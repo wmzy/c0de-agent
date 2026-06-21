@@ -573,7 +573,7 @@ export function executeTool(
 |------|------|------|
 | `read` | 读取文件内容，支持行范围选择 | auto |
 | `write` | 创建或覆盖文件 | ask |
-| `edit` | 基于 diff 的文件编辑 | ask |
+| `edit` | 文件编辑（支持 hashline 和 diff 两种模式） | ask |
 | `bash` | 执行 shell 命令 | ask |
 | `glob` | 按模式搜索文件名 | auto |
 | `grep` | 按正则搜索文件内容 | auto |
@@ -1154,7 +1154,20 @@ export function computeHash(content: string): string  // 4 位 hex
 
 ### 16.4 与 edit 工具集成
 
-`edit` 工具内部使用 hashline 格式。LLM 生成 hashline patch，工具解析并应用。如果哈希不匹配，返回错误让 LLM 重新读取文件再编辑。
+`edit` 工具支持两种编辑模式：
+
+1. **Diff 模式**（默认）：标准的 search/replace 文本替换，所有模型都能良好生成
+2. **Hashline 模式**：内容哈希锚定的补丁，更安全但依赖模型能力
+
+配置中可设置默认模式，也可在每次调用时通过参数切换：
+
+```typescript
+type EditMode =
+  | { _tag: 'diff'; search: string; replace: string }
+  | { _tag: 'hashline'; patch: string }
+```
+
+如果 hashline 应用失败（哈希不匹配），自动降级到 diff 模式并提示 LLM 重新读取文件。
 
 ---
 
