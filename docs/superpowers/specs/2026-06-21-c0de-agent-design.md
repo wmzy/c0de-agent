@@ -1156,7 +1156,7 @@ export function computeHash(content: string): string  // 4 位 hex
 
 `edit` 工具支持两种编辑模式：
 
-1. **Diff 模式**（默认）：标准的 search/replace 文本替换，所有模型都能良好生成
+1. **Diff 模式**：标准的 search/replace 文本替换，所有模型都能良好生成
 2. **Hashline 模式**：内容哈希锚定的补丁，更安全但依赖模型能力
 
 配置中可设置默认模式，也可在每次调用时通过参数切换：
@@ -1167,7 +1167,38 @@ type EditMode =
   | { _tag: 'hashline'; patch: string }
 ```
 
-如果 hashline 应用失败（哈希不匹配），自动降级到 diff 模式并提示 LLM 重新读取文件。
+### 16.5 模型能力评估
+
+系统根据模型历史表现自动选择最优工具模式：
+
+```typescript
+type ModelToolMetrics = {
+  model: string
+  tool: string
+  mode: string
+  attempts: number
+  successes: number
+  failures: number
+  avgLatency: number
+  lastUsed: number
+}
+
+export function recordToolResult(metrics: ModelToolMetrics[], result: ToolResult): void
+export function selectBestMode(metrics: ModelToolMetrics[], model: string, tool: string): string
+export function getMetrics(db: DB, model: string, tool: string): ModelToolMetrics
+```
+
+**评估逻辑**：
+- 每次工具执行后记录成功/失败到 DB
+- `selectBestMode` 查找该 model+tool 组合的历史成功率
+- 优先选择成功率 > 80% 的模式
+- 新模型或数据不足时使用保守默认值（diff 模式）
+- 用户可覆盖自动选择，强制使用指定模式
+
+这个机制不限于 edit 工具——任何有多种实现方式的工具都可以注册模式评估：
+- `edit`：diff vs hashline
+- `bash`：直接执行 vs 沙箱执行
+- `read`：全文读取 vs 分块读取
 
 ---
 
