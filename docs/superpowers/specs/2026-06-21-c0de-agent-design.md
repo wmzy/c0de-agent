@@ -16,7 +16,7 @@
 | LLM | 自建 provider 层 | 完全控制 streaming、tool calling、thinking blocks |
 | 工具集 | 完整（file/bash/LSP/AST/browser/MCP/sub-agent/worktree） | 对标 opencode/oh-my-openagent |
 | 插件 | 进程内加载 | 简单直接，开发体验好 |
-| UI | React 19 + haze-ui + @linaria | 用户自有组件库，零运行时 CSS |
+| UI | React 19 + haze-ui + @linaria，PWA + 移动端优先 | 用户自有组件库，零运行时 CSS，支持移动设备 |
 | 存储 | Drizzle ORM + PGLite/PostgreSQL | 本地无需服务端，生产可切真 PG |
 | 语言 | 纯 TypeScript | 前后端统一 |
 | 包管理 | pnpm + Vite | 用户现有工具链 |
@@ -930,6 +930,29 @@ src/web/
 - @native-router/react 路由
 - @tanstack/react-query 数据获取
 - Vite 构建
+
+### 10.3 PWA + 移动端优先
+
+Web 前端作为 PWA 构建，支持移动端安装和使用：
+
+**PWA 要求**：
+- `manifest.json` 配置应用图标、主题色、启动 URL
+- Service Worker 缓存静态资源，支持离线访问
+- 支持 `beforeinstallprompt` 事件，引导用户安装
+- 响应式布局，移动端优先设计
+
+**移动端优先设计原则**：
+- 断点：mobile（< 768px）→ tablet（768-1024px）→ desktop（> 1024px）
+- 默认样式为移动端，通过 `@media (min-width)` 适配大屏
+- 触摸友好的交互（按钮最小 44px、滑动手势、长按菜单）
+- 底部导航栏（移动端）→ 侧边栏（桌面端）
+- 聊天界面全屏沉浸式，输入框固定在底部
+- 工具调用详情可折叠/展开
+
+**移动端特有功能**：
+- 语音输入（Web Speech API）
+- 推送通知（Push API）——agent 完成任务时通知
+- 分享目标（Web Share API）——从其他应用分享文本到 c0de
 
 ### 10.3 核心页面
 
