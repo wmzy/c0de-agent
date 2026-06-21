@@ -110,6 +110,9 @@ type AgentState = {
   tools: ToolDef[]
   tokenBudget: TokenBudget
   abortController: AbortController
+  status: AgentStatus      // 运行状态（idle/running/paused/error）
+  steeringQueue: string[]  // steering 消息队列
+  llmDetails: LLMDetail[]  // LLM 调用详情记录
 }
 
 type AgentEvent =
@@ -1199,7 +1202,147 @@ export function registerPromptSection(registry: PromptRegistry, section: PromptS
 
 ---
 
-## 18. DAP 集成
+---
+
+## 18. 热更新 + 会话迁移
+
+自动检查新版本，无缝升级而不丢失会话。
+
+### 18.1 流程
+
+```
+1. 后台定期检查 npm registry 新版本
+2. 发现新版本 → 通知前端（可选自动/手动确认）
+3. 下载并安装新版本
+4. 序列化当前会话状态到临时文件
+5. 启动新实例，传入会话状态文件路径
+6. 新实例加载会话状态，恢复所有活跃会话
+7. 新实例接管 server 端口（旧实例 graceful shutdown）
+8. 前端自动重连到新实例
+```
+
+### 18.2 核心函数
+
+```typescript
+type UpdateCheckResult = {
+  hasUpdate: boolean
+  currentVersion: string
+  latestVersion: string
+  releaseNotes?: string
+}
+
+type SessionSnapshot = {
+  version: string
+  sessions: SessionState[]
+  agentStates: AgentStateSnapshot[]
+  config: Config
+  timestamp: number
+}
+
+export function checkForUpdate(): Promise<UpdateCheckResult>
+export function serializeSessionState(state: AgentState): SessionSnapshot
+export function restoreSessionState(snapshot: SessionSnapshot): Promise<AgentState>
+export function performHotUpdate(snapshot: SessionSnapshot): Promise<void>
+```
+
+### 18.3 端口接管
+
+新实例启动时检测端口占用：
+- 如果旧实例仍在运行，通过 IPC 通知旧实例 graceful shutdown
+- 旧实例序列化状态后退出
+- 新实例绑定端口，加载状态
+- 前端 WebSocket 自动重连
+
+---
+
+## 19. 暂停/恢复 Agent Loop
+
+用户可以暂停正在执行的 agent，查看状态后恢复或中止。
+
+### 19.1 状态机
+
+```
+idle → running → paused → running（恢复）
+                → idle（中止）
+```
+
+### 19.2 核心函数
+
+```typescript
+export function pauseAgent(state: AgentState): void
+export function resumeAgent(state: AgentState): void
+export function isAgentPaused(state: AgentState): boolean
+export function getAgentStatus(state: AgentState): AgentStatus
+
+type AgentStatus =
+  | { _tag: 'idle' }
+  | { _tag: 'running'; currentTool?: string; messageCount: number }
+  | { _tag: 'paused'; pauseReason: string; resumeAvailable: boolean }
+  | { _tag: 'error'; error: AgentError }
+```
+
+### 19.3 暂停时可执行操作
+
+- 查看当前消息历史
+- 查看正在执行的工具及其输入
+- 注入 steering 消息（恢复后生效）
+- 中止 agent
+- 恢复执行
+
+前端通过 WebSocket 接收状态变更事件，在 UI 上显示暂停状态和操作按钮。
+
+---
+
+## 20. 透明可观察
+
+完整暴露 LLM 调用细节，包括 prompt、token 用量、延迟。
+
+### 20.1 观察数据
+
+每次 LLM 调用记录：
+
+```typescript
+type LLMDetail = {
+  id: string
+  timestamp: number
+  model: string
+  provider: string
+  role: ModelRole
+
+  // 输入
+  systemPrompt: string      // 完整 system prompt
+  messages: ChatMessage[]    // 完整消息历史
+  tools: ChatTool[]          // 发送的工具定义
+
+  // 输出
+  responseChunks: StreamChunk[]  // 完整响应流
+  thinking?: string              // thinking 内容
+
+  // 元数据
+  usage: { input: number; output: number; cacheHit?: number }
+  latency: { firstToken: number; total: number }
+  cost: number
+}
+```
+
+### 20.2 观察 API
+
+```
+GET /api/sessions/:id/llm-details        获取会话的所有 LLM 调用详情
+GET /api/sessions/:id/llm-details/:callId 获取单次调用详情
+```
+
+### 20.3 前端展示
+
+会话详情页包含「调用详情」tab：
+- 按时间线展示每次 LLM 调用
+- 可展开查看完整 system prompt、消息历史、工具定义
+- 显示 token 用量、延迟、成本
+- 响应流可回放（逐 chunk 查看）
+
+---
+
+## 21. DAP 集成
 
 Debug Adapter Protocol 支持，让 agent 能控制调试器。
 
@@ -1253,27 +1396,27 @@ DAP 暴露为一组工具，agent 可以自然地使用调试能力：
 
 ---
 
-## 19. 非功能需求
+## 24. 非功能需求
 
-### 19.1 性能
+### 24.1 性能
 
 - Agent 首次响应 < 2s（不含 LLM 延迟）
 - 前端首屏加载 < 1s
 - 工具执行超时：bash 300s，其他 30s
 
-### 19.2 安全
+### 24.2 安全
 
 - API key 存储在本地 keyring 或加密文件
 - 工具执行沙箱化（bash 工具可选沙箱模式）
 - CORS 限制本地 origin
 
-### 19.3 可扩展性
+### 24.3 可扩展性
 
 - 插件可通过 hook 拦截和修改所有核心流程
 - MCP 工具对 agent 透明，与内置工具统一接口
 - Provider 可通过配置添加，无需改代码
 
-### 19.4 可测试性
+### 24.4 可测试性
 
 - 每个包独立可测试（mock 依赖）
 - 核心 agent loop 可脱离 server 测试
@@ -1281,20 +1424,21 @@ DAP 暴露为一组工具，agent 可以自然地使用调试能力：
 
 ---
 
-## 20. 初始实现范围
+## 25. 初始实现范围
 
 第一版实现以下核心功能（MVP）：
 
-1. **Core**：agent loop、prompt 构建（动态 prompt）、config 加载、上下文管理（滑动窗口 + compaction）、生命周期 hook、steering 消息
+1. **Core**：agent loop（支持暂停/恢复）、prompt 构建（动态 prompt）、config 加载、上下文管理（滑动窗口 + compaction）、生命周期 hook、steering 消息
 2. **LLM**：OpenAI 兼容 provider、角色路由、fallback 链
 3. **Tools**：read（支持内部 URL）、write、edit（hashline）、bash、glob、grep、task（worktree 隔离）
-4. **Session**：单会话消息流、compaction、分支功能
+4. **Session**：单会话消息流、compaction、分支功能、LLM 调用详情记录（透明可观察）
 5. **DB**：PGLite 本地存储
 6. **Server**：Hono API + SSE + WebSocket
-7. **Web**：基础聊天界面、slash 命令支持
+7. **Web**：基础聊天界面、slash 命令支持、LLM 调用详情展示
 8. **CLI**：`c0de`、`c0de chat`（Print 模式）、`c0de acp`（ACP 模式）
 9. **Plugins**：插件加载框架 + hook 系统
 10. **DAP**：调试器集成（基础 DAP 客户端）
+11. **Update**：热更新 + 会话迁移
 
 后续迭代：
 - 完整工具集（LSP、AST、Browser、MCP）
