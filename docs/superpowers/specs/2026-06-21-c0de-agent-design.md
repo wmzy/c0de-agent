@@ -849,6 +849,12 @@ GET    /api/config                获取配置
 PATCH  /api/config                更新配置
 
 GET    /api/health                健康检查
+
+GET    /api/files                  浏览目录（?path=相对路径）
+GET    /api/files/:path            读取文件内容
+PUT    /api/files/:path            写入文件
+GET    /api/files/search           搜索文件（?q=关键词）
+GET    /api/files/:path/raw        原始文件内容（用于预览/下载）
 ```
 
 ### 9.3 SSE 流式聊天
@@ -901,7 +907,10 @@ src/web/
 │   │   ├── MessageBubble/     消息气泡
 │   │   ├── ToolCall/          工具调用展示
 │   │   ├── BranchTree/        分支可视化
-│   │   ├── CodeBlock/         代码块渲染
+│   │   ├── CodeBlock/         代码块渲染 + 引用
+│   │   ├── FileBrowser/       文件浏览器
+│   │   ├── FilePreview/       文件预览（图片/MD/PDF/代码）
+│   │   ├── CodeEditor/        代码编辑器（Monaco/CodeMirror）
 │   │   ├── PermissionDialog/  工具权限确认弹窗
 │   │   └── StreamingIndicator/ 流式输入指示器
 │   ├── services/
@@ -954,13 +963,49 @@ Web 前端作为 PWA 构建，支持移动端安装和使用：
 - 推送通知（Push API）——agent 完成任务时通知
 - 分享目标（Web Share API）——从其他应用分享文本到 c0de
 
-### 10.3 核心页面
+### 10.4 核心页面
 
 **Chat 页面**（主界面）：
-- 左侧：会话列表 + 分支树
+- 左侧：会话列表 + 分支树 + 文件浏览器
 - 右侧：消息流 + 输入框
 - 消息流支持流式渲染、代码高亮、工具调用展开
 - 工具权限确认通过弹窗交互
+
+**文件浏览器**：
+- 树形目录结构，支持展开/折叠
+- 点击文件在右侧预览面板打开
+- 支持在线编辑（Monaco Editor 或 CodeMirror）
+- 文件变更实时反映（WebSocket 推送）
+- 搜索文件名和内容
+- git 状态标记（新增/修改/删除）
+
+**特殊文件渲染**：
+- 图片：内联预览（PNG/JPEG/GIF/SVG/WebP）
+- Markdown：渲染为富文本（支持 mermaid 图表）
+- JSON/YAML：语法高亮 + 折叠
+- PDF：内联查看器
+- 代码：语法高亮 + 行号 + 折叠
+- 音频/视频：内联播放器
+
+**代码块引用**：
+- 消息中的代码块可被引用（点击引用按钮或拖拽）
+- 引用格式：`@[path:startLine-endLine]` 或 `@[messageId:blockIndex]`
+- 引用的代码块在消息中渲染为可折叠的代码片段
+- 点击引用可跳转到文件浏览器中的对应位置
+- agent 可以通过引用自动获取代码上下文
+
+```typescript
+type CodeReference = {
+  _tag: 'file'
+  path: string
+  startLine: number
+  endLine: number
+} | {
+  _tag: 'message'
+  messageId: string
+  blockIndex: number
+}
+```
 
 **Settings 页面**：
 - Provider 配置（API key、base URL）
