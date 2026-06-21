@@ -277,6 +277,42 @@ type CommandContext = {
 | `/fork [messageIndex]` | 从指定消息处创建分支 |
 | `/config <key> [value]` | 查看/设置配置 |
 
+### 3.9 Steering 消息
+
+Agent 执行过程中，用户可注入系统消息纠正行为：
+
+```typescript
+export function injectSteeringMessage(state: AgentState, message: string): void
+```
+
+Steering 消息插入到消息流的当前位置，作为系统角色消息传给 LLM。不影响历史消息，只影响当前轮次的行为。
+
+前端通过 WebSocket 推送 steering 消息，agent loop 在下一次 LLM 调用前检查 steering 队列。
+
+### 3.10 内部 URL Scheme
+
+统一资源访问，`read` 和 `search` 工具支持多种 URL scheme：
+
+| Scheme | 描述 | 示例 |
+|--------|------|------|
+| `file://` 或无前缀 | 本地文件 | `src/main.ts` |
+| `skill://` | 技能文件 | `skill://brainstorming` |
+| `agent://` | 子 agent 输出 | `agent://Task1` |
+| `pr://` | GitHub PR | `pr://123` |
+| `issue://` | GitHub Issue | `issue://456` |
+
+```typescript
+type URLResolver = {
+  scheme: string
+  resolve(url: string, ctx: ResolveContext): Promise<string>  // 返回内容
+}
+
+export function registerURLResolver(registry: URLRegistry, resolver: URLResolver): void
+export function resolveURL(registry: URLRegistry, url: string, ctx: ResolveContext): Promise<string>
+```
+
+工具执行时，如果输入匹配已注册的 URL scheme，自动调用对应的 resolver 获取内容。
+
 ---
 
 ## 4. LLM 包（src/llm/）
@@ -912,7 +948,7 @@ src/web/
 
 ## 11. CLI 包（src/cli/）
 
-命令行入口。
+命令行入口与多运行模式。
 
 ### 11.1 文件结构
 
@@ -924,14 +960,61 @@ src/cli/
 │   ├── serve.ts       c0de serve（启动 server）
 │   ├── init.ts        c0de init（初始化配置）
 │   ├── config.ts      c0de config（管理配置）
-│   └── plugin.ts      c0de plugin（管理插件）
+│   ├── plugin.ts      c0de plugin（管理插件）
+│   └── acp.ts         c0de acp（ACP 模式）
+├── modes/
+│   ├── print.ts       Print 模式（一次性输出）
+│   └── acp.ts         ACP 模式（编辑器集成）
 ├── utils/
 │   ├── print.ts       终端输出格式化
 │   └── prompt.ts      终端交互式提示
 └── index.ts
 ```
 
-### 11.2 命令
+### 11.2 运行模式
+
+| 模式 | 命令 | 描述 |
+|------|------|------|
+| **Server** | `c0de` 或 `c0de serve` | 启动 HTTP/WS 服务 + 打开浏览器 |
+| **Print** | `c0de chat "问题"` | 一次性输出结果，适合脚本和快速提问 |
+| **ACP** | `c0de acp` | Agent Client Protocol，JSON-RPC over stdin/stdout，供编辑器集成 |
+
+#### Print 模式
+
+```typescript
+export function runPrintMode(config: Config, message: string, opts: PrintOptions): Promise<string>
+
+type PrintOptions = {
+  model?: string
+  format: 'text' | 'json'
+  maxTokens?: number
+}
+```
+
+Print 模式启动一个临时 agent，发送消息，等待完整响应后输出到 stdout 并退出。
+
+#### ACP 模式
+
+Agent Client Protocol（参考 oh-my-pi）：JSON-RPC over stdin/stdout，让编辑器（VS Code、Neovim 等）能与 c0de 通信。
+
+```typescript
+type ACPRequest =
+  | { method: 'chat'; params: { message: string; sessionId?: string } }
+  | { method: 'tool/confirm'; params: { toolCallId: string; approved: boolean } }
+  | { method: 'session/list'; params: {} }
+  | { method: 'session/create'; params: { title?: string } }
+  | { method: 'abort'; params: {} }
+
+type ACPResponse =
+  | { result: { text: string } }
+  | { result: { sessionId: string } }
+  | { result: { sessions: Session[] } }
+  | { error: { code: number; message: string } }
+```
+
+ACP 事件通过 `event` 消息推送（与 agent event 对应）。
+
+### 11.3 命令
 
 | 命令 | 描述 |
 |------|------|
@@ -1023,27 +1106,174 @@ task 工具内部:
 
 ---
 
-## 14. 非功能需求
+## 16. Hashline 编辑
 
-### 14.1 性能
+内容哈希锚定的补丁语言，替代普通 diff 实现更安全的文件编辑。
+
+### 16.1 概念
+
+每个编辑块绑定文件内容的 4 位哈希。如果文件在 agent 思考期间被修改，旧锚点的哈希不匹配，编辑会被拒绝而不是错误应用。
+
+### 16.2 格式
+
+```
+[PATH#HASH]
+SWAP lineStart-lineEnd
+new content here
+---
+```
+
+操作类型：
+- `SWAP`：替换指定行范围
+- `DEL`：删除指定行
+- `INS.PRE` / `INS.POST`：在指定行前/后插入
+- `INS.HEAD` / `INS.TAIL`：在文件头/尾插入
+- `SWAP.BLK` / `DEL.BLK` / `INS.BLK.POST`：基于语法块的操作（AST 感知）
+
+### 16.3 核心函数
+
+```typescript
+type ParsedPatch = {
+  path: string
+  hash: string
+  operations: PatchOp[]
+}
+
+type ApplyResult =
+  | { _tag: 'success'; content: string }
+  | { _tag: 'hash_mismatch'; expected: string; actual: string }
+  | { _tag: 'line_not_found'; operation: PatchOp }
+
+export function parsePatch(input: string): ParsedPatch[]
+export function applyPatch(file: string, patch: ParsedPatch): ApplyResult
+export function computeHash(content: string): string  // 4 位 hex
+```
+
+### 16.4 与 edit 工具集成
+
+`edit` 工具内部使用 hashline 格式。LLM 生成 hashline patch，工具解析并应用。如果哈希不匹配，返回错误让 LLM 重新读取文件再编辑。
+
+---
+
+## 17. 动态 Prompt 构建
+
+运行时根据当前可用能力动态组装 system prompt，替代静态模板。
+
+### 17.1 原理
+
+```typescript
+type PromptSection = {
+  id: string
+  title: string
+  content: string
+  priority: number       // 排序优先级
+  condition?: (ctx: PromptBuildContext) => boolean  // 条件渲染
+}
+
+type PromptBuildContext = {
+  tools: ToolDef[]
+  agents: AgentDef[]
+  skills: Skill[]
+  plugins: Plugin[]
+  config: Config
+  session: Session
+}
+
+export function buildDynamicPrompt(ctx: PromptBuildContext): string
+export function registerPromptSection(registry: PromptRegistry, section: PromptSection): void
+```
+
+### 17.2 内置 Section
+
+| Section | 条件 | 内容 |
+|---------|------|------|
+| `role` | 始终 | 基础角色描述 |
+| `tools` | 有工具时 | 工具列表及参数 |
+| `skills` | 有技能时 | 技能描述和调用方式 |
+| `agents` | 有子 agent 时 | 可委托的 agent 列表 |
+| `project` | 有项目上下文时 | 文件结构、git 状态 |
+| `constraints` | 始终 | 编码范式约束 |
+| `slash-commands` | 始终 | 可用命令列表 |
+
+插件可通过 `registerPromptSection` 注入自定义 section。
+
+---
+
+## 18. DAP 集成
+
+Debug Adapter Protocol 支持，让 agent 能控制调试器。
+
+### 18.1 DAP 客户端
+
+```
+src/tools/
+├── dap.ts             DAP 工具（设断点、单步、查看变量）
+└── ...
+```
+
+```typescript
+type DAPSession = {
+  adapter: string      // 调试适配器名称（如 'node', 'python'）
+  program: string      // 被调试程序
+  state: 'running' | 'paused' | 'stopped'
+}
+
+type Breakpoint = {
+  file: string
+  line: number
+  condition?: string
+}
+
+export function startDebugSession(config: DAPConfig): Promise<DAPSession>
+export function setBreakpoint(session: DAPSession, bp: Breakpoint): Promise<void>
+export function continue(session: DAPSession): Promise<void>
+export function stepOver(session: DAPSession): Promise<void>
+export function stepIn(session: DAPSession): Promise<void>
+export function stepOut(session: DAPSession): Promise<void>
+export function getStackTrace(session: DAPSession): Promise<StackFrame[]>
+export function getVariables(session: DAPSession, frameId: number): Promise<Variable[]>
+export function evaluate(session: DAPSession, expression: string): Promise<string>
+export function stopDebugSession(session: DAPSession): void
+```
+
+### 18.2 DAP 工具
+
+DAP 暴露为一组工具，agent 可以自然地使用调试能力：
+
+| 工具 | 描述 | 权限 |
+|------|------|------|
+| `debug_start` | 启动调试会话 | ask |
+| `debug_breakpoint` | 设置断点 | auto |
+| `debug_continue` | 继续执行 | auto |
+| `debug_step` | 单步执行（over/in/out） | auto |
+| `debug_stack` | 查看调用栈 | auto |
+| `debug_vars` | 查看变量 | auto |
+| `debug_eval` | 求值表达式 | auto |
+| `debug_stop` | 停止调试 | auto |
+
+---
+
+## 19. 非功能需求
+
+### 19.1 性能
 
 - Agent 首次响应 < 2s（不含 LLM 延迟）
 - 前端首屏加载 < 1s
 - 工具执行超时：bash 300s，其他 30s
 
-### 14.2 安全
+### 19.2 安全
 
 - API key 存储在本地 keyring 或加密文件
 - 工具执行沙箱化（bash 工具可选沙箱模式）
 - CORS 限制本地 origin
 
-### 14.3 可扩展性
+### 19.3 可扩展性
 
 - 插件可通过 hook 拦截和修改所有核心流程
 - MCP 工具对 agent 透明，与内置工具统一接口
 - Provider 可通过配置添加，无需改代码
 
-### 14.4 可测试性
+### 19.4 可测试性
 
 - 每个包独立可测试（mock 依赖）
 - 核心 agent loop 可脱离 server 测试
@@ -1051,19 +1281,20 @@ task 工具内部:
 
 ---
 
-## 15. 初始实现范围
+## 20. 初始实现范围
 
 第一版实现以下核心功能（MVP）：
 
-1. **Core**：agent loop、prompt 构建、config 加载、上下文管理（滑动窗口 + compaction）、生命周期 hook
+1. **Core**：agent loop、prompt 构建（动态 prompt）、config 加载、上下文管理（滑动窗口 + compaction）、生命周期 hook、steering 消息
 2. **LLM**：OpenAI 兼容 provider、角色路由、fallback 链
-3. **Tools**：read、write、edit、bash、glob、grep（6 个基础工具）、task（worktree 隔离）
+3. **Tools**：read（支持内部 URL）、write、edit（hashline）、bash、glob、grep、task（worktree 隔离）
 4. **Session**：单会话消息流、compaction、分支功能
 5. **DB**：PGLite 本地存储
 6. **Server**：Hono API + SSE + WebSocket
 7. **Web**：基础聊天界面、slash 命令支持
-8. **CLI**：`c0de` 和 `c0de chat` 命令
-9. **Plugins**：插件加载框架 + hook 系统（基础 hook 点）
+8. **CLI**：`c0de`、`c0de chat`（Print 模式）、`c0de acp`（ACP 模式）
+9. **Plugins**：插件加载框架 + hook 系统
+10. **DAP**：调试器集成（基础 DAP 客户端）
 
 后续迭代：
 - 完整工具集（LSP、AST、Browser、MCP）
@@ -1073,3 +1304,4 @@ task 工具内部:
 - 记忆引擎
 - 实时协作
 - 多 agent 编排（Swarm）
+- 统计面板
