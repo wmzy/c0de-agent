@@ -24,9 +24,10 @@
 | 编码范式 | data + functions | 无 class，纯 type + export function |
 
 **参考项目**：
-- pi（agent loop、harness、tools 架构）
-- opencode（provider 抽象、LSP/MCP 集成、session 管理）
-- oh-my-openagent（插件系统、hook 系统、工具注册）
+- pi（agent loop、harness、tools 架构、session compaction）
+- oh-my-pi（hashline、snapcompact、swarm、collab、mnemopi、Rust 核心、多 provider 路由）
+- opencode（provider 抽象、LSP/MCP 集成、session 管理、worktree）
+- oh-my-openagent（插件系统、hook 系统、工具注册、动态 prompt 构建）
 - painless（前端技术栈：React + haze-ui + @linaria）
 - anthology（后端技术栈：Hono + Drizzle + PostgreSQL）
 - data-and-functions（编码范式约束）
@@ -176,9 +177,13 @@ type Config = {
   providers: ProviderConfig[]
   defaultProvider: string
   defaultModel: string
+  roleRouting: Record<string, { provider: string; model: string }>
+  fallback: { enabled: boolean; maxRetries: number; retryDelay: number }
+  compaction: CompactionConfig
   tools: { enabled: string[]; disabled: string[] }
   plugins: { enabled: string[] }
   mcpServers: MCPServerConfig[]
+  slashCommands: { enabled: string[] }
   theme: 'light' | 'dark' | 'system'
   locale: string
 }
@@ -187,6 +192,90 @@ export function loadConfig(projectDir?: string): Promise<Config>
 export function saveConfig(config: Config, scope: 'global' | 'project'): Promise<void>
 export function mergeConfig(...configs: Partial<Config>[]): Config
 ```
+
+### 3.6 上下文管理
+
+`context.ts` 管理 token 预算和消息裁剪：
+
+```typescript
+type TokenBudget = {
+  total: number          // context window 大小
+  reserved: number       // 预留给 system prompt + 工具描述
+  available: number      // total - reserved
+  used: number           // 当前已用
+  keepRecent: number     // 保留最近 N 条消息原文
+}
+
+type CompactionConfig = {
+  enabled: boolean
+  threshold: number      // 触发压缩的 token 使用率（如 0.8）
+  reserveTokens: number  // 压缩后保留的 token 空间
+  keepRecentTokens: number // 保留最近消息的 token 数
+}
+```
+
+**策略**：
+1. **Token 预算分配**：system prompt + 工具描述占 20%，历史消息占 60%，当前轮次占 20%
+2. **滑动窗口**：当消息超出预算，从最旧的非系统消息开始丢弃
+3. **Compaction**：当 token 使用率超过阈值，将旧消息压缩为摘要（调用 LLM 生成摘要，替换原始消息）
+
+```typescript
+export function estimateTokens(text: string): number
+export function shouldCompact(messages: Message[], budget: TokenBudget, config: CompactionConfig): boolean
+export function compactMessages(messages: Message[], config: CompactionConfig): Promise<Message[]>
+export function fitToBudget(messages: Message[], budget: TokenBudget): Message[]
+```
+
+### 3.7 Agent 生命周期 Hook
+
+Agent loop 在关键节点触发 hook，插件可拦截和修改行为：
+
+```typescript
+type AgentHookMap = {
+  'before_tool_call': { tool: string; input: unknown; ctx: ToolContext }
+  'after_tool_call': { tool: string; input: unknown; result: ToolResult; ctx: ToolContext }
+  'before_provider_request': { request: ChatRequest }
+  'after_provider_response': { chunks: StreamChunk[] }
+  'session:create': { session: Session }
+  'session:fork': { source: Session; fork: Session }
+  'message:before': { messages: Message[] }
+  'message:after': { message: Message }
+}
+```
+
+Hook 执行规则：
+- `before_*` hook 可修改输入参数或返回 `false` 拦截操作
+- `after_*` hook 可修改输出结果
+- 多个 hook 按注册顺序链式执行
+- hook 超时 5s 自动跳过
+
+### 3.8 Slash 命令
+
+```typescript
+type SlashCommand = {
+  name: string           // 命令名（不含 /）
+  description: string
+  args?: JSONSchema      // 可选参数 schema
+  execute: (args: unknown, ctx: CommandContext) => Promise<CommandResult>
+}
+
+type CommandContext = {
+  agent: AgentState
+  session: Session
+  config: Config
+}
+```
+
+内置命令：
+
+| 命令 | 描述 |
+|------|------|
+| `/compact` | 手动触发上下文压缩 |
+| `/model <name>` | 切换当前会话模型 |
+| `/clear` | 清空当前会话消息 |
+| `/help` | 列出可用命令 |
+| `/fork [messageIndex]` | 从指定消息处创建分支 |
+| `/config <key> [value]` | 查看/设置配置 |
 
 ---
 
@@ -282,6 +371,61 @@ type ProtocolHandler = {
 - **anthropic.ts**：Anthropic Messages API，支持 extended thinking、prompt caching
 - **google.ts**：Gemini API，支持多模态
 - **openai-compat.ts**：OpenAI 兼容适配器，覆盖 DeepSeek、Groq、Together 等
+
+### 4.6 多角色路由
+
+不同任务路由到不同模型，节省成本：
+
+```typescript
+type ModelRole =
+  | { readonly _tag: 'default' }   // 通用任务
+  | { readonly _tag: 'smol' }      // 简单快速（便宜模型）
+  | { readonly _tag: 'slow' }      // 复杂推理（强模型）
+  | { readonly _tag: 'plan' }      // 规划任务
+  | { readonly _tag: 'commit' }    // 提交消息生成
+
+type RoleRouting = Record<ModelRole['_tag'], { provider: string; model: string }>
+
+export function resolveModel(registry: ProviderRegistry, role: ModelRole): { provider: string; model: string }
+```
+
+配置示例：
+```json
+{
+  "roleRouting": {
+    "default": { "provider": "openai", "model": "gpt-4.1" },
+    "smol": { "provider": "openai", "model": "gpt-4.1-mini" },
+    "slow": { "provider": "anthropic", "model": "claude-sonnet-4" },
+    "plan": { "provider": "anthropic", "model": "claude-sonnet-4" },
+    "commit": { "provider": "openai", "model": "gpt-4.1-mini" }
+  }
+}
+```
+
+### 4.7 Provider Fallback
+
+Provider 失败时自动切换备用：
+
+```typescript
+type FallbackChain = {
+  primary: string        // 主 provider
+  fallbacks: string[]    // 备用 provider 列表
+  retryDelay: number     // 重试间隔（ms）
+  maxRetries: number     // 每个 provider 最大重试次数
+}
+
+export function chatStreamWithFallback(
+  registry: ProviderRegistry,
+  request: ChatRequest,
+  chain: FallbackChain
+): AsyncGenerator<StreamChunk>
+```
+
+Fallback 触发条件：
+- HTTP 429（限流）
+- HTTP 5xx（服务端错误）
+- 网络超时
+- API key 无效
 
 ### 4.5 模型能力注册表
 
@@ -397,7 +541,7 @@ export function executeTool(
 | `lsp` | LSP 操作（定义/引用/重命名/diagnostics） | auto |
 | `ast` | AST 结构搜索与编辑（基于 ast-grep） | auto |
 | `browser` | 浏览器控制（Puppeteer） | ask |
-| `task` | 生成子 agent 并行工作 | auto |
+| `task` | 生成子 agent 并行工作（worktree 隔离） | auto |
 | `worktree` | Git worktree 管理（隔离工作区） | ask |
 | `websearch` | 网络搜索 | auto |
 
@@ -911,18 +1055,21 @@ task 工具内部:
 
 第一版实现以下核心功能（MVP）：
 
-1. **Core**：agent loop、prompt 构建、config 加载
-2. **LLM**：OpenAI 兼容 provider（覆盖大多数场景）
-3. **Tools**：read、write、edit、bash、glob、grep（6 个基础工具）
-4. **Session**：单会话消息流（分支功能后续迭代）
+1. **Core**：agent loop、prompt 构建、config 加载、上下文管理（滑动窗口 + compaction）、生命周期 hook
+2. **LLM**：OpenAI 兼容 provider、角色路由、fallback 链
+3. **Tools**：read、write、edit、bash、glob、grep（6 个基础工具）、task（worktree 隔离）
+4. **Session**：单会话消息流、compaction、分支功能
 5. **DB**：PGLite 本地存储
-6. **Server**：Hono API + SSE
-7. **Web**：基础聊天界面
+6. **Server**：Hono API + SSE + WebSocket
+7. **Web**：基础聊天界面、slash 命令支持
 8. **CLI**：`c0de` 和 `c0de chat` 命令
+9. **Plugins**：插件加载框架 + hook 系统（基础 hook 点）
 
 后续迭代：
-- 多 provider 支持（Anthropic、Google）
-- 完整工具集（LSP、AST、Browser、MCP、task、worktree）
-- 多会话分支
-- 插件系统
+- 完整工具集（LSP、AST、Browser、MCP）
+- 多 provider 支持（Anthropic、Google 原生协议）
 - 插件市场
+- 技能发现（从 .claude/.cursor 等目录继承）
+- 记忆引擎
+- 实时协作
+- 多 agent 编排（Swarm）
