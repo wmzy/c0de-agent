@@ -394,7 +394,57 @@ export function chatStream(
 ): AsyncGenerator<StreamChunk>
 ```
 
-### 4.4 Protocol 实现
+### 4.8 Provider 缓存优化
+
+不同 provider 有不同的 prompt 缓存机制，LLM 包需要针对性优化：
+
+| Provider | 缓存机制 | 优化策略 |
+|----------|----------|----------|
+| Anthropic | 显式 `cache_control` 断点 | 在 system prompt 末尾和工具定义后插入缓存断点 |
+| DeepSeek | 自动前缀缓存 | 保持 system prompt + 工具定义稳定，消息追加到尾部 |
+| OpenAI | 自动前缀缓存 | 同 DeepSeek，保持前缀稳定 |
+| Google | Context Caching API | 创建 cached content，后续请求引用 cache ID |
+
+```typescript
+type CacheStrategy = {
+  provider: string
+  apply(request: ChatRequest): ChatRequest
+}
+
+// 注册缓存策略
+export function registerCacheStrategy(registry: CacheRegistry, strategy: CacheStrategy): void
+export function applyCacheOptimization(registry: CacheRegistry, provider: string, request: ChatRequest): ChatRequest
+```
+
+**Anthropic 缓存断点**：
+```typescript
+// system prompt 末尾添加缓存断点
+messages[0].content = [
+  { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }
+]
+// 工具定义后添加缓存断点
+tools[tools.length - 1].cache_control = { type: 'ephemeral' }
+```
+
+**DeepSeek/OpenAI 自动缓存优化**：
+- 确保每次请求的 system prompt 和工具定义完全一致（不注入时间戳等变量）
+- 消息历史从稳定的前缀开始追加
+- 避免在中间插入消息（会破坏前缀缓存）
+
+**Google Context Caching**：
+```typescript
+// 创建缓存
+const cache = await google.createCachedContent({
+  model: 'gemini-2.5-pro',
+  systemInstruction: systemPrompt,
+  tools: tools,
+  ttl: '3600s'
+})
+// 后续请求引用缓存
+request.cachedContent = cache.name
+```
+
+每个 protocol 实现自动应用对应的缓存策略，上层无需关心细节。
 
 每个 protocol 文件实现统一接口：
 
