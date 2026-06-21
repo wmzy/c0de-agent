@@ -497,16 +497,17 @@ src/tools/
 ├── executor.ts        工具执行器
 ├── types.ts           ToolDef、ToolResult、ToolPermission
 ├── builtin/
-│   ├── read.ts        文件读取
+│   ├── read.ts        文件读取（支持内部 URL）
 │   ├── write.ts       文件写入
-│   ├── edit.ts        文件编辑（diff-based）
+│   ├── edit.ts        文件编辑（hashline + diff 双模式）
 │   ├── bash.ts        Shell 执行
 │   ├── glob.ts        文件搜索
 │   ├── grep.ts        内容搜索
+│   ├── ast_grep.ts    AST 结构搜索（tree-sitter，50+ 语言）
+│   ├── ast_edit.ts    AST 结构编辑（语法感知重写）
 │   ├── lsp.ts         LSP 操作
-│   ├── ast.ts         AST 搜索与编辑
 │   ├── browser.ts     浏览器控制
-│   ├── task.ts        子 agent
+│   ├── task.ts        子 agent（worktree 隔离）
 │   ├── worktree.ts    Git worktree 管理
 │   └── websearch.ts   网络搜索
 └── index.ts
@@ -577,8 +578,9 @@ export function executeTool(
 | `bash` | 执行 shell 命令 | ask |
 | `glob` | 按模式搜索文件名 | auto |
 | `grep` | 按正则搜索文件内容 | auto |
+| `ast_grep` | AST 结构搜索（基于 tree-sitter，50+ 语言） | auto |
+| `ast_edit` | AST 结构编辑（预览后应用，语法感知重写） | ask |
 | `lsp` | LSP 操作（定义/引用/重命名/diagnostics） | auto |
-| `ast` | AST 结构搜索与编辑（基于 ast-grep） | auto |
 | `browser` | 浏览器控制（Puppeteer） | ask |
 | `task` | 生成子 agent 并行工作（worktree 隔离） | auto |
 | `worktree` | Git worktree 管理（隔离工作区） | ask |
@@ -1267,6 +1269,69 @@ export function getMetrics(db: DB, model: string, tool: string): ModelToolMetric
 - `edit`：diff vs hashline
 - `bash`：直接执行 vs 沙箱执行
 - `read`：全文读取 vs 分块读取
+
+---
+
+## 17. AST 工具（ast_grep + ast_edit）
+
+基于 tree-sitter 的结构化代码搜索和编辑，支持 50+ 编程语言。
+
+### 17.1 ast_grep — 结构搜索
+
+用 AST 模式匹配代码，比正则更精确：
+
+```typescript
+type ASTGrepResult = {
+  file: string
+  range: { start: { line: number; column: number }; end: { line: number; column: number } }
+  match: string        // 匹配的代码文本
+  captures: Record<string, string>  // 捕获的变量
+}
+
+export function astGrep(pattern: string, paths: string[], opts?: ASTGrepOptions): ASTGrepResult[]
+
+type ASTGrepOptions = {
+  language?: string    // 强制指定语言
+  include?: string[]   // 文件 glob 过滤
+  exclude?: string[]   // 排除 glob
+  maxResults?: number
+}
+```
+
+示例：
+- `astGrep('console.log($$$ARGS)', ['src/**/*.ts'])` — 找所有 console.log 调用
+- `astGrep('function $NAME($$$ARGS) { $$$BODY }', ['src/**/*.ts'])` — 找所有函数声明
+- `astGrep('import { $$$IMPORTS } from "$PKG"', ['src/**/*.ts'])` — 找特定包的导入
+
+### 17.2 ast_edit — 结构编辑
+
+用 AST 模式匹配 + 模板替换实现语法感知的代码重写：
+
+```typescript
+type ASTEditOp = {
+  pattern: string      // 匹配模式
+  replacement: string  // 替换模板（可用捕获变量）
+}
+
+type ASTEditResult = {
+  file: string
+  changes: { original: string; replacement: string; range: Range }[]
+  preview: string      // 完整文件预览
+}
+
+export function astEdit(ops: ASTEditOp[], paths: string[], opts?: ASTEditOptions): ASTEditResult[]
+export function applyASTEdit(result: ASTEditResult): void
+```
+
+**安全机制**：
+- 默认只生成预览（`preview` 字段），不直接修改文件
+- 用户确认后调用 `applyASTEdit` 应用变更
+- 支持 dry-run 模式，输出 diff 预览
+- 多文件编辑原子性：要么全部应用，要么全部回滚
+
+示例：
+- `astEdit([{ pattern: 'console.log($$$ARGS)', replacement: 'logger.info($$$ARGS)' }], ['src/**/*.ts'])` — 批量替换 console.log
+- `astEdit([{ pattern: 'class $NAME { $$$BODY }', replacement: 'export function create$NAME() { $$$BODY }' }], ['src/**/*.ts'])` — OOP 到 data+functions 重构
 
 ---
 
