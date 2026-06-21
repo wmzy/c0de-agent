@@ -6,73 +6,19 @@
 
 ### 1.1 Pi（harness/session）
 
-**Session 数据结构**：树形 DAG
-- 每个 session 是一棵树，节点是 typed entries（message、compaction、branch_summary、custom 等）
-- 通过 `parentId` 链接形成树结构
-- `buildSessionContext()` 从根到当前叶子重建完整上下文
+**Session 数据结构**：树形 DAG，typed entries（message、compaction、branch_summary、custom 等），JSONL 追加存储。
 
-**Entry 类型**：
-```typescript
-type SessionEntry =
-  | { _tag: 'message'; role: 'user' | 'assistant'; content: string }
-  | { _tag: 'compaction'; summary: string; tokenCount: number }
-  | { _tag: 'branch_summary'; summary: string; branchPath: string }
-  | { _tag: 'tool_call'; tool: string; input: unknown }
-  | { _tag: 'tool_result'; tool: string; output: unknown }
-  | { _tag: 'custom'; kind: string; data: unknown }
-```
+**Compaction**：`prepareCompaction()` 找安全切割点，`compact()` 调用 LLM 生成结构化摘要（Goal/Progress/Decisions/Next Steps/Critical Context），保留最近 N 条原文。
 
-**存储**：JSONL 文件，每行一个 entry。追加写入，不修改历史。
-
-**分支**：`forkSession()` 复制从根到目标 entry 的路径到新 session，添加 `branch_summary` entry 记录分支原因。
-
-**Compaction 策略**：LLM 摘要
-- 触发条件：token 使用率超过阈值（默认 80%）
-- `prepareCompaction()` 找到安全切割点（不在工具调用中间）
-- `compact()` 调用 LLM 生成结构化摘要（Goal/Progress/Decisions/Next Steps/Critical Context）
-- 摘要替换原始消息，保留最近 N 条原文
+**Branch**：`forkSession()` 复制路径到新 session，`branch_summary` 记录分支原因。
 
 ### 1.2 OpenCode（session/）
 
-**Session 数据结构**：扁平表
-- SQLite 存储，`sessions` 表 + `messages` 表
-- 消息通过 `sessionId` 关联
-- 无原生树结构，分支通过复制 session 实现
-
-**Compaction 策略**：LLM 回放
-- `compaction.ts`（610行）实现压缩逻辑
-- 触发条件：消息数超过阈值或 token 超限
-- 策略：选择保留最近 N 轮对话，将更早的消息发送给 LLM 生成摘要
-- 摘要作为 system message 插入消息流开头
-
-**Overflow 处理**：
-- `overflow.ts` 检测 context 是否超限
-- 自动裁剪最旧的消息
+扁平 SQLite 表，LLM 回放压缩，overflow 自动裁剪。
 
 ### 1.3 Oh-My-Pi（snapcompact）
 
-**创新方案**：位图压缩
-- 不用 LLM 生成摘要，而是将历史消息渲染为终端风格的 PNG 图片
-- 视觉模型（Claude、GPT-4V）可以直接"看"图片理解历史
-- 本地确定性处理，不需要 API 调用
-
-**实现细节**：
-- 使用 Rust 原生渲染器（pi-natives）生成 PNG
-- Provider 感知的帧形状：Anthropic `11on16-bw`、Google/OpenAI `8on22-bw`
-- 文本归一化、像素字体光栅化
-- 帧预算：每个 provider 限制图片 token 数
-- 最旧优先淘汰策略
-- 文本尾部回退：最近的消息保留原文
-
-**优势**：
-- 零 API 调用成本
-- 确定性（相同输入总是相同输出）
-- 保留视觉格式（代码缩进、表格等）
-
-**劣势**：
-- 只适用于支持视觉的模型
-- 图片 token 成本可能高于文本摘要
-- 实现复杂度高（需要 Rust 渲染器）
+位图压缩：渲染历史为 PNG 图片，视觉模型直接"看"图片。零 API 调用，确定性输出。
 
 ---
 
@@ -80,18 +26,20 @@ type SessionEntry =
 
 ### 2.1 架构
 
-采用 pi 的树形 DAG 结构，支持两种可切换的 compaction 策略。
-
 ```
 src/session/
 ├── session.ts         Session CRUD + 树操作
 ├── entry.ts           Entry 类型和操作
 ├── context.ts         上下文重建
 ├── branch.ts          分支管理
+├── squash.ts          Squash 压缩（类似 git merge --squash）
+├── snapshot.ts        源码快照管理
+├── archive.ts         压缩窗口归档（可搜索/可引用）
 ├── compaction/
 │   ├── types.ts       Compaction 接口
 │   ├── llm.ts         LLM 摘要策略
-│   ├── bitmap.ts      位图压缩策略（可选，需要视觉模型）
+│   ├── bitmap.ts      位图压缩策略
+│   ├── squash.ts      Squash 策略
 │   └── index.ts       策略选择
 ├── token.ts           Token 估算
 ├── storage.ts         存储抽象
@@ -105,33 +53,31 @@ src/session/
 type Session = {
   id: string
   title: string
-  parentId: string | null      // 父 session（分支来源）
-  branchPoint: string | null   // 分支点 entry ID
+  parentId: string | null
+  branchPoint: string | null
+  metadata: SessionMetadata
   createdAt: number
   updatedAt: number
+}
+
+type SessionMetadata = {
+  mainThreadId?: string     // 主线程 session ID（用于 squash 回归）
+  squashCount?: number      // 被 squash 的次数
+  fileSnapshots?: string[]  // 关联的文件快照 ID 列表
 }
 
 type SessionEntry =
   | { _tag: 'message'; id: string; sessionId: string; role: 'user' | 'assistant' | 'system'; content: string; timestamp: number }
   | { _tag: 'tool_call'; id: string; sessionId: string; tool: string; input: unknown; timestamp: number }
   | { _tag: 'tool_result'; id: string; sessionId: string; tool: string; output: ToolResult; timestamp: number }
-  | { _tag: 'compaction'; id: string; sessionId: string; summary: string; originalEntryIds: string[]; tokenCount: number; timestamp: number }
+  | { _tag: 'compaction'; id: string; sessionId: string; summary: string; originalEntryIds: string[]; archiveId: string; tokenCount: number; timestamp: number }
+  | { _tag: 'squash'; id: string; sessionId: string; summary: string; squashedSessionIds: string[]; archiveId: string; tokenCount: number; timestamp: number }
   | { _tag: 'branch_summary'; id: string; sessionId: string; summary: string; sourceSessionId: string; timestamp: number }
   | { _tag: 'steering'; id: string; sessionId: string; content: string; timestamp: number }
-
-// 上下文重建：从根到当前叶子收集所有 entries
-export function buildSessionContext(db: DB, sessionId: string): SessionEntry[]
-
-// 分支：从指定 entry 处创建新 session
-export function forkSession(db: DB, sessionId: string, entryId: string): Session
-
-// 获取分支树
-export function getSessionTree(db: DB): SessionTreeNode[]
+  | { _tag: 'file_snapshot'; id: string; sessionId: string; path: string; content: string; hash: string; tokenCount: number; timestamp: number }
 ```
 
 ### 2.3 存储
-
-使用 Drizzle ORM + PGLite/PostgreSQL：
 
 ```sql
 CREATE TABLE sessions (
@@ -147,51 +93,319 @@ CREATE TABLE sessions (
 CREATE TABLE session_entries (
   id UUID PRIMARY KEY,
   session_id UUID NOT NULL REFERENCES sessions(id),
-  tag TEXT NOT NULL,           -- 'message' | 'tool_call' | 'tool_result' | 'compaction' | 'branch_summary' | 'steering'
-  role TEXT,                   -- 仅 message 类型
-  content JSONB NOT NULL,      -- 结构化内容
-  tool_name TEXT,              -- 仅 tool_call/tool_result 类型
+  tag TEXT NOT NULL,
+  role TEXT,
+  content JSONB NOT NULL,
+  tool_name TEXT,
   token_count INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_entries_session ON session_entries(session_id, created_at);
+
+-- 压缩归档表（存储原始会话信息，可搜索）
+CREATE TABLE compaction_archives (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES sessions(id),
+  compaction_id UUID NOT NULL,     -- 关联的 compaction/squash entry ID
+  archive_type TEXT NOT NULL,      -- 'compaction' | 'squash'
+  original_entries JSONB NOT NULL, -- 被压缩的原始 entries 完整数据
+  file_snapshots JSONB DEFAULT '[]', -- 压缩时的文件快照列表
+  summary TEXT NOT NULL,           -- 摘要文本
+  token_count INTEGER,
+  searchable_text TEXT,            -- 全文搜索用的纯文本
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_archives_session ON compaction_archives(session_id);
+CREATE INDEX idx_archives_search ON compaction_archives USING gin(to_tsvector('english', searchable_text));
+
+-- 文件快照表（热点源码的最新快照）
+CREATE TABLE file_snapshots (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES sessions(id),
+  entry_id UUID,                   -- 关联的 entry
+  file_path TEXT NOT NULL,
+  content TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  token_count INTEGER DEFAULT 0,
+  version INTEGER DEFAULT 1,       -- 同一文件的版本号
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_snapshots_session_path ON file_snapshots(session_id, file_path);
+CREATE UNIQUE INDEX idx_snapshots_latest ON file_snapshots(session_id, file_path, version DESC);
 ```
 
-### 2.4 Compaction 接口
+### 2.4 Squash 压缩（类似 git merge --squash）
+
+将最近的 N 次交互压缩为摘要，保持缓存前缀不变，回归主线任务：
+
+```typescript
+type SquashConfig = {
+  keepRecent: number           // 保留最近 N 条原文
+  preserveFileSnapshots: boolean // 保留热点文件快照
+  archiveOriginal: boolean     // 归档原始 entries（可搜索/可引用）
+}
+
+// Squash 最近的交互到栈顶
+// 类似 git rebase -i + squash：把多个 commit 合并为一个
+export async function squashRecent(
+  db: DB,
+  sessionId: string,
+  count: number,               // 压缩最近 N 条交互
+  config: SquashConfig,
+  compactionModel: { provider: string; model: string }
+): Promise<SessionEntry> {
+  const entries = getEntries(db, sessionId)
+  const toSquash = entries.slice(-count)
+  const remaining = entries.slice(0, -count)
+
+  // 1. 生成 squash 摘要
+  const summary = await generateSquashSummary(toSquash, compactionModel)
+
+  // 2. 归档原始 entries
+  const archiveId = await archiveOriginalEntries(db, sessionId, toSquash, 'squash')
+
+  // 3. 保留热点文件快照
+  if (config.preserveFileSnapshots) {
+    const hotFiles = extractHotFiles(toSquash)
+    for (const file of hotFiles) {
+      await upsertFileSnapshot(db, sessionId, file.path, file.content)
+    }
+  }
+
+  // 4. 创建 squash entry（放在压缩位置，保持前缀不变）
+  const squashEntry: SessionEntry = {
+    _tag: 'squash',
+    id: generateId(),
+    sessionId,
+    summary,
+    squashedSessionIds: toSquash.filter(e => e._tag === 'message').map(e => e.id),
+    archiveId,
+    tokenCount: estimateTokens(summary),
+    timestamp: Date.now()
+  }
+
+  // 5. 替换 entries：保留前缀 + squash 摘要 + 最近 N 条
+  const newEntries = [...remaining, squashEntry, ...entries.slice(-config.keepRecent)]
+  await replaceEntries(db, sessionId, newEntries)
+
+  return squashEntry
+}
+
+// Squash 后回归主线任务
+export async function squashAndReturnToMain(
+  db: DB,
+  currentSessionId: string,
+  mainThreadId: string,
+  count: number
+): Promise<void> {
+  // 1. Squash 当前会话的最近交互
+  await squashRecent(db, currentSessionId, count, { keepRecent: 2, preserveFileSnapshots: true, archiveOriginal: true }, compactionModel)
+
+  // 2. 将 squash 摘要复制到主线程
+  const squashEntry = getLatestSquashEntry(db, currentSessionId)
+  await appendEntry(db, mainThreadId, {
+    ...squashEntry,
+    sessionId: mainThreadId,
+    content: `[Squashed from ${currentSessionId}]\n${squashEntry.summary}`
+  })
+
+  // 3. 复制热点文件快照到主线程
+  const snapshots = getFileSnapshots(db, currentSessionId)
+  for (const snapshot of snapshots) {
+    await upsertFileSnapshot(db, mainThreadId, snapshot.filePath, snapshot.content)
+  }
+}
+```
+
+**Squash 摘要 Prompt**：
+```
+将以下最近的交互压缩为简洁摘要，保留关键决策和上下文，丢弃冗余细节。
+重点保留：修改了哪些文件、做了什么决策、当前进度、下一步计划。
+
+输出格式：
+## 最近操作
+[简要描述做了什么]
+
+## 修改的文件
+- path: 变更描述
+
+## 关键决策
+[做出的重要决策]
+
+## 当前状态
+[进度和下一步]
+
+---
+交互历史：
+{entries}
+```
+
+### 2.5 源码快照管理
+
+压缩时保持热点源码的最新快照在上下文中，防止重复调用 read 工具：
+
+```typescript
+// 提取热点文件（被多次读取/编辑的文件）
+function extractHotFiles(entries: SessionEntry[]): { path: string; content: string; tokenCount: number }[] {
+  const fileAccessCount: Map<string, { count: number; lastContent?: string }> = new Map()
+
+  for (const entry of entries) {
+    if (entry._tag === 'tool_call' && (entry.tool === 'read' || entry.tool === 'write' || entry.tool === 'edit')) {
+      const input = entry.input as { path: string }
+      const record = fileAccessCount.get(input.path) ?? { count: 0 }
+      record.count++
+      fileAccessCount.set(input.path, record)
+    }
+    // 记录最后一次写入的内容
+    if (entry._tag === 'tool_result' && entry.tool === 'read') {
+      const input = entries.find(e => e._tag === 'tool_call' && e.id === entry.id)?.input as { path: string }
+      if (input) {
+        const record = fileAccessCount.get(input.path) ?? { count: 0 }
+        record.lastContent = entry.output
+        fileAccessCount.set(input.path, record)
+      }
+    }
+  }
+
+  // 按访问次数排序，取 top N
+  return Array.from(fileAccessCount.entries())
+    .filter(([_, v]) => v.count >= 2 && v.lastContent)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 10)
+    .map(([path, v]) => ({ path, content: v.lastContent!, tokenCount: estimateTokens(v.lastContent!) }))
+}
+
+// 上下文重建时注入文件快照
+function injectFileSnapshots(messages: ChatMessage[], snapshots: FileSnapshot[]): ChatMessage[] {
+  if (snapshots.length === 0) return messages
+
+  const snapshotBlock = snapshots.map(s =>
+    `[Cached File: ${s.filePath}]\n\`\`\`\n${s.content}\n\`\`\``
+  ).join('\n\n')
+
+  // 在 system prompt 后注入，保持缓存前缀稳定
+  return [
+    messages[0], // system prompt
+    { role: 'system', content: `[Active File Snapshots - DO NOT re-read these files]\n${snapshotBlock}` },
+    ...messages.slice(1)
+  ]
+}
+
+// 读取工具检查：如果文件已有快照，直接返回快照而不是重新读取
+function checkFileSnapshot(db: DB, sessionId: string, filePath: string): string | null {
+  const snapshot = getLatestFileSnapshot(db, sessionId, filePath)
+  return snapshot?.content ?? null
+}
+```
+
+### 2.6 压缩归档（可搜索/可引用）
+
+每个压缩窗口的原始会话信息存储在 `compaction_archives` 表中，支持：
+
+```typescript
+// 搜索归档内容
+export function searchArchives(db: DB, sessionId: string, query: string): CompactionArchive[] {
+  return db.select()
+    .from(compactionArchives)
+    .where(
+      and(
+        eq(compactionArchives.sessionId, sessionId),
+        sql`to_tsvector('english', ${compactionArchives.searchableText}) @@ plainto_tsquery('english', ${query})`
+      )
+    )
+    .orderBy(desc(compactionArchives.createdAt))
+    .execute()
+}
+
+// 获取归档详情（用于 @ 引用）
+export function getArchive(db: DB, archiveId: string): CompactionArchive {
+  return db.select()
+    .from(compactionArchives)
+    .where(eq(compactionArchives.id, archiveId))
+    .execute()
+}
+
+// 获取归档的原始 entries（用于 @ 引用查看完整历史）
+export function getArchiveOriginalEntries(db: DB, archiveId: string): SessionEntry[] {
+  const archive = getArchive(db, archiveId)
+  return archive.originalEntries as SessionEntry[]
+}
+```
+
+**用户 @ 引用**：
+
+用户在聊天中可以通过 `@[archive:<id>]` 或 `@[squash:<n>]` 引用压缩窗口：
+
+```typescript
+// 解析 @ 引用
+function parseArchiveReference(text: string): { type: 'archive' | 'squash'; id: string } | null {
+  // @[archive:abc123] → 引用特定归档
+  // @[squash:1] → 引用最近第 1 次 squash
+  // @[squash:last] → 引用最近一次 squash
+  const archiveMatch = text.match(/@\[archive:([^\]]+)\]/)
+  if (archiveMatch) return { type: 'archive', id: archiveMatch[1] }
+
+  const squashMatch = text.match(/@\[squash:(\d+|last)\]/)
+  if (squashMatch) return { type: 'squash', id: squashMatch[1] }
+
+  return null
+}
+
+// 将 @ 引用解析为上下文内容
+export async function resolveArchiveReference(db: DB, sessionId: string, ref: ReturnType<typeof parseArchiveReference>): Promise<string | null> {
+  if (!ref) return null
+
+  if (ref.type === 'archive') {
+    const archive = getArchive(db, ref.id)
+    return archive ? `[Referenced Archive]\n${archive.summary}\n\nOriginal entries available via /archive ${ref.id}` : null
+  }
+
+  if (ref.type === 'squash') {
+    const archives = db.select()
+      .from(compactionArchives)
+      .where(and(eq(compactionArchives.sessionId, sessionId), eq(compactionArchives.archiveType, 'squash')))
+      .orderBy(desc(compactionArchives.createdAt))
+      .execute()
+
+    const index = ref.id === 'last' ? 0 : parseInt(ref.id) - 1
+    const archive = archives[index]
+    return archive ? `[Referenced Squash #${index + 1}]\n${archive.summary}` : null
+  }
+
+  return null
+}
+```
+
+### 2.7 Compaction 接口
 
 ```typescript
 type CompactionStrategy = {
   name: string
-
-  // 检查是否需要压缩
   shouldCompact(entries: SessionEntry[], budget: TokenBudget): boolean
-
-  // 准备压缩（找到切割点）
   prepareCompaction(entries: SessionEntry[], budget: TokenBudget): CompactionPlan
-
-  // 执行压缩
-  compact(plan: CompactionPlan): Promise<CompactionResult>
+  compact(plan: CompactionPlan, model: { provider: string; model: string }): Promise<CompactionResult>
 }
 
 type CompactionPlan = {
-  keepEntries: SessionEntry[]      // 保留原文的 entries
-  compactEntries: SessionEntry[]   // 需要压缩的 entries
-  cutPoint: number                 // 切割点索引
+  keepEntries: SessionEntry[]
+  compactEntries: SessionEntry[]
+  hotFiles: { path: string; content: string }[]  // 需要保留的热点文件
+  cutPoint: number
 }
 
 type CompactionResult = {
-  summary: string                  // 压缩后的摘要
-  tokenCount: number               // 摘要 token 数
-  originalEntryIds: string[]       // 被压缩的 entry IDs
+  summary: string
+  tokenCount: number
+  originalEntryIds: string[]
+  archiveId: string              // 归档 ID（可搜索/可引用）
+  fileSnapshots: string[]        // 保留的文件快照 ID
 }
-
-// 策略注册
-export function registerCompactionStrategy(name: string, strategy: CompactionStrategy): void
-export function getCompactionStrategy(name: string): CompactionStrategy
 ```
 
-### 2.5 LLM 摘要策略
+### 2.8 LLM 摘要策略
 
 ```typescript
 const llmStrategy: CompactionStrategy = {
@@ -203,32 +417,40 @@ const llmStrategy: CompactionStrategy = {
   },
 
   prepareCompaction(entries, budget) {
-    // 保留最近 keepRecentTokens 的消息原文
     const keepRecentTokens = budget.total * 0.3
     let kept = 0
-    const keepFrom = entries.findLastIndex(e => {
-      kept += e.tokenCount
-      return kept >= keepRecentTokens
-    })
-
-    // 找安全切割点（不在工具调用中间）
+    const keepFrom = entries.findLastIndex(e => { kept += e.tokenCount; return kept >= keepRecentTokens })
     const safeCutPoint = findSafeCutPoint(entries, keepFrom)
+
+    // 提取热点文件
+    const hotFiles = extractHotFiles(entries.slice(0, safeCutPoint))
 
     return {
       keepEntries: entries.slice(safeCutPoint),
       compactEntries: entries.slice(0, safeCutPoint),
+      hotFiles,
       cutPoint: safeCutPoint
     }
   },
 
-  async compact(plan) {
-    // 调用 LLM 生成结构化摘要
+  async compact(plan, model) {
     const prompt = buildCompactionPrompt(plan.compactEntries)
-    const summary = await llm.chat(prompt)
+    const summary = await llm.chat(prompt, model)
+    const archiveId = await archiveOriginalEntries(db, sessionId, plan.compactEntries, 'compaction')
+
+    // 保留热点文件快照
+    const snapshotIds: string[] = []
+    for (const file of plan.hotFiles) {
+      const id = await upsertFileSnapshot(db, sessionId, file.path, file.content)
+      snapshotIds.push(id)
+    }
+
     return {
       summary,
       tokenCount: estimateTokens(summary),
-      originalEntryIds: plan.compactEntries.map(e => e.id)
+      originalEntryIds: plan.compactEntries.map(e => e.id),
+      archiveId,
+      fileSnapshots: snapshotIds
     }
   }
 }
@@ -238,7 +460,6 @@ const llmStrategy: CompactionStrategy = {
 ```
 将以下对话历史压缩为结构化摘要。保留关键信息，丢弃冗余细节。
 
-输出格式：
 ## Goal
 用户的目标是什么
 
@@ -254,105 +475,71 @@ const llmStrategy: CompactionStrategy = {
 ## Critical Context
 必须记住的上下文（文件路径、变量名、错误信息等）
 
+## Modified Files
+修改过的文件列表及变更摘要
+
 ---
 对话历史：
 {entries}
 ```
 
-### 2.6 安全切割点
+### 2.9 安全切割点
 
 ```typescript
 function findSafeCutPoint(entries: SessionEntry[], preferredCut: number): number {
-  // 不能在 tool_call 和 tool_result 之间切割
-  // 不能在 assistant 消息的 tool_calls 和后续 tool_result 之间切割
-  // 向前找到最近的安全位置
-
   for (let i = preferredCut; i >= 0; i--) {
     const entry = entries[i]
     const nextEntry = entries[i + 1]
-
-    // 安全：message 后面是 message 或 compaction
-    if (entry._tag === 'message' && (!nextEntry || nextEntry._tag === 'message' || nextEntry._tag === 'compaction')) {
-      return i
-    }
-    // 安全：tool_result 后面是 message
-    if (entry._tag === 'tool_result' && nextEntry?._tag === 'message') {
-      return i + 1
-    }
+    if (entry._tag === 'message' && (!nextEntry || nextEntry._tag === 'message' || nextEntry._tag === 'compaction')) return i
+    if (entry._tag === 'tool_result' && nextEntry?._tag === 'message') return i + 1
   }
-
-  return 0 // 最坏情况从头切割
+  return 0
 }
 ```
 
-### 2.7 分支管理
+### 2.10 分支管理
 
 ```typescript
-// 从指定 entry 处创建分支
 export function forkSession(db: DB, sessionId: string, entryId: string): Session {
   const entries = getEntries(db, sessionId)
   const forkIndex = entries.findIndex(e => e.id === entryId)
   const entriesToCopy = entries.slice(0, forkIndex + 1)
-
-  // 创建新 session
   const newSession = createSession(db, `Branch from ${sessionId}`)
-
-  // 复制 entries
   for (const entry of entriesToCopy) {
     appendEntry(db, { ...entry, id: generateId(), sessionId: newSession.id })
   }
-
-  // 添加分支摘要
   appendEntry(db, {
-    _tag: 'branch_summary',
-    id: generateId(),
-    sessionId: newSession.id,
+    _tag: 'branch_summary', id: generateId(), sessionId: newSession.id,
     summary: `Branched from session ${sessionId} at entry ${entryId}`,
-    sourceSessionId: sessionId,
-    timestamp: Date.now()
+    sourceSessionId: sessionId, timestamp: Date.now()
   })
-
   return newSession
 }
 ```
 
-### 2.8 Token 估算
+### 2.11 Token 估算
 
 ```typescript
-// 简单启发式：4 字符 ≈ 1 token（英文）
-// 中文：1 字 ≈ 2 tokens
 export function estimateTokens(text: string): number {
   const cjkChars = (text.match(/[\u4e00-\u9fff]/g) || []).length
   const otherChars = text.length - cjkChars
   return Math.ceil(cjkChars * 2 + otherChars / 4)
 }
 
-// 使用 provider 报告的实际 usage 更新估算
+// 使用 provider 报告的实际 usage 校准
 export function calibrateEstimate(model: string, actual: { input: number; output: number }, estimated: number): void {
-  // 存储校准因子，后续估算使用
+  // 存储校准因子
 }
 ```
 
----
-
-## 3. 上下文重建流程
+### 2.12 上下文重建
 
 ```typescript
 export function buildSessionContext(db: DB, sessionId: string): SessionEntry[] {
-  const session = getSession(db, sessionId)
-  const entries = getEntries(db, sessionId)
-
-  if (session.parentId && session.branchPoint) {
-    // 分支 session：从父 session 复制的 entries 已经在当前 session 中
-    return entries
-  }
-
-  // 主 session：直接返回所有 entries
-  return entries
+  return getEntries(db, sessionId)
 }
 
-// 转换为 LLM 消息格式
-export function entriesToMessages(entries: SessionEntry[]): ChatMessage[] {
+export function entriesToMessages(db: DB, entries: SessionEntry[], sessionId: string): ChatMessage[] {
   const messages: ChatMessage[] = []
 
   for (const entry of entries) {
@@ -361,12 +548,13 @@ export function entriesToMessages(entries: SessionEntry[]): ChatMessage[] {
         messages.push({ role: entry.role, content: entry.content })
         break
       case 'tool_call':
-        // 工具调用附加到上一条 assistant 消息
+        // 附加到上一条 assistant 消息
         break
       case 'tool_result':
         messages.push({ role: 'tool', toolCallId: entry.id, content: JSON.stringify(entry.output) })
         break
       case 'compaction':
+      case 'squash':
         messages.push({ role: 'system', content: `[Compacted History]\n${entry.summary}` })
         break
       case 'branch_summary':
@@ -375,9 +563,14 @@ export function entriesToMessages(entries: SessionEntry[]): ChatMessage[] {
       case 'steering':
         messages.push({ role: 'system', content: entry.content })
         break
+      case 'file_snapshot':
+        // 文件快照不直接放入消息，由 snapshot 管理器处理
+        break
     }
   }
 
-  return messages
+  // 注入热点文件快照
+  const snapshots = getFileSnapshots(db, sessionId)
+  return injectFileSnapshots(messages, snapshots)
 }
 ```

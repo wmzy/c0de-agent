@@ -430,7 +430,51 @@ function LLMDetailPanel({ detail }: { detail: LLMDetail }) {
 }
 ```
 
-### 2.10 触摸交互
+### 2.10 子 Agent 进度视图
+
+当 task 工具 spawn 子 agent 时，前端需要展示子 agent 的实时进度：
+
+```typescript
+type SubAgentEvent = {
+  parentId: string
+  childId: string
+  childSessionId: string
+  event: AgentEvent
+}
+
+function SubAgentProgress({ childId, childSessionId }: { childId: string; childSessionId: string }) {
+  // 显示：子 agent 名称、当前状态、已执行工具数、token 用量
+  // 可展开查看子 agent 的消息流
+  // 可中止子 agent
+}
+```
+
+### 2.11 离线 Agent 状态管理
+
+PWA 离线时的处理：
+- 已有会话历史可浏览（Service Worker 缓存）
+- 文件浏览器可浏览已缓存文件
+- 发送消息时提示“离线中，消息将在恢复连接后发送”
+- 恢复连接后自动发送排队的消息
+- Agent 执行状态通过 WebSocket 保持，离线时显示最后已知状态
+
+```typescript
+function useOfflineQueue() {
+  const queue: { message: string; sessionId: string; timestamp: number }[] = []
+  const enqueue = (message: string, sessionId: string) => {
+    queue.push({ message, sessionId, timestamp: Date.now() })
+    localStorage.setItem('offlineQueue', JSON.stringify(queue))
+  }
+  const flush = async () => {
+    for (const item of queue) await sendMessage(item.sessionId, item.message)
+    queue.length = 0
+    localStorage.removeItem('offlineQueue')
+  }
+  return { enqueue, flush, hasPending: queue.length > 0 }
+}
+```
+
+### 2.12 触摸交互
 
 - **按钮最小尺寸**：44px × 44px
 - **滑动手势**：左滑删除会话，右滑返回
