@@ -345,42 +345,152 @@ function partitionByConflict(toolCalls: { id: string; name: string; args: string
 }
 ```
 
-### 2.8 LLM 重试与 Fallback
+### 2.7 Provider 错误分类
+
+采用 opencode 的细粒度错误分类，支持非标准错误响应的模式匹配：
 
 ```typescript
+// 错误分类（参考 opencode/schema/errors.ts）
+type ProviderErrorReason =
+  | { _tag: 'InvalidRequest'; message: string; classification?: 'context-overflow' }
+  | { _tag: 'NoRoute'; message: string }
+  | { _tag: 'Authentication'; message: string }
+  | { _tag: 'RateLimit'; retryAfter?: number; message: string }
+  | { _tag: 'QuotaExceeded'; message: string }
+  | { _tag: 'ContentPolicy'; message: string }
+  | { _tag: 'ProviderInternal'; status: number; message: string }
+  | { _tag: 'Transport'; message: string }
+  | { _tag: 'InvalidProviderOutput'; message: string }
+  | { _tag: 'UnknownProvider'; message: string }
+
+// Context overflow 检测（20+ 正则模式匹配各家 provider 的非标准错误）
+const CONTEXT_OVERFLOW_PATTERNS = [
+  /prompt is too long/i,
+  /input is too long for requested model/i,
+  /exceeds the context window/i,
+  /input token count.*exceeds the maximum/i,
+  /maximum prompt length is \d+/i,
+  /reduce the length of the messages/i,
+  /maximum context length is \d+ tokens/i,
+  /exceeds the limit of \d+/i,
+  /exceeds the available context size/i,
+  /context window exceeds limit/i,
+  /exceeded model token limit/i,
+  /context[_ ]length[_ ]exceeded/i,
+  /request entity too large/i,
+  /prompt too long; exceeded (?:max )?context length/i,
+  /model_context_window_exceeded/i,
+]
+
+export function isContextOverflow(message: string): boolean {
+  return CONTEXT_OVERFLOW_PATTERNS.some(p => p.test(message))
+}
+
+// 错误分类器（可扩展）
+type ErrorClassifier = {
+  classify(status: number, body: unknown, headers: Headers): ProviderErrorReason
+}
+
+// 每个 provider 注册自己的错误分类器
+const classifiers: Map<string, ErrorClassifier> = new Map()
+
+export function registerErrorClassifier(provider: string, classifier: ErrorClassifier): void
+export function classifyError(provider: string, status: number, body: unknown, headers: Headers): ProviderErrorReason
+```
+
+### 2.8 重试策略
+
+参考 opencode 的重试实现，支持 provider-specific 配置：
+
+```typescript
+// 重试配置（参考 opencode/session/retry.ts）
+type RetryConfig = {
+  maxRetries: number           // 最大重试次数（默认 3）
+  initialDelay: number         // 初始延迟 ms（默认 2000）
+  backoffFactor: number        // 退避因子（默认 2）
+  maxDelay: number             // 最大延迟 ms（默认 30000）
+  retryableErrors: string[]    // 可重试的错误类型
+  retryableStatusCodes: number[]  // 可重试的 HTTP 状态码
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  initialDelay: 2000,
+  backoffFactor: 2,
+  maxDelay: 30_000,
+  retryableErrors: ['RateLimit', 'ProviderInternal', 'Transport'],
+  retryableStatusCodes: [429, 500, 502, 503, 504]
+}
+
+// 延迟计算（参考 opencode）
+function calculateDelay(attempt: number, error?: ProviderErrorReason, config?: RetryConfig): number {
+  const cfg = config ?? DEFAULT_RETRY_CONFIG
+
+  // 如果有 retry-after header，使用它
+  if (error?._tag === 'RateLimit' && error.retryAfter) {
+    return Math.min(error.retryAfter * 1000, RETRY_MAX_DELAY)
+  }
+
+  // 指数退避
+  return Math.min(
+    cfg.initialDelay * Math.pow(cfg.backoffFactor, attempt - 1),
+    cfg.maxDelay
+  )
+}
+
+// 重试判断（参考 opencode 的 retryable 函数）
+function isRetryable(error: ProviderErrorReason, config?: RetryConfig): boolean {
+  const cfg = config ?? DEFAULT_RETRY_CONFIG
+  return cfg.retryableErrors.includes(error._tag)
+}
+
+// 带重试的流式请求
+async function* chatStreamWithRetry(
+  registry: ProviderRegistry,
+  request: ChatRequest,
+  config?: RetryConfig
+): AsyncGenerator<StreamChunk> {
+  const cfg = config ?? DEFAULT_RETRY_CONFIG
+
+  for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
+    try {
+      yield* chatStream(registry, request)
+      return
+    } catch (error) {
+      const classified = classifyErrorFromException(error)
+
+      if (!isRetryable(classified, cfg) || attempt >= cfg.maxRetries) {
+        throw error
+      }
+
+      const delay = calculateDelay(attempt, classified, cfg)
+      await sleep(delay)
+    }
+  }
+}
+
+// 带 fallback 的重试
 async function* chatStreamWithRetryAndFallback(
   registry: ProviderRegistry,
   request: ChatRequest,
   chain: FallbackChain,
-  maxRetries: number,
-  baseDelay: number
+  config?: RetryConfig
 ): AsyncGenerator<StreamChunk> {
   const providers = [chain.primary, ...chain.fallbacks]
+  const errors: ProviderErrorReason[] = []
 
   for (const providerName of providers) {
-    for (let retry = 0; retry <= maxRetries; retry++) {
-      try {
-        yield* chatStream(registry, { ...request, provider: providerName })
-        return
-      } catch (error) {
-        const providerError = classifyError(error)
-
-        // 不可重试的错误直接切下一个 provider
-        if (providerError._tag === 'auth_error' || providerError._tag === 'model_not_found') break
-
-        // 可重试的错误
-        if (retry < maxRetries) {
-          const delay = providerError._tag === 'rate_limit'
-            ? (providerError.retryAfter ?? baseDelay * Math.pow(2, retry))
-            : baseDelay * Math.pow(2, retry)
-          await sleep(delay)
-          continue
-        }
-      }
+    try {
+      yield* chatStreamWithRetry(registry, { ...request, provider: providerName }, config)
+      return
+    } catch (error) {
+      errors.push(classifyErrorFromException(error))
+      // 继续尝试下一个 provider
     }
   }
 
-  yield { _tag: 'error', error: { _tag: 'all_providers_failed' } }
+  // 所有 provider 都失败
+  yield { _tag: 'error', error: { _tag: 'all_providers_failed', errors } }
 }
 ```
 
@@ -465,7 +575,9 @@ function injectSteering(state: AgentState, message: string): void {
 
 | 场景 | 处理方式 |
 |------|----------|
-| LLM 超时 | 重试 N 次（可配置），每次间隔递增（指数退避），全部失败切 fallback provider |
+| LLM 超时 | 可配置重试策略（次数/退避/可重试错误类型），指数退避，retry-after header 支持，全部失败切 fallback provider |
+| LLM context overflow | 20+ 正则模式匹配各家 provider 的非标准错误，自动触发 compaction 后重试 |
+| LLM 认证/配额错误 | 不重试，立即切 fallback provider |
 | 工具执行超时 | **不杀死进程**，返回当前状态和最近日志给 LLM，由 LLM 决定是否继续等待 |
 | 工具崩溃 | 捕获异常，返回 error 结果 |
 | 用户中止 | AbortController 触发，工具收到 signal |
