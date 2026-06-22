@@ -68,12 +68,7 @@
 
 ### 2.2 项目结构
 
-```
-src/web/
-├── App.tsx                根组件
-├── main.tsx               入口
-├── router.tsx             路由配置
-├── views/
+> 文件结构见总纲 §10。内部结构：
 │   ├── Layout/            响应式布局
 │   ├── Chat/              主聊天界面
 │   ├── SessionList/       会话列表 + 分支树

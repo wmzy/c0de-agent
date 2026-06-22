@@ -26,26 +26,7 @@
 
 ### 2.1 架构
 
-```
-src/session/
-├── session.ts         Session CRUD + 树操作
-├── entry.ts           Entry 类型和操作
-├── context.ts         上下文重建
-├── branch.ts          分支管理
-├── squash.ts          Squash 压缩（类似 git merge --squash）
-├── snapshot.ts        源码快照管理
-├── archive.ts         压缩窗口归档（可搜索/可引用）
-├── compaction/
-│   ├── types.ts       Compaction 接口
-│   ├── llm.ts         LLM 摘要策略
-│   ├── bitmap.ts      位图压缩策略
-│   ├── squash.ts      Squash 策略
-│   └── index.ts       策略选择
-├── token.ts           Token 估算
-├── storage.ts         存储抽象
-├── types.ts           类型定义
-└── index.ts
-```
+> 文件结构见总纲 §8.2。
 
 ### 2.2 Session 树
 

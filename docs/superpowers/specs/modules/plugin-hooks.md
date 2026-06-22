@@ -84,25 +84,9 @@
 
 ### 2.1 架构
 
-采用 oh-my-pi 的三层模型，简化实现：
+### 2.1 架构
 
-```
-src/plugins/
-├── types.ts           类型定义
-├── plugin.ts          Plugin 管理器
-├── extension.ts       Extension 管理器
-├── hooks/
-│   ├── registry.ts    Hook 注册表
-│   ├── runner.ts      Hook 执行器
-│   ├── builtin/       内置 hook
-│   │   ├── tool-guard.ts
-│   │   ├── session-hook.ts
-│   │   └── message-hook.ts
-│   └── index.ts
-├── loader.ts          插件/扩展发现与加载
-├── context.ts         ExtensionContext 构建
-└── index.ts
-```
+> 文件结构见总纲 §7。
 
 ### 2.2 三层定义
 

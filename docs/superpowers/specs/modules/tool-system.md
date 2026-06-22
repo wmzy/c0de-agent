@@ -146,34 +146,7 @@ type ApplyResult =
 
 ### 2.1 架构
 
-```
-src/tools/
-├── types.ts           类型定义
-├── registry.ts        工具注册表
-├── executor.ts        工具执行器
-├── permission.ts      权限系统
-├── truncate.ts        输出截断
-├── builtin/
-│   ├── read.ts        文件读取
-│   ├── write.ts       文件写入
-│   ├── edit.ts        文件编辑（diff + hashline 双模式）
-│   ├── bash.ts        Shell 执行
-│   ├── glob.ts        文件搜索
-│   ├── grep.ts        内容搜索
-│   ├── ast_grep.ts    AST 结构搜索
-│   ├── ast_edit.ts    AST 结构编辑
-│   ├── lsp.ts         LSP 操作
-│   ├── browser.ts     浏览器控制
-│   ├── task.ts        子 agent
-│   ├── worktree.ts    Git worktree
-│   └── websearch.ts   网络搜索
-├── hashline/
-│   ├── parser.ts      Patch 解析器
-│   ├── patcher.ts     Patch 应用器
-│   ├── types.ts       Hashline 类型
-│   └── index.ts
-└── index.ts
-```
+> 文件结构见总纲 §5。
 
 ### 2.2 工具定义
 
