@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "references": [
+    { "path": "src/core" },
+    { "path": "src/llm" },
+    { "path": "src/tools" },
+    { "path": "src/mcp" },
+    { "path": "src/plugins" },
+    { "path": "src/session" },
+    { "path": "src/db" },
+    { "path": "src/server" },
+    { "path": "src/web" },
+    { "path": "src/cli" }
+  ]
+}
