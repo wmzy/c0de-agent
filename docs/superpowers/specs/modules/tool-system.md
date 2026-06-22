@@ -384,39 +384,165 @@ export async function editTool(input: EditInput, ctx: ToolContext): Promise<Tool
 
 ### 2.9 Hashline 实现
 
-**Parser**：
-```typescript
-// 解析 hashline patch 输入
-export function parsePatch(input: string): ParsedPatch[]
+**完整类型定义**（参考 oh-my-pi/hashline/types.ts）：
 
-// ParsedPatch = { anchor: Anchor; edits: Edit[] }
-// Anchor = { path: string; hash: string }
-// Edit = Swap | Del | InsPre | InsPost | InsHead | InsTail | SwapBlk | DelBlk | InsBlkPost
+```typescript
+// ── 锚点与光标 ──────────────────────────────
+
+/** 行号锚点（1-indexed） */
+type Anchor = { line: number }
+
+/** 插入位置 */
+type Cursor =
+  | { kind: 'bof' }
+  | { kind: 'eof' }
+  | { kind: 'before_anchor'; anchor: Anchor }
+  | { kind: 'after_anchor'; anchor: Anchor }
+
+// ── 编辑操作 ──────────────────────────────
+
+/** 单个低级编辑操作 */
+type Edit =
+  | {
+      kind: 'insert'
+      cursor: Cursor
+      text: string
+      lineNum: number
+      index: number
+      mode?: 'replacement'
+      blockStart?: number
+    }
+  | {
+      kind: 'delete'
+      anchor: Anchor
+      lineNum: number
+      index: number
+      oldAssertion?: string  // 旧内容断言（stale 检测）
+    }
+  | {
+      // 延迟块编辑：replace_block / delete_block / insert_after_block
+      // 解析时不知道精确行范围，由 resolveBlockEdits 在文件文本可用后展开
+      kind: 'block'
+      anchor: Anchor
+      payloads: string[]
+      mode?: 'insert_after'
+      lineNum: number
+      index: number
+    }
+
+// ── 应用结果 ──────────────────────────────
+
+type ApplyResult = {
+  text: string
+  firstChangedLine?: number
+  warnings?: string[]
+  blockResolutions?: BlockResolution[]
+}
+
+// ── 块操作 ──────────────────────────────
+
+type BlockSpan = { start: number; end: number }
+
+type BlockResolution = {
+  anchorLine: number
+  start: number
+  end: number
+  op: 'replace' | 'delete' | 'insert_after'
+}
+
+type BlockResolverRequest = {
+  path: string
+  text: string
+  line: number
+}
+
+/** 块解析器：由 host 注入 tree-sitter 实现 */
+type BlockResolver = (request: BlockResolverRequest) => BlockSpan | null
+
+// ── 辅助类型 ──────────────────────────────
+
+type ParsedRange = { start: Anchor; end: Anchor }
+
+/** 内容哈希（4 位 hex） */
+export function computeHash(content: string): string
 ```
 
-**Patcher**：
+**Parser**（`parser.ts`，306 行）：
+
 ```typescript
-// 应用 patch 到文件
+// 正式语法：[PATH#HASH] 头 + 操作行
+// SWAP lineStart-lineEnd     → 替换行范围
+// SWAP.BLK N                 → 替换语法块
+// DEL lineStart-lineEnd      → 删除行范围
+// DEL.BLK N                  → 删除语法块
+// INS.PRE line               → 在行前插入
+// INS.POST line              → 在行后插入
+// INS.HEAD                   → 在文件头插入
+// INS.TAIL                   → 在文件尾插入
+// INS.BLK.POST N             → 在语法块后插入
+
+export function parsePatch(input: string): ParsedPatch[]
+export function splitPatchInput(input: string, opts?: SplitOptions): PatchSection[]
+
+// 恢复启发式：处理模型输出噪声（多余空白、错误前缀、缺失 header）
+export function recoverFromNoisyInput(input: string): ParsedPatch[]
+```
+
+**Patcher**（`patcher.ts`，309 行）：
+
+```typescript
+// 多段 preflight：验证所有锚点哈希
+export function preflight(sections: PatchSection[], files: Map<string, string>): PreflightResult
+
+// 应用 patch
 export async function applyPatch(
   filePath: string,
   patches: ParsedPatch[],
-  fs: FileSystem
+  fs: FileSystem,
+  blockResolver?: BlockResolver
 ): Promise<ApplyResult>
 
-// 验证锚点哈希
-export function verifyAnchor(content: string, expectedHash: string): boolean
+// Stale anchor 检测
+export function detectStaleAnchor(content: string, expectedHash: string): boolean
 
-// 计算内容哈希（4 位 hex）
-export function computeHash(content: string): string
+// Session-aware 3-way merge 恢复
+export function recoverFromStale(
+  original: string,
+  current: string,
+  patch: ParsedPatch
+): Promise<ApplyResult>
 
-// 安全切割点（不在工具调用中间）
-export function findSafeEditPoint(content: string, preferredLine: number): number
+// 块编辑解析（延迟展开）
+export function resolveBlockEdits(
+  edits: Edit[],
+  text: string,
+  path: string,
+  resolver: BlockResolver
+): Edit[]
 ```
 
-**恢复机制**：
-- 如果锚点哈希不匹配，尝试 3-way merge
-- 找到文件的"原始版本"（compaction 前的快照）
-- 合并用户修改和 agent 编辑
+**Apply Engine**（`apply.ts`）：
+
+```typescript
+// 编辑降级：将高级编辑分解为 insert + delete
+export function lowerEdits(edits: Edit[]): Edit[]
+
+// 行解析：将锚点转为具体行号
+export function resolveLineNumbers(edits: Edit[], text: string): Edit[]
+
+// 文件文本变更
+export function applyEdits(text: string, edits: Edit[]): ApplyResult
+```
+
+**Input Parser**（`input.ts`，107 行）：
+
+```typescript
+// 分割输入为多个 PatchSection
+export function splitPatchInput(input: string, opts?: SplitOptions): PatchSection[]
+
+// 处理 apply_patch 噪声（Update File: 前缀等）
+export function stripNoise(input: string): string
+```
 
 ### 2.10 内置工具摘要
 
