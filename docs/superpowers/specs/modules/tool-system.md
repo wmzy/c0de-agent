@@ -8,7 +8,7 @@
 
 **工具定义**：
 ```typescript
-// AgentTool 接口（packages/agent/src/types.ts）
+// AgentTool 接口（src/agent/types.ts）
 type AgentTool = {
   name: string
   description: string
@@ -58,7 +58,7 @@ type ToolResult = {
 **权限系统**（`permission/index.ts`，231 行）：
 - 工具分为 `auto`（自动执行）和 `confirm`（需要确认）
 - 权限检查在执行前进行
-- 确认请求通过 WebSocket 推送到前端
+- 确认请求通过 SSE 流推送到前端
 - 用户确认后恢复执行
 
 **输出截断**（`truncate.ts`，161 行）：
@@ -97,7 +97,7 @@ type ToolFactory = (ctx: ToolFactoryContext) => ToolDef | null
 
 ### 1.4 Oh-My-Pi（hashline）
 
-**Hashline 核心**（`packages/hashline/`）：
+**Hashline 核心**（`src/hashline/`）：
 
 **类型**（`types.ts`，170 行）：
 ```typescript

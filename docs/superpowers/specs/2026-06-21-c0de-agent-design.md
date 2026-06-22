@@ -46,7 +46,7 @@ c0de-agent/
 │   ├── plugins/       插件加载、生命周期、hook 系统
 │   ├── session/       会话持久化、分支管理
 │   ├── db/            Drizzle schema、PGLite/PostgreSQL
-│   ├── server/        Hono API + WebSocket
+│   ├── server/        Hono API + SSE
 │   ├── web/           React 前端
 │   └── cli/           c0de 命令入口
 ├── package.json
@@ -290,7 +290,7 @@ export function injectSteeringMessage(state: AgentState, message: string): void
 
 Steering 消息插入到消息流的当前位置，作为系统角色消息传给 LLM。不影响历史消息，只影响当前轮次的行为。
 
-前端通过 WebSocket 推送 steering 消息，agent loop 在下一次 LLM 调用前检查 steering 队列。
+前端通过 SSE 流推送 steering 消息，agent loop 在下一次 LLM 调用前检查 steering 队列。
 
 ### 3.10 内部 URL Scheme
 
@@ -860,7 +860,7 @@ export function getTree(db: DB): SessionTreeNode[]
 
 ## 9. Server 包（src/server/）
 
-Hono HTTP/WebSocket 服务。
+Hono HTTP 服务（SSE 推送）。
 
 ### 9.1 文件结构
 
@@ -873,7 +873,7 @@ src/server/
 │   ├── tool.ts        工具管理 API
 │   ├── config.ts      配置 API
 │   └── health.ts      健康检查
-├── ws.ts              WebSocket 推送
+├── agent.ts            Agent 控制（abort、steering、permission confirm）
 ├── middleware/
 │   ├── auth.ts        认证中间件
 │   ├── cors.ts        CORS
@@ -933,11 +933,17 @@ event: done
 data: {}
 ```
 
-### 9.4 WebSocket 推送
+### 9.4 Agent 控制 API（替代 WebSocket）
 
-WebSocket 用于双向通信：
-- **Server → Client**：agent 事件、工具执行进度、后台任务状态
-- **Client → Server**：工具权限确认、会话切换、配置更新
+所有 server→client 推送通过 SSE 流（聊天 API 的 SSE 响应中包含所有事件），client→server 操作通过 HTTP POST：
+
+```
+POST   /api/chat/abort              中止 agent
+POST   /api/chat/pause              暂停 agent
+POST   /api/chat/resume             恢复 agent
+POST   /api/chat/steer              注入 steering 消息
+POST   /api/tools/confirm           确认工具执行
+```
 
 ---
 
@@ -968,7 +974,7 @@ src/web/
 │   ├── services/
 │   │   ├── chat.ts            聊天 API 客户端
 │   │   ├── session.ts         会话 API 客户端
-│   │   └── ws.ts              WebSocket 客户端
+│   │   └── agent.ts           Agent 控制（abort、steering、permission confirm）
 │   ├── hooks/
 │   │   ├── useChat.ts         聊天状态管理
 │   │   ├── useSession.ts      会话状态管理
@@ -1027,7 +1033,7 @@ Web 前端作为 PWA 构建，支持移动端安装和使用：
 - 树形目录结构，支持展开/折叠
 - 点击文件在右侧预览面板打开
 - 支持在线编辑（Monaco Editor 或 CodeMirror）
-- 文件变更实时反映（WebSocket 推送）
+- 文件变更实时反映（SSE 推送）
 - 搜索文件名和内容
 - git 状态标记（新增/修改/删除）
 
@@ -1185,7 +1191,7 @@ Agent loop 遇到 permission: 'ask' 的工具
   ↓
 yield AgentEvent.permission_required
   ↓
-Server 通过 WebSocket 推送到前端
+Server 通过 SSE 流推送到前端
   ↓
 前端弹出 PermissionDialog
   ↓
@@ -1478,7 +1484,7 @@ export function performHotUpdate(snapshot: SessionSnapshot): Promise<void>
 - 如果旧实例仍在运行，通过 IPC 通知旧实例 graceful shutdown
 - 旧实例序列化状态后退出
 - 新实例绑定端口，加载状态
-- 前端 WebSocket 自动重连
+- 前端 SSE 自动重连
 
 ---
 
@@ -1516,7 +1522,7 @@ type AgentStatus =
 - 中止 agent
 - 恢复执行
 
-前端通过 WebSocket 接收状态变更事件，在 UI 上显示暂停状态和操作按钮。
+前端通过 SSE 流接收状态变更事件，在 UI 上显示暂停状态和操作按钮。
 
 ---
 
@@ -1660,7 +1666,7 @@ DAP 暴露为一组工具，agent 可以自然地使用调试能力：
 3. **Tools**：read（支持内部 URL）、write、edit（hashline）、bash、glob、grep、task（worktree 隔离）
 4. **Session**：单会话消息流、compaction、分支功能、LLM 调用详情记录（透明可观察）
 5. **DB**：PGLite 本地存储
-6. **Server**：Hono API + SSE + WebSocket
+6. **Server**：Hono API + SSE
 7. **Web**：基础聊天界面、slash 命令支持、LLM 调用详情展示
 8. **CLI**：`c0de`、`c0de chat`（Print 模式）、`c0de acp`（ACP 模式）
 9. **Plugins**：插件加载框架 + hook 系统

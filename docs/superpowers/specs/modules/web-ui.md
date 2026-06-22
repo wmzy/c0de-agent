@@ -98,13 +98,12 @@ src/web/
 │   ├── session.ts         会话 API
 │   ├── file.ts            文件 API
 │   ├── config.ts          配置 API
-│   └── ws.ts              WebSocket 客户端
+│   └── agent.ts           Agent 控制（abort、steering、permission confirm）
 ├── hooks/
 │   ├── useChat.ts         聊天状态管理
 │   ├── useSession.ts      会话状态
 │   ├── useAgent.ts        agent 状态
 │   ├── useFile.ts         文件操作
-│   ├── useWS.ts           WebSocket 连接
 │   └── useMediaQuery.ts   响应式断点
 ├── contexts/
 │   ├── ThemeContext.tsx    主题上下文
@@ -475,7 +474,7 @@ PWA 离线时的处理：
 - 文件浏览器可浏览已缓存文件
 - 发送消息时提示“离线中，消息将在恢复连接后发送”
 - 恢复连接后自动发送排队的消息
-- Agent 执行状态通过 WebSocket 保持，离线时显示最后已知状态
+- Agent 执行状态通过 SSE 流保持，离线时显示最后已知状态
 
 ```typescript
 function useOfflineQueue() {
@@ -625,62 +624,36 @@ const configAPI = {
 }
 ```
 
-### 2.13 WebSocket Client
+### 2.13 Agent 控制服务（替代 WebSocket）
+
+所有 server→client 推送通过 SSE 流，client→server 操作通过 HTTP POST：
 
 ```typescript
-// services/ws.ts
-type WSMessage =
-  | { type: 'agent_event'; sessionId: string; event: AgentEvent }
-  | { type: 'permission_request'; toolCallId: string; tool: string; input: unknown }
-  | { type: 'status_change'; sessionId: string; status: AgentStatus }
-  | { type: 'subagent_event'; parentId: string; childId: string; event: AgentEvent }
+// services/agent.ts
+const agentAPI = {
+  // 中止 agent
+  abort: (sessionId: string) =>
+    apiRequest<void>(`/api/chat/abort`, { method: 'POST', body: JSON.stringify({ sessionId }) }),
 
-function createWSClient(url: string): WSClient {
-  let ws: WebSocket | null = null
-  let reconnectTimer: number | null = null
-  let reconnectDelay = 1000
-  const listeners: Map<string, Set<(msg: WSMessage) => void>> = new Map()
+  // 确认工具执行
+  confirmTool: (toolCallId: string, approved: boolean) =>
+    apiRequest<void>('/api/tools/confirm', { method: 'POST', body: JSON.stringify({ toolCallId, approved }) }),
 
-  function connect() {
-    ws = new WebSocket(url)
+  // 注入 steering 消息
+  steer: (sessionId: string, message: string) =>
+    apiRequest<void>('/api/chat/steer', { method: 'POST', body: JSON.stringify({ sessionId, message }) }),
 
-    ws.onopen = () => {
-      reconnectDelay = 1000  // 重置重连延迟
-    }
+  // 暂停 agent
+  pause: (sessionId: string) =>
+    apiRequest<void>('/api/chat/pause', { method: 'POST', body: JSON.stringify({ sessionId }) }),
 
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data) as WSMessage
-      listeners.get(msg.type)?.forEach(fn => fn(msg))
-      listeners.get('*')?.forEach(fn => fn(msg))
-    }
-
-    ws.onclose = () => {
-      // 指数退避重连
-      reconnectTimer = window.setTimeout(() => {
-        reconnectDelay = Math.min(reconnectDelay * 2, 30000)
-        connect()
-      }, reconnectDelay)
-    }
-
-    ws.onerror = () => ws?.close()
-  }
-
-  connect()
-
-  return {
-    on: (type: string, handler: (msg: WSMessage) => void) => {
-      if (!listeners.has(type)) listeners.set(type, new Set())
-      listeners.get(type)!.add(handler)
-      return () => listeners.get(type)?.delete(handler)
-    },
-    send: (msg: unknown) => ws?.send(JSON.stringify(msg)),
-    close: () => {
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-      ws?.close()
-    }
-  }
+  // 恢复 agent
+  resume: (sessionId: string) =>
+    apiRequest<void>(`/api/chat/resume`, { method: 'POST', body: JSON.stringify({ sessionId }) })
 }
 ```
+
+SSE 流中包含所有事件类型（见 §2.5 useChat），无需独立的 WebSocket 连接。
 
 ### 2.14 TanStack Query 配置
 

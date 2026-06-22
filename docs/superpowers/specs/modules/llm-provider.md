@@ -31,7 +31,7 @@ flowchart LR
 ### 1.2 文件布局
 
 ```
-packages/llm/src/
+src/llm/
 ├── provider.ts                  公共 Provider 工厂接口
 ├── provider-error.ts            上下文溢出检测 (20+ 正则)
 ├── cache-policy.ts              applyCachePolicy (auto/none/object)
