@@ -74,50 +74,49 @@ src/web/
 │   ├── manifest.json          PWA manifest
 │   ├── sw.js                  Service Worker
 │   └── icons/                 应用图标
-├── src/
-│   ├── App.tsx                根组件
-│   ├── main.tsx               入口
-│   ├── router.tsx             路由配置
-│   ├── views/
-│   │   ├── Layout/            响应式布局
-│   │   ├── Chat/              主聊天界面
-│   │   ├── SessionList/       会话列表 + 分支树
-│   │   ├── FileBrowser/       文件浏览器
-│   │   ├── FilePreview/       文件预览
-│   │   ├── Settings/          设置页面
-│   │   └── NotFound/          404
-│   ├── components/
-│   │   ├── MessageBubble/     消息气泡
-│   │   ├── ToolCall/          工具调用展示
-│   │   ├── BranchTree/        分支可视化
-│   │   ├── CodeBlock/         代码块渲染 + 引用
-│   │   ├── CodeEditor/        代码编辑器
-│   │   ├── Markdown/          Markdown 渲染
-│   │   ├── PermissionDialog/  权限确认弹窗
-│   │   ├── StreamingIndicator/ 流式指示器
-│   │   ├── LLMDetail/         LLM 调用详情
-│   │   └── SlashCommand/      命令输入
-│   ├── services/
-│   │   ├── api.ts             API 客户端基类
-│   │   ├── chat.ts            聊天 API（SSE）
-│   │   ├── session.ts         会话 API
-│   │   ├── file.ts            文件 API
-│   │   ├── config.ts          配置 API
-│   │   └── ws.ts              WebSocket 客户端
-│   ├── hooks/
-│   │   ├── useChat.ts         聊天状态管理
-│   │   ├── useSession.ts      会话状态
-│   │   ├── useAgent.ts        agent 状态
-│   │   ├── useFile.ts         文件操作
-│   │   ├── useWS.ts           WebSocket 连接
-│   │   └── useMediaQuery.ts   响应式断点
-│   ├── contexts/
-│   │   ├── ThemeContext.tsx    主题上下文
-│   │   └── ConfigContext.tsx   配置上下文
-│   ├── styles/
-│   │   ├── global.ts          全局样式
-│   │   ├── theme.ts           主题变量
-│   │   └── breakpoints.ts     断点定义
+├── App.tsx                根组件
+├── main.tsx               入口
+├── router.tsx             路由配置
+├── views/
+│   ├── Layout/            响应式布局
+│   ├── Chat/              主聊天界面
+│   ├── SessionList/       会话列表 + 分支树
+│   ├── FileBrowser/       文件浏览器
+│   ├── FilePreview/       文件预览
+│   ├── Settings/          设置页面
+│   └── NotFound/          404
+├── components/
+│   ├── MessageBubble/     消息气泡
+│   ├── ToolCall/          工具调用展示
+│   ├── BranchTree/        分支可视化
+│   ├── CodeBlock/         代码块渲染 + 引用
+│   ├── CodeEditor/        代码编辑器
+│   ├── Markdown/          Markdown 渲染
+│   ├── PermissionDialog/  权限确认弹窗
+│   ├── StreamingIndicator/ 流式指示器
+│   ├── LLMDetail/         LLM 调用详情
+│   └── SlashCommand/      命令输入
+├── services/
+│   ├── api.ts             API 客户端基类
+│   ├── chat.ts            聊天 API（SSE）
+│   ├── session.ts         会话 API
+│   ├── file.ts            文件 API
+│   ├── config.ts          配置 API
+│   └── ws.ts              WebSocket 客户端
+├── hooks/
+│   ├── useChat.ts         聊天状态管理
+│   ├── useSession.ts      会话状态
+│   ├── useAgent.ts        agent 状态
+│   ├── useFile.ts         文件操作
+│   ├── useWS.ts           WebSocket 连接
+│   └── useMediaQuery.ts   响应式断点
+├── contexts/
+│   ├── ThemeContext.tsx    主题上下文
+│   └── ConfigContext.tsx   配置上下文
+├── styles/
+│   ├── global.ts          全局样式
+│   ├── theme.ts           主题变量
+│   └── breakpoints.ts     断点定义
 │   └── utils/
 │       ├── markdown.ts        Markdown 渲染
 │       ├── highlight.ts       代码高亮
