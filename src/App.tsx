@@ -1,14 +1,17 @@
-import { Suspense, useEffect, type ComponentType, type LazyExoticComponent } from 'react'
+import { Suspense, type ComponentType, type LazyExoticComponent } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { cx } from '@linaria/core'
-import { ToastContainer, useToast, Spinner, Button } from 'haze-ui'
-import { setToastHandler } from './utils/toast'
-import { ErrorBoundary } from './components/ErrorBoundary'
+import { ToastContainer, Spinner, Button, lightTheme } from 'haze-ui'
 import { AppQueryProvider } from './hooks/useQueryClient'
 import { ConfigProvider, useConfigContext } from './contexts/ConfigContext'
 import { useConfig } from './hooks/useConfig'
-import { globalStyles } from './styles/global'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { ROUTE_PAGES, ROUTE_NAV_ITEMS } from './router'
+import { globalStyles } from './styles/global'
+
+// Lazy load pages
+const SettingsPage = async () => import('./pages/SettingsPage')
+const ChatPage = async () => import('./pages/ChatPage')
 
 function ProtectedRoute() {
   const { isConfigured, isLoading } = useConfig()
@@ -65,14 +68,6 @@ function AppLayout() {
   )
 }
 
-function ToastInitializer() {
-  const toastFn = useToast()
-  useEffect(() => {
-    setToastHandler(toastFn)
-  }, [toastFn])
-  return null
-}
-
 function PageFallback() {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
@@ -81,52 +76,54 @@ function PageFallback() {
   )
 }
 
-type RouteDef = {
-  path: string
-  Component: LazyExoticComponent<ComponentType<unknown>>
+// Simple lazy wrapper
+function LazyPage({ loader }: { loader: () => Promise<{ default: ComponentType<unknown> }> }) {
+  const [Comp, setComp] = useState<ComponentType<unknown> | null>(null)
+  const [error, setError] = useState<Error | null>(null)
+
+  useState(() => {
+    loader()
+      .then((m) => setComp(() => m.default))
+      .catch(setError)
+  })
+
+  if (error) throw error
+  if (!Comp) return <PageFallback />
+  return <Comp />
 }
 
-const ROUTES: RouteDef[] = Object.entries(ROUTE_PAGES).map(([path, entry]) => ({
-  path,
-  Component: entry.Component,
-}))
+import { useState, useEffect } from 'react'
 
 export function App() {
   return (
-    <ErrorBoundary>
-      <AppQueryProvider>
-        <BrowserRouter>
+    <div className={cx(globalStyles, lightTheme)}>
+      <ErrorBoundary>
+        <AppQueryProvider>
           <ConfigProvider>
-            <ToastInitializer />
-            <Routes>
-              <Route element={<ProtectedRoute />}>
-                <Route element={<AppLayout />}>
-                  {ROUTES.map(({ path, Component }) => (
-                    <Route
-                      key={path}
-                      path={path}
-                      element={
-                        <Suspense fallback={<PageFallback />}>
-                          <Component />
-                        </Suspense>
-                      }
-                    />
-                  ))}
-                  <Route path="/" element={<Navigate to="/chat" replace />} />
-                </Route>
-              </Route>
-              <Route path="/settings" element={
+            <BrowserRouter>
+              <ToastContainer>
                 <Suspense fallback={<PageFallback />}>
-                  {(() => {
-                    const Comp = ROUTE_PAGES['/settings'].Component
-                    return <Comp />
-                  })()}
+                  <Routes>
+                    <Route element={<ProtectedRoute />}>
+                      <Route element={<AppLayout />}>
+                        <Route
+                          path="/chat"
+                          element={<LazyPage loader={() => import('./pages/ChatPage')} />}
+                        />
+                        <Route path="/" element={<Navigate to="/chat" replace />} />
+                      </Route>
+                    </Route>
+                    <Route
+                      path="/settings"
+                      element={<LazyPage loader={() => import('./pages/SettingsPage')} />}
+                    />
+                  </Routes>
                 </Suspense>
-              } />
-            </Routes>
+              </ToastContainer>
+            </BrowserRouter>
           </ConfigProvider>
-        </BrowserRouter>
-      </AppQueryProvider>
-    </ErrorBoundary>
+        </AppQueryProvider>
+      </ErrorBoundary>
+    </div>
   )
 }
