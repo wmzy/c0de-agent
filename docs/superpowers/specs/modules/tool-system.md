@@ -614,16 +614,46 @@ type AskResult = {
 - 选项以列表/按钮形式展示
 - 推荐选项高亮显示
 - 自定义输入框在选项下方
-- 超时倒计时显示
+- 超时倒计时显示（用户交互时自动暂停）
+- 选项支持点击后进入编辑模式（基于选项文本修改）
 
-### 2.12 内置工具摘要
+### 2.12 Bash 输出存档
+
+Bash 执行的输出自动存档，支持 LLM 搜索和读取历史日志：
+
+```sql
+CREATE TABLE bash_outputs (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES sessions(id),
+  command TEXT NOT NULL,
+  exit_code INTEGER,
+  stdout TEXT,
+  stderr TEXT,
+  duration_ms INTEGER,
+  searchable_text TEXT,  -- stdout + stderr 合并，全文搜索用
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_bash_session ON bash_outputs(session_id);
+CREATE INDEX idx_bash_search ON bash_outputs USING gin(to_tsvector('english', searchable_text));
+```
+
+```typescript
+// 搜索历史 bash 输出
+export function searchBashOutputs(db: DB, sessionId: string, query: string): BashOutput[]
+
+// 读取特定 bash 执行的输出
+export function getBashOutput(db: DB, executionId: string): BashOutput
+```
+
+### 2.13 内置工具摘要
 
 | 工具 | 权限 | 模式 | 描述 |
 |------|------|------|------|
 | `read` | auto | — | 文件读取，支持行范围、内部 URL、图片 base64 |
 | `write` | ask | — | 文件写入，创建或覆盖 |
 | `edit` | ask | diff / hashline | 文件编辑，自动检测模式 |
-| `bash` | ask | — | Shell 执行，支持超时、进程树 kill |
+| `bash` | ask | — | Shell 执行，支持超时观察、进程树 kill、输出存档 |
 | `glob` | auto | — | 文件名搜索（glob 模式） |
 | `grep` | auto | — | 内容搜索（正则） |
 | `ast_grep` | auto | — | AST 结构搜索（tree-sitter） |
@@ -632,6 +662,7 @@ type AskResult = {
 | `browser` | ask | — | 浏览器控制（Puppeteer） |
 | `task` | auto | — | 子 agent（worktree 隔离） |
 | `todo` | auto | — | 分阶段任务跟踪（7 种操作，模糊匹配，Markdown 往返） |
-| `ask` | auto | — | 向用户提问（多问题、选项、推荐、超时、自定义输入） |
+| `ask` | auto | — | 向用户提问（多问题、选项、推荐、超时暂停、选项修改） |
+| `bash_logs` | auto | — | 搜索/读取历史 bash 输出 |
 | `worktree` | ask | — | Git worktree 管理 |
 | `websearch` | auto | — | 网络搜索 |
