@@ -70,10 +70,6 @@
 
 ```
 src/web/
-├── public/
-│   ├── manifest.json          PWA manifest
-│   ├── sw.js                  Service Worker
-│   └── icons/                 应用图标
 ├── App.tsx                根组件
 ├── main.tsx               入口
 ├── router.tsx             路由配置
@@ -122,6 +118,10 @@ src/web/
 │       ├── highlight.ts       代码高亮
 │       └── format.ts          格式化工具
 ├── index.html
+├── public/                  静态资源
+│   ├── manifest.json        PWA manifest
+│   ├── sw.js                Service Worker
+│   └── icons/               应用图标
 ├── vite.config.ts
 ├── tsconfig.json
 └── package.json
