@@ -1,0 +1,16 @@
+{
+  "name": "@c0de/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.ts" },
+  "scripts": { "build": "tsc --build", "clean": "rm -rf dist *.tsbuildinfo" },
+  "dependencies": {
+    "drizzle-orm": "^0.45.0",
+    "@electric-sql/pglite": "^0.4.0"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "drizzle-kit": "^0.31.0"
+  }
+}

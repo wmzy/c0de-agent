@@ -1,0 +1,13 @@
+{
+  "name": "@c0de/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": { "c0de": "./index.ts" },
+  "scripts": { "build": "tsc --build", "clean": "rm -rf dist *.tsbuildinfo" },
+  "dependencies": {
+    "@c0de/core": "workspace:*",
+    "@c0de/server": "workspace:*"
+  },
+  "devDependencies": { "typescript": "catalog:", "tsx": "^4.0.0" }
+}

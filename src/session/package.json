@@ -1,0 +1,12 @@
+{
+  "name": "@c0de/session",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.ts" },
+  "scripts": { "build": "tsc --build", "clean": "rm -rf dist *.tsbuildinfo" },
+  "dependencies": {
+    "@c0de/db": "workspace:*"
+  },
+  "devDependencies": { "typescript": "catalog:" }
+}
