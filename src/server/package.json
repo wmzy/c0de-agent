@@ -14,7 +14,9 @@
     "@hono/node-server": "^2.0.0",
     "@c0de/core": "workspace:*",
     "@c0de/session": "workspace:*",
-    "@c0de/db": "workspace:*"
+    "@c0de/db": "workspace:*",
+    "@c0de/llm": "workspace:*",
+    "@c0de/tools": "workspace:*"
   },
-  "devDependencies": { "typescript": "catalog:", "tsx": "^4.0.0" }
+  "devDependencies": { "typescript": "catalog:", "tsx": "^4.0.0", "@types/node": "^22.0.0" }
 }

@@ -6,5 +6,12 @@
     "composite": true
   },
   "include": ["**/*.ts"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../server" },
+    { "path": "../llm" },
+    { "path": "../tools" },
+    { "path": "../session" }
+  ]
 }

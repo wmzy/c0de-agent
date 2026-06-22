@@ -11,9 +11,11 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@c0de/mcp": "workspace:*"
+    "@c0de/mcp": "workspace:*",
+    "@c0de/llm": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "@types/node": "^22.0.0"
   }
 }

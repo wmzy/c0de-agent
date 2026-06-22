@@ -17,6 +17,7 @@
     "@c0de/session": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "@types/node": "^22.0.0"
   }
 }

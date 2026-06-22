@@ -8,5 +8,5 @@
   "dependencies": {
     "@c0de/db": "workspace:*"
   },
-  "devDependencies": { "typescript": "catalog:" }
+  "devDependencies": { "typescript": "catalog:", "@types/node": "^22.0.0" }
 }
