@@ -571,7 +571,50 @@ CREATE TABLE todos (
 );
 ```
 
-### 2.11 内置工具摘要
+### 2.11 Ask 工具
+
+向用户提问，收集澄清信息。参考 oh-my-pi 的完整实现：
+
+```typescript
+type AskQuestion = {
+  id: string
+  question: string
+  options?: AskOption[]
+  multi?: boolean          // 允许多选
+  recommended?: number     // 推荐选项索引
+}
+
+type AskOption = {
+  label: string
+  description?: string
+}
+
+type AskResult = {
+  questionId: string
+  selectedOptions?: string[]
+  customInput?: string     // 用户自定义输入
+  cancelled?: boolean
+  timedOut?: boolean
+}
+```
+
+**核心特性**：
+- 多问题支持：一次 ask 调用包含多个问题
+- 选项 + 推荐标记：每个选项可标记推荐
+- 多选支持：`multi: true` 允许选择多个选项
+- 超时处理：可配置超时时间，超时自动选择推荐项
+- 自定义输入：用户可以输入不在选项中的自定义回答
+- 取消支持：用户可以取消提问
+- 通知：等待用户输入时发送通知（声音/推送）
+
+**前端交互**：
+- 问题以弹窗形式展示
+- 选项以列表/按钮形式展示
+- 推荐选项高亮显示
+- 自定义输入框在选项下方
+- 超时倒计时显示
+
+### 2.12 内置工具摘要
 
 | 工具 | 权限 | 模式 | 描述 |
 |------|------|------|------|
@@ -587,5 +630,6 @@ CREATE TABLE todos (
 | `browser` | ask | — | 浏览器控制（Puppeteer） |
 | `task` | auto | — | 子 agent（worktree 隔离） |
 | `todo` | auto | — | 分阶段任务跟踪（7 种操作，模糊匹配，Markdown 往返） |
+| `ask` | auto | — | 向用户提问（多问题、选项、推荐、超时、自定义输入） |
 | `worktree` | ask | — | Git worktree 管理 |
 | `websearch` | auto | — | 网络搜索 |
