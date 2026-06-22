@@ -99,7 +99,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: parseInt(process.env.PORT || '3000'),
+    port: parseInt(process.env.PORT || '3020'),
     host: true,
     cors: {
       origin: true,

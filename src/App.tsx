@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useState, useRef, useEffect } from 'react'
+import { ConfigPanel } from './components/ConfigPanel'
 
 const appClass = css`
   display: flex;
@@ -13,7 +14,33 @@ const appClass = css`
 const headerClass = css`
   padding: 16px;
   border-bottom: 1px solid #30363d;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+`
+
+const titleClass = css`
   font-weight: bold;
+`
+
+const configInfoClass = css`
+  font-size: 12px;
+  color: #8b949e;
+`
+
+const logoutButtonClass = css`
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: transparent;
+  color: #8b949e;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    background: #21262d;
+    color: #e6edf3;
+  }
 `
 
 const messagesClass = css`
@@ -85,7 +112,18 @@ interface Message {
   content: string
 }
 
+interface Config {
+  provider: string
+  apiKey: string
+  baseUrl: string
+  model: string
+}
+
 export function App() {
+  const [config, setConfig] = useState<Config | null>(() => {
+    const saved = localStorage.getItem('c0de-config')
+    return saved ? JSON.parse(saved) : null
+  })
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -94,6 +132,24 @@ export function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const handleConfigConfirm = async (newConfig: Config) => {
+    // Send config to server
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig),
+    })
+
+    localStorage.setItem('c0de-config', JSON.stringify(newConfig))
+    setConfig(newConfig)
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('c0de-config')
+    setConfig(null)
+    setMessages([])
+  }
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return
@@ -171,9 +227,31 @@ export function App() {
     }
   }
 
+  // Show config panel if not configured
+  if (!config) {
+    return (
+      <div className={appClass}>
+        <div className={headerClass}>
+          <span className={titleClass}>c0de-agent</span>
+        </div>
+        <ConfigPanel onConfirm={handleConfigConfirm} />
+      </div>
+    )
+  }
+
   return (
     <div className={appClass}>
-      <div className={headerClass}>c0de-agent</div>
+      <div className={headerClass}>
+        <span className={titleClass}>c0de-agent</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span className={configInfoClass}>
+            {config.provider} / {config.model}
+          </span>
+          <button className={logoutButtonClass} onClick={handleLogout}>
+            切换 Provider
+          </button>
+        </div>
+      </div>
 
       <div className={messagesClass}>
         {messages.map((msg, i) => (

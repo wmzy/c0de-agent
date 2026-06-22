@@ -12,6 +12,28 @@ app.use('*', cors())
 
 const sessionStore = createMemoryStore()
 
+// Provider config (in-memory)
+let providerConfig: {
+  apiKey: string
+  baseUrl?: string
+  model?: string
+} | null = null
+
+app.post('/config', async (c) => {
+  const config = await c.req.json()
+  providerConfig = config
+  return c.json({ ok: true })
+})
+
+app.get('/config', (c) => {
+  if (!providerConfig) return c.json({ configured: false })
+  return c.json({
+    configured: true,
+    provider: providerConfig.baseUrl?.includes('openai') ? 'OpenAI' : 'Custom',
+    model: providerConfig.model,
+  })
+})
+
 // Sessions
 app.post('/sessions', async (c) => {
   const session = await sessionStore.create()
@@ -48,10 +70,14 @@ app.post('/sessions/:id/chat', async (c) => {
     return c.json({ error: 'Message is required' }, 400)
   }
 
+  if (!providerConfig) {
+    return c.json({ error: 'Provider not configured. Please set up your API key first.' }, 400)
+  }
+
   const provider = createProvider({
-    apiKey: process.env.OPENAI_API_KEY ?? '',
-    baseUrl: process.env.OPENAI_BASE_URL,
-    model: process.env.MODEL_NAME,
+    apiKey: providerConfig.apiKey,
+    baseUrl: providerConfig.baseUrl,
+    model: providerConfig.model,
   })
 
   const registry = createDefaultRegistry()
