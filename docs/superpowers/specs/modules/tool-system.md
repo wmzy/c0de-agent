@@ -135,6 +135,8 @@ type ApplyResult =
 - Stale anchor 检测：文件被修改后旧锚点失效
 - Session-aware 3-way merge 恢复
 
+**实现方案**：直接复用 oh-my-pi 的 hashline 包（纯 TypeScript，~1800 行，零外部依赖），提取到 `src/tools/hashline/` 目录。已生产验证，包含完整的边界修复、分隔符平衡检查、stale anchor 恢复。
+
 **Input Parser**（`input.ts`，107 行）：
 - 分割输入为多个 `PatchSection`（每个 `[PATH#HASH]` 头一个）
 - 处理 `apply_patch` 噪声（`Update File:` 前缀等）
