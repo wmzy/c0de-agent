@@ -1,0 +1,22 @@
+{
+  "name": "@c0de/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@c0de/llm": "workspace:*",
+    "@c0de/tools": "workspace:*",
+    "@c0de/plugins": "workspace:*",
+    "@c0de/session": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}
