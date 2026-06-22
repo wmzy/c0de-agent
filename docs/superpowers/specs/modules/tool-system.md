@@ -307,25 +307,37 @@ export function truncateOutput(output: string, opts?: TruncateOptions): {
 }
 ```
 
-### 2.7 Bash 工具
+### 2.7 Bash 工具（三种模式）
 
 ```typescript
-type BashInput = {
-  command: string
-  cwd?: string
-  timeout?: number         // 超时秒数（默认 120）
-  env?: Record<string, string>
-}
+type BashInput =
+  | { mode: 'sync'; command: string; cwd?: string; timeout?: number; env?: Record<string, string> }
+  | { mode: 'async'; command: string; cwd?: string; timeout?: number; env?: Record<string, string> }
+  | { mode: 'pty'; command: string; cwd?: string; size: { cols: number; rows: number }; env?: Record<string, string> }
 
-// 执行流程：
-// 1. 解析命令
-// 2. 设置超时（AbortSignal.timeout）
-// 3. 执行命令（child_process.spawn）
-// 4. 捕获 stdout + stderr
-// 5. 超时时 kill 进程树（不只杀主进程）
-// 6. 截断大输出
-// 7. 返回结果
+// sync  — 同步执行，等待完成返回输出（默认，timeout 默认 120s）
+// async — 后台执行，立即返回 job ID，输出可通过 bash_logs 查询
+// pty   — PTY 交互模式，server 端伪终端，输出通过 SSE 流式推送
 ```
+
+**同步模式**：
+- 等待命令完成，返回 stdout + stderr + exitCode
+- 超时观察：不杀死进程，返回当前输出给 LLM 决策
+- 输出存档到 bash_outputs 表
+
+**异步模式**：
+- 立即返回 job ID
+- 命令在后台运行，输出持续追加到存档（append-only，不覆盖）
+- LLM 可通过 `bash_logs` 工具查询最新输出
+- 前端通过 SSE 接收实时输出更新
+- 适用场景：vitest watch、dev server、长时间构建
+
+**PTY 模式**：
+- server 端启动伪终端（参考 oh-my-pi 的 xterm.js 方案）
+- 输出通过 SSE 流式推送到前端
+- 前端可发送键盘输入（HTTP POST `/api/bash/:jobId/input`）
+- 适用场景：vim、top、交互式安装程序
+- PTY 会话在 agent 结束时自动清理
 
 **进程树 Kill**（参考 pi）：
 ```typescript
@@ -653,7 +665,7 @@ export function getBashOutput(db: DB, executionId: string): BashOutput
 | `read` | auto | — | 文件读取，支持行范围、内部 URL、图片 base64 |
 | `write` | ask | — | 文件写入，创建或覆盖 |
 | `edit` | ask | diff / hashline | 文件编辑，自动检测模式 |
-| `bash` | ask | — | Shell 执行，支持超时观察、进程树 kill、输出存档 |
+| `bash` | ask | sync/async/pty | Shell 执行，三种模式，输出存档 |
 | `glob` | auto | — | 文件名搜索（glob 模式） |
 | `grep` | auto | — | 内容搜索（正则） |
 | `ast_grep` | auto | — | AST 结构搜索（tree-sitter） |
