@@ -1,7 +1,3 @@
-// @c0de/llm - Provider abstraction, streaming, token counting
-
-export const VERSION = "0.0.1";
-
 export type {
   ChatCompletionChunk,
   ChatCompletionResponse,
@@ -10,6 +6,6 @@ export type {
   ProviderConfig,
   ToolCall,
   ToolDefinition,
-} from "./types";
+} from './types'
 
-export { OpenAIProvider, createProvider } from "./openai";
+export { OpenAIProvider, createProvider } from './openai'

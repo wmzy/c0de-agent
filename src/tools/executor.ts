@@ -1,37 +1,37 @@
-// @c0de/tools - Tool executor
+// Tool executor
 
-import type { ToolCall } from "@c0de/llm";
-import type { ToolContext, ToolRegistry, ToolResult } from "./types";
+import type { ToolCall } from '@/llm'
+import type { ToolContext, ToolRegistry, ToolResult } from './types'
 
 export interface ToolExecutor {
-  execute(toolCall: ToolCall, context: ToolContext): Promise<ToolResult>;
+  execute(toolCall: ToolCall, context: ToolContext): Promise<ToolResult>
 }
 
 export class DefaultToolExecutor implements ToolExecutor {
   constructor(private registry: ToolRegistry) {}
 
   async execute(toolCall: ToolCall, context: ToolContext): Promise<ToolResult> {
-    const tool = this.registry.get(toolCall.function.name);
+    const tool = this.registry.get(toolCall.function.name)
 
     if (!tool) {
       return {
-        output: "",
+        output: '',
         error: `Unknown tool: ${toolCall.function.name}`,
-      };
+      }
     }
 
     try {
-      const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-      return await tool.execute(args, context);
+      const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
+      return await tool.execute(args, context)
     } catch (error) {
       return {
-        output: "",
+        output: '',
         error: error instanceof Error ? error.message : String(error),
-      };
+      }
     }
   }
 }
 
 export function createExecutor(registry: ToolRegistry): ToolExecutor {
-  return new DefaultToolExecutor(registry);
+  return new DefaultToolExecutor(registry)
 }

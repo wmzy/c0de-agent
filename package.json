@@ -1,22 +1,47 @@
 {
   "name": "c0de-agent",
-  "private": true,
+  "version": "0.0.1",
   "type": "module",
-  "packageManager": "pnpm@9.15.0",
+  "description": "AI Coding Assistant",
+  "license": "MIT",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm -r build",
-    "dev": "pnpm --filter @c0de/server dev & pnpm --filter @c0de/web dev",
-    "lint": "biome check --write .",
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
     "test": "vitest run",
-    "clean": "pnpm -r clean"
+    "test:watch": "vitest --watch",
+    "lint": "biome check --write .",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.4.0",
+    "@hono/node-server": "^2.0.0",
+    "@linaria/core": "^7.0.0",
+    "@linaria/react": "^7.0.0",
+    "@tanstack/react-query": "^5.0.0",
+    "@wyw-in-js/shared": "^1.0.0",
+    "drizzle-kit": "^0.31.0",
+    "drizzle-orm": "^0.45.0",
+    "hono": "^4.12.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "@wyw-in-js/vite": "^1.0.0",
     "typescript": "^5.9.0",
+    "tsx": "^4.0.0",
+    "vite": "^6.0.0",
     "vitest": "^3.0.0"
   }
 }

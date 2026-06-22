@@ -1,4 +1,4 @@
-// @c0de/core - System prompts
+// System prompts
 
 export const DEFAULT_SYSTEM_PROMPT = `You are an AI coding assistant. You help users with software development tasks.
 
@@ -14,4 +14,4 @@ When using tools:
 - Be precise with file paths
 - Explain what you're doing and why
 
-Be concise, helpful, and focused on the task.`;
+Be concise, helpful, and focused on the task.`
