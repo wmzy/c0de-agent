@@ -1,6 +1,6 @@
 // Tool executor
 
-import type { ToolCall } from '@/llm'
+import type { ToolCall } from '../llm'
 import type { ToolContext, ToolRegistry, ToolResult } from './types'
 
 export interface ToolExecutor {

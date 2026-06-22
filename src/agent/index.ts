@@ -1,7 +1,7 @@
 // Agent core loop
 
-import type { LLMProvider, Message } from '@/llm'
-import type { ToolExecutor, ToolRegistry } from '@/tools'
+import type { LLMProvider, Message } from '../llm'
+import type { ToolExecutor, ToolRegistry } from '../tools'
 import { DEFAULT_SYSTEM_PROMPT } from './prompts'
 import type { AgentConfig, AgentEvent, AgentRunner } from './types'
 

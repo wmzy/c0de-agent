@@ -1,7 +1,7 @@
 // Agent types
 
-import type { LLMProvider, Message } from '@/llm'
-import type { ToolContext, ToolRegistry } from '@/tools'
+import type { LLMProvider, Message } from '../llm'
+import type { ToolContext, ToolRegistry } from '../tools'
 
 export interface AgentConfig {
   systemPrompt?: string

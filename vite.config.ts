@@ -25,8 +25,7 @@ function honoApiPlugin(): Plugin {
 
         try {
           const { default: apiApp } = await import('./src/api')
-          const fullPath = '/api' + (req.url || '')
-          const url = new URL(fullPath, `http://${req.headers.host}`)
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
 
           let body: string | undefined = undefined
           if (req.method !== 'GET' && req.method !== 'HEAD') {

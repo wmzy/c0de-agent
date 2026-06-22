@@ -2,10 +2,10 @@
 
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { createProvider } from '@/llm'
-import { createDefaultRegistry, createExecutor } from '@/tools'
-import { createAgent } from '@/agent'
-import { createMemoryStore } from '@/session'
+import { createProvider } from '../llm'
+import { createDefaultRegistry, createExecutor } from '../tools'
+import { createAgent } from '../agent'
+import { createMemoryStore } from '../session'
 
 const app = new Hono()
 app.use('*', cors())

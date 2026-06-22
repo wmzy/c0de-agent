@@ -1,6 +1,6 @@
 // Tool registry
 
-import type { ToolDefinition } from '@/llm'
+import type { ToolDefinition } from '../llm'
 import type { Tool, ToolRegistry } from './types'
 
 export class InMemoryToolRegistry implements ToolRegistry {

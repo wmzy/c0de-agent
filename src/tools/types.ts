@@ -1,6 +1,6 @@
 // Tool types
 
-import type { ToolDefinition } from '@/llm'
+import type { ToolDefinition } from '../llm'
 
 export interface ToolContext {
   workingDirectory: string
