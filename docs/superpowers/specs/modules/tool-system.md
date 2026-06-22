@@ -339,6 +339,12 @@ type BashInput =
 - 适用场景：vim、top、交互式安装程序
 - PTY 会话在 agent 结束时自动清理
 
+**清屏处理**：
+- 检测 ANSI 清屏序列（`\x1b[2J\x1b[H` 等）
+- 清屏后的内容为当前输出，清屏前的内容可选归档
+- LLM 只看到干净的最新输出，不被旧结果干扰
+- 适用场景：vitest watch、npm watch 等会清屏重绘的程序
+
 **进程树 Kill**（参考 pi）：
 ```typescript
 function killProcessTree(pid: number): void {
