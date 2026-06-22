@@ -519,7 +519,59 @@ export function splitPatchInput(input: string, opts?: SplitOptions): PatchSectio
 export function stripNoise(input: string): string
 ```
 
-### 2.10 内置工具摘要
+### 2.10 Todo 工具
+
+分阶段任务跟踪，参考 oh-my-pi 的完整实现：
+
+```typescript
+type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
+
+type TodoItem = {
+  content: string
+  status: TodoStatus
+  notes?: string[]
+}
+
+type TodoPhase = {
+  name: string
+  tasks: TodoItem[]
+}
+
+// 7 种操作
+type TodoOp =
+  | { op: 'init'; phases: { phase: string; items: string[] }[] }
+  | { op: 'start'; content: string }
+  | { op: 'done'; content?: string; phase?: string }
+  | { op: 'drop'; content?: string; phase?: string }
+  | { op: 'rm'; content?: string; phase?: string }
+  | { op: 'append'; phase?: string; items: string[] }
+  | { op: 'view' }
+```
+
+**核心特性**：
+- 分阶段 todo（Phase + Tasks），支持 init/start/done/rm/drop/append/view 7 种操作
+- 模糊匹配：子 agent 完成工作时自动标记对应 todo 为完成
+- 自动清理：完成/放弃的 todo 延迟后自动移除（可配置延迟）
+- Markdown 往返：`phasesToMarkdown()` / `markdownToPhases()` 导出导入
+- Eager 模式：首次消息强制创建 todo 列表（可配置 default/preferred/always）
+- Todo 提醒：agent 停止前提醒未完成的 todo
+- `/todo` slash 命令：edit/copy/export/import/append/start/done/drop/rm
+
+**Todo 持久化**：
+```sql
+CREATE TABLE todos (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES sessions(id),
+  phase_name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  position INTEGER NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 2.11 内置工具摘要
 
 | 工具 | 权限 | 模式 | 描述 |
 |------|------|------|------|
@@ -534,5 +586,6 @@ export function stripNoise(input: string): string
 | `lsp` | auto | — | LSP 操作（定义/引用/重命名/diagnostics） |
 | `browser` | ask | — | 浏览器控制（Puppeteer） |
 | `task` | auto | — | 子 agent（worktree 隔离） |
+| `todo` | auto | — | 分阶段任务跟踪（7 种操作，模糊匹配，Markdown 往返） |
 | `worktree` | ask | — | Git worktree 管理 |
 | `websearch` | auto | — | 网络搜索 |
