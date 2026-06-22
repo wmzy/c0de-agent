@@ -260,43 +260,147 @@ emit('tool:before_execute', data)
 
 #### Tool Guard
 
-```typescript
-// 写入已有文件时确认
-const writeExistingFileGuard: Hook = {
-  name: 'write-existing-file-guard',
-  priority: 10,
-  events: ['tool:before_execute'],
-  setup(api) {
-    api.on('tool:before_execute', (data) => {
-      if (data.tool === 'write') {
-        const input = data.input as { path: string }
-        if (fileExists(input.path)) {
-          // 标记需要用户确认
-          return { ...data, _requiresConfirmation: true }
-        }
-      }
-      return data
-    })
-  }
-}
-```
+| Hook | 描述 |
+|------|------|
+| `write-existing-file-guard` | 写入已有文件时确认 |
+| `webfetch-redirect-guard` | Web fetch 重定向安全检查 |
+| `notepad-write-guard` | Notepad 写入保护 |
+| `tool-pair-validator` | 验证工具调用配对（如 read 必须在 edit 之前） |
+| `bash-file-read-guard` | Bash 文件读取保护 |
+| `edit-error-recovery` | 编辑错误自动恢复 |
+| `hashline-read-enhancer` | Hashline 读取增强 |
+| `hashline-edit-diff-enhancer` | Hashline 编辑 diff 增强 |
+| `fsync-skip-warning` | 跳过 fsync 时警告 |
+| `tool-output-truncator` | 工具输出智能截断 |
+| `json-error-recovery` | JSON 解析错误恢复 |
 
-#### Session Hook
+#### Session 管理
+
+| Hook | 描述 |
+|------|------|
+| `session-recovery` | 会话错误恢复（22+ 文件，含 thinking block 修改恢复、中断恢复） |
+| `session-notification` | 会话事件通知 |
+| `session-notification-sender` | 通知发送器 |
+| `session-todo-status` | 会话 TODO 状态跟踪 |
+| `compaction-context-injector` | 压缩时注入上下文 |
+| `compaction-todo-preserver` | 压缩时保留 TODO |
+| `preemptive-compaction` | 抢占式压缩（在超限前主动压缩） |
+| `preemptive-compaction-trigger` | 抢占式压缩触发器 |
+| `preemptive-compaction-degradation-monitor` | 压缩退化监控 |
+| `anthropic-context-window-limit-recovery` | Anthropic 上下文超限恢复（激进截断 + 摘要重试） |
+| `directory-agents-injector` | 注入目录级 agent 配置 |
+| `directory-readme-injector` | 注入目录 README |
+| `rules-injector` | 注入规则文件 |
+| `compaction-model-resolver` | 压缩模型解析 |
+
+#### Transform
+
+| Hook | 描述 |
+|------|------|
+| `team-mailbox-injector` | 注入团队邮箱 |
+| `team-mode-status-injector` | 注入团队模式状态 |
+| `keyword-detector` | 检测消息中的关键词 |
+| `think-mode` | 思考模式检测和切换 |
+| `question-label-truncator` | 问题标签截断 |
+| `read-image-resizer` | 读取图片自动缩放 |
+| `start-work` | 工作启动上下文构建 |
+| `category-skill-reminder` | 类别技能提醒 |
+| `plan-format-validator` | 计划格式验证 |
+
+#### Model / Provider
+
+| Hook | 描述 |
+|------|------|
+| `model-fallback` | 模型失败自动切换 |
+| `runtime-fallback` | 运行时回退（含配额错误分类、自动重试、子 agent 配额中止） |
+| `anthropic-effort` | Anthropic effort 参数调整 |
+| `no-hephaestus-non-gpt` | 非 GPT 模型禁用 Hephaestus agent |
+| `no-sisyphus-gpt` | GPT 模型禁用 Sisyphus agent |
+
+#### Agent / Task
+
+| Hook | 描述 |
+|------|------|
+| `atlas` | Atlas agent 系统提醒模板（14KB after_execute + 7KB before_execute） |
+| `ralph-loop` | Ralph 循环处理（循环状态控制、迭代继续、验证失败处理） |
+| `unstable-agent-babysitter` | 不稳定 agent 监护 |
+| `delegate-task-retry` | 委托任务重试 |
+| `todo-continuation-enforcer` | TODO 继续执行强制器 |
+| `stop-continuation-guard` | 停止继续保护 |
+| `task-reminder` | 任务提醒 |
+| `task-resume-info` | 任务恢复信息 |
+| `tasks-todowrite-disabler` | 任务 TODO 写入禁用器 |
+| `empty-task-response-detector` | 空任务响应检测 |
+
+#### Team Mode
+
+| Hook | 描述 |
+|------|------|
+| `team-session-events` | 团队会话事件（idle wake hint、error handler、leader orphan handler、member status） |
+| `team-tool-gating` | 团队模式工具门控 |
+
+#### Disposable
+
+| Hook | 描述 |
+|------|------|
+| `claude-code-hooks` | Claude Code 兼容 hooks（stop、user-prompt-submit、post-tool-use、pre-compact） |
+| `comment-checker` | 代码注释检查器 |
+| `auto-slash-command` | 自动斜杠命令检测和执行 |
+| `auto-update-checker` | 自动更新检查 |
+| `background-notification` | 后台通知 |
+| `legacy-plugin-toast` | 旧插件迁移提示 |
+| `prometheus-md-only` | Prometheus 仅 Markdown 模式 |
+| `thinking-block-validator` | Thinking block 验证 |
+| `sisyphus-junior-notepad` | Sisyphus Junior Notepad |
+
+#### Interactive Bash
+
+| Hook | 描述 |
+|------|------|
+| `interactive-bash-session` | 交互式 bash 会话跟踪（状态管理、tmux 命令解析、存储） |
+
+### 2.6 扩展 API（ExtensionContext）
+
+参考 oh-my-pi 的扩展类型（48KB API surface）：
 
 ```typescript
-// 自动设置会话标题
-const autoTitleHook: Hook = {
-  name: 'auto-title',
-  priority: 100,
-  events: ['message:after_receive'],
-  setup(api) {
-    api.on('message:after_receive', (data) => {
-      if (data.message.role === 'user' && !session.title) {
-        // 用第一条用户消息的前 50 字符作为标题
-        session.title = data.message.content.slice(0, 50)
-      }
-    })
-  }
+type ExtensionContext = {
+  // 工具注册
+  registerTool: (tool: ToolDef) => void
+  registerSlashCommand: (cmd: SlashCommand) => void
+
+  // Provider 注册
+  registerProvider: (provider: ProviderConfig) => void
+
+  // 事件订阅（完整事件映射）
+  on: <K extends keyof EventMap>(event: K, handler: EventHandler<EventMap[K]>) => void
+
+  // 配置
+  getConfig: () => Config
+  getPluginConfig: (pluginName: string) => unknown
+
+  // 系统访问
+  getSystemPrompt: () => string
+  setSystemPromptExtension: (ext: string) => void
+
+  // 模型访问
+  getAvailableModels: () => Model[]
+  getCurrentModel: () => Model
+  switchModel: (model: string) => void
+
+  // Session 访问
+  getCurrentSession: () => Session
+  getSessionHistory: () => Message[]
+
+  // UI 原语（桌面端）
+  showNotification: (message: string, type: 'info' | 'warn' | 'error') => void
+  showProgress: (message: string, progress: number) => void
+
+  // 日志
+  getLogger: (name: string) => Logger
+
+  // 生命周期
+  onDispose: (handler: () => void | Promise<void>) => void
 }
 ```
 
