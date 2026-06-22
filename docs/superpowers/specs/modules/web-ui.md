@@ -511,3 +511,292 @@ function useShare() {
   // navigator.share({ title, text, url })
 }
 ```
+
+### 2.12 API Client
+
+```typescript
+// services/api.ts - 通用 API 客户端
+const API_BASE = ''  // 同源
+
+type APIError = {
+  status: number
+  message: string
+  code?: string
+}
+
+async function apiRequest<T>(path: string, opts?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...opts?.headers
+    },
+    credentials: 'same-origin'
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ message: response.statusText }))
+    throw { status: response.status, message: body.message, code: body.code } as APIError
+  }
+
+  return response.json()
+}
+
+// services/chat.ts - SSE 聊天客户端
+async function sendChatMessage(
+  sessionId: string,
+  message: string,
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, message }),
+    signal
+  })
+
+  if (!response.ok) throw await response.json()
+
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = JSON.parse(line.slice(6))
+        onEvent(data)
+      }
+    }
+  }
+}
+
+// services/session.ts
+const sessionAPI = {
+  list: () => apiRequest<Session[]>('/api/sessions'),
+  get: (id: string) => apiRequest<Session>(`/api/sessions/${id}`),
+  create: (title?: string) => apiRequest<Session>('/api/sessions', { method: 'POST', body: JSON.stringify({ title }) }),
+  fork: (id: string, entryId: string) => apiRequest<Session>(`/api/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ entryId }) }),
+  delete: (id: string) => apiRequest<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
+  messages: (id: string, opts?: { limit?: number; offset?: number }) =>
+    apiRequest<Message[]>(`/api/sessions/${id}/messages?${new URLSearchParams(opts as Record<string, string>)}`),
+  llmDetails: (id: string) => apiRequest<LLMDetail[]>(`/api/sessions/${id}/llm-details`)
+}
+
+// services/file.ts
+const fileAPI = {
+  list: (path: string) => apiRequest<FileEntry[]>(`/api/files?path=${encodeURIComponent(path)}`),
+  read: (path: string) => apiRequest<{ content: string; hash: string }>(`/api/files/${encodeURIComponent(path)}`),
+  write: (path: string, content: string) => apiRequest<void>(`/api/files/${encodeURIComponent(path)}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  search: (query: string) => apiRequest<FileSearchResult[]>(`/api/files/search?q=${encodeURIComponent(query)}`)
+}
+
+// services/config.ts
+const configAPI = {
+  get: () => apiRequest<Config>('/api/config'),
+  update: (patch: Partial<Config>) => apiRequest<Config>('/api/config', { method: 'PATCH', body: JSON.stringify(patch) })
+}
+```
+
+### 2.13 WebSocket Client
+
+```typescript
+// services/ws.ts
+type WSMessage =
+  | { type: 'agent_event'; sessionId: string; event: AgentEvent }
+  | { type: 'permission_request'; toolCallId: string; tool: string; input: unknown }
+  | { type: 'status_change'; sessionId: string; status: AgentStatus }
+  | { type: 'subagent_event'; parentId: string; childId: string; event: AgentEvent }
+
+function createWSClient(url: string): WSClient {
+  let ws: WebSocket | null = null
+  let reconnectTimer: number | null = null
+  let reconnectDelay = 1000
+  const listeners: Map<string, Set<(msg: WSMessage) => void>> = new Map()
+
+  function connect() {
+    ws = new WebSocket(url)
+
+    ws.onopen = () => {
+      reconnectDelay = 1000  // 重置重连延迟
+    }
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data) as WSMessage
+      listeners.get(msg.type)?.forEach(fn => fn(msg))
+      listeners.get('*')?.forEach(fn => fn(msg))
+    }
+
+    ws.onclose = () => {
+      // 指数退避重连
+      reconnectTimer = window.setTimeout(() => {
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000)
+        connect()
+      }, reconnectDelay)
+    }
+
+    ws.onerror = () => ws?.close()
+  }
+
+  connect()
+
+  return {
+    on: (type: string, handler: (msg: WSMessage) => void) => {
+      if (!listeners.has(type)) listeners.set(type, new Set())
+      listeners.get(type)!.add(handler)
+      return () => listeners.get(type)?.delete(handler)
+    },
+    send: (msg: unknown) => ws?.send(JSON.stringify(msg)),
+    close: () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      ws?.close()
+    }
+  }
+}
+```
+
+### 2.14 TanStack Query 配置
+
+```typescript
+// App.tsx
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,        // 30s 内不重新获取
+      gcTime: 5 * 60_000,       // 5min 后清理缓存
+      retry: 2,                 // 重试 2 次
+      refetchOnWindowFocus: true // 窗口聚焦时重新获取
+    },
+    mutations: {
+      retry: 1
+    }
+  }
+})
+
+// 使用示例
+function useSessions() {
+  return useQuery({
+    queryKey: ['sessions'],
+    queryFn: () => sessionAPI.list()
+  })
+}
+
+function useSendMessage(sessionId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (message: string) => sendChatMessage(sessionId, message, handleEvent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions', sessionId, 'messages'] })
+    }
+  })
+}
+```
+
+### 2.15 Shiki + Marked 代码渲染
+
+```typescript
+// utils/highlight.ts
+import { createHighlighter } from 'shiki'
+
+const highlighter = await createHighlighter({
+  themes: ['github-dark', 'github-light'],
+  langs: ['javascript', 'typescript', 'python', 'rust', 'go', 'java', 'c', 'cpp', 'html', 'css', 'json', 'yaml', 'markdown', 'bash', 'sql']
+})
+
+export function highlightCode(code: string, lang: string): string {
+  return highlighter.codeToHtml(code, { lang, themes: { dark: 'github-dark', light: 'github-light' } })
+}
+
+// utils/markdown.ts
+import { marked } from 'marked'
+import { highlightCode } from './highlight'
+
+marked.setOptions({
+  gfm: true,
+  breaks: true
+})
+
+// 自定义 renderer：代码块使用 Shiki 高亮
+const renderer = new marked.Renderer()
+renderer.code = ({ text, lang }) => {
+  const highlighted = highlightCode(text, lang ?? 'text')
+  return `<div class="code-block" data-lang="${lang}">
+    <div class="code-header">
+      <span class="lang">${lang}</span>
+      <button class="copy-btn">Copy</button>
+      <button class="ref-btn">@引用</button>
+    </div>
+    ${highlighted}
+  </div>`
+}
+
+export function renderMarkdown(content: string): string {
+  return marked.parse(content, { renderer }) as string
+}
+```
+
+### 2.16 Linaria 主题系统
+
+```typescript
+// styles/theme.ts
+import { css } from '@linaria/core'
+
+export const lightTheme = {
+  bg: '#ffffff',
+  bgSecondary: '#f5f5f5',
+  text: '#1a1a1a',
+  textSecondary: '#666666',
+  border: '#e0e0e0',
+  primary: '#2563eb',
+  primaryHover: '#1d4ed8',
+  success: '#16a34a',
+  warning: '#d97706',
+  error: '#dc2626',
+  codeBg: '#f6f8fa',
+  shadow: '0 1px 3px rgba(0,0,0,0.1)'
+}
+
+export const darkTheme = {
+  bg: '#0d1117',
+  bgSecondary: '#161b22',
+  text: '#e6edf3',
+  textSecondary: '#8b949e',
+  border: '#30363d',
+  primary: '#58a6ff',
+  primaryHover: '#79c0ff',
+  success: '#3fb950',
+  warning: '#d29922',
+  error: '#f85149',
+  codeBg: '#161b22',
+  shadow: '0 1px 3px rgba(0,0,0,0.3)'
+}
+
+export const theme = css`
+  :global(:root) {
+    --bg: ${lightTheme.bg};
+    --text: ${lightTheme.text};
+    /* ... */
+  }
+  :global(:root.dark) {
+    --bg: ${darkTheme.bg};
+    --text: ${darkTheme.text};
+    /* ... */
+  }
+`
+
+// styles/breakpoints.ts
+export const MOBILE = '@media (max-width: 767px)'
+export const TABLET = '@media (min-width: 768px) and (max-width: 1023px)'
+export const DESKTOP = '@media (min-width: 1024px)'
+export const TOUCH = '@media (hover: none) and (pointer: coarse)'
+```
