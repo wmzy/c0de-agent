@@ -1,2 +1,5 @@
 packages:
   - "src/*"
+
+catalog:
+  typescript: "^5.9.0"

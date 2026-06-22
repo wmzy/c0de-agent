@@ -1,4 +1,4 @@
-import { css } from '@linaria/core'
+import { css } from "@linaria/core";
 
 const appClass = css`
   display: flex;
@@ -8,12 +8,12 @@ const appClass = css`
   font-family: system-ui, sans-serif;
   color: #e6edf3;
   background: #0d1117;
-`
+`;
 
 export function App() {
   return (
     <div className={appClass}>
       <h1>c0de-agent</h1>
     </div>
-  )
+  );
 }

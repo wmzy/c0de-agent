@@ -3,6 +3,8 @@
   "compilerOptions": {
     "noEmit": true
   },
+  "include": ["src"],
+  "exclude": ["src/web", "src/web/**"],
   "references": [
     { "path": "src/core" },
     { "path": "src/llm" },
@@ -12,7 +14,7 @@
     { "path": "src/session" },
     { "path": "src/db" },
     { "path": "src/server" },
-    { "path": "src/web" },
+
     { "path": "src/cli" }
   ]
 }
