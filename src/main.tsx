@@ -1,4 +1,17 @@
+import React from 'react'
 import { createRoot } from 'react-dom/client'
+import 'haze-ui/styles.css'
 import { App } from './App'
 
-createRoot(document.getElementById('root')!).render(<App />)
+const container = document.getElementById('root')
+if (!container) {
+  throw new Error('Root container not found')
+}
+
+const root = createRoot(container)
+
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+)
