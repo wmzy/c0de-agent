@@ -15,7 +15,7 @@
 - `hooks/`：自定义 hooks
 - `types/`：类型定义
 
-**路由**：@native-router/react，声明式路由配置
+**路由**：@native-router/react，声明式路由配置（用户自有库）
 
 **样式**：@linaria 零运行时 CSS，CSS-in-JS 编译时提取
 
@@ -58,7 +58,7 @@
 ### 2.1 技术栈
 
 - React 19
-- react-router-dom v7（路由）
+- @native-router/react（路由）
 - @tanstack/react-query v5（数据获取）
 - haze-ui（组件库）
 - @linaria/core + @linaria/react（零运行时 CSS）
