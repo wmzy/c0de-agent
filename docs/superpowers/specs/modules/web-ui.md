@@ -128,13 +128,23 @@ src/web/
 └── package.json
 ```
 
-### 2.3 PWA 配置
+### 2.3 PWA + HTTP 强缓存配置
 
 ```typescript
 // vite.config.ts
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  build: {
+    // 文件名带 content hash，支持强缓存
+    rollupOptions: {
+      output: {
+        assetFileNames: 'assets/[name].[hash][extname]',
+        chunkFileNames: 'assets/[name].[hash].js',
+        entryFileNames: 'assets/[name].[hash].js'
+      }
+    }
+  },
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
@@ -152,9 +162,19 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        // 不变资源（带 hash 的文件）强缓存 1 周
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/api\./,
+            urlPattern: /\.[0-9a-f]{8,}\./,  // 匹配带 hash 的文件
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'static-assets',
+              expiration: { maxEntries: 500, maxAgeSeconds: 7 * 24 * 60 * 60 },  // 1 周
+              cacheableResponse: { statuses: [0, 200] }
+            }
+          },
+          {
+            urlPattern: /^https?:\/\/localhost:\d+\/api\//,
             handler: 'NetworkFirst',
             options: { cacheName: 'api-cache', expiration: { maxEntries: 50, maxAgeSeconds: 300 } }
           }
