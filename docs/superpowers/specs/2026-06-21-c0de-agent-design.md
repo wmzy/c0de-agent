@@ -50,8 +50,7 @@ c0de-agent/
 │   ├── web/           React 前端
 │   └── cli/           c0de 命令入口
 ├── package.json
-├── tsconfig.base.json
-├── pnpm-workspace.yaml
+├── tsconfig.json
 └── biome.json
 ```
 
@@ -71,7 +70,7 @@ cli ──→ core ──→ llm
 web ←──(HTTP/WS)──→ server
 ```
 
-依赖方向单向，禁止循环依赖。每个包是 pnpm workspace member，独立 `package.json`。
+依赖方向单向，禁止循环依赖。
 
 ---
 
@@ -955,7 +954,6 @@ React 前端。
 
 ```
 src/web/
-├── src/
 │   ├── views/
 │   │   ├── Chat/              主聊天界面
 │   │   ├── SessionList/       会话列表（含分支树）

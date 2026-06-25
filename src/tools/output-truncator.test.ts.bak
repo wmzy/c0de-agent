@@ -1,0 +1,678 @@
+// Tests for the output truncator (output-truncator.ts)
+//
+// Covers:
+//   - classifyLine: semantic importance detection
+//   - truncateByLine: head+tail line truncation
+//   - truncateByChar: character-based truncation
+//   - truncateSemantic: importance-aware truncation
+//   - truncateSmart: combined smart truncation
+//   - truncateToolResult: ToolResult integration
+//   - Strategy factories: bashStrategy, grepStrategy, testStrategy
+
+import { describe, expect, it } from "vitest";
+import {
+  classifyLine,
+  classifyLines,
+  truncateByLine,
+  truncateByChar,
+  truncateSemantic,
+  truncateSmart,
+  truncateOutput,
+  truncateToolResult,
+  bashStrategy,
+  grepStrategy,
+  testStrategy,
+  DEFAULT_TRUNCATOR_CONFIG,
+} from "./output-truncator";
+import type { TruncationStrategy, SmartStrategy } from "./output-truncator";
+
+// ---------------------------------------------------------------------------
+// classifyLine
+// ---------------------------------------------------------------------------
+
+describe("classifyLine", () => {
+  it("classifies error messages", () => {
+    const cases = [
+      "Error: ENOENT: no such file or directory",
+      "FATAL: process crashed",
+      "TypeError: Cannot read property 'x' of undefined",
+      "Exit code 1",
+      "non-zero exit status",
+    ];
+    for (const text of cases) {
+      const result = classifyLine(text, 0);
+      expect(result.importance).toBe("error");
+      expect(result.score).toBeGreaterThanOrEqual(100);
+    }
+  });
+
+  it("classifies stack traces", () => {
+    const cases = [
+      "    at Object.<anonymous> (/src/index.ts:42:5)",
+      "    at Module._compile (node:internal/modules/cjs:1000:14)",
+      '  File "/app/main.py", line 42, in <module>',
+      "Traceback (most recent call last):",
+      "thread 'main' panicked at 'explicit panic'",
+    ];
+    for (const text of cases) {
+      const result = classifyLine(text, 0);
+      expect(result.importance).toBe("stack-trace");
+      expect(result.score).toBeGreaterThanOrEqual(90);
+    }
+  });
+
+  it("classifies assertion failures", () => {
+    const cases = [
+      "AssertionError: expected 1 to equal 2",
+      "FAIL src/tools/foo.test.ts",
+      "FAILED: 2 tests",
+      "PASS src/tools/bar.test.ts",
+    ];
+    for (const text of cases) {
+      const result = classifyLine(text, 0);
+      expect(result.importance).toBe("assertion");
+      expect(result.score).toBeGreaterThanOrEqual(85);
+    }
+  });
+
+  it("classifies warnings", () => {
+    const cases = [
+      "Warning: unused variable 'x'",
+      "WARN: deprecated API usage",
+      "Deprecation notice: this will be removed in v3",
+    ];
+    for (const text of cases) {
+      const result = classifyLine(text, 0);
+      expect(result.importance).toBe("warning");
+      expect(result.score).toBeGreaterThanOrEqual(70);
+    }
+  });
+
+  it("classifies key-value data", () => {
+    const cases = [
+      "name: my-project",
+      "version=1.0.0",
+      '{ "key": "value" }',
+      "| col1 | col2 | col3 |",
+    ];
+    for (const text of cases) {
+      const result = classifyLine(text, 0);
+      expect(result.importance).toBe("key-data");
+      expect(result.score).toBeGreaterThanOrEqual(50);
+    }
+  });
+
+  it("classifies commands", () => {
+    const cases = [
+      "$ npm install",
+      "pnpm run build",
+      "git status",
+    ];
+    for (const text of cases) {
+      const result = classifyLine(text, 0);
+      expect(result.importance).toBe("command");
+      expect(result.score).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  it("classifies paths", () => {
+    const result = classifyLine("  at /src/components/Button.tsx", 0);
+    expect(result.importance).toBe("path");
+    expect(result.score).toBeGreaterThanOrEqual(30);
+  });
+
+  it("classifies summary lines", () => {
+    const cases = [
+      "Total: 42 tests passed",
+      "Done in 3.2s",
+      "Results: 5 files changed",
+    ];
+    for (const text of cases) {
+      const result = classifyLine(text, 0);
+      expect(result.importance).toBe("summary");
+      expect(result.score).toBeGreaterThanOrEqual(60);
+    }
+  });
+
+  it("classifies normal lines", () => {
+    const result = classifyLine("just some regular output", 0);
+    expect(result.importance).toBe("normal");
+    expect(result.score).toBe(10);
+  });
+
+  it("classifies empty lines as zero score", () => {
+    const result = classifyLine("", 0);
+    expect(result.importance).toBe("normal");
+    expect(result.score).toBe(0);
+  });
+
+  it("preserves the line index", () => {
+    const result = classifyLine("hello", 42);
+    expect(result.index).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyLines
+// ---------------------------------------------------------------------------
+
+describe("classifyLines", () => {
+  it("classifies all lines in a multi-line string", () => {
+    const text = [
+      "Building project...",
+      "Error: compilation failed",
+      "  at main.ts:10:5",
+      "WARN: unused import",
+      "Done in 2.1s",
+    ].join("\n");
+
+    const scored = classifyLines(text);
+    expect(scored).toHaveLength(5);
+    expect(scored[0].importance).toBe("normal");
+    expect(scored[1].importance).toBe("error");
+    expect(scored[2].importance).toBe("stack-trace");
+    expect(scored[3].importance).toBe("warning");
+    expect(scored[4].importance).toBe("summary");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateByLine
+// ---------------------------------------------------------------------------
+
+describe("truncateByLine", () => {
+  const strategy: SmartStrategy = {
+    _tag: "line",
+    maxLines: 10,
+    headLines: 3,
+    tailLines: 3,
+  };
+
+  it("returns unchanged output when within limits", () => {
+    const text = "line1\nline2\nline3\nline4\nline5";
+    const result = truncateByLine(text, strategy);
+    expect(result.truncated).toBe(false);
+    expect(result.output).toBe(text);
+    expect(result.retainedLines).toBe(5);
+  });
+
+  it("truncates when exceeding maxLines", () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
+    const text = lines.join("\n");
+    const result = truncateByLine(text, strategy);
+
+    expect(result.truncated).toBe(true);
+    expect(result.strategy).toBe("line");
+    expect(result.totalLines).toBe(20);
+    expect(result.retainedLines).toBe(6);
+    expect(result.output).toContain("line 1");
+    expect(result.output).toContain("line 20");
+    expect(result.output).toContain("truncated");
+  });
+
+  it("preserves head and tail lines", () => {
+    const lines = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`);
+    const text = lines.join("\n");
+    const result = truncateByLine(text, strategy);
+
+    // Head lines
+    expect(result.output).toContain("line 1");
+    expect(result.output).toContain("line 2");
+    expect(result.output).toContain("line 3");
+    // Tail lines
+    expect(result.output).toContain("line 48");
+    expect(result.output).toContain("line 49");
+    expect(result.output).toContain("line 50");
+  });
+
+  it("reports correct totalChars", () => {
+    const text = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n");
+    const result = truncateByLine(text, strategy);
+    expect(result.totalChars).toBe(text.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateByChar
+// ---------------------------------------------------------------------------
+
+describe("truncateByChar", () => {
+  const strategy: SmartStrategy = {
+    _tag: "char",
+    maxChars: 100,
+    headChars: 40,
+    tailChars: 40,
+  };
+
+  it("returns unchanged when within limits", () => {
+    const text = "short text";
+    const result = truncateByChar(text, strategy);
+    expect(result.truncated).toBe(false);
+    expect(result.output).toBe(text);
+  });
+
+  it("truncates when exceeding maxChars", () => {
+    const text = Array.from({ length: 20 }, (_, i) => `This is line number ${i + 1} with some content`).join("\n");
+    const result = truncateByChar(text, strategy);
+
+    expect(result.truncated).toBe(true);
+    expect(result.strategy).toBe("char");
+    expect(result.output.length).toBeLessThan(text.length);
+    expect(result.output).toContain("truncated");
+  });
+
+  it("breaks at clean line boundaries", () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `line-${i + 1}`);
+    const text = lines.join("\n");
+    const result = truncateByChar(text, strategy);
+
+    // Should not cut in the middle of a line.
+    const outputLines = result.output.split("\n");
+    for (const line of outputLines) {
+      if (line.startsWith("line-")) {
+        expect(line).toMatch(/^line-\d+$/);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateSemantic
+// ---------------------------------------------------------------------------
+
+describe("truncateSemantic", () => {
+  const strategy: SmartStrategy = {
+    _tag: "semantic",
+    maxLines: 15,
+    maxChars: 2000,
+    contextRadius: 2,
+  };
+
+  it("returns unchanged when within limits", () => {
+    const text = "line1\nline2\nline3";
+    const result = truncateSemantic(text, strategy);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("preserves error lines during truncation", () => {
+    // Build output with errors buried in noise.
+    const noise = Array.from({ length: 100 }, (_, i) => `noise line ${i + 1}`);
+    noise[30] = "Error: ENOENT: no such file or directory '/missing/file.ts'";
+    noise[31] = "    at Object.readFileSync (node:fs:452:35)";
+    noise[60] = "TypeError: Cannot read properties of null";
+    noise[61] = "    at processInput (/src/handler.ts:42:18)";
+    const text = noise.join("\n");
+
+    const result = truncateSemantic(text, strategy);
+
+    expect(result.truncated).toBe(true);
+    expect(result.strategy).toBe("semantic");
+    // Error content should be preserved.
+    expect(result.output).toContain("ENOENT");
+    expect(result.output).toContain("TypeError");
+    // Stack traces should be preserved.
+    expect(result.output).toContain("readFileSync");
+    expect(result.output).toContain("processInput");
+    expect(result.preservedRegions).toContain("error");
+    expect(result.preservedRegions).toContain("stack-trace");
+  });
+
+  it("handles custom priority patterns", () => {
+    const strategyWithPatterns: TruncationStrategy = {
+      _tag: "semantic",
+      maxLines: 10,
+      maxChars: 2000,
+      contextRadius: 1,
+      priorityPatterns: [/IMPORTANT/],
+    };
+
+    const lines = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`);
+    lines[25] = "IMPORTANT: this line must survive";
+    const text = lines.join("\n");
+
+    const result = truncateSemantic(text, strategyWithPatterns);
+    expect(result.truncated).toBe(true);
+    expect(result.output).toContain("IMPORTANT: this line must survive");
+  });
+
+  it("handles noise patterns", () => {
+    const strategyWithNoise: TruncationStrategy = {
+      _tag: "semantic",
+      maxLines: 10,
+      maxChars: 2000,
+      contextRadius: 1,
+      noisePatterns: [/^noise/],
+    };
+
+    const lines = Array.from({ length: 50 }, (_, i) => `noise line ${i + 1}`);
+    lines[10] = "Error: something broke";
+    const text = lines.join("\n");
+
+    const result = truncateSemantic(text, strategyWithNoise);
+    expect(result.output).toContain("Error: something broke");
+  });
+
+  it("inserts truncation markers for gaps", () => {
+    const lines = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`);
+    lines[5] = "Error: critical failure";
+    lines[50] = "Error: another failure";
+    const text = lines.join("\n");
+
+    const result = truncateSemantic(text, strategy);
+    expect(result.output).toContain("lines truncated");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateSmart
+// ---------------------------------------------------------------------------
+
+describe("truncateSmart", () => {
+  const strategy: SmartStrategy = {
+    _tag: "smart",
+    maxLines: 20,
+    maxChars: 3000,
+    headLines: 3,
+    tailLines: 5,
+    contextRadius: 2,
+  };
+
+  it("returns unchanged when within limits", () => {
+    const text = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    const result = truncateSmart(text, strategy);
+    expect(result.truncated).toBe(false);
+    expect(result.output).toBe(text);
+  });
+
+  it("preserves head and tail", () => {
+    const lines = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`);
+    const text = lines.join("\n");
+    const result = truncateSmart(text, strategy);
+
+    expect(result.truncated).toBe(true);
+    expect(result.strategy).toBe("smart");
+    // Head preserved
+    expect(result.output).toContain("line 1");
+    expect(result.output).toContain("line 2");
+    expect(result.output).toContain("line 3");
+    // Tail preserved
+    expect(result.output).toContain("line 196");
+    expect(result.output).toContain("line 200");
+  });
+
+  it("preserves errors and stack traces in smart mode", () => {
+    const lines = Array.from({ length: 200 }, (_, i) => `output line ${i + 1}`);
+    lines[50] = "Error: build failed with exit code 1";
+    lines[51] = "    at compile (/src/build.ts:100:5)";
+    lines[52] = "    at runBuild (/src/index.ts:10:3)";
+    lines[100] = "WARNING: deprecated function usage";
+    lines[150] = "FAIL: 3 tests failed out of 50";
+    const text = lines.join("\n");
+
+    const result = truncateSmart(text, strategy);
+
+    expect(result.output).toContain("Error: build failed");
+    expect(result.output).toContain("at compile");
+    expect(result.output).toContain("WARNING");
+    expect(result.output).toContain("FAIL: 3 tests");
+    expect(result.preservedRegions).toContain("error");
+    expect(result.preservedRegions).toContain("warning");
+  });
+
+  it("respects character limit", () => {
+    const strategySmall: SmartStrategy = {
+      _tag: "smart",
+      maxLines: 1000,
+      maxChars: 500,
+      headLines: 3,
+      tailLines: 5,
+      contextRadius: 1,
+    };
+    const text = Array.from({ length: 100 }, (_, i) => `This is a reasonably long line number ${i} with some content here`).join("\n");
+    const result = truncateSmart(text, strategySmall);
+
+    expect(result.truncated).toBe(true);
+    expect(result.output.length).toBeLessThanOrEqual(600); // Some slack for markers
+  });
+
+  it("handles custom priority and noise patterns", () => {
+    const strategyCustom: SmartStrategy = {
+      _tag: "smart",
+      maxLines: 10,
+      maxChars: 2000,
+      headLines: 2,
+      tailLines: 2,
+      contextRadius: 1,
+      priorityPatterns: [/CUSTOM_PRIORITY/],
+      noisePatterns: [/^debug:/],
+    };
+
+    const lines = Array.from({ length: 50 }, (_, i) => `debug: verbose line ${i}`);
+    lines[20] = "CUSTOM_PRIORITY: must keep this";
+    lines[25] = "Error: also important";
+    const text = lines.join("\n");
+
+    const result = truncateSmart(text, strategyCustom);
+    expect(result.output).toContain("CUSTOM_PRIORITY");
+    expect(result.output).toContain("Error: also important");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateOutput — strategy dispatch
+// ---------------------------------------------------------------------------
+
+describe("truncateOutput", () => {
+  it("dispatches to line strategy", () => {
+    const text = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n");
+    const result = truncateOutput(text, { _tag: "line", maxLines: 10, headLines: 3, tailLines: 3 });
+    expect(result.strategy).toBe("line");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("dispatches to char strategy", () => {
+    const text = "a".repeat(200);
+    const result = truncateOutput(text, { _tag: "char", maxChars: 100, headChars: 40, tailChars: 40 });
+    expect(result.strategy).toBe("char");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("dispatches to semantic strategy", () => {
+    const lines = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`);
+    lines[10] = "Error: important";
+    const text = lines.join("\n");
+    const result = truncateOutput(text, { _tag: "semantic", maxLines: 20, maxChars: 5000, contextRadius: 1 });
+    expect(result.strategy).toBe("semantic");
+    expect(result.truncated).toBe(true);
+    expect(result.output).toContain("Error: important");
+  });
+
+  it("dispatches to smart strategy", () => {
+    const text = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join("\n");
+    const result = truncateOutput(text, { _tag: "smart", maxLines: 20, maxChars: 5000, headLines: 3, tailLines: 3, contextRadius: 1 });
+    expect(result.strategy).toBe("smart");
+    expect(result.truncated).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateToolResult
+// ---------------------------------------------------------------------------
+
+describe("truncateToolResult", () => {
+  const strategy: SmartStrategy = {
+    _tag: "smart",
+    maxLines: 10,
+    maxChars: 2000,
+    headLines: 2,
+    tailLines: 2,
+    contextRadius: 1,
+  };
+
+  it("passes through error results unchanged", () => {
+    const result = { _tag: "error" as const, error: "something broke" };
+    const truncated = truncateToolResult(result, strategy);
+    expect(truncated).toBe(result);
+  });
+
+  it("passes through permission_required results unchanged", () => {
+    const result = { _tag: "permission_required" as const, reason: "needs approval" };
+    const truncated = truncateToolResult(result, strategy);
+    expect(truncated).toBe(result);
+  });
+
+  it("passes through small success results unchanged", () => {
+    const result = { _tag: "success" as const, output: "small output" };
+    const truncated = truncateToolResult(result, strategy);
+    expect(truncated).toBe(result);
+    expect(truncated._tag).toBe("success");
+  });
+
+  it("truncates large success results", () => {
+    const output = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join("\n");
+    const result = { _tag: "success" as const, output };
+    const truncated = truncateToolResult(result, strategy);
+
+    expect(truncated._tag).toBe("truncated");
+    if (truncated._tag === "truncated") {
+      expect(truncated.truncated).toBe(true);
+      expect(truncated.totalLines).toBe(50);
+    }
+  });
+
+  it("preserves errors in truncated tool results", () => {
+    const lines = Array.from({ length: 100 }, (_, i) => `output ${i}`);
+    lines[40] = "Error: ENOENT: file not found";
+    lines[41] = "    at readSync (node:fs:300:10)";
+    const output = lines.join("\n");
+    const result = { _tag: "success" as const, output };
+    const truncated = truncateToolResult(result, strategy);
+
+    expect(truncated._tag).toBe("truncated");
+    if (truncated._tag === "truncated") {
+      expect(truncated.output).toContain("ENOENT");
+      expect(truncated.output).toContain("readSync");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Strategy factories
+// ---------------------------------------------------------------------------
+
+describe("bashStrategy", () => {
+  it("returns a smart strategy with bash-tuned defaults", () => {
+    const s = bashStrategy();
+    expect(s._tag).toBe("smart");
+    expect(s.maxLines).toBe(500);
+    expect(s.maxChars).toBe(50_000);
+    expect(s.headLines).toBe(10);
+    expect(s.tailLines).toBe(20);
+    expect(s.contextRadius).toBe(3);
+    expect(s.noisePatterns).toBeDefined();
+    expect(s.noisePatterns!.length).toBeGreaterThan(0);
+  });
+
+  it("accepts custom limits", () => {
+    const s = bashStrategy(1000, 100_000);
+    expect(s.maxLines).toBe(1000);
+    expect(s.maxChars).toBe(100_000);
+  });
+});
+
+describe("grepStrategy", () => {
+  it("returns a smart strategy with grep-tuned defaults", () => {
+    const s = grepStrategy();
+    expect(s._tag).toBe("smart");
+    expect(s.maxLines).toBe(1000);
+    expect(s.priorityPatterns).toBeDefined();
+    expect(s.priorityPatterns!.length).toBeGreaterThan(0);
+  });
+});
+
+describe("testStrategy", () => {
+  it("returns a smart strategy with test-tuned defaults", () => {
+    const s = testStrategy();
+    expect(s._tag).toBe("smart");
+    expect(s.maxLines).toBe(800);
+    expect(s.tailLines).toBe(25);
+    expect(s.noisePatterns).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEFAULT_TRUNCATOR_CONFIG
+// ---------------------------------------------------------------------------
+
+describe("DEFAULT_TRUNCATOR_CONFIG", () => {
+  it("uses smart strategy by default", () => {
+    expect(DEFAULT_TRUNCATOR_CONFIG.strategy._tag).toBe("smart");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge cases
+// ---------------------------------------------------------------------------
+
+describe("edge cases", () => {
+  it("handles empty string", () => {
+    const result = truncateSmart("", DEFAULT_TRUNCATOR_CONFIG.strategy);
+    expect(result.truncated).toBe(false);
+    expect(result.output).toBe("");
+    expect(result.totalLines).toBe(1);
+    expect(result.totalChars).toBe(0);
+  });
+
+  it("handles single line", () => {
+    const result = truncateSmart("single line", DEFAULT_TRUNCATOR_CONFIG.strategy);
+    expect(result.truncated).toBe(false);
+    expect(result.output).toBe("single line");
+  });
+
+  it("handles single very long line", () => {
+    const text = "x".repeat(200_000);
+    const result = truncateByChar(text, { _tag: "char", maxChars: 1000, headChars: 500, tailChars: 500 });
+    expect(result.truncated).toBe(true);
+    expect(result.output.length).toBeLessThan(text.length);
+  });
+
+  it("handles output that is exactly at the limit", () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `line ${i}`);
+    const text = lines.join("\n");
+    const strategy: SmartStrategy = {
+      _tag: "smart",
+      maxLines: 500,
+      maxChars: 100_000,
+      headLines: 50,
+      tailLines: 50,
+      contextRadius: 2,
+    };
+    const result = truncateSmart(text, strategy);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("handles all-important output (errors everywhere)", () => {
+    const lines = Array.from({ length: 100 }, (_, i) => `Error: failure ${i}`);
+    const text = lines.join("\n");
+    const strategy: SmartStrategy = {
+      _tag: "smart",
+      maxLines: 20,
+      maxChars: 5000,
+      headLines: 3,
+      tailLines: 5,
+      contextRadius: 1,
+    };
+    const result = truncateSmart(text, strategy);
+    expect(result.truncated).toBe(true);
+    expect(result.preservedRegions).toContain("error");
+    // Should keep a reasonable number of lines.
+    expect(result.retainedLines).toBeGreaterThan(0);
+    expect(result.retainedLines).toBeLessThanOrEqual(100);
+  });
+
+  it("handles output with only empty lines", () => {
+    const text = "\n\n\n\n\n";
+    const result = truncateSmart(text, DEFAULT_TRUNCATOR_CONFIG.strategy);
+    expect(result.truncated).toBe(false);
+  });
+});

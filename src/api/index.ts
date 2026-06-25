@@ -1,138 +1,100 @@
-// API routes
+// Hono HTTP server — API routes per design spec §9.
+//
+// Implements all §9.2 routes: sessions, chat (SSE), tools, config, files,
+// health. Uses data + functions paradigm throughout — no class, no new,
+// no this, no obj.method().
+//
+// SSE streaming (§9.3) uses ReadableStream + TextEncoder. Agent events
+// are pushed to the client as `event: <_tag>\ndata: <json>\n\n`.
+//
+// Dependencies are injected via the `ServerDeps` bag so the app can be
+// tested and wired without module-level singletons.
 
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
-import { createProvider } from '../llm'
-import { createDefaultRegistry, createExecutor } from '../tools'
-import { createAgent } from '../agent'
-import { createMemoryStore } from '../session'
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { loadConfig } from "../core";
+import type { Config } from "../core";
+import type { DB } from "../db/client";
+import type { ProviderRegistry } from "../llm";
+import { createDefaultRegistry } from "../tools";
+import type { ToolRegistry } from "../tools";
+import type { PluginRegistry } from "../plugins/types";
+import { registerChatRoutes } from "./routes/chat";
+import { registerConfigRoutes } from "./routes/config";
+import { registerFileRoutes } from "./routes/files";
+import { registerSessionRoutes } from "./routes/sessions";
+import { registerToolRoutes } from "./routes/tools";
 
-const app = new Hono()
-app.use('*', cors())
+// ---------------------------------------------------------------------------
+// Dependencies bag — the single injection point for the server.
+// ---------------------------------------------------------------------------
 
-const sessionStore = createMemoryStore()
+export type ServerDeps = {
+  db: DB;
+  config: Config;
+  providerRegistry: ProviderRegistry;
+  toolRegistry: ToolRegistry;
+  workingDirectory: string;
+  pluginRegistry?: PluginRegistry;
+};
 
-// Provider config (in-memory)
-let providerConfig: {
-  apiKey: string
-  baseUrl?: string
-  model?: string
-} | null = null
+// ---------------------------------------------------------------------------
+// createApp — factory that wires all routes and returns the Hono app.
+// ---------------------------------------------------------------------------
 
-app.post('/config', async (c) => {
-  const config = await c.req.json()
-  providerConfig = config
-  return c.json({ ok: true })
-})
+export function createApp(deps: ServerDeps): Hono {
+  const app = new Hono();
 
-app.get('/config', (c) => {
-  if (!providerConfig) return c.json({ configured: false })
-  return c.json({
-    configured: true,
-    provider: providerConfig.baseUrl?.includes('openai') ? 'OpenAI' : 'Custom',
-    model: providerConfig.model,
-  })
-})
+  // CORS — allow local dev origins.
+  app.use(
+    "*",
+    cors({
+      origin: ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type", "Authorization"],
+    }),
+  );
 
-// Sessions
-app.post('/sessions', async (c) => {
-  const session = await sessionStore.create()
-  return c.json(session)
-})
+  // ======================================================================
+  // Health
+  // ======================================================================
 
-app.get('/sessions', async (c) => {
-  const sessions = await sessionStore.list()
-  return c.json(sessions)
-})
+  app.get("/api/health", (c) => c.json({ status: "ok", timestamp: new Date().toISOString() }));
 
-app.get('/sessions/:id', async (c) => {
-  const session = await sessionStore.get(c.req.param('id'))
-  if (!session) return c.json({ error: 'Session not found' }, 404)
-  return c.json(session)
-})
+  // ======================================================================
+  // Register route groups
+  // ======================================================================
 
-app.delete('/sessions/:id', async (c) => {
-  await sessionStore.delete(c.req.param('id'))
-  return c.json({ ok: true })
-})
+  registerSessionRoutes(app, deps);
+  registerChatRoutes(app, deps);
+  registerToolRoutes(app, deps);
+  registerConfigRoutes(app, deps);
+  registerFileRoutes(app, deps);
 
-app.get('/sessions/:id/messages', async (c) => {
-  const messages = await sessionStore.getMessages(c.req.param('id'))
-  return c.json(messages)
-})
+  return app;
+}
 
-// Chat with SSE streaming
-app.post('/sessions/:id/chat', async (c) => {
-  const sessionId = c.req.param('id')
-  const { message } = await c.req.json<{ message: string }>()
+// ---------------------------------------------------------------------------
+// Default export — a convenience factory that creates the app with a
+// default tool registry and loads config from disk.
+// ---------------------------------------------------------------------------
 
-  if (!message) {
-    return c.json({ error: 'Message is required' }, 400)
-  }
+export async function createServerApp(opts: {
+  db: DB;
+  providerRegistry: ProviderRegistry;
+  workingDirectory?: string;
+}): Promise<Hono> {
+  const workingDirectory = opts.workingDirectory ?? process.cwd();
+  const config = await loadConfig(workingDirectory);
+  const toolRegistry = createDefaultRegistry();
 
-  if (!providerConfig) {
-    return c.json({ error: 'Provider not configured. Please set up your API key first.' }, 400)
-  }
+  return createApp({
+    db: opts.db,
+    config,
+    providerRegistry: opts.providerRegistry,
+    toolRegistry,
+    workingDirectory,
+  });
+}
 
-  const provider = createProvider({
-    apiKey: providerConfig.apiKey,
-    baseUrl: providerConfig.baseUrl,
-    model: providerConfig.model,
-  })
-
-  const registry = createDefaultRegistry()
-  const executor = createExecutor(registry)
-
-  const agent = createAgent({
-    provider,
-    tools: registry,
-    executor,
-    config: {
-      workingDirectory: process.env.WORKING_DIRECTORY ?? process.cwd(),
-    },
-  })
-
-  await sessionStore.addMessage(sessionId, { role: 'user', content: message })
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      const encoder = new TextEncoder()
-
-      try {
-        for await (const event of agent.run(message)) {
-          if (event.type === 'message') {
-            await sessionStore.addMessage(sessionId, {
-              role: 'assistant',
-              content: event.data as string,
-            })
-          }
-
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
-        }
-
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-      } catch (error) {
-        const errorEvent = {
-          type: 'error',
-          data: error instanceof Error ? error.message : String(error),
-        }
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`))
-      } finally {
-        controller.close()
-      }
-    },
-  })
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  })
-})
-
-// Health
-app.get('/health', (c) => c.json({ status: 'ok' }))
-
-export default app
+export default createApp;

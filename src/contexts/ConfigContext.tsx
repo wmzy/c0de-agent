@@ -1,73 +1,80 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type ReactNode, createContext, useContext, useState } from "react";
 
 type ProviderConfig = {
-  apiKey: string
-  baseUrl: string
-  model: string
-}
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+};
 
 type ConfigState = {
-  config: ProviderConfig | null
-  isConfigured: boolean
-  isLoading: boolean
-}
+  config: ProviderConfig | null;
+  isConfigured: boolean;
+  isLoading: boolean;
+};
 
 type ConfigContextValue = ConfigState & {
-  saveConfig: (config: ProviderConfig) => Promise<void>
-  logout: () => void
-}
+  saveConfig: (config: ProviderConfig) => Promise<void>;
+  logout: () => void;
+};
 
-const ConfigContext = createContext<ConfigContextValue | null>(null)
+const ConfigContext = createContext<ConfigContextValue | null>(null);
 
 async function fetchConfig(): Promise<{ configured: boolean; model?: string }> {
-  const response = await fetch('/api/config')
-  if (!response.ok) throw new Error('Failed to fetch config')
-  return response.json()
+  const response = await fetch("/api/config");
+  if (!response.ok) throw new Error("Failed to fetch config");
+  const data = (await response.json()) as {
+    configured?: unknown;
+    model?: unknown;
+  };
+  return {
+    configured: Boolean(data?.configured),
+    model: typeof data?.model === "string" ? data.model : undefined,
+  };
 }
 
 async function saveConfigToServer(config: ProviderConfig): Promise<void> {
-  const response = await fetch('/api/config', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const response = await fetch("/api/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
-  })
-  if (!response.ok) throw new Error('Failed to save config')
+  });
+  if (!response.ok) throw new Error("Failed to save config");
 }
 
 export function ConfigProvider({ children }: { children: ReactNode }) {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   const [localConfig, setLocalConfig] = useState<ProviderConfig | null>(() => {
-    const saved = localStorage.getItem('c0de-config')
-    return saved ? JSON.parse(saved) : null
-  })
+    const saved = localStorage.getItem("c0de-config");
+    return saved ? JSON.parse(saved) : null;
+  });
 
   const { data: serverConfig, isLoading } = useQuery({
-    queryKey: ['config'],
+    queryKey: ["config"],
     queryFn: fetchConfig,
     retry: false,
-  })
+  });
 
   const saveMutation = useMutation({
     mutationFn: saveConfigToServer,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['config'] })
+      queryClient.invalidateQueries({ queryKey: ["config"] });
     },
-  })
+  });
 
   const saveConfig = async (config: ProviderConfig) => {
-    localStorage.setItem('c0de-config', JSON.stringify(config))
-    setLocalConfig(config)
-    await saveMutation.mutateAsync(config)
-  }
+    localStorage.setItem("c0de-config", JSON.stringify(config));
+    setLocalConfig(config);
+    await saveMutation.mutateAsync(config);
+  };
 
   const logout = () => {
-    localStorage.removeItem('c0de-config')
-    setLocalConfig(null)
-    queryClient.setQueryData(['config'], { configured: false })
-  }
+    localStorage.removeItem("c0de-config");
+    setLocalConfig(null);
+    queryClient.setQueryData(["config"], { configured: false });
+  };
 
-  const isConfigured = serverConfig?.configured ?? false
+  const isConfigured = serverConfig?.configured ?? false;
 
   return (
     <ConfigContext.Provider
@@ -81,13 +88,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     >
       {children}
     </ConfigContext.Provider>
-  )
+  );
 }
 
 export function useConfigContext() {
-  const context = useContext(ConfigContext)
+  const context = useContext(ConfigContext);
   if (!context) {
-    throw new Error('useConfigContext must be used within ConfigProvider')
+    throw new Error("useConfigContext must be used within ConfigProvider");
   }
-  return context
+  return context;
 }

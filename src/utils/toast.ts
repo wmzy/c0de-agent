@@ -1,22 +1,22 @@
-import { useToast } from 'haze-ui'
+import type { useToast } from "haze-ui";
 
-let _toast: ReturnType<typeof useToast> | null = null
+let _toast: ReturnType<typeof useToast> | null = null;
 
 export function setToastHandler(t: ReturnType<typeof useToast>) {
-  _toast = t
+  _toast = t;
 }
 
 export const toast = {
   success(msg: string) {
-    _toast?.(msg, { variant: 'success' })
+    _toast?.(msg, { variant: "success" });
   },
   error(msg: string) {
-    _toast?.(msg, { variant: 'danger' })
+    _toast?.(msg, { variant: "danger" });
   },
   warning(msg: string) {
-    _toast?.(msg, { variant: 'warning' })
+    _toast?.(msg, { variant: "warning" });
   },
   info(msg: string) {
-    _toast?.(msg, { variant: 'info' })
+    _toast?.(msg, { variant: "info" });
   },
-}
+};
