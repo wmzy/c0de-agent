@@ -46,7 +46,9 @@ export function parseQueryInt(c: Context, key: string, fallback: number): number
 export function serializeSession(s: SessionData): Record<string, unknown> {
   return {
     id: s.id,
+    projectId: s.projectId ?? null,
     title: s.title,
+    directory: s.directory ?? null,
     parentId: s.parentId ?? null,
     branchPoint: s.branchPoint ?? null,
     metadata: s.metadata ?? {},

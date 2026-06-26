@@ -8,13 +8,14 @@ import type { DB } from "../db/client";
 import { sessions } from "../db/schema";
 import type { SessionData } from "./types";
 
-export async function createSession(db: DB, title?: string): Promise<SessionData> {
+export async function createSession(db: DB, title?: string, projectId?: string): Promise<SessionData> {
   const now = new Date();
   const [row] = await db.db
     .insert(sessions)
     .values({
       id: crypto.randomUUID(),
       title: title ?? "New Session",
+      projectId: projectId ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -27,8 +28,12 @@ export async function getSession(db: DB, id: string): Promise<SessionData | null
   return (row as unknown as SessionData) ?? null;
 }
 
-export async function listSessions(db: DB): Promise<SessionData[]> {
-  const rows = await db.db.select().from(sessions).orderBy(desc(sessions.updatedAt));
+export async function listSessions(db: DB, projectId?: string): Promise<SessionData[]> {
+  let query = db.db.select().from(sessions);
+  if (projectId) {
+    query = query.where(eq(sessions.projectId, projectId));
+  }
+  const rows = await query.orderBy(desc(sessions.updatedAt));
   return rows as unknown as SessionData[];
 }
 

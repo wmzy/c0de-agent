@@ -61,8 +61,9 @@ export function parseMessageContent(content: string): MessageContentPart[] {
 // listSessions — GET /api/sessions
 // ---------------------------------------------------------------------------
 
-export async function listSessions(): Promise<SessionData[]> {
-  const response = await fetch("/api/sessions");
+export async function listSessions(projectId?: string): Promise<SessionData[]> {
+  const url = projectId ? `/api/sessions?projectId=${projectId}` : "/api/sessions";
+  const response = await fetch(url);
   if (!response.ok) throw new Error(`Failed to list sessions: ${response.status}`);
   const data = (await response.json()) as unknown[];
   return data.map(deserializeSession);
@@ -72,11 +73,11 @@ export async function listSessions(): Promise<SessionData[]> {
 // createSession — POST /api/sessions
 // ---------------------------------------------------------------------------
 
-export async function createSession(title?: string): Promise<SessionData> {
+export async function createSession(title?: string, projectId?: string): Promise<SessionData> {
   const response = await fetch("/api/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, projectId }),
   });
   if (!response.ok) throw new Error(`Failed to create session: ${response.status}`);
   return deserializeSession(await response.json());

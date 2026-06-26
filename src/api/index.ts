@@ -19,9 +19,11 @@ import type { ProviderRegistry } from "../llm";
 import { createDefaultRegistry } from "../tools";
 import type { ToolRegistry } from "../tools";
 import type { PluginRegistry } from "../plugins/types";
+import type { SessionStore } from "../session/types";
 import { registerChatRoutes } from "./routes/chat";
 import { registerConfigRoutes } from "./routes/config";
 import { registerFileRoutes } from "./routes/files";
+import { registerProjectRoutes } from "./routes/projects";
 import { registerSessionRoutes } from "./routes/sessions";
 import { registerToolRoutes } from "./routes/tools";
 
@@ -36,6 +38,7 @@ export type ServerDeps = {
   toolRegistry: ToolRegistry;
   workingDirectory: string;
   pluginRegistry?: PluginRegistry;
+  sessionStore?: SessionStore;
 };
 
 // ---------------------------------------------------------------------------
@@ -65,6 +68,7 @@ export function createApp(deps: ServerDeps): Hono {
   // Register route groups
   // ======================================================================
 
+  registerProjectRoutes(app, deps);
   registerSessionRoutes(app, deps);
   registerChatRoutes(app, deps);
   registerToolRoutes(app, deps);

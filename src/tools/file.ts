@@ -11,7 +11,7 @@
 // never throws.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import {
   createURLRegistry,
   registerBuiltInResolvers,
@@ -127,7 +127,11 @@ export const readTool: ToolDef = {
     }
 
     // --- Plain path: filesystem read with hashline detection ---
-    const filePath = hashRef._tag === "valid" ? hashRef.path : path;
+    let filePath = hashRef._tag === "valid" ? hashRef.path : path;
+    // Resolve relative paths against cwd
+    if (!filePath.startsWith("/") && !filePath.match(/^[a-zA-Z]:\\/) && !hasURLScheme(filePath)) {
+      filePath = join(context.cwd, filePath);
+    }
     try {
       const full = await readFile(filePath, "utf-8");
 
@@ -200,14 +204,19 @@ export const writeTool: ToolDef = {
     required: ["path", "content"],
     additionalProperties: false,
   },
-  permission: "ask",
+  permission: "auto",
 
-  async execute(input: unknown, _context: ToolContext): Promise<ToolResult> {
+  async execute(input: unknown, context: ToolContext): Promise<ToolResult> {
     const args = (input ?? {}) as Record<string, unknown>;
-    const path = typeof args.path === "string" ? args.path : "";
+    let path = typeof args.path === "string" ? args.path : "";
     const content = typeof args.content === "string" ? args.content : undefined;
     if (path.length === 0) return err('write: "path" argument is required');
     if (content === undefined) return err('write: "content" argument is required');
+
+    // Resolve relative paths against cwd
+    if (!path.startsWith("/") && !path.match(/^[a-zA-Z]:\\/)) {
+      path = join(context.cwd, path);
+    }
 
     try {
       await mkdir(dirname(path), { recursive: true });

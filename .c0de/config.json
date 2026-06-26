@@ -1,0 +1,65 @@
+{
+  "providers": [
+    {
+      "_tag": "openai-compat",
+      "apiKey": "sk-nDNRoHLCqGSnPSQ1dMOUra7eeBPUT5KR",
+      "baseURL": "https://token.sensenova.cn/v1"
+    }
+  ],
+  "defaultProvider": "openai-compat",
+  "defaultModel": "sensenova-6.7-flash-lite",
+  "roleRouting": {},
+  "fallback": {
+    "enabled": true,
+    "maxRetries": 3,
+    "retryDelay": 1000
+  },
+  "compaction": {
+    "enabled": true,
+    "threshold": 0.8,
+    "reserveTokens": 2000,
+    "keepRecentTokens": 4000
+  },
+  "tools": {
+    "enabled": [
+      "bash",
+      "read",
+      "write",
+      "edit",
+      "glob",
+      "grep",
+      "ast_grep",
+      "ast_edit",
+      "task",
+      "web_search",
+      "lsp",
+      "worktree",
+      "browser",
+      "debug_start",
+      "debug_breakpoint",
+      "debug_continue",
+      "debug_step",
+      "debug_stack",
+      "debug_vars",
+      "debug_eval",
+      "debug_stop"
+    ],
+    "disabled": []
+  },
+  "plugins": {
+    "enabled": []
+  },
+  "mcpServers": [],
+  "slashCommands": {
+    "enabled": [
+      "compact",
+      "model",
+      "clear",
+      "help",
+      "fork",
+      "config"
+    ]
+  },
+  "theme": "system",
+  "locale": "en"
+}

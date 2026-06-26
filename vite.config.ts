@@ -4,6 +4,9 @@ import wyw from "@wyw-in-js/vite";
 import { defineConfig } from "vite";
 import type { Plugin } from "vite";
 
+// Shared in-memory session store (persists across requests)
+import { globalSessionStore as sharedMemStore } from "./src/api/global-store";
+
 // Custom plugin to integrate Hono API app
 function honoApiPlugin(): Plugin {
   return {
@@ -31,7 +34,25 @@ function honoApiPlugin(): Plugin {
           const { createDefaultRegistry } = await import("./src/tools");
 
           const cwd = process.env.WORKING_DIRECTORY ?? process.cwd();
-          const db = await createDB({ driver: "pglite" });
+          let db;
+          try {
+            db = await createDB({ driver: "pglite" });
+          } catch (dbErr) {
+            console.warn("DB init failed, running without persistence:", (dbErr as Error).message?.substring(0, 100));
+            // In-memory mock DB for when PGLite fails
+            const memStore = { sessions: new Map(), messages: new Map() };
+            db = {
+              driver: "pglite" as const,
+              db: {
+                select: () => ({ from: () => ({ where: () => ({ then: (r: any) => r([]) }) }) }),
+                insert: () => ({ values: () => ({ returning: () => ({ then: (r: any) => r([]) }) }) }),
+                update: () => ({ set: () => ({ where: () => ({ then: (r: any) => r([]) }) }) }),
+                delete: () => ({ where: () => ({ then: (r: any) => r([]) }) }),
+                execute: () => Promise.resolve([]),
+              },
+              _memStore: memStore,
+            } as any;
+          }
           const config = await loadConfig(cwd);
           const providerRegistry = createProviderRegistry(config.providers ?? []);
           const toolRegistry = createDefaultRegistry();
@@ -42,6 +63,7 @@ function honoApiPlugin(): Plugin {
             providerRegistry,
             toolRegistry,
             workingDirectory: cwd,
+            sessionStore: sharedMemStore,
           });
           const url = new URL("/api" + (req.url || "/"), `http://${req.headers.host}`);
 

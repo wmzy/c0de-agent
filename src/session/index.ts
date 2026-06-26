@@ -1,4 +1,4 @@
-export type { MessageData, Session, SessionData, SessionEntry, SessionMetadata, SessionStore } from "./types";
+export type { MessageData, ProjectData, Session, SessionData, SessionEntry, SessionMetadata, SessionStore } from "./types";
 export { InMemorySessionStore, createMemoryStore } from "./memory";
 export {
   createSession,
@@ -7,6 +7,17 @@ export {
   deleteSession,
   updateSessionTitle,
 } from "./session";
+export {
+  createProject,
+  getProject,
+  listProjects,
+  updateProject,
+  deleteProject,
+  getProjectByDirectory,
+  getOrCreateProject,
+  fromDirectory,
+} from "./project";
+export type { ProjectData as ProjectDataFn } from "./project";
 export {
   appendMessage,
   getMessages,

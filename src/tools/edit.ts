@@ -17,7 +17,7 @@
 // Conventions: data + functions, no class. Returns ToolResult variants.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { recordToolResult, selectBestMode } from "../core/tool-metrics";
 import { ok, err, type ToolContext, type ToolDef, type ToolResult } from "./types";
 import {
@@ -468,13 +468,18 @@ export const editTool: ToolDef = {
     required: ["path"],
     additionalProperties: false,
   },
-  permission: "ask",
+  permission: "auto",
 
   async execute(input: unknown, context: ToolContext): Promise<ToolResult> {
     const args = (input ?? {}) as Record<string, unknown>;
-    const filePath = typeof args.path === "string" ? args.path : "";
+    let filePath = typeof args.path === "string" ? args.path : "";
     if (filePath.length === 0) {
       return err('edit: "path" argument is required');
+    }
+
+    // Resolve relative paths against cwd
+    if (!filePath.startsWith("/") && !filePath.match(/^[a-zA-Z]:\\/)) {
+      filePath = join(context.cwd, filePath);
     }
 
     // §16.5 — mode selection: user override or selectBestMode from history

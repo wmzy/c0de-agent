@@ -11,15 +11,17 @@
 import { Hono } from "hono";
 import { runHooks } from "../../plugins/hooks";
 import {
-  createSession,
-  deleteSession,
+  createSession as dbCreateSession,
+  deleteSession as dbDeleteSession,
   exportSession,
   EXPORT_MIME,
   forkSession,
-  getSession,
-  getMessages,
-  listSessions,
+  getSession as dbGetSession,
+  getMessages as dbGetMessages,
+  listSessions as dbListSessions,
 } from "../../session";
+import { globalSessionStore as memStore } from "../global-store";
+import type { SessionStore } from "../../session/types";
 import {
   badRequest,
   notFound,
@@ -36,11 +38,21 @@ import { cleanupAgent } from "../state";
 // ---------------------------------------------------------------------------
 
 export function registerSessionRoutes(app: Hono, deps: ServerDeps): void {
+  // Use injected session store or fallback to module-level store
+  // Use injected session store (from vite.config.ts shared instance)
+  const getStore = (): SessionStore => {
+    if (deps.sessionStore) return deps.sessionStore;
+    // Fallback: create and cache a module-level store
+    return memStore;
+  };
+
   // POST /api/sessions — create a new session.
   app.post("/api/sessions", async (c) => {
     const body = await safeJson(c);
     const title = typeof body?.title === "string" ? body.title : undefined;
-    const session = await createSession(deps.db, title);
+    const projectId = typeof body?.projectId === "string" ? body.projectId : undefined;
+    const store = getStore();
+    const session = await store.create(title, projectId);
 
     // Trigger session:create hook (§3.7) — failure must not interrupt.
     if (deps.pluginRegistry) {
@@ -65,15 +77,19 @@ export function registerSessionRoutes(app: Hono, deps: ServerDeps): void {
   });
 
   // GET /api/sessions — list all sessions.
+  // Supports ?projectId=xxx to filter by project.
   app.get("/api/sessions", async (c) => {
-    const sessions = await listSessions(deps.db);
+    const projectId = c.req.query("projectId");
+    const store = getStore();
+    const sessions = await store.list(projectId);
     return c.json(sessions.map(serializeSession));
   });
 
   // GET /api/sessions/:id — get session detail.
   app.get("/api/sessions/:id", async (c) => {
     const id = c.req.param("id");
-    const session = await getSession(deps.db, id);
+    const store = getStore();
+    const session = await store.get(id);
     if (!session) return notFound(c, `Session not found: ${id}`);
     return c.json(serializeSession(session));
   });
@@ -89,7 +105,7 @@ export function registerSessionRoutes(app: Hono, deps: ServerDeps): void {
       // Trigger session:fork hook (§3.7) — failure must not interrupt.
       if (deps.pluginRegistry) {
         try {
-          const sourceSession = await getSession(deps.db, id);
+          const sourceSession = await getStore().get(id);
           if (sourceSession) {
             await runHooks(deps.pluginRegistry, "session:fork", {
               source: {
@@ -126,7 +142,8 @@ export function registerSessionRoutes(app: Hono, deps: ServerDeps): void {
   // GET /api/sessions/:id/export — export session in json/markdown/html.
   app.get("/api/sessions/:id/export", async (c) => {
     const id = c.req.param("id");
-    const session = await getSession(deps.db, id);
+    const store = getStore();
+    const session = await store.get(id);
     if (!session) return notFound(c, `Session not found: ${id}`);
 
     const formatParam = c.req.query("format") ?? "json";
@@ -157,22 +174,22 @@ export function registerSessionRoutes(app: Hono, deps: ServerDeps): void {
   // DELETE /api/sessions/:id — delete a session.
   app.delete("/api/sessions/:id", async (c) => {
     const id = c.req.param("id");
-    const session = await getSession(deps.db, id);
+    const store = getStore();
+    const session = await store.get(id);
     if (!session) return notFound(c, `Session not found: ${id}`);
     // Also clean up any active agent for this session.
     cleanupAgent(id);
-    await deleteSession(deps.db, id);
+    await store.delete(id);
     return c.json({ deleted: true });
   });
 
   // GET /api/sessions/:id/messages — list messages for a session.
   app.get("/api/sessions/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const session = await getSession(deps.db, id);
+    const store = getStore();
+    const session = await store.get(id);
     if (!session) return notFound(c, `Session not found: ${id}`);
-    const limit = parseQueryInt(c, "limit", 1000);
-    const offset = parseQueryInt(c, "offset", 0);
-    const msgs = await getMessages(deps.db, id, { limit, offset });
+    const msgs = await store.getMessages(id);
     return c.json(msgs.map(serializeMessage));
   });
 }

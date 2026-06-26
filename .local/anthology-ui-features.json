@@ -1,0 +1,654 @@
+{
+  "project": "anthology",
+  "path": "/home/zlt/projects/anthology/src/",
+  "techStack": {
+    "framework": "React 19",
+    "styling": "@linaria/core (zero-runtime CSS-in-JS)",
+    "uiLibrary": "haze-ui",
+    "routing": "react-router-dom (browser-router)",
+    "stateManagement": "TanStack Query + React Context",
+    "buildTool": "Vite"
+  },
+  "featureCatalog": [
+    {
+      "category": "Routing & Code Splitting",
+      "features": [
+        {
+          "name": "Lazy page loading via defineRoute()",
+          "file": "src/router/routes.tsx",
+          "description": "Every page is wrapped in React.lazy() via a defineRoute() helper. Each route entry stores both a Component (lazy) and a preload() function for eager prefetching.",
+          "pattern": "defineRoute(() => import('@/pages/SomePage'))"
+        },
+        {
+          "name": "Route-based prefetching on hover/focus",
+          "file": "src/hooks/useRoutePrefetch.ts",
+          "description": "useRoutePrefetch hook returns onMouseEnter/onFocus handlers that trigger module preload. A Set-based dedup cache prevents double-loading.",
+          "pattern": "prefetched = new Set<string>(); onMouseEnter → importFn()"
+        },
+        {
+          "name": "Route prefetch integration in nav",
+          "file": "src/components/RoleNav.tsx",
+          "description": "Each nav link gets {...useRoutePrefetch(importFn)} spread, plus the brand/notification/avatar links have explicit prefetch wiring.",
+          "pattern": "<NavLink ... {...prefetchNotifications}>"
+        },
+        {
+          "name": "20 lazy-loaded page routes",
+          "file": "src/router/routes.tsx",
+          "description": "Complete route map: /anthologies, /anthologies/new, /anthologies/:id, /anthologies/:id/edit, /anthologies/:id/submit, /anthologies/:id/evaluation, /anthologies/:anthologyId/sponsor, /submissions, /submissions/:id, /sponsor-pools, /notifications, /profile, /users/:id, /wallet, /store, /orders, /pay/:orderId, /pay/result/:orderId, /settings, /login"
+        },
+        {
+          "name": "Nav item configuration array",
+          "file": "src/router/routes.tsx",
+          "description": "ROUTE_NAV_ITEMS is a typed array of {path, label} objects that drives the navigation bar rendering dynamically.",
+          "pattern": "ROUTE_NAV_ITEMS: NavItem[]"
+        }
+      ]
+    },
+    {
+      "category": "TanStack Query Patterns",
+      "features": [
+        {
+          "name": "Global QueryClient with optimized defaults",
+          "file": "src/hooks/useQueryClient.tsx",
+          "description": "Singleton QueryClient with staleTime: 30s, gcTime: 5min, retry: 1, refetchOnWindowFocus: false."
+        },
+        {
+          "name": "Query key conventions",
+          "description": "Consistent array-based query keys: ['anthology', id], ['submissions', id], ['ranking', id], ['wallet'], ['walletTransactions'], ['notifications'], ['following', userId], ['liked', targetType, targetId], ['likesCount', targetType, targetId], ['bookmarked', targetType, targetId], ['eval-config', id], ['transparency', id], ['auth', 'me'], ['payment-status', orderId], ['submission', id], ['submission-evaluation', id], ['submission-transparency', id]"
+        },
+        {
+          "name": "Mutations with cache invalidation",
+          "description": "useMutation with onSuccess → qc.invalidateQueries() for related query keys. FollowButton invalidates ['following', userId] + ['followers', targetUserId]. LikeButton invalidates ['liked',...] + ['likesCount',...]. StorePage buyMutation invalidates ['orders']."
+        },
+        {
+          "name": "Conditional query enabling",
+          "description": "useQuery with enabled: !!user && ... guards to prevent queries when auth state is unknown."
+        },
+        {
+          "name": "Polling for payment status",
+          "file": "src/pages/PaymentResultPage.tsx",
+          "description": "refetchInterval: (q) => q.state.data?.status === 'paid' ? false : 2000 — polls every 2s until payment confirmed, then stops. retry: 30."
+        },
+        {
+          "name": "Select transform for derived data",
+          "file": "src/components/community/FollowButton.tsx",
+          "description": "useQuery with select option to transform raw following list into boolean isFollowing check."
+        },
+        {
+          "name": "Query-level loading/error/empty pattern",
+          "description": "Every page destructures { data, isLoading, isError, error, refetch } and renders conditional states: isLoading → Skeleton, isError → QueryError with onRetry=refetch, empty → Empty component."
+        }
+      ]
+    },
+    {
+      "category": "Authentication & Authorization",
+      "features": [
+        {
+          "name": "AuthContext with React Context",
+          "file": "src/contexts/AuthContext.tsx",
+          "description": "Provides user, isAuthenticated, isLoading, login(), logout(). Uses useQuery(['auth','me']) to fetch current session on mount. Manual user override via useState for optimistic login."
+        },
+        {
+          "name": "SMS verification code login",
+          "file": "src/pages/LoginPage.tsx",
+          "description": "Phone number input → send code mutation → verify code mutation → authLogin(data.user). Countdown timer (60s) for resend. Client-side phone/code validation (regex)."
+        },
+        {
+          "name": "WeChat OAuth login",
+          "file": "src/pages/LoginPage.tsx",
+          "description": "WeChat green button (#07c160) triggers WeChat OAuth flow via /api/auth/login-with-wechat endpoint."
+        },
+        {
+          "name": "Dev login shortcut",
+          "file": "src/pages/LoginPage.tsx",
+          "description": "handleDevLogin() for development environment only — auto-fills phone/code and calls /api/auth/dev-login. Guarded by import.meta.env.PROD check."
+        },
+        {
+          "name": "useAuth() convenience hook",
+          "file": "src/hooks/useAuth.ts",
+          "description": "Thin wrapper over useAuthContext() that exposes { user, isAuthenticated, isLoading, login, logout }."
+        },
+        {
+          "name": "Logout with server call + redirect",
+          "file": "src/contexts/AuthContext.tsx",
+          "description": "logout() clears manualUser, POSTs to /api/auth/logout with credentials, then navigates to /login."
+        },
+        {
+          "name": "API client 401 auto-redirect",
+          "file": "src/api/client.ts",
+          "description": "api() function intercepts 401 responses and redirects to /login?next=<currentPath> for post-login redirect."
+        },
+        {
+          "name": "Bearer token auth header pattern",
+          "description": "Consistent pattern: const token = localStorage.getItem('auth_token'); fetch(url, { headers: { Authorization: `Bearer ${token}` } })"
+        },
+        {
+          "name": "Curator-only action guards",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "isCurator check (user.id === a.curatorId) gates status mutations, evaluate, retry evaluation, and sponsor pool management UI."
+        }
+      ]
+    },
+    {
+      "category": "Community Features",
+      "features": [
+        {
+          "name": "Like button with count",
+          "file": "src/components/community/InteractionButtons.tsx",
+          "description": "LikeButton component: checks liked status via /api/community/likes/check, shows count via /api/community/likes/count, toggles via POST /api/community/likes. Shows ♡/❤️ with active styling when liked."
+        },
+        {
+          "name": "Bookmark button with status",
+          "file": "src/components/community/InteractionButtons.tsx",
+          "description": "BookmarkButton: checks bookmarks for targetType, toggles via POST /api/community/bookmarks. Uses optimistic local state synced via useQuery."
+        },
+        {
+          "name": "Follow/unfollow button",
+          "file": "src/components/community/FollowButton.tsx",
+          "description": "FollowButton: checks if user is following target, toggles follow status. Hides when viewing own profile. Uses ['following', userId] query key."
+        },
+        {
+          "name": "Notification bell with dropdown",
+          "file": "src/components/community/NotificationBell.tsx",
+          "description": "Bell icon with unread count badge (9+ cap). Dropdown with notification list, mark-as-read, mark-all-as-read. Click-outside-to-close via useRef + mousedown listener."
+        },
+        {
+          "name": "Notifications page (full)",
+          "file": "src/pages/NotificationsPage.tsx",
+          "description": "Full-page notification list with mark individual as read, mark all as read, mark-all mutation. Unread items styled with left-border accent."
+        },
+        {
+          "name": "User profile page (public)",
+          "file": "src/pages/UserProfilePage.tsx",
+          "description": "Displays avatar, nickname, bio, stats (submissions/sponsorships/anthologies counts), honor badge, submission list with like counts, anthology references, status badges."
+        }
+      ]
+    },
+    {
+      "category": "Anthology Management",
+      "features": [
+        {
+          "name": "Anthology list with filter tabs",
+          "file": "src/pages/AnthologyListPage.tsx",
+          "description": "List page with Segmented filter bar: all/open/closed/draft/final status filtering. Card grid layout with status badges, curator name, deadline, sponsor pool amount."
+        },
+        {
+          "name": "Anthology detail with tabs",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "Detail page with Segmented tab switcher: ranking tab and transparency tab (evaluation audit logs)."
+        },
+        {
+          "name": "Anthology create/edit form",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "34KB page with: title, description, AI system prompt with 5 prompt templates, deadline, max entries. Edit mode reuses same component."
+        },
+        {
+          "name": "Prompt templates system",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "PROMPT_TEMPLATES array with 5 pre-built evaluation prompts for different poetry genres (通用/古典/现代/情感/创意). Template selection buttons with active state."
+        },
+        {
+          "name": "Multi-model evaluation configuration",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "Enable multi-model evaluation with up to 5 AI models. Each model row: provider select, model select, weight (0-100), rounds (1-3), thinking depth (none/low/medium/high/max)."
+        },
+        {
+          "name": "Sponsor pool configuration in create form",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "Optional sponsor pool toggle with target amount and distribution plan textarea."
+        },
+        {
+          "name": "Curator control panel",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "Context-sensitive action buttons: draft→open, open→closed, closed→final (with confirm dialog), evaluate, retry evaluation, manage sponsor pool."
+        },
+        {
+          "name": "Evaluation progress indicator",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "Progress bar showing evaluated/total submissions count. Color changes based on completion."
+        },
+        {
+          "name": "Evaluation result with ranking display",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "Ranking list with numbered badges (gold/silver/bronze for top 3). Each item shows author name, score, content excerpt, like button."
+        },
+        {
+          "name": "Transparency logs tab",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "Evaluation audit trail: provider/model, round number, score, duration, token counts, error states. Collapsible details with preformatted JSON."
+        },
+        {
+          "name": "Collapsible config section",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "Accordion-style section showing AI system prompt and evaluation model configuration with details/summary."
+        }
+      ]
+    },
+    {
+      "category": "Submission System",
+      "features": [
+        {
+          "name": "Submission form with content + statement",
+          "file": "src/pages/SubmissionPage.tsx",
+          "description": "Content textarea (max 5000 chars), statement textarea (max 1000 chars, optional), char count display."
+        },
+        {
+          "name": "Pre-evaluation toggle in submission form",
+          "file": "src/pages/SubmissionPage.tsx",
+          "description": "Optional checkbox to enable AI pre-evaluation before formal submission."
+        },
+        {
+          "name": "Submission detail with editing",
+          "file": "src/pages/SubmissionDetailPage.tsx",
+          "description": "View mode shows content + statement. Edit mode (owner only) allows modifying both fields. Save triggers automatic PK re-ranking."
+        },
+        {
+          "name": "PK re-ranking on edit",
+          "file": "src/pages/SubmissionDetailPage.tsx",
+          "description": "When editing a ranked submission, user can input opponent ranks. On save, system POSTs to /api/submissions/:id/pk to re-rank."
+        },
+        {
+          "name": "Rank selection algorithm",
+          "file": "src/pages/SubmissionDetailPage.tsx",
+          "description": "computeAutoRanks(): auto-selects 4 opponents including rank 1 and totalRanks, filling gaps evenly."
+        },
+        {
+          "name": "Pre-evaluation history with deletion",
+          "file": "src/pages/SubmissionDetailPage.tsx",
+          "description": "Shows all previous pre-evaluations with delete capability. Each shows group rank, score, PK opponents, expandable detail logs."
+        },
+        {
+          "name": "AI pre-evaluation with PK results",
+          "file": "src/pages/SubmissionDetailPage.tsx",
+          "description": "Shows groupRank/total, yourScore, PK group ranking table with opponent excerpts, scores, clickable navigation."
+        },
+        {
+          "name": "Evaluation audit logs per submission",
+          "file": "src/pages/SubmissionDetailPage.tsx",
+          "description": "Per-submission transparency logs: provider/model, round, score, duration, token counts, error states, collapsible full prompt and response JSON."
+        },
+        {
+          "name": "Thinking chain display",
+          "file": "src/pages/SubmissionDetailPage.tsx",
+          "description": "Collapsible thinking content with warm yellow background (#fef3c7), showing AI's reasoning chain per evaluation round."
+        },
+        {
+          "name": "Submission list page",
+          "file": "src/pages/SubmissionListPage.tsx",
+          "description": "List of user's submissions with status badges, content preview (3-line clamp), anthology link, creation date."
+        }
+      ]
+    },
+    {
+      "category": "AI Chat Assistant",
+      "features": [
+        {
+          "name": "Floating AI assistant button",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "Fixed-position round button (48px, bottom-right) with 'AI' label. Opens slide-in chat panel."
+        },
+        {
+          "name": "Slide-in chat panel",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "Right-side panel (420px width) with backdrop overlay. Contains: model selector, message list with bubbles, input with Enter-to-send."
+        },
+        {
+          "name": "AI tool call integration",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "Chat responses can include toolCall with name='update_anthology'. Auto-updates form fields (title, description, aiSystemPrompt, deadline, maxEntries, sponsorPool, evaluationModels)."
+        },
+        {
+          "name": "Chat model selector",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "Dropdown in chat header to select which AI model/provider to use. Populated from connected providers."
+        },
+        {
+          "name": "Retry on error",
+          "file": "src/pages/AnthologyCreatePage.tsx",
+          "description": "When AI response starts with '错误:', a retry button appears to resend the last user message."
+        },
+        {
+          "name": "Chat default model persistence",
+          "file": "src/api/chat-settings.ts",
+          "description": "GET/PUT /api/settings/default-chat-model for persisting preferred chat model across sessions."
+        }
+      ]
+    },
+    {
+      "category": "Payment & Wallet",
+      "features": [
+        {
+          "name": "Wallet balance card with gradient",
+          "file": "src/pages/WalletPage.tsx",
+          "description": "Gradient card (indigo→purple) showing balance in large text. Withdraw button expands inline form."
+        },
+        {
+          "name": "Withdraw form with method selection",
+          "file": "src/pages/WalletPage.tsx",
+          "description": "Amount input, radio group for Alipay/WeChat Pay, account input. Client-side validation."
+        },
+        {
+          "name": "Transaction history list",
+          "file": "src/pages/WalletPage.tsx",
+          "description": "List of wallet transactions with description, timestamp, amount (green for income, red for expense)."
+        },
+        {
+          "name": "Store page with anthology grid",
+          "file": "src/pages/StorePage.tsx",
+          "description": "Grid of finalized anthologies with fixed price (¥9.90). Buy button creates order via POST /api/orders."
+        },
+        {
+          "name": "Orders page",
+          "file": "src/pages/OrdersPage.tsx",
+          "description": "Order list with order ID, status badges, item rows, total amount. Download button for purchased anthologies."
+        },
+        {
+          "name": "Payment page with method selection",
+          "file": "src/pages/PaymentPage.tsx",
+          "description": "Payment amount display, method list (Alipay/WeChat Pay) with radio selection, pay button."
+        },
+        {
+          "name": "Payment result polling page",
+          "file": "src/pages/PaymentResultPage.tsx",
+          "description": "Shows ⏳/✅ based on status. Polls every 2s until paid. Navigation links to orders, return URL, or browse."
+        },
+        {
+          "name": "Sponsor pool contribution",
+          "file": "src/pages/SponsorPoolPage.tsx",
+          "description": "Pool stats (target/current/progress bar), sponsor list, contribution form, my sponsorship share percentage."
+        },
+        {
+          "name": "Sponsor pools list",
+          "file": "src/pages/SponsorPoolsPage.tsx",
+          "description": "List of user's sponsored pools with pool name, target/current amounts, anthology link, contribution amount."
+        }
+      ]
+    },
+    {
+      "category": "Styling & Design System",
+      "features": [
+        {
+          "name": "Linaria zero-runtime CSS-in-JS",
+          "description": "All components use css tagged template from @linaria/core. Styles extracted at build time — zero runtime cost."
+        },
+        {
+          "name": "CSS custom properties (design tokens)",
+          "file": "src/styles/global.ts",
+          "description": "Complete design token system: --haze-color-primary, --haze-color-bg, --haze-color-text, --haze-color-border, --haze-color-success/warning/danger/info, --haze-color-focus-ring."
+        },
+        {
+          "name": "Dark mode support",
+          "file": "src/hooks/useTheme.ts",
+          "description": "Full dark mode via .dark class on html. useTheme() hook toggles class. MutationObserver watches for external changes. System preference detection via matchMedia."
+        },
+        {
+          "name": "Shared style constants",
+          "file": "src/styles/shared.ts",
+          "description": "Reusable style classes: primaryBtn (with hover/active/disabled), label, formGroup, grid (auto-fill responsive)."
+        },
+        {
+          "name": "Global reset and base styles",
+          "file": "src/styles/global.ts",
+          "description": "Comprehensive reset: box-sizing, font smoothing, scrollbar customization, container responsive widths, utility classes (.sr-only, .truncate, .break-all, .font-mono)."
+        },
+        {
+          "name": "haze-ui component library",
+          "description": "Design system: Container, Title, Card, Empty, Button, Skeleton, Segmented, Spinner, Input, Textarea, Progress, Text, Switch, NavigationBar, NavLink, useToast."
+        },
+        {
+          "name": "Responsive grid system",
+          "file": "src/styles/shared.ts",
+          "description": "Grid class: grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) with gap: 16px."
+        },
+        {
+          "name": "Gradient backgrounds",
+          "description": "Consistent indigo→purple gradient (linear-gradient(135deg, #6366f1, #8b5cf6)) on login, wallet, and home."
+        }
+      ]
+    },
+    {
+      "category": "Error Handling Patterns",
+      "features": [
+        {
+          "name": "QueryError component",
+          "file": "src/components/QueryError.tsx",
+          "description": "Reusable error display with danger-colored message and optional retry button."
+        },
+        {
+          "name": "FormError component",
+          "file": "src/components/FormError.tsx",
+          "description": "Inline form error message with danger color. Returns null when message is empty."
+        },
+        {
+          "name": "ErrorBoundary class component",
+          "file": "src/components/ErrorBoundary.tsx",
+          "description": "React class ErrorBoundary with getDerivedStateFromError + componentDidCatch. Custom fallback or default with Try again button."
+        },
+        {
+          "name": "Toast notifications",
+          "file": "src/utils/toast.ts",
+          "description": "Global toast singleton wrapping haze-ui's useToast. Provides toast.success/error/warning/info methods."
+        },
+        {
+          "name": "API error handling in client",
+          "file": "src/api/client.ts",
+          "description": "ApiError class with status/message/data. api() extracts error from JSON body. 401 auto-redirect."
+        },
+        {
+          "name": "Mutation error handling pattern",
+          "description": "Consistent: useMutation with onError → toast.error(err.message). Some use try/catch with manual setError state."
+        },
+        {
+          "name": "Loading skeleton pattern",
+          "description": "Every data-fetching page renders Skeleton variants during loading: text for titles, rectangular for content."
+        },
+        {
+          "name": "Empty state pattern",
+          "description": "haze-ui Empty component with descriptive text when lists return empty."
+        }
+      ]
+    },
+    {
+      "category": "SEO & Meta",
+      "features": [
+        {
+          "name": "SEOHead component",
+          "file": "src/components/SEOHead.tsx",
+          "description": "Programmatic meta tag management: document.title, og:title, og:description, og:image, og:url, og:type. Creates/updates meta elements dynamically."
+        }
+      ]
+    },
+    {
+      "category": "Status & Badge System",
+      "features": [
+        {
+          "name": "StatusBadge with color map",
+          "file": "src/components/StatusBadge.tsx",
+          "description": "Maps status strings to colors (color-mix for subtle backgrounds) and Chinese labels. Covers: draft/open/closed/final/pending/paid/completed/cancelled/judging/accepted/rejected."
+        },
+        {
+          "name": "Exportable status maps",
+          "file": "src/components/StatusBadge.tsx",
+          "description": "statusColors and statusLabels exported for reuse."
+        }
+      ]
+    },
+    {
+      "category": "Settings & Configuration",
+      "features": [
+        {
+          "name": "API Key management",
+          "file": "src/pages/SettingsPage.tsx",
+          "description": "Add/delete API keys with provider selection. AES-256 encryption. Auto model discovery. Provider search with model count."
+        },
+        {
+          "name": "Model discovery and management",
+          "file": "src/pages/SettingsPage.tsx",
+          "description": "Per-key model grid with search, pagination (40/page), individual toggle, batch enable/disable, select-all."
+        },
+        {
+          "name": "Default chat model selection",
+          "file": "src/pages/SettingsPage.tsx",
+          "description": "Dropdown to set default AI model for chat assistant from enabled models."
+        },
+        {
+          "name": "Dark mode toggle",
+          "file": "src/pages/SettingsPage.tsx",
+          "description": "Switch component for toggling dark mode via useTheme() hook."
+        },
+        {
+          "name": "Batch model operations",
+          "file": "src/pages/SettingsPage.tsx",
+          "description": "Batch enable/disable current page models via /api/settings/api-keys/:id/models/batch."
+        }
+      ]
+    },
+    {
+      "category": "Profile Management",
+      "features": [
+        {
+          "name": "Profile page with avatar",
+          "file": "src/pages/ProfilePage.tsx",
+          "description": "Avatar (initial-based circular), nickname, bio, creation date. Edit mode with inline Input/Textarea."
+        },
+        {
+          "name": "Profile update mutation",
+          "file": "src/pages/ProfilePage.tsx",
+          "description": "PATCH /api/auth/profile with optimistic navigation. QueryClient invalidation on success."
+        }
+      ]
+    },
+    {
+      "category": "Evaluation System",
+      "features": [
+        {
+          "name": "Evaluation result page",
+          "file": "src/pages/EvaluationResultPage.tsx",
+          "description": "Displays anthology evaluation rankings with rank badges, poem content, evaluation section, highlight items, like buttons."
+        },
+        {
+          "name": "Multi-model weighted evaluation",
+          "description": "Supports multiple AI models with weights (0-100%), rounds (1-3), thinking depth (none/low/medium/high/max). Batch evaluation with retry."
+        },
+        {
+          "name": "PK (head-to-head) evaluation",
+          "description": "Pairwise comparison: user selects opponent ranks, system runs head-to-head. Results show group rank, opponent ranking, detailed logs."
+        },
+        {
+          "name": "Evaluation transparency",
+          "description": "Full audit trail: per-model logs with provider, model, round, score, duration, tokens, prompt, response, thinking, errors. Export JSON/CSV."
+        },
+        {
+          "name": "Evaluation config per anthology",
+          "file": "src/api/evaluation-config.ts",
+          "description": "Per-anthology model config with GET/PUT/DELETE. Default fallback: deepseek-chat."
+        },
+        {
+          "name": "Curator evaluation trigger",
+          "file": "src/pages/AnthologyDetailPage.tsx",
+          "description": "Curator can trigger or retry evaluation. Confirmation dialog before final status change."
+        }
+      ]
+    },
+    {
+      "category": "Unique UI Features",
+      "features": [
+        {
+          "name": "Sticky navigation bar",
+          "file": "src/components/RoleNav.tsx",
+          "description": "position: sticky, top: 0, z-index: 100. NavigationBar with brand, links, create button, notification bell, avatar."
+        },
+        {
+          "name": "Click-outside dropdown dismissal",
+          "file": "src/components/community/NotificationBell.tsx",
+          "description": "useRef + mousedown listener for notification dropdown."
+        },
+        {
+          "name": "Confirmation dialogs",
+          "description": "window.confirm() before destructive actions (finalizing anthology)."
+        },
+        {
+          "name": "Character count indicators",
+          "description": "Real-time char count below textareas (e.g. '342/5000')."
+        },
+        {
+          "name": "Card hover effects",
+          "description": "translateY(-1px) + box-shadow transition on interactive cards."
+        },
+        {
+          "name": "Progress bar for evaluation status",
+          "description": "Visual indicator showing evaluated vs total. Color changes on completion."
+        },
+        {
+          "name": "Segmented tab control",
+          "description": "haze-ui Segmented for tab switching (ranking/transparency, status filters)."
+        },
+        {
+          "name": "Collapsible details sections",
+          "description": "Native <details>/<summary> for expandable AI prompts, responses, thinking chains."
+        },
+        {
+          "name": "Avatar initial-based design",
+          "description": "Circular avatar showing first letter of nickname. Primary color background."
+        },
+        {
+          "name": "Status-based conditional UI",
+          "description": "Different sections rendered based on anthology status: curator panel, submit button, evaluation trigger."
+        }
+      ]
+    }
+  ],
+  "apiLayer": {
+    "clientModule": {
+      "file": "src/api/client.ts",
+      "exports": ["ApiError", "api", "apiGet", "apiPost", "apiPatch", "apiDelete"],
+      "features": ["JSON auto-serialization", "FormData support", "401 auto-redirect", "credentials: include"]
+    },
+    "serverRoutes": {
+      "framework": "Hono",
+      "routes": [
+        "auth (send-code, verify-code, login-with-wechat, dev-login, logout, me, profile)",
+        "anthologies (CRUD with Zod validation)",
+        "submissions (CRUD + PK trigger + statement update)",
+        "evaluations (ranking, evaluation trigger, retry, per-submission)",
+        "community (likes, bookmarks, follows, notifications)",
+        "sponsors (pools, wallet, withdrawals, sponsorships)",
+        "orders (create, list, detail, pay, download, print-preview)",
+        "payments (create, callback, status polling)",
+        "transparency (logs, export JSON/CSV)",
+        "providers (CRUD, toggle)",
+        "api-keys (CRUD, model discovery, batch operations)",
+        "quotas (daily quota)",
+        "pre-evaluation (run, list, delete)",
+        "evaluation-config (GET/PUT/DELETE per anthology)",
+        "models (provider list, model list with pagination)",
+        "chat-settings (default chat model, chat endpoint)",
+        "users (public profile with aggregated data)"
+      ],
+      "authPattern": "authMiddleware applied per-route or via router.use('*', authMiddleware)",
+      "validationPattern": "Zod schemas with parseJson helper returning {ok, data|response} discriminated union"
+    }
+  },
+  "uniqueFeatures_c0deAgentDoesNotHave": [
+    "AI chat assistant with tool call integration (auto-fill forms from AI responses)",
+    "Multi-model weighted evaluation with configurable weights/rounds/thinking depth",
+    "PK (head-to-head) pairwise submission comparison",
+    "Pre-evaluation self-test with opponent ranking",
+    "Evaluation transparency audit trail with full prompt/response logs",
+    "Thinking chain visualization (AI reasoning display)",
+    "Prompt template system (5 genre-specific evaluation prompts)",
+    "Sponsor pool system with contribution tracking and fund distribution",
+    "Payment integration (Alipay/WeChat Pay) with polling confirmation",
+    "Wallet with withdrawal to Alipay/WeChat",
+    "Anthology store with purchase flow",
+    "Community system (likes, bookmarks, follows, notifications)",
+    "Route prefetching on hover/focus with Set-based dedup",
+    "Batch model operations (enable/disable)",
+    "Export transparency as JSON/CSV",
+    "Notification bell dropdown with mark-all-as-read",
+    "WeChat OAuth login",
+    "Curator control panel with status workflow management",
+    "Evaluation progress tracking",
+    "Profile with aggregated stats"
+  ]
+}

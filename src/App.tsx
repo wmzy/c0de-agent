@@ -150,11 +150,15 @@ export function App() {
                       <Route element={<AppLayout />}>
                         <Route
                           path="/chat"
-                          element={<LazyPage loader={() => import("./pages/ChatPage")} />}
+                          element={<LazyPage loader={() => import("./pages/ChatPage/index.tsx")} />}
                         />
                         <Route path="/" element={<Navigate to="/chat" replace />} />
                       </Route>
                     </Route>
+                    <Route
+                      path="/projects"
+                      element={<LazyPage loader={() => import("./pages/ProjectsPage")} />}
+                    />
                     <Route
                       path="/settings"
                       element={<LazyPage loader={() => import("./pages/SettingsPage")} />}

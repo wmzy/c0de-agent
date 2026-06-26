@@ -21,7 +21,7 @@ import type { ServerDeps } from "../index";
  * settings page to consume directly. Returns a flat shape matching the
  * ConfigContext's `fetchConfig` contract.
  */
-function configView(config: Config): {
+function configView(config: Config, projects: Array<{ id: string; name: string; directory: string }> = []): {
   configured: boolean;
   model?: string;
   providers: ProviderConfig[];
@@ -30,6 +30,7 @@ function configView(config: Config): {
   theme: "light" | "dark" | "system";
   locale: string;
   mcpServers: Config["mcpServers"];
+  projects: Array<{ id: string; name: string; directory: string }>;
 } {
   const first = config.providers[0];
   return {
@@ -41,6 +42,7 @@ function configView(config: Config): {
     theme: config.theme,
     locale: config.locale,
     mcpServers: config.mcpServers,
+    projects,
   };
 }
 
@@ -56,25 +58,46 @@ function buildProviderConfig(input: {
   model: string;
 }): ProviderConfig {
   const tag = inferProviderTag(input.providerName, input.baseUrl);
-  if (tag === "openai") {
-    return {
-      _tag: "openai",
-      apiKey: input.apiKey,
-      ...(input.baseUrl ? { baseURL: input.baseUrl } : {}),
-    };
+
+  switch (tag) {
+    case "openai":
+      return {
+        _tag: "openai",
+        apiKey: input.apiKey,
+        ...(input.baseUrl ? { baseURL: input.baseUrl } : {}),
+      };
+    case "anthropic":
+      return {
+        _tag: "anthropic",
+        apiKey: input.apiKey,
+        ...(input.baseUrl ? { baseURL: input.baseUrl } : {}),
+      };
+    case "google":
+      return {
+        _tag: "google",
+        apiKey: input.apiKey,
+        ...(input.baseUrl ? { baseURL: input.baseUrl } : {}),
+      };
+    default:
+      return {
+        _tag: "openai-compat",
+        apiKey: input.apiKey,
+        baseURL: input.baseUrl,
+        ...(input.providerName ? { label: input.providerName } : {}),
+      };
   }
-  return {
-    _tag: "openai-compat",
-    apiKey: input.apiKey,
-    baseURL: input.baseUrl,
-    ...(input.providerName ? { label: input.providerName } : {}),
-  };
 }
 
-function inferProviderTag(providerName: string, baseUrl: string): "openai" | "openai-compat" {
+function inferProviderTag(providerName: string, baseUrl: string): "openai" | "openai-compat" | "anthropic" | "google" {
   const normalizedName = providerName.trim().toLowerCase();
   const normalizedUrl = baseUrl.trim().toLowerCase();
+
+  // Native provider routing by name or URL
   if (normalizedName === "openai") return "openai";
+  if (normalizedName === "anthropic") return "anthropic";
+  if (normalizedName === "google" || normalizedName === "gemini") return "google";
+
+  // URL-based detection
   if (
     normalizedUrl === "" ||
     normalizedUrl === "https://api.openai.com/v1" ||
@@ -82,6 +105,10 @@ function inferProviderTag(providerName: string, baseUrl: string): "openai" | "op
   ) {
     return "openai";
   }
+  if (normalizedUrl.includes("anthropic.com")) return "anthropic";
+  if (normalizedUrl.includes("googleapis.com")) return "google";
+
+  // Everything else goes through OpenAI-compatible handler
   return "openai-compat";
 }
 
@@ -117,8 +144,10 @@ function rebuildProviderRegistry(registry: ProviderRegistry, providers: Provider
 
 export function registerConfigRoutes(app: Hono, deps: ServerDeps): void {
   // GET /api/config — get a UI-friendly view of the current configuration.
-  app.get("/api/config", (c) => {
-    return c.json(configView(deps.config));
+  app.get("/api/config", async (c) => {
+    const projects = deps.sessionStore ? await deps.sessionStore.listProjects() : [];
+    const projectList = projects.map((p) => ({ id: p.id, name: p.name, directory: p.directory }));
+    return c.json(configView(deps.config, projectList));
   });
 
   // POST /api/config — accept a complete Config or Partial<Config> and

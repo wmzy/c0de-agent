@@ -514,12 +514,15 @@ export async function* runAgent(
       }
 
       // Build request
+      // Default maxTokens to 8196 for models that need it (e.g. SenseNova reasoning models)
+      // SenseNova needs extra tokens for tool call arguments which can be long
+      const effectiveMaxTokens = config.maxTokens ?? 8196;
       const request: ChatRequest = {
         model: resolvedProvider ? `${resolvedProvider}/${resolvedModel}` : resolvedModel,
         messages: chatMessages,
         tools: chatTools.length > 0 ? chatTools : undefined,
         stream: true as const,
-        ...(config.maxTokens ? { maxTokens: config.maxTokens } : {}),
+        maxTokens: effectiveMaxTokens,
         ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
       };
 

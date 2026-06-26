@@ -1,8 +1,9 @@
 // In-memory session store
 
-import type { MessageData, SessionData, SessionStore } from "./types";
+import type { MessageData, ProjectData, SessionData, SessionStore } from "./types";
 
 export class InMemorySessionStore implements SessionStore {
+  private projects = new Map<string, ProjectData>();
   private sessions = new Map<string, SessionData>();
   private messages = new Map<string, MessageData[]>();
 
@@ -10,9 +11,53 @@ export class InMemorySessionStore implements SessionStore {
     return crypto.randomUUID();
   }
 
-  async create(title?: string): Promise<SessionData> {
+  // ── Project operations ──────────────────────────────────────────────────
+
+  async createProject(
+    data: Omit<ProjectData, "id" | "createdAt" | "updatedAt">,
+  ): Promise<ProjectData> {
+    const project: ProjectData = {
+      ...data,
+      id: this.generateId(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.projects.set(project.id, project);
+    return project;
+  }
+
+  async getProject(id: string): Promise<ProjectData | null> {
+    return this.projects.get(id) ?? null;
+  }
+
+  async listProjects(): Promise<ProjectData[]> {
+    return Array.from(this.projects.values()).sort(
+      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+    );
+  }
+
+  async updateProject(id: string, data: Partial<ProjectData>): Promise<void> {
+    const project = this.projects.get(id);
+    if (!project) throw new Error(`Project not found: ${id}`);
+    Object.assign(project, data, { updatedAt: new Date() });
+  }
+
+  async deleteProject(id: string): Promise<void> {
+    this.projects.delete(id);
+    // Unlink sessions from this project
+    for (const session of this.sessions.values()) {
+      if (session.projectId === id) {
+        session.projectId = null;
+      }
+    }
+  }
+
+  // ── Session operations ──────────────────────────────────────────────────
+
+  async create(title?: string, projectId?: string): Promise<SessionData> {
     const session: SessionData = {
       id: this.generateId(),
+      projectId: projectId ?? null,
       title: title ?? "New Session",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -26,10 +71,12 @@ export class InMemorySessionStore implements SessionStore {
     return this.sessions.get(id) ?? null;
   }
 
-  async list(): Promise<SessionData[]> {
-    return Array.from(this.sessions.values()).sort(
-      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-    );
+  async list(projectId?: string): Promise<SessionData[]> {
+    let sessions = Array.from(this.sessions.values());
+    if (projectId) {
+      sessions = sessions.filter((s) => s.projectId === projectId);
+    }
+    return sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   }
 
   async update(id: string, data: Partial<SessionData>): Promise<void> {

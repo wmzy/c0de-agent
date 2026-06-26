@@ -19,6 +19,7 @@ const defineRoute = (loader: () => Promise<unknown>): RouteEntry => ({
 
 export const ROUTE_PAGES: Record<string, RouteEntry> = {
   "/chat": defineRoute(() => import("../pages/ChatPage")),
+  "/projects": defineRoute(() => import("../pages/ProjectsPage")),
   "/settings": defineRoute(() => import("../pages/SettingsPage")),
 };
 
@@ -29,5 +30,6 @@ export interface NavItem {
 
 export const ROUTE_NAV_ITEMS: NavItem[] = [
   { path: "/chat", label: "对话" },
+  { path: "/projects", label: "项目" },
   { path: "/settings", label: "设置" },
 ];

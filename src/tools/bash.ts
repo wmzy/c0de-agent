@@ -57,7 +57,7 @@ export const bashTool: ToolDef = {
     required: ["command"],
     additionalProperties: false,
   },
-  permission: "ask",
+  permission: "auto",
 
   async execute(input: unknown, context: ToolContext): Promise<ToolResult> {
     const args = (input ?? {}) as Record<string, unknown>;

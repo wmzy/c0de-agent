@@ -14,8 +14,10 @@ import {
 export type SessionState = {
   sessions: SessionData[];
   activeSessionId: string | null;
+  activeProjectId: string | null;
   setActiveSession: (id: string) => void;
-  createSession: (title?: string) => Promise<SessionData>;
+  setActiveProject: (id: string | null) => void;
+  createSession: (title?: string, projectId?: string) => Promise<SessionData>;
   createNewSession: () => Promise<SessionData>;
   deleteSession: (id: string) => Promise<void>;
   forkSession: (sessionId: string, branchPoint: number) => Promise<SessionData>;
@@ -32,10 +34,27 @@ export function useSession(): SessionState {
     return localStorage.getItem(STORAGE_KEY);
   });
 
-  const { data: sessions = [], isLoading } = useQuery<SessionData[]>({
-    queryKey: ["sessions"],
-    queryFn: listSessions,
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("c0de-active-project");
   });
+
+  const { data: sessions = [], isLoading } = useQuery<SessionData[]>({
+    queryKey: ["sessions", activeProjectId],
+    queryFn: () => listSessions(activeProjectId ?? undefined),
+  });
+
+  const setActiveProject = useCallback((id: string | null) => {
+    setActiveProjectId(id);
+    if (id) {
+      localStorage.setItem("c0de-active-project", id);
+    } else {
+      localStorage.removeItem("c0de-active-project");
+    }
+    // Clear active session when project changes
+    setActiveSessionId(null);
+    localStorage.removeItem(STORAGE_KEY);
+  }, []);
 
   const createMutation = useMutation({
     mutationFn: createSession,
@@ -72,12 +91,13 @@ export function useSession(): SessionState {
   }, []);
 
   const createSessionFn = useCallback(
-    async (title?: string): Promise<SessionData> => {
-      const newSession = await createMutation.mutateAsync(title);
+    async (title?: string, projectId?: string): Promise<SessionData> => {
+      const actualProjectId = projectId ?? activeProjectId ?? undefined;
+      const newSession = await createMutation.mutateAsync({ title, projectId: actualProjectId });
       setActiveSession(newSession.id);
       return newSession;
     },
-    [createMutation, setActiveSession],
+    [createMutation, setActiveSession, activeProjectId],
   );
 
   const deleteSessionFn = useCallback(
@@ -132,7 +152,9 @@ export function useSession(): SessionState {
   return {
     sessions,
     activeSessionId,
+    activeProjectId,
     setActiveSession,
+    setActiveProject,
     createSession: createSessionFn,
     createNewSession,
     deleteSession: deleteSessionFn,

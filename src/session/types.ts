@@ -21,10 +21,24 @@ export type SessionMetadata = Record<string, unknown>;
 
 export type SessionData = {
   id: string;
+  projectId?: string | null;
   title: string;
+  directory?: string;
   parentId?: string | null;
   branchPoint?: number | null;
   metadata?: SessionMetadata;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type ProjectData = {
+  id: string;
+  name: string;
+  directory: string;
+  description?: string;
+  icon?: string;
+  vcs?: string;
+  metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -50,9 +64,17 @@ export type SessionEntry =
   | { _tag: "file_snapshot"; id: string; sessionId: string; path: string; content: string; hash: string; tokenCount: number; timestamp: number };
 
 export type SessionStore = {
-  create(title?: string): Promise<SessionData>;
+  // Project operations
+  createProject(data: Omit<ProjectData, "id" | "createdAt" | "updatedAt">): Promise<ProjectData>;
+  getProject(id: string): Promise<ProjectData | null>;
+  listProjects(): Promise<ProjectData[]>;
+  updateProject(id: string, data: Partial<ProjectData>): Promise<void>;
+  deleteProject(id: string): Promise<void>;
+
+  // Session operations
+  create(title?: string, projectId?: string): Promise<SessionData>;
   get(id: string): Promise<SessionData | null>;
-  list(): Promise<SessionData[]>;
+  list(projectId?: string): Promise<SessionData[]>;
   update(id: string, data: Partial<SessionData>): Promise<void>;
   delete(id: string): Promise<void>;
   addMessage(

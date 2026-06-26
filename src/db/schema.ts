@@ -4,10 +4,23 @@
 
 import { integer, jsonb, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
+// ── projects ─────────────────────────────────────────────────────────────────
+
+export const projects = pgTable("projects", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  directory: text("directory").notNull(),
+  description: text("description"),
+  metadata: jsonb("metadata").notNull().default("{}"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ── sessions ────────────────────────────────────────────────────────────────
 
 export const sessions = pgTable("sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
   title: text("title").notNull().default("New Session"),
   parentId: uuid("parent_id"),
   branchPoint: integer("branch_point"),

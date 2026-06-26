@@ -220,7 +220,10 @@ const emptyMcp = css`
 
 const presets = [
   { name: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
+  { name: "Anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-sonnet-4-20250514" },
   { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { name: "SenseNova (商汤)", baseUrl: "https://token.sensenova.cn/v1", model: "sensenova-6.7-flash-lite" },
+  { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash" },
   { name: "Ollama (本地)", baseUrl: "http://localhost:11434/v1", model: "qwen2.5:14b" },
   { name: "自定义", baseUrl: "", model: "" },
 ];

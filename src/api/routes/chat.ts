@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { abortAgent, injectSteeringMessage, runAgent } from "../../agent";
 import type { AgentEvent } from "../../agent";
 import { appendMessage } from "../../session";
+import { globalSessionStore as memStore } from "../global-store";
 import { executeTool } from "../../tools";
 import { badRequest, notFound, safeJson } from "../helpers";
 import type { ServerDeps } from "../index";
@@ -69,6 +70,8 @@ function agentEventToSSE(event: AgentEvent): string {
 // ---------------------------------------------------------------------------
 
 export function registerChatRoutes(app: Hono, deps: ServerDeps): void {
+  // Use injected session store or fallback to module-level store
+  const sessionStore = deps.sessionStore ?? memStore;
   // POST /api/chat — send a message and stream agent events via SSE.
   app.post("/api/chat", async (c) => {
     const body = await safeJson(c);
@@ -84,11 +87,15 @@ export function registerChatRoutes(app: Hono, deps: ServerDeps): void {
     // Resolve or create the agent for this session.
     const agent = await getOrCreateAgent(deps, sessionId);
 
-    // Persist the user message.
-    await appendMessage(deps.db, sessionId, {
-      role: "user",
-      content: JSON.stringify([{ _tag: "text", text: userText }]),
-    });
+    // Persist the user message using session store
+    try {
+      await sessionStore.addMessage(sessionId, {
+        role: "user",
+        content: JSON.stringify([{ _tag: "text", text: userText }]),
+      });
+    } catch {
+      // Non-fatal: message may already exist
+    }
 
     // Build the core Message object for the agent loop.
     const userMessage = {
@@ -106,11 +113,16 @@ export function registerChatRoutes(app: Hono, deps: ServerDeps): void {
         const enqueue = (sse: string) => controller.enqueue(encoder.encode(sse));
 
         let assistantText = "";
+        const assistantToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
         try {
           for await (const event of runAgent(agent.state, userMessage, agent.config)) {
             // Accumulate assistant text for persistence
             if (event._tag === "text_delta") {
               assistantText += event.text;
+            }
+            // Collect tool calls for persistence
+            if (event._tag === "tool_call") {
+              assistantToolCalls.push({ id: event.id, name: event.tool, arguments: event.input });
             }
             // Handle permission_required: set up confirm flow.
             if (event._tag === "permission_required") {
@@ -162,12 +174,17 @@ export function registerChatRoutes(app: Hono, deps: ServerDeps): void {
             }),
           );
         } finally {
-          // Persist assistant response
-          if (assistantText) {
-            await appendMessage(deps.db, sessionId, {
-              role: "assistant",
-              content: JSON.stringify([{ _tag: "text", text: assistantText }]),
-            });
+          // Persist assistant response using session store
+          if (assistantText || assistantToolCalls.length > 0) {
+            try {
+              await sessionStore.addMessage(sessionId, {
+                role: "assistant",
+                content: JSON.stringify([{ _tag: "text", text: assistantText }]),
+                ...(assistantToolCalls.length > 0 ? { toolCalls: assistantToolCalls } : {}),
+              });
+            } catch {
+              // Non-fatal
+            }
           }
           enqueue(sseEvent("done", {}));
           controller.close();
