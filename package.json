@@ -1,0 +1,28 @@
+{
+  "name": "c0de-agent",
+  "version": "0.1.0",
+  "description": "Open-source AI coding assistant with Browser-Server architecture",
+  "type": "module",
+  "bin": {
+    "c0de": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src/",
+    "format": "biome format --write src/"
+  },
+  "keywords": ["ai", "coding-assistant", "llm", "agent"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
