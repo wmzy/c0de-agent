@@ -1,11 +1,6 @@
-import type { ToolDef, ToolResult } from './tool.js'
+import type { ChatMessage, ChatTool, ModelRole, StreamChunk } from './llm.js'
 import type { Message, Session } from './message.js'
-import type {
-  ChatMessage,
-  ChatTool,
-  StreamChunk,
-  ModelRole,
-} from './llm.js'
+import type { ToolDef, ToolResult } from './tool.js'
 
 /** Agent error variants. Discriminated by `_tag`. */
 type AgentError =
@@ -112,12 +107,12 @@ type AgentState = {
 }
 
 export type {
-  AgentError,
-  PendingToolCall,
-  AgentStatus,
   AgentConfig,
-  TokenBudget,
-  LLMDetail,
+  AgentError,
   AgentEvent,
   AgentState,
+  AgentStatus,
+  LLMDetail,
+  PendingToolCall,
+  TokenBudget,
 }

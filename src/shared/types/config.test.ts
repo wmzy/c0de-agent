@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import type { Config, CompactionConfig, MCPServerConfig } from './config.js'
+import { describe, expect, it } from 'vitest'
+import type { CompactionConfig, Config, MCPServerConfig } from './config.js'
 
 describe('MCPServerConfig', () => {
   it('creates a stdio server config', () => {

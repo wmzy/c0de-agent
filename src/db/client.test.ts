@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { createDB } from './client.js'
+import { describe, expect, it } from 'vitest'
 import type { DB } from './client.js'
+import { createDB } from './client.js'
 
 describe('createDB with pglite in-memory', () => {
   it('creates an in-memory database', async () => {

@@ -36,4 +36,4 @@ type Config = {
   locale: string
 }
 
-export type { MCPServerConfig, CompactionConfig, Config }
+export type { CompactionConfig, Config, MCPServerConfig }

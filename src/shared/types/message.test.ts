@@ -1,10 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import type {
-  MessageContent,
-  Message,
-  Session,
-  SessionMetadata,
-} from './message.js'
+import { describe, expect, it } from 'vitest'
+import type { Message, MessageContent, Session, SessionMetadata } from './message.js'
 
 describe('MessageContent', () => {
   it('creates a text content part', () => {

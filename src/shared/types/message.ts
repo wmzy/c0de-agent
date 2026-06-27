@@ -37,4 +37,4 @@ type Session = {
   updatedAt: number
 }
 
-export type { MessageContent, Message, SessionMetadata, Session }
+export type { Message, MessageContent, Session, SessionMetadata }

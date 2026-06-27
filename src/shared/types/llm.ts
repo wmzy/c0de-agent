@@ -94,14 +94,14 @@ type StreamChunk =
   | { _tag: 'error'; error: { message: string; retryable?: boolean } }
 
 export type {
-  ProviderProtocol,
-  ProviderConfig,
-  ModelOverride,
-  ModelCapabilities,
-  ModelRole,
-  ContentPart,
   ChatMessage,
-  ChatTool,
   ChatRequest,
+  ChatTool,
+  ContentPart,
+  ModelCapabilities,
+  ModelOverride,
+  ModelRole,
+  ProviderConfig,
+  ProviderProtocol,
   StreamChunk,
 }

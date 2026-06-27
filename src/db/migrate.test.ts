@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
 import { sql } from 'drizzle-orm'
+import { describe, expect, it } from 'vitest'
 import { createDB } from './client.js'
 import { migrateDB } from './migrate.js'
 

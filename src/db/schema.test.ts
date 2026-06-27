@@ -1,16 +1,18 @@
-import { describe, it, expect } from 'vitest'
-import { sessions, sessionEntries, compactionArchives, fileSnapshots } from './schema.js'
+import { describe, expect, it } from 'vitest'
 import type {
-  SessionRow,
-  SessionInsert,
-  SessionEntryRow,
   CompactionArchiveRow,
   FileSnapshotRow,
+  SessionEntryRow,
+  SessionInsert,
+  SessionRow,
 } from './schema.js'
+import { compactionArchives, fileSnapshots, sessionEntries, sessions } from './schema.js'
 
 describe('sessions table', () => {
   it('has correct table name', () => {
-    expect((sessions as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')]).toBe('sessions')
+    expect((sessions as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')]).toBe(
+      'sessions',
+    )
   })
 
   it('defines all expected columns', () => {
@@ -27,7 +29,9 @@ describe('sessions table', () => {
 
 describe('sessionEntries table', () => {
   it('has correct table name', () => {
-    expect((sessionEntries as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')]).toBe('session_entries')
+    expect((sessionEntries as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')]).toBe(
+      'session_entries',
+    )
   })
 
   it('defines all expected columns', () => {
@@ -45,7 +49,9 @@ describe('sessionEntries table', () => {
 
 describe('compactionArchives table', () => {
   it('has correct table name', () => {
-    expect((compactionArchives as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')]).toBe('compaction_archives')
+    expect(
+      (compactionArchives as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')],
+    ).toBe('compaction_archives')
   })
 
   it('defines all expected columns', () => {
@@ -65,7 +71,9 @@ describe('compactionArchives table', () => {
 
 describe('fileSnapshots table', () => {
   it('has correct table name', () => {
-    expect((fileSnapshots as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')]).toBe('file_snapshots')
+    expect((fileSnapshots as unknown as Record<symbol, string>)[Symbol.for('drizzle:Name')]).toBe(
+      'file_snapshots',
+    )
   })
 
   it('defines all expected columns', () => {

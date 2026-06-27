@@ -6,4 +6,4 @@ type DBConfig =
   | { driver: 'pglite'; dataDir?: string }
   | { driver: 'postgres'; connectionString: string }
 
-export type { DBDriver, DBConfig }
+export type { DBConfig, DBDriver }

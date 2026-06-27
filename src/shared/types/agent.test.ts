@@ -1,11 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type {
-  AgentError,
-  AgentStatus,
   AgentConfig,
-  TokenBudget,
+  AgentError,
   AgentEvent,
   AgentState,
+  AgentStatus,
+  TokenBudget,
 } from './agent.js'
 
 describe('AgentError', () => {

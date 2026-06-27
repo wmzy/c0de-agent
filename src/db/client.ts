@@ -1,6 +1,6 @@
-import { drizzle } from 'drizzle-orm/pglite'
-import type { PgliteDatabase } from 'drizzle-orm/pglite'
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres'
+import type { PgliteDatabase } from 'drizzle-orm/pglite'
+import { drizzle } from 'drizzle-orm/pglite'
 import { Pool } from 'pg'
 import * as schema from './schema.js'
 import type { DBConfig } from './types.js'
@@ -25,9 +25,7 @@ type DB = {
 async function createDB(config: DBConfig): Promise<DB> {
   if (config.driver === 'pglite') {
     const connection =
-      config.dataDir && config.dataDir !== ':memory:'
-        ? { dataDir: config.dataDir }
-        : undefined
+      config.dataDir && config.dataDir !== ':memory:' ? { dataDir: config.dataDir } : undefined
     const db = drizzle({ schema, connection })
     return {
       db,

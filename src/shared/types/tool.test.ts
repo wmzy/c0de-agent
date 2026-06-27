@@ -1,10 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import type {
-  ToolPermission,
-  ToolResult,
-  ToolContext,
-  ToolDef,
-} from './tool.js'
+import { describe, expect, it } from 'vitest'
+import type { ToolContext, ToolDef, ToolPermission, ToolResult } from './tool.js'
 
 describe('ToolResult', () => {
   it('creates a success result', () => {
