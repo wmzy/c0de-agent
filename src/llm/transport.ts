@@ -61,12 +61,11 @@ type StreamHTTPOptions = {
 }
 
 /**
- * POST a JSON body and yield SSE data frames from the response.
- * Throws an LLMError on non-2xx responses, classifying context-overflow.
+ * Eagerly POST a JSON body and return the response body stream for framing.
+ * Throws an LLMError (classified) on non-2xx responses or transport failure.
+ * Used when the connection must be retryable independently of frame consumption.
  */
-const streamHTTP = async function* (
-  options: StreamHTTPOptions,
-): AsyncGenerator<string, void, unknown> {
+const httpPost = async (options: StreamHTTPOptions): Promise<ReadableStream<Uint8Array>> => {
   const fetchImpl = options.fetchImpl ?? fetch
   let response: Response
   try {
@@ -86,13 +85,22 @@ const streamHTTP = async function* (
       url: options.url,
     })
   }
-
   if (!response.ok || response.body === null) {
     const text = await response.text().catch(() => '')
     throw classifyHttpError(response.status, text, options.url, response.headers)
   }
+  return response.body
+}
 
-  yield* sseFraming(response.body)
+/**
+ * POST a JSON body and yield SSE data frames from the response.
+ * Throws an LLMError on non-2xx responses, classifying context-overflow.
+ */
+const streamHTTP = async function* (
+  options: StreamHTTPOptions,
+): AsyncGenerator<string, void, unknown> {
+  const body = await httpPost(options)
+  yield* sseFraming(body)
 }
 
 /** Map an HTTP failure status + body to an LLMError. */
@@ -127,6 +135,13 @@ const classifyHttpError = (
       http,
     })
   }
+  if (status === 402 || /quota|billing|insufficient.{0,4}quota|exceeded.{0,12}limit/i.test(body)) {
+    return llmError('ProviderShared', 'request', {
+      _tag: 'QuotaExceeded',
+      message: body || `Quota exceeded (${status})`,
+      http,
+    })
+  }
   if (status >= 500) {
     return llmError('ProviderShared', 'request', {
       _tag: 'ProviderInternal',
@@ -135,11 +150,19 @@ const classifyHttpError = (
       http,
     })
   }
-  if (isContextOverflow(body)) {
+  // Bodyless 413/400 (no error text) is a context-window overflow signal.
+  if (status === 413 || (status === 400 && body.length === 0) || isContextOverflow(body)) {
     return llmError('ProviderShared', 'request', {
       _tag: 'InvalidRequest',
       message: body || 'Context overflow',
       classification: 'context-overflow',
+      http,
+    })
+  }
+  if (/content.{0,4}(filter|policy)|safety/i.test(body)) {
+    return llmError('ProviderShared', 'request', {
+      _tag: 'ContentPolicy',
+      message: body || 'Content policy violation',
       http,
     })
   }
@@ -167,4 +190,4 @@ const parseRetryAfterMs = (
 }
 
 export type { StreamHTTPOptions }
-export { classifyHttpError, sseFraming, streamHTTP }
+export { classifyHttpError, httpPost, sseFraming, streamHTTP }

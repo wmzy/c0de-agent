@@ -6,15 +6,22 @@ import type {
   StreamChunk,
 } from '../shared/types/llm.js'
 import type { StepState } from './protocols/openai-compat.js'
-import { bodyFrom, initialStepState, parseChunk, step } from './protocols/openai-compat.js'
+import {
+  bodyFrom,
+  finalizeStream,
+  initialStepState,
+  parseChunk,
+  step,
+} from './protocols/openai-compat.js'
 import type { Registry } from './registry.js'
 import { resolveRoute } from './registry.js'
+import { withRetry } from './retry.js'
 import type { FallbackChain } from './routing.js'
-import { runWithFallback } from './routing.js'
+import { shouldFallOver } from './routing.js'
 import type { StreamEvent } from './schema/events.js'
 import type { ContentPart, InternalRequest, Message, ToolDefinition } from './schema/messages.js'
 import { model as makeModel } from './schema/options.js'
-import { streamHTTP } from './transport.js'
+import { httpPost, sseFraming } from './transport.js'
 
 type ProviderContext = {
   registry: Registry
@@ -83,7 +90,10 @@ const toStreamChunk = (event: StreamEvent): StreamChunk | null => {
     case 'tool-input-delta':
       return { _tag: 'tool_call_delta', id: event.id, argumentsDelta: event.text }
     case 'tool-input-end':
-      return { _tag: 'tool_call_end', id: event.id }
+      // Redundant: the finalized `tool-call` event below carries the complete
+      // parsed input and maps to tool_call_end. Emitting both would duplicate
+      // the end signal per tool call.
+      return null
     case 'tool-call':
       return { _tag: 'tool_call_end', id: event.id, argumentsFinal: JSON.stringify(event.input) }
     case 'reasoning-delta':
@@ -135,12 +145,8 @@ const buildInternalRequest = (
     request.tools !== undefined && request.tools.length > 0 ? { type: 'auto' } : undefined,
 })
 
-const collectEvents = async (
-  ctx: ProviderContext,
-  request: ChatRequest,
-  options: ChatOptions,
-): Promise<StreamEvent[]> => {
-  const chain: FallbackChain = options.fallback ?? {
+const resolveChain = (options: ChatOptions): FallbackChain =>
+  options.fallback ?? {
     primary: { provider: options.provider, model: options.model },
     fallbacks: [],
     maxRetries: 3,
@@ -148,63 +154,90 @@ const collectEvents = async (
     sleep: options.sleep,
   }
 
-  const { result: events } = await runWithFallback(
-    ctx.registry,
-    chain,
-    async (providerArg, modelArg) => {
-      const resolved = resolveRoute(ctx.registry, providerArg, modelArg)
-      const internal = buildInternalRequest(request, providerArg, modelArg)
-      const body = bodyFrom(internal)
-      const url = `${resolved.route.baseURL}${resolved.route.path}`
-      const authHeader = resolved.route.auth.type === 'bearer' ? resolved.route.auth.apiKey : ''
-      const collected: StreamEvent[] = []
-      let state: StepState = initialStepState()
-      for await (const frame of streamHTTP({
+/** Open a (retryable) connection to one target route and stream its StreamChunks. */
+const streamTarget = async function* (
+  ctx: ProviderContext,
+  request: ChatRequest,
+  target: { provider: string; model: string },
+  chain: FallbackChain,
+): AsyncGenerator<StreamChunk, void, unknown> {
+  const resolved = resolveRoute(ctx.registry, target.provider, target.model)
+  const internal = buildInternalRequest(request, target.provider, target.model)
+  const body = bodyFrom(internal)
+  const url = `${resolved.route.baseURL}${resolved.route.path}`
+  const authHeader = resolved.route.auth.type === 'bearer' ? resolved.route.auth.apiKey : ''
+  // Retry only the connection (the fetch). Once streaming begins, errors propagate.
+  const stream = await withRetry(
+    () =>
+      httpPost({
         url,
         body,
         headers: { authorization: `Bearer ${authHeader}`, ...resolved.route.headers() },
         signal: ctx.signal,
         fetchImpl: ctx.fetchImpl,
-      })) {
-        const chunk = parseChunk(resolved.route.id, frame)
-        const result = step(state, chunk)
-        state = result.state
-        collected.push(...result.events)
-        if (result.done) break
-      }
-      return collected
-    },
+      }),
+    { maxRetries: chain.maxRetries, sleep: chain.sleep },
   )
-  return events
+  let state: StepState = initialStepState()
+  for await (const frame of sseFraming(stream)) {
+    const chunk = parseChunk(resolved.route.id, frame)
+    const result = step(state, chunk)
+    state = result.state
+    for (const event of result.events) {
+      const sc = toStreamChunk(event)
+      if (sc !== null) yield sc
+    }
+  }
+  // Stream ended without a trailing usage chunk — finalize (no-op if already finished).
+  for (const event of finalizeStream(state).events) {
+    const sc = toStreamChunk(event)
+    if (sc !== null) yield sc
+  }
 }
 
 /**
- * Stream a chat request as agent-facing StreamChunk values.
- * Each yielded chunk is the normalized form Plans 4-6 consume.
+ * Stream a chat request incrementally as agent-facing StreamChunk values.
+ * Retries/falls over only BEFORE the first chunk is yielded; once streaming
+ * begins, errors propagate to the caller (per spec §7.6 fall-over policy).
  */
 const chatStream = async function* (
   ctx: ProviderContext,
   request: ChatRequest,
   options: ChatOptions,
 ): AsyncGenerator<StreamChunk, void, unknown> {
-  const events = await collectEvents(ctx, request, options)
-  for (const event of events) {
-    const chunk = toStreamChunk(event)
-    if (chunk !== null) yield chunk
+  const chain = resolveChain(options)
+  const targets = [chain.primary, ...chain.fallbacks]
+  let started = false
+  let lastError: unknown
+
+  for (const target of targets) {
+    if (target === undefined) continue
+    resolveRoute(ctx.registry, target.provider, target.model) // fail-fast NoRoute
+    try {
+      for await (const sc of streamTarget(ctx, request, target, chain)) {
+        started = true
+        yield sc
+      }
+      return
+    } catch (error) {
+      lastError = error
+      if (started || !shouldFallOver(error)) throw error
+    }
   }
+  throw lastError
 }
 
-/** Non-streaming chat: collect all events and return the final text. */
+/** Non-streaming chat: consume the stream and return the final text. */
 const chat = async (
   ctx: ProviderContext,
   request: ChatRequest,
   options: ChatOptions,
 ): Promise<string> => {
-  const events = await collectEvents(ctx, request, options)
-  return events
-    .filter((e): e is Extract<StreamEvent, { type: 'text-delta' }> => e.type === 'text-delta')
-    .map((e) => e.text)
-    .join('')
+  let text = ''
+  for await (const chunk of chatStream(ctx, request, options)) {
+    if (chunk._tag === 'text') text += chunk.text
+  }
+  return text
 }
 
 export type { ChatOptions, ProviderContext }

@@ -27,8 +27,8 @@ describe('routing shouldFallOver', () => {
   it('falls over on ProviderInternal', () => {
     expect(shouldFallOver(internalError())).toBe(true)
   })
-  it('does not fall over on Authentication', () => {
-    expect(shouldFallOver(authError())).toBe(false)
+  it('falls over on Authentication (spec §7.6: invalid key should try next route)', () => {
+    expect(shouldFallOver(authError())).toBe(true)
   })
   it('does not fall over on context overflow', () => {
     expect(shouldFallOver(overflowError())).toBe(false)
@@ -76,7 +76,8 @@ describe('routing runWithFallback', () => {
     expect(res.provider).toBe('b')
   })
 
-  it('does not fall over on auth errors', async () => {
+  it('falls over on auth errors and tries the next route', async () => {
+    const calls: string[] = []
     await expect(
       runWithFallback(
         setup(),
@@ -87,11 +88,13 @@ describe('routing runWithFallback', () => {
           retryDelay: 0,
           sleep: noSleep,
         },
-        async () => {
+        async (provider) => {
+          calls.push(provider)
           throw authError()
         },
       ),
     ).rejects.toSatisfy((e: unknown) => isLLMError(e) && e.reason._tag === 'Authentication')
+    expect(calls).toEqual(['a', 'b'])
   })
 
   it('retries retryable errors within a route before falling over', async () => {

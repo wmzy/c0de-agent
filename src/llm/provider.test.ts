@@ -24,12 +24,17 @@ const request = (): ChatRequest => ({
 })
 
 describe('provider chatStream', () => {
-  it('streams text deltas + usage + done', async () => {
+  it('streams text deltas + usage + done (separate trailing usage chunk)', async () => {
+    // Real OpenAI format: finish_reason chunk has NO usage; usage arrives in a
+    // separate trailing chunk with choices: [] when stream_options.include_usage.
     const sse = [
-      'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n',
-      'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
-      'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n',
-    ].join('')
+      'data: {"choices":[{"delta":{"content":"hel"}}]}',
+      'data: {"choices":[{"delta":{"content":"lo"}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}',
+    ]
+      .map((l) => `${l}\n\n`)
+      .join('')
     const ctx = setup(sse)
     const chunks = []
     for await (const c of chatStream(ctx, request(), { provider: 'mock', model: 'm1' })) {
@@ -42,10 +47,7 @@ describe('provider chatStream', () => {
     expect(text).toBe('hello')
     expect(chunks.some((c) => c._tag === 'done')).toBe(true)
     const usage = chunks.find((c) => c._tag === 'usage') as
-      | {
-          inputTokens: number
-          outputTokens: number
-        }
+      | { inputTokens: number; outputTokens: number }
       | undefined
     expect(usage?.inputTokens).toBe(3)
   })
@@ -60,12 +62,15 @@ describe('provider chatStream', () => {
     expect(chunks.some((c) => c._tag === 'thinking')).toBe(true)
   })
 
-  it('streams a tool call through start/delta/end', async () => {
+  it('streams a tool call through start/delta/end (single end)', async () => {
     const sse = [
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"echo","arguments":"{\\"x\\":"}}]}}]}\n\n',
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}\n\n',
-      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
-    ].join('')
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"echo","arguments":"{\\"x\\":"}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+    ]
+      .map((l) => `${l}\n\n`)
+      .join('')
     const ctx = setup(sse)
     const chunks = []
     for await (const c of chatStream(ctx, request(), { provider: 'mock', model: 'm1' })) {
@@ -73,17 +78,24 @@ describe('provider chatStream', () => {
     }
     expect(chunks.some((c) => c._tag === 'tool_call_start')).toBe(true)
     expect(chunks.some((c) => c._tag === 'tool_call_delta')).toBe(true)
-    expect(chunks.some((c) => c._tag === 'tool_call_end')).toBe(true)
+    // Exactly one tool_call_end per tool (the finalized tool-call event).
+    expect(chunks.filter((c) => c._tag === 'tool_call_end')).toHaveLength(1)
+    const end = chunks.find((c) => c._tag === 'tool_call_end') as
+      | { argumentsFinal?: string }
+      | undefined
+    expect(end?.argumentsFinal).toBe('{"x":1}')
   })
 })
 
 describe('provider chat (non-streaming)', () => {
   it('returns the joined text', async () => {
     const sse = [
-      'data: {"choices":[{"delta":{"content":"foo"}}]}\n\n',
-      'data: {"choices":[{"delta":{"content":"bar"}}]}\n\n',
-      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
-    ].join('')
+      'data: {"choices":[{"delta":{"content":"foo"}}]}',
+      'data: {"choices":[{"delta":{"content":"bar"}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    ]
+      .map((l) => `${l}\n\n`)
+      .join('')
     const ctx = setup(sse)
     const text = await chat(ctx, request(), { provider: 'mock', model: 'm1' })
     expect(text).toBe('foobar')

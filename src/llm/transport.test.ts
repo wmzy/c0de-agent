@@ -139,4 +139,52 @@ describe('transport streamHTTP', () => {
       return e.reason._tag === 'ProviderInternal'
     })
   })
+
+  it('throws QuotaExceeded on 402', async () => {
+    await expect(
+      collect(
+        streamHTTP({
+          url: 'https://example.com',
+          body: {},
+          headers: {},
+          fetchImpl: makeFetch(402, 'billing quota exceeded'),
+        }),
+      ),
+    ).rejects.toSatisfy((e: unknown) => {
+      if (!isLLMError(e)) return false
+      return e.reason._tag === 'QuotaExceeded'
+    })
+  })
+
+  it('throws ContentPolicy when body mentions content filter', async () => {
+    await expect(
+      collect(
+        streamHTTP({
+          url: 'https://example.com',
+          body: {},
+          headers: {},
+          fetchImpl: makeFetch(400, 'blocked by content filter'),
+        }),
+      ),
+    ).rejects.toSatisfy((e: unknown) => {
+      if (!isLLMError(e)) return false
+      return e.reason._tag === 'ContentPolicy'
+    })
+  })
+
+  it('classifies bodyless 413 as context-overflow', async () => {
+    await expect(
+      collect(
+        streamHTTP({
+          url: 'https://example.com',
+          body: {},
+          headers: {},
+          fetchImpl: makeFetch(413, ''),
+        }),
+      ),
+    ).rejects.toSatisfy((e: unknown) => {
+      if (!isLLMError(e)) return false
+      return e.reason._tag === 'InvalidRequest' && e.reason.classification === 'context-overflow'
+    })
+  })
 })

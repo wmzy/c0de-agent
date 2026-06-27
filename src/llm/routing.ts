@@ -50,14 +50,16 @@ const runWithFallback = async <T>(
 
 /**
  * Whether an error should trigger a fallback after retries are exhausted.
- * Only ProviderInternal (5xx/overloaded) and RateLimit fall over. Auth,
- * context-overflow, invalid request, and transport errors propagate.
+ * Per spec §7.6: RateLimit (after retries), ProviderInternal, and Authentication
+ * fall over to the next route. Context-overflow, invalid request, and transport
+ * errors propagate without trying fallbacks.
  */
 const shouldFallOver = (error: unknown): boolean => {
   if (!isLLMError(error)) return false
   const reason = error.reason
   if (reason._tag === 'ProviderInternal') return true
   if (reason._tag === 'RateLimit') return true
+  if (reason._tag === 'Authentication') return true
   return false
 }
 

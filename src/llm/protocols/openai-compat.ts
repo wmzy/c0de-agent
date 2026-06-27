@@ -186,16 +186,40 @@ const mapFinishReason = (raw: string | null | undefined): FinishReason => {
 type StepState = {
   lifecycle: LifecycleState
   tools: ToolStreamState
+  /** Finish reason seen but not yet finalized (waiting for trailing usage chunk). */
+  pendingFinish: FinishReason | null
 }
 
 const initialStepState = (): StepState => ({
   lifecycle: lifecycleInitial(),
   tools: emptyTools(),
+  pendingFinish: null,
 })
 
+/** Map an OpenAI usage object to the internal Usage fields. */
+const mapUsage = (raw: NonNullable<OpenAIStreamChunk['usage']>) => ({
+  inputTokens: raw.prompt_tokens,
+  outputTokens: raw.completion_tokens,
+  cacheReadInputTokens: raw.prompt_tokens_details?.cached_tokens,
+  totalTokens: raw.total_tokens,
+  providerMetadata: { openai: raw } as ProviderMetadata,
+})
+
+/** Finalize the stream: close open blocks, emit step-finish + finish. */
+const finalize = (
+  lifecycle: LifecycleState,
+  events: StreamEvent[],
+  reason: FinishReason,
+  usage?: ReturnType<typeof mapUsage>,
+): LifecycleState => lifecycleFinish(lifecycle, events, { reason, usage }).state
+
 /**
- * Fold one OpenAI stream chunk into (next state, events). When the chunk
- * carries a finish_reason or usage, the stream is finalized.
+ * Fold one OpenAI stream chunk into (next state, events).
+ *
+ * OpenAI sends finish_reason in the penultimate chunk and usage in a SEPARATE
+ * trailing chunk (choices: []) when stream_options.include_usage is set. So we
+ * defer finalization: on finish_reason without usage we stash the reason; the
+ * trailing usage chunk triggers the finish. `done` is only true once finalized.
  */
 const step = (
   state: StepState,
@@ -204,19 +228,18 @@ const step = (
   const events: StreamEvent[] = []
   let lifecycle = state.lifecycle
   let tools = state.tools
+  let pendingFinish = state.pendingFinish
   let done = false
 
   const choice = chunk.choices?.[0]
   if (choice !== undefined && choice.delta !== undefined) {
     const delta = choice.delta
     if (delta.content !== undefined && delta.content.length > 0) {
-      const r = textDelta(lifecycle, events, 'text-main', delta.content)
-      lifecycle = r.state
+      lifecycle = textDelta(lifecycle, events, 'text-main', delta.content).state
     }
     const reasoning = delta.reasoning_content ?? delta.reasoning
     if (reasoning !== undefined && reasoning.length > 0) {
-      const r = reasoningDelta(lifecycle, events, 'reasoning-main', reasoning)
-      lifecycle = r.state
+      lifecycle = reasoningDelta(lifecycle, events, 'reasoning-main', reasoning).state
     }
     if (delta.tool_calls !== undefined) {
       for (const tc of delta.tool_calls) {
@@ -239,27 +262,31 @@ const step = (
       const finishTools = finishAll(tools)
       tools = finishTools.state
       events.push(...finishTools.events)
-      const usage = chunk.usage
-        ? {
-            inputTokens: chunk.usage.prompt_tokens,
-            outputTokens: chunk.usage.completion_tokens,
-            cacheReadInputTokens: chunk.usage.prompt_tokens_details?.cached_tokens,
-            totalTokens: chunk.usage.total_tokens,
-            providerMetadata: { openai: chunk.usage } as ProviderMetadata,
-          }
-        : undefined
-      const fr = lifecycleFinish(lifecycle, events, {
-        reason: mapFinishReason(choice.finish_reason),
-        usage,
-      })
-      lifecycle = fr.state
-      done = true
+      pendingFinish = mapFinishReason(choice.finish_reason)
+      if (chunk.usage !== undefined) {
+        lifecycle = finalize(lifecycle, events, pendingFinish, mapUsage(chunk.usage))
+        done = true
+        pendingFinish = null
+      }
     }
   } else if (chunk.usage !== undefined) {
+    // Trailing usage-only chunk (choices empty) — finalize with stashed reason.
+    const reason = pendingFinish ?? 'stop'
+    lifecycle = finalize(lifecycle, events, reason, mapUsage(chunk.usage))
     done = true
+    pendingFinish = null
   }
 
-  return { state: { lifecycle, tools }, events, done }
+  return { state: { lifecycle, tools, pendingFinish }, events, done }
+}
+
+/** Finalize a stream that ended without a trailing usage chunk (no-op if already finished). */
+const finalizeStream = (state: StepState): { events: StreamEvent[] } => {
+  if (state.pendingFinish === null) return { events: [] }
+  const events: StreamEvent[] = []
+  const lifecycle = finalize(state.lifecycle, events, state.pendingFinish)
+  void lifecycle
+  return { events }
 }
 
 /** Parse a raw SSE data string into an OpenAI stream chunk; throws on bad JSON. */
@@ -321,4 +348,12 @@ export type {
   RouteConfig,
   StepState,
 }
-export { bodyFrom, initialStepState, mapFinishReason, openAICompatRoute, parseChunk, step }
+export {
+  bodyFrom,
+  finalizeStream,
+  initialStepState,
+  mapFinishReason,
+  openAICompatRoute,
+  parseChunk,
+  step,
+}
