@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
@@ -7,6 +7,8 @@ import type { StreamChunk } from '../shared/types/llm.js'
 import type { Message, Session } from '../shared/types/message.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
+import { createHookRunner } from '../plugins/hooks.js'
+import type { HookRunner } from '../plugins/types.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
 import { agentLoop } from './loop.js'
@@ -49,6 +51,23 @@ function makeMockDeps(db: LoopDeps['db'], streamFn: () => AsyncGenerator<StreamC
     config: DEFAULT_CONFIG,
     cwd: process.cwd(),
     chatStream: streamFn as unknown as LoopDeps['chatStream'],
+  }
+}
+
+function makeMockDepsWithHooks(
+  db: LoopDeps['db'],
+  streamFn: () => AsyncGenerator<StreamChunk>,
+  hookRunner: HookRunner,
+): LoopDeps {
+  return {
+    db,
+    llmRegistry: {} as LoopDeps['llmRegistry'],
+    toolRegistry: createDefaultRegistry(),
+    permission: autoAllowChecker,
+    config: DEFAULT_CONFIG,
+    cwd: process.cwd(),
+    chatStream: streamFn as unknown as LoopDeps['chatStream'],
+    hookRunner,
   }
 }
 
@@ -153,5 +172,91 @@ describe('agentLoop', () => {
       // consume
     }
     expect(state.steeringQueue).toEqual([])
+  })
+})
+
+describe('agentLoop with hookRunner', () => {
+  it('fires provider:before hook before LLM call', async () => {
+    const hookRunner = createHookRunner()
+    const beforeHandler = vi.fn((data) => data)
+    hookRunner.on('provider:before', beforeHandler)
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDepsWithHooks(db, () => mockTextStream('hello'), hookRunner)
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+    expect(beforeHandler).toHaveBeenCalledOnce()
+    const callArg = beforeHandler.mock.calls[0][0]
+    expect(callArg.request.model).toBe('mock')
+  })
+
+  it('aborts when provider:before returns false', async () => {
+    const hookRunner = createHookRunner()
+    hookRunner.on('provider:before', () => false)
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDepsWithHooks(db, () => mockTextStream('should-not-appear'), hookRunner)
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+    expect(events.some((e) => e._tag === 'error')).toBe(true)
+    expect(events.some((e) => e._tag === 'text_delta')).toBe(false)
+  })
+
+  it('fires message:before hook with messages array', async () => {
+    const hookRunner = createHookRunner()
+    const beforeHandler = vi.fn((data) => data)
+    hookRunner.on('message:before', beforeHandler)
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDepsWithHooks(db, () => mockTextStream('ok'), hookRunner)
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    expect(beforeHandler).toHaveBeenCalledOnce()
+    const callArg = beforeHandler.mock.calls[0][0]
+    expect(Array.isArray(callArg.messages)).toBe(true)
+    expect(callArg.messages.length).toBeGreaterThan(0)
+  })
+
+  it('fires provider:after hook after stream completes', async () => {
+    const hookRunner = createHookRunner()
+    const afterHandler = vi.fn()
+    hookRunner.on('provider:after', afterHandler)
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDepsWithHooks(db, () => mockTextStream('response'), hookRunner)
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    expect(afterHandler).toHaveBeenCalledOnce()
+    const callArg = afterHandler.mock.calls[0][0]
+    expect(callArg.chunks.length).toBeGreaterThan(0)
+    expect(callArg.chunks.some((c: StreamChunk) => c._tag === 'text')).toBe(true)
+  })
+
+  it('passes hookRunner to executeToolCalls (tool:before fires)', async () => {
+    const hookRunner = createHookRunner()
+    const toolBeforeHandler = vi.fn((data) => data)
+    hookRunner.on('tool:before', toolBeforeHandler)
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDepsWithHooks(db, () => mockToolThenTextStream(), hookRunner)
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+    // mockToolThenTextStream yields a read tool call on turn 0
+    expect(toolBeforeHandler).toHaveBeenCalledOnce()
+    const callArg = toolBeforeHandler.mock.calls[0][0]
+    expect(callArg.tool).toBe('read')
   })
 })

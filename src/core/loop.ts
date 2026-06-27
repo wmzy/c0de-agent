@@ -3,7 +3,8 @@ import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
 import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
-import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
+import type { HookRunner } from '../plugins/types.js'
+import type { ChatRequest, ChatTool, StreamChunk } from '../shared/types/llm.js'
 import type { MessageContent } from '../shared/types/message.js'
 import type { ToolResult } from '../shared/types/tool.js'
 import { createSummarizer, runCompaction } from './compact.js'
@@ -53,10 +54,19 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     const steering = drainSteering(state)
 
     const { entries, snapshots } = await getSessionContext(deps.db, state.session.id)
-    const chatMessages = entriesToChatMessages(entries, snapshots)
+    let chatMessages = entriesToChatMessages(entries, snapshots)
 
     for (const s of steering) {
       chatMessages.push({ role: 'system', content: s })
+    }
+
+    if (deps.hookRunner) {
+      const hookResult = await deps.hookRunner.runHooks('message:before', { messages: chatMessages })
+      if (hookResult === false) {
+        yield { _tag: 'error', error: { _tag: 'unexpected', message: 'Aborted by message:before hook' } }
+        return
+      }
+      chatMessages = hookResult.messages
     }
 
     const systemPrompt =
@@ -77,7 +87,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       parameters: t.parameters,
     }))
 
-    const request: ChatRequest = {
+    let request: ChatRequest = {
       model: state.config.model,
       messages: chatMessages,
       tools: tools.length > 0 ? tools : undefined,
@@ -87,6 +97,16 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       ...(state.config.temperature !== undefined ? { temperature: state.config.temperature } : {}),
     }
 
+    if (deps.hookRunner) {
+      const hookResult = await deps.hookRunner.runHooks('provider:before', { request })
+      if (hookResult === false) {
+        yield { _tag: 'error', error: { _tag: 'unexpected', message: 'Aborted by provider:before hook' } }
+        return
+      }
+      request = hookResult.request
+    }
+
+    const collectedChunks = deps.hookRunner ? [] as StreamChunk[] : undefined
     const collectedText: string[] = []
     const collectedToolCalls: Map<string, CollectedToolCall> = new Map()
     const toolCallArgs: Map<string, string> = new Map()
@@ -101,6 +121,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         request,
         { provider: state.config.provider, model: state.config.model },
       )) {
+        if (collectedChunks) collectedChunks.push(chunk)
         if (state.abortController.signal.aborted) {
           yield { _tag: 'error', error: { _tag: 'aborted' } }
           return
@@ -188,6 +209,10 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       return
     }
 
+    if (deps.hookRunner && collectedChunks) {
+      await deps.hookRunner.fireHooks('provider:after', { request, chunks: collectedChunks })
+    }
+
     if (hadError) {
       state.status = { _tag: 'stopped', reason: 'error' }
       return
@@ -206,10 +231,13 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       })
     }
     if (assistantContent.length > 0) {
-      await appendMessage(deps.db, state.session.id, {
+      const savedMsg = await appendMessage(deps.db, state.session.id, {
         role: 'assistant',
         content: assistantContent,
       })
+      if (deps.hookRunner) {
+        await deps.hookRunner.fireHooks('message:after', { message: savedMsg })
+      }
     }
 
     if (collectedToolCalls.size > 0) {
@@ -229,6 +257,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
           abort: state.abortController.signal,
         },
         calls,
+        deps.hookRunner,
       )
       for (const { id, result } of results) {
         yield { _tag: 'tool_call_end', id, result }
