@@ -1,0 +1,69 @@
+import { describe, it, expect } from 'vitest'
+import {
+  autoAllowChecker,
+  bashTool,
+  createDefaultRegistry,
+  createPermissionChecker,
+  createToolRegistry,
+  editTool,
+  executeTool,
+  getTool,
+  globToRegex,
+  globTool,
+  grepTool,
+  listTools,
+  readTool,
+  registerTool,
+  truncateOutput,
+  validateInput,
+  writeTool,
+} from './index.js'
+import type { ToolContext } from '../shared/types/tool.js'
+
+describe('tools index', () => {
+  it('exports all framework functions', () => {
+    expect(createToolRegistry).toBeDefined()
+    expect(registerTool).toBeDefined()
+    expect(getTool).toBeDefined()
+    expect(listTools).toBeDefined()
+    expect(executeTool).toBeDefined()
+    expect(validateInput).toBeDefined()
+    expect(truncateOutput).toBeDefined()
+    expect(createPermissionChecker).toBeDefined()
+    expect(autoAllowChecker).toBeDefined()
+  })
+
+  it('exports all builtin tools', () => {
+    expect(readTool.name).toBe('read')
+    expect(writeTool.name).toBe('write')
+    expect(editTool.name).toBe('edit')
+    expect(globTool.name).toBe('glob')
+    expect(grepTool.name).toBe('grep')
+    expect(bashTool.name).toBe('bash')
+  })
+
+  it('createDefaultRegistry registers all 6 tools', () => {
+    const reg = createDefaultRegistry()
+    const tools = listTools(reg)
+    const names = tools.map((t) => t.name).sort()
+    expect(names).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'write'])
+  })
+
+  it('can execute read via default registry', async () => {
+    const reg = createDefaultRegistry()
+    const ctx: ToolContext = {
+      cwd: process.cwd(),
+      session: { id: 's1', cwd: process.cwd() },
+      abort: new AbortController().signal,
+    }
+    const result = await executeTool(reg, 'glob', { pattern: 'package.json' }, ctx, autoAllowChecker)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toContain('package.json')
+    }
+  })
+
+  it('exports globToRegex', () => {
+    expect(globToRegex('*.ts').test('foo.ts')).toBe(true)
+  })
+})
