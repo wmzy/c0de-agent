@@ -4,7 +4,7 @@ import { sessions } from '../db/schema.js'
 import type { Session, SessionMetadata } from '../shared/types/message.js'
 
 /** Convert a DB row (with Date timestamps) to the shared Session type (with number timestamps). */
-function rowToSession(row: typeof sessions.$inferSelect): Session {
+export function rowToSession(row: typeof sessions.$inferSelect): Session {
   const created = row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime()
   const updated = row.updatedAt instanceof Date ? row.updatedAt.getTime() : new Date(row.updatedAt).getTime()
   return {
