@@ -177,6 +177,13 @@ export default defineConfig({
           include: ['src/**/*.test.ts'],
           exclude: ['src/web/**', 'node_modules'],
           testTimeout: 30_000,
+          // ⚠️ 必需：动态 import 项目根外的临时文件（如 loader.test.ts 的 /tmp 插件）
+          // 走 Node 原生 ESM，不经 vite transform，否则 projects 模式下 resolve 失败
+          server: {
+            deps: {
+              external: [/^\/tmp\//],
+            },
+          },
         },
       },
       {
