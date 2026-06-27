@@ -1,0 +1,53 @@
+import { drizzle } from 'drizzle-orm/pglite'
+import type { PgliteDatabase } from 'drizzle-orm/pglite'
+import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres'
+import { Pool } from 'pg'
+import * as schema from './schema.js'
+import type { DBConfig } from './types.js'
+
+/**
+ * Unified database handle.
+ * `db` is the Drizzle ORM instance with schema bound.
+ * `close()` cleans up the connection.
+ */
+type DB = {
+  db: PgliteDatabase<typeof schema>
+  close(): Promise<void>
+}
+
+/**
+ * Create a database connection.
+ *
+ * - PGLite mode: in-process WASM Postgres, no server needed.
+ *   Pass `dataDir` for persistent storage, omit for in-memory (tests).
+ * - PostgreSQL mode: connects to a real PG server via connection string.
+ */
+async function createDB(config: DBConfig): Promise<DB> {
+  if (config.driver === 'pglite') {
+    const connection =
+      config.dataDir && config.dataDir !== ':memory:'
+        ? { dataDir: config.dataDir }
+        : undefined
+    const db = drizzle({ schema, connection })
+    return {
+      db,
+      async close() {
+        // PGLite manages its own lifecycle via the drizzle connection
+      },
+    }
+  }
+
+  // PostgreSQL mode — cast to PgliteDatabase for a unified interface.
+  // The underlying Drizzle ORM query API is identical across drivers.
+  const pool = new Pool({ connectionString: config.connectionString })
+  const db = drizzlePg(pool, { schema }) as unknown as PgliteDatabase<typeof schema>
+  return {
+    db,
+    async close() {
+      await pool.end()
+    },
+  }
+}
+
+export type { DB }
+export { createDB }
