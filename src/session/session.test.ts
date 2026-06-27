@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { createSession, deleteSession, getSession, listSessions, touchSession, updateSessionTitle } from './session.js'
+import {
+  createSession,
+  deleteSession,
+  getSession,
+  listSessions,
+  touchSession,
+  updateSessionTitle,
+} from './session.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })

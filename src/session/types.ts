@@ -1,10 +1,10 @@
-import type { ChatMessage } from '../shared/types/llm.js'
 import type { MessageRole } from '../shared/types/base.js'
+import type { ChatMessage } from '../shared/types/llm.js'
 import type { Message, MessageContent, Session, SessionMetadata } from '../shared/types/message.js'
 
+export type { MessageRole } from '../shared/types/base.js'
 // Re-export shared types so consumers can import everything from the session barrel.
 export type { ChatMessage, Message, MessageContent, Session, SessionMetadata }
-export type { MessageRole } from '../shared/types/base.js'
 
 /** A compaction summary entry — replaces compacted messages with a summary. */
 type CompactionEntry = {

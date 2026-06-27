@@ -3,8 +3,8 @@ import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import type { MessageContent } from '../shared/types/message.js'
-import { createSession } from './session.js'
 import { appendMessage, deleteMessagesAfter, getMessageCount, getMessages } from './message.js'
+import { createSession } from './session.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
@@ -25,7 +25,10 @@ describe('message operations', () => {
   })
 
   it('appends a message and returns it with generated id/timestamp', async () => {
-    const msg = await appendMessage(handle, sessionId, { role: 'user', content: textContent('Hello') })
+    const msg = await appendMessage(handle, sessionId, {
+      role: 'user',
+      content: textContent('Hello'),
+    })
     expect(msg.id).toBeTruthy()
     expect(msg.sessionId).toBe(sessionId)
     expect(msg.role).toBe('user')

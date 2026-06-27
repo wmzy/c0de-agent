@@ -2,10 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import type { MessageContent } from '../shared/types/message.js'
-import { appendMessage } from './message.js'
-import { createSession } from './session.js'
 import { generateId } from '../shared/index.js'
+import type { MessageContent } from '../shared/types/message.js'
 import {
   archiveOriginalEntries,
   getArchive,
@@ -14,6 +12,8 @@ import {
   resolveArchiveReference,
   searchArchives,
 } from './archive.js'
+import { appendMessage } from './message.js'
+import { createSession } from './session.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
@@ -33,14 +33,34 @@ describe('archives', () => {
   })
 
   it('archives entries and returns an archive id', async () => {
-    const msg = await appendMessage(handle, sessionId, { role: 'user', content: textContent('hello world') })
-    const archiveId = await archiveOriginalEntries(handle, sessionId, [msg], 'compaction', 'Summary text', generateId())
+    const msg = await appendMessage(handle, sessionId, {
+      role: 'user',
+      content: textContent('hello world'),
+    })
+    const archiveId = await archiveOriginalEntries(
+      handle,
+      sessionId,
+      [msg],
+      'compaction',
+      'Summary text',
+      generateId(),
+    )
     expect(archiveId).toBeTruthy()
   })
 
   it('retrieves an archive by id', async () => {
-    const msg = await appendMessage(handle, sessionId, { role: 'user', content: textContent('content') })
-    const archiveId = await archiveOriginalEntries(handle, sessionId, [msg], 'compaction', 'My summary', generateId())
+    const msg = await appendMessage(handle, sessionId, {
+      role: 'user',
+      content: textContent('content'),
+    })
+    const archiveId = await archiveOriginalEntries(
+      handle,
+      sessionId,
+      [msg],
+      'compaction',
+      'My summary',
+      generateId(),
+    )
     const archive = await getArchive(handle, archiveId)
     expect(archive?.summary).toBe('My summary')
     expect(archive?.archiveType).toBe('compaction')
@@ -52,17 +72,47 @@ describe('archives', () => {
   })
 
   it('gets original entries from an archive', async () => {
-    const msg = await appendMessage(handle, sessionId, { role: 'user', content: textContent('original') })
-    const archiveId = await archiveOriginalEntries(handle, sessionId, [msg], 'compaction', 'summary', generateId())
+    const msg = await appendMessage(handle, sessionId, {
+      role: 'user',
+      content: textContent('original'),
+    })
+    const archiveId = await archiveOriginalEntries(
+      handle,
+      sessionId,
+      [msg],
+      'compaction',
+      'summary',
+      generateId(),
+    )
     const originals = await getArchiveOriginalEntries(handle, archiveId)
     expect(originals).toHaveLength(1)
   })
 
   it('searches archives by keyword', async () => {
-    const msg1 = await appendMessage(handle, sessionId, { role: 'user', content: textContent('alpha beta') })
-    const msg2 = await appendMessage(handle, sessionId, { role: 'user', content: textContent('gamma delta') })
-    await archiveOriginalEntries(handle, sessionId, [msg1], 'compaction', 'alpha summary', generateId())
-    await archiveOriginalEntries(handle, sessionId, [msg2], 'compaction', 'gamma summary', generateId())
+    const msg1 = await appendMessage(handle, sessionId, {
+      role: 'user',
+      content: textContent('alpha beta'),
+    })
+    const msg2 = await appendMessage(handle, sessionId, {
+      role: 'user',
+      content: textContent('gamma delta'),
+    })
+    await archiveOriginalEntries(
+      handle,
+      sessionId,
+      [msg1],
+      'compaction',
+      'alpha summary',
+      generateId(),
+    )
+    await archiveOriginalEntries(
+      handle,
+      sessionId,
+      [msg2],
+      'compaction',
+      'gamma summary',
+      generateId(),
+    )
     const results = await searchArchives(handle, sessionId, 'alpha')
     expect(results).toHaveLength(1)
     expect(results[0]?.summary).toContain('alpha')
@@ -71,7 +121,10 @@ describe('archives', () => {
 
 describe('parseArchiveReference', () => {
   it('parses @[archive:<id>]', () => {
-    expect(parseArchiveReference('see @[archive:abc-123]')).toEqual({ type: 'archive', id: 'abc-123' })
+    expect(parseArchiveReference('see @[archive:abc-123]')).toEqual({
+      type: 'archive',
+      id: 'abc-123',
+    })
   })
 
   it('parses @[squash:<n>]', () => {
@@ -97,14 +150,30 @@ describe('resolveArchiveReference', () => {
   })
 
   it('resolves an archive reference to summary text', async () => {
-    const msg = await appendMessage(handle, sessionId, { role: 'user', content: textContent('data') })
-    const archiveId = await archiveOriginalEntries(handle, sessionId, [msg], 'compaction', 'Resolved summary', generateId())
-    const text = await resolveArchiveReference(handle, sessionId, { type: 'archive', id: archiveId })
+    const msg = await appendMessage(handle, sessionId, {
+      role: 'user',
+      content: textContent('data'),
+    })
+    const archiveId = await archiveOriginalEntries(
+      handle,
+      sessionId,
+      [msg],
+      'compaction',
+      'Resolved summary',
+      generateId(),
+    )
+    const text = await resolveArchiveReference(handle, sessionId, {
+      type: 'archive',
+      id: archiveId,
+    })
     expect(text).toContain('Resolved summary')
   })
 
   it('returns null for missing archive', async () => {
-    const text = await resolveArchiveReference(handle, sessionId, { type: 'archive', id: 'missing' })
+    const text = await resolveArchiveReference(handle, sessionId, {
+      type: 'archive',
+      id: 'missing',
+    })
     expect(text).toBeNull()
   })
 })

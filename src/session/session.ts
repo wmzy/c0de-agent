@@ -5,8 +5,10 @@ import type { Session, SessionMetadata } from '../shared/types/message.js'
 
 /** Convert a DB row (with Date timestamps) to the shared Session type (with number timestamps). */
 export function rowToSession(row: typeof sessions.$inferSelect): Session {
-  const created = row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime()
-  const updated = row.updatedAt instanceof Date ? row.updatedAt.getTime() : new Date(row.updatedAt).getTime()
+  const created =
+    row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime()
+  const updated =
+    row.updatedAt instanceof Date ? row.updatedAt.getTime() : new Date(row.updatedAt).getTime()
   return {
     id: row.id,
     title: row.title,
@@ -21,7 +23,8 @@ export function rowToSession(row: typeof sessions.$inferSelect): Session {
 /** Create a new root session. */
 async function createSession(handle: DB, title: string): Promise<Session> {
   const [row] = await handle.db.insert(sessions).values({ title }).returning()
-  return rowToSession(row!)
+  if (!row) throw new Error('Failed to insert session')
+  return rowToSession(row)
 }
 
 /** Get a session by id, or null if not found. */

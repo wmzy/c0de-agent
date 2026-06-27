@@ -3,7 +3,12 @@ import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { createSession } from './session.js'
-import { checkFileSnapshot, getFileSnapshots, getLatestFileSnapshot, upsertFileSnapshot } from './snapshot.js'
+import {
+  checkFileSnapshot,
+  getFileSnapshots,
+  getLatestFileSnapshot,
+  upsertFileSnapshot,
+} from './snapshot.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })

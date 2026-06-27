@@ -3,9 +3,9 @@ import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import type { MessageContent } from '../shared/types/message.js'
+import { forkSession, getBranches, getTree } from './branch.js'
 import { appendMessage, getEntries, getMessages } from './message.js'
 import { createSession } from './session.js'
-import { forkSession, getBranches, getTree } from './branch.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })

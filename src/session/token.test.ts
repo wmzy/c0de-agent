@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { estimateMessageTokens, estimateTokens } from './token.js'
 import type { MessageContent } from '../shared/types/message.js'
+import { estimateMessageTokens, estimateTokens } from './token.js'
 
 describe('estimateTokens', () => {
   it('returns 0 for empty string', () => {

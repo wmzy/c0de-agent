@@ -2,10 +2,11 @@ import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessionEntries } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
-import type { Message, MessageContent, MessageRole } from '../shared/types/message.js'
-import type { MessageInput, SessionEntry } from './types.js'
-import { estimateMessageTokens } from './token.js'
+import type { MessageRole } from '../shared/types/base.js'
+import type { Message, MessageContent } from '../shared/types/message.js'
 import { touchSession } from './session.js'
+import { estimateMessageTokens } from './token.js'
+import type { MessageInput, SessionEntry } from './types.js'
 
 /** Convert a Date-like DB value to epoch milliseconds. */
 function toEpochMs(value: Date | string | number): number {
@@ -94,7 +95,8 @@ async function appendMessage(handle: DB, sessionId: string, input: MessageInput)
     })
     .returning()
   await touchSession(handle, sessionId)
-  return rowToMessage(row!)
+  if (!row) throw new Error('Failed to insert message')
+  return rowToMessage(row)
 }
 
 /** Get messages for a session (tag='message' only), ordered chronologically. */
@@ -123,11 +125,20 @@ async function getMessageCount(handle: DB, sessionId: string): Promise<number> {
 }
 
 /** Delete all messages after the given 0-based index (keeps 0..index inclusive). */
-async function deleteMessagesAfter(handle: DB, sessionId: string, messageIndex: number): Promise<void> {
+async function deleteMessagesAfter(
+  handle: DB,
+  sessionId: string,
+  messageIndex: number,
+): Promise<void> {
   const messages = await getMessages(handle, sessionId)
   const toDelete = messages.slice(messageIndex + 1)
   if (toDelete.length > 0) {
-    await handle.db.delete(sessionEntries).where(inArray(sessionEntries.id, toDelete.map((m) => m.id)))
+    await handle.db.delete(sessionEntries).where(
+      inArray(
+        sessionEntries.id,
+        toDelete.map((m) => m.id),
+      ),
+    )
   }
 }
 
@@ -153,7 +164,8 @@ async function insertEntry(
   values: typeof sessionEntries.$inferInsert,
 ): Promise<typeof sessionEntries.$inferSelect> {
   const [row] = await handle.db.insert(sessionEntries).values(values).returning()
-  return row!
+  if (!row) throw new Error('Failed to insert entry')
+  return row
 }
 
 export {

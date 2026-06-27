@@ -2,9 +2,9 @@ import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
-import type { Session, SessionTreeNode } from './types.js'
-import { createSession, getSession, rowToSession } from './session.js'
 import { getMessages, insertEntry } from './message.js'
+import { createSession, getSession, rowToSession } from './session.js'
+import type { Session, SessionTreeNode } from './types.js'
 
 /** Fork a session at a message index — copies messages 0..index into a new child session. */
 async function forkSession(handle: DB, sessionId: string, messageIndex: number): Promise<Session> {
@@ -42,7 +42,8 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
   })
 
   const updated = await getSession(handle, forked.id)
-  return updated!
+  if (!updated) throw new Error('Forked session not found after creation')
+  return updated
 }
 
 /** Get direct child sessions (branches) of a session. */
