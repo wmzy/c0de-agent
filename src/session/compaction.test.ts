@@ -3,9 +3,14 @@ import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
+import {
+  buildCompactionPrompt,
+  compactSession,
+  extractHotFiles,
+  findSafeCutPoint,
+} from './compaction.js'
 import { appendMessage, getEntries, getMessages } from './message.js'
 import { createSession } from './session.js'
-import { buildCompactionPrompt, compactSession, extractHotFiles, findSafeCutPoint } from './compaction.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
@@ -62,7 +67,14 @@ describe('extractHotFiles', () => {
         id: 'm2',
         sessionId: 's',
         role: 'tool',
-        content: [{ _tag: 'tool_result', id: 'c1', tool: 'read', output: { _tag: 'success', output: 'content-a' } }],
+        content: [
+          {
+            _tag: 'tool_result',
+            id: 'c1',
+            tool: 'read',
+            output: { _tag: 'success', output: 'content-a' },
+          },
+        ],
         tokenCount: 1,
         createdAt: 1,
       },
@@ -78,7 +90,14 @@ describe('extractHotFiles', () => {
         id: 'm4',
         sessionId: 's',
         role: 'tool',
-        content: [{ _tag: 'tool_result', id: 'c2', tool: 'read', output: { _tag: 'success', output: 'content-a-v2' } }],
+        content: [
+          {
+            _tag: 'tool_result',
+            id: 'c2',
+            tool: 'read',
+            output: { _tag: 'success', output: 'content-a-v2' },
+          },
+        ],
         tokenCount: 1,
         createdAt: 3,
       },
@@ -108,8 +127,22 @@ describe('extractHotFiles', () => {
 describe('buildCompactionPrompt', () => {
   it('includes section headers and entry content', () => {
     const messages: Message[] = [
-      { id: 'm1', sessionId: 's', role: 'user', content: textContent('do something'), tokenCount: 1, createdAt: 0 },
-      { id: 'm2', sessionId: 's', role: 'assistant', content: textContent('done'), tokenCount: 1, createdAt: 1 },
+      {
+        id: 'm1',
+        sessionId: 's',
+        role: 'user',
+        content: textContent('do something'),
+        tokenCount: 1,
+        createdAt: 0,
+      },
+      {
+        id: 'm2',
+        sessionId: 's',
+        role: 'assistant',
+        content: textContent('done'),
+        tokenCount: 1,
+        createdAt: 1,
+      },
     ]
     const prompt = buildCompactionPrompt(messages)
     expect(prompt).toContain('## Goal')
@@ -141,9 +174,14 @@ describe('compactSession', () => {
         content: textContent(`msg-${i}`),
       })
     }
-    const result = await compactSession(handle, sessionId, async (prompt) => `SUMMARY: ${prompt.slice(0, 20)}`, {
-      keepRecent: 2,
-    })
+    const result = await compactSession(
+      handle,
+      sessionId,
+      async (prompt) => `SUMMARY: ${prompt.slice(0, 20)}`,
+      {
+        keepRecent: 2,
+      },
+    )
     expect(result.compacted).toBe(true)
     if (result.compacted) {
       expect(result.summary).toContain('SUMMARY')
@@ -176,5 +214,21 @@ describe('compactSession', () => {
     await compactSession(handle, sessionId, async () => 'summary', { keepRecent: 2 })
     const remaining = await getMessages(handle, sessionId)
     expect(remaining).toHaveLength(2)
+  })
+
+  it('places the compaction summary before kept messages in chronological order', async () => {
+    for (let i = 0; i < 6; i++) {
+      await appendMessage(handle, sessionId, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: textContent(`msg-${i}`),
+      })
+    }
+    await compactSession(handle, sessionId, async () => 'compaction summary', { keepRecent: 2 })
+    const entries = await getEntries(handle, sessionId)
+    // Compaction summary must come FIRST, then the kept messages
+    const first = entries[0]
+    expect(first && '_tag' in first && first._tag).toBe('compaction')
+    const rest = entries.slice(1)
+    expect(rest.every((e) => !('_tag' in e))).toBe(true)
   })
 })

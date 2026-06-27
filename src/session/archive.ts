@@ -29,7 +29,14 @@ function rowToArchive(row: typeof compactionArchives.$inferSelect): CompactionAr
 /** Convert an entry to searchable plain text. */
 function entryToSearchableText(entry: SessionEntry): string {
   if ('_tag' in entry) {
-    return entry.summary ?? entry.content ?? ''
+    switch (entry._tag) {
+      case 'compaction':
+      case 'squash':
+      case 'branch_summary':
+        return entry.summary
+      case 'steering':
+        return entry.content
+    }
   }
   return entry.content
     .map((part) => {
@@ -42,6 +49,8 @@ function entryToSearchableText(entry: SessionEntry): string {
           return `${part.tool}: ${JSON.stringify(part.input)}`
         case 'tool_result':
           return JSON.stringify(part.output)
+        default:
+          return ''
       }
     })
     .join(' ')
@@ -76,7 +85,10 @@ async function archiveOriginalEntries(
 async function getArchive(handle: DB, id: string): Promise<CompactionArchive | null> {
   // PGLite rejects non-UUID strings at query time; validate first.
   if (!UUID_RE.test(id)) return null
-  const [row] = await handle.db.select().from(compactionArchives).where(eq(compactionArchives.id, id))
+  const [row] = await handle.db
+    .select()
+    .from(compactionArchives)
+    .where(eq(compactionArchives.id, id))
   return row ? rowToArchive(row) : null
 }
 
@@ -86,15 +98,25 @@ async function getArchiveOriginalEntries(handle: DB, archiveId: string): Promise
   return archive?.originalEntries ?? []
 }
 
+/** Escape LIKE/ILIKE metacharacters so the query is treated as a literal substring. */
+function escapeLikePattern(text: string): string {
+  return text.replace(/[%_\\]/g, '\\$&')
+}
+
 /** Search archives by keyword (case-insensitive substring on searchable text). */
-async function searchArchives(handle: DB, sessionId: string, query: string): Promise<CompactionArchive[]> {
+async function searchArchives(
+  handle: DB,
+  sessionId: string,
+  query: string,
+): Promise<CompactionArchive[]> {
+  const pattern = `%${escapeLikePattern(query)}%`
   const rows = await handle.db
     .select()
     .from(compactionArchives)
     .where(
       and(
         eq(compactionArchives.sessionId, sessionId),
-        ilike(compactionArchives.searchableText, `%${query}%`),
+        ilike(compactionArchives.searchableText, pattern),
       ),
     )
     .orderBy(desc(compactionArchives.createdAt))
@@ -103,11 +125,11 @@ async function searchArchives(handle: DB, sessionId: string, query: string): Pro
 
 /** Parse a `@[archive:<id>]` or `@[squash:<n>]` reference from text. Returns null if none. */
 function parseArchiveReference(text: string): ArchiveRef | null {
-  const archiveMatch = text.match(/@\[archive:([^\]]+)\]/)
-  if (archiveMatch) return { type: 'archive', id: archiveMatch[1]! }
+  const archiveId = text.match(/@\[archive:([^\]]+)\]/)?.[1]
+  if (archiveId) return { type: 'archive', id: archiveId }
 
-  const squashMatch = text.match(/@\[squash:(\d+|last)\]/)
-  if (squashMatch) return { type: 'squash', id: squashMatch[1]! }
+  const squashId = text.match(/@\[squash:(\d+|last)\]/)?.[1]
+  if (squashId) return { type: 'squash', id: squashId }
 
   return null
 }

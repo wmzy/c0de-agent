@@ -70,7 +70,14 @@ function entriesToChatMessages(entries: SessionEntry[], snapshots: FileSnapshot[
 function injectSnapshots(messages: ChatMessage[], snapshots: FileSnapshot[]): ChatMessage[] {
   if (snapshots.length === 0) return messages
 
-  const block = snapshots
+  // Keep only the highest-version snapshot per filePath (avoid stale duplicates).
+  const latestByPath = new Map<string, FileSnapshot>()
+  for (const s of snapshots) {
+    const prev = latestByPath.get(s.filePath)
+    if (!prev || s.version > prev.version) latestByPath.set(s.filePath, s)
+  }
+
+  const block = [...latestByPath.values()]
     .map((s) => `[Cached File: ${s.filePath}]\n\`\`\`\n${s.content}\n\`\`\``)
     .join('\n\n')
 

@@ -1,11 +1,11 @@
-import { generateId } from '../shared/index.js'
 import type { DB } from '../db/client.js'
+import { generateId } from '../shared/index.js'
 import type { Message } from '../shared/types/message.js'
-import type { CompactionConfig, CompactionResult, HotFile, Summarizer } from './types.js'
 import { archiveOriginalEntries } from './archive.js'
 import { deleteEntriesByIds, getMessages, insertEntry } from './message.js'
-import { estimateTokens } from './token.js'
 import { upsertFileSnapshot } from './snapshot.js'
+import { estimateTokens } from './token.js'
+import type { CompactionConfig, CompactionResult, HotFile, Summarizer } from './types.js'
 
 /**
  * Find a safe cut point: the index of the most recent 'user' message
@@ -60,7 +60,10 @@ function extractHotFiles(messages: Message[]): HotFile[] {
 /** Build the LLM summarization prompt for a set of messages. */
 function buildCompactionPrompt(messages: Message[]): string {
   const history = messages
-    .map((m) => `[${m.role}] ${m.content.map((p) => (p._tag === 'text' ? p.text : JSON.stringify(p))).join(' ')}`)
+    .map(
+      (m) =>
+        `[${m.role}] ${m.content.map((p) => (p._tag === 'text' ? p.text : JSON.stringify(p))).join(' ')}`,
+    )
     .join('\n')
 
   return `将以下对话历史压缩为结构化摘要。保留关键信息，丢弃冗余细节。
@@ -136,7 +139,10 @@ async function compactSession(
     }
   }
 
-  await deleteEntriesByIds(handle, compactMessages.map((m) => m.id))
+  await deleteEntriesByIds(
+    handle,
+    compactMessages.map((m) => m.id),
+  )
 
   await insertEntry(handle, {
     id: compactionEntryId,
@@ -148,6 +154,9 @@ async function compactSession(
       archiveId,
     },
     tokenCount: estimateTokens(summary),
+    // Position the summary at the first compacted message's timestamp so it
+    // sorts BEFORE the kept recent messages under createdAt-ascending order.
+    createdAt: compactMessages[0] ? new Date(compactMessages[0].createdAt) : new Date(),
   })
 
   return {

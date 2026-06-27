@@ -1,11 +1,11 @@
-import { generateId } from '../shared/index.js'
 import type { DB } from '../db/client.js'
-import type { CompactionResult, SquashConfig, Summarizer } from './types.js'
+import { generateId } from '../shared/index.js'
 import { archiveOriginalEntries } from './archive.js'
-import { deleteEntriesByIds, getMessages, insertEntry } from './message.js'
-import { estimateTokens } from './token.js'
-import { upsertFileSnapshot } from './snapshot.js'
 import { extractHotFiles } from './compaction.js'
+import { deleteEntriesByIds, getMessages, insertEntry } from './message.js'
+import { upsertFileSnapshot } from './snapshot.js'
+import { estimateTokens } from './token.js'
+import type { CompactionResult, SquashConfig, Summarizer } from './types.js'
 
 const DEFAULT_SQUASH_CONFIG: SquashConfig = {
   keepRecent: 2,
@@ -42,7 +42,10 @@ async function squashRecent(
   }
 
   const history = toSquash
-    .map((m) => `[${m.role}] ${m.content.map((p) => (p._tag === 'text' ? p.text : JSON.stringify(p))).join(' ')}`)
+    .map(
+      (m) =>
+        `[${m.role}] ${m.content.map((p) => (p._tag === 'text' ? p.text : JSON.stringify(p))).join(' ')}`,
+    )
     .join('\n')
 
   const prompt = `将以下最近的交互压缩为简洁摘要，保留关键决策和上下文，丢弃冗余细节。
@@ -80,7 +83,10 @@ ${history}`
     }
   }
 
-  await deleteEntriesByIds(handle, toSquash.map((m) => m.id))
+  await deleteEntriesByIds(
+    handle,
+    toSquash.map((m) => m.id),
+  )
 
   await insertEntry(handle, {
     id: squashEntryId,
@@ -92,6 +98,9 @@ ${history}`
       archiveId,
     },
     tokenCount: estimateTokens(summary),
+    // Position at the first squashed message's timestamp so it sorts between
+    // the prefix and the kept tail under createdAt-ascending order.
+    createdAt: toSquash[0] ? new Date(toSquash[0].createdAt) : new Date(),
   })
 
   return {

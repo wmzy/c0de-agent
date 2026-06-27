@@ -153,6 +153,50 @@ describe('injectSnapshots', () => {
     const messages: ChatMessage[] = [{ role: 'user', content: 'hi' }]
     expect(injectSnapshots(messages, [])).toBe(messages)
   })
+
+  it('deduplicates snapshot versions to latest per file', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: 'hi' },
+    ]
+    const snapshots: FileSnapshot[] = [
+      {
+        id: 's1',
+        sessionId: 'x',
+        filePath: '/a.ts',
+        content: 'v1',
+        contentHash: 'h1',
+        tokenCount: 1,
+        version: 1,
+        createdAt: 0,
+      },
+      {
+        id: 's2',
+        sessionId: 'x',
+        filePath: '/a.ts',
+        content: 'v2',
+        contentHash: 'h2',
+        tokenCount: 1,
+        version: 2,
+        createdAt: 1,
+      },
+      {
+        id: 's3',
+        sessionId: 'x',
+        filePath: '/b.ts',
+        content: 'b1',
+        contentHash: 'h3',
+        tokenCount: 1,
+        version: 1,
+        createdAt: 0,
+      },
+    ]
+    const result = injectSnapshots(messages, snapshots)
+    const block = result[1]?.content as string
+    expect(block).toContain('v2')
+    expect(block).not.toContain('v1')
+    expect(block).toContain('b1')
+  })
 })
 
 describe('getSessionContext', () => {
