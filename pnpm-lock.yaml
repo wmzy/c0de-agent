@@ -75,6 +75,12 @@ importers:
       '@linaria/vite':
         specifier: ^5.0.4
         version: 5.0.4(rollup@4.62.2)(typescript@5.9.3)(vite@6.4.3(@types/node@22.20.0)(terser@5.48.0)(tsx@4.22.4))
+      '@shikijs/langs':
+        specifier: ^1.29.2
+        version: 1.29.2
+      '@shikijs/themes':
+        specifier: ^1.29.2
+        version: 1.29.2
       '@testing-library/jest-dom':
         specifier: ^6.9.1
         version: 6.9.1
