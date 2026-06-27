@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { StreamEvent, ToolCallEvent } from './events.js'
 import {
   foldResponse,
   responseReasoning,
@@ -7,7 +8,6 @@ import {
   usageFrom,
   visibleOutputTokens,
 } from './events.js'
-import type { StreamEvent, ToolCallEvent } from './events.js'
 
 describe('schema/events Usage', () => {
   it('falls back to input+output for totalTokens', () => {

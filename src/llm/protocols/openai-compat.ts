@@ -1,21 +1,21 @@
-import type { GenerationOptions, RouteDefaults } from '../schema/options.js'
-import type { ContentPart, InternalRequest, Message, ToolDefinition } from '../schema/messages.js'
-import type { FinishReason, ProviderMetadata } from '../schema/ids.js'
-import type { StreamEvent } from '../schema/events.js'
 import { llmError } from '../schema/errors.js'
+import type { StreamEvent } from '../schema/events.js'
+import type { FinishReason, ProviderMetadata } from '../schema/ids.js'
+import type { ContentPart, InternalRequest, Message, ToolDefinition } from '../schema/messages.js'
+import type { GenerationOptions, RouteDefaults } from '../schema/options.js'
+import {
+  type LifecycleState,
+  finish as lifecycleFinish,
+  initial as lifecycleInitial,
+  reasoningDelta,
+  textDelta,
+} from './utils/lifecycle.js'
 import {
   appendOrStart,
   empty as emptyTools,
   finishAll,
   type ToolStreamState,
 } from './utils/tool-stream.js'
-import {
-  finish as lifecycleFinish,
-  initial as lifecycleInitial,
-  reasoningDelta,
-  textDelta,
-  type LifecycleState,
-} from './utils/lifecycle.js'
 
 type OpenAIChatRole = 'system' | 'user' | 'assistant' | 'tool'
 
@@ -288,7 +288,9 @@ type RouteConfig = {
 }
 
 /** Build a complete route descriptor for an OpenAI-compatible provider. */
-const openAICompatRoute = (config: RouteConfig): {
+const openAICompatRoute = (
+  config: RouteConfig,
+): {
   id: string
   provider: string
   protocol: 'openai-compat'
@@ -319,11 +321,4 @@ export type {
   RouteConfig,
   StepState,
 }
-export {
-  bodyFrom,
-  initialStepState,
-  mapFinishReason,
-  openAICompatRoute,
-  parseChunk,
-  step,
-}
+export { bodyFrom, initialStepState, mapFinishReason, openAICompatRoute, parseChunk, step }

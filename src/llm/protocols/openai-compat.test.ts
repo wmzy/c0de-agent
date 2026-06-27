@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { isLLMError } from '../schema/errors.js'
+import type { InternalRequest, Message, ToolDefinition } from '../schema/messages.js'
+import { messageAssistant, messageUser } from '../schema/messages.js'
+import { model } from '../schema/options.js'
 import {
   bodyFrom,
   initialStepState,
@@ -7,10 +11,6 @@ import {
   parseChunk,
   step,
 } from './openai-compat.js'
-import { isLLMError } from '../schema/errors.js'
-import { model } from '../schema/options.js'
-import { messageAssistant, messageUser } from '../schema/messages.js'
-import type { InternalRequest, Message, ToolDefinition } from '../schema/messages.js'
 
 const request = (extra?: Partial<InternalRequest>): InternalRequest => ({
   model: model('gpt-4o', 'openai'),

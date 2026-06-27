@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import {
-  messageAssistant,
-  messageSystem,
-  messageUser,
-  requestUpdate,
-} from './messages.js'
-import { model } from './options.js'
 import type { InternalRequest, Message, ToolDefinition } from './messages.js'
+import { messageAssistant, messageSystem, messageUser, requestUpdate } from './messages.js'
+import { model } from './options.js'
 
 describe('schema/messages factories', () => {
   it('messageUser wraps a string in a text part', () => {

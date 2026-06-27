@@ -70,21 +70,25 @@ const mergeGenerationOptions = (
 ): GenerationOptions | undefined => {
   const filtered = opts.filter((o): o is GenerationOptions => o !== undefined)
   if (filtered.length === 0) return undefined
-  return filtered.reduce((acc, o) => ({ ...acc, ...o }), {})
+  const merged: GenerationOptions = {}
+  for (const o of filtered) Object.assign(merged, o)
+  return merged
 }
 
 const mergeHttpOptions = (...opts: (HttpOptions | undefined)[]): HttpOptions | undefined => {
   const filtered = opts.filter((o): o is HttpOptions => o !== undefined)
   if (filtered.length === 0) return undefined
-  return filtered.reduce<HttpOptions>(
-    (acc, o) => ({
-      ...acc,
-      ...o,
-      headers: { ...acc.headers, ...o.headers },
-      query: { ...acc.query, ...o.query },
-    }),
-    {},
-  )
+  const merged: HttpOptions = {}
+  const headers: Record<string, string> = {}
+  const query: Record<string, string> = {}
+  for (const o of filtered) {
+    if (o.body !== undefined) merged.body = o.body
+    if (o.headers !== undefined) Object.assign(headers, o.headers)
+    if (o.query !== undefined) Object.assign(query, o.query)
+  }
+  if (Object.keys(headers).length > 0) merged.headers = headers
+  if (Object.keys(query).length > 0) merged.query = query
+  return merged
 }
 
 const mergeProviderOptions = (
@@ -92,13 +96,13 @@ const mergeProviderOptions = (
 ): ProviderOptions | undefined => {
   const filtered = opts.filter((o): o is ProviderOptions => o !== undefined)
   if (filtered.length === 0) return undefined
-  return filtered.reduce<ProviderOptions>((acc, o) => {
-    const merged: ProviderOptions = { ...acc }
+  const merged: ProviderOptions = {}
+  for (const o of filtered) {
     for (const key of Object.keys(o)) {
-      merged[key] = { ...(acc[key] ?? {}), ...o[key] }
+      merged[key] = { ...(merged[key] ?? {}), ...o[key] }
     }
-    return merged
-  }, {})
+  }
+  return merged
 }
 
 export type {
@@ -112,10 +116,4 @@ export type {
   ProviderOptions,
   RouteDefaults,
 }
-export {
-  mergeGenerationOptions,
-  mergeHttpOptions,
-  mergeProviderOptions,
-  model,
-  modelUpdate,
-}
+export { mergeGenerationOptions, mergeHttpOptions, mergeProviderOptions, model, modelUpdate }

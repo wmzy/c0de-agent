@@ -7,8 +7,8 @@ import type {
   RouteID,
   ToolCallID,
 } from './ids.js'
-import type { Model } from './options.js'
 import type { ToolResultValue } from './messages.js'
+import type { Model } from './options.js'
 
 type Usage = {
   inputTokens?: number
@@ -61,7 +61,11 @@ type ReasoningDelta = {
   text: string
   providerMetadata?: ProviderMetadata
 }
-type ReasoningEnd = { type: 'reasoning-end'; id: ContentBlockID; providerMetadata?: ProviderMetadata }
+type ReasoningEnd = {
+  type: 'reasoning-end'
+  id: ContentBlockID
+  providerMetadata?: ProviderMetadata
+}
 type ToolInputStart = {
   type: 'tool-input-start'
   id: ToolCallID
@@ -161,10 +165,7 @@ type LLMResponse = {
 const foldResponse = (events: StreamEvent[]): LLMResponse => {
   let usage: Usage | undefined
   for (const event of events) {
-    if (
-      (event.type === 'finish' || event.type === 'step-finish') &&
-      event.usage !== undefined
-    ) {
+    if ((event.type === 'finish' || event.type === 'step-finish') && event.usage !== undefined) {
       usage = event.usage
     }
   }

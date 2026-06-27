@@ -38,11 +38,11 @@ const delay = (attempt: number, error?: unknown): number => {
       const parsed = Date.parse(retryAfter) - Date.now()
       if (!Number.isNaN(parsed) && parsed > 0) return capDelay(Math.ceil(parsed))
     }
-    return capDelay(RETRY_INITIAL_DELAY * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1))
+    return capDelay(RETRY_INITIAL_DELAY * RETRY_BACKOFF_FACTOR ** (attempt - 1))
   }
   return capDelay(
     Math.min(
-      RETRY_INITIAL_DELAY * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1),
+      RETRY_INITIAL_DELAY * RETRY_BACKOFF_FACTOR ** (attempt - 1),
       RETRY_MAX_DELAY_NO_HEADERS,
     ),
   )
@@ -100,12 +100,12 @@ const withRetry = async <T>(fn: () => Promise<T>, options: RetryOptions): Promis
   }
 }
 
-export type { RetryOptions, Retryable }
+export type { Retryable, RetryOptions }
 export {
+  delay,
   RETRY_INITIAL_DELAY,
   RETRY_MAX_DELAY,
   RETRY_MAX_DELAY_NO_HEADERS,
-  delay,
   retryable,
   withRetry,
 }

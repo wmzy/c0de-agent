@@ -16,12 +16,13 @@ describe('provider-error isContextOverflow', () => {
     expect(isContextOverflow(msg)).toBe(true)
   })
 
-  it.each(['everything is fine', 'rate limit exceeded', 'unauthorized'])(
-    'does not match non-overflow phrase: %s',
-    (msg) => {
-      expect(isContextOverflow(msg)).toBe(false)
-    },
-  )
+  it.each([
+    'everything is fine',
+    'rate limit exceeded',
+    'unauthorized',
+  ])('does not match non-overflow phrase: %s', (msg) => {
+    expect(isContextOverflow(msg)).toBe(false)
+  })
 })
 
 describe('provider-error isContextOverflowFailure', () => {

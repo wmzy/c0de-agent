@@ -1,8 +1,8 @@
 import type { ModelCapabilities, ModelRole } from '../shared/types/llm.js'
-import { model as makeModel } from './schema/options.js'
-import type { Model } from './schema/options.js'
 import { openAICompatRoute } from './protocols/openai-compat.js'
 import { llmError } from './schema/errors.js'
+import type { Model } from './schema/options.js'
+import { model as makeModel } from './schema/options.js'
 
 type RouteEntry = ReturnType<typeof openAICompatRoute> & {
   models: Record<string, ModelCapabilities>

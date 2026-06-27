@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { ModelRole } from '../shared/types/llm.js'
 import {
   createRegistry,
   registerProvider,
@@ -7,7 +8,6 @@ import {
   setRole,
 } from './registry.js'
 import { isLLMError } from './schema/errors.js'
-import type { ModelRole } from '../shared/types/llm.js'
 
 const defaultRole: ModelRole = { _tag: 'default' }
 

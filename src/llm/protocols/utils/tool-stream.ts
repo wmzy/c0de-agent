@@ -1,4 +1,4 @@
-import type { ToolCallID } from '../../schema/ids.js'
+import { llmError } from '../../schema/errors.js'
 import type {
   StreamEvent,
   ToolCallEvent,
@@ -6,7 +6,7 @@ import type {
   ToolInputEnd,
   ToolInputStart,
 } from '../../schema/events.js'
-import { llmError } from '../../schema/errors.js'
+import type { ToolCallID } from '../../schema/ids.js'
 
 type PendingTool = {
   id: ToolCallID

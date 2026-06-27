@@ -18,14 +18,15 @@ const sseFraming = async function* (
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
-      let sepIndex: number
-      while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+      let sepIndex = buffer.indexOf('\n\n')
+      while (sepIndex !== -1) {
         const block = buffer.slice(0, sepIndex)
         buffer = buffer.slice(sepIndex + 2)
         const data = extractData(block)
         if (data !== null && data.length > 0 && data !== '[DONE]') {
           yield data
         }
+        sepIndex = buffer.indexOf('\n\n')
       }
     }
     const tailData = extractData(buffer)
@@ -165,5 +166,5 @@ const parseRetryAfterMs = (
   return undefined
 }
 
-export { classifyHttpError, sseFraming, streamHTTP }
 export type { StreamHTTPOptions }
+export { classifyHttpError, sseFraming, streamHTTP }

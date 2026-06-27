@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { appendOrStart, empty, finishAll, parseToolInput } from './tool-stream.js'
 import { isLLMError } from '../../schema/errors.js'
+import { appendOrStart, empty, finishAll, parseToolInput } from './tool-stream.js'
 
 describe('tool-stream appendOrStart', () => {
   it('starts a tool on first delta and emits start + delta', () => {

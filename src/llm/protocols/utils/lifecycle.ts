@@ -1,5 +1,5 @@
-import type { ContentBlockID, FinishReason } from '../../schema/ids.js'
 import type { StreamEvent, Usage } from '../../schema/events.js'
+import type { ContentBlockID, FinishReason } from '../../schema/ids.js'
 
 type LifecycleState = {
   stepStarted: boolean

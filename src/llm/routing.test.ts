@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { runWithFallback, shouldFallOver } from './routing.js'
 import { createRegistry, registerProvider } from './registry.js'
-import { llmError } from './schema/errors.js'
-import { isLLMError } from './schema/errors.js'
+import { runWithFallback, shouldFallOver } from './routing.js'
+import { isLLMError, llmError } from './schema/errors.js'
 
 const noSleep = async () => {}
 
@@ -43,7 +42,13 @@ describe('routing runWithFallback', () => {
   it('succeeds on the primary route', async () => {
     const res = await runWithFallback(
       setup(),
-      { primary: { provider: 'a', model: 'm1' }, fallbacks: [], maxRetries: 0, retryDelay: 0, sleep: noSleep },
+      {
+        primary: { provider: 'a', model: 'm1' },
+        fallbacks: [],
+        maxRetries: 0,
+        retryDelay: 0,
+        sleep: noSleep,
+      },
       async () => 'ok',
     )
     expect(res.result).toBe('ok')

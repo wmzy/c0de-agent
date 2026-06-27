@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRequest } from '../shared/types/llm.js'
-import { createRegistry, registerProvider } from './registry.js'
 import { chat, chatStream } from './provider.js'
+import { createRegistry, registerProvider } from './registry.js'
 
 const sseFetch = (body: string): typeof fetch =>
   (async () =>
@@ -41,10 +41,12 @@ describe('provider chatStream', () => {
       .join('')
     expect(text).toBe('hello')
     expect(chunks.some((c) => c._tag === 'done')).toBe(true)
-    const usage = chunks.find((c) => c._tag === 'usage') as {
-      inputTokens: number
-      outputTokens: number
-    } | undefined
+    const usage = chunks.find((c) => c._tag === 'usage') as
+      | {
+          inputTokens: number
+          outputTokens: number
+        }
+      | undefined
     expect(usage?.inputTokens).toBe(3)
   })
 

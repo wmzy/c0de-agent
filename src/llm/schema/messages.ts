@@ -1,3 +1,4 @@
+import type { JsonSchema, ProviderMetadata, ToolCallID } from './ids.js'
 import type {
   CacheHint,
   GenerationOptions,
@@ -5,7 +6,6 @@ import type {
   Model,
   ProviderOptions,
 } from './options.js'
-import type { JsonSchema, ProviderMetadata, ToolCallID } from './ids.js'
 
 type SystemPart = {
   type: 'text'
@@ -92,9 +92,7 @@ type ToolChoice =
   | { type: 'required' }
   | { type: 'tool'; name: string }
 
-type ResponseFormat =
-  | { type: 'text' }
-  | { type: 'json'; schema: JsonSchema }
+type ResponseFormat = { type: 'text' } | { type: 'json'; schema: JsonSchema }
 
 type InternalRequest = {
   id?: string

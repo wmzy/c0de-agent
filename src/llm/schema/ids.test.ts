@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { modelId, providerId } from './ids.js'
 import type { ModelID, ProviderID } from './ids.js'
+import { modelId, providerId } from './ids.js'
 
 describe('schema/ids', () => {
   it('brands a string as ModelID', () => {

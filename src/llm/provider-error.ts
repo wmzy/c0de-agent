@@ -1,5 +1,5 @@
-import { isLLMError } from './schema/errors.js'
 import type { LLMErrorReason } from './schema/errors.js'
+import { isLLMError } from './schema/errors.js'
 
 const patterns: RegExp[] = [
   /prompt is too long/i,

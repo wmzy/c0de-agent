@@ -1,7 +1,7 @@
 import type { Registry } from './registry.js'
 import { resolveRoute } from './registry.js'
-import { isLLMError } from './schema/errors.js'
 import { withRetry } from './retry.js'
+import { isLLMError } from './schema/errors.js'
 
 type FallbackChain = {
   primary: { provider: string; model: string }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { finish, initial, reasoningDelta, textDelta } from './lifecycle.js'
 import { usageFrom } from '../../schema/events.js'
+import { finish, initial, reasoningDelta, textDelta } from './lifecycle.js'
 
 describe('lifecycle textDelta', () => {
   it('emits step-start + text-start + text-delta on first use', () => {

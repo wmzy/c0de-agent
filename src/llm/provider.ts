@@ -1,25 +1,20 @@
 import type {
+  ContentPart as ChatContentPart,
   ChatMessage,
   ChatRequest,
   ChatTool,
-  ContentPart as ChatContentPart,
   StreamChunk,
 } from '../shared/types/llm.js'
+import type { StepState } from './protocols/openai-compat.js'
+import { bodyFrom, initialStepState, parseChunk, step } from './protocols/openai-compat.js'
 import type { Registry } from './registry.js'
 import { resolveRoute } from './registry.js'
 import type { FallbackChain } from './routing.js'
 import { runWithFallback } from './routing.js'
-import { bodyFrom, initialStepState, parseChunk, step } from './protocols/openai-compat.js'
-import type { StepState } from './protocols/openai-compat.js'
-import { streamHTTP } from './transport.js'
 import type { StreamEvent } from './schema/events.js'
+import type { ContentPart, InternalRequest, Message, ToolDefinition } from './schema/messages.js'
 import { model as makeModel } from './schema/options.js'
-import type {
-  ContentPart,
-  InternalRequest,
-  Message,
-  ToolDefinition,
-} from './schema/messages.js'
+import { streamHTTP } from './transport.js'
 
 type ProviderContext = {
   registry: Registry
@@ -50,7 +45,12 @@ const toInternalMessage = (msg: ChatMessage): Message => {
     return {
       role: 'tool',
       content: [
-        { type: 'tool-result', id: msg.toolCallId, name: 'tool', result: { type: 'text', value: text } },
+        {
+          type: 'tool-result',
+          id: msg.toolCallId,
+          name: 'tool',
+          result: { type: 'text', value: text },
+        },
       ],
     }
   }
@@ -140,38 +140,41 @@ const collectEvents = async (
   request: ChatRequest,
   options: ChatOptions,
 ): Promise<StreamEvent[]> => {
-  const chain: FallbackChain =
-    options.fallback ?? {
-      primary: { provider: options.provider, model: options.model },
-      fallbacks: [],
-      maxRetries: 3,
-      retryDelay: 2000,
-      sleep: options.sleep,
-    }
+  const chain: FallbackChain = options.fallback ?? {
+    primary: { provider: options.provider, model: options.model },
+    fallbacks: [],
+    maxRetries: 3,
+    retryDelay: 2000,
+    sleep: options.sleep,
+  }
 
-  const { result: events } = await runWithFallback(ctx.registry, chain, async (providerArg, modelArg) => {
-    const resolved = resolveRoute(ctx.registry, providerArg, modelArg)
-    const internal = buildInternalRequest(request, providerArg, modelArg)
-    const body = bodyFrom(internal)
-    const url = `${resolved.route.baseURL}${resolved.route.path}`
-    const authHeader = resolved.route.auth.type === 'bearer' ? resolved.route.auth.apiKey : ''
-    const collected: StreamEvent[] = []
-    let state: StepState = initialStepState()
-    for await (const frame of streamHTTP({
-      url,
-      body,
-      headers: { authorization: `Bearer ${authHeader}`, ...resolved.route.headers() },
-      signal: ctx.signal,
-      fetchImpl: ctx.fetchImpl,
-    })) {
-      const chunk = parseChunk(resolved.route.id, frame)
-      const result = step(state, chunk)
-      state = result.state
-      collected.push(...result.events)
-      if (result.done) break
-    }
-    return collected
-  })
+  const { result: events } = await runWithFallback(
+    ctx.registry,
+    chain,
+    async (providerArg, modelArg) => {
+      const resolved = resolveRoute(ctx.registry, providerArg, modelArg)
+      const internal = buildInternalRequest(request, providerArg, modelArg)
+      const body = bodyFrom(internal)
+      const url = `${resolved.route.baseURL}${resolved.route.path}`
+      const authHeader = resolved.route.auth.type === 'bearer' ? resolved.route.auth.apiKey : ''
+      const collected: StreamEvent[] = []
+      let state: StepState = initialStepState()
+      for await (const frame of streamHTTP({
+        url,
+        body,
+        headers: { authorization: `Bearer ${authHeader}`, ...resolved.route.headers() },
+        signal: ctx.signal,
+        fetchImpl: ctx.fetchImpl,
+      })) {
+        const chunk = parseChunk(resolved.route.id, frame)
+        const result = step(state, chunk)
+        state = result.state
+        collected.push(...result.events)
+        if (result.done) break
+      }
+      return collected
+    },
+  )
   return events
 }
 
