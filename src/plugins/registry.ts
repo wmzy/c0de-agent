@@ -1,5 +1,5 @@
 // src/plugins/registry.ts
-import type { Plugin, PluginRecord, PluginRegistry, HookRunner } from './types.js'
+import type { HookRunner, Plugin, PluginRecord, PluginRegistry } from './types.js'
 
 function createPluginRegistry(hookRunner: HookRunner): PluginRegistry {
   return {

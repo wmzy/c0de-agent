@@ -1,4 +1,10 @@
 // src/plugins/lifecycle.ts
+
+import type { Registry as LLMRegistry } from '../llm/registry.js'
+import { registerProvider as registerLLMProvider } from '../llm/registry.js'
+import type { ProviderConfig } from '../shared/types/llm.js'
+import { registerTool } from '../tools/registry.js'
+import type { ToolRegistry } from '../tools/types.js'
 import { createLogger } from './logger.js'
 import type {
   HookRunner,
@@ -9,11 +15,6 @@ import type {
   PluginServices,
   ToolDef,
 } from './types.js'
-import type { ProviderConfig } from '../shared/types/llm.js'
-import { registerTool } from '../tools/registry.js'
-import type { ToolRegistry } from '../tools/types.js'
-import { registerProvider as registerLLMProvider } from '../llm/registry.js'
-import type { Registry as LLMRegistry } from '../llm/registry.js'
 
 function createPluginContext(
   services: PluginServices,

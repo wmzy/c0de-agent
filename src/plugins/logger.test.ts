@@ -1,5 +1,5 @@
 // src/plugins/logger.test.ts
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createLogger } from './logger.js'
 
 describe('createLogger', () => {

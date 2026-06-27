@@ -1,7 +1,6 @@
 // src/plugins/hooks.test.ts
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createHookRunner } from './hooks.js'
-import type { HookMap } from './types.js'
 
 describe('createHookRunner', () => {
   it('returns a HookRunner with all methods', () => {
@@ -39,15 +38,27 @@ describe('createHookRunner', () => {
   it('runHooks chains handlers in priority order (lower = first)', async () => {
     const runner = createHookRunner()
     const calls: string[] = []
-    runner.on('tool:before', () => {
-      calls.push('second')
-    }, 200)
-    runner.on('tool:before', () => {
-      calls.push('first')
-    }, 50)
-    runner.on('tool:before', () => {
-      calls.push('third')
-    }, 300)
+    runner.on(
+      'tool:before',
+      () => {
+        calls.push('second')
+      },
+      200,
+    )
+    runner.on(
+      'tool:before',
+      () => {
+        calls.push('first')
+      },
+      50,
+    )
+    runner.on(
+      'tool:before',
+      () => {
+        calls.push('third')
+      },
+      300,
+    )
     await runner.runHooks('tool:before', {
       tool: 'read',
       input: {},
@@ -58,12 +69,20 @@ describe('createHookRunner', () => {
 
   it('runHooks passes modified data through the chain', async () => {
     const runner = createHookRunner()
-    runner.on('tool:before', (data) => {
-      return { ...data, input: { ...data.input as object, modified: true } }
-    }, 100)
-    runner.on('tool:before', (data) => {
-      return { ...data, input: { ...data.input as object, second: true } }
-    }, 200)
+    runner.on(
+      'tool:before',
+      (data) => {
+        return { ...data, input: { ...(data.input as object), modified: true } }
+      },
+      100,
+    )
+    runner.on(
+      'tool:before',
+      (data) => {
+        return { ...data, input: { ...(data.input as object), second: true } }
+      },
+      200,
+    )
     const result = await runner.runHooks('tool:before', {
       tool: 'write',
       input: { path: '/a' },
@@ -107,7 +126,7 @@ describe('createHookRunner', () => {
     const runner = createHookRunner()
     runner.on('tool:before', async (data) => {
       await new Promise((r) => setTimeout(r, 10))
-      return { ...data, input: { ...data.input as object, async: true } }
+      return { ...data, input: { ...(data.input as object), async: true } }
     })
     const result = await runner.runHooks('tool:before', {
       tool: 'read',
@@ -123,9 +142,13 @@ describe('createHookRunner', () => {
   it('runHooks isolates errors — logs warning, continues with last good data', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const runner = createHookRunner()
-    runner.on('tool:before', () => {
-      throw new Error('boom')
-    }, 100)
+    runner.on(
+      'tool:before',
+      () => {
+        throw new Error('boom')
+      },
+      100,
+    )
     const afterHandler = vi.fn((data) => data)
     runner.on('tool:before', afterHandler, 200)
     const result = await runner.runHooks('tool:before', {
@@ -158,7 +181,7 @@ describe('createHookRunner', () => {
 
   it('fireHooks ignores handler return values', async () => {
     const runner = createHookRunner()
-    const handler = vi.fn(() => 'ignored-value')
+    const handler = vi.fn((data) => data)
     runner.on('tool:after', handler)
     await runner.fireHooks('tool:after', {
       tool: 'read',
@@ -219,9 +242,13 @@ describe('createHookRunner', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const runner = createHookRunner({ timeout: 100 })
     const nextHandler = vi.fn((data) => data)
-    runner.on('tool:before', async () => {
-      await new Promise((r) => setTimeout(r, 500))
-    }, 100)
+    runner.on(
+      'tool:before',
+      async () => {
+        await new Promise((r) => setTimeout(r, 500))
+      },
+      100,
+    )
     runner.on('tool:before', nextHandler, 200)
     const promise = runner.runHooks('tool:before', {
       tool: 'read',

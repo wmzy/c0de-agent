@@ -1,4 +1,27 @@
 // src/plugins/index.ts
+
+export {
+  BUILTIN_PLUGINS,
+  createToolAuditLogger,
+  createWriteGuard,
+  registerBuiltinHooks,
+} from './builtin.js'
+export { createHookRunner } from './hooks.js'
+export {
+  activatePlugin,
+  createPluginContext,
+  deactivateAll,
+  deactivatePlugin,
+} from './lifecycle.js'
+export { discoverPlugins, loadPlugin, validatePluginModule } from './loader.js'
+export { createLogger } from './logger.js'
+export {
+  createPluginRegistry,
+  getPlugin,
+  listPlugins,
+  registerPlugin,
+  unregisterPlugin,
+} from './registry.js'
 export type {
   HookHandler,
   HookMap,
@@ -13,21 +36,3 @@ export type {
   PluginServices,
   PluginStatus,
 } from './types.js'
-
-export { createLogger } from './logger.js'
-export { createHookRunner } from './hooks.js'
-export {
-  createPluginRegistry,
-  getPlugin,
-  listPlugins,
-  registerPlugin,
-  unregisterPlugin,
-} from './registry.js'
-export { activatePlugin, createPluginContext, deactivateAll, deactivatePlugin } from './lifecycle.js'
-export { discoverPlugins, loadPlugin, validatePluginModule } from './loader.js'
-export {
-  BUILTIN_PLUGINS,
-  createToolAuditLogger,
-  createWriteGuard,
-  registerBuiltinHooks,
-} from './builtin.js'

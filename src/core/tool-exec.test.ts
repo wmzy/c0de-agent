@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createHookRunner } from '../plugins/hooks.js'
 import type { ToolContext } from '../shared/types/tool.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
-import { createHookRunner } from '../plugins/hooks.js'
+import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
 import { executeToolCall, executeToolCalls, partitionByConflict } from './tool-exec.js'
 
 const registry = createDefaultRegistry()
@@ -94,20 +95,30 @@ describe('executeToolCall with hookRunner', () => {
 
     const mockRegistry = {
       tools: new Map([
-        ['test', {
-          name: 'test',
-          description: 'test',
-          parameters: { type: 'object' },
-          permission: 'auto',
-          execute: async () => ({ _tag: 'success' as const, output: 'ok' }),
-        }],
+        [
+          'test',
+          {
+            name: 'test',
+            description: 'test',
+            parameters: { type: 'object' },
+            permission: 'auto',
+            execute: async () => ({ _tag: 'success' as const, output: 'ok' }),
+          },
+        ],
       ]),
       factories: new Map(),
     }
     const mockPermission = { check: async () => ({ _tag: 'allow' as const }) }
     const ctx = { cwd: '/', session: { id: 's', cwd: '/' }, abort: new AbortController().signal }
 
-    await executeToolCall(mockRegistry as any, mockPermission as any, ctx, 'test', { foo: 1 }, hookRunner)
+    await executeToolCall(
+      mockRegistry as unknown as ToolRegistry,
+      mockPermission as unknown as PermissionChecker,
+      ctx,
+      'test',
+      { foo: 1 },
+      hookRunner,
+    )
     expect(beforeHandler).toHaveBeenCalled()
   })
 
@@ -118,20 +129,30 @@ describe('executeToolCall with hookRunner', () => {
     const executeFn = vi.fn()
     const mockRegistry = {
       tools: new Map([
-        ['blocked', {
-          name: 'blocked',
-          description: 'test',
-          parameters: { type: 'object' },
-          permission: 'auto',
-          execute: executeFn,
-        }],
+        [
+          'blocked',
+          {
+            name: 'blocked',
+            description: 'test',
+            parameters: { type: 'object' },
+            permission: 'auto',
+            execute: executeFn,
+          },
+        ],
       ]),
       factories: new Map(),
     }
     const mockPermission = { check: async () => ({ _tag: 'allow' as const }) }
     const ctx = { cwd: '/', session: { id: 's', cwd: '/' }, abort: new AbortController().signal }
 
-    const result = await executeToolCall(mockRegistry as any, mockPermission as any, ctx, 'blocked', {}, hookRunner)
+    const result = await executeToolCall(
+      mockRegistry as unknown as ToolRegistry,
+      mockPermission as unknown as PermissionChecker,
+      ctx,
+      'blocked',
+      {},
+      hookRunner,
+    )
     expect(result._tag).toBe('error')
     expect(executeFn).not.toHaveBeenCalled()
   })
@@ -140,29 +161,39 @@ describe('executeToolCall with hookRunner', () => {
     const hookRunner = createHookRunner()
     hookRunner.on('tool:before', (data) => ({
       ...data,
-      input: { ...data.input as object, injected: true },
+      input: { ...(data.input as object), injected: true },
     }))
 
     let receivedInput: unknown
     const mockRegistry = {
       tools: new Map([
-        ['mod', {
-          name: 'mod',
-          description: 'test',
-          parameters: { type: 'object' },
-          permission: 'auto',
-          execute: async (input: unknown) => {
-            receivedInput = input
-            return { _tag: 'success' as const, output: 'ok' }
+        [
+          'mod',
+          {
+            name: 'mod',
+            description: 'test',
+            parameters: { type: 'object' },
+            permission: 'auto',
+            execute: async (input: unknown) => {
+              receivedInput = input
+              return { _tag: 'success' as const, output: 'ok' }
+            },
           },
-        }],
+        ],
       ]),
       factories: new Map(),
     }
     const mockPermission = { check: async () => ({ _tag: 'allow' as const }) }
     const ctx = { cwd: '/', session: { id: 's', cwd: '/' }, abort: new AbortController().signal }
 
-    await executeToolCall(mockRegistry as any, mockPermission as any, ctx, 'mod', { original: true }, hookRunner)
+    await executeToolCall(
+      mockRegistry as unknown as ToolRegistry,
+      mockPermission as unknown as PermissionChecker,
+      ctx,
+      'mod',
+      { original: true },
+      hookRunner,
+    )
     expect(receivedInput).toEqual({ original: true, injected: true })
   })
 
@@ -173,42 +204,61 @@ describe('executeToolCall with hookRunner', () => {
 
     const mockRegistry = {
       tools: new Map([
-        ['after', {
-          name: 'after',
-          description: 'test',
-          parameters: { type: 'object' },
-          permission: 'auto',
-          execute: async () => ({ _tag: 'success' as const, output: 'done' }),
-        }],
+        [
+          'after',
+          {
+            name: 'after',
+            description: 'test',
+            parameters: { type: 'object' },
+            permission: 'auto',
+            execute: async () => ({ _tag: 'success' as const, output: 'done' }),
+          },
+        ],
       ]),
       factories: new Map(),
     }
     const mockPermission = { check: async () => ({ _tag: 'allow' as const }) }
     const ctx = { cwd: '/', session: { id: 's', cwd: '/' }, abort: new AbortController().signal }
 
-    await executeToolCall(mockRegistry as any, mockPermission as any, ctx, 'after', {}, hookRunner)
+    await executeToolCall(
+      mockRegistry as unknown as ToolRegistry,
+      mockPermission as unknown as PermissionChecker,
+      ctx,
+      'after',
+      {},
+      hookRunner,
+    )
     expect(afterHandler).toHaveBeenCalled()
-    const callArg = afterHandler.mock.calls[0][0]
+    const callArg = afterHandler.mock.calls[0]?.[0] as { result: { _tag: string } }
     expect(callArg.result._tag).toBe('success')
   })
 
   it('works without hookRunner (backward compatible)', async () => {
     const mockRegistry = {
       tools: new Map([
-        ['plain', {
-          name: 'plain',
-          description: 'test',
-          parameters: { type: 'object' },
-          permission: 'auto',
-          execute: async () => ({ _tag: 'success' as const, output: 'ok' }),
-        }],
+        [
+          'plain',
+          {
+            name: 'plain',
+            description: 'test',
+            parameters: { type: 'object' },
+            permission: 'auto',
+            execute: async () => ({ _tag: 'success' as const, output: 'ok' }),
+          },
+        ],
       ]),
       factories: new Map(),
     }
     const mockPermission = { check: async () => ({ _tag: 'allow' as const }) }
     const ctx = { cwd: '/', session: { id: 's', cwd: '/' }, abort: new AbortController().signal }
 
-    const result = await executeToolCall(mockRegistry as any, mockPermission as any, ctx, 'plain', {})
+    const result = await executeToolCall(
+      mockRegistry as unknown as ToolRegistry,
+      mockPermission as unknown as PermissionChecker,
+      ctx,
+      'plain',
+      {},
+    )
     expect(result._tag).toBe('success')
   })
 })

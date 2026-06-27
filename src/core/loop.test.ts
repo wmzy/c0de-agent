@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { createHookRunner } from '../plugins/hooks.js'
+import type { HookRunner } from '../plugins/types.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import type { Message, Session } from '../shared/types/message.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
-import { createHookRunner } from '../plugins/hooks.js'
-import type { HookRunner } from '../plugins/types.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
 import { agentLoop } from './loop.js'
@@ -189,7 +189,7 @@ describe('agentLoop with hookRunner', () => {
       events.push(ev)
     }
     expect(beforeHandler).toHaveBeenCalledOnce()
-    const callArg = beforeHandler.mock.calls[0][0]
+    const callArg = beforeHandler.mock.calls[0]?.[0] as { request: { model: string } }
     expect(callArg.request.model).toBe('mock')
   })
 
@@ -220,7 +220,7 @@ describe('agentLoop with hookRunner', () => {
       // consume
     }
     expect(beforeHandler).toHaveBeenCalledOnce()
-    const callArg = beforeHandler.mock.calls[0][0]
+    const callArg = beforeHandler.mock.calls[0]?.[0] as { messages: unknown[] }
     expect(Array.isArray(callArg.messages)).toBe(true)
     expect(callArg.messages.length).toBeGreaterThan(0)
   })
@@ -237,7 +237,7 @@ describe('agentLoop with hookRunner', () => {
       // consume
     }
     expect(afterHandler).toHaveBeenCalledOnce()
-    const callArg = afterHandler.mock.calls[0][0]
+    const callArg = afterHandler.mock.calls[0]?.[0] as { chunks: StreamChunk[] }
     expect(callArg.chunks.length).toBeGreaterThan(0)
     expect(callArg.chunks.some((c: StreamChunk) => c._tag === 'text')).toBe(true)
   })
@@ -256,7 +256,7 @@ describe('agentLoop with hookRunner', () => {
     }
     // mockToolThenTextStream yields a read tool call on turn 0
     expect(toolBeforeHandler).toHaveBeenCalledOnce()
-    const callArg = toolBeforeHandler.mock.calls[0][0]
+    const callArg = toolBeforeHandler.mock.calls[0]?.[0] as { tool: string }
     expect(callArg.tool).toBe('read')
   })
 })

@@ -1,23 +1,28 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { createSlashRegistry, parseSlashInput } from './slash.js'
-import type { AgentDependencies } from './types.js'
+import { beforeEach, describe, expect, it } from 'vitest'
+import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { createSession } from '../session/session.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
 import { DEFAULT_CONFIG } from './config.js'
+import { builtinCommands, createSlashRegistry, parseSlashInput } from './slash.js'
+import type { AgentDependencies, CommandResult } from './types.js'
 
-let db: any
+let db: DB
 let deps: AgentDependencies
 
 beforeEach(async () => {
   db = await createDB({ driver: 'pglite' })
   await migrateDB(db)
   deps = {
-    db, llmRegistry: {} as any, toolRegistry: createDefaultRegistry(),
-    permission: autoAllowChecker, config: DEFAULT_CONFIG, cwd: process.cwd(),
-  } as any
+    db,
+    llmRegistry: {} as AgentDependencies['llmRegistry'],
+    toolRegistry: createDefaultRegistry(),
+    permission: autoAllowChecker,
+    config: DEFAULT_CONFIG,
+    cwd: process.cwd(),
+  } as AgentDependencies
 })
 
 describe('parseSlashInput', () => {
@@ -60,9 +65,13 @@ describe('slash registry', () => {
 
 describe('builtin commands', () => {
   it('/help returns text listing commands', async () => {
-    const reg = createSlashRegistry()
-    const cmd = reg.get('help')!
-    const result = await cmd.execute('', { cwd: '/', config: DEFAULT_CONFIG, deps })
+    const cmd = builtinCommands.find((c) => c.name === 'help')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
     expect(result._tag).toBe('text')
     if (result._tag === 'text') {
       expect(result.text).toContain('compact')
@@ -71,9 +80,13 @@ describe('builtin commands', () => {
   })
 
   it('/config without args shows current config', async () => {
-    const reg = createSlashRegistry()
-    const cmd = reg.get('config')!
-    const result = await cmd.execute('', { cwd: '/', config: DEFAULT_CONFIG, deps })
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
     expect(result._tag).toBe('text')
   })
 
@@ -81,11 +94,16 @@ describe('builtin commands', () => {
     const session = await createSession(db, 't')
     const { appendMessage } = await import('../session/message.js')
     await appendMessage(db, session.id, {
-      role: 'user', content: [{ _tag: 'text', text: 'hello' }],
+      role: 'user',
+      content: [{ _tag: 'text', text: 'hello' }],
     })
-    const reg = createSlashRegistry()
-    const cmd = reg.get('clear')!
-    const result = await cmd.execute(session.id, { cwd: '/', config: DEFAULT_CONFIG, deps })
+    const cmd = builtinCommands.find((c) => c.name === 'clear')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute(session.id, {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
     expect(result._tag).toBe('success')
   })
 })

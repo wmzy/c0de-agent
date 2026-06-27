@@ -1,18 +1,18 @@
 // src/plugins/builtin.test.ts
-import { describe, it, expect, vi } from 'vitest'
-import { existsSync } from 'node:fs'
-import { createHookRunner } from './hooks.js'
-import { createPluginRegistry, registerPlugin } from './registry.js'
-import { activatePlugin, deactivateAll } from './lifecycle.js'
-import { createToolRegistry } from '../tools/registry.js'
-import { createRegistry as createLLMRegistry } from '../llm/registry.js'
+
+import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG } from '../core/config.js'
+import { createRegistry as createLLMRegistry } from '../llm/registry.js'
+import { createToolRegistry } from '../tools/registry.js'
 import {
+  BUILTIN_PLUGINS,
   createToolAuditLogger,
   createWriteGuard,
-  BUILTIN_PLUGINS,
   registerBuiltinHooks,
 } from './builtin.js'
+import { createHookRunner } from './hooks.js'
+import { activatePlugin, deactivateAll } from './lifecycle.js'
+import { createPluginRegistry, registerPlugin } from './registry.js'
 import type { PluginServices } from './types.js'
 
 function makeServices(): PluginServices {
@@ -90,7 +90,11 @@ describe('createWriteGuard', () => {
     await hookRunner.runHooks('tool:before', {
       tool: 'write',
       input: { path: 'package.json' },
-      ctx: { cwd: process.cwd(), session: { id: 's1', cwd: process.cwd() }, abort: new AbortController().signal },
+      ctx: {
+        cwd: process.cwd(),
+        session: { id: 's1', cwd: process.cwd() },
+        abort: new AbortController().signal,
+      },
     })
     expect(warnSpy).toHaveBeenCalled()
     warnSpy.mockRestore()
@@ -125,7 +129,11 @@ describe('createWriteGuard', () => {
     const originalData = {
       tool: 'write',
       input: { path: 'package.json' },
-      ctx: { cwd: process.cwd(), session: { id: 's1', cwd: process.cwd() }, abort: new AbortController().signal },
+      ctx: {
+        cwd: process.cwd(),
+        session: { id: 's1', cwd: process.cwd() },
+        abort: new AbortController().signal,
+      },
     }
     const result = await hookRunner.runHooks('tool:before', originalData)
     expect(result).not.toBe(false)

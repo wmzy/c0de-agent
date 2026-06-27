@@ -1,5 +1,5 @@
 // src/plugins/index.test.ts
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import * as plugins from './index.js'
 
 describe('plugins barrel export', () => {

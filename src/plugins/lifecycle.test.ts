@@ -1,14 +1,22 @@
 // src/plugins/lifecycle.test.ts
-import { describe, it, expect, vi } from 'vitest'
-import { createPluginRegistry, registerPlugin } from './registry.js'
-import { createHookRunner } from './hooks.js'
-import { activatePlugin, deactivatePlugin, deactivateAll, createPluginContext } from './lifecycle.js'
-import { createToolRegistry } from '../tools/registry.js'
-import { createRegistry as createLLMRegistry } from '../llm/registry.js'
+import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG } from '../core/config.js'
+import { createRegistry as createLLMRegistry } from '../llm/registry.js'
+import { createToolRegistry } from '../tools/registry.js'
+import { createHookRunner } from './hooks.js'
+import {
+  activatePlugin,
+  createPluginContext,
+  deactivateAll,
+  deactivatePlugin,
+} from './lifecycle.js'
+import { createPluginRegistry, registerPlugin } from './registry.js'
 import type { Plugin, PluginServices } from './types.js'
 
-function makeServices(): { services: PluginServices; toolRegistry: ReturnType<typeof createToolRegistry> } {
+function makeServices(): {
+  services: PluginServices
+  toolRegistry: ReturnType<typeof createToolRegistry>
+} {
   const toolRegistry = createToolRegistry()
   const llmRegistry = createLLMRegistry()
   return {

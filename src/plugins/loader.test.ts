@@ -1,9 +1,10 @@
 // src/plugins/loader.test.ts
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { validatePluginModule, loadPlugin, discoverPlugins } from './loader.js'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { discoverPlugins, loadPlugin, validatePluginModule } from './loader.js'
 import type { Plugin } from './types.js'
 
 describe('validatePluginModule', () => {
@@ -17,14 +18,18 @@ describe('validatePluginModule', () => {
     }
     const result = validatePluginModule(mod)
     expect(result.valid).toBe(true)
-    expect(result.plugin?.name).toBe('test')
+    if (result.valid) {
+      expect(result.plugin.name).toBe('test')
+    }
   })
 
   it('accepts a module without default export (named export)', () => {
     const plugin: Plugin = { name: 'named', version: '1.0.0', setup: () => {} }
     const result = validatePluginModule(plugin)
     expect(result.valid).toBe(true)
-    expect(result.plugin?.name).toBe('named')
+    if (result.valid) {
+      expect(result.plugin.name).toBe('named')
+    }
   })
 
   it('rejects a module missing name', () => {
@@ -32,7 +37,9 @@ describe('validatePluginModule', () => {
       default: { version: '1.0.0', setup: () => {} },
     })
     expect(result.valid).toBe(false)
-    expect(result.error).toContain('name')
+    if (!result.valid) {
+      expect(result.error).toContain('name')
+    }
   })
 
   it('rejects a module missing version', () => {
@@ -40,7 +47,9 @@ describe('validatePluginModule', () => {
       default: { name: 'test', setup: () => {} },
     })
     expect(result.valid).toBe(false)
-    expect(result.error).toContain('version')
+    if (!result.valid) {
+      expect(result.error).toContain('version')
+    }
   })
 
   it('rejects a module missing setup', () => {
@@ -48,7 +57,9 @@ describe('validatePluginModule', () => {
       default: { name: 'test', version: '1.0.0' },
     })
     expect(result.valid).toBe(false)
-    expect(result.error).toContain('setup')
+    if (!result.valid) {
+      expect(result.error).toContain('setup')
+    }
   })
 
   it('rejects a module where setup is not a function', () => {
@@ -56,7 +67,9 @@ describe('validatePluginModule', () => {
       default: { name: 'test', version: '1.0.0', setup: 'not-a-fn' },
     })
     expect(result.valid).toBe(false)
-    expect(result.error).toContain('setup')
+    if (!result.valid) {
+      expect(result.error).toContain('setup')
+    }
   })
 })
 

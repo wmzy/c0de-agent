@@ -4,9 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Plugin } from './types.js'
 
-type ValidationResult =
-  | { valid: true; plugin: Plugin }
-  | { valid: false; error: string }
+type ValidationResult = { valid: true; plugin: Plugin } | { valid: false; error: string }
 
 function validatePluginModule(mod: unknown): ValidationResult {
   const candidate = (mod as { default?: unknown })?.default ?? mod

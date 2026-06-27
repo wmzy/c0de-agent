@@ -12,8 +12,7 @@ const LEVEL_ORDER: Record<LogLevel, number> = {
 /** Create a named, level-filtered logger that writes to console. */
 function createLogger(name: string, level: LogLevel = 'info'): Logger {
   const prefix = `[${name}]`
-  const shouldLog = (target: LogLevel): boolean =>
-    LEVEL_ORDER[level] <= LEVEL_ORDER[target]
+  const shouldLog = (target: LogLevel): boolean => LEVEL_ORDER[level] <= LEVEL_ORDER[target]
 
   return {
     debug: (msg: string, ...args: unknown[]) => {

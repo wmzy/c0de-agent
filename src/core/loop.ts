@@ -3,7 +3,6 @@ import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
 import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
-import type { HookRunner } from '../plugins/types.js'
 import type { ChatRequest, ChatTool, StreamChunk } from '../shared/types/llm.js'
 import type { MessageContent } from '../shared/types/message.js'
 import type { ToolResult } from '../shared/types/tool.js'
@@ -61,9 +60,14 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     }
 
     if (deps.hookRunner) {
-      const hookResult = await deps.hookRunner.runHooks('message:before', { messages: chatMessages })
+      const hookResult = await deps.hookRunner.runHooks('message:before', {
+        messages: chatMessages,
+      })
       if (hookResult === false) {
-        yield { _tag: 'error', error: { _tag: 'unexpected', message: 'Aborted by message:before hook' } }
+        yield {
+          _tag: 'error',
+          error: { _tag: 'unexpected', message: 'Aborted by message:before hook' },
+        }
         return
       }
       chatMessages = hookResult.messages
@@ -100,13 +104,16 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     if (deps.hookRunner) {
       const hookResult = await deps.hookRunner.runHooks('provider:before', { request })
       if (hookResult === false) {
-        yield { _tag: 'error', error: { _tag: 'unexpected', message: 'Aborted by provider:before hook' } }
+        yield {
+          _tag: 'error',
+          error: { _tag: 'unexpected', message: 'Aborted by provider:before hook' },
+        }
         return
       }
       request = hookResult.request
     }
 
-    const collectedChunks = deps.hookRunner ? [] as StreamChunk[] : undefined
+    const collectedChunks = deps.hookRunner ? ([] as StreamChunk[]) : undefined
     const collectedText: string[] = []
     const collectedToolCalls: Map<string, CollectedToolCall> = new Map()
     const toolCallArgs: Map<string, string> = new Map()

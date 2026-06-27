@@ -1,4 +1,4 @@
-import type { CommandContext, CommandResult, SlashCommand } from './types.js'
+import type { SlashCommand } from './types.js'
 
 function parseSlashInput(input: string): { name: string; args: string } | null {
   const trimmed = input.trim()
@@ -51,7 +51,10 @@ const compactCommand: SlashCommand = {
   name: 'compact',
   description: 'Manually trigger context compaction',
   execute: async () => {
-    return { _tag: 'success', message: 'Compaction queued. Use the agent API to trigger with a summarizer.' }
+    return {
+      _tag: 'success',
+      message: 'Compaction queued. Use the agent API to trigger with a summarizer.',
+    }
   },
 }
 
@@ -83,12 +86,14 @@ const clearCommand: SlashCommand = {
 const forkCommand: SlashCommand = {
   name: 'fork',
   description: 'Fork session from a message index',
-  argsHint: '[message-index]',
+  argsHint: '<session-id> [message-index]',
   execute: async (args, ctx) => {
-    const sessionId = args || ''
-    if (!sessionId) return { _tag: 'error', message: 'Usage: /fork <session-id>' }
+    if (!args) return { _tag: 'error', message: 'Usage: /fork <session-id> [message-index]' }
+    const parts = args.split(/\s+/)
+    const sessionId = parts[0] ?? ''
+    const messageIndex = parts[1] !== undefined ? Number.parseInt(parts[1], 10) : 0
     const { forkSession } = await import('../session/branch.js')
-    const forked = await forkSession(ctx.deps.db, sessionId)
+    const forked = await forkSession(ctx.deps.db, sessionId, messageIndex)
     return { _tag: 'success', message: `Forked to new session: ${forked.id}` }
   },
 }
@@ -120,5 +125,5 @@ const builtinCommands: SlashCommand[] = [
   configCommand,
 ]
 
-export { builtinCommands, createSlashRegistry, parseSlashInput }
 export type { SlashRegistry }
+export { builtinCommands, createSlashRegistry, parseSlashInput }

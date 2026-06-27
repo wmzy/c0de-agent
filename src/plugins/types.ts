@@ -1,12 +1,7 @@
 // src/plugins/types.ts
 import type { AgentConfig } from '../shared/types/agent.js'
 import type { Config } from '../shared/types/config.js'
-import type {
-  ChatMessage,
-  ChatRequest,
-  ProviderConfig,
-  StreamChunk,
-} from '../shared/types/llm.js'
+import type { ChatMessage, ChatRequest, ProviderConfig, StreamChunk } from '../shared/types/llm.js'
 import type { Message, Session } from '../shared/types/message.js'
 import type { ToolContext, ToolDef, ToolResult } from '../shared/types/tool.js'
 
@@ -40,6 +35,7 @@ type HookMap = {
 }
 
 /** Hook handler. Returns T (possibly modified) or false (abort). void = passthrough. */
+// biome-ignore lint/suspicious/noConfusingVoidType: void is intentional for passthrough semantics
 type HookHandler<T> = (data: T) => T | false | void | Promise<T | false | void>
 
 /** Options for createHookRunner. */

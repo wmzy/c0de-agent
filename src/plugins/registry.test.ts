@@ -1,7 +1,13 @@
 // src/plugins/registry.test.ts
-import { describe, it, expect } from 'vitest'
-import { createPluginRegistry, registerPlugin, getPlugin, listPlugins, unregisterPlugin } from './registry.js'
+import { describe, expect, it } from 'vitest'
 import { createHookRunner } from './hooks.js'
+import {
+  createPluginRegistry,
+  getPlugin,
+  listPlugins,
+  registerPlugin,
+  unregisterPlugin,
+} from './registry.js'
 import type { Plugin } from './types.js'
 
 function makePlugin(name: string): Plugin {

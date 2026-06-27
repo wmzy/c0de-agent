@@ -1,7 +1,9 @@
 // src/plugins/hooks.ts
-import type { HookHandler, HookMap, HookRunner, HookRunnerOptions, Logger } from './types.js'
-import { createLogger } from './logger.js'
 
+import { createLogger } from './logger.js'
+import type { HookMap, HookRunner, HookRunnerOptions, Logger } from './types.js'
+
+// biome-ignore lint/suspicious/noConfusingVoidType: void is intentional for passthrough semantics
 type ErasedHandler = (data: unknown) => unknown | false | Promise<unknown | false | void>
 
 type Registration = {
@@ -34,11 +36,7 @@ function createHookRunner(opts?: HookRunnerOptions): HookRunner {
   const logger: Logger = opts?.logger ?? createLogger('hooks')
   const handlers = new Map<string, Registration[]>()
 
-  const on = (
-    event: keyof HookMap,
-    handler: ErasedHandler,
-    priority: number,
-  ): void => {
+  const on = (event: keyof HookMap, handler: ErasedHandler, priority: number): void => {
     const key = event as string
     const regs = handlers.get(key) ?? []
     regs.push({ handler, priority })
@@ -62,10 +60,7 @@ function createHookRunner(opts?: HookRunnerOptions): HookRunner {
     let current: unknown = data
     for (const reg of sortByPriority(regs)) {
       try {
-        const result = await withTimeout(
-          Promise.resolve(reg.handler(current)),
-          timeout,
-        )
+        const result = await withTimeout(Promise.resolve(reg.handler(current)), timeout)
         if (result === false) return false
         if (result !== undefined) current = result
       } catch (err) {
@@ -75,10 +70,7 @@ function createHookRunner(opts?: HookRunnerOptions): HookRunner {
     return current as HookMap[K]
   }
 
-  const fireHooks = async <K extends keyof HookMap>(
-    event: K,
-    data: HookMap[K],
-  ): Promise<void> => {
+  const fireHooks = async <K extends keyof HookMap>(event: K, data: HookMap[K]): Promise<void> => {
     const regs = handlers.get(event as string)
     if (!regs || regs.length === 0) return
     await Promise.allSettled(
