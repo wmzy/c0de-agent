@@ -44,6 +44,19 @@ describe('retry delay', () => {
   it('falls back to exponential when header unparseable', () => {
     expect(delay(1, rateLimitError({ 'retry-after': 'not-a-date' }))).toBe(2_000)
   })
+
+  it('honors retry-after as an HTTP date in the future', () => {
+    const future = new Date(Date.now() + 5000).toUTCString()
+    const result = delay(1, rateLimitError({ 'retry-after': future }))
+    // Date.parse(future) - now is ~5000ms (slightly less due to elapsed time).
+    expect(result).toBeGreaterThan(4_000)
+    expect(result).toBeLessThanOrEqual(5_000)
+  })
+
+  it('falls back to exponential when retry-after HTTP date is in the past', () => {
+    const past = new Date(Date.now() - 10_000).toUTCString()
+    expect(delay(1, rateLimitError({ 'retry-after': past }))).toBe(2_000)
+  })
 })
 
 describe('retry retryable', () => {
