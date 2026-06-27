@@ -7,3 +7,6 @@ dist/
 .DS_Store
 coverage/
 *.log
+
+# PGLite WASM assets (downloaded at runtime, not committed)
+*.wasm

@@ -11,9 +11,16 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check src/",
-    "format": "biome format --write src/"
+    "format": "biome format --write src/",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio"
   },
-  "keywords": ["ai", "coding-assistant", "llm", "agent"],
+  "keywords": [
+    "ai",
+    "coding-assistant",
+    "llm",
+    "agent"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=22.0.0"
@@ -21,8 +28,15 @@
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "pg": "^8.22.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "drizzle-orm": "^0.45.2"
   }
 }
