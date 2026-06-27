@@ -1,0 +1,114 @@
+import { sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import {
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core'
+
+/**
+ * Sessions table — conversation sessions with branching support.
+ * Root sessions have parentId = null. Forked sessions reference their parent.
+ */
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    title: text('title').notNull(),
+    parentId: uuid('parent_id').references((): AnyPgColumn => sessions.id),
+    branchPoint: integer('branch_point'),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('idx_sessions_parent').on(table.parentId)],
+)
+
+/**
+ * Session entries table — unified storage for all session content types.
+ * The `tag` field discriminates: 'message' | 'tool_call' | 'tool_result' |
+ * 'compaction' | 'squash' | 'branch_summary' | 'steering' | 'file_snapshot'.
+ */
+export const sessionEntries = pgTable(
+  'session_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    tag: text('tag').notNull(),
+    role: text('role'),
+    content: jsonb('content').notNull(),
+    toolName: text('tool_name'),
+    tokenCount: integer('token_count').default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('idx_entries_session').on(table.sessionId, table.createdAt)],
+)
+
+/**
+ * Compaction archives — stores original entries that were compacted/squashed.
+ * Searchable via full-text search on `searchableText`.
+ */
+export const compactionArchives = pgTable(
+  'compaction_archives',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    compactionId: uuid('compaction_id').notNull(),
+    archiveType: text('archive_type').notNull(),
+    originalEntries: jsonb('original_entries').notNull(),
+    fileSnapshots: jsonb('file_snapshots').default([]),
+    summary: text('summary').notNull(),
+    tokenCount: integer('token_count'),
+    searchableText: text('searchable_text'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_archives_session').on(table.sessionId),
+    // Full-text search index (GIN) for archive content search
+    sql`CREATE INDEX IF NOT EXISTS "idx_archives_search" ON "compaction_archives" USING gin(to_tsvector('english', coalesce(${table.searchableText}, '')))`,
+  ],
+)
+
+/**
+ * File snapshots — caches hot file content to avoid repeated read tool calls.
+ * Versioned per (session_id, file_path).
+ */
+export const fileSnapshots = pgTable(
+  'file_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    entryId: uuid('entry_id'),
+    filePath: text('file_path').notNull(),
+    content: text('content').notNull(),
+    contentHash: text('content_hash').notNull(),
+    tokenCount: integer('token_count').default(0),
+    version: integer('version').default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_snapshots_session_path').on(table.sessionId, table.filePath),
+    uniqueIndex('idx_snapshots_latest').on(table.sessionId, table.filePath, table.version),
+  ],
+)
+
+/** Type exports for insert/select operations. */
+export type SessionRow = typeof sessions.$inferSelect
+export type SessionInsert = typeof sessions.$inferInsert
+export type SessionEntryRow = typeof sessionEntries.$inferSelect
+export type SessionEntryInsert = typeof sessionEntries.$inferInsert
+export type CompactionArchiveRow = typeof compactionArchives.$inferSelect
+export type CompactionArchiveInsert = typeof compactionArchives.$inferInsert
+export type FileSnapshotRow = typeof fileSnapshots.$inferSelect
+export type FileSnapshotInsert = typeof fileSnapshots.$inferInsert
