@@ -13,6 +13,7 @@ import type {
 import type { ChatTool } from '../shared/types/llm.js'
 import type { ToolDef } from '../shared/types/tool.js'
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
+import type { HookRunner } from '../plugins/types.js'
 import type { Config } from './config.js'
 
 /** Runtime services injected into every core function (DI pattern). */
@@ -23,6 +24,7 @@ type AgentDependencies = {
   permission: PermissionChecker
   config: Config
   cwd: string
+  hookRunner?: HookRunner
 }
 
 type ProjectInfo = {
@@ -68,6 +70,7 @@ export type {
   ChatTool,
   CommandContext,
   CommandResult,
+  HookRunner,
   LLMDetail,
   PendingToolCall,
   ProjectInfo,

@@ -9,6 +9,7 @@ import type {
   AgentStatus,
   ChatTool,
   CommandResult,
+  HookRunner,
   LLMDetail,
   PromptContext,
   SlashCommand,
@@ -55,5 +56,13 @@ describe('core types', () => {
 
   it('CommandResult is a discriminated union', () => {
     expectTypeOf<CommandResult>().toHaveProperty('_tag')
+  })
+
+  it('AgentDependencies has optional hookRunner', () => {
+    expectTypeOf<AgentDependencies>().toHaveProperty('hookRunner')
+  })
+
+  it('re-exports HookRunner type', () => {
+    expectTypeOf<HookRunner>().toBeObject()
   })
 })
