@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-web/
 *.tsbuildinfo
 .env
 .env.*
@@ -11,3 +12,4 @@ coverage/
 # PGLite WASM assets (downloaded at runtime, not committed)
 *.wasm
 memory:/
+.c0de/
