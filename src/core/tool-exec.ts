@@ -1,3 +1,4 @@
+import type { HookRunner } from '../plugins/types.js'
 import type { ToolContext, ToolResult } from '../shared/types/tool.js'
 import { executeTool } from '../tools/executor.js'
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
@@ -21,8 +22,25 @@ async function executeToolCall(
   ctx: ToolContext,
   name: string,
   input: unknown,
+  hookRunner?: HookRunner,
 ): Promise<ToolResult> {
-  return executeTool(registry, name, input, ctx, permission)
+  let effectiveInput = input
+
+  if (hookRunner) {
+    const hookResult = await hookRunner.runHooks('tool:before', { tool: name, input, ctx })
+    if (hookResult === false) {
+      return { _tag: 'error', error: `Tool "${name}" aborted by hook` }
+    }
+    effectiveInput = hookResult.input
+  }
+
+  const result = await executeTool(registry, name, effectiveInput, ctx, permission)
+
+  if (hookRunner) {
+    await hookRunner.fireHooks('tool:after', { tool: name, input: effectiveInput, result, ctx })
+  }
+
+  return result
 }
 
 function partitionByConflict(calls: CollectedToolCall[]): {
@@ -56,6 +74,7 @@ async function executeToolCalls(
   permission: PermissionChecker,
   ctx: ToolContext,
   calls: CollectedToolCall[],
+  hookRunner?: HookRunner,
 ): Promise<ToolCallResult[]> {
   const { parallel, serial } = partitionByConflict(calls)
   const results: ToolCallResult[] = []
@@ -64,7 +83,7 @@ async function executeToolCalls(
     const settled = await Promise.allSettled(
       parallel.map(async (tc) => ({
         id: tc.id,
-        result: await executeToolCall(registry, permission, ctx, tc.tool, tc.input),
+        result: await executeToolCall(registry, permission, ctx, tc.tool, tc.input, hookRunner),
       })),
     )
     for (const s of settled) {
@@ -77,7 +96,7 @@ async function executeToolCalls(
   }
 
   for (const tc of serial) {
-    const result = await executeToolCall(registry, permission, ctx, tc.tool, tc.input)
+    const result = await executeToolCall(registry, permission, ctx, tc.tool, tc.input, hookRunner)
     results.push({ id: tc.id, result })
   }
 
