@@ -14,6 +14,7 @@ type CreateServerContextOptions = {
   toolRegistry?: ToolRegistry
   llmRegistry: Registry
   cwd?: string
+  chatStream?: ServerContext['chatStream']
 }
 
 function createServerContext(opts: CreateServerContextOptions): ServerContext {
@@ -24,6 +25,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     llmRegistry: opts.llmRegistry,
     agentManager: createAgentManager(),
     cwd: opts.cwd ?? process.cwd(),
+    ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
   }
 }
 

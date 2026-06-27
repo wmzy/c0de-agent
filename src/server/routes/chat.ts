@@ -1,0 +1,124 @@
+import { Hono } from 'hono'
+import { streamSSE } from 'hono/streaming'
+import { createAgent, runAgent } from '../../core/agent.js'
+import type { LoopDeps } from '../../core/loop.js'
+import { getSession } from '../../session/session.js'
+import type { AgentConfig } from '../../shared/types/agent.js'
+import { apiError } from '../middleware/error.js'
+import { createInteractivePermissionChecker } from '../permission/interactive.js'
+import type { ServerContext } from '../types.js'
+
+function createChatRoute(ctx: ServerContext): Hono {
+  const app = new Hono()
+
+  // POST / — SSE 流式聊天
+  app.post('/', async (c) => {
+    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const sessionId = body.sessionId as string | undefined
+    const message = body.message as string | undefined
+
+    if (!sessionId || !message) {
+      return apiError(c, 400, 'BAD_REQUEST', 'sessionId and message are required')
+    }
+
+    let session: Awaited<ReturnType<typeof getSession>>
+    try {
+      session = await getSession(ctx.db, sessionId)
+    } catch {
+      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    }
+    if (!session) {
+      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    }
+
+    return streamSSE(c, async (stream) => {
+      // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认
+      const permissionChecker = createInteractivePermissionChecker({
+        onPermissionRequired: async (req) => {
+          await stream.writeSSE({
+            event: 'permission_required',
+            data: JSON.stringify({ _tag: 'permission_required', ...req }),
+          })
+        },
+      })
+
+      // 构建 agent 依赖（注入测试用 chatStream）
+      const deps: LoopDeps = {
+        db: ctx.db,
+        llmRegistry: ctx.llmRegistry,
+        toolRegistry: ctx.toolRegistry,
+        permission: permissionChecker,
+        config: ctx.config,
+        cwd: ctx.cwd,
+        ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
+      }
+
+      const provider = (body.provider as string) ?? ctx.config.defaultProvider
+      const model = (body.model as string) ?? ctx.config.defaultModel
+      const tools = (body.tools as string[]) ?? ctx.config.tools.enabled
+
+      const agentConfig: AgentConfig = {
+        provider,
+        model,
+        tools,
+        plugins: ctx.config.plugins.enabled,
+      }
+
+      const state = await createAgent(session, agentConfig, deps)
+
+      ctx.agentManager.register({ sessionId, state, deps, permissionChecker })
+
+      // 客户端断开时中止 agent
+      stream.onAbort(() => {
+        ctx.agentManager.abort(sessionId)
+      })
+
+      try {
+        for await (const event of runAgent(state, message, deps)) {
+          await stream.writeSSE({
+            event: event._tag,
+            data: JSON.stringify(event),
+          })
+        }
+      } catch (err) {
+        await stream.writeSSE({
+          event: 'error',
+          data: JSON.stringify({
+            _tag: 'error',
+            error: {
+              _tag: 'unexpected',
+              message: err instanceof Error ? err.message : String(err),
+            },
+          }),
+        })
+      } finally {
+        ctx.agentManager.unregister(sessionId)
+      }
+    })
+  })
+
+  // 控制端点
+  app.post('/abort', async (c) => {
+    const { sessionId } = await c.req.json()
+    return c.json({ aborted: ctx.agentManager.abort(sessionId) })
+  })
+
+  app.post('/pause', async (c) => {
+    const { sessionId } = await c.req.json()
+    return c.json({ paused: ctx.agentManager.pause(sessionId) })
+  })
+
+  app.post('/resume', async (c) => {
+    const { sessionId } = await c.req.json()
+    return c.json({ resumed: ctx.agentManager.resume(sessionId) })
+  })
+
+  app.post('/steer', async (c) => {
+    const body = await c.req.json()
+    return c.json({ steered: ctx.agentManager.steer(body.sessionId, body.message) })
+  })
+
+  return app
+}
+
+export { createChatRoute }
