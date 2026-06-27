@@ -1,0 +1,66 @@
+import type { AgentEvent } from '@shared/types/agent.js'
+import type { APIError } from '../types/index.js'
+
+/** 从单个 SSE 帧文本提取 data 字段并解析为 AgentEvent。 */
+export function parseSSEFrame(frame: string): AgentEvent | null {
+  const lines = frame.split('\n')
+  const dataLines = lines.filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart())
+  if (dataLines.length === 0) return null
+  try {
+    return JSON.parse(dataLines.join('\n')) as AgentEvent
+  } catch {
+    return null
+  }
+}
+
+/** 解析缓冲区，返回已完整的帧事件 + 剩余未完成文本。 */
+export function consumeSSEBuffer(buffer: string): { events: AgentEvent[]; rest: string } {
+  const events: AgentEvent[] = []
+  let remaining = buffer
+  let sep = remaining.indexOf('\n\n')
+  while (sep !== -1) {
+    const frame = remaining.slice(0, sep)
+    const evt = parseSSEFrame(frame)
+    if (evt) events.push(evt)
+    remaining = remaining.slice(sep + 2)
+    sep = remaining.indexOf('\n\n')
+  }
+  return { events, rest: remaining }
+}
+
+/** 发送聊天消息并消费 SSE 流，逐事件回调。 */
+async function sendChatMessage(
+  sessionId: string,
+  message: string,
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
+  opts?: { provider?: string; model?: string; tools?: string[] },
+): Promise<void> {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, message, ...opts }),
+    signal,
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ message: response.statusText }))
+    throw { status: response.status, message: (body as { message?: string }).message } as APIError
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) return
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const { events, rest } = consumeSSEBuffer(buffer)
+    buffer = rest
+    for (const evt of events) onEvent(evt)
+  }
+}
+
+export { sendChatMessage }
