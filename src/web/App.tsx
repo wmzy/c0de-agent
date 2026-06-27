@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { HashRouter, Routes, Route } from 'react-router-dom'
-import { ThemeProvider } from './contexts/ThemeContext.js'
+import { HashRouter, Route, Routes } from 'react-router-dom'
 import { ConfigProvider } from './contexts/ConfigContext.js'
-import { Layout } from './views/Layout.js'
+import { ThemeProvider } from './contexts/ThemeContext.js'
 import { ChatView } from './views/ChatView.js'
+import { Layout } from './views/Layout.js'
+import { NotFound } from './views/NotFound.js'
 import { SessionList } from './views/SessionList.js'
 import { Settings } from './views/Settings.js'
-import { NotFound } from './views/NotFound.js'
 
 const queryClient = new QueryClient({
   defaultOptions: {

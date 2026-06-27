@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FilePreview } from './FilePreview.js'
 
 function withClient(ui: React.ReactNode) {

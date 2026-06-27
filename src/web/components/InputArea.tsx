@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
 import { css } from '@linaria/core'
+import { useRef, useState } from 'react'
 import { SlashCommandMenu } from './SlashCommandMenu.js'
 
 const wrap = css`
@@ -81,12 +81,7 @@ export function InputArea({
         disabled={disabled}
         data-testid="input"
       />
-      <button
-        onClick={send}
-        disabled={disabled || !value.trim()}
-        type="button"
-        data-testid="send"
-      >
+      <button onClick={send} disabled={disabled || !value.trim()} type="button" data-testid="send">
         {steerMode ? '注入' : '发送'}
       </button>
     </div>

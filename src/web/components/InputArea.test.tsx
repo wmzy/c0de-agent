@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, afterEach } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { InputArea } from './InputArea.js'
 
 afterEach(() => cleanup())

@@ -40,13 +40,7 @@ export function BranchTree({
   return (
     <div data-testid="branch-tree">
       {nodes.map((n) => (
-        <TreeNode
-          key={n.session.id}
-          node={n}
-          activeId={activeId}
-          depth={0}
-          onSelect={onSelect}
-        />
+        <TreeNode key={n.session.id} node={n} activeId={activeId} depth={0} onSelect={onSelect} />
       ))}
     </div>
   )

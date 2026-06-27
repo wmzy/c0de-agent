@@ -1,10 +1,10 @@
-import { useEffect, useRef } from 'react'
 import { css } from '@linaria/core'
 import type { Message } from '@shared/types/message.js'
-import { MessageBubble } from '../components/MessageBubble.js'
-import { StreamingIndicator } from '../components/StreamingIndicator.js'
-import { PermissionDialog } from '../components/PermissionDialog.js'
+import { useEffect, useRef } from 'react'
 import { InputArea } from '../components/InputArea.js'
+import { MessageBubble } from '../components/MessageBubble.js'
+import { PermissionDialog } from '../components/PermissionDialog.js'
+import { StreamingIndicator } from '../components/StreamingIndicator.js'
 import { formatTokenCount } from '../utils/format.js'
 
 type ChatProps = {
@@ -47,7 +47,7 @@ export function Chat({
   const bottomRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [])
 
   return (
     <>

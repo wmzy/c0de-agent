@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react'
 import { css } from '@linaria/core'
+import type { ReactNode } from 'react'
 import { DESKTOP } from '../styles/breakpoints.js'
 
-const layout = css`
+const layoutStyle = css`
   display: flex;
   flex-direction: column;
   height: 100dvh;
@@ -12,7 +12,7 @@ const layout = css`
   }
 `
 
-const sidebar = css`
+const sidebarStyle = css`
   display: none;
   width: 100%;
   ${DESKTOP} {
@@ -24,7 +24,7 @@ const sidebar = css`
   }
 `
 
-const main = css`
+const mainStyle = css`
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -32,7 +32,7 @@ const main = css`
   overflow: hidden;
 `
 
-const panel = css`
+const panelStyle = css`
   display: none;
   ${DESKTOP} {
     display: flex;
@@ -48,12 +48,12 @@ type LayoutProps = {
   panel?: ReactNode
 }
 
-export function Layout({ sidebar: sidebarNode, main: mainNode, panel }: LayoutProps) {
+export function Layout({ sidebar: sidebarNode, main: mainNode, panel: panelNode }: LayoutProps) {
   return (
-    <div className={layout}>
-      {sidebarNode && <aside className={sidebar}>{sidebarNode}</aside>}
-      <main className={main}>{mainNode}</main>
-      {panel && <aside className={panel}>{panel}</aside>}
+    <div className={layoutStyle}>
+      {sidebarNode && <aside className={sidebarStyle}>{sidebarNode}</aside>}
+      <main className={mainStyle}>{mainNode}</main>
+      {panelNode && <aside className={panelStyle}>{panelNode}</aside>}
     </div>
   )
 }

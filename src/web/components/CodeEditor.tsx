@@ -1,19 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import { EditorState } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap } from '@codemirror/view'
+import { defaultKeymap } from '@codemirror/commands'
 import { javascript } from '@codemirror/lang-javascript'
+import { EditorState } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { fileAPI } from '../services/file.js'
+import { EditorView, keymap } from '@codemirror/view'
+import { useEffect, useRef, useState } from 'react'
 import { useTheme } from '../contexts/ThemeContext.js'
+import { fileAPI } from '../services/file.js'
 
-export function CodeEditor({
-  path,
-  initial,
-}: {
-  path: string
-  initial: string
-}) {
+export function CodeEditor({ path, initial }: { path: string; initial: string }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -22,10 +16,7 @@ export function CodeEditor({
   useEffect(() => {
     if (!hostRef.current) return
     const ext = path.split('.').pop()
-    const lang =
-      ext === 'ts' || ext === 'js' || ext === 'tsx' || ext === 'jsx'
-        ? javascript()
-        : []
+    const lang = ext === 'ts' || ext === 'js' || ext === 'tsx' || ext === 'jsx' ? javascript() : []
     const view = new EditorView({
       state: EditorState.create({
         doc: initial,
@@ -60,12 +51,7 @@ export function CodeEditor({
         }}
       >
         <span style={{ fontSize: 12 }}>{path}</span>
-        <button
-          onClick={() => void save()}
-          disabled={!dirty}
-          type="button"
-          data-testid="save"
-        >
+        <button onClick={() => void save()} disabled={!dirty} type="button" data-testid="save">
           {dirty ? '保存*' : '已保存'}
         </button>
       </div>

@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { css } from '@linaria/core'
+import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { fileAPI } from '../services/file.js'
+import type { FileEntry, FileSearchResult } from '../types/index.js'
 
 const panel = css`
   display: flex;
@@ -17,11 +18,7 @@ const row = css`
   }
 `
 
-export function FileBrowser({
-  onPick,
-}: {
-  onPick: (path: string) => void
-}) {
+export function FileBrowser({ onPick }: { onPick: (path: string) => void }) {
   const [path, setPath] = useState('.')
   const [query, setQuery] = useState('')
   const listQ = useQuery({
@@ -34,7 +31,10 @@ export function FileBrowser({
     enabled: query.length > 1,
   })
 
-  const entries = query ? (searchQ.data ?? []) : (listQ.data ?? [])
+  const isSearch = query.length > 1
+  const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
+  const listEntries: FileEntry[] = isSearch ? [] : (listQ.data ?? [])
+
   return (
     <div className={panel}>
       <input
@@ -45,34 +45,40 @@ export function FileBrowser({
         data-testid="file-search"
       />
       <div style={{ padding: 4 }}>
-        {query ? null : (
+        {isSearch ? null : (
           <button
             className={row}
-            onClick={() =>
-              setPath(path.split('/').slice(0, -1).join('/') || '.')
-            }
+            onClick={() => setPath(path.split('/').slice(0, -1).join('/') || '.')}
             type="button"
           >
             📁 ..
           </button>
         )}
-        {entries.map((e) => {
-          const fullPath = query
-            ? e.path
-            : `${path === '.' ? '' : path + '/'}${e.name ?? e.path}`
+        {searchEntries.map((e) => (
+          <button
+            key={e.path}
+            className={row}
+            data-testid={`file-${e.path}`}
+            onClick={() => onPick(e.path)}
+            type="button"
+          >
+            {e.type === 'directory' ? '📁' : '📄'} {e.path}
+          </button>
+        ))}
+        {listEntries.map((e) => {
+          const fullPath = `${path === '.' ? '' : `${path}/`}${e.name}`
           return (
             <button
               key={fullPath}
               className={row}
               data-testid={`file-${fullPath}`}
               onClick={() => {
-                if (e.type === 'directory' && !query) setPath(fullPath)
+                if (e.type === 'directory') setPath(fullPath)
                 else onPick(fullPath)
               }}
               type="button"
             >
-              {e.type === 'directory' ? '📁' : '📄'}{' '}
-              {query ? e.path : e.name}
+              {e.type === 'directory' ? '📁' : '📄'} {e.name}
             </button>
           )
         })}

@@ -42,16 +42,9 @@ export function SlashCommandMenu({
   return (
     <div className={menu} data-testid="slash-menu">
       {filtered.map((c) => (
-        <button
-          key={c.name}
-          className={item}
-          onClick={() => onPick(c.name)}
-          type="button"
-        >
+        <button key={c.name} className={item} onClick={() => onPick(c.name)} type="button">
           <strong>{c.name}</strong>
-          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-            {c.desc}
-          </span>
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{c.desc}</span>
         </button>
       ))}
     </div>

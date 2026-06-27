@@ -1,9 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
 import { css } from '@linaria/core'
-import { fileAPI } from '../services/file.js'
+import { useQuery } from '@tanstack/react-query'
 import { CodeBlock } from '../components/CodeBlock.js'
-import { Markdown } from '../components/Markdown.js'
 import { CodeEditor } from '../components/CodeEditor.js'
+import { Markdown } from '../components/Markdown.js'
+import { fileAPI } from '../services/file.js'
 
 const wrap = css`
   height: 100%;
@@ -44,13 +44,7 @@ export function FilePreview({ path }: { path: string }) {
 
   const ext = extOf(path)
   if (IMG_EXT.includes(ext)) {
-    return (
-      <img
-        src={`/api/files/${encodeURI(path)}`}
-        alt={path}
-        style={{ maxWidth: '100%' }}
-      />
-    )
+    return <img src={`/api/files/${encodeURI(path)}`} alt={path} style={{ maxWidth: '100%' }} />
   }
   if (ext === 'pdf') {
     return (
