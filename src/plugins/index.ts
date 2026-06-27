@@ -1,3 +1,33 @@
-// Plugins package: plugin loading, lifecycle, hook system.
-// Implementation in subsequent plan.
-export {}
+// src/plugins/index.ts
+export type {
+  HookHandler,
+  HookMap,
+  HookRunner,
+  HookRunnerOptions,
+  Logger,
+  LogLevel,
+  Plugin,
+  PluginContext,
+  PluginRecord,
+  PluginRegistry,
+  PluginServices,
+  PluginStatus,
+} from './types.js'
+
+export { createLogger } from './logger.js'
+export { createHookRunner } from './hooks.js'
+export {
+  createPluginRegistry,
+  getPlugin,
+  listPlugins,
+  registerPlugin,
+  unregisterPlugin,
+} from './registry.js'
+export { activatePlugin, createPluginContext, deactivateAll, deactivatePlugin } from './lifecycle.js'
+export { discoverPlugins, loadPlugin, validatePluginModule } from './loader.js'
+export {
+  BUILTIN_PLUGINS,
+  createToolAuditLogger,
+  createWriteGuard,
+  registerBuiltinHooks,
+} from './builtin.js'
