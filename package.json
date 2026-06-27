@@ -8,10 +8,14 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "typecheck:web": "tsc -p src/web/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check src/",
     "format": "biome format --write src/",
+    "dev:web": "vite --config src/web/vite.config.ts",
+    "build:web": "vite build --config src/web/vite.config.ts",
+    "preview:web": "vite preview --config src/web/vite.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio"
   },

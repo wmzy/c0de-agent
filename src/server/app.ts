@@ -1,4 +1,7 @@
 // src/server/app.ts
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { errorHandler } from './middleware/error.js'
@@ -41,6 +44,12 @@ function createApp(ctx: ServerContext): Hono {
       ],
     }),
   )
+
+  // 静态文件服务（生产环境 dist-web/ 存在时启用）
+  if (existsSync(path.resolve(ctx.cwd, 'dist-web'))) {
+    app.use('/*', serveStatic({ root: './dist-web' }))
+    app.get('/*', (c) => c.body(null)) // SPA fallback
+  }
 
   return app
 }
