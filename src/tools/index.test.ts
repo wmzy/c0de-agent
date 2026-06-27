@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import type { ToolContext } from '../shared/types/tool.js'
 import {
   autoAllowChecker,
   bashTool,
@@ -8,8 +9,8 @@ import {
   editTool,
   executeTool,
   getTool,
-  globToRegex,
   globTool,
+  globToRegex,
   grepTool,
   listTools,
   readTool,
@@ -18,7 +19,6 @@ import {
   validateInput,
   writeTool,
 } from './index.js'
-import type { ToolContext } from '../shared/types/tool.js'
 
 describe('tools index', () => {
   it('exports all framework functions', () => {
@@ -56,7 +56,13 @@ describe('tools index', () => {
       session: { id: 's1', cwd: process.cwd() },
       abort: new AbortController().signal,
     }
-    const result = await executeTool(reg, 'glob', { pattern: 'package.json' }, ctx, autoAllowChecker)
+    const result = await executeTool(
+      reg,
+      'glob',
+      { pattern: 'package.json' },
+      ctx,
+      autoAllowChecker,
+    )
     expect(result._tag).toBe('success')
     if (result._tag === 'success') {
       expect(result.output).toContain('package.json')

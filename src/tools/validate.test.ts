@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { JSONSchema } from '../shared/types/base.js'
 import { validateInput } from './validate.js'
 

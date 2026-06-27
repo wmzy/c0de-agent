@@ -1,7 +1,7 @@
-import { describe, it, expectTypeOf } from 'vitest'
+import { describe, expectTypeOf, it } from 'vitest'
 import type { JSONSchema } from '../shared/types/base.js'
+import type { ChatTool } from '../shared/types/llm.js'
 import type {
-  ChatTool,
   ToolContext,
   ToolDef,
   ToolExecutor,
@@ -10,21 +10,21 @@ import type {
   ToolResult,
 } from '../shared/types/tool.js'
 import type {
-  PermissionResult,
-  PermissionChecker,
-  ToolRegistry,
-  ToolFactory,
-  ToolFactoryContext,
-  ValidationResult,
-  TruncateOptions,
-  TruncateResult,
   BashInput,
-  ReadInput,
-  WriteInput,
   EditInput,
   GlobInput,
   GrepInput,
   GrepMatch,
+  PermissionChecker,
+  PermissionResult,
+  ReadInput,
+  ToolFactory,
+  ToolFactoryContext,
+  ToolRegistry,
+  TruncateOptions,
+  TruncateResult,
+  ValidationResult,
+  WriteInput,
 } from './types.js'
 
 describe('tool types', () => {
@@ -43,7 +43,7 @@ describe('tool types', () => {
     const r: ToolRegistry = { tools: new Map(), factories: new Map() }
     expectTypeOf(r).toMatchTypeOf<ToolRegistry>()
 
-    const f: ToolFactory = (ctx) => null
+    const f: ToolFactory = () => null
     expectTypeOf(f).toMatchTypeOf<ToolFactory>()
 
     const fc: ToolFactoryContext = { config: {}, cwd: '/tmp' }

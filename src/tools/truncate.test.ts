@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { truncateOutput, DEFAULT_TRUNCATE_OPTIONS } from './truncate.js'
+import { describe, expect, it } from 'vitest'
+import { DEFAULT_TRUNCATE_OPTIONS, truncateOutput } from './truncate.js'
 
 describe('truncateOutput', () => {
   it('returns short output unchanged', () => {

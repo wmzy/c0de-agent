@@ -59,14 +59,15 @@ export const editTool: ToolDef = {
       }
 
       // Map normalized match back to original content
-      const matchIdx = matches[0]!
+      const matchIdx = matches[0] ?? 0
       const prefix = normalizedContent.slice(0, matchIdx)
       const charCount = prefix.length
 
       const mapping = buildPositionMapping(content, normalizedContent)
 
       const origStart = mapping.get(charCount) ?? charCount
-      const origEnd = mapping.get(charCount + normalizedOld.length) ?? charCount + normalizedOld.length
+      const origEnd =
+        mapping.get(charCount + normalizedOld.length) ?? charCount + normalizedOld.length
 
       const newContent = content.slice(0, origStart) + newText + content.slice(origEnd)
       await writeFile(fullPath, newContent, 'utf-8')

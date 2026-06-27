@@ -1,12 +1,12 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { ToolDef } from '../shared/types/tool.js'
 import {
   createToolRegistry,
+  getTool,
+  getToolSchemas,
+  listTools,
   registerTool,
   registerToolFactory,
-  getTool,
-  listTools,
-  getToolSchemas,
 } from './registry.js'
 
 function makeTool(name: string): ToolDef {
@@ -50,7 +50,7 @@ describe('tool registry', () => {
   it('registers a lazy factory', () => {
     const reg = createToolRegistry()
     let factoryCalled = false
-    registerToolFactory(reg, 'lazy', (ctx) => {
+    registerToolFactory(reg, 'lazy', () => {
       factoryCalled = true
       return makeTool('lazy')
     })

@@ -1,8 +1,8 @@
 import type { ToolContext, ToolResult } from '../shared/types/tool.js'
-import type { PermissionChecker, ToolRegistry } from './types.js'
 import { getTool } from './registry.js'
-import { validateInput } from './validate.js'
 import { truncateOutput } from './truncate.js'
+import type { PermissionChecker, ToolRegistry } from './types.js'
+import { validateInput } from './validate.js'
 
 /**
  * Execute a tool by name with full pipeline:

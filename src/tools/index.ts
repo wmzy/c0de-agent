@@ -1,5 +1,25 @@
 // Tools package: tool registry, executor, validation, truncation, and builtin tools.
 
+// ── Re-exports from shared ──────────────────────────────────
+export type { JSONSchema } from '../shared/types/base.js'
+export type { ChatTool } from '../shared/types/llm.js'
+export type {
+  ToolContext,
+  ToolDef,
+  ToolExecutor,
+  ToolMode,
+  ToolPermission,
+  ToolResult,
+} from '../shared/types/tool.js'
+export { bashTool } from './builtin/bash.js'
+export { editTool } from './builtin/edit.js'
+export { globTool, globToRegex } from './builtin/glob.js'
+export { grepTool } from './builtin/grep.js'
+// ── Builtin tools ───────────────────────────────────────────
+export { readTool } from './builtin/read.js'
+export { writeTool } from './builtin/write.js'
+export { executeTool } from './executor.js'
+export { autoAllowChecker, createPermissionChecker } from './permission.js'
 // ── Framework ───────────────────────────────────────────────
 export {
   createToolRegistry,
@@ -9,19 +29,7 @@ export {
   registerTool,
   registerToolFactory,
 } from './registry.js'
-export { autoAllowChecker, createPermissionChecker } from './permission.js'
-export { executeTool } from './executor.js'
-export { validateInput } from './validate.js'
 export { DEFAULT_TRUNCATE_OPTIONS, truncateOutput } from './truncate.js'
-
-// ── Builtin tools ───────────────────────────────────────────
-export { readTool } from './builtin/read.js'
-export { writeTool } from './builtin/write.js'
-export { editTool } from './builtin/edit.js'
-export { globToRegex, globTool } from './builtin/glob.js'
-export { grepTool } from './builtin/grep.js'
-export { bashTool } from './builtin/bash.js'
-
 // ── Types ───────────────────────────────────────────────────
 export type {
   BashInput,
@@ -40,18 +48,7 @@ export type {
   ValidationResult,
   WriteInput,
 } from './types.js'
-
-// ── Re-exports from shared ──────────────────────────────────
-export type { JSONSchema } from '../shared/types/base.js'
-export type {
-  ChatTool,
-  ToolContext,
-  ToolDef,
-  ToolExecutor,
-  ToolMode,
-  ToolPermission,
-  ToolResult,
-} from '../shared/types/tool.js'
+export { validateInput } from './validate.js'
 
 // ── Default registry ────────────────────────────────────────
 import { bashTool } from './builtin/bash.js'

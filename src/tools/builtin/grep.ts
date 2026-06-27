@@ -8,11 +8,48 @@ const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', '
 
 /** File extensions treated as text (skip binary files). */
 const TEXT_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.md', '.mdx',
-  '.txt', '.css', '.scss', '.html', '.htm', '.xml', '.yaml', '.yml',
-  '.toml', '.ini', '.env', '.sh', '.bash', '.zsh', '.py', '.rb', '.go',
-  '.rs', '.java', '.kt', '.c', '.cpp', '.h', '.hpp', '.cs', '.php',
-  '.swift', '.sql', '.graphql', '.gql', '.vue', '.svelte', '.astro',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.json',
+  '.md',
+  '.mdx',
+  '.txt',
+  '.css',
+  '.scss',
+  '.html',
+  '.htm',
+  '.xml',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.env',
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.py',
+  '.rb',
+  '.go',
+  '.rs',
+  '.java',
+  '.kt',
+  '.c',
+  '.cpp',
+  '.h',
+  '.hpp',
+  '.cs',
+  '.php',
+  '.swift',
+  '.sql',
+  '.graphql',
+  '.gql',
+  '.vue',
+  '.svelte',
+  '.astro',
 ])
 
 /** Maximum file size to search (skip files > 1MB). */
@@ -21,12 +58,8 @@ const MAX_FILE_SIZE = 1024 * 1024
 /** Recursively walk a directory for text files. */
 async function walkForFiles(dir: string, base: string): Promise<string[]> {
   const results: string[] = []
-  let entries
-  try {
-    entries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return []
-  }
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => null)
+  if (!entries) return []
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (IGNORE_DIRS.has(entry.name)) continue
@@ -87,7 +120,7 @@ export const grepTool: ToolDef = {
         const relPath = relative(basePath, filePath)
 
         for (let i = 0; i < lines.length; i++) {
-          const line = lines[i]!
+          const line = lines[i] ?? ''
           const match = line.match(regex)
           if (match) {
             matches.push({
@@ -101,9 +134,7 @@ export const grepTool: ToolDef = {
         }
       }
 
-      const output = matches
-        .map((m) => `${m.file}:${m.line}: ${m.text}`)
-        .join('\n')
+      const output = matches.map((m) => `${m.file}:${m.line}: ${m.text}`).join('\n')
 
       return {
         _tag: 'success',

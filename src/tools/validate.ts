@@ -26,7 +26,8 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
   // oneOf: exactly one must pass
   if (schema.oneOf) {
     const count = schema.oneOf.filter((s) => validateNode(s, value, path) === null).length
-    if (count !== 1) return `${path || 'value'}: must match exactly one oneOf schema (matched ${count})`
+    if (count !== 1)
+      return `${path || 'value'}: must match exactly one oneOf schema (matched ${count})`
     return null
   }
 
@@ -44,14 +45,19 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
   }
 
   // object validation
-  if (schema.type === 'object' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+  if (
+    schema.type === 'object' &&
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value)
+  ) {
     const obj = value as Record<string, unknown>
 
     // required fields
     if (schema.required) {
       for (const field of schema.required) {
         if (!(field in obj)) {
-          return `${path ? path + '.' : ''}${field}: missing required field`
+          return `${path ? `${path}.` : ''}${field}: missing required field`
         }
       }
     }
@@ -71,7 +77,7 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
       const knownKeys = new Set(Object.keys(schema.properties))
       for (const key of Object.keys(obj)) {
         if (!knownKeys.has(key)) {
-          return `${path ? path + '.' : ''}${key}: additional property not allowed`
+          return `${path ? `${path}.` : ''}${key}: additional property not allowed`
         }
       }
     }

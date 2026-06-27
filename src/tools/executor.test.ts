@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { ToolContext, ToolDef, ToolResult } from '../shared/types/tool.js'
-import { createToolRegistry, registerTool } from './registry.js'
-import { autoAllowChecker, createPermissionChecker } from './permission.js'
 import { executeTool } from './executor.js'
+import { autoAllowChecker, createPermissionChecker } from './permission.js'
+import { createToolRegistry, registerTool } from './registry.js'
 
 const ctx: ToolContext = {
   cwd: '/tmp',
@@ -56,7 +56,10 @@ describe('executeTool', () => {
 
   it('returns error for invalid input', async () => {
     const reg = createToolRegistry()
-    registerTool(reg, makeTool('echo', async () => ({ _tag: 'success', output: '' })))
+    registerTool(
+      reg,
+      makeTool('echo', async () => ({ _tag: 'success', output: '' })),
+    )
     const result = await executeTool(reg, 'echo', {}, ctx, autoAllowChecker)
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
@@ -66,14 +69,20 @@ describe('executeTool', () => {
 
   it('returns permission_required for ask tools', async () => {
     const reg = createToolRegistry()
-    registerTool(reg, makeTool('write', async () => ({ _tag: 'success', output: '' }), 'ask'))
+    registerTool(
+      reg,
+      makeTool('write', async () => ({ _tag: 'success', output: '' }), 'ask'),
+    )
     const result = await executeTool(reg, 'write', { msg: 'x' }, ctx, autoAllowChecker)
     expect(result._tag).toBe('permission_required')
   })
 
   it('returns error for denied tools', async () => {
     const reg = createToolRegistry()
-    registerTool(reg, makeTool('rm', async () => ({ _tag: 'success', output: '' }), 'deny'))
+    registerTool(
+      reg,
+      makeTool('rm', async () => ({ _tag: 'success', output: '' }), 'deny'),
+    )
     const result = await executeTool(reg, 'rm', { msg: 'x' }, ctx, autoAllowChecker)
     expect(result._tag).toBe('error')
   })
@@ -113,7 +122,10 @@ describe('executeTool', () => {
 
   it('uses custom permission checker', async () => {
     const reg = createToolRegistry()
-    registerTool(reg, makeTool('bash', async () => ({ _tag: 'success', output: '' }), 'ask'))
+    registerTool(
+      reg,
+      makeTool('bash', async () => ({ _tag: 'success', output: '' }), 'ask'),
+    )
     const checker = createPermissionChecker({ alwaysAllow: ['bash'] })
     const result = await executeTool(reg, 'bash', { msg: 'ls' }, ctx, checker)
     expect(result._tag).toBe('success')
@@ -128,7 +140,10 @@ describe('executeTool', () => {
       session: { id: 's1', cwd: '/tmp' },
       abort: ac.signal,
     }
-    registerTool(reg, makeTool('echo', async () => ({ _tag: 'success', output: 'ok' })))
+    registerTool(
+      reg,
+      makeTool('echo', async () => ({ _tag: 'success', output: 'ok' })),
+    )
     const result = await executeTool(reg, 'echo', { msg: 'x' }, abortedCtx, autoAllowChecker)
     expect(result._tag).toBe('error')
   })

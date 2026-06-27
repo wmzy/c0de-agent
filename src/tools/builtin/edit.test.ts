@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ToolContext } from '../../shared/types/tool.js'
 import { editTool } from './edit.js'
 
@@ -63,10 +63,7 @@ describe('editTool', () => {
 
   it('returns error when oldText matches multiple times', async () => {
     await writeFile(join(workDir, 'f.ts'), 'dup\ndup\n')
-    const result = await editTool.execute(
-      { path: 'f.ts', oldText: 'dup', newText: 'unique' },
-      ctx,
-    )
+    const result = await editTool.execute({ path: 'f.ts', oldText: 'dup', newText: 'unique' }, ctx)
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
       expect(result.error).toContain('multiple')
@@ -84,10 +81,7 @@ describe('editTool', () => {
   })
 
   it('returns error for non-existent file', async () => {
-    const result = await editTool.execute(
-      { path: 'nope.ts', oldText: 'a', newText: 'b' },
-      ctx,
-    )
+    const result = await editTool.execute({ path: 'nope.ts', oldText: 'a', newText: 'b' }, ctx)
     expect(result._tag).toBe('error')
   })
 

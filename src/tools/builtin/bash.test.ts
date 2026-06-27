@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ToolContext } from '../../shared/types/tool.js'
 import { bashTool } from './bash.js'
 
@@ -69,10 +69,7 @@ describe('bashTool', () => {
   })
 
   it('respects timeout', async () => {
-    const result = await bashTool.execute(
-      { command: 'sleep 10', timeout: 100 },
-      ctx,
-    )
+    const result = await bashTool.execute({ command: 'sleep 10', timeout: 100 }, ctx)
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
       expect(result.error.toLowerCase()).toContain('timeout')

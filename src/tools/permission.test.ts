@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { ToolDef } from '../shared/types/tool.js'
-import { createPermissionChecker, autoAllowChecker } from './permission.js'
+import { autoAllowChecker, createPermissionChecker } from './permission.js'
 
 function makeTool(permission: 'auto' | 'ask' | 'deny'): ToolDef {
   return {
@@ -14,20 +14,28 @@ function makeTool(permission: 'auto' | 'ask' | 'deny'): ToolDef {
 
 describe('autoAllowChecker', () => {
   it('allows auto tools', async () => {
-    const result = await autoAllowChecker.check(makeTool('auto'), {}, {
-      cwd: '/tmp',
-      session: { id: 's1', cwd: '/tmp' },
-      abort: new AbortController().signal,
-    })
+    const result = await autoAllowChecker.check(
+      makeTool('auto'),
+      {},
+      {
+        cwd: '/tmp',
+        session: { id: 's1', cwd: '/tmp' },
+        abort: new AbortController().signal,
+      },
+    )
     expect(result._tag).toBe('allow')
   })
 
   it('asks for ask tools', async () => {
-    const result = await autoAllowChecker.check(makeTool('ask'), {}, {
-      cwd: '/tmp',
-      session: { id: 's1', cwd: '/tmp' },
-      abort: new AbortController().signal,
-    })
+    const result = await autoAllowChecker.check(
+      makeTool('ask'),
+      {},
+      {
+        cwd: '/tmp',
+        session: { id: 's1', cwd: '/tmp' },
+        abort: new AbortController().signal,
+      },
+    )
     expect(result._tag).toBe('ask')
     if (result._tag === 'ask') {
       expect(result.reason).toBeTruthy()
@@ -36,11 +44,15 @@ describe('autoAllowChecker', () => {
   })
 
   it('denies deny tools', async () => {
-    const result = await autoAllowChecker.check(makeTool('deny'), {}, {
-      cwd: '/tmp',
-      session: { id: 's1', cwd: '/tmp' },
-      abort: new AbortController().signal,
-    })
+    const result = await autoAllowChecker.check(
+      makeTool('deny'),
+      {},
+      {
+        cwd: '/tmp',
+        session: { id: 's1', cwd: '/tmp' },
+        abort: new AbortController().signal,
+      },
+    )
     expect(result._tag).toBe('deny')
   })
 })

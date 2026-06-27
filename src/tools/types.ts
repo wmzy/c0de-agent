@@ -1,6 +1,6 @@
 import type { JSONSchema } from '../shared/types/base.js'
+import type { ChatTool } from '../shared/types/llm.js'
 import type {
-  ChatTool,
   ToolContext,
   ToolDef,
   ToolExecutor,
@@ -118,7 +118,12 @@ type GrepMatch = {
 // ── Re-exports ──────────────────────────────────────────────
 
 export type {
+  BashInput,
   ChatTool,
+  EditInput,
+  GlobInput,
+  GrepInput,
+  GrepMatch,
   JSONSchema,
   PermissionChecker,
   PermissionResult,
@@ -132,15 +137,8 @@ export type {
   ToolPermission,
   ToolRegistry,
   ToolResult,
-  ValidationResult,
-}
-export type {
-  BashInput,
-  EditInput,
-  GlobInput,
-  GrepInput,
-  GrepMatch,
   TruncateOptions,
   TruncateResult,
+  ValidationResult,
   WriteInput,
 }

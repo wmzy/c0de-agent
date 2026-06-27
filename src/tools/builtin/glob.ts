@@ -14,7 +14,7 @@ export function globToRegex(pattern: string): RegExp {
   let re = ''
   let i = 0
   while (i < pattern.length) {
-    const c = pattern[i]!
+    const c = pattern[i] ?? ''
     if (c === '*') {
       if (pattern[i + 1] === '*') {
         re += '.*'
@@ -64,12 +64,8 @@ function escapeRegex(s: string): string {
 /** Recursively walk a directory, skipping IGNORE_DIRS. Returns relative file paths. */
 async function walkDir(dir: string, base: string): Promise<string[]> {
   const results: string[] = []
-  let entries
-  try {
-    entries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return []
-  }
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => null)
+  if (!entries) return []
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (IGNORE_DIRS.has(entry.name)) continue

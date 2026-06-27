@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdir, readFile, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ToolContext } from '../../shared/types/tool.js'
 import { writeTool } from './write.js'
 
@@ -38,10 +38,7 @@ describe('writeTool', () => {
   })
 
   it('creates parent directories', async () => {
-    const result = await writeTool.execute(
-      { path: 'sub/dir/file.txt', content: 'nested' },
-      ctx,
-    )
+    const result = await writeTool.execute({ path: 'sub/dir/file.txt', content: 'nested' }, ctx)
     expect(result._tag).toBe('success')
     const written = await readFile(join(workDir, 'sub/dir/file.txt'), 'utf-8')
     expect(written).toBe('nested')
@@ -55,10 +52,7 @@ describe('writeTool', () => {
   })
 
   it('returns error on permission denied', async () => {
-    const result = await writeTool.execute(
-      { path: '/proc/cannot-write-here', content: 'x' },
-      ctx,
-    )
+    const result = await writeTool.execute({ path: '/proc/cannot-write-here', content: 'x' }, ctx)
     expect(result._tag).toBe('error')
   })
 
