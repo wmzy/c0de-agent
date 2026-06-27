@@ -124,14 +124,20 @@ src/web/
 - Create: `src/web/main.tsx`
 - Create: `src/web/App.tsx`
 
-- [ ] **Step 1: 安装前端依赖**
+- [ ] **Step 1: 前端依赖（已预装，验证即可）**
+
+依赖已由 controller 预装并锁定（见 `package.json`）。核心版本：
+- 运行时：react/react-dom@19、@tanstack/react-query@5、@native-router/{core,react}@1、@linaria/{core,react}@5、shiki@1、marked@12、haze-ui@1（不强依赖，peer 警告可忽略）
+- 开发：vite@6、@vitejs/plugin-react@4、@linaria/vite@5、vite-plugin-pwa@1、@types/react@19、happy-dom@15、@testing-library/{react,jest-dom,user-event}@16/6/14、@codemirror/*@6
+
+> **版本对齐（重要）**：linaria 必须全套 5.x（core/react/vite 同版本，是唯一有完整 vite 支持的组合；6/7/8 无配套 vite 插件）。vite-plugin-pwa 需 ^1 以兼容 vite 6。esbuild 构建已通过 `package.json` 的 `pnpm.onlyBuiltDependencies` 批准。
+
+验证（无需重装）：
 
 ```bash
-pnpm add react@^19 react-dom@^19 @tanstack/react-query@^5 @native-router/react@^1 @native-router/core@^1 haze-ui@^1 @linaria/core@^6 @linaria/react@^6 shiki@^1 marked@^12
-pnpm add -D vite@^6 @vitejs/plugin-react@^4 @linaria/vite@^6 vite-plugin-pwa@^0.20 @types/react@^19 @types/react-dom@^19 happy-dom@^15 @testing-library/react@^16 @testing-library/jest-dom@^6 @testing-library/user-event@^14 @codemirror/state@^6 @codemirror/view@^6 @codemirror/lang-javascript@^6 @codemirror/theme-one-dark@^6
+./node_modules/.bin/vite --version    # 期望 vite/6.x
+node -e "require('@linaria/core')"    # 不报错即可
 ```
-
-> 若 pnpm 报网络错误，设代理：`export HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890` 后重试。
 
 - [ ] **Step 2: 在 `package.json` 的 `scripts` 增加前端命令**
 
@@ -244,6 +250,7 @@ export default defineConfig({
     }),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: false,
       manifest: {
         name: 'c0de-agent',
         short_name: 'c0de',
