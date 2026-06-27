@@ -1,12 +1,12 @@
-import type { DB } from '../db/client.js'
 import type { LoopDeps } from '../core/loop.js'
+import type { DB } from '../db/client.js'
 import { createRegistry, registerProvider } from '../llm/index.js'
 import type { Registry } from '../llm/registry.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
-import type { PermissionChecker, PermissionResult } from '../tools/types.js'
 import { createDefaultRegistry } from '../tools/index.js'
+import type { PermissionChecker, PermissionResult } from '../tools/types.js'
 
 /** Print/ACP 等非交互模式：所有工具自动放行（命令由用户显式触发）。 */
 const autoApproveChecker: PermissionChecker = {

@@ -19,10 +19,11 @@ describe('plugin list', () => {
     await runPluginCommand({
       args: { options: {}, positionals: ['list'] },
       cwd: tmp,
-      discover: async () => [
-        { name: 'p1', version: '1.0.0' },
-        { name: 'p2', version: '2.0.0' },
-      ] as never,
+      discover: async () =>
+        [
+          { name: 'p1', version: '1.0.0' },
+          { name: 'p2', version: '2.0.0' },
+        ] as never,
       write: (s) => out.push(s),
     })
     expect(out.join('')).toContain('p1')

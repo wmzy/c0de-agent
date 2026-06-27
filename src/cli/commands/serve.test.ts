@@ -12,13 +12,21 @@ describe('runServeCommand', () => {
       cwd: process.cwd(),
       serverStarter: async (opts) => {
         started.push({ port: opts.port ?? 3000 })
-        return { port: opts.port ?? 3000, close: () => { closed = true } }
+        return {
+          port: opts.port ?? 3000,
+          close: () => {
+            closed = true
+          },
+        }
       },
       banner: (s) => banners.push(s),
-      opener: (url) => { opens.push(url) },
+      opener: (url) => {
+        opens.push(url)
+      },
       hold: false,
     })
-    expect(started[0].port).toBe(3000)
+    const [first] = started
+    expect(first?.port).toBe(3000)
     expect(banners.join('')).toContain('3000')
     expect(opens[0]).toContain('3000')
     expect(closed).toBe(true)
@@ -31,7 +39,9 @@ describe('runServeCommand', () => {
       cwd: process.cwd(),
       serverStarter: async (opts) => ({ port: opts.port ?? 3000, close: () => {} }),
       banner: () => {},
-      opener: (url) => { opens.push(url) },
+      opener: (url) => {
+        opens.push(url)
+      },
       hold: false,
     })
     expect(opens).toHaveLength(0)

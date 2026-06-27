@@ -52,7 +52,8 @@ async function runAcpLoop(opts: AcpLoopOptions): Promise<void> {
     }
     const handler = opts.handlers[req.method]
     if (!handler) {
-      if (req.id !== null) opts.writer(formatACPError(req.id, -32601, `Method not found: ${req.method}`))
+      if (req.id !== null)
+        opts.writer(formatACPError(req.id, -32601, `Method not found: ${req.method}`))
       continue
     }
     try {
@@ -60,7 +61,9 @@ async function runAcpLoop(opts: AcpLoopOptions): Promise<void> {
       if (req.id !== null) opts.writer(formatACPResponse(req.id, result))
     } catch (err) {
       if (req.id !== null) {
-        opts.writer(formatACPError(req.id, -32603, err instanceof Error ? err.message : String(err)))
+        opts.writer(
+          formatACPError(req.id, -32603, err instanceof Error ? err.message : String(err)),
+        )
       }
     }
   }

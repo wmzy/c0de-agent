@@ -21,7 +21,7 @@ type CommandArgs = {
 }
 
 function parseCommand(spec: CommandSpec, argv: string[]): CommandArgs {
-  const opts: Record<string, { type: OptionType; short?: string; default?: unknown }> = {}
+  const opts: Record<string, { type: OptionType; short?: string }> = {}
   const defaults: Record<string, unknown> = {}
   for (const o of spec.options ?? []) {
     const key = o.name
@@ -40,7 +40,7 @@ function parseCommand(spec: CommandSpec, argv: string[]): CommandArgs {
   for (const k of Object.keys(opts)) {
     if (values[k] !== undefined) {
       merged[k] = values[k]
-    } else if (opts[k].type === 'boolean' && defaults[k] === undefined) {
+    } else if (opts[k]?.type === 'boolean' && defaults[k] === undefined) {
       merged[k] = false
     }
   }

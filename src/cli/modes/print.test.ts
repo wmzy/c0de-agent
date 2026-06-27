@@ -1,10 +1,10 @@
-import { createDB, migrateDB } from '../../db/index.js'
-import type { ChatOptions, ProviderContext } from '../../llm/index.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
+import { createDB, migrateDB } from '../../db/index.js'
+import type { ChatOptions, ProviderContext } from '../../llm/index.js'
 import type { AgentEvent } from '../../shared/types/agent.js'
-import type { ChatRequest, StreamChunk } from '../../shared/types/llm.js'
 import type { Config } from '../../shared/types/config.js'
+import type { ChatRequest, StreamChunk } from '../../shared/types/llm.js'
 import { buildAgentDeps } from '../deps.js'
 import { collectAssistantText, runPrintMode } from './print.js'
 
@@ -62,10 +62,7 @@ describe('collectAssistantText', () => {
 describe('runPrintMode', () => {
   it('returns assistant text from agent run', async () => {
     // StreamChunk 'text' 经 loop 转为 AgentEvent 'text_delta'；loop 在无 tool 调用时自动发 'done'
-    const chatStream = mockChatStream([
-      { _tag: 'text', text: 'Hi there' },
-      { _tag: 'done' },
-    ])
+    const chatStream = mockChatStream([{ _tag: 'text', text: 'Hi there' }, { _tag: 'done' }])
     const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream })
     const out = await runPrintMode(config, 'ping', deps, { onEvent: () => {} })
     expect(out).toBe('Hi there')

@@ -1,6 +1,6 @@
-import type { CommandArgs } from '../parser.js'
 import type { StartServerOptions } from '../../server/index.js'
 import { startServer } from '../../server/index.js'
+import type { CommandArgs } from '../parser.js'
 import { openBrowser, printStartupBanner } from '../utils/output.js'
 
 type RunningHandle = { port: number; close(): void }

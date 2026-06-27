@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseCommand } from './parser.js'
 import type { CommandSpec } from './parser.js'
+import { parseCommand } from './parser.js'
 
 const spec: CommandSpec = {
   name: 'chat',

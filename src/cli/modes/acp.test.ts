@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { formatACPError, formatACPEvent, formatACPResponse, parseACPRequest, runAcpLoop } from './acp.js'
+import {
+  formatACPError,
+  formatACPEvent,
+  formatACPResponse,
+  parseACPRequest,
+  runAcpLoop,
+} from './acp.js'
 
 describe('parseACPRequest', () => {
   it('parses valid request', () => {
-    const line = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'chat', params: { message: 'hi' } })
+    const line = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'chat',
+      params: { message: 'hi' },
+    })
     const req = parseACPRequest(line)
     expect(req?.method).toBe('chat')
     expect(req?.id).toBe(1)
@@ -45,7 +56,12 @@ describe('runAcpLoop', () => {
   it('responds to session/create and echoes unknown method as error', async () => {
     const written: string[] = []
     async function* reader() {
-      yield JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'session/create', params: { title: 't' } })
+      yield JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'session/create',
+        params: { title: 't' },
+      })
       yield JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'bogus', params: {} })
     }
     await runAcpLoop({

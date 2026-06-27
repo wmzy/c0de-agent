@@ -23,7 +23,8 @@ describe('openBrowser', () => {
         return { killed: false, kill() {} } as never
       },
     })
-    expect(calls[0].cmd).toBe('xdg-open')
-    expect(calls[0].args).toContain('http://localhost:3000')
+    const [first] = calls
+    expect(first?.cmd).toBe('xdg-open')
+    expect(first?.args).toContain('http://localhost:3000')
   })
 })

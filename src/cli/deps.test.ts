@@ -1,8 +1,8 @@
-import { resolveRoute } from '../llm/index.js'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
+import { resolveRoute } from '../llm/index.js'
 import type { Config } from '../shared/types/config.js'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { autoApproveChecker, buildAgentDeps, buildLLMRegistry } from './deps.js'
 
 let db: DB
