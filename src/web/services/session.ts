@@ -7,10 +7,10 @@ const sessionAPI = {
   list: () => apiRequest<Session[]>('/api/sessions'),
   tree: () => apiRequest<SessionTreeNode[]>('/api/sessions/tree'),
   get: (id: string) => apiRequest<Session>(`/api/sessions/${id}`),
-  create: (title?: string) =>
+  create: (params?: { title?: string; directory?: string; projectId?: string }) =>
     apiRequest<Session>('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify(title ? { title } : {}),
+      body: JSON.stringify(params ?? {}),
     }),
   fork: (id: string, messageIndex: number) =>
     apiRequest<Session>(`/api/sessions/${id}/fork`, {

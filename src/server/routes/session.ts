@@ -14,10 +14,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const title = (body.title as string) ?? 'New Session'
     const directory = body.directory as string | undefined
+    const explicitProjectId = body.projectId as string | undefined
     let projectId: string | undefined
     if (directory) {
       const project = await fromDirectory(ctx.db, directory)
       projectId = project.id
+    } else if (explicitProjectId) {
+      projectId = explicitProjectId
     }
     const session = await createSession(ctx.db, title, projectId)
     return c.json(session, 201)

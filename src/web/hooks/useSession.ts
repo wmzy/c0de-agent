@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { projectAPI } from '../services/project.js'
 import { sessionAPI } from '../services/session.js'
 
 export function useSessionTree() {
@@ -20,7 +21,8 @@ export function useMessages(sessionId: string | null) {
 export function useCreateSession() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (title?: string) => sessionAPI.create(title),
+    mutationFn: (params?: { title?: string; directory?: string; projectId?: string }) =>
+      sessionAPI.create(params),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   })
 }
@@ -43,4 +45,9 @@ export function useForkSession() {
       sessionAPI.fork(id, messageIndex),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }),
   })
+}
+
+/** 项目列表（用于会话列表的项目切换过滤）。 */
+export function useProjects() {
+  return useQuery({ queryKey: ['projects'], queryFn: () => projectAPI.list(), staleTime: 30_000 })
 }

@@ -14,7 +14,7 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
   const messages = await getMessages(handle, sessionId)
   const toCopy = messages.slice(0, messageIndex + 1)
 
-  const forked = await createSession(handle, `Branch of ${source.title}`)
+  const forked = await createSession(handle, `Branch of ${source.title}`, source.projectId ?? undefined)
   await handle.db
     .update(sessions)
     .set({ parentId: sessionId, branchPoint: messageIndex })
