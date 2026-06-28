@@ -38,8 +38,8 @@ const removed = css`
 type RowKind = 'added' | 'removed' | 'unchanged'
 
 export function ContentDiff({ oldText, newText }: { oldText: string; newText: string }) {
-  const normalizedOld = oldText.endsWith('\n') ? oldText : oldText + '\n'
-  const normalizedNew = newText.endsWith('\n') ? newText : newText + '\n'
+  const normalizedOld = oldText.endsWith('\n') ? oldText : `${oldText}\n`
+  const normalizedNew = newText.endsWith('\n') ? newText : `${newText}\n`
   const parts = diffLines(normalizedOld, normalizedNew)
   const rows: { kind: RowKind; text: string }[] = []
   for (const part of parts) {
@@ -58,7 +58,9 @@ export function ContentDiff({ oldText, newText }: { oldText: string; newText: st
           className={`${row} ${r.kind === 'added' ? added : r.kind === 'removed' ? removed : ''}`}
           data-diff={r.kind}
         >
-          <span className={marker}>{r.kind === 'added' ? '+' : r.kind === 'removed' ? '-' : ' '}</span>
+          <span className={marker}>
+            {r.kind === 'added' ? '+' : r.kind === 'removed' ? '-' : ' '}
+          </span>
           <span>{r.text}</span>
         </div>
       ))}

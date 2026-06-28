@@ -1,5 +1,4 @@
 import { css } from '@linaria/core'
-import type { RenderBlock } from './utils/normalizeParts.js'
 import { BashToolView } from './tools/BashToolView.js'
 import { EditToolView } from './tools/EditToolView.js'
 import { FallbackToolView } from './tools/FallbackToolView.js'
@@ -7,6 +6,7 @@ import { GlobToolView } from './tools/GlobToolView.js'
 import { GrepToolView } from './tools/GrepToolView.js'
 import { ReadToolView } from './tools/ReadToolView.js'
 import { WriteToolView } from './tools/WriteToolView.js'
+import type { RenderBlock } from './utils/normalizeParts.js'
 
 type ToolRenderBlock = Extract<RenderBlock, { type: 'tool' }>
 

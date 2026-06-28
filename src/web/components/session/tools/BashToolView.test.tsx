@@ -15,7 +15,7 @@ describe('BashToolView', () => {
       <BashToolView
         input={{ command: 'echo hi' }}
         status="completed"
-        output={{ _tag: 'success', output: 'hi', metadata: { exitCode: 0 } } as any}
+        output={{ _tag: 'success', output: 'hi', metadata: { exitCode: 0 } }}
       />,
     )
     expect(screen.getByTestId('bash-output')).toHaveTextContent('hi')
@@ -27,7 +27,7 @@ describe('BashToolView', () => {
       <BashToolView
         input={{ command: 'bad' }}
         status="error"
-        output={{ _tag: 'error', error: 'Command failed with exit code: 127\nx' } as any}
+        output={{ _tag: 'error', error: 'Command failed with exit code: 127\nx' }}
       />,
     )
     expect(screen.getByTestId('bash-output')).toHaveTextContent('exit code: 127')

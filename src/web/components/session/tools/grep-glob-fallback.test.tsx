@@ -11,7 +11,7 @@ describe('GrepToolView', () => {
     render(
       <GrepToolView
         input={{ pattern: 'foo' }}
-        output={{ _tag: 'success', output: 'a.ts:1:foo' } as any}
+        output={{ _tag: 'success', output: 'a.ts:1:foo' }}
         status="completed"
       />,
     )
@@ -22,7 +22,7 @@ describe('GrepToolView', () => {
     render(
       <GrepToolView
         input={{ pattern: 'foo' }}
-        output={{ _tag: 'success', output: 'a.ts:1:foo' } as any}
+        output={{ _tag: 'success', output: 'a.ts:1:foo' }}
         status="completed"
       />,
     )
@@ -37,7 +37,7 @@ describe('GlobToolView', () => {
     render(
       <GlobToolView
         input={{ pattern: '*.ts' }}
-        output={{ _tag: 'success', output: 'a.ts\nb.ts' } as any}
+        output={{ _tag: 'success', output: 'a.ts\nb.ts' }}
         status="completed"
       />,
     )

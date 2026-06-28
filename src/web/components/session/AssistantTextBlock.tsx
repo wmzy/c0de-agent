@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { CopyButton } from '../CopyButton.js'
-import { useOverflow } from './hooks/useOverflow.js'
 import { Markdown } from '../Markdown.js'
+import { useOverflow } from './hooks/useOverflow.js'
 
 const wrap = css`
   display: flex;
@@ -38,13 +38,7 @@ const footer = css`
   color: var(--text-secondary);
 `
 
-export function AssistantTextBlock({
-  text,
-  completedAt,
-}: {
-  text: string
-  completedAt?: number
-}) {
+export function AssistantTextBlock({ text, completedAt }: { text: string; completedAt?: number }) {
   const { ref, overflowing, expanded, toggle } = useOverflow(400)
   const showToggle = overflowing && !expanded
   return (

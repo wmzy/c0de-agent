@@ -13,7 +13,13 @@ describe('ReadToolView', () => {
   })
 
   it('error 状态显示错误信息', () => {
-    render(<ReadToolView input={{ path: 'a.ts' }} status="error" output={{ _tag: 'error', error: 'no file' } as any} />)
+    render(
+      <ReadToolView
+        input={{ path: 'a.ts' }}
+        status="error"
+        output={{ _tag: 'error', error: 'no file' }}
+      />,
+    )
     expect(screen.getByTestId('tool-error')).toHaveTextContent('no file')
   })
 })

@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
-import type { ReactNode } from 'react'
 import type { Message } from '@shared/types/message.js'
+import type { ReactNode } from 'react'
 import { AssistantTextBlock } from './AssistantTextBlock.js'
 import { PartDecoration } from './PartDecoration.js'
 import { ReasoningBlock } from './ReasoningBlock.js'
@@ -38,7 +38,10 @@ export function MessageItem({ message }: { message: Message }) {
               block.role === 'user' ? (
                 <UserTextBlock text={block.text} />
               ) : (
-                <AssistantTextBlock text={block.text} completedAt={message.createdAt || undefined} />
+                <AssistantTextBlock
+                  text={block.text}
+                  completedAt={message.createdAt || undefined}
+                />
               )
             break
           case 'thinking':
@@ -52,6 +55,7 @@ export function MessageItem({ message }: { message: Message }) {
             break
         }
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: 消息 part 无稳定 id，按索引作 key
           <div className={row} key={`${block.type}-${i}`}>
             <PartDecoration block={block} />
             <div className={content}>{body}</div>

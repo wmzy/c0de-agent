@@ -59,9 +59,7 @@ export function FallbackToolView({
         {tool}
       </div>
       <pre className={pre} data-testid="fallback-args">
-        {pairs
-          .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
-          .join('\n')}
+        {pairs.map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n')}
       </pre>
       {resultText && (
         <pre className={pre} data-testid="fallback-output">

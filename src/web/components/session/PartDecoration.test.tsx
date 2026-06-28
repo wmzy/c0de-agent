@@ -26,7 +26,11 @@ describe('PartDecoration', () => {
 
   it('tool 块按工具名显示对应 icon', () => {
     const block: RenderBlock = {
-      type: 'tool', id: '1', tool: 'bash', input: {}, status: 'completed',
+      type: 'tool',
+      id: '1',
+      tool: 'bash',
+      input: {},
+      status: 'completed',
     }
     render(<PartDecoration block={block} />)
     expect(screen.getByTestId('decoration').getAttribute('data-icon')).toBe('bash')
@@ -34,7 +38,11 @@ describe('PartDecoration', () => {
 
   it('未知工具显示通用 tool icon', () => {
     const block: RenderBlock = {
-      type: 'tool', id: '1', tool: 'custom', input: {}, status: 'running',
+      type: 'tool',
+      id: '1',
+      tool: 'custom',
+      input: {},
+      status: 'running',
     }
     render(<PartDecoration block={block} />)
     expect(screen.getByTestId('decoration').getAttribute('data-icon')).toBe('tool')

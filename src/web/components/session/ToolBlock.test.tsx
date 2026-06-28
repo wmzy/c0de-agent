@@ -8,7 +8,14 @@ afterEach(() => cleanup())
 function toolBlock(
   over: Partial<Extract<RenderBlock, { type: 'tool' }>> = {},
 ): Extract<RenderBlock, { type: 'tool' }> {
-  return { type: 'tool', id: '1', tool: 'read', input: { path: 'a.ts' }, status: 'completed', ...over }
+  return {
+    type: 'tool',
+    id: '1',
+    tool: 'read',
+    input: { path: 'a.ts' },
+    status: 'completed',
+    ...over,
+  }
 }
 
 describe('ToolBlock', () => {

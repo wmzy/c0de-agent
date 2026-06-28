@@ -1,5 +1,5 @@
-import type { Message } from '@shared/types/message.js'
 import type { MessageRole } from '@shared/types/base.js'
+import type { Message } from '@shared/types/message.js'
 import type { ToolResult } from '@shared/types/tool.js'
 
 /** normalizeParts 产出的渲染块。 */

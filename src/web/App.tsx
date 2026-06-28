@@ -1,6 +1,5 @@
 import { css } from '@linaria/core'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useQuery } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { TopBar } from './components/TopBar.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
@@ -64,28 +63,25 @@ const redirectMsg = css`
  * 加载中显示提示；失败显示错误引导而非静默循环。
  */
 function RootRedirect() {
-  const { data: project, isLoading, isError } = useQuery({
+  const {
+    data: project,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ['project', 'current'],
     queryFn: projectAPI.current,
   })
 
   if (isLoading) {
     return (
-      <Layout
-        header={<TopBar />}
-        main={<div className={redirectMsg}>正在解析当前项目…</div>}
-      />
+      <Layout header={<TopBar />} main={<div className={redirectMsg}>正在解析当前项目…</div>} />
     )
   }
   if (isError || !project) {
     return (
       <Layout
         header={<TopBar />}
-        main={
-          <div className={redirectMsg}>
-            无法解析当前项目，请前往设置确认工作区配置。
-          </div>
-        }
+        main={<div className={redirectMsg}>无法解析当前项目，请前往设置确认工作区配置。</div>}
       />
     )
   }

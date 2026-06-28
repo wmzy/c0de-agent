@@ -1,6 +1,5 @@
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
-import type { RenderBlock } from './utils/normalizeParts.js'
 import {
   BashIcon,
   BrainIcon,
@@ -13,6 +12,7 @@ import {
   UserIcon,
   WriteIcon,
 } from './icons.js'
+import type { RenderBlock } from './utils/normalizeParts.js'
 
 const wrap = css`
   display: flex;

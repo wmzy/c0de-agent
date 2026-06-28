@@ -63,6 +63,7 @@ export function Chat({
   topPanel,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在消息数量变化时滚动，避免内容更新触发抖动
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length])

@@ -89,7 +89,12 @@ describe('normalizeParts', () => {
   it('孤立的 tool_result（无对应 call）仍渲染为 tool 块', () => {
     const blocks = normalizeParts(
       msg('assistant', [
-        { _tag: 'tool_result', id: 't6', tool: 'glob', output: { _tag: 'success', output: 'f.ts' } },
+        {
+          _tag: 'tool_result',
+          id: 't6',
+          tool: 'glob',
+          output: { _tag: 'success', output: 'f.ts' },
+        },
       ]),
     )
     expect(blocks).toHaveLength(1)

@@ -173,6 +173,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const abortRef = useRef<AbortController | null>(null)
 
   // 切换会话时重置本地流式状态；历史消息由调用方合并加载
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅依赖 sessionId 触发重置
   useEffect(() => {
     setState(INITIAL)
   }, [sessionId])

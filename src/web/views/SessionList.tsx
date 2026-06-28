@@ -105,16 +105,22 @@ export function SessionList({
         </button>
       </div>
       {showAdd && (
-        <AddProjectDialog onClose={() => setShowAdd(false)} onCreated={(p) => onProjectChange(p.id)} />
+        <AddProjectDialog
+          onClose={() => setShowAdd(false)}
+          onCreated={(p) => onProjectChange(p.id)}
+        />
       )}
       <div className={header}>
         <span>会话</span>
         <button
           type="button"
           onClick={() =>
-            create.mutate({ projectId }, {
-              onSuccess: (s) => s && onSelect(s.id),
-            })
+            create.mutate(
+              { projectId },
+              {
+                onSuccess: (s) => s && onSelect(s.id),
+              },
+            )
           }
           data-testid="new-session"
         >
