@@ -1,5 +1,5 @@
-import { eq } from 'drizzle-orm'
 import { basename } from 'node:path'
+import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { projects } from '../db/schema.js'
 import { resolveProject } from './resolve.js'
@@ -22,13 +22,9 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
     name: row.name,
     gitRemote: row.gitRemote,
     createdAt:
-      row.createdAt instanceof Date
-        ? row.createdAt.getTime()
-        : new Date(row.createdAt).getTime(),
+      row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime(),
     updatedAt:
-      row.updatedAt instanceof Date
-        ? row.updatedAt.getTime()
-        : new Date(row.updatedAt).getTime(),
+      row.updatedAt instanceof Date ? row.updatedAt.getTime() : new Date(row.updatedAt).getTime(),
   }
 }
 
@@ -64,18 +60,12 @@ export async function listProjects(handle: DB): Promise<Project[]> {
   return rows.map(rowToProject)
 }
 
-export async function getProject(
-  handle: DB,
-  id: string,
-): Promise<Project | null> {
+export async function getProject(handle: DB, id: string): Promise<Project | null> {
   const [row] = await handle.db.select().from(projects).where(eq(projects.id, id))
   return row ? rowToProject(row) : null
 }
 
-export async function getByDirectory(
-  handle: DB,
-  directory: string,
-): Promise<Project | null> {
+export async function getByDirectory(handle: DB, directory: string): Promise<Project | null> {
   const resolved = resolveProject(directory)
   return getProject(handle, resolved.id)
 }

@@ -1,10 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { join } from 'node:path'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { fromDirectory } from '../project/project.js'
 import {
   createSession,
   deleteSession,
@@ -13,7 +14,6 @@ import {
   touchSession,
   updateSessionTitle,
 } from './session.js'
-import { fromDirectory } from '../project/project.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })

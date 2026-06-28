@@ -1,13 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
-import { createServerContext } from '../context.js'
 import type { Project } from '../../project/project.js'
+import { createServerContext } from '../context.js'
 import { createProjectRoute } from './project.js'
 
 let dbHandle: DB | undefined

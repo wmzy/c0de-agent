@@ -50,7 +50,10 @@ function findGitRoot(directory: string): string | null {
 /** 取第一个 remote 的 URL（origin 无果时的回退）。 */
 function firstRemoteUrl(cwd: string): string {
   const names = git(['remote'], cwd)
-  const first = names.split('\n').map((s) => s.trim()).filter(Boolean)[0]
+  const first = names
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)[0]
   if (!first) return ''
   return git(['remote', 'get-url', first], cwd)
 }

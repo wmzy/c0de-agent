@@ -63,4 +63,12 @@ async function listSessionsByProject(handle: DB, projectId: string): Promise<Ses
   return rows.map(rowToSession)
 }
 
-export { createSession, deleteSession, getSession, listSessions, listSessionsByProject, touchSession, updateSessionTitle }
+export {
+  createSession,
+  deleteSession,
+  getSession,
+  listSessions,
+  listSessionsByProject,
+  touchSession,
+  updateSessionTitle,
+}

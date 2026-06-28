@@ -1,16 +1,16 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
+import { fromDirectory } from '../../project/project.js'
 import { createSession } from '../../session/session.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
 import { createChatRoute, resolveAgentCwd } from './chat.js'
-import { fromDirectory } from '../../project/project.js'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 /** 模拟 chatStream：返回简单的文本 + done。 */
 function mockChatStream(): AsyncGenerator<StreamChunk> {
@@ -140,7 +140,11 @@ describe('chat route (SSE)', () => {
       dbHandle = db
       await migrateDB(db)
       const project = await fromDirectory(db, dir)
-      const ctx = createServerContext({ db, llmRegistry: createRegistry(), chatStream: mockChatStream })
+      const ctx = createServerContext({
+        db,
+        llmRegistry: createRegistry(),
+        chatStream: mockChatStream,
+      })
       const cwd = await resolveAgentCwd(ctx, { projectId: project.id })
       expect(cwd).toBe(dir)
     } finally {
@@ -151,7 +155,12 @@ describe('chat route (SSE)', () => {
   it('resolveAgentCwd: falls back to ctx.cwd when no project', async () => {
     const db = await createDB({ driver: 'pglite' })
     dbHandle = db
-    const ctx = createServerContext({ db, llmRegistry: createRegistry(), chatStream: mockChatStream, cwd: '/some/base' })
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      chatStream: mockChatStream,
+      cwd: '/some/base',
+    })
     const cwd = await resolveAgentCwd(ctx, { projectId: null })
     expect(cwd).toBe('/some/base')
   })

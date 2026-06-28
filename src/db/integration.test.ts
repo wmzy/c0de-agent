@@ -1,13 +1,13 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { desc, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { fromDirectory, getProject, listProjects, updateProjectName } from '../project/project.js'
 import type { DB } from './client.js'
 import { createDB } from './client.js'
 import { migrateDB } from './migrate.js'
 import { compactionArchives, fileSnapshots, projects, sessionEntries, sessions } from './schema.js'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { fromDirectory, getProject, listProjects, updateProjectName } from '../project/project.js'
 
 // Each test gets a fresh in-memory database
 async function setupDB(): Promise<DB> {
@@ -329,10 +329,7 @@ describe('DB integration: projects', () => {
 
     await handle.db.delete(projects).where(eq(projects.id, 'proj1'))
 
-    const [session] = await handle.db
-      .select()
-      .from(sessions)
-      .where(eq(sessions.title, 'S'))
+    const [session] = await handle.db.select().from(sessions).where(eq(sessions.title, 'S'))
     expect(session?.projectId).toBeNull()
   })
 

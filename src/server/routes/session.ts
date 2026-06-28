@@ -1,8 +1,14 @@
 import { Hono } from 'hono'
+import { fromDirectory } from '../../project/index.js'
 import { forkSession, getBranches, getTree } from '../../session/branch.js'
 import { getMessages } from '../../session/message.js'
-import { createSession, deleteSession, getSession, listSessions, listSessionsByProject } from '../../session/session.js'
-import { fromDirectory } from '../../project/index.js'
+import {
+  createSession,
+  deleteSession,
+  getSession,
+  listSessions,
+  listSessionsByProject,
+} from '../../session/session.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 

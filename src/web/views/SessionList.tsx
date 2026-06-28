@@ -2,9 +2,14 @@ import { css } from '@linaria/core'
 import { useState } from 'react'
 import { BranchTree } from '../components/BranchTree.js'
 import { ProjectIndicator } from '../components/ProjectIndicator.js'
-import { ProjectSwitcher } from '../components/ProjectSwitcher.js'
 import type { Selection } from '../components/ProjectSwitcher.js'
-import { useCreateSession, useDeleteSession, useProjects, useSessionTree } from '../hooks/useSession.js'
+import { ProjectSwitcher } from '../components/ProjectSwitcher.js'
+import {
+  useCreateSession,
+  useDeleteSession,
+  useProjects,
+  useSessionTree,
+} from '../hooks/useSession.js'
 import type { SessionTreeNode } from '../types/index.js'
 
 const panel = css`
@@ -58,7 +63,8 @@ export function SessionList({
   const [selection, setSelection] = useState<Selection>('ALL')
 
   const visibleTree = tree ? filterTree(tree, selection) : []
-  const selectedProjectId = selection !== 'ALL' && selection !== 'UNASSIGNED' ? selection : undefined
+  const selectedProjectId =
+    selection !== 'ALL' && selection !== 'UNASSIGNED' ? selection : undefined
 
   return (
     <div className={panel}>
@@ -71,10 +77,9 @@ export function SessionList({
         <button
           type="button"
           onClick={() =>
-            create.mutate(
-              selectedProjectId ? { projectId: selectedProjectId } : undefined,
-              { onSuccess: (s) => s && onSelect(s.id) },
-            )
+            create.mutate(selectedProjectId ? { projectId: selectedProjectId } : undefined, {
+              onSuccess: (s) => s && onSelect(s.id),
+            })
           }
           data-testid="new-session"
         >
