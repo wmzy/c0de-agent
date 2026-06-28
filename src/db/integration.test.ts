@@ -4,6 +4,10 @@ import type { DB } from './client.js'
 import { createDB } from './client.js'
 import { migrateDB } from './migrate.js'
 import { compactionArchives, fileSnapshots, projects, sessionEntries, sessions } from './schema.js'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fromDirectory, getProject, listProjects, updateProjectName } from '../project/project.js'
 
 // Each test gets a fresh in-memory database
 async function setupDB(): Promise<DB> {
@@ -330,5 +334,42 @@ describe('DB integration: projects', () => {
       .from(sessions)
       .where(eq(sessions.title, 'S'))
     expect(session?.projectId).toBeNull()
+  })
+
+  it('fromDirectory upserts and is idempotent', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'projdb-'))
+    try {
+      const p1 = await fromDirectory(handle, dir)
+      const p2 = await fromDirectory(handle, dir)
+      expect(p1.id).toBe(p2.id)
+      expect(p1.worktree).toBe(dir)
+      expect(p1.vcs).toBeNull()
+      const all = await listProjects(handle)
+      expect(all).toHaveLength(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('getProject returns null for missing', async () => {
+    expect(await getProject(handle, 'nonexistent')).toBeNull()
+  })
+
+  it('updateProjectName updates name', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'projdb2-'))
+    try {
+      const created = await fromDirectory(handle, dir)
+      const updated = await updateProjectName(handle, created.id, 'My Project')
+      expect(updated?.name).toBe('My Project')
+      const refetched = await getProject(handle, created.id)
+      expect(refetched?.name).toBe('My Project')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('updateProjectName on missing returns null', async () => {
+    const result = await updateProjectName(handle, 'nope', 'X')
+    expect(result).toBeNull()
   })
 })
