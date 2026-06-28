@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
-import { createRegistry } from '../../llm/registry.js'
+import { createRegistry, registerProvider } from '../../llm/registry.js'
 import { createServerContext } from '../context.js'
 import { createConfigRoute } from './config.js'
 
@@ -64,5 +64,33 @@ describe('config route', () => {
     }
     expect(config.tools.enabled).toEqual(['read', 'write'])
     expect(config.tools.disabled).toBeDefined()
+  })
+
+  it('PATCH / with providers syncs the llm registry live', async () => {
+    const { app, ctx } = await setup()
+    expect(ctx.llmRegistry.routes.has('myprov')).toBe(false)
+    const res = await app.request('/', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providers: [
+          {
+            name: 'myprov',
+            protocol: 'openai-compat',
+            apiKey: 'sk-x',
+            baseURL: 'https://example.com/v1',
+          },
+        ],
+      }),
+    })
+    expect(res.status).toBe(200)
+    // registry 原地同步：运行中 ServerContext 立即生效
+    expect(ctx.llmRegistry.routes.has('myprov')).toBe(true)
+  })
+
+  it('registerProvider on registry is reachable (smoke)', () => {
+    const r = createRegistry()
+    registerProvider(r, { name: 'smoke', baseURL: 'https://x/v1', apiKey: 'k' })
+    expect(r.routes.has('smoke')).toBe(true)
   })
 })

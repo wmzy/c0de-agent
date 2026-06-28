@@ -1,6 +1,6 @@
 import type { AgentError, AgentEvent } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { sendChatMessage } from '../services/chat.js'
 import type { APIError } from '../types/index.js'
 import { generateId } from './id.js'
@@ -13,8 +13,10 @@ type ChatState = {
   pendingPermission: { toolCallId: string; tool: string } | null
 }
 
+type ChatOpts = { provider?: string; model?: string; tools?: string[] }
+
 type ChatActions = {
-  sendMessage: (content: string) => Promise<void>
+  sendMessage: (content: string, opts?: ChatOpts) => Promise<void>
   abort: () => void
   reset: () => void
 }
@@ -58,10 +60,14 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
       const messages = [...state.messages]
       const last = messages[messages.length - 1]
       if (last && last.role === 'assistant') {
-        messages[messages.length - 1] = {
-          ...last,
-          content: [...last.content, { _tag: 'thinking', text: event.text }],
+        const content = [...last.content]
+        const lastPart = content[content.length - 1]
+        if (lastPart && lastPart._tag === 'thinking') {
+          content[content.length - 1] = { _tag: 'thinking', text: lastPart.text + event.text }
+        } else {
+          content.push({ _tag: 'thinking', text: event.text })
         }
+        messages[messages.length - 1] = { ...last, content }
       } else {
         messages.push({
           id: generateId(),
@@ -166,8 +172,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
 
+  // 切换会话时重置本地流式状态；历史消息由调用方合并加载
+  useEffect(() => {
+    setState(INITIAL)
+  }, [sessionId])
+
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, opts?: ChatOpts) => {
       const userMsg: Message = {
         id: generateId(),
         sessionId,
@@ -176,7 +187,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         tokenCount: 0,
         createdAt: Date.now(),
       }
-      setState({ ...INITIAL, messages: [userMsg], isStreaming: true })
+      // 追加到已有消息（保留历史/多轮），仅重置 usage/error/permission
+      setState((s) => ({ ...INITIAL, messages: [...s.messages, userMsg], isStreaming: true }))
       abortRef.current = new AbortController()
       try {
         await sendChatMessage(
@@ -184,6 +196,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           content,
           (event) => setState((s) => reduceChatEvent(s, event)),
           abortRef.current.signal,
+          opts,
         )
       } catch (err) {
         const e = err as unknown as APIError
@@ -203,4 +216,4 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   return { ...state, sendMessage, abort, reset }
 }
 
-export type { ChatState }
+export type { ChatOpts, ChatState }

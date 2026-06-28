@@ -5,8 +5,16 @@ import { DESKTOP } from '../styles/breakpoints.js'
 const layoutStyle = css`
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  flex: 1;
+  min-height: 0;
   width: 100%;
+`
+
+const bodyStyle = css`
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
   ${DESKTOP} {
     flex-direction: row;
   }
@@ -43,17 +51,26 @@ const panelStyle = css`
 `
 
 type LayoutProps = {
+  header?: ReactNode
   sidebar?: ReactNode
   main: ReactNode
   panel?: ReactNode
 }
 
-export function Layout({ sidebar: sidebarNode, main: mainNode, panel: panelNode }: LayoutProps) {
+export function Layout({
+  header: headerNode,
+  sidebar: sidebarNode,
+  main: mainNode,
+  panel: panelNode,
+}: LayoutProps) {
   return (
     <div className={layoutStyle}>
-      {sidebarNode && <aside className={sidebarStyle}>{sidebarNode}</aside>}
-      <main className={mainStyle}>{mainNode}</main>
-      {panelNode && <aside className={panelStyle}>{panelNode}</aside>}
+      {headerNode && <>{headerNode}</>}
+      <div className={bodyStyle}>
+        {sidebarNode && <aside className={sidebarStyle}>{sidebarNode}</aside>}
+        <main className={mainStyle}>{mainNode}</main>
+        {panelNode && <aside className={panelStyle}>{panelNode}</aside>}
+      </div>
     </div>
   )
 }

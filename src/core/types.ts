@@ -1,4 +1,5 @@
 import type { DB } from '../db/client.js'
+import type { chat as ChatFn } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
 import type { HookRunner } from '../plugins/types.js'
 import type {
@@ -25,6 +26,8 @@ type AgentDependencies = {
   config: Config
   cwd: string
   hookRunner?: HookRunner
+  /** 可注入的标题生成 chat 实现（测试用）；省略走真实 llm/provider。 */
+  titleChatFn?: typeof ChatFn
 }
 
 type ProjectInfo = {

@@ -3,7 +3,7 @@ import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { getMessages } from '../session/message.js'
-import { createSession } from '../session/session.js'
+import { createSession, getSession } from '../session/session.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import type { Session } from '../shared/types/message.js'
 import { createDefaultRegistry } from '../tools/index.js'
@@ -17,6 +17,7 @@ import {
   runAgent,
 } from './agent.js'
 import { DEFAULT_CONFIG } from './config.js'
+import { DEFAULT_SESSION_TITLE } from './title.js'
 import type { AgentDependencies } from './types.js'
 
 function mockTextStream(text: string) {
@@ -108,6 +109,48 @@ describe('runAgent', () => {
       // consume
     }
     expect(getAgentStatus(agent)._tag).toBe('stopped')
+  })
+
+  it('generates a session title on the first user message', async () => {
+    const titleSession = await createSession(db, DEFAULT_SESSION_TITLE)
+    const deps = makeDeps(db, mockTextStream('Response!'))
+    deps.titleChatFn = async () => 'Generated Title'
+    const agent = await createAgent(
+      titleSession,
+      { provider: 'p', model: 'm', tools: [], plugins: [], maxTurns: 5 },
+      deps,
+    )
+    for await (const _ev of runAgent(agent, 'Do something important', deps)) {
+      // consume
+    }
+    // 标题生成是 fire-and-forget，轮询 DB 直到更新完成或超时。
+    let title = DEFAULT_SESSION_TITLE
+    for (let i = 0; i < 50 && title === DEFAULT_SESSION_TITLE; i++) {
+      await new Promise((r) => setTimeout(r, 20))
+      title = (await getSession(db, titleSession.id))?.title ?? title
+    }
+    expect(title).toBe('Generated Title')
+  })
+
+  it('does not override a non-default title', async () => {
+    const namedSession = await createSession(db, 'Custom Title')
+    let called = false
+    const deps = makeDeps(db, mockTextStream('Response!'))
+    deps.titleChatFn = async () => {
+      called = true
+      return 'Should Not Appear'
+    }
+    const agent = await createAgent(
+      namedSession,
+      { provider: 'p', model: 'm', tools: [], plugins: [], maxTurns: 5 },
+      deps,
+    )
+    for await (const _ev of runAgent(agent, 'hello', deps)) {
+      // consume
+    }
+    await new Promise((r) => setTimeout(r, 100))
+    expect(called).toBe(false)
+    expect((await getSession(db, namedSession.id))?.title).toBe('Custom Title')
   })
 })
 

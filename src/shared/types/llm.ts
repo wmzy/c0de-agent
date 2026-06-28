@@ -14,6 +14,8 @@ type ProviderConfig = {
 
 /** Per-model configuration overrides. */
 type ModelOverride = {
+  /** 是否在会话模型选择器中启用。省略或 true 为启用；false 为禁用（仍保留记录）。 */
+  enabled?: boolean
   contextWindow?: number
   maxOutput?: number
   supportsTools?: boolean

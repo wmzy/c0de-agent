@@ -2,8 +2,9 @@ import { chatStream as llmChatStream } from '../llm/provider.js'
 import { isLLMError } from '../llm/schema/errors.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
+import { appendLLMDetail } from '../session/session.js'
 import { generateId } from '../shared/index.js'
-import type { AgentEvent, AgentState } from '../shared/types/agent.js'
+import type { AgentEvent, AgentState, LLMDetail } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool, StreamChunk } from '../shared/types/llm.js'
 import type { MessageContent } from '../shared/types/message.js'
 import type { ToolResult } from '../shared/types/tool.js'
@@ -114,11 +115,18 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       request = hookResult.request
     }
 
-    const collectedChunks = deps.hookRunner ? ([] as StreamChunk[]) : undefined
+    // 总是收集完整 chunk 序列：既供 hookRunner 触发 provider:after，
+    // 也是 LLMDetail.responseChunks 的来源（用于调用详情展示）。
+    const collectedChunks: StreamChunk[] = []
     const collectedText: string[] = []
+    const collectedThinking: string[] = []
     const collectedToolCalls: Map<string, CollectedToolCall> = new Map()
     const toolCallArgs: Map<string, string> = new Map()
+    let collectedUsage: { inputTokens: number; outputTokens: number; cacheRead?: number } | null =
+      null
     let hadError = false
+    const requestStartTime = Date.now()
+    let firstTokenTime: number | null = null
 
     try {
       for await (const chunk of streamFn(
@@ -129,7 +137,10 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         request,
         { provider: state.config.provider, model: state.config.model },
       )) {
-        if (collectedChunks) collectedChunks.push(chunk)
+        if (firstTokenTime === null && chunk._tag !== 'done') {
+          firstTokenTime = Date.now()
+        }
+        collectedChunks.push(chunk)
         if (state.abortController.signal.aborted) {
           yield { _tag: 'error', error: { _tag: 'aborted' } }
           return
@@ -173,9 +184,15 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             break
           }
           case 'thinking':
+            collectedThinking.push(chunk.text)
             yield { _tag: 'thinking', text: chunk.text }
             break
           case 'usage':
+            collectedUsage = {
+              inputTokens: chunk.inputTokens,
+              outputTokens: chunk.outputTokens,
+              cacheRead: chunk.cacheRead,
+            }
             yield {
               _tag: 'usage',
               input: chunk.inputTokens,
@@ -225,9 +242,37 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       return
     }
 
-    if (deps.hookRunner && collectedChunks) {
+    if (deps.hookRunner) {
       await deps.hookRunner.fireHooks('provider:after', { request, chunks: collectedChunks })
     }
+
+    // 记录本轮 LLM 调用详情，供前端调用详情面板展示。
+    const totalLatency = Date.now() - requestStartTime
+    const detail: LLMDetail = {
+      id: generateId(),
+      timestamp: requestStartTime,
+      model: state.config.model,
+      provider: state.config.provider,
+      role: { _tag: 'default' },
+      systemPrompt,
+      messages: chatMessages,
+      tools,
+      responseChunks: collectedChunks,
+      thinking: collectedThinking.length > 0 ? collectedThinking.join('') : undefined,
+      usage: {
+        input: collectedUsage?.inputTokens ?? 0,
+        output: collectedUsage?.outputTokens ?? 0,
+        cacheRead: collectedUsage?.cacheRead,
+      },
+      latency: {
+        firstToken: firstTokenTime ? firstTokenTime - requestStartTime : totalLatency,
+        total: totalLatency,
+      },
+      cost: 0,
+    }
+    state.llmDetails.push(detail)
+    // 持久化到 sessions.metadata.llmDetails，供会话结束后仍可查看调用详情。
+    await appendLLMDetail(deps.db, state.session.id, detail)
 
     if (hadError) {
       state.status = { _tag: 'stopped', reason: 'error' }

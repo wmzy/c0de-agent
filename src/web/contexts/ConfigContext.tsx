@@ -1,6 +1,7 @@
 import type { Config } from '@shared/types/config.js'
+import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext } from 'react'
 import { configAPI } from '../services/config.js'
 
 type ConfigContextValue = {
@@ -11,24 +12,31 @@ type ConfigContextValue = {
 
 const ConfigContext = createContext<ConfigContextValue | null>(null)
 
+/**
+ * 全局配置上下文。
+ *
+ * 与配置页共享同一个 react-query 缓存（queryKey ['config']）：
+ * 配置页保存后 `invalidateQueries(['config'])` 会同时刷新本上下文，
+ * 使会话页 ModelSelector 等消费方立即拿到最新 config（含 provider models）。
+ */
 export function ConfigProvider({ children }: { children: ReactNode }) {
-  const [config, setConfig] = useState<Config | null>(null)
-  const [loading, setLoading] = useState(true)
+  const {
+    data: config,
+    isLoading: loading,
+    refetch,
+  } = useQuery({
+    queryKey: ['config'],
+    queryFn: () => configAPI.get(),
+  })
 
   const refresh = useCallback(async () => {
-    try {
-      setConfig(await configAPI.get())
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
+    await refetch()
+  }, [refetch])
 
   return (
-    <ConfigContext.Provider value={{ config, loading, refresh }}>{children}</ConfigContext.Provider>
+    <ConfigContext.Provider value={{ config: config ?? null, loading, refresh }}>
+      {children}
+    </ConfigContext.Provider>
   )
 }
 

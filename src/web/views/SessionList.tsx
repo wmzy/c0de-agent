@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useState } from 'react'
+import { AddProjectDialog } from '../components/AddProjectDialog.js'
 import { BranchTree } from '../components/BranchTree.js'
 import { ProjectIndicator } from '../components/ProjectIndicator.js'
 import type { Selection } from '../components/ProjectSwitcher.js'
@@ -27,8 +28,32 @@ const header = css`
 `
 
 const filterBar = css`
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+`
+
+const switcherWrap = css`
+  flex: 1;
+  min-width: 0;
+`
+
+const addBtn = css`
+  flex-shrink: 0;
+  min-height: auto;
+  min-width: auto;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  &:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
 `
 
 const empty = css`
@@ -61,6 +86,7 @@ export function SessionList({
   const create = useCreateSession()
   const del = useDeleteSession()
   const [selection, setSelection] = useState<Selection>('ALL')
+  const [showAdd, setShowAdd] = useState(false)
 
   const visibleTree = tree ? filterTree(tree, selection) : []
   const selectedProjectId =
@@ -70,8 +96,22 @@ export function SessionList({
     <div className={panel}>
       <ProjectIndicator />
       <div className={filterBar}>
-        <ProjectSwitcher projects={projects ?? []} value={selection} onChange={setSelection} />
+        <div className={switcherWrap}>
+          <ProjectSwitcher projects={projects ?? []} value={selection} onChange={setSelection} />
+        </div>
+        <button
+          type="button"
+          className={addBtn}
+          onClick={() => setShowAdd(true)}
+          data-testid="add-project"
+          aria-label="添加项目"
+        >
+          + 项目
+        </button>
       </div>
+      {showAdd && (
+        <AddProjectDialog onClose={() => setShowAdd(false)} onCreated={(p) => setSelection(p.id)} />
+      )}
       <div className={header}>
         <span>会话</span>
         <button

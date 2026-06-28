@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { HashRouter, Route, Routes } from 'react-router-dom'
+import { HashRouter, Route, Routes, useNavigate, useParams } from 'react-router-dom'
+import { TopBar } from './components/TopBar.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
 import { ChatView } from './views/ChatView.js'
@@ -25,22 +26,37 @@ export function App() {
       <ThemeProvider>
         <ConfigProvider>
           <HashRouter>
-            <Routes>
-              <Route
-                path="/"
-                element={
-                  <Layout
-                    sidebar={<SessionList activeId={null} onSelect={() => {}} />}
-                    main={<ChatView />}
-                  />
-                }
-              />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+              <Routes>
+                <Route path="/" element={<ChatPage />} />
+                <Route path="/sessions/:sessionId" element={<ChatPage />} />
+                <Route
+                  path="/settings"
+                  element={<Layout header={<TopBar />} main={<Settings />} />}
+                />
+                <Route path="*" element={<Layout header={<TopBar />} main={<NotFound />} />} />
+              </Routes>
+            </div>
           </HashRouter>
         </ConfigProvider>
       </ThemeProvider>
     </QueryClientProvider>
+  )
+}
+
+function ChatPage() {
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const navigate = useNavigate()
+  return (
+    <Layout
+      header={<TopBar />}
+      sidebar={
+        <SessionList
+          activeId={sessionId ?? null}
+          onSelect={(id) => navigate(`/sessions/${id}`)}
+        />
+      }
+      main={<ChatView sessionId={sessionId ?? null} />}
+    />
   )
 }

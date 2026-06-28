@@ -5,6 +5,7 @@ import { getMessages } from '../../session/message.js'
 import {
   createSession,
   deleteSession,
+  getLLMDetails,
   getSession,
   listSessions,
   listSessionsByProject,
@@ -85,10 +86,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json(messages)
   })
 
-  // 获取 LLM 调用详情
+  // 获取 LLM 调用详情：优先取活跃 run 的内存记录（实时），回退 DB 持久化
   app.get('/:id/llm-details', async (c) => {
     const run = ctx.agentManager.get(c.req.param('id'))
-    return c.json(run?.state.llmDetails ?? [])
+    if (run) return c.json(run.state.llmDetails)
+    const persisted = await getLLMDetails(ctx.db, c.req.param('id'))
+    return c.json(persisted)
   })
 
   // 获取分支

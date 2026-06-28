@@ -5,11 +5,14 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { errorHandler } from './middleware/error.js'
+import { createCatalogRoute } from './routes/catalog.js'
 import { createChatRoute } from './routes/chat.js'
 import { createConfigRoute } from './routes/config.js'
 import { createFilesRoute } from './routes/files.js'
+import { createFilesystemRoute } from './routes/filesystem.js'
 import { createHealthRoute } from './routes/health.js'
 import { createProjectRoute } from './routes/project.js'
+import { createProviderRoute } from './routes/provider.js'
 import { createSessionRoute } from './routes/session.js'
 import { createToolRoute } from './routes/tool.js'
 import type { ServerContext } from './types.js'
@@ -26,6 +29,9 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/health', createHealthRoute())
   app.route('/api/sessions', createSessionRoute(ctx))
   app.route('/api/projects', createProjectRoute(ctx))
+  app.route('/api/providers', createProviderRoute(ctx))
+  app.route('/api/catalog', createCatalogRoute(ctx))
+  app.route('/api/filesystem', createFilesystemRoute(ctx))
   app.route('/api/chat', createChatRoute(ctx))
   app.route('/api/tools', createToolRoute(ctx))
   app.route('/api/config', createConfigRoute(ctx))
@@ -40,6 +46,9 @@ function createApp(ctx: ServerContext): Hono {
         '/api/health',
         '/api/sessions',
         '/api/projects',
+        '/api/providers',
+        '/api/catalog',
+        '/api/filesystem',
         '/api/chat',
         '/api/tools',
         '/api/config',

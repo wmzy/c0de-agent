@@ -5,6 +5,7 @@ import type { Session } from '../shared/types/message.js'
 import { listTools } from '../tools/registry.js'
 import { estimateBudget } from './context.js'
 import { agentLoop } from './loop.js'
+import { DEFAULT_SESSION_TITLE, generateSessionTitle } from './title.js'
 import type { AgentDependencies } from './types.js'
 
 async function createAgent(
@@ -47,6 +48,24 @@ async function* runAgent(
     role: 'user',
     content: [{ _tag: 'text', text: userInput }],
   })
+
+  // 第一条用户消息后，后台为会话生成简短标题（fire-and-forget）。
+  // 条件：标题仍是默认占位 + 持久化前无任何消息（即首条消息）。
+  // 失败被吞掉，绝不阻塞主对话流。
+  if (state.session.title === DEFAULT_SESSION_TITLE && state.messages.length === 0) {
+    void generateSessionTitle(
+      {
+        db: deps.db,
+        llmRegistry: deps.llmRegistry,
+        config: deps.config,
+        ...(deps.titleChatFn ? { chatFn: deps.titleChatFn } : {}),
+      },
+      state.session.id,
+      userInput,
+      state.config.provider,
+      state.config.model,
+    ).catch(() => {})
+  }
 
   state.status = { _tag: 'running', turnCount: 0 }
 

@@ -1,3 +1,4 @@
+import type { LLMDetail } from './agent.js'
 import type { MessageRole } from './base.js'
 import type { ToolResult } from './tool.js'
 
@@ -24,6 +25,8 @@ type SessionMetadata = {
   mainThreadId?: string
   squashCount?: number
   fileSnapshots?: string[]
+  /** 本会话历次 LLM 调用详情，用于调用详情面板展示。 */
+  llmDetails?: LLMDetail[]
 }
 
 /** A conversation session (may have a parent for branching). */

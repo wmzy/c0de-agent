@@ -31,8 +31,10 @@ export {
   insertEntry,
 } from './message.js'
 export {
+  appendLLMDetail,
   createSession,
   deleteSession,
+  getLLMDetails,
   getSession,
   listSessions,
   touchSession,

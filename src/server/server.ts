@@ -56,6 +56,18 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
   })
 }
 
+/**
+ * config 变更后原地同步 registry（清空旧路由 + 重新注册），
+ * 使运行中的 ServerContext 立即生效，无需重启。
+ */
+function syncRegistryFromConfig(registry: Registry, config: Config): void {
+  registry.routes.clear()
+  registry.roles.clear()
+  for (const p of config.providers) {
+    registerProviderFromConfig(registry, p)
+  }
+}
+
 /** 初始化 DB + 配置 + 注册表，返回 ServerContext + 清理函数（dev 与独立后端共用）。 */
 async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<BootstrappedServer> {
   const cwd = opts.cwd ?? process.cwd()
@@ -104,4 +116,4 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }
-export { bootstrapServerContext, buildRegistryFromConfig, startServer }
+export { bootstrapServerContext, buildRegistryFromConfig, startServer, syncRegistryFromConfig }

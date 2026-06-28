@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessions } from '../db/schema.js'
+import type { LLMDetail } from '../shared/types/agent.js'
 import type { Session, SessionMetadata } from '../shared/types/message.js'
 
 /** Convert a DB row (with Date timestamps) to the shared Session type (with number timestamps). */
@@ -58,14 +59,36 @@ async function touchSession(handle: DB, id: string): Promise<void> {
   await handle.db.update(sessions).set({ updatedAt: new Date() }).where(eq(sessions.id, id))
 }
 
+/** 读取会话 metadata.llmDetails（持久化的调用详情）。 */
+async function getLLMDetails(handle: DB, id: string): Promise<LLMDetail[]> {
+  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  if (!row) return []
+  const meta = (row.metadata ?? {}) as SessionMetadata
+  return meta.llmDetails ?? []
+}
+
+/** 追加一条 LLM 调用详情到 metadata.llmDetails（merge 写入）。 */
+async function appendLLMDetail(handle: DB, id: string, detail: LLMDetail): Promise<void> {
+  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  if (!row) return
+  const meta = (row.metadata ?? {}) as SessionMetadata
+  const next: SessionMetadata = { ...meta, llmDetails: [...(meta.llmDetails ?? []), detail] }
+  await handle.db
+    .update(sessions)
+    .set({ metadata: next, updatedAt: new Date() })
+    .where(eq(sessions.id, id))
+}
+
 async function listSessionsByProject(handle: DB, projectId: string): Promise<Session[]> {
   const rows = await handle.db.select().from(sessions).where(eq(sessions.projectId, projectId))
   return rows.map(rowToSession)
 }
 
 export {
+  appendLLMDetail,
   createSession,
   deleteSession,
+  getLLMDetails,
   getSession,
   listSessions,
   listSessionsByProject,

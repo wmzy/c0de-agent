@@ -176,6 +176,53 @@ describe('agentLoop', () => {
     }
     expect(state.steeringQueue).toEqual([])
   })
+
+  it('每轮 LLM 调用后记录 LLMDetail 到 state.llmDetails', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // mockToolThenTextStream：turn0 工具调用，turn1 文本回复 → 两轮 LLM 调用
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    expect(state.llmDetails).toHaveLength(2)
+    const d0 = state.llmDetails[0]
+    const d1 = state.llmDetails[1]
+    if (!d0 || !d1) throw new Error('missing llmDetails')
+    // 第一轮：工具调用轮次
+    expect(d0.model).toBe('mock')
+    expect(d0.provider).toBe('mock')
+    expect(d0.systemPrompt).toBeTruthy()
+    expect(d0.messages.length).toBeGreaterThan(0)
+    // state.tools 为空（makeState 未填充），故 LLMDetail.tools 也为空
+    expect(d0.tools).toEqual([])
+    // responseChunks 应包含原始流块
+    expect(d0.responseChunks.some((c) => c._tag === 'tool_call_start')).toBe(true)
+    expect(d0.responseChunks.some((c) => c._tag === 'done')).toBe(true)
+    expect(d0.latency.total).toBeGreaterThanOrEqual(0)
+    // 第二轮：文本回复，responseChunks 含 text
+    expect(d1.responseChunks.some((c) => c._tag === 'text')).toBe(true)
+  })
+
+  it('LLMDetail 记录 usage 与 thinking（当 stream 提供）', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    async function* streamWithUsage(): AsyncGenerator<StreamChunk> {
+      yield { _tag: 'thinking', text: 'let me think' } as const
+      yield { _tag: 'text', text: 'answer' } as const
+      yield { _tag: 'usage', inputTokens: 10, outputTokens: 5, cacheRead: 2 } as const
+      yield { _tag: 'done' } as const
+    }
+    const deps = makeMockDeps(db, () => streamWithUsage())
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    expect(state.llmDetails).toHaveLength(1)
+    const d = state.llmDetails[0]
+    if (!d) throw new Error('missing llmDetail')
+    expect(d.usage).toEqual({ input: 10, output: 5, cacheRead: 2 })
+    expect(d.thinking).toBe('let me think')
+  })
 })
 
 describe('agentLoop with hookRunner', () => {

@@ -60,6 +60,15 @@ describe('reduceChatEvent', () => {
     expect(s.messages[0]?.content[1]).toEqual({ _tag: 'thinking', text: 'hmm' })
   })
 
+  it('连续 thinking chunk 累积到同一 part', () => {
+    let s = reduceChatEvent(base, { _tag: 'thinking', text: 'a' })
+    s = reduceChatEvent(s, { _tag: 'thinking', text: 'b' })
+    s = reduceChatEvent(s, { _tag: 'thinking', text: 'c' })
+    const parts = s.messages[0]?.content
+    expect(parts).toHaveLength(1)
+    expect(parts?.[0]).toEqual({ _tag: 'thinking', text: 'abc' })
+  })
+
   it('usage 更新', () => {
     const s = reduceChatEvent(base, { _tag: 'usage', input: 10, output: 5 })
     expect(s.usage).toEqual({ input: 10, output: 5 })
