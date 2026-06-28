@@ -1,0 +1,73 @@
+import { css } from '@linaria/core'
+import type { ToolResult } from '@shared/types/tool.js'
+
+const title = css`
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  margin-bottom: 2px;
+`
+
+const pre = css`
+  margin: 0;
+  padding: 8px;
+  background: var(--code-bg);
+  border-radius: 6px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 400px;
+`
+
+/** 把嵌套对象拍平成 [path, value] 对，如 {a:{b:1}} => [["a.b",1]]。 */
+function flatten(obj: unknown, prefix = ''): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = []
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      const key = prefix ? `${prefix}.${k}` : k
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        out.push(...flatten(v, key))
+      } else {
+        out.push([key, v])
+      }
+    }
+  } else {
+    out.push([prefix || '(value)', obj])
+  }
+  return out
+}
+
+export function FallbackToolView({
+  tool,
+  input,
+  output,
+}: {
+  tool: string
+  input: unknown
+  output?: ToolResult
+}) {
+  const pairs = flatten(input ?? {})
+  const resultText =
+    output?._tag === 'success' || output?._tag === 'truncated'
+      ? output.output
+      : output?._tag === 'error'
+        ? output.error
+        : ''
+  return (
+    <div>
+      <div className={title} data-testid="tool-title">
+        {tool}
+      </div>
+      <pre className={pre} data-testid="fallback-args">
+        {pairs
+          .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+          .join('\n')}
+      </pre>
+      {resultText && (
+        <pre className={pre} data-testid="fallback-output">
+          {resultText}
+        </pre>
+      )}
+    </div>
+  )
+}
