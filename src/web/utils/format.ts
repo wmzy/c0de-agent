@@ -36,3 +36,10 @@ export function formatLatency(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`
   return `${(ms / 1000).toFixed(2)}s`
 }
+
+/** 把美元花费格式化为可读字符串；极小额保留 4 位小数以避免被四舍五入为 $0。 */
+export function formatCost(cost: number): string {
+  if (cost < 0.0001) return '$0'
+  if (cost < 0.01) return `$${cost.toFixed(4)}`
+  return `$${cost.toFixed(2)}`
+}

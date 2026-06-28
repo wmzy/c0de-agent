@@ -54,6 +54,8 @@ export function LLMDetailsView({ sessionId }: { sessionId: string }) {
   })
 
   const details = data ?? []
+  // 只展示最后一次调用：历史调用的 messages 往往是最新一次的前缀，逐条展示重复度高。
+  const latest = details[details.length - 1]
 
   return (
     <div className={wrap} data-testid="llm-details-view">
@@ -74,9 +76,7 @@ export function LLMDetailsView({ sessionId }: { sessionId: string }) {
           {!isLoading && !error && details.length === 0 && (
             <span className={status}>暂无 LLM 调用记录</span>
           )}
-          {details.map((d) => (
-            <LLMDetailPanel key={d.id} detail={d} />
-          ))}
+          {latest && <LLMDetailPanel detail={latest} />}
         </div>
       )}
     </div>

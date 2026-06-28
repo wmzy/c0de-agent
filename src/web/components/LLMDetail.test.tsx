@@ -106,16 +106,17 @@ describe('LLMDetailPanel', () => {
     expect(text).toContain('tool')
   })
 
-  it('渲染 assistant 消息的 toolCalls', () => {
+  it('Messages 以原始 JSON 展示，含 toolCalls', () => {
     const { container } = render(<LLMDetailPanel detail={detail} />)
     const text = container.textContent ?? ''
-    expect(text).toContain('read')
-    expect(text).toContain('{"path":"a.ts"}')
+    // toolCalls 的 name 与 arguments（JSON.stringify 会转义内部引号）
+    expect(text).toContain('"name": "read"')
+    expect(text).toContain('a.ts')
   })
 
-  it('多模态 content 中的 image 渲染为占位标记', () => {
+  it('多模态 content 以原始 JSON 展示 image 结构', () => {
     const { container } = render(<LLMDetailPanel detail={detail} />)
-    expect(container.textContent).toContain('[图片 image/png]')
+    expect(container.textContent).toContain('"mediaType": "image/png"')
   })
 
   it('Tools 面板标题显示工具条数', () => {
@@ -139,6 +140,33 @@ describe('LLMDetailPanel', () => {
   it('工具为空时显示空态', () => {
     render(<LLMDetailPanel detail={emptyDetail} />)
     expect(screen.getByTestId('tools-summary').textContent).toContain('Tools (0)')
+  })
+
+  it('渲染模型角色和调用花费', () => {
+    render(<LLMDetailPanel detail={detail} />)
+    const el = screen.getByTestId('llm-detail')
+    expect(el.textContent).toContain('default')
+    expect(el.textContent).toContain('$0.0010')
+  })
+
+  it('折叠区块默认折叠，点击后切换为展开', () => {
+    render(<LLMDetailPanel detail={detail} />)
+    const btn = screen.getByTestId('messages-summary')
+    expect(btn.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(btn)
+    expect(btn.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('存在 thinking 时渲染 Thinking 区块', () => {
+    const withThinking: LLMDetail = { ...detail, id: 'd3', thinking: '逐步推理过程' }
+    const { container } = render(<LLMDetailPanel detail={withThinking} />)
+    expect(container.textContent).toContain('Thinking')
+    expect(container.textContent).toContain('逐步推理过程')
+  })
+
+  it('无 thinking 时不渲染 Thinking 区块', () => {
+    const { container } = render(<LLMDetailPanel detail={detail} />)
+    expect(container.textContent).not.toContain('Thinking')
   })
 })
 
@@ -178,6 +206,15 @@ describe('LLMDetailsView', () => {
     renderWithClient(<LLMDetailsView sessionId="s1" />)
     await waitFor(() => {
       expect(screen.getByTestId('llm-details-toggle').textContent).toContain('调用详情 (2)')
+    })
+  })
+
+  it('多条调用时只展示最后一次，不逐条渲染', async () => {
+    ;(sessionAPI.llmDetails as Mock).mockResolvedValue([detail, emptyDetail])
+    renderWithClient(<LLMDetailsView sessionId="s1" />)
+    fireEvent.click(screen.getByTestId('llm-details-toggle'))
+    await waitFor(() => {
+      expect(screen.getAllByTestId('llm-detail')).toHaveLength(1)
     })
   })
 })

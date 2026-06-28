@@ -1,4 +1,5 @@
 import { chatStream as llmChatStream } from '../llm/provider.js'
+import { resolveRoute } from '../llm/registry.js'
 import { isLLMError } from '../llm/schema/errors.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
@@ -248,6 +249,25 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
 
     // 记录本轮 LLM 调用详情，供前端调用详情面板展示。
     const totalLatency = Date.now() - requestStartTime
+    // 解析模型能力：拿 contextWindow（供总结面板使用率）与单价（计算成本）。
+    // resolveRoute 在 provider 未注册时抛 NoRoute；此处容错，失败则跳过补充字段。
+    let contextWindow: number | undefined
+    let computedCost = 0
+    try {
+      const { capabilities } = resolveRoute(
+        deps.llmRegistry,
+        state.config.provider,
+        state.config.model,
+      )
+      contextWindow = capabilities.contextWindow
+      const inputTokens = collectedUsage?.inputTokens ?? 0
+      const outputTokens = collectedUsage?.outputTokens ?? 0
+      computedCost =
+        (inputTokens / 1000) * capabilities.costPer1kInput +
+        (outputTokens / 1000) * capabilities.costPer1kOutput
+    } catch {
+      // provider 未注册或模型未知：保留 contextWindow=undefined、cost=0
+    }
     const detail: LLMDetail = {
       id: generateId(),
       timestamp: requestStartTime,
@@ -268,7 +288,8 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         firstToken: firstTokenTime ? firstTokenTime - requestStartTime : totalLatency,
         total: totalLatency,
       },
-      cost: 0,
+      cost: computedCost,
+      contextWindow,
     }
     state.llmDetails.push(detail)
     // 持久化到 sessions.metadata.llmDetails，供会话结束后仍可查看调用详情。

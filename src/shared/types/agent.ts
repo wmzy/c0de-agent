@@ -64,6 +64,8 @@ type LLMDetail = {
   usage: { input: number; output: number; cacheRead?: number }
   latency: { firstToken: number; total: number }
   cost: number
+  /** 模型上下文窗口大小（token），来自 registry capabilities。用于总结面板的使用率。 */
+  contextWindow?: number
 }
 
 /** Events emitted by the agent loop. Discriminated by `_tag`. */

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { LLMDetailsView } from '../components/LLMDetailsView.js'
 import { type ModelSelection, ModelSelector } from '../components/ModelSelector.js'
+import { SessionSummary } from '../components/SessionSummary.js'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { useChat } from '../hooks/useChat.js'
 import { useMessages } from '../hooks/useSession.js'
@@ -78,7 +79,12 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       onAbort={chat.abort}
       onConfirm={handleConfirm}
       modelBar={<ModelSelector value={selection} onChange={setSelection} />}
-      topPanel={<LLMDetailsView sessionId={sessionId} />}
+      topPanel={
+        <>
+          <SessionSummary sessionId={sessionId} />
+          <LLMDetailsView sessionId={sessionId} />
+        </>
+      }
     />
   )
 }

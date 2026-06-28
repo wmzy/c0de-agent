@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatLatency, formatTokenCount, parseCodeReference } from './format.js'
+import { formatCost, formatLatency, formatTokenCount, parseCodeReference } from './format.js'
 
 describe('parseCodeReference', () => {
   it('文件引用单行', () => {
@@ -38,4 +38,10 @@ describe('formatTokenCount', () => {
 describe('formatLatency', () => {
   it('ms', () => expect(formatLatency(500)).toBe('500ms'))
   it('s', () => expect(formatLatency(1500)).toBe('1.50s'))
+})
+
+describe('formatCost', () => {
+  it('零花费', () => expect(formatCost(0)).toBe('$0'))
+  it('极小额保留 4 位小数', () => expect(formatCost(0.001)).toBe('$0.0010'))
+  it('常规保留 2 位小数', () => expect(formatCost(1.234)).toBe('$1.23'))
 })

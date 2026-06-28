@@ -1,7 +1,9 @@
 import { css } from '@linaria/core'
 import type { LLMDetail } from '@shared/types/agent.js'
-import type { ChatMessage, ChatTool, ContentPart } from '@shared/types/llm.js'
-import { formatLatency } from '../utils/format.js'
+import type { ChatTool } from '@shared/types/llm.js'
+import type { ReactNode } from 'react'
+import { useState } from 'react'
+import { formatCost, formatLatency, formatTokenCount } from '../utils/format.js'
 
 const card = css`
   border: 1px solid var(--border);
@@ -22,33 +24,58 @@ const sectionBody = css`
   padding: 8px;
   max-height: 320px;
   overflow: auto;
-`
 
-const msgItem = css`
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed var(--border);
-
-  &:last-child {
-    border-bottom: none;
-    margin-bottom: 0;
+  &[data-collapsed] {
+    display: none;
   }
 `
 
-const msgMeta = css`
+const section = css`
+  border-top: 1px solid var(--border);
+
+  &:first-child {
+    border-top: none;
+  }
+`
+
+const sectionHead = css`
   display: flex;
-  gap: 8px;
   align-items: center;
-  margin-bottom: 4px;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
   font-size: 12px;
+
+  &:hover {
+    color: var(--text);
+  }
+`
+
+const modelName = css`
+  font-weight: 600;
+`
+
+const dim = css`
   color: var(--text-secondary);
 `
 
-const roleTag = css`
-  font-weight: 600;
-  color: var(--text);
+const roleBadge = css`
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+`
+
+const costValue = css`
+  color: var(--text-secondary);
 `
 
 const pre = css`
@@ -76,38 +103,6 @@ const toolHead = css`
   }
 `
 
-/** 把 ChatMessage.content（string 或多模态 ContentPart[]）渲染为可读文本。 */
-function renderContent(content: string | ContentPart[]): string {
-  if (typeof content === 'string') return content
-  return content
-    .map((part) => (part.type === 'text' ? part.text : `[图片 ${part.mediaType}]`))
-    .join('\n')
-}
-
-function MessageView({ message }: { message: ChatMessage }) {
-  return (
-    <div className={msgItem}>
-      <div className={msgMeta}>
-        <span className={roleTag}>{message.role}</span>
-        {message.toolCallId && <span>← {message.toolCallId}</span>}
-      </div>
-      {renderContent(message.content) && (
-        <pre className={pre}>{renderContent(message.content)}</pre>
-      )}
-      {message.toolCalls && message.toolCalls.length > 0 && (
-        <div style={{ marginTop: 4 }}>
-          {message.toolCalls.map((tc) => (
-            <div key={tc.id}>
-              <span className={roleTag}>tool</span> <em>{tc.name}</em>
-              <pre className={pre}>{tc.arguments}</pre>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function ToolSchemaView({ tool }: { tool: ChatTool }) {
   return (
     <div className={toolItem}>
@@ -120,52 +115,87 @@ function ToolSchemaView({ tool }: { tool: ChatTool }) {
   )
 }
 
+/**
+ * 可折叠区块：默认折叠，点击切换。内容常驻 DOM，折叠态用 data-collapsed 隐藏
+ * （textContent 仍可读），与 opencode web 的「摘要 + 展开原始内容」展示模式一致。
+ */
+function Collapsible({
+  title,
+  testId,
+  children,
+}: {
+  title: string
+  testId?: string
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className={section}>
+      <button
+        type="button"
+        className={sectionHead}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        data-testid={testId}
+      >
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span>{title}</span>
+      </button>
+      <div className={sectionBody} data-collapsed={!open || undefined}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 export function LLMDetailPanel({ detail }: { detail: LLMDetail }) {
   return (
     <div className={card} data-testid="llm-detail">
       <div className={header}>
-        <span>{detail.model}</span>
-        <span style={{ color: 'var(--text-secondary)' }}>{detail.provider}</span>
-        <span>
-          {detail.usage.input} → {detail.usage.output}
+        <span className={modelName}>{detail.model}</span>
+        <span className={dim}>{detail.provider}</span>
+        <span className={roleBadge}>{detail.role._tag}</span>
+        <span className={dim}>
+          {formatTokenCount(detail.usage.input)} → {formatTokenCount(detail.usage.output)}
         </span>
-        <span style={{ color: 'var(--text-secondary)' }}>
-          {formatLatency(detail.latency.total)}
-        </span>
+        {detail.usage.cacheRead != null && (
+          <span className={dim}>cache {formatTokenCount(detail.usage.cacheRead)}</span>
+        )}
+        <span className={costValue}>{formatCost(detail.cost)}</span>
+        <span className={dim}>{formatLatency(detail.latency.total)}</span>
       </div>
-      <details>
-        <summary>System Prompt</summary>
-        <pre className={sectionBody}>{detail.systemPrompt}</pre>
-      </details>
-      <details>
-        <summary data-testid="messages-summary">Messages ({detail.messages.length})</summary>
-        <div className={sectionBody}>
-          {detail.messages.length === 0 ? (
-            <span style={{ color: 'var(--text-secondary)' }}>（无消息）</span>
-          ) : (
-            detail.messages.map((msg, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: 历史快照，列表静态且无 id 字段
-              <MessageView key={i} message={msg} />
-            ))
-          )}
-        </div>
-      </details>
-      <details>
-        <summary data-testid="tools-summary">Tools ({detail.tools.length})</summary>
-        <div className={sectionBody}>
-          {detail.tools.length === 0 ? (
-            <span style={{ color: 'var(--text-secondary)' }}>（无工具）</span>
-          ) : (
-            detail.tools.map((tool) => <ToolSchemaView key={tool.name} tool={tool} />)
-          )}
-        </div>
-      </details>
-      <details>
-        <summary>Response</summary>
-        <pre className={sectionBody}>
+      <Collapsible title="System Prompt">
+        <pre className={pre}>{detail.systemPrompt}</pre>
+      </Collapsible>
+      <Collapsible title={`Messages (${detail.messages.length})`} testId="messages-summary">
+        {detail.messages.length === 0 ? (
+          <span className={dim}>（无消息）</span>
+        ) : (
+          detail.messages.map((msg, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 历史快照，列表静态且无 id 字段
+            <pre className={pre} key={i}>
+              {JSON.stringify(msg, null, 2)}
+            </pre>
+          ))
+        )}
+      </Collapsible>
+      <Collapsible title={`Tools (${detail.tools.length})`} testId="tools-summary">
+        {detail.tools.length === 0 ? (
+          <span className={dim}>（无工具）</span>
+        ) : (
+          detail.tools.map((tool) => <ToolSchemaView key={tool.name} tool={tool} />)
+        )}
+      </Collapsible>
+      {detail.thinking && (
+        <Collapsible title="Thinking">
+          <pre className={pre}>{detail.thinking}</pre>
+        </Collapsible>
+      )}
+      <Collapsible title="Response">
+        <pre className={pre}>
           {detail.responseChunks.map((c) => ('text' in c ? c.text : '')).join('')}
         </pre>
-      </details>
+      </Collapsible>
     </div>
   )
 }
