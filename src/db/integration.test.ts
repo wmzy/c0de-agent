@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from './client.js'
 import { createDB } from './client.js'
 import { migrateDB } from './migrate.js'
-import { compactionArchives, fileSnapshots, sessionEntries, sessions } from './schema.js'
+import { compactionArchives, fileSnapshots, projects, sessionEntries, sessions } from './schema.js'
 
 // Each test gets a fresh in-memory database
 async function setupDB(): Promise<DB> {
@@ -268,5 +268,67 @@ describe('DB integration: compaction archives', () => {
     expect(archive?.archiveType).toBe('compaction')
     expect(archive?.summary).toBe('Compacted conversation summary')
     expect(archive?.originalEntries).toHaveLength(1)
+  })
+})
+
+describe('DB integration: projects', () => {
+  let handle: DB
+
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  afterEach(async () => {
+    await handle.close()
+  })
+
+  it('inserts and queries a project', async () => {
+    const [inserted] = await handle.db
+      .insert(projects)
+      .values({
+        id: 'abc123def456abcd',
+        worktree: '/home/user/myrepo',
+        vcs: 'git',
+        name: 'myrepo',
+        gitRemote: 'git@github.com:u/myrepo.git',
+      })
+      .returning()
+
+    expect(inserted).toBeDefined()
+    expect(inserted?.id).toBe('abc123def456abcd')
+    expect(inserted?.vcs).toBe('git')
+    expect(inserted?.createdAt).toBeInstanceOf(Date)
+  })
+
+  it('session can reference project via projectId', async () => {
+    await handle.db
+      .insert(projects)
+      .values({ id: 'proj1', worktree: '/repo', vcs: 'git' })
+      .returning()
+
+    const [session] = await handle.db
+      .insert(sessions)
+      .values({ title: 'S', projectId: 'proj1' })
+      .returning()
+
+    expect(session?.projectId).toBe('proj1')
+  })
+
+  it('session projectId defaults to null', async () => {
+    const [session] = await handle.db.insert(sessions).values({ title: 'S' }).returning()
+    expect(session?.projectId).toBeNull()
+  })
+
+  it('deleting a project sets session.projectId to null', async () => {
+    await handle.db.insert(projects).values({ id: 'proj1', worktree: '/repo', vcs: 'git' })
+    await handle.db.insert(sessions).values({ title: 'S', projectId: 'proj1' })
+
+    await handle.db.delete(projects).where(eq(projects.id, 'proj1'))
+
+    const [session] = await handle.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.title, 'S'))
+    expect(session?.projectId).toBeNull()
   })
 })

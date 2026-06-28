@@ -8,6 +8,13 @@
       "when": 1782523729213,
       "tag": "0000_magical_nightshade",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782620610647,
+      "tag": "0001_chemical_doctor_faustus",
+      "breakpoints": true
     }
   ]
 }

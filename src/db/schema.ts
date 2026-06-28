@@ -12,6 +12,20 @@ import {
 } from 'drizzle-orm/pg-core'
 
 /**
+ * Projects table — git repos or plain directories tracked for agent workspaces.
+ * Identity: git repo uses sha256(remote||worktree)[:16]; plain dir uses sha256(path)[:16].
+ */
+export const projects = pgTable('projects', {
+  id: text('id').primaryKey(),
+  worktree: text('worktree').notNull(),
+  vcs: text('vcs'),
+  name: text('name'),
+  gitRemote: text('git_remote'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
  * Sessions table — conversation sessions with branching support.
  * Root sessions have parentId = null. Forked sessions reference their parent.
  */
@@ -21,12 +35,18 @@ export const sessions = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     title: text('title').notNull(),
     parentId: uuid('parent_id').references((): AnyPgColumn => sessions.id),
+    projectId: text('project_id').references((): AnyPgColumn => projects.id, {
+      onDelete: 'set null',
+    }),
     branchPoint: integer('branch_point'),
     metadata: jsonb('metadata').notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('idx_sessions_parent').on(table.parentId)],
+  (table) => [
+    index('idx_sessions_parent').on(table.parentId),
+    index('idx_sessions_project').on(table.projectId),
+  ],
 )
 
 /**
@@ -104,6 +124,8 @@ export const fileSnapshots = pgTable(
 )
 
 /** Type exports for insert/select operations. */
+export type ProjectRow = typeof projects.$inferSelect
+export type ProjectInsert = typeof projects.$inferInsert
 export type SessionRow = typeof sessions.$inferSelect
 export type SessionInsert = typeof sessions.$inferInsert
 export type SessionEntryRow = typeof sessionEntries.$inferSelect
