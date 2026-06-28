@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 
 const bar = css`
   display: flex;
@@ -63,7 +63,10 @@ const dot = css`
 /** 全局顶部导航栏：品牌标识 + 主界面/设置入口。 */
 export function TopBar() {
   const { pathname } = useLocation()
+  const { projectId } = useParams<{ projectId: string }>()
   const isSettings = pathname.startsWith('/settings')
+  // 会话入口：项目上下文跳当前项目，否则回根路径（由 RootRedirect 解析当前项目）。
+  const sessionsPath = projectId ? `/projects/${projectId}` : '/'
 
   return (
     <header className={bar} data-testid="topbar">
@@ -73,7 +76,7 @@ export function TopBar() {
       </Link>
       <nav className={nav}>
         <Link
-          to="/"
+          to={sessionsPath}
           className={`${link} ${!isSettings ? activeLink : ''}`}
           data-active={!isSettings || undefined}
         >

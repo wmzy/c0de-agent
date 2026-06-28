@@ -19,35 +19,31 @@ const select = css`
   }
 `
 
-/** ALL = 显示全部会话；null = 未关联项目的会话；其余 = 具体项目 id。 */
-type Selection = 'ALL' | 'UNASSIGNED' | string
-
 type ProjectSwitcherProps = {
   projects: Project[]
-  /** 当前选中值。 */
-  value: Selection
-  onChange: (value: Selection) => void
+  /** 当前项目 id（来自路由，恒有值）。 */
+  value: string
+  /** 切换项目。 */
+  onChange: (projectId: string) => void
 }
 
-/** 会话列表的项目过滤切换器。 */
+/** 项目导航器：选择项目即切换到该项目的会话视图（项目为路由顶级维度）。 */
 export function ProjectSwitcher({ projects, value, onChange }: ProjectSwitcherProps) {
   return (
     <select
       className={select}
       value={value}
-      onChange={(e) => onChange(e.target.value as Selection)}
+      onChange={(e) => onChange(e.target.value)}
       data-testid="project-switcher"
-      aria-label="按项目筛选会话"
+      aria-label="切换项目"
     >
-      <option value="ALL">全部项目</option>
       {projects.map((p) => (
         <option key={p.id} value={p.id}>
           {p.name ?? '未命名项目'}
         </option>
       ))}
-      <option value="UNASSIGNED">未关联项目</option>
     </select>
   )
 }
 
-export type { ProjectSwitcherProps, Selection }
+export type { ProjectSwitcherProps }

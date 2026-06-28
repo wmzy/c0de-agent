@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { AddProjectDialog } from '../components/AddProjectDialog.js'
 import { BranchTree } from '../components/BranchTree.js'
 import { ProjectIndicator } from '../components/ProjectIndicator.js'
-import type { Selection } from '../components/ProjectSwitcher.js'
 import { ProjectSwitcher } from '../components/ProjectSwitcher.js'
 import {
   useCreateSession,
@@ -64,40 +63,36 @@ const empty = css`
   text-align: center;
 `
 
-/** 按选中项目过滤会话树（以根会话的 projectId 为准）。 */
-function filterTree(tree: SessionTreeNode[], selection: Selection): SessionTreeNode[] {
-  if (selection === 'ALL') return tree
-  return tree.filter((node) => {
-    const pid = node.session.projectId
-    if (selection === 'UNASSIGNED') return pid === null
-    return pid === selection
-  })
+/** 按项目 id 过滤会话树（以根会话的 projectId 为准）。项目为路由顶级维度，仅显示归属本项目的会话。 */
+function filterTree(tree: SessionTreeNode[], projectId: string): SessionTreeNode[] {
+  return tree.filter((node) => node.session.projectId === projectId)
 }
 
 export function SessionList({
+  projectId,
   activeId,
   onSelect,
+  onProjectChange,
 }: {
+  projectId: string
   activeId: string | null
   onSelect: (id: string) => void
+  onProjectChange: (projectId: string) => void
 }) {
   const { data: tree, isLoading } = useSessionTree()
   const { data: projects } = useProjects()
   const create = useCreateSession()
   const del = useDeleteSession()
-  const [selection, setSelection] = useState<Selection>('ALL')
   const [showAdd, setShowAdd] = useState(false)
 
-  const visibleTree = tree ? filterTree(tree, selection) : []
-  const selectedProjectId =
-    selection !== 'ALL' && selection !== 'UNASSIGNED' ? selection : undefined
+  const visibleTree = tree ? filterTree(tree, projectId) : []
 
   return (
     <div className={panel}>
       <ProjectIndicator />
       <div className={filterBar}>
         <div className={switcherWrap}>
-          <ProjectSwitcher projects={projects ?? []} value={selection} onChange={setSelection} />
+          <ProjectSwitcher projects={projects ?? []} value={projectId} onChange={onProjectChange} />
         </div>
         <button
           type="button"
@@ -110,14 +105,14 @@ export function SessionList({
         </button>
       </div>
       {showAdd && (
-        <AddProjectDialog onClose={() => setShowAdd(false)} onCreated={(p) => setSelection(p.id)} />
+        <AddProjectDialog onClose={() => setShowAdd(false)} onCreated={(p) => onProjectChange(p.id)} />
       )}
       <div className={header}>
         <span>会话</span>
         <button
           type="button"
           onClick={() =>
-            create.mutate(selectedProjectId ? { projectId: selectedProjectId } : undefined, {
+            create.mutate({ projectId }, {
               onSuccess: (s) => s && onSelect(s.id),
             })
           }

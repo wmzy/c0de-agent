@@ -1,6 +1,6 @@
 // TopBar 组件测试，对应 src/web/components/TopBar.tsx
 import { cleanup, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TopBar } from './TopBar.js'
 
@@ -10,6 +10,17 @@ function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <TopBar />
+    </MemoryRouter>,
+  )
+}
+
+/** 项目上下文下渲染 TopBar：需匹配项目路由以让 useParams 解析 projectId。 */
+function renderAtProject(projectId: string) {
+  return render(
+    <MemoryRouter initialEntries={[`/projects/${projectId}`]}>
+      <Routes>
+        <Route path="/projects/:projectId" element={<TopBar />} />
+      </Routes>
     </MemoryRouter>,
   )
 }
@@ -33,5 +44,17 @@ describe('TopBar', () => {
     renderAt('/settings')
     const settingsLink = screen.getByText('设置').closest('a')
     expect(settingsLink?.getAttribute('data-active')).not.toBeUndefined()
+  })
+
+  it('无项目上下文时会话入口指向根路径', () => {
+    renderAt('/settings')
+    const sessionsLink = screen.getByText('会话').closest('a')
+    expect(sessionsLink?.getAttribute('href')).toBe('/')
+  })
+
+  it('项目上下文时会话入口指向当前项目路由', () => {
+    renderAtProject('abc123')
+    const sessionsLink = screen.getByText('会话').closest('a')
+    expect(sessionsLink?.getAttribute('href')).toBe('/projects/abc123')
   })
 })
