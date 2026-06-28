@@ -1,7 +1,7 @@
 // src/web/vite.config.ts
 import path from 'node:path'
-import linaria from '@linaria/vite'
 import react from '@vitejs/plugin-react'
+import wyw from '@wyw-in-js/vite'
 import type { Plugin } from 'vite'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -44,13 +44,23 @@ export default defineConfig({
     },
   },
   plugins: [
-    react(),
-    linaria({
-      include: ['**/*.{ts,tsx}'],
+    // 参考 ../anthology 配置：用 @wyw-in-js/vite（@linaria/vite 的官方继任者）。
+    // @linaria/vite@5 是废弃架构，与 vite@8/plugin-react@6 不兼容，css`` 不会被
+    // 静态提取，运行时调用 @linaria/core 的 css 会抛 "runtime is not supported"。
+    // 组件代码 `import { css } from '@linaria/core'` 无需改动，仅换编译器。
+    react({ exclude: ['node_modules/**'] }),
+    wyw({
+      sourceMap: process.env.NODE_ENV !== 'production',
+      displayName: process.env.NODE_ENV !== 'production',
+      exclude: ['node_modules/**'],
     }),
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: false,
+      // dev 模式下必须启用，否则 manifest.webmanifest 不会被插件服务，
+      // 落到 Vite SPA fallback 返回 index.html，浏览器按 JSON 解析报 Syntax error。
+      // injectRegister:false 保证不会注册 SW，仅让 manifest 正确返回。
+      devOptions: { enabled: true },
       manifest: {
         name: 'c0de-agent',
         short_name: 'c0de',
