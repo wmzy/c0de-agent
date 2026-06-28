@@ -3,9 +3,9 @@ import type { Message } from '@shared/types/message.js'
 import type { ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
 import { InputArea } from '../components/InputArea.js'
-import { MessageBubble } from '../components/MessageBubble.js'
 import { PermissionDialog } from '../components/PermissionDialog.js'
 import { StreamingIndicator } from '../components/StreamingIndicator.js'
+import { MessageItem } from '../components/session/MessageItem.js'
 import { formatTokenCount } from '../utils/format.js'
 
 type ChatProps = {
@@ -86,7 +86,7 @@ export function Chat({
       {topPanel}
       <div className={stream} data-testid="stream">
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
+          <MessageItem key={m.id} message={m} />
         ))}
         {isStreaming && <StreamingIndicator />}
         <div ref={bottomRef} />
