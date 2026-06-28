@@ -26,7 +26,18 @@ describe('ReadToolView', () => {
 
 describe('WriteToolView', () => {
   it('渲染文件名与写入提示', () => {
-    render(<WriteToolView input={{ path: 'b.ts', content: 'x' }} />)
+    render(<WriteToolView input={{ path: 'b.ts', content: 'x' }} status="completed" />)
     expect(screen.getByTestId('file-name')).toHaveTextContent('b.ts')
+  })
+
+  it('error 状态显示错误信息', () => {
+    render(
+      <WriteToolView
+        input={{ path: 'b.ts', content: 'x' }}
+        status="error"
+        output={{ _tag: 'error', error: 'permission denied' }}
+      />,
+    )
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('permission denied')
   })
 })

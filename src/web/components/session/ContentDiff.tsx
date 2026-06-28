@@ -4,9 +4,10 @@ import { diffLines } from 'diff'
 const wrap = css`
   margin: 4px 0;
   border-radius: 6px;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid var(--border);
   font-size: 13px;
+  max-height: 400px;
 `
 
 const row = css`

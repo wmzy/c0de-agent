@@ -53,7 +53,7 @@ function renderTool(
     case 'read':
       return <ReadToolView input={(input ?? {}) as never} output={output} status={status} />
     case 'write':
-      return <WriteToolView input={(input ?? {}) as never} />
+      return <WriteToolView input={(input ?? {}) as never} output={output} status={status} />
     case 'edit':
       return <EditToolView input={(input ?? {}) as never} output={output} status={status} />
     case 'bash':
