@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { projectAPI } from '../services/project.js'
 import type { Project } from '../types/index.js'
-import { PathPicker } from './PathPicker.js'
+import { DirectoryPicker } from './DirectoryPicker.js'
 
 const overlay = css`
   position: fixed;
@@ -86,7 +86,7 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
     <div className={overlay} role="presentation" data-testid="add-project-dialog">
       <div className={dialog}>
         <div className={title}>添加项目</div>
-        <PathPicker
+        <DirectoryPicker
           value={directory}
           onChange={setDirectory}
           onKeyDown={(e) => {
@@ -97,7 +97,7 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
           testId="add-project-input"
           autoFocus
         />
-        <div className={hint}>输入项目目录路径，自动补全子目录；将解析 git 信息并注册。</div>
+        <div className={hint}>输入目录名可递归搜索深层目录，或在文件树中浏览选择。</div>
         {error ? <div className={errorMsg}>{error}</div> : null}
         <div className={actions}>
           <button type="button" onClick={onClose}>

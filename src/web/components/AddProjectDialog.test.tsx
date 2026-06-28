@@ -15,11 +15,12 @@ vi.mock('../services/project.js', () => ({
   },
 }))
 
-// PathPicker 依赖 filesystem service，mock 掉避免测试中发起网络请求
+// DirectoryPicker 依赖 filesystem service，mock 掉避免测试中发起网络请求
 vi.mock('../services/filesystem.js', () => ({
   filesystemAPI: {
     browse: vi.fn().mockResolvedValue({ path: '', directories: [] }),
-    home: vi.fn(),
+    home: vi.fn().mockResolvedValue({ path: '' }),
+    search: vi.fn().mockResolvedValue({ items: [] }),
   },
 }))
 

@@ -101,4 +101,52 @@ describe('filesystem route', () => {
     const body = (await res.json()) as { path: string }
     expect(body.path.startsWith('/')).toBe(true)
   })
+
+  it('GET /search recursively matches deep directories', async () => {
+    // project-a/src/deep/nested
+    await mkdir(join(tempDir, 'project-a', 'src', 'deep', 'nested'), { recursive: true })
+    const { app } = await setup()
+    const res = await app.request(
+      `/search?directory=${encodeURIComponent(tempDir)}&q=${encodeURIComponent('nested')}`,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: string[] }
+    // 命中深层目录（相对路径）
+    expect(body.items.some((p) => p.includes('nested'))).toBe(true)
+    expect(body.items.some((p) => p.includes('src/deep/nested'))).toBe(true)
+  })
+
+  it('GET /search only returns directories and skips node_modules/.git/hidden', async () => {
+    await mkdir(join(tempDir, 'project-a', 'node_modules', 'pkg'), { recursive: true })
+    await mkdir(join(tempDir, 'project-a', '.git', 'refs'), { recursive: true })
+    await mkdir(join(tempDir, 'project-a', 'src', 'real'), { recursive: true })
+    const { app } = await setup()
+    const res = await app.request(`/search?directory=${encodeURIComponent(tempDir)}&q=src`)
+    const body = (await res.json()) as { items: string[] }
+    // 命中 real，但不出现 node_modules/.git 内部
+    expect(body.items.some((p) => p.includes('real'))).toBe(true)
+    expect(body.items.every((p) => !p.includes('node_modules'))).toBe(true)
+    expect(body.items.every((p) => !p.includes('.git'))).toBe(true)
+  })
+
+  it('GET /search respects limit', async () => {
+    // 创建 6 个匹配目录，limit=3 截断
+    for (const name of ['d1', 'd2', 'd3', 'd4', 'd5', 'd6']) {
+      await mkdir(join(tempDir, 'project-a', name), { recursive: true })
+    }
+    const { app } = await setup()
+    const res = await app.request(`/search?directory=${encodeURIComponent(tempDir)}&q=d&limit=3`)
+    const body = (await res.json()) as { items: string[] }
+    expect(body.items.length).toBeLessThanOrEqual(3)
+  })
+
+  it('GET /search with empty query returns top-level directories', async () => {
+    const { app } = await setup()
+    const res = await app.request(`/search?directory=${encodeURIComponent(tempDir)}&q=`)
+    const body = (await res.json()) as { items: string[] }
+    const names = body.items
+    expect(names).toContain('project-a')
+    expect(names).toContain('project-b')
+    expect(names.every((n) => !n.startsWith('.'))).toBe(true)
+  })
 })

@@ -9,6 +9,7 @@ import {
 import type { Project } from '../../project/project.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { expandPath } from './filesystem.js'
 
 type ProjectWithBranch = Project & { gitBranch: string | null }
 
@@ -25,7 +26,8 @@ function createProjectRoute(ctx: ServerContext): Hono {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const directory = body.directory as string | undefined
     if (!directory) return apiError(c, 400, 'BAD_REQUEST', 'directory is required')
-    const project = await fromDirectory(ctx.db, directory)
+    // 展开 ~ 前缀为 home 绝对路径（前端可能传 ~/... 形式）
+    const project = await fromDirectory(ctx.db, expandPath(directory))
     return c.json(withBranch(project), 200)
   })
 

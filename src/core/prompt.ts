@@ -11,6 +11,15 @@ This project follows a strict data + functions paradigm:
 - No classes; prefer factory functions and pure data transformation.
 - Prefer \`import type\` for type-only imports.`
 
+const TOOL_USAGE = `## Tool Usage
+You have dedicated tools — prefer them over shell commands for file operations:
+- Reading a file or listing a directory → \`read\` (NOT \`cat\`, \`head\`, \`tail\`, \`less\`).
+- Finding files by name or pattern → \`glob\` (NOT \`find\`, \`ls -R\`, \`fd\`).
+- Searching file contents → \`grep\` (NOT shell \`grep\`/\`rg\`/\`ack\`, NOT \`awk\`/\`sed\`).
+- Modifying files → \`edit\`/\`write\` (NOT \`sed\`, \`echo >\`, \`tee\`, heredocs).
+
+Reserve \`bash\` for genuine command execution: builds, tests, git, or short pipelines that compute a fact (\`wc -l\`, \`git status\`, \`diff\`, a checksum). Never explore a codebase with \`find\`/\`ls\`/\`cat\` when \`read\`/\`glob\`/\`grep\` can do it — they are faster, safer, and skip ignored paths.`
+
 function buildSystemPrompt(ctx: PromptContext): string {
   const parts: string[] = []
   parts.push(ROLE_DESCRIPTION)
@@ -24,6 +33,7 @@ function buildSystemPrompt(ctx: PromptContext): string {
     for (const tool of ctx.tools) {
       parts.push(`- **${tool.name}**: ${tool.description}`)
     }
+    parts.push(TOOL_USAGE)
   }
 
   parts.push('## Project Context')

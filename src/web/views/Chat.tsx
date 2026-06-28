@@ -18,6 +18,8 @@ type ChatProps = {
   onAbort: () => void
   onConfirm: (toolCallId: string, approved: boolean) => void
   modelBar?: ReactNode
+  /** 底部工具栏右侧的工具开关（启用/禁用工具列表）。 */
+  toolToggle?: ReactNode
   /** 插入到工具栏与消息流之间的面板（如 LLM 调用详情）。 */
   topPanel?: ReactNode
 }
@@ -50,6 +52,11 @@ const footerBar = css`
   background: var(--bg-secondary);
 `
 
+const footerLeft = css`
+  flex: 1;
+  min-width: 0;
+`
+
 export function Chat({
   messages,
   isStreaming,
@@ -60,6 +67,7 @@ export function Chat({
   onAbort,
   onConfirm,
   modelBar,
+  toolToggle,
   topPanel,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -100,7 +108,12 @@ export function Chat({
           onCancel={() => onConfirm(pendingPermission.toolCallId, false)}
         />
       )}
-      {modelBar && <div className={footerBar}>{modelBar}</div>}
+      {(modelBar || toolToggle) && (
+        <div className={footerBar}>
+          {modelBar && <div className={footerLeft}>{modelBar}</div>}
+          {toolToggle}
+        </div>
+      )}
       <InputArea onSend={onSend} disabled={isStreaming} />
     </>
   )

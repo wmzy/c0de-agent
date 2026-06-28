@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
@@ -41,6 +41,26 @@ describe('project route', () => {
       expect(project.worktree).toBe(dir)
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('POST /from-directory 展开 ~ 前缀为 home（而非拼到 cwd）', async () => {
+    // 独立 cwd，避免 findGitRoot 向上找到测试进程所在仓库
+    const independentCwd = mkdtempSync(join(tmpdir(), 'projcwd-'))
+    try {
+      const { app } = await setup(independentCwd)
+      const res = await app.request('/from-directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: '~/projects/c0de-agent' }),
+      })
+      expect(res.status).toBe(200)
+      const project = (await res.json()) as Project & { gitBranch: string | null }
+      // worktree 必须是 home 下的绝对路径，不能含字面 ~
+      expect(project.worktree).toBe(join(homedir(), 'projects/c0de-agent'))
+      expect(project.worktree).not.toContain('~')
+    } finally {
+      rmSync(independentCwd, { recursive: true, force: true })
     }
   })
 

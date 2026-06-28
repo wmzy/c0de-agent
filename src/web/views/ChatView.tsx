@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { LLMDetailsView } from '../components/LLMDetailsView.js'
 import { type ModelSelection, ModelSelector } from '../components/ModelSelector.js'
 import { SessionSummary } from '../components/SessionSummary.js'
+import { ToolToggle } from '../components/ToolToggle.js'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { useChat } from '../hooks/useChat.js'
 import { useMessages } from '../hooks/useSession.js'
@@ -60,8 +61,15 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
   const messages = useMemo(() => [...(history ?? []), ...chat.messages], [history, chat.messages])
 
+  // 启用工具白名单：null = 默认全启用（不传 tools，走后端 config）；Set = 显式选择
+  const [enabledTools, setEnabledTools] = useState<Set<string> | null>(null)
+
   const handleSend = (text: string) => {
-    void chat.sendMessage(text, { provider: selection.provider, model: selection.model })
+    void chat.sendMessage(text, {
+      provider: selection.provider,
+      model: selection.model,
+      ...(enabledTools ? { tools: Array.from(enabledTools) } : {}),
+    })
   }
 
   const handleConfirm = (toolCallId: string, approved: boolean) => {
@@ -79,6 +87,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       onAbort={chat.abort}
       onConfirm={handleConfirm}
       modelBar={<ModelSelector value={selection} onChange={setSelection} />}
+      toolToggle={
+        <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={chat.isStreaming} />
+      }
       topPanel={
         <>
           <SessionSummary sessionId={sessionId} />

@@ -38,6 +38,18 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Read a file')
   })
 
+  it('includes tool usage guidance preferring dedicated tools over shell commands', () => {
+    const prompt = buildSystemPrompt({
+      tools: [readTool],
+      config,
+      projectInfo: { name: 'myapp', language: 'TypeScript', rootDir: '/proj' },
+    })
+    // 引导优先用专用工具，禁止用 find/ls/cat 探查项目
+    expect(prompt).toContain('glob')
+    expect(prompt).toMatch(/NOT.*find/i)
+    expect(prompt).toMatch(/NOT.*cat/i)
+  })
+
   it('includes project info', () => {
     const prompt = buildSystemPrompt({
       tools: [],
