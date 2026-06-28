@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
@@ -45,6 +45,9 @@ beforeEach(async () => {
   db = await createDB({ driver: 'pglite' })
   await migrateDB(db)
   session = await createSession(db, 'test')
+})
+afterEach(async () => {
+  await db.close()
 })
 
 describe('createAgent', () => {

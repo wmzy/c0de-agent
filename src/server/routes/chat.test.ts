@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
@@ -16,8 +17,15 @@ function mockChatStream(): AsyncGenerator<StreamChunk> {
   })()
 }
 
+let dbHandle: DB | undefined
+afterEach(async () => {
+  await dbHandle?.close()
+  dbHandle = undefined
+})
+
 async function setup() {
   const db = await createDB({ driver: 'pglite' })
+  dbHandle = db
   await migrateDB(db)
   const session = await createSession(db, 'Test')
   const ctx = createServerContext({

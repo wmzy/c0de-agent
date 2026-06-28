@@ -1,13 +1,20 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { createRegistry } from '../../llm/registry.js'
 import { createServerContext } from '../context.js'
 import { createFilesRoute } from './files.js'
 
 type FileEntry = { name: string; type: 'file' | 'directory' }
+
+let dbHandle: DB | undefined
+afterEach(async () => {
+  await dbHandle?.close()
+  dbHandle = undefined
+})
 
 async function setupWithDir() {
   const dir = mkdtempSync(join(tmpdir(), 'c0de-files-'))
@@ -16,6 +23,7 @@ async function setupWithDir() {
   mkdirSync(join(dir, 'subdir'))
   writeFileSync(join(dir, 'subdir', 'nested.ts'), 'export const x = 1')
   const db = await createDB({ driver: 'pglite' })
+  dbHandle = db
   const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
   const app = createFilesRoute(ctx)
   return { app, ctx, dir }

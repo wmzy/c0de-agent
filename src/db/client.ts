@@ -27,10 +27,15 @@ async function createDB(config: DBConfig): Promise<DB> {
     const connection =
       config.dataDir && config.dataDir !== ':memory:' ? { dataDir: config.dataDir } : undefined
     const db = drizzle({ schema, connection })
+    // $client is the underlying PGlite (WASM Postgres) instance drizzle created
+    // from the connection option. Without closing it, each instance leaks
+    // ~100MB+ of WASM memory — which OOM-kills vitest worker forks when many
+    // test files run in the same process.
+    const client = db.$client
     return {
       db,
       async close() {
-        // PGLite manages its own lifecycle via the drizzle connection
+        await client.close()
       },
     }
   }

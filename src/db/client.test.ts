@@ -11,6 +11,18 @@ describe('createDB with pglite in-memory', () => {
     await handle.close()
   })
 
+  it('close() actually frees the underlying PGlite instance (regression)', async () => {
+    // Regression guard: close() must call the underlying PGlite's close(),
+    // not be a no-op. A no-op leaks ~100MB+ of WASM Postgres per instance
+    // and OOM-kills vitest worker forks when many tests run.
+    // $client is hidden by the driver-agnostic DB type, so cast locally.
+    const handle = await createDB({ driver: 'pglite' })
+    const client = (handle.db as unknown as { $client: { closed: boolean } }).$client
+    expect(client.closed).toBe(false)
+    await handle.close()
+    expect(client.closed).toBe(true)
+  })
+
   it('can execute a simple query', async () => {
     const { db, close } = await createDB({ driver: 'pglite' })
     const result = await db.execute(sql`SELECT 1 AS value`)

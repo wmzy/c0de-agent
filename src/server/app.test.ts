@@ -2,7 +2,8 @@
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { createRegistry } from '../llm/registry.js'
@@ -17,8 +18,15 @@ function mockChatStream(): AsyncGenerator<StreamChunk> {
   })()
 }
 
+let dbHandle: DB | undefined
+afterEach(async () => {
+  await dbHandle?.close()
+  dbHandle = undefined
+})
+
 async function setupApp() {
   const db = await createDB({ driver: 'pglite' })
+  dbHandle = db
   await migrateDB(db)
   const cwd = mkdtempSync(join(tmpdir(), 'c0de-app-'))
   const ctx = createServerContext({

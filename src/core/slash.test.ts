@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
@@ -23,6 +23,9 @@ beforeEach(async () => {
     config: DEFAULT_CONFIG,
     cwd: process.cwd(),
   } as AgentDependencies
+})
+afterEach(async () => {
+  await db.close()
 })
 
 describe('parseSlashInput', () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { createHookRunner } from '../plugins/hooks.js'
@@ -110,6 +110,9 @@ beforeEach(async () => {
     role: 'user',
     content: [{ _tag: 'text', text: 'Hello' }],
   })
+})
+afterEach(async () => {
+  await db.close()
 })
 
 describe('agentLoop', () => {

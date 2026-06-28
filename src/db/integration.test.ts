@@ -1,5 +1,5 @@
 import { desc, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from './client.js'
 import { createDB } from './client.js'
 import { migrateDB } from './migrate.js'
@@ -17,6 +17,10 @@ describe('DB integration: sessions CRUD', () => {
 
   beforeEach(async () => {
     handle = await setupDB()
+  })
+
+  afterEach(async () => {
+    await handle.close()
   })
 
   it('inserts and queries a session', async () => {
@@ -87,6 +91,10 @@ describe('DB integration: session entries', () => {
 
   beforeEach(async () => {
     handle = await setupDB()
+  })
+
+  afterEach(async () => {
+    await handle.close()
   })
 
   it('inserts and queries entries by session', async () => {
@@ -164,6 +172,10 @@ describe('DB integration: file snapshots', () => {
     handle = await setupDB()
   })
 
+  afterEach(async () => {
+    await handle.close()
+  })
+
   it('inserts and queries file snapshots', async () => {
     const [session] = await handle.db.insert(sessions).values({ title: 'S1' }).returning()
 
@@ -227,6 +239,10 @@ describe('DB integration: compaction archives', () => {
 
   beforeEach(async () => {
     handle = await setupDB()
+  })
+
+  afterEach(async () => {
+    await handle.close()
   })
 
   it('inserts and queries compaction archives', async () => {
