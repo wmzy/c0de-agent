@@ -11,6 +11,18 @@ type SessionTreeNode = {
   children: SessionTreeNode[]
 }
 
+/** 项目（GET /api/projects 返回，含实时 git 分支）。 */
+type Project = {
+  id: string
+  worktree: string
+  vcs: 'git' | null
+  name: string | null
+  gitRemote: string | null
+  gitBranch: string | null
+  createdAt: number
+  updatedAt: number
+}
+
 /** API 统一错误。 */
 type APIError = {
   status: number
@@ -55,6 +67,7 @@ export type {
   FileContent,
   FileEntry,
   FileSearchResult,
+  Project,
   SessionTreeNode,
   ToolListItem,
 }
