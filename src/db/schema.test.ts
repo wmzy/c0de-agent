@@ -20,6 +20,7 @@ describe('sessions table', () => {
     expect(columns).toContain('id')
     expect(columns).toContain('title')
     expect(columns).toContain('parentId')
+    expect(columns).toContain('projectId')
     expect(columns).toContain('branchPoint')
     expect(columns).toContain('metadata')
     expect(columns).toContain('createdAt')
@@ -96,6 +97,7 @@ describe('type inference', () => {
       id: '00000000-0000-4000-8000-000000000000',
       title: 'Test',
       parentId: null,
+      projectId: null,
       branchPoint: null,
       metadata: {},
       createdAt: new Date(),
