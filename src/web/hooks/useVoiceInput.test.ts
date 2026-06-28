@@ -25,7 +25,11 @@ describe('useVoiceInput', () => {
     }
     vi.stubGlobal(
       'webkitSpeechRecognition',
-      vi.fn(() => fakeRec),
+      // 必须用 function 表达式：useVoiceInput 通过 new 调用，箭头函数无 [[Construct]]
+      // biome-ignore lint/complexity/useArrowFunction: 需作为 constructor 被 new 调用
+      vi.fn(function () {
+        return fakeRec
+      }),
     )
     const { result } = renderHook(() => useVoiceInput())
     act(() => result.current.start())

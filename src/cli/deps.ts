@@ -26,8 +26,17 @@ function buildLLMRegistry(config: Config): Registry {
 }
 
 function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void {
-  if (!p.baseURL) return
-  registerProvider(registry, { name: p.name, baseURL: p.baseURL, apiKey: p.apiKey })
+  // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
+  const name = p.name || (p as { _tag?: string })._tag
+  if (!name || !p.baseURL) return
+  // baseURL 已含 /v1 时用 /chat/completions，避免 /v1/v1 双重前缀
+  const path = p.baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/chat/completions' : undefined
+  registerProvider(registry, {
+    name,
+    baseURL: p.baseURL,
+    apiKey: p.apiKey,
+    ...(path ? { path } : {}),
+  })
 }
 
 type BuildDepsOptions = {

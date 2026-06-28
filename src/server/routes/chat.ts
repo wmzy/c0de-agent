@@ -81,13 +81,19 @@ function createChatRoute(ctx: ServerContext): Hono {
           })
         }
       } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === 'object' && err !== null && 'message' in err
+              ? String((err as { message: unknown }).message)
+              : String(err)
         await stream.writeSSE({
           event: 'error',
           data: JSON.stringify({
             _tag: 'error',
             error: {
               _tag: 'unexpected',
-              message: err instanceof Error ? err.message : String(err),
+              message,
             },
           }),
         })

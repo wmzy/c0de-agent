@@ -1,4 +1,5 @@
 import { chatStream as llmChatStream } from '../llm/provider.js'
+import { isLLMError } from '../llm/schema/errors.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
 import { generateId } from '../shared/index.js'
@@ -198,11 +199,19 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         }
       }
     } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : isLLMError(err)
+            ? err.message
+            : typeof err === 'object' && err !== null && 'message' in err
+              ? String((err as { message: unknown }).message)
+              : String(err)
       yield {
         _tag: 'error',
         error: {
           _tag: 'unexpected',
-          message: err instanceof Error ? err.message : String(err),
+          message,
         },
       }
       state.status = {
@@ -210,7 +219,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         reason: 'error',
         error: {
           _tag: 'unexpected',
-          message: String(err),
+          message,
         },
       }
       return
