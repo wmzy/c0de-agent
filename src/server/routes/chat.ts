@@ -4,9 +4,20 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { getSession } from '../../session/session.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
+import { getProject } from '../../project/project.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import type { ServerContext } from '../types.js'
+
+/** 按 session.projectId 解析 agent 工作目录；无项目回退 ctx.cwd。 */
+export async function resolveAgentCwd(
+  ctx: ServerContext,
+  session: { projectId: string | null },
+): Promise<string> {
+  if (!session.projectId) return ctx.cwd
+  const project = await getProject(ctx.db, session.projectId)
+  return project?.worktree ?? ctx.cwd
+}
 
 function createChatRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -42,6 +53,8 @@ function createChatRoute(ctx: ServerContext): Hono {
         },
       })
 
+      const cwd = await resolveAgentCwd(ctx, session)
+
       // 构建 agent 依赖（注入测试用 chatStream）
       const deps: LoopDeps = {
         db: ctx.db,
@@ -49,7 +62,7 @@ function createChatRoute(ctx: ServerContext): Hono {
         toolRegistry: ctx.toolRegistry,
         permission: permissionChecker,
         config: ctx.config,
-        cwd: ctx.cwd,
+        cwd,
         ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
       }
 
