@@ -6,6 +6,10 @@ import { createRegistry } from '../../llm/registry.js'
 import type { Session } from '../../shared/types/message.js'
 import { createServerContext } from '../context.js'
 import type { APIErrorBody } from '../types.js'
+import { fromDirectory } from '../../project/index.js'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createSessionRoute } from './session.js'
 
 let dbHandle: DB | undefined
@@ -20,7 +24,7 @@ async function setup() {
   await migrateDB(db)
   const ctx = createServerContext({ db, llmRegistry: createRegistry() })
   const app = createSessionRoute(ctx)
-  return { app, ctx }
+  return { app, ctx, db }
 }
 
 describe('session route', () => {
@@ -189,5 +193,46 @@ describe('session route', () => {
     expect(res.status).toBe(200)
     const branches = (await res.json()) as unknown[]
     expect(Array.isArray(branches)).toBe(true)
+  })
+
+  it('POST / with directory associates project', async () => {
+    const { app } = await setup()
+    const dir = mkdtempSync(join(tmpdir(), 'route-'))
+    try {
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'S', directory: dir }),
+      })
+      expect(res.status).toBe(201)
+      const session = (await res.json()) as Session
+      expect(session.projectId).toBeTruthy()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('GET / filters by projectId', async () => {
+    const { app, db } = await setup()
+    const dir = mkdtempSync(join(tmpdir(), 'route2-'))
+    try {
+      await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'WithProject', directory: dir }),
+      })
+      await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'NoProject' }),
+      })
+      const project = await fromDirectory(db, dir)
+      const res = await app.request(`/?projectId=${project.id}`)
+      const sessions = (await res.json()) as Session[]
+      expect(sessions.every((s) => s.projectId === project.id)).toBe(true)
+      expect(sessions.some((s) => s.title === 'WithProject')).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

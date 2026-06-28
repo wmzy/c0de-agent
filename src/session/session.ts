@@ -58,4 +58,9 @@ async function touchSession(handle: DB, id: string): Promise<void> {
   await handle.db.update(sessions).set({ updatedAt: new Date() }).where(eq(sessions.id, id))
 }
 
-export { createSession, deleteSession, getSession, listSessions, touchSession, updateSessionTitle }
+async function listSessionsByProject(handle: DB, projectId: string): Promise<Session[]> {
+  const rows = await handle.db.select().from(sessions).where(eq(sessions.projectId, projectId))
+  return rows.map(rowToSession)
+}
+
+export { createSession, deleteSession, getSession, listSessions, listSessionsByProject, touchSession, updateSessionTitle }

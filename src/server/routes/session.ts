@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import { forkSession, getBranches, getTree } from '../../session/branch.js'
 import { getMessages } from '../../session/message.js'
-import { createSession, deleteSession, getSession, listSessions } from '../../session/session.js'
+import { createSession, deleteSession, getSession, listSessions, listSessionsByProject } from '../../session/session.js'
+import { fromDirectory } from '../../project/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -12,13 +13,22 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.post('/', async (c) => {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const title = (body.title as string) ?? 'New Session'
-    const session = await createSession(ctx.db, title)
+    const directory = body.directory as string | undefined
+    let projectId: string | undefined
+    if (directory) {
+      const project = await fromDirectory(ctx.db, directory)
+      projectId = project.id
+    }
+    const session = await createSession(ctx.db, title, projectId)
     return c.json(session, 201)
   })
 
   // 列出会话
   app.get('/', async (c) => {
-    const sessions = await listSessions(ctx.db)
+    const projectId = c.req.query('projectId')
+    const sessions = projectId
+      ? await listSessionsByProject(ctx.db, projectId)
+      : await listSessions(ctx.db)
     return c.json(sessions)
   })
 
