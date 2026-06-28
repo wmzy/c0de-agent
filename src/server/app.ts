@@ -9,6 +9,7 @@ import { createChatRoute } from './routes/chat.js'
 import { createConfigRoute } from './routes/config.js'
 import { createFilesRoute } from './routes/files.js'
 import { createHealthRoute } from './routes/health.js'
+import { createProjectRoute } from './routes/project.js'
 import { createSessionRoute } from './routes/session.js'
 import { createToolRoute } from './routes/tool.js'
 import type { ServerContext } from './types.js'
@@ -24,6 +25,7 @@ function createApp(ctx: ServerContext): Hono {
   // 路由
   app.route('/api/health', createHealthRoute())
   app.route('/api/sessions', createSessionRoute(ctx))
+  app.route('/api/projects', createProjectRoute(ctx))
   app.route('/api/chat', createChatRoute(ctx))
   app.route('/api/tools', createToolRoute(ctx))
   app.route('/api/config', createConfigRoute(ctx))
@@ -37,6 +39,7 @@ function createApp(ctx: ServerContext): Hono {
       endpoints: [
         '/api/health',
         '/api/sessions',
+        '/api/projects',
         '/api/chat',
         '/api/tools',
         '/api/config',
