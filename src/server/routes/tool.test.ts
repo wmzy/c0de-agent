@@ -92,6 +92,7 @@ describe('tool route', () => {
           id: 's1',
           title: 'T',
           parentId: null,
+          projectId: null,
           branchPoint: null,
           metadata: {},
           createdAt: 0,

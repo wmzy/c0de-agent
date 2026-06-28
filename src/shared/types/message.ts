@@ -31,6 +31,7 @@ type Session = {
   id: string
   title: string
   parentId: string | null
+  projectId: string | null
   branchPoint: number | null
   metadata: SessionMetadata
   createdAt: number

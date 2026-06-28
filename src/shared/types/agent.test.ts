@@ -136,6 +136,7 @@ describe('AgentState', () => {
         id: 'sess-1',
         title: 'Test',
         parentId: null,
+        projectId: null,
         branchPoint: null,
         metadata: {},
         createdAt: Date.now(),

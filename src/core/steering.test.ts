@@ -8,6 +8,7 @@ function makeState(): AgentState {
     id: 's1',
     title: 't',
     parentId: null,
+    projectId: null,
     branchPoint: null,
     metadata: {},
     createdAt: 0,

@@ -13,6 +13,7 @@ export function rowToSession(row: typeof sessions.$inferSelect): Session {
     id: row.id,
     title: row.title,
     parentId: row.parentId,
+    projectId: row.projectId,
     branchPoint: row.branchPoint,
     metadata: (row.metadata ?? {}) as SessionMetadata,
     createdAt: created,
@@ -21,8 +22,11 @@ export function rowToSession(row: typeof sessions.$inferSelect): Session {
 }
 
 /** Create a new root session. */
-async function createSession(handle: DB, title: string): Promise<Session> {
-  const [row] = await handle.db.insert(sessions).values({ title }).returning()
+async function createSession(handle: DB, title: string, projectId?: string): Promise<Session> {
+  const [row] = await handle.db
+    .insert(sessions)
+    .values({ title, projectId: projectId ?? null })
+    .returning()
   if (!row) throw new Error('Failed to insert session')
   return rowToSession(row)
 }

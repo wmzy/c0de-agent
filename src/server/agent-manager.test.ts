@@ -12,6 +12,7 @@ function mockState(sessionId: string): AgentState {
       id: sessionId,
       title: 'Test',
       parentId: null,
+      projectId: null,
       branchPoint: null,
       metadata: {},
       createdAt: Date.now(),

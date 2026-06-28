@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { join } from 'node:path'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import {
   createSession,
   deleteSession,
@@ -10,6 +13,7 @@ import {
   touchSession,
   updateSessionTitle,
 } from './session.js'
+import { fromDirectory } from '../project/project.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
@@ -75,5 +79,23 @@ describe('session CRUD', () => {
     await touchSession(handle, created.id)
     const found = await getSession(handle, created.id)
     expect(found?.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt)
+  })
+
+  it('createSession without projectId yields null projectId', async () => {
+    const s = await createSession(handle, 'T')
+    expect(s.projectId).toBeNull()
+  })
+
+  it('createSession with projectId associates project', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sess-'))
+    try {
+      const project = await fromDirectory(handle, dir)
+      const s = await createSession(handle, 'T', project.id)
+      expect(s.projectId).toBe(project.id)
+      const refetched = await getSession(handle, s.id)
+      expect(refetched?.projectId).toBe(project.id)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
