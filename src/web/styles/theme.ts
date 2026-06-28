@@ -16,6 +16,10 @@ export const themeVars = css`
     --error: #dc2626;
     --code-bg: #f6f8fa;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    --diff-add-bg: #e6ffec;
+    --diff-add-text: #1a7f37;
+    --diff-del-bg: #ffebe9;
+    --diff-del-text: #cf222e;
   }
   :global(.dark) {
     --bg: #0d1117;
@@ -30,5 +34,9 @@ export const themeVars = css`
     --error: #f85149;
     --code-bg: #161b22;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --diff-add-bg: #0d2818;
+    --diff-add-text: #3fb950;
+    --diff-del-bg: #2d0a0a;
+    --diff-del-text: #f85149;
   }
 `
