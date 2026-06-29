@@ -10,13 +10,50 @@ type ToolResult =
   | { _tag: 'permission_required'; reason: string }
   | { _tag: 'truncated'; output: string; truncated: boolean; totalLines: number }
 
+/** Context passed to a URL resolver (skill://, agent://, pr://, …). */
+type URLResolveContext = {
+  cwd: string
+  session: SessionRef
+}
+
+/** A resolver for one URL scheme (e.g. `skill`, `agent`, `pr`). */
+type URLResolver = {
+  scheme: string
+  resolve: (url: string, ctx: URLResolveContext) => Promise<string>
+}
+
+/** Mutable registry of URL resolvers, keyed by scheme. */
+type URLRegistry = {
+  resolvers: Map<string, URLResolver>
+}
+
+/** Result of resolving a URL. */
+type ResolveResult = { _tag: 'ok'; content: string } | { _tag: 'error'; error: string }
+
 /** Context passed to every tool executor. */
 type ToolContext = {
   cwd: string
   session: SessionRef
   abort: AbortSignal
   mode?: string
+  /** URL resolver registry; present when the host wires up internal URL schemes. */
+  urlRegistry?: URLRegistry
+  /** Spawn a sub-agent and return its final text output (dependency-reversal hook
+   *  for the `task` tool; avoids tools→core circular import). */
+  runSubAgent?: (input: SubAgentRequest) => Promise<SubAgentResult>
 }
+
+/** Request to run a sub-agent (the `task` tool's payload to the host). */
+type SubAgentRequest = {
+  prompt: string
+  description?: string
+  model?: string
+}
+
+/** Result of a sub-agent run. */
+type SubAgentResult =
+  | { _tag: 'success'; output: string; sessionId: string }
+  | { _tag: 'error'; error: string }
 
 /** Function signature for tool execution. */
 type ToolExecutor = (input: unknown, ctx: ToolContext) => Promise<ToolResult>
@@ -39,4 +76,17 @@ type ToolDef = {
   modes?: ToolMode[]
 }
 
-export type { ToolContext, ToolDef, ToolExecutor, ToolMode, ToolPermission, ToolResult }
+export type {
+  ResolveResult,
+  SubAgentRequest,
+  SubAgentResult,
+  ToolContext,
+  ToolDef,
+  ToolExecutor,
+  ToolMode,
+  ToolPermission,
+  ToolResult,
+  URLRegistry,
+  URLResolveContext,
+  URLResolver,
+}

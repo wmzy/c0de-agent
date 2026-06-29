@@ -1,7 +1,17 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { isURLPath, resolveURL } from '../resolver.js'
 import type { ReadInput } from '../types.js'
+
+/** Apply optional offset/limit (1-indexed) to text content. */
+function applyRange(content: string, offset?: number, limit?: number): string {
+  if (offset === undefined && limit === undefined) return content
+  const lines = content.split('\n')
+  const start = (offset ?? 1) - 1 // convert to 0-indexed
+  const end = limit !== undefined ? start + limit : lines.length
+  return lines.slice(start, end).join('\n')
+}
 
 /**
  * read tool: read file content with optional line range.
@@ -10,7 +20,7 @@ import type { ReadInput } from '../types.js'
 export const readTool: ToolDef = {
   name: 'read',
   description:
-    'Read file content, or list a directory (entries with trailing `/` on subdirectories). Supports optional offset (1-indexed line number) and limit (number of lines) for files.',
+    'Read file content, or list a directory (entries with trailing `/` on subdirectories). Supports optional offset (1-indexed line number) and limit (number of lines) for files. Also resolves internal URL schemes (skill://, agent://, pr://, issue://) when a resolver registry is configured.',
   parameters: {
     type: 'object',
     properties: {
@@ -23,6 +33,21 @@ export const readTool: ToolDef = {
   permission: 'auto',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { path, offset, limit } = input as ReadInput
+
+    // 内部 URL scheme（spec §3.10）：skill://, agent://, pr:// 等。
+    // 命中时走 resolver 拿到文本内容，再统一应用 offset/limit；目录列举对 URL 无意义。
+    if (isURLPath(path)) {
+      if (!ctx.urlRegistry) {
+        return {
+          _tag: 'error',
+          error: `Cannot resolve URL "${path}": no resolver registry available`,
+        }
+      }
+      const res = await resolveURL(ctx.urlRegistry, path, { cwd: ctx.cwd, session: ctx.session })
+      if (res._tag === 'error') return { _tag: 'error', error: res.error }
+      return { _tag: 'success', output: applyRange(res.content, offset, limit) }
+    }
+
     const fullPath = resolve(ctx.cwd, path)
 
     try {
@@ -42,16 +67,7 @@ export const readTool: ToolDef = {
       }
 
       const content = await readFile(fullPath, 'utf-8')
-
-      if (offset === undefined && limit === undefined) {
-        return { _tag: 'success', output: content }
-      }
-
-      const lines = content.split('\n')
-      const start = (offset ?? 1) - 1 // convert to 0-indexed
-      const end = limit !== undefined ? start + limit : lines.length
-      const sliced = lines.slice(start, end)
-      return { _tag: 'success', output: sliced.join('\n') }
+      return { _tag: 'success', output: applyRange(content, offset, limit) }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return { _tag: 'error', error: `Failed to read "${path}": ${message}` }

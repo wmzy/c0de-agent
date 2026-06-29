@@ -13,7 +13,7 @@ import type {
   TokenBudget,
 } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
-import type { ToolDef } from '../shared/types/tool.js'
+import type { ToolDef, URLRegistry } from '../shared/types/tool.js'
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
 import type { Config } from './config.js'
 
@@ -26,6 +26,12 @@ type AgentDependencies = {
   config: Config
   cwd: string
   hookRunner?: HookRunner
+  /** Optional URL resolver registry wired into tool contexts (spec §3.10). */
+  urlRegistry?: URLRegistry
+  /** Optional prompt registry for dynamic system-prompt assembly (spec §17).
+   *  When provided, the agent loop renders the prompt from it; otherwise the
+   *  default built-in registry is used. Plugins register sections here. */
+  promptRegistry?: PromptRegistry
   /** 可注入的标题生成 chat 实现（测试用）；省略走真实 llm/provider。 */
   titleChatFn?: typeof ChatFn
 }
@@ -44,6 +50,35 @@ type PromptContext = {
   projectInfo: ProjectInfo
   skills?: string[]
   cwd?: string
+}
+
+/** Build context for dynamic prompt assembly (spec §17). */
+type PromptBuildContext = {
+  tools: ToolDef[]
+  config: AgentConfig
+  projectInfo: ProjectInfo
+  skills?: string[]
+  agents?: string[]
+  cwd?: string
+}
+
+/** A dynamically composable system-prompt section (spec §17). */
+type PromptSection = {
+  id: string
+  title?: string
+  /** Static body. Overridden by `render` when present. */
+  content: string
+  /** Lower priority sorts earlier. */
+  priority: number
+  /** Omit the section when false. */
+  condition?: (ctx: PromptBuildContext) => boolean
+  /** Dynamic body; takes precedence over `content`. */
+  render?: (ctx: PromptBuildContext) => string
+}
+
+/** Mutable registry of prompt sections, keyed by id (later registration wins). */
+type PromptRegistry = {
+  sections: Map<string, PromptSection>
 }
 
 type CommandResult =
@@ -78,7 +113,10 @@ export type {
   LLMDetail,
   PendingToolCall,
   ProjectInfo,
+  PromptBuildContext,
   PromptContext,
+  PromptRegistry,
+  PromptSection,
   SlashCommand,
   TokenBudget,
 }

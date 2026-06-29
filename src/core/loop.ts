@@ -4,15 +4,17 @@ import { isLLMError } from '../llm/schema/errors.js'
 import { detectProjectInfo } from '../project/detect.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
-import { appendLLMDetail } from '../session/session.js'
+import { appendLLMDetail, createSession } from '../session/session.js'
 import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState, LLMDetail } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool, FinishReason, StreamChunk } from '../shared/types/llm.js'
-import type { MessageContent } from '../shared/types/message.js'
-import type { ToolResult } from '../shared/types/tool.js'
+import type { MessageContent, Session } from '../shared/types/message.js'
+import type { SubAgentRequest, SubAgentResult, ToolResult } from '../shared/types/tool.js'
+import { createAgent, runAgent } from './agent.js'
 import { createSummarizer, runCompaction } from './compact.js'
 import { estimateBudget, shouldCompact } from './context.js'
 import { buildSystemPrompt } from './prompt.js'
+import { buildDynamicPrompt } from './prompt-registry.js'
 import { drainSteering } from './steering.js'
 import type { CollectedToolCall } from './tool-exec.js'
 import { executeToolCalls } from './tool-exec.js'
@@ -31,6 +33,61 @@ async function waitForResume(state: AgentState): Promise<void> {
     await sleep(100)
     if (state.status._tag !== 'paused') return
   }
+}
+
+/** Run a delegated sub-agent in an isolated session (spec §12.3).
+ *
+ *  Host-side implementation of the dependency-reversed `task` tool: creates a
+ *  child session + agent, runs the agent loop to completion, and returns the
+ *  accumulated assistant text. The child inherits the parent's provider, tools
+ *  and plugins; `request.model` overrides the model. Aborting the parent also
+ *  aborts the child. */
+async function runSubAgent(
+  deps: LoopDeps,
+  parent: AgentState,
+  request: SubAgentRequest,
+): Promise<SubAgentResult> {
+  const title = request.description?.trim() || `Sub-agent: ${request.prompt.slice(0, 60)}`
+  let childSession: Session
+  try {
+    childSession = await createSession(deps.db, title, parent.session.projectId ?? undefined)
+  } catch (e) {
+    return { _tag: 'error', error: e instanceof Error ? e.message : String(e) }
+  }
+
+  const childConfig = { ...parent.config, ...(request.model ? { model: request.model } : {}) }
+  const childState = await createAgent(childSession, childConfig, deps)
+
+  // Link abort: if the parent aborts, the child stops too.
+  if (parent.abortController.signal.aborted) {
+    childState.abortController.abort()
+  } else {
+    parent.abortController.signal.addEventListener(
+      'abort',
+      () => childState.abortController.abort(),
+      { once: true },
+    )
+  }
+
+  const text: string[] = []
+  let errMsg: string | null = null
+  try {
+    for await (const ev of runAgent(childState, request.prompt, deps)) {
+      if (ev._tag === 'text_delta') {
+        text.push(ev.text)
+      } else if (ev._tag === 'error') {
+        const e = ev.error
+        errMsg = e._tag === 'unexpected' || e._tag === 'provider' ? e.message : e._tag
+      }
+    }
+  } catch (e) {
+    errMsg = e instanceof Error ? e.message : String(e)
+  }
+
+  if (errMsg !== null) {
+    return { _tag: 'error', error: errMsg }
+  }
+  return { _tag: 'success', output: text.join(''), sessionId: childSession.id }
 }
 
 function toolResultToContent(
@@ -89,14 +146,17 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       chatMessages = hookResult.messages
     }
 
+    const promptCtx = {
+      tools: state.tools,
+      config: state.config,
+      projectInfo: detectProjectInfo(deps.cwd),
+      skills: [],
+    }
     const systemPrompt =
       state.config.systemPrompt ??
-      buildSystemPrompt({
-        tools: state.tools,
-        config: state.config,
-        projectInfo: detectProjectInfo(deps.cwd),
-        skills: [],
-      })
+      (deps.promptRegistry
+        ? buildDynamicPrompt(deps.promptRegistry, promptCtx)
+        : buildSystemPrompt(promptCtx))
 
     const tools: ChatTool[] = state.tools.map((t) => ({
       name: t.name,
@@ -381,6 +441,8 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
           cwd: deps.cwd,
           session: { id: state.session.id, cwd: deps.cwd },
           abort: state.abortController.signal,
+          ...(deps.urlRegistry ? { urlRegistry: deps.urlRegistry } : {}),
+          runSubAgent: (req) => runSubAgent(deps, state, req),
         },
         validCalls,
         deps.hookRunner,

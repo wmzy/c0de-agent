@@ -17,6 +17,7 @@ export { globTool, globToRegex } from './builtin/glob.js'
 export { grepTool } from './builtin/grep.js'
 // ── Builtin tools ───────────────────────────────────────────
 export { readTool } from './builtin/read.js'
+export { taskTool } from './builtin/task.js'
 export { writeTool } from './builtin/write.js'
 export { executeTool } from './executor.js'
 export { autoAllowChecker, createPermissionChecker } from './permission.js'
@@ -56,12 +57,13 @@ import { editTool } from './builtin/edit.js'
 import { globTool } from './builtin/glob.js'
 import { grepTool } from './builtin/grep.js'
 import { readTool } from './builtin/read.js'
+import { taskTool } from './builtin/task.js'
 import { writeTool } from './builtin/write.js'
 import { createToolRegistry, registerTool } from './registry.js'
 
 /**
  * Create a registry pre-loaded with all builtin tools:
- * read, write, edit, glob, grep, bash.
+ * read, write, edit, glob, grep, bash, task.
  */
 export function createDefaultRegistry() {
   const reg = createToolRegistry()
@@ -71,5 +73,6 @@ export function createDefaultRegistry() {
   registerTool(reg, globTool)
   registerTool(reg, grepTool)
   registerTool(reg, bashTool)
+  registerTool(reg, taskTool)
   return reg
 }

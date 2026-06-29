@@ -237,9 +237,7 @@ describe('agentLoop', () => {
     // 回归：不应持久化无对应 assistant tool_call 的 orphan tool 消息——它会被
     // context.ts 的 sanitizeToolPairs 在重建上下文时丢弃，属注定无效的冗余 DB 写。
     const orphanTool = stored.find(
-      (m) =>
-        m.role === 'tool' &&
-        m.content.some((p) => p._tag === 'tool_result' && p.id === 'tc1'),
+      (m) => m.role === 'tool' && m.content.some((p) => p._tag === 'tool_result' && p.id === 'tc1'),
     )
     expect(orphanTool).toBeUndefined()
   })
@@ -430,5 +428,84 @@ describe('agentLoop with hookRunner', () => {
     expect(toolBeforeHandler).toHaveBeenCalledOnce()
     const callArg = toolBeforeHandler.mock.calls[0]?.[0] as { tool: string }
     expect(callArg.tool).toBe('read')
+  })
+})
+
+describe('agentLoop task delegation (spec §12.3)', () => {
+  // chatStream 调用序列：父派发 task → 子 agent 输出 → 父总结。
+  function mockTaskDelegationStream(): () => AsyncGenerator<StreamChunk> {
+    let call = 0
+    return () => {
+      const n = call++
+      async function* gen() {
+        if (n === 0) {
+          // 父轮 0：派发 task 工具调用
+          yield { _tag: 'tool_call_start', id: 'tc1', name: 'task' } as const
+          yield {
+            _tag: 'tool_call_end',
+            id: 'tc1',
+            argumentsFinal: JSON.stringify({
+              prompt: 'write unit tests for the parser',
+              description: 'Test writer',
+            }),
+          } as const
+          yield { _tag: 'done' } as const
+        } else if (n === 1) {
+          // 子 agent 轮：输出文本后结束
+          yield { _tag: 'text', text: 'tests written' } as const
+          yield { _tag: 'done' } as const
+        } else {
+          // 父轮 1：总结
+          yield { _tag: 'text', text: 'Delegated.' } as const
+          yield { _tag: 'done' } as const
+        }
+      }
+      return gen()
+    }
+  }
+
+  it('runs a sub-agent via the task tool and returns its output', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    state.config = { ...state.config, tools: ['task'] }
+    const deps = makeMockDeps(db, mockTaskDelegationStream())
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+
+    // 父派发了 task 工具调用
+    const start = events.find((e) => e._tag === 'tool_call_start' && e.tool === 'task')
+    expect(start).toBeTruthy()
+
+    // task 返回子 agent 的输出与 sessionId
+    const end = events.find((e) => e._tag === 'tool_call_end')
+    expect(end).toBeTruthy()
+    if (end && end._tag === 'tool_call_end') {
+      expect(end.result._tag).toBe('success')
+      if (end.result._tag === 'success') {
+        expect(end.result.output).toContain('tests written')
+        expect(end.result.metadata?.sessionId).toBeTruthy()
+      }
+    }
+
+    // 父最终正常完成
+    expect(events.some((e) => e._tag === 'done')).toBe(true)
+  })
+
+  it('creates an isolated child session in the DB', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    state.config = { ...state.config, tools: ['task'] }
+    const deps = makeMockDeps(db, mockTaskDelegationStream())
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    // 子会话标题取自 description
+    const { listSessions } = await import('../session/index.js')
+    const all = await listSessions(db)
+    const child = all.find((s) => s.title === 'Test writer')
+    expect(child).toBeTruthy()
+    expect(child?.id).not.toBe(session.id)
   })
 })

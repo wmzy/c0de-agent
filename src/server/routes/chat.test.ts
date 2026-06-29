@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DEFAULT_CONFIG } from '../../core/config.js'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/project.js'
 import { createSession, getLLMDetails } from '../../session/session.js'
-import { DEFAULT_CONFIG } from '../../core/config.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
 import { createChatRoute, resolveAgentCwd } from './chat.js'
@@ -160,11 +160,11 @@ describe('chat route (SSE)', () => {
     // 消费完整 SSE 流，驱动 agentLoop 执行到 appendLLMDetail
     await res.text()
 
-    // loop 持久化的 llmDetail.tools 即发送给 LLM 的工具定义；修复后应为全部 6 个
+    // loop 持久化的 llmDetail.tools 即发送给 LLM 的工具定义；不带 tools 时启用全部注册工具（7 个）
     const details = await getLLMDetails(db, session.id)
     expect(details).toHaveLength(1)
     const toolNames = details[0]?.tools.map((t) => t.name).sort()
-    expect(toolNames).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'write'])
+    expect(toolNames).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'task', 'write'])
   })
 
   it('resolveAgentCwd: returns worktree when session has project', async () => {
