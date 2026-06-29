@@ -1,17 +1,13 @@
 import { chatStream as llmChatStream } from '../llm/provider.js'
 import { resolveRoute } from '../llm/registry.js'
 import { isLLMError } from '../llm/schema/errors.js'
+import { detectProjectInfo } from '../project/detect.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
 import { appendLLMDetail } from '../session/session.js'
 import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState, LLMDetail } from '../shared/types/agent.js'
-import type {
-  ChatRequest,
-  ChatTool,
-  FinishReason,
-  StreamChunk,
-} from '../shared/types/llm.js'
+import type { ChatRequest, ChatTool, FinishReason, StreamChunk } from '../shared/types/llm.js'
 import type { MessageContent } from '../shared/types/message.js'
 import type { ToolResult } from '../shared/types/tool.js'
 import { createSummarizer, runCompaction } from './compact.js'
@@ -90,11 +86,8 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       buildSystemPrompt({
         tools: state.tools,
         config: state.config,
-        projectInfo: {
-          name: 'project',
-          language: 'TypeScript',
-          rootDir: deps.cwd,
-        },
+        projectInfo: detectProjectInfo(deps.cwd),
+        skills: [],
       })
 
     const tools: ChatTool[] = state.tools.map((t) => ({

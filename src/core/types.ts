@@ -43,6 +43,7 @@ type PromptContext = {
   config: AgentConfig
   projectInfo: ProjectInfo
   skills?: string[]
+  cwd?: string
 }
 
 type CommandResult =

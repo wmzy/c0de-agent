@@ -32,6 +32,8 @@ describe('core types', () => {
     expectTypeOf<PromptContext>().toHaveProperty('tools')
     expectTypeOf<PromptContext>().toHaveProperty('config').toEqualTypeOf<AgentConfig>()
     expectTypeOf<PromptContext>().toHaveProperty('projectInfo')
+    expectTypeOf<PromptContext>().toHaveProperty('skills')
+    expectTypeOf<PromptContext>().toHaveProperty('cwd')
   })
 
   it('SlashCommand has name and execute', () => {
