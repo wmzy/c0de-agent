@@ -2,6 +2,7 @@ import type { AgentError, AgentEvent } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { agentAPI } from '../services/agent.js'
 import { sendChatMessage } from '../services/chat.js'
 import type { APIError } from '../types/index.js'
 import { generateId } from './id.js'
@@ -19,6 +20,8 @@ type ChatOpts = { provider?: string; model?: string; tools?: string[] }
 type ChatActions = {
   sendMessage: (content: string, opts?: ChatOpts) => Promise<void>
   abort: () => void
+  /** 确认/拒绝权限请求：乐观关闭弹窗并通知后端。 */
+  confirm: (toolCallId: string, approved: boolean) => void
   reset: () => void
 }
 
@@ -210,9 +213,19 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     setState((s) => ({ ...s, isStreaming: false }))
   }, [])
 
+  // 权限确认：乐观清空 pending，弹窗立即关闭。后端 store 的 pending 一次消费即删除，
+  // 若不清空前端状态，弹窗会一直显示到 done 事件，期间用户重复点击会对已消费的
+  // toolCallId 触发 404（"No pending permission"）。
+  const confirm = useCallback((toolCallId: string, approved: boolean) => {
+    setState((s) => ({ ...s, pendingPermission: null }))
+    agentAPI
+      .confirmTool(toolCallId, approved)
+      .catch((err) => console.error('[权限确认] 失败，工具调用可能已过期:', err))
+  }, [])
+
   const reset = useCallback(() => setState(INITIAL), [])
 
-  return { ...state, sendMessage, abort, reset }
+  return { ...state, sendMessage, abort, confirm, reset }
 }
 
 export type { ChatOpts, ChatState }

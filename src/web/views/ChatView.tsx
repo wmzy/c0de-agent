@@ -8,7 +8,6 @@ import { ToolToggle } from '../components/ToolToggle.js'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { useChat } from '../hooks/useChat.js'
 import { useMessages } from '../hooks/useSession.js'
-import { agentAPI } from '../services/agent.js'
 import { providerAPI } from '../services/provider.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { Chat } from './Chat.js'
@@ -81,9 +80,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   }
 
   const handleConfirm = (toolCallId: string, approved: boolean) => {
-    agentAPI
-      .confirmTool(toolCallId, approved)
-      .catch((err) => console.error('[权限确认] 失败，工具调用可能已过期:', err))
+    chat.confirm(toolCallId, approved)
   }
 
   return (

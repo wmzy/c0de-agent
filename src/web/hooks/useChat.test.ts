@@ -1,8 +1,12 @@
 import type { AgentError } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
-import { describe, expect, it } from 'vitest'
+import type { ReactNode } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, renderHook } from '@testing-library/react'
+import { createElement } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatState } from './useChat.js'
-import { reduceChatEvent } from './useChat.js'
+import { reduceChatEvent, useChat } from './useChat.js'
 
 const base: ChatState = {
   messages: [],
@@ -98,5 +102,68 @@ describe('reduceChatEvent', () => {
       input: {},
     })
     expect(s.pendingPermission).toEqual({ toolCallId: 'p1', tool: 'bash', input: {} })
+  })
+})
+
+describe('useChat confirm', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // 回归：点击「允许」后必须立即关闭弹窗。此前 handleConfirm 不清 pendingPermission，
+  // 弹窗要等到 done 事件才关；期间重复点击会对后端已消费的 pending 触发 404。
+  it('confirm 后立即乐观清空 pendingPermission 并通知后端', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tc1","tool":"bash","input":{"command":"ls"}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({ confirmed: true }) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    // permission_required 事件已设置 pending
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc1')
+
+    act(() => {
+      result.current.confirm('tc1', true)
+    })
+
+    // 乐观关闭：弹窗立即消失
+    expect(result.current.pendingPermission).toBeNull()
+    // 后端确认端点被调用（method POST + toolCallId）
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/tools/confirm',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ toolCallId: 'tc1', approved: true }),
+      }),
+    )
   })
 })

@@ -44,8 +44,13 @@ async function sendChatMessage(
   })
 
   if (!response.ok) {
+    // 后端 apiError 返回 { error: { code, message } }；兼容裸 { message } 与无 JSON（fallback statusText）。
     const body = await response.json().catch(() => ({ message: response.statusText }))
-    throw { status: response.status, message: (body as { message?: string }).message } as APIError
+    const errBody = (body as { error?: { code?: string; message?: string } }).error
+    throw {
+      status: response.status,
+      message: errBody?.message ?? (body as { message?: string }).message ?? response.statusText,
+    } as APIError
   }
 
   const reader = response.body?.getReader()
