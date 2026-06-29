@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolContext, ToolDef } from '../../shared/types/tool.js'
 import { createInteractivePermissionChecker } from './interactive.js'
+import { createPermissionStore } from './store.js'
 
 const autoTool: ToolDef = {
   name: 'read',
@@ -33,34 +34,49 @@ const ctx: ToolContext = {
   abort: new AbortController().signal,
 }
 
+/** helper：每个 checker 配独立 store */
+function makeChecker(
+  opts: {
+    alwaysAllow?: string[]
+    alwaysDeny?: string[]
+    onPermissionRequired?: (req: {
+      toolCallId: string
+      tool: string
+      input: unknown
+    }) => void | Promise<void>
+  } = {},
+) {
+  return createInteractivePermissionChecker(createPermissionStore(), opts)
+}
+
 describe('InteractivePermissionChecker', () => {
   it('auto 权限工具直接 allow', async () => {
-    const checker = createInteractivePermissionChecker()
+    const checker = makeChecker()
     const result = await checker.check(autoTool, {}, ctx)
     expect(result._tag).toBe('allow')
   })
 
   it('deny 权限工具直接 deny', async () => {
-    const checker = createInteractivePermissionChecker()
+    const checker = makeChecker()
     const result = await checker.check(denyTool, {}, ctx)
     expect(result._tag).toBe('deny')
   })
 
   it('alwaysAllow 列表中的工具直接 allow（即使 permission=ask）', async () => {
-    const checker = createInteractivePermissionChecker({ alwaysAllow: ['write'] })
+    const checker = makeChecker({ alwaysAllow: ['write'] })
     const result = await checker.check(askTool, {}, ctx)
     expect(result._tag).toBe('allow')
   })
 
   it('alwaysDeny 列表中的工具直接 deny', async () => {
-    const checker = createInteractivePermissionChecker({ alwaysDeny: ['read'] })
+    const checker = makeChecker({ alwaysDeny: ['read'] })
     const result = await checker.check(autoTool, {}, ctx)
     expect(result._tag).toBe('deny')
   })
 
   it('ask 权限工具触发 onPermissionRequired 回调并阻塞', async () => {
     let calledWith: { toolCallId: string; tool: string; input: unknown } | null = null
-    const checker = createInteractivePermissionChecker({
+    const checker = makeChecker({
       onPermissionRequired: (req) => {
         calledWith = req
       },
@@ -88,7 +104,7 @@ describe('InteractivePermissionChecker', () => {
 
   it('confirm(approved=false) 返回 deny', async () => {
     let captured: string | null = null
-    const checker = createInteractivePermissionChecker({
+    const checker = makeChecker({
       onPermissionRequired: (req) => {
         captured = req.toolCallId
       },
@@ -103,12 +119,39 @@ describe('InteractivePermissionChecker', () => {
   })
 
   it('confirm 不存在的 toolCallId 返回 false', () => {
-    const checker = createInteractivePermissionChecker()
+    const checker = makeChecker()
     expect(checker.confirm('nonexistent', true)).toBe(false)
   })
 
   it('hasPending 对不存在的 id 返回 false', () => {
-    const checker = createInteractivePermissionChecker()
+    const checker = makeChecker()
     expect(checker.hasPending('nope')).toBe(false)
+  })
+
+  it('store 独立于 checker 实例——checker 丢弃后 store 仍持有 pending', async () => {
+    // 验证架构核心：pending 在全局 store，不挂在 checker/run 上。
+    // 即使创建 checker 的 run 被注销（checker 实例丢弃），store 仍能 resolve。
+    const store = createPermissionStore()
+    let capturedId: string | null = null
+    const checker = createInteractivePermissionChecker(store, {
+      onPermissionRequired: (req) => {
+        capturedId = req.toolCallId
+      },
+    })
+
+    const checkPromise = checker.check(askTool, { path: 'orphan.txt' }, ctx)
+    await Promise.resolve()
+    expect(capturedId).not.toBeNull()
+
+    // 模拟 agent run 被注销：checker 实例不再被引用。
+    // 但 store 仍持有 pending，confirm 仍能 resolve。
+    const id = capturedId as unknown as string
+    expect(store.has(id)).toBe(true)
+    const ok = store.resolve(id, true)
+    expect(ok).toBe(true)
+
+    const result = await checkPromise
+    expect(result._tag).toBe('allow')
+    expect(store.size()).toBe(0)
   })
 })

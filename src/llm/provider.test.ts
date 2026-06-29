@@ -86,6 +86,27 @@ describe('provider chatStream', () => {
       | undefined
     expect(end?.argumentsFinal).toBe('{"x":1}')
   })
+  it('propagates finish_reason through the done chunk', async () => {
+    // finish_reason:"length" 表示响应被 max_tokens 截断。done chunk 必须带上
+    // finishReason，否则 agent loop 无法区分“正常说完”与“被截断”，一律当
+    // completed，导致被截断的半截回答静默成功。
+    const sse = [
+      'data: {"choices":[{"delta":{"content":"hel"}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"length"}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+    ]
+      .map((l) => `${l}\n\n`)
+      .join('')
+    const ctx = setup(sse)
+    const chunks = []
+    for await (const c of chatStream(ctx, request(), { provider: 'mock', model: 'm1' })) {
+      chunks.push(c)
+    }
+    const done = chunks.find((c) => c._tag === 'done') as
+      | { finishReason?: string }
+      | undefined
+    expect(done?.finishReason).toBe('length')
+  })
 })
 
 describe('provider chat (non-streaming)', () => {

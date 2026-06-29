@@ -6,19 +6,24 @@ import type { Hono } from 'hono'
 import { createApp } from './app.js'
 import { bootstrapServerContext } from './server.js'
 
-let cachedApp: Hono | undefined
-
 /**
  * 开发环境入口：初始化并返回 Hono app。
  * 供 vite dev server 中间件复用，使前后端共享同一端口。
- * 首次调用完成 DB/配置/注册表初始化，后续直接返回缓存的 app。
+ *
+ * 用 globalThis 缓存而非模块级变量：Vite ssrLoadModule 在 server 端代码变更时会
+ * 重新执行本模块，模块级 cachedApp 会重置；这会导致运行中的 AgentManager（含
+ * 权限确认 pending）丢失，前端 POST /api/tools/confirm 拿不到 pending 而 404。
+ * globalThis 跨模块重载保持单例，避免权限流程中途断裂。
  */
+const DEV_APP_KEY = '__c0de_dev_app__'
+
 async function getDevApp(): Promise<Hono> {
-  if (!cachedApp) {
+  const g = globalThis as Record<string, unknown>
+  if (!g[DEV_APP_KEY]) {
     const { ctx } = await bootstrapServerContext({ cwd: process.cwd() })
-    cachedApp = createApp(ctx)
+    g[DEV_APP_KEY] = createApp(ctx)
   }
-  return cachedApp
+  return g[DEV_APP_KEY] as Hono
 }
 
 /**

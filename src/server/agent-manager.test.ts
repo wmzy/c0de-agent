@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { abortAgent, injectSteering, pauseAgent, resumeAgent } from '../core/index.js'
 import type { AgentDependencies, AgentState } from '../core/types.js'
 import { createAgentManager } from './agent-manager.js'
-import type { InteractivePermissionChecker } from './permission/interactive.js'
 
 function mockState(sessionId: string): AgentState {
   return {
@@ -29,23 +28,13 @@ function mockState(sessionId: string): AgentState {
   }
 }
 
-function mockPermissionChecker(): InteractivePermissionChecker {
-  return {
-    check: async () => ({ _tag: 'allow' }),
-    confirm: () => false,
-    hasPending: () => false,
-    pendingCount: () => 0,
-  } as unknown as InteractivePermissionChecker
-}
-
 describe('AgentManager', () => {
   it('register 和 get 跟踪活跃 run', () => {
     const mgr = createAgentManager()
     const state = mockState('s1')
     const deps = {} as AgentDependencies
-    const pc = mockPermissionChecker()
 
-    mgr.register({ sessionId: 's1', state, deps, permissionChecker: pc })
+    mgr.register({ sessionId: 's1', state, deps })
 
     expect(mgr.get('s1')?.state).toBe(state)
     expect(mgr.size()).toBe(1)
@@ -59,7 +48,6 @@ describe('AgentManager', () => {
       sessionId: 's1',
       state,
       deps: {} as AgentDependencies,
-      permissionChecker: mockPermissionChecker(),
     })
     mgr.unregister('s1')
 
@@ -80,7 +68,6 @@ describe('AgentManager', () => {
       sessionId: 's1',
       state,
       deps: {} as AgentDependencies,
-      permissionChecker: mockPermissionChecker(),
     })
 
     const ok = mgr.abort('s1')
@@ -102,7 +89,6 @@ describe('AgentManager', () => {
       sessionId: 's1',
       state,
       deps: {} as AgentDependencies,
-      permissionChecker: mockPermissionChecker(),
     })
 
     const ok = mgr.pause('s1')
@@ -118,7 +104,6 @@ describe('AgentManager', () => {
       sessionId: 's1',
       state,
       deps: {} as AgentDependencies,
-      permissionChecker: mockPermissionChecker(),
     })
 
     mgr.pause('s1')
@@ -137,7 +122,6 @@ describe('AgentManager', () => {
       sessionId: 's1',
       state,
       deps: {} as AgentDependencies,
-      permissionChecker: mockPermissionChecker(),
     })
 
     const ok = mgr.steer('s1', 'Be more concise')
@@ -154,13 +138,11 @@ describe('AgentManager', () => {
       sessionId: 's1',
       state: state1,
       deps: {} as AgentDependencies,
-      permissionChecker: mockPermissionChecker(),
     })
     mgr.register({
       sessionId: 's1',
       state: state2,
       deps: {} as AgentDependencies,
-      permissionChecker: mockPermissionChecker(),
     })
 
     expect(mgr.size()).toBe(1)

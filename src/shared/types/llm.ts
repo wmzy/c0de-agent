@@ -3,6 +3,9 @@ import type { JSONSchema } from './base.js'
 /** Supported LLM provider protocols. */
 type ProviderProtocol = 'openai' | 'anthropic' | 'google' | 'openai-compat'
 
+/** Why a model response ended. Protocol-agnostic; mirrored by each provider. */
+type FinishReason = 'stop' | 'length' | 'tool-calls' | 'content-filter' | 'error' | 'unknown'
+
 /** Provider configuration entry. */
 type ProviderConfig = {
   name: string
@@ -92,7 +95,7 @@ type StreamChunk =
       outputTokens: number
       cacheRead?: number
     }
-  | { _tag: 'done' }
+  | { _tag: 'done'; finishReason?: FinishReason }
   | { _tag: 'error'; error: { message: string; retryable?: boolean } }
 
 export type {
@@ -100,6 +103,7 @@ export type {
   ChatRequest,
   ChatTool,
   ContentPart,
+  FinishReason,
   ModelCapabilities,
   ModelOverride,
   ModelRole,

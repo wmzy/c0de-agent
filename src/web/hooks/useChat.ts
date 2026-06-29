@@ -11,7 +11,7 @@ type ChatState = {
   isStreaming: boolean
   usage: { input: number; output: number } | null
   error: string | null
-  pendingPermission: { toolCallId: string; tool: string } | null
+  pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
 }
 
 type ChatOpts = { provider?: string; model?: string; tools?: string[] }
@@ -147,7 +147,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     case 'permission_required':
       return {
         ...state,
-        pendingPermission: { toolCallId: event.toolCallId, tool: event.tool },
+        pendingPermission: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
       }
     case 'error':
       return { ...state, error: errorToMessage(event.error) }

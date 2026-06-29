@@ -4,8 +4,8 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { getProject } from '../../project/project.js'
 import { getSession } from '../../session/session.js'
-import { listTools } from '../../tools/registry.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
+import { listTools } from '../../tools/registry.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import type { ServerContext } from '../types.js'
@@ -45,7 +45,7 @@ function createChatRoute(ctx: ServerContext): Hono {
 
     return streamSSE(c, async (stream) => {
       // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认
-      const permissionChecker = createInteractivePermissionChecker({
+      const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
         onPermissionRequired: async (req) => {
           await stream.writeSSE({
             event: 'permission_required',
@@ -85,7 +85,7 @@ function createChatRoute(ctx: ServerContext): Hono {
 
       const state = await createAgent(session, agentConfig, deps)
 
-      ctx.agentManager.register({ sessionId, state, deps, permissionChecker })
+      ctx.agentManager.register({ sessionId, state, deps })
 
       // 客户端断开时中止 agent
       stream.onAbort(() => {

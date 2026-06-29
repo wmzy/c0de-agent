@@ -21,7 +21,7 @@ function createToolRoute(ctx: ServerContext): Hono {
   // 确认工具执行权限
   app.post('/confirm', async (c) => {
     const body = await c.req.json()
-    const ok = ctx.agentManager.confirmPermission(body.toolCallId, body.approved)
+    const ok = ctx.permissionStore.resolve(body.toolCallId, body.approved)
     if (!ok) {
       return apiError(c, 404, 'NOT_FOUND', 'No pending permission for this tool call')
     }

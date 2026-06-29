@@ -97,6 +97,6 @@ describe('reduceChatEvent', () => {
       tool: 'bash',
       input: {},
     })
-    expect(s.pendingPermission).toEqual({ toolCallId: 'p1', tool: 'bash' })
+    expect(s.pendingPermission).toEqual({ toolCallId: 'p1', tool: 'bash', input: {} })
   })
 })

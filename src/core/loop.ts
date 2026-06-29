@@ -6,7 +6,12 @@ import { appendMessage, getMessages } from '../session/message.js'
 import { appendLLMDetail } from '../session/session.js'
 import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState, LLMDetail } from '../shared/types/agent.js'
-import type { ChatRequest, ChatTool, StreamChunk } from '../shared/types/llm.js'
+import type {
+  ChatRequest,
+  ChatTool,
+  FinishReason,
+  StreamChunk,
+} from '../shared/types/llm.js'
 import type { MessageContent } from '../shared/types/message.js'
 import type { ToolResult } from '../shared/types/tool.js'
 import { createSummarizer, runCompaction } from './compact.js'
@@ -130,6 +135,9 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     let collectedUsage: { inputTokens: number; outputTokens: number; cacheRead?: number } | null =
       null
     let hadError = false
+    // 非正常停止原因（length=被 max_tokens 截断, content_filter=被内容过滤）。
+    // 若在无 tool_call 的完成分支里仍非 null，说明回答被截断/过滤而非正常说完。
+    let truncated: FinishReason | null = null
     const requestStartTime = Date.now()
     let firstTokenTime: number | null = null
 
@@ -206,6 +214,9 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             }
             break
           case 'done':
+            if (chunk.finishReason === 'length' || chunk.finishReason === 'content-filter') {
+              truncated = chunk.finishReason
+            }
             break
           case 'error':
             yield {
@@ -395,6 +406,17 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     }
 
     if (validToolCalls.length === 0) {
+      // finish_reason=length/content_filter 表示响应被截断或被内容过滤，而非正常说完。
+      // 若当作 completed，被截断的半截回答会静默成功（用户看到“中断但无报错”）。
+      if (truncated !== null) {
+        const message =
+          truncated === 'length'
+            ? 'Response truncated: the model hit max_tokens before finishing (finish_reason=length)'
+            : 'Response filtered by content policy (finish_reason=content_filter)'
+        yield { _tag: 'error', error: { _tag: 'unexpected', message } }
+        state.status = { _tag: 'stopped', reason: 'error', error: { _tag: 'unexpected', message } }
+        return
+      }
       state.status = { _tag: 'stopped', reason: 'completed' }
       yield { _tag: 'done' }
       return

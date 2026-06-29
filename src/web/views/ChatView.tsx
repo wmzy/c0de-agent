@@ -73,7 +73,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   }
 
   const handleConfirm = (toolCallId: string, approved: boolean) => {
-    void agentAPI.confirmTool(toolCallId, approved)
+    agentAPI
+      .confirmTool(toolCallId, approved)
+      .catch((err) => console.error('[权限确认] 失败，工具调用可能已过期:', err))
   }
 
   return (

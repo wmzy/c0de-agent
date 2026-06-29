@@ -6,6 +6,7 @@ import type { Registry } from '../llm/registry.js'
 import type { Config as SharedConfig } from '../shared/types/config.js'
 import type { ToolRegistry } from '../tools/types.js'
 import type { AgentManager } from './agent-manager.js'
+import type { PermissionStore } from './permission/store.js'
 
 /** 持有所有服务依赖的不可变上下文（config 字段可变用于 PATCH 更新）。 */
 type ServerContext = {
@@ -14,6 +15,8 @@ type ServerContext = {
   toolRegistry: ToolRegistry
   llmRegistry: Registry
   agentManager: AgentManager
+  /** 全局权限确认 store（单例），独立于 agent run 生命周期。 */
+  permissionStore: PermissionStore
   cwd: string
   /** 测试注入：覆盖 LLM chat stream。生产环境为 undefined。 */
   chatStream?: typeof chatStreamFn

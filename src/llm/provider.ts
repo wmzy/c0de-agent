@@ -116,7 +116,7 @@ const toStreamChunk = (event: StreamEvent): StreamChunk | null => {
       }
       return null
     case 'finish':
-      return { _tag: 'done' }
+      return { _tag: 'done', finishReason: event.reason }
     case 'provider-error':
       return {
         _tag: 'error',

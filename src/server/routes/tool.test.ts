@@ -54,7 +54,7 @@ describe('tool route', () => {
     expect(readTool?.execute).toBeUndefined()
   })
 
-  it('POST /confirm without active run returns 404', async () => {
+  it('POST /confirm without pending permission returns 404', async () => {
     const { app } = await setup()
     const res = await app.request('/confirm', {
       method: 'POST',
@@ -68,47 +68,12 @@ describe('tool route', () => {
 
   it('POST /confirm confirms permission', async () => {
     const { app, ctx } = await setup()
-    const pendingMap = new Map<string, (approved: boolean) => void>()
-    const mockChecker = {
-      check: async () => ({ _tag: 'allow' as const }),
-      confirm: (id: string, approved: boolean) => {
-        const r = pendingMap.get(id)
-        if (!r) return false
-        pendingMap.delete(id)
-        r(approved)
-        return true
+    let resolved = false
+    ctx.permissionStore.register('tc-test', {
+      request: { toolCallId: 'tc-test', tool: 'bash', input: { command: 'echo test' } },
+      resolve: () => {
+        resolved = true
       },
-      hasPending: (id: string) => pendingMap.has(id),
-      pendingCount: () => pendingMap.size,
-    }
-    pendingMap.set('tc-test', (_approved) => {
-      // no-op
-    })
-    ctx.agentManager.register({
-      sessionId: 's1',
-      state: {
-        id: 'a1',
-        session: {
-          id: 's1',
-          title: 'T',
-          parentId: null,
-          projectId: null,
-          branchPoint: null,
-          metadata: {},
-          createdAt: 0,
-          updatedAt: 0,
-        },
-        messages: [],
-        tools: [],
-        config: { provider: 'p', model: 'm', tools: [], plugins: [] },
-        status: { _tag: 'running', turnCount: 0 },
-        abortController: new AbortController(),
-        steeringQueue: [],
-        llmDetails: [],
-        tokenBudget: { total: 0, reserved: 0, available: 0, used: 0, keepRecent: 0 },
-      },
-      deps: {} as never,
-      permissionChecker: mockChecker as never,
     })
 
     const res = await app.request('/confirm', {
@@ -119,5 +84,6 @@ describe('tool route', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { confirmed: boolean }
     expect(body.confirmed).toBe(true)
+    expect(resolved).toBe(true)
   })
 })

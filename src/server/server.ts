@@ -15,6 +15,7 @@ import type { ProviderConfig } from '../shared/types/llm.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
+import { createPermissionStore } from './permission/store.js'
 import type { ServerContext } from './types.js'
 
 type StartServerOptions = {
@@ -105,6 +106,7 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
     toolRegistry,
     llmRegistry,
     agentManager: createAgentManager(),
+    permissionStore: createPermissionStore(),
     cwd,
   }
 

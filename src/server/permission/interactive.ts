@@ -1,20 +1,10 @@
-// src/server/permission/interactive.ts
 import { randomUUID } from 'node:crypto'
 import type { ToolContext, ToolDef } from '../../shared/types/tool.js'
 import type { PermissionChecker, PermissionResult } from '../../tools/types.js'
+import type { PermissionRequest, PermissionStore } from './store.js'
 
-/** 权限请求（需要用户确认）。 */
-type PermissionRequest = {
-  toolCallId: string
-  tool: string
-  input: unknown
-}
-
-/** 待处理的权限确认。 */
-type PendingPermission = {
-  request: PermissionRequest
-  resolve: (result: PermissionResult) => void
-}
+// PermissionRequest 从 store.ts re-export，保持现有 import 路径兼容。
+export type { PermissionRequest }
 
 type InteractivePermissionCheckerOptions = {
   /** 始终允许的工具名（覆盖 permission 字段）。 */
@@ -25,7 +15,8 @@ type InteractivePermissionCheckerOptions = {
   onPermissionRequired?: (request: PermissionRequest) => void | Promise<void>
 }
 
-/** 阻塞式权限检查器：ask 权限会阻塞等待用户确认。 */
+/** 阻塞式权限检查器：ask 权限会阻塞等待用户确认。
+ *  pending 存在全局 PermissionStore 中，独立于 agent run 生命周期。 */
 type InteractivePermissionChecker = PermissionChecker & {
   confirm(toolCallId: string, approved: boolean): boolean
   hasPending(toolCallId: string): boolean
@@ -33,11 +24,11 @@ type InteractivePermissionChecker = PermissionChecker & {
 }
 
 function createInteractivePermissionChecker(
+  store: PermissionStore,
   opts: InteractivePermissionCheckerOptions = {},
 ): InteractivePermissionChecker {
   const allowSet = new Set(opts.alwaysAllow ?? [])
   const denySet = new Set(opts.alwaysDeny ?? [])
-  const pending = new Map<string, PendingPermission>()
 
   return {
     check: async (tool: ToolDef, input: unknown, _ctx: ToolContext): Promise<PermissionResult> => {
@@ -55,26 +46,24 @@ function createInteractivePermissionChecker(
       const toolCallId = randomUUID()
       const request: PermissionRequest = { toolCallId, tool: tool.name, input }
       const promise = new Promise<PermissionResult>((resolve) => {
-        pending.set(toolCallId, { request, resolve })
+        // pending 注册到全局 store，confirm 端点按 toolCallId 直接寻址，
+        // 不依赖当前 agent run 是否仍在 agentManager 中注册。
+        store.register(toolCallId, { request, resolve })
       })
       await opts.onPermissionRequired?.(request)
       return promise
     },
     confirm(toolCallId, approved) {
-      const p = pending.get(toolCallId)
-      if (!p) return false
-      pending.delete(toolCallId)
-      p.resolve(approved ? { _tag: 'allow' } : { _tag: 'deny', reason: 'User denied permission' })
-      return true
+      return store.resolve(toolCallId, approved)
     },
     hasPending(toolCallId) {
-      return pending.has(toolCallId)
+      return store.has(toolCallId)
     },
     pendingCount() {
-      return pending.size
+      return store.size()
     },
   }
 }
 
-export type { InteractivePermissionChecker, InteractivePermissionCheckerOptions, PermissionRequest }
+export type { InteractivePermissionChecker, InteractivePermissionCheckerOptions }
 export { createInteractivePermissionChecker }

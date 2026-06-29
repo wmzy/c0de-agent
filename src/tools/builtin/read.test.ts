@@ -69,6 +69,28 @@ describe('readTool', () => {
     }
   })
 
+  it('lists a directory with trailing slash on subdirectories', async () => {
+    await writeFile(join(workDir, 'a.txt'), 'x')
+    await mkdir(join(workDir, 'sub'))
+    const result = await readTool.execute({ path: '.' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toContain('a.txt')
+      expect(result.output).toContain('sub/')
+      expect(result.output).not.toMatch(/(^|\n)a\.txt\/$/) // files must not get a slash
+    }
+  })
+
+  it('lists an empty directory without erroring', async () => {
+    await mkdir(join(workDir, 'empty'))
+    const result = await readTool.execute({ path: 'empty' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      // 空目录必须返回成功且不含 EISDIR,而非抛目录读取错误
+      expect(result.output).not.toContain('EISDIR')
+    }
+  })
+
   it('has correct tool definition', () => {
     expect(readTool.name).toBe('read')
     expect(readTool.permission).toBe('auto')

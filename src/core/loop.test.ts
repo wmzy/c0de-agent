@@ -67,6 +67,16 @@ function mockBadJsonToolThenTextStream(): AsyncGenerator<StreamChunk> {
   return gen()
 }
 
+// 模型响应被 max_tokens 截断：finish_reason=length，本轮无 tool_call。
+// agent loop 不应当成正常 completed，否则被截断的半截回答会静默成功。
+function mockLengthTruncatedStream(): AsyncGenerator<StreamChunk> {
+  async function* gen() {
+    yield { _tag: 'text', text: '这是一段被截断的回答' } as const
+    yield { _tag: 'done', finishReason: 'length' } as const
+  }
+  return gen()
+}
+
 function makeMockDeps(db: LoopDeps['db'], streamFn: () => AsyncGenerator<StreamChunk>): LoopDeps {
   return {
     db,
@@ -220,6 +230,26 @@ describe('agentLoop', () => {
       events.push(ev)
     }
     expect(events.some((e) => e._tag === 'error' && e.error._tag === 'max_turns')).toBe(true)
+  })
+
+  it('被 max_tokens 截断时报错而非静默当作完成', async () => {
+    // finish_reason=length 且无 tool_call：以前 loop 会判定 completed 并静默退出，
+    // 导致半截回答看起来“成功”。现在应报 error，让截断可见。
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockLengthTruncatedStream())
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+    // 不应静默完成
+    expect(events.some((e) => e._tag === 'done')).toBe(false)
+    // 应报错
+    expect(events.some((e) => e._tag === 'error')).toBe(true)
+    expect(state.status._tag).toBe('stopped')
+    if (state.status._tag === 'stopped') {
+      expect(state.status.reason).toBe('error')
+    }
   })
 
   it('drains steering messages before LLM call', async () => {

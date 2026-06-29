@@ -6,6 +6,7 @@ import type { Config } from '../shared/types/config.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import type { ToolRegistry } from '../tools/types.js'
 import { createAgentManager } from './agent-manager.js'
+import { createPermissionStore } from './permission/store.js'
 import type { ServerContext } from './types.js'
 
 type CreateServerContextOptions = {
@@ -24,6 +25,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     toolRegistry: opts.toolRegistry ?? createDefaultRegistry(),
     llmRegistry: opts.llmRegistry,
     agentManager: createAgentManager(),
+    permissionStore: createPermissionStore(),
     cwd: opts.cwd ?? process.cwd(),
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
   }

@@ -13,7 +13,7 @@ type ChatProps = {
   isStreaming: boolean
   usage: { input: number; output: number } | null
   error?: string | null
-  pendingPermission: { toolCallId: string; tool: string } | null
+  pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
   onSend: (text: string) => void
   onAbort: () => void
   onConfirm: (toolCallId: string, approved: boolean) => void
@@ -103,7 +103,7 @@ export function Chat({
       {pendingPermission && (
         <PermissionDialog
           tool={pendingPermission.tool}
-          input={null}
+          input={pendingPermission.input}
           onConfirm={() => onConfirm(pendingPermission.toolCallId, true)}
           onCancel={() => onConfirm(pendingPermission.toolCallId, false)}
         />
