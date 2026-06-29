@@ -42,6 +42,31 @@ function mockToolThenTextStream(): AsyncGenerator<StreamChunk> {
   return gen()
 }
 
+// 模型流被截断：工具 arguments 是不完整 JSON → 协议层标记 _parseError 后
+// 正常发出 tool_call_end（而非抛错），agent loop 应把错误反馈给模型并继续。
+function mockBadJsonToolThenTextStream(): AsyncGenerator<StreamChunk> {
+  const turn = mockTurn
+  mockTurn++
+  async function* gen() {
+    if (turn === 0) {
+      yield { _tag: 'tool_call_start', id: 'tc1', name: 'grep' } as const
+      yield {
+        _tag: 'tool_call_end',
+        id: 'tc1',
+        argumentsFinal: JSON.stringify({
+          _parseError: 'Unexpected end of JSON input',
+          _raw: '{"pattern": "',
+        }),
+      } as const
+      yield { _tag: 'done' } as const
+    } else {
+      yield { _tag: 'text', text: 'Recovered.' } as const
+      yield { _tag: 'done' } as const
+    }
+  }
+  return gen()
+}
+
 function makeMockDeps(db: LoopDeps['db'], streamFn: () => AsyncGenerator<StreamChunk>): LoopDeps {
   return {
     db,
@@ -141,6 +166,35 @@ describe('agentLoop', () => {
     expect(events.some((e) => e._tag === 'tool_call_start')).toBe(true)
     expect(events.some((e) => e._tag === 'tool_call_end')).toBe(true)
     expect(events.some((e) => e._tag === 'text_delta')).toBe(true)
+    expect(events.some((e) => e._tag === 'done')).toBe(true)
+
+    // 回归：持久化的 tool_result 的 id 必须等于对应 tool_call 的 id，
+    // 否则发给 provider 的 tool_call_id 与 assistant.tool_calls[].id 不匹配，
+    // 触发 "invalid tool_call_id" 错误。
+    const stored = await getMessages(db, session.id)
+    const toolMsg = stored.find((m) => m.role === 'tool')
+    expect(toolMsg).toBeDefined()
+    const resultPart = toolMsg?.content.find((p) => p._tag === 'tool_result')
+    expect(resultPart).toBeDefined()
+    expect((resultPart as { id: string }).id).toBe('tc1')
+  })
+
+  it('工具参数解析失败时反馈错误给模型而非中断会话', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockBadJsonToolThenTextStream())
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+    // 不应中断会话（无 error 事件）
+    expect(events.some((e) => e._tag === 'error')).toBe(false)
+    // 应有 tool_call_end，result 为 error（把解析失败反馈给模型）
+    const toolEnd = events.find((e) => e._tag === 'tool_call_end' && e.id === 'tc1')
+    expect(toolEnd).toBeDefined()
+    expect((toolEnd as { result: { _tag: string } }).result._tag).toBe('error')
+    // 会话应恢复并完成
+    expect(events.some((e) => e._tag === 'text_delta' && e.text === 'Recovered.')).toBe(true)
     expect(events.some((e) => e._tag === 'done')).toBe(true)
   })
 

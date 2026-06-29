@@ -32,8 +32,12 @@ async function waitForResume(state: AgentState): Promise<void> {
   }
 }
 
-function toolResultToContent(toolName: string, result: ToolResult): MessageContent[] {
-  return [{ _tag: 'tool_result', id: generateId(), tool: toolName, output: result }]
+function toolResultToContent(
+  toolCallId: string,
+  toolName: string,
+  result: ToolResult,
+): MessageContent[] {
+  return [{ _tag: 'tool_result', id: toolCallId, tool: toolName, output: result }]
 }
 
 export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenerator<AgentEvent> {
@@ -302,11 +306,19 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       return
     }
 
+    // 过滤掉无效 tool call（id 或工具名为空）。部分输出不规范的 provider
+    // 会把单个 tool call 的 arguments 流式片段拆成多个独立 delta，每片
+    // id/name 为空——这些碎片无法执行，且其空 id 在下一轮发回 provider 时
+    // 触发 "invalid tool_call_id"。这里在持久化/执行前将其丢弃。
+    const validToolCalls = Array.from(collectedToolCalls.values()).filter(
+      (c) => c.id.length > 0 && c.tool.length > 0,
+    )
+
     const assistantContent: MessageContent[] = []
     if (collectedText.length > 0) {
       assistantContent.push({ _tag: 'text', text: collectedText.join('') })
     }
-    for (const tc of collectedToolCalls.values()) {
+    for (const tc of validToolCalls) {
       assistantContent.push({
         _tag: 'tool_call',
         id: tc.id,
@@ -324,38 +336,65 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       }
     }
 
-    if (collectedToolCalls.size > 0) {
-      const calls = Array.from(collectedToolCalls.values())
+    if (validToolCalls.length > 0) {
+      const calls = validToolCalls
       if (calls.length > 1) {
         yield {
           _tag: 'tool_calls_parallel',
           calls: calls.map((c) => ({ id: c.id, tool: c.tool, input: c.input })),
         }
       }
-      const results = await executeToolCalls(
-        deps.toolRegistry,
-        deps.permission,
-        {
-          cwd: deps.cwd,
-          session: { id: state.session.id, cwd: deps.cwd },
-          abort: state.abortController.signal,
-        },
-        calls,
-        deps.hookRunner,
-      )
+      // 参数解析失败的调用（模型输出了不完整/非法 JSON，常见于流被截断）：
+      // 不执行工具，把错误作为 tool result 反馈给模型，让其重试。
+      // 参考 oh-my-pi 的 __parseError 处理（agent-loop.ts:1741-1764）。
+      const validCalls: CollectedToolCall[] = []
+      const parseErrorResults: { id: string; result: ToolResult }[] = []
+      for (const tc of calls) {
+        if (
+          tc.input !== null &&
+          typeof tc.input === 'object' &&
+          '_parseError' in (tc.input as Record<string, unknown>)
+        ) {
+          const errInput = tc.input as { _parseError: unknown; _raw: unknown }
+          parseErrorResults.push({
+            id: tc.id,
+            result: {
+              _tag: 'error',
+              error: `Tool "${tc.tool}" arguments are not valid JSON: ${String(errInput._parseError)}. Raw arguments: ${String(errInput._raw)}`,
+            },
+          })
+        } else {
+          validCalls.push(tc)
+        }
+      }
+      const results =
+        validCalls.length > 0
+          ? await executeToolCalls(
+              deps.toolRegistry,
+              deps.permission,
+              {
+                cwd: deps.cwd,
+                session: { id: state.session.id, cwd: deps.cwd },
+                abort: state.abortController.signal,
+              },
+              validCalls,
+              deps.hookRunner,
+            )
+          : []
+      results.push(...parseErrorResults)
       for (const { id, result } of results) {
         yield { _tag: 'tool_call_end', id, result }
         const tc = calls.find((c) => c.id === id)
         if (tc) {
           await appendMessage(deps.db, state.session.id, {
             role: 'tool',
-            content: toolResultToContent(tc.tool, result),
+            content: toolResultToContent(id, tc.tool, result),
           })
         }
       }
     }
 
-    if (collectedToolCalls.size === 0) {
+    if (validToolCalls.length === 0) {
       state.status = { _tag: 'stopped', reason: 'completed' }
       yield { _tag: 'done' }
       return

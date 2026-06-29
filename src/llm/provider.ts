@@ -39,16 +39,16 @@ const safeParseArgs = (raw: string): unknown => {
 
 /** Map a shared ChatMessage to the internal Message shape. */
 const toInternalMessage = (msg: ChatMessage): Message => {
-  if (typeof msg.content === 'string') {
-    return { role: msg.role, content: [{ type: 'text', text: msg.content }] }
-  }
-  const parts: ContentPart[] = (msg.content as ChatContentPart[]).map((p) => {
-    if (p.type === 'text') return { type: 'text' as const, text: p.text }
-    return { type: 'text' as const, text: `[image: ${p.mediaType}]` }
-  })
-  // tool role messages carry tool result text
+  // tool role messages carry tool result text — MUST handle before the
+  // string-content early return below, because context.ts serialises tool
+  // result output to a JSON string (msg.content is a string for tool msgs).
+  // If this runs after the early return, toolCallId is lost and the provider
+  // receives a tool message without tool_call_id → "invalid tool_call_id".
   if (msg.role === 'tool' && msg.toolCallId !== undefined) {
-    const text = parts.map((p) => (p.type === 'text' ? p.text : '')).join('')
+    const text =
+      typeof msg.content === 'string'
+        ? msg.content
+        : (msg.content as ChatContentPart[]).map((p) => (p.type === 'text' ? p.text : '')).join('')
     return {
       role: 'tool',
       content: [
@@ -61,6 +61,13 @@ const toInternalMessage = (msg: ChatMessage): Message => {
       ],
     }
   }
+  if (typeof msg.content === 'string') {
+    return { role: msg.role, content: [{ type: 'text', text: msg.content }] }
+  }
+  const parts: ContentPart[] = (msg.content as ChatContentPart[]).map((p) => {
+    if (p.type === 'text') return { type: 'text' as const, text: p.text }
+    return { type: 'text' as const, text: `[image: ${p.mediaType}]` }
+  })
   // assistant messages may carry tool_calls
   if (msg.role === 'assistant' && msg.toolCalls !== undefined) {
     const toolParts: ContentPart[] = msg.toolCalls.map((tc) => ({

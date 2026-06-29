@@ -243,17 +243,12 @@ const step = (
     }
     if (delta.tool_calls !== undefined) {
       for (const tc of delta.tool_calls) {
-        const missing = `OpenAI stream missing tool id/name at index ${tc.index}`
-        const outcome = appendOrStart(
-          tools,
-          {
-            index: tc.index,
-            id: tc.id,
-            name: tc.function?.name,
-            argumentsDelta: tc.function?.arguments,
-          },
-          missing,
-        )
+        const outcome = appendOrStart(tools, {
+          index: tc.index,
+          id: tc.id,
+          name: tc.function?.name,
+          argumentsDelta: tc.function?.arguments,
+        })
         tools = outcome.state
         events.push(...outcome.events)
       }

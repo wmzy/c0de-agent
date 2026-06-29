@@ -121,6 +121,61 @@ describe('entriesToChatMessages', () => {
     )
     expect(systemMsg).toBeDefined()
   })
+
+  it('丢弃空 id 的 tool_call 和无法配对的孤儿 tool result', async () => {
+    // 模拟部分 provider 的违规输出：assistant 含空 id 的 tool_call 碎片，
+    // tool result 含空 toolCallId 或找不到对应 tool_call。
+    await appendMessage(handle, sessionId, { role: 'user', content: textContent('hi') })
+    // assistant：一个有效 tool_call + 一个空 id 碎片
+    await appendMessage(handle, sessionId, {
+      role: 'assistant',
+      content: [
+        ...textContent('let me check'),
+        { _tag: 'tool_call', id: 'call_valid', tool: 'read', input: { path: 'a.ts' } },
+        { _tag: 'tool_call', id: '', tool: '', input: { _parseError: 'x', _raw: '{bad' } },
+      ],
+    })
+    // 有效 tool result（配对 call_valid）
+    await appendMessage(handle, sessionId, {
+      role: 'tool',
+      content: [
+        {
+          _tag: 'tool_result',
+          id: 'call_valid',
+          tool: 'read',
+          output: { _tag: 'success', output: 'data' },
+        },
+      ],
+    })
+    // 孤儿 tool result（空 toolCallId）
+    await appendMessage(handle, sessionId, {
+      role: 'tool',
+      content: [{ _tag: 'tool_result', id: '', tool: '', output: { _tag: 'error', error: 'bad' } }],
+    })
+    // 孤儿 tool result（toolCallId 不匹配任何 tool_call）
+    await appendMessage(handle, sessionId, {
+      role: 'tool',
+      content: [
+        {
+          _tag: 'tool_result',
+          id: 'call_ghost',
+          tool: 'read',
+          output: { _tag: 'success', output: 'x' },
+        },
+      ],
+    })
+
+    const { entries } = await getSessionContext(handle, sessionId)
+    const messages = entriesToChatMessages(entries, [])
+
+    const assistant = messages.find((m) => m.role === 'assistant' && m.toolCalls)
+    expect(assistant?.toolCalls).toHaveLength(1)
+    expect(assistant?.toolCalls?.[0]?.id).toBe('call_valid')
+
+    const toolMsgs = messages.filter((m) => m.role === 'tool')
+    expect(toolMsgs).toHaveLength(1)
+    expect(toolMsgs[0]?.toolCallId).toBe('call_valid')
+  })
 })
 
 describe('injectSnapshots', () => {

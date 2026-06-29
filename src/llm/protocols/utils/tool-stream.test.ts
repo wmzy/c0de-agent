@@ -4,11 +4,12 @@ import { appendOrStart, empty, finishAll, parseToolInput } from './tool-stream.j
 
 describe('tool-stream appendOrStart', () => {
   it('starts a tool on first delta and emits start + delta', () => {
-    const { state, events } = appendOrStart(
-      empty(),
-      { index: 0, id: 't1', name: 'echo', argumentsDelta: '{"x":' },
-      'missing',
-    )
+    const { state, events } = appendOrStart(empty(), {
+      index: 0,
+      id: 't1',
+      name: 'echo',
+      argumentsDelta: '{"x":',
+    })
     expect(events).toEqual([
       { type: 'tool-input-start', id: 't1', name: 'echo' },
       { type: 'tool-input-delta', id: 't1', name: 'echo', text: '{"x":' },
@@ -17,27 +18,33 @@ describe('tool-stream appendOrStart', () => {
   })
 
   it('appends to an existing tool without re-starting', () => {
-    const started = appendOrStart(empty(), { index: 0, id: 't1', name: 'echo' }, 'm')
-    const { state, events } = appendOrStart(
-      started.state,
-      { index: 0, argumentsDelta: '1}' },
-      'missing',
-    )
+    const started = appendOrStart(empty(), { index: 0, id: 't1', name: 'echo' })
+    const { state, events } = appendOrStart(started.state, { index: 0, argumentsDelta: '1}' })
     expect(events).toHaveLength(1)
     expect(events[0]?.type).toBe('tool-input-delta')
     expect(state[0]?.input).toBe('1}')
   })
 
-  it('throws when starting without id or name', () => {
-    expect(() => appendOrStart(empty(), { index: 0 }, 'need id')).toThrow()
+  it('drops delta when id or name is missing or empty', () => {
+    // 缺失 id/name：丢弃该 delta（不抛错、不创建 tool），state 不变。
+    // 部分兼容 provider 把 arguments 片段拆成多个 delta，每片 id/name 为空。
+    const missing = appendOrStart(empty(), { index: 0 })
+    expect(missing.events).toHaveLength(0)
+    expect(missing.state).toEqual({})
+
+    // 空字符串 id/name：同样丢弃（不与 undefined 区分）
+    const emptyId = appendOrStart(empty(), { index: 0, id: '', name: '' })
+    expect(emptyId.events).toHaveLength(0)
+    expect(emptyId.state).toEqual({})
   })
 
   it('does not emit delta for empty argument fragments', () => {
-    const { state, events } = appendOrStart(
-      empty(),
-      { index: 0, id: 't1', name: 'echo', argumentsDelta: '' },
-      'm',
-    )
+    const { state, events } = appendOrStart(empty(), {
+      index: 0,
+      id: 't1',
+      name: 'echo',
+      argumentsDelta: '',
+    })
     expect(events).toEqual([{ type: 'tool-input-start', id: 't1', name: 'echo' }])
     expect(state[0]?.input).toBe('')
   })
@@ -45,9 +52,9 @@ describe('tool-stream appendOrStart', () => {
 
 describe('tool-stream finishAll', () => {
   it('parses and emits tool-call events', () => {
-    const { state } = appendOrStart(empty(), { index: 0, id: 't1', name: 'echo' }, 'm')
+    const { state } = appendOrStart(empty(), { index: 0, id: 't1', name: 'echo' })
     const { events, tools } = finishAll(
-      appendOrStart(state, { index: 0, argumentsDelta: '{"a":1}' }, 'm').state,
+      appendOrStart(state, { index: 0, argumentsDelta: '{"a":1}' }).state,
     )
     expect(tools).toEqual([{ id: 't1', name: 'echo', input: { a: 1 } }])
     expect(events.some((e) => e.type === 'tool-call')).toBe(true)
@@ -69,5 +76,23 @@ describe('tool-stream finishAll', () => {
     } catch (e) {
       expect(isLLMError(e)).toBe(true)
     }
+  })
+
+  it('marks unparseable input with _parseError instead of throwing (truncated stream)', () => {
+    // 模型流被截断，arguments 只收到半截 JSON —— finishAll 不应抛错中断流。
+    const started = appendOrStart(empty(), {
+      index: 0,
+      id: 't1',
+      name: 'grep',
+      argumentsDelta: '{"pattern": "',
+    })
+    const { events, tools } = finishAll(started.state)
+    expect(tools[0]?.input).toEqual({
+      _parseError: expect.any(String),
+      _raw: '{"pattern": "',
+    })
+    // 仍正常发出 tool-call / tool-input-end，让流完整结束
+    expect(events.some((e) => e.type === 'tool-call')).toBe(true)
+    expect(events.some((e) => e.type === 'tool-input-end')).toBe(true)
   })
 })

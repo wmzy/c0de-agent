@@ -37,22 +37,19 @@ const empty = (): ToolStreamState => ({})
  * (using the delta's id/name if present, else synthesized). Then emit a
  * `tool-input-delta` when an argument fragment is present.
  */
-const appendOrStart = (
-  state: ToolStreamState,
-  delta: DeltaInput,
-  missingToolMessage: string,
-): AppendOutcome => {
+const appendOrStart = (state: ToolStreamState, delta: DeltaInput): AppendOutcome => {
   const current = state[delta.index]
   const events: StreamEvent[] = []
   let next: PendingTool
   if (current === undefined) {
     const id = delta.id
     const name = delta.name
-    if (id === undefined || name === undefined) {
-      throw llmError('ProviderShared', 'stream', {
-        _tag: 'InvalidProviderOutput',
-        message: missingToolMessage,
-      })
+    // 无效 id/name（缺失或空字符串）：丢弃该 delta 而非抛错。部分兼容
+    // provider 把 tool call 的 arguments 流式片段拆成多个独立 delta，每片
+    // id/name 为空。接受空值会产生空 id 的 tool call，导致下一轮
+    // invalid tool_call_id；抛错则让整个流崩溃。跳过最稳妥。
+    if (!id || !name) {
+      return { state, events }
     }
     next = { id, name, input: '', started: false }
     const start: ToolInputStart = { type: 'tool-input-start', id, name }
@@ -108,7 +105,18 @@ const finishAll = (state: ToolStreamState): FinishAllOutcome => {
     if (tool === undefined) continue
     const end: ToolInputEnd = { type: 'tool-input-end', id: tool.id, name: tool.name }
     events.push(end)
-    const input = parseToolInput(tool.input)
+    // 解析失败不抛错：模型可能输出不完整 JSON（流被截断/提前结束）。
+    // 标记 _parseError + _raw 让流完整结束，由 agent loop 把错误反馈给模型重试，
+    // 而非让整个会话崩溃。对齐 oh-my-pi 的 __parseError 容错（agent-loop.ts:1741）。
+    let input: unknown
+    try {
+      input = parseToolInput(tool.input)
+    } catch (e) {
+      input = {
+        _parseError: e instanceof Error ? e.message : String(e),
+        _raw: tool.input,
+      }
+    }
     tools.push({ id: tool.id, name: tool.name, input })
     const call: ToolCallEvent = { type: 'tool-call', id: tool.id, name: tool.name, input }
     events.push(call)

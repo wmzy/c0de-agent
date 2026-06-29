@@ -5,6 +5,52 @@ import { getEntries } from './message.js'
 import { getFileSnapshots } from './snapshot.js'
 import type { FileSnapshot, SessionEntry } from './types.js'
 
+/**
+ * Drop tool messages whose id cannot be paired with an assistant tool_call.
+ *
+ * OpenAI Chat 协议要求每个 role=tool 消息必须有 tool_call_id，且必须匹配
+ * 前面某条 assistant 消息的 tool_calls[].id。部分输出不规范的 provider
+ * 会产生空 id 的 tool_call/tool_result 碎片；这些碎片发回 provider 会触发
+ * "invalid tool_call_id"。这里在重建上下文时丢弃：
+ *   - assistant.toolCalls 里 id 为空的项（连带丢弃其后无法配对的 tool result）
+ *   - role=tool 但 toolCallId 为空、或找不到对应 assistant tool_call 的消息
+ * 正常（完整配对）的数据不受影响。
+ */
+function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
+  // 收集所有有效的 assistant tool_call id（非空）
+  const validCallIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.toolCalls) {
+      for (const tc of m.toolCalls) {
+        if (tc.id) validCallIds.add(tc.id)
+      }
+    }
+  }
+
+  const result: ChatMessage[] = []
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.toolCalls) {
+      // 丢弃 id 为空的 tool_call 项；若删空了则整个 toolCalls 移除
+      const filtered = m.toolCalls.filter((tc) => tc.id)
+      if (filtered.length === 0) {
+        const next: ChatMessage = { role: 'assistant', content: m.content }
+        result.push(next)
+      } else {
+        result.push({ ...m, toolCalls: filtered })
+      }
+      continue
+    }
+    if (m.role === 'tool') {
+      // toolCallId 为空、或找不到对应 assistant tool_call：丢弃整条 tool 消息
+      if (!m.toolCallId || !validCallIds.has(m.toolCallId)) {
+        continue
+      }
+    }
+    result.push(m)
+  }
+  return result
+}
+
 /** Convert a stored Message to a protocol-level ChatMessage for the LLM. */
 function messageToChatMessage(msg: Message): ChatMessage {
   const textParts = msg.content
@@ -63,7 +109,7 @@ function entriesToChatMessages(entries: SessionEntry[], snapshots: FileSnapshot[
     }
   }
 
-  return injectSnapshots(messages, snapshots)
+  return injectSnapshots(sanitizeToolPairs(messages), snapshots)
 }
 
 /** Inject file snapshot block after the first message (preserves cache prefix). */

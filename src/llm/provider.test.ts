@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRequest } from '../shared/types/llm.js'
-import { chat, chatStream } from './provider.js'
+import type { ChatMessage, ChatRequest } from '../shared/types/llm.js'
+import { bodyFrom } from './protocols/openai-compat.js'
+import { buildInternalRequest, chat, chatStream } from './provider.js'
 import { createRegistry, registerProvider } from './registry.js'
 
 const sseFetch = (body: string): typeof fetch =>
@@ -99,5 +100,30 @@ describe('provider chat (non-streaming)', () => {
     const ctx = setup(sse)
     const text = await chat(ctx, request(), { provider: 'mock', model: 'm1' })
     expect(text).toBe('foobar')
+  })
+})
+
+describe('toInternalMessage tool-call-id preservation', () => {
+  // 回归：context.ts 对 tool 消息返回 string content + toolCallId 字段。
+  // toInternalMessage 必须在 string-content early return 之前处理 tool 消息，
+  // 否则 toolCallId 丢失 → 发给 provider 的 tool 消息没有 tool_call_id →
+  // "invalid tool_call_id"。
+  it('preserves toolCallId for tool messages with string content', () => {
+    const req: ChatRequest = {
+      model: 'm1',
+      messages: [
+        {
+          role: 'tool',
+          content: '{"_tag":"success","output":"data"}',
+          toolCallId: 'call_abc123',
+        } as ChatMessage,
+      ],
+      stream: true,
+    }
+    const internal = buildInternalRequest(req, 'mock', 'm1')
+    const body = bodyFrom(internal)
+    const toolMsg = body.messages[0]
+    expect(toolMsg?.role).toBe('tool')
+    expect(toolMsg?.tool_call_id).toBe('call_abc123')
   })
 })
