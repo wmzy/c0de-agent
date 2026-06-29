@@ -54,4 +54,18 @@ describe('FallbackToolView', () => {
     expect(screen.getByTestId('fallback-args').textContent).toContain('a.b.c')
     expect(screen.getByTestId('fallback-args').textContent).toContain('1')
   })
+
+  it('跳过 _parseError/_raw 容错标记（防御旧数据/边角）', () => {
+    // 这些标记是后端专用的解析失败容错，绝不应作为参数渲染。
+    render(<FallbackToolView input={{ _parseError: 'x', _raw: '{', real: 1 }} tool="custom" />)
+    const args = screen.getByTestId('fallback-args')
+    expect(args.textContent).toContain('real')
+    expect(args.textContent).not.toContain('_parseError')
+    expect(args.textContent).not.toContain('_raw')
+  })
+
+  it('空入参不渲染参数区', () => {
+    render(<FallbackToolView input={{}} tool="custom" />)
+    expect(screen.queryByTestId('fallback-args')).toBeNull()
+  })
 })

@@ -1,4 +1,4 @@
-import { llmError } from '../../schema/errors.js'
+import { isLLMError, llmError, reasonMessage } from '../../schema/errors.js'
 import type {
   StreamEvent,
   ToolCallEvent,
@@ -112,8 +112,14 @@ const finishAll = (state: ToolStreamState): FinishAllOutcome => {
     try {
       input = parseToolInput(tool.input)
     } catch (e) {
+      // parseToolInput 抛的是 llmError（普通对象，非 Error 实例），直接 String(e)
+      // 会退化成 "[object Object]"。按错误类型提取可读消息。
       input = {
-        _parseError: e instanceof Error ? e.message : String(e),
+        _parseError: isLLMError(e)
+          ? reasonMessage(e.reason)
+          : e instanceof Error
+            ? e.message
+            : String(e),
         _raw: tool.input,
       }
     }

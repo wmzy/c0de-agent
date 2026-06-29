@@ -41,6 +41,14 @@ function toolResultToContent(
   return [{ _tag: 'tool_result', id: toolCallId, tool: toolName, output: result }]
 }
 
+/** 入参是否为协议层/loop 标记的解析失败（携带 _parseError / _raw 容错标记）。
+ * 这类入参是后端专用、只反馈给模型重试的，绝不能进入持久化消息或渲染层。 */
+function isParseErrorInput(input: unknown): boolean {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return false
+  const obj = input as Record<string, unknown>
+  return '_parseError' in obj || '_raw' in obj
+}
+
 export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenerator<AgentEvent> {
   const maxTurns = state.config.maxTurns ?? 50
   const streamFn = deps.chatStream ?? llmChatStream
@@ -158,18 +166,16 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             yield { _tag: 'text_delta', text: chunk.text }
             break
           case 'tool_call_start':
+            // 仅登记，不立即发射 AgentEvent。此时入参尚未到达（流式 delta 累积中），
+            // 过早发射空入参的 tool_call_start 会让前端渲染 "Glob · " 等半成品卡，
+            // 且该 part 的入参之后也不会被纠正。tool_call_start 改在入参解析完成后、
+            // 携带真实入参时统一发射（见本轮流结束后的处理）。
             collectedToolCalls.set(chunk.id, {
               id: chunk.id,
               tool: chunk.name,
               input: {},
             })
             toolCallArgs.set(chunk.id, '')
-            yield {
-              _tag: 'tool_call_start',
-              id: chunk.id,
-              tool: chunk.name,
-              input: {},
-            }
             break
           case 'tool_call_delta': {
             const existing = toolCallArgs.get(chunk.id) ?? ''
@@ -182,8 +188,12 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             let parsed: unknown = {}
             try {
               parsed = JSON.parse(finalArgs)
-            } catch {
-              parsed = { _raw: finalArgs }
+            } catch (e) {
+              // 与协议层 finishAll 的容错标记保持一致：同时带 _parseError（可读）与 _raw。
+              parsed = {
+                _parseError: e instanceof Error ? e.message : String(e),
+                _raw: finalArgs,
+              }
             }
             const tc = collectedToolCalls.get(id)
             if (tc) tc.input = parsed
@@ -318,11 +328,23 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       (c) => c.id.length > 0 && c.tool.length > 0,
     )
 
+    // 区分入参解析成功 / 失败的调用。解析失败（模型输出不完整 JSON，常见于流被截断）
+    // 的调用不执行、不持久化为 assistant tool_call、也不向前端发 tool_call_start——
+    // 仅把错误作为 tool result 反馈给模型让其重试，避免 _raw/_parseError 等容错
+    // 标记泄漏到持久化消息与渲染层。对齐 oh-my-pi 的 __parseError 容错。
+    const validCalls: CollectedToolCall[] = []
+    const parseErrorCalls: CollectedToolCall[] = []
+    for (const tc of validToolCalls) {
+      if (isParseErrorInput(tc.input)) parseErrorCalls.push(tc)
+      else validCalls.push(tc)
+    }
+
     const assistantContent: MessageContent[] = []
     if (collectedText.length > 0) {
       assistantContent.push({ _tag: 'text', text: collectedText.join('') })
     }
-    for (const tc of validToolCalls) {
+    // 仅持久化解析成功的调用（携带真实入参）。解析失败的入参是容错标记，不能落库。
+    for (const tc of validCalls) {
       assistantContent.push({
         _tag: 'tool_call',
         id: tc.id,
@@ -340,37 +362,28 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       }
     }
 
+    // 工具调用卡只在入参解析完成后、携带真实入参时才向前端发射 tool_call_start。
+    // 这样前端拿到的第一帧就是可渲染的完整入参，不再出现空 pattern 半成品卡。
+    // 解析失败的调用不发射 start，其 tool_call_end 在前端无匹配 part 会被忽略，
+    // 因此解析失败在 UI 中不可见（模型会立即重试），错误仅反馈给模型并落库。
+    for (const tc of validCalls) {
+      yield { _tag: 'tool_call_start', id: tc.id, tool: tc.tool, input: tc.input }
+    }
+
     if (validToolCalls.length > 0) {
-      const calls = validToolCalls
-      if (calls.length > 1) {
-        yield {
-          _tag: 'tool_calls_parallel',
-          calls: calls.map((c) => ({ id: c.id, tool: c.tool, input: c.input })),
+      // 解析失败的调用：组装可读的错误 result 反馈给模型（不含 [object Object]，
+      // 不直接平铺原始片段作为参数）。参考 oh-my-pi 的 __parseError 处理。
+      const parseErrorResults: { id: string; result: ToolResult }[] = parseErrorCalls.map((tc) => {
+        const errInput = tc.input as { _parseError?: unknown; _raw?: unknown }
+        const rawSnippet = typeof errInput._raw === 'string' ? errInput._raw.slice(0, 200) : ''
+        return {
+          id: tc.id,
+          result: {
+            _tag: 'error',
+            error: `工具 "${tc.tool}" 的参数不是合法 JSON，已跳过执行并要求模型重试。原始输出片段：${rawSnippet || '(空)'}`,
+          },
         }
-      }
-      // 参数解析失败的调用（模型输出了不完整/非法 JSON，常见于流被截断）：
-      // 不执行工具，把错误作为 tool result 反馈给模型，让其重试。
-      // 参考 oh-my-pi 的 __parseError 处理（agent-loop.ts:1741-1764）。
-      const validCalls: CollectedToolCall[] = []
-      const parseErrorResults: { id: string; result: ToolResult }[] = []
-      for (const tc of calls) {
-        if (
-          tc.input !== null &&
-          typeof tc.input === 'object' &&
-          '_parseError' in (tc.input as Record<string, unknown>)
-        ) {
-          const errInput = tc.input as { _parseError: unknown; _raw: unknown }
-          parseErrorResults.push({
-            id: tc.id,
-            result: {
-              _tag: 'error',
-              error: `Tool "${tc.tool}" arguments are not valid JSON: ${String(errInput._parseError)}. Raw arguments: ${String(errInput._raw)}`,
-            },
-          })
-        } else {
-          validCalls.push(tc)
-        }
-      }
+      })
       const results =
         validCalls.length > 0
           ? await executeToolCalls(
@@ -388,7 +401,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       results.push(...parseErrorResults)
       for (const { id, result } of results) {
         yield { _tag: 'tool_call_end', id, result }
-        const tc = calls.find((c) => c.id === id)
+        const tc = validToolCalls.find((c) => c.id === id)
         if (tc) {
           await appendMessage(deps.db, state.session.id, {
             role: 'tool',

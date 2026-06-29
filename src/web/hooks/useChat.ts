@@ -124,20 +124,6 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
       })
       return { ...state, messages }
     }
-    case 'tool_calls_parallel': {
-      const messages = [...state.messages]
-      const last = messages[messages.length - 1]
-      const parts: MessageContent[] = event.calls.map((c) => ({
-        _tag: 'tool_call',
-        id: c.id,
-        tool: c.tool,
-        input: c.input,
-      }))
-      if (last && last.role === 'assistant') {
-        messages[messages.length - 1] = { ...last, content: [...last.content, ...parts] }
-      }
-      return { ...state, messages }
-    }
     case 'usage':
       return { ...state, usage: { input: event.input, output: event.output } }
     case 'llm_detail':

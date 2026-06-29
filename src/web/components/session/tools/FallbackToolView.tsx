@@ -46,7 +46,8 @@ export function FallbackToolView({
   input: unknown
   output?: ToolResult
 }) {
-  const pairs = flatten(input ?? {})
+  // _parseError/_raw 是后端专用的解析失败容错标记，绝不应作为参数渲染。
+  const pairs = flatten(input ?? {}).filter(([k]) => k !== '_parseError' && k !== '_raw')
   const resultText =
     output?._tag === 'success' || output?._tag === 'truncated'
       ? output.output
@@ -56,11 +57,15 @@ export function FallbackToolView({
   return (
     <div>
       <div className={title} data-testid="tool-title">
-        {tool}
+        {tool || 'tool'}
       </div>
-      <pre className={pre} data-testid="fallback-args">
-        {pairs.map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n')}
-      </pre>
+      {pairs.length > 0 && (
+        <pre className={pre} data-testid="fallback-args">
+          {pairs
+            .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+            .join('\n')}
+        </pre>
+      )}
       {resultText && (
         <pre className={pre} data-testid="fallback-output">
           {resultText}

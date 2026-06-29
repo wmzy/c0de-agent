@@ -75,10 +75,6 @@ type AgentEvent =
   | { _tag: 'tool_call_start'; id: string; tool: string; input: unknown }
   | { _tag: 'tool_call_progress'; id: string; progress: string }
   | { _tag: 'tool_call_end'; id: string; result: ToolResult }
-  | {
-      _tag: 'tool_calls_parallel'
-      calls: { id: string; tool: string; input: unknown }[]
-    }
   | { _tag: 'thinking'; text: string }
   | { _tag: 'usage'; input: number; output: number; cacheRead?: number }
   | {

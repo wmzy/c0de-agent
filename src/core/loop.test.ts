@@ -178,6 +178,15 @@ describe('agentLoop', () => {
     expect(events.some((e) => e._tag === 'text_delta')).toBe(true)
     expect(events.some((e) => e._tag === 'done')).toBe(true)
 
+    // 回归：tool_call_start 必须携带解析后的真实入参，而非流式半成品的空 {}。
+    // 旧实现在 tool-input-start 时就发 input:{}，导致前端渲染 "Read · " 等空标题卡
+    // 且永不更新；解析完成后的真实入参再也没机会纠正该 part。
+    const start = events.find(
+      (e): e is Extract<AgentEvent, { _tag: 'tool_call_start' }> =>
+        e._tag === 'tool_call_start' && e.id === 'tc1',
+    )
+    expect(start?.input).toEqual({ path: 'package.json' })
+
     // 回归：持久化的 tool_result 的 id 必须等于对应 tool_call 的 id，
     // 否则发给 provider 的 tool_call_id 与 assistant.tool_calls[].id 不匹配，
     // 触发 "invalid tool_call_id" 错误。
@@ -206,6 +215,28 @@ describe('agentLoop', () => {
     // 会话应恢复并完成
     expect(events.some((e) => e._tag === 'text_delta' && e.text === 'Recovered.')).toBe(true)
     expect(events.some((e) => e._tag === 'done')).toBe(true)
+
+    // 回归：解析失败的调用不应把 _raw/_parseError 容错标记泄漏到持久化消息。
+    // 旧实现会把 { _parseError, _raw } 原样写进 assistant tool_call 入参并落库，
+    // 刷新后被 FallbackToolView 平铺成 "_raw: }" / "_parseError: [object Object]"。
+    const stored = await getMessages(db, session.id)
+    const leaked = stored
+      .flatMap((m) => m.content)
+      .filter(
+        (p): p is Extract<typeof p, { input: unknown }> =>
+          typeof p === 'object' && p !== null && 'input' in p,
+      )
+      .some(
+        (p) =>
+          p.input !== null &&
+          typeof p.input === 'object' &&
+          ('_parseError' in (p.input as object) || '_raw' in (p.input as object)),
+      )
+    expect(leaked).toBe(false)
+    // 反馈给模型的错误消息应是可读散文，不含 "[object Object]"。
+    const errMsg = (toolEnd as { result: { error: string } }).result.error
+    expect(errMsg).not.toContain('[object Object]')
+    expect(errMsg).toContain('不是合法 JSON')
   })
 
   it('stops on abort', async () => {

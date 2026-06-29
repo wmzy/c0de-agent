@@ -91,6 +91,15 @@ describe('tool-stream finishAll', () => {
       _parseError: expect.any(String),
       _raw: '{"pattern": "',
     })
+    // 回归：_parseError 必须是可读消息。parseToolInput 抛的是 llmError（普通对象），
+    // 旧实现用 String(e) 会退化成 "[object Object]"，最终渲染为
+    // "_parseError: [object Object]"。
+    const parseErr =
+      tools[0]?.input && typeof tools[0].input === 'object' && '_parseError' in tools[0].input
+        ? (tools[0].input as { _parseError: string })._parseError
+        : ''
+    expect(parseErr).not.toBe('[object Object]')
+    expect(parseErr.length).toBeGreaterThan(0)
     // 仍正常发出 tool-call / tool-input-end，让流完整结束
     expect(events.some((e) => e.type === 'tool-call')).toBe(true)
     expect(events.some((e) => e.type === 'tool-input-end')).toBe(true)
