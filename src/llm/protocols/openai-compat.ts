@@ -253,7 +253,15 @@ const step = (
         events.push(...outcome.events)
       }
     }
-    if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
+    // 排除空字符串：部分 provider（如 sensenova）在进行中的 chunk 发送
+    // finish_reason:"" 而非标准 null。若不排除，每个 chunk 都会触发 finishAll，
+    // 在 tool arguments 尚未累积完毕时就把 input 解析为 {}，并清空 tools 状态，
+    // 导致后续 arguments delta 全部丢失（tool 参数永远为空，工具调用全部失败）。
+    if (
+      choice.finish_reason !== undefined &&
+      choice.finish_reason !== null &&
+      choice.finish_reason !== ''
+    ) {
       const finishTools = finishAll(tools)
       tools = finishTools.state
       events.push(...finishTools.events)

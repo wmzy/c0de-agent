@@ -123,6 +123,76 @@ describe('openai-compat step', () => {
     expect(toolCall && 'input' in toolCall && toolCall.input).toEqual({ x: 1 })
   })
 
+  it('does not finalize on empty-string finish_reason (sensenova/streaming)', () => {
+    // sensenova 等兼容 provider 在进行中的 chunk 发送 finish_reason:"" 而非标准
+    // null。step 必须把空串视为“未结束”，否则每个 chunk 都会触发 finishAll，
+    // 在 arguments 尚未累积完毕时把 input 解析为 {}，并清空 tools 状态，
+    // 导致后续 arguments delta 全部丢失（tool 参数永远为空，工具调用全部失败）。
+    let state = initialStepState()
+    const allEvents: ReturnType<typeof step>['events'][number][] = []
+
+    // 首 chunk：带 id+name，arguments 空，finish_reason 为空串
+    let res = step(state, {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: 't1', function: { name: 'read', arguments: '' } },
+            ],
+          },
+          finish_reason: '',
+        },
+      ],
+    })
+    state = res.state
+    allEvents.push(...res.events)
+
+    // arguments delta：id/name 为空（标准 OpenAI 流式延续），finish_reason 为空串
+    res = step(state, {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: '', function: { name: '', arguments: '{"path":' } },
+            ],
+          },
+          finish_reason: '',
+        },
+      ],
+    })
+    state = res.state
+    allEvents.push(...res.events)
+
+    res = step(state, {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: '', function: { name: '', arguments: '"pkg"}' } },
+            ],
+          },
+          finish_reason: '',
+        },
+      ],
+    })
+    state = res.state
+    allEvents.push(...res.events)
+
+    // 收尾 chunk：finish_reason:"tool_calls"
+    res = step(state, { choices: [{ delta: {}, finish_reason: 'tool_calls' }] })
+    allEvents.push(...res.events)
+
+    // 只在最后 finalize 一次：仅一个 tool-call 事件
+    const toolCalls = allEvents.filter((e) => e.type === 'tool-call')
+    expect(toolCalls).toHaveLength(1)
+    // arguments 正确累积，不是 {}
+    expect(toolCalls[0] && 'input' in toolCalls[0] && toolCalls[0].input).toEqual({
+      path: 'pkg',
+    })
+    // 中途发出了 tool-input-delta（arguments 确实被累积，未被提前 finalize 吞掉）
+    expect(allEvents.some((e) => e.type === 'tool-input-delta')).toBe(true)
+  })
+
   it('maps finish reasons', () => {
     expect(mapFinishReason('stop')).toBe('stop')
     expect(mapFinishReason('tool_calls')).toBe('tool-calls')
