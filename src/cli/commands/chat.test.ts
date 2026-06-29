@@ -28,6 +28,8 @@ const config: Config = {
   mcpServers: [],
   slashCommands: { enabled: [] },
   theme: 'system',
+  toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
+  security: { authEnabled: false, allowedOrigins: [] },
   locale: 'en',
 }
 

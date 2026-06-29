@@ -13,6 +13,13 @@ import type { SubAgentRequest, SubAgentResult, ToolResult } from '../shared/type
 import { createAgent, runAgent } from './agent.js'
 import { createSummarizer, runCompaction } from './compact.js'
 import { estimateBudget, shouldCompact } from './context.js'
+import {
+  DEFAULT_EDIT_MODE,
+  getToolMetrics,
+  inferToolMode,
+  recordToolMetrics,
+  selectBestMode,
+} from './metrics.js'
 import { buildSystemPrompt } from './prompt.js'
 import { buildDynamicPrompt } from './prompt-registry.js'
 import { drainSteering } from './steering.js'
@@ -152,11 +159,31 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       projectInfo: detectProjectInfo(deps.cwd),
       skills: [],
     }
+    // spec §16.5：edit 工具模式偏好。仅当该轮启用 edit 且某模式历史成功率
+    // 显著优于默认时，向 system prompt 追加偏好提示，引导模型选择高成功率模式。
+    let modeHint = ''
+    if (deps.config.toolMetrics.enabled) {
+      const hasEdit = state.tools.some((t) => t.name === 'edit')
+      if (hasEdit) {
+        try {
+          const ms = await getToolMetrics(deps.db, state.config.model, 'edit')
+          const best = selectBestMode(ms, DEFAULT_EDIT_MODE, {
+            threshold: deps.config.toolMetrics.threshold,
+            minSamples: deps.config.toolMetrics.minSamples,
+          })
+          if (best !== DEFAULT_EDIT_MODE) {
+            modeHint = `\n\n# Tool-mode preference\nFor the \`edit\` tool prefer the \`${best}\` mode (content-hash-anchored patch) — your historical success rate is highest with it for this model.`
+          }
+        } catch {
+          // metrics 查询失败非致命，跳过偏好注入
+        }
+      }
+    }
     const systemPrompt =
-      state.config.systemPrompt ??
-      (deps.promptRegistry
-        ? buildDynamicPrompt(deps.promptRegistry, promptCtx)
-        : buildSystemPrompt(promptCtx))
+      (state.config.systemPrompt ??
+        (deps.promptRegistry
+          ? buildDynamicPrompt(deps.promptRegistry, promptCtx)
+          : buildSystemPrompt(promptCtx))) + modeHint
 
     const tools: ChatTool[] = state.tools.map((t) => ({
       name: t.name,
@@ -434,6 +461,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     // 不可见：模型下轮基于已持久化的 assistant 文本/有效 tool_call 重新生成，通常能
     // 修正一次性的流截断错误。
     if (validCalls.length > 0) {
+      const toolExecStart = Date.now()
       const results = await executeToolCalls(
         deps.toolRegistry,
         deps.permission,
@@ -448,6 +476,8 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         validCalls,
         deps.hookRunner,
       )
+      const toolLatency = Date.now() - toolExecStart
+      const metricsEnabled = deps.config.toolMetrics.enabled
       for (const { id, result } of results) {
         yield { _tag: 'tool_call_end', id, result }
         const tc = validCalls.find((c) => c.id === id)
@@ -456,6 +486,20 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             role: 'tool',
             content: toolResultToContent(id, tc.tool, result),
           })
+          // spec §16.5：记录工具执行结果供后续模式评估。
+          // fire-and-forget：记录失败绝不阻塞 agent 主流程。
+          if (metricsEnabled) {
+            const mode = inferToolMode(tc.tool, tc.input)
+            const success = result._tag === 'success' || result._tag === 'truncated'
+            void recordToolMetrics(
+              deps.db,
+              state.config.model,
+              tc.tool,
+              mode,
+              success,
+              toolLatency,
+            ).catch(() => {})
+          }
         }
       }
     }

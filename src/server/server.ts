@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
 import { loadConfig } from '../core/config.js'
+import { decryptSecret } from '../core/secret.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import type { Registry } from '../llm/registry.js'
@@ -57,7 +58,7 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
   registerProvider(registry, {
     name,
     baseURL: p.baseURL,
-    apiKey: p.apiKey,
+    apiKey: p.apiKey ? decryptSecret(p.apiKey) : p.apiKey,
     ...(path ? { path } : {}),
   })
 }

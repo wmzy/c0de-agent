@@ -1,4 +1,5 @@
 import type { LoopDeps } from '../core/loop.js'
+import { decryptSecret } from '../core/secret.js'
 import type { DB } from '../db/client.js'
 import { createRegistry, registerProvider } from '../llm/index.js'
 import type { Registry } from '../llm/registry.js'
@@ -34,7 +35,7 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
   registerProvider(registry, {
     name,
     baseURL: p.baseURL,
-    apiKey: p.apiKey,
+    apiKey: p.apiKey ? decryptSecret(p.apiKey) : p.apiKey,
     ...(path ? { path } : {}),
   })
 }

@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { CompactionConfig, Config, MCPServerConfig } from '../shared/types/config.js'
+import type {
+  CompactionConfig,
+  Config,
+  MCPServerConfig,
+  SecurityConfig,
+  ToolMetricsConfig,
+} from '../shared/types/config.js'
 
 const GLOBAL_CONFIG_DIR = '.c0de'
 const CONFIG_FILENAME = 'config.json'
@@ -22,6 +28,8 @@ const DEFAULT_CONFIG: Config = {
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: { enabled: ['/compact', '/model', '/clear', '/help', '/fork', '/config'] },
+  toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
+  security: { authEnabled: false, allowedOrigins: [] },
   theme: 'system',
   locale: 'en',
 }
@@ -82,5 +90,5 @@ async function saveConfig(
   writeFileSync(path, JSON.stringify(config, null, 2), 'utf-8')
 }
 
-export type { CompactionConfig, Config, MCPServerConfig }
+export type { CompactionConfig, Config, MCPServerConfig, SecurityConfig, ToolMetricsConfig }
 export { DEFAULT_CONFIG, loadConfig, mergeConfig, saveConfig }

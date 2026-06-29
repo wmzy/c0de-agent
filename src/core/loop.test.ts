@@ -4,14 +4,17 @@ import { migrateDB } from '../db/migrate.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import type { HookRunner } from '../plugins/types.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
+import { getLLMDetails } from '../session/session.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import type { Message, Session } from '../shared/types/message.js'
-import { createDefaultRegistry } from '../tools/index.js'
+import { editTool } from '../tools/builtin/edit.js'
+import { createDefaultRegistry, createToolRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
 import { agentLoop } from './loop.js'
+import { getToolMetrics, recordToolMetrics } from './metrics.js'
 
 function mockTextStream(text: string): AsyncGenerator<StreamChunk> {
   async function* gen() {
@@ -507,5 +510,76 @@ describe('agentLoop task delegation (spec §12.3)', () => {
     const child = all.find((s) => s.title === 'Test writer')
     expect(child).toBeTruthy()
     expect(child?.id).not.toBe(session.id)
+  })
+})
+
+describe('agentLoop tool-mode metrics (spec §16.5)', () => {
+  it('工具执行后记录 metrics 到 DB', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    // read 工具执行成功 → 记录 read/default/success
+    const ms = await getToolMetrics(db, 'mock', 'read')
+    expect(ms).toHaveLength(1)
+    expect(ms[0]).toMatchObject({
+      model: 'mock',
+      tool: 'read',
+      mode: 'default',
+      attempts: 1,
+      successes: 1,
+      failures: 0,
+    })
+  })
+
+  it('失败的工具调用记录为 failure', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // mockToolThenTextStream 调 read 一个不存在的路径 → error
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    // 用空 toolRegistry：read 工具不存在 → 返回 error
+    deps.toolRegistry = createToolRegistry()
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    const ms = await getToolMetrics(db, 'mock', 'read')
+    expect(ms).toHaveLength(1)
+    expect(ms[0]).toMatchObject({ attempts: 1, successes: 0, failures: 1 })
+  })
+
+  it('edit 历史成功率高时注入 hashline 偏好到 system prompt', async () => {
+    // 预置 metrics：hashline 9/10 成功，diff 4/10 成功
+    for (let i = 0; i < 9; i++) await recordToolMetrics(db, 'mock', 'edit', 'hashline', true, 100)
+    await recordToolMetrics(db, 'mock', 'edit', 'hashline', false, 100)
+    for (let i = 0; i < 6; i++) await recordToolMetrics(db, 'mock', 'edit', 'diff', false, 100)
+    for (let i = 0; i < 4; i++) await recordToolMetrics(db, 'mock', 'edit', 'diff', true, 100)
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    state.tools = [editTool]
+    const deps = makeMockDeps(db, () => mockTextStream('ok'))
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    const details = await getLLMDetails(db, session.id)
+    expect(details[0]?.systemPrompt).toContain('hashline')
+  })
+
+  it('数据不足时不注入偏好（用默认 diff）', async () => {
+    // 仅 2 次 hashline 成功（< minSamples 5）→ 不达标，不注入
+    await recordToolMetrics(db, 'mock', 'edit', 'hashline', true, 100)
+    await recordToolMetrics(db, 'mock', 'edit', 'hashline', true, 100)
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    state.tools = [editTool]
+    const deps = makeMockDeps(db, () => mockTextStream('ok'))
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    const details = await getLLMDetails(db, session.id)
+    expect(details[0]?.systemPrompt).not.toContain('Tool-mode preference')
   })
 })

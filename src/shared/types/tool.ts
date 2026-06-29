@@ -87,8 +87,22 @@ type ToolDef = {
   modes?: ToolMode[]
 }
 
+/** Per-(model, tool, mode) success/latency record used to auto-select the
+ *  best tool mode (spec §16.5). Persisted in the `tool_metrics` table. */
+type ModelToolMetrics = {
+  model: string
+  tool: string
+  mode: string
+  attempts: number
+  successes: number
+  failures: number
+  avgLatencyMs: number
+  lastUsed: number
+}
+
 export type {
   DebugTransport,
+  ModelToolMetrics,
   ResolveResult,
   SubAgentRequest,
   SubAgentResult,

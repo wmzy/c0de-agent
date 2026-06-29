@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -123,6 +124,27 @@ export const fileSnapshots = pgTable(
   ],
 )
 
+/**
+ * Tool metrics table — per-(model, tool, mode) success/latency stats used to
+ * auto-select the best tool mode (spec §16.5). One row per unique combination.
+ */
+export const toolMetrics = pgTable(
+  'tool_metrics',
+  {
+    model: text('model').notNull(),
+    tool: text('tool').notNull(),
+    mode: text('mode').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    successes: integer('successes').notNull().default(0),
+    failures: integer('failures').notNull().default(0),
+    avgLatencyMs: real('avg_latency_ms').notNull().default(0),
+    lastUsed: timestamp('last_used', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_tool_metrics_model_tool_mode').on(table.model, table.tool, table.mode),
+  ],
+)
+
 /** Type exports for insert/select operations. */
 export type ProjectRow = typeof projects.$inferSelect
 export type ProjectInsert = typeof projects.$inferInsert
@@ -134,3 +156,5 @@ export type CompactionArchiveRow = typeof compactionArchives.$inferSelect
 export type CompactionArchiveInsert = typeof compactionArchives.$inferInsert
 export type FileSnapshotRow = typeof fileSnapshots.$inferSelect
 export type FileSnapshotInsert = typeof fileSnapshots.$inferInsert
+export type ToolMetricRow = typeof toolMetrics.$inferSelect
+export type ToolMetricInsert = typeof toolMetrics.$inferInsert

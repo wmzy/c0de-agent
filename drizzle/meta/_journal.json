@@ -15,6 +15,13 @@
       "when": 1782620610647,
       "tag": "0001_chemical_doctor_faustus",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782755591801,
+      "tag": "0002_amusing_micromacro",
+      "breakpoints": true
     }
   ]
 }

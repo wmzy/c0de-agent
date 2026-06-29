@@ -43,6 +43,8 @@ const baseConfig: Config = {
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: { enabled: [] },
+  toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
+  security: { authEnabled: false, allowedOrigins: [] },
   theme: 'light',
   locale: 'zh-CN',
 }

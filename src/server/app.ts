@@ -3,7 +3,8 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
+import { createAuthMiddleware } from './middleware/auth.js'
+import { createCORSMiddleware } from './middleware/cors.js'
 import { errorHandler } from './middleware/error.js'
 import { createCatalogRoute } from './routes/catalog.js'
 import { createChatRoute } from './routes/chat.js'
@@ -24,7 +25,13 @@ function createApp(ctx: ServerContext): Hono {
 
   // 中间件
   app.onError(errorHandler)
-  app.use('*', cors())
+  // spec §24.2：仅允许本地/可信 origin 跨域读，拒绝外部网页。
+  app.use('*', createCORSMiddleware({ allowedOrigins: ctx.config.security.allowedOrigins }))
+  // spec §24.2：Bearer token 认证（配置了 token 时生效；/api/health 探活放行）。
+  app.use(
+    '/api/*',
+    createAuthMiddleware(ctx.config.security.authEnabled ? ctx.config.security.token : undefined),
+  )
 
   // 路由
   app.route('/api/health', createHealthRoute())
