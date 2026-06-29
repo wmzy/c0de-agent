@@ -4,12 +4,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { LLMDetailsView } from '../components/LLMDetailsView.js'
 import { type ModelSelection, ModelSelector } from '../components/ModelSelector.js'
 import { SessionSummary } from '../components/SessionSummary.js'
+import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { ToolToggle } from '../components/ToolToggle.js'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { useChat } from '../hooks/useChat.js'
 import { useMessages } from '../hooks/useSession.js'
 import { providerAPI } from '../services/provider.js'
-import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { Chat } from './Chat.js'
 
 const empty = css`

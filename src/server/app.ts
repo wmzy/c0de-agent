@@ -15,6 +15,7 @@ import { createProjectRoute } from './routes/project.js'
 import { createProviderRoute } from './routes/provider.js'
 import { createSessionRoute } from './routes/session.js'
 import { createToolRoute } from './routes/tool.js'
+import { createUpdateRoute } from './routes/update.js'
 import type { ServerContext } from './types.js'
 
 /** 创建完整的 Hono 应用，挂载所有路由 + 中间件。 */
@@ -34,6 +35,7 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/filesystem', createFilesystemRoute(ctx))
   app.route('/api/chat', createChatRoute(ctx))
   app.route('/api/tools', createToolRoute(ctx))
+  app.route('/api/update', createUpdateRoute(ctx))
   app.route('/api/config', createConfigRoute(ctx))
   app.route('/api/files', createFilesRoute(ctx))
 
@@ -51,6 +53,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/filesystem',
         '/api/chat',
         '/api/tools',
+        '/api/update',
         '/api/config',
         '/api/files',
       ],

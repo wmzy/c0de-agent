@@ -42,11 +42,27 @@ describe('tools index', () => {
     expect(bashTool.name).toBe('bash')
   })
 
-  it('createDefaultRegistry registers all 7 builtin tools', () => {
+  it('createDefaultRegistry registers all builtin tools', () => {
     const reg = createDefaultRegistry()
     const tools = listTools(reg)
     const names = tools.map((t) => t.name).sort()
-    expect(names).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'task', 'write'])
+    expect(names).toEqual([
+      'bash',
+      'debug_breakpoint',
+      'debug_continue',
+      'debug_eval',
+      'debug_stack',
+      'debug_start',
+      'debug_step',
+      'debug_stop',
+      'debug_vars',
+      'edit',
+      'glob',
+      'grep',
+      'read',
+      'task',
+      'write',
+    ])
   })
 
   it('can execute read via default registry', async () => {

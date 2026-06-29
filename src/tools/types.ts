@@ -78,12 +78,12 @@ type WriteInput = {
   content: string
 }
 
-/** Input for the edit tool (search/replace diff mode). */
-type EditInput = {
-  path: string
-  oldText: string
-  newText: string
-}
+/** Input for the edit tool. Two modes (spec §16.4):
+ * - diff: search/replace via oldText/newText
+ * - hashline: content-hash-anchored patch via `patch` */
+type EditInput =
+  | { path: string; oldText: string; newText: string }
+  | { path: string; patch: string }
 
 /** Input for the glob tool. */
 type GlobInput = {

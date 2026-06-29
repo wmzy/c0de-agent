@@ -20,7 +20,8 @@ async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
   const shouldOpen = (ctx.args.options.open as boolean | undefined) ?? true
 
   const starter = ctx.serverStarter ?? startServer
-  const handle = await starter({ port, cwd: ctx.cwd })
+  const restore = ctx.args.options.restore as string | undefined
+  const handle = await starter({ port, cwd: ctx.cwd, ...(restore ? { restoreFrom: restore } : {}) })
 
   const url = `http://localhost:${handle.port}`
   ;(ctx.banner ?? printStartupBanner)(url)

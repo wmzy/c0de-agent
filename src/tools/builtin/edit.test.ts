@@ -88,6 +88,53 @@ describe('editTool', () => {
   it('has correct tool definition', () => {
     expect(editTool.name).toBe('edit')
     expect(editTool.permission).toBe('ask')
-    expect(editTool.parameters.required).toEqual(['path', 'oldText', 'newText'])
+    expect(editTool.parameters.required).toEqual(['path'])
+  })
+})
+
+describe('editTool (hashline mode)', () => {
+  it('applies a hashline patch when hash matches', async () => {
+    const { computeHash } = await import('../hashline/index.js')
+    const content = 'line1\nline2\nline3\n'
+    await writeFile(join(workDir, 'f.ts'), content)
+    const hash = computeHash(content)
+    const patch = `[f.ts#${hash}]\nSWAP 2-2\nREPLACED\n---\n`
+    const result = await editTool.execute({ path: 'f.ts', patch }, ctx)
+    expect(result._tag).toBe('success')
+    const out = await readFile(join(workDir, 'f.ts'), 'utf-8')
+    expect(out).toBe('line1\nREPLACED\nline3\n')
+  })
+
+  it('rejects a stale hash (file changed) without modifying file', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'current\n')
+    const result = await editTool.execute(
+      { path: 'f.ts', patch: '[f.ts#ffff]\nSWAP 1-1\nx\n---\n' },
+      ctx,
+    )
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('hash mismatch')
+    }
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('current\n')
+  })
+
+  it('rejects out-of-bounds line range without modifying file', async () => {
+    const { computeHash } = await import('../hashline/index.js')
+    const content = 'only\n'
+    await writeFile(join(workDir, 'f.ts'), content)
+    const hash = computeHash(content)
+    const patch = `[f.ts#${hash}]\nSWAP 9-9\nx\n---\n`
+    const result = await editTool.execute({ path: 'f.ts', patch }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('out of bounds')
+    }
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('only\n')
+  })
+
+  it('returns error when neither mode params provided', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'x\n')
+    const result = await editTool.execute({ path: 'f.ts' } as never, ctx)
+    expect(result._tag).toBe('error')
   })
 })

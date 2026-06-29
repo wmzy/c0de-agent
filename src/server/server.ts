@@ -1,6 +1,6 @@
 // src/server/server.ts
 
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import type { Server as NodeServer } from 'node:http'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
@@ -13,6 +13,7 @@ import { createRegistry, registerProvider } from '../llm/registry.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import { createDefaultRegistry } from '../tools/index.js'
+import { restoreSessions, type SessionSnapshot } from '../update/index.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
 import { createPermissionStore } from './permission/store.js'
@@ -23,6 +24,8 @@ type StartServerOptions = {
   cwd?: string
   /** 注入已有 DB（测试用）。 */
   db?: DB
+  /** 热更新新实例启动时从此快照文件恢复会话状态。 */
+  restoreFrom?: string
 }
 
 type RunningServer = {
@@ -95,6 +98,11 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
     db = await createDB({ driver: 'pglite', dataDir })
   }
   await migrateDB(db)
+
+  if (opts.restoreFrom) {
+    const snapshot = JSON.parse(readFileSync(opts.restoreFrom, 'utf8')) as SessionSnapshot
+    await restoreSessions(db, snapshot)
+  }
 
   const config = await loadConfig(cwd)
   const toolRegistry = createDefaultRegistry()

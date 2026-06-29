@@ -137,9 +137,7 @@ describe('mergeToolMessages', () => {
   })
 
   it('不修改入参数组与原消息 content（浅拷贝）', () => {
-    const assistant = msg('assistant', [
-      { _tag: 'tool_call', id: 'tc1', tool: 'read', input: {} },
-    ])
+    const assistant = msg('assistant', [{ _tag: 'tool_call', id: 'tc1', tool: 'read', input: {} }])
     const tool = msg('tool', [
       { _tag: 'tool_result', id: 'tc1', tool: 'read', output: { _tag: 'success', output: 'x' } },
     ])

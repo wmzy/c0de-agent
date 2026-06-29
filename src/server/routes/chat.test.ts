@@ -160,11 +160,27 @@ describe('chat route (SSE)', () => {
     // 消费完整 SSE 流，驱动 agentLoop 执行到 appendLLMDetail
     await res.text()
 
-    // loop 持久化的 llmDetail.tools 即发送给 LLM 的工具定义；不带 tools 时启用全部注册工具（7 个）
+    // loop 持久化的 llmDetail.tools 即发送给 LLM 的工具定义；不带 tools 时启用全部注册工具
     const details = await getLLMDetails(db, session.id)
     expect(details).toHaveLength(1)
     const toolNames = details[0]?.tools.map((t) => t.name).sort()
-    expect(toolNames).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'task', 'write'])
+    expect(toolNames).toEqual([
+      'bash',
+      'debug_breakpoint',
+      'debug_continue',
+      'debug_eval',
+      'debug_stack',
+      'debug_start',
+      'debug_step',
+      'debug_stop',
+      'debug_vars',
+      'edit',
+      'glob',
+      'grep',
+      'read',
+      'task',
+      'write',
+    ])
   })
 
   it('resolveAgentCwd: returns worktree when session has project', async () => {

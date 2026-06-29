@@ -1,35 +1,79 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { type ApplyResult, applyPatch, parsePatch } from '../hashline/index.js'
 import type { EditInput } from '../types.js'
 
 /**
- * edit tool: search-and-replace editing with fuzzy whitespace matching.
- * Permission: ask (modifies filesystem).
+ * edit tool: file editing in two modes (spec §16.4).
+ * - diff mode: search-and-replace with fuzzy whitespace matching. Provide
+ *   `oldText` + `newText`. Returns error if oldText is absent or ambiguous.
+ * - hashline mode: content-hash-anchored patch language (spec §16). Provide
+ *   `patch`. If the file changed since the patch was generated, the hash
+ *   mismatch is rejected rather than misapplied.
  *
- * Matching: collapses consecutive whitespace in both oldText and file content
- * to support minor formatting differences. Returns error if oldText is not
- * found or matches multiple times (ambiguous).
+ * Permission: ask (modifies filesystem).
  */
 export const editTool: ToolDef = {
   name: 'edit',
   description:
-    'Edit a file by replacing oldText with newText. Uses fuzzy whitespace matching. Returns error if oldText is not found or matches multiple times.',
+    'Edit a file. Two modes: (1) diff — provide oldText+newText for fuzzy search-and-replace; (2) hashline — provide `patch`, a content-hash-anchored patch that fails safely if the file changed since the patch was generated.',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string', description: 'File path (relative to cwd or absolute).' },
-      oldText: { type: 'string', description: 'Text to find in the file.' },
-      newText: { type: 'string', description: 'Replacement text.' },
+      oldText: {
+        type: 'string',
+        description: 'diff mode: text to find in the file (fuzzy whitespace matching).',
+      },
+      newText: { type: 'string', description: 'diff mode: replacement text.' },
+      patch: {
+        type: 'string',
+        description:
+          'hashline mode: a patch block like `[path#hash]\\nSWAP start-end\\nnew content\\n---`. Generate the hash from the CURRENT file content; a stale hash is rejected.',
+      },
     },
-    required: ['path', 'oldText', 'newText'],
+    required: ['path'],
   },
   permission: 'ask',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
-    const { path, oldText, newText } = input as EditInput
+    const raw = input as EditInput
+    const path = raw.path
     const fullPath = resolve(ctx.cwd, path)
 
     try {
+      // ── hashline 模式 ──────────────────────────────────
+      if ('patch' in raw && typeof raw.patch === 'string') {
+        const patches = parsePatch(raw.patch)
+        if (patches.length === 0) {
+          return { _tag: 'error', error: `hashline: empty patch for "${path}"` }
+        }
+
+        let current = await readFile(fullPath, 'utf-8')
+        for (const p of patches) {
+          const r: ApplyResult = applyPatch(current, p)
+          if (r._tag !== 'success') {
+            return { _tag: 'error', error: formatHashlineError(path, r) }
+          }
+          current = r.content
+        }
+        await writeFile(fullPath, current, 'utf-8')
+        return {
+          _tag: 'success',
+          output: `Edited "${path}" via hashline patch (${patches.length} block(s))`,
+        }
+      }
+
+      // ── diff 模式 ──────────────────────────────────────
+      if (!('oldText' in raw) || !('newText' in raw)) {
+        return {
+          _tag: 'error',
+          error: `edit: provide either 'patch' (hashline) or 'oldText'+'newText' (diff) for "${path}"`,
+        }
+      }
+      const oldText = raw.oldText
+      const newText = raw.newText
+
       const content = await readFile(fullPath, 'utf-8')
 
       // Fuzzy whitespace matching: normalize whitespace runs
@@ -80,6 +124,19 @@ export const editTool: ToolDef = {
       return { _tag: 'error', error: `Failed to edit "${path}": ${message}` }
     }
   },
+}
+
+/** 把 hashline ApplyResult 失败分支格式化为对 agent 有指导意义的错误信息。 */
+function formatHashlineError(
+  path: string,
+  result: Exclude<ApplyResult, { _tag: 'success' }>,
+): string {
+  if (result._tag === 'hash_mismatch') {
+    return `"${path}": hashline hash mismatch — the file changed since this patch was generated (expected ${result.expected}, actual ${result.actual}). Re-read the file and regenerate the patch with the current hash.`
+  }
+  const op = result.operation
+  const range = 'start' in op ? `${op.start}${op.end !== op.start ? `-${op.end}` : ''}` : ''
+  return `"${path}": hashline line range ${range} out of bounds for ${op._tag} operation.`
 }
 
 /**

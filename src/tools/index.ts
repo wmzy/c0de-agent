@@ -12,6 +12,7 @@ export type {
   ToolResult,
 } from '../shared/types/tool.js'
 export { bashTool } from './builtin/bash.js'
+export { dapTools } from './builtin/dap.js'
 export { editTool } from './builtin/edit.js'
 export { globTool, globToRegex } from './builtin/glob.js'
 export { grepTool } from './builtin/grep.js'
@@ -53,6 +54,7 @@ export { validateInput } from './validate.js'
 
 // ── Default registry ────────────────────────────────────────
 import { bashTool } from './builtin/bash.js'
+import { dapTools } from './builtin/dap.js'
 import { editTool } from './builtin/edit.js'
 import { globTool } from './builtin/glob.js'
 import { grepTool } from './builtin/grep.js'
@@ -63,7 +65,7 @@ import { createToolRegistry, registerTool } from './registry.js'
 
 /**
  * Create a registry pre-loaded with all builtin tools:
- * read, write, edit, glob, grep, bash, task.
+ * read, write, edit, glob, grep, bash, task, and the debug_* set.
  */
 export function createDefaultRegistry() {
   const reg = createToolRegistry()
@@ -74,5 +76,6 @@ export function createDefaultRegistry() {
   registerTool(reg, grepTool)
   registerTool(reg, bashTool)
   registerTool(reg, taskTool)
+  for (const tool of dapTools) registerTool(reg, tool)
   return reg
 }

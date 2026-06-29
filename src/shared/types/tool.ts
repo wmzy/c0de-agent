@@ -30,6 +30,14 @@ type URLRegistry = {
 /** Result of resolving a URL. */
 type ResolveResult = { _tag: 'ok'; content: string } | { _tag: 'error'; error: string }
 
+/** Transport shape for a debug adapter process stdio (DAP). Host-injected. */
+type DebugTransport = {
+  write: (chunk: string | Uint8Array) => void
+  onData: (handler: (chunk: Uint8Array | string) => void) => void
+  onClose: (handler: () => void) => void
+  close: () => void
+}
+
 /** Context passed to every tool executor. */
 type ToolContext = {
   cwd: string
@@ -41,6 +49,9 @@ type ToolContext = {
   /** Spawn a sub-agent and return its final text output (dependency-reversal hook
    *  for the `task` tool; avoids tools→core circular import). */
   runSubAgent?: (input: SubAgentRequest) => Promise<SubAgentResult>
+  /** Spawn a debug adapter and return its stdio transport (dependency-reversal
+   *  hook for the `debug_*` tools; host wires real child_process spawn). */
+  debugSpawn?: (config: unknown) => DebugTransport
 }
 
 /** Request to run a sub-agent (the `task` tool's payload to the host). */
@@ -77,6 +88,7 @@ type ToolDef = {
 }
 
 export type {
+  DebugTransport,
   ResolveResult,
   SubAgentRequest,
   SubAgentResult,

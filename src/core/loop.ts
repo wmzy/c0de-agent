@@ -442,6 +442,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
           session: { id: state.session.id, cwd: deps.cwd },
           abort: state.abortController.signal,
           ...(deps.urlRegistry ? { urlRegistry: deps.urlRegistry } : {}),
+          ...(deps.debugSpawn ? { debugSpawn: deps.debugSpawn } : {}),
           runSubAgent: (req) => runSubAgent(deps, state, req),
         },
         validCalls,

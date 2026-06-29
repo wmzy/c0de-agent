@@ -102,9 +102,7 @@ describe('provider chatStream', () => {
     for await (const c of chatStream(ctx, request(), { provider: 'mock', model: 'm1' })) {
       chunks.push(c)
     }
-    const done = chunks.find((c) => c._tag === 'done') as
-      | { finishReason?: string }
-      | undefined
+    const done = chunks.find((c) => c._tag === 'done') as { finishReason?: string } | undefined
     expect(done?.finishReason).toBe('length')
   })
 })

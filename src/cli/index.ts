@@ -12,6 +12,7 @@ import { runConfigCommand } from './commands/config.js'
 import { runInitCommand } from './commands/init.js'
 import { runPluginCommand } from './commands/plugin.js'
 import { runServeCommand } from './commands/serve.js'
+import { runUpdateCommand } from './commands/update.js'
 import { buildAgentDeps } from './deps.js'
 import type { CommandSpec } from './parser.js'
 
@@ -31,6 +32,7 @@ const COMMANDS: CommandSpec[] = [
     options: [
       { name: 'port', type: 'string' },
       { name: 'open', type: 'boolean' },
+      { name: 'restore', type: 'string' },
     ],
   },
   {
@@ -52,6 +54,11 @@ const COMMANDS: CommandSpec[] = [
     name: 'acp',
     description: 'Run in Agent Client Protocol mode (editor integration).',
     options: [],
+  },
+  {
+    name: 'update',
+    description: 'Check npm registry for a newer version (--apply to hot-update).',
+    options: [{ name: 'apply', type: 'boolean' }],
   },
 ]
 
@@ -125,6 +132,10 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       } finally {
         await db.close()
       }
+      return
+    }
+    case 'update': {
+      await runUpdateCommand({ args, cwd })
       return
     }
     default: {

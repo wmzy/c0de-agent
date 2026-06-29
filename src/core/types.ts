@@ -13,7 +13,7 @@ import type {
   TokenBudget,
 } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
-import type { ToolDef, URLRegistry } from '../shared/types/tool.js'
+import type { DebugTransport, ToolDef, URLRegistry } from '../shared/types/tool.js'
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
 import type { Config } from './config.js'
 
@@ -34,6 +34,9 @@ type AgentDependencies = {
   promptRegistry?: PromptRegistry
   /** 可注入的标题生成 chat 实现（测试用）；省略走真实 llm/provider。 */
   titleChatFn?: typeof ChatFn
+  /** 可选调试适配器 spawn 钩子（spec §21）：注入后 debug_* 工具可用。
+   *  接收 debug_start 的配置，返回适配器进程的 stdio transport。 */
+  debugSpawn?: (config: unknown) => DebugTransport
 }
 
 type ProjectInfo = {

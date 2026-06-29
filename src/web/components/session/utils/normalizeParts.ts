@@ -99,7 +99,7 @@ export function mergeToolMessages(messages: Message[]): Message[] {
   const callIndex = new Map<string, number>()
   for (let i = 0; i < out.length; i++) {
     const m = out[i]
-    if (m.role !== 'assistant') continue
+    if (m?.role !== 'assistant') continue
     for (const p of m.content) {
       if (p._tag === 'tool_call' && p.id) callIndex.set(p.id, i)
     }
@@ -107,7 +107,7 @@ export function mergeToolMessages(messages: Message[]): Message[] {
   const drop = new Set<number>()
   for (let i = 0; i < out.length; i++) {
     const m = out[i]
-    if (m.role !== 'tool') continue
+    if (m?.role !== 'tool') continue
     const found = m.content.find(
       (p): p is Extract<MessageContent, { _tag: 'tool_result' }> => p._tag === 'tool_result',
     )

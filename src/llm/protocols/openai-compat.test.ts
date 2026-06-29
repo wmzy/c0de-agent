@@ -136,9 +136,7 @@ describe('openai-compat step', () => {
       choices: [
         {
           delta: {
-            tool_calls: [
-              { index: 0, id: 't1', function: { name: 'read', arguments: '' } },
-            ],
+            tool_calls: [{ index: 0, id: 't1', function: { name: 'read', arguments: '' } }],
           },
           finish_reason: '',
         },
@@ -152,9 +150,7 @@ describe('openai-compat step', () => {
       choices: [
         {
           delta: {
-            tool_calls: [
-              { index: 0, id: '', function: { name: '', arguments: '{"path":' } },
-            ],
+            tool_calls: [{ index: 0, id: '', function: { name: '', arguments: '{"path":' } }],
           },
           finish_reason: '',
         },
@@ -167,9 +163,7 @@ describe('openai-compat step', () => {
       choices: [
         {
           delta: {
-            tool_calls: [
-              { index: 0, id: '', function: { name: '', arguments: '"pkg"}' } },
-            ],
+            tool_calls: [{ index: 0, id: '', function: { name: '', arguments: '"pkg"}' } }],
           },
           finish_reason: '',
         },
