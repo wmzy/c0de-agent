@@ -10,6 +10,7 @@ import { useChat } from '../hooks/useChat.js'
 import { useMessages } from '../hooks/useSession.js'
 import { agentAPI } from '../services/agent.js'
 import { providerAPI } from '../services/provider.js'
+import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { Chat } from './Chat.js'
 
 const empty = css`
@@ -59,7 +60,14 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     }
   }, [providers, providersData, config, selection.provider, selection.model])
 
-  const messages = useMemo(() => [...(history ?? []), ...chat.messages], [history, chat.messages])
+  // 历史重载时，持久化层把同轮 assistant(tool_call) 与 tool(tool_result) 存成独立
+  // Message；normalizeParts 只在单条 Message 内按 id 配对，不合并会导致历史工具调用
+  // 渲染成两张卡（一张永久 running、一张孤立 result）。这里跨消息把 tool_result 并回
+  // 对应 assistant，使历史与实时形态统一。实时 chat.messages 已在 reducer 内配对，no-op。
+  const messages = useMemo(
+    () => mergeToolMessages([...(history ?? []), ...chat.messages]),
+    [history, chat.messages],
+  )
 
   // 启用工具白名单：null = 默认全启用（不传 tools，走后端 config）；Set = 显式选择
   const [enabledTools, setEnabledTools] = useState<Set<string> | null>(null)

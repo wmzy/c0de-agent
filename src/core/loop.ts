@@ -329,15 +329,11 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     )
 
     // 区分入参解析成功 / 失败的调用。解析失败（模型输出不完整 JSON，常见于流被截断）
-    // 的调用不执行、不持久化为 assistant tool_call、也不向前端发 tool_call_start——
-    // 仅把错误作为 tool result 反馈给模型让其重试，避免 _raw/_parseError 等容错
-    // 标记泄漏到持久化消息与渲染层。对齐 oh-my-pi 的 __parseError 容错。
-    const validCalls: CollectedToolCall[] = []
-    const parseErrorCalls: CollectedToolCall[] = []
-    for (const tc of validToolCalls) {
-      if (isParseErrorInput(tc.input)) parseErrorCalls.push(tc)
-      else validCalls.push(tc)
-    }
+    // 的调用对系统完全透明：不执行、不持久化、不发前端事件（见下方工具执行块说明），
+    // 仅保留解析成功的调用供执行与持久化，避免 _raw/_parseError 容错标记泄漏。
+    const validCalls: CollectedToolCall[] = validToolCalls.filter(
+      (tc) => !isParseErrorInput(tc.input),
+    )
 
     const assistantContent: MessageContent[] = []
     if (collectedText.length > 0) {
@@ -370,38 +366,28 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       yield { _tag: 'tool_call_start', id: tc.id, tool: tc.tool, input: tc.input }
     }
 
-    if (validToolCalls.length > 0) {
-      // 解析失败的调用：组装可读的错误 result 反馈给模型（不含 [object Object]，
-      // 不直接平铺原始片段作为参数）。参考 oh-my-pi 的 __parseError 处理。
-      const parseErrorResults: { id: string; result: ToolResult }[] = parseErrorCalls.map((tc) => {
-        const errInput = tc.input as { _parseError?: unknown; _raw?: unknown }
-        const rawSnippet = typeof errInput._raw === 'string' ? errInput._raw.slice(0, 200) : ''
-        return {
-          id: tc.id,
-          result: {
-            _tag: 'error',
-            error: `工具 "${tc.tool}" 的参数不是合法 JSON，已跳过执行并要求模型重试。原始输出片段：${rawSnippet || '(空)'}`,
-          },
-        }
-      })
-      const results =
-        validCalls.length > 0
-          ? await executeToolCalls(
-              deps.toolRegistry,
-              deps.permission,
-              {
-                cwd: deps.cwd,
-                session: { id: state.session.id, cwd: deps.cwd },
-                abort: state.abortController.signal,
-              },
-              validCalls,
-              deps.hookRunner,
-            )
-          : []
-      results.push(...parseErrorResults)
+    // 仅执行解析成功的工具调用。解析失败的调用（isParseErrorInput 为真）对系统完全透明：
+    // 不执行、不持久化 tool result、不发 tool_call_start/end。其入参是 _parseError/_raw
+    // 容错标记，既不能执行也不能落库；若持久化为 orphan tool 消息（无对应 assistant
+    // tool_call），context.ts 的 sanitizeToolPairs 会在重建上下文时将其丢弃——即模型
+    // 永远收不到这个"错误反馈"，徒增一次注定被忽略的 DB 写。故让 parse-error 对模型
+    // 不可见：模型下轮基于已持久化的 assistant 文本/有效 tool_call 重新生成，通常能
+    // 修正一次性的流截断错误。
+    if (validCalls.length > 0) {
+      const results = await executeToolCalls(
+        deps.toolRegistry,
+        deps.permission,
+        {
+          cwd: deps.cwd,
+          session: { id: state.session.id, cwd: deps.cwd },
+          abort: state.abortController.signal,
+        },
+        validCalls,
+        deps.hookRunner,
+      )
       for (const { id, result } of results) {
         yield { _tag: 'tool_call_end', id, result }
-        const tc = validToolCalls.find((c) => c.id === id)
+        const tc = validCalls.find((c) => c.id === id)
         if (tc) {
           await appendMessage(deps.db, state.session.id, {
             role: 'tool',

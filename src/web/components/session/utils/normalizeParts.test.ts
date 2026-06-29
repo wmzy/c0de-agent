@@ -1,6 +1,6 @@
 import type { Message, MessageContent } from '@shared/types/message.js'
 import { describe, expect, it } from 'vitest'
-import { normalizeParts } from './normalizeParts.js'
+import { mergeToolMessages, normalizeParts } from './normalizeParts.js'
 
 function msg(role: Message['role'], parts: MessageContent[]): Message {
   return { id: '1', sessionId: 's', role, content: parts, tokenCount: 0, createdAt: 1 }
@@ -111,5 +111,75 @@ describe('normalizeParts', () => {
       ]),
     )
     expect(blocks.map((b) => b.type)).toEqual(['text', 'tool', 'text'])
+  })
+})
+
+describe('mergeToolMessages', () => {
+  it('把独立 tool 消息的 tool_result 合并回对应 assistant 消息', () => {
+    const assistant = msg('assistant', [
+      { _tag: 'tool_call', id: 'tc1', tool: 'read', input: { path: 'a.ts' } },
+    ])
+    const tool = msg('tool', [
+      { _tag: 'tool_result', id: 'tc1', tool: 'read', output: { _tag: 'success', output: 'x' } },
+    ])
+    const merged = mergeToolMessages([assistant, tool])
+    // tool 消息被并入，只剩一条 assistant
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.role).toBe('assistant')
+    expect(merged[0]?.content).toEqual([
+      { _tag: 'tool_call', id: 'tc1', tool: 'read', input: { path: 'a.ts' } },
+      { _tag: 'tool_result', id: 'tc1', tool: 'read', output: { _tag: 'success', output: 'x' } },
+    ])
+    // 合并后单条 assistant 经 normalizeParts 应得到一张 completed 卡（非两张）
+    const blocks = normalizeParts(merged[0] as Message)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ type: 'tool', status: 'completed' })
+  })
+
+  it('不修改入参数组与原消息 content（浅拷贝）', () => {
+    const assistant = msg('assistant', [
+      { _tag: 'tool_call', id: 'tc1', tool: 'read', input: {} },
+    ])
+    const tool = msg('tool', [
+      { _tag: 'tool_result', id: 'tc1', tool: 'read', output: { _tag: 'success', output: 'x' } },
+    ])
+    const original = [assistant, tool]
+    mergeToolMessages(original)
+    expect(original).toHaveLength(2)
+    expect(assistant.content).toHaveLength(1)
+  })
+
+  it('tool_result 无对应 assistant tool_call 时保留该 tool 消息', () => {
+    const tool = msg('tool', [
+      { _tag: 'tool_result', id: 'orphan', tool: 'read', output: { _tag: 'error', error: 'e' } },
+    ])
+    const merged = mergeToolMessages([tool])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.role).toBe('tool')
+  })
+
+  it('实时形态（assistant 已含 tool_call+tool_result）是 no-op', () => {
+    const assistant = msg('assistant', [
+      { _tag: 'tool_call', id: 'tc1', tool: 'read', input: {} },
+      { _tag: 'tool_result', id: 'tc1', tool: 'read', output: { _tag: 'success', output: 'x' } },
+    ])
+    const merged = mergeToolMessages([assistant])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.content).toHaveLength(2)
+  })
+
+  it('多轮多工具：各自正确合并', () => {
+    const a1 = msg('assistant', [{ _tag: 'tool_call', id: 't1', tool: 'read', input: {} }])
+    const t1 = msg('tool', [
+      { _tag: 'tool_result', id: 't1', tool: 'read', output: { _tag: 'success', output: '1' } },
+    ])
+    const a2 = msg('assistant', [{ _tag: 'tool_call', id: 't2', tool: 'grep', input: {} }])
+    const t2 = msg('tool', [
+      { _tag: 'tool_result', id: 't2', tool: 'grep', output: { _tag: 'success', output: '2' } },
+    ])
+    const merged = mergeToolMessages([a1, t1, a2, t2])
+    expect(merged).toHaveLength(2)
+    expect(merged[0]?.content.some((p) => p._tag === 'tool_result' && p.id === 't1')).toBe(true)
+    expect(merged[1]?.content.some((p) => p._tag === 'tool_result' && p.id === 't2')).toBe(true)
   })
 })

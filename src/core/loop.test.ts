@@ -43,7 +43,8 @@ function mockToolThenTextStream(): AsyncGenerator<StreamChunk> {
 }
 
 // 模型流被截断：工具 arguments 是不完整 JSON → 协议层标记 _parseError 后
-// 正常发出 tool_call_end（而非抛错），agent loop 应把错误反馈给模型并继续。
+// 正常发出 tool_call_end（而非抛错），agent loop 应透明跳过该调用并继续，
+// 让模型下轮重新生成（而非持久化注定被 sanitize 丢弃的 orphan tool 消息）。
 function mockBadJsonToolThenTextStream(): AsyncGenerator<StreamChunk> {
   const turn = mockTurn
   mockTurn++
@@ -198,7 +199,7 @@ describe('agentLoop', () => {
     expect((resultPart as { id: string }).id).toBe('tc1')
   })
 
-  it('工具参数解析失败时反馈错误给模型而非中断会话', async () => {
+  it('工具参数解析失败时透明跳过而非中断会话', async () => {
     const messages = await getMessages(db, session.id)
     const state = makeState(session, messages)
     const deps = makeMockDeps(db, () => mockBadJsonToolThenTextStream())
@@ -208,10 +209,10 @@ describe('agentLoop', () => {
     }
     // 不应中断会话（无 error 事件）
     expect(events.some((e) => e._tag === 'error')).toBe(false)
-    // 应有 tool_call_end，result 为 error（把解析失败反馈给模型）
-    const toolEnd = events.find((e) => e._tag === 'tool_call_end' && e.id === 'tc1')
-    expect(toolEnd).toBeDefined()
-    expect((toolEnd as { result: { _tag: string } }).result._tag).toBe('error')
+    // 解析失败的调用对系统完全透明：不发 tool_call_start（前端无半成品卡）、
+    // 不发 tool_call_end（无 orphan 事件）。模型下轮重新生成即可修正一次性截断。
+    expect(events.some((e) => e._tag === 'tool_call_start' && e.id === 'tc1')).toBe(false)
+    expect(events.some((e) => e._tag === 'tool_call_end' && e.id === 'tc1')).toBe(false)
     // 会话应恢复并完成
     expect(events.some((e) => e._tag === 'text_delta' && e.text === 'Recovered.')).toBe(true)
     expect(events.some((e) => e._tag === 'done')).toBe(true)
@@ -233,10 +234,14 @@ describe('agentLoop', () => {
           ('_parseError' in (p.input as object) || '_raw' in (p.input as object)),
       )
     expect(leaked).toBe(false)
-    // 反馈给模型的错误消息应是可读散文，不含 "[object Object]"。
-    const errMsg = (toolEnd as { result: { error: string } }).result.error
-    expect(errMsg).not.toContain('[object Object]')
-    expect(errMsg).toContain('不是合法 JSON')
+    // 回归：不应持久化无对应 assistant tool_call 的 orphan tool 消息——它会被
+    // context.ts 的 sanitizeToolPairs 在重建上下文时丢弃，属注定无效的冗余 DB 写。
+    const orphanTool = stored.find(
+      (m) =>
+        m.role === 'tool' &&
+        m.content.some((p) => p._tag === 'tool_result' && p.id === 'tc1'),
+    )
+    expect(orphanTool).toBeUndefined()
   })
 
   it('stops on abort', async () => {
