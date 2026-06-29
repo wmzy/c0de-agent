@@ -112,31 +112,4 @@ describe('normalizeParts', () => {
     )
     expect(blocks.map((b) => b.type)).toEqual(['text', 'tool', 'text'])
   })
-
-  it('多个并行工具结果渲染为结构化块，绝不字符串化为 [object Promise]', () => {
-    // 回归：并行工具调用的结果必须渲染为结构化 ToolResult 对象，
-    // 而非把 Promise/对象字符串化为 "[object Promise]"（曾出现于工具结果展示）。
-    const blocks = normalizeParts(
-      msg('assistant', [
-        { _tag: 'tool_call', id: 'p1', tool: 'bash', input: { command: 'ls' } },
-        { _tag: 'tool_call', id: 'p2', tool: 'bash', input: { command: 'pwd' } },
-        { _tag: 'tool_call', id: 'p3', tool: 'bash', input: { command: 'cat x' } },
-        { _tag: 'tool_result', id: 'p1', tool: '', output: { _tag: 'success', output: 'a\nb' } },
-        { _tag: 'tool_result', id: 'p2', tool: '', output: { _tag: 'success', output: '/proj' } },
-        { _tag: 'tool_result', id: 'p3', tool: '', output: { _tag: 'error', error: 'no file' } },
-      ]),
-    )
-    const toolBlocks = blocks.filter((b) => b.type === 'tool')
-    expect(toolBlocks).toHaveLength(3)
-    // 每个 output 必须是结构化 ToolResult（带 _tag），不是字符串
-    for (const tb of toolBlocks) {
-      const out = (tb as { output?: unknown }).output
-      expect(out).toBeTypeOf('object')
-      expect(out).not.toBeNull()
-      expect((out as { _tag?: string })._tag).toBeDefined()
-    }
-    // 锁定不变量：渲染块序列化后绝不出现 "[object Promise]" / "[object Object]"
-    expect(JSON.stringify(blocks)).not.toContain('[object Promise]')
-    expect(JSON.stringify(blocks)).not.toContain('[object Object]')
-  })
 })

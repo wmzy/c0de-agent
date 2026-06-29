@@ -79,6 +79,11 @@ describe('reduceChatEvent', () => {
     expect(s.isStreaming).toBe(false)
   })
 
+  it('llm_detail 是纯通知，状态不变（调用详情由 query 刷新）', () => {
+    const s = reduceChatEvent(base, { _tag: 'llm_detail' })
+    expect(s).toBe(base)
+  })
+
   it('error 转消息', () => {
     const err: AgentError = { _tag: 'provider', message: 'boom', retryable: false }
     const s = reduceChatEvent(base, { _tag: 'error', error: err })

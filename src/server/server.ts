@@ -1,6 +1,8 @@
 // src/server/server.ts
 
+import { existsSync, mkdirSync } from 'node:fs'
 import type { Server as NodeServer } from 'node:http'
+import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
 import { loadConfig } from '../core/config.js'
@@ -68,12 +70,29 @@ function syncRegistryFromConfig(registry: Registry, config: Config): void {
   }
 }
 
+/** 解析 PGLite 持久化数据目录：优先 C0DE_DB_DIR，否则 <cwd>/.c0de/pglite。 */
+function resolveDbDir(cwd: string): string {
+  const envDir = process.env.C0DE_DB_DIR
+  if (envDir && envDir.trim() !== '') return envDir
+  return join(cwd, '.c0de', 'pglite')
+}
+
 /** 初始化 DB + 配置 + 注册表，返回 ServerContext + 清理函数（dev 与独立后端共用）。 */
 async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<BootstrappedServer> {
   const cwd = opts.cwd ?? process.cwd()
 
   const ownsDb = !opts.db
-  const db = opts.db ?? (await createDB({ driver: 'pglite' }))
+  // 持久化 PGLite 数据：默认 <cwd>/.c0de/pglite（与 .c0de/cache、.c0de/config.json 同约定），
+  // 可用 C0DE_DB_DIR 覆盖。此前默认 in-memory，进程重启即丢全部会话/消息/调用详情。
+  // 测试注入 opts.db 时跳过（保持 in-memory 隔离）。
+  let db: DB
+  if (opts.db) {
+    db = opts.db
+  } else {
+    const dataDir = resolveDbDir(cwd)
+    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
+    db = await createDB({ driver: 'pglite', dataDir })
+  }
   await migrateDB(db)
 
   const config = await loadConfig(cwd)

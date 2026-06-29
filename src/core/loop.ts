@@ -294,6 +294,8 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     state.llmDetails.push(detail)
     // 持久化到 sessions.metadata.llmDetails，供会话结束后仍可查看调用详情。
     await appendLLMDetail(deps.db, state.session.id, detail)
+    // 通知前端调用详情已更新，使其刷新调用详情面板（避免需手动刷新页面）。
+    yield { _tag: 'llm_detail' }
 
     if (hadError) {
       state.status = { _tag: 'stopped', reason: 'error' }

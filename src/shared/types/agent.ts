@@ -88,6 +88,8 @@ type AgentEvent =
       input: unknown
     }
   | { _tag: 'error'; error: AgentError }
+  /** 通知前端：本轮 LLM 调用详情已持久化，应刷新调用详情面板。轻量通知，不带 payload。 */
+  | { _tag: 'llm_detail' }
   | { _tag: 'done' }
 
 /**

@@ -126,6 +126,8 @@ describe('agentLoop', () => {
     }
     expect(events.some((e) => e._tag === 'text_delta' && e.text === 'Hello back!')).toBe(true)
     expect(events.some((e) => e._tag === 'done')).toBe(true)
+    // 每轮 LLM 调用后应通知调用详情已持久化
+    expect(events.some((e) => e._tag === 'llm_detail')).toBe(true)
   })
 
   it('emits tool_call events and executes the tool', async () => {

@@ -1,5 +1,6 @@
 import type { AgentError, AgentEvent } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
+import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sendChatMessage } from '../services/chat.js'
 import type { APIError } from '../types/index.js'
@@ -139,6 +140,10 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     }
     case 'usage':
       return { ...state, usage: { input: event.input, output: event.output } }
+    case 'llm_detail':
+      // 纯通知事件：调用详情由 useChat 在 onEvent 中 invalidate query 刷新，
+      // 状态本身不变。
+      return state
     case 'permission_required':
       return {
         ...state,
@@ -171,6 +176,7 @@ function errorToMessage(err: AgentError): string {
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
+  const qc = useQueryClient()
 
   // 切换会话时重置本地流式状态；历史消息由调用方合并加载
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅依赖 sessionId 触发重置
@@ -195,7 +201,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         await sendChatMessage(
           sessionId,
           content,
-          (event) => setState((s) => reduceChatEvent(s, event)),
+          (event) => {
+            setState((s) => reduceChatEvent(s, event))
+            // 收到调用详情通知时刷新调用详情面板，避免需手动刷新页面。
+            if (event._tag === 'llm_detail') {
+              qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
+            }
+          },
           abortRef.current.signal,
           opts,
         )
@@ -204,7 +216,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         setState((s) => ({ ...s, isStreaming: false, error: e.message ?? '发送失败' }))
       }
     },
-    [sessionId],
+    [sessionId, qc],
   )
 
   const abort = useCallback(() => {
