@@ -4,6 +4,7 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { getProject } from '../../project/project.js'
 import { getSession } from '../../session/session.js'
+import { listTools } from '../../tools/registry.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
@@ -68,7 +69,12 @@ function createChatRoute(ctx: ServerContext): Hono {
 
       const provider = (body.provider as string) ?? ctx.config.defaultProvider
       const model = (body.model as string) ?? ctx.config.defaultModel
-      const tools = (body.tools as string[]) ?? ctx.config.tools.enabled
+      // 前端 ToolToggle 全选时不传 tools（undefined），语义为「启用全部注册工具」。
+      // 显式传 [] 才是禁用全部。config.tools.enabled 仅 CLI 模式使用，此处不回退它，
+      // 避免配置里 enabled:[] 把 Web 全选误降级为无工具（LLM 无法 function call）。
+      const tools =
+        (body.tools as string[] | undefined) ??
+        listTools(ctx.toolRegistry, { config: {}, cwd }).map((t) => t.name)
 
       const agentConfig: AgentConfig = {
         provider,

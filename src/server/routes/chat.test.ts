@@ -7,7 +7,8 @@ import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/project.js'
-import { createSession } from '../../session/session.js'
+import { createSession, getLLMDetails } from '../../session/session.js'
+import { DEFAULT_CONFIG } from '../../core/config.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
 import { createChatRoute, resolveAgentCwd } from './chat.js'
@@ -131,6 +132,39 @@ describe('chat route (SSE)', () => {
       body: JSON.stringify({ sessionId, message: 'Hi' }),
     })
     expect(ctx.agentManager.get(sessionId)).toBeUndefined()
+  })
+
+  // 来源：修复 Web 前端 ToolToggle 全选（不带 tools）时，后端回退 config.tools.enabled:[]
+  // 导致 LLM 无工具定义、无法 function call 的 bug。前端全选语义应为「启用全部注册工具」。
+  it('POST / 不带 tools 时启用全部注册工具（不因 config.tools.enabled:[] 降级）', async () => {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const session = await createSession(db, 'Test')
+    // 复现 bug 配置：enabled 为空数组（曾被当作「默认全启用」，实为「无工具」）
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      config: { ...DEFAULT_CONFIG, tools: { enabled: [], disabled: [] } },
+      chatStream: mockChatStream,
+    })
+    const app = createChatRoute(ctx)
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // 不带 tools 字段，模拟前端 ToolToggle 全选状态
+      body: JSON.stringify({ sessionId: session.id, message: 'hi' }),
+    })
+    expect(res.status).toBe(200)
+    // 消费完整 SSE 流，驱动 agentLoop 执行到 appendLLMDetail
+    await res.text()
+
+    // loop 持久化的 llmDetail.tools 即发送给 LLM 的工具定义；修复后应为全部 6 个
+    const details = await getLLMDetails(db, session.id)
+    expect(details).toHaveLength(1)
+    const toolNames = details[0]?.tools.map((t) => t.name).sort()
+    expect(toolNames).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'write'])
   })
 
   it('resolveAgentCwd: returns worktree when session has project', async () => {

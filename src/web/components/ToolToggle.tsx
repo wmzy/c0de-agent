@@ -124,7 +124,7 @@ const empty = css`
 /**
  * 输入区工具开关：列出可用工具，按名勾选；启用的工具随消息发送给后端（白名单）。
  *
- * - `enabled === null`：默认全启用，发送时不传 tools，由后端用 config.tools.enabled。
+ * - `enabled === null`：默认全启用，发送时不传 tools，后端启用全部注册工具。
  * - `enabled` 为 Set：用户显式选择，发送时传 Array.from(set)。
  */
 export function ToolToggle({
