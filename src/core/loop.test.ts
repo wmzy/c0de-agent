@@ -4,7 +4,7 @@ import { migrateDB } from '../db/migrate.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import type { HookRunner } from '../plugins/types.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
-import { getLLMDetails } from '../session/session.js'
+import { getLLMSegments } from '../session/session.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import type { Message, Session } from '../shared/types/message.js'
@@ -136,7 +136,7 @@ function makeState(session: Session, messages: Message[]): AgentState {
     status: { _tag: 'idle' },
     abortController: new AbortController(),
     steeringQueue: [],
-    llmDetails: [],
+    segments: [],
     tokenBudget: {
       total: 100_000,
       reserved: 20_000,
@@ -312,7 +312,7 @@ describe('agentLoop', () => {
     expect(state.steeringQueue).toEqual([])
   })
 
-  it('每轮 LLM 调用后记录 LLMDetail 到 state.llmDetails', async () => {
+  it('同前缀多轮调用归入同一 segment，calls 增量追加', async () => {
     const messages = await getMessages(db, session.id)
     const state = makeState(session, messages)
     // mockToolThenTextStream：turn0 工具调用，turn1 文本回复 → 两轮 LLM 调用
@@ -320,26 +320,25 @@ describe('agentLoop', () => {
     for await (const _ev of agentLoop(state, deps)) {
       // consume
     }
-    expect(state.llmDetails).toHaveLength(2)
-    const d0 = state.llmDetails[0]
-    const d1 = state.llmDetails[1]
-    if (!d0 || !d1) throw new Error('missing llmDetails')
-    // 第一轮：工具调用轮次
-    expect(d0.model).toBe('mock')
-    expect(d0.provider).toBe('mock')
-    expect(d0.systemPrompt).toBeTruthy()
-    expect(d0.messages.length).toBeGreaterThan(0)
-    // state.tools 为空（makeState 未填充），故 LLMDetail.tools 也为空
-    expect(d0.tools).toEqual([])
-    // responseChunks 应包含原始流块
-    expect(d0.responseChunks.some((c) => c._tag === 'tool_call_start')).toBe(true)
-    expect(d0.responseChunks.some((c) => c._tag === 'done')).toBe(true)
-    expect(d0.latency.total).toBeGreaterThanOrEqual(0)
-    // 第二轮：文本回复，responseChunks 含 text
-    expect(d1.responseChunks.some((c) => c._tag === 'text')).toBe(true)
+    // 两轮调用、前缀不变 → 单段两 call
+    expect(state.segments).toHaveLength(1)
+    const seg = state.segments[0]
+    if (!seg) throw new Error('missing segment')
+    expect(seg.trigger).toBe('initial')
+    expect(seg.calls).toHaveLength(2)
+    expect(seg.systemPrompt).toBeTruthy()
+    expect(seg.tools).toEqual([])
+    // 段内 call 不含 messages/systemPrompt（轻量）
+    const c0 = seg.calls[0]!
+    // turn0 为工具调用轮：无文本回复，responseText 为空
+    expect(c0.responseText).toBe('')
+    expect(c0.latency.total).toBeGreaterThanOrEqual(0)
+    const c1 = seg.calls[1]!
+    // turn1 为文本回复轮
+    expect(c1.responseText.length).toBeGreaterThan(0)
   })
 
-  it('LLMDetail 记录 usage 与 thinking（当 stream 提供）', async () => {
+  it('call 记录 usage 与 thinking（当 stream 提供）', async () => {
     const messages = await getMessages(db, session.id)
     const state = makeState(session, messages)
     async function* streamWithUsage(): AsyncGenerator<StreamChunk> {
@@ -352,11 +351,32 @@ describe('agentLoop', () => {
     for await (const _ev of agentLoop(state, deps)) {
       // consume
     }
-    expect(state.llmDetails).toHaveLength(1)
-    const d = state.llmDetails[0]
-    if (!d) throw new Error('missing llmDetail')
-    expect(d.usage).toEqual({ input: 10, output: 5, cacheRead: 2 })
-    expect(d.thinking).toBe('let me think')
+    expect(state.segments).toHaveLength(1)
+    const seg = state.segments[0]
+    const call = seg?.calls[0]
+    if (!call) throw new Error('missing call')
+    expect(call.usage).toEqual({ input: 10, output: 5, cacheRead: 2 })
+    expect(call.thinking).toBe('let me think')
+    expect(call.responseText).toBe('answer')
+  })
+
+  it('中途 model 变化 → 开新段 trigger=model_change', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockTextStream('hi'))
+    // 先跑一轮建立首段
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    expect(state.segments).toHaveLength(1)
+    // 切换模型后再跑一轮（agentLoop 可重复进入：重置 status 并从 DB 重读消息）
+    state.config.model = 'other-model'
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    expect(state.segments).toHaveLength(2)
+    expect(state.segments[1]!.trigger).toBe('model_change')
+    expect(state.segments[1]!.model).toBe('other-model')
   })
 })
 
@@ -602,7 +622,7 @@ describe('agentLoop tool-mode metrics (spec §16.5)', () => {
     for await (const _ev of agentLoop(state, deps)) {
       // consume
     }
-    const details = await getLLMDetails(db, session.id)
+    const details = await getLLMSegments(db, session.id)
     expect(details[0]?.systemPrompt).toContain('hashline')
   })
 
@@ -618,7 +638,7 @@ describe('agentLoop tool-mode metrics (spec §16.5)', () => {
     for await (const _ev of agentLoop(state, deps)) {
       // consume
     }
-    const details = await getLLMDetails(db, session.id)
+    const details = await getLLMSegments(db, session.id)
     expect(details[0]?.systemPrompt).not.toContain('Tool-mode preference')
   })
 })
