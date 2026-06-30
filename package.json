@@ -13,9 +13,9 @@
     "test:watch": "vitest",
     "lint": "biome check src/",
     "format": "biome format --write src/",
-    "dev": "vite --config src/web/vite.config.ts",
-    "build:web": "vite build --config src/web/vite.config.ts",
-    "preview:web": "vite preview --config src/web/vite.config.ts",
+    "dev": "vite",
+    "build:web": "vite build",
+    "preview:web": "vite preview",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio"
   },

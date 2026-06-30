@@ -20,7 +20,7 @@ function honoApiPlugin(): Plugin {
           return
         }
         try {
-          const dev = await server.ssrLoadModule(path.resolve(__dirname, '../server/dev.ts'))
+          const dev = await server.ssrLoadModule(path.resolve(__dirname, 'src/server/dev.ts'))
           const app = await dev.getDevApp()
           await dev.handleApiRequest(app, req, res)
         } catch (err) {
@@ -37,10 +37,9 @@ function honoApiPlugin(): Plugin {
 }
 
 export default defineConfig({
-  root: __dirname,
   resolve: {
     alias: {
-      '@shared': path.resolve(__dirname, '../shared'),
+      '@shared': path.resolve(__dirname, 'src/shared'),
     },
   },
   plugins: [
@@ -102,7 +101,7 @@ export default defineConfig({
     noExternal: ['hono'],
   },
   build: {
-    outDir: path.resolve(__dirname, '../../dist-web'),
+    outDir: path.resolve(__dirname, 'dist-web'),
     emptyOutDir: true,
     rollupOptions: {
       output: {
