@@ -1,4 +1,5 @@
 import { appendMessage, getMessages } from '../session/message.js'
+import { getLLMSegments } from '../session/session.js'
 import { generateId } from '../shared/index.js'
 import type { AgentConfig, AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
 import type { MessageContent, Session } from '../shared/types/message.js'
@@ -15,6 +16,9 @@ async function createAgent(
 ): Promise<AgentState> {
   const messages = await getMessages(deps.db, session.id)
   const used = estimateBudget(messages)
+  // 加载会话已有分段：每次 /api/chat 创建新 agent 时，从 DB 恢复完整段历史，
+  // 使本轮新增的 segment/call 追加到既有历史而非覆盖（saveLLMSegments 为全量写回）。
+  const segments = await getLLMSegments(deps.db, session.id)
 
   const allTools = listTools(deps.toolRegistry, { config: {}, cwd: deps.cwd })
   const tools = allTools.filter((t) => config.tools.includes(t.name))
@@ -28,7 +32,7 @@ async function createAgent(
     status: { _tag: 'idle' },
     abortController: new AbortController(),
     steeringQueue: [],
-    llmDetails: [],
+    segments,
     tokenBudget: {
       total: 128_000,
       reserved: 25_600,

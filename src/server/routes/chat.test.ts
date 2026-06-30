@@ -139,6 +139,58 @@ describe('chat route (SSE)', () => {
     expect(ctx.agentManager.get(sessionId)).toBeUndefined()
   })
 
+  it('POST / 模型变更且未确认 → 409 SEGMENT_BREAK_REQUIRED（含 activeSegment）', async () => {
+    const { app, sessionId } = await setup()
+    // 第一条消息建立首段（默认模型）
+    const first = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(first.status).toBe(200)
+    await first.text() // 消费流，驱动 saveLLMSegments
+
+    // 第二条消息切换模型、不带 confirmSegmentBreak → 409
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'more', model: 'other-model' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as {
+      error: { code: string; details?: { activeSegment?: { model?: string } } }
+    }
+    expect(body.error.code).toBe('SEGMENT_BREAK_REQUIRED')
+    expect(body.error.details?.activeSegment?.model).toBeTruthy()
+  })
+
+  it('POST / 模型变更且带 confirmSegmentBreak → 200 开新段', async () => {
+    const { app, ctx, sessionId } = await setup()
+    const first = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    await first.text()
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        message: 'more',
+        model: 'other-model',
+        confirmSegmentBreak: true,
+      }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+    const segs = await getLLMSegments(ctx.db, sessionId)
+    expect(segs).toHaveLength(2)
+    expect(segs[1]?.model).toBe('other-model')
+    expect(segs[1]?.trigger).toBe('model_change')
+  })
+
   // 来源：修复 Web 前端 ToolToggle 全选（不带 tools）时，后端回退 config.tools.enabled:[]
   // 导致 LLM 无工具定义、无法 function call 的 bug。前端全选语义应为「启用全部注册工具」。
   it('POST / 不带 tools 时启用全部注册工具（不因 config.tools.enabled:[] 降级）', async () => {
