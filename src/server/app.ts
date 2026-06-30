@@ -13,6 +13,7 @@ import { createConfigRoute } from './routes/config.js'
 import { createFilesRoute } from './routes/files.js'
 import { createFilesystemRoute } from './routes/filesystem.js'
 import { createHealthRoute } from './routes/health.js'
+import { createPermissionsRoute } from './routes/permissions.js'
 import { createProjectRoute } from './routes/project.js'
 import { createProviderRoute } from './routes/provider.js'
 import { createSessionRoute } from './routes/session.js'
@@ -46,6 +47,7 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/tools', createToolRoute(ctx))
   app.route('/api/update', createUpdateRoute(ctx))
   app.route('/api/config', createConfigRoute(ctx))
+  app.route('/api/permissions', createPermissionsRoute(ctx))
   app.route('/api/files', createFilesRoute(ctx))
 
   // 根路径
@@ -65,6 +67,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/tools',
         '/api/update',
         '/api/config',
+        '/api/permissions',
         '/api/files',
       ],
     }),

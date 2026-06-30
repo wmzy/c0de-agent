@@ -2,11 +2,19 @@ import type { Message } from '@shared/types/message.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { permissionAPI } from '../services/permission.js'
 import { Chat } from './Chat.js'
 
 // Composer 内部 useCommands 会请求 /api/commands；mock 掉避免真实网络调用。
 vi.mock('../services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
+}))
+
+vi.mock('../services/permission.js', () => ({
+  permissionAPI: {
+    getMode: vi.fn().mockResolvedValue({ mode: 'default' }),
+    setMode: vi.fn().mockResolvedValue({ mode: 'auto' }),
+  },
 }))
 
 afterEach(() => cleanup())
@@ -67,5 +75,21 @@ describe('Chat pause/resume/steer controls', () => {
     fireEvent.click(screen.getByTestId('send'))
     expect(h.onSteer).toHaveBeenCalledWith('be concise')
     expect(h.onSend).not.toHaveBeenCalled()
+  })
+})
+
+describe('Chat permission mode toggle', () => {
+  it('默认渲染未勾选的自动授权开关，无警告', () => {
+    renderChat()
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    expect(screen.queryByText(/自动执行所有工具/)).toBeNull()
+  })
+
+  it('点击开关切换到 auto：调用 setMode 并显示警告', () => {
+    renderChat()
+    fireEvent.click(screen.getByTestId('permission-mode-toggle'))
+    expect(vi.mocked(permissionAPI.setMode)).toHaveBeenCalledWith('auto')
+    expect(screen.getByText(/自动执行所有工具/)).toBeTruthy()
   })
 })

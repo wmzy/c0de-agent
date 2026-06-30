@@ -127,6 +127,7 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
     pluginRegistry,
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
+    permissionMode: 'default',
     cwd,
   }
 

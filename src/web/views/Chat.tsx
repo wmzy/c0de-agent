@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { StreamingIndicator } from '../components/StreamingIndicator.js'
 import { MessageItem } from '../components/session/MessageItem.js'
 import { Composer, type SendPayload } from '../composer/Composer.js'
+import { type PermissionMode, permissionAPI } from '../services/permission.js'
 import { formatTokenCount } from '../utils/format.js'
 
 export type { SendPayload }
@@ -89,6 +90,28 @@ const steerRow = css`
   }
 `
 
+const modeBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: 12px;
+`
+
+const modeToggle = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+`
+
+const modeWarn = css`
+  color: var(--danger, #e5484d);
+`
+
 export function Chat({
   messages,
   isStreaming,
@@ -124,6 +147,20 @@ export function Chat({
     } else {
       onSend(payload)
     }
+  }
+
+  // 全局授权模式（YOLO 自动授权）：运行时可切换，进程内不持久化。
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
+  useEffect(() => {
+    permissionAPI
+      .getMode()
+      .then((res) => setPermissionMode(res.mode))
+      .catch(() => {})
+  }, [])
+  const togglePermissionMode = () => {
+    const next: PermissionMode = permissionMode === 'auto' ? 'default' : 'auto'
+    setPermissionMode(next)
+    permissionAPI.setMode(next).catch(() => setPermissionMode(permissionMode))
   }
 
   return (
@@ -175,6 +212,20 @@ export function Chat({
         >
           {steerMode ? '退出注入' : '注入 steering'}
         </button>
+      </div>
+      <div className={modeBar} data-testid="permission-mode-bar">
+        <label className={modeToggle}>
+          <input
+            type="checkbox"
+            checked={permissionMode === 'auto'}
+            onChange={togglePermissionMode}
+            data-testid="permission-mode-toggle"
+          />
+          自动授权
+        </label>
+        {permissionMode === 'auto' && (
+          <span className={modeWarn}>将自动执行所有工具（含 bash），无需确认</span>
+        )}
       </div>
       <Composer
         projectId={projectId}

@@ -39,6 +39,7 @@ function makeChecker(
   opts: {
     alwaysAllow?: string[]
     alwaysDeny?: string[]
+    getMode?: () => 'default' | 'auto'
     onPermissionRequired?: (req: {
       toolCallId: string
       tool: string
@@ -153,5 +154,54 @@ describe('InteractivePermissionChecker', () => {
     const result = await checkPromise
     expect(result._tag).toBe('allow')
     expect(store.size()).toBe(0)
+  })
+
+  it('getMode=auto 时 ask 工具直接 allow，不阻塞', async () => {
+    let called = false
+    const checker = makeChecker({
+      getMode: () => 'auto',
+      onPermissionRequired: () => {
+        called = true
+      },
+    })
+    // auto 模式应同步放行；若误走阻塞路径，超时竞态会让用例明确失败而非挂起
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('check 未在 auto 模式立即返回')), 1000),
+    )
+    const result = await Promise.race([checker.check(askTool, {}, ctx), timeout])
+    expect(result._tag).toBe('allow')
+    expect(called).toBe(false)
+    expect(checker.pendingCount()).toBe(0)
+  })
+
+  it('getMode=auto 时 alwaysDeny 仍拒绝（安全边界）', async () => {
+    const checker = makeChecker({
+      getMode: () => 'auto',
+      alwaysDeny: ['write'],
+    })
+    const result = await checker.check(askTool, {}, ctx)
+    expect(result._tag).toBe('deny')
+  })
+
+  it('getMode=auto 时 deny 权限工具仍拒绝', async () => {
+    const checker = makeChecker({ getMode: () => 'auto' })
+    const result = await checker.check(denyTool, {}, ctx)
+    expect(result._tag).toBe('deny')
+  })
+
+  it('getMode=default 时 ask 行为不变（仍阻塞确认）', async () => {
+    let captured: string | null = null
+    const checker = makeChecker({
+      getMode: () => 'default',
+      onPermissionRequired: (req) => {
+        captured = req.toolCallId
+      },
+    })
+    const checkPromise = checker.check(askTool, {}, ctx)
+    await Promise.resolve()
+    expect(captured).not.toBeNull()
+    checker.confirm(captured as unknown as string, true)
+    const result = await checkPromise
+    expect(result._tag).toBe('allow')
   })
 })

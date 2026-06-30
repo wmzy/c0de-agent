@@ -133,6 +133,7 @@ function createChatRoute(ctx: ServerContext): Hono {
     return streamSSE(c, async (stream) => {
       // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认
       const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
+        getMode: () => ctx.permissionMode,
         onPermissionRequired: async (req) => {
           await stream.writeSSE({
             event: 'permission_required',

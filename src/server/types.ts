@@ -25,6 +25,8 @@ type ServerContext = {
   agentManager: AgentManager
   /** 全局权限确认 store（单例），独立于 agent run 生命周期。 */
   permissionStore: PermissionStore
+  /** 全局授权模式（可变，运行时切换）：'default' 逐个确认；'auto' 自动放行 ask 工具（YOLO）。不持久化，重启回 default。 */
+  permissionMode: 'default' | 'auto'
   cwd: string
   /** 测试注入：覆盖 LLM chat stream。生产环境为 undefined。 */
   chatStream?: typeof chatStreamFn
