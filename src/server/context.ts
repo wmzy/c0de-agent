@@ -1,7 +1,8 @@
 // src/server/context.ts
-import { DEFAULT_CONFIG } from '../core/config.js'
+
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import type { AgentRegistry } from '../core/agents/types.js'
+import { DEFAULT_CONFIG } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import type { Registry } from '../llm/registry.js'
 import { createHookRunner, createPluginRegistry } from '../plugins/index.js'
@@ -28,11 +29,13 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
   // 生产启动走 bootstrapServerContext → initPlugins（激活 builtin + 发现外部插件）。
   const hookRunner = createHookRunner()
   // Agent 注册表：测试可注入；默认含 4 个内置 agent（general/coder/researcher/reviewer）。
-  const agentRegistry = opts.agentRegistry ?? (() => {
-    const reg = createAgentRegistry()
-    for (const def of BUILTIN_AGENTS) reg.register(def)
-    return reg
-  })()
+  const agentRegistry =
+    opts.agentRegistry ??
+    (() => {
+      const reg = createAgentRegistry()
+      for (const def of BUILTIN_AGENTS) reg.register(def)
+      return reg
+    })()
   return {
     db: opts.db,
     config: opts.config ?? DEFAULT_CONFIG,

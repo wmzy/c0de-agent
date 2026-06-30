@@ -29,7 +29,12 @@ describe('AgentRegistry', () => {
     const reg = createAgentRegistry()
     reg.register(def('coder'))
     reg.register(def('researcher'))
-    expect(reg.list().map((d) => d.name).sort()).toEqual(['coder', 'researcher'])
+    expect(
+      reg
+        .list()
+        .map((d) => d.name)
+        .sort(),
+    ).toEqual(['coder', 'researcher'])
   })
 
   it('list(mode) filters by mode', () => {
@@ -37,8 +42,18 @@ describe('AgentRegistry', () => {
     reg.register(def('coder', { mode: 'subagent' }))
     reg.register(def('main', { mode: 'primary' }))
     reg.register(def('general', { mode: 'all' }))
-    expect(reg.list('subagent').map((d) => d.name).sort()).toEqual(['coder', 'general'])
-    expect(reg.list('primary').map((d) => d.name).sort()).toEqual(['general', 'main'])
+    expect(
+      reg
+        .list('subagent')
+        .map((d) => d.name)
+        .sort(),
+    ).toEqual(['coder', 'general'])
+    expect(
+      reg
+        .list('primary')
+        .map((d) => d.name)
+        .sort(),
+    ).toEqual(['general', 'main'])
   })
 
   it('later registration overwrites same name', () => {

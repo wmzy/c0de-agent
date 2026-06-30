@@ -45,5 +45,5 @@ async function mapWithConcurrencyLimit<T, R>(
   return { results, aborted: signal?.aborted ?? false }
 }
 
-export { mapWithConcurrencyLimit }
 export type { ParallelResult }
+export { mapWithConcurrencyLimit }

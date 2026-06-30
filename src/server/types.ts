@@ -1,6 +1,7 @@
 // src/server/types.ts
-import type { Config } from '../core/config.js'
+
 import type { AgentRegistry } from '../core/agents/types.js'
+import type { Config } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import type { chatStream as chatStreamFn } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'

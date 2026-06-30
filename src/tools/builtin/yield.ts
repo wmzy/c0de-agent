@@ -16,7 +16,8 @@ export const yieldTool: ToolDef = {
     properties: {
       data: {
         type: 'object',
-        description: 'Your structured result. Must match the outputSchema if the agent declared one.',
+        description:
+          'Your structured result. Must match the outputSchema if the agent declared one.',
       },
       type: {
         type: 'string',

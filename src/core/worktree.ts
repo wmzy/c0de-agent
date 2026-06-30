@@ -84,5 +84,5 @@ function removeWorktree(repoRoot: string, worktreeDir: string): void {
   }
 }
 
-export { applyPatchToParent, captureBaseline, captureDeltaPatch, createWorktree, removeWorktree }
 export type { RepoBaseline }
+export { applyPatchToParent, captureBaseline, captureDeltaPatch, createWorktree, removeWorktree }

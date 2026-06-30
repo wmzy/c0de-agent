@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -78,14 +78,8 @@ describe('loadAgents', () => {
   it('加载项目 agents 目录下所有 .md', async () => {
     const agentsDir = join(tmpDir, '.c0de', 'agents')
     await mkdir(agentsDir, { recursive: true })
-    await writeFile(
-      join(agentsDir, 'a.md'),
-      '---\nname: a\ndescription: agent a\n---\nprompt a',
-    )
-    await writeFile(
-      join(agentsDir, 'b.md'),
-      '---\nname: b\ndescription: agent b\n---\nprompt b',
-    )
+    await writeFile(join(agentsDir, 'a.md'), '---\nname: a\ndescription: agent a\n---\nprompt a')
+    await writeFile(join(agentsDir, 'b.md'), '---\nname: b\ndescription: agent b\n---\nprompt b')
     const defs = await loadAgents(tmpDir)
     expect(defs.map((d) => d.name).sort()).toEqual(['a', 'b'])
   })

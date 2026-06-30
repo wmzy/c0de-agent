@@ -128,7 +128,12 @@ describe('taskTool subagent_type + batch', () => {
     expect(runSubAgent).toHaveBeenCalledTimes(2)
     expect(runSubAgent).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ agentType: 'coder', prompt: 'do A', role: 'api', context: 'refactor X' }),
+      expect.objectContaining({
+        agentType: 'coder',
+        prompt: 'do A',
+        role: 'api',
+        context: 'refactor X',
+      }),
     )
     expect(result._tag).toBe('success')
   })

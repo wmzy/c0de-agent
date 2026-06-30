@@ -1,9 +1,4 @@
-import type {
-  SubAgentRequest,
-  TaskItem,
-  ToolDef,
-  ToolResult,
-} from '../../shared/types/tool.js'
+import type { SubAgentRequest, TaskItem, ToolDef, ToolResult } from '../../shared/types/tool.js'
 
 /** 单任务输入。 */
 type SingleTaskInput = {

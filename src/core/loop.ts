@@ -27,6 +27,7 @@ import { drainSteering } from './steering.js'
 import type { CollectedToolCall } from './tool-exec.js'
 import { executeToolCalls } from './tool-exec.js'
 import type { AgentDependencies } from './types.js'
+import type { RepoBaseline } from './worktree.js'
 import {
   applyPatchToParent,
   captureBaseline,
@@ -34,7 +35,6 @@ import {
   createWorktree,
   removeWorktree,
 } from './worktree.js'
-import type { RepoBaseline } from './worktree.js'
 
 type LoopDeps = AgentDependencies & {
   chatStream?: typeof llmChatStream
@@ -84,7 +84,8 @@ export async function runSubAgent(
   }
 
   const title =
-    request.description?.trim() || `Sub-agent (${request.agentType}): ${request.prompt.slice(0, 60)}`
+    request.description?.trim() ||
+    `Sub-agent (${request.agentType}): ${request.prompt.slice(0, 60)}`
   const childId = generateId()
   const yielded: unknown[] = []
 
@@ -173,7 +174,11 @@ export async function runSubAgent(
     const text: string[] = []
     let errMsg: string | null = null
     try {
-      for await (const ev of runAgent(childState, [{ _tag: 'text', text: childPrompt }], childDeps)) {
+      for await (const ev of runAgent(
+        childState,
+        [{ _tag: 'text', text: childPrompt }],
+        childDeps,
+      )) {
         if (ev._tag === 'text_delta') {
           text.push(ev.text)
         } else if (ev._tag === 'error') {
@@ -209,8 +214,8 @@ export async function runSubAgent(
       ...(success ? { output: text.join('') } : {}),
     })
 
-    if (!success) {
-      return { _tag: 'error', error: errMsg!, sessionId: childSession.id }
+    if (errMsg !== null) {
+      return { _tag: 'error', error: errMsg, sessionId: childSession.id }
     }
     const data = yielded.length > 0 ? (yielded.length === 1 ? yielded[0] : yielded) : undefined
     return {

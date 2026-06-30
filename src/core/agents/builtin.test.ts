@@ -23,9 +23,10 @@ describe('BUILTIN_AGENTS', () => {
   })
 
   it('researcher 是只读（不含 write/edit/bash）', () => {
-    const researcher = BUILTIN_AGENTS.find((d) => d.name === 'researcher')!
-    expect(researcher.tools).toBeDefined()
-    const tools = researcher.tools!
+    const researcher = BUILTIN_AGENTS.find((d) => d.name === 'researcher')
+    expect(researcher).toBeDefined()
+    const tools = researcher?.tools
+    expect(tools).toBeDefined()
     expect(tools).toContain('grep')
     expect(tools).toContain('read')
     expect(tools).not.toContain('write')
@@ -33,8 +34,9 @@ describe('BUILTIN_AGENTS', () => {
   })
 
   it('general 允许递归 task（maxRecursion >= 1）', () => {
-    const general = BUILTIN_AGENTS.find((d) => d.name === 'general')!
-    expect(general.maxRecursion ?? 0).toBeGreaterThanOrEqual(1)
+    const general = BUILTIN_AGENTS.find((d) => d.name === 'general')
+    expect(general).toBeDefined()
+    expect(general?.maxRecursion ?? 0).toBeGreaterThanOrEqual(1)
   })
 
   it('coder/researcher/reviewer 默认禁止递归 task（maxRecursion 0 或缺省）', () => {
