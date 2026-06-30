@@ -41,6 +41,7 @@ function useComposer({
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
   const [showPasteConfirm, setShowPasteConfirm] = useState<{ text: string } | null>(null)
+  const [isEmpty, setIsEmpty] = useState(true)
 
   // 历史回溯导航状态
   const indexRef = useRef(-1)
@@ -66,6 +67,7 @@ function useComposer({
     if (!editorRef.current) return
     const prompt = parseFromDOM(editorRef.current)
     promptRef.current = prompt
+    setIsEmpty(isPromptEmpty(prompt))
     resetHistory()
 
     const text = promptToText(prompt)
@@ -92,6 +94,7 @@ function useComposer({
     const cursor = currentCursor(editorRef.current)
     reconcile(editorRef.current, prompt, prompt === DEFAULT_PROMPT ? 0 : cursor)
     promptRef.current = prompt
+    setIsEmpty(isPromptEmpty(prompt))
   }, [])
 
   // popover 选中插入命令（替换整行 /xxx）
@@ -277,6 +280,7 @@ function useComposer({
     insertFile,
     send,
     setPopover,
+    isEmpty,
   }
 }
 
