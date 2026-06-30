@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { sessionAPI } from '../services/session.js'
-import { LLMDetailPanel } from './LLMDetail.js'
+import { CallRow, SegmentHeader } from './LLMDetail.js'
 
 const wrap = css`
   border-bottom: 1px solid var(--border);
@@ -42,8 +42,8 @@ const errStatus = css`
 `
 
 /**
- * 会话级 LLM 调用详情视图：拉取 `/llm-details` 并按需展开，展示每次 LLM 调用的
- * 完整上下文（system prompt / messages / tools / response）。
+ * 会话级 LLM 调用分段视图：拉取 `/llm-details`（返回 LLMSegment[]）并按需展开，
+ * 按段折叠渲染——段首快照（system prompt / tools）存一次，段内 calls 轻量展示。
  */
 export function LLMDetailsView({ sessionId }: { sessionId: string }) {
   const [open, setOpen] = useState(false)
@@ -53,7 +53,8 @@ export function LLMDetailsView({ sessionId }: { sessionId: string }) {
     staleTime: 10_000,
   })
 
-  const details = data ?? []
+  const segments = data ?? []
+  const totalCalls = segments.reduce((sum, seg) => sum + seg.calls.length, 0)
 
   return (
     <div className={wrap} data-testid="llm-details-view">
@@ -65,28 +66,25 @@ export function LLMDetailsView({ sessionId }: { sessionId: string }) {
         aria-expanded={open}
       >
         <span>{open ? '▾' : '▸'}</span>
-        <span>调用详情 ({details.length})</span>
+        <span>调用详情 ({totalCalls})</span>
       </button>
       {open && (
         <div className={list} data-testid="llm-details-list">
           {isLoading && <span className={status}>加载中…</span>}
           {!isLoading && error && <span className={errStatus}>加载失败</span>}
-          {!isLoading && !error && details.length === 0 && (
+          {!isLoading && !error && totalCalls === 0 && (
             <span className={status}>暂无 LLM 调用记录</span>
           )}
           {!isLoading &&
             !error &&
-            [...details].reverse().map((d, i) => {
-              const n = details.length - i
-              return (
-                <div key={d.id}>
-                  <div data-testid="llm-detail-header">
-                    调用 #{n} · {d.model} · {new Date(d.timestamp).toLocaleString()}
-                  </div>
-                  <LLMDetailPanel detail={d} />
-                </div>
-              )
-            })}
+            segments.map((seg) => (
+              <div key={seg.id}>
+                <SegmentHeader segment={seg} />
+                {[...seg.calls].reverse().map((call, i) => (
+                  <CallRow key={call.id} call={call} index={seg.calls.length - i} />
+                ))}
+              </div>
+            ))}
         </div>
       )}
     </div>
