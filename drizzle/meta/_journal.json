@@ -22,6 +22,13 @@
       "when": 1782755591801,
       "tag": "0002_amusing_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782842650929,
+      "tag": "0003_regular_purifiers",
+      "breakpoints": true
     }
   ]
 }

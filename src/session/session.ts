@@ -17,16 +17,23 @@ export function rowToSession(row: typeof sessions.$inferSelect): Session {
     projectId: row.projectId,
     branchPoint: row.branchPoint,
     metadata: (row.metadata ?? {}) as SessionMetadata,
+    agentType: row.agentType ?? null,
+    worktreePath: row.worktreePath ?? null,
     createdAt: created,
     updatedAt: updated,
   }
 }
 
 /** Create a new root session. */
-async function createSession(handle: DB, title: string, projectId?: string): Promise<Session> {
+async function createSession(
+  handle: DB,
+  title: string,
+  projectId?: string,
+  agentType?: string,
+): Promise<Session> {
   const [row] = await handle.db
     .insert(sessions)
-    .values({ title, projectId: projectId ?? null })
+    .values({ title, projectId: projectId ?? null, agentType: agentType ?? null })
     .returning()
   if (!row) throw new Error('Failed to insert session')
   return rowToSession(row)

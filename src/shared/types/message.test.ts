@@ -84,6 +84,8 @@ describe('Session', () => {
       projectId: null,
       branchPoint: null,
       metadata: {},
+      agentType: null,
+      worktreePath: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
@@ -98,6 +100,8 @@ describe('Session', () => {
       projectId: null,
       branchPoint: 5,
       metadata: { mainThreadId: 'sess-1' },
+      agentType: null,
+      worktreePath: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }

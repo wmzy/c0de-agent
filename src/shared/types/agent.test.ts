@@ -140,6 +140,8 @@ describe('AgentState', () => {
         projectId: null,
         branchPoint: null,
         metadata: {},
+        agentType: null,
+        worktreePath: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },

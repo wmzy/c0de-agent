@@ -11,6 +11,8 @@ function makeState(): AgentState {
     projectId: null,
     branchPoint: null,
     metadata: {},
+    agentType: null,
+    worktreePath: null,
     createdAt: 0,
     updatedAt: 0,
   }

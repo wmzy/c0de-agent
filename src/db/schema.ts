@@ -41,6 +41,8 @@ export const sessions = pgTable(
     }),
     branchPoint: integer('branch_point'),
     metadata: jsonb('metadata').notNull().default({}),
+    agentType: text('agent_type'),
+    worktreePath: text('worktree_path'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

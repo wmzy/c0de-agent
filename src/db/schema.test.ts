@@ -100,6 +100,8 @@ describe('type inference', () => {
       projectId: null,
       branchPoint: null,
       metadata: {},
+      agentType: null,
+      worktreePath: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     }
@@ -156,5 +158,13 @@ describe('type inference', () => {
       createdAt: new Date(),
     }
     expect(_row.filePath).toBe('src/main.ts')
+  })
+})
+
+describe('sessions agent columns', () => {
+  it('sessions 表含 agentType 和 worktreePath 列', () => {
+    // sessions 是 drizzle table 对象，列名通过 Object.keys 访问
+    expect(sessions.agentType).toBeDefined()
+    expect(sessions.worktreePath).toBeDefined()
   })
 })

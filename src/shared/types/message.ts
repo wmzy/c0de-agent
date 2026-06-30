@@ -38,6 +38,10 @@ type Session = {
   projectId: string | null
   branchPoint: number | null
   metadata: SessionMetadata
+  /** 子 session 用的 agent 类型名（null=主 session）。 */
+  agentType: string | null
+  /** 隔离 worktree 路径（null=共享父 cwd）。 */
+  worktreePath: string | null
   createdAt: number
   updatedAt: number
 }
