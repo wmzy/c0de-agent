@@ -1,5 +1,5 @@
 import type { DB } from '../db/client.js'
-import type { ChatMessage } from '../shared/types/llm.js'
+import type { ChatMessage, ContentPart } from '../shared/types/llm.js'
 import type { Message } from '../shared/types/message.js'
 import { getEntries } from './message.js'
 import { getFileSnapshots } from './snapshot.js'
@@ -67,7 +67,22 @@ function messageToChatMessage(msg: Message): ChatMessage {
     }))
 
   const toolResultPart = msg.content.find((p) => p._tag === 'tool_result')
+  const imageParts = msg.content.filter((p) => p._tag === 'image')
 
+  // 含图片：构建多模态 content 数组（text 在前，image 在后）
+  if (imageParts.length > 0) {
+    const parts: ContentPart[] = []
+    if (textParts) parts.push({ type: 'text', text: textParts })
+    for (const img of imageParts) {
+      if (img._tag !== 'image') continue
+      parts.push({ type: 'image', mediaType: img.mediaType, data: img.data })
+    }
+    const multimodal: ChatMessage = { role: msg.role, content: parts }
+    if (toolCalls.length > 0) multimodal.toolCalls = toolCalls
+    return multimodal
+  }
+
+  // 无图片：保持原纯字符串逻辑（零回归）
   const chat: ChatMessage = {
     role: msg.role,
     content: textParts || (toolResultPart ? JSON.stringify(toolResultPart.output) : ''),

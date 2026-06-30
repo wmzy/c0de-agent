@@ -271,3 +271,43 @@ describe('getSessionContext', () => {
     expect(snapshots).toHaveLength(1)
   })
 })
+
+describe('messageToChatMessage 多模态', () => {
+  const base = (content: Message['content']): Message => ({
+    id: 'm1',
+    sessionId: 's',
+    role: 'user',
+    content,
+    tokenCount: 0,
+    createdAt: 1,
+  })
+
+  it('无 image 时返回纯字符串 content（原路径）', () => {
+    const chat = messageToChatMessage(base([{ _tag: 'text', text: 'hi' }]))
+    expect(typeof chat.content).toBe('string')
+    expect(chat.content).toBe('hi')
+  })
+
+  it('含 image 时返回 ContentPart 数组', () => {
+    const chat = messageToChatMessage(
+      base([
+        { _tag: 'text', text: '看这张图' },
+        { _tag: 'image', mediaType: 'image/png', data: 'BASE64' },
+      ]),
+    )
+    expect(Array.isArray(chat.content)).toBe(true)
+    const parts = chat.content as Array<{ type: string; [k: string]: unknown }>
+    expect(parts).toHaveLength(2)
+    expect(parts[0]).toEqual({ type: 'text', text: '看这张图' })
+    expect(parts[1]).toEqual({ type: 'image', mediaType: 'image/png', data: 'BASE64' })
+  })
+
+  it('仅 image 无 text 时数组只含 image part', () => {
+    const chat = messageToChatMessage(
+      base([{ _tag: 'image', mediaType: 'image/png', data: 'X' }]),
+    )
+    const parts = chat.content as Array<{ type: string }>
+    expect(parts).toHaveLength(1)
+    expect(parts[0]?.type).toBe('image')
+  })
+})
