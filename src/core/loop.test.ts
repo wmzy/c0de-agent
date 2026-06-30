@@ -14,7 +14,7 @@ import { autoAllowChecker } from '../tools/permission.js'
 import { BUILTIN_AGENTS, createAgentRegistry } from './agents/index.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
-import { agentLoop } from './loop.js'
+import { agentLoop, runSubAgent } from './loop.js'
 import { getToolMetrics, recordToolMetrics } from './metrics.js'
 
 function mockTextStream(text: string): AsyncGenerator<StreamChunk> {
@@ -522,6 +522,33 @@ describe('agentLoop task delegation (spec §12.3)', () => {
     const child = all.find((s) => s.title === 'Test writer')
     expect(child).toBeTruthy()
     expect(child?.id).not.toBe(session.id)
+  })
+})
+
+describe('runSubAgent background', () => {
+  it('background 模式立即返回 running，不阻塞', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockTextStream('child output'))
+    const result = await runSubAgent(deps, state, {
+      agentType: 'general',
+      prompt: 'p',
+      background: true,
+    })
+    expect(result._tag).toBe('running')
+    if (result._tag === 'running') {
+      expect(result.sessionId).toBeTruthy()
+      expect(result.jobId).toBe(result.sessionId)
+    }
+  })
+
+  it('未知 agentType 返回 error', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockTextStream('x'))
+    const result = await runSubAgent(deps, state, { agentType: 'nonexistent', prompt: 'p' })
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') expect(result.error).toMatch(/Unknown agent type/i)
   })
 })
 

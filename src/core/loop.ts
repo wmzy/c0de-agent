@@ -27,6 +27,14 @@ import { drainSteering } from './steering.js'
 import type { CollectedToolCall } from './tool-exec.js'
 import { executeToolCalls } from './tool-exec.js'
 import type { AgentDependencies } from './types.js'
+import {
+  applyPatchToParent,
+  captureBaseline,
+  captureDeltaPatch,
+  createWorktree,
+  removeWorktree,
+} from './worktree.js'
+import type { RepoBaseline } from './worktree.js'
 
 type LoopDeps = AgentDependencies & {
   chatStream?: typeof llmChatStream
@@ -55,7 +63,9 @@ async function waitForResume(state: AgentState): Promise<void> {
  *  Host 端实现：查 agentRegistry 获取 AgentDefinition → 创建隔离子 session（agentType 记录）
  *  → 构建子 agent（专属 prompt + 受限工具集 + yield）→ 运行到 yield 或完成 → 返回结果。
  *  发射 subagent_start/subagent_end 事件供父 agent 转发（spec §4.5 step 7）。
- *  abort 链接父→子。maxRecursion 控制子 agent 能否再递归派生 task（spec §4.5 step 4）。 */
+ *  abort 链接父→子。maxRecursion 控制子 agent 能否再递归派生 task（spec §4.5 step 4）。
+ *  def.isolated 时在 git worktree 中运行，结束后把 delta 自动 apply 回父仓库（spec §4.6）。
+ *  request.background 时 fork 异步运行，立即返回 running（spec §4.7）。 */
 export async function runSubAgent(
   deps: LoopDeps,
   parent: AgentState,
@@ -76,9 +86,9 @@ export async function runSubAgent(
   const title =
     request.description?.trim() || `Sub-agent (${request.agentType}): ${request.prompt.slice(0, 60)}`
   const childId = generateId()
+  const yielded: unknown[] = []
 
-  // 发射 subagent_start 事件（spec §4.5 step 7）—— 通过 deps._subagentEventSink
-  // 推入父 agent 的事件缓冲，由 agentLoop 在工具执行后 yield 出去。
+  // 发射 subagent_start 事件（spec §4.5 step 7）
   deps._subagentEventSink?.({
     _tag: 'subagent_start',
     childId,
@@ -100,90 +110,136 @@ export async function runSubAgent(
     return { _tag: 'error', error: e instanceof Error ? e.message : String(e) }
   }
 
-  // 3. 构建子 agent 配置：工具集隔离 + 模型覆盖 + 递归限制。
-  //    工具集：def.tools 声明的（否则继承父全部）；始终注入 yield（子 agent 返回结果的唯一方式）。
-  //    maxRecursion 默认 0=禁止；超过上限则移除 task 工具（spec §4.5 step 4 / §8）。
-  const parentDepth = deps._subagentDepth ?? 0
-  const childDepth = parentDepth + 1
-  const declaredTools = def.tools ?? parent.config.tools
-  const maxRec = def.maxRecursion ?? 0
-  const baseTools = childDepth > maxRec ? declaredTools.filter((t) => t !== 'task') : declaredTools
-  const childTools = Array.from(new Set([...baseTools, 'yield']))
-
-  const childConfig = {
-    ...parent.config,
-    systemPrompt: def.systemPrompt,
-    tools: childTools,
-    ...(def.model ? { model: def.model } : {}),
-    ...(request.model ? { model: request.model } : {}),
+  // 3. worktree 隔离（isolated agent）：失败回退共享 cwd
+  let worktreePath: string | undefined
+  let baseline: RepoBaseline | undefined
+  if (def.isolated) {
+    try {
+      baseline = await captureBaseline(deps.cwd)
+      worktreePath = await createWorktree(deps.cwd, `subagent-${childSession.id}`)
+    } catch (e) {
+      console.warn(
+        `[subagent] worktree creation failed, falling back to shared cwd: ${e instanceof Error ? e.message : e}`,
+      )
+    }
   }
+  const childCwd = worktreePath ?? deps.cwd
 
-  // 4. 创建子 agent
-  const childState = await createAgent(childSession, childConfig, deps)
+  // 实际运行子 agent 的内部函数（sync 与 background 共用）
+  const runBody = async (): Promise<SubAgentResult> => {
+    // 4. 构建子 agent 配置：工具集隔离 + 模型覆盖 + 递归限制 + yield
+    const parentDepth = deps._subagentDepth ?? 0
+    const childDepth = parentDepth + 1
+    const declaredTools = def.tools ?? parent.config.tools
+    const maxRec = def.maxRecursion ?? 0
+    const baseTools =
+      childDepth > maxRec ? declaredTools.filter((t) => t !== 'task') : declaredTools
+    const childTools = Array.from(new Set([...baseTools, 'yield']))
+    const childConfig = {
+      ...parent.config,
+      systemPrompt: def.systemPrompt,
+      tools: childTools,
+      ...(def.model ? { model: def.model } : {}),
+      ...(request.model ? { model: request.model } : {}),
+    }
 
-  // 5. abort 链接：父 abort 则子 abort
-  if (parent.abortController.signal.aborted) {
-    childState.abortController.abort()
-  } else {
-    parent.abortController.signal.addEventListener(
-      'abort',
-      () => childState.abortController.abort(),
-      { once: true },
-    )
-  }
-
-  // 6. 运行子 agent loop，透传 yield 收集器与递归深度
-  const yielded: unknown[] = []
-  const collectYield = (data: unknown) => {
-    yielded.push(data)
-  }
-  const childPrompt = request.context
-    ? `CONTEXT\n${request.context}\n\nASSIGNMENT\n${request.prompt}`
-    : request.prompt
-
-  const text: string[] = []
-  let errMsg: string | null = null
-  try {
+    // 子 agent 的 deps：覆盖 cwd（worktree）+ 注入 yield 收集器 + 递归深度
     const childDeps: LoopDeps = {
       ...deps,
-      _subagentYieldCollector: collectYield,
+      cwd: childCwd,
+      _subagentYieldCollector: (data: unknown) => {
+        yielded.push(data)
+      },
       _subagentDepth: childDepth,
     }
-    for await (const ev of runAgent(childState, [{ _tag: 'text', text: childPrompt }], childDeps)) {
-      if (ev._tag === 'text_delta') {
-        text.push(ev.text)
-      } else if (ev._tag === 'error') {
-        const e = ev.error
-        errMsg = e._tag === 'unexpected' || e._tag === 'provider' ? e.message : e._tag
-      }
+
+    const childState = await createAgent(childSession, childConfig, childDeps)
+
+    // abort 链接：父 abort 则子 abort
+    if (parent.abortController.signal.aborted) {
+      childState.abortController.abort()
+    } else {
+      parent.abortController.signal.addEventListener(
+        'abort',
+        () => childState.abortController.abort(),
+        { once: true },
+      )
     }
-  } catch (e) {
-    errMsg = e instanceof Error ? e.message : String(e)
+
+    // 运行子 agent loop
+    const childPrompt = request.context
+      ? `CONTEXT\n${request.context}\n\nASSIGNMENT\n${request.prompt}`
+      : request.prompt
+    const text: string[] = []
+    let errMsg: string | null = null
+    try {
+      for await (const ev of runAgent(childState, [{ _tag: 'text', text: childPrompt }], childDeps)) {
+        if (ev._tag === 'text_delta') {
+          text.push(ev.text)
+        } else if (ev._tag === 'error') {
+          const e = ev.error
+          errMsg = e._tag === 'unexpected' || e._tag === 'provider' ? e.message : e._tag
+        }
+      }
+    } catch (e) {
+      errMsg = e instanceof Error ? e.message : String(e)
+    }
+
+    // 5. worktree 回传：仅成功时把 delta apply 回父仓库（spec §4.6）；无论成败都清理 worktree
+    if (baseline && worktreePath) {
+      if (errMsg === null) {
+        try {
+          const patch = await captureDeltaPatch(worktreePath, baseline)
+          await applyPatchToParent(deps.cwd, patch, `agent(isolated): ${title}`)
+        } catch (e) {
+          console.warn(`[subagent] worktree apply failed: ${e instanceof Error ? e.message : e}`)
+        }
+      }
+      removeWorktree(deps.cwd, worktreePath)
+    }
+
+    const success = errMsg === null
+
+    // 发射 subagent_end 事件（spec §4.5 step 7）
+    deps._subagentEventSink?.({
+      _tag: 'subagent_end',
+      childId,
+      agentType: request.agentType,
+      success,
+      ...(success ? { output: text.join('') } : {}),
+    })
+
+    if (!success) {
+      return { _tag: 'error', error: errMsg!, sessionId: childSession.id }
+    }
+    const data = yielded.length > 0 ? (yielded.length === 1 ? yielded[0] : yielded) : undefined
+    return {
+      _tag: 'success',
+      output: text.join(''),
+      sessionId: childSession.id,
+      ...(data !== undefined ? { data } : {}),
+    }
   }
 
-  const success = errMsg === null
-
-  // 发射 subagent_end 事件（spec §4.5 step 7）
-  deps._subagentEventSink?.({
-    _tag: 'subagent_end',
-    childId,
-    agentType: request.agentType,
-    success,
-    ...(success ? { output: text.join('') } : {}),
-  })
-
-  if (!success) {
-    return { _tag: 'error', error: errMsg!, sessionId: childSession.id }
+  // 6. background 模式：fork 异步运行，立即返回 running；完成时向父 session 注入合成通知
+  if (request.background) {
+    const jobId = childSession.id
+    void runBody()
+      .then((result) => {
+        const success = result._tag === 'success'
+        const output = success ? result.output : (result as { error: string }).error
+        const tag = success ? 'task_result' : 'task_error'
+        const synthetic = `<task id="${childSession.id}" state="${success ? 'completed' : 'failed'}">\n<${tag}>\n${output}\n</${tag}>\n</task>`
+        void appendMessage(deps.db, parent.session.id, {
+          role: 'user',
+          content: [{ _tag: 'text', text: synthetic }],
+        }).catch(() => {})
+      })
+      .catch(() => {})
+    return { _tag: 'running', jobId, sessionId: childSession.id }
   }
 
-  // 组装结果：优先 yield data，否则文本
-  const data = yielded.length > 0 ? (yielded.length === 1 ? yielded[0] : yielded) : undefined
-  return {
-    _tag: 'success',
-    output: text.join(''),
-    sessionId: childSession.id,
-    ...(data !== undefined ? { data } : {}),
-  }
+  return runBody()
 }
 
 function toolResultToContent(
