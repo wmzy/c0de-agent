@@ -28,6 +28,8 @@ const session: Session = {
   projectId: null,
   branchPoint: null,
   metadata: {},
+  agentType: null,
+  worktreePath: null,
   createdAt: 1719300000000,
   updatedAt: 1719380000000,
 }

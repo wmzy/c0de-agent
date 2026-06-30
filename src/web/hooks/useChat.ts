@@ -7,12 +7,21 @@ import { sendChatMessage } from '../services/chat.js'
 import type { APIError } from '../types/index.js'
 import { generateId } from './id.js'
 
+type SubagentInfo = {
+  childId: string
+  agentType: string
+  description: string
+  status: 'running' | 'completed' | 'failed'
+}
+
 type ChatState = {
   messages: Message[]
   isStreaming: boolean
   usage: { input: number; output: number } | null
   error: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
+  /** 本轮派发的子 agent 进度（spec: multi-agent-design §4.5）。 */
+  subagents: SubagentInfo[]
 }
 
 type ChatOpts = {
@@ -37,6 +46,7 @@ const INITIAL: ChatState = {
   usage: null,
   error: null,
   pendingPermission: null,
+  subagents: [],
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -139,6 +149,29 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
       // 纯通知事件：调用详情由 useChat 在 onEvent 中 invalidate query 刷新，
       // 状态本身不变。
       return state
+    case 'subagent_start': {
+      const subagents = [
+        ...state.subagents.filter((s) => s.childId !== event.childId),
+        {
+          childId: event.childId,
+          agentType: event.agentType,
+          description: event.description,
+          status: 'running' as const,
+        },
+      ]
+      return { ...state, subagents }
+    }
+    case 'subagent_progress':
+      // 进度更新（工具名/状态）暂不改变状态，避免频繁重渲
+      return state
+    case 'subagent_end': {
+      const subagents = state.subagents.map((s) =>
+        s.childId === event.childId
+          ? { ...s, status: (event.success ? 'completed' : 'failed') as 'completed' | 'failed' }
+          : s,
+      )
+      return { ...state, subagents }
+    }
     case 'permission_required':
       return {
         ...state,
@@ -234,4 +267,4 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   return { ...state, sendMessage, abort, confirm, reset }
 }
 
-export type { ChatOpts, ChatState }
+export type { ChatOpts, ChatState, SubagentInfo }

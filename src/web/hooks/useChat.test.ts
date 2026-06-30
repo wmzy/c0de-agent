@@ -14,6 +14,7 @@ const base: ChatState = {
   usage: null,
   error: null,
   pendingPermission: null,
+  subagents: [],
 }
 
 function asst(parts: MessageContent[]): Message[] {
@@ -102,6 +103,53 @@ describe('reduceChatEvent', () => {
       input: {},
     })
     expect(s.pendingPermission).toEqual({ toolCallId: 'p1', tool: 'bash', input: {} })
+  })
+
+  it('subagent_start 记录运行中的子 agent', () => {
+    const s = reduceChatEvent(base, {
+      _tag: 'subagent_start',
+      childId: 'c1',
+      agentType: 'researcher',
+      description: '探索',
+      background: false,
+    })
+    expect(s.subagents).toHaveLength(1)
+    expect(s.subagents[0]).toMatchObject({ childId: 'c1', status: 'running' })
+  })
+
+  it('subagent_end 更新状态为 completed', () => {
+    let s = reduceChatEvent(base, {
+      _tag: 'subagent_start',
+      childId: 'c1',
+      agentType: 'researcher',
+      description: 'x',
+      background: false,
+    })
+    s = reduceChatEvent(s, {
+      _tag: 'subagent_end',
+      childId: 'c1',
+      agentType: 'researcher',
+      success: true,
+      output: 'done',
+    })
+    expect(s.subagents.find((x) => x.childId === 'c1')?.status).toBe('completed')
+  })
+
+  it('subagent_end 失败时状态为 failed', () => {
+    let s = reduceChatEvent(base, {
+      _tag: 'subagent_start',
+      childId: 'c2',
+      agentType: 'coder',
+      description: 'x',
+      background: false,
+    })
+    s = reduceChatEvent(s, {
+      _tag: 'subagent_end',
+      childId: 'c2',
+      agentType: 'coder',
+      success: false,
+    })
+    expect(s.subagents.find((x) => x.childId === 'c2')?.status).toBe('failed')
   })
 })
 
