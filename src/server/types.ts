@@ -1,5 +1,6 @@
 // src/server/types.ts
 import type { Config } from '../core/config.js'
+import type { AgentRegistry } from '../core/agents/types.js'
 import type { DB } from '../db/client.js'
 import type { chatStream as chatStreamFn } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
@@ -27,6 +28,8 @@ type ServerContext = {
   permissionStore: PermissionStore
   /** 全局授权模式（可变，运行时切换）：'default' 逐个确认；'auto' 自动放行 ask 工具（YOLO）。不持久化，重启回 default。 */
   permissionMode: 'default' | 'auto'
+  /** Agent 类型注册表（spec: multi-agent-design）。注入 agent loop 的 runSubAgent。 */
+  agentRegistry: AgentRegistry
   cwd: string
   /** 测试注入：覆盖 LLM chat stream。生产环境为 undefined。 */
   chatStream?: typeof chatStreamFn

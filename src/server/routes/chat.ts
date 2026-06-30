@@ -153,6 +153,7 @@ function createChatRoute(ctx: ServerContext): Hono {
         hookRunner: ctx.hookRunner,
         permission: permissionChecker,
         config: ctx.config,
+        agentRegistry: ctx.agentRegistry,
         cwd,
         ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
       }

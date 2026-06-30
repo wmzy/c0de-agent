@@ -5,6 +5,7 @@ import type { Server as NodeServer } from 'node:http'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
+import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import { loadConfig } from '../core/config.js'
 import { decryptSecret } from '../core/secret.js'
 import type { DB } from '../db/client.js'
@@ -128,6 +129,12 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
     permissionMode: 'default',
+    // Agent 注册表：内置 4 个默认 agent；项目/用户自定义 agent 可在启动后补充加载。
+    agentRegistry: (() => {
+      const reg = createAgentRegistry()
+      for (const def of BUILTIN_AGENTS) reg.register(def)
+      return reg
+    })(),
     cwd,
   }
 

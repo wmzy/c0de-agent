@@ -28,6 +28,10 @@ describe('server/types', () => {
     expect(ctx.toolRegistry).toBeDefined()
     expect(ctx.llmRegistry).toBeDefined()
     expect(ctx.agentManager).toBeDefined()
+    expect(ctx.agentRegistry).toBeDefined()
+    expect(ctx.agentRegistry.has('general')).toBe(true)
+    expect(ctx.agentRegistry.has('researcher')).toBe(true)
+    expect(ctx.agentRegistry.list().length).toBeGreaterThanOrEqual(4)
     expect(typeof ctx.cwd).toBe('string')
   })
 
