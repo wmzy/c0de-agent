@@ -9,6 +9,7 @@ type MessageContent =
   | { _tag: 'tool_result'; id: string; tool: string; output: ToolResult }
   | { _tag: 'thinking'; text: string }
   | { _tag: 'steering'; text: string }
+  | { _tag: 'image'; mediaType: string; data: string }
 
 /** A single message in a session. Content is always an array of parts. */
 type Message = {
