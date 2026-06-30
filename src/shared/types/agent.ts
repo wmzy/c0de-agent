@@ -40,11 +40,16 @@ type AgentConfig = {
   maxTurns?: number
 }
 
-/** Token budget for context window management. */
+/**
+ * Token budget for context window management.
+ * 分配（spec §3.6 策略1）：reserved(system prompt+工具描述) 20%，
+ * historyBudget(历史消息) 60%，剩余 available-historyBudget 预留给当前轮次 20%。
+ */
 type TokenBudget = {
   total: number
   reserved: number
   available: number
+  historyBudget: number
   used: number
   keepRecent: number
 }
@@ -103,6 +108,8 @@ type AgentState = {
   steeringQueue: string[]
   llmDetails: LLMDetail[]
   tokenBudget: TokenBudget
+  /** estimateTokens 的校准系数（由 calibrateEstimate 按真实 usage EMA 更新，默认 1.0）。 */
+  calibrationFactor: number
   compactionModel?: { provider: string; model: string }
 }
 

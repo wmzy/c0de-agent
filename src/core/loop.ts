@@ -5,6 +5,7 @@ import { detectProjectInfo } from '../project/detect.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
 import { appendLLMDetail, createSession } from '../session/session.js'
+import { estimateTokens } from '../session/token.js'
 import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState, LLMDetail } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool, FinishReason, StreamChunk } from '../shared/types/llm.js'
@@ -12,7 +13,7 @@ import type { MessageContent, Session } from '../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult, ToolResult } from '../shared/types/tool.js'
 import { createAgent, runAgent } from './agent.js'
 import { createSummarizer, runCompaction } from './compact.js'
-import { estimateBudget, shouldCompact } from './context.js'
+import { calibrateEstimate, estimateBudget, shouldCompact } from './context.js'
 import {
   DEFAULT_EDIT_MODE,
   getToolMetrics,
@@ -522,7 +523,20 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     }
 
     const latestMessages = await getMessages(deps.db, state.session.id)
-    state.tokenBudget.used = estimateBudget(latestMessages)
+    // 校准估算系数：本轮真实 input token（system prompt + 工具描述 + 消息序列全口径）
+    // 反算 estimateTokens 的系统性系数，反哺 used/fitToBudget 的裁剪与压缩判断。
+    if (collectedUsage && collectedUsage.inputTokens > 0) {
+      const estimatedRequest =
+        estimateTokens(systemPrompt) +
+        tools.reduce((sum, t) => sum + estimateTokens(JSON.stringify(t)), 0) +
+        estimateTokens(JSON.stringify(chatMessages))
+      state.calibrationFactor = calibrateEstimate(
+        state.calibrationFactor,
+        estimatedRequest,
+        collectedUsage.inputTokens,
+      )
+    }
+    state.tokenBudget.used = estimateBudget(latestMessages, state.calibrationFactor)
     state.messages = latestMessages
 
     if (shouldCompact(latestMessages, state.tokenBudget, deps.config.compaction)) {
@@ -540,7 +554,10 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         await runCompaction(deps.db, state.session.id, summarizer, {
           keepRecent: deps.config.compaction.keepRecentTokens,
         })
-        state.tokenBudget.used = estimateBudget(await getMessages(deps.db, state.session.id))
+        state.tokenBudget.used = estimateBudget(
+          await getMessages(deps.db, state.session.id),
+          state.calibrationFactor,
+        )
       } catch {
         // Compaction failure is non-fatal
       }

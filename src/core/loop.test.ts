@@ -131,9 +131,11 @@ function makeState(session: Session, messages: Message[]): AgentState {
       total: 100_000,
       reserved: 20_000,
       available: 80_000,
+      historyBudget: 60_000,
       used: 0,
       keepRecent: 10_000,
     },
+    calibrationFactor: 1.0,
   }
 }
 

@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto'
 
 // hashline 补丁语言（spec §16）：内容哈希锚定的行级补丁。
-// 本模块仅实现行级操作（SWAP/DEL/INS.PRE|POST|HEAD|TAIL）；
-// BLK 语法块操作（spec §16.2）依赖 tree-sitter AST，随 AST 工具后续迭代。
+// 本模块实现全部行级操作（SWAP/DEL/INS.PRE|POST|HEAD|TAIL）。
+// BLK 语法块操作（spec §16.2）是未来项，依赖 tree-sitter AST，
+// 与 ast_grep/ast_edit 工具共享同一依赖簇，统一在该里程碑实现。
+// 当前 parseOps 遇到 `*.BLK` 操作会抛 `unknown operation`（硬错误，非静默 stub）。
 
 // ── 操作类型 ──────────────────────────────────────────────
 

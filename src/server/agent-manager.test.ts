@@ -24,7 +24,15 @@ function mockState(sessionId: string): AgentState {
     abortController: new AbortController(),
     steeringQueue: [],
     llmDetails: [],
-    tokenBudget: { total: 1000, reserved: 200, available: 800, used: 0, keepRecent: 100 },
+    tokenBudget: {
+      total: 1000,
+      reserved: 200,
+      available: 800,
+      historyBudget: 600,
+      used: 0,
+      keepRecent: 100,
+    },
+    calibrationFactor: 1.0,
   }
 }
 

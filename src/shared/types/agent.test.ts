@@ -78,6 +78,7 @@ describe('TokenBudget', () => {
       total: 128_000,
       reserved: 25_600,
       available: 102_400,
+      historyBudget: 76_800,
       used: 50_000,
       keepRecent: 10,
     }
@@ -158,9 +159,11 @@ describe('AgentState', () => {
         total: 128_000,
         reserved: 0,
         available: 128_000,
+        historyBudget: 76_800,
         used: 0,
         keepRecent: 10,
       },
+      calibrationFactor: 1.0,
     }
     expect(state.status._tag).toBe('idle')
     expect(state.messages).toHaveLength(0)

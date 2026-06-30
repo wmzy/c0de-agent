@@ -24,7 +24,8 @@ function makeState(): AgentState {
     abortController: new AbortController(),
     steeringQueue: [],
     llmDetails: [],
-    tokenBudget: { total: 0, reserved: 0, available: 0, used: 0, keepRecent: 0 },
+    tokenBudget: { total: 0, reserved: 0, available: 0, historyBudget: 0, used: 0, keepRecent: 0 },
+    calibrationFactor: 1.0,
   }
 }
 

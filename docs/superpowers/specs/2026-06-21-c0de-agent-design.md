@@ -202,8 +202,9 @@ export function mergeConfig(...configs: Partial<Config>[]): Config
 ```typescript
 type TokenBudget = {
   total: number          // context window 大小
-  reserved: number       // 预留给 system prompt + 工具描述
+  reserved: number       // 预留给 system prompt + 工具描述（20%）
   available: number      // total - reserved
+  historyBudget: number  // 历史消息上限（60%）；available - historyBudget 预留给当前轮次（20%）
   used: number           // 当前已用
   keepRecent: number     // 保留最近 N 条消息原文
 }
@@ -223,10 +224,17 @@ type CompactionConfig = {
 
 ```typescript
 export function estimateTokens(text: string): number
+export function estimateBudget(messages: Message[], factor?: number): number
 export function shouldCompact(messages: Message[], budget: TokenBudget, config: CompactionConfig): boolean
-export function compactMessages(messages: Message[], config: CompactionConfig): Promise<Message[]>
-export function fitToBudget(messages: Message[], budget: TokenBudget): Message[]
+export function fitToBudget(messages: Message[], budget: TokenBudget, factor?: number): Message[]
+export function calibrateEstimate(prevFactor: number, estimated: number, actual: number): number
 ```
+
+> **实现注记（compaction）**：spec 原列出的 `compactMessages(messages, config): Promise<Message[]>`
+> 纯消息级接口未单独实现。压缩走 **session 级 + DB archive** 路线：`runCompaction(db, sessionId, summarizer, opts)`
+> （`src/session/compaction.ts`）由 agent loop 在 `shouldCompact` 命中时调用（`src/core/loop.ts`），
+> 把旧消息归档到 `compaction_archives` 表并替换为摘要。`estimateBudget` / `fitToBudget` / `calibrateEstimate`
+> 按 token 预算与校准系数驱动裁剪与压缩触发。
 
 ### 3.7 Agent 生命周期 Hook
 
@@ -506,7 +514,12 @@ src/tools/
 │   ├── browser.ts     浏览器控制
 │   ├── task.ts        子 agent（worktree 隔离）
 │   ├── worktree.ts    Git worktree 管理
-│   └── websearch.ts   网络搜索
+├── websearch/         网络搜索（多后端：DuckDuckGo/Tavily/Brave）✅ 已实现
+│   ├── types.ts       WebSearch 类型 + clampNumResults
+│   ├── fetch.ts       undici ProxyAgent 代理感知 fetch
+│   ├── providers/     duckduckgo / tavily / brave 后端
+│   ├── index.ts       注册表 + resolveProvider + formatForLLM + runWebSearch
+│   └── websearch.ts   createWebSearchTool 工厂（ToolDef）
 └── index.ts
 ```
 
@@ -581,7 +594,7 @@ export function executeTool(
 | `browser` | 浏览器控制（Puppeteer） | ask |
 | `task` | 生成子 agent 并行工作（worktree 隔离） | auto |
 | `worktree` | Git worktree 管理（隔离工作区） | ask |
-| `websearch` | 网络搜索 | auto |
+| `websearch` | 网络搜索（多后端，DuckDuckGo 默认零 key）✅ 已实现（见 `docs/superpowers/specs/2026-06-30-websearch-tool-design.md`） | auto |
 
 ---
 
@@ -1203,7 +1216,7 @@ new content here
 - `DEL`：删除指定行
 - `INS.PRE` / `INS.POST`：在指定行前/后插入
 - `INS.HEAD` / `INS.TAIL`：在文件头/尾插入
-- `SWAP.BLK` / `DEL.BLK` / `INS.BLK.POST`：基于语法块的操作（AST 感知）
+- `SWAP.BLK` / `DEL.BLK` / `INS.BLK.POST`：基于语法块的操作（AST 感知）—— **未来项，随 tree-sitter/AST 工具里程碑实现**（见 §里程碑 P2 工具）。行级操作是已交付的安全编辑基线；BLK 与 `ast_grep`/`ast_edit` 共享 tree-sitter 依赖簇，统一在该里程碑评估是否引入。
 
 ### 16.3 核心函数
 

@@ -33,9 +33,11 @@ async function createAgent(
       total: 128_000,
       reserved: 25_600,
       available: 102_400,
+      historyBudget: 76_800,
       used,
       keepRecent: 12_800,
     },
+    calibrationFactor: 1.0,
   }
 }
 

@@ -13,6 +13,7 @@ describe('core barrel export', () => {
     expect(typeof core.createTokenBudget).toBe('function')
     expect(typeof core.fitToBudget).toBe('function')
     expect(typeof core.shouldCompact).toBe('function')
+    expect(typeof core.calibrateEstimate).toBe('function')
   })
 
   it('exports prompt builder', () => {

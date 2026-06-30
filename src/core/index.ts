@@ -13,7 +13,13 @@ export {
 export { createSummarizer, runCompaction } from './compact.js'
 export type { CompactionConfig, Config, MCPServerConfig } from './config.js'
 export { DEFAULT_CONFIG, loadConfig, mergeConfig, saveConfig } from './config.js'
-export { createTokenBudget, estimateBudget, fitToBudget, shouldCompact } from './context.js'
+export {
+  calibrateEstimate,
+  createTokenBudget,
+  estimateBudget,
+  fitToBudget,
+  shouldCompact,
+} from './context.js'
 export { agentLoop } from './loop.js'
 export { buildSystemPrompt } from './prompt.js'
 export type { SlashRegistry } from './slash.js'
