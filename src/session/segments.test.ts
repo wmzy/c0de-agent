@@ -4,13 +4,11 @@
  * 层测试可并入。
  */
 import { describe, expect, it } from 'vitest'
-import type { ChatTool } from '../shared/types/llm.js'
 import type { LLMSegment } from '../shared/types/agent.js'
+import type { ChatTool } from '../shared/types/llm.js'
 import { migrateLegacyDetails, segmentFingerprint } from './session.js'
 
-const tools: ChatTool[] = [
-  { name: 'read', description: '读文件', parameters: { type: 'object' } },
-]
+const tools: ChatTool[] = [{ name: 'read', description: '读文件', parameters: { type: 'object' } }]
 
 describe('segmentFingerprint', () => {
   it('相同 systemPrompt + tools → 相同指纹', () => {
@@ -35,8 +33,15 @@ describe('migrateLegacyDetails', () => {
   })
   it('已有 segments → 不重复迁移', () => {
     const seg: LLMSegment = {
-      id: 's1', fingerprint: 'x', provider: 'p', model: 'm',
-      systemPrompt: 's', tools: [], startedAt: 1, trigger: 'initial', calls: [],
+      id: 's1',
+      fingerprint: 'x',
+      provider: 'p',
+      model: 'm',
+      systemPrompt: 's',
+      tools: [],
+      startedAt: 1,
+      trigger: 'initial',
+      calls: [],
     }
     const out = migrateLegacyDetails({ segments: [seg] })
     expect(out.segments).toEqual([seg])
@@ -46,29 +51,41 @@ describe('migrateLegacyDetails', () => {
     const legacy = {
       llmDetails: [
         {
-          id: 'd1', timestamp: 10, model: 'm', provider: 'p', role: { _tag: 'default' },
-          systemPrompt: 'sys', messages: [], tools,
+          id: 'd1',
+          timestamp: 10,
+          model: 'm',
+          provider: 'p',
+          role: { _tag: 'default' },
+          systemPrompt: 'sys',
+          messages: [],
+          tools,
           responseChunks: [
             { _tag: 'text', text: 'hel' },
             { _tag: 'text', text: 'lo' },
             { _tag: 'done' },
           ],
-          thinking: 'hmm', usage: { input: 1, output: 2, cacheRead: 3 },
-          latency: { firstToken: 5, total: 10 }, cost: 0.1, contextWindow: 8000,
+          thinking: 'hmm',
+          usage: { input: 1, output: 2, cacheRead: 3 },
+          latency: { firstToken: 5, total: 10 },
+          cost: 0.1,
+          contextWindow: 8000,
         },
       ],
     }
     const out = migrateLegacyDetails(legacy)
     expect(out.llmDetails).toBeUndefined()
     expect(out.segments).toHaveLength(1)
-    const seg = out.segments![0]!
+    const seg = (out.segments as LLMSegment[])[0]
+    if (!seg) throw new Error('missing segment')
     expect(seg.trigger).toBe('initial')
     expect(seg.systemPrompt).toBe('sys')
     expect(seg.tools).toEqual(tools)
     expect(seg.contextWindow).toBe(8000)
     expect(seg.calls).toHaveLength(1)
-    expect(seg.calls[0]!.responseText).toBe('hello')
-    expect(seg.calls[0]!.thinking).toBe('hmm')
-    expect(seg.calls[0]!.usage).toEqual({ input: 1, output: 2, cacheRead: 3 })
+    const call = seg.calls[0]
+    if (!call) throw new Error('missing call')
+    expect(call.responseText).toBe('hello')
+    expect(call.thinking).toBe('hmm')
+    expect(call.usage).toEqual({ input: 1, output: 2, cacheRead: 3 })
   })
 })

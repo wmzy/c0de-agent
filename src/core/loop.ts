@@ -7,7 +7,13 @@ import { appendMessage, getMessages } from '../session/message.js'
 import { createSession, saveLLMSegments, segmentFingerprint } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import { generateId } from '../shared/index.js'
-import type { AgentEvent, AgentState, LLMCall, SegmentTrigger } from '../shared/types/agent.js'
+import type {
+  AgentEvent,
+  AgentState,
+  LLMCall,
+  LLMSegment,
+  SegmentTrigger,
+} from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool, FinishReason, StreamChunk } from '../shared/types/llm.js'
 import type { MessageContent, Session } from '../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult, ToolResult } from '../shared/types/tool.js'
@@ -549,8 +555,11 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       !activeSeg ||
       activeSeg.model !== state.config.model ||
       activeSeg.fingerprint !== fp
-    if (needSegment) {
-      state.segments.push({
+    let currentSeg: LLMSegment
+    if (!needSegment && activeSeg) {
+      currentSeg = activeSeg
+    } else {
+      currentSeg = {
         id: generateId(),
         fingerprint: fp,
         provider: state.config.provider,
@@ -561,9 +570,9 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         trigger,
         ...(contextWindow !== undefined ? { contextWindow } : {}),
         calls: [],
-      })
+      }
+      state.segments.push(currentSeg)
     }
-    const currentSeg = state.segments[state.segments.length - 1]!
 
     // —— 段内轻量 call ——
     const call: LLMCall = {

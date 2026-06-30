@@ -329,11 +329,13 @@ describe('agentLoop', () => {
     expect(seg.systemPrompt).toBeTruthy()
     expect(seg.tools).toEqual([])
     // 段内 call 不含 messages/systemPrompt（轻量）
-    const c0 = seg.calls[0]!
+    const c0 = seg.calls[0]
+    if (!c0) throw new Error('missing call 0')
     // turn0 为工具调用轮：无文本回复，responseText 为空
     expect(c0.responseText).toBe('')
     expect(c0.latency.total).toBeGreaterThanOrEqual(0)
-    const c1 = seg.calls[1]!
+    const c1 = seg.calls[1]
+    if (!c1) throw new Error('missing call 1')
     // turn1 为文本回复轮
     expect(c1.responseText.length).toBeGreaterThan(0)
   })
@@ -375,8 +377,10 @@ describe('agentLoop', () => {
       // consume
     }
     expect(state.segments).toHaveLength(2)
-    expect(state.segments[1]!.trigger).toBe('model_change')
-    expect(state.segments[1]!.model).toBe('other-model')
+    const seg2 = state.segments[1]
+    if (!seg2) throw new Error('missing segment 2')
+    expect(seg2.trigger).toBe('model_change')
+    expect(seg2.model).toBe('other-model')
   })
 })
 
