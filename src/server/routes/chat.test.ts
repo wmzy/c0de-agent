@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,6 +11,7 @@ import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/project.js'
 import { appendMessage, getEntries } from '../../session/message.js'
 import { createSession, getLLMDetails } from '../../session/session.js'
+import { getFileSnapshots } from '../../session/snapshot.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
 import { createChatRoute, resolveAgentCwd } from './chat.js'
@@ -29,7 +31,7 @@ afterEach(async () => {
   dbHandle = undefined
 })
 
-async function setup() {
+async function setup(opts: { cwd?: string } = {}) {
   const db = await createDB({ driver: 'pglite' })
   dbHandle = db
   await migrateDB(db)
@@ -37,6 +39,7 @@ async function setup() {
   const ctx = createServerContext({
     db,
     llmRegistry: createRegistry(),
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
     chatStream: mockChatStream,
   })
   const app = createChatRoute(ctx)
@@ -327,5 +330,64 @@ describe('chat route (control endpoints)', () => {
     })
     expect(res.status).toBe(200)
     expect(((await res.json()) as { steered: boolean }).steered).toBe(false)
+  })
+})
+
+describe('POST / 多模态与文件上下文', () => {
+  let tmpCwd: string | undefined
+  afterEach(() => {
+    if (tmpCwd) {
+      rmSync(tmpCwd, { recursive: true, force: true })
+      tmpCwd = undefined
+    }
+  })
+
+  it('images 字段随消息持久化为 image part', async () => {
+    const { app, sessionId, ctx } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        message: '看图',
+        images: [{ mediaType: 'image/png', data: 'BASE64DATA' }],
+      }),
+    })
+    expect(res.status).toBe(200)
+    await res.text() // 消费 SSE 流
+    const entries = await getEntries(ctx.db, sessionId)
+    const userMsg = entries.find((e) => !('_tag' in e) && e.role === 'user')
+    expect(userMsg).toBeTruthy()
+    const imagePart = (userMsg as { content: Array<{ _tag: string }> }).content.find(
+      (p) => p._tag === 'image',
+    )
+    expect(imagePart).toBeTruthy()
+  })
+
+  it('files 字段写入文件快照', async () => {
+    tmpCwd = mkdtempSync(join(tmpdir(), 'c0de-files-'))
+    await writeFile(join(tmpCwd, 'tmp.txt'), 'hello file context')
+    const { app, sessionId, ctx } = await setup({ cwd: tmpCwd })
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'q', files: ['tmp.txt'] }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+    const snapshots = await getFileSnapshots(ctx.db, sessionId)
+    expect(
+      snapshots.some((s) => s.filePath === 'tmp.txt' && s.content === 'hello file context'),
+    ).toBe(true)
+  })
+
+  it('无 images/files 时行为不变（向后兼容）', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'plain text' }),
+    })
+    expect(res.status).toBe(200)
   })
 })

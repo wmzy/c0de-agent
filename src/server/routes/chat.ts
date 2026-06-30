@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
@@ -5,12 +6,15 @@ import type { LoopDeps } from '../../core/loop.js'
 import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
 import { getProject } from '../../project/project.js'
 import { getSession } from '../../session/session.js'
+import { upsertFileSnapshot } from '../../session/snapshot.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
+import type { MessageContent } from '../../shared/types/message.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import { listTools } from '../../tools/registry.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import type { ServerContext } from '../types.js'
+import { safeResolve } from '../util/safe-path.js'
 
 /** 按 session.projectId 解析 agent 工作目录；无项目回退 ctx.cwd。 */
 export async function resolveAgentCwd(
@@ -101,6 +105,31 @@ function createChatRoute(ctx: ServerContext): Hono {
       // 未知斜杠命令：回退为正常消息发给 agent
     }
 
+    // 构建多模态 user content：文本在前，images（dataURL base64）在后
+    const userContent: MessageContent[] = [{ _tag: 'text', text: message }]
+    const images = body.images as Array<{ mediaType: string; data: string }> | undefined
+    if (images?.length) {
+      for (const img of images) {
+        userContent.push({ _tag: 'image', mediaType: img.mediaType, data: img.data })
+      }
+    }
+
+    // @文件上下文：读取文件内容写入快照，后续 getSessionContext→injectSnapshots 自动注入。
+    // 路径越界或读取失败静默跳过，不阻塞主对话流。
+    const files = body.files as string[] | undefined
+    if (files?.length) {
+      for (const p of files) {
+        const resolved = safeResolve(cwd, p)
+        if (!resolved) continue
+        try {
+          const content = await readFile(resolved, 'utf-8')
+          await upsertFileSnapshot(ctx.db, sessionId, p, content)
+        } catch {
+          // 文件读取失败静默跳过
+        }
+      }
+    }
+
     return streamSSE(c, async (stream) => {
       // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认
       const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
@@ -153,7 +182,7 @@ function createChatRoute(ctx: ServerContext): Hono {
       })
 
       try {
-        for await (const event of runAgent(state, [{ _tag: 'text', text: message }], deps)) {
+        for await (const event of runAgent(state, userContent, deps)) {
           await stream.writeSSE({
             event: event._tag,
             data: JSON.stringify(event),
