@@ -7,6 +7,7 @@ import { SessionSummary } from '../components/SessionSummary.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { ToolToggle } from '../components/ToolToggle.js'
 import { useConfig } from '../contexts/ConfigContext.js'
+import { useAgent } from '../hooks/useAgent.js'
 import { useChat } from '../hooks/useChat.js'
 import { useMessages } from '../hooks/useSession.js'
 import { providerAPI } from '../services/provider.js'
@@ -33,6 +34,7 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
 
 function ChatSession({ sessionId }: { sessionId: string }) {
   const chat = useChat(sessionId)
+  const agent = useAgent(sessionId)
   const { data: history } = useMessages(sessionId)
   const { config } = useConfig()
   const { data: providersData } = useQuery({
@@ -72,6 +74,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const [enabledTools, setEnabledTools] = useState<Set<string> | null>(null)
 
   const handleSend = (text: string) => {
+    // 新一轮发送：清除上轮残留的暂停态（paused 仅在运行中有意义）。
+    agent.resetPaused()
     void chat.sendMessage(text, {
       provider: selection.provider,
       model: selection.model,
@@ -93,6 +97,10 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       onSend={handleSend}
       onAbort={chat.abort}
       onConfirm={handleConfirm}
+      onPause={agent.pause}
+      onResume={agent.resume}
+      onSteer={agent.steer}
+      paused={agent.paused}
       modelBar={<ModelSelector value={selection} onChange={setSelection} />}
       toolToggle={
         <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={chat.isStreaming} />

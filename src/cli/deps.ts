@@ -3,10 +3,11 @@ import { decryptSecret } from '../core/secret.js'
 import type { DB } from '../db/client.js'
 import { createRegistry, registerProvider } from '../llm/index.js'
 import type { Registry } from '../llm/registry.js'
+import { initPlugins } from '../plugins/index.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
-import { createDefaultRegistry } from '../tools/index.js'
+import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import type { PermissionChecker, PermissionResult } from '../tools/types.js'
 
 /** Print/ACP 等非交互模式：所有工具自动放行（命令由用户显式触发）。 */
@@ -49,10 +50,20 @@ type BuildDepsOptions = {
 
 /** 组装完整 LoopDeps（auto 放行 + 默认工具注册表）。 */
 async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<LoopDeps> {
+  const llmRegistry = buildLLMRegistry(config)
+  const toolRegistry = createDefaultRegistry()
+  const { hookRunner } = await initPlugins({
+    cwd: opts.cwd,
+    config,
+    toolRegistry,
+    llmRegistry,
+  })
   const deps: LoopDeps = {
     db: opts.db,
-    llmRegistry: buildLLMRegistry(config),
-    toolRegistry: createDefaultRegistry(),
+    llmRegistry,
+    toolRegistry,
+    urlRegistry: createDefaultURLRegistry(),
+    hookRunner,
     permission: autoApproveChecker,
     config,
     cwd: opts.cwd,

@@ -11,9 +11,10 @@ import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import type { Registry } from '../llm/registry.js'
 import { createRegistry, registerProvider } from '../llm/registry.js'
+import { initPlugins } from '../plugins/index.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
-import { createDefaultRegistry } from '../tools/index.js'
+import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import { restoreSessions, type SessionSnapshot } from '../update/index.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
@@ -108,12 +109,22 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
   const config = await loadConfig(cwd)
   const toolRegistry = createDefaultRegistry()
   const llmRegistry = buildRegistryFromConfig(config)
+  const urlRegistry = createDefaultURLRegistry()
+  const { pluginRegistry, hookRunner } = await initPlugins({
+    cwd,
+    config,
+    toolRegistry,
+    llmRegistry,
+  })
 
   const ctx: ServerContext = {
     db,
     config,
     toolRegistry,
     llmRegistry,
+    urlRegistry,
+    hookRunner,
+    pluginRegistry,
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
     cwd,

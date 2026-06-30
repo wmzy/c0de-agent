@@ -56,10 +56,12 @@ export default defineConfig({
     }),
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: false,
+      // injectRegister:'auto'：插件在「生产构建」自动注入 SW 注册脚本；transformIndexHtml
+      // 仅在非 dev 注入该脚本，故 dev 模式只服务 manifest 不注册 SW，避免缓存干扰 HMR。
+      // injectRegister 只管注册脚本注入，与 manifest 返回无关（manifest 由 devOptions 控制）。
+      injectRegister: 'auto',
       // dev 模式下必须启用，否则 manifest.webmanifest 不会被插件服务，
       // 落到 Vite SPA fallback 返回 index.html，浏览器按 JSON 解析报 Syntax error。
-      // injectRegister:false 保证不会注册 SW，仅让 manifest 正确返回。
       devOptions: { enabled: true },
       manifest: {
         name: 'c0de-agent',

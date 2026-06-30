@@ -61,6 +61,8 @@ function createChatRoute(ctx: ServerContext): Hono {
         db: ctx.db,
         llmRegistry: ctx.llmRegistry,
         toolRegistry: ctx.toolRegistry,
+        urlRegistry: ctx.urlRegistry,
+        hookRunner: ctx.hookRunner,
         permission: permissionChecker,
         config: ctx.config,
         cwd,

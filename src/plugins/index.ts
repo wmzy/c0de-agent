@@ -7,6 +7,8 @@ export {
   registerBuiltinHooks,
 } from './builtin.js'
 export { createHookRunner } from './hooks.js'
+export type { InitPluginsOptions, InitPluginsResult } from './init.js'
+export { initPlugins } from './init.js'
 export {
   activatePlugin,
   createPluginContext,

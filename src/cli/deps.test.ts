@@ -64,4 +64,10 @@ describe('buildAgentDeps', () => {
     expect(deps.llmRegistry).toBeTruthy()
     expect(deps.toolRegistry).toBeTruthy()
   })
+
+  it('wires a default URL registry resolving file:// and skill://', async () => {
+    const deps = await buildAgentDeps(config, { db, cwd: process.cwd() })
+    expect(deps.urlRegistry?.resolvers.has('file')).toBe(true)
+    expect(deps.urlRegistry?.resolvers.has('skill')).toBe(true)
+  })
 })

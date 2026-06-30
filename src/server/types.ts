@@ -3,7 +3,9 @@ import type { Config } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import type { chatStream as chatStreamFn } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
+import type { HookRunner, PluginRegistry } from '../plugins/types.js'
 import type { Config as SharedConfig } from '../shared/types/config.js'
+import type { URLRegistry } from '../shared/types/tool.js'
 import type { ToolRegistry } from '../tools/types.js'
 import type { AgentManager } from './agent-manager.js'
 import type { PermissionStore } from './permission/store.js'
@@ -14,6 +16,12 @@ type ServerContext = {
   config: Config
   toolRegistry: ToolRegistry
   llmRegistry: Registry
+  /** 内置 URL 解析器注册表（file://, skill://）；注入 agent loop 的 ToolContext。 */
+  urlRegistry: URLRegistry
+  /** 插件 hook runner；接入 agent loop 的 tool/provider/message hook。 */
+  hookRunner: HookRunner
+  /** 插件注册表（builtin + 已加载外部插件）；供插件管理 API 查询。 */
+  pluginRegistry: PluginRegistry
   agentManager: AgentManager
   /** 全局权限确认 store（单例），独立于 agent run 生命周期。 */
   permissionStore: PermissionStore

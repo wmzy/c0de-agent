@@ -16,8 +16,13 @@ export { dapTools } from './builtin/dap.js'
 export { editTool } from './builtin/edit.js'
 export { globTool, globToRegex } from './builtin/glob.js'
 export { grepTool } from './builtin/grep.js'
-// ── Builtin tools ───────────────────────────────────────────
 export { readTool } from './builtin/read.js'
+// ── Builtin tools ───────────────────────────────────────────
+export {
+  createDefaultURLRegistry,
+  createFileResolver,
+  createSkillResolver,
+} from './builtin/resolvers.js'
 export { taskTool } from './builtin/task.js'
 export { writeTool } from './builtin/write.js'
 export { executeTool } from './executor.js'
