@@ -74,6 +74,7 @@ describe('Config', () => {
       theme: 'dark',
       toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
       security: { authEnabled: false, allowedOrigins: [] },
+      websearch: { provider: 'auto' },
       locale: 'zh-CN',
     }
     expect(config.defaultProvider).toBe('openai')

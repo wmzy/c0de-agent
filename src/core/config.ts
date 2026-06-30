@@ -7,6 +7,7 @@ import type {
   MCPServerConfig,
   SecurityConfig,
   ToolMetricsConfig,
+  WebSearchConfig,
 } from '../shared/types/config.js'
 
 const GLOBAL_CONFIG_DIR = '.c0de'
@@ -24,12 +25,13 @@ const DEFAULT_CONFIG: Config = {
     reserveTokens: 8000,
     keepRecentTokens: 4000,
   },
-  tools: { enabled: ['read', 'write', 'edit', 'glob', 'grep', 'bash'], disabled: [] },
+  tools: { enabled: ['read', 'write', 'edit', 'glob', 'grep', 'bash', 'websearch'], disabled: [] },
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: { enabled: ['/compact', '/model', '/clear', '/help', '/fork', '/config'] },
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
+  websearch: { provider: 'auto' },
   theme: 'system',
   locale: 'en',
 }
@@ -90,5 +92,12 @@ async function saveConfig(
   writeFileSync(path, JSON.stringify(config, null, 2), 'utf-8')
 }
 
-export type { CompactionConfig, Config, MCPServerConfig, SecurityConfig, ToolMetricsConfig }
+export type {
+  CompactionConfig,
+  Config,
+  MCPServerConfig,
+  SecurityConfig,
+  ToolMetricsConfig,
+  WebSearchConfig,
+}
 export { DEFAULT_CONFIG, loadConfig, mergeConfig, saveConfig }

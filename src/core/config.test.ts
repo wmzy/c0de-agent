@@ -17,6 +17,16 @@ describe('DEFAULT_CONFIG', () => {
     expect(DEFAULT_CONFIG.tools.enabled).toContain('read')
     expect(DEFAULT_CONFIG.fallback.maxRetries).toBe(3)
   })
+
+  it('tools.enabled includes websearch', () => {
+    expect(DEFAULT_CONFIG.tools.enabled).toContain('websearch')
+  })
+
+  it('websearch defaults to auto provider with no keys', () => {
+    expect(DEFAULT_CONFIG.websearch.provider).toBe('auto')
+    expect(DEFAULT_CONFIG.websearch.tavilyApiKey).toBeUndefined()
+    expect(DEFAULT_CONFIG.websearch.braveApiKey).toBeUndefined()
+  })
 })
 
 describe('mergeConfig', () => {

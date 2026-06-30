@@ -29,6 +29,16 @@ type ToolMetricsConfig = {
   minSamples: number
 }
 
+/** Web 搜索配置（见 docs/superpowers/specs/2026-06-30-websearch-tool-design.md）。 */
+type WebSearchConfig = {
+  /** 后端选择。'auto'（默认）→ 按 key 可用性：tavily > brave > duckduckgo。 */
+  provider: 'auto' | 'duckduckgo' | 'tavily' | 'brave'
+  /** Tavily key；也可由环境变量 TAVILY_API_KEY 提供（环境变量优先）。 */
+  tavilyApiKey?: string
+  /** Brave key；也可由环境变量 BRAVE_API_KEY 提供（环境变量优先）。 */
+  braveApiKey?: string
+}
+
 /** Server security configuration (spec §24.2). */
 type SecurityConfig = {
   /** 启用 Bearer token 认证（远程访问场景）。本地开发默认关闭。 */
@@ -53,8 +63,16 @@ type Config = {
   slashCommands: { enabled: string[] }
   toolMetrics: ToolMetricsConfig
   security: SecurityConfig
+  websearch: WebSearchConfig
   theme: 'light' | 'dark' | 'system'
   locale: string
 }
 
-export type { CompactionConfig, Config, MCPServerConfig, SecurityConfig, ToolMetricsConfig }
+export type {
+  CompactionConfig,
+  Config,
+  MCPServerConfig,
+  SecurityConfig,
+  ToolMetricsConfig,
+  WebSearchConfig,
+}

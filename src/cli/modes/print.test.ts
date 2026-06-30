@@ -31,6 +31,7 @@ const config: Config = {
   theme: 'system',
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
+  websearch: { provider: 'auto' },
   locale: 'en',
 }
 

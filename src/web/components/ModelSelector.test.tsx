@@ -45,6 +45,7 @@ const baseConfig: Config = {
   slashCommands: { enabled: [] },
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
+  websearch: { provider: 'auto' },
   theme: 'light',
   locale: 'zh-CN',
 }
