@@ -15,6 +15,7 @@ import { getFileSnapshots } from '../../session/snapshot.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
 import { createChatRoute, resolveAgentCwd } from './chat.js'
+import { createCommandsRoute } from './commands.js'
 
 /** 模拟 chatStream：返回简单的文本 + done。 */
 function mockChatStream(): AsyncGenerator<StreamChunk> {
@@ -389,5 +390,19 @@ describe('POST / 多模态与文件上下文', () => {
       body: JSON.stringify({ sessionId, message: 'plain text' }),
     })
     expect(res.status).toBe(200)
+  })
+})
+
+describe('commands route', () => {
+  it('GET / 返回内置斜杠命令', async () => {
+    const { ctx } = await setup()
+    const app = createCommandsRoute(ctx)
+    const res = await app.request('/', { method: 'GET' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { commands: Array<{ name: string }> }
+    const names = body.commands.map((c) => c.name)
+    expect(names).toContain('help')
+    expect(names).toContain('clear')
+    expect(names).toContain('model')
   })
 })

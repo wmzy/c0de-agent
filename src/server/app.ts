@@ -8,6 +8,7 @@ import { createCORSMiddleware } from './middleware/cors.js'
 import { errorHandler } from './middleware/error.js'
 import { createCatalogRoute } from './routes/catalog.js'
 import { createChatRoute } from './routes/chat.js'
+import { createCommandsRoute } from './routes/commands.js'
 import { createConfigRoute } from './routes/config.js'
 import { createFilesRoute } from './routes/files.js'
 import { createFilesystemRoute } from './routes/filesystem.js'
@@ -41,6 +42,7 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/catalog', createCatalogRoute(ctx))
   app.route('/api/filesystem', createFilesystemRoute(ctx))
   app.route('/api/chat', createChatRoute(ctx))
+  app.route('/api/commands', createCommandsRoute(ctx))
   app.route('/api/tools', createToolRoute(ctx))
   app.route('/api/update', createUpdateRoute(ctx))
   app.route('/api/config', createConfigRoute(ctx))
@@ -59,6 +61,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/catalog',
         '/api/filesystem',
         '/api/chat',
+        '/api/commands',
         '/api/tools',
         '/api/update',
         '/api/config',
