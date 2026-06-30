@@ -227,8 +227,8 @@ describe('LLMDetailsView', () => {
       expect(headers).toHaveLength(2)
       // detail 是 index 0（旧），emptyDetail 是 index 1（新）
       // reverse() 后 emptyDetail 在前，header 以 #2 开头
-      expect(headers[0].textContent).toMatch(/^调用 #2/)
-      expect(headers[1].textContent).toMatch(/^调用 #1/)
+      expect(headers[0]?.textContent).toMatch(/^调用 #2/)
+      expect(headers[1]?.textContent).toMatch(/^调用 #1/)
     })
   })
 })
