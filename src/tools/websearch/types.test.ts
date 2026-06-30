@@ -6,12 +6,7 @@
  * 归并建议：本测试与 types.ts 同属 websearch 子包，无既有 skill-tests/integration 适用，故就地建文件。
  */
 import { describe, expect, it } from 'vitest'
-import {
-  clampNumResults,
-  DEFAULT_NUM_RESULTS,
-  MAX_NUM_RESULTS,
-  MIN_NUM_RESULTS,
-} from './types.js'
+import { clampNumResults, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from './types.js'
 
 describe('websearch types', () => {
   it('exposes default/min/max result constants', () => {

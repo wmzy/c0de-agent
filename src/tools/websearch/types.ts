@@ -64,7 +64,7 @@ export type {
   WebSearchParams,
   WebSearchProvider,
   WebSearchProviderId,
-  WebSearchSource,
   WebSearchResponse,
+  WebSearchSource,
 }
-export { DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS, clampNumResults }
+export { clampNumResults, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS }

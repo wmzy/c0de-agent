@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ToolContext } from '../shared/types/tool.js'
 import { DEFAULT_CONFIG } from '../core/config.js'
+import type { ToolContext } from '../shared/types/tool.js'
 import {
   autoAllowChecker,
   bashTool,

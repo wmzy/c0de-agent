@@ -1,4 +1,3 @@
-import { DEFAULT_NUM_RESULTS } from '../types.js'
 import type {
   Recency,
   WebSearchParams,
@@ -6,6 +5,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
+import { DEFAULT_NUM_RESULTS } from '../types.js'
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'
 

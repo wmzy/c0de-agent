@@ -39,12 +39,14 @@ describe('createWebSearchTool', () => {
 
   it('returns formatted success output on results', async () => {
     const tool = createWebSearchTool(duckCfg)
-    const f = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ AbstractText: 'TS', AbstractURL: 'https://ts.dev', Heading: 'TS' }),
-        { status: 200 },
-      ),
-    ) as unknown as typeof fetch
+    const f = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ AbstractText: 'TS', AbstractURL: 'https://ts.dev', Heading: 'TS' }),
+          { status: 200 },
+        ),
+      ) as unknown as typeof fetch
     setFetchOverride(f)
     const result = await tool.execute({ query: 'typescript' }, makeCtx())
     expect(result._tag).toBe('success')
@@ -58,7 +60,9 @@ describe('createWebSearchTool', () => {
     const tool = createWebSearchTool(duckCfg)
     const f = vi
       .fn()
-      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch
+      .mockResolvedValue(
+        new Response(JSON.stringify({}), { status: 200 }),
+      ) as unknown as typeof fetch
     setFetchOverride(f)
     const result = await tool.execute({ query: 'zzz' }, makeCtx())
     expect(result._tag).toBe('success')
@@ -69,9 +73,7 @@ describe('createWebSearchTool', () => {
 
   it('returns error on fetch failure', async () => {
     const tool = createWebSearchTool(duckCfg)
-    const f = vi
-      .fn()
-      .mockRejectedValue(new Error('network down')) as unknown as typeof fetch
+    const f = vi.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch
     setFetchOverride(f)
     const result = await tool.execute({ query: 'x' }, makeCtx())
     expect(result._tag).toBe('error')
@@ -90,7 +92,9 @@ describe('createWebSearchTool', () => {
     const ac = new AbortController()
     const f = vi
       .fn()
-      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch
+      .mockResolvedValue(
+        new Response(JSON.stringify({}), { status: 200 }),
+      ) as unknown as typeof fetch
     setFetchOverride(f)
     const ctx = { ...makeCtx(), abort: ac.signal }
     await tool.execute({ query: 'x' }, ctx)

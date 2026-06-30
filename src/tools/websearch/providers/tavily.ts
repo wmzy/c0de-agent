@@ -1,4 +1,3 @@
-import { DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from '../types.js'
 import type {
   Recency,
   WebSearchParams,
@@ -6,6 +5,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
+import { DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from '../types.js'
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search'
 
@@ -104,8 +104,7 @@ export const tavilyProvider: WebSearchProvider = {
   id: 'tavily',
   isAvailable: (apiKey?: string) => Boolean(apiKey && apiKey.length > 0),
   search: async (params: WebSearchParams): Promise<WebSearchResponse> => {
-    if (!params.apiKey)
-      throw new Error('Tavily requires an API key (TAVILY_API_KEY or config).')
+    if (!params.apiKey) throw new Error('Tavily requires an API key (TAVILY_API_KEY or config).')
     const data = await callTavilySearch(params.apiKey, params)
     const sources: WebSearchSource[] = []
     for (const r of data.results ?? []) {

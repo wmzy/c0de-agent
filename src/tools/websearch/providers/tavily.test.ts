@@ -85,8 +85,8 @@ describe('tavilyProvider', () => {
 
   it('throws with status on non-2xx', async () => {
     const f = mockFetch({ detail: 'invalid key' }, 401)
-    await expect(tavilyProvider.search({ query: 'q', apiKey: 'bad', fetchImpl: f })).rejects.toThrow(
-      /401/,
-    )
+    await expect(
+      tavilyProvider.search({ query: 'q', apiKey: 'bad', fetchImpl: f }),
+    ).rejects.toThrow(/401/)
   })
 })

@@ -109,9 +109,11 @@ describe('runWebSearch', () => {
   })
 
   it('resolves tavily via config key when env unset', async () => {
-    const f = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ answer: 'hi', results: [] }), { status: 200 }),
-    ) as unknown as typeof fetch
+    const f = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ answer: 'hi', results: [] }), { status: 200 }),
+      ) as unknown as typeof fetch
     setFetchOverride(f)
     const prevTavily = process.env.TAVILY_API_KEY
     delete process.env.TAVILY_API_KEY

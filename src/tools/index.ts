@@ -25,15 +25,6 @@ export {
 } from './builtin/resolvers.js'
 export { taskTool } from './builtin/task.js'
 export { writeTool } from './builtin/write.js'
-// ── Websearch ───────────────────────────────────────────────
-export { formatForLLM, resolveProvider, runWebSearch } from './websearch/index.js'
-export { createWebSearchTool } from './websearch/websearch.js'
-export type {
-  WebSearchProvider,
-  WebSearchProviderId,
-  WebSearchSource,
-  WebSearchResponse,
-} from './websearch/types.js'
 export { executeTool } from './executor.js'
 export { autoAllowChecker, createPermissionChecker } from './permission.js'
 // ── Framework ───────────────────────────────────────────────
@@ -65,6 +56,15 @@ export type {
   WriteInput,
 } from './types.js'
 export { validateInput } from './validate.js'
+// ── Websearch ───────────────────────────────────────────────
+export { formatForLLM, resolveProvider, runWebSearch } from './websearch/index.js'
+export type {
+  WebSearchProvider,
+  WebSearchProviderId,
+  WebSearchResponse,
+  WebSearchSource,
+} from './websearch/types.js'
+export { createWebSearchTool } from './websearch/websearch.js'
 
 // ── Default registry ────────────────────────────────────────
 import { DEFAULT_CONFIG } from '../core/config.js'

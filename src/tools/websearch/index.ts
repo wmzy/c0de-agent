@@ -1,10 +1,10 @@
 import type { WebSearchConfig } from '../../shared/types/config.js'
+import { createFetch } from './fetch.js'
 import { braveProvider } from './providers/brave.js'
 import { duckduckgoProvider } from './providers/duckduckgo.js'
 import { tavilyProvider } from './providers/tavily.js'
-import { createFetch } from './fetch.js'
-import { clampNumResults, DEFAULT_NUM_RESULTS } from './types.js'
 import type { Recency, WebSearchProvider, WebSearchProviderId, WebSearchResponse } from './types.js'
+import { clampNumResults, DEFAULT_NUM_RESULTS } from './types.js'
 
 const PROVIDERS: Record<WebSearchProviderId, WebSearchProvider> = {
   duckduckgo: duckduckgoProvider,
@@ -90,7 +90,8 @@ export async function runWebSearch(
     limit: clampNumResults(input.numResults),
     recency: input.recency,
     signal: abort,
-    apiKey: provider.id === 'tavily' ? keys.tavily : provider.id === 'brave' ? keys.brave : undefined,
+    apiKey:
+      provider.id === 'tavily' ? keys.tavily : provider.id === 'brave' ? keys.brave : undefined,
     fetchImpl: currentFetch(),
   })
 }
