@@ -31,12 +31,14 @@ export {
   insertEntry,
 } from './message.js'
 export {
-  appendLLMDetail,
   createSession,
   deleteSession,
-  getLLMDetails,
+  getLLMSegments,
   getSession,
   listSessions,
+  migrateLegacyDetails,
+  saveLLMSegments,
+  segmentFingerprint,
   touchSession,
   updateSessionTitle,
 } from './session.js'

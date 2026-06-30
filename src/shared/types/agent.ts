@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatTool, ModelRole, StreamChunk } from './llm.js'
+import type { ChatTool } from './llm.js'
 import type { Message, Session } from './message.js'
 import type { ToolDef, ToolResult } from './tool.js'
 
@@ -54,23 +54,48 @@ type TokenBudget = {
   keepRecent: number
 }
 
-/** Detailed record of a single LLM API call (for transparency/observability). */
-type LLMDetail = {
+/** 段内单次 LLM 调用的轻量记录（不含 messages/systemPrompt/tools——那些是段级或派生数据）。 */
+type LLMCall = {
   id: string
   timestamp: number
-  model: string
-  provider: string
-  role: ModelRole
-  systemPrompt: string
-  messages: ChatMessage[]
-  tools: ChatTool[]
-  responseChunks: StreamChunk[]
-  thinking?: string
   usage: { input: number; output: number; cacheRead?: number }
   latency: { firstToken: number; total: number }
   cost: number
-  /** 模型上下文窗口大小（token），来自 registry capabilities。用于总结面板的使用率。 */
+  thinking?: string
+  /** 模型回复文本（替代完整 responseChunks；前端只用文本拼接）。 */
+  responseText: string
+  /** 非正常停止原因（length/content_filter），正常完成为 undefined。 */
+  finishReason?: string
+}
+
+/** 触发新段的原因。 */
+type SegmentTrigger =
+  | 'initial'
+  | 'model_change'
+  | 'tools_change'
+  | 'system_prompt_change'
+  | 'compaction'
+  | 'user_confirmed'
+
+/**
+ * 一段共享相同前缀（systemPrompt + tools + provider + model）的连续 LLM 调用。
+ * 段首存一次前缀快照，段内 calls 只记轻量增量，消除每轮重复存储完整 messages 的 O(N²) 冗余。
+ */
+type LLMSegment = {
+  id: string
+  /** hash(systemPrompt + 规格化 tools)。变化 = 前缀失效 = cache miss。 */
+  fingerprint: string
+  provider: string
+  model: string
+  /** 段首快照：本段生命周期内恒定的系统提示词。 */
+  systemPrompt: string
+  /** 段首快照：本段启用的工具规格。 */
+  tools: ChatTool[]
+  startedAt: number
+  trigger: SegmentTrigger
+  /** 模型上下文窗口（来自 registry capabilities），用于总结面板使用率。段内恒定。 */
   contextWindow?: number
+  calls: LLMCall[]
 }
 
 /** Events emitted by the agent loop. Discriminated by `_tag`. */
@@ -120,7 +145,7 @@ type AgentState = {
   status: AgentStatus
   abortController: AbortController
   steeringQueue: string[]
-  llmDetails: LLMDetail[]
+  segments: LLMSegment[]
   tokenBudget: TokenBudget
   /** estimateTokens 的校准系数（由 calibrateEstimate 按真实 usage EMA 更新，默认 1.0）。 */
   calibrationFactor: number
@@ -133,7 +158,9 @@ export type {
   AgentEvent,
   AgentState,
   AgentStatus,
-  LLMDetail,
+  LLMCall,
+  LLMSegment,
   PendingToolCall,
+  SegmentTrigger,
   TokenBudget,
 }
