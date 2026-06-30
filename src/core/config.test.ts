@@ -80,3 +80,18 @@ describe('saveConfig / loadConfig', () => {
     expect(loaded.defaultModel).toBe('project-model')
   })
 })
+
+describe('agents config', () => {
+  it('DEFAULT_CONFIG 含 agents 字段', () => {
+    expect(DEFAULT_CONFIG.agents).toBeDefined()
+    expect(DEFAULT_CONFIG.agents.dir).toBe('.c0de/agents')
+    expect(DEFAULT_CONFIG.agents.subagentConcurrency).toBe(3)
+  })
+
+  it('mergeConfig 合并 agents 字段', () => {
+    const merged = mergeConfig(DEFAULT_CONFIG, {
+      agents: { dir: '.custom/agents', subagentConcurrency: 5 },
+    })
+    expect(merged.agents?.subagentConcurrency).toBe(5)
+  })
+})

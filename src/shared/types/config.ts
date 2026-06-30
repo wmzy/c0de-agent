@@ -39,6 +39,14 @@ type WebSearchConfig = {
   braveApiKey?: string
 }
 
+/** 多 agent 配置（spec: multi-agent-design §4.12）。 */
+type AgentsConfig = {
+  /** agent markdown 目录（相对项目根），默认 '.c0de/agents'。 */
+  dir: string
+  /** 并行子 agent 数上限，默认 3。 */
+  subagentConcurrency: number
+}
+
 /** Server security configuration (spec §24.2). */
 type SecurityConfig = {
   /** 启用 Bearer token 认证（远程访问场景）。本地开发默认关闭。 */
@@ -64,11 +72,13 @@ type Config = {
   toolMetrics: ToolMetricsConfig
   security: SecurityConfig
   websearch: WebSearchConfig
+  agents: AgentsConfig
   theme: 'light' | 'dark' | 'system'
   locale: string
 }
 
 export type {
+  AgentsConfig,
   CompactionConfig,
   Config,
   MCPServerConfig,

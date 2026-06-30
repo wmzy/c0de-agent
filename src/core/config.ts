@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
+  AgentsConfig,
   CompactionConfig,
   Config,
   MCPServerConfig,
@@ -32,6 +33,7 @@ const DEFAULT_CONFIG: Config = {
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },
+  agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   theme: 'system',
   locale: 'en',
 }
@@ -93,6 +95,7 @@ async function saveConfig(
 }
 
 export type {
+  AgentsConfig,
   CompactionConfig,
   Config,
   MCPServerConfig,

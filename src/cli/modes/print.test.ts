@@ -32,6 +32,7 @@ const config: Config = {
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },
+  agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   locale: 'en',
 }
 
