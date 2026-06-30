@@ -30,6 +30,13 @@ import type { AgentDependencies } from './types.js'
 
 type LoopDeps = AgentDependencies & {
   chatStream?: typeof llmChatStream
+  /** 子 agent 运行时注入：yield 工具的结果收集器（透传到 ToolContext.collectYield）。 */
+  readonly _subagentYieldCollector?: (data: unknown) => void
+  /** 子 agent 运行时注入：事件回调，子 agent 的 subagent_start/end 事件推入此 sink，
+   *  由父 agentLoop 缓冲后在工具执行后 yield 出去（spec §4.5 step 7）。 */
+  readonly _subagentEventSink?: (event: AgentEvent) => void
+  /** 当前递归深度（0=顶层主 agent）。用于 maxRecursion 控制（spec §4.5 step 4）。 */
+  readonly _subagentDepth?: number
 }
 
 export type { LoopDeps }
@@ -43,30 +50,78 @@ async function waitForResume(state: AgentState): Promise<void> {
   }
 }
 
-/** Run a delegated sub-agent in an isolated session (spec §12.3).
+/** 运行一个按类型派发的子 agent（spec: multi-agent-design §4.5）。
  *
- *  Host-side implementation of the dependency-reversed `task` tool: creates a
- *  child session + agent, runs the agent loop to completion, and returns the
- *  accumulated assistant text. The child inherits the parent's provider, tools
- *  and plugins; `request.model` overrides the model. Aborting the parent also
- *  aborts the child. */
-async function runSubAgent(
+ *  Host 端实现：查 agentRegistry 获取 AgentDefinition → 创建隔离子 session（agentType 记录）
+ *  → 构建子 agent（专属 prompt + 受限工具集 + yield）→ 运行到 yield 或完成 → 返回结果。
+ *  发射 subagent_start/subagent_end 事件供父 agent 转发（spec §4.5 step 7）。
+ *  abort 链接父→子。maxRecursion 控制子 agent 能否再递归派生 task（spec §4.5 step 4）。 */
+export async function runSubAgent(
   deps: LoopDeps,
   parent: AgentState,
   request: SubAgentRequest,
 ): Promise<SubAgentResult> {
-  const title = request.description?.trim() || `Sub-agent: ${request.prompt.slice(0, 60)}`
+  // 1. 查 agent 类型
+  if (!deps.agentRegistry) {
+    return { _tag: 'error', error: 'task tool unavailable: no agent registry is wired' }
+  }
+  const def = deps.agentRegistry.get(request.agentType)
+  if (!def) {
+    return {
+      _tag: 'error',
+      error: `Unknown agent type: ${request.agentType} is not a valid agent type`,
+    }
+  }
+
+  const title =
+    request.description?.trim() || `Sub-agent (${request.agentType}): ${request.prompt.slice(0, 60)}`
+  const childId = generateId()
+
+  // 发射 subagent_start 事件（spec §4.5 step 7）—— 通过 deps._subagentEventSink
+  // 推入父 agent 的事件缓冲，由 agentLoop 在工具执行后 yield 出去。
+  deps._subagentEventSink?.({
+    _tag: 'subagent_start',
+    childId,
+    agentType: request.agentType,
+    description: request.description ?? '',
+    background: request.background ?? false,
+  })
+
+  // 2. 创建子 session（记录 agentType）
   let childSession: Session
   try {
-    childSession = await createSession(deps.db, title, parent.session.projectId ?? undefined)
+    childSession = await createSession(
+      deps.db,
+      title,
+      parent.session.projectId ?? undefined,
+      request.agentType,
+    )
   } catch (e) {
     return { _tag: 'error', error: e instanceof Error ? e.message : String(e) }
   }
 
-  const childConfig = { ...parent.config, ...(request.model ? { model: request.model } : {}) }
+  // 3. 构建子 agent 配置：工具集隔离 + 模型覆盖 + 递归限制。
+  //    工具集：def.tools 声明的（否则继承父全部）；始终注入 yield（子 agent 返回结果的唯一方式）。
+  //    maxRecursion 默认 0=禁止；超过上限则移除 task 工具（spec §4.5 step 4 / §8）。
+  const parentDepth = deps._subagentDepth ?? 0
+  const childDepth = parentDepth + 1
+  const declaredTools = def.tools ?? parent.config.tools
+  const maxRec = def.maxRecursion ?? 0
+  const baseTools = childDepth > maxRec ? declaredTools.filter((t) => t !== 'task') : declaredTools
+  const childTools = Array.from(new Set([...baseTools, 'yield']))
+
+  const childConfig = {
+    ...parent.config,
+    systemPrompt: def.systemPrompt,
+    tools: childTools,
+    ...(def.model ? { model: def.model } : {}),
+    ...(request.model ? { model: request.model } : {}),
+  }
+
+  // 4. 创建子 agent
   const childState = await createAgent(childSession, childConfig, deps)
 
-  // Link abort: if the parent aborts, the child stops too.
+  // 5. abort 链接：父 abort 则子 abort
   if (parent.abortController.signal.aborted) {
     childState.abortController.abort()
   } else {
@@ -77,10 +132,24 @@ async function runSubAgent(
     )
   }
 
+  // 6. 运行子 agent loop，透传 yield 收集器与递归深度
+  const yielded: unknown[] = []
+  const collectYield = (data: unknown) => {
+    yielded.push(data)
+  }
+  const childPrompt = request.context
+    ? `CONTEXT\n${request.context}\n\nASSIGNMENT\n${request.prompt}`
+    : request.prompt
+
   const text: string[] = []
   let errMsg: string | null = null
   try {
-    for await (const ev of runAgent(childState, [{ _tag: 'text', text: request.prompt }], deps)) {
+    const childDeps: LoopDeps = {
+      ...deps,
+      _subagentYieldCollector: collectYield,
+      _subagentDepth: childDepth,
+    }
+    for await (const ev of runAgent(childState, [{ _tag: 'text', text: childPrompt }], childDeps)) {
       if (ev._tag === 'text_delta') {
         text.push(ev.text)
       } else if (ev._tag === 'error') {
@@ -92,10 +161,29 @@ async function runSubAgent(
     errMsg = e instanceof Error ? e.message : String(e)
   }
 
-  if (errMsg !== null) {
-    return { _tag: 'error', error: errMsg }
+  const success = errMsg === null
+
+  // 发射 subagent_end 事件（spec §4.5 step 7）
+  deps._subagentEventSink?.({
+    _tag: 'subagent_end',
+    childId,
+    agentType: request.agentType,
+    success,
+    ...(success ? { output: text.join('') } : {}),
+  })
+
+  if (!success) {
+    return { _tag: 'error', error: errMsg!, sessionId: childSession.id }
   }
-  return { _tag: 'success', output: text.join(''), sessionId: childSession.id }
+
+  // 组装结果：优先 yield data，否则文本
+  const data = yielded.length > 0 ? (yielded.length === 1 ? yielded[0] : yielded) : undefined
+  return {
+    _tag: 'success',
+    output: text.join(''),
+    sessionId: childSession.id,
+    ...(data !== undefined ? { data } : {}),
+  }
 }
 
 function toolResultToContent(
@@ -122,6 +210,12 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     if (state.abortController.signal.aborted) {
       yield { _tag: 'error', error: { _tag: 'aborted' } }
       return
+    }
+
+    // subagent 事件缓冲：runSubAgent 通过 sink 推入事件，executeToolCalls 后 yield 出去
+    const subagentEvents: AgentEvent[] = []
+    const eventSink = (ev: AgentEvent): void => {
+      subagentEvents.push(ev)
     }
     if (state.status._tag === 'paused') {
       state.status = { _tag: 'running', turnCount: turn }
@@ -472,7 +566,8 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
           abort: state.abortController.signal,
           ...(deps.urlRegistry ? { urlRegistry: deps.urlRegistry } : {}),
           ...(deps.debugSpawn ? { debugSpawn: deps.debugSpawn } : {}),
-          runSubAgent: (req) => runSubAgent(deps, state, req),
+          runSubAgent: (req) => runSubAgent({ ...deps, _subagentEventSink: eventSink }, state, req),
+          ...(deps._subagentYieldCollector ? { collectYield: deps._subagentYieldCollector } : {}),
         },
         validCalls,
         deps.hookRunner,
@@ -503,6 +598,11 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
           }
         }
       }
+    }
+
+    // yield 在本轮工具执行中收集的 subagent 事件（subagent_start/end）
+    for (const ev of subagentEvents) {
+      yield ev
     }
 
     if (validToolCalls.length === 0) {

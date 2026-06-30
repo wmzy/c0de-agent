@@ -15,6 +15,7 @@ import type {
 import type { ChatTool } from '../shared/types/llm.js'
 import type { DebugTransport, ToolDef, URLRegistry } from '../shared/types/tool.js'
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
+import type { AgentRegistry } from './agents/types.js'
 import type { Config } from './config.js'
 
 /** Runtime services injected into every core function (DI pattern). */
@@ -37,6 +38,8 @@ type AgentDependencies = {
   /** 可选调试适配器 spawn 钩子（spec §21）：注入后 debug_* 工具可用。
    *  接收 debug_start 的配置，返回适配器进程的 stdio transport。 */
   debugSpawn?: (config: unknown) => DebugTransport
+  /** Agent 类型注册表（spec: multi-agent-design）。注入后 task 工具可按类型派发。 */
+  agentRegistry?: AgentRegistry
 }
 
 type ProjectInfo = {

@@ -52,19 +52,38 @@ type ToolContext = {
   /** Spawn a debug adapter and return its stdio transport (dependency-reversal
    *  hook for the `debug_*` tools; host wires real child_process spawn). */
   debugSpawn?: (config: unknown) => DebugTransport
+  /** 子 agent 专用：yield 工具调用时收集结构化结果（runSubAgent 注入）。 */
+  collectYield?: (data: unknown) => void
+}
+
+/** 单个并行子任务项（批量模式）。 */
+type TaskItem = {
+  description?: string
+  /** 角色细分（注入子 prompt）。 */
+  role?: string
+  assignment: string
 }
 
 /** Request to run a sub-agent (the `task` tool's payload to the host). */
 type SubAgentRequest = {
+  /** agent 类型名（必填）。 */
+  agentType: string
   prompt: string
   description?: string
+  /** 批量模式的角色细分。 */
+  role?: string
+  /** 批量模式的共享上下文。 */
+  context?: string
   model?: string
+  /** 后台异步运行（默认 false）。 */
+  background?: boolean
 }
 
 /** Result of a sub-agent run. */
 type SubAgentResult =
-  | { _tag: 'success'; output: string; sessionId: string }
-  | { _tag: 'error'; error: string }
+  | { _tag: 'success'; output: string; sessionId: string; data?: unknown; patchPath?: string }
+  | { _tag: 'error'; error: string; sessionId?: string }
+  | { _tag: 'running'; jobId: string; sessionId: string }
 
 /** Function signature for tool execution. */
 type ToolExecutor = (input: unknown, ctx: ToolContext) => Promise<ToolResult>
@@ -106,6 +125,7 @@ export type {
   ResolveResult,
   SubAgentRequest,
   SubAgentResult,
+  TaskItem,
   ToolContext,
   ToolDef,
   ToolExecutor,

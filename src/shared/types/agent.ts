@@ -91,6 +91,20 @@ type AgentEvent =
   | { _tag: 'error'; error: AgentError }
   /** 通知前端：本轮 LLM 调用详情已持久化，应刷新调用详情面板。轻量通知，不带 payload。 */
   | { _tag: 'llm_detail' }
+  | {
+      _tag: 'subagent_start'
+      childId: string
+      agentType: string
+      description: string
+      background: boolean
+    }
+  | {
+      _tag: 'subagent_progress'
+      childId: string
+      toolName?: string
+      status: 'running' | 'completed' | 'failed'
+    }
+  | { _tag: 'subagent_end'; childId: string; agentType: string; success: boolean; output?: string }
   | { _tag: 'done' }
 
 /**

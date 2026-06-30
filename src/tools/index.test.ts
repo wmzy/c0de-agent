@@ -64,6 +64,7 @@ describe('tools index', () => {
       'task',
       'websearch',
       'write',
+      'yield',
     ])
   })
 

@@ -25,6 +25,7 @@ export {
 } from './builtin/resolvers.js'
 export { taskTool } from './builtin/task.js'
 export { writeTool } from './builtin/write.js'
+export { yieldTool } from './builtin/yield.js'
 export { executeTool } from './executor.js'
 export { autoAllowChecker, createPermissionChecker } from './permission.js'
 // ── Framework ───────────────────────────────────────────────
@@ -77,6 +78,7 @@ import { grepTool } from './builtin/grep.js'
 import { readTool } from './builtin/read.js'
 import { taskTool } from './builtin/task.js'
 import { writeTool } from './builtin/write.js'
+import { yieldTool } from './builtin/yield.js'
 import { createToolRegistry, registerTool } from './registry.js'
 import { createWebSearchTool } from './websearch/websearch.js'
 
@@ -95,6 +97,7 @@ export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
   registerTool(reg, grepTool)
   registerTool(reg, bashTool)
   registerTool(reg, taskTool)
+  registerTool(reg, yieldTool)
   registerTool(reg, createWebSearchTool(config.websearch))
   for (const tool of dapTools) registerTool(reg, tool)
   return reg

@@ -186,6 +186,7 @@ describe('chat route (SSE)', () => {
       'task',
       'websearch',
       'write',
+      'yield',
     ])
   })
 

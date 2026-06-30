@@ -11,6 +11,7 @@ import type { Message, Session } from '../shared/types/message.js'
 import { editTool } from '../tools/builtin/edit.js'
 import { createDefaultRegistry, createToolRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
+import { BUILTIN_AGENTS, createAgentRegistry } from './agents/index.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
 import { agentLoop } from './loop.js'
@@ -90,6 +91,7 @@ function makeMockDeps(db: LoopDeps['db'], streamFn: () => AsyncGenerator<StreamC
     config: DEFAULT_CONFIG,
     cwd: process.cwd(),
     chatStream: streamFn as unknown as LoopDeps['chatStream'],
+    agentRegistry: makeAgentRegistry(),
   }
 }
 
@@ -107,7 +109,15 @@ function makeMockDepsWithHooks(
     cwd: process.cwd(),
     chatStream: streamFn as unknown as LoopDeps['chatStream'],
     hookRunner,
+    agentRegistry: makeAgentRegistry(),
   }
+}
+
+/** 构建含内置 agent 的注册表（runSubAgent 按 agentType 派发需要）。 */
+function makeAgentRegistry() {
+  const reg = createAgentRegistry()
+  for (const def of BUILTIN_AGENTS) reg.register(def)
+  return reg
 }
 
 function makeState(session: Session, messages: Message[]): AgentState {
