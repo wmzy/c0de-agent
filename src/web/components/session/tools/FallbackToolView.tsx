@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { useOverflow } from '../hooks/useOverflow.js'
 
 const title = css`
   font-size: 13px;
@@ -17,6 +18,19 @@ const pre = css`
   white-space: pre-wrap;
   overflow: auto;
   max-height: 400px;
+`
+
+const collapsed = css`
+  max-height: 200px;
+  overflow: hidden;
+`
+
+const btn = css`
+  font-size: 12px;
+  color: var(--primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
 `
 
 /** 把嵌套对象拍平成 [path, value] 对，如 {a:{b:1}} => [["a.b",1]]。 */
@@ -54,6 +68,8 @@ export function FallbackToolView({
       : output?._tag === 'error'
         ? output.error
         : ''
+  const { ref, overflowing, expanded, toggle } = useOverflow(200)
+  const showToggle = overflowing && !expanded
   return (
     <div>
       <div className={title} data-testid="tool-title">
@@ -67,9 +83,18 @@ export function FallbackToolView({
         </pre>
       )}
       {resultText && (
-        <pre className={pre} data-testid="fallback-output">
-          {resultText}
-        </pre>
+        <div>
+          <div ref={ref} className={showToggle ? collapsed : ''}>
+            <pre className={pre} data-testid="fallback-output">
+              {resultText}
+            </pre>
+          </div>
+          {overflowing && (
+            <button type="button" className={btn} onClick={toggle}>
+              {expanded ? '收起' : '展开'}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )

@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { diffLines } from 'diff'
+import { useOverflow } from './hooks/useOverflow.js'
 
 const wrap = css`
   margin: 4px 0;
@@ -8,6 +9,19 @@ const wrap = css`
   border: 1px solid var(--border);
   font-size: 13px;
   max-height: 400px;
+`
+
+const collapsed = css`
+  max-height: 200px;
+  overflow: hidden;
+`
+
+const btn = css`
+  font-size: 12px;
+  color: var(--primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
 `
 
 const row = css`
@@ -42,6 +56,8 @@ export function ContentDiff({ oldText, newText }: { oldText: string; newText: st
   const normalizedOld = oldText.endsWith('\n') ? oldText : `${oldText}\n`
   const normalizedNew = newText.endsWith('\n') ? newText : `${newText}\n`
   const parts = diffLines(normalizedOld, normalizedNew)
+  const { ref, overflowing, expanded, toggle } = useOverflow(200)
+  const showToggle = overflowing && !expanded
   const rows: { kind: RowKind; text: string }[] = []
   for (const part of parts) {
     const lines = part.value.split('\n')
@@ -51,20 +67,29 @@ export function ContentDiff({ oldText, newText }: { oldText: string; newText: st
     for (const line of lines) rows.push({ kind, text: line })
   }
   return (
-    <div className={wrap} data-testid="diff">
-      {rows.map((r, i) => (
-        <div
-          // biome-ignore lint/suspicious/noArrayIndexKey: diff 行无稳定 id
-          key={i}
-          className={`${row} ${r.kind === 'added' ? added : r.kind === 'removed' ? removed : ''}`}
-          data-diff={r.kind}
-        >
-          <span className={marker}>
-            {r.kind === 'added' ? '+' : r.kind === 'removed' ? '-' : ' '}
-          </span>
-          <span>{r.text}</span>
+    <div data-testid="diff-wrap">
+      <div ref={ref} className={showToggle ? collapsed : ''}>
+        <div className={wrap} data-testid="diff">
+          {rows.map((r, i) => (
+            <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: diff 行无稳定 id
+              key={i}
+              className={`${row} ${r.kind === 'added' ? added : r.kind === 'removed' ? removed : ''}`}
+              data-diff={r.kind}
+            >
+              <span className={marker}>
+                {r.kind === 'added' ? '+' : r.kind === 'removed' ? '-' : ' '}
+              </span>
+              <span>{r.text}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
+      {overflowing && (
+        <button type="button" className={btn} onClick={toggle}>
+          {expanded ? '收起' : '展开'}
+        </button>
+      )}
     </div>
   )
 }
