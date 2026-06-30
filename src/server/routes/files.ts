@@ -1,7 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
 import { apiError } from '../middleware/error.js'
+import { safeResolve } from '../util/safe-path.js'
 import type { ServerContext } from '../types.js'
 
 type FileEntry = {
@@ -12,16 +13,6 @@ type FileEntry = {
 type SearchResult = {
   path: string
   type: 'file' | 'directory'
-}
-
-/** 安全路径检查：确保解析后的路径在 cwd 内。 */
-function safeResolve(ctx: ServerContext, requestPath: string): string | null {
-  const resolved = resolve(ctx.cwd, requestPath)
-  const rel = relative(ctx.cwd, resolved)
-  if (rel.startsWith('..') || resolve(ctx.cwd, rel) !== resolved) {
-    return null
-  }
-  return resolved
 }
 
 /** 递归收集文件列表（用于搜索）。 */
@@ -82,7 +73,7 @@ function createFilesRoute(ctx: ServerContext): Hono {
   // 列出目录
   app.get('/', async (c) => {
     const queryPath = c.req.query('path') ?? '.'
-    const resolved = safeResolve(ctx, queryPath)
+    const resolved = safeResolve(ctx.cwd, queryPath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
@@ -121,7 +112,7 @@ function createFilesRoute(ctx: ServerContext): Hono {
     const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
     const raw = path.endsWith('/raw')
     const filePath = raw ? path.slice(0, -'/raw'.length) : path
-    const resolved = safeResolve(ctx, filePath)
+    const resolved = safeResolve(ctx.cwd, filePath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
@@ -143,7 +134,7 @@ function createFilesRoute(ctx: ServerContext): Hono {
   // 写入文件
   app.put('/*', async (c) => {
     const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
-    const resolved = safeResolve(ctx, path)
+    const resolved = safeResolve(ctx.cwd, path)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
