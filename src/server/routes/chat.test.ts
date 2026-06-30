@@ -8,6 +8,7 @@ import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/project.js'
+import { appendMessage, getEntries } from '../../session/message.js'
 import { createSession, getLLMDetails } from '../../session/session.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
@@ -213,6 +214,71 @@ describe('chat route (SSE)', () => {
     })
     const cwd = await resolveAgentCwd(ctx, { projectId: null })
     expect(cwd).toBe('/some/base')
+  })
+
+  // 斜杠命令拦截（spec §3.8）：/help 等命令在服务端执行，返回结果文本而非启动 agent
+  it('/help 命令返回命令列表文本，不启动 agent', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/help' }),
+    })
+    expect(res.status).toBe(200)
+    const events = parseSSEEvents(await res.text())
+    const types = events.map((e) => e.event)
+    expect(types).toContain('text_delta')
+    expect(types).toContain('done')
+    const text = events
+      .filter((e) => e.event === 'text_delta')
+      .map((e) => JSON.parse(e.data).text as string)
+      .join('')
+    expect(text).toContain('/compact')
+  })
+
+  it('/clear <sessionId> 清空会话消息后返回成功', async () => {
+    const { app, ctx, sessionId } = await setup()
+    // 先放一条消息
+    await appendMessage(ctx.db, sessionId, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'hello' }],
+    })
+    expect(await getEntries(ctx.db, sessionId)).toHaveLength(1)
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: `/clear ${sessionId}` }),
+    })
+    expect(res.status).toBe(200)
+    const events = parseSSEEvents(await res.text())
+    const text = events
+      .filter((e) => e.event === 'text_delta')
+      .map((e) => JSON.parse(e.data).text as string)
+      .join('')
+    expect(text).toContain('Cleared')
+    // 消息已被清除
+    expect(await getEntries(ctx.db, sessionId)).toHaveLength(0)
+  })
+
+  it('未知斜杠命令回退为正常消息发给 agent', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/foobarbaz' }),
+    })
+    expect(res.status).toBe(200)
+    const events = parseSSEEvents(await res.text())
+    const types = events.map((e) => e.event)
+    // 回退到 agent 路径：mockChatStream 会产出 'Hello' 文本 + done
+    expect(types).toContain('text_delta')
+    expect(types).toContain('done')
+    const text = events
+      .filter((e) => e.event === 'text_delta')
+      .map((e) => JSON.parse(e.data).text as string)
+      .join('')
+    expect(text).toContain('Hello')
   })
 })
 

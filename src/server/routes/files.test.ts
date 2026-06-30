@@ -117,6 +117,14 @@ describe('files route', () => {
     expect(paths.some((p) => p.includes('hello'))).toBe(true)
   })
 
+  it('GET /hello.txt/raw 返回原始字节和 text/plain 类型', async () => {
+    const { app } = await setupWithDir()
+    const res = await app.request('/hello.txt/raw')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/plain')
+    expect(await res.text()).toBe('Hello World')
+  })
+
   it('GET /search without q returns 400', async () => {
     const { app } = await setupWithDir()
     const res = await app.request('/search')

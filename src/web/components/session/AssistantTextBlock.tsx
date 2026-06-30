@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { CodeReference } from '../CodeReference.js'
 import { CopyButton } from '../CopyButton.js'
 import { Markdown } from '../Markdown.js'
 import { useOverflow } from './hooks/useOverflow.js'
@@ -38,13 +39,30 @@ const footer = css`
   color: var(--text-secondary);
 `
 
+const refPattern = /^@\[[^:]+:\d+(-\d+)?\]$/
+
+function collectCodeRefs(text: string): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => refPattern.test(l))
+}
+
 export function AssistantTextBlock({ text, completedAt }: { text: string; completedAt?: number }) {
   const { ref, overflowing, expanded, toggle } = useOverflow(400)
   const showToggle = overflowing && !expanded
+  const refTokens = collectCodeRefs(text)
   return (
     <div className={wrap} data-testid="assistant-text">
       <div ref={ref} className={`${body} ${showToggle ? collapsed : ''}`}>
         <Markdown content={text} />
+        {refTokens.length > 0 && (
+          <div data-testid="assistant-code-refs">
+            {refTokens.map((t) => (
+              <CodeReference key={t} token={t} />
+            ))}
+          </div>
+        )}
       </div>
       {overflowing && (
         <button type="button" className={btn} onClick={toggle}>

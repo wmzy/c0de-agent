@@ -12,6 +12,7 @@ import {
   abortAgent,
   createAgent,
   getAgentStatus,
+  isAgentPaused,
   pauseAgent,
   resumeAgent,
   runAgent,
@@ -204,5 +205,18 @@ describe('control functions', () => {
       makeDeps(db, mockTextStream('x')),
     )
     expect(getAgentStatus(agent)).toBe(agent.status)
+  })
+
+  it('isAgentPaused 仅在 paused 时返回 true', async () => {
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [] },
+      makeDeps(db, mockTextStream('x')),
+    )
+    expect(isAgentPaused(agent)).toBe(false) // idle
+    agent.status = { _tag: 'running', turnCount: 0 }
+    expect(isAgentPaused(agent)).toBe(false)
+    agent.status = { _tag: 'paused', pauseReason: 'test' }
+    expect(isAgentPaused(agent)).toBe(true)
   })
 })

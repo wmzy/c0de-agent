@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
-import { DESKTOP } from '../styles/breakpoints.js'
+import { MobileNav } from '../components/MobileNav.js'
+import { DESKTOP, MOBILE } from '../styles/breakpoints.js'
 
 const layoutStyle = css`
   display: flex;
@@ -38,6 +39,9 @@ const mainStyle = css`
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  ${MOBILE} {
+    padding-bottom: 56px;
+  }
 `
 
 const panelStyle = css`
@@ -71,6 +75,8 @@ export function Layout({
         <main className={mainStyle}>{mainNode}</main>
         {panelNode && <aside className={panelStyle}>{panelNode}</aside>}
       </div>
+      {/* 移动端底部导航栏（spec §10.3）；桌面端由组件内部隐藏 */}
+      <MobileNav />
     </div>
   )
 }

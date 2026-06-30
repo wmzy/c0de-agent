@@ -1,3 +1,4 @@
+import { builtinCommands } from './slash.js'
 import type { PromptBuildContext, PromptRegistry, PromptSection } from './types.js'
 
 // ── Static section bodies (shared with the legacy buildSystemPrompt) ──
@@ -105,6 +106,8 @@ export const BUILTIN_SECTION_IDS = [
   'tone',
   'project',
   'skills',
+  'agents',
+  'slash-commands',
 ] as const
 
 /** Built-in sections. Dynamic bodies (tool list, project info, skills) use `render`. */
@@ -160,6 +163,29 @@ function builtinSections(): PromptSection[] {
       render: (c) => {
         const lines = ['## Loaded Skills']
         for (const skill of c.skills ?? []) lines.push(`- ${skill}`)
+        return lines.join('\n')
+      },
+    },
+    // spec §17.2：有子 agent 时列出可委托 agent（插件/配置注入）。
+    {
+      id: 'agents',
+      content: '',
+      priority: 115,
+      condition: (c) => Boolean(c.agents && c.agents.length > 0),
+      render: (c) => {
+        const lines = ['## Available Agents']
+        for (const agent of c.agents ?? []) lines.push(`- ${agent}`)
+        return lines.join('\n')
+      },
+    },
+    // spec §17.2：始终列出可用 slash 命令，让模型知道可调用哪些命令。
+    {
+      id: 'slash-commands',
+      content: '',
+      priority: 120,
+      render: () => {
+        const lines = ['## Slash Commands']
+        for (const cmd of builtinCommands) lines.push(`- /${cmd.name}: ${cmd.description}`)
         return lines.join('\n')
       },
     },

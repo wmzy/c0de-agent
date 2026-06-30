@@ -1,10 +1,20 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// 代码引用组件依赖 Shiki 高亮，mock 避免测试中加载 WASM/语法包
+vi.mock('../../utils/highlight.js', () => ({
+  highlightCode: vi.fn(async (code: string) => `<pre><code>${code}</code></pre>`),
+}))
+
 import { AssistantTextBlock } from './AssistantTextBlock.js'
 import { ReasoningBlock } from './ReasoningBlock.js'
 import { UserTextBlock } from './UserTextBlock.js'
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 describe('UserTextBlock', () => {
   it('渲染文本', () => {
@@ -23,6 +33,47 @@ describe('AssistantTextBlock', () => {
   it('有 completedAt 时显示时间', () => {
     render(<AssistantTextBlock text="hi" completedAt={1700000000000} />)
     expect(screen.getByTestId('assistant-time')).toBeInTheDocument()
+  })
+
+  it('含代码引用时渲染展开控件', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <AssistantTextBlock text="@[src/a.ts:1-2]" />
+      </QueryClientProvider>,
+    )
+    expect(screen.queryByTestId('assistant-code-refs')).toBeTruthy()
+    const toggle = screen.queryByTestId('code-ref-toggle')
+    expect(toggle).toBeTruthy()
+    expect(toggle?.textContent).toContain('src/a.ts:1-2')
+  })
+
+  it('点击引用展开后拉取并显示代码片段', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ path: 'a.ts', content: 'line1\nline2\nline3' }),
+      }),
+    )
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <AssistantTextBlock text="@[src/a.ts:1-2]" />
+      </QueryClientProvider>,
+    )
+    fireEvent.click(screen.getByTestId('code-ref-toggle'))
+    await waitFor(() => {
+      const body = screen.getByTestId('code-ref-body')
+      expect(body.textContent).toContain('line1')
+      expect(body.textContent).toContain('line2')
+    })
+  })
+
+  it('无引用时不渲染引用区块', () => {
+    render(<AssistantTextBlock text="普通文本" />)
+    expect(screen.queryByTestId('assistant-code-refs')).toBeNull()
   })
 })
 

@@ -5,6 +5,7 @@ export {
   abortAgent,
   createAgent,
   getAgentStatus,
+  isAgentPaused,
   pauseAgent,
   resumeAgent,
   runAgent,

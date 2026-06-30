@@ -48,6 +48,34 @@ async function collectFiles(dir: string, basePath: string, maxDepth = 5): Promis
   return results
 }
 
+function contentTypeFor(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  const map: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    svg: 'image/svg+xml',
+    webp: 'image/webp',
+    pdf: 'application/pdf',
+    mp3: 'audio/mpeg',
+    wav: 'audio/wav',
+    ogg: 'audio/ogg',
+    m4a: 'audio/mp4',
+    flac: 'audio/flac',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    mov: 'video/quicktime',
+    json: 'application/json; charset=utf-8',
+    html: 'text/html; charset=utf-8',
+    md: 'text/markdown; charset=utf-8',
+    txt: 'text/plain; charset=utf-8',
+    ts: 'text/plain; charset=utf-8',
+    js: 'text/plain; charset=utf-8',
+  }
+  return map[ext] ?? 'application/octet-stream'
+}
+
 function createFilesRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -91,11 +119,20 @@ function createFilesRoute(ctx: ServerContext): Hono {
   // 读取文件
   app.get('/*', async (c) => {
     const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
-    const resolved = safeResolve(ctx, path)
+    const raw = path.endsWith('/raw')
+    const filePath = raw ? path.slice(0, -'/raw'.length) : path
+    const resolved = safeResolve(ctx, filePath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
     try {
+      if (raw) {
+        const buf = await readFile(resolved)
+        return c.body(buf, 200, {
+          'Content-Type': contentTypeFor(filePath),
+          'Cache-Control': 'no-store',
+        })
+      }
       const content = await readFile(resolved, 'utf-8')
       return c.json({ path, content })
     } catch {

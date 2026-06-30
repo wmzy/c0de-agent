@@ -27,4 +27,33 @@ describe('FilePreview', () => {
       expect(screen.getByText('加载中…')).toBeTruthy()
     })
   })
+
+  it('渲染音频文件为内联播放器', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ path: 'song.mp3', content: '' }),
+      }),
+    )
+    withClient(<FilePreview path="song.mp3" />)
+    const audio = document.querySelector('audio')
+    expect(audio).toBeTruthy()
+    expect(audio?.getAttribute('src')).toContain('/api/files/song.mp3/raw')
+  })
+
+  it('渲染视频文件为内联播放器', async () => {
+    withClient(<FilePreview path="clip.mp4" />)
+    const video = document.querySelector('video')
+    expect(video).toBeTruthy()
+    expect(video?.getAttribute('src')).toContain('/api/files/clip.mp4/raw')
+  })
+
+  it('图片 src 指向 /raw 端点', async () => {
+    withClient(<FilePreview path="a.png" />)
+    const img = document.querySelector('img')
+    expect(img).toBeTruthy()
+    expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
+  })
 })

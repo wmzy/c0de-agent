@@ -2,9 +2,11 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
+import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
 import { getProject } from '../../project/project.js'
 import { getSession } from '../../session/session.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
+import { autoAllowChecker } from '../../tools/permission.js'
 import { listTools } from '../../tools/registry.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
@@ -43,6 +45,62 @@ function createChatRoute(ctx: ServerContext): Hono {
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     }
 
+    // 提前解析 cwd（slash 拦截与 agent 路径都需使用）
+    const cwd = await resolveAgentCwd(ctx, session)
+
+    // 斜杠命令拦截
+    const parsed = parseSlashInput(message)
+    if (parsed) {
+      const registry = createSlashRegistry()
+      const cmd = registry.get(parsed.name)
+      if (cmd) {
+        const commandCtx = {
+          cwd,
+          config: ctx.config,
+          // 内置斜杠命令（/clear、/fork、/config）仅需 db + config；
+          // permission/toolRegistry/llmRegistry 不会触发，用 autoAllow 凑齐类型。
+          deps: {
+            db: ctx.db,
+            config: ctx.config,
+            cwd,
+            permission: autoAllowChecker,
+            toolRegistry: ctx.toolRegistry,
+            llmRegistry: ctx.llmRegistry,
+          },
+        }
+        return streamSSE(c, async (stream) => {
+          try {
+            const result = await cmd.execute(parsed.args, commandCtx)
+            if (result._tag === 'error') {
+              await stream.writeSSE({
+                event: 'error',
+                data: JSON.stringify({
+                  _tag: 'error',
+                  error: { _tag: 'unexpected', message: result.message },
+                }),
+              })
+            } else {
+              const text = result._tag === 'success' ? result.message : result.text
+              await stream.writeSSE({
+                event: 'text_delta',
+                data: JSON.stringify({ _tag: 'text_delta', text }),
+              })
+            }
+            await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+          } catch (e) {
+            await stream.writeSSE({
+              event: 'error',
+              data: JSON.stringify({
+                _tag: 'error',
+                error: { _tag: 'unexpected', message: String(e) },
+              }),
+            })
+          }
+        })
+      }
+      // 未知斜杠命令：回退为正常消息发给 agent
+    }
+
     return streamSSE(c, async (stream) => {
       // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认
       const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
@@ -54,7 +112,7 @@ function createChatRoute(ctx: ServerContext): Hono {
         },
       })
 
-      const cwd = await resolveAgentCwd(ctx, session)
+      // cwd 已在斜杠拦截前解析，此处直接复用
 
       // 构建 agent 依赖（注入测试用 chatStream）
       const deps: LoopDeps = {

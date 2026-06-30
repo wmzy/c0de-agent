@@ -93,4 +93,9 @@ function getAgentStatus(state: AgentState): AgentStatus {
   return state.status
 }
 
-export { abortAgent, createAgent, getAgentStatus, pauseAgent, resumeAgent, runAgent }
+/** 判断 agent 是否处于暂停态（spec §19.2）。 */
+function isAgentPaused(state: AgentState): boolean {
+  return state.status._tag === 'paused'
+}
+
+export { abortAgent, createAgent, getAgentStatus, isAgentPaused, pauseAgent, resumeAgent, runAgent }

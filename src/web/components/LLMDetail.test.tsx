@@ -209,12 +209,26 @@ describe('LLMDetailsView', () => {
     })
   })
 
-  it('多条调用时只展示最后一次，不逐条渲染', async () => {
+  it('多条调用逐条渲染完整时间线', async () => {
     ;(sessionAPI.llmDetails as Mock).mockResolvedValue([detail, emptyDetail])
     renderWithClient(<LLMDetailsView sessionId="s1" />)
     fireEvent.click(screen.getByTestId('llm-details-toggle'))
     await waitFor(() => {
-      expect(screen.getAllByTestId('llm-detail')).toHaveLength(1)
+      expect(screen.getAllByTestId('llm-detail')).toHaveLength(2)
+    })
+  })
+
+  it('按时间倒序渲染（最新在前）', async () => {
+    ;(sessionAPI.llmDetails as Mock).mockResolvedValue([detail, emptyDetail])
+    renderWithClient(<LLMDetailsView sessionId="s1" />)
+    fireEvent.click(screen.getByTestId('llm-details-toggle'))
+    await waitFor(() => {
+      const headers = screen.getAllByTestId('llm-detail-header')
+      expect(headers).toHaveLength(2)
+      // detail 是 index 0（旧），emptyDetail 是 index 1（新）
+      // reverse() 后 emptyDetail 在前，header 以 #2 开头
+      expect(headers[0].textContent).toMatch(/^调用 #2/)
+      expect(headers[1].textContent).toMatch(/^调用 #1/)
     })
   })
 })

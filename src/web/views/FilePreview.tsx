@@ -29,33 +29,70 @@ const CODE_EXT = [
   'sql',
 ]
 const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp']
+const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'm4a', 'flac']
+const VIDEO_EXT = ['mp4', 'webm', 'mov', 'mkv']
 
 function extOf(name: string): string {
   return name.split('.').pop()?.toLowerCase() ?? ''
 }
 
 export function FilePreview({ path }: { path: string }) {
+  const ext = extOf(path)
+  const isMedia =
+    IMG_EXT.includes(ext) || AUDIO_EXT.includes(ext) || VIDEO_EXT.includes(ext) || ext === 'pdf'
+
   const q = useQuery({
     queryKey: ['file', path],
     queryFn: () => fileAPI.read(path),
+    enabled: !isMedia,
   })
+
+  // 媒体文件直接渲染，不经过 JSON 查询
+  if (isMedia) {
+    if (IMG_EXT.includes(ext)) {
+      return (
+        <img src={`/api/files/${encodeURI(path)}/raw`} alt={path} style={{ maxWidth: '100%' }} />
+      )
+    }
+    if (ext === 'pdf') {
+      return (
+        <embed
+          src={`/api/files/${encodeURI(path)}/raw`}
+          type="application/pdf"
+          style={{ width: '100%', height: '100%' }}
+          data-testid="pdf-preview"
+        />
+      )
+    }
+    if (AUDIO_EXT.includes(ext)) {
+      return (
+        <audio
+          controls
+          src={`/api/files/${encodeURI(path)}/raw`}
+          style={{ width: '100%' }}
+          data-testid="audio-preview"
+        >
+          <track kind="captions" />
+        </audio>
+      )
+    }
+    if (VIDEO_EXT.includes(ext)) {
+      return (
+        <video
+          controls
+          src={`/api/files/${encodeURI(path)}/raw`}
+          style={{ maxWidth: '100%' }}
+          data-testid="video-preview"
+        >
+          <track kind="captions" />
+        </video>
+      )
+    }
+  }
+
   if (q.isLoading) return <div style={{ padding: 12 }}>加载中…</div>
   if (!q.data) return <div style={{ padding: 12 }}>无内容</div>
 
-  const ext = extOf(path)
-  if (IMG_EXT.includes(ext)) {
-    return <img src={`/api/files/${encodeURI(path)}`} alt={path} style={{ maxWidth: '100%' }} />
-  }
-  if (ext === 'pdf') {
-    return (
-      <embed
-        src={`/api/files/${encodeURI(path)}`}
-        type="application/pdf"
-        style={{ width: '100%', height: '100%' }}
-        data-testid="pdf-preview"
-      />
-    )
-  }
   if (['md', 'markdown'].includes(ext)) {
     return (
       <div className={wrap}>

@@ -56,6 +56,22 @@ describe('createPromptRegistry / builtin sections', () => {
     const out = buildDynamicPrompt(reg, { ...ctx, tools: [] })
     expect(out).not.toContain('**read**')
   })
+
+  it('slash-commands section 始终列出内置命令', () => {
+    const reg = createPromptRegistry()
+    const out = buildDynamicPrompt(reg, ctx)
+    expect(out).toContain('## Slash Commands')
+    expect(out).toContain('/help')
+    expect(out).toContain('/compact')
+  })
+
+  it('agents section 仅在有 agents 时出现', () => {
+    const reg = createPromptRegistry()
+    expect(buildDynamicPrompt(reg, { ...ctx, agents: ['coder'] })).toContain('## Available Agents')
+    expect(buildDynamicPrompt(reg, { ...ctx, agents: ['coder'] })).toContain('coder')
+    // 无 agents 时不出现
+    expect(buildDynamicPrompt(reg, ctx)).not.toContain('## Available Agents')
+  })
 })
 
 describe('registerPromptSection (plugin extensibility)', () => {

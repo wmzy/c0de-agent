@@ -181,6 +181,32 @@ describe('session route', () => {
     expect(Array.isArray(details)).toBe(true)
   })
 
+  it('GET /:id/status 无活跃 run 返回 idle', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Status' }),
+    })
+    const created = (await createRes.json()) as Session
+    const res = await app.request(`/${created.id}/status`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { _tag: string }
+    expect(body._tag).toBe('idle')
+  })
+
+  it('GET /:id/llm-details/:callId 未找到返回 404', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'LLMDetail' }),
+    })
+    const created = (await createRes.json()) as Session
+    const res = await app.request(`/${created.id}/llm-details/nope`)
+    expect(res.status).toBe(404)
+  })
+
   it('GET /:id/branches returns branches', async () => {
     const { app } = await setup()
     const createRes = await app.request('/', {

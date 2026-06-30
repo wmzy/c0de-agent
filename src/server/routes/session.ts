@@ -94,6 +94,23 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json(persisted)
   })
 
+  // 获取单个 LLM 调用详情
+  app.get('/:id/llm-details/:callId', async (c) => {
+    const id = c.req.param('id')
+    const callId = c.req.param('callId')
+    const run = ctx.agentManager.get(id)
+    const details = run ? run.state.llmDetails : await getLLMDetails(ctx.db, id)
+    const found = details.find((d) => d.id === callId)
+    if (!found) return apiError(c, 404, 'NOT_FOUND', 'LLM detail not found')
+    return c.json(found)
+  })
+
+  // 获取会话状态
+  app.get('/:id/status', async (c) => {
+    const run = ctx.agentManager.get(c.req.param('id'))
+    return c.json(run ? run.state.status : { _tag: 'idle' })
+  })
+
   // 获取分支
   app.get('/:id/branches', async (c) => {
     const branches = await getBranches(ctx.db, c.req.param('id'))
