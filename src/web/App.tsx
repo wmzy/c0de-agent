@@ -107,7 +107,7 @@ function ChatPage() {
           onProjectChange={(id) => navigate(`/projects/${id}`)}
         />
       }
-      main={<ChatView sessionId={sessionId ?? null} />}
+      main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
     />
   )
 }

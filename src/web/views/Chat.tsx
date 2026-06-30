@@ -32,6 +32,8 @@ type ChatProps = {
   toolToggle?: ReactNode
   /** 插入到工具栏与消息流之间的面板（如 LLM 调用详情）。 */
   topPanel?: ReactNode
+  /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
+  projectId?: string
 }
 
 const stream = css`
@@ -104,6 +106,7 @@ export function Chat({
   toolToggle,
   topPanel,
   supportsVision = true,
+  projectId,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在消息数量变化时滚动，避免内容更新触发抖动
@@ -174,6 +177,7 @@ export function Chat({
         </button>
       </div>
       <Composer
+        projectId={projectId}
         onSend={handleSend}
         onAbort={onAbort}
         isStreaming={isStreaming}

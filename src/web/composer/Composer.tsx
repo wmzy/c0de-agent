@@ -85,6 +85,8 @@ type ComposerProps = {
   permission?: { tool: string; input: unknown } | null
   onPermissionConfirm?: () => void
   onPermissionCancel?: () => void
+  /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
+  projectId?: string
 }
 
 function Composer(props: ComposerProps) {
@@ -96,7 +98,7 @@ function Composer(props: ComposerProps) {
     hasHistory: props.hasHistory,
   })
   const { data: commands = [] } = useCommands()
-  const fileSearch = useFileSearch(composer.popoverQuery)
+  const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
 
   const [slashActive, setSlashActive] = useState(0)
   const [atActive, setAtActive] = useState(0)

@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
+import { getProject } from '../../project/project.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { safeResolve } from '../util/safe-path.js'
@@ -96,12 +97,22 @@ function createFilesRoute(ctx: ServerContext): Hono {
   })
 
   // 搜索文件名
+  // projectId 指定时按对应项目 worktree 搜索，否则回退 ctx.cwd（向后兼容）。
   app.get('/search', async (c) => {
     const q = c.req.query('q')
     if (!q) {
       return apiError(c, 400, 'BAD_REQUEST', 'Query parameter q is required')
     }
-    const all = await collectFiles(ctx.cwd, ctx.cwd)
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const all = await collectFiles(root, root)
     const lower = q.toLowerCase()
     const matched = all.filter((f) => f.path.toLowerCase().includes(lower))
     return c.json(matched)

@@ -9,8 +9,10 @@ const fileAPI = {
       method: 'PUT',
       body: JSON.stringify({ content }),
     }),
-  search: (query: string) =>
-    apiRequest<FileSearchResult[]>(`/api/files/search?q=${encodeURIComponent(query)}`),
+  search: (query: string, projectId?: string) =>
+    apiRequest<FileSearchResult[]>(
+      `/api/files/search?q=${encodeURIComponent(query)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
 }
 
 export { fileAPI }

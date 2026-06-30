@@ -25,14 +25,20 @@ const empty = css`
 `
 
 /** 会话视图：无 sessionId 显示空状态，否则接通 useChat 进行流式对话。 */
-export function ChatView({ sessionId }: { sessionId: string | null }) {
+export function ChatView({
+  projectId,
+  sessionId,
+}: {
+  projectId: string
+  sessionId: string | null
+}) {
   if (!sessionId) {
     return <div className={empty}>从左侧选择或新建一个会话开始对话</div>
   }
-  return <ChatSession sessionId={sessionId} />
+  return <ChatSession projectId={projectId} sessionId={sessionId} />
 }
 
-function ChatSession({ sessionId }: { sessionId: string }) {
+function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: string }) {
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const { data: history } = useMessages(sessionId)
@@ -94,6 +100,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
   return (
     <Chat
+      projectId={projectId}
       messages={messages}
       isStreaming={chat.isStreaming}
       usage={chat.usage}

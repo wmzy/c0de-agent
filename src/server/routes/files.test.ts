@@ -4,7 +4,9 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
+import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
+import { fromDirectory } from '../../project/project.js'
 import { createServerContext } from '../context.js'
 import { createFilesRoute } from './files.js'
 
@@ -129,5 +131,51 @@ describe('files route', () => {
     const { app } = await setupWithDir()
     const res = await app.request('/search')
     expect(res.status).toBe(400)
+  })
+
+  it('GET /search?projectId=... 按项目 worktree 搜索（非 ctx.cwd）', async () => {
+    // 两个独立目录，各自注册为 project；ctx.cwd 指向 dirA
+    const dirA = mkdtempSync(join(tmpdir(), 'c0de-proj-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'c0de-proj-b-'))
+    writeFileSync(join(dirA, 'only-in-a.txt'), 'a')
+    writeFileSync(join(dirB, 'only-in-b.txt'), 'b')
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const projectA = await fromDirectory(db, dirA)
+    const projectB = await fromDirectory(db, dirB)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
+    const app = createFilesRoute(ctx)
+
+    // 不传 projectId：回退 ctx.cwd（dirA），命中 only-in-a
+    const resDefault = await app.request('/search?q=only')
+    expect(resDefault.status).toBe(200)
+    const defaultPaths = ((await resDefault.json()) as Array<{ path: string }>).map((r) => r.path)
+    expect(defaultPaths.some((p) => p.includes('only-in-a'))).toBe(true)
+    expect(defaultPaths.some((p) => p.includes('only-in-b'))).toBe(false)
+
+    // 传 projectB.id：应命中 only-in-b 而非 only-in-a
+    const resB = await app.request(`/search?q=only&projectId=${projectB.id}`)
+    expect(resB.status).toBe(200)
+    const bPaths = ((await resB.json()) as Array<{ path: string }>).map((r) => r.path)
+    expect(bPaths.some((p) => p.includes('only-in-b'))).toBe(true)
+    expect(bPaths.some((p) => p.includes('only-in-a'))).toBe(false)
+
+    // 传 projectA.id：命中 only-in-a
+    const resA = await app.request(`/search?q=only&projectId=${projectA.id}`)
+    expect(resA.status).toBe(200)
+    const aPaths = ((await resA.json()) as Array<{ path: string }>).map((r) => r.path)
+    expect(aPaths.some((p) => p.includes('only-in-a'))).toBe(true)
+  })
+
+  it('GET /search?projectId=不存在 返回 404', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-files-'))
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/search?q=x&projectId=nonexistent-id')
+    expect(res.status).toBe(404)
   })
 })
