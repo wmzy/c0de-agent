@@ -40,9 +40,7 @@ function promptLength(prompt: Prompt): number {
 
 /** 将 Prompt 的文本流（text + file content）join 成纯字符串。 */
 function promptToText(prompt: Prompt): string {
-  return prompt
-    .map((p) => ('content' in p ? p.content : ''))
-    .join('')
+  return prompt.map((p) => ('content' in p ? p.content : '')).join('')
 }
 
 /** 判断 Prompt 是否为空（无任何非空文本且无 file/image）。 */

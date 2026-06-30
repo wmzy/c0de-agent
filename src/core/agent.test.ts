@@ -121,7 +121,11 @@ describe('runAgent', () => {
       { provider: 'p', model: 'm', tools: [], plugins: [], maxTurns: 5 },
       deps,
     )
-    for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'Do something important' }], deps)) {
+    for await (const _ev of runAgent(
+      agent,
+      [{ _tag: 'text', text: 'Do something important' }],
+      deps,
+    )) {
       // consume
     }
     // 标题生成是 fire-and-forget，轮询 DB 直到更新完成或超时。

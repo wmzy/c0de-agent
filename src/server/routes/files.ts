@@ -2,8 +2,8 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
 import { apiError } from '../middleware/error.js'
-import { safeResolve } from '../util/safe-path.js'
 import type { ServerContext } from '../types.js'
+import { safeResolve } from '../util/safe-path.js'
 
 type FileEntry = {
   name: string

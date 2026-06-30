@@ -303,9 +303,7 @@ describe('messageToChatMessage 多模态', () => {
   })
 
   it('仅 image 无 text 时数组只含 image part', () => {
-    const chat = messageToChatMessage(
-      base([{ _tag: 'image', mediaType: 'image/png', data: 'X' }]),
-    )
+    const chat = messageToChatMessage(base([{ _tag: 'image', mediaType: 'image/png', data: 'X' }]))
     const parts = chat.content as Array<{ type: string }>
     expect(parts).toHaveLength(1)
     expect(parts[0]?.type).toBe('image')
