@@ -11,7 +11,7 @@ import { useAgent } from '../hooks/useAgent.js'
 import { useChat } from '../hooks/useChat.js'
 import { useMessages } from '../hooks/useSession.js'
 import { providerAPI } from '../services/provider.js'
-import { Chat } from './Chat.js'
+import { Chat, type SendPayload } from './Chat.js'
 
 const empty = css`
   display: flex;
@@ -73,19 +73,24 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 启用工具白名单：null = 默认全启用（不传 tools，走后端 config）；Set = 显式选择
   const [enabledTools, setEnabledTools] = useState<Set<string> | null>(null)
 
-  const handleSend = (text: string) => {
+  const handleSend = (payload: SendPayload) => {
     // 新一轮发送：清除上轮残留的暂停态（paused 仅在运行中有意义）。
     agent.resetPaused()
-    void chat.sendMessage(text, {
+    void chat.sendMessage(payload.text, {
       provider: selection.provider,
       model: selection.model,
       ...(enabledTools ? { tools: Array.from(enabledTools) } : {}),
+      ...(payload.images.length ? { images: payload.images } : {}),
+      ...(payload.files.length ? { files: payload.files } : {}),
     })
   }
 
   const handleConfirm = (toolCallId: string, approved: boolean) => {
     chat.confirm(toolCallId, approved)
   }
+
+  // TODO: 从当前选中 model 的 capabilities 读取 supportsVision（providersData 已含）
+  const supportsVision = true
 
   return (
     <Chat
@@ -101,6 +106,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       onResume={agent.resume}
       onSteer={agent.steer}
       paused={agent.paused}
+      supportsVision={supportsVision}
       modelBar={<ModelSelector value={selection} onChange={setSelection} />}
       toolToggle={
         <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={chat.isStreaming} />

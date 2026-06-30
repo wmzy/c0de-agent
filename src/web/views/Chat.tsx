@@ -2,11 +2,12 @@ import { css } from '@linaria/core'
 import type { Message } from '@shared/types/message.js'
 import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { InputArea } from '../components/InputArea.js'
-import { PermissionDialog } from '../components/PermissionDialog.js'
 import { StreamingIndicator } from '../components/StreamingIndicator.js'
 import { MessageItem } from '../components/session/MessageItem.js'
+import { Composer, type SendPayload } from '../composer/Composer.js'
 import { formatTokenCount } from '../utils/format.js'
+
+export type { SendPayload }
 
 type ChatProps = {
   messages: Message[]
@@ -14,7 +15,7 @@ type ChatProps = {
   usage: { input: number; output: number } | null
   error?: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
-  onSend: (text: string) => void
+  onSend: (payload: SendPayload) => void
   onAbort: () => void
   onConfirm: (toolCallId: string, approved: boolean) => void
   /** 暂停 agent loop（spec §19）；isStreaming 时可用。 */
@@ -25,6 +26,7 @@ type ChatProps = {
   onSteer?: (message: string) => void
   /** agent 是否处于暂停态（控制 pause/resume 按钮切换）。 */
   paused?: boolean
+  supportsVision?: boolean
   modelBar?: ReactNode
   /** 底部工具栏右侧的工具开关（启用/禁用工具列表）。 */
   toolToggle?: ReactNode
@@ -101,6 +103,7 @@ export function Chat({
   modelBar,
   toolToggle,
   topPanel,
+  supportsVision = true,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在消息数量变化时滚动，避免内容更新触发抖动
@@ -111,12 +114,12 @@ export function Chat({
   // steer 模式：运行中注入 steering 消息（spec §3.9）。切到 steer 时输入不再被禁用，
   // 发送走 onSteer；发送后退出 steer 回到正常输入。
   const [steerMode, setSteerMode] = useState(false)
-  const handleSend = (text: string) => {
+  const handleSend = (payload: SendPayload) => {
     if (steerMode) {
-      onSteer?.(text)
+      onSteer?.(payload.text)
       setSteerMode(false)
     } else {
-      onSend(text)
+      onSend(payload)
     }
   }
 
@@ -154,14 +157,6 @@ export function Chat({
         {isStreaming && <StreamingIndicator />}
         <div ref={bottomRef} />
       </div>
-      {pendingPermission && (
-        <PermissionDialog
-          tool={pendingPermission.tool}
-          input={pendingPermission.input}
-          onConfirm={() => onConfirm(pendingPermission.toolCallId, true)}
-          onCancel={() => onConfirm(pendingPermission.toolCallId, false)}
-        />
-      )}
       {(modelBar || toolToggle) && (
         <div className={footerBar}>
           {modelBar && <div className={footerLeft}>{modelBar}</div>}
@@ -178,7 +173,25 @@ export function Chat({
           {steerMode ? '退出注入' : '注入 steering'}
         </button>
       </div>
-      <InputArea onSend={handleSend} disabled={isStreaming && !steerMode} steerMode={steerMode} />
+      <Composer
+        onSend={handleSend}
+        onAbort={onAbort}
+        isStreaming={isStreaming}
+        steerMode={steerMode}
+        hasHistory={messages.length > 0}
+        supportsVision={supportsVision}
+        permission={
+          pendingPermission
+            ? { tool: pendingPermission.tool, input: pendingPermission.input }
+            : null
+        }
+        onPermissionConfirm={() =>
+          pendingPermission && onConfirm(pendingPermission.toolCallId, true)
+        }
+        onPermissionCancel={() =>
+          pendingPermission && onConfirm(pendingPermission.toolCallId, false)
+        }
+      />
     </>
   )
 }
