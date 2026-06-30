@@ -10,7 +10,7 @@ import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/project.js'
 import { appendMessage, getEntries } from '../../session/message.js'
-import { createSession, getLLMDetails } from '../../session/session.js'
+import { createSession, getLLMSegments } from '../../session/session.js'
 import { getFileSnapshots } from '../../session/snapshot.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
@@ -162,13 +162,13 @@ describe('chat route (SSE)', () => {
       body: JSON.stringify({ sessionId: session.id, message: 'hi' }),
     })
     expect(res.status).toBe(200)
-    // 消费完整 SSE 流，驱动 agentLoop 执行到 appendLLMDetail
+    // 消费完整 SSE 流，驱动 agentLoop 执行到 saveLLMSegments
     await res.text()
 
-    // loop 持久化的 llmDetail.tools 即发送给 LLM 的工具定义；不带 tools 时启用全部注册工具
-    const details = await getLLMDetails(db, session.id)
-    expect(details).toHaveLength(1)
-    const toolNames = details[0]?.tools.map((t) => t.name).sort()
+    // loop 持久化的 segment.tools 即发送给 LLM 的工具定义；不带 tools 时启用全部注册工具
+    const segments = await getLLMSegments(db, session.id)
+    expect(segments).toHaveLength(1)
+    const toolNames = segments[0]?.tools.map((t) => t.name).sort()
     expect(toolNames).toEqual([
       'bash',
       'debug_breakpoint',

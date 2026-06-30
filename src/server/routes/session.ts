@@ -5,7 +5,7 @@ import { getMessages } from '../../session/message.js'
 import {
   createSession,
   deleteSession,
-  getLLMDetails,
+  getLLMSegments,
   getSession,
   listSessions,
   listSessionsByProject,
@@ -86,23 +86,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json(messages)
   })
 
-  // 获取 LLM 调用详情：优先取活跃 run 的内存记录（实时），回退 DB 持久化
+  // 获取 LLM 调用分段（段首快照 + 段内轻量 calls）：优先取活跃 run 的内存记录（实时），回退 DB 持久化
   app.get('/:id/llm-details', async (c) => {
     const run = ctx.agentManager.get(c.req.param('id'))
-    if (run) return c.json(run.state.llmDetails)
-    const persisted = await getLLMDetails(ctx.db, c.req.param('id'))
+    if (run) return c.json(run.state.segments)
+    const persisted = await getLLMSegments(ctx.db, c.req.param('id'))
     return c.json(persisted)
-  })
-
-  // 获取单个 LLM 调用详情
-  app.get('/:id/llm-details/:callId', async (c) => {
-    const id = c.req.param('id')
-    const callId = c.req.param('callId')
-    const run = ctx.agentManager.get(id)
-    const details = run ? run.state.llmDetails : await getLLMDetails(ctx.db, id)
-    const found = details.find((d) => d.id === callId)
-    if (!found) return apiError(c, 404, 'NOT_FOUND', 'LLM detail not found')
-    return c.json(found)
   })
 
   // 获取会话状态
