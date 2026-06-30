@@ -34,7 +34,13 @@ async function sendChatMessage(
   message: string,
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
-  opts?: { provider?: string; model?: string; tools?: string[] },
+  opts?: {
+    provider?: string
+    model?: string
+    tools?: string[]
+    images?: Array<{ mediaType: string; data: string }>
+    files?: string[]
+  },
 ): Promise<void> {
   const response = await fetch('/api/chat', {
     method: 'POST',

@@ -15,7 +15,13 @@ type ChatState = {
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
 }
 
-type ChatOpts = { provider?: string; model?: string; tools?: string[] }
+type ChatOpts = {
+  provider?: string
+  model?: string
+  tools?: string[]
+  images?: Array<{ mediaType: string; data: string }>
+  files?: string[]
+}
 
 type ChatActions = {
   sendMessage: (content: string, opts?: ChatOpts) => Promise<void>
