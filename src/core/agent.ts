@@ -1,7 +1,7 @@
 import { appendMessage, getMessages } from '../session/message.js'
 import { generateId } from '../shared/index.js'
 import type { AgentConfig, AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
-import type { Session } from '../shared/types/message.js'
+import type { MessageContent, Session } from '../shared/types/message.js'
 import { listTools } from '../tools/registry.js'
 import { estimateBudget } from './context.js'
 import { agentLoop } from './loop.js'
@@ -43,13 +43,19 @@ async function createAgent(
 
 async function* runAgent(
   state: AgentState,
-  userInput: string,
+  userInput: MessageContent[],
   deps: AgentDependencies,
 ): AsyncGenerator<AgentEvent> {
   await appendMessage(deps.db, state.session.id, {
     role: 'user',
-    content: [{ _tag: 'text', text: userInput }],
+    content: userInput,
   })
+
+  // 标题生成用纯文本（join text parts），忽略 image/tool 等非文本 part。
+  const titleText = userInput
+    .filter((p) => p._tag === 'text')
+    .map((p) => (p._tag === 'text' ? p.text : ''))
+    .join('')
 
   // 第一条用户消息后，后台为会话生成简短标题（fire-and-forget）。
   // 条件：标题仍是默认占位 + 持久化前无任何消息（即首条消息）。
@@ -63,7 +69,7 @@ async function* runAgent(
         ...(deps.titleChatFn ? { chatFn: deps.titleChatFn } : {}),
       },
       state.session.id,
-      userInput,
+      titleText,
       state.config.provider,
       state.config.model,
     ).catch(() => {})

@@ -89,7 +89,7 @@ describe('runAgent', () => {
       deps,
     )
     const events: Array<{ _tag: string; text?: string }> = []
-    for await (const ev of runAgent(agent, 'Hello', deps)) {
+    for await (const ev of runAgent(agent, [{ _tag: 'text', text: 'Hello' }], deps)) {
       events.push(ev)
     }
     expect(events.some((e) => e._tag === 'text_delta' && e.text === 'Response!')).toBe(true)
@@ -106,7 +106,7 @@ describe('runAgent', () => {
       { provider: 'p', model: 'm', tools: [], plugins: [], maxTurns: 5 },
       deps,
     )
-    for await (const _ev of runAgent(agent, 'hi', deps)) {
+    for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'hi' }], deps)) {
       // consume
     }
     expect(getAgentStatus(agent)._tag).toBe('stopped')
@@ -121,7 +121,7 @@ describe('runAgent', () => {
       { provider: 'p', model: 'm', tools: [], plugins: [], maxTurns: 5 },
       deps,
     )
-    for await (const _ev of runAgent(agent, 'Do something important', deps)) {
+    for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'Do something important' }], deps)) {
       // consume
     }
     // 标题生成是 fire-and-forget，轮询 DB 直到更新完成或超时。
@@ -146,7 +146,7 @@ describe('runAgent', () => {
       { provider: 'p', model: 'm', tools: [], plugins: [], maxTurns: 5 },
       deps,
     )
-    for await (const _ev of runAgent(agent, 'hello', deps)) {
+    for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'hello' }], deps)) {
       // consume
     }
     await new Promise((r) => setTimeout(r, 100))

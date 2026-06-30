@@ -80,7 +80,7 @@ async function runSubAgent(
   const text: string[] = []
   let errMsg: string | null = null
   try {
-    for await (const ev of runAgent(childState, request.prompt, deps)) {
+    for await (const ev of runAgent(childState, [{ _tag: 'text', text: request.prompt }], deps)) {
       if (ev._tag === 'text_delta') {
         text.push(ev.text)
       } else if (ev._tag === 'error') {

@@ -41,7 +41,7 @@ async function runPrintMode(
   const state = await createAgent(session, agentConfig, deps)
 
   const events: AgentEvent[] = []
-  for await (const event of runAgent(state, message, deps)) {
+  for await (const event of runAgent(state, [{ _tag: 'text', text: message }], deps)) {
     events.push(event)
     opts.onEvent?.(event)
   }

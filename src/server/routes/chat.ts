@@ -153,7 +153,7 @@ function createChatRoute(ctx: ServerContext): Hono {
       })
 
       try {
-        for await (const event of runAgent(state, message, deps)) {
+        for await (const event of runAgent(state, [{ _tag: 'text', text: message }], deps)) {
           await stream.writeSSE({
             event: event._tag,
             data: JSON.stringify(event),
