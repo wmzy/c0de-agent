@@ -107,7 +107,7 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
   }
 
   const config = await loadConfig(cwd)
-  const toolRegistry = createDefaultRegistry()
+  const toolRegistry = createDefaultRegistry(config)
   const llmRegistry = buildRegistryFromConfig(config)
   const urlRegistry = createDefaultURLRegistry()
   const { pluginRegistry, hookRunner } = await initPlugins({

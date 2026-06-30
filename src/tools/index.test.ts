@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolContext } from '../shared/types/tool.js'
+import { DEFAULT_CONFIG } from '../core/config.js'
 import {
   autoAllowChecker,
   bashTool,
@@ -61,8 +62,24 @@ describe('tools index', () => {
       'grep',
       'read',
       'task',
+      'websearch',
       'write',
     ])
+  })
+
+  it('createDefaultRegistry() without config still registers websearch (uses DEFAULT_CONFIG)', () => {
+    const reg = createDefaultRegistry()
+    expect(getTool(reg, 'websearch')).toBeDefined()
+  })
+
+  it('createDefaultRegistry(config) wires websearch from config.websearch', () => {
+    const reg = createDefaultRegistry({
+      ...DEFAULT_CONFIG,
+      websearch: { provider: 'duckduckgo' },
+    })
+    const tool = getTool(reg, 'websearch')
+    expect(tool).toBeDefined()
+    expect(tool?.permission).toBe('auto')
   })
 
   it('can execute read via default registry', async () => {

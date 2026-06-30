@@ -180,6 +180,7 @@ describe('chat route (SSE)', () => {
       'grep',
       'read',
       'task',
+      'websearch',
       'write',
     ])
   })

@@ -51,7 +51,7 @@ type BuildDepsOptions = {
 /** 组装完整 LoopDeps（auto 放行 + 默认工具注册表）。 */
 async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<LoopDeps> {
   const llmRegistry = buildLLMRegistry(config)
-  const toolRegistry = createDefaultRegistry()
+  const toolRegistry = createDefaultRegistry(config)
   const { hookRunner } = await initPlugins({
     cwd: opts.cwd,
     config,

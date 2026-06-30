@@ -26,7 +26,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
   return {
     db: opts.db,
     config: opts.config ?? DEFAULT_CONFIG,
-    toolRegistry: opts.toolRegistry ?? createDefaultRegistry(),
+    toolRegistry: opts.toolRegistry ?? createDefaultRegistry(opts.config ?? DEFAULT_CONFIG),
     llmRegistry: opts.llmRegistry,
     urlRegistry: createDefaultURLRegistry(),
     hookRunner,

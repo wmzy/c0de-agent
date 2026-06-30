@@ -25,6 +25,15 @@ export {
 } from './builtin/resolvers.js'
 export { taskTool } from './builtin/task.js'
 export { writeTool } from './builtin/write.js'
+// ── Websearch ───────────────────────────────────────────────
+export { formatForLLM, resolveProvider, runWebSearch } from './websearch/index.js'
+export { createWebSearchTool } from './websearch/websearch.js'
+export type {
+  WebSearchProvider,
+  WebSearchProviderId,
+  WebSearchSource,
+  WebSearchResponse,
+} from './websearch/types.js'
 export { executeTool } from './executor.js'
 export { autoAllowChecker, createPermissionChecker } from './permission.js'
 // ── Framework ───────────────────────────────────────────────
@@ -58,6 +67,8 @@ export type {
 export { validateInput } from './validate.js'
 
 // ── Default registry ────────────────────────────────────────
+import { DEFAULT_CONFIG } from '../core/config.js'
+import type { Config } from '../shared/types/config.js'
 import { bashTool } from './builtin/bash.js'
 import { dapTools } from './builtin/dap.js'
 import { editTool } from './builtin/edit.js'
@@ -67,12 +78,15 @@ import { readTool } from './builtin/read.js'
 import { taskTool } from './builtin/task.js'
 import { writeTool } from './builtin/write.js'
 import { createToolRegistry, registerTool } from './registry.js'
+import { createWebSearchTool } from './websearch/websearch.js'
 
 /**
  * Create a registry pre-loaded with all builtin tools:
- * read, write, edit, glob, grep, bash, task, and the debug_* set.
+ * read, write, edit, glob, grep, bash, task, websearch, and the debug_* set.
+ *
+ * @param config 可选配置；websearch 工具按 config.websearch 构造。省略时用 DEFAULT_CONFIG。
  */
-export function createDefaultRegistry() {
+export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
   const reg = createToolRegistry()
   registerTool(reg, readTool)
   registerTool(reg, writeTool)
@@ -81,6 +95,7 @@ export function createDefaultRegistry() {
   registerTool(reg, grepTool)
   registerTool(reg, bashTool)
   registerTool(reg, taskTool)
+  registerTool(reg, createWebSearchTool(config.websearch))
   for (const tool of dapTools) registerTool(reg, tool)
   return reg
 }
