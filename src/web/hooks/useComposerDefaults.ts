@@ -42,5 +42,14 @@ export function useComposerDefaults() {
     }
   }, [providers, providersData, config, selection.provider, selection.model])
 
-  return { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName, providers, providersData }
+  return {
+    selection,
+    setSelection,
+    enabledTools,
+    setEnabledTools,
+    agentName,
+    setAgentName,
+    providers,
+    providersData,
+  }
 }

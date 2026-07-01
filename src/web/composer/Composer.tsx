@@ -9,9 +9,8 @@ import { AttachmentBar } from './AttachmentBar.js'
 import { ComposerEditor } from './ComposerEditor.js'
 import { PermissionDock } from './PermissionDock.js'
 import { SlashPopover } from './SlashPopover.js'
-import type { ImagePart } from './types.js'
+import type { ImagePart, Prompt } from './types.js'
 import { promptToText } from './types.js'
-import type { Prompt } from './types.js'
 import { useComposer } from './useComposer.js'
 
 const wrap = css`
@@ -143,9 +142,7 @@ function Composer(props: ComposerProps) {
     while (tokenEnd < text.length && !/\s/.test(text[tokenEnd] ?? '')) tokenEnd += 1
     const after = text.slice(tokenEnd)
     const newText = `${before}@${name} ${after}`
-    const newPrompt: Prompt = [
-      { type: 'text', content: newText, start: 0, end: newText.length },
-    ]
+    const newPrompt: Prompt = [{ type: 'text', content: newText, start: 0, end: newText.length }]
     composer.setPromptExternal(newPrompt)
     composer.setPopover(null)
     composer.editorRef.current?.focus()
