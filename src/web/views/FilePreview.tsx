@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { CodeBlock } from '../components/CodeBlock.js'
 import { CodeEditor } from '../components/CodeEditor.js'
 import { Markdown } from '../components/Markdown.js'
+import { useFileSelection } from '../contexts/FileSelectionContext.js'
 import { fileAPI } from '../services/file.js'
 
 const wrap = css`
@@ -10,6 +11,43 @@ const wrap = css`
   display: flex;
   flex-direction: column;
   overflow: hidden;
+`
+
+const header = css`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  flex-shrink: 0;
+`
+
+const pathText = css`
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+`
+
+const closeBtn = css`
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  flex-shrink: 0;
+
+  &:hover {
+    color: var(--text);
+  }
+`
+
+const contentScroll = css`
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
 `
 
 const CODE_EXT = [
@@ -37,6 +75,7 @@ function extOf(name: string): string {
 }
 
 export function FilePreview({ path }: { path: string }) {
+  const { closeFile } = useFileSelection()
   const ext = extOf(path)
   const isMedia =
     IMG_EXT.includes(ext) || AUDIO_EXT.includes(ext) || VIDEO_EXT.includes(ext) || ext === 'pdf'
@@ -47,15 +86,15 @@ export function FilePreview({ path }: { path: string }) {
     enabled: !isMedia,
   })
 
-  // 媒体文件直接渲染，不经过 JSON 查询
+  // 渲染内容区（不含 header）
+  let body: React.ReactNode
   if (isMedia) {
     if (IMG_EXT.includes(ext)) {
-      return (
+      body = (
         <img src={`/api/files/${encodeURI(path)}/raw`} alt={path} style={{ maxWidth: '100%' }} />
       )
-    }
-    if (ext === 'pdf') {
-      return (
+    } else if (ext === 'pdf') {
+      body = (
         <embed
           src={`/api/files/${encodeURI(path)}/raw`}
           type="application/pdf"
@@ -63,9 +102,8 @@ export function FilePreview({ path }: { path: string }) {
           data-testid="pdf-preview"
         />
       )
-    }
-    if (AUDIO_EXT.includes(ext)) {
-      return (
+    } else if (AUDIO_EXT.includes(ext)) {
+      body = (
         <audio
           controls
           src={`/api/files/${encodeURI(path)}/raw`}
@@ -75,9 +113,8 @@ export function FilePreview({ path }: { path: string }) {
           <track kind="captions" />
         </audio>
       )
-    }
-    if (VIDEO_EXT.includes(ext)) {
-      return (
+    } else {
+      body = (
         <video
           controls
           src={`/api/files/${encodeURI(path)}/raw`}
@@ -88,28 +125,29 @@ export function FilePreview({ path }: { path: string }) {
         </video>
       )
     }
+  } else if (q.isLoading) {
+    body = <div style={{ padding: 12 }}>加载中…</div>
+  } else if (!q.data) {
+    body = <div style={{ padding: 12 }}>无内容</div>
+  } else if (['md', 'markdown'].includes(ext)) {
+    body = <Markdown content={q.data.content} />
+  } else if (CODE_EXT.includes(ext)) {
+    body = <CodeEditor path={path} initial={q.data.content} />
+  } else {
+    body = <CodeBlock code={q.data.content} lang={ext} />
   }
 
-  if (q.isLoading) return <div style={{ padding: 12 }}>加载中…</div>
-  if (!q.data) return <div style={{ padding: 12 }}>无内容</div>
-
-  if (['md', 'markdown'].includes(ext)) {
-    return (
-      <div className={wrap}>
-        <Markdown content={q.data.content} />
-      </div>
-    )
-  }
-  if (CODE_EXT.includes(ext)) {
-    return (
-      <div className={wrap}>
-        <CodeEditor path={path} initial={q.data.content} />
-      </div>
-    )
-  }
   return (
     <div className={wrap}>
-      <CodeBlock code={q.data.content} lang={ext} />
+      <header className={header}>
+        <span className={pathText} data-testid="preview-path">
+          {path}
+        </span>
+        <button type="button" className={closeBtn} onClick={closeFile} aria-label="关闭预览">
+          ✕
+        </button>
+      </header>
+      <div className={contentScroll}>{body}</div>
     </div>
   )
 }

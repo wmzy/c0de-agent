@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import {
   BrowserRouter,
   Link,
@@ -9,11 +10,15 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom'
+import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TopBar } from './components/TopBar.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
+import { type FileSelection, FileSelectionContext } from './contexts/FileSelectionContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
 import { projectAPI } from './services/project.js'
 import { ChatView } from './views/ChatView.js'
+import { FileBrowser } from './views/FileBrowser.js'
+import { FilePreview } from './views/FilePreview.js'
 import { Layout } from './views/Layout.js'
 import { NotFound } from './views/NotFound.js'
 import { SessionList } from './views/SessionList.js'
@@ -133,24 +138,50 @@ function RootRedirect() {
 function ChatPage() {
   const { projectId, sessionId } = useParams<{ projectId: string; sessionId: string }>()
   const navigate = useNavigate()
+  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
+    () => (localStorage.getItem('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
+  )
+  const switchTab = (t: SidebarTab) => {
+    setSidebarTab(t)
+    localStorage.setItem('c0de-agent:sidebarTab', t)
+  }
+
+  const fileCtx: FileSelection = {
+    selectedFile,
+    openFile: setSelectedFile,
+    closeFile: () => setSelectedFile(null),
+  }
+
   if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
+
   return (
-    <Layout
-      header={<TopBar />}
-      sidebar={
-        <SessionList
-          projectId={projectId}
-          activeId={sessionId ?? null}
-          onSelect={(id) => navigate(`/projects/${projectId}/sessions/${id}`)}
-          onProjectChange={(id) => navigate(`/projects/${id}`)}
-          onNewSession={() => navigate(`/projects/${projectId}`)}
-          onDeleted={(id) => {
-            // 删除的是当前会话则跳回草稿新会话页
-            if (id === (sessionId ?? null)) navigate(`/projects/${projectId}`)
-          }}
-        />
-      }
-      main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
-    />
+    <FileSelectionContext.Provider value={fileCtx}>
+      <Layout
+        header={<TopBar />}
+        sidebar={
+          <SidebarTabs
+            activeTab={sidebarTab}
+            onSwitch={switchTab}
+            sessions={
+              <SessionList
+                projectId={projectId}
+                activeId={sessionId ?? null}
+                onSelect={(id) => navigate(`/projects/${projectId}/sessions/${id}`)}
+                onProjectChange={(id) => navigate(`/projects/${id}`)}
+                onNewSession={() => navigate(`/projects/${projectId}`)}
+                onDeleted={(id) => {
+                  // 删除的是当前会话则跳回草稿新会话页
+                  if (id === (sessionId ?? null)) navigate(`/projects/${projectId}`)
+                }}
+              />
+            }
+            files={<FileBrowser onPick={setSelectedFile} />}
+          />
+        }
+        main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
+        panel={selectedFile ? <FilePreview path={selectedFile} /> : null}
+      />
+    </FileSelectionContext.Provider>
   )
 }

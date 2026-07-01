@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { FilePathLink } from '../../FilePathLink.js'
 import { ContentDiff } from '../ContentDiff.js'
 
 const title = css`
@@ -53,7 +54,7 @@ export function EditToolView({
         <span className={name}>edit</span>
       </div>
       <div className={title} data-testid="file-name">
-        {path}
+        <FilePathLink path={path} />
       </div>
       <ContentDiff oldText={oldText} newText={newText} />
     </div>
