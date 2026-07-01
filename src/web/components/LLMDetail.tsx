@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
+import type { LLMSegment } from '@shared/types/agent.js'
 import type { ChatTool } from '@shared/types/llm.js'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
@@ -134,16 +134,19 @@ function Collapsible({
   )
 }
 
-export function SegmentHeader({ segment }: { segment: LLMSegment }) {
+export function SegmentFooter({ segment }: { segment: LLMSegment }) {
+  const totalTokens = segment.calls.reduce((s, c) => s + c.usage.input + c.usage.output, 0)
+  const totalCost = segment.calls.reduce((s, c) => s + c.cost, 0)
+  const totalLatency = segment.calls.reduce((s, c) => s + c.latency.total, 0)
   return (
-    <div className={card} data-testid="segment-header">
+    <div className={card} data-testid="segment-footer">
       <div className={header}>
         <span className={modelName}>{segment.model}</span>
         <span className={dim}>{segment.provider}</span>
-        <span className={dim}>· {segment.trigger}</span>
-        {segment.contextWindow != null && (
-          <span className={dim}>ctx {formatTokenCount(segment.contextWindow)}</span>
-        )}
+        <span className={dim}>· {formatTokenCount(totalTokens)} tok</span>
+        <span className={dim}>· {formatLatency(totalLatency)}</span>
+        <span className={dim}>· {formatCost(totalCost)}</span>
+        <span className={dim}>· {segment.calls.length} 次调用</span>
       </div>
       <Collapsible title="System Prompt">
         <pre className={pre}>{segment.systemPrompt}</pre>
@@ -159,30 +162,43 @@ export function SegmentHeader({ segment }: { segment: LLMSegment }) {
   )
 }
 
-export function CallRow({ call, index }: { call: LLMCall; index: number }) {
+const breakStyle = css`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 4px 0;
+`
+
+const breakLine = css`
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+`
+
+const breakLabel = css`
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+`
+
+const BREAK_LABEL: Record<string, string> = {
+  model_change: '模型切换',
+  system_prompt_change: '系统提示词变更',
+  tools_change: '工具集变更',
+  compaction: '会话压缩',
+  user_confirmed: '用户确认',
+}
+
+/** 段断裂分隔线：trigger=initial 或 user_confirmed 时不渲染。 */
+export function SegmentBreak({ segment }: { segment: LLMSegment }) {
+  const label = BREAK_LABEL[segment.trigger]
+  if (!label) return null
   return (
-    <div className={card} data-testid="call-row">
-      <div className={header}>
-        <span className={modelName}>调用 #{index}</span>
-        <span className={dim}>{new Date(call.timestamp).toLocaleString()}</span>
-        <span className={dim}>
-          {formatTokenCount(call.usage.input)} in · {formatTokenCount(call.usage.output)} out
-        </span>
-        {call.usage.cacheRead != null && (
-          <span className={dim}>cache {formatTokenCount(call.usage.cacheRead)}</span>
-        )}
-        <span className={dim}>{formatLatency(call.latency.total)}</span>
-        <span className={dim}>{formatCost(call.cost)}</span>
-        {call.finishReason && <span className={dim}>· {call.finishReason}</span>}
-      </div>
-      {call.thinking && (
-        <Collapsible title="Thinking">
-          <pre className={pre}>{call.thinking}</pre>
-        </Collapsible>
-      )}
-      <Collapsible title="Response">
-        <pre className={pre}>{call.responseText}</pre>
-      </Collapsible>
+    <div className={breakStyle} data-testid="segment-break">
+      <span className={breakLine} />
+      <span className={breakLabel}>{label}</span>
+      <span className={breakLine} />
     </div>
   )
 }
