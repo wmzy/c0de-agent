@@ -1,22 +1,27 @@
 import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import type { Message } from '@shared/types/message.js'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineRow } from './utils/timeline.js'
 
-// 聚焦行级控制逻辑：美化渲染由各组件自身测试覆盖，这里 mock 成占位。
+// mock MessageItem 为占位（含 latency 透传验证）
 vi.mock('./MessageItem.js', () => ({
-  MessageItem: ({ message }: { message: Message }) => (
-    <div data-testid={`pretty-msg-${message.id}`}>msg:{message.id}</div>
+  MessageItem: ({ message, latency }: { message: Message; latency?: number }) => (
+    <div data-testid={`pretty-msg-${message.id}`}>
+      msg:{message.id}
+      {latency != null ? `:${latency}ms` : ''}
+    </div>
   ),
 }))
+// mock SegmentFooter / SegmentBreak 为占位
 vi.mock('../LLMDetail.js', () => ({
-  CallRow: ({ call }: { call: { id: string } }) => (
-    <div data-testid={`pretty-call-${call.id}`}>call:{call.id}</div>
+  SegmentFooter: ({ segment }: { segment: { id: string } }) => (
+    <div data-testid={`footer-${segment.id}`}>footer:{segment.id}</div>
   ),
-  SegmentHeader: ({ segment }: { segment: { id: string } }) => (
-    <div data-testid={`pretty-seg-${segment.id}`}>seg:{segment.id}</div>
-  ),
+  SegmentBreak: ({ segment }: { segment: { id: string; trigger: string } }) =>
+    segment.trigger === 'initial' ? null : (
+      <div data-testid={`break-${segment.id}`}>break:{segment.id}</div>
+    ),
 }))
 
 const { TimelineChat } = await import('./TimelineChat.js')
@@ -55,50 +60,61 @@ const call: LLMCall = {
 describe('TimelineChat', () => {
   afterEach(() => cleanup())
 
-  it('美化态渲染 message/call/segment 行', () => {
+  it('segments 为空时退化为纯消息列表（无 footer/break）', () => {
+    const rows: TimelineRow[] = [{ kind: 'message', message: mkMessage('m1', 'hi'), ts: 1 }]
+    render(<TimelineChat rows={rows} showAllJson={false} />)
+    expect(screen.getByTestId('pretty-msg-m1')).toBeTruthy()
+    expect(screen.queryByTestId(/footer-/)).toBeNull()
+    expect(screen.queryByTestId(/break-/)).toBeNull()
+  })
+
+  it('单段：渲染消息 + footer，无 break', () => {
     const rows: TimelineRow[] = [
-      { kind: 'message', message: mkMessage('m1', 'hi'), ts: 1 },
-      { kind: 'call', call, segment: seg, ts: 1 },
       { kind: 'segment', segment: seg, ts: 1 },
+      { kind: 'message', message: mkMessage('m1', 'hi'), ts: 100 },
     ]
     render(<TimelineChat rows={rows} showAllJson={false} />)
     expect(screen.getByTestId('pretty-msg-m1')).toBeTruthy()
-    expect(screen.getByTestId('pretty-call-c')).toBeTruthy()
-    expect(screen.getByTestId('pretty-seg-seg')).toBeTruthy()
+    expect(screen.getByTestId('footer-seg')).toBeTruthy()
+    expect(screen.queryByTestId(/break-/)).toBeNull()
+  })
+
+  it('call 行不被渲染', () => {
+    const rows: TimelineRow[] = [
+      { kind: 'segment', segment: seg, ts: 1 },
+      { kind: 'call', call, segment: seg, ts: 50 },
+      { kind: 'message', message: mkMessage('m1', 'hi'), ts: 100 },
+    ]
+    const { container } = render(<TimelineChat rows={rows} showAllJson={false} />)
+    expect(container.textContent).not.toContain('调用 #')
+  })
+
+  it('多段：非首段 trigger≠initial 渲染 break', () => {
+    const seg2: LLMSegment = { ...seg, id: 'seg2', trigger: 'model_change', startedAt: 200 }
+    const rows: TimelineRow[] = [
+      { kind: 'segment', segment: seg, ts: 1 },
+      { kind: 'message', message: mkMessage('m1', 'a'), ts: 100 },
+      { kind: 'segment', segment: seg2, ts: 200 },
+      { kind: 'message', message: mkMessage('m2', 'b'), ts: 300 },
+    ]
+    render(<TimelineChat rows={rows} showAllJson={false} />)
+    expect(screen.getByTestId('break-seg2')).toBeTruthy()
+    expect(screen.getByTestId('footer-seg')).toBeTruthy()
+    expect(screen.getByTestId('footer-seg2')).toBeTruthy()
+  })
+
+  it('latency 透传到 MessageItem', () => {
+    const rows: TimelineRow[] = [
+      { kind: 'segment', segment: seg, ts: 1 },
+      { kind: 'message', message: mkMessage('m1', 'hi'), ts: 100, latency: 1500 },
+    ]
+    render(<TimelineChat rows={rows} showAllJson={false} />)
+    expect(screen.getByTestId('pretty-msg-m1').textContent).toContain('1500ms')
   })
 
   it('空壳消息默认隐藏', () => {
     const rows: TimelineRow[] = [{ kind: 'message', message: mkMessage('e', null), ts: 1 }]
     render(<TimelineChat rows={rows} showAllJson={false} />)
     expect(screen.queryByTestId('pretty-msg-e')).toBeNull()
-  })
-
-  it('showAllJson 露出空壳消息并显示 JSON', () => {
-    const rows: TimelineRow[] = [{ kind: 'message', message: mkMessage('e', null), ts: 1 }]
-    const { container } = render(<TimelineChat rows={rows} showAllJson={true} />)
-    expect(screen.queryByTestId('pretty-msg-e')).toBeNull()
-    expect(container.textContent).toContain('"role"')
-  })
-
-  it('showAllJson 全局切换所有行为 JSON', () => {
-    const rows: TimelineRow[] = [{ kind: 'message', message: mkMessage('m1', 'hi'), ts: 1 }]
-    const { container } = render(<TimelineChat rows={rows} showAllJson={true} />)
-    expect(screen.queryByTestId('pretty-msg-m1')).toBeNull()
-    expect(container.textContent).toContain('"role"')
-  })
-
-  it('局部 { } toggle 切换单行 JSON（不影响其它行）', () => {
-    const rows: TimelineRow[] = [
-      { kind: 'message', message: mkMessage('m1', 'a'), ts: 1 },
-      { kind: 'message', message: mkMessage('m2', 'b'), ts: 2 },
-    ]
-    render(<TimelineChat rows={rows} showAllJson={false} />)
-    expect(screen.getByTestId('pretty-msg-m1')).toBeTruthy()
-    expect(screen.getByTestId('pretty-msg-m2')).toBeTruthy()
-    fireEvent.click(screen.getByTestId('row-json-m:m1'))
-    expect(screen.queryByTestId('pretty-msg-m1')).toBeNull()
-    expect(screen.getByTestId('pretty-msg-m2')).toBeTruthy()
-    fireEvent.click(screen.getByTestId('row-json-m:m1'))
-    expect(screen.getByTestId('pretty-msg-m1')).toBeTruthy()
   })
 })

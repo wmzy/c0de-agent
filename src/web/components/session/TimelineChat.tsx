@@ -1,8 +1,12 @@
 import { css } from '@linaria/core'
 import { useState } from 'react'
-import { CallRow, SegmentHeader } from '../LLMDetail.js'
+import { SegmentBreak, SegmentFooter } from '../LLMDetail.js'
 import { MessageItem } from './MessageItem.js'
-import { isEmptyMessage, type TimelineRow } from './utils/timeline.js'
+import { groupBySegment, isEmptyMessage, type TimelineRow } from './utils/timeline.js'
+
+const groupWrap = css`
+  position: relative;
+`
 
 const rowWrap = css`
   position: relative;
@@ -42,50 +46,12 @@ const pre = css`
   overflow: auto;
 `
 
-/** 行稳定 key（加前缀避免跨 kind 的 id 碰撞）。 */
-function rowKey(row: TimelineRow): string {
-  switch (row.kind) {
-    case 'message':
-      return `m:${row.message.id}`
-    case 'call':
-      return `c:${row.call.id}`
-    case 'segment':
-      return `s:${row.segment.id}`
-  }
-}
-
-/** 行的原始 JSON 文本。 */
-function rowJSON(row: TimelineRow): string {
-  switch (row.kind) {
-    case 'message':
-      return JSON.stringify(row.message, null, 2)
-    case 'call':
-      return JSON.stringify(row.call, null, 2)
-    case 'segment':
-      return JSON.stringify(row.segment, null, 2)
-  }
-}
-
-/** 美化态行渲染。 */
-function PrettyRow({ row }: { row: TimelineRow }) {
-  switch (row.kind) {
-    case 'message':
-      return <MessageItem message={row.message} />
-    case 'call': {
-      const idx = row.segment.calls.findIndex((c) => c.id === row.call.id) + 1
-      return <CallRow call={row.call} index={idx} />
-    }
-    case 'segment':
-      return <SegmentHeader segment={row.segment} />
-  }
-}
-
 /**
- * 时间线聊天视图：按位置渲染 buildTimeline 产出的行。
- * - message 行：美化卡片（MessageItem）；空 content 默认隐藏（showAllJson 时露出）。
- * - call 行：复用 CallRow 紧凑摘要（默认折叠，不与消息文本重复）。
- * - segment 行：复用 SegmentHeader 段标记。
- * 每行右上角局部 { } 切换原始 JSON；showAllJson 全局强制 JSON。
+ * 时间线聊天视图：按段分组渲染。
+ * - 每段：非首段 trigger≠initial 时渲染 SegmentBreak → 段内消息 → SegmentFooter。
+ * - call 行不渲染（groupBySegment 已滤除）。
+ * - 每条消息右上角局部 { } 切换原始 JSON（仅序列化该消息自身）。
+ * - showAllJson 全局强制 JSON。
  */
 export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showAllJson: boolean }) {
   const [localJson, setLocalJson] = useState<Set<string>>(new Set())
@@ -98,25 +64,40 @@ export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showA
       return next
     })
 
+  const groups = groupBySegment(rows)
+
   return (
     <>
-      {rows.map((row) => {
-        const key = rowKey(row)
-        const isJson = showAllJson || localJson.has(key)
-        // 空 content 消息：仅在 JSON 模式下露出（否则美化态无内容可显示）。
-        if (row.kind === 'message' && isEmptyMessage(row.message) && !isJson) return null
+      {groups.map((g) => {
+        const hasSegmentData = g.segment.id !== '__implicit__'
         return (
-          <div className={rowWrap} key={key}>
-            <button
-              type="button"
-              className={jsonToggle}
-              onClick={() => toggle(key)}
-              data-testid={`row-json-${key}`}
-              aria-label={isJson ? '切换美化' : '切换 JSON'}
-            >
-              {isJson ? '✦' : '{ }'}
-            </button>
-            {isJson ? <pre className={pre}>{rowJSON(row)}</pre> : <PrettyRow row={row} />}
+          <div className={groupWrap} key={g.segment.id}>
+            {hasSegmentData && <SegmentBreak segment={g.segment} />}
+            {g.messages.map(({ message, latency }) => {
+              const key = `m:${message.id}`
+              const isJson = showAllJson || localJson.has(key)
+              // 空壳消息：仅在 JSON 模式下露出（否则美化态无内容可显示）。
+              if (isEmptyMessage(message) && !isJson) return null
+              return (
+                <div className={rowWrap} key={key}>
+                  <button
+                    type="button"
+                    className={jsonToggle}
+                    onClick={() => toggle(key)}
+                    data-testid={`row-json-${key}`}
+                    aria-label={isJson ? '切换美化' : '切换 JSON'}
+                  >
+                    {isJson ? '✦' : '{ }'}
+                  </button>
+                  {isJson ? (
+                    <pre className={pre}>{JSON.stringify(message, null, 2)}</pre>
+                  ) : (
+                    <MessageItem message={message} latency={latency} />
+                  )}
+                </div>
+              )
+            })}
+            {hasSegmentData && <SegmentFooter segment={g.segment} />}
           </div>
         )
       })}
