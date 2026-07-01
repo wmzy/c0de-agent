@@ -16,13 +16,20 @@ import { Chat, type SendPayload } from './Chat.js'
 
 const empty = css`
   display: flex;
-  flex: 1;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
+  flex: 1;
   color: var(--text-secondary);
   font-size: 14px;
   padding: 24px;
   text-align: center;
+`
+
+const emptyIcon = css`
+  font-size: 32px;
+  opacity: 0.5;
 `
 
 /** 会话视图：无 sessionId 显示空状态，否则接通 useChat 进行流式对话。 */
@@ -34,7 +41,12 @@ export function ChatView({
   sessionId: string | null
 }) {
   if (!sessionId) {
-    return <div className={empty}>从左侧选择或新建一个会话开始对话</div>
+    return (
+      <div className={empty}>
+        <span className={emptyIcon}>💬</span>
+        <span>选择一个会话或新建开始对话</span>
+      </div>
+    )
   }
   return <ChatSession projectId={projectId} sessionId={sessionId} />
 }

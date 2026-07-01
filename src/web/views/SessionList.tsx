@@ -55,6 +55,11 @@ const addBtn = css`
   }
 `
 
+const delBtn = css`
+  align-self: flex-start;
+  margin: 12px;
+`
+
 const empty = css`
   padding: 16px 12px;
   color: var(--text);
@@ -135,7 +140,13 @@ export function SessionList({
         <BranchTree nodes={visibleTree} activeId={activeId} onSelect={onSelect} />
       )}
       {activeId && (
-        <button type="button" onClick={() => del.mutate(activeId)} style={{ margin: 12 }}>
+        <button
+          type="button"
+          className={delBtn}
+          data-variant="danger"
+          onClick={() => del.mutate(activeId)}
+          data-testid="delete-session"
+        >
           删除当前会话
         </button>
       )}

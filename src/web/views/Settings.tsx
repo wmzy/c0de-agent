@@ -39,7 +39,7 @@ const buttonRow = css`
 `
 
 const sourceHint = css`
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
 `
 
@@ -114,6 +114,24 @@ const modelEmpty = css`
   font-size: 12px;
   color: var(--text-secondary);
   padding: 4px;
+`
+
+const field = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+`
+
+const fieldInput = css`
+  flex: 1;
+  max-width: 320px;
+`
+
+const hint = css`
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
 `
 
 export function Settings() {
@@ -250,16 +268,18 @@ export function Settings() {
       </div>
       <div className={section}>
         <h3>默认 Provider / Model</h3>
-        <label>
-          Provider:
+        <label className={field}>
+          <span>Provider：</span>
           <input
+            className={fieldInput}
             value={merged.defaultProvider}
             onChange={(e) => setDraft((prev) => ({ ...prev, defaultProvider: e.target.value }))}
           />
         </label>
-        <label>
-          Model:
+        <label className={field}>
+          <span>Model：</span>
           <input
+            className={fieldInput}
             value={merged.defaultModel}
             onChange={(e) => setDraft((prev) => ({ ...prev, defaultModel: e.target.value }))}
           />
@@ -317,6 +337,7 @@ export function Settings() {
               </button>
               <button
                 type="button"
+                data-variant="danger"
                 onClick={() => removeProvider(index)}
                 data-testid="provider-remove"
               >
@@ -425,7 +446,9 @@ export function Settings() {
               },
             }))
           }
+          placeholder="read, write, edit, glob, grep, bash"
         />
+        <div className={hint}>用逗号分隔已启用的工具名称。</div>
       </div>
       <div className={section}>
         <h3>压缩阈值</h3>
@@ -449,6 +472,7 @@ export function Settings() {
           type="button"
           onClick={() => draft && save.mutate(draft)}
           disabled={!draft}
+          title={draft ? '保存配置' : '配置未变更或正在加载'}
           data-testid="settings-save"
         >
           保存

@@ -20,6 +20,21 @@ const header = css`
   border-bottom: 1px solid var(--border);
 `
 
+const copyBtn = css`
+  min-height: auto;
+  min-width: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  &:hover {
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+`
+
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [html, setHtml] = useState('')
   useEffect(() => {
@@ -29,7 +44,7 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
     <div className={wrap}>
       <div className={header}>
         <span>{lang ?? 'text'}</span>
-        <button onClick={() => navigator.clipboard?.writeText(code)} type="button">
+        <button onClick={() => navigator.clipboard?.writeText(code)} type="button" className={copyBtn}>
           复制
         </button>
       </div>

@@ -31,7 +31,7 @@ const sendBtn = css`
   padding: 8px 16px;
   border-radius: 8px;
   border: none;
-  background: var(--accent, #4a9eff);
+  background: var(--primary);
   color: #fff;
   cursor: pointer;
   font-size: 14px;
@@ -47,7 +47,7 @@ const stopBtn = css`
   padding: 8px 16px;
   border-radius: 8px;
   border: none;
-  background: var(--danger, #e5484d);
+  background: var(--error);
   color: #fff;
   cursor: pointer;
   font-size: 14px;

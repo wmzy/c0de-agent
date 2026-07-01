@@ -19,6 +19,7 @@ const bar = css`
 
 const tab = css`
   flex: 1;
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -32,11 +33,25 @@ const tab = css`
   padding: 6px 0;
   &.active {
     color: var(--primary);
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 30%;
+      right: 30%;
+      height: 2px;
+      background: var(--primary);
+      border-radius: 0 0 2px 2px;
+    }
   }
 `
 
 const icon = css`
   font-size: 18px;
+  transition: transform 0.15s;
+  &.activeIcon {
+    transform: scale(1.15);
+  }
 `
 
 type Tab = { id: string; label: string; icon: string; kind: 'chat' | 'sessions' | 'settings' }
@@ -73,7 +88,7 @@ export function MobileNav() {
           data-testid={`mobile-nav-${t.id}`}
           onClick={() => onPick(t)}
         >
-          <span className={icon}>{t.icon}</span>
+          <span className={`${icon} ${activeId === t.id ? 'activeIcon' : ''}`}>{t.icon}</span>
           <span>{t.label}</span>
         </button>
       ))}

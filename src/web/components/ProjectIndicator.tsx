@@ -27,9 +27,8 @@ const projectName = css`
 
 const branchTag = css`
   font-family: ui-monospace, monospace;
-  font-size: 11px;
-  color: var(--text);
-  opacity: 0.6;
+  font-size: 12px;
+  color: var(--text-secondary);
   background: var(--bg);
   padding: 1px 6px;
   border-radius: 3px;

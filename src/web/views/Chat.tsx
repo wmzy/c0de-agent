@@ -76,7 +76,7 @@ const steerRow = css`
 
   & > button {
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--text);
     background: none;
     border: 1px solid var(--border, #2a2a3e);
     border-radius: 6px;
@@ -84,8 +84,8 @@ const steerRow = css`
     cursor: pointer;
 
     &[aria-pressed='true'] {
-      color: var(--text-primary, #fff);
-      border-color: var(--accent, #4a9eff);
+      color: var(--text);
+      border-color: var(--primary);
     }
   }
 `
@@ -104,12 +104,14 @@ const modeToggle = css`
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-height: 44px;
+  padding: 4px 8px;
   cursor: pointer;
   user-select: none;
 `
 
 const modeWarn = css`
-  color: var(--danger, #e5484d);
+  color: var(--error);
 `
 
 export function Chat({
@@ -166,7 +168,7 @@ export function Chat({
   return (
     <>
       <div className={toolbar}>
-        <span style={error ? { color: 'var(--danger, #e5484d)' } : undefined}>
+        <span style={error ? { color: 'var(--error)' } : undefined}>
           {error
             ? error
             : usage
@@ -210,7 +212,7 @@ export function Chat({
           data-testid="steer-toggle"
           aria-pressed={steerMode}
         >
-          {steerMode ? '退出注入' : '注入 steering'}
+          {steerMode ? '完成' : '追加指令'}
         </button>
       </div>
       <div className={modeBar} data-testid="permission-mode-bar">

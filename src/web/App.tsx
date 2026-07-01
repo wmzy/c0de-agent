@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { TopBar } from './components/TopBar.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
@@ -57,6 +57,19 @@ const redirectMsg = css`
   padding: 24px;
 `
 
+const errorState = css`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 14px;
+  padding: 24px;
+  text-align: center;
+`
+
 /**
  * 根路径重定向：解析当前工作区对应项目，跳转到项目路由。
  * history 模式下根路径无项目上下文，必须落到具体项目才能展示会话。
@@ -81,7 +94,24 @@ function RootRedirect() {
     return (
       <Layout
         header={<TopBar />}
-        main={<div className={redirectMsg}>无法解析当前项目，请前往设置确认工作区配置。</div>}
+        main={
+          <div className={errorState}>
+            <span style={{ fontSize: 32 }}>⚠️</span>
+            <span>无法解析当前项目，请前往设置确认工作区配置。</span>
+            <Link
+              to="/settings"
+              style={{
+                color: 'var(--primary)',
+                textDecoration: 'none',
+                padding: '8px 16px',
+                border: '1px solid var(--primary)',
+                borderRadius: 6,
+              }}
+            >
+              前往设置
+            </Link>
+          </div>
+        }
       />
     )
   }
