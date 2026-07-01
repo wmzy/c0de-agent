@@ -752,7 +752,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
           })
       try {
         await runCompaction(deps.db, state.session.id, summarizer, {
-          keepRecent: deps.config.compaction.keepRecentTokens,
+          keepRecentTokens: deps.config.compaction.keepRecentTokens,
         })
         // 压缩改写了消息历史 → 标记下一轮强制开新段（段边界）
         state.pendingSegmentTrigger = 'compaction'

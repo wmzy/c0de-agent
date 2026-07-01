@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { safeResolve } from '../../shared/utils/path.js'
 import { isURLPath, resolveURL } from '../resolver.js'
 import type { ReadInput } from '../types.js'
 
@@ -48,7 +48,10 @@ export const readTool: ToolDef = {
       return { _tag: 'success', output: applyRange(res.content, offset, limit) }
     }
 
-    const fullPath = resolve(ctx.cwd, path)
+    const fullPath = safeResolve(ctx.cwd, path)
+    if (fullPath === null) {
+      return { _tag: 'error', error: `Path "${path}" escapes the working directory` }
+    }
 
     try {
       // 目录：列出条目（子目录加 `/` 后缀），与 system prompt 的「listing a

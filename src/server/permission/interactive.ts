@@ -35,7 +35,7 @@ function createInteractivePermissionChecker(
   const denySet = new Set(opts.alwaysDeny ?? [])
 
   return {
-    check: async (tool: ToolDef, input: unknown, _ctx: ToolContext): Promise<PermissionResult> => {
+    check: async (tool: ToolDef, input: unknown, ctx: ToolContext): Promise<PermissionResult> => {
       if (denySet.has(tool.name)) {
         return { _tag: 'deny', reason: `Tool "${tool.name}" is denied by configuration` }
       }
@@ -59,9 +59,26 @@ function createInteractivePermissionChecker(
       const promise = new Promise<PermissionResult>((resolve) => {
         // pending 注册到全局 store，confirm 端点按 toolCallId 直接寻址，
         // 不依赖当前 agent run 是否仍在 agentManager 中注册。
+        // store 内置超时：到期自动 deny 并清理条目（防永久挂起 + Map 泄漏）。
         store.register(toolCallId, { request, resolve })
       })
       await opts.onPermissionRequired?.(request)
+
+      // agent abort 联动：abort 时主动 deny 并清理 store 条目，
+      // 避免 agent 已中止后 promise 仍悬空等待超时。store.resolve 是幂等终结，
+      // 与超时/confirm 互斥——谁先到谁生效。
+      if (ctx.abort.aborted) {
+        store.resolve(toolCallId, false)
+      } else {
+        ctx.abort.addEventListener(
+          'abort',
+          () => {
+            store.resolve(toolCallId, false)
+          },
+          { once: true },
+        )
+      }
+
       return promise
     },
     confirm(toolCallId, approved) {

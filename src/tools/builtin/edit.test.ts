@@ -85,6 +85,28 @@ describe('editTool', () => {
     expect(result._tag).toBe('error')
   })
 
+  it('rejects a relative path that escapes the working directory', async () => {
+    const result = await editTool.execute(
+      { path: '../escape.txt', oldText: 'a', newText: 'b' },
+      ctx,
+    )
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
+  it('rejects an absolute path outside the working directory', async () => {
+    const result = await editTool.execute(
+      { path: '/etc/passwd', oldText: 'a', newText: 'b' },
+      ctx,
+    )
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
   it('has correct tool definition', () => {
     expect(editTool.name).toBe('edit')
     expect(editTool.permission).toBe('ask')

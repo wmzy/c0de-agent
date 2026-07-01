@@ -55,11 +55,6 @@ const addBtn = css`
   }
 `
 
-const delBtn = css`
-  align-self: flex-start;
-  margin: 12px;
-`
-
 const empty = css`
   padding: 16px 12px;
   color: var(--text);
@@ -137,18 +132,12 @@ export function SessionList({
         <div className={empty}>该项目下暂无会话</div>
       ) : null}
       {visibleTree.length > 0 && (
-        <BranchTree nodes={visibleTree} activeId={activeId} onSelect={onSelect} />
-      )}
-      {activeId && (
-        <button
-          type="button"
-          className={delBtn}
-          data-variant="danger"
-          onClick={() => del.mutate(activeId)}
-          data-testid="delete-session"
-        >
-          删除当前会话
-        </button>
+        <BranchTree
+          nodes={visibleTree}
+          activeId={activeId}
+          onSelect={onSelect}
+          onDelete={(id) => del.mutate(id)}
+        />
       )}
     </div>
   )

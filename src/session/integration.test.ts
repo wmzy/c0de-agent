@@ -47,7 +47,7 @@ describe('session integration', () => {
       session.id,
       async (p) => `SUMMARY(${p.length})`,
       {
-        keepRecent: 4,
+        keepRecentTokens: 16,
       },
     )
     expect(compactResult.compacted).toBe(true)

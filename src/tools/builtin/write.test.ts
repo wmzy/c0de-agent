@@ -56,6 +56,22 @@ describe('writeTool', () => {
     expect(result._tag).toBe('error')
   })
 
+  it('rejects a relative path that escapes the working directory', async () => {
+    const result = await writeTool.execute({ path: '../escape.txt', content: 'x' }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
+  it('rejects an absolute path outside the working directory', async () => {
+    const result = await writeTool.execute({ path: '/etc/escape.txt', content: 'x' }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
   it('has correct tool definition', () => {
     expect(writeTool.name).toBe('write')
     expect(writeTool.permission).toBe('ask')

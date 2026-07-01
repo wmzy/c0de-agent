@@ -4,7 +4,7 @@ import type { Message } from '../shared/types/message.js'
 import { archiveOriginalEntries } from './archive.js'
 import { deleteEntriesByIds, getMessages, insertEntry } from './message.js'
 import { upsertFileSnapshot } from './snapshot.js'
-import { estimateTokens } from './token.js'
+import { estimateMessageTokens, estimateTokens } from './token.js'
 import type { CompactionConfig, CompactionResult, HotFile, Summarizer } from './types.js'
 
 /**
@@ -92,8 +92,49 @@ ${history}`
 }
 
 /**
+ * Token cost of a single message, honoring a stored tokenCount when present.
+ * Mirrors core/context.ts rawMessageTokens without crossing the core→session
+ * layer boundary (core already imports session, so session must not import core).
+ */
+function messageTokens(m: Message): number {
+  if (m.tokenCount > 0) return m.tokenCount
+  return estimateMessageTokens(m.content)
+}
+
+/**
+ * Find the start index of the token-budgeted keep window by reverse-walking
+ * from the newest message. This is the session-layer analogue of
+ * core/context.ts fitToBudget's keep-window logic: accumulate tokens from the
+ * end until `keepRecentTokens` is exceeded, then everything older is eligible
+ * for compaction. At least the most recent message is always retained.
+ */
+function findKeepRecentStart(messages: Message[], keepRecentTokens: number): number {
+  if (messages.length === 0) return 0
+  let used = 0
+  let start = messages.length
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (!m) continue
+    const tc = messageTokens(m)
+    if (used + tc > keepRecentTokens) break
+    used += tc
+    start = i
+  }
+  // Always retain at least the most recent message.
+  return Math.min(start, messages.length - 1)
+}
+
+/**
  * Compact a session: summarize old messages, archive them, keep recent ones.
- * The `summarizer` function is injected (the session layer never imports the LLM package).
+ *
+ * The keep window is driven by a token budget (`keepRecentTokens`), not a
+ * fixed message count — so compaction actually fires on a few long messages
+ * instead of silently no-op'ing when message count is small. The `summarizer`
+ * function is injected (the session layer never imports the LLM package).
+ *
+ * All destructive writes (archive + snapshot + delete + insert) run inside a
+ * single transaction so a mid-way failure cannot lose history: the originals
+ * are only deleted once the summary is durably stored.
  */
 async function compactSession(
   handle: DB,
@@ -102,14 +143,18 @@ async function compactSession(
   config?: Partial<CompactionConfig>,
 ): Promise<CompactionResult> {
   const messages = await getMessages(handle, sessionId)
-  const keepRecent = config?.keepRecent ?? 6
+  const keepRecentTokens = config?.keepRecentTokens ?? 4000
 
-  if (messages.length <= keepRecent) {
+  if (messages.length === 0) {
     return { compacted: false, reason: 'too_few_messages' }
   }
 
-  const preferredCut = messages.length - keepRecent
-  const cutPoint = findSafeCutPoint(messages, preferredCut)
+  // Reverse-walk from the newest message to find the keep window boundary,
+  // driven by a token budget rather than a fixed message count.
+  const keepStart = findKeepRecentStart(messages, keepRecentTokens)
+  // Align the cut to a user-turn boundary so we never split an assistant
+  // reply from its tool results.
+  const cutPoint = findSafeCutPoint(messages, keepStart)
   const compactMessages = messages.slice(0, cutPoint)
   const keepMessages = messages.slice(cutPoint)
 
@@ -118,45 +163,57 @@ async function compactSession(
   }
 
   const prompt = buildCompactionPrompt(compactMessages)
+  // Run the (slow, network) summarizer OUTSIDE the transaction so we don't
+  // hold a DB transaction open across an LLM call.
   const summary = await summarizer(prompt)
 
   const compactionEntryId = generateId()
-  const archiveId = await archiveOriginalEntries(
-    handle,
-    sessionId,
-    compactMessages,
-    'compaction',
-    summary,
-    compactionEntryId,
-  )
 
-  const fileSnapshotIds: string[] = []
-  if (config?.preserveSnapshots !== false) {
-    const hotFiles = extractHotFiles(compactMessages)
-    for (const file of hotFiles) {
-      const id = await upsertFileSnapshot(handle, sessionId, file.path, file.content)
-      fileSnapshotIds.push(id)
-    }
-  }
+  // Atomic rewrite: archive originals → upsert snapshots → delete originals →
+  // insert summary. If any step throws, the whole transaction rolls back and
+  // the original message history is left intact.
+  const { archiveId, fileSnapshotIds } = await handle.db.transaction(async (tx) => {
+    const txHandle: DB = { db: tx, close: handle.close }
 
-  await deleteEntriesByIds(
-    handle,
-    compactMessages.map((m) => m.id),
-  )
-
-  await insertEntry(handle, {
-    id: compactionEntryId,
-    sessionId,
-    tag: 'compaction',
-    content: {
+    const archiveId = await archiveOriginalEntries(
+      txHandle,
+      sessionId,
+      compactMessages,
+      'compaction',
       summary,
-      originalEntryIds: compactMessages.map((m) => m.id),
-      archiveId,
-    },
-    tokenCount: estimateTokens(summary),
-    // Position the summary at the first compacted message's timestamp so it
-    // sorts BEFORE the kept recent messages under createdAt-ascending order.
-    createdAt: compactMessages[0] ? new Date(compactMessages[0].createdAt) : new Date(),
+      compactionEntryId,
+    )
+
+    const fileSnapshotIds: string[] = []
+    if (config?.preserveSnapshots !== false) {
+      const hotFiles = extractHotFiles(compactMessages)
+      for (const file of hotFiles) {
+        const id = await upsertFileSnapshot(txHandle, sessionId, file.path, file.content)
+        fileSnapshotIds.push(id)
+      }
+    }
+
+    await deleteEntriesByIds(
+      txHandle,
+      compactMessages.map((m) => m.id),
+    )
+
+    await insertEntry(txHandle, {
+      id: compactionEntryId,
+      sessionId,
+      tag: 'compaction',
+      content: {
+        summary,
+        originalEntryIds: compactMessages.map((m) => m.id),
+        archiveId,
+      },
+      tokenCount: estimateTokens(summary),
+      // Position the summary at the first compacted message's timestamp so it
+      // sorts BEFORE the kept recent messages under createdAt-ascending order.
+      createdAt: compactMessages[0] ? new Date(compactMessages[0].createdAt) : new Date(),
+    })
+
+    return { archiveId, fileSnapshotIds }
   })
 
   return {

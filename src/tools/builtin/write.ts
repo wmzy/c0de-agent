@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { safeResolve } from '../../shared/utils/path.js'
 import type { WriteInput } from '../types.js'
 
 /**
@@ -21,7 +22,10 @@ export const writeTool: ToolDef = {
   permission: 'ask',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { path, content } = input as WriteInput
-    const fullPath = resolve(ctx.cwd, path)
+    const fullPath = safeResolve(ctx.cwd, path)
+    if (fullPath === null) {
+      return { _tag: 'error', error: `Path "${path}" escapes the working directory` }
+    }
 
     try {
       await mkdir(dirname(fullPath), { recursive: true })

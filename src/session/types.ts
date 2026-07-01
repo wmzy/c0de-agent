@@ -69,7 +69,11 @@ type HotFile = {
 
 /** Configuration for compaction. */
 type CompactionConfig = {
-  keepRecent: number
+  /** Token budget for the recent-message keep window. Messages are retained
+   *  from the newest backward until their cumulative token count exceeds this
+   *  value; everything older is summarized. Drives compaction by tokens, not
+   *  by a fixed message count. */
+  keepRecentTokens: number
   preserveSnapshots: boolean
 }
 

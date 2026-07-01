@@ -112,7 +112,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     try {
       const summarizer = createSummarizer(ctx.llmRegistry, provider, model, {})
       const result = await runCompaction(ctx.db, id, summarizer, {
-        keepRecent: ctx.config.compaction.keepRecentTokens,
+        keepRecentTokens: ctx.config.compaction.keepRecentTokens,
       })
       return c.json(result)
     } catch (e) {

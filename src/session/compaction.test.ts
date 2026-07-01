@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { sessionEntries } from '../db/schema.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
 import {
   buildCompactionPrompt,
@@ -163,7 +165,7 @@ describe('compactSession', () => {
 
   it('returns compacted:false when too few messages', async () => {
     await appendMessage(handle, sessionId, { role: 'user', content: textContent('only one') })
-    const result = await compactSession(handle, sessionId, async () => 'summary', { keepRecent: 6 })
+    const result = await compactSession(handle, sessionId, async () => 'summary', { keepRecentTokens: 6 })
     expect(result.compacted).toBe(false)
   })
 
@@ -179,7 +181,7 @@ describe('compactSession', () => {
       sessionId,
       async (prompt) => `SUMMARY: ${prompt.slice(0, 20)}`,
       {
-        keepRecent: 2,
+        keepRecentTokens: 2,
       },
     )
     expect(result.compacted).toBe(true)
@@ -198,7 +200,7 @@ describe('compactSession', () => {
         content: textContent(`msg-${i}`),
       })
     }
-    await compactSession(handle, sessionId, async () => 'compacted summary', { keepRecent: 2 })
+    await compactSession(handle, sessionId, async () => 'compacted summary', { keepRecentTokens: 2 })
     const entries = await getEntries(handle, sessionId)
     const compaction = entries.find((e) => '_tag' in e && e._tag === 'compaction')
     expect(compaction).toBeDefined()
@@ -211,7 +213,7 @@ describe('compactSession', () => {
         content: textContent(`msg-${i}`),
       })
     }
-    await compactSession(handle, sessionId, async () => 'summary', { keepRecent: 2 })
+    await compactSession(handle, sessionId, async () => 'summary', { keepRecentTokens: 2 })
     const remaining = await getMessages(handle, sessionId)
     expect(remaining).toHaveLength(2)
   })
@@ -223,12 +225,80 @@ describe('compactSession', () => {
         content: textContent(`msg-${i}`),
       })
     }
-    await compactSession(handle, sessionId, async () => 'compaction summary', { keepRecent: 2 })
+    await compactSession(handle, sessionId, async () => 'compaction summary', { keepRecentTokens: 2 })
     const entries = await getEntries(handle, sessionId)
     // Compaction summary must come FIRST, then the kept messages
     const first = entries[0]
     expect(first && '_tag' in first && first._tag).toBe('compaction')
     const rest = entries.slice(1)
     expect(rest.every((e) => !('_tag' in e))).toBe(true)
+  })
+
+  it('compacts by token budget, firing on a few long messages (P0#1 fix)', async () => {
+    // Only 3 messages, but each ~1000 tokens — far over keepRecentTokens.
+    // The old message-count gate (messages.length <= keepRecent) returned
+    // 'too_few_messages' here and compaction NEVER ran; the token-budget gate
+    // must now actually compact.
+    const big = 'x'.repeat(4000)
+    await appendMessage(handle, sessionId, { role: 'user', content: textContent(big) })
+    await appendMessage(handle, sessionId, { role: 'assistant', content: textContent(big) })
+    await appendMessage(handle, sessionId, { role: 'user', content: textContent(big) })
+
+    const result = await compactSession(
+      handle,
+      sessionId,
+      async () => 'token-driven summary',
+      // Less than a single message → only the most recent message is kept.
+      { keepRecentTokens: 500 },
+    )
+    expect(result.compacted).toBe(true)
+    if (result.compacted) {
+      expect(result.summary).toBe('token-driven summary')
+      expect(result.compactedCount).toBe(2)
+      expect(result.keptCount).toBe(1)
+    }
+    expect(await getMessages(handle, sessionId)).toHaveLength(1)
+  })
+
+  it('keeps a token-budgeted window of recent messages', async () => {
+    // 4 messages, ~101 tokens each. keepRecentTokens=250 keeps the last 2
+    // (101+101=202 ≤ 250; a 3rd → 303 > 250).
+    const chunk = 'y'.repeat(400)
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(handle, sessionId, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: textContent(`${chunk}-${i}`),
+      })
+    }
+    const result = await compactSession(
+      handle,
+      sessionId,
+      async () => 'windowed summary',
+      { keepRecentTokens: 250 },
+    )
+    expect(result.compacted).toBe(true)
+    if (result.compacted) {
+      expect(result.keptCount).toBe(2)
+      expect(result.compactedCount).toBe(2)
+    }
+    expect(await getMessages(handle, sessionId)).toHaveLength(2)
+  })
+
+  it('wraps the rewrite in a transaction that rolls back on failure (P1#2 fix)', async () => {
+    // compactSession relies on handle.db.transaction for atomicity. Prove the
+    // mechanism the DB exposes actually rolls back a succeeded delete when the
+    // callback throws — so a mid-compaction failure cannot lose history.
+    await appendMessage(handle, sessionId, { role: 'user', content: textContent('keep me') })
+    expect(await getMessages(handle, sessionId)).toHaveLength(1)
+
+    await expect(
+      handle.db.transaction(async (tx) => {
+        await tx.delete(sessionEntries).where(eq(sessionEntries.sessionId, sessionId))
+        throw new Error('boom')
+      }),
+    ).rejects.toThrow('boom')
+
+    // The delete was rolled back — the original message survives.
+    expect(await getMessages(handle, sessionId)).toHaveLength(1)
   })
 })

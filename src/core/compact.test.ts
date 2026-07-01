@@ -28,7 +28,7 @@ describe('runCompaction', () => {
     })
 
     const summarizer = async () => 'Compacted summary'
-    const result = await runCompaction(db, session.id, summarizer, { keepRecent: 0 })
+    const result = await runCompaction(db, session.id, summarizer, { keepRecentTokens: 0 })
     expect(result.compacted).toBe(true)
     if (result.compacted) {
       expect(result.summary).toBe('Compacted summary')
