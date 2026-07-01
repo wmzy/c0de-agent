@@ -5,7 +5,7 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
 import { getProject } from '../../project/project.js'
-import { getSession } from '../../session/session.js'
+import { getLLMSegments, getSession } from '../../session/session.js'
 import { upsertFileSnapshot } from '../../session/snapshot.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import type { MessageContent } from '../../shared/types/message.js'
@@ -130,6 +130,44 @@ function createChatRoute(ctx: ServerContext): Hono {
       }
     }
 
+    const provider = (body.provider as string) ?? ctx.config.defaultProvider
+    const model = (body.model as string) ?? ctx.config.defaultModel
+    // 前端 ToolToggle 全选时不传 tools（undefined），语义为「启用全部注册工具」。
+    // 显式传 [] 才是禁用全部。config.tools.enabled 仅 CLI 模式使用，此处不回退它，
+    // 避免配置里 enabled:[] 把 Web 全选误降级为无工具（LLM 无法 function call）。
+    const tools =
+      (body.tools as string[] | undefined) ??
+      listTools(ctx.toolRegistry, { config: {}, cwd }).map((t) => t.name)
+
+    // 分段预检：切换 provider/model/tools 将开新段（前缀失效→缓存 miss），
+    // 需用户显式确认（confirmSegmentBreak）。首轮无活跃段时跳过。
+    const existingRun = ctx.agentManager.get(sessionId)
+    const segs = existingRun ? existingRun.state.segments : await getLLMSegments(ctx.db, sessionId)
+    const active = segs[segs.length - 1]
+    if (active) {
+      const reqTools = new Set(tools)
+      const segTools = new Set(active.tools.map((t) => t.name))
+      const toolsDiffer =
+        reqTools.size !== segTools.size || [...reqTools].some((t) => !segTools.has(t))
+      const modelDiffer = active.provider !== provider || active.model !== model
+      const confirmed = (body.confirmSegmentBreak as boolean | undefined) === true
+      if ((modelDiffer || toolsDiffer) && !confirmed) {
+        return apiError(
+          c,
+          409,
+          'SEGMENT_BREAK_REQUIRED',
+          '切换模型/工具将开始新的上下文段（缓存失效），需用户确认',
+          {
+            activeSegment: {
+              provider: active.provider,
+              model: active.model,
+              tools: active.tools.map((t) => t.name),
+            },
+          },
+        )
+      }
+    }
+
     return streamSSE(c, async (stream) => {
       // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认
       const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
@@ -157,15 +195,6 @@ function createChatRoute(ctx: ServerContext): Hono {
         cwd,
         ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
       }
-
-      const provider = (body.provider as string) ?? ctx.config.defaultProvider
-      const model = (body.model as string) ?? ctx.config.defaultModel
-      // 前端 ToolToggle 全选时不传 tools（undefined），语义为「启用全部注册工具」。
-      // 显式传 [] 才是禁用全部。config.tools.enabled 仅 CLI 模式使用，此处不回退它，
-      // 避免配置里 enabled:[] 把 Web 全选误降级为无工具（LLM 无法 function call）。
-      const tools =
-        (body.tools as string[] | undefined) ??
-        listTools(ctx.toolRegistry, { config: {}, cwd }).map((t) => t.name)
 
       const agentConfig: AgentConfig = {
         provider,

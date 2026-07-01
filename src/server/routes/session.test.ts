@@ -195,16 +195,37 @@ describe('session route', () => {
     expect(body._tag).toBe('idle')
   })
 
-  it('GET /:id/llm-details/:callId 未找到返回 404', async () => {
+  it('GET /:id/llm-details/:callId 子端点已移除（段内 call 由前端从段取）', async () => {
     const { app } = await setup()
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'LLMDetail' }),
+      body: JSON.stringify({ title: 'LLMSegment' }),
     })
     const created = (await createRes.json()) as Session
+    // /:callId 子端点已删除；/llm-details/nope 不匹配任何路由 → 404
     const res = await app.request(`/${created.id}/llm-details/nope`)
     expect(res.status).toBe(404)
+  })
+
+  it('POST /:id/compact 不存在的会话 → 404', async () => {
+    const { app } = await setup()
+    const res = await app.request('/nonexistent/compact', { method: 'POST' })
+    expect(res.status).toBe(404)
+  })
+
+  it('POST /:id/compact 消息过少的会话 → 200 compacted:false（不调 LLM）', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Compact' }),
+    })
+    const created = (await createRes.json()) as Session
+    const res = await app.request(`/${created.id}/compact`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { compacted: boolean; reason?: string }
+    expect(body.compacted).toBe(false)
   })
 
   it('GET /:id/branches returns branches', async () => {

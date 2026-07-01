@@ -1,9 +1,18 @@
-import type { AgentEvent, LLMDetail } from '@shared/types/agent.js'
+import type { AgentEvent, LLMCall, LLMSegment, SegmentTrigger } from '@shared/types/agent.js'
 import type { Config } from '@shared/types/config.js'
 import type { Message, Session } from '@shared/types/message.js'
 import type { ToolResult } from '@shared/types/tool.js'
 
-export type { AgentEvent, Config, LLMDetail, Message, Session, ToolResult }
+export type {
+  AgentEvent,
+  Config,
+  LLMCall,
+  LLMSegment,
+  Message,
+  SegmentTrigger,
+  Session,
+  ToolResult,
+}
 
 /** 会话树节点（后端 GET /api/sessions/tree 返回）。 */
 type SessionTreeNode = {
@@ -28,6 +37,7 @@ type APIError = {
   status: number
   message: string
   code?: string
+  details?: Record<string, unknown>
 }
 
 /** 文件目录项（GET /api/files 返回）。 */

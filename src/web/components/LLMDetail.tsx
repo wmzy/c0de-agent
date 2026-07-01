@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import type { LLMDetail } from '@shared/types/agent.js'
+import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import type { ChatTool } from '@shared/types/llm.js'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
@@ -61,20 +61,6 @@ const modelName = css`
 `
 
 const dim = css`
-  color: var(--text-secondary);
-`
-
-const roleBadge = css`
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 0 4px;
-`
-
-const costValue = css`
   color: var(--text-secondary);
 `
 
@@ -148,53 +134,54 @@ function Collapsible({
   )
 }
 
-export function LLMDetailPanel({ detail }: { detail: LLMDetail }) {
+export function SegmentHeader({ segment }: { segment: LLMSegment }) {
   return (
-    <div className={card} data-testid="llm-detail">
+    <div className={card} data-testid="segment-header">
       <div className={header}>
-        <span className={modelName}>{detail.model}</span>
-        <span className={dim}>{detail.provider}</span>
-        <span className={roleBadge}>{detail.role._tag}</span>
-        <span className={dim}>
-          {formatTokenCount(detail.usage.input)} → {formatTokenCount(detail.usage.output)}
-        </span>
-        {detail.usage.cacheRead != null && (
-          <span className={dim}>cache {formatTokenCount(detail.usage.cacheRead)}</span>
+        <span className={modelName}>{segment.model}</span>
+        <span className={dim}>{segment.provider}</span>
+        <span className={dim}>· {segment.trigger}</span>
+        {segment.contextWindow != null && (
+          <span className={dim}>ctx {formatTokenCount(segment.contextWindow)}</span>
         )}
-        <span className={costValue}>{formatCost(detail.cost)}</span>
-        <span className={dim}>{formatLatency(detail.latency.total)}</span>
       </div>
       <Collapsible title="System Prompt">
-        <pre className={pre}>{detail.systemPrompt}</pre>
+        <pre className={pre}>{segment.systemPrompt}</pre>
       </Collapsible>
-      <Collapsible title={`Messages (${detail.messages.length})`} testId="messages-summary">
-        {detail.messages.length === 0 ? (
-          <span className={dim}>（无消息）</span>
-        ) : (
-          detail.messages.map((msg, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 历史快照，列表静态且无 id 字段
-            <pre className={pre} key={i}>
-              {JSON.stringify(msg, null, 2)}
-            </pre>
-          ))
-        )}
-      </Collapsible>
-      <Collapsible title={`Tools (${detail.tools.length})`} testId="tools-summary">
-        {detail.tools.length === 0 ? (
+      <Collapsible title={`Tools (${segment.tools.length})`} testId="tools-summary">
+        {segment.tools.length === 0 ? (
           <span className={dim}>（无工具）</span>
         ) : (
-          detail.tools.map((tool) => <ToolSchemaView key={tool.name} tool={tool} />)
+          segment.tools.map((tool) => <ToolSchemaView key={tool.name} tool={tool} />)
         )}
       </Collapsible>
-      {detail.thinking && (
+    </div>
+  )
+}
+
+export function CallRow({ call, index }: { call: LLMCall; index: number }) {
+  return (
+    <div className={card} data-testid="call-row">
+      <div className={header}>
+        <span className={modelName}>调用 #{index}</span>
+        <span className={dim}>{new Date(call.timestamp).toLocaleString()}</span>
+        <span className={dim}>
+          {formatTokenCount(call.usage.input)} in · {formatTokenCount(call.usage.output)} out
+        </span>
+        {call.usage.cacheRead != null && (
+          <span className={dim}>cache {formatTokenCount(call.usage.cacheRead)}</span>
+        )}
+        <span className={dim}>{formatLatency(call.latency.total)}</span>
+        <span className={dim}>{formatCost(call.cost)}</span>
+        {call.finishReason && <span className={dim}>· {call.finishReason}</span>}
+      </div>
+      {call.thinking && (
         <Collapsible title="Thinking">
-          <pre className={pre}>{detail.thinking}</pre>
+          <pre className={pre}>{call.thinking}</pre>
         </Collapsible>
       )}
       <Collapsible title="Response">
-        <pre className={pre}>
-          {detail.responseChunks.map((c) => ('text' in c ? c.text : '')).join('')}
-        </pre>
+        <pre className={pre}>{call.responseText}</pre>
       </Collapsible>
     </div>
   )

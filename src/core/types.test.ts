@@ -10,7 +10,7 @@ import type {
   ChatTool,
   CommandResult,
   HookRunner,
-  LLMDetail,
+  LLMSegment,
   PromptContext,
   SlashCommand,
   TokenBudget,
@@ -52,7 +52,7 @@ describe('core types', () => {
     expectTypeOf<AgentState>().toBeObject()
     expectTypeOf<AgentStatus>().toBeObject()
     expectTypeOf<ChatTool>().toBeObject()
-    expectTypeOf<LLMDetail>().toBeObject()
+    expectTypeOf<LLMSegment>().toBeObject()
     expectTypeOf<TokenBudget>().toBeObject()
   })
 

@@ -3,7 +3,7 @@
  * 归并建议：本文件为新增「会话信息总结面板」组件的单元测试，与 LLMDetail.test.tsx
  * 同属「会话上下文展示」组件族；若后续合并展示组件，可并入对应测试文件。
  */
-import type { LLMDetail } from '@shared/types/agent.js'
+import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -61,36 +61,35 @@ const messages: Message[] = [
   },
 ]
 
-const llmDetails: LLMDetail[] = [
+const segments: LLMSegment[] = [
   {
-    id: 'd1',
-    timestamp: 1,
-    model: 'glm-5.2',
+    id: 's1',
+    fingerprint: 'fp',
     provider: 'zhipu',
-    role: { _tag: 'default' },
-    systemPrompt: 'sys',
-    messages: [],
-    tools: [],
-    responseChunks: [],
-    usage: { input: 100, output: 50, cacheRead: 200 },
-    latency: { firstToken: 10, total: 100 },
-    cost: 0.02,
-    contextWindow: 100000,
-  },
-  {
-    id: 'd2',
-    timestamp: 2,
     model: 'glm-5.2',
-    provider: 'zhipu',
-    role: { _tag: 'default' },
     systemPrompt: 'sys',
-    messages: [],
     tools: [],
-    responseChunks: [],
-    usage: { input: 300, output: 80, cacheRead: 500 },
-    latency: { firstToken: 10, total: 100 },
-    cost: 0.03,
+    startedAt: 1,
+    trigger: 'initial',
     contextWindow: 100000,
+    calls: [
+      {
+        id: 'c1',
+        timestamp: 1,
+        usage: { input: 100, output: 50, cacheRead: 200 },
+        latency: { firstToken: 10, total: 100 },
+        cost: 0.02,
+        responseText: '',
+      },
+      {
+        id: 'c2',
+        timestamp: 2,
+        usage: { input: 300, output: 80, cacheRead: 500 },
+        latency: { firstToken: 10, total: 100 },
+        cost: 0.03,
+        responseText: '',
+      },
+    ],
   },
 ]
 
@@ -102,7 +101,7 @@ function renderWithClient(ui: React.ReactElement) {
 function mockAll(
   s: Session | undefined = session,
   m: Message[] | undefined = messages,
-  d: LLMDetail[] | undefined = llmDetails,
+  d: LLMSegment[] | undefined = segments,
 ) {
   ;(sessionAPI.get as Mock).mockResolvedValue(s)
   ;(sessionAPI.messages as Mock).mockResolvedValue(m)

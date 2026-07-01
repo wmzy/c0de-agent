@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import type { LLMDetail } from '@shared/types/agent.js'
+import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
@@ -101,23 +101,24 @@ type Stats = {
   updatedAt?: number
 }
 
-/** 聚合会话、消息、LLM 调用详情为总结统计。 */
+/** 聚合会话、消息、LLM 调用分段为总结统计（跨段跨 call 累加）。 */
 function computeStats(
   session: Session | undefined,
   messages: Message[] | undefined,
-  details: LLMDetail[],
+  segments: LLMSegment[],
 ): Stats {
   const msgs = messages ?? []
   const userMessages = msgs.filter((m) => m.role === 'user').length
   const assistantMessages = msgs.filter((m) => m.role === 'assistant').length
-  const inputTokens = details.reduce((s, d) => s + d.usage.input, 0)
-  const outputTokens = details.reduce((s, d) => s + d.usage.output, 0)
-  const cacheRead = details.reduce((s, d) => s + (d.usage.cacheRead ?? 0), 0)
-  const cost = details.reduce((s, d) => s + d.cost, 0)
+  const calls = segments.flatMap((s) => s.calls)
+  const inputTokens = calls.reduce((s, c) => s + c.usage.input, 0)
+  const outputTokens = calls.reduce((s, c) => s + c.usage.output, 0)
+  const cacheRead = calls.reduce((s, c) => s + (c.usage.cacheRead ?? 0), 0)
+  const cost = calls.reduce((s, c) => s + c.cost, 0)
   // 总 token = 输入 + 输出 + 缓存读（推理/缓存写当前未采集，计 0）。
   const totalTokens = inputTokens + outputTokens + cacheRead
-  const latest = details[details.length - 1]
-  const contextWindow = latest?.contextWindow
+  const lastSeg = segments[segments.length - 1]
+  const contextWindow = lastSeg?.contextWindow
   const usagePercent = contextWindow
     ? Math.min(100, Math.round((totalTokens / contextWindow) * 100))
     : undefined
@@ -126,8 +127,8 @@ function computeStats(
     messageCount: msgs.length,
     userMessages,
     assistantMessages,
-    provider: latest?.provider,
-    model: latest?.model,
+    provider: lastSeg?.provider,
+    model: lastSeg?.model,
     contextWindow,
     totalTokens,
     usagePercent,
@@ -161,15 +162,15 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
     staleTime: 10_000,
   })
   const { data: messages } = useMessages(sessionId)
-  const { data: details, isLoading } = useQuery({
+  const { data: segments, isLoading } = useQuery({
     queryKey: ['session', sessionId, 'llm-details'],
     queryFn: () => sessionAPI.llmDetails(sessionId),
     staleTime: 10_000,
   })
 
   const stats = useMemo(
-    () => computeStats(session, messages, details ?? []),
-    [session, messages, details],
+    () => computeStats(session, messages, segments ?? []),
+    [session, messages, segments],
   )
 
   return (

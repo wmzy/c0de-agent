@@ -64,7 +64,7 @@ type ConfirmRequest = {
 
 /** 统一错误响应体。 */
 type APIErrorBody = {
-  error: { code: string; message: string }
+  error: { code: string; message: string; details?: Record<string, unknown> }
 }
 
 export type {

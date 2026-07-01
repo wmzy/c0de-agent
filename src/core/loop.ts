@@ -4,10 +4,16 @@ import { isLLMError } from '../llm/schema/errors.js'
 import { detectProjectInfo } from '../project/detect.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { appendMessage, getMessages } from '../session/message.js'
-import { appendLLMDetail, createSession } from '../session/session.js'
+import { createSession, saveLLMSegments, segmentFingerprint } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import { generateId } from '../shared/index.js'
-import type { AgentEvent, AgentState, LLMDetail } from '../shared/types/agent.js'
+import type {
+  AgentEvent,
+  AgentState,
+  LLMCall,
+  LLMSegment,
+  SegmentTrigger,
+} from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool, FinishReason, StreamChunk } from '../shared/types/llm.js'
 import type { MessageContent, Session } from '../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult, ToolResult } from '../shared/types/tool.js'
@@ -508,10 +514,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       await deps.hookRunner.fireHooks('provider:after', { request, chunks: collectedChunks })
     }
 
-    // 记录本轮 LLM 调用详情，供前端调用详情面板展示。
     const totalLatency = Date.now() - requestStartTime
-    // 解析模型能力：拿 contextWindow（供总结面板使用率）与单价（计算成本）。
-    // resolveRoute 在 provider 未注册时抛 NoRoute；此处容错，失败则跳过补充字段。
     let contextWindow: number | undefined
     let computedCost = 0
     try {
@@ -529,33 +532,69 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     } catch {
       // provider 未注册或模型未知：保留 contextWindow=undefined、cost=0
     }
-    const detail: LLMDetail = {
+
+    // —— 段管理：判断是否开新段 ——
+    const fp = segmentFingerprint(systemPrompt, tools)
+    const activeSeg = state.segments[state.segments.length - 1]
+    const pendingTrigger = state.pendingSegmentTrigger
+    let trigger: SegmentTrigger
+    if (pendingTrigger) {
+      trigger = pendingTrigger
+      state.pendingSegmentTrigger = undefined
+    } else if (!activeSeg) {
+      trigger = 'initial'
+    } else if (activeSeg.model !== state.config.model) {
+      trigger = 'model_change'
+    } else if (activeSeg.fingerprint !== fp) {
+      trigger = activeSeg.systemPrompt !== systemPrompt ? 'system_prompt_change' : 'tools_change'
+    } else {
+      trigger = 'user_confirmed' // 占位，实际不会开段
+    }
+    const needSegment =
+      !!pendingTrigger ||
+      !activeSeg ||
+      activeSeg.model !== state.config.model ||
+      activeSeg.fingerprint !== fp
+    let currentSeg: LLMSegment
+    if (!needSegment && activeSeg) {
+      currentSeg = activeSeg
+    } else {
+      currentSeg = {
+        id: generateId(),
+        fingerprint: fp,
+        provider: state.config.provider,
+        model: state.config.model,
+        systemPrompt,
+        tools,
+        startedAt: requestStartTime,
+        trigger,
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+        calls: [],
+      }
+      state.segments.push(currentSeg)
+    }
+
+    // —— 段内轻量 call ——
+    const call: LLMCall = {
       id: generateId(),
       timestamp: requestStartTime,
-      model: state.config.model,
-      provider: state.config.provider,
-      role: { _tag: 'default' },
-      systemPrompt,
-      messages: chatMessages,
-      tools,
-      responseChunks: collectedChunks,
-      thinking: collectedThinking.length > 0 ? collectedThinking.join('') : undefined,
       usage: {
         input: collectedUsage?.inputTokens ?? 0,
         output: collectedUsage?.outputTokens ?? 0,
-        cacheRead: collectedUsage?.cacheRead,
+        ...(collectedUsage?.cacheRead !== undefined ? { cacheRead: collectedUsage.cacheRead } : {}),
       },
       latency: {
         firstToken: firstTokenTime ? firstTokenTime - requestStartTime : totalLatency,
         total: totalLatency,
       },
       cost: computedCost,
-      contextWindow,
+      ...(collectedThinking.length > 0 ? { thinking: collectedThinking.join('') } : {}),
+      responseText: collectedText.join(''),
+      ...(truncated ? { finishReason: truncated } : {}),
     }
-    state.llmDetails.push(detail)
-    // 持久化到 sessions.metadata.llmDetails，供会话结束后仍可查看调用详情。
-    await appendLLMDetail(deps.db, state.session.id, detail)
-    // 通知前端调用详情已更新，使其刷新调用详情面板（避免需手动刷新页面）。
+    currentSeg.calls.push(call)
+
+    await saveLLMSegments(deps.db, state.session.id, state.segments)
     yield { _tag: 'llm_detail' }
 
     if (hadError) {
@@ -715,6 +754,8 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         await runCompaction(deps.db, state.session.id, summarizer, {
           keepRecent: deps.config.compaction.keepRecentTokens,
         })
+        // 压缩改写了消息历史 → 标记下一轮强制开新段（段边界）
+        state.pendingSegmentTrigger = 'compaction'
         state.tokenBudget.used = estimateBudget(
           await getMessages(deps.db, state.session.id),
           state.calibrationFactor,

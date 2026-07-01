@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { LLMDetailsView } from '../components/LLMDetailsView.js'
 import { type ModelSelection, ModelSelector } from '../components/ModelSelector.js'
+import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { ToolToggle } from '../components/ToolToggle.js'
@@ -99,31 +100,53 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   const supportsVision = true
 
   return (
-    <Chat
-      projectId={projectId}
-      messages={messages}
-      isStreaming={chat.isStreaming}
-      usage={chat.usage}
-      error={chat.error}
-      pendingPermission={chat.pendingPermission}
-      onSend={handleSend}
-      onAbort={chat.abort}
-      onConfirm={handleConfirm}
-      onPause={agent.pause}
-      onResume={agent.resume}
-      onSteer={agent.steer}
-      paused={agent.paused}
-      supportsVision={supportsVision}
-      modelBar={<ModelSelector value={selection} onChange={setSelection} />}
-      toolToggle={
-        <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={chat.isStreaming} />
-      }
-      topPanel={
-        <>
-          <SessionSummary sessionId={sessionId} />
-          <LLMDetailsView sessionId={sessionId} />
-        </>
-      }
-    />
+    <>
+      <Chat
+        projectId={projectId}
+        messages={messages}
+        isStreaming={chat.isStreaming}
+        usage={chat.usage}
+        error={chat.error}
+        pendingPermission={chat.pendingPermission}
+        onSend={handleSend}
+        onAbort={chat.abort}
+        onConfirm={handleConfirm}
+        onPause={agent.pause}
+        onResume={agent.resume}
+        onSteer={agent.steer}
+        paused={agent.paused}
+        supportsVision={supportsVision}
+        modelBar={<ModelSelector value={selection} onChange={setSelection} />}
+        toolToggle={
+          <ToolToggle
+            enabled={enabledTools}
+            onChange={setEnabledTools}
+            disabled={chat.isStreaming}
+          />
+        }
+        topPanel={
+          <>
+            <SessionSummary sessionId={sessionId} />
+            <LLMDetailsView sessionId={sessionId} />
+          </>
+        }
+      />
+      {chat.pendingSegmentBreak && (
+        <SegmentBreakDialog
+          activeSegment={chat.pendingSegmentBreak.activeSegment}
+          onConfirm={() => void chat.confirmBreak(false)}
+          onCompact={() => void chat.confirmBreak(true)}
+          onCancel={() => {
+            // 取消：还原 selection/enabledTools 到活跃段值，再清除待发状态
+            const seg = chat.pendingSegmentBreak?.activeSegment
+            if (seg) {
+              setSelection({ provider: seg.provider, model: seg.model })
+              setEnabledTools(new Set(seg.tools))
+            }
+            chat.cancelBreak()
+          }}
+        />
+      )}
+    </>
   )
 }

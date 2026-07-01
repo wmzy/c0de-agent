@@ -8,7 +8,7 @@ import type {
   AgentEvent,
   AgentState,
   AgentStatus,
-  LLMDetail,
+  LLMSegment,
   PendingToolCall,
   TokenBudget,
 } from '../shared/types/agent.js'
@@ -116,7 +116,7 @@ export type {
   CommandContext,
   CommandResult,
   HookRunner,
-  LLMDetail,
+  LLMSegment,
   PendingToolCall,
   ProjectInfo,
   PromptBuildContext,
