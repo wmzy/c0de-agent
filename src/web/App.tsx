@@ -1,6 +1,14 @@
 import { css } from '@linaria/core'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
+import {
+  BrowserRouter,
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useNavigate,
+  useParams,
+} from 'react-router-dom'
 import { TopBar } from './components/TopBar.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'

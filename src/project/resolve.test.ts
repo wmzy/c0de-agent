@@ -44,7 +44,7 @@ describe('resolveProject', () => {
     expect(a.id).toBe(b.id)
   })
 
-  it.runIf(hasGit)('git directory: id from remote, vcs git', () => {
+  it.runIf(hasGit)('git directory: id from worktree, remote recorded as metadata', () => {
     const repo = join(tmpRoot, 'repo')
     mkdirSync(repo)
     execSync('git init -q', { cwd: repo })
@@ -71,7 +71,7 @@ describe('resolveProject', () => {
     const result = resolveProject(sub)
     expect(result.worktree).toBe(repo)
     expect(result.vcs).toBe('git')
-    // same id whether resolved from root or subdir (remote-based)
+    // same id whether resolved from root or subdir (worktree-based)
     expect(result.id).toBe(resolveProject(repo).id)
   })
 
@@ -86,5 +86,20 @@ describe('resolveProject', () => {
     expect(result.id).toHaveLength(16)
     // differs from a plain non-git dir id only by content, length is 16
     expect(result.id).toBe(resolveProject(repo).id)
+  })
+
+  it.runIf(hasGit)('git repo id 不随 remote 变更漂移（回归：先无 remote 后加 origin）', () => {
+    const repo = join(tmpRoot, 'drift')
+    mkdirSync(repo)
+    execSync('git init -q', { cwd: repo })
+    execSync('git checkout -q -b main', { cwd: repo })
+
+    const before = resolveProject(repo)
+    // 模拟「先无 remote 注册、后加 origin」——旧实现这里 id 会从 hash(worktree) 漂到 hash(remote)
+    execSync('git remote add origin https://github.com/u/drift.git', { cwd: repo })
+    const after = resolveProject(repo)
+
+    expect(after.id).toBe(before.id)
+    expect(after.gitRemote).toBe('https://github.com/u/drift.git')
   })
 })

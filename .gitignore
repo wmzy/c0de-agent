@@ -14,3 +14,6 @@ coverage/
 *.wasm
 memory:/
 .c0de/
+
+# Git worktrees (isolated workspaces)
+.worktrees/

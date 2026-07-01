@@ -69,10 +69,11 @@ export function resolveProject(directory: string): ResolvedProject {
   if (gitRoot) {
     const remote = git(['remote', 'get-url', 'origin'], gitRoot) || firstRemoteUrl(gitRoot)
     const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], gitRoot) || null
-    // remote 优先；无 remote 用 worktree 路径
-    const idSource = remote || gitRoot
+    // 身份恒用 worktree（本地路径稳定）；remote 是可变元数据，曾用 remote 作 id 会在
+    // 「先无 remote 注册、后加 remote」时导致 id 漂移——同一目录分裂成两个项目，
+    // 历史会话挂在旧 id 上从列表消失。remote 仅记录到 gitRemote 字段。
     return {
-      id: hash16(idSource),
+      id: hash16(gitRoot),
       worktree: gitRoot,
       vcs: 'git',
       gitRemote: remote || null,

@@ -14,7 +14,8 @@ import {
 
 /**
  * Projects table — git repos or plain directories tracked for agent workspaces.
- * Identity: git repo uses sha256(remote||worktree)[:16]; plain dir uses sha256(path)[:16].
+ * Identity: sha256(worktree)[:16]（git 仓库用仓库根，普通目录用绝对路径）。gitRemote 仅作
+ * 元数据，不参与 id——避免「先无 remote 注册、后加 remote」导致 id 漂移。
  */
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
