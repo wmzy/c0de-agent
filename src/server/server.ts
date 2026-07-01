@@ -34,7 +34,7 @@ type StartServerOptions = {
 type RunningServer = {
   app: Hono
   port: number
-  close(): void
+  close(): Promise<void>
 }
 
 type BootstrappedServer = {
@@ -100,7 +100,14 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
     if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
     db = await createDB({ driver: 'pglite', dataDir })
   }
-  await migrateDB(db)
+  // migrateDB 失败时必须 close db，否则 PGLite WASM 实例泄漏并锁住 dataDir，
+  // 导致后续重试全部 abort（RuntimeError: Aborted()）。
+  try {
+    await migrateDB(db)
+  } catch (err) {
+    if (ownsDb) await db.close().catch(() => {})
+    throw err
+  }
 
   if (opts.restoreFrom) {
     const snapshot = JSON.parse(readFileSync(opts.restoreFrom, 'utf8')) as SessionSnapshot
@@ -154,14 +161,15 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
 
   const server = serve({ fetch: app.fetch, port }) as unknown as NodeServer
 
-  return {
-    app,
-    port,
-    close: () => {
-      server.close()
-      void closeCtx()
-    },
+  let closed = false
+  const close = async () => {
+    if (closed) return
+    closed = true
+    server.close()
+    await closeCtx()
   }
+
+  return { app, port, close }
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }

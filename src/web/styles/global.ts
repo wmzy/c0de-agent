@@ -53,20 +53,20 @@ export const globalStyle = css`
   :global(textarea) {
     resize: vertical;
   }
-  :global(input):focus,
-  :global(select):focus,
-  :global(textarea):focus {
+  :global(input:focus),
+  :global(select:focus),
+  :global(textarea:focus) {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
   }
-  :global(input)::placeholder,
-  :global(textarea)::placeholder {
+  :global(input::placeholder),
+  :global(textarea::placeholder) {
     color: var(--text-secondary);
   }
-  :global(input):disabled,
-  :global(select):disabled,
-  :global(textarea):disabled {
+  :global(input:disabled),
+  :global(select:disabled),
+  :global(textarea:disabled) {
     opacity: 0.6;
     cursor: not-allowed;
   }
@@ -93,10 +93,10 @@ export const globalStyle = css`
     padding: 8px 12px;
     transition: background 0.15s, border-color 0.15s;
   }
-  :global(button):hover:not(:disabled) {
+  :global(button:hover:not(:disabled)) {
     background: color-mix(in srgb, var(--bg-secondary) 80%, var(--text) 8%);
   }
-  :global(button):disabled {
+  :global(button:disabled) {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -106,7 +106,7 @@ export const globalStyle = css`
     border-color: var(--primary);
     color: #fff;
   }
-  :global(button[data-variant='primary']):hover:not(:disabled) {
+  :global(button[data-variant='primary']:hover:not(:disabled)) {
     background: var(--primary-hover);
     border-color: var(--primary-hover);
   }
@@ -114,14 +114,14 @@ export const globalStyle = css`
     color: var(--error);
     border-color: color-mix(in srgb, var(--error) 45%, var(--border));
   }
-  :global(button[data-variant='danger']):hover:not(:disabled) {
+  :global(button[data-variant='danger']:hover:not(:disabled)) {
     background: color-mix(in srgb, var(--error) 12%, var(--bg-secondary));
   }
   :global(button[data-variant='ghost']) {
     background: transparent;
     border-color: transparent;
   }
-  :global(button[data-variant='ghost']):hover:not(:disabled) {
+  :global(button[data-variant='ghost']:hover:not(:disabled)) {
     background: color-mix(in srgb, var(--text) 8%, transparent);
   }
 `

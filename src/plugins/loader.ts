@@ -25,7 +25,8 @@ function validatePluginModule(mod: unknown): ValidationResult {
 }
 
 async function loadPlugin(path: string): Promise<Plugin> {
-  const mod = await import(path)
+  // 动态导入运行时扫描到的插件路径，Vite 无法静态分析，故显式忽略
+  const mod = await import(/* @vite-ignore */ path)
   const result = validatePluginModule(mod)
   if (!result.valid) {
     throw new Error(`Invalid plugin at ${path}: ${result.error}`)

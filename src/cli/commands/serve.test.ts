@@ -14,7 +14,7 @@ describe('runServeCommand', () => {
         started.push({ port: opts.port ?? 3000 })
         return {
           port: opts.port ?? 3000,
-          close: () => {
+          close: async () => {
             closed = true
           },
         }
@@ -37,7 +37,7 @@ describe('runServeCommand', () => {
     await runServeCommand({
       args: { options: { port: 4000, open: false }, positionals: [] },
       cwd: process.cwd(),
-      serverStarter: async (opts) => ({ port: opts.port ?? 3000, close: () => {} }),
+      serverStarter: async (opts) => ({ port: opts.port ?? 3000, close: async () => {} }),
       banner: () => {},
       opener: (url) => {
         opens.push(url)

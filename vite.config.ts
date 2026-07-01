@@ -14,6 +14,10 @@ function honoApiPlugin(): Plugin {
   return {
     name: 'c0de-hono-api',
     configureServer(server) {
+      // 首次加载 dev.ts 时缓存 closeDevApp 引用。
+      // 关闭阶段不能再调 ssrLoadModule——此时 vite module runner 已关闭会抛错。
+      let closeDev: (() => Promise<void>) | null = null
+
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith('/api')) {
           next()
@@ -22,6 +26,7 @@ function honoApiPlugin(): Plugin {
         try {
           const dev = await server.ssrLoadModule(path.resolve(__dirname, 'src/server/dev.ts'))
           const app = await dev.getDevApp()
+          if (!closeDev) closeDev = dev.closeDevApp
           await dev.handleApiRequest(app, req, res)
         } catch (err) {
           console.error('[c0de-hono-api] error:', err)
@@ -31,6 +36,12 @@ function honoApiPlugin(): Plugin {
           }
           res.end(JSON.stringify({ error: 'Internal Server Error', message: String(err) }))
         }
+      })
+      // 关闭时用缓存的引用直接 close PGLite，防止 WAL 损坏导致下次启动 abort。
+      // 不抢注 process SIGTERM/SIGINT——vite 自身处理信号并触发 'close' 事件，
+      // 此处清理在 vite 优雅关闭流程中执行。
+      server.httpServer?.on('close', () => {
+        void closeDev?.()
       })
     },
   }

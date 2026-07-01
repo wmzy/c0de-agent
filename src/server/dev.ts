@@ -16,14 +16,27 @@ import { bootstrapServerContext } from './server.js'
  * globalThis 跨模块重载保持单例，避免权限流程中途断裂。
  */
 const DEV_APP_KEY = '__c0de_dev_app__'
+const DEV_CLOSE_KEY = '__c0de_dev_close__'
 
 async function getDevApp(): Promise<Hono> {
   const g = globalThis as Record<string, unknown>
   if (!g[DEV_APP_KEY]) {
-    const { ctx } = await bootstrapServerContext({ cwd: process.cwd() })
+    const { ctx, close } = await bootstrapServerContext({ cwd: process.cwd() })
     g[DEV_APP_KEY] = createApp(ctx)
+    g[DEV_CLOSE_KEY] = close
   }
   return g[DEV_APP_KEY] as Hono
+}
+
+/** vite dev server 关闭时调用，确保 PGLite WASM 正常 close 并刷写 WAL。 */
+async function closeDevApp(): Promise<void> {
+  const g = globalThis as Record<string, unknown>
+  const close = g[DEV_CLOSE_KEY] as (() => Promise<void>) | undefined
+  if (close) {
+    await close()
+    delete g[DEV_APP_KEY]
+    delete g[DEV_CLOSE_KEY]
+  }
 }
 
 /**
@@ -84,4 +97,4 @@ async function handleApiRequest(
   }
 }
 
-export { getDevApp, handleApiRequest }
+export { closeDevApp, getDevApp, handleApiRequest }
