@@ -298,7 +298,9 @@ export function Settings() {
             : modelEntries
           return (
             <div
-              key={`${provider.name || 'p'}-${provider.baseURL || 'b'}`}
+              // key 必须稳定：若依赖 name/baseURL，输入首字符即改变 key
+              // 导致该行卸载重建、输入框失焦。用 index 即可（受控表单列表）。
+              key={index}
               className={providerRow}
               data-testid="provider-row"
             >

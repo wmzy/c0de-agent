@@ -455,4 +455,31 @@ describe('Settings — Provider 管理', () => {
       within(panel).getByTestId('provider-model-toggle-gpt-4o-mini') as HTMLInputElement,
     ).toBeChecked()
   })
+
+  it('编辑 provider name 不会重新挂载输入行（避免输入一个字符即失焦）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('provider-row')).toHaveLength(2)
+    })
+
+    // 持有第一个 provider 的 name 输入框 DOM 引用
+    const rows = screen.getAllByTestId('provider-row')
+    const nameInput = within(rows[0] as HTMLElement).getByPlaceholderText(
+      '名称',
+    ) as HTMLInputElement
+    expect(nameInput.value).toBe('ProviderA')
+
+    // 输入会改变 provider.name —— 若 key 依赖 name，此处会卸载重建该行，DOM 节点改变
+    fireEvent.change(nameInput, { target: { value: 'ProviderAX' } })
+
+    // 重新查询：必须是同一个 DOM 节点（否则即重挂载，实际表现为输入失焦）
+    const rowsAfter = screen.getAllByTestId('provider-row')
+    const nameInputAgain = within(rowsAfter[0] as HTMLElement).getByPlaceholderText('名称')
+    expect(nameInputAgain).toBe(nameInput)
+    expect((nameInputAgain as HTMLInputElement).value).toBe('ProviderAX')
+  })
 })
