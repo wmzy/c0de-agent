@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { FilePathLink } from '../../FilePathLink.js'
 import { FileCodeBlock } from './FileCodeBlock.js'
 
 const title = css`
@@ -52,7 +53,7 @@ export function ReadToolView({
         <span className={name}>read</span>
       </div>
       <div className={title} data-testid="file-name">
-        {path}
+        <FilePathLink path={path} />
       </div>
       {content && <FileCodeBlock path={path} content={content} />}
     </div>
