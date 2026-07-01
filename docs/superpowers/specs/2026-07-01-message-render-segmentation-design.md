@@ -89,6 +89,9 @@ function groupBySegment(rows: TimelineRow[]): SegmentGroup[]
 1. 以 `segment` 行为分隔符切分。
 2. 段内 message 行收入 `messages`（带配对好的 latency）；call 行丢弃（chat 不渲染）。
 3. 若某 message 不属于任何 segment（无前置 segment 行），归入一个隐式首段。
+4. **segments 为空的边界**（旧会话无分段数据）：所有 messages 归入单个隐式组，
+   `isFirst=true`，不渲染 SegmentFooter（无段数据可汇总），不渲染 SegmentBreak。
+   此时 TimelineChat 退化为纯消息列表——与优化前的渲染等价。
 
 **latency 配对逻辑仍在 `buildTimeline` 中完成**（步骤 2），groupBySegment 只是消费它。
 
