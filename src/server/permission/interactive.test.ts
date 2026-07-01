@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ToolContext, ToolDef } from '../../shared/types/tool.js'
 import { createInteractivePermissionChecker } from './interactive.js'
-import { DEFAULT_PERMISSION_TIMEOUT_MS, createPermissionStore } from './store.js'
+import { createPermissionStore, DEFAULT_PERMISSION_TIMEOUT_MS } from './store.js'
 
 const autoTool: ToolDef = {
   name: 'read',

@@ -46,8 +46,9 @@ export function buildTimeline(messages: Message[], segments: LLMSegment[]): Time
     if (row.message.role !== 'assistant') continue
     // 推进到不超过 msg.ts 的最后一个未消费 call
     let best: { call: LLMCall; segStartedAt: number } | null = null
-    while (callIdx < allCalls.length && allCalls[callIdx]!.call.timestamp <= row.ts) {
-      const candidate = allCalls[callIdx]!
+    while (callIdx < allCalls.length) {
+      const candidate = allCalls[callIdx]
+      if (!candidate || candidate.call.timestamp > row.ts) break
       if (!consumed.has(candidate.call.id)) {
         best = candidate
       }

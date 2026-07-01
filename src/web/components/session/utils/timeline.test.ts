@@ -99,9 +99,10 @@ describe('buildTimeline latency 配对', () => {
       [msg('m', 100, [{ _tag: 'text', text: 'hi' }])],
       [seg({ startedAt: 50, calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] })],
     )
-    const msgRow = rows.find((r) => r.kind === 'message')!
-    expect(msgRow.kind).toBe('message')
-    if (msgRow.kind === 'message') expect(msgRow.latency).toBe(1500)
+    const msgRow = rows.find((r) => r.kind === 'message')
+    expect(msgRow).toBeDefined()
+    expect(msgRow?.kind).toBe('message')
+    if (msgRow?.kind === 'message') expect(msgRow.latency).toBe(1500)
   })
 
   it('user 消息不配对 latency', () => {
@@ -117,8 +118,8 @@ describe('buildTimeline latency 配对', () => {
       [userMsg],
       [seg({ startedAt: 50, calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] })],
     )
-    const msgRow = rows.find((r) => r.kind === 'message')!
-    if (msgRow.kind === 'message') expect(msgRow.latency).toBeUndefined()
+    const msgRow = rows.find((r) => r.kind === 'message')
+    if (msgRow?.kind === 'message') expect(msgRow.latency).toBeUndefined()
   })
 
   it('latency 不跨段配对：msg 属 seg2 配对 seg2 的 call', () => {
@@ -135,8 +136,8 @@ describe('buildTimeline latency 配对', () => {
         }),
       ],
     )
-    const msgRow = rows.find((r) => r.kind === 'message')!
-    if (msgRow.kind === 'message') expect(msgRow.latency).toBe(800)
+    const msgRow = rows.find((r) => r.kind === 'message')
+    if (msgRow?.kind === 'message') expect(msgRow.latency).toBe(800)
   })
 
   it('孤儿 call 不影响配对，仍保留为 call 行', () => {
@@ -157,8 +158,8 @@ describe('buildTimeline latency 配对', () => {
       .map((r) => (r.kind === 'call' ? r.call.id : ''))
     expect(callIds).toContain('fail')
     expect(callIds).toContain('ok')
-    const msgRow = rows.find((r) => r.kind === 'message')!
-    if (msgRow.kind === 'message') expect(msgRow.latency).toBe(1500)
+    const msgRow = rows.find((r) => r.kind === 'message')
+    if (msgRow?.kind === 'message') expect(msgRow.latency).toBe(1500)
   })
 })
 
@@ -167,8 +168,8 @@ describe('groupBySegment', () => {
     const rows = buildTimeline([msg('m', 100, [{ _tag: 'text', text: 'x' }])], [])
     const groups = groupBySegment(rows)
     expect(groups).toHaveLength(1)
-    expect(groups[0]!.messages).toHaveLength(1)
-    expect(groups[0]!.isFirst).toBe(true)
+    expect(groups[0]?.messages).toHaveLength(1)
+    expect(groups[0]?.isFirst).toBe(true)
   })
 
   it('单段：message 行保留，call 行被滤掉', () => {
@@ -178,7 +179,7 @@ describe('groupBySegment', () => {
     )
     const groups = groupBySegment(rows)
     expect(groups).toHaveLength(1)
-    expect(groups[0]!.messages.map((m) => m.message.id)).toEqual(['m'])
+    expect(groups[0]?.messages.map((m) => m.message.id)).toEqual(['m'])
   })
 
   it('多段：按 segment 行切分', () => {
@@ -199,9 +200,9 @@ describe('groupBySegment', () => {
     )
     const groups = groupBySegment(rows)
     expect(groups).toHaveLength(2)
-    expect(groups[0]!.segment.id).toBe('seg1')
-    expect(groups[1]!.segment.id).toBe('seg2')
-    expect(groups[1]!.segment.trigger).toBe('model_change')
+    expect(groups[0]?.segment.id).toBe('seg1')
+    expect(groups[1]?.segment.id).toBe('seg2')
+    expect(groups[1]?.segment.trigger).toBe('model_change')
   })
 
   it('隐式首段：segment 行之前的消息归入首段', () => {
@@ -211,8 +212,8 @@ describe('groupBySegment', () => {
     )
     const groups = groupBySegment(rows)
     expect(groups).toHaveLength(2)
-    expect(groups[0]!.isFirst).toBe(true)
-    expect(groups[0]!.messages.map((m) => m.message.id)).toEqual(['m0'])
+    expect(groups[0]?.isFirst).toBe(true)
+    expect(groups[0]?.messages.map((m) => m.message.id)).toEqual(['m0'])
   })
 
   it('latency 透传到 group messages', () => {
@@ -221,6 +222,6 @@ describe('groupBySegment', () => {
       [seg({ calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] })],
     )
     const groups = groupBySegment(rows)
-    expect(groups[0]!.messages[0]!.latency).toBe(1500)
+    expect(groups[0]?.messages[0]?.latency).toBe(1500)
   })
 })

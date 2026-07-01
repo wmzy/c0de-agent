@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
@@ -165,7 +165,9 @@ describe('compactSession', () => {
 
   it('returns compacted:false when too few messages', async () => {
     await appendMessage(handle, sessionId, { role: 'user', content: textContent('only one') })
-    const result = await compactSession(handle, sessionId, async () => 'summary', { keepRecentTokens: 6 })
+    const result = await compactSession(handle, sessionId, async () => 'summary', {
+      keepRecentTokens: 6,
+    })
     expect(result.compacted).toBe(false)
   })
 
@@ -200,7 +202,9 @@ describe('compactSession', () => {
         content: textContent(`msg-${i}`),
       })
     }
-    await compactSession(handle, sessionId, async () => 'compacted summary', { keepRecentTokens: 2 })
+    await compactSession(handle, sessionId, async () => 'compacted summary', {
+      keepRecentTokens: 2,
+    })
     const entries = await getEntries(handle, sessionId)
     const compaction = entries.find((e) => '_tag' in e && e._tag === 'compaction')
     expect(compaction).toBeDefined()
@@ -225,7 +229,9 @@ describe('compactSession', () => {
         content: textContent(`msg-${i}`),
       })
     }
-    await compactSession(handle, sessionId, async () => 'compaction summary', { keepRecentTokens: 2 })
+    await compactSession(handle, sessionId, async () => 'compaction summary', {
+      keepRecentTokens: 2,
+    })
     const entries = await getEntries(handle, sessionId)
     // Compaction summary must come FIRST, then the kept messages
     const first = entries[0]
@@ -270,12 +276,9 @@ describe('compactSession', () => {
         content: textContent(`${chunk}-${i}`),
       })
     }
-    const result = await compactSession(
-      handle,
-      sessionId,
-      async () => 'windowed summary',
-      { keepRecentTokens: 250 },
-    )
+    const result = await compactSession(handle, sessionId, async () => 'windowed summary', {
+      keepRecentTokens: 250,
+    })
     expect(result.compacted).toBe(true)
     if (result.compacted) {
       expect(result.keptCount).toBe(2)

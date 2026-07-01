@@ -85,10 +85,5 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
   }
 }
 
-export type {
-  PendingPermission,
-  PermissionRequest,
-  PermissionStore,
-  PermissionStoreOptions,
-}
-export { DEFAULT_PERMISSION_TIMEOUT_MS, createPermissionStore }
+export type { PendingPermission, PermissionRequest, PermissionStore, PermissionStoreOptions }
+export { createPermissionStore, DEFAULT_PERMISSION_TIMEOUT_MS }

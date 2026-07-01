@@ -112,12 +112,7 @@ export function SessionList({
       )}
       <div className={header}>
         <span>会话</span>
-        <button
-          type="button"
-          className={addBtn}
-          onClick={onNewSession}
-          data-testid="new-session"
-        >
+        <button type="button" className={addBtn} onClick={onNewSession} data-testid="new-session">
           + 新建
         </button>
       </div>

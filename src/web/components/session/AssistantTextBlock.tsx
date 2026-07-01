@@ -1,8 +1,8 @@
 import { css } from '@linaria/core'
+import { formatLatency } from '../../utils/format.js'
 import { CodeReference } from '../CodeReference.js'
 import { CopyButton } from '../CopyButton.js'
 import { Markdown } from '../Markdown.js'
-import { formatLatency } from '../../utils/format.js'
 import { useOverflow } from './hooks/useOverflow.js'
 
 const wrap = css`

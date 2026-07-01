@@ -109,36 +109,31 @@ describe('SegmentBreak', () => {
   })
 
   it('trigger=model_change 渲染分隔线 + 标签', () => {
-    const { container } = render(
-      <SegmentBreak segment={{ ...segment, trigger: 'model_change' }} />,
-    )
+    const { container } = render(<SegmentBreak segment={{ ...segment, trigger: 'model_change' }} />)
     const el = container.querySelector('[data-testid="segment-break"]')
     expect(el).toBeTruthy()
-    expect(el!.textContent).toContain('模型切换')
+    expect(el?.textContent).toContain('模型切换')
   })
 
   it('trigger=compaction 渲染会话压缩标签', () => {
-    const { container } = render(
-      <SegmentBreak segment={{ ...segment, trigger: 'compaction' }} />,
-    )
+    const { container } = render(<SegmentBreak segment={{ ...segment, trigger: 'compaction' }} />)
     const el = container.querySelector('[data-testid="segment-break"]')
-    expect(el!.textContent).toContain('会话压缩')
+    expect(el).toBeTruthy()
+    expect(el?.textContent).toContain('会话压缩')
   })
 
   it('trigger=system_prompt_change 渲染系统提示词变更标签', () => {
     const { container } = render(
       <SegmentBreak segment={{ ...segment, trigger: 'system_prompt_change' }} />,
     )
-    expect(container.querySelector('[data-testid="segment-break"]')!.textContent).toContain(
+    expect(container.querySelector('[data-testid="segment-break"]')?.textContent).toContain(
       '系统提示词变更',
     )
   })
 
   it('trigger=tools_change 渲染工具集变更标签', () => {
-    const { container } = render(
-      <SegmentBreak segment={{ ...segment, trigger: 'tools_change' }} />,
-    )
-    expect(container.querySelector('[data-testid="segment-break"]')!.textContent).toContain(
+    const { container } = render(<SegmentBreak segment={{ ...segment, trigger: 'tools_change' }} />)
+    expect(container.querySelector('[data-testid="segment-break"]')?.textContent).toContain(
       '工具集变更',
     )
   })

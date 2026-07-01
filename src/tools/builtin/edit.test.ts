@@ -97,10 +97,7 @@ describe('editTool', () => {
   })
 
   it('rejects an absolute path outside the working directory', async () => {
-    const result = await editTool.execute(
-      { path: '/etc/passwd', oldText: 'a', newText: 'b' },
-      ctx,
-    )
+    const result = await editTool.execute({ path: '/etc/passwd', oldText: 'a', newText: 'b' }, ctx)
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
       expect(result.error).toContain('escapes the working directory')

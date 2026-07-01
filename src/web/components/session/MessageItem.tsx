@@ -26,13 +26,7 @@ const content = css`
   padding-top: 2px;
 `
 
-export function MessageItem({
-  message,
-  latency,
-}: {
-  message: Message
-  latency?: number
-}) {
+export function MessageItem({ message, latency }: { message: Message; latency?: number }) {
   const blocks = normalizeParts(message)
   return (
     <div className={wrap} data-testid="message" data-role={message.role}>
