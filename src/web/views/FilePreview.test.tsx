@@ -1,16 +1,37 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { FileSelectionContext } from '../contexts/FileSelectionContext.js'
 import { FilePreview } from './FilePreview.js'
 
-function withClient(ui: React.ReactNode) {
+// 返回 mock fetch，json 响应携带给定 content
+function fetchMock(content: string) {
+  return vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ path: 'x', content }),
+  })
+}
+
+function withClient(ui: React.ReactNode, closeFile = () => {}) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  render(
+    <QueryClientProvider client={qc}>
+      <FileSelectionContext.Provider
+        value={{ selectedFile: null, openFile: () => {}, closeFile }}
+      >
+        {ui}
+      </FileSelectionContext.Provider>
+    </QueryClientProvider>,
+  )
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('FilePreview', () => {
   it('渲染 markdown 文件', async () => {
@@ -55,5 +76,33 @@ describe('FilePreview', () => {
     const img = document.querySelector('img')
     expect(img).toBeTruthy()
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
+  })
+
+  it('渲染 header 显示路径', async () => {
+    vi.stubGlobal('fetch', fetchMock('# Title'))
+    withClient(<FilePreview path="readme.md" />)
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-path').textContent).toBe('readme.md')
+    })
+  })
+
+  it('点击关闭按钮调用 closeFile', async () => {
+    const closeFile = vi.fn()
+    vi.stubGlobal('fetch', fetchMock('# Title'))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: 'readme.md', openFile: () => {}, closeFile }}
+        >
+          <FilePreview path="readme.md" />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByLabelText('关闭预览')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByLabelText('关闭预览'))
+    expect(closeFile).toHaveBeenCalledOnce()
   })
 })
