@@ -1,8 +1,8 @@
 import { css } from '@linaria/core'
-import type { Config } from '@shared/types/config.js'
+import type { Config, MCPServerConfig } from '@shared/types/config.js'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { type ChangeEvent, useRef, useState } from 'react'
 import { ProviderCatalogDialog } from '../components/ProviderCatalogDialog.js'
 import { useTheme } from '../contexts/ThemeContext.js'
 import { configAPI } from '../services/config.js'
@@ -12,6 +12,110 @@ import { providerAPI } from '../services/provider.js'
 const section = css`
   padding: 16px;
   border-bottom: 1px solid var(--border);
+`
+
+const toolbar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+`
+
+const toolbarTitle = css`
+  font-size: 15px;
+  font-weight: 600;
+  margin-right: auto;
+`
+
+const segGroup = css`
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+`
+
+const segBtn = css`
+  padding: 4px 12px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  &:last-child {
+    border-right: none;
+  }
+`
+
+const segBtnActive = css`
+  background: var(--primary);
+  color: #fff;
+`
+
+const toolBtn = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  &:hover {
+    background: var(--bg-secondary);
+  }
+`
+
+const jsonWrap = css`
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+`
+
+const jsonTextarea = css`
+  flex: 1;
+  min-height: 420px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  border: none;
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  tab-size: 2;
+  white-space: pre;
+`
+
+const jsonErrorBar = css`
+  padding: 8px 16px;
+  background: var(--diff-del-bg);
+  color: var(--diff-del-text);
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  word-break: break-all;
+`
+
+const jsonOkBar = css`
+  padding: 6px 16px;
+  background: var(--diff-add-bg);
+  color: var(--diff-add-text);
+  font-size: 12px;
 `
 
 const providerRow = css`
@@ -134,6 +238,33 @@ const hint = css`
   margin-top: 4px;
 `
 
+const checkRow = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+`
+
+const kvRow = css`
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+`
+
+const mcpRow = css`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+`
+
 export function Settings() {
   const qc = useQueryClient()
   const { data: config, isLoading } = useQuery({
@@ -148,6 +279,12 @@ export function Settings() {
   const [modelFilter, setModelFilter] = useState<Record<number, string>>({})
   const [catalogOpen, setCatalogOpen] = useState(false)
 
+  // 视图模式：GUI 表单 / JSON 直接编辑（参考 VSCode settings 切换）
+  const [viewMode, setViewMode] = useState<'gui' | 'json'>('gui')
+  const [jsonText, setJsonText] = useState('')
+  const [jsonError, setJsonError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const save = useMutation({
     mutationFn: (patch: Partial<Config>) => configAPI.update(patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['config'] }),
@@ -160,6 +297,7 @@ export function Settings() {
   if (isLoading || !config) return <div style={{ padding: 24 }}>加载中…</div>
 
   const merged = { ...config, ...draft }
+  const isDirty = draft !== null
 
   const updateProviders = (providers: ProviderConfig[]) => {
     setDraft((prev) => ({ ...prev, providers }))
@@ -256,225 +394,780 @@ export function Settings() {
     }
   }
 
+  /**
+   * 通用嵌套对象字段更新（浅合并）。适用于 compaction/fallback/tools/
+   * toolMetrics/security/websearch/agents/plugins/slashCommands。
+   */
+  const updateSection = <K extends keyof Config>(
+    key: K,
+    patch: Partial<NonNullable<Config[K]>>,
+  ) => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      const current = (base[key] ?? {}) as object
+      return { ...base, [key]: { ...current, ...patch } }
+    })
+  }
+
+  /** 解析逗号分隔的字符串数组。 */
+  const parseList = (s: string): string[] =>
+    s
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean)
+
+  // ---- 角色路由 (roleRouting) ----
+  const addRoleRouting = () => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      const routing = { ...(base.roleRouting ?? {}) }
+      routing[`role-${Object.keys(routing).length + 1}`] = { provider: '', model: '' }
+      return { ...base, roleRouting: routing }
+    })
+  }
+  const updateRoleRouting = (role: string, field: 'provider' | 'model', value: string) => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      const routing = { ...(base.roleRouting ?? {}) }
+      routing[role] = { ...(routing[role] ?? { provider: '', model: '' }), [field]: value }
+      return { ...base, roleRouting: routing }
+    })
+  }
+  const removeRoleRouting = (role: string) => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      const routing = { ...(base.roleRouting ?? {}) }
+      delete routing[role]
+      return { ...base, roleRouting: routing }
+    })
+  }
+  const renameRoleRouting = (oldKey: string, newKey: string) => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      const entries = Object.entries(base.roleRouting ?? {})
+      return {
+        ...base,
+        roleRouting: Object.fromEntries(
+          entries.map(([k, v]) => (k === oldKey ? [newKey, v] : [k, v])),
+        ),
+      }
+    })
+  }
+
+  // ---- MCP 服务器 (mcpServers) ----
+  const addMcpServer = () => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      return {
+        ...base,
+        mcpServers: [...(base.mcpServers ?? []), { name: '', transport: 'stdio' }],
+      }
+    })
+  }
+  const updateMcpServer = (
+    index: number,
+    field: keyof MCPServerConfig,
+    value: string | string[],
+  ) => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      const servers = (base.mcpServers ?? []).map((s, i) =>
+        i === index ? { ...s, [field]: value } : s,
+      )
+      return { ...base, mcpServers: servers }
+    })
+  }
+  const removeMcpServer = (index: number) => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      return { ...base, mcpServers: (base.mcpServers ?? []).filter((_, i) => i !== index) }
+    })
+  }
+
+  // ---- JSON 模式 / 导入导出 ----
+
+  /** 进入 JSON 模式：以当前合并配置序列化为初始文本。 */
+  const enterJsonMode = () => {
+    setJsonText(JSON.stringify(merged, null, 2))
+    setJsonError(null)
+    setViewMode('json')
+  }
+
+  /** JSON 文本变更：实时解析，合法则同步 draft，非法仅提示。 */
+  const onJsonChange = (text: string) => {
+    setJsonText(text)
+    try {
+      const parsed = JSON.parse(text) as Partial<Config>
+      setJsonError(null)
+      setDraft(parsed)
+    } catch (e) {
+      setJsonError(e instanceof Error ? e.message : 'JSON 解析错误')
+    }
+  }
+
+  /** 切回 GUI：JSON 非法时阻止（避免丢失未保存的编辑）。 */
+  const enterGuiMode = () => {
+    if (viewMode === 'json' && jsonError) return
+    setViewMode('gui')
+  }
+
+  /** 导出当前配置为 c0de-config.json。 */
+  const exportConfig = () => {
+    const text = viewMode === 'json' && !jsonError ? jsonText : JSON.stringify(merged, null, 2)
+    const blob = new Blob([text], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'c0de-config.json'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  /** 从文件导入配置。 */
+  const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      const parsed = JSON.parse(text) as Partial<Config>
+      setDraft(parsed)
+      setJsonText(JSON.stringify(parsed, null, 2))
+      setJsonError(null)
+      setViewMode('gui')
+    } catch (err) {
+      setJsonError(`导入失败：${err instanceof Error ? err.message : '未知错误'}`)
+      setViewMode('json')
+      // 把读取到的原始文本放进编辑器方便定位问题
+      try {
+        setJsonText(await file.text())
+      } catch {
+        /* ignore */
+      }
+    }
+    e.target.value = '' // 允许重复导入同一文件
+  }
+
   return (
-    <div data-testid="settings" style={{ overflow: 'auto' }}>
-      <div className={section}>
-        <h3>主题</h3>
-        <select value={mode} onChange={(e) => setMode(e.target.value as never)}>
-          <option value="light">浅色</option>
-          <option value="dark">深色</option>
-          <option value="system">跟随系统</option>
-        </select>
-      </div>
-      <div className={section}>
-        <h3>默认 Provider / Model</h3>
-        <label className={field}>
-          <span>Provider：</span>
-          <input
-            className={fieldInput}
-            value={merged.defaultProvider}
-            onChange={(e) => setDraft((prev) => ({ ...prev, defaultProvider: e.target.value }))}
-          />
-        </label>
-        <label className={field}>
-          <span>Model：</span>
-          <input
-            className={fieldInput}
-            value={merged.defaultModel}
-            onChange={(e) => setDraft((prev) => ({ ...prev, defaultModel: e.target.value }))}
-          />
-        </label>
-      </div>
-      <div className={section}>
-        <h3>LLM Provider</h3>
-        {merged.providers.map((provider, index) => {
-          const test = testResults[index]
-          const modelEntries = Object.entries(provider.models ?? {})
-          const totalCount = modelEntries.length
-          const enabledCount = modelEntries.filter(([, v]) => v.enabled !== false).length
-          const filterText = (modelFilter[index] ?? '').toLowerCase()
-          const filteredModels = filterText
-            ? modelEntries.filter(([name]) => name.toLowerCase().includes(filterText))
-            : modelEntries
-          return (
-            <div
-              // key 必须稳定：若依赖 name/baseURL，输入首字符即改变 key
-              // 导致该行卸载重建、输入框失焦。用 index 即可（受控表单列表）。
-              key={index}
-              className={providerRow}
-              data-testid="provider-row"
-            >
-              <input
-                value={provider.name}
-                onChange={(e) => updateProvider(index, 'name', e.target.value)}
-                placeholder="名称"
-              />
-              <select
-                value={provider.protocol}
-                onChange={(e) => updateProvider(index, 'protocol', e.target.value)}
-              >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="google">Google</option>
-                <option value="openai-compat">OpenAI Compatible</option>
-              </select>
-              <input
-                value={provider.baseURL ?? ''}
-                onChange={(e) => updateProvider(index, 'baseURL', e.target.value)}
-                placeholder="https://api.openai.com/v1"
-              />
-              <input
-                type="password"
-                value={provider.apiKey}
-                onChange={(e) => updateProvider(index, 'apiKey', e.target.value)}
-                placeholder="API Key"
-              />
-              <button
-                type="button"
-                onClick={() => testProvider(index, provider.baseURL ?? '', provider.apiKey)}
-                disabled={test?.loading === true}
-                data-testid="provider-test"
-              >
-                {test?.loading ? '测试中…' : '测试'}
-              </button>
-              <button
-                type="button"
-                data-variant="danger"
-                onClick={() => removeProvider(index)}
-                data-testid="provider-remove"
-              >
-                删除
-              </button>
-              {test?.result && (
-                <span
-                  className={testResultSpan}
-                  style={{
-                    color: test.result.ok ? 'var(--success)' : 'var(--error)',
-                  }}
-                >
-                  {test.result.ok
-                    ? `\u2713 连接成功，${test.result.models.length} 个模型`
-                    : `\u2717 ${test.result.error}`}
-                </span>
-              )}
-              {totalCount > 0 && (
-                <div className={modelPanel} data-testid="provider-models">
-                  <div className={modelToolbar}>
-                    <input
-                      className={modelFilterInput}
-                      value={modelFilter[index] ?? ''}
-                      onChange={(e) =>
-                        setModelFilter((prev) => ({ ...prev, [index]: e.target.value }))
-                      }
-                      placeholder="过滤模型…"
-                      data-testid="provider-model-filter"
-                    />
-                    <button
-                      type="button"
-                      className={modelToolbarBtn}
-                      onClick={() => setAllModels(index, true)}
-                      data-testid="provider-models-enable-all"
-                    >
-                      启用所有
-                    </button>
-                    <button
-                      type="button"
-                      className={modelToolbarBtn}
-                      onClick={() => setAllModels(index, false)}
-                      data-testid="provider-models-disable-all"
-                    >
-                      禁用所有
-                    </button>
-                    <span className={modelCountText} data-testid="provider-models-count">
-                      {enabledCount} / {totalCount} 已启用
-                    </span>
-                  </div>
-                  <div className={modelList}>
-                    {filteredModels.length === 0 ? (
-                      <div className={modelEmpty}>无匹配模型</div>
-                    ) : (
-                      filteredModels.map(([name, override]) => {
-                        const on = override.enabled !== false
-                        return (
-                          <label key={name} className={modelRow}>
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              onChange={() => toggleModel(index, name)}
-                              data-testid={`provider-model-toggle-${name}`}
-                            />
-                            <span>{name}</span>
-                          </label>
-                        )
-                      })
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-        <div className={buttonRow}>
-          <button type="button" onClick={addProvider} data-testid="provider-add">
-            + 手动添加
+    <div
+      data-testid="settings"
+      style={{ overflow: 'auto', display: 'flex', flexDirection: 'column' }}
+    >
+      <div className={toolbar}>
+        <span className={toolbarTitle}>⚙ 设置</span>
+        <div className={segGroup}>
+          <button
+            type="button"
+            className={`${segBtn} ${viewMode === 'gui' ? segBtnActive : ''}`}
+            onClick={enterGuiMode}
+            data-testid="settings-mode-gui"
+          >
+            表单
           </button>
-          <button type="button" onClick={() => setCatalogOpen(true)} data-testid="provider-catalog">
-            从 models.dev 选择
+          <button
+            type="button"
+            className={`${segBtn} ${viewMode === 'json' ? segBtnActive : ''}`}
+            onClick={enterJsonMode}
+            data-testid="settings-mode-json"
+          >
+            {'{ } JSON'}
           </button>
-          <span className={sourceHint}>
-            数据源：
-            <a className={sourceLink} href="https://models.dev" target="_blank" rel="noreferrer">
-              models.dev
-            </a>
-          </span>
         </div>
-        {catalogOpen && (
-          <ProviderCatalogDialog
-            onClose={() => setCatalogOpen(false)}
-            onSelect={addProviderFromCatalog}
+        <button
+          type="button"
+          className={toolBtn}
+          onClick={() => fileInputRef.current?.click()}
+          data-testid="settings-import"
+          title="从 JSON 文件导入配置"
+        >
+          ⬆ 导入
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          style={{ display: 'none' }}
+          onChange={(e) => void onImportFile(e)}
+          data-testid="settings-import-input"
+        />
+        <button
+          type="button"
+          className={toolBtn}
+          onClick={exportConfig}
+          data-testid="settings-export"
+          title="导出当前配置为 JSON 文件"
+        >
+          ⬇ 导出
+        </button>
+      </div>
+
+      {viewMode === 'json' ? (
+        <div className={jsonWrap}>
+          <textarea
+            className={jsonTextarea}
+            value={jsonText}
+            onChange={(e) => onJsonChange(e.target.value)}
+            spellCheck={false}
+            data-testid="settings-json-editor"
           />
-        )}
-      </div>
-      <div className={section}>
-        <h3>启用工具</h3>
-        <input
-          value={merged.tools.enabled.join(', ')}
-          onChange={(e) =>
-            setDraft((prev) => ({
-              ...prev,
-              tools: {
-                ...merged.tools,
-                enabled: e.target.value.split(',').map((s) => s.trim()),
-              },
-            }))
-          }
-          placeholder="read, write, edit, glob, grep, bash"
-        />
-        <div className={hint}>用逗号分隔已启用的工具名称。</div>
-      </div>
-      <div className={section}>
-        <h3>压缩阈值</h3>
-        <input
-          type="number"
-          step="0.05"
-          value={merged.compaction.threshold}
-          onChange={(e) =>
-            setDraft((prev) => ({
-              ...prev,
-              compaction: {
-                ...merged.compaction,
-                threshold: Number(e.target.value),
-              },
-            }))
-          }
-        />
-      </div>
+          {jsonError ? (
+            <div className={jsonErrorBar} data-testid="settings-json-error">
+              ⚠ {jsonError}
+            </div>
+          ) : (
+            <div className={jsonOkBar}>✓ JSON 合法，编辑实时同步到配置草稿</div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className={section}>
+            <h3>外观</h3>
+            <label className={field}>
+              <span>主题：</span>
+              <select value={mode} onChange={(e) => setMode(e.target.value as never)}>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+                <option value="system">跟随系统</option>
+              </select>
+            </label>
+            <label className={field}>
+              <span>语言：</span>
+              <select
+                value={merged.locale}
+                onChange={(e) => setDraft((prev) => ({ ...prev, locale: e.target.value }))}
+              >
+                <option value="zh-CN">简体中文</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
+          <div className={section}>
+            <h3>默认 Provider / Model</h3>
+            <label className={field}>
+              <span>Provider：</span>
+              <input
+                className={fieldInput}
+                value={merged.defaultProvider}
+                onChange={(e) => setDraft((prev) => ({ ...prev, defaultProvider: e.target.value }))}
+              />
+            </label>
+            <label className={field}>
+              <span>Model：</span>
+              <input
+                className={fieldInput}
+                value={merged.defaultModel}
+                onChange={(e) => setDraft((prev) => ({ ...prev, defaultModel: e.target.value }))}
+              />
+            </label>
+          </div>
+          <div className={section}>
+            <h3>LLM Provider</h3>
+            {merged.providers.map((provider, index) => {
+              const test = testResults[index]
+              const modelEntries = Object.entries(provider.models ?? {})
+              const totalCount = modelEntries.length
+              const enabledCount = modelEntries.filter(([, v]) => v.enabled !== false).length
+              const filterText = (modelFilter[index] ?? '').toLowerCase()
+              const filteredModels = filterText
+                ? modelEntries.filter(([name]) => name.toLowerCase().includes(filterText))
+                : modelEntries
+              return (
+                <div
+                  // key 必须稳定：若依赖 name/baseURL，输入首字符即改变 key
+                  // 导致该行卸载重建、输入框失焦。用 index 即可（受控表单列表）。
+                  key={index}
+                  className={providerRow}
+                  data-testid="provider-row"
+                >
+                  <input
+                    value={provider.name}
+                    onChange={(e) => updateProvider(index, 'name', e.target.value)}
+                    placeholder="名称"
+                  />
+                  <select
+                    value={provider.protocol}
+                    onChange={(e) => updateProvider(index, 'protocol', e.target.value)}
+                  >
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="google">Google</option>
+                    <option value="openai-compat">OpenAI Compatible</option>
+                  </select>
+                  <input
+                    value={provider.baseURL ?? ''}
+                    onChange={(e) => updateProvider(index, 'baseURL', e.target.value)}
+                    placeholder="https://api.openai.com/v1"
+                  />
+                  <input
+                    type="password"
+                    value={provider.apiKey}
+                    onChange={(e) => updateProvider(index, 'apiKey', e.target.value)}
+                    placeholder="API Key"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => testProvider(index, provider.baseURL ?? '', provider.apiKey)}
+                    disabled={test?.loading === true}
+                    data-testid="provider-test"
+                  >
+                    {test?.loading ? '测试中…' : '测试'}
+                  </button>
+                  <button
+                    type="button"
+                    data-variant="danger"
+                    onClick={() => removeProvider(index)}
+                    data-testid="provider-remove"
+                  >
+                    删除
+                  </button>
+                  {test?.result && (
+                    <span
+                      className={testResultSpan}
+                      style={{
+                        color: test.result.ok ? 'var(--success)' : 'var(--error)',
+                      }}
+                    >
+                      {test.result.ok
+                        ? `\u2713 连接成功，${test.result.models.length} 个模型`
+                        : `\u2717 ${test.result.error}`}
+                    </span>
+                  )}
+                  {totalCount > 0 && (
+                    <div className={modelPanel} data-testid="provider-models">
+                      <div className={modelToolbar}>
+                        <input
+                          className={modelFilterInput}
+                          value={modelFilter[index] ?? ''}
+                          onChange={(e) =>
+                            setModelFilter((prev) => ({ ...prev, [index]: e.target.value }))
+                          }
+                          placeholder="过滤模型…"
+                          data-testid="provider-model-filter"
+                        />
+                        <button
+                          type="button"
+                          className={modelToolbarBtn}
+                          onClick={() => setAllModels(index, true)}
+                          data-testid="provider-models-enable-all"
+                        >
+                          启用所有
+                        </button>
+                        <button
+                          type="button"
+                          className={modelToolbarBtn}
+                          onClick={() => setAllModels(index, false)}
+                          data-testid="provider-models-disable-all"
+                        >
+                          禁用所有
+                        </button>
+                        <span className={modelCountText} data-testid="provider-models-count">
+                          {enabledCount} / {totalCount} 已启用
+                        </span>
+                      </div>
+                      <div className={modelList}>
+                        {filteredModels.length === 0 ? (
+                          <div className={modelEmpty}>无匹配模型</div>
+                        ) : (
+                          filteredModels.map(([name, override]) => {
+                            const on = override.enabled !== false
+                            return (
+                              <label key={name} className={modelRow}>
+                                <input
+                                  type="checkbox"
+                                  checked={on}
+                                  onChange={() => toggleModel(index, name)}
+                                  data-testid={`provider-model-toggle-${name}`}
+                                />
+                                <span>{name}</span>
+                              </label>
+                            )
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+            <div className={buttonRow}>
+              <button type="button" onClick={addProvider} data-testid="provider-add">
+                + 手动添加
+              </button>
+              <button
+                type="button"
+                onClick={() => setCatalogOpen(true)}
+                data-testid="provider-catalog"
+              >
+                从 models.dev 选择
+              </button>
+              <span className={sourceHint}>
+                数据源：
+                <a
+                  className={sourceLink}
+                  href="https://models.dev"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  models.dev
+                </a>
+              </span>
+            </div>
+            {catalogOpen && (
+              <ProviderCatalogDialog
+                onClose={() => setCatalogOpen(false)}
+                onSelect={addProviderFromCatalog}
+              />
+            )}
+          </div>
+          <div className={section}>
+            <h3>角色路由</h3>
+            <div className={hint} style={{ marginBottom: 8 }}>
+              为特定角色指定独立的 provider 和 model（覆盖默认）。
+            </div>
+            {Object.entries(merged.roleRouting ?? {}).map(([role, cfg]) => (
+              <div key={role} className={kvRow}>
+                <input
+                  value={role}
+                  placeholder="角色名"
+                  onChange={(e) => renameRoleRouting(role, e.target.value)}
+                />
+                <input
+                  value={cfg.provider}
+                  placeholder="provider"
+                  onChange={(e) => updateRoleRouting(role, 'provider', e.target.value)}
+                />
+                <input
+                  value={cfg.model}
+                  placeholder="model"
+                  onChange={(e) => updateRoleRouting(role, 'model', e.target.value)}
+                />
+                <button type="button" data-variant="danger" onClick={() => removeRoleRouting(role)}>
+                  删除
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={addRoleRouting} data-testid="role-add">
+              + 添加角色
+            </button>
+          </div>
+          <div className={section}>
+            <h3>故障回退</h3>
+            <label className={checkRow}>
+              <input
+                type="checkbox"
+                checked={merged.fallback.enabled}
+                onChange={(e) => updateSection('fallback', { enabled: e.target.checked })}
+              />
+              <span>启用自动重试与回退</span>
+            </label>
+            <label className={field}>
+              <span>最大重试次数：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                min={0}
+                value={merged.fallback.maxRetries}
+                onChange={(e) => updateSection('fallback', { maxRetries: Number(e.target.value) })}
+              />
+            </label>
+            <label className={field}>
+              <span>重试间隔 (ms)：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                min={0}
+                value={merged.fallback.retryDelay}
+                onChange={(e) => updateSection('fallback', { retryDelay: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+          <div className={section}>
+            <h3>上下文压缩</h3>
+            <label className={checkRow}>
+              <input
+                type="checkbox"
+                checked={merged.compaction.enabled}
+                onChange={(e) => updateSection('compaction', { enabled: e.target.checked })}
+              />
+              <span>启用自动压缩</span>
+            </label>
+            <label className={field}>
+              <span>触发阈值：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                step="0.05"
+                min={0}
+                max={1}
+                value={merged.compaction.threshold}
+                onChange={(e) => updateSection('compaction', { threshold: Number(e.target.value) })}
+              />
+            </label>
+            <label className={field}>
+              <span>保留 Token：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                min={0}
+                value={merged.compaction.reserveTokens}
+                onChange={(e) =>
+                  updateSection('compaction', { reserveTokens: Number(e.target.value) })
+                }
+              />
+            </label>
+            <label className={field}>
+              <span>近期保留 Token：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                min={0}
+                value={merged.compaction.keepRecentTokens}
+                onChange={(e) =>
+                  updateSection('compaction', { keepRecentTokens: Number(e.target.value) })
+                }
+              />
+            </label>
+          </div>
+          <div className={section}>
+            <h3>工具配置</h3>
+            <label className={field}>
+              <span>已启用：</span>
+              <input
+                className={fieldInput}
+                value={merged.tools.enabled.join(', ')}
+                onChange={(e) => updateSection('tools', { enabled: parseList(e.target.value) })}
+                placeholder="read, write, edit, glob, grep, bash"
+              />
+            </label>
+            <label className={field}>
+              <span>已禁用：</span>
+              <input
+                className={fieldInput}
+                value={merged.tools.disabled.join(', ')}
+                onChange={(e) => updateSection('tools', { disabled: parseList(e.target.value) })}
+                placeholder="（无）"
+              />
+            </label>
+            <div className={hint}>用逗号分隔工具名称。</div>
+          </div>
+          <div className={section}>
+            <h3>工具指标</h3>
+            <label className={checkRow}>
+              <input
+                type="checkbox"
+                checked={merged.toolMetrics.enabled}
+                onChange={(e) => updateSection('toolMetrics', { enabled: e.target.checked })}
+              />
+              <span>启用工具模式自动选择</span>
+            </label>
+            <label className={field}>
+              <span>成功率阈值：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                step="0.05"
+                min={0}
+                max={1}
+                value={merged.toolMetrics.threshold}
+                onChange={(e) =>
+                  updateSection('toolMetrics', { threshold: Number(e.target.value) })
+                }
+              />
+            </label>
+            <label className={field}>
+              <span>最小样本数：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                min={0}
+                value={merged.toolMetrics.minSamples}
+                onChange={(e) =>
+                  updateSection('toolMetrics', { minSamples: Number(e.target.value) })
+                }
+              />
+            </label>
+          </div>
+          <div className={section}>
+            <h3>插件</h3>
+            <input
+              value={merged.plugins.enabled.join(', ')}
+              onChange={(e) => updateSection('plugins', { enabled: parseList(e.target.value) })}
+              placeholder="plugin-a, plugin-b"
+            />
+            <div className={hint}>用逗号分隔已启用的插件名称。</div>
+          </div>
+          <div className={section}>
+            <h3>斜杠命令</h3>
+            <input
+              value={merged.slashCommands.enabled.join(', ')}
+              onChange={(e) =>
+                updateSection('slashCommands', { enabled: parseList(e.target.value) })
+              }
+              placeholder="/compact, /model, /clear"
+            />
+            <div className={hint}>用逗号分隔已启用的斜杠命令。</div>
+          </div>
+          <div className={section}>
+            <h3>MCP 服务器</h3>
+            {(merged.mcpServers ?? []).map((server, index) => (
+              // 受控表单列表用 index 作 key，避免输入 name 即重挂载失焦（同 providers 行）
+              <div key={index} className={mcpRow} data-testid="mcp-row">
+                <input
+                  value={server.name}
+                  onChange={(e) => updateMcpServer(index, 'name', e.target.value)}
+                  placeholder="名称"
+                />
+                <select
+                  value={server.transport}
+                  onChange={(e) => updateMcpServer(index, 'transport', e.target.value)}
+                >
+                  <option value="stdio">stdio</option>
+                  <option value="sse">sse</option>
+                  <option value="http">http</option>
+                </select>
+                {server.transport === 'stdio' ? (
+                  <>
+                    <input
+                      value={server.command ?? ''}
+                      onChange={(e) => updateMcpServer(index, 'command', e.target.value)}
+                      placeholder="command"
+                    />
+                    <input
+                      value={(server.args ?? []).join(' ')}
+                      onChange={(e) =>
+                        updateMcpServer(index, 'args', e.target.value.split(/\s+/).filter(Boolean))
+                      }
+                      placeholder="args（空格分隔）"
+                    />
+                  </>
+                ) : (
+                  <input
+                    value={server.url ?? ''}
+                    onChange={(e) => updateMcpServer(index, 'url', e.target.value)}
+                    placeholder="https://..."
+                  />
+                )}
+                <button
+                  type="button"
+                  data-variant="danger"
+                  onClick={() => removeMcpServer(index)}
+                  data-testid="mcp-remove"
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={addMcpServer} data-testid="mcp-add">
+              + 添加服务器
+            </button>
+          </div>
+          <div className={section}>
+            <h3>Web 搜索</h3>
+            <label className={field}>
+              <span>后端：</span>
+              <select
+                value={merged.websearch.provider}
+                onChange={(e) =>
+                  updateSection('websearch', {
+                    provider: e.target.value as Config['websearch']['provider'],
+                  })
+                }
+              >
+                <option value="auto">自动</option>
+                <option value="duckduckgo">DuckDuckGo</option>
+                <option value="tavily">Tavily</option>
+                <option value="brave">Brave</option>
+              </select>
+            </label>
+            <label className={field}>
+              <span>Tavily Key：</span>
+              <input
+                className={fieldInput}
+                type="password"
+                value={merged.websearch.tavilyApiKey ?? ''}
+                onChange={(e) => updateSection('websearch', { tavilyApiKey: e.target.value })}
+                placeholder="（可由环境变量 TAVILY_API_KEY 提供）"
+              />
+            </label>
+            <label className={field}>
+              <span>Brave Key：</span>
+              <input
+                className={fieldInput}
+                type="password"
+                value={merged.websearch.braveApiKey ?? ''}
+                onChange={(e) => updateSection('websearch', { braveApiKey: e.target.value })}
+                placeholder="（可由环境变量 BRAVE_API_KEY 提供）"
+              />
+            </label>
+          </div>
+          <div className={section}>
+            <h3>多 Agent</h3>
+            <label className={field}>
+              <span>Agent 目录：</span>
+              <input
+                className={fieldInput}
+                value={merged.agents.dir}
+                onChange={(e) => updateSection('agents', { dir: e.target.value })}
+                placeholder=".c0de/agents"
+              />
+            </label>
+            <label className={field}>
+              <span>子 Agent 并发数：</span>
+              <input
+                className={fieldInput}
+                type="number"
+                min={1}
+                value={merged.agents.subagentConcurrency}
+                onChange={(e) =>
+                  updateSection('agents', { subagentConcurrency: Number(e.target.value) })
+                }
+              />
+            </label>
+          </div>
+          <div className={section}>
+            <h3>安全</h3>
+            <label className={checkRow}>
+              <input
+                type="checkbox"
+                checked={merged.security.authEnabled}
+                onChange={(e) => updateSection('security', { authEnabled: e.target.checked })}
+              />
+              <span>启用 Bearer Token 认证</span>
+            </label>
+            {merged.security.authEnabled && (
+              <label className={field}>
+                <span>Token：</span>
+                <input
+                  className={fieldInput}
+                  type="password"
+                  value={merged.security.token ?? ''}
+                  onChange={(e) => updateSection('security', { token: e.target.value })}
+                  placeholder="Bearer Token"
+                />
+              </label>
+            )}
+            <label className={field}>
+              <span>允许的 CORS 来源：</span>
+              <input
+                className={fieldInput}
+                value={merged.security.allowedOrigins.join(', ')}
+                onChange={(e) =>
+                  updateSection('security', { allowedOrigins: parseList(e.target.value) })
+                }
+                placeholder="（本地回环始终允许）"
+              />
+            </label>
+          </div>
+        </>
+      )}
+
       <div className={section}>
         <button
           type="button"
           onClick={() => draft && save.mutate(draft)}
-          disabled={!draft}
-          title={draft ? '保存配置' : '配置未变更或正在加载'}
+          disabled={!isDirty}
+          title={isDirty ? '保存配置' : '配置未变更或正在加载'}
           data-testid="settings-save"
         >
           保存

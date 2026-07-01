@@ -39,6 +39,10 @@ const mockConfig = {
   slashCommands: { enabled: [] },
   theme: 'light',
   locale: 'zh-CN',
+  toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
+  security: { authEnabled: false, allowedOrigins: [] },
+  websearch: { provider: 'auto' },
+  agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
 }
 
 vi.mock('../services/config.js', () => ({
@@ -481,5 +485,296 @@ describe('Settings — Provider 管理', () => {
     const nameInputAgain = within(rowsAfter[0] as HTMLElement).getByPlaceholderText('名称')
     expect(nameInputAgain).toBe(nameInput)
     expect((nameInputAgain as HTMLInputElement).value).toBe('ProviderAX')
+  })
+})
+
+describe('Settings — JSON 模式与导入导出', () => {
+  it('点击 JSON 切换显示编辑器，内容为当前配置序列化', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    expect(editor).toBeTruthy()
+    expect(editor.value).toContain('"defaultModel": "gpt-4"')
+    expect(editor.value).toContain('ProviderA')
+  })
+
+  it('JSON 编辑合法时同步到 draft，保存提交新值', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    const updated = { ...mockConfig, defaultModel: 'claude-3' }
+    fireEvent.change(editor, { target: { value: JSON.stringify(updated, null, 2) } })
+
+    expect(screen.queryByTestId('settings-json-error')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as { defaultModel: string }
+    expect(args.defaultModel).toBe('claude-3')
+  })
+
+  it('JSON 语法错误时显示错误条', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{ invalid json' } })
+
+    expect(screen.getByTestId('settings-json-error')).toBeTruthy()
+  })
+
+  it('JSON 错误时切回表单被阻止（停留在 JSON）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{ invalid' } })
+
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    // 仍停留在 JSON 模式
+    expect(screen.getByTestId('settings-json-editor')).toBeTruthy()
+    expect(screen.queryByTestId('provider-add')).toBeNull()
+  })
+
+  it('导出触发 Blob 下载（createObjectURL/revokeObjectURL 各一次）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    const createURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    // 阻止 anchor.click 真正导航
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-export'))
+
+    expect(createURLSpy).toHaveBeenCalledTimes(1)
+    expect(revokeSpy).toHaveBeenCalledTimes(1)
+
+    createURLSpy.mockRestore()
+    revokeSpy.mockRestore()
+    clickSpy.mockRestore()
+  })
+
+  it('导入合法 JSON 文件后应用配置并切回表单，保存提交导入值', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const imported = { ...mockConfig, defaultModel: 'imported-model' }
+    const mockFile = {
+      text: () => Promise.resolve(JSON.stringify(imported)),
+    } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [mockFile] } })
+
+    // 切回 GUI 模式，defaultModel 输入框反映导入值
+    await waitFor(() =>
+      expect(
+        (screen.getAllByDisplayValue('imported-model') as HTMLInputElement[]).length,
+      ).toBeGreaterThan(0),
+    )
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as { defaultModel: string }
+    expect(args.defaultModel).toBe('imported-model')
+  })
+
+  it('导入非法 JSON 文件时显示错误并切到 JSON 模式', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const mockFile = { text: () => Promise.resolve('{ not valid') } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [mockFile] } })
+
+    await waitFor(() => expect(screen.getByTestId('settings-json-error')).toBeTruthy())
+    expect(screen.getByTestId('settings-json-editor')).toBeTruthy()
+  })
+})
+
+describe('Settings — 完整配置表单覆盖', () => {
+  it('所有配置分区均渲染', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+    for (const title of [
+      '外观',
+      '默认 Provider / Model',
+      'LLM Provider',
+      '角色路由',
+      '故障回退',
+      '上下文压缩',
+      '工具配置',
+      '工具指标',
+      '插件',
+      '斜杠命令',
+      'MCP 服务器',
+      'Web 搜索',
+      '多 Agent',
+      '安全',
+    ]) {
+      expect(headings).toContain(title)
+    }
+  })
+
+  it('编辑故障回退字段后保存提交正确值', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 勾选启用回退 checkbox
+    const fallbackCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('启用自动重试与回退'))
+    expect(fallbackCheck).toBeTruthy()
+    fireEvent.click(fallbackCheck as HTMLElement)
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      fallback: { enabled: boolean }
+    }
+    expect(args.fallback.enabled).toBe(true)
+  })
+
+  it('编辑上下文压缩全部字段后保存提交完整对象', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 修改保留 Token 数值（用 label 文本精确定位，避免与同值输入框混淆）
+    const reserveLabel = screen.getByText('保留 Token：').closest('label')
+    const reserveInput = reserveLabel?.querySelector('input') as HTMLInputElement
+    expect(reserveInput).toBeTruthy()
+    fireEvent.change(reserveInput, { target: { value: '9999' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      compaction: { reserveTokens: number; threshold: number }
+    }
+    expect(args.compaction.reserveTokens).toBe(9999)
+    // 其他字段被保留（浅合并不丢失）
+    expect(args.compaction.threshold).toBe(mockConfig.compaction.threshold)
+  })
+
+  it('添加并删除 MCP 服务器', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('mcp-add'))
+    expect(screen.getAllByTestId('mcp-row')).toHaveLength(1)
+
+    fireEvent.click(screen.getByTestId('mcp-remove'))
+    expect(screen.queryByTestId('mcp-row')).toBeNull()
+  })
+
+  it('启用安全认证后显示 Token 输入框', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 初始 authEnabled=false，Token 输入框不显示
+    expect(screen.queryByPlaceholderText('Bearer Token')).toBeNull()
+
+    // 勾选启用认证
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('Bearer Token 认证'))
+    expect(authCheck).toBeTruthy()
+    fireEvent.click(authCheck as HTMLElement)
+
+    // Token 输入框出现
+    expect(screen.getByPlaceholderText('Bearer Token')).toBeTruthy()
+  })
+
+  it('切换 Web 搜索后端并保存', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 找到 Web 搜索区的 select（在包含 "后端" 的 label 内）
+    const allSelects = screen.getAllByRole('combobox')
+    const websearchSelect = allSelects.find(
+      (s) =>
+        s.closest('label')?.textContent?.includes('后端') &&
+        (s as HTMLSelectElement).value === 'auto',
+    ) as HTMLSelectElement
+    expect(websearchSelect).toBeTruthy()
+    fireEvent.change(websearchSelect, { target: { value: 'tavily' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      websearch: { provider: string }
+    }
+    expect(args.websearch.provider).toBe('tavily')
+  })
+
+  it('编辑多 Agent 并发数并保存', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const concurrencyLabel = screen.getByText('子 Agent 并发数：').closest('label')
+    const concurrencyInput = concurrencyLabel?.querySelector('input') as HTMLInputElement
+    fireEvent.change(concurrencyInput, { target: { value: '7' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      agents: { subagentConcurrency: number }
+    }
+    expect(args.agents.subagentConcurrency).toBe(7)
   })
 })
