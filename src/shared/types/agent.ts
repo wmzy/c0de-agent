@@ -38,6 +38,10 @@ type AgentConfig = {
   tools: string[]
   plugins: string[]
   maxTurns?: number
+  /** primary agent 名（段记录用，spec: agent-frontend-switching §4.2）。 */
+  agentName?: string
+  /** primary agent 的 role prompt（仅覆盖 role section，保留动态上下文）。 */
+  agentRolePrompt?: string
 }
 
 /**
@@ -93,6 +97,8 @@ type LLMSegment = {
   tools: ChatTool[]
   startedAt: number
   trigger: SegmentTrigger
+  /** 段首 primary agent 名（段检测比较用，spec: agent-frontend-switching §4.3）。 */
+  agentName?: string
   /** 模型上下文窗口（来自 registry capabilities），用于总结面板使用率。段内恒定。 */
   contextWindow?: number
   calls: LLMCall[]
