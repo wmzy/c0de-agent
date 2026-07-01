@@ -115,6 +115,57 @@ describe('chat route (SSE)', () => {
     expect(types).toContain('done')
   })
 
+  it('POST / 带 body.agent=plan 使用只读工具集', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'test', agent: 'plan' }),
+    })
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    const events = parseSSEEvents(text)
+    expect(events.some((e) => e.event === 'done')).toBe(true)
+  })
+
+  it('POST / 带 body.agent=unknown 返回 400', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'test', agent: 'nonexistent' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST / 带 body.agent=general（subagent）返回 400', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'test', agent: 'general' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST / 带 body.agents 注入 subagent 指令前缀', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        message: '帮我实现 X',
+        agents: ['coder'],
+      }),
+    })
+    expect(res.status).toBe(200)
+    // mockChatStream 不暴露 message，但 200 + done 表示注入未报错
+    const text = await res.text()
+    const events = parseSSEEvents(text)
+    expect(events.some((e) => e.event === 'done')).toBe(true)
+  })
+
   it('POST / text_delta events contain text content', async () => {
     const { app, sessionId } = await setup()
     const res = await app.request('/', {

@@ -114,6 +114,21 @@ function createChatRoute(ctx: ServerContext): Hono {
       }
     }
 
+    // @agent 调用 subagent：在消息前注入指令（复用 task 工具派生）
+    const mentionedAgents = (body.agents as string[]) ?? []
+    if (mentionedAgents.length > 0) {
+      const valid = mentionedAgents
+        .map((n) => ctx.agentRegistry.get(n))
+        .filter((d): d is NonNullable<typeof d> => Boolean(d && d.mode !== 'primary'))
+      if (valid.length > 0) {
+        const names = valid.map((d) => d.name).join(', ')
+        const first = userContent[0]
+        if (first && first._tag === 'text') {
+          first.text = `[User requested subagent(s): ${names}]\n\n${first.text}`
+        }
+      }
+    }
+
     // @文件上下文：读取文件内容写入快照，后续 getSessionContext→injectSnapshots 自动注入。
     // 路径越界或读取失败静默跳过，不阻塞主对话流。
     const files = body.files as string[] | undefined
@@ -139,19 +154,31 @@ function createChatRoute(ctx: ServerContext): Hono {
       (body.tools as string[] | undefined) ??
       listTools(ctx.toolRegistry, { config: {}, cwd }).map((t) => t.name)
 
+    // primary agent 解析（spec: agent-frontend-switching §4.3）
+    const agentName = (body.agent as string) ?? 'default'
+    const agentDef = ctx.agentRegistry.get(agentName)
+    if (!agentDef || agentDef.mode === 'subagent') {
+      return apiError(c, 400, 'INVALID_AGENT', `Unknown or non-primary agent: ${agentName}`)
+    }
+    // agent def 覆盖：tools（plan 限只读）、model（可选）
+    const resolvedTools = agentDef.tools ?? tools
+    const resolvedModel = agentDef.model ?? model
+
     // 分段预检：切换 provider/model/tools 将开新段（前缀失效→缓存 miss），
     // 需用户显式确认（confirmSegmentBreak）。首轮无活跃段时跳过。
     const existingRun = ctx.agentManager.get(sessionId)
     const segs = existingRun ? existingRun.state.segments : await getLLMSegments(ctx.db, sessionId)
     const active = segs[segs.length - 1]
     if (active) {
-      const reqTools = new Set(tools)
+      const reqTools = new Set(resolvedTools)
       const segTools = new Set(active.tools.map((t) => t.name))
       const toolsDiffer =
         reqTools.size !== segTools.size || [...reqTools].some((t) => !segTools.has(t))
-      const modelDiffer = active.provider !== provider || active.model !== model
+      const modelDiffer = active.provider !== provider || active.model !== resolvedModel
+      // 旧段 agentName undefined 视为 'default'
+      const agentDiffer = (active.agentName ?? 'default') !== agentName
       const confirmed = (body.confirmSegmentBreak as boolean | undefined) === true
-      if ((modelDiffer || toolsDiffer) && !confirmed) {
+      if ((modelDiffer || toolsDiffer || agentDiffer) && !confirmed) {
         return apiError(
           c,
           409,
@@ -198,9 +225,11 @@ function createChatRoute(ctx: ServerContext): Hono {
 
       const agentConfig: AgentConfig = {
         provider,
-        model,
-        tools,
+        model: resolvedModel,
+        tools: resolvedTools,
         plugins: ctx.config.plugins.enabled,
+        agentName,
+        ...(agentDef.systemPrompt ? { agentRolePrompt: agentDef.systemPrompt } : {}),
       }
 
       const state = await createAgent(session, agentConfig, deps)
