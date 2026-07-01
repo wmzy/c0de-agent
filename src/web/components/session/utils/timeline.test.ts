@@ -1,7 +1,7 @@
 import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import type { Message } from '@shared/types/message.js'
 import { describe, expect, it } from 'vitest'
-import { buildTimeline, isEmptyMessage, type TimelineRow } from './timeline.js'
+import { buildTimeline, groupBySegment, isEmptyMessage, type TimelineRow } from './timeline.js'
 
 function msg(id: string, createdAt: number, content: Message['content'] = []): Message {
   return { id, sessionId: 's', role: 'assistant', content, tokenCount: 0, createdAt }
@@ -90,5 +90,137 @@ describe('isEmptyMessage', () => {
 
   it('有 content 非空壳', () => {
     expect(isEmptyMessage(msg('e', 1, [{ _tag: 'text', text: 'x' }]))).toBe(false)
+  })
+})
+
+describe('buildTimeline latency 配对', () => {
+  it('assistant 消息配对最近的 call latency', () => {
+    const rows = buildTimeline(
+      [msg('m', 100, [{ _tag: 'text', text: 'hi' }])],
+      [seg({ startedAt: 50, calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] })],
+    )
+    const msgRow = rows.find((r) => r.kind === 'message')!
+    expect(msgRow.kind).toBe('message')
+    if (msgRow.kind === 'message') expect(msgRow.latency).toBe(1500)
+  })
+
+  it('user 消息不配对 latency', () => {
+    const userMsg: Message = {
+      id: 'u',
+      sessionId: 's',
+      role: 'user',
+      content: [{ _tag: 'text', text: 'hi' }],
+      tokenCount: 0,
+      createdAt: 100,
+    }
+    const rows = buildTimeline(
+      [userMsg],
+      [seg({ startedAt: 50, calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] })],
+    )
+    const msgRow = rows.find((r) => r.kind === 'message')!
+    if (msgRow.kind === 'message') expect(msgRow.latency).toBeUndefined()
+  })
+
+  it('latency 不跨段配对：msg 属 seg2 配对 seg2 的 call', () => {
+    const rows = buildTimeline(
+      [msg('m', 200, [{ _tag: 'text', text: 'hi' }])],
+      [
+        seg({ id: 'seg1', startedAt: 50, calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] }),
+        seg({
+          id: 'seg2',
+          startedAt: 150,
+          calls: [
+            { ...baseCall, id: 'c2', timestamp: 150, latency: { firstToken: 10, total: 800 } },
+          ],
+        }),
+      ],
+    )
+    const msgRow = rows.find((r) => r.kind === 'message')!
+    if (msgRow.kind === 'message') expect(msgRow.latency).toBe(800)
+  })
+
+  it('孤儿 call 不影响配对，仍保留为 call 行', () => {
+    const rows = buildTimeline(
+      [msg('m', 200, [{ _tag: 'text', text: 'hi' }])],
+      [
+        seg({
+          startedAt: 1,
+          calls: [
+            { ...baseCall, id: 'fail', timestamp: 50 },
+            { ...baseCall, id: 'ok', timestamp: 100 },
+          ],
+        }),
+      ],
+    )
+    const callIds = rows
+      .filter((r) => r.kind === 'call')
+      .map((r) => (r.kind === 'call' ? r.call.id : ''))
+    expect(callIds).toContain('fail')
+    expect(callIds).toContain('ok')
+    const msgRow = rows.find((r) => r.kind === 'message')!
+    if (msgRow.kind === 'message') expect(msgRow.latency).toBe(1500)
+  })
+})
+
+describe('groupBySegment', () => {
+  it('segments 为空：所有消息归入单个隐式组', () => {
+    const rows = buildTimeline([msg('m', 100, [{ _tag: 'text', text: 'x' }])], [])
+    const groups = groupBySegment(rows)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.messages).toHaveLength(1)
+    expect(groups[0]!.isFirst).toBe(true)
+  })
+
+  it('单段：message 行保留，call 行被滤掉', () => {
+    const rows = buildTimeline(
+      [msg('m', 100, [{ _tag: 'text', text: 'x' }])],
+      [seg({ calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] })],
+    )
+    const groups = groupBySegment(rows)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.messages.map((m) => m.message.id)).toEqual(['m'])
+  })
+
+  it('多段：按 segment 行切分', () => {
+    const rows = buildTimeline(
+      [
+        msg('m1', 100, [{ _tag: 'text', text: 'a' }]),
+        msg('m2', 300, [{ _tag: 'text', text: 'b' }]),
+      ],
+      [
+        seg({ id: 'seg1', startedAt: 50, calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] }),
+        seg({
+          id: 'seg2',
+          startedAt: 200,
+          trigger: 'model_change',
+          calls: [{ ...baseCall, id: 'c2', timestamp: 200 }],
+        }),
+      ],
+    )
+    const groups = groupBySegment(rows)
+    expect(groups).toHaveLength(2)
+    expect(groups[0]!.segment.id).toBe('seg1')
+    expect(groups[1]!.segment.id).toBe('seg2')
+    expect(groups[1]!.segment.trigger).toBe('model_change')
+  })
+
+  it('隐式首段：segment 行之前的消息归入首段', () => {
+    const rows = buildTimeline(
+      [msg('m0', 10, [{ _tag: 'text', text: 'pre' }])],
+      [seg({ startedAt: 50, calls: [] })],
+    )
+    const groups = groupBySegment(rows)
+    expect(groups).toHaveLength(2)
+    expect(groups[0]!.isFirst).toBe(true)
+    expect(groups[0]!.messages.map((m) => m.message.id)).toEqual(['m0'])
+  })
+
+  it('latency 透传到 group messages', () => {
+    const rows = buildTimeline(
+      [msg('m', 100, [{ _tag: 'text', text: 'x' }])],
+      [seg({ calls: [{ ...baseCall, id: 'c1', timestamp: 50 }] })],
+    )
+    const groups = groupBySegment(rows)
+    expect(groups[0]!.messages[0]!.latency).toBe(1500)
   })
 })
