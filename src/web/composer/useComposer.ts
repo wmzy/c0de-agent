@@ -265,6 +265,8 @@ function useComposer({
   return {
     editorRef,
     composingRef,
+    promptRef,
+    setPromptExternal,
     images,
     popover,
     popoverQuery,
