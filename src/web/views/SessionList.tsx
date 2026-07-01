@@ -4,12 +4,7 @@ import { AddProjectDialog } from '../components/AddProjectDialog.js'
 import { BranchTree } from '../components/BranchTree.js'
 import { ProjectIndicator } from '../components/ProjectIndicator.js'
 import { ProjectSwitcher } from '../components/ProjectSwitcher.js'
-import {
-  useCreateSession,
-  useDeleteSession,
-  useProjects,
-  useSessionTree,
-} from '../hooks/useSession.js'
+import { useDeleteSession, useProjects, useSessionTree } from '../hooks/useSession.js'
 import type { SessionTreeNode } from '../types/index.js'
 
 const panel = css`
@@ -73,15 +68,20 @@ export function SessionList({
   activeId,
   onSelect,
   onProjectChange,
+  onNewSession,
+  onDeleted,
 }: {
   projectId: string
   activeId: string | null
   onSelect: (id: string) => void
   onProjectChange: (projectId: string) => void
+  /** 新建会话：仅前端导航到草稿页，不创建会话（首条消息发送时才创建）。 */
+  onNewSession: () => void
+  /** 删除会话后回调（参数为被删 id），用于父级在删除当前会话时跳回草稿页。 */
+  onDeleted?: (id: string) => void
 }) {
   const { data: tree, isLoading } = useSessionTree()
   const { data: projects } = useProjects()
-  const create = useCreateSession()
   const del = useDeleteSession()
   const [showAdd, setShowAdd] = useState(false)
 
@@ -112,18 +112,7 @@ export function SessionList({
       )}
       <div className={header}>
         <span>会话</span>
-        <button
-          type="button"
-          onClick={() =>
-            create.mutate(
-              { projectId },
-              {
-                onSuccess: (s) => s && onSelect(s.id),
-              },
-            )
-          }
-          data-testid="new-session"
-        >
+        <button type="button" onClick={onNewSession} data-testid="new-session">
           + 新建
         </button>
       </div>
@@ -136,7 +125,10 @@ export function SessionList({
           nodes={visibleTree}
           activeId={activeId}
           onSelect={onSelect}
-          onDelete={(id) => del.mutate(id)}
+          onDelete={(id) => {
+            del.mutate(id)
+            onDeleted?.(id)
+          }}
         />
       )}
     </div>

@@ -1,7 +1,7 @@
-import type { Message } from '@shared/types/message.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { TimelineRow } from '../components/session/utils/timeline.js'
 import { permissionAPI } from '../services/permission.js'
 import { Chat } from './Chat.js'
 
@@ -29,7 +29,7 @@ function renderChat(overrides: Record<string, unknown> = {}) {
     onSteer: vi.fn(),
   }
   const base = {
-    messages: [] as Message[],
+    timeline: [] as TimelineRow[],
     isStreaming: true,
     paused: false,
     usage: null,
@@ -91,5 +91,27 @@ describe('Chat permission mode toggle', () => {
     fireEvent.click(screen.getByTestId('permission-mode-toggle'))
     expect(vi.mocked(permissionAPI.setMode)).toHaveBeenCalledWith('auto')
     expect(screen.getByText(/自动执行所有工具/)).toBeTruthy()
+  })
+})
+
+describe('Chat view modes', () => {
+  it('默认聊天模式，可切换到表格', () => {
+    renderChat()
+    expect(screen.getByTestId('view-chat').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByTestId('table-view')).toBeNull()
+    fireEvent.click(screen.getByTestId('view-table'))
+    expect(screen.getByTestId('view-table').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('table-view')).toBeTruthy()
+  })
+
+  it('聊天模式显示全局 JSON 开关', () => {
+    renderChat()
+    expect(screen.getByTestId('toggle-all-json')).toBeTruthy()
+  })
+
+  it('表格模式隐藏全局 JSON 开关', () => {
+    renderChat()
+    fireEvent.click(screen.getByTestId('view-table'))
+    expect(screen.queryByTestId('toggle-all-json')).toBeNull()
   })
 })

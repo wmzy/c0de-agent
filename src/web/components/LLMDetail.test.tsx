@@ -1,19 +1,7 @@
 import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { Mock } from 'vitest'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
 import { CallRow, SegmentHeader } from './LLMDetail.js'
-import { LLMDetailsView } from './LLMDetailsView.js'
-
-vi.mock('../services/session.js', () => ({
-  sessionAPI: {
-    llmDetails: vi.fn(),
-  },
-}))
-
-// 引用被 mock 的 sessionAPI，用于在每个用例里指定返回值。
-const { sessionAPI } = await import('../services/session.js')
 
 const tools: LLMSegment['tools'] = [
   {
@@ -51,11 +39,6 @@ const segment: LLMSegment = {
 }
 
 const emptySegment: LLMSegment = { ...segment, id: 's2', tools: [], calls: [] }
-
-function renderWithClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
-}
 
 describe('SegmentHeader', () => {
   afterEach(() => cleanup())
@@ -132,62 +115,5 @@ describe('CallRow', () => {
     const truncated: LLMCall = { ...call, id: 'c3', finishReason: 'length' }
     render(<CallRow call={truncated} index={1} />)
     expect(screen.getByTestId('call-row').textContent).toContain('length')
-  })
-})
-
-describe('LLMDetailsView', () => {
-  afterEach(() => {
-    cleanup()
-    vi.clearAllMocks()
-  })
-
-  it('默认折叠，不渲染详情列表', () => {
-    ;(sessionAPI.llmDetails as Mock).mockResolvedValue([])
-    renderWithClient(<LLMDetailsView sessionId="s1" />)
-    expect(screen.queryByTestId('llm-details-list')).toBeNull()
-    expect(screen.getByTestId('llm-details-toggle').textContent).toContain('调用详情 (0)')
-  })
-
-  it('展开后渲染段头与段内 call', async () => {
-    ;(sessionAPI.llmDetails as Mock).mockResolvedValue([segment])
-    renderWithClient(<LLMDetailsView sessionId="s1" />)
-    fireEvent.click(screen.getByTestId('llm-details-toggle'))
-    await waitFor(() => {
-      expect(screen.getAllByTestId('segment-header')).toHaveLength(1)
-      expect(screen.getAllByTestId('call-row')).toHaveLength(1)
-    })
-  })
-
-  it('无数据时显示空态文案', async () => {
-    ;(sessionAPI.llmDetails as Mock).mockResolvedValue([])
-    renderWithClient(<LLMDetailsView sessionId="s1" />)
-    fireEvent.click(screen.getByTestId('llm-details-toggle'))
-    await waitFor(() => {
-      expect(screen.getByText('暂无 LLM 调用记录')).toBeTruthy()
-    })
-  })
-
-  it('toggle 按钮反映总 call 数（跨段累加）', async () => {
-    ;(sessionAPI.llmDetails as Mock).mockResolvedValue([segment, emptySegment])
-    renderWithClient(<LLMDetailsView sessionId="s1" />)
-    await waitFor(() => {
-      // segment 有 1 call，emptySegment 有 0 call → 共 1
-      expect(screen.getByTestId('llm-details-toggle').textContent).toContain('调用详情 (1)')
-    })
-  })
-
-  it('段内多 call 按倒序渲染（最新在前）', async () => {
-    const newer: LLMCall = { ...call, id: 'c-new', responseText: 'newer answer' }
-    const seg: LLMSegment = { ...segment, id: 's-multi', calls: [call, newer] }
-    ;(sessionAPI.llmDetails as Mock).mockResolvedValue([seg])
-    renderWithClient(<LLMDetailsView sessionId="s1" />)
-    fireEvent.click(screen.getByTestId('llm-details-toggle'))
-    await waitFor(() => {
-      const rows = screen.getAllByTestId('call-row')
-      expect(rows).toHaveLength(2)
-      // reverse()：newer 在前，序号 #2；call 在后，序号 #1
-      expect(rows[0]?.textContent).toMatch(/^调用 #2/)
-      expect(rows[1]?.textContent).toMatch(/^调用 #1/)
-    })
   })
 })

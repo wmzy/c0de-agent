@@ -1,38 +1,25 @@
-import { css } from '@linaria/core'
-import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
-import { LLMDetailsView } from '../components/LLMDetailsView.js'
-import { type ModelSelection, ModelSelector } from '../components/ModelSelector.js'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
+import { buildTimeline } from '../components/session/utils/timeline.js'
 import { ToolToggle } from '../components/ToolToggle.js'
-import { useConfig } from '../contexts/ConfigContext.js'
+import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
 import { useAgent } from '../hooks/useAgent.js'
 import { useChat } from '../hooks/useChat.js'
+import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
 import { useMessages } from '../hooks/useSession.js'
-import { providerAPI } from '../services/provider.js'
+import { sessionAPI } from '../services/session.js'
 import { Chat, type SendPayload } from './Chat.js'
 
-const empty = css`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex: 1;
-  color: var(--text-secondary);
-  font-size: 14px;
-  padding: 24px;
-  text-align: center;
-`
-
-const emptyIcon = css`
-  font-size: 32px;
-  opacity: 0.5;
-`
-
-/** 会话视图：无 sessionId 显示空状态，否则接通 useChat 进行流式对话。 */
+/**
+ * 会话视图：
+ * - sessionId === null：草稿新会话页，渲染带输入框的 Chat，发送首条消息时才创建会话。
+ * - 否则接通 useChat 进行流式对话；若来自草稿页的 pending 首条消息则自动发送。
+ */
 export function ChatView({
   projectId,
   sessionId,
@@ -40,45 +27,73 @@ export function ChatView({
   projectId: string
   sessionId: string | null
 }) {
-  if (!sessionId) {
-    return (
-      <div className={empty}>
-        <span className={emptyIcon}>💬</span>
-        <span>选择一个会话或新建开始对话</span>
-      </div>
-    )
-  }
+  if (!sessionId) return <DraftSession projectId={projectId} />
   return <ChatSession projectId={projectId} sessionId={sessionId} />
+}
+
+/**
+ * 草稿新会话页：不创建会话，仅渲染输入区。发送首条消息时创建会话，
+ * 把消息暂存到 pendingFirstMessage，再导航到新会话路由交由 ChatSession 发送，
+ * 从而保证 SSE 流在拥有真实 sessionId 的组件实例中建立，不会被卸载中断。
+ */
+function DraftSession({ projectId }: { projectId: string }) {
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const { selection, setSelection, enabledTools, setEnabledTools } = useComposerDefaults()
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSend = async (payload: SendPayload) => {
+    setError(null)
+    setCreating(true)
+    const opts = {
+      provider: selection.provider,
+      model: selection.model,
+      ...(enabledTools ? { tools: Array.from(enabledTools) } : {}),
+      ...(payload.images.length ? { images: payload.images } : {}),
+      ...(payload.files.length ? { files: payload.files } : {}),
+    }
+    try {
+      const session = await sessionAPI.create({ projectId })
+      pendingFirstMessage.set(session.id, { text: payload.text, opts })
+      // 让侧边栏立即显示新会话
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      navigate(`/projects/${projectId}/sessions/${session.id}`)
+    } catch {
+      setCreating(false)
+      setError('创建会话失败，请重试')
+    }
+  }
+
+  return (
+    <Chat
+      projectId={projectId}
+      timeline={[]}
+      isStreaming={creating}
+      usage={null}
+      error={error}
+      pendingPermission={null}
+      onSend={handleSend}
+      onAbort={() => {
+        /* 草稿阶段无可中止的后端请求 */
+      }}
+      onConfirm={() => {}}
+      modelBar={<ModelSelector value={selection} onChange={setSelection} />}
+      toolToggle={
+        <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={creating} />
+      }
+      supportsVision
+    />
+  )
 }
 
 function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: string }) {
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const { data: history } = useMessages(sessionId)
-  const { config } = useConfig()
-  const { data: providersData } = useQuery({
-    queryKey: ['providers'],
-    queryFn: () => providerAPI.list(),
-    staleTime: 60_000,
-  })
-
-  const providers = providersData?.providers ?? []
-  const [selection, setSelection] = useState<ModelSelection>({ provider: '', model: '' })
-
-  // 校正默认 provider/model。registry 以 provider name 注册，而 defaultProvider
-  // 可能是 protocol 名（如 openai-compat），直传会触发后端 NoRoute；故 defaultProvider
-  // 不在已配置列表时回退首个已配置 provider。
-  useEffect(() => {
-    if (selection.provider && selection.model) return
-    const def = providersData?.defaultProvider
-    const provider = providers.some((p) => p.name === def)
-      ? def
-      : (providers[0]?.name ?? selection.provider)
-    const model = config?.defaultModel ?? selection.model
-    if (provider !== selection.provider || model !== selection.model) {
-      setSelection({ provider: provider || selection.provider, model: model || selection.model })
-    }
-  }, [providers, providersData, config, selection.provider, selection.model])
+  const { selection, setSelection, enabledTools, setEnabledTools } = useComposerDefaults()
+  // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
+  const consumed = useRef(false)
 
   // 历史重载时，持久化层把同轮 assistant(tool_call) 与 tool(tool_result) 存成独立
   // Message；normalizeParts 只在单条 Message 内按 id 配对，不合并会导致历史工具调用
@@ -89,9 +104,33 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     [history, chat.messages],
   )
 
-  // 启用工具白名单：null = 默认全启用（不传 tools，走后端 config）；Set = 显式选择
-  const [enabledTools, setEnabledTools] = useState<Set<string> | null>(null)
+  // LLM 调用段：llm_detail 事件会 invalidate 此 query（见 useChat），实时刷新。
+  const { data: segments } = useQuery({
+    queryKey: ['session', sessionId, 'llm-details'],
+    queryFn: () => sessionAPI.llmDetails(sessionId),
+    staleTime: 10_000,
+  })
 
+  // 统一时间线：消息 + LLM 调用 + 段标记按时间交错融合。
+  const timeline = useMemo(() => buildTimeline(messages, segments ?? []), [messages, segments])
+
+  // 消费草稿页暂存的首条消息：导航到新会话后自动发送，并恢复 model/工具选择。
+  // 仅按 sessionId 消费一次；sendMessage/setSelection/setEnabledTools 在本实例内稳定，故不纳入依赖。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 草稿 pending 仅按 sessionId 消费一次
+  useEffect(() => {
+    if (consumed.current) return
+    const pending = pendingFirstMessage.get(sessionId)
+    if (!pending) return
+    consumed.current = true
+    pendingFirstMessage.delete(sessionId)
+    if (pending.opts.provider && pending.opts.model) {
+      setSelection({ provider: pending.opts.provider, model: pending.opts.model })
+    }
+    if (pending.opts.tools) setEnabledTools(new Set(pending.opts.tools))
+    void chat.sendMessage(pending.text, pending.opts)
+  }, [sessionId])
+
+  // 启用工具白名单：null = 默认全启用（不传 tools，走后端 config）；Set = 显式选择
   const handleSend = (payload: SendPayload) => {
     // 新一轮发送：清除上轮残留的暂停态（paused 仅在运行中有意义）。
     agent.resetPaused()
@@ -115,7 +154,7 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     <>
       <Chat
         projectId={projectId}
-        messages={messages}
+        timeline={timeline}
         isStreaming={chat.isStreaming}
         usage={chat.usage}
         error={chat.error}
@@ -136,12 +175,7 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
             disabled={chat.isStreaming}
           />
         }
-        topPanel={
-          <>
-            <SessionSummary sessionId={sessionId} />
-            <LLMDetailsView sessionId={sessionId} />
-          </>
-        }
+        topPanel={<SessionSummary sessionId={sessionId} />}
       />
       {chat.pendingSegmentBreak && (
         <SegmentBreakDialog

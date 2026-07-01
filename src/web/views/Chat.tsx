@@ -1,17 +1,19 @@
 import { css } from '@linaria/core'
-import type { Message } from '@shared/types/message.js'
 import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { StreamingIndicator } from '../components/StreamingIndicator.js'
-import { MessageItem } from '../components/session/MessageItem.js'
+import { TimelineChat } from '../components/session/TimelineChat.js'
+import type { TimelineRow } from '../components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '../composer/Composer.js'
 import { type PermissionMode, permissionAPI } from '../services/permission.js'
 import { formatTokenCount } from '../utils/format.js'
+import { TableView } from './TableView.js'
 
 export type { SendPayload }
 
 type ChatProps = {
-  messages: Message[]
+  /** 统一时间线（消息 + LLM 调用 + 段标记），替代原 messages。 */
+  timeline: TimelineRow[]
   isStreaming: boolean
   usage: { input: number; output: number } | null
   error?: string | null
@@ -31,20 +33,11 @@ type ChatProps = {
   modelBar?: ReactNode
   /** 底部工具栏右侧的工具开关（启用/禁用工具列表）。 */
   toolToggle?: ReactNode
-  /** 插入到工具栏与消息流之间的面板（如 LLM 调用详情）。 */
+  /** 插入到工具栏与消息流之间的面板（如会话摘要）。 */
   topPanel?: ReactNode
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
 }
-
-const stream = css`
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 16px;
-  overflow-y: auto;
-`
 
 const toolbar = css`
   display: flex;
@@ -53,6 +46,58 @@ const toolbar = css`
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   color: var(--text-secondary);
+`
+
+const viewBar = css`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: 12px;
+`
+
+const viewSwitch = css`
+  display: inline-flex;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+
+  & > button {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 3px 12px;
+    cursor: pointer;
+    font-size: 12px;
+
+    &[aria-pressed='true'] {
+      background: var(--bg);
+      color: var(--text);
+    }
+  }
+`
+
+const jsonSwitch = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-secondary);
+`
+
+const stream = css`
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  overflow-y: auto;
 `
 
 const footerBar = css`
@@ -118,7 +163,7 @@ const modeWarn = css`
 `
 
 export function Chat({
-  messages,
+  timeline,
   isStreaming,
   usage,
   error,
@@ -137,10 +182,14 @@ export function Chat({
   projectId,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在消息数量变化时滚动，避免内容更新触发抖动
+  // 视图模式：聊天（默认美化）/ 表格。全局「原始 JSON」仅作用于聊天模式。
+  const [viewMode, setViewMode] = useState<'chat' | 'table'>('chat')
+  const [showAllJson, setShowAllJson] = useState(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在时间线长度变化时滚动，避免内容更新触发抖动
   useEffect(() => {
+    if (viewMode !== 'chat') return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length])
+  }, [timeline.length, viewMode])
 
   // steer 模式：运行中注入 steering 消息（spec §3.9）。切到 steer 时输入不再被禁用，
   // 发送走 onSteer；发送后退出 steer 回到正常输入。
@@ -195,13 +244,46 @@ export function Chat({
         ) : null}
       </div>
       {topPanel}
-      <div className={stream} data-testid="stream">
-        {messages.map((m) => (
-          <MessageItem key={m.id} message={m} />
-        ))}
-        {isStreaming && <StreamingIndicator />}
-        <div ref={bottomRef} />
+      <div className={viewBar} data-testid="view-bar">
+        <fieldset className={viewSwitch} aria-label="视图模式">
+          <button
+            type="button"
+            aria-pressed={viewMode === 'chat'}
+            onClick={() => setViewMode('chat')}
+            data-testid="view-chat"
+          >
+            聊天
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === 'table'}
+            onClick={() => setViewMode('table')}
+            data-testid="view-table"
+          >
+            表格
+          </button>
+        </fieldset>
+        {viewMode === 'chat' && (
+          <label className={jsonSwitch}>
+            <input
+              type="checkbox"
+              checked={showAllJson}
+              onChange={(e) => setShowAllJson(e.target.checked)}
+              data-testid="toggle-all-json"
+            />
+            原始 JSON（含隐藏条目）
+          </label>
+        )}
       </div>
+      {viewMode === 'table' ? (
+        <TableView rows={timeline} />
+      ) : (
+        <div className={stream} data-testid="stream">
+          <TimelineChat rows={timeline} showAllJson={showAllJson} />
+          {isStreaming && <StreamingIndicator />}
+          <div ref={bottomRef} />
+        </div>
+      )}
       {(modelBar || toolToggle) && (
         <div className={footerBar}>
           {modelBar && <div className={footerLeft}>{modelBar}</div>}
@@ -238,7 +320,7 @@ export function Chat({
         onAbort={onAbort}
         isStreaming={isStreaming}
         steerMode={steerMode}
-        hasHistory={messages.length > 0}
+        hasHistory={timeline.length > 0}
         supportsVision={supportsVision}
         permission={
           pendingPermission

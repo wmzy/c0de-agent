@@ -143,6 +143,11 @@ function ChatPage() {
           activeId={sessionId ?? null}
           onSelect={(id) => navigate(`/projects/${projectId}/sessions/${id}`)}
           onProjectChange={(id) => navigate(`/projects/${id}`)}
+          onNewSession={() => navigate(`/projects/${projectId}`)}
+          onDeleted={(id) => {
+            // 删除的是当前会话则跳回草稿新会话页
+            if (id === (sessionId ?? null)) navigate(`/projects/${projectId}`)
+          }}
         />
       }
       main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
