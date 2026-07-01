@@ -50,10 +50,23 @@ async function* runAgent(
   userInput: MessageContent[],
   deps: AgentDependencies,
 ): AsyncGenerator<AgentEvent> {
-  await appendMessage(deps.db, state.session.id, {
-    role: 'user',
-    content: userInput,
-  })
+  // 幂等重发保护：若 DB 末尾已是相同 user message（服务重启后续传场景），
+  // 跳过 append 避免重复。比较 text parts 内容即可区分不同消息。
+  const last = state.messages[state.messages.length - 1]
+  const isDupUser =
+    last?.role === 'user' &&
+    last.content.length === userInput.length &&
+    last.content.every((p, i) => {
+      const q = userInput[i]
+      return p._tag === 'text' && q?._tag === 'text' ? p.text === q.text : false
+    })
+
+  if (!isDupUser) {
+    await appendMessage(deps.db, state.session.id, {
+      role: 'user',
+      content: userInput,
+    })
+  }
 
   // 标题生成用纯文本（join text parts），忽略 image/tool 等非文本 part。
   const titleText = userInput

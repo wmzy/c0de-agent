@@ -6,7 +6,9 @@ import { getFileSnapshots } from './snapshot.js'
 import type { FileSnapshot, SessionEntry } from './types.js'
 
 /**
- * Drop tool messages whose id cannot be paired with an assistant tool_call.
+ * Drop tool messages whose id cannot be paired with an assistant tool_call,
+ * and inject synthetic tool results for orphan tool_calls (assistant 发出了
+ * tool_call 但无对应 tool result——服务重启中断场景）。
  *
  * OpenAI Chat 协议要求每个 role=tool 消息必须有 tool_call_id，且必须匹配
  * 前面某条 assistant 消息的 tool_calls[].id。部分输出不规范的 provider
@@ -15,6 +17,10 @@ import type { FileSnapshot, SessionEntry } from './types.js'
  *   - assistant.toolCalls 里 id 为空的项（连带丢弃其后无法配对的 tool result）
  *   - role=tool 但 toolCallId 为空、或找不到对应 assistant tool_call 的消息
  * 正常（完整配对）的数据不受影响。
+ *
+ * 新增：assistant 有有效 tool_call 但后续无匹配 tool result（服务重启中断）时，
+ * 注入合成 tool result 告知模型工具被中断，而非丢弃 tool_call 让模型
+ * 盲目重试可能已产生副作用的非幂等工具。
  */
 function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
   // 收集所有有效的 assistant tool_call id（非空）
@@ -27,16 +33,35 @@ function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
     }
   }
 
+  // 收集已有 tool result 配对的 tool_call id（用于检测孤儿 tool_call）
+  const answeredCallIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'tool' && m.toolCallId && validCallIds.has(m.toolCallId)) {
+      answeredCallIds.add(m.toolCallId)
+    }
+  }
+
   const result: ChatMessage[] = []
   for (const m of messages) {
     if (m.role === 'assistant' && m.toolCalls) {
       // 丢弃 id 为空的 tool_call 项；若删空了则整个 toolCalls 移除
       const filtered = m.toolCalls.filter((tc) => tc.id)
       if (filtered.length === 0) {
-        const next: ChatMessage = { role: 'assistant', content: m.content }
-        result.push(next)
+        result.push({ role: 'assistant', content: m.content })
       } else {
         result.push({ ...m, toolCalls: filtered })
+        // 为无 result 配对的 tool_call 注入合成 result（服务中断场景）
+        for (const tc of filtered) {
+          if (!answeredCallIds.has(tc.id)) {
+            result.push({
+              role: 'tool',
+              toolCallId: tc.id,
+              content: JSON.stringify({
+                error: 'Tool execution was interrupted by server restart',
+              }),
+            })
+          }
+        }
       }
       continue
     }

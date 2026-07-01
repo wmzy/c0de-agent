@@ -176,6 +176,31 @@ describe('entriesToChatMessages', () => {
     expect(toolMsgs).toHaveLength(1)
     expect(toolMsgs[0]?.toolCallId).toBe('call_valid')
   })
+
+  it('为无 result 的 tool_call 注入合成 tool result（服务中断场景）', async () => {
+    await appendMessage(handle, sessionId, { role: 'user', content: textContent('hi') })
+    // assistant 有 tool_call 但无对应 tool result（服务重启中断）
+    await appendMessage(handle, sessionId, {
+      role: 'assistant',
+      content: [
+        ...textContent('let me check'),
+        { _tag: 'tool_call', id: 'call_orphan', tool: 'read', input: { path: 'a.ts' } },
+      ],
+    })
+
+    const { entries } = await getSessionContext(handle, sessionId)
+    const messages = entriesToChatMessages(entries, [])
+
+    const assistant = messages.find((m) => m.role === 'assistant' && m.toolCalls)
+    expect(assistant?.toolCalls).toHaveLength(1)
+    expect(assistant?.toolCalls?.[0]?.id).toBe('call_orphan')
+
+    // 合成 tool result 注入
+    const toolMsgs = messages.filter((m) => m.role === 'tool')
+    expect(toolMsgs).toHaveLength(1)
+    expect(toolMsgs[0]?.toolCallId).toBe('call_orphan')
+    expect(toolMsgs[0]?.content).toContain('interrupted')
+  })
 })
 
 describe('injectSnapshots', () => {

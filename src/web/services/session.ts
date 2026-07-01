@@ -26,6 +26,7 @@ const sessionAPI = {
       body: JSON.stringify({}),
     }),
   branches: (id: string) => apiRequest<Session[]>(`/api/sessions/${id}/branches`),
+  status: (id: string) => apiRequest<{ _tag: string }>(`/api/sessions/${id}/status`),
 }
 
 export { sessionAPI }

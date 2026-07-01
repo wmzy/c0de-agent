@@ -21,6 +21,15 @@ type Message = {
   createdAt: number
 }
 
+/** 上次 agent run 的持久化状态（服务重启后检测中断用）。 */
+type LastRun = {
+  status: 'running' | 'completed'
+  agentName?: string
+  provider?: string
+  model?: string
+  startedAt: number
+}
+
 /** Session metadata for branching and compaction tracking. */
 type SessionMetadata = {
   mainThreadId?: string
@@ -28,6 +37,8 @@ type SessionMetadata = {
   fileSnapshots?: string[]
   /** 本会话分段增量 LLM 调用记录，用于调用详情面板展示。 */
   segments?: LLMSegment[]
+  /** 上次 agent run 状态；status='running' 且进程无活跃 run → 被中断。 */
+  lastRun?: LastRun
 }
 
 /** A conversation session (may have a parent for branching). */
@@ -46,4 +57,4 @@ type Session = {
   updatedAt: number
 }
 
-export type { Message, MessageContent, Session, SessionMetadata }
+export type { LastRun, Message, MessageContent, Session, SessionMetadata }

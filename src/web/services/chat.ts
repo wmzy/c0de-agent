@@ -28,7 +28,7 @@ export function consumeSSEBuffer(buffer: string): { events: AgentEvent[]; rest: 
   return { events, rest: remaining }
 }
 
-/** 发送聊天消息并消费 SSE 流，逐事件回调。 */
+/** 发送聊天消息并消费 SSE 流，逐事件回调。返回是否收到 done 事件（false=中断）。 */
 async function sendChatMessage(
   sessionId: string,
   message: string,
@@ -43,7 +43,7 @@ async function sendChatMessage(
     images?: Array<{ mediaType: string; data: string }>
     files?: string[]
   },
-): Promise<void> {
+): Promise<{ done: boolean }> {
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -66,9 +66,10 @@ async function sendChatMessage(
   }
 
   const reader = response.body?.getReader()
-  if (!reader) return
+  if (!reader) return { done: false }
   const decoder = new TextDecoder()
   let buffer = ''
+  let doneReceived = false
 
   while (true) {
     const { done, value } = await reader.read()
@@ -76,8 +77,13 @@ async function sendChatMessage(
     buffer += decoder.decode(value, { stream: true })
     const { events, rest } = consumeSSEBuffer(buffer)
     buffer = rest
-    for (const evt of events) onEvent(evt)
+    for (const evt of events) {
+      if (evt._tag === 'done') doneReceived = true
+      onEvent(evt)
+    }
   }
+
+  return { done: doneReceived }
 }
 
 export { sendChatMessage }

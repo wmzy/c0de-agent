@@ -16,6 +16,7 @@ const base: ChatState = {
   pendingPermission: null,
   subagents: [],
   pendingSegmentBreak: null,
+  interrupted: false,
 }
 
 function asst(parts: MessageContent[]): Message[] {

@@ -5,7 +5,7 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
 import { getProject } from '../../project/project.js'
-import { getLLMSegments, getSession } from '../../session/session.js'
+import { getLLMSegments, getSession, updateSessionLastRun } from '../../session/session.js'
 import { upsertFileSnapshot } from '../../session/snapshot.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import type { MessageContent } from '../../shared/types/message.js'
@@ -234,6 +234,17 @@ function createChatRoute(ctx: ServerContext): Hono {
 
       const state = await createAgent(session, agentConfig, deps)
 
+      // 持久化 run 状态：status='running' 写入 DB。服务重启后此字段仍为 'running'
+      // 而进程无活跃 run → 检测为 interrupted。finally 中标记 'completed'。
+      const runStartedAt = Date.now()
+      await updateSessionLastRun(ctx.db, sessionId, {
+        status: 'running',
+        ...(agentName !== 'default' ? { agentName } : {}),
+        provider,
+        model: resolvedModel,
+        startedAt: runStartedAt,
+      })
+
       ctx.agentManager.register({ sessionId, state, deps })
 
       // 客户端断开时中止 agent
@@ -266,6 +277,15 @@ function createChatRoute(ctx: ServerContext): Hono {
           }),
         })
       } finally {
+        // 无论正常完成、错误还是 abort，只要服务还活着就标记 completed。
+        // 只有服务崩溃/重启才会留下 status='running' → 下次加载检测为 interrupted。
+        await updateSessionLastRun(ctx.db, sessionId, {
+          status: 'completed',
+          ...(agentName !== 'default' ? { agentName } : {}),
+          provider,
+          model: resolvedModel,
+          startedAt: runStartedAt,
+        }).catch(() => {})
         ctx.agentManager.unregister(sessionId)
       }
     })

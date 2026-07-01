@@ -4,7 +4,7 @@ import { sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
-import type { Session, SessionMetadata } from '../shared/types/message.js'
+import type { LastRun, Session, SessionMetadata } from '../shared/types/message.js'
 
 /** Convert a DB row (with Date timestamps) to the shared Session type (with number timestamps). */
 export function rowToSession(row: typeof sessions.$inferSelect): Session {
@@ -162,6 +162,17 @@ export async function saveLLMSegments(
     .where(eq(sessions.id, id))
 }
 
+/** 更新会话 metadata.lastRun（agent run 开始/结束时写入；重启后检测中断用）。 */
+async function updateSessionLastRun(handle: DB, id: string, lastRun: LastRun): Promise<void> {
+  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  if (!row) return
+  const meta = (row.metadata ?? {}) as SessionMetadata
+  await handle.db
+    .update(sessions)
+    .set({ metadata: { ...meta, lastRun }, updatedAt: new Date() })
+    .where(eq(sessions.id, id))
+}
+
 async function listSessionsByProject(handle: DB, projectId: string): Promise<Session[]> {
   const rows = await handle.db.select().from(sessions).where(eq(sessions.projectId, projectId))
   return rows.map(rowToSession)
@@ -174,5 +185,6 @@ export {
   listSessions,
   listSessionsByProject,
   touchSession,
+  updateSessionLastRun,
   updateSessionTitle,
 }

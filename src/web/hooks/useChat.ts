@@ -25,6 +25,8 @@ type ChatState = {
   subagents: SubagentInfo[]
   /** 后端检测到模型/工具变更需用户确认开新段时设置；携带活跃段信息与待重发内容。 */
   pendingSegmentBreak: PendingSegmentBreak | null
+  /** SSE 流中断（服务重启等）：true 时显示恢复提示。 */
+  interrupted: boolean
 }
 
 type PendingSegmentBreak = {
@@ -54,6 +56,10 @@ type ChatActions = {
   confirmBreak: (withCompaction: boolean) => Promise<void>
   /** 用户取消开新段：清除待发状态并移除乐观追加的 user 消息。 */
   cancelBreak: () => void
+  /** 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。 */
+  retry: (content: string, opts?: ChatOpts) => Promise<void>
+  /** 清除中断状态。 */
+  clearInterrupted: () => void
   reset: () => void
 }
 
@@ -65,6 +71,7 @@ const INITIAL: ChatState = {
   pendingPermission: null,
   subagents: [],
   pendingSegmentBreak: null,
+  interrupted: false,
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -233,14 +240,19 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   }, [sessionId])
 
   // 执行 SSE 流并归约事件；捕获 409 SEGMENT_BREAK_REQUIRED 时存入 pendingSegmentBreak。
+  // SSE 流未收到 done 事件结束时标记 interrupted（服务重启等）；
+  // 但若已收到 error 事件，说明是服务端正常错误（LLM 报错等），不标记中断。
   const doStream = useCallback(
     async (content: string, opts: ChatOpts | undefined) => {
       abortRef.current = new AbortController()
+      // 追踪是否收到 error 事件（区分服务端正常错误与连接中断）
+      let gotError = false
       try {
-        await sendChatMessage(
+        const result = await sendChatMessage(
           sessionId,
           content,
           (event) => {
+            if (event._tag === 'error') gotError = true
             setState((s) => reduceChatEvent(s, event))
             // 收到调用详情通知时刷新调用详情面板，避免需手动刷新页面。
             if (event._tag === 'llm_detail') {
@@ -250,6 +262,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           abortRef.current.signal,
           opts,
         )
+        if (!result.done && !gotError) {
+          // SSE 结束但未收到 done 也无 error → 连接中断（服务重启等）
+          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
+        } else if (!result.done && gotError) {
+          // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断
+          setState((s) => ({ ...s, isStreaming: false }))
+        }
       } catch (err) {
         const e = err as unknown as APIError
         if (e.code === 'SEGMENT_BREAK_REQUIRED') {
@@ -265,7 +284,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           setState((s) => ({ ...s, isStreaming: false, pendingSegmentBreak: pending }))
           return
         }
-        setState((s) => ({ ...s, isStreaming: false, error: e.message ?? '发送失败' }))
+        // 网络错误（服务不可达）也视为中断
+        if (!abortRef.current.signal.aborted) {
+          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
+        } else {
+          setState((s) => ({ ...s, isStreaming: false }))
+        }
       }
     },
     [sessionId, qc],
@@ -333,9 +357,33 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       .catch((err) => console.error('[权限确认] 失败，工具调用可能已过期:', err))
   }, [])
 
+  // 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。
+  // 后端 runAgent 幂等检查会跳过重复 append。
+  const retry = useCallback(
+    async (content: string, opts?: ChatOpts) => {
+      setState((s) => ({ ...s, isStreaming: true, error: null, interrupted: false }))
+      await doStream(content, opts)
+    },
+    [doStream],
+  )
+
+  const clearInterrupted = useCallback(() => {
+    setState((s) => ({ ...s, interrupted: false }))
+  }, [])
+
   const reset = useCallback(() => setState(INITIAL), [])
 
-  return { ...state, sendMessage, abort, confirm, confirmBreak, cancelBreak, reset }
+  return {
+    ...state,
+    sendMessage,
+    abort,
+    confirm,
+    confirmBreak,
+    cancelBreak,
+    retry,
+    clearInterrupted,
+    reset,
+  }
 }
 
 export type { ChatOpts, ChatState, SubagentInfo }

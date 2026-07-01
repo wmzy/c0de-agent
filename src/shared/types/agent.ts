@@ -27,6 +27,7 @@ type AgentStatus =
       reason: 'completed' | 'aborted' | 'error'
       error?: AgentError
     }
+  | { _tag: 'interrupted' }
 
 /** Configuration for creating an agent. */
 type AgentConfig = {

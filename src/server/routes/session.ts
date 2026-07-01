@@ -125,10 +125,16 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
   })
 
-  // 获取会话状态
+  // 获取会话状态：内存有活跃 run → 返回其 status；否则查 DB lastRun。
+  // lastRun.status='running' 但无活跃 run → 服务重启被中断。
   app.get('/:id/status', async (c) => {
     const run = ctx.agentManager.get(c.req.param('id'))
-    return c.json(run ? run.state.status : { _tag: 'idle' })
+    if (run) return c.json(run.state.status)
+    const session = await getSession(ctx.db, c.req.param('id'))
+    if (session?.metadata.lastRun?.status === 'running') {
+      return c.json({ _tag: 'interrupted' })
+    }
+    return c.json({ _tag: 'idle' })
   })
 
   // 获取分支

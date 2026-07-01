@@ -112,6 +112,32 @@ describe('runAgent', () => {
     expect(getAgentStatus(agent)._tag).toBe('stopped')
   })
 
+  it('幂等重发：末尾已有相同 user message 时跳过 append', async () => {
+    const { appendMessage } = await import('../session/message.js')
+    // 模拟中断场景：DB 末尾已是 user message（服务重启前写入，未生成 assistant 回复）
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+
+    const deps = makeDeps(db, mockTextStream('Response!'))
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [], maxTurns: 5 },
+      deps,
+    )
+    // state.messages 已从 DB 加载了 user message
+    expect(agent.messages.some((m) => m.role === 'user')).toBe(true)
+
+    // 重发相同消息：不应追加重复 user message
+    for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'Hello' }], deps)) {
+      // consume
+    }
+    const msgs = await getMessages(db, session.id)
+    const userCount = msgs.filter((m) => m.role === 'user').length
+    expect(userCount).toBe(1) // 没有追加重复 user message
+  })
+
   it('generates a session title on the first user message', async () => {
     const titleSession = await createSession(db, DEFAULT_SESSION_TITLE)
     const deps = makeDeps(db, mockTextStream('Response!'))

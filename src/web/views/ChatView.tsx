@@ -1,3 +1,4 @@
+import { css } from '@linaria/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -16,6 +17,32 @@ import { useMessages } from '../hooks/useSession.js'
 import { agentAPI } from '../services/agent.js'
 import { sessionAPI } from '../services/session.js'
 import { Chat, type SendPayload } from './Chat.js'
+
+const interruptBanner = css`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  color: var(--text-secondary);
+
+  & > button {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--text);
+
+    &:first-of-type {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+  }
+`
 
 /**
  * 会话视图：
@@ -110,6 +137,7 @@ function DraftSession({ projectId }: { projectId: string }) {
 function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: string }) {
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
+  const qc = useQueryClient()
   const { data: history } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults()
@@ -120,6 +148,20 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   })
   // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
   const consumed = useRef(false)
+
+  // 冷启动中断检测：页面加载时检查 session status，若上次 run 未正常结束则显示恢复提示
+  const [coldStartInterrupted, setColdStartInterrupted] = useState(false)
+  useEffect(() => {
+    setColdStartInterrupted(false)
+    sessionAPI
+      .status(sessionId)
+      .then((s) => {
+        if (s._tag === 'interrupted') setColdStartInterrupted(true)
+      })
+      .catch(() => {})
+  }, [sessionId])
+
+  const showInterruptBanner = coldStartInterrupted || chat.interrupted
 
   // 历史重载时，持久化层把同轮 assistant(tool_call) 与 tool(tool_result) 存成独立
   // Message；normalizeParts 只在单条 Message 内按 id 配对，不合并会导致历史工具调用
@@ -177,6 +219,30 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     chat.confirm(toolCallId, approved)
   }
 
+  // 恢复中断的对话：从 DB 重载消息，若末尾是 user 消息则重发（后端幂等跳过 append）
+  const handleResume = async () => {
+    setColdStartInterrupted(false)
+    chat.clearInterrupted()
+    const msgs = await sessionAPI.messages(sessionId)
+    qc.setQueryData(['session', sessionId, 'messages'], msgs)
+    const lastMsg = msgs[msgs.length - 1]
+    if (lastMsg?.role === 'user') {
+      const text = lastMsg.content
+        .filter((p) => p._tag === 'text')
+        .map((p) => (p._tag === 'text' ? p.text : ''))
+        .join('')
+      if (text) {
+        const session = await sessionAPI.get(sessionId)
+        const lr = session.metadata.lastRun
+        await chat.retry(text, {
+          ...(lr?.provider ? { provider: lr.provider } : { provider: selection.provider }),
+          ...(lr?.model ? { model: lr.model } : { model: selection.model }),
+          ...(lr?.agentName ? { agent: lr.agentName } : { agent: agentName }),
+        })
+      }
+    }
+  }
+
   // TODO: 从当前选中 model 的 capabilities 读取 supportsVision（providersData 已含）
   const supportsVision = true
 
@@ -215,7 +281,28 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
             disabled={chat.isStreaming}
           />
         }
-        topPanel={<SessionSummary sessionId={sessionId} />}
+        topPanel={
+          <>
+            {showInterruptBanner && !chat.isStreaming && (
+              <div className={interruptBanner} data-testid="interrupt-banner">
+                <span>连接已中断（服务可能已重启）</span>
+                <button onClick={() => void handleResume()} type="button">
+                  恢复对话
+                </button>
+                <button
+                  onClick={() => {
+                    setColdStartInterrupted(false)
+                    chat.clearInterrupted()
+                  }}
+                  type="button"
+                >
+                  忽略
+                </button>
+              </div>
+            )}
+            <SessionSummary sessionId={sessionId} />
+          </>
+        }
       />
       {chat.pendingSegmentBreak && (
         <SegmentBreakDialog
