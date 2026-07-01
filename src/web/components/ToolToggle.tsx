@@ -12,6 +12,7 @@ const trigger = css`
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
+  min-height: 28px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);

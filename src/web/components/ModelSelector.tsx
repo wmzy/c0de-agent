@@ -12,19 +12,31 @@ const field = css`
   color: var(--text-secondary);
 `
 
-const control = css`
-  padding: 3px 6px;
+/** 基础控件样式。注意：wyw-in-js 不会把 `${control}` 的样式内联进派生类，
+ * 派生类只生成增量；故每个控件需自包含 min-height，否则被全局 select/input{min-height:44px} 覆盖。 */
+const selectControl = css`
+  padding: 4px 28px 4px 8px;
+  min-height: 28px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
   color: var(--text);
   font: inherit;
   font-size: 12px;
+  line-height: 1.4;
 `
 
 const input = css`
-  ${control};
+  padding: 4px 8px;
   min-width: 180px;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
 `
 
 /** Model 字段：input + 下拉按钮 + 弹出列表，统一相对定位。 */
@@ -36,9 +48,16 @@ const modelWrap = css`
 `
 
 const dropdownBtn = css`
-  ${control};
+  padding: 4px 8px;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
   cursor: pointer;
-  line-height: 1;
   border-left: none;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -136,7 +155,7 @@ export function ModelSelector({
       <label className={field}>
         <span>Provider</span>
         <select
-          className={control}
+          className={selectControl}
           value={value.provider}
           onChange={(e) => onChange({ ...value, provider: e.target.value })}
           data-testid="provider-select"

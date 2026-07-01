@@ -2,16 +2,24 @@ import { css } from '@linaria/core'
 import type { SessionTreeNode } from '../types/index.js'
 
 const node = css`
-  padding: 2px 0;
+  padding: 1px 0;
 `
 
 const row = css`
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
   cursor: pointer;
+  border: none;
   border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  min-height: 0;
+  min-width: 0;
   &:hover {
     background: var(--bg-secondary);
   }
@@ -20,6 +28,18 @@ const row = css`
 const active = css`
   background: var(--bg-secondary);
   font-weight: 600;
+`
+
+const iconCls = css`
+  flex-shrink: 0;
+`
+
+const titleCls = css`
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 `
 
 const childList = css`
@@ -66,8 +86,8 @@ function TreeNode({
         type="button"
         data-testid={`node-${n.session.id}`}
       >
-        <span>{n.children.length > 0 ? '📂' : '💬'}</span>
-        <span>{n.session.title}</span>
+        <span className={iconCls}>{n.children.length > 0 ? '📂' : '💬'}</span>
+        <span className={titleCls}>{n.session.title}</span>
       </button>
       {n.children.length > 0 && (
         <div className={childList}>

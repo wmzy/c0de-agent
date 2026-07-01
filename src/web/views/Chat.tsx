@@ -60,12 +60,15 @@ const footerBar = css`
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 6px 12px;
+  padding: 4px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
 `
 
 const footerLeft = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1;
   min-width: 0;
 `
