@@ -26,7 +26,13 @@ const content = css`
   padding-top: 2px;
 `
 
-export function MessageItem({ message }: { message: Message }) {
+export function MessageItem({
+  message,
+  latency,
+}: {
+  message: Message
+  latency?: number
+}) {
   const blocks = normalizeParts(message)
   return (
     <div className={wrap} data-testid="message" data-role={message.role}>
@@ -41,6 +47,7 @@ export function MessageItem({ message }: { message: Message }) {
                 <AssistantTextBlock
                   text={block.text}
                   completedAt={message.createdAt || undefined}
+                  latency={latency}
                 />
               )
             break

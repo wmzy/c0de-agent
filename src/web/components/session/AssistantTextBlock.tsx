@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { CodeReference } from '../CodeReference.js'
 import { CopyButton } from '../CopyButton.js'
 import { Markdown } from '../Markdown.js'
+import { formatLatency } from '../../utils/format.js'
 import { useOverflow } from './hooks/useOverflow.js'
 
 const wrap = css`
@@ -48,7 +49,15 @@ function collectCodeRefs(text: string): string[] {
     .filter((l) => refPattern.test(l))
 }
 
-export function AssistantTextBlock({ text, completedAt }: { text: string; completedAt?: number }) {
+export function AssistantTextBlock({
+  text,
+  completedAt,
+  latency,
+}: {
+  text: string
+  completedAt?: number
+  latency?: number
+}) {
   const { ref, overflowing, expanded, toggle } = useOverflow(400)
   const showToggle = overflowing && !expanded
   const refTokens = collectCodeRefs(text)
@@ -71,9 +80,11 @@ export function AssistantTextBlock({ text, completedAt }: { text: string; comple
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <CopyButton text={text} />
-        {completedAt && (
+        {(completedAt || latency != null) && (
           <span className={footer} data-testid="assistant-time">
-            {new Date(completedAt).toLocaleString()}
+            {completedAt && new Date(completedAt).toLocaleString()}
+            {completedAt && latency != null && ' · '}
+            {latency != null && formatLatency(latency)}
           </span>
         )}
       </div>
