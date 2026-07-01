@@ -36,7 +36,7 @@ export type {
   AgentStatus,
   CommandContext,
   CommandResult,
-  LLMDetail,
+  LLMSegment,
   PendingToolCall,
   ProjectInfo,
   PromptContext,

@@ -15,6 +15,7 @@ const base: ChatState = {
   error: null,
   pendingPermission: null,
   subagents: [],
+  pendingSegmentBreak: null,
 }
 
 function asst(parts: MessageContent[]): Message[] {
@@ -213,5 +214,118 @@ describe('useChat confirm', () => {
         body: JSON.stringify({ toolCallId: 'tc1', approved: true }),
       }),
     )
+  })
+})
+
+describe('useChat segment break', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function makeWrapper() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+  }
+
+  it('409 SEGMENT_BREAK_REQUIRED → 设置 pendingSegmentBreak，不设 error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: {
+            code: 'SEGMENT_BREAK_REQUIRED',
+            message: '切换',
+            details: { activeSegment: { provider: 'p', model: 'm', tools: ['read'] } },
+          },
+        }),
+      })),
+    )
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi', { model: 'other' })
+    })
+    expect(result.current.pendingSegmentBreak).not.toBeNull()
+    expect(result.current.pendingSegmentBreak?.activeSegment.model).toBe('m')
+    expect(result.current.pendingSegmentBreak?.text).toBe('hi')
+    expect(result.current.error).toBeNull()
+  })
+
+  it('confirmBreak → 以 confirmSegmentBreak:true 重发', async () => {
+    let chatCall = 0
+    const fetchMock = vi.fn(async (url: string, _init?: { body?: string }) => {
+      if (url === '/api/chat') {
+        chatCall++
+        if (chatCall === 1) {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: {
+                code: 'SEGMENT_BREAK_REQUIRED',
+                message: '切换',
+                details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
+              },
+            }),
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => ({ done: true, value: undefined }),
+            }),
+          },
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({}) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi', { model: 'other' })
+    })
+    expect(result.current.pendingSegmentBreak).not.toBeNull()
+
+    await act(async () => {
+      await result.current.confirmBreak(false)
+    })
+    // 重发后清除待发
+    expect(result.current.pendingSegmentBreak).toBeNull()
+    // 第二次 /api/chat 调用携带 confirmSegmentBreak:true
+    const second = fetchMock.mock.calls[1]
+    expect(second?.[0]).toBe('/api/chat')
+    expect(JSON.parse(String(second?.[1]?.body)).confirmSegmentBreak).toBe(true)
+  })
+
+  it('cancelBreak → 移除乐观 user 消息并清除待发', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: {
+            code: 'SEGMENT_BREAK_REQUIRED',
+            message: '切换',
+            details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
+          },
+        }),
+      })),
+    )
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.messages.some((m) => m.role === 'user')).toBe(true)
+    expect(result.current.pendingSegmentBreak).not.toBeNull()
+
+    act(() => {
+      result.current.cancelBreak()
+    })
+    expect(result.current.pendingSegmentBreak).toBeNull()
+    expect(result.current.messages.some((m) => m.role === 'user')).toBe(false)
   })
 })

@@ -156,7 +156,7 @@ describe('AgentState', () => {
       status: { _tag: 'idle' },
       abortController: new AbortController(),
       steeringQueue: [],
-      llmDetails: [],
+      segments: [],
       tokenBudget: {
         total: 128_000,
         reserved: 0,

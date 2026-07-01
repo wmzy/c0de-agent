@@ -25,7 +25,7 @@ function mockState(sessionId: string): AgentState {
     status: { _tag: 'running', turnCount: 0 },
     abortController: new AbortController(),
     steeringQueue: [],
-    llmDetails: [],
+    segments: [],
     tokenBudget: {
       total: 1000,
       reserved: 200,

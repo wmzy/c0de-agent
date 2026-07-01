@@ -25,7 +25,7 @@ function makeState(): AgentState {
     status: { _tag: 'idle' },
     abortController: new AbortController(),
     steeringQueue: [],
-    llmDetails: [],
+    segments: [],
     tokenBudget: { total: 0, reserved: 0, available: 0, historyBudget: 0, used: 0, keepRecent: 0 },
     calibrationFactor: 1.0,
   }

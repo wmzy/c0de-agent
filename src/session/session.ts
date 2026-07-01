@@ -4,7 +4,7 @@ import { sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
-import type { Session } from '../shared/types/message.js'
+import type { Session, SessionMetadata } from '../shared/types/message.js'
 
 /** Convert a DB row (with Date timestamps) to the shared Session type (with number timestamps). */
 export function rowToSession(row: typeof sessions.$inferSelect): Session {

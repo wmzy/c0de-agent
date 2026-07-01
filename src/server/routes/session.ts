@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { createSummarizer, runCompaction } from '../../core/compact.js'
 import { fromDirectory } from '../../project/index.js'
 import { forkSession, getBranches, getTree } from '../../session/branch.js'
 import { getMessages } from '../../session/message.js'
@@ -92,6 +93,36 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (run) return c.json(run.state.segments)
     const persisted = await getLLMSegments(ctx.db, c.req.param('id'))
     return c.json(persisted)
+  })
+
+  // 手动触发会话压缩（段切换确认弹窗「顺便压缩」调用）。用末段的 provider/model 构建摘要器。
+  app.post('/:id/compact', async (c) => {
+    const id = c.req.param('id')
+    let session: Awaited<ReturnType<typeof getSession>>
+    try {
+      session = await getSession(ctx.db, id)
+    } catch {
+      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    }
+    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    const segs = await getLLMSegments(ctx.db, id)
+    const lastSeg = segs[segs.length - 1]
+    const provider = lastSeg?.provider ?? ctx.config.defaultProvider
+    const model = lastSeg?.model ?? ctx.config.defaultModel
+    try {
+      const summarizer = createSummarizer(ctx.llmRegistry, provider, model, {})
+      const result = await runCompaction(ctx.db, id, summarizer, {
+        keepRecent: ctx.config.compaction.keepRecentTokens,
+      })
+      return c.json(result)
+    } catch (e) {
+      return apiError(
+        c,
+        500,
+        'COMPACTION_FAILED',
+        e instanceof Error ? e.message : 'Compaction failed',
+      )
+    }
   })
 
   // 获取会话状态

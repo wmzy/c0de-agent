@@ -37,6 +37,7 @@ type APIError = {
   status: number
   message: string
   code?: string
+  details?: Record<string, unknown>
 }
 
 /** 文件目录项（GET /api/files 返回）。 */
