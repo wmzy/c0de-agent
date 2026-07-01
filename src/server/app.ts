@@ -6,6 +6,7 @@ import { Hono } from 'hono'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { createCORSMiddleware } from './middleware/cors.js'
 import { errorHandler } from './middleware/error.js'
+import { createAgentRoute } from './routes/agent.js'
 import { createCatalogRoute } from './routes/catalog.js'
 import { createChatRoute } from './routes/chat.js'
 import { createCommandsRoute } from './routes/commands.js'
@@ -37,6 +38,7 @@ function createApp(ctx: ServerContext): Hono {
 
   // 路由
   app.route('/api/health', createHealthRoute())
+  app.route('/api/agents', createAgentRoute(ctx))
   app.route('/api/sessions', createSessionRoute(ctx))
   app.route('/api/projects', createProjectRoute(ctx))
   app.route('/api/providers', createProviderRoute(ctx))
@@ -57,6 +59,7 @@ function createApp(ctx: ServerContext): Hono {
       version: '0.1.0',
       endpoints: [
         '/api/health',
+        '/api/agents',
         '/api/sessions',
         '/api/projects',
         '/api/providers',

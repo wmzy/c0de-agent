@@ -5,6 +5,7 @@ import { StreamingIndicator } from '../components/StreamingIndicator.js'
 import { TimelineChat } from '../components/session/TimelineChat.js'
 import type { TimelineRow } from '../components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '../composer/Composer.js'
+import type { AgentListItem } from '../services/agent.js'
 import { type PermissionMode, permissionAPI } from '../services/permission.js'
 import { formatTokenCount } from '../utils/format.js'
 import { TableView } from './TableView.js'
@@ -37,6 +38,8 @@ type ChatProps = {
   topPanel?: ReactNode
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
+  /** 可用 agent 列表（@ mention 渲染与校验）。 */
+  agents?: AgentListItem[]
 }
 
 const toolbar = css`
@@ -171,6 +174,7 @@ export function Chat({
   topPanel,
   supportsVision = true,
   projectId,
+  agents = [],
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   // 视图模式：同一份时间线数据的三种并列展示。
@@ -304,6 +308,7 @@ export function Chat({
       </div>
       <Composer
         projectId={projectId}
+        agents={agents}
         onSend={handleSend}
         onAbort={onAbort}
         isStreaming={isStreaming}

@@ -1,5 +1,13 @@
 import { apiRequest } from './api.js'
 
+type AgentListItem = {
+  name: string
+  description: string
+  mode: 'subagent' | 'primary' | 'all'
+  source: string
+  hasTools: boolean
+}
+
 const agentAPI = {
   abort: (sessionId: string) =>
     apiRequest<{ aborted: boolean }>('/api/chat/abort', {
@@ -26,6 +34,8 @@ const agentAPI = {
       method: 'POST',
       body: JSON.stringify({ toolCallId, approved }),
     }),
+  listAgents: () => apiRequest<{ agents: AgentListItem[] }>('/api/agents', { method: 'GET' }),
 }
 
+export type { AgentListItem }
 export { agentAPI }

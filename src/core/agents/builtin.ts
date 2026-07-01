@@ -16,8 +16,31 @@ You have FULL access to the tools provided. Use them as needed to complete the a
 
 When done, call the \`yield\` tool with your structured result. This is the ONLY way to return a final result.`
 
-/** 4 个内置默认 agent。 */
+/** Plan 模式 primary agent 的 role prompt（覆盖 role section）。 */
+const PLAN_ROLE = `You are c0de-agent in **Plan Mode**. Your job is to investigate the codebase and produce a clear, actionable plan — NOT to make changes directly.
+
+- Use read-only tools (grep/glob/read) to understand the structure and relevant code.
+- Ask clarifying questions when requirements are ambiguous.
+- When ready, present a concrete implementation plan (files to touch, approach, risks).
+- Do NOT use edit/write tools to modify code. You may run bash for investigation only.`
+
+/** 6 个内置 agent（2 primary + 4 subagent）。 */
 const BUILTIN_AGENTS: AgentDefinition[] = [
+  {
+    name: 'default',
+    description: '通用助手（默认）。全工具，动态系统提示。',
+    systemPrompt: '',
+    mode: 'primary',
+    source: 'builtin',
+  },
+  {
+    name: 'plan',
+    description: '计划模式（只读）。专注调研与方案设计，不直接改代码。',
+    tools: ['read', 'grep', 'glob', 'bash'],
+    systemPrompt: PLAN_ROLE,
+    mode: 'primary',
+    source: 'builtin',
+  },
   {
     name: 'general',
     description: '通用助手，全工具，可递归派生子任务。默认子 agent。',

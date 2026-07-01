@@ -37,6 +37,8 @@ type ChatOpts = {
   provider?: string
   model?: string
   tools?: string[]
+  agent?: string
+  agents?: string[]
   images?: Array<{ mediaType: string; data: string }>
   files?: string[]
   /** 用户确认开新段后重发时携带，跳过后端 409 预检。 */

@@ -3,12 +3,14 @@ import type { DragEvent, KeyboardEvent } from 'react'
 import { useEffect, useState } from 'react'
 import { useCommands } from '../hooks/useCommands.js'
 import { useFileSearch } from '../hooks/useFiles.js'
+import type { AgentListItem } from '../services/agent.js'
 import { AtFilePopover } from './AtFilePopover.js'
 import { AttachmentBar } from './AttachmentBar.js'
 import { ComposerEditor } from './ComposerEditor.js'
 import { PermissionDock } from './PermissionDock.js'
 import { SlashPopover } from './SlashPopover.js'
-import type { ImagePart } from './types.js'
+import type { ImagePart, Prompt } from './types.js'
+import { promptToText } from './types.js'
 import { useComposer } from './useComposer.js'
 
 const wrap = css`
@@ -73,6 +75,7 @@ type SendPayload = {
   text: string
   files: string[]
   images: ImagePart[]
+  agents: string[]
 }
 
 type ComposerProps = {
@@ -87,11 +90,20 @@ type ComposerProps = {
   onPermissionCancel?: () => void
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
+  /** 可用 agent 列表（@ mention 渲染与校验）。 */
+  agents: AgentListItem[]
 }
 
 function Composer(props: ComposerProps) {
+  // 从文本提取 @agent mentions，仅保留非 primary（可调用的 subagent/all）
+  const handleSend = (payload: { text: string; files: string[]; images: ImagePart[] }) => {
+    const subagentNames = props.agents.filter((a) => a.mode !== 'primary').map((a) => a.name)
+    const mentions = payload.text.match(/@([\w-]+)/g) ?? []
+    const agents = mentions.map((m) => m.slice(1)).filter((name) => subagentNames.includes(name))
+    props.onSend({ ...payload, agents })
+  }
   const composer = useComposer({
-    onSend: props.onSend,
+    onSend: handleSend,
     onAbort: props.onAbort,
     isStreaming: props.isStreaming,
     steerMode: props.steerMode,
@@ -113,6 +125,29 @@ function Composer(props: ComposerProps) {
     if (composer.popover === 'at') setAtActive(0)
   }, [composer.popover, composer.popoverQuery])
 
+  // @ mention 候选：subagent（非 primary）按 query 过滤
+  const atSubagents = props.agents
+    .filter((a) => a.mode !== 'primary')
+    .filter((a) => !composer.popoverQuery || a.name.includes(composer.popoverQuery))
+    .slice(0, 5)
+  const atFiles = (fileSearch.data ?? []).filter((r) => r.type === 'file')
+
+  // 选中 @agent：替换 @query token 为 @name 文本
+  const insertAgentToken = (name: string) => {
+    const text = promptToText(composer.promptRef.current)
+    const atIdx = text.lastIndexOf('@')
+    if (atIdx === -1) return
+    const before = text.slice(0, atIdx)
+    let tokenEnd = atIdx + 1
+    while (tokenEnd < text.length && !/\s/.test(text[tokenEnd] ?? '')) tokenEnd += 1
+    const after = text.slice(tokenEnd)
+    const newText = `${before}@${name} ${after}`
+    const newPrompt: Prompt = [{ type: 'text', content: newText, start: 0, end: newText.length }]
+    composer.setPromptExternal(newPrompt)
+    composer.setPopover(null)
+    composer.editorRef.current?.focus()
+  }
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (composer.popover === 'slash') {
       if (e.key === 'ArrowDown') {
@@ -133,10 +168,10 @@ function Composer(props: ComposerProps) {
       }
     }
     if (composer.popover === 'at') {
-      const files = (fileSearch.data ?? []).filter((r) => r.type === 'file')
+      const total = atSubagents.length + atFiles.length
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setAtActive((i) => Math.min(i + 1, files.length - 1))
+        setAtActive((i) => Math.min(i + 1, total - 1))
         return
       }
       if (e.key === 'ArrowUp') {
@@ -146,8 +181,13 @@ function Composer(props: ComposerProps) {
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        const f = files[atActive]
-        if (f) composer.insertFile(f.path)
+        if (atActive < atSubagents.length) {
+          const a = atSubagents[atActive]
+          if (a) insertAgentToken(a.name)
+        } else {
+          const f = atFiles[atActive - atSubagents.length]
+          if (f) composer.insertFile(f.path)
+        }
         return
       }
     }
@@ -213,6 +253,10 @@ function Composer(props: ComposerProps) {
             results={fileSearch.data ?? []}
             activeIndex={atActive}
             onSelect={(path) => composer.insertFile(path)}
+            agents={props.agents}
+            query={composer.popoverQuery}
+            activeAgentIndex={atActive}
+            onAgentSelect={insertAgentToken}
           />
         )}
         <ComposerEditor

@@ -11,6 +11,7 @@ import type { Message, Session } from '../shared/types/message.js'
 import { editTool } from '../tools/builtin/edit.js'
 import { createDefaultRegistry, createToolRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
+import { listTools } from '../tools/registry.js'
 import { BUILTIN_AGENTS, createAgentRegistry } from './agents/index.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
@@ -179,6 +180,37 @@ describe('agentLoop', () => {
     expect(events.some((e) => e._tag === 'done')).toBe(true)
     // 每轮 LLM 调用后应通知调用详情已持久化
     expect(events.some((e) => e._tag === 'llm_detail')).toBe(true)
+  })
+
+  it('agentRolePrompt 覆盖 role section 但保留工具段', async () => {
+    const messages = await getMessages(db, session.id)
+    let capturedSystem = ''
+    // 工厂捕获 loop 传入的 request.system（loop 调 streamFn(depsObj, request, info)）
+    const captureStream = ((_d: unknown, request: { system?: string }) => {
+      capturedSystem = request.system ?? ''
+      async function* gen(): AsyncGenerator<StreamChunk> {
+        yield { _tag: 'text', text: 'planned' }
+        yield { _tag: 'done' }
+      }
+      return gen()
+    }) as unknown as () => AsyncGenerator<StreamChunk>
+    const deps = makeMockDeps(db, captureStream)
+    const state = makeState(session, messages)
+    // 设置 primary agent role prompt
+    state.config.agentRolePrompt = 'OVERRIDE_PLAN_ROLE'
+    state.config.tools = ['read']
+    state.tools = listTools(deps.toolRegistry, { config: {}, cwd: deps.cwd }).filter((t) =>
+      state.config.tools.includes(t.name),
+    )
+
+    for await (const _event of agentLoop(state, deps)) {
+      // 消费完
+    }
+
+    expect(capturedSystem).toContain('OVERRIDE_PLAN_ROLE')
+    // 工具段仍保留（未被整段替换抹掉）
+    expect(capturedSystem).toContain('## Available Tools')
+    expect(capturedSystem).toContain('**read**')
   })
 
   it('emits tool_call events and executes the tool', async () => {

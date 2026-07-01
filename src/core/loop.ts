@@ -27,8 +27,11 @@ import {
   recordToolMetrics,
   selectBestMode,
 } from './metrics.js'
-import { buildSystemPrompt } from './prompt.js'
-import { buildDynamicPrompt } from './prompt-registry.js'
+import {
+  buildDynamicPrompt,
+  createPromptRegistry,
+  registerPromptSection,
+} from './prompt-registry.js'
 import { drainSteering } from './steering.js'
 import type { CollectedToolCall } from './tool-exec.js'
 import { executeToolCalls } from './tool-exec.js'
@@ -145,6 +148,8 @@ export async function runSubAgent(
     const childConfig = {
       ...parent.config,
       systemPrompt: def.systemPrompt,
+      // 子 agent 走整段 systemPrompt 替换，清除父的 role override 避免干扰
+      agentRolePrompt: undefined,
       tools: childTools,
       ...(def.model ? { model: def.model } : {}),
       ...(request.model ? { model: request.model } : {}),
@@ -341,11 +346,18 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         }
       }
     }
+    // primary agent 的 role prompt 覆盖 role section（保留工具/项目等动态段）。
+    // 仅当未走 config.systemPrompt 整段替换时生效。
+    const baseReg = deps.promptRegistry ?? createPromptRegistry()
+    if (state.config.agentRolePrompt) {
+      registerPromptSection(baseReg, {
+        id: 'role',
+        content: state.config.agentRolePrompt,
+        priority: 0,
+      })
+    }
     const systemPrompt =
-      (state.config.systemPrompt ??
-        (deps.promptRegistry
-          ? buildDynamicPrompt(deps.promptRegistry, promptCtx)
-          : buildSystemPrompt(promptCtx))) + modeHint
+      (state.config.systemPrompt ?? buildDynamicPrompt(baseReg, promptCtx)) + modeHint
 
     const tools: ChatTool[] = state.tools.map((t) => ({
       name: t.name,
@@ -568,6 +580,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         tools,
         startedAt: requestStartTime,
         trigger,
+        agentName: state.config.agentName,
         ...(contextWindow !== undefined ? { contextWindow } : {}),
         calls: [],
       }
