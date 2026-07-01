@@ -3,6 +3,7 @@ import type { DragEvent, KeyboardEvent } from 'react'
 import { useEffect, useState } from 'react'
 import { useCommands } from '../hooks/useCommands.js'
 import { useFileSearch } from '../hooks/useFiles.js'
+import type { AgentListItem } from '../services/agent.js'
 import { AtFilePopover } from './AtFilePopover.js'
 import { AttachmentBar } from './AttachmentBar.js'
 import { ComposerEditor } from './ComposerEditor.js'
@@ -73,6 +74,7 @@ type SendPayload = {
   text: string
   files: string[]
   images: ImagePart[]
+  agents: string[]
 }
 
 type ComposerProps = {
@@ -87,11 +89,20 @@ type ComposerProps = {
   onPermissionCancel?: () => void
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
+  /** 可用 agent 列表（@ mention 渲染与校验）。 */
+  agents: AgentListItem[]
 }
 
 function Composer(props: ComposerProps) {
+  // 从文本提取 @agent mentions，仅保留非 primary（可调用的 subagent/all）
+  const handleSend = (payload: { text: string; files: string[]; images: ImagePart[] }) => {
+    const subagentNames = props.agents.filter((a) => a.mode !== 'primary').map((a) => a.name)
+    const mentions = payload.text.match(/@([\w-]+)/g) ?? []
+    const agents = mentions.map((m) => m.slice(1)).filter((name) => subagentNames.includes(name))
+    props.onSend({ ...payload, agents })
+  }
   const composer = useComposer({
-    onSend: props.onSend,
+    onSend: handleSend,
     onAbort: props.onAbort,
     isStreaming: props.isStreaming,
     steerMode: props.steerMode,

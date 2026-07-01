@@ -38,6 +38,8 @@ async function sendChatMessage(
     provider?: string
     model?: string
     tools?: string[]
+    agent?: string
+    agents?: string[]
     images?: Array<{ mediaType: string; data: string }>
     files?: string[]
   },

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ModelSelector } from '../components/ModelSelector.js'
+import { AgentSelector } from '../components/AgentSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
@@ -13,6 +14,7 @@ import { useChat } from '../hooks/useChat.js'
 import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
 import { useMessages } from '../hooks/useSession.js'
 import { sessionAPI } from '../services/session.js'
+import { agentAPI } from '../services/agent.js'
 import { Chat, type SendPayload } from './Chat.js'
 
 /**
@@ -39,7 +41,13 @@ export function ChatView({
 function DraftSession({ projectId }: { projectId: string }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { selection, setSelection, enabledTools, setEnabledTools } = useComposerDefaults()
+  const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
+    useComposerDefaults()
+  const { data: agentsData } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => agentAPI.listAgents(),
+    staleTime: 60_000,
+  })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,9 +57,11 @@ function DraftSession({ projectId }: { projectId: string }) {
     const opts = {
       provider: selection.provider,
       model: selection.model,
+      agent: agentName,
       ...(enabledTools ? { tools: Array.from(enabledTools) } : {}),
       ...(payload.images.length ? { images: payload.images } : {}),
       ...(payload.files.length ? { files: payload.files } : {}),
+      ...(payload.agents.length ? { agents: payload.agents } : {}),
     }
     try {
       const session = await sessionAPI.create({ projectId })
@@ -68,6 +78,7 @@ function DraftSession({ projectId }: { projectId: string }) {
   return (
     <Chat
       projectId={projectId}
+      agents={agentsData?.agents ?? []}
       timeline={[]}
       isStreaming={creating}
       usage={null}
@@ -78,7 +89,16 @@ function DraftSession({ projectId }: { projectId: string }) {
         /* 草稿阶段无可中止的后端请求 */
       }}
       onConfirm={() => {}}
-      modelBar={<ModelSelector value={selection} onChange={setSelection} />}
+      modelBar={
+        <>
+          <AgentSelector
+            value={agentName}
+            onChange={setAgentName}
+            agents={agentsData?.agents ?? []}
+          />
+          <ModelSelector value={selection} onChange={setSelection} />
+        </>
+      }
       toolToggle={
         <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={creating} />
       }
@@ -91,7 +111,13 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const { data: history } = useMessages(sessionId)
-  const { selection, setSelection, enabledTools, setEnabledTools } = useComposerDefaults()
+  const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
+    useComposerDefaults()
+  const { data: agentsData } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => agentAPI.listAgents(),
+    staleTime: 60_000,
+  })
   // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
   const consumed = useRef(false)
 
@@ -123,6 +149,8 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     if (!pending) return
     consumed.current = true
     pendingFirstMessage.delete(sessionId)
+    // 恢复时若 pending.opts 无 agent，用当前 agentName
+    if (!pending.opts.agent) pending.opts.agent = agentName
     if (pending.opts.provider && pending.opts.model) {
       setSelection({ provider: pending.opts.provider, model: pending.opts.model })
     }
@@ -137,9 +165,11 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     void chat.sendMessage(payload.text, {
       provider: selection.provider,
       model: selection.model,
+      agent: agentName,
       ...(enabledTools ? { tools: Array.from(enabledTools) } : {}),
       ...(payload.images.length ? { images: payload.images } : {}),
       ...(payload.files.length ? { files: payload.files } : {}),
+      ...(payload.agents.length ? { agents: payload.agents } : {}),
     })
   }
 
@@ -154,6 +184,7 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     <>
       <Chat
         projectId={projectId}
+        agents={agentsData?.agents ?? []}
         timeline={timeline}
         isStreaming={chat.isStreaming}
         usage={chat.usage}
@@ -167,7 +198,16 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
         onSteer={agent.steer}
         paused={agent.paused}
         supportsVision={supportsVision}
-        modelBar={<ModelSelector value={selection} onChange={setSelection} />}
+        modelBar={
+          <>
+            <AgentSelector
+              value={agentName}
+              onChange={setAgentName}
+              agents={agentsData?.agents ?? []}
+            />
+            <ModelSelector value={selection} onChange={setSelection} />
+          </>
+        }
         toolToggle={
           <ToolToggle
             enabled={enabledTools}
