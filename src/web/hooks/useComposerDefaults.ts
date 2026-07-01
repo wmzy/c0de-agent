@@ -22,6 +22,13 @@ export function useComposerDefaults() {
   const providers = providersData?.providers ?? []
   const [selection, setSelection] = useState<ModelSelection>({ provider: '', model: '' })
   const [enabledTools, setEnabledTools] = useState<Set<string> | null>(null)
+  const [agent, setAgentState] = useState<string>(
+    () => localStorage.getItem('c0de-agent:selectedAgent') ?? 'default',
+  )
+  const setAgent = (name: string) => {
+    localStorage.setItem('c0de-agent:selectedAgent', name)
+    setAgentState(name)
+  }
 
   useEffect(() => {
     if (selection.provider && selection.model) return
@@ -35,5 +42,5 @@ export function useComposerDefaults() {
     }
   }, [providers, providersData, config, selection.provider, selection.model])
 
-  return { selection, setSelection, enabledTools, setEnabledTools, providers, providersData }
+  return { selection, setSelection, enabledTools, setEnabledTools, agent, setAgent, providers, providersData }
 }
