@@ -82,15 +82,6 @@ const viewSwitch = css`
   }
 `
 
-const jsonSwitch = css`
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  user-select: none;
-  color: var(--text-secondary);
-`
-
 const stream = css`
   flex: 1;
   display: flex;
@@ -182,12 +173,12 @@ export function Chat({
   projectId,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
-  // 视图模式：聊天（默认美化）/ 表格。全局「原始 JSON」仅作用于聊天模式。
-  const [viewMode, setViewMode] = useState<'chat' | 'table'>('chat')
-  const [showAllJson, setShowAllJson] = useState(false)
+  // 视图模式：同一份时间线数据的三种并列展示。
+  //   chat  — 美化卡片；table — 平铺表格；json — 全量原始 JSON（含隐藏空壳消息）。
+  const [viewMode, setViewMode] = useState<'chat' | 'table' | 'json'>('chat')
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在时间线长度变化时滚动，避免内容更新触发抖动
   useEffect(() => {
-    if (viewMode !== 'chat') return
+    if (viewMode === 'table') return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [timeline.length, viewMode])
 
@@ -262,24 +253,21 @@ export function Chat({
           >
             表格
           </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === 'json'}
+            onClick={() => setViewMode('json')}
+            data-testid="view-json"
+          >
+            原始 JSON
+          </button>
         </fieldset>
-        {viewMode === 'chat' && (
-          <label className={jsonSwitch}>
-            <input
-              type="checkbox"
-              checked={showAllJson}
-              onChange={(e) => setShowAllJson(e.target.checked)}
-              data-testid="toggle-all-json"
-            />
-            原始 JSON（含隐藏条目）
-          </label>
-        )}
       </div>
       {viewMode === 'table' ? (
         <TableView rows={timeline} />
       ) : (
         <div className={stream} data-testid="stream">
-          <TimelineChat rows={timeline} showAllJson={showAllJson} />
+          <TimelineChat rows={timeline} showAllJson={viewMode === 'json'} />
           {isStreaming && <StreamingIndicator />}
           <div ref={bottomRef} />
         </div>

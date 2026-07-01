@@ -104,14 +104,45 @@ describe('Chat view modes', () => {
     expect(screen.getByTestId('table-view')).toBeTruthy()
   })
 
-  it('聊天模式显示全局 JSON 开关', () => {
+  it('聊天/表格/原始 JSON 三态互斥切换', () => {
     renderChat()
-    expect(screen.getByTestId('toggle-all-json')).toBeTruthy()
+    // 默认聊天
+    expect(screen.getByTestId('view-chat').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('view-table').getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByTestId('view-json').getAttribute('aria-pressed')).toBe('false')
+
+    // 切到原始 JSON
+    fireEvent.click(screen.getByTestId('view-json'))
+    expect(screen.getByTestId('view-json').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('view-chat').getAttribute('aria-pressed')).toBe('false')
+
+    // 切到表格
+    fireEvent.click(screen.getByTestId('view-table'))
+    expect(screen.getByTestId('view-table').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('view-json').getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('表格模式隐藏全局 JSON 开关', () => {
-    renderChat()
-    fireEvent.click(screen.getByTestId('view-table'))
-    expect(screen.queryByTestId('toggle-all-json')).toBeNull()
+  it('原始 JSON 视图露出空壳消息的 JSON', () => {
+    // 空壳消息（content 为空）在聊天模式下隐藏，原始 JSON 视图应露出其 JSON。
+    const timeline: TimelineRow[] = [
+      {
+        kind: 'message',
+        message: {
+          id: 'empty',
+          sessionId: 's',
+          role: 'assistant',
+          content: [],
+          tokenCount: 0,
+          createdAt: 1,
+        },
+        ts: 1,
+      },
+    ]
+    renderChat({ timeline })
+    // 聊天模式下空壳消息被隐藏
+    expect(screen.getByTestId('stream').textContent).not.toContain('"role"')
+    fireEvent.click(screen.getByTestId('view-json'))
+    // 原始 JSON 视图露出空壳消息
+    expect(screen.getByTestId('stream').textContent).toContain('"role"')
   })
 })
