@@ -90,7 +90,9 @@ export function FilePreview({ path }: { path: string }) {
   let body: React.ReactNode
   if (isMedia) {
     if (IMG_EXT.includes(ext)) {
-      body = <img src={`/api/files/${encodeURI(path)}/raw`} alt={path} style={{ maxWidth: '100%' }} />
+      body = (
+        <img src={`/api/files/${encodeURI(path)}/raw`} alt={path} style={{ maxWidth: '100%' }} />
+      )
     } else if (ext === 'pdf') {
       body = (
         <embed
@@ -102,13 +104,23 @@ export function FilePreview({ path }: { path: string }) {
       )
     } else if (AUDIO_EXT.includes(ext)) {
       body = (
-        <audio controls src={`/api/files/${encodeURI(path)}/raw`} style={{ width: '100%' }} data-testid="audio-preview">
+        <audio
+          controls
+          src={`/api/files/${encodeURI(path)}/raw`}
+          style={{ width: '100%' }}
+          data-testid="audio-preview"
+        >
           <track kind="captions" />
         </audio>
       )
     } else {
       body = (
-        <video controls src={`/api/files/${encodeURI(path)}/raw`} style={{ maxWidth: '100%' }} data-testid="video-preview">
+        <video
+          controls
+          src={`/api/files/${encodeURI(path)}/raw`}
+          style={{ maxWidth: '100%' }}
+          data-testid="video-preview"
+        >
           <track kind="captions" />
         </video>
       )

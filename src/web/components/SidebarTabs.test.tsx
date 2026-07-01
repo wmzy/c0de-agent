@@ -47,12 +47,7 @@ describe('SidebarTabs', () => {
   it('点击 tab 调用 onSwitch', () => {
     const onSwitch = vi.fn()
     render(
-      <SidebarTabs
-        activeTab="sessions"
-        onSwitch={onSwitch}
-        sessions={<div />}
-        files={<div />}
-      />,
+      <SidebarTabs activeTab="sessions" onSwitch={onSwitch} sessions={<div />} files={<div />} />,
     )
     fireEvent.click(screen.getByText('📁文件'))
     expect(onSwitch).toHaveBeenCalledWith('files')

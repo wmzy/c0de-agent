@@ -1,9 +1,22 @@
 import type { Message, MessageContent } from '@shared/types/message.js'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render as rtlRender, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { FileSelectionContext } from '../../contexts/FileSelectionContext.js'
 import { MessageItem } from './MessageItem.js'
 
 afterEach(() => cleanup())
+
+// tool 调用块经 FilePathLink 依赖 FileSelectionContext，需包裹 Provider
+function SelectionWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <FileSelectionContext.Provider
+      value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+    >
+      {children}
+    </FileSelectionContext.Provider>
+  )
+}
+const render = (ui: React.ReactNode) => rtlRender(ui, { wrapper: SelectionWrapper })
 
 function msg(role: 'user' | 'assistant', parts: MessageContent[]): Message {
   return { id: '1', sessionId: 's', role, content: parts, tokenCount: 0, createdAt: 1 }

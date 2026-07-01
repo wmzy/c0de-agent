@@ -8,9 +8,7 @@ afterEach(cleanup)
 // 用假 Provider 包裹，捕获 openFile 调用
 function withSelection(ui: React.ReactNode, openFile = vi.fn()) {
   render(
-    <FileSelectionContext.Provider
-      value={{ selectedFile: null, openFile, closeFile: () => {} }}
-    >
+    <FileSelectionContext.Provider value={{ selectedFile: null, openFile, closeFile: () => {} }}>
       {ui}
     </FileSelectionContext.Provider>,
   )

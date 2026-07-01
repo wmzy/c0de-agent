@@ -19,9 +19,7 @@ function withClient(ui: React.ReactNode, closeFile = () => {}) {
   })
   render(
     <QueryClientProvider client={qc}>
-      <FileSelectionContext.Provider
-        value={{ selectedFile: null, openFile: () => {}, closeFile }}
-      >
+      <FileSelectionContext.Provider value={{ selectedFile: null, openFile: () => {}, closeFile }}>
         {ui}
       </FileSelectionContext.Provider>
     </QueryClientProvider>,

@@ -25,7 +25,9 @@ describe('FileSelectionContext', () => {
   it('无 Provider 时 useFileSelection 抛错', () => {
     // 抑制 console.error（React Provider 缺失会打印）
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    expect(() => render(<Consumer />)).toThrow('useFileSelection must be used within FileSelectionContext')
+    expect(() => render(<Consumer />)).toThrow(
+      'useFileSelection must be used within FileSelectionContext',
+    )
     spy.mockRestore()
   })
 

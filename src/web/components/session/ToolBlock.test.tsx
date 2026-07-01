@@ -1,9 +1,22 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { FileSelectionContext } from '../../contexts/FileSelectionContext.js'
 import { ToolBlock } from './ToolBlock.js'
 import type { RenderBlock } from './utils/normalizeParts.js'
 
 afterEach(() => cleanup())
+
+// ReadToolView 等经 FilePathLink 依赖 FileSelectionContext，需包裹 Provider
+function SelectionWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <FileSelectionContext.Provider
+      value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+    >
+      {children}
+    </FileSelectionContext.Provider>
+  )
+}
+const render = (ui: React.ReactNode) => rtlRender(ui, { wrapper: SelectionWrapper })
 
 function toolBlock(
   over: Partial<Extract<RenderBlock, { type: 'tool' }>> = {},

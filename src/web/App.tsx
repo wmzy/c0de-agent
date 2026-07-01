@@ -10,10 +10,10 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom'
+import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TopBar } from './components/TopBar.js'
-import { FileSelectionContext, type FileSelection } from './contexts/FileSelectionContext.js'
-import { SidebarTabs, type SidebarTab } from './components/SidebarTabs.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
+import { type FileSelection, FileSelectionContext } from './contexts/FileSelectionContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
 import { projectAPI } from './services/project.js'
 import { ChatView } from './views/ChatView.js'

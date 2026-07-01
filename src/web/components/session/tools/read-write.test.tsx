@@ -9,9 +9,7 @@ afterEach(cleanup)
 // FilePathLink 依赖 FileSelectionContext，测试需包裹假 Provider
 function withProvider(ui: React.ReactNode, openFile = vi.fn()) {
   render(
-    <FileSelectionContext.Provider
-      value={{ selectedFile: null, openFile, closeFile: () => {} }}
-    >
+    <FileSelectionContext.Provider value={{ selectedFile: null, openFile, closeFile: () => {} }}>
       {ui}
     </FileSelectionContext.Provider>,
   )
@@ -37,9 +35,7 @@ describe('ReadToolView', () => {
   })
 
   it('路径为可点击 FilePathLink', () => {
-    const openFile = withProvider(
-      <ReadToolView input={{ path: 'src/a.ts' }} status="completed" />,
-    )
+    const openFile = withProvider(<ReadToolView input={{ path: 'src/a.ts' }} status="completed" />)
     const link = screen.getByTestId('filepath-link')
     expect(link.textContent).toBe('src/a.ts')
     link.click()
