@@ -1,7 +1,28 @@
 import { css } from '@linaria/core'
-import type { ReactNode } from 'react'
+import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MobileNav } from '../components/MobileNav.js'
 import { DESKTOP, MOBILE } from '../styles/breakpoints.js'
+
+// 三栏宽度常量：左 sidebar / 右 panel 各自可拖拽，中间 main flex 填充剩余空间。
+const DEFAULT_SIDEBAR = 280
+const MIN_SIDEBAR = 200
+const MAX_SIDEBAR = 480
+const DEFAULT_PANEL = 360
+const MIN_PANEL = 240
+const MAX_PANEL = 640
+const SIDEBAR_KEY = 'c0de-agent:sidebarWidth'
+const PANEL_KEY = 'c0de-agent:panelWidth'
+
+const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
+
+/** 从 localStorage 读取并钳制宽度；非法或缺省返回 fallback。 */
+function loadWidth(key: string, fallback: number, min: number, max: number): number {
+  const raw = localStorage.getItem(key)
+  if (raw == null) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) ? clamp(n, min, max) : fallback
+}
 
 const layoutStyle = css`
   display: flex;
@@ -27,8 +48,6 @@ const sidebarStyle = css`
   ${DESKTOP} {
     display: flex;
     flex-direction: column;
-    width: 280px;
-    border-right: 1px solid var(--border);
     flex-shrink: 0;
   }
 `
@@ -48,9 +67,36 @@ const panelStyle = css`
   display: none;
   ${DESKTOP} {
     display: flex;
-    width: 360px;
-    border-left: 1px solid var(--border);
     flex-shrink: 0;
+  }
+`
+
+// 分隔条：<hr> 语义即 separator，1px 视觉分隔线，::before 把可抓取热区扩展到 ±4px。
+// 拖拽中/悬停高亮用 --primary；active 态额外通过 inline style 强化。
+const resizerStyle = css`
+  display: none;
+  ${DESKTOP} {
+    display: block;
+    width: 1px;
+    border: 0;
+    margin: 0;
+    cursor: col-resize;
+    background: var(--border);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 5;
+    transition: background 0.12s ease;
+    &:hover {
+      background: var(--primary);
+    }
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -4px;
+      right: -4px;
+    }
   }
 `
 
@@ -61,19 +107,141 @@ type LayoutProps = {
   panel?: ReactNode
 }
 
+/**
+ * 水平拖拽：按累积增量调整宽度。draggingRef 用作即时门控（不依赖重渲染时序），
+ * dragging state 仅驱动视觉反馈与拖拽期间禁用全局文本选中。
+ */
+function useColResize(applyDelta: (delta: number) => void) {
+  const draggingRef = useRef(false)
+  const [dragging, setDragging] = useState(false)
+  const startX = useRef(0)
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
+    e.preventDefault()
+    draggingRef.current = true
+    setDragging(true)
+    startX.current = e.clientX
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // jsdom / 无指针捕获环境忽略
+    }
+  }
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+    if (!draggingRef.current) return
+    const delta = e.clientX - startX.current
+    if (delta === 0) return
+    startX.current = e.clientX
+    applyDelta(delta)
+  }
+
+  const onPointerUp = (e: ReactPointerEvent<HTMLElement>) => {
+    if (!draggingRef.current) return
+    draggingRef.current = false
+    setDragging(false)
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      // 同上
+    }
+  }
+
+  return { dragging, onPointerDown, onPointerMove, onPointerUp }
+}
+
 export function Layout({
   header: headerNode,
   sidebar: sidebarNode,
   main: mainNode,
   panel: panelNode,
 }: LayoutProps) {
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    loadWidth(SIDEBAR_KEY, DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
+  )
+  const [panelWidth, setPanelWidth] = useState(() =>
+    loadWidth(PANEL_KEY, DEFAULT_PANEL, MIN_PANEL, MAX_PANEL),
+  )
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_KEY, String(sidebarWidth))
+  }, [sidebarWidth])
+  useEffect(() => {
+    localStorage.setItem(PANEL_KEY, String(panelWidth))
+  }, [panelWidth])
+
+  const sidebarResize = useColResize((delta) =>
+    setSidebarWidth((w) => clamp(w + delta, MIN_SIDEBAR, MAX_SIDEBAR)),
+  )
+  const panelResize = useColResize((delta) =>
+    setPanelWidth((w) => clamp(w - delta, MIN_PANEL, MAX_PANEL)),
+  )
+
+  const dragging = sidebarResize.dragging || panelResize.dragging
+  useEffect(() => {
+    if (!dragging) return
+    const { cursor, userSelect } = document.body.style
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    return () => {
+      document.body.style.cursor = cursor
+      document.body.style.userSelect = userSelect
+    }
+  }, [dragging])
+
   return (
     <div className={layoutStyle}>
       {headerNode && <>{headerNode}</>}
       <div className={bodyStyle}>
-        {sidebarNode && <aside className={sidebarStyle}>{sidebarNode}</aside>}
+        {sidebarNode && (
+          <>
+            <aside
+              className={sidebarStyle}
+              data-testid="layout-sidebar"
+              style={{ width: sidebarWidth }}
+            >
+              {sidebarNode}
+            </aside>
+            <hr
+              className={resizerStyle}
+              data-testid="resizer-sidebar"
+              aria-orientation="vertical"
+              aria-label="调整侧边栏宽度"
+              aria-valuenow={Math.round(sidebarWidth)}
+              aria-valuemin={MIN_SIDEBAR}
+              aria-valuemax={MAX_SIDEBAR}
+              tabIndex={0}
+              style={sidebarResize.dragging ? { background: 'var(--primary)' } : undefined}
+              onPointerDown={sidebarResize.onPointerDown}
+              onPointerMove={sidebarResize.onPointerMove}
+              onPointerUp={sidebarResize.onPointerUp}
+              onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR)}
+            />
+          </>
+        )}
         <main className={mainStyle}>{mainNode}</main>
-        {panelNode && <aside className={panelStyle}>{panelNode}</aside>}
+        {panelNode && (
+          <>
+            <hr
+              className={resizerStyle}
+              data-testid="resizer-panel"
+              aria-orientation="vertical"
+              aria-label="调整预览面板宽度"
+              aria-valuenow={Math.round(panelWidth)}
+              aria-valuemin={MIN_PANEL}
+              aria-valuemax={MAX_PANEL}
+              tabIndex={0}
+              style={panelResize.dragging ? { background: 'var(--primary)' } : undefined}
+              onPointerDown={panelResize.onPointerDown}
+              onPointerMove={panelResize.onPointerMove}
+              onPointerUp={panelResize.onPointerUp}
+              onDoubleClick={() => setPanelWidth(DEFAULT_PANEL)}
+            />
+            <aside className={panelStyle} data-testid="layout-panel" style={{ width: panelWidth }}>
+              {panelNode}
+            </aside>
+          </>
+        )}
       </div>
       {/* 移动端底部导航栏（spec §10.3）；桌面端由组件内部隐藏 */}
       <MobileNav />

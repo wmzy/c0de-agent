@@ -1,25 +1,28 @@
 import { css } from '@linaria/core'
 
-/** 文件树节点。children 为 undefined 表示尚未加载子目录。 */
+/** 文件树节点。children 为 undefined 表示尚未加载子目录。type 缺省视为 directory（兼容目录选择器）。 */
 export type TreeNode = {
   name: string
   path: string
+  type?: 'file' | 'directory'
   children?: TreeNode[]
 }
 
 type FileTreeProps = {
-  /** 根节点（当前已导航目录）。null 时不渲染。 */
+  /** 根节点。null 时不渲染。 */
   root: TreeNode | null
   /** 已展开的目录路径集合。 */
   expanded: Set<string>
-  /** 当前选中目录路径。 */
+  /** 当前选中节点路径。 */
   selected: string | null
   /** 正在加载子目录的节点路径集合。 */
   loadingPaths: Set<string>
-  /** 展开/折叠节点（首次展开由父组件触发懒加载）。 */
+  /** 展开/折叠目录（首次展开由父组件触发懒加载）。 */
   onToggle: (path: string) => void
-  /** 选中目录。 */
+  /** 激活节点：文件=打开；目录行为由 directoryClickMode 决定。 */
   onSelect: (path: string) => void
+  /** 点击目录名的行为：select=选中（目录选择器），toggle=展开/折叠（文件浏览器）。默认 select。 */
+  directoryClickMode?: 'select' | 'toggle'
 }
 
 const tree = css`
@@ -55,6 +58,19 @@ const toggle = css`
   font-size: 10px;
 `
 
+const toggleBtn = css`
+  width: 16px;
+  text-align: center;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  font-size: 10px;
+  min-height: auto;
+  min-width: auto;
+`
+
 const childList = css`
   padding-left: 16px;
   border-left: 1px solid var(--border);
@@ -67,7 +83,11 @@ const hint = css`
   font-size: 12px;
 `
 
-/** 递归文件树：目录节点可展开（懒加载）与选中。仅渲染 directory（mode=directory）。 */
+/**
+ * 递归文件树：目录可展开（懒加载），文件为叶子节点。
+ * directoryClickMode='select' 时点目录名=选中（目录选择器用法）；
+ * 'toggle' 时点目录名=展开/折叠（文件浏览器用法）。
+ */
 export function FileTree({
   root,
   expanded,
@@ -75,11 +95,12 @@ export function FileTree({
   loadingPaths,
   onToggle,
   onSelect,
+  directoryClickMode = 'select',
 }: FileTreeProps) {
   if (!root) return null
   return (
     <div className={tree} role="tree" data-testid="file-tree">
-      {renderNode(root, 0, expanded, selected, loadingPaths, onToggle, onSelect)}
+      {renderNode(root, 0, expanded, selected, loadingPaths, onToggle, onSelect, directoryClickMode)}
     </div>
   )
 }
@@ -92,43 +113,64 @@ function renderNode(
   loadingPaths: Set<string>,
   onToggle: (path: string) => void,
   onSelect: (path: string) => void,
+  directoryClickMode: 'select' | 'toggle',
 ) {
+  const isFile = node.type === 'file'
   const isExpanded = expanded.has(node.path)
   const isLoading = loadingPaths.has(node.path)
   const isSelected = selected === node.path
   const hasChildren = node.children !== undefined
   return (
-    <div role="treeitem" aria-expanded={isExpanded} tabIndex={-1} key={node.path}>
+    <div role="treeitem" aria-expanded={isFile ? undefined : isExpanded} tabIndex={-1} key={node.path}>
       <div
         className={`${row} ${isSelected ? selectedRow : ''}`}
         style={{ paddingLeft: depth * 16 + 8 }}
       >
+        {isFile ? (
+          <span className={toggle} aria-hidden="true" />
+        ) : (
+          <button
+            type="button"
+            className={toggleBtn}
+            onClick={() => onToggle(node.path)}
+            aria-label={isExpanded ? '折叠' : '展开'}
+            data-testid={`toggle-${node.path}`}
+          >
+            {hasChildren ? (isExpanded ? '▼' : '▶') : ''}
+          </button>
+        )}
         <button
           type="button"
-          className={toggle}
-          onClick={() => onToggle(node.path)}
-          aria-label={isExpanded ? '折叠' : '展开'}
-          data-testid={`toggle-${node.path}`}
-        >
-          {hasChildren ? (isExpanded ? '▼' : '▶') : ''}
-        </button>
-        <button
-          type="button"
-          className={`${row}`}
+          className={row}
           style={{ flex: 1, padding: 0 }}
-          onClick={() => onSelect(node.path)}
+          onClick={() =>
+            isFile
+              ? onSelect(node.path)
+              : directoryClickMode === 'toggle'
+                ? onToggle(node.path)
+                : onSelect(node.path)
+          }
           data-testid={`node-${node.path}`}
           data-selected={isSelected ? '' : undefined}
         >
-          <span>{isExpanded ? '📂' : '📁'}</span>
+          <span>{isFile ? '📄' : isExpanded ? '📂' : '📁'}</span>
           <span>{node.name}</span>
         </button>
       </div>
-      {isExpanded && (
+      {!isFile && isExpanded && (
         <div className={childList}>
           {hasChildren && node.children && node.children.length > 0 ? (
             node.children.map((c) =>
-              renderNode(c, depth + 1, expanded, selected, loadingPaths, onToggle, onSelect),
+              renderNode(
+                c,
+                depth + 1,
+                expanded,
+                selected,
+                loadingPaths,
+                onToggle,
+                onSelect,
+                directoryClickMode,
+              ),
             )
           ) : isLoading ? (
             <div className={hint}>加载中…</div>

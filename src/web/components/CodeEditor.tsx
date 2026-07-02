@@ -7,7 +7,15 @@ import { useEffect, useRef, useState } from 'react'
 import { useTheme } from '../contexts/ThemeContext.js'
 import { fileAPI } from '../services/file.js'
 
-export function CodeEditor({ path, initial }: { path: string; initial: string }) {
+export function CodeEditor({
+  path,
+  initial,
+  projectId,
+}: {
+  path: string
+  initial: string
+  projectId?: string
+}) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -37,7 +45,7 @@ export function CodeEditor({ path, initial }: { path: string; initial: string })
 
   const save = async () => {
     const doc = viewRef.current?.state.doc.toString() ?? ''
-    await fileAPI.write(path, doc)
+    await fileAPI.write(path, doc, projectId)
     setDirty(false)
   }
 

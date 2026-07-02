@@ -72,9 +72,19 @@ function createFilesRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
   // 列出目录
+  // projectId 指定时按对应项目 worktree 列出，否则回退 ctx.cwd（向后兼容）。
   app.get('/', async (c) => {
     const queryPath = c.req.query('path') ?? '.'
-    const resolved = safeResolve(ctx.cwd, queryPath)
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const resolved = safeResolve(root, queryPath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
@@ -119,11 +129,21 @@ function createFilesRoute(ctx: ServerContext): Hono {
   })
 
   // 读取文件
+  // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.get('/*', async (c) => {
     const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
     const raw = path.endsWith('/raw')
     const filePath = raw ? path.slice(0, -'/raw'.length) : path
-    const resolved = safeResolve(ctx.cwd, filePath)
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const resolved = safeResolve(root, filePath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
@@ -143,9 +163,19 @@ function createFilesRoute(ctx: ServerContext): Hono {
   })
 
   // 写入文件
+  // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.put('/*', async (c) => {
     const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
-    const resolved = safeResolve(ctx.cwd, path)
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const resolved = safeResolve(root, path)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }

@@ -1,6 +1,5 @@
 import { css } from '@linaria/core'
-import { useQuery } from '@tanstack/react-query'
-import { projectAPI } from '../services/project.js'
+import { useProjects } from '../hooks/useSession.js'
 
 const indicator = css`
   display: flex;
@@ -35,13 +34,10 @@ const branchTag = css`
   flex-shrink: 0;
 `
 
-/** 顶栏项目指示器：显示当前项目名 + git 分支。 */
-export function ProjectIndicator() {
-  const { data: project } = useQuery({
-    queryKey: ['project', 'current'],
-    queryFn: projectAPI.current,
-    staleTime: 30_000,
-  })
+/** 侧栏项目指示器：显示路由当前项目名 + git 分支（由 projectId 驱动，非服务端工作区）。 */
+export function ProjectIndicator({ projectId }: { projectId: string }) {
+  const { data: projects } = useProjects()
+  const project = projects?.find((p) => p.id === projectId)
 
   if (!project) {
     return (

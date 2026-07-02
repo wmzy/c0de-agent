@@ -41,7 +41,7 @@ describe('FilePreview', () => {
         json: async () => ({ path: 'a.md', content: '# Title' }),
       }),
     )
-    withClient(<FilePreview path="a.md" />)
+    withClient(<FilePreview projectId="p1" path="a.md" />)
     await waitFor(() => {
       expect(screen.getByText('加载中…')).toBeTruthy()
     })
@@ -56,21 +56,21 @@ describe('FilePreview', () => {
         json: async () => ({ path: 'song.mp3', content: '' }),
       }),
     )
-    withClient(<FilePreview path="song.mp3" />)
+    withClient(<FilePreview projectId="p1" path="song.mp3" />)
     const audio = document.querySelector('audio')
     expect(audio).toBeTruthy()
     expect(audio?.getAttribute('src')).toContain('/api/files/song.mp3/raw')
   })
 
   it('渲染视频文件为内联播放器', async () => {
-    withClient(<FilePreview path="clip.mp4" />)
+    withClient(<FilePreview projectId="p1" path="clip.mp4" />)
     const video = document.querySelector('video')
     expect(video).toBeTruthy()
     expect(video?.getAttribute('src')).toContain('/api/files/clip.mp4/raw')
   })
 
   it('图片 src 指向 /raw 端点', async () => {
-    withClient(<FilePreview path="a.png" />)
+    withClient(<FilePreview projectId="p1" path="a.png" />)
     const img = document.querySelector('img')
     expect(img).toBeTruthy()
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
@@ -78,7 +78,7 @@ describe('FilePreview', () => {
 
   it('渲染 header 显示路径', async () => {
     vi.stubGlobal('fetch', fetchMock('# Title'))
-    withClient(<FilePreview path="readme.md" />)
+    withClient(<FilePreview projectId="p1" path="readme.md" />)
     await waitFor(() => {
       expect(screen.getByTestId('preview-path').textContent).toBe('readme.md')
     })
@@ -93,7 +93,7 @@ describe('FilePreview', () => {
         <FileSelectionContext.Provider
           value={{ selectedFile: 'readme.md', openFile: () => {}, closeFile }}
         >
-          <FilePreview path="readme.md" />
+          <FilePreview projectId="p1" path="readme.md" />
         </FileSelectionContext.Provider>
       </QueryClientProvider>,
     )

@@ -89,7 +89,7 @@ export function SessionList({
 
   return (
     <div className={panel}>
-      <ProjectIndicator />
+      <ProjectIndicator projectId={projectId} />
       <div className={filterBar}>
         <div className={switcherWrap}>
           <ProjectSwitcher projects={projects ?? []} value={projectId} onChange={onProjectChange} />

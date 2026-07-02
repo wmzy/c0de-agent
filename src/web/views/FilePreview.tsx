@@ -74,15 +74,17 @@ function extOf(name: string): string {
   return name.split('.').pop()?.toLowerCase() ?? ''
 }
 
-export function FilePreview({ path }: { path: string }) {
+export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
   const { closeFile } = useFileSelection()
   const ext = extOf(path)
   const isMedia =
     IMG_EXT.includes(ext) || AUDIO_EXT.includes(ext) || VIDEO_EXT.includes(ext) || ext === 'pdf'
 
+  const projectQuery = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
+
   const q = useQuery({
-    queryKey: ['file', path],
-    queryFn: () => fileAPI.read(path),
+    queryKey: ['file', path, projectId],
+    queryFn: () => fileAPI.read(path, projectId),
     enabled: !isMedia,
   })
 
@@ -91,12 +93,12 @@ export function FilePreview({ path }: { path: string }) {
   if (isMedia) {
     if (IMG_EXT.includes(ext)) {
       body = (
-        <img src={`/api/files/${encodeURI(path)}/raw`} alt={path} style={{ maxWidth: '100%' }} />
+        <img src={`/api/files/${encodeURI(path)}/raw${projectQuery}`} alt={path} style={{ maxWidth: '100%' }} />
       )
     } else if (ext === 'pdf') {
       body = (
         <embed
-          src={`/api/files/${encodeURI(path)}/raw`}
+          src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
           type="application/pdf"
           style={{ width: '100%', height: '100%' }}
           data-testid="pdf-preview"
@@ -106,7 +108,7 @@ export function FilePreview({ path }: { path: string }) {
       body = (
         <audio
           controls
-          src={`/api/files/${encodeURI(path)}/raw`}
+          src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
           style={{ width: '100%' }}
           data-testid="audio-preview"
         >
@@ -117,7 +119,7 @@ export function FilePreview({ path }: { path: string }) {
       body = (
         <video
           controls
-          src={`/api/files/${encodeURI(path)}/raw`}
+          src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
           style={{ maxWidth: '100%' }}
           data-testid="video-preview"
         >
@@ -132,7 +134,7 @@ export function FilePreview({ path }: { path: string }) {
   } else if (['md', 'markdown'].includes(ext)) {
     body = <Markdown content={q.data.content} />
   } else if (CODE_EXT.includes(ext)) {
-    body = <CodeEditor path={path} initial={q.data.content} />
+    body = <CodeEditor projectId={projectId} path={path} initial={q.data.content} />
   } else {
     body = <CodeBlock code={q.data.content} lang={ext} />
   }

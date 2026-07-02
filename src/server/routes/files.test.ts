@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -177,5 +177,81 @@ describe('files route', () => {
     const app = createFilesRoute(ctx)
     const res = await app.request('/search?q=x&projectId=nonexistent-id')
     expect(res.status).toBe(404)
+  })
+
+  it('GET /?projectId=... 按项目 worktree 列出（非 ctx.cwd）', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'c0de-list-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'c0de-list-b-'))
+    writeFileSync(join(dirA, 'only-in-a.txt'), 'a')
+    writeFileSync(join(dirB, 'only-in-b.txt'), 'b')
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const projectA = await fromDirectory(db, dirA)
+    const projectB = await fromDirectory(db, dirB)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
+    const app = createFilesRoute(ctx)
+
+    // 不传 projectId：回退 ctx.cwd（dirA）
+    const resDefault = await app.request('/')
+    const defaultNames = ((await resDefault.json()) as FileEntry[]).map((e) => e.name)
+    expect(defaultNames).toContain('only-in-a.txt')
+    expect(defaultNames).not.toContain('only-in-b.txt')
+
+    // 传 projectB.id：列出 dirB
+    const resB = await app.request(`/?projectId=${projectB.id}`)
+    const bNames = ((await resB.json()) as FileEntry[]).map((e) => e.name)
+    expect(bNames).toContain('only-in-b.txt')
+    expect(bNames).not.toContain('only-in-a.txt')
+
+    // 传 projectA.id：列出 dirA
+    const resA = await app.request(`/?projectId=${projectA.id}`)
+    const aNames = ((await resA.json()) as FileEntry[]).map((e) => e.name)
+    expect(aNames).toContain('only-in-a.txt')
+  })
+
+  it('GET /file?projectId=... 按项目 worktree 读取（非 ctx.cwd）', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'c0de-read-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'c0de-read-b-'))
+    writeFileSync(join(dirA, 'shared.txt'), 'from-a')
+    writeFileSync(join(dirB, 'shared.txt'), 'from-b')
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const projectB = await fromDirectory(db, dirB)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
+    const app = createFilesRoute(ctx)
+
+    // 不传 projectId：读 dirA
+    const resDefault = await app.request('/shared.txt')
+    expect(((await resDefault.json()) as { content: string }).content).toBe('from-a')
+
+    // 传 projectB.id：读 dirB
+    const resB = await app.request(`/shared.txt?projectId=${projectB.id}`)
+    expect(((await resB.json()) as { content: string }).content).toBe('from-b')
+  })
+
+  it('PUT /file?projectId=... 写入对应项目 worktree（不污染 ctx.cwd）', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'c0de-put-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'c0de-put-b-'))
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const projectB = await fromDirectory(db, dirB)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
+    const app = createFilesRoute(ctx)
+
+    // 传 projectB.id：写入 dirB
+    const res = await app.request(`/shared.txt?projectId=${projectB.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'written-to-b' }),
+    })
+    expect(res.status).toBe(200)
+    // dirB 应存在该文件
+    expect(existsSync(join(dirB, 'shared.txt'))).toBe(true)
+    expect(readFileSync(join(dirB, 'shared.txt'), 'utf-8')).toBe('written-to-b')
+    // dirA（ctx.cwd）不应被污染
+    expect(existsSync(join(dirA, 'shared.txt'))).toBe(false)
   })
 })

@@ -176,11 +176,11 @@ function ChatPage() {
                 }}
               />
             }
-            files={<FileBrowser onPick={setSelectedFile} />}
+            files={<FileBrowser projectId={projectId} onPick={setSelectedFile} />}
           />
         }
         main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
-        panel={selectedFile ? <FilePreview path={selectedFile} /> : null}
+        panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
       />
     </FileSelectionContext.Provider>
   )

@@ -38,6 +38,8 @@ type ChatProps = {
   topPanel?: ReactNode
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
+  /** 当前项目名（空闲态工具栏占位显示，替代硬编码 brand）。 */
+  projectName?: string
   /** 可用 agent 列表（@ mention 渲染与校验）。 */
   agents?: AgentListItem[]
 }
@@ -154,6 +156,7 @@ export function Chat({
   topPanel,
   supportsVision = true,
   projectId,
+  projectName,
   agents = [],
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -188,7 +191,7 @@ export function Chat({
             ? error
             : usage
               ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
-              : 'c0de-agent'}
+              : projectName ?? 'c0de-agent'}
         </span>
         {isStreaming && !paused ? (
           <button onClick={onPause} type="button" data-testid="pause">
