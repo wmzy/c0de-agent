@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import type { Config, MCPServerConfig } from '@shared/types/config.js'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type ChangeEvent, useRef, useState } from 'react'
+import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import { ProviderCatalogDialog } from '../components/ProviderCatalogDialog.js'
 import { useTheme } from '../contexts/ThemeContext.js'
 import { configAPI } from '../services/config.js'
@@ -135,6 +135,19 @@ const testResultSpan = css`
   font-size: 0.85em;
 `
 
+/** 已加密保存徽章：apiKey 输入框旁的小提示，表示 key 已落盘。 */
+const apiKeySavedBadge = css`
+  font-size: 0.8em;
+  color: var(--success, #2a9d8f);
+  white-space: nowrap;
+`
+
+/** 保存状态提示文本。 */
+const saveStatus = css`
+  margin-left: 12px;
+  font-size: 0.9em;
+`
+
 const buttonRow = css`
   display: flex;
   gap: 8px;
@@ -265,6 +278,100 @@ const mcpRow = css`
   background: var(--bg-secondary);
 `
 
+/** 解析逗号分隔的字符串数组（trim + 去空）。 */
+function splitList(s: string): string[] {
+  return s
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean)
+}
+
+/**
+ * 逗号分隔列表输入。
+ *
+ * 内部维护原始文本缓冲，仅在「外部 value 解析结果与缓冲不一致」时同步，
+ * 避免 value={array.join(', ')} + onChange=parseList 在每次按键时抹掉
+ * 用户正在输入的分隔符：输入 "read," 会被 parse→join 还原成 "read"，
+ * 导致逗号无法输入，最终保存时字段被清空（refresh 后恢复原值的根因）。
+ */
+function CommaListInput({
+  value,
+  onCommit,
+  placeholder,
+  className,
+  type,
+  id,
+}: {
+  value: string[]
+  onCommit: (items: string[]) => void
+  placeholder?: string
+  className?: string
+  type?: string
+  id?: string
+}) {
+  const [text, setText] = useState(value.join(', '))
+  const joined = value.join(', ')
+  // 外部 value 变化（加载/导入/保存后刷新）时同步缓冲；
+  // 解析结果一致则保留用户正在编辑的文本（含尾随分隔符）。
+  useEffect(() => {
+    setText((cur) => (splitList(cur).join(', ') === joined ? cur : joined))
+  }, [joined])
+  return (
+    <input
+      id={id}
+      type={type}
+      className={className}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => {
+        setText(e.target.value)
+        onCommit(splitList(e.target.value))
+      }}
+    />
+  )
+}
+
+/**
+ * API Key 输入。
+ *
+ * 不回显已加密的密文（enc: 前缀）：否则用户改完 key、保存、刷新后会看到 enc: 串
+ * （而非自己输入的 key），误以为「没保存」。已加密时输入框留空，旁边提示「已加密」；
+ * 用户重新输入即覆盖。未改动时 draft 仍保留原 enc: 值，保存不会误清空。
+ */
+function ApiKeyInput({
+  stored,
+  onCommit,
+}: {
+  stored: string | undefined
+  onCommit: (value: string) => void
+}) {
+  const [text, setText] = useState('')
+  // 外部 stored 变化（加载、保存后刷新、导入）时同步显示：密文→留空，明文→原样。
+  useEffect(() => {
+    setText((stored ?? '').startsWith('enc:') ? '' : (stored ?? ''))
+  }, [stored])
+  const isEnc = (stored ?? '').startsWith('enc:')
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <input
+        type="password"
+        value={text}
+        placeholder={isEnc ? '已加密保存（重新输入以修改）' : 'API Key'}
+        onChange={(e) => {
+          setText(e.target.value)
+          onCommit(e.target.value)
+        }}
+        data-testid="provider-apikey"
+      />
+      {isEnc && (
+        <span className={apiKeySavedBadge} data-testid="provider-apikey-saved">
+          ✓ 已加密
+        </span>
+      )}
+    </span>
+  )
+}
+
 export function Settings() {
   const qc = useQueryClient()
   const { data: config, isLoading } = useQuery({
@@ -285,9 +392,29 @@ export function Settings() {
   const [jsonError, setJsonError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。
+  const [saveFeedback, setSaveFeedback] = useState<
+    { kind: 'idle' } | { kind: 'saving' } | { kind: 'ok' } | { kind: 'err'; msg: string }
+  >({ kind: 'idle' })
+
   const save = useMutation({
     mutationFn: (patch: Partial<Config>) => configAPI.update(patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['config'] }),
+    onMutate: () => setSaveFeedback({ kind: 'saving' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['config'] })
+      // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
+      // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
+      setDraft(null)
+      setSaveFeedback({ kind: 'ok' })
+      setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
+    },
+    onError: (err: unknown) => {
+      const msg =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message: string }).message)
+          : '未知错误'
+      setSaveFeedback({ kind: 'err', msg })
+    },
   })
 
   const addProviderFromCatalog = (provider: ProviderConfig) => {
@@ -408,13 +535,6 @@ export function Settings() {
       return { ...base, [key]: { ...current, ...patch } }
     })
   }
-
-  /** 解析逗号分隔的字符串数组。 */
-  const parseList = (s: string): string[] =>
-    s
-      .split(',')
-      .map((x) => x.trim())
-      .filter(Boolean)
 
   // ---- 角色路由 (roleRouting) ----
   const addRoleRouting = () => {
@@ -699,11 +819,9 @@ export function Settings() {
                     onChange={(e) => updateProvider(index, 'baseURL', e.target.value)}
                     placeholder="https://api.openai.com/v1"
                   />
-                  <input
-                    type="password"
-                    value={provider.apiKey}
-                    onChange={(e) => updateProvider(index, 'apiKey', e.target.value)}
-                    placeholder="API Key"
+                  <ApiKeyInput
+                    stored={provider.apiKey}
+                    onCommit={(value) => updateProvider(index, 'apiKey', value)}
                   />
                   <button
                     type="button"
@@ -931,21 +1049,23 @@ export function Settings() {
           </div>
           <div className={section}>
             <h3>工具配置</h3>
-            <label className={field}>
+            <label className={field} htmlFor="cfg-tools-enabled">
               <span>已启用：</span>
-              <input
+              <CommaListInput
+                id="cfg-tools-enabled"
                 className={fieldInput}
-                value={merged.tools.enabled.join(', ')}
-                onChange={(e) => updateSection('tools', { enabled: parseList(e.target.value) })}
+                value={merged.tools.enabled}
+                onCommit={(items) => updateSection('tools', { enabled: items })}
                 placeholder="read, write, edit, glob, grep, bash"
               />
             </label>
-            <label className={field}>
+            <label className={field} htmlFor="cfg-tools-disabled">
               <span>已禁用：</span>
-              <input
+              <CommaListInput
+                id="cfg-tools-disabled"
                 className={fieldInput}
-                value={merged.tools.disabled.join(', ')}
-                onChange={(e) => updateSection('tools', { disabled: parseList(e.target.value) })}
+                value={merged.tools.disabled}
+                onCommit={(items) => updateSection('tools', { disabled: items })}
                 placeholder="（无）"
               />
             </label>
@@ -990,20 +1110,18 @@ export function Settings() {
           </div>
           <div className={section}>
             <h3>插件</h3>
-            <input
-              value={merged.plugins.enabled.join(', ')}
-              onChange={(e) => updateSection('plugins', { enabled: parseList(e.target.value) })}
+            <CommaListInput
+              value={merged.plugins.enabled}
+              onCommit={(items) => updateSection('plugins', { enabled: items })}
               placeholder="plugin-a, plugin-b"
             />
             <div className={hint}>用逗号分隔已启用的插件名称。</div>
           </div>
           <div className={section}>
             <h3>斜杠命令</h3>
-            <input
-              value={merged.slashCommands.enabled.join(', ')}
-              onChange={(e) =>
-                updateSection('slashCommands', { enabled: parseList(e.target.value) })
-              }
+            <CommaListInput
+              value={merged.slashCommands.enabled}
+              onCommit={(items) => updateSection('slashCommands', { enabled: items })}
               placeholder="/compact, /model, /clear"
             />
             <div className={hint}>用逗号分隔已启用的斜杠命令。</div>
@@ -1147,14 +1265,13 @@ export function Settings() {
                 />
               </label>
             )}
-            <label className={field}>
+            <label className={field} htmlFor="cfg-allowed-origins">
               <span>允许的 CORS 来源：</span>
-              <input
+              <CommaListInput
+                id="cfg-allowed-origins"
                 className={fieldInput}
-                value={merged.security.allowedOrigins.join(', ')}
-                onChange={(e) =>
-                  updateSection('security', { allowedOrigins: parseList(e.target.value) })
-                }
+                value={merged.security.allowedOrigins}
+                onCommit={(items) => updateSection('security', { allowedOrigins: items })}
                 placeholder="（本地回环始终允许）"
               />
             </label>
@@ -1166,12 +1283,30 @@ export function Settings() {
         <button
           type="button"
           onClick={() => draft && save.mutate(draft)}
-          disabled={!isDirty}
+          disabled={!isDirty || saveFeedback.kind === 'saving'}
           title={isDirty ? '保存配置' : '配置未变更或正在加载'}
           data-testid="settings-save"
         >
-          保存
+          {saveFeedback.kind === 'saving' ? '保存中…' : '保存'}
         </button>
+        {saveFeedback.kind !== 'idle' && (
+          <span
+            className={saveStatus}
+            data-testid="settings-save-status"
+            style={{
+              color:
+                saveFeedback.kind === 'ok'
+                  ? 'var(--success, #2a9d8f)'
+                  : saveFeedback.kind === 'err'
+                    ? 'var(--error, #e63946)'
+                    : 'var(--text-secondary)',
+            }}
+          >
+            {saveFeedback.kind === 'saving' && '保存中…'}
+            {saveFeedback.kind === 'ok' && '✓ 已保存'}
+            {saveFeedback.kind === 'err' && `✗ 保存失败：${saveFeedback.msg}`}
+          </span>
+        )}
       </div>
     </div>
   )

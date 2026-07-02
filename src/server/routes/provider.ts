@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { decryptSecret } from '../../core/secret.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -64,7 +65,10 @@ function createProviderRoute(ctx: ServerContext): Hono {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const { baseURL, apiKey } = body as TestBody
     if (!baseURL) return apiError(c, 400, 'BAD_REQUEST', 'baseURL is required')
-    const result = await probeModels(baseURL, apiKey ?? '')
+    // apiKey 可能是 Settings 页回传的 enc: 密文（保存后刷新、未重输时）：探测前解密，
+    // 否则把 enc: 串当 Bearer token 发给上游必然 401，造成「保存了却测试失败」的误判。
+    const secret = apiKey ? decryptSecret(apiKey) : ''
+    const result = await probeModels(baseURL, secret)
     return c.json(result, result.ok ? 200 : 200)
   })
 

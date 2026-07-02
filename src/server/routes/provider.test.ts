@@ -107,4 +107,31 @@ describe('provider route', () => {
     expect(body.ok).toBe(false)
     expect(body.error).toContain('401')
   })
+
+  // 回归：Settings 保存后 apiKey 落盘为 enc: 密文，刷新后未重输时，测试按钮回传的是
+  // enc: 串。若直接当 Bearer 发给上游必然 401，造成「保存了却测试失败」的误判。
+  // 测试端点需先解密再探测。
+  it('POST /test 解密 enc: apiKey 后再探测（保存+刷新后测试可用）', async () => {
+    const { encryptSecret } = await import('../../core/secret.js')
+    const enc = encryptSecret('sk-decrypted-real')
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: 'gpt-4o' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    const { app } = await setup()
+    const res = await app.request('/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseURL: 'https://api.openai.com/v1', apiKey: enc }),
+    })
+    const body = (await res.json()) as { ok: boolean; models: string[] }
+    expect(body.ok).toBe(true)
+    // 上游收到的 Authorization 是解密后的明文，不是 enc: 串
+    const reqInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined
+    const authHeader = (reqInit?.headers as Record<string, string>)?.Authorization
+    expect(authHeader).toBe('Bearer sk-decrypted-real')
+    expect(authHeader).not.toContain('enc:')
+  })
 })

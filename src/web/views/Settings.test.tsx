@@ -486,6 +486,75 @@ describe('Settings — Provider 管理', () => {
     expect(nameInputAgain).toBe(nameInput)
     expect((nameInputAgain as HTMLInputElement).value).toBe('ProviderAX')
   })
+
+  // 回归：保存后 apiKey 落盘为 enc: 密文，刷新后 Settings 不应把密文回显到输入框
+  // （否则用户误以为「key 没保存」）。应留空并显示「已加密」徽章。
+  it('已加密的 apiKey 不回显密文，留空并显示「已加密」徽章', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const encConfig = {
+      ...mockConfig,
+      providers: [
+        { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
+      ],
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(encConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(1))
+
+    const apiKeyInput = screen.getByTestId('provider-apikey') as HTMLInputElement
+    expect(apiKeyInput.value).toBe('')
+    expect(apiKeyInput.placeholder).toContain('已加密')
+    expect(screen.getByTestId('provider-apikey-saved').textContent).toContain('已加密')
+    // 密文不得出现在 DOM 中
+    expect(document.body.textContent ?? '').not.toContain('enc:898L9mF6CILM')
+  })
+
+  it('重新输入 apiKey 后保存提交明文（可被服务端加密）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const encConfig = {
+      ...mockConfig,
+      providers: [
+        { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
+      ],
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(encConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(encConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(1))
+
+    const apiKeyInput = screen.getByTestId('provider-apikey') as HTMLInputElement
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-new-plaintext' } })
+    expect(apiKeyInput.value).toBe('sk-new-plaintext')
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      providers: { apiKey: string }[]
+    }
+    expect(args.providers[0]?.apiKey).toBe('sk-new-plaintext')
+  })
+
+  // 回归：保存后应有成功反馈，并清空草稿（按钮禁用）。
+  it('保存成功后显示「已保存」反馈并清空草稿', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('provider-add'))
+    fireEvent.change(screen.getAllByPlaceholderText('名称').at(-1) as HTMLElement, {
+      target: { value: 'P' },
+    })
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-save-status').textContent).toContain('已保存')
+    })
+  })
 })
 
 describe('Settings — JSON 模式与导入导出', () => {
@@ -776,5 +845,30 @@ describe('Settings — 完整配置表单覆盖', () => {
       agents: { subagentConcurrency: number }
     }
     expect(args.agents.subagentConcurrency).toBe(7)
+  })
+
+  // 回归：逗号分隔列表输入（tools.enabled 等）此前用 value={array.join(', ')} +
+  // onChange=parseList，每次按键 parse→join 会抹掉刚输入的逗号，导致无法输入分隔符、
+  // 最终保存空数组（“保存无效、刷新后恢复原值”的根因）。CommaListInput 用内部文本缓冲修复。
+  it('逗号分隔列表输入可输入逗号并随保存提交（tools.enabled）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const enabledLabel = screen.getByText('已启用：').closest('label')
+    const enabledInput = enabledLabel?.querySelector('input') as HTMLInputElement
+    // 模拟逐字符输入：旧实现会把逗号抹掉得到 'readwriteedit'，修复后应保留分隔符
+    fireEvent.change(enabledInput, { target: { value: 'read, write, edit' } })
+    expect(enabledInput.value).toBe('read, write, edit')
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      tools: { enabled: string[] }
+    }
+    expect(args.tools.enabled).toEqual(['read', 'write', 'edit'])
   })
 })
