@@ -44,6 +44,23 @@ const sendBtn = css`
   }
 `
 
+const appendBtn = css`
+  align-self: flex-end;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: transparent;
+  }
+`
+
 const stopBtn = css`
   align-self: flex-end;
   padding: 8px 16px;
@@ -81,8 +98,9 @@ type SendPayload = {
 type ComposerProps = {
   onSend: (payload: SendPayload) => void
   onAbort?: () => void
+  /** 流式态「追加指令」注入 steering 文本。 */
+  onSteer?: (message: string) => void
   isStreaming: boolean
-  steerMode?: boolean
   hasHistory: boolean
   supportsVision?: boolean
   permission?: { tool: string; input: unknown } | null
@@ -105,8 +123,8 @@ function Composer(props: ComposerProps) {
   const composer = useComposer({
     onSend: handleSend,
     onAbort: props.onAbort,
+    onSteer: props.onSteer,
     isStreaming: props.isStreaming,
-    steerMode: props.steerMode,
     hasHistory: props.hasHistory,
   })
   const { data: commands = [] } = useCommands()
@@ -208,8 +226,7 @@ function Composer(props: ComposerProps) {
     }
   }
 
-  const isStop = props.isStreaming && !props.steerMode
-  const sendLabel = isStop ? '停止' : props.steerMode ? '注入' : '发送'
+  const sendLabel = props.isStreaming ? '终止' : '发送'
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: composer 拖放区，容器需捕获 drag/drop 事件
@@ -262,7 +279,7 @@ function Composer(props: ComposerProps) {
         <ComposerEditor
           editorRef={composer.editorRef}
           composingRef={composer.composingRef}
-          steerMode={props.steerMode}
+          streaming={props.isStreaming}
           hasHistory={props.hasHistory}
           isEmpty={composer.isEmpty}
           onInput={composer.handleInput}
@@ -270,7 +287,16 @@ function Composer(props: ComposerProps) {
           onPaste={composer.handlePaste}
         />
         <button
-          className={isStop ? stopBtn : sendBtn}
+          className={appendBtn}
+          onClick={composer.steer}
+          type="button"
+          disabled={!props.isStreaming}
+          data-testid="append"
+        >
+          追加指令
+        </button>
+        <button
+          className={props.isStreaming ? stopBtn : sendBtn}
           onClick={composer.send}
           type="button"
           data-testid="send"

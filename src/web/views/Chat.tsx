@@ -112,26 +112,6 @@ const footerLeft = css`
   min-width: 0;
 `
 
-const steerRow = css`
-  display: flex;
-  padding: 4px 12px;
-
-  & > button {
-    font-size: 12px;
-    color: var(--text);
-    background: none;
-    border: 1px solid var(--border, #2a2a3e);
-    border-radius: 6px;
-    padding: 2px 10px;
-    cursor: pointer;
-
-    &[aria-pressed='true'] {
-      color: var(--text);
-      border-color: var(--primary);
-    }
-  }
-`
-
 const modeBar = css`
   display: flex;
   align-items: center;
@@ -186,19 +166,7 @@ export function Chat({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [timeline.length, viewMode])
 
-  // steer 模式：运行中注入 steering 消息（spec §3.9）。切到 steer 时输入不再被禁用，
-  // 发送走 onSteer；发送后退出 steer 回到正常输入。
-  const [steerMode, setSteerMode] = useState(false)
-  const handleSend = (payload: SendPayload) => {
-    if (steerMode) {
-      onSteer?.(payload.text)
-      setSteerMode(false)
-    } else {
-      onSend(payload)
-    }
-  }
-
-  // 全局授权模式（YOLO 自动授权）：运行时可切换，进程内不持久化。
+  // steering 由 Composer 直接驱动：流式态下「追加指令」按钮/Enter 注入运行中消息。
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
   useEffect(() => {
     permissionAPI
@@ -282,16 +250,6 @@ export function Chat({
           {toolToggle}
         </div>
       )}
-      <div className={steerRow}>
-        <button
-          onClick={() => setSteerMode(!steerMode)}
-          type="button"
-          data-testid="steer-toggle"
-          aria-pressed={steerMode}
-        >
-          {steerMode ? '完成' : '追加指令'}
-        </button>
-      </div>
       <div className={modeBar} data-testid="permission-mode-bar">
         <label className={modeToggle}>
           <input
@@ -309,10 +267,10 @@ export function Chat({
       <Composer
         projectId={projectId}
         agents={agents}
-        onSend={handleSend}
+        onSend={onSend}
         onAbort={onAbort}
+        onSteer={onSteer}
         isStreaming={isStreaming}
-        steerMode={steerMode}
         hasHistory={timeline.length > 0}
         supportsVision={supportsVision}
         permission={

@@ -65,16 +65,28 @@ describe('Chat pause/resume/steer controls', () => {
     expect(screen.queryByTestId('resume')).toBeNull()
   })
 
-  it('steer toggle routes input send to onSteer instead of onSend', () => {
+  it('流式态「追加指令」按钮注入 steering 文本，不走 onSend', () => {
     const h = renderChat()
-    // 切到 steer 后 composer 发送走 onSteer（steer 可在运行中注入）
-    fireEvent.click(screen.getByTestId('steer-toggle'))
     const editor = screen.getByTestId('composer-editor')
     editor.textContent = 'be concise'
     fireEvent.input(editor)
-    fireEvent.click(screen.getByTestId('send'))
+    fireEvent.click(screen.getByTestId('append'))
     expect(h.onSteer).toHaveBeenCalledWith('be concise')
     expect(h.onSend).not.toHaveBeenCalled()
+  })
+
+  it('流式态「发送」按钮变「终止」，点击触发 onAbort', () => {
+    const h = renderChat()
+    const sendBtn = screen.getByTestId('send')
+    expect(sendBtn.textContent).toBe('终止')
+    fireEvent.click(sendBtn)
+    expect(h.onAbort).toHaveBeenCalledOnce()
+  })
+
+  it('非流式态「追加指令」按钮禁用，「发送」可点', () => {
+    renderChat({ isStreaming: false })
+    expect(screen.getByTestId('append')).toBeDisabled()
+    expect(screen.getByTestId('send').textContent).toBe('发送')
   })
 })
 

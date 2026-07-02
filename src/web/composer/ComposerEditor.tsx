@@ -36,7 +36,7 @@ const placeholderStyle = css`
 type Props = {
   editorRef: RefObject<HTMLDivElement | null>
   composingRef: RefObject<boolean>
-  steerMode?: boolean
+  streaming?: boolean
   hasHistory: boolean
   isEmpty: boolean
   onInput: () => void
@@ -46,7 +46,7 @@ type Props = {
 
 function ComposerEditor(props: Props) {
   const placeholder = promptPlaceholder({
-    steerMode: !!props.steerMode,
+    streaming: !!props.streaming,
     hasHistory: props.hasHistory,
   })
   return (

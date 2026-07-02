@@ -16,8 +16,9 @@ type PopoverState = 'slash' | 'at' | null
 type UseComposerOptions = {
   onSend: (payload: { text: string; files: string[]; images: ImagePart[] }) => void
   onAbort?: () => void
+  /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。 */
+  onSteer?: (message: string) => void
   isStreaming: boolean
-  steerMode?: boolean
   hasHistory: boolean
 }
 
@@ -29,8 +30,8 @@ function textPrompt(text: string): Prompt {
 function useComposer({
   onSend,
   onAbort,
+  onSteer,
   isStreaming,
-  steerMode,
   hasHistory: _hasHistory,
 }: UseComposerOptions) {
   const editorRef = useRef<HTMLDivElement>(null)
@@ -76,17 +77,17 @@ function useComposer({
     // popover 触发检测（steer 模式不触发）
     const slashMatch = text.match(/^\/(\S*)$/)
     const atMatch = text.substring(0, cursor).match(/@(\S*)$/)
-    if (slashMatch && !steerMode) {
+    if (slashMatch) {
       setPopover('slash')
       setPopoverQuery(slashMatch[1] ?? '')
-    } else if (atMatch && !steerMode) {
+    } else if (atMatch) {
       setPopover('at')
       setPopoverQuery(atMatch[1] ?? '')
     } else if (popover) {
       setPopover(null)
       setPopoverQuery('')
     }
-  }, [steerMode, popover, resetHistory])
+  }, [popover, resetHistory])
 
   const setPromptExternal = useCallback((prompt: Prompt) => {
     if (!editorRef.current) return
@@ -198,8 +199,8 @@ function useComposer({
   }, [])
 
   const send = useCallback(() => {
-    // 流式态：发送键变停止键
-    if (isStreaming && !steerMode) {
+    // 流式态：发送键变终止键
+    if (isStreaming) {
       onAbort?.()
       return
     }
@@ -212,16 +213,27 @@ function useComposer({
     setImages([])
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
-  }, [isStreaming, steerMode, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
+  }, [isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
+
+  // 追加指令：流式态下注入 steering 文本（仅流式态可用，空文本 no-op）
+  const steer = useCallback(() => {
+    const prompt = readPrompt()
+    if (isPromptEmpty(prompt)) return
+    const text = promptToText(prompt)
+    onSteer?.(text)
+    setPromptExternal(DEFAULT_PROMPT)
+    resetHistory()
+  }, [readPrompt, onSteer, setPromptExternal, resetHistory])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       // IME 组合中不拦截
       if (composingRef.current) return
-      // Enter 发送（非 shift，popover 未激活）
+      // Enter 发送/追加（非 shift，popover 未激活）：流式态追加指令，否则发送
       if (e.key === 'Enter' && !e.shiftKey && !popover) {
         e.preventDefault()
-        send()
+        if (isStreaming) steer()
+        else send()
         return
       }
       if (e.key === 'Escape' && popover) {
@@ -259,7 +271,7 @@ function useComposer({
         }
       }
     },
-    [popover, send, setPromptExternal],
+    [popover, send, steer, setPromptExternal],
   )
 
   return {
@@ -281,6 +293,7 @@ function useComposer({
     insertSlash,
     insertFile,
     send,
+    steer,
     setPopover,
     isEmpty,
   }
