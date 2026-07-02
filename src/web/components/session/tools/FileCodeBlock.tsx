@@ -14,13 +14,17 @@ const pre = css`
   padding: 8px;
   background: var(--code-bg);
   border-radius: 6px;
-  overflow: auto;
   font-size: 13px;
-  max-height: 400px;
 `
 
-const collapsed = css`
+/** 内容滚动容器：始终限高 + 纵向滚动，避免超长内容纵向溢出挤压后续块。 */
+const scroll = css`
+  overflow: auto;
   max-height: 300px;
+`
+
+const scrollExpanded = css`
+  max-height: 600px;
 `
 
 const btn = css`
@@ -36,18 +40,15 @@ const btn = css`
 export function FileCodeBlock({ path, content }: { path: string; content: string }) {
   const lang = extToLang(path)
   const { ref, overflowing, expanded, toggle } = useOverflow(300)
-  const showToggle = overflowing && !expanded
   return (
     <div className={wrap}>
-      {lang === 'text' ? (
-        <div ref={ref} className={showToggle ? collapsed : ''}>
+      <div ref={ref} className={`${scroll} ${expanded ? scrollExpanded : ''}`}>
+        {lang === 'text' ? (
           <pre className={pre}>{content}</pre>
-        </div>
-      ) : (
-        <div ref={ref} className={showToggle ? collapsed : ''}>
+        ) : (
           <CodeBlock code={content} lang={lang} />
-        </div>
-      )}
+        )}
+      </div>
       {overflowing && (
         <button type="button" className={btn} onClick={toggle}>
           {expanded ? '收起' : '展开'}

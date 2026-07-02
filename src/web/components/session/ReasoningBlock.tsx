@@ -12,7 +12,9 @@ const header = css`
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   padding: 6px 10px;
+  text-align: left;
   cursor: pointer;
   background: var(--bg-secondary);
   font-size: 13px;
@@ -36,6 +38,8 @@ const preview = css`
 const body = css`
   padding: 8px 12px;
   font-size: 13px;
+  max-height: 400px;
+  overflow-y: auto;
 `
 
 /** 取思考文本的最后一个非空行，作为折叠态预览。 */
