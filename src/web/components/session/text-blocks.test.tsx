@@ -84,4 +84,25 @@ describe('ReasoningBlock', () => {
     fireEvent.click(screen.getByTestId('reasoning-toggle'))
     expect(screen.getByTestId('reasoning').getAttribute('data-expanded')).toBe('true')
   })
+
+  it('折叠态展示最后一行预览', () => {
+    render(<ReasoningBlock text={'第一行\n第二行\n正在思考'} />)
+    expect(screen.getByTestId('reasoning-preview')).toHaveTextContent('正在思考')
+  })
+
+  it('展开后不再展示预览', () => {
+    render(<ReasoningBlock text="正在思考" />)
+    fireEvent.click(screen.getByTestId('reasoning-toggle'))
+    expect(screen.queryByTestId('reasoning-preview')).toBeNull()
+  })
+
+  it('空内容时不展示预览', () => {
+    render(<ReasoningBlock text="" />)
+    expect(screen.queryByTestId('reasoning-preview')).toBeNull()
+  })
+
+  it('忽略末尾空行，取最后一个非空行', () => {
+    render(<ReasoningBlock text={'有内容\n\n'} />)
+    expect(screen.getByTestId('reasoning-preview')).toHaveTextContent('有内容')
+  })
 })

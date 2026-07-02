@@ -19,13 +19,34 @@ const header = css`
   color: var(--text-secondary);
 `
 
+const title = css`
+  flex-shrink: 0;
+`
+
+const preview = css`
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  opacity: 0.7;
+`
+
 const body = css`
   padding: 8px 12px;
   font-size: 13px;
 `
 
+/** 取思考文本的最后一个非空行，作为折叠态预览。 */
+function lastNonEmptyLine(text: string): string {
+  const line = text.trimEnd().split('\n').pop() ?? ''
+  return line.trim()
+}
+
 export function ReasoningBlock({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false)
+  const previewLine = expanded ? '' : lastNonEmptyLine(text)
   return (
     <div className={wrap} data-testid="reasoning" data-expanded={expanded}>
       <button
@@ -35,7 +56,12 @@ export function ReasoningBlock({ text }: { text: string }) {
         onClick={() => setExpanded((v) => !v)}
       >
         <span>{expanded ? '▾' : '▸'}</span>
-        <span>思考过程</span>
+        <span className={title}>思考过程</span>
+        {previewLine && (
+          <span className={preview} data-testid="reasoning-preview">
+            {previewLine}
+          </span>
+        )}
       </button>
       {expanded && (
         <div className={body}>
