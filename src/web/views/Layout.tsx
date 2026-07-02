@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { MobileNav } from '../components/MobileNav.js'
 import { DESKTOP, MOBILE } from '../styles/breakpoints.js'
 
@@ -10,7 +10,7 @@ const MIN_SIDEBAR = 200
 const MAX_SIDEBAR = 480
 const DEFAULT_PANEL = 360
 const MIN_PANEL = 240
-const MAX_PANEL = 640
+const MAX_PANEL = 960
 const SIDEBAR_KEY = 'c0de-agent:sidebarWidth'
 const PANEL_KEY = 'c0de-agent:panelWidth'
 
@@ -108,46 +108,45 @@ type LayoutProps = {
 }
 
 /**
- * 水平拖拽：按累积增量调整宽度。draggingRef 用作即时门控（不依赖重渲染时序），
- * dragging state 仅驱动视觉反馈与拖拽期间禁用全局文本选中。
+ * 水平拖拽调整列宽。dragging 为 true 时向 document 挂载 pointermove/up 监听，
+ * 这样无论光标快速移出 1px 分隔条还是 setPointerCapture 在某些环境不可靠，
+ * 都能稳定收到全部移动事件——比元素级 onPointerMove + 指针捕获更健壮。
+ * applyDelta 用 ref 持有最新闭包，避免 effect 捕获旧值。
  */
 function useColResize(applyDelta: (delta: number) => void) {
-  const draggingRef = useRef(false)
   const [dragging, setDragging] = useState(false)
   const startX = useRef(0)
+  const applyRef = useRef(applyDelta)
+  applyRef.current = applyDelta
 
-  const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
+  const onPointerDown = useCallback((e: ReactPointerEvent<HTMLElement>) => {
     e.preventDefault()
-    draggingRef.current = true
+    startX.current = e.clientX
     setDragging(true)
-    startX.current = e.clientX
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId)
-    } catch {
-      // jsdom / 无指针捕获环境忽略
+  }, [])
+
+  useEffect(() => {
+    if (!dragging) return
+    const onMove = (e: PointerEvent) => {
+      const delta = e.clientX - startX.current
+      if (delta === 0) return
+      startX.current = e.clientX
+      applyRef.current(delta)
     }
-  }
-
-  const onPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
-    if (!draggingRef.current) return
-    const delta = e.clientX - startX.current
-    if (delta === 0) return
-    startX.current = e.clientX
-    applyDelta(delta)
-  }
-
-  const onPointerUp = (e: ReactPointerEvent<HTMLElement>) => {
-    if (!draggingRef.current) return
-    draggingRef.current = false
-    setDragging(false)
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId)
-    } catch {
-      // 同上
+    const onUp = () => setDragging(false)
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onUp)
+    // 拖拽中阻止 IFrames/其他元素抢占事件，并兼容部分浏览器丢失 pointerup 的边界
+    const onDragEnd = () => setDragging(false)
+    document.addEventListener('dragend', onDragEnd)
+    return () => {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      document.removeEventListener('dragend', onDragEnd)
     }
-  }
+  }, [dragging])
 
-  return { dragging, onPointerDown, onPointerMove, onPointerUp }
+  return { dragging, onPointerDown }
 }
 
 export function Layout({
@@ -213,8 +212,6 @@ export function Layout({
               tabIndex={0}
               style={sidebarResize.dragging ? { background: 'var(--primary)' } : undefined}
               onPointerDown={sidebarResize.onPointerDown}
-              onPointerMove={sidebarResize.onPointerMove}
-              onPointerUp={sidebarResize.onPointerUp}
               onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR)}
             />
           </>
@@ -233,8 +230,6 @@ export function Layout({
               tabIndex={0}
               style={panelResize.dragging ? { background: 'var(--primary)' } : undefined}
               onPointerDown={panelResize.onPointerDown}
-              onPointerMove={panelResize.onPointerMove}
-              onPointerUp={panelResize.onPointerUp}
               onDoubleClick={() => setPanelWidth(DEFAULT_PANEL)}
             />
             <aside className={panelStyle} data-testid="layout-panel" style={{ width: panelWidth }}>

@@ -21,6 +21,15 @@ function renderThree() {
   )
 }
 
+// 拖拽：pointerdown 设 dragging=true → useEffect 向 document 挂载 pointermove/up 监听。
+// fireEvent 是异步的（包在 act 中），await 之间保证 effect 已挂载、state 已提交，
+// 从而 document 级监听能收到后续冒泡到 document 的 pointer 事件。
+async function drag(resizer: HTMLElement, fromX: number, toX: number) {
+  await fireEvent.pointerDown(resizer, { clientX: fromX })
+  await fireEvent.pointerMove(resizer, { clientX: toX })
+  await fireEvent.pointerUp(resizer, { clientX: toX })
+}
+
 describe('Layout 三栏拖拽 resize', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -42,49 +51,38 @@ describe('Layout 三栏拖拽 resize', () => {
     expect(screen.queryByTestId('layout-panel')).toBeNull()
   })
 
-  it('拖拽 sidebar 分隔条向右增大侧栏宽度', () => {
+  it('拖拽 sidebar 分隔条向右增大侧栏宽度', async () => {
     renderThree()
     const resizer = screen.getByTestId('resizer-sidebar')
-    fireEvent.pointerDown(resizer, { clientX: 0 })
-    fireEvent.pointerMove(resizer, { clientX: 120 })
-    fireEvent.pointerUp(resizer, { clientX: 120 })
+    await drag(resizer, 0, 120)
     expect(screen.getByTestId('layout-sidebar').style.width).toBe('400px')
   })
 
-  it('拖拽 panel 分隔条向右缩小预览面板宽度', () => {
+  it('拖拽 panel 分隔条向右缩小预览面板宽度', async () => {
     renderThree()
     const resizer = screen.getByTestId('resizer-panel')
-    fireEvent.pointerDown(resizer, { clientX: 0 })
-    fireEvent.pointerMove(resizer, { clientX: 100 })
-    fireEvent.pointerUp(resizer, { clientX: 100 })
+    await drag(resizer, 0, 100)
     expect(screen.getByTestId('layout-panel').style.width).toBe('260px')
   })
 
-  it('侧栏宽度不小于下限 200px', () => {
+  it('侧栏宽度不小于下限 200px', async () => {
     renderThree()
     const resizer = screen.getByTestId('resizer-sidebar')
-    fireEvent.pointerDown(resizer, { clientX: 0 })
-    // 向左拖 999px，远超下限
-    fireEvent.pointerMove(resizer, { clientX: -999 })
-    fireEvent.pointerUp(resizer, { clientX: -999 })
+    await drag(resizer, 0, -999)
     expect(screen.getByTestId('layout-sidebar').style.width).toBe('200px')
   })
 
-  it('侧栏宽度不超过上限 480px', () => {
+  it('侧栏宽度不超过上限 480px', async () => {
     renderThree()
     const resizer = screen.getByTestId('resizer-sidebar')
-    fireEvent.pointerDown(resizer, { clientX: 0 })
-    fireEvent.pointerMove(resizer, { clientX: 9999 })
-    fireEvent.pointerUp(resizer, { clientX: 9999 })
+    await drag(resizer, 0, 9999)
     expect(screen.getByTestId('layout-sidebar').style.width).toBe('480px')
   })
 
-  it('拖拽后将宽度持久化到 localStorage', () => {
+  it('拖拽后将宽度持久化到 localStorage', async () => {
     renderThree()
     const resizer = screen.getByTestId('resizer-sidebar')
-    fireEvent.pointerDown(resizer, { clientX: 0 })
-    fireEvent.pointerMove(resizer, { clientX: 50 })
-    fireEvent.pointerUp(resizer, { clientX: 50 })
+    await drag(resizer, 0, 50)
     expect(localStorage.getItem('c0de-agent:sidebarWidth')).toBe('330')
   })
 
@@ -93,17 +91,27 @@ describe('Layout 三栏拖拽 resize', () => {
     localStorage.setItem('c0de-agent:panelWidth', '9999')
     renderThree()
     expect(screen.getByTestId('layout-sidebar').style.width).toBe('420px')
-    expect(screen.getByTestId('layout-panel').style.width).toBe('640px')
+    expect(screen.getByTestId('layout-panel').style.width).toBe('960px')
   })
 
-  it('双击 sidebar 分隔条恢复默认宽度', () => {
+  it('双击 sidebar 分隔条恢复默认宽度', async () => {
     renderThree()
     const resizer = screen.getByTestId('resizer-sidebar')
-    fireEvent.pointerDown(resizer, { clientX: 0 })
-    fireEvent.pointerMove(resizer, { clientX: 100 })
-    fireEvent.pointerUp(resizer, { clientX: 100 })
+    await drag(resizer, 0, 100)
     expect(screen.getByTestId('layout-sidebar').style.width).toBe('380px')
     fireEvent.dblClick(resizer)
     expect(screen.getByTestId('layout-sidebar').style.width).toBe('280px')
+  })
+
+  it('快速拖拽超出分隔条范围仍能收到移动事件（document 级监听）', async () => {
+    // 关键回归：光标移出 1px 分隔条后事件仍被 document 监听捕获，宽度持续变化。
+    renderThree()
+    const resizer = screen.getByTestId('resizer-sidebar')
+    await fireEvent.pointerDown(resizer, { clientX: 0 })
+    // pointermove 派发到 document（模拟光标已离开 resizer），而非 resizer 本身
+    await fireEvent.pointerMove(document, { clientX: 90 })
+    await fireEvent.pointerMove(document, { clientX: 200 })
+    await fireEvent.pointerUp(document, { clientX: 200 })
+    expect(screen.getByTestId('layout-sidebar').style.width).toBe('480px')
   })
 })
