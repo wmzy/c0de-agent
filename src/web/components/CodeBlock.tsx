@@ -8,6 +8,9 @@ const wrap = css`
   overflow: hidden;
   margin: 8px 0;
   background: var(--code-bg);
+  & pre {
+    overflow-x: auto;
+  }
 `
 
 const header = css`

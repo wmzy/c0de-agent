@@ -67,7 +67,10 @@ const panelStyle = css`
   display: none;
   ${DESKTOP} {
     display: flex;
+    flex-direction: column;
     flex-shrink: 0;
+    min-width: 0;
+    overflow: hidden;
   }
 `
 

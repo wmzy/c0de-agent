@@ -121,4 +121,56 @@ describe('FileTree', () => {
     )
     expect(container.firstChild).toBeNull()
   })
+
+  it('传入 onMention 时文件和目录节点都渲染 @ 按钮，点击调用', () => {
+    const onMention = vi.fn()
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '/root',
+      children: [
+        { name: 'a.ts', path: '/root/a.ts', type: 'file' },
+        { name: 'dir', path: '/root/dir', type: 'directory', children: [] },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['/root'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        onMention={onMention}
+      />,
+    )
+    // 文件节点有 @ 按钮
+    expect(screen.getByTestId('mention-/root/a.ts')).toBeTruthy()
+    // 目录节点也有 @ 按钮
+    expect(screen.getByTestId('mention-/root/dir')).toBeTruthy()
+    // 点击文件的 @ 调用 onMention
+    fireEvent.click(screen.getByTestId('mention-/root/a.ts'))
+    expect(onMention).toHaveBeenCalledWith('/root/a.ts')
+    // 点击目录的 @ 调用 onMention
+    fireEvent.click(screen.getByTestId('mention-/root/dir'))
+    expect(onMention).toHaveBeenCalledWith('/root/dir')
+  })
+
+  it('未传入 onMention 时不渲染 @ 按钮', () => {
+    render(
+      <FileTree
+        root={{
+          name: 'root',
+          path: '/root',
+          children: [{ name: 'a.ts', path: '/root/a.ts', type: 'file' }],
+        }}
+        expanded={new Set(['/root'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId('mention-/root/a.ts')).toBeNull()
+  })
 })

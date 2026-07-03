@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileSelectionContext } from '../contexts/FileSelectionContext.js'
+import { ReferenceContext } from '../contexts/ReferenceContext.js'
 import { FilePreview } from './FilePreview.js'
 
 // 返回 mock fetch，json 响应携带给定 content
@@ -102,5 +103,51 @@ describe('FilePreview', () => {
     })
     fireEvent.click(screen.getByLabelText('关闭预览'))
     expect(closeFile).toHaveBeenCalledOnce()
+  })
+
+  it('选中文本后点击引用按钮调用 insertTextReference', async () => {
+    const insertTextReference = vi.fn()
+    const insertFileReference = vi.fn()
+    vi.stubGlobal('fetch', fetchMock('hello world\nsecond line'))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <ReferenceContext.Provider
+          value={{ api: { insertFileReference, insertTextReference }, setApi: () => {} }}
+        >
+          <FileSelectionContext.Provider
+            value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
+          >
+            <FilePreview projectId="p1" path="notes.txt" />
+          </FileSelectionContext.Provider>
+        </ReferenceContext.Provider>
+      </QueryClientProvider>,
+    )
+    // 等待内容渲染
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+    })
+    // 找到内容区元素作为选区的公共祖先
+    const scrollArea = screen.getByTestId('preview-content')
+    // 模拟 window.getSelection 返回选中文本
+    const mockRange = {
+      getBoundingClientRect: () => ({ left: 10, top: 10, width: 50 }),
+      commonAncestorContainer: scrollArea,
+    }
+    vi.stubGlobal('getSelection', () => ({
+      isCollapsed: false,
+      rangeCount: 1,
+      toString: () => 'hello world',
+      getRangeAt: () => mockRange,
+      removeAllRanges: () => {},
+    }))
+    // 触发 mouseup 检测选区
+    fireEvent.mouseUp(scrollArea)
+    // 引用按钮出现
+    await waitFor(() => {
+      expect(screen.getByTestId('quote-selection')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByTestId('quote-selection'))
+    expect(insertTextReference).toHaveBeenCalledWith('notes.txt', 'hello world')
   })
 })

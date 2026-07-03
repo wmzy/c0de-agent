@@ -14,6 +14,7 @@ import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TopBar } from './components/TopBar.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
 import { type FileSelection, FileSelectionContext } from './contexts/FileSelectionContext.js'
+import { FileReferenceProvider } from './contexts/ReferenceContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
 import { projectAPI } from './services/project.js'
 import { ChatView } from './views/ChatView.js'
@@ -156,32 +157,34 @@ function ChatPage() {
   if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
 
   return (
-    <FileSelectionContext.Provider value={fileCtx}>
-      <Layout
-        header={<TopBar />}
-        sidebar={
-          <SidebarTabs
-            activeTab={sidebarTab}
-            onSwitch={switchTab}
-            sessions={
-              <SessionList
-                projectId={projectId}
-                activeId={sessionId ?? null}
-                onSelect={(id) => navigate(`/projects/${projectId}/sessions/${id}`)}
-                onProjectChange={(id) => navigate(`/projects/${id}`)}
-                onNewSession={() => navigate(`/projects/${projectId}`)}
-                onDeleted={(id) => {
-                  // 删除的是当前会话则跳回草稿新会话页
-                  if (id === (sessionId ?? null)) navigate(`/projects/${projectId}`)
-                }}
-              />
-            }
-            files={<FileBrowser projectId={projectId} onPick={setSelectedFile} />}
-          />
-        }
-        main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
-        panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
-      />
-    </FileSelectionContext.Provider>
+    <FileReferenceProvider>
+      <FileSelectionContext.Provider value={fileCtx}>
+        <Layout
+          header={<TopBar />}
+          sidebar={
+            <SidebarTabs
+              activeTab={sidebarTab}
+              onSwitch={switchTab}
+              sessions={
+                <SessionList
+                  projectId={projectId}
+                  activeId={sessionId ?? null}
+                  onSelect={(id) => navigate(`/projects/${projectId}/sessions/${id}`)}
+                  onProjectChange={(id) => navigate(`/projects/${id}`)}
+                  onNewSession={() => navigate(`/projects/${projectId}`)}
+                  onDeleted={(id) => {
+                    // 删除的是当前会话则跳回草稿新会话页
+                    if (id === (sessionId ?? null)) navigate(`/projects/${projectId}`)
+                  }}
+                />
+              }
+              files={<FileBrowser projectId={projectId} onPick={setSelectedFile} />}
+            />
+          }
+          main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
+          panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
+        />
+      </FileSelectionContext.Provider>
+    </FileReferenceProvider>
   )
 }

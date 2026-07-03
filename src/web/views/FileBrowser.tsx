@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useState } from 'react'
 import { FileTree, type TreeNode } from '../components/FileTree.js'
+import { useFileReference } from '../contexts/ReferenceContext.js'
 import { useProjects } from '../hooks/useSession.js'
 import { fileAPI } from '../services/file.js'
 import type { FileEntry, FileSearchResult } from '../types/index.js'
@@ -36,7 +37,8 @@ const resultRow = css`
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 4px 8px;
   cursor: pointer;
   border: none;
@@ -46,6 +48,34 @@ const resultRow = css`
   text-align: left;
   &:hover {
     background: var(--bg-secondary);
+  }
+`
+
+const resultRowWrap = css`
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  &:hover [data-search-mention] {
+    opacity: 1;
+  }
+`
+
+const searchMentionBtn = css`
+  opacity: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 5px;
+  min-height: auto;
+  min-width: auto;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+  &:hover {
+    color: var(--primary);
+    border-color: var(--primary);
   }
 `
 
@@ -88,6 +118,7 @@ export function FileBrowser({
 }) {
   const { data: projects } = useProjects()
   const projectName = projects?.find((p) => p.id === projectId)?.name ?? projectId
+  const fileRef = useFileReference()
 
   const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -136,10 +167,7 @@ export function FileBrowser({
         return
       }
       // 首次展开：懒加载子目录
-      const needLoad =
-        treeRoot
-          ? findNode(treeRoot, dirPath)?.children === undefined
-          : false
+      const needLoad = treeRoot ? findNode(treeRoot, dirPath)?.children === undefined : false
       if (needLoad) {
         setLoadingPaths((prev) => new Set(prev).add(dirPath))
         try {
@@ -189,16 +217,29 @@ export function FileBrowser({
             <div className={empty}>无匹配文件</div>
           ) : (
             searchEntries.map((e) => (
-              <button
-                key={e.path}
-                type="button"
-                className={resultRow}
-                data-testid={`file-${e.path}`}
-                onClick={() => onPick(e.path)}
-              >
-                <span>{e.type === 'directory' ? '📁' : '📄'}</span>
-                <span>{e.path}</span>
-              </button>
+              <div key={e.path} className={resultRowWrap}>
+                <button
+                  type="button"
+                  className={resultRow}
+                  data-testid={`file-${e.path}`}
+                  onClick={() => onPick(e.path)}
+                >
+                  <span>{e.type === 'directory' ? '📁' : '📄'}</span>
+                  <span>{e.path}</span>
+                </button>
+                {fileRef && (
+                  <button
+                    type="button"
+                    className={searchMentionBtn}
+                    data-search-mention
+                    data-testid={`search-mention-${e.path}`}
+                    aria-label={`引用 ${e.path} 到输入框`}
+                    onClick={() => fileRef.insertFileReference(e.path)}
+                  >
+                    @
+                  </button>
+                )}
+              </div>
             ))
           )
         ) : !treeRoot ? (
@@ -212,6 +253,7 @@ export function FileBrowser({
             onToggle={handleToggle}
             onSelect={handleSelect}
             directoryClickMode="toggle"
+            onMention={fileRef?.insertFileReference}
           />
         )}
       </div>

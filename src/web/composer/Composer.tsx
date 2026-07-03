@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { DragEvent, KeyboardEvent } from 'react'
 import { useEffect, useState } from 'react'
+import { useFileReferenceSetter } from '../contexts/ReferenceContext.js'
 import { useCommands } from '../hooks/useCommands.js'
 import { useFileSearch } from '../hooks/useFiles.js'
 import type { AgentListItem } from '../services/agent.js'
@@ -129,6 +130,16 @@ function Composer(props: ComposerProps) {
   })
   const { data: commands = [] } = useCommands()
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
+
+  // 注册文件引用 API，供文件树/预览面板跨组件调用
+  const setFileReferenceApi = useFileReferenceSetter()
+  useEffect(() => {
+    setFileReferenceApi({
+      insertFileReference: composer.appendFileReference,
+      insertTextReference: composer.appendTextReference,
+    })
+    return () => setFileReferenceApi(null)
+  }, [composer.appendFileReference, composer.appendTextReference, setFileReferenceApi])
 
   const [slashActive, setSlashActive] = useState(0)
   const [atActive, setAtActive] = useState(0)

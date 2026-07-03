@@ -23,6 +23,8 @@ type FileTreeProps = {
   onSelect: (path: string) => void
   /** 点击目录名的行为：select=选中（目录选择器），toggle=展开/折叠（文件浏览器）。默认 select。 */
   directoryClickMode?: 'select' | 'toggle'
+  /** 引用文件到输入框（文件树 @ 按钮）；仅文件节点，提供时显示按钮。 */
+  onMention?: (path: string) => void
 }
 
 const tree = css`
@@ -39,6 +41,10 @@ const row = css`
   border-radius: 4px;
   &:hover {
     background: var(--bg-secondary);
+  }
+  /* hover 时显示 @ 引用按钮（通过 data-mention-btn 属性选择器） */
+  &:hover [data-mention-btn] {
+    opacity: 1;
   }
 `
 
@@ -83,6 +89,26 @@ const hint = css`
   font-size: 12px;
 `
 
+const mentionBtn = css`
+  margin-left: auto;
+  opacity: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 5px;
+  min-height: auto;
+  min-width: auto;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+  &:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+  }
+`
+
 /**
  * 递归文件树：目录可展开（懒加载），文件为叶子节点。
  * directoryClickMode='select' 时点目录名=选中（目录选择器用法）；
@@ -96,11 +122,22 @@ export function FileTree({
   onToggle,
   onSelect,
   directoryClickMode = 'select',
+  onMention,
 }: FileTreeProps) {
   if (!root) return null
   return (
     <div className={tree} role="tree" data-testid="file-tree">
-      {renderNode(root, 0, expanded, selected, loadingPaths, onToggle, onSelect, directoryClickMode)}
+      {renderNode(
+        root,
+        0,
+        expanded,
+        selected,
+        loadingPaths,
+        onToggle,
+        onSelect,
+        directoryClickMode,
+        onMention,
+      )}
     </div>
   )
 }
@@ -114,6 +151,7 @@ function renderNode(
   onToggle: (path: string) => void,
   onSelect: (path: string) => void,
   directoryClickMode: 'select' | 'toggle',
+  onMention?: (path: string) => void,
 ) {
   const isFile = node.type === 'file'
   const isExpanded = expanded.has(node.path)
@@ -121,7 +159,12 @@ function renderNode(
   const isSelected = selected === node.path
   const hasChildren = node.children !== undefined
   return (
-    <div role="treeitem" aria-expanded={isFile ? undefined : isExpanded} tabIndex={-1} key={node.path}>
+    <div
+      role="treeitem"
+      aria-expanded={isFile ? undefined : isExpanded}
+      tabIndex={-1}
+      key={node.path}
+    >
       <div
         className={`${row} ${isSelected ? selectedRow : ''}`}
         style={{ paddingLeft: depth * 16 + 8 }}
@@ -156,6 +199,21 @@ function renderNode(
           <span>{isFile ? '📄' : isExpanded ? '📂' : '📁'}</span>
           <span>{node.name}</span>
         </button>
+        {onMention && (
+          <button
+            type="button"
+            className={mentionBtn}
+            data-mention-btn
+            data-testid={`mention-${node.path}`}
+            aria-label={`引用 ${node.name} 到输入框`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onMention(node.path)
+            }}
+          >
+            @
+          </button>
+        )}
       </div>
       {!isFile && isExpanded && (
         <div className={childList}>
@@ -170,6 +228,7 @@ function renderNode(
                 onToggle,
                 onSelect,
                 directoryClickMode,
+                onMention,
               ),
             )
           ) : isLoading ? (

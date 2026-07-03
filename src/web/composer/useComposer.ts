@@ -89,11 +89,16 @@ function useComposer({
     }
   }, [popover, resetHistory])
 
-  const setPromptExternal = useCallback((prompt: Prompt) => {
+  const setPromptExternal = useCallback((prompt: Prompt, cursorAtEnd = false) => {
     if (!editorRef.current) return
     mirrorRef.current.input = true
-    const cursor = currentCursor(editorRef.current)
-    reconcile(editorRef.current, prompt, prompt === DEFAULT_PROMPT ? 0 : cursor)
+    if (cursorAtEnd) {
+      const totalLen = promptToText(prompt).length
+      reconcile(editorRef.current, prompt, totalLen)
+    } else {
+      const cursor = currentCursor(editorRef.current)
+      reconcile(editorRef.current, prompt, prompt === DEFAULT_PROMPT ? 0 : cursor)
+    }
     promptRef.current = prompt
     setIsEmpty(isPromptEmpty(prompt))
   }, [])
@@ -134,6 +139,45 @@ function useComposer({
 
       setPromptExternal(newPrompt)
       setPopover(null)
+      editorRef.current?.focus()
+    },
+    [setPromptExternal],
+  )
+
+  /** 外部引用（文件树 @ 按钮）：在 prompt 末尾追加 file pill，无需 @ token。 */
+  const appendFileReference = useCallback(
+    (path: string) => {
+      const prompt = promptRef.current
+      const parts: Prompt = []
+      for (const part of prompt) {
+        if (part.type === 'text') parts.push({ ...part })
+        else if (part.type === 'file') parts.push({ ...part })
+      }
+      const text = promptToText(prompt)
+      if (text.length > 0 && !text.endsWith(' ')) {
+        parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
+      }
+      parts.push({ type: 'file', path, content: path, start: 0, end: path.length })
+      parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
+      setPromptExternal(parts, true)
+      editorRef.current?.focus()
+    },
+    [setPromptExternal],
+  )
+
+  /** 外部引用（预览面板选中文本）：在 prompt 末尾追加带路径标注的代码块。 */
+  const appendTextReference = useCallback(
+    (path: string, snippet: string) => {
+      const prompt = promptRef.current
+      const parts: Prompt = []
+      for (const part of prompt) {
+        if (part.type === 'text') parts.push({ ...part })
+        else if (part.type === 'file') parts.push({ ...part })
+      }
+      const text = promptToText(prompt)
+      const block = `${text.length > 0 && !text.endsWith('\n') ? '\n' : ''}📄 \`${path}\`:\n\`\`\`\n${snippet}\n\`\`\`\n`
+      parts.push({ type: 'text', content: block, start: 0, end: block.length })
+      setPromptExternal(parts, true)
       editorRef.current?.focus()
     },
     [setPromptExternal],
@@ -271,7 +315,7 @@ function useComposer({
         }
       }
     },
-    [popover, send, steer, setPromptExternal],
+    [popover, send, steer, setPromptExternal, isStreaming],
   )
 
   return {
@@ -292,6 +336,8 @@ function useComposer({
     removeImage,
     insertSlash,
     insertFile,
+    appendFileReference,
+    appendTextReference,
     send,
     steer,
     setPopover,
