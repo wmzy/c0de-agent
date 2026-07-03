@@ -132,7 +132,7 @@ function computeLineRange(
 }
 
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
-  const { closeFile, revealLine } = useFileSelection()
+  const { closeFile, revealRange } = useFileSelection()
   const fileRef = useFileReference()
   // ref 持有最新 API，避免条件绑定 onMouseUp 导致首次操作失败
   const apiRef = useRef(fileRef)
@@ -214,7 +214,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         projectId={projectId}
         path={path}
         initial={q.data.content}
-        gotoLine={revealLine ?? null}
+        highlightRange={revealRange ?? null}
       />
     )
   } else {

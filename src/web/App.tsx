@@ -13,7 +13,11 @@ import {
 import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TopBar } from './components/TopBar.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
-import { type FileSelection, FileSelectionContext } from './contexts/FileSelectionContext.js'
+import {
+  type FileSelection,
+  FileSelectionContext,
+  type LineRange,
+} from './contexts/FileSelectionContext.js'
 import { FileReferenceProvider } from './contexts/ReferenceContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
 import { projectAPI } from './services/project.js'
@@ -140,7 +144,7 @@ function ChatPage() {
   const { projectId, sessionId } = useParams<{ projectId: string; sessionId: string }>()
   const navigate = useNavigate()
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [revealLine, setRevealLine] = useState<number | null>(null)
+  const [revealRange, setRevealRange] = useState<LineRange | null>(null)
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
     () => (localStorage.getItem('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
   )
@@ -151,15 +155,15 @@ function ChatPage() {
 
   const fileCtx: FileSelection = {
     selectedFile,
-    openFile: (path: string, line?: number) => {
+    openFile: (path: string, range?: LineRange) => {
       setSelectedFile(path)
-      setRevealLine(line ?? null)
+      setRevealRange(range ?? null)
     },
     closeFile: () => {
       setSelectedFile(null)
-      setRevealLine(null)
+      setRevealRange(null)
     },
-    revealLine,
+    revealRange,
   }
 
   if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />

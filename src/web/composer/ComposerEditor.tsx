@@ -106,8 +106,9 @@ function ComposerEditor(props: Props) {
     if (!pill) return
     e.preventDefault()
     const path = pill.dataset.path
-    const line = Number(pill.dataset.lineStart ?? '1')
-    if (path) openFile(path, line)
+    const start = Number(pill.dataset.lineStart ?? '1')
+    const end = Number(pill.dataset.lineEnd ?? start)
+    if (path) openFile(path, { start, end })
   }
 
   return (
