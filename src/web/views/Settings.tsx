@@ -426,6 +426,35 @@ export function Settings() {
   const merged = { ...config, ...draft }
   const isDirty = draft !== null
 
+  // 默认 Provider/Model 候选来自已配置 provider 及其 models（仅启用的）。
+  // defaultProvider 可能是 protocol 名或导入的陌生值，不在已配置列表时由 select 兜底显示。
+  const defaultProviderCandidates = merged.providers.filter((p) => p.name.trim() !== '')
+  const defaultProviderEntry = defaultProviderCandidates.find(
+    (p) => p.name === merged.defaultProvider,
+  )
+  const defaultModelCandidates = Object.entries(defaultProviderEntry?.models ?? {})
+    .filter(([, v]) => v.enabled !== false)
+    .map(([name]) => name)
+
+  // 切换默认 provider 时校正 model：新 provider 不含当前 model 则取首个启用模型。
+  const changeDefaultProvider = (name: string) => {
+    setDraft((prev) => {
+      const base = prev ?? config
+      const entry = (base.providers ?? []).find((p) => p.name === name)
+      const models = entry?.models
+        ? Object.entries(entry.models)
+            .filter(([, v]) => v.enabled !== false)
+            .map(([n]) => n)
+        : []
+      const keepModel = models.includes(base.defaultModel ?? '')
+      return {
+        ...base,
+        defaultProvider: name,
+        defaultModel: keepModel ? base.defaultModel : (models[0] ?? ''),
+      }
+    })
+  }
+
   const updateProviders = (providers: ProviderConfig[]) => {
     setDraft((prev) => ({ ...prev, providers }))
   }
@@ -764,22 +793,69 @@ export function Settings() {
           </div>
           <div className={section}>
             <h3>默认 Provider / Model</h3>
-            <label className={field}>
-              <span>Provider：</span>
-              <input
-                className={fieldInput}
-                value={merged.defaultProvider}
-                onChange={(e) => setDraft((prev) => ({ ...prev, defaultProvider: e.target.value }))}
-              />
-            </label>
-            <label className={field}>
-              <span>Model：</span>
-              <input
-                className={fieldInput}
-                value={merged.defaultModel}
-                onChange={(e) => setDraft((prev) => ({ ...prev, defaultModel: e.target.value }))}
-              />
-            </label>
+            {defaultProviderCandidates.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                请先在下方「LLM Provider」添加并配置 Provider，再选择默认值。
+              </p>
+            ) : (
+              <>
+                <label className={field}>
+                  <span>Provider：</span>
+                  <select
+                    className={fieldInput}
+                    value={merged.defaultProvider}
+                    onChange={(e) => changeDefaultProvider(e.target.value)}
+                    data-testid="default-provider-select"
+                  >
+                    {/* 当前值不在已配置列表时兜底显示，避免受控 select 丢失值 */}
+                    {!defaultProviderCandidates.some(
+                      (p) => p.name === merged.defaultProvider,
+                    ) &&
+                    merged.defaultProvider ? (
+                      <option value={merged.defaultProvider}>
+                        {merged.defaultProvider}（未配置）
+                      </option>
+                    ) : null}
+                    {defaultProviderCandidates.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={field}>
+                  <span>Model：</span>
+                  <select
+                    className={fieldInput}
+                    value={merged.defaultModel}
+                    onChange={(e) =>
+                      setDraft((prev) => {
+                        const base = prev ?? config
+                        return { ...base, defaultModel: e.target.value }
+                      })
+                    }
+                    data-testid="default-model-select"
+                  >
+                    {defaultModelCandidates.length === 0 ? (
+                      <option value="">
+                        {defaultProviderEntry ? '该 Provider 暂无模型，请先添加' : '请先选择 Provider'}
+                      </option>
+                    ) : null}
+                    {!defaultModelCandidates.includes(merged.defaultModel) &&
+                    merged.defaultModel ? (
+                      <option value={merged.defaultModel}>
+                        {merged.defaultModel}（未配置）
+                      </option>
+                    ) : null}
+                    {defaultModelCandidates.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
           </div>
           <div className={section}>
             <h3>LLM Provider</h3>

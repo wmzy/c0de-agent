@@ -557,6 +557,81 @@ describe('Settings — Provider 管理', () => {
   })
 })
 
+describe('Settings — 默认 Provider/Model 下拉选择', () => {
+  // 来源：默认 Provider/Model 改为从已配置 provider 派生的 select（取代手动输入）
+  const configWithModels = {
+    ...mockConfig,
+    providers: [
+      {
+        name: 'Alpha',
+        protocol: 'openai',
+        apiKey: 'k1',
+        baseURL: 'https://a',
+        models: { 'a-1': {}, 'a-disabled': { enabled: false } },
+      },
+      {
+        name: 'Beta',
+        protocol: 'anthropic',
+        apiKey: 'k2',
+        baseURL: 'https://b',
+        models: { 'b-1': {}, 'b-2': {} },
+      },
+    ],
+    defaultProvider: 'Alpha',
+    defaultModel: 'a-1',
+  }
+
+  it('默认 Provider select 选项来自已配置 provider', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('default-provider-select')).toBeTruthy())
+
+    const sel = screen.getByTestId('default-provider-select') as HTMLSelectElement
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['Alpha', 'Beta'])
+    expect(sel.value).toBe('Alpha')
+  })
+
+  it('默认 Model select 仅列出当前 provider 启用的模型', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('default-model-select')).toBeTruthy())
+
+    const sel = screen.getByTestId('default-model-select') as HTMLSelectElement
+    // a-disabled 被过滤；当前值 a-1 命中候选，无兜底 option
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['a-1'])
+    expect(sel.value).toBe('a-1')
+  })
+
+  it('切换默认 provider 时 model 自动校正为该 provider 首个启用模型', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.update as Mock).mockResolvedValue(configWithModels)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('default-provider-select')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('default-provider-select'), {
+      target: { value: 'Beta' },
+    })
+
+    const modelSel = screen.getByTestId('default-model-select') as HTMLSelectElement
+    await waitFor(() => expect(modelSel.value).toBe('b-1'))
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      defaultProvider: string
+      defaultModel: string
+    }
+    expect(args.defaultProvider).toBe('Beta')
+    expect(args.defaultModel).toBe('b-1')
+  })
+})
+
 describe('Settings — JSON 模式与导入导出', () => {
   it('点击 JSON 切换显示编辑器，内容为当前配置序列化', async () => {
     const { configAPI } = await import('../services/config.js')
@@ -661,12 +736,11 @@ describe('Settings — JSON 模式与导入导出', () => {
     const input = screen.getByTestId('settings-import-input') as HTMLInputElement
     fireEvent.change(input, { target: { files: [mockFile] } })
 
-    // 切回 GUI 模式，defaultModel 输入框反映导入值
-    await waitFor(() =>
-      expect(
-        (screen.getAllByDisplayValue('imported-model') as HTMLInputElement[]).length,
-      ).toBeGreaterThan(0),
-    )
+    // 切回 GUI 模式，defaultModel select 反映导入值（受控 select 用 value 断言）
+    await waitFor(() => {
+      const sel = screen.getByTestId('default-model-select') as HTMLSelectElement
+      expect(sel.value).toBe('imported-model')
+    })
 
     fireEvent.click(screen.getByTestId('settings-save'))
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
