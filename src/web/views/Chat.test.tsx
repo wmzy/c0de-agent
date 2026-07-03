@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { FileSelectionContext } from '../contexts/FileSelectionContext.js'
 import type { TimelineRow } from '../components/session/utils/timeline.js'
 import { permissionAPI } from '../services/permission.js'
 import { Chat } from './Chat.js'
@@ -39,7 +40,11 @@ function renderChat(overrides: Record<string, unknown> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <Chat {...base} {...overrides} />
+      <FileSelectionContext.Provider
+        value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+      >
+        <Chat {...base} {...overrides} />
+      </FileSelectionContext.Provider>
     </QueryClientProvider>,
   )
   return handlers

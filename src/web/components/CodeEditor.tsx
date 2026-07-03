@@ -11,10 +11,13 @@ export function CodeEditor({
   path,
   initial,
   projectId,
+  gotoLine,
 }: {
   path: string
   initial: string
   projectId?: string
+  /** 需要滚动定位到的行号（1-indexed）；变化时滚动。null 表示不定位。 */
+  gotoLine?: number | null
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -42,6 +45,22 @@ export function CodeEditor({
     viewRef.current = view
     return () => view.destroy()
   }, [path, initial, resolved])
+
+  // gotoLine 变化时滚动定位到该行（1-indexed）。
+  // 滚动 hostRef（实际溢出容器）而非 CodeMirror 的 cm-scroller——
+  // 本组件布局下 hostRef 才是 overflow:auto 的滚动容器，cm-scroller 撑满全高不滚动。
+  useEffect(() => {
+    if (gotoLine == null) return
+    const host = hostRef.current
+    if (!host) return
+    const lines = host.querySelectorAll('.cm-line')
+    const line = lines[gotoLine - 1] as HTMLElement | undefined
+    if (!line) return
+    // 居中该行：按视口坐标计算增量，避免 offsetParent 嵌套问题
+    const hostRect = host.getBoundingClientRect()
+    const lineRect = line.getBoundingClientRect()
+    host.scrollTop += lineRect.top - hostRect.top - hostRect.height / 2 + lineRect.height / 2
+  }, [gotoLine])
 
   const save = async () => {
     const doc = viewRef.current?.state.doc.toString() ?? ''

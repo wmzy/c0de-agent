@@ -1,5 +1,6 @@
+import { css } from '@linaria/core'
 import { getCursorPosition, setCursorPosition } from './editor-dom.js'
-import type { Prompt } from './types.js'
+import type { Prompt, SnippetPart } from './types.js'
 import { DEFAULT_PROMPT } from './types.js'
 
 /** 创建 file pill 元素（contenteditable=false，防光标进入）。 */
@@ -9,6 +10,39 @@ function createFilePill(path: string, label: string): HTMLSpanElement {
   span.setAttribute('data-path', path)
   span.setAttribute('contenteditable', 'false')
   span.textContent = label
+  return span
+}
+
+/** pill 公共样式（file 与 snippet pill 共用），hover 时有底色提示可交互。 */
+const pillStyle = css`
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 2px;
+  border-radius: 4px;
+  background: var(--bg-tertiary, #e8e8e8);
+  color: var(--primary, #4a9eff);
+  font-size: 0.92em;
+  user-select: none;
+  cursor: pointer;
+  &:hover {
+    background: var(--primary, #4a9eff);
+    color: #fff;
+  }
+`
+
+/** 创建 snippet pill 元素（显示位置标签，snippet 存 data 属性供 hover/click 使用）。
+ * 注意：pill 内不能放任何额外子节点，否则 editor-dom 的 getTextLength 会把子节点文本
+ * 计入光标偏移，破坏光标定位。hover tooltip 由 ComposerEditor 在 pill 外层渲染。 */
+function createSnippetPill(part: SnippetPart): HTMLSpanElement {
+  const span = document.createElement('span')
+  span.setAttribute('data-type', 'snippet')
+  span.setAttribute('data-path', part.path)
+  span.setAttribute('data-line-start', String(part.lineStart))
+  span.setAttribute('data-line-end', String(part.lineEnd))
+  span.setAttribute('data-snippet', part.snippet)
+  span.setAttribute('contenteditable', 'false')
+  span.className = pillStyle
+  span.textContent = part.label
   return span
 }
 
@@ -41,6 +75,22 @@ function parseFromDOM(editor: HTMLElement): Prompt {
       const path = el.dataset.path ?? ''
       parts.push({ type: 'file', path, content, start: position, end: position + content.length })
       position += content.length
+      return
+    }
+    if (el.dataset.type === 'snippet') {
+      flushText()
+      const label = el.textContent ?? ''
+      parts.push({
+        type: 'snippet',
+        path: el.dataset.path ?? '',
+        lineStart: Number(el.dataset.lineStart ?? '1'),
+        lineEnd: Number(el.dataset.lineEnd ?? '1'),
+        label,
+        snippet: el.dataset.snippet ?? '',
+        start: position,
+        end: position + label.length,
+      })
+      position += label.length
       return
     }
     if (el.tagName === 'BR') {
@@ -76,6 +126,8 @@ function renderPrompt(editor: HTMLElement, prompt: Prompt): void {
       })
     } else if (part.type === 'file') {
       editor.appendChild(createFilePill(part.path, part.content || `📄 ${part.path}`))
+    } else if (part.type === 'snippet') {
+      editor.appendChild(createSnippetPill(part))
     }
   }
   // 空 editor 插零宽空格防塌陷

@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { CodeBlock } from '../components/CodeBlock.js'
 import { CodeEditor } from '../components/CodeEditor.js'
 import { Markdown } from '../components/Markdown.js'
@@ -98,14 +98,51 @@ function extOf(name: string): string {
   return name.split('.').pop()?.toLowerCase() ?? ''
 }
 
+/** 计算选区在文件中的行范围（1-indexed）。
+ * 优先用 CodeMirror 的 .cm-line 元素精确计数；回退到全文查找选中文本首次出现位置后按换行计数。 */
+function computeLineRange(
+  container: HTMLElement,
+  range: Range,
+  fullContent: string,
+  selText: string,
+): { start: number; end: number } {
+  const lines = container.querySelectorAll('.cm-line')
+  if (lines.length > 0) {
+    let startLine = -1
+    let endLine = -1
+    lines.forEach((line, i) => {
+      const n = i + 1
+      if (startLine === -1 && line.contains(range.startContainer)) startLine = n
+      if (line.contains(range.endContainer)) endLine = n
+    })
+    if (startLine !== -1 && endLine !== -1) {
+      if (endLine < startLine) [startLine, endLine] = [endLine, startLine]
+      return { start: startLine, end: endLine }
+    }
+  }
+  if (fullContent && selText) {
+    const idx = fullContent.indexOf(selText)
+    if (idx >= 0) {
+      const start = fullContent.slice(0, idx).split('\n').length
+      const end = start + selText.split('\n').length - 1
+      return { start, end }
+    }
+  }
+  return { start: 1, end: 1 }
+}
+
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
-  const { closeFile } = useFileSelection()
+  const { closeFile, revealLine } = useFileSelection()
   const fileRef = useFileReference()
   // ref 持有最新 API，避免条件绑定 onMouseUp 导致首次操作失败
   const apiRef = useRef(fileRef)
   apiRef.current = fileRef
   const contentRef = useRef<HTMLDivElement>(null)
-  const [quotePos, setQuotePos] = useState<{ x: number; y: number; text: string } | null>(null)
+  // 按钮始终存在于 DOM 中（display:none 隐藏），通过 ref 直接操作 style 定位/显隐。
+  // 不用 useState：选区检测期间任何 React 重渲染都会打断浏览器的选区固化，导致闪烁/丢失。
+  const quoteBtnRef = useRef<HTMLButtonElement>(null)
+  const selectedTextRef = useRef('')
+  const selectedRangeRef = useRef<{ start: number; end: number }>({ start: 1, end: 1 })
 
   const ext = extOf(path)
   const isMedia =
@@ -118,6 +155,9 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     queryFn: () => fileAPI.read(path, projectId),
     enabled: !isMedia,
   })
+  // 全文内容 ref（供选区行号回退计算），渲染时同步
+  const fullContentRef = useRef('')
+  fullContentRef.current = q.data?.content ?? ''
 
   // 渲染内容区（不含 header）
   let body: React.ReactNode
@@ -169,51 +209,86 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   } else if (['md', 'markdown'].includes(ext)) {
     body = <Markdown content={q.data.content} />
   } else if (CODE_EXT.includes(ext)) {
-    body = <CodeEditor projectId={projectId} path={path} initial={q.data.content} />
+    body = (
+      <CodeEditor
+        projectId={projectId}
+        path={path}
+        initial={q.data.content}
+        gotoLine={revealLine ?? null}
+      />
+    )
   } else {
     body = <CodeBlock code={q.data.content} lang={ext} />
   }
 
-  // 选中文本检测：mouseup 后检查 selection 是否在内容区内且非空
+  // 选中文本检测：直接操作按钮 DOM（display/left/top），不触发 React 重渲染。
+  // 重渲染会在浏览器固化选区的关键窗口期打断它，导致选区闪烁/丢失。
   const checkSelection = useCallback(() => {
-    if (!apiRef.current) return
+    const btn = quoteBtnRef.current
+    if (!btn) return
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-      setQuotePos(null)
+      btn.style.display = 'none'
+      selectedTextRef.current = ''
       return
     }
     const text = sel.toString().trim()
     if (!text) {
-      setQuotePos(null)
+      btn.style.display = 'none'
+      selectedTextRef.current = ''
       return
     }
     const range = sel.getRangeAt(0)
     const container = contentRef.current
     if (!container?.contains(range.commonAncestorContainer)) {
-      setQuotePos(null)
+      btn.style.display = 'none'
+      selectedTextRef.current = ''
       return
     }
     const rect = range.getBoundingClientRect()
     const containerRect = container.getBoundingClientRect()
-    setQuotePos({
-      x: rect.left - containerRect.left + rect.width / 2,
-      y: rect.top - containerRect.top,
-      text,
-    })
+    btn.style.left = `${rect.left - containerRect.left + rect.width / 2}px`
+    btn.style.top = `${rect.top - containerRect.top}px`
+    btn.style.display = 'block'
+    selectedTextRef.current = text
+    selectedRangeRef.current = computeLineRange(container, range, fullContentRef.current, text)
   }, [])
 
   const handleQuote = useCallback(() => {
-    if (!quotePos || !apiRef.current) return
-    apiRef.current.insertTextReference(path, quotePos.text)
+    if (!selectedTextRef.current || !apiRef.current) return
+    const { start, end } = selectedRangeRef.current
+    apiRef.current.insertSnippetReference(path, start, end, selectedTextRef.current)
     window.getSelection()?.removeAllRanges()
-    setQuotePos(null)
-  }, [quotePos, path])
-
-  // 切换文件时清除引用按钮；path 是 prop 变化时唯一需响应的依赖
-  // biome-ignore lint/correctness/useExhaustiveDependencies: path 变化即需重置 quotePos
-  useEffect(() => {
-    setQuotePos(null)
+    const btn = quoteBtnRef.current
+    if (btn) btn.style.display = 'none'
+    selectedTextRef.current = ''
   }, [path])
+
+  // 切换文件时隐藏引用按钮
+  // biome-ignore lint/correctness/useExhaustiveDependencies: path 变化即需隐藏按钮
+  useEffect(() => {
+    const btn = quoteBtnRef.current
+    if (btn) btn.style.display = 'none'
+    selectedTextRef.current = ''
+  }, [path])
+
+  // selectionchange 监听：覆盖 onMouseUp 无法捕获的场景——
+  // 键盘选择（Ctrl+A / Shift+方向键）、触摸长按选择，以及鼠标拖选长代码行时
+  // mouseup 落在面板可见区域外。
+  // 150ms 定时器在拖选期间不断重置，仅在选区稳定后触发一次。
+  useEffect(() => {
+    if (isMedia) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onSelectionChange = () => {
+      clearTimeout(timer)
+      timer = setTimeout(checkSelection, 150)
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('selectionchange', onSelectionChange)
+    }
+  }, [checkSelection, isMedia])
 
   return (
     <div className={wrap}>
@@ -231,20 +306,23 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         data-testid="preview-content"
         ref={contentRef}
         onMouseUp={isMedia ? undefined : checkSelection}
-        onScroll={() => setQuotePos(null)}
+        onScroll={() => {
+          const btn = quoteBtnRef.current
+          if (btn) btn.style.display = 'none'
+        }}
       >
         {body}
-        {quotePos && (
-          <button
-            type="button"
-            className={quoteBtn}
-            data-testid="quote-selection"
-            style={{ left: quotePos.x, top: quotePos.y }}
-            onClick={handleQuote}
-          >
-            引用到对话
-          </button>
-        )}
+        <button
+          type="button"
+          className={quoteBtn}
+          ref={quoteBtnRef}
+          data-testid="quote-selection"
+          style={{ display: 'none' }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={handleQuote}
+        >
+          引用到对话
+        </button>
       </div>
     </div>
   )

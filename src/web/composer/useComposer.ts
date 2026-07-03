@@ -9,7 +9,7 @@ import {
 } from './history.js'
 import { normalizePaste, pasteMode } from './paste.js'
 import type { ImagePart, Prompt } from './types.js'
-import { DEFAULT_PROMPT, isPromptEmpty, promptToText } from './types.js'
+import { DEFAULT_PROMPT, isPromptEmpty, promptToMessageText, promptToText, snippetLabel } from './types.js'
 
 type PopoverState = 'slash' | 'at' | null
 
@@ -165,18 +165,24 @@ function useComposer({
     [setPromptExternal],
   )
 
-  /** 外部引用（预览面板选中文本）：在 prompt 末尾追加带路径标注的代码块。 */
-  const appendTextReference = useCallback(
-    (path: string, snippet: string) => {
+  /** 外部引用（预览面板选中文本）：在 prompt 末尾追加 snippet pill（显示位置标签），
+   * snippet 内容隐藏在 pill data 属性中，提交时由 promptToMessageText 展开为代码块。 */
+  const appendSnippetReference = useCallback(
+    (path: string, lineStart: number, lineEnd: number, snippet: string) => {
       const prompt = promptRef.current
       const parts: Prompt = []
       for (const part of prompt) {
         if (part.type === 'text') parts.push({ ...part })
         else if (part.type === 'file') parts.push({ ...part })
+        else if (part.type === 'snippet') parts.push({ ...part })
       }
       const text = promptToText(prompt)
-      const block = `${text.length > 0 && !text.endsWith('\n') ? '\n' : ''}📄 \`${path}\`:\n\`\`\`\n${snippet}\n\`\`\`\n`
-      parts.push({ type: 'text', content: block, start: 0, end: block.length })
+      const label = snippetLabel(path, lineStart, lineEnd)
+      if (text.length > 0 && !text.endsWith(' ')) {
+        parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
+      }
+      parts.push({ type: 'snippet', path, lineStart, lineEnd, label, snippet, start: 0, end: label.length })
+      parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
       setPromptExternal(parts, true)
       editorRef.current?.focus()
     },
@@ -250,7 +256,7 @@ function useComposer({
     }
     const prompt = readPrompt()
     if (isPromptEmpty(prompt) && images.length === 0) return
-    const text = promptToText(prompt)
+    const text = promptToMessageText(prompt)
     const files = prompt.flatMap((p) => (p.type === 'file' ? [p.path] : []))
     onSend({ text, files, images })
     if (text.trim()) saveHistory(prependHistoryEntry(loadHistory(), text))
@@ -263,7 +269,7 @@ function useComposer({
   const steer = useCallback(() => {
     const prompt = readPrompt()
     if (isPromptEmpty(prompt)) return
-    const text = promptToText(prompt)
+    const text = promptToMessageText(prompt)
     onSteer?.(text)
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
@@ -337,7 +343,7 @@ function useComposer({
     insertSlash,
     insertFile,
     appendFileReference,
-    appendTextReference,
+    appendSnippetReference,
     send,
     steer,
     setPopover,

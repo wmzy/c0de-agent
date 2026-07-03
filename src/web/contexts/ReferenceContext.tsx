@@ -12,8 +12,14 @@ import { createContext, useContext, useState } from 'react'
 export type FileReferenceAPI = {
   /** 插入文件引用 pill（FilePart，发送时附带整个文件内容到上下文）。 */
   insertFileReference: (path: string) => void
-  /** 插入选中文本引用（标注来源路径的代码块，作为消息文本发送）。 */
-  insertTextReference: (path: string, text: string) => void
+  /** 插入选区引用 pill（SnippetPart）：编辑器显示位置标签，
+   * hover 展示 snippet，提交时注入代码块以省一次 read 调用。 */
+  insertSnippetReference: (
+    path: string,
+    lineStart: number,
+    lineEnd: number,
+    snippet: string,
+  ) => void
 }
 
 type FileReferenceContextValue = {

@@ -140,6 +140,7 @@ function ChatPage() {
   const { projectId, sessionId } = useParams<{ projectId: string; sessionId: string }>()
   const navigate = useNavigate()
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [revealLine, setRevealLine] = useState<number | null>(null)
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
     () => (localStorage.getItem('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
   )
@@ -150,8 +151,15 @@ function ChatPage() {
 
   const fileCtx: FileSelection = {
     selectedFile,
-    openFile: setSelectedFile,
-    closeFile: () => setSelectedFile(null),
+    openFile: (path: string, line?: number) => {
+      setSelectedFile(path)
+      setRevealLine(line ?? null)
+    },
+    closeFile: () => {
+      setSelectedFile(null)
+      setRevealLine(null)
+    },
+    revealLine,
   }
 
   if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
@@ -178,7 +186,7 @@ function ChatPage() {
                   }}
                 />
               }
-              files={<FileBrowser projectId={projectId} onPick={setSelectedFile} />}
+              files={<FileBrowser projectId={projectId} onPick={(p) => fileCtx.openFile(p)} />}
             />
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}

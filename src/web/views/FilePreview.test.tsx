@@ -105,15 +105,15 @@ describe('FilePreview', () => {
     expect(closeFile).toHaveBeenCalledOnce()
   })
 
-  it('选中文本后点击引用按钮调用 insertTextReference', async () => {
-    const insertTextReference = vi.fn()
+  it('选中文本后点击引用按钮调用 insertSnippetReference', async () => {
+    const insertSnippetReference = vi.fn()
     const insertFileReference = vi.fn()
     vi.stubGlobal('fetch', fetchMock('hello world\nsecond line'))
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={qc}>
         <ReferenceContext.Provider
-          value={{ api: { insertFileReference, insertTextReference }, setApi: () => {} }}
+          value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
         >
           <FileSelectionContext.Provider
             value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
@@ -143,11 +143,54 @@ describe('FilePreview', () => {
     }))
     // 触发 mouseup 检测选区
     fireEvent.mouseUp(scrollArea)
-    // 引用按钮出现
+    // 引用按钮变为可见
     await waitFor(() => {
-      expect(screen.getByTestId('quote-selection')).toBeTruthy()
+      expect(screen.getByTestId('quote-selection')).toBeVisible()
     })
     fireEvent.click(screen.getByTestId('quote-selection'))
-    expect(insertTextReference).toHaveBeenCalledWith('notes.txt', 'hello world')
+    // 行号由全文回退计算：'hello world' 在第 1 行
+    expect(insertSnippetReference).toHaveBeenCalledWith('notes.txt', 1, 1, 'hello world')
+  })
+
+  it('selectionchange 事件也能触发引用按钮（覆盖键盘选择场景）', async () => {
+    const insertSnippetReference = vi.fn()
+    const insertFileReference = vi.fn()
+    vi.stubGlobal('fetch', fetchMock('hello world\nsecond line'))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <ReferenceContext.Provider
+          value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
+        >
+          <FileSelectionContext.Provider
+            value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
+          >
+            <FilePreview projectId="p1" path="notes.txt" />
+          </FileSelectionContext.Provider>
+        </ReferenceContext.Provider>
+      </QueryClientProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+    })
+    const scrollArea = screen.getByTestId('preview-content')
+    const mockRange = {
+      getBoundingClientRect: () => ({ left: 10, top: 10, width: 50 }),
+      commonAncestorContainer: scrollArea,
+    }
+    vi.stubGlobal('getSelection', () => ({
+      isCollapsed: false,
+      rangeCount: 1,
+      toString: () => 'hello world',
+      getRangeAt: () => mockRange,
+      removeAllRanges: () => {},
+    }))
+    // 仅 dispatch selectionchange，不触发 mouseup——模拟键盘选择（Ctrl+A 等）
+    document.dispatchEvent(new Event('selectionchange'))
+    await waitFor(() => {
+      expect(screen.getByTestId('quote-selection')).toBeVisible()
+    })
+    fireEvent.click(screen.getByTestId('quote-selection'))
+    expect(insertSnippetReference).toHaveBeenCalledWith('notes.txt', 1, 1, 'hello world')
   })
 })

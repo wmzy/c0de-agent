@@ -136,10 +136,10 @@ function Composer(props: ComposerProps) {
   useEffect(() => {
     setFileReferenceApi({
       insertFileReference: composer.appendFileReference,
-      insertTextReference: composer.appendTextReference,
+      insertSnippetReference: composer.appendSnippetReference,
     })
     return () => setFileReferenceApi(null)
-  }, [composer.appendFileReference, composer.appendTextReference, setFileReferenceApi])
+  }, [composer.appendFileReference, composer.appendSnippetReference, setFileReferenceApi])
 
   const [slashActive, setSlashActive] = useState(0)
   const [atActive, setAtActive] = useState(0)
