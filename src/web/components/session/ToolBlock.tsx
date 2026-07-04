@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { FilePathLink } from '../FilePathLink.js'
 import { BashToolView } from './tools/BashToolView.js'
 import { EditToolView } from './tools/EditToolView.js'
 import { FallbackToolView } from './tools/FallbackToolView.js'
@@ -83,32 +84,45 @@ export function ToolBlock({ block }: { block: ToolRenderBlock }) {
   }, [st, autoCollapsed])
 
   const toggle = () => setExpanded((v) => !v)
-  const label = toolSummary(tool, input)
+  const onHeaderKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      toggle()
+    }
+  }
 
   return (
     <div className={wrap}>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         className={header}
         data-testid="tool-header"
         data-expanded={expanded}
         onClick={toggle}
+        onKeyDown={onHeaderKeyDown}
       >
         <span className={icon} data-testid="tool-status" data-status={st}>
           {STATUS_ICON[st]}
         </span>
-        <span className={summary}>
+        <span className={summary} data-testid="tool-summary">
           {tool}
-          {label ? ` · ${label}` : ''}
+          {renderHeaderSummary(tool, input)}
         </span>
         <span className={arrow}>{expanded ? '▾' : '▸'}</span>
-      </button>
+      </div>
       {expanded && st === 'paused' ? (
-        <div className={body} style={{ fontSize: 13, color: 'var(--warning)' }}>
+        <div
+          className={body}
+          data-testid="tool-body"
+          style={{ fontSize: 13, color: 'var(--warning)' }}
+        >
           等待权限确认
         </div>
       ) : expanded ? (
-        <div className={body}>{renderTool(tool, input, output, st)}</div>
+        <div className={body} data-testid="tool-body">
+          {renderTool(tool, input, output, st)}
+        </div>
       ) : null}
     </div>
   )
@@ -136,4 +150,26 @@ function renderTool(
     default:
       return <FallbackToolView tool={tool} input={input} output={output} />
   }
+}
+
+/** header 摘要：文件类工具渲染可点击路径，其余用纯文本摘要。 */
+function renderHeaderSummary(tool: string, input: unknown): ReactNode {
+  const i = (input ?? {}) as Record<string, unknown>
+  if (
+    (tool === 'read' || tool === 'write' || tool === 'edit') &&
+    typeof i.path === 'string' &&
+    i.path
+  ) {
+    return (
+      <>
+        {' · '}
+        {/* 阻止路径点击冒泡到 header 的展开/收起 */}
+        <span onClick={(e) => e.stopPropagation()}>
+          <FilePathLink path={i.path} />
+        </span>
+      </>
+    )
+  }
+  const label = toolSummary(tool, input)
+  return label ? ` · ${label}` : null
 }

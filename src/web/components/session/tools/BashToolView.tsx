@@ -3,17 +3,6 @@ import type { ToolResult } from '@shared/types/tool.js'
 import { CodeBlock } from '../../CodeBlock.js'
 import { useOverflow } from '../hooks/useOverflow.js'
 
-const title = css`
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 4px;
-`
-
-const name = css`
-  color: var(--text);
-  font-weight: 500;
-`
-
 const out = css`
   margin: 4px 0 0;
   padding: 8px;
@@ -79,9 +68,6 @@ export function BashToolView({
 
   return (
     <div>
-      <div className={title}>
-        <span className={name}>bash</span>
-      </div>
       <div data-testid="bash-command">
         <CodeBlock code={command} lang="bash" />
       </div>

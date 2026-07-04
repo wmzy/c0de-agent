@@ -7,17 +7,6 @@ import { GrepToolView } from './GrepToolView.js'
 describe('GrepToolView', () => {
   afterEach(cleanup)
 
-  it('渲染 pattern', () => {
-    render(
-      <GrepToolView
-        input={{ pattern: 'foo' }}
-        output={{ _tag: 'success', output: 'a.ts:1:foo' }}
-        status="completed"
-      />,
-    )
-    expect(screen.getByTestId('tool-title')).toHaveTextContent('foo')
-  })
-
   it('渲染输出', () => {
     render(
       <GrepToolView
@@ -33,7 +22,7 @@ describe('GrepToolView', () => {
 describe('GlobToolView', () => {
   afterEach(cleanup)
 
-  it('渲染 pattern 与文件列表', () => {
+  it('渲染文件列表', () => {
     render(
       <GlobToolView
         input={{ pattern: '*.ts' }}
@@ -41,7 +30,6 @@ describe('GlobToolView', () => {
         status="completed"
       />,
     )
-    expect(screen.getByTestId('tool-title')).toHaveTextContent('*.ts')
     expect(screen.getByTestId('tool-output')).toHaveTextContent('a.ts')
   })
 })

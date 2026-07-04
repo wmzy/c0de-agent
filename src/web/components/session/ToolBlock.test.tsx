@@ -1,16 +1,22 @@
 import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileSelectionContext } from '../../contexts/FileSelectionContext.js'
 import { ToolBlock } from './ToolBlock.js'
 import type { RenderBlock } from './utils/normalizeParts.js'
 
 afterEach(() => cleanup())
 
-// ReadToolView 等经 FilePathLink 依赖 FileSelectionContext，需包裹 Provider
-function SelectionWrapper({ children }: { children: React.ReactNode }) {
+// header 的 FilePathLink 依赖 FileSelectionContext，需包裹 Provider
+function SelectionWrapper({
+  children,
+  openFile = vi.fn(),
+}: {
+  children: React.ReactNode
+  openFile?: ReturnType<typeof vi.fn>
+}) {
   return (
     <FileSelectionContext.Provider
-      value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+      value={{ selectedFile: null, openFile: openFile as never, closeFile: () => {} }}
     >
       {children}
     </FileSelectionContext.Provider>
@@ -40,7 +46,7 @@ describe('ToolBlock', () => {
   it('completed 默认折叠，body 不渲染', () => {
     render(<ToolBlock block={toolBlock({ status: 'completed' })} />)
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('false')
-    expect(screen.queryByTestId('file-name')).toBeNull()
+    expect(screen.queryByTestId('tool-body')).toBeNull()
   })
 
   it('running 默认展开', () => {
@@ -53,9 +59,9 @@ describe('ToolBlock', () => {
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('false')
     fireEvent.click(screen.getByTestId('tool-header'))
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
-    expect(screen.getByTestId('file-name')).toHaveTextContent('a.ts')
+    expect(screen.getByTestId('tool-body')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('tool-header'))
-    expect(screen.queryByTestId('file-name')).toBeNull()
+    expect(screen.queryByTestId('tool-body')).toBeNull()
   })
 
   it('running → completed 自动收起一次', () => {
@@ -101,7 +107,22 @@ describe('ToolBlock', () => {
       />,
     )
     fireEvent.click(screen.getByTestId('tool-header'))
-    expect(screen.getByTestId('file-name')).toHaveTextContent('a.ts')
+    expect(screen.getByTestId('tool-body')).toBeInTheDocument()
+  })
+
+  it('header 文件路径为可点击链接，且点击不触发展开', () => {
+    const openFile = vi.fn()
+    render(
+      <SelectionWrapper openFile={openFile}>
+        <ToolBlock block={toolBlock({ tool: 'read', input: { path: 'src/a.ts' } })} />
+      </SelectionWrapper>,
+    )
+    const link = screen.getByTestId('filepath-link')
+    expect(link.textContent).toBe('src/a.ts')
+    // 折叠态点击路径：打开预览但不展开
+    fireEvent.click(link)
+    expect(openFile).toHaveBeenCalledWith('src/a.ts')
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('false')
   })
 
   it('未知工具用 FallbackToolView（展开后）', () => {

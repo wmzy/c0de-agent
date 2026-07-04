@@ -1,30 +1,25 @@
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FileSelectionContext } from '../../../contexts/FileSelectionContext.js'
+import { afterEach, describe, expect, it } from 'vitest'
 import { ReadToolView } from './ReadToolView.js'
 import { WriteToolView } from './WriteToolView.js'
 
 afterEach(cleanup)
 
-// FilePathLink 依赖 FileSelectionContext，测试需包裹假 Provider
-function withProvider(ui: React.ReactNode, openFile = vi.fn()) {
-  render(
-    <FileSelectionContext.Provider value={{ selectedFile: null, openFile, closeFile: () => {} }}>
-      {ui}
-    </FileSelectionContext.Provider>,
-  )
-  return openFile
-}
-
 describe('ReadToolView', () => {
-  it('渲染文件名', () => {
-    withProvider(<ReadToolView input={{ path: 'src/a.ts' }} status="completed" />)
-    expect(screen.getByTestId('tool-title')).toHaveTextContent('read')
-    expect(screen.getByTestId('file-name')).toHaveTextContent('src/a.ts')
+  it('有内容时渲染代码块', () => {
+    const { container } = render(
+      <ReadToolView
+        input={{ path: 'src/a.ts' }}
+        output={{ _tag: 'success', output: 'file content' }}
+        status="completed"
+      />,
+    )
+    // FileCodeBlock 渲染出代码区（pre 或 CodeBlock 高亮容器）
+    expect(container.querySelector('pre, [class]')).not.toBeNull()
   })
 
   it('error 状态显示错误信息', () => {
-    withProvider(
+    render(
       <ReadToolView
         input={{ path: 'a.ts' }}
         status="error"
@@ -34,23 +29,22 @@ describe('ReadToolView', () => {
     expect(screen.getByTestId('tool-error')).toHaveTextContent('no file')
   })
 
-  it('路径为可点击 FilePathLink', () => {
-    const openFile = withProvider(<ReadToolView input={{ path: 'src/a.ts' }} status="completed" />)
-    const link = screen.getByTestId('filepath-link')
-    expect(link.textContent).toBe('src/a.ts')
-    link.click()
-    expect(openFile).toHaveBeenCalledWith('src/a.ts')
+  it('无内容时不渲染代码块', () => {
+    const { container } = render(<ReadToolView input={{ path: 'a.ts' }} status="running" />)
+    expect(container.querySelector('pre')).toBeNull()
   })
 })
 
 describe('WriteToolView', () => {
-  it('渲染文件名与写入提示', () => {
-    withProvider(<WriteToolView input={{ path: 'b.ts', content: 'x' }} status="completed" />)
-    expect(screen.getByTestId('file-name')).toHaveTextContent('b.ts')
+  it('渲染写入内容代码块', () => {
+    const { container } = render(
+      <WriteToolView input={{ path: 'b.ts', content: 'written' }} status="completed" />,
+    )
+    expect(container.querySelector('pre, [class]')).not.toBeNull()
   })
 
   it('error 状态显示错误信息', () => {
-    withProvider(
+    render(
       <WriteToolView
         input={{ path: 'b.ts', content: 'x' }}
         status="error"
@@ -58,14 +52,5 @@ describe('WriteToolView', () => {
       />,
     )
     expect(screen.getByTestId('tool-error')).toHaveTextContent('permission denied')
-  })
-
-  it('路径为可点击 FilePathLink', () => {
-    const openFile = withProvider(
-      <WriteToolView input={{ path: 'b.ts', content: 'x' }} status="completed" />,
-    )
-    const link = screen.getByTestId('filepath-link')
-    link.click()
-    expect(openFile).toHaveBeenCalledWith('b.ts')
   })
 })

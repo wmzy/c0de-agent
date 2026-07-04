@@ -2,12 +2,6 @@ import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { useOverflow } from '../hooks/useOverflow.js'
 
-const title = css`
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 2px;
-`
-
 const pre = css`
   margin: 0;
   padding: 8px;
@@ -42,7 +36,6 @@ export function GlobToolView({
   output?: ToolResult
   status: string
 }) {
-  const pattern = input?.pattern ?? ''
   const text =
     output?._tag === 'success' || output?._tag === 'truncated'
       ? output.output
@@ -53,9 +46,6 @@ export function GlobToolView({
   const showToggle = overflowing && !expanded
   return (
     <div>
-      <div className={title} data-testid="tool-title">
-        Glob · {pattern}
-      </div>
       {text && (
         <div>
           <div ref={ref} className={showToggle ? collapsed : ''}>

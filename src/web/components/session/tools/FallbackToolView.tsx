@@ -2,13 +2,6 @@ import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { useOverflow } from '../hooks/useOverflow.js'
 
-const title = css`
-  font-size: 13px;
-  color: var(--text);
-  font-weight: 500;
-  margin-bottom: 2px;
-`
-
 const pre = css`
   margin: 0;
   padding: 8px;
@@ -72,9 +65,6 @@ export function FallbackToolView({
   const showToggle = overflowing && !expanded
   return (
     <div>
-      <div className={title} data-testid="tool-title">
-        {tool || 'tool'}
-      </div>
       {pairs.length > 0 && (
         <pre className={pre} data-testid="fallback-args">
           {pairs
