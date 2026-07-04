@@ -965,9 +965,7 @@ export function Settings() {
                     data-testid="default-provider-select"
                   >
                     {/* 当前值不在已配置列表时兜底显示，避免受控 select 丢失值 */}
-                    {!defaultProviderCandidates.some(
-                      (p) => p.name === merged.defaultProvider,
-                    ) &&
+                    {!defaultProviderCandidates.some((p) => p.name === merged.defaultProvider) &&
                     merged.defaultProvider ? (
                       <option value={merged.defaultProvider}>
                         {merged.defaultProvider}（未配置）
@@ -995,14 +993,14 @@ export function Settings() {
                   >
                     {defaultModelCandidates.length === 0 ? (
                       <option value="">
-                        {defaultProviderEntry ? '该 Provider 暂无模型，请先添加' : '请先选择 Provider'}
+                        {defaultProviderEntry
+                          ? '该 Provider 暂无模型，请先添加'
+                          : '请先选择 Provider'}
                       </option>
                     ) : null}
                     {!defaultModelCandidates.includes(merged.defaultModel) &&
                     merged.defaultModel ? (
-                      <option value={merged.defaultModel}>
-                        {merged.defaultModel}（未配置）
-                      </option>
+                      <option value={merged.defaultModel}>{merged.defaultModel}（未配置）</option>
                     ) : null}
                     {defaultModelCandidates.map((m) => (
                       <option key={m} value={m}>
@@ -1351,6 +1349,28 @@ export function Settings() {
                 placeholder="（本地回环始终允许）"
               />
             </label>
+          </div>
+          <div className={section}>
+            <h3>自动授权</h3>
+            <label className={field}>
+              <span>默认模式：</span>
+              <select
+                value={merged.permission?.defaultMode ?? 'default'}
+                onChange={(e) =>
+                  updateSection('permission', {
+                    defaultMode: e.target.value as Config['permission']['defaultMode'],
+                  })
+                }
+              >
+                <option value="default">逐个确认（推荐）</option>
+                <option value="auto">自动授权（YOLO，跳过确认）</option>
+              </select>
+            </label>
+            <p className={hint}>
+              启动时的默认授权模式。「自动授权」会跳过所有 ask 工具（含
+              bash）的确认。此项为持久化默认值；Chat
+              页顶部的「自动授权」开关为本次运行的临时切换，不会改写这里。
+            </p>
           </div>
         </>
       )}

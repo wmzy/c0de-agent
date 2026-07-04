@@ -50,6 +50,22 @@ describe('server/types', () => {
     expect(ctx.cwd).toBe('/tmp/test')
   })
 
+  it('createServerContext 用 config.permission.defaultMode 初始化 permissionMode', async () => {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    // 默认 config → permissionMode 为 default
+    const ctxDefault = createServerContext({ db, llmRegistry: createRegistry() })
+    expect(ctxDefault.permissionMode).toBe('default')
+    // config 设 auto → permissionMode 跟随
+    const ctxAuto = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      config: { ...DEFAULT_CONFIG, permission: { defaultMode: 'auto' } },
+    })
+    expect(ctxAuto.permissionMode).toBe('auto')
+  })
+
   it('请求类型满足结构约束', () => {
     const chat: ChatRequest = { sessionId: 's1', message: 'hello' }
     const steer: SteerRequest = { sessionId: 's1', message: 'stop' }

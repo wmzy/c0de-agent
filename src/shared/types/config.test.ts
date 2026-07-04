@@ -76,6 +76,7 @@ describe('Config', () => {
       security: { authEnabled: false, allowedOrigins: [] },
       websearch: { provider: 'auto' },
       agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
+      permission: { defaultMode: 'default' },
       locale: 'zh-CN',
     }
     expect(config.defaultProvider).toBe('openai')

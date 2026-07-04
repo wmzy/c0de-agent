@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileSelectionContext } from '../contexts/FileSelectionContext.js'
 import { ReferenceContext } from '../contexts/ReferenceContext.js'
+import { ThemeProvider } from '../contexts/ThemeContext.js'
 import { FilePreview } from './FilePreview.js'
 
 // 返回 mock fetch，json 响应携带给定 content
@@ -112,15 +113,17 @@ describe('FilePreview', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={qc}>
-        <ReferenceContext.Provider
-          value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
-        >
-          <FileSelectionContext.Provider
-            value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
+        <ThemeProvider>
+          <ReferenceContext.Provider
+            value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
           >
-            <FilePreview projectId="p1" path="notes.txt" />
-          </FileSelectionContext.Provider>
-        </ReferenceContext.Provider>
+            <FileSelectionContext.Provider
+              value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
+            >
+              <FilePreview projectId="p1" path="notes.txt" />
+            </FileSelectionContext.Provider>
+          </ReferenceContext.Provider>
+        </ThemeProvider>
       </QueryClientProvider>,
     )
     // 等待内容渲染
@@ -159,15 +162,17 @@ describe('FilePreview', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={qc}>
-        <ReferenceContext.Provider
-          value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
-        >
-          <FileSelectionContext.Provider
-            value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
+        <ThemeProvider>
+          <ReferenceContext.Provider
+            value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
           >
-            <FilePreview projectId="p1" path="notes.txt" />
-          </FileSelectionContext.Provider>
-        </ReferenceContext.Provider>
+            <FileSelectionContext.Provider
+              value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
+            >
+              <FilePreview projectId="p1" path="notes.txt" />
+            </FileSelectionContext.Provider>
+          </ReferenceContext.Provider>
+        </ThemeProvider>
       </QueryClientProvider>,
     )
     await waitFor(() => {

@@ -43,6 +43,7 @@ const mockConfig = {
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
+  permission: { defaultMode: 'default' },
 }
 
 vi.mock('../services/config.js', () => ({
@@ -788,9 +789,39 @@ describe('Settings — 完整配置表单覆盖', () => {
       'Web 搜索',
       '多 Agent',
       '安全',
+      '自动授权',
     ]) {
       expect(headings).toContain(title)
     }
+  })
+
+  it('自动授权段落 select 切换并保存', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 定位「自动授权」段落并取其内 select
+    const permHeading = screen
+      .getAllByRole('heading', { level: 3 })
+      .find((h) => h.textContent === '自动授权')
+    expect(permHeading).toBeTruthy()
+    const section = permHeading?.closest('div')
+    const select = within(section as HTMLElement).getByRole(
+      'combobox',
+    ) as HTMLSelectElement
+    expect(select.value).toBe('default')
+
+    fireEvent.change(select, { target: { value: 'auto' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      permission: { defaultMode: string }
+    }
+    expect(args.permission.defaultMode).toBe('auto')
   })
 
   it('编辑故障回退字段后保存提交正确值', async () => {

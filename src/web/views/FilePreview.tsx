@@ -1,7 +1,6 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef } from 'react'
-import { CodeBlock } from '../components/CodeBlock.js'
 import { CodeEditor } from '../components/CodeEditor.js'
 import { Markdown } from '../components/Markdown.js'
 import { useFileSelection } from '../contexts/FileSelectionContext.js'
@@ -74,22 +73,6 @@ const quoteBtn = css`
   }
 `
 
-const CODE_EXT = [
-  'ts',
-  'tsx',
-  'js',
-  'jsx',
-  'py',
-  'rs',
-  'go',
-  'java',
-  'c',
-  'cpp',
-  'css',
-  'html',
-  'sh',
-  'sql',
-]
 const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp']
 const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'm4a', 'flac']
 const VIDEO_EXT = ['mp4', 'webm', 'mov', 'mkv']
@@ -208,7 +191,8 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     body = <div style={{ padding: 12 }}>无内容</div>
   } else if (['md', 'markdown'].includes(ext)) {
     body = <Markdown content={q.data.content} />
-  } else if (CODE_EXT.includes(ext)) {
+  } else {
+    // 所有非 markdown 文本/代码文件统一用 CodeEditor：行号 + 行范围高亮。
     body = (
       <CodeEditor
         projectId={projectId}
@@ -217,8 +201,6 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         highlightRange={revealRange ?? null}
       />
     )
-  } else {
-    body = <CodeBlock code={q.data.content} lang={ext} />
   }
 
   // 选中文本检测：直接操作按钮 DOM（display/left/top），不触发 React 重渲染。

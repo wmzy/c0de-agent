@@ -11,7 +11,8 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     return c.json({ mode: ctx.permissionMode })
   })
 
-  // PUT / — 运行时切换授权模式（不持久化，重启回 default）
+  // PUT / — 运行时切换授权模式（仅本次运行生效，不回写 config；
+  // 重启后回到 config.permission.defaultMode 持久化默认值）
   app.put('/', async (c) => {
     const body = (await c.req.json().catch(() => null)) as { mode?: unknown } | null
     const mode = body?.mode

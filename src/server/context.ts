@@ -46,7 +46,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     pluginRegistry: createPluginRegistry(hookRunner),
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
-    permissionMode: 'default',
+    permissionMode: (opts.config ?? DEFAULT_CONFIG).permission.defaultMode,
     agentRegistry,
     cwd: opts.cwd ?? process.cwd(),
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),

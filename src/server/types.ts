@@ -27,7 +27,7 @@ type ServerContext = {
   agentManager: AgentManager
   /** 全局权限确认 store（单例），独立于 agent run 生命周期。 */
   permissionStore: PermissionStore
-  /** 全局授权模式（可变，运行时切换）：'default' 逐个确认；'auto' 自动放行 ask 工具（YOLO）。不持久化，重启回 default。 */
+  /** 全局授权模式（运行时可临时切换）：'default' 逐个确认；'auto' 自动放行 ask 工具（YOLO）。启动时取 config.permission.defaultMode，PUT /api/permissions 临时切换不回写 config。 */
   permissionMode: 'default' | 'auto'
   /** Agent 类型注册表（spec: multi-agent-design）。注入 agent loop 的 runSubAgent。 */
   agentRegistry: AgentRegistry

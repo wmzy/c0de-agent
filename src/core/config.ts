@@ -6,6 +6,7 @@ import type {
   CompactionConfig,
   Config,
   MCPServerConfig,
+  PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,
   WebSearchConfig,
@@ -34,6 +35,7 @@ const DEFAULT_CONFIG: Config = {
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
+  permission: { defaultMode: 'default' },
   theme: 'system',
   locale: 'en',
 }
@@ -99,6 +101,7 @@ export type {
   CompactionConfig,
   Config,
   MCPServerConfig,
+  PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,
   WebSearchConfig,

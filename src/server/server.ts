@@ -135,7 +135,7 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
     pluginRegistry,
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
-    permissionMode: 'default',
+    permissionMode: config.permission.defaultMode,
     // Agent 注册表：内置 4 个默认 agent；项目/用户自定义 agent 可在启动后补充加载。
     agentRegistry: (() => {
       const reg = createAgentRegistry()

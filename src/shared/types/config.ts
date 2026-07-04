@@ -47,6 +47,12 @@ type AgentsConfig = {
   subagentConcurrency: number
 }
 
+/** 权限配置：控制工具执行授权的默认行为。 */
+type PermissionConfig = {
+  /** 启动时的默认授权模式：'default' 逐个确认（默认）；'auto' 自动放行 ask 工具（YOLO 自动授权）。 */
+  defaultMode: 'default' | 'auto'
+}
+
 /** Server security configuration (spec §24.2). */
 type SecurityConfig = {
   /** 启用 Bearer token 认证（远程访问场景）。本地开发默认关闭。 */
@@ -73,6 +79,7 @@ type Config = {
   security: SecurityConfig
   websearch: WebSearchConfig
   agents: AgentsConfig
+  permission: PermissionConfig
   theme: 'light' | 'dark' | 'system'
   locale: string
 }
@@ -82,6 +89,7 @@ export type {
   CompactionConfig,
   Config,
   MCPServerConfig,
+  PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,
   WebSearchConfig,

@@ -27,6 +27,10 @@ describe('DEFAULT_CONFIG', () => {
     expect(DEFAULT_CONFIG.websearch.tavilyApiKey).toBeUndefined()
     expect(DEFAULT_CONFIG.websearch.braveApiKey).toBeUndefined()
   })
+
+  it('permission defaults to default mode', () => {
+    expect(DEFAULT_CONFIG.permission.defaultMode).toBe('default')
+  })
 })
 
 describe('mergeConfig', () => {
@@ -56,6 +60,11 @@ describe('mergeConfig', () => {
   it('replaces arrays, not concatenates', () => {
     const merged = mergeConfig({ providers: [{ name: 'x', protocol: 'openai', apiKey: 'k' }] })
     expect(merged.providers).toHaveLength(1)
+  })
+
+  it('deep-merges permission override', () => {
+    const merged = mergeConfig({ permission: { defaultMode: 'auto' } })
+    expect(merged.permission.defaultMode).toBe('auto')
   })
 })
 
