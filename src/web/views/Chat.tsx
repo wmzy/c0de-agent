@@ -1,9 +1,14 @@
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '../components/StreamingIndicator.js'
+import { StickyUserMessage } from '../components/session/StickyUserMessage.js'
 import { TimelineChat } from '../components/session/TimelineChat.js'
-import type { TimelineRow } from '../components/session/utils/timeline.js'
+import {
+  isEmptyMessage,
+  type TimelineRow,
+  userMessageText,
+} from '../components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '../composer/Composer.js'
 import type { AgentListItem } from '../services/agent.js'
 import { type PermissionMode, permissionAPI } from '../services/permission.js'
@@ -160,6 +165,18 @@ export function Chat({
   agents = [],
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const streamRef = useRef<HTMLDivElement>(null)
+  // 顶部滞留用户消息：滚动时钉住视口上方最近一条用户消息，支持点击跳转/上下导航。
+  const stickyUserMessages = useMemo(
+    () =>
+      timeline
+        .filter(
+          (r): r is Extract<TimelineRow, { kind: 'message' }> =>
+            r.kind === 'message' && r.message.role === 'user' && !isEmptyMessage(r.message),
+        )
+        .map((r) => ({ id: r.message.id, text: userMessageText(r.message) })),
+    [timeline],
+  )
   // 视图模式：同一份时间线数据的三种并列展示。
   //   chat  — 美化卡片；table — 平铺表格；json — 全量原始 JSON（含隐藏空壳消息）。
   const [viewMode, setViewMode] = useState<'chat' | 'table' | 'json'>('chat')
@@ -191,7 +208,7 @@ export function Chat({
             ? error
             : usage
               ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
-              : projectName ?? 'c0de-agent'}
+              : (projectName ?? 'c0de-agent')}
         </span>
         {isStreaming && !paused ? (
           <button onClick={onPause} type="button" data-testid="pause">
@@ -241,7 +258,10 @@ export function Chat({
       {viewMode === 'table' ? (
         <TableView rows={timeline} />
       ) : (
-        <div className={stream} data-testid="stream">
+        <div className={stream} data-testid="stream" ref={streamRef}>
+          {viewMode === 'chat' && (
+            <StickyUserMessage containerRef={streamRef} messages={stickyUserMessages} />
+          )}
           <TimelineChat rows={timeline} showAllJson={viewMode === 'json'} />
           {isStreaming && <StreamingIndicator />}
           <div ref={bottomRef} />

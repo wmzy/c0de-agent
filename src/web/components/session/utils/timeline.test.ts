@@ -1,7 +1,13 @@
 import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import type { Message } from '@shared/types/message.js'
 import { describe, expect, it } from 'vitest'
-import { buildTimeline, groupBySegment, isEmptyMessage, type TimelineRow } from './timeline.js'
+import {
+  buildTimeline,
+  groupBySegment,
+  isEmptyMessage,
+  type TimelineRow,
+  userMessageText,
+} from './timeline.js'
 
 function msg(id: string, createdAt: number, content: Message['content'] = []): Message {
   return { id, sessionId: 's', role: 'assistant', content, tokenCount: 0, createdAt }
@@ -223,5 +229,39 @@ describe('groupBySegment', () => {
     )
     const groups = groupBySegment(rows)
     expect(groups[0]?.messages[0]?.latency).toBe(1500)
+  })
+})
+
+describe('userMessageText', () => {
+  it('拼接 text part', () => {
+    const m = { ...msg('u1', 1, [{ _tag: 'text', text: '你好' }]), role: 'user' as const }
+    expect(userMessageText(m)).toBe('你好')
+  })
+
+  it('拼接 text + steering part', () => {
+    const m = {
+      ...msg('u2', 1, [
+        { _tag: 'text', text: '问题' },
+        { _tag: 'steering', text: '补充' },
+      ]),
+      role: 'user' as const,
+    }
+    expect(userMessageText(m)).toBe('问题\n补充')
+  })
+
+  it('忽略非文本 part 并 trim', () => {
+    const m = {
+      ...msg('u3', 1, [
+        { _tag: 'thinking', text: 'x' },
+        { _tag: 'text', text: '  hi  ' },
+      ]),
+      role: 'user' as const,
+    }
+    expect(userMessageText(m)).toBe('hi')
+  })
+
+  it('无文本 part 返回空串', () => {
+    const m = msg('u4', 1, [{ _tag: 'thinking', text: 'x' }])
+    expect(userMessageText(m)).toBe('')
   })
 })

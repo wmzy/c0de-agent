@@ -29,7 +29,7 @@ const content = css`
 export function MessageItem({ message, latency }: { message: Message; latency?: number }) {
   const blocks = normalizeParts(message)
   return (
-    <div className={wrap} data-testid="message" data-role={message.role}>
+    <div className={wrap} data-testid="message" data-role={message.role} data-msg-id={message.id}>
       {blocks.map((block, i) => {
         let body: ReactNode = null
         switch (block.type) {

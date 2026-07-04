@@ -1,5 +1,5 @@
 import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
-import type { Message } from '@shared/types/message.js'
+import type { Message, MessageContent } from '@shared/types/message.js'
 
 /** 时间线统一行类型。把消息、LLM 调用、段标记合并为单一有序序列。 */
 export type TimelineRow =
@@ -111,4 +111,16 @@ export function groupBySegment(rows: TimelineRow[]): SegmentGroup[] {
 /** 美化聊天视图下默认隐藏的空壳消息（无任何 content part）。 */
 export function isEmptyMessage(message: Message): boolean {
   return message.content.length === 0
+}
+
+/** 提取用户消息的可读文本（text + steering part 拼接），供顶部滞留浮层显示摘要。 */
+export function userMessageText(message: Message): string {
+  return message.content
+    .filter(
+      (p): p is Extract<MessageContent, { _tag: 'text' | 'steering' }> =>
+        p._tag === 'text' || p._tag === 'steering',
+    )
+    .map((p) => p.text)
+    .join('\n')
+    .trim()
 }
