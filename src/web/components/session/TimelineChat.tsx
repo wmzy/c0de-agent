@@ -11,6 +11,12 @@ const groupWrap = css`
 const rowWrap = css`
   position: relative;
   padding: 2px 0;
+  border-radius: 6px;
+  transition: background-color 0.12s ease;
+
+  &:hover {
+    background: color-mix(in srgb, var(--bg-secondary) 88%, var(--text) 6%);
+  }
 `
 
 const jsonToggle = css`
