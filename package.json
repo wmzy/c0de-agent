@@ -14,10 +14,20 @@
     "lint": "biome check src/",
     "format": "biome format --write src/",
     "dev": "vite",
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli/index.js",
     "build:web": "vite build",
     "preview:web": "vite preview",
     "db:generate": "drizzle-kit generate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "keywords": [
     "ai",
@@ -26,6 +36,15 @@
     "agent"
   ],
   "license": "MIT",
+  "author": "wmzy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wmzy/c0de-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wmzy/c0de-agent/issues"
+  },
+  "homepage": "https://github.com/wmzy/c0de-agent#readme",
   "engines": {
     "node": ">=22.0.0"
   },

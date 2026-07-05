@@ -9,7 +9,13 @@ import {
 } from './history.js'
 import { normalizePaste, pasteMode } from './paste.js'
 import type { ImagePart, Prompt } from './types.js'
-import { DEFAULT_PROMPT, isPromptEmpty, promptToMessageText, promptToText, snippetLabel } from './types.js'
+import {
+  DEFAULT_PROMPT,
+  isPromptEmpty,
+  promptToMessageText,
+  promptToText,
+  snippetLabel,
+} from './types.js'
 
 type PopoverState = 'slash' | 'at' | null
 
@@ -181,7 +187,16 @@ function useComposer({
       if (text.length > 0 && !text.endsWith(' ')) {
         parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
       }
-      parts.push({ type: 'snippet', path, lineStart, lineEnd, label, snippet, start: 0, end: label.length })
+      parts.push({
+        type: 'snippet',
+        path,
+        lineStart,
+        lineEnd,
+        label,
+        snippet,
+        start: 0,
+        end: label.length,
+      })
       parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
       setPromptExternal(parts, true)
       editorRef.current?.focus()

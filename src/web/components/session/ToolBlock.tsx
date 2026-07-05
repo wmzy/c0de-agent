@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { type KeyboardEvent, type ReactNode, useEffect, useState } from 'react'
 import { FilePathLink } from '../FilePathLink.js'
 import { BashToolView } from './tools/BashToolView.js'
 import { EditToolView } from './tools/EditToolView.js'
@@ -93,6 +93,7 @@ export function ToolBlock({ block }: { block: ToolRenderBlock }) {
 
   return (
     <div className={wrap}>
+      {/* biome-ignore lint/a11y/useSemanticElements: header 内嵌 FilePathLink(<button>)，HTML 禁止 button 嵌 button，必须用 div+role */}
       <div
         role="button"
         tabIndex={0}
@@ -164,6 +165,8 @@ function renderHeaderSummary(tool: string, input: unknown): ReactNode {
       <>
         {' · '}
         {/* 阻止路径点击冒泡到 header 的展开/收起 */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: span 仅用于 stopPropagation 隔离冒泡，非交互元素 */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: 纯事件隔离，无交互语义，无需键盘事件 */}
         <span onClick={(e) => e.stopPropagation()}>
           <FilePathLink path={i.path} />
         </span>

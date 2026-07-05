@@ -83,8 +83,7 @@ function promptToMessageText(prompt: Prompt): string {
     .map((p) => {
       if (p.type === 'text' || p.type === 'file') return p.content
       if (p.type === 'snippet') {
-        const loc =
-          p.lineStart === p.lineEnd ? `${p.lineStart}` : `${p.lineStart}-${p.lineEnd}`
+        const loc = p.lineStart === p.lineEnd ? `${p.lineStart}` : `${p.lineStart}-${p.lineEnd}`
         return `📄 \`${p.path}:${loc}\`:\n\`\`\`\n${p.snippet}\n\`\`\``
       }
       return ''
@@ -98,4 +97,11 @@ function isPromptEmpty(prompt: Prompt): boolean {
 }
 
 export type { ContentPart, FilePart, ImagePart, PartBase, Prompt, SnippetPart, TextPart }
-export { DEFAULT_PROMPT, isPromptEmpty, promptLength, snippetLabel, promptToMessageText, promptToText }
+export {
+  DEFAULT_PROMPT,
+  isPromptEmpty,
+  promptLength,
+  promptToMessageText,
+  promptToText,
+  snippetLabel,
+}

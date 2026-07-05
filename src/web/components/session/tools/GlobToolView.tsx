@@ -29,7 +29,6 @@ const btn = css`
 type GlobInput = { pattern: string; path?: string }
 
 export function GlobToolView({
-  input,
   output,
 }: {
   input: GlobInput

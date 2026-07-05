@@ -29,7 +29,6 @@ const btn = css`
 type GrepInput = { pattern: string; path?: string }
 
 export function GrepToolView({
-  input,
   output,
 }: {
   input: GrepInput

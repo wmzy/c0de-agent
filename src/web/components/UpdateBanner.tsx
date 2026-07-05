@@ -90,7 +90,7 @@ export function UpdateBanner() {
   })
 
   // 无数据、无更新、或已 dismissed 当前版本 → 不渲染。
-  if (!data || !data.hasUpdate) return null
+  if (!data?.hasUpdate) return null
   if (dismissedVersion === data.latestVersion) return null
 
   const applying = apply.isPending

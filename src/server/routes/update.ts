@@ -1,8 +1,7 @@
 import { Hono } from 'hono'
-import { performHotUpdate } from '../../update/index.js'
-import { serializeSessions } from '../../update/index.js'
-import type { ServerContext } from '../types.js'
+import { performHotUpdate, serializeSessions } from '../../update/index.js'
 import { apiError } from '../middleware/error.js'
+import type { ServerContext } from '../types.js'
 
 /**
  * GET /api/update — 返回后台调度器缓存的版本检查结果（spec §18.1）。
@@ -46,12 +45,7 @@ function createUpdateRoute(ctx: ServerContext): Hono {
         latestVersion: result.latestVersion,
       })
     }
-    return apiError(
-      c,
-      500,
-      'HOT_UPDATE_FAILED',
-      `${r._tag}: ${'error' in r ? r.error : 'unknown'}`,
-    )
+    return apiError(c, 500, 'HOT_UPDATE_FAILED', `${r._tag}: ${'error' in r ? r.error : 'unknown'}`)
   })
 
   return app

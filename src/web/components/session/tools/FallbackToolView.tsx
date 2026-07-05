@@ -45,7 +45,6 @@ function flatten(obj: unknown, prefix = ''): Array<[string, unknown]> {
 }
 
 export function FallbackToolView({
-  tool,
   input,
   output,
 }: {

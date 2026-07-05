@@ -806,6 +806,7 @@ export function Settings() {
                 <div
                   // key 必须稳定：若依赖 name/baseURL，输入首字符即改变 key
                   // 导致该行卸载重建、输入框失焦。用 index 即可（受控表单列表）。
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 受控表单列表，name 输入会改 key 导致重挂载失焦
                   key={index}
                   className={providerRow}
                   data-testid="provider-row"
@@ -1204,6 +1205,7 @@ export function Settings() {
             <h3>MCP 服务器</h3>
             {(merged.mcpServers ?? []).map((server, index) => (
               // 受控表单列表用 index 作 key，避免输入 name 即重挂载失焦（同 providers 行）
+              // biome-ignore lint/suspicious/noArrayIndexKey: 受控表单列表，name 输入会改 key 导致重挂载失焦
               <div key={index} className={mcpRow} data-testid="mcp-row">
                 <input
                   value={server.name}

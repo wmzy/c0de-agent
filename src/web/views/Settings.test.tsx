@@ -809,9 +809,7 @@ describe('Settings — 完整配置表单覆盖', () => {
       .find((h) => h.textContent === '自动授权')
     expect(permHeading).toBeTruthy()
     const section = permHeading?.closest('div')
-    const select = within(section as HTMLElement).getByRole(
-      'combobox',
-    ) as HTMLSelectElement
+    const select = within(section as HTMLElement).getByRole('combobox') as HTMLSelectElement
     expect(select.value).toBe('default')
 
     fireEvent.change(select, { target: { value: 'auto' } })

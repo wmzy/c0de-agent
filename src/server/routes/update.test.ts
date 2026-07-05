@@ -31,7 +31,11 @@ function makeCtx(opts: {
     updateScheduler: {
       getLastResult: () => opts.lastResult ?? null,
       checkNow: async () =>
-        opts.checkNowResult ?? { hasUpdate: false, currentVersion: '0.0.0', latestVersion: '0.0.0' },
+        opts.checkNowResult ?? {
+          hasUpdate: false,
+          currentVersion: '0.0.0',
+          latestVersion: '0.0.0',
+        },
       start: vi.fn(),
       stop: vi.fn(),
     },
