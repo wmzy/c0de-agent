@@ -53,6 +53,18 @@ type PermissionConfig = {
   defaultMode: 'default' | 'auto'
 }
 
+/** 自动升级配置（spec §18）。控制后台 npm registry 检查与无感知热更新行为。 */
+type UpdateConfig = {
+  /** 启用后台定期版本检查（默认 true）。 */
+  enabled: boolean
+  /** 检查间隔（毫秒），默认 1 小时。 */
+  intervalMs: number
+  /** 启动后首次检查的延迟（毫秒），默认 10 秒。 */
+  initialDelayMs: number
+  /** 发现新版本后自动应用（无感知），false 则仅前端提示手动确认（默认 false）。 */
+  autoApply: boolean
+}
+
 /** Server security configuration (spec §24.2). */
 type SecurityConfig = {
   /** 启用 Bearer token 认证（远程访问场景）。本地开发默认关闭。 */
@@ -80,6 +92,7 @@ type Config = {
   websearch: WebSearchConfig
   agents: AgentsConfig
   permission: PermissionConfig
+  update: UpdateConfig
   theme: 'light' | 'dark' | 'system'
   locale: string
 }
@@ -92,5 +105,6 @@ export type {
   PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,
+  UpdateConfig,
   WebSearchConfig,
 }

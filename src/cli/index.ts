@@ -33,6 +33,7 @@ const COMMANDS: CommandSpec[] = [
       { name: 'port', type: 'string' },
       { name: 'open', type: 'boolean' },
       { name: 'restore', type: 'string' },
+      { name: 'handoff-port', type: 'string' },
     ],
   },
   {

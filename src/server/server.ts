@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import type { Server as NodeServer } from 'node:http'
+import { connect as tcpConnect } from 'node:net'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
@@ -16,11 +17,18 @@ import { initPlugins } from '../plugins/index.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
-import { restoreSessions, type SessionSnapshot } from '../update/index.js'
+import {
+  checkForUpdate,
+  createHandoffServer,
+  createUpdateScheduler,
+  requestHandoff,
+  restoreSessions,
+  type SessionSnapshot,
+} from '../update/index.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
 import { createPermissionStore } from './permission/store.js'
-import type { ServerContext } from './types.js'
+import type { HandoffServer, ServerContext } from './types.js'
 
 type StartServerOptions = {
   port?: number
@@ -29,6 +37,14 @@ type StartServerOptions = {
   db?: DB
   /** 热更新新实例启动时从此快照文件恢复会话状态。 */
   restoreFrom?: string
+  /** 新实例启动时提供：请求旧实例 handoff 后再绑端口（spec §18.3）。 */
+  handoffPort?: number
+  /** 测试注入：跳过 handoff 请求与重试绑端口。 */
+  skipHandoff?: boolean
+  /** 测试注入：覆盖 checkForUpdate（默认走真实 npm registry）。 */
+  checkForUpdateFn?: typeof checkForUpdate
+  /** 测试注入：覆盖 createHandoffServer。 */
+  createHandoffFn?: typeof createHandoffServer
 }
 
 type RunningServer = {
@@ -87,7 +103,6 @@ function resolveDbDir(cwd: string): string {
 /** 初始化 DB + 配置 + 注册表，返回 ServerContext + 清理函数（dev 与独立后端共用）。 */
 async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<BootstrappedServer> {
   const cwd = opts.cwd ?? process.cwd()
-
   const ownsDb = !opts.db
   // 持久化 PGLite 数据：默认 <cwd>/.c0de/pglite（与 .c0de/cache、.c0de/config.json 同约定），
   // 可用 C0DE_DB_DIR 覆盖。此前默认 in-memory，进程重启即丢全部会话/消息/调用详情。
@@ -142,22 +157,83 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
       for (const def of BUILTIN_AGENTS) reg.register(def)
       return reg
     })(),
+    // spec §18.1 后台版本检查调度器；config.update.enabled 控制是否启动。
+    updateScheduler: createUpdateScheduler({
+      checkFn: opts.checkForUpdateFn ?? checkForUpdate,
+      intervalMs: config.update.intervalMs,
+      initialDelayMs: config.update.initialDelayMs,
+    }),
     cwd,
+  }
+
+  // spec §18.3 handoff server：旧实例监听随机端口，收到 POST /handoff 时
+  // 序列化当前会话状态 + 优雅关闭，让新实例接管。config.update.enabled=false
+  // 或测试 skipHandoff 时跳过（减少后台资源占用）。
+  let handoffServer: HandoffServer | undefined
+  if (config.update.enabled && !opts.skipHandoff) {
+    const createHandoff = opts.createHandoffFn ?? createHandoffServer
+    handoffServer = await createHandoff(async () => {
+      // 序列化在热更新主链路（performHotUpdate）已完成；handoff 回调只需释放资源。
+      // 这里提前停 scheduler 以避免 close 期间还在跑检查。
+      ctx.updateScheduler.stop()
+    })
+    ctx.handoff = { port: handoffServer.port, server: handoffServer }
   }
 
   return {
     ctx,
     close: async () => {
+      ctx.updateScheduler.stop()
+      if (handoffServer) await handoffServer.close()
       if (ownsDb) await db.close()
     },
   }
 }
 
-/** 启动完整服务：初始化 DB + 配置 + 注册表 + Hono 应用 + HTTP 服务器。 */
+/**
+ * 请求旧实例 handoff 后轮询端口释放（spec §18.3）。旧实例收到 /handoff 后
+ * 优雅退出释放端口；新实例轮询 TCP 连接直到被拒（端口已释放）或超时报错。
+ */
+async function requestHandoffWithRetry(
+  port: number,
+  maxAttempts = 30,
+  delayMs = 100,
+): Promise<void> {
+  try {
+    await requestHandoff(port)
+  } catch {
+    // 旧实例未启 handoff 端点（update 未启用）；直接尝试绑端口。
+    return
+  }
+  for (let i = 0; i < maxAttempts; i++) {
+    const released = await new Promise<boolean>((resolve) => {
+      const sock = tcpConnect({ host: '127.0.0.1', port })
+      sock.once('connect', () => {
+        sock.destroy()
+        resolve(false) // 连上 → 旧实例还在
+      })
+      sock.once('error', () => resolve(true)) // 连接拒绝 → 端口已释放
+    })
+    if (released) return
+    await new Promise((r) => setTimeout(r, delayMs))
+  }
+  throw new Error(
+    `handoff: old instance on port ${port} did not release after ${maxAttempts} attempts`,
+  )
+}
 async function startServer(opts: StartServerOptions = {}): Promise<RunningServer> {
   const port = opts.port ?? 3000
+
+  // spec §18.3：新实例从 --handoff-port 拿到旧实例端口，请求优雅退出后绑端口。
+  if (opts.handoffPort && !opts.skipHandoff) {
+    await requestHandoffWithRetry(opts.handoffPort)
+  }
+
   const { ctx, close: closeCtx } = await bootstrapServerContext(opts)
   const app = createApp(ctx)
+
+  // config.update.enabled 时启动后台调度器。
+  if (ctx.config.update.enabled) ctx.updateScheduler.start()
 
   const server = serve({ fetch: app.fetch, port }) as unknown as NodeServer
 

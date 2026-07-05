@@ -9,6 +9,7 @@ import type {
   PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,
+  UpdateConfig,
   WebSearchConfig,
 } from '../shared/types/config.js'
 
@@ -36,6 +37,7 @@ const DEFAULT_CONFIG: Config = {
   websearch: { provider: 'auto' },
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   permission: { defaultMode: 'default' },
+  update: { enabled: true, intervalMs: 60 * 60 * 1000, initialDelayMs: 10_000, autoApply: false },
   theme: 'system',
   locale: 'en',
 }
@@ -104,6 +106,7 @@ export type {
   PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,
+  UpdateConfig,
   WebSearchConfig,
 }
 export { DEFAULT_CONFIG, loadConfig, mergeConfig, saveConfig }

@@ -12,6 +12,7 @@ import {
 } from 'react-router-dom'
 import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TopBar } from './components/TopBar.js'
+import { UpdateBanner } from './components/UpdateBanner.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
 import {
   type FileSelection,
@@ -47,6 +48,7 @@ export function App() {
         <ConfigProvider>
           <BrowserRouter>
             <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+              <UpdateBanner />
               <Routes>
                 <Route path="/" element={<RootRedirect />} />
                 <Route path="/projects/:projectId" element={<ChatPage />} />

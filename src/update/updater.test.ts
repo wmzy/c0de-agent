@@ -67,4 +67,42 @@ describe('performHotUpdate', () => {
     const written = JSON.parse(await readFile(path, 'utf8')) as { version: string }
     expect(written.version).toBe('0.1.0')
   })
+
+  it('passes snapshot path with default --restore argv (no handoff)', async () => {
+    const spawnFn = vi.fn().mockResolvedValue(undefined)
+    await performHotUpdate(snapshot, {
+      installFn: vi.fn().mockResolvedValue(undefined),
+      spawnNewInstanceFn: spawnFn,
+      snapshotPath: '/tmp/snap.json',
+    })
+    // [path, ...argv]
+    expect(spawnFn).toHaveBeenCalledWith('/tmp/snap.json', ['--restore', '/tmp/snap.json'])
+  })
+
+  it('appends --handoff-port <port> argv when handoffPort provided', async () => {
+    const spawnFn = vi.fn().mockResolvedValue(undefined)
+    await performHotUpdate(snapshot, {
+      installFn: vi.fn().mockResolvedValue(undefined),
+      spawnNewInstanceFn: spawnFn,
+      snapshotPath: '/tmp/snap.json',
+      handoffPort: 12345,
+    })
+    expect(spawnFn).toHaveBeenCalledWith('/tmp/snap.json', [
+      '--restore',
+      '/tmp/snap.json',
+      '--handoff-port',
+      '12345',
+    ])
+  })
+
+  it('honors custom restoreFlag in argv construction', async () => {
+    const spawnFn = vi.fn().mockResolvedValue(undefined)
+    await performHotUpdate(snapshot, {
+      installFn: vi.fn().mockResolvedValue(undefined),
+      spawnNewInstanceFn: spawnFn,
+      snapshotPath: '/tmp/s.json',
+      restoreFlag: '--resume-from',
+    })
+    expect(spawnFn).toHaveBeenCalledWith('/tmp/s.json', ['--resume-from', '/tmp/s.json'])
+  })
 })
