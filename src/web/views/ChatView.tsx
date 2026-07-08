@@ -1,11 +1,12 @@
 import { css } from '@linaria/core'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AgentSelector } from '../components/AgentSelector.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
+import { ShakePanel } from '../components/ShakePanel.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { buildTimeline } from '../components/session/utils/timeline.js'
 import { ToolToggle } from '../components/ToolToggle.js'
@@ -16,6 +17,7 @@ import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
 import { useMessages, useProjects } from '../hooks/useSession.js'
 import { agentAPI } from '../services/agent.js'
 import { sessionAPI } from '../services/session.js'
+import type { ShakeRegionView } from '../types/index.js'
 import { Chat, type SendPayload } from './Chat.js'
 
 const interruptBanner = css`
@@ -41,6 +43,28 @@ const interruptBanner = css`
       border-color: var(--primary);
       color: var(--primary);
     }
+  }
+`
+
+const shakeBtn = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-secondary);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 `
 
@@ -224,6 +248,27 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     chat.confirm(toolCallId, approved)
   }
 
+  // shake 面板状态
+  const [shakeOpen, setShakeOpen] = useState(false)
+  const [shakeRegions, setShakeRegions] = useState<ShakeRegionView[]>([])
+  const shakeMutation = useMutation({
+    mutationFn: (regionIds: string[]) => sessionAPI.shakeApply(sessionId, regionIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
+      setShakeOpen(false)
+    },
+  })
+
+  const handleShakeOpen = async () => {
+    try {
+      const result = await sessionAPI.shakePreview(sessionId)
+      setShakeRegions(result.regions)
+      setShakeOpen(true)
+    } catch {
+      // 静默失败，不阻塞用户
+    }
+  }
+
   // 恢复中断的对话：从 DB 重载消息，若末尾是 user 消息则重发（后端幂等跳过 append）
   const handleResume = async () => {
     setColdStartInterrupted(false)
@@ -306,7 +351,18 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
                 </button>
               </div>
             )}
-            <SessionSummary sessionId={sessionId} />
+            <div style={{ display: 'flex', gap: 8, padding: '4px 12px' }}>
+              <button
+                type="button"
+                className={shakeBtn}
+                onClick={() => void handleShakeOpen()}
+                disabled={chat.isStreaming}
+                data-testid="shake-button"
+              >
+                ⚡ Shake
+              </button>
+              <SessionSummary sessionId={sessionId} />
+            </div>
           </>
         }
       />
@@ -324,6 +380,14 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
             }
             chat.cancelBreak()
           }}
+        />
+      )}
+      {shakeOpen && (
+        <ShakePanel
+          regions={shakeRegions}
+          fromIndex={Math.floor(messages.length / 2)}
+          onSubmit={(regionIds) => shakeMutation.mutate(regionIds)}
+          onClose={() => setShakeOpen(false)}
         />
       )}
     </>

@@ -71,6 +71,19 @@ type CodeReference =
   | { _tag: 'file'; path: string; startLine: number; endLine: number }
   | { _tag: 'message'; messageId: string; blockIndex: number }
 
+/** shake 区域视图（POST /sessions/:id/shake/preview 返回）。 */
+type ShakeRegionView = {
+  id: string
+  kind: 'toolResult' | 'block'
+  messageId: string
+  messageIndex: number
+  tokens: number
+  label: string
+  preview: string
+  placeholder: string
+  isAfterProtectWindow: boolean
+}
+
 export type {
   APIError,
   CodeReference,
@@ -79,5 +92,6 @@ export type {
   FileSearchResult,
   Project,
   SessionTreeNode,
+  ShakeRegionView,
   ToolListItem,
 }

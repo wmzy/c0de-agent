@@ -119,7 +119,7 @@ type CompactionArchive = {
   id: string
   sessionId: string
   compactionId: string
-  archiveType: 'compaction' | 'squash'
+  archiveType: 'compaction' | 'squash' | 'shake'
   originalEntries: SessionEntry[]
   summary: string
   tokenCount: number
