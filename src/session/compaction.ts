@@ -94,35 +94,20 @@ function buildCompactionPrompt(messages: Message[], previousSummary?: string): s
     .map((m) => `[${m.role}] ${m.content.map((p) => serializePart(p)).join(' ')}`)
     .join('\n')
 
-  const header = previousSummary
-    ? `更新以下已有摘要，保留仍成立的细节，移除过时信息，合并新事实。
-
-<previous-summary>
-${previousSummary}
-</previous-summary>`
-    : '将以下对话历史压缩为结构化摘要。保留关键信息，丢弃冗余细节。'
-
-  return `${header}
+  const sections = `## Agenda
+逐条列出对话中出现的议题/任务，按处理顺序排列。每条格式：
+- **[议题标题]** — ✅已解决 / ⏳进行中 / 🔒阻塞 / 📋待办
+  - ✅/🔒 → 一行：最终结论或卡点
+  - ⏳/📋 → 完整保留：目标、约束、已尝试方向、相关文件路径、关键决策、待确认问题
 
 ## Goal
-用户的目标是什么
+用户此次会话的总体目标（若 Agenda 已涵盖，写"见 Agenda"）
 
 ## Constraints & Preferences
 用户约束、偏好、规范要求（或"(none)"）
 
-## Progress
-### Done
-已完成的工作
-### In Progress
-当前进行的工作
-### Blocked
-遇到的阻塞
-
 ## Key Decisions
 做出的关键决策及原因
-
-## Next Steps
-接下来的有序行动
 
 ## Critical Context
 必须记住的技术事实（文件路径、变量名、命令、错误信息、未解决问题）
@@ -131,7 +116,25 @@ ${previousSummary}
 修改过的文件路径及变更摘要
 
 ## Relevant Files
-对任务重要的文件/目录路径及原因
+对任务重要的文件/目录路径及原因`
+
+  const header = previousSummary
+    ? `更新以下已有【议题驱动】摘要。重点：
+- 已解决的议题：状态更新为✅并压缩为一行结论；
+- 新增议题：补入 Agenda 并完整保留其描述与约束；
+- 尚未解决的议题：保持其原有描述与约束不变，只叠加本轮新进展。
+
+<previous-summary>
+${previousSummary}
+</previous-summary>`
+    : `将以下对话历史压缩为一份【议题驱动】的结构化摘要。
+核心原则——非对称保留：已解决的议题只留一行结论；尚未解决/待办的议题
+必须完整保留其描述、约束、已尝试方向、相关文件与待确认问题，它们是后续
+工作的蓝图，绝不可被稀释。`
+
+  return `${header}
+
+${sections}
 
 ---
 对话历史：
