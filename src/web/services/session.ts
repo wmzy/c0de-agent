@@ -1,6 +1,6 @@
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
-import type { ShakeRegionView, SessionTreeNode } from '../types/index.js'
+import type { SessionTreeNode, ShakeRegionView } from '../types/index.js'
 import { apiRequest } from './api.js'
 
 const sessionAPI = {
