@@ -5,10 +5,10 @@ type ToolPermission = 'auto' | 'ask' | 'deny'
 
 /** Result of a tool execution. Discriminated by `_tag`. */
 type ToolResult =
-  | { _tag: 'success'; output: string; metadata?: Record<string, unknown> }
-  | { _tag: 'error'; error: string }
+  | { _tag: 'success'; output: string; metadata?: Record<string, unknown>; shakenAt?: number }
+  | { _tag: 'error'; error: string; shakenAt?: number }
   | { _tag: 'permission_required'; reason: string }
-  | { _tag: 'truncated'; output: string; truncated: boolean; totalLines: number }
+  | { _tag: 'truncated'; output: string; truncated: boolean; totalLines: number; shakenAt?: number }
 
 /** Context passed to a URL resolver (skill://, agent://, pr://, …). */
 type URLResolveContext = {

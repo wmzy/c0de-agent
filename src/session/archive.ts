@@ -61,7 +61,7 @@ async function archiveOriginalEntries(
   handle: DB,
   sessionId: string,
   entries: SessionEntry[],
-  archiveType: 'compaction' | 'squash',
+  archiveType: 'compaction' | 'squash' | 'shake',
   summary: string,
   compactionId: string,
 ): Promise<string> {
