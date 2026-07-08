@@ -1,6 +1,6 @@
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
-import type { SessionTreeNode } from '../types/index.js'
+import type { ShakeRegionView, SessionTreeNode } from '../types/index.js'
 import { apiRequest } from './api.js'
 
 const sessionAPI = {
@@ -27,6 +27,16 @@ const sessionAPI = {
     }),
   branches: (id: string) => apiRequest<Session[]>(`/api/sessions/${id}/branches`),
   status: (id: string) => apiRequest<{ _tag: string }>(`/api/sessions/${id}/status`),
+  shakePreview: (id: string) =>
+    apiRequest<{ regions: ShakeRegionView[] }>(`/api/sessions/${id}/shake/preview`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  shakeApply: (id: string, regionIds: string[]) =>
+    apiRequest<{ shaken: number; archiveId: string }>(`/api/sessions/${id}/shake/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ regionIds }),
+    }),
 }
 
 export { sessionAPI }
