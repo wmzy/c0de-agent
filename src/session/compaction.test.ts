@@ -147,16 +147,17 @@ describe('buildCompactionPrompt', () => {
       },
     ]
     const prompt = buildCompactionPrompt(messages)
+    // 新增议题骨架
+    expect(prompt).toContain('## Agenda')
+    // 保留的全局章节
     expect(prompt).toContain('## Goal')
-    expect(prompt).toContain('## Progress')
-    // 结构化章节验证
     expect(prompt).toContain('## Constraints & Preferences')
     expect(prompt).toContain('## Relevant Files')
     expect(prompt).toContain('## Key Decisions')
-    // Progress 子章节
-    expect(prompt).toContain('### Done')
-    expect(prompt).toContain('### In Progress')
-    expect(prompt).toContain('### Blocked')
+    // 已移除的章节不再出现
+    expect(prompt).not.toContain('## Progress')
+    expect(prompt).not.toContain('## Next Steps')
+    // 对话内容仍被序列化进 prompt
     expect(prompt).toContain('do something')
     expect(prompt).toContain('done')
   })
@@ -240,17 +241,17 @@ describe('buildCompactionPrompt', () => {
     const messages: Message[] = [mk('user', 'do more'), mk('assistant', 'done more')]
     const previous = '上一轮的目标是 X，已完成 Y。'
     const prompt = buildCompactionPrompt(messages, previous)
-    // 增量更新指令
-    expect(prompt).toContain('更新以下已有摘要')
+    // 增量更新指令（议题状态驱动）
+    expect(prompt).toContain('更新以下已有【议题驱动】摘要')
+    expect(prompt).toContain('已解决的议题：状态更新为✅')
     // previous-summary 标签包裹已有摘要
     expect(prompt).toContain('<previous-summary>')
     expect(prompt).toContain('</previous-summary>')
     expect(prompt).toContain(previous)
     // 不应再出现从零压缩的头部指令
-    expect(prompt).not.toContain('将以下对话历史压缩为结构化摘要')
-    // 结构化模板仍然保留
-    expect(prompt).toContain('## Goal')
-    expect(prompt).toContain('## Progress')
+    expect(prompt).not.toContain('将以下对话历史压缩为一份【议题驱动】的结构化摘要')
+    // 议题骨架仍然保留
+    expect(prompt).toContain('## Agenda')
     // 新对话历史仍被序列化进 prompt
     expect(prompt).toContain('do more')
     expect(prompt).toContain('done more')
@@ -259,11 +260,13 @@ describe('buildCompactionPrompt', () => {
   it('uses from-scratch header when previousSummary is absent (P0-2)', () => {
     const messages: Message[] = [mk('user', 'fresh start'), mk('assistant', 'ok')]
     const prompt = buildCompactionPrompt(messages)
-    // 行为不变：仍是从零压缩的头部
-    expect(prompt).toContain('将以下对话历史压缩为结构化摘要')
+    // 议题驱动从零压缩头部
+    expect(prompt).toContain('将以下对话历史压缩为一份【议题驱动】的结构化摘要')
     // 不应出现增量更新指令
-    expect(prompt).not.toContain('更新以下已有摘要')
+    expect(prompt).not.toContain('更新以下已有')
     expect(prompt).not.toContain('<previous-summary>')
+    // 议题骨架
+    expect(prompt).toContain('## Agenda')
     // 对话历史仍存在
     expect(prompt).toContain('fresh start')
     expect(prompt).toContain('ok')
@@ -272,8 +275,34 @@ describe('buildCompactionPrompt', () => {
   it('treats empty-string previousSummary as absent', () => {
     const messages: Message[] = [mk('user', 'msg')]
     const prompt = buildCompactionPrompt(messages, '')
-    expect(prompt).toContain('将以下对话历史压缩为结构化摘要')
+    expect(prompt).toContain('将以下对话历史压缩为一份【议题驱动】的结构化摘要')
     expect(prompt).not.toContain('<previous-summary>')
+  })
+
+  it('does not include Progress or Next Steps sections', () => {
+    const messages: Message[] = [mk('user', 'task'), mk('assistant', 'ok')]
+    const prompt = buildCompactionPrompt(messages)
+    expect(prompt).not.toContain('## Progress')
+    expect(prompt).not.toContain('### Done')
+    expect(prompt).not.toContain('### In Progress')
+    expect(prompt).not.toContain('### Blocked')
+    expect(prompt).not.toContain('## Next Steps')
+  })
+
+  it('includes asymmetric retention instruction in from-scratch header', () => {
+    const messages: Message[] = [mk('user', 'fix issue 1 then 2')]
+    const prompt = buildCompactionPrompt(messages)
+    expect(prompt).toContain('已解决的议题只留一行结论')
+    expect(prompt).toContain('必须完整保留')
+  })
+
+  it('Agenda section documents status markers', () => {
+    const messages: Message[] = [mk('user', 'review')]
+    const prompt = buildCompactionPrompt(messages)
+    expect(prompt).toContain('✅已解决')
+    expect(prompt).toContain('⏳进行中')
+    expect(prompt).toContain('🔒阻塞')
+    expect(prompt).toContain('📋待办')
   })
 })
 
