@@ -472,12 +472,12 @@ describe('compactSession', () => {
       { keepRecentTokens: 2 },
     )
     expect(second.compacted).toBe(true)
-    expect(capturedPrompt).toContain('更新以下已有摘要')
+    expect(capturedPrompt).toContain('更新以下已有【议题驱动】摘要')
     expect(capturedPrompt).toContain('<previous-summary>')
     expect(capturedPrompt).toContain('</previous-summary>')
     expect(capturedPrompt).toContain('PRIOR SUMMARY')
     // 不应是从零压缩的头部
-    expect(capturedPrompt).not.toContain('将以下对话历史压缩为结构化摘要')
+    expect(capturedPrompt).not.toContain('将以下对话历史压缩为一份【议题驱动】的结构化摘要')
   })
 
   it('does not pass previousSummary on first compaction (no prior entry) (P0-2)', async () => {
@@ -498,8 +498,8 @@ describe('compactSession', () => {
       { keepRecentTokens: 2 },
     )
     // 无历史 compaction entry → 从零压缩头部
-    expect(capturedPrompt).toContain('将以下对话历史压缩为结构化摘要')
-    expect(capturedPrompt).not.toContain('更新以下已有摘要')
+    expect(capturedPrompt).toContain('将以下对话历史压缩为一份【议题驱动】的结构化摘要')
+    expect(capturedPrompt).not.toContain('更新以下已有【议题驱动】摘要')
     expect(capturedPrompt).not.toContain('<previous-summary>')
   })
 
