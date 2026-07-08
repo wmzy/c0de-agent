@@ -350,4 +350,41 @@ describe('PermissionStore 超时', () => {
     // 导出常量便于配置/测试引用，值固定 300_000ms
     expect(DEFAULT_PERMISSION_TIMEOUT_MS).toBe(5 * 60 * 1000)
   })
+
+  it('dispose settle 所有 pending 为 deny 并清空', async () => {
+    const store = createPermissionStore({ timeoutMs: 10_000 })
+    const resolve1 = vi.fn()
+    const resolve2 = vi.fn()
+    store.register('p1', {
+      request: { toolCallId: 'p1', tool: 'x', input: {} },
+      resolve: resolve1,
+    })
+    store.register('p2', {
+      request: { toolCallId: 'p2', tool: 'y', input: {} },
+      resolve: resolve2,
+    })
+    expect(store.size()).toBe(2)
+
+    store.dispose()
+
+    // 两个 resolver 都被 settle 为 deny
+    expect(resolve1).toHaveBeenCalledTimes(1)
+    expect(resolve1).toHaveBeenCalledWith({
+      _tag: 'deny',
+      reason: 'Server context disposed (hot reload)',
+    })
+    expect(resolve2).toHaveBeenCalledTimes(1)
+    expect(resolve2).toHaveBeenCalledWith({
+      _tag: 'deny',
+      reason: 'Server context disposed (hot reload)',
+    })
+    // store 清空
+    expect(store.size()).toBe(0)
+    expect(store.has('p1')).toBe(false)
+
+    // 微任务 flush 后确认 resolver 不会再被调用（定时器已 clear）
+    await new Promise((r) => setTimeout(r, 10))
+    expect(resolve1).toHaveBeenCalledTimes(1)
+    expect(resolve2).toHaveBeenCalledTimes(1)
+  })
 })

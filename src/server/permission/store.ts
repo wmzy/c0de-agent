@@ -41,6 +41,8 @@ type PermissionStore = {
   resolve(toolCallId: string, approved: boolean): boolean
   has(toolCallId: string): boolean
   size(): number
+  /** settle 所有 pending 为 deny 并清空（dev 热重载重建前调用）。 */
+  dispose(): void
 }
 
 function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionStore {
@@ -81,6 +83,15 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
     },
     size() {
       return pending.size
+    },
+    dispose() {
+      // dev 热重载重建前调用：所有 pending settle 为 deny（避免悬空 Promise +
+      // timer 泄漏），clearTimeout 后清空 Map。
+      for (const [id, p] of pending) {
+        clearTimeout(p.timer)
+        p.resolve({ _tag: 'deny', reason: 'Server context disposed (hot reload)' })
+        pending.delete(id)
+      }
     },
   }
 }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
-import { bootstrapServerContext } from './server.js'
+import { bootstrapServerContext, buildServerContext } from './server.js'
 
 describe('bootstrapServerContext 数据持久化', () => {
   let tmpDir: string
@@ -50,5 +50,53 @@ describe('bootstrapServerContext 数据持久化', () => {
     expect(session.id).toBeTruthy()
     await close()
     // injected 由 close 关闭
+  })
+})
+
+describe('buildServerContext 围绕复用 db 重建', () => {
+  let tmpDir: string
+  const prevEnv = process.env.C0DE_DB_DIR
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'c0de-rebuild-'))
+    process.env.C0DE_DB_DIR = tmpDir
+  })
+
+  afterEach(async () => {
+    process.env.C0DE_DB_DIR = prevEnv
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('dispose 后 db 仍可用，重建不丢 DB 数据', async () => {
+    // 首次 bootstrap：写入数据
+    const first = await bootstrapServerContext()
+    const session = await createSession(first.ctx.db, 'rebuild-test')
+    await appendMessage(first.ctx.db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'before-rebuild' }],
+    })
+    // dispose 只清理 ctx 资源，不 close db
+    await first.ctx.agentManager.dispose()
+    await first.ctx.permissionStore.dispose()
+    const db = first.ctx.db
+
+    // 围绕同一 db handle 重建 ctx
+    const rebuilt = await buildServerContext(db, { cwd: process.cwd(), skipHandoff: true })
+
+    // DB 数据保留
+    const msgs = await getMessages(db, session.id)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]?.content[0]).toMatchObject({ _tag: 'text', text: 'before-rebuild' })
+
+    // 重建后 ctx 资源可用（agentManager/permissionStore 是新实例）
+    expect(rebuilt.ctx.agentManager.size()).toBe(0)
+    expect(rebuilt.ctx.permissionStore.size()).toBe(0)
+
+    // 重建后仍可写入
+    const session2 = await createSession(db, 'after-rebuild')
+    expect(session2.id).toBeTruthy()
+
+    await rebuilt.dispose()
+    await db.close()
   })
 })

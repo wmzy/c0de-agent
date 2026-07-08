@@ -159,6 +159,36 @@ describe('AgentManager', () => {
     expect(mgr.get('s1')?.state).toBe(state2)
   })
 
+  it('dispose abort 所有活跃 run 并清空', () => {
+    const mgr = createAgentManager()
+    const state1 = mockState('s1')
+    const state2 = mockState('s2')
+
+    mgr.register({
+      sessionId: 's1',
+      state: state1,
+      deps: {} as AgentDependencies,
+    })
+    mgr.register({
+      sessionId: 's2',
+      state: state2,
+      deps: {} as AgentDependencies,
+    })
+
+    expect(mgr.size()).toBe(2)
+
+    mgr.dispose()
+
+    // 所有 run 被 abort
+    expect(state1.abortController.signal.aborted).toBe(true)
+    expect(state2.abortController.signal.aborted).toBe(true)
+    // runs Map 清空
+    expect(mgr.size()).toBe(0)
+    expect(mgr.get('s1')).toBeUndefined()
+    expect(mgr.get('s2')).toBeUndefined()
+  })
+
+
   // 注意：abortAgent/pauseAgent/resumeAgent/injectSteering 已从 core 导入
   // 此处仅验证 mockState 的状态正确性，不实际调用 core 函数
   void abortAgent

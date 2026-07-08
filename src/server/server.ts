@@ -100,29 +100,18 @@ function resolveDbDir(cwd: string): string {
   return join(cwd, '.c0de', 'pglite')
 }
 
-/** 初始化 DB + 配置 + 注册表，返回 ServerContext + 清理函数（dev 与独立后端共用）。 */
-async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<BootstrappedServer> {
+/**
+ * 围绕已有 DB handle 组装 ServerContext（不建/不关闭 DB）。
+ *
+ * dev 热重载重建复用此函数：PGLite 单写者约束下 DB handle 必须跨重载存活，
+ * 但 ctx 其余资源（agentManager/permissionStore/registries/plugins）全部重建为新实例。
+ * 返回的 dispose 清理 ctx 资源但**不 close db**——db 由调用方持有。
+ */
+async function buildServerContext(
+  db: DB,
+  opts: StartServerOptions = {},
+): Promise<{ ctx: ServerContext; dispose: () => Promise<void> }> {
   const cwd = opts.cwd ?? process.cwd()
-  const ownsDb = !opts.db
-  // 持久化 PGLite 数据：默认 <cwd>/.c0de/pglite（与 .c0de/cache、.c0de/config.json 同约定），
-  // 可用 C0DE_DB_DIR 覆盖。此前默认 in-memory，进程重启即丢全部会话/消息/调用详情。
-  // 测试注入 opts.db 时跳过（保持 in-memory 隔离）。
-  let db: DB
-  if (opts.db) {
-    db = opts.db
-  } else {
-    const dataDir = resolveDbDir(cwd)
-    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
-    db = await createDB({ driver: 'pglite', dataDir })
-  }
-  // migrateDB 失败时必须 close db，否则 PGLite WASM 实例泄漏并锁住 dataDir，
-  // 导致后续重试全部 abort（RuntimeError: Aborted()）。
-  try {
-    await migrateDB(db)
-  } catch (err) {
-    if (ownsDb) await db.close().catch(() => {})
-    throw err
-  }
 
   if (opts.restoreFrom) {
     const snapshot = JSON.parse(readFileSync(opts.restoreFrom, 'utf8')) as SessionSnapshot
@@ -182,9 +171,60 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
 
   return {
     ctx,
-    close: async () => {
+    dispose: async () => {
+      // dev 重建前调用：中止活跃 run + settle pending permission +
+      // 停 scheduler + 关 handoff。**不 close db**（调用方持有）。
+      ctx.agentManager.dispose()
+      ctx.permissionStore.dispose()
       ctx.updateScheduler.stop()
       if (handoffServer) await handoffServer.close()
+    },
+  }
+}
+
+/** dev 专用：创建 + migrate PGLite，跨热重载复用（单写者，只建一次）。 */
+async function createDevDb(cwd: string): Promise<DB> {
+  const dataDir = resolveDbDir(cwd)
+  if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
+  const db = await createDB({ driver: 'pglite', dataDir })
+  // migrateDB 失败必须 close，否则 WASM 实例泄漏锁住 dataDir。
+  try {
+    await migrateDB(db)
+  } catch (err) {
+    await db.close().catch(() => {})
+    throw err
+  }
+  return db
+}
+
+/** 初始化 DB + 配置 + 注册表，返回 ServerContext + 清理函数（dev 与独立后端共用）。 */
+async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<BootstrappedServer> {
+  const cwd = opts.cwd ?? process.cwd()
+  const ownsDb = !opts.db
+  // 持久化 PGLite 数据：默认 <cwd>/.c0de/pglite（与 .c0de/cache、.c0de/config.json 同约定），
+  // 可用 C0DE_DB_DIR 覆盖。此前默认 in-memory，进程重启即丢全部会话/消息/调用详情。
+  // 测试注入 opts.db 时跳过（保持 in-memory 隔离）。
+  let db: DB
+  if (opts.db) {
+    db = opts.db
+    // 注入 db 仍需 migrate（测试可能注入全新 in-memory db）。
+    // migrateDB 失败时若 ownsDb 才 close（注入的由调用方管）。
+    try {
+      await migrateDB(db)
+    } catch (err) {
+      if (ownsDb) await db.close().catch(() => {})
+      throw err
+    }
+  } else {
+    db = await createDevDb(cwd)
+  }
+
+  const { ctx, dispose } = await buildServerContext(db, opts)
+
+  return {
+    ctx,
+    close: async () => {
+      await dispose()
       if (ownsDb) await db.close()
     },
   }
@@ -249,4 +289,4 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }
-export { bootstrapServerContext, buildRegistryFromConfig, startServer, syncRegistryFromConfig }
+export { bootstrapServerContext, buildRegistryFromConfig, buildServerContext, createDevDb, startServer, syncRegistryFromConfig }

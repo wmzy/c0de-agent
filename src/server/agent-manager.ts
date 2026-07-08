@@ -30,6 +30,8 @@ type AgentManager = {
   children(parentSessionId: string): ActiveRun[]
   /** 查询所有后台任务（jobId 非空的 run）。 */
   backgroundJobs(): ActiveRun[]
+  /** 中止所有活跃 run 并清空（dev 热重载重建前调用）。 */
+  dispose(): void
 }
 
 function createAgentManager(): AgentManager {
@@ -77,6 +79,14 @@ function createAgentManager(): AgentManager {
     },
     backgroundJobs() {
       return Array.from(runs.values()).filter((r) => r.jobId !== undefined)
+    },
+    dispose() {
+      // dev 热重载重建前调用：中止所有活跃 run（loop 在 turn/流边界检测 signal
+      // → unwind → 调用方 finally 持久化 + unregister），然后清空 Map。
+      for (const run of runs.values()) {
+        abortAgent(run.state)
+      }
+      runs.clear()
     },
   }
 }
