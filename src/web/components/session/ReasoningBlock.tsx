@@ -48,18 +48,19 @@ function lastNonEmptyLine(text: string): string {
   return line.trim()
 }
 
-export function ReasoningBlock({ text }: { text: string }) {
+export function ReasoningBlock({ text, forceExpand }: { text: string; forceExpand?: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const previewLine = expanded ? '' : lastNonEmptyLine(text)
+  const isExpanded = forceExpand || expanded
+  const previewLine = isExpanded ? '' : lastNonEmptyLine(text)
   return (
-    <div className={wrap} data-testid="reasoning" data-expanded={expanded}>
+    <div className={wrap} data-testid="reasoning" data-expanded={isExpanded}>
       <button
         type="button"
         className={header}
         data-testid="reasoning-toggle"
         onClick={() => setExpanded((v) => !v)}
       >
-        <span>{expanded ? '▾' : '▸'}</span>
+        <span>{isExpanded ? '▾' : '▸'}</span>
         <span className={title}>思考过程</span>
         {previewLine && (
           <span className={preview} data-testid="reasoning-preview">
@@ -67,7 +68,7 @@ export function ReasoningBlock({ text }: { text: string }) {
           </span>
         )}
       </button>
-      {expanded && (
+      {isExpanded && (
         <div className={body}>
           <Markdown content={text} />
         </div>

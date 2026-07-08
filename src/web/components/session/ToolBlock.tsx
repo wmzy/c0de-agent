@@ -72,7 +72,7 @@ const body = css`
   margin-top: 2px;
 `
 
-export function ToolBlock({ block }: { block: ToolRenderBlock }) {
+export function ToolBlock({ block, forceExpand }: { block: ToolRenderBlock; forceExpand?: boolean }) {
   const { tool, input, output, status: st } = block
 
   // 运行中默认展开，其余状态默认折叠
@@ -96,6 +96,9 @@ export function ToolBlock({ block }: { block: ToolRenderBlock }) {
     }
   }
 
+  // shake 模式强制展开（用户需看到完整内容判断是否 shake）
+  const isExpanded = forceExpand || expanded
+
   return (
     <div className={wrap}>
       {/* biome-ignore lint/a11y/useSemanticElements: header 内嵌 FilePathLink(<button>)，HTML 禁止 button 嵌 button，必须用 div+role */}
@@ -104,7 +107,7 @@ export function ToolBlock({ block }: { block: ToolRenderBlock }) {
         tabIndex={0}
         className={header}
         data-testid="tool-header"
-        data-expanded={expanded}
+        data-expanded={isExpanded}
         onClick={toggle}
         onKeyDown={onHeaderKeyDown}
       >
@@ -115,16 +118,16 @@ export function ToolBlock({ block }: { block: ToolRenderBlock }) {
           {tool}
           {renderHeaderSummary(tool, input)}
         </span>
-        <span className={arrow}>{expanded ? '▾' : '▸'}</span>
+        <span className={arrow}>{isExpanded ? '▾' : '▸'}</span>
       </div>
-      {expanded && st === 'paused' ? (
+      {isExpanded && st === 'paused' ? (
         <div
           className={`${body} ${permissionPending}`}
           data-testid="tool-body"
         >
           等待权限确认
         </div>
-      ) : expanded ? (
+      ) : isExpanded ? (
         <div className={body} data-testid="tool-body">
           {renderTool(tool, input, output, st)}
         </div>

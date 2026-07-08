@@ -7,19 +7,19 @@ afterEach(() => cleanup())
 
 describe('PartDecoration', () => {
   it('user text 显示用户 icon', () => {
-    const block: RenderBlock = { type: 'text', role: 'user', text: 'hi' }
+    const block: RenderBlock = { type: 'text', role: 'user', text: 'hi', partIndex: 0 }
     render(<PartDecoration block={block} />)
     expect(screen.getByTestId('decoration').getAttribute('data-icon')).toBe('user')
   })
 
   it('assistant text 显示 sparkle icon', () => {
-    const block: RenderBlock = { type: 'text', role: 'assistant', text: 'hi' }
+    const block: RenderBlock = { type: 'text', role: 'assistant', text: 'hi', partIndex: 0 }
     render(<PartDecoration block={block} />)
     expect(screen.getByTestId('decoration').getAttribute('data-icon')).toBe('assistant')
   })
 
   it('thinking 显示 brain icon', () => {
-    const block: RenderBlock = { type: 'thinking', text: 'hmm' }
+    const block: RenderBlock = { type: 'thinking', text: 'hmm', partIndex: 0 }
     render(<PartDecoration block={block} />)
     expect(screen.getByTestId('decoration').getAttribute('data-icon')).toBe('brain')
   })

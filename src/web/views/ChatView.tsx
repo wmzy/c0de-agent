@@ -6,7 +6,7 @@ import { AgentSelector } from '../components/AgentSelector.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
-import { ShakePanel } from '../components/ShakePanel.js'
+import { ShakeProvider, type ShakeModeValue } from '../components/session/ShakeContext.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { buildTimeline } from '../components/session/utils/timeline.js'
 import { ToolToggle } from '../components/ToolToggle.js'
@@ -65,6 +65,52 @@ const shakeBtn = css`
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+`
+
+const shakeToolbar = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 50%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  font-size: 12px;
+  color: var(--warning);
+
+  & > span {
+    color: var(--text-secondary);
+  }
+
+  & > button {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    background: var(--bg);
+    color: var(--text);
+
+    &:hover {
+      background: var(--bg-secondary);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+`
+
+const shakeExitBtn = css`
+  border: none !important;
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  padding: 0 4px !important;
+
+  &:hover {
+    color: var(--text) !important;
   }
 `
 
@@ -248,26 +294,77 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     chat.confirm(toolCallId, approved)
   }
 
-  // shake 面板状态
-  const [shakeOpen, setShakeOpen] = useState(false)
+  // shake 内联模式状态
+  const [shakeMode, setShakeMode] = useState(false)
   const [shakeRegions, setShakeRegions] = useState<ShakeRegionView[]>([])
+  const [shakeSelected, setShakeSelected] = useState<Set<string>>(new Set())
   const shakeMutation = useMutation({
     mutationFn: (regionIds: string[]) => sessionAPI.shakeApply(sessionId, regionIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
-      setShakeOpen(false)
+      exitShakeMode()
     },
   })
+
+  const exitShakeMode = () => {
+    setShakeMode(false)
+    setShakeRegions([])
+    setShakeSelected(new Set())
+  }
 
   const handleShakeOpen = async () => {
     try {
       const result = await sessionAPI.shakePreview(sessionId)
       setShakeRegions(result.regions)
-      setShakeOpen(true)
+      setShakeSelected(
+        new Set(result.regions.filter((r) => r.isAfterProtectWindow).map((r) => r.id)),
+      )
+      setShakeMode(true)
     } catch {
       // 静默失败，不阻塞用户
     }
   }
+
+  const shakeToggle = (id: string) => {
+    setShakeSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const regionsByMessage = useMemo(() => {
+    // tool_result 在 DB 中是独立 role:'tool' 消息，前端 mergeToolMessages 合并进 assistant
+    // 后该消息被 drop。region.messageId 指向被 drop 的 tool 消息；用 toolCallId 重映射到
+    // 含 tool_call 的 assistant 消息，block region 的 messageId 本就是 assistant。
+    const callIdToMsgId = new Map<string, string>()
+    for (const m of messages) {
+      for (const part of m.content) {
+        if (part._tag === 'tool_call') callIdToMsgId.set(part.id, m.id)
+      }
+    }
+    const map = new Map<string, ShakeRegionView[]>()
+    for (const r of shakeRegions) {
+      const targetMsgId =
+        r.kind === 'toolResult' && r.toolCallId
+          ? (callIdToMsgId.get(r.toolCallId) ?? r.messageId)
+          : r.messageId
+      const list = map.get(targetMsgId) ?? []
+      list.push(r)
+      map.set(targetMsgId, list)
+    }
+    return map
+  }, [shakeRegions, messages])
+
+  const shakeContextValue: ShakeModeValue = useMemo(
+    () => ({ enabled: shakeMode, regionsByMessage, selected: shakeSelected, onToggle: shakeToggle }),
+    [shakeMode, regionsByMessage, shakeSelected],
+  )
+
+  const shakeSelectedTokens = shakeRegions
+    .filter((r) => shakeSelected.has(r.id))
+    .reduce((sum, r) => sum + r.tokens, 0)
 
   // 恢复中断的对话：从 DB 重载消息，若末尾是 user 消息则重发（后端幂等跳过 append）
   const handleResume = async () => {
@@ -297,7 +394,7 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   const supportsVision = true
 
   return (
-    <>
+    <ShakeProvider value={shakeContextValue}>
       <Chat
         projectId={projectId}
         projectName={projectName}
@@ -352,15 +449,55 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, padding: '4px 12px' }}>
-              <button
-                type="button"
-                className={shakeBtn}
-                onClick={() => void handleShakeOpen()}
-                disabled={chat.isStreaming}
-                data-testid="shake-button"
-              >
-                ⚡ Shake
-              </button>
+              {shakeMode ? (
+                <div className={shakeToolbar} data-testid="shake-toolbar">
+                  <span>⚡ Shake 模式</span>
+                  <span>
+                    已选 {shakeSelected.size}/{shakeRegions.length} · 省 {shakeSelectedTokens}t
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShakeSelected(new Set(shakeRegions.map((r) => r.id)))}
+                    data-testid="shake-select-all"
+                  >
+                    全选
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShakeSelected(new Set())}
+                    data-testid="shake-deselect-all"
+                  >
+                    取消全选
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => shakeMutation.mutate([...shakeSelected])}
+                    disabled={shakeSelected.size === 0}
+                    data-testid="shake-submit"
+                  >
+                    提交 Shake
+                  </button>
+                  <button
+                    type="button"
+                    className={shakeExitBtn}
+                    onClick={exitShakeMode}
+                    data-testid="shake-exit"
+                    aria-label="退出 Shake"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className={shakeBtn}
+                  onClick={() => void handleShakeOpen()}
+                  disabled={chat.isStreaming}
+                  data-testid="shake-button"
+                >
+                  ⚡ Shake
+                </button>
+              )}
               <SessionSummary sessionId={sessionId} />
             </div>
           </>
@@ -382,14 +519,6 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
           }}
         />
       )}
-      {shakeOpen && (
-        <ShakePanel
-          regions={shakeRegions}
-          fromIndex={Math.floor(messages.length / 2)}
-          onSubmit={(regionIds) => shakeMutation.mutate(regionIds)}
-          onClose={() => setShakeOpen(false)}
-        />
-      )}
-    </>
+    </ShakeProvider>
   )
 }

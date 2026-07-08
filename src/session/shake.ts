@@ -38,6 +38,8 @@ export type ShakeRegion =
       tokens: number
       originalText: string
       label: string
+      /** tool_call_id（tool_result part.id），前端用于跨消息合并后匹配渲染块。 */
+      toolCallId: string
     }
   | {
       kind: 'block'
@@ -58,11 +60,14 @@ export type ShakeRegionView = {
   kind: 'toolResult' | 'block'
   messageId: string
   messageIndex: number
+  partIndex: number
   tokens: number
   label: string
   preview: string
   placeholder: string
   isAfterProtectWindow: boolean
+  /** tool_result 的 tool_call_id（仅 toolResult 类别），前端跨消息合并后匹配渲染块。 */
+  toolCallId?: string
 }
 
 /**
@@ -220,6 +225,7 @@ export function collectShakeRegions(messages: Message[], config: ShakeConfig): S
           tokens,
           originalText: text,
           label: part.tool,
+          toolCallId: part.id,
         })
         continue
       }
@@ -341,6 +347,7 @@ export function toRegionViews(
     kind: region.kind,
     messageId: region.messageId,
     messageIndex: region.messageIndex,
+    partIndex: region.partIndex,
     tokens: region.tokens,
     label: region.label,
     preview: region.originalText.slice(0, 200),
@@ -349,5 +356,6 @@ export function toRegionViews(
         ? `[shaken: ${region.label}, ${region.tokens} tokens]`
         : '[shaken]',
     isAfterProtectWindow: accumulatedAfter[region.messageIndex]! >= config.protectTokens,
+    ...(region.kind === 'toolResult' ? { toolCallId: region.toolCallId } : {}),
   }))
 }

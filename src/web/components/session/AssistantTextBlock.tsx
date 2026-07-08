@@ -59,13 +59,16 @@ export function AssistantTextBlock({
   text,
   completedAt,
   latency,
+  forceExpand,
 }: {
   text: string
   completedAt?: number
   latency?: number
+  forceExpand?: boolean
 }) {
   const { ref, overflowing, expanded, toggle } = useOverflow(400)
-  const showToggle = overflowing && !expanded
+  const isExpanded = forceExpand || expanded
+  const showToggle = overflowing && !isExpanded
   const refTokens = collectCodeRefs(text)
   return (
     <div className={wrap} data-testid="assistant-text">
@@ -81,7 +84,7 @@ export function AssistantTextBlock({
       </div>
       {overflowing && (
         <button type="button" className={btn} onClick={toggle}>
-          {expanded ? '收起' : '展开'}
+          {isExpanded ? '收起' : '展开'}
         </button>
       )}
       <div className={footerRow}>

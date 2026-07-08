@@ -4,9 +4,9 @@ import type { ToolResult } from '@shared/types/tool.js'
 
 /** normalizeParts 产出的渲染块。 */
 export type RenderBlock =
-  | { type: 'text'; role: MessageRole; text: string }
-  | { type: 'thinking'; text: string }
-  | { type: 'steering'; text: string }
+  | { type: 'text'; role: MessageRole; text: string; partIndex: number }
+  | { type: 'thinking'; text: string; partIndex: number }
+  | { type: 'steering'; text: string; partIndex: number }
   | {
       type: 'tool'
       id: string
@@ -23,16 +23,16 @@ export function normalizeParts(message: Message): RenderBlock[] {
   const blocks: RenderBlock[] = []
   const toolIndex = new Map<string, number>()
 
-  for (const part of message.content) {
+  message.content.forEach((part, partIndex) => {
     switch (part._tag) {
       case 'text':
-        blocks.push({ type: 'text', role: message.role, text: part.text })
+        blocks.push({ type: 'text', role: message.role, text: part.text, partIndex })
         break
       case 'thinking':
-        blocks.push({ type: 'thinking', text: part.text })
+        blocks.push({ type: 'thinking', text: part.text, partIndex })
         break
       case 'steering':
-        blocks.push({ type: 'steering', text: part.text })
+        blocks.push({ type: 'steering', text: part.text, partIndex })
         break
       case 'tool_call': {
         const tb: ToolBlock = {
@@ -67,7 +67,7 @@ export function normalizeParts(message: Message): RenderBlock[] {
         break
       }
     }
-  }
+  })
   return blocks
 }
 

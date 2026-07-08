@@ -253,6 +253,8 @@ describe('toRegionViews', () => {
     expect(views[0]!.preview.length).toBeLessThanOrEqual(200)
     expect(views[0]!.placeholder).toContain('shaken')
     expect(views[0]!.isAfterProtectWindow).toBe(true)
+    expect(views[0]!.partIndex).toBe(regions[0]!.partIndex)
+    expect(views[0]!.toolCallId).toBeTruthy()
   })
 
   it('preview 截断到 200 字符', () => {

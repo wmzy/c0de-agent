@@ -9,17 +9,17 @@ function msg(role: Message['role'], parts: MessageContent[]): Message {
 describe('normalizeParts', () => {
   it('纯文本消息映射为 text 块', () => {
     const blocks = normalizeParts(msg('user', [{ _tag: 'text', text: 'hi' }]))
-    expect(blocks).toEqual([{ type: 'text', role: 'user', text: 'hi' }])
+    expect(blocks).toEqual([{ type: 'text', role: 'user', text: 'hi', partIndex: 0 }])
   })
 
   it('thinking 映射为 thinking 块', () => {
     const blocks = normalizeParts(msg('assistant', [{ _tag: 'thinking', text: 'hmm' }]))
-    expect(blocks).toEqual([{ type: 'thinking', text: 'hmm' }])
+    expect(blocks).toEqual([{ type: 'thinking', text: 'hmm', partIndex: 0 }])
   })
 
   it('steering 映射为 steering 块', () => {
     const blocks = normalizeParts(msg('user', [{ _tag: 'steering', text: 's' }]))
-    expect(blocks).toEqual([{ type: 'steering', text: 's' }])
+    expect(blocks).toEqual([{ type: 'steering', text: 's', partIndex: 0 }])
   })
 
   it('tool_call + 同 id tool_result(success) 合并为 completed', () => {

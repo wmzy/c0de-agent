@@ -77,11 +77,14 @@ type ShakeRegionView = {
   kind: 'toolResult' | 'block'
   messageId: string
   messageIndex: number
+  partIndex: number
   tokens: number
   label: string
   preview: string
   placeholder: string
   isAfterProtectWindow: boolean
+  /** tool_result 的 tool_call_id（仅 toolResult 类别），跨消息合并后匹配渲染块。 */
+  toolCallId?: string
 }
 
 export type {
