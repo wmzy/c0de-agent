@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
+import { compactContext } from '../../core/loop.js'
 import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
 import { getProject } from '../../project/project.js'
 import { getLLMSegments, getSession, updateSessionLastRun } from '../../session/session.js'
@@ -75,7 +76,40 @@ function createChatRoute(ctx: ServerContext): Hono {
         return streamSSE(c, async (stream) => {
           try {
             const result = await cmd.execute(parsed.args, commandCtx)
-            if (result._tag === 'error') {
+            if (result._tag === 'compact') {
+              // /compact：手动触发上下文压缩。复用 loop.compactContext（createSummarizer +
+              // runCompaction），不创建主 agent、不进入 LLM turn 循环（不把 /compact 当作
+              // user 消息发给模型）。
+              const provider = (body.provider as string) ?? ctx.config.defaultProvider
+              const model = (body.model as string) ?? ctx.config.defaultModel
+              const agentConfig: AgentConfig = {
+                provider,
+                model,
+                tools: [],
+                plugins: ctx.config.plugins.enabled,
+                agentName: 'default',
+              }
+              const compactState = await createAgent(session, agentConfig, commandCtx.deps)
+              try {
+                for await (const event of compactContext(compactState, commandCtx.deps)) {
+                  await stream.writeSSE({
+                    event: event._tag,
+                    data: JSON.stringify(event),
+                  })
+                }
+              } catch (e) {
+                await stream.writeSSE({
+                  event: 'error',
+                  data: JSON.stringify({
+                    _tag: 'error',
+                    error: {
+                      _tag: 'unexpected',
+                      message: e instanceof Error ? e.message : String(e),
+                    },
+                  }),
+                })
+              }
+            } else if (result._tag === 'error') {
               await stream.writeSSE({
                 event: 'error',
                 data: JSON.stringify({

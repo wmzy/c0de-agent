@@ -40,6 +40,12 @@ const footer = css`
   color: var(--text-secondary);
 `
 
+const footerRow = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`
+
 const refPattern = /^@\[[^:]+:\d+(-\d+)?\]$/
 
 function collectCodeRefs(text: string): string[] {
@@ -78,7 +84,7 @@ export function AssistantTextBlock({
           {expanded ? '收起' : '展开'}
         </button>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div className={footerRow}>
         <CopyButton text={text} />
         {(completedAt || latency != null) && (
           <span className={footer} data-testid="assistant-time">

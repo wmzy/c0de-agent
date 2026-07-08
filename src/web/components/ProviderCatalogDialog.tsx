@@ -151,6 +151,27 @@ const sourceLink = css`
   }
 `
 
+const catalogBody = css`
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+`
+
+const listFixed = css`
+  flex: 0 0 240px;
+`
+
+const catalogHint = css`
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+`
+
+const catalogItemHead = css`
+  margin-bottom: 8px;
+`
+
 /** 根据 models.dev 的 npm 字段推断 protocol。 */
 function npmToProtocol(npm?: string): ProviderProtocol {
   if (!npm) return 'openai-compat'
@@ -221,10 +242,10 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
           placeholder="搜索 Provider 名称…"
           data-testid="catalog-search"
         />
-        <div style={{ display: 'flex', gap: '8px', flex: 1, minHeight: 0 }}>
-          <div className={listContainer} style={{ flex: '0 0 240px' }}>
+        <div className={catalogBody}>
+          <div className={`${listContainer} ${listFixed}`}>
             {providersLoading ? (
-              <div style={{ padding: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <div className={catalogHint}>
                 加载中…
               </div>
             ) : (
@@ -249,18 +270,18 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
               ))
             )}
           </div>
-          <div className={detailPanel} style={{ flex: 1 }}>
+          <div className={detailPanel}>
             {!selectedId ? (
-              <div style={{ padding: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <div className={catalogHint}>
                 从左侧选择 Provider 查看可用模型
               </div>
             ) : modelsLoading ? (
-              <div style={{ padding: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <div className={catalogHint}>
                 加载模型列表…
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: '8px' }}>
+                <div className={catalogItemHead}>
                   <strong>{selectedProvider?.name ?? selectedId}</strong>
                   {selectedProvider?.api ? (
                     <div className={providerMeta}>API: {selectedProvider.api}</div>

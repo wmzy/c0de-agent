@@ -27,6 +27,7 @@ const DEFAULT_CONFIG: Config = {
     threshold: 0.8,
     reserveTokens: 8000,
     keepRecentTokens: 4000,
+    midTurnEnabled: false,
   },
   tools: { enabled: ['read', 'write', 'edit', 'glob', 'grep', 'bash', 'websearch'], disabled: [] },
   plugins: { enabled: [] },

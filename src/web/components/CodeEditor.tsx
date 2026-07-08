@@ -1,3 +1,4 @@
+import { css } from '@linaria/core'
 import { defaultKeymap } from '@codemirror/commands'
 import { javascript } from '@codemirror/lang-javascript'
 import { EditorState, StateEffect, StateField } from '@codemirror/state'
@@ -47,6 +48,28 @@ const highlightTheme = EditorView.baseTheme({
     boxShadow: 'inset 3px 0 0 var(--primary, #0969da)',
   },
 })
+
+const editorWrap = css`
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+`
+
+const editorBar = css`
+  display: flex;
+  justify-content: space-between;
+  padding: 4px;
+`
+
+const editorPath = css`
+  font-size: 12px;
+`
+
+const editorHost = css`
+  flex: 1;
+  overflow: auto;
+`
 
 export function CodeEditor({
   path,
@@ -116,20 +139,14 @@ export function CodeEditor({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          padding: 4,
-        }}
-      >
-        <span style={{ fontSize: 12 }}>{path}</span>
+    <div className={editorWrap}>
+      <div className={editorBar}>
+        <span className={editorPath}>{path}</span>
         <button onClick={() => void save()} disabled={!dirty} type="button" data-testid="save">
           {dirty ? '保存*' : '已保存'}
         </button>
       </div>
-      <div ref={hostRef} style={{ flex: 1, overflow: 'auto' }} />
+      <div ref={hostRef} className={editorHost} />
     </div>
   )
 }

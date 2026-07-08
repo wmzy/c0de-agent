@@ -36,6 +36,10 @@ const exitErr = css`
   color: var(--error);
 `
 
+const exitTag = css`
+  margin-left: 4px;
+`
+
 type BashInput = { command: string; cwd?: string; timeout?: number }
 
 export function BashToolView({
@@ -87,9 +91,8 @@ export function BashToolView({
       )}
       {exitCode !== null && status !== 'running' && (
         <span
-          className={exitCode === 0 ? exitOk : exitErr}
+          className={`${exitCode === 0 ? exitOk : exitErr} ${exitTag}`}
           data-testid="bash-exit"
-          style={{ marginLeft: 4 }}
         >
           exit {exitCode}
         </span>

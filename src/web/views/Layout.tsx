@@ -103,6 +103,10 @@ const resizerStyle = css`
   }
 `
 
+const resizerActive = css`
+  background: var(--primary);
+`
+
 type LayoutProps = {
   header?: ReactNode
   sidebar?: ReactNode
@@ -205,7 +209,7 @@ export function Layout({
               {sidebarNode}
             </aside>
             <hr
-              className={resizerStyle}
+              className={`${resizerStyle} ${sidebarResize.dragging ? resizerActive : ''}`}
               data-testid="resizer-sidebar"
               aria-orientation="vertical"
               aria-label="调整侧边栏宽度"
@@ -213,7 +217,6 @@ export function Layout({
               aria-valuemin={MIN_SIDEBAR}
               aria-valuemax={MAX_SIDEBAR}
               tabIndex={0}
-              style={sidebarResize.dragging ? { background: 'var(--primary)' } : undefined}
               onPointerDown={sidebarResize.onPointerDown}
               onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR)}
             />
@@ -223,7 +226,7 @@ export function Layout({
         {panelNode && (
           <>
             <hr
-              className={resizerStyle}
+              className={`${resizerStyle} ${panelResize.dragging ? resizerActive : ''}`}
               data-testid="resizer-panel"
               aria-orientation="vertical"
               aria-label="调整预览面板宽度"
@@ -231,7 +234,6 @@ export function Layout({
               aria-valuemin={MIN_PANEL}
               aria-valuemax={MAX_PANEL}
               tabIndex={0}
-              style={panelResize.dragging ? { background: 'var(--primary)' } : undefined}
               onPointerDown={panelResize.onPointerDown}
               onDoubleClick={() => setPanelWidth(DEFAULT_PANEL)}
             />

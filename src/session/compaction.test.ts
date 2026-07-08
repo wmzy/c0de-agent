@@ -149,8 +149,131 @@ describe('buildCompactionPrompt', () => {
     const prompt = buildCompactionPrompt(messages)
     expect(prompt).toContain('## Goal')
     expect(prompt).toContain('## Progress')
+    // 结构化章节验证
+    expect(prompt).toContain('## Constraints & Preferences')
+    expect(prompt).toContain('## Relevant Files')
+    expect(prompt).toContain('## Key Decisions')
+    // Progress 子章节
+    expect(prompt).toContain('### Done')
+    expect(prompt).toContain('### In Progress')
+    expect(prompt).toContain('### Blocked')
     expect(prompt).toContain('do something')
     expect(prompt).toContain('done')
+  })
+
+  it('truncates long tool_result output with head/tail marker', () => {
+    const longOutput = `HEAD-MARKER-${'X'.repeat(5000)}-TAIL-MARKER`
+    const messages: Message[] = [
+      {
+        id: 'm1',
+        sessionId: 's',
+        role: 'user',
+        content: [
+          {
+            _tag: 'tool_result',
+            id: 'r1',
+            tool: 'bash',
+            output: {
+              _tag: 'success',
+              output: longOutput,
+            },
+          },
+        ],
+        tokenCount: 1,
+        createdAt: 0,
+      },
+    ]
+    const prompt = buildCompactionPrompt(messages)
+    // 截断标记存在
+    expect(prompt).toContain('[truncated]')
+    // 头部与尾部均保留
+    expect(prompt).toContain('HEAD-MARKER-')
+    expect(prompt).toContain('-TAIL-MARKER')
+    // 中间的超长连续片段不可能完整存在（head 1200 / tail 800 容纳不下 2500 个 X）
+    expect(prompt).not.toContain('X'.repeat(2500))
+  })
+
+  it('does not truncate short tool_result output', () => {
+    const messages: Message[] = [
+      {
+        id: 'm1',
+        sessionId: 's',
+        role: 'user',
+        content: [
+          {
+            _tag: 'tool_result',
+            id: 'r1',
+            tool: 'bash',
+            output: {
+              _tag: 'success',
+              output: 'short result',
+            },
+          },
+        ],
+        tokenCount: 1,
+        createdAt: 0,
+      },
+    ]
+    const prompt = buildCompactionPrompt(messages)
+    expect(prompt).not.toContain('[truncated]')
+    expect(prompt).toContain('short result')
+  })
+
+  it('truncates long tool_call input with head/tail marker', () => {
+    const longInput = { data: `HEAD-${'Y'.repeat(5000)}-TAIL` }
+    const messages: Message[] = [
+      {
+        id: 'm1',
+        sessionId: 's',
+        role: 'assistant',
+        content: [{ _tag: 'tool_call', id: 'c1', tool: 'write', input: longInput }],
+        tokenCount: 1,
+        createdAt: 0,
+      },
+    ]
+    const prompt = buildCompactionPrompt(messages)
+    expect(prompt).toContain('[truncated]')
+    expect(prompt).not.toContain('Y'.repeat(2500))
+  })
+
+  it('uses incremental-update header when previousSummary is provided (P0-2)', () => {
+    const messages: Message[] = [mk('user', 'do more'), mk('assistant', 'done more')]
+    const previous = '上一轮的目标是 X，已完成 Y。'
+    const prompt = buildCompactionPrompt(messages, previous)
+    // 增量更新指令
+    expect(prompt).toContain('更新以下已有摘要')
+    // previous-summary 标签包裹已有摘要
+    expect(prompt).toContain('<previous-summary>')
+    expect(prompt).toContain('</previous-summary>')
+    expect(prompt).toContain(previous)
+    // 不应再出现从零压缩的头部指令
+    expect(prompt).not.toContain('将以下对话历史压缩为结构化摘要')
+    // 结构化模板仍然保留
+    expect(prompt).toContain('## Goal')
+    expect(prompt).toContain('## Progress')
+    // 新对话历史仍被序列化进 prompt
+    expect(prompt).toContain('do more')
+    expect(prompt).toContain('done more')
+  })
+
+  it('uses from-scratch header when previousSummary is absent (P0-2)', () => {
+    const messages: Message[] = [mk('user', 'fresh start'), mk('assistant', 'ok')]
+    const prompt = buildCompactionPrompt(messages)
+    // 行为不变：仍是从零压缩的头部
+    expect(prompt).toContain('将以下对话历史压缩为结构化摘要')
+    // 不应出现增量更新指令
+    expect(prompt).not.toContain('更新以下已有摘要')
+    expect(prompt).not.toContain('<previous-summary>')
+    // 对话历史仍存在
+    expect(prompt).toContain('fresh start')
+    expect(prompt).toContain('ok')
+  })
+
+  it('treats empty-string previousSummary as absent', () => {
+    const messages: Message[] = [mk('user', 'msg')]
+    const prompt = buildCompactionPrompt(messages, '')
+    expect(prompt).toContain('将以下对话历史压缩为结构化摘要')
+    expect(prompt).not.toContain('<previous-summary>')
   })
 })
 
@@ -285,6 +408,70 @@ describe('compactSession', () => {
       expect(result.compactedCount).toBe(2)
     }
     expect(await getMessages(handle, sessionId)).toHaveLength(2)
+  })
+
+  it('passes previousSummary to summarizer when a prior compaction entry exists (P0-2)', async () => {
+    // 第一次压缩：产生一个 compaction entry，summary='PRIOR SUMMARY'
+    for (let i = 0; i < 6; i++) {
+      await appendMessage(handle, sessionId, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: textContent(`first-${i}`),
+      })
+    }
+    const first = await compactSession(handle, sessionId, async () => 'PRIOR SUMMARY', {
+      keepRecentTokens: 2,
+    })
+    expect(first.compacted).toBe(true)
+
+    // 追加新消息，触发第二次压缩
+    for (let i = 0; i < 6; i++) {
+      await appendMessage(handle, sessionId, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: textContent(`second-${i}`),
+      })
+    }
+
+    // 捕获 summarizer 收到的 prompt，验证它包含 previous-summary 增量指令
+    let capturedPrompt = ''
+    const second = await compactSession(
+      handle,
+      sessionId,
+      async (prompt) => {
+        capturedPrompt = prompt
+        return 'INCREMENTAL SUMMARY'
+      },
+      { keepRecentTokens: 2 },
+    )
+    expect(second.compacted).toBe(true)
+    expect(capturedPrompt).toContain('更新以下已有摘要')
+    expect(capturedPrompt).toContain('<previous-summary>')
+    expect(capturedPrompt).toContain('</previous-summary>')
+    expect(capturedPrompt).toContain('PRIOR SUMMARY')
+    // 不应是从零压缩的头部
+    expect(capturedPrompt).not.toContain('将以下对话历史压缩为结构化摘要')
+  })
+
+  it('does not pass previousSummary on first compaction (no prior entry) (P0-2)', async () => {
+    for (let i = 0; i < 6; i++) {
+      await appendMessage(handle, sessionId, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: textContent(`msg-${i}`),
+      })
+    }
+    let capturedPrompt = ''
+    await compactSession(
+      handle,
+      sessionId,
+      async (prompt) => {
+        capturedPrompt = prompt
+        return 'summary'
+      },
+      { keepRecentTokens: 2 },
+    )
+    // 无历史 compaction entry → 从零压缩头部
+    expect(capturedPrompt).toContain('将以下对话历史压缩为结构化摘要')
+    expect(capturedPrompt).not.toContain('更新以下已有摘要')
+    expect(capturedPrompt).not.toContain('<previous-summary>')
   })
 
   it('wraps the rewrite in a transaction that rolls back on failure (P1#2 fix)', async () => {

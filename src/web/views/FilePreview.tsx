@@ -73,6 +73,27 @@ const quoteBtn = css`
   }
 `
 
+const mediaImg = css`
+  max-width: 100%;
+`
+
+const embedFill = css`
+  width: 100%;
+  height: 100%;
+`
+
+const audioFull = css`
+  width: 100%;
+`
+
+const loadingWrap = css`
+  padding: 12px;
+`
+
+const hidden = css`
+  display: none;
+`
+
 const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp']
 const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'm4a', 'flac']
 const VIDEO_EXT = ['mp4', 'webm', 'mov', 'mkv']
@@ -150,7 +171,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         <img
           src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
           alt={path}
-          style={{ maxWidth: '100%' }}
+          className={mediaImg}
         />
       )
     } else if (ext === 'pdf') {
@@ -158,7 +179,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         <embed
           src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
           type="application/pdf"
-          style={{ width: '100%', height: '100%' }}
+          className={embedFill}
           data-testid="pdf-preview"
         />
       )
@@ -167,7 +188,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         <audio
           controls
           src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
-          style={{ width: '100%' }}
+          className={audioFull}
           data-testid="audio-preview"
         >
           <track kind="captions" />
@@ -178,7 +199,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         <video
           controls
           src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
-          style={{ maxWidth: '100%' }}
+          className={mediaImg}
           data-testid="video-preview"
         >
           <track kind="captions" />
@@ -186,9 +207,9 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       )
     }
   } else if (q.isLoading) {
-    body = <div style={{ padding: 12 }}>加载中…</div>
+    body = <div className={loadingWrap}>加载中…</div>
   } else if (!q.data) {
-    body = <div style={{ padding: 12 }}>无内容</div>
+    body = <div className={loadingWrap}>无内容</div>
   } else if (['md', 'markdown'].includes(ext)) {
     body = <Markdown content={q.data.content} />
   } else {
@@ -296,10 +317,9 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         {body}
         <button
           type="button"
-          className={quoteBtn}
+          className={`${quoteBtn} ${hidden}`}
           ref={quoteBtnRef}
           data-testid="quote-selection"
-          style={{ display: 'none' }}
           onMouseDown={(e) => e.preventDefault()}
           onClick={handleQuote}
         >

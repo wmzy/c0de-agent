@@ -47,7 +47,7 @@ export function App() {
       <ThemeProvider>
         <ConfigProvider>
           <BrowserRouter>
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+            <div className={appShell}>
               <UpdateBanner />
               <Routes>
                 <Route path="/" element={<RootRedirect />} />
@@ -90,6 +90,24 @@ const errorState = css`
   text-align: center;
 `
 
+const appShell = css`
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+`
+
+const errorIcon = css`
+  font-size: 32px;
+`
+
+const errorLink = css`
+  color: var(--primary);
+  text-decoration: none;
+  padding: 8px 16px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+`
+
 /**
  * 根路径重定向：解析当前工作区对应项目，跳转到项目路由。
  * history 模式下根路径无项目上下文，必须落到具体项目才能展示会话。
@@ -116,18 +134,9 @@ function RootRedirect() {
         header={<TopBar />}
         main={
           <div className={errorState}>
-            <span style={{ fontSize: 32 }}>⚠️</span>
+            <span className={errorIcon}>⚠️</span>
             <span>无法解析当前项目，请前往设置确认工作区配置。</span>
-            <Link
-              to="/settings"
-              style={{
-                color: 'var(--primary)',
-                textDecoration: 'none',
-                padding: '8px 16px',
-                border: '1px solid var(--primary)',
-                borderRadius: 6,
-              }}
-            >
+            <Link to="/settings" className={errorLink}>
               前往设置
             </Link>
           </div>

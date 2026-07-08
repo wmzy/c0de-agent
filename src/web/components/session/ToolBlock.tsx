@@ -63,6 +63,11 @@ const arrow = css`
   color: var(--text-secondary);
 `
 
+const permissionPending = css`
+  font-size: 13px;
+  color: var(--warning);
+`
+
 const body = css`
   margin-top: 2px;
 `
@@ -114,9 +119,8 @@ export function ToolBlock({ block }: { block: ToolRenderBlock }) {
       </div>
       {expanded && st === 'paused' ? (
         <div
-          className={body}
+          className={`${body} ${permissionPending}`}
           data-testid="tool-body"
-          style={{ fontSize: 13, color: 'var(--warning)' }}
         >
           等待权限确认
         </div>

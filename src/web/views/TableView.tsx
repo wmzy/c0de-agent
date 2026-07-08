@@ -110,6 +110,10 @@ const jsonRow = css`
   }
 `
 
+const tdCenter = css`
+  text-align: center;
+`
+
 /** 行类型标签。 */
 function typeLabel(row: TimelineRow): string {
   switch (row.kind) {
@@ -326,7 +330,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center' }}>
+                <td colSpan={8} className={tdCenter}>
                   <span className={dim}>无匹配项</span>
                 </td>
               </tr>

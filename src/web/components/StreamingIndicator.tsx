@@ -18,14 +18,20 @@ const dot = css`
       opacity: 1;
     }
   }
+  &:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  &:nth-child(3) {
+    animation-delay: 0.4s;
+  }
 `
 
 export function StreamingIndicator() {
   return (
     <span data-testid="streaming" role="status" aria-label="正在输入">
       <span className={dot} />
-      <span className={dot} style={{ animationDelay: '0.2s' }} />
-      <span className={dot} style={{ animationDelay: '0.4s' }} />
+      <span className={dot} />
+      <span className={dot} />
     </span>
   )
 }

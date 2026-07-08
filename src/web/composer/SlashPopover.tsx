@@ -33,6 +33,11 @@ const item = css`
   }
 `
 
+const cmdDesc = css`
+  font-size: 12px;
+  color: var(--text-secondary);
+`
+
 type Props = {
   query: string
   commands: CommandInfo[]
@@ -65,7 +70,7 @@ function SlashPopover(props: Props) {
         >
           <strong>/{c.name}</strong>
           {c.description && (
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            <span className={cmdDesc}>
               {c.description}
             </span>
           )}

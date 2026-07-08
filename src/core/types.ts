@@ -91,6 +91,7 @@ type CommandResult =
   | { _tag: 'success'; message: string }
   | { _tag: 'error'; message: string }
   | { _tag: 'text'; text: string }
+  | { _tag: 'compact' }
 
 type CommandContext = {
   cwd: string

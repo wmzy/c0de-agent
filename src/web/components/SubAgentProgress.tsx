@@ -23,6 +23,15 @@ const card = css`
   font-size: 13px;
 `
 
+const rowBetween = css`
+  display: flex;
+  justify-content: space-between;
+`
+
+const muted = css`
+  color: var(--text-secondary);
+`
+
 export function SubAgentProgress({
   childId,
   childSessionId,
@@ -33,7 +42,7 @@ export function SubAgentProgress({
   const toolCount = events.filter((e) => e.event._tag === 'tool_call_start').length
   return (
     <div className={card} data-testid="subagent-progress">
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+      <div className={rowBetween}>
         <span>子 Agent {childId.slice(0, 8)}</span>
         {onAbort && (
           <button type="button" onClick={onAbort}>
@@ -41,7 +50,7 @@ export function SubAgentProgress({
           </button>
         )}
       </div>
-      <span style={{ color: 'var(--text-secondary)' }}>
+      <span className={muted}>
         session: {childSessionId.slice(0, 8)} · {toolCount} 次工具调用
       </span>
     </div>

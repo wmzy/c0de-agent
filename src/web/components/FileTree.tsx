@@ -77,6 +77,11 @@ const toggleBtn = css`
   min-width: auto;
 `
 
+const rowBtn = css`
+  flex: 1;
+  padding: 0;
+`
+
 const childList = css`
   padding-left: 16px;
   border-left: 1px solid var(--border);
@@ -184,8 +189,7 @@ function renderNode(
         )}
         <button
           type="button"
-          className={row}
-          style={{ flex: 1, padding: 0 }}
+          className={`${row} ${rowBtn}`}
           onClick={() =>
             isFile
               ? onSelect(node.path)

@@ -1,8 +1,8 @@
 import type { DB } from '../db/client.js'
 import { generateId } from '../shared/index.js'
-import type { Message } from '../shared/types/message.js'
+import type { Message, MessageContent } from '../shared/types/message.js'
 import { archiveOriginalEntries } from './archive.js'
-import { deleteEntriesByIds, getMessages, insertEntry } from './message.js'
+import { deleteEntriesByIds, getEntries, getMessages, insertEntry } from './message.js'
 import { upsertFileSnapshot } from './snapshot.js'
 import { estimateMessageTokens, estimateTokens } from './token.js'
 import type { CompactionConfig, CompactionResult, HotFile, Summarizer } from './types.js'
@@ -57,34 +57,81 @@ function extractHotFiles(messages: Message[]): HotFile[] {
   return hot.sort((a, b) => b.accessCount - a.accessCount).slice(0, 10)
 }
 
-/** Build the LLM summarization prompt for a set of messages. */
-function buildCompactionPrompt(messages: Message[]): string {
+/** 工具输出在压缩 prompt 中保留的最大字符数（参考 opencode）。 */
+const TOOL_OUTPUT_MAX_CHARS = 2000
+
+/** 截断超长字符串：head 60% + "[truncated]" + tail 40%，而非硬切。 */
+function truncateToolOutput(s: string): string {
+  if (s.length <= TOOL_OUTPUT_MAX_CHARS) return s
+  const head = Math.floor(TOOL_OUTPUT_MAX_CHARS * 0.6)
+  const tail = TOOL_OUTPUT_MAX_CHARS - head
+  return `${s.slice(0, head)}[truncated]${s.slice(-tail)}`
+}
+
+/** 序列化单个 content part：text/thinking 保持原样，tool 输出超长时截断。 */
+function serializePart(p: MessageContent): string {
+  if (p._tag === 'text' || p._tag === 'thinking') return p.text
+  if (p._tag === 'tool_call') {
+    const input = truncateToolOutput(JSON.stringify(p.input))
+    return JSON.stringify({ _tag: p._tag, id: p.id, tool: p.tool, input })
+  }
+  if (p._tag === 'tool_result') {
+    const output = truncateToolOutput(JSON.stringify(p.output))
+    return JSON.stringify({ _tag: p._tag, id: p.id, tool: p.tool, output })
+  }
+  return JSON.stringify(p)
+}
+
+/**
+ * Build the LLM summarization prompt for a set of messages.
+ *
+ * 当存在 previousSummary（上一次压缩生成的摘要）时，prompt 头部改为增量更新指令，
+ * 引导模型在已有摘要上叠加新事实、剔除过时信息，从而避免连续多次压缩导致的
+ * 信息逐次丢失。无 previousSummary 时退回原始的从零压缩指令。
+ */
+function buildCompactionPrompt(messages: Message[], previousSummary?: string): string {
   const history = messages
-    .map(
-      (m) =>
-        `[${m.role}] ${m.content.map((p) => (p._tag === 'text' ? p.text : JSON.stringify(p))).join(' ')}`,
-    )
+    .map((m) => `[${m.role}] ${m.content.map((p) => serializePart(p)).join(' ')}`)
     .join('\n')
 
-  return `将以下对话历史压缩为结构化摘要。保留关键信息，丢弃冗余细节。
+  const header = previousSummary
+    ? `更新以下已有摘要，保留仍成立的细节，移除过时信息，合并新事实。
+
+<previous-summary>
+${previousSummary}
+</previous-summary>`
+    : '将以下对话历史压缩为结构化摘要。保留关键信息，丢弃冗余细节。'
+
+  return `${header}
 
 ## Goal
 用户的目标是什么
 
-## Progress
-已完成的工作
+## Constraints & Preferences
+用户约束、偏好、规范要求（或"(none)"）
 
-## Decisions
-做出的关键决策
+## Progress
+### Done
+已完成的工作
+### In Progress
+当前进行的工作
+### Blocked
+遇到的阻塞
+
+## Key Decisions
+做出的关键决策及原因
 
 ## Next Steps
-接下来要做什么
+接下来的有序行动
 
 ## Critical Context
-必须记住的上下文（文件路径、变量名、错误信息等）
+必须记住的技术事实（文件路径、变量名、命令、错误信息、未解决问题）
 
 ## Modified Files
-修改过的文件列表及变更摘要
+修改过的文件路径及变更摘要
+
+## Relevant Files
+对任务重要的文件/目录路径及原因
 
 ---
 对话历史：
@@ -125,6 +172,23 @@ function findKeepRecentStart(messages: Message[], keepRecentTokens: number): num
 }
 
 /**
+ * 查找 session 最新的 compaction 摘要，用于增量摘要（P0-2）。
+ *
+ * 从全部 entries 中筛选 tag='compaction' 的记录，取最后一条（时间序最晚）的
+ * summary。无历史摘要时返回 undefined，buildCompactionPrompt 据此退回从零压缩模式。
+ */
+async function findPreviousSummary(handle: DB, sessionId: string): Promise<string | undefined> {
+  const entries = await getEntries(handle, sessionId)
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (entry && '_tag' in entry && entry._tag === 'compaction') {
+      return entry.summary
+    }
+  }
+  return undefined
+}
+
+/**
  * Compact a session: summarize old messages, archive them, keep recent ones.
  *
  * The keep window is driven by a token budget (`keepRecentTokens`), not a
@@ -162,7 +226,11 @@ async function compactSession(
     return { compacted: false, reason: 'nothing_to_compact' }
   }
 
-  const prompt = buildCompactionPrompt(compactMessages)
+  // 查询当前 session 最新的 compaction 摘要，作为增量更新的基线（P0-2）。
+  // 这样连续多次压缩时，新摘要会基于已有摘要叠加而非从零重建，避免早期信息逐次丢失。
+  const previousSummary = await findPreviousSummary(handle, sessionId)
+
+  const prompt = buildCompactionPrompt(compactMessages, previousSummary)
   // Run the (slow, network) summarizer OUTSIDE the transaction so we don't
   // hold a DB transaction open across an LLM call.
   const summary = await summarizer(prompt)

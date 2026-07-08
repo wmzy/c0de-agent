@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import * as provider from '../llm/provider.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import type { HookRunner } from '../plugins/types.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
@@ -15,12 +16,29 @@ import { listTools } from '../tools/registry.js'
 import { BUILTIN_AGENTS, createAgentRegistry } from './agents/index.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
-import { agentLoop, runSubAgent } from './loop.js'
+import { agentLoop, compactContext, runSubAgent } from './loop.js'
 import { getToolMetrics, recordToolMetrics } from './metrics.js'
 
 function mockTextStream(text: string): AsyncGenerator<StreamChunk> {
   async function* gen() {
     yield { _tag: 'text', text } as const
+    yield { _tag: 'done' } as const
+  }
+  return gen()
+}
+
+/** 空回复流：仅 done，无 text 无 tool_call。模拟压缩后 agent "沉默退化"。 */
+function mockEmptyStream(): AsyncGenerator<StreamChunk> {
+  async function* gen() {
+    yield { _tag: 'done' } as const
+  }
+  return gen()
+}
+
+/** summarizer 摘要流：createSummarizer 仅消费 text chunk 拼成 summary。 */
+function mockSummaryStream(summary = 'Compacted summary'): AsyncGenerator<StreamChunk> {
+  async function* gen() {
+    yield { _tag: 'text', text: summary } as const
     yield { _tag: 'done' } as const
   }
   return gen()
@@ -79,6 +97,59 @@ function mockLengthTruncatedStream(): AsyncGenerator<StreamChunk> {
   async function* gen() {
     yield { _tag: 'text', text: '这是一段被截断的回答' } as const
     yield { _tag: 'done', finishReason: 'length' } as const
+  }
+  return gen()
+}
+
+// context-overflow 错误流：turn0 返回带 classification 的溢出错误，turn1 恢复正常文本。
+// 用于验证响应式溢出恢复（压缩后重试成功）。
+function mockOverflowThenTextStream(): AsyncGenerator<StreamChunk> {
+  const turn = mockTurn
+  mockTurn++
+  async function* gen() {
+    if (turn === 0) {
+      yield {
+        _tag: 'error',
+        error: { message: 'prompt is too long', classification: 'context-overflow' },
+      } as const
+    } else {
+      yield { _tag: 'text', text: 'Recovered after compaction.' } as const
+      yield { _tag: 'done' } as const
+    }
+  }
+  return gen()
+}
+
+// 持续 context-overflow 错误流：每次调用都返回溢出错误。
+// 用于验证最多重试 1 次（第二次不再压缩，直接透传 error）。
+function mockOverflowOnlyStream(): AsyncGenerator<StreamChunk> {
+  async function* gen() {
+    yield {
+      _tag: 'error',
+      error: { message: 'prompt is too long', classification: 'context-overflow' },
+    } as const
+  }
+  return gen()
+}
+
+// 两轮工具调用 + 一轮文本：turn0/turn1 均抵达压缩检查点，turn2 完成。
+// 用于验证 compactionDeadEnd 后第二轮不再重复触发自动压缩。
+function mockTwoToolThenTextStream(): AsyncGenerator<StreamChunk> {
+  const turn = mockTurn
+  mockTurn++
+  async function* gen() {
+    if (turn < 2) {
+      yield { _tag: 'tool_call_start', id: `tc${turn}`, name: 'read' } as const
+      yield {
+        _tag: 'tool_call_end',
+        id: `tc${turn}`,
+        argumentsFinal: JSON.stringify({ path: 'package.json' }),
+      } as const
+      yield { _tag: 'done' } as const
+    } else {
+      yield { _tag: 'text', text: 'Done reading.' } as const
+      yield { _tag: 'done' } as const
+    }
   }
   return gen()
 }
@@ -414,6 +485,327 @@ describe('agentLoop', () => {
     expect(seg2.trigger).toBe('model_change')
     expect(seg2.model).toBe('other-model')
   })
+
+  it('压缩失败时记录警告但不中断循环（非致命）', async () => {
+    // 多塞几条 user 消息，使 findSafeCutPoint 能在较早的 user 边界切分，
+    // compactMessages 非空 → 触发 summarizer → 空 registry 抛错 → 进入 catch。
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'earlier context one' }],
+    })
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'earlier context two' }],
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // turn0 工具调用轮 → 越过 done 提前返回、抵达压缩检查；turn1 文本回复 → 完成
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    // threshold:0 → shouldCompact 恒真；keepRecentTokens 极小 → 保留窗只留最后一条，
+    // 其余进入待压缩集，确保 summarizer 被实际调用（空 registry 使其抛错）。
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, threshold: 0, keepRecentTokens: 1 },
+    }
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const events: AgentEvent[] = []
+    try {
+      for await (const ev of agentLoop(state, deps)) {
+        events.push(ev)
+      }
+
+      // 压缩失败被记录（可观测），携带统一前缀
+      expect(warnSpy).toHaveBeenCalled()
+      const failCall = warnSpy.mock.calls.find((c) => String(c[0]).includes('[compaction] failed'))
+      expect(failCall).toBeDefined()
+      // 非致命：循环未中断，仍正常完成（无 error 事件）
+      expect(events.some((e) => e._tag === 'done')).toBe(true)
+      expect(events.some((e) => e._tag === 'error')).toBe(false)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('context-overflow 触发压缩后重试成功（第二次流返回正常文本）', async () => {
+    // 塞入足够消息使压缩有内容（参考 compactContext 测试的消息量）
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `msg ${i}` }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // 主对话流：turn0 溢出错误，turn1 恢复正常文本
+    const deps = makeMockDeps(db, () => mockOverflowThenTextStream())
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, keepRecentTokens: 0 },
+    }
+    // summarizer 走模块默认 chatStream：spy 注入摘要流以避免真实 LLM 调用
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    const events: AgentEvent[] = []
+    try {
+      for await (const ev of agentLoop(state, deps)) {
+        events.push(ev)
+      }
+
+      // 压缩已发生：重试轮以 trigger=compaction 开新段
+      const compactionSeg = state.segments.find((s) => s.trigger === 'compaction')
+      expect(compactionSeg).toBeDefined()
+      // 重试后正常完成
+      expect(events.some((e) => e._tag === 'done')).toBe(true)
+      // 重试的文本输出可见
+      expect(
+        events.some((e) => e._tag === 'text_delta' && e.text === 'Recovered after compaction.'),
+      ).toBe(true)
+      // 溢出错误被恢复，未透传给用户
+      expect(events.some((e) => e._tag === 'error')).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('已压缩过一次后再次 overflow 不再重试（直接 yield error）', async () => {
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `msg ${i}` }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // 主对话流：每次都返回 overflow 错误（两次都溢出）
+    const deps = makeMockDeps(db, () => mockOverflowOnlyStream())
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, keepRecentTokens: 0 },
+    }
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    const events: AgentEvent[] = []
+    try {
+      for await (const ev of agentLoop(state, deps)) {
+        events.push(ev)
+      }
+
+      // 第一次 overflow → 压缩 → 重试；第二次 overflow → 不再重试 → yield error
+      const errors = events.filter((e) => e._tag === 'error')
+      expect(errors).toHaveLength(1)
+      // 循环因错误停止，未正常完成
+      expect(events.some((e) => e._tag === 'done')).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('压缩后仍超阈值时设置 compactionDeadEnd 并发出非致命警告', async () => {
+    // 塞入足够消息使压缩有内容可摘要（user/assistant 交替）
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `earlier msg ${i}` }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // turn0 工具调用轮 → 越过 done 抵达压缩检查；turn1 文本 → 完成
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    // threshold:0 → shouldCompact 恒真（即使压缩后仍超）；keepRecentTokens 极小确保有内容可压缩
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, threshold: 0, keepRecentTokens: 1 },
+    }
+    // summarizer 走模块默认 chatStream：spy 注入摘要流以避免真实 LLM 调用
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    const events: AgentEvent[] = []
+    try {
+      for await (const ev of agentLoop(state, deps)) {
+        events.push(ev)
+      }
+
+      // 压缩成功但阈值恒真 → 标记死锁
+      expect(state.compactionDeadEnd).toBe(true)
+      // 发出非致命警告（error 事件，但未中断循环）
+      const warning = events.find(
+        (e) =>
+          e._tag === 'error' &&
+          e.error._tag === 'unexpected' &&
+          e.error.message.includes('freed too little context'),
+      )
+      expect(warning).toBeDefined()
+      // 非致命：循环仍正常完成
+      expect(events.some((e) => e._tag === 'done')).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('compactionDeadEnd 后同一轮对话不再重复触发自动压缩', async () => {
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `earlier msg ${i}` }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // turn0/turn1 均为工具调用轮 → 两个压缩检查点；turn2 文本 → 完成
+    const deps = makeMockDeps(db, () => mockTwoToolThenTextStream())
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, threshold: 0, keepRecentTokens: 1 },
+    }
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    try {
+      for await (const _ev of agentLoop(state, deps)) {
+        // 消费
+      }
+
+      // turn0 压缩成功 → 死锁；turn1 因死锁跳过压缩 → summarizer（provider.chatStream
+      // 仅被 summarizer 调用，主对话走 deps.chatStream）仅被调用一次
+      expect(state.compactionDeadEnd).toBe(true)
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('新一轮 agentLoop（新用户消息）重置 compactionDeadEnd', async () => {
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `earlier msg ${i}` }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, threshold: 0, keepRecentTokens: 1 },
+    }
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    try {
+      // 第一轮：触发死锁
+      for await (const _ev of agentLoop(state, deps)) {
+        // 消费
+      }
+      expect(state.compactionDeadEnd).toBe(true)
+
+      // 第二轮：模拟新用户消息 → agentLoop 重入 → 死锁标记应被重置。
+      // 关闭压缩避免再次触发死锁，单独验证重置行为。
+      deps.config = {
+        ...DEFAULT_CONFIG,
+        compaction: { ...DEFAULT_CONFIG.compaction, enabled: false },
+      }
+      for await (const _ev of agentLoop(state, deps)) {
+        // 消费
+      }
+      expect(state.compactionDeadEnd).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('midTurnEnabled=false（默认）时工具后不触发中轮压缩', async () => {
+    // 塞入足够消息使压缩有内容（与上方压缩测试一致的消息量）
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `earlier msg ${i}` }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // turn0 工具调用轮 → 越过 done 提前返回、抵达中轮压缩检查；turn1 文本 → 完成
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    // 关闭 turn-end 自动压缩（enabled:false）以隔离中轮路径；midTurnEnabled=false（默认）。
+    // threshold:0 使阈值恒真——若中轮未被 midTurnEnabled 闸住，summarizer 会被调用。
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: {
+        ...DEFAULT_CONFIG.compaction,
+        enabled: false,
+        midTurnEnabled: false,
+        threshold: 0,
+        keepRecentTokens: 0,
+      },
+    }
+    // summarizer 走模块默认 chatStream：spy 检测是否被调用
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    try {
+      for await (const _ev of agentLoop(state, deps)) {
+        // 消费
+      }
+      // midTurnEnabled=false：summarizer 未被调用（中轮压缩未触发）
+      expect(spy).not.toHaveBeenCalled()
+      // 未开 compaction 段
+      expect(state.segments.find((s) => s.trigger === 'compaction')).toBeUndefined()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('midTurnEnabled=true 且超阈值时工具后触发中轮压缩', async () => {
+    // 塞入足够消息使压缩有内容（与上方压缩测试一致的消息量）
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `earlier msg ${i}` }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // turn0 工具调用轮 → 越过 done 提前返回、抵达中轮压缩检查；turn1 文本 → 完成
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    // 关闭 turn-end 自动压缩（enabled:false）以隔离中轮路径；开启 midTurnEnabled。
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: {
+        ...DEFAULT_CONFIG.compaction,
+        enabled: false,
+        midTurnEnabled: true,
+        threshold: 0,
+        keepRecentTokens: 0,
+      },
+    }
+    // summarizer 走模块默认 chatStream：spy 注入摘要流以避免真实 LLM 调用
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    const events: AgentEvent[] = []
+    try {
+      for await (const ev of agentLoop(state, deps)) {
+        events.push(ev)
+      }
+      // summarizer 被调用（中轮压缩触发）
+      expect(spy).toHaveBeenCalled()
+      // 压缩后以 trigger=compaction 开新段
+      const compactionSeg = state.segments.find((s) => s.trigger === 'compaction')
+      expect(compactionSeg).toBeDefined()
+      // 静默执行：与 turn-end 自动压缩一致，compactContext 的事件被静默消费，
+      // 不向用户透传 compaction_done/error/warning
+      expect(events.some((e) => e._tag === 'compaction_done')).toBe(false)
+      expect(events.some((e) => e._tag === 'error')).toBe(false)
+      // 循环正常完成
+      expect(events.some((e) => e._tag === 'done')).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })
 
 describe('agentLoop with hookRunner', () => {
@@ -676,5 +1068,213 @@ describe('agentLoop tool-mode metrics (spec §16.5)', () => {
     }
     const details = await getLLMSegments(db, session.id)
     expect(details[0]?.systemPrompt).not.toContain('Tool-mode preference')
+  })
+})
+
+describe('compactContext (手动 /compact)', () => {
+  it('触发 runCompaction、标记 compaction 段、不进入对话 LLM 循环', async () => {
+    // 塞入足够消息使压缩有内容（参考 compact.test.ts 的消息量）
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `message ${i} `.repeat(100) }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockTextStream('unused'))
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, keepRecentTokens: 0 },
+    }
+
+    // summarizer 走模块默认 chatStream：spy 注入摘要流以避免真实 LLM 调用。
+    // 作用域仅限本测试（finally 恢复），不影响依赖「空 registry 抛错」的其它测试。
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    const events: AgentEvent[] = []
+    try {
+      for await (const ev of compactContext(state, deps)) {
+        events.push(ev)
+      }
+    } finally {
+      spy.mockRestore()
+    }
+
+    // runCompaction 成功执行：state 标记下一段为 compaction
+    expect(state.pendingSegmentTrigger).toBe('compaction')
+    // 压缩完成通知（text_delta），明确告知压缩了消息
+    const notice = events.find((e) => e._tag === 'text_delta')
+    expect(notice).toBeDefined()
+    if (notice?._tag === 'text_delta') {
+      expect(notice.text).toContain('compacted')
+    }
+    // 不进入对话 turn 循环：compactContext 不产生 tool_call 事件，
+    // 也不产生多轮 text_delta（仅一条压缩通知）
+    expect(events.some((e) => e._tag === 'tool_call_start')).toBe(false)
+    expect(events.filter((e) => e._tag === 'text_delta')).toHaveLength(1)
+  })
+
+  it('压缩成功后发出 compaction_done 事件并分发 session:compact hook', async () => {
+    // 塞入足够消息使压缩有内容（参考 compact.test.ts 的消息量）
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `message ${i} `.repeat(100) }],
+      })
+    }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // 注入 hookRunner 以验证 session:compact hook 分发
+    const hookRunner = createHookRunner()
+    const compactHandler = vi.fn((data) => data)
+    hookRunner.on('session:compact', compactHandler)
+    const deps = makeMockDepsWithHooks(db, () => mockTextStream('unused'), hookRunner)
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, keepRecentTokens: 0 },
+    }
+
+    // summarizer 走模块默认 chatStream：spy 注入摘要流以避免真实 LLM 调用。
+    const spy = vi.spyOn(provider, 'chatStream')
+    spy.mockImplementation(() => mockSummaryStream('Compacted summary'))
+
+    const events: AgentEvent[] = []
+    try {
+      for await (const ev of compactContext(state, deps)) {
+        events.push(ev)
+      }
+    } finally {
+      spy.mockRestore()
+    }
+
+    // compaction_done 事件存在并携带压缩结果
+    const done = events.find((e) => e._tag === 'compaction_done')
+    expect(done).toBeDefined()
+    let compactedCount = 0
+    let keptCount = 0
+    if (done?._tag === 'compaction_done') {
+      expect(done.summary).toBe('Compacted summary')
+      expect(done.archiveId).toBeTruthy()
+      expect(done.compactedCount).toBeGreaterThan(0)
+      expect(done.keptCount).toBeGreaterThanOrEqual(0)
+      compactedCount = done.compactedCount
+      keptCount = done.keptCount
+    }
+    // session:compact hook 被分发一次，payload.before/after 与事件计数一致
+    expect(compactHandler).toHaveBeenCalledTimes(1)
+    const payload = compactHandler.mock.calls[0]?.[0] as { before: number; after: number }
+    expect(payload.before).toBe(compactedCount)
+    expect(payload.after).toBe(keptCount)
+  })
+
+  it('压缩失败时抛错由调用方处理（不静默吞错）', async () => {
+    // 塞入足够消息使 summarizer 被实际调用（否则 runCompaction 提前返回 nothing_to_compact）
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(db, session.id, {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ _tag: 'text', text: `message ${i} `.repeat(100) }],
+      })
+    }
+    const deps = makeMockDeps(db, () => mockTextStream('unused'))
+    deps.config = {
+      ...DEFAULT_CONFIG,
+      compaction: { ...DEFAULT_CONFIG.compaction, keepRecentTokens: 0 },
+    }
+    const state = makeState(session, await getMessages(db, session.id))
+    // 不 spy 摘要流 → 模块默认 chatStream + 空 registry → resolveRoute 抛错，
+    // 错误向上传播由调用方处理（自动压缩路径会 console.warn）。
+    await expect(
+      (async () => {
+        for await (const _ev of compactContext(state, deps)) {
+          // consume
+        }
+      })(),
+    ).rejects.toThrow()
+    expect(state.pendingSegmentTrigger).toBeUndefined()
+  })
+})
+
+describe('agentLoop 压缩退化监测 (degradation-monitor)', () => {
+  it('压缩后连续 3 条空回复触发退化警告（不中断循环）', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockEmptyStream())
+    // 模拟压缩成功后初始化监测器（与 compactContext 成功路径一致）
+    state.postCompactionMonitor = { remaining: 5, noTextStreak: 0 }
+
+    // 空回复（无 text 无 tool_call）会令 agentLoop 立即 completed 结束，
+    // 故退化跨多次 agentLoop 重入累积（同一 state 持久化监测器）。
+    let warningRun = -1
+    for (let run = 0; run < 3; run++) {
+      const events: AgentEvent[] = []
+      for await (const ev of agentLoop(state, deps)) {
+        events.push(ev)
+      }
+      if (
+        events.some(
+          (e) =>
+            e._tag === 'error' &&
+            e.error._tag === 'unexpected' &&
+            e.error.message.includes('degraded after compaction'),
+        )
+      ) {
+        warningRun = run
+      }
+      // 每次重入都正常完成（警告不中断循环）
+      expect(events.some((e) => e._tag === 'done')).toBe(true)
+    }
+
+    // 第 3 次空回复（noTextStreak 累积到 3）才触发警告
+    expect(warningRun).toBe(2)
+    // 监测器仍在活动（remaining=5-3=2>0，未耗尽）
+    expect(state.postCompactionMonitor).toBeDefined()
+    expect(state.postCompactionMonitor?.noTextStreak).toBe(3)
+  })
+
+  it('有 tool_call 的回复不触发退化警告（工具调用轮次不算沉默）', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // mockToolThenTextStream：turn0 read 工具调用，turn1 文本回复
+    const deps = makeMockDeps(db, () => mockToolThenTextStream())
+    // 预置接近阈值的监测器：证明即使 noTextStreak 已近阈值，
+    // 有 tool_call / 实质文本的轮次也不会触发警告。
+    state.postCompactionMonitor = { remaining: 5, noTextStreak: 2 }
+
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+
+    // 无退化警告
+    expect(
+      events.some(
+        (e) =>
+          e._tag === 'error' &&
+          e.error._tag === 'unexpected' &&
+          e.error.message.includes('degraded after compaction'),
+      ),
+    ).toBe(false)
+    // 循环正常完成
+    expect(events.some((e) => e._tag === 'done')).toBe(true)
+    // 工具调用轮与文本轮均非空回复 → noTextStreak 不增长
+    expect(state.postCompactionMonitor?.noTextStreak).toBe(2)
+  })
+
+  it('remaining 耗尽后停止监测', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockEmptyStream())
+    // remaining 仅剩 1：本轮监测后即耗尽清除
+    state.postCompactionMonitor = { remaining: 1, noTextStreak: 1 }
+
+    for (let run = 0; run < 2; run++) {
+      for await (const _ev of agentLoop(state, deps)) {
+        // consume
+      }
+    }
+    // 第 1 次重入后 remaining 归零 → 监测器清除；第 2 次不再监测
+    expect(state.postCompactionMonitor).toBeUndefined()
   })
 })

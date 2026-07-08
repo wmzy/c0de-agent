@@ -18,6 +18,10 @@ type CompactionConfig = {
   reserveTokens: number
   /** Token budget for retaining recent messages verbatim. */
   keepRecentTokens: number
+  /** 中轮压缩（mid-run compaction）：单个 turn 内工具执行后、下一次 LLM 请求前
+   * 按阈值静默压缩。与 turn-end 自动压缩独立——以本开关为闸门复用 shouldCompact
+   * 的阈值逻辑（不受 `enabled` 影响），默认关闭（保守开启）。 */
+  midTurnEnabled?: boolean
 }
 
 /** Tool-mode auto-selection configuration (spec §16.5). */

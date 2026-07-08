@@ -109,4 +109,15 @@ describe('builtin commands', () => {
     })) as CommandResult
     expect(result._tag).toBe('success')
   })
+
+  it('/compact 声明压缩意图，返回 compact 变体（实际压缩由消费方执行）', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'compact')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('compact')
+  })
 })

@@ -137,6 +137,18 @@ type AgentEvent =
       status: 'running' | 'completed' | 'failed'
     }
   | { _tag: 'subagent_end'; childId: string; agentType: string; success: boolean; output?: string }
+  /**
+   * 会话压缩成功后发出（spec: plugin-hooks `session:compact`）。
+   * 实际发生压缩（runCompaction 返回 compacted=true）时才 yield；
+   * nothing_to_compact 不发。archiveId/summary 仅在真实压缩时存在。
+   */
+  | {
+      _tag: 'compaction_done'
+      summary: string
+      archiveId?: string
+      compactedCount: number
+      keptCount: number
+    }
   | { _tag: 'done' }
 
 /**
@@ -159,6 +171,18 @@ type AgentState = {
   /** estimateTokens 的校准系数（由 calibrateEstimate 按真实 usage EMA 更新，默认 1.0）。 */
   calibrationFactor: number
   compactionModel?: { provider: string; model: string }
+  /**
+   * 压缩死锁标记：自动压缩成功后仍超阈值（如 keepRecentTokens 本身已超限）时置真，
+   * 暂停后续自动压缩以防每轮重复触发（无限循环）。收到新用户消息（agentLoop 重入）时重置。
+   */
+  compactionDeadEnd?: boolean
+  /**
+   * 压缩退化监测器：压缩成功后初始化，监测接下来若干轮 assistant 回复。
+   * 若连续产生空回复（无实质文本且无 tool_call），发出非致命警告（不中断循环），
+   * 提示 agent 可能在"沉默退化"。remaining 耗尽即清除；新一轮用户输入
+   * （agentLoop 重入）时不会自动重置——它由压缩成功单独建立。
+   */
+  postCompactionMonitor?: { remaining: number; noTextStreak: number }
 }
 
 export type {

@@ -142,6 +142,61 @@ const apiKeySavedBadge = css`
   white-space: nowrap;
 `
 
+/** PasswordInput 外层 flex 容器。 */
+const pwdField = css`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+`
+
+/** 加载中占位。 */
+const loadingWrap = css`
+  padding: 24px;
+`
+
+/** Settings 根滚动容器。 */
+const settingsScroll = css`
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+`
+
+/** 隐藏的 file input。 */
+const hiddenInput = css`
+  display: none;
+`
+
+/** 灰化提示文本（独立出现时）。 */
+const mutedHint = css`
+  color: var(--text-secondary);
+  font-size: 13px;
+`
+
+/** hint 文本带下边距的变体。 */
+const hintMb = css`
+  margin-bottom: 8px;
+`
+
+/** 测试结果 — 成功色。 */
+const testOk = css`
+  color: var(--success);
+`
+
+/** 测试结果 — 错误色。 */
+const testErr = css`
+  color: var(--error);
+`
+
+/** 保存反馈 — 成功色。 */
+const saveOk = css`
+  color: var(--success, #2a9d8f);
+`
+
+/** 保存反馈 — 错误色。 */
+const saveErr = css`
+  color: var(--error, #e63946);
+`
+
 /** 保存状态提示文本。 */
 const saveStatus = css`
   margin-left: 12px;
@@ -352,7 +407,7 @@ function ApiKeyInput({
   }, [stored])
   const isEnc = (stored ?? '').startsWith('enc:')
   return (
-    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+    <span className={pwdField}>
       <input
         type="password"
         value={text}
@@ -421,7 +476,7 @@ export function Settings() {
     updateProviders([...merged.providers, provider])
   }
 
-  if (isLoading || !config) return <div style={{ padding: 24 }}>加载中…</div>
+  if (isLoading || !config) return <div className={loadingWrap}>加载中…</div>
 
   const merged = { ...config, ...draft }
   const isDirty = draft !== null
@@ -700,8 +755,8 @@ export function Settings() {
 
   return (
     <div
+      className={settingsScroll}
       data-testid="settings"
-      style={{ overflow: 'auto', display: 'flex', flexDirection: 'column' }}
     >
       <div className={toolbar}>
         <span className={toolbarTitle}>⚙ 设置</span>
@@ -736,7 +791,7 @@ export function Settings() {
           ref={fileInputRef}
           type="file"
           accept=".json,application/json"
-          style={{ display: 'none' }}
+          className={hiddenInput}
           onChange={(e) => void onImportFile(e)}
           data-testid="settings-import-input"
         />
@@ -852,10 +907,7 @@ export function Settings() {
                   </button>
                   {test?.result && (
                     <span
-                      className={testResultSpan}
-                      style={{
-                        color: test.result.ok ? 'var(--success)' : 'var(--error)',
-                      }}
+                      className={`${testResultSpan} ${test.result.ok ? testOk : testErr}`}
                     >
                       {test.result.ok
                         ? `\u2713 连接成功，${test.result.models.length} 个模型`
@@ -952,7 +1004,7 @@ export function Settings() {
           <div className={section}>
             <h3>默认 Provider / Model</h3>
             {defaultProviderCandidates.length === 0 ? (
-              <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+              <p className={mutedHint}>
                 请先在上方「LLM Provider」添加并配置 Provider，再选择默认值。
               </p>
             ) : (
@@ -1015,7 +1067,7 @@ export function Settings() {
           </div>
           <div className={section}>
             <h3>角色路由</h3>
-            <div className={hint} style={{ marginBottom: 8 }}>
+            <div className={`${hint} ${hintMb}`}>
               为特定角色指定独立的 provider 和 model（覆盖默认）。
             </div>
             {Object.entries(merged.roleRouting ?? {}).map(([role, cfg]) => (
@@ -1389,16 +1441,14 @@ export function Settings() {
         </button>
         {saveFeedback.kind !== 'idle' && (
           <span
-            className={saveStatus}
+            className={`${saveStatus} ${
+              saveFeedback.kind === 'ok'
+                ? saveOk
+                : saveFeedback.kind === 'err'
+                  ? saveErr
+                  : ''
+            }`}
             data-testid="settings-save-status"
-            style={{
-              color:
-                saveFeedback.kind === 'ok'
-                  ? 'var(--success, #2a9d8f)'
-                  : saveFeedback.kind === 'err'
-                    ? 'var(--error, #e63946)'
-                    : 'var(--text-secondary)',
-            }}
           >
             {saveFeedback.kind === 'saving' && '保存中…'}
             {saveFeedback.kind === 'ok' && '✓ 已保存'}

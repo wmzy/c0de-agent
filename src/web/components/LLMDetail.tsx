@@ -94,7 +94,7 @@ function ToolSchemaView({ tool }: { tool: ChatTool }) {
     <div className={toolItem}>
       <div className={toolHead}>
         <strong>{tool.name}</strong>
-        <span style={{ color: 'var(--text-secondary)' }}> — {tool.description}</span>
+        <span className={dim}> — {tool.description}</span>
       </div>
       <pre className={pre}>{JSON.stringify(tool.parameters, null, 2)}</pre>
     </div>

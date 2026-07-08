@@ -96,7 +96,10 @@ type StreamChunk =
       cacheRead?: number
     }
   | { _tag: 'done'; finishReason?: FinishReason }
-  | { _tag: 'error'; error: { message: string; retryable?: boolean } }
+  | {
+      _tag: 'error'
+      error: { message: string; retryable?: boolean; classification?: 'context-overflow' }
+    }
 
 export type {
   ChatMessage,

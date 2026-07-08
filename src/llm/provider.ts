@@ -120,7 +120,11 @@ const toStreamChunk = (event: StreamEvent): StreamChunk | null => {
     case 'provider-error':
       return {
         _tag: 'error',
-        error: { message: event.message, retryable: event.retryable ?? false },
+        error: {
+          message: event.message,
+          retryable: event.retryable ?? false,
+          ...(event.classification !== undefined ? { classification: event.classification } : {}),
+        },
       }
     default:
       return null

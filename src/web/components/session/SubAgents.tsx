@@ -9,6 +9,15 @@ const card = css`
   font-size: 13px;
 `
 
+const rowBetween = css`
+  display: flex;
+  justify-content: space-between;
+`
+
+const muted = css`
+  color: var(--text-secondary);
+`
+
 const statusColor = (status: SubagentInfo['status']): string => {
   switch (status) {
     case 'running':
@@ -27,13 +36,13 @@ export function SubAgents({ subagents }: { subagents: SubagentInfo[] }) {
     <div data-testid="subagents-list">
       {subagents.map((s) => (
         <div key={s.childId} className={card}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div className={rowBetween}>
             <span>
               {s.agentType} · {s.description}
             </span>
             <span style={{ color: statusColor(s.status) }}>{s.status}</span>
           </div>
-          <span style={{ color: 'var(--text-secondary)' }}>id: {s.childId.slice(0, 8)}</span>
+          <span className={muted}>id: {s.childId.slice(0, 8)}</span>
         </div>
       ))}
     </div>

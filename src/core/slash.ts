@@ -51,10 +51,9 @@ const compactCommand: SlashCommand = {
   name: 'compact',
   description: 'Manually trigger context compaction',
   execute: async () => {
-    return {
-      _tag: 'success',
-      message: 'Compaction queued. Use the agent API to trigger with a summarizer.',
-    }
+    // 仅声明意图：真正的压缩由消费方（loop.compactContext / chat 路由）执行，
+    // 复用 createSummarizer + runCompaction，且不把 /compact 当作 user 消息发给 LLM。
+    return { _tag: 'compact' }
   },
 }
 
