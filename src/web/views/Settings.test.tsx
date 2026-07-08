@@ -869,6 +869,110 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(args.compaction.threshold).toBe(mockConfig.compaction.threshold)
   })
 
+  it('勾选压缩独立模型后显示 provider/model 下拉并保存', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const cfg = {
+      ...mockConfig,
+      providers: [
+        {
+          name: 'Alpha',
+          protocol: 'openai',
+          apiKey: 'k1',
+          baseURL: 'https://a',
+          models: { 'a-1': {}, 'a-2': {} },
+        },
+        {
+          name: 'Beta',
+          protocol: 'anthropic',
+          apiKey: 'k2',
+          baseURL: 'https://b',
+          models: { 'b-1': {} },
+        },
+      ],
+      defaultProvider: 'Alpha',
+      defaultModel: 'a-1',
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(cfg)
+    ;(configAPI.update as Mock).mockResolvedValue(cfg)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 勾选「压缩使用独立模型」复选框
+    const cmCheckbox = screen
+      .getByText('压缩使用独立模型（摘要任务对推理要求低，可指定便宜模型）')
+      .closest('label')
+      ?.querySelector('input') as HTMLInputElement
+    expect(cmCheckbox).toBeTruthy()
+    fireEvent.click(cmCheckbox)
+
+    // 下拉出现，默认值为当前 defaultProvider/defaultModel
+    const providerSel = await waitFor(
+      () => screen.getByTestId('compaction-provider-select') as HTMLSelectElement,
+    )
+    const modelSel = screen.getByTestId('compaction-model-select') as HTMLSelectElement
+    expect(providerSel.value).toBe('Alpha')
+    expect(modelSel.value).toBe('a-1')
+
+    // 切换到 Beta → model 自动校正为 b-1
+    fireEvent.change(providerSel, { target: { value: 'Beta' } })
+    await waitFor(() => expect(modelSel.value).toBe('b-1'))
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      compaction: { compactionModel: { provider: string; model: string } }
+    }
+    expect(args.compaction.compactionModel).toEqual({ provider: 'Beta', model: 'b-1' })
+  })
+
+  it('取消勾选压缩独立模型后 compactionModel 被清除', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const cfg = {
+      ...mockConfig,
+      compaction: {
+        ...mockConfig.compaction,
+        compactionModel: { provider: 'Alpha', model: 'a-1' },
+      },
+      providers: [
+        {
+          name: 'Alpha',
+          protocol: 'openai',
+          apiKey: 'k1',
+          baseURL: 'https://a',
+          models: { 'a-1': {} },
+        },
+      ],
+      defaultProvider: 'Alpha',
+      defaultModel: 'a-1',
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(cfg)
+    ;(configAPI.update as Mock).mockResolvedValue(cfg)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 初始已勾选 → 下拉可见
+    expect(screen.getByTestId('compaction-provider-select')).toBeTruthy()
+
+    // 取消勾选
+    const cmCheckbox = screen
+      .getByText('压缩使用独立模型（摘要任务对推理要求低，可指定便宜模型）')
+      .closest('label')
+      ?.querySelector('input') as HTMLInputElement
+    fireEvent.click(cmCheckbox)
+
+    // 下拉消失
+    expect(screen.queryByTestId('compaction-provider-select')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      compaction: { compactionModel?: { provider: string; model: string } }
+    }
+    expect(args.compaction.compactionModel).toBeUndefined()
+  })
+
   it('添加并删除 MCP 服务器', async () => {
     const { configAPI } = await import('../services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(mockConfig)

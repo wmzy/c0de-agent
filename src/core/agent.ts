@@ -42,6 +42,11 @@ async function createAgent(
       keepRecent: 12_800,
     },
     calibrationFactor: 1.0,
+    // 压缩模型覆盖：从全局配置映射到 agent state，compactContext 读取后用于
+    // 创建 summarizer。未配置时为 undefined → 回退到会话主模型。
+    ...(deps.config.compaction.compactionModel
+      ? { compactionModel: deps.config.compaction.compactionModel }
+      : {}),
   }
 }
 

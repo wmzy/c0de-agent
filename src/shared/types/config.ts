@@ -22,6 +22,9 @@ type CompactionConfig = {
    * 按阈值静默压缩。与 turn-end 自动压缩独立——以本开关为闸门复用 shouldCompact
    * 的阈值逻辑（不受 `enabled` 影响），默认关闭（保守开启）。 */
   midTurnEnabled?: boolean
+  /** 压缩摘要使用的模型覆盖。未设置时回退到会话主模型。
+   * 摘要任务对推理能力要求低，可指定便宜/快速模型以降低成本。 */
+  compactionModel?: { provider: string; model: string }
 }
 
 /** Tool-mode auto-selection configuration (spec §16.5). */

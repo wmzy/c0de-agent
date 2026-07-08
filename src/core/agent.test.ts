@@ -64,6 +64,32 @@ describe('createAgent', () => {
     expect(agent.steeringQueue).toEqual([])
   })
 
+  it('映射 compaction.compactionModel 到 state（指定便宜模型）', async () => {
+    const cheapModel = { provider: 'cheap', model: 'flash' }
+    const depsWithModel: AgentDependencies = {
+      ...makeDeps(db, mockTextStream('hi')),
+      config: {
+        ...DEFAULT_CONFIG,
+        compaction: { ...DEFAULT_CONFIG.compaction, compactionModel: cheapModel },
+      },
+    }
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [] },
+      depsWithModel,
+    )
+    expect(agent.compactionModel).toEqual(cheapModel)
+  })
+
+  it('未配置 compactionModel 时 state.compactionModel 为 undefined', async () => {
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [] },
+      makeDeps(db, mockTextStream('hi')),
+    )
+    expect(agent.compactionModel).toBeUndefined()
+  })
+
   it('loads existing messages from DB', async () => {
     const { appendMessage } = await import('../session/message.js')
     await appendMessage(db, session.id, {

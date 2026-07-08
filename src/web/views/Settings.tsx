@@ -481,6 +481,16 @@ export function Settings() {
   const merged = { ...config, ...draft }
   const isDirty = draft !== null
 
+  /** 获取指定 provider 下已启用的模型列表（空数组表示无可用模型）。 */
+  const enabledModelsOf = (providerName: string): string[] => {
+    const entry = merged.providers.find((p) => p.name === providerName)
+    return entry?.models
+      ? Object.entries(entry.models)
+          .filter(([, v]) => v.enabled !== false)
+          .map(([name]) => name)
+      : []
+  }
+
   // 默认 Provider/Model 候选来自已配置 provider 及其 models（仅启用的）。
   // defaultProvider 可能是 protocol 名或导入的陌生值，不在已配置列表时由 select 兜底显示。
   const defaultProviderCandidates = merged.providers.filter((p) => p.name.trim() !== '')
@@ -754,10 +764,7 @@ export function Settings() {
   }
 
   return (
-    <div
-      className={settingsScroll}
-      data-testid="settings"
-    >
+    <div className={settingsScroll} data-testid="settings">
       <div className={toolbar}>
         <span className={toolbarTitle}>⚙ 设置</span>
         <div className={segGroup}>
@@ -906,9 +913,7 @@ export function Settings() {
                     删除
                   </button>
                   {test?.result && (
-                    <span
-                      className={`${testResultSpan} ${test.result.ok ? testOk : testErr}`}
-                    >
+                    <span className={`${testResultSpan} ${test.result.ok ? testOk : testErr}`}>
                       {test.result.ok
                         ? `\u2713 连接成功，${test.result.models.length} 个模型`
                         : `\u2717 ${test.result.error}`}
@@ -1173,6 +1178,83 @@ export function Settings() {
                 }
               />
             </label>
+            <label className={checkRow}>
+              <input
+                type="checkbox"
+                checked={merged.compaction.midTurnEnabled === true}
+                onChange={(e) => updateSection('compaction', { midTurnEnabled: e.target.checked })}
+              />
+              <span>中轮压缩（工具执行后、下次 LLM 请求前按阈值静默压缩）</span>
+            </label>
+            <label className={checkRow}>
+              <input
+                type="checkbox"
+                checked={merged.compaction.compactionModel !== undefined}
+                onChange={(e) =>
+                  updateSection('compaction', {
+                    compactionModel: e.target.checked
+                      ? { provider: merged.defaultProvider, model: merged.defaultModel }
+                      : undefined,
+                  })
+                }
+              />
+              <span>压缩使用独立模型（摘要任务对推理要求低，可指定便宜模型）</span>
+            </label>
+            {(() => {
+              const cm = merged.compaction.compactionModel
+              if (!cm) return null
+              return (
+                <>
+                  <label className={field}>
+                    <span>压缩 Provider：</span>
+                    <select
+                      className={fieldInput}
+                      value={cm.provider}
+                      onChange={(e) => {
+                        const firstModel = enabledModelsOf(e.target.value)[0] ?? cm.model
+                        updateSection('compaction', {
+                          compactionModel: {
+                            provider: e.target.value,
+                            model: firstModel,
+                          },
+                        })
+                      }}
+                      data-testid="compaction-provider-select"
+                    >
+                      {defaultProviderCandidates.map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className={field}>
+                    <span>压缩 Model：</span>
+                    <select
+                      className={fieldInput}
+                      value={cm.model}
+                      onChange={(e) =>
+                        updateSection('compaction', {
+                          compactionModel: { provider: cm.provider, model: e.target.value },
+                        })
+                      }
+                      data-testid="compaction-model-select"
+                    >
+                      {(() => {
+                        const models = enabledModelsOf(cm.provider)
+                        if (models.length === 0)
+                          return <option value="">该 Provider 暂无模型</option>
+                        return models.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))
+                      })()}
+                    </select>
+                  </label>
+                </>
+              )
+            })()}
           </div>
           <div className={section}>
             <h3>工具配置</h3>
@@ -1442,11 +1524,7 @@ export function Settings() {
         {saveFeedback.kind !== 'idle' && (
           <span
             className={`${saveStatus} ${
-              saveFeedback.kind === 'ok'
-                ? saveOk
-                : saveFeedback.kind === 'err'
-                  ? saveErr
-                  : ''
+              saveFeedback.kind === 'ok' ? saveOk : saveFeedback.kind === 'err' ? saveErr : ''
             }`}
             data-testid="settings-save-status"
           >
