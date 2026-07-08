@@ -259,6 +259,102 @@ describe('session route', () => {
     }
   })
 
+  it('POST /:id/shake/preview 返回可 shake 区域', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Shake' }),
+    })
+    const created = (await createRes.json()) as Session
+
+    const { appendMessage } = await import('../../session/message.js')
+    await appendMessage(dbHandle!, created.id, {
+      role: 'tool',
+      content: [
+        {
+          _tag: 'tool_result',
+          id: 'call-1',
+          tool: 'bash',
+          output: { _tag: 'success', output: 'x'.repeat(5000) },
+        },
+      ],
+    })
+
+    const res = await app.request(`/${created.id}/shake/preview`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { regions: Array<{ kind: string; tokens: number }> }
+    expect(body.regions.length).toBeGreaterThan(0)
+    expect(body.regions.some((r) => r.kind === 'toolResult')).toBe(true)
+  })
+
+  it('POST /:id/shake/preview 不存在的会话 → 404', async () => {
+    const { app } = await setup()
+    const res = await app.request('/nonexistent/shake/preview', { method: 'POST' })
+    expect(res.status).toBe(404)
+  })
+
+  it('POST /:id/shake/apply 归档并替换内容', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'ShakeApply' }),
+    })
+    const created = (await createRes.json()) as Session
+
+    const { appendMessage } = await import('../../session/message.js')
+    await appendMessage(dbHandle!, created.id, {
+      role: 'tool',
+      content: [
+        {
+          _tag: 'tool_result',
+          id: 'call-1',
+          tool: 'bash',
+          output: { _tag: 'success', output: 'x'.repeat(5000) },
+        },
+      ],
+    })
+
+    // preview 拿 regionId
+    const previewRes = await app.request(`/${created.id}/shake/preview`, { method: 'POST' })
+    const previewBody = (await previewRes.json()) as { regions: Array<{ id: string }> }
+    const regionId = previewBody.regions[0]!.id
+
+    // apply
+    const applyRes = await app.request(`/${created.id}/shake/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regionIds: [regionId] }),
+    })
+    expect(applyRes.status).toBe(200)
+    const applyBody = (await applyRes.json()) as { shaken: number; archiveId: string }
+    expect(applyBody.shaken).toBe(1)
+    expect(applyBody.archiveId).toBeTruthy()
+
+    // 再次 preview：已 shaken 的不出现
+    const previewRes2 = await app.request(`/${created.id}/shake/preview`, { method: 'POST' })
+    const previewBody2 = (await previewRes2.json()) as { regions: unknown[] }
+    expect(previewBody2.regions).toHaveLength(0)
+  })
+
+  it('POST /:id/shake/apply regionIds 不匹配 → 400', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Shake400' }),
+    })
+    const created = (await createRes.json()) as Session
+
+    const res = await app.request(`/${created.id}/shake/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regionIds: ['nonexistent-id'] }),
+    })
+    expect(res.status).toBe(400)
+  })
+
   it('GET / filters by projectId', async () => {
     const { app, db } = await setup()
     const dir = mkdtempSync(join(tmpdir(), 'route2-'))

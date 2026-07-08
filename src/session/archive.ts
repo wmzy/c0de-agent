@@ -17,7 +17,7 @@ function rowToArchive(row: typeof compactionArchives.$inferSelect): CompactionAr
     id: row.id,
     sessionId: row.sessionId,
     compactionId: row.compactionId,
-    archiveType: row.archiveType as 'compaction' | 'squash',
+    archiveType: row.archiveType as 'compaction' | 'squash' | 'shake',
     originalEntries: row.originalEntries as SessionEntry[],
     summary: row.summary,
     tokenCount: row.tokenCount ?? 0,
