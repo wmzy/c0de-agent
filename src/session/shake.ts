@@ -193,18 +193,22 @@ export function collectShakeRegions(messages: Message[], config: ShakeConfig): S
   let acc = 0
   for (let i = n - 1; i >= 0; i--) {
     accumulatedAfter[i] = acc
-    acc += messageTokens(messages[i]!)
+    const m = messages[i]
+    if (m) acc += messageTokens(m)
   }
 
   const regions: ShakeRegion[] = []
 
   for (let i = 0; i < n; i++) {
-    const msg = messages[i]!
-    const isAfterProtectWindow = accumulatedAfter[i]! >= config.protectTokens
+    const msg = messages[i]
+    if (!msg) continue
+    const afterTokens = accumulatedAfter[i] ?? 0
+    const isAfterProtectWindow = afterTokens >= config.protectTokens
     if (!isAfterProtectWindow) continue
 
     for (let partIndex = 0; partIndex < msg.content.length; partIndex++) {
-      const part = msg.content[partIndex]!
+      const part = msg.content[partIndex]
+      if (!part) continue
 
       // tool_result 区域
       if (part._tag === 'tool_result') {
@@ -294,7 +298,8 @@ export function applyShakeRegions(messages: Message[], regions: ShakeRegion[]): 
     for (const region of msgRegions) {
       if (region.kind !== 'toolResult') continue
       const part = newContent[region.partIndex]
-      if (!part || part._tag !== 'tool_result') continue
+      if (!part) continue
+      if (part._tag !== 'tool_result') continue
       const placeholder = placeholderFor(region)
       if (part.output._tag === 'success') {
         part.output = { ...part.output, output: placeholder, shakenAt: now }
@@ -339,7 +344,8 @@ export function toRegionViews(
   let acc = 0
   for (let i = n - 1; i >= 0; i--) {
     accumulatedAfter[i] = acc
-    acc += messageTokens(messages[i]!)
+    const m = messages[i]
+    if (m) acc += messageTokens(m)
   }
 
   return regions.map((region) => ({
@@ -355,7 +361,7 @@ export function toRegionViews(
       region.kind === 'toolResult'
         ? `[shaken: ${region.label}, ${region.tokens} tokens]`
         : '[shaken]',
-    isAfterProtectWindow: accumulatedAfter[region.messageIndex]! >= config.protectTokens,
+    isAfterProtectWindow: (accumulatedAfter[region.messageIndex] ?? 0) >= config.protectTokens,
     ...(region.kind === 'toolResult' ? { toolCallId: region.toolCallId } : {}),
   }))
 }

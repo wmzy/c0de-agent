@@ -188,7 +188,6 @@ describe('AgentManager', () => {
     expect(mgr.get('s2')).toBeUndefined()
   })
 
-
   // 注意：abortAgent/pauseAgent/resumeAgent/injectSteering 已从 core 导入
   // 此处仅验证 mockState 的状态正确性，不实际调用 core 函数
   void abortAgent

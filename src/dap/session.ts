@@ -166,11 +166,11 @@ function createDebugSessionManager(): DebugSessionManager {
       const s = sessions.get(sessionId)
       if (!s) return
       s.session.state = 'stopped'
-      // disconnect 适配器可能已退出；吞错。
+      // disconnect 适配器可能已退出；吞错但记录，便于排查非正常退出。
       try {
         await s.client.request('disconnect', {})
-      } catch {
-        /* adapter gone */
+      } catch (e) {
+        console.warn('[dap] disconnect failed:', e instanceof Error ? e.message : String(e))
       }
       s.client.dispose()
       sessions.delete(sessionId)

@@ -1,12 +1,12 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AgentSelector } from '../components/AgentSelector.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
-import { ShakeProvider, type ShakeModeValue } from '../components/session/ShakeContext.js'
+import { type ShakeModeValue, ShakeProvider } from '../components/session/ShakeContext.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { buildTimeline } from '../components/session/utils/timeline.js'
 import { ToolToggle } from '../components/ToolToggle.js'
@@ -325,14 +325,14 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     }
   }
 
-  const shakeToggle = (id: string) => {
+  const shakeToggle = useCallback((id: string) => {
     setShakeSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  }
+  }, [])
 
   const regionsByMessage = useMemo(() => {
     // tool_result 在 DB 中是独立 role:'tool' 消息，前端 mergeToolMessages 合并进 assistant
@@ -358,8 +358,13 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   }, [shakeRegions, messages])
 
   const shakeContextValue: ShakeModeValue = useMemo(
-    () => ({ enabled: shakeMode, regionsByMessage, selected: shakeSelected, onToggle: shakeToggle }),
-    [shakeMode, regionsByMessage, shakeSelected],
+    () => ({
+      enabled: shakeMode,
+      regionsByMessage,
+      selected: shakeSelected,
+      onToggle: shakeToggle,
+    }),
+    [shakeMode, regionsByMessage, shakeSelected, shakeToggle],
   )
 
   const shakeSelectedTokens = shakeRegions

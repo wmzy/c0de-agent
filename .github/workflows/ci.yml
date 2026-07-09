@@ -10,16 +10,36 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+
+      # cache: pnpm 让 setup-node 缓存 pnpm 全局 store（~/.local/share/pnpm/store），
+      # key 由 pnpm-lock.yaml 派生，命中后 pnpm install 仅做 link，不再走网络下载。
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # 双 reporter：default 保留可读的控制台输出；github-actions 在失败时
+      # 为每条失败用例标注对应源文件/行号（workflow run summary 的 annotations）。
+      - name: Test
+        id: test
+        run: pnpm test --reporter=default --reporter=github-actions
+
+      - name: Build
+        run: pnpm build

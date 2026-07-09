@@ -151,8 +151,9 @@ async function generateSessionTitle(
     const title = cleanTitle(text)
     if (title.length === 0) return
     await updateSessionTitle(db, sessionId, title)
-  } catch {
-    // 标题生成是尽力而为的辅助功能：失败不阻塞主对话流。
+  } catch (e) {
+    // 标题生成是尽力而为的辅助功能：失败不阻塞主对话流，但记录以便排查。
+    console.warn('[title] generateSessionTitle failed:', e instanceof Error ? e.message : String(e))
   }
 }
 

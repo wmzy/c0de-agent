@@ -71,7 +71,8 @@ async function rebuild(): Promise<void> {
 async function getDevApp(): Promise<Hono> {
   if (app) return app
   await rebuild()
-  return app!
+  if (!app) throw new Error('dev app failed to initialize')
+  return app
 }
 
 /** vite dev server 关闭时调用，确保 PGLite WASM 正常 close 并刷写 WAL。 */

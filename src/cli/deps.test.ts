@@ -3,7 +3,12 @@ import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { resolveRoute } from '../llm/index.js'
 import type { Config } from '../shared/types/config.js'
-import { autoApproveChecker, buildAgentDeps, buildLLMRegistry } from './deps.js'
+import {
+  buildAgentDeps,
+  buildLLMRegistry,
+  fullyAutoApproveChecker,
+  readOnlySafeChecker,
+} from './deps.js'
 
 let db: DB
 beforeEach(async () => {
@@ -48,9 +53,9 @@ describe('buildLLMRegistry', () => {
   })
 })
 
-describe('autoApproveChecker', () => {
-  it('allows any tool', async () => {
-    const res = await autoApproveChecker.check(
+describe('fullyAutoApproveChecker', () => {
+  it('allows any tool unconditionally', async () => {
+    const res = await fullyAutoApproveChecker.check(
       { name: 'bash', permission: 'ask' } as never,
       {},
       {} as never,
@@ -59,14 +64,58 @@ describe('autoApproveChecker', () => {
   })
 })
 
+describe('readOnlySafeChecker', () => {
+  it('allows read-only (permission: auto) tools', async () => {
+    const res = await readOnlySafeChecker.check(
+      { name: 'read', permission: 'auto' } as never,
+      {},
+      {} as never,
+    )
+    expect(res._tag).toBe('allow')
+  })
+
+  it('asks for write/exec (permission: ask) tools', async () => {
+    const res = await readOnlySafeChecker.check(
+      { name: 'bash', permission: 'ask' } as never,
+      {},
+      {} as never,
+    )
+    expect(res._tag).toBe('ask')
+  })
+})
+
 describe('buildAgentDeps', () => {
-  it('assembles LoopDeps with db, registries, auto permission', async () => {
+  it('defaults to readOnlySafeChecker when config.defaultMode is default', async () => {
     const deps = await buildAgentDeps(config, { db, cwd: process.cwd() })
     expect(deps.db).toBe(db)
     expect(deps.config).toBe(config)
-    expect(deps.permission).toBe(autoApproveChecker)
+    expect(deps.permission).toBe(readOnlySafeChecker)
     expect(deps.llmRegistry).toBeTruthy()
     expect(deps.toolRegistry).toBeTruthy()
+  })
+
+  it('uses fullyAutoApproveChecker when strategy is full-auto', async () => {
+    const deps = await buildAgentDeps(config, {
+      db,
+      cwd: process.cwd(),
+      permissionStrategy: 'full-auto',
+    })
+    expect(deps.permission).toBe(fullyAutoApproveChecker)
+  })
+
+  it('uses readOnlySafeChecker when strategy is safe', async () => {
+    const deps = await buildAgentDeps(config, {
+      db,
+      cwd: process.cwd(),
+      permissionStrategy: 'safe',
+    })
+    expect(deps.permission).toBe(readOnlySafeChecker)
+  })
+
+  it('falls back to config.permission.defaultMode when strategy omitted', async () => {
+    const yolo = { ...config, permission: { defaultMode: 'auto' as const } }
+    const deps = await buildAgentDeps(yolo, { db, cwd: process.cwd() })
+    expect(deps.permission).toBe(fullyAutoApproveChecker)
   })
 
   it('wires a default URL registry resolving file:// and skill://', async () => {

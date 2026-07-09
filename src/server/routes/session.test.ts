@@ -260,7 +260,7 @@ describe('session route', () => {
   })
 
   it('POST /:id/shake/preview 返回可 shake 区域', async () => {
-    const { app } = await setup()
+    const { app, db } = await setup()
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -269,7 +269,7 @@ describe('session route', () => {
     const created = (await createRes.json()) as Session
 
     const { appendMessage } = await import('../../session/message.js')
-    await appendMessage(dbHandle!, created.id, {
+    await appendMessage(db, created.id, {
       role: 'tool',
       content: [
         {
@@ -295,7 +295,7 @@ describe('session route', () => {
   })
 
   it('POST /:id/shake/apply 归档并替换内容', async () => {
-    const { app } = await setup()
+    const { app, db } = await setup()
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -304,7 +304,7 @@ describe('session route', () => {
     const created = (await createRes.json()) as Session
 
     const { appendMessage } = await import('../../session/message.js')
-    await appendMessage(dbHandle!, created.id, {
+    await appendMessage(db, created.id, {
       role: 'tool',
       content: [
         {
@@ -319,7 +319,9 @@ describe('session route', () => {
     // preview 拿 regionId
     const previewRes = await app.request(`/${created.id}/shake/preview`, { method: 'POST' })
     const previewBody = (await previewRes.json()) as { regions: Array<{ id: string }> }
-    const regionId = previewBody.regions[0]!.id
+    const firstRegion = previewBody.regions[0]
+    if (!firstRegion) throw new Error('preview returned no regions')
+    const regionId = firstRegion.id
 
     // apply
     const applyRes = await app.request(`/${created.id}/shake/apply`, {

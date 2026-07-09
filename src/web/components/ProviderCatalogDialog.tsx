@@ -245,9 +245,7 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
         <div className={catalogBody}>
           <div className={`${listContainer} ${listFixed}`}>
             {providersLoading ? (
-              <div className={catalogHint}>
-                加载中…
-              </div>
+              <div className={catalogHint}>加载中…</div>
             ) : (
               filtered.map((p) => (
                 <button
@@ -272,13 +270,9 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
           </div>
           <div className={detailPanel}>
             {!selectedId ? (
-              <div className={catalogHint}>
-                从左侧选择 Provider 查看可用模型
-              </div>
+              <div className={catalogHint}>从左侧选择 Provider 查看可用模型</div>
             ) : modelsLoading ? (
-              <div className={catalogHint}>
-                加载模型列表…
-              </div>
+              <div className={catalogHint}>加载模型列表…</div>
             ) : (
               <>
                 <div className={catalogItemHead}>

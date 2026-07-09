@@ -66,8 +66,12 @@ async function applyPatchToParent(
   }
   try {
     gitWithInput(repoRoot, ['apply'], patch)
-  } catch {
-    // apply 失败：尝试 3-way 合并
+  } catch (e) {
+    // apply 失败：记录后尝试 3-way 合并
+    console.warn(
+      '[worktree] git apply failed, retrying with --3way:',
+      e instanceof Error ? e.message : String(e),
+    )
     gitWithInput(repoRoot, ['apply', '--3way'], patch)
   }
   git(repoRoot, ['add', '-A'])
@@ -79,8 +83,9 @@ async function applyPatchToParent(
 function removeWorktree(repoRoot: string, worktreeDir: string): void {
   try {
     git(repoRoot, ['worktree', 'remove', '--force', worktreeDir])
-  } catch {
-    // 清理失败忽略（可能已删）
+  } catch (e) {
+    // 清理失败忽略（可能已删），但记录以便排查残留 worktree
+    console.warn('[worktree] worktree cleanup failed:', e instanceof Error ? e.message : String(e))
   }
 }
 

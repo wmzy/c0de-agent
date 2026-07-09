@@ -69,11 +69,7 @@ function SlashPopover(props: Props) {
           type="button"
         >
           <strong>/{c.name}</strong>
-          {c.description && (
-            <span className={cmdDesc}>
-              {c.description}
-            </span>
-          )}
+          {c.description && <span className={cmdDesc}>{c.description}</span>}
         </button>
       ))}
     </div>

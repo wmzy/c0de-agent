@@ -37,11 +37,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # 测试已在 ci.yml 的 PR/push 阶段覆盖；release 只需 build 产出 dist/ 后发布。
       - name: Build
         run: npm run build
-
-      - name: Run tests
-        run: npm run test
 
       - name: Release
         env:

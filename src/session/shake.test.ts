@@ -62,7 +62,7 @@ describe('scanTextForBlockRanges', () => {
     const text = 'intro\n```ts\nconst a = 1;\n```\noutro'
     const ranges = scanTextForBlockRanges(text)
     expect(ranges).toHaveLength(1)
-    expect(text.slice(ranges[0]!.start, ranges[0]!.end)).toBe('```ts\nconst a = 1;\n```')
+    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('```ts\nconst a = 1;\n```')
   })
 
   it('未闭合围栏不产生 range', () => {
@@ -74,14 +74,14 @@ describe('scanTextForBlockRanges', () => {
     const text = 'before\n<example>\nrow1\n</example>\nafter'
     const ranges = scanTextForBlockRanges(text)
     expect(ranges).toHaveLength(1)
-    expect(text.slice(ranges[0]!.start, ranges[0]!.end)).toBe('<example>\nrow1\n</example>')
+    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('<example>\nrow1\n</example>')
   })
 
   it('围栏内 XML 不重复检测', () => {
     const text = '```ts\nconst x = `<root>\ndata\n</root>`\n```'
     const ranges = scanTextForBlockRanges(text)
     expect(ranges).toHaveLength(1)
-    expect(text.slice(ranges[0]!.start, ranges[0]!.end)).toBe(
+    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe(
       '```ts\nconst x = `<root>\ndata\n</root>`\n```',
     )
   })
@@ -102,9 +102,9 @@ describe('collectShakeRegions — tool results', () => {
     const msg = toolResultMessage('bash', 'x'.repeat(400))
     const regions = collectShakeRegions([msg], cfg())
     expect(regions).toHaveLength(1)
-    expect(regions[0]!.kind).toBe('toolResult')
-    expect(regions[0]!.label).toBe('bash')
-    expect(regions[0]!.tokens).toBeGreaterThan(0)
+    expect(regions[0]?.kind).toBe('toolResult')
+    expect(regions[0]?.label).toBe('bash')
+    expect(regions[0]?.tokens).toBeGreaterThan(0)
   })
 
   it('保护窗口内的 tool_result 不被标记', () => {
@@ -114,7 +114,7 @@ describe('collectShakeRegions — tool results', () => {
     const perEntry = Math.ceil(text.length / 4)
     const regions = collectShakeRegions([older, recent], cfg({ protectTokens: perEntry - 1 }))
     expect(regions).toHaveLength(1)
-    expect(regions[0]!.messageId).toBe(older.id)
+    expect(regions[0]?.messageId).toBe(older.id)
   })
 
   it('已标记 shakenAt 的不重复标记', () => {
@@ -145,9 +145,9 @@ describe('collectShakeRegions — fenced/XML blocks', () => {
     const msg = assistantMessage(`intro line\n${fence}\noutro line`)
     const regions = collectShakeRegions([msg], cfg())
     expect(regions).toHaveLength(1)
-    expect(regions[0]!.kind).toBe('block')
-    if (regions[0]!.kind !== 'block') throw new Error('expected block region')
-    expect(regions[0]!.originalText).toBe(fence)
+    expect(regions[0]?.kind).toBe('block')
+    if (regions[0]?.kind !== 'block') throw new Error('expected block region')
+    expect(regions[0]?.originalText).toBe(fence)
   })
 
   it('fenceMinTokens 以下的 fenced 块不标记', () => {
@@ -156,13 +156,13 @@ describe('collectShakeRegions — fenced/XML blocks', () => {
   })
 
   it('标记顶层 XML 块', () => {
-    const xml = '<example>\n' + '  payload row data alpha beta gamma.\n'.repeat(12) + '</example>'
+    const xml = `<example>\n${'  payload row data alpha beta gamma.\n'.repeat(12)}</example>`
     const msg = assistantMessage(`before\n${xml}\nafter`)
     const regions = collectShakeRegions([msg], cfg())
     expect(regions).toHaveLength(1)
-    expect(regions[0]!.kind).toBe('block')
-    if (regions[0]!.kind !== 'block') throw new Error('expected block region')
-    expect(regions[0]!.originalText).toBe(xml)
+    expect(regions[0]?.kind).toBe('block')
+    if (regions[0]?.kind !== 'block') throw new Error('expected block region')
+    expect(regions[0]?.originalText).toBe(xml)
   })
 
   it('thinking 块也被扫描', () => {
@@ -177,7 +177,7 @@ describe('collectShakeRegions — fenced/XML blocks', () => {
     }
     const regions = collectShakeRegions([msg], cfg())
     expect(regions).toHaveLength(1)
-    expect(regions[0]!.partIndex).toBe(0)
+    expect(regions[0]?.partIndex).toBe(0)
   })
 })
 
@@ -189,7 +189,10 @@ describe('applyShakeRegions', () => {
 
     const result = applyShakeRegions([msg], regions)
     expect(result).not.toBe([msg])
-    const output = result[0]!.content[0]!
+    const resultMsg = result[0]
+    if (!resultMsg) throw new Error('applyShakeRegions returned no message')
+    const output = resultMsg.content[0]
+    if (!output) throw new Error('result message has no content')
     expect(output._tag).toBe('tool_result')
     if (output._tag === 'tool_result') {
       expect(output.output._tag).toBe('success')
@@ -207,7 +210,10 @@ describe('applyShakeRegions', () => {
     expect(regions).toHaveLength(1)
 
     const result = applyShakeRegions([msg], regions)
-    const block = result[0]!.content[0]!
+    const resultMsg = result[0]
+    if (!resultMsg) throw new Error('applyShakeRegions returned no message')
+    const block = resultMsg.content[0]
+    if (!block) throw new Error('result message has no content')
     expect(block._tag).toBe('text')
     if (block._tag === 'text') {
       expect(block.text).toBe(`head\n[shaken]\ntail`)
@@ -222,7 +228,10 @@ describe('applyShakeRegions', () => {
     expect(regions).toHaveLength(2)
 
     const result = applyShakeRegions([msg], regions)
-    const block = result[0]!.content[0]!
+    const resultMsg = result[0]
+    if (!resultMsg) throw new Error('applyShakeRegions returned no message')
+    const block = resultMsg.content[0]
+    if (!block) throw new Error('result message has no content')
     expect(block._tag).toBe('text')
     if (block._tag === 'text') {
       expect(block.text).toBe('head\n[shaken]\nmiddle\n[shaken]\ntail')
@@ -245,16 +254,16 @@ describe('toRegionViews', () => {
     const regions = collectShakeRegions(messages, cfg())
     const views = toRegionViews(regions, cfg(), messages)
     expect(views).toHaveLength(1)
-    expect(views[0]!.id).toBe(regions[0]!.id)
-    expect(views[0]!.kind).toBe('toolResult')
-    expect(views[0]!.tokens).toBe(regions[0]!.tokens)
-    expect(views[0]!.label).toBe('bash')
-    expect(views[0]!.preview).toContain('huge output')
-    expect(views[0]!.preview.length).toBeLessThanOrEqual(200)
-    expect(views[0]!.placeholder).toContain('shaken')
-    expect(views[0]!.isAfterProtectWindow).toBe(true)
-    expect(views[0]!.partIndex).toBe(regions[0]!.partIndex)
-    expect(views[0]!.toolCallId).toBeTruthy()
+    expect(views[0]?.id).toBe(regions[0]?.id)
+    expect(views[0]?.kind).toBe('toolResult')
+    expect(views[0]?.tokens).toBe(regions[0]?.tokens)
+    expect(views[0]?.label).toBe('bash')
+    expect(views[0]?.preview).toContain('huge output')
+    expect(views[0]?.preview.length).toBeLessThanOrEqual(200)
+    expect(views[0]?.placeholder).toContain('shaken')
+    expect(views[0]?.isAfterProtectWindow).toBe(true)
+    expect(views[0]?.partIndex).toBe(regions[0]?.partIndex)
+    expect(views[0]?.toolCallId).toBeTruthy()
   })
 
   it('preview 截断到 200 字符', () => {
@@ -262,6 +271,6 @@ describe('toRegionViews', () => {
     const messages = [msg]
     const regions = collectShakeRegions(messages, cfg())
     const views = toRegionViews(regions, cfg(), messages)
-    expect(views[0]!.preview.length).toBeLessThanOrEqual(200)
+    expect(views[0]?.preview.length).toBeLessThanOrEqual(200)
   })
 })

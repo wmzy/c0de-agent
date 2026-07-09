@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileSelectionContext } from '../../contexts/FileSelectionContext.js'
 import type { ShakeRegionView } from '../../types/index.js'
 import { MessageItem } from './MessageItem.js'
-import { ShakeProvider, type ShakeModeValue } from './ShakeContext.js'
+import { type ShakeModeValue, ShakeProvider } from './ShakeContext.js'
 
 afterEach(() => cleanup())
 
@@ -74,9 +74,7 @@ describe('MessageItem', () => {
 
   // ---- Shake 内联高亮 ----
 
-  function shakeValue(
-    overrides: Partial<ShakeModeValue> = {},
-  ): ShakeModeValue {
+  function shakeValue(overrides: Partial<ShakeModeValue> = {}): ShakeModeValue {
     return {
       enabled: true,
       regionsByMessage: new Map(),
@@ -229,7 +227,8 @@ describe('MessageItem', () => {
       regionsByMessage: new Map([['1', [thinkingRegion]]]),
     })
     render(
-      <MessageItem message={msg('assistant', [{ _tag: 'thinking', text: 'deep thought' }])} />, sv,
+      <MessageItem message={msg('assistant', [{ _tag: 'thinking', text: 'deep thought' }])} />,
+      sv,
     )
     expect(screen.getByTestId('reasoning').getAttribute('data-expanded')).toBe('true')
   })

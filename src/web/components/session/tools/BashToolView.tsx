@@ -90,10 +90,7 @@ export function BashToolView({
         </div>
       )}
       {exitCode !== null && status !== 'running' && (
-        <span
-          className={`${exitCode === 0 ? exitOk : exitErr} ${exitTag}`}
-          data-testid="bash-exit"
-        >
+        <span className={`${exitCode === 0 ? exitOk : exitErr} ${exitTag}`} data-testid="bash-exit">
           exit {exitCode}
         </span>
       )}

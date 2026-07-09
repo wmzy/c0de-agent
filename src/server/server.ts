@@ -289,4 +289,11 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }
-export { bootstrapServerContext, buildRegistryFromConfig, buildServerContext, createDevDb, startServer, syncRegistryFromConfig }
+export {
+  bootstrapServerContext,
+  buildRegistryFromConfig,
+  buildServerContext,
+  createDevDb,
+  startServer,
+  syncRegistryFromConfig,
+}

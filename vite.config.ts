@@ -119,6 +119,21 @@ export default defineConfig({
         assetFileNames: 'assets/[name].[hash][extname]',
         chunkFileNames: 'assets/[name].[hash].js',
         entryFileNames: 'assets/[name].[hash].js',
+        // 代码分割：按明确的包族将稳定的三方依赖单独切 chunk，提升缓存命中率。
+        // 注意：Vite 8 后端为 rolldown，`build.rollupOptions` 实为 `rolldownOptions`
+        // 的别名；Rollup 的 `manualChunks(id)` 函数在 rolldown 下不生效，须用
+        // rolldown 原生 `output.codeSplitting.groups`（test 为正则，priority 越大越优先）。
+        // 仅匹配稳定、体积大的包族，未匹配依赖保持 rolldown 默认分块，避免一刀切
+        // 破坏按需加载（Settings 懒加载 chunk、各语言语法高亮 chunk 等不受影响）。
+        // 正则结尾的 [\\/] 确保只匹配包名边界，react 不会误吞 react-router 等。
+        codeSplitting: {
+          groups: [
+            { name: 'react-query', test: /node_modules[\/]@tanstack[\/]/, priority: 20 },
+            { name: 'react-router', test: /node_modules[\/]react-router/, priority: 20 },
+            { name: 'linaria', test: /node_modules[\/](@linaria|@wyw-in-js)[\/]/, priority: 20 },
+            { name: 'react', test: /node_modules[\/](react|react-dom|scheduler)[\/]/, priority: 20 },
+          ],
+        },
       },
     },
   },

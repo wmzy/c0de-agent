@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import {
   BrowserRouter,
   Link,
@@ -28,7 +28,10 @@ import { FilePreview } from './views/FilePreview.js'
 import { Layout } from './views/Layout.js'
 import { NotFound } from './views/NotFound.js'
 import { SessionList } from './views/SessionList.js'
-import { Settings } from './views/Settings.js'
+
+// Settings 体积最大（含 6+ 子面板：JsonConfigEditor/MCPPanel/ModelPanel 等），
+// 且仅在 /settings 路由访问时才需要，懒加载为独立 chunk 以降低首屏 bundle。
+const Settings = lazy(() => import('./views/Settings.js').then((m) => ({ default: m.Settings })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -55,7 +58,16 @@ export function App() {
                 <Route path="/projects/:projectId/sessions/:sessionId" element={<ChatPage />} />
                 <Route
                   path="/settings"
-                  element={<Layout header={<TopBar />} main={<Settings />} />}
+                  element={
+                    <Layout
+                      header={<TopBar />}
+                      main={
+                        <Suspense fallback={<div className={redirectMsg}>加载中…</div>}>
+                          <Settings />
+                        </Suspense>
+                      }
+                    />
+                  }
                 />
                 <Route path="*" element={<Layout header={<TopBar />} main={<NotFound />} />} />
               </Routes>

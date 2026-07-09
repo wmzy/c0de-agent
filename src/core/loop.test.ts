@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import * as provider from '../llm/provider.js'
+import { createRegistry, registerProvider } from '../llm/registry.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import type { HookRunner } from '../plugins/types.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
@@ -804,6 +805,93 @@ describe('agentLoop', () => {
       expect(events.some((e) => e._tag === 'done')).toBe(true)
     } finally {
       spy.mockRestore()
+    }
+  })
+})
+
+describe('contextWindow 兜底与 token 预算同步', () => {
+  it('provider 未声明 contextWindow 时回填保守估计、同步预算并告警（仅一次）', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // makeMockDeps 使用空 registry {} → resolveRoute 抛错 → contextWindow 缺失
+    const deps = makeMockDeps(db, () => mockTextStream('hi'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for await (const _ev of agentLoop(state, deps)) {
+        // consume
+      }
+      // 预算从初始 100_000 同步到保守估计 32_000（mock 流无 usage → inputTokens=0 → max(0, 32_000)）
+      expect(state.tokenBudget.total).toBe(32_000)
+      // 告警触发且仅一次（WeakMap 按 agent 去重）
+      const warnCalls = warnSpy.mock.calls.filter((c) =>
+        String(c[0]).includes('未声明 contextWindow'),
+      )
+      expect(warnCalls).toHaveLength(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('保守估计以真实 input token 为下限（inputTokens × 2 > 兜底值）', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // mock 流携带 usage：inputTokens=20_000 → 估计 max(40_000, 32_000)=40_000
+    const streamWithUsage = async function* (): AsyncGenerator<StreamChunk> {
+      yield { _tag: 'text', text: 'hi' } as const
+      yield { _tag: 'usage', inputTokens: 20_000, outputTokens: 100 } as const
+      yield { _tag: 'done' } as const
+    }
+    const deps = makeMockDeps(db, streamWithUsage)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for await (const _ev of agentLoop(state, deps)) {
+        // consume
+      }
+      expect(state.tokenBudget.total).toBe(40_000)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('provider 已声明 contextWindow 时按真实值同步预算、不告警', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // 构建带 contextWindow 的真实 registry
+    const registry = createRegistry()
+    registerProvider(registry, {
+      name: 'mock',
+      baseURL: 'http://localhost',
+      apiKey: 'key',
+      models: {
+        mock: {
+          contextWindow: 200_000,
+          maxOutput: 4096,
+          supportsTools: true,
+          supportsVision: false,
+          supportsThinking: false,
+          costPer1kInput: 0,
+          costPer1kOutput: 0,
+        },
+      },
+    })
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('hi')),
+      llmRegistry: registry,
+    }
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for await (const _ev of agentLoop(state, deps)) {
+        // consume
+      }
+      // 预算同步到真实 contextWindow 200_000，正常配置行为不被破坏
+      expect(state.tokenBudget.total).toBe(200_000)
+      // 未触发 contextWindow 回填告警
+      const warnCalls = warnSpy.mock.calls.filter((c) =>
+        String(c[0]).includes('未声明 contextWindow'),
+      )
+      expect(warnCalls).toHaveLength(0)
+    } finally {
+      warnSpy.mockRestore()
     }
   })
 })

@@ -72,7 +72,13 @@ const body = css`
   margin-top: 2px;
 `
 
-export function ToolBlock({ block, forceExpand }: { block: ToolRenderBlock; forceExpand?: boolean }) {
+export function ToolBlock({
+  block,
+  forceExpand,
+}: {
+  block: ToolRenderBlock
+  forceExpand?: boolean
+}) {
   const { tool, input, output, status: st } = block
 
   // 运行中默认展开，其余状态默认折叠
@@ -121,10 +127,7 @@ export function ToolBlock({ block, forceExpand }: { block: ToolRenderBlock; forc
         <span className={arrow}>{isExpanded ? '▾' : '▸'}</span>
       </div>
       {isExpanded && st === 'paused' ? (
-        <div
-          className={`${body} ${permissionPending}`}
-          data-testid="tool-body"
-        >
+        <div className={`${body} ${permissionPending}`} data-testid="tool-body">
           等待权限确认
         </div>
       ) : isExpanded ? (

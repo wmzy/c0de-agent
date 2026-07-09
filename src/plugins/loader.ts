@@ -66,8 +66,12 @@ async function discoverPlugins(
     try {
       const plugin = await loadPlugin(join(entry.path, 'index.js'))
       results.push({ name: entry.name, path: entry.path, plugin })
-    } catch {
-      // Skip plugins that fail to load
+    } catch (e) {
+      // Plugin failed to load — skip but warn (otherwise silently inactive)
+      console.warn(
+        `[plugin] failed to load "${entry.name}" from ${entry.path}:`,
+        e instanceof Error ? e.message : String(e),
+      )
     }
   }
   return results

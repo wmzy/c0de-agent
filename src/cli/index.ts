@@ -104,7 +104,12 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       const db = await createDB({ driver: 'pglite' })
       await migrateDB(db)
       try {
-        const deps = await buildAgentDeps(config, { db, cwd })
+        // --yes / -y 显式放行写操作；否则按 config.permission.defaultMode 决定（默认 safe）。
+        const deps = await buildAgentDeps(config, {
+          db,
+          cwd,
+          ...(args.options.yes ? { permissionStrategy: 'full-auto' as const } : {}),
+        })
         await runChatCommand({ args, config, deps })
       } finally {
         await db.close()
@@ -128,7 +133,8 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       const db = await createDB({ driver: 'pglite' })
       await migrateDB(db)
       try {
-        const deps = await buildAgentDeps(config, { db, cwd })
+        // ACP 非交互：所有工具放行（编辑器侧自行控制执行授权）。
+        const deps = await buildAgentDeps(config, { db, cwd, permissionStrategy: 'full-auto' })
         await runAcpCommand({ config, deps })
       } finally {
         await db.close()

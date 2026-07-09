@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { Message } from '@shared/types/message.js'
 import type { ReactNode } from 'react'
+import type { ShakeRegionView } from '../../types/index.js'
 import { AssistantTextBlock } from './AssistantTextBlock.js'
 import { PartDecoration } from './PartDecoration.js'
 import { ReasoningBlock } from './ReasoningBlock.js'
@@ -9,7 +10,6 @@ import { ToolBlock } from './ToolBlock.js'
 import { UserTextBlock } from './UserTextBlock.js'
 import type { RenderBlock } from './utils/normalizeParts.js'
 import { normalizeParts } from './utils/normalizeParts.js'
-import type { ShakeRegionView } from '../../types/index.js'
 
 const wrap = css`
   display: flex;
@@ -74,6 +74,21 @@ const shakeRow = css`
   position: relative;
 `
 
+/** shake 可点击块：重置 button 默认样式，仅保留可交互语义 */
+const shakeButton = css`
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  width: 100%;
+  cursor: pointer;
+`
+
 /**
  * 找到与渲染块匹配的 shake 区域。
  * - tool 块：按 toolCallId 匹配（跨消息合并后仍可靠）
@@ -92,12 +107,11 @@ function matchShakeRegions(block: RenderBlock, msgRegions: ShakeRegionView[]): S
 export function MessageItem({ message, latency }: { message: Message; latency?: number }) {
   const shake = useShakeMode()
   const blocks = normalizeParts(message)
-  const msgRegions =
-    shake?.enabled ? (shake.regionsByMessage.get(message.id) ?? []) : []
+  const msgRegions = shake?.enabled ? (shake.regionsByMessage.get(message.id) ?? []) : []
 
   return (
     <div className={wrap} data-testid="message" data-role={message.role} data-msg-id={message.id}>
-      {blocks.map((block, i) => {
+      {blocks.map((block) => {
         // shake 高亮：先计算，以便传递 forceExpand 给折叠块
         const blockRegions = msgRegions.length > 0 ? matchShakeRegions(block, msgRegions) : []
         const shakeActive = blockRegions.length > 0
@@ -130,31 +144,40 @@ export function MessageItem({ message, latency }: { message: Message; latency?: 
         }
 
         const allSelected =
-          shakeActive && blockRegions.every((r) => shake!.selected.has(r.id))
-        const shakeCls = shakeActive
-          ? `${shakeRow} ${allSelected ? shakeSelected : shakeable}`
-          : ''
+          shakeActive && blockRegions.every((r) => shake?.selected.has(r.id) ?? false)
+        const shakeCls = shakeActive ? `${shakeRow} ${allSelected ? shakeSelected : shakeable}` : ''
         const shakeTokens = blockRegions.reduce((sum, r) => sum + r.tokens, 0)
 
-        return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: 消息 part 无稳定 id，按索引作 key
-          <div
-            className={`${row} ${shakeCls}`}
-            key={`${block.type}-${i}`}
-            onClick={
-              shakeActive
-                ? (e) => {
-                    e.stopPropagation()
-                    for (const r of blockRegions) shake!.onToggle(r.id)
-                  }
-                : undefined
-            }
-            data-testid={shakeActive ? 'shake-inline-block' : undefined}
-            data-shake-selected={shakeActive ? allSelected : undefined}
-          >
+        const blockKey =
+          'id' in block ? `${block.type}-${block.id}` : `${block.type}-${block.partIndex}`
+        const toggleRegions = () => {
+          for (const r of blockRegions) shake?.onToggle(r.id)
+        }
+        const inner = (
+          <>
             <PartDecoration block={block} />
             <div className={content}>{body}</div>
             {shakeActive && <span className={shakeBadge}>{shakeTokens}t</span>}
+          </>
+        )
+
+        return shakeActive ? (
+          <button
+            type="button"
+            className={`${shakeButton} ${row} ${shakeCls}`}
+            key={blockKey}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleRegions()
+            }}
+            data-testid="shake-inline-block"
+            data-shake-selected={allSelected}
+          >
+            {inner}
+          </button>
+        ) : (
+          <div className={`${row} ${shakeCls}`} key={blockKey}>
+            {inner}
           </div>
         )
       })}
