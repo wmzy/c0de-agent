@@ -297,6 +297,7 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
     activePaneId,
     height,
     open,
+    restoring,
     setActiveTabId,
     setActivePaneId,
     createTerminal,
@@ -324,15 +325,14 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   // 仅在本轮「打开」周期内创建一次：用户主动关掉最后一个标签后不重建。
   const autoCreatedRef = useRef(false)
   useEffect(() => {
-    if (!open) {
-      autoCreatedRef.current = false
+    if (!open || restoring) {
       return
     }
     if (tabs.length === 0 && cwd && !autoCreatedRef.current) {
       autoCreatedRef.current = true
       void createTerminal({ cwd })
     }
-  }, [open, tabs.length, cwd, createTerminal])
+  }, [open, restoring, tabs.length, cwd, createTerminal])
 
   // 活动标签打开时，自动选中第一个 pane
   useEffect(() => {

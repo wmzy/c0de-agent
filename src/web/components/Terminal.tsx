@@ -138,11 +138,21 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
     ws.addEventListener('message', onMessage)
     const disposable = term.onData(onTermData)
 
+    // WS（重）连接后强制 shell 重绘 prompt。
+    // - 首次连接：shell 自然输出 prompt，Ctrl+L 无副作用。
+    // - 页面刷新后重连：PTY 存活但无待发输出，xterm 一片空白。
+    //   发送 Ctrl+L（\x0c）让 shell 清屏重绘，恢复可见 prompt。
+    // 同时触发 resize 同步 PTY 尺寸。
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send('\x0c')
+    }
+    requestAnimationFrame(() => doFit())
+
     return () => {
       ws.removeEventListener('message', onMessage)
       disposable.dispose()
     }
-  }, [ws])
+  }, [ws, doFit])
 
   // 可见性变化时重新 fit
   useEffect(() => {
