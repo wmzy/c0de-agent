@@ -10,6 +10,7 @@ import type { Config as SharedConfig } from '../shared/types/config.js'
 import type { URLRegistry } from '../shared/types/tool.js'
 import type { ToolRegistry } from '../tools/types.js'
 import type { HandoffServer, UpdateScheduler } from '../update/index.js'
+import type { PTYManager } from './terminal/pty-manager.js'
 import type { AgentManager } from './agent-manager.js'
 import type { PermissionStore } from './permission/store.js'
 
@@ -37,6 +38,8 @@ type ServerContext = {
   /** Handoff HTTP 端点（spec §18.3）；热更新时新实例 POST /handoff 触发优雅退出。 undefined 表示未启用。 */
   handoff?: { port: number; server: HandoffServer }
   cwd: string
+  /** 终端 PTY 管理器（Web 终端面板用）。 */
+  ptyManager: PTYManager
   /** 测试注入：覆盖 LLM chat stream。生产环境为 undefined。 */
   chatStream?: typeof chatStreamFn
 }

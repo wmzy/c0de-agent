@@ -18,6 +18,7 @@ import { createPermissionsRoute } from './routes/permissions.js'
 import { createProjectRoute } from './routes/project.js'
 import { createProviderRoute } from './routes/provider.js'
 import { createSessionRoute } from './routes/session.js'
+import { createTerminalRoute } from './routes/terminal.js'
 import { createToolRoute } from './routes/tool.js'
 import { createUpdateRoute } from './routes/update.js'
 import type { ServerContext } from './types.js'
@@ -51,6 +52,7 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/config', createConfigRoute(ctx))
   app.route('/api/permissions', createPermissionsRoute(ctx))
   app.route('/api/files', createFilesRoute(ctx))
+  app.route('/api/terminal', createTerminalRoute(ctx))
 
   // 根路径
   app.get('/', (c) =>
@@ -72,6 +74,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/config',
         '/api/permissions',
         '/api/files',
+        '/api/terminal',
       ],
     }),
   )

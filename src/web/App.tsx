@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import {
   BrowserRouter,
   Link,
@@ -21,6 +21,8 @@ import {
 } from './contexts/FileSelectionContext.js'
 import { FileReferenceProvider } from './contexts/ReferenceContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
+import { TerminalPanel } from './components/TerminalPanel.js'
+import { useTerminal } from './hooks/useTerminal.js'
 import { projectAPI } from './services/project.js'
 import { ChatView } from './views/ChatView.js'
 import { FileBrowser } from './views/FileBrowser.js'
@@ -166,6 +168,19 @@ function RootRedirect() {
 function ChatPage() {
   const { projectId, sessionId } = useParams<{ projectId: string; sessionId: string }>()
   const navigate = useNavigate()
+  const terminal = useTerminal()
+
+  // Ctrl+` 切换终端面板显示/隐藏
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === '`') {
+        e.preventDefault()
+        terminal.toggleOpen()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [terminal])
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [revealRange, setRevealRange] = useState<LineRange | null>(null)
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
@@ -218,6 +233,7 @@ function ChatPage() {
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
+          terminal={<TerminalPanel terminal={terminal} />}
         />
       </FileSelectionContext.Provider>
     </FileReferenceProvider>

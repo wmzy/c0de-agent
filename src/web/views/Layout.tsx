@@ -112,6 +112,8 @@ type LayoutProps = {
   sidebar?: ReactNode
   main: ReactNode
   panel?: ReactNode
+  /** 底部终端面板（可折叠/拖拽高度）。 */
+  terminal?: ReactNode
 }
 
 /**
@@ -161,6 +163,7 @@ export function Layout({
   sidebar: sidebarNode,
   main: mainNode,
   panel: panelNode,
+  terminal: terminalNode,
 }: LayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     loadWidth(SIDEBAR_KEY, DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
@@ -243,6 +246,7 @@ export function Layout({
           </>
         )}
       </div>
+      {terminalNode}
       {/* 移动端底部导航栏（spec §10.3）；桌面端由组件内部隐藏 */}
       <MobileNav />
     </div>

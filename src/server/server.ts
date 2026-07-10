@@ -6,6 +6,7 @@ import { connect as tcpConnect } from 'node:net'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
+import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import { loadConfig } from '../core/config.js'
 import { decryptSecret } from '../core/secret.js'
@@ -26,6 +27,7 @@ import {
   type SessionSnapshot,
 } from '../update/index.js'
 import { createAgentManager } from './agent-manager.js'
+import { PTYManager } from './terminal/pty-manager.js'
 import { createApp } from './app.js'
 import { createPermissionStore } from './permission/store.js'
 import type { HandoffServer, ServerContext } from './types.js'
@@ -153,6 +155,7 @@ async function buildServerContext(
       initialDelayMs: config.update.initialDelayMs,
     }),
     cwd,
+    ptyManager: new PTYManager(),
   }
 
   // spec §18.3 handoff server：旧实例监听随机端口，收到 POST /handoff 时
@@ -177,6 +180,7 @@ async function buildServerContext(
       ctx.agentManager.dispose()
       ctx.permissionStore.dispose()
       ctx.updateScheduler.stop()
+      ctx.ptyManager.dispose()
       if (handoffServer) await handoffServer.close()
     },
   }
@@ -277,10 +281,45 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
 
   const server = serve({ fetch: app.fetch, port }) as unknown as NodeServer
 
+  // WebSocket：终端双向流。Hono v2 无原生 WS，用 ws 包直接挂载到 HTTP server。
+  // 匹配 /api/terminal/:id/ws → ptyManager.attachWebSocket
+  const wss = new WebSocketServer({ noServer: true })
+  const expectedToken = ctx.config.security.authEnabled ? ctx.config.security.token : undefined
+  server.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
+    const match = url.pathname.match(/^\/api\/terminal\/([^/]+)\/ws$/)
+    if (!match) {
+      socket.destroy()
+      return
+    }
+    // 认证：token 通过 query 参数传递（浏览器 WS 无法设置 Authorization header）
+    if (expectedToken) {
+      const token = url.searchParams.get('token')
+      if (token !== expectedToken) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+        socket.destroy()
+        return
+      }
+    }
+    const ptyId = match[1]
+    if (!ptyId) {
+      socket.destroy()
+      return
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      const attached = ctx.ptyManager.attachWebSocket(ptyId, ws)
+      if (!attached) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Terminal not found' }))
+        ws.close(1008, 'Terminal not found')
+      }
+    })
+  })
+
   let closed = false
   const close = async () => {
     if (closed) return
     closed = true
+    wss.close()
     server.close()
     await closeCtx()
   }

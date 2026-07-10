@@ -12,6 +12,7 @@ import type { ToolRegistry } from '../tools/types.js'
 import { createUpdateScheduler } from '../update/index.js'
 import { createAgentManager } from './agent-manager.js'
 import { createPermissionStore } from './permission/store.js'
+import { PTYManager } from './terminal/pty-manager.js'
 import type { ServerContext } from './types.js'
 
 type CreateServerContextOptions = {
@@ -60,6 +61,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
       }),
     }),
     cwd: opts.cwd ?? process.cwd(),
+    ptyManager: new PTYManager(),
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
   }
 }
