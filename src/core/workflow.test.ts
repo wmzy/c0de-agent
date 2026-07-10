@@ -35,6 +35,18 @@ describe('containsWorkflow — keyword detection', () => {
     ).toBe(true)
   })
 
+  it('matches in CJK prose without ASCII spaces (中文无词间空格)', () => {
+    expect(containsWorkflow('请workflowz，部署')).toBe(true)
+    expect(containsWorkflow('workflowz。')).toBe(true)
+    expect(containsWorkflow('用workflowz方式来')).toBe(true)
+    expect(containsWorkflow('（workflowz）')).toBe(true)
+    expect(containsWorkflow('帮我workflowz这个功能')).toBe(true)
+  })
+
+  it('matches when followed by ASCII punctuation (sentence end)', () => {
+    expect(containsWorkflow('do this workflowz, then report')).toBe(true)
+  })
+
   it('handles empty string', () => {
     expect(containsWorkflow('')).toBe(false)
   })
@@ -61,5 +73,10 @@ describe('WORKFLOW_NOTICE', () => {
   it('includes decomposition guidance', () => {
     expect(WORKFLOW_NOTICE).toContain('Decompose')
     expect(WORKFLOW_NOTICE).toContain('fan-out')
+  })
+
+  it('uses MUST language to enforce task tool usage', () => {
+    expect(WORKFLOW_NOTICE).toContain('MUST')
+    expect(WORKFLOW_NOTICE).toContain('not optional')
   })
 })

@@ -3,6 +3,88 @@ import { getCursorPosition, setCursorPosition } from './editor-dom.js'
 import type { Prompt, SnippetPart } from './types.js'
 import { DEFAULT_PROMPT } from './types.js'
 
+/** workflowz 高亮样式：琥珀→翠绿渐变文字，与 oh-my-pi 的 hue 30→150 一致。 */
+const wfHighlight = css`
+  background: linear-gradient(135deg, #f59e0b, #10b981);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  font-weight: 600;
+`
+
+/** 全局匹配 workflowz 关键词（非代码块/路径内的独立词）。 */
+const WORKFLOW_GLOBAL = /(?<![\w./-])workflowz(?![\w./-])/g
+
+/**
+ * 在 contentEditable 编辑器中高亮所有 workflowz 关键词。
+ *
+ * 幂等：先 unwrap 已有 [data-wf] 装饰 span，再重新扫描文本节点包裹。
+ * 保存/恢复光标位置（按字符偏移），避免 DOM 结构变更影响光标。
+ * 跳过 pill 元素（contenteditable=false）内的文本。
+ */
+function decorateWorkflowz(editor: HTMLElement): void {
+  const cursor = getCursorPosition(editor)
+
+  // 1. unwrap 已有 [data-wf] span → 纯文本节点
+  for (const el of Array.from(editor.querySelectorAll('[data-wf]'))) {
+    const text = el.textContent ?? ''
+    el.replaceWith(document.createTextNode(text))
+  }
+  editor.normalize()
+
+  // 2. 收集需要装饰的文本节点
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (node.parentElement?.closest('[contenteditable="false"]')) return NodeFilter.FILTER_REJECT
+      return /workflowz/.test(node.textContent ?? '')
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT
+    },
+  })
+
+  // 3. 在每个文本节点中包裹所有匹配（收集后处理，避免 walker 失效）
+  const targets: Text[] = []
+  let n: Node | null = walker.nextNode()
+  while (n) {
+    targets.push(n as Text)
+    n = walker.nextNode()
+  }
+
+  for (const textNode of targets) {
+    const text = textNode.textContent ?? ''
+    const segments: { text: string; highlight: boolean }[] = []
+    let lastEnd = 0
+    WORKFLOW_GLOBAL.lastIndex = 0
+    let m: RegExpExecArray | null = WORKFLOW_GLOBAL.exec(text)
+    while (m) {
+      if (m.index > lastEnd) segments.push({ text: text.slice(lastEnd, m.index), highlight: false })
+      segments.push({ text: m[0], highlight: true })
+      lastEnd = m.index + m[0].length
+      m = WORKFLOW_GLOBAL.exec(text)
+    }
+    if (segments.length === 0) continue
+    if (lastEnd < text.length) segments.push({ text: text.slice(lastEnd), highlight: false })
+
+    // 用 segment 替换原文本节点
+    const frag = document.createDocumentFragment()
+    for (const seg of segments) {
+      if (seg.highlight) {
+        const span = document.createElement('span')
+        span.dataset.wf = '1'
+        span.className = wfHighlight
+        span.textContent = seg.text
+        frag.appendChild(span)
+      } else {
+        frag.appendChild(document.createTextNode(seg.text))
+      }
+    }
+    textNode.replaceWith(frag)
+  }
+
+  setCursorPosition(editor, cursor)
+}
+
 /** 创建 file pill 元素（contenteditable=false，防光标进入）。 */
 function createFilePill(path: string, label: string): HTMLSpanElement {
   const span = document.createElement('span')
@@ -145,4 +227,4 @@ function currentCursor(editor: HTMLElement): number {
   return getCursorPosition(editor)
 }
 
-export { currentCursor, parseFromDOM, reconcile, renderPrompt }
+export { currentCursor, decorateWorkflowz, parseFromDOM, reconcile, renderPrompt }

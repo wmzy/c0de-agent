@@ -905,8 +905,22 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     const { entries, snapshots } = await getSessionContext(deps.db, state.session.id)
     let chatMessages = entriesToChatMessages(entries, snapshots)
 
+    // steering 消息必须插入到最后一条 user 消息之前（而非末尾 push），
+    // 使 notice 在相关 user 消息的同一 turn 生效。
+    // 参考 oh-my-pi magic-keyword fix：末尾 system 消息会被模型忽略。
     for (const s of steering) {
-      chatMessages.push({ role: 'system', content: s })
+      let lastUserIdx = -1
+      for (let i = chatMessages.length - 1; i >= 0; i--) {
+        if (chatMessages[i]?.role === 'user') {
+          lastUserIdx = i
+          break
+        }
+      }
+      if (lastUserIdx >= 0) {
+        chatMessages.splice(lastUserIdx, 0, { role: 'system', content: s })
+      } else {
+        chatMessages.push({ role: 'system', content: s })
+      }
     }
 
     if (deps.hookRunner) {

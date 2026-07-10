@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
-import { currentCursor, parseFromDOM, reconcile } from './editor-sync.js'
+import { currentCursor, decorateWorkflowz, parseFromDOM, reconcile } from './editor-sync.js'
 import {
   canNavigateHistoryAtCursor,
   loadHistory,
@@ -93,6 +93,9 @@ function useComposer({
       setPopover(null)
       setPopoverQuery('')
     }
+
+    // workflowz 关键词高亮装饰（纯视觉，不影响 parse/cursor 逻辑）
+    decorateWorkflowz(editorRef.current)
   }, [popover, resetHistory])
 
   const setPromptExternal = useCallback((prompt: Prompt, cursorAtEnd = false) => {
@@ -107,6 +110,8 @@ function useComposer({
     }
     promptRef.current = prompt
     setIsEmpty(isPromptEmpty(prompt))
+    // 外部设置 prompt 后也需装饰
+    if (editorRef.current) decorateWorkflowz(editorRef.current)
   }, [])
 
   // popover 选中插入命令（替换整行 /xxx）

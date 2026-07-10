@@ -11,12 +11,18 @@
  *  - 单任务模式：`{ subagent_type?, prompt, description? }`
  */
 
-// 检测：小写关键词，两侧为空白或字符串边界。非全局，`.test` 无状态。
-const WORKFLOW_WORD = /(?<!\S)workflowz(?!\S)/
+// 检测：小写关键词，两侧不得是 ASCII 词/路径字符（字母、数字、_、.、/、-）。
+// 用 [\w./-] 而非 \S 做边界，使 CJK 字符和中文标点也能当边界——
+// 中文无词间空格，用 \S 会拒绝「请workflowz」「workflowz。」等合法写法。
+// 仍拒绝 reworkflowz / workflowzed / workflowz.test.ts 等。
+const WORKFLOW_WORD = /(?<![\w./-])workflowz(?![\w./-])/
 
 /**
- * 判断 `text` 是否在 prose 中包含独立关键词 "workflowz"
- * （小写、空白分隔）——不在代码块、行内代码或路径中。
+ * 判断 `text` 是否在 prose 中包含独立关键词 "workflowz"。
+ *
+ * 边界为「非 ASCII 词/路径字符」，因此 CJK 字符和中文标点也算合法边界
+ * （中文无词间空格）；但仍拒绝 workflowzed / reworkflowz / workflowz.test.ts
+ * 等拉丁词续或路径内嵌形式。
  *
  * 简化版 prose 检测：移除 ``` 代码块和 `行内代码` 后再匹配。
  */
@@ -34,10 +40,10 @@ export function containsWorkflow(text: string): boolean {
  * 适配 c0de-agent 的 task 工具 schema（subagent_type + context + tasks[]）。
  */
 export const WORKFLOW_NOTICE = `<workflow-notice>
-The user's message contains the **workflowz** keyword: drive this task as a deterministic multi-subagent workflow. Use the \`task\` tool for batched fan-out — to be comprehensive (decompose and cover in parallel), to be confident (independent perspectives and adversarial checks before you commit), or to take on scale one context can't hold (audits, migrations, broad sweeps). This overrides any default tendency to do the whole task inline when fanning out would be more thorough.
+The user's message contains the **workflowz** keyword: you MUST drive this task as a deterministic multi-subagent workflow using the \`task\` tool for batched fan-out. This is not optional — the keyword signals the user explicitly wants parallel sub-agent decomposition, not inline work. This overrides any default tendency to do the whole task inline.
 
 <when>
-Worth it when the task benefits from decomposition + parallel coverage, or from independent/adversarial cross-checking. For a quick lookup or single edit, just do it directly — don't spin up agents. Scout inline first (list the files, scope the diff, find the call sites) to discover the work list, then fan out over it. Common shapes:
+The user typed workflowz intentionally — they want fan-out. You may do a brief inline scout (1-2 tool calls to list files/scope the work), but your NEXT action after scouting MUST be a \`task\` tool call to fan out. Do NOT spend the entire turn reading files inline — that defeats the purpose. Common shapes:
 - **Understand** — parallel readers over subsystems → structured map.
 - **Design** — independent approaches → scored synthesis.
 - **Review** — split dimensions → find per dimension → adversarially verify each finding.
@@ -52,8 +58,8 @@ Call \`task\` once per independent fan-out batch using the batch form:
       subagent_type: "coder",
       context: "shared background all subagents need",
       tasks: [
-        { prompt: "specific assignment for agent 1", description: "short label" },
-        { prompt: "specific assignment for agent 2", description: "short label" },
+        { role: "coder", assignment: "specific assignment for agent 1", description: "short label" },
+        { role: "reviewer", assignment: "specific assignment for agent 2", description: "short label" },
       ]
     })
 
@@ -62,7 +68,8 @@ Available subagent types: \`general\` (full tools, recursive), \`coder\` (implem
 \`context\` carries shared background prepended to every subagent's prompt — put the shared contract, conventions, and coordination rules here.
 
 Each task in \`tasks[]\` must be self-contained:
-- \`prompt\`: exact target (files, symbols, subsystem) + what to do + acceptance criteria
+- \`role\`: specialist type for this sub-task (e.g. coder, reviewer, researcher)
+- \`assignment\`: exact target (files, symbols, subsystem) + what to do + acceptance criteria
 - \`description\`: short label for the UI
 
 Each subagent runs in an isolated session and returns its result via the \`yield\` tool. Subagents skip formatters, linters, and project-wide tests — the parent runs shared proof once after all results return.
@@ -73,10 +80,10 @@ Decompose first, then batch the independent leaves:
 
     task({
       subagent_type: "coder",
-      context: "# Goal\\nImplement feature X across the codebase\\n# Constraints\\nFollow existing patterns...\\n# Contract\\nReturn findings as structured data...",
+      context: "# Goal\nImplement feature X across the codebase\n# Constraints\nFollow existing patterns...\n# Contract\nReturn findings as structured data...",
       tasks: [
-        { prompt: "# Target\\nsrc/auth/login.ts\\n# Change\\nAdd rate limiting to login endpoint\\n# Acceptance\\nRate limiter works, tests pass", description: "Login rate limiting" },
-        { prompt: "# Target\\nsrc/auth/signup.ts\\n# Change\\nAdd input validation\\n# Acceptance\\nValidation blocks invalid emails", description: "Signup validation" },
+        { role: "coder", assignment: "# Target\nsrc/auth/login.ts\n# Change\nAdd rate limiting to login endpoint\n# Acceptance\nRate limiter works, tests pass", description: "Login rate limiting" },
+        { role: "coder", assignment: "# Target\nsrc/auth/signup.ts\n# Change\nAdd input validation\n# Acceptance\nValidation blocks invalid emails", description: "Signup validation" },
       ]
     })
 
@@ -92,6 +99,7 @@ Prefer one wide batch over serial calls when work items do not share files. If t
 </patterns>
 
 <execution>
+- **You MUST call the \`task\` tool** — this is the defining action of a workflowz request. A response that only does inline read/glob/edit without dispatching sub-agents is a failure.
 - Capture multi-phase workflow state in the visible todo system when available.
 - Batch independent subagents in one \`task\` call.
 - Give every subagent a narrow target, explicit non-goals, and a concrete return packet.

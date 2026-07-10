@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseFromDOM, renderPrompt } from './editor-sync.js'
+import { decorateWorkflowz, parseFromDOM, renderPrompt } from './editor-sync.js'
 import type { Prompt } from './types.js'
 import { DEFAULT_PROMPT, promptToMessageText, promptToText } from './types.js'
 
@@ -150,5 +150,50 @@ describe('promptToMessageText', () => {
       },
     ]
     expect(promptToMessageText(prompt)).toBe('📄 `b.ts:3`:\n```\nx\n```')
+  })
+})
+
+describe('decorateWorkflowz', () => {
+  it('包裹独立 workflowz 关键词', () => {
+    const el = makeEditor('please workflowz this')
+    decorateWorkflowz(el)
+    const span = el.querySelector('[data-wf]')
+    expect(span).not.toBeNull()
+    expect(span?.textContent).toBe('workflowz')
+  })
+
+  it('中文混排也匹配', () => {
+    const el = makeEditor('请workflowz，部署')
+    decorateWorkflowz(el)
+    const span = el.querySelector('[data-wf]')
+    expect(span?.textContent).toBe('workflowz')
+  })
+
+  it('不匹配 workflowzed / reworkflowz / 路径', () => {
+    const el = makeEditor('workflowzed reworkflowz workflowz.test.ts')
+    decorateWorkflowz(el)
+    expect(el.querySelector('[data-wf]')).toBeNull()
+  })
+
+  it('多次匹配全部包裹', () => {
+    const el = makeEditor('workflowz and workflowz')
+    decorateWorkflowz(el)
+    expect(el.querySelectorAll('[data-wf]')).toHaveLength(2)
+  })
+
+  it('幂等：重复调用不产生嵌套 span', () => {
+    const el = makeEditor('workflowz here')
+    decorateWorkflowz(el)
+    decorateWorkflowz(el)
+    expect(el.querySelectorAll('[data-wf]')).toHaveLength(1)
+    // parseFromDOM 仍能正确提取文本
+    expect(promptToText(parseFromDOM(el))).toBe('workflowz here')
+  })
+
+  it('parseFromDOM 不受装饰 span 影响', () => {
+    const el = makeEditor('hello workflowz world')
+    decorateWorkflowz(el)
+    const prompt = parseFromDOM(el)
+    expect(promptToText(prompt)).toBe('hello workflowz world')
   })
 })

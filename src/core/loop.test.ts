@@ -416,6 +416,46 @@ describe('agentLoop', () => {
     expect(state.steeringQueue).toEqual([])
   })
 
+  it('steering 消息插入最后一条 user 消息之前（非末尾）', async () => {
+    // workflowz/steer 注入的 system notice 必须在相关 user 消息之前，
+    // 否则模型在该 turn 忽略它（oh-my-pi magic-keyword fix）。
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: '请workflowz帮我重构' }],
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    state.steeringQueue.push('<workflow-notice>use task tool</workflow-notice>')
+
+    // 捕获传给 chatStream 的 request，检查 messages 中 system/user 顺序
+    let capturedMessages: Array<{ role: string }> = []
+    const captureDeps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('ok')),
+      chatStream: ((_ctx: unknown, request: { messages: Array<{ role: string }> }) => {
+        capturedMessages = request.messages
+        return mockTextStream('ok')
+      }) as unknown as LoopDeps['chatStream'],
+    }
+    for await (const _ev of agentLoop(state, captureDeps)) {
+      // consume
+    }
+
+    // 找到 steering system 消息（排除 idx 0 的顶层 system prompt）
+    const steeringMsgs = capturedMessages
+      .map((m, i) => ({ role: m.role, idx: i }))
+      .filter((m) => m.role === 'system' && m.idx > 0)
+    const lastUserIdx = (() => {
+      for (let i = capturedMessages.length - 1; i >= 0; i--) {
+        if (capturedMessages[i]?.role === 'user') return i
+      }
+      return -1
+    })()
+    expect(steeringMsgs.length).toBeGreaterThan(0)
+    const steeringPos = steeringMsgs[0]?.idx ?? -1
+    expect(steeringPos).toBeGreaterThanOrEqual(0)
+    expect(steeringPos).toBeLessThan(lastUserIdx)
+  })
+
   it('同前缀多轮调用归入同一 segment，calls 增量追加', async () => {
     const messages = await getMessages(db, session.id)
     const state = makeState(session, messages)
