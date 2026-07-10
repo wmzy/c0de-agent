@@ -5,6 +5,8 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { compactContext } from '../../core/loop.js'
 import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
+import { injectSteering } from '../../core/steering.js'
+import { containsWorkflow, WORKFLOW_NOTICE } from '../../core/workflow.js'
 import { getProject } from '../../project/project.js'
 import { getLLMSegments, getSession, updateSessionLastRun } from '../../session/session.js'
 import { upsertFileSnapshot } from '../../session/snapshot.js'
@@ -280,6 +282,12 @@ function createChatRoute(ctx: ServerContext): Hono {
       })
 
       ctx.agentManager.register({ sessionId, state, deps })
+
+      // workflowz 关键词检测：用户消息包含独立关键词时注入工作流通知（steering），
+      // 引导模型用 task 工具批量 fan-out 做确定性多子 agent 分解。
+      if (containsWorkflow(message)) {
+        injectSteering(state, WORKFLOW_NOTICE)
+      }
 
       // 客户端断开时中止 agent
       stream.onAbort(() => {

@@ -23,6 +23,21 @@ export function toolSummary(tool: string, input: unknown): string {
       return typeof i.pattern === 'string' ? `"${i.pattern}"` : ''
     case 'glob':
       return typeof i.pattern === 'string' ? i.pattern : ''
+    case 'task': {
+      // 批量模式显示任务数，单任务模式显示 description/prompt 摘要
+      if (Array.isArray(i.tasks) && i.tasks.length > 0) {
+        const type = typeof i.subagent_type === 'string' ? i.subagent_type : 'general'
+        return `${type} × ${i.tasks.length} agents`
+      }
+      const type = typeof i.subagent_type === 'string' ? i.subagent_type : ''
+      const desc =
+        typeof i.description === 'string'
+          ? i.description
+          : typeof i.prompt === 'string'
+            ? clip(i.prompt)
+            : ''
+      return [type, desc].filter(Boolean).join(' · ')
+    }
     default: {
       // 取首个字符串标量值作为兜底摘要
       const first = Object.values(i).find((v) => typeof v === 'string')

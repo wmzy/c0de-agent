@@ -40,4 +40,33 @@ describe('toolSummary', () => {
     expect(toolSummary('custom', { n: 1 })).toBe('')
     expect(toolSummary('custom', null)).toBe('')
   })
+
+  it('task 批量模式显示 agent 数量', () => {
+    expect(
+      toolSummary('task', {
+        subagent_type: 'coder',
+        context: 'shared',
+        tasks: [{ assignment: 'a' }, { assignment: 'b' }],
+      }),
+    ).toBe('coder × 2 agents')
+  })
+
+  it('task 单任务模式显示 type + description', () => {
+    expect(
+      toolSummary('task', {
+        subagent_type: 'researcher',
+        prompt: 'investigate the auth flow',
+        description: 'Auth investigation',
+      }),
+    ).toBe('researcher · Auth investigation')
+  })
+
+  it('task 单任务无 description 时显示 prompt 摘要', () => {
+    expect(
+      toolSummary('task', {
+        subagent_type: 'coder',
+        prompt: 'Fix the login bug in auth.ts',
+      }),
+    ).toBe('coder · Fix the login bug in auth.ts')
+  })
 })
