@@ -37,6 +37,54 @@ function honoApiPlugin(): Plugin {
           res.end(JSON.stringify({ error: 'Internal Server Error', message: String(err) }))
         }
       })
+
+      // WebSocket：终端双向流。vite HMR 走自己的路径，不冲突。
+      // 匹配 /api/terminal/:id/ws → ptyManager.attachWebSocket
+      server.httpServer?.on('upgrade', async (req, socket, head) => {
+        const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
+        if (!url.pathname.startsWith('/api/terminal/')) return
+
+        const match = url.pathname.match(/^\/api\/terminal\/([^/]+)\/ws$/)
+        if (!match) {
+          socket.destroy()
+          return
+        }
+
+        try {
+          const dev = await server.ssrLoadModule(path.resolve(__dirname, 'src/server/dev.ts'))
+          const ctx = await dev.getDevCtx()
+          const ptyId = match[1]
+
+          // 认证：token 通过 query 参数传递
+          const expectedToken = ctx.config.security.authEnabled
+            ? ctx.config.security.token
+            : undefined
+          if (expectedToken) {
+            const token = url.searchParams.get('token')
+            if (token !== expectedToken) {
+              socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+              socket.destroy()
+              return
+            }
+          }
+
+          const { WebSocketServer } = await import('ws')
+          // 每次创建临时 WSS，handleUpgrade 后即完成（无需持久 WSS 实例）
+          const wss = new WebSocketServer({ noServer: true })
+          wss.handleUpgrade(req, socket, head, (ws) => {
+            const attached = ctx.ptyManager.attachWebSocket(ptyId, ws)
+            if (!attached) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Terminal not found' }))
+              ws.close(1008, 'Terminal not found')
+            }
+          })
+          wss.close() // 释放监听器，连接已由 handleUpgrade 建立完成
+        } catch (err) {
+          console.error('[c0de-hono-api] ws upgrade error:', err)
+          socket.destroy()
+        }
+      })
+
       // 关闭时用缓存的引用直接 close PGLite，防止 WAL 损坏导致下次启动 abort。
       // 不抢注 process SIGTERM/SIGINT——vite 自身处理信号并触发 'close' 事件，
       // 此处清理在 vite 优雅关闭流程中执行。

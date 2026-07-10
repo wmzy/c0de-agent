@@ -170,6 +170,13 @@ function ChatPage() {
   const navigate = useNavigate()
   const terminal = useTerminal()
 
+  // 获取项目信息（worktree 用于终端默认目录）
+  const { data: project } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => projectAPI.get(projectId!),
+    enabled: !!projectId,
+  })
+
   // Ctrl+` 切换终端面板显示/隐藏
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -233,7 +240,7 @@ function ChatPage() {
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
-          terminal={<TerminalPanel terminal={terminal} />}
+          terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} />}
         />
       </FileSelectionContext.Provider>
     </FileReferenceProvider>

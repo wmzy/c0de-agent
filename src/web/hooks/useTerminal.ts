@@ -1,6 +1,6 @@
 // src/web/hooks/useTerminal.ts
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { terminalAPI, terminalWsUrl, type TerminalInfo } from '../services/terminal.js'
 
 export interface TerminalSession extends TerminalInfo {
@@ -8,6 +8,25 @@ export interface TerminalSession extends TerminalInfo {
   ws: WebSocket | null
   /** 是否正在连接中。 */
   connecting: boolean
+  /** 所属标签 id（同一 tabId 的终端共享一个标签页，实现分屏）。 */
+  tabId: string
+}
+
+/** 分屏方向。 */
+export type SplitDirection = 'horizontal' | 'vertical'
+
+/** 单个标签的分屏布局信息。 */
+export interface TabSplit {
+  direction: SplitDirection
+  /** 各 pane 的 flex-grow 比例，长度 = pane 数量，和无需归一化。 */
+  sizes: number[]
+}
+
+/** 标签页：包含若干终端 pane 和分屏布局。 */
+export interface TerminalTab {
+  id: string
+  panes: TerminalSession[]
+  split: TabSplit
 }
 
 const TERMINAL_HEIGHT_KEY = 'c0de-agent:terminalHeight'
@@ -15,6 +34,9 @@ const TERMINAL_OPEN_KEY = 'c0de-agent:terminalOpen'
 const DEFAULT_HEIGHT = 240
 const MIN_HEIGHT = 100
 const MAX_HEIGHT = 800
+
+/** pane 最小 flex 比例（防止被拖到 0）。 */
+const MIN_PANE_FLEX = 0.15
 
 function loadHeight(): number {
   const raw = localStorage.getItem(TERMINAL_HEIGHT_KEY)
@@ -28,36 +50,115 @@ function loadOpen(): boolean {
 }
 
 /**
- * 终端会话管理 hook。
+ * 终端会话管理 hook（支持 VSCode 风格分屏）。
  *
- * 负责：终端创建/列表/销毁、WebSocket 连接生命周期、活动标签切换、面板高度。
+ * 负责：终端创建/列表/销毁、WebSocket 连接生命周期、标签切换、
+ * 分屏（split）方向与 pane 尺寸、面板高度。
+ *
+ * 数据模型：
+ * - sessions 为扁平列表，每个 session 有 tabId 标识所属标签
+ * - tabs 由 sessions 按 tabId 分组派生
+ * - 每个 tab 维护 split（direction + sizes）
+ * - activeTabId / activePaneId 分别追踪当前标签和 pane
+ *
  * 组件卸载时断开所有 WS（PTY 进程在后端保持存活，重连可恢复）。
  */
 export function useTerminal() {
   const [sessions, setSessions] = useState<TerminalSession[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const [tabSplits, setTabSplits] = useState<Record<string, TabSplit>>({})
+  const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  const [activePaneId, setActivePaneId] = useState<string | null>(null)
   const [height, setHeight] = useState(loadHeight)
   const [open, setOpen] = useState(loadOpen)
 
   // ref 同步最新值供回调闭包使用
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
+  const activeTabIdRef = useRef(activeTabId)
+  activeTabIdRef.current = activeTabId
+  const activePaneIdRef = useRef(activePaneId)
+  activePaneIdRef.current = activePaneId
+  const tabSplitsRef = useRef(tabSplits)
+  tabSplitsRef.current = tabSplits
+
+  /** 派生 tabs：按 tabId 分组。 */
+  const tabs: TerminalTab[] = useMemo(() => {
+    const map = new Map<string, TerminalSession[]>()
+    for (const s of sessions) {
+      const list = map.get(s.tabId)
+      if (list) {
+        list.push(s)
+      } else {
+        map.set(s.tabId, [s])
+      }
+    }
+    const result: TerminalTab[] = []
+    for (const [tabId, panes] of map) {
+      const split = tabSplitsRef.current[tabId] ?? {
+        direction: 'horizontal' as SplitDirection,
+        sizes: [1],
+      }
+      // 确保 sizes 长度与 pane 数量一致
+      const sizes = reconcileSizes(split.sizes, panes.length)
+      result.push({ id: tabId, panes, split: { direction: split.direction, sizes } })
+    }
+    return result
+  }, [sessions, tabSplits])
 
   const updateSession = useCallback((id: string, patch: Partial<TerminalSession>) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)))
   }, [])
 
-  /** 创建新终端会话并建立 WebSocket 连接。 */
+  /** 创建新终端会话（作为新标签页）。建立 WebSocket 连接。 */
   const createTerminal = useCallback(
     async (opts?: { cwd?: string; cols?: number; rows?: number; title?: string }) => {
+      const info = await terminalAPI.create(opts)
+      const tabId = info.id // 新终端独占一个标签
+      const session: TerminalSession = {
+        ...info,
+        ws: null,
+        connecting: false,
+        tabId,
+      }
+      setSessions((prev) => [...prev, session])
+      setTabSplits((prev) => ({ ...prev, [tabId]: { direction: 'horizontal', sizes: [1] } }))
+      setActiveTabId(tabId)
+      setActivePaneId(info.id)
+      return info.id
+    },
+    [],
+  )
+
+  /** 在当前标签内分屏：创建新终端 pane 加入当前标签的分屏。 */
+  const splitTerminal = useCallback(
+    async (opts?: { cwd?: string; direction?: SplitDirection }) => {
+      const tabId = activeTabIdRef.current
+      if (!tabId) return undefined
+
+      // 获取当前 tab 的 pane 数
+      const tabPanes = sessionsRef.current.filter((s) => s.tabId === tabId)
+      if (tabPanes.length === 0) return undefined
+
       const info = await terminalAPI.create(opts)
       const session: TerminalSession = {
         ...info,
         ws: null,
-        connecting: true,
+        connecting: false,
+        tabId,
       }
       setSessions((prev) => [...prev, session])
-      setActiveId(info.id)
+
+      // 更新分屏布局
+      setTabSplits((prev) => {
+        const existing = prev[tabId] ?? { direction: 'horizontal' as SplitDirection, sizes: [1] }
+        const direction = opts?.direction ?? existing.direction
+        // 新 pane 取平均份额
+        const oldSizes = reconcileSizes(existing.sizes, tabPanes.length)
+        const newSizes = [...oldSizes.map((s) => s * 0.5), 0.5]
+        return { ...prev, [tabId]: { direction, sizes: newSizes } }
+      })
+
+      setActivePaneId(info.id)
       return info.id
     },
     [],
@@ -107,7 +208,7 @@ export function useTerminal() {
     [updateSession],
   )
 
-  /** 关闭终端会话（终止 PTY 进程 + 移除标签）。 */
+  /** 关闭终端 pane（终止 PTY 进程 + 移除）。若为标签内最后一个 pane 则关闭整个标签。 */
   const closeTerminal = useCallback(
     async (id: string) => {
       const session = sessionsRef.current.find((s) => s.id === id)
@@ -119,20 +220,54 @@ export function useTerminal() {
         // PTY 可能已退出
       }
 
-      setSessions((prev) => {
-        const next = prev.filter((s) => s.id !== id)
-        // 如果关闭的是活动标签，切换到最后一个
-        if (activeId === id) {
-          const last = next.length > 0 ? next[next.length - 1] : undefined
-          setActiveId(last ? last.id : null)
+      const tabId = session?.tabId
+      // 在 setSessions 之前计算 idx 和 remainingInTab，
+      // 避免 functional update 内 sessionsRef.current 已被其他 re-render 更新导致 idx=-1
+      const tabPanes = sessionsRef.current.filter((s) => s.tabId === tabId)
+      const idx = tabPanes.findIndex((s) => s.id === id)
+      const remainingInTab = tabPanes.length - 1
+
+      setSessions((prev) => prev.filter((s) => s.id !== id))
+
+      // 更新分屏 sizes
+      if (tabId && remainingInTab > 0) {
+        setTabSplits((prev) => {
+          const existing = prev[tabId]
+          if (!existing) return prev
+          const newSizes = existing.sizes.filter((_, i) => i !== idx)
+          return { ...prev, [tabId]: { ...existing, sizes: reconcileSizes(newSizes, remainingInTab) } }
+        })
+      } else if (tabId) {
+        // 标签内没有 pane 了，清理 split 信息
+        setTabSplits((prev) => {
+          const next = { ...prev }
+          delete next[tabId]
+          return next
+        })
+      }
+
+      // 如果关闭的是活动 pane，切换到同标签内其他 pane
+      if (activePaneIdRef.current === id) {
+        if (tabId && remainingInTab > 0) {
+          const siblings = sessionsRef.current.filter((s) => s.tabId === tabId && s.id !== id)
+          const last = siblings[siblings.length - 1]
+          setActivePaneId(last ? last.id : null)
+        } else {
+          // 标签关闭，切换到最后一个标签
+          setActivePaneId(null)
+          // 更新活动标签
+          const otherTabs = sessionsRef.current
+            .filter((s) => s.tabId !== tabId)
+            .map((s) => s.tabId)
+          const uniqueTabs = [...new Set(otherTabs)]
+          setActiveTabId(uniqueTabs.length > 0 ? uniqueTabs[uniqueTabs.length - 1]! : null)
         }
-        return next
-      })
+      }
     },
-    [activeId],
+    [],
   )
 
-  /** 调整终端尺寸。 */
+  /** 调整终端尺寸（PTY cols/rows）。 */
   const resize = useCallback(
     async (id: string, cols: number, rows: number) => {
       try {
@@ -148,6 +283,28 @@ export function useTerminal() {
   const getWebSocket = useCallback(
     (id: string): WebSocket | null => {
       return sessionsRef.current.find((s) => s.id === id)?.ws ?? null
+    },
+    [],
+  )
+
+  /** 切换标签的分屏方向。 */
+  const setSplitDirection = useCallback(
+    (tabId: string, direction: SplitDirection) => {
+      setTabSplits((prev) => {
+        const existing = prev[tabId] ?? { direction, sizes: [1] }
+        return { ...prev, [tabId]: { ...existing, direction } }
+      })
+    },
+    [],
+  )
+
+  /** 更新标签内 pane 的尺寸比例（拖拽分隔条后调用）。 */
+  const setPaneSizes = useCallback(
+    (tabId: string, sizes: number[]) => {
+      setTabSplits((prev) => {
+        const existing = prev[tabId] ?? { direction: 'horizontal' as SplitDirection, sizes }
+        return { ...prev, [tabId]: { ...existing, sizes } }
+      })
     },
     [],
   )
@@ -177,21 +334,46 @@ export function useTerminal() {
 
   return {
     sessions,
-    activeId,
+    tabs,
+    activeTabId,
+    activePaneId,
     height,
     open,
-    setActiveId,
+    setActiveTabId,
+    setActivePaneId,
     createTerminal,
+    splitTerminal,
     connect,
     disconnect,
     closeTerminal,
     resize,
     getWebSocket,
+    setSplitDirection,
+    setPaneSizes,
     toggleOpen,
     setHeight: setHeightClamped,
     minHeight: MIN_HEIGHT,
     maxHeight: MAX_HEIGHT,
+    minPaneFlex: MIN_PANE_FLEX,
   }
 }
 
 export type UseTerminalReturn = ReturnType<typeof useTerminal>
+
+/** 确保 sizes 数组长度与 pane 数量一致，且归一化为均值 1.0。
+ *  归一化后每个 pane 的 flex-grow ≈ 1.0，浏览器会正确分配空间。
+ *  不归一化时（如 [0.5]），单个 pane 的 flex-grow:0.5 只占 50% 而非 100%。 */
+function reconcileSizes(sizes: number[], count: number): number[] {
+  let arr: number[]
+  if (sizes.length === count) {
+    arr = sizes
+  } else if (sizes.length > count) {
+    arr = sizes.slice(0, count)
+  } else {
+    arr = [...sizes, ...Array(count - sizes.length).fill(1)]
+  }
+  // 归一化：使总和 = count（均值 1.0）
+  const sum = arr.reduce((a, b) => a + b, 0)
+  if (sum <= 0) return arr.map(() => 1)
+  return arr.map((s) => (s * count) / sum)
+}

@@ -75,6 +75,13 @@ async function getDevApp(): Promise<Hono> {
   return app
 }
 
+/** 获取当前 dev ctx（WebSocket 升级等需要直接访问 ptyManager 的场景）。 */
+async function getDevCtx(): Promise<ServerContext> {
+  if (!ctx) await getDevApp()
+  if (!ctx) throw new Error('dev ctx not initialized')
+  return ctx
+}
+
 /** vite dev server 关闭时调用，确保 PGLite WASM 正常 close 并刷写 WAL。 */
 async function closeDevApp(): Promise<void> {
   if (disposeCtx) {
@@ -154,4 +161,4 @@ async function handleApiRequest(
   }
 }
 
-export { closeDevApp, getDevApp, handleApiRequest }
+export { closeDevApp, getDevApp, getDevCtx, handleApiRequest }
