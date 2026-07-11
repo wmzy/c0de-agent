@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG } from '../../core/config.js'
+import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
@@ -508,5 +509,111 @@ describe('commands route', () => {
     expect(names).toContain('help')
     expect(names).toContain('clear')
     expect(names).toContain('model')
+  })
+})
+
+describe('workflowz 关键词 steering 注入', () => {
+  /** 构造捕获 chatStream：记录 request.messages 供断言 steering 内容。 */
+  function makeCapturingStream(captured: Array<{ role: string; content: unknown }>) {
+    return (
+      _ctx: unknown,
+      request: { messages: Array<{ role: string; content: unknown }> },
+    ): AsyncGenerator<StreamChunk> => {
+      for (const m of request.messages) captured.push(m)
+      return mockChatStream()
+    }
+  }
+
+  async function setupWithCapture() {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const session = await createSession(db, 'Test')
+    const captured: Array<{ role: string; content: unknown }> = []
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      chatStream: makeCapturingStream(captured),
+    })
+    const app = createChatRoute(ctx)
+    return { app, ctx, sessionId: session.id, captured }
+  }
+
+  it('workflowz 消息注入含已注册工作流名的 steering system 消息', async () => {
+    const { app, ctx, sessionId, captured } = await setupWithCapture()
+
+    // 注册自定义工作流，使 steering 通知包含可辨识的名字
+    const customWf: WorkflowEntry = {
+      meta: {
+        name: 'test-steering-wf',
+        description: 'A custom workflow for steering injection test',
+      },
+      source: 'user',
+      execute: async () => ({ output: 'done' }),
+    }
+    ctx.workflowRegistry?.register(customWf)
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '请 workflowz 帮我分析这段代码' }),
+    })
+    expect(res.status).toBe(200)
+    await res.text() // 消费 SSE 流
+
+    // steering system 消息含 workflow-notice + 自定义工作流名
+    const steeringMsgs = captured.filter(
+      (m) =>
+        m.role === 'system' &&
+        typeof m.content === 'string' &&
+        m.content.includes('workflow-notice'),
+    )
+    expect(steeringMsgs.length).toBeGreaterThan(0)
+    const notice = String(steeringMsgs[0]?.content)
+    expect(notice).toContain('test-steering-wf')
+    expect(notice).toContain('A custom workflow for steering injection test')
+    // 也应包含 builtin 工作流（registry → wfList 映射完整性）
+    expect(notice).toContain('security-audit')
+  })
+
+  it('无 workflowz 关键词时不注入 steering 通知', async () => {
+    const { app, sessionId, captured } = await setupWithCapture()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '请帮我分析这段代码' }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const steeringMsgs = captured.filter(
+      (m) =>
+        m.role === 'system' &&
+        typeof m.content === 'string' &&
+        m.content.includes('workflow-notice'),
+    )
+    expect(steeringMsgs).toHaveLength(0)
+  })
+
+  it('workflowz 在代码块内不触发 steering（prose 感知）', async () => {
+    const { app, sessionId, captured } = await setupWithCapture()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        message: '看这个 ```workflowz``` 代码',
+      }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const steeringMsgs = captured.filter(
+      (m) =>
+        m.role === 'system' &&
+        typeof m.content === 'string' &&
+        m.content.includes('workflow-notice'),
+    )
+    expect(steeringMsgs).toHaveLength(0)
   })
 })
