@@ -21,6 +21,7 @@ import { createSessionRoute } from './routes/session.js'
 import { createTerminalRoute } from './routes/terminal.js'
 import { createToolRoute } from './routes/tool.js'
 import { createUpdateRoute } from './routes/update.js'
+import { createWorkflowsRoute } from './routes/workflows.js'
 import type { ServerContext } from './types.js'
 
 /** 创建完整的 Hono 应用，挂载所有路由 + 中间件。 */
@@ -53,6 +54,7 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/permissions', createPermissionsRoute(ctx))
   app.route('/api/files', createFilesRoute(ctx))
   app.route('/api/terminal', createTerminalRoute(ctx))
+  app.route('/api/workflows', createWorkflowsRoute(ctx))
 
   // 根路径
   app.get('/', (c) =>
@@ -75,6 +77,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/permissions',
         '/api/files',
         '/api/terminal',
+        '/api/workflows',
       ],
     }),
   )

@@ -2,6 +2,8 @@
 
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import type { AgentRegistry } from '../core/agents/types.js'
+import { BUILTIN_WORKFLOWS, createWorkflowRegistry } from '../core/workflows/index.js'
+import type { WorkflowRegistry } from '../core/workflows/registry.js'
 import { DEFAULT_CONFIG, mergeConfig } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import type { Registry } from '../llm/registry.js'
@@ -40,6 +42,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
       for (const def of BUILTIN_AGENTS) reg.register(def)
       return reg
     })()
+  let _workflowRegistry: WorkflowRegistry | undefined
   return {
     db: opts.db,
     config,
@@ -52,6 +55,14 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     permissionStore: createPermissionStore(),
     permissionMode: config.permission.defaultMode,
     agentRegistry,
+    // 工作流注册表：惰性初始化，只含内置（项目级 discovery 由 bootstrap 或 API 触发热加载）。
+    get workflowRegistry() {
+      if (!_workflowRegistry) {
+        _workflowRegistry = createWorkflowRegistry()
+        for (const wf of BUILTIN_WORKFLOWS) _workflowRegistry.register(wf)
+      }
+      return _workflowRegistry
+    },
     // 测试上下文：默认 scheduler 不启动（enabled=false 由调用方控制）。
     updateScheduler: createUpdateScheduler({
       checkFn: async () => ({
