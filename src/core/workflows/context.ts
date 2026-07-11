@@ -64,14 +64,23 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
         tasks,
         concurrency,
         async (task: { assignment: string; description?: string; role?: string }) => {
-          const result = await doRunSubAgent({
-            agentType: type,
-            prompt: task.assignment,
-            description: task.description,
-            role: task.role,
-            context,
-          })
-          return mapResult(result)
+          try {
+            const result = await doRunSubAgent({
+              agentType: type,
+              prompt: task.assignment,
+              description: task.description,
+              role: task.role,
+              context,
+            })
+            return mapResult(result)
+          } catch (e) {
+            // 隔离单个任务的异常：不向上抛，避免 mapWithConcurrencyLimit 的
+            // fail-fast 终止所有尚未启动的兄弟任务。按合约返回 per-task { ok: false }。
+            return {
+              ok: false,
+              error: e instanceof Error ? e.message : String(e),
+            } satisfies WorkflowAgentResult
+          }
         },
       )
       return results.filter((r): r is WorkflowAgentResult => r !== undefined)

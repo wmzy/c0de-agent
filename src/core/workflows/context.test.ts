@@ -127,6 +127,51 @@ describe('buildWorkflowContext', () => {
     expect(results.every((r) => r.ok)).toBe(true)
   })
 
+  it('runSubagents isolates a throwing task from its siblings (no fail-fast abort)', async () => {
+    let callCount = 0
+    const runSubAgentFn = vi.fn().mockImplementation(() => {
+      callCount++
+      // 中间任务抛异常（不是返回 error，而是 reject）
+      if (callCount === 2) {
+        return Promise.reject(new Error('boom'))
+      }
+      return Promise.resolve({
+        _tag: 'success' as const,
+        output: `result-${callCount}`,
+        sessionId: `s-${callCount}`,
+      })
+    })
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+      runSubAgentFn,
+    })
+    const results = await ctx.runSubagents('coder', [
+      { assignment: 'task1' },
+      { assignment: 'task2-throws' },
+      { assignment: 'task3' },
+    ])
+    // 1. 所有任务都有结果（未被 fail-fast 终止）
+    expect(results.length).toBe(3)
+    expect(runSubAgentFn).toHaveBeenCalledTimes(3)
+    // 2. 抛异常的任务变为 { ok: false, error }
+    expect(results[1]?.ok).toBe(false)
+    if (!results[1]?.ok) {
+      expect(results[1]?.error).toBe('boom')
+    }
+    // 3. 其余任务保持正常结果
+    expect(results[0]?.ok).toBe(true)
+    expect(results[2]?.ok).toBe(true)
+    if (results[0]?.ok) {
+      expect(results[0]?.output).toBe('result-1')
+    }
+    if (results[2]?.ok) {
+      expect(results[2]?.output).toBe('result-3')
+    }
+  })
+
   it('progress callback fires', () => {
     const onProgress = vi.fn()
     const ctx = buildWorkflowContext({
