@@ -68,6 +68,17 @@ async function touchSession(handle: DB, id: string): Promise<void> {
   await handle.db.update(sessions).set({ updatedAt: new Date() }).where(eq(sessions.id, id))
 }
 
+/** 记录会话上次打开时间（用于会话列表按最近打开排序）。 */
+async function touchLastOpened(handle: DB, id: string): Promise<void> {
+  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  if (!row) return
+  const meta = (row.metadata ?? {}) as SessionMetadata
+  await handle.db
+    .update(sessions)
+    .set({ metadata: { ...meta, lastOpenedAt: Date.now() } })
+    .where(eq(sessions.id, id))
+}
+
 /** 规格化工具集并计算前缀指纹。tools 顺序不影响指纹（按 name 排序）。 */
 export function segmentFingerprint(systemPrompt: string, tools: ChatTool[]): string {
   const norm = JSON.stringify({
@@ -184,6 +195,7 @@ export {
   getSession,
   listSessions,
   listSessionsByProject,
+  touchLastOpened,
   touchSession,
   updateSessionLastRun,
   updateSessionTitle,

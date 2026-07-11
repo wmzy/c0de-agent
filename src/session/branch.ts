@@ -56,7 +56,9 @@ async function getBranches(handle: DB, sessionId: string): Promise<Session[]> {
   return rows.map(rowToSession)
 }
 
-/** Build a full session tree from root sessions down. */
+/** Build a full session tree from root sessions down.
+ * 每层按 metadata.lastOpenedAt 降序（fallback updatedAt、createdAt）。
+ */
 async function getTree(handle: DB): Promise<SessionTreeNode[]> {
   const rows = await handle.db.select().from(sessions)
   const byParent = new Map<string | null, Session[]>()
@@ -67,11 +69,17 @@ async function getTree(handle: DB): Promise<SessionTreeNode[]> {
     byParent.set(session.parentId, list)
   }
 
+  // 排序键：lastOpenedAt > updatedAt > createdAt（均为 epoch ms）
+  const sortKey = (s: Session): number => s.metadata.lastOpenedAt ?? s.updatedAt ?? s.createdAt ?? 0
+
   const build = (parentId: string | null): SessionTreeNode[] =>
-    (byParent.get(parentId) ?? []).map((session) => ({
-      session,
-      children: build(session.id),
-    }))
+    (byParent.get(parentId) ?? [])
+      .slice()
+      .sort((a, b) => sortKey(b) - sortKey(a))
+      .map((session) => ({
+        session,
+        children: build(session.id),
+      }))
 
   return build(null)
 }

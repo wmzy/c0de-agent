@@ -5,7 +5,7 @@ import { migrateDB } from '../db/migrate.js'
 import type { MessageContent } from '../shared/types/message.js'
 import { forkSession, getBranches, getTree } from './branch.js'
 import { appendMessage, getEntries, getMessages } from './message.js'
-import { createSession } from './session.js'
+import { createSession, touchLastOpened } from './session.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
@@ -75,5 +75,38 @@ describe('branching', () => {
     expect(tree).toHaveLength(1) // one root
     expect(tree[0]?.children).toHaveLength(1)
     expect(tree[0]?.children[0]?.children).toHaveLength(1)
+  })
+
+  it('getTree 按最近打开时间降序排列', async () => {
+    // 创建顺序：s1 → s2 → s3
+    const s1 = await createSession(handle, 'S1')
+    const s2 = await createSession(handle, 'S2')
+    const s3 = await createSession(handle, 'S3')
+
+    // 打开顺序：s3 → s1 → s2（s2 最近打开）
+    await touchLastOpened(handle, s3.id)
+    await touchLastOpened(handle, s1.id)
+    await touchLastOpened(handle, s2.id)
+
+    const tree = await getTree(handle)
+    expect(tree).toHaveLength(3)
+    // 期望顺序：s2（最近打开）→ s1 → s3
+    expect(tree[0]?.session.id).toBe(s2.id)
+    expect(tree[1]?.session.id).toBe(s1.id)
+    expect(tree[2]?.session.id).toBe(s3.id)
+  })
+
+  it('getTree 未打开过的会话按 updatedAt 降序排在已打开之后', async () => {
+    const s1 = await createSession(handle, 'S1')
+    await createSession(handle, 'S2')
+    await createSession(handle, 'S3')
+
+    // 只有 s1 被打开过
+    await touchLastOpened(handle, s1.id)
+
+    const tree = await getTree(handle)
+    expect(tree).toHaveLength(3)
+    // s1 最近打开，排第一；s3、s2 未打开过按 updatedAt（创建时间）降序
+    expect(tree[0]?.session.id).toBe(s1.id)
   })
 })

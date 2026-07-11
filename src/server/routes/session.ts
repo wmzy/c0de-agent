@@ -11,6 +11,7 @@ import {
   getSession,
   listSessions,
   listSessionsByProject,
+  touchLastOpened,
 } from '../../session/session.js'
 import {
   applyShakeRegions,
@@ -227,6 +228,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
 
     return c.json({ shaken: selected.length, archiveId })
+  })
+
+  // 记录会话打开（更新 metadata.lastOpenedAt，用于会话列表按最近打开排序）
+  app.post('/:id/open', async (c) => {
+    await touchLastOpened(ctx.db, c.req.param('id'))
+    return c.json({ ok: true })
   })
 
   // 获取分支

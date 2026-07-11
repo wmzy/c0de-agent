@@ -39,6 +39,8 @@ type SessionMetadata = {
   segments?: LLMSegment[]
   /** 上次 agent run 状态；status='running' 且进程无活跃 run → 被中断。 */
   lastRun?: LastRun
+  /** 上次打开时间戳（ms），用于会话列表按最近打开排序。 */
+  lastOpenedAt?: number
 }
 
 /** A conversation session (may have a parent for branching). */

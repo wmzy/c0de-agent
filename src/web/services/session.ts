@@ -27,6 +27,11 @@ const sessionAPI = {
     }),
   branches: (id: string) => apiRequest<Session[]>(`/api/sessions/${id}/branches`),
   status: (id: string) => apiRequest<{ _tag: string }>(`/api/sessions/${id}/status`),
+  open: (id: string) =>
+    apiRequest<{ ok: boolean }>(`/api/sessions/${id}/open`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
   shakePreview: (id: string) =>
     apiRequest<{ regions: ShakeRegionView[] }>(`/api/sessions/${id}/shake/preview`, {
       method: 'POST',

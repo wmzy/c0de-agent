@@ -224,7 +224,8 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
   const consumed = useRef(false)
 
-  // 冷启动中断检测：页面加载时检查 session status，若上次 run 未正常结束则显示恢复提示
+  // 冷启动中断检测：页面加载时检查 session status，若上次 run 未正常结束则显示恢复提示。
+  // 同时记录打开时间，用于会话列表按最近打开排序。
   const [coldStartInterrupted, setColdStartInterrupted] = useState(false)
   useEffect(() => {
     setColdStartInterrupted(false)
@@ -234,7 +235,12 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
         if (s._tag === 'interrupted') setColdStartInterrupted(true)
       })
       .catch(() => {})
-  }, [sessionId])
+    // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）
+    sessionAPI
+      .open(sessionId)
+      .then(() => qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }))
+      .catch(() => {})
+  }, [sessionId, qc])
 
   const showInterruptBanner = coldStartInterrupted || chat.interrupted
 
