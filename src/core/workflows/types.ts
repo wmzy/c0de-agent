@@ -68,10 +68,13 @@ interface WorkflowModule {
   default: (ctx: WorkflowContext) => Promise<WorkflowResult>
 }
 
+/** 工作流来源层级（后注册覆盖同名：project > user > builtin）。 */
+type WorkflowSource = 'builtin' | 'user' | 'project'
+
 /** 注册表中的条目。 */
 interface WorkflowEntry {
   meta: WorkflowMeta
-  source: 'builtin' | 'user' | 'project'
+  source: WorkflowSource
   filePath?: string
   /** 执行器。 */
   execute: (ctx: WorkflowContext) => Promise<WorkflowResult>
@@ -86,5 +89,6 @@ export type {
   WorkflowMeta,
   WorkflowModule,
   WorkflowResult,
+  WorkflowSource,
   WorkflowUtils,
 }

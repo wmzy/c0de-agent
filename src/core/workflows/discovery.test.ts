@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { discoverWorkflows } from './discovery.js'
+import { discoverGlobalWorkflows, discoverWorkflows } from './discovery.js'
 
 let tmpDir: string
 
@@ -81,5 +81,63 @@ export const meta = { name: 'no-default', description: 'x' }
     await writeWorkflow(join(tmpDir, '.c0de/workflows'), 'no-default', noDefault)
     const entries = await discoverWorkflows(tmpDir)
     expect(entries.length).toBe(0)
+  })
+})
+
+describe('discoverGlobalWorkflows', () => {
+  // 全局发现读取 os.homedir() → process.env.HOME（POSIX），用临时 HOME 隔离测试。
+  const originalHome = process.env.HOME
+  let globalHomeDir: string
+
+  beforeEach(async () => {
+    globalHomeDir = await mkdtemp(join(tmpdir(), 'wf-global-home-'))
+    process.env.HOME = globalHomeDir
+  })
+
+  afterEach(async () => {
+    if (originalHome === undefined) {
+      delete process.env.HOME
+    } else {
+      process.env.HOME = originalHome
+    }
+    await rm(globalHomeDir, { recursive: true, force: true })
+  })
+
+  it('loads valid .js workflow files from ~/.c0de/workflows/ with source:user', async () => {
+    await writeWorkflow(join(globalHomeDir, '.c0de/workflows'), 'global-wf', VALID_WORKFLOW)
+    const entries = await discoverGlobalWorkflows()
+    expect(entries.length).toBe(1)
+    expect(entries[0]?.meta.name).toBe('test-wf')
+    expect(entries[0]?.source).toBe('user')
+    expect(entries[0]?.filePath).toBe(join(globalHomeDir, '.c0de/workflows', 'global-wf.js'))
+    expect(entries[0]?.sourceCode).toContain('test workflow')
+    expect(typeof entries[0]?.execute).toBe('function')
+  })
+
+  it('skips malformed files and continues loading others', async () => {
+    await writeWorkflow(join(globalHomeDir, '.c0de/workflows'), 'broken', 'not valid js export')
+    await writeWorkflow(join(globalHomeDir, '.c0de/workflows'), 'good', VALID_WORKFLOW)
+    const entries = await discoverGlobalWorkflows()
+    const names = entries.map((e) => e.meta.name)
+    expect(names).toContain('test-wf')
+    expect(names).not.toContain('broken')
+  })
+
+  it('returns empty array when ~/.c0de/workflows does not exist', async () => {
+    const entries = await discoverGlobalWorkflows()
+    expect(entries).toEqual([])
+  })
+
+  it('uses filename as fallback name when meta.name is missing', async () => {
+    const noName = `
+export const meta = { description: 'no name field' }
+export default async function workflow(ctx) {
+  return { output: 'ok' }
+}
+`
+    await writeWorkflow(join(globalHomeDir, '.c0de/workflows'), 'fallback-global', noName)
+    const entries = await discoverGlobalWorkflows()
+    expect(entries[0]?.meta.name).toBe('fallback-global')
+    expect(entries[0]?.source).toBe('user')
   })
 })

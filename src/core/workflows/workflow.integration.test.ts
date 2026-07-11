@@ -12,11 +12,20 @@ import { createAndPopulateRegistry } from './index.js'
 import { executeWorkflow } from './runtime.js'
 
 let tmpDir: string
+const originalHome = process.env.HOME
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'wf-int-'))
+  // 隔离 HOME：createAndPopulateRegistry 现在会读取 ~/.c0de/workflows（全局发现），
+  // 指向临时空目录以保证 builtin source 断言确定性和可重复。
+  process.env.HOME = tmpDir
 })
 afterEach(async () => {
+  if (originalHome === undefined) {
+    delete process.env.HOME
+  } else {
+    process.env.HOME = originalHome
+  }
   await rm(tmpDir, { recursive: true, force: true })
 })
 
