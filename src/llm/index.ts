@@ -13,6 +13,8 @@ export type { ProviderInput, Registry, ResolveResult } from './registry.js'
 export {
   builtinCapabilities,
   createRegistry,
+  DEFAULT_MODEL_CAPABILITIES,
+  overrideToCapabilities,
   registerProvider,
   resolveModelByRole,
   resolveRoute,

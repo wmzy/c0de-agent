@@ -123,6 +123,18 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
     )
   }
 
+  /** 更新单个模型的 capability 字段（contextWindow/maxOutput 等）。 */
+  const updateModelField = (
+    providerIndex: number,
+    modelName: string,
+    patch: Partial<ModelOverride>,
+  ) => {
+    updateModels(providerIndex, (models) => ({
+      ...models,
+      [modelName]: { ...(models[modelName] ?? {}), ...patch },
+    }))
+  }
+
   const testProvider = async (index: number, baseURL: string, apiKey: string) => {
     setTestResults((prev) => ({ ...prev, [index]: { loading: true } }))
     try {
@@ -223,6 +235,7 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
               models={provider.models ?? {}}
               onToggle={(name) => toggleModel(index, name)}
               onSetAll={(enabled) => setAllModels(index, enabled)}
+              onModelFieldChange={(name, patch) => updateModelField(index, name, patch)}
             />
           </div>
         )

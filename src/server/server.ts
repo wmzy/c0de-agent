@@ -15,7 +15,11 @@ import type { WorkflowRegistry } from '../core/workflows/registry.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import type { Registry } from '../llm/registry.js'
-import { createRegistry, registerProvider } from '../llm/registry.js'
+import {
+  createRegistry,
+  overrideToCapabilities,
+  registerProvider,
+} from '../llm/registry.js'
 import { initPlugins } from '../plugins/index.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
@@ -82,6 +86,9 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
     baseURL: p.baseURL,
     apiKey: p.apiKey ? decryptSecret(p.apiKey) : p.apiKey,
     ...(path ? { path } : {}),
+    // 传递用户配置的 per-model capabilities（contextWindow 等），
+    // 否则 resolveRoute 回退到 DEFAULT_MODEL_CAPABILITIES，可能导致预算过小。
+    ...(p.models ? { models: overrideToCapabilities(p.models) } : {}),
   })
 }
 

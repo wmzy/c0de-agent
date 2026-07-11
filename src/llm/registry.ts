@@ -1,4 +1,4 @@
-import type { ModelCapabilities, ModelRole } from '../shared/types/llm.js'
+import type { ModelCapabilities, ModelOverride, ModelRole } from '../shared/types/llm.js'
 import { openAICompatRoute } from './protocols/openai-compat.js'
 import { llmError } from './schema/errors.js'
 import type { Model } from './schema/options.js'
@@ -45,6 +45,48 @@ type ResolveResult = {
 }
 
 /**
+ * Default capabilities for models not explicitly declared in the route's models map.
+ *
+ * Modern models overwhelmingly support ≥128k context windows; the previous 8192
+ * default caused false-positive compaction deadlocks on any provider that
+ * didn't declare per-model capabilities. 128k is a conservative floor that
+ * matches the most common modern context window.
+ */
+const DEFAULT_MODEL_CAPABILITIES: ModelCapabilities = {
+  contextWindow: 128_000,
+  maxOutput: 8192,
+  supportsTools: true,
+  supportsVision: false,
+  supportsThinking: false,
+  costPer1kInput: 0,
+  costPer1kOutput: 0,
+}
+
+/**
+ * Merge sparse per-model overrides from config (ModelOverride) into full
+ * ModelCapabilities by filling gaps with DEFAULT_MODEL_CAPABILITIES.
+ * Strips `enabled` (a UI-only concern) — the registry tracks all models
+ * regardless of selector visibility.
+ */
+function overrideToCapabilities(
+  overrides: Record<string, ModelOverride>,
+): Record<string, ModelCapabilities> {
+  const result: Record<string, ModelCapabilities> = {}
+  for (const [name, o] of Object.entries(overrides)) {
+    result[name] = {
+      contextWindow: o.contextWindow ?? DEFAULT_MODEL_CAPABILITIES.contextWindow,
+      maxOutput: o.maxOutput ?? DEFAULT_MODEL_CAPABILITIES.maxOutput,
+      supportsTools: o.supportsTools ?? DEFAULT_MODEL_CAPABILITIES.supportsTools,
+      supportsVision: o.supportsVision ?? DEFAULT_MODEL_CAPABILITIES.supportsVision,
+      supportsThinking: o.supportsThinking ?? DEFAULT_MODEL_CAPABILITIES.supportsThinking,
+      costPer1kInput: o.costPer1kInput ?? DEFAULT_MODEL_CAPABILITIES.costPer1kInput,
+      costPer1kOutput: o.costPer1kOutput ?? DEFAULT_MODEL_CAPABILITIES.costPer1kOutput,
+    }
+  }
+  return result
+}
+
+/**
  * Resolve a (provider, modelId) pair into a route + typed model.
  * Throws NoRoute when the provider is unknown.
  */
@@ -58,17 +100,7 @@ const resolveRoute = (registry: Registry, provider: string, modelId: string): Re
       model: modelId,
     })
   }
-  const capabilities =
-    route.models[modelId] ??
-    ({
-      contextWindow: 8192,
-      maxOutput: 4096,
-      supportsTools: true,
-      supportsVision: false,
-      supportsThinking: false,
-      costPer1kInput: 0,
-      costPer1kOutput: 0,
-    } satisfies ModelCapabilities)
+  const capabilities = route.models[modelId] ?? DEFAULT_MODEL_CAPABILITIES
   return {
     route,
     model: makeModel(modelId, provider, {
@@ -145,6 +177,8 @@ export type { ProviderInput, Registry, ResolveResult, RouteEntry }
 export {
   builtinCapabilities,
   createRegistry,
+  DEFAULT_MODEL_CAPABILITIES,
+  overrideToCapabilities,
   registerProvider,
   resolveModelByRole,
   resolveRoute,

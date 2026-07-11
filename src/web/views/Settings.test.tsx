@@ -461,6 +461,43 @@ describe('Settings — Provider 管理', () => {
     ).toBeChecked()
   })
 
+  it('编辑模型的上下文窗口/最大输出后随保存提交', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('provider-row')).toHaveLength(2)
+    })
+
+    const rows = screen.getAllByTestId('provider-row')
+    const panel = within(rows[0] as HTMLElement).getByTestId('provider-models') as HTMLElement
+
+    // 给 gpt-4o 设置 contextWindow 和 maxOutput
+    const ctxInput = within(panel).getByTestId('model-ctx-gpt-4o') as HTMLInputElement
+    fireEvent.change(ctxInput, { target: { value: '1000000' } })
+    const outputInput = within(panel).getByTestId('model-output-gpt-4o') as HTMLInputElement
+    fireEvent.change(outputInput, { target: { value: '8192' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => {
+      expect(configAPI.update).toHaveBeenCalled()
+    })
+
+    const updateArgs = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      providers: {
+        name: string
+        models?: Record<string, { contextWindow?: number; maxOutput?: number }>
+      }[]
+    }
+    const providerA = updateArgs.providers.find((p) => p.name === 'ProviderA')
+    expect(providerA?.models?.['gpt-4o']?.contextWindow).toBe(1_000_000)
+    expect(providerA?.models?.['gpt-4o']?.maxOutput).toBe(8192)
+  })
+
   it('编辑 provider name 不会重新挂载输入行（避免输入一个字符即失焦）', async () => {
     const { configAPI } = await import('../services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(mockConfig)

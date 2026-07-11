@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ModelRole } from '../shared/types/llm.js'
 import {
   createRegistry,
+  DEFAULT_MODEL_CAPABILITIES,
+  overrideToCapabilities,
   registerProvider,
   resolveModelByRole,
   resolveRoute,
@@ -40,9 +42,44 @@ describe('registry register + resolveRoute', () => {
     const reg = createRegistry()
     registerProvider(reg, { name: 'groq', baseURL: 'https://x', apiKey: 'k' })
     const res = resolveRoute(reg, 'groq', 'llama-3-70b')
-    expect(res.capabilities.contextWindow).toBe(8192)
+    expect(res.capabilities.contextWindow).toBe(128_000)
   })
 
+  it('passes declared per-model capabilities through registerProvider', () => {
+    const reg = createRegistry()
+    registerProvider(reg, {
+      name: 'sensenova',
+      baseURL: 'https://x',
+      apiKey: 'k',
+      models: overrideToCapabilities({
+        'sensenova-6.7-flash-lite': { contextWindow: 1_000_000, maxOutput: 8192 },
+      }),
+    })
+    const res = resolveRoute(reg, 'sensenova', 'sensenova-6.7-flash-lite')
+    expect(res.capabilities.contextWindow).toBe(1_000_000)
+  })
+})
+
+describe('overrideToCapabilities', () => {
+  it('fills missing fields with DEFAULT_MODEL_CAPABILITIES', () => {
+    const caps = overrideToCapabilities({ 'm1': { contextWindow: 200_000 } })
+    expect(caps['m1']?.contextWindow).toBe(200_000)
+    expect(caps['m1']?.maxOutput).toBe(DEFAULT_MODEL_CAPABILITIES.maxOutput)
+    expect(caps['m1']?.supportsTools).toBe(true)
+  })
+
+  it('strips enabled flag (UI-only concern)', () => {
+    const caps = overrideToCapabilities({ 'm1': { enabled: false, contextWindow: 100_000 } })
+    expect(caps['m1']).toBeDefined()
+    expect('enabled' in (caps['m1'] as Record<string, unknown>)).toBe(false)
+  })
+
+  it('returns empty object for empty input', () => {
+    expect(overrideToCapabilities({})).toEqual({})
+  })
+})
+
+describe('registry resolveRoute edge cases', () => {
   it('throws NoRoute for unknown provider', () => {
     const reg = createRegistry()
     try {

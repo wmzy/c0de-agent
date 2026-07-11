@@ -5,7 +5,9 @@ import type { AgentConfig, AgentEvent, AgentState, AgentStatus } from '../shared
 import type { MessageContent, Session } from '../shared/types/message.js'
 import { listTools } from '../tools/registry.js'
 import { estimateBudget } from './context.js'
+import { createTokenBudget } from './context.js'
 import { agentLoop } from './loop.js'
+import { resolveRoute } from '../llm/registry.js'
 import { DEFAULT_SESSION_TITLE, generateSessionTitle } from './title.js'
 import type { AgentDependencies } from './types.js'
 
@@ -23,6 +25,18 @@ async function createAgent(
   const allTools = listTools(deps.toolRegistry, { config: {}, cwd: deps.cwd })
   const tools = allTools.filter((t) => config.tools.includes(t.name))
 
+  // 从 registry 解析模型的 contextWindow，使初始 token 预算与真实窗口一致；
+  // 解析失败（provider 未注册 / 模型未知）回退到保守的 128k，首轮流式时
+  // resolveEffectiveContextWindow 会再纠正。
+  let contextWindow = 128_000
+  try {
+    const { capabilities } = resolveRoute(deps.llmRegistry, config.provider, config.model)
+    contextWindow = capabilities.contextWindow
+  } catch {
+    // provider 未注册或模型未知：保留回退值，loop 首轮会同步
+  }
+  const tokenBudget = createTokenBudget(contextWindow)
+
   return {
     id: generateId(),
     session,
@@ -33,14 +47,7 @@ async function createAgent(
     abortController: new AbortController(),
     steeringQueue: [],
     segments,
-    tokenBudget: {
-      total: 128_000,
-      reserved: 25_600,
-      available: 102_400,
-      historyBudget: 76_800,
-      used,
-      keepRecent: 12_800,
-    },
+    tokenBudget: { ...tokenBudget, used },
     calibrationFactor: 1.0,
     // 压缩模型覆盖：从全局配置映射到 agent state，compactContext 读取后用于
     // 创建 summarizer。未配置时为 undefined → 回退到会话主模型。

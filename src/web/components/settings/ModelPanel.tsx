@@ -57,10 +57,36 @@ const modelList = css`
 
 const modelRow = css`
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   font-size: 12px;
+  padding: 4px;
+  border-bottom: 1px solid var(--border);
+`
+
+const modelCapRow = css`
+  display: flex;
+  gap: 12px;
+  padding-left: 22px;
+  flex-wrap: wrap;
+`
+
+const modelCapField = css`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+`
+
+const modelCapInput = css`
+  width: 90px;
   padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
 `
 
 const modelEmpty = css`
@@ -163,6 +189,7 @@ interface ProviderModelsPanelProps {
   models: Record<string, ModelOverride>
   onToggle: (modelName: string) => void
   onSetAll: (enabled: boolean) => void
+  onModelFieldChange: (modelName: string, patch: Partial<ModelOverride>) => void
 }
 
 /**
@@ -171,7 +198,12 @@ interface ProviderModelsPanelProps {
  * 渲染在 ProviderPanel 的每一行内：勾选即写入该模型的 enabled 状态（ModelOverride）。
  * 过滤缓冲为组件内部状态（按 provider 实例隔离）。
  */
-function ProviderModelsPanel({ models, onToggle, onSetAll }: ProviderModelsPanelProps) {
+function ProviderModelsPanel({
+  models,
+  onToggle,
+  onSetAll,
+  onModelFieldChange,
+}: ProviderModelsPanelProps) {
   const [filter, setFilter] = useState('')
   const modelEntries = Object.entries(models)
   const totalCount = modelEntries.length
@@ -218,15 +250,55 @@ function ProviderModelsPanel({ models, onToggle, onSetAll }: ProviderModelsPanel
           filteredModels.map(([name, override]) => {
             const on = override.enabled !== false
             return (
-              <label key={name} className={modelRow}>
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={() => onToggle(name)}
-                  data-testid={`provider-model-toggle-${name}`}
-                />
-                <span>{name}</span>
-              </label>
+              <div key={name} className={modelRow}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => onToggle(name)}
+                    data-testid={`provider-model-toggle-${name}`}
+                  />
+                  <span>{name}</span>
+                </label>
+                <div className={modelCapRow}>
+                  <label className={modelCapField}>
+                    <span>上下文窗口</span>
+                    <input
+                      type="number"
+                      className={modelCapInput}
+                      value={override.contextWindow ?? ''}
+                      onChange={(e) =>
+                        onModelFieldChange(name, {
+                          contextWindow: e.target.value
+                            ? Number(e.target.value)
+                            : undefined,
+                        })
+                      }
+                      placeholder="留空=默认"
+                      min={1000}
+                      data-testid={`model-ctx-${name}`}
+                    />
+                  </label>
+                  <label className={modelCapField}>
+                    <span>最大输出</span>
+                    <input
+                      type="number"
+                      className={modelCapInput}
+                      value={override.maxOutput ?? ''}
+                      onChange={(e) =>
+                        onModelFieldChange(name, {
+                          maxOutput: e.target.value
+                            ? Number(e.target.value)
+                            : undefined,
+                        })
+                      }
+                      placeholder="留空=默认"
+                      min={256}
+                      data-testid={`model-output-${name}`}
+                    />
+                  </label>
+                </div>
+              </div>
             )
           })
         )}
