@@ -65,7 +65,10 @@ function createChatRoute(ctx: ServerContext): Hono {
           cwd,
           config: ctx.config,
           // 内置斜杠命令（/clear、/fork、/config）仅需 db + config；
-          // permission/toolRegistry/llmRegistry 不会触发，用 autoAllow 凑齐类型。
+          // 但 /workflow run 会走 executeWorkflow → buildWorkflowContext → runSubAgent，
+          // 该路径需要 agentRegistry 来派生子 agent，因此必须注入。
+          // permission/toolRegistry 用 autoAllow 凑齐类型（子命令不触发交互权限）。
+          workflowRegistry: ctx.workflowRegistry,
           deps: {
             db: ctx.db,
             config: ctx.config,
@@ -73,6 +76,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             permission: autoAllowChecker,
             toolRegistry: ctx.toolRegistry,
             llmRegistry: ctx.llmRegistry,
+            agentRegistry: ctx.agentRegistry,
           },
         }
         return streamSSE(c, async (stream) => {

@@ -10,6 +10,8 @@ import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import { loadConfig } from '../core/config.js'
 import { decryptSecret } from '../core/secret.js'
+import { BUILTIN_WORKFLOWS, createWorkflowRegistry } from '../core/workflows/index.js'
+import type { WorkflowRegistry } from '../core/workflows/registry.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import type { Registry } from '../llm/registry.js'
@@ -27,9 +29,9 @@ import {
   type SessionSnapshot,
 } from '../update/index.js'
 import { createAgentManager } from './agent-manager.js'
-import { PTYManager } from './terminal/pty-manager.js'
 import { createApp } from './app.js'
 import { createPermissionStore } from './permission/store.js'
+import { PTYManager } from './terminal/pty-manager.js'
 import type { HandoffServer, ServerContext } from './types.js'
 
 type StartServerOptions = {
@@ -131,6 +133,9 @@ async function buildServerContext(
     llmRegistry,
   })
 
+  // workflowRegistry 惰性初始化 backing field（见下方 ctx getter）。
+  let _workflowRegistry: WorkflowRegistry | undefined
+
   const ctx: ServerContext = {
     db,
     config,
@@ -148,6 +153,15 @@ async function buildServerContext(
       for (const def of BUILTIN_AGENTS) reg.register(def)
       return reg
     })(),
+    // 工作流注册表：惰性初始化，只含内置（项目级 discovery 由 bootstrap 或 API 触发热加载）。
+    // 与 context.ts 的 createServerContext 保持一致的模式。
+    get workflowRegistry() {
+      if (!_workflowRegistry) {
+        _workflowRegistry = createWorkflowRegistry()
+        for (const wf of BUILTIN_WORKFLOWS) _workflowRegistry.register(wf)
+      }
+      return _workflowRegistry
+    },
     // spec §18.1 后台版本检查调度器；config.update.enabled 控制是否启动。
     updateScheduler: createUpdateScheduler({
       checkFn: opts.checkForUpdateFn ?? checkForUpdate,
