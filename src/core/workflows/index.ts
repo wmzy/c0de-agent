@@ -1,4 +1,4 @@
-export { BUILTIN_WORKFLOWS } from './builtins.js'
+export { BUILTIN_WORKFLOWS, createBuiltinWorkflows } from './builtins.js'
 export { buildWorkflowContext } from './context.js'
 export { discoverGlobalWorkflows, discoverWorkflows } from './discovery.js'
 export type { WorkflowRegistry } from './registry.js'

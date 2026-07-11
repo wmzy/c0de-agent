@@ -1,4 +1,4 @@
-import { BUILTIN_WORKFLOWS } from './builtins.js'
+import { createBuiltinWorkflows } from './builtins.js'
 import { discoverGlobalWorkflows, discoverWorkflows } from './discovery.js'
 import type { WorkflowEntry } from './types.js'
 
@@ -36,8 +36,8 @@ type WorkflowRegistry = ReturnType<typeof createWorkflowRegistry>
  */
 async function createAndPopulateRegistry(projectDir: string): Promise<WorkflowRegistry> {
   const registry = createWorkflowRegistry()
-  // 1. 内置
-  for (const wf of BUILTIN_WORKFLOWS) {
+  // 1. 内置（由源码字符串动态导入生成，show === run）
+  for (const wf of await createBuiltinWorkflows()) {
     registry.register(wf)
   }
   // 2. 全局级（~/.c0de/workflows）

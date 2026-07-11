@@ -57,7 +57,7 @@ describe('BUILTIN_WORKFLOWS', () => {
       runSubagents: async (_type, tasks) =>
         tasks.map(() => ({ ok: true, output: JSON.stringify({ findings: [] }) })),
     })
-    const result: WorkflowResult = await wf?.execute(ctx)
+    const result: WorkflowResult = await wf!.execute(ctx)
     expect(result.output).toBeDefined()
     expect(typeof result.output).toBe('string')
   })
@@ -71,14 +71,14 @@ describe('BUILTIN_WORKFLOWS', () => {
           output: JSON.stringify({ findings: [] }),
         })),
     })
-    const result = await wf?.execute(ctx)
+    const result = await wf!.execute(ctx)
     expect(result.output).toBeDefined()
   })
 
   it('migration-check executes and returns output', async () => {
     const wf = BUILTIN_WORKFLOWS.find((w) => w.meta.name === 'migration-check')
     const ctx = makeMockCtx()
-    const result = await wf?.execute(ctx)
+    const result = await wf!.execute(ctx)
     expect(result.output).toBeDefined()
   })
 

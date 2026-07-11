@@ -44,14 +44,6 @@ export type {
   TokenBudget,
 } from './types.js'
 export { buildWorkflowNotice, containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
-export {
-  BUILTIN_WORKFLOWS,
-  buildWorkflowContext,
-  createAndPopulateRegistry,
-  createWorkflowRegistry,
-  discoverWorkflows,
-  executeWorkflow,
-} from './workflows/index.js'
 export type {
   WorkflowAgentResult,
   WorkflowContext,
@@ -60,4 +52,13 @@ export type {
   WorkflowRegistry,
   WorkflowResult,
   WorkflowUtils,
+} from './workflows/index.js'
+export {
+  BUILTIN_WORKFLOWS,
+  buildWorkflowContext,
+  createAndPopulateRegistry,
+  createBuiltinWorkflows,
+  createWorkflowRegistry,
+  discoverWorkflows,
+  executeWorkflow,
 } from './workflows/index.js'
