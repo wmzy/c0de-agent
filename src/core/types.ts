@@ -97,6 +97,7 @@ type CommandContext = {
   cwd: string
   config: Config
   deps: AgentDependencies
+  workflowRegistry?: import('./workflows/registry.js').WorkflowRegistry
 }
 
 type SlashCommand = {

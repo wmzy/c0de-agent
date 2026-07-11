@@ -1,5 +1,10 @@
 import type { SlashCommand } from './types.js'
 
+import { createAgent } from './agent.js'
+import { BUILTIN_WORKFLOWS, createWorkflowRegistry, executeWorkflow } from './workflows/index.js'
+import { createSession } from '../session/session.js'
+import { generateId } from '../shared/index.js'
+
 function parseSlashInput(input: string): { name: string; args: string } | null {
   const trimmed = input.trim()
   if (!trimmed.startsWith('/')) return null
@@ -42,6 +47,7 @@ const helpCommand: SlashCommand = {
       '  /help           Show this help',
       '  /fork [index]   Fork session from a message',
       '  /config [k][v]  View or set configuration',
+      '  /workflow       Manage and run workflows',
     ]
     return { _tag: 'text', text: lines.join('\n') }
   },
@@ -115,6 +121,91 @@ const configCommand: SlashCommand = {
   },
 }
 
+const workflowCommand: SlashCommand = {
+  name: 'workflow',
+  description: 'Manage and run workflows',
+  argsHint: '[run|show|list] [name] [args]',
+  execute: async (args, ctx) => {
+    const parts = args.split(/\s+/).filter(Boolean)
+    const subcommand = parts[0] ?? 'list'
+
+    let registry = ctx.workflowRegistry
+    if (!registry) {
+      // 回退：创建仅含内置的注册表
+      registry = createWorkflowRegistry()
+      for (const wf of BUILTIN_WORKFLOWS) {
+        registry.register(wf)
+      }
+    }
+
+    if (subcommand === 'list') {
+      const workflows = registry.list()
+      const lines = ['Available workflows:']
+      for (const wf of workflows) {
+        const phases = wf.meta.phases ? ` [${wf.meta.phases.join('→')}]` : ''
+        lines.push(
+          `  /${wf.meta.name}${phases}  — ${wf.meta.description} (${wf.source})`,
+        )
+      }
+      lines.push('')
+      lines.push('Usage: /workflow run <name> [args]')
+      return { _tag: 'text', text: lines.join('\n') }
+    }
+
+    if (subcommand === 'show') {
+      const name = parts[1]
+      if (!name) return { _tag: 'error', message: 'Usage: /workflow show <name>' }
+      const wf = registry.get(name)
+      if (!wf) {
+        return { _tag: 'error', message: `Unknown workflow: ${name}` }
+      }
+      const code = wf.sourceCode ?? '// source not available'
+      return {
+        _tag: 'text',
+        text: `// ${wf.meta.name}: ${wf.meta.description}\n\n${code}`,
+      }
+    }
+
+    if (subcommand === 'run') {
+      const name = parts[1]
+      if (!name) return { _tag: 'error', message: 'Usage: /workflow run <name> [args]' }
+      const wfArgs = parts.slice(2).join(' ')
+
+      const agentConfig = {
+        provider: ctx.config.defaultProvider,
+        model: ctx.config.defaultModel,
+        tools: [],
+        plugins: ctx.config.plugins.enabled,
+        agentName: 'default',
+      }
+      const session = await createSession(
+        ctx.deps.db,
+        `workflow:${name}`,
+        undefined,
+        'workflow',
+      )
+      const parent = await createAgent(
+        session,
+        agentConfig,
+        ctx.deps,
+      )
+
+      return executeWorkflow({
+        registry,
+        name,
+        args: wfArgs,
+        deps: ctx.deps,
+        parent,
+      })
+    }
+
+    return {
+      _tag: 'error',
+      message: `Unknown subcommand: ${subcommand}. Use: list, run, show`,
+    }
+  },
+}
+
 const builtinCommands: SlashCommand[] = [
   helpCommand,
   compactCommand,
@@ -122,6 +213,7 @@ const builtinCommands: SlashCommand[] = [
   clearCommand,
   forkCommand,
   configCommand,
+  workflowCommand,
 ]
 
 export type { SlashRegistry }

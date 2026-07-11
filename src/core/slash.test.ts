@@ -121,3 +121,63 @@ describe('builtin commands', () => {
     expect(result._tag).toBe('compact')
   })
 })
+
+describe('workflow command', () => {
+  it('is registered in builtin commands', () => {
+    const reg = createSlashRegistry()
+    expect(reg.has('workflow')).toBe(true)
+  })
+
+  it('/workflow without subcommand lists available workflows', async () => {
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('Available')
+    }
+  })
+
+  it('/workflow show <name> displays source code', async () => {
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('show security-audit', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('security-audit')
+    }
+  })
+
+  it('/workflow show <unknown> returns error', async () => {
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('show nonexistent', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+  })
+
+  it('/workflow run <unknown> returns error', async () => {
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('run nonexistent', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('nonexistent')
+    }
+  })
+})
