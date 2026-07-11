@@ -29,6 +29,18 @@ const content = css`
   padding-top: 2px;
 `
 
+/** 连续 tool 组：flex column + gap，确保展开后块间有间距不重叠 */
+const groupContent = css`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+`
+
+/** 连续 tool 组行：stretch 让 PartDecoration 竖线贯通全组高度 */
+const toolGroupRow = css`
+  align-items: stretch;
+`
+
 /** 可 shake 但未选中：淡琥珀色高亮，可点击 */
 const shakeable = css`
   border-radius: 6px;
@@ -104,14 +116,63 @@ function matchShakeRegions(block: RenderBlock, msgRegions: ShakeRegionView[]): S
   return []
 }
 
+type ToolRenderBlock = Extract<RenderBlock, { type: 'tool' }>
+
+/**
+ * 把连续的 tool 块合并为一组，用于共享装饰列的紧凑渲染。
+ * 非 tool 块各自成组（单元素数组）。
+ */
+function groupConsecutiveTools(blocks: RenderBlock[]): RenderBlock[][] {
+  const result: RenderBlock[][] = []
+  let i = 0
+  while (i < blocks.length) {
+    const cur = blocks[i]
+    if (!cur) break
+    if (cur.type === 'tool') {
+      const group: RenderBlock[] = [cur]
+      i++
+      while (i < blocks.length) {
+        const next = blocks[i]
+        if (!next || next.type !== 'tool') break
+        group.push(next)
+        i++
+      }
+      result.push(group)
+    } else {
+      result.push([cur])
+      i++
+    }
+  }
+  return result
+}
+
 export function MessageItem({ message, latency }: { message: Message; latency?: number }) {
   const shake = useShakeMode()
   const blocks = normalizeParts(message)
   const msgRegions = shake?.enabled ? (shake.regionsByMessage.get(message.id) ?? []) : []
 
+  // shake 模式需逐块高亮，不分组；正常模式合并连续 tool 以紧凑显示
+  const groups = shake?.enabled ? blocks.map((b) => [b]) : groupConsecutiveTools(blocks)
+
   return (
     <div className={wrap} data-testid="message" data-role={message.role} data-msg-id={message.id}>
-      {blocks.map((block) => {
+      {groups.map((group, gi) => {
+        // 连续 tool 组：共享装饰列 + 紧凑堆叠
+        if (group.length > 1 && group.every((b) => b.type === 'tool')) {
+          const head = group[0]!
+          return (
+            <div className={`${row} ${toolGroupRow}`} key={`tg-${gi}`}>
+              <PartDecoration block={head} />
+              <div className={`${content} ${groupContent}`}>
+                {group.map((b) => (
+                  <ToolBlock key={b.id!} block={b as ToolRenderBlock} compact />
+                ))}
+              </div>
+            </div>
+          )
+        }
+
+        const block = group[0]!
         // shake 高亮：先计算，以便传递 forceExpand 给折叠块
         const blockRegions = msgRegions.length > 0 ? matchShakeRegions(block, msgRegions) : []
         const shakeActive = blockRegions.length > 0

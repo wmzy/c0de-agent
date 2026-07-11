@@ -44,6 +44,12 @@ const header = css`
   text-align: left;
 `
 
+/** 紧凑模式：连续 tool 组内减小 header 上下内距 */
+const headerCompact = css`
+  padding-top: 1px;
+  padding-bottom: 1px;
+`
+
 const icon = css`
   width: 14px;
   flex-shrink: 0;
@@ -76,9 +82,11 @@ const body = css`
 export function ToolBlock({
   block,
   forceExpand,
+  compact,
 }: {
   block: ToolRenderBlock
   forceExpand?: boolean
+  compact?: boolean
 }) {
   const { tool, input, output, status: st } = block
 
@@ -112,7 +120,7 @@ export function ToolBlock({
       <div
         role="button"
         tabIndex={0}
-        className={header}
+        className={`${header} ${compact ? headerCompact : ''}`}
         data-testid="tool-header"
         data-expanded={isExpanded}
         onClick={toggle}
