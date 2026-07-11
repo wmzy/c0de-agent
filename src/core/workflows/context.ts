@@ -184,10 +184,14 @@ async function grepRecursive(
   return results
 }
 
-/** 按子目录拆分模块。 */
+/**
+ * 按目录拆分模块。depth=N 时从 rootDir 向下走 N 层，每棵深度为 N 的子目录成为一个模块；
+ * 深度不足 N 的叶子目录（没有子目录）也成为一个模块，避免被跳过。
+ * 模块名 = 相对 rootDir 的路径（如 "src/a"）；rootDir 自身成为模块时命名为 "root"。
+ */
 async function splitByDir(
   rootDir: string,
-  _depth: number,
+  depth: number,
   ignore: string[],
 ): Promise<Array<{ name: string; path: string; files: string[] }>> {
   const modules: Array<{ name: string; path: string; files: string[] }> = []
@@ -213,31 +217,49 @@ async function splitByDir(
     return files
   }
 
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await readdir(rootDir, { withFileTypes: true })
-  } catch {
-    return modules
+  async function readSubdirs(dir: string): Promise<import('node:fs').Dirent[]> {
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    return entries.filter(
+      (e) => e.isDirectory() && !e.name.startsWith('.') && !ignore.includes(e.name),
+    )
   }
 
-  const subdirs = entries.filter(
-    (e) => e.isDirectory() && !e.name.startsWith('.') && !ignore.includes(e.name),
-  )
-
-  if (subdirs.length === 0) {
-    modules.push({ name: 'root', path: rootDir, files: await collectFiles(rootDir) })
-    return modules
-  }
-
-  for (const subdir of subdirs) {
-    const dirPath = join(rootDir, subdir.name)
+  async function pushModule(dir: string): Promise<void> {
+    const rel = relative(rootDir, dir)
     modules.push({
-      name: subdir.name,
-      path: dirPath,
-      files: await collectFiles(dirPath),
+      name: rel === '' ? 'root' : rel,
+      path: dir,
+      files: await collectFiles(dir),
     })
   }
 
+  async function collectModules(currentDir: string, currentDepth: number): Promise<void> {
+    // 到达目标深度：当前目录成为模块
+    if (currentDepth >= depth) {
+      await pushModule(currentDir)
+      return
+    }
+
+    // 未到达目标深度：继续向下走
+    const subdirs = await readSubdirs(currentDir)
+
+    // 深度不足 N 的叶子目录（无子目录）：成为模块，避免被跳过
+    if (subdirs.length === 0) {
+      await pushModule(currentDir)
+      return
+    }
+
+    for (const subdir of subdirs) {
+      await collectModules(join(currentDir, subdir.name), currentDepth + 1)
+    }
+  }
+
+  await collectModules(rootDir, 0)
   return modules
 }
 

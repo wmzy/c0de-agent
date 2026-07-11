@@ -197,6 +197,60 @@ describe('buildWorkflowContext', () => {
     expect(names).toContain('modB')
   })
 
+  it('utils.splitByDirectory with depth=2 partitions by nested directories', async () => {
+    // Structure: root/a/b/, root/a/c/, root/d/
+    // depth=2 should produce modules: "a/b", "a/c", "d"
+    await mkdir(join(tmpDir, 'a', 'b'), { recursive: true })
+    await mkdir(join(tmpDir, 'a', 'c'), { recursive: true })
+    await mkdir(join(tmpDir, 'd'), { recursive: true })
+    await writeFile(join(tmpDir, 'a', 'b', 'b1.ts'), 'x')
+    await mkdir(join(tmpDir, 'a', 'b', 'sub'), { recursive: true })
+    await writeFile(join(tmpDir, 'a', 'b', 'sub', 'b2.ts'), 'y')
+    await writeFile(join(tmpDir, 'a', 'c', 'c1.ts'), 'z')
+    await writeFile(join(tmpDir, 'd', 'd1.ts'), 'w')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    const modules = await ctx.utils.splitByDirectory(tmpDir, { depth: 2 })
+    const names = modules.map((m) => m.name).sort()
+    expect(names).toEqual(['a/b', 'a/c', 'd'])
+
+    // "d" has no subdir at level 2, so it becomes a module itself
+    const dMod = modules.find((m) => m.name === 'd')
+    expect(dMod).toBeDefined()
+    expect(dMod?.files).toEqual(['d/d1.ts'])
+
+    // files collected recursively within each module's directory
+    const abMod = modules.find((m) => m.name === 'a/b')
+    expect(abMod).toBeDefined()
+    expect(abMod?.files.sort()).toEqual(['a/b/b1.ts', 'a/b/sub/b2.ts'])
+
+    const acMod = modules.find((m) => m.name === 'a/c')
+    expect(acMod).toBeDefined()
+    expect(acMod?.files).toEqual(['a/c/c1.ts'])
+  })
+
+  it('utils.splitByDirectory defaults to depth=1', async () => {
+    await mkdir(join(tmpDir, 'x', 'y'), { recursive: true })
+    await writeFile(join(tmpDir, 'x', 'x1.ts'), 'x')
+    await writeFile(join(tmpDir, 'x', 'y', 'y1.ts'), 'y')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    // no depth option -> defaults to 1: only immediate subdirectory "x"
+    const modules = await ctx.utils.splitByDirectory(tmpDir)
+    const names = modules.map((m) => m.name)
+    expect(names).toEqual(['x'])
+    // recursive collection still grabs nested files
+    expect(modules[0]?.files.sort()).toEqual(['x/x1.ts', 'x/y/y1.ts'])
+  })
+
   it('utils.grep finds matching lines', async () => {
     await writeFile(join(tmpDir, 'search.ts'), 'const hello = "world"\nconst foo = "bar"')
     const ctx = buildWorkflowContext({
