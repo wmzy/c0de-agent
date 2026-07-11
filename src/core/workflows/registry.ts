@@ -1,4 +1,6 @@
 import type { WorkflowEntry } from './types.js'
+import { BUILTIN_WORKFLOWS } from './builtins.js'
+import { discoverWorkflows } from './discovery.js'
 
 /** 工作流注册表：内存 Map<name, WorkflowEntry>，后注册覆盖同名。 */
 function createWorkflowRegistry() {
@@ -25,5 +27,25 @@ function createWorkflowRegistry() {
 
 type WorkflowRegistry = ReturnType<typeof createWorkflowRegistry>
 
+/**
+ * 创建并填充工作流注册表：
+ *  1. 注册内置工作流
+ *  2. 发现并注册项目 `.c0de/workflows/*.js`
+ *  后注册覆盖同名（project > builtin）。
+ */
+async function createAndPopulateRegistry(projectDir: string): Promise<WorkflowRegistry> {
+  const registry = createWorkflowRegistry()
+  // 1. 内置
+  for (const wf of BUILTIN_WORKFLOWS) {
+    registry.register(wf)
+  }
+  // 2. 项目级
+  const discovered = await discoverWorkflows(projectDir)
+  for (const wf of discovered) {
+    registry.register(wf)
+  }
+  return registry
+}
+
 export type { WorkflowRegistry }
-export { createWorkflowRegistry }
+export { createAndPopulateRegistry, createWorkflowRegistry }
