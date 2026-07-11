@@ -22,6 +22,10 @@ function createWorkflowRegistry() {
     delete(name: string): boolean {
       return entries.delete(name)
     },
+    /** 清空注册表（热重载前调用）。 */
+    clear() {
+      entries.clear()
+    },
   }
 }
 
@@ -53,5 +57,22 @@ async function createAndPopulateRegistry(projectDir: string): Promise<WorkflowRe
   return registry
 }
 
+/**
+ * 重新填充已有注册表：清空 → 三级发现 → 注册。
+ * 用于 create/save 后热重载，保留同一 registry 引用。
+ */
+async function reloadRegistry(registry: WorkflowRegistry, projectDir: string): Promise<void> {
+  registry.clear()
+  for (const wf of await createBuiltinWorkflows()) {
+    registry.register(wf)
+  }
+  for (const wf of await discoverGlobalWorkflows()) {
+    registry.register(wf)
+  }
+  for (const wf of await discoverWorkflows(projectDir)) {
+    registry.register(wf)
+  }
+}
+
 export type { WorkflowRegistry }
-export { createAndPopulateRegistry, createWorkflowRegistry }
+export { createAndPopulateRegistry, createWorkflowRegistry, reloadRegistry }

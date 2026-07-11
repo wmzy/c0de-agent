@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -76,4 +76,59 @@ async function discoverGlobalWorkflows(): Promise<WorkflowEntry[]> {
   return discoverFromDir(join(homedir(), GLOBAL_WORKFLOWS_DIR), 'user')
 }
 
-export { discoverGlobalWorkflows, discoverWorkflows }
+/** 合法工作流名称：仅小写字母、数字、连字符。 */
+const WORKFLOW_NAME_RE = /^[a-z0-9-]+$/
+
+/** saveWorkflow 的目标层级。 */
+type SaveTarget = 'project' | 'user'
+
+/** saveWorkflow 的结果。 */
+type SaveResult =
+  | { ok: true; filePath: string; meta: WorkflowMeta }
+  | { ok: false; error: string }
+
+/**
+ * 将工作流源码保存到磁盘并验证可加载。
+ *
+ * - name 必须匹配 `[a-z0-9-]+`
+ * - 写入 `<projectDir>/.c0de/workflows/<name>.js`（project）或 `~/.c0de/workflows/<name>.js`（user）
+ * - 写入后 dynamic import 验证 meta + default 导出存在；验证失败则删除文件
+ * - 返回 { ok, filePath, meta } 或 { ok: false, error }
+ */
+async function saveWorkflow(
+  name: string,
+  source: string,
+  target: SaveTarget = 'project',
+  projectDir?: string,
+): Promise<SaveResult> {
+  if (!WORKFLOW_NAME_RE.test(name)) {
+    return { ok: false, error: `Invalid workflow name "${name}": must match [a-z0-9-]+` }
+  }
+
+  const dir =
+    target === 'project'
+      ? join(projectDir ?? '.', PROJECT_WORKFLOWS_DIR)
+      : join(homedir(), GLOBAL_WORKFLOWS_DIR)
+
+  await mkdir(dir, { recursive: true })
+  const filePath = join(dir, `${name}.js`)
+  await writeFile(filePath, source, 'utf-8')
+
+  // 验证：dynamic import 检查 meta + default
+  try {
+    const fileUrl = pathToFileURL(filePath).href
+    const mod = (await import(`${fileUrl}#${Date.now()}`)) as Partial<WorkflowModule>
+    if (!mod.meta || typeof mod.default !== 'function') {
+      await unlink(filePath)
+      return { ok: false, error: 'Workflow source missing `export const meta` or default export' }
+    }
+    const meta: WorkflowMeta = { ...mod.meta, name: mod.meta.name ?? name }
+    return { ok: true, filePath, meta }
+  } catch (e) {
+    await unlink(filePath)
+    return { ok: false, error: `Failed to load workflow: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+export { discoverGlobalWorkflows, discoverWorkflows, saveWorkflow }
+export type { SaveResult, SaveTarget }

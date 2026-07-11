@@ -96,6 +96,7 @@ Prefer one wide batch over serial calls when work items do not share files. If t
 - **Completeness critic** — after the first batch, dispatch one read-only critic that asks what was missed.
 - **No silent caps** — if you bound coverage (top-N, sampling), state what was dropped and why.
 - **Parent owns closure** — subagents return evidence; the parent reads it, resolves contradictions, runs proof, and makes the final decision.
+- **Save reusable workflows** — if the fan-out pattern is reusable, save it as a \`/workflow create <name>\` command. Generate a JS file with \`export const meta = { name, description, phases }\` and a default async function that orchestrates via \`ctx.runSubagents\`. Use the REST API \`POST /api/workflows\` with body \`{ name, source }\` to save it, or write the file directly to \`.c0de/workflows/<name>.js\`. Saved workflows become slash commands (\`/<name>\`) that can be re-run anytime.
 </patterns>
 
 <execution>
@@ -120,9 +121,11 @@ export function buildWorkflowNotice(
       ? `\n<registered-workflows>
 Available workflow templates you can invoke with the task tool's workflow parameter:
 ${workflows.map((w) => `- ${w.name}: ${w.description}`).join('\n')}
-If none fit, orchestrate inline using runSubagent fan-out as described below.
+If none fit, orchestrate inline using runSubagent fan-out as described below, then save your workflow with POST /api/workflows { name, source } for reuse.
 </registered-workflows>`
-      : ''
+      : `\n<registered-workflows>
+No saved workflows yet. After orchestrating a successful fan-out, save it with POST /api/workflows { name, source } for reuse.
+</registered-workflows>`
 
   return WORKFLOW_NOTICE + registeredSection
 }

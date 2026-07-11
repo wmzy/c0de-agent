@@ -45,6 +45,8 @@ export type {
 } from './types.js'
 export { buildWorkflowNotice, containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
 export type {
+  SaveResult,
+  SaveTarget,
   WorkflowAgentResult,
   WorkflowContext,
   WorkflowEntry,
@@ -61,4 +63,6 @@ export {
   createWorkflowRegistry,
   discoverWorkflows,
   executeWorkflow,
+  reloadRegistry,
+  saveWorkflow,
 } from './workflows/index.js'

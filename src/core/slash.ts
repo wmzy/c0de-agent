@@ -2,7 +2,13 @@ import { createSession } from '../session/session.js'
 
 import { createAgent } from './agent.js'
 import type { SlashCommand } from './types.js'
-import { BUILTIN_WORKFLOWS, createWorkflowRegistry, executeWorkflow } from './workflows/index.js'
+import {
+  BUILTIN_WORKFLOWS,
+  createWorkflowRegistry,
+  executeWorkflow,
+  reloadRegistry,
+  saveWorkflow,
+} from './workflows/index.js'
 
 function parseSlashInput(input: string): { name: string; args: string } | null {
   const trimmed = input.trim()
@@ -123,7 +129,7 @@ const configCommand: SlashCommand = {
 const workflowCommand: SlashCommand = {
   name: 'workflow',
   description: 'Manage and run workflows',
-  argsHint: '[run|show|list] [name] [args]',
+  argsHint: '[list|run|show|create|edit] [name] [args]',
   execute: async (args, ctx) => {
     const parts = args.split(/\s+/).filter(Boolean)
     const subcommand = parts[0] ?? 'list'
@@ -145,7 +151,11 @@ const workflowCommand: SlashCommand = {
         lines.push(`  /${wf.meta.name}${phases}  — ${wf.meta.description} (${wf.source})`)
       }
       lines.push('')
-      lines.push('Usage: /workflow run <name> [args]')
+      lines.push('Usage:')
+      lines.push('  /workflow run <name> [args]     — 执行工作流')
+      lines.push('  /workflow create <name> --file <path>  — 从文件创建工作流')
+      lines.push('  /workflow edit <name>           — 编辑工作流源码')
+      lines.push('  /workflow show <name>           — 查看工作流源码')
       return { _tag: 'text', text: lines.join('\n') }
     }
 
@@ -161,6 +171,70 @@ const workflowCommand: SlashCommand = {
         _tag: 'text',
         text: `// ${wf.meta.name}: ${wf.meta.description}\n\n${code}`,
       }
+    }
+
+    if (subcommand === 'create') {
+      const name = parts[1]
+      if (!name) return { _tag: 'error', message: 'Usage: /workflow create <name> --file <path>' }
+
+      // 解析 --file <path> 参数
+      const fileIdx = parts.indexOf('--file')
+      if (fileIdx === -1 || !parts[fileIdx + 1]) {
+        return { _tag: 'error', message: 'Usage: /workflow create <name> --file <path>\nTip: 也可通过 REST API POST /api/workflows { name, source } 创建' }
+      }
+      const filePath = parts[fileIdx + 1] ?? ''
+
+      let source: string
+      try {
+        source = await import('node:fs/promises').then((fs) => fs.readFile(filePath, 'utf-8'))
+      } catch {
+        return { _tag: 'error', message: `Cannot read file: ${filePath}` }
+      }
+
+      const result = await saveWorkflow(name, source, 'project', ctx.cwd)
+      if (!result.ok) {
+        return { _tag: 'error', message: result.error }
+      }
+
+      // 热重载注册表
+      if (ctx.workflowRegistry) {
+        await reloadRegistry(ctx.workflowRegistry, ctx.cwd)
+      }
+
+      return {
+        _tag: 'success',
+        message: `Workflow "${name}" saved to ${result.filePath}\n现在可以用 /workflow run ${name} 执行，或在对话中输入 /${name} 调用。`,
+      }
+    }
+
+    if (subcommand === 'edit') {
+      const name = parts[1]
+      if (!name) return { _tag: 'error', message: 'Usage: /workflow edit <name>' }
+      const wf = registry.get(name)
+      if (!wf) {
+        return { _tag: 'error', message: `Unknown workflow: ${name}` }
+      }
+      if (wf.source === 'builtin') {
+        return { _tag: 'error', message: 'Cannot edit builtin workflow. Fork it first: /workflow create <new-name> --file <path>' }
+      }
+      if (!wf.filePath) {
+        return { _tag: 'error', message: `Workflow file path not available for "${name}"` }
+      }
+
+      const editor = process.env.EDITOR || process.env.VISUAL || 'vi'
+      try {
+        const { spawnSync } = await import('node:child_process')
+        spawnSync(editor, [wf.filePath], { stdio: 'inherit' })
+      } catch {
+        return { _tag: 'error', message: `Failed to launch editor: ${editor}` }
+      }
+
+      // 编辑后热重载
+      if (ctx.workflowRegistry) {
+        await reloadRegistry(ctx.workflowRegistry, ctx.cwd)
+      }
+
+      return { _tag: 'success', message: `Workflow "${name}" reloaded after edit.` }
     }
 
     if (subcommand === 'run') {
@@ -189,7 +263,7 @@ const workflowCommand: SlashCommand = {
 
     return {
       _tag: 'error',
-      message: `Unknown subcommand: ${subcommand}. Use: list, run, show`,
+      message: `Unknown subcommand: ${subcommand}. Use: list, run, show, create, edit`,
     }
   },
 }

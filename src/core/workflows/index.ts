@@ -1,8 +1,9 @@
 export { BUILTIN_WORKFLOWS, createBuiltinWorkflows } from './builtins.js'
 export { buildWorkflowContext } from './context.js'
-export { discoverGlobalWorkflows, discoverWorkflows } from './discovery.js'
+export { discoverGlobalWorkflows, discoverWorkflows, saveWorkflow } from './discovery.js'
+export type { SaveResult, SaveTarget } from './discovery.js'
 export type { WorkflowRegistry } from './registry.js'
-export { createAndPopulateRegistry, createWorkflowRegistry } from './registry.js'
+export { createAndPopulateRegistry, createWorkflowRegistry, reloadRegistry } from './registry.js'
 export { executeWorkflow } from './runtime.js'
 export type {
   WorkflowAgentResult,

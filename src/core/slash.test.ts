@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
@@ -178,6 +181,84 @@ describe('workflow command', () => {
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
       expect(result.message).toContain('nonexistent')
+    }
+  })
+
+  it('/workflow create saves workflow from file and reloads registry', async () => {
+    // 准备临时项目目录和工作流源码文件
+    const projDir = await mkdtemp(join(tmpdir(), 'wf-create-'))
+    const sourceFile = join(projDir, 'my-audit.js')
+    const wfSource = `
+export const meta = { name: 'my-audit', description: 'test create', phases: ['scan'] }
+export default async function workflow(ctx) {
+  return { output: 'created' }
+}
+`
+    await writeFile(sourceFile, wfSource, 'utf-8')
+
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute(`create my-audit --file ${sourceFile}`, {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.message).toContain('my-audit')
+      expect(result.message).toContain('saved')
+    }
+
+    // 验证文件被写入 .c0de/workflows/
+    const { readFile } = await import('node:fs/promises')
+    const savedPath = join(projDir, '.c0de/workflows', 'my-audit.js')
+    const savedContent = await readFile(savedPath, 'utf-8')
+    expect(savedContent).toContain('test create')
+
+    await rm(projDir, { recursive: true, force: true })
+  })
+
+  it('/workflow create without --file returns error', async () => {
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('create my-wf', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('--file')
+    }
+  })
+
+  it('/workflow create with unreadable file returns error', async () => {
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('create my-wf --file /nonexistent/path.js', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('Cannot read')
+    }
+  })
+
+  it('/workflow list shows create/edit in usage', async () => {
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('list', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('create')
+      expect(result.text).toContain('edit')
     }
   })
 })

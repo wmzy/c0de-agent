@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { discoverGlobalWorkflows, discoverWorkflows } from './discovery.js'
+import { discoverGlobalWorkflows, discoverWorkflows, saveWorkflow } from './discovery.js'
 
 let tmpDir: string
 
@@ -139,5 +139,106 @@ export default async function workflow(ctx) {
     const entries = await discoverGlobalWorkflows()
     expect(entries[0]?.meta.name).toBe('fallback-global')
     expect(entries[0]?.source).toBe('user')
+  })
+})
+
+describe('saveWorkflow', () => {
+  const originalHome = process.env.HOME
+  let homeDir: string
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'wf-save-home-'))
+    process.env.HOME = homeDir
+  })
+
+  afterEach(async () => {
+    if (originalHome === undefined) {
+      delete process.env.HOME
+    } else {
+      process.env.HOME = originalHome
+    }
+    await rm(homeDir, { recursive: true, force: true })
+  })
+
+  const VALID_SOURCE = `
+export const meta = { name: 'my-wf', description: 'saved workflow', phases: ['scan', 'report'] }
+export default async function workflow(ctx) {
+  return { output: 'done' }
+}
+`
+
+  it('saves valid workflow to project dir and returns meta + filePath', async () => {
+    const result = await saveWorkflow('my-wf', VALID_SOURCE, 'project', tmpDir)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.meta.name).toBe('my-wf')
+      expect(result.meta.description).toBe('saved workflow')
+      expect(result.filePath).toBe(join(tmpDir, '.c0de/workflows', 'my-wf.js'))
+    }
+    // 保存后能被 discoverWorkflows 发现
+    const entries = await discoverWorkflows(tmpDir)
+    expect(entries.some((e) => e.meta.name === 'my-wf')).toBe(true)
+  })
+
+  it('saves valid workflow to user (~/.c0de/workflows) dir', async () => {
+    const result = await saveWorkflow('my-wf', VALID_SOURCE, 'user')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.filePath).toBe(join(homeDir, '.c0de', 'workflows', 'my-wf.js'))
+    }
+  })
+
+  it('rejects invalid name with path traversal characters', async () => {
+    const result = await saveWorkflow('../etc/passwd', VALID_SOURCE, 'project', tmpDir)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error).toContain('Invalid workflow name')
+    }
+  })
+
+  it('rejects invalid name with uppercase letters', async () => {
+    const result = await saveWorkflow('MyWorkflow', VALID_SOURCE, 'project', tmpDir)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error).toContain('Invalid workflow name')
+    }
+  })
+
+  it('rejects source missing meta export', async () => {
+    const badSource = `
+export default async function workflow(ctx) {
+  return { output: 'done' }
+}
+`
+    const result = await saveWorkflow('bad-wf', badSource, 'project', tmpDir)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error).toContain('meta')
+    }
+  })
+
+  it('rejects source missing default export', async () => {
+    const badSource = `
+export const meta = { name: 'bad-wf', description: 'no default' }
+`
+    const result = await saveWorkflow('bad-wf', badSource, 'project', tmpDir)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error).toContain('default')
+    }
+  })
+
+  it('uses filename as fallback name when meta.name is absent', async () => {
+    const noNameSource = `
+export const meta = { description: 'fallback name' }
+export default async function workflow(ctx) {
+  return { output: 'ok' }
+}
+`
+    const result = await saveWorkflow('fallback-name', noNameSource, 'project', tmpDir)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.meta.name).toBe('fallback-name')
+    }
   })
 })

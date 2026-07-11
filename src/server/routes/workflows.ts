@@ -3,6 +3,8 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent } from '../../core/agent.js'
 import { executeWorkflow } from '../../core/workflows/runtime.js'
+import { reloadRegistry } from '../../core/workflows/registry.js'
+import { saveWorkflow } from '../../core/workflows/discovery.js'
 import { createSession } from '../../session/session.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import { apiError } from '../middleware/error.js'
@@ -26,6 +28,43 @@ function createWorkflowsRoute(ctx: ServerContext) {
       source: entry.source,
     }))
     return c.json({ workflows })
+  })
+
+  // POST / — 创建/保存工作流（写入 .c0de/workflows/<name>.js，验证后热重载注册表）
+  app.post('/', async (c) => {
+    const registry = ctx.workflowRegistry
+    if (!registry) {
+      return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
+    }
+
+    const body = await c.req.json().catch(() => ({}))
+    const { name, source, target } = body as { name?: string; source?: string; target?: 'project' | 'user' }
+
+    if (!name || typeof name !== 'string') {
+      return apiError(c, 400, 'BAD_REQUEST', 'Missing required field: name')
+    }
+    if (!source || typeof source !== 'string') {
+      return apiError(c, 400, 'BAD_REQUEST', 'Missing required field: source')
+    }
+
+    // 保存到磁盘 + dynamic import 验证
+    const result = await saveWorkflow(name, source, target ?? 'project', ctx.cwd)
+    if (!result.ok) {
+      return apiError(c, 400, 'SAVE_FAILED', result.error)
+    }
+
+    // 热重载注册表（清空 → 三级重新发现）
+    await reloadRegistry(registry, ctx.cwd)
+
+    const entry = registry.get(name)
+    return c.json({
+      ok: true,
+      name: result.meta.name,
+      description: result.meta.description,
+      filePath: result.filePath,
+      phases: entry?.meta.phases,
+      source: entry?.source ?? 'project',
+    })
   })
 
   // GET /:name — 元数据 + 源码

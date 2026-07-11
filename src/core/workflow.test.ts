@@ -92,9 +92,10 @@ describe('buildWorkflowNotice', () => {
     expect(notice).toContain('code-review')
   })
 
-  it('works without workflows (backward compatible)', () => {
+  it('shows empty-state message when workflows list is empty', () => {
     const notice = buildWorkflowNotice([])
     expect(notice).toContain('workflowz')
-    expect(notice).not.toContain('registered-workflows')
+    expect(notice).toContain('registered-workflows')
+    expect(notice).toContain('No saved workflows yet')
   })
 })

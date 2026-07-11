@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
@@ -13,18 +14,36 @@ import type { ServerContext } from '../types.js'
 import { createWorkflowsRoute } from './workflows.js'
 
 let dbHandle: DB | undefined
+let projectCwd: string
+const originalHome = process.env.HOME
+
+beforeEach(async () => {
+  projectCwd = await mkdtemp(join(tmpdir(), 'wf-api-proj-'))
+  // 隔离 HOME：saveWorkflow 和全局发现都读取 homedir()
+  const tmpHome = await mkdtemp(join(tmpdir(), 'wf-api-home-'))
+  process.env.HOME = tmpHome
+})
+
 afterEach(async () => {
   await dbHandle?.close()
   dbHandle = undefined
+  if (originalHome === undefined) {
+    delete process.env.HOME
+  } else {
+    process.env.HOME = originalHome
+  }
+  await rm(projectCwd, { recursive: true, force: true })
 })
 
 async function setup() {
   const db = await createDB({ driver: 'pglite' })
   dbHandle = db
   await migrateDB(db)
+  // 隔离 HOME：saveWorkflow 和全局发现都读取 homedir()
   const ctx = createServerContext({
     db,
     llmRegistry: createRegistry(),
+    cwd: projectCwd,
   })
   const app = createWorkflowsRoute(ctx)
   return { app, ctx }
@@ -225,5 +244,118 @@ describe('workflows route — registry not initialized', () => {
     expect(res.status).toBe(500)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe('NOT_INITIALIZED')
+  })
+})
+
+describe('workflows route — POST / (create)', () => {
+  const VALID_SOURCE = `
+export const meta = { name: 'api-wf', description: 'API created workflow', phases: ['scan'] }
+export default async function workflow(ctx) {
+  return { output: 'from api' }
+}
+`
+
+  it('creates a valid workflow and reloads registry', async () => {
+    const { app, ctx } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; name: string; description: string; filePath: string; source: string }
+    expect(body.ok).toBe(true)
+    expect(body.name).toBe('api-wf')
+    expect(body.description).toBe('API created workflow')
+    expect(body.filePath).toContain('api-wf.js')
+    expect(body.source).toBe('project')
+
+    // 注册表热重载后包含新工作流
+    expect(ctx.workflowRegistry?.has('api-wf')).toBe(true)
+
+    // 文件确实写入磁盘
+    expect(existsSync(body.filePath)).toBe(true)
+    const onDisk = await readFile(body.filePath, 'utf-8')
+    expect(onDisk).toContain('API created workflow')
+  })
+
+  it('returns 400 when name is missing', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: VALID_SOURCE }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('BAD_REQUEST')
+    expect(body.error.message).toContain('name')
+  })
+
+  it('returns 400 when source is missing', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('BAD_REQUEST')
+    expect(body.error.message).toContain('source')
+  })
+
+  it('returns 400 for invalid name (uppercase)', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'InvalidName', source: VALID_SOURCE }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('SAVE_FAILED')
+    expect(body.error.message).toContain('Invalid workflow name')
+  })
+
+  it('returns 400 for source missing default export', async () => {
+    const { app } = await setup()
+    const badSource = `export const meta = { name: 'bad', description: 'no default' }\n`
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'bad-wf', source: badSource }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('SAVE_FAILED')
+    expect(body.error.message).toContain('default')
+  })
+
+  it('returns 500 NOT_INITIALIZED when registry is undefined', async () => {
+    const ctx = makeCtxWithoutRegistry()
+    const app = createWorkflowsRoute(ctx)
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'test', source: VALID_SOURCE }),
+    })
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('NOT_INITIALIZED')
+  })
+
+  it('saves to user dir when target=user', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'user-wf', source: VALID_SOURCE, target: 'user' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; filePath: string }
+    expect(body.ok).toBe(true)
+    expect(body.filePath).toContain('.c0de')
+    expect(body.filePath).toContain('workflows')
   })
 })
