@@ -2,9 +2,9 @@
 
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import type { AgentRegistry } from '../core/agents/types.js'
+import { DEFAULT_CONFIG, mergeConfig } from '../core/config.js'
 import { BUILTIN_WORKFLOWS, createWorkflowRegistry } from '../core/workflows/index.js'
 import type { WorkflowRegistry } from '../core/workflows/registry.js'
-import { DEFAULT_CONFIG, mergeConfig } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import type { Registry } from '../llm/registry.js'
 import { createHookRunner, createPluginRegistry } from '../plugins/index.js'
