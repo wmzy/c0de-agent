@@ -43,7 +43,7 @@ export type {
   SlashCommand,
   TokenBudget,
 } from './types.js'
-export { containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
+export { buildWorkflowNotice, containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
 export {
   BUILTIN_WORKFLOWS,
   buildWorkflowContext,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
+import { buildWorkflowNotice, containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
 
 describe('containsWorkflow — keyword detection', () => {
   it('matches the standalone lowercase trigger word', () => {
@@ -78,5 +78,23 @@ describe('WORKFLOW_NOTICE', () => {
   it('uses MUST language to enforce task tool usage', () => {
     expect(WORKFLOW_NOTICE).toContain('MUST')
     expect(WORKFLOW_NOTICE).toContain('not optional')
+  })
+})
+
+describe('buildWorkflowNotice', () => {
+  it('appends registered workflows section when workflows provided', () => {
+    const notice = buildWorkflowNotice([
+      { name: 'security-audit', description: '安全审计' },
+      { name: 'code-review', description: '代码审查' },
+    ])
+    expect(notice).toContain('registered-workflows')
+    expect(notice).toContain('security-audit')
+    expect(notice).toContain('code-review')
+  })
+
+  it('works without workflows (backward compatible)', () => {
+    const notice = buildWorkflowNotice([])
+    expect(notice).toContain('workflowz')
+    expect(notice).not.toContain('registered-workflows')
   })
 })

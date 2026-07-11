@@ -107,3 +107,22 @@ Prefer one wide batch over serial calls when work items do not share files. If t
 - Keep going until the task is closed — returned fan-out is a step, not a stopping point.
 </execution>
 </workflow-notice>`
+
+/**
+ * 构建工作流 steering 通知：基础通知 + 可选的已注册工作流列表。
+ * 无工作流时退化为纯基础通知（向后兼容）。
+ */
+export function buildWorkflowNotice(
+  workflows?: Array<{ name: string; description: string }>,
+): string {
+  const registeredSection =
+    workflows && workflows.length > 0
+      ? `\n<registered-workflows>
+Available workflow templates you can invoke with the task tool's workflow parameter:
+${workflows.map((w) => `- ${w.name}: ${w.description}`).join('\n')}
+If none fit, orchestrate inline using runSubagent fan-out as described below.
+</registered-workflows>`
+      : ''
+
+  return WORKFLOW_NOTICE + registeredSection
+}

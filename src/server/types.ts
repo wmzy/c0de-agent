@@ -33,6 +33,8 @@ type ServerContext = {
   permissionMode: 'default' | 'auto'
   /** Agent 类型注册表（spec: multi-agent-design）。注入 agent loop 的 runSubAgent。 */
   agentRegistry: AgentRegistry
+  /** 工作流注册表（spec: dynamic-workflow-design）。注入 /workflow slash 命令和 workflowz steering。 */
+  workflowRegistry?: import('../core/workflows/registry.js').WorkflowRegistry
   /** 后台版本检查调度器（spec §18.1）；/api/update 读取其缓存结果。 */
   updateScheduler: UpdateScheduler
   /** Handoff HTTP 端点（spec §18.3）；热更新时新实例 POST /handoff 触发优雅退出。 undefined 表示未启用。 */

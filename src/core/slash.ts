@@ -3,7 +3,6 @@ import type { SlashCommand } from './types.js'
 import { createAgent } from './agent.js'
 import { BUILTIN_WORKFLOWS, createWorkflowRegistry, executeWorkflow } from './workflows/index.js'
 import { createSession } from '../session/session.js'
-import { generateId } from '../shared/index.js'
 
 function parseSlashInput(input: string): { name: string; args: string } | null {
   const trimmed = input.trim()
