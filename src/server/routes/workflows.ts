@@ -1,3 +1,4 @@
+import { unlink } from 'node:fs/promises'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent } from '../../core/agent.js'
@@ -124,8 +125,14 @@ function createWorkflowsRoute(ctx: ServerContext) {
   })
 
   // DELETE /:name — 删除（仅非 builtin）
-  app.delete('/:name', (c) => {
+  app.delete('/:name', async (c) => {
     const name = c.req.param('name')
+
+    // 名称格式校验（涉及文件系统操作前阻断路径穿越）
+    if (!/^[a-z0-9-]+$/.test(name)) {
+      return apiError(c, 400, 'BAD_REQUEST', `Invalid workflow name "${name}"`)
+    }
+
     const registry = ctx.workflowRegistry
     if (!registry) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
@@ -137,6 +144,16 @@ function createWorkflowsRoute(ctx: ServerContext) {
     if (entry.source === 'builtin') {
       return apiError(c, 400, 'BAD_REQUEST', 'Cannot delete builtin workflow')
     }
+
+    // 先从磁盘删除文件（若存在），失败则告知用户且不清理 registry 以保持状态一致
+    if (entry.filePath) {
+      try {
+        await unlink(entry.filePath)
+      } catch {
+        return apiError(c, 500, 'DELETE_FAILED', `Failed to delete workflow file for "${name}"`)
+      }
+    }
+
     registry.delete(name)
     return c.json({ ok: true })
   })

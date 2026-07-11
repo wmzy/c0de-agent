@@ -1,3 +1,7 @@
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
@@ -135,6 +139,49 @@ describe('workflows route — DELETE /:name', () => {
 
     // 已从 registry 中移除
     expect(ctx.workflowRegistry?.has('test-project-wf')).toBe(false)
+  })
+
+  it('removes the on-disk file (filePath) on DELETE', async () => {
+    const { app, ctx } = await setup()
+
+    // 模拟 .c0de/workflows/<name>.js：在临时目录中写入真实文件
+    const dir = await mkdtemp(join(tmpdir(), 'wf-delete-'))
+    const filePath = join(dir, 'disk-workflow.js')
+    await writeFile(filePath, '// fake on-disk workflow')
+    expect(existsSync(filePath)).toBe(true)
+
+    const fakeEntry: WorkflowEntry = {
+      meta: {
+        name: 'disk-workflow',
+        description: 'A workflow backed by a real file',
+      },
+      source: 'project',
+      filePath,
+      execute: async () => ({ output: 'done' }),
+      sourceCode: '// fake on-disk workflow',
+    }
+    ctx.workflowRegistry?.register(fakeEntry)
+
+    const res = await app.request('/disk-workflow', { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean }
+    expect(body.ok).toBe(true)
+
+    // 文件已从磁盘删除
+    expect(existsSync(filePath)).toBe(false)
+    // registry 中也已移除
+    expect(ctx.workflowRegistry?.has('disk-workflow')).toBe(false)
+
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('returns 400 BAD_REQUEST for an invalid name (path traversal guard)', async () => {
+    const { app } = await setup()
+    // 名称含下划线，不匹配 /^[a-z0-9-]+$/
+    const res = await app.request('/bad_name', { method: 'DELETE' })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('BAD_REQUEST')
   })
 
   it('deletes a user-level workflow (source !== builtin)', async () => {
