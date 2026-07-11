@@ -49,9 +49,7 @@ async function discoverWorkflows(projectDir: string): Promise<WorkflowEntry[]> {
         execute: mod.default,
       })
     } catch (e) {
-      console.warn(
-        `[workflow] failed to load ${file}: ${e instanceof Error ? e.message : e}`,
-      )
+      console.warn(`[workflow] failed to load ${file}: ${e instanceof Error ? e.message : e}`)
     }
   }
 

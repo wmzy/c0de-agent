@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { WorkflowContext, WorkflowEntry } from './types.js'
+import type { AgentDependencies, AgentState } from '../types.js'
 import { createWorkflowRegistry } from './registry.js'
 import { executeWorkflow } from './runtime.js'
-import type { AgentDependencies, AgentState } from '../types.js'
+import type { WorkflowContext, WorkflowEntry } from './types.js'
 
 function makeMockDeps(): AgentDependencies {
   return {

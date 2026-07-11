@@ -1,6 +1,6 @@
-import type { WorkflowEntry } from './types.js'
 import { BUILTIN_WORKFLOWS } from './builtins.js'
 import { discoverWorkflows } from './discovery.js'
+import type { WorkflowEntry } from './types.js'
 
 /** 工作流注册表：内存 Map<name, WorkflowEntry>，后注册覆盖同名。 */
 function createWorkflowRegistry() {

@@ -61,8 +61,10 @@ const securityAudit: (ctx: WorkflowContext) => Promise<WorkflowResult> = async (
   const modules = await utils.splitByDirectory(project.rootDir, { depth: 2 })
 
   progress(`并行扫描 ${modules.length} 个模块...`, { phase: 'scan' })
-  const scans = await runSubagents('researcher', modules.map((m) => ({
-    assignment: `你是安全扫描专家。扫描目录 ${m.path} 下的代码，检查以下安全风险：
+  const scans = await runSubagents(
+    'researcher',
+    modules.map((m) => ({
+      assignment: `你是安全扫描专家。扫描目录 ${m.path} 下的代码，检查以下安全风险：
 - SQL 注入风险
 - 硬编码密钥 / 密码 / Token
 - 权限绕过模式
@@ -72,8 +74,9 @@ const securityAudit: (ctx: WorkflowContext) => Promise<WorkflowResult> = async (
 文件列表：${m.files.slice(0, 50).join(', ')}
 
 返回 JSON：{ findings: [{ severity: 'critical|warning|info', file, line, issue, evidence }] }`,
-    description: `扫描 ${m.name}`,
-  })))
+      description: `扫描 ${m.name}`,
+    })),
+  )
 
   const allFindings = scans
     .filter((r) => r.ok)
@@ -86,13 +89,16 @@ const securityAudit: (ctx: WorkflowContext) => Promise<WorkflowResult> = async (
     })
 
   progress(`交叉验证 ${allFindings.length} 个发现...`, { phase: 'verify' })
-  const verified = await runSubagents('reviewer', allFindings.map((f) => ({
-    assignment: `对抗审查以下安全发现，判断是否为真实问题还是误报：
+  const verified = await runSubagents(
+    'reviewer',
+    allFindings.map((f) => ({
+      assignment: `对抗审查以下安全发现，判断是否为真实问题还是误报：
 ${JSON.stringify(f, null, 2)}
 
 返回 JSON：{ confirmed: boolean, reason: string, adjustedSeverity?: 'critical|warning|info' }`,
-    description: '验证发现',
-  })))
+      description: '验证发现',
+    })),
+  )
 
   const confirmed = verified
     .filter((r) => r.ok)
@@ -171,8 +177,10 @@ const codeReview: (ctx: WorkflowContext) => Promise<WorkflowResult> = async (ctx
   const dimensions = ['correctness', 'security', 'performance', 'maintainability']
 
   progress(`并行 ${dimensions.length} 个维度审查...`, { phase: 'review' })
-  const reviews = await runSubagents('reviewer', dimensions.map((dim) => ({
-    assignment: `你是 ${dim} 维度的代码审查专家。审查 ${target} 下的代码。
+  const reviews = await runSubagents(
+    'reviewer',
+    dimensions.map((dim) => ({
+      assignment: `你是 ${dim} 维度的代码审查专家。审查 ${target} 下的代码。
 
 关注点：
 ${dim === 'correctness' ? '- 逻辑正确性、边界条件、错误处理' : ''}
@@ -181,9 +189,10 @@ ${dim === 'performance' ? '- 性能瓶颈、不必要计算、内存泄漏' : ''
 ${dim === 'maintainability' ? '- 代码可读性、重复代码、命名规范' : ''}
 
 返回 JSON：{ findings: [{ severity: 'critical|warning|info', file, line, issue, suggestion }] }`,
-    description: `${dim} 审查`,
-    role: dim,
-  })))
+      description: `${dim} 审查`,
+      role: dim,
+    })),
+  )
 
   const allFindings = reviews
     .filter((r) => r.ok)
@@ -265,14 +274,17 @@ const migrationCheck: (ctx: WorkflowContext) => Promise<WorkflowResult> = async 
   const categories = ['breaking-changes', 'deprecated', 'new-features']
 
   progress(`并行分析 ${categories.length} 个类别...`, { phase: 'analyze' })
-  const analyses = await runSubagents('researcher', categories.map((cat) => ({
-    assignment: `你是代码迁移分析专家。分析项目 ${project.rootDir} 从 ${baseRef} 到当前的变更，
+  const analyses = await runSubagents(
+    'researcher',
+    categories.map((cat) => ({
+      assignment: `你是代码迁移分析专家。分析项目 ${project.rootDir} 从 ${baseRef} 到当前的变更，
 聚焦 ${cat === 'breaking-changes' ? '破坏性变更（API 签名变更、删除、行为变更）' : cat === 'deprecated' ? '已废弃的功能和 API' : '新增功能和特性'}。
 
 返回 JSON：{ items: [{ category: '${cat}', description, files, impact: 'high|medium|low' }] }`,
-    description: `${cat} 分析`,
-    role: cat,
-  })))
+      description: `${cat} 分析`,
+      role: cat,
+    })),
+  )
 
   const allItems = analyses
     .filter((r) => r.ok)
@@ -312,7 +324,8 @@ const BUILTIN_WORKFLOWS: WorkflowEntry[] = [
   {
     meta: {
       name: 'code-review',
-      description: '多维度代码审查：correctness/security/performance/maintainability 各派独立 reviewer',
+      description:
+        '多维度代码审查：correctness/security/performance/maintainability 各派独立 reviewer',
       argsHint: '[审查目标路径]',
       phases: ['review', 'merge'],
     },

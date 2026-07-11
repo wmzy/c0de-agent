@@ -196,13 +196,7 @@ function StatusDot({ status }: { status: WorkflowNodeStatus }) {
   )
 }
 
-function PhaseBar({
-  phases,
-  currentPhase,
-}: {
-  phases: string[]
-  currentPhase?: string
-}) {
+function PhaseBar({ phases, currentPhase }: { phases: string[]; currentPhase?: string }) {
   const currentIdx = currentPhase ? phases.indexOf(currentPhase) : -1
   return (
     <div className={phaseBar} data-testid="wf-phases">
@@ -267,9 +261,7 @@ export function WorkflowGraph({
       </div>
 
       {/* Phase 进度条 */}
-      {phases && phases.length > 0 && (
-        <PhaseBar phases={phases} currentPhase={currentPhase} />
-      )}
+      {phases && phases.length > 0 && <PhaseBar phases={phases} currentPhase={currentPhase} />}
 
       {/* 连接线 */}
       {nodes.length > 0 && <div className={connector} />}

@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
 import type { AgentDependencies, AgentState } from '../types.js'
@@ -97,10 +97,7 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
         return lines.slice(range.start - 1, range.end).join('\n')
       },
 
-      splitByDirectory: async (
-        dir: string,
-        opts?: { depth?: number; ignore?: string[] },
-      ) => {
+      splitByDirectory: async (dir: string, opts?: { depth?: number; ignore?: string[] }) => {
         return splitByDir(resolve(rootDir, dir), opts?.depth ?? 1, opts?.ignore ?? [])
       },
     },
@@ -115,7 +112,7 @@ async function globRecursive(rootDir: string, pattern: string): Promise<string[]
   const regex = new RegExp(pattern.replace(/\./g, '\\.').replace(/\*/g, '.*'))
 
   async function walk(dir: string): Promise<void> {
-    let entries
+    let entries: import('node:fs').Dirent[]
     try {
       entries = await readdir(dir, { withFileTypes: true })
     } catch {
@@ -151,7 +148,7 @@ async function grepRecursive(
   }
 
   async function walk(dir: string): Promise<void> {
-    let entries
+    let entries: import('node:fs').Dirent[]
     try {
       entries = await readdir(dir, { withFileTypes: true })
     } catch {
@@ -167,11 +164,12 @@ async function grepRecursive(
           const content = await readFile(fullPath, 'utf-8')
           const lines = content.split('\n')
           for (let i = 0; i < lines.length; i++) {
-            if (lines[i] && regex.test(lines[i]!)) {
+            const line = lines[i]
+            if (line && regex.test(line)) {
               results.push({
                 path: relative(rootDir, fullPath),
                 line: i + 1,
-                text: lines[i]!.trim(),
+                text: line.trim(),
               })
             }
           }
@@ -196,7 +194,7 @@ async function splitByDir(
 
   async function collectFiles(dir: string): Promise<string[]> {
     const files: string[] = []
-    let entries
+    let entries: import('node:fs').Dirent[]
     try {
       entries = await readdir(dir, { withFileTypes: true })
     } catch {
@@ -215,7 +213,7 @@ async function splitByDir(
     return files
   }
 
-  let entries
+  let entries: import('node:fs').Dirent[]
   try {
     entries = await readdir(rootDir, { withFileTypes: true })
   } catch {

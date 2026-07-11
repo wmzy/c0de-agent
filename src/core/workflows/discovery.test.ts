@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -37,11 +37,7 @@ describe('discoverWorkflows', () => {
   })
 
   it('skips files that fail to import and continues loading others', async () => {
-    await writeWorkflow(
-      join(tmpDir, '.c0de/workflows'),
-      'broken',
-      'this is not valid JS export',
-    )
+    await writeWorkflow(join(tmpDir, '.c0de/workflows'), 'broken', 'this is not valid JS export')
     await writeWorkflow(join(tmpDir, '.c0de/workflows'), 'good', VALID_WORKFLOW)
     const entries = await discoverWorkflows(tmpDir)
     // broken 文件（无 meta/default 导出）应跳过，good 应正常加载

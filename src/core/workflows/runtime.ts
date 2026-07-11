@@ -22,7 +22,10 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
 
   const entry = registry.get(name)
   if (!entry) {
-    const available = registry.list().map((e) => e.meta.name).join(', ')
+    const available = registry
+      .list()
+      .map((e) => e.meta.name)
+      .join(', ')
     return {
       _tag: 'error',
       message: `Unknown workflow: "${name}". Available: ${available || '(none)'}`,

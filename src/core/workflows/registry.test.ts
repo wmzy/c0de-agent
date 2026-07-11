@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { WorkflowEntry } from './types.js'
 import { createWorkflowRegistry } from './registry.js'
+import type { WorkflowEntry } from './types.js'
 
 function makeEntry(name: string, source: WorkflowEntry['source'] = 'builtin'): WorkflowEntry {
   return {

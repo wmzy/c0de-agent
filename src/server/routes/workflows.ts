@@ -70,25 +70,16 @@ function createWorkflowsRoute(ctx: ServerContext) {
       plugins: ctx.config.plugins.enabled,
       agentName: 'default',
     }
-    const session = await createSession(
-      ctx.db,
-      `workflow:${name}`,
-      undefined,
-      'workflow',
-    )
-    const parent = await createAgent(
-      session,
-      agentConfig,
-      {
-        db: ctx.db,
-        llmRegistry: ctx.llmRegistry,
-        toolRegistry: ctx.toolRegistry,
-        permission: autoAllowChecker,
-        config: ctx.config,
-        cwd: ctx.cwd,
-        agentRegistry: ctx.agentRegistry,
-      },
-    )
+    const session = await createSession(ctx.db, `workflow:${name}`, undefined, 'workflow')
+    const parent = await createAgent(session, agentConfig, {
+      db: ctx.db,
+      llmRegistry: ctx.llmRegistry,
+      toolRegistry: ctx.toolRegistry,
+      permission: autoAllowChecker,
+      config: ctx.config,
+      cwd: ctx.cwd,
+      agentRegistry: ctx.agentRegistry,
+    })
 
     return streamSSE(c, async (stream) => {
       const deps = {

@@ -1,8 +1,8 @@
-import type { SlashCommand } from './types.js'
+import { createSession } from '../session/session.js'
 
 import { createAgent } from './agent.js'
+import type { SlashCommand } from './types.js'
 import { BUILTIN_WORKFLOWS, createWorkflowRegistry, executeWorkflow } from './workflows/index.js'
-import { createSession } from '../session/session.js'
 
 function parseSlashInput(input: string): { name: string; args: string } | null {
   const trimmed = input.trim()
@@ -142,9 +142,7 @@ const workflowCommand: SlashCommand = {
       const lines = ['Available workflows:']
       for (const wf of workflows) {
         const phases = wf.meta.phases ? ` [${wf.meta.phases.join('→')}]` : ''
-        lines.push(
-          `  /${wf.meta.name}${phases}  — ${wf.meta.description} (${wf.source})`,
-        )
+        lines.push(`  /${wf.meta.name}${phases}  — ${wf.meta.description} (${wf.source})`)
       }
       lines.push('')
       lines.push('Usage: /workflow run <name> [args]')
@@ -177,17 +175,8 @@ const workflowCommand: SlashCommand = {
         plugins: ctx.config.plugins.enabled,
         agentName: 'default',
       }
-      const session = await createSession(
-        ctx.deps.db,
-        `workflow:${name}`,
-        undefined,
-        'workflow',
-      )
-      const parent = await createAgent(
-        session,
-        agentConfig,
-        ctx.deps,
-      )
+      const session = await createSession(ctx.deps.db, `workflow:${name}`, undefined, 'workflow')
+      const parent = await createAgent(session, agentConfig, ctx.deps)
 
       return executeWorkflow({
         registry,
