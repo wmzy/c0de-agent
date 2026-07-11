@@ -2,6 +2,25 @@ import type { AgentDependencies, AgentState, CommandResult } from '../types.js'
 import { buildWorkflowContext } from './context.js'
 import type { WorkflowRegistry } from './registry.js'
 
+/** 工作流超时错误（用于 Promise.race 中识别超时）。 */
+class WorkflowTimeoutError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkflowTimeoutError'
+  }
+}
+
+/** 等待 ms 后 reject，timer.unref() 保证不阻塞 Node 退出。 */
+function createTimeoutPromise(timeoutMs: number, timeoutSeconds: number): Promise<never> {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(
+      () => reject(new WorkflowTimeoutError(`timed out after ${timeoutSeconds}s`)),
+      timeoutMs,
+    )
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+  })
+}
+
 /** executeWorkflow 的参数。 */
 type ExecuteWorkflowOpts = {
   registry: WorkflowRegistry
@@ -39,13 +58,30 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
     onProgress: onProgress ?? (() => {}),
   })
 
+  const { timeout } = entry.meta
+  const hasTimeout = typeof timeout === 'number' && timeout > 0
+  const timeoutSeconds: number | undefined = hasTimeout ? (timeout as number) : undefined
+
   try {
-    const result = await entry.execute(ctx)
+    const execPromise = entry.execute(ctx)
+    const result =
+      timeoutSeconds !== undefined
+        ? await Promise.race([
+            execPromise,
+            createTimeoutPromise(timeoutSeconds * 1000, timeoutSeconds),
+          ])
+        : await execPromise
     return {
       _tag: 'text',
       text: result.output ?? 'Workflow completed (no output).',
     }
   } catch (e) {
+    if (e instanceof WorkflowTimeoutError) {
+      return {
+        _tag: 'error',
+        message: `Workflow "${name}" timed out after ${timeoutSeconds}s`,
+      }
+    }
     return {
       _tag: 'error',
       message: `Workflow "${name}" failed: ${e instanceof Error ? e.message : String(e)}`,

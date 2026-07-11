@@ -149,4 +149,29 @@ describe('executeWorkflow', () => {
     })
     expect(result._tag).toBe('text')
   })
+
+  it('returns timeout error when workflow exceeds meta.timeout', async () => {
+    const registry = createWorkflowRegistry()
+    const entry: WorkflowEntry = {
+      meta: { name: 'slow', description: 'sleeps', timeout: 0.1 },
+      source: 'builtin',
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        return { output: 'should not reach' }
+      },
+    }
+    registry.register(entry)
+    const result = await executeWorkflow({
+      registry,
+      name: 'slow',
+      args: '',
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+    })
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('timed out')
+      expect(result.message).toContain('0.1s')
+    }
+  })
 })
