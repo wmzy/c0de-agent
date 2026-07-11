@@ -330,3 +330,67 @@ describe('useChat segment break', () => {
     expect(result.current.messages.some((m) => m.role === 'user')).toBe(false)
   })
 })
+
+describe('useChat abort', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // 回归：abort 必须同时通知后端终止 agent，而不只是中断前端 SSE 读取。
+  // 此前 abort 仅调用 abortRef.current?.abort()，后端依赖 stream.onAbort 检测断开，
+  // 可能有延迟或遗漏，导致 agent 在后台继续运行。
+  it('abort 调用后端 /api/chat/abort 终止 agent', async () => {
+    const sse = 'data: {"_tag":"text_delta","text":"hi"}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                // 模拟流未结束（不返回 done 事件），等待 abort
+                return new Promise<{ done: boolean; value: undefined }>(() => {})
+              },
+            }),
+          },
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({ aborted: true }) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    // 启动流（不 await：mock reader 会阻塞）
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      // 等待 React 刷新 setState（sendMessage 在 await 前同步调用了 isStreaming:true）
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    act(() => {
+      result.current.abort()
+    })
+
+    // isStreaming 立即变 false
+    expect(result.current.isStreaming).toBe(false)
+    // 后端 abort 端点被调用
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/chat/abort',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionId: 's1' }),
+      }),
+    )
+  })
+})

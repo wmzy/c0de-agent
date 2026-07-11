@@ -344,8 +344,11 @@ export function useChat(sessionId: string): ChatState & ChatActions {
 
   const abort = useCallback(() => {
     abortRef.current?.abort()
+    // 通知后端终止 agent，而不只是中断前端 SSE 读取。
+    // 若仅 abort 前端 fetch，后端依赖 stream.onAbort 检测断开，可能有延迟或遗漏。
+    agentAPI.abort(sessionId).catch(() => {})
     setState((s) => ({ ...s, isStreaming: false }))
-  }, [])
+  }, [sessionId])
 
   // 权限确认：乐观清空 pending，弹窗立即关闭。后端 store 的 pending 一次消费即删除，
   // 若不清空前端状态，弹窗会一直显示到 done 事件，期间用户重复点击会对已消费的
