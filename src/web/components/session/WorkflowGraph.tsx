@@ -86,6 +86,43 @@ const nodeMeta = css`
   gap: 4px;
 `
 
+// ── Phase 进度条 ──
+
+const phaseBar = css`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 8px 0;
+  flex-wrap: wrap;
+`
+
+const phaseItem = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+`
+
+const phaseItemActive = css`
+  border-color: var(--primary, #4a9eff);
+  color: var(--primary, #4a9eff);
+  font-weight: 600;
+`
+
+const phaseItemDone = css`
+  color: var(--success, #22c55e);
+  border-color: var(--success, #22c55e);
+`
+
+const phaseArrow = css`
+  color: var(--text-secondary);
+  font-size: 11px;
+`
+
 // ── 状态样式 ──
 
 const statusColors: Record<WorkflowNodeStatus, { border: string; dot: string; text: string }> = {
@@ -159,6 +196,34 @@ function StatusDot({ status }: { status: WorkflowNodeStatus }) {
   )
 }
 
+function PhaseBar({
+  phases,
+  currentPhase,
+}: {
+  phases: string[]
+  currentPhase?: string
+}) {
+  const currentIdx = currentPhase ? phases.indexOf(currentPhase) : -1
+  return (
+    <div className={phaseBar} data-testid="wf-phases">
+      {phases.map((phase, i) => {
+        const isDone = i < currentIdx
+        const isActive = phase === currentPhase
+        const cls = `${phaseItem}${isActive ? ` ${phaseItemActive}` : ''}${isDone ? ` ${phaseItemDone}` : ''}`
+        const icon = isDone ? '\u2713' : isActive ? '\u25D0' : '\u25CB'
+        return (
+          <div key={phase} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span className={cls}>
+              {icon} {phase}
+            </span>
+            {i < phases.length - 1 && <span className={phaseArrow}>&rarr;</span>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 /**
  * 工作流图可视化组件。
  *
@@ -173,12 +238,16 @@ export function WorkflowGraph({
   nodes,
   rootLabel,
   rootStatus = 'completed',
+  phases,
+  currentPhase,
 }: {
   nodes: WorkflowNode[]
   rootLabel: string
   rootStatus?: WorkflowNodeStatus
+  phases?: string[]
+  currentPhase?: string
 }) {
-  if (nodes.length === 0) return null
+  if (nodes.length === 0 && !phases) return null
 
   const rootColor = statusColors[rootStatus]
 
@@ -196,6 +265,11 @@ export function WorkflowGraph({
         <span>{rootLabel}</span>
         <span style={{ fontSize: 11, opacity: 0.7 }}>dispatcher</span>
       </div>
+
+      {/* Phase 进度条 */}
+      {phases && phases.length > 0 && (
+        <PhaseBar phases={phases} currentPhase={currentPhase} />
+      )}
 
       {/* 连接线 */}
       {nodes.length > 0 && <div className={connector} />}

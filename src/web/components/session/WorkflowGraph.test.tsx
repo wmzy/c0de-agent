@@ -73,4 +73,31 @@ describe('WorkflowGraph', () => {
     expect(screen.getAllByText(/researcher/).length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText(/reviewer/).length).toBeGreaterThanOrEqual(1)
   })
+
+  it('renders phase progress bar when phases provided', () => {
+    render(
+      <WorkflowGraph
+        nodes={[{ id: 't0', agentType: 'coder', label: 'Task', status: 'running' }]}
+        rootLabel="main"
+        rootStatus="running"
+        phases={['scan', 'verify', 'report']}
+        currentPhase="verify"
+      />,
+    )
+    expect(screen.getByText(/scan/)).toBeInTheDocument()
+    expect(screen.getByText(/verify/)).toBeInTheDocument()
+    expect(screen.getByText(/report/)).toBeInTheDocument()
+    expect(screen.getByTestId('wf-phases')).toBeInTheDocument()
+  })
+
+  it('does not render phases bar when no phases provided', () => {
+    render(
+      <WorkflowGraph
+        nodes={[{ id: 't0', agentType: 'coder', label: 'Task', status: 'running' }]}
+        rootLabel="main"
+        rootStatus="running"
+      />,
+    )
+    expect(screen.queryByTestId('wf-phases')).toBeNull()
+  })
 })
