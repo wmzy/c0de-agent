@@ -241,6 +241,7 @@ function ChatPage() {
                   fileCtx.closeFile()
                 }
               }} />
+            }
             />
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
