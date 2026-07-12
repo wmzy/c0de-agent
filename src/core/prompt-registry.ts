@@ -108,6 +108,7 @@ export const BUILTIN_SECTION_IDS = [
   'skills',
   'agents',
   'slash-commands',
+  'workflow-format',
 ] as const
 
 /** Built-in sections. Dynamic bodies (tool list, project info, skills) use `render`. */
@@ -186,6 +187,38 @@ function builtinSections(): PromptSection[] {
       render: () => {
         const lines = ['## Slash Commands']
         for (const cmd of builtinCommands) lines.push(`- /${cmd.name}: ${cmd.description}`)
+        return lines.join('\n')
+      },
+    },
+    // 工作流脚本格式提示：让模型知道工作流脚本是 JS 格式，放在 .c0de/workflows/。
+    {
+      id: 'workflow-format',
+      content: '',
+      priority: 121,
+      render: () => {
+        const lines = [
+          '## Dynamic Workflows',
+          'When the user asks to create/save a workflow (e.g. "workflowz 创建工作流"), you MUST generate a **JavaScript** file (NOT bash/shell/python) with this structure:',
+          '```js',
+          '// File: .c0de/workflows/<name>.js',
+          'export const meta = {',
+          '  name: \'<name>\',           // lowercase, kebab-case',
+          '  description: \'<description>\',',
+          '  phases: [\'phase1\', \'phase2\'],',
+          '}',
+          '',
+          'export default async function workflow(ctx) {',
+          '  const { runSubagents, runSubagent, utils, progress, project, args } = ctx',
+          '  // runSubagents(type, tasks[]) → parallel fan-out',
+          '  // runSubagent(type, { assignment, description? }) → single dispatch',
+          '  // utils: { glob, grep, read, splitByDirectory }',
+          '  // progress(message, { phase? }) → SSE progress',
+          '  return { output: \'summary\', data: {} }',
+          '}',
+          '```',
+          'Save to `<project>/.c0de/workflows/<name>.js`. Available subagent types: general, coder, researcher, reviewer.',
+          'Run with `/workflow run <name>` or POST /api/workflows/:name/run. NEVER create bash/shell scripts for workflows.',
+        ]
         return lines.join('\n')
       },
     },

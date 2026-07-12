@@ -40,10 +40,59 @@ export function containsWorkflow(text: string): boolean {
  * 适配 c0de-agent 的 task 工具 schema（subagent_type + context + tasks[]）。
  */
 export const WORKFLOW_NOTICE = `<workflow-notice>
-The user's message contains the **workflowz** keyword: you MUST drive this task as a deterministic multi-subagent workflow using the \`task\` tool for batched fan-out. This is not optional — the keyword signals the user explicitly wants parallel sub-agent decomposition, not inline work. This overrides any default tendency to do the whole task inline.
+The user's message contains the **workflowz** keyword. This triggers the Dynamic Workflow system. You MUST first determine the user's intent:
+
+<intent-detection>
+- **Create/save a workflow** — the user says "workflowz 创建/建/save/make a workflow" — they want you to GENERATE a reusable JavaScript workflow script and save it. Jump to <create-workflow> below.
+- **Execute a workflow** — the user says "workflowz 扫描/审查/重构/测试..." — they want you to drive a deterministic multi-subagent fan-out using the \`task\` tool. Jump to <task-contract> below.
+- **Both** — "workflowz 创建一个扫描工作流" means create the workflow script first, then optionally run it.
+</intent-detection>
+
+<create-workflow>
+When the intent is to CREATE a workflow, you MUST generate a **JavaScript** file (NOT bash/shell/python) with this exact structure:
+
+\`\`\`js
+// File: .c0de/workflows/<name>.js
+export const meta = {
+  name: '<name>',           // lowercase, kebab-case, matches filename
+  description: '<description>',
+  argsHint: '[optional args]',
+  phases: ['phase1', 'phase2', ...],
+  timeout: 300,            // optional, seconds
+}
+
+export default async function workflow(ctx) {
+  const { runSubagents, runSubagent, utils, progress, project, args } = ctx
+
+  // Phase 1: progress('starting...', { phase: 'phase1' })
+  // Call runSubagents for parallel fan-out:
+  const results = await runSubagents('researcher', [
+    { assignment: '...', description: 'task 1' },
+    { assignment: '...', description: 'task 2' },
+  ])
+  // results: [{ ok: true, output: '...' }, { ok: false, error: '...' }]
+
+  // Phase 2: verify / cross-check results
+  // Phase 3: return summary
+  return { output: 'summary text', data: { ... } }
+}
+\`\`\`
+
+**Rules:**
+1. The file MUST be \`.js\` with ES module exports (\`export const meta\` + \`export default async function\`).
+2. Save to \`<project_root>/.c0de/workflows/<name>.js\` — use the \`write\` tool.
+3. Use \`ctx.runSubagents(type, tasks[])\` for parallel dispatch, \`ctx.runSubagent(type, params)\` for single dispatch.
+4. Available subagent types: \`general\`, \`coder\`, \`researcher\`, \`reviewer\`.
+5. Use \`ctx.utils\` for file ops: \`glob(pattern)\`, \`grep(pattern, path?)\`, \`read(path, range?)\`, \`splitByDirectory(dir, {depth, ignore})\`.
+6. Use \`ctx.progress(message, { phase })\` to report progress.
+7. Parse subagent output with \`JSON.parse(r.output)\` — subagents return text.
+8. Return \`{ output: 'summary', data: {...} }\` as the final result.
+9. NEVER generate bash/shell scripts, python scripts, or any non-JS format for workflows.
+10. After writing the file, tell the user they can run it with \`/workflow run <name>\` or via POST /api/workflows/:name/run.
+</create-workflow>
 
 <when>
-The user typed workflowz intentionally — they want fan-out. You may do a brief inline scout (1-2 tool calls to list files/scope the work), but your NEXT action after scouting MUST be a \`task\` tool call to fan out. Do NOT spend the entire turn reading files inline — that defeats the purpose. Common shapes:
+When the intent is to EXECUTE a workflow (not create), you may do a brief inline scout (1-2 tool calls to list files/scope the work), but your NEXT action after scouting MUST be a \`task\` tool call to fan out. Do NOT spend the entire turn reading files inline — that defeats the purpose. Common shapes:
 - **Understand** — parallel readers over subsystems → structured map.
 - **Design** — independent approaches → scored synthesis.
 - **Review** — split dimensions → find per dimension → adversarially verify each finding.
@@ -96,7 +145,6 @@ Prefer one wide batch over serial calls when work items do not share files. If t
 - **Completeness critic** — after the first batch, dispatch one read-only critic that asks what was missed.
 - **No silent caps** — if you bound coverage (top-N, sampling), state what was dropped and why.
 - **Parent owns closure** — subagents return evidence; the parent reads it, resolves contradictions, runs proof, and makes the final decision.
-- **Save reusable workflows** — if the fan-out pattern is reusable, save it as a \`/workflow create <name>\` command. Generate a JS file with \`export const meta = { name, description, phases }\` and a default async function that orchestrates via \`ctx.runSubagents\`. Use the REST API \`POST /api/workflows\` with body \`{ name, source }\` to save it, or write the file directly to \`.c0de/workflows/<name>.js\`. Saved workflows become slash commands (\`/<name>\`) that can be re-run anytime.
 </patterns>
 
 <execution>
@@ -119,12 +167,12 @@ export function buildWorkflowNotice(
   const registeredSection =
     workflows && workflows.length > 0
       ? `\n<registered-workflows>
-Available workflow templates you can invoke with the task tool's workflow parameter:
+Available saved workflow scripts (run with /workflow run <name> or POST /api/workflows/:name/run):
 ${workflows.map((w) => `- ${w.name}: ${w.description}`).join('\n')}
-If none fit, orchestrate inline using runSubagent fan-out as described below, then save your workflow with POST /api/workflows { name, source } for reuse.
+To create a new workflow, generate a .js file with export const meta + export default async function(ctx) and save it to .c0de/workflows/<name>.js.
 </registered-workflows>`
       : `\n<registered-workflows>
-No saved workflows yet. After orchestrating a successful fan-out, save it with POST /api/workflows { name, source } for reuse.
+No saved workflow scripts yet. When the user asks to create a workflow, generate a .js file (export const meta + export default async function) and save it to .c0de/workflows/<name>.js.
 </registered-workflows>`
 
   return WORKFLOW_NOTICE + registeredSection

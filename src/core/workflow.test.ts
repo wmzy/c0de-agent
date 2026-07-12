@@ -77,7 +77,7 @@ describe('WORKFLOW_NOTICE', () => {
 
   it('uses MUST language to enforce task tool usage', () => {
     expect(WORKFLOW_NOTICE).toContain('MUST')
-    expect(WORKFLOW_NOTICE).toContain('not optional')
+    expect(WORKFLOW_NOTICE).toContain('task')
   })
 })
 
@@ -96,6 +96,6 @@ describe('buildWorkflowNotice', () => {
     const notice = buildWorkflowNotice([])
     expect(notice).toContain('workflowz')
     expect(notice).toContain('registered-workflows')
-    expect(notice).toContain('No saved workflows yet')
+    expect(notice).toContain('No saved workflow scripts yet')
   })
 })
