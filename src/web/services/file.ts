@@ -22,6 +22,11 @@ const fileAPI = {
     apiRequest<FileSearchResult[]>(
       `/api/files/search?q=${encodeURIComponent(query)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
+  delete: (path: string, projectId?: string) =>
+    apiRequest<{ path: string; trashed: boolean }>(
+      `/api/files/${encodeURI(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+      { method: 'DELETE' },
+    ),
 }
 
 export { fileAPI }

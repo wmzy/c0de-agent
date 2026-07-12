@@ -1,0 +1,2 @@
+[main cf6bc67] fix(chat): SSE 流异常路径补发 done 事件，修复前端 isStreaming 卡死
+ 2 files changed, 48 insertions(+)

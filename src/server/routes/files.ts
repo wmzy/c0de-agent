@@ -1,6 +1,7 @@
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
+import trash from 'trash'
 import { getProject } from '../../project/project.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -186,6 +187,36 @@ function createFilesRoute(ctx: ServerContext): Hono {
       return c.json({ path, written: true })
     } catch (err) {
       return apiError(c, 500, 'WRITE_ERROR', `Failed to write file: ${String(err)}`)
+    }
+  })
+
+  // 删除文件/目录（移入系统回收站）
+  // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
+  app.delete('/*', async (c) => {
+    const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const resolved = safeResolve(root, path)
+    if (!resolved) {
+      return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
+    }
+    try {
+      await access(resolved)
+    } catch {
+      return apiError(c, 404, 'NOT_FOUND', 'File not found')
+    }
+    try {
+      await trash(resolved)
+      return c.json({ path, trashed: true })
+    } catch (err) {
+      return apiError(c, 500, 'DELETE_ERROR', `Failed to delete file: ${String(err)}`)
     }
   })
 

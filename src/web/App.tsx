@@ -235,7 +235,12 @@ function ChatPage() {
                   }}
                 />
               }
-              files={<FileBrowser projectId={projectId} onPick={(p) => fileCtx.openFile(p)} />}
+              files={<FileBrowser projectId={projectId} onPick={(p) => fileCtx.openFile(p)} onDelete={(p) => {
+                // 被删文件/目录是当前预览目标（含子路径）时关闭预览
+                if (selectedFile === p || (selectedFile && selectedFile.startsWith(`${p}/`))) {
+                  fileCtx.closeFile()
+                }
+              }} />
             />
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}

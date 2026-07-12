@@ -58,6 +58,9 @@ const resultRowWrap = css`
   &:hover [data-search-mention] {
     opacity: 1;
   }
+  &:hover [data-search-delete] {
+    opacity: 1;
+  }
 `
 
 const searchMentionBtn = css`
@@ -76,6 +79,25 @@ const searchMentionBtn = css`
   &:hover {
     color: var(--primary);
     border-color: var(--primary);
+  }
+`
+
+const searchDeleteBtn = css`
+  opacity: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 5px;
+  min-height: auto;
+  min-width: auto;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+  &:hover {
+    color: var(--error);
+    border-color: var(--error);
   }
 `
 
@@ -109,12 +131,25 @@ function setChildren(root: TreeNode, dirPath: string, nodes: TreeNode[]): TreeNo
   return { ...root, children: root.children.map((c) => setChildren(c, dirPath, nodes)) }
 }
 
+/** 不可变移除：从树中删除 path 节点。 */
+function removeNode(root: TreeNode, path: string): TreeNode {
+  if (!root.children) return root
+  return {
+    ...root,
+    children: root.children
+      .filter((c) => c.path !== path)
+      .map((c) => removeNode(c, path)),
+  }
+}
+
 export function FileBrowser({
   projectId,
   onPick,
+  onDelete,
 }: {
   projectId: string
   onPick: (path: string) => void
+  onDelete?: (path: string) => void
 }) {
   const { data: projects } = useProjects()
   const projectName = projects?.find((p) => p.id === projectId)?.name ?? projectId
@@ -131,6 +166,7 @@ export function FileBrowser({
     queryFn: () => fileAPI.search(query, projectId),
     enabled: isSearch,
   })
+  const refetchSearch = searchQ.refetch
 
   // 切换项目时重置树，加载新项目根目录
   useEffect(() => {
@@ -198,6 +234,21 @@ export function FileBrowser({
     [onPick],
   )
 
+  const handleDelete = useCallback(
+    async (path: string) => {
+      if (!window.confirm(`确定删除「${path}」？文件将移入系统回收站，可从回收站恢复。`)) return
+      try {
+        await fileAPI.delete(path, projectId)
+        setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
+        onDelete?.(path)
+        if (isSearch) refetchSearch()
+      } catch {
+        window.alert('删除失败，请重试')
+      }
+    },
+    [projectId, onDelete, isSearch, refetchSearch],
+  )
+
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
 
   return (
@@ -239,6 +290,16 @@ export function FileBrowser({
                     @
                   </button>
                 )}
+                <button
+                  type="button"
+                  className={searchDeleteBtn}
+                  data-search-delete
+                  data-testid={`search-delete-${e.path}`}
+                  aria-label={`删除 ${e.path}`}
+                  onClick={() => handleDelete(e.path)}
+                >
+                  🗑
+                </button>
               </div>
             ))
           )
@@ -254,6 +315,7 @@ export function FileBrowser({
             onSelect={handleSelect}
             directoryClickMode="toggle"
             onMention={fileRef?.insertFileReference}
+            onDelete={handleDelete}
           />
         )}
       </div>

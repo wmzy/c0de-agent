@@ -25,6 +25,8 @@ type FileTreeProps = {
   directoryClickMode?: 'select' | 'toggle'
   /** 引用文件到输入框（文件树 @ 按钮）；仅文件节点，提供时显示按钮。 */
   onMention?: (path: string) => void
+  /** 删除节点（移入系统回收站）；提供时显示 🗑 按钮。 */
+  onDelete?: (path: string) => void
 }
 
 const tree = css`
@@ -44,6 +46,9 @@ const row = css`
   }
   /* hover 时显示 @ 引用按钮（通过 data-mention-btn 属性选择器） */
   &:hover [data-mention-btn] {
+    opacity: 1;
+  }
+  &:hover [data-delete-btn] {
     opacity: 1;
   }
 `
@@ -114,6 +119,25 @@ const mentionBtn = css`
   }
 `
 
+const deleteBtn = css`
+  opacity: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 5px;
+  min-height: auto;
+  min-width: auto;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+  &:hover {
+    color: var(--error);
+    border-color: var(--error);
+  }
+`
+
 /**
  * 递归文件树：目录可展开（懒加载），文件为叶子节点。
  * directoryClickMode='select' 时点目录名=选中（目录选择器用法）；
@@ -128,6 +152,7 @@ export function FileTree({
   onSelect,
   directoryClickMode = 'select',
   onMention,
+  onDelete,
 }: FileTreeProps) {
   if (!root) return null
   return (
@@ -142,6 +167,7 @@ export function FileTree({
         onSelect,
         directoryClickMode,
         onMention,
+        onDelete,
       )}
     </div>
   )
@@ -157,6 +183,7 @@ function renderNode(
   onSelect: (path: string) => void,
   directoryClickMode: 'select' | 'toggle',
   onMention?: (path: string) => void,
+  onDelete?: (path: string) => void,
 ) {
   const isFile = node.type === 'file'
   const isExpanded = expanded.has(node.path)
@@ -218,6 +245,21 @@ function renderNode(
             @
           </button>
         )}
+        {onDelete && (
+          <button
+            type="button"
+            className={deleteBtn}
+            data-delete-btn
+            data-testid={`delete-${node.path}`}
+            aria-label={`删除 ${node.name}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(node.path)
+            }}
+          >
+            🗑
+          </button>
+        )}
       </div>
       {!isFile && isExpanded && (
         <div className={childList}>
@@ -233,6 +275,7 @@ function renderNode(
                 onSelect,
                 directoryClickMode,
                 onMention,
+                onDelete,
               ),
             )
           ) : isLoading ? (

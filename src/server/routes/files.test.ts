@@ -254,4 +254,33 @@ describe('files route', () => {
     // dirA（ctx.cwd）不应被污染
     expect(existsSync(join(dirA, 'shared.txt'))).toBe(false)
   })
+
+  it('DELETE /hello.txt 移入回收站', async () => {
+    const { app, dir } = await setupWithDir()
+    const res = await app.request('/hello.txt', { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { path: string; trashed: boolean }
+    expect(body.trashed).toBe(true)
+    // 文件应已从工作区消失
+    expect(existsSync(join(dir, 'hello.txt'))).toBe(false)
+  })
+
+  it('DELETE /subdir 移入回收站（目录）', async () => {
+    const { app, dir } = await setupWithDir()
+    const res = await app.request('/subdir', { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    expect(existsSync(join(dir, 'subdir'))).toBe(false)
+  })
+
+  it('DELETE /..%2Fetc%2Fpasswd path traversal rejected', async () => {
+    const { app } = await setupWithDir()
+    const res = await app.request('/..%2Fetc%2Fpasswd', { method: 'DELETE' })
+    expect(res.status).toBe(403)
+  })
+
+  it('DELETE /nonexistent.txt returns 404', async () => {
+    const { app } = await setupWithDir()
+    const res = await app.request('/nonexistent.txt', { method: 'DELETE' })
+    expect(res.status).toBe(404)
+  })
 })
