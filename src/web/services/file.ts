@@ -1,4 +1,4 @@
-import type { FileContent, FileEntry, FileSearchResult } from '../types/index.js'
+import type { FileContent, FileEntry, FileSearchResult, GitStatusMap } from '../types/index.js'
 import { apiRequest } from './api.js'
 
 const fileAPI = {
@@ -26,6 +26,10 @@ const fileAPI = {
     apiRequest<{ path: string; trashed: boolean }>(
       `/api/files/${encodeURI(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
       { method: 'DELETE' },
+    ),
+  gitStatus: (projectId?: string) =>
+    apiRequest<GitStatusMap>(
+      `/api/files/git-status${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
 }
 

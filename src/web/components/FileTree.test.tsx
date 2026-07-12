@@ -7,6 +7,11 @@ import { FileTree } from './FileTree.js'
 
 afterEach(cleanup)
 
+/** 取元素最近的 [data-git-status] 容器的状态值。 */
+function gitStatusOf(text: string): string | null {
+  return screen.getByText(text).closest('[data-git-status]')?.getAttribute('data-git-status') ?? null
+}
+
 const tree: TreeNode = {
   name: 'root',
   path: '/root',
@@ -169,8 +174,111 @@ describe('FileTree', () => {
         loadingPaths={new Set()}
         onToggle={vi.fn()}
         onSelect={vi.fn()}
-      />,
+      />
     )
     expect(screen.queryByTestId('mention-/root/a.ts')).toBeNull()
+  })
+
+  it('传入 gitStatusMap 时文件节点按状态高亮', () => {
+    const onMention = vi.fn()
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      children: [
+        { name: 'modified.ts', path: 'modified.ts', type: 'file' },
+        { name: 'staged.ts', path: 'staged.ts', type: 'file' },
+        { name: 'untracked.ts', path: 'untracked.ts', type: 'file' },
+        { name: 'clean.ts', path: 'clean.ts', type: 'file' },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        onMention={onMention}
+        gitStatusMap={{
+          'modified.ts': 'modified',
+          'staged.ts': 'staged',
+          'untracked.ts': 'untracked',
+        }}
+      />
+    )
+    expect(gitStatusOf('modified.ts')).toBe('modified')
+    expect(gitStatusOf('staged.ts')).toBe('staged')
+    expect(gitStatusOf('untracked.ts')).toBe('untracked')
+    // 无状态文件不带 data-git-status
+    expect(gitStatusOf('clean.ts')).toBeNull()
+  })
+
+  it('目录节点按后代最高优先级状态聚合高亮', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      children: [
+        {
+          name: 'src',
+          path: 'src',
+          type: 'directory',
+          children: [{ name: 'a.ts', path: 'src/a.ts', type: 'file' }],
+        },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.', 'src'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        gitStatusMap={{ 'src/a.ts': 'modified' }}
+      />
+    )
+    // src 目录应聚合为 modified
+    expect(gitStatusOf('src')).toBe('modified')
+    // 子文件直接为 modified
+    expect(gitStatusOf('a.ts')).toBe('modified')
+  })
+
+  it('git 忽略文件/目录置灰（data-git-status=ignored）', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      children: [
+        { name: 'ignored.txt', path: 'ignored.txt', type: 'file' },
+        {
+          name: 'build',
+          path: 'build',
+          type: 'directory',
+          children: [{ name: 'out.js', path: 'build/out.js', type: 'file' }],
+        },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.', 'build'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        gitStatusMap={{
+          'ignored.txt': 'ignored',
+          'build/out.js': 'ignored',
+        }}
+      />
+    )
+    // 忽略文件置灰
+    expect(gitStatusOf('ignored.txt')).toBe('ignored')
+    // 忽略目录聚合为 ignored
+    expect(gitStatusOf('build')).toBe('ignored')
+    expect(gitStatusOf('out.js')).toBe('ignored')
   })
 })

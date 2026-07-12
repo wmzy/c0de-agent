@@ -5,7 +5,7 @@ import { FileTree, type TreeNode } from '../components/FileTree.js'
 import { useFileReference } from '../contexts/ReferenceContext.js'
 import { useProjects } from '../hooks/useSession.js'
 import { fileAPI } from '../services/file.js'
-import type { FileEntry, FileSearchResult } from '../types/index.js'
+import type { FileEntry, FileSearchResult, GitStatusMap } from '../types/index.js'
 
 const panel = css`
   display: flex;
@@ -168,6 +168,14 @@ export function FileBrowser({
   })
   const refetchSearch = searchQ.refetch
 
+  // git 状态：项目打开时拉取，30s 自动刷新（文件树高亮用）
+  const gitStatusQ = useQuery({
+    queryKey: ['files', 'git-status', projectId],
+    queryFn: () => fileAPI.gitStatus(projectId),
+    refetchInterval: 30_000,
+  })
+  const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
+
   // 切换项目时重置树，加载新项目根目录
   useEffect(() => {
     let cancelled = false
@@ -242,11 +250,12 @@ export function FileBrowser({
         setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
         onDelete?.(path)
         if (isSearch) refetchSearch()
+        gitStatusQ.refetch()
       } catch {
         window.alert('删除失败，请重试')
       }
     },
-    [projectId, onDelete, isSearch, refetchSearch],
+    [projectId, onDelete, isSearch, refetchSearch, gitStatusQ],
   )
 
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
@@ -316,6 +325,7 @@ export function FileBrowser({
             directoryClickMode="toggle"
             onMention={fileRef?.insertFileReference}
             onDelete={handleDelete}
+            gitStatusMap={gitStatusMap}
           />
         )}
       </div>

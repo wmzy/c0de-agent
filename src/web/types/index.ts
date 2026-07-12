@@ -46,6 +46,12 @@ type FileEntry = {
   type: 'file' | 'directory'
 }
 
+/** git 状态分类（GET /api/files/git-status 返回值的 value）。 */
+type GitStatusCode = 'modified' | 'staged' | 'untracked' | 'conflict' | 'deleted' | 'ignored'
+
+/** git 状态映射：path → 状态分类（GET /api/files/git-status 返回）。 */
+type GitStatusMap = Record<string, GitStatusCode>
+
 /** 文件搜索结果。 */
 type FileSearchResult = {
   path: string
@@ -93,6 +99,8 @@ export type {
   FileContent,
   FileEntry,
   FileSearchResult,
+  GitStatusMap,
+  GitStatusCode,
   Project,
   SessionTreeNode,
   ShakeRegionView,

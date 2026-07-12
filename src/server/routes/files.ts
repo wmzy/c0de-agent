@@ -2,6 +2,7 @@ import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
 import trash from 'trash'
+import { getGitStatus } from '../../project/resolve.js'
 import { getProject } from '../../project/project.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -17,6 +18,9 @@ type SearchResult = {
   type: 'file' | 'directory'
 }
 
+/** 递归搜索时跳过的目录（体积大/为元数据噪音，避免递归进入）。 */
+const SEARCH_SKIP_DIRS = new Set(['.git', 'node_modules'])
+
 /** 递归收集文件列表（用于搜索）。 */
 async function collectFiles(dir: string, basePath: string, maxDepth = 5): Promise<SearchResult[]> {
   if (maxDepth < 0) return []
@@ -28,7 +32,7 @@ async function collectFiles(dir: string, basePath: string, maxDepth = 5): Promis
     return []
   }
   for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+    if (entry.isDirectory() && SEARCH_SKIP_DIRS.has(entry.name)) continue
     const fullPath = join(dir, entry.name)
     const relPath = relative(basePath, fullPath)
     if (entry.isDirectory()) {
@@ -72,6 +76,20 @@ function contentTypeFor(name: string): string {
 function createFilesRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
+  // git 状态：返回 path → 状态分类 的映射（非 git 返回空对象）
+  app.get('/git-status', async (c) => {
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    return c.json(getGitStatus(root) ?? {})
+  })
+
   // 列出目录
   // projectId 指定时按对应项目 worktree 列出，否则回退 ctx.cwd（向后兼容）。
   app.get('/', async (c) => {
@@ -92,7 +110,6 @@ function createFilesRoute(ctx: ServerContext): Hono {
     try {
       const entries = await readdir(resolved, { withFileTypes: true })
       const result: FileEntry[] = entries
-        .filter((e) => !e.name.startsWith('.'))
         .map((e) => ({
           name: e.name,
           type: (e.isDirectory() ? 'directory' : 'file') as 'file' | 'directory',

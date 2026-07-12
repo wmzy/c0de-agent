@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import type { GitStatusCode } from '../types/index.js'
 
 /** 文件树节点。children 为 undefined 表示尚未加载子目录。type 缺省视为 directory（兼容目录选择器）。 */
 export type TreeNode = {
@@ -27,6 +28,8 @@ type FileTreeProps = {
   onMention?: (path: string) => void
   /** 删除节点（移入系统回收站）；提供时显示 🗑 按钮。 */
   onDelete?: (path: string) => void
+  /** git 状态映射（path → 分类），用于高亮未提交/stage/未跟踪文件与目录。 */
+  gitStatusMap?: Record<string, GitStatusCode>
 }
 
 const tree = css`
@@ -138,6 +141,84 @@ const deleteBtn = css`
   }
 `
 
+/* git 状态高亮：文件名颜色 + 左缘色条。 */
+const gitModified = css`
+  color: var(--warning);
+  box-shadow: inset 2px 0 0 var(--warning);
+`
+const gitStaged = css`
+  color: var(--success);
+  box-shadow: inset 2px 0 0 var(--success);
+`
+const gitUntracked = css`
+  color: var(--primary);
+  box-shadow: inset 2px 0 0 var(--primary);
+`
+const gitConflict = css`
+  color: var(--error);
+  box-shadow: inset 2px 0 0 var(--error);
+`
+const gitDeleted = css`
+  color: var(--text-secondary);
+  box-shadow: inset 2px 0 0 var(--text-secondary);
+  text-decoration: line-through;
+`
+const gitIgnored = css`
+  color: var(--text-secondary);
+  opacity: 0.55;
+`
+
+/** git 状态 → 高亮类名。 */
+function gitClass(code: GitStatusCode): string {
+  switch (code) {
+    case 'modified':
+      return gitModified
+    case 'staged':
+      return gitStaged
+    case 'untracked':
+      return gitUntracked
+    case 'conflict':
+      return gitConflict
+    case 'deleted':
+      return gitDeleted
+    case 'ignored':
+      return gitIgnored
+  }
+}
+
+/** 目录聚合：取后代中优先级最高的状态。 */
+const GIT_PRIORITY: Record<GitStatusCode, number> = {
+  conflict: 5,
+  untracked: 4,
+  modified: 3,
+  staged: 2,
+  deleted: 1,
+  ignored: 0,
+}
+
+/** 计算 path 的显示 git 状态：文件直接查表；目录取后代最高优先级。 */
+function resolveGitStatus(
+  path: string,
+  isFile: boolean,
+  map: Record<string, GitStatusCode> | undefined,
+): GitStatusCode | undefined {
+  if (!map) return undefined
+  if (isFile) return map[path]
+  // 目录：查所有以 `${path}/` 为前缀的状态，取最高优先级
+  const prefix = path === '.' ? '' : `${path}/`
+  let best: GitStatusCode | undefined
+  let bestPrio = -1
+  for (const [p, code] of Object.entries(map)) {
+    if (prefix === '' ? true : p.startsWith(prefix)) {
+      if (GIT_PRIORITY[code] > bestPrio) {
+        best = code
+        bestPrio = GIT_PRIORITY[code]
+      }
+    }
+  }
+  return best
+}
+
 /**
  * 递归文件树：目录可展开（懒加载），文件为叶子节点。
  * directoryClickMode='select' 时点目录名=选中（目录选择器用法）；
@@ -153,6 +234,7 @@ export function FileTree({
   directoryClickMode = 'select',
   onMention,
   onDelete,
+  gitStatusMap,
 }: FileTreeProps) {
   if (!root) return null
   return (
@@ -168,6 +250,7 @@ export function FileTree({
         directoryClickMode,
         onMention,
         onDelete,
+        gitStatusMap,
       )}
     </div>
   )
@@ -184,12 +267,14 @@ function renderNode(
   directoryClickMode: 'select' | 'toggle',
   onMention?: (path: string) => void,
   onDelete?: (path: string) => void,
+  gitStatusMap?: Record<string, GitStatusCode>,
 ) {
   const isFile = node.type === 'file'
   const isExpanded = expanded.has(node.path)
   const isLoading = loadingPaths.has(node.path)
   const isSelected = selected === node.path
   const hasChildren = node.children !== undefined
+  const gitCode = resolveGitStatus(node.path, isFile, gitStatusMap)
   return (
     <div
       role="treeitem"
@@ -198,8 +283,9 @@ function renderNode(
       key={node.path}
     >
       <div
-        className={`${row} ${isSelected ? selectedRow : ''}`}
+        className={`${row} ${isSelected ? selectedRow : ''} ${gitCode ? gitClass(gitCode) : ''}`}
         style={{ paddingLeft: depth * 16 + 8 }}
+        data-git-status={gitCode ?? undefined}
       >
         {isFile ? (
           <span className={toggle} aria-hidden="true" />
@@ -276,6 +362,7 @@ function renderNode(
                 directoryClickMode,
                 onMention,
                 onDelete,
+                gitStatusMap,
               ),
             )
           ) : isLoading ? (

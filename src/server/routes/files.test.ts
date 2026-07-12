@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -282,5 +282,110 @@ describe('files route', () => {
     const { app } = await setupWithDir()
     const res = await app.request('/nonexistent.txt', { method: 'DELETE' })
     expect(res.status).toBe(404)
+  })
+
+  it('GET / 列出所有隐藏文件/目录（含 .c0de/.git/.env）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-dotfiles-'))
+    mkdirSync(join(dir, '.c0de'), { recursive: true })
+    mkdirSync(join(dir, '.git'), { recursive: true })
+    writeFileSync(join(dir, '.env'), 'k=v')
+    writeFileSync(join(dir, 'normal.txt'), 'x')
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/')
+    expect(res.status).toBe(200)
+    const names = ((await res.json()) as FileEntry[]).map((e) => e.name)
+    expect(names).toContain('.c0de')
+    expect(names).toContain('.git')
+    expect(names).toContain('.env')
+    expect(names).toContain('normal.txt')
+  })
+
+  it('GET /search 命中 .c0de 内文件', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-search-c0de-'))
+    mkdirSync(join(dir, '.c0de'), { recursive: true })
+    writeFileSync(join(dir, '.c0de', 'config.json'), '{}')
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/search?q=config')
+    expect(res.status).toBe(200)
+    const paths = ((await res.json()) as Array<{ path: string }>).map((r) => r.path)
+    expect(paths.some((p) => p.includes('.c0de'))).toBe(true)
+  })
+
+  it('GET /git-status 返回状态映射（非 git 返回空对象）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-gitstatus-nogit-'))
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/git-status')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual({})
+  })
+
+  it('GET /git-status 返回 git 变更文件状态', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-gitstatus-'))
+    // 初始化 git 仓库
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    // 已提交文件
+    writeFileSync(join(dir, 'committed.txt'), 'committed')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    // 未跟踪文件
+    writeFileSync(join(dir, 'untracked.txt'), 'new')
+    // 已修改文件（未暂存）
+    writeFileSync(join(dir, 'committed.txt'), 'changed')
+    // 已暂存文件
+    writeFileSync(join(dir, 'staged.txt'), 's')
+    execSync('git add staged.txt', { cwd: dir })
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/git-status')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, string>
+    expect(body['untracked.txt']).toBe('untracked')
+    expect(body['committed.txt']).toBe('modified')
+    expect(body['staged.txt']).toBe('staged')
+  })
+
+  it('GET /git-status 返回 git 忽略文件为 ignored', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-gitignored-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, '.gitignore'), 'ignored.txt\n')
+    writeFileSync(join(dir, 'ignored.txt'), 'ignored')
+    writeFileSync(join(dir, 'normal.txt'), 'normal')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    // 修改 .gitignore 后再创建一个被忽略的新文件
+    writeFileSync(join(dir, 'ignored2.txt'), 'x2')
+    appendFileSync(join(dir, '.gitignore'), 'ignored2.txt\n')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/git-status')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, string>
+    expect(body['ignored.txt']).toBe('ignored')
+    expect(body['ignored2.txt']).toBe('ignored')
   })
 })
