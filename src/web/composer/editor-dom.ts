@@ -43,8 +43,16 @@ function setCursorPosition(parent: HTMLElement, position: number): void {
       const range = document.createRange()
       const sel = window.getSelection()
       const textNode = node
-      const offset = Math.min(remaining, (node.textContent ?? '').length)
-      range.setStart(textNode, offset)
+      // remaining 是剔除零宽空格后的偏移，需映射回原始 offset（跳过 \u200B）。
+      // 旧代码直接用 remaining 作为 offset，遇到零宽空格时光标会少移一位。
+      const text = textNode.textContent ?? ''
+      let rawOffset = 0
+      let stripped = 0
+      while (rawOffset < text.length && stripped < remaining) {
+        if (text[rawOffset] !== '\u200B') stripped++
+        rawOffset++
+      }
+      range.setStart(textNode, rawOffset)
       range.collapse(true)
       sel?.removeAllRanges()
       sel?.addRange(range)

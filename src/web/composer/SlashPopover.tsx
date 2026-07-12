@@ -1,6 +1,4 @@
 import { css } from '@linaria/core'
-import fuzzysort from 'fuzzysort'
-import { useMemo } from 'react'
 import type { CommandInfo } from '../hooks/useCommands.js'
 
 const popover = css`
@@ -39,19 +37,13 @@ const cmdDesc = css`
 `
 
 type Props = {
-  query: string
   commands: CommandInfo[]
   activeIndex: number
   onSelect: (name: string) => void
 }
 
 function SlashPopover(props: Props) {
-  const filtered = useMemo(() => {
-    if (!props.query) return props.commands
-    return fuzzysort.go(props.query, props.commands, { key: 'name' }).map((r) => r.obj)
-  }, [props.query, props.commands])
-
-  if (filtered.length === 0) return null
+  if (props.commands.length === 0) return null
   return (
     <div
       className={popover}
@@ -59,7 +51,7 @@ function SlashPopover(props: Props) {
       data-testid="slash-menu"
       onMouseDown={(e) => e.preventDefault()}
     >
-      {filtered.map((c, i) => (
+      {props.commands.map((c, i) => (
         <button
           key={c.name}
           role="option"

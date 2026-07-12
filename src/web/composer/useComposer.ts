@@ -17,7 +17,7 @@ import {
   snippetLabel,
 } from './types.js'
 
-type PopoverState = 'slash' | 'at' | null
+type PopoverState = 'slash' | 'at' | 'workflow' | null
 
 type UseComposerOptions = {
   onSend: (payload: { text: string; files: string[]; images: ImagePart[] }) => void
@@ -83,7 +83,12 @@ function useComposer({
     // popover 触发检测（steer 模式不触发）
     const slashMatch = text.match(/^\/(\S*)$/)
     const atMatch = text.substring(0, cursor).match(/@(\S*)$/)
-    if (slashMatch) {
+    // /workflow (run|show|edit) <name> — 补全工作流名称
+    const workflowMatch = text.match(/^\/workflow\s+(run|show|edit)\s+(\S*)$/)
+    if (workflowMatch) {
+      setPopover('workflow')
+      setPopoverQuery(workflowMatch[2] ?? '')
+    } else if (slashMatch) {
       setPopover('slash')
       setPopoverQuery(slashMatch[1] ?? '')
     } else if (atMatch) {
@@ -117,7 +122,20 @@ function useComposer({
   // popover 选中插入命令（替换整行 /xxx）
   const insertSlash = useCallback(
     (name: string) => {
-      setPromptExternal(textPrompt(`/${name} `))
+      setPromptExternal(textPrompt(`/${name} `), true)
+      setPopover(null)
+      editorRef.current?.focus()
+    },
+    [setPromptExternal],
+  )
+
+  // popover 选中插入工作流名称（保留 /workflow run/show/edit 前缀，仅替换查询部分）
+  const insertWorkflow = useCallback(
+    (name: string) => {
+      const text = promptToText(promptRef.current)
+      const match = text.match(/^(\/workflow\s+(?:run|show|edit)\s+)\S*$/)
+      const prefix = match?.[1] ?? `/workflow run `
+      setPromptExternal(textPrompt(`${prefix}${name} `), true)
       setPopover(null)
       editorRef.current?.focus()
     },
@@ -361,6 +379,7 @@ function useComposer({
     addImage,
     removeImage,
     insertSlash,
+    insertWorkflow,
     insertFile,
     appendFileReference,
     appendSnippetReference,

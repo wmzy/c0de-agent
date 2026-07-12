@@ -24,6 +24,13 @@ const WORKFLOW_GLOBAL = /(?<![\w./-])workflowz(?![\w./-])/g
  * 跳过 pill 元素（contenteditable=false）内的文本。
  */
 function decorateWorkflowz(editor: HTMLElement): void {
+  // 快速路径：没有 workflowz 关键词也没有残留装饰 span 时，
+  // 不需要修改 DOM，也不应保存/恢复光标（setCursorPosition 的零宽空格
+  // 映射会导致光标偏移）。这是最高频路径——绝大多数按键不涉及 workflowz。
+  const hasKeyword = /workflowz/.test(editor.textContent ?? '')
+  const hasStaleSpan = editor.querySelector('[data-wf]') !== null
+  if (!hasKeyword && !hasStaleSpan) return
+
   const cursor = getCursorPosition(editor)
 
   // 1. unwrap 已有 [data-wf] span → 纯文本节点

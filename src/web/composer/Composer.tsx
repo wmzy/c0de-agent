@@ -1,10 +1,13 @@
 import { css } from '@linaria/core'
+import { useQuery } from '@tanstack/react-query'
+import fuzzysort from 'fuzzysort'
 import type { DragEvent, KeyboardEvent } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useFileReferenceSetter } from '../contexts/ReferenceContext.js'
 import { useCommands } from '../hooks/useCommands.js'
 import { useFileSearch } from '../hooks/useFiles.js'
 import type { AgentListItem } from '../services/agent.js'
+import { workflowsAPI } from '../services/workflows.js'
 import { AtFilePopover } from './AtFilePopover.js'
 import { AttachmentBar } from './AttachmentBar.js'
 import { ComposerEditor } from './ComposerEditor.js'
@@ -13,6 +16,7 @@ import { SlashPopover } from './SlashPopover.js'
 import type { ImagePart, Prompt } from './types.js'
 import { promptToText } from './types.js'
 import { useComposer } from './useComposer.js'
+import { WorkflowPopover } from './WorkflowPopover.js'
 
 const wrap = css`
   position: relative;
@@ -131,6 +135,27 @@ function Composer(props: ComposerProps) {
   const { data: commands = [] } = useCommands()
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
 
+  // 工作流列表（和命令列表一样很少变化，长时间缓存）
+  const { data: workflows = [] } = useQuery({
+    queryKey: ['workflows'],
+    queryFn: () => workflowsAPI.list(),
+    staleTime: Infinity,
+    select: (data) => data.workflows,
+  })
+
+  // slash 命令按 query 过滤——过滤必须与键盘导航/选择使用同一列表，
+  // 否则 activeIndex 指向的项与 popover 展示的项不一致（选中错误命令）。
+  const filteredCommands = useMemo(() => {
+    if (!composer.popoverQuery) return commands
+    return fuzzysort.go(composer.popoverQuery, commands, { key: 'name' }).map((r) => r.obj)
+  }, [composer.popoverQuery, commands])
+
+  // /workflow (run|show|edit) <name> 补全：按 name 过滤工作流列表
+  const filteredWorkflows = useMemo(() => {
+    if (!composer.popoverQuery) return workflows
+    return fuzzysort.go(composer.popoverQuery, workflows, { key: 'name' }).map((r) => r.obj)
+  }, [composer.popoverQuery, workflows])
+
   // 注册文件引用 API，供文件树/预览面板跨组件调用
   const setFileReferenceApi = useFileReferenceSetter()
   useEffect(() => {
@@ -143,6 +168,7 @@ function Composer(props: ComposerProps) {
 
   const [slashActive, setSlashActive] = useState(0)
   const [atActive, setAtActive] = useState(0)
+  const [workflowActive, setWorkflowActive] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
@@ -152,6 +178,10 @@ function Composer(props: ComposerProps) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
   useEffect(() => {
     if (composer.popover === 'at') setAtActive(0)
+  }, [composer.popover, composer.popoverQuery])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
+  useEffect(() => {
+    if (composer.popover === 'workflow') setWorkflowActive(0)
   }, [composer.popover, composer.popoverQuery])
 
   // @ mention 候选：subagent（非 primary）按 query 过滤
@@ -172,16 +202,34 @@ function Composer(props: ComposerProps) {
     const after = text.slice(tokenEnd)
     const newText = `${before}@${name} ${after}`
     const newPrompt: Prompt = [{ type: 'text', content: newText, start: 0, end: newText.length }]
-    composer.setPromptExternal(newPrompt)
+    composer.setPromptExternal(newPrompt, true)
     composer.setPopover(null)
     composer.editorRef.current?.focus()
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    if (composer.popover === 'workflow') {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setWorkflowActive((i) => Math.min(i + 1, filteredWorkflows.length - 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setWorkflowActive((i) => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        const wf = filteredWorkflows[workflowActive]
+        if (wf) composer.insertWorkflow(wf.name)
+        return
+      }
+    }
     if (composer.popover === 'slash') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setSlashActive((i) => Math.min(i + 1, commands.length - 1))
+        setSlashActive((i) => Math.min(i + 1, filteredCommands.length - 1))
         return
       }
       if (e.key === 'ArrowUp') {
@@ -191,7 +239,7 @@ function Composer(props: ComposerProps) {
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        const cmd = commands[slashActive]
+        const cmd = filteredCommands[slashActive]
         if (cmd) composer.insertSlash(cmd.name)
         return
       }
@@ -270,10 +318,16 @@ function Composer(props: ComposerProps) {
       <div className={editorRow}>
         {composer.popover === 'slash' && (
           <SlashPopover
-            query={composer.popoverQuery}
-            commands={commands}
+            commands={filteredCommands}
             activeIndex={slashActive}
             onSelect={(name) => composer.insertSlash(name)}
+          />
+        )}
+        {composer.popover === 'workflow' && (
+          <WorkflowPopover
+            workflows={filteredWorkflows}
+            activeIndex={workflowActive}
+            onSelect={(name) => composer.insertWorkflow(name)}
           />
         )}
         {composer.popover === 'at' && (
