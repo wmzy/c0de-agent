@@ -1,7 +1,8 @@
 // src/server/terminal/pty-manager.test.ts
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { PTYManager } from './pty-manager.js'
+import { userInfo } from 'node:os'
+import { PTYManager, detectShell } from './pty-manager.js'
 
 describe('PTYManager', () => {
   let mgr: PTYManager
@@ -56,5 +57,28 @@ describe('PTYManager', () => {
     mgr.create({ cwd: '/tmp' })
     mgr.dispose()
     expect(mgr.list()).toHaveLength(0)
+  })
+})
+
+describe('detectShell', () => {
+  // detectShell 优先级链：process.env.SHELL → userInfo().shell → /bin/bash。
+  // 回归 bug：SHELL 未导出到环境时，server 错误回退到 /bin/bash。
+  const savedShell = process.env.SHELL
+
+  afterEach(() => {
+    if (savedShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = savedShell
+  })
+
+  it('process.env.SHELL 存在时优先使用', () => {
+    process.env.SHELL = '/usr/bin/zsh'
+    expect(detectShell()).toBe('/usr/bin/zsh')
+  })
+
+  it('process.env.SHELL 缺失时 fallback 到 userInfo().shell（/etc/passwd 登录 shell）', () => {
+    delete process.env.SHELL
+    expect(detectShell()).toBe(userInfo().shell)
+    // 不应错误回退到硬编码 /bin/bash（除非用户登录 shell 真是 bash）
+    expect(detectShell()).not.toBe('/bin/bash')
   })
 })

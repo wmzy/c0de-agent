@@ -2,6 +2,7 @@
 
 import { spawn, type IPty } from 'node-pty'
 import { randomUUID } from 'node:crypto'
+import { userInfo } from 'node:os'
 import type { WebSocket } from 'ws'
 
 /** PTY 会话信息（返回给前端）。 */
@@ -32,12 +33,20 @@ export interface CreatePTYOptions {
   shell?: string
 }
 
-/** 检测当前平台默认 shell。 */
-function detectShell(): string {
+/**
+ * 检测当前平台默认 shell。
+ *
+ * 优先级：process.env.SHELL → os.userInfo().shell（/etc/passwd 登录 shell）→ /bin/bash。
+ * 仅依赖 process.env.SHELL 是不可靠的：当 server 经 npm 脚本（sh -c 包装）、
+ * 热更新重启或 IDE 启动器等链路启动时，SHELL 往往未被 export 到环境，
+ * 导致 node 进程读不到而错误回退到 /bin/bash。userInfo().shell 直接读取
+ * /etc/passwd（getpwuid），是用户真实登录 shell 的可靠来源。
+ */
+export function detectShell(): string {
   if (process.platform === 'win32') {
     return process.env.COMSPEC ?? 'cmd.exe'
   }
-  return process.env.SHELL ?? '/bin/bash'
+  return process.env.SHELL ?? userInfo().shell ?? '/bin/bash'
 }
 
 const DEFAULT_COLS = 80
