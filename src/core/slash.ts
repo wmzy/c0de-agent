@@ -5,6 +5,7 @@ import type { SlashCommand } from './types.js'
 import {
   BUILTIN_WORKFLOWS,
   createWorkflowRegistry,
+  discoverWorkflows,
   executeWorkflow,
   reloadRegistry,
   saveWorkflow,
@@ -143,8 +144,17 @@ const workflowCommand: SlashCommand = {
       }
     }
 
+    // 项目级工作流：从 agent cwd（= project worktree）动态发现。
+    // registry 是 server 单例（含 builtin + global + server-cwd），不含其他项目的工作流。
+    const projectWorkflows = await discoverWorkflows(ctx.cwd)
+    const projectByName = new Map(projectWorkflows.map((w) => [w.meta.name, w]))
+    const resolveEntry = (name: string) => registry!.get(name) ?? projectByName.get(name)
+
     if (subcommand === 'list') {
-      const workflows = registry.list()
+      // 合并 registry + 项目级（去重：同名项目级覆盖）
+      const byName = new Map(registry.list().map((w) => [w.meta.name, w]))
+      for (const wf of projectWorkflows) byName.set(wf.meta.name, wf)
+      const workflows = Array.from(byName.values())
       const lines = ['Available workflows:']
       for (const wf of workflows) {
         const phases = wf.meta.phases ? ` [${wf.meta.phases.join('→')}]` : ''
@@ -162,7 +172,7 @@ const workflowCommand: SlashCommand = {
     if (subcommand === 'show') {
       const name = parts[1]
       if (!name) return { _tag: 'error', message: 'Usage: /workflow show <name>' }
-      const wf = registry.get(name)
+      const wf = resolveEntry(name)
       if (!wf) {
         return { _tag: 'error', message: `Unknown workflow: ${name}` }
       }
@@ -210,7 +220,7 @@ const workflowCommand: SlashCommand = {
     if (subcommand === 'edit') {
       const name = parts[1]
       if (!name) return { _tag: 'error', message: 'Usage: /workflow edit <name>' }
-      const wf = registry.get(name)
+      const wf = resolveEntry(name)
       if (!wf) {
         return { _tag: 'error', message: `Unknown workflow: ${name}` }
       }
@@ -242,6 +252,18 @@ const workflowCommand: SlashCommand = {
       if (!name) return { _tag: 'error', message: 'Usage: /workflow run <name> [args]' }
       const wfArgs = parts.slice(2).join(' ')
 
+      const entry = resolveEntry(name)
+      if (!entry) {
+        const available = [
+          ...registry.list().map((e) => e.meta.name),
+          ...projectWorkflows.map((e) => e.meta.name),
+        ].join(', ')
+        return {
+          _tag: 'error',
+          message: `Unknown workflow: "${name}". Available: ${available || '(none)'}`,
+        }
+      }
+
       const agentConfig = {
         provider: ctx.config.defaultProvider,
         model: ctx.config.defaultModel,
@@ -255,6 +277,7 @@ const workflowCommand: SlashCommand = {
       return executeWorkflow({
         registry,
         name,
+        entry,
         args: wfArgs,
         deps: ctx.deps,
         parent,

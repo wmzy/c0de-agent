@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -260,5 +260,60 @@ export default async function workflow(ctx) {
       expect(result.text).toContain('create')
       expect(result.text).toContain('edit')
     }
+  })
+
+  it('/workflow show 发现项目级 .c0de/workflows/*.js', async () => {
+    const projDir = await mkdtemp(join(tmpdir(), 'wf-proj-show-'))
+    const wfDir = join(projDir, '.c0de', 'workflows')
+    await mkdir(wfDir, { recursive: true })
+    await writeFile(
+      join(wfDir, 'proj-only.js'),
+      `export const meta = { name: 'proj-only', description: 'project-level wf', phases: ['go'] }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('show proj-only', {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('proj-only')
+      expect(result.text).toContain('project-level wf')
+    }
+
+    await rm(projDir, { recursive: true, force: true })
+  })
+
+  it('/workflow list 合并项目级工作流', async () => {
+    const projDir = await mkdtemp(join(tmpdir(), 'wf-proj-list-'))
+    const wfDir = join(projDir, '.c0de', 'workflows')
+    await mkdir(wfDir, { recursive: true })
+    await writeFile(
+      join(wfDir, 'list-test.js'),
+      `export const meta = { name: 'list-test', description: 'listed from project', phases: ['go'] }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')!
+    const result = (await cmd.execute('list', {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      // builtin 仍在
+      expect(result.text).toContain('security-audit')
+      // 项目级出现
+      expect(result.text).toContain('list-test')
+      expect(result.text).toContain('project')
+    }
+
+    await rm(projDir, { recursive: true, force: true })
   })
 })

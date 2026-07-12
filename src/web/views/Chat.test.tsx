@@ -222,6 +222,11 @@ describe('workflow run 补全 popover', () => {
     expect(names).toContain('security-audit')
     expect(names).toContain('code-review')
     expect(names).toContain('migration-check')
+
+    // argsHint 应作为参数提示展示
+    const texts = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent ?? '')
+    expect(texts.some((t) => t.includes('扫描目标'))).toBe(true)
+    expect(texts.some((t) => t.includes('[目标]'))).toBe(true)
   })
 
   it('输入查询后 Enter 选择高亮的工作流名称', async () => {

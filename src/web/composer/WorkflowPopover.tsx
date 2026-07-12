@@ -36,6 +36,13 @@ const wfDesc = css`
   color: var(--text-secondary);
 `
 
+const wfArgs = css`
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  font-family: var(--font-mono, monospace);
+`
+
 const sourceTag = css`
   font-size: 10px;
   padding: 1px 5px;
@@ -91,6 +98,7 @@ function WorkflowPopover(props: Props) {
             <span className={`${sourceTag} ${wf.source}`}>{wf.source}</span>
           </span>
           {wf.description && <span className={wfDesc}>{wf.description}</span>}
+          {wf.argsHint && <span className={wfArgs}>参数: {wf.argsHint}</span>}
         </button>
       ))}
     </div>

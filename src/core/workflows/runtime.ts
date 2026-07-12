@@ -1,6 +1,7 @@
 import type { AgentDependencies, AgentState, CommandResult } from '../types.js'
 import { buildWorkflowContext } from './context.js'
 import type { WorkflowRegistry } from './registry.js'
+import type { WorkflowEntry } from './types.js'
 
 /** 工作流超时错误（用于 Promise.race 中识别超时）。 */
 class WorkflowTimeoutError extends Error {
@@ -28,6 +29,8 @@ type ExecuteWorkflowOpts = {
   args: string
   deps: AgentDependencies
   parent: AgentState
+  /** 已解析的 entry（如项目级工作流），优先于 registry.get(name)。 */
+  entry?: WorkflowEntry
   onProgress?: (message: string, detail?: unknown) => void
 }
 
@@ -37,9 +40,9 @@ type ExecuteWorkflowOpts = {
  * 工作流 return 的 output 作为 text 返回；异常捕获为 error。
  */
 async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult> {
-  const { registry, name, args, deps, parent, onProgress } = opts
+  const { registry, name, args, deps, parent, onProgress, entry: resolvedEntry } = opts
 
-  const entry = registry.get(name)
+  const entry = resolvedEntry ?? registry.get(name)
   if (!entry) {
     const available = registry
       .list()

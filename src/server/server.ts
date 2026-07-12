@@ -1,6 +1,6 @@
 // src/server/server.ts
 
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import type { Server as NodeServer } from 'node:http'
 import { connect as tcpConnect } from 'node:net'
 import { join } from 'node:path'
@@ -10,8 +10,7 @@ import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import { loadConfig } from '../core/config.js'
 import { decryptSecret } from '../core/secret.js'
-import { BUILTIN_WORKFLOWS, createWorkflowRegistry } from '../core/workflows/index.js'
-import type { WorkflowRegistry } from '../core/workflows/registry.js'
+import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import type { Registry } from '../llm/registry.js'
@@ -140,8 +139,9 @@ async function buildServerContext(
     llmRegistry,
   })
 
-  // workflowRegistry 惰性初始化 backing field（见下方 ctx getter）。
-  let _workflowRegistry: WorkflowRegistry | undefined
+  // 工作流注册表：三级发现（builtin → global → project），eager 初始化。
+  // 此前是惰性 getter 只注册 builtin，导致项目级 .c0de/workflows/*.js 永远不可见。
+  const workflowRegistry = await createAndPopulateRegistry(cwd)
 
   const ctx: ServerContext = {
     db,
@@ -160,15 +160,7 @@ async function buildServerContext(
       for (const def of BUILTIN_AGENTS) reg.register(def)
       return reg
     })(),
-    // 工作流注册表：惰性初始化，只含内置（项目级 discovery 由 bootstrap 或 API 触发热加载）。
-    // 与 context.ts 的 createServerContext 保持一致的模式。
-    get workflowRegistry() {
-      if (!_workflowRegistry) {
-        _workflowRegistry = createWorkflowRegistry()
-        for (const wf of BUILTIN_WORKFLOWS) _workflowRegistry.register(wf)
-      }
-      return _workflowRegistry
-    },
+    workflowRegistry,
     // spec §18.1 后台版本检查调度器；config.update.enabled 控制是否启动。
     updateScheduler: createUpdateScheduler({
       checkFn: opts.checkForUpdateFn ?? checkForUpdate,
@@ -207,16 +199,67 @@ async function buildServerContext(
   }
 }
 
+const DEV_LOCK_FILE = '.dev.lock'
+
+/**
+ * Cross-process guard for PGLite dataDir.
+ *
+ * PGLite is single-writer WASM Postgres — two processes on the same dataDir
+ * always abort (`RuntimeError: Aborted()`). This lock prevents silent
+ * corruption when multiple dev servers (e.g. different ports) target the
+ * same project.
+ *
+ * - Live PID in lock → throw clear error instead of cryptic WASM abort.
+ * - Dead PID in lock → stale: remove `.dev.lock` + `postmaster.pid`, proceed.
+ */
+function acquireDevDbLock(dataDir: string): void {
+  const lockPath = join(dataDir, DEV_LOCK_FILE)
+  if (existsSync(lockPath)) {
+    const oldPid = parseInt(readFileSync(lockPath, 'utf8').trim(), 10)
+    let stale = false
+    if (oldPid && oldPid !== process.pid) {
+      try {
+        process.kill(oldPid, 0) // signal 0 = liveness check
+      } catch (err: unknown) {
+        // ESRCH = process dead → stale lock, fall through to cleanup.
+        // Any other error (EPERM etc.) re-throws — don't clobber a live lock.
+        if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err
+        stale = true
+      }
+      if (!stale) {
+        throw new Error(
+          `Database is locked by another c0de process (PID ${oldPid}).\n` +
+            `PGLite is single-writer — only one process may use:\n  ${dataDir}\n` +
+            `Kill the other process and retry:\n  kill ${oldPid}`,
+        )
+      }
+    }
+    // Stale lock cleanup
+    try { unlinkSync(lockPath) } catch { /* best-effort */ }
+    try { unlinkSync(join(dataDir, 'postmaster.pid')) } catch { /* best-effort */ }
+  }
+  writeFileSync(lockPath, String(process.pid))
+}
+
+/** Release the dev DB lock (best-effort, stale-detection covers missed calls). */
+function releaseDevDbLock(dataDir: string): void {
+  try { unlinkSync(join(dataDir, DEV_LOCK_FILE)) } catch { /* best-effort */ }
+}
+
 /** dev 专用：创建 + migrate PGLite，跨热重载复用（单写者，只建一次）。 */
 async function createDevDb(cwd: string): Promise<DB> {
   const dataDir = resolveDbDir(cwd)
   if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
+
+  acquireDevDbLock(dataDir)
+
   const db = await createDB({ driver: 'pglite', dataDir })
-  // migrateDB 失败必须 close，否则 WASM 实例泄漏锁住 dataDir。
+  // migrateDB 失败必须 close + release lock，否则 WASM 实例泄漏锁住 dataDir。
   try {
     await migrateDB(db)
   } catch (err) {
     await db.close().catch(() => {})
+    releaseDevDbLock(dataDir)
     throw err
   }
   return db
@@ -354,6 +397,8 @@ export {
   buildRegistryFromConfig,
   buildServerContext,
   createDevDb,
+  releaseDevDbLock,
+  resolveDbDir,
   startServer,
   syncRegistryFromConfig,
 }

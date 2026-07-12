@@ -135,10 +135,11 @@ function Composer(props: ComposerProps) {
   const { data: commands = [] } = useCommands()
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
 
-  // 工作流列表（和命令列表一样很少变化，长时间缓存）
+  // 工作流列表：传入 projectId 以发现项目级 .c0de/workflows/*.js。
+  // queryKey 含 projectId 确保切换项目时重新拉取。
   const { data: workflows = [] } = useQuery({
-    queryKey: ['workflows'],
-    queryFn: () => workflowsAPI.list(),
+    queryKey: ['workflows', props.projectId],
+    queryFn: () => workflowsAPI.list(props.projectId),
     staleTime: Infinity,
     select: (data) => data.workflows,
   })

@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { Hono } from 'hono'
 import { createApp } from './app.js'
-import { buildServerContext, createDevDb } from './server.js'
+import { buildServerContext, createDevDb, releaseDevDbLock, resolveDbDir } from './server.js'
 import type { ServerContext } from './types.js'
 
 /**
@@ -96,6 +96,8 @@ async function closeDevApp(): Promise<void> {
     await db.close()
     delete g[DEV_DB_KEY]
   }
+  // Release cross-process lock so the next dev server can start cleanly.
+  releaseDevDbLock(resolveDbDir(process.cwd()))
 }
 
 /**

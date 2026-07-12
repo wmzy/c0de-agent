@@ -42,7 +42,9 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
       for (const def of BUILTIN_AGENTS) reg.register(def)
       return reg
     })()
+  // 工作流注册表：测试工厂只含内置（项目级 discovery 由 buildServerContext 负责）。
   let _workflowRegistry: WorkflowRegistry | undefined
+
   return {
     db: opts.db,
     config,
@@ -55,7 +57,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     permissionStore: createPermissionStore(),
     permissionMode: config.permission.defaultMode,
     agentRegistry,
-    // 工作流注册表：惰性初始化，只含内置（项目级 discovery 由 bootstrap 或 API 触发热加载）。
+    // 工作流注册表：惰性初始化，只含内置（测试工厂；生产路径走 buildServerContext）。
     get workflowRegistry() {
       if (!_workflowRegistry) {
         _workflowRegistry = createWorkflowRegistry()

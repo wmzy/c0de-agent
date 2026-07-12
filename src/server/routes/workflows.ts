@@ -4,7 +4,9 @@ import { streamSSE } from 'hono/streaming'
 import { createAgent } from '../../core/agent.js'
 import { executeWorkflow } from '../../core/workflows/runtime.js'
 import { reloadRegistry } from '../../core/workflows/registry.js'
-import { saveWorkflow } from '../../core/workflows/discovery.js'
+import { discoverWorkflows, saveWorkflow } from '../../core/workflows/discovery.js'
+import type { WorkflowEntry } from '../../core/workflows/types.js'
+import { getProject } from '../../project/project.js'
 import { createSession } from '../../session/session.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import { apiError } from '../middleware/error.js'
@@ -14,13 +16,32 @@ import type { ServerContext } from '../types.js'
 function createWorkflowsRoute(ctx: ServerContext) {
   const app = new Hono()
 
-  // GET / — 列出所有工作流
-  app.get('/', (c) => {
+  // GET / — 列出所有工作流。可选 ?projectId=xxx 合并项目级 .c0de/workflows/*.js。
+  app.get('/', async (c) => {
     const registry = ctx.workflowRegistry
     if (!registry) {
       return c.json({ workflows: [] })
     }
-    const workflows = registry.list().map((entry) => ({
+
+    // 注册表已有 builtin + global + server-cwd；以 name 为 key 去重。
+    const byName = new Map<string, WorkflowEntry>()
+    for (const entry of registry.list()) {
+      byName.set(entry.meta.name, entry)
+    }
+
+    // 项目级工作流：从 project.worktree/.c0de/workflows/ 动态发现，同名覆盖。
+    const projectId = c.req.query('projectId')
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (project) {
+        const projectWorkflows = await discoverWorkflows(project.worktree)
+        for (const wf of projectWorkflows) {
+          byName.set(wf.meta.name, wf)
+        }
+      }
+    }
+
+    const workflows = Array.from(byName.values()).map((entry) => ({
       name: entry.meta.name,
       description: entry.meta.description,
       argsHint: entry.meta.argsHint,
@@ -67,14 +88,27 @@ function createWorkflowsRoute(ctx: ServerContext) {
     })
   })
 
-  // GET /:name — 元数据 + 源码
-  app.get('/:name', (c) => {
+  // GET /:name — 元数据 + 源码。可选 ?projectId=xxx 查找项目级工作流。
+  app.get('/:name', async (c) => {
     const name = c.req.param('name')
     const registry = ctx.workflowRegistry
     if (!registry) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
     }
-    const entry = registry.get(name)
+    let entry = registry.get(name)
+
+    // 项目级 fallback
+    if (!entry) {
+      const projectId = c.req.query('projectId')
+      if (projectId) {
+        const project = await getProject(ctx.db, projectId)
+        if (project) {
+          const discovered = await discoverWorkflows(project.worktree)
+          entry = discovered.find((w) => w.meta.name === name)
+        }
+      }
+    }
+
     if (!entry) {
       return apiError(c, 404, 'NOT_FOUND', `Workflow "${name}" not found`)
     }
@@ -88,14 +122,27 @@ function createWorkflowsRoute(ctx: ServerContext) {
     })
   })
 
-  // POST /:name/run — 执行工作流（SSE 推送进度）
+  // POST /:name/run — 执行工作流（SSE 推送进度）。可选 ?projectId=xxx 执行项目级工作流。
   app.post('/:name/run', async (c) => {
     const name = c.req.param('name')
     const registry = ctx.workflowRegistry
     if (!registry) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
     }
-    const entry = registry.get(name)
+    let entry = registry.get(name)
+
+    // 项目级 fallback + 解析项目 worktree 作为 agent cwd
+    let agentCwd = ctx.cwd
+    const projectId = c.req.query('projectId')
+    if (!entry && projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (project) {
+        agentCwd = project.worktree
+        const discovered = await discoverWorkflows(project.worktree)
+        entry = discovered.find((w) => w.meta.name === name)
+      }
+    }
+
     if (!entry) {
       return apiError(c, 404, 'NOT_FOUND', `Workflow "${name}" not found`)
     }
@@ -117,7 +164,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       toolRegistry: ctx.toolRegistry,
       permission: autoAllowChecker,
       config: ctx.config,
-      cwd: ctx.cwd,
+      cwd: agentCwd,
       agentRegistry: ctx.agentRegistry,
     })
 
@@ -128,7 +175,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
         toolRegistry: ctx.toolRegistry,
         permission: autoAllowChecker,
         config: ctx.config,
-        cwd: ctx.cwd,
+        cwd: agentCwd,
         agentRegistry: ctx.agentRegistry,
       }
 
@@ -136,6 +183,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
         const result = await executeWorkflow({
           registry,
           name,
+          entry,
           args,
           deps,
           parent,

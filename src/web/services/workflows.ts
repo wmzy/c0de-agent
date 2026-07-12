@@ -10,7 +10,10 @@ type WorkflowInfo = {
 }
 
 const workflowsAPI = {
-  list: () => apiRequest<{ workflows: WorkflowInfo[] }>('/api/workflows'),
+  list: (projectId?: string) =>
+    apiRequest<{ workflows: WorkflowInfo[] }>(
+      projectId ? `/api/workflows?projectId=${encodeURIComponent(projectId)}` : '/api/workflows',
+    ),
 }
 
 export type { WorkflowInfo }

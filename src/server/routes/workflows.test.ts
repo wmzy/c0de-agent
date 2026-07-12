@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
@@ -9,6 +8,7 @@ import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
+import { fromDirectory } from '../../project/project.js'
 import { createServerContext } from '../context.js'
 import type { ServerContext } from '../types.js'
 import { createWorkflowsRoute } from './workflows.js'
@@ -78,6 +78,45 @@ describe('workflows route — GET /', () => {
       expect(wf.description).toBeTruthy()
       expect(wf.phases).toBeInstanceOf(Array)
     }
+  })
+
+  it('?projectId 合并项目级 .c0de/workflows/*.js', async () => {
+    const { app, ctx } = await setup()
+
+    // 注册项目并写入工作流文件
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'proj-test-wf.js'),
+      `export const meta = { name: 'proj-test-wf', description: 'project-level test', phases: ['go'] }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+
+    const res = await app.request(`/?projectId=${project.id}`, { method: 'GET' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { workflows: Array<{ name: string; source: string }> }
+    const names = body.workflows.map((w) => w.name)
+
+    // builtin 仍在
+    expect(names).toContain('security-audit')
+    // 项目级工作流出现
+    expect(names).toContain('proj-test-wf')
+    const projWf = body.workflows.find((w) => w.name === 'proj-test-wf')
+    expect(projWf?.source).toBe('project')
+  })
+
+  it('无 projectId 时项目级工作流不出现', async () => {
+    const { app } = await setup()
+
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'hidden-wf.js'),
+      `export const meta = { name: 'hidden-wf', description: 'hidden without projectId', phases: ['go'] }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+
+    // 不传 projectId：只看到 builtin，项目级不可见
+    const res = await app.request('/', { method: 'GET' })
+    const body = (await res.json()) as { workflows: Array<{ name: string }> }
+    expect(body.workflows.map((w) => w.name)).not.toContain('hidden-wf')
   })
 })
 
