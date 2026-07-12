@@ -294,6 +294,43 @@ describe('chat route (SSE)', () => {
     ])
   })
 
+  // 回归：catch 块必须发送 done 事件，否则前端 isStreaming 永远不会变 false。
+  // 此前 catch 块只发 error 不发 done，依赖前端 gotError 回退——
+  // 若 error 事件也因流关闭而丢失，前端会永远卡在 streaming 态。
+  it('POST / chatStream 抛错时 SSE 流仍以 done 结束', async () => {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const session = await createSession(db, 'Test')
+    const throwingStream = (): AsyncGenerator<StreamChunk> =>
+      (async function* (): AsyncGenerator<StreamChunk> {
+        yield { _tag: 'text', text: 'partial' }
+        throw new Error('stream blew up')
+      })()
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      chatStream: throwingStream,
+    })
+    const app = createChatRoute(ctx)
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: session.id, message: 'hi' }),
+    })
+    expect(res.status).toBe(200)
+    const events = parseSSEEvents(await res.text())
+    const types = events.map((e) => e.event)
+    // error 事件应被发送
+    expect(types).toContain('error')
+    // done 事件必须在 error 之后发送（catch 块补发）
+    expect(types).toContain('done')
+    const errorIdx = types.indexOf('error')
+    const doneIdx = types.indexOf('done')
+    expect(doneIdx).toBeGreaterThan(errorIdx)
+  })
+
   it('resolveAgentCwd: returns worktree when session has project', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cwd-'))
     try {

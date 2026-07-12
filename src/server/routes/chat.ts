@@ -139,6 +139,7 @@ function createChatRoute(ctx: ServerContext): Hono {
                 error: { _tag: 'unexpected', message: String(e) },
               }),
             })
+            await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
           }
         })
       }
@@ -304,8 +305,13 @@ function createChatRoute(ctx: ServerContext): Hono {
         ctx.agentManager.abort(sessionId)
       })
 
+      // 跟踪 done 事件是否已发送：agentLoop 正常完成时 yield done；
+      // 但 error/abort/max_turns 等路径不 yield done，需在 finally 补发。
+      // 否则前端 isStreaming 永远不会变 false，按钮卡在「终止」态。
+      let doneSent = false
       try {
         for await (const event of runAgent(state, userContent, deps)) {
+          if (event._tag === 'done') doneSent = true
           await stream.writeSSE({
             event: event._tag,
             data: JSON.stringify(event),
@@ -329,6 +335,11 @@ function createChatRoute(ctx: ServerContext): Hono {
           }),
         })
       } finally {
+        // agentLoop 的 error/abort/max_turns 路径不 yield done，在此补发。
+        // 正常完成路径已在循环中 yield done，doneSent=true 时跳过避免重复。
+        if (!doneSent) {
+          await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+        }
         // 无论正常完成、错误还是 abort，只要服务还活着就标记 completed。
         // 只有服务崩溃/重启才会留下 status='running' → 下次加载检测为 interrupted。
         await updateSessionLastRun(ctx.db, sessionId, {
