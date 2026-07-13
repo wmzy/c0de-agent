@@ -4,6 +4,7 @@ import { css } from '@linaria/core'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from './Terminal.js'
 import type { SplitDirection, UseTerminalReturn } from '../hooks/useTerminal.js'
+import { useFileReference } from '../contexts/ReferenceContext.js'
 
 interface TerminalPanelProps {
   terminal: UseTerminalReturn
@@ -625,6 +626,14 @@ function PaneSplitContainer({
   const containerClass = direction === 'horizontal' ? splitContainerHStyle : splitContainerVStyle
   const dividerClass = direction === 'horizontal' ? dividerHStyle : dividerVStyle
 
+  const fileRef = useFileReference()
+  const handleAddToChat = useCallback(
+    (label: string, content: string) => {
+      fileRef?.insertTerminalReference(label, content)
+    },
+    [fileRef],
+  )
+
   return (
     <div className={containerClass} style={{ flex: 1 }}>
       {tab.panes.map((pane, i) => (
@@ -657,6 +666,7 @@ function PaneSplitContainer({
                 ws={getWebSocket(pane.id)}
                 visible={visible}
                 onResize={(cols, rows) => onPaneResize(pane.id, cols, rows)}
+                onAddToChat={handleAddToChat}
               />
             </div>
           </div>
