@@ -30,11 +30,14 @@ export interface TerminalTab {
 }
 
 const TERMINAL_HEIGHT_KEY = 'c0de-agent:terminalHeight'
-const TERMINAL_OPEN_KEY = 'c0de-agent:terminalOpen'
-const TERMINAL_SESSIONS_KEY = 'c0de-agent:terminalSessions'
 const DEFAULT_HEIGHT = 240
 const MIN_HEIGHT = 100
 const MAX_HEIGHT = 800
+
+/** 面板开关状态：按项目分桶。 */
+const openKey = (projectId: string) => `c0de-agent:terminalOpen:${projectId}`
+/** 终端布局：按项目分桶。 */
+const sessionsKey = (projectId: string) => `c0de-agent:terminalSessions:${projectId}`
 
 /** 持久化到 localStorage 的最小终端结构（不含 WS 对象）。 */
 interface PersistedTerminalState {
@@ -54,13 +57,13 @@ function loadHeight(): number {
   return Number.isFinite(n) ? Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, n)) : DEFAULT_HEIGHT
 }
 
-function loadOpen(): boolean {
-  return localStorage.getItem(TERMINAL_OPEN_KEY) === 'true'
+function loadOpen(projectId: string): boolean {
+  return localStorage.getItem(openKey(projectId)) === 'true'
 }
 
-function loadPersistedState(): PersistedTerminalState | null {
+function loadPersistedState(projectId: string): PersistedTerminalState | null {
   try {
-    const raw = localStorage.getItem(TERMINAL_SESSIONS_KEY)
+    const raw = localStorage.getItem(sessionsKey(projectId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as PersistedTerminalState
     if (!parsed?.sessions || !Array.isArray(parsed.sessions)) return null
@@ -70,9 +73,9 @@ function loadPersistedState(): PersistedTerminalState | null {
   }
 }
 
-function savePersistedState(state: PersistedTerminalState): void {
+function savePersistedState(state: PersistedTerminalState, projectId: string): void {
   try {
-    localStorage.setItem(TERMINAL_SESSIONS_KEY, JSON.stringify(state))
+    localStorage.setItem(sessionsKey(projectId), JSON.stringify(state))
   } catch {
     // localStorage 满或不可用，忽略
   }
@@ -92,13 +95,16 @@ function savePersistedState(state: PersistedTerminalState): void {
  *
  * 组件卸载时断开所有 WS（PTY 进程在后端保持存活，重连可恢复）。
  */
-export function useTerminal() {
+export function useTerminal(projectId: string) {
+  const projectIdRef = useRef(projectId)
+  projectIdRef.current = projectId
+
   const [sessions, setSessions] = useState<TerminalSession[]>([])
   const [tabSplits, setTabSplits] = useState<Record<string, TabSplit>>({})
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [activePaneId, setActivePaneId] = useState<string | null>(null)
   const [height, setHeight] = useState(loadHeight)
-  const [open, setOpen] = useState(loadOpen)
+  const [open, setOpen] = useState(() => loadOpen(projectId))
   /** 页面加载时恢复终端会话，恢复期间阻止自动创建。 */
   const [restoring, setRestoring] = useState(true)
 
@@ -143,7 +149,7 @@ export function useTerminal() {
   /** 创建新终端会话（作为新标签页）。建立 WebSocket 连接。 */
   const createTerminal = useCallback(
     async (opts?: { cwd?: string; cols?: number; rows?: number; title?: string }) => {
-      const info = await terminalAPI.create(opts)
+      const info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
       const tabId = info.id // 新终端独占一个标签
       const session: TerminalSession = {
         ...info,
@@ -170,7 +176,7 @@ export function useTerminal() {
       const tabPanes = sessionsRef.current.filter((s) => s.tabId === tabId)
       if (tabPanes.length === 0) return undefined
 
-      const info = await terminalAPI.create(opts)
+      const info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
       const session: TerminalSession = {
         ...info,
         ws: null,
@@ -343,7 +349,7 @@ export function useTerminal() {
   const toggleOpen = useCallback(() => {
     setOpen((prev) => {
       const next = !prev
-      localStorage.setItem(TERMINAL_OPEN_KEY, String(next))
+      localStorage.setItem(openKey(projectIdRef.current), String(next))
       return next
     })
   }, [])
@@ -354,20 +360,36 @@ export function useTerminal() {
     localStorage.setItem(TERMINAL_HEIGHT_KEY, String(clamped))
   }, [])
 
-  // ---- 恢复：页面加载时从后端获取存活 PTY 列表，结合 localStorage 恢复 tab/pane 结构 ----
+  // ---- 恢复：projectId 变化时按项目重建终端结构 ----
   useEffect(() => {
+    const pid = projectId
     let cancelled = false
+    setRestoring(true)
+    // 断开当前所有 WebSocket（PTY 在后端保持存活，切回可重连）
+    for (const s of sessionsRef.current) {
+      s.ws?.close()
+    }
+    // 清空当前项目状态
+    setSessions([])
+    setTabSplits({})
+    setActiveTabId(null)
+    setActivePaneId(null)
+    // 恢复该项目的面板开关状态（无记录默认关闭）
+    setOpen(loadOpen(pid))
+
     void (async () => {
-      const persisted = loadPersistedState()
+      const persisted = loadPersistedState(pid)
       if (!persisted?.sessions.length) {
-        setRestoring(false)
+        if (!cancelled) setRestoring(false)
         return
       }
       try {
         const { terminals } = await terminalAPI.list()
         if (cancelled) return
-        const liveIds = new Set(terminals.map((t) => t.id))
-        // 过滤掉已死的 PTY，保留存活且在 localStorage 中的
+        // 后端 projectId 为权威：仅归属当前项目的存活 PTY
+        const liveIds = new Set(
+          terminals.filter((t) => t.projectId === pid).map((t) => t.id),
+        )
         const restored = persisted.sessions
           .filter((ps) => liveIds.has(ps.id))
           .map((ps) => {
@@ -380,7 +402,7 @@ export function useTerminal() {
             } satisfies TerminalSession
           })
         if (restored.length === 0) {
-          setRestoring(false)
+          if (!cancelled) setRestoring(false)
           return
         }
         // 重建 tabSplits，只保留仍有 pane 的 tab
@@ -418,17 +440,20 @@ export function useTerminal() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [projectId])
 
   // ---- 持久化：sessions/tabSplits/active 变化时写入 localStorage ----
   useEffect(() => {
     if (restoring) return
-    savePersistedState({
-      sessions: sessions.map((s) => ({ id: s.id, tabId: s.tabId })),
-      tabSplits,
-      activeTabId,
-      activePaneId,
-    })
+    savePersistedState(
+      {
+        sessions: sessions.map((s) => ({ id: s.id, tabId: s.tabId })),
+        tabSplits,
+        activeTabId,
+        activePaneId,
+      },
+      projectIdRef.current,
+    )
   }, [restoring, sessions, tabSplits, activeTabId, activePaneId])
 
   // 卸载时断开所有 WebSocket（PTY 保持存活，可重连）
