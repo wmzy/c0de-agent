@@ -1,6 +1,7 @@
 // src/web/components/Terminal.tsx
 
-import { useCallback, useEffect, useRef } from 'react'
+import { css } from '@linaria/core'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -13,7 +14,52 @@ interface TerminalProps {
   visible: boolean
   /** 终端尺寸变化时通知后端（cols, rows）。 */
   onResize?: (cols: number, rows: number) => void
+  /** 终端 Add to Chat 回调（选区或命令块引用）。 */
+  onAddToChat?: (label: string, content: string) => void
 }
+
+/** 命令块：一个用户命令及其输出的行范围。 */
+interface CommandBlock {
+  /** 终端绝对行号（baseY + cursorY），稳定标识。 */
+  startRow: number
+  /** 命令文本（用户输入）。 */
+  command: string
+}
+
+const addToChatBtnStyle = css`
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-secondary, #1c2128);
+  border: 1px solid var(--primary, #4a9eff);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background 0.12s;
+
+  &:hover {
+    background: var(--primary, #4a9eff);
+    color: #fff;
+  }
+`
+
+const blockHighlightStyle = css`
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  background: rgba(74, 158, 255, 0.08);
+  border-left: 2px solid var(--primary, #4a9eff);
+  pointer-events: none;
+`
 
 /**
  * xterm.js 终端渲染组件。
@@ -27,12 +73,20 @@ interface TerminalProps {
  * WS 生命周期由父组件（useTerminal）管理；本组件只负责数据桥接和渲染。
  * ws 为 null 时显示「正在连接…」占位。
  */
-export function Terminal({ ws, visible, onResize }: TerminalProps) {
+export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const onResizeRef = useRef(onResize)
   onResizeRef.current = onResize
+
+  // 命令块追踪状态
+  const blocksRef = useRef<CommandBlock[]>([])
+  const currentInputRef = useRef('')
+  const wasAlternateRef = useRef(false)
+  // 选区 + 块悬停状态
+  const [selection, setSelection] = useState<string | null>(null)
+  const [hoverBlock, setHoverBlock] = useState<{ top: number; height: number; block: CommandBlock } | null>(null)
 
   /** 执行 fit 并通知后端尺寸变化。 */
   const doFit = useCallback(() => {
@@ -89,6 +143,12 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
     termRef.current = term
     fitRef.current = fit
 
+    // 选区变化追踪
+    term.onSelectionChange(() => {
+      const sel = term.getSelection()
+      setSelection(sel && sel.length > 0 ? sel : null)
+    })
+
     // 延迟一帧让 DOM 布局完成后再 fit
     requestAnimationFrame(() => doFit())
 
@@ -132,10 +192,38 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
       processData(data)
     }
 
-    // xterm 输入 → WS
+    // xterm 输入 → WS + 命令块追踪
     const onTermData = (data: string) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(data)
+      }
+      // 命令块追踪：跳过 alternate buffer（vim/less/top 等全屏程序）
+      const isAlt = term.buffer.active.type === 'alternate'
+      if (isAlt) {
+        wasAlternateRef.current = true
+        currentInputRef.current = ''
+        return
+      }
+      // 从 alternate 切回 normal 时清空输入缓存
+      if (wasAlternateRef.current) {
+        wasAlternateRef.current = false
+        currentInputRef.current = ''
+      }
+      for (const char of data) {
+        if (char === '\r') {
+          const absRow = term.buffer.active.baseY + term.buffer.active.cursorY
+          blocksRef.current.push({
+            startRow: absRow,
+            command: currentInputRef.current,
+          })
+          // 修剪被 scrollback 裁掉的旧块
+          const maxRow = term.buffer.active.length
+          blocksRef.current = blocksRef.current.filter((b) => b.startRow <= maxRow)
+          currentInputRef.current = ''
+        } else if (char >= ' ') {
+          // 可打印字符累积到当前输入（跳过控制字符）
+          currentInputRef.current += char
+        }
       }
     }
 
@@ -188,6 +276,100 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
     return () => observer.disconnect()
   }, [doFit])
 
+  /** 鼠标悬停时计算命令块高亮。 */
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      // 有选区时不显示块高亮
+      if (selection) {
+        if (hoverBlock) setHoverBlock(null)
+        return
+      }
+      const term = termRef.current
+      const container = containerRef.current
+      if (!term || !container) return
+      // 仅 normal buffer 追踪块
+      if (term.buffer.active.type === 'alternate') {
+        if (hoverBlock) setHoverBlock(null)
+        return
+      }
+      const rect = container.getBoundingClientRect()
+      const cellHeight = rect.height / term.rows
+      const row = Math.floor((e.clientY - rect.top) / cellHeight)
+      const absRow = term.buffer.active.baseY + row
+
+      // 查找 absRow 所在的块
+      const blocks = blocksRef.current
+      let foundIdx = -1
+      for (let i = 0; i < blocks.length; i++) {
+        const endRow = blocks[i + 1]?.startRow ?? Infinity
+        if (absRow >= blocks[i]!.startRow && absRow < endRow) {
+          foundIdx = i
+          break
+        }
+      }
+      if (foundIdx === -1) {
+        if (hoverBlock) setHoverBlock(null)
+        return
+      }
+      // 计算块在视口内的像素范围
+      const block = blocks[foundIdx]!
+      const nextStart =
+        blocks[foundIdx + 1]?.startRow ?? term.buffer.active.baseY + term.rows
+      const startViewportRow = block.startRow - term.buffer.active.baseY
+      const endViewportRow = nextStart - term.buffer.active.baseY
+      const top = Math.max(0, startViewportRow) * cellHeight
+      const bottom = Math.min(term.rows, endViewportRow) * cellHeight
+      const height = bottom - top
+      if (height <= 0) {
+        if (hoverBlock) setHoverBlock(null)
+        return
+      }
+      setHoverBlock({ top, height, block })
+    },
+    [selection, hoverBlock],
+  )
+
+  /** 鼠标离开时清除块高亮。 */
+  const handleMouseLeave = useCallback(() => {
+    if (hoverBlock) setHoverBlock(null)
+  }, [hoverBlock])
+
+  /** 从终端 buffer 提取命令块文本。 */
+  const extractBlockText = useCallback((block: CommandBlock): string => {
+    const term = termRef.current
+    if (!term) return block.command
+    const blocks = blocksRef.current
+    const idx = blocks.indexOf(block)
+    const endRow =
+      blocks[idx + 1]?.startRow ??
+      term.buffer.active.baseY + term.buffer.active.cursorY
+    const lines: string[] = []
+    for (let i = block.startRow; i <= endRow && i < term.buffer.active.length; i++) {
+      const line = term.buffer.active.getLine(i)
+      if (line) lines.push(line.translateToString(true))
+    }
+    return lines.join('\n').replace(/\n+$/, '')
+  }, [])
+
+  /** Add to Chat 按钮点击。 */
+  const handleAddToChat = useCallback(() => {
+    if (selection) {
+      onAddToChat?.('🖥 终端选区', selection)
+      // 引用后清除选区
+      termRef.current?.clearSelection()
+      setSelection(null)
+    } else if (hoverBlock) {
+      const content = extractBlockText(hoverBlock.block)
+      const cmd = hoverBlock.block.command.trim()
+      const label = cmd
+        ? `🖥 命令: ${cmd.length > 30 ? `${cmd.slice(0, 30)}…` : cmd}`
+        : '🖥 终端输出'
+      onAddToChat?.(label, content)
+    }
+  }, [selection, hoverBlock, extractBlockText, onAddToChat])
+
+  const showAddToChat = onAddToChat && (selection || hoverBlock)
+
   return (
     <div
       ref={containerRef}
@@ -196,8 +378,28 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
         height: '100%',
         padding: '4px 8px',
         overflow: 'hidden',
+        position: 'relative',
       }}
-    />
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      {showAddToChat && (
+        <button
+          className={addToChatBtnStyle}
+          onClick={handleAddToChat}
+          type="button"
+          aria-label="添加到会话"
+        >
+          ＋ Add to Chat
+        </button>
+      )}
+      {!selection && hoverBlock && (
+        <div
+          className={blockHighlightStyle}
+          style={{ top: hoverBlock.top, height: hoverBlock.height }}
+        />
+      )}
+    </div>
   )
 }
 
