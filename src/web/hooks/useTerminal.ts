@@ -216,6 +216,16 @@ export function useTerminal(projectId: string) {
 
       const ws = new WebSocket(terminalWsUrl(id))
 
+      // 早期消息缓冲：后端在 WS 连接时立即回放 scrollback，
+      // 但此时 Terminal 组件尚未注册 onmessage（React effect 延迟一个渲染周期）。
+      // 先用 onmessage 暂存消息，Terminal effect 清空缓冲后切换到正式处理器。
+      const earlyData: string[] = []
+      ws.onmessage = (ev: MessageEvent) => {
+        const data = typeof ev.data === 'string' ? ev.data : ev.data.toString('utf8')
+        earlyData.push(data)
+      }
+      ;(ws as WebSocket & { __earlyData?: string[] }).__earlyData = earlyData
+
       ws.onopen = () => {
         updateSession(id, { ws, connecting: false })
       }

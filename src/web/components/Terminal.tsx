@@ -107,8 +107,7 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
     if (!ws) return
 
     // WS 数据 → xterm
-    const onMessage = (event: MessageEvent) => {
-      const data = typeof event.data === 'string' ? event.data : event.data.toString('utf8')
+    const processData = (data: string) => {
       // 检查是否为 JSON 控制消息（exit/error）
       if (data.startsWith('{') && data.includes('"type"')) {
         try {
@@ -128,6 +127,11 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
       term.write(data)
     }
 
+    const onMessage = (event: MessageEvent) => {
+      const data = typeof event.data === 'string' ? event.data : event.data.toString('utf8')
+      processData(data)
+    }
+
     // xterm 输入 → WS
     const onTermData = (data: string) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -135,17 +139,22 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
       }
     }
 
+    // 先清空早期缓冲（scrollback），再切换到正式 onmessage 处理器。
+    // connect() 设置的 ws.onmessage 缓冲在此 effect 运行时被消费。
+    const earlyData = (ws as WebSocket & { __earlyData?: string[] }).__earlyData
+    if (earlyData) {
+      for (const data of earlyData) {
+        processData(data)
+      }
+      earlyData.length = 0
+    }
+    ws.onmessage = null
+
     ws.addEventListener('message', onMessage)
     const disposable = term.onData(onTermData)
 
-    // WS（重）连接后强制 shell 重绘 prompt。
-    // - 首次连接：shell 自然输出 prompt，Ctrl+L 无副作用。
-    // - 页面刷新后重连：PTY 存活但无待发输出，xterm 一片空白。
-    //   发送 Ctrl+L（\x0c）让 shell 清屏重绘，恢复可见 prompt。
-    // 同时触发 resize 同步 PTY 尺寸。
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send('\x0c')
-    }
+    // scrollback 由后端在 WS attach 时自动回放，前端无需发送 Ctrl+L。
+    // 仅触发 resize 同步 PTY 尺寸。
     requestAnimationFrame(() => doFit())
 
     return () => {

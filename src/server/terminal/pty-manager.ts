@@ -19,11 +19,13 @@ export interface PTYInfo {
   projectId?: string
 }
 
-/** 内部 PTY 条目：进程 + 元信息 + 活跃 WebSocket 连接集合。 */
+/** 内部 PTY 条目：进程 + 元信息 + 活跃 WebSocket 连接集合 + 输出缓冲。 */
 interface PTYEntry {
   pty: IPty
   info: PTYInfo
   sockets: Set<WebSocket>
+  /** 近期 PTY 输出环形缓冲，WS 重连时回放以恢复终端画面。 */
+  scrollback: string
 }
 
 export interface CreatePTYOptions {
@@ -56,6 +58,8 @@ export function detectShell(): string {
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 const MAX_TITLE_LEN = 100
+/** scrollback 环形缓冲最大字节数（约 50KB）。 */
+const SCROLLBACK_MAX = 50_000
 
 function truncateTitle(title: string): string {
   const clean = title.replace(/[\r\n]/g, ' ').trim()
@@ -102,10 +106,14 @@ export class PTYManager {
       projectId: opts.projectId,
     }
 
-    const entry: PTYEntry = { pty, info, sockets: new Set() }
+    const entry: PTYEntry = { pty, info, sockets: new Set(), scrollback: '' }
 
-    // PTY 输出 → 广播到所有挂载的 WebSocket
+    // PTY 输出 → 广播到所有挂载的 WebSocket + 追加 scrollback
     pty.onData((data) => {
+      entry.scrollback += data
+      if (entry.scrollback.length > SCROLLBACK_MAX) {
+        entry.scrollback = entry.scrollback.slice(-SCROLLBACK_MAX)
+      }
       for (const ws of entry.sockets) {
         if (ws.readyState === ws.OPEN) {
           ws.send(data)
@@ -191,6 +199,13 @@ export class PTYManager {
     if (!entry) return false
 
     entry.sockets.add(ws)
+
+    // 先回放 scrollback，让前端恢复终端历史画面。
+    // 先 add 再 send 避免漏数据：add 之后 onData 的新输出会广播到此 WS，
+    // 而 scrollback 覆盖 add 之前的所有历史输出。Node 单线程保证无竞态。
+    if (entry.scrollback) {
+      ws.send(entry.scrollback)
+    }
 
     ws.on('message', (data: Buffer | string) => {
       const text = typeof data === 'string' ? data : data.toString('utf8')
