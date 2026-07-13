@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { getCursorPosition, setCursorPosition } from './editor-dom.js'
-import type { Prompt, SnippetPart } from './types.js'
+import type { Prompt, SnippetPart, TerminalPart } from './types.js'
 import { DEFAULT_PROMPT } from './types.js'
 
 /** workflowz 高亮样式：琥珀→翠绿渐变文字，与 oh-my-pi 的 hue 30→150 一致。 */
@@ -135,6 +135,18 @@ function createSnippetPill(part: SnippetPart): HTMLSpanElement {
   return span
 }
 
+/** 创建 terminal pill 元素（显示 label，content 存 data 属性）。
+ * 复用 snippet/file pill 的 pillStyle 样式。 */
+function createTerminalPill(part: TerminalPart): HTMLSpanElement {
+  const span = document.createElement('span')
+  span.setAttribute('data-type', 'terminal')
+  span.setAttribute('data-content', part.content)
+  span.setAttribute('contenteditable', 'false')
+  span.className = pillStyle
+  span.textContent = part.label
+  return span
+}
+
 /** 把 contenteditable DOM 解析为 Prompt（DOM→状态）。 */
 function parseFromDOM(editor: HTMLElement): Prompt {
   const parts: Prompt = []
@@ -182,6 +194,19 @@ function parseFromDOM(editor: HTMLElement): Prompt {
       position += label.length
       return
     }
+    if (el.dataset.type === 'terminal') {
+      flushText()
+      const label = el.textContent ?? ''
+      parts.push({
+        type: 'terminal',
+        label,
+        content: el.dataset.content ?? '',
+        start: position,
+        end: position + label.length,
+      })
+      position += label.length
+      return
+    }
     if (el.tagName === 'BR') {
       buffer += '\n'
       return
@@ -217,6 +242,8 @@ function renderPrompt(editor: HTMLElement, prompt: Prompt): void {
       editor.appendChild(createFilePill(part.path, part.content || `📄 ${part.path}`))
     } else if (part.type === 'snippet') {
       editor.appendChild(createSnippetPill(part))
+    } else if (part.type === 'terminal') {
+      editor.appendChild(createTerminalPill(part))
     }
   }
   // 空 editor 插零宽空格防塌陷

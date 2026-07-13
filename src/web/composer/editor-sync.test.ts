@@ -39,7 +39,7 @@ describe('parseFromDOM', () => {
     expect(file && file.type === 'file' ? file.path : '').toBe('src/a.ts')
   })
 
-  it('file pill 的 start/end 基于其 textContent 长度', () => {
+  it('snippet pill 的 start/end 基于其 textContent 长度', () => {
     const el = makeEditor('<span data-type="file" data-path="a.ts">FILE</span>')
     const prompt = parseFromDOM(el)
     const file = prompt.find((p) => p.type === 'file')
@@ -47,6 +47,21 @@ describe('parseFromDOM', () => {
     if (file && file.type === 'file') {
       expect(file.start).toBe(0)
       expect(file.end).toBe(4)
+    }
+  })
+
+  it('terminal pill 解析为 TerminalPart（含 label/content）', () => {
+    const el = makeEditor(
+      'x<span data-type="terminal" data-content="$ npm test\n✓ passed">🖥 命令: npm test</span>y',
+    )
+    const prompt = parseFromDOM(el)
+    const terminal = prompt.find((p) => p.type === 'terminal')
+    expect(terminal && terminal.type === 'terminal').toBeTruthy()
+    if (terminal && terminal.type === 'terminal') {
+      expect(terminal.label).toBe('🖥 命令: npm test')
+      expect(terminal.content).toBe('$ npm test\n✓ passed')
+      expect(terminal.start).toBe(1)
+      expect(terminal.end).toBe(1 + '🖥 命令: npm test'.length)
     }
   })
 
@@ -110,6 +125,25 @@ describe('renderPrompt', () => {
     expect(pill?.getAttribute('data-line-end')).toBe('5')
     expect(pill?.getAttribute('data-snippet')).toBe('const x = 1')
     expect(pill?.textContent).toBe('📄 a.ts:5')
+  })
+
+  it('TerminalPart 渲染为带 data 属性的 terminal pill', () => {
+    const el = makeEditor('')
+    const prompt: Prompt = [
+      {
+        type: 'terminal',
+        label: '🖥 终端选区',
+        content: 'hello world',
+        start: 0,
+        end: 6,
+      },
+    ]
+    renderPrompt(el, prompt)
+    const pill = el.querySelector('[data-type="terminal"]')
+    expect(pill).toBeTruthy()
+    expect(pill?.getAttribute('data-content')).toBe('hello world')
+    expect(pill?.textContent).toBe('🖥 终端选区')
+    expect(pill?.getAttribute('contenteditable')).toBe('false')
   })
 })
 
