@@ -1,5 +1,7 @@
 import { css } from '@linaria/core'
 import { Link, useLocation, useParams } from 'react-router-dom'
+import { CommitButton } from './CommitButton.js'
+import { ProjectIndicator } from './ProjectIndicator.js'
 
 const bar = css`
   display: flex;
@@ -10,6 +12,12 @@ const bar = css`
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
+`
+
+const brandGroup = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
 `
 
 const brand = css`
@@ -70,10 +78,19 @@ export function TopBar() {
 
   return (
     <header className={bar} data-testid="topbar">
-      <Link to="/" className={brand}>
-        <span className={dot} />
-        c0de-agent
-      </Link>
+      <div className={brandGroup}>
+        <Link to="/" className={brand}>
+          <span className={dot} />
+          c0de-agent
+        </Link>
+        {projectId && (
+          <ProjectIndicator
+            projectId={projectId}
+            variant="inline"
+            actions={<CommitButton projectId={projectId} />}
+          />
+        )}
+      </div>
       <nav className={nav}>
         <Link
           to={sessionsPath}

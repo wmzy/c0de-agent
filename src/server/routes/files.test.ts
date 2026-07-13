@@ -461,6 +461,43 @@ describe('files route', () => {
     const body = (await res.json()) as { branch: string | null }
     expect(body.branch).toBeNull()
   })
+
+  it('GET /git-last-commit 返回最后一次提交信息', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-lastcommit-route-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'x')
+    execSync('git add -A && git commit -q -m "feat: initial commit"', { cwd: dir })
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-last-commit')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { commit: { subject: string } | null }
+    expect(body.commit).not.toBeNull()
+    expect(body.commit!.subject).toBe('feat: initial commit')
+  })
+
+  it('GET /git-last-commit 非 git 仓库返回 commit null', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-lastcommit-nogit-route-'))
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-last-commit')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { commit: { subject: string } | null }
+    expect(body.commit).toBeNull()
+  })
 })
 
 describe('git-commit route', () => {

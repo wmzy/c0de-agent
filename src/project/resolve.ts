@@ -30,7 +30,8 @@ function classifyStatus(xy: string): GitStatusCode {
   const y = xy[1]
   if (x === '!' && y === '!') return 'ignored' // git 忽略项
   // 合并冲突：任意 U，或双方同时增/删
-  if (x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D')) return 'conflict'
+  if (x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D'))
+    return 'conflict'
   if (x === '?' && y === '?') return 'untracked'
   if (x === 'D' || y === 'D') return 'deleted'
   if (x !== ' ' && x !== '?') return 'staged' // 已暂存（新增/修改/重命名/复制）
@@ -170,6 +171,31 @@ export function getGitBranch(cwd: string): string | null {
   return branch || null
 }
 
+/** 最后一次提交摘要（供分支名 hover tooltip）。 */
+export interface GitLastCommit {
+  subject: string
+  hash: string
+  author: string
+  date: string
+}
+
+/**
+ * 取最后一次提交信息（subject/hash/author/相对时间）。
+ * 非 git 仓库或无提交（如全新仓库）返回 null。
+ */
+export function getGitLastCommit(cwd: string): GitLastCommit | null {
+  const line = git(['log', '-1', '--format=%s%x1f%h%x1f%an%x1f%cr'], cwd)
+  if (!line) return null
+  const [subject, hash, author, date] = line.split('\x1f')
+  if (!subject) return null
+  return {
+    subject: subject.trim(),
+    hash: (hash ?? '').trim(),
+    author: (author ?? '').trim(),
+    date: (date ?? '').trim(),
+  }
+}
+
 /**
  * 取工作区变更摘要（供 LLM 生成 commit message）。
  * 包含 staged + unstaged diff（相对 HEAD）和 untracked 文件名列表。
@@ -181,7 +207,10 @@ export function getGitDiffSummary(cwd: string): { diff: string; fileCount: numbe
   const parts: string[] = []
   if (diff) parts.push(diff)
   if (untracked) {
-    const files = untracked.split('\n').map((s) => s.trim()).filter(Boolean)
+    const files = untracked
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
     if (files.length > 0) {
       parts.push(`Untracked files:\n${files.map((f) => `  ${f}`).join('\n')}`)
     }
@@ -213,6 +242,71 @@ export function performGitCommit(
   }
   const hash = git(['rev-parse', '--short', 'HEAD'], cwd)
   return { hash: hash || 'unknown' }
+}
+
+/** 分支信息。 */
+export interface GitBranchInfo {
+  name: string
+  current: boolean
+  lastSubject: string | null
+}
+
+/**
+ * 列出本地分支及当前分支标记（非 git 仓库返回 null）。
+ */
+export function listGitBranches(cwd: string): GitBranchInfo[] | null {
+  // --format 自定义输出：每行 `current<TAB>refname<TAB>subject`
+  const raw = git(['branch', '--format=%(HEAD)%09%(refname:short)%09%(contents:subject)'], cwd)
+  if (!raw) return null
+  return raw
+    .split('\n')
+    .filter((l) => l.trim())
+    .map((line) => {
+      const [head, name, subject] = line.split('\t')
+      return {
+        name: (name ?? '').trim(),
+        current: (head ?? '').trim() === '*',
+        lastSubject: (subject ?? '').trim() || null,
+      }
+    })
+    .filter((b) => b.name)
+}
+
+/**
+ * 切换到指定分支（git checkout）。成功返回分支名，失败返回 error。
+ */
+export function checkoutGitBranch(
+  cwd: string,
+  branch: string,
+): { branch: string } | { error: string } {
+  const result = spawnSync('git', ['checkout', branch], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: GIT_MAX_BUFFER,
+  })
+  if (result.status !== 0) {
+    const stderr = (result.stderr ?? '').trim()
+    return { error: stderr || `git checkout failed (exit ${result.status})` }
+  }
+  return { branch }
+}
+
+/**
+ * 创建并切换到新分支。成功返回分支名，失败返回 error。
+ */
+export function createGitBranch(cwd: string, name: string): { branch: string } | { error: string } {
+  const result = spawnSync('git', ['checkout', '-b', name], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: GIT_MAX_BUFFER,
+  })
+  if (result.status !== 0) {
+    const stderr = (result.stderr ?? '').trim()
+    return { error: stderr || `git checkout -b failed (exit ${result.status})` }
+  }
+  return { branch: name }
 }
 
 function hash16(input: string): string {

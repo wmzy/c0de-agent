@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { checkIgnored, resolveProject } from './resolve.js'
+import { checkIgnored, getGitLastCommit, resolveProject } from './resolve.js'
 
 const hasGit = (() => {
   try {
@@ -127,5 +127,36 @@ describe('checkIgnored', () => {
   it('非 git 目录返回空集', () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-nongit-'))
     expect(checkIgnored(dir, ['any.txt'])).toEqual(new Set())
+  })
+})
+
+describe('getGitLastCommit', () => {
+  it.runIf(hasGit)('返回最后一次提交的 subject/hash/author/date', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-lastcommit-'))
+    execSync('git init -q', { cwd: repo })
+    execSync('git config user.email test@test.com', { cwd: repo })
+    execSync('git config user.name Tester', { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'x')
+    execSync('git add . && git commit -q -m "feat: init project"', { cwd: repo })
+
+    const result = getGitLastCommit(repo)
+    expect(result).not.toBeNull()
+    expect(result!.subject).toBe('feat: init project')
+    expect(result!.author).toBe('Tester')
+    expect(result!.hash).toMatch(/^[0-9a-f]{7,}$/)
+    expect(result!.date).toBeTruthy()
+  })
+
+  it('非 git 目录返回 null', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-lastcommit-nogit-'))
+    expect(getGitLastCommit(dir)).toBeNull()
+  })
+
+  it.runIf(hasGit)('无提交的全新仓库返回 null', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-lastcommit-empty-'))
+    execSync('git init -q', { cwd: repo })
+    execSync('git config user.email test@test.com', { cwd: repo })
+    execSync('git config user.name Tester', { cwd: repo })
+    expect(getGitLastCommit(repo)).toBeNull()
   })
 })

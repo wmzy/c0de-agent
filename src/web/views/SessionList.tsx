@@ -1,10 +1,6 @@
 import { css } from '@linaria/core'
-import { useState } from 'react'
-import { AddProjectDialog } from '../components/AddProjectDialog.js'
 import { BranchTree } from '../components/BranchTree.js'
-import { ProjectIndicator } from '../components/ProjectIndicator.js'
-import { ProjectSwitcher } from '../components/ProjectSwitcher.js'
-import { useDeleteSession, useProjects, useSessionTree } from '../hooks/useSession.js'
+import { useDeleteSession, useSessionTree } from '../hooks/useSession.js'
 import type { SessionTreeNode } from '../types/index.js'
 
 const panel = css`
@@ -19,19 +15,6 @@ const header = css`
   align-items: center;
   padding: 12px;
   border-bottom: 1px solid var(--border);
-`
-
-const filterBar = css`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-`
-
-const switcherWrap = css`
-  flex: 1;
-  min-width: 0;
 `
 
 const addBtn = css`
@@ -67,49 +50,24 @@ export function SessionList({
   projectId,
   activeId,
   onSelect,
-  onProjectChange,
   onNewSession,
   onDeleted,
 }: {
   projectId: string
   activeId: string | null
   onSelect: (id: string) => void
-  onProjectChange: (projectId: string) => void
   /** 新建会话：仅前端导航到草稿页，不创建会话（首条消息发送时才创建）。 */
   onNewSession: () => void
   /** 删除会话后回调（参数为被删 id），用于父级在删除当前会话时跳回草稿页。 */
   onDeleted?: (id: string) => void
 }) {
   const { data: tree, isLoading } = useSessionTree()
-  const { data: projects } = useProjects()
   const del = useDeleteSession()
-  const [showAdd, setShowAdd] = useState(false)
 
   const visibleTree = tree ? filterTree(tree, projectId) : []
 
   return (
     <div className={panel}>
-      <ProjectIndicator projectId={projectId} />
-      <div className={filterBar}>
-        <div className={switcherWrap}>
-          <ProjectSwitcher projects={projects ?? []} value={projectId} onChange={onProjectChange} />
-        </div>
-        <button
-          type="button"
-          className={addBtn}
-          onClick={() => setShowAdd(true)}
-          data-testid="add-project"
-          aria-label="添加项目"
-        >
-          + 项目
-        </button>
-      </div>
-      {showAdd && (
-        <AddProjectDialog
-          onClose={() => setShowAdd(false)}
-          onCreated={(p) => onProjectChange(p.id)}
-        />
-      )}
       <div className={header}>
         <span>会话</span>
         <button type="button" className={addBtn} onClick={onNewSession} data-testid="new-session">

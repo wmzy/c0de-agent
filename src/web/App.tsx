@@ -11,6 +11,7 @@ import {
   useParams,
 } from 'react-router-dom'
 import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
+import { TerminalPanel } from './components/TerminalPanel.js'
 import { TopBar } from './components/TopBar.js'
 import { UpdateBanner } from './components/UpdateBanner.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
@@ -21,7 +22,6 @@ import {
 } from './contexts/FileSelectionContext.js'
 import { FileReferenceProvider } from './contexts/ReferenceContext.js'
 import { ThemeProvider } from './contexts/ThemeContext.js'
-import { TerminalPanel } from './components/TerminalPanel.js'
 import { useTerminal } from './hooks/useTerminal.js'
 import { projectAPI } from './services/project.js'
 import { ChatView } from './views/ChatView.js'
@@ -227,7 +227,6 @@ function ChatPage() {
                   projectId={projectId}
                   activeId={sessionId ?? null}
                   onSelect={(id) => navigate(`/projects/${projectId}/sessions/${id}`)}
-                  onProjectChange={(id) => navigate(`/projects/${id}`)}
                   onNewSession={() => navigate(`/projects/${projectId}`)}
                   onDeleted={(id) => {
                     // 删除的是当前会话则跳回草稿新会话页
@@ -235,13 +234,18 @@ function ChatPage() {
                   }}
                 />
               }
-              files={<FileBrowser projectId={projectId} onPick={(p) => fileCtx.openFile(p)} onDelete={(p) => {
-                // 被删文件/目录是当前预览目标（含子路径）时关闭预览
-                if (selectedFile === p || (selectedFile && selectedFile.startsWith(`${p}/`))) {
-                  fileCtx.closeFile()
-                }
-              }} />
-            }
+              files={
+                <FileBrowser
+                  projectId={projectId}
+                  onPick={(p) => fileCtx.openFile(p)}
+                  onDelete={(p) => {
+                    // 被删文件/目录是当前预览目标（含子路径）时关闭预览
+                    if (selectedFile === p || (selectedFile && selectedFile.startsWith(`${p}/`))) {
+                      fileCtx.closeFile()
+                    }
+                  }}
+                />
+              }
             />
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}

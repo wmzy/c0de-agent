@@ -9,7 +9,9 @@ afterEach(cleanup)
 
 /** 取元素最近的 [data-git-status] 容器的状态值。 */
 function gitStatusOf(text: string): string | null {
-  return screen.getByText(text).closest('[data-git-status]')?.getAttribute('data-git-status') ?? null
+  return (
+    screen.getByText(text).closest('[data-git-status]')?.getAttribute('data-git-status') ?? null
+  )
 }
 
 const tree: TreeNode = {
@@ -174,7 +176,7 @@ describe('FileTree', () => {
         loadingPaths={new Set()}
         onToggle={vi.fn()}
         onSelect={vi.fn()}
-      />
+      />,
     )
     expect(screen.queryByTestId('mention-/root/a.ts')).toBeNull()
   })
@@ -206,7 +208,7 @@ describe('FileTree', () => {
           'staged.ts': 'staged',
           'untracked.ts': 'untracked',
         }}
-      />
+      />,
     )
     expect(gitStatusOf('modified.ts')).toBe('modified')
     expect(gitStatusOf('staged.ts')).toBe('staged')
@@ -238,7 +240,7 @@ describe('FileTree', () => {
         onSelect={vi.fn()}
         directoryClickMode="toggle"
         gitStatusMap={{ 'src/a.ts': 'modified' }}
-      />
+      />,
     )
     // src 目录应聚合为 modified
     expect(gitStatusOf('src')).toBe('modified')
@@ -271,7 +273,7 @@ describe('FileTree', () => {
         onToggle={vi.fn()}
         onSelect={vi.fn()}
         directoryClickMode="toggle"
-      />
+      />,
     )
     // ignored 文件带 data-ignored
     expect(screen.getByText('ignored.txt').closest('[data-ignored]')).toBeTruthy()
@@ -279,5 +281,39 @@ describe('FileTree', () => {
     expect(screen.getByText('normal.txt').closest('[data-ignored]')).toBeNull()
     // ignored 目录带 data-ignored
     expect(screen.getByText('build').closest('[data-ignored]')).toBeTruthy()
+  })
+
+  it('hideRoot 时不渲染根节点本身，直接渲染子项', () => {
+    const fileTree: TreeNode = {
+      name: 'my-project',
+      path: '.',
+      type: 'directory',
+      children: [
+        { name: 'a.ts', path: 'a.ts', type: 'file' },
+        {
+          name: 'src',
+          path: 'src',
+          type: 'directory',
+          children: [{ name: 'b.ts', path: 'src/b.ts', type: 'file' }],
+        },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        hideRoot
+      />,
+    )
+    // 根节点（项目名）不渲染
+    expect(screen.queryByText('my-project')).toBeNull()
+    // 子项直接出现在顶层
+    expect(screen.getByText('a.ts')).toBeInTheDocument()
+    expect(screen.getByText('src')).toBeInTheDocument()
   })
 })

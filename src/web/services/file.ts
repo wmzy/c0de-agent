@@ -40,6 +40,26 @@ const fileAPI = {
     apiRequest<{ branch: string | null }>(
       `/api/files/git-branch${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
+  gitLastCommit: (projectId?: string) =>
+    apiRequest<{
+      commit: { subject: string; hash: string; author: string; date: string } | null
+    }>(
+      `/api/files/git-last-commit${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
+  gitBranches: (projectId?: string) =>
+    apiRequest<{ branches: { name: string; current: boolean; lastSubject: string | null }[] }>(
+      `/api/files/git-branches${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
+  gitCheckout: (projectId: string, branch: string) =>
+    apiRequest<{ branch: string }>(
+      `/api/files/git-checkout?projectId=${encodeURIComponent(projectId)}`,
+      { method: 'POST', body: JSON.stringify({ branch }) },
+    ),
+  gitBranchCreate: (projectId: string, name: string) =>
+    apiRequest<{ branch: string }>(
+      `/api/files/git-branch-create?projectId=${encodeURIComponent(projectId)}`,
+      { method: 'POST', body: JSON.stringify({ name }) },
+    ),
 }
 
 export { fileAPI }

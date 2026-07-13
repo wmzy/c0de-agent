@@ -31,6 +31,8 @@ type FileTreeProps = {
   onDelete?: (path: string) => void
   /** git 状态映射（path → 分类），用于高亮未提交/stage/未跟踪文件与目录。 */
   gitStatusMap?: Record<string, GitStatusCode>
+  /** 隐藏根节点本身，直接渲染其子项（文件浏览器：顶部已有项目名指示器，根节点冗余）。 */
+  hideRoot?: boolean
 }
 
 const tree = css`
@@ -236,22 +238,27 @@ export function FileTree({
   onMention,
   onDelete,
   gitStatusMap,
+  hideRoot,
 }: FileTreeProps) {
   if (!root) return null
+  // hideRoot：跳过根节点本身，直接渲染其子项（子项 depth 从 0 起）。
+  const topLevel = hideRoot && root.children ? root.children : [root]
   return (
     <div className={tree} role="tree" data-testid="file-tree">
-      {renderNode(
-        root,
-        0,
-        expanded,
-        selected,
-        loadingPaths,
-        onToggle,
-        onSelect,
-        directoryClickMode,
-        onMention,
-        onDelete,
-        gitStatusMap,
+      {topLevel.map((node) =>
+        renderNode(
+          node,
+          0,
+          expanded,
+          selected,
+          loadingPaths,
+          onToggle,
+          onSelect,
+          directoryClickMode,
+          onMention,
+          onDelete,
+          gitStatusMap,
+        ),
       )}
     </div>
   )

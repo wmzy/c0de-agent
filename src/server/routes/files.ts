@@ -2,9 +2,19 @@ import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
 import trash from 'trash'
-import { checkIgnored, getGitBranch, getGitDiffSummary, getGitStatus, performGitCommit } from '../../project/resolve.js'
-import { getProject } from '../../project/project.js'
 import { createSummarizer } from '../../core/compact.js'
+import { getProject } from '../../project/project.js'
+import {
+  checkIgnored,
+  checkoutGitBranch,
+  createGitBranch,
+  getGitBranch,
+  getGitDiffSummary,
+  getGitLastCommit,
+  getGitStatus,
+  listGitBranches,
+  performGitCommit,
+} from '../../project/resolve.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { safeResolve } from '../util/safe-path.js'
@@ -106,6 +116,20 @@ function createFilesRoute(ctx: ServerContext): Hono {
     return c.json({ branch: getGitBranch(root) })
   })
 
+  // 最后一次提交信息（供分支名 hover tooltip）。非 git 仓库或无提交返回 commit null。
+  app.get('/git-last-commit', async (c) => {
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    return c.json({ commit: getGitLastCommit(root) })
+  })
+
   // 一键提交：用 LLM 生成 commit message 后执行 git add -A + commit
   app.post('/git-commit', async (c) => {
     const projectId = c.req.query('projectId')
@@ -133,7 +157,10 @@ function createFilesRoute(ctx: ServerContext): Hono {
       return apiError(c, 502, 'LLM_ERROR', `Failed to generate commit message: ${String(err)}`)
     }
     // LLM 返回可能含 markdown 代码块包裹，去掉
-    message = message.replace(/^```[a-z]*\n?/m, '').replace(/\n?```$/m, '').trim()
+    message = message
+      .replace(/^```[a-z]*\n?/m, '')
+      .replace(/\n?```$/m, '')
+      .trim()
     if (!message) {
       return apiError(c, 502, 'LLM_ERROR', 'LLM returned empty commit message')
     }
@@ -142,6 +169,62 @@ function createFilesRoute(ctx: ServerContext): Hono {
       return apiError(c, 500, 'COMMIT_FAILED', result.error)
     }
     return c.json({ committed: true, message, hash: result.hash, fileCount: summary.fileCount })
+  })
+
+  // 列出本地分支（非 git 仓库返回空数组）
+  app.get('/git-branches', async (c) => {
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    return c.json({ branches: listGitBranches(root) ?? [] })
+  })
+
+  // 切换分支（git checkout）
+  app.post('/git-checkout', async (c) => {
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const branch = body.branch as string | undefined
+    if (!branch) return apiError(c, 400, 'BAD_REQUEST', 'branch is required')
+    const result = checkoutGitBranch(root, branch)
+    if ('error' in result) {
+      return apiError(c, 500, 'CHECKOUT_FAILED', result.error)
+    }
+    return c.json({ branch: result.branch })
+  })
+
+  // 创建并切换到新分支（git checkout -b）
+  app.post('/git-branch-create', async (c) => {
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const name = body.name as string | undefined
+    if (!name) return apiError(c, 400, 'BAD_REQUEST', 'name is required')
+    const result = createGitBranch(root, name)
+    if ('error' in result) {
+      return apiError(c, 500, 'BRANCH_CREATE_FAILED', result.error)
+    }
+    return c.json({ branch: result.branch })
   })
 
   // 列出目录

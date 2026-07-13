@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useState } from 'react'
 import { FileTree, type TreeNode } from '../components/FileTree.js'
 import { useFileReference } from '../contexts/ReferenceContext.js'
@@ -11,29 +11,6 @@ const panel = css`
   display: flex;
   flex-direction: column;
   height: 100%;
-`
-
-const commitBar = css`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 8px 8px 0;
-`
-
-const branchLabel = css`
-  flex: 1;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  & svg {
-    flex-shrink: 0;
-  }
 `
 
 const headerBar = css`
@@ -56,63 +33,6 @@ const searchInputFlex = css`
     outline: none;
     border-color: var(--primary);
   }
-`
-
-const commitBtn = css`
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 13px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  &:hover {
-    border-color: var(--primary);
-    color: var(--primary);
-  }
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-`
-
-const commitBtnActive = css`
-  background: var(--warning);
-  border-color: var(--warning);
-  color: #fff;
-  font-weight: 600;
-  animation: pulse 2s ease-in-out infinite;
-  &:hover {
-    background: var(--warning);
-    color: #fff;
-    opacity: 0.9;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.85;
-    }
-  }
-`
-
-const commitBtnSuccess = css`
-  background: var(--success);
-  border-color: var(--success);
-  color: #fff;
-`
-
-const commitBtnError = css`
-  background: var(--error);
-  border-color: var(--error);
-  color: #fff;
 `
 
 const treeScroll = css`
@@ -225,9 +145,7 @@ function removeNode(root: TreeNode, path: string): TreeNode {
   if (!root.children) return root
   return {
     ...root,
-    children: root.children
-      .filter((c) => c.path !== path)
-      .map((c) => removeNode(c, path)),
+    children: root.children.filter((c) => c.path !== path).map((c) => removeNode(c, path)),
   }
 }
 
@@ -264,67 +182,6 @@ export function FileBrowser({
     refetchInterval: 30_000,
   })
   const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
-
-  // 当前分支名
-  const gitBranchQ = useQuery({
-    queryKey: ['files', 'git-branch', projectId],
-    queryFn: () => fileAPI.gitBranch(projectId),
-    refetchInterval: 30_000,
-  })
-  const branchName = gitBranchQ.data?.branch ?? null
-
-  // 一键提交：有变更时按钮高亮，点击调用便宜模型生成 commit message 并提交
-  const hasChanges =
-    !!gitStatusMap &&
-    Object.values(gitStatusMap).some((c) => c !== 'ignored')
-  const [commitFeedback, setCommitFeedback] = useState<
-    { kind: 'idle' } | { kind: 'ok'; message: string } | { kind: 'err'; msg: string }
-  >({ kind: 'idle' })
-
-  const commitMut = useMutation({
-    mutationFn: () => fileAPI.gitCommit(projectId),
-    onMutate: () => setCommitFeedback({ kind: 'idle' }),
-    onSuccess: (data) => {
-      setCommitFeedback({ kind: 'ok', message: data.message })
-      gitStatusQ.refetch()
-      setTimeout(
-        () => setCommitFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)),
-        3000,
-      )
-    },
-    onError: (err: unknown) => {
-      const msg =
-        err && typeof err === 'object' && 'message' in err
-          ? String((err as { message: string }).message)
-          : '提交失败'
-      setCommitFeedback({ kind: 'err', msg })
-      setTimeout(
-        () => setCommitFeedback((s) => (s.kind === 'err' ? { kind: 'idle' } : s)),
-        5000,
-      )
-    },
-  })
-
-  const commitBtnClass = (() => {
-    if (commitMut.isPending) return commitBtn
-    if (commitFeedback.kind === 'ok') return `${commitBtn} ${commitBtnSuccess}`
-    if (commitFeedback.kind === 'err') return `${commitBtn} ${commitBtnError}`
-    if (hasChanges) return `${commitBtn} ${commitBtnActive}`
-    return commitBtn
-  })()
-
-  const commitLabel = (() => {
-    if (commitMut.isPending) return '提交中…'
-    if (commitFeedback.kind === 'ok') return '✓ 已提交'
-    if (commitFeedback.kind === 'err') return '提交失败'
-    return '提交'
-  })()
-
-  const commitTitle = (() => {
-    if (commitFeedback.kind === 'ok') return commitFeedback.message
-    if (commitFeedback.kind === 'err') return commitFeedback.msg
-    return hasChanges ? 'AI 生成 commit message 并提交全部变更' : '无变更'
-  })()
 
   // 切换项目时重置树，加载新项目根目录
   useEffect(() => {
@@ -412,25 +269,6 @@ export function FileBrowser({
 
   return (
     <div className={panel}>
-      <div className={commitBar}>
-        <span className={branchLabel} data-testid="git-branch-label">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.371A2.25 2.25 0 019.5 3.25zM4.25 2.5a.75.75 0 000 1.5.75.75 0 000-1.5zM2 3.25a2.25 2.25 0 113 2.122v5.256a2.25 2.25 0 11-1.5 0V5.371A2.25 2.25 0 014.25 3.25z" />
-          </svg>
-          {branchName ?? '(非 git 仓库)'}
-        </span>
-        <button
-          type="button"
-          className={commitBtnClass}
-          onClick={() => commitMut.mutate()}
-          disabled={commitMut.isPending || !hasChanges}
-          title={commitTitle}
-          data-testid="git-commit-btn"
-          data-has-changes={hasChanges || undefined}
-        >
-          {commitLabel}
-        </button>
-      </div>
       <div className={headerBar}>
         <input
           className={searchInputFlex}
@@ -497,6 +335,7 @@ export function FileBrowser({
             onMention={fileRef?.insertFileReference}
             onDelete={handleDelete}
             gitStatusMap={gitStatusMap}
+            hideRoot
           />
         )}
       </div>
