@@ -151,6 +151,23 @@ describe('promptToMessageText', () => {
     ]
     expect(promptToMessageText(prompt)).toBe('📄 `b.ts:3`:\n```\nx\n```')
   })
+
+  it('terminal pill 提交时展开为 terminal 代码块', () => {
+    const prompt: Prompt = [
+      { type: 'text', content: '分析这个 ', start: 0, end: 5 },
+      {
+        type: 'terminal',
+        label: '🖥 命令: npm test',
+        content: '$ npm test\n✓ all passed',
+        start: 5,
+        end: 5 + '🖥 命令: npm test'.length,
+      },
+    ]
+    expect(promptToText(prompt)).toBe('分析这个 🖥 命令: npm test')
+    expect(promptToMessageText(prompt)).toBe(
+      '分析这个 ```terminal\n$ npm test\n✓ all passed\n```',
+    )
+  })
 })
 
 describe('decorateWorkflowz', () => {

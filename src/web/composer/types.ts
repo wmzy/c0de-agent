@@ -36,6 +36,16 @@ interface SnippetPart extends PartBase {
   snippet: string
 }
 
+/** 终端内容引用 pill：显示标签（如 `🖥 命令: npm test`），
+ * 提交时展开为 ```terminal 代码块注入 LLM 上下文。 */
+interface TerminalPart extends PartBase {
+  type: 'terminal'
+  /** pill 显示的标签（= textContent，参与光标定位长度计算）。 */
+  label: string
+  /** 实际终端文本（选区文本 或 命令+输出），提交时展开为代码块。 */
+  content: string
+}
+
 /** 图片附件不进 contenteditable DOM（无法在文本流表示），单独维护。 */
 interface ImagePart {
   type: 'image'
@@ -44,7 +54,7 @@ interface ImagePart {
   data: string
 }
 
-type ContentPart = TextPart | FilePart | SnippetPart | ImagePart
+type ContentPart = TextPart | FilePart | SnippetPart | TerminalPart | ImagePart
 type Prompt = ContentPart[]
 
 const DEFAULT_PROMPT: Prompt = [{ type: 'text', content: '', start: 0, end: 0 }]
@@ -54,6 +64,7 @@ function promptLength(prompt: Prompt): number {
   return prompt.reduce((len, part) => {
     if (part.type === 'text' || part.type === 'file') return len + part.content.length
     if (part.type === 'snippet') return len + part.label.length
+    if (part.type === 'terminal') return len + part.label.length
     return len
   }, 0)
 }
@@ -65,6 +76,7 @@ function promptToText(prompt: Prompt): string {
     .map((p) => {
       if (p.type === 'text' || p.type === 'file') return p.content
       if (p.type === 'snippet') return p.label
+      if (p.type === 'terminal') return p.label
       return ''
     })
     .join('')
@@ -86,6 +98,9 @@ function promptToMessageText(prompt: Prompt): string {
         const loc = p.lineStart === p.lineEnd ? `${p.lineStart}` : `${p.lineStart}-${p.lineEnd}`
         return `📄 \`${p.path}:${loc}\`:\n\`\`\`\n${p.snippet}\n\`\`\``
       }
+      if (p.type === 'terminal') {
+        return `\`\`\`terminal\n${p.content}\n\`\`\``
+      }
       return ''
     })
     .join('')
@@ -93,10 +108,14 @@ function promptToMessageText(prompt: Prompt): string {
 
 /** 判断 Prompt 是否为空（无任何非空文本且无 file/image）。 */
 function isPromptEmpty(prompt: Prompt): boolean {
-  return promptLength(prompt) === 0 && !prompt.some((p) => p.type === 'file')
+  return (
+    promptLength(prompt) === 0 &&
+    !prompt.some((p) => p.type === 'file') &&
+    !prompt.some((p) => p.type === 'terminal')
+  )
 }
 
-export type { ContentPart, FilePart, ImagePart, PartBase, Prompt, SnippetPart, TextPart }
+export type { ContentPart, FilePart, ImagePart, PartBase, Prompt, SnippetPart, TerminalPart, TextPart }
 export {
   DEFAULT_PROMPT,
   isPromptEmpty,
