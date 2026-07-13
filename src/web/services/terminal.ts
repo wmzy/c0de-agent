@@ -10,11 +10,13 @@ export interface TerminalInfo {
   rows: number
   cwd: string
   shell: string
+  /** 所属项目 id（未归属时为 undefined）。 */
+  projectId?: string
 }
 
 const terminalAPI = {
   list: () => apiRequest<{ terminals: TerminalInfo[] }>('/api/terminal'),
-  create: (params?: { cwd?: string; cols?: number; rows?: number; title?: string; shell?: string }) =>
+  create: (params?: { cwd?: string; cols?: number; rows?: number; title?: string; shell?: string; projectId?: string }) =>
     apiRequest<TerminalInfo>('/api/terminal', {
       method: 'POST',
       body: JSON.stringify(params ?? {}),
