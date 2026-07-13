@@ -198,9 +198,7 @@ describe('promptToMessageText', () => {
       },
     ]
     expect(promptToText(prompt)).toBe('分析这个 🖥 命令: npm test')
-    expect(promptToMessageText(prompt)).toBe(
-      '分析这个 ```terminal\n$ npm test\n✓ all passed\n```',
-    )
+    expect(promptToMessageText(prompt)).toBe('分析这个 ```terminal\n$ npm test\n✓ all passed\n```')
   })
 })
 

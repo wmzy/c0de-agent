@@ -115,7 +115,16 @@ function isPromptEmpty(prompt: Prompt): boolean {
   )
 }
 
-export type { ContentPart, FilePart, ImagePart, PartBase, Prompt, SnippetPart, TerminalPart, TextPart }
+export type {
+  ContentPart,
+  FilePart,
+  ImagePart,
+  PartBase,
+  Prompt,
+  SnippetPart,
+  TerminalPart,
+  TextPart,
+}
 export {
   DEFAULT_PROMPT,
   isPromptEmpty,

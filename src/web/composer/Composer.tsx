@@ -166,7 +166,12 @@ function Composer(props: ComposerProps) {
       insertTerminalReference: composer.appendTerminalReference,
     })
     return () => setFileReferenceApi(null)
-  }, [composer.appendFileReference, composer.appendSnippetReference, composer.appendTerminalReference, setFileReferenceApi])
+  }, [
+    composer.appendFileReference,
+    composer.appendSnippetReference,
+    composer.appendTerminalReference,
+    setFileReferenceApi,
+  ])
 
   const [slashActive, setSlashActive] = useState(0)
   const [atActive, setAtActive] = useState(0)

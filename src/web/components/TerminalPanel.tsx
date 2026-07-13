@@ -2,9 +2,9 @@
 
 import { css } from '@linaria/core'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { Terminal } from './Terminal.js'
-import type { SplitDirection, UseTerminalReturn } from '../hooks/useTerminal.js'
 import { useFileReference } from '../contexts/ReferenceContext.js'
+import type { SplitDirection, UseTerminalReturn } from '../hooks/useTerminal.js'
+import { Terminal } from './Terminal.js'
 
 interface TerminalPanelProps {
   terminal: UseTerminalReturn
@@ -343,7 +343,12 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
 
   // 活动标签打开时，自动选中第一个 pane
   useEffect(() => {
-    if (open && activeTab && activeTab.panes.length > 0 && !activeTab.panes.some((p) => p.id === activePaneId)) {
+    if (
+      open &&
+      activeTab &&
+      activeTab.panes.length > 0 &&
+      !activeTab.panes.some((p) => p.id === activePaneId)
+    ) {
       setActivePaneId(activeTab.panes[0]!.id)
     }
   }, [open, activeTab, activePaneId, setActivePaneId])
@@ -452,7 +457,12 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
 
   // 分隔条拖拽
   const onDividerPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLElement>, tabId: string, leftIdx: number, direction: SplitDirection) => {
+    (
+      e: React.PointerEvent<HTMLElement>,
+      tabId: string,
+      leftIdx: number,
+      direction: SplitDirection,
+    ) => {
       e.preventDefault()
       e.stopPropagation()
       const container = e.currentTarget.parentElement
@@ -523,9 +533,7 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
                 aria-selected={tab.id === activeTabId}
               >
                 <span>{shellLabel(tab.panes[0]?.shell ?? 'terminal')}</span>
-                {tab.panes.length > 1 && (
-                  <span className={tabBadgeStyle}>{tab.panes.length}</span>
-                )}
+                {tab.panes.length > 1 && <span className={tabBadgeStyle}>{tab.panes.length}</span>}
                 <button
                   className={tabCloseStyle}
                   onClick={(e) => handleCloseTab(tab.id, e)}
@@ -558,7 +566,13 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
           >
             ⬓
           </button>
-          <button className={iconBtnStyle} onClick={handleNewTab} aria-label="新建终端" type="button" title="新建终端">
+          <button
+            className={iconBtnStyle}
+            onClick={handleNewTab}
+            aria-label="新建终端"
+            type="button"
+            title="新建终端"
+          >
             +
           </button>
           <button
@@ -620,7 +634,12 @@ function PaneSplitContainer({
   onPaneResize: (id: string, cols: number, rows: number) => void
   onPaneClick: (id: string) => void
   onPaneClose: (id: string) => void
-  onDividerPointerDown: (e: React.PointerEvent<HTMLElement>, tabId: string, leftIdx: number, direction: SplitDirection) => void
+  onDividerPointerDown: (
+    e: React.PointerEvent<HTMLElement>,
+    tabId: string,
+    leftIdx: number,
+    direction: SplitDirection,
+  ) => void
 }) {
   const { direction, sizes } = tab.split
   const containerClass = direction === 'horizontal' ? splitContainerHStyle : splitContainerVStyle

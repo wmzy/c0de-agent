@@ -1,10 +1,10 @@
 // src/web/components/Terminal.tsx
 
 import { css } from '@linaria/core'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { Terminal as XTerm } from '@xterm/xterm'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
 
 interface TerminalProps {
@@ -86,7 +86,11 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
   const wasAlternateRef = useRef(false)
   // 选区 + 块悬停状态
   const [selection, setSelection] = useState<string | null>(null)
-  const [hoverBlock, setHoverBlock] = useState<{ top: number; height: number; block: CommandBlock } | null>(null)
+  const [hoverBlock, setHoverBlock] = useState<{
+    top: number
+    height: number
+    block: CommandBlock
+  } | null>(null)
 
   /** 执行 fit 并通知后端尺寸变化。 */
   const doFit = useCallback(() => {
@@ -301,8 +305,10 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
       const blocks = blocksRef.current
       let foundIdx = -1
       for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i]
+        if (!block) continue
         const endRow = blocks[i + 1]?.startRow ?? Infinity
-        if (absRow >= blocks[i]!.startRow && absRow < endRow) {
+        if (absRow >= block.startRow && absRow < endRow) {
           foundIdx = i
           break
         }
@@ -312,9 +318,12 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
         return
       }
       // 计算块在视口内的像素范围
-      const block = blocks[foundIdx]!
-      const nextStart =
-        blocks[foundIdx + 1]?.startRow ?? term.buffer.active.baseY + term.rows
+      const block = blocks[foundIdx]
+      if (!block) {
+        if (hoverBlock) setHoverBlock(null)
+        return
+      }
+      const nextStart = blocks[foundIdx + 1]?.startRow ?? term.buffer.active.baseY + term.rows
       const startViewportRow = block.startRow - term.buffer.active.baseY
       const endViewportRow = nextStart - term.buffer.active.baseY
       const top = Math.max(0, startViewportRow) * cellHeight
@@ -341,8 +350,7 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
     const blocks = blocksRef.current
     const idx = blocks.indexOf(block)
     const endRow =
-      blocks[idx + 1]?.startRow ??
-      term.buffer.active.baseY + term.buffer.active.cursorY
+      blocks[idx + 1]?.startRow ?? term.buffer.active.baseY + term.buffer.active.cursorY
     const lines: string[] = []
     for (let i = block.startRow; i <= endRow && i < term.buffer.active.length; i++) {
       const line = term.buffer.active.getLine(i)
@@ -361,9 +369,7 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
     } else if (hoverBlock) {
       const content = extractBlockText(hoverBlock.block)
       const cmd = hoverBlock.block.command.trim()
-      const label = cmd
-        ? `🖥 命令: ${cmd.length > 30 ? `${cmd.slice(0, 30)}…` : cmd}`
-        : '🖥 终端输出'
+      const label = cmd ? `🖥 命令: ${cmd.length > 30 ? `${cmd.slice(0, 30)}…` : cmd}` : '🖥 终端输出'
       onAddToChat?.(label, content)
     }
   }, [selection, hoverBlock, extractBlockText, onAddToChat])
@@ -371,6 +377,7 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
   const showAddToChat = onAddToChat && (selection || hoverBlock)
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 终端容器需捕获鼠标事件用于命令块高亮
     <div
       ref={containerRef}
       style={{
@@ -402,4 +409,3 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
     </div>
   )
 }
-
