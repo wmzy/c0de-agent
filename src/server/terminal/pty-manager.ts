@@ -1,8 +1,10 @@
 // src/server/terminal/pty-manager.ts
 
-import { spawn, type IPty } from 'node-pty'
 import { randomUUID } from 'node:crypto'
-import { userInfo } from 'node:os'
+import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir, userInfo } from 'node:os'
+import { basename, join } from 'node:path'
+import { type IPty, spawn } from 'node-pty'
 import type { WebSocket } from 'ws'
 
 /** PTY 会话信息（返回给前端）。 */
@@ -26,6 +28,89 @@ interface PTYEntry {
   sockets: Set<WebSocket>
   /** 近期 PTY 输出环形缓冲，WS 重连时回放以恢复终端画面。 */
   scrollback: string
+  /** Shell 集成临时文件清理函数。 */
+  integrationCleanup?: () => void
+}
+
+/** Shell 集成配置：通过 init 脚本注入 OSC 133 prompt 标记。 */
+interface ShellIntegration {
+  spawnArgs: string[]
+  env: Record<string, string>
+  /** 清理临时文件 / 目录。 */
+  cleanup: () => void
+}
+
+/**
+ * 为指定 shell 创建 OSC 133 prompt 标记注入脚本。
+ *
+ * shell 在每次显示 prompt 前发送 \x1b]133;A\x07（OSC 133;A），
+ * 前端 xterm.js parser 捕获后精确记录命令块起始行。
+ * 标记嵌入 PTY 输出流 → scrollback 回放时自动重建，无需正则猜测。
+ *
+ * 支持的 shell：bash（--init-file）、zsh（ZDOTDIR）。
+ * 其他 shell 不注入，退化到前端正则启发式。
+ */
+function setupShellIntegration(shell: string): ShellIntegration {
+  const base = basename(shell)
+  // printf 的 \x1b / \x07 由 shell 自行解释，JS 中双反斜杠确保写入字面量
+  const mark = "printf '\\x1b]133;A\\x07'"
+
+  if (base === 'bash') {
+    const script = join(tmpdir(), `c0de-bash-${randomUUID()}.sh`)
+    writeFileSync(
+      script,
+      [
+        '[ -f /etc/bash.bashrc ] && source /etc/bash.bashrc',
+        '[ -f ~/.bashrc ] && source ~/.bashrc',
+        `__c0de_prompt_mark() { ${mark}; }`,
+        // 追加到已有 PROMPT_COMMAND 而非覆盖
+        'if [ -n "$PROMPT_COMMAND" ]; then',
+        '  PROMPT_COMMAND=\'__c0de_prompt_mark;\'"$PROMPT_COMMAND"',
+        'else',
+        '  PROMPT_COMMAND=__c0de_prompt_mark',
+        'fi',
+      ].join('\n'),
+    )
+    return {
+      spawnArgs: ['--init-file', script],
+      env: {},
+      cleanup: () => {
+        try {
+          unlinkSync(script)
+        } catch {
+          // 文件可能已被清理
+        }
+      },
+    }
+  }
+
+  if (base === 'zsh') {
+    const dir = join(tmpdir(), `c0de-zsh-${randomUUID()}`)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, '.zshrc'),
+      [
+        '[ -f ~/.zshrc ] && source ~/.zshrc',
+        `__c0de_prompt_mark() { ${mark}; }`,
+        'autoload -Uz add-zsh-hook',
+        'add-zsh-hook precmd __c0de_prompt_mark',
+      ].join('\n'),
+    )
+    return {
+      spawnArgs: [],
+      env: { ZDOTDIR: dir },
+      cleanup: () => {
+        try {
+          rmSync(dir, { recursive: true })
+        } catch {
+          // 目录可能已被清理
+        }
+      },
+    }
+  }
+
+  // fish / 其他 shell 暂不支持，退化到前端正则
+  return { spawnArgs: [], env: {}, cleanup: () => {} }
 }
 
 export interface CreatePTYOptions {
@@ -82,14 +167,16 @@ export class PTYManager {
     const cols = opts.cols ?? DEFAULT_COLS
     const rows = opts.rows ?? DEFAULT_ROWS
     const shell = opts.shell ?? detectShell()
+    const integration = setupShellIntegration(shell)
 
-    const pty = spawn(shell, [], {
+    const pty = spawn(shell, integration.spawnArgs, {
       name: 'xterm-256color',
       cols,
       rows,
       cwd: opts.cwd,
       env: {
         ...process.env,
+        ...integration.env,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
       },
@@ -106,7 +193,13 @@ export class PTYManager {
       projectId: opts.projectId,
     }
 
-    const entry: PTYEntry = { pty, info, sockets: new Set(), scrollback: '' }
+    const entry: PTYEntry = {
+      pty,
+      info,
+      sockets: new Set(),
+      scrollback: '',
+      integrationCleanup: integration.cleanup,
+    }
 
     // PTY 输出 → 广播到所有挂载的 WebSocket + 追加 scrollback
     pty.onData((data) => {
@@ -175,6 +268,7 @@ export class PTYManager {
     } catch {
       // 进程可能已退出
     }
+    entry.integrationCleanup?.()
     this.entries.delete(id)
   }
 

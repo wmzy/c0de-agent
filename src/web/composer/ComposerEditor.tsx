@@ -35,8 +35,8 @@ const placeholderStyle = css`
   line-height: 1.5;
 `
 
-/** snippet pill 的 hover 预览浮层：展示选中的代码内容。 */
-const snippetTip = css`
+/** pill 的 hover 预览浮层：展示 snippet 代码或终端引用内容。 */
+const pillTip = css`
   position: fixed;
   z-index: 50;
   transform: translate(-50%, -100%);
@@ -74,17 +74,20 @@ function ComposerEditor(props: Props) {
     hasHistory: props.hasHistory,
   })
   const { openFile } = useFileSelection()
-  // hover tooltip：仅当鼠标进入 snippet pill 时展示其 snippet 内容。
+  // hover tooltip：鼠标进入 snippet / terminal pill 时展示其隐藏内容。
   // 用 ref 记录当前 hover 的 pill，避免 mouseover 重复触发 setState。
   const hoverPillRef = useRef<HTMLElement | null>(null)
-  const [tip, setTip] = useState<{ snippet: string; x: number; y: number } | null>(null)
+  const [tip, setTip] = useState<{ content: string; x: number; y: number } | null>(null)
 
   const handleMouseOver = (e: MouseEvent) => {
-    const pill = (e.target as HTMLElement).closest('[data-type="snippet"]') as HTMLElement | null
+    const pill = (e.target as HTMLElement).closest(
+      '[data-type="snippet"],[data-type="terminal"]',
+    ) as HTMLElement | null
     if (pill && pill !== hoverPillRef.current) {
       hoverPillRef.current = pill
       const rect = pill.getBoundingClientRect()
-      setTip({ snippet: pill.dataset.snippet ?? '', x: rect.left + rect.width / 2, y: rect.top })
+      const content = pill.dataset.snippet ?? pill.dataset.content ?? ''
+      setTip({ content, x: rect.left + rect.width / 2, y: rect.top })
     } else if (!pill && hoverPillRef.current) {
       hoverPillRef.current = null
       setTip(null)
@@ -92,9 +95,12 @@ function ComposerEditor(props: Props) {
   }
 
   const handleMouseOut = (e: MouseEvent) => {
-    // relatedTarget 不在任何 snippet pill 内时才隐藏（防止 pill 内部子节点移动误触）
+    // relatedTarget 不在任何 snippet/terminal pill 内时才隐藏（防止 pill 内部子节点移动误触）
     const related = e.relatedTarget as HTMLElement | null
-    if (hoverPillRef.current && !related?.closest?.('[data-type="snippet"]')) {
+    if (
+      hoverPillRef.current &&
+      !related?.closest?.('[data-type="snippet"],[data-type="terminal"]')
+    ) {
       hoverPillRef.current = null
       setTip(null)
     }
@@ -115,12 +121,12 @@ function ComposerEditor(props: Props) {
     <div className={editorWrap}>
       {props.isEmpty && <span className={placeholderStyle}>{placeholder}</span>}
       {tip && (
-        <div className={snippetTip} style={{ left: tip.x, top: tip.y }}>
-          {tip.snippet}
+        <div className={pillTip} style={{ left: tip.x, top: tip.y }}>
+          {tip.content}
         </div>
       )}
       {/* biome-ignore lint/a11y/useSemanticElements: contenteditable 富文本编辑器无语义元素等价物 */}
-      {/* biome-ignore lint/a11y/useKeyWithMouseEvents: snippet pill 的 hover tooltip 是纯鼠标增强，键盘焦点不适用 */}
+      {/* biome-ignore lint/a11y/useKeyWithMouseEvents: pill 的 hover tooltip 是纯鼠标增强，键盘焦点不适用 */}
       <div
         ref={props.editorRef}
         className={editor}

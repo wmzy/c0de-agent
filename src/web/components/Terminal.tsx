@@ -26,10 +26,45 @@ interface CommandBlock {
   command: string
 }
 
+/**
+ * 常见 shell prompt 正则，按可靠性从高到低排序。
+ * 匹配成功即视为该行为命令块的起始（prompt + 命令在同一行）。
+ */
+const PROMPT_PATTERNS: RegExp[] = [
+  // 1. 标准 bash/zsh: user@host:path$ / user@host:path#
+  /^\S+@[\w.-]+:[^\r\n$#]*[$#]\s/,
+  // 2. oh-my-zsh robbyrussell: ➜  dirname
+  /^➜\s/,
+  // 3. starship / p10k / 其他: ❯ ▶ ➤ ≫ »
+  /^[❯▶➤≫»]\s/,
+  // 4. 裸 $ % # 开头（最宽松，命令输出中也可能误匹配）
+  /^[$%#]\s/,
+]
+
+/**
+ * 扫描终端 buffer，用 prompt 正则重建命令块。
+ * 用于页面刷新 / WS 重连后恢复历史命令块识别。
+ */
+function rebuildBlocksFromBuffer(term: XTerm): CommandBlock[] {
+  const buffer = term.buffer.active
+  const blocks: CommandBlock[] = []
+  for (let i = 0; i < buffer.length; i++) {
+    const line = buffer.getLine(i)
+    if (!line) continue
+    const text = line.translateToString(true)
+    for (const re of PROMPT_PATTERNS) {
+      if (re.test(text)) {
+        blocks.push({ startRow: i, command: text.replace(re, '').trim() })
+        break
+      }
+    }
+  }
+  return blocks
+}
+
 const addToChatBtnStyle = css`
   position: absolute;
-  top: 4px;
-  left: 8px;
+  right: 8px;
   z-index: 10;
   display: inline-flex;
   align-items: center;
@@ -84,8 +119,12 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
   const blocksRef = useRef<CommandBlock[]>([])
   const currentInputRef = useRef('')
   const wasAlternateRef = useRef(false)
+  /** OSC 133 shell 集成是否可用（后端注入成功时由 handler 设为 true）。 */
+  const hasOsc133Ref = useRef(false)
   // 选区 + 块悬停状态
   const [selection, setSelection] = useState<string | null>(null)
+  // 选区结束位置（容器内像素 y），用于按钮跟随选区定位
+  const [selectionTop, setSelectionTop] = useState<number | null>(null)
   const [hoverBlock, setHoverBlock] = useState<{
     top: number
     height: number
@@ -144,19 +183,39 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
     term.loadAddon(new WebLinksAddon())
     term.open(containerRef.current)
 
+    // OSC 133 prompt 标记：shell 集成在每次 prompt 显示前发送 \x1b]133;A\x07
+    // 捕获后精确记录命令块起始行。标记嵌入 PTY 输出流 → scrollback 回放时自动重建。
+    const oscDisposable = term.parser.registerOscHandler(133, (data: string) => {
+      if (data.startsWith('A')) {
+        hasOsc133Ref.current = true
+        const buffer = term.buffer.active
+        const absRow = buffer.baseY + buffer.cursorY
+        blocksRef.current.push({ startRow: absRow, command: '' })
+        const maxRow = buffer.length
+        blocksRef.current = blocksRef.current.filter((b) => b.startRow <= maxRow)
+      }
+      return true
+    })
+
     termRef.current = term
     fitRef.current = fit
 
     // 选区变化追踪
     term.onSelectionChange(() => {
       const sel = term.getSelection()
-      setSelection(sel && sel.length > 0 ? sel : null)
+      if (sel && sel.length > 0) {
+        setSelection(sel)
+      } else {
+        setSelection(null)
+        setSelectionTop(null)
+      }
     })
 
     // 延迟一帧让 DOM 布局完成后再 fit
     requestAnimationFrame(() => doFit())
 
     return () => {
+      oscDisposable.dispose()
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -215,14 +274,23 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
       }
       for (const char of data) {
         if (char === '\r') {
-          const absRow = term.buffer.active.baseY + term.buffer.active.cursorY
-          blocksRef.current.push({
-            startRow: absRow,
-            command: currentInputRef.current,
-          })
-          // 修剪被 scrollback 裁掉的旧块
-          const maxRow = term.buffer.active.length
-          blocksRef.current = blocksRef.current.filter((b) => b.startRow <= maxRow)
+          if (hasOsc133Ref.current) {
+            // OSC 133 已在 prompt 开始时创建了 block → 更新 command 文本
+            const lastBlock = blocksRef.current[blocksRef.current.length - 1]
+            if (lastBlock) {
+              lastBlock.command = currentInputRef.current
+            }
+          } else {
+            // 无 OSC 133 → onData 自己创建 block（与原有逻辑一致）
+            const absRow = term.buffer.active.baseY + term.buffer.active.cursorY
+            blocksRef.current.push({
+              startRow: absRow,
+              command: currentInputRef.current,
+            })
+            // 修剪被 scrollback 裁掉的旧块
+            const maxRow = term.buffer.active.length
+            blocksRef.current = blocksRef.current.filter((b) => b.startRow <= maxRow)
+          }
           currentInputRef.current = ''
         } else if (char >= ' ') {
           // 可打印字符累积到当前输入（跳过控制字符）
@@ -239,6 +307,15 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
         processData(data)
       }
       earlyData.length = 0
+      // scrollback 写入后，延迟一帧等 xterm buffer 落盘
+      requestAnimationFrame(() => {
+        const t = termRef.current
+        if (!t || t.buffer.active.type !== 'normal') return
+        // OSC 133 可用时跳过正则重建——scrollback 中的标记已通过 handler 重建 blocks
+        if (!hasOsc133Ref.current) {
+          blocksRef.current = rebuildBlocksFromBuffer(t)
+        }
+      })
     }
     ws.onmessage = null
 
@@ -313,6 +390,10 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
           break
         }
       }
+      // 最后一个空命令块是当前 prompt 输入区，没有实际命令内容 → 不高亮
+      if (foundIdx === blocks.length - 1 && blocks[foundIdx]?.command === '') {
+        foundIdx = -1
+      }
       if (foundIdx === -1) {
         if (hoverBlock) setHoverBlock(null)
         return
@@ -343,6 +424,22 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
     if (hoverBlock) setHoverBlock(null)
   }, [hoverBlock])
 
+  /** 选区结束时记录鼠标所在行，用于按钮跟随选区定位。 */
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const term = termRef.current
+    const container = containerRef.current
+    if (!term || !container) return
+    const sel = term.getSelection()
+    if (!sel || sel.length === 0) return
+    const rect = container.getBoundingClientRect()
+    const cellHeight = rect.height / term.rows
+    const row = Math.max(
+      0,
+      Math.min(term.rows - 1, Math.floor((e.clientY - rect.top) / cellHeight)),
+    )
+    setSelectionTop(row * cellHeight)
+  }, [])
+
   /** 从终端 buffer 提取命令块文本。 */
   const extractBlockText = useCallback((block: CommandBlock): string => {
     const term = termRef.current
@@ -352,7 +449,7 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
     const endRow =
       blocks[idx + 1]?.startRow ?? term.buffer.active.baseY + term.buffer.active.cursorY
     const lines: string[] = []
-    for (let i = block.startRow; i <= endRow && i < term.buffer.active.length; i++) {
+    for (let i = block.startRow; i < endRow && i < term.buffer.active.length; i++) {
       const line = term.buffer.active.getLine(i)
       if (line) lines.push(line.translateToString(true))
     }
@@ -376,6 +473,12 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
 
   const showAddToChat = onAddToChat && (selection || hoverBlock)
 
+  // 按钮跟随选区/命令块定位到右侧
+  const containerH = containerRef.current?.clientHeight ?? 0
+  const BTN_H = 28
+  const rawTop = selection && selectionTop != null ? selectionTop : hoverBlock ? hoverBlock.top : 4
+  const addToChatTop = Math.min(rawTop, Math.max(4, containerH - BTN_H - 4))
+
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 终端容器需捕获鼠标事件用于命令块高亮
     <div
@@ -388,11 +491,13 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
         position: 'relative',
       }}
       onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
     >
       {showAddToChat && (
         <button
           className={addToChatBtnStyle}
+          style={{ top: addToChatTop }}
           onClick={handleAddToChat}
           type="button"
           aria-label="添加到会话"

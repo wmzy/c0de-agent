@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { CommitButton } from './CommitButton.js'
+import { Logo } from './Logo.js'
 import { ProjectIndicator } from './ProjectIndicator.js'
 
 const bar = css`
@@ -21,11 +22,8 @@ const brandGroup = css`
 `
 
 const brand = css`
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  font-size: 14px;
   color: var(--text);
   text-decoration: none;
   min-height: auto;
@@ -60,14 +58,6 @@ const activeLink = css`
   font-weight: 600;
 `
 
-const dot = css`
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--primary);
-  display: inline-block;
-`
-
 /** 全局顶部导航栏：品牌标识 + 主界面/设置入口。 */
 export function TopBar() {
   const { pathname } = useLocation()
@@ -80,8 +70,7 @@ export function TopBar() {
     <header className={bar} data-testid="topbar">
       <div className={brandGroup}>
         <Link to="/" className={brand}>
-          <span className={dot} />
-          c0de-agent
+          <Logo />
         </Link>
         {projectId && (
           <ProjectIndicator
