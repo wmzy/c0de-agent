@@ -9,6 +9,8 @@ interface TerminalPanelProps {
   terminal: UseTerminalReturn
   /** 新终端的默认工作目录（通常为项目 worktree）。未提供时使用服务端默认。 */
   cwd?: string
+  /** 当前项目 id（用于切换项目时重置自动创建标记）。 */
+  projectId: string
 }
 
 const panelStyle = css`
@@ -289,7 +291,7 @@ function shellLabel(shell: string): string {
  * - 高度拖拽：上拉/下拉调整，记忆到 localStorage
  * - 隐藏时高度为 0（仅显示拖拽条）
  */
-export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
+export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) {
   const {
     sessions,
     tabs,
@@ -324,6 +326,10 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   // 避免在进程启动目录而非项目目录打开 shell）。
   // 仅在本轮「打开」周期内创建一次：用户主动关掉最后一个标签后不重建。
   const autoCreatedRef = useRef(false)
+  // 切换项目时重置自动创建标记，允许新项目在面板打开时创建首个终端
+  useEffect(() => {
+    autoCreatedRef.current = false
+  }, [projectId])
   useEffect(() => {
     if (!open || restoring) {
       return

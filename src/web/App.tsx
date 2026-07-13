@@ -168,7 +168,7 @@ function RootRedirect() {
 function ChatPage() {
   const { projectId, sessionId } = useParams<{ projectId: string; sessionId: string }>()
   const navigate = useNavigate()
-  const terminal = useTerminal()
+  const terminal = useTerminal(projectId!)
 
   // 获取项目信息（worktree 用于终端默认目录）
   const { data: project } = useQuery({
@@ -250,7 +250,7 @@ function ChatPage() {
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
-          terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} />}
+          terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} projectId={projectId} />}
         />
       </FileSelectionContext.Provider>
     </FileReferenceProvider>
