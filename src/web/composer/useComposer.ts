@@ -227,6 +227,29 @@ function useComposer({
     [setPromptExternal],
   )
 
+  /** 外部引用（终端 Add to Chat）：在 prompt 末尾追加 terminal pill。 */
+  const appendTerminalReference = useCallback(
+    (label: string, content: string) => {
+      const prompt = promptRef.current
+      const parts: Prompt = []
+      for (const part of prompt) {
+        if (part.type === 'text') parts.push({ ...part })
+        else if (part.type === 'file') parts.push({ ...part })
+        else if (part.type === 'snippet') parts.push({ ...part })
+        else if (part.type === 'terminal') parts.push({ ...part })
+      }
+      const text = promptToText(prompt)
+      if (text.length > 0 && !text.endsWith(' ')) {
+        parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
+      }
+      parts.push({ type: 'terminal', label, content, start: 0, end: label.length })
+      parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
+      setPromptExternal(parts, true)
+      editorRef.current?.focus()
+    },
+    [setPromptExternal],
+  )
+
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     // 图片粘贴优先
     const items = e.clipboardData.items
@@ -383,6 +406,7 @@ function useComposer({
     insertFile,
     appendFileReference,
     appendSnippetReference,
+    appendTerminalReference,
     send,
     steer,
     setPopover,

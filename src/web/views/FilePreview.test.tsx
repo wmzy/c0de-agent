@@ -115,7 +115,7 @@ describe('FilePreview', () => {
       <QueryClientProvider client={qc}>
         <ThemeProvider>
           <ReferenceContext.Provider
-            value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
+            value={{ api: { insertFileReference, insertSnippetReference, insertTerminalReference: vi.fn() }, setApi: () => {} }}
           >
             <FileSelectionContext.Provider
               value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
@@ -164,7 +164,7 @@ describe('FilePreview', () => {
       <QueryClientProvider client={qc}>
         <ThemeProvider>
           <ReferenceContext.Provider
-            value={{ api: { insertFileReference, insertSnippetReference }, setApi: () => {} }}
+            value={{ api: { insertFileReference, insertSnippetReference, insertTerminalReference: vi.fn() }, setApi: () => {} }}
           >
             <FileSelectionContext.Provider
               value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}

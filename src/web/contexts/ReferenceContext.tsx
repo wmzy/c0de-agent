@@ -20,6 +20,9 @@ export type FileReferenceAPI = {
     lineEnd: number,
     snippet: string,
   ) => void
+  /** 插入终端内容引用 pill（TerminalPart）：编辑器显示标签，
+   * 提交时展开为 ```terminal 代码块注入 LLM 上下文。 */
+  insertTerminalReference: (label: string, content: string) => void
 }
 
 type FileReferenceContextValue = {
