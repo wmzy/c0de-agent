@@ -14,7 +14,7 @@ import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
 import { useAgent } from '../hooks/useAgent.js'
 import { useChat } from '../hooks/useChat.js'
 import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
-import { useMessages, useProjects } from '../hooks/useSession.js'
+import { useMessages } from '../hooks/useSession.js'
 import { agentAPI } from '../services/agent.js'
 import { sessionAPI } from '../services/session.js'
 import type { ShakeRegionView } from '../types/index.js'
@@ -138,8 +138,6 @@ export function ChatView({
 function DraftSession({ projectId }: { projectId: string }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { data: projects } = useProjects()
-  const projectName = projects?.find((p) => p.id === projectId)?.name ?? undefined
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults()
   const { data: agentsData } = useQuery({
@@ -177,7 +175,6 @@ function DraftSession({ projectId }: { projectId: string }) {
   return (
     <Chat
       projectId={projectId}
-      projectName={projectName}
       agents={agentsData?.agents ?? []}
       timeline={[]}
       isStreaming={creating}
@@ -212,8 +209,6 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   const agent = useAgent(sessionId)
   const qc = useQueryClient()
   const { data: history } = useMessages(sessionId)
-  const { data: projects } = useProjects()
-  const projectName = projects?.find((p) => p.id === projectId)?.name ?? undefined
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults()
   const { data: agentsData } = useQuery({
@@ -408,7 +403,6 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
     <ShakeProvider value={shakeContextValue}>
       <Chat
         projectId={projectId}
-        projectName={projectName}
         agents={agentsData?.agents ?? []}
         timeline={timeline}
         isStreaming={chat.isStreaming}
