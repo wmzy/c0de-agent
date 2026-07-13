@@ -7,6 +7,7 @@ export type TreeNode = {
   path: string
   type?: 'file' | 'directory'
   children?: TreeNode[]
+  ignored?: boolean
 }
 
 type FileTreeProps = {
@@ -283,9 +284,10 @@ function renderNode(
       key={node.path}
     >
       <div
-        className={`${row} ${isSelected ? selectedRow : ''} ${gitCode ? gitClass(gitCode) : ''}`}
+        className={`${row} ${isSelected ? selectedRow : ''} ${gitCode ? gitClass(gitCode) : ''} ${node.ignored ? gitIgnored : ''}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         data-git-status={gitCode ?? undefined}
+        data-ignored={node.ignored ? '' : undefined}
       >
         {isFile ? (
           <span className={toggle} aria-hidden="true" />

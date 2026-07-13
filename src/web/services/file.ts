@@ -31,6 +31,15 @@ const fileAPI = {
     apiRequest<GitStatusMap>(
       `/api/files/git-status${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
+  gitCommit: (projectId?: string) =>
+    apiRequest<{ committed: boolean; message: string; hash: string; fileCount: number }>(
+      `/api/files/git-commit${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+      { method: 'POST' },
+    ),
+  gitBranch: (projectId?: string) =>
+    apiRequest<{ branch: string | null }>(
+      `/api/files/git-branch${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
 }
 
 export { fileAPI }

@@ -246,16 +246,18 @@ describe('FileTree', () => {
     expect(gitStatusOf('a.ts')).toBe('modified')
   })
 
-  it('git 忽略文件/目录置灰（data-git-status=ignored）', () => {
+  it('节点 ignored 属性驱动灰显（data-ignored）', () => {
     const fileTree: TreeNode = {
       name: 'root',
       path: '.',
       children: [
-        { name: 'ignored.txt', path: 'ignored.txt', type: 'file' },
+        { name: 'ignored.txt', path: 'ignored.txt', type: 'file', ignored: true },
+        { name: 'normal.txt', path: 'normal.txt', type: 'file' },
         {
           name: 'build',
           path: 'build',
           type: 'directory',
+          ignored: true,
           children: [{ name: 'out.js', path: 'build/out.js', type: 'file' }],
         },
       ],
@@ -269,16 +271,13 @@ describe('FileTree', () => {
         onToggle={vi.fn()}
         onSelect={vi.fn()}
         directoryClickMode="toggle"
-        gitStatusMap={{
-          'ignored.txt': 'ignored',
-          'build/out.js': 'ignored',
-        }}
       />
     )
-    // 忽略文件置灰
-    expect(gitStatusOf('ignored.txt')).toBe('ignored')
-    // 忽略目录聚合为 ignored
-    expect(gitStatusOf('build')).toBe('ignored')
-    expect(gitStatusOf('out.js')).toBe('ignored')
+    // ignored 文件带 data-ignored
+    expect(screen.getByText('ignored.txt').closest('[data-ignored]')).toBeTruthy()
+    // 正常文件不带
+    expect(screen.getByText('normal.txt').closest('[data-ignored]')).toBeNull()
+    // ignored 目录带 data-ignored
+    expect(screen.getByText('build').closest('[data-ignored]')).toBeTruthy()
   })
 })

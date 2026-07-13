@@ -5,6 +5,7 @@ import { type ChangeEvent, useRef, useState } from 'react'
 import { CommaListInput } from '../components/settings/CommaListInput.js'
 import { CompactionPanel } from '../components/settings/CompactionPanel.js'
 import { JsonConfigEditor } from '../components/settings/JsonConfigEditor.js'
+import { GitPanel } from '../components/settings/GitPanel.js'
 import { MCPPanel } from '../components/settings/MCPPanel.js'
 import { ModelPanel } from '../components/settings/ModelPanel.js'
 import { ProviderPanel } from '../components/settings/ProviderPanel.js'
@@ -452,6 +453,13 @@ export function Settings() {
           <ToolsPanel
             tools={merged.tools}
             onToolsChange={(patch) => updateSection('tools', patch)}
+          />
+          <GitPanel
+            commitModel={merged.commitModel}
+            providers={merged.providers}
+            defaultProvider={merged.defaultProvider}
+            defaultModel={merged.defaultModel}
+            onCommitModelChange={(patch) => patchDraft(patch)}
           />
           <div className={section}>
             <h3>工具指标</h3>

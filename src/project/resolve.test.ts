@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { resolveProject } from './resolve.js'
+import { checkIgnored, resolveProject } from './resolve.js'
 
 const hasGit = (() => {
   try {
@@ -101,5 +101,31 @@ describe('resolveProject', () => {
 
     expect(after.id).toBe(before.id)
     expect(after.gitRemote).toBe('https://github.com/u/drift.git')
+  })
+})
+
+describe('checkIgnored', () => {
+  it.runIf(hasGit)('返回被 .gitignore 覆盖的路径', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-chkign-'))
+    execSync('git init -q', { cwd: repo })
+    writeFileSync(join(repo, '.gitignore'), 'node_modules\n*.log\n.c0de\n')
+
+    const result = checkIgnored(repo, ['node_modules', 'app.ts', 'error.log', '.c0de', 'README.md'])
+    expect(result.has('node_modules')).toBe(true)
+    expect(result.has('error.log')).toBe(true)
+    expect(result.has('.c0de')).toBe(true)
+    expect(result.has('app.ts')).toBe(false)
+    expect(result.has('README.md')).toBe(false)
+  })
+
+  it.runIf(hasGit)('空路径列表返回空集', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-chkign-empty-'))
+    execSync('git init -q', { cwd: repo })
+    expect(checkIgnored(repo, [])).toEqual(new Set())
+  })
+
+  it('非 git 目录返回空集', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-nongit-'))
+    expect(checkIgnored(dir, ['any.txt'])).toEqual(new Set())
   })
 })

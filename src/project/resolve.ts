@@ -42,13 +42,19 @@ function classifyStatus(xy: string): GitStatusCode {
  * 取工作区 git status（porcelain v1, NUL 分隔），返回 path → 状态分类 的映射。
  * path 为相对 cwd 的 POSIX 路径；非 git 仓库或失败返回 null。
  */
+/** spawnSync 的 stdout/stderr maxBuffer 默认 1MB，大仓库可能超出。
+ * 10MB 足以覆盖大量 untracked 文件场景（此前 50MB 是为 --ignored 的 PGLite 数万文件预留，
+ * 去掉 --ignored 后不再需要）。 */
+const GIT_MAX_BUFFER = 10 * 1024 * 1024 // 10MB
+
 export function getGitStatus(cwd: string): Record<string, GitStatusCode> | null {
   let result: import('node:child_process').SpawnSyncReturns<string>
   try {
-    result = spawnSync('git', ['status', '--porcelain', '-z', '--ignored', '--untracked-files=all'], {
+    result = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: GIT_MAX_BUFFER,
     })
   } catch {
     return null
@@ -90,11 +96,37 @@ function git(args: string[], cwd: string): string {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: GIT_MAX_BUFFER,
     })
     if (result.status !== 0 || result.error) return ''
     return (result.stdout ?? '').trim()
   } catch {
     return ''
+  }
+}
+
+/** 检查给定路径中哪些被 gitignore 规则覆盖。
+ *
+ * 用 git check-ignore 只查询传入的路径（不递归），返回被忽略路径的集合。
+ * 只检查当前展开目录的直接子项（通常 10-50 个），不递归进 node_modules 等。
+ * 非 git 仓库或无忽略文件时返回空集。
+ *
+ * 注意：git check-ignore 在「无路径被忽略」或「非 git 仓库」时退出码为 1，
+ * 这两种情况都返回空集。 */
+export function checkIgnored(cwd: string, paths: string[]): Set<string> {
+  if (paths.length === 0) return new Set()
+  try {
+    const result = spawnSync('git', ['check-ignore', ...paths], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: GIT_MAX_BUFFER,
+    })
+    if (result.status !== 0 || result.error) return new Set()
+    const raw = result.stdout ?? ''
+    return new Set(raw.split('\n').filter(Boolean).map(normalizePath))
+  } catch {
+    return new Set()
   }
 }
 
@@ -128,6 +160,59 @@ function firstRemoteUrl(cwd: string): string {
     .filter(Boolean)[0]
   if (!first) return ''
   return git(['remote', 'get-url', first], cwd)
+}
+
+/**
+ * 取当前分支名（非 git 仓库返回 null）。
+ */
+export function getGitBranch(cwd: string): string | null {
+  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)
+  return branch || null
+}
+
+/**
+ * 取工作区变更摘要（供 LLM 生成 commit message）。
+ * 包含 staged + unstaged diff（相对 HEAD）和 untracked 文件名列表。
+ * 非 git 仓库或无变更返回 null。
+ */
+export function getGitDiffSummary(cwd: string): { diff: string; fileCount: number } | null {
+  const diff = git(['diff', 'HEAD'], cwd)
+  const untracked = git(['ls-files', '--others', '--exclude-standard'], cwd)
+  const parts: string[] = []
+  if (diff) parts.push(diff)
+  if (untracked) {
+    const files = untracked.split('\n').map((s) => s.trim()).filter(Boolean)
+    if (files.length > 0) {
+      parts.push(`Untracked files:\n${files.map((f) => `  ${f}`).join('\n')}`)
+    }
+  }
+  const combined = parts.join('\n\n')
+  if (!combined.trim()) return null
+  const status = getGitStatus(cwd)
+  const fileCount = status ? Object.values(status).filter((c) => c !== 'ignored').length : 0
+  return { diff: combined, fileCount }
+}
+
+/**
+ * 执行 git add -A + git commit。成功返回 commit 短 hash，失败返回 error 信息。
+ */
+export function performGitCommit(
+  cwd: string,
+  message: string,
+): { hash: string } | { error: string } {
+  git(['add', '-A'], cwd)
+  const result = spawnSync('git', ['commit', '-m', message], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: GIT_MAX_BUFFER,
+  })
+  if (result.status !== 0) {
+    const stderr = (result.stderr ?? '').trim()
+    return { error: stderr || `git commit failed (exit ${result.status})` }
+  }
+  const hash = git(['rev-parse', '--short', 'HEAD'], cwd)
+  return { hash: hash || 'unknown' }
 }
 
 function hash16(input: string): string {

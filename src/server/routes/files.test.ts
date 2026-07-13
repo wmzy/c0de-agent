@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
@@ -10,7 +10,16 @@ import { fromDirectory } from '../../project/project.js'
 import { createServerContext } from '../context.js'
 import { createFilesRoute } from './files.js'
 
-type FileEntry = { name: string; type: 'file' | 'directory' }
+// mock createSummarizer 以避免真实 LLM 调用；保留 runCompaction 等其他导出
+vi.mock('../../core/compact.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/compact.js')>()
+  return {
+    ...actual,
+    createSummarizer: () => async () => 'feat: auto-generated commit message',
+  }
+})
+
+type FileEntry = { name: string; type: 'file' | 'directory'; ignored?: boolean }
 
 let dbHandle: DB | undefined
 afterEach(async () => {
@@ -304,6 +313,32 @@ describe('files route', () => {
     expect(names).toContain('normal.txt')
   })
 
+  it('GET / git 仓库返回被忽略文件的 ignored 标记', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-list-ignored-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email t@t.com', { cwd: dir })
+    execSync('git config user.name t', { cwd: dir })
+    writeFileSync(join(dir, '.gitignore'), 'node_modules\n*.log\n')
+    mkdirSync(join(dir, 'node_modules'), { recursive: true })
+    writeFileSync(join(dir, 'error.log'), 'err')
+    writeFileSync(join(dir, 'app.ts'), 'app')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/')
+    expect(res.status).toBe(200)
+    const entries = (await res.json()) as FileEntry[]
+    const byName = Object.fromEntries(entries.map((e) => [e.name, e]))
+    expect(byName['node_modules']?.ignored).toBe(true)
+    expect(byName['error.log']?.ignored).toBe(true)
+    expect(byName['app.ts']?.ignored).toBeUndefined()
+  })
+
   it('GET /search 命中 .c0de 内文件', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-search-c0de-'))
     mkdirSync(join(dir, '.c0de'), { recursive: true })
@@ -363,7 +398,7 @@ describe('files route', () => {
     expect(body['staged.txt']).toBe('staged')
   })
 
-  it('GET /git-status 返回 git 忽略文件为 ignored', async () => {
+  it('GET /git-status 不返回 git 忽略文件（去掉 --ignored，避免大仓库性能问题）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-gitignored-'))
     const { execSync } = await import('node:child_process')
     execSync('git init -q', { cwd: dir })
@@ -385,7 +420,112 @@ describe('files route', () => {
     const res = await app.request('/git-status')
     expect(res.status).toBe(200)
     const body = (await res.json()) as Record<string, string>
-    expect(body['ignored.txt']).toBe('ignored')
-    expect(body['ignored2.txt']).toBe('ignored')
+    // 被忽略文件不返回（去掉 --ignored 后 git status 不再列出）
+    expect(body['ignored.txt']).toBeUndefined()
+    expect(body['ignored2.txt']).toBeUndefined()
+  })
+
+  it('GET /git-branch 返回当前分支名', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-branch-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'x')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    execSync('git checkout -q -b my-feature', { cwd: dir })
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-branch')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { branch: string | null }
+    expect(body.branch).toBe('my-feature')
+  })
+
+  it('GET /git-branch 非 git 仓库返回 branch null', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-nogit-branch-'))
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-branch')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { branch: string | null }
+    expect(body.branch).toBeNull()
+  })
+})
+
+describe('git-commit route', () => {
+  it('POST /git-commit 无变更返回 400 NO_CHANGES', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-empty-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'file.txt'), 'content')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', { method: 'POST' })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('NO_CHANGES')
+  })
+
+  it('POST /git-commit 非 git 仓库返回 400 NO_CHANGES', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-nogit-'))
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', { method: 'POST' })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /git-commit 有变更时用 LLM 生成 message 并提交', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-ok-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'base.txt'), 'base')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    // 制造变更
+    writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
+    writeFileSync(join(dir, 'base.txt'), 'modified')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { committed: boolean; message: string; hash: string; fileCount: number }
+    expect(body.committed).toBe(true)
+    expect(body.message).toBe('feat: auto-generated commit message')
+    expect(body.fileCount).toBeGreaterThan(0)
+    // 验证 git log 包含 LLM 生成的 message
+    const log = execSync('git log --oneline', { cwd: dir, encoding: 'utf-8' })
+    expect(log).toContain('feat: auto-generated commit message')
+    // 验证工作区干净
+    const status = execSync('git status --porcelain', { cwd: dir, encoding: 'utf-8' })
+    expect(status.trim()).toBe('')
   })
 })

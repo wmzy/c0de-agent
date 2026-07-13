@@ -2,8 +2,9 @@ import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
 import trash from 'trash'
-import { getGitStatus } from '../../project/resolve.js'
+import { checkIgnored, getGitBranch, getGitDiffSummary, getGitStatus, performGitCommit } from '../../project/resolve.js'
 import { getProject } from '../../project/project.js'
+import { createSummarizer } from '../../core/compact.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { safeResolve } from '../util/safe-path.js'
@@ -11,6 +12,7 @@ import { safeResolve } from '../util/safe-path.js'
 type FileEntry = {
   name: string
   type: 'file' | 'directory'
+  ignored?: boolean
 }
 
 type SearchResult = {
@@ -90,6 +92,58 @@ function createFilesRoute(ctx: ServerContext): Hono {
     return c.json(getGitStatus(root) ?? {})
   })
 
+  // 当前分支名（非 git 仓库返回 null）
+  app.get('/git-branch', async (c) => {
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    return c.json({ branch: getGitBranch(root) })
+  })
+
+  // 一键提交：用 LLM 生成 commit message 后执行 git add -A + commit
+  app.post('/git-commit', async (c) => {
+    const projectId = c.req.query('projectId')
+    let root = ctx.cwd
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+      }
+      root = project.worktree
+    }
+    const summary = getGitDiffSummary(root)
+    if (!summary) {
+      return apiError(c, 400, 'NO_CHANGES', 'No changes to commit')
+    }
+    const cm = ctx.config.commitModel
+    const provider = cm?.provider ?? ctx.config.defaultProvider
+    const model = cm?.model ?? ctx.config.defaultModel
+    const prompt = `Based on the following git diff, generate a concise commit message in conventional-commits format (e.g. "feat: add login page"). Reply with ONLY the commit message, no explanation.\n\n${summary.diff.slice(0, 8000)}`
+    let message: string
+    try {
+      const summarizer = createSummarizer(ctx.llmRegistry, provider, model, { maxTokens: 200 })
+      message = (await summarizer(prompt)).trim()
+    } catch (err) {
+      return apiError(c, 502, 'LLM_ERROR', `Failed to generate commit message: ${String(err)}`)
+    }
+    // LLM 返回可能含 markdown 代码块包裹，去掉
+    message = message.replace(/^```[a-z]*\n?/m, '').replace(/\n?```$/m, '').trim()
+    if (!message) {
+      return apiError(c, 502, 'LLM_ERROR', 'LLM returned empty commit message')
+    }
+    const result = performGitCommit(root, message)
+    if ('error' in result) {
+      return apiError(c, 500, 'COMMIT_FAILED', result.error)
+    }
+    return c.json({ committed: true, message, hash: result.hash, fileCount: summary.fileCount })
+  })
+
   // 列出目录
   // projectId 指定时按对应项目 worktree 列出，否则回退 ctx.cwd（向后兼容）。
   app.get('/', async (c) => {
@@ -109,7 +163,7 @@ function createFilesRoute(ctx: ServerContext): Hono {
     }
     try {
       const entries = await readdir(resolved, { withFileTypes: true })
-      const result: FileEntry[] = entries
+      const sorted = entries
         .map((e) => ({
           name: e.name,
           type: (e.isDirectory() ? 'directory' : 'file') as 'file' | 'directory',
@@ -118,6 +172,14 @@ function createFilesRoute(ctx: ServerContext): Hono {
           if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
           return a.name.localeCompare(b.name)
         })
+      // git check-ignore：只检查当前目录直接子项，标记被忽略的文件/目录（灰显用）
+      const prefix = queryPath === '.' ? '' : `${queryPath}/`
+      const checkPaths = sorted.map((e) => `${prefix}${e.name}`)
+      const ignoredSet = checkIgnored(root, checkPaths)
+      const result: FileEntry[] = sorted.map((e) => ({
+        ...e,
+        ...(ignoredSet.has(`${prefix}${e.name}`) ? { ignored: true } : {}),
+      }))
       return c.json(result)
     } catch {
       return apiError(c, 404, 'NOT_FOUND', 'Directory not found')

@@ -1,9 +1,10 @@
 // src/server/server.ts
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import type { Server as NodeServer } from 'node:http'
 import { connect as tcpConnect } from 'node:net'
-import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
 import { WebSocketServer } from 'ws'
@@ -103,11 +104,48 @@ function syncRegistryFromConfig(registry: Registry, config: Config): void {
   }
 }
 
-/** 解析 PGLite 持久化数据目录：优先 C0DE_DB_DIR，否则 <cwd>/.c0de/pglite。 */
-function resolveDbDir(cwd: string): string {
+/** 全局数据根目录：XDG_DATA_HOME 优先，否则 ~/.local/share/c0de。
+ * 与 opencode (~/.local/share/opencode/)、oh-my-pi (~/.omp/agent/) 同约定——
+ * 数据库等运行时数据放全局，项目 .c0de/ 只留配置和扩展。 */
+function resolveGlobalDataRoot(): string {
+  const xdg = process.env.XDG_DATA_HOME
+  if (xdg && xdg.trim() !== '') return join(xdg, 'c0de')
+  return join(homedir(), '.local', 'share', 'c0de')
+}
+
+/** 解析 PGLite 持久化数据目录：优先 C0DE_DB_DIR，否则全局数据根下 pglite 子目录。
+ *
+ * 历史上数据库放在 <cwd>/.c0de/pglite（项目级），但项目 DB schema 通过 projectId
+ * 区分项目，设计本意是全局共享单库。旧路径已在 migrateLegacyPglite 中自动迁移。 */
+function resolveDbDir(): string {
   const envDir = process.env.C0DE_DB_DIR
   if (envDir && envDir.trim() !== '') return envDir
-  return join(cwd, '.c0de', 'pglite')
+  return join(resolveGlobalDataRoot(), 'pglite')
+}
+
+/** 一次性迁移：<cwd>/.c0de/pglite → 全局路径。仅当目标不存在时执行。
+ *
+ * 多个项目各有 .c0de/pglite 时只迁移第一个遇到的（首次启动即触发）；
+ * 其余项目的旧数据保留在原地（已被 .gitignore 覆盖，不影响 git，但不再读取）。
+ * 用户可用 C0DE_DB_DIR 手动指向旧路径访问遗留数据。 */
+function migrateLegacyPglite(cwd: string, targetDir: string): void {
+  const legacy = join(cwd, '.c0de', 'pglite')
+  if (!existsSync(legacy)) return
+  if (existsSync(targetDir)) return // 全局目录已有数据，不覆盖
+  const parent = dirname(targetDir)
+  if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
+  try {
+    renameSync(legacy, targetDir)
+    return
+  } catch {
+    // 跨文件系统 rename 失败，fallback 到 copy
+  }
+  try {
+    cpSync(legacy, targetDir, { recursive: true })
+    rmSync(legacy, { recursive: true, force: true })
+  } catch {
+    // 迁移失败：旧数据留在项目目录（已 gitignore，无害），用户可手动迁移
+  }
 }
 
 /**
@@ -248,7 +286,8 @@ function releaseDevDbLock(dataDir: string): void {
 
 /** dev 专用：创建 + migrate PGLite，跨热重载复用（单写者，只建一次）。 */
 async function createDevDb(cwd: string): Promise<DB> {
-  const dataDir = resolveDbDir(cwd)
+  const dataDir = resolveDbDir()
+  migrateLegacyPglite(cwd, dataDir)
   if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
 
   acquireDevDbLock(dataDir)
@@ -269,8 +308,8 @@ async function createDevDb(cwd: string): Promise<DB> {
 async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<BootstrappedServer> {
   const cwd = opts.cwd ?? process.cwd()
   const ownsDb = !opts.db
-  // 持久化 PGLite 数据：默认 <cwd>/.c0de/pglite（与 .c0de/cache、.c0de/config.json 同约定），
-  // 可用 C0DE_DB_DIR 覆盖。此前默认 in-memory，进程重启即丢全部会话/消息/调用详情。
+  // 持久化 PGLite 数据：全局路径 ~/.local/share/c0de/pglite（可用 C0DE_DB_DIR 覆盖）。
+  // 跨项目共享单库，通过 projects/sessions 表的 projectId 区分。
   // 测试注入 opts.db 时跳过（保持 in-memory 隔离）。
   let db: DB
   if (opts.db) {

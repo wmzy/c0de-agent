@@ -90,6 +90,9 @@ type Config = {
   roleRouting: Record<string, { provider: string; model: string }>
   fallback: { enabled: boolean; maxRetries: number; retryDelay: number }
   compaction: CompactionConfig
+  /** 一键提交使用的独立模型。未设置时回退到 defaultProvider/defaultModel。
+   * commit message 生成对推理能力要求低，可指定便宜/快速模型以降低成本。 */
+  commitModel?: { provider: string; model: string }
   tools: { enabled: string[]; disabled: string[] }
   plugins: { enabled: string[] }
   mcpServers: MCPServerConfig[]

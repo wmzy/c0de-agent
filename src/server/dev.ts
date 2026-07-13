@@ -97,7 +97,7 @@ async function closeDevApp(): Promise<void> {
     delete g[DEV_DB_KEY]
   }
   // Release cross-process lock so the next dev server can start cleanly.
-  releaseDevDbLock(resolveDbDir(process.cwd()))
+  releaseDevDbLock(resolveDbDir())
 }
 
 /**

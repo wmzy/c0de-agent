@@ -44,6 +44,7 @@ type APIError = {
 type FileEntry = {
   name: string
   type: 'file' | 'directory'
+  ignored?: boolean
 }
 
 /** git 状态分类（GET /api/files/git-status 返回值的 value）。 */
