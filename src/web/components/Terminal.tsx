@@ -154,6 +154,13 @@ export function Terminal({ ws, visible, onResize }: TerminalProps) {
     }
   }, [ws, doFit])
 
+  // 终端（重）连接或变为可见时自动获取焦点。
+  // 切换项目回来后 WS 重连，新 xterm 实例默认无焦点 → 用户无法输入。
+  useEffect(() => {
+    if (!visible || !ws || !termRef.current) return
+    termRef.current.focus()
+  }, [visible, ws])
+
   // 可见性变化时重新 fit
   useEffect(() => {
     if (!visible) return
