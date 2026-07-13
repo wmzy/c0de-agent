@@ -15,6 +15,8 @@ export interface PTYInfo {
   cwd: string
   /** shell 程序路径。 */
   shell: string
+  /** 所属项目 id（未归属时为 undefined）。 */
+  projectId?: string
 }
 
 /** 内部 PTY 条目：进程 + 元信息 + 活跃 WebSocket 连接集合。 */
@@ -31,6 +33,8 @@ export interface CreatePTYOptions {
   title?: string
   /** 覆盖默认 shell；不传则自动检测。 */
   shell?: string
+  /** 所属项目 id。 */
+  projectId?: string
 }
 
 /**
@@ -95,6 +99,7 @@ export class PTYManager {
       rows,
       cwd: opts.cwd,
       shell,
+      projectId: opts.projectId,
     }
 
     const entry: PTYEntry = { pty, info, sockets: new Set() }

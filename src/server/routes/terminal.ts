@@ -22,9 +22,10 @@ function createTerminalRoute(ctx: ServerContext): Hono {
     const rows = Number.isFinite(body.rows) ? Number(body.rows) : undefined
     const title = typeof body.title === 'string' ? body.title : undefined
     const shell = typeof body.shell === 'string' && body.shell.length > 0 ? body.shell : undefined
+    const projectId = typeof body.projectId === 'string' && body.projectId.length > 0 ? body.projectId : undefined
 
     try {
-      const info = mgr.create({ cwd, cols, rows, title, shell })
+      const info = mgr.create({ cwd, cols, rows, title, shell, projectId })
       return c.json(info, 201)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create terminal'

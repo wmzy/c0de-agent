@@ -111,4 +111,31 @@ describe('terminal route', () => {
     const res = await app.request('/nonexistent', { method: 'DELETE' })
     expect(res.status).toBe(404)
   })
+
+  it('POST / with projectId stores and returns it', async () => {
+    const { app, ctx } = setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-xyz' }),
+    })
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body.id).toMatch(/^pty_/)
+    expect(body.projectId).toBe('proj-xyz')
+    ctx.ptyManager.kill(body.id as string)
+  })
+
+  it('POST / without projectId returns undefined projectId', async () => {
+    const { app, ctx } = setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body.projectId).toBeUndefined()
+    ctx.ptyManager.kill(body.id as string)
+  })
 })
