@@ -23,62 +23,76 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
 
 // ── Styles ────────────────────────────────────────────────
 
-const panel = css`
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-`
-
-const header = css`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+const wrapper = css`
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
   flex-shrink: 0;
 `
 
-const title = css`
+const summaryBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-`
-
-const addBtn = css`
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  user-select: none;
 
   &:hover {
-    color: var(--primary);
-    border-color: var(--primary);
+    background: var(--bg-hover, color-mix(in srgb, var(--bg) 95%, var(--text) 5%));
   }
 `
 
-const list = css`
+const summaryIcon = css`
+  font-size: 13px;
+  flex-shrink: 0;
+`
+
+const summaryProgress = css`
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+`
+
+const summaryDivider = css`
+  opacity: 0.3;
+  flex-shrink: 0;
+`
+
+const summaryCurrent = css`
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
+const summaryCurrentTask = css`
+  color: var(--text);
+`
+
+const expandIcon = css`
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+`
+
+const body = css`
+  max-height: 240px;
   overflow-y: auto;
-  min-height: 0;
-  padding: 4px 0;
+  padding: 2px 0 6px;
 `
 
 const phaseGroup = css`
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 `
 
 const phaseHeader = css`
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px 2px;
+  padding: 4px 12px 1px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text-secondary);
@@ -96,20 +110,19 @@ const taskItem = css`
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  padding: 3px 10px;
+  padding: 2px 12px;
   font-size: 13px;
   line-height: 1.4;
   cursor: pointer;
 
   &:hover {
-    background: var(--bg-hover, var(--bg-secondary));
+    background: var(--bg-hover, color-mix(in srgb, var(--bg) 95%, var(--text) 5%));
   }
 `
 
 const taskIcon = css`
   flex-shrink: 0;
   width: 16px;
-  height: 16px;
   text-align: center;
   font-size: 13px;
   line-height: 1.4;
@@ -159,31 +172,16 @@ const taskItemHover = css`
   }
 `
 
-const emptyState = css`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 20px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  text-align: center;
-  gap: 8px;
-`
-
 const addForm = css`
-  padding: 8px 10px;
-  border-top: 1px solid var(--border);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex-shrink: 0;
+  gap: 4px;
+  padding: 4px 12px 6px;
 `
 
 const input = css`
-  width: 100%;
-  padding: 4px 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -197,16 +195,11 @@ const input = css`
   }
 `
 
-const formRow = css`
-  display: flex;
-  gap: 4px;
-`
-
-const formBtn = css`
+const addBtn = css`
   padding: 3px 10px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg-secondary);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
   font-size: 12px;
@@ -237,20 +230,34 @@ const primaryBtn = css`
 const errorText = css`
   color: var(--error);
   font-size: 12px;
-  padding: 2px 0;
+  padding: 2px 12px;
 `
+
+// ── Helpers ───────────────────────────────────────────────
+
+function activeTaskInfo(phases: TodoPhase[]) {
+  for (const phase of phases) {
+    for (const task of phase.tasks) {
+      if (task.status === 'in_progress') return { phase: phase.name, content: task.content }
+    }
+  }
+  return null
+}
 
 // ── Component ─────────────────────────────────────────────
 
 export function TodoPanel({ sessionId }: { sessionId: string }) {
   const queryClient = useQueryClient()
   const todoKey = ['todo', sessionId]
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem('c0de-agent:todoCollapsed') === '1',
+  )
   const [showAdd, setShowAdd] = useState(false)
   const [newTask, setNewTask] = useState('')
   const [newPhase, setNewPhase] = useState('')
   const [error, setError] = useState('')
 
-  const { data, isLoading } = useQuery({
+  const { data } = useQuery({
     queryKey: todoKey,
     queryFn: () => todoAPI.get(sessionId),
   })
@@ -262,17 +269,6 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
       todoAPI.exec(sid, op),
     onSuccess: (result: TodoOpResult) => {
       queryClient.setQueryData(todoKey, { phases: result.phases })
-      setError('')
-    },
-    onError: (e: Error) => setError(e.message),
-  })
-
-  const addMutation = useMutation({
-    mutationFn: ({ sessionId: sid, op }: { sessionId: string; op: TodoOp }) =>
-      todoAPI.exec(sid, op),
-    onSuccess: (result: TodoOpResult) => {
-      queryClient.setQueryData(todoKey, { phases: result.phases })
-      setNewTask('')
       setError('')
     },
     onError: (e: Error) => setError(e.message),
@@ -297,39 +293,63 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
   const handleAdd = () => {
     if (!newTask.trim()) return
     const phaseName = newPhase.trim() || (phases[0]?.name ?? 'Tasks')
-    addMutation.mutate({
+    execMutation.mutate({
       sessionId,
       op: { op: 'append', phase: phaseName, items: [newTask.trim()] },
     })
+    setNewTask('')
+    setNewPhase('')
+  }
+
+  const toggleCollapse = () => {
+    const next = !collapsed
+    setCollapsed(next)
+    localStorage.setItem('c0de-agent:todoCollapsed', next ? '1' : '0')
   }
 
   const totalTasks = phases.reduce((sum, p) => sum + p.tasks.length, 0)
   const doneTasks = phases.reduce(
-    (sum, p) => sum + p.tasks.filter((t) => t.status === 'completed' || t.status === 'abandoned').length,
+    (sum, p) =>
+      sum +
+      p.tasks.filter((t) => t.status === 'completed' || t.status === 'abandoned').length,
     0,
   )
+  const current = activeTaskInfo(phases)
 
   return (
-    <div className={panel} data-testid="todo-panel">
-      <div className={header}>
-        <span className={title}>
-          📋 任务 {totalTasks > 0 && <span className={phaseProgress}>({doneTasks}/{totalTasks})</span>}
-        </span>
-        <button type="button" className={addBtn} onClick={() => setShowAdd((v) => !v)} title="添加任务">
-          {showAdd ? '−' : '+'}
-        </button>
+    <div className={wrapper} data-testid="todo-panel">
+      <div
+        className={summaryBar}
+        onClick={totalTasks > 0 ? toggleCollapse : () => setShowAdd((v) => !v)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            totalTasks > 0 ? toggleCollapse() : setShowAdd((v) => !v)
+          }
+        }}
+      >
+        <span className={summaryIcon}>📋</span>
+        <span className={summaryProgress}>任务</span>
+        {totalTasks > 0 && <span className={phaseProgress}>{doneTasks}/{totalTasks}</span>}
+        {current && (
+          <>
+            <span className={summaryDivider}>·</span>
+            <span className={summaryCurrent}>
+              <span className={summaryCurrentTask}>{current.content}</span>
+            </span>
+          </>
+        )}
+        {totalTasks === 0 && !showAdd && (
+          <span className={summaryCurrent}>暂无任务，点击添加</span>
+        )}
+        <span className={expandIcon}>{collapsed ? '▾' : '▴'}</span>
       </div>
 
-      <div className={list}>
-        {isLoading ? (
-          <div className={emptyState}>加载中…</div>
-        ) : phases.length === 0 || totalTasks === 0 ? (
-          <div className={emptyState}>
-            <span>暂无任务</span>
-            <span style={{ fontSize: 12 }}>点击 + 添加任务，或让 AI 用 todo 工具创建</span>
-          </div>
-        ) : (
-          phases.map((phase, pi) => {
+      {!collapsed && totalTasks > 0 && (
+        <div className={body}>
+          {phases.map((phase, pi) => {
             const done = phase.tasks.filter(
               (t) => t.status === 'completed' || t.status === 'abandoned',
             ).length
@@ -367,19 +387,11 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
                       </span>
                       <div className={taskActions} onClick={(e) => e.stopPropagation()}>
                         {status !== 'abandoned' && (
-                          <button
-                            type="button"
-                            title="放弃"
-                            onClick={() => dropTask(task.content)}
-                          >
+                          <button type="button" title="放弃" onClick={() => dropTask(task.content)}>
                             ✕
                           </button>
                         )}
-                        <button
-                          type="button"
-                          title="删除"
-                          onClick={() => removeTask(task.content)}
-                        >
+                        <button type="button" title="删除" onClick={() => removeTask(task.content)}>
                           🗑
                         </button>
                       </div>
@@ -388,13 +400,45 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
                 })}
               </div>
             )
-          })
-        )}
-      </div>
+          })}
+          {showAdd && (
+            <div className={addForm}>
+              <input
+                className={input}
+                placeholder="任务描述…"
+                value={newTask}
+                onChange={(e) => setNewTask(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAdd()
+                  if (e.key === 'Escape') setShowAdd(false)
+                }}
+                autoFocus
+              />
+              <input
+                className={input}
+                placeholder="阶段（可选）"
+                style={{ flex: '0 0 100px' }}
+                value={newPhase}
+                onChange={(e) => setNewPhase(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAdd()
+                  if (e.key === 'Escape') setShowAdd(false)
+                }}
+              />
+              <button
+                type="button"
+                className={`${addBtn} ${primaryBtn}`}
+                onClick={handleAdd}
+                disabled={!newTask.trim() || execMutation.isPending}
+              >
+                添加
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
-      {error && <div className={errorText}>{error}</div>}
-
-      {showAdd && (
+      {showAdd && (collapsed || totalTasks === 0) && (
         <div className={addForm}>
           <input
             className={input}
@@ -407,24 +451,29 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
             }}
             autoFocus
           />
-          <div className={formRow}>
-            <input
-              className={input}
-              placeholder="阶段名（留空=当前/默认）"
-              value={newPhase}
-              onChange={(e) => setNewPhase(e.target.value)}
-            />
-            <button
-              type="button"
-              className={`${formBtn} ${primaryBtn}`}
-              onClick={handleAdd}
-              disabled={!newTask.trim() || addMutation.isPending}
-            >
-              添加
-            </button>
-          </div>
+          <input
+            className={input}
+            placeholder="阶段（可选）"
+            style={{ flex: '0 0 100px' }}
+            value={newPhase}
+            onChange={(e) => setNewPhase(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAdd()
+              if (e.key === 'Escape') setShowAdd(false)
+            }}
+          />
+          <button
+            type="button"
+            className={`${addBtn} ${primaryBtn}`}
+            onClick={handleAdd}
+            disabled={!newTask.trim() || execMutation.isPending}
+          >
+            添加
+          </button>
         </div>
       )}
+
+      {error && <div className={errorText}>{error}</div>}
     </div>
   )
 }

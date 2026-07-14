@@ -6,6 +6,7 @@ import { AgentSelector } from '../components/AgentSelector.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
+import { TodoPanel } from '../components/TodoPanel.js'
 import { type ShakeModeValue, ShakeProvider } from '../components/session/ShakeContext.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { buildTimeline } from '../components/session/utils/timeline.js'
@@ -434,6 +435,7 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
             disabled={chat.isStreaming}
           />
         }
+        bottomPanel={<TodoPanel sessionId={sessionId} />}
         topPanel={
           <>
             {showInterruptBanner && !chat.isStreaming && (

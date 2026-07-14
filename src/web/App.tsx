@@ -12,7 +12,6 @@ import {
 } from 'react-router-dom'
 import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TerminalPanel } from './components/TerminalPanel.js'
-import { TodoPanel } from './components/TodoPanel.js'
 import { TopBar } from './components/TopBar.js'
 import { UpdateBanner } from './components/UpdateBanner.js'
 import { ConfigProvider } from './contexts/ConfigContext.js'
@@ -247,15 +246,7 @@ function ChatPage() {
                   }}
                 />
               }
-              tasks={
-                sessionId ? (
-                  <TodoPanel sessionId={sessionId} />
-                ) : (
-                  <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 13, textAlign: 'center' }}>
-                    请先选择一个会话
-                  </div>
-                )
-              }
+
             />
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}

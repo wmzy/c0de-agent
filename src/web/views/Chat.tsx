@@ -41,6 +41,8 @@ type ChatProps = {
   toolToggle?: ReactNode
   /** 插入到工具栏与消息流之间的面板（如会话摘要）。 */
   topPanel?: ReactNode
+  /** 插入到输入框上方的面板（如 todo）。 */
+  bottomPanel?: ReactNode
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
   /** 可用 agent 列表（@ mention 渲染与校验）。 */
@@ -157,6 +159,7 @@ export function Chat({
   modelBar,
   toolToggle,
   topPanel,
+  bottomPanel,
   supportsVision = true,
   projectId,
   agents = [],
@@ -284,6 +287,7 @@ export function Chat({
           <span className={modeWarn}>将自动执行所有工具（含 bash），无需确认</span>
         )}
       </div>
+      {bottomPanel}
       <Composer
         projectId={projectId}
         agents={agents}
