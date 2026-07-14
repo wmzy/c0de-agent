@@ -186,7 +186,14 @@ function builtinSections(): PromptSection[] {
       priority: 120,
       render: () => {
         const lines = ['## Slash Commands']
-        for (const cmd of builtinCommands) lines.push(`- /${cmd.name}: ${cmd.description}`)
+        for (const cmd of builtinCommands) {
+          let line = `- /${cmd.name}: ${cmd.description}`
+          if (cmd.subcommands) {
+            const subs = cmd.subcommands.map((s) => s.name).join('|')
+            line += ` (${subs})`
+          }
+          lines.push(line)
+        }
         return lines.join('\n')
       },
     },
@@ -202,9 +209,9 @@ function builtinSections(): PromptSection[] {
           '```js',
           '// File: .c0de/workflows/<name>.js',
           'export const meta = {',
-          '  name: \'<name>\',           // lowercase, kebab-case',
-          '  description: \'<description>\',',
-          '  phases: [\'phase1\', \'phase2\'],',
+          "  name: '<name>',           // lowercase, kebab-case",
+          "  description: '<description>',",
+          "  phases: ['phase1', 'phase2'],",
           '}',
           '',
           'export default async function workflow(ctx) {',
@@ -213,7 +220,7 @@ function builtinSections(): PromptSection[] {
           '  // runSubagent(type, { assignment, description? }) → single dispatch',
           '  // utils: { glob, grep, read, splitByDirectory }',
           '  // progress(message, { phase? }) → SSE progress',
-          '  return { output: \'summary\', data: {} }',
+          "  return { output: 'summary', data: {} }",
           '}',
           '```',
           'Save to `<project>/.c0de/workflows/<name>.js`. Available subagent types: general, coder, researcher, reviewer.',

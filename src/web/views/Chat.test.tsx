@@ -182,6 +182,90 @@ describe('slash 命令 popover 候选选择', () => {
   })
 })
 
+describe('slash 子命令补全 popover', () => {
+  const TEST_COMMANDS_WITH_SUBS = [
+    { name: 'help', description: 'List available slash commands' },
+    { name: 'compact', description: 'Manually trigger context compaction' },
+    {
+      name: 'workflow',
+      description: 'Manage and run workflows',
+      argsHint: '[list|run|show|create|edit] [name] [args]',
+      subcommands: [
+        { name: 'list', description: 'List available workflows' },
+        { name: 'run', description: 'Run a workflow', usage: '<name> [args]' },
+        { name: 'show', description: 'Show workflow source', usage: '<name>' },
+        {
+          name: 'create',
+          description: 'Create a workflow from file',
+          usage: '<name> --file <path>',
+        },
+        { name: 'edit', description: 'Edit workflow source', usage: '<name>' },
+      ],
+    },
+  ]
+
+  afterEach(() => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] })
+  })
+
+  it('输入 /workflow 后显示子命令 popover', async () => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: TEST_COMMANDS_WITH_SUBS })
+    renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/workflow '
+    fireEvent.input(editor)
+
+    const menu = await screen.findByTestId('subcommand-menu')
+    const items = Array.from(menu.querySelectorAll('button strong')).map((b) => b.textContent)
+    expect(items).toContain('/workflow list')
+    expect(items).toContain('/workflow run')
+    expect(items).toContain('/workflow show')
+  })
+
+  it('输入 /workflow r 过滤出 run 子命令', async () => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: TEST_COMMANDS_WITH_SUBS })
+    renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/workflow r'
+    fireEvent.input(editor)
+
+    const menu = await screen.findByTestId('subcommand-menu')
+    const items = Array.from(menu.querySelectorAll('button strong')).map((b) => b.textContent)
+    expect(items).toEqual(['/workflow run'])
+  })
+
+  it('Enter 选中子命令后插入 /workflow run ', async () => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: TEST_COMMANDS_WITH_SUBS })
+    renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/workflow '
+    fireEvent.input(editor)
+
+    await screen.findByTestId('subcommand-menu')
+    fireEvent.keyDown(editor, { key: 'ArrowDown' })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+
+    // ArrowDown 从 list（index 0）→ run（index 1），选中后插入 /workflow run
+    expect(editor.textContent).toContain('workflow run')
+  })
+
+  it('无 subcommands 的命令不触发子命令 popover', async () => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: TEST_COMMANDS_WITH_SUBS })
+    renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/help '
+    fireEvent.input(editor)
+
+    // /help 没有 subcommands → 不应出现 subcommand-menu
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByTestId('subcommand-menu')).toBeNull()
+  })
+})
+
 describe('workflow run 补全 popover', () => {
   const TEST_WORKFLOWS = [
     {

@@ -41,6 +41,7 @@ export type {
   ProjectInfo,
   PromptContext,
   SlashCommand,
+  SubcommandDef,
   TokenBudget,
 } from './types.js'
 export { buildWorkflowNotice, containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'

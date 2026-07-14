@@ -11,6 +11,7 @@ function createCommandsRoute(_ctx: ServerContext): Hono {
       name: cmd.name,
       description: cmd.description,
       ...(cmd.argsHint ? { argsHint: cmd.argsHint } : {}),
+      ...(cmd.subcommands ? { subcommands: cmd.subcommands } : {}),
     }))
     return c.json({ commands })
   })

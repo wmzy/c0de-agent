@@ -131,6 +131,13 @@ const workflowCommand: SlashCommand = {
   name: 'workflow',
   description: 'Manage and run workflows',
   argsHint: '[list|run|show|create|edit] [name] [args]',
+  subcommands: [
+    { name: 'list', description: 'List available workflows' },
+    { name: 'run', description: 'Run a workflow', usage: '<name> [args]' },
+    { name: 'show', description: 'Show workflow source', usage: '<name>' },
+    { name: 'create', description: 'Create a workflow from file', usage: '<name> --file <path>' },
+    { name: 'edit', description: 'Edit workflow source', usage: '<name>' },
+  ],
   execute: async (args, ctx) => {
     const parts = args.split(/\s+/).filter(Boolean)
     const subcommand = parts[0] ?? 'list'
@@ -190,7 +197,11 @@ const workflowCommand: SlashCommand = {
       // 解析 --file <path> 参数
       const fileIdx = parts.indexOf('--file')
       if (fileIdx === -1 || !parts[fileIdx + 1]) {
-        return { _tag: 'error', message: 'Usage: /workflow create <name> --file <path>\nTip: 也可通过 REST API POST /api/workflows { name, source } 创建' }
+        return {
+          _tag: 'error',
+          message:
+            'Usage: /workflow create <name> --file <path>\nTip: 也可通过 REST API POST /api/workflows { name, source } 创建',
+        }
       }
       const filePath = parts[fileIdx + 1] ?? ''
 
@@ -225,7 +236,11 @@ const workflowCommand: SlashCommand = {
         return { _tag: 'error', message: `Unknown workflow: ${name}` }
       }
       if (wf.source === 'builtin') {
-        return { _tag: 'error', message: 'Cannot edit builtin workflow. Fork it first: /workflow create <new-name> --file <path>' }
+        return {
+          _tag: 'error',
+          message:
+            'Cannot edit builtin workflow. Fork it first: /workflow create <new-name> --file <path>',
+        }
       }
       if (!wf.filePath) {
         return { _tag: 'error', message: `Workflow file path not available for "${name}"` }

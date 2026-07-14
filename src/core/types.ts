@@ -100,10 +100,20 @@ type CommandContext = {
   workflowRegistry?: import('./workflows/registry.js').WorkflowRegistry
 }
 
+/** Declarative subcommand definition for commands like /workflow. */
+type SubcommandDef = {
+  name: string
+  description: string
+  /** Usage hint shown in popover, e.g. "<name> [args]". */
+  usage?: string
+}
+
 type SlashCommand = {
   name: string
   description: string
   argsHint?: string
+  /** Subcommands for dropdown completion (e.g. /workflow list, /workflow run). */
+  subcommands?: SubcommandDef[]
   execute: (args: string, ctx: CommandContext) => Promise<CommandResult>
 }
 
@@ -126,5 +136,6 @@ export type {
   PromptRegistry,
   PromptSection,
   SlashCommand,
+  SubcommandDef,
   TokenBudget,
 }

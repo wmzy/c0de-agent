@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { CommandInfo } from '../hooks/useCommands.js'
+import type { SubcommandDef } from '../services/commands.js'
 
 const popover = css`
   position: absolute;
@@ -36,10 +37,23 @@ const cmdDesc = css`
   color: var(--text-secondary);
 `
 
+const cmdUsage = css`
+  font-size: 11px;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-family: var(--mono, monospace);
+`
+
 type Props = {
   commands: CommandInfo[]
   activeIndex: number
   onSelect: (name: string) => void
+}
+
+type SubcommandProps = {
+  subcommands: SubcommandDef[]
+  activeIndex: number
+  onSelect: (name: string) => void
+  parentCommand: string
 }
 
 function SlashPopover(props: Props) {
@@ -68,4 +82,33 @@ function SlashPopover(props: Props) {
   )
 }
 
-export { SlashPopover }
+function SubcommandPopover(props: SubcommandProps) {
+  if (props.subcommands.length === 0) return null
+  return (
+    <div
+      className={popover}
+      role="listbox"
+      data-testid="subcommand-menu"
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {props.subcommands.map((c, i) => (
+        <button
+          key={c.name}
+          role="option"
+          aria-selected={i === props.activeIndex}
+          className={`${item} ${i === props.activeIndex ? 'active' : ''}`}
+          onClick={() => props.onSelect(c.name)}
+          type="button"
+        >
+          <strong>
+            /{props.parentCommand} {c.name}
+          </strong>
+          {c.description && <span className={cmdDesc}>{c.description}</span>}
+          {c.usage && <span className={cmdUsage}>{c.usage}</span>}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export { SlashPopover, SubcommandPopover }

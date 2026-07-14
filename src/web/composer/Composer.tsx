@@ -12,7 +12,7 @@ import { AtFilePopover } from './AtFilePopover.js'
 import { AttachmentBar } from './AttachmentBar.js'
 import { ComposerEditor } from './ComposerEditor.js'
 import { PermissionDock } from './PermissionDock.js'
-import { SlashPopover } from './SlashPopover.js'
+import { SlashPopover, SubcommandPopover } from './SlashPopover.js'
 import type { ImagePart, Prompt } from './types.js'
 import { promptToText } from './types.js'
 import { useComposer } from './useComposer.js'
@@ -121,18 +121,19 @@ function Composer(props: ComposerProps) {
   // 从文本提取 @agent mentions，仅保留非 primary（可调用的 subagent/all）
   const handleSend = (payload: { text: string; files: string[]; images: ImagePart[] }) => {
     const subagentNames = props.agents.filter((a) => a.mode !== 'primary').map((a) => a.name)
-    const mentions = payload.text.match(/@([\w-]+)/g) ?? []
+    const mentions = payload.text.match(/@[\w-]+/g) ?? []
     const agents = mentions.map((m) => m.slice(1)).filter((name) => subagentNames.includes(name))
     props.onSend({ ...payload, agents })
   }
+  const { data: commands = [] } = useCommands()
   const composer = useComposer({
     onSend: handleSend,
     onAbort: props.onAbort,
     onSteer: props.onSteer,
     isStreaming: props.isStreaming,
     hasHistory: props.hasHistory,
+    commands,
   })
-  const { data: commands = [] } = useCommands()
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
 
   // 工作流列表：传入 projectId 以发现项目级 .c0de/workflows/*.js。
@@ -151,11 +152,20 @@ function Composer(props: ComposerProps) {
     return fuzzysort.go(composer.popoverQuery, commands, { key: 'name' }).map((r) => r.obj)
   }, [composer.popoverQuery, commands])
 
-  // /workflow (run|show|edit) <name> 补全：按 name 过滤工作流列表
+  // /workflow (run|show|create|edit) <name> 补全：按 name 过滤工作流列表
   const filteredWorkflows = useMemo(() => {
     if (!composer.popoverQuery) return workflows
     return fuzzysort.go(composer.popoverQuery, workflows, { key: 'name' }).map((r) => r.obj)
   }, [composer.popoverQuery, workflows])
+
+  // 子命令补全：从当前命令的 subcommands 按 query 过滤
+  const filteredSubcommands = useMemo(() => {
+    const cmd = commands.find((c) => c.name === composer.subcommandCmd)
+    if (!cmd?.subcommands) return []
+    if (!composer.popoverQuery) return cmd.subcommands
+    const lower = composer.popoverQuery.toLowerCase()
+    return cmd.subcommands.filter((s) => s.name.toLowerCase().startsWith(lower))
+  }, [commands, composer.subcommandCmd, composer.popoverQuery])
 
   // 注册文件引用 API，供文件树/预览面板跨组件调用
   const setFileReferenceApi = useFileReferenceSetter()
@@ -176,6 +186,7 @@ function Composer(props: ComposerProps) {
   const [slashActive, setSlashActive] = useState(0)
   const [atActive, setAtActive] = useState(0)
   const [workflowActive, setWorkflowActive] = useState(0)
+  const [subcommandActive, setSubcommandActive] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
@@ -189,6 +200,10 @@ function Composer(props: ComposerProps) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
   useEffect(() => {
     if (composer.popover === 'workflow') setWorkflowActive(0)
+  }, [composer.popover, composer.popoverQuery])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
+  useEffect(() => {
+    if (composer.popover === 'subcommand') setSubcommandActive(0)
   }, [composer.popover, composer.popoverQuery])
 
   // @ mention 候选：subagent（非 primary）按 query 过滤
@@ -248,6 +263,24 @@ function Composer(props: ComposerProps) {
         e.preventDefault()
         const cmd = filteredCommands[slashActive]
         if (cmd) composer.insertSlash(cmd.name)
+        return
+      }
+    }
+    if (composer.popover === 'subcommand') {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSubcommandActive((i) => Math.min(i + 1, filteredSubcommands.length - 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSubcommandActive((i) => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        const sub = filteredSubcommands[subcommandActive]
+        if (sub) composer.insertSubcommand(sub.name)
         return
       }
     }
@@ -328,6 +361,14 @@ function Composer(props: ComposerProps) {
             commands={filteredCommands}
             activeIndex={slashActive}
             onSelect={(name) => composer.insertSlash(name)}
+          />
+        )}
+        {composer.popover === 'subcommand' && composer.subcommandCmd && (
+          <SubcommandPopover
+            subcommands={filteredSubcommands}
+            activeIndex={subcommandActive}
+            onSelect={(name) => composer.insertSubcommand(name)}
+            parentCommand={composer.subcommandCmd}
           />
         )}
         {composer.popover === 'workflow' && (

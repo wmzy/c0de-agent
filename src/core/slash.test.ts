@@ -67,6 +67,23 @@ describe('slash registry', () => {
     expect(names).toContain('fork')
     expect(names).toContain('config')
   })
+
+  it('workflow 命令声明了 subcommands', () => {
+    const reg = createSlashRegistry()
+    const wf = reg.get('workflow')
+    expect(wf?.subcommands).toBeDefined()
+    expect(wf?.subcommands?.map((s) => s.name)).toEqual([
+      'list',
+      'run',
+      'show',
+      'create',
+      'edit',
+    ])
+    // 每个子命令必须有 description
+    for (const sub of wf?.subcommands ?? []) {
+      expect(sub.description.length).toBeGreaterThan(0)
+    }
+  })
 })
 
 describe('builtin commands', () => {

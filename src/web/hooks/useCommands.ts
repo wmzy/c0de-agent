@@ -11,4 +11,4 @@ export function useCommands() {
   })
 }
 
-export type { CommandInfo }
+export type { CommandInfo, SubcommandDef }

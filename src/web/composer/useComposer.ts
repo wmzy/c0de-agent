@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { CommandInfo } from '../hooks/useCommands.js'
 import { currentCursor, decorateWorkflowz, parseFromDOM, reconcile } from './editor-sync.js'
 import {
   canNavigateHistoryAtCursor,
@@ -17,7 +18,7 @@ import {
   snippetLabel,
 } from './types.js'
 
-type PopoverState = 'slash' | 'at' | 'workflow' | null
+type PopoverState = 'slash' | 'subcommand' | 'at' | 'workflow' | null
 
 type UseComposerOptions = {
   onSend: (payload: { text: string; files: string[]; images: ImagePart[] }) => void
@@ -26,6 +27,8 @@ type UseComposerOptions = {
   onSteer?: (message: string) => void
   isStreaming: boolean
   hasHistory: boolean
+  /** 可用 slash 命令列表（用于检测子命令补全）。 */
+  commands?: CommandInfo[]
 }
 
 /** 把一段纯文本包成单 TextPart 的 Prompt（start/end 仅占位，renderPrompt 不读它们）。 */
@@ -39,6 +42,7 @@ function useComposer({
   onSteer,
   isStreaming,
   hasHistory: _hasHistory,
+  commands,
 }: UseComposerOptions) {
   const editorRef = useRef<HTMLDivElement>(null)
   const promptRef = useRef<Prompt>(DEFAULT_PROMPT)
@@ -47,8 +51,29 @@ function useComposer({
   const [images, setImages] = useState<ImagePart[]>([])
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
+  const [subcommandCmd, setSubcommandCmd] = useState<string | null>(null)
   const [showPasteConfirm, setShowPasteConfirm] = useState<{ text: string } | null>(null)
   const [isEmpty, setIsEmpty] = useState(true)
+
+  // commands 用 ref 避免每次列表变化都重建 handleInput callback
+  const commandsRef = useRef<CommandInfo[] | undefined>(commands)
+  commandsRef.current = commands
+
+  // commands 异步加载后，重新检测当前文本是否匹配子命令补全。
+  // handleInput 在输入时触发，但此时 commands 可能尚未就绪。
+  useEffect(() => {
+    if (!commands?.length) return
+    const text = promptToText(promptRef.current)
+    const subMatch = text.match(/^\/(\S+)\s+(\S*)$/)
+    if (!subMatch) return
+    const cmd = commands.find((c) => c.name === subMatch[1])
+    if (!cmd?.subcommands?.length) return
+    // 仅在当前未处于 subcommand/workflow popover 时接管
+    if (popover === 'subcommand' || popover === 'workflow') return
+    setPopover('subcommand')
+    setPopoverQuery(subMatch[2] ?? '')
+    setSubcommandCmd(subMatch[1] ?? '')
+  }, [commands, popover])
 
   // 历史回溯导航状态
   const indexRef = useRef(-1)
@@ -83,11 +108,18 @@ function useComposer({
     // popover 触发检测（steer 模式不触发）
     const slashMatch = text.match(/^\/(\S*)$/)
     const atMatch = text.substring(0, cursor).match(/@(\S*)$/)
-    // /workflow (run|show|edit) <name> — 补全工作流名称
-    const workflowMatch = text.match(/^\/workflow\s+(run|show|edit)\s+(\S*)$/)
+    // /workflow (run|show|create|edit) <name> — 补全工作流名称
+    const workflowMatch = text.match(/^\/workflow\s+(run|show|create|edit)\s+(\S*)$/)
+    // /<cmd> <subprefix> — 子命令补全（cmd 必须声明了 subcommands）
+    const subMatch = text.match(/^\/(\S+)\s+(\S*)$/)
+    const subCmd = subMatch ? commandsRef.current?.find((c) => c.name === subMatch[1]) : undefined
     if (workflowMatch) {
       setPopover('workflow')
       setPopoverQuery(workflowMatch[2] ?? '')
+    } else if (subMatch && subCmd?.subcommands?.length) {
+      setPopover('subcommand')
+      setPopoverQuery(subMatch[2] ?? '')
+      setSubcommandCmd(subMatch[1] ?? '')
     } else if (slashMatch) {
       setPopover('slash')
       setPopoverQuery(slashMatch[1] ?? '')
@@ -129,17 +161,29 @@ function useComposer({
     [setPromptExternal],
   )
 
-  // popover 选中插入工作流名称（保留 /workflow run/show/edit 前缀，仅替换查询部分）
+  // popover 选中插入工作流名称（保留 /workflow run/show/create/edit 前缀，仅替换查询部分）
   const insertWorkflow = useCallback(
     (name: string) => {
       const text = promptToText(promptRef.current)
-      const match = text.match(/^(\/workflow\s+(?:run|show|edit)\s+)\S*$/)
+      const match = text.match(/^(\/workflow\s+(?:run|show|create|edit)\s+)\S*$/)
       const prefix = match?.[1] ?? `/workflow run `
       setPromptExternal(textPrompt(`${prefix}${name} `), true)
       setPopover(null)
       editorRef.current?.focus()
     },
     [setPromptExternal],
+  )
+
+  // popover 选中插入子命令（替换整行为 /<cmd> <sub> ）
+  const insertSubcommand = useCallback(
+    (sub: string) => {
+      if (!subcommandCmd) return
+      setPromptExternal(textPrompt(`/${subcommandCmd} ${sub} `), true)
+      setPopover(null)
+      setSubcommandCmd(null)
+      editorRef.current?.focus()
+    },
+    [setPromptExternal, subcommandCmd],
   )
 
   // popover 选中插入文件 pill（替换 @query token）
@@ -393,6 +437,7 @@ function useComposer({
     images,
     popover,
     popoverQuery,
+    subcommandCmd,
     showPasteConfirm,
     handleInput,
     handleKeyDown,
@@ -402,6 +447,7 @@ function useComposer({
     addImage,
     removeImage,
     insertSlash,
+    insertSubcommand,
     insertWorkflow,
     insertFile,
     appendFileReference,
