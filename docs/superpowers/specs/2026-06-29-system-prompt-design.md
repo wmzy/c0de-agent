@@ -280,7 +280,7 @@ type PromptContext = {
 ## 6. 不做的事（YAGNI）
 
 - **不引入 provider 分发**：c0de-agent 规模不需要维护多套提示词文件。
-- **不移植 TodoWrite/Task Management**：c0de-agent 无 todo 工具；以"主动规划、分步推进"精神表述替代。
+- **不在提示词中引用 TodoWrite/Task Management 表述**：本 spec 范围限于 `prompt.ts` 重写，不对 todo 工具是否建造做架构决策——那是 tool-system spec（§2.10）的范畴，该 spec 已完整定义 todo 工具的类型、7 种操作、DB 表与权限。当前提示词中不引用 TodoWrite 表述，仅因为对应工具尚未实现；待 todo 工具落地后，应在 §4.1 段 3（Tool Usage）中接通引用。EXECUTION_WORKFLOW 段第 3 步的「break multi-step work into steps and track them」是 prompt 层的 interim 措辞，不是 todo 工具的永久替代——「track them」缺少持久化载体，待 todo 工具实现后该措辞应更新为引用 todo 工具。
 - **不移植 task subagent 委托 / LSP / AST 段**：无对应工具。
 - **不引入 personality 独立字段**：personality 已融入 Role 与 Tone 段。
 - **不改 systemPrompt 语义为追加**：用户明确选择保留整体覆盖。

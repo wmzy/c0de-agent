@@ -35,6 +35,7 @@ function mockState(sessionId: string): AgentState {
       keepRecent: 100,
     },
     calibrationFactor: 1.0,
+    todoPhases: [],
   }
 }
 

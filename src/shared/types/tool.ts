@@ -1,5 +1,9 @@
 import type { JSONSchema, SessionRef } from './base.js'
 
+// Forward-declared type for the todo state hook. The full TodoPhase type lives
+// in tools/builtin/todo.ts; here we only need the structural shape for the hook.
+type TodoPhaseLike = { name: string; tasks: { content: string; status: string }[] }
+
 /** Permission level for tool execution. */
 type ToolPermission = 'auto' | 'ask' | 'deny'
 
@@ -54,6 +58,12 @@ type ToolContext = {
   debugSpawn?: (config: unknown) => DebugTransport
   /** 子 agent 专用：yield 工具调用时收集结构化结果（runSubAgent 注入）。 */
   collectYield?: (data: unknown) => void
+  /** Todo state accessor (dependency-reversal for the `todo` tool).
+   *  Host (agent loop) injects get/set backed by AgentState.todoPhases. */
+  todoState?: {
+    get: () => TodoPhaseLike[]
+    set: (phases: TodoPhaseLike[]) => void
+  }
 }
 
 /** 单个并行子任务项（批量模式）。 */

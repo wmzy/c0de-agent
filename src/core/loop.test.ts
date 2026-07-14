@@ -219,6 +219,7 @@ function makeState(session: Session, messages: Message[]): AgentState {
       keepRecent: 10_000,
     },
     calibrationFactor: 1.0,
+    todoPhases: [],
   }
 }
 

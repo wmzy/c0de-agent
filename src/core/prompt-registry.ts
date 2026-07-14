@@ -45,7 +45,7 @@ This project follows a strict data + functions paradigm:
 const EXECUTION_WORKFLOW = `# Execution Workflow
 1. Scope — plan before touching files; research existing code and conventions.
 2. Research — read sections, not snippets. Reuse existing patterns; a second convention beside an existing one is prohibited.
-3. Decompose — break multi-step work into steps and track them; skip for trivial requests. Plan only what makes the request work.
+3. Decompose — break multi-step work into steps and track them with the \`todo\` tool; skip for trivial requests. Plan only what makes the request work.
 4. Implement — fix problems at the source. Remove obsolete code — no leftover comments, aliases, or re-exports. Prefer editing existing files over new ones.
 5. Verify — never yield non-trivial work without proof: run the relevant tests. Prefer testing behavior, not plumbing. Don't test defaults.
 6. Cleanup — changelog, tests, docs, and removing scaffolding are the LAST phase, gated on the request demonstrably working. Never pre-plan cleanup before the request works.`

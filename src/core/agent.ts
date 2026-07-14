@@ -4,6 +4,7 @@ import { generateId } from '../shared/index.js'
 import type { AgentConfig, AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
 import type { MessageContent, Session } from '../shared/types/message.js'
 import { listTools } from '../tools/registry.js'
+import { getLatestTodoPhasesFromMessages } from '../tools/builtin/todo.js'
 import { estimateBudget } from './context.js'
 import { createTokenBudget } from './context.js'
 import { agentLoop } from './loop.js'
@@ -49,6 +50,9 @@ async function createAgent(
     segments,
     tokenBudget: { ...tokenBudget, used },
     calibrationFactor: 1.0,
+    // 从历史 tool result 恢复 todo 状态（跨 session resume / compaction 后重建）。
+    // 遍历所有消息找最后一条带 phases metadata 的 todo result。
+    todoPhases: getLatestTodoPhasesFromMessages(messages),
     // 压缩模型覆盖：从全局配置映射到 agent state，compactContext 读取后用于
     // 创建 summarizer。未配置时为 undefined → 回退到会话主模型。
     ...(deps.config.compaction.compactionModel

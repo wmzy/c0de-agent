@@ -62,6 +62,7 @@ describe('tools index', () => {
       'grep',
       'read',
       'task',
+      'todo',
       'websearch',
       'write',
       'yield',

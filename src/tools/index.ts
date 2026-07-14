@@ -24,6 +24,8 @@ export {
   createSkillResolver,
 } from './builtin/resolvers.js'
 export { taskTool } from './builtin/task.js'
+export { todoTool } from './builtin/todo.js'
+export type { TodoInput, TodoItem, TodoPhase, TodoStatus } from './builtin/todo.js'
 export { writeTool } from './builtin/write.js'
 export { yieldTool } from './builtin/yield.js'
 export { executeTool } from './executor.js'
@@ -77,6 +79,7 @@ import { globTool } from './builtin/glob.js'
 import { grepTool } from './builtin/grep.js'
 import { readTool } from './builtin/read.js'
 import { taskTool } from './builtin/task.js'
+import { todoTool } from './builtin/todo.js'
 import { writeTool } from './builtin/write.js'
 import { yieldTool } from './builtin/yield.js'
 import { createToolRegistry, registerTool } from './registry.js'
@@ -97,6 +100,7 @@ export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
   registerTool(reg, grepTool)
   registerTool(reg, bashTool)
   registerTool(reg, taskTool)
+  registerTool(reg, todoTool)
   registerTool(reg, yieldTool)
   registerTool(reg, createWebSearchTool(config.websearch))
   for (const tool of dapTools) registerTool(reg, tool)

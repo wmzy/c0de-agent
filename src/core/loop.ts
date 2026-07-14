@@ -766,6 +766,15 @@ async function* persistAssistantAndTools(
         ...(deps.debugSpawn ? { debugSpawn: deps.debugSpawn } : {}),
         runSubAgent: (req) => runSubAgent({ ...deps, _subagentEventSink: eventSink }, state, req),
         ...(deps._subagentYieldCollector ? { collectYield: deps._subagentYieldCollector } : {}),
+        // todo 工具状态通过 dependency-reversal hook 注入：get/set 直接读写
+        // state.todoPhases（in-memory），tool result 的 metadata.phases 充当
+        // 持久化层——createAgent 时从历史消息恢复。
+        todoState: {
+          get: () => state.todoPhases,
+          set: (phases) => {
+            state.todoPhases = phases as typeof state.todoPhases
+          },
+        },
       },
       validCalls,
       deps.hookRunner,

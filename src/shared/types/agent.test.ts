@@ -166,6 +166,7 @@ describe('AgentState', () => {
         keepRecent: 10,
       },
       calibrationFactor: 1.0,
+      todoPhases: [],
     }
     expect(state.status._tag).toBe('idle')
     expect(state.messages).toHaveLength(0)

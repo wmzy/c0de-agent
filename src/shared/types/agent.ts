@@ -170,6 +170,9 @@ type AgentState = {
   tokenBudget: TokenBudget
   /** estimateTokens 的校准系数（由 calibrateEstimate 按真实 usage EMA 更新，默认 1.0）。 */
   calibrationFactor: number
+  /** 分阶段任务列表（todo 工具状态）。in-memory，通过 tool result metadata 持久化。
+   *  createAgent 时从历史消息恢复；每次 todo 工具调用通过 todoState hook 更新。 */
+  todoPhases: { name: string; tasks: { content: string; status: string }[] }[]
   compactionModel?: { provider: string; model: string }
   /**
    * 压缩死锁标记：自动压缩成功后仍超阈值（如 keepRecentTokens 本身已超限）时置真，

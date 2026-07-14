@@ -107,6 +107,16 @@ type BashInput = {
   env?: Record<string, string>
 }
 
+/** Input for the todo tool. */
+type TodoInput =
+  | { op: 'init'; list?: { phase: string; items: string[] }[]; phase?: string; items?: string[] }
+  | { op: 'start'; task: string }
+  | { op: 'done'; task?: string; phase?: string }
+  | { op: 'drop'; task?: string; phase?: string }
+  | { op: 'rm'; task?: string; phase?: string }
+  | { op: 'append'; phase: string; items: string[] }
+  | { op: 'view' }
+
 /** A single grep match. */
 type GrepMatch = {
   file: string
@@ -128,6 +138,7 @@ export type {
   PermissionChecker,
   PermissionResult,
   ReadInput,
+  TodoInput,
   ToolContext,
   ToolDef,
   ToolExecutor,
