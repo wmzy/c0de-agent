@@ -1,4 +1,11 @@
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -11,11 +18,17 @@ import { createServerContext } from '../context.js'
 import { createFilesRoute } from './files.js'
 
 // mock createSummarizer 以避免真实 LLM 调用；保留 runCompaction 等其他导出
+// 使用 vi.hoisted 以便 per-test 覆盖 LLM 返回值（不同测试需要不同的 JSON 响应）
+const { mockLLMResponse } = vi.hoisted(() => ({
+  mockLLMResponse: {
+    value: '{"message":"feat: auto-generated commit message","ignoreSuggestions":[]}',
+  },
+}))
 vi.mock('../../core/compact.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../core/compact.js')>()
   return {
     ...actual,
-    createSummarizer: () => async () => 'feat: auto-generated commit message',
+    createSummarizer: () => async () => mockLLMResponse.value,
   }
 })
 
@@ -535,6 +548,8 @@ describe('git-commit route', () => {
   })
 
   it('POST /git-commit 有变更时用 LLM 生成 message 并提交', async () => {
+    mockLLMResponse.value =
+      '{"message":"feat: auto-generated commit message","ignoreSuggestions":[]}'
     const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-ok-'))
     const { execSync } = await import('node:child_process')
     execSync('git init -q', { cwd: dir })
@@ -554,7 +569,12 @@ describe('git-commit route', () => {
 
     const res = await app.request('/git-commit', { method: 'POST' })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { committed: boolean; message: string; hash: string; fileCount: number }
+    const body = (await res.json()) as {
+      committed: boolean
+      message: string
+      hash: string
+      fileCount: number
+    }
     expect(body.committed).toBe(true)
     expect(body.message).toBe('feat: auto-generated commit message')
     expect(body.fileCount).toBeGreaterThan(0)
@@ -564,5 +584,160 @@ describe('git-commit route', () => {
     // 验证工作区干净
     const status = execSync('git status --porcelain', { cwd: dir, encoding: 'utf-8' })
     expect(status.trim()).toBe('')
+  })
+
+  it('POST /git-commit LLM 检测到可疑文件时返回 needsReview', async () => {
+    mockLLMResponse.value = '{"message":"feat: add config","ignoreSuggestions":[".env","dist/"]}'
+
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-review-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'base.txt'), 'base')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      needsReview?: boolean
+      message?: string
+      suggestions?: string[]
+    }
+    expect(body.needsReview).toBe(true)
+    expect(body.message).toBe('feat: add config')
+    expect(body.suggestions).toEqual(['.env', 'dist/'])
+    // 没有实际提交
+    const status = execSync('git status --porcelain', { cwd: dir, encoding: 'utf-8' })
+    expect(status.trim()).not.toBe('')
+  })
+
+  it('POST /git-commit LLM 返回无法解析的响应时返回 502', async () => {
+    mockLLMResponse.value = 'This is not valid JSON at all'
+
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-parseerr-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'base.txt'), 'base')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', { method: 'POST' })
+    expect(res.status).toBe(502)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('CHECK_PARSE_ERROR')
+    // 没有实际提交
+    const status = execSync('git status --porcelain', { cwd: dir, encoding: 'utf-8' })
+    expect(status.trim()).not.toBe('')
+  })
+
+  it('POST /git-commit mode=force 跳过检查直接提交', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-force-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'base.txt'), 'base')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'force', message: 'feat: force commit' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { committed: boolean; message: string }
+    expect(body.committed).toBe(true)
+    expect(body.message).toBe('feat: force commit')
+    const log = execSync('git log --oneline', { cwd: dir, encoding: 'utf-8' })
+    expect(log).toContain('feat: force commit')
+  })
+
+  it('POST /git-commit mode=append-ignore 追加 .gitignore 后提交', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-appendignore-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, '.gitignore'), 'node_modules\n')
+    writeFileSync(join(dir, 'base.txt'), 'base')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'append-ignore',
+        message: 'feat: add feature',
+        suggestions: ['.env', 'dist/'],
+      }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { committed: boolean; message: string }
+    expect(body.committed).toBe(true)
+    expect(body.message).toBe('feat: add feature')
+    // .gitignore 被追加了新条目
+    const gitignore = readFileSync(join(dir, '.gitignore'), 'utf-8')
+    expect(gitignore).toContain('.env')
+    expect(gitignore).toContain('dist/')
+    expect(gitignore).toContain('node_modules')
+    // git log 包含提交
+    const log = execSync('git log --oneline', { cwd: dir, encoding: 'utf-8' })
+    expect(log).toContain('feat: add feature')
+  })
+
+  it('POST /git-commit mode=force 缺少 message 返回 400', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-nomsg-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'x')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'changed')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'force' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('MISSING_MESSAGE')
   })
 })

@@ -5,6 +5,7 @@ import trash from 'trash'
 import { createSummarizer } from '../../core/compact.js'
 import { getProject } from '../../project/project.js'
 import {
+  appendToGitignore,
   checkIgnored,
   checkoutGitBranch,
   createGitBranch,
@@ -130,7 +131,7 @@ function createFilesRoute(ctx: ServerContext): Hono {
     return c.json({ commit: getGitLastCommit(root) })
   })
 
-  // 一键提交：用 LLM 生成 commit message 后执行 git add -A + commit
+  // 一键提交：用 LLM 生成 commit message + 检查可疑文件，支持 force/append-ignore 模式
   app.post('/git-commit', async (c) => {
     const projectId = c.req.query('projectId')
     let root = ctx.cwd
@@ -145,30 +146,114 @@ function createFilesRoute(ctx: ServerContext): Hono {
     if (!summary) {
       return apiError(c, 400, 'NO_CHANGES', 'No changes to commit')
     }
+
+    // 可选 body：mode / message / suggestions
+    const body = await c.req
+      .json()
+      .catch(() => ({}) as { mode?: string; message?: string; suggestions?: string[] })
+
+    // --- mode: force — 跳过检查，用传入 message 直接提交 ---
+    if (body.mode === 'force') {
+      if (!body.message) {
+        return apiError(c, 400, 'MISSING_MESSAGE', 'mode=force requires a message')
+      }
+      const result = performGitCommit(root, body.message)
+      if ('error' in result) {
+        return apiError(c, 500, 'COMMIT_FAILED', result.error)
+      }
+      return c.json({
+        committed: true,
+        message: body.message,
+        hash: result.hash,
+        fileCount: summary.fileCount,
+      })
+    }
+
+    // --- mode: append-ignore — 追加 .gitignore 后提交 ---
+    if (body.mode === 'append-ignore') {
+      if (!body.message) {
+        return apiError(c, 400, 'MISSING_MESSAGE', 'mode=append-ignore requires a message')
+      }
+      if (!body.suggestions || body.suggestions.length === 0) {
+        return apiError(c, 400, 'MISSING_SUGGESTIONS', 'mode=append-ignore requires suggestions')
+      }
+      appendToGitignore(root, body.suggestions)
+      const result = performGitCommit(root, body.message)
+      if ('error' in result) {
+        return apiError(c, 500, 'COMMIT_FAILED', result.error)
+      }
+      return c.json({
+        committed: true,
+        message: body.message,
+        hash: result.hash,
+        fileCount: summary.fileCount,
+      })
+    }
+
+    // --- 默认模式：LLM 生成 message + 检查可疑文件 ---
     const cm = ctx.config.commitModel
     const provider = cm?.provider ?? ctx.config.defaultProvider
     const model = cm?.model ?? ctx.config.defaultModel
-    const prompt = `Based on the following git diff, generate a concise commit message in conventional-commits format (e.g. "feat: add login page"). Reply with ONLY the commit message, no explanation.\n\n${summary.diff.slice(0, 8000)}`
-    let message: string
+    const prompt = `Based on the following git diff, generate a concise commit message in conventional-commits format (e.g. "feat: add login page").
+
+ALSO review the changed/new files: are any of them files that SHOULD be in .gitignore but are currently missing? (e.g. secrets, .env, build output, dependencies, temp files, large binaries)
+
+Reply as JSON ONLY:
+{"message": "<commit message>", "ignoreSuggestions": ["<path>", ...]}
+
+If no files need ignoring, return an empty array for ignoreSuggestions.
+
+${summary.diff.slice(0, 8000)}`
+
+    let raw: string
     try {
-      const summarizer = createSummarizer(ctx.llmRegistry, provider, model, { maxTokens: 200 })
-      message = (await summarizer(prompt)).trim()
+      const summarizer = createSummarizer(ctx.llmRegistry, provider, model, { maxTokens: 400 })
+      raw = (await summarizer(prompt)).trim()
     } catch (err) {
       return apiError(c, 502, 'LLM_ERROR', `Failed to generate commit message: ${String(err)}`)
     }
     // LLM 返回可能含 markdown 代码块包裹，去掉
-    message = message
+    raw = raw
       .replace(/^```[a-z]*\n?/m, '')
       .replace(/\n?```$/m, '')
       .trim()
-    if (!message) {
-      return apiError(c, 502, 'LLM_ERROR', 'LLM returned empty commit message')
+
+    // JSON 解析（fail-closed：无法解析 → 报错阻断，不提交）
+    let parsed: { message?: string; ignoreSuggestions?: string[] }
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return apiError(
+        c,
+        502,
+        'CHECK_PARSE_ERROR',
+        'Commit ignore check failed: LLM returned unparseable response',
+      )
     }
+
+    const message = (parsed.message ?? '').trim()
+    if (!message) {
+      return apiError(c, 502, 'EMPTY_MESSAGE', 'LLM returned empty commit message')
+    }
+
+    const suggestions = Array.isArray(parsed.ignoreSuggestions) ? parsed.ignoreSuggestions : []
+
+    // LLM 检测到可疑文件 → 阻断提交，返回供前端审查
+    if (suggestions.length > 0) {
+      return c.json({ needsReview: true, message, suggestions })
+    }
+
+    // 无可疑文件 → 直接提交
     const result = performGitCommit(root, message)
     if ('error' in result) {
       return apiError(c, 500, 'COMMIT_FAILED', result.error)
     }
-    return c.json({ committed: true, message, hash: result.hash, fileCount: summary.fileCount })
+    return c.json({
+      committed: true,
+      message,
+      hash: result.hash,
+      fileCount: summary.fileCount,
+    })
   })
 
   // 列出本地分支（非 git 仓库返回空数组）

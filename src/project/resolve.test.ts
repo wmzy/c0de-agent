@@ -1,9 +1,9 @@
 import { execSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { checkIgnored, getGitLastCommit, resolveProject } from './resolve.js'
+import { appendToGitignore, checkIgnored, getGitLastCommit, resolveProject } from './resolve.js'
 
 const hasGit = (() => {
   try {
@@ -127,6 +127,56 @@ describe('checkIgnored', () => {
   it('非 git 目录返回空集', () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-nongit-'))
     expect(checkIgnored(dir, ['any.txt'])).toEqual(new Set())
+  })
+})
+
+describe('appendToGitignore', () => {
+  it.runIf(hasGit)('追加新条目到已有 .gitignore', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-appendgi-'))
+    execSync('git init -q', { cwd: repo })
+    writeFileSync(join(repo, '.gitignore'), 'node_modules\n*.log\n')
+
+    appendToGitignore(repo, ['.env', 'dist/'])
+
+    const content = readFileSync(join(repo, '.gitignore'), 'utf-8')
+    expect(content).toContain('node_modules')
+    expect(content).toContain('.env')
+    expect(content).toContain('dist/')
+  })
+
+  it.runIf(hasGit)('跳过已存在的条目（去重）', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-appendgi-dedup-'))
+    execSync('git init -q', { cwd: repo })
+    writeFileSync(join(repo, '.gitignore'), 'node_modules\n*.log\n')
+
+    appendToGitignore(repo, ['node_modules', '.env'])
+
+    const content = readFileSync(join(repo, '.gitignore'), 'utf-8')
+    expect(content.match(/node_modules/g)?.length).toBe(1)
+    expect(content).toContain('.env')
+  })
+
+  it.runIf(hasGit)('.gitignore 不存在时创建新文件', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-appendgi-new-'))
+    execSync('git init -q', { cwd: repo })
+
+    appendToGitignore(repo, ['.env', 'dist/'])
+
+    const content = readFileSync(join(repo, '.gitignore'), 'utf-8')
+    expect(content).toContain('.env')
+    expect(content).toContain('dist/')
+  })
+
+  it.runIf(hasGit)('所有条目都已存在时不修改文件', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-appendgi-noop-'))
+    execSync('git init -q', { cwd: repo })
+    const original = 'node_modules\n*.log\n'
+    writeFileSync(join(repo, '.gitignore'), original)
+
+    appendToGitignore(repo, ['node_modules', '*.log'])
+
+    const content = readFileSync(join(repo, '.gitignore'), 'utf-8')
+    expect(content).toBe(original)
   })
 })
 

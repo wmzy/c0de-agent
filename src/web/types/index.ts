@@ -78,6 +78,11 @@ type CodeReference =
   | { _tag: 'file'; path: string; startLine: number; endLine: number }
   | { _tag: 'message'; messageId: string; blockIndex: number }
 
+/** 一键提交响应：提交成功或需要审查（检测到可疑文件）。 */
+type CommitResponse =
+  | { committed: true; message: string; hash: string; fileCount: number }
+  | { needsReview: true; message: string; suggestions: string[] }
+
 /** shake 区域视图（POST /sessions/:id/shake/preview 返回）。 */
 type ShakeRegionView = {
   id: string
@@ -97,11 +102,12 @@ type ShakeRegionView = {
 export type {
   APIError,
   CodeReference,
+  CommitResponse,
   FileContent,
   FileEntry,
   FileSearchResult,
-  GitStatusMap,
   GitStatusCode,
+  GitStatusMap,
   Project,
   SessionTreeNode,
   ShakeRegionView,

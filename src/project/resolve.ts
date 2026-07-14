@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 export type ResolvedProject = {
@@ -129,6 +129,27 @@ export function checkIgnored(cwd: string, paths: string[]): Set<string> {
   } catch {
     return new Set()
   }
+}
+
+/** 追加条目到 .gitignore（去重，文件不存在则创建）。 */
+export function appendToGitignore(cwd: string, patterns: string[]): void {
+  const gitignorePath = join(cwd, '.gitignore')
+  let existing = ''
+  try {
+    existing = readFileSync(gitignorePath, 'utf-8')
+  } catch {
+    // 文件不存在，视为空
+  }
+  const existingLines = new Set(
+    existing
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean),
+  )
+  const toAppend = patterns.map((p) => p.trim()).filter((p) => p && !existingLines.has(p))
+  if (toAppend.length === 0) return
+  const prefix = existing && !existing.endsWith('\n') ? '\n' : ''
+  writeFileSync(gitignorePath, `${existing}${prefix}${toAppend.join('\n')}\n`)
 }
 
 /** 从 directory 向上查找 .git，返回仓库根；非 git 返回 null。 */

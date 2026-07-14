@@ -382,7 +382,7 @@ describe('TopBar', () => {
     fireEvent.click(screen.getByTestId('git-commit-btn'))
 
     await waitFor(() => {
-      expect(fileAPI.gitCommit).toHaveBeenCalledWith('p1')
+      expect(fileAPI.gitCommit).toHaveBeenCalledWith('p1', undefined)
     })
     // 成功后显示 ✓
     await waitFor(() => {
@@ -407,5 +407,128 @@ describe('TopBar', () => {
     await waitFor(() => {
       expect(screen.getByTestId('git-commit-btn').textContent).toContain('提交失败')
     })
+  })
+
+  it('LLM 检测到可疑文件时弹审查框，选「仍然提交」后调用 force 模式', async () => {
+    const { fileAPI } = await import('../services/file.js')
+    ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      'foo.ts': 'modified',
+    })
+    // 第一次调用返回 needsReview
+    ;(fileAPI.gitCommit as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        needsReview: true,
+        message: 'feat: add config',
+        suggestions: ['.env'],
+      })
+      .mockResolvedValueOnce({
+        committed: true,
+        message: 'feat: add config',
+        hash: 'abc123',
+        fileCount: 2,
+      })
+
+    renderAtProject('p1')
+    await waitFor(() => {
+      expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
+    })
+
+    fireEvent.click(screen.getByTestId('git-commit-btn'))
+
+    // 弹出审查框
+    await waitFor(() => {
+      expect(screen.getByTestId('commit-review-dialog')).toBeInTheDocument()
+    })
+    expect(screen.getByText('.env')).toBeInTheDocument()
+
+    // 选「仍然提交」
+    fireEvent.click(screen.getByTestId('commit-review-force'))
+
+    // 第二次调用使用 force 模式
+    await waitFor(() => {
+      expect(fileAPI.gitCommit).toHaveBeenNthCalledWith(2, 'p1', {
+        mode: 'force',
+        message: 'feat: add config',
+      })
+    })
+    // 弹框关闭，显示成功
+    await waitFor(() => {
+      expect(screen.getByTestId('git-commit-btn').textContent).toContain('已提交')
+    })
+  })
+
+  it('LLM 检测到可疑文件时选「加入 .gitignore」调用 append-ignore 模式', async () => {
+    const { fileAPI } = await import('../services/file.js')
+    ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      'foo.ts': 'modified',
+    })
+    ;(fileAPI.gitCommit as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        needsReview: true,
+        message: 'feat: add feature',
+        suggestions: ['.env', 'dist/'],
+      })
+      .mockResolvedValueOnce({
+        committed: true,
+        message: 'feat: add feature',
+        hash: 'def456',
+        fileCount: 3,
+      })
+
+    renderAtProject('p1')
+    await waitFor(() => {
+      expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
+    })
+
+    fireEvent.click(screen.getByTestId('git-commit-btn'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('commit-review-dialog')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('commit-review-ignore'))
+
+    await waitFor(() => {
+      expect(fileAPI.gitCommit).toHaveBeenNthCalledWith(2, 'p1', {
+        mode: 'append-ignore',
+        message: 'feat: add feature',
+        suggestions: ['.env', 'dist/'],
+      })
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('git-commit-btn').textContent).toContain('已提交')
+    })
+  })
+
+  it('审查框选「取消」关闭弹框不提交', async () => {
+    const { fileAPI } = await import('../services/file.js')
+    ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      'foo.ts': 'modified',
+    })
+    ;(fileAPI.gitCommit as ReturnType<typeof vi.fn>).mockResolvedValue({
+      needsReview: true,
+      message: 'feat: x',
+      suggestions: ['.env'],
+    })
+
+    renderAtProject('p1')
+    await waitFor(() => {
+      expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
+    })
+
+    fireEvent.click(screen.getByTestId('git-commit-btn'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('commit-review-dialog')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('commit-review-cancel'))
+
+    // 弹框消失
+    await waitFor(() => {
+      expect(screen.queryByTestId('commit-review-dialog')).toBeNull()
+    })
+    // gitCommit 只被调用了一次（初始调用），没有第二次
+    expect(fileAPI.gitCommit).toHaveBeenCalledTimes(1)
   })
 })

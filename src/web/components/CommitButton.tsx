@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { fileAPI } from '../services/file.js'
+import { CommitReviewDialog } from './CommitReviewDialog.js'
 
 const commitBtn = css`
   display: inline-flex;
@@ -84,10 +85,24 @@ export function CommitButton({ projectId }: { projectId: string }) {
     { kind: 'idle' } | { kind: 'ok'; message: string } | { kind: 'err'; msg: string }
   >({ kind: 'idle' })
 
+  // LLM 检测到可疑文件时展示审查弹框
+  const [reviewState, setReviewState] = useState<{
+    message: string
+    suggestions: string[]
+  } | null>(null)
+
   const commitMut = useMutation({
-    mutationFn: () => fileAPI.gitCommit(projectId),
+    mutationFn: (body?: { mode?: string; message?: string; suggestions?: string[] }) =>
+      fileAPI.gitCommit(projectId, body),
     onMutate: () => setCommitFeedback({ kind: 'idle' }),
     onSuccess: (data) => {
+      // 需要审查 → 弹框，不显示成功
+      if ('needsReview' in data && data.needsReview) {
+        setReviewState({ message: data.message, suggestions: data.suggestions })
+        return
+      }
+      // 提交成功 → 关弹框（若有）、显示成功、刷新状态
+      setReviewState(null)
       setCommitFeedback({ kind: 'ok', message: data.message })
       queryClient.invalidateQueries({ queryKey: ['files', 'git-status', projectId] })
       setTimeout(() => setCommitFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 3000)
@@ -124,16 +139,33 @@ export function CommitButton({ projectId }: { projectId: string }) {
   })()
 
   return (
-    <button
-      type="button"
-      className={btnClass}
-      onClick={() => commitMut.mutate()}
-      disabled={commitMut.isPending || !hasChanges}
-      title={title}
-      data-testid="git-commit-btn"
-      data-has-changes={hasChanges || undefined}
-    >
-      {label}
-    </button>
+    <>
+      <button
+        type="button"
+        className={btnClass}
+        onClick={() => commitMut.mutate()}
+        disabled={commitMut.isPending || !hasChanges}
+        title={title}
+        data-testid="git-commit-btn"
+        data-has-changes={hasChanges || undefined}
+      >
+        {label}
+      </button>
+      {reviewState && (
+        <CommitReviewDialog
+          suggestions={reviewState.suggestions}
+          message={reviewState.message}
+          onAppendIgnore={() =>
+            commitMut.mutate({
+              mode: 'append-ignore',
+              message: reviewState.message,
+              suggestions: reviewState.suggestions,
+            })
+          }
+          onForce={() => commitMut.mutate({ mode: 'force', message: reviewState.message })}
+          onCancel={() => setReviewState(null)}
+        />
+      )}
+    </>
   )
 }

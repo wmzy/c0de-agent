@@ -1,4 +1,10 @@
-import type { FileContent, FileEntry, FileSearchResult, GitStatusMap } from '../types/index.js'
+import type {
+  CommitResponse,
+  FileContent,
+  FileEntry,
+  FileSearchResult,
+  GitStatusMap,
+} from '../types/index.js'
 import { apiRequest } from './api.js'
 
 const fileAPI = {
@@ -31,10 +37,13 @@ const fileAPI = {
     apiRequest<GitStatusMap>(
       `/api/files/git-status${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
-  gitCommit: (projectId?: string) =>
-    apiRequest<{ committed: boolean; message: string; hash: string; fileCount: number }>(
+  gitCommit: (
+    projectId?: string,
+    body?: { mode?: string; message?: string; suggestions?: string[] },
+  ) =>
+    apiRequest<CommitResponse>(
       `/api/files/git-commit${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
-      { method: 'POST' },
+      { method: 'POST', body: body ? JSON.stringify(body) : undefined },
     ),
   gitBranch: (projectId?: string) =>
     apiRequest<{ branch: string | null }>(
