@@ -14,6 +14,7 @@ import { createConfigRoute } from './routes/config.js'
 import { createFilesRoute } from './routes/files.js'
 import { createFilesystemRoute } from './routes/filesystem.js'
 import { createHealthRoute } from './routes/health.js'
+import { createKanbanRoute } from './routes/kanban.js'
 import { createPermissionsRoute } from './routes/permissions.js'
 import { createProjectRoute } from './routes/project.js'
 import { createProviderRoute } from './routes/provider.js'
@@ -51,6 +52,7 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/commands', createCommandsRoute(ctx))
   app.route('/api/tools', createToolRoute(ctx))
   app.route('/api/todo', createTodoRoute(ctx))
+  app.route('/api/kanban', createKanbanRoute(ctx))
   app.route('/api/update', createUpdateRoute(ctx))
   app.route('/api/config', createConfigRoute(ctx))
   app.route('/api/permissions', createPermissionsRoute(ctx))
@@ -75,6 +77,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/commands',
         '/api/tools',
         '/api/todo',
+        '/api/kanban',
         '/api/update',
         '/api/config',
         '/api/permissions',

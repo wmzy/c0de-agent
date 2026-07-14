@@ -1,4 +1,5 @@
 import { chatStream as llmChatStream } from '../llm/provider.js'
+import { createKanbanStore } from '../kanban/index.js'
 import { isContextOverflowFailure } from '../llm/provider-error.js'
 import { resolveRoute } from '../llm/registry.js'
 import { isLLMError } from '../llm/schema/errors.js'
@@ -775,6 +776,11 @@ async function* persistAssistantAndTools(
             state.todoPhases = phases as typeof state.todoPhases
           },
         },
+        // kanban 工具通过 dependency-reversal 注入：per-project 的 db-backed store。
+        // 仅当 session 有 projectId 时启用（子 session 无 project 时不可用）。
+        ...(state.session.projectId
+          ? { kanbanStore: createKanbanStore(deps.db, state.session.projectId) }
+          : {}),
       },
       validCalls,
       deps.hookRunner,

@@ -6,6 +6,7 @@ import { EditToolView } from './tools/EditToolView.js'
 import { FallbackToolView } from './tools/FallbackToolView.js'
 import { GlobToolView } from './tools/GlobToolView.js'
 import { GrepToolView } from './tools/GrepToolView.js'
+import { KanbanToolView } from './tools/KanbanToolView.js'
 import { ReadToolView } from './tools/ReadToolView.js'
 import { TaskToolView } from './tools/TaskToolView.js'
 import { TodoToolView } from './tools/TodoToolView.js'
@@ -172,6 +173,8 @@ function renderTool(
       return <TaskToolView input={input} output={output} status={status} />
     case 'todo':
       return <TodoToolView input={input} output={output} status={status} />
+    case 'kanban':
+      return <KanbanToolView input={input} output={output} status={status} />
     default:
       return <FallbackToolView tool={tool} input={input} output={output} />
   }

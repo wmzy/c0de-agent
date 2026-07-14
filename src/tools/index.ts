@@ -23,7 +23,7 @@ export {
   createFileResolver,
   createSkillResolver,
 } from './builtin/resolvers.js'
-export { taskTool } from './builtin/task.js'
+export { kanbanTool } from './builtin/kanban.js'
 export { todoTool } from './builtin/todo.js'
 export type { TodoInput, TodoItem, TodoPhase, TodoStatus } from './builtin/todo.js'
 export { writeTool } from './builtin/write.js'
@@ -77,6 +77,7 @@ import { dapTools } from './builtin/dap.js'
 import { editTool } from './builtin/edit.js'
 import { globTool } from './builtin/glob.js'
 import { grepTool } from './builtin/grep.js'
+import { kanbanTool } from './builtin/kanban.js'
 import { readTool } from './builtin/read.js'
 import { taskTool } from './builtin/task.js'
 import { todoTool } from './builtin/todo.js'
@@ -99,6 +100,7 @@ export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
   registerTool(reg, globTool)
   registerTool(reg, grepTool)
   registerTool(reg, bashTool)
+  registerTool(reg, kanbanTool)
   registerTool(reg, taskTool)
   registerTool(reg, todoTool)
   registerTool(reg, yieldTool)

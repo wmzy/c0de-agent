@@ -148,6 +148,52 @@ export const toolMetrics = pgTable(
   ],
 )
 
+/**
+ * Kanban boards — one per project (unique projectId). Stores column/label
+ * configuration as JSON; cards live in kanban_cards.
+ */
+export const kanbanBoards = pgTable(
+  'kanban_boards',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    /** Column definitions: [{ id, name }] */
+    columns: jsonb('columns').notNull(),
+    /** Label definitions: [{ id, name, color }] */
+    labels: jsonb('labels').notNull().default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('uq_kanban_boards_project').on(table.projectId)],
+)
+
+/**
+ * Kanban cards — tasks on a board. position is a real for fractional indexing
+ * (insert between two cards without rewriting all positions). columnId
+ * references a column id in the parent board's columns JSON.
+ */
+export const kanbanCards = pgTable(
+  'kanban_cards',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    boardId: uuid('board_id')
+      .notNull()
+      .references(() => kanbanBoards.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    description: text('description'),
+    columnId: text('column_id').notNull(),
+    priority: text('priority').notNull().default('medium'),
+    position: real('position').notNull().default(0),
+    /** Label ids referencing board.labels[].id */
+    labels: jsonb('labels').notNull().default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('idx_kanban_cards_board').on(table.boardId, table.columnId, table.position)],
+)
+
 /** Type exports for insert/select operations. */
 export type ProjectRow = typeof projects.$inferSelect
 export type ProjectInsert = typeof projects.$inferInsert
@@ -161,3 +207,7 @@ export type FileSnapshotRow = typeof fileSnapshots.$inferSelect
 export type FileSnapshotInsert = typeof fileSnapshots.$inferInsert
 export type ToolMetricRow = typeof toolMetrics.$inferSelect
 export type ToolMetricInsert = typeof toolMetrics.$inferInsert
+export type KanbanBoardRow = typeof kanbanBoards.$inferSelect
+export type KanbanBoardInsert = typeof kanbanBoards.$inferInsert
+export type KanbanCardRow = typeof kanbanCards.$inferSelect
+export type KanbanCardInsert = typeof kanbanCards.$inferInsert

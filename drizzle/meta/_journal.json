@@ -29,6 +29,13 @@
       "when": 1782842650929,
       "tag": "0003_regular_purifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784049307550,
+      "tag": "0004_smooth_red_skull",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import type { JSONSchema, SessionRef } from './base.js'
+import type { KanbanStore } from './kanban.js'
 
 // Forward-declared type for the todo state hook. The full TodoPhase type lives
 // in tools/builtin/todo.ts; here we only need the structural shape for the hook.
@@ -64,6 +65,9 @@ type ToolContext = {
     get: () => TodoPhaseLike[]
     set: (phases: TodoPhaseLike[]) => void
   }
+  /** Kanban store (dependency-reversal for the `kanban` tool).
+   *  Host injects a db-backed implementation scoped to the session's project. */
+  kanbanStore?: KanbanStore
 }
 
 /** 单个并行子任务项（批量模式）。 */

@@ -27,6 +27,7 @@ import { projectAPI } from './services/project.js'
 import { ChatView } from './views/ChatView.js'
 import { FileBrowser } from './views/FileBrowser.js'
 import { FilePreview } from './views/FilePreview.js'
+import { KanbanView } from './views/KanbanView.js'
 import { Layout } from './views/Layout.js'
 import { NotFound } from './views/NotFound.js'
 import { SessionList } from './views/SessionList.js'
@@ -58,6 +59,7 @@ export function App() {
                 <Route path="/" element={<RootRedirect />} />
                 <Route path="/projects/:projectId" element={<ChatPage />} />
                 <Route path="/projects/:projectId/sessions/:sessionId" element={<ChatPage />} />
+                <Route path="/projects/:projectId/kanban" element={<KanbanPage />} />
                 <Route
                   path="/settings"
                   element={
@@ -255,5 +257,20 @@ function ChatPage() {
         />
       </FileSelectionContext.Provider>
     </FileReferenceProvider>
+  )
+}
+
+/**
+ * 项目看板页：展示项目级共享看板，支持拖拽、卡片编辑、列/标签配置。
+ */
+function KanbanPage() {
+  const { projectId } = useParams<{ projectId: string }>()
+  if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
+
+  return (
+    <Layout
+      header={<TopBar />}
+      main={<KanbanView projectId={projectId} />}
+    />
   )
 }

@@ -58,13 +58,15 @@ const activeLink = css`
   font-weight: 600;
 `
 
-/** 全局顶部导航栏：品牌标识 + 主界面/设置入口。 */
+/** 全局顶部导航栏：品牌标识 + 主界面/看板/设置入口。 */
 export function TopBar() {
   const { pathname } = useLocation()
   const { projectId } = useParams<{ projectId: string }>()
   const isSettings = pathname.startsWith('/settings')
+  const isKanban = pathname.includes('/kanban')
   // 会话入口：项目上下文跳当前项目，否则回根路径（由 RootRedirect 解析当前项目）。
   const sessionsPath = projectId ? `/projects/${projectId}` : '/'
+  const kanbanPath = projectId ? `/projects/${projectId}/kanban` : '/'
 
   return (
     <header className={bar} data-testid="topbar">
@@ -83,10 +85,18 @@ export function TopBar() {
       <nav className={nav}>
         <Link
           to={sessionsPath}
-          className={`${link} ${!isSettings ? activeLink : ''}`}
-          data-active={!isSettings || undefined}
+          className={`${link} ${!isSettings && !isKanban ? activeLink : ''}`}
+          data-active={(!isSettings && !isKanban) || undefined}
         >
           会话
+        </Link>
+        <Link
+          to={kanbanPath}
+          className={`${link} ${isKanban ? activeLink : ''}`}
+          data-active={isKanban || undefined}
+          data-testid="nav-kanban"
+        >
+          看板
         </Link>
         <Link
           to="/settings"
