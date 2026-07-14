@@ -1,8 +1,8 @@
 import { css } from '@linaria/core'
-import type { ProviderConfig, ProviderProtocol } from '@shared/types/llm.js'
+import type { ModelOverride, ProviderConfig, ProviderProtocol } from '@shared/types/llm.js'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import type { CatalogProvider } from '../services/catalog.js'
+import type { CatalogModel, CatalogProvider } from '../services/catalog.js'
 import { catalogAPI } from '../services/catalog.js'
 
 const overlay = css`
@@ -181,14 +181,32 @@ function npmToProtocol(npm?: string): ProviderProtocol {
   return 'openai-compat'
 }
 
-/** 把选中的 catalog provider 转成 ProviderConfig。 */
-function toProviderConfig(p: CatalogProvider): ProviderConfig {
+/** 把 models.dev 的 CatalogModel 映射为 ModelOverride（capabilities 供 registry 使用）。
+ *  models.dev cost 单位是 $/1M tokens，转换为 costPer1k（$/1k tokens）。 */
+function toModelOverride(m: CatalogModel): ModelOverride {
   return {
+    ...(m.context > 0 ? { contextWindow: m.context } : {}),
+    ...(m.output > 0 ? { maxOutput: m.output } : {}),
+    supportsTools: m.toolCall,
+    supportsVision: m.attachment,
+    supportsThinking: m.reasoning,
+    ...(m.costInput != null ? { costPer1kInput: m.costInput / 1000 } : {}),
+    ...(m.costOutput != null ? { costPer1kOutput: m.costOutput / 1000 } : {}),
+  }
+}
+
+/** 把选中的 catalog provider 转成 ProviderConfig，附带模型 capabilities。 */
+function toProviderConfig(p: CatalogProvider, models: CatalogModel[]): ProviderConfig {
+  const config: ProviderConfig = {
     name: p.name,
     protocol: npmToProtocol(p.npm),
     baseURL: p.api ?? '',
     apiKey: '',
   }
+  if (models.length > 0) {
+    config.models = Object.fromEntries(models.map((m) => [m.id, toModelOverride(m)] as const))
+  }
+  return config
 }
 
 type ProviderCatalogDialogProps = {
@@ -227,7 +245,7 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
 
   const handleSelect = () => {
     if (!selectedProvider) return
-    onSelect(toProviderConfig(selectedProvider))
+    onSelect(toProviderConfig(selectedProvider, modelsData?.models ?? []))
     onClose()
   }
 

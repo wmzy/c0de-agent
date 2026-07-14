@@ -1,4 +1,5 @@
 // ProviderCatalogDialog 组件测试，对应 src/web/components/ProviderCatalogDialog.tsx
+import type { ProviderConfig } from '@shared/types/llm.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -147,7 +148,7 @@ describe('ProviderCatalogDialog', () => {
     expect(screen.getByText('推理')).toBeTruthy()
   })
 
-  it('确认选择后回调正确 protocol 和 baseURL', async () => {
+  it('确认选择后回调正确 protocol、baseURL 和模型 capabilities', async () => {
     const onSelect = vi.fn()
     vi.mocked(catalogAPI.listProviders).mockResolvedValue({
       providers: [
@@ -157,7 +158,7 @@ describe('ProviderCatalogDialog', () => {
           npm: '@ai-sdk/openai',
           api: 'https://api.openai.com/v1',
           env: ['OPENAI_API_KEY'],
-          modelCount: 1,
+          modelCount: 2,
         },
       ],
     })
@@ -168,9 +169,32 @@ describe('ProviderCatalogDialog', () => {
         npm: '@ai-sdk/openai',
         api: 'https://api.openai.com/v1',
         env: ['OPENAI_API_KEY'],
-        modelCount: 1,
+        modelCount: 2,
       },
-      models: [],
+      models: [
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          reasoning: false,
+          toolCall: true,
+          attachment: true,
+          temperature: true,
+          context: 128000,
+          output: 16384,
+          costInput: 2.5,
+          costOutput: 10,
+        },
+        {
+          id: 'o1',
+          name: 'o1',
+          reasoning: true,
+          toolCall: false,
+          attachment: false,
+          temperature: false,
+          context: 200000,
+          output: 100000,
+        },
+      ],
     })
 
     renderWithClient(<ProviderCatalogDialog onClose={vi.fn()} onSelect={onSelect} />)
@@ -180,15 +204,38 @@ describe('ProviderCatalogDialog', () => {
     })
 
     fireEvent.click(screen.getByTestId('catalog-provider-openai'))
+    // 等待模型列表加载完成后再确认
+    await waitFor(() => {
+      expect(screen.getByText('GPT-4o')).toBeTruthy()
+    })
     fireEvent.click(screen.getByTestId('catalog-confirm'))
 
     await waitFor(() => {
-      expect(onSelect).toHaveBeenCalledWith({
-        name: 'OpenAI',
-        protocol: 'openai',
-        baseURL: 'https://api.openai.com/v1',
-        apiKey: '',
-      })
+      expect(onSelect).toHaveBeenCalledTimes(1)
+    })
+    const result = onSelect.mock.calls[0]?.[0] as ProviderConfig
+    expect(result.name).toBe('OpenAI')
+    expect(result.protocol).toBe('openai')
+    expect(result.baseURL).toBe('https://api.openai.com/v1')
+    expect(result.apiKey).toBe('')
+    // 模型 capabilities 从 models.dev 自动填充
+    expect(result.models).toEqual({
+      'gpt-4o': {
+        contextWindow: 128000,
+        maxOutput: 16384,
+        supportsTools: true,
+        supportsVision: true,
+        supportsThinking: false,
+        costPer1kInput: 0.0025,
+        costPer1kOutput: 0.01,
+      },
+      o1: {
+        contextWindow: 200000,
+        maxOutput: 100000,
+        supportsTools: false,
+        supportsVision: false,
+        supportsThinking: true,
+      },
     })
   })
 
