@@ -19,6 +19,7 @@ import { createProjectRoute } from './routes/project.js'
 import { createProviderRoute } from './routes/provider.js'
 import { createSessionRoute } from './routes/session.js'
 import { createTerminalRoute } from './routes/terminal.js'
+import { createTodoRoute } from './routes/todo.js'
 import { createToolRoute } from './routes/tool.js'
 import { createUpdateRoute } from './routes/update.js'
 import { createWorkflowsRoute } from './routes/workflows.js'
@@ -49,6 +50,7 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/chat', createChatRoute(ctx))
   app.route('/api/commands', createCommandsRoute(ctx))
   app.route('/api/tools', createToolRoute(ctx))
+  app.route('/api/todo', createTodoRoute(ctx))
   app.route('/api/update', createUpdateRoute(ctx))
   app.route('/api/config', createConfigRoute(ctx))
   app.route('/api/permissions', createPermissionsRoute(ctx))
@@ -72,6 +74,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/chat',
         '/api/commands',
         '/api/tools',
+        '/api/todo',
         '/api/update',
         '/api/config',
         '/api/permissions',

@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
 
-export type SidebarTab = 'sessions' | 'files'
+export type SidebarTab = 'sessions' | 'files' | 'tasks'
 
 const container = css`
   display: flex;
@@ -48,10 +48,11 @@ type SidebarTabsProps = {
   onSwitch: (t: SidebarTab) => void
   sessions: ReactNode
   files: ReactNode
+  tasks: ReactNode
 }
 
-/** 会话/文件侧栏切换器：顶部两 tab，下方渲染对应内容。 */
-export function SidebarTabs({ activeTab, onSwitch, sessions, files }: SidebarTabsProps) {
+/** 会话/文件/任务侧栏切换器：顶部三 tab，下方渲染对应内容。 */
+export function SidebarTabs({ activeTab, onSwitch, sessions, files, tasks }: SidebarTabsProps) {
   return (
     <div className={container}>
       <div className={tabBar}>
@@ -71,8 +72,18 @@ export function SidebarTabs({ activeTab, onSwitch, sessions, files }: SidebarTab
         >
           📁文件
         </button>
+        <button
+          type="button"
+          className={`${tab} ${activeTab === 'tasks' ? tabActive : ''}`}
+          onClick={() => onSwitch('tasks')}
+          data-testid="tab-tasks"
+        >
+          📋任务
+        </button>
       </div>
-      <div className={content}>{activeTab === 'sessions' ? sessions : files}</div>
+      <div className={content}>
+        {activeTab === 'sessions' ? sessions : activeTab === 'files' ? files : tasks}
+      </div>
     </div>
   )
 }

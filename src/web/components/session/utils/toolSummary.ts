@@ -38,6 +38,13 @@ export function toolSummary(tool: string, input: unknown): string {
             : ''
       return [type, desc].filter(Boolean).join(' · ')
     }
+    case 'todo': {
+      const op = typeof i.op === 'string' ? i.op : 'view'
+      const task = typeof i.task === 'string' ? clip(i.task) : ''
+      const phase = typeof i.phase === 'string' ? i.phase : ''
+      const target = [phase, task].filter(Boolean).join(' · ')
+      return target || op
+    }
     default: {
       // 取首个字符串标量值作为兜底摘要
       const first = Object.values(i).find((v) => typeof v === 'string')

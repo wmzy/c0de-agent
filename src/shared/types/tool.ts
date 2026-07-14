@@ -2,7 +2,7 @@ import type { JSONSchema, SessionRef } from './base.js'
 
 // Forward-declared type for the todo state hook. The full TodoPhase type lives
 // in tools/builtin/todo.ts; here we only need the structural shape for the hook.
-type TodoPhaseLike = { name: string; tasks: { content: string; status: string }[] }
+export type TodoPhaseLike = { name: string; tasks: { content: string; status: string }[] }
 
 /** Permission level for tool execution. */
 type ToolPermission = 'auto' | 'ask' | 'deny'

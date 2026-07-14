@@ -8,6 +8,7 @@ import { GlobToolView } from './tools/GlobToolView.js'
 import { GrepToolView } from './tools/GrepToolView.js'
 import { ReadToolView } from './tools/ReadToolView.js'
 import { TaskToolView } from './tools/TaskToolView.js'
+import { TodoToolView } from './tools/TodoToolView.js'
 import { WriteToolView } from './tools/WriteToolView.js'
 import type { RenderBlock } from './utils/normalizeParts.js'
 import { toolSummary } from './utils/toolSummary.js'
@@ -169,6 +170,8 @@ function renderTool(
       return <GlobToolView input={(input ?? {}) as never} output={output} status={status} />
     case 'task':
       return <TaskToolView input={input} output={output} status={status} />
+    case 'todo':
+      return <TodoToolView input={input} output={output} status={status} />
     default:
       return <FallbackToolView tool={tool} input={input} output={output} />
   }
