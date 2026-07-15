@@ -267,6 +267,7 @@ export function Chat({
           <div ref={bottomRef} />
         </div>
       )}
+      {bottomPanel}
       {(modelBar || toolToggle) && (
         <div className={footerBar}>
           {modelBar && <div className={footerLeft}>{modelBar}</div>}
@@ -287,7 +288,6 @@ export function Chat({
           <span className={modeWarn}>将自动执行所有工具（含 bash），无需确认</span>
         )}
       </div>
-      {bottomPanel}
       <Composer
         projectId={projectId}
         agents={agents}
