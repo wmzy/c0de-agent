@@ -6,10 +6,10 @@ import { AgentSelector } from '../components/AgentSelector.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
-import { TodoPanel } from '../components/TodoPanel.js'
 import { type ShakeModeValue, ShakeProvider } from '../components/session/ShakeContext.js'
 import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
 import { buildTimeline } from '../components/session/utils/timeline.js'
+import { TodoPanel } from '../components/TodoPanel.js'
 import { ToolToggle } from '../components/ToolToggle.js'
 import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
 import { useAgent } from '../hooks/useAgent.js'
@@ -43,6 +43,32 @@ const interruptBanner = css`
     &:first-of-type {
       border-color: var(--primary);
       color: var(--primary);
+    }
+  }
+`
+
+const skeletonStream = css`
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+`
+
+const skeletonBar = css`
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+
+  @keyframes skeletonPulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
     }
   }
 `
@@ -114,6 +140,20 @@ const shakeExitBtn = css`
     color: var(--text) !important;
   }
 `
+
+/** 会话首次加载消息时的骨架占位（几个灰色条形，不用文字提示）。 */
+function ChatSkeleton() {
+  return (
+    <div className={skeletonStream} aria-busy="true" data-testid="chat-skeleton">
+      <div className={skeletonBar} style={{ width: '40%', height: 16 }} />
+      <div className={skeletonBar} style={{ width: '68%' }} />
+      <div className={skeletonBar} style={{ width: '55%' }} />
+      <div className={skeletonBar} style={{ width: '72%', height: 44, borderRadius: 10 }} />
+      <div className={skeletonBar} style={{ width: '45%' }} />
+      <div className={skeletonBar} style={{ width: '60%' }} />
+    </div>
+  )
+}
 
 /**
  * 会话视图：
@@ -209,7 +249,7 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const qc = useQueryClient()
-  const { data: history } = useMessages(sessionId)
+  const { data: history, isLoading } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults()
   const { data: agentsData } = useQuery({
@@ -399,6 +439,8 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
 
   // TODO: 从当前选中 model 的 capabilities 读取 supportsVision（providersData 已含）
   const supportsVision = true
+
+  if (isLoading && messages.length === 0) return <ChatSkeleton />
 
   return (
     <ShakeProvider value={shakeContextValue}>

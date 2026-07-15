@@ -231,6 +231,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const abortRef = useRef<AbortController | null>(null)
   // 段切换确认待发内容（confirmBreak/cancelBreak 读取，避免闭包staleness）
   const pendingRef = useRef<PendingSegmentBreak | null>(null)
+  const llmDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const qc = useQueryClient()
 
   // 切换会话时重置本地流式状态；历史消息由调用方合并加载
@@ -255,7 +256,17 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             if (event._tag === 'error') gotError = true
             setState((s) => reduceChatEvent(s, event))
             // 收到调用详情通知时刷新调用详情面板，避免需手动刷新页面。
+            // 高频 llm_detail 做 debounce（500ms），done/error 立即 flush。
             if (event._tag === 'llm_detail') {
+              if (llmDetailTimerRef.current) clearTimeout(llmDetailTimerRef.current)
+              llmDetailTimerRef.current = setTimeout(() => {
+                qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
+              }, 500)
+            } else if (event._tag === 'done' || event._tag === 'error') {
+              if (llmDetailTimerRef.current) {
+                clearTimeout(llmDetailTimerRef.current)
+                llmDetailTimerRef.current = null
+              }
               qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
             }
           },
@@ -288,6 +299,11 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         if (!abortRef.current.signal.aborted) {
           setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
         } else {
+          if (llmDetailTimerRef.current) {
+            clearTimeout(llmDetailTimerRef.current)
+            llmDetailTimerRef.current = null
+          }
+          qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
           setState((s) => ({ ...s, isStreaming: false }))
         }
       }
@@ -321,8 +337,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (withCompaction) {
         try {
           await sessionAPI.compact(sessionId)
-        } catch {
-          // 压缩失败不阻塞重发
+        } catch (err) {
+          // 压缩失败不阻塞重发，记录错误便于排查
+          console.error('[会话压缩] 失败:', err)
         }
       }
       setState((s) => ({ ...s, isStreaming: true, error: null, pendingSegmentBreak: null }))

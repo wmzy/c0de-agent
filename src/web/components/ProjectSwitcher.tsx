@@ -1,13 +1,10 @@
 import { css } from '@linaria/core'
+import { inputStyle } from '../styles/tokens.js'
 import type { Project } from '../types/index.js'
 
 const select = css`
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font-size: 13px;
   cursor: pointer;
   &:hover {
@@ -31,7 +28,7 @@ type ProjectSwitcherProps = {
 export function ProjectSwitcher({ projects, value, onChange }: ProjectSwitcherProps) {
   return (
     <select
-      className={select}
+      className={`${inputStyle} ${select}`}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       data-testid="project-switcher"

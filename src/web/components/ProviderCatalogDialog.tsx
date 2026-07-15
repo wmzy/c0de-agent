@@ -4,33 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import type { CatalogModel, CatalogProvider } from '../services/catalog.js'
 import { catalogAPI } from '../services/catalog.js'
-
-const overlay = css`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-`
-
-const dialog = css`
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 20px;
-  width: min(720px, 92vw);
-  max-height: 80vh;
-  box-shadow: var(--shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`
-
-const title = css`
-  font-size: 16px;
-  font-weight: 600;
-`
+import { Dialog } from './Dialog.js'
 
 const searchBar = css`
   width: 100%;
@@ -250,89 +224,12 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
   }
 
   return (
-    <div className={overlay} role="presentation" data-testid="provider-catalog-dialog">
-      <div className={dialog}>
-        <div className={title}>从 models.dev 目录选择 Provider</div>
-        <input
-          className={searchBar}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索 Provider 名称…"
-          data-testid="catalog-search"
-        />
-        <div className={catalogBody}>
-          <div className={`${listContainer} ${listFixed}`}>
-            {providersLoading ? (
-              <div className={catalogHint}>加载中…</div>
-            ) : (
-              filtered.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={
-                    p.id === selectedId ? `${providerItem} ${providerItemSelected}` : providerItem
-                  }
-                  onClick={() => setSelectedId(p.id)}
-                  data-testid={`catalog-provider-${p.id}`}
-                >
-                  <div>
-                    <div className={providerName}>{p.name}</div>
-                    <div className={providerMeta}>
-                      {p.npm ?? p.id} · {p.env[0] ?? ''}
-                    </div>
-                  </div>
-                  <span className={modelCount}>{p.modelCount}</span>
-                </button>
-              ))
-            )}
-          </div>
-          <div className={detailPanel}>
-            {!selectedId ? (
-              <div className={catalogHint}>从左侧选择 Provider 查看可用模型</div>
-            ) : modelsLoading ? (
-              <div className={catalogHint}>加载模型列表…</div>
-            ) : (
-              <>
-                <div className={catalogItemHead}>
-                  <strong>{selectedProvider?.name ?? selectedId}</strong>
-                  {selectedProvider?.api ? (
-                    <div className={providerMeta}>API: {selectedProvider.api}</div>
-                  ) : null}
-                  {selectedProvider?.doc ? (
-                    <a
-                      className={sourceLink}
-                      href={selectedProvider.doc}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      文档 ↗
-                    </a>
-                  ) : null}
-                </div>
-                {modelsData?.models.map((m) => (
-                  <div key={m.id} className={modelItem}>
-                    <div>
-                      <div className={modelName}>{m.name}</div>
-                      <div className={providerMeta}>{m.id}</div>
-                    </div>
-                    <div className={modelTags}>
-                      {m.reasoning ? (
-                        <span className={`${modelTag} ${modelTagActive}`}>推理</span>
-                      ) : null}
-                      {m.toolCall ? (
-                        <span className={`${modelTag} ${modelTagActive}`}>工具</span>
-                      ) : null}
-                      {m.attachment ? (
-                        <span className={`${modelTag} ${modelTagActive}`}>多模态</span>
-                      ) : null}
-                      <span className={modelTag}>{(m.context / 1000).toFixed(0)}K ctx</span>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-        </div>
+    <Dialog
+      onClose={onClose}
+      title="从 models.dev 目录选择 Provider"
+      width="min(720px, 92vw)"
+      testId="provider-catalog-dialog"
+      footer={
         <div className={actions}>
           <button type="button" onClick={onClose}>
             取消
@@ -346,8 +243,89 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
             选择此 Provider
           </button>
         </div>
+      }
+    >
+      <input
+        className={searchBar}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="搜索 Provider 名称…"
+        data-testid="catalog-search"
+      />
+      <div className={catalogBody}>
+        <div className={`${listContainer} ${listFixed}`}>
+          {providersLoading ? (
+            <div className={catalogHint}>加载中…</div>
+          ) : (
+            filtered.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={
+                  p.id === selectedId ? `${providerItem} ${providerItemSelected}` : providerItem
+                }
+                onClick={() => setSelectedId(p.id)}
+                data-testid={`catalog-provider-${p.id}`}
+              >
+                <div>
+                  <div className={providerName}>{p.name}</div>
+                  <div className={providerMeta}>
+                    {p.npm ?? p.id} · {p.env[0] ?? ''}
+                  </div>
+                </div>
+                <span className={modelCount}>{p.modelCount}</span>
+              </button>
+            ))
+          )}
+        </div>
+        <div className={detailPanel}>
+          {!selectedId ? (
+            <div className={catalogHint}>从左侧选择 Provider 查看可用模型</div>
+          ) : modelsLoading ? (
+            <div className={catalogHint}>加载模型列表…</div>
+          ) : (
+            <>
+              <div className={catalogItemHead}>
+                <strong>{selectedProvider?.name ?? selectedId}</strong>
+                {selectedProvider?.api ? (
+                  <div className={providerMeta}>API: {selectedProvider.api}</div>
+                ) : null}
+                {selectedProvider?.doc ? (
+                  <a
+                    className={sourceLink}
+                    href={selectedProvider.doc}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    文档 ↗
+                  </a>
+                ) : null}
+              </div>
+              {modelsData?.models.map((m) => (
+                <div key={m.id} className={modelItem}>
+                  <div>
+                    <div className={modelName}>{m.name}</div>
+                    <div className={providerMeta}>{m.id}</div>
+                  </div>
+                  <div className={modelTags}>
+                    {m.reasoning ? (
+                      <span className={`${modelTag} ${modelTagActive}`}>推理</span>
+                    ) : null}
+                    {m.toolCall ? (
+                      <span className={`${modelTag} ${modelTagActive}`}>工具</span>
+                    ) : null}
+                    {m.attachment ? (
+                      <span className={`${modelTag} ${modelTagActive}`}>多模态</span>
+                    ) : null}
+                    <span className={modelTag}>{(m.context / 1000).toFixed(0)}K ctx</span>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </Dialog>
   )
 }
 

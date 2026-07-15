@@ -93,6 +93,11 @@ const dragOverlay = css`
   z-index: 20;
 `
 
+// display:contents 让承载 aria-label 的包装层不占用 editorRow 的 flex 槽位（否则会多出 gap 间距）
+const popoverGroup = css`
+  display: contents;
+`
+
 type SendPayload = {
   text: string
   files: string[]
@@ -357,37 +362,49 @@ function Composer(props: ComposerProps) {
       />
       <div className={editorRow}>
         {composer.popover === 'slash' && (
-          <SlashPopover
-            commands={filteredCommands}
-            activeIndex={slashActive}
-            onSelect={(name) => composer.insertSlash(name)}
-          />
+          // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，fieldset 不适用于绝对定位浮层
+          <div className={popoverGroup} role="group" aria-label="斜杠命令">
+            <SlashPopover
+              commands={filteredCommands}
+              activeIndex={slashActive}
+              onSelect={(name) => composer.insertSlash(name)}
+            />
+          </div>
         )}
         {composer.popover === 'subcommand' && composer.subcommandCmd && (
-          <SubcommandPopover
-            subcommands={filteredSubcommands}
-            activeIndex={subcommandActive}
-            onSelect={(name) => composer.insertSubcommand(name)}
-            parentCommand={composer.subcommandCmd}
-          />
+          // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，fieldset 不适用于绝对定位浮层
+          <div className={popoverGroup} role="group" aria-label="子命令">
+            <SubcommandPopover
+              subcommands={filteredSubcommands}
+              activeIndex={subcommandActive}
+              onSelect={(name) => composer.insertSubcommand(name)}
+              parentCommand={composer.subcommandCmd}
+            />
+          </div>
         )}
         {composer.popover === 'workflow' && (
-          <WorkflowPopover
-            workflows={filteredWorkflows}
-            activeIndex={workflowActive}
-            onSelect={(name) => composer.insertWorkflow(name)}
-          />
+          // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，fieldset 不适用于绝对定位浮层
+          <div className={popoverGroup} role="group" aria-label="工作流">
+            <WorkflowPopover
+              workflows={filteredWorkflows}
+              activeIndex={workflowActive}
+              onSelect={(name) => composer.insertWorkflow(name)}
+            />
+          </div>
         )}
         {composer.popover === 'at' && (
-          <AtFilePopover
-            results={fileSearch.data ?? []}
-            activeIndex={atActive}
-            onSelect={(path) => composer.insertFile(path)}
-            agents={props.agents}
-            query={composer.popoverQuery}
-            activeAgentIndex={atActive}
-            onAgentSelect={insertAgentToken}
-          />
+          // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，fieldset 不适用于绝对定位浮层
+          <div className={popoverGroup} role="group" aria-label="文件与提及">
+            <AtFilePopover
+              results={fileSearch.data ?? []}
+              activeIndex={atActive}
+              onSelect={(path) => composer.insertFile(path)}
+              agents={props.agents}
+              query={composer.popoverQuery}
+              activeAgentIndex={atActive}
+              onAgentSelect={insertAgentToken}
+            />
+          </div>
         )}
         <ComposerEditor
           editorRef={composer.editorRef}
@@ -412,6 +429,7 @@ function Composer(props: ComposerProps) {
           className={props.isStreaming ? stopBtn : sendBtn}
           onClick={composer.send}
           type="button"
+          aria-label={props.isStreaming ? '终止生成' : '发送消息'}
           data-testid="send"
         >
           {sendLabel}

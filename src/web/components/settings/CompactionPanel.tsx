@@ -1,6 +1,6 @@
 import type { Config } from '@shared/types/config.js'
 import type { ProviderConfig } from '@shared/types/llm.js'
-import { enabledModelsOf, providerCandidates } from './shared.js'
+import { ProviderModelSelect } from './ProviderModelSelect.js'
 import { checkRow, field, fieldInput, section } from './styles.js'
 
 interface CompactionPanelProps {
@@ -21,7 +21,6 @@ function CompactionPanel({
   defaultModel,
   onCompactionChange,
 }: CompactionPanelProps) {
-  const candidates = providerCandidates(providers)
   const cm = compaction.compactionModel
 
   return (
@@ -90,54 +89,15 @@ function CompactionPanel({
         <span>压缩使用独立模型（摘要任务对推理要求低，可指定便宜模型）</span>
       </label>
       {cm && (
-        <>
-          <label className={field}>
-            <span>压缩 Provider：</span>
-            <select
-              className={fieldInput}
-              value={cm.provider}
-              onChange={(e) => {
-                const firstModel = enabledModelsOf(providers, e.target.value)[0] ?? cm.model
-                onCompactionChange({
-                  compactionModel: {
-                    provider: e.target.value,
-                    model: firstModel,
-                  },
-                })
-              }}
-              data-testid="compaction-provider-select"
-            >
-              {candidates.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className={field}>
-            <span>压缩 Model：</span>
-            <select
-              className={fieldInput}
-              value={cm.model}
-              onChange={(e) =>
-                onCompactionChange({
-                  compactionModel: { provider: cm.provider, model: e.target.value },
-                })
-              }
-              data-testid="compaction-model-select"
-            >
-              {(() => {
-                const models = enabledModelsOf(providers, cm.provider)
-                if (models.length === 0) return <option value="">该 Provider 暂无模型</option>
-                return models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))
-              })()}
-            </select>
-          </label>
-        </>
+        <ProviderModelSelect
+          value={cm}
+          onChange={(v) => onCompactionChange({ compactionModel: v })}
+          providers={providers}
+          providerLabel="压缩 Provider："
+          modelLabel="压缩 Model："
+          providerTestId="compaction-provider-select"
+          modelTestId="compaction-model-select"
+        />
       )}
     </div>
   )

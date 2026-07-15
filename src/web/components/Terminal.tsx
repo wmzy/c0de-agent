@@ -220,7 +220,7 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
       termRef.current = null
       fitRef.current = null
     }
-  }, [])
+  }, [doFit])
 
   // 桥接 WebSocket ↔ xterm
   useEffect(() => {
@@ -310,7 +310,7 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
       // scrollback 写入后，延迟一帧等 xterm buffer 落盘
       requestAnimationFrame(() => {
         const t = termRef.current
-        if (!t || t.buffer.active.type !== 'normal') return
+        if (t?.buffer.active.type !== 'normal') return
         // OSC 133 可用时跳过正则重建——scrollback 中的标记已通过 handler 重建 blocks
         if (!hasOsc133Ref.current) {
           blocksRef.current = rebuildBlocksFromBuffer(t)

@@ -133,6 +133,7 @@ function ComposerEditor(props: Props) {
         contentEditable
         suppressContentEditableWarning
         role="textbox"
+        aria-label="消息输入框"
         tabIndex={0}
         data-testid="composer-editor"
         onInput={props.onInput}

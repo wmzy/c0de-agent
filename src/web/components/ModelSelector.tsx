@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { providerAPI } from '../services/provider.js'
+import { inputStyle } from '../styles/tokens.js'
 
 const field = css`
   display: flex;
@@ -12,15 +13,12 @@ const field = css`
   color: var(--text-secondary);
 `
 
-/** 基础控件样式。注意：wyw-in-js 不会把 `${control}` 的样式内联进派生类，
- * 派生类只生成增量；故每个控件需自包含 min-height，否则被全局 select/input{min-height:44px} 覆盖。 */
+/** 基础控件增量样式。注意：wyw-in-js 不会把 `${control}` 的样式内联进派生类，
+ * 派生类只生成增量；故每个控件需自包含 min-height，否则被全局 select/input{min-height:44px} 覆盖；
+ * 边框/圆角/背景/文字色来自 inputStyle。 */
 const selectControl = css`
   padding: 4px 28px 4px 8px;
   min-height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font: inherit;
   font-size: 12px;
   line-height: 1.4;
@@ -30,10 +28,6 @@ const input = css`
   padding: 4px 8px;
   min-width: 180px;
   min-height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font: inherit;
   font-size: 12px;
   line-height: 1.4;
@@ -50,10 +44,6 @@ const modelWrap = css`
 const dropdownBtn = css`
   padding: 4px 8px;
   min-height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font: inherit;
   font-size: 12px;
   line-height: 1.4;
@@ -155,7 +145,7 @@ export function ModelSelector({
       <label className={field}>
         <span>Provider</span>
         <select
-          className={selectControl}
+          className={`${inputStyle} ${selectControl}`}
           value={value.provider}
           onChange={(e) => onChange({ ...value, provider: e.target.value })}
           data-testid="provider-select"
@@ -174,7 +164,7 @@ export function ModelSelector({
         <label className={field}>
           <span>Model</span>
           <input
-            className={input}
+            className={`${inputStyle} ${input}`}
             value={value.model}
             placeholder="模型名"
             onFocus={() => modelHints.length > 0 && setHintsOpen(true)}
@@ -185,7 +175,7 @@ export function ModelSelector({
         {modelHints.length > 0 && (
           <button
             type="button"
-            className={dropdownBtn}
+            className={`${inputStyle} ${dropdownBtn}`}
             onClick={() => setHintsOpen((o) => !o)}
             aria-label="切换模型"
             aria-expanded={hintsOpen}

@@ -57,7 +57,7 @@ function AttachmentBar(props: Props) {
       {props.images.map((img, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: 图片附件无稳定 id，按索引作 key
         <div key={`img-${i}`} className={thumb}>
-          <img src={`data:${img.mediaType};base64,${img.data}`} alt={`附件 ${i + 1}`} />
+          <img src={`data:${img.mediaType};base64,${img.data}`} alt={`图片附件 ${i + 1}`} />
           <button
             className={removeBtn}
             onClick={() => props.onRemove(i)}

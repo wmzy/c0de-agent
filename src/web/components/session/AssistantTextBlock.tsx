@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { memo, useMemo } from 'react'
 import { formatLatency } from '../../utils/format.js'
 import { CodeReference } from '../CodeReference.js'
 import { CopyButton } from '../CopyButton.js'
@@ -55,7 +56,7 @@ function collectCodeRefs(text: string): string[] {
     .filter((l) => refPattern.test(l))
 }
 
-export function AssistantTextBlock({
+export const AssistantTextBlock = memo(function AssistantTextBlock({
   text,
   completedAt,
   latency,
@@ -69,7 +70,7 @@ export function AssistantTextBlock({
   const { ref, overflowing, expanded, toggle } = useOverflow(400)
   const isExpanded = forceExpand || expanded
   const showToggle = overflowing && !isExpanded
-  const refTokens = collectCodeRefs(text)
+  const refTokens = useMemo(() => collectCodeRefs(text), [text])
   return (
     <div className={wrap} data-testid="assistant-text">
       <div ref={ref} className={`${body} ${showToggle ? collapsed : ''}`}>
@@ -99,4 +100,4 @@ export function AssistantTextBlock({
       </div>
     </div>
   )
-}
+})

@@ -71,11 +71,8 @@ export function SidebarTabs({ activeTab, onSwitch, sessions, files }: SidebarTab
         >
           📁文件
         </button>
-
       </div>
-      <div className={content}>
-        {activeTab === 'sessions' ? sessions : files}
-      </div>
+      <div className={content}>{activeTab === 'sessions' ? sessions : files}</div>
     </div>
   )
 }

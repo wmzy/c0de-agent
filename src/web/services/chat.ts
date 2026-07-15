@@ -44,11 +44,17 @@ async function sendChatMessage(
     files?: string[]
   },
 ): Promise<{ done: boolean }> {
+  const controller = new AbortController()
+  if (signal) {
+    if (signal.aborted) controller.abort(signal.reason)
+    else signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true })
+  }
+
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId, message, ...opts }),
-    signal,
+    signal: controller.signal,
   })
 
   if (!response.ok) {
@@ -71,16 +77,30 @@ async function sendChatMessage(
   let buffer = ''
   let doneReceived = false
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const { events, rest } = consumeSSEBuffer(buffer)
-    buffer = rest
-    for (const evt of events) {
-      if (evt._tag === 'done') doneReceived = true
-      onEvent(evt)
+  let watchdog: ReturnType<typeof setTimeout> | null = null
+  let timedOut = false
+  try {
+    while (true) {
+      if (watchdog) clearTimeout(watchdog)
+      watchdog = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, 90_000)
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const { events, rest } = consumeSSEBuffer(buffer)
+      buffer = rest
+      for (const evt of events) {
+        if (evt._tag === 'done') doneReceived = true
+        onEvent(evt)
+      }
     }
+  } catch (err) {
+    if (timedOut) return { done: false }
+    throw err
+  } finally {
+    if (watchdog) clearTimeout(watchdog)
   }
 
   return { done: doneReceived }

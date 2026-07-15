@@ -1,7 +1,8 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { todoAPI, type TodoOp, type TodoOpResult, type TodoPhase } from '../services/todo.js'
+import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '../services/todo.js'
+import { inputStyle } from '../styles/tokens.js'
 
 // ── Status icons & colors ─────────────────────────────────
 
@@ -182,10 +183,6 @@ const input = css`
   flex: 1;
   min-width: 0;
   padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font: inherit;
   font-size: 13px;
   outline: none;
@@ -197,10 +194,6 @@ const input = css`
 
 const addBtn = css`
   padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -310,8 +303,7 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
   const totalTasks = phases.reduce((sum, p) => sum + p.tasks.length, 0)
   const doneTasks = phases.reduce(
     (sum, p) =>
-      sum +
-      p.tasks.filter((t) => t.status === 'completed' || t.status === 'abandoned').length,
+      sum + p.tasks.filter((t) => t.status === 'completed' || t.status === 'abandoned').length,
     0,
   )
   const current = activeTaskInfo(phases)
@@ -332,7 +324,11 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
       >
         <span className={summaryIcon}>📋</span>
         <span className={summaryProgress}>任务</span>
-        {totalTasks > 0 && <span className={phaseProgress}>{doneTasks}/{totalTasks}</span>}
+        {totalTasks > 0 && (
+          <span className={phaseProgress}>
+            {doneTasks}/{totalTasks}
+          </span>
+        )}
         {current && (
           <>
             <span className={summaryDivider}>·</span>
@@ -341,9 +337,7 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
             </span>
           </>
         )}
-        {totalTasks === 0 && !showAdd && (
-          <span className={summaryCurrent}>暂无任务，点击添加</span>
-        )}
+        {totalTasks === 0 && !showAdd && <span className={summaryCurrent}>暂无任务，点击添加</span>}
         <span className={expandIcon}>{collapsed ? '▾' : '▴'}</span>
       </div>
 
@@ -357,7 +351,9 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
               <div key={`phase-${pi}`} className={phaseGroup}>
                 <div className={phaseHeader}>
                   <span>{phase.name}</span>
-                  <span className={phaseProgress}>{done}/{phase.tasks.length}</span>
+                  <span className={phaseProgress}>
+                    {done}/{phase.tasks.length}
+                  </span>
                 </div>
                 {phase.tasks.map((task, ti) => {
                   const status = (
@@ -404,7 +400,7 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
           {showAdd && (
             <div className={addForm}>
               <input
-                className={input}
+                className={`${inputStyle} ${input}`}
                 placeholder="任务描述…"
                 value={newTask}
                 onChange={(e) => setNewTask(e.target.value)}
@@ -412,10 +408,9 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
                   if (e.key === 'Enter') handleAdd()
                   if (e.key === 'Escape') setShowAdd(false)
                 }}
-                autoFocus
               />
               <input
-                className={input}
+                className={`${inputStyle} ${input}`}
                 placeholder="阶段（可选）"
                 style={{ flex: '0 0 100px' }}
                 value={newPhase}
@@ -427,7 +422,7 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
               />
               <button
                 type="button"
-                className={`${addBtn} ${primaryBtn}`}
+                className={`${inputStyle} ${addBtn} ${primaryBtn}`}
                 onClick={handleAdd}
                 disabled={!newTask.trim() || execMutation.isPending}
               >
@@ -441,7 +436,7 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
       {showAdd && (collapsed || totalTasks === 0) && (
         <div className={addForm}>
           <input
-            className={input}
+            className={`${inputStyle} ${input}`}
             placeholder="任务描述…"
             value={newTask}
             onChange={(e) => setNewTask(e.target.value)}
@@ -449,10 +444,9 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
               if (e.key === 'Enter') handleAdd()
               if (e.key === 'Escape') setShowAdd(false)
             }}
-            autoFocus
           />
           <input
-            className={input}
+            className={`${inputStyle} ${input}`}
             placeholder="阶段（可选）"
             style={{ flex: '0 0 100px' }}
             value={newPhase}
@@ -464,7 +458,7 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
           />
           <button
             type="button"
-            className={`${addBtn} ${primaryBtn}`}
+            className={`${inputStyle} ${addBtn} ${primaryBtn}`}
             onClick={handleAdd}
             disabled={!newTask.trim() || execMutation.isPending}
           >

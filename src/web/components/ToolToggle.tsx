@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { toolAPI } from '../services/tool.js'
+import { cardStyle, inputStyle } from '../styles/tokens.js'
 
 const wrap = css`
   position: relative;
@@ -13,9 +14,6 @@ const trigger = css`
   gap: 6px;
   padding: 4px 10px;
   min-height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
   color: var(--text);
   font-size: 12px;
   cursor: pointer;
@@ -72,10 +70,6 @@ const headerBtns = css`
 
 const headerBtn = css`
   padding: 2px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font-size: 11px;
   cursor: pointer;
 `
@@ -187,7 +181,7 @@ export function ToolToggle({
     <div className={wrap} ref={ref}>
       <button
         type="button"
-        className={trigger}
+        className={`${cardStyle} ${trigger}`}
         onClick={() => !disabled && setOpen((o) => !o)}
         disabled={disabled}
         aria-expanded={open}
@@ -204,7 +198,7 @@ export function ToolToggle({
             <span className={headerBtns}>
               <button
                 type="button"
-                className={headerBtn}
+                className={`${inputStyle} ${headerBtn}`}
                 onClick={() => onChange(null)}
                 data-testid="tool-select-all"
               >
@@ -212,7 +206,7 @@ export function ToolToggle({
               </button>
               <button
                 type="button"
-                className={headerBtn}
+                className={`${inputStyle} ${headerBtn}`}
                 onClick={() => onChange(new Set())}
                 data-testid="tool-clear"
               >

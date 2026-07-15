@@ -1,10 +1,20 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { renderMarkdown } from '../utils/markdown.js'
 
-export function Markdown({ content }: { content: string }) {
+const mdCache = new Map<string, string>()
+
+export const Markdown = memo(function Markdown({ content }: { content: string }) {
   const [html, setHtml] = useState('')
   useEffect(() => {
-    void renderMarkdown(content).then(setHtml)
+    const cached = mdCache.get(content)
+    if (cached !== undefined) {
+      setHtml(cached)
+      return
+    }
+    void renderMarkdown(content).then((rendered) => {
+      mdCache.set(content, rendered)
+      setHtml(rendered)
+    })
   }, [content])
   return (
     <>
@@ -12,4 +22,4 @@ export function Markdown({ content }: { content: string }) {
       <div dangerouslySetInnerHTML={{ __html: html }} />
     </>
   )
-}
+})

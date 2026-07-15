@@ -21,14 +21,12 @@ function CommaListInput({
   onCommit,
   placeholder,
   className,
-  type,
   id,
 }: {
   value: string[]
   onCommit: (items: string[]) => void
   placeholder?: string
   className?: string
-  type?: string
   id?: string
 }) {
   const [text, setText] = useState(value.join(', '))
@@ -41,7 +39,6 @@ function CommaListInput({
   return (
     <input
       id={id}
-      type={type}
       className={className}
       value={text}
       placeholder={placeholder}

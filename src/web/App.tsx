@@ -10,6 +10,7 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom'
+import { ErrorBoundary } from './components/ErrorBoundary.js'
 import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TerminalPanel } from './components/TerminalPanel.js'
 import { TopBar } from './components/TopBar.js'
@@ -53,29 +54,33 @@ export function App() {
       <ThemeProvider>
         <ConfigProvider>
           <BrowserRouter>
-            <div className={appShell}>
-              <UpdateBanner />
-              <Routes>
-                <Route path="/" element={<RootRedirect />} />
-                <Route path="/projects/:projectId" element={<ChatPage />} />
-                <Route path="/projects/:projectId/sessions/:sessionId" element={<ChatPage />} />
-                <Route path="/projects/:projectId/kanban" element={<KanbanPage />} />
-                <Route
-                  path="/settings"
-                  element={
-                    <Layout
-                      header={<TopBar />}
-                      main={
-                        <Suspense fallback={<div className={redirectMsg}>加载中…</div>}>
-                          <Settings />
-                        </Suspense>
-                      }
-                    />
-                  }
-                />
-                <Route path="*" element={<Layout header={<TopBar />} main={<NotFound />} />} />
-              </Routes>
-            </div>
+            <ErrorBoundary>
+              <div className={appShell}>
+                <UpdateBanner />
+                <Routes>
+                  <Route path="/" element={<RootRedirect />} />
+                  <Route path="/projects/:projectId" element={<ChatPage />} />
+                  <Route path="/projects/:projectId/sessions/:sessionId" element={<ChatPage />} />
+                  <Route path="/projects/:projectId/kanban" element={<KanbanPage />} />
+                  <Route
+                    path="/settings"
+                    element={
+                      <Layout
+                        header={<TopBar />}
+                        main={
+                          <ErrorBoundary>
+                            <Suspense fallback={<div className={redirectMsg}>加载中…</div>}>
+                              <Settings />
+                            </Suspense>
+                          </ErrorBoundary>
+                        }
+                      />
+                    }
+                  />
+                  <Route path="*" element={<Layout header={<TopBar />} main={<NotFound />} />} />
+                </Routes>
+              </div>
+            </ErrorBoundary>
           </BrowserRouter>
         </ConfigProvider>
       </ThemeProvider>
@@ -242,18 +247,19 @@ function ChatPage() {
                   onPick={(p) => fileCtx.openFile(p)}
                   onDelete={(p) => {
                     // 被删文件/目录是当前预览目标（含子路径）时关闭预览
-                    if (selectedFile === p || (selectedFile && selectedFile.startsWith(`${p}/`))) {
+                    if (selectedFile === p || selectedFile?.startsWith(`${p}/`)) {
                       fileCtx.closeFile()
                     }
                   }}
                 />
               }
-
             />
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
-          terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} projectId={projectId} />}
+          terminal={
+            <TerminalPanel terminal={terminal} cwd={project?.worktree} projectId={projectId} />
+          }
         />
       </FileSelectionContext.Provider>
     </FileReferenceProvider>
@@ -267,10 +273,5 @@ function KanbanPage() {
   const { projectId } = useParams<{ projectId: string }>()
   if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
 
-  return (
-    <Layout
-      header={<TopBar />}
-      main={<KanbanView projectId={projectId} />}
-    />
-  )
+  return <Layout header={<TopBar />} main={<KanbanView projectId={projectId} />} />
 }

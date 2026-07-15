@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { Message } from '@shared/types/message.js'
-import type { ReactNode } from 'react'
+import { memo, type ReactNode } from 'react'
 import type { ShakeRegionView } from '../../types/index.js'
 import { AssistantTextBlock } from './AssistantTextBlock.js'
 import { PartDecoration } from './PartDecoration.js'
@@ -133,7 +133,7 @@ function groupConsecutiveTools(blocks: RenderBlock[]): RenderBlock[][] {
       i++
       while (i < blocks.length) {
         const next = blocks[i]
-        if (!next || next.type !== 'tool') break
+        if (next?.type !== 'tool') break
         group.push(next)
         i++
       }
@@ -146,7 +146,13 @@ function groupConsecutiveTools(blocks: RenderBlock[]): RenderBlock[][] {
   return result
 }
 
-export function MessageItem({ message, latency }: { message: Message; latency?: number }) {
+export const MessageItem = memo(function MessageItem({
+  message,
+  latency,
+}: {
+  message: Message
+  latency?: number
+}) {
   const shake = useShakeMode()
   const blocks = normalizeParts(message)
   const msgRegions = shake?.enabled ? (shake.regionsByMessage.get(message.id) ?? []) : []
@@ -244,4 +250,4 @@ export function MessageItem({ message, latency }: { message: Message; latency?: 
       })}
     </div>
   )
-}
+})

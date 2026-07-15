@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { type KeyboardEvent, type ReactNode, useEffect, useState } from 'react'
+import { type KeyboardEvent, memo, type ReactNode, useEffect, useState } from 'react'
 import { FilePathLink } from '../FilePathLink.js'
 import { BashToolView } from './tools/BashToolView.js'
 import { EditToolView } from './tools/EditToolView.js'
@@ -81,7 +81,7 @@ const body = css`
   margin-top: 2px;
 `
 
-export function ToolBlock({
+export const ToolBlock = memo(function ToolBlock({
   block,
   forceExpand,
   compact,
@@ -148,7 +148,7 @@ export function ToolBlock({
       ) : null}
     </div>
   )
-}
+})
 
 function renderTool(
   tool: string,

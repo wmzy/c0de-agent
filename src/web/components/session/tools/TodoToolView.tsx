@@ -5,7 +5,13 @@ type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
 
 type TodoTask = { content: string; status: string }
 type TodoPhase = { name: string; tasks: TodoTask[] }
-type TodoInput = { op?: string; task?: string; phase?: string; items?: string[]; list?: { phase: string; items: string[] }[] }
+type TodoInput = {
+  op?: string
+  task?: string
+  phase?: string
+  items?: string[]
+  list?: { phase: string; items: string[] }[]
+}
 
 const TASK_ICONS: Record<TaskStatus, string> = {
   completed: '✓',
@@ -22,9 +28,18 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
 }
 
 const ROMAN_PAIRS: ReadonlyArray<readonly [number, string]> = [
-  [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'],
-  [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'],
-  [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'],
+  [1000, 'M'],
+  [900, 'CM'],
+  [500, 'D'],
+  [400, 'CD'],
+  [100, 'C'],
+  [90, 'XC'],
+  [50, 'L'],
+  [40, 'XL'],
+  [10, 'X'],
+  [9, 'IX'],
+  [5, 'V'],
+  [4, 'IV'],
   [1, 'I'],
 ]
 
@@ -133,9 +148,11 @@ function Board({ phases }: { phases: TodoPhase[] }) {
               </span>
             </div>
             {phase.tasks.map((task, ti) => {
-              const status = (['pending', 'in_progress', 'completed', 'abandoned'].includes(task.status)
-                ? task.status
-                : 'pending') as TaskStatus
+              const status = (
+                ['pending', 'in_progress', 'completed', 'abandoned'].includes(task.status)
+                  ? task.status
+                  : 'pending'
+              ) as TaskStatus
               return (
                 <div key={`task-${pi}-${ti}`} className={taskRow}>
                   <span className={taskIcon} style={{ color: STATUS_COLORS[status] }}>

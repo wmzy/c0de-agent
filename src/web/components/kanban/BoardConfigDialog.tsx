@@ -3,34 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { generateId } from '../../hooks/id.js'
 import { type KanbanColumnDef, type KanbanLabelDef, kanbanAPI } from '../../services/kanban.js'
-
-const overlay = css`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-`
-
-const dialog = css`
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 20px;
-  width: min(560px, 92vw);
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-`
-
-const titleStyle = css`
-  font-size: 16px;
-  font-weight: 600;
-`
+import { Dialog } from '../Dialog.js'
 
 const sectionTitle = css`
   font-size: 13px;
@@ -159,100 +132,12 @@ export function BoardConfigDialog({
   }
 
   return (
-    <div className={overlay} role="presentation" data-testid="board-config-overlay">
-      <div className={dialog}>
-        <div className={titleStyle}>看板设置</div>
-
-        {/* 列管理 */}
-        <div>
-          <div className={sectionTitle}>列</div>
-          {columns.map((col) => (
-            <div key={col.id} className={row}>
-              <input
-                className={rowInput}
-                value={col.name}
-                onChange={(e) => updateColumnName(col.id, e.target.value)}
-              />
-              <button
-                type="button"
-                data-variant="danger"
-                className={rowBtn}
-                onClick={() => removeColumn(col.id)}
-              >
-                删除
-              </button>
-            </div>
-          ))}
-          <div className={row}>
-            <input
-              className={rowInput}
-              placeholder="新列名…"
-              value={newColumnName}
-              onChange={(e) => setNewColumnName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addColumn()
-              }}
-            />
-            <button type="button" className={addBtn} onClick={addColumn}>
-              + 添加列
-            </button>
-          </div>
-        </div>
-
-        {/* 标签管理 */}
-        <div>
-          <div className={sectionTitle}>标签</div>
-          {labels.map((l) => (
-            <div key={l.id} className={row}>
-              <input
-                type="color"
-                className={colorSwatch}
-                value={l.color}
-                onChange={(e) => updateLabel(l.id, { color: e.target.value })}
-              />
-              <input
-                className={rowInput}
-                value={l.name}
-                onChange={(e) => updateLabel(l.id, { name: e.target.value })}
-              />
-              <button
-                type="button"
-                data-variant="danger"
-                className={rowBtn}
-                onClick={() => removeLabel(l.id)}
-              >
-                删除
-              </button>
-            </div>
-          ))}
-          <div className={row}>
-            <input
-              type="color"
-              className={colorSwatch}
-              value={newLabelColor}
-              onChange={(e) => setNewLabelColor(e.target.value)}
-            />
-            <input
-              className={rowInput}
-              placeholder="新标签名…"
-              value={newLabelName}
-              onChange={(e) => setNewLabelName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addLabel()
-              }}
-            />
-            <button type="button" className={addBtn} onClick={addLabel}>
-              + 添加标签
-            </button>
-          </div>
-        </div>
-
-        {saveMutation.isError && (
-          <div style={{ color: 'var(--error)', fontSize: 12 }}>
-            保存失败：{(saveMutation.error as Error)?.message}
-          </div>
-        )}
-
+    <Dialog
+      onClose={onClose}
+      title="看板设置"
+      width="min(560px, 92vw)"
+      testId="board-config-overlay"
+      footer={
         <div className={actions}>
           <button
             type="button"
@@ -272,7 +157,97 @@ export function BoardConfigDialog({
             保存
           </button>
         </div>
+      }
+    >
+      {/* 列管理 */}
+      <div>
+        <div className={sectionTitle}>列</div>
+        {columns.map((col) => (
+          <div key={col.id} className={row}>
+            <input
+              className={rowInput}
+              value={col.name}
+              onChange={(e) => updateColumnName(col.id, e.target.value)}
+            />
+            <button
+              type="button"
+              data-variant="danger"
+              className={rowBtn}
+              onClick={() => removeColumn(col.id)}
+            >
+              删除
+            </button>
+          </div>
+        ))}
+        <div className={row}>
+          <input
+            className={rowInput}
+            placeholder="新列名…"
+            value={newColumnName}
+            onChange={(e) => setNewColumnName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addColumn()
+            }}
+          />
+          <button type="button" className={addBtn} onClick={addColumn}>
+            + 添加列
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* 标签管理 */}
+      <div>
+        <div className={sectionTitle}>标签</div>
+        {labels.map((l) => (
+          <div key={l.id} className={row}>
+            <input
+              type="color"
+              className={colorSwatch}
+              value={l.color}
+              onChange={(e) => updateLabel(l.id, { color: e.target.value })}
+            />
+            <input
+              className={rowInput}
+              value={l.name}
+              onChange={(e) => updateLabel(l.id, { name: e.target.value })}
+            />
+            <button
+              type="button"
+              data-variant="danger"
+              className={rowBtn}
+              onClick={() => removeLabel(l.id)}
+            >
+              删除
+            </button>
+          </div>
+        ))}
+        <div className={row}>
+          <input
+            type="color"
+            className={colorSwatch}
+            value={newLabelColor}
+            onChange={(e) => setNewLabelColor(e.target.value)}
+          />
+          <input
+            className={rowInput}
+            placeholder="新标签名…"
+            value={newLabelName}
+            onChange={(e) => setNewLabelName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addLabel()
+            }}
+          />
+          <button type="button" className={addBtn} onClick={addLabel}>
+            + 添加标签
+          </button>
+        </div>
+      </div>
+
+      {saveMutation.isError && (
+        <div style={{ color: 'var(--error)', fontSize: 12 }}>
+          保存失败：{(saveMutation.error as Error)?.message}
+        </div>
+      )}
+    </Dialog>
   )
 }

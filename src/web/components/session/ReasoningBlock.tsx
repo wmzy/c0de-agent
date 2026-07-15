@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { Markdown } from '../Markdown.js'
 
 const wrap = css`
@@ -48,7 +48,13 @@ function lastNonEmptyLine(text: string): string {
   return line.trim()
 }
 
-export function ReasoningBlock({ text, forceExpand }: { text: string; forceExpand?: boolean }) {
+export const ReasoningBlock = memo(function ReasoningBlock({
+  text,
+  forceExpand,
+}: {
+  text: string
+  forceExpand?: boolean
+}) {
   const [expanded, setExpanded] = useState(false)
   const isExpanded = forceExpand || expanded
   const previewLine = isExpanded ? '' : lastNonEmptyLine(text)
@@ -75,4 +81,4 @@ export function ReasoningBlock({ text, forceExpand }: { text: string; forceExpan
       )}
     </div>
   )
-}
+})

@@ -2,13 +2,16 @@ import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useRef, useState } from 'react'
+import { AppearancePanel } from '../components/settings/AppearancePanel.js'
 import { CommaListInput } from '../components/settings/CommaListInput.js'
 import { CompactionPanel } from '../components/settings/CompactionPanel.js'
-import { JsonConfigEditor } from '../components/settings/JsonConfigEditor.js'
+import { FallbackPanel } from '../components/settings/FallbackPanel.js'
 import { GitPanel } from '../components/settings/GitPanel.js'
+import { JsonConfigEditor } from '../components/settings/JsonConfigEditor.js'
 import { MCPPanel } from '../components/settings/MCPPanel.js'
 import { ModelPanel } from '../components/settings/ModelPanel.js'
 import { ProviderPanel } from '../components/settings/ProviderPanel.js'
+import { SecurityPanel } from '../components/settings/SecurityPanel.js'
 import {
   checkRow,
   field,
@@ -19,7 +22,7 @@ import {
   section,
 } from '../components/settings/styles.js'
 import { ToolsPanel } from '../components/settings/ToolsPanel.js'
-import { useTheme } from '../contexts/ThemeContext.js'
+import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
 import { configAPI } from '../services/config.js'
 
 const toolbar = css`
@@ -124,7 +127,6 @@ export function Settings() {
     queryKey: ['config'],
     queryFn: () => configAPI.get(),
   })
-  const { mode, setMode } = useTheme()
   const [draft, setDraft] = useState<Partial<Config> | null>(null)
 
   // 视图模式：GUI 表单 / JSON 直接编辑（参考 VSCode settings 切换）
@@ -353,27 +355,10 @@ export function Settings() {
         <JsonConfigEditor jsonText={jsonText} jsonError={jsonError} onChange={onJsonChange} />
       ) : (
         <>
-          <div className={section}>
-            <h3>外观</h3>
-            <label className={field}>
-              <span>主题：</span>
-              <select value={mode} onChange={(e) => setMode(e.target.value as never)}>
-                <option value="light">浅色</option>
-                <option value="dark">深色</option>
-                <option value="system">跟随系统</option>
-              </select>
-            </label>
-            <label className={field}>
-              <span>语言：</span>
-              <select
-                value={merged.locale}
-                onChange={(e) => setDraft((prev) => ({ ...prev, locale: e.target.value }))}
-              >
-                <option value="zh-CN">简体中文</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-          </div>
+          <AppearancePanel
+            locale={merged.locale}
+            onLocaleChange={(locale) => patchDraft({ locale })}
+          />
           <ProviderPanel providers={merged.providers} onProvidersChange={updateProviders} />
           <ModelPanel
             providers={merged.providers}
@@ -412,37 +397,10 @@ export function Settings() {
               + 添加角色
             </button>
           </div>
-          <div className={section}>
-            <h3>故障回退</h3>
-            <label className={checkRow}>
-              <input
-                type="checkbox"
-                checked={merged.fallback.enabled}
-                onChange={(e) => updateSection('fallback', { enabled: e.target.checked })}
-              />
-              <span>启用自动重试与回退</span>
-            </label>
-            <label className={field}>
-              <span>最大重试次数：</span>
-              <input
-                className={fieldInput}
-                type="number"
-                min={0}
-                value={merged.fallback.maxRetries}
-                onChange={(e) => updateSection('fallback', { maxRetries: Number(e.target.value) })}
-              />
-            </label>
-            <label className={field}>
-              <span>重试间隔 (ms)：</span>
-              <input
-                className={fieldInput}
-                type="number"
-                min={0}
-                value={merged.fallback.retryDelay}
-                onChange={(e) => updateSection('fallback', { retryDelay: Number(e.target.value) })}
-              />
-            </label>
-          </div>
+          <FallbackPanel
+            fallback={merged.fallback}
+            onFallbackChange={(patch) => updateSection('fallback', patch)}
+          />
           <CompactionPanel
             compaction={merged.compaction}
             providers={merged.providers}
@@ -517,45 +475,10 @@ export function Settings() {
             <div className={hint}>用逗号分隔已启用的斜杠命令。</div>
           </div>
           <MCPPanel mcpServers={merged.mcpServers} onMcpServersChange={updateMcpServers} />
-          <div className={section}>
-            <h3>Web 搜索</h3>
-            <label className={field}>
-              <span>后端：</span>
-              <select
-                value={merged.websearch.provider}
-                onChange={(e) =>
-                  updateSection('websearch', {
-                    provider: e.target.value as Config['websearch']['provider'],
-                  })
-                }
-              >
-                <option value="auto">自动</option>
-                <option value="duckduckgo">DuckDuckGo</option>
-                <option value="tavily">Tavily</option>
-                <option value="brave">Brave</option>
-              </select>
-            </label>
-            <label className={field}>
-              <span>Tavily Key：</span>
-              <input
-                className={fieldInput}
-                type="password"
-                value={merged.websearch.tavilyApiKey ?? ''}
-                onChange={(e) => updateSection('websearch', { tavilyApiKey: e.target.value })}
-                placeholder="（可由环境变量 TAVILY_API_KEY 提供）"
-              />
-            </label>
-            <label className={field}>
-              <span>Brave Key：</span>
-              <input
-                className={fieldInput}
-                type="password"
-                value={merged.websearch.braveApiKey ?? ''}
-                onChange={(e) => updateSection('websearch', { braveApiKey: e.target.value })}
-                placeholder="（可由环境变量 BRAVE_API_KEY 提供）"
-              />
-            </label>
-          </div>
+          <WebSearchPanel
+            websearch={merged.websearch}
+            onWebSearchChange={(patch) => updateSection('websearch', patch)}
+          />
           <div className={section}>
             <h3>多 Agent</h3>
             <label className={field}>
@@ -580,61 +503,12 @@ export function Settings() {
               />
             </label>
           </div>
-          <div className={section}>
-            <h3>安全</h3>
-            <label className={checkRow}>
-              <input
-                type="checkbox"
-                checked={merged.security.authEnabled}
-                onChange={(e) => updateSection('security', { authEnabled: e.target.checked })}
-              />
-              <span>启用 Bearer Token 认证</span>
-            </label>
-            {merged.security.authEnabled && (
-              <label className={field}>
-                <span>Token：</span>
-                <input
-                  className={fieldInput}
-                  type="password"
-                  value={merged.security.token ?? ''}
-                  onChange={(e) => updateSection('security', { token: e.target.value })}
-                  placeholder="Bearer Token"
-                />
-              </label>
-            )}
-            <label className={field} htmlFor="cfg-allowed-origins">
-              <span>允许的 CORS 来源：</span>
-              <CommaListInput
-                id="cfg-allowed-origins"
-                className={fieldInput}
-                value={merged.security.allowedOrigins}
-                onCommit={(items) => updateSection('security', { allowedOrigins: items })}
-                placeholder="（本地回环始终允许）"
-              />
-            </label>
-          </div>
-          <div className={section}>
-            <h3>自动授权</h3>
-            <label className={field}>
-              <span>默认模式：</span>
-              <select
-                value={merged.permission?.defaultMode ?? 'default'}
-                onChange={(e) =>
-                  updateSection('permission', {
-                    defaultMode: e.target.value as Config['permission']['defaultMode'],
-                  })
-                }
-              >
-                <option value="default">逐个确认（推荐）</option>
-                <option value="auto">自动授权（YOLO，跳过确认）</option>
-              </select>
-            </label>
-            <p className={hint}>
-              启动时的默认授权模式。「自动授权」会跳过所有 ask 工具（含
-              bash）的确认。此项为持久化默认值；Chat
-              页顶部的「自动授权」开关为本次运行的临时切换，不会改写这里。
-            </p>
-          </div>
+          <SecurityPanel
+            security={merged.security}
+            permission={merged.permission}
+            onSecurityChange={(patch) => updateSection('security', patch)}
+            onPermissionChange={(patch) => updateSection('permission', patch)}
+          />
         </>
       )}
 

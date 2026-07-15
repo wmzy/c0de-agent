@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { type CSSProperties, memo } from 'react'
 import type { GitStatusCode } from '../types/index.js'
 
 /** 文件树节点。children 为 undefined 表示尚未加载子目录。type 缺省视为 directory（兼容目录选择器）。 */
@@ -45,6 +46,7 @@ const row = css`
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
+  padding-left: calc(var(--depth, 0) * 16px + 8px);
   cursor: pointer;
   border-radius: 4px;
   &:hover {
@@ -245,38 +247,53 @@ export function FileTree({
   const topLevel = hideRoot && root.children ? root.children : [root]
   return (
     <div className={tree} role="tree" data-testid="file-tree">
-      {topLevel.map((node) =>
-        renderNode(
-          node,
-          0,
-          expanded,
-          selected,
-          loadingPaths,
-          onToggle,
-          onSelect,
-          directoryClickMode,
-          onMention,
-          onDelete,
-          gitStatusMap,
-        ),
-      )}
+      {topLevel.map((node) => (
+        <TreeNode
+          key={node.path}
+          node={node}
+          depth={0}
+          expanded={expanded}
+          selected={selected}
+          loadingPaths={loadingPaths}
+          onToggle={onToggle}
+          onSelect={onSelect}
+          directoryClickMode={directoryClickMode}
+          onMention={onMention}
+          onDelete={onDelete}
+          gitStatusMap={gitStatusMap}
+        />
+      ))}
     </div>
   )
 }
 
-function renderNode(
-  node: TreeNode,
-  depth: number,
-  expanded: Set<string>,
-  selected: string | null,
-  loadingPaths: Set<string>,
-  onToggle: (path: string) => void,
-  onSelect: (path: string) => void,
-  directoryClickMode: 'select' | 'toggle',
-  onMention?: (path: string) => void,
-  onDelete?: (path: string) => void,
-  gitStatusMap?: Record<string, GitStatusCode>,
-) {
+type TreeNodeProps = {
+  node: TreeNode
+  depth: number
+  expanded: Set<string>
+  selected: string | null
+  loadingPaths: Set<string>
+  onToggle: (path: string) => void
+  onSelect: (path: string) => void
+  directoryClickMode: 'select' | 'toggle'
+  onMention?: (path: string) => void
+  onDelete?: (path: string) => void
+  gitStatusMap?: Record<string, GitStatusCode>
+}
+
+const TreeNode = memo(function TreeNode({
+  node,
+  depth,
+  expanded,
+  selected,
+  loadingPaths,
+  onToggle,
+  onSelect,
+  directoryClickMode,
+  onMention,
+  onDelete,
+  gitStatusMap,
+}: TreeNodeProps) {
   const isFile = node.type === 'file'
   const isExpanded = expanded.has(node.path)
   const isLoading = loadingPaths.has(node.path)
@@ -284,15 +301,10 @@ function renderNode(
   const hasChildren = node.children !== undefined
   const gitCode = resolveGitStatus(node.path, isFile, gitStatusMap)
   return (
-    <div
-      role="treeitem"
-      aria-expanded={isFile ? undefined : isExpanded}
-      tabIndex={-1}
-      key={node.path}
-    >
+    <div role="treeitem" aria-expanded={isFile ? undefined : isExpanded} tabIndex={-1}>
       <div
         className={`${row} ${isSelected ? selectedRow : ''} ${gitCode ? gitClass(gitCode) : ''} ${node.ignored ? gitIgnored : ''}`}
-        style={{ paddingLeft: depth * 16 + 8 }}
+        style={{ '--depth': depth } as CSSProperties}
         data-git-status={gitCode ?? undefined}
         data-ignored={node.ignored ? '' : undefined}
       >
@@ -359,21 +371,22 @@ function renderNode(
       {!isFile && isExpanded && (
         <div className={childList}>
           {hasChildren && node.children && node.children.length > 0 ? (
-            node.children.map((c) =>
-              renderNode(
-                c,
-                depth + 1,
-                expanded,
-                selected,
-                loadingPaths,
-                onToggle,
-                onSelect,
-                directoryClickMode,
-                onMention,
-                onDelete,
-                gitStatusMap,
-              ),
-            )
+            node.children.map((c) => (
+              <TreeNode
+                key={c.path}
+                node={c}
+                depth={depth + 1}
+                expanded={expanded}
+                selected={selected}
+                loadingPaths={loadingPaths}
+                onToggle={onToggle}
+                onSelect={onSelect}
+                directoryClickMode={directoryClickMode}
+                onMention={onMention}
+                onDelete={onDelete}
+                gitStatusMap={gitStatusMap}
+              />
+            ))
           ) : isLoading ? (
             <div className={hint}>加载中…</div>
           ) : (
@@ -383,6 +396,6 @@ function renderNode(
       )}
     </div>
   )
-}
+})
 
 export type { FileTreeProps }

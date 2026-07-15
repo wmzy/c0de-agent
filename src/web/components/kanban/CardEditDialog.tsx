@@ -1,36 +1,9 @@
 import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { generateId } from '../../hooks/id.js'
 import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '../../services/kanban.js'
-
-const overlay = css`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-`
-
-const dialog = css`
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 20px;
-  width: min(520px, 92vw);
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`
-
-const titleStyle = css`
-  font-size: 16px;
-  font-weight: 600;
-`
+import { Dialog } from '../Dialog.js'
 
 const field = css`
   display: flex;
@@ -176,7 +149,6 @@ const actions = css`
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 4px;
 `
 
 const actionsRight = css`
@@ -237,15 +209,6 @@ export function CardEditDialog({
   const [allLabels, setAllLabels] = useState<KanbanLabelDef[]>(boardLabels)
   const [newLabelName, setNewLabelName] = useState('')
   const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0] ?? '#ef4444')
-
-  // Escape 关闭
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -310,114 +273,12 @@ export function CardEditDialog({
   }
 
   return (
-    <div className={overlay} role="presentation" data-testid="card-edit-overlay">
-      <div className={dialog}>
-        <div className={titleStyle}>编辑卡片</div>
-
-        <div className={field}>
-          <span className={label}>标题</span>
-          <input
-            className={titleInput}
-            value={titleVal}
-            onChange={(e) => setTitleVal(e.target.value)}
-            data-testid="card-title-input"
-          />
-        </div>
-
-        <div className={field}>
-          <span className={label}>描述</span>
-          <textarea
-            className={descTextarea}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="添加详细描述…"
-            data-testid="card-desc-input"
-          />
-        </div>
-
-        <div className={field}>
-          <span className={label}>优先级</span>
-          <div className={priorityRow}>
-            {(Object.keys(PRIORITY_COLORS) as KanbanPriority[]).map((p) => (
-              <button
-                key={p}
-                type="button"
-                className={priorityBtn}
-                data-variant={priority === p ? 'primary' : 'ghost'}
-                onClick={() => setPriority(p)}
-                style={{ color: priority === p ? '#fff' : PRIORITY_COLORS[p] }}
-              >
-                {PRIORITY_LABELS[p]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className={field}>
-          <span className={label}>标签</span>
-          {allLabels.length > 0 ? (
-            <div className={labelsGrid}>
-              {allLabels.map((l) => {
-                const selected = selectedLabels.has(l.id)
-                return (
-                  <span
-                    key={l.id}
-                    className={`${labelChip} ${selected ? labelChipSelected : ''}`}
-                    style={{ color: l.color }}
-                  >
-                    <button
-                      type="button"
-                      className={labelChipMain}
-                      onClick={() => toggleLabel(l.id)}
-                    >
-                      <span className={labelDot} style={{ background: l.color }} />
-                      {l.name}
-                    </button>
-                    <button
-                      type="button"
-                      className={labelChipDel}
-                      onClick={() => removeLabel(l.id)}
-                      aria-label={`删除标签 ${l.name}`}
-                    >
-                      ×
-                    </button>
-                  </span>
-                )
-              })}
-            </div>
-          ) : (
-            <span className={labelHint}>暂无标签，可在下方创建</span>
-          )}
-          <div className={labelCreateRow}>
-            <input
-              type="color"
-              className={colorSwatch}
-              value={newLabelColor}
-              onChange={(e) => setNewLabelColor(e.target.value)}
-              aria-label="标签颜色"
-            />
-            <input
-              className={labelNameInput}
-              placeholder="新标签名…"
-              value={newLabelName}
-              onChange={(e) => setNewLabelName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addLabel()
-              }}
-            />
-            <button type="button" className={labelAddBtn} onClick={addLabel}>
-              + 添加
-            </button>
-          </div>
-        </div>
-
-        {(saveMutation.isError || deleteMutation.isError) && (
-          <div style={{ color: 'var(--error)', fontSize: 12 }}>
-            操作失败：
-            {(saveMutation.error as Error)?.message ?? (deleteMutation.error as Error)?.message}
-          </div>
-        )}
-
+    <Dialog
+      onClose={onClose}
+      title="编辑卡片"
+      width="min(520px, 92vw)"
+      testId="card-edit-overlay"
+      footer={
         <div className={actions}>
           <button
             type="button"
@@ -448,7 +309,107 @@ export function CardEditDialog({
             </button>
           </div>
         </div>
+      }
+    >
+      <div className={field}>
+        <span className={label}>标题</span>
+        <input
+          className={titleInput}
+          value={titleVal}
+          onChange={(e) => setTitleVal(e.target.value)}
+          data-testid="card-title-input"
+        />
       </div>
-    </div>
+
+      <div className={field}>
+        <span className={label}>描述</span>
+        <textarea
+          className={descTextarea}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="添加详细描述…"
+          data-testid="card-desc-input"
+        />
+      </div>
+
+      <div className={field}>
+        <span className={label}>优先级</span>
+        <div className={priorityRow}>
+          {(Object.keys(PRIORITY_COLORS) as KanbanPriority[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={priorityBtn}
+              data-variant={priority === p ? 'primary' : 'ghost'}
+              onClick={() => setPriority(p)}
+              style={{ color: priority === p ? '#fff' : PRIORITY_COLORS[p] }}
+            >
+              {PRIORITY_LABELS[p]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={field}>
+        <span className={label}>标签</span>
+        {allLabels.length > 0 ? (
+          <div className={labelsGrid}>
+            {allLabels.map((l) => {
+              const selected = selectedLabels.has(l.id)
+              return (
+                <span
+                  key={l.id}
+                  className={`${labelChip} ${selected ? labelChipSelected : ''}`}
+                  style={{ color: l.color }}
+                >
+                  <button type="button" className={labelChipMain} onClick={() => toggleLabel(l.id)}>
+                    <span className={labelDot} style={{ background: l.color }} />
+                    {l.name}
+                  </button>
+                  <button
+                    type="button"
+                    className={labelChipDel}
+                    onClick={() => removeLabel(l.id)}
+                    aria-label={`删除标签 ${l.name}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              )
+            })}
+          </div>
+        ) : (
+          <span className={labelHint}>暂无标签，可在下方创建</span>
+        )}
+        <div className={labelCreateRow}>
+          <input
+            type="color"
+            className={colorSwatch}
+            value={newLabelColor}
+            onChange={(e) => setNewLabelColor(e.target.value)}
+            aria-label="标签颜色"
+          />
+          <input
+            className={labelNameInput}
+            placeholder="新标签名…"
+            value={newLabelName}
+            onChange={(e) => setNewLabelName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addLabel()
+            }}
+          />
+          <button type="button" className={labelAddBtn} onClick={addLabel}>
+            + 添加
+          </button>
+        </div>
+      </div>
+
+      {(saveMutation.isError || deleteMutation.isError) && (
+        <div style={{ color: 'var(--error)', fontSize: 12 }}>
+          操作失败：
+          {(saveMutation.error as Error)?.message ?? (deleteMutation.error as Error)?.message}
+        </div>
+      )}
+    </Dialog>
   )
 }

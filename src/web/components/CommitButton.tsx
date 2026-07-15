@@ -2,23 +2,17 @@ import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { fileAPI } from '../services/file.js'
+import { btnSm } from '../styles/tokens.js'
 import { CommitReviewDialog } from './CommitReviewDialog.js'
 
 const commitBtn = css`
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text-secondary);
-  cursor: pointer;
   font-size: 12px;
+  color: var(--text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
-  min-height: auto;
-  min-width: auto;
   &:hover {
     border-color: var(--primary);
     color: var(--primary);
@@ -118,11 +112,12 @@ export function CommitButton({ projectId }: { projectId: string }) {
   })
 
   const btnClass = (() => {
-    if (commitMut.isPending) return commitBtn
-    if (commitFeedback.kind === 'ok') return `${commitBtn} ${commitBtnSuccess}`
-    if (commitFeedback.kind === 'err') return `${commitBtn} ${commitBtnError}`
-    if (hasChanges) return `${commitBtn} ${commitBtnActive}`
-    return commitBtn
+    const base = `${btnSm} ${commitBtn}`
+    if (commitMut.isPending) return base
+    if (commitFeedback.kind === 'ok') return `${base} ${commitBtnSuccess}`
+    if (commitFeedback.kind === 'err') return `${base} ${commitBtnError}`
+    if (hasChanges) return `${base} ${commitBtnActive}`
+    return base
   })()
 
   const label = (() => {
@@ -143,7 +138,7 @@ export function CommitButton({ projectId }: { projectId: string }) {
       <button
         type="button"
         className={btnClass}
-        onClick={() => commitMut.mutate()}
+        onClick={() => commitMut.mutate(undefined)}
         disabled={commitMut.isPending || !hasChanges}
         title={title}
         data-testid="git-commit-btn"

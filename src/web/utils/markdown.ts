@@ -17,33 +17,34 @@ export function renderMarkdownSync(content: string): string {
  * 因此用 walkTokens 在解析前异步高亮，把结果挂到 token 上，
  * renderer 同步读取。
  */
-export async function renderMarkdown(content: string): Promise<string> {
-  const instance = new Marked({ gfm: true, breaks: true })
-  instance.use({
-    async: true,
-    async walkTokens(token: Token) {
-      if (token.type === 'code' && typeof token.text === 'string') {
-        const lang = token.lang ?? 'text'
-        try {
-          ;(token as Token & { _highlighted?: string })._highlighted = await highlightCode(
-            token.text,
-            lang,
-          )
-        } catch {
-          // 高亮失败留空，renderer 走 fallback
-        }
+const configuredMarked = new Marked({ gfm: true, breaks: true })
+configuredMarked.use({
+  async: true,
+  async walkTokens(token: Token) {
+    if (token.type === 'code' && typeof token.text === 'string') {
+      const lang = token.lang ?? 'text'
+      try {
+        ;(token as Token & { _highlighted?: string })._highlighted = await highlightCode(
+          token.text,
+          lang,
+        )
+      } catch {
+        // 高亮失败留空，renderer 走 fallback
       }
+    }
+  },
+  renderer: {
+    code(token: { _highlighted?: string; text: string; lang?: string }) {
+      const lang = token.lang ?? 'text'
+      if (token._highlighted) {
+        return `<div class="code-block" data-lang="${lang}">${token._highlighted}</div>`
+      }
+      // fallback：未高亮时返回原始代码
+      return `<div class="code-block" data-lang="${lang}"><pre><code>${token.text}</code></pre></div>`
     },
-    renderer: {
-      code(token: { _highlighted?: string; text: string; lang?: string }) {
-        const lang = token.lang ?? 'text'
-        if (token._highlighted) {
-          return `<div class="code-block" data-lang="${lang}">${token._highlighted}</div>`
-        }
-        // fallback：未高亮时返回原始代码
-        return `<div class="code-block" data-lang="${lang}"><pre><code>${token.text}</code></pre></div>`
-      },
-    },
-  } as unknown as MarkedExtension)
-  return (await instance.parse(content, { async: true })) as string
+  },
+} as unknown as MarkedExtension)
+
+export async function renderMarkdown(content: string): Promise<string> {
+  return (await configuredMarked.parse(content, { async: true })) as string
 }

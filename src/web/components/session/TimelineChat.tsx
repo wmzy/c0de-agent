@@ -1,11 +1,20 @@
 import { css } from '@linaria/core'
-import { useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { SegmentBreak, SegmentFooter } from '../LLMDetail.js'
 import { MessageItem } from './MessageItem.js'
 import { groupBySegment, isEmptyMessage, type TimelineRow } from './utils/timeline.js'
 
-const groupWrap = css`
+const virtualInner = css`
   position: relative;
+  width: 100%;
+`
+
+const virtualItem = css`
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 `
 
 const rowWrap = css`
@@ -52,32 +61,75 @@ const pre = css`
   overflow: auto;
 `
 
+/** 向上查找最近的可滚动祖先，作为虚拟化的滚动容器（stream 区域）。 */
+function useNearestScrollParent<T extends HTMLElement>(
+  ref: RefObject<T | null>,
+): HTMLElement | null {
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    let node = ref.current?.parentElement ?? null
+    while (node) {
+      const { overflowY } = getComputedStyle(node)
+      if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
+        setEl(node)
+        return
+      }
+      node = node.parentElement
+    }
+  }, [ref])
+  return el
+}
+
 /**
  * 时间线聊天视图：按段分组渲染。
  * - 每段：非首段 trigger≠initial 时渲染 SegmentBreak → 段内消息 → SegmentFooter。
  * - call 行不渲染（groupBySegment 已滤除）。
  * - 每条消息右上角局部 { } 切换原始 JSON（仅序列化该消息自身）。
  * - showAllJson 全局强制 JSON。
+ * - 段组经 useVirtualizer 窗口化渲染，滚动容器复用父级 stream 区域；estimateSize 为
+ *   初始估值，measureElement 会按真实高度动态校正。
  */
 export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showAllJson: boolean }) {
   const [localJson, setLocalJson] = useState<Set<string>>(new Set())
 
-  const toggle = (key: string) =>
-    setLocalJson((s) => {
-      const next = new Set(s)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
+  const toggle = useCallback(
+    (key: string) =>
+      setLocalJson((s) => {
+        const next = new Set(s)
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+        return next
+      }),
+    [],
+  )
 
-  const groups = groupBySegment(rows)
+  const groups = useMemo(() => groupBySegment(rows), [rows])
+
+  const innerRef = useRef<HTMLDivElement>(null)
+  const scrollParent = useNearestScrollParent(innerRef)
+
+  const virtualizer = useVirtualizer({
+    count: groups.length,
+    getScrollElement: () => scrollParent,
+    estimateSize: () => 200,
+    overscan: 4,
+    getItemKey: (i) => groups[i]?.segment.id ?? i,
+  })
 
   return (
-    <>
-      {groups.map((g) => {
+    <div className={virtualInner} ref={innerRef} style={{ height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((vi) => {
+        const g = groups[vi.index]
+        if (!g) return null
         const hasSegmentData = g.segment.id !== '__implicit__'
         return (
-          <div className={groupWrap} key={g.segment.id}>
+          <div
+            className={virtualItem}
+            data-index={vi.index}
+            key={g.segment.id}
+            ref={virtualizer.measureElement}
+            style={{ transform: `translateY(${vi.start}px)` }}
+          >
             {hasSegmentData && <SegmentBreak segment={g.segment} />}
             {g.messages.map(({ message, latency }) => {
               const key = `m:${message.id}`
@@ -107,6 +159,6 @@ export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showA
           </div>
         )
       })}
-    </>
+    </div>
   )
 }

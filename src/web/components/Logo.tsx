@@ -29,7 +29,14 @@ export function Logo() {
         aria-hidden="true"
       >
         <defs>
-          <linearGradient id="c0de-logo-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+          <linearGradient
+            id="c0de-logo-grad"
+            x1="2"
+            y1="2"
+            x2="22"
+            y2="22"
+            gradientUnits="userSpaceOnUse"
+          >
             <stop stopColor="var(--primary)" />
             <stop offset="1" stopColor="var(--primary-hover)" />
           </linearGradient>

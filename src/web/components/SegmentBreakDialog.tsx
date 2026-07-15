@@ -1,36 +1,10 @@
 import { css } from '@linaria/core'
+import { Dialog } from './Dialog.js'
 
-const overlay = css`
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgb(0 0 0 / 50%);
-`
-
-const card = css`
-  min-width: 320px;
-  max-width: 420px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
-`
-
-const title = css`
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 8px;
-`
-
-const body = css`
+const bodyText = css`
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.5;
-  margin-bottom: 12px;
 `
 
 const actions = css`
@@ -78,13 +52,12 @@ export function SegmentBreakDialog({
   onCancel: () => void
 }) {
   return (
-    <div className={overlay} data-testid="segment-break-dialog" role="dialog" aria-modal="true">
-      <div className={card}>
-        <div className={title}>切换将开始新的上下文段</div>
-        <div className={body}>
-          当前段使用 {activeSegment.provider}/{activeSegment.model}（{activeSegment.tools.length}{' '}
-          个工具）。 切换模型或工具会使前缀失效（缓存 miss），后续调用归入新段。
-        </div>
+    <Dialog
+      onClose={onCancel}
+      title="切换将开始新的上下文段"
+      width="min(420px, 92vw)"
+      testId="segment-break-dialog"
+      footer={
         <div className={actions}>
           <button
             type="button"
@@ -111,7 +84,12 @@ export function SegmentBreakDialog({
             继续
           </button>
         </div>
+      }
+    >
+      <div className={bodyText}>
+        当前段使用 {activeSegment.provider}/{activeSegment.model}（{activeSegment.tools.length}{' '}
+        个工具）。 切换模型或工具会使前缀失效（缓存 miss），后续调用归入新段。
       </div>
-    </div>
+    </Dialog>
   )
 }

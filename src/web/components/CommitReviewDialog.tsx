@@ -1,46 +1,19 @@
 import { css } from '@linaria/core'
-
-const overlay = css`
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgb(0 0 0 / 50%);
-`
-
-const card = css`
-  min-width: 340px;
-  max-width: 460px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
-`
-
-const titleStyle = css`
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 8px;
-`
+import { Dialog } from './Dialog.js'
 
 const bodyText = css`
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.5;
-  margin-bottom: 12px;
 `
 
 const fileList = css`
-  margin: 4px 0 12px;
-  padding: 8px 12px;
   background: var(--bg-secondary);
   border-radius: 4px;
   font-size: 12px;
   font-family: var(--font-mono, monospace);
   color: var(--text-secondary);
+  padding: 8px 12px;
 `
 
 const actions = css`
@@ -89,15 +62,12 @@ export function CommitReviewDialog({
   onCancel: () => void
 }) {
   return (
-    <div className={overlay} data-testid="commit-review-dialog" role="dialog" aria-modal="true">
-      <div className={card}>
-        <div className={titleStyle}>检测到可能需要忽略的文件</div>
-        <div className={bodyText}>AI 检查变更内容后认为以下文件可能应该加入 .gitignore：</div>
-        <div className={fileList}>
-          {suggestions.map((s) => (
-            <div key={s}>{s}</div>
-          ))}
-        </div>
+    <Dialog
+      onClose={onCancel}
+      title="检测到可能需要忽略的文件"
+      width="min(460px, 92vw)"
+      testId="commit-review-dialog"
+      footer={
         <div className={actions}>
           <button
             type="button"
@@ -119,7 +89,14 @@ export function CommitReviewDialog({
             加入 .gitignore 再提交
           </button>
         </div>
+      }
+    >
+      <div className={bodyText}>AI 检查变更内容后认为以下文件可能应该加入 .gitignore：</div>
+      <div className={fileList}>
+        {suggestions.map((s) => (
+          <div key={s}>{s}</div>
+        ))}
       </div>
-    </div>
+    </Dialog>
   )
 }

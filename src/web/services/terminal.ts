@@ -1,6 +1,6 @@
 // src/web/services/terminal.ts
 
-import { apiRequest, API_BASE } from './api.js'
+import { API_BASE, apiRequest } from './api.js'
 
 export interface TerminalInfo {
   id: string
@@ -16,7 +16,14 @@ export interface TerminalInfo {
 
 const terminalAPI = {
   list: () => apiRequest<{ terminals: TerminalInfo[] }>('/api/terminal'),
-  create: (params?: { cwd?: string; cols?: number; rows?: number; title?: string; shell?: string; projectId?: string }) =>
+  create: (params?: {
+    cwd?: string
+    cols?: number
+    rows?: number
+    title?: string
+    shell?: string
+    projectId?: string
+  }) =>
     apiRequest<TerminalInfo>('/api/terminal', {
       method: 'POST',
       body: JSON.stringify(params ?? {}),

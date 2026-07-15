@@ -207,7 +207,7 @@ export function Chat({
           <span style={error ? { color: 'var(--error)' } : undefined}>
             {error
               ? error
-              : `${formatTokenCount(usage!.input)} → ${formatTokenCount(usage!.output)} tokens`}
+              : `${formatTokenCount(usage?.input)} → ${formatTokenCount(usage?.output)} tokens`}
           </span>
         ) : null}
         {isStreaming && !paused ? (

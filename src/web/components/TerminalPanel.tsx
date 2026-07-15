@@ -330,7 +330,7 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
   // 切换项目时重置自动创建标记，允许新项目在面板打开时创建首个终端
   useEffect(() => {
     autoCreatedRef.current = false
-  }, [projectId])
+  }, [])
   useEffect(() => {
     if (!open || restoring) {
       return
@@ -349,7 +349,7 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
       activeTab.panes.length > 0 &&
       !activeTab.panes.some((p) => p.id === activePaneId)
     ) {
-      setActivePaneId(activeTab.panes[0]!.id)
+      setActivePaneId(activeTab.panes[0]?.id)
     }
   }, [open, activeTab, activePaneId, setActivePaneId])
 

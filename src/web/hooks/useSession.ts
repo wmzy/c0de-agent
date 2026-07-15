@@ -23,7 +23,10 @@ export function useCreateSession() {
   return useMutation({
     mutationFn: (params?: { title?: string; directory?: string; projectId?: string }) =>
       sessionAPI.create(params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+    },
   })
 }
 
@@ -43,7 +46,10 @@ export function useForkSession() {
   return useMutation({
     mutationFn: ({ id, messageIndex }: { id: string; messageIndex: number }) =>
       sessionAPI.fork(id, messageIndex),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+    },
   })
 }
 

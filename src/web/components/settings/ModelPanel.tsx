@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useState } from 'react'
+import { inputStyle } from '../../styles/tokens.js'
 import { enabledModelsOf, providerCandidates } from './shared.js'
 import { field, fieldInput, mutedHint, section } from './styles.js'
 
@@ -25,10 +26,6 @@ const modelFilterInput = css`
   flex: 1;
   min-width: 120px;
   padding: 3px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
   font-size: 12px;
 `
 
@@ -217,7 +214,7 @@ function ProviderModelsPanel({
     <div className={modelPanel} data-testid="provider-models">
       <div className={modelToolbar}>
         <input
-          className={modelFilterInput}
+          className={`${inputStyle} ${modelFilterInput}`}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="过滤模型…"
@@ -269,9 +266,7 @@ function ProviderModelsPanel({
                       value={override.contextWindow ?? ''}
                       onChange={(e) =>
                         onModelFieldChange(name, {
-                          contextWindow: e.target.value
-                            ? Number(e.target.value)
-                            : undefined,
+                          contextWindow: e.target.value ? Number(e.target.value) : undefined,
                         })
                       }
                       placeholder="留空=默认"
@@ -287,9 +282,7 @@ function ProviderModelsPanel({
                       value={override.maxOutput ?? ''}
                       onChange={(e) =>
                         onModelFieldChange(name, {
-                          maxOutput: e.target.value
-                            ? Number(e.target.value)
-                            : undefined,
+                          maxOutput: e.target.value ? Number(e.target.value) : undefined,
                         })
                       }
                       placeholder="留空=默认"
