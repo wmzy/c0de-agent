@@ -262,6 +262,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               llmDetailTimerRef.current = setTimeout(() => {
                 qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
               }, 500)
+            } else if (event._tag === 'todo_update') {
+              // Tag-based todo 操作成功，刷新 TodoPanel（React Query 重新拉取）
+              qc.invalidateQueries({ queryKey: ['todo', sessionId] })
             } else if (event._tag === 'done' || event._tag === 'error') {
               if (llmDetailTimerRef.current) {
                 clearTimeout(llmDetailTimerRef.current)

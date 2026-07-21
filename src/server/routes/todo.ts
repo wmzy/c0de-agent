@@ -4,7 +4,7 @@ import { getMessages, appendMessage } from '../../session/message.js'
 import { getSession } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { MessageContent } from '../../shared/types/message.js'
-import { todoTool, getLatestTodoPhasesFromMessages, type TodoPhase } from '../../tools/builtin/todo.js'
+import { formatSummary, todoTool, getLatestTodoPhasesFromMessages, type TodoPhase } from '../../tools/builtin/todo.js'
 import type { TodoPhaseLike } from '../../shared/types/tool.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -103,6 +103,11 @@ function createTodoRoute(ctx: ServerContext): Hono {
       // 更新活跃 agent 的内存状态
       if (run) {
         run.state.todoPhases = updatedPhases
+        // 前端手动修改了 todo 状态 → 注入 steering 通知 LLM（通道 A）
+        const summary = formatSummary(updatedPhases, [], true)
+        run.state.steeringQueue.push(
+          `<todo-state-external>\nA todo change was made externally (via UI).\n${summary}\n</todo-state-external>`,
+        )
       }
     }
 
