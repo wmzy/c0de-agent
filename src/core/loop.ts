@@ -1,5 +1,5 @@
-import { chatStream as llmChatStream } from '../llm/provider.js'
 import { createKanbanStore } from '../kanban/index.js'
+import { chatStream as llmChatStream } from '../llm/provider.js'
 import { isContextOverflowFailure } from '../llm/provider-error.js'
 import { resolveRoute } from '../llm/registry.js'
 import { isLLMError } from '../llm/schema/errors.js'
@@ -19,6 +19,7 @@ import type {
 import type { ChatRequest, ChatTool, FinishReason, StreamChunk } from '../shared/types/llm.js'
 import type { Message, MessageContent, Session } from '../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult, ToolResult } from '../shared/types/tool.js'
+import { formatSummary, type TodoPhase } from '../tools/builtin/todo.js'
 import { createAgent, runAgent } from './agent.js'
 import { createSummarizer, runCompaction } from './compact.js'
 import { calibrateEstimate, createTokenBudget, estimateBudget, shouldCompact } from './context.js'
@@ -36,7 +37,6 @@ import {
 } from './prompt-registry.js'
 import { drainSteering, injectSteering } from './steering.js'
 import { applyTodoTags } from './todo-tags.js'
-import { formatSummary, type TodoPhase } from '../tools/builtin/todo.js'
 import type { CollectedToolCall } from './tool-exec.js'
 import { executeToolCalls } from './tool-exec.js'
 import type { AgentDependencies } from './types.js'
@@ -839,8 +839,7 @@ async function* processTodoTags(state: AgentState, text: string): AsyncGenerator
   }
 
   // Emit event + update state if anything happened
-  const tagsFound =
-    result.errors.length > 0 || result.hasView || result.phases !== state.todoPhases
+  const tagsFound = result.errors.length > 0 || result.hasView || result.phases !== state.todoPhases
   if (tagsFound) {
     state.todoPhases = result.phases
     yield { _tag: 'todo_update', phases: result.phases }

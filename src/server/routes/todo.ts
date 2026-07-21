@@ -1,11 +1,16 @@
 // src/server/routes/todo.ts
 import { Hono } from 'hono'
-import { getMessages, appendMessage } from '../../session/message.js'
+import { appendMessage, getMessages } from '../../session/message.js'
 import { getSession } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { MessageContent } from '../../shared/types/message.js'
-import { formatSummary, todoTool, getLatestTodoPhasesFromMessages, type TodoPhase } from '../../tools/builtin/todo.js'
 import type { TodoPhaseLike } from '../../shared/types/tool.js'
+import {
+  formatSummary,
+  getLatestTodoPhasesFromMessages,
+  type TodoPhase,
+  todoTool,
+} from '../../tools/builtin/todo.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -113,13 +118,14 @@ function createTodoRoute(ctx: ServerContext): Hono {
 
     return c.json({
       phases: updatedPhases,
-      output: result._tag === 'success'
-        ? result.output
-        : result._tag === 'error'
-          ? result.error
-          : result._tag === 'permission_required'
-            ? result.reason
-            : 'truncated',
+      output:
+        result._tag === 'success'
+          ? result.output
+          : result._tag === 'error'
+            ? result.error
+            : result._tag === 'permission_required'
+              ? result.reason
+              : 'truncated',
     })
   })
 

@@ -143,7 +143,10 @@ function normalizeForTodoMatch(value: string): string {
 /** Report whether `content` likely names the same work as any entry in
  *  `descriptions`. Normalize-then-equal first, with a substring fallback
  *  in either direction (≥6 char overlap on the contained side). */
-export function todoMatchesAnyDescription(content: string, descriptions: readonly string[]): boolean {
+export function todoMatchesAnyDescription(
+  content: string,
+  descriptions: readonly string[],
+): boolean {
   const target = normalizeForTodoMatch(content)
   if (!target) return false
   for (const desc of descriptions) {
@@ -523,10 +526,12 @@ export function formatSummary(phases: TodoPhase[], errors: string[], readOnly = 
 
 /** Extract the latest todo phases from stored messages (tool results).
  *  Scans backwards for the most recent `todo` tool result with phases metadata. */
-export function getLatestTodoPhasesFromMessages(messages: {
-  role: string
-  content: unknown[]
-}[]): TodoPhase[] {
+export function getLatestTodoPhasesFromMessages(
+  messages: {
+    role: string
+    content: unknown[]
+  }[],
+): TodoPhase[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]!
     if (msg.role !== 'tool') continue
@@ -576,7 +581,10 @@ const todoParameters: JSONSchema = {
       },
     },
     task: { type: 'string', description: 'Task content (for start/done/drop/rm)' },
-    phase: { type: 'string', description: 'Phase name (for done/drop/rm/append, or init flat mode)' },
+    phase: {
+      type: 'string',
+      description: 'Phase name (for done/drop/rm/append, or init flat mode)',
+    },
     items: {
       type: 'array',
       items: { type: 'string' },
@@ -618,7 +626,8 @@ export const todoTool: ToolDef = {
     // batch makes the natural retry hit "already exists" for the ops that did land.
     const failed = errors.length > 0
     const effective = failed ? previousPhases : updated
-    const completedTasks = readOnly || failed ? [] : getCompletionTransitions(previousPhases, updated)
+    const completedTasks =
+      readOnly || failed ? [] : getCompletionTransitions(previousPhases, updated)
 
     if (!readOnly && !failed) {
       todoState.set(updated)
@@ -638,5 +647,5 @@ export const todoTool: ToolDef = {
   },
 }
 
-export { applyParams }
 export type { TodoInput, TodoItem, TodoPhase, TodoStatus }
+export { applyParams }

@@ -71,10 +71,7 @@ describe('todoTool', () => {
 
   it('init with flat items uses default phase', async () => {
     const ctx = makeCtx()
-    const result = await todoTool.execute(
-      { op: 'init', items: ['Task A', 'Task B'] },
-      ctx,
-    )
+    const result = await todoTool.execute({ op: 'init', items: ['Task A', 'Task B'] }, ctx)
     expect(result._tag).toBe('success')
     const phases = await getState(ctx)
     expect(phases).toHaveLength(1)
@@ -358,7 +355,13 @@ describe('todoMatchesAnyDescription', () => {
 describe('phasesToMarkdown / markdownToPhases', () => {
   it('round-trips a multi-phase list', () => {
     const phases: TodoPhase[] = [
-      { name: 'Foundation', tasks: [{ content: 'Scaffold', status: 'completed' }, { content: 'Wire', status: 'in_progress' }] },
+      {
+        name: 'Foundation',
+        tasks: [
+          { content: 'Scaffold', status: 'completed' },
+          { content: 'Wire', status: 'in_progress' },
+        ],
+      },
       { name: 'Auth', tasks: [{ content: 'OAuth', status: 'pending' }] },
     ]
     const md = phasesToMarkdown(phases)
@@ -418,7 +421,13 @@ describe('phasesToMarkdown / markdownToPhases', () => {
 describe('nextActionableTask', () => {
   it('prefers in_progress over first pending', () => {
     const phases: TodoPhase[] = [
-      { name: 'P1', tasks: [{ content: 'A', status: 'completed' }, { content: 'B', status: 'pending' }] },
+      {
+        name: 'P1',
+        tasks: [
+          { content: 'A', status: 'completed' },
+          { content: 'B', status: 'pending' },
+        ],
+      },
       { name: 'P2', tasks: [{ content: 'C', status: 'in_progress' }] },
     ]
     expect(nextActionableTask(phases)?.content).toBe('C')
@@ -426,15 +435,19 @@ describe('nextActionableTask', () => {
 
   it('falls back to first pending', () => {
     const phases: TodoPhase[] = [
-      { name: 'P1', tasks: [{ content: 'A', status: 'completed' }, { content: 'B', status: 'pending' }] },
+      {
+        name: 'P1',
+        tasks: [
+          { content: 'A', status: 'completed' },
+          { content: 'B', status: 'pending' },
+        ],
+      },
     ]
     expect(nextActionableTask(phases)?.content).toBe('B')
   })
 
   it('returns undefined when all done', () => {
-    const phases: TodoPhase[] = [
-      { name: 'P1', tasks: [{ content: 'A', status: 'completed' }] },
-    ]
+    const phases: TodoPhase[] = [{ name: 'P1', tasks: [{ content: 'A', status: 'completed' }] }]
     expect(nextActionableTask(phases)).toBeUndefined()
   })
 })
@@ -542,9 +555,7 @@ describe('getLatestTodoPhasesFromMessages', () => {
 
 describe('clonePhases', () => {
   it('produces a deep copy', () => {
-    const phases: TodoPhase[] = [
-      { name: 'P1', tasks: [{ content: 'A', status: 'pending' }] },
-    ]
+    const phases: TodoPhase[] = [{ name: 'P1', tasks: [{ content: 'A', status: 'pending' }] }]
     const cloned = clonePhases(phases)
     at(cloned, 0).tasks[0]!.status = 'completed'
     expect(at(phases, 0).tasks[0]!.status).toBe('pending')

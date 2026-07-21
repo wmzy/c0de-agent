@@ -941,12 +941,10 @@ describe('contextWindow 兜底与 token 预算同步', () => {
   it('processes <todo:*> tags from assistant text and updates state', async () => {
     const messages = await getMessages(db, session.id)
     const state = makeState(session, messages)
-    const deps = makeMockDeps(
-      db,
-      () =>
-        mockTextStream(
-          'Let me set up tasks.\n<todo:init><todo:phase name="Work"><todo:item>Task A</todo:item><todo:item>Task B</todo:item></todo:phase></todo:init>',
-        ),
+    const deps = makeMockDeps(db, () =>
+      mockTextStream(
+        'Let me set up tasks.\n<todo:init><todo:phase name="Work"><todo:item>Task A</todo:item><todo:item>Task B</todo:item></todo:phase></todo:init>',
+      ),
     )
 
     const events: AgentEvent[] = []
@@ -971,9 +969,7 @@ describe('contextWindow 兜底与 token 预算同步', () => {
   it('injects steering on tag error', async () => {
     const messages = await getMessages(db, session.id)
     const state = makeState(session, messages)
-    state.todoPhases = [
-      { name: 'Setup', tasks: [{ content: 'Task A', status: 'pending' }] },
-    ]
+    state.todoPhases = [{ name: 'Setup', tasks: [{ content: 'Task A', status: 'pending' }] }]
     const deps = makeMockDeps(db, () => mockTextStream('<todo:done seq="9-9" />'))
 
     for await (const _ev of agentLoop(state, deps)) {
