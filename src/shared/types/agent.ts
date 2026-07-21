@@ -149,6 +149,11 @@ type AgentEvent =
       compactedCount: number
       keptCount: number
     }
+  /** Tag-based todo 操作成功后发射，前端据此刷新 TodoPanel。 */
+  | {
+      _tag: 'todo_update'
+      phases: { name: string; tasks: { content: string; status: string }[] }[]
+    }
   | { _tag: 'done' }
 
 /**
