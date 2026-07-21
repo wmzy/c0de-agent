@@ -444,7 +444,7 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
 // Summary formatter
 // =============================================================================
 
-function formatSummary(phases: TodoPhase[], errors: string[], readOnly = false): string {
+export function formatSummary(phases: TodoPhase[], errors: string[], readOnly = false): string {
   const tasks = phases.flatMap((phase) => phase.tasks)
   if (tasks.length === 0) {
     if (errors.length > 0) return `Errors: ${errors.join('; ')}`
@@ -452,15 +452,15 @@ function formatSummary(phases: TodoPhase[], errors: string[], readOnly = false):
   }
 
   const remainingByPhase = phases
-    .map((phase) => ({
+    .map((phase, pi) => ({
       name: phase.name,
-      tasks: phase.tasks.filter(
-        (task) => task.status === 'pending' || task.status === 'in_progress',
-      ),
+      tasks: phase.tasks
+        .map((task, ti) => ({ task, seq: `${pi + 1}-${ti + 1}` }))
+        .filter(({ task }) => task.status === 'pending' || task.status === 'in_progress'),
     }))
     .filter((phase) => phase.tasks.length > 0)
   const remainingTasks = remainingByPhase.flatMap((phase) =>
-    phase.tasks.map((task) => ({ ...task, phase: phase.name })),
+    phase.tasks.map(({ task, seq }) => ({ ...task, seq, phase: phase.name })),
   )
 
   let currentIdx = phases.findIndex((phase) =>
@@ -479,7 +479,7 @@ function formatSummary(phases: TodoPhase[], errors: string[], readOnly = false):
   } else {
     lines.push(`Remaining items (${remainingTasks.length}):`)
     for (const task of remainingTasks) {
-      lines.push(`  - ${task.content} [${task.status}] (${task.phase})`)
+      lines.push(`  - ${task.seq}: ${task.content} [${task.status}] (${task.phase})`)
     }
   }
   const closedAll = tasks.filter(
@@ -498,9 +498,12 @@ function formatSummary(phases: TodoPhase[], errors: string[], readOnly = false):
         : '.'
     }`,
   )
-  for (const phase of phases) {
+  for (let pi = 0; pi < phases.length; pi++) {
+    const phase = phases[pi]!
     lines.push(`  ${phase.name}:`)
-    for (const task of phase.tasks) {
+    for (let ti = 0; ti < phase.tasks.length; ti++) {
+      const task = phase.tasks[ti]!
+      const seq = `${pi + 1}-${ti + 1}`
       const checkbox = task.status === 'completed' ? '[X]' : '[ ]'
       const tag =
         task.status === 'in_progress'
@@ -508,7 +511,7 @@ function formatSummary(phases: TodoPhase[], errors: string[], readOnly = false):
           : task.status === 'abandoned'
             ? ' (dropped)'
             : ''
-      lines.push(`    - ${checkbox} ${task.content}${tag}`)
+      lines.push(`    - ${checkbox} ${seq}: ${task.content}${tag}`)
     }
   }
   return lines.join('\n')
@@ -635,4 +638,5 @@ export const todoTool: ToolDef = {
   },
 }
 
+export { applyParams }
 export type { TodoInput, TodoItem, TodoPhase, TodoStatus }

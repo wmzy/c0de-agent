@@ -304,6 +304,23 @@ describe('todoTool', () => {
       expect(result.output).toContain('referenced by content')
     }
   })
+
+  // ── seq in formatSummary (for tag-based todo operations) ──
+
+  it('formatSummary includes seq numbers for LLM consumption', async () => {
+    const ctx = makeCtx()
+    await initPhases(ctx, [
+      { phase: 'Setup', items: ['Task A', 'Task B'] },
+      { phase: 'Impl', items: ['Task C'] },
+    ])
+    const result = await todoTool.execute({ op: 'view' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag !== 'success') return
+    // seq format: phaseIdx-taskIdx (1-based)
+    expect(result.output).toContain('1-1: Task A')
+    expect(result.output).toContain('1-2: Task B')
+    expect(result.output).toContain('2-1: Task C')
+  })
 })
 
 // ── Fuzzy match ───────────────────────────────────────────
