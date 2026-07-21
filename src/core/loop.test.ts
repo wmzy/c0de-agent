@@ -935,6 +935,55 @@ describe('contextWindow 兜底与 token 预算同步', () => {
       warnSpy.mockRestore()
     }
   })
+
+  // ── todo tag processing ──
+
+  it('processes <todo:*> tags from assistant text and updates state', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(
+      db,
+      () =>
+        mockTextStream(
+          'Let me set up tasks.\n<todo:init><todo:phase name="Work"><todo:item>Task A</todo:item><todo:item>Task B</todo:item></todo:phase></todo:init>',
+        ),
+    )
+
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+
+    // state.todoPhases should be updated
+    expect(state.todoPhases).toHaveLength(1)
+    expect(state.todoPhases[0]!.name).toBe('Work')
+    expect(state.todoPhases[0]!.tasks).toHaveLength(2)
+
+    // todo_update event should be emitted
+    const todoUpdate = events.find((e) => e._tag === 'todo_update')
+    expect(todoUpdate).toBeTruthy()
+    if (todoUpdate && todoUpdate._tag === 'todo_update') {
+      expect(todoUpdate.phases).toHaveLength(1)
+      expect(todoUpdate.phases[0]!.tasks).toHaveLength(2)
+    }
+  })
+
+  it('injects steering on tag error', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    state.todoPhases = [
+      { name: 'Setup', tasks: [{ content: 'Task A', status: 'pending' }] },
+    ]
+    const deps = makeMockDeps(db, () => mockTextStream('<todo:done seq="9-9" />'))
+
+    for await (const _ev of agentLoop(state, deps)) {
+      // drain
+    }
+
+    // Steering queue should have an error message
+    expect(state.steeringQueue.length).toBeGreaterThan(0)
+    expect(state.steeringQueue[0]).toContain('Invalid seq')
+  })
 })
 
 describe('agentLoop with hookRunner', () => {

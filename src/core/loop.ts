@@ -34,7 +34,9 @@ import {
   createPromptRegistry,
   registerPromptSection,
 } from './prompt-registry.js'
-import { drainSteering } from './steering.js'
+import { drainSteering, injectSteering } from './steering.js'
+import { applyTodoTags } from './todo-tags.js'
+import { formatSummary, type TodoPhase } from '../tools/builtin/todo.js'
 import type { CollectedToolCall } from './tool-exec.js'
 import { executeToolCalls } from './tool-exec.js'
 import type { AgentDependencies } from './types.js'
@@ -819,6 +821,32 @@ async function* persistAssistantAndTools(
   }
 }
 
+/** Process <todo:*> tags embedded in assistant text.
+ *  Parses tags, applies them to state.todoPhases via applyTodoTags,
+ *  yields todo_update event on success, injects steering on error/view. */
+async function* processTodoTags(state: AgentState, text: string): AsyncGenerator<AgentEvent> {
+  if (text.length === 0) return
+  const result = applyTodoTags(state.todoPhases as TodoPhase[], text)
+
+  if (result.errors.length > 0) {
+    // Inject error feedback into steering queue for next turn
+    injectSteering(state, `<todo-tag-errors>\n${result.errors.join('\n')}\n</todo-tag-errors>`)
+  }
+  if (result.hasView) {
+    // View request: inject current state (with seq) into steering
+    const summary = formatSummary(result.phases, [], true)
+    injectSteering(state, `<todo-state>\n${summary}\n</todo-state>`)
+  }
+
+  // Emit event + update state if anything happened
+  const tagsFound =
+    result.errors.length > 0 || result.hasView || result.phases !== state.todoPhases
+  if (tagsFound) {
+    state.todoPhases = result.phases
+    yield { _tag: 'todo_update', phases: result.phases }
+  }
+}
+
 /** 轮末压缩：turn-end 自动压缩（含死锁检测）+ mid-turn 压缩，复用 compactContext。
  *
  *  - turn-end：shouldCompact 触发时静默压缩；压缩后仍超阈值（典型成因 keepRecentTokens
@@ -1144,6 +1172,9 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
 
     // —— 持久化 assistant + 执行工具 + 透传 tool_call/subagent 事件 ——
     yield* persistAssistantAndTools(state, deps, collected.text, validCalls)
+
+    // —— 处理 assistant 文本中的 <todo:*> 标签 ——
+    yield* processTodoTags(state, collected.text.join(''))
 
     if (validToolCalls.length === 0) {
       // finish_reason=length/content_filter 表示响应被截断或被内容过滤，而非正常说完。
