@@ -308,7 +308,7 @@ export function useTerminal(projectId: string) {
         // 更新活动标签
         const otherTabs = sessionsRef.current.filter((s) => s.tabId !== tabId).map((s) => s.tabId)
         const uniqueTabs = [...new Set(otherTabs)]
-        setActiveTabId(uniqueTabs.length > 0 ? uniqueTabs[uniqueTabs.length - 1]! : null)
+        setActiveTabId(uniqueTabs.length > 0 ? (uniqueTabs[uniqueTabs.length - 1] ?? null) : null)
       }
     }
   }, [])
@@ -387,15 +387,17 @@ export function useTerminal(projectId: string) {
         const liveIds = new Set(terminals.filter((t) => t.projectId === pid).map((t) => t.id))
         const restored = persisted.sessions
           .filter((ps) => liveIds.has(ps.id))
-          .map((ps) => {
-            const info = terminals.find((t) => t.id === ps.id)!
+          .map((ps): TerminalSession | null => {
+            const info = terminals.find((t) => t.id === ps.id)
+            if (!info) return null
             return {
               ...info,
               ws: null,
               connecting: false,
               tabId: ps.tabId,
-            } satisfies TerminalSession
+            }
           })
+          .filter((s): s is TerminalSession => s !== null)
         if (restored.length === 0) {
           if (!cancelled) setRestoring(false)
           return

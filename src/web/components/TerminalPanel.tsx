@@ -479,8 +479,12 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
         const delta = direction === 'horizontal' ? ev.clientX - e.clientX : ev.clientY - e.clientY
         const deltaFraction = (delta / totalSize) * total
 
-        const newLeft = sizes[leftIdx]! + deltaFraction
-        const newRight = sizes[leftIdx + 1]! - deltaFraction
+        const left = sizes[leftIdx]
+        const right = sizes[leftIdx + 1]
+        // 边界保护：索引越界时放弃本次调整
+        if (left === undefined || right === undefined) return
+        const newLeft = left + deltaFraction
+        const newRight = right - deltaFraction
 
         // 最小 pane 约束
         const minFlex = minPaneFlex * total

@@ -70,37 +70,54 @@ ${history}`
   const summary = await summarizer(prompt)
 
   const squashEntryId = generateId()
-  const archiveId = cfg.archiveOriginal
-    ? await archiveOriginalEntries(handle, sessionId, toSquash, 'squash', summary, squashEntryId)
-    : generateId()
 
-  const fileSnapshotIds: string[] = []
-  if (cfg.preserveFileSnapshots) {
-    const hotFiles = extractHotFiles(toSquash)
-    for (const file of hotFiles) {
-      const id = await upsertFileSnapshot(handle, sessionId, file.path, file.content)
-      fileSnapshotIds.push(id)
+  // Atomic rewrite: archive originals → upsert snapshots → delete originals →
+  // insert summary. If any step throws, the whole transaction rolls back and
+  // the original message history is left intact. (Mirrors compactSession.)
+  const { archiveId, fileSnapshotIds } = await handle.db.transaction(async (tx) => {
+    const txHandle: DB = { db: tx, close: handle.close }
+
+    const archiveId = cfg.archiveOriginal
+      ? await archiveOriginalEntries(
+          txHandle,
+          sessionId,
+          toSquash,
+          'squash',
+          summary,
+          squashEntryId,
+        )
+      : generateId()
+
+    const fileSnapshotIds: string[] = []
+    if (cfg.preserveFileSnapshots) {
+      const hotFiles = extractHotFiles(toSquash)
+      for (const file of hotFiles) {
+        const id = await upsertFileSnapshot(txHandle, sessionId, file.path, file.content)
+        fileSnapshotIds.push(id)
+      }
     }
-  }
 
-  await deleteEntriesByIds(
-    handle,
-    toSquash.map((m) => m.id),
-  )
+    await deleteEntriesByIds(
+      txHandle,
+      toSquash.map((m) => m.id),
+    )
 
-  await insertEntry(handle, {
-    id: squashEntryId,
-    sessionId,
-    tag: 'squash',
-    content: {
-      summary,
-      squashedEntryIds: toSquash.map((m) => m.id),
-      archiveId,
-    },
-    tokenCount: estimateTokens(summary),
-    // Position at the first squashed message's timestamp so it sorts between
-    // the prefix and the kept tail under createdAt-ascending order.
-    createdAt: toSquash[0] ? new Date(toSquash[0].createdAt) : new Date(),
+    await insertEntry(txHandle, {
+      id: squashEntryId,
+      sessionId,
+      tag: 'squash',
+      content: {
+        summary,
+        squashedEntryIds: toSquash.map((m) => m.id),
+        archiveId,
+      },
+      tokenCount: estimateTokens(summary),
+      // Position at the first squashed message's timestamp so it sorts between
+      // the prefix and the kept tail under createdAt-ascending order.
+      createdAt: toSquash[0] ? new Date(toSquash[0].createdAt) : new Date(),
+    })
+
+    return { archiveId, fileSnapshotIds }
   })
 
   return {

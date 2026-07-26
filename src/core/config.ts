@@ -29,7 +29,10 @@ const DEFAULT_CONFIG: Config = {
     keepRecentTokens: 4000,
     midTurnEnabled: false,
   },
-  tools: { enabled: ['read', 'write', 'edit', 'glob', 'grep', 'bash', 'todo', 'websearch'], disabled: [] },
+  tools: {
+    enabled: ['read', 'write', 'edit', 'glob', 'grep', 'bash', 'todo', 'websearch'],
+    disabled: [],
+  },
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: { enabled: ['/compact', '/model', '/clear', '/help', '/fork', '/config'] },

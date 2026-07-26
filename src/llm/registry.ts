@@ -8,12 +8,26 @@ type RouteEntry = ReturnType<typeof openAICompatRoute> & {
   models: Record<string, ModelCapabilities>
 }
 
-type Registry = {
+/**
+ * Atomic, replaceable snapshot of every route + role binding.
+ *
+ * `Registry.table` is the single mutable field on a registry; `rebuildRegistry`
+ * swaps it in one reference assignment, so a `resolveRoute` /
+ * `resolveModelByRole` call firing at any moment observes a fully
+ * self-consistent table — either the complete previous set or the complete
+ * new set — never the half-cleared / half-registered intermediate that
+ * clear()-then-register would expose to a concurrent reader.
+ */
+type RouteTable = {
   routes: Map<string, RouteEntry>
   roles: Map<string, { provider: string; model: string }>
 }
 
-const createRegistry = (): Registry => ({ routes: new Map(), roles: new Map() })
+type Registry = {
+  table: RouteTable
+}
+
+const createRegistry = (): Registry => ({ table: { routes: new Map(), roles: new Map() } })
 
 type ProviderInput = {
   name: string
@@ -25,7 +39,7 @@ type ProviderInput = {
 }
 
 const registerProvider = (registry: Registry, input: ProviderInput): void => {
-  registry.routes.set(input.name, {
+  registry.table.routes.set(input.name, {
     ...openAICompatRoute({
       id: input.name,
       provider: input.name,
@@ -91,7 +105,7 @@ function overrideToCapabilities(
  * Throws NoRoute when the provider is unknown.
  */
 const resolveRoute = (registry: Registry, provider: string, modelId: string): ResolveResult => {
-  const route = registry.routes.get(provider)
+  const route = registry.table.routes.get(provider)
   if (route === undefined) {
     throw llmError('LLM', 'resolve', {
       _tag: 'NoRoute',
@@ -117,9 +131,9 @@ const resolveModelByRole = (
   role: ModelRole,
 ): { provider: string; model: string } => {
   const key = role._tag
-  const entry = registry.roles.get(key)
+  const entry = registry.table.roles.get(key)
   if (entry === undefined) {
-    const fallback = registry.roles.get('default')
+    const fallback = registry.table.roles.get('default')
     if (fallback === undefined) {
       throw llmError('LLM', 'resolve', {
         _tag: 'NoRoute',
@@ -135,7 +149,26 @@ const resolveModelByRole = (
 
 /** Bind a role to a (provider, model) pair. */
 const setRole = (registry: Registry, role: ModelRole, provider: string, model: string): void => {
-  registry.roles.set(role._tag, { provider, model })
+  registry.table.roles.set(role._tag, { provider, model })
+}
+
+/**
+ * Atomically rebuild the registry's routes + roles.
+ *
+ * `builder` populates a *detached* next registry via the normal
+ * `registerProvider` / `setRole` API; only after it returns is the live
+ * `table` pointer swapped in a single reference assignment. A reader that runs
+ * at any point during the build therefore sees the previous complete table,
+ * and the moment `rebuildRegistry` returns it sees the new complete table —
+ * never the partial intermediate the builder is still filling.
+ *
+ * Prefer this over clear()-then-register whenever the registry is shared with
+ * live request handlers (e.g. config hot-reload).
+ */
+const rebuildRegistry = (registry: Registry, builder: (next: Registry) => void): void => {
+  const next = createRegistry()
+  builder(next)
+  registry.table = next.table
 }
 
 /** Default role + a starter catalog of well-known models. */
@@ -173,12 +206,13 @@ const builtinCapabilities: Record<string, Record<string, ModelCapabilities>> = {
   },
 }
 
-export type { ProviderInput, Registry, ResolveResult, RouteEntry }
+export type { ProviderInput, Registry, ResolveResult, RouteEntry, RouteTable }
 export {
   builtinCapabilities,
   createRegistry,
   DEFAULT_MODEL_CAPABILITIES,
   overrideToCapabilities,
+  rebuildRegistry,
   registerProvider,
   resolveModelByRole,
   resolveRoute,

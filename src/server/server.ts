@@ -1,6 +1,15 @@
 // src/server/server.ts
 
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import type { Server as NodeServer } from 'node:http'
 import { connect as tcpConnect } from 'node:net'
 import { homedir } from 'node:os'
@@ -18,6 +27,7 @@ import type { Registry } from '../llm/registry.js'
 import {
   createRegistry,
   overrideToCapabilities,
+  rebuildRegistry,
   registerProvider,
 } from '../llm/registry.js'
 import { initPlugins } from '../plugins/index.js'
@@ -93,15 +103,17 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
 }
 
 /**
- * config 变更后原地同步 registry（清空旧路由 + 重新注册），
- * 使运行中的 ServerContext 立即生效，无需重启。
+ * config 变更后原子地同步 registry：在隔离的 next registry 上重建全部路由，
+ * 完成后一次性替换 registry 内部 table 引用。运行中的 resolveRoute 任何时刻
+ * 看到的都是完整的旧表或完整的新表，不会读到「已清空但未注册完」的半状态，
+ * 因此不会把本可用的 provider 误判为 NoRoute。ServerContext 立即生效，无需重启。
  */
 function syncRegistryFromConfig(registry: Registry, config: Config): void {
-  registry.routes.clear()
-  registry.roles.clear()
-  for (const p of config.providers) {
-    registerProviderFromConfig(registry, p)
-  }
+  rebuildRegistry(registry, (next) => {
+    for (const p of config.providers) {
+      registerProviderFromConfig(next, p)
+    }
+  })
 }
 
 /** 全局数据根目录：XDG_DATA_HOME 优先，否则 ~/.local/share/c0de。
@@ -273,15 +285,27 @@ function acquireDevDbLock(dataDir: string): void {
       }
     }
     // Stale lock cleanup
-    try { unlinkSync(lockPath) } catch { /* best-effort */ }
-    try { unlinkSync(join(dataDir, 'postmaster.pid')) } catch { /* best-effort */ }
+    try {
+      unlinkSync(lockPath)
+    } catch {
+      /* best-effort */
+    }
+    try {
+      unlinkSync(join(dataDir, 'postmaster.pid'))
+    } catch {
+      /* best-effort */
+    }
   }
   writeFileSync(lockPath, String(process.pid))
 }
 
 /** Release the dev DB lock (best-effort, stale-detection covers missed calls). */
 function releaseDevDbLock(dataDir: string): void {
-  try { unlinkSync(join(dataDir, DEV_LOCK_FILE)) } catch { /* best-effort */ }
+  try {
+    unlinkSync(join(dataDir, DEV_LOCK_FILE))
+  } catch {
+    /* best-effort */
+  }
 }
 
 /** dev 专用：创建 + migrate PGLite，跨热重载复用（单写者，只建一次）。 */

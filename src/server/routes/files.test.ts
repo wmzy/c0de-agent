@@ -494,7 +494,7 @@ describe('files route', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { commit: { subject: string } | null }
     expect(body.commit).not.toBeNull()
-    expect(body.commit!.subject).toBe('feat: initial commit')
+    expect(body.commit?.subject).toBe('feat: initial commit')
   })
 
   it('GET /git-last-commit 非 git 仓库返回 commit null', async () => {

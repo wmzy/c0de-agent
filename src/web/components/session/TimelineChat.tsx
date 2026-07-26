@@ -3,7 +3,12 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { SegmentBreak, SegmentFooter } from '../LLMDetail.js'
 import { MessageItem } from './MessageItem.js'
-import { groupBySegment, isEmptyMessage, type TimelineRow } from './utils/timeline.js'
+import {
+  groupBySegment,
+  isEmptyMessage,
+  type SegmentGroup,
+  type TimelineRow,
+} from './utils/timeline.js'
 
 const virtualInner = css`
   position: relative;
@@ -116,49 +121,71 @@ export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showA
     getItemKey: (i) => groups[i]?.segment.id ?? i,
   })
 
+  /** 渲染单个段组的内部内容（不含定位 wrapper）。 */
+  const renderGroupContent = (g: SegmentGroup) => {
+    const hasSegmentData = g.segment.id !== '__implicit__'
+    return (
+      <>
+        {hasSegmentData && <SegmentBreak segment={g.segment} />}
+        {g.messages.map(({ message, latency }) => {
+          const key = `m:${message.id}`
+          const isJson = showAllJson || localJson.has(key)
+          // 空壳消息：仅在 JSON 模式下露出（否则美化态无内容可显示）。
+          if (isEmptyMessage(message) && !isJson) return null
+          return (
+            <div className={rowWrap} key={key}>
+              <button
+                type="button"
+                className={jsonToggle}
+                onClick={() => toggle(key)}
+                data-testid={`row-json-${key}`}
+                aria-label={isJson ? '切换美化' : '切换 JSON'}
+              >
+                {isJson ? '✦' : '{ }'}
+              </button>
+              {isJson ? (
+                <pre className={pre}>{JSON.stringify(message, null, 2)}</pre>
+              ) : (
+                <MessageItem message={message} latency={latency} />
+              )}
+            </div>
+          )
+        })}
+        {hasSegmentData && <SegmentFooter segment={g.segment} />}
+      </>
+    )
+  }
+
+  // 无滚动容器（测试环境或异常布局）时回退到非虚拟化全量渲染，避免白屏。
+  const useVirtual = scrollParent !== null
+
   return (
-    <div className={virtualInner} ref={innerRef} style={{ height: virtualizer.getTotalSize() }}>
-      {virtualizer.getVirtualItems().map((vi) => {
-        const g = groups[vi.index]
-        if (!g) return null
-        const hasSegmentData = g.segment.id !== '__implicit__'
-        return (
-          <div
-            className={virtualItem}
-            data-index={vi.index}
-            key={g.segment.id}
-            ref={virtualizer.measureElement}
-            style={{ transform: `translateY(${vi.start}px)` }}
-          >
-            {hasSegmentData && <SegmentBreak segment={g.segment} />}
-            {g.messages.map(({ message, latency }) => {
-              const key = `m:${message.id}`
-              const isJson = showAllJson || localJson.has(key)
-              // 空壳消息：仅在 JSON 模式下露出（否则美化态无内容可显示）。
-              if (isEmptyMessage(message) && !isJson) return null
-              return (
-                <div className={rowWrap} key={key}>
-                  <button
-                    type="button"
-                    className={jsonToggle}
-                    onClick={() => toggle(key)}
-                    data-testid={`row-json-${key}`}
-                    aria-label={isJson ? '切换美化' : '切换 JSON'}
-                  >
-                    {isJson ? '✦' : '{ }'}
-                  </button>
-                  {isJson ? (
-                    <pre className={pre}>{JSON.stringify(message, null, 2)}</pre>
-                  ) : (
-                    <MessageItem message={message} latency={latency} />
-                  )}
-                </div>
-              )
-            })}
-            {hasSegmentData && <SegmentFooter segment={g.segment} />}
-          </div>
-        )
-      })}
+    <div
+      className={virtualInner}
+      ref={innerRef}
+      style={useVirtual ? { height: virtualizer.getTotalSize() } : undefined}
+    >
+      {useVirtual
+        ? virtualizer.getVirtualItems().map((vi) => {
+            const g = groups[vi.index]
+            if (!g) return null
+            return (
+              <div
+                className={virtualItem}
+                data-index={vi.index}
+                key={g.segment.id}
+                ref={virtualizer.measureElement}
+                style={{ transform: `translateY(${vi.start}px)` }}
+              >
+                {renderGroupContent(g)}
+              </div>
+            )
+          })
+        : groups.map((g) => (
+            <div className={virtualItem} key={g.segment.id}>
+              {renderGroupContent(g)}
+            </div>
+          ))}
     </div>
   )
 }

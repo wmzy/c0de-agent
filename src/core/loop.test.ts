@@ -954,15 +954,15 @@ describe('contextWindow 兜底与 token 预算同步', () => {
 
     // state.todoPhases should be updated
     expect(state.todoPhases).toHaveLength(1)
-    expect(state.todoPhases[0]!.name).toBe('Work')
-    expect(state.todoPhases[0]!.tasks).toHaveLength(2)
+    expect(state.todoPhases[0]?.name).toBe('Work')
+    expect(state.todoPhases[0]?.tasks).toHaveLength(2)
 
     // todo_update event should be emitted
     const todoUpdate = events.find((e) => e._tag === 'todo_update')
     expect(todoUpdate).toBeTruthy()
     if (todoUpdate && todoUpdate._tag === 'todo_update') {
       expect(todoUpdate.phases).toHaveLength(1)
-      expect(todoUpdate.phases[0]!.tasks).toHaveLength(2)
+      expect(todoUpdate.phases[0]?.tasks).toHaveLength(2)
     }
   })
 

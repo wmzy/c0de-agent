@@ -6,7 +6,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
-import { bootstrapServerContext, buildServerContext, createDevDb, releaseDevDbLock } from './server.js'
+import {
+  bootstrapServerContext,
+  buildServerContext,
+  createDevDb,
+  releaseDevDbLock,
+} from './server.js'
 
 describe('bootstrapServerContext 数据持久化', () => {
   let tmpDir: string
@@ -155,7 +160,7 @@ describe('createDevDb 跨进程锁', () => {
       // 写入一个几乎不可能存活的 PID（INT_MAX）模拟 stale 锁
       const stalePid = 2147483647
       writeFileSync(join(tmpDir, '.dev.lock'), String(stalePid))
-      writeFileSync(join(tmpDir, 'postmaster.pid'), `-42\n/pglite/data\n0\n5432\n`) 
+      writeFileSync(join(tmpDir, 'postmaster.pid'), `-42\n/pglite/data\n0\n5432\n`)
       const db = await createDevDb(tmpDir)
       expect(db).toBeDefined()
       // stale 锁被清理，新锁写入当前 PID

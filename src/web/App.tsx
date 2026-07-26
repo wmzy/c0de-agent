@@ -175,12 +175,18 @@ function RootRedirect() {
 function ChatPage() {
   const { projectId, sessionId } = useParams<{ projectId: string; sessionId: string }>()
   const navigate = useNavigate()
-  const terminal = useTerminal(projectId!)
+  // projectId 来自路由 :projectId 段，缺失时下方 `if (!projectId)` 会渲染 NotFound；
+  // Hook 必须无条件调用，故用 `?? ''` 提供稳定 string，query 由 enabled 守卫。
+  const terminal = useTerminal(projectId ?? '')
 
   // 获取项目信息（worktree 用于终端默认目录）
   const { data: project } = useQuery({
     queryKey: ['project', projectId],
-    queryFn: () => projectAPI.get(projectId!),
+    queryFn: () => {
+      // enabled: !!projectId 保证仅当 projectId 为真值时执行
+      if (!projectId) throw new Error('projectId is required')
+      return projectAPI.get(projectId)
+    },
     enabled: !!projectId,
   })
 

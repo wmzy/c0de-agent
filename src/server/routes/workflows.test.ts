@@ -302,7 +302,13 @@ export default async function workflow(ctx) {
       body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE }),
     })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { ok: boolean; name: string; description: string; filePath: string; source: string }
+    const body = (await res.json()) as {
+      ok: boolean
+      name: string
+      description: string
+      filePath: string
+      source: string
+    }
     expect(body.ok).toBe(true)
     expect(body.name).toBe('api-wf')
     expect(body.description).toBe('API created workflow')

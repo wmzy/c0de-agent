@@ -18,6 +18,49 @@ const collect = async (gen: AsyncGenerator<string>): Promise<string[]> => {
   return out
 }
 
+/**
+ * Build a ReadableStream that tracks reader cleanup. `readerCancels` counts
+ * how often the acquired reader's `cancel()` is invoked (the fix under test);
+ * `sourceCancels` counts how often the underlying source's `cancel()` runs —
+ * the real signal that the transport was torn down. Note: in Bun
+ * `reader.cancel()` does NOT flip `stream.locked`, so we assert on these
+ * counters instead. `error` (instead of `close`) simulates an upstream
+ * network failure so `reader.read()` rejects.
+ */
+const trackedStream = (
+  chunks: string[],
+  opts: { error?: Error } = {},
+): {
+  stream: ReadableStream<Uint8Array>
+  readerCancels: () => number
+  sourceCancels: () => number
+} => {
+  const encoder = new TextEncoder()
+  let readerCancels = 0
+  let sourceCancels = 0
+  const base = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      if (opts.error) controller.error(opts.error)
+      else controller.close()
+    },
+    cancel() {
+      sourceCancels += 1
+    },
+  })
+  const original = base.getReader.bind(base)
+  base.getReader = (() => {
+    const reader = original()
+    const realCancel = reader.cancel.bind(reader)
+    reader.cancel = () => {
+      readerCancels += 1
+      return realCancel()
+    }
+    return reader
+  }) as typeof base.getReader
+  return { stream: base, readerCancels: () => readerCancels, sourceCancels: () => sourceCancels }
+}
+
 describe('transport sseFraming', () => {
   it('parses a single data frame', async () => {
     const frames = await collect(sseFraming(toStream(['data: {"a":1}\n\n'])))
@@ -49,6 +92,59 @@ describe('transport sseFraming', () => {
   it('flushes a trailing frame without terminator', async () => {
     const frames = await collect(sseFraming(toStream(['data: {"tail":1}'])))
     expect(frames).toEqual(['{"tail":1}'])
+  })
+})
+
+describe('transport sseFraming reader cleanup', () => {
+  it('cancels the reader on normal completion', async () => {
+    const { stream, readerCancels, sourceCancels } = trackedStream(['data: {"a":1}\n\n'])
+    const frames = await collect(sseFraming(stream))
+    expect(frames).toEqual(['{"a":1}'])
+    // reader.cancel() is always invoked in the finally; the stream is already
+    // closed by then so the underlying source has nothing to tear down.
+    expect(readerCancels()).toBe(1)
+    expect(sourceCancels()).toBe(0)
+  })
+
+  it('cancels the reader when the consumer throws mid-stream', async () => {
+    const { stream, readerCancels, sourceCancels } = trackedStream([
+      'data: {"a":1}\n\n',
+      'data: {"b":2}\n\n',
+    ])
+    const gen = sseFraming(stream)
+    await expect(
+      (async () => {
+        for await (const _frame of gen) throw new Error('consumer boom')
+      })(),
+    ).rejects.toThrow('consumer boom')
+    // reader was released AND the still-readable transport was torn down.
+    expect(readerCancels()).toBe(1)
+    expect(sourceCancels()).toBe(1)
+  })
+
+  it('cancels the reader on early consumer break', async () => {
+    const { stream, readerCancels, sourceCancels } = trackedStream([
+      'data: {"a":1}\n\n',
+      'data: {"b":2}\n\n',
+    ])
+    const gen = sseFraming(stream)
+    const out: string[] = []
+    for await (const frame of gen) {
+      out.push(frame)
+      break
+    }
+    expect(out).toEqual(['{"a":1}'])
+    expect(readerCancels()).toBe(1)
+    expect(sourceCancels()).toBe(1)
+  })
+
+  it('cancels the reader when the upstream stream errors', async () => {
+    const { stream, readerCancels } = trackedStream(['data: {"a":1}\n\n'], {
+      error: new Error('upstream broke'),
+    })
+    await expect(collect(sseFraming(stream))).rejects.toThrow('upstream broke')
+    // reader.cancel() still runs in the finally even though read() rejected.
+    expect(readerCancels()).toBe(1)
   })
 })
 

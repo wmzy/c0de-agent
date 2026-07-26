@@ -296,9 +296,21 @@ export async function runSubAgent(
         void appendMessage(deps.db, parent.session.id, {
           role: 'user',
           content: [{ _tag: 'text', text: synthetic }],
-        }).catch(() => {})
+        }).catch((e) => {
+          // 通知消息持久化失败：任务已算完但父 session 收不到完成通知——记录避免静默丢失。
+          console.warn(
+            '[subagent] background 通知消息持久化失败:',
+            e instanceof Error ? e.message : String(e),
+          )
+        })
       })
-      .catch(() => {})
+      .catch((e) => {
+        // background 子 agent 执行或合成失败：父 session 永远收不到结果，记录避免静默丢失。
+        console.warn(
+          '[subagent] background 子 agent 执行失败:',
+          e instanceof Error ? e.message : String(e),
+        )
+      })
     return { _tag: 'running', jobId, sessionId: childSession.id }
   }
 

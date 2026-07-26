@@ -116,14 +116,14 @@ describe('applyTodoTags', () => {
   it('applies start tag', () => {
     const { phases, errors } = applyTodoTags(PHASES, '<todo:start seq="1-3" />')
     expect(errors).toHaveLength(0)
-    const task = phases[0]!.tasks[2]!
-    expect(task.status).toBe('in_progress')
+    const task = phases[0]?.tasks[2]
+    expect(task?.status).toBe('in_progress')
   })
 
   it('applies done tag', () => {
     const { phases, errors } = applyTodoTags(PHASES, '<todo:done seq="1-2" />')
     expect(errors).toHaveLength(0)
-    expect(phases[0]!.tasks[1]!.status).toBe('completed')
+    expect(phases[0]?.tasks[1]?.status).toBe('completed')
   })
 
   it('applies init tag', () => {
@@ -131,23 +131,23 @@ describe('applyTodoTags', () => {
     const { phases, errors } = applyTodoTags(PHASES, text)
     expect(errors).toHaveLength(0)
     expect(phases).toHaveLength(1)
-    expect(phases[0]!.name).toBe('New')
+    expect(phases[0]?.name).toBe('New')
   })
 
   it('applies append tag', () => {
     const text = `<todo:append phase="1"><todo:item>Extra task</todo:item></todo:append>`
     const { phases, errors } = applyTodoTags(PHASES, text)
     expect(errors).toHaveLength(0)
-    expect(phases[0]!.tasks).toHaveLength(4)
-    expect(phases[0]!.tasks[3]!.content).toBe('Extra task')
+    expect(phases[0]?.tasks).toHaveLength(4)
+    expect(phases[0]?.tasks[3]?.content).toBe('Extra task')
   })
 
   it('applies multiple tags sequentially', () => {
     const text = '<todo:done seq="1-2" />\n<todo:done seq="1-3" />'
     const { phases, errors } = applyTodoTags(PHASES, text)
     expect(errors).toHaveLength(0)
-    expect(phases[0]!.tasks[1]!.status).toBe('completed')
-    expect(phases[0]!.tasks[2]!.status).toBe('completed')
+    expect(phases[0]?.tasks[1]?.status).toBe('completed')
+    expect(phases[0]?.tasks[2]?.status).toBe('completed')
   })
 
   it('resolves all seqs against original snapshot', () => {
@@ -156,7 +156,7 @@ describe('applyTodoTags', () => {
     const { phases, errors } = applyTodoTags(PHASES, text)
     expect(errors).toHaveLength(0)
     // 'Write tests' was 1-3, now completed
-    const writeTests = phases[0]!.tasks.find((t) => t.content === 'Write tests')
+    const writeTests = phases[0]?.tasks.find((t) => t.content === 'Write tests')
     expect(writeTests?.status).toBe('completed')
   })
 

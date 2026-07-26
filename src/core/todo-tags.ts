@@ -45,7 +45,7 @@ function parseItems(inner: string): string[] {
   const items: string[] = []
   const itemRe = /<todo:item>([\s\S]*?)<\/todo:item>/g
   for (const m of inner.matchAll(itemRe)) {
-    items.push(m[1]!.trim())
+    items.push((m[1] ?? '').trim())
   }
   return items
 }
@@ -55,7 +55,7 @@ function parseInitInner(inner: string): { name: string; items: string[] }[] {
   const phases: { name: string; items: string[] }[] = []
   const phaseRe = /<todo:phase\s+name="([^"]+)">([\s\S]*?)<\/todo:phase>/g
   for (const m of inner.matchAll(phaseRe)) {
-    phases.push({ name: m[1]!.trim(), items: parseItems(m[2] ?? '') })
+    phases.push({ name: (m[1] ?? '').trim(), items: parseItems(m[2] ?? '') })
   }
   // Flat items without phase wrapper → default phase
   if (phases.length === 0) {
@@ -69,7 +69,7 @@ function parseInitInner(inner: string): { name: string; items: string[] }[] {
 export function parseTodoTags(text: string): ParsedTodoTag[] {
   const tags: ParsedTodoTag[] = []
   for (const m of text.matchAll(TAG_RE)) {
-    const op = m[1]!
+    const op = m[1] ?? ''
     const attrs = m[2] ?? ''
     const inner = m[3]
 
@@ -82,7 +82,7 @@ export function parseTodoTags(text: string): ParsedTodoTag[] {
         break
       case 'append': {
         const phaseMatch = /phase="([^"]+)"/.exec(attrs)
-        const phaseSeq = phaseMatch ? Number.parseInt(phaseMatch[1]!, 10) : Number.NaN
+        const phaseSeq = phaseMatch ? Number.parseInt(phaseMatch[1] ?? '', 10) : Number.NaN
         tags.push({ op: 'append', phaseSeq, items: parseItems(inner ?? '') })
         break
       }
@@ -115,18 +115,23 @@ export function resolveSeq(
 ): { phase: TodoPhase; task?: TodoItem } | undefined {
   if (!seq) return undefined
   const parts = seq.split('-').map((s) => Number.parseInt(s.trim(), 10))
-  if (parts.length === 0 || Number.isNaN(parts[0]!)) return undefined
+  const phaseNum = parts[0]
+  if (phaseNum === undefined || Number.isNaN(phaseNum)) return undefined
 
-  const phaseIdx = parts[0]! - 1
+  const phaseIdx = phaseNum - 1
   if (phaseIdx < 0 || phaseIdx >= phases.length) return undefined
-  const phase = phases[phaseIdx]!
+  const phase = phases[phaseIdx]
+  if (!phase) return undefined
 
   if (parts.length === 1) return { phase }
 
-  if (Number.isNaN(parts[1]!)) return undefined
-  const taskIdx = parts[1]! - 1
+  const taskNum = parts[1]
+  if (taskNum === undefined || Number.isNaN(taskNum)) return undefined
+  const taskIdx = taskNum - 1
   if (taskIdx < 0 || taskIdx >= phase.tasks.length) return undefined
-  return { phase, task: phase.tasks[taskIdx]! }
+  const task = phase.tasks[taskIdx]
+  if (!task) return undefined
+  return { phase, task }
 }
 
 // =============================================================================
@@ -146,17 +151,22 @@ function tagToTodoInput(
           list: tag.phases.map((p) => ({ phase: p.name, items: p.items })),
         },
       }
-    case 'append':
+    case 'append': {
       if (Number.isNaN(tag.phaseSeq) || tag.phaseSeq < 1 || tag.phaseSeq > phases.length) {
+        return { error: `Phase ${tag.phaseSeq} not found (have ${phases.length} phases)` }
+      }
+      const targetPhase = phases[tag.phaseSeq - 1]
+      if (!targetPhase) {
         return { error: `Phase ${tag.phaseSeq} not found (have ${phases.length} phases)` }
       }
       return {
         input: {
           op: 'append',
-          phase: phases[tag.phaseSeq - 1]!.name,
+          phase: targetPhase.name,
           items: tag.items,
         },
       }
+    }
     case 'view':
       return { input: { op: 'view' } }
     case 'start': {

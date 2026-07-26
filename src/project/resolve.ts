@@ -66,14 +66,14 @@ export function getGitStatus(cwd: string): Record<string, GitStatusCode> | null 
   const map: Record<string, GitStatusCode> = {}
   let i = 0
   while (i < tokens.length) {
-    const token = tokens[i]!
-    if (token === '') break // 末尾空 token
+    const token = tokens[i]
+    if (!token) break // 末尾空 token
     const xy = token.slice(0, 2)
     const code = classifyStatus(xy)
     const isRename = xy[0] === 'R' || xy[0] === 'C'
     // 重命名/复制："XY oldpath\0newpath"，状态挂在 newpath
     if (isRename && i + 1 < tokens.length) {
-      const newPath = tokens[i + 1]!
+      const newPath = tokens[i + 1] ?? ''
       map[normalizePath(newPath)] = code
       i += 2
     } else {

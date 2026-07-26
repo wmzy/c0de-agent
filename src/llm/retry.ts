@@ -1,5 +1,5 @@
-import type { LLMErrorReason } from './schema/errors.js'
-import { isLLMError, reasonRetryAfterMs, reasonRetryable } from './schema/errors.js'
+import type { LLMErrorReason, RetryPolicy } from './schema/errors.js'
+import { isLLMError, reasonRetryAfterMs, retryPolicy } from './schema/errors.js'
 
 const RETRY_INITIAL_DELAY = 2_000
 const RETRY_BACKOFF_FACTOR = 2
@@ -52,17 +52,20 @@ const delay = (attempt: number, error?: unknown): number => {
 type Retryable = {
   message: string
   reason: LLMErrorReason
+  /** Per-reason policy: caps extra retries and per-attempt delay. */
+  policy: RetryPolicy
 }
 
 /**
  * Decide whether a thrown error is retryable. Returns undefined when not retryable
- * (e.g. context overflow, auth, invalid request).
+ * (e.g. context overflow, auth, invalid request, mid-stream Transport failure).
  */
 const retryable = (error: unknown): Retryable | undefined => {
   if (!isLLMError(error)) return undefined
   const reason = error.reason
-  if (!reasonRetryable(reason)) return undefined
-  return { message: error.message, reason }
+  const policy = retryPolicy(reason)
+  if (!policy) return undefined
+  return { message: error.message, reason, policy }
 }
 
 type RetryOptions = {
@@ -88,12 +91,16 @@ const withRetry = async <T>(fn: () => Promise<T>, options: RetryOptions): Promis
       return await fn()
     } catch (error) {
       const canRetry = retryable(error)
-      if (!canRetry || attempt >= options.maxRetries) throw error
+      if (!canRetry || attempt >= Math.min(options.maxRetries, canRetry.policy.maxRetries))
+        throw error
       attempt += 1
       const fallbackReason: LLMErrorReason = isLLMError(error)
         ? error.reason
         : { _tag: 'InvalidRequest', message: '' }
-      const delayMs = reasonRetryAfterMs(fallbackReason) ?? delay(attempt, error)
+      const delayMs = Math.min(
+        reasonRetryAfterMs(fallbackReason) ?? delay(attempt, error),
+        canRetry.policy.maxDelay,
+      )
       options.onRetry?.({ attempt, delayMs, error })
       await sleep(delayMs)
     }

@@ -377,9 +377,8 @@ const STATUS_TO_MARKER: Record<TodoStatus, string> = {
 export function phasesToMarkdown(phases: TodoPhase[]): string {
   if (phases.length === 0) return '# Todos\n'
   const out: string[] = []
-  for (let i = 0; i < phases.length; i++) {
+  for (const [i, phase] of phases.entries()) {
     if (i > 0) out.push('')
-    const phase = phases[i]!
     out.push(`# ${phase.name}`)
     for (const task of phase.tasks) {
       out.push(`- [${STATUS_TO_MARKER[task.status]}] ${task.content}`)
@@ -406,14 +405,13 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
   let currentPhase: TodoPhase | undefined
 
   const lines = md.split(/\r?\n/)
-  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-    const raw = lines[lineNum]!
+  for (const [lineNum, raw] of lines.entries()) {
     const trimmed = raw.trim()
     if (!trimmed) continue
 
     const headingMatch = /^#{1,6}\s+(.+?)\s*$/.exec(trimmed)
     if (headingMatch) {
-      currentPhase = { name: headingMatch[1]!.trim(), tasks: [] }
+      currentPhase = { name: (headingMatch[1] ?? '').trim(), tasks: [] }
       phases.push(currentPhase)
       continue
     }
@@ -432,7 +430,7 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
         )
         continue
       }
-      currentPhase.tasks.push({ content: taskMatch[2]!.trim(), status })
+      currentPhase.tasks.push({ content: (taskMatch[2] ?? '').trim(), status })
       continue
     }
 
@@ -470,7 +468,8 @@ export function formatSummary(phases: TodoPhase[], errors: string[], readOnly = 
     phase.tasks.some((task) => task.status === 'pending' || task.status === 'in_progress'),
   )
   if (currentIdx === -1) currentIdx = phases.length - 1
-  const current = phases[currentIdx]!
+  const current = phases[currentIdx]
+  if (!current) return errors.length > 0 ? `Errors: ${errors.join('; ')}` : 'Todo list cleared.'
   const done = current.tasks.filter(
     (task) => task.status === 'completed' || task.status === 'abandoned',
   ).length
@@ -501,11 +500,9 @@ export function formatSummary(phases: TodoPhase[], errors: string[], readOnly = 
         : '.'
     }`,
   )
-  for (let pi = 0; pi < phases.length; pi++) {
-    const phase = phases[pi]!
+  for (const [pi, phase] of phases.entries()) {
     lines.push(`  ${phase.name}:`)
-    for (let ti = 0; ti < phase.tasks.length; ti++) {
-      const task = phase.tasks[ti]!
+    for (const [ti, task] of phase.tasks.entries()) {
       const seq = `${pi + 1}-${ti + 1}`
       const checkbox = task.status === 'completed' ? '[X]' : '[ ]'
       const tag =
@@ -533,8 +530,8 @@ export function getLatestTodoPhasesFromMessages(
   }[],
 ): TodoPhase[] {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!
-    if (msg.role !== 'tool') continue
+    const msg = messages[i]
+    if (msg?.role !== 'tool') continue
     for (let j = msg.content.length - 1; j >= 0; j--) {
       const part = msg.content[j] as Record<string, unknown> | undefined
       if (!part || part._tag !== 'tool_result') continue

@@ -165,20 +165,24 @@ export const MessageItem = memo(function MessageItem({
       {groups.map((group, gi) => {
         // 连续 tool 组：共享装饰列 + 紧凑堆叠
         if (group.length > 1 && group.every((b) => b.type === 'tool')) {
-          const head = group[0]!
+          // 上方 every 已保证全为 tool 块，filter 仅用于把联合类型收窄为 ToolRenderBlock
+          const toolGroup = group.filter((b): b is ToolRenderBlock => b.type === 'tool')
+          const [head] = toolGroup
+          if (!head) return null
           return (
             <div className={`${row} ${toolGroupRow}`} key={`tg-${gi}`}>
               <PartDecoration block={head} />
               <div className={`${content} ${groupContent}`}>
-                {group.map((b) => (
-                  <ToolBlock key={b.id!} block={b as ToolRenderBlock} compact />
+                {toolGroup.map((b) => (
+                  <ToolBlock key={b.id} block={b} compact />
                 ))}
               </div>
             </div>
           )
         }
 
-        const block = group[0]!
+        const [block] = group
+        if (!block) return null
         // shake 高亮：先计算，以便传递 forceExpand 给折叠块
         const blockRegions = msgRegions.length > 0 ? matchShakeRegions(block, msgRegions) : []
         const shakeActive = blockRegions.length > 0

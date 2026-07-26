@@ -83,9 +83,7 @@ const WORKFLOW_NAME_RE = /^[a-z0-9-]+$/
 type SaveTarget = 'project' | 'user'
 
 /** saveWorkflow 的结果。 */
-type SaveResult =
-  | { ok: true; filePath: string; meta: WorkflowMeta }
-  | { ok: false; error: string }
+type SaveResult = { ok: true; filePath: string; meta: WorkflowMeta } | { ok: false; error: string }
 
 /**
  * 将工作流源码保存到磁盘并验证可加载。
@@ -126,7 +124,10 @@ async function saveWorkflow(
     return { ok: true, filePath, meta }
   } catch (e) {
     await unlink(filePath)
-    return { ok: false, error: `Failed to load workflow: ${e instanceof Error ? e.message : String(e)}` }
+    return {
+      ok: false,
+      error: `Failed to load workflow: ${e instanceof Error ? e.message : String(e)}`,
+    }
   }
 }
 

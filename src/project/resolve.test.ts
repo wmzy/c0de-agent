@@ -191,10 +191,10 @@ describe('getGitLastCommit', () => {
 
     const result = getGitLastCommit(repo)
     expect(result).not.toBeNull()
-    expect(result!.subject).toBe('feat: init project')
-    expect(result!.author).toBe('Tester')
-    expect(result!.hash).toMatch(/^[0-9a-f]{7,}$/)
-    expect(result!.date).toBeTruthy()
+    expect(result?.subject).toBe('feat: init project')
+    expect(result?.author).toBe('Tester')
+    expect(result?.hash).toMatch(/^[0-9a-f]{7,}$/)
+    expect(result?.date).toBeTruthy()
   })
 
   it('非 git 目录返回 null', () => {

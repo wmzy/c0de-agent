@@ -34,7 +34,11 @@ const sseFraming = async function* (
       yield tailData
     }
   } finally {
-    reader.releaseLock()
+    // Cancel the underlying transport and release the exclusive lock on every
+    // exit path (normal completion, thrown error, or early consumer break).
+    // cancel() rejects on an already-closed/errored stream — swallow that so it
+    // never masks the original error propagating through the generator.
+    await reader.cancel().catch(() => {})
   }
 }
 

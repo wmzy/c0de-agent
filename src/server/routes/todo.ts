@@ -77,7 +77,7 @@ function createTodoRoute(ctx: ServerContext): Hono {
     const result = await todoTool.execute(body, todoCtx)
 
     // 从 todoState 读取操作后的 phases
-    const updatedPhases = todoCtx.todoState!.get() as TodoPhase[]
+    const updatedPhases = todoCtx.todoState.get() as TodoPhase[]
 
     // 如果操作成功且 phases 有变化，持久化为 tool 消息
     if (result._tag === 'success' && (body as { op?: string }).op !== 'view') {

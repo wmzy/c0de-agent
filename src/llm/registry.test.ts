@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelRole } from '../shared/types/llm.js'
+import type { Registry } from './registry.js'
 import {
   createRegistry,
   DEFAULT_MODEL_CAPABILITIES,
   overrideToCapabilities,
+  rebuildRegistry,
   registerProvider,
   resolveModelByRole,
   resolveRoute,
@@ -62,14 +64,14 @@ describe('registry register + resolveRoute', () => {
 
 describe('overrideToCapabilities', () => {
   it('fills missing fields with DEFAULT_MODEL_CAPABILITIES', () => {
-    const caps = overrideToCapabilities({ 'm1': { contextWindow: 200_000 } })
+    const caps = overrideToCapabilities({ m1: { contextWindow: 200_000 } })
     expect(caps['m1']?.contextWindow).toBe(200_000)
     expect(caps['m1']?.maxOutput).toBe(DEFAULT_MODEL_CAPABILITIES.maxOutput)
     expect(caps['m1']?.supportsTools).toBe(true)
   })
 
   it('strips enabled flag (UI-only concern)', () => {
-    const caps = overrideToCapabilities({ 'm1': { enabled: false, contextWindow: 100_000 } })
+    const caps = overrideToCapabilities({ m1: { enabled: false, contextWindow: 100_000 } })
     expect(caps['m1']).toBeDefined()
     expect('enabled' in (caps['m1'] as Record<string, unknown>)).toBe(false)
   })
@@ -118,5 +120,107 @@ describe('registry roles', () => {
     } catch (e) {
       expect(isLLMError(e)).toBe(true)
     }
+  })
+})
+
+describe('registry atomic rebuild (concurrency safety)', () => {
+  /** resolveRoute succeeds (no NoRoute) for (provider, model). */
+  const resolves = (reg: Registry, provider: string, model: string): boolean => {
+    try {
+      resolveRoute(reg, provider, model)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** resolveModelByRole succeeds (no NoRoute) for a role. */
+  const roleResolves = (reg: Registry, role: ModelRole): boolean => {
+    try {
+      resolveModelByRole(reg, role)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  it('mid-rebuild readers observe a consistent table — never a half-cleared state', () => {
+    // Reproduces the syncRegistryFromConfig hazard: a config reload rebuilds
+    // the shared registry while a concurrent request fires resolveRoute.
+    const reg = createRegistry()
+    registerProvider(reg, { name: 'old-a', baseURL: 'https://x', apiKey: 'k' })
+    registerProvider(reg, { name: 'old-b', baseURL: 'https://x', apiKey: 'k' })
+    setRole(reg, defaultRole, 'old-a', 'm1')
+
+    // Snapshot taken *during* the rebuild, after the builder has registered a
+    // new provider into the detached next registry but before the swap.
+    // Models a concurrent resolveRoute / resolveModelByRole hitting the LIVE
+    // registry mid-reload. Sentinel values are chosen to FAIL the assertions
+    // below if the builder never runs.
+    const midBuild = {
+      oldA: false,
+      oldB: false,
+      newA: true,
+      defaultRole: false,
+    }
+    rebuildRegistry(reg, (next) => {
+      registerProvider(next, { name: 'new-a', baseURL: 'https://y', apiKey: 'k' })
+      // Concurrent reader observes the LIVE registry right now.
+      midBuild.oldA = resolves(reg, 'old-a', 'm1')
+      midBuild.oldB = resolves(reg, 'old-b', 'm1')
+      midBuild.newA = resolves(reg, 'new-a', 'm1')
+      midBuild.defaultRole = roleResolves(reg, defaultRole)
+      registerProvider(next, { name: 'new-b', baseURL: 'https://y', apiKey: 'k' })
+    })
+
+    // During rebuild: the previous table is fully intact and the new providers
+    // are not yet visible. (With the old clear()-then-register approach every
+    // one of these would be false — the half-state this fix eliminates.)
+    expect(midBuild.oldA).toBe(true)
+    expect(midBuild.oldB).toBe(true)
+    expect(midBuild.newA).toBe(false)
+    expect(midBuild.defaultRole).toBe(true)
+
+    // After rebuild: new providers live, old providers gone.
+    expect(resolves(reg, 'new-a', 'm1')).toBe(true)
+    expect(resolves(reg, 'new-b', 'm1')).toBe(true)
+    expect(resolves(reg, 'old-a', 'm1')).toBe(false)
+    expect(resolves(reg, 'old-b', 'm1')).toBe(false)
+  })
+
+  it('rebuild swaps routes + roles together — no window with mixed old/new maps', () => {
+    // After rebuild returns, routes AND roles both reflect the new table;
+    // there is no observable moment where routes=new but roles=old.
+    const reg = createRegistry()
+    registerProvider(reg, { name: 'p1', baseURL: 'https://x', apiKey: 'k' })
+    setRole(reg, defaultRole, 'p1', 'm1')
+
+    rebuildRegistry(reg, (next) => {
+      registerProvider(next, { name: 'p2', baseURL: 'https://x', apiKey: 'k' })
+      setRole(next, defaultRole, 'p2', 'm2')
+    })
+
+    // New route resolves with declared capabilities; old route is gone.
+    const res = resolveRoute(reg, 'p2', 'm2')
+    expect(res.route).toBeDefined()
+    expect(resolves(reg, 'p1', 'm1')).toBe(false)
+    // Role now points at the new (provider, model).
+    expect(resolveModelByRole(reg, defaultRole)).toEqual({ provider: 'p2', model: 'm2' })
+  })
+
+  it('rebuild to an empty provider set yields a clean empty table', () => {
+    const reg = createRegistry()
+    registerProvider(reg, { name: 'gone', baseURL: 'https://x', apiKey: 'k' })
+
+    rebuildRegistry(reg, () => {
+      // no providers registered
+    })
+
+    expect(resolves(reg, 'gone', 'm1')).toBe(false)
+    // A second rebuild can repopulate from the emptied state.
+    rebuildRegistry(reg, (next) => {
+      registerProvider(next, { name: 'back', baseURL: 'https://x', apiKey: 'k' })
+    })
+    expect(resolves(reg, 'back', 'm1')).toBe(true)
   })
 })

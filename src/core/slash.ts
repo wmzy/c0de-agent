@@ -155,7 +155,7 @@ const workflowCommand: SlashCommand = {
     // registry 是 server 单例（含 builtin + global + server-cwd），不含其他项目的工作流。
     const projectWorkflows = await discoverWorkflows(ctx.cwd)
     const projectByName = new Map(projectWorkflows.map((w) => [w.meta.name, w]))
-    const resolveEntry = (name: string) => registry!.get(name) ?? projectByName.get(name)
+    const resolveEntry = (name: string) => registry?.get(name) ?? projectByName.get(name)
 
     if (subcommand === 'list') {
       // 合并 registry + 项目级（去重：同名项目级覆盖）

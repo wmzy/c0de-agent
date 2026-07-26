@@ -72,13 +72,7 @@ describe('slash registry', () => {
     const reg = createSlashRegistry()
     const wf = reg.get('workflow')
     expect(wf?.subcommands).toBeDefined()
-    expect(wf?.subcommands?.map((s) => s.name)).toEqual([
-      'list',
-      'run',
-      'show',
-      'create',
-      'edit',
-    ])
+    expect(wf?.subcommands?.map((s) => s.name)).toEqual(['list', 'run', 'show', 'create', 'edit'])
     // 每个子命令必须有 description
     for (const sub of wf?.subcommands ?? []) {
       expect(sub.description.length).toBeGreaterThan(0)
@@ -150,8 +144,8 @@ describe('workflow command', () => {
 
   it('/workflow without subcommand lists available workflows', async () => {
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
@@ -164,8 +158,8 @@ describe('workflow command', () => {
 
   it('/workflow show <name> displays source code', async () => {
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('show security-audit', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('show security-audit', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
@@ -178,8 +172,8 @@ describe('workflow command', () => {
 
   it('/workflow show <unknown> returns error', async () => {
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('show nonexistent', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('show nonexistent', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
@@ -189,8 +183,8 @@ describe('workflow command', () => {
 
   it('/workflow run <unknown> returns error', async () => {
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('run nonexistent', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('run nonexistent', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
@@ -214,8 +208,8 @@ export default async function workflow(ctx) {
     await writeFile(sourceFile, wfSource, 'utf-8')
 
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute(`create my-audit --file ${sourceFile}`, {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute(`create my-audit --file ${sourceFile}`, {
       cwd: projDir,
       config: DEFAULT_CONFIG,
       deps,
@@ -238,8 +232,8 @@ export default async function workflow(ctx) {
 
   it('/workflow create without --file returns error', async () => {
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('create my-wf', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('create my-wf', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
@@ -252,8 +246,8 @@ export default async function workflow(ctx) {
 
   it('/workflow create with unreadable file returns error', async () => {
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('create my-wf --file /nonexistent/path.js', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('create my-wf --file /nonexistent/path.js', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
@@ -266,8 +260,8 @@ export default async function workflow(ctx) {
 
   it('/workflow list shows create/edit in usage', async () => {
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('list', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('list', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
@@ -289,8 +283,8 @@ export default async function workflow(ctx) {
     )
 
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('show proj-only', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('show proj-only', {
       cwd: projDir,
       config: DEFAULT_CONFIG,
       deps,
@@ -315,8 +309,8 @@ export default async function workflow(ctx) {
     )
 
     const reg = createSlashRegistry()
-    const cmd = reg.get('workflow')!
-    const result = (await cmd.execute('list', {
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('list', {
       cwd: projDir,
       config: DEFAULT_CONFIG,
       deps,

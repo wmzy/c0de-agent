@@ -36,7 +36,7 @@ export default async function workflow(ctx) {
 
   const allFindings = scans
     .filter((r) => r.ok)
-    .flatMap((r) => { try { return JSON.parse(r.output).findings ?? [] } catch { return [] } })
+    .flatMap((r) => { try { return JSON.parse(r.output).findings ?? [] } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return [] } })
 
   progress(\`交叉验证 \${allFindings.length} 个发现...\`, { phase: 'verify' })
   const verified = await runSubagents('reviewer', allFindings.map((f) => ({
@@ -49,7 +49,7 @@ export default async function workflow(ctx) {
 
   const confirmed = verified
     .filter((r) => r.ok)
-    .map((r) => { try { return JSON.parse(r.output) } catch { return null } })
+    .map((r) => { try { return JSON.parse(r.output) } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return null } })
     .filter((v) => v?.confirmed)
 
   progress('生成报告...', { phase: 'report' })
@@ -90,7 +90,7 @@ export default async function workflow(ctx) {
 
   const allFindings = reviews
     .filter((r) => r.ok)
-    .flatMap((r) => { try { return JSON.parse(r.output).findings ?? [] } catch { return [] } })
+    .flatMap((r) => { try { return JSON.parse(r.output).findings ?? [] } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return [] } })
 
   progress('合并去重并生成报告...', { phase: 'merge' })
   const seen = new Set()
@@ -140,7 +140,7 @@ export default async function workflow(ctx) {
 
   const allItems = analyses
     .filter((r) => r.ok)
-    .flatMap((r) => { try { return JSON.parse(r.output).items ?? [] } catch { return [] } })
+    .flatMap((r) => { try { return JSON.parse(r.output).items ?? [] } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return [] } })
 
   progress('生成迁移报告...', { phase: 'report' })
   const high = allItems.filter((i) => i.impact === 'high').length

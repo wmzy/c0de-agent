@@ -60,6 +60,7 @@ describe('tools index', () => {
       'edit',
       'glob',
       'grep',
+      'kanban',
       'read',
       'task',
       'todo',

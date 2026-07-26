@@ -65,8 +65,8 @@ describe('todoTool', () => {
     expect(phases).toHaveLength(2)
     expect(at(phases, 0).name).toBe('Foundation')
     expect(at(phases, 0).tasks).toHaveLength(2)
-    expect(at(phases, 0).tasks[0]!.status).toBe('in_progress') // auto-promote
-    expect(at(phases, 1).tasks[0]!.status).toBe('pending')
+    expect(at(at(phases, 0).tasks, 0).status).toBe('in_progress') // auto-promote
+    expect(at(at(phases, 1).tasks, 0).status).toBe('pending')
   })
 
   it('init with flat items uses default phase', async () => {
@@ -120,8 +120,8 @@ describe('todoTool', () => {
     // First pending auto-promoted to 'A'
     await todoTool.execute({ op: 'start', task: 'C' }, ctx)
     const phases = await getState(ctx)
-    const taskA = at(phases, 0).tasks[0]!
-    const taskC = at(phases, 1).tasks[0]!
+    const taskA = at(at(phases, 0).tasks, 0)
+    const taskC = at(at(phases, 1).tasks, 0)
     expect(taskA.status).toBe('pending') // demoted
     expect(taskC.status).toBe('in_progress')
   })
@@ -143,9 +143,9 @@ describe('todoTool', () => {
     await initPhases(ctx, [{ phase: 'P1', items: ['A', 'B'] }])
     await todoTool.execute({ op: 'done', task: 'A' }, ctx)
     const phases = await getState(ctx)
-    expect(at(phases, 0).tasks[0]!.status).toBe('completed')
+    expect(at(at(phases, 0).tasks, 0).status).toBe('completed')
     // Auto-promote: B should now be in_progress
-    expect(at(phases, 0).tasks[1]!.status).toBe('in_progress')
+    expect(at(at(phases, 0).tasks, 1).status).toBe('in_progress')
   })
 
   it('done with phase marks all tasks in phase completed', async () => {
@@ -157,7 +157,7 @@ describe('todoTool', () => {
     await todoTool.execute({ op: 'done', phase: 'P1' }, ctx)
     const phases = await getState(ctx)
     expect(at(phases, 0).tasks.every((t) => t.status === 'completed')).toBe(true)
-    expect(at(phases, 1).tasks[0]!.status).toBe('in_progress') // auto-promote
+    expect(at(at(phases, 1).tasks, 0).status).toBe('in_progress') // auto-promote
   })
 
   // ── drop ──────────────────────────────────────────────
@@ -167,8 +167,8 @@ describe('todoTool', () => {
     await initPhases(ctx, [{ phase: 'P1', items: ['A', 'B'] }])
     await todoTool.execute({ op: 'drop', task: 'A' }, ctx)
     const phases = await getState(ctx)
-    expect(at(phases, 0).tasks[0]!.status).toBe('abandoned')
-    expect(at(phases, 0).tasks[1]!.status).toBe('in_progress')
+    expect(at(at(phases, 0).tasks, 0).status).toBe('abandoned')
+    expect(at(at(phases, 0).tasks, 1).status).toBe('in_progress')
   })
 
   // ── rm ────────────────────────────────────────────────
@@ -213,7 +213,7 @@ describe('todoTool', () => {
     await todoTool.execute({ op: 'append', phase: 'P1', items: ['B', 'C'] }, ctx)
     const phases = await getState(ctx)
     expect(at(phases, 0).tasks).toHaveLength(3)
-    expect(at(phases, 0).tasks[2]!.content).toBe('C')
+    expect(at(at(phases, 0).tasks, 2).content).toBe('C')
   })
 
   it('append lazily creates a new phase', async () => {
@@ -393,8 +393,8 @@ describe('phasesToMarkdown / markdownToPhases', () => {
     const md = '# P1\n- [>] active\n- [~] dropped\n'
     const { phases, errors } = markdownToPhases(md)
     expect(errors).toHaveLength(0)
-    expect(at(phases, 0).tasks[0]!.status).toBe('in_progress')
-    expect(at(phases, 0).tasks[1]!.status).toBe('abandoned')
+    expect(at(at(phases, 0).tasks, 0).status).toBe('in_progress')
+    expect(at(at(phases, 0).tasks, 1).status).toBe('abandoned')
   })
 
   it('reports error for unknown marker', () => {
@@ -544,10 +544,10 @@ describe('getLatestTodoPhasesFromMessages', () => {
       },
     ]
     const phases = getLatestTodoPhasesFromMessages(messages)
-    at(phases, 0).tasks[0]!.status = 'completed'
+    at(at(phases, 0).tasks, 0).status = 'completed'
     // Re-extract: should still be pending (clone)
     const phases2 = getLatestTodoPhasesFromMessages(messages)
-    expect(at(phases2, 0).tasks[0]!.status).toBe('pending')
+    expect(at(at(phases2, 0).tasks, 0).status).toBe('pending')
   })
 })
 
@@ -557,7 +557,7 @@ describe('clonePhases', () => {
   it('produces a deep copy', () => {
     const phases: TodoPhase[] = [{ name: 'P1', tasks: [{ content: 'A', status: 'pending' }] }]
     const cloned = clonePhases(phases)
-    at(cloned, 0).tasks[0]!.status = 'completed'
-    expect(at(phases, 0).tasks[0]!.status).toBe('pending')
+    at(at(cloned, 0).tasks, 0).status = 'completed'
+    expect(at(at(phases, 0).tasks, 0).status).toBe('pending')
   })
 })

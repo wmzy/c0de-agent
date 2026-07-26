@@ -335,10 +335,17 @@ function createChatRoute(ctx: ServerContext): Hono {
           }),
         })
       } finally {
+        // 先从 agentManager 注销：必须最先执行，确保客户端断开使 writeSSE reject
+        // 时 agent 状态（state/deps/AbortController）不会泄漏到 Map（unregister 仅做
+        // Map.delete、不依赖 state，放最前安全）。
+        ctx.agentManager.unregister(sessionId)
         // agentLoop 的 error/abort/max_turns 路径不 yield done，在此补发。
         // 正常完成路径已在循环中 yield done，doneSent=true 时跳过避免重复。
+        // 客户端已断开时 writeSSE 会 reject，吞掉以保证后续 updateSessionLastRun 执行。
         if (!doneSent) {
-          await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+          await stream
+            .writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+            .catch(() => {})
         }
         // 无论正常完成、错误还是 abort，只要服务还活着就标记 completed。
         // 只有服务崩溃/重启才会留下 status='running' → 下次加载检测为 interrupted。
@@ -349,7 +356,6 @@ function createChatRoute(ctx: ServerContext): Hono {
           model: resolvedModel,
           startedAt: runStartedAt,
         }).catch(() => {})
-        ctx.agentManager.unregister(sessionId)
       }
     })
   })

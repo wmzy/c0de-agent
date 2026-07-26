@@ -59,7 +59,11 @@ function createWorkflowsRoute(ctx: ServerContext) {
     }
 
     const body = await c.req.json().catch(() => ({}))
-    const { name, source, target } = body as { name?: string; source?: string; target?: 'project' | 'user' }
+    const { name, source, target } = body as {
+      name?: string
+      source?: string
+      target?: 'project' | 'user'
+    }
 
     if (!name || typeof name !== 'string') {
       return apiError(c, 400, 'BAD_REQUEST', 'Missing required field: name')

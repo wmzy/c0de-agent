@@ -5,6 +5,7 @@ import {
   reasonMessage,
   reasonRetryAfterMs,
   reasonRetryable,
+  retryPolicy,
   toolFailure,
 } from './errors.js'
 
@@ -56,6 +57,55 @@ describe('schema/errors retryable', () => {
   it('extracts retryAfterMs only from RateLimit/ProviderInternal', () => {
     expect(reasonRetryAfterMs({ _tag: 'RateLimit', message: 'x', retryAfterMs: 500 })).toBe(500)
     expect(reasonRetryAfterMs({ _tag: 'InvalidRequest', message: 'x' })).toBeUndefined()
+  })
+})
+
+describe('schema/errors Transport retryability', () => {
+  it('a transient Transport error (kind network) is retryable', () => {
+    expect(reasonRetryable({ _tag: 'Transport', message: 'tcp reset', kind: 'network' })).toBe(true)
+  })
+
+  it('a mid-stream Transport disconnect is not retryable', () => {
+    expect(
+      reasonRetryable({ _tag: 'Transport', message: 'stream broke', kind: 'stream_interrupted' }),
+    ).toBe(false)
+  })
+
+  it('a Transport error with an unknown kind is not retryable', () => {
+    expect(reasonRetryable({ _tag: 'Transport', message: '???', kind: 'whatever' })).toBe(false)
+  })
+
+  it('a Transport error without a kind is not retryable', () => {
+    expect(reasonRetryable({ _tag: 'Transport', message: '???' })).toBe(false)
+  })
+})
+
+describe('schema/errors retryPolicy', () => {
+  it('RateLimit defers limits to the caller (unbounded policy)', () => {
+    expect(retryPolicy({ _tag: 'RateLimit', message: 'x', retryAfterMs: 100 })).toEqual({
+      maxRetries: Number.POSITIVE_INFINITY,
+      maxDelay: Number.POSITIVE_INFINITY,
+    })
+  })
+
+  it('ProviderInternal defers limits to the caller (unbounded policy)', () => {
+    expect(retryPolicy({ _tag: 'ProviderInternal', message: 'x', status: 503 })).toEqual({
+      maxRetries: Number.POSITIVE_INFINITY,
+      maxDelay: Number.POSITIVE_INFINITY,
+    })
+  })
+
+  it('transient Transport caps retries at 2 and delay at 5s', () => {
+    expect(
+      retryPolicy({ _tag: 'Transport', message: 'dns fail', kind: 'network', url: 'https://x' }),
+    ).toEqual({ maxRetries: 2, maxDelay: 5_000 })
+  })
+
+  it('non-retryable reasons have no policy', () => {
+    expect(retryPolicy({ _tag: 'InvalidRequest', message: 'x' })).toBeUndefined()
+    expect(
+      retryPolicy({ _tag: 'Transport', message: 'mid-stream', kind: 'stream_interrupted' }),
+    ).toBeUndefined()
   })
 })
 
