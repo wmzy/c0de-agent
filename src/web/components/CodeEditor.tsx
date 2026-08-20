@@ -76,17 +76,27 @@ export function CodeEditor({
   initial,
   projectId,
   highlightRange,
+  onDirtyChange,
 }: {
   path: string
   initial: string
   projectId?: string
   /** 需要滚动定位并高亮的行范围（1-indexed）；变化时滚动+高亮。null 表示清除高亮。 */
   highlightRange?: LineRange | null
+  /** 脏状态回调：文档被编辑或重置（切换文件/保存）时通知父组件，用于关闭前确认等守卫。 */
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const [dirty, setDirty] = useState(false)
   const { resolved } = useTheme()
+
+  // ref 持有最新回调，避免回调身份变化触发重复通知
+  const onDirtyChangeRef = useRef(onDirtyChange)
+  onDirtyChangeRef.current = onDirtyChange
+  useEffect(() => {
+    onDirtyChangeRef.current?.(dirty)
+  }, [dirty])
 
   useEffect(() => {
     if (!hostRef.current) return
@@ -110,6 +120,8 @@ export function CodeEditor({
       parent: hostRef.current,
     })
     viewRef.current = view
+    // 重建视图 = 换文件/重读内容，脏状态随之重置（避免上个文件的脏标记误伤新文件）
+    setDirty(false)
     return () => view.destroy()
   }, [path, initial, resolved])
 

@@ -19,6 +19,8 @@ const brandGroup = css`
   display: flex;
   align-items: center;
   gap: 8px;
+  /* 允许收缩给右侧导航让位（窄屏防横向溢出）；项目名随之省略号截断 */
+  min-width: 0;
 `
 
 const brand = css`
@@ -27,12 +29,15 @@ const brand = css`
   color: var(--text);
   text-decoration: none;
   min-height: auto;
+  flex-shrink: 0;
 `
 
 const nav = css`
   display: flex;
   align-items: center;
   gap: 4px;
+  /* 导航不压缩：窄屏溢出压力由左侧品牌区（项目名截断）吸收 */
+  flex-shrink: 0;
 `
 
 const link = css`
@@ -71,8 +76,10 @@ export function TopBar() {
   return (
     <header className={bar} data-testid="topbar">
       <div className={brandGroup}>
-        <Link to="/" className={brand}>
-          <Logo />
+        <Link to="/" className={brand} title="c0de-agent 首页">
+          {/* 仅显示品牌 mark：字标与右侧项目切换器的项目名（可能恰为 c0de-agent）
+              同字样相邻会造成品牌/项目身份混淆，品牌名由 Logo 内 sr-only 文本保留 */}
+          <Logo wordmark={false} />
         </Link>
         {projectId && (
           <ProjectIndicator

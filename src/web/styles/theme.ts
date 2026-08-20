@@ -6,8 +6,10 @@ export const themeVars = css`
   :global(:root) {
     --bg: #ffffff;
     --bg-secondary: #f5f5f5;
+    --bg-disabled: #fafafa;
     --text: #1a1a1a;
     --text-secondary: #666666;
+    --text-disabled: #9e9e9e;
     --border: #e0e0e0;
     --primary: #2563eb;
     --primary-hover: #1d4ed8;
@@ -24,8 +26,10 @@ export const themeVars = css`
   :global(.dark) {
     --bg: #0d1117;
     --bg-secondary: #161b22;
+    --bg-disabled: #21262d;
     --text: #e6edf3;
     --text-secondary: #8b949e;
+    --text-disabled: #6e7681;
     --border: #30363d;
     --primary: #58a6ff;
     --primary-hover: #79c0ff;

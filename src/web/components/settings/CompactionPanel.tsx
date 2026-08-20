@@ -1,7 +1,7 @@
 import type { Config } from '@shared/types/config.js'
 import type { ProviderConfig } from '@shared/types/llm.js'
 import { ProviderModelSelect } from './ProviderModelSelect.js'
-import { checkRow, field, fieldInput, section } from './styles.js'
+import { checkRow, field, fieldInput, section, sectionTitle } from './styles.js'
 
 interface CompactionPanelProps {
   compaction: Config['compaction']
@@ -25,7 +25,7 @@ function CompactionPanel({
 
   return (
     <div className={section}>
-      <h3>上下文压缩</h3>
+      <h2 className={sectionTitle}>上下文压缩</h2>
       <label className={checkRow}>
         <input
           type="checkbox"

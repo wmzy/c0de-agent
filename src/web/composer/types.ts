@@ -106,12 +106,16 @@ function promptToMessageText(prompt: Prompt): string {
     .join('')
 }
 
-/** 判断 Prompt 是否为空（无任何非空文本且无 file/image）。 */
+/** 判断 Prompt 是否为空（无任何非空白文本且无 file/snippet/terminal）。
+ * 纯空白文本（如删空后残留的 <br> 解析出的 "\n"）视为空，
+ * 保证发送按钮禁用态与 send() 的空值守卫判定一致。 */
 function isPromptEmpty(prompt: Prompt): boolean {
-  return (
-    promptLength(prompt) === 0 &&
-    !prompt.some((p) => p.type === 'file') &&
-    !prompt.some((p) => p.type === 'terminal')
+  return !prompt.some(
+    (p) =>
+      (p.type === 'text' && p.content.trim().length > 0) ||
+      p.type === 'file' ||
+      p.type === 'snippet' ||
+      p.type === 'terminal',
   )
 }
 

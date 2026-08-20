@@ -1,5 +1,5 @@
 import type { Config } from '@shared/types/config.js'
-import { field, fieldInput, section } from './styles.js'
+import { field, fieldInput, section, sectionTitle } from './styles.js'
 
 interface WebSearchPanelProps {
   websearch: Config['websearch']
@@ -10,7 +10,7 @@ interface WebSearchPanelProps {
 function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
   return (
     <div className={section}>
-      <h3>Web 搜索</h3>
+      <h2 className={sectionTitle}>Web 搜索</h2>
       <label className={field}>
         <span>后端：</span>
         <select

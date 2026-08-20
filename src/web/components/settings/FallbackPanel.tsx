@@ -1,5 +1,5 @@
 import type { Config } from '@shared/types/config.js'
-import { checkRow, field, fieldInput, section } from './styles.js'
+import { checkRow, field, fieldInput, section, sectionTitle } from './styles.js'
 
 interface FallbackPanelProps {
   fallback: Config['fallback']
@@ -10,7 +10,7 @@ interface FallbackPanelProps {
 function FallbackPanel({ fallback, onFallbackChange }: FallbackPanelProps) {
   return (
     <div className={section}>
-      <h3>故障回退</h3>
+      <h2 className={sectionTitle}>故障回退</h2>
       <label className={checkRow}>
         <input
           type="checkbox"

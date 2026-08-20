@@ -38,7 +38,8 @@ describe('Layout 三栏拖拽 resize', () => {
   it('三栏渲染默认宽度与两条分隔条', () => {
     renderThree()
     expect(screen.getByTestId('layout-sidebar').style.width).toBe('280px')
-    expect(screen.getByTestId('layout-panel').style.width).toBe('360px')
+    // 预览面板默认宽度自适应视口：max(480, min(45vw, 720))；jsdom innerWidth=1024 → 480
+    expect(screen.getByTestId('layout-panel').style.width).toBe('480px')
     expect(screen.getByTestId('resizer-sidebar')).toBeTruthy()
     expect(screen.getByTestId('resizer-panel')).toBeTruthy()
   })
@@ -62,7 +63,8 @@ describe('Layout 三栏拖拽 resize', () => {
     renderThree()
     const resizer = screen.getByTestId('resizer-panel')
     await drag(resizer, 0, 100)
-    expect(screen.getByTestId('layout-panel').style.width).toBe('260px')
+    // 默认宽度随视口自适应（jsdom 1024px 视口 → 480px），拖拽后 480-100=380
+    expect(screen.getByTestId('layout-panel').style.width).toBe('380px')
   })
 
   it('侧栏宽度不小于下限 200px', async () => {

@@ -1,7 +1,7 @@
 import type { Config } from '@shared/types/config.js'
 import type { ProviderConfig } from '@shared/types/llm.js'
 import { ProviderModelSelect } from './ProviderModelSelect.js'
-import { checkRow, section } from './styles.js'
+import { checkRow, section, sectionTitle } from './styles.js'
 
 interface GitPanelProps {
   /** commitModel 配置（undefined 表示用默认模型）。 */
@@ -26,7 +26,7 @@ function GitPanel({
 
   return (
     <div className={section}>
-      <h3>Git 提交</h3>
+      <h2 className={sectionTitle}>Git 提交</h2>
       <label className={checkRow}>
         <input
           type="checkbox"

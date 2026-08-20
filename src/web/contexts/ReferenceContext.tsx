@@ -23,6 +23,8 @@ export type FileReferenceAPI = {
   /** 插入终端内容引用 pill（TerminalPart）：编辑器显示标签，
    * 提交时展开为 ```terminal 代码块注入 LLM 上下文。 */
   insertTerminalReference: (label: string, content: string) => void
+  /** 填入纯文本并聚焦编辑器（空状态示例卡片入口）；已有草稿时换行追加。 */
+  insertPromptText?: (text: string) => void
 }
 
 type FileReferenceContextValue = {

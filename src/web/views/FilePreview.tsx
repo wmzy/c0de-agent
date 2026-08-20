@@ -1,7 +1,8 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeEditor } from '../components/CodeEditor.js'
+import { Dialog } from '../components/Dialog.js'
 import { Markdown } from '../components/Markdown.js'
 import { useFileSelection } from '../contexts/FileSelectionContext.js'
 import { useFileReference } from '../contexts/ReferenceContext.js'
@@ -94,6 +95,12 @@ const hidden = css`
   display: none;
 `
 
+const discardActions = css`
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+`
+
 const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp']
 const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'm4a', 'flac']
 const VIDEO_EXT = ['mp4', 'webm', 'mov', 'mkv']
@@ -138,6 +145,9 @@ function computeLineRange(
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
   const { closeFile, revealRange } = useFileSelection()
   const fileRef = useFileReference()
+  // 编辑器脏状态（CodeEditor 上报）：关闭预览前需确认丢弃
+  const [dirty, setDirty] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   // ref 持有最新 API，避免条件绑定 onMouseUp 导致首次操作失败
   const apiRef = useRef(fileRef)
   apiRef.current = fileRef
@@ -220,6 +230,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         path={path}
         initial={q.data.content}
         highlightRange={revealRange ?? null}
+        onDirtyChange={setDirty}
       />
     )
   }
@@ -293,13 +304,24 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     }
   }, [checkSelection, isMedia])
 
+  // 脏编辑态点 ✕ 先弹确认，确认后才丢弃修改并关闭；非脏态直接关闭
+  const handleClose = useCallback(() => {
+    if (dirty) setConfirmDiscard(true)
+    else closeFile()
+  }, [dirty, closeFile])
+
+  const handleDiscard = useCallback(() => {
+    setConfirmDiscard(false)
+    closeFile()
+  }, [closeFile])
+
   return (
     <div className={wrap}>
       <header className={header}>
         <span className={pathText} data-testid="preview-path">
           {path}
         </span>
-        <button type="button" className={closeBtn} onClick={closeFile} aria-label="关闭预览">
+        <button type="button" className={closeBtn} onClick={handleClose} aria-label="关闭预览">
           ✕
         </button>
       </header>
@@ -326,6 +348,34 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
           引用到对话
         </button>
       </div>
+      <Dialog
+        open={confirmDiscard}
+        onClose={() => setConfirmDiscard(false)}
+        title="放弃未保存的修改？"
+        width="min(380px, 92vw)"
+        testId="discard-dialog"
+        footer={
+          <div className={discardActions}>
+            <button
+              type="button"
+              data-testid="discard-cancel"
+              onClick={() => setConfirmDiscard(false)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              data-variant="danger"
+              data-testid="discard-confirm"
+              onClick={handleDiscard}
+            >
+              放弃修改
+            </button>
+          </div>
+        }
+      >
+        <div>「{path}」有未保存的修改，关闭预览将丢弃这些修改。</div>
+      </Dialog>
     </div>
   )
 }

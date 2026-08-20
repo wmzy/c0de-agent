@@ -316,4 +316,60 @@ describe('FileTree', () => {
     expect(screen.getByText('a.ts')).toBeInTheDocument()
     expect(screen.getByText('src')).toBeInTheDocument()
   })
+
+  it('暴露 tree/treeitem aria 语义（label/level/selected）', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      type: 'directory',
+      children: [
+        { name: 'a.ts', path: 'a.ts', type: 'file' },
+        {
+          name: 'src',
+          path: 'src',
+          type: 'directory',
+          children: [{ name: 'b.ts', path: 'src/b.ts', type: 'file' }],
+        },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.', 'src'])}
+        selected="src/b.ts"
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        label="项目文件树"
+        hideRoot
+      />,
+    )
+    // tree 容器带 aria-label（可传入，默认「文件树」）
+    expect(screen.getByRole('tree', { name: '项目文件树' })).toBeInTheDocument()
+    // 顶层 treeitem aria-level=1；嵌套 treeitem aria-level 逐层递增
+    const topNode = screen.getByTestId('node-a.ts').closest('[role="treeitem"]')
+    expect(topNode?.getAttribute('aria-level')).toBe('1')
+    const srcNode = screen.getByTestId('node-src').closest('[role="treeitem"]')
+    expect(srcNode?.getAttribute('aria-level')).toBe('1')
+    const bNode = screen.getByTestId('node-src/b.ts').closest('[role="treeitem"]')
+    expect(bNode?.getAttribute('aria-level')).toBe('2')
+    // aria-selected 反映选中态
+    expect(bNode?.getAttribute('aria-selected')).toBe('true')
+    expect(topNode?.getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('未传 label 时 tree 使用默认 aria-label「文件树」', () => {
+    render(
+      <FileTree
+        root={tree}
+        expanded={new Set()}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('tree', { name: '文件树' })).toBeInTheDocument()
+  })
 })

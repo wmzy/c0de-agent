@@ -14,10 +14,13 @@ interface TerminalPanelProps {
   projectId: string
 }
 
+// 面板外层：flex-shrink 允许在视口高度不足时收缩（正常 900px 视口无赤字、不影响布局），
+// min-height 兜底保证标签工具栏（36px 头 + 边框）永远不会被整行裁掉。
 const panelStyle = css`
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-height: 40px;
   background: #0d1117;
   border-top: 1px solid var(--border);
   overflow: hidden;
@@ -29,6 +32,7 @@ const headerStyle = css`
   gap: 4px;
   padding: 0 8px;
   height: 36px;
+  flex-shrink: 0;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   user-select: none;
@@ -103,6 +107,9 @@ const tabCloseStyle = css`
   border-radius: 3px;
   padding: 0;
   line-height: 1;
+  /* 覆盖全局 button 的 44px 触控最小尺寸，否则 16px 关闭钮被撑大溢出标签行 */
+  min-height: auto;
+  min-width: auto;
 
   &:hover {
     background: var(--error);
@@ -123,6 +130,9 @@ const iconBtnStyle = css`
   cursor: pointer;
   border-radius: 4px;
   flex-shrink: 0;
+  /* 覆盖全局 button 的 44px 触控最小尺寸，保持 36px 工具栏行内的紧凑图标钮 */
+  min-height: auto;
+  min-width: auto;
 
   &:hover {
     background: var(--bg);
@@ -148,6 +158,9 @@ const closePanelBtnStyle = css`
   cursor: pointer;
   border-radius: 4px;
   flex-shrink: 0;
+  /* 覆盖全局 button 的 44px 触控最小尺寸，保持 36px 工具栏行内的紧凑图标钮 */
+  min-height: auto;
+  min-width: auto;
 
   &:hover {
     background: var(--error);
@@ -223,6 +236,9 @@ const paneCloseStyle = css`
   border-radius: 3px;
   padding: 0;
   line-height: 1;
+  /* 覆盖全局 button 的 44px 触控最小尺寸，否则 22px pane 头被撑到 44px 浪费终端纵向空间 */
+  min-height: auto;
+  min-width: auto;
 
   &:hover {
     background: var(--error);
@@ -290,7 +306,7 @@ function shellLabel(shell: string): string {
  * - 分屏：split 按钮在当前标签内创建新 pane（水平/垂直方向）
  * - pane 间可拖拽分隔条调整大小
  * - 高度拖拽：上拉/下拉调整，记忆到 localStorage
- * - 隐藏时高度为 0（仅显示拖拽条）
+ * - 隐藏时整块 display:none（仅显示拖拽条），避免隐藏控件排布到视口外仍可聚焦
  */
 export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) {
   const {
@@ -524,7 +540,10 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
         aria-orientation="horizontal"
         aria-label="调整终端面板高度"
       />
-      <div className={panelStyle} style={{ height: open ? height : 0 }}>
+      {/* 收起时整块 display:none：不再以 height:0 布局隐藏内容——那样工具栏仍会
+          排布在视口之外（y900+）且可被 Tab 聚焦却不可达；none 同时移除几何与焦点。
+          xterm 实例保持挂载（与非活动标签相同的隐藏方式），重新展开时重算 fit。 */}
+      <div className={panelStyle} style={open ? { height } : { display: 'none' }}>
         {/* 标签栏 */}
         <div className={headerStyle}>
           <div className={tabsStyle}>

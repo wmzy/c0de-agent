@@ -13,6 +13,13 @@ const section = css`
   border-bottom: 1px solid var(--border);
 `
 
+/** 分区标题（h2 语义）：紧凑尺寸，避免浏览器 h2 默认字号放大分区头。 */
+const sectionTitle = css`
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+`
+
 /** 单行字段：标签 + 控件水平排列。 */
 const field = css`
   display: flex;
@@ -62,4 +69,4 @@ const hintMb = css`
   margin-bottom: 8px;
 `
 
-export { checkRow, field, fieldInput, hint, hintMb, kvRow, mutedHint, section }
+export { checkRow, field, fieldInput, hint, hintMb, kvRow, mutedHint, section, sectionTitle }

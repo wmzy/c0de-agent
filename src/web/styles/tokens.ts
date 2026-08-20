@@ -24,7 +24,7 @@ export const cardStyle = css`
   background: var(--bg);
 `
 
-/** 小号按钮原子类：自适应尺寸 / 内边距 / 字号 / 边框 / 圆角 / 背景 / 文字色 / 指针。 */
+/** 小号按钮原子类：自适应尺寸 / 内边距 / 字号 / 边框 / 圆角 / 背景 / 文字色 / 指针 / 禁用态。 */
 export const btnSm = css`
   min-height: auto;
   min-width: auto;
@@ -35,4 +35,10 @@ export const btnSm = css`
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
+  &:disabled,
+  &[aria-disabled='true'] {
+    color: var(--text-disabled);
+    background: var(--bg-disabled);
+    cursor: not-allowed;
+  }
 `

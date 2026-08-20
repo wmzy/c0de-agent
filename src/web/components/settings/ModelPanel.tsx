@@ -3,7 +3,7 @@ import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useState } from 'react'
 import { inputStyle } from '../../styles/tokens.js'
 import { enabledModelsOf, providerCandidates } from './shared.js'
-import { field, fieldInput, mutedHint, section } from './styles.js'
+import { field, fieldInput, mutedHint, section, sectionTitle } from './styles.js'
 
 const modelPanel = css`
   grid-column: 1 / -1;
@@ -128,7 +128,7 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
 
   return (
     <div className={section}>
-      <h3>默认 Provider / Model</h3>
+      <h2 className={sectionTitle}>默认 Provider / Model</h2>
       {defaultProviderCandidates.length === 0 ? (
         <p className={mutedHint}>请先在上方「LLM Provider」添加并配置 Provider，再选择默认值。</p>
       ) : (

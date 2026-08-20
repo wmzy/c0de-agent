@@ -1,5 +1,5 @@
 import { useTheme } from '../../contexts/ThemeContext.js'
-import { field, section } from './styles.js'
+import { field, section, sectionTitle } from './styles.js'
 
 interface AppearancePanelProps {
   locale: string
@@ -12,7 +12,7 @@ function AppearancePanel({ locale, onLocaleChange }: AppearancePanelProps) {
 
   return (
     <div className={section}>
-      <h3>外观</h3>
+      <h2 className={sectionTitle}>外观</h2>
       <label className={field}>
         <span>主题：</span>
         <select

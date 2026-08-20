@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { type CSSProperties, memo } from 'react'
+import { memo } from 'react'
 import type { GitStatusCode } from '../types/index.js'
 
 /** 文件树节点。children 为 undefined 表示尚未加载子目录。type 缺省视为 directory（兼容目录选择器）。 */
@@ -32,12 +32,14 @@ type FileTreeProps = {
   onDelete?: (path: string) => void
   /** git 状态映射（path → 分类），用于高亮未提交/stage/未跟踪文件与目录。 */
   gitStatusMap?: Record<string, GitStatusCode>
+  /** 无障碍标签：role=tree 容器的 aria-label，供读屏播报树用途。 */
+  label?: string
   /** 隐藏根节点本身，直接渲染其子项（文件浏览器：顶部已有项目名指示器，根节点冗余）。 */
   hideRoot?: boolean
 }
 
 const tree = css`
-  font-size: 13px;
+  font-size: 12.5px;
   user-select: none;
 `
 
@@ -45,14 +47,14 @@ const row = css`
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  padding-left: calc(var(--depth, 0) * 16px + 8px);
+  min-height: 36px;
+  padding: 2px 8px;
   cursor: pointer;
   border-radius: 4px;
   &:hover {
     background: var(--bg-secondary);
   }
-  /* hover 时显示 @ 引用按钮（通过 data-mention-btn 属性选择器） */
+  /* hover 时增强 @/删除 按钮（常驻低对比度，hover 提升到全亮） */
   &:hover [data-mention-btn] {
     opacity: 1;
   }
@@ -86,63 +88,72 @@ const toggleBtn = css`
   cursor: pointer;
   padding: 0;
   font-size: 10px;
-  min-height: auto;
+  /* 覆盖全局按钮 44px 最小尺寸：保持行高紧凑，触屏热区仍达 32px 高 */
+  min-height: 32px;
   min-width: auto;
 `
 
 const rowBtn = css`
   flex: 1;
   padding: 0;
+  /* 覆盖全局按钮 44px 最小尺寸：与 36px 行高匹配 */
+  min-height: 32px;
+  min-width: auto;
 `
 
 const childList = css`
-  padding-left: 16px;
+  padding-left: 10px;
   border-left: 1px solid var(--border);
-  margin-left: 8px;
+  margin-left: 6px;
 `
 
 const hint = css`
-  padding: 2px 8px 2px 28px;
+  padding: 3px 8px 3px 24px;
   color: var(--text-secondary);
   font-size: 12px;
 `
 
 const mentionBtn = css`
   margin-left: auto;
-  opacity: 0;
+  /* 常驻低对比度（非 hover 也可发现/触屏可达），hover 增强到全亮 */
+  opacity: 0.65;
   background: transparent;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 3px;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 11px;
-  padding: 0 5px;
-  min-height: auto;
-  min-width: auto;
+  padding: 0;
+  min-height: 32px;
+  min-width: 32px;
   flex-shrink: 0;
-  transition: opacity 0.1s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s, color 0.1s;
   &:hover {
     color: var(--primary);
-    border-color: var(--primary);
   }
 `
 
 const deleteBtn = css`
-  opacity: 0;
+  opacity: 0.65;
   background: transparent;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 3px;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
-  padding: 0 5px;
-  min-height: auto;
-  min-width: auto;
+  padding: 0;
+  min-height: 32px;
+  min-width: 32px;
   flex-shrink: 0;
-  transition: opacity 0.1s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s, color 0.1s;
   &:hover {
     color: var(--error);
-    border-color: var(--error);
   }
 `
 
@@ -240,13 +251,14 @@ export function FileTree({
   onMention,
   onDelete,
   gitStatusMap,
+  label = '文件树',
   hideRoot,
 }: FileTreeProps) {
   if (!root) return null
   // hideRoot：跳过根节点本身，直接渲染其子项（子项 depth 从 0 起）。
   const topLevel = hideRoot && root.children ? root.children : [root]
   return (
-    <div className={tree} role="tree" data-testid="file-tree">
+    <div className={tree} role="tree" aria-label={label} data-testid="file-tree">
       {topLevel.map((node) => (
         <TreeNode
           key={node.path}
@@ -301,10 +313,15 @@ const TreeNode = memo(function TreeNode({
   const hasChildren = node.children !== undefined
   const gitCode = resolveGitStatus(node.path, isFile, gitStatusMap)
   return (
-    <div role="treeitem" aria-expanded={isFile ? undefined : isExpanded} tabIndex={-1}>
+    <div
+      role="treeitem"
+      aria-expanded={isFile ? undefined : isExpanded}
+      aria-level={depth + 1}
+      aria-selected={isSelected}
+      tabIndex={-1}
+    >
       <div
         className={`${row} ${isSelected ? selectedRow : ''} ${gitCode ? gitClass(gitCode) : ''} ${node.ignored ? gitIgnored : ''}`}
-        style={{ '--depth': depth } as CSSProperties}
         data-git-status={gitCode ?? undefined}
         data-ignored={node.ignored ? '' : undefined}
       >

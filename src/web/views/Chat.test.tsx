@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineRow } from '../components/session/utils/timeline.js'
 import { FileSelectionContext } from '../contexts/FileSelectionContext.js'
+import { FileReferenceProvider } from '../contexts/ReferenceContext.js'
 import { commandsAPI } from '../services/commands.js'
 import { permissionAPI } from '../services/permission.js'
 import { workflowsAPI } from '../services/workflows.js'
 import { Chat } from './Chat.js'
+import { ChatWelcome, EXAMPLE_TASKS } from './ChatView.js'
 
 // Composer 内部 useCommands 会请求 /api/commands；mock 掉避免真实网络调用。
 vi.mock('../services/commands.js', () => ({
@@ -103,18 +105,32 @@ describe('Chat pause/resume/steer controls', () => {
 })
 
 describe('Chat permission mode toggle', () => {
-  it('默认渲染未勾选的自动授权开关，无警告', () => {
+  it('默认渲染未勾选的自动授权开关，仅显示中性说明', () => {
     renderChat()
     const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
     expect(toggle.checked).toBe(false)
-    expect(screen.queryByText(/自动执行所有工具/)).toBeNull()
+    // 关闭态：无警示 pill，只有中性说明文本
+    expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+    expect(screen.getByTestId('permission-mode-hint').textContent).toBe('工具执行前逐个确认')
   })
 
-  it('点击开关切换到 auto：调用 setMode 并显示警告', () => {
+  it('点击开关切换到 auto：调用 setMode 并显示警示 pill', () => {
     renderChat()
     fireEvent.click(screen.getByTestId('permission-mode-toggle'))
     expect(vi.mocked(permissionAPI.setMode)).toHaveBeenCalledWith('auto')
-    expect(screen.getByText(/自动执行所有工具/)).toBeTruthy()
+    const warn = screen.getByTestId('permission-mode-warning')
+    expect(warn.textContent).toContain('自动授权已开启')
+    expect(screen.queryByTestId('permission-mode-hint')).toBeNull()
+  })
+
+  it('服务端返回 auto（已保存配置）时默认勾选并显示警示 pill', async () => {
+    vi.mocked(permissionAPI.getMode).mockResolvedValueOnce({ mode: 'auto' })
+    renderChat()
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    await waitFor(() => expect(toggle.checked).toBe(true))
+    expect(screen.getByTestId('permission-mode-warning').textContent).toContain(
+      '自动授权已开启',
+    )
   })
 })
 
@@ -418,5 +434,69 @@ describe('Chat view modes', () => {
     fireEvent.click(screen.getByTestId('view-json'))
     // 原始 JSON 视图露出空壳消息
     expect(screen.getByTestId('stream').textContent).toContain('"role"')
+  })
+})
+
+describe('Chat 空状态欢迎区', () => {
+  /** 空状态行为依赖 Composer 经 FileReferenceProvider 注册的填入 API，
+   *  故用真实 Provider 渲染（renderChat 不带该 Provider）。 */
+  function renderWelcomeChat(timeline: TimelineRow[] = []) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <QueryClientProvider client={qc}>
+        <FileReferenceProvider>
+          <FileSelectionContext.Provider
+            value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+          >
+            <Chat
+              timeline={timeline}
+              isStreaming={false}
+              usage={null}
+              pendingPermission={null}
+              onSend={vi.fn()}
+              onAbort={vi.fn()}
+              onConfirm={vi.fn()}
+              emptyState={<ChatWelcome />}
+            />
+          </FileSelectionContext.Provider>
+        </FileReferenceProvider>
+      </QueryClientProvider>,
+    )
+  }
+
+  it('空会话时渲染欢迎区与示例卡片、能力提示', () => {
+    renderWelcomeChat()
+    expect(screen.getByTestId('chat-welcome')).toBeTruthy()
+    expect(screen.getAllByTestId('welcome-card').length).toBe(EXAMPLE_TASKS.length)
+    expect(screen.getByText('输入 / 查看命令，@ 引用文件')).toBeTruthy()
+  })
+
+  it('时间线有消息时不渲染欢迎区', () => {
+    const timeline: TimelineRow[] = [
+      {
+        kind: 'message',
+        message: {
+          id: 'm1',
+          sessionId: 's',
+          role: 'user',
+          content: [{ _tag: 'text', text: 'hi' }],
+          tokenCount: 0,
+          createdAt: 1,
+        },
+        ts: 1,
+      },
+    ]
+    renderWelcomeChat(timeline)
+    expect(screen.queryByTestId('chat-welcome')).toBeNull()
+    expect(screen.queryByTestId('welcome-card')).toBeNull()
+  })
+
+  it('点击示例卡片把示例文本填入 composer 并聚焦', () => {
+    renderWelcomeChat()
+    fireEvent.click(screen.getAllByTestId('welcome-card')[0] as HTMLElement)
+
+    const editor = screen.getByTestId('composer-editor')
+    expect(editor.textContent).toContain(EXAMPLE_TASKS[0]?.prompt ?? '')
+    expect(document.activeElement).toBe(editor)
   })
 })

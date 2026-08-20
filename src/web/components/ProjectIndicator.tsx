@@ -29,6 +29,28 @@ const indicatorInline = css`
   color: var(--text-secondary);
   background: transparent;
   margin-left: 4px;
+  /* 随品牌区收缩（配合 brandGroup min-width:0），项目名省略号截断 */
+  min-width: 0;
+`
+
+/** 项目切换触发器：可见按钮可供性（边框/背景/hover），
+ *  避免被当成纯文本状态标签；▾ 与项目名垂直居中对齐。 */
+const triggerBtn = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* 触发器随容器收缩，项目名省略号截断 */
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  transition: border-color 0.12s ease;
+  &:hover {
+    border-color: var(--primary);
+  }
 `
 
 const projectIcon = css`
@@ -41,6 +63,8 @@ const projectName = css`
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* flex 子项默认 min-width:auto 不收缩，置 0 省略号才生效 */
+  min-width: 0;
 `
 
 const branchTag = css`
@@ -48,14 +72,21 @@ const branchTag = css`
   font-size: 12px;
   color: var(--text-secondary);
   background: var(--bg);
+  /* 白底 pill 压在 --bg-secondary 顶栏上，无描边则边界几乎不可见 */
+  border: 1px solid var(--border);
   padding: 1px 6px;
   border-radius: 3px;
   flex-shrink: 0;
+  transition: border-color 0.12s ease;
+  &:hover {
+    border-color: var(--primary);
+    color: var(--text);
+  }
 `
 
 const caret = css`
   font-size: 10px;
-  opacity: 0.5;
+  opacity: 0.6;
   margin-left: 1px;
 `
 
@@ -230,11 +261,11 @@ export function ProjectIndicator({
       <DropdownMenu
         testId="project-dropdown"
         trigger={
-          <>
+          <span className={triggerBtn}>
             <span className={projectIcon}>{'\u{1F4C2}'}</span>
             <span className={projectName}>{project.name ?? '未命名项目'}</span>
             <span className={caret}>{'\u25BE'}</span>
-          </>
+          </span>
         }
         footer={(close) => (
           <button

@@ -1,6 +1,6 @@
 import type { Config } from '@shared/types/config.js'
 import { CommaListInput } from './CommaListInput.js'
-import { checkRow, field, fieldInput, hint, section } from './styles.js'
+import { checkRow, field, fieldInput, hint, section, sectionTitle } from './styles.js'
 
 interface SecurityPanelProps {
   security: Config['security']
@@ -19,7 +19,7 @@ function SecurityPanel({
   return (
     <>
       <div className={section}>
-        <h3>安全</h3>
+        <h2 className={sectionTitle}>安全</h2>
         <label className={checkRow}>
           <input
             type="checkbox"
@@ -52,7 +52,7 @@ function SecurityPanel({
         </label>
       </div>
       <div className={section}>
-        <h3>自动授权</h3>
+        <h2 className={sectionTitle}>自动授权</h2>
         <label className={field}>
           <span>默认模式：</span>
           <select

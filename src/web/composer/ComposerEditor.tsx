@@ -2,12 +2,17 @@ import { css } from '@linaria/core'
 import type { ClipboardEvent, KeyboardEvent, MouseEvent, RefObject } from 'react'
 import { useRef, useState } from 'react'
 import { useFileSelection } from '../contexts/FileSelectionContext.js'
+import { MOBILE } from '../styles/breakpoints.js'
 import { promptPlaceholder } from './placeholder.js'
 
 const editorWrap = css`
   position: relative;
   flex: 1;
   min-width: 0;
+  ${MOBILE} {
+    /* 窄屏独占一行：配合 editorRow 换行，输入区宽度≥260px */
+    flex-basis: 100%;
+  }
 `
 
 const editor = css`

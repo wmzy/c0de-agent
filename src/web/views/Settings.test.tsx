@@ -593,6 +593,54 @@ describe('Settings — Provider 管理', () => {
       expect(screen.getByTestId('settings-save-status').textContent).toContain('已保存')
     })
   })
+
+  // 可访问性：每个 Provider 表单控件须有显式关联的 label（label[for] ↔ control#id）
+  it('Provider 表单控件均有显式关联的 label（名称/协议/URL/API Key）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+
+    const rows = screen.getAllByTestId('provider-row')
+    // 名称/协议/URL 是直接控件；APIKey 在 ApiKeyInput 内（data-testid=provider-apikey）
+    const controls = rows.flatMap((row) => {
+      const r = within(row as HTMLElement)
+      return [
+        r.getByLabelText('名称') as HTMLElement,
+        r.getByLabelText('协议') as HTMLElement,
+        r.getByLabelText('URL') as HTMLElement,
+        r.getByTestId('provider-apikey') as HTMLElement,
+      ]
+    })
+    expect(controls).toHaveLength(8)
+
+    for (const control of controls) {
+      const id = control.getAttribute('id')
+      expect(id, '控件须有 id 供 label[for] 关联').toBeTruthy()
+      const label = document.querySelector(`label[for="${id}"]`)
+      expect(label, `控件 #${id} 须有关联 label[for]`).toBeTruthy()
+      // label 文本非空（非空串标签）
+      expect((label as HTMLElement).textContent?.trim().length ?? 0).toBeGreaterThan(0)
+    }
+  })
+
+  // 可访问性：设置页标题为页面唯一 h1；Provider/区块标题为 h2
+  it('页面标题「⚙ 设置」为唯一 h1，区块标题为 h2', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const h1s = screen.getAllByRole('heading', { level: 1 })
+    expect(h1s).toHaveLength(1)
+    expect(h1s[0]?.textContent).toBe('⚙ 设置')
+
+    const h2Texts = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+    expect(h2Texts).toContain('LLM Provider')
+    expect(h2Texts).not.toContain('外观 ') // 无重复/空白污染
+  })
 })
 
 describe('Settings — 默认 Provider/Model 下拉选择', () => {
@@ -810,7 +858,7 @@ describe('Settings — 完整配置表单覆盖', () => {
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
 
-    const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
     for (const title of [
       '外观',
       '默认 Provider / Model',
@@ -842,7 +890,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
     // 定位「自动授权」段落并取其内 select
     const permHeading = screen
-      .getAllByRole('heading', { level: 3 })
+      .getAllByRole('heading', { level: 2 })
       .find((h) => h.textContent === '自动授权')
     expect(permHeading).toBeTruthy()
     const section = permHeading?.closest('div')
@@ -1114,5 +1162,145 @@ describe('Settings — 完整配置表单覆盖', () => {
       tools: { enabled: string[] }
     }
     expect(args.tools.enabled).toEqual(['read', 'write', 'edit'])
+  })
+})
+
+describe('Settings — 吸底保存条与未保存导航防护', () => {
+  it('修改字段后保存条出现「未保存更改」提示与「放弃更改」，未修改时弱化', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+
+    // 初始干净状态：保存条在底部但禁用，无提示无放弃按钮
+    expect(screen.getByTestId('settings-save-bar')).toBeTruthy()
+    expect(screen.getByTestId('settings-save')).toBeDisabled()
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+    expect(screen.queryByTestId('settings-discard')).toBeNull()
+
+    // 修改字段 → dirty：提示与放弃按钮出现，保存可用
+    fireEvent.click(screen.getByTestId('role-add'))
+    expect(screen.getByTestId('settings-dirty-hint').textContent).toContain('未保存更改')
+    expect(screen.getByTestId('settings-discard')).toBeTruthy()
+    expect(screen.getByTestId('settings-save')).not.toBeDisabled()
+  })
+
+  it('点击「放弃更改」清空草稿，表单恢复到已保存配置', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('provider-add'))
+    expect(screen.getAllByTestId('provider-row')).toHaveLength(3)
+
+    fireEvent.click(screen.getByTestId('settings-discard'))
+
+    expect(screen.getByTestId('settings-save')).toBeDisabled()
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+    expect(screen.queryByTestId('settings-discard')).toBeNull()
+    // 新增的空 provider 行随草稿一起回退
+    expect(screen.getAllByTestId('provider-row')).toHaveLength(2)
+  })
+
+  it('dirty 时点击离开设置页的站内链接弹确认，「留下」则留在设置页', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('role-add')) // 制造未保存更改
+
+    // 模拟顶栏「会话」导航：TopBar 用 react-router Link 渲染为 <a href>
+    const nav = document.createElement('a')
+    nav.setAttribute('href', '/projects/p1')
+    nav.textContent = '会话'
+    document.body.appendChild(nav)
+    // 阻止重放点击触发真实导航（happy-dom 未接 react-router）
+    const clickSpy = vi.spyOn(nav, 'click').mockImplementation(() => {})
+
+    fireEvent.click(nav)
+
+    expect(screen.getByTestId('settings-unsaved-dialog')).toBeTruthy()
+    expect(clickSpy).not.toHaveBeenCalled() // 未确认离开，导航未放行
+
+    fireEvent.click(screen.getByTestId('settings-unsaved-stay'))
+
+    expect(screen.queryByTestId('settings-unsaved-dialog')).toBeNull()
+    expect(clickSpy).not.toHaveBeenCalled() // 仍停留在设置页
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy() // 草稿保留
+
+    clickSpy.mockRestore()
+    nav.remove()
+  })
+
+  it('确认「离开」丢弃草稿并放行被拦截的链接点击', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('role-add')) // 制造未保存更改
+
+    const nav = document.createElement('a')
+    nav.setAttribute('href', '/projects/p1')
+    nav.textContent = '会话'
+    document.body.appendChild(nav)
+    const clickSpy = vi.spyOn(nav, 'click').mockImplementation(() => {})
+
+    fireEvent.click(nav)
+    expect(screen.getByTestId('settings-unsaved-dialog')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('settings-unsaved-leave'))
+
+    // 弹窗关闭、草稿丢弃（保存回到禁用）、被拦截的链接点击重放放行
+    expect(screen.queryByTestId('settings-unsaved-dialog')).toBeNull()
+    expect(screen.getByTestId('settings-save')).toBeDisabled()
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+
+    clickSpy.mockRestore()
+    nav.remove()
+  })
+
+  it('干净状态点击站内链接不弹确认；dirty 时刷新被 beforeunload 拦截，放弃后解除', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+
+    // 干净状态：站内链接直接放行、beforeunload 不拦截
+    const nav = document.createElement('a')
+    nav.setAttribute('href', '/projects/p1')
+    nav.textContent = '会话'
+    document.body.appendChild(nav)
+    const clickSpy = vi.spyOn(nav, 'click').mockImplementation(() => {})
+    fireEvent.click(nav)
+    expect(screen.queryByTestId('settings-unsaved-dialog')).toBeNull()
+    expect(clickSpy).not.toHaveBeenCalled()
+
+    const clean = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(clean)
+    expect(clean.defaultPrevented).toBe(false)
+
+    // dirty：beforeunload 被 preventDefault
+    fireEvent.click(screen.getByTestId('role-add'))
+    const dirty = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(dirty)
+    expect(dirty.defaultPrevented).toBe(true)
+
+    // 放弃更改后解除防护
+    fireEvent.click(screen.getByTestId('settings-discard'))
+    const after = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(after)
+    expect(after.defaultPrevented).toBe(false)
+
+    clickSpy.mockRestore()
+    nav.remove()
   })
 })

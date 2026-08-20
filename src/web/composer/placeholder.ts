@@ -6,7 +6,7 @@ type PlaceholderInput = {
 /** 动态占位符：按模式/会话状态切换文案。 */
 function promptPlaceholder(input: PlaceholderInput): string {
   if (input.streaming) return '追加运行中指令…'
-  if (!input.hasHistory) return '描述你的任务…'
+  if (!input.hasHistory) return '描述你的任务…（/ 命令、@ 引用文件）'
   return '输入消息，/ 查看命令，@ 提及文件'
 }
 

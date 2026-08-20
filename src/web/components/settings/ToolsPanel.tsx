@@ -1,6 +1,6 @@
 import type { Config } from '@shared/types/config.js'
 import { CommaListInput } from './CommaListInput.js'
-import { field, fieldInput, hint, section } from './styles.js'
+import { field, fieldInput, hint, section, sectionTitle } from './styles.js'
 
 interface ToolsPanelProps {
   tools: Config['tools']
@@ -11,7 +11,7 @@ interface ToolsPanelProps {
 function ToolsPanel({ tools, onToolsChange }: ToolsPanelProps) {
   return (
     <div className={section}>
-      <h3>工具配置</h3>
+      <h2 className={sectionTitle}>工具配置</h2>
       <label className={field} htmlFor="cfg-tools-enabled">
         <span>已启用：</span>
         <CommaListInput

@@ -3,21 +3,58 @@ import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useState } from 'react'
 import type { TestResult } from '../../services/provider.js'
 import { providerAPI } from '../../services/provider.js'
+import { MOBILE } from '../../styles/breakpoints.js'
 import { ProviderCatalogDialog } from '../ProviderCatalogDialog.js'
 import { ApiKeyInput } from './ApiKeyInput.js'
 import { ProviderModelsPanel } from './ModelPanel.js'
-import { section } from './styles.js'
+import { section, sectionTitle } from './styles.js'
 
+/*
+ * Provider 行网格：桌面 6 列（名称/协议/URL/APIKey + 测试/删除），窄屏 2 列堆叠。
+ * 关键：1fr 轨道的 min 宽默认是 auto（= 输入框固有 ~170px），4 列合计即 ~700px+，
+ * 是窄屏横向滚动的根因；providerField 上 min-width:0 允许列内收缩消除溢出。
+ */
 const providerRow = css`
   display: grid;
   grid-template-columns: 1fr 1fr 1fr 1fr auto auto;
   gap: 8px;
-  align-items: center;
+  align-items: end;
   padding: 10px;
   margin-bottom: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-secondary);
+  ${MOBILE} {
+    /* 窄屏：6 列改 2 列；长字段（URL/API Key）由 providerFieldWide 整行展开 */
+    grid-template-columns: 1fr 1fr;
+  }
+`
+
+/** 字段单元：小标签悬于控件上方；min-width:0 让 1fr 列可收缩防横向溢出。 */
+const providerField = css`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+
+  & input,
+  & select {
+    width: 100%;
+    min-width: 0;
+  }
+`
+
+/** 字段标签：小号次级色（名称/协议/URL/API Key）。 */
+const providerFieldLabel = css`
+  font-size: 12px;
+  color: var(--text-secondary);
+`
+
+/** 窄屏整行字段：URL / API Key 输入较长，独占一行。 */
+const providerFieldWide = css`
+  ${MOBILE} {
+    grid-column: 1 / -1;
+  }
 `
 
 const testResultSpan = css`
@@ -173,7 +210,7 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
 
   return (
     <div className={section}>
-      <h3>LLM Provider</h3>
+      <h2 className={sectionTitle}>LLM Provider</h2>
       {providers.map((provider, index) => {
         const test = testResults[index]
         return (
@@ -185,29 +222,53 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
             className={providerRow}
             data-testid="provider-row"
           >
-            <input
-              value={provider.name}
-              onChange={(e) => updateProvider(index, 'name', e.target.value)}
-              placeholder="名称"
-            />
-            <select
-              value={provider.protocol}
-              onChange={(e) => updateProvider(index, 'protocol', e.target.value)}
-            >
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="google">Google</option>
-              <option value="openai-compat">OpenAI Compatible</option>
-            </select>
-            <input
-              value={provider.baseURL ?? ''}
-              onChange={(e) => updateProvider(index, 'baseURL', e.target.value)}
-              placeholder="https://api.openai.com/v1"
-            />
-            <ApiKeyInput
-              stored={provider.apiKey}
-              onCommit={(value) => updateProvider(index, 'apiKey', value)}
-            />
+            <div className={providerField}>
+              <label className={providerFieldLabel} htmlFor={`provider-name-${index}`}>
+                名称
+              </label>
+              <input
+                id={`provider-name-${index}`}
+                value={provider.name}
+                onChange={(e) => updateProvider(index, 'name', e.target.value)}
+                placeholder="名称"
+              />
+            </div>
+            <div className={providerField}>
+              <label className={providerFieldLabel} htmlFor={`provider-protocol-${index}`}>
+                协议
+              </label>
+              <select
+                id={`provider-protocol-${index}`}
+                value={provider.protocol}
+                onChange={(e) => updateProvider(index, 'protocol', e.target.value)}
+              >
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="google">Google</option>
+                <option value="openai-compat">OpenAI Compatible</option>
+              </select>
+            </div>
+            <div className={`${providerField} ${providerFieldWide}`}>
+              <label className={providerFieldLabel} htmlFor={`provider-url-${index}`}>
+                URL
+              </label>
+              <input
+                id={`provider-url-${index}`}
+                value={provider.baseURL ?? ''}
+                onChange={(e) => updateProvider(index, 'baseURL', e.target.value)}
+                placeholder="https://api.openai.com/v1"
+              />
+            </div>
+            <div className={`${providerField} ${providerFieldWide}`}>
+              <label className={providerFieldLabel} htmlFor={`provider-apikey-${index}`}>
+                API Key
+              </label>
+              <ApiKeyInput
+                id={`provider-apikey-${index}`}
+                stored={provider.apiKey}
+                onCommit={(value) => updateProvider(index, 'apiKey', value)}
+              />
+            </div>
             <button
               type="button"
               onClick={() => testProvider(index, provider.baseURL ?? '', provider.apiKey)}

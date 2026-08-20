@@ -294,6 +294,16 @@ function useComposer({
     [setPromptExternal],
   )
 
+  /** 外部填入纯文本（空状态示例卡片）：已有草稿时换行追加，并聚焦编辑器。 */
+  const insertPromptText = useCallback(
+    (text: string) => {
+      const current = promptToText(promptRef.current)
+      setPromptExternal(textPrompt(current.length > 0 ? `${current}\n${text}` : text), true)
+      editorRef.current?.focus()
+    },
+    [setPromptExternal],
+  )
+
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     // 图片粘贴优先
     const items = e.clipboardData.items
@@ -453,6 +463,7 @@ function useComposer({
     appendFileReference,
     appendSnippetReference,
     appendTerminalReference,
+    insertPromptText,
     send,
     steer,
     setPopover,

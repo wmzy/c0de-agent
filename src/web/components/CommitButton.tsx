@@ -13,12 +13,17 @@ const commitBtn = css`
   color: var(--text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
-  &:hover {
+  &:hover:not(:disabled) {
     border-color: var(--primary);
     color: var(--primary);
   }
+  &:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
   &:disabled {
-    opacity: 0.6;
+    color: var(--text-disabled);
+    background: var(--bg-disabled);
     cursor: not-allowed;
   }
 `
@@ -49,12 +54,24 @@ const commitBtnSuccess = css`
   background: var(--success);
   border-color: var(--success);
   color: #fff;
+  /* 反馈期间按钮已禁用（提交后无变更），重申语义色避免被全局禁用灰态覆盖 */
+  &:disabled {
+    background: var(--success);
+    border-color: var(--success);
+    color: #fff;
+  }
 `
 
 const commitBtnError = css`
   background: var(--error);
   border-color: var(--error);
   color: #fff;
+  /* 反馈期间按钮可能禁用（无变更），重申语义色避免被全局禁用灰态覆盖 */
+  &:disabled {
+    background: var(--error);
+    border-color: var(--error);
+    color: #fff;
+  }
 `
 
 /**

@@ -1,7 +1,8 @@
 import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type ChangeEvent, useRef, useState } from 'react'
+import { type ChangeEvent, useEffect, useRef, useState } from 'react'
+import { Dialog } from '../components/Dialog.js'
 import { AppearancePanel } from '../components/settings/AppearancePanel.js'
 import { CommaListInput } from '../components/settings/CommaListInput.js'
 import { CompactionPanel } from '../components/settings/CompactionPanel.js'
@@ -20,6 +21,7 @@ import {
   hintMb,
   kvRow,
   section,
+  sectionTitle,
 } from '../components/settings/styles.js'
 import { ToolsPanel } from '../components/settings/ToolsPanel.js'
 import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
@@ -117,8 +119,53 @@ const saveErr = css`
 
 /** 保存状态提示文本。 */
 const saveStatus = css`
-  margin-left: 12px;
   font-size: 0.9em;
+`
+
+/** 吸底保存条：sticky 于设置滚动容器底部；有未保存更改时强调，无更改时弱化。 */
+const saveBar = css`
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  z-index: 10;
+`
+
+/** 有未保存更改时的强调：上浮阴影 + 主色分隔线。 */
+const saveBarDirty = css`
+  border-top-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+`
+
+/** 保存条中间弹性占位：提示靠左、按钮靠右。 */
+const saveBarSpacer = css`
+  flex: 1;
+`
+
+/** 「未保存更改」提示：警示色。 */
+const dirtyHint = css`
+  color: var(--warning);
+  font-size: 13px;
+`
+
+/** 离开确认弹窗正文。 */
+const dialogBody = css`
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+`
+
+/** 离开确认弹窗底部按钮组。 */
+const dialogActions = css`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 `
 
 export function Settings() {
@@ -140,6 +187,16 @@ export function Settings() {
     { kind: 'idle' } | { kind: 'saving' } | { kind: 'ok' } | { kind: 'err'; msg: string }
   >({ kind: 'idle' })
 
+  // 未保存导航防护：待确认的离开链接；bypass 标记放行「离开」确认后的重放点击。
+  const [pendingLeave, setPendingLeave] = useState<{
+    el: HTMLAnchorElement
+    href: string
+  } | null>(null)
+  const bypassGuardRef = useRef(false)
+
+  // dirty 仅指「需手动保存的草稿」；外观面板即时生效、不进 draft，不影响此判定。
+  const isDirty = draft !== null
+
   const save = useMutation({
     mutationFn: (patch: Partial<Config>) => configAPI.update(patch),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
@@ -160,10 +217,60 @@ export function Settings() {
     },
   })
 
+  // SPA 内部导航防护：App 使用 BrowserRouter（非 data router），useBlocker 不可用，
+  // 改为捕获阶段拦截站内 <a> 点击（TopBar 等 Link 最终渲染为 <a href>）；
+  // preventDefault 后 react-router Link 的 onClick（先查 defaultPrevented）会放弃导航。
+  useEffect(() => {
+    if (!isDirty) return
+    const onClick = (e: MouseEvent) => {
+      if (bypassGuardRef.current) {
+        bypassGuardRef.current = false // 「离开」确认后的重放点击，放行一次
+        return
+      }
+      if (
+        e.defaultPrevented ||
+        e.button !== 0 ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.shiftKey ||
+        e.altKey
+      ) {
+        return
+      }
+      const el = (e.target as HTMLElement | null)?.closest('a[href]')
+      if (!(el instanceof HTMLAnchorElement)) return
+      if (el.target && el.target !== '_self') return
+      if (el.hasAttribute('download')) return
+      let url: URL
+      try {
+        url = new URL(el.getAttribute('href') ?? '', window.location.href)
+      } catch {
+        return
+      }
+      // 仅拦截同源且离开设置页的导航（导出用的 blob: 链接不同源，天然跳过）
+      if (url.origin !== window.location.origin) return
+      if (url.pathname.startsWith('/settings')) return
+      e.preventDefault()
+      setPendingLeave({ el, href: url.href })
+    }
+    document.addEventListener('click', onClick, true)
+    return () => document.removeEventListener('click', onClick, true)
+  }, [isDirty])
+
+  // 刷新/关闭页面前提示；SPA 内部导航不触发 beforeunload，由上面的拦截负责。
+  useEffect(() => {
+    if (!isDirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isDirty])
+
   if (isLoading || !config) return <div className={loadingWrap}>加载中…</div>
 
   const merged = { ...config, ...draft }
-  const isDirty = draft !== null
 
   /**
    * 通用嵌套对象字段更新（浅合并）。适用于 compaction/fallback/tools/
@@ -301,10 +408,33 @@ export function Settings() {
     e.target.value = '' // 允许重复导入同一文件
   }
 
+  /** 放弃未保存的更改：草稿清空回退到已持久化配置（JSON 模式同步重置编辑器）。 */
+  const discardChanges = () => {
+    setDraft(null)
+    if (viewMode === 'json') {
+      setJsonText(JSON.stringify(config, null, 2))
+      setJsonError(null)
+    }
+  }
+
+  /** 离开确认弹窗：「留下」= 关闭弹窗，留在设置页继续编辑。 */
+  const stayOnSettings = () => setPendingLeave(null)
+
+  /** 离开确认弹窗：「离开」= 丢弃草稿并重放被拦截的链接点击（放行一次）。 */
+  const confirmLeave = () => {
+    const pending = pendingLeave
+    setPendingLeave(null)
+    setDraft(null)
+    if (!pending) return
+    bypassGuardRef.current = true
+    if (pending.el.isConnected) pending.el.click()
+    else window.location.assign(pending.href)
+  }
+
   return (
     <div className={settingsScroll} data-testid="settings">
       <div className={toolbar}>
-        <span className={toolbarTitle}>⚙ 设置</span>
+        <h1 className={toolbarTitle}>⚙ 设置</h1>
         <div className={segGroup}>
           <button
             type="button"
@@ -367,7 +497,7 @@ export function Settings() {
             onChange={patchDraft}
           />
           <div className={section}>
-            <h3>角色路由</h3>
+            <h2 className={sectionTitle}>角色路由</h2>
             <div className={`${hint} ${hintMb}`}>
               为特定角色指定独立的 provider 和 model（覆盖默认）。
             </div>
@@ -420,7 +550,7 @@ export function Settings() {
             onCommitModelChange={(patch) => patchDraft(patch)}
           />
           <div className={section}>
-            <h3>工具指标</h3>
+            <h2 className={sectionTitle}>工具指标</h2>
             <label className={checkRow}>
               <input
                 type="checkbox"
@@ -457,7 +587,7 @@ export function Settings() {
             </label>
           </div>
           <div className={section}>
-            <h3>插件</h3>
+            <h2 className={sectionTitle}>插件</h2>
             <CommaListInput
               value={merged.plugins.enabled}
               onCommit={(items) => updateSection('plugins', { enabled: items })}
@@ -466,7 +596,7 @@ export function Settings() {
             <div className={hint}>用逗号分隔已启用的插件名称。</div>
           </div>
           <div className={section}>
-            <h3>斜杠命令</h3>
+            <h2 className={sectionTitle}>斜杠命令</h2>
             <CommaListInput
               value={merged.slashCommands.enabled}
               onCommit={(items) => updateSection('slashCommands', { enabled: items })}
@@ -480,7 +610,7 @@ export function Settings() {
             onWebSearchChange={(patch) => updateSection('websearch', patch)}
           />
           <div className={section}>
-            <h3>多 Agent</h3>
+            <h2 className={sectionTitle}>多 Agent</h2>
             <label className={field}>
               <span>Agent 目录：</span>
               <input
@@ -512,16 +642,16 @@ export function Settings() {
         </>
       )}
 
-      <div className={section}>
-        <button
-          type="button"
-          onClick={() => draft && save.mutate(draft)}
-          disabled={!isDirty || saveFeedback.kind === 'saving'}
-          title={isDirty ? '保存配置' : '配置未变更或正在加载'}
-          data-testid="settings-save"
-        >
-          {saveFeedback.kind === 'saving' ? '保存中…' : '保存'}
-        </button>
+      {/* 吸底保存条：有未保存更改时强调并给出「放弃更改」，无更改时弱化为禁用保存 */}
+      <div
+        className={`${saveBar} ${isDirty ? saveBarDirty : ''}`}
+        data-testid="settings-save-bar"
+      >
+        {isDirty && (
+          <span className={dirtyHint} data-testid="settings-dirty-hint">
+            ● 未保存更改
+          </span>
+        )}
         {saveFeedback.kind !== 'idle' && (
           <span
             className={`${saveStatus} ${
@@ -534,7 +664,59 @@ export function Settings() {
             {saveFeedback.kind === 'err' && `✗ 保存失败：${saveFeedback.msg}`}
           </span>
         )}
+        <span className={saveBarSpacer} />
+        {isDirty && (
+          <button
+            type="button"
+            onClick={discardChanges}
+            data-testid="settings-discard"
+            title="放弃当前未保存的修改，恢复到已保存配置"
+          >
+            放弃更改
+          </button>
+        )}
+        <button
+          type="button"
+          data-variant="primary"
+          onClick={() => draft && save.mutate(draft)}
+          disabled={!isDirty || saveFeedback.kind === 'saving'}
+          title={isDirty ? '保存配置' : '配置未变更或正在加载'}
+          data-testid="settings-save"
+        >
+          {saveFeedback.kind === 'saving' ? '保存中…' : '保存'}
+        </button>
       </div>
+
+      {/* 未保存更改离开确认：弹窗遮罩阻断交互，「留下」恢复编辑，「离开」放行导航 */}
+      <Dialog
+        open={pendingLeave != null}
+        onClose={stayOnSettings}
+        title="未保存的更改"
+        width="min(420px, 92vw)"
+        testId="settings-unsaved-dialog"
+        footer={
+          <div className={dialogActions}>
+            <button
+              type="button"
+              data-variant="primary"
+              onClick={stayOnSettings}
+              data-testid="settings-unsaved-stay"
+            >
+              留下
+            </button>
+            <button
+              type="button"
+              data-variant="danger"
+              onClick={confirmLeave}
+              data-testid="settings-unsaved-leave"
+            >
+              离开
+            </button>
+          </div>
+        }
+      >
+        <div className={dialogBody}>设置有未保存的更改，离开页面将丢失这些更改。</div>
+      </Dialog>
     </div>
   )
 }

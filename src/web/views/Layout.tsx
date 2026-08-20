@@ -8,11 +8,16 @@ import { DESKTOP, MOBILE } from '../styles/breakpoints.js'
 const DEFAULT_SIDEBAR = 280
 const MIN_SIDEBAR = 200
 const MAX_SIDEBAR = 480
-const DEFAULT_PANEL = 360
 const MIN_PANEL = 240
 const MAX_PANEL = 960
 const SIDEBAR_KEY = 'c0de-agent:sidebarWidth'
 const PANEL_KEY = 'c0de-agent:panelWidth'
+
+/** 预览面板默认宽度：max(480px, min(45vw, 720px))。固定 360px 过窄——
+ *  package.json 等长行文件会被折成细高窄列；随视口自适应，仍在可拖拽区间内。 */
+function defaultPanelWidth(): number {
+  return Math.round(Math.max(480, Math.min(window.innerWidth * 0.45, 720)))
+}
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
@@ -169,7 +174,7 @@ export function Layout({
     loadWidth(SIDEBAR_KEY, DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
   )
   const [panelWidth, setPanelWidth] = useState(() =>
-    loadWidth(PANEL_KEY, DEFAULT_PANEL, MIN_PANEL, MAX_PANEL),
+    loadWidth(PANEL_KEY, defaultPanelWidth(), MIN_PANEL, MAX_PANEL),
   )
 
   useEffect(() => {
@@ -238,7 +243,7 @@ export function Layout({
               aria-valuemax={MAX_PANEL}
               tabIndex={0}
               onPointerDown={panelResize.onPointerDown}
-              onDoubleClick={() => setPanelWidth(DEFAULT_PANEL)}
+              onDoubleClick={() => setPanelWidth(defaultPanelWidth())}
             />
             <aside className={panelStyle} data-testid="layout-panel" style={{ width: panelWidth }}>
               {panelNode}
@@ -247,8 +252,9 @@ export function Layout({
         )}
       </div>
       {terminalNode}
-      {/* 移动端底部导航栏（spec §10.3）；桌面端由组件内部隐藏 */}
-      <MobileNav />
+      {/* 移动端底部导航栏（spec §10.3）；桌面端由组件内部隐藏。
+          侧栏内容透传给 MobileNav，移动端「会话」标签以抽屉形式复用。 */}
+      <MobileNav sidebar={sidebarNode} />
     </div>
   )
 }

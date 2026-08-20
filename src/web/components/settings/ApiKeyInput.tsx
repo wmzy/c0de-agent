@@ -13,6 +13,13 @@ const pwdField = css`
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+`
+
+/** 密码输入框：弹性占满、允许收缩（窄屏两列网格内不撑破容器）。 */
+const pwdInput = css`
+  flex: 1;
+  min-width: 0;
 `
 
 /**
@@ -23,9 +30,12 @@ const pwdField = css`
  * 用户重新输入即覆盖。未改动时 draft 仍保留原 enc: 值，保存不会误清空。
  */
 function ApiKeyInput({
+  id,
   stored,
   onCommit,
 }: {
+  /** 关联外部 label（ProviderPanel 的「API Key」标签）。 */
+  id?: string
   stored: string | undefined
   onCommit: (value: string) => void
 }) {
@@ -38,6 +48,8 @@ function ApiKeyInput({
   return (
     <span className={pwdField}>
       <input
+        id={id}
+        className={pwdInput}
         type="password"
         value={text}
         placeholder={isEnc ? '已加密保存（重新输入以修改）' : 'API Key'}

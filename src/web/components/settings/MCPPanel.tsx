@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { MCPServerConfig } from '@shared/types/config.js'
-import { section } from './styles.js'
+import { section, sectionTitle } from './styles.js'
 
 const mcpRow = css`
   display: flex;
@@ -40,7 +40,7 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
 
   return (
     <div className={section}>
-      <h3>MCP 服务器</h3>
+      <h2 className={sectionTitle}>MCP 服务器</h2>
       {mcpServers.map((server, index) => (
         // 受控表单列表用 index 作 key，避免输入 name 即重挂载失焦（同 providers 行）
         // biome-ignore lint/suspicious/noArrayIndexKey: 受控表单列表，name 输入会改 key 导致重挂载失焦

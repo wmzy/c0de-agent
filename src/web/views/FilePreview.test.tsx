@@ -6,6 +6,18 @@ import { ReferenceContext } from '../contexts/ReferenceContext.js'
 import { ThemeProvider } from '../contexts/ThemeContext.js'
 import { FilePreview } from './FilePreview.js'
 
+// mock CodeEditor：本文件聚焦 FilePreview 行为（脏关闭守卫等），
+// 通过 mock-dirty 按钮驱动 onDirtyChange，避免在 jsdom 中模拟 CodeMirror 输入。
+vi.mock('../components/CodeEditor.js', () => ({
+  CodeEditor: ({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) => (
+    <div data-testid="code-editor">
+      <button type="button" data-testid="mock-dirty" onClick={() => onDirtyChange?.(true)}>
+        标记脏
+      </button>
+    </div>
+  ),
+}))
+
 // 返回 mock fetch，json 响应携带给定 content
 function fetchMock(content: string) {
   return vi.fn().mockResolvedValue({
@@ -103,6 +115,58 @@ describe('FilePreview', () => {
       expect(screen.getByLabelText('关闭预览')).toBeTruthy()
     })
     fireEvent.click(screen.getByLabelText('关闭预览'))
+    expect(closeFile).toHaveBeenCalledOnce()
+  })
+
+  it('脏编辑点关闭弹出确认弹窗，取消后保留编辑内容', async () => {
+    const closeFile = vi.fn()
+    vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile }}
+        >
+          <FilePreview projectId="p1" path="notes.txt" />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('code-editor')).toBeTruthy()
+    })
+    // 标记编辑器为脏后点 ✕：应弹确认而非直接关闭
+    fireEvent.click(screen.getByTestId('mock-dirty'))
+    fireEvent.click(screen.getByLabelText('关闭预览'))
+    expect(screen.getByTestId('discard-dialog')).toBeTruthy()
+    expect(screen.getByText('放弃未保存的修改？')).toBeTruthy()
+    expect(closeFile).not.toHaveBeenCalled()
+    // 取消：弹窗关闭，编辑内容仍在
+    fireEvent.click(screen.getByTestId('discard-cancel'))
+    expect(screen.queryByTestId('discard-dialog')).toBeNull()
+    expect(closeFile).not.toHaveBeenCalled()
+    expect(screen.getByTestId('code-editor')).toBeTruthy()
+    expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+  })
+
+  it('确认放弃未保存修改后才关闭预览', async () => {
+    const closeFile = vi.fn()
+    vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile }}
+        >
+          <FilePreview projectId="p1" path="notes.txt" />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('code-editor')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByTestId('mock-dirty'))
+    fireEvent.click(screen.getByLabelText('关闭预览'))
+    fireEvent.click(screen.getByTestId('discard-confirm'))
     expect(closeFile).toHaveBeenCalledOnce()
   })
 

@@ -49,3 +49,65 @@ describe('MobileNav', () => {
     expect(screen.getByTestId('mobile-nav-chat')).toBeTruthy()
   })
 })
+
+describe('MobileNav 会话抽屉', () => {
+  const sidebar = (
+    <div data-testid="drawer-sidebar">
+      <button type="button" data-testid="tab-sessions">
+        💬会话
+      </button>
+      <button type="button" data-testid="tab-files">
+        📁文件
+      </button>
+    </div>
+  )
+
+  it('点击会话标签打开抽屉，内嵌侧栏（会话+文件 tab），再次点击关闭', () => {
+    renderWith(<MobileNav sidebar={sidebar} />)
+    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(screen.getByTestId('mobile-drawer')).toBeTruthy()
+    expect(screen.getByTestId('drawer-sidebar')).toBeTruthy()
+    expect(screen.getByTestId('tab-sessions')).toBeTruthy()
+    expect(screen.getByTestId('tab-files')).toBeTruthy()
+    // 抽屉打开期间 sessions 标签高亮
+    expect(screen.getByTestId('mobile-nav-sessions').className).toContain('active')
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+  })
+
+  it('点击遮罩关闭抽屉', () => {
+    renderWith(<MobileNav sidebar={sidebar} />)
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    fireEvent.click(screen.getByTestId('mobile-drawer-mask'))
+    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+  })
+
+  it('点击 ✕ 关闭抽屉', () => {
+    renderWith(<MobileNav sidebar={sidebar} />)
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    fireEvent.click(screen.getByTestId('mobile-drawer-close'))
+    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+  })
+
+  it('Esc 关闭抽屉', () => {
+    renderWith(<MobileNav sidebar={sidebar} />)
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+  })
+
+  it('未传 sidebar 时点击会话标签不渲染抽屉', () => {
+    renderWith(<MobileNav />)
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+  })
+
+  it('抽屉打开时锁定背景滚动，关闭后恢复', () => {
+    renderWith(<MobileNav sidebar={sidebar} />)
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(document.body.style.overflow).toBe('hidden')
+    fireEvent.click(screen.getByTestId('mobile-drawer-close'))
+    expect(document.body.style.overflow).toBe('')
+  })
+})

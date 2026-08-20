@@ -93,12 +93,8 @@ export const globalStyle = css`
     padding: 8px 12px;
     transition: background 0.15s, border-color 0.15s;
   }
-  :global(button:hover:not(:disabled)) {
+  :global(button:hover:not(:disabled):not([aria-disabled='true'])) {
     background: color-mix(in srgb, var(--bg-secondary) 80%, var(--text) 8%);
-  }
-  :global(button:disabled) {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   /* 按钮变体：组件用 data-variant 声明语义，跨文件统一外观 */
   :global(button[data-variant='primary']) {
@@ -106,7 +102,7 @@ export const globalStyle = css`
     border-color: var(--primary);
     color: #fff;
   }
-  :global(button[data-variant='primary']:hover:not(:disabled)) {
+  :global(button[data-variant='primary']:hover:not(:disabled):not([aria-disabled='true'])) {
     background: var(--primary-hover);
     border-color: var(--primary-hover);
   }
@@ -114,14 +110,25 @@ export const globalStyle = css`
     color: var(--error);
     border-color: color-mix(in srgb, var(--error) 45%, var(--border));
   }
-  :global(button[data-variant='danger']:hover:not(:disabled)) {
+  :global(button[data-variant='danger']:hover:not(:disabled):not([aria-disabled='true'])) {
     background: color-mix(in srgb, var(--error) 12%, var(--bg-secondary));
   }
   :global(button[data-variant='ghost']) {
     background: transparent;
     border-color: transparent;
   }
-  :global(button[data-variant='ghost']:hover:not(:disabled)) {
+  :global(button[data-variant='ghost']:hover:not(:disabled):not([aria-disabled='true'])) {
     background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+  /*
+   * 禁用态全局语义：真实 disabled 与 aria-disabled 等同——文字降对比度、
+   * 背景变浅、cursor:not-allowed，hover 已被上方 :not() 守卫排除。
+   * 置于变体规则之后：primary/danger/ghost 禁用时同样回退灰态而非保留语义色。
+   */
+  :global(button:disabled),
+  :global(button[aria-disabled='true']) {
+    color: var(--text-disabled);
+    background: var(--bg-disabled);
+    cursor: not-allowed;
   }
 `

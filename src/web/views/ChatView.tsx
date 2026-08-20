@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AgentSelector } from '../components/AgentSelector.js'
+import { Logo } from '../components/Logo.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
@@ -11,6 +12,7 @@ import { mergeToolMessages } from '../components/session/utils/normalizeParts.js
 import { buildTimeline } from '../components/session/utils/timeline.js'
 import { TodoPanel } from '../components/TodoPanel.js'
 import { ToolToggle } from '../components/ToolToggle.js'
+import { useFileReference } from '../contexts/ReferenceContext.js'
 import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
 import { useAgent } from '../hooks/useAgent.js'
 import { useChat } from '../hooks/useChat.js'
@@ -141,6 +143,119 @@ const shakeExitBtn = css`
   }
 `
 
+const welcomeWrap = css`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 16px 32px;
+  /* margin-block:auto 吸收滚动容器剩余空间实现居中；内容超高时不像 justify-content:center 那样裁掉顶部 */
+  margin-block: auto;
+`
+
+const welcomeSub = css`
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+`
+
+const exampleGrid = css`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
+  gap: 10px;
+  justify-content: center;
+  width: 100%;
+  max-width: 480px;
+`
+
+const exampleCard = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+
+  &:hover {
+    background: var(--bg-secondary);
+    border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  }
+`
+
+const cardTitle = css`
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+`
+
+const cardDesc = css`
+  font-size: 12px;
+  color: var(--text-secondary);
+`
+
+const welcomeHint = css`
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+`
+
+/** 空会话示例任务卡片：title 是卡片标签，prompt 是点击后填入 composer 的文本。 */
+export const EXAMPLE_TASKS = [
+  {
+    title: '解释这个项目的架构',
+    desc: '梳理模块、数据流与关键设计',
+    prompt: '解释这个项目的架构：主要模块、数据流和关键设计决策',
+  },
+  {
+    title: '为当前项目修一个 bug',
+    desc: '定位根因，修复并补回归测试',
+    prompt: '帮我修一个 bug：先定位根因，修复后补充回归测试验证',
+  },
+  {
+    title: '写一个新功能并补测试',
+    desc: '实现功能，一步到位补单测',
+    prompt: '帮我实现一个新功能，完成后补充对应的单元测试',
+  },
+  {
+    title: '审查最近的改动',
+    desc: '检查最近提交，指出问题',
+    prompt: '审查最近一次提交的改动，指出问题并给出改进建议',
+  },
+]
+
+/** 空会话欢迎区：应用名 + 欢迎语 + 示例任务卡片 + 能力提示。
+ *  点击卡片经 ReferenceContext 把示例文本填入 composer 并聚焦。 */
+export function ChatWelcome() {
+  const fileRef = useFileReference()
+  return (
+    <div className={welcomeWrap} data-testid="chat-welcome">
+      <Logo />
+      <p className={welcomeSub}>描述你想做的事，我会读代码、改文件、跑命令，直到完成</p>
+      <div className={exampleGrid}>
+        {EXAMPLE_TASKS.map((task) => (
+          <button
+            key={task.title}
+            type="button"
+            className={exampleCard}
+            data-testid="welcome-card"
+            onClick={() => fileRef?.insertPromptText?.(task.prompt)}
+          >
+            <span className={cardTitle}>{task.title}</span>
+            <span className={cardDesc}>{task.desc}</span>
+          </button>
+        ))}
+      </div>
+      <p className={welcomeHint}>输入 / 查看命令，@ 引用文件</p>
+    </div>
+  )
+}
+
 /** 会话首次加载消息时的骨架占位（几个灰色条形，不用文字提示）。 */
 function ChatSkeleton() {
   return (
@@ -227,6 +342,7 @@ function DraftSession({ projectId }: { projectId: string }) {
         /* 草稿阶段无可中止的后端请求 */
       }}
       onConfirm={() => {}}
+      emptyState={<ChatWelcome />}
       modelBar={
         <>
           <AgentSelector
@@ -460,6 +576,7 @@ function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: s
         onSteer={agent.steer}
         paused={agent.paused}
         supportsVision={supportsVision}
+        emptyState={<ChatWelcome />}
         modelBar={
           <>
             <AgentSelector

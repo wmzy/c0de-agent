@@ -15,9 +15,25 @@ const mark = css`
   flex-shrink: 0;
 `
 
+/** wordmark 隐藏时保留读屏可及的品牌名（视觉上只剩图标）。 */
+const srOnly = css`
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+`
+
 /** c0de-agent 品牌 logo：终端提示符 mark + wordmark。
- *  mark 用主题色变量自适应明暗主题；wordmark 跟随正文文本色。 */
-export function Logo() {
+ *  mark 用主题色变量自适应明暗主题；wordmark 跟随正文文本色。
+ *  wordmark=false 时仅显示 mark（如顶栏，避免与项目切换器的项目名字样重复相邻），
+ *  品牌名以 sr-only 文本保留给读屏。 */
+export function Logo({ wordmark = true }: { wordmark?: boolean }) {
   return (
     <span className={wrap}>
       <svg
@@ -52,7 +68,7 @@ export function Logo() {
         <circle cx="15.5" cy="12" r="3" fill="#fff" opacity="0.22" />
         <circle cx="15.5" cy="12" r="1.5" fill="#fff" />
       </svg>
-      c0de-agent
+      {wordmark ? 'c0de-agent' : <span className={srOnly}>c0de-agent</span>}
     </span>
   )
 }

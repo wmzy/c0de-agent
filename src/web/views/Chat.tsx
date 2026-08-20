@@ -12,6 +12,7 @@ import {
 import { Composer, type SendPayload } from '../composer/Composer.js'
 import type { AgentListItem } from '../services/agent.js'
 import { type PermissionMode, permissionAPI } from '../services/permission.js'
+import { MOBILE } from '../styles/breakpoints.js'
 import { formatTokenCount } from '../utils/format.js'
 import { TableView } from './TableView.js'
 
@@ -47,6 +48,8 @@ type ChatProps = {
   projectId?: string
   /** 可用 agent 列表（@ mention 渲染与校验）。 */
   agents?: AgentListItem[]
+  /** 时间线为空时渲染在消息流中央的空状态（欢迎区/示例卡片），由 ChatView 注入。 */
+  emptyState?: ReactNode
 }
 
 const toolbar = css`
@@ -68,27 +71,57 @@ const viewBar = css`
   font-size: 12px;
 `
 
+/* 主视图切换（聊天/表格）：无边框分段控件，白底 track 上灰底 pill + primary 文字，
+ * 激活/未激活在背景与文字色上双重区分，避免容器/按钮双层边框的琐碎感。 */
 const viewSwitch = css`
   display: inline-flex;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--border);
+  padding: 2px;
+  border: none;
   border-radius: 6px;
-  overflow: hidden;
+  background: var(--bg);
 
   & > button {
     border: none;
     background: transparent;
     color: var(--text-secondary);
     padding: 3px 12px;
+    border-radius: 4px;
     cursor: pointer;
     font-size: 12px;
 
-    &[aria-pressed='true'] {
-      background: var(--bg);
+    &:hover {
       color: var(--text);
     }
+
+    &[aria-pressed='true'] {
+      background: var(--bg-secondary);
+      color: var(--primary);
+      font-weight: 600;
+    }
+  }
+`
+
+/* 调试用原始 JSON 视图：下沉为行尾次要小链接，不与主视图并列。 */
+const viewJsonLink = css`
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  border-radius: 4px;
+  cursor: pointer;
+  &:hover {
+    color: var(--primary);
+  }
+  &[aria-pressed='true'] {
+    color: var(--primary);
+    font-weight: 600;
   }
 `
 
@@ -117,16 +150,32 @@ const footerLeft = css`
   gap: 8px;
   flex: 1;
   min-width: 0;
+  ${MOBILE} {
+    /* 窄屏：Provider/Model 控件换行堆叠，避免 modelWrap 被 main 的
+     * overflow:hidden 裁剪导致模型输入不可达；控件自身不超出容器。 */
+    flex-wrap: wrap;
+    & select,
+    & input {
+      max-width: 100%;
+    }
+  }
 `
 
 const modeBar = css`
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 6px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
   font-size: 12px;
+`
+
+/** auto 开启态的 modeBar：整条警示底色 + 警示上边线（须在 modeBar 之后定义以按源序覆盖）。 */
+const modeBarAuto = css`
+  border-top-color: color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg-secondary));
 `
 
 const modeToggle = css`
@@ -139,8 +188,21 @@ const modeToggle = css`
   user-select: none;
 `
 
+/** 关闭态中性说明：次级文本色，无警示语义。 */
+const modeHint = css`
+  color: var(--text-secondary);
+`
+
+/** 开启态警示 pill：--warning 实底白字，视觉权重明显高于关闭态小字。 */
 const modeWarn = css`
-  color: var(--error);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--warning);
+  color: #fff;
+  font-weight: 600;
 `
 
 export function Chat({
@@ -163,6 +225,7 @@ export function Chat({
   supportsVision = true,
   projectId,
   agents = [],
+  emptyState,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
@@ -228,7 +291,7 @@ export function Chat({
       </div>
       {topPanel}
       <div className={viewBar} data-testid="view-bar">
-        <fieldset className={viewSwitch} aria-label="视图模式">
+        <div className={viewSwitch} role="group" aria-label="视图模式">
           <button
             type="button"
             aria-pressed={viewMode === 'chat'}
@@ -245,15 +308,17 @@ export function Chat({
           >
             表格
           </button>
-          <button
-            type="button"
-            aria-pressed={viewMode === 'json'}
-            onClick={() => setViewMode('json')}
-            data-testid="view-json"
-          >
-            原始 JSON
-          </button>
-        </fieldset>
+        </div>
+        <button
+          type="button"
+          className={viewJsonLink}
+          aria-pressed={viewMode === 'json'}
+          onClick={() => setViewMode('json')}
+          data-testid="view-json"
+          title="调试视图：完整时间线的原始 JSON"
+        >
+          原始 JSON
+        </button>
       </div>
       {viewMode === 'table' ? (
         <TableView rows={timeline} />
@@ -262,6 +327,7 @@ export function Chat({
           {viewMode === 'chat' && (
             <StickyUserMessage containerRef={streamRef} messages={stickyUserMessages} />
           )}
+          {timeline.length === 0 && emptyState}
           <TimelineChat rows={timeline} showAllJson={viewMode === 'json'} />
           {isStreaming && <StreamingIndicator />}
           <div ref={bottomRef} />
@@ -274,7 +340,10 @@ export function Chat({
           {toolToggle}
         </div>
       )}
-      <div className={modeBar} data-testid="permission-mode-bar">
+      <div
+        className={permissionMode === 'auto' ? `${modeBar} ${modeBarAuto}` : modeBar}
+        data-testid="permission-mode-bar"
+      >
         <label className={modeToggle}>
           <input
             type="checkbox"
@@ -284,8 +353,14 @@ export function Chat({
           />
           自动授权
         </label>
-        {permissionMode === 'auto' && (
-          <span className={modeWarn}>将自动执行所有工具（含 bash），无需确认</span>
+        {permissionMode === 'auto' ? (
+          <span className={modeWarn} data-testid="permission-mode-warning" role="status">
+            ⚠ 自动授权已开启：所有工具（含 bash）免确认执行
+          </span>
+        ) : (
+          <span className={modeHint} data-testid="permission-mode-hint">
+            工具执行前逐个确认
+          </span>
         )}
       </div>
       <Composer

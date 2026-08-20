@@ -21,6 +21,8 @@ const { updateAPI } = await import('../services/update.js')
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  // 「稍后」dismissal 记录在 sessionStorage，跨用例隔离必须清掉
+  sessionStorage.clear()
 })
 
 function renderWithClient(ui: React.ReactElement) {
@@ -83,6 +85,46 @@ describe('UpdateBanner', () => {
     await waitFor(() => expect(screen.getByTestId('update-dismiss')).toBeTruthy())
     fireEvent.click(screen.getByTestId('update-dismiss'))
     await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
+  })
+
+  it('clicking 稍后 keeps the banner hidden after remount in the same tab session', async () => {
+    ;(updateAPI.status as Mock).mockResolvedValue({
+      hasUpdate: true,
+      currentVersion: '0.1.0',
+      latestVersion: '0.2.0',
+    })
+    const first = renderWithClient(<UpdateBanner />)
+    await waitFor(() => expect(screen.getByTestId('update-dismiss')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('update-dismiss'))
+    await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
+    first.unmount()
+
+    // 重新挂载（模拟路由切换/刷新）：query 已返回 hasUpdate，但本会话已 dismiss 该版本
+    renderWithClient(<UpdateBanner />)
+    await waitFor(() => expect(updateAPI.status).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
+    expect(sessionStorage.getItem('c0de-agent:updateDismissed')).toBe('0.2.0')
+  })
+
+  it('shows the banner again for a newer version after dismissing an older one', async () => {
+    ;(updateAPI.status as Mock).mockResolvedValue({
+      hasUpdate: true,
+      currentVersion: '0.1.0',
+      latestVersion: '0.2.0',
+    })
+    const first = renderWithClient(<UpdateBanner />)
+    await waitFor(() => expect(screen.getByTestId('update-dismiss')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('update-dismiss'))
+    await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
+    first.unmount()
+
+    ;(updateAPI.status as Mock).mockResolvedValue({
+      hasUpdate: true,
+      currentVersion: '0.2.0',
+      latestVersion: '0.3.0',
+    })
+    renderWithClient(<UpdateBanner />)
+    await waitFor(() => expect(screen.getByTestId('update-banner').textContent).toContain('0.3.0'))
   })
 
   it('shows failure message when apply throws', async () => {

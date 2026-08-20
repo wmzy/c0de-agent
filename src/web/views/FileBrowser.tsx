@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FileTree, type TreeNode } from '../components/FileTree.js'
 import { useFileReference } from '../contexts/ReferenceContext.js'
 import { useProjects } from '../hooks/useSession.js'
@@ -23,7 +23,8 @@ const headerBar = css`
 const searchInputFlex = css`
   flex: 1;
   min-width: 0;
-  padding: 6px 8px;
+  min-height: 36px;
+  padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -47,65 +48,58 @@ const resultRow = css`
   gap: 4px;
   flex: 1;
   min-width: 0;
-  padding: 4px 8px;
+  min-height: 36px;
+  padding: 2px 8px;
   cursor: pointer;
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: 12.5px;
   text-align: left;
   &:hover {
     background: var(--bg-secondary);
   }
 `
 
-const resultRowWrap = css`
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  &:hover [data-search-mention] {
-    opacity: 1;
-  }
-  &:hover [data-search-delete] {
-    opacity: 1;
-  }
-`
-
 const searchMentionBtn = css`
-  opacity: 0;
+  opacity: 0.65;
   background: transparent;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 3px;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 11px;
-  padding: 0 5px;
-  min-height: auto;
-  min-width: auto;
+  padding: 0;
+  min-height: 32px;
+  min-width: 32px;
   flex-shrink: 0;
-  transition: opacity 0.1s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s, color 0.1s;
   &:hover {
     color: var(--primary);
-    border-color: var(--primary);
   }
 `
 
 const searchDeleteBtn = css`
-  opacity: 0;
+  opacity: 0.65;
   background: transparent;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 3px;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
-  padding: 0 5px;
-  min-height: auto;
-  min-width: auto;
+  padding: 0;
+  min-height: 32px;
+  min-width: 32px;
   flex-shrink: 0;
-  transition: opacity 0.1s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s, color 0.1s;
   &:hover {
     color: var(--error);
-    border-color: var(--error);
   }
 `
 
@@ -120,6 +114,80 @@ const loading = css`
   color: var(--text-secondary);
   font-size: 12px;
 `
+
+/** 搜索结果列表：原生 ul/li 语义（读屏从树切换到搜索时有明确上下文）。 */
+const resultList = css`
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+`
+
+/** 搜索结果行容器。 */
+const resultItem = css`
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  &:hover [data-search-mention] {
+    opacity: 1;
+  }
+  &:hover [data-search-delete] {
+    opacity: 1;
+  }
+`
+
+/** 「显示隐藏目录」开关：紧凑方形按钮，收在搜索框旁。 */
+const hiddenToggle = css`
+  flex-shrink: 0;
+  min-height: 36px;
+  min-width: 36px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  &[aria-pressed='true'] {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+`
+
+/**
+ * 内置忽略清单：依赖/构建产物/覆盖率/缓存等噪音目录，
+ * 默认从文件树过滤（与 git ignore 无关，纯 UI 降噪），可用开关找回。
+ * type 缺省视为 directory，按名字精确匹配。
+ */
+const HIDDEN_DIR_NAMES = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  '.worktrees',
+  'node_modules',
+  'bower_components',
+  'dist',
+  'dist-web',
+  'dev-dist',
+  'build',
+  'out',
+  'coverage',
+  '.nyc_output',
+  '.cache',
+  '.parcel-cache',
+  '.turbo',
+  '.vite',
+  '.yarn',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+])
+
+/** 递归过滤：从树中移除命中忽略清单的目录（不可变更新）。 */
+function filterHiddenDirs(node: TreeNode): TreeNode {
+  if (!node.children) return node
+  return {
+    ...node,
+    children: node.children
+      .filter((c) => !(c.type !== 'file' && HIDDEN_DIR_NAMES.has(c.name)))
+      .map(filterHiddenDirs),
+  }
+}
 
 /** 子目录条目 → 树节点（目录 children 未加载=undefined，文件为叶子）。 */
 function entriesToNodes(entries: FileEntry[], parentPath: string): TreeNode[] {
@@ -166,6 +234,14 @@ export function FileBrowser({
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
   const [query, setQuery] = useState('')
+  /** 显示隐藏目录（node_modules/构建产物等），默认降噪过滤。 */
+  const [showHidden, setShowHidden] = useState(false)
+
+  /** 渲染用树：默认过滤忽略目录；memo 保持节点引用稳定，避免全树重渲染。 */
+  const visibleRoot = useMemo(
+    () => (treeRoot && !showHidden ? filterHiddenDirs(treeRoot) : treeRoot),
+    [treeRoot, showHidden],
+  )
 
   const isSearch = query.length > 1
   const searchQ = useQuery({
@@ -277,6 +353,21 @@ export function FileBrowser({
           onChange={(e) => setQuery(e.target.value)}
           data-testid="file-search"
         />
+        <button
+          type="button"
+          className={hiddenToggle}
+          aria-pressed={showHidden}
+          aria-label="显示隐藏目录"
+          title={
+            showHidden
+              ? '隐藏 node_modules、构建产物等目录'
+              : '显示 node_modules、构建产物等隐藏目录'
+          }
+          data-testid="toggle-hidden-dirs"
+          onClick={() => setShowHidden((v) => !v)}
+        >
+          {showHidden ? '🙈' : '👁'}
+        </button>
       </div>
       <div className={treeScroll}>
         {isSearch ? (
@@ -285,47 +376,49 @@ export function FileBrowser({
           ) : searchEntries.length === 0 ? (
             <div className={empty}>无匹配文件</div>
           ) : (
-            searchEntries.map((e) => (
-              <div key={e.path} className={resultRowWrap}>
-                <button
-                  type="button"
-                  className={resultRow}
-                  data-testid={`file-${e.path}`}
-                  onClick={() => onPick(e.path)}
-                >
-                  <span>{e.type === 'directory' ? '📁' : '📄'}</span>
-                  <span>{e.path}</span>
-                </button>
-                {fileRef && (
+            <ul className={resultList} aria-label="搜索结果">
+              {searchEntries.map((e) => (
+                <li key={e.path} className={resultItem}>
                   <button
                     type="button"
-                    className={searchMentionBtn}
-                    data-search-mention
-                    data-testid={`search-mention-${e.path}`}
-                    aria-label={`引用 ${e.path} 到输入框`}
-                    onClick={() => fileRef.insertFileReference(e.path)}
+                    className={resultRow}
+                    data-testid={`file-${e.path}`}
+                    onClick={() => onPick(e.path)}
                   >
-                    @
+                    <span>{e.type === 'directory' ? '📁' : '📄'}</span>
+                    <span>{e.path}</span>
                   </button>
-                )}
-                <button
-                  type="button"
-                  className={searchDeleteBtn}
-                  data-search-delete
-                  data-testid={`search-delete-${e.path}`}
-                  aria-label={`删除 ${e.path}`}
-                  onClick={() => handleDelete(e.path)}
-                >
-                  🗑
-                </button>
-              </div>
-            ))
+                  {fileRef && (
+                    <button
+                      type="button"
+                      className={searchMentionBtn}
+                      data-search-mention
+                      data-testid={`search-mention-${e.path}`}
+                      aria-label={`引用 ${e.path} 到输入框`}
+                      onClick={() => fileRef.insertFileReference(e.path)}
+                    >
+                      @
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={searchDeleteBtn}
+                    data-search-delete
+                    data-testid={`search-delete-${e.path}`}
+                    aria-label={`删除 ${e.path}`}
+                    onClick={() => handleDelete(e.path)}
+                  >
+                    🗑
+                  </button>
+                </li>
+              ))}
+            </ul>
           )
         ) : !treeRoot ? (
           <div className={loading}>加载中…</div>
         ) : (
           <FileTree
-            root={treeRoot}
+            root={visibleRoot}
             expanded={expanded}
             selected={null}
             loadingPaths={loadingPaths}
@@ -335,6 +428,7 @@ export function FileBrowser({
             onMention={fileRef?.insertFileReference}
             onDelete={handleDelete}
             gitStatusMap={gitStatusMap}
+            label="项目文件树"
             hideRoot
           />
         )}

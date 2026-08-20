@@ -8,6 +8,7 @@ import { useCommands } from '../hooks/useCommands.js'
 import { useFileSearch } from '../hooks/useFiles.js'
 import type { AgentListItem } from '../services/agent.js'
 import { workflowsAPI } from '../services/workflows.js'
+import { MOBILE } from '../styles/breakpoints.js'
 import { AtFilePopover } from './AtFilePopover.js'
 import { AttachmentBar } from './AttachmentBar.js'
 import { ComposerEditor } from './ComposerEditor.js'
@@ -31,6 +32,13 @@ const editorRow = css`
   display: flex;
   gap: 8px;
   padding: 12px;
+  ${MOBILE} {
+    /* 窄屏：输入区独占一行（宽度=视口-padding），按钮换行到第二行平分 */
+    flex-wrap: wrap;
+    & > button {
+      flex: 1;
+    }
+  }
 `
 
 const sendBtn = css`
@@ -43,8 +51,16 @@ const sendBtn = css`
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
+  &:hover:not(:disabled) {
+    background: var(--primary-hover);
+  }
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+  }
   &:disabled {
-    opacity: 0.4;
+    color: var(--text-disabled);
+    background: var(--bg-disabled);
     cursor: not-allowed;
   }
 `
@@ -59,10 +75,19 @@ const appendBtn = css`
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
+  &:hover:not(:disabled) {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  &:focus-visible {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+  }
   &:disabled {
-    opacity: 0.4;
+    color: var(--text-disabled);
+    background: var(--bg-disabled);
     cursor: not-allowed;
-    border-color: transparent;
   }
 `
 
@@ -179,12 +204,14 @@ function Composer(props: ComposerProps) {
       insertFileReference: composer.appendFileReference,
       insertSnippetReference: composer.appendSnippetReference,
       insertTerminalReference: composer.appendTerminalReference,
+      insertPromptText: composer.insertPromptText,
     })
     return () => setFileReferenceApi(null)
   }, [
     composer.appendFileReference,
     composer.appendSnippetReference,
     composer.appendTerminalReference,
+    composer.insertPromptText,
     setFileReferenceApi,
   ])
 
@@ -431,6 +458,7 @@ function Composer(props: ComposerProps) {
           type="button"
           aria-label={props.isStreaming ? '终止生成' : '发送消息'}
           data-testid="send"
+          disabled={!props.isStreaming && composer.isEmpty && composer.images.length === 0}
         >
           {sendLabel}
         </button>
