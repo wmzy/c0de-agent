@@ -31,6 +31,10 @@ const rowWrap = css`
   &:hover {
     background: color-mix(in srgb, var(--bg-secondary) 88%, var(--text) 6%);
   }
+
+  &:hover > button {
+    opacity: 1;
+  }
 `
 
 const jsonToggle = css`
@@ -46,8 +50,12 @@ const jsonToggle = css`
   font-size: 11px;
   cursor: pointer;
   line-height: 18px;
+  /* 常态半隐降低噪音，悬停消息行或按钮时完整显现 */
+  opacity: 0.4;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 
   &:hover {
+    opacity: 1;
     color: var(--text);
     border-color: var(--primary);
   }
@@ -140,6 +148,7 @@ export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showA
                 onClick={() => toggle(key)}
                 data-testid={`row-json-${key}`}
                 aria-label={isJson ? '切换美化' : '切换 JSON'}
+                title={isJson ? '切回美化视图' : '查看该消息原始 JSON'}
               >
                 {isJson ? '✦' : '{ }'}
               </button>

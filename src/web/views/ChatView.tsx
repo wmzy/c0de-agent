@@ -180,11 +180,19 @@ const exampleCard = css`
   background: var(--bg);
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.12s ease, background-color 0.12s ease;
+  transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.12s ease,
+    box-shadow 0.12s ease;
 
   &:hover {
     background: var(--bg-secondary);
     border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+    transform: translateY(-1px);
+    box-shadow: var(--shadow);
+  }
+
+  &:active {
+    transform: translateY(0);
+    box-shadow: none;
   }
 `
 

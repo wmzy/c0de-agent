@@ -4,6 +4,7 @@ import { type ReactNode, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjects } from '../hooks/useSession.js'
 import { fileAPI } from '../services/file.js'
+import { MOBILE } from '../styles/breakpoints.js'
 import { AddProjectDialog } from './AddProjectDialog.js'
 import { DropdownMenu } from './DropdownMenu.js'
 
@@ -97,6 +98,14 @@ const actionsWrap = css`
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+`
+
+/** TopBar 内联模式窄屏收纳：分支标签与提交按钮是低频 git 操作，
+ *  390px 视口下与右侧导航争宽导致溢出截断，移动端整体隐藏让位。 */
+const mobileHide = css`
+  ${MOBILE} {
+    display: none;
+  }
 `
 
 // ---- 下拉菜单项样式 ----
@@ -302,57 +311,63 @@ export function ProjectIndicator({
 
       {/* 分支下拉 */}
       {project.gitBranch ? (
-        <DropdownMenu
-          testId="branch-dropdown"
-          onOpenChange={setBranchesOpen}
-          trigger={
-            <span
-              className={branchTag}
-              data-testid="project-branch"
-              title={
-                lastCommit
-                  ? `${lastCommit.subject}\n${lastCommit.author} · ${lastCommit.date}${lastCommit.hash ? ` · ${lastCommit.hash}` : ''}`
-                  : undefined
-              }
-            >
-              {project.gitBranch}
-              <span className={caret}>{'\u25BE'}</span>
-            </span>
-          }
-          footer={() => (
-            <NewBranchForm
-              onCreate={(name) => createBranchMut.mutate(name)}
-              pending={createBranchMut.isPending}
-              error={createBranchMut.error ? String(createBranchMut.error.message) : null}
-            />
-          )}
-        >
-          {() =>
-            (branchesQ.data?.branches ?? []).map((b) => (
-              <button
-                key={b.name}
-                type="button"
-                className={`${menuItem} ${b.current ? menuItemActive : ''}`}
-                onClick={() => {
-                  if (!b.current) checkoutMut.mutate(b.name)
-                }}
-                disabled={b.current || checkoutMut.isPending}
-                data-testid={`branch-dropdown-item-${b.name}`}
+        <span className={variant === 'inline' ? mobileHide : undefined}>
+          <DropdownMenu
+            testId="branch-dropdown"
+            onOpenChange={setBranchesOpen}
+            trigger={
+              <span
+                className={branchTag}
+                data-testid="project-branch"
+                title={
+                  lastCommit
+                    ? `${lastCommit.subject}\n${lastCommit.author} · ${lastCommit.date}${lastCommit.hash ? ` · ${lastCommit.hash}` : ''}`
+                    : undefined
+                }
               >
-                <span className={menuItemCheck}>{b.current ? '\u2713' : ''}</span>
-                <span className={menuItemSub}>{b.name}</span>
-                {b.lastSubject ? (
-                  <span className={menuItemHint} title={b.lastSubject}>
-                    {b.lastSubject}
-                  </span>
-                ) : null}
-              </button>
-            ))
-          }
-        </DropdownMenu>
+                {project.gitBranch}
+                <span className={caret}>{'\u25BE'}</span>
+              </span>
+            }
+            footer={() => (
+              <NewBranchForm
+                onCreate={(name) => createBranchMut.mutate(name)}
+                pending={createBranchMut.isPending}
+                error={createBranchMut.error ? String(createBranchMut.error.message) : null}
+              />
+            )}
+          >
+            {() =>
+              (branchesQ.data?.branches ?? []).map((b) => (
+                <button
+                  key={b.name}
+                  type="button"
+                  className={`${menuItem} ${b.current ? menuItemActive : ''}`}
+                  onClick={() => {
+                    if (!b.current) checkoutMut.mutate(b.name)
+                  }}
+                  disabled={b.current || checkoutMut.isPending}
+                  data-testid={`branch-dropdown-item-${b.name}`}
+                >
+                  <span className={menuItemCheck}>{b.current ? '\u2713' : ''}</span>
+                  <span className={menuItemSub}>{b.name}</span>
+                  {b.lastSubject ? (
+                    <span className={menuItemHint} title={b.lastSubject}>
+                      {b.lastSubject}
+                    </span>
+                  ) : null}
+                </button>
+              ))
+            }
+          </DropdownMenu>
+        </span>
       ) : null}
 
-      {actions ? <span className={actionsWrap}>{actions}</span> : null}
+      {actions ? (
+        <span className={variant === 'inline' ? `${actionsWrap} ${mobileHide}` : actionsWrap}>
+          {actions}
+        </span>
+      ) : null}
 
       {showAddProject && (
         <AddProjectDialog

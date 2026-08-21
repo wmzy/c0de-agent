@@ -4,6 +4,11 @@ import { useOverflow } from './hooks/useOverflow.js'
 const wrap = css`
   display: flex;
   flex-direction: column;
+  /* 用户消息轻底色气泡：与无背景的 assistant 文本形成角色区分，
+     底色用 --bg-secondary，明暗主题下均与消息流底色有可感知差异 */
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
 `
 
 const text = css`

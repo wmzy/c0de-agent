@@ -52,23 +52,51 @@ type ChatProps = {
   emptyState?: ReactNode
 }
 
-const toolbar = css`
-  display: flex;
-  justify-content: space-between;
-  padding: 4px 16px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-secondary);
-`
-
-const viewBar = css`
+/* 顶栏合并行：视图切换 + 运行状态 + 流控按钮 + 原始 JSON 单行排布，
+ * 替代原先 toolbar/viewBar 两层横条，为消息流腾出垂直空间。 */
+const topBar = css`
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 16px;
+  gap: 8px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   font-size: 12px;
+`
+
+const topSpacer = css`
+  flex: 1;
+`
+
+const topStatus = css`
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+`
+
+/* 流控按钮（暂停/恢复/中止）：ghost 化融入 secondary 底色横条；中止用 error 色警示 */
+const ctlBtn = css`
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+
+  &:hover:not(:disabled) {
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+`
+
+const ctlDanger = css`
+  color: var(--error);
+  &:hover:not(:disabled) {
+    color: var(--error);
+    background: color-mix(in srgb, var(--error) 10%, transparent);
+  }
 `
 
 /* 主视图切换（聊天/表格）：无边框分段控件，白底 track 上灰底 pill + primary 文字，
@@ -104,9 +132,8 @@ const viewSwitch = css`
   }
 `
 
-/* 调试用原始 JSON 视图：下沉为行尾次要小链接，不与主视图并列。 */
+/* 调试用原始 JSON 视图：行尾次要小链接，不与主视图并列。 */
 const viewJsonLink = css`
-  margin-left: auto;
   border: none;
   background: none;
   padding: 3px 6px;
@@ -134,6 +161,7 @@ const stream = css`
   overflow-y: auto;
 `
 
+/* 底栏合并行：模型/工具选择 + 自动授权开关单行排布，替代原 footerBar/modeBar 两层。 */
 const footerBar = css`
   display: flex;
   align-items: center;
@@ -142,6 +170,13 @@ const footerBar = css`
   padding: 4px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
+  font-size: 12px;
+`
+
+/** auto 开启态的底栏：整条警示底色 + 警示上边线（须在 footerBar 之后定义以按源序覆盖）。 */
+const footerBarAuto = css`
+  border-top-color: color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg-secondary));
 `
 
 const footerLeft = css`
@@ -161,28 +196,25 @@ const footerLeft = css`
   }
 `
 
-const modeBar = css`
+const footerRight = css`
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
-  font-size: 12px;
-`
-
-/** auto 开启态的 modeBar：整条警示底色 + 警示上边线（须在 modeBar 之后定义以按源序覆盖）。 */
-const modeBarAuto = css`
-  border-top-color: color-mix(in srgb, var(--warning) 60%, transparent);
-  background: color-mix(in srgb, var(--warning) 12%, var(--bg-secondary));
+  margin-left: auto;
+  flex-shrink: 0;
+  ${MOBILE} {
+    /* 窄屏：授权开关与警示 pill 换行独占，pill 允许截断不撑破容器 */
+    flex-wrap: wrap;
+    margin-left: 0;
+    max-width: 100%;
+    min-width: 0;
+  }
 `
 
 const modeToggle = css`
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 44px;
   padding: 4px 8px;
   cursor: pointer;
   user-select: none;
@@ -203,6 +235,12 @@ const modeWarn = css`
   background: var(--warning);
   color: #fff;
   font-weight: 600;
+  /* 窄屏换行后允许文本截断，不横向撑破底栏 */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 `
 
 export function Chat({
@@ -265,32 +303,7 @@ export function Chat({
 
   return (
     <>
-      <div className={toolbar}>
-        {error || usage ? (
-          <span style={error ? { color: 'var(--error)' } : undefined}>
-            {error
-              ? error
-              : `${formatTokenCount(usage?.input)} → ${formatTokenCount(usage?.output)} tokens`}
-          </span>
-        ) : null}
-        {isStreaming && !paused ? (
-          <button onClick={onPause} type="button" data-testid="pause">
-            暂停
-          </button>
-        ) : null}
-        {isStreaming && paused ? (
-          <button onClick={onResume} type="button" data-testid="resume">
-            恢复
-          </button>
-        ) : null}
-        {isStreaming ? (
-          <button onClick={onAbort} type="button" data-testid="abort">
-            中止
-          </button>
-        ) : null}
-      </div>
-      {topPanel}
-      <div className={viewBar} data-testid="view-bar">
+      <div className={topBar} data-testid="view-bar">
         <div className={viewSwitch} role="group" aria-label="视图模式">
           <button
             type="button"
@@ -309,6 +322,34 @@ export function Chat({
             表格
           </button>
         </div>
+        <div className={topSpacer} />
+        {error || usage ? (
+          <span className={topStatus} style={error ? { color: 'var(--error)' } : undefined}>
+            {error
+              ? error
+              : `${formatTokenCount(usage?.input)} → ${formatTokenCount(usage?.output)} tokens`}
+          </span>
+        ) : null}
+        {isStreaming && !paused ? (
+          <button onClick={onPause} type="button" className={ctlBtn} data-testid="pause">
+            暂停
+          </button>
+        ) : null}
+        {isStreaming && paused ? (
+          <button onClick={onResume} type="button" className={ctlBtn} data-testid="resume">
+            恢复
+          </button>
+        ) : null}
+        {isStreaming ? (
+          <button
+            onClick={onAbort}
+            type="button"
+            className={`${ctlBtn} ${ctlDanger}`}
+            data-testid="abort"
+          >
+            中止
+          </button>
+        ) : null}
         <button
           type="button"
           className={viewJsonLink}
@@ -320,6 +361,7 @@ export function Chat({
           原始 JSON
         </button>
       </div>
+      {topPanel}
       {viewMode === 'table' ? (
         <TableView rows={timeline} />
       ) : (
@@ -334,34 +376,32 @@ export function Chat({
         </div>
       )}
       {bottomPanel}
-      {(modelBar || toolToggle) && (
-        <div className={footerBar}>
-          {modelBar && <div className={footerLeft}>{modelBar}</div>}
-          {toolToggle}
-        </div>
-      )}
       <div
-        className={permissionMode === 'auto' ? `${modeBar} ${modeBarAuto}` : modeBar}
+        className={permissionMode === 'auto' ? `${footerBar} ${footerBarAuto}` : footerBar}
         data-testid="permission-mode-bar"
       >
-        <label className={modeToggle}>
-          <input
-            type="checkbox"
-            checked={permissionMode === 'auto'}
-            onChange={togglePermissionMode}
-            data-testid="permission-mode-toggle"
-          />
-          自动授权
-        </label>
-        {permissionMode === 'auto' ? (
-          <span className={modeWarn} data-testid="permission-mode-warning" role="status">
-            ⚠ 自动授权已开启：所有工具（含 bash）免确认执行
-          </span>
-        ) : (
-          <span className={modeHint} data-testid="permission-mode-hint">
-            工具执行前逐个确认
-          </span>
-        )}
+        {modelBar && <div className={footerLeft}>{modelBar}</div>}
+        <div className={footerRight}>
+          <label className={modeToggle}>
+            <input
+              type="checkbox"
+              checked={permissionMode === 'auto'}
+              onChange={togglePermissionMode}
+              data-testid="permission-mode-toggle"
+            />
+            自动授权
+          </label>
+          {permissionMode === 'auto' ? (
+            <span className={modeWarn} data-testid="permission-mode-warning" role="status">
+              ⚠ 自动授权已开启：所有工具（含 bash）免确认执行
+            </span>
+          ) : (
+            <span className={modeHint} data-testid="permission-mode-hint">
+              工具执行前逐个确认
+            </span>
+          )}
+          {toolToggle}
+        </div>
       </div>
       <Composer
         projectId={projectId}
