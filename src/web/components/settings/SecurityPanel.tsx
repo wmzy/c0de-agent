@@ -30,7 +30,7 @@ function SecurityPanel({
         </label>
         {security.authEnabled && (
           <label className={field}>
-            <span>Token：</span>
+            <span>Token</span>
             <input
               className={fieldInput}
               type="password"
@@ -41,7 +41,7 @@ function SecurityPanel({
           </label>
         )}
         <label className={field} htmlFor="cfg-allowed-origins">
-          <span>允许的 CORS 来源：</span>
+          <span>允许的 CORS 来源</span>
           <CommaListInput
             id="cfg-allowed-origins"
             className={fieldInput}
@@ -54,7 +54,7 @@ function SecurityPanel({
       <div className={section}>
         <h2 className={sectionTitle}>自动授权</h2>
         <label className={field}>
-          <span>默认模式：</span>
+          <span>默认模式</span>
           <select
             value={permission?.defaultMode ?? 'default'}
             onChange={(e) =>

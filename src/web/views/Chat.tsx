@@ -173,10 +173,10 @@ const footerBar = css`
   font-size: 12px;
 `
 
-/** auto 开启态的底栏：整条警示底色 + 警示上边线（须在 footerBar 之后定义以按源序覆盖）。 */
+/** auto 开启态的底栏：仅顶部 2px 警示细线提示状态（须在 footerBar 之后定义以按源序覆盖）。
+ * 不再整条染橙——授权模式是持续状态而非错误，高饱和底色会长期压制消息流视觉。 */
 const footerBarAuto = css`
-  border-top-color: color-mix(in srgb, var(--warning) 60%, transparent);
-  background: color-mix(in srgb, var(--warning) 12%, var(--bg-secondary));
+  border-top: 2px solid color-mix(in srgb, var(--warning) 55%, transparent);
 `
 
 const footerLeft = css`
@@ -225,15 +225,17 @@ const modeHint = css`
   color: var(--text-secondary);
 `
 
-/** 开启态警示 pill：--warning 实底白字，视觉权重明显高于关闭态小字。 */
+/** 开启态警示 pill：描边淡底（--warning 前景 + 10% 底 + 45% 边框），短文案降噪，
+ * 完整风险说明移入 title 悬停提示——状态可辨识但不长期抢占视觉权重。 */
 const modeWarn = css`
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 10px;
+  padding: 2px 10px;
   border-radius: 999px;
-  background: var(--warning);
-  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
   font-weight: 600;
   /* 窄屏换行后允许文本截断，不横向撑破底栏 */
   min-width: 0;
@@ -327,7 +329,9 @@ export function Chat({
           <span className={topStatus} style={error ? { color: 'var(--error)' } : undefined}>
             {error
               ? error
-              : `${formatTokenCount(usage?.input)} → ${formatTokenCount(usage?.output)} tokens`}
+              : usage
+                ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
+                : ''}
           </span>
         ) : null}
         {isStreaming && !paused ? (
@@ -392,8 +396,13 @@ export function Chat({
             自动授权
           </label>
           {permissionMode === 'auto' ? (
-            <span className={modeWarn} data-testid="permission-mode-warning" role="status">
-              ⚠ 自动授权已开启：所有工具（含 bash）免确认执行
+            <span
+              className={modeWarn}
+              data-testid="permission-mode-warning"
+              role="status"
+              title="自动授权已开启：所有工具（含 bash）免确认执行"
+            >
+              ⚠ 自动授权已开启
             </span>
           ) : (
             <span className={modeHint} data-testid="permission-mode-hint">

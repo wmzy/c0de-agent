@@ -46,8 +46,8 @@ function GitPanel({
           value={cm}
           onChange={(v) => onCommitModelChange({ commitModel: v })}
           providers={providers}
-          providerLabel="提交 Provider："
-          modelLabel="提交 Model："
+          providerLabel="提交 Provider"
+          modelLabel="提交 Model"
           providerTestId="commit-provider-select"
           modelTestId="commit-model-select"
         />

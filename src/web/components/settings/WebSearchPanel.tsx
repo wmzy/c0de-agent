@@ -12,7 +12,7 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
     <div className={section}>
       <h2 className={sectionTitle}>Web 搜索</h2>
       <label className={field}>
-        <span>后端：</span>
+        <span>后端</span>
         <select
           value={websearch.provider}
           onChange={(e) =>
@@ -28,7 +28,7 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
         </select>
       </label>
       <label className={field}>
-        <span>Tavily Key：</span>
+        <span>Tavily Key</span>
         <input
           className={fieldInput}
           type="password"
@@ -38,7 +38,7 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
         />
       </label>
       <label className={field}>
-        <span>Brave Key：</span>
+        <span>Brave Key</span>
         <input
           className={fieldInput}
           type="password"

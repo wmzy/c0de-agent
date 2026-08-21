@@ -560,7 +560,7 @@ export function Settings() {
               <span>启用工具模式自动选择</span>
             </label>
             <label className={field}>
-              <span>成功率阈值：</span>
+              <span>成功率阈值</span>
               <input
                 className={fieldInput}
                 type="number"
@@ -574,7 +574,7 @@ export function Settings() {
               />
             </label>
             <label className={field}>
-              <span>最小样本数：</span>
+              <span>最小样本数</span>
               <input
                 className={fieldInput}
                 type="number"
@@ -612,7 +612,7 @@ export function Settings() {
           <div className={section}>
             <h2 className={sectionTitle}>多 Agent</h2>
             <label className={field}>
-              <span>Agent 目录：</span>
+              <span>Agent 目录</span>
               <input
                 className={fieldInput}
                 value={merged.agents.dir}
@@ -621,7 +621,7 @@ export function Settings() {
               />
             </label>
             <label className={field}>
-              <span>子 Agent 并发数：</span>
+              <span>子 Agent 并发数</span>
               <input
                 className={fieldInput}
                 type="number"

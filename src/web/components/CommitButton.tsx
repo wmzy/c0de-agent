@@ -29,13 +29,14 @@ const commitBtn = css`
 `
 
 const commitBtnActive = css`
-  background: var(--warning);
-  border-color: var(--warning);
+  background: var(--primary);
+  border-color: var(--primary);
   color: #fff;
   font-weight: 600;
   animation: pulse 2s ease-in-out infinite;
   &:hover {
-    background: var(--warning);
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
     color: #fff;
     opacity: 0.9;
   }

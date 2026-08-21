@@ -134,7 +134,7 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
       ) : (
         <>
           <label className={field}>
-            <span>Provider：</span>
+            <span>Provider</span>
             <select
               className={fieldInput}
               value={defaultProvider}
@@ -154,7 +154,7 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
             </select>
           </label>
           <label className={field}>
-            <span>Model：</span>
+            <span>Model</span>
             <select
               className={fieldInput}
               value={defaultModel}

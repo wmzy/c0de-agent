@@ -64,6 +64,28 @@ export const globalStyle = css`
   :global(textarea::placeholder) {
     color: var(--text-secondary);
   }
+  /* 细滚动条：暗色下系统默认粗滚动条刺眼且挤压内容宽度；thumb 用中性灰随主题切换 */
+  :global(*) {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-secondary) 45%, transparent) transparent;
+  }
+  :global(::-webkit-scrollbar) {
+    width: 8px;
+    height: 8px;
+  }
+  :global(::-webkit-scrollbar-thumb) {
+    background: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+    border-radius: 4px;
+  }
+  :global(::-webkit-scrollbar-thumb:hover) {
+    background: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+  }
+  :global(::-webkit-scrollbar-track) {
+    background: transparent;
+  }
+  :global(::-webkit-scrollbar-corner) {
+    background: transparent;
+  }
   :global(input:disabled),
   :global(select:disabled),
   :global(textarea:disabled) {
@@ -95,6 +117,12 @@ export const globalStyle = css`
   }
   :global(button:hover:not(:disabled):not([aria-disabled='true'])) {
     background: color-mix(in srgb, var(--bg-secondary) 80%, var(--text) 8%);
+  }
+  /* 键盘可达性：Tab 聚焦时与输入控件同款焦点环（鼠标点击不触发） */
+  :global(button:focus-visible) {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+    border-color: var(--primary);
   }
   /* 按钮变体：组件用 data-variant 声明语义，跨文件统一外观 */
   :global(button[data-variant='primary']) {

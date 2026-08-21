@@ -14,7 +14,7 @@ function AppearancePanel({ locale, onLocaleChange }: AppearancePanelProps) {
     <div className={section}>
       <h2 className={sectionTitle}>外观</h2>
       <label className={field}>
-        <span>主题：</span>
+        <span>主题</span>
         <select
           value={mode}
           onChange={(e) => setMode(e.target.value as 'light' | 'dark' | 'system')}
@@ -25,7 +25,7 @@ function AppearancePanel({ locale, onLocaleChange }: AppearancePanelProps) {
         </select>
       </label>
       <label className={field}>
-        <span>语言：</span>
+        <span>语言</span>
         <select value={locale} onChange={(e) => onLocaleChange(e.target.value)}>
           <option value="zh-CN">简体中文</option>
           <option value="en">English</option>

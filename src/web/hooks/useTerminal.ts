@@ -421,7 +421,7 @@ export function useTerminal(projectId: string) {
         const validTabId =
           persisted.activeTabId && liveTabIds.has(persisted.activeTabId)
             ? persisted.activeTabId
-            : restored[0]?.tabId
+            : (restored[0]?.tabId ?? null)
         const validPaneId =
           persisted.activePaneId && restored.some((s) => s.id === persisted.activePaneId)
             ? persisted.activePaneId

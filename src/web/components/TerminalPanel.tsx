@@ -308,7 +308,7 @@ function shellLabel(shell: string): string {
  * - 高度拖拽：上拉/下拉调整，记忆到 localStorage
  * - 隐藏时整块 display:none（仅显示拖拽条），避免隐藏控件排布到视口外仍可聚焦
  */
-export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) {
+export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   const {
     sessions,
     tabs,
@@ -365,7 +365,7 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
       activeTab.panes.length > 0 &&
       !activeTab.panes.some((p) => p.id === activePaneId)
     ) {
-      setActivePaneId(activeTab.panes[0]?.id)
+      setActivePaneId(activeTab.panes[0]?.id ?? null)
     }
   }, [open, activeTab, activePaneId, setActivePaneId])
 

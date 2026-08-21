@@ -20,7 +20,7 @@ function FallbackPanel({ fallback, onFallbackChange }: FallbackPanelProps) {
         <span>启用自动重试与回退</span>
       </label>
       <label className={field}>
-        <span>最大重试次数：</span>
+        <span>最大重试次数</span>
         <input
           className={fieldInput}
           type="number"
@@ -30,7 +30,7 @@ function FallbackPanel({ fallback, onFallbackChange }: FallbackPanelProps) {
         />
       </label>
       <label className={field}>
-        <span>重试间隔 (ms)：</span>
+        <span>重试间隔 (ms)</span>
         <input
           className={fieldInput}
           type="number"

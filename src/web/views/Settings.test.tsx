@@ -939,7 +939,7 @@ describe('Settings — 完整配置表单覆盖', () => {
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
 
     // 修改保留 Token 数值（用 label 文本精确定位，避免与同值输入框混淆）
-    const reserveLabel = screen.getByText('保留 Token：').closest('label')
+    const reserveLabel = screen.getByText('保留 Token').closest('label')
     const reserveInput = reserveLabel?.querySelector('input') as HTMLInputElement
     expect(reserveInput).toBeTruthy()
     fireEvent.change(reserveInput, { target: { value: '9999' } })
@@ -1127,7 +1127,7 @@ describe('Settings — 完整配置表单覆盖', () => {
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
 
-    const concurrencyLabel = screen.getByText('子 Agent 并发数：').closest('label')
+    const concurrencyLabel = screen.getByText('子 Agent 并发数').closest('label')
     const concurrencyInput = concurrencyLabel?.querySelector('input') as HTMLInputElement
     fireEvent.change(concurrencyInput, { target: { value: '7' } })
 
@@ -1150,7 +1150,7 @@ describe('Settings — 完整配置表单覆盖', () => {
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
 
-    const enabledLabel = screen.getByText('已启用：').closest('label')
+    const enabledLabel = screen.getByText('已启用').closest('label')
     const enabledInput = enabledLabel?.querySelector('input') as HTMLInputElement
     // 模拟逐字符输入：旧实现会把逗号抹掉得到 'readwriteedit'，修复后应保留分隔符
     fireEvent.change(enabledInput, { target: { value: 'read, write, edit' } })

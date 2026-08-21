@@ -13,7 +13,7 @@ function ToolsPanel({ tools, onToolsChange }: ToolsPanelProps) {
     <div className={section}>
       <h2 className={sectionTitle}>工具配置</h2>
       <label className={field} htmlFor="cfg-tools-enabled">
-        <span>已启用：</span>
+        <span>已启用</span>
         <CommaListInput
           id="cfg-tools-enabled"
           className={fieldInput}
@@ -23,7 +23,7 @@ function ToolsPanel({ tools, onToolsChange }: ToolsPanelProps) {
         />
       </label>
       <label className={field} htmlFor="cfg-tools-disabled">
-        <span>已禁用：</span>
+        <span>已禁用</span>
         <CommaListInput
           id="cfg-tools-disabled"
           className={fieldInput}

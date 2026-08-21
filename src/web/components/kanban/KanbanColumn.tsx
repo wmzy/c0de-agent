@@ -246,14 +246,6 @@ const quickAddBtn = css`
   font-size: 12px;
 `
 
-const emptyHint = css`
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 16px 8px;
-  opacity: 0.5;
-`
-
 type ColumnProps = {
   column: { id: string; name: string }
   cards: KanbanCardType[]
@@ -296,7 +288,8 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
           ))}
         </SortableContext>
 
-        {cards.length === 0 && !isAdding && <div className={emptyHint}>拖动卡片到此处</div>}
+        {/* 空列不渲染常驻占位文案：多列空白时逐列重复「拖动卡片到此处」是视觉噪音；
+            可拖入性由列容器本身（columnDropActive 悬停高亮）与「+ 新建卡片」行动点表达。 */}
 
         {isAdding ? (
           <div className={quickAddRow}>

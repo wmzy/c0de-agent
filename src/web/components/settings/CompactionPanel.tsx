@@ -35,7 +35,7 @@ function CompactionPanel({
         <span>启用自动压缩</span>
       </label>
       <label className={field}>
-        <span>触发阈值：</span>
+        <span>触发阈值</span>
         <input
           className={fieldInput}
           type="number"
@@ -47,7 +47,7 @@ function CompactionPanel({
         />
       </label>
       <label className={field}>
-        <span>保留 Token：</span>
+        <span>保留 Token</span>
         <input
           className={fieldInput}
           type="number"
@@ -57,7 +57,7 @@ function CompactionPanel({
         />
       </label>
       <label className={field}>
-        <span>近期保留 Token：</span>
+        <span>近期保留 Token</span>
         <input
           className={fieldInput}
           type="number"
@@ -93,8 +93,8 @@ function CompactionPanel({
           value={cm}
           onChange={(v) => onCompactionChange({ compactionModel: v })}
           providers={providers}
-          providerLabel="压缩 Provider："
-          modelLabel="压缩 Model："
+          providerLabel="压缩 Provider"
+          modelLabel="压缩 Model"
           providerTestId="compaction-provider-select"
           modelTestId="compaction-model-select"
         />
