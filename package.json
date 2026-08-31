@@ -48,12 +48,6 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "node-pty"
-    ]
-  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.1",
     "@codemirror/lang-javascript": "^6.2.5",

@@ -10,8 +10,6 @@ interface TerminalPanelProps {
   terminal: UseTerminalReturn
   /** 新终端的默认工作目录（通常为项目 worktree）。未提供时使用服务端默认。 */
   cwd?: string
-  /** 当前项目 id（用于切换项目时重置自动创建标记）。 */
-  projectId: string
 }
 
 // 面板外层：flex-shrink 允许在视口高度不足时收缩（正常 900px 视口无赤字、不影响布局），

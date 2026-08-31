@@ -84,6 +84,9 @@ const ctlBtn = css`
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 12px;
+  /* 覆盖全局按钮 44px 最小尺寸：保持顶栏单行紧凑，触屏热区仍达 32px */
+  min-height: 32px;
+  min-width: auto;
 
   &:hover:not(:disabled) {
     color: var(--text);
@@ -218,6 +221,8 @@ const modeToggle = css`
   padding: 4px 8px;
   cursor: pointer;
   user-select: none;
+  /* label 不受全局 44px 按钮约束，显式保证 ≥32px 紧凑触控热区下限（自动授权开关，触控安全关键） */
+  min-height: 32px;
 `
 
 /** 关闭态中性说明：次级文本色，无警示语义。 */
@@ -325,8 +330,13 @@ export function Chat({
           </button>
         </div>
         <div className={topSpacer} />
+        {/* topStatus 单行截断仅是排布：错误全文经 title 悬停可达（usage 态无需） */}
         {error || usage ? (
-          <span className={topStatus} style={error ? { color: 'var(--error)' } : undefined}>
+          <span
+            className={topStatus}
+            style={error ? { color: 'var(--error)' } : undefined}
+            title={error ?? undefined}
+          >
             {error
               ? error
               : usage
