@@ -86,10 +86,8 @@ const shakeRow = css`
   position: relative;
 `
 
-/** shake 可点击块：重置 button 默认样式，仅保留可交互语义 */
+/** shake 可点击块：div+role 版本，重置默认样式，仅保留可交互语义 */
 const shakeButton = css`
-  appearance: none;
-  -webkit-appearance: none;
   background: transparent;
   border: 0;
   margin: 0;
@@ -233,19 +231,28 @@ export const MessageItem = memo(function MessageItem({
         )
 
         return shakeActive ? (
-          <button
-            type="button"
+          // biome-ignore lint/a11y/useSemanticElements: 行内 ToolBlock 含复制按钮、FilePathLink 等内嵌 <button>，HTML 禁止 button 嵌套 button（React 会告警），必须用 div+role，与 ToolBlock 头部同款处理
+          <div
             className={`${shakeButton} ${row} ${shakeCls}`}
             key={blockKey}
+            role="button"
+            tabIndex={0}
             onClick={(e) => {
-              e.stopPropagation()
+              // 内嵌交互元素（复制按钮/路径链接/工具折叠头）自身处理点击，不触发 shake 选中切换
+              if ((e.target as HTMLElement | null)?.closest('button, a')) return
               toggleRegions()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                toggleRegions()
+              }
             }}
             data-testid="shake-inline-block"
             data-shake-selected={allSelected}
           >
             {inner}
-          </button>
+          </div>
         ) : (
           <div className={`${row} ${shakeCls}`} key={blockKey}>
             {inner}
