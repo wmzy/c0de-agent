@@ -1,5 +1,6 @@
 import type { AgentEvent } from '@shared/types/agent.js'
 import type { APIError } from '../types/index.js'
+import { getAuthToken } from './api.js'
 
 /** 从单个 SSE 帧文本提取 data 字段并解析为 AgentEvent。 */
 export function parseSSEFrame(frame: string): AgentEvent | null {
@@ -50,9 +51,15 @@ async function sendChatMessage(
     else signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true })
   }
 
+  const token = getAuthToken()
   const response = await fetch('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // 认证（P0-1）：authEnabled 默认开启，/api/chat 与 apiRequest 一样条件携带
+      // Bearer 头；否则 401 落入 useChat 的「网络错误视为中断」分支，只见持续中断横幅。
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ sessionId, message, ...opts }),
     signal: controller.signal,
   })
@@ -63,9 +70,14 @@ async function sendChatMessage(
     const errBody = (
       body as { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
     ).error
+    // 401：token 缺失/过期，附可操作指引（从 serve 输出的 URL 重新进入以携带新 token），
+    // 避免只显示裸 statusText。
+    const errMessage =
+      errBody?.message ?? (body as { message?: string }).message ?? response.statusText
     throw {
       status: response.status,
-      message: errBody?.message ?? (body as { message?: string }).message ?? response.statusText,
+      message:
+        response.status === 401 ? `${errMessage}（认证失败，请从 serve 输出的 URL 重新进入）` : errMessage,
       code: errBody?.code,
       ...(errBody?.details ? { details: errBody.details } : {}),
     } as APIError

@@ -216,6 +216,110 @@ describe('chat route (SSE)', () => {
     expect(body.error.details?.activeSegment?.model).toBeTruthy()
   })
 
+  it('POST / 会话已有活跃 run → 409 RUN_ACTIVE', async () => {
+    const { app, ctx, sessionId } = await setup()
+    // 模拟进行中的 run（伪造最小 state/deps 直接占位 agentManager）
+    ctx.agentManager.register({
+      sessionId,
+      state: {} as never,
+      deps: {} as never,
+    })
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'second concurrent' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+  })
+
+  // P0-4 竞态回归：旧实现守卫用 get 检查、真正 register 在 SSE 回调内，中间隔
+  // 多个 await，双发 POST 均通过守卫后后注册覆盖前者（runs.set），且 A 结束时
+  // unregister 误删仍在跑的 B。现守卫为同步原子占位 tryAcquire。
+  it('POST / 同 sessionId 连发两次：第一个占住后第二个必 409 RUN_ACTIVE', async () => {
+    const { app, ctx, sessionId } = await setup()
+    // 第一个请求：handler 返回 SSE Response 前已同步完成占位（流未消费、
+    // register 未执行即可被第二个请求观测到）
+    const first = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'first' }),
+    })
+    expect(first.status).toBe(200)
+
+    // 第二个请求在第一个 run 仍在进行（流未消费）时到达 → 409，不得开第二股流
+    const second = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'second' }),
+    })
+    expect(second.status).toBe(409)
+    const body = (await second.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+
+    // 消费第一个流至结束：占位/run 释放，会话不被锁死，可再次对话
+    await first.text()
+    expect(ctx.agentManager.get(sessionId)).toBeUndefined()
+    const third = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'third' }),
+    })
+    expect(third.status).toBe(200)
+    await third.text()
+  })
+
+  it('POST / 守卫后提前返回（INVALID_AGENT）时释放占位，会话不被锁死', async () => {
+    const { app, ctx, sessionId } = await setup()
+    const bad = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'x', agent: 'nonexistent' }),
+    })
+    expect(bad.status).toBe(400)
+    expect(ctx.agentManager.isStarting(sessionId)).toBe(false)
+    expect(ctx.agentManager.get(sessionId)).toBeUndefined()
+
+    // 紧随其后的正常请求可成功（占位未泄漏）
+    const ok = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(ok.status).toBe(200)
+    await ok.text()
+  })
+
+  it('POST / SEGMENT_BREAK_REQUIRED 409 时同样释放占位', async () => {
+    const { app, ctx, sessionId } = await setup()
+    // 第一条消息建立首段
+    const first = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    await first.text()
+
+    // 换模型不带确认 → 占位后提前 409 返回
+    const brk = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'more', model: 'other-model' }),
+    })
+    expect(brk.status).toBe(409)
+    expect(ctx.agentManager.isStarting(sessionId)).toBe(false)
+
+    // 占位已释放：原模型继续对话不受影响
+    const again = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'again' }),
+    })
+    expect(again.status).toBe(200)
+    await again.text()
+  })
+
   it('POST / 模型变更且带 confirmSegmentBreak → 200 开新段', async () => {
     const { app, ctx, sessionId } = await setup()
     const first = await app.request('/', {
@@ -294,6 +398,34 @@ describe('chat route (SSE)', () => {
       'write',
       'yield',
     ])
+  })
+
+  it('POST / config.tools.disabled 工具不进入 LLM 工具集', async () => {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const session = await createSession(db, 'Test')
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      config: { ...DEFAULT_CONFIG, tools: { enabled: [], disabled: ['bash', 'grep'] } },
+      chatStream: mockChatStream,
+    })
+    const app = createChatRoute(ctx)
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: session.id, message: 'hi' }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const segments = await getLLMSegments(db, session.id)
+    const toolNames = segments[0]?.tools.map((t) => t.name).sort()
+    expect(toolNames).not.toContain('bash')
+    expect(toolNames).not.toContain('grep')
+    expect(toolNames).toContain('read')
   })
 
   // 回归：catch 块必须发送 done 事件，否则前端 isStreaming 永远不会变 false。
@@ -442,6 +574,41 @@ describe('chat route (control endpoints)', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { aborted: boolean }
     expect(body.aborted).toBe(false)
+  })
+
+  // P0-4：占位期间（tryAcquire 后、register 前）run 尚无 state，控制端点
+  // 返回明确 409 RUN_STARTING，而非静默 false 或崩溃。
+  it('占位期间 abort/pause/resume/steer 返回 409 RUN_STARTING', async () => {
+    const { app, ctx, sessionId } = await setup()
+    // 预置占位：模拟 POST 已通过并发守卫、SSE 回调尚未 register 的窗口
+    expect(ctx.agentManager.tryAcquire(sessionId)).toBe(true)
+
+    const cases: Array<[string, Record<string, string>]> = [
+      ['/abort', { sessionId }],
+      ['/pause', { sessionId }],
+      ['/resume', { sessionId }],
+      ['/steer', { sessionId, message: 'm' }],
+    ]
+    for (const [path, body] of cases) {
+      const res = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      expect(res.status).toBe(409)
+      const json = (await res.json()) as { error: { code: string } }
+      expect(json.error.code).toBe('RUN_STARTING')
+    }
+
+    // 占位释放后恢复原行为（200 + false）
+    ctx.agentManager.unregister(sessionId)
+    const res = await app.request('/abort', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { aborted: boolean }).aborted).toBe(false)
   })
 
   it('POST /pause without active run returns paused: false', async () => {

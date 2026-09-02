@@ -118,7 +118,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
 
     const steering = drainSteering(state)
 
-    const { entries, snapshots } = await getSessionContext(deps.db, state.session.id)
+    const { entries, snapshots } = await getSessionContext(deps.db, state.session.id, deps.cwd)
     let chatMessages = entriesToChatMessages(entries, snapshots)
 
     // steering 消息必须插入到最后一条 user 消息之前（而非末尾 push），

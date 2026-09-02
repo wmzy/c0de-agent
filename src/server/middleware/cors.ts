@@ -5,17 +5,25 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
 
 /**
  * 判断 origin 是否为本地/可信来源（spec §24.2「CORS 限制本地 origin」）。
- * 允许：本机回环任意端口、file://（PWA 安装后）、浏览器扩展、'null'
- * （file 协议/隐私沙箱发出的 Origin 头）。
+ *
+ * 仅允许本机回环任意端口 + 显式配置的 allowedOrigins。
+ * 显式不放行 'null'（sandboxed iframe）、file:// 与浏览器扩展前缀——
+ * 任意网页/扩展均可伪造这些来源，等价于完全关闭 CORS 防护。
+ * 认证未启用时（authEnabled=false 的显式选择），本函数仍是唯一的跨域读取防线。
  */
 export function isLocalOrigin(origin: string): boolean {
   if (!origin) return false
-  if (LOCAL_ORIGIN.test(origin)) return true
-  if (origin === 'null') return true
-  if (origin.startsWith('file://')) return true
-  if (origin.startsWith('chrome-extension://')) return true
-  if (origin.startsWith('moz-extension://')) return true
-  return false
+  return LOCAL_ORIGIN.test(origin)
+}
+
+/**
+ * Origin 是否被允许（本地回环 + 配置的额外 origin）。
+ * 供 CORS 中间件与 WebSocket 升级路径共用——浏览器对 WS 不实施 CORS，
+ * 但会携带 Origin 头，必须在服务端显式校验。
+ */
+export function isAllowedOrigin(origin: string, allowedOrigins?: string[]): boolean {
+  if (isLocalOrigin(origin)) return true
+  return allowedOrigins?.includes(origin) ?? false
 }
 
 export type CORSOptions = {

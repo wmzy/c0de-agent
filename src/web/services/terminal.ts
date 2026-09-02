@@ -1,6 +1,6 @@
 // src/web/services/terminal.ts
 
-import { API_BASE, apiRequest } from './api.js'
+import { API_BASE, apiRequest, getAuthToken } from './api.js'
 
 export interface TerminalInfo {
   id: string
@@ -41,7 +41,8 @@ const terminalAPI = {
 export function terminalWsUrl(id: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const base = `${proto}//${window.location.host}${API_BASE}/api/terminal/${id}/ws`
-  return base
+  const token = getAuthToken()
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base
 }
 
 export { terminalAPI }

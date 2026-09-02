@@ -9,4 +9,4 @@ export { orderSessionsByParent, restoreSessions, serializeSessions } from './sna
 export type { HotUpdateOptions, HotUpdateResult, SpawnFn } from './updater.js'
 export { cleanupSnapshot, performHotUpdate } from './updater.js'
 export type { UpdateCheckResult } from './version.js'
-export { checkForUpdate, compareSemver } from './version.js'
+export { checkForUpdate, compareSemver, getCurrentVersion } from './version.js'

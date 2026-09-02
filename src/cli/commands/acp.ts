@@ -29,7 +29,9 @@ function createAcpHandlers(
     chat: async (params) => {
       const message = params.message as string | undefined
       if (!message) throw new Error('chat: message is required')
+      const sessionId = params.sessionId as string | undefined
       const text = await runPrintMode(config, message, deps, {
+        ...(sessionId ? { sessionId } : {}),
         onEvent: (e) => opts.onEvent('event', e as unknown as Record<string, unknown>),
       })
       return { text }

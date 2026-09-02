@@ -189,6 +189,60 @@ describe('AgentManager', () => {
     expect(mgr.get('s2')).toBeUndefined()
   })
 
+  // P0-4 POST /api/chat 并发守卫：tryAcquire 同步原子占位（has+set 一气呵成）
+  describe('tryAcquire 同步原子占位（P0-4）', () => {
+    it('首面试 tryAcquire 成功，重复（占位或活跃 run）均失败', () => {
+      const mgr = createAgentManager()
+      expect(mgr.tryAcquire('s1')).toBe(true)
+      expect(mgr.tryAcquire('s1')).toBe(false) // 占位已存在
+
+      mgr.register({ sessionId: 's1', state: mockState('s1'), deps: {} as AgentDependencies })
+      expect(mgr.tryAcquire('s1')).toBe(false) // 活跃 run 已存在
+      expect(mgr.tryAcquire('s2')).toBe(true) // 其它会话不受影响
+    })
+
+    it('register 填充占位：isStarting 变 false、get 返回真实 run', () => {
+      const mgr = createAgentManager()
+      mgr.tryAcquire('s1')
+      expect(mgr.isStarting('s1')).toBe(true)
+      expect(mgr.get('s1')).toBeUndefined() // 占位不算活跃 run
+
+      const state = mockState('s1')
+      mgr.register({ sessionId: 's1', state, deps: {} as AgentDependencies })
+      expect(mgr.isStarting('s1')).toBe(false)
+      expect(mgr.get('s1')?.state).toBe(state)
+    })
+
+    it('unregister 幂等释放：占位与活跃 run 均可再次 tryAcquire', () => {
+      const mgr = createAgentManager()
+      mgr.tryAcquire('s1')
+      mgr.unregister('s1')
+      mgr.unregister('s1') // 幂等
+      expect(mgr.tryAcquire('s1')).toBe(true)
+
+      mgr.register({ sessionId: 's1', state: mockState('s1'), deps: {} as AgentDependencies })
+      mgr.unregister('s1')
+      expect(mgr.tryAcquire('s1')).toBe(true)
+    })
+
+    it('占位期间 abort/pause/resume/steer 返回 false（无 state 可操作，不崩溃）', () => {
+      const mgr = createAgentManager()
+      mgr.tryAcquire('s1')
+      expect(mgr.abort('s1')).toBe(false)
+      expect(mgr.pause('s1')).toBe(false)
+      expect(mgr.resume('s1')).toBe(false)
+      expect(mgr.steer('s1', 'msg')).toBe(false)
+    })
+
+    it('size 只计活跃 run，不含占位', () => {
+      const mgr = createAgentManager()
+      mgr.tryAcquire('s1')
+      expect(mgr.size()).toBe(0)
+      mgr.register({ sessionId: 's1', state: mockState('s1'), deps: {} as AgentDependencies })
+      expect(mgr.size()).toBe(1)
+    })
+  })
+
   // 注意：abortAgent/pauseAgent/resumeAgent/injectSteering 已从 core 导入
   // 此处仅验证 mockState 的状态正确性，不实际调用 core 函数
   void abortAgent

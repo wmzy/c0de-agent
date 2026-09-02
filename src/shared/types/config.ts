@@ -68,17 +68,18 @@ type UpdateConfig = {
   intervalMs: number
   /** 启动后首次检查的延迟（毫秒），默认 10 秒。 */
   initialDelayMs: number
-  /** 发现新版本后自动应用（无感知），false 则仅前端提示手动确认（默认 false）。 */
-  autoApply: boolean
 }
 
-/** Server security configuration (spec §24.2). */
+/** Server security configuration (spec §24.2)。 */
 type SecurityConfig = {
-  /** 启用 Bearer token 认证（远程访问场景）。本地开发默认关闭。 */
+  /**
+   * 是否启用 Bearer token 认证（默认 true）。
+   * 关闭为显式选择（可信网络/无人值守场景），会取消一切 API 鉴权。
+   */
   authEnabled: boolean
-  /** Bearer token；authEnabled 为 true 时必填。 */
+  /** Bearer token；未提供时服务端自动生成并持久化到全局数据目录（跨重启/热更新稳定）。 */
   token?: string
-  /** 额外允许的 CORS origin（本地回环始终允许）。 */
+  /** 额外允许的 CORS origin（本地回环始终允许；局域网/远程访问需显式添加）。 */
   allowedOrigins: string[]
 }
 

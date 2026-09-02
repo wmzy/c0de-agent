@@ -1,8 +1,12 @@
 // src/server/routes/terminal.ts
 
+import { isAbsolute } from 'node:path'
 import { Hono } from 'hono'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+
+/** 允许的 shell 白名单（P2-6：拒绝路径分隔符与任意二进制）。 */
+const ALLOWED_SHELLS = new Set(['bash', 'zsh', 'fish', 'sh'])
 
 /** 创建终端路由（REST 部分；WebSocket 升级在 server.ts 中处理）。 */
 function createTerminalRoute(ctx: ServerContext): Hono {
@@ -24,6 +28,16 @@ function createTerminalRoute(ctx: ServerContext): Hono {
     const shell = typeof body.shell === 'string' && body.shell.length > 0 ? body.shell : undefined
     const projectId =
       typeof body.projectId === 'string' && body.projectId.length > 0 ? body.projectId : undefined
+
+    // 入参校验（P2-6）：shell 白名单；cwd 必须为绝对路径。
+    if (shell !== undefined) {
+      if (shell.includes('/') || shell.includes('\\') || !ALLOWED_SHELLS.has(shell)) {
+        return apiError(c, 400, 'INVALID_SHELL', `shell 必须是 ${[...ALLOWED_SHELLS].join('/')} 之一`)
+      }
+    }
+    if (typeof cwd === 'string' && cwd.length > 0 && !isAbsolute(cwd)) {
+      return apiError(c, 400, 'INVALID_CWD', 'cwd 必须是绝对路径')
+    }
 
     try {
       const info = mgr.create({ cwd, cols, rows, title, shell, projectId })

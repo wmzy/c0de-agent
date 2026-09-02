@@ -55,10 +55,22 @@ function honoApiPlugin(): Plugin {
           const ctx = await dev.getDevCtx()
           const ptyId = match[1]
 
-          // 认证：token 通过 query 参数传递
-          const expectedToken = ctx.config.security.authEnabled
-            ? ctx.config.security.token
-            : undefined
+          // Origin 校验（P0-2）：浏览器 WS 不受 CORS 约束，必须在服务端校验。
+          const origin = req.headers.origin
+          const { isAllowedOrigin } = await server.ssrLoadModule(
+            path.resolve(__dirname, 'src/server/middleware/cors.ts'),
+          )
+          if (
+            origin &&
+            !isAllowedOrigin(origin, ctx.config.security.allowedOrigins)
+          ) {
+            socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+            socket.destroy()
+            return
+          }
+
+          // 认证：token 通过 query 参数传递（ctx.authToken，P0-3）。
+          const expectedToken = ctx.authToken
           if (expectedToken) {
             const token = url.searchParams.get('token')
             if (token !== expectedToken) {
@@ -91,6 +103,26 @@ function honoApiPlugin(): Plugin {
       server.httpServer?.on('close', () => {
         void closeDev?.()
       })
+    },
+    // dev 模式注入认证 token（P0-3）：页面加载时经 window.__C0DE_AUTH_TOKEN__ 进入 localStorage。
+    transformIndexHtml: {
+      order: 'pre',
+      handler: async (_html, ctx) => {
+        try {
+          const dev = await ctx.server.ssrLoadModule(path.resolve(__dirname, 'src/server/dev.ts'))
+          const srvCtx = await dev.getDevCtx()
+          if (!srvCtx?.authToken) return []
+          return [
+            {
+              tag: 'script',
+              children: `window.__C0DE_AUTH_TOKEN__=${JSON.stringify(srvCtx.authToken)};`,
+              injectTo: 'head',
+            },
+          ]
+        } catch {
+          return []
+        }
+      },
     },
   }
 }

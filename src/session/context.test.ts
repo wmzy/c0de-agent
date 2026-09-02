@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
@@ -14,6 +17,31 @@ import { appendMessage, insertEntry } from './message.js'
 import { createSession } from './session.js'
 import { upsertFileSnapshot } from './snapshot.js'
 import type { FileSnapshot } from './types.js'
+
+// Hoisted flag 控制被 mock 的 upsertFileSnapshot 是否抛错（DB 写入错误上抛用例）。
+const failFlag = vi.hoisted(() => ({ failUpsert: false }))
+
+// Mock snapshot.js：仅替换 upsertFileSnapshot，其余原样透传。refreshStaleSnapshots
+// 的 catch 只允许吞 fs 错误（stat/readFile）；注入 upsertFileSnapshot 抛错可证明
+// DB 写入错误不再被吞掉、过期内容不再静默注入上下文。
+vi.mock('./snapshot.js', async (importActual) => {
+  const actual = await importActual<typeof import('./snapshot.js')>()
+  return {
+    ...actual,
+    upsertFileSnapshot: vi.fn(
+      async (
+        handle: DB,
+        sessionId: string,
+        filePath: string,
+        content: string,
+        mtimeMs?: number,
+      ) => {
+        if (failFlag.failUpsert) throw new Error('injected db write failure')
+        return actual.upsertFileSnapshot(handle, sessionId, filePath, content, mtimeMs)
+      },
+    ),
+  }
+})
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
@@ -284,8 +312,14 @@ describe('getSessionContext', () => {
   let sessionId: string
 
   beforeEach(async () => {
+    failFlag.failUpsert = false
     handle = await setupDB()
     sessionId = (await createSession(handle, 'Test')).id
+  })
+
+  afterEach(async () => {
+    failFlag.failUpsert = false
+    await handle.close()
   })
 
   it('returns entries and snapshots', async () => {
@@ -294,6 +328,62 @@ describe('getSessionContext', () => {
     const { entries, snapshots } = await getSessionContext(handle, sessionId)
     expect(entries.length).toBeGreaterThan(0)
     expect(snapshots).toHaveLength(1)
+  })
+
+  it('cwd 提供时过期快照自动重读并升版本', async () => {
+    const tmpCwd = await mkdtemp(join(tmpdir(), 'c0de-stale-'))
+    const filePath = 'note.txt'
+    const abs = join(tmpCwd, filePath)
+    await writeFile(abs, 'v1')
+    const st1 = await stat(abs)
+    // 模拟旧快照：mtime 早于磁盘当前值
+    await upsertFileSnapshot(handle, sessionId, filePath, 'stale', st1.mtimeMs - 10_000)
+
+    await writeFile(abs, 'v2')
+    const { snapshots } = await getSessionContext(handle, sessionId, tmpCwd)
+
+    const latest = snapshots
+      .filter((s) => s.filePath === filePath)
+      .sort((a, b) => b.version - a.version)[0]
+    expect(latest?.content).toBe('v2')
+    expect(latest?.version).toBe(2)
+
+    await rm(tmpCwd, { recursive: true, force: true })
+  })
+
+  it('未过期的快照不重复重读', async () => {
+    const tmpCwd = await mkdtemp(join(tmpdir(), 'c0de-fresh-'))
+    const filePath = 'note.txt'
+    await writeFile(join(tmpCwd, filePath), 'same')
+    const st1 = await stat(join(tmpCwd, filePath))
+    await upsertFileSnapshot(handle, sessionId, filePath, 'same', st1.mtimeMs)
+
+    const { snapshots } = await getSessionContext(handle, sessionId, tmpCwd)
+    const versions = snapshots.filter((s) => s.filePath === filePath).map((s) => s.version)
+    expect(versions).toEqual([1])
+
+    await rm(tmpCwd, { recursive: true, force: true })
+  })
+
+  it('刷新过期快照时 DB 写入错误向上抛，而非静默注入过期内容', async () => {
+    const tmpCwd = await mkdtemp(join(tmpdir(), 'c0de-dbfail-'))
+    const filePath = 'note.txt'
+    const abs = join(tmpCwd, filePath)
+    await writeFile(abs, 'v1')
+    const st1 = await stat(abs)
+    // 旧快照 mtime 早于磁盘 → 判定过期，进入刷新写入路径
+    await upsertFileSnapshot(handle, sessionId, filePath, 'stale', st1.mtimeMs - 10_000)
+    await writeFile(abs, 'v2')
+
+    failFlag.failUpsert = true
+    // 修复前：upsertFileSnapshot 的 DB 错误被 catch 一并吞掉，静默返回过期内容；
+    // 修复后：fs 错误照旧跳过，DB 写入错误必须向上抛给调用方。
+    await expect(getSessionContext(handle, sessionId, tmpCwd)).rejects.toThrow(
+      'injected db write failure',
+    )
+    failFlag.failUpsert = false
+
+    await rm(tmpCwd, { recursive: true, force: true })
   })
 })
 

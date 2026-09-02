@@ -1,8 +1,10 @@
+import { readFile, stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import type { DB } from '../db/client.js'
 import type { ChatMessage, ContentPart } from '../shared/types/llm.js'
 import type { Message } from '../shared/types/message.js'
 import { getEntries } from './message.js'
-import { getFileSnapshots } from './snapshot.js'
+import { getFileSnapshots, upsertFileSnapshot } from './snapshot.js'
 import type { FileSnapshot, SessionEntry } from './types.js'
 
 /**
@@ -178,16 +180,44 @@ function injectSnapshots(messages: ChatMessage[], snapshots: FileSnapshot[]): Ch
   return [first, snapshotMessage, ...messages.slice(1)]
 }
 
-/** Get the full session context: all entries + file snapshots. */
+/** Get the full session context: all entries + file snapshots.
+ *  cwd 提供时刷新过期快照：文件磁盘 mtime 晚于快照记录 → 重读并升版本（P1-5）。 */
 async function getSessionContext(
   handle: DB,
   sessionId: string,
+  cwd?: string,
 ): Promise<{ entries: SessionEntry[]; snapshots: FileSnapshot[] }> {
+  if (cwd) await refreshStaleSnapshots(handle, sessionId, cwd)
   const [entries, snapshots] = await Promise.all([
     getEntries(handle, sessionId),
     getFileSnapshots(handle, sessionId),
   ])
   return { entries, snapshots }
+}
+
+/** 比对每个文件最新快照与磁盘 mtime，过期则重读并写入新版本。 */
+async function refreshStaleSnapshots(handle: DB, sessionId: string, cwd: string): Promise<void> {
+  const snaps = await getFileSnapshots(handle, sessionId)
+  const latest = new Map<string, FileSnapshot>()
+  for (const s of snaps) {
+    const prev = latest.get(s.filePath)
+    if (!prev || s.version > prev.version) latest.set(s.filePath, s)
+  }
+  for (const s of latest.values()) {
+    const p = resolve(cwd, s.filePath)
+    // try 只覆盖 fs 错误（stat/readFile）：文件已删除/不可读 → 保留旧快照
+    // （读工具会报错提示模型），跳过该文件继续处理其余快照。
+    const st = await stat(p).catch(() => null)
+    if (!st) continue
+    // upsertFileSnapshot 落盘时对 mtimeMs 取整（bigint 列），比对侧同样取整，
+    // 避免向下舍入导致"存储值 < 真实值"的永久误判过期。
+    if ((s.mtimeMs ?? 0) >= Math.round(st.mtimeMs)) continue
+    const content = await readFile(p, 'utf-8').catch(() => null)
+    if (content === null) continue
+    // DB 写入放在 try 之外：upsertFileSnapshot 失败必须向上抛，
+    // 否则过期内容被静默注入上下文（评审 NIT：错误吞没范围过大）。
+    await upsertFileSnapshot(handle, sessionId, s.filePath, content, st.mtimeMs)
+  }
 }
 
 export { entriesToChatMessages, getSessionContext, injectSnapshots, messageToChatMessage }

@@ -14,8 +14,9 @@ type HotUpdateResult =
  * 启动新实例的函数签名。
  * @param snapshotPath 快照文件路径（旧实例已写入）
  * @param argv          传给新进程的完整参数（含 restore flag + 可选 handoff flag）
+ * @param opts          热更新选项（authToken 等经环境变量传递给新实例）
  */
-type SpawnFn = (snapshotPath: string, argv: string[]) => Promise<void>
+type SpawnFn = (snapshotPath: string, argv: string[], opts?: HotUpdateOptions) => Promise<void>
 
 type HotUpdateOptions = {
   /** 自更新安装函数；默认 `npm install -g <pkg>`。 */
@@ -29,6 +30,10 @@ type HotUpdateOptions = {
   restoreFlag?: string
   /** 旧实例 handoff 端口；提供时新实例启动后请求旧实例 graceful shutdown。 */
   handoffPort?: number
+  /** 旧实例主服务端口；新实例 --port 复用（保证接管同一地址）。 */
+  port?: number
+  /** 传给新实例的认证 token（经环境变量 C0DE_AUTH_TOKEN），保证新旧实例握手同 token。 */
+  authToken?: string
 }
 
 const DEFAULT_PACKAGE = 'c0de-agent'
@@ -45,13 +50,17 @@ function defaultInstall(pkg: string): Promise<void> {
   })
 }
 
-/** 默认启动新实例：detached spawn，argv 全部透传给新进程。 */
-function defaultSpawn(_snapshotPath: string, argv: string[]): Promise<void> {
+/** 默认启动新实例：detached spawn CLI bin，argv = serve <restore> <handoff>。
+ * 必须以 `serve` 子命令开头（CLI dispatch 按首参选命令）；
+ * --port 复用旧实例端口，--handoff-port 让新实例启动后请求旧实例退出。
+ * 认证 token 经环境变量传递（不落 argv，避免 ps 泄漏）。 */
+function defaultSpawn(_snapshotPath: string, argv: string[], opts?: HotUpdateOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
       const child: ChildProcess = spawn(process.argv0, [process.argv[1] ?? '', ...argv], {
         detached: true,
         stdio: 'ignore',
+        ...(opts?.authToken ? { env: { ...process.env, C0DE_AUTH_TOKEN: opts.authToken } } : {}),
       })
       child.unref()
       resolve()
@@ -68,8 +77,7 @@ function defaultSpawn(_snapshotPath: string, argv: string[]): Promise<void> {
  *   3. detached 启动新版本实例，传入快照路径（新实例 restore + 端口接管）
  *
  * 注：旧实例的 graceful shutdown / 端口让渡由新实例启动后通过 IPC 协调
- * （见 ipc.ts），本函数只负责"序列化 + 安装 + 接力"。若提供 handoffPort，
- * argv 会带上 --handoff-port，新实例据此 requestHandoff 通知旧实例退出。
+ * （见 ipc.ts），本函数只负责"序列化 + 安装 + 接力"。
  */
 async function performHotUpdate(
   snapshot: SessionSnapshot,
@@ -93,13 +101,18 @@ async function performHotUpdate(
   }
 
   const restoreFlag = opts.restoreFlag ?? '--restore'
-  const argv = [restoreFlag, snapshotPath]
+  const argv = [
+    'serve',
+    restoreFlag,
+    snapshotPath,
+    ...(opts.port !== undefined ? ['--port', String(opts.port)] : []),
+  ]
   if (opts.handoffPort !== undefined) {
     argv.push('--handoff-port', String(opts.handoffPort))
   }
   const spawnNew = opts.spawnNewInstanceFn ?? defaultSpawn
   try {
-    await spawnNew(snapshotPath, argv)
+    await spawnNew(snapshotPath, argv, opts)
   } catch (error) {
     return {
       _tag: 'spawn_failed',

@@ -1,4 +1,9 @@
-import { loadConfig, mergeConfig, saveConfig } from '../../core/config.js'
+import {
+  loadConfigScopes,
+  mergeConfig,
+  mergeRaw,
+  saveConfigScoped,
+} from '../../core/config.js'
 import type { Config } from '../../shared/types/config.js'
 import type { CommandArgs } from '../parser.js'
 
@@ -55,7 +60,9 @@ function setPathPatch(path: string, value: unknown): Record<string, unknown> {
 async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
   const write = ctx.write ?? process.stdout.write.bind(process.stdout)
   const sub = ctx.args.positionals[0]
-  const config = await loadConfig(ctx.cwd)
+  const scopes = loadConfigScopes(ctx.cwd)
+  // get 展示用合并视图（global ← project，含默认值），与 loadConfig 语义一致。
+  const config: Config = mergeConfig(scopes.global, scopes.project)
 
   if (sub === 'get') {
     const key = ctx.args.positionals[1]
@@ -74,8 +81,10 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
     if (!key) throw new Error('config set: a key is required')
     if (rawValue === undefined) throw new Error('config set: a value is required')
     const scope = (ctx.args.options.global as boolean | undefined) ? 'global' : 'project'
-    const merged: Config = mergeConfig(config, setPathPatch(key, coerce(rawValue)))
-    await saveConfig(merged, scope, ctx.cwd)
+    // 只把 patch 合并进目标作用域的原始文件，不写入默认值与其他作用域的配置（P2-3）。
+    const scopeCfg = scope === 'global' ? scopes.global : scopes.project
+    const next = mergeRaw(scopeCfg ?? {}, setPathPatch(key, coerce(rawValue)))
+    await saveConfigScoped(scope, ctx.cwd, next)
     write(`Set ${key} (scope: ${scope})\n`)
     return
   }

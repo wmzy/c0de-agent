@@ -3,7 +3,7 @@ import { startServer } from '../../server/index.js'
 import type { CommandArgs } from '../parser.js'
 import { openBrowser, printStartupBanner } from '../utils/output.js'
 
-type RunningHandle = { port: number; close(): Promise<void> }
+type RunningHandle = { port: number; authToken?: string; close(): Promise<void> }
 
 type ServeCommandContext = {
   args: CommandArgs
@@ -29,7 +29,10 @@ async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
     ...(handoffPort ? { handoffPort } : {}),
   })
 
-  const url = `http://localhost:${handle.port}`
+  // P0-3：认证 token（authEnabled 显式关闭时为 undefined）挂到 URL，
+  // 浏览器首访存入 localStorage 并从地址栏移除。
+  const tokenQuery = handle.authToken ? `?token=${encodeURIComponent(handle.authToken)}` : ''
+  const url = `http://localhost:${handle.port}${tokenQuery}`
   ;(ctx.banner ?? printStartupBanner)(url)
 
   if (shouldOpen) {

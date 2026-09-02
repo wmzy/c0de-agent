@@ -7,7 +7,7 @@ import {
   buildAgentDeps,
   buildLLMRegistry,
   fullyAutoApproveChecker,
-  readOnlySafeChecker,
+  nonInteractiveSafeChecker,
 } from './deps.js'
 
 let db: DB
@@ -36,7 +36,7 @@ const config: Config = {
   websearch: { provider: 'auto' },
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   permission: { defaultMode: 'default' },
-  update: { enabled: false, intervalMs: 3_600_000, initialDelayMs: 10_000, autoApply: false },
+  update: { enabled: false, intervalMs: 3_600_000, initialDelayMs: 10_000 },
   locale: 'en',
 }
 
@@ -64,9 +64,9 @@ describe('fullyAutoApproveChecker', () => {
   })
 })
 
-describe('readOnlySafeChecker', () => {
-  it('allows read-only (permission: auto) tools', async () => {
-    const res = await readOnlySafeChecker.check(
+describe('nonInteractiveSafeChecker', () => {
+  it('allow 只读（permission: auto）工具', async () => {
+    const res = await nonInteractiveSafeChecker.check(
       { name: 'read', permission: 'auto' } as never,
       {},
       {} as never,
@@ -74,22 +74,36 @@ describe('readOnlySafeChecker', () => {
     expect(res._tag).toBe('allow')
   })
 
-  it('asks for write/exec (permission: ask) tools', async () => {
-    const res = await readOnlySafeChecker.check(
+  it('deny 写/执行（permission: ask）工具，且提示含可操作指引（-y / serve）', async () => {
+    const res = await nonInteractiveSafeChecker.check(
       { name: 'bash', permission: 'ask' } as never,
       {},
       {} as never,
     )
-    expect(res._tag).toBe('ask')
+    expect(res._tag).toBe('deny')
+    if (res._tag !== 'deny') return
+    // 拒绝原因必须给出两条出路：加 -y 放行，或改用 serve 交互确认
+    expect(res.reason).toContain('-y')
+    expect(res.reason).toContain('serve')
+    expect(res.reason).toContain('bash')
+  })
+
+  it('deny permission: deny 工具（原样透传 autoAllowChecker 判定）', async () => {
+    const res = await nonInteractiveSafeChecker.check(
+      { name: 'dangerous', permission: 'deny' } as never,
+      {},
+      {} as never,
+    )
+    expect(res._tag).toBe('deny')
   })
 })
 
 describe('buildAgentDeps', () => {
-  it('defaults to readOnlySafeChecker when config.defaultMode is default', async () => {
+  it('defaults to nonInteractiveSafeChecker when config.defaultMode is default', async () => {
     const deps = await buildAgentDeps(config, { db, cwd: process.cwd() })
     expect(deps.db).toBe(db)
     expect(deps.config).toBe(config)
-    expect(deps.permission).toBe(readOnlySafeChecker)
+    expect(deps.permission).toBe(nonInteractiveSafeChecker)
     expect(deps.llmRegistry).toBeTruthy()
     expect(deps.toolRegistry).toBeTruthy()
   })
@@ -103,13 +117,13 @@ describe('buildAgentDeps', () => {
     expect(deps.permission).toBe(fullyAutoApproveChecker)
   })
 
-  it('uses readOnlySafeChecker when strategy is safe', async () => {
+  it('uses nonInteractiveSafeChecker when strategy is safe', async () => {
     const deps = await buildAgentDeps(config, {
       db,
       cwd: process.cwd(),
       permissionStrategy: 'safe',
     })
-    expect(deps.permission).toBe(readOnlySafeChecker)
+    expect(deps.permission).toBe(nonInteractiveSafeChecker)
   })
 
   it('falls back to config.permission.defaultMode when strategy omitted', async () => {

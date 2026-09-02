@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 // 版本检查（spec §18.1）：查询 npm registry 比对当前版本。
 
 type UpdateCheckResult = {
@@ -17,6 +19,22 @@ type CheckOptions = {
 const DEFAULT_PACKAGE = 'c0de-agent'
 const DEFAULT_VERSION = '0.1.0'
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org'
+
+/**
+ * 读取当前安装版本（package.json 的 version 字段）。
+ * src/dev 与 dist 两种布局下 `../../package.json` 都指向包根；读取失败回退常量。
+ */
+function getCurrentVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
+    ) as { version?: unknown }
+    if (typeof pkg.version === 'string' && pkg.version.length > 0) return pkg.version
+  } catch {
+    // 打包布局异常：回退保守常量
+  }
+  return DEFAULT_VERSION
+}
 
 /** 取 semver 的数值核心（去前导 v 与 prerelease）。 */
 function semverCore(v: string): number[] {
@@ -39,7 +57,7 @@ function compareSemver(a: string, b: string): number {
 /** 查询 npm registry 判断是否有新版本。网络/解析失败时返回 hasUpdate:false，绝不抛错。 */
 async function checkForUpdate(opts: CheckOptions = {}): Promise<UpdateCheckResult> {
   const pkg = opts.packageName ?? DEFAULT_PACKAGE
-  const current = opts.currentVersion ?? DEFAULT_VERSION
+  const current = opts.currentVersion ?? getCurrentVersion()
   const registry = opts.registryUrl ?? DEFAULT_REGISTRY
   const fetchImpl = opts.fetchImpl ?? fetch
 
@@ -63,4 +81,4 @@ async function checkForUpdate(opts: CheckOptions = {}): Promise<UpdateCheckResul
 }
 
 export type { CheckOptions, UpdateCheckResult }
-export { checkForUpdate, compareSemver }
+export { checkForUpdate, compareSemver, getCurrentVersion }

@@ -1,0 +1,1 @@
+ALTER TABLE "file_snapshots" ADD COLUMN "mtime_ms" bigint;

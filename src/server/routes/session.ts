@@ -2,7 +2,12 @@ import { Hono } from 'hono'
 import { createSummarizer, runCompaction } from '../../core/compact.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries } from '../../session/archive.js'
-import { forkSession, getBranches, getTree } from '../../session/branch.js'
+import {
+  BranchPointOutOfRangeError,
+  forkSession,
+  getBranches,
+  getTree,
+} from '../../session/branch.js'
 import { deleteEntriesByIds, getMessages, insertEntry } from '../../session/message.js'
 import {
   createSession,
@@ -80,7 +85,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
     try {
       const forked = await forkSession(ctx.db, id, messageIndex)
       return c.json(forked, 201)
-    } catch {
+    } catch (error) {
+      // 分支点越界是客户端索引/分页 bug → 400 并透出明确语义；归 404 会误导排查
+      if (error instanceof BranchPointOutOfRangeError) {
+        return apiError(c, 400, 'BRANCH_POINT_OUT_OF_RANGE', error.message)
+      }
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     }
   })

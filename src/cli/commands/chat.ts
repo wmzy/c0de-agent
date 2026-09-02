@@ -19,9 +19,11 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
   const err = ctx.stderr ?? process.stderr.write.bind(process.stderr)
   const format = (ctx.args.options.format as 'text' | 'json' | undefined) ?? 'text'
   const model = ctx.args.options.model as string | undefined
+  const continueId = ctx.args.options.continue as string | undefined
 
   const text = await runPrintMode(ctx.config, message, ctx.deps, {
     ...(model ? { model } : {}),
+    ...(continueId ? { sessionId: continueId } : {}),
     onEvent: (e) => {
       if (e._tag === 'tool_call_start') err(`[tool] ${e.tool}\n`)
       else if (e._tag === 'thinking') err(`[thinking] ${e.text}\n`)

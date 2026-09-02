@@ -92,6 +92,7 @@ ${history}`
     if (cfg.preserveFileSnapshots) {
       const hotFiles = extractHotFiles(toSquash)
       for (const file of hotFiles) {
+        // 不传 mtimeMs：由 upsertFileSnapshot 从已有行透传，压缩后热文件不误判过期。
         const id = await upsertFileSnapshot(txHandle, sessionId, file.path, file.content)
         fileSnapshotIds.push(id)
       }

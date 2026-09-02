@@ -17,14 +17,14 @@ describe('isLocalOrigin', () => {
     expect(isLocalOrigin('http://localhost')).toBe(true)
   })
 
-  it('file:// 与扩展协议 → true（PWA/扩展场景）', () => {
-    expect(isLocalOrigin('file://')).toBe(true)
-    expect(isLocalOrigin('chrome-extension://abc')).toBe(true)
-    expect(isLocalOrigin('moz-extension://def')).toBe(true)
+  it('file:// 与扩展协议 → false（无法证明是本机回环）', () => {
+    expect(isLocalOrigin('file://')).toBe(false)
+    expect(isLocalOrigin('chrome-extension://abc')).toBe(false)
+    expect(isLocalOrigin('moz-extension://def')).toBe(false)
   })
 
-  it("'null' origin → true（file/沙箱）", () => {
-    expect(isLocalOrigin('null')).toBe(true)
+  it("'null' origin → false（file/沙箱）", () => {
+    expect(isLocalOrigin('null')).toBe(false)
   })
 
   it('外部域名 → false', () => {

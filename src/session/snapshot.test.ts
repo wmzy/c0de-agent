@@ -62,4 +62,28 @@ describe('file snapshots', () => {
     expect(latest?.contentHash).toHaveLength(64) // sha256 hex
     expect(latest?.tokenCount).toBeGreaterThan(0)
   })
+
+  it('未传 mtimeMs 时从已有快照行透传（压缩/squash 调用点避免冗余重读）', async () => {
+    // 首次快照带 mtimeMs（如 @文件写入路径）
+    await upsertFileSnapshot(handle, sessionId, '/a.ts', 'v1', 123_456)
+    // 模拟 compaction/squash 从工具结果重建快照：不传 mtimeMs
+    await upsertFileSnapshot(handle, sessionId, '/a.ts', 'v2')
+    const latest = await getLatestFileSnapshot(handle, sessionId, '/a.ts')
+    expect(latest?.content).toBe('v2')
+    expect(latest?.version).toBe(2)
+    // 继承旧值而非置空 → 下次注入前比对不误判过期、不多一轮重读
+    expect(latest?.mtimeMs).toBe(123_456)
+
+    // 无已有行的首次写入（无 mtime 可透传）仍保持 undefined
+    await upsertFileSnapshot(handle, sessionId, '/b.ts', 'b1')
+    const first = await getLatestFileSnapshot(handle, sessionId, '/b.ts')
+    expect(first?.mtimeMs).toBeUndefined()
+  })
+
+  it('显式传入的 mtimeMs 优先于已有行透传值', async () => {
+    await upsertFileSnapshot(handle, sessionId, '/a.ts', 'v1', 111)
+    await upsertFileSnapshot(handle, sessionId, '/a.ts', 'v2', 222)
+    const latest = await getLatestFileSnapshot(handle, sessionId, '/a.ts')
+    expect(latest?.mtimeMs).toBe(222)
+  })
 })

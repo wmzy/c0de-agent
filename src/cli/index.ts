@@ -2,10 +2,13 @@
 
 // src/cli/index.ts — c0de CLI bin entry.
 
+import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
+import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
+import { acquireDevDbLock, releaseDevDbLock, resolveDbDir } from '../server/server.js'
 import type { Config } from '../shared/types/config.js'
 import { runAcpCommand } from './commands/acp.js'
 import { runChatCommand } from './commands/chat.js'
@@ -25,6 +28,7 @@ const COMMANDS: CommandSpec[] = [
       { name: 'model', type: 'string' },
       { name: 'format', type: 'string' },
       { name: 'yes', type: 'boolean', short: 'y' },
+      { name: 'continue', type: 'string' },
     ],
   },
   {
@@ -68,25 +72,68 @@ type DispatchOverrides = {
   runServe?: () => Promise<void>
 }
 
+/** 判别持久库错误是否为「库被其它 c0de 进程占用」的锁冲突特征（读 server.ts 确认）：
+ *  - acquireDevDbLock 对 live lock 抛出的 "Database is locked by another c0de process (PID …)"；
+ *  - PGLite 单写者 WASM 崩溃 RuntimeError "Aborted()"（serve 未持锁但占用 dataDir 时的兜底特征）。
+ *  其余错误（磁盘故障、迁移失败等）不属于锁冲突，不得误报 serve。 */
+function isDbLockConflict(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  if (err.message.includes('Database is locked by another c0de process')) return true
+  return err.name === 'RuntimeError' && /abort/i.test(err.message)
+}
+
+type AgentDepsOptions = {
+  /** 权限策略：undefined → 按 config.permission.defaultMode 决定。 */
+  strategy?: PermissionStrategy
+  /** --continue 指定的会话 id：依赖持久库，降级内存模式时无法续聊。 */
+  continueSessionId?: string
+}
+
 /** 封装 agent 依赖生命周期：加载配置 → 建库迁移 → 组装 deps → 使用后关库。
- *  chat / acp 两个命令复用同一套逻辑（此前在 dispatch 中各写一份）。 */
+ *  chat / acp 两个命令复用同一套逻辑（此前在 dispatch 中各写一份）。
+ *  数据库优先用全局 dataDir 持久库（会话可恢复，--continue 可用）；
+ *  仅当错误是锁冲突特征（dataDir 被 serve 实例占用）时退化为内存库并 stderr 提示，
+ *  其它持久库错误如实上抛（main 统一打印 + 非零退出）；
+ *  带 --continue 时内存库不含历史会话，直接报错退出而非误导性的 session not found。 */
 async function withAgentDeps(
   cwd: string,
-  strategy: PermissionStrategy | undefined,
+  opts: AgentDepsOptions,
   fn: (config: Config, deps: LoopDeps) => Promise<void>,
 ): Promise<void> {
   const config = await loadConfig(cwd)
-  const db = await createDB({ driver: 'pglite' })
-  await migrateDB(db)
+  const dataDir = resolveDbDir()
+  let db: DB
+  let holdLock = false
+  try {
+    mkdirSync(dataDir, { recursive: true })
+    acquireDevDbLock(dataDir)
+    holdLock = true
+    db = await createDB({ driver: 'pglite', dataDir })
+    await migrateDB(db)
+  } catch (err) {
+    if (holdLock) releaseDevDbLock(dataDir)
+    holdLock = false
+    if (!isDbLockConflict(err)) throw err
+    if (opts.continueSessionId) {
+      throw new Error(
+        `无法续聊会话 ${opts.continueSessionId}：持久库被 c0de serve 占用，内存模式无法续聊。\n` +
+          `请停止 serve 后重试，或去掉 --continue 开启新会话。`,
+      )
+    }
+    process.stderr.write('[c0de] c0de serve 正在运行，本次会话不持久化（内存模式）\n')
+    db = await createDB({ driver: 'pglite' })
+    await migrateDB(db)
+  }
   try {
     const deps = await buildAgentDeps(config, {
       db,
       cwd,
-      ...(strategy ? { permissionStrategy: strategy } : {}),
+      ...(opts.strategy ? { permissionStrategy: opts.strategy } : {}),
     })
     await fn(config, deps)
   } finally {
     await db.close()
+    if (holdLock) releaseDevDbLock(dataDir)
   }
 }
 
@@ -113,7 +160,12 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     case 'chat': {
       // --yes / -y 显式放行写操作；否则按 config.permission.defaultMode 决定（默认 safe）。
       const strategy = args.options.yes ? ('full-auto' as const) : undefined
-      await withAgentDeps(cwd, strategy, (config, deps) => runChatCommand({ args, config, deps }))
+      const continueId = args.options.continue as string | undefined
+      await withAgentDeps(
+        cwd,
+        { ...(strategy ? { strategy } : {}), ...(continueId ? { continueSessionId: continueId } : {}) },
+        (config, deps) => runChatCommand({ args, config, deps }),
+      )
       return
     }
     case 'init': {
@@ -130,7 +182,9 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     }
     case 'acp': {
       // ACP 非交互：所有工具放行（编辑器侧自行控制执行授权）。
-      await withAgentDeps(cwd, 'full-auto', (config, deps) => runAcpCommand({ config, deps }))
+      await withAgentDeps(cwd, { strategy: 'full-auto' }, (config, deps) =>
+        runAcpCommand({ config, deps }),
+      )
       return
     }
     case 'update': {

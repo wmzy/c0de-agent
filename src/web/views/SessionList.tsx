@@ -84,6 +84,8 @@ export function SessionList({
           activeId={activeId}
           onSelect={onSelect}
           onDelete={(id) => {
+            // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
+            if (!window.confirm('删除该会话及其全部消息？此操作不可恢复。')) return
             del.mutate(id)
             onDeleted?.(id)
           }}

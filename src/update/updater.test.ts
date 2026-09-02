@@ -76,7 +76,11 @@ describe('performHotUpdate', () => {
       snapshotPath: '/tmp/snap.json',
     })
     // [path, ...argv]
-    expect(spawnFn).toHaveBeenCalledWith('/tmp/snap.json', ['--restore', '/tmp/snap.json'])
+    expect(spawnFn).toHaveBeenCalledWith(
+      '/tmp/snap.json',
+      ['serve', '--restore', '/tmp/snap.json'],
+      expect.anything(),
+    )
   })
 
   it('appends --handoff-port <port> argv when handoffPort provided', async () => {
@@ -87,12 +91,11 @@ describe('performHotUpdate', () => {
       snapshotPath: '/tmp/snap.json',
       handoffPort: 12345,
     })
-    expect(spawnFn).toHaveBeenCalledWith('/tmp/snap.json', [
-      '--restore',
+    expect(spawnFn).toHaveBeenCalledWith(
       '/tmp/snap.json',
-      '--handoff-port',
-      '12345',
-    ])
+      ['serve', '--restore', '/tmp/snap.json', '--handoff-port', '12345'],
+      expect.anything(),
+    )
   })
 
   it('honors custom restoreFlag in argv construction', async () => {
@@ -103,6 +106,10 @@ describe('performHotUpdate', () => {
       snapshotPath: '/tmp/s.json',
       restoreFlag: '--resume-from',
     })
-    expect(spawnFn).toHaveBeenCalledWith('/tmp/s.json', ['--resume-from', '/tmp/s.json'])
+    expect(spawnFn).toHaveBeenCalledWith(
+      '/tmp/s.json',
+      ['serve', '--resume-from', '/tmp/s.json'],
+      expect.anything(),
+    )
   })
 })

@@ -56,6 +56,8 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
     permissionMode: config.permission.defaultMode,
+    // 测试工厂不解析/生成 token（不触碰用户全局数据目录）。
+    authToken: undefined,
     agentRegistry,
     // 工作流注册表：惰性初始化，只含内置（测试工厂；生产路径走 buildServerContext）。
     get workflowRegistry() {

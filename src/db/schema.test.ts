@@ -155,6 +155,7 @@ describe('type inference', () => {
       contentHash: 'abc123',
       tokenCount: 2,
       version: 1,
+      mtimeMs: null,
       createdAt: new Date(),
     }
     expect(_row.filePath).toBe('src/main.ts')

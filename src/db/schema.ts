@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import {
+  bigint,
   index,
   integer,
   jsonb,
@@ -119,6 +120,8 @@ export const fileSnapshots = pgTable(
     contentHash: text('content_hash').notNull(),
     tokenCount: integer('token_count').default(0),
     version: integer('version').default(1),
+    /** 快照创建时文件磁盘 mtime（毫秒）。注入前比对，过期自动重读（P1-5）。 */
+    mtimeMs: bigint('mtime_ms', { mode: 'number' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

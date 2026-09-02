@@ -10,6 +10,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import type { Server as NodeServer } from 'node:http'
 import { connect as tcpConnect } from 'node:net'
 import { homedir } from 'node:os'
@@ -42,8 +43,12 @@ import {
   restoreSessions,
   type SessionSnapshot,
 } from '../update/index.js'
+// HandoffError 经深导入（而非 update/index.js barrel）获取：barrel 归 update
+// 包维护，此处仅用其类型标注 requestHandoff 抛错的 kind/status 分流。
+import type { HandoffError } from '../update/ipc.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
+import { isAllowedOrigin } from './middleware/cors.js'
 import { createPermissionStore } from './permission/store.js'
 import { PTYManager } from './terminal/pty-manager.js'
 import type { HandoffServer, ServerContext } from './types.js'
@@ -68,6 +73,8 @@ type StartServerOptions = {
 type RunningServer = {
   app: Hono
   port: number
+  /** 认证 token（authEnabled=false 时为 undefined）；serve 命令据此打印带 token 的 URL。 */
+  authToken?: string
   close(): Promise<void>
 }
 
@@ -133,6 +140,58 @@ function resolveDbDir(): string {
   const envDir = process.env.C0DE_DB_DIR
   if (envDir && envDir.trim() !== '') return envDir
   return join(resolveGlobalDataRoot(), 'pglite')
+}
+
+/**
+ * 认证 token 解析（P0 安全修复）：
+ * 1. security.authEnabled 显式为 false → 无认证（用户显式选择）。
+ * 2. 用户配置 security.token → 使用。
+ * 3. 环境变量 C0DE_AUTH_TOKEN（热更新新实例经 updater 传入）→ 采用并落盘。
+ * 4. dataDir 下 auth-token 文件（跨重启/热更新稳定）→ 复用。
+ * 5. 都没有 → 生成随机 token 并写入 auth-token（0600）。
+ */
+function resolveAuthToken(config: Config, dataDir: string): string | undefined {
+  if (config.security.authEnabled === false) return undefined
+  if (config.security.token && config.security.token.length > 0) return config.security.token
+
+  const tokenFile = join(dataDir, 'auth-token')
+  const envToken = process.env.C0DE_AUTH_TOKEN
+
+  if (envToken) {
+    try {
+      mkdirSync(dataDir, { recursive: true })
+      writeFileSync(tokenFile, envToken, { mode: 0o600 })
+    } catch {
+      // 落盘失败不影响本次运行
+    }
+    return envToken
+  }
+
+  try {
+    const existing = readFileSync(tokenFile, 'utf-8').trim()
+    if (existing) return existing
+  } catch {
+    // 文件不存在，走生成分支
+  }
+
+  const generated = randomBytes(24).toString('hex')
+  try {
+    mkdirSync(dataDir, { recursive: true })
+    writeFileSync(tokenFile, generated, { mode: 0o600 })
+  } catch {
+    // 落盘失败：本次运行仍可用内存 token
+  }
+  return generated
+}
+
+/** 只读 dataDir 下已存在的 auth-token（新实例 handoff 握手用；不生成）。 */
+function readAuthTokenFile(dataDir: string): string | undefined {
+  try {
+    const t = readFileSync(join(dataDir, 'auth-token'), 'utf-8').trim()
+    return t || undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** 一次性迁移：<cwd>/.c0de/pglite → 全局路径。仅当目标不存在时执行。
@@ -204,6 +263,7 @@ async function buildServerContext(
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
     permissionMode: config.permission.defaultMode,
+    authToken: resolveAuthToken(config, resolveDbDir()),
     // Agent 注册表：内置 4 个默认 agent；项目/用户自定义 agent 可在启动后补充加载。
     agentRegistry: (() => {
       const reg = createAgentRegistry()
@@ -221,30 +281,17 @@ async function buildServerContext(
     ptyManager: new PTYManager(),
   }
 
-  // spec §18.3 handoff server：旧实例监听随机端口，收到 POST /handoff 时
-  // 序列化当前会话状态 + 优雅关闭，让新实例接管。config.update.enabled=false
-  // 或测试 skipHandoff 时跳过（减少后台资源占用）。
-  let handoffServer: HandoffServer | undefined
-  if (config.update.enabled && !opts.skipHandoff) {
-    const createHandoff = opts.createHandoffFn ?? createHandoffServer
-    handoffServer = await createHandoff(async () => {
-      // 序列化在热更新主链路（performHotUpdate）已完成；handoff 回调只需释放资源。
-      // 这里提前停 scheduler 以避免 close 期间还在跑检查。
-      ctx.updateScheduler.stop()
-    })
-    ctx.handoff = { port: handoffServer.port, server: handoffServer }
-  }
-
+  // handoff server 不在此创建：它需要持有主 HTTP server 引用以触发完整关停，
+  // 由 startServer 在 serve() 之后创建（dev 模式走 vite，不创建）。
   return {
     ctx,
     dispose: async () => {
       // dev 重建前调用：中止活跃 run + settle pending permission +
-      // 停 scheduler + 关 handoff。**不 close db**（调用方持有）。
+      // 停 scheduler。**不 close db**（调用方持有）。
       ctx.agentManager.dispose()
       ctx.permissionStore.dispose()
       ctx.updateScheduler.stop()
       ctx.ptyManager.dispose()
-      if (handoffServer) await handoffServer.close()
     },
   }
 }
@@ -367,14 +414,27 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
  */
 async function requestHandoffWithRetry(
   port: number,
+  token?: string,
   maxAttempts = 30,
   delayMs = 100,
 ): Promise<void> {
   try {
-    await requestHandoff(port)
-  } catch {
-    // 旧实例未启 handoff 端点（update 未启用）；直接尝试绑端口。
-    return
+    await requestHandoff(port, '127.0.0.1', token)
+  } catch (err) {
+    const handoffErr = err as HandoffError
+    // 连接层失败（ECONNREFUSED 等）：旧实例未启 handoff 端点（update 未启用）；
+    // 直接尝试绑端口。
+    if (handoffErr?.kind === 'connect') return
+    // HTTP 401：旧实例存在但 auth token 不匹配——立即明确报错退出。若继续
+    // bind 必撞 EADDRINUSE，把真实原因（token 校验失败）误报成端口占用。
+    if (handoffErr?.kind === 'http' && handoffErr.status === 401) {
+      throw new Error(
+        `handoff: 端口 ${port} 上的旧实例拒绝让渡（HTTP 401：auth token 不匹配）。\n` +
+          `新旧实例须共享同一 token（C0DE_AUTH_TOKEN 环境变量或数据目录 auth-token 文件），\n` +
+          `请核对配置后重试。`,
+      )
+    }
+    throw err
   }
   for (let i = 0; i < maxAttempts; i++) {
     const released = await new Promise<boolean>((resolve) => {
@@ -396,8 +456,11 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
   const port = opts.port ?? 3000
 
   // spec §18.3：新实例从 --handoff-port 拿到旧实例端口，请求优雅退出后绑端口。
+  // 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，否则读 auth-token 文件。
   if (opts.handoffPort && !opts.skipHandoff) {
-    await requestHandoffWithRetry(opts.handoffPort)
+    const pendingToken =
+      process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+    await requestHandoffWithRetry(opts.handoffPort, pendingToken)
   }
 
   const { ctx, close: closeCtx } = await bootstrapServerContext(opts)
@@ -407,15 +470,24 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
   if (ctx.config.update.enabled) ctx.updateScheduler.start()
 
   const server = serve({ fetch: app.fetch, port }) as unknown as NodeServer
+  ctx.port = port
 
   // WebSocket：终端双向流。Hono v2 无原生 WS，用 ws 包直接挂载到 HTTP server。
   // 匹配 /api/terminal/:id/ws → ptyManager.attachWebSocket
   const wss = new WebSocketServer({ noServer: true })
-  const expectedToken = ctx.config.security.authEnabled ? ctx.config.security.token : undefined
+  const expectedToken = ctx.authToken
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
     const match = url.pathname.match(/^\/api\/terminal\/([^/]+)\/ws$/)
     if (!match) {
+      socket.destroy()
+      return
+    }
+    // Origin 校验：浏览器 WS 不受 CORS 约束，必须在服务端显式校验。
+    // 非浏览器客户端（无 Origin 头）放行——token 仍是硬门槛。
+    const origin = req.headers.origin
+    if (origin && !isAllowedOrigin(origin, ctx.config.security.allowedOrigins)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
       socket.destroy()
       return
     }
@@ -443,24 +515,43 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
   })
 
   let closed = false
-  const close = async () => {
+  const closeMain = async () => {
     if (closed) return
     closed = true
     wss.close()
     server.close()
     await closeCtx()
   }
+  const close = async () => {
+    await closeMain()
+    await handoffServer?.close()
+  }
 
-  return { app, port, close }
+  // spec §18.3 handoff server：旧实例收到 POST /handoff 后关闭主服务与资源，
+  // 响应 200，随后退出进程（exitAfterResponse），端口让渡给新实例。
+  // config.update.enabled=false 或 skipHandoff 时跳过。
+  let handoffServer: HandoffServer | undefined
+  if (ctx.config.update.enabled && !opts.skipHandoff) {
+    const createHandoff = opts.createHandoffFn ?? createHandoffServer
+    handoffServer = await createHandoff(closeMain, {
+      expectedToken: ctx.authToken,
+      exitAfterResponse: true,
+    })
+    ctx.handoff = { port: handoffServer.port, server: handoffServer }
+  }
+
+  return { app, port, close, ...(ctx.authToken ? { authToken: ctx.authToken } : {}) }
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }
 export {
+  acquireDevDbLock,
   bootstrapServerContext,
   buildRegistryFromConfig,
   buildServerContext,
   createDevDb,
   releaseDevDbLock,
+  resolveAuthToken,
   resolveDbDir,
   startServer,
   syncRegistryFromConfig,

@@ -153,6 +153,32 @@ describe('session route', () => {
     expect(forked.parentId).toBe(created.id)
   })
 
+  it('POST /:id/fork 分支点越界 → 400 BRANCH_POINT_OUT_OF_RANGE（区别于会话不存在 404）', async () => {
+    const { app, ctx } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Original' }),
+    })
+    const created = (await createRes.json()) as Session
+    await ctx.db.db.insert((await import('../../db/schema.js')).sessionEntries).values({
+      sessionId: created.id,
+      tag: 'message',
+      role: 'user',
+      content: [{ _tag: 'text', text: 'msg1' }],
+    })
+    // 会话存在但 messageIndex 超出条目数 → 400 透出越界语义（归 404 会误导排查）
+    const res = await app.request(`/${created.id}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageIndex: 99 }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as APIErrorBody
+    expect(body.error.code).toBe('BRANCH_POINT_OUT_OF_RANGE')
+    expect(body.error.message).toContain('99')
+  })
+
   it('GET /tree returns session tree', async () => {
     const { app } = await setup()
     await app.request('/', {

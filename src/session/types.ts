@@ -136,6 +136,8 @@ type FileSnapshot = {
   contentHash: string
   tokenCount: number
   version: number
+  /** 快照创建时文件磁盘 mtime（毫秒）；旧行无此字段（迁移前写入） */
+  mtimeMs?: number
   createdAt: number
 }
 

@@ -1,9 +1,15 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { safeResolve } from './path.js'
 
-const root = join(tmpdir(), `safe-path-root-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+let root: string
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'safe-path-root-'))
+})
+afterEach(() => rmSync(root, { recursive: true, force: true }))
 
 describe('safeResolve', () => {
   it('resolves a relative path inside root to an absolute path', () => {
@@ -31,5 +37,24 @@ describe('safeResolve', () => {
   it('rejects a path whose relative form starts with ..', () => {
     // /tmp itself is a parent of the root temp dir → escape
     expect(safeResolve(root, tmpdir())).toBeNull()
+  })
+
+  it('rejects symlink escaping root', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'safe-path-out-'))
+    try {
+      mkdirSync(join(root, 'sub'))
+      symlinkSync(outside, join(root, 'sub', 'link'))
+      expect(safeResolve(root, 'sub/link/secret.txt')).toBeNull()
+      expect(safeResolve(root, 'sub/link')).toBeNull()
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('allows symlink staying inside root', () => {
+    mkdirSync(join(root, 'real'), { recursive: true })
+    mkdirSync(join(root, 'sub'))
+    symlinkSync(join(root, 'real'), join(root, 'sub', 'alias'))
+    expect(safeResolve(root, 'sub/alias/file.txt')).toBe(join(root, 'sub/alias/file.txt'))
   })
 })

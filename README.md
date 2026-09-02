@@ -8,7 +8,7 @@
 - **本地优先**：会话与索引存储在 PGLite（浏览器/进程内 PostgreSQL），数据随用随取。
 - **多项目**：工作区隔离的多项目管理，每个项目独立会话历史与配置。
 - **工具系统**：内置文件读写、bash、grep、glob、编辑等工具，可按需启用/禁用。
-- **权限模式**：`default` / `yolo` 等授权模式，控制工具执行前是否需用户确认。
+- **权限模式**：`default` / `auto` 等授权模式，控制工具执行前是否需用户确认。
 - **会话可恢复**：会话快照序列化/反序列化，支持进程重启后无缝恢复。
 - **无感知热更新**：后台定期检查新版本，序列化当前会话 → npm 自更新 → 端口 handoff 接管，用户无感升级。
 - **Web 搜索**：内置 websearch 工具，支持多搜索引擎。
@@ -26,6 +26,15 @@ pnpm add -g c0de-agent
 ```
 
 要求 Node.js >= 22.0.0。
+
+## 安全
+
+- **认证**：`security.authEnabled` 默认开启。首次启动自动生成认证 token（持久化于数据目录 `auth-token` 文件），浏览器访问时经启动打印的 URL `?token=` 参数自动保存到 localStorage 并从地址栏移除；后续 API 请求与终端 WebSocket 均携带该 token，服务端校验不通过返回 401。
+  - token 解析优先级：`security.token` 配置 > 环境变量 `C0DE_AUTH_TOKEN` > 数据目录 token 文件 > 自动生成并持久化。
+  - 显式关闭：`security.authEnabled: false`（本机单用户且端口仅本机可达时）。
+- **CORS/Origin 校验**：仅放行本机回环 origin 与 `security.allowedOrigins` 中显式配置的 origin；WebSocket 升级在服务端独立校验 Origin（浏览器 WS 不受 CORS 约束）。
+- **监听地址**：默认绑定 `0.0.0.0`（便于容器/远程访问），安全性由 token + allowedOrigins 保证；需要时可用 `security.allowedOrigins` 收紧或自行反向代理限制。
+- **热更新交接**：新实例经环境变量继承 token，请求旧实例 `/handoff` 时须携带匹配的 Bearer token，防止任意本地进程借 handoff 杀掉服务。
 
 ## 使用
 

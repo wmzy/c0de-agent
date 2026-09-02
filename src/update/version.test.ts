@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkForUpdate, compareSemver } from './version.js'
+import { checkForUpdate, compareSemver, getCurrentVersion } from './version.js'
+
+describe('getCurrentVersion', () => {
+  it('reads version from package.json', () => {
+    const v = getCurrentVersion()
+    expect(v).toMatch(/^\d+\.\d+\.\d+/)
+  })
+})
 
 describe('compareSemver', () => {
   it('orders by major.minor.patch', () => {

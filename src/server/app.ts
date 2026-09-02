@@ -35,10 +35,8 @@ function createApp(ctx: ServerContext): Hono {
   // spec §24.2：仅允许本地/可信 origin 跨域读，拒绝外部网页。
   app.use('*', createCORSMiddleware({ allowedOrigins: ctx.config.security.allowedOrigins }))
   // spec §24.2：Bearer token 认证（配置了 token 时生效；/api/health 探活放行）。
-  app.use(
-    '/api/*',
-    createAuthMiddleware(ctx.config.security.authEnabled ? ctx.config.security.token : undefined),
-  )
+  // token 来源：用户配置 security.token，或启动时自动生成（ctx.authToken）。
+  app.use('/api/*', createAuthMiddleware(ctx.authToken))
 
   // 路由
   app.route('/api/health', createHealthRoute())

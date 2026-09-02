@@ -285,6 +285,16 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }
       } catch (err) {
         const e = err as unknown as APIError
+        if (e.code === 'RUN_ACTIVE') {
+          // 并发守卫：撤回乐观追加的 user 消息并提示（P0-4）。
+          setState((s) => {
+            const msgs = [...s.messages]
+            const last = msgs[msgs.length - 1]
+            if (last && last.role === 'user') msgs.pop()
+            return { ...s, messages: msgs, isStreaming: false, error: '该会话已有进行中的对话' }
+          })
+          return
+        }
         if (e.code === 'SEGMENT_BREAK_REQUIRED') {
           const details = e.details as
             | { activeSegment?: PendingSegmentBreak['activeSegment'] }
@@ -375,9 +385,15 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // toolCallId 触发 404（"No pending permission"）。
   const confirm = useCallback((toolCallId: string, approved: boolean) => {
     setState((s) => ({ ...s, pendingPermission: null }))
-    agentAPI
-      .confirmTool(toolCallId, approved)
-      .catch((err) => console.error('[权限确认] 失败，工具调用可能已过期:', err))
+    agentAPI.confirmTool(toolCallId, approved).catch((err) => {
+      const e = err as { status?: number }
+      if (e?.status === 404) {
+        // 超时（5 分钟）或已被其他标签页处理：明确提示，避免「以为已批准」。
+        setState((s) => ({ ...s, error: '权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行' }))
+      } else {
+        console.error('[权限确认] 失败，工具调用可能已过期:', err)
+      }
+    })
   }, [])
 
   // 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。

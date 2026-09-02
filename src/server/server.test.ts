@@ -1,16 +1,26 @@
 // 来源：修复 bootstrapServerContext 默认 in-memory PGLite 导致进程重启丢全部数据。
 // 归并建议：持久化回归专用，与 index.test.ts（导出测试）关注点不同，独立维护。
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { DEFAULT_CONFIG } from '../core/config.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
 import {
   bootstrapServerContext,
   buildServerContext,
   createDevDb,
   releaseDevDbLock,
+  resolveAuthToken,
 } from './server.js'
 
 describe('bootstrapServerContext 数据持久化', () => {
@@ -178,5 +188,68 @@ describe('createDevDb 跨进程锁', () => {
     writeFileSync(lockPath, String(process.pid))
     releaseDevDbLock(tmpDir)
     expect(existsSync(lockPath)).toBe(false)
+  })
+})
+
+// 来源：评审 MINOR·测试缺口——resolveAuthToken 五分支零覆盖。dataDir 为参数，
+// 测试注入临时目录（不触碰用户全局数据目录）；C0DE_AUTH_TOKEN 环境变量在
+// beforeEach/afterEach 中隔离保存/恢复。
+describe('resolveAuthToken 认证 token 解析（P0 安全）', () => {
+  let tmpDir: string
+  const prevEnvToken = process.env.C0DE_AUTH_TOKEN
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'c0de-auth-'))
+    delete process.env.C0DE_AUTH_TOKEN
+  })
+
+  afterEach(() => {
+    if (prevEnvToken === undefined) delete process.env.C0DE_AUTH_TOKEN
+    else process.env.C0DE_AUTH_TOKEN = prevEnvToken
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('security.authEnabled=false → undefined（用户显式关闭认证）', () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      security: { ...DEFAULT_CONFIG.security, authEnabled: false },
+    }
+    expect(resolveAuthToken(config, tmpDir)).toBeUndefined()
+    // 不生成也不读取 auth-token 文件
+    expect(existsSync(join(tmpDir, 'auth-token'))).toBe(false)
+  })
+
+  it('security.token 优先：直接使用且不落盘', () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      security: { ...DEFAULT_CONFIG.security, token: 'cfg-token' },
+    }
+    expect(resolveAuthToken(config, tmpDir)).toBe('cfg-token')
+    expect(existsSync(join(tmpDir, 'auth-token'))).toBe(false)
+  })
+
+  it('C0DE_AUTH_TOKEN → 采用并以 0600 落盘（跨实例稳定）', () => {
+    process.env.C0DE_AUTH_TOKEN = 'env-token'
+    expect(resolveAuthToken(DEFAULT_CONFIG, tmpDir)).toBe('env-token')
+    const file = join(tmpDir, 'auth-token')
+    expect(readFileSync(file, 'utf-8')).toBe('env-token')
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+  })
+
+  it('文件已有 token → 读取复用，不重新生成', () => {
+    writeFileSync(join(tmpDir, 'auth-token'), 'file-token', { mode: 0o600 })
+    expect(resolveAuthToken(DEFAULT_CONFIG, tmpDir)).toBe('file-token')
+  })
+
+  it('无任何来源 → 生成随机 token 并 0600 落盘，二次调用（bootstrap 后）稳定', () => {
+    const first = resolveAuthToken(DEFAULT_CONFIG, tmpDir)
+    expect(typeof first).toBe('string')
+    expect(first!.length).toBeGreaterThan(0)
+    const file = join(tmpDir, 'auth-token')
+    expect(readFileSync(file, 'utf-8')).toBe(first)
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+
+    // 重启（再次解析）后 token 稳定，浏览器保存的 token 不失效
+    expect(resolveAuthToken(DEFAULT_CONFIG, tmpDir)).toBe(first)
   })
 })

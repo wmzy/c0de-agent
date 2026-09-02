@@ -46,4 +46,23 @@ describe('runServeCommand', () => {
     })
     expect(opens).toHaveLength(0)
   })
+
+  it('appends ?token= to URL when server reports authToken', async () => {
+    const opens: string[] = []
+    await runServeCommand({
+      args: { options: {}, positionals: [] },
+      cwd: process.cwd(),
+      serverStarter: async (opts) => ({
+        port: opts.port ?? 3000,
+        authToken: 'tok-abc',
+        close: async () => {},
+      }),
+      banner: () => {},
+      opener: (url) => {
+        opens.push(url)
+      },
+      hold: false,
+    })
+    expect(opens[0]).toBe('http://localhost:3000?token=tok-abc')
+  })
 })

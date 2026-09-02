@@ -216,6 +216,65 @@ describe('useChat confirm', () => {
       }),
     )
   })
+
+  // 回归：confirmTool 返回 404（超时或已被其他标签页处理）时给出明确提示，
+  // 避免「以为已批准」。此前该分支零覆盖。
+  it('confirmTool 404 → 提示权限请求已过期或已处理', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tc404","tool":"bash","input":{}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      // 确认端点 404：pending 已被消费/过期
+      return {
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        json: async () => ({ error: { code: 'NOT_FOUND', message: 'No pending permission' } }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc404')
+
+    await act(async () => {
+      result.current.confirm('tc404', true)
+      // 等待 confirmTool promise rejection 的 catch 回调 setState
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    // 乐观关闭仍生效
+    expect(result.current.pendingPermission).toBeNull()
+    // 明确提示文案
+    expect(result.current.error).toBe('权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行')
+  })
 })
 
 describe('useChat segment break', () => {
@@ -392,5 +451,36 @@ describe('useChat abort', () => {
         body: JSON.stringify({ sessionId: 's1' }),
       }),
     )
+  })
+})
+
+// 回归（P0-4）：RUN_ACTIVE 并发守卫——该错误若落入「网络错误视为中断」分支，
+// 乐观追加的 user 消息不撤回、用户只见持续中断横幅。此前该分支零覆盖。
+describe('useChat 并发守卫（RUN_ACTIVE）', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('RUN_ACTIVE → 撤回乐观 user 消息并提示，不标记中断', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 'RUN_ACTIVE', message: '已有进行中的对话' } }),
+      })),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    // 乐观追加的 user 消息被撤回
+    expect(result.current.messages.some((m) => m.role === 'user')).toBe(false)
+    // 明确提示
+    expect(result.current.error).toBe('该会话已有进行中的对话')
+    // 不落入「网络错误视为中断」分支
+    expect(result.current.interrupted).toBe(false)
   })
 })

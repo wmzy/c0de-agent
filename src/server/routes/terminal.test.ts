@@ -138,4 +138,42 @@ describe('terminal route', () => {
     expect(body.projectId).toBeUndefined()
     ctx.ptyManager.kill(body.id as string)
   })
+
+  it('POST / rejects non-allowlisted shell (path or unknown binary)', async () => {
+    const { app } = setup()
+    for (const shell of ['/bin/custom', '../evil', 'cmd.exe', 'python3']) {
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shell }),
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error?: { code?: string } }
+      expect(body.error?.code).toBe('INVALID_SHELL')
+    }
+  })
+
+  it('POST / accepts allowlisted shell name', async () => {
+    const { app, ctx } = setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shell: 'zsh' }),
+    })
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { id: string }
+    ctx.ptyManager.kill(body.id)
+  })
+
+  it('POST / rejects relative cwd', async () => {
+    const { app } = setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd: 'relative/path' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_CWD')
+  })
 })

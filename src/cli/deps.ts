@@ -24,10 +24,24 @@ const fullyAutoApproveChecker: PermissionChecker = {
   confirm: (_toolCallId: string, _approved: boolean) => {},
 }
 
-/** 安全策略：只读工具（permission: 'auto'，如 read/grep/glob/websearch）自动放行；
- * 写/执行工具（permission: 'ask'，如 bash/write/edit）返回 ask 需确认；
- * permission: 'deny' 拒绝。复用 tools 层 autoAllowChecker（按工具自身声明的权限分级）。 */
-const readOnlySafeChecker: PermissionChecker = autoAllowChecker
+/**
+ * 非交互模式（print）安全策略（P1-6）：ask 工具**直接拒绝**并给出可操作提示
+ * （-y 或 serve），而非返回 permission_required 让 LLM 在无确认通道下无限重试。
+ * 拒绝原因作为 tool result 交给模型，模型会向用户转述。
+ */
+const nonInteractiveSafeChecker: PermissionChecker = {
+  check: async (tool: ToolDef, _input: unknown, _ctx: ToolContext): Promise<PermissionResult> => {
+    const result = await autoAllowChecker.check(tool, _input, _ctx)
+    if (result._tag === 'ask') {
+      return {
+        _tag: 'deny',
+        reason: `非交互模式：工具 "${tool.name}" 需要确认。请加 -y 放行写操作，或使用 c0de serve 交互确认`,
+      }
+    }
+    return result
+  },
+  confirm: autoAllowChecker.confirm,
+}
 
 /** 把 config.providers 注册到新建的 LLM registry。 */
 function buildLLMRegistry(config: Config): Registry {
@@ -71,8 +85,10 @@ function resolvePermissionChecker(
   strategy?: PermissionStrategy,
 ): PermissionChecker {
   if (strategy === 'full-auto') return fullyAutoApproveChecker
-  if (strategy === 'safe') return readOnlySafeChecker
-  return config.permission.defaultMode === 'auto' ? fullyAutoApproveChecker : readOnlySafeChecker
+  if (strategy === 'safe') return nonInteractiveSafeChecker
+  return config.permission.defaultMode === 'auto'
+    ? fullyAutoApproveChecker
+    : nonInteractiveSafeChecker
 }
 
 /** 组装完整 LoopDeps（默认 safe 放行 + 默认工具注册表）。 */
@@ -100,4 +116,4 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
 }
 
 export type { BuildDepsOptions, PermissionStrategy }
-export { buildAgentDeps, buildLLMRegistry, fullyAutoApproveChecker, readOnlySafeChecker }
+export { buildAgentDeps, buildLLMRegistry, fullyAutoApproveChecker, nonInteractiveSafeChecker }

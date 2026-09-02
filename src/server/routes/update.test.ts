@@ -16,6 +16,7 @@ vi.mock('../../update/index.js', () => ({
   performHotUpdate: performHotUpdateMock,
   serializeSessions: serializeSessionsMock,
   checkForUpdate: vi.fn(),
+  getCurrentVersion: () => '0.1.0',
 }))
 
 import type { ServerContext } from '../types.js'
@@ -80,14 +81,30 @@ describe('GET /api/update', () => {
 })
 
 describe('POST /api/update/apply', () => {
-  it('returns 409 NO_UPDATE when no update available', async () => {
+  it('returns 409 HOT_UPDATE_UNAVAILABLE when no handoff server (dev mode)', async () => {
     performHotUpdateMock.mockClear()
     const ctx = makeCtx({
-      checkNowResult: { hasUpdate: false, currentVersion: '0.1.0', latestVersion: '0.1.0' },
+      checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
     })
     const app = createUpdateRoute(ctx)
     const res = await app.request('/apply', { method: 'POST' })
     expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('HOT_UPDATE_UNAVAILABLE')
+    expect(performHotUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('returns 409 NO_UPDATE when no update available', async () => {
+    performHotUpdateMock.mockClear()
+    const ctx = makeCtx({
+      checkNowResult: { hasUpdate: false, currentVersion: '0.1.0', latestVersion: '0.1.0' },
+      handoffPort: 9999,
+    })
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/apply', { method: 'POST' })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('NO_UPDATE')
     expect(performHotUpdateMock).not.toHaveBeenCalled()
   })
 
@@ -119,6 +136,7 @@ describe('POST /api/update/apply', () => {
     })
     const ctx = makeCtx({
       checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+      handoffPort: 9999,
     })
     const app = createUpdateRoute(ctx)
     const res = await app.request('/apply', { method: 'POST' })

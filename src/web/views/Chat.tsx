@@ -410,9 +410,9 @@ export function Chat({
               className={modeWarn}
               data-testid="permission-mode-warning"
               role="status"
-              title="自动授权已开启：所有工具（含 bash）免确认执行"
+              title="自动授权已开启：所有工具（含 bash）免确认执行（重启后恢复默认模式）"
             >
-              ⚠ 自动授权已开启
+              ⚠ 自动授权已开启（重启后恢复默认）
             </span>
           ) : (
             <span className={modeHint} data-testid="permission-mode-hint">

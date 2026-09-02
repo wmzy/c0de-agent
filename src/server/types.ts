@@ -31,6 +31,14 @@ type ServerContext = {
   permissionStore: PermissionStore
   /** 全局授权模式（运行时可临时切换）：'default' 逐个确认；'auto' 自动放行 ask 工具（YOLO）。启动时取 config.permission.defaultMode，PUT /api/permissions 临时切换不回写 config。 */
   permissionMode: 'default' | 'auto'
+  /**
+   * API Bearer token（认证未显式关闭时必存在）。
+   * 用户配置 security.token 优先；否则自动生成并持久化到数据目录 auth-token 文件
+   * （跨重启/热更新稳定，浏览器首访经 ?token= URL 获取后本地保存）。
+   */
+  authToken?: string
+  /** 主 HTTP 服务实际绑定端口（startServer 绑定后回填；热更新 spawn 新实例复用）。 */
+  port?: number
   /** Agent 类型注册表（spec: multi-agent-design）。注入 agent loop 的 runSubAgent。 */
   agentRegistry: AgentRegistry
   /** 工作流注册表（spec: dynamic-workflow-design）。注入 /workflow slash 命令和 workflowz steering。 */
