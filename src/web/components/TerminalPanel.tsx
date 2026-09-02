@@ -1,10 +1,9 @@
 // src/web/components/TerminalPanel.tsx
 
 import { css } from '@linaria/core'
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { useFileReference } from '../contexts/ReferenceContext.js'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SplitDirection, UseTerminalReturn } from '../hooks/useTerminal.js'
-import { Terminal } from './Terminal.js'
+import { PaneSplitContainer } from './PaneSplitContainer.js'
 
 interface TerminalPanelProps {
   terminal: UseTerminalReturn
@@ -174,108 +173,15 @@ const termAreaStyle = css`
   display: flex;
 `
 
-const splitContainerHStyle = css`
-  display: flex;
-  flex-direction: row;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-`
-
-const splitContainerVStyle = css`
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-`
-
-const paneStyle = css`
-  position: relative;
-  overflow: hidden;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-`
-
-const paneActiveStyle = css`
-  // 用极细边框标识活动 pane
-  outline: 1px solid var(--primary);
-  outline-offset: -1px;
-`
-
-const paneHeaderStyle = css`
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 6px;
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  font-size: 11px;
-  color: var(--text-secondary);
-  user-select: none;
-  flex-shrink: 0;
-`
-
-const paneCloseStyle = css`
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 3px;
-  padding: 0;
-  line-height: 1;
-  /* 覆盖全局 button 的 44px 触控最小尺寸，否则 22px pane 头被撑到 44px 浪费终端纵向空间 */
-  min-height: auto;
-  min-width: auto;
-
-  &:hover {
-    background: var(--error);
-    color: #fff;
-  }
-`
-
-const dividerHStyle = css`
-  width: 4px;
-  cursor: col-resize;
-  background: var(--border);
-  flex-shrink: 0;
-  transition: background 0.12s;
-  z-index: 1;
-
-  &:hover {
-    background: var(--primary);
-  }
-`
-
-const dividerVStyle = css`
-  height: 4px;
-  cursor: row-resize;
-  background: var(--border);
-  flex-shrink: 0;
-  transition: background 0.12s;
-  z-index: 1;
-
-  &:hover {
-    background: var(--primary);
-  }
-`
-
 const resizeHandleStyle = css`
   height: 4px;
   cursor: row-resize;
   background: var(--border);
   flex-shrink: 0;
   transition: background 0.12s;
+  border: none;
+  padding: 0;
+  margin: 0;
 
   &:hover {
     background: var(--primary);
@@ -529,14 +435,49 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
     [tabs, setPaneSizes, minPaneFlex],
   )
 
+  // 分隔条键盘调整：ArrowLeft/Up 缩小左/上 pane，ArrowRight/Down 放大（±5% 总宽）
+  const onDividerKeyDown = useCallback(
+    (tabId: string, leftIdx: number, delta: number) => {
+      const tab = tabs.find((t) => t.id === tabId)
+      if (!tab) return
+      const sizes = [...tab.split.sizes]
+      const total = sizes.reduce((a, b) => a + b, 0) || 1
+      const left = sizes[leftIdx]
+      const right = sizes[leftIdx + 1]
+      if (left === undefined || right === undefined) return
+      const deltaFraction = delta * total
+      const newLeft = left + deltaFraction
+      const newRight = right - deltaFraction
+      const minFlex = minPaneFlex * total
+      if (newLeft < minFlex || newRight < minFlex) return
+      const newSizes = [...sizes]
+      newSizes[leftIdx] = newLeft
+      newSizes[leftIdx + 1] = newRight
+      setPaneSizes(tabId, newSizes)
+    },
+    [tabs, setPaneSizes, minPaneFlex],
+  )
+
   return (
     <>
-      <div
+      <hr
         className={resizeHandleStyle}
         onPointerDown={onPointerDown}
-        role="separator"
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            setHeight(height + 20)
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            setHeight(Math.max(40, height - 20))
+          }
+        }}
         aria-orientation="horizontal"
         aria-label="调整终端面板高度"
+        aria-valuemin={40}
+        aria-valuemax={800}
+        aria-valuenow={Math.round(height)}
+        tabIndex={0}
       />
       {/* 收起时整块 display:none：不再以 height:0 布局隐藏内容——那样工具栏仍会
           排布在视口之外（y900+）且可被 Tab 聚焦却不可达；none 同时移除几何与焦点。
@@ -544,14 +485,33 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
       <div className={panelStyle} style={open ? { height } : { display: 'none' }}>
         {/* 标签栏 */}
         <div className={headerStyle}>
-          <div className={tabsStyle}>
+          <div className={tabsStyle} role="tablist" aria-label="终端标签">
             {tabs.map((tab) => (
               <div
                 key={tab.id}
                 className={`${tabStyle} ${tab.id === activeTabId ? tabActiveStyle : ''}`}
                 onClick={() => setActiveTabId(tab.id)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key !== 'ArrowLeft' &&
+                    e.key !== 'ArrowRight' &&
+                    e.key !== 'Home' &&
+                    e.key !== 'End'
+                  )
+                    return
+                  e.preventDefault()
+                  const idx = tabs.findIndex((t) => t.id === tab.id)
+                  let nextIdx: number
+                  if (e.key === 'Home') nextIdx = 0
+                  else if (e.key === 'End') nextIdx = tabs.length - 1
+                  else
+                    nextIdx = (idx + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                  const next = tabs[nextIdx]
+                  if (next) setActiveTabId(next.id)
+                }}
                 role="tab"
                 aria-selected={tab.id === activeTabId}
+                tabIndex={tab.id === activeTabId ? 0 : -1}
               >
                 <span>{shellLabel(tab.panes[0]?.shell ?? 'terminal')}</span>
                 {tab.panes.length > 1 && <span className={tabBadgeStyle}>{tab.panes.length}</span>}
@@ -627,6 +587,8 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
                 onPaneClick={setActivePaneId}
                 onPaneClose={handleClosePane}
                 onDividerPointerDown={onDividerPointerDown}
+                onDividerKeyDown={onDividerKeyDown}
+                minPaneFlex={minPaneFlex}
               />
             </div>
           ))}
@@ -634,93 +596,5 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
         </div>
       </div>
     </>
-  )
-}
-
-/** 分屏容器：根据方向渲染 pane 列表 + 分隔条。 */
-function PaneSplitContainer({
-  tab,
-  activePaneId,
-  getWebSocket,
-  visible,
-  onPaneResize,
-  onPaneClick,
-  onPaneClose,
-  onDividerPointerDown,
-}: {
-  tab: NonNullable<UseTerminalReturn['tabs'][number]>
-  activePaneId: string | null
-  getWebSocket: (id: string) => WebSocket | null
-  visible: boolean
-  onPaneResize: (id: string, cols: number, rows: number) => void
-  onPaneClick: (id: string) => void
-  onPaneClose: (id: string) => void
-  onDividerPointerDown: (
-    e: React.PointerEvent<HTMLElement>,
-    tabId: string,
-    leftIdx: number,
-    direction: SplitDirection,
-  ) => void
-}) {
-  const { direction, sizes } = tab.split
-  const containerClass = direction === 'horizontal' ? splitContainerHStyle : splitContainerVStyle
-  const dividerClass = direction === 'horizontal' ? dividerHStyle : dividerVStyle
-
-  const fileRef = useFileReference()
-  const handleAddToChat = useCallback(
-    (label: string, content: string) => {
-      fileRef?.insertTerminalReference(label, content)
-    },
-    [fileRef],
-  )
-
-  return (
-    <div className={containerClass} style={{ flex: 1 }}>
-      {tab.panes.map((pane, i) => (
-        <Fragment key={pane.id}>
-          {/* pane */}
-          <div
-            className={`${paneStyle} ${pane.id === activePaneId ? paneActiveStyle : ''}`}
-            style={{
-              flexGrow: sizes[i] ?? 1,
-              flexBasis: 0,
-            }}
-            onMouseDown={() => onPaneClick(pane.id)}
-          >
-            <div className={paneHeaderStyle}>
-              <span>{shellLabel(pane.shell)}</span>
-              <button
-                className={paneCloseStyle}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onPaneClose(pane.id)
-                }}
-                aria-label="关闭分屏"
-                type="button"
-              >
-                ×
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <Terminal
-                ws={getWebSocket(pane.id)}
-                visible={visible}
-                onResize={(cols, rows) => onPaneResize(pane.id, cols, rows)}
-                onAddToChat={handleAddToChat}
-              />
-            </div>
-          </div>
-          {/* 分隔条（最后一个 pane 后不加） */}
-          {i < tab.panes.length - 1 && (
-            <div
-              className={dividerClass}
-              onPointerDown={(e) => onDividerPointerDown(e, tab.id, i, direction)}
-              role="separator"
-              aria-orientation={direction === 'horizontal' ? 'vertical' : 'horizontal'}
-            />
-          )}
-        </Fragment>
-      ))}
-    </div>
   )
 }

@@ -347,7 +347,7 @@ describe('files route', () => {
     expect(res.status).toBe(200)
     const entries = (await res.json()) as FileEntry[]
     const byName = Object.fromEntries(entries.map((e) => [e.name, e]))
-    expect(byName['node_modules']?.ignored).toBe(true)
+    expect(byName.node_modules?.ignored).toBe(true)
     expect(byName['error.log']?.ignored).toBe(true)
     expect(byName['app.ts']?.ignored).toBeUndefined()
   })

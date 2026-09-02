@@ -3,9 +3,10 @@
 // src/cli/index.ts — c0de CLI bin entry.
 
 import { fileURLToPath } from 'node:url'
-import { parseArgs } from 'node:util'
 import { loadConfig } from '../core/config.js'
+import type { LoopDeps } from '../core/loop.js'
 import { createDB, migrateDB } from '../db/index.js'
+import type { Config } from '../shared/types/config.js'
 import { runAcpCommand } from './commands/acp.js'
 import { runChatCommand } from './commands/chat.js'
 import { runConfigCommand } from './commands/config.js'
@@ -13,8 +14,8 @@ import { runInitCommand } from './commands/init.js'
 import { runPluginCommand } from './commands/plugin.js'
 import { runServeCommand } from './commands/serve.js'
 import { runUpdateCommand } from './commands/update.js'
-import { buildAgentDeps } from './deps.js'
-import type { CommandSpec } from './parser.js'
+import { buildAgentDeps, type PermissionStrategy } from './deps.js'
+import { type CommandSpec, parseCommand } from './parser.js'
 
 const COMMANDS: CommandSpec[] = [
   {
@@ -67,6 +68,28 @@ type DispatchOverrides = {
   runServe?: () => Promise<void>
 }
 
+/** 封装 agent 依赖生命周期：加载配置 → 建库迁移 → 组装 deps → 使用后关库。
+ *  chat / acp 两个命令复用同一套逻辑（此前在 dispatch 中各写一份）。 */
+async function withAgentDeps(
+  cwd: string,
+  strategy: PermissionStrategy | undefined,
+  fn: (config: Config, deps: LoopDeps) => Promise<void>,
+): Promise<void> {
+  const config = await loadConfig(cwd)
+  const db = await createDB({ driver: 'pglite' })
+  await migrateDB(db)
+  try {
+    const deps = await buildAgentDeps(config, {
+      db,
+      cwd,
+      ...(strategy ? { permissionStrategy: strategy } : {}),
+    })
+    await fn(config, deps)
+  } finally {
+    await db.close()
+  }
+}
+
 async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Promise<void> {
   const [command, ...rest] = argv
   const name = command ?? 'serve'
@@ -79,19 +102,7 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
   const spec = COMMANDS.find((c) => c.name === name)
   if (!spec) throw new Error(`cli: unknown command "${name}"`)
 
-  const { values, positionals } = parseArgs({
-    options: Object.fromEntries(
-      (spec.options ?? []).map((o) => [
-        o.name,
-        { type: o.type, ...(o.short ? { short: o.short } : {}) },
-      ]),
-    ),
-    args: rest,
-    allowPositionals: true,
-    strict: true,
-  })
-  const args = { options: values as Record<string, unknown>, positionals }
-
+  const args = parseCommand(spec, rest)
   const cwd = process.cwd()
 
   switch (name) {
@@ -100,20 +111,9 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       return
     }
     case 'chat': {
-      const config = await loadConfig(cwd)
-      const db = await createDB({ driver: 'pglite' })
-      await migrateDB(db)
-      try {
-        // --yes / -y 显式放行写操作；否则按 config.permission.defaultMode 决定（默认 safe）。
-        const deps = await buildAgentDeps(config, {
-          db,
-          cwd,
-          ...(args.options.yes ? { permissionStrategy: 'full-auto' as const } : {}),
-        })
-        await runChatCommand({ args, config, deps })
-      } finally {
-        await db.close()
-      }
+      // --yes / -y 显式放行写操作；否则按 config.permission.defaultMode 决定（默认 safe）。
+      const strategy = args.options.yes ? ('full-auto' as const) : undefined
+      await withAgentDeps(cwd, strategy, (config, deps) => runChatCommand({ args, config, deps }))
       return
     }
     case 'init': {
@@ -129,16 +129,8 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       return
     }
     case 'acp': {
-      const config = await loadConfig(cwd)
-      const db = await createDB({ driver: 'pglite' })
-      await migrateDB(db)
-      try {
-        // ACP 非交互：所有工具放行（编辑器侧自行控制执行授权）。
-        const deps = await buildAgentDeps(config, { db, cwd, permissionStrategy: 'full-auto' })
-        await runAcpCommand({ config, deps })
-      } finally {
-        await db.close()
-      }
+      // ACP 非交互：所有工具放行（编辑器侧自行控制执行授权）。
+      await withAgentDeps(cwd, 'full-auto', (config, deps) => runAcpCommand({ config, deps }))
       return
     }
     case 'update': {

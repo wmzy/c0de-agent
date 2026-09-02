@@ -77,14 +77,19 @@ pnpm format
 
 ```
 src/
-├── cli/           # CLI 入口与命令（serve / chat / update）
-├── core/          # 配置、agent 注册、权限、工具注册
-├── llm/           # LLM provider 抽象与调用
-├── server/        # Hono HTTP 服务、SSE 流、路由、handoff
-├── session/       # 会话上下文与消息转换
+├── cli/           # CLI 入口与命令（serve / chat / acp / update / config / init / plugin）
+├── core/          # 配置、agent 注册与主循环（loop/ 子模块）、权限、prompt、工作流、斜杠命令
+├── llm/           # LLM provider 抽象、registry 与重试策略
+├── server/        # Hono HTTP 服务、SSE 流、路由、鉴权/CORS、交互式权限、终端（node-pty）
+├── session/       # 会话上下文、消息、compaction、branch/squash、快照
+├── project/       # 多项目解析与检测（.git、package.json 等）
+├── db/            # Drizzle schema 与迁移（PGLite）
+├── tools/         # 内置工具实现（read/write/edit/bash/grep/glob/todo/kanban/dap/websearch…）
+├── plugins/       # 插件系统（12 个生命周期钩子）
+├── dap/           # Debug Adapter Protocol 会话与协议编解码
 ├── shared/        # 前后端共享类型
-├── tools/         # 内置工具实现
 ├── update/        # 版本检查、热更新调度器、会话快照
+├── kanban/        # 看板状态存储
 └── web/           # React 前端（组件、视图、服务、hooks）
 ```
 

@@ -8,8 +8,8 @@
 import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { providerAPI } from '../services/provider.js'
 import { type ModelSelection, ModelSelector } from './ModelSelector.js'
@@ -171,9 +171,9 @@ describe('ModelSelector — 可搜索下拉', () => {
     fireEvent.change(input, { target: { value: 'nope-model' } })
     const list = document.querySelector('[data-testid="model-hints"]')
     expect(list?.querySelectorAll('button').length).toBe(0)
-    expect(
-      list?.querySelector('[data-testid="model-hints-empty"]')?.textContent,
-    ).toContain('无匹配模型')
+    expect(list?.querySelector('[data-testid="model-hints-empty"]')?.textContent).toContain(
+      '无匹配模型',
+    )
     expect(input.value).toBe('nope-model')
     expect(onChange).toHaveBeenLastCalledWith({ provider: 'sensenova', model: 'nope-model' })
   })
@@ -187,9 +187,13 @@ describe('ModelSelector — 可搜索下拉', () => {
 
   it('点击列表项选中并回填输入框，列表收起', () => {
     const { onChange } = renderSelector({ provider: 'sensenova', model: '' })
-    fireEvent.click(document.querySelector('[data-testid="model-dropdown"]')!)
+    const dropdown = document.querySelector('[data-testid="model-dropdown"]')
+    expect(dropdown).not.toBeNull()
+    fireEvent.click(dropdown as HTMLElement)
     const items = document.querySelectorAll('[data-testid="model-hints"] button')
-    fireEvent.click(items[1]!)
+    const secondItem = items[1]
+    expect(secondItem).toBeDefined()
+    fireEvent.click(secondItem as HTMLElement)
     expect(onChange).toHaveBeenLastCalledWith({ provider: 'sensenova', model: 'SenseChat-Vision' })
     expect(modelInput().value).toBe('SenseChat-Vision')
     expect(document.querySelector('[data-testid="model-hints"]')).toBeNull()
@@ -207,7 +211,9 @@ describe('ModelSelector — 可搜索下拉', () => {
 
     // 重新打开后 Escape 收起，且不触发选择
     onChange.mockClear()
-    fireEvent.click(document.querySelector('[data-testid="model-dropdown"]')!)
+    const dropdown = document.querySelector('[data-testid="model-dropdown"]')
+    expect(dropdown).not.toBeNull()
+    fireEvent.click(dropdown as HTMLElement)
     expect(document.querySelector('[data-testid="model-hints"]')).not.toBeNull()
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(document.querySelector('[data-testid="model-hints"]')).toBeNull()

@@ -263,9 +263,7 @@ function ChatPage() {
           }
           main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
-          terminal={
-            <TerminalPanel terminal={terminal} cwd={project?.worktree} />
-          }
+          terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} />}
         />
       </FileSelectionContext.Provider>
     </FileReferenceProvider>

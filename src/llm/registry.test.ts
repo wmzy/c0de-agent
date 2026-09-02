@@ -65,15 +65,15 @@ describe('registry register + resolveRoute', () => {
 describe('overrideToCapabilities', () => {
   it('fills missing fields with DEFAULT_MODEL_CAPABILITIES', () => {
     const caps = overrideToCapabilities({ m1: { contextWindow: 200_000 } })
-    expect(caps['m1']?.contextWindow).toBe(200_000)
-    expect(caps['m1']?.maxOutput).toBe(DEFAULT_MODEL_CAPABILITIES.maxOutput)
-    expect(caps['m1']?.supportsTools).toBe(true)
+    expect(caps.m1?.contextWindow).toBe(200_000)
+    expect(caps.m1?.maxOutput).toBe(DEFAULT_MODEL_CAPABILITIES.maxOutput)
+    expect(caps.m1?.supportsTools).toBe(true)
   })
 
   it('strips enabled flag (UI-only concern)', () => {
     const caps = overrideToCapabilities({ m1: { enabled: false, contextWindow: 100_000 } })
-    expect(caps['m1']).toBeDefined()
-    expect('enabled' in (caps['m1'] as Record<string, unknown>)).toBe(false)
+    expect(caps.m1).toBeDefined()
+    expect('enabled' in (caps.m1 as Record<string, unknown>)).toBe(false)
   })
 
   it('returns empty object for empty input', () => {

@@ -128,9 +128,7 @@ describe('Chat permission mode toggle', () => {
     renderChat()
     const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
     await waitFor(() => expect(toggle.checked).toBe(true))
-    expect(screen.getByTestId('permission-mode-warning').textContent).toContain(
-      '自动授权已开启',
-    )
+    expect(screen.getByTestId('permission-mode-warning').textContent).toContain('自动授权已开启')
   })
 })
 

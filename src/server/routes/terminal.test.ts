@@ -17,7 +17,7 @@ function setup() {
 }
 
 describe('terminal route', () => {
-  let createdIds: string[] = []
+  const createdIds: string[] = []
 
   afterEach(() => {
     // 清理在测试中创建的 PTY

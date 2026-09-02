@@ -131,5 +131,5 @@ async function saveWorkflow(
   }
 }
 
-export { discoverGlobalWorkflows, discoverWorkflows, saveWorkflow }
 export type { SaveResult, SaveTarget }
+export { discoverGlobalWorkflows, discoverWorkflows, saveWorkflow }

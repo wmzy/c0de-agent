@@ -311,7 +311,7 @@ export function Chat({
   return (
     <>
       <div className={topBar} data-testid="view-bar">
-        <div className={viewSwitch} role="group" aria-label="视图模式">
+        <section className={viewSwitch} aria-label="视图模式">
           <button
             type="button"
             aria-pressed={viewMode === 'chat'}
@@ -328,7 +328,7 @@ export function Chat({
           >
             表格
           </button>
-        </div>
+        </section>
         <div className={topSpacer} />
         {/* topStatus 单行截断仅是排布：错误全文经 title 悬停可达（usage 态无需） */}
         {error || usage ? (

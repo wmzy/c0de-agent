@@ -14,81 +14,21 @@ import { ModelPanel } from '../components/settings/ModelPanel.js'
 import { ProviderPanel } from '../components/settings/ProviderPanel.js'
 import { SecurityPanel } from '../components/settings/SecurityPanel.js'
 import {
+  RoleRoutingSection,
+  SettingsSaveBar,
+  SettingsToolbar,
+} from '../components/settings/SettingsChrome.js'
+import {
   checkRow,
   field,
   fieldInput,
   hint,
-  hintMb,
-  kvRow,
   section,
   sectionTitle,
 } from '../components/settings/styles.js'
 import { ToolsPanel } from '../components/settings/ToolsPanel.js'
 import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
 import { configAPI } from '../services/config.js'
-
-const toolbar = css`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  flex-wrap: wrap;
-`
-
-const toolbarTitle = css`
-  font-size: 15px;
-  font-weight: 600;
-  margin-right: auto;
-`
-
-const segGroup = css`
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-`
-
-const segBtn = css`
-  padding: 4px 12px;
-  border: none;
-  border-right: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 13px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  &:last-child {
-    border-right: none;
-  }
-`
-
-const segBtnActive = css`
-  background: var(--primary);
-  color: #fff;
-`
-
-const toolBtn = css`
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 13px;
-  &:hover {
-    background: var(--bg-secondary);
-  }
-`
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -100,57 +40,6 @@ const settingsScroll = css`
   overflow: auto;
   display: flex;
   flex-direction: column;
-`
-
-/** 隐藏的 file input。 */
-const hiddenInput = css`
-  display: none;
-`
-
-/** 保存反馈 — 成功色。 */
-const saveOk = css`
-  color: var(--success, #2a9d8f);
-`
-
-/** 保存反馈 — 错误色。 */
-const saveErr = css`
-  color: var(--error, #e63946);
-`
-
-/** 保存状态提示文本。 */
-const saveStatus = css`
-  font-size: 0.9em;
-`
-
-/** 吸底保存条：sticky 于设置滚动容器底部；有未保存更改时强调，无更改时弱化。 */
-const saveBar = css`
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  z-index: 10;
-`
-
-/** 有未保存更改时的强调：上浮阴影 + 主色分隔线。 */
-const saveBarDirty = css`
-  border-top-color: color-mix(in srgb, var(--primary) 40%, var(--border));
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
-`
-
-/** 保存条中间弹性占位：提示靠左、按钮靠右。 */
-const saveBarSpacer = css`
-  flex: 1;
-`
-
-/** 「未保存更改」提示：警示色。 */
-const dirtyHint = css`
-  color: var(--warning);
-  font-size: 13px;
 `
 
 /** 离开确认弹窗正文。 */
@@ -433,53 +322,14 @@ export function Settings() {
 
   return (
     <div className={settingsScroll} data-testid="settings">
-      <div className={toolbar}>
-        <h1 className={toolbarTitle}>⚙ 设置</h1>
-        <div className={segGroup}>
-          <button
-            type="button"
-            className={`${segBtn} ${viewMode === 'gui' ? segBtnActive : ''}`}
-            onClick={enterGuiMode}
-            data-testid="settings-mode-gui"
-          >
-            表单
-          </button>
-          <button
-            type="button"
-            className={`${segBtn} ${viewMode === 'json' ? segBtnActive : ''}`}
-            onClick={enterJsonMode}
-            data-testid="settings-mode-json"
-          >
-            {'{ } JSON'}
-          </button>
-        </div>
-        <button
-          type="button"
-          className={toolBtn}
-          onClick={() => fileInputRef.current?.click()}
-          data-testid="settings-import"
-          title="从 JSON 文件导入配置"
-        >
-          ⬆ 导入
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json,application/json"
-          className={hiddenInput}
-          onChange={(e) => void onImportFile(e)}
-          data-testid="settings-import-input"
-        />
-        <button
-          type="button"
-          className={toolBtn}
-          onClick={exportConfig}
-          data-testid="settings-export"
-          title="导出当前配置为 JSON 文件"
-        >
-          ⬇ 导出
-        </button>
-      </div>
+      <SettingsToolbar
+        viewMode={viewMode}
+        onSwitchGui={enterGuiMode}
+        onSwitchJson={enterJsonMode}
+        fileInputRef={fileInputRef}
+        onImport={(e) => void onImportFile(e)}
+        onExport={exportConfig}
+      />
 
       {viewMode === 'json' ? (
         <JsonConfigEditor jsonText={jsonText} jsonError={jsonError} onChange={onJsonChange} />
@@ -496,37 +346,13 @@ export function Settings() {
             defaultModel={merged.defaultModel}
             onChange={patchDraft}
           />
-          <div className={section}>
-            <h2 className={sectionTitle}>角色路由</h2>
-            <div className={`${hint} ${hintMb}`}>
-              为特定角色指定独立的 provider 和 model（覆盖默认）。
-            </div>
-            {Object.entries(merged.roleRouting ?? {}).map(([role, cfg]) => (
-              <div key={role} className={kvRow}>
-                <input
-                  value={role}
-                  placeholder="角色名"
-                  onChange={(e) => renameRoleRouting(role, e.target.value)}
-                />
-                <input
-                  value={cfg.provider}
-                  placeholder="provider"
-                  onChange={(e) => updateRoleRouting(role, 'provider', e.target.value)}
-                />
-                <input
-                  value={cfg.model}
-                  placeholder="model"
-                  onChange={(e) => updateRoleRouting(role, 'model', e.target.value)}
-                />
-                <button type="button" data-variant="danger" onClick={() => removeRoleRouting(role)}>
-                  删除
-                </button>
-              </div>
-            ))}
-            <button type="button" onClick={addRoleRouting} data-testid="role-add">
-              + 添加角色
-            </button>
-          </div>
+          <RoleRoutingSection
+            routing={merged.roleRouting}
+            onRename={renameRoleRouting}
+            onUpdate={updateRoleRouting}
+            onRemove={removeRoleRouting}
+            onAdd={addRoleRouting}
+          />
           <FallbackPanel
             fallback={merged.fallback}
             onFallbackChange={(patch) => updateSection('fallback', patch)}
@@ -642,50 +468,12 @@ export function Settings() {
         </>
       )}
 
-      {/* 吸底保存条：有未保存更改时强调并给出「放弃更改」，无更改时弱化为禁用保存 */}
-      <div
-        className={`${saveBar} ${isDirty ? saveBarDirty : ''}`}
-        data-testid="settings-save-bar"
-      >
-        {isDirty && (
-          <span className={dirtyHint} data-testid="settings-dirty-hint">
-            ● 未保存更改
-          </span>
-        )}
-        {saveFeedback.kind !== 'idle' && (
-          <span
-            className={`${saveStatus} ${
-              saveFeedback.kind === 'ok' ? saveOk : saveFeedback.kind === 'err' ? saveErr : ''
-            }`}
-            data-testid="settings-save-status"
-          >
-            {saveFeedback.kind === 'saving' && '保存中…'}
-            {saveFeedback.kind === 'ok' && '✓ 已保存'}
-            {saveFeedback.kind === 'err' && `✗ 保存失败：${saveFeedback.msg}`}
-          </span>
-        )}
-        <span className={saveBarSpacer} />
-        {isDirty && (
-          <button
-            type="button"
-            onClick={discardChanges}
-            data-testid="settings-discard"
-            title="放弃当前未保存的修改，恢复到已保存配置"
-          >
-            放弃更改
-          </button>
-        )}
-        <button
-          type="button"
-          data-variant="primary"
-          onClick={() => draft && save.mutate(draft)}
-          disabled={!isDirty || saveFeedback.kind === 'saving'}
-          title={isDirty ? '保存配置' : '配置未变更或正在加载'}
-          data-testid="settings-save"
-        >
-          {saveFeedback.kind === 'saving' ? '保存中…' : '保存'}
-        </button>
-      </div>
+      <SettingsSaveBar
+        isDirty={isDirty}
+        feedback={saveFeedback}
+        onDiscard={discardChanges}
+        onSave={() => draft && save.mutate(draft)}
+      />
 
       {/* 未保存更改离开确认：弹窗遮罩阻断交互，「留下」恢复编辑，「离开」放行导航 */}
       <Dialog

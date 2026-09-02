@@ -159,12 +159,7 @@ export function UpdateBanner() {
             {applying ? '应用中…' : '立即应用'}
           </button>
         )}
-        <button
-          type="button"
-          className={linkBtn}
-          onClick={dismiss}
-          data-testid="update-dismiss"
-        >
+        <button type="button" className={linkBtn} onClick={dismiss} data-testid="update-dismiss">
           稍后
         </button>
       </span>

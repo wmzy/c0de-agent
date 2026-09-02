@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { providerAPI } from '../services/provider.js'
 import { inputStyle } from '../styles/tokens.js'
@@ -173,11 +173,11 @@ export function ModelSelector({
     [modelHints, query],
   )
 
-  const closeHints = () => {
+  const closeHints = useCallback(() => {
     setHintsOpen(false)
     setQuery(null)
     setHighlight(-1)
-  }
+  }, [])
 
   const openHints = () => {
     setHintsOpen(true)
@@ -214,7 +214,7 @@ export function ModelSelector({
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [hintsOpen])
+  }, [hintsOpen, closeHints])
 
   // 高亮项滚入可视区（jsdom 无 scrollIntoView，用可选调用兜底）
   useEffect(() => {

@@ -162,7 +162,7 @@ export const MessageItem = memo(function MessageItem({
 
   return (
     <div className={wrap} data-testid="message" data-role={message.role} data-msg-id={message.id}>
-      {groups.map((group, gi) => {
+      {groups.map((group) => {
         // 连续 tool 组：共享装饰列 + 紧凑堆叠
         if (group.length > 1 && group.every((b) => b.type === 'tool')) {
           // 上方 every 已保证全为 tool 块，filter 仅用于把联合类型收窄为 ToolRenderBlock
@@ -170,7 +170,7 @@ export const MessageItem = memo(function MessageItem({
           const [head] = toolGroup
           if (!head) return null
           return (
-            <div className={`${row} ${toolGroupRow}`} key={`tg-${gi}`}>
+            <div className={`${row} ${toolGroupRow}`} key={`tg-${head.id}`}>
               <PartDecoration block={head} />
               <div className={`${content} ${groupContent}`}>
                 {toolGroup.map((b) => (

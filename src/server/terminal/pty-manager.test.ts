@@ -1,8 +1,8 @@
 // src/server/terminal/pty-manager.test.ts
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { userInfo } from 'node:os'
-import { PTYManager, detectShell } from './pty-manager.js'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { detectShell, PTYManager } from './pty-manager.js'
 
 describe('PTYManager', () => {
   let mgr: PTYManager

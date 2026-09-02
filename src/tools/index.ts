@@ -16,6 +16,7 @@ export { dapTools } from './builtin/dap.js'
 export { editTool } from './builtin/edit.js'
 export { globTool, globToRegex } from './builtin/glob.js'
 export { grepTool } from './builtin/grep.js'
+export { kanbanTool } from './builtin/kanban.js'
 export { readTool } from './builtin/read.js'
 // ── Builtin tools ───────────────────────────────────────────
 export {
@@ -23,9 +24,8 @@ export {
   createFileResolver,
   createSkillResolver,
 } from './builtin/resolvers.js'
-export { kanbanTool } from './builtin/kanban.js'
-export { todoTool } from './builtin/todo.js'
 export type { TodoInput, TodoItem, TodoPhase, TodoStatus } from './builtin/todo.js'
+export { todoTool } from './builtin/todo.js'
 export { writeTool } from './builtin/write.js'
 export { yieldTool } from './builtin/yield.js'
 export { executeTool } from './executor.js'

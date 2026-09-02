@@ -34,9 +34,14 @@ const summaryBar = css`
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 4px 12px;
+  font: inherit;
   font-size: 12px;
+  text-align: left;
   color: var(--text-secondary);
+  background: none;
+  border: none;
   cursor: pointer;
   user-select: none;
 
@@ -114,11 +119,25 @@ const taskItem = css`
   padding: 2px 12px;
   font-size: 13px;
   line-height: 1.4;
-  cursor: pointer;
 
   &:hover {
     background: var(--bg-hover, color-mix(in srgb, var(--bg) 95%, var(--text) 5%));
   }
+`
+
+const taskToggle = css`
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
 `
 
 const taskIcon = css`
@@ -310,17 +329,10 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
 
   return (
     <div className={wrapper} data-testid="todo-panel">
-      <div
+      <button
+        type="button"
         className={summaryBar}
         onClick={totalTasks > 0 ? toggleCollapse : () => setShowAdd((v) => !v)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            totalTasks > 0 ? toggleCollapse() : setShowAdd((v) => !v)
-          }
-        }}
       >
         <span className={summaryIcon}>📋</span>
         <span className={summaryProgress}>任务</span>
@@ -339,49 +351,51 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
         )}
         {totalTasks === 0 && !showAdd && <span className={summaryCurrent}>暂无任务，点击添加</span>}
         <span className={expandIcon}>{collapsed ? '▾' : '▴'}</span>
-      </div>
+      </button>
 
       {!collapsed && totalTasks > 0 && (
         <div className={body}>
-          {phases.map((phase, pi) => {
+          {phases.map((phase) => {
             const done = phase.tasks.filter(
               (t) => t.status === 'completed' || t.status === 'abandoned',
             ).length
             return (
-              <div key={`phase-${pi}`} className={phaseGroup}>
+              <div key={phase.name} className={phaseGroup}>
                 <div className={phaseHeader}>
                   <span>{phase.name}</span>
                   <span className={phaseProgress}>
                     {done}/{phase.tasks.length}
                   </span>
                 </div>
-                {phase.tasks.map((task, ti) => {
+                {phase.tasks.map((task) => {
                   const status = (
                     ['pending', 'in_progress', 'completed', 'abandoned'].includes(task.status)
                       ? task.status
                       : 'pending'
                   ) as TaskStatus
                   return (
-                    <div
-                      key={`task-${pi}-${ti}`}
-                      className={`${taskItem} ${taskItemHover}`}
-                      onClick={() => toggleTask(task.content, task.status)}
-                    >
-                      <span className={taskIcon} style={{ color: STATUS_COLORS[status] }}>
-                        {TASK_ICONS[status]}
-                      </span>
-                      <span
-                        className={`${taskText} ${
-                          status === 'completed'
-                            ? taskDone
-                            : status === 'abandoned'
-                              ? taskAbandoned
-                              : ''
-                        }`}
+                    <div key={task.content} className={`${taskItem} ${taskItemHover}`}>
+                      <button
+                        type="button"
+                        className={taskToggle}
+                        onClick={() => toggleTask(task.content, task.status)}
                       >
-                        {task.content}
-                      </span>
-                      <div className={taskActions} onClick={(e) => e.stopPropagation()}>
+                        <span className={taskIcon} style={{ color: STATUS_COLORS[status] }}>
+                          {TASK_ICONS[status]}
+                        </span>
+                        <span
+                          className={`${taskText} ${
+                            status === 'completed'
+                              ? taskDone
+                              : status === 'abandoned'
+                                ? taskAbandoned
+                                : ''
+                          }`}
+                        >
+                          {task.content}
+                        </span>
+                      </button>
+                      <div className={taskActions}>
                         {status !== 'abandoned' && (
                           <button type="button" title="放弃" onClick={() => dropTask(task.content)}>
                             ✕

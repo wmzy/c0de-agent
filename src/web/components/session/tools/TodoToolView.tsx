@@ -134,27 +134,27 @@ function Board({ phases }: { phases: TodoPhase[] }) {
   }
   return (
     <div className={board}>
-      {phases.map((phase, pi) => {
+      {phases.map((phase) => {
         const doneCount = phase.tasks.filter(
           (t) => t.status === 'completed' || t.status === 'abandoned',
         ).length
         return (
-          <div key={`phase-${pi}`}>
+          <div key={phase.name}>
             <div className={phaseHeader}>
-              <span className={romanNum}>{roman(pi + 1)}.</span>
+              <span className={romanNum}>{roman(phases.indexOf(phase) + 1)}.</span>
               <span>{phase.name}</span>
               <span style={{ fontWeight: 400, opacity: 0.6 }}>
                 ({doneCount}/{phase.tasks.length})
               </span>
             </div>
-            {phase.tasks.map((task, ti) => {
+            {phase.tasks.map((task) => {
               const status = (
                 ['pending', 'in_progress', 'completed', 'abandoned'].includes(task.status)
                   ? task.status
                   : 'pending'
               ) as TaskStatus
               return (
-                <div key={`task-${pi}-${ti}`} className={taskRow}>
+                <div key={task.content} className={taskRow}>
                   <span className={taskIcon} style={{ color: STATUS_COLORS[status] }}>
                     {TASK_ICONS[status]}
                   </span>

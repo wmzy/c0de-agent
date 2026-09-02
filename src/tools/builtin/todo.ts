@@ -534,13 +534,14 @@ export function getLatestTodoPhasesFromMessages(
     if (msg?.role !== 'tool') continue
     for (let j = msg.content.length - 1; j >= 0; j--) {
       const part = msg.content[j] as Record<string, unknown> | undefined
-      if (!part || part._tag !== 'tool_result') continue
+      if (part?._tag !== 'tool_result') continue
       if (part.tool !== 'todo') continue
       const output = part.output as Record<string, unknown> | undefined
-      if (!output || output._tag !== 'success') continue
+      if (output?._tag !== 'success') continue
       const metadata = output.metadata as { phases?: unknown } | undefined
-      if (metadata && Array.isArray(metadata.phases)) {
-        return clonePhases(metadata.phases as TodoPhase[])
+      const phases = metadata?.phases
+      if (Array.isArray(phases)) {
+        return clonePhases(phases as TodoPhase[])
       }
     }
   }

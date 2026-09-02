@@ -10,9 +10,9 @@ import type { Config as SharedConfig } from '../shared/types/config.js'
 import type { URLRegistry } from '../shared/types/tool.js'
 import type { ToolRegistry } from '../tools/types.js'
 import type { HandoffServer, UpdateScheduler } from '../update/index.js'
-import type { PTYManager } from './terminal/pty-manager.js'
 import type { AgentManager } from './agent-manager.js'
 import type { PermissionStore } from './permission/store.js'
+import type { PTYManager } from './terminal/pty-manager.js'
 
 /** 持有所有服务依赖的不可变上下文（config 字段可变用于 PATCH 更新）。 */
 type ServerContext = {
