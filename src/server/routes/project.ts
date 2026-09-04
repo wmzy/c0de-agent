@@ -1,6 +1,6 @@
 // src/server/routes/project.ts
 import { existsSync } from 'node:fs'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { kanbanBoards, projects, sessions } from '../../db/schema.js'
 import {
@@ -65,7 +65,10 @@ function createProjectRoute(ctx: ServerContext): Hono {
     return c.json(withBranch(project))
   })
 
-  // P1-9：删除项目记录（看板级联删除；会话经 FK set null 解除绑定保留）。
+  // P1-9 + P2-2：删除项目记录（看板级联删除）。
+  // 会话不再留孤儿（FK set null 后在任何项目视图都不可见且 cwd 回退 serve 目录）：
+  // 删除前把该项目全部未删除会话软删除进回收站（30 天内可恢复），
+  // 并把 worktreePath 落盘——恢复后 resolveAgentCwd 仍能解析原工作目录。
   // 有活跃 run 绑定该项目时拒绝删除，避免 agent 工作目录悬空。
   app.delete('/:id', async (c) => {
     const id = c.req.param('id')
@@ -94,11 +97,28 @@ function createProjectRoute(ctx: ServerContext): Hono {
       }
     }
 
+    let deletedSessions = 0
     await ctx.db.db.transaction(async (tx) => {
+      // 该项目下所有未删除会话：记录 worktreePath（若尚无）并软删除进回收站
+      const now = new Date()
+      const bound = await tx
+        .select({ id: sessions.id, worktreePath: sessions.worktreePath })
+        .from(sessions)
+        .where(and(eq(sessions.projectId, id), isNull(sessions.deletedAt)))
+      for (const s of bound) {
+        if (!s.worktreePath) {
+          await tx
+            .update(sessions)
+            .set({ worktreePath: project.worktree })
+            .where(eq(sessions.id, s.id))
+        }
+        await tx.update(sessions).set({ deletedAt: now }).where(eq(sessions.id, s.id))
+        deletedSessions += 1
+      }
       await tx.delete(kanbanBoards).where(eq(kanbanBoards.projectId, id))
       await tx.delete(projects).where(eq(projects.id, id))
     })
-    return c.json({ ok: true })
+    return c.json({ ok: true, deletedSessions })
   })
 
   return app

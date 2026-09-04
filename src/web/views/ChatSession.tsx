@@ -401,11 +401,13 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             )}
             {coldStartPaused && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="paused-banner">
-                <span>对话处于暂停状态（热更新前已安全挂起），可继续执行</span>
+                <span>对话处于暂停状态，可继续执行</span>
                 <button
                   onClick={() => {
+                    // 活跃 run 仍注册在服务端（页面刷新场景），resume 端点可真正恢复；
+                    // 服务重启导致的 paused 已由 status 端点转为 interrupted（走重发路径）。
                     setColdStartPaused(false)
-                    void handleResume()
+                    agent.resume()
                   }}
                   type="button"
                 >

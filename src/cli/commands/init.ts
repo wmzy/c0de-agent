@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { DEFAULT_CONFIG, saveConfig } from '../../core/config.js'
+import { saveConfigScoped } from '../../core/config.js'
 import type { CommandArgs } from '../parser.js'
 
 type InitCommandContext = {
@@ -18,7 +18,9 @@ async function runInitCommand(ctx: InitCommandContext): Promise<void> {
     throw new Error(`init: config already exists at ${path} (use --force to overwrite)`)
   }
 
-  await saveConfig(DEFAULT_CONFIG, 'project', ctx.cwd)
+  // P1-3：只写空配置——写入 DEFAULT_CONFIG 会把 providers: [] 等默认值固化进项目文件，
+  // 数组整体替换语义会覆盖全局 providers，使项目内 AI 服务失效。
+  await saveConfigScoped('project', ctx.cwd, {})
   log(`Created ${path}\n`)
 }
 

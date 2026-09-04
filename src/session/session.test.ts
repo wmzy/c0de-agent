@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { sessions } from '../db/schema.js'
 import { fromDirectory } from '../project/project.js'
 import {
   createSession,
@@ -84,6 +86,22 @@ describe('session CRUD', () => {
     expect(ok).toBe(true)
     expect(await listSessions(handle)).toHaveLength(1)
     expect(await listDeletedSessions(handle)).toHaveLength(0)
+  })
+
+  it('restore 连带恢复已删除祖先（P2-1：恢复的子会话不再游离于树外）', async () => {
+    const parent = await createSession(handle, 'Parent')
+    const child = await createSession(handle, 'Child')
+    await handle.db.update(sessions).set({ parentId: parent.id }).where(eq(sessions.id, child.id))
+    // 删除父会话 → 级联删除子会话
+    await softDeleteSession(handle, parent.id)
+    expect(await listDeletedSessions(handle)).toHaveLength(2)
+
+    // 恢复子会话 → 祖先链一并还原
+    const ok = await restoreSession(handle, child.id)
+    expect(ok).toBe(true)
+    expect(await listDeletedSessions(handle)).toHaveLength(0)
+    const restoredParent = await getSession(handle, parent.id)
+    expect(restoredParent?.deletedAt).toBeNull()
   })
 
   it('touches updatedAt without changing title', async () => {

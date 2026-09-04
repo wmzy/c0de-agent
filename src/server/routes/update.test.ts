@@ -73,6 +73,7 @@ describe('GET /api/update', () => {
     })
     const ctx = {
       updateScheduler: { getLastResult: () => null, checkNow, start: vi.fn(), stop: vi.fn() },
+      config: { update: { enabled: true } },
     } as unknown as ServerContext
     const app = createUpdateRoute(ctx)
     const res = await app.request('/')
@@ -82,6 +83,21 @@ describe('GET /api/update', () => {
     expect(body.hasUpdate).toBe(false)
     // checkNow 被触发（fire-and-forget）
     expect(checkNow).toHaveBeenCalledTimes(1)
+  })
+
+  it('update.enabled=false：返回 disabled 且不触发 checkNow', async () => {
+    const checkNow = vi.fn()
+    const ctx = {
+      updateScheduler: { getLastResult: () => null, checkNow, start: vi.fn(), stop: vi.fn() },
+      config: { update: { enabled: false } },
+    } as unknown as ServerContext
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { hasUpdate: boolean; disabled?: boolean }
+    expect(body.hasUpdate).toBe(false)
+    expect(body.disabled).toBe(true)
+    expect(checkNow).not.toHaveBeenCalled()
   })
 })
 

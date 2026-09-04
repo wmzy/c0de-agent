@@ -11,11 +11,13 @@ import { createDB, migrateDB } from '../db/index.js'
 import { acquireDevDbLock, releaseDevDbLock, resolveDbDir } from '../server/server.js'
 import type { Config } from '../shared/types/config.js'
 import { runAcpCommand } from './commands/acp.js'
+import { runAuthCommand } from './commands/auth.js'
 import { runChatCommand } from './commands/chat.js'
 import { runConfigCommand } from './commands/config.js'
 import { runInitCommand } from './commands/init.js'
 import { runPluginCommand } from './commands/plugin.js'
 import { runServeCommand } from './commands/serve.js'
+import { runSessionsCommand } from './commands/sessions.js'
 import { runUpdateCommand } from './commands/update.js'
 import { buildAgentDeps, type PermissionStrategy } from './deps.js'
 import { type CommandSpec, parseCommand } from './parser.js'
@@ -57,6 +59,16 @@ const COMMANDS: CommandSpec[] = [
     options: [],
   },
   {
+    name: 'auth',
+    description: 'Manage authorized devices (list / revoke / reset).',
+    options: [],
+  },
+  {
+    name: 'sessions',
+    description: 'Manage CLI/web sessions (list / delete).',
+    options: [],
+  },
+  {
     name: 'acp',
     description: 'Run in Agent Client Protocol mode (editor integration).',
     options: [],
@@ -87,6 +99,8 @@ type AgentDepsOptions = {
   strategy?: PermissionStrategy
   /** --continue 指定的会话 id：依赖持久库，降级内存模式时无法续聊。 */
   continueSessionId?: string
+  /** 必须使用持久库（如 sessions 命令）；锁冲突时不降级内存库而是直接报错。 */
+  requirePersistent?: boolean
 }
 
 /** 封装 agent 依赖生命周期：加载配置 → 建库迁移 → 组装 deps → 使用后关库。
@@ -114,13 +128,21 @@ async function withAgentDeps(
     if (holdLock) releaseDevDbLock(dataDir)
     holdLock = false
     if (!isDbLockConflict(err)) throw err
+    if (opts.requirePersistent) {
+      throw new Error(
+        'c0de serve 正在运行并占用会话库。请通过 Web UI 管理会话，或停止 serve 后重试。',
+      )
+    }
     if (opts.continueSessionId) {
       throw new Error(
         `无法续聊会话 ${opts.continueSessionId}：持久库被 c0de serve 占用，内存模式无法续聊。\n` +
           `请停止 serve 后重试，或去掉 --continue 开启新会话。`,
       )
     }
-    process.stderr.write('[c0de] c0de serve 正在运行，本次会话不持久化（内存模式）\n')
+    process.stderr.write(
+      '[c0de] ⚠ c0de serve 正在运行：本次对话为临时模式，消息与工具调用不会保存。\n' +
+        '       停止 serve 后重试可持久化，或直接使用浏览器界面。\n',
+    )
     db = await createDB({ driver: 'pglite' })
     await migrateDB(db)
   }
@@ -181,6 +203,17 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     }
     case 'plugin': {
       await runPluginCommand({ args, cwd })
+      return
+    }
+    case 'auth': {
+      await runAuthCommand({ args })
+      return
+    }
+    case 'sessions': {
+      // 需要持久库列出/清理会话；serve 运行时内存库不含数据，直接失败而不是列空表。
+      await withAgentDeps(cwd, { requirePersistent: true }, (_config, deps) =>
+        runSessionsCommand({ args, db: deps.db }),
+      )
       return
     }
     case 'acp': {

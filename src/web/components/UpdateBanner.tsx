@@ -169,7 +169,17 @@ export function UpdateBanner() {
             type="button"
             className={btn}
             disabled={applying}
-            onClick={() => apply.mutate()}
+            onClick={() => {
+              // P1-1：热更新会暂停/中止进行中的任务并关闭所有终端面板，apply 前必须让用户知情。
+              if (
+                !window.confirm(
+                  '热更新将暂停进行中的对话任务（可能中止未达安全点的任务）并关闭所有终端面板，确认继续？',
+                )
+              ) {
+                return
+              }
+              apply.mutate()
+            }}
             data-testid="update-apply"
           >
             {applying ? '应用中…' : '立即应用'}

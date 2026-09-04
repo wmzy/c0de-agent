@@ -3,10 +3,10 @@
 // 新建文件原因：auth-manager 是新增模块，无既有测试文件覆盖。
 
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createAuthManager } from './auth-manager.js'
 
 let dir: string
@@ -137,6 +137,48 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     for (let i = 0; i < 10; i++) {
       expect(mgr.requestPairing(`d${i}`)).not.toBeNull()
     }
-    expect(mgr.requestPairing('overflow')).toBeNull()
+    expect(mgr.requestPairing('d11')).toBeNull()
+  })
+})
+
+describe('createAuthManager — 设备热重载与撤销（P1-4/P2-5）', () => {
+  it('外部修改 devices.json 后 watcher 热重载：新设备 token 生效、被删设备失效', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir })
+    const deviceToken = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'a')
+    expect(mgr.verify(deviceToken ?? '')).toBe(true)
+
+    // 模拟 c0de auth reset：外部删除注册表文件
+    rmSync(join(dir, 'devices.json'))
+    await vi.waitFor(() => {
+      expect(mgr.verify(deviceToken ?? '')).toBe(false)
+    })
+    mgr.dispose()
+  })
+
+  it('revokeDevice 立即从内存移除并落盘', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir })
+    const deviceToken = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'a')
+    const devices = mgr.listDevices()
+    expect(devices).toHaveLength(1)
+    const id = devices[0]?.id ?? ''
+
+    expect(mgr.revokeDevice(id)).toBe(true)
+    expect(mgr.revokeDevice(id)).toBe(false)
+    expect(mgr.verify(deviceToken ?? '')).toBe(false)
+    expect(mgr.listDevices()).toHaveLength(0)
+
+    // 重启后仍为空（落盘生效）
+    const mgr2 = createAuthManager({ dataDir: dir })
+    expect(mgr2.listDevices()).toHaveLength(0)
+    expect(mgr2.verify(deviceToken ?? '')).toBe(false)
+    mgr.dispose()
+  })
+
+  it('注册表损坏 → 视为空（设备需重新注册）', async () => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'devices.json'), '{broken')
+    const mgr = createAuthManager({ dataDir: dir })
+    expect(mgr.listDevices()).toHaveLength(0)
+    mgr.dispose()
   })
 })

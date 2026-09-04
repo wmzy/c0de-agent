@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  applyScopedPatch,
   DEFAULT_CONFIG,
   loadConfig,
   loadConfigScopes,
   mergeConfig,
   mergeRaw,
-  saveConfig,
   saveConfigScoped,
 } from './config.js'
 
@@ -77,9 +77,9 @@ describe('mergeConfig', () => {
   })
 })
 
-describe('saveConfig / loadConfig', () => {
+describe('saveConfigScoped / loadConfig', () => {
   it('saves and loads project config', async () => {
-    await saveConfig(mergeConfig({ defaultModel: 'claude' }), 'project', tmp)
+    await saveConfigScoped('project', tmp, { defaultModel: 'claude' })
     const loaded = await loadConfig(tmp)
     expect(loaded.defaultModel).toBe('claude')
   })
@@ -93,7 +93,7 @@ describe('saveConfig / loadConfig', () => {
   })
 
   it('project config overrides defaults', async () => {
-    await saveConfig(mergeConfig({ defaultModel: 'project-model' }), 'project', tmp)
+    await saveConfigScoped('project', tmp, { defaultModel: 'project-model' })
     const loaded = await loadConfig(tmp)
     expect(loaded.defaultModel).toBe('project-model')
   })
@@ -116,6 +116,39 @@ describe('agents config', () => {
 
 // 作用域隔离：loadConfigScopes/saveConfigScoped 读写 homedir() → process.env.HOME（POSIX），
 // 用临时 HOME 隔离测试，避免污染真实全局配置文件（同 workflows 测试的既有模式）。
+describe('applyScopedPatch（scoped patch，null=删除）', () => {
+  it('null 顶层键：从作用域文件删除（回落默认值/另一作用域）', () => {
+    const base = { defaultModel: 'proj-model', theme: 'dark' }
+    expect(applyScopedPatch(base, { defaultModel: null })).toEqual({ theme: 'dark' })
+  })
+
+  it('null 嵌套键：仅删除嵌套键', () => {
+    const base = { compaction: { enabled: false, threshold: 0.5 } }
+    expect(applyScopedPatch(base, { compaction: { threshold: null } })).toEqual({
+      compaction: { enabled: false },
+    })
+  })
+
+  it('undefined 跳过；普通对象递归合并；数组整体替换', () => {
+    const base = { tools: { enabled: ['read'] }, websearch: { provider: 'auto' } }
+    const patch = {
+      tools: { enabled: ['write'], disabled: undefined },
+      websearch: { provider: 'tavily' },
+    }
+    expect(applyScopedPatch(base, patch)).toEqual({
+      tools: { enabled: ['write'] },
+      websearch: { provider: 'tavily' },
+    })
+  })
+
+  it('空 patch 原样返回 base 副本', () => {
+    const base = { a: 1 }
+    const next = applyScopedPatch(base, {})
+    expect(next).toEqual({ a: 1 })
+    expect(next).not.toBe(base)
+  })
+})
+
 describe('loadConfigScopes / mergeRaw / saveConfigScoped 作用域隔离', () => {
   const originalHome = process.env.HOME
   let homeDir: string

@@ -1,8 +1,14 @@
 import { Hono } from 'hono'
-import { loadConfigScopes, mergeConfig, mergeRaw, saveConfigScoped } from '../../core/config.js'
+import {
+  applyScopedPatch,
+  loadConfigScopes,
+  mergeConfig,
+  saveConfigScoped,
+} from '../../core/config.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ProviderConfig } from '../../shared/types/llm.js'
+import { apiError } from '../middleware/error.js'
 import { syncRegistryFromConfig } from '../server.js'
 import type { ServerContext } from '../types.js'
 
@@ -53,23 +59,39 @@ function createConfigRoute(ctx: ServerContext): Hono {
     }
     // 按作用域最小落盘：patch 只合并进指定作用域原始文件，
     // 不把合并结果（含默认值/另一作用域配置）整体序列化进文件。
+    // null 值 = 删除该作用域中的键（回落到另一作用域/默认值）。
     const scopes = loadConfigScopes(ctx.cwd)
     const nextScoped =
       scope === 'global'
-        ? mergeRaw(scopes.global ?? {}, patch)
-        : mergeRaw(scopes.project ?? {}, patch)
+        ? applyScopedPatch(scopes.global ?? {}, patch)
+        : applyScopedPatch(scopes.project ?? {}, patch)
+
+    // P2-3：落盘失败必须反馈给前端（此前静默吞掉，UI 显示已保存但重启后丢失）。
+    // 先落盘、成功后才更新内存配置与 registry，保证「已保存」反馈与磁盘状态一致。
+    try {
+      await saveConfigScoped(scope, ctx.cwd, nextScoped)
+    } catch (err) {
+      return apiError(
+        c,
+        500,
+        'CONFIG_SAVE_FAILED',
+        `配置保存失败：${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+
     ctx.config =
       scope === 'global'
         ? mergeConfig(nextScoped as Partial<Config>, scopes.project)
         : mergeConfig(scopes.global, nextScoped as Partial<Config>)
     // providers 变更后原地同步 registry，使运行中的连接立即生效
     syncRegistryFromConfig(ctx.llmRegistry, ctx.config)
-    await saveConfigScoped(scope, ctx.cwd, nextScoped).catch(() => {
-      // 保存失败不影响内存配置
-    })
+    // 安全类配置（token/authEnabled/allowedOrigins）由 authManager 在启动时一次性读取，
+    // 运行时修改不生效——告知前端提示重启。
+    const needsRestart = patch.security !== undefined
     return c.json({
       config: ctx.config,
       scope,
+      needsRestart,
       warnings: providerApiKeyWarnings(ctx.config.providers),
     })
   })

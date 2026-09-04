@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import type { Session } from '@shared/types/message.js'
 import { useState } from 'react'
 import { BranchTree } from '../components/BranchTree.js'
 import {
@@ -117,6 +118,25 @@ function filterTree(tree: SessionTreeNode[], projectId: string): SessionTreeNode
   return tree.filter((node) => node.session.projectId === projectId)
 }
 
+/** 在树中按 id 查找节点（深度优先）。 */
+function findNode(nodes: SessionTreeNode[], id: string): SessionTreeNode | null {
+  for (const node of nodes) {
+    if (node.session.id === id) return node
+    const found = findNode(node.children ?? [], id)
+    if (found) return found
+  }
+  return null
+}
+
+/** 统计某节点的 fork 后代数量（含各级子孙；软删除级联范围）。 */
+function countDescendants(node: SessionTreeNode): number {
+  let n = 0
+  for (const child of node.children ?? []) {
+    n += 1 + countDescendants(child)
+  }
+  return n
+}
+
 export function SessionList({
   projectId,
   activeId,
@@ -142,7 +162,11 @@ export function SessionList({
   const handleDelete = (id: string) => {
     setDeleteError(null)
     // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
-    if (!window.confirm('删除该会话及其全部消息？将移入回收站，30 天内可恢复。')) return
+    const node = findNode(visibleTree, id)
+    const branches = node ? countDescendants(node) : 0
+    const branchNote = branches > 0 ? `其 ${branches} 个分支会话将一并移入回收站。` : ''
+    if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，30 天内可恢复。`))
+      return
     del.mutate(id, {
       onSuccess: () => onDeleted?.(id),
       onError: (e: unknown) => {
@@ -198,7 +222,7 @@ export function SessionList({
   )
 }
 
-/** 回收站列表：软删除会话 + 恢复按钮。 */
+/** 回收站列表：软删除会话 + 恢复按钮。父会话也在回收站的行做标记（恢复时连带还原祖先链）。 */
 function RecycleBin() {
   const { data: deleted, isLoading } = useDeletedSessions()
   const restore = useRestoreSession()
@@ -206,6 +230,10 @@ function RecycleBin() {
 
   if (isLoading) return <div className={empty}>加载中…</div>
   if (!deleted || deleted.length === 0) return <div className={empty}>回收站为空</div>
+
+  const deletedIds = new Set(deleted.map((s) => s.id))
+  const hasDeletedParent = (s: Session): boolean =>
+    s.parentId !== null && deletedIds.has(s.parentId)
 
   return (
     <div>
@@ -217,6 +245,14 @@ function RecycleBin() {
       {deleted.map((s) => (
         <div key={s.id} className={deletedRow}>
           <span title={s.title}>{s.title}</span>
+          {hasDeletedParent(s) && (
+            <span
+              style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }}
+              data-testid={`deleted-parent-${s.id}`}
+            >
+              父会话已删除（恢复时一并还原）
+            </span>
+          )}
           <span>{s.deletedAt ? new Date(s.deletedAt).toLocaleDateString() : ''}</span>
           <button
             type="button"

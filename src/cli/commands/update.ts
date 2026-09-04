@@ -3,6 +3,7 @@ import {
   checkForUpdate,
   type HotUpdateOptions,
   performHotUpdate,
+  performInstall,
   type SessionSnapshot,
   serializeSessions,
 } from '../../update/index.js'
@@ -44,16 +45,23 @@ async function runUpdateCommand(ctx: UpdateCommandContext): Promise<void> {
     return
   }
 
+  // P2-7：无 db（独立 CLI，无活跃 serve）→ 仅安装，不 spawn `serve`。
+  // 此前会拉起一个用户未请求的常驻服务；活跃 serve 的热更新走 /api/update/apply。
+  if (!ctx.db) {
+    out(`发现新版本 ${result.latestVersion}，开始安装…`)
+    const r = await performInstall(ctx.updateOpts)
+    if (r._tag === 'success') {
+      out('安装完成。若 c0de serve 正在运行，请在页面顶部的更新横幅中应用热更新，或重启 serve。')
+    } else if (r._tag === 'install_failed') {
+      out(`安装失败：${r.error}`)
+    } else {
+      out(`无法自动安装（${r.error}）。请手动执行：${r.command}`)
+    }
+    return
+  }
+
   out(`发现新版本 ${result.latestVersion}，开始热更新…`)
-  const snapshot: SessionSnapshot = ctx.db
-    ? await serializeSessions(ctx.db, ctx.config)
-    : {
-        version: result.currentVersion,
-        sessions: [],
-        entries: [],
-        config: ctx.config ?? null,
-        timestamp: Date.now(),
-      }
+  const snapshot: SessionSnapshot = await serializeSessions(ctx.db, ctx.config)
 
   const r = await performHotUpdate(snapshot, ctx.updateOpts)
   if (r._tag === 'success') {

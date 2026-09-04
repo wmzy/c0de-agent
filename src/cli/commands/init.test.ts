@@ -9,7 +9,7 @@ beforeEach(() => mkdirSync(tmp, { recursive: true }))
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 describe('runInitCommand', () => {
-  it('creates .c0de/config.json with defaults', async () => {
+  it('creates .c0de/config.json with empty minimal config', async () => {
     const messages: string[] = []
     await runInitCommand({
       args: { options: {}, positionals: [] },
@@ -19,7 +19,8 @@ describe('runInitCommand', () => {
     const path = join(tmp, '.c0de', 'config.json')
     expect(existsSync(path)).toBe(true)
     const cfg = JSON.parse(readFileSync(path, 'utf-8'))
-    expect(cfg.defaultProvider).toBe('openai')
+    // P1-3：不再固化 DEFAULT_CONFIG（providers: [] 会整体替换全局 providers）
+    expect(cfg).toEqual({})
     expect(messages.join('')).toContain('Created')
   })
 

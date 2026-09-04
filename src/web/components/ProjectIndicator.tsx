@@ -324,7 +324,7 @@ export function ProjectIndicator({
               onClick={() => {
                 if (
                   window.confirm(
-                    `确定删除项目「${project.name ?? '未命名项目'}」？\n看板将一并删除；该项目的会话保留但不再归属此项目。`,
+                    `确定删除项目「${project.name ?? '未命名项目'}」？\n看板将一并删除；该项目的全部会话将移入回收站（30 天内可恢复）。`,
                   )
                 ) {
                   setDeleteError(null)

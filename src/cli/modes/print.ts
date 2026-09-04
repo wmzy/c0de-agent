@@ -1,5 +1,6 @@
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
+import { resolveRoute } from '../../llm/registry.js'
 import { createSession, getSession } from '../../session/session.js'
 import type { AgentConfig, AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
@@ -53,6 +54,17 @@ async function runPrintMode(
     tools: resolveEnabledToolNames(deps.toolRegistry, config),
     plugins: config.plugins.enabled,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+  }
+
+  // P3：首跑友好报错——未配置 provider 时不再让底层 NoRoute 异常裸抛，
+  // 给出与 Web 端一致的引导（c0de serve → 设置 → Provider）。
+  try {
+    resolveRoute(deps.llmRegistry, agentConfig.provider, agentConfig.model)
+  } catch {
+    throw new Error(
+      '未配置可用的 AI 服务。请运行 `c0de serve` 并在「设置 → Provider」中添加 API 服务并测试连接，' +
+        '或使用 `c0de config set` 配置 providers。',
+    )
   }
 
   const state = await createAgent(session, agentConfig, deps)

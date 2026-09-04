@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +14,8 @@ import { createConfigRoute } from './config.js'
 
 let dbHandle: DB | undefined
 let tmpCwd: string | undefined
+let tmpHome: string | undefined
+const originalHome = process.env.HOME
 
 afterEach(async () => {
   await dbHandle?.close()
@@ -22,6 +24,11 @@ afterEach(async () => {
     rmSync(tmpCwd, { recursive: true, force: true })
     tmpCwd = undefined
   }
+  if (tmpHome) {
+    rmSync(tmpHome, { recursive: true, force: true })
+    tmpHome = undefined
+  }
+  process.env.HOME = originalHome
   vi.restoreAllMocks()
 })
 
@@ -30,6 +37,9 @@ async function setup(overrides?: Partial<Config>) {
   dbHandle = db
   await migrateDB(db)
   tmpCwd = mkdtempSync(join(tmpdir(), 'c0de-cfg-'))
+  // 隔离全局作用域：避免读到真实 ~/.c0de/config.json 干扰断言
+  tmpHome = mkdtempSync(join(tmpdir(), 'c0de-cfg-home-'))
+  process.env.HOME = tmpHome
   const config = mergeConfig(overrides)
   const ctx = createServerContext({
     db,
@@ -101,5 +111,50 @@ describe('config route — apiKey 加密（spec §24.2）', () => {
     const res = await app.request('/')
     const body = (await res.json()) as { config: Config }
     expect(body.config.providers[0]?.apiKey).toBe('sk-x')
+  })
+})
+
+describe('config route — scoped patch 与保存反馈（P1-2/P2-3）', () => {
+  it('PATCH security 变更返回 needsRestart: true', async () => {
+    const { app } = await setup()
+    const res = await patchBody(app, { security: { authEnabled: true } })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { needsRestart?: boolean }
+    expect(body.needsRestart).toBe(true)
+  })
+
+  it('PATCH 非 security 变更 needsRestart 为 false', async () => {
+    const { app } = await setup()
+    const res = await patchBody(app, { defaultModel: 'gpt-5' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { needsRestart?: boolean }
+    expect(body.needsRestart).toBe(false)
+  })
+
+  it('PATCH null 键删除该作用域中的键（unset 语义）', async () => {
+    const { app, ctx } = await setup()
+    // 先落盘两个键，再 unset 其中一个
+    await patchBody(app, { defaultModel: 'proj-model', theme: 'dark' })
+    const res = await patchBody(app, { defaultModel: null })
+    expect(res.status).toBe(200)
+    // 内存合并配置回落默认值
+    expect(ctx.config.defaultModel).toBe('gpt-4o')
+    // 落盘文件不含该键，其余键保留
+    const file = JSON.parse(readFileSync(join(ctx.cwd, '.c0de', 'config.json'), 'utf-8')) as Record<
+      string,
+      unknown
+    >
+    expect(file.defaultModel).toBeUndefined()
+    expect(file.theme).toBe('dark')
+  })
+
+  it('落盘失败返回 500 CONFIG_SAVE_FAILED', async () => {
+    const { app, ctx } = await setup()
+    // 用同名文件占位 .c0de 目录 → saveConfigScoped 的 mkdir/write 失败
+    writeFileSync(join(ctx.cwd, '.c0de'), 'not a dir')
+    const res = await patchBody(app, { defaultModel: 'gpt-5' })
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('CONFIG_SAVE_FAILED')
   })
 })

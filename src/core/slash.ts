@@ -47,13 +47,12 @@ const helpCommand: SlashCommand = {
   execute: async () => {
     const lines = [
       'Available commands:',
-      '  /compact        Manually trigger context compaction',
-      '  /model <name>   Switch the current session model',
-      '  /clear          Clear session messages',
-      '  /help           Show this help',
-      '  /fork [index]   Fork session from a message',
-      '  /config [k][v]  View or set configuration',
-      '  /workflow       Manage and run workflows',
+      '  /compact         Manually trigger context compaction',
+      '  /clear [id] --yes  Clear session messages (default: current session; archives originals)',
+      '  /help            Show this help',
+      '  /fork [id] [index]  Fork session (default: current session, latest message)',
+      '  /config [key] [value]  View or set configuration (dot paths supported)',
+      '  /workflow        Manage and run workflows',
     ]
     return { _tag: 'text', text: lines.join('\n') }
   },
@@ -71,41 +70,98 @@ const compactCommand: SlashCommand = {
 
 const modelCommand: SlashCommand = {
   name: 'model',
-  description: 'Switch the current session model',
-  argsHint: '<model-name>',
-  execute: async (args) => {
-    if (!args) return { _tag: 'error', message: 'Usage: /model <model-name>' }
-    return { _tag: 'success', message: `Model set to ${args} (takes effect next turn)` }
+  description: 'Model selection guidance',
+  argsHint: '',
+  execute: async () => {
+    // 诚实化：模型由前端 ModelSelector 决定并随请求 body 传递，服务端不保存会话级模型覆盖。
+    // 此前返回 "Model set to X" 但什么都不生效。
+    return {
+      _tag: 'text',
+      text: '会话模型请在聊天页底部的模型选择器中切换（/model 不再直接生效）。',
+    }
   },
 }
 
 const clearCommand: SlashCommand = {
   name: 'clear',
-  description: 'Clear session messages',
+  description: 'Clear session messages (archives originals first)',
+  argsHint: '[session-id] [--yes]',
   execute: async (args, ctx) => {
-    if (!args) return { _tag: 'error', message: 'Usage: /clear <session-id>' }
-    const { deleteEntriesByIds, getEntries } = await import('../session/message.js')
-    const entries = await getEntries(ctx.deps.db, args)
+    const parts = args.split(/\s+/).filter(Boolean)
+    const yes = parts.includes('--yes')
+    const sessionId = parts.find((p) => p !== '--yes') ?? ctx.sessionId
+    if (!sessionId) {
+      return { _tag: 'error', message: 'Usage: /clear [session-id] --yes（当前会话可省略 id）' }
+    }
+    if (!yes) {
+      return {
+        _tag: 'error',
+        message:
+          '清空消息不可逆。原始消息将归档保存，确认请执行 /clear --yes（或 /clear <session-id> --yes）。',
+      }
+    }
+    const { getEntries, deleteEntriesByIds } = await import('../session/message.js')
+    const entries = await getEntries(ctx.deps.db, sessionId)
     const ids = entries.map((e) => ('id' in e ? e.id : '')).filter(Boolean)
     if (ids.length > 0) {
+      // 归档原始内容（与 shake 同机制），删除才有后悔路径
+      const { archiveOriginalEntries } = await import('../session/archive.js')
+      const { generateId } = await import('../shared/index.js')
+      await archiveOriginalEntries(
+        ctx.deps.db,
+        sessionId,
+        entries,
+        'clear',
+        `Cleared ${ids.length} entries`,
+        generateId(),
+      )
       await deleteEntriesByIds(ctx.deps.db, ids)
     }
-    return { _tag: 'success', message: `Cleared ${ids.length} entries` }
+    return { _tag: 'success', message: `Cleared ${ids.length} entries (archived)` }
   },
 }
 
 const forkCommand: SlashCommand = {
   name: 'fork',
   description: 'Fork session from a message index',
-  argsHint: '<session-id> [message-index]',
+  argsHint: '[session-id] [message-index]',
   execute: async (args, ctx) => {
-    if (!args) return { _tag: 'error', message: 'Usage: /fork <session-id> [message-index]' }
-    const parts = args.split(/\s+/)
-    const sessionId = parts[0] ?? ''
-    const messageIndex = parts[1] !== undefined ? Number.parseInt(parts[1], 10) : 0
+    const parts = args.split(/\s+/).filter(Boolean)
+    // 默认当前会话；第一个参数若是 session id（非纯数字）则用它。
+    let sessionId = ctx.sessionId
+    let messageIndex: number | undefined
+    for (const p of parts) {
+      if (/^\d+$/.test(p)) {
+        messageIndex = Number.parseInt(p, 10)
+      } else if (!sessionId) {
+        sessionId = p
+      }
+    }
+    if (!sessionId) {
+      return {
+        _tag: 'error',
+        message: 'Usage: /fork [session-id] [message-index]（当前会话可省略 id）',
+      }
+    }
+    // 未指定 index → 默认最新一条消息处分支（与 web fork API 语义一致，不再是 index 0）
+    if (messageIndex === undefined) {
+      const { getMessages } = await import('../session/message.js')
+      const messages = await getMessages(ctx.deps.db, sessionId)
+      if (messages.length === 0) {
+        return { _tag: 'error', message: 'EMPTY_SESSION: 空会话无法分支' }
+      }
+      messageIndex = messages.length - 1
+    }
     const { forkSession } = await import('../session/branch.js')
-    const forked = await forkSession(ctx.deps.db, sessionId, messageIndex)
-    return { _tag: 'success', message: `Forked to new session: ${forked.id}` }
+    try {
+      const forked = await forkSession(ctx.deps.db, sessionId, messageIndex)
+      return { _tag: 'success', message: `Forked to new session: ${forked.id}` }
+    } catch (error) {
+      return {
+        _tag: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
   },
 }
 
@@ -114,16 +170,30 @@ const configCommand: SlashCommand = {
   description: 'View or set configuration',
   argsHint: '[key] [value]',
   execute: async (args, ctx) => {
+    const { getByPath, setPathPatch, coerce } = await import('./config-path.js')
     if (!args) {
       return { _tag: 'text', text: JSON.stringify(ctx.config, null, 2) }
     }
     const parts = args.split(/\s+/)
     const key = parts[0] ?? ''
     if (parts.length === 1) {
-      const value = (ctx.config as Record<string, unknown>)[key]
-      return { _tag: 'text', text: `${key}: ${JSON.stringify(value)}` }
+      try {
+        const value = getByPath(ctx.config, key)
+        return { _tag: 'text', text: `${key}: ${JSON.stringify(value)}` }
+      } catch (error) {
+        return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
+      }
     }
-    return { _tag: 'success', message: 'Config updates are handled via the config API' }
+    // 点路径写值：与 CLI config set 同语义（project 作用域最小落盘，null=unset）
+    const { applyScopedPatch, loadConfigScopes, saveConfigScoped } = await import('./config.js')
+    const scopes = loadConfigScopes(ctx.cwd)
+    const value = coerce(parts.slice(1).join(' '))
+    const next = applyScopedPatch(scopes.project ?? {}, setPathPatch(key, value))
+    await saveConfigScoped('project', ctx.cwd, next)
+    return {
+      _tag: 'success',
+      message: `${value === null ? 'Unset' : 'Set'} ${key} (scope: project)`,
+    }
   },
 }
 

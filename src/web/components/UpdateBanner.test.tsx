@@ -23,6 +23,7 @@ afterEach(() => {
   vi.clearAllMocks()
   // 「稍后」dismissal 记录在 sessionStorage，跨用例隔离必须清掉
   sessionStorage.clear()
+  vi.unstubAllGlobals()
 })
 
 function renderWithClient(ui: React.ReactElement) {
@@ -65,6 +66,7 @@ describe('UpdateBanner', () => {
       snapshotPath: '/tmp/s.json',
       latestVersion: '0.2.0',
     })
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
     renderWithClient(<UpdateBanner />)
     await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('update-apply'))
@@ -73,6 +75,19 @@ describe('UpdateBanner', () => {
     await waitFor(() =>
       expect(screen.getByTestId('update-banner').textContent).toContain('已触发热更新'),
     )
+  })
+
+  it('apply 确认弹窗取消时不调用 apply', async () => {
+    ;(updateAPI.status as Mock).mockResolvedValue({
+      hasUpdate: true,
+      currentVersion: '0.1.0',
+      latestVersion: '0.2.0',
+    })
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
+    renderWithClient(<UpdateBanner />)
+    await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('update-apply'))
+    expect(updateAPI.apply).not.toHaveBeenCalled()
   })
 
   it('clicking 稍后 dismisses the banner for current latest version', async () => {
@@ -134,6 +149,7 @@ describe('UpdateBanner', () => {
       latestVersion: '0.2.0',
     })
     ;(updateAPI.apply as Mock).mockRejectedValue(new Error('network'))
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
     renderWithClient(<UpdateBanner />)
     await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('update-apply'))

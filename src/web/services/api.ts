@@ -19,7 +19,12 @@ function bootstrapAuthToken(): void {
     const params = new URLSearchParams(window.location.search)
     const fromUrl = params.get('token')
     const injected = (window as { __C0DE_AUTH_TOKEN__?: string }).__C0DE_AUTH_TOKEN__
-    const rawToken = fromUrl ?? injected ?? ''
+    // URL token 优先级最高（显式注册意图，覆盖一切）。
+    // dev 注入的 bootstrap 仅在**尚无任何已存 token** 时作为候选——
+    // 否则每次页面加载都用 bootstrap 覆盖有效设备 token，注册又因 devices>0 失败，
+    // 陷入 401 → 配对死循环（P1-4 修复）。
+    const existing = localStorage.getItem(TOKEN_KEY)
+    const rawToken = fromUrl ?? (existing ? null : (injected ?? ''))
     if (rawToken) {
       if (fromUrl) {
         params.delete('token')

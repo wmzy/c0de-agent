@@ -111,9 +111,11 @@ describe('Chat permission mode toggle', () => {
     renderChat()
     const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
     expect(toggle.checked).toBe(false)
-    // 关闭态：无警示 pill，只有中性说明文本
+    // 关闭态：无警示 pill，只有中性说明文本（含非持久提示）
     expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
-    expect(screen.getByTestId('permission-mode-hint').textContent).toBe('工具执行前逐个确认')
+    expect(screen.getByTestId('permission-mode-hint').textContent).toBe(
+      '工具执行前逐个确认（重启后恢复默认）',
+    )
   })
 
   it('点击开关切换到 auto：调用 setMode 并显示警示 pill', () => {

@@ -794,10 +794,18 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(screen.queryByTestId('provider-add')).toBeNull()
   })
 
-  it('导出触发 Blob 下载（createObjectURL/revokeObjectURL 各一次）', async () => {
+  it('导出触发 Blob 下载，且剔除明文 security.token', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
-    const createURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
+    const withToken = {
+      ...mockConfig,
+      security: { authEnabled: true, token: 'secret-plain-token', allowedOrigins: [] },
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(withToken))
+    let exportedBlob: Blob | null = null
+    const createURLSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+      exportedBlob = blob as Blob
+      return 'blob:mock'
+    })
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     // 阻止 anchor.click 真正导航
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
@@ -809,6 +817,10 @@ describe('Settings — JSON 模式与导入导出', () => {
 
     expect(createURLSpy).toHaveBeenCalledTimes(1)
     expect(revokeSpy).toHaveBeenCalledTimes(1)
+    // P3：明文 token 不出现在导出内容中
+    expect(exportedBlob).not.toBeNull()
+    const exportedText = await (exportedBlob ?? new Blob()).text()
+    expect(exportedText).not.toContain('secret-plain-token')
 
     createURLSpy.mockRestore()
     revokeSpy.mockRestore()
@@ -938,7 +950,7 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(args.fallback.enabled).toBe(true)
   })
 
-  it('编辑上下文压缩全部字段后保存提交完整对象', async () => {
+  it('编辑上下文压缩单个字段后保存最小 diff（仅变化的键）', async () => {
     const { configAPI } = await import('../services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
@@ -955,11 +967,11 @@ describe('Settings — 完整配置表单覆盖', () => {
     fireEvent.click(screen.getByTestId('settings-save'))
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
     const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
-      compaction: { reserveTokens: number; threshold: number }
+      compaction: { reserveTokens: number; threshold?: number }
     }
     expect(args.compaction.reserveTokens).toBe(9999)
-    // 其他字段被保留（浅合并不丢失）
-    expect(args.compaction.threshold).toBe(mockConfig.compaction.threshold)
+    // P1-2 diff：未变化的字段不进 patch（服务端按作用域合并保留其余值）
+    expect(args.compaction.threshold).toBeUndefined()
   })
 
   it('勾选压缩独立模型后显示 provider/model 下拉并保存', async () => {
@@ -1061,9 +1073,12 @@ describe('Settings — 完整配置表单覆盖', () => {
     fireEvent.click(screen.getByTestId('settings-save'))
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
     const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
-      compaction: { compactionModel?: { provider: string; model: string } }
+      compaction: { compactionModel?: { provider: string; model: string } | null }
     }
-    expect(args.compaction.compactionModel).toBeUndefined()
+    // P1-2 diff：删除用 null 标记（服务端 unset 该作用域中的键）
+    expect(args.compaction.compactionModel).toBeNull()
+    // 最小 patch：compaction 其余未变键不出现
+    expect(Object.keys(args.compaction)).toEqual(['compactionModel'])
   })
 
   it('添加并删除 MCP 服务器', async () => {
@@ -1097,8 +1112,85 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(authCheck).toBeTruthy()
     fireEvent.click(authCheck as HTMLElement)
 
-    // Token 输入框出现
-    expect(screen.getByPlaceholderText('Bearer Token')).toBeTruthy()
+    await waitFor(() => expect(screen.getByPlaceholderText('Bearer Token')).toBeTruthy())
+  })
+
+  it('关闭认证需确认：取消不生效，确认后写入 security 变更', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const withAuth = { ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(withAuth))
+    ;(configAPI.update as Mock).mockResolvedValue(withAuth)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) =>
+        cb.closest('label')?.textContent?.includes('Bearer Token 认证'),
+      ) as HTMLInputElement
+    expect(authCheck.checked).toBe(true)
+
+    // 取消确认 → 不产生变更（happy-dom 无 window.confirm，用 stubGlobal）
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
+    fireEvent.click(authCheck)
+    expect(authCheck.checked).toBe(true)
+    expect(screen.getByTestId('settings-save')).toBeDisabled()
+
+    // 确认 → 允许关闭
+    ;(globalThis.confirm as Mock).mockReturnValue(true)
+    fireEvent.click(authCheck)
+    expect(authCheck.checked).toBe(false)
+    vi.unstubAllGlobals()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      security: { authEnabled?: boolean; token?: unknown }
+    }
+    expect(args.security.authEnabled).toBe(false)
+    // 最小 patch：security 内仅 authEnabled 变化
+    expect(Object.keys(args.security)).toEqual(['authEnabled'])
+  })
+
+  it('保存 security 变更后显示重启提示（needsRestart）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({
+      config: mockConfig,
+      scopes: { global: null, project: null },
+      warnings: [],
+      needsRestart: true,
+    })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('Bearer Token 认证')) as HTMLElement
+    fireEvent.click(authCheck) // 启用认证（开启方向无需确认）
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(screen.getByTestId('settings-restart-hint')).toBeTruthy())
+    expect(screen.getByTestId('settings-restart-hint').textContent).toContain('重启')
+  })
+
+  it('最小 patch：只保存变化字段，未变化的顶层键不出现在 payload', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 只修改 defaultModel
+    fireEvent.change(screen.getByTestId('default-model-select'), { target: { value: 'gpt-5' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as Record<string, unknown>
+    expect(Object.keys(args).sort()).toEqual(['defaultModel'])
   })
 
   it('切换 Web 搜索后端并保存', async () => {

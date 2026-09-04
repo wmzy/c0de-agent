@@ -18,6 +18,12 @@ function createUpdateRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
   app.get('/', (c) => {
+    // P2-8：update.enabled=false 时无 handoff server，apply 必然 409。
+    // 不再触发 checkNow，也不返回 hasUpdate，避免横幅出现一个点了必失败的应用按钮。
+    if (ctx.config.update.enabled === false) {
+      const v = getCurrentVersion()
+      return c.json({ hasUpdate: false, disabled: true, currentVersion: v, latestVersion: v })
+    }
     const cached = ctx.updateScheduler.getLastResult()
     if (cached) return c.json(cached)
     // 无缓存（首次启动延迟未到）：同步触发一次，避免前端首屏空。

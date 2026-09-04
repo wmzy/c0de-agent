@@ -9,6 +9,8 @@ type ConfigResponse = {
     project: Partial<Config> | null
   }
   warnings: string[]
+  /** 安全类配置（token/authEnabled）运行时修改不生效，需重启 serve（PATCH 响应）。 */
+  needsRestart?: boolean
 }
 
 const configAPI = {

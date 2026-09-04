@@ -21,14 +21,24 @@ import { createInteractivePermissionChecker } from '../permission/interactive.js
 import type { ServerContext } from '../types.js'
 import { safeResolve } from '../util/safe-path.js'
 
-/** 按 session.projectId 解析 agent 工作目录；无项目回退 ctx.cwd。
- *  P1-9：项目 worktree 已失效（目录被删除/移动）时抛错，由上层转为明确 409，
- *  不再静默回退 ctx.cwd 导致 agent 在错误目录执行工具。 */
+/** 按 session.projectId / worktreePath 解析 agent 工作目录：
+ *  - 有 projectId → 项目 worktree（缺失/目录失效时抛错，由上层转 409）。
+ *  - 无 projectId（项目已删除后从回收站恢复的会话）→ 用 worktreePath 兜底：
+ *    目录失效同样抛错，绝不静默回退 serve cwd 导致 agent 在错误目录执行工具。
+ *  - 两者皆无（从未绑定项目的会话，如 CLI print）→ 回退 ctx.cwd。 */
 export async function resolveAgentCwd(
   ctx: ServerContext,
-  session: { projectId: string | null },
+  session: { projectId: string | null; worktreePath?: string | null },
 ): Promise<string> {
-  if (!session.projectId) return ctx.cwd
+  if (!session.projectId) {
+    if (!session.worktreePath) return ctx.cwd
+    if (!existsSync(session.worktreePath)) {
+      throw new Error(
+        `WORKTREE_MISSING: 会话工作目录已失效（${session.worktreePath}）。请检查目录是否被移动或删除`,
+      )
+    }
+    return session.worktreePath
+  }
   const project = await getProject(ctx.db, session.projectId)
   if (!project) {
     throw new Error(`PROJECT_MISSING: 会话所属项目已不存在（projectId=${session.projectId}）`)
@@ -86,9 +96,27 @@ function createChatRoute(ctx: ServerContext): Hono {
       const registry = createSlashRegistry()
       const cmd = registry.get(parsed.name)
       if (cmd) {
+        // P2-4：执行 config.slashCommands.enabled 过滤（此前该配置无任何消费方）。
+        // enabled 为空 = 全部启用（与 tools.enabled 语义一致）；名称兼容带/不带前缀斜杠。
+        const enabledList = ctx.config.slashCommands?.enabled ?? []
+        const enabledSet = new Set(enabledList.map((n) => (n.startsWith('/') ? n.slice(1) : n)))
+        if (enabledSet.size > 0 && !enabledSet.has(parsed.name)) {
+          return streamSSE(c, async (stream) => {
+            await stream.writeSSE({
+              event: 'text_delta',
+              data: JSON.stringify({
+                _tag: 'text_delta',
+                text: `斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）`,
+              }),
+            })
+            await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+          })
+        }
         const commandCtx = {
           cwd,
           config: ctx.config,
+          // 当前会话 id：/clear /fork 等命令默认作用于当前会话（P2-4）。
+          sessionId,
           // 内置斜杠命令（/clear、/fork、/config）仅需 db + config；
           // 但 /workflow run 会走 executeWorkflow → buildWorkflowContext → runSubAgent，
           // 该路径需要 agentRegistry 来派生子 agent，因此必须注入。

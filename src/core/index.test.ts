@@ -6,7 +6,6 @@ describe('core barrel export', () => {
     expect(typeof core.DEFAULT_CONFIG).toBe('object')
     expect(typeof core.loadConfig).toBe('function')
     expect(typeof core.mergeConfig).toBe('function')
-    expect(typeof core.saveConfig).toBe('function')
   })
 
   it('exports context functions', () => {

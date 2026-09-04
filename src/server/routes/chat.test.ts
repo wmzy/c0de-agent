@@ -497,6 +497,39 @@ describe('chat route (SSE)', () => {
     expect(cwd).toBe('/some/base')
   })
 
+  it('resolveAgentCwd: 无项目但有 worktreePath → 用 worktreePath（项目删除后恢复的会话）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cwd-wt-'))
+    try {
+      const db = await createDB({ driver: 'pglite' })
+      dbHandle = db
+      await migrateDB(db)
+      const ctx = createServerContext({
+        db,
+        llmRegistry: createRegistry(),
+        chatStream: mockChatStream,
+        cwd: '/some/base',
+      })
+      const cwd = await resolveAgentCwd(ctx, { projectId: null, worktreePath: dir })
+      expect(cwd).toBe(dir)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolveAgentCwd: worktreePath 失效 → 抛 WORKTREE_MISSING 而非静默回退 serve cwd', async () => {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      chatStream: mockChatStream,
+      cwd: '/some/base',
+    })
+    await expect(
+      resolveAgentCwd(ctx, { projectId: null, worktreePath: '/nonexistent/deleted-dir' }),
+    ).rejects.toThrow(/WORKTREE_MISSING/)
+  })
+
   // 斜杠命令拦截（spec §3.8）：/help 等命令在服务端执行，返回结果文本而非启动 agent
   it('/help 命令返回命令列表文本，不启动 agent', async () => {
     const { app, sessionId } = await setup()
@@ -517,7 +550,7 @@ describe('chat route (SSE)', () => {
     expect(text).toContain('/compact')
   })
 
-  it('/clear <sessionId> 清空会话消息后返回成功', async () => {
+  it('/clear --yes 清空当前会话消息后返回成功', async () => {
     const { app, ctx, sessionId } = await setup()
     // 先放一条消息
     await appendMessage(ctx.db, sessionId, {
@@ -529,7 +562,7 @@ describe('chat route (SSE)', () => {
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, message: `/clear ${sessionId}` }),
+      body: JSON.stringify({ sessionId, message: '/clear --yes' }),
     })
     expect(res.status).toBe(200)
     const events = parseSSEEvents(await res.text())
@@ -540,6 +573,47 @@ describe('chat route (SSE)', () => {
     expect(text).toContain('Cleared')
     // 消息已被清除
     expect(await getEntries(ctx.db, sessionId)).toHaveLength(0)
+  })
+
+  it('/clear 缺 --yes 拒绝且消息保留', async () => {
+    const { app, ctx, sessionId } = await setup()
+    await appendMessage(ctx.db, sessionId, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'keep' }],
+    })
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/clear' }),
+    })
+    expect(res.status).toBe(200)
+    expect(await getEntries(ctx.db, sessionId)).toHaveLength(1)
+  })
+
+  it('config.slashCommands.enabled 过滤：未启用命令返回提示而非执行', async () => {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const session = await createSession(db, 'Test')
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      config: { ...DEFAULT_CONFIG, slashCommands: { enabled: ['/help'] } },
+      chatStream: mockChatStream,
+    })
+    const app = createChatRoute(ctx)
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: session.id, message: '/compact' }),
+    })
+    expect(res.status).toBe(200)
+    const events = parseSSEEvents(await res.text())
+    const text = events
+      .filter((e) => e.event === 'text_delta')
+      .map((e) => JSON.parse(e.data).text as string)
+      .join('')
+    expect(text).toContain('未启用')
   })
 
   it('未知斜杠命令回退为正常消息发给 agent', async () => {

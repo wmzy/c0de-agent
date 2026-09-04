@@ -24,7 +24,22 @@ function SecurityPanel({
           <input
             type="checkbox"
             checked={security.authEnabled}
-            onChange={(e) => onSecurityChange({ authEnabled: e.target.checked })}
+            onChange={(e) => {
+              const next = e.target.checked
+              if (next) {
+                onSecurityChange({ authEnabled: true })
+                return
+              }
+              // 关闭认证是高风险操作（服务绑 0.0.0.0，所有 API 将无鉴权），fail-closed 确认。
+              if (
+                !window.confirm(
+                  '关闭认证将移除所有 API 鉴权，任何能访问该服务端口的进程/设备都能执行任意工具。确定关闭？',
+                )
+              ) {
+                return
+              }
+              onSecurityChange({ authEnabled: false })
+            }}
           />
           <span>启用 Bearer Token 认证</span>
         </label>

@@ -7,6 +7,7 @@ import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
+import { updateSessionLastRun } from '../../session/session.js'
 import type { Session } from '../../shared/types/message.js'
 import { createServerContext } from '../context.js'
 import type { APIErrorBody } from '../types.js'
@@ -231,6 +232,27 @@ describe('session route', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { _tag: string }
     expect(body._tag).toBe('idle')
+  })
+
+  it('GET /:id/status lastRun=paused 且无活跃 run → interrupted（重启后 run 内存态已丢）', async () => {
+    const { app, ctx } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Paused' }),
+    })
+    const created = (await createRes.json()) as Session
+    // 直接写 DB：lastRun.status='paused'（模拟热更新前暂停、进程已退出的遗留状态）
+    await updateSessionLastRun(ctx.db, created.id, {
+      status: 'paused',
+      provider: 'p',
+      model: 'm',
+      startedAt: Date.now(),
+    })
+    const res = await app.request(`/${created.id}/status`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { _tag: string }
+    expect(body._tag).toBe('interrupted')
   })
 
   it('GET /:id/llm-details/:callId 子端点已移除（段内 call 由前端从段取）', async () => {

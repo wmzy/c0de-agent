@@ -17,7 +17,7 @@ function rowToArchive(row: typeof compactionArchives.$inferSelect): CompactionAr
     id: row.id,
     sessionId: row.sessionId,
     compactionId: row.compactionId,
-    archiveType: row.archiveType as 'compaction' | 'squash' | 'shake',
+    archiveType: row.archiveType as 'compaction' | 'squash' | 'shake' | 'clear',
     originalEntries: row.originalEntries as SessionEntry[],
     summary: row.summary,
     tokenCount: row.tokenCount ?? 0,
@@ -61,7 +61,7 @@ async function archiveOriginalEntries(
   handle: DB,
   sessionId: string,
   entries: SessionEntry[],
-  archiveType: 'compaction' | 'squash' | 'shake',
+  archiveType: 'compaction' | 'squash' | 'shake' | 'clear',
   summary: string,
   compactionId: string,
 ): Promise<string> {

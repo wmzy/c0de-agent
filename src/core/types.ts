@@ -97,6 +97,8 @@ type CommandContext = {
   cwd: string
   config: Config
   deps: AgentDependencies
+  /** 当前会话 id（Web chat 路由注入）：/clear /fork 等命令默认作用于当前会话。 */
+  sessionId?: string
   workflowRegistry?: import('./workflows/registry.js').WorkflowRegistry
 }
 

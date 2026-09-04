@@ -91,8 +91,12 @@ describe('builtin commands', () => {
     })) as CommandResult
     expect(result._tag).toBe('text')
     if (result._tag === 'text') {
-      expect(result.text).toContain('compact')
-      expect(result.text).toContain('model')
+      expect(result.text).toContain('/compact')
+      expect(result.text).toContain('/clear')
+      expect(result.text).toContain('/fork')
+      expect(result.text).toContain('/config')
+      // /model 不再以「切换模型」姿态出现（已诚实化）
+      expect(result.text).not.toContain('Switch the current session model')
     }
   })
 
@@ -107,7 +111,66 @@ describe('builtin commands', () => {
     expect(result._tag).toBe('text')
   })
 
-  it('/clear clears session messages', async () => {
+  it('/config <key> 点路径读取', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('compaction.threshold', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('compaction.threshold')
+      expect(result.text).toContain('0.8')
+    }
+  })
+
+  it('/config <key> <value> 写入 project 作用域文件', async () => {
+    const projDir = await mkdtemp(join(tmpdir(), 'slash-config-'))
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('defaultModel gpt-5', {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('success')
+    const { readFile } = await import('node:fs/promises')
+    const saved = JSON.parse(await readFile(join(projDir, '.c0de/config.json'), 'utf-8')) as {
+      defaultModel?: string
+    }
+    expect(saved.defaultModel).toBe('gpt-5')
+    await rm(projDir, { recursive: true, force: true })
+  })
+
+  it('/config 未知键返回 error', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('nope.nope', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+  })
+
+  it('/model 诚实指引到模型选择器', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'model')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('gpt-4o', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('模型选择器')
+      expect(result.text).not.toContain('Model set to')
+    }
+  })
+
+  it('/clear 缺 --yes 拒绝执行', async () => {
     const session = await createSession(db, 't')
     const { appendMessage } = await import('../session/message.js')
     await appendMessage(db, session.id, {
@@ -116,12 +179,77 @@ describe('builtin commands', () => {
     })
     const cmd = builtinCommands.find((c) => c.name === 'clear')
     expect(cmd).toBeDefined()
-    const result = (await cmd?.execute(session.id, {
+    const result = (await cmd?.execute('', {
       cwd: '/',
       config: DEFAULT_CONFIG,
       deps,
+      sessionId: session.id,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    const { getEntries } = await import('../session/message.js')
+    expect(await getEntries(db, session.id)).toHaveLength(1)
+  })
+
+  it('/clear --yes 归档并清空当前会话消息', async () => {
+    const session = await createSession(db, 't')
+    const { appendMessage, getEntries } = await import('../session/message.js')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'hello' }],
+    })
+    const cmd = builtinCommands.find((c) => c.name === 'clear')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('--yes', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+      sessionId: session.id,
     })) as CommandResult
     expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.message).toContain('Cleared 1')
+    }
+    expect(await getEntries(db, session.id)).toHaveLength(0)
+    // 原始消息已归档（clear 类型）
+    const { searchArchives } = await import('../session/archive.js')
+    const archives = await searchArchives(db, session.id, 'hello')
+    expect(archives.length).toBeGreaterThan(0)
+    expect(archives.some((a) => a.archiveType === 'clear')).toBe(true)
+  })
+
+  it('/fork 默认当前会话最新消息分支', async () => {
+    const session = await createSession(db, 't')
+    const { appendMessage } = await import('../session/message.js')
+    await appendMessage(db, session.id, { role: 'user', content: [{ _tag: 'text', text: 'one' }] })
+    await appendMessage(db, session.id, { role: 'user', content: [{ _tag: 'text', text: 'two' }] })
+    const cmd = builtinCommands.find((c) => c.name === 'fork')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+      sessionId: session.id,
+    })) as CommandResult
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.message).toContain('Forked')
+    }
+  })
+
+  it('/fork 空会话返回 EMPTY_SESSION 错误', async () => {
+    const session = await createSession(db, 't')
+    const cmd = builtinCommands.find((c) => c.name === 'fork')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+      sessionId: session.id,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('EMPTY_SESSION')
+    }
   })
 
   it('/compact 声明压缩意图，返回 compact 变体（实际压缩由消费方执行）', async () => {

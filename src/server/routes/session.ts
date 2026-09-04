@@ -168,22 +168,18 @@ function createSessionRoute(ctx: ServerContext): Hono {
   })
 
   // 获取会话状态：内存有活跃 run → 返回其 status；否则查 DB lastRun。
-  // lastRun.status='running' 但无活跃 run → 服务重启被中断。
-  // lastRun.status='paused' → 服务重启时暂停的 run 可恢复继续执行。
+  // lastRun.status='running' 且无活跃 run → 服务重启被中断。
+  // lastRun.status='paused' 但无活跃 run（热更新/重启后 run 状态未迁移）→ 同样按中断处理：
+  // agent 内存态已丢失，resume 端点无法恢复，唯一可行路径是重发上一条消息。
   app.get('/:id/status', async (c) => {
     const run = ctx.agentManager.get(c.req.param('id'))
     if (run) return c.json(run.state.status)
     const session = await getSession(ctx.db, c.req.param('id'))
-    if (session?.metadata.lastRun?.status === 'running') {
+    if (
+      session?.metadata.lastRun?.status === 'running' ||
+      session?.metadata.lastRun?.status === 'paused'
+    ) {
       return c.json({ _tag: 'interrupted' })
-    }
-    if (session?.metadata.lastRun?.status === 'paused') {
-      return c.json({
-        _tag: 'paused',
-        provider: session.metadata.lastRun.provider,
-        model: session.metadata.lastRun.model,
-        agentName: session.metadata.lastRun.agentName,
-      })
     }
     return c.json({ _tag: 'idle' })
   })

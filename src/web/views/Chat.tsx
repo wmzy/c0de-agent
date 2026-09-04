@@ -429,7 +429,12 @@ export function Chat({
         <div className={interruptBanner} data-testid="permission-timeout-banner">
           <span>权限确认超时，工具「{permissionTimeout.tool}」已被自动拒绝</span>
           {onReask ? (
-            <button type="button" onClick={onReask} data-testid="permission-reask">
+            <button
+              type="button"
+              onClick={onReask}
+              data-testid="permission-reask"
+              title="重新询问将重发上一条消息，本回合已执行的工具可能重复执行"
+            >
               重新询问
             </button>
           ) : null}
@@ -480,8 +485,12 @@ export function Chat({
               ⚠ 自动授权已开启（重启后恢复默认）
             </span>
           ) : (
-            <span className={modeHint} data-testid="permission-mode-hint">
-              工具执行前逐个确认
+            <span
+              className={modeHint}
+              data-testid="permission-mode-hint"
+              title="授权模式为运行时状态，重启后恢复配置的默认模式"
+            >
+              工具执行前逐个确认（重启后恢复默认）
             </span>
           )}
           {toolToggle}

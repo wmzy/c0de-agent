@@ -32,7 +32,10 @@ function ToolsPanel({ tools, onToolsChange }: ToolsPanelProps) {
           placeholder="（无）"
         />
       </label>
-      <div className={hint}>用逗号分隔工具名称。</div>
+      <div className={hint}>
+        用逗号分隔工具名称。「已启用」留空 =
+        启用全部已注册工具；要禁用全部工具，请将全部工具名列入「已禁用」。
+      </div>
     </div>
   )
 }

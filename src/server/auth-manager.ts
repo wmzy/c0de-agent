@@ -10,8 +10,8 @@
 //   - authEnabled=false 时不启用。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, type FSWatcher, mkdirSync, readFileSync, watch, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 const DEVICES_FILENAME = 'devices.json'
 
@@ -76,8 +76,14 @@ export type AuthManager = {
   approvePairing(pairingId: string): boolean
   /** 拒绝配对。 */
   denyPairing(pairingId: string): boolean
+  /** 列出已授权设备（id/name/createdAt）。 */
+  listDevices(): Array<{ id: string; name: string; createdAt: number }>
+  /** 撤销某设备：立即从内存移除并落盘；返回是否成功。 */
+  revokeDevice(id: string): boolean
   /** 持久化设备注册表到磁盘（fire-and-forget 调用）。 */
   persist(): void
+  /** 关闭 devices.json 热重载 watcher（server dispose 时调用）。 */
+  dispose(): void
 }
 
 function hashToken(token: string): string {
@@ -121,6 +127,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   }
 
   function loadDevices(): void {
+    devices.clear()
     try {
       if (!existsSync(devicesPath)) return
       const raw = JSON.parse(readFileSync(devicesPath, 'utf-8')) as DevicesFile
@@ -132,6 +139,20 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
     } catch {
       // 注册表损坏：视为空（设备需重新配对/注册）
     }
+  }
+
+  // 热重载：CLI `c0de auth revoke/reset` 或手工编辑 devices.json 后立即生效。
+  // 监听目录而非文件——文件可能尚不存在（首启），persist/revoke 会创建它。
+  // 自身 persist 写入也会触发一次无伤重载。
+  let watcher: FSWatcher | undefined
+  try {
+    watcher = watch(dirname(devicesPath), (_event, filename) => {
+      if (filename === basename(devicesPath)) loadDevices()
+    })
+    // 不让 watcher 独占事件循环（测试/短生命周期进程可正常退出）
+    watcher.unref()
+  } catch {
+    // 目录不可 watch（极端环境）：降级为仅启动时加载
   }
 
   function persist(): void {
@@ -294,6 +315,25 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
       if (!p || p.status !== 'pending') return false
       p.status = 'denied'
       return true
+    },
+
+    listDevices() {
+      return Array.from(devices.values()).map((d) => ({
+        id: d.id,
+        name: d.name,
+        createdAt: d.createdAt,
+      }))
+    },
+
+    revokeDevice(id) {
+      const ok = devices.delete(id)
+      if (ok) persist()
+      return ok
+    },
+
+    dispose() {
+      watcher?.close()
+      watcher = undefined
     },
 
     persist,

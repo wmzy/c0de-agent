@@ -302,11 +302,12 @@ async function buildServerContext(
     ctx,
     dispose: async () => {
       // dev 重建前调用：中止活跃 run + settle pending permission +
-      // 停 scheduler。**不 close db**（调用方持有）。
+      // 停 scheduler + 关 devices.json watcher。**不 close db**（调用方持有）。
       ctx.agentManager.dispose()
       ctx.permissionStore.dispose()
       ctx.updateScheduler.stop()
       ctx.ptyManager.dispose()
+      ctx.authManager?.dispose()
     },
   }
 }

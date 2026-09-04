@@ -87,8 +87,14 @@ async function listDeletedSessions(handle: DB): Promise<Session[]> {
 /**
  * 软删除会话（级联其所有 fork 后代）。设置 deletedAt = now；
  * 30 天后由 purgeDeletedSessions 物理清除。
+ * 会话不存在或已在回收站 → 返回 false（调用方按 404 处理）。
  */
 async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
+  const [row] = await handle.db
+    .select({ id: sessions.id, deletedAt: sessions.deletedAt })
+    .from(sessions)
+    .where(eq(sessions.id, id))
+  if (!row || row.deletedAt) return false
   const ids = new Set<string>([id])
   let frontier = [id]
   while (frontier.length > 0) {
@@ -100,7 +106,6 @@ async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
     frontier = children.map((r) => r.id).filter((cid) => !ids.has(cid))
     for (const r of children) ids.add(r.id)
   }
-  if (!ids.has(id)) return false
   const now = new Date()
   for (const sid of ids) {
     await handle.db.update(sessions).set({ deletedAt: now }).where(eq(sessions.id, sid))
@@ -108,11 +113,25 @@ async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
   return true
 }
 
-/** 从回收站恢复会话（仅该会话本身，不清除其祖先/后代的删除标记）。 */
+/**
+ * 从回收站恢复会话：默认连带恢复其已软删除的祖先链——
+ * 否则恢复的会话因父仍在回收站而游离于会话树之外（P2-1：UI 不可达）。
+ * 祖先中未删除的（活跃）节点不需要也不应该被改动。
+ */
 async function restoreSession(handle: DB, id: string): Promise<boolean> {
   const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
   if (!row || !row.deletedAt) return false
-  await handle.db.update(sessions).set({ deletedAt: null }).where(eq(sessions.id, id))
+  const ids = new Set<string>([id])
+  let parentId = row.parentId
+  while (parentId) {
+    const [parent] = await handle.db.select().from(sessions).where(eq(sessions.id, parentId))
+    if (!parent) break
+    if (parent.deletedAt) ids.add(parent.id)
+    parentId = parent.parentId
+  }
+  for (const sid of ids) {
+    await handle.db.update(sessions).set({ deletedAt: null }).where(eq(sessions.id, sid))
+  }
   return true
 }
 

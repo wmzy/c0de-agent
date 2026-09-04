@@ -71,4 +71,28 @@ describe('config set', () => {
       }),
     ).rejects.toThrow(/value/i)
   })
+
+  it('set null 删除该键（unset，回落全局/默认值）', async () => {
+    seedConfig({ defaultModel: 'proj-model', theme: 'dark' })
+    const out: string[] = []
+    await runConfigCommand({
+      args: { options: {}, positionals: ['set', 'defaultModel', 'null'] },
+      cwd: tmp,
+      write: (s) => out.push(s),
+    })
+    const cfg = JSON.parse(readFileSync(join(tmp, '.c0de', 'config.json'), 'utf-8'))
+    expect(cfg).toEqual({ theme: 'dark' })
+    expect(out.join('')).toContain('Unset')
+  })
+
+  it('set 嵌套点路径只改目标键，不覆盖同层其它键', async () => {
+    seedConfig({ compaction: { threshold: 0.5, reserveTokens: 1000 } })
+    await runConfigCommand({
+      args: { options: {}, positionals: ['set', 'compaction.threshold', '0.9'] },
+      cwd: tmp,
+      write: () => {},
+    })
+    const cfg = JSON.parse(readFileSync(join(tmp, '.c0de', 'config.json'), 'utf-8'))
+    expect(cfg.compaction).toEqual({ threshold: 0.9, reserveTokens: 1000 })
+  })
 })

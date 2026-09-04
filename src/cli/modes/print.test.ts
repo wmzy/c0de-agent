@@ -118,4 +118,12 @@ describe('runPrintMode', () => {
       runPrintMode(config, 'hi', deps, { sessionId: '00000000-0000-4000-8000-000000000000' }),
     ).rejects.toThrow('session not found: 00000000-0000-4000-8000-000000000000')
   })
+
+  it('未配置 provider 时给出引导性报错（不裸抛 NoRoute）', async () => {
+    const chatStream = mockChatStream([])
+    // providers 为空 → registry 无路由
+    const bareConfig: Config = { ...config, providers: [] }
+    const deps = await buildAgentDeps(bareConfig, { db, cwd: process.cwd(), chatStream })
+    await expect(runPrintMode(bareConfig, 'hi', deps)).rejects.toThrow(/未配置可用的 AI 服务/)
+  })
 })

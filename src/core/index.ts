@@ -12,7 +12,7 @@ export {
 } from './agent.js'
 export { createSummarizer, runCompaction } from './compact.js'
 export type { CompactionConfig, Config, MCPServerConfig } from './config.js'
-export { DEFAULT_CONFIG, loadConfig, mergeConfig, saveConfig } from './config.js'
+export { DEFAULT_CONFIG, loadConfig, mergeConfig } from './config.js'
 export {
   calibrateEstimate,
   createTokenBudget,

@@ -94,6 +94,44 @@ function loadConfigScopes(projectDir?: string): {
 }
 
 /**
+ * 把 patch 应用到某个作用域的原始配置（scoped patch，null=删除）：
+ * - 深合并：嵌套普通对象递归合并，数组整体替换（providers 等列表语义）；
+ * - 值为 undefined 的键跳过；
+ * - 值为 null 的键从结果中**删除**——作用域内取消覆盖，回落到另一作用域/默认值。
+ *   Config 各字段均无合法的 null 值（可选字段用 undefined），null 作为「unset」标记是安全的。
+ * 不注入默认值。CLI config set / 服务端 PATCH /api/config 共用。
+ */
+function applyScopedPatch(
+  base: Record<string, unknown> | undefined,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...(base ?? {}) }
+  for (const [key, val] of Object.entries(patch)) {
+    if (val === undefined) continue
+    if (val === null) {
+      delete result[key]
+      continue
+    }
+    const current = result[key]
+    if (
+      typeof val === 'object' &&
+      !Array.isArray(val) &&
+      current !== null &&
+      typeof current === 'object' &&
+      !Array.isArray(current)
+    ) {
+      result[key] = applyScopedPatch(
+        current as Record<string, unknown>,
+        val as Record<string, unknown>,
+      )
+    } else {
+      result[key] = val
+    }
+  }
+  return result
+}
+
+/**
  * 不注入默认值的深合并：仅合并传入对象的自有键。
  * 数组整体替换（providers 等列表语义）；嵌套普通对象递归合并。
  * 用于「patch 合并进某个作用域的原始文件」后再写盘。
@@ -145,20 +183,6 @@ async function loadConfig(projectDir?: string): Promise<Config> {
   return mergeConfig(global, project)
 }
 
-async function saveConfig(
-  config: Config,
-  scope: 'global' | 'project',
-  projectDir?: string,
-): Promise<void> {
-  const dir =
-    scope === 'global'
-      ? join(homedir(), GLOBAL_CONFIG_DIR)
-      : join(projectDir ?? process.cwd(), '.c0de')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const path = join(dir, CONFIG_FILENAME)
-  writeFileSync(path, JSON.stringify(config, null, 2), 'utf-8')
-}
-
 export type {
   AgentsConfig,
   CompactionConfig,
@@ -171,11 +195,11 @@ export type {
   WebSearchConfig,
 }
 export {
+  applyScopedPatch,
   DEFAULT_CONFIG,
   loadConfig,
   loadConfigScopes,
   mergeConfig,
   mergeRaw,
-  saveConfig,
   saveConfigScoped,
 }

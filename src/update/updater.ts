@@ -12,6 +12,12 @@ type HotUpdateResult =
   | { _tag: 'spawn_failed'; error: string; snapshotPath: string }
   | { _tag: 'manual_install_required'; error: string; snapshotPath: string; command: string }
 
+/** 仅安装结果（无活跃 serve 的 CLI `c0de update --apply` 使用；不 spawn 新实例）。 */
+type InstallOnlyResult =
+  | { _tag: 'success'; installMethod: string }
+  | { _tag: 'install_failed'; error: string }
+  | { _tag: 'manual_install_required'; error: string; command: string }
+
 /**
  * 启动新实例的函数签名。
  * @param snapshotPath 快照文件路径（旧实例已写入）
@@ -319,10 +325,43 @@ async function performHotUpdate(
   return { _tag: 'success', snapshotPath, installMethod: method.kind }
 }
 
+/**
+ * 仅安装新版本（P2-7：无活跃 serve 的 `c0de update --apply`）。
+ * 不序列化快照、不 spawn `serve`——此前独立 CLI 执行会拉起一个用户未请求的常驻服务。
+ * 运行中的 serve 由 `/api/update/apply` 走 performHotUpdate 热更新路径。
+ */
+async function performInstall(opts: HotUpdateOptions = {}): Promise<InstallOnlyResult> {
+  const pkg = opts.packageName ?? DEFAULT_PACKAGE
+  const method = detectInstallMethod()
+  if (method.kind === 'unknown') {
+    return {
+      _tag: 'manual_install_required',
+      error: method.hint,
+      command: manualInstallCommand(pkg),
+    }
+  }
+  const install = opts.installFn ?? defaultInstall
+  try {
+    await install(pkg, method)
+  } catch (error) {
+    return {
+      _tag: 'install_failed',
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+  return { _tag: 'success', installMethod: method.kind }
+}
+
 /** 清理快照临时目录（热更新完成或放弃后调用）。 */
 async function cleanupSnapshot(snapshotPath: string): Promise<void> {
   await rm(join(snapshotPath, '..'), { recursive: true, force: true }).catch(() => {})
 }
 
-export type { HotUpdateOptions, HotUpdateResult, InstallMethod, SpawnFn }
-export { cleanupSnapshot, detectInstallMethod, manualInstallCommand, performHotUpdate }
+export type { HotUpdateOptions, HotUpdateResult, InstallMethod, InstallOnlyResult, SpawnFn }
+export {
+  cleanupSnapshot,
+  detectInstallMethod,
+  manualInstallCommand,
+  performHotUpdate,
+  performInstall,
+}

@@ -33,6 +33,8 @@ pnpm add -g c0de-agent
 - **认证**：`security.authEnabled` 默认开启。首次启动自动生成 bootstrap token（持久化于数据目录 `auth-token` 文件），浏览器首访凭启动打印的 URL `?token=` 注册为**首台设备**，服务端随即**轮换 bootstrap token**（旧 token 立即失效，杜绝 URL/shell 历史泄漏）并下发设备 token；后续 API 请求与终端 WebSocket 均携带设备 token。新增设备无 token 时进入**配对流程**：新设备生成 6 位配对码，由已授权设备在「设备配对」弹窗中核对并批准后下发新设备 token。显式配置 `security.token` 时为静态模式（不轮换、不配对，适合 CI/脚本）。
   - token 解析优先级：`security.token` 配置 > 环境变量 `C0DE_AUTH_TOKEN` > 数据目录 token 文件 > 自动生成并持久化。
   - 显式关闭：`security.authEnabled: false`（本机单用户且端口仅本机可达时）。
+  - **设备管理**：`c0de auth list` 列出已授权设备；`c0de auth revoke <id>` 撤销设备（运行中的服务立即生效）；`c0de auth reset` 清除全部设备与 token。运行中的服务会热加载 `devices.json` 的变更。
+  - **丢失唯一设备的恢复**：若唯一设备的浏览器数据被清空（设备 token 丢失），配对流程因无已授权设备可批准而无法完成。恢复步骤：`c0de auth reset` → 重启 `c0de serve` → 打开启动日志打印的带 `?token=` 的 URL 重新注册首台设备。
 - **CORS/Origin 校验**：仅放行本机回环 origin 与 `security.allowedOrigins` 中显式配置的 origin；WebSocket 升级在服务端独立校验 Origin（浏览器 WS 不受 CORS 约束）。
 - **监听地址**：默认绑定 `0.0.0.0`（便于容器/远程访问），安全性由 token + allowedOrigins 保证；需要时可用 `security.allowedOrigins` 收紧或自行反向代理限制。
 - **热更新交接**：新实例经环境变量继承 token，请求旧实例 `/handoff` 时须携带匹配的 Bearer token，防止任意本地进程借 handoff 杀掉服务。

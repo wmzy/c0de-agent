@@ -29,6 +29,7 @@ import {
 import { ToolsPanel } from '../components/settings/ToolsPanel.js'
 import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
 import { configAPI } from '../services/config.js'
+import { diffConfig, isPatchEmpty } from '../utils/config-diff.js'
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -80,6 +81,9 @@ export function Settings() {
     { kind: 'idle' } | { kind: 'saving' } | { kind: 'ok' } | { kind: 'err'; msg: string }
   >({ kind: 'idle' })
 
+  // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
+  const [needsRestart, setNeedsRestart] = useState(false)
+
   // 未保存导航防护：待确认的离开链接；bypass 标记放行「离开」确认后的重放点击。
   const [pendingLeave, setPendingLeave] = useState<{
     el: HTMLAnchorElement
@@ -93,11 +97,12 @@ export function Settings() {
   const save = useMutation({
     mutationFn: (patch: Partial<Config>) => configAPI.update(patch, scope),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
-    onSuccess: () => {
+    onSuccess: (resp) => {
       qc.invalidateQueries({ queryKey: ['config'] })
       // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
       // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
       setDraft(null)
+      setNeedsRestart(resp?.needsRestart === true)
       setSaveFeedback({ kind: 'ok' })
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
     },
@@ -164,6 +169,23 @@ export function Settings() {
   if (isLoading || !config) return <div className={loadingWrap}>加载中…</div>
 
   const merged = { ...config, ...draft }
+
+  /** 保存：diff 出相对加载时合并配置的变更（最小 patch，null=删除键），
+   *  只把变更合并进目标作用域文件——不再全量落盘（P1-2 作用域污染修复）。 */
+  const handleSave = () => {
+    if (!draft) return
+    const patch = diffConfig(
+      config as unknown as Record<string, unknown>,
+      draft as unknown as Record<string, unknown>,
+    )
+    if (isPatchEmpty(patch)) {
+      setDraft(null)
+      setSaveFeedback({ kind: 'ok' })
+      setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
+      return
+    }
+    save.mutate(patch as Partial<Config>)
+  }
 
   /**
    * 通用嵌套对象字段更新（浅合并）。适用于 compaction/fallback/tools/
@@ -263,10 +285,16 @@ export function Settings() {
     setViewMode('gui')
   }
 
-  /** 导出当前配置为 c0de-config.json。 */
+  /** 导出当前配置为 c0de-config.json（剔除明文 security.token 等敏感字段）。 */
   const exportConfig = () => {
     const text = viewMode === 'json' && !jsonError ? jsonText : JSON.stringify(merged, null, 2)
-    const blob = new Blob([text], { type: 'application/json' })
+    // P3：security.token 为明文鉴权令牌，导出/分享配置文件不应携带。
+    // apiKey 已由服务端加密（enc: 前缀），保留以便同机备份还原。
+    const cleaned = JSON.parse(text) as Record<string, unknown>
+    if (cleaned.security && typeof cleaned.security === 'object') {
+      delete (cleaned.security as Record<string, unknown>).token
+    }
+    const blob = new Blob([JSON.stringify(cleaned, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -510,8 +538,24 @@ export function Settings() {
         isDirty={isDirty}
         feedback={saveFeedback}
         onDiscard={discardChanges}
-        onSave={() => draft && save.mutate(draft)}
+        onSave={handleSave}
       />
+
+      {/* 安全类配置重启提示：token/authEnabled 由 authManager 启动时一次性读取 */}
+      {needsRestart && (
+        <div
+          style={{
+            padding: '8px 16px',
+            borderTop: '1px solid var(--border)',
+            background: 'color-mix(in srgb, var(--warning) 10%, transparent)',
+            color: 'var(--warning)',
+            fontSize: 12,
+          }}
+          data-testid="settings-restart-hint"
+        >
+          安全配置已保存，但需重启 c0de serve 后生效。
+        </div>
+      )}
 
       {/* 未保存更改离开确认：弹窗遮罩阻断交互，「留下」恢复编辑，「离开」放行导航 */}
       <Dialog

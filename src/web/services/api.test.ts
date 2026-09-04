@@ -96,6 +96,35 @@ describe('apiRequest', () => {
     expect(nextUrl).not.toContain('token')
     expect(nextUrl).toContain('other=1')
   })
+
+  it('已有设备 token 时 dev 注入的 bootstrap 不覆盖已存 token（防配对死循环）', async () => {
+    const setItem = vi.fn()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (k === 'c0de-auth-token' ? 'device-token' : null),
+      setItem,
+      removeItem: vi.fn(),
+    })
+    vi.stubGlobal('history', { replaceState: vi.fn(), pushState: vi.fn() })
+    vi.stubGlobal('fetch', vi.fn())
+    // 模拟 dev 注入 bootstrap，但无 URL token
+    Object.defineProperty(window, '__C0DE_AUTH_TOKEN__', {
+      value: 'injected-bootstrap',
+      configurable: true,
+    })
+    vi.resetModules()
+    Object.defineProperty(window, 'location', {
+      value: {
+        search: '',
+        pathname: '/',
+        hash: '',
+        href: 'http://localhost/',
+      },
+      configurable: true,
+    })
+    await import('./api.js')
+    // 不得用 injected-bootstrap 覆盖设备 token（否则注册失败 → 401 → 配对循环）
+    expect(setItem).not.toHaveBeenCalledWith('c0de-auth-token', 'injected-bootstrap')
+  })
 })
 
 // 回归（P0-1）：sendChatMessage 此前走原生 fetch 且不带 Authorization，
