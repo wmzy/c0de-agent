@@ -47,6 +47,8 @@ type AgentManager = {
   abort(sessionId: string): boolean
   pause(sessionId: string): boolean
   resume(sessionId: string): boolean
+  /** 暂停全部活跃 run 并等待到达安全点；超时强制中止（热更新前调用）。 */
+  pauseAll(timeoutMs?: number): Promise<{ paused: number; forcedAbort: number }>
   steer(sessionId: string, message: string): boolean
   /** 查询某 session 的所有子 agent run（恢复/展示用）。 */
   children(parentSessionId: string): ActiveRun[]
@@ -106,6 +108,33 @@ function createAgentManager(): AgentManager {
       if (!run) return false
       resumeAgent(run.state)
       return true
+    },
+    /**
+     * 请求暂停所有活跃 run，等待其到达安全暂停点（当前原子操作完成后）。
+     * 超时后对仍未暂停的 run 强制 abort（热更新不能无限等待）。
+     * 返回 { paused: 已暂停数, forcedAbort: 超时中止数 }。
+     */
+    async pauseAll(timeoutMs = 30_000): Promise<{ paused: number; forcedAbort: number }> {
+      const active = Array.from(runs.values())
+        .map((slot) => slotRun(slot))
+        .filter((r): r is ActiveRun => r !== undefined && r.state.status._tag === 'running')
+      for (const run of active) {
+        pauseAgent(run.state)
+      }
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        const stillRunning = active.filter((r) => r.state.status._tag === 'running')
+        if (stillRunning.length === 0) break
+        await new Promise((res) => setTimeout(res, 100))
+      }
+      let forcedAbort = 0
+      for (const run of active) {
+        if (run.state.status._tag === 'running') {
+          abortAgent(run.state)
+          forcedAbort += 1
+        }
+      }
+      return { paused: active.length - forcedAbort, forcedAbort }
     },
     steer(sessionId, message) {
       const run = slotRun(runs.get(sessionId))

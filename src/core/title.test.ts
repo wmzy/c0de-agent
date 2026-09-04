@@ -162,19 +162,20 @@ describe('generateSessionTitle', () => {
     expect(updated?.title).toBe(DEFAULT_SESSION_TITLE)
   })
 
-  it('never throws and never overwrites when chat fails', async () => {
+  it('falls back to message-derived title when chat fails (never throws)', async () => {
     const session = await createSession(db, DEFAULT_SESSION_TITLE)
     await expect(
       generateSessionTitle(
         { db, llmRegistry: {} as Registry, config: makeConfig(), chatFn: throwingChat() },
         session.id,
-        'anything',
+        'refactor the auth module',
         'openai',
         'gpt-4o',
       ),
     ).resolves.toBeUndefined()
     const updated = await getSession(db, session.id)
-    expect(updated?.title).toBe(DEFAULT_SESSION_TITLE)
+    // P2-12：标题生成失败时回退到首条消息摘要，避免列表出现大量 "New Session"
+    expect(updated?.title).toBe('refactor the auth module')
   })
 
   it('prefers the smol role when configured', async () => {

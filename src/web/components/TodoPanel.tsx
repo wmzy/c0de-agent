@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { kanbanAPI } from '../services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '../services/todo.js'
 import { inputStyle } from '../styles/tokens.js'
 
@@ -258,7 +259,7 @@ function activeTaskInfo(phases: TodoPhase[]) {
 
 // ── Component ─────────────────────────────────────────────
 
-export function TodoPanel({ sessionId }: { sessionId: string }) {
+export function TodoPanel({ sessionId, projectId }: { sessionId: string; projectId?: string }) {
   const queryClient = useQueryClient()
   const todoKey = ['todo', sessionId]
   const [collapsed, setCollapsed] = useState(
@@ -268,6 +269,7 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
   const [newTask, setNewTask] = useState('')
   const [newPhase, setNewPhase] = useState('')
   const [error, setError] = useState('')
+  const [exportResult, setExportResult] = useState<string | null>(null)
 
   const { data } = useQuery({
     queryKey: todoKey,
@@ -275,6 +277,40 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
   })
 
   const phases: TodoPhase[] = data?.phases ?? []
+
+  // P2-14：todo 与看板打通——把未完成任务导出为项目看板卡片（todo 列）。
+  const exportMutation = useMutation({
+    mutationFn: async ({ pid, todos }: { pid: string; todos: string[] }) => {
+      let count = 0
+      for (const title of todos) {
+        await kanbanAPI.addCard(pid, { title, columnId: 'todo' })
+        count += 1
+      }
+      return count
+    },
+    onSuccess: (count) => {
+      setExportResult(`已导出 ${count} 个任务到看板`)
+      setError('')
+      setTimeout(() => setExportResult(null), 4000)
+    },
+    onError: (e: Error) => {
+      setExportResult(null)
+      setError(`导出到看板失败：${e.message}`)
+    },
+  })
+
+  const handleExportToKanban = () => {
+    if (!projectId) return
+    const todos = phases
+      .flatMap((p) => p.tasks)
+      .filter((t) => t.status === 'pending' || t.status === 'in_progress')
+      .map((t) => t.content)
+    if (todos.length === 0) {
+      setError('没有可导出的未完成任务')
+      return
+    }
+    exportMutation.mutate({ pid: projectId, todos })
+  }
 
   const execMutation = useMutation({
     mutationFn: ({ sessionId: sid, op }: { sessionId: string; op: TodoOp }) =>
@@ -482,6 +518,27 @@ export function TodoPanel({ sessionId }: { sessionId: string }) {
       )}
 
       {error && <div className={errorText}>{error}</div>}
+      {exportResult && (
+        <div
+          className={errorText}
+          style={{ color: 'var(--success)' }}
+          data-testid="todo-export-result"
+        >
+          {exportResult}
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 12px 8px' }}>
+        <button
+          type="button"
+          className={`${inputStyle} ${addBtn}`}
+          onClick={handleExportToKanban}
+          disabled={!projectId || exportMutation.isPending}
+          title={projectId ? '把未完成任务导出为项目看板卡片' : '无项目上下文，无法导出'}
+          data-testid="todo-export-kanban"
+        >
+          导出到看板
+        </button>
+      </div>
     </div>
   )
 }

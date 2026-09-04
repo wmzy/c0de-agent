@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
-import { Hono, type Context } from 'hono'
+import { type Context, Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
@@ -7,6 +8,7 @@ import { compactContext } from '../../core/loop.js'
 import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
+import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
 import { getLLMSegments, getSession, updateSessionLastRun } from '../../session/session.js'
 import { upsertFileSnapshot } from '../../session/snapshot.js'
@@ -19,14 +21,24 @@ import { createInteractivePermissionChecker } from '../permission/interactive.js
 import type { ServerContext } from '../types.js'
 import { safeResolve } from '../util/safe-path.js'
 
-/** 按 session.projectId 解析 agent 工作目录；无项目回退 ctx.cwd。 */
+/** 按 session.projectId 解析 agent 工作目录；无项目回退 ctx.cwd。
+ *  P1-9：项目 worktree 已失效（目录被删除/移动）时抛错，由上层转为明确 409，
+ *  不再静默回退 ctx.cwd 导致 agent 在错误目录执行工具。 */
 export async function resolveAgentCwd(
   ctx: ServerContext,
   session: { projectId: string | null },
 ): Promise<string> {
   if (!session.projectId) return ctx.cwd
   const project = await getProject(ctx.db, session.projectId)
-  return project?.worktree ?? ctx.cwd
+  if (!project) {
+    throw new Error(`PROJECT_MISSING: 会话所属项目已不存在（projectId=${session.projectId}）`)
+  }
+  if (!existsSync(project.worktree)) {
+    throw new Error(
+      `WORKTREE_MISSING: 项目工作目录已失效（${project.worktree}）。请检查目录是否被移动或删除`,
+    )
+  }
+  return project.worktree
 }
 
 function createChatRoute(ctx: ServerContext): Hono {
@@ -53,7 +65,20 @@ function createChatRoute(ctx: ServerContext): Hono {
     }
 
     // 提前解析 cwd（slash 拦截与 agent 路径都需使用）
-    const cwd = await resolveAgentCwd(ctx, session)
+    // P1-9：worktree 失效/项目缺失 → 明确 409，不静默回退服务端 cwd。
+    let cwd: string
+    try {
+      cwd = await resolveAgentCwd(ctx, session)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.startsWith('PROJECT_MISSING')) {
+        return apiError(c, 409, 'PROJECT_MISSING', msg.replace('PROJECT_MISSING: ', ''))
+      }
+      if (msg.startsWith('WORKTREE_MISSING')) {
+        return apiError(c, 409, 'WORKTREE_MISSING', msg.replace('WORKTREE_MISSING: ', ''))
+      }
+      return apiError(c, 500, 'CWD_RESOLVE_FAILED', msg)
+    }
 
     // 斜杠命令拦截
     const parsed = parseSlashInput(message)
@@ -194,6 +219,32 @@ function createChatRoute(ctx: ServerContext): Hono {
 
     const provider = (body.provider as string) ?? ctx.config.defaultProvider
     const model = (body.model as string) ?? ctx.config.defaultModel
+
+    // P0-1 首次运行引导：provider 未配置/未注册时立即返回可操作错误，
+    // 不让错误延迟到 SSE 流内以英文 NoRoute 冒出。前端据此引导用户去设置页。
+    // 注：测试注入 ctx.chatStream 时跳过——测试 registry 空壳不代表生产未配置。
+    if (!ctx.chatStream) {
+      try {
+        resolveRoute(ctx.llmRegistry, provider, model)
+      } catch {
+        const configured = ctx.config.providers
+          .map((p) => p.name)
+          .filter(Boolean)
+          .join(', ')
+        return apiError(
+          c,
+          400,
+          'NO_PROVIDER_CONFIGURED',
+          `未配置可用的 AI 服务（provider: ${provider}）。请前往「设置 → Provider」添加 API 服务并测试连接`,
+          {
+            provider,
+            configuredProviders: ctx.config.providers.map((p) => p.name).filter(Boolean),
+            ...(configured ? { hint: `已配置：${configured}` } : {}),
+          },
+        )
+      }
+    }
+
     // 并发守卫（P0-4）：同步原子占位 tryAcquire（Map has+set 一气呵成、无 await）。
     // 旧实现先 get 检查、真正 register 在 SSE 回调内，两者之间隔多个 await
     // （getLLMSegments、createAgent 等）：双发 POST 在窗口内均通过守卫，后注册
@@ -265,14 +316,24 @@ function createChatRoute(ctx: ServerContext): Hono {
         let doneSent = false
         let runStartedAt: number | undefined
         try {
-          // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认
+          // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认。
+          // P1-5：模式按会话隔离（sessionPermissionModes 覆盖优先）。
           const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
-            getMode: () => ctx.permissionMode,
+            getMode: () => ctx.sessionPermissionModes.get(sessionId) ?? ctx.permissionMode,
             onPermissionRequired: async (req) => {
               await stream.writeSSE({
                 event: 'permission_required',
                 data: JSON.stringify({ _tag: 'permission_required', ...req }),
               })
+            },
+            // P1-6：确认超时（5 分钟）被自动拒绝时通知前端，避免用户误以为已执行
+            onPermissionTimeout: (req) => {
+              stream
+                .writeSSE({
+                  event: 'permission_timeout',
+                  data: JSON.stringify({ _tag: 'permission_timeout', ...req }),
+                })
+                .catch(() => {})
             },
           })
 
@@ -313,6 +374,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             model: resolvedModel,
             startedAt: runStartedAt,
           })
+          state.lastRunStartedAt = runStartedAt
 
           // 填充 tryAcquire 留下的占位（原 register 语义：按 sessionId 覆盖写入）
           ctx.agentManager.register({ sessionId, state, deps })

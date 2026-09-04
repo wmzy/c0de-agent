@@ -59,10 +59,14 @@ const dialogActions = css`
 
 export function Settings() {
   const qc = useQueryClient()
-  const { data: config, isLoading } = useQuery({
+  const { data: resp, isLoading } = useQuery({
     queryKey: ['config'],
     queryFn: () => configAPI.get(),
   })
+  const config = resp?.config ?? null
+  const warnings = resp?.warnings ?? []
+  // P1-7：配置作用域（global 全局 / project 项目），保存时按此作用域落盘
+  const [scope, setScope] = useState<'global' | 'project'>('project')
   const [draft, setDraft] = useState<Partial<Config> | null>(null)
 
   // 视图模式：GUI 表单 / JSON 直接编辑（参考 VSCode settings 切换）
@@ -87,7 +91,7 @@ export function Settings() {
   const isDirty = draft !== null
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Config>) => configAPI.update(patch),
+    mutationFn: (patch: Partial<Config>) => configAPI.update(patch, scope),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] })
@@ -322,6 +326,43 @@ export function Settings() {
 
   return (
     <div className={settingsScroll} data-testid="settings">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '8px 16px',
+          borderBottom: '1px solid var(--border)',
+          fontSize: 12,
+        }}
+      >
+        <span style={{ color: 'var(--text-secondary)' }}>配置作用域</span>
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value as 'global' | 'project')}
+          data-testid="scope-select"
+          style={{ fontSize: 12, padding: '3px 8px' }}
+        >
+          <option value="project">项目配置（当前目录 .c0de/config.json）</option>
+          <option value="global">全局配置（~/.c0de/config.json）</option>
+        </select>
+      </div>
+      {warnings.length > 0 && (
+        <div
+          style={{
+            padding: '10px 16px',
+            borderBottom: '1px solid var(--border)',
+            background: 'color-mix(in srgb, var(--warning) 10%, transparent)',
+            fontSize: 12,
+            color: 'var(--text)',
+          }}
+          data-testid="config-warnings"
+        >
+          {warnings.map((w) => (
+            <div key={w}>{w}</div>
+          ))}
+        </div>
+      )}
       <SettingsToolbar
         viewMode={viewMode}
         onSwitchGui={enterGuiMode}
@@ -335,10 +376,7 @@ export function Settings() {
         <JsonConfigEditor jsonText={jsonText} jsonError={jsonError} onChange={onJsonChange} />
       ) : (
         <>
-          <AppearancePanel
-            locale={merged.locale}
-            onLocaleChange={(locale) => patchDraft({ locale })}
-          />
+          <AppearancePanel />
           <ProviderPanel providers={merged.providers} onProvidersChange={updateProviders} />
           <ModelPanel
             providers={merged.providers}

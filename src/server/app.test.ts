@@ -95,8 +95,8 @@ describe('createApp (integration)', () => {
     const { app } = await setupApp()
     const res = await app.request('/api/config')
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { defaultProvider: string }
-    expect(body.defaultProvider).toBeDefined()
+    const body = (await res.json()) as { config: { defaultProvider: string } }
+    expect(body.config.defaultProvider).toBeDefined()
   })
 
   it('GET /api/files 列出文件', async () => {

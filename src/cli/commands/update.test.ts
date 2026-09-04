@@ -38,7 +38,7 @@ describe('runUpdateCommand', () => {
       out,
     })
     expect(r).toBeUndefined()
-    expect(installFn).toHaveBeenCalledWith('c0de-agent')
+    expect(installFn).toHaveBeenCalledWith('c0de-agent', expect.anything())
     expect(spawnFn).toHaveBeenCalled()
     expect(out.mock.calls.flat().join(' ')).toContain('热更新完成')
   })

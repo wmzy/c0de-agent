@@ -9,10 +9,14 @@ import type { DBConfig } from './types.js'
  * Unified database handle.
  * `db` is the Drizzle ORM instance with schema bound.
  * `close()` cleans up the connection.
+ * `sync()` (PGLite only) flushes WAL to filesystem — periodic call 缩短
+ * 突然停机（kill -9）时的数据丢失窗口，是 WAL 之外的额外保险。
  */
 type DB = {
   db: PgliteDatabase<typeof schema>
   close(): Promise<void>
+  /** PGLite：syncToFs(false) 全量刷盘；PostgreSQL 模式下为 no-op（服务端自行管理）。 */
+  sync?(): Promise<void>
 }
 
 /**
@@ -36,6 +40,11 @@ async function createDB(config: DBConfig): Promise<DB> {
       db,
       async close() {
         await client.close()
+      },
+      async sync() {
+        // P2-15：主动把 WAL 刷到文件系统（默认非 relaxedDurability 全量 fsync），
+        // 使 kill -9 等非优雅退出时已提交事务不丢。失败吞掉（尽力而为）。
+        await client.syncToFs().catch(() => {})
       },
     }
   }

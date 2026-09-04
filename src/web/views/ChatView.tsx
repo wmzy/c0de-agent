@@ -1,11 +1,12 @@
 import { css } from '@linaria/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { AgentSelector } from '../components/AgentSelector.js'
 import { Logo } from '../components/Logo.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { ToolToggle } from '../components/ToolToggle.js'
+import { useConfig } from '../contexts/ConfigContext.js'
 import { useFileReference } from '../contexts/ReferenceContext.js'
 import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
 import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
@@ -13,6 +14,45 @@ import { agentAPI } from '../services/agent.js'
 import { sessionAPI } from '../services/session.js'
 import { Chat, type SendPayload } from './Chat.js'
 import { ChatSession } from './ChatSession.js'
+
+/** P0-1：未配置 AI 服务的引导横幅（欢迎区上方，直达设置页）。 */
+const setupBanner = css`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  font-size: 13px;
+  color: var(--text);
+
+  & > a {
+    color: var(--primary);
+    text-decoration: none;
+    border: 1px solid var(--primary);
+    border-radius: 6px;
+    padding: 3px 12px;
+    font-size: 12px;
+    flex-shrink: 0;
+    &:hover {
+      background: color-mix(in srgb, var(--primary) 10%, transparent);
+    }
+  }
+`
+
+/** 未配置 provider 时的引导横幅（首条消息前展示）。 */
+export function SetupBanner() {
+  const { config, loading } = useConfig()
+  if (loading || !config) return null
+  const hasProvider = (config.providers ?? []).length > 0
+  if (hasProvider) return null
+  return (
+    <div className={setupBanner} data-testid="setup-banner">
+      <span>尚未配置 AI 服务（Provider / API Key），无法开始对话</span>
+      <Link to="/settings">去设置</Link>
+    </div>
+  )
+}
 
 const skeletonStream = css`
   flex: 1;
@@ -261,6 +301,7 @@ function DraftSession({ projectId }: { projectId: string }) {
       toolToggle={
         <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={creating} />
       }
+      topPanel={<SetupBanner />}
       supportsVision
     />
   )

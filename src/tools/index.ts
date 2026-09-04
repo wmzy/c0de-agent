@@ -131,8 +131,8 @@ export function resolveEnabledToolNames(
 ): string[] {
   const all = listTools(registry).map((t) => t.name)
   const disabled = new Set(config.tools?.disabled ?? [])
-  const base = explicit ?? (config.tools?.enabled && config.tools.enabled.length > 0
-    ? config.tools.enabled
-    : all)
+  const base =
+    explicit ??
+    (config.tools?.enabled && config.tools.enabled.length > 0 ? config.tools.enabled : all)
   return base.filter((n) => all.includes(n) && !disabled.has(n))
 }

@@ -90,7 +90,13 @@ function Harness({
 
 function renderSelector(value: ModelSelection, config: Config = baseConfig) {
   const onChange = vi.fn()
-  vi.mocked(useConfig).mockReturnValue({ config, loading: false, refresh: vi.fn() })
+  vi.mocked(useConfig).mockReturnValue({
+    config,
+    loading: false,
+    refresh: vi.fn(),
+    warnings: [],
+    scopes: { global: null, project: null },
+  })
   vi.mocked(providerAPI.list).mockResolvedValue({
     providers: config.providers.map((p) => ({
       name: p.name,

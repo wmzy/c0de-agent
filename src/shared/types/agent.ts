@@ -120,6 +120,8 @@ type AgentEvent =
       tool: string
       input: unknown
     }
+  /** P1-6：权限确认超时（5 分钟）被自动拒绝时通知前端，提供「重新询问」入口。 */
+  | { _tag: 'permission_timeout'; toolCallId: string; tool: string; input: unknown }
   | { _tag: 'error'; error: AgentError }
   /** 通知前端：本轮 LLM 调用详情已持久化，应刷新调用详情面板。轻量通知，不带 payload。 */
   | { _tag: 'llm_detail' }
@@ -191,6 +193,10 @@ type AgentState = {
    * （agentLoop 重入）时不会自动重置——它由压缩成功单独建立。
    */
   postCompactionMonitor?: { remaining: number; noTextStreak: number }
+  /** 本次 run 开始时间戳（ms）。暂停持久化 lastRun 时回填 startedAt。 */
+  lastRunStartedAt?: number
+  /** 暂停状态是否已 yield 给前端（loop 内用，防重复 status_change）。 */
+  pauseYielded?: boolean
 }
 
 export type {

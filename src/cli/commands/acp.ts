@@ -1,6 +1,6 @@
 import readline from 'node:readline/promises'
 import type { LoopDeps } from '../../core/loop.js'
-import { createSession, listSessions } from '../../session/session.js'
+import { createSession, listAllSessions } from '../../session/session.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ACPHandler } from '../modes/acp.js'
 import { formatACPEvent, runAcpLoop } from '../modes/acp.js'
@@ -19,11 +19,11 @@ function createAcpHandlers(
   return {
     'session/create': async (params) => {
       const title = (params.title as string | undefined) ?? 'acp-session'
-      const session = await createSession(deps.db, title)
+      const session = await createSession(deps.db, title, undefined, undefined, 'cli')
       return { sessionId: session.id }
     },
     'session/list': async () => {
-      const sessions = await listSessions(deps.db)
+      const sessions = await listAllSessions(deps.db)
       return { sessions }
     },
     chat: async (params) => {

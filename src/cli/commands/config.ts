@@ -1,9 +1,4 @@
-import {
-  loadConfigScopes,
-  mergeConfig,
-  mergeRaw,
-  saveConfigScoped,
-} from '../../core/config.js'
+import { loadConfigScopes, mergeConfig, mergeRaw, saveConfigScoped } from '../../core/config.js'
 import type { Config } from '../../shared/types/config.js'
 import type { CommandArgs } from '../parser.js'
 

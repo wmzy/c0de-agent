@@ -3,6 +3,7 @@ import { resolveRoute } from '../llm/registry.js'
 import { detectProjectInfo } from '../project/detect.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { getMessages } from '../session/message.js'
+import { updateSessionLastRun } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
@@ -109,10 +110,19 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     }
 
     if (state.status._tag === 'paused') {
-      state.status = { _tag: 'running', turnCount: turn }
+      // 暂停点：上一轮原子操作（工具执行批次）已完成。
+      // 持久化 paused 状态供热更新/重启后恢复，随后阻塞等待 resume。
+      state.pauseYielded = false
       yield { _tag: 'status_change', status: state.status }
+      await updateSessionLastRun(deps.db, state.session.id, {
+        status: 'paused',
+        agentName: state.config.agentName,
+        provider: state.config.provider,
+        model: state.config.model,
+        startedAt: state.lastRunStartedAt ?? Date.now(),
+      }).catch(() => {})
       await waitForResume(state)
-      if (state.status._tag !== 'running') return
+      if (state.status._tag === 'paused') return // 等待期间被 abort 等终结
     }
     state.status = { _tag: 'running', turnCount: turn }
 

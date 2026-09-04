@@ -27,6 +27,14 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
     onEvent: (e) => {
       if (e._tag === 'tool_call_start') err(`[tool] ${e.tool}\n`)
       else if (e._tag === 'thinking') err(`[thinking] ${e.text}\n`)
+      else if (e._tag === 'tool_call_end') {
+        // P2-17：非交互模式被拒绝的工具调用，把拒绝原因直接可见地输出给用户
+        //（拒绝原因本身含 -y / serve 指引），而不是只留给模型转述。
+        const result = e.result as { _tag?: string; reason?: string }
+        if (result?._tag === 'deny') {
+          err(`[tool] 工具调用已拒绝：${result.reason ?? '需要确认'}\n`)
+        }
+      }
     },
   })
 

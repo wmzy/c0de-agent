@@ -1,4 +1,8 @@
+// src/server/routes/project.ts
+import { existsSync } from 'node:fs'
+import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { kanbanBoards, projects, sessions } from '../../db/schema.js'
 import {
   fromDirectory,
   getProject,
@@ -11,11 +15,12 @@ import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { expandPath } from './filesystem.js'
 
-type ProjectWithBranch = Project & { gitBranch: string | null }
+type ProjectWithBranch = Project & { gitBranch: string | null; worktreeMissing: boolean }
 
-/** 实时取 git 分支（分支随时变，不存 DB）。 */
+/** 实时取 git 分支（分支随时变，不存 DB）。worktree 不存在时标记缺失。 */
 function withBranch(project: Project): ProjectWithBranch {
-  return { ...project, gitBranch: resolveProject(project.worktree).gitBranch }
+  const worktreeMissing = !existsSync(project.worktree)
+  return { ...project, gitBranch: resolveProject(project.worktree).gitBranch, worktreeMissing }
 }
 
 function createProjectRoute(ctx: ServerContext): Hono {
@@ -58,6 +63,42 @@ function createProjectRoute(ctx: ServerContext): Hono {
     const project = await updateProjectName(ctx.db, c.req.param('id'), name)
     if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
     return c.json(withBranch(project))
+  })
+
+  // P1-9：删除项目记录（看板级联删除；会话经 FK set null 解除绑定保留）。
+  // 有活跃 run 绑定该项目时拒绝删除，避免 agent 工作目录悬空。
+  app.delete('/:id', async (c) => {
+    const id = c.req.param('id')
+    const project = await getProject(ctx.db, id)
+    if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+
+    // 活跃 run 守卫：任一活跃会话归属于该项目 → 拒绝
+    const activeSessionIds = new Set<string>()
+    for (const run of ctx.agentManager.children(id)) {
+      activeSessionIds.add(run.sessionId)
+    }
+    if (activeSessionIds.size === 0) {
+      // 检查该项目下是否有正在进行（含占位）的会话
+      const rows = await ctx.db.db
+        .select({ id: sessions.id, projectId: sessions.projectId })
+        .from(sessions)
+        .where(and(eq(sessions.projectId, id)))
+      const active = rows.filter((r) => ctx.agentManager.get(r.id))
+      if (active.length > 0) {
+        return apiError(
+          c,
+          409,
+          'PROJECT_HAS_ACTIVE_SESSIONS',
+          `项目下有 ${active.length} 个进行中的对话，请先中止后再删除`,
+        )
+      }
+    }
+
+    await ctx.db.db.transaction(async (tx) => {
+      await tx.delete(kanbanBoards).where(eq(kanbanBoards.projectId, id))
+      await tx.delete(projects).where(eq(projects.id, id))
+    })
+    return c.json({ ok: true })
   })
 
   return app

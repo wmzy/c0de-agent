@@ -13,6 +13,8 @@ function makeState(): AgentState {
     metadata: {},
     agentType: null,
     worktreePath: null,
+    source: null,
+    deletedAt: null,
     createdAt: 0,
     updatedAt: 0,
   }

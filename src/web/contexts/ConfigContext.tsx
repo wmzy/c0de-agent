@@ -7,6 +7,10 @@ import { configAPI } from '../services/config.js'
 type ConfigContextValue = {
   config: Config | null
   loading: boolean
+  /** apiKey 解密失败等配置警告（P1-7）。 */
+  warnings: string[]
+  /** 作用域信息：global/project 原始配置（设置页作用域标注用）。 */
+  scopes: { global: Partial<Config> | null; project: Partial<Config> | null }
   refresh: () => Promise<void>
 }
 
@@ -21,7 +25,7 @@ const ConfigContext = createContext<ConfigContextValue | null>(null)
  */
 export function ConfigProvider({ children }: { children: ReactNode }) {
   const {
-    data: config,
+    data: resp,
     isLoading: loading,
     refetch,
   } = useQuery({
@@ -34,7 +38,15 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, [refetch])
 
   return (
-    <ConfigContext.Provider value={{ config: config ?? null, loading, refresh }}>
+    <ConfigContext.Provider
+      value={{
+        config: resp?.config ?? null,
+        loading,
+        warnings: resp?.warnings ?? [],
+        scopes: resp?.scopes ?? { global: null, project: null },
+        refresh,
+      }}
+    >
       {children}
     </ConfigContext.Provider>
   )

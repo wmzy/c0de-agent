@@ -11,6 +11,7 @@ import type { URLRegistry } from '../shared/types/tool.js'
 import type { ToolRegistry } from '../tools/types.js'
 import type { HandoffServer, UpdateScheduler } from '../update/index.js'
 import type { AgentManager } from './agent-manager.js'
+import type { AuthManager } from './auth-manager.js'
 import type { PermissionStore } from './permission/store.js'
 import type { PTYManager } from './terminal/pty-manager.js'
 
@@ -29,14 +30,20 @@ type ServerContext = {
   agentManager: AgentManager
   /** 全局权限确认 store（单例），独立于 agent run 生命周期。 */
   permissionStore: PermissionStore
-  /** 全局授权模式（运行时可临时切换）：'default' 逐个确认；'auto' 自动放行 ask 工具（YOLO）。启动时取 config.permission.defaultMode，PUT /api/permissions 临时切换不回写 config。 */
+  /** 默认授权模式（config.permission.defaultMode）。 */
   permissionMode: 'default' | 'auto'
+  /** 会话级授权模式覆盖：Map<sessionId, mode>。会话未覆盖时回退 permissionMode。
+   *  P1-5：auto 是高风险状态，按会话隔离避免一个标签页切换影响全部会话。 */
+  sessionPermissionModes: Map<string, 'default' | 'auto'>
   /**
    * API Bearer token（认证未显式关闭时必存在）。
    * 用户配置 security.token 优先；否则自动生成并持久化到数据目录 auth-token 文件
    * （跨重启/热更新稳定，浏览器首访经 ?token= URL 获取后本地保存）。
+   * P2-16：bootstrap token 仅用于首设备注册；注册后轮换，API 请求认设备 token。
    */
   authToken?: string
+  /** 认证管理器（token 轮换 + 设备配对审批，P2-16）。authEnabled=false 或测试上下文为 undefined。 */
+  authManager?: AuthManager
   /** 主 HTTP 服务实际绑定端口（startServer 绑定后回填；热更新 spawn 新实例复用）。 */
   port?: number
   /** Agent 类型注册表（spec: multi-agent-design）。注入 agent loop 的 runSubAgent。 */

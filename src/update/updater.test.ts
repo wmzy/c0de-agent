@@ -27,7 +27,7 @@ describe('performHotUpdate', () => {
     })
     expect(r._tag).toBe('success')
     expect(calls).toEqual(['install', 'spawn'])
-    expect(installFn).toHaveBeenCalledWith('c0de-agent')
+    expect(installFn).toHaveBeenCalledWith('c0de-agent', expect.anything())
     const written = JSON.parse(await readFile(path, 'utf8')) as { version: string }
     expect(written.version).toBe('0.1.0')
   })

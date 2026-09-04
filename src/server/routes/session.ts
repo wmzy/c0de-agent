@@ -11,11 +11,13 @@ import {
 import { deleteEntriesByIds, getMessages, insertEntry } from '../../session/message.js'
 import {
   createSession,
-  deleteSession,
   getLLMSegments,
   getSession,
+  listDeletedSessions,
   listSessions,
   listSessionsByProject,
+  restoreSession,
+  softDeleteSession,
   touchLastOpened,
 } from '../../session/session.js'
 import {
@@ -64,6 +66,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json(tree)
   })
 
+  // 回收站：已软删除的会话列表（必须注册在 /:id 之前，避免被参数路由吞掉）
+  app.get('/deleted', async (c) => {
+    const sessions = await listDeletedSessions(ctx.db)
+    return c.json(sessions)
+  })
+
   // 获取会话详情
   app.get('/:id', async (c) => {
     try {
@@ -77,11 +85,18 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
   })
 
-  // 分支会话
+  // 分支会话：未指定 messageIndex 时默认在最新一条消息处分叉（fork=完整副本语义）
   app.post('/:id/fork', async (c) => {
     const id = c.req.param('id')
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const messageIndex = (body.messageIndex as number) ?? 0
+    let messageIndex = body.messageIndex as number | undefined
+    if (messageIndex === undefined || !Number.isFinite(messageIndex)) {
+      const messages = await getMessages(ctx.db, id)
+      if (messages.length === 0) {
+        return apiError(c, 400, 'EMPTY_SESSION', '空会话无法分支')
+      }
+      messageIndex = messages.length - 1
+    }
     try {
       const forked = await forkSession(ctx.db, id, messageIndex)
       return c.json(forked, 201)
@@ -94,10 +109,18 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
   })
 
-  // 删除会话
+  // 删除会话（软删除：级联其 fork 后代进入回收站，30 天后物理清除）
   app.delete('/:id', async (c) => {
-    await deleteSession(ctx.db, c.req.param('id'))
+    const ok = await softDeleteSession(ctx.db, c.req.param('id'))
+    if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     return c.body(null, 204)
+  })
+
+  // 恢复会话（从回收站还原；仅还原该会话本身）
+  app.post('/:id/restore', async (c) => {
+    const ok = await restoreSession(ctx.db, c.req.param('id'))
+    if (!ok) return apiError(c, 404, 'NOT_FOUND', '会话不存在或未删除')
+    return c.json({ ok: true })
   })
 
   // 获取消息列表
@@ -146,12 +169,21 @@ function createSessionRoute(ctx: ServerContext): Hono {
 
   // 获取会话状态：内存有活跃 run → 返回其 status；否则查 DB lastRun。
   // lastRun.status='running' 但无活跃 run → 服务重启被中断。
+  // lastRun.status='paused' → 服务重启时暂停的 run 可恢复继续执行。
   app.get('/:id/status', async (c) => {
     const run = ctx.agentManager.get(c.req.param('id'))
     if (run) return c.json(run.state.status)
     const session = await getSession(ctx.db, c.req.param('id'))
     if (session?.metadata.lastRun?.status === 'running') {
       return c.json({ _tag: 'interrupted' })
+    }
+    if (session?.metadata.lastRun?.status === 'paused') {
+      return c.json({
+        _tag: 'paused',
+        provider: session.metadata.lastRun.provider,
+        model: session.metadata.lastRun.model,
+        agentName: session.metadata.lastRun.agentName,
+      })
     }
     return c.json({ _tag: 'idle' })
   })

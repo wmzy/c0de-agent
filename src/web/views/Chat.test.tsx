@@ -25,6 +25,8 @@ vi.mock('../services/permission.js', () => ({
     getMode: vi.fn().mockResolvedValue({ mode: 'default' }),
     setMode: vi.fn().mockResolvedValue({ mode: 'auto' }),
   },
+  broadcastModeChange: vi.fn(),
+  subscribeModeChange: vi.fn(() => () => {}),
 }))
 
 afterEach(() => cleanup())
@@ -117,7 +119,7 @@ describe('Chat permission mode toggle', () => {
   it('点击开关切换到 auto：调用 setMode 并显示警示 pill', () => {
     renderChat()
     fireEvent.click(screen.getByTestId('permission-mode-toggle'))
-    expect(vi.mocked(permissionAPI.setMode)).toHaveBeenCalledWith('auto')
+    expect(vi.mocked(permissionAPI.setMode)).toHaveBeenCalledWith('auto', undefined)
     const warn = screen.getByTestId('permission-mode-warning')
     expect(warn.textContent).toContain('自动授权已开启')
     expect(screen.queryByTestId('permission-mode-hint')).toBeNull()

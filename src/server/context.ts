@@ -56,6 +56,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
     permissionMode: config.permission.defaultMode,
+    sessionPermissionModes: new Map(),
     // 测试工厂不解析/生成 token（不触碰用户全局数据目录）。
     authToken: undefined,
     agentRegistry,

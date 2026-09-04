@@ -163,7 +163,10 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       const continueId = args.options.continue as string | undefined
       await withAgentDeps(
         cwd,
-        { ...(strategy ? { strategy } : {}), ...(continueId ? { continueSessionId: continueId } : {}) },
+        {
+          ...(strategy ? { strategy } : {}),
+          ...(continueId ? { continueSessionId: continueId } : {}),
+        },
         (config, deps) => runChatCommand({ args, config, deps }),
       )
       return

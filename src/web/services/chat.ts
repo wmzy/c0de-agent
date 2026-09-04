@@ -77,7 +77,9 @@ async function sendChatMessage(
     throw {
       status: response.status,
       message:
-        response.status === 401 ? `${errMessage}（认证失败，请从 serve 输出的 URL 重新进入）` : errMessage,
+        response.status === 401
+          ? `${errMessage}（认证失败，请从 serve 输出的 URL 重新进入）`
+          : errMessage,
       code: errBody?.code,
       ...(errBody?.details ? { details: errBody.details } : {}),
     } as APIError

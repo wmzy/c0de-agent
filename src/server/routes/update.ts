@@ -33,23 +33,46 @@ function createUpdateRoute(ctx: ServerContext): Hono {
 
   app.post('/apply', async (c) => {
     if (!ctx.handoff) {
-      return apiError(c, 409, 'HOT_UPDATE_UNAVAILABLE', '热更新仅在独立 serve 进程可用（dev 模式请手动更新）')
+      return apiError(
+        c,
+        409,
+        'HOT_UPDATE_UNAVAILABLE',
+        '热更新仅在独立 serve 进程可用（dev 模式请手动更新）',
+      )
     }
     const result = await ctx.updateScheduler.checkNow()
     if (!result.hasUpdate) {
       return apiError(c, 409, 'NO_UPDATE', '已是最新版本，无需热更新')
     }
+
+    // P1-8：热更新前先暂停所有活跃 run，等其到达安全暂停点（原子操作完成）。
+    // 暂停状态已持久化（lastRun.status='paused'），新实例接管后可恢复继续执行。
+    const pauseTimeoutMs = ctx.config.update.pauseTimeoutMs ?? 30_000
+    const pauseResult = await ctx.agentManager.pauseAll(pauseTimeoutMs)
+
     const snapshot = await serializeSessions(ctx.db, ctx.config)
     const r = await performHotUpdate(snapshot, {
       handoffPort: ctx.handoff.port,
       port: ctx.port,
-      authToken: ctx.authToken,
+      // P2-16：传当前 bootstrap（轮换后 ctx.authToken 可能已过期）；
+      // 旧实例 handoff 端点经 verifyHandoff 接受当前/历史 bootstrap 与设备 token。
+      authToken: ctx.authManager?.bootstrap ?? ctx.authToken,
     })
     if (r._tag === 'success') {
       return c.json({
         ok: true,
         snapshotPath: r.snapshotPath,
         latestVersion: result.latestVersion,
+        installMethod: r.installMethod,
+        pausedSessions: pauseResult.paused,
+        forcedAbort: pauseResult.forcedAbort,
+      })
+    }
+    if (r._tag === 'manual_install_required') {
+      // P0-2：无法自动安装（未知安装方式/自动安装失败/等待超时）→ 引导手动更新
+      return apiError(c, 409, 'MANUAL_UPDATE_REQUIRED', r.error, {
+        command: r.command,
+        snapshotPath: r.snapshotPath,
       })
     }
     return apiError(c, 500, 'HOT_UPDATE_FAILED', `${r._tag}: ${'error' in r ? r.error : 'unknown'}`)

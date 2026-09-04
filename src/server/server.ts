@@ -1,5 +1,6 @@
 // src/server/server.ts
 
+import { randomBytes } from 'node:crypto'
 import {
   cpSync,
   existsSync,
@@ -10,7 +11,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { randomBytes } from 'node:crypto'
 import type { Server as NodeServer } from 'node:http'
 import { connect as tcpConnect } from 'node:net'
 import { homedir } from 'node:os'
@@ -32,6 +32,7 @@ import {
   registerProvider,
 } from '../llm/registry.js'
 import { initPlugins } from '../plugins/index.js'
+import { purgeDeletedSessions } from '../session/session.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
@@ -48,6 +49,7 @@ import {
 import type { HandoffError } from '../update/ipc.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
+import { createAuthManager } from './auth-manager.js'
 import { isAllowedOrigin } from './middleware/cors.js'
 import { createPermissionStore } from './permission/store.js'
 import { PTYManager } from './terminal/pty-manager.js'
@@ -252,6 +254,17 @@ async function buildServerContext(
   // 此前是惰性 getter 只注册 builtin，导致项目级 .c0de/workflows/*.js 永远不可见。
   const workflowRegistry = await createAndPopulateRegistry(cwd)
 
+  const dataDir = resolveDbDir()
+  // 先解析/生成 bootstrap token（落盘），再创建 authManager 读取——
+  // 首启时文件由 resolveAuthToken 生成，顺序颠倒会导致 bootstrap 读到空值。
+  const resolvedToken = resolveAuthToken(config, dataDir)
+  const authManager = createAuthManager({
+    dataDir,
+    ...(config.security.token && config.security.token.length > 0
+      ? { staticToken: config.security.token }
+      : {}),
+  })
+
   const ctx: ServerContext = {
     db,
     config,
@@ -263,7 +276,9 @@ async function buildServerContext(
     agentManager: createAgentManager(),
     permissionStore: createPermissionStore(),
     permissionMode: config.permission.defaultMode,
-    authToken: resolveAuthToken(config, resolveDbDir()),
+    sessionPermissionModes: new Map(),
+    authToken: resolvedToken,
+    authManager: config.security.authEnabled === false ? undefined : authManager,
     // Agent 注册表：内置 4 个默认 agent；项目/用户自定义 agent 可在启动后补充加载。
     agentRegistry: (() => {
       const reg = createAgentRegistry()
@@ -399,9 +414,30 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
 
   const { ctx, dispose } = await buildServerContext(db, opts)
 
+  // 回收站清理：启动时清一次 + 每 24h 清一次（软删除保留 30 天）。
+  // fire-and-forget：清理失败不阻塞服务启动。
+  void purgeDeletedSessions(db).catch(() => {})
+  const purgeTimer = setInterval(
+    () => {
+      void purgeDeletedSessions(db).catch(() => {})
+    },
+    24 * 60 * 60 * 1000,
+  )
+  purgeTimer.unref()
+
+  // P2-15：PGLite WAL 周期刷盘（30s），缩短 kill -9 等突然停机时的已提交数据丢失窗口。
+  const syncTimer = db.sync
+    ? setInterval(() => {
+        void db.sync?.().catch(() => {})
+      }, 30_000)
+    : null
+  syncTimer?.unref()
+
   return {
     ctx,
     close: async () => {
+      clearInterval(purgeTimer)
+      if (syncTimer) clearInterval(syncTimer)
       await dispose()
       if (ownsDb) await db.close()
     },
@@ -458,8 +494,7 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
   // spec §18.3：新实例从 --handoff-port 拿到旧实例端口，请求优雅退出后绑端口。
   // 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，否则读 auth-token 文件。
   if (opts.handoffPort && !opts.skipHandoff) {
-    const pendingToken =
-      process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+    const pendingToken = process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
     await requestHandoffWithRetry(opts.handoffPort, pendingToken)
   }
 
@@ -475,7 +510,6 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
   // WebSocket：终端双向流。Hono v2 无原生 WS，用 ws 包直接挂载到 HTTP server。
   // 匹配 /api/terminal/:id/ws → ptyManager.attachWebSocket
   const wss = new WebSocketServer({ noServer: true })
-  const expectedToken = ctx.authToken
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
     const match = url.pathname.match(/^\/api\/terminal\/([^/]+)\/ws$/)
@@ -491,10 +525,14 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
       socket.destroy()
       return
     }
-    // 认证：token 通过 query 参数传递（浏览器 WS 无法设置 Authorization header）
-    if (expectedToken) {
+    // 认证：token 通过 query 参数传递（浏览器 WS 无法设置 Authorization header）。
+    // P2-16：优先 authManager 校验（设备 token）；回退 ctx.authToken 兼容测试上下文。
+    if (ctx.authManager || ctx.authToken) {
       const token = url.searchParams.get('token')
-      if (token !== expectedToken) {
+      const ok = ctx.authManager
+        ? ctx.authManager.verify(token ?? undefined)
+        : token === ctx.authToken
+      if (!ok) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
         socket.destroy()
         return
@@ -534,7 +572,11 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
   if (ctx.config.update.enabled && !opts.skipHandoff) {
     const createHandoff = opts.createHandoffFn ?? createHandoffServer
     handoffServer = await createHandoff(closeMain, {
-      expectedToken: ctx.authToken,
+      // P2-16：token 轮换后新旧实例 bootstrap 可能不同，用 verifyHandoff 接受
+      // 当前/历史 bootstrap 与设备 token；无 authManager 回退字符串比较。
+      ...(ctx.authManager
+        ? { verify: (t) => ctx.authManager?.verifyHandoff(t) ?? false }
+        : { expectedToken: ctx.authToken }),
       exitAfterResponse: true,
     })
     ctx.handoff = { port: handoffServer.port, server: handoffServer }

@@ -68,6 +68,11 @@ type UpdateConfig = {
   intervalMs: number
   /** 启动后首次检查的延迟（毫秒），默认 10 秒。 */
   initialDelayMs: number
+  /** 热更新前暂停活跃 run 的等待超时（毫秒），默认 30 秒。
+   *  暂停会等当前原子操作（工具执行）完成；超时仍未暂停的 run 将被强制中止。 */
+  pauseTimeoutMs?: number
+  /** 手动安装等待程序文件变更的超时（毫秒），默认 10 分钟。 */
+  manualWaitTimeoutMs?: number
 }
 
 /** Server security configuration (spec §24.2)。 */

@@ -23,7 +23,7 @@ import { agentAPI } from '../services/agent.js'
 import { sessionAPI } from '../services/session.js'
 import type { ShakeRegionView } from '../types/index.js'
 import { Chat, type SendPayload } from './Chat.js'
-import { ChatSkeleton, ChatWelcome } from './ChatView.js'
+import { ChatSkeleton, ChatWelcome, SetupBanner } from './ChatView.js'
 
 const interruptBanner = css`
   display: flex;
@@ -134,15 +134,18 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
   const consumed = useRef(false)
 
-  // 冷启动中断检测：页面加载时检查 session status，若上次 run 未正常结束则显示恢复提示。
+  // 冷启动中断/暂停检测：页面加载时检查 session status，若上次 run 未正常结束则显示恢复提示。
   // 同时记录打开时间，用于会话列表按最近打开排序。
   const [coldStartInterrupted, setColdStartInterrupted] = useState(false)
+  const [coldStartPaused, setColdStartPaused] = useState(false)
   useEffect(() => {
     setColdStartInterrupted(false)
+    setColdStartPaused(false)
     sessionAPI
       .status(sessionId)
       .then((s) => {
         if (s._tag === 'interrupted') setColdStartInterrupted(true)
+        else if (s._tag === 'paused') setColdStartPaused(true)
       })
       .catch(() => {})
     // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）
@@ -311,6 +314,25 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     }
   }
 
+  // P1-6：权限确认超时后重新询问（重发上一条用户消息）
+  const handleReask = async () => {
+    const msgs = await sessionAPI.messages(sessionId)
+    const lastMsg = msgs[msgs.length - 1]
+    if (lastMsg?.role !== 'user') return
+    const text = lastMsg.content
+      .filter((p) => p._tag === 'text')
+      .map((p) => (p._tag === 'text' ? p.text : ''))
+      .join('')
+    if (!text) return
+    const session = await sessionAPI.get(sessionId)
+    const lr = session.metadata.lastRun
+    await chat.reask(text, {
+      ...(lr?.provider ? { provider: lr.provider } : { provider: selection.provider }),
+      ...(lr?.model ? { model: lr.model } : { model: selection.model }),
+      ...(lr?.agentName ? { agent: lr.agentName } : { agent: agentName }),
+    })
+  }
+
   // TODO: 从当前选中 model 的 capabilities 读取 supportsVision（providersData 已含）
   const supportsVision = true
 
@@ -320,12 +342,16 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     <ShakeProvider value={shakeContextValue}>
       <Chat
         projectId={projectId}
+        sessionId={sessionId}
         agents={agentsData?.agents ?? []}
         timeline={timeline}
         isStreaming={chat.isStreaming}
         usage={chat.usage}
         error={chat.error}
         pendingPermission={chat.pendingPermission}
+        permissionTimeout={chat.permissionTimeout}
+        onReask={() => void handleReask()}
+        onDismissPermissionTimeout={chat.dismissPermissionTimeout}
         onSend={handleSend}
         onAbort={chat.abort}
         onConfirm={handleConfirm}
@@ -352,9 +378,10 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             disabled={chat.isStreaming}
           />
         }
-        bottomPanel={<TodoPanel sessionId={sessionId} />}
+        bottomPanel={<TodoPanel sessionId={sessionId} projectId={projectId} />}
         topPanel={
           <>
+            <SetupBanner />
             {showInterruptBanner && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="interrupt-banner">
                 <span>连接已中断（服务可能已重启）</span>
@@ -364,6 +391,29 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                 <button
                   onClick={() => {
                     setColdStartInterrupted(false)
+                    chat.clearInterrupted()
+                  }}
+                  type="button"
+                >
+                  忽略
+                </button>
+              </div>
+            )}
+            {coldStartPaused && !chat.isStreaming && (
+              <div className={interruptBanner} data-testid="paused-banner">
+                <span>对话处于暂停状态（热更新前已安全挂起），可继续执行</span>
+                <button
+                  onClick={() => {
+                    setColdStartPaused(false)
+                    void handleResume()
+                  }}
+                  type="button"
+                >
+                  继续对话
+                </button>
+                <button
+                  onClick={() => {
+                    setColdStartPaused(false)
                     chat.clearInterrupted()
                   }}
                   type="button"

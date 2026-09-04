@@ -21,6 +21,8 @@ type ChatState = {
   usage: { input: number; output: number } | null
   error: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
+  /** P1-6：权限确认超时被自动拒绝（显示提示 + 重新询问入口）。 */
+  permissionTimeout: { toolCallId: string; tool: string } | null
   /** 本轮派发的子 agent 进度（spec: multi-agent-design §4.5）。 */
   subagents: SubagentInfo[]
   /** 后端检测到模型/工具变更需用户确认开新段时设置；携带活跃段信息与待重发内容。 */
@@ -58,6 +60,10 @@ type ChatActions = {
   cancelBreak: () => void
   /** 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。 */
   retry: (content: string, opts?: ChatOpts) => Promise<void>
+  /** P1-6：权限确认超时后重新询问（重发上一条用户消息）。 */
+  reask: (content: string, opts?: ChatOpts) => Promise<void>
+  /** 清除权限超时提示。 */
+  dismissPermissionTimeout: () => void
   /** 清除中断状态。 */
   clearInterrupted: () => void
   reset: () => void
@@ -69,6 +75,7 @@ const INITIAL: ChatState = {
   usage: null,
   error: null,
   pendingPermission: null,
+  permissionTimeout: null,
   subagents: [],
   pendingSegmentBreak: null,
   interrupted: false,
@@ -202,6 +209,14 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         ...state,
         pendingPermission: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
       }
+    case 'permission_timeout':
+      // P1-6：确认超时被自动拒绝。保留最后一条 user 文本供「重新询问」入口使用，
+      // error 显示可操作提示而非静默失败。
+      return {
+        ...state,
+        pendingPermission: null,
+        permissionTimeout: { toolCallId: event.toolCallId, tool: event.tool },
+      }
     case 'error':
       return { ...state, error: errorToMessage(event.error) }
     case 'done':
@@ -292,6 +307,30 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             const last = msgs[msgs.length - 1]
             if (last && last.role === 'user') msgs.pop()
             return { ...s, messages: msgs, isStreaming: false, error: '该会话已有进行中的对话' }
+          })
+          return
+        }
+        if (e.code === 'NO_PROVIDER_CONFIGURED') {
+          // P0-1：未配置 AI 服务 → 撤回乐观 user 消息并给出可操作提示
+          setState((s) => {
+            const msgs = [...s.messages]
+            const last = msgs[msgs.length - 1]
+            if (last && last.role === 'user') msgs.pop()
+            return {
+              ...s,
+              messages: msgs,
+              isStreaming: false,
+              error: '未配置可用的 AI 服务。请前往「设置 → Provider」添加 API 服务并测试连接',
+            }
+          })
+          return
+        }
+        if (e.code === 'WORKTREE_MISSING' || e.code === 'PROJECT_MISSING') {
+          setState((s) => {
+            const msgs = [...s.messages]
+            const last = msgs[msgs.length - 1]
+            if (last && last.role === 'user') msgs.pop()
+            return { ...s, messages: msgs, isStreaming: false, error: e.message }
           })
           return
         }
@@ -389,7 +428,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       const e = err as { status?: number }
       if (e?.status === 404) {
         // 超时（5 分钟）或已被其他标签页处理：明确提示，避免「以为已批准」。
-        setState((s) => ({ ...s, error: '权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行' }))
+        setState((s) => ({
+          ...s,
+          error: '权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行',
+        }))
       } else {
         console.error('[权限确认] 失败，工具调用可能已过期:', err)
       }
@@ -406,6 +448,25 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     [doStream],
   )
 
+  // P1-6：权限确认超时后重新询问——重发上一条用户消息（不追加、清超时提示）。
+  const reask = useCallback(
+    async (content: string, opts?: ChatOpts) => {
+      setState((s) => ({
+        ...s,
+        isStreaming: true,
+        error: null,
+        interrupted: false,
+        permissionTimeout: null,
+      }))
+      await doStream(content, opts)
+    },
+    [doStream],
+  )
+
+  const dismissPermissionTimeout = useCallback(() => {
+    setState((s) => ({ ...s, permissionTimeout: null }))
+  }, [])
+
   const clearInterrupted = useCallback(() => {
     setState((s) => ({ ...s, interrupted: false }))
   }, [])
@@ -420,6 +481,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     confirmBreak,
     cancelBreak,
     retry,
+    reask,
+    dismissPermissionTimeout,
     clearInterrupted,
     reset,
   }

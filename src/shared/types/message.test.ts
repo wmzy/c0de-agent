@@ -86,6 +86,8 @@ describe('Session', () => {
       metadata: {},
       agentType: null,
       worktreePath: null,
+      source: null,
+      deletedAt: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
@@ -102,6 +104,8 @@ describe('Session', () => {
       metadata: { mainThreadId: 'sess-1' },
       agentType: null,
       worktreePath: null,
+      source: null,
+      deletedAt: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }

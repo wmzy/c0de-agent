@@ -22,6 +22,8 @@ type PermissionRequest = {
 type PendingPermission = {
   request: PermissionRequest
   resolve: (result: PermissionResult) => void
+  /** 该请求超时自动拒绝时的回调（P1-6：按请求绑定 SSE 流）。 */
+  onTimeout?: (request: PermissionRequest) => void
 }
 
 /** store 内部条目：在 PendingPermission 之上附带超时定时器句柄，便于终结时 clearTimeout。 */
@@ -33,6 +35,8 @@ type StoredPermission = PendingPermission & {
 type PermissionStoreOptions = {
   /** pending 超时毫秒数；省略时取 DEFAULT_PERMISSION_TIMEOUT_MS（5 分钟）。 */
   timeoutMs?: number
+  /** 超时自动拒绝时回调（P1-6：通知前端「确认超时已拒绝」，提供重新询问入口）。 */
+  onTimeout?: (request: PermissionRequest) => void
 }
 
 /** 全局权限确认 store：注册/解析 pending permission。 */
@@ -69,6 +73,7 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
 
       const timer = setTimeout(() => {
         settle(toolCallId, { _tag: 'deny', reason: 'Permission request timed out' })
+        entry.onTimeout?.(entry.request)
       }, timeoutMs)
       pending.set(toolCallId, { ...entry, timer })
     },

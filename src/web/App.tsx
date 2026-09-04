@@ -11,6 +11,7 @@ import {
   useParams,
 } from 'react-router-dom'
 import { ErrorBoundary } from './components/ErrorBoundary.js'
+import { PairingApproval, PairingRequestFlow } from './components/PairingView.js'
 import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
 import { TerminalPanel } from './components/TerminalPanel.js'
 import { TopBar } from './components/TopBar.js'
@@ -49,6 +50,14 @@ const queryClient = new QueryClient({
 })
 
 export function App() {
+  // P2-16：API 401 → 显示新设备配对流程；已授权设备轮询待审批配对。
+  const [authRequired, setAuthRequired] = useState(false)
+  useEffect(() => {
+    const onAuthRequired = () => setAuthRequired(true)
+    window.addEventListener('c0de-auth-required', onAuthRequired)
+    return () => window.removeEventListener('c0de-auth-required', onAuthRequired)
+  }, [])
+
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
@@ -57,6 +66,8 @@ export function App() {
             <ErrorBoundary>
               <div className={appShell}>
                 <UpdateBanner />
+                {authRequired && <PairingRequestFlow />}
+                <PairingApproval onDone={() => {}} />
                 <Routes>
                   <Route path="/" element={<RootRedirect />} />
                   <Route path="/projects/:projectId" element={<ChatPage />} />

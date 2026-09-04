@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull, ne, or } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
-import { sessionEntries, sessions } from '../db/schema.js'
+import { type sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import { getEntries, insertEntry } from './message.js'
 import { createSession, getSession, rowToSession } from './session.js'
@@ -93,6 +93,8 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
       txHandle,
       `Branch of ${source.title}`,
       source.projectId ?? undefined,
+      undefined,
+      source.source === 'cli' ? 'cli' : 'web',
     )
     await tx
       .update(sessions)
@@ -126,15 +128,22 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
 
 /** Get direct child sessions (branches) of a session. */
 async function getBranches(handle: DB, sessionId: string): Promise<Session[]> {
-  const rows = await handle.db.select().from(sessions).where(eq(sessions.parentId, sessionId))
+  const rows = await handle.db
+    .select()
+    .from(sessions)
+    .where(and(eq(sessions.parentId, sessionId), isNull(sessions.deletedAt)))
   return rows.map(rowToSession)
 }
 
 /** Build a full session tree from root sessions down.
  * 每层按 metadata.lastOpenedAt 降序（fallback updatedAt、createdAt）。
+ * 排除软删除会话与 CLI 来源会话（Web 树仅展示 web 会话）。
  */
 async function getTree(handle: DB): Promise<SessionTreeNode[]> {
-  const rows = await handle.db.select().from(sessions)
+  const rows = await handle.db
+    .select()
+    .from(sessions)
+    .where(and(isNull(sessions.deletedAt), or(isNull(sessions.source), ne(sessions.source, 'cli'))))
   const byParent = new Map<string | null, Session[]>()
   for (const row of rows) {
     const session = rowToSession(row)

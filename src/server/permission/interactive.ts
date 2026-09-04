@@ -17,6 +17,8 @@ type InteractivePermissionCheckerOptions = {
   getMode?: () => PermissionMode
   /** 遇到 ask 权限时调用（用于通知前端）。 */
   onPermissionRequired?: (request: PermissionRequest) => void | Promise<void>
+  /** 权限确认超时被自动拒绝时调用（P1-6：SSE 通知前端）。 */
+  onPermissionTimeout?: (request: PermissionRequest) => void
 }
 
 /** 阻塞式权限检查器：ask 权限会阻塞等待用户确认。
@@ -60,7 +62,11 @@ function createInteractivePermissionChecker(
         // pending 注册到全局 store，confirm 端点按 toolCallId 直接寻址，
         // 不依赖当前 agent run 是否仍在 agentManager 中注册。
         // store 内置超时：到期自动 deny 并清理条目（防永久挂起 + Map 泄漏）。
-        store.register(toolCallId, { request, resolve })
+        store.register(toolCallId, {
+          request,
+          resolve,
+          ...(opts.onPermissionTimeout ? { onTimeout: opts.onPermissionTimeout } : {}),
+        })
       })
       await opts.onPermissionRequired?.(request)
 

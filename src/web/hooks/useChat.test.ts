@@ -14,6 +14,7 @@ const base: ChatState = {
   usage: null,
   error: null,
   pendingPermission: null,
+  permissionTimeout: null,
   subagents: [],
   pendingSegmentBreak: null,
   interrupted: false,

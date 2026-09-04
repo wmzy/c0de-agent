@@ -94,7 +94,7 @@ describe('session route', () => {
     expect(body.error.code).toBe('NOT_FOUND')
   })
 
-  it('DELETE /:id deletes session', async () => {
+  it('DELETE /:id soft-deletes session (回收站保留)', async () => {
     const { app } = await setup()
     const createRes = await app.request('/', {
       method: 'POST',
@@ -104,8 +104,20 @@ describe('session route', () => {
     const created = (await createRes.json()) as Session
     const delRes = await app.request(`/${created.id}`, { method: 'DELETE' })
     expect(delRes.status).toBe(204)
+    // 软删除：详情仍可读，但活跃列表与回收站分开
     const getRes = await app.request(`/${created.id}`)
-    expect(getRes.status).toBe(404)
+    expect(getRes.status).toBe(200)
+    const deletedRes = await app.request('/deleted')
+    expect(deletedRes.status).toBe(200)
+    const deleted = (await deletedRes.json()) as Session[]
+    expect(deleted.some((s) => s.id === created.id)).toBe(true)
+
+    // 恢复：回到活跃列表
+    const restoreRes = await app.request(`/${created.id}/restore`, { method: 'POST' })
+    expect(restoreRes.status).toBe(200)
+    const afterRestore = await app.request('/deleted')
+    const after = (await afterRestore.json()) as Session[]
+    expect(after.some((s) => s.id === created.id)).toBe(false)
   })
 
   it('GET /:id/messages returns message list', async () => {

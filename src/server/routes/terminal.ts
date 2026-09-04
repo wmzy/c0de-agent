@@ -1,7 +1,9 @@
 // src/server/routes/terminal.ts
 
+import { existsSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { Hono } from 'hono'
+import { getProject } from '../../project/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -21,18 +23,35 @@ function createTerminalRoute(ctx: ServerContext): Hono {
   // 创建新 PTY 会话
   app.post('/', async (c) => {
     const body = await c.req.json().catch(() => ({}))
-    const cwd = typeof body.cwd === 'string' && body.cwd.length > 0 ? body.cwd : ctx.cwd
+    const projectId =
+      typeof body.projectId === 'string' && body.projectId.length > 0 ? body.projectId : undefined
+
+    // P2-13：未显式传 cwd 且带 projectId 时，默认目录跟随项目 worktree
+    // （与 chat 的 resolveAgentCwd 行为一致；项目缺失/目录失效时回退 ctx.cwd）。
+    let defaultCwd = ctx.cwd
+    if (!(typeof body.cwd === 'string' && body.cwd.length > 0) && projectId) {
+      try {
+        const project = await getProject(ctx.db, projectId)
+        if (project && existsSync(project.worktree)) defaultCwd = project.worktree
+      } catch {
+        // db 不可用（测试桩/临时故障）：保持 ctx.cwd
+      }
+    }
+    const cwd = typeof body.cwd === 'string' && body.cwd.length > 0 ? body.cwd : defaultCwd
     const cols = Number.isFinite(body.cols) ? Number(body.cols) : undefined
     const rows = Number.isFinite(body.rows) ? Number(body.rows) : undefined
     const title = typeof body.title === 'string' ? body.title : undefined
     const shell = typeof body.shell === 'string' && body.shell.length > 0 ? body.shell : undefined
-    const projectId =
-      typeof body.projectId === 'string' && body.projectId.length > 0 ? body.projectId : undefined
 
     // 入参校验（P2-6）：shell 白名单；cwd 必须为绝对路径。
     if (shell !== undefined) {
       if (shell.includes('/') || shell.includes('\\') || !ALLOWED_SHELLS.has(shell)) {
-        return apiError(c, 400, 'INVALID_SHELL', `shell 必须是 ${[...ALLOWED_SHELLS].join('/')} 之一`)
+        return apiError(
+          c,
+          400,
+          'INVALID_SHELL',
+          `shell 必须是 ${[...ALLOWED_SHELLS].join('/')} 之一`,
+        )
       }
     }
     if (typeof cwd === 'string' && cwd.length > 0 && !isAbsolute(cwd)) {

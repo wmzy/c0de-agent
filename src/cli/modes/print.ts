@@ -43,7 +43,7 @@ async function runPrintMode(
     if (!existing) throw new Error(`session not found: ${opts.sessionId}`)
     session = existing
   } else {
-    session = await createSession(deps.db, 'cli-print')
+    session = await createSession(deps.db, 'cli-print', undefined, undefined, 'cli')
   }
 
   const agentConfig: AgentConfig = {

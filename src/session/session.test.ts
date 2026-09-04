@@ -8,9 +8,11 @@ import { migrateDB } from '../db/migrate.js'
 import { fromDirectory } from '../project/project.js'
 import {
   createSession,
-  deleteSession,
   getSession,
+  listDeletedSessions,
   listSessions,
+  restoreSession,
+  softDeleteSession,
   touchSession,
   updateSessionTitle,
 } from './session.js'
@@ -65,11 +67,23 @@ describe('session CRUD', () => {
     expect(found?.title).toBe('New')
   })
 
-  it('deletes a session', async () => {
+  it('soft-deletes a session', async () => {
     const created = await createSession(handle, 'Gone')
-    await deleteSession(handle, created.id)
-    const found = await getSession(handle, created.id)
-    expect(found).toBeNull()
+    const ok = await softDeleteSession(handle, created.id)
+    expect(ok).toBe(true)
+    // 软删除后从活跃列表消失，但记录仍在（回收站可见）
+    expect(await listSessions(handle)).toHaveLength(0)
+    expect(await listDeletedSessions(handle)).toHaveLength(1)
+    expect(await getSession(handle, created.id)).not.toBeNull()
+  })
+
+  it('restores a soft-deleted session', async () => {
+    const created = await createSession(handle, 'Revive')
+    await softDeleteSession(handle, created.id)
+    const ok = await restoreSession(handle, created.id)
+    expect(ok).toBe(true)
+    expect(await listSessions(handle)).toHaveLength(1)
+    expect(await listDeletedSessions(handle)).toHaveLength(0)
   })
 
   it('touches updatedAt without changing title', async () => {

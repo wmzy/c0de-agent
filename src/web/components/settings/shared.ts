@@ -14,9 +14,10 @@ function enabledModelsOf(providers: ProviderConfig[], providerName: string): str
     : []
 }
 
-/** 作为候选的 provider：名称非空者（用于默认 / 压缩模型下拉）。 */
+/** 作为候选的 provider：名称非空者（用于默认 / 压缩模型下拉）。
+ *  name 可为空（旧格式仅有 _tag），此时跳过，避免 .trim 崩溃。 */
 function providerCandidates(providers: ProviderConfig[]): ProviderConfig[] {
-  return providers.filter((p) => p.name.trim() !== '')
+  return providers.filter((p) => (p.name ?? '').trim() !== '')
 }
 
 export { enabledModelsOf, providerCandidates }

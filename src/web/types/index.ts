@@ -20,7 +20,7 @@ type SessionTreeNode = {
   children: SessionTreeNode[]
 }
 
-/** 项目（GET /api/projects 返回，含实时 git 分支）。 */
+/** 项目（GET /api/projects 返回，含实时 git 分支与 worktree 状态）。 */
 type Project = {
   id: string
   worktree: string
@@ -28,6 +28,8 @@ type Project = {
   name: string | null
   gitRemote: string | null
   gitBranch: string | null
+  /** 工作目录已失效（被删除/移动），后端实时检测。 */
+  worktreeMissing?: boolean
   createdAt: number
   updatedAt: number
 }

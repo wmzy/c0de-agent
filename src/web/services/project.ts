@@ -21,6 +21,8 @@ const projectAPI = {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     }),
+  /** 删除项目记录（看板级联删除；会话保留）。 */
+  remove: (id: string) => apiRequest<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 }
 
 export { projectAPI }

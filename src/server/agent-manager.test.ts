@@ -16,6 +16,8 @@ function mockState(sessionId: string): AgentState {
       metadata: {},
       agentType: null,
       worktreePath: null,
+      source: null,
+      deletedAt: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     },

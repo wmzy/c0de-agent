@@ -34,6 +34,10 @@ describe('orderSessionsByParent', () => {
       projectId: null,
       branchPoint: 2,
       metadata: {},
+      agentType: null,
+      worktreePath: null,
+      source: null,
+      deletedAt: null,
       createdAt: 1,
       updatedAt: 1,
     }
@@ -44,6 +48,10 @@ describe('orderSessionsByParent', () => {
       projectId: null,
       branchPoint: null,
       metadata: {},
+      agentType: null,
+      worktreePath: null,
+      source: null,
+      deletedAt: null,
       createdAt: 1,
       updatedAt: 1,
     }

@@ -130,6 +130,16 @@ export function UpdateBanner() {
     mutationFn: updateAPI.apply,
   })
 
+  // P0-2：无法自动安装（未知安装方式/等待手动安装超时）→ 显示手动更新指引
+  const manual = apply.isError
+    ? (() => {
+        const err = apply.error as unknown as { code?: string; details?: { command?: string } }
+        return err?.code === 'MANUAL_UPDATE_REQUIRED'
+          ? { command: err.details?.command ?? 'npm install -g c0de-agent' }
+          : null
+      })()
+    : null
+
   // 无数据、无更新、或已 dismissed 当前版本 → 不渲染。
   if (!data?.hasUpdate) return null
   if (dismissedVersion === data.latestVersion) return null
@@ -145,10 +155,16 @@ export function UpdateBanner() {
       <span className={text}>
         发现新版本 <strong>{data.latestVersion}</strong>（当前 {data.currentVersion}）
         {apply.isSuccess ? '· 已触发热更新，新实例即将接管…' : null}
-        {apply.isError ? '· 热更新失败，请稍后重试或使用 c0de update --apply' : null}
+        {manual ? '· 无法自动更新，请手动执行以下命令' : null}
+        {apply.isError && !manual ? '· 热更新失败，请稍后重试或使用 c0de update --apply' : null}
       </span>
+      {manual && (
+        <span className={text} data-testid="manual-update-hint" style={{ color: 'var(--warning)' }}>
+          <code>{manual.command}</code>（完成后服务将自动滚动切换）
+        </span>
+      )}
       <span className={actions}>
-        {!apply.isSuccess && (
+        {!apply.isSuccess && !manual && (
           <button
             type="button"
             className={btn}

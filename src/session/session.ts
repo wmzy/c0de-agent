@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, gt, inArray, isNull, lt, ne, or } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
@@ -12,6 +12,11 @@ export function rowToSession(row: typeof sessions.$inferSelect): Session {
     row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime()
   const updated =
     row.updatedAt instanceof Date ? row.updatedAt.getTime() : new Date(row.updatedAt).getTime()
+  const deleted = row.deletedAt
+    ? row.deletedAt instanceof Date
+      ? row.deletedAt.getTime()
+      : new Date(row.deletedAt).getTime()
+    : null
   return {
     id: row.id,
     title: row.title,
@@ -21,6 +26,8 @@ export function rowToSession(row: typeof sessions.$inferSelect): Session {
     metadata: (row.metadata ?? {}) as SessionMetadata,
     agentType: row.agentType ?? null,
     worktreePath: row.worktreePath ?? null,
+    source: row.source === 'web' || row.source === 'cli' ? row.source : null,
+    deletedAt: deleted,
     createdAt: created,
     updatedAt: updated,
   }
@@ -32,10 +39,16 @@ async function createSession(
   title: string,
   projectId?: string,
   agentType?: string,
+  source?: 'web' | 'cli',
 ): Promise<Session> {
   const [row] = await handle.db
     .insert(sessions)
-    .values({ title, projectId: projectId ?? null, agentType: agentType ?? null })
+    .values({
+      title,
+      projectId: projectId ?? null,
+      agentType: agentType ?? null,
+      source: source ?? null,
+    })
     .returning()
   if (!row) throw new Error('Failed to insert session')
   return rowToSession(row)
@@ -47,15 +60,103 @@ async function getSession(handle: DB, id: string): Promise<Session | null> {
   return row ? rowToSession(row) : null
 }
 
-/** List all sessions. */
+/** List all active sessions (未软删除、非 CLI 来源；source 为 NULL 的旧数据视为 web). */
 async function listSessions(handle: DB): Promise<Session[]> {
-  const rows = await handle.db.select().from(sessions)
+  const rows = await handle.db
+    .select()
+    .from(sessions)
+    .where(and(isNull(sessions.deletedAt), or(isNull(sessions.source), ne(sessions.source, 'cli'))))
   return rows.map(rowToSession)
 }
 
-/** Delete a session (cascades to entries, archives, snapshots via FK). */
-async function deleteSession(handle: DB, id: string): Promise<void> {
-  await handle.db.delete(sessions).where(eq(sessions.id, id))
+/** 列出所有未软删除会话（含 CLI 来源；供 ACP/CLI 等非 Web 消费者使用）。 */
+async function listAllSessions(handle: DB): Promise<Session[]> {
+  const rows = await handle.db.select().from(sessions).where(isNull(sessions.deletedAt))
+  return rows.map(rowToSession)
+}
+
+/** List soft-deleted sessions (回收站). */
+async function listDeletedSessions(handle: DB): Promise<Session[]> {
+  const rows = await handle.db
+    .select()
+    .from(sessions)
+    .where(gt(sessions.deletedAt, new Date(0)))
+  return rows.map(rowToSession)
+}
+
+/**
+ * 软删除会话（级联其所有 fork 后代）。设置 deletedAt = now；
+ * 30 天后由 purgeDeletedSessions 物理清除。
+ */
+async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
+  const ids = new Set<string>([id])
+  let frontier = [id]
+  while (frontier.length > 0) {
+    // 用 parentId 过滤：收集下一层子会话
+    const children = await handle.db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(isNull(sessions.deletedAt), inArray(sessions.parentId, frontier)))
+    frontier = children.map((r) => r.id).filter((cid) => !ids.has(cid))
+    for (const r of children) ids.add(r.id)
+  }
+  if (!ids.has(id)) return false
+  const now = new Date()
+  for (const sid of ids) {
+    await handle.db.update(sessions).set({ deletedAt: now }).where(eq(sessions.id, sid))
+  }
+  return true
+}
+
+/** 从回收站恢复会话（仅该会话本身，不清除其祖先/后代的删除标记）。 */
+async function restoreSession(handle: DB, id: string): Promise<boolean> {
+  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  if (!row || !row.deletedAt) return false
+  await handle.db.update(sessions).set({ deletedAt: null }).where(eq(sessions.id, id))
+  return true
+}
+
+/**
+ * 物理清除回收站中超过保留期（默认 30 天）的会话。
+ * 子会话先于父会话删除（自引用 FK 要求）。
+ * 返回清除数量。启动时与每日定时调用。
+ */
+async function purgeDeletedSessions(
+  handle: DB,
+  retentionMs = 30 * 24 * 60 * 60 * 1000,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionMs)
+  const rows = await handle.db
+    .select({ id: sessions.id, parentId: sessions.parentId })
+    .from(sessions)
+    .where(lt(sessions.deletedAt, cutoff))
+  if (rows.length === 0) return 0
+  // 拓扑序：无子会话的先删
+  const remaining = new Set(rows.map((r) => r.id))
+  let deleted = 0
+  while (remaining.size > 0) {
+    const hasChildParent = new Set(
+      rows.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
+    )
+    const leaves = rows
+      .filter((r) => remaining.has(r.id) && !hasChildParent.has(r.id))
+      .map((r) => r.id)
+    if (leaves.length === 0) {
+      // 循环引用兜底：强制按 id 逐个删除（自引用环数据异常场景）
+      for (const id of Array.from(remaining)) {
+        await handle.db.delete(sessions).where(eq(sessions.id, id))
+        remaining.delete(id)
+        deleted += 1
+      }
+      break
+    }
+    for (const id of leaves) {
+      await handle.db.delete(sessions).where(eq(sessions.id, id))
+      remaining.delete(id)
+      deleted += 1
+    }
+  }
+  return deleted
 }
 
 /** Update a session's title. */
@@ -185,16 +286,29 @@ async function updateSessionLastRun(handle: DB, id: string, lastRun: LastRun): P
 }
 
 async function listSessionsByProject(handle: DB, projectId: string): Promise<Session[]> {
-  const rows = await handle.db.select().from(sessions).where(eq(sessions.projectId, projectId))
+  const rows = await handle.db
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.projectId, projectId),
+        isNull(sessions.deletedAt),
+        or(isNull(sessions.source), ne(sessions.source, 'cli')),
+      ),
+    )
   return rows.map(rowToSession)
 }
 
 export {
   createSession,
-  deleteSession,
   getSession,
+  listAllSessions,
+  listDeletedSessions,
   listSessions,
   listSessionsByProject,
+  purgeDeletedSessions,
+  restoreSession,
+  softDeleteSession,
   touchLastOpened,
   touchSession,
   updateSessionLastRun,

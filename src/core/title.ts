@@ -154,7 +154,27 @@ async function generateSessionTitle(
   } catch (e) {
     // 标题生成是尽力而为的辅助功能：失败不阻塞主对话流，但记录以便排查。
     console.warn('[title] generateSessionTitle failed:', e instanceof Error ? e.message : String(e))
+    // P2-12：失败时回退到首条消息摘要，避免列表出现大量同名 "New Session"。
+    await fallbackTitleFromMessage(db, sessionId, firstMessage)
   }
+}
+
+/** 从首条消息生成回退标题：取首个非空行，超长截断（与 cleanTitle 一致）。 */
+async function fallbackTitleFromMessage(
+  db: DB,
+  sessionId: string,
+  firstMessage: string,
+): Promise<void> {
+  const firstLine = firstMessage
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+  if (!firstLine) return
+  const title =
+    firstLine.length > TITLE_MAX_LENGTH
+      ? `${firstLine.slice(0, TITLE_MAX_LENGTH - 3)}...`
+      : firstLine
+  await updateSessionTitle(db, sessionId, title).catch(() => {})
 }
 
 export { DEFAULT_SESSION_TITLE, generateSessionTitle, isDefaultTitle }

@@ -21,9 +21,9 @@ type Message = {
   createdAt: number
 }
 
-/** 上次 agent run 的持久化状态（服务重启后检测中断用）。 */
+/** 上次 agent run 的持久化状态（服务重启后检测中断/恢复用）。 */
 type LastRun = {
-  status: 'running' | 'completed'
+  status: 'running' | 'completed' | 'paused'
   agentName?: string
   provider?: string
   model?: string
@@ -55,6 +55,10 @@ type Session = {
   agentType: string | null
   /** 隔离 worktree 路径（null=共享父 cwd）。 */
   worktreePath: string | null
+  /** 会话来源：'web'（Web UI）/ 'cli'（CLI print 模式）；null=旧数据视为 web。 */
+  source: 'web' | 'cli' | null
+  /** 软删除时间戳（ms）；null=未删除。 */
+  deletedAt: number | null
   createdAt: number
   updatedAt: number
 }

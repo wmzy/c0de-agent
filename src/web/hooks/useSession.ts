@@ -37,6 +37,25 @@ export function useDeleteSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+    },
+  })
+}
+
+/** 回收站：已软删除的会话列表。 */
+export function useDeletedSessions() {
+  return useQuery({ queryKey: ['sessions', 'deleted'], queryFn: () => sessionAPI.deleted() })
+}
+
+/** 从回收站恢复会话。 */
+export function useRestoreSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => sessionAPI.restore(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
     },
   })
 }

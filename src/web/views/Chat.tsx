@@ -11,7 +11,12 @@ import {
 } from '../components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '../composer/Composer.js'
 import type { AgentListItem } from '../services/agent.js'
-import { type PermissionMode, permissionAPI } from '../services/permission.js'
+import {
+  broadcastModeChange,
+  type PermissionMode,
+  permissionAPI,
+  subscribeModeChange,
+} from '../services/permission.js'
 import { MOBILE } from '../styles/breakpoints.js'
 import { formatTokenCount } from '../utils/format.js'
 import { TableView } from './TableView.js'
@@ -46,10 +51,18 @@ type ChatProps = {
   bottomPanel?: ReactNode
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
+  /** 当前会话 id（P1-5：权限模式按会话隔离）。 */
+  sessionId?: string
   /** 可用 agent 列表（@ mention 渲染与校验）。 */
   agents?: AgentListItem[]
   /** 时间线为空时渲染在消息流中央的空状态（欢迎区/示例卡片），由 ChatView 注入。 */
   emptyState?: ReactNode
+  /** P1-6：权限确认超时被自动拒绝（显示提示 + 重新询问入口）。 */
+  permissionTimeout?: { toolCallId: string; tool: string } | null
+  /** 重新询问（P1-6）：重发上一条用户消息。 */
+  onReask?: () => void
+  /** 关闭超时提示。 */
+  onDismissPermissionTimeout?: () => void
 }
 
 /* 顶栏合并行：视图切换 + 运行状态 + 流控按钮 + 原始 JSON 单行排布，
@@ -164,6 +177,33 @@ const stream = css`
   overflow-y: auto;
 `
 
+/* P1-6：权限确认超时横幅（与 ChatSession 的中断横幅同款式） */
+const interruptBanner = css`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  color: var(--text-secondary);
+
+  & > button {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--text);
+
+    &:first-of-type {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+  }
+`
+
 /* 底栏合并行：模型/工具选择 + 自动授权开关单行排布，替代原 footerBar/modeBar 两层。 */
 const footerBar = css`
   display: flex;
@@ -256,6 +296,9 @@ export function Chat({
   usage,
   error,
   pendingPermission,
+  permissionTimeout,
+  onReask,
+  onDismissPermissionTimeout,
   onSend,
   onAbort,
   onConfirm,
@@ -269,6 +312,7 @@ export function Chat({
   bottomPanel,
   supportsVision = true,
   projectId,
+  sessionId,
   agents = [],
   emptyState,
 }: ChatProps) {
@@ -295,17 +339,23 @@ export function Chat({
   }, [timeline.length, viewMode])
 
   // steering 由 Composer 直接驱动：流式态下「追加指令」按钮/Enter 注入运行中消息。
+  // P1-5：权限模式按会话隔离（sessionId），跨标签页通过 BroadcastChannel 同步。
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
   useEffect(() => {
     permissionAPI
-      .getMode()
+      .getMode(sessionId)
       .then((res) => setPermissionMode(res.mode))
       .catch(() => {})
-  }, [])
+    const unsubscribe = subscribeModeChange(sessionId ?? null, setPermissionMode)
+    return unsubscribe
+  }, [sessionId])
   const togglePermissionMode = () => {
     const next: PermissionMode = permissionMode === 'auto' ? 'default' : 'auto'
     setPermissionMode(next)
-    permissionAPI.setMode(next).catch(() => setPermissionMode(permissionMode))
+    permissionAPI
+      .setMode(next, sessionId)
+      .then(() => broadcastModeChange({ sessionId: sessionId ?? null, mode: next }))
+      .catch(() => setPermissionMode(permissionMode))
   }
 
   return (
@@ -375,6 +425,21 @@ export function Chat({
           原始 JSON
         </button>
       </div>
+      {permissionTimeout ? (
+        <div className={interruptBanner} data-testid="permission-timeout-banner">
+          <span>权限确认超时，工具「{permissionTimeout.tool}」已被自动拒绝</span>
+          {onReask ? (
+            <button type="button" onClick={onReask} data-testid="permission-reask">
+              重新询问
+            </button>
+          ) : null}
+          {onDismissPermissionTimeout ? (
+            <button type="button" onClick={onDismissPermissionTimeout}>
+              忽略
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {topPanel}
       {viewMode === 'table' ? (
         <TableView rows={timeline} />

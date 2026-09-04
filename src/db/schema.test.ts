@@ -102,6 +102,8 @@ describe('type inference', () => {
       metadata: {},
       agentType: null,
       worktreePath: null,
+      source: null,
+      deletedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     }

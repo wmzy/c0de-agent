@@ -2,6 +2,7 @@
  * Settings 视图测试，对应 src/web/views/Settings.tsx。
  */
 
+import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Mock } from 'vitest'
@@ -53,6 +54,11 @@ vi.mock('../services/config.js', () => ({
   },
 }))
 
+/** 把裸 Config（测试夹具的松散字面量）包装成 GET/PATCH /api/config 的响应结构。 */
+function wrapConfig(config: unknown): { config: Partial<Config> } {
+  return { config: config as Partial<Config> }
+}
+
 vi.mock('../services/provider.js', () => ({
   providerAPI: {
     test: vi.fn(),
@@ -94,7 +100,7 @@ function renderSettings() {
 describe('Settings — Provider 管理', () => {
   it('渲染时显示已加载 config 的 providers', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
 
@@ -115,7 +121,7 @@ describe('Settings — Provider 管理', () => {
 
   it('点击「添加 Provider」新增一行', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
 
@@ -132,7 +138,7 @@ describe('Settings — Provider 管理', () => {
   it('点击「测试」调用 providerAPI.test 并显示成功结果', async () => {
     const { configAPI } = await import('../services/config.js')
     const { providerAPI } = await import('../services/provider.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(providerAPI.test as Mock).mockResolvedValue({
       ok: true,
       models: ['gpt-4', 'gpt-4o', 'claude-3'],
@@ -157,7 +163,7 @@ describe('Settings — Provider 管理', () => {
 
   it('点击「删除」移除一行', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
 
@@ -179,7 +185,7 @@ describe('Settings — Provider 管理', () => {
   it('点击「从 models.dev 选择」打开 catalog 弹窗', async () => {
     const { configAPI } = await import('../services/config.js')
     const { catalogAPI } = await import('../services/catalog.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(catalogAPI.listProviders as Mock).mockResolvedValue({ providers: [] })
 
     renderSettings()
@@ -197,7 +203,7 @@ describe('Settings — Provider 管理', () => {
 
   it('点击「保存」调用 configAPI.update 并带 providers', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -235,7 +241,7 @@ describe('Settings — Provider 管理', () => {
   it('测试成功后将检测到的模型写入 provider.models，保存时一并提交', async () => {
     const { configAPI } = await import('../services/config.js')
     const { providerAPI } = await import('../services/provider.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
     ;(providerAPI.test as Mock).mockResolvedValue({
       ok: true,
@@ -276,19 +282,21 @@ describe('Settings — Provider 管理', () => {
     const { configAPI } = await import('../services/config.js')
     const { providerAPI } = await import('../services/provider.js')
     // ProviderA 已预设一个带 override 的模型
-    ;(configAPI.get as Mock).mockResolvedValue({
-      ...mockConfig,
-      providers: [
-        {
-          name: 'ProviderA',
-          protocol: 'openai',
-          apiKey: 'sk-xxx',
-          baseURL: 'https://api.openai.com/v1',
-          models: { 'gpt-4': { contextWindow: 8192 } },
-        },
-        mockConfig.providers[1],
-      ],
-    })
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({
+        ...mockConfig,
+        providers: [
+          {
+            name: 'ProviderA',
+            protocol: 'openai',
+            apiKey: 'sk-xxx',
+            baseURL: 'https://api.openai.com/v1',
+            models: { 'gpt-4': { contextWindow: 8192 } },
+          },
+          mockConfig.providers[1],
+        ],
+      }),
+    )
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
     ;(providerAPI.test as Mock).mockResolvedValue({
       ok: true,
@@ -347,7 +355,7 @@ describe('Settings — Provider 管理', () => {
 
   it('provider 含 models 时展示模型管理面板与计数', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
 
@@ -366,7 +374,7 @@ describe('Settings — Provider 管理', () => {
 
   it('过滤输入框按模型名筛选列表', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
 
@@ -389,7 +397,7 @@ describe('Settings — Provider 管理', () => {
 
   it('切换单个模型开关翻转其启用状态与计数', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
 
@@ -412,7 +420,7 @@ describe('Settings — Provider 管理', () => {
 
   it('禁用所有将全部模型标记 enabled:false 并随保存提交', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -442,7 +450,7 @@ describe('Settings — Provider 管理', () => {
 
   it('启用所有恢复全部模型为启用', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
 
@@ -463,7 +471,7 @@ describe('Settings — Provider 管理', () => {
 
   it('编辑模型的上下文窗口/最大输出后随保存提交', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -500,7 +508,7 @@ describe('Settings — Provider 管理', () => {
 
   it('编辑 provider name 不会重新挂载输入行（避免输入一个字符即失焦）', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
 
@@ -535,7 +543,7 @@ describe('Settings — Provider 管理', () => {
         { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
       ],
     }
-    ;(configAPI.get as Mock).mockResolvedValue(encConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(encConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(1))
@@ -556,7 +564,7 @@ describe('Settings — Provider 管理', () => {
         { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
       ],
     }
-    ;(configAPI.get as Mock).mockResolvedValue(encConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(encConfig))
     ;(configAPI.update as Mock).mockResolvedValue(encConfig)
 
     renderSettings()
@@ -577,7 +585,7 @@ describe('Settings — Provider 管理', () => {
   // 回归：保存后应有成功反馈，并清空草稿（按钮禁用）。
   it('保存成功后显示「已保存」反馈并清空草稿', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -597,7 +605,7 @@ describe('Settings — Provider 管理', () => {
   // 可访问性：每个 Provider 表单控件须有显式关联的 label（label[for] ↔ control#id）
   it('Provider 表单控件均有显式关联的 label（名称/协议/URL/API Key）', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
@@ -628,7 +636,7 @@ describe('Settings — Provider 管理', () => {
   // 可访问性：设置页标题为页面唯一 h1；Provider/区块标题为 h2
   it('页面标题「⚙ 设置」为唯一 h1，区块标题为 h2', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -669,7 +677,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
 
   it('默认 Provider select 选项来自已配置 provider', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('default-provider-select')).toBeTruthy())
@@ -681,7 +689,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
 
   it('默认 Model select 仅列出当前 provider 启用的模型', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('default-model-select')).toBeTruthy())
@@ -694,7 +702,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
 
   it('切换默认 provider 时 model 自动校正为该 provider 首个启用模型', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(configWithModels)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
     ;(configAPI.update as Mock).mockResolvedValue(configWithModels)
 
     renderSettings()
@@ -721,7 +729,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
 describe('Settings — JSON 模式与导入导出', () => {
   it('点击 JSON 切换显示编辑器，内容为当前配置序列化', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -736,7 +744,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 
   it('JSON 编辑合法时同步到 draft，保存提交新值', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -757,7 +765,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 
   it('JSON 语法错误时显示错误条', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -771,7 +779,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 
   it('JSON 错误时切回表单被阻止（停留在 JSON）', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -788,7 +796,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 
   it('导出触发 Blob 下载（createObjectURL/revokeObjectURL 各一次）', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     const createURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     // 阻止 anchor.click 真正导航
@@ -809,7 +817,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 
   it('导入合法 JSON 文件后应用配置并切回表单，保存提交导入值', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -836,7 +844,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 
   it('导入非法 JSON 文件时显示错误并切到 JSON 模式', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -853,7 +861,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 describe('Settings — 完整配置表单覆盖', () => {
   it('所有配置分区均渲染', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -882,7 +890,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
   it('自动授权段落 select 切换并保存', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -909,7 +917,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
   it('编辑故障回退字段后保存提交正确值', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -932,7 +940,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
   it('编辑上下文压缩全部字段后保存提交完整对象', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -977,7 +985,7 @@ describe('Settings — 完整配置表单覆盖', () => {
       defaultProvider: 'Alpha',
       defaultModel: 'a-1',
     }
-    ;(configAPI.get as Mock).mockResolvedValue(cfg)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(cfg))
     ;(configAPI.update as Mock).mockResolvedValue(cfg)
 
     renderSettings()
@@ -1031,7 +1039,7 @@ describe('Settings — 完整配置表单覆盖', () => {
       defaultProvider: 'Alpha',
       defaultModel: 'a-1',
     }
-    ;(configAPI.get as Mock).mockResolvedValue(cfg)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(cfg))
     ;(configAPI.update as Mock).mockResolvedValue(cfg)
 
     renderSettings()
@@ -1060,7 +1068,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
   it('添加并删除 MCP 服务器', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -1074,7 +1082,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
   it('启用安全认证后显示 Token 输入框', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -1095,7 +1103,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
   it('切换 Web 搜索后端并保存', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -1121,7 +1129,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 
   it('编辑多 Agent 并发数并保存', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -1144,7 +1152,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   // 最终保存空数组（“保存无效、刷新后恢复原值”的根因）。CommaListInput 用内部文本缓冲修复。
   it('逗号分隔列表输入可输入逗号并随保存提交（tools.enabled）', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
@@ -1168,7 +1176,7 @@ describe('Settings — 完整配置表单覆盖', () => {
 describe('Settings — 吸底保存条与未保存导航防护', () => {
   it('修改字段后保存条出现「未保存更改」提示与「放弃更改」，未修改时弱化', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
@@ -1188,7 +1196,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
 
   it('点击「放弃更改」清空草稿，表单恢复到已保存配置', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -1207,7 +1215,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
 
   it('dirty 时点击离开设置页的站内链接弹确认，「留下」则留在设置页', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
@@ -1239,7 +1247,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
 
   it('确认「离开」丢弃草稿并放行被拦截的链接点击', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
@@ -1269,7 +1277,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
 
   it('干净状态点击站内链接不弹确认；dirty 时刷新被 beforeunload 拦截，放弃后解除', async () => {
     const { configAPI } = await import('../services/config.js')
-    ;(configAPI.get as Mock).mockResolvedValue(mockConfig)
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())

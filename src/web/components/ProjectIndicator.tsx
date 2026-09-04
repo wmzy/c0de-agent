@@ -4,6 +4,7 @@ import { type ReactNode, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjects } from '../hooks/useSession.js'
 import { fileAPI } from '../services/file.js'
+import { projectAPI } from '../services/project.js'
 import { MOBILE } from '../styles/breakpoints.js'
 import { AddProjectDialog } from './AddProjectDialog.js'
 import { DropdownMenu } from './DropdownMenu.js'
@@ -218,6 +219,19 @@ export function ProjectIndicator({
   const qc = useQueryClient()
 
   const [showAddProject, setShowAddProject] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => projectAPI.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] })
+      // 删除的是当前项目 → 回根路径重新解析
+      navigate('/')
+    },
+    onError: (e: unknown) => {
+      setDeleteError(e instanceof Error ? e.message : String(e))
+    },
+  })
 
   // hover 分支名展示最后一次提交信息
   const gitLastCommitQ = useQuery({
@@ -277,17 +291,52 @@ export function ProjectIndicator({
           </span>
         }
         footer={(close) => (
-          <button
-            type="button"
-            className={footerBtn}
-            onClick={() => {
-              close()
-              setShowAddProject(true)
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              borderTop: '1px solid var(--border)',
             }}
-            data-testid="project-dropdown-add"
           >
-            {'\uFF0B'} 添加项目
-          </button>
+            {deleteError && (
+              <span
+                style={{ padding: '4px 12px', fontSize: 11, color: 'var(--error)' }}
+                data-testid="project-delete-error"
+              >
+                {deleteError}
+              </span>
+            )}
+            <button
+              type="button"
+              className={footerBtn}
+              onClick={() => {
+                close()
+                setShowAddProject(true)
+              }}
+              data-testid="project-dropdown-add"
+            >
+              {'\uFF0B'} 添加项目
+            </button>
+            <button
+              type="button"
+              className={footerBtn}
+              style={{ color: 'var(--error)' }}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `确定删除项目「${project.name ?? '未命名项目'}」？\n看板将一并删除；该项目的会话保留但不再归属此项目。`,
+                  )
+                ) {
+                  setDeleteError(null)
+                  close()
+                  deleteMut.mutate(project.id)
+                }
+              }}
+              data-testid="delete-project"
+            >
+              {'\u{1F5D1}'} 删除项目
+            </button>
+          </div>
         )}
       >
         {(close) =>
@@ -303,11 +352,25 @@ export function ProjectIndicator({
               data-testid={`project-dropdown-item-${p.id}`}
             >
               <span className={menuItemCheck}>{p.id === projectId ? '\u2713' : ''}</span>
-              <span className={menuItemSub}>{p.name ?? '未命名项目'}</span>
+              <span className={menuItemSub}>
+                {p.name ?? '未命名项目'}
+                {p.worktreeMissing ? '（目录已失效）' : ''}
+              </span>
             </button>
           ))
         }
       </DropdownMenu>
+
+      {/* worktree 失效警告（P1-9：目录被删除/移动时明确提示，避免 agent 在错误目录执行） */}
+      {project.worktreeMissing ? (
+        <span
+          style={{ color: 'var(--warning)', fontSize: 11 }}
+          title="项目工作目录已失效（被删除或移动）。对话将无法执行工具，请删除该项目或恢复目录。"
+          data-testid="worktree-missing"
+        >
+          {'\u26A0'} 目录已失效
+        </span>
+      ) : null}
 
       {/* 分支下拉 */}
       {project.gitBranch ? (

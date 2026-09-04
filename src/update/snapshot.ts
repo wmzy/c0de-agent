@@ -9,6 +9,10 @@ type SerializedSession = {
   projectId: string | null
   branchPoint: number | null
   metadata: unknown
+  agentType: string | null
+  worktreePath: string | null
+  source: string | null
+  deletedAt: number | null
   createdAt: number
   updatedAt: number
 }
@@ -50,6 +54,10 @@ function toSerializedSession(row: typeof sessions.$inferSelect): SerializedSessi
     projectId: row.projectId,
     branchPoint: row.branchPoint,
     metadata: row.metadata,
+    agentType: row.agentType,
+    worktreePath: row.worktreePath,
+    source: row.source,
+    deletedAt: row.deletedAt ? toDateMs(row.deletedAt) : null,
     createdAt: toDateMs(row.createdAt),
     updatedAt: toDateMs(row.updatedAt),
   }
@@ -111,6 +119,10 @@ async function restoreSessions(handle: DB, snapshot: SessionSnapshot): Promise<v
         projectId: s.projectId,
         branchPoint: s.branchPoint,
         metadata: s.metadata as Record<string, unknown>,
+        agentType: s.agentType,
+        worktreePath: s.worktreePath,
+        source: s.source,
+        deletedAt: s.deletedAt != null ? new Date(s.deletedAt) : null,
         createdAt: new Date(s.createdAt),
         updatedAt: new Date(s.updatedAt),
       })

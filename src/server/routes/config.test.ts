@@ -99,7 +99,7 @@ describe('config route — apiKey 加密（spec §24.2）', () => {
       providers: [{ name: 'demo', protocol: 'openai', apiKey: 'sk-x', baseURL: 'https://demo/v1' }],
     })
     const res = await app.request('/')
-    const body = (await res.json()) as Config
-    expect(body.providers[0]?.apiKey).toBe('sk-x')
+    const body = (await res.json()) as { config: Config }
+    expect(body.config.providers[0]?.apiKey).toBe('sk-x')
   })
 })

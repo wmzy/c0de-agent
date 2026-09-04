@@ -30,6 +30,8 @@ const session: Session = {
   metadata: {},
   agentType: null,
   worktreePath: null,
+  source: null,
+  deletedAt: null,
   createdAt: 1719300000000,
   updatedAt: 1719380000000,
 }

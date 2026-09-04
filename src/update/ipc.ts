@@ -20,6 +20,12 @@ type HandoffOptions = {
    */
   expectedToken?: string
   /**
+   * 自定义校验函数（P2-16：token 轮换后新旧实例 bootstrap 可能不同，
+   * 用 authManager.verifyHandoff 接受当前/历史 bootstrap 与设备 token）。
+   * 提供时优先于 expectedToken。
+   */
+  verify?: (token: string | undefined) => boolean
+  /**
    * 响应发出后退出进程（旧实例完整让渡：主服务与资源已在 onHandoff 中关闭）。
    * 退出延迟 250ms 保证 HTTP 响应刷出；不设时仅响应不退出（测试用）。
    */
@@ -54,12 +60,16 @@ function createHandoffServer(
   opts: HandoffOptions = {},
 ): Promise<HandoffServer> {
   return new Promise((resolve, reject) => {
-    const expected = opts.expectedToken && opts.expectedToken.length > 0
-      ? `Bearer ${opts.expectedToken}`
-      : ''
+    const expected =
+      opts.expectedToken && opts.expectedToken.length > 0 ? `Bearer ${opts.expectedToken}` : ''
     const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
       if (req.method === 'POST' && req.url === '/handoff') {
-        if (expected && !authHeaderMatches(req.headers.authorization, expected)) {
+        const authorized = opts.verify
+          ? opts.verify(req.headers.authorization?.replace(/^Bearer\s+/i, ''))
+          : expected.length > 0
+            ? authHeaderMatches(req.headers.authorization, expected)
+            : true
+        if (!authorized) {
           res.writeHead(401, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ ok: false, error: 'unauthorized' }))
           return

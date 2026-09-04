@@ -13,7 +13,8 @@
 - **无感知热更新**：后台定期检查新版本，序列化当前会话 → npm 自更新 → 端口 handoff 接管，用户无感升级。
 - **Web 搜索**：内置 websearch 工具，支持多搜索引擎。
 - **斜杠命令**：`/compact`、`/model`、`/clear` 等可配置的斜杠命令。
-- **主题与多语言**：亮/暗主题，简体中文 / English。
+- **会话回收站**：删除会话软删除入回收站，30 天内可恢复。
+- **主题**：亮/暗/跟随系统主题。
 
 ## 安装
 
@@ -29,7 +30,7 @@ pnpm add -g c0de-agent
 
 ## 安全
 
-- **认证**：`security.authEnabled` 默认开启。首次启动自动生成认证 token（持久化于数据目录 `auth-token` 文件），浏览器访问时经启动打印的 URL `?token=` 参数自动保存到 localStorage 并从地址栏移除；后续 API 请求与终端 WebSocket 均携带该 token，服务端校验不通过返回 401。
+- **认证**：`security.authEnabled` 默认开启。首次启动自动生成 bootstrap token（持久化于数据目录 `auth-token` 文件），浏览器首访凭启动打印的 URL `?token=` 注册为**首台设备**，服务端随即**轮换 bootstrap token**（旧 token 立即失效，杜绝 URL/shell 历史泄漏）并下发设备 token；后续 API 请求与终端 WebSocket 均携带设备 token。新增设备无 token 时进入**配对流程**：新设备生成 6 位配对码，由已授权设备在「设备配对」弹窗中核对并批准后下发新设备 token。显式配置 `security.token` 时为静态模式（不轮换、不配对，适合 CI/脚本）。
   - token 解析优先级：`security.token` 配置 > 环境变量 `C0DE_AUTH_TOKEN` > 数据目录 token 文件 > 自动生成并持久化。
   - 显式关闭：`security.authEnabled: false`（本机单用户且端口仅本机可达时）。
 - **CORS/Origin 校验**：仅放行本机回环 origin 与 `security.allowedOrigins` 中显式配置的 origin；WebSocket 升级在服务端独立校验 Origin（浏览器 WS 不受 CORS 约束）。

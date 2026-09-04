@@ -7,6 +7,7 @@ import { createAuthMiddleware } from './middleware/auth.js'
 import { createCORSMiddleware } from './middleware/cors.js'
 import { errorHandler } from './middleware/error.js'
 import { createAgentRoute } from './routes/agent.js'
+import { createAuthRoute } from './routes/auth.js'
 import { createCatalogRoute } from './routes/catalog.js'
 import { createChatRoute } from './routes/chat.js'
 import { createCommandsRoute } from './routes/commands.js'
@@ -35,11 +36,23 @@ function createApp(ctx: ServerContext): Hono {
   // spec §24.2：仅允许本地/可信 origin 跨域读，拒绝外部网页。
   app.use('*', createCORSMiddleware({ allowedOrigins: ctx.config.security.allowedOrigins }))
   // spec §24.2：Bearer token 认证（配置了 token 时生效；/api/health 探活放行）。
-  // token 来源：用户配置 security.token，或启动时自动生成（ctx.authToken）。
-  app.use('/api/*', createAuthMiddleware(ctx.authToken))
+  // P2-16：authManager 存在时按设备 token 校验；认证/配对引导端点公开。
+  app.use(
+    '/api/*',
+    createAuthMiddleware(ctx.authToken, {
+      publicPaths: [
+        '/api/health',
+        '/api/auth/register',
+        '/api/auth/pairing/request',
+        '/api/auth/pairing/status',
+      ],
+      ...(ctx.authManager ? { verify: (t) => ctx.authManager?.verify(t) ?? false } : {}),
+    }),
+  )
 
   // 路由
   app.route('/api/health', createHealthRoute())
+  app.route('/api/auth', createAuthRoute(ctx))
   app.route('/api/agents', createAgentRoute(ctx))
   app.route('/api/sessions', createSessionRoute(ctx))
   app.route('/api/projects', createProjectRoute(ctx))

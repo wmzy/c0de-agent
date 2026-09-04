@@ -40,8 +40,13 @@ function makeCtx(opts: {
       start: vi.fn(),
       stop: vi.fn(),
     },
+    agentManager: {
+      pauseAll: vi.fn().mockResolvedValue({ paused: 0, forcedAbort: 0 }),
+    } as never,
+    authManager: undefined,
+    authToken: undefined,
+    config: { update: { pauseTimeoutMs: 30_000 } } as never,
     db: {} as never,
-    config: {} as never,
     handoff:
       opts.handoffPort !== undefined ? { port: opts.handoffPort, server: {} as never } : undefined,
   } as unknown as ServerContext
