@@ -244,7 +244,7 @@ describe('resolveAuthToken 认证 token 解析（P0 安全）', () => {
   it('无任何来源 → 生成随机 token 并 0600 落盘，二次调用（bootstrap 后）稳定', () => {
     const first = resolveAuthToken(DEFAULT_CONFIG, tmpDir)
     expect(typeof first).toBe('string')
-    expect(first!.length).toBeGreaterThan(0)
+    expect(first?.length).toBeGreaterThan(0)
     const file = join(tmpDir, 'auth-token')
     expect(readFileSync(file, 'utf-8')).toBe(first)
     expect(statSync(file).mode & 0o777).toBe(0o600)

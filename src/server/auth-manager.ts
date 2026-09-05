@@ -291,7 +291,8 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
 
     approvePairing(pairingId) {
       const p = pending.get(pairingId)
-      if (!p || p.status !== 'pending') return false
+      if (!p) return false
+      if (p.status !== 'pending') return false
       if (p.createdAt <= now() - pairingTtlMs) {
         pending.delete(pairingId)
         return false
@@ -312,7 +313,8 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
 
     denyPairing(pairingId) {
       const p = pending.get(pairingId)
-      if (!p || p.status !== 'pending') return false
+      if (!p) return false
+      if (p.status !== 'pending') return false
       p.status = 'denied'
       return true
     },

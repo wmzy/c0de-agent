@@ -84,7 +84,7 @@ describe('runPrintMode', () => {
     await runPrintMode(config, 'first question', deps, { onEvent: () => {} })
     const created = await db.db.select({ id: sessions.id }).from(sessions)
     expect(created).toHaveLength(1)
-    const sessionId = created[0]!.id
+    const sessionId = created[0]?.id ?? ''
     const entriesAfterFirst = await db.db
       .select({ id: sessionEntries.id })
       .from(sessionEntries)
@@ -94,7 +94,7 @@ describe('runPrintMode', () => {
     await runPrintMode(config, 'follow up', deps, { sessionId, onEvent: () => {} })
     const afterContinue = await db.db.select({ id: sessions.id }).from(sessions)
     expect(afterContinue).toHaveLength(1)
-    expect(afterContinue[0]!.id).toBe(sessionId)
+    expect(afterContinue[0]?.id).toBe(sessionId)
     const entriesAfterSecond = await db.db
       .select({ id: sessionEntries.id })
       .from(sessionEntries)

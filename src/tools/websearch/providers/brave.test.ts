@@ -37,7 +37,7 @@ describe('braveProvider', () => {
     expect(url).toContain('q=rust')
     expect(url).toContain('count=5')
     expect(init?.method).toBe('GET')
-    expect((init?.headers as Record<string, string>)['X-Subscription-Token']).toBe('brave-key')
+    expect((init?.headers as Record<string, string>)?.['X-Subscription-Token']).toBe('brave-key')
   })
 
   it('appends freshness param when recency set', async () => {

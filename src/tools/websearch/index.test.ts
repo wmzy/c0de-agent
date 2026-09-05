@@ -125,7 +125,7 @@ describe('runWebSearch', () => {
       )
       expect(res.provider).toBe('tavily')
       const init = vi.mocked(f).mock.calls[0]?.[1]
-      expect((init?.headers as Record<string, string>).Authorization).toBe(
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(
         'Bearer tvly-from-config',
       )
     } finally {
