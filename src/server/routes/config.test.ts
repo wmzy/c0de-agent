@@ -158,3 +158,44 @@ describe('config route — scoped patch 与保存反馈（P1-2/P2-3）', () => {
     expect(body.error?.code).toBe('CONFIG_SAVE_FAILED')
   })
 })
+
+describe('config route — git 误提交警告', () => {
+  it('项目级配置含 token 且位于 git 仓库内 → gitWarning 非空', async () => {
+    const { app, ctx } = await setup()
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(join(ctx.cwd, '.c0de'), { recursive: true })
+    mkdirSync(join(ctx.cwd, '.git'), { recursive: true })
+    writeFileSync(
+      join(ctx.cwd, '.c0de', 'config.json'),
+      JSON.stringify({ security: { token: 'static-token-xyz' } }),
+    )
+    const res = await app.request('/')
+    const body = (await res.json()) as { gitWarning: string | null }
+    expect(body.gitWarning).toBeTruthy()
+    expect(body.gitWarning).toContain('.gitignore')
+  })
+
+  it('项目级配置无密钥 → gitWarning 为 null', async () => {
+    const { app, ctx } = await setup()
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(join(ctx.cwd, '.c0de'), { recursive: true })
+    mkdirSync(join(ctx.cwd, '.git'), { recursive: true })
+    writeFileSync(join(ctx.cwd, '.c0de', 'config.json'), JSON.stringify({ defaultModel: 'gpt-5' }))
+    const res = await app.request('/')
+    const body = (await res.json()) as { gitWarning: string | null }
+    expect(body.gitWarning).toBeNull()
+  })
+
+  it('含密钥但不在 git 仓库内 → gitWarning 为 null', async () => {
+    const { app, ctx } = await setup()
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(join(ctx.cwd, '.c0de'), { recursive: true })
+    writeFileSync(
+      join(ctx.cwd, '.c0de', 'config.json'),
+      JSON.stringify({ security: { token: 'static-token-xyz' } }),
+    )
+    const res = await app.request('/')
+    const body = (await res.json()) as { gitWarning: string | null }
+    expect(body.gitWarning).toBeNull()
+  })
+})

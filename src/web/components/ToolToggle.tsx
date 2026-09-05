@@ -116,6 +116,13 @@ const empty = css`
   text-align: center;
 `
 
+const hintLine = css`
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+`
+
 /**
  * 输入区工具开关：列出可用工具，按名勾选；启用的工具随消息发送给后端（白名单）。
  *
@@ -233,6 +240,11 @@ export function ToolToggle({
                 </label>
               ))
             )}
+          </div>
+          <div className={hintLine} data-testid="tool-toggle-hint">
+            {enabled === null
+              ? '默认启用全部注册工具（含未来版本新增工具）'
+              : `已显式选择 ${enabled.size} 个工具：后续版本新增的工具不会自动启用，「全选」可恢复默认`}
           </div>
         </div>
       )}

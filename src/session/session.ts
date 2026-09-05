@@ -196,7 +196,7 @@ async function permanentlyDeleteSession(handle: DB, id: string): Promise<number>
     .select({ id: sessions.id, deletedAt: sessions.deletedAt })
     .from(sessions)
     .where(eq(sessions.id, id))
-  if (!row || !row.deletedAt) return 0
+  if (!row?.deletedAt) return 0
   const all = await handle.db
     .select({ id: sessions.id, parentId: sessions.parentId })
     .from(sessions)

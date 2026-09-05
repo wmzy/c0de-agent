@@ -23,19 +23,24 @@ vi.mock('../../update/index.js', () => ({
 import type { ServerContext } from '../types.js'
 import { createUpdateRoute } from './update.js'
 
+/** 模块级 mock（beforeEach 统一 reset），makeCtx 复用并附到 ctx 上。 */
+const agentManagerMock = {
+  pauseAll: vi.fn(),
+  resume: vi.fn(),
+  get: vi.fn(),
+  isStarting: vi.fn(),
+  listActive: vi.fn(),
+}
+const ptyManagerMock = {
+  list: vi.fn(),
+}
+
 /** 构造带 mock scheduler 的 ctx；getLastResult / checkNow 行为由用例控制。 */
 function makeCtx(opts: {
   lastResult?: { hasUpdate: boolean; currentVersion: string; latestVersion: string } | null
   checkNowResult?: { hasUpdate: boolean; currentVersion: string; latestVersion: string }
   handoffPort?: number
 }): ServerContext {
-  const pausedIds: string[] = []
-  const agentManager = {
-    pauseAll: vi.fn().mockResolvedValue({ paused: 0, forcedAbort: 0, pausedIds }),
-    resume: vi.fn().mockReturnValue(true),
-    get: vi.fn(),
-    isStarting: vi.fn().mockReturnValue(false),
-  }
   return {
     updateScheduler: {
       getLastResult: () => opts.lastResult ?? null,
@@ -53,7 +58,8 @@ function makeCtx(opts: {
     config: {
       update: { enabled: true, pauseTimeoutMs: 30_000 },
     },
-    agentManager,
+    agentManager: agentManagerMock,
+    ptyManager: ptyManagerMock,
     db: {},
     port: 3000,
     handoff:
@@ -67,6 +73,14 @@ beforeEach(() => {
   performInstallMock.mockReset()
   performHandoffMock.mockReset()
   serializeSessionsMock.mockClear()
+  agentManagerMock.pauseAll
+    .mockReset()
+    .mockResolvedValue({ paused: 0, forcedAbort: 0, pausedIds: [] })
+  agentManagerMock.resume.mockReset().mockReturnValue(true)
+  agentManagerMock.get.mockReset()
+  agentManagerMock.isStarting.mockReset().mockReturnValue(false)
+  agentManagerMock.listActive.mockReset().mockReturnValue([])
+  ptyManagerMock.list.mockReset().mockReturnValue([])
 })
 
 describe('GET /api/update', () => {
@@ -82,16 +96,38 @@ describe('GET /api/update', () => {
     expect(body.latestVersion).toBe('0.2.0')
   })
 
+  it('响应含 impact：活跃对话与终端数（子 agent 并入父会话不重复列出）', async () => {
+    const ctx = makeCtx({
+      lastResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+    })
+    agentManagerMock.listActive.mockReturnValue([
+      { sessionId: '11111111-1111-4111-8111-111111111111' },
+      {
+        sessionId: '22222222-2222-4222-8222-222222222222',
+        parentSessionId: '11111111-1111-4111-8111-111111111111',
+      },
+    ])
+    ptyManagerMock.list.mockReturnValue([{}, {}] as never)
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      impact: { runs: Array<{ sessionId: string; title: string }>; terminalCount: number }
+    }
+    expect(body.impact.runs).toHaveLength(1)
+    expect(body.impact.runs[0]?.sessionId).toBe('11111111-1111-4111-8111-111111111111')
+    expect(body.impact.terminalCount).toBe(2)
+  })
+
   it('returns placeholder when no cache and triggers checkNow (non-blocking)', async () => {
     const checkNow = vi.fn().mockResolvedValue({
       hasUpdate: true,
       currentVersion: '0.1.0',
       latestVersion: '0.3.0',
     })
-    const ctx = {
-      updateScheduler: { getLastResult: () => null, checkNow, start: vi.fn(), stop: vi.fn() },
-      config: { update: { enabled: true } },
-    } as unknown as ServerContext
+    const ctx = makeCtx({})
+    ctx.updateScheduler.getLastResult = () => null
+    ctx.updateScheduler.checkNow = checkNow
     const app = createUpdateRoute(ctx)
     const res = await app.request('/')
     expect(res.status).toBe(200)
@@ -104,10 +140,10 @@ describe('GET /api/update', () => {
 
   it('update.enabled=false：返回 disabled 且不触发 checkNow', async () => {
     const checkNow = vi.fn()
-    const ctx = {
-      updateScheduler: { getLastResult: () => null, checkNow, start: vi.fn(), stop: vi.fn() },
-      config: { update: { enabled: false } },
-    } as unknown as ServerContext
+    const ctx = makeCtx({})
+    ctx.config.update.enabled = false
+    ctx.updateScheduler.getLastResult = () => null
+    ctx.updateScheduler.checkNow = checkNow
     const app = createUpdateRoute(ctx)
     const res = await app.request('/')
     expect(res.status).toBe(200)

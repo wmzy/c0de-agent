@@ -176,9 +176,21 @@ export function UpdateBanner() {
             disabled={applying}
             onClick={() => {
               // P1-1：热更新会暂停/中止进行中的任务并关闭所有终端面板，apply 前必须让用户知情。
+              // P2-11：逐项列出受影响会话与终端数（此前只给一句笼统文案）。
+              const impact = data?.impact
+              const runNote =
+                impact && impact.runs.length > 0
+                  ? `\n将中断 ${impact.runs.length} 个进行中的对话：\n${impact.runs
+                      .map((r) => `  · ${r.title}`)
+                      .join('\n')}`
+                  : ''
+              const termNote =
+                impact && impact.terminalCount > 0
+                  ? `\n将关闭 ${impact.terminalCount} 个终端面板。`
+                  : ''
               if (
                 !window.confirm(
-                  '热更新将暂停进行中的对话任务（可能中止未达安全点的任务）并关闭所有终端面板，确认继续？',
+                  `热更新将暂停进行中的对话任务（可能中止未达安全点的任务）${runNote}${termNote}\n确认继续？`,
                 )
               ) {
                 return

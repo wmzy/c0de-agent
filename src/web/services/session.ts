@@ -51,6 +51,18 @@ const sessionAPI = {
     ),
   /** 会话导出（元数据 + 消息 + 归档），数据可迁移。 */
   exportSession: (id: string) => apiRequest<SessionExport>(`/api/sessions/${id}/export`),
+  /** 会话导入（导出的逆操作；绑定 projectId 后出现在对应项目视图）。 */
+  importSession: (
+    data: unknown,
+    projectId?: string,
+  ): Promise<{ ok: boolean; sessionId: string; messageCount: number; archiveCount: number }> =>
+    apiRequest('/api/sessions/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(data as Record<string, unknown>),
+        ...(projectId ? { projectId } : {}),
+      }),
+    }),
   branches: (id: string) => apiRequest<Session[]>(`/api/sessions/${id}/branches`),
   status: (id: string) => apiRequest<{ _tag: string }>(`/api/sessions/${id}/status`),
   open: (id: string) =>

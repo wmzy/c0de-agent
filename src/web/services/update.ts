@@ -5,6 +5,12 @@ type UpdateStatus = {
   hasUpdate: boolean
   currentVersion: string
   latestVersion: string
+  disabled?: boolean
+  /** 热更新影响面：进行中的对话与终端面板数（apply 确认框逐项展示）。 */
+  impact?: {
+    runs: Array<{ sessionId: string; title: string; agentType?: string }>
+    terminalCount: number
+  }
 }
 
 /** POST /api/update/apply 成功响应。 */

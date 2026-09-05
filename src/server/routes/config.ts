@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { Hono } from 'hono'
 import {
   applyScopedPatch,
@@ -5,6 +7,7 @@ import {
   mergeConfig,
   saveConfigScoped,
 } from '../../core/config.js'
+import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ProviderConfig } from '../../shared/types/llm.js'
@@ -29,10 +32,27 @@ function providerApiKeyWarnings(providers: Config['providers']): string[] {
   return warnings
 }
 
+/** 项目级配置含密钥且位于 git 仓库内时提示 .gitignore（防误提交）。 */
+function projectConfigGitWarning(project: Partial<Config> | undefined, cwd: string): string | null {
+  if (!project || !containsSecrets(project)) return null
+  let dir = cwd
+  while (true) {
+    if (existsSync(join(dir, '.git'))) {
+      return (
+        '项目级配置（.c0de/config.json）含 API Key/Token 且位于 git 仓库内，' +
+        '建议将 .c0de/ 加入 .gitignore，防止密钥被误提交。'
+      )
+    }
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
 function createConfigRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
-  // GET / — 合并后配置 + 作用域信息 + apiKey 解密警告
+  // GET / — 合并后配置 + 作用域信息 + apiKey 解密警告 + git 误提交警告
   app.get('/', (c) => {
     const scopes = loadConfigScopes(ctx.cwd)
     return c.json({
@@ -42,6 +62,7 @@ function createConfigRoute(ctx: ServerContext): Hono {
         project: scopes.project ?? null,
       },
       warnings: providerApiKeyWarnings(ctx.config.providers),
+      gitWarning: projectConfigGitWarning(scopes.project, ctx.cwd),
     })
   })
 

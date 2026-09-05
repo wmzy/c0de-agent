@@ -372,6 +372,13 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
       >
         <span className={summaryIcon}>📋</span>
         <span className={summaryProgress}>任务</span>
+        <span
+          className={summaryCurrent}
+          title="会话内 agent 待办（todo 工具维护），独立于「看板」页的项目级任务看板；可用「导出到看板」把未完成任务复制到项目看板"
+          data-testid="todo-scope-hint"
+        >
+          本会话待办
+        </span>
         {totalTasks > 0 && (
           <span className={phaseProgress}>
             {doneTasks}/{totalTasks}

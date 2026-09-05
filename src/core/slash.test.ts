@@ -95,8 +95,82 @@ describe('builtin commands', () => {
       expect(result.text).toContain('/clear')
       expect(result.text).toContain('/fork')
       expect(result.text).toContain('/config')
+      // 动态生成：默认启用的 /model 与 /workflow 必须出现在帮助里（静态文案曾漂移漏掉）
+      expect(result.text).toContain('/model')
+      expect(result.text).toContain('/workflow')
       // /model 不再以「切换模型」姿态出现（已诚实化）
       expect(result.text).not.toContain('Switch the current session model')
+    }
+  })
+
+  it('/help 尊重 slashCommands.enabled 过滤', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'help')
+    expect(cmd).toBeDefined()
+    const config = {
+      ...DEFAULT_CONFIG,
+      slashCommands: { enabled: ['/help', '/model'] },
+    }
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('/model')
+      expect(result.text).not.toContain('/config')
+      expect(result.text).not.toContain('/clear')
+    }
+  })
+
+  it('/config 输出对 apiKey/token 脱敏', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const config = {
+      ...DEFAULT_CONFIG,
+      providers: [
+        {
+          name: 'demo',
+          protocol: 'openai-compat' as const,
+          apiKey: 'sk-super-secret-key-12345',
+          baseURL: 'https://demo/v1',
+        },
+      ],
+      security: { ...DEFAULT_CONFIG.security, token: 'top-secret-token-value' },
+    }
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).not.toContain('sk-super-secret-key-12345')
+      expect(result.text).not.toContain('top-secret-token-value')
+      expect(result.text).toContain('sk-s****2345')
+      expect(result.text).toContain('top-****alue')
+      // 非敏感字段原样可见
+      expect(result.text).toContain('demo')
+      expect(result.text).toContain('https://demo/v1')
+    }
+  })
+
+  it('/config <key> 单键读取同样脱敏', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const config = {
+      ...DEFAULT_CONFIG,
+      security: { ...DEFAULT_CONFIG.security, token: 'another-secret-token' },
+    }
+    const result = (await cmd?.execute('security.token', {
+      cwd: '/',
+      config,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).not.toContain('another-secret-token')
+      expect(result.text).toContain('****')
     }
   })
 
@@ -207,7 +281,7 @@ describe('builtin commands', () => {
     })) as CommandResult
     expect(result._tag).toBe('success')
     if (result._tag === 'success') {
-      expect(result.message).toContain('Cleared 1')
+      expect(result.message).toContain('已清空 1')
     }
     expect(await getEntries(db, session.id)).toHaveLength(0)
     // 原始消息已归档（clear 类型）
@@ -232,7 +306,7 @@ describe('builtin commands', () => {
     })) as CommandResult
     expect(result._tag).toBe('success')
     if (result._tag === 'success') {
-      expect(result.message).toContain('Forked')
+      expect(result.message).toContain('已分支到新会话')
     }
   })
 
@@ -280,7 +354,7 @@ describe('workflow command', () => {
     })) as CommandResult
     expect(result._tag).toBe('text')
     if (result._tag === 'text') {
-      expect(result.text).toContain('Available')
+      expect(result.text).toContain('可用工作流')
     }
   })
 
@@ -346,7 +420,7 @@ export default async function workflow(ctx) {
     expect(result._tag).toBe('success')
     if (result._tag === 'success') {
       expect(result.message).toContain('my-audit')
-      expect(result.message).toContain('saved')
+      expect(result.message).toContain('已保存到')
     }
 
     // 验证文件被写入 .c0de/workflows/
@@ -382,7 +456,7 @@ export default async function workflow(ctx) {
     })) as CommandResult
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
-      expect(result.message).toContain('Cannot read')
+      expect(result.message).toContain('无法读取文件')
     }
   })
 

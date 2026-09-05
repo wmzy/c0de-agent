@@ -82,7 +82,7 @@ describe('config set', () => {
     })
     const cfg = JSON.parse(readFileSync(join(tmp, '.c0de', 'config.json'), 'utf-8'))
     expect(cfg).toEqual({ theme: 'dark' })
-    expect(out.join('')).toContain('Unset')
+    expect(out.join('')).toContain('已取消设置')
   })
 
   it('set 嵌套点路径只改目标键，不覆盖同层其它键', async () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
@@ -12,6 +12,7 @@ import type {
   UpdateConfig,
   WebSearchConfig,
 } from '../shared/types/config.js'
+import { encryptSecret, isEncryptedSecret } from './secret.js'
 
 const GLOBAL_CONFIG_DIR = '.c0de'
 const CONFIG_FILENAME = 'config.json'
@@ -162,7 +163,10 @@ function mergeRaw(...cfgs: (Record<string, unknown> | undefined)[]): Record<stri
   return result
 }
 
-/** 把 raw JSON 写回指定作用域配置文件（不含默认值）。 */
+/** 把 raw JSON 写回指定作用域配置文件（不含默认值）。
+ *  - 落盘前对 providers[].apiKey 加密（已带 enc: 前缀/空值透传）——
+ *    CLI config set 与 /config 斜杠命令共用此路径，保证「apiKey 不明文落盘」全链路成立。
+ *  - 写入后 chmod 600：配置文件可能含 token/加密密钥，默认 0644 同机可读。 */
 async function saveConfigScoped(
   scope: 'global' | 'project',
   projectDir: string | undefined,
@@ -174,7 +178,28 @@ async function saveConfigScoped(
       : join(projectDir ?? process.cwd(), '.c0de')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   const path = join(dir, CONFIG_FILENAME)
-  writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8')
+  const hardened = redactSensitiveOnSave(data)
+  writeFileSync(path, JSON.stringify(hardened, null, 2), 'utf-8')
+  try {
+    chmodSync(path, 0o600)
+  } catch {
+    // 平台不支持（Windows 等）时忽略；内容仍已加密。
+  }
+}
+
+/** 落盘前的敏感值处理：providers[].apiKey 明文 → enc: 加密（spec §24.2）。 */
+function redactSensitiveOnSave(data: Record<string, unknown>): Record<string, unknown> {
+  const providers = data.providers
+  if (!Array.isArray(providers)) return data
+  const hardened = providers.map((p) => {
+    if (p === null || typeof p !== 'object') return p
+    const apiKey = (p as Record<string, unknown>).apiKey
+    if (typeof apiKey === 'string' && apiKey.length > 0 && !isEncryptedSecret(apiKey)) {
+      return { ...(p as Record<string, unknown>), apiKey: encryptSecret(apiKey) }
+    }
+    return p
+  })
+  return { ...data, providers: hardened }
 }
 
 async function loadConfig(projectDir?: string): Promise<Config> {

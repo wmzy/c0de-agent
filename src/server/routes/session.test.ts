@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
-import { projects, sessions } from '../../db/schema.js'
+import { projects, sessionEntries, sessions } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries } from '../../session/archive.js'
-import { updateSessionLastRun } from '../../session/session.js'
+import { getSession, updateSessionLastRun } from '../../session/session.js'
 import type { Session } from '../../shared/types/message.js'
 import { createServerContext } from '../context.js'
 import type { APIErrorBody } from '../types.js'
@@ -585,5 +585,116 @@ describe('session route', () => {
     expect(body.session.id).toBe(session.id)
     expect(Array.isArray(body.messages)).toBe(true)
     expect(Array.isArray(body.archives)).toBe(true)
+  })
+
+  describe('POST /import 会话导入', () => {
+    it('导入导出 JSON：新会话含原消息（id/时间戳保留）', async () => {
+      const { app, ctx } = await setup()
+      // 构造可导入载荷：一个项目 + 一条导出会话
+      const projectId = 'import-target-project'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-target' })
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Origin', projectId }),
+      })
+      const origin = (await created.json()) as Session
+      await ctx.db.db.insert(sessionEntries).values({
+        sessionId: origin.id,
+        tag: 'message',
+        role: 'user',
+        content: [{ _tag: 'text', text: 'hello import' }],
+      })
+      const exportRes = await app.request(`/${origin.id}/export`)
+      const exported = (await exportRes.json()) as Record<string, unknown>
+
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...exported, projectId }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        ok: boolean
+        sessionId: string
+        messageCount: number
+      }
+      expect(body.ok).toBe(true)
+      expect(body.messageCount).toBe(1)
+
+      // 导入后新会话属于目标项目，消息可读
+      const msgs = await app.request(`/${body.sessionId}/messages`)
+      const msgList = (await msgs.json()) as Array<{ role: string }>
+      expect(msgList).toHaveLength(1)
+      expect(msgList[0]?.role).toBe('user')
+      const imported = await getSession(ctx.db, body.sessionId)
+      expect(imported?.projectId).toBe(projectId)
+      expect(imported?.title).toBe('Origin')
+    })
+
+    it('无效载荷（缺 version/session/messages）→ 400', async () => {
+      const { app } = await setup()
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ foo: 'bar' }),
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error?: { code?: string } }
+      expect(body.error?.code).toBe('INVALID_EXPORT')
+    })
+
+    it('绑定不存在的项目 → 404', async () => {
+      const { app } = await setup()
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: 1,
+          session: { title: 'X' },
+          messages: [],
+          projectId: 'no-such-project',
+        }),
+      })
+      expect(res.status).toBe(404)
+    })
+
+    it('同一导出重复导入 → 每次生成新会话（同库复制/恢复安全）', async () => {
+      const { app } = await setup()
+      const payload = {
+        version: 1,
+        session: { title: 'Dup' },
+        messages: [
+          {
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            sessionId: 'ignored',
+            role: 'user',
+            content: [{ _tag: 'text', text: 'x' }],
+            tokenCount: 1,
+            createdAt: Date.now(),
+          },
+        ],
+      }
+      const first = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      expect(first.status).toBe(200)
+      const firstBody = (await first.json()) as { sessionId: string }
+      const second = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      expect(second.status).toBe(200)
+      const secondBody = (await second.json()) as { sessionId: string }
+      expect(secondBody.sessionId).not.toBe(firstBody.sessionId)
+      // 两份均有完整消息
+      const a = (await (await app.request(`/${firstBody.sessionId}/messages`)).json()) as unknown[]
+      const b = (await (await app.request(`/${secondBody.sessionId}/messages`)).json()) as unknown[]
+      expect(a).toHaveLength(1)
+      expect(b).toHaveLength(1)
+    })
   })
 })

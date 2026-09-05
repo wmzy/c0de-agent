@@ -23,11 +23,15 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
 
   if (sub === 'get') {
     const key = ctx.args.positionals[1]
+    const { redactSecrets } = await import('../../core/redact.js')
     if (!key) {
-      write(`${JSON.stringify(config, null, 2)}\n`)
+      // 展示前脱敏：apiKey/token 明文绝不输出到终端（P0 密钥暴露）。
+      write(`${JSON.stringify(redactSecrets(config), null, 2)}\n`)
       return
     }
-    const val = getByPath(config, key)
+    // 用点路径末段作为键名参与脱敏判定：config get security.token 等单键读取同样掩码。
+    const leaf = key.split('.').pop()
+    const val = redactSecrets(getByPath(config, key), leaf)
     write(`${typeof val === 'object' ? JSON.stringify(val) : String(val)}\n`)
     return
   }
@@ -44,7 +48,7 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
     const value = coerce(rawArg)
     const next = applyScopedPatch(scopeCfg ?? {}, setPathPatch(key, value))
     await saveConfigScoped(scope, ctx.cwd, next)
-    write(`${value === null ? 'Unset' : 'Set'} ${key} (scope: ${scope})\n`)
+    write(`${value === null ? '已取消设置' : '已设置'} ${key} (scope: ${scope})\n`)
     return
   }
 

@@ -9,16 +9,30 @@ import { createServerContext } from '../context.js'
 import { createPermissionsRoute } from './permissions.js'
 
 let dbHandle: DB | undefined
+let tmpHome: string | undefined
+const originalHome = process.env.HOME
 
 afterEach(async () => {
   await dbHandle?.close()
   dbHandle = undefined
+  if (tmpHome) {
+    const { rmSync } = await import('node:fs')
+    rmSync(tmpHome, { recursive: true, force: true })
+    tmpHome = undefined
+  }
+  process.env.HOME = originalHome
 })
 
 async function setup() {
   const db = await createDB({ driver: 'pglite' })
   dbHandle = db
   await migrateDB(db)
+  // PUT / 持久化到 global 作用域（homedir()），用临时 HOME 隔离避免污染真实全局配置
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  tmpHome = mkdtempSync(join(tmpdir(), 'c0de-perm-home-'))
+  process.env.HOME = tmpHome
   const ctx = createServerContext({ db, llmRegistry: createRegistry() })
   const app = createPermissionsRoute(ctx)
   return { app, ctx }
@@ -64,6 +78,20 @@ describe('permissions route', () => {
     await putMode(app, 'auto')
     const res = await app.request('/')
     expect(await res.json()).toEqual({ mode: 'auto' })
+  })
+
+  it('PUT / 持久化到 global 作用域 config.permission.defaultMode（重启后仍生效）', async () => {
+    const { app } = await setup()
+    const res = await putMode(app, 'auto')
+    expect(res.status).toBe(200)
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const saved = JSON.parse(
+      readFileSync(join(tmpHome ?? '', '.c0de', 'config.json'), 'utf-8'),
+    ) as { permission?: { defaultMode?: string } }
+    expect(saved.permission?.defaultMode).toBe('auto')
+    // 最小落盘：不含其他键
+    expect(Object.keys(saved)).toEqual(['permission'])
   })
 
   it('POST /:sessionId/always-allow 追加白名单并持久化到 metadata', async () => {

@@ -43,24 +43,29 @@ function createSlashRegistry(): SlashRegistry {
 
 const helpCommand: SlashCommand = {
   name: 'help',
-  description: 'List available slash commands',
-  execute: async () => {
-    const lines = [
-      'Available commands:',
-      '  /compact         Manually trigger context compaction',
-      '  /clear [id] --yes  Clear session messages (default: current session; archives originals)',
-      '  /help            Show this help',
-      '  /fork [id] [index]  Fork session (default: current session, latest message)',
-      '  /config [key] [value]  View or set configuration (dot paths supported)',
-      '  /workflow        Manage and run workflows',
-    ]
+  description: '列出可用斜杠命令',
+  execute: async (_args, ctx) => {
+    // 从 registry 动态生成，避免静态文案随命令增删漂移；
+    // 尊重 slashCommands.enabled 过滤（空 = 全部启用，与消费方语义一致）。
+    const enabledList = ctx.config.slashCommands?.enabled ?? []
+    const enabledSet = new Set(enabledList.map((n) => (n.startsWith('/') ? n.slice(1) : n)))
+    const commands = createSlashRegistry()
+      .list()
+      .filter((c) => enabledSet.size === 0 || enabledSet.has(c.name))
+    const width = Math.max(...commands.map((c) => `/${c.name}`.length))
+    const lines = ['可用命令：']
+    for (const cmd of commands) {
+      const hint = cmd.argsHint ? ` ${cmd.argsHint}` : ''
+      const pad = ' '.repeat(Math.max(1, width - `/${cmd.name}`.length))
+      lines.push(`  /${cmd.name}${pad}${hint}  ${cmd.description}`)
+    }
     return { _tag: 'text', text: lines.join('\n') }
   },
 }
 
 const compactCommand: SlashCommand = {
   name: 'compact',
-  description: 'Manually trigger context compaction',
+  description: '手动触发上下文压缩',
   execute: async () => {
     // 仅声明意图：真正的压缩由消费方（loop.compactContext / chat 路由）执行，
     // 复用 createSummarizer + runCompaction，且不把 /compact 当作 user 消息发给 LLM。
@@ -70,7 +75,7 @@ const compactCommand: SlashCommand = {
 
 const modelCommand: SlashCommand = {
   name: 'model',
-  description: 'Show the model in use for this session',
+  description: '查看当前会话使用的模型',
   argsHint: '',
   execute: async (_args, ctx) => {
     // P2：诚实化——此前返回「Model set to X」但什么都不生效，后改为引导文案。
@@ -100,7 +105,7 @@ const modelCommand: SlashCommand = {
 
 const clearCommand: SlashCommand = {
   name: 'clear',
-  description: 'Clear session messages (archives originals first)',
+  description: '清空会话消息（先归档原始内容）',
   argsHint: '[session-id] [--yes]',
   execute: async (args, ctx) => {
     const parts = args.split(/\s+/).filter(Boolean)
@@ -135,14 +140,14 @@ const clearCommand: SlashCommand = {
     }
     return {
       _tag: 'success',
-      message: `Cleared ${ids.length} entries (archived — view via the 归档 button in the session page)`,
+      message: `已清空 ${ids.length} 条消息（原内容已归档，可在会话页「归档」面板查看）`,
     }
   },
 }
 
 const forkCommand: SlashCommand = {
   name: 'fork',
-  description: 'Fork session from a message index',
+  description: '从指定消息处分支会话',
   argsHint: '[session-id] [message-index]',
   execute: async (args, ctx) => {
     const parts = args.split(/\s+/).filter(Boolean)
@@ -174,7 +179,7 @@ const forkCommand: SlashCommand = {
     const { forkSession } = await import('../session/branch.js')
     try {
       const forked = await forkSession(ctx.deps.db, sessionId, messageIndex)
-      return { _tag: 'success', message: `Forked to new session: ${forked.id}` }
+      return { _tag: 'success', message: `已分支到新会话：${forked.id}` }
     } catch (error) {
       return {
         _tag: 'error',
@@ -186,21 +191,25 @@ const forkCommand: SlashCommand = {
 
 const configCommand: SlashCommand = {
   name: 'config',
-  description: 'View or set configuration',
+  description: '查看或设置配置（支持点路径）',
   argsHint: '[key] [value]',
   execute: async (args, ctx) => {
     const { getByPath, setPathPatch, coerce } = await import('./config-path.js')
+    // 展示前脱敏：apiKey/token 等敏感字段绝不原样出现在聊天里（P0 密钥暴露）。
+    const { redactSecrets } = await import('./redact.js')
     if (!args) {
       return {
         _tag: 'text',
-        text: `（合并视图：global + project 作用域；修改请用 /config <key> <value>，写入 project 作用域）\n${JSON.stringify(ctx.config, null, 2)}`,
+        text: `（合并视图：global + project 作用域；修改请用 /config <key> <value>，写入 project 作用域）\n${JSON.stringify(redactSecrets(ctx.config), null, 2)}`,
       }
     }
     const parts = args.split(/\s+/)
     const key = parts[0] ?? ''
     if (parts.length === 1) {
       try {
-        const value = getByPath(ctx.config, key)
+        // 用点路径末段作为键名参与脱敏判定：/config security.token 等单键读取同样掩码。
+        const leaf = key.split('.').pop()
+        const value = redactSecrets(getByPath(ctx.config, key), leaf)
         return {
           _tag: 'text',
           text: `${key}: ${JSON.stringify(value)}（合并视图：global + project 作用域）`,
@@ -217,14 +226,14 @@ const configCommand: SlashCommand = {
     await saveConfigScoped('project', ctx.cwd, next)
     return {
       _tag: 'success',
-      message: `${value === null ? 'Unset' : 'Set'} ${key} (scope: project)`,
+      message: `${value === null ? '已取消设置' : '已设置'} ${key} (scope: project)`,
     }
   },
 }
 
 const workflowCommand: SlashCommand = {
   name: 'workflow',
-  description: 'Manage and run workflows',
+  description: '管理并运行工作流',
   argsHint: '[list|run|show|create|edit] [name] [args]',
   subcommands: [
     { name: 'list', description: 'List available workflows' },
@@ -257,13 +266,13 @@ const workflowCommand: SlashCommand = {
       const byName = new Map(registry.list().map((w) => [w.meta.name, w]))
       for (const wf of projectWorkflows) byName.set(wf.meta.name, wf)
       const workflows = Array.from(byName.values())
-      const lines = ['Available workflows:']
+      const lines = ['可用工作流：']
       for (const wf of workflows) {
         const phases = wf.meta.phases ? ` [${wf.meta.phases.join('→')}]` : ''
         lines.push(`  /${wf.meta.name}${phases}  — ${wf.meta.description} (${wf.source})`)
       }
       lines.push('')
-      lines.push('Usage:')
+      lines.push('用法：')
       lines.push('  /workflow run <name> [args]     — 执行工作流')
       lines.push('  /workflow create <name> --file <path>  — 从文件创建工作流')
       lines.push('  /workflow edit <name>           — 编辑工作流源码')
@@ -276,7 +285,7 @@ const workflowCommand: SlashCommand = {
       if (!name) return { _tag: 'error', message: 'Usage: /workflow show <name>' }
       const wf = resolveEntry(name)
       if (!wf) {
-        return { _tag: 'error', message: `Unknown workflow: ${name}` }
+        return { _tag: 'error', message: `未知工作流：${name}` }
       }
       const code = wf.sourceCode ?? '// source not available'
       return {
@@ -304,7 +313,7 @@ const workflowCommand: SlashCommand = {
       try {
         source = await import('node:fs/promises').then((fs) => fs.readFile(filePath, 'utf-8'))
       } catch {
-        return { _tag: 'error', message: `Cannot read file: ${filePath}` }
+        return { _tag: 'error', message: `无法读取文件：${filePath}` }
       }
 
       const result = await saveWorkflow(name, source, 'project', ctx.cwd)
@@ -319,7 +328,7 @@ const workflowCommand: SlashCommand = {
 
       return {
         _tag: 'success',
-        message: `Workflow "${name}" saved to ${result.filePath}\n现在可以用 /workflow run ${name} 执行，或在对话中输入 /${name} 调用。`,
+        message: `工作流 "${name}" 已保存到 ${result.filePath}\n现在可以用 /workflow run ${name} 执行，或在对话中输入 /${name} 调用。`,
       }
     }
 
@@ -328,17 +337,16 @@ const workflowCommand: SlashCommand = {
       if (!name) return { _tag: 'error', message: 'Usage: /workflow edit <name>' }
       const wf = resolveEntry(name)
       if (!wf) {
-        return { _tag: 'error', message: `Unknown workflow: ${name}` }
+        return { _tag: 'error', message: `未知工作流：${name}` }
       }
       if (wf.source === 'builtin') {
         return {
           _tag: 'error',
-          message:
-            'Cannot edit builtin workflow. Fork it first: /workflow create <new-name> --file <path>',
+          message: '内置工作流不可编辑。请先复制：/workflow create <新名称> --file <路径>',
         }
       }
       if (!wf.filePath) {
-        return { _tag: 'error', message: `Workflow file path not available for "${name}"` }
+        return { _tag: 'error', message: `工作流 "${name}" 的文件路径不可用` }
       }
       // 斜杠命令经 Web SSE 执行，无法在浏览器里交互式打开终端编辑器——
       // 在 serve 进程 spawn vi 会让用户既看不到也无法输入，SSE 流还会阻塞。
@@ -366,7 +374,7 @@ const workflowCommand: SlashCommand = {
         ].join(', ')
         return {
           _tag: 'error',
-          message: `Unknown workflow: "${name}". Available: ${available || '(none)'}`,
+          message: `未知工作流："${name}"。可用：${available || '(无)'}`,
         }
       }
 
@@ -392,7 +400,7 @@ const workflowCommand: SlashCommand = {
 
     return {
       _tag: 'error',
-      message: `Unknown subcommand: ${subcommand}. Use: list, run, show, create, edit`,
+      message: `未知子命令：${subcommand}。可用：list, run, show, create, edit`,
     }
   },
 }

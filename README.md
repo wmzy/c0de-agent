@@ -14,6 +14,7 @@
 - **Web 搜索**：内置 websearch 工具，支持多搜索引擎。
 - **斜杠命令**：`/compact`、`/model`、`/clear` 等可配置的斜杠命令。
 - **会话回收站**：删除会话软删除入回收站，30 天内可恢复。
+- **会话导出/导入**：会话可导出为 JSON 备份，并在任意项目重新导入（会话列表「导入」按钮），跨机器迁移或本地备份均可用。
 - **主题**：亮/暗/跟随系统主题。
 
 ## 安装
@@ -30,6 +31,8 @@ pnpm add -g c0de-agent
 
 ## 安全
 
+- **密钥存储**：`config.json` 写入时强制 `chmod 600`；`providers[].apiKey` 落盘前自动加密（AES-256-GCM，机器绑定，`enc:` 前缀），无论经 Web 设置、`c0de config set` 还是 `/config` 斜杠命令写入均不落明文。`/config` 与 `c0de config get` 展示配置时对 apiKey/token 等字段自动脱敏。
+  - 项目级配置（`<项目>/.c0de/config.json`）含密钥且目录在 git 仓库内时，设置页会提示将 `.c0de/` 加入 `.gitignore`，防止误提交。
 - **认证**：`security.authEnabled` 默认开启。首次启动自动生成 bootstrap token（持久化于数据目录 `auth-token` 文件），浏览器首访凭启动打印的 URL `?token=` 注册为**首台设备**，服务端随即**轮换 bootstrap token**（旧 token 立即失效，杜绝 URL/shell 历史泄漏）并下发设备 token；后续 API 请求与终端 WebSocket 均携带设备 token。新增设备无 token 时进入**配对流程**：新设备生成 6 位配对码，由已授权设备在「设备配对」弹窗中核对并批准后下发新设备 token。显式配置 `security.token` 时为静态模式（不轮换、不配对，适合 CI/脚本）。
   - **首设备先到先得**：任何能看见启动打印 URL 的人（同机其他用户、终端输出被截图/共享）都能抢先注册为首台设备，随后真实用户只能经其配对审批。请勿在共享主机或会被录屏的场景让 URL 暴露。
   - token 解析优先级：`security.token` 配置 > 环境变量 `C0DE_AUTH_TOKEN` > 数据目录 token 文件 > 自动生成并持久化。
@@ -60,6 +63,11 @@ c0de update --check
 ```
 
 启动后访问 `http://localhost:3000`。
+
+> **CLI 与 Web 的会话隔离**：`c0de chat` 产生的会话标记为 `cli` 来源，仅在 CLI 可见
+> （`c0de sessions` 列出 / `c0de chat --continue` 续接 / `c0de sessions delete` 删除），
+> 不会出现在 Web 界面的会话列表中；Web 会话同理仅供 Web 浏览。两者存于同一数据库，
+> 互不干扰。
 
 ## 开发
 

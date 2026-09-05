@@ -5,7 +5,8 @@ import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
 /** GET/PUT /api/permissions — 授权模式（default 逐个确认 / auto 自动放行 ask 工具）。
- *  - 根路径：默认模式（全局，启动时取 config.permission.defaultMode）
+ *  - 根路径：全局默认模式（启动时取 config.permission.defaultMode；
+ *    PUT / 持久化到 global 作用域 config，重启后仍生效）
  *  - /:sessionId：会话级覆盖（P1-5 按会话隔离 auto 高风险状态）。
  *    P2：会话级覆盖持久化到 session.metadata.permissionMode，重启后经 GET 或
  *    chat 路由懒加载恢复——此前仅内存 Map，重启静默回退 default，用户困惑。
@@ -77,7 +78,8 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     return c.json({ mode: ctx.permissionMode })
   })
 
-  // PUT / — 运行时切换默认模式（仅本次运行生效，不回写 config）
+  // PUT / — 设置全局默认授权模式（P1-4：持久化到 global 作用域 config）。
+  // 此前仅本次运行生效、重启静默回退，与同款控件在会话页的持久化语义相悖。
   app.put('/', async (c) => {
     const body = (await c.req.json().catch(() => null)) as { mode?: unknown } | null
     const mode = body?.mode
@@ -85,6 +87,18 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
       return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
     }
     ctx.permissionMode = mode
+    try {
+      const { applyScopedPatch, loadConfigScopes, saveConfigScoped } = await import(
+        '../../core/config.js'
+      )
+      const scopes = loadConfigScopes(ctx.cwd)
+      const next = applyScopedPatch(scopes.global ?? {}, {
+        permission: { defaultMode: mode },
+      })
+      await saveConfigScoped('global', ctx.cwd, next)
+    } catch {
+      // 持久化失败不致命：本次运行仍生效（与 /:sessionId 覆盖的降级语义一致）
+    }
     return c.json({ mode: ctx.permissionMode })
   })
 

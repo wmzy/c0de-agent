@@ -11,6 +11,77 @@ type ChatCommandContext = {
   stderr?: (s: string) => void
 }
 
+/**
+ * CLI 斜杠命令拦截：与 Web chat 路由同语义（P1 跨端一致性）。
+ * 此前 print 模式把 /clear、/config 等当普通文本发给 LLM，模型会虚构执行结果；
+ * 现在 parseSlashInput + registry 拦截，未启用/未知命令回退与 Web 端一致。
+ * /compact 需要会话上下文，由消费方在此执行压缩并输出摘要。
+ */
+async function runSlashCommand(
+  message: string,
+  continueId: string | undefined,
+  ctx: ChatCommandContext,
+): Promise<boolean> {
+  const { createSlashRegistry, parseSlashInput } = await import('../../core/slash.js')
+  const parsed = parseSlashInput(message)
+  if (!parsed) return false
+  const registry = createSlashRegistry()
+  const cmd = registry.get(parsed.name)
+  if (!cmd) return false // 未知斜杠命令：回退为正常消息发给 agent（与 Web 端一致）
+
+  const out = ctx.stdout ?? process.stdout.write.bind(process.stdout)
+  const err = ctx.stderr ?? process.stderr.write.bind(process.stderr)
+  const enabledList = ctx.config.slashCommands?.enabled ?? []
+  const enabledSet = new Set(enabledList.map((n) => (n.startsWith('/') ? n.slice(1) : n)))
+  if (enabledSet.size > 0 && !enabledSet.has(parsed.name)) {
+    err(`斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）\n`)
+    return true
+  }
+
+  const { compactContext } = await import('../../core/loop.js')
+  const { createAgent } = await import('../../core/agent.js')
+  const { getSession } = await import('../../session/session.js')
+
+  const result = await cmd.execute(parsed.args, {
+    cwd: ctx.deps.cwd,
+    config: ctx.config,
+    deps: ctx.deps,
+    sessionId: continueId,
+  })
+
+  if (result._tag === 'compact') {
+    // /compact：消费方执行压缩（Web 端由 chat 路由消费）。需要会话上下文。
+    if (!continueId) {
+      err('/compact 需要会话上下文：请加 --continue <session-id> 指定会话\n')
+      return true
+    }
+    const session = await getSession(ctx.deps.db, continueId)
+    if (!session) {
+      throw new Error(`session not found: ${continueId}`)
+    }
+    const agentConfig = {
+      provider: ctx.config.defaultProvider,
+      model: ctx.config.defaultModel,
+      tools: [],
+      plugins: ctx.config.plugins.enabled,
+      agentName: 'default',
+    }
+    const state = await createAgent(session, agentConfig, ctx.deps)
+    for await (const event of compactContext(state, ctx.deps)) {
+      if (event._tag === 'text_delta') out(`${event.text}\n`)
+    }
+    return true
+  }
+
+  if (result._tag === 'error') {
+    err(`${result.message}\n`)
+    return true
+  }
+  const text = result._tag === 'success' ? result.message : result.text
+  out(`${text}\n`)
+  return true
+}
+
 async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
   const message = ctx.args.positionals.join(' ').trim()
   if (!message) throw new Error('chat: a message is required (c0de chat "your question")')
@@ -32,6 +103,9 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
     continueId = sessions[0]?.id
     if (!continueId) throw new Error('chat: no sessions to continue')
   }
+
+  // 斜杠命令拦截：命中则执行本地语义，不把命令文本发给 LLM。
+  if (await runSlashCommand(message, continueId, ctx)) return
 
   const text = await runPrintMode(ctx.config, message, ctx.deps, {
     ...(model ? { model } : {}),

@@ -5,6 +5,7 @@ import { createSummarizer, runCompaction } from '../../core/compact.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import { sessions } from '../../db/schema.js'
 import { fromDirectory } from '../../project/index.js'
+import { getProject } from '../../project/project.js'
 import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
 import {
   BranchPointOutOfRangeError,
@@ -12,6 +13,7 @@ import {
   getBranches,
   getTree,
 } from '../../session/branch.js'
+import { importSessionData } from '../../session/import.js'
 import { deleteEntriesByIds, getMessages, insertEntry } from '../../session/message.js'
 import {
   createSession,
@@ -40,6 +42,48 @@ import { resolveAgentCwd } from './chat.js'
 
 function createSessionRoute(ctx: ServerContext): Hono {
   const app = new Hono()
+
+  // 会话导入：GET /:id/export 的逆操作（数据备份/迁移闭环）。
+  // 消息/归档重新生成 id（保留内容与时间戳），同库复制、重复导入均安全。
+  // 绑定 projectId 后立即出现在对应项目视图。
+  app.post('/import', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      version?: unknown
+      session?: { title?: unknown } | null
+      messages?: unknown
+      archives?: unknown
+      projectId?: unknown
+    } | null
+    if (body?.version !== 1 || !body?.session || !Array.isArray(body?.messages)) {
+      return apiError(
+        c,
+        400,
+        'INVALID_EXPORT',
+        '无效的会话导出 JSON：需要 version/session/messages 字段',
+      )
+    }
+    const projectId =
+      typeof body.projectId === 'string' && body.projectId ? body.projectId : undefined
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
+      }
+    }
+    const title =
+      typeof body.session.title === 'string' && body.session.title
+        ? body.session.title
+        : '导入的会话'
+    const result = await importSessionData(ctx.db, {
+      title,
+      projectId,
+      messages: body.messages as Parameters<typeof importSessionData>[1]['messages'],
+      archives: Array.isArray(body.archives)
+        ? (body.archives as Parameters<typeof importSessionData>[1]['archives'])
+        : [],
+    })
+    return c.json({ ok: true, ...result })
+  })
 
   // 创建会话
   app.post('/', async (c) => {

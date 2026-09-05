@@ -477,13 +477,16 @@ export function Chat({
       </div>
       {permissionTimeout ? (
         <div className={interruptBanner} data-testid="permission-timeout-banner">
-          <span>权限确认超时，工具「{permissionTimeout.tool}」已被自动拒绝</span>
+          <span>
+            权限确认超时，工具「{permissionTimeout.tool}
+            」已被自动拒绝。重新询问将重发上一条消息，本回合已执行的工具可能重复执行
+          </span>
           {onReask ? (
             <button
               type="button"
               onClick={onReask}
               data-testid="permission-reask"
-              title="重新询问将重发上一条消息，本回合已执行的工具可能重复执行"
+              title="重发上一条消息继续；已执行的工具（bash/git 等）可能再次执行"
             >
               重新询问
             </button>
@@ -550,11 +553,11 @@ export function Chat({
               role="status"
               title={
                 sessionId
-                  ? '本会话自动授权已开启：所有工具（含 bash）免确认执行（重启后恢复默认模式）'
-                  : '全局自动授权已开启：所有会话的所有工具（含 bash）免确认执行（仅本次运行有效）'
+                  ? '本会话自动授权已开启：所有工具（含 bash）免确认执行（会话级覆盖，重启后仍生效）'
+                  : '全局自动授权已开启：所有会话的所有工具（含 bash）免确认执行（写入全局配置，重启后仍生效）'
               }
             >
-              ⚠ 自动授权已开启{sessionId ? '（本会话，重启后恢复默认）' : '（全局，仅本次运行）'}
+              ⚠ 自动授权已开启{sessionId ? '（本会话）' : '（全局，已保存）'}
             </span>
           ) : (
             <span
@@ -563,10 +566,10 @@ export function Chat({
               title={
                 sessionId
                   ? '本会话工具执行前逐个确认；「始终允许」白名单除外（重启后仍生效）'
-                  : '全局默认授权模式：所有会话的工具执行前逐个确认'
+                  : '全局默认授权模式：所有会话的工具执行前逐个确认（写入全局配置，重启后仍生效）'
               }
             >
-              工具执行前逐个确认{sessionId ? '（本会话）' : '（全局，重启后恢复默认）'}
+              工具执行前逐个确认{sessionId ? '（本会话）' : '（全局默认）'}
             </span>
           )}
           {toolToggle}

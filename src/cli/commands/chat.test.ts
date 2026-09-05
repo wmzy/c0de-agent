@@ -85,4 +85,63 @@ describe('runChatCommand', () => {
       }),
     ).rejects.toThrow(/message/i)
   })
+
+  describe('斜杠命令拦截（与 Web 端同语义）', () => {
+    it('/help 本地执行：输出命令列表，不发给 LLM', async () => {
+      const lines: string[] = []
+      const errs: string[] = []
+      const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream: mockStream })
+      await runChatCommand({
+        args: { options: {}, positionals: ['/help'] },
+        config,
+        deps,
+        stdout: (s: string) => lines.push(s),
+        stderr: (s: string) => errs.push(s),
+      })
+      expect(lines.join('')).toContain('可用命令')
+      expect(lines.join('')).toContain('/model')
+      // 未走 LLM：chatStream 产物 answer 不应出现
+      expect(lines.join('')).not.toContain('answer')
+      expect(errs.join('')).toBe('')
+    })
+
+    it('/config <key> 本地执行：输出配置值', async () => {
+      const lines: string[] = []
+      const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream: mockStream })
+      await runChatCommand({
+        args: { options: {}, positionals: ['/config', 'defaultModel'] },
+        config,
+        deps,
+        stdout: (s: string) => lines.push(s),
+      })
+      expect(lines.join('')).toContain('demo-model')
+    })
+
+    it('/clear 缺 --yes：输出确认指引到 stderr，不发给 LLM', async () => {
+      const lines: string[] = []
+      const errs: string[] = []
+      const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream: mockStream })
+      await runChatCommand({
+        args: { options: {}, positionals: ['/clear'] },
+        config,
+        deps,
+        stdout: (s: string) => lines.push(s),
+        stderr: (s: string) => errs.push(s),
+      })
+      expect(errs.join('')).toContain('--yes')
+      expect(lines.join('')).not.toContain('answer')
+    })
+
+    it('未知斜杠命令：回退为普通消息发给 LLM', async () => {
+      const lines: string[] = []
+      const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream: mockStream })
+      await runChatCommand({
+        args: { options: {}, positionals: ['/nope'] },
+        config,
+        deps,
+        stdout: (s: string) => lines.push(s),
+      })
+      expect(lines.join('')).toContain('answer')
+    })
+  })
 })

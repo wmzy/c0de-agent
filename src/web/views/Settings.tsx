@@ -391,6 +391,20 @@ export function Settings() {
           ))}
         </div>
       )}
+      {resp?.gitWarning && (
+        <div
+          style={{
+            padding: '10px 16px',
+            borderBottom: '1px solid var(--border)',
+            background: 'color-mix(in srgb, var(--warning) 10%, transparent)',
+            fontSize: 12,
+            color: 'var(--warning)',
+          }}
+          data-testid="config-git-warning"
+        >
+          {resp.gitWarning}
+        </div>
+      )}
       <SettingsToolbar
         viewMode={viewMode}
         onSwitchGui={enterGuiMode}

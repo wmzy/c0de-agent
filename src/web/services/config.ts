@@ -9,6 +9,8 @@ type ConfigResponse = {
     project: Partial<Config> | null
   }
   warnings: string[]
+  /** 项目级配置含密钥且位于 git 仓库内时提示 .gitignore（GET 响应）。 */
+  gitWarning?: string | null
   /** 安全类配置（token/authEnabled）运行时修改不生效，需重启 serve（PATCH 响应）。 */
   needsRestart?: boolean
 }

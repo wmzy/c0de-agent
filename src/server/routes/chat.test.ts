@@ -588,7 +588,7 @@ describe('chat route (SSE)', () => {
       .filter((e) => e.event === 'text_delta')
       .map((e) => JSON.parse(e.data).text as string)
       .join('')
-    expect(text).toContain('Cleared')
+    expect(text).toContain('已清空')
     // 消息已被清除
     expect(await getEntries(ctx.db, sessionId)).toHaveLength(0)
   })

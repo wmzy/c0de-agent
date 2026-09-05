@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { Session } from '@shared/types/message.js'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { type ChangeEvent, useRef, useState } from 'react'
 import { BranchTree } from '../components/BranchTree.js'
 import {
   useDeletedSessions,
@@ -198,9 +198,13 @@ export function SessionList({
 }) {
   const { data: tree, isLoading } = useSessionTree()
   const del = useDeleteSession()
+  const qc = useQueryClient()
   const [showRecycle, setShowRecycle] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
   const [search, setSearch] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
 
@@ -221,6 +225,26 @@ export function SessionList({
     })
   }
 
+  /** 导入会话导出 JSON：成功后刷新会话树并跳转到导入的会话。 */
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // 允许重复选择同一文件
+    if (!file) return
+    setImportError(null)
+    setImporting(true)
+    try {
+      const data = JSON.parse(await file.text()) as unknown
+      const result = await sessionAPI.importSession(data, projectId)
+      await qc.invalidateQueries({ queryKey: ['sessions'] })
+      await qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      onSelect(result.sessionId)
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className={panel}>
       <div className={header}>
@@ -237,6 +261,24 @@ export function SessionList({
         >
           回收站
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          style={{ display: 'none' }}
+          onChange={(e) => void handleImportFile(e)}
+          data-testid="session-import-input"
+        />
+        <button
+          type="button"
+          className={addBtn}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={importing}
+          title="导入之前导出的会话 JSON（.c0de-session.json）"
+          data-testid="session-import"
+        >
+          {importing ? '导入中…' : '导入'}
+        </button>
         <button type="button" className={addBtn} onClick={onNewSession} data-testid="new-session">
           + 新建
         </button>
@@ -244,6 +286,11 @@ export function SessionList({
       {deleteError && (
         <div className={errorBar} data-testid="delete-error">
           删除失败：{deleteError}
+        </div>
+      )}
+      {importError && (
+        <div className={errorBar} data-testid="import-error">
+          导入失败：{importError}
         </div>
       )}
       {!showRecycle && (

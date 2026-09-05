@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -96,6 +96,37 @@ describe('saveConfigScoped / loadConfig', () => {
     await saveConfigScoped('project', tmp, { defaultModel: 'project-model' })
     const loaded = await loadConfig(tmp)
     expect(loaded.defaultModel).toBe('project-model')
+  })
+
+  it('saveConfigScoped 落盘前加密 providers[].apiKey（不明文持久化）', async () => {
+    const { decryptSecret, encryptSecret, isEncryptedSecret } = await import('./secret.js')
+    const preEncrypted = encryptSecret('sk-orig')
+    await saveConfigScoped('project', tmp, {
+      providers: [
+        { name: 'demo', protocol: 'openai-compat', apiKey: 'sk-plain-key-123', baseURL: '' },
+        { name: 'pre', protocol: 'openai-compat', apiKey: preEncrypted, baseURL: '' },
+        { name: 'empty', protocol: 'openai-compat', apiKey: '', baseURL: '' },
+      ],
+    })
+    const onDisk = JSON.parse(readFileSync(join(tmp, '.c0de', 'config.json'), 'utf-8')) as {
+      providers: Array<{ name: string; apiKey: string }>
+    }
+    expect(onDisk.providers[0]?.apiKey).not.toContain('sk-plain-key-123')
+    expect(isEncryptedSecret(onDisk.providers[0]?.apiKey ?? '')).toBe(true)
+    expect(decryptSecret(onDisk.providers[0]?.apiKey ?? '')).toBe('sk-plain-key-123')
+    // 已加密透传、空值透传
+    expect(onDisk.providers[1]?.apiKey).toBe(preEncrypted)
+    expect(onDisk.providers[2]?.apiKey).toBe('')
+  })
+
+  it('saveConfigScoped 写入后配置文件权限为 600', async () => {
+    const { statSync } = await import('node:fs')
+    await saveConfigScoped('project', tmp, { defaultModel: 'perm-model' })
+    const mode = statSync(join(tmp, '.c0de', 'config.json')).mode & 0o777
+    // Windows 无 POSIX 权限语义，跳过断言
+    if (process.platform !== 'win32') {
+      expect(mode).toBe(0o600)
+    }
   })
 })
 

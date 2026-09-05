@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { getSession } from '../../session/session.js'
 import type { InstallMethod } from '../../update/index.js'
 import {
   getCurrentVersion,
@@ -30,15 +31,42 @@ import type { ServerContext } from '../types.js'
 function createUpdateRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
-  app.get('/', (c) => {
+  app.get('/', async (c) => {
+    // 热更新影响面（P2-11）：apply 前由前端确认框逐项展示受影响对象。
+    // 顶层 run（主 agent）+ 终端数；子 agent 归父会话，不重复列出。
+    const active = ctx.agentManager.listActive()
+    const topRuns = active.filter((r) => !r.parentSessionId)
+    const runs: Array<{ sessionId: string; title: string; agentType?: string }> = []
+    for (const r of topRuns) {
+      let title = r.sessionId.slice(0, 8)
+      try {
+        const session = await getSession(ctx.db, r.sessionId)
+        if (session) title = session.title
+      } catch {
+        // 会话查询失败：回退 id 前缀展示
+      }
+      runs.push({
+        sessionId: r.sessionId,
+        title,
+        ...(r.agentType ? { agentType: r.agentType } : {}),
+      })
+    }
+    const impact = { runs, terminalCount: ctx.ptyManager.list().length }
+
     // P2-8：update.enabled=false 时无 handoff server，apply 必然 409。
     // 不再触发 checkNow，也不返回 hasUpdate，避免横幅出现一个点了必失败的应用按钮。
     if (ctx.config.update.enabled === false) {
       const v = getCurrentVersion()
-      return c.json({ hasUpdate: false, disabled: true, currentVersion: v, latestVersion: v })
+      return c.json({
+        hasUpdate: false,
+        disabled: true,
+        currentVersion: v,
+        latestVersion: v,
+        impact,
+      })
     }
     const cached = ctx.updateScheduler.getLastResult()
-    if (cached) return c.json(cached)
+    if (cached) return c.json({ ...cached, impact })
     // 无缓存（首次启动延迟未到）：同步触发一次，避免前端首屏空。
     // 不 await——保持 GET 语义非阻塞；前端下次轮询拿到结果。
     void ctx.updateScheduler.checkNow()
@@ -47,6 +75,7 @@ function createUpdateRoute(ctx: ServerContext): Hono {
       hasUpdate: false,
       currentVersion: v,
       latestVersion: v,
+      impact,
     })
   })
 

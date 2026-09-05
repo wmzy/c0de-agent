@@ -114,7 +114,7 @@ describe('Chat permission mode toggle', () => {
     // 关闭态：无警示 pill，只有中性说明文本（含非持久提示）
     expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
     expect(screen.getByTestId('permission-mode-hint').textContent).toBe(
-      '工具执行前逐个确认（全局，重启后恢复默认）',
+      '工具执行前逐个确认（全局默认）',
     )
   })
 
