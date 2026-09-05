@@ -70,14 +70,30 @@ const compactCommand: SlashCommand = {
 
 const modelCommand: SlashCommand = {
   name: 'model',
-  description: 'Model selection guidance',
+  description: 'Show the model in use for this session',
   argsHint: '',
-  execute: async () => {
-    // 诚实化：模型由前端 ModelSelector 决定并随请求 body 传递，服务端不保存会话级模型覆盖。
-    // 此前返回 "Model set to X" 但什么都不生效。
+  execute: async (_args, ctx) => {
+    // P2：诚实化——此前返回「Model set to X」但什么都不生效，后改为引导文案。
+    // 现在提供真实信息：优先读本会话活跃段的 provider/model（若存在），
+    // 否则回退默认配置。会话模型切换由底部 ModelSelector 完成。
+    if (ctx.sessionId) {
+      try {
+        const { getLLMSegments } = await import('../session/session.js')
+        const segs = await getLLMSegments(ctx.deps.db, ctx.sessionId)
+        const last = segs[segs.length - 1]
+        if (last) {
+          return {
+            _tag: 'text',
+            text: `当前会话模型：${last.model}（provider: ${last.provider}）\n切换模型请使用聊天页底部的模型选择器。`,
+          }
+        }
+      } catch {
+        // 段查询失败回退默认值展示
+      }
+    }
     return {
       _tag: 'text',
-      text: '会话模型请在聊天页底部的模型选择器中切换（/model 不再直接生效）。',
+      text: `默认模型：${ctx.config.defaultModel}（provider: ${ctx.config.defaultProvider}）\n切换模型请使用聊天页底部的模型选择器。`,
     }
   },
 }
@@ -97,7 +113,7 @@ const clearCommand: SlashCommand = {
       return {
         _tag: 'error',
         message:
-          '清空消息不可逆。原始消息将归档保存，确认请执行 /clear --yes（或 /clear <session-id> --yes）。',
+          '清空消息不可逆。原始消息将归档到本地数据存储（compaction_archives，暂无界面恢复入口），确认请执行 /clear --yes（或 /clear <session-id> --yes）。',
       }
     }
     const { getEntries, deleteEntriesByIds } = await import('../session/message.js')
@@ -117,7 +133,10 @@ const clearCommand: SlashCommand = {
       )
       await deleteEntriesByIds(ctx.deps.db, ids)
     }
-    return { _tag: 'success', message: `Cleared ${ids.length} entries (archived)` }
+    return {
+      _tag: 'success',
+      message: `Cleared ${ids.length} entries (archived to local data store, no UI restore path)`,
+    }
   },
 }
 

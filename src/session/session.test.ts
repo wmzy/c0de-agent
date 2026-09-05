@@ -8,14 +8,17 @@ import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { sessions } from '../db/schema.js'
 import { fromDirectory } from '../project/project.js'
+import { markDeadBackgroundJobs } from './jobs.js'
 import {
   createSession,
   getSession,
   listDeletedSessions,
   listSessions,
+  purgeTemporarySessions,
   restoreSession,
   softDeleteSession,
   touchSession,
+  updateSessionLastRun,
   updateSessionTitle,
 } from './session.js'
 
@@ -129,5 +132,72 @@ describe('session CRUD', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('createSession with parentId sets parentId (子 agent 会话挂树)', async () => {
+    const parent = await createSession(handle, 'P')
+    const child = await createSession(handle, 'C', undefined, 'coder', undefined, parent.id)
+    expect(child.parentId).toBe(parent.id)
+  })
+})
+
+describe('purgeTemporarySessions', () => {
+  let handle: DB
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  it('清理过期的 CLI/workflow 临时会话，保留 web 与近期会话', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000)
+    const cli = await createSession(handle, 'cli-old', undefined, undefined, 'cli')
+    const wf = await createSession(handle, 'workflow:x', undefined, 'workflow')
+    const web = await createSession(handle, 'web')
+    const recentCli = await createSession(handle, 'cli-recent', undefined, undefined, 'cli')
+    await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, cli.id))
+    await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, wf.id))
+    const purged = await purgeTemporarySessions(handle)
+    expect(purged).toBe(2)
+    expect(await getSession(handle, cli.id)).toBeNull()
+    expect(await getSession(handle, wf.id)).toBeNull()
+    expect(await getSession(handle, web.id)).not.toBeNull()
+    expect(await getSession(handle, recentCli.id)).not.toBeNull()
+  })
+})
+
+describe('markDeadBackgroundJobs', () => {
+  let handle: DB
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  it('标记悬空后台任务并给父会话发失败通知', async () => {
+    const parent = await createSession(handle, 'parent')
+    const child = await createSession(handle, 'child', undefined, 'coder', undefined, parent.id)
+    await updateSessionLastRun(handle, child.id, {
+      status: 'running',
+      agentName: 'coder',
+      startedAt: Date.now(),
+    })
+    const marked = await markDeadBackgroundJobs(handle)
+    expect(marked).toBe(1)
+    const { getMessages } = await import('./message.js')
+    const messages = await getMessages(handle, parent.id)
+    const failedNotice = messages.filter(
+      (m) =>
+        m.role === 'user' &&
+        m.content.some((p) => p._tag === 'text' && p.text.includes('state="failed"')),
+    )
+    expect(failedNotice).toHaveLength(1)
+  })
+
+  it('正常完成的后台任务不被标记', async () => {
+    const parent = await createSession(handle, 'parent2')
+    const child = await createSession(handle, 'child2', undefined, 'coder', undefined, parent.id)
+    await updateSessionLastRun(handle, child.id, {
+      status: 'completed',
+      agentName: 'coder',
+      startedAt: Date.now(),
+    })
+    expect(await markDeadBackgroundJobs(handle)).toBe(0)
   })
 })

@@ -1,5 +1,9 @@
+import { existsSync } from 'node:fs'
+import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createSummarizer, runCompaction } from '../../core/compact.js'
+import { loadConfigScopes, mergeConfig } from '../../core/config.js'
+import { sessions } from '../../db/schema.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries } from '../../session/archive.js'
 import {
@@ -30,6 +34,7 @@ import { estimateMessageTokens } from '../../session/token.js'
 import { generateId } from '../../shared/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { resolveAgentCwd } from './chat.js'
 
 function createSessionRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -116,11 +121,31 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.body(null, 204)
   })
 
-  // 恢复会话（从回收站还原；仅还原该会话本身）
+  // 恢复会话（从回收站还原；仅还原该会话本身）。
+  // P1 可达性修复：会话所属项目已被删除时（FK set null），按 worktreePath 重建
+  // 项目记录并重新归属——否则恢复成功但会话不属于任何项目视图，UI 不可达。
   app.post('/:id/restore', async (c) => {
-    const ok = await restoreSession(ctx.db, c.req.param('id'))
+    const id = c.req.param('id')
+    const ok = await restoreSession(ctx.db, id)
     if (!ok) return apiError(c, 404, 'NOT_FOUND', '会话不存在或未删除')
-    return c.json({ ok: true })
+    const session = await getSession(ctx.db, id)
+    let rebound = false
+    let orphaned = false
+    if (session && !session.projectId) {
+      const wt = session.worktreePath
+      if (wt && existsSync(wt)) {
+        try {
+          const project = await fromDirectory(ctx.db, wt)
+          await ctx.db.db.update(sessions).set({ projectId: project.id }).where(eq(sessions.id, id))
+          rebound = true
+        } catch {
+          orphaned = true
+        }
+      } else {
+        orphaned = true
+      }
+    }
+    return c.json({ ok: true, rebound, orphaned })
   })
 
   // 获取消息列表
@@ -138,6 +163,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
   })
 
   // 手动触发会话压缩（段切换确认弹窗「顺便压缩」调用）。用末段的 provider/model 构建摘要器。
+  // P1 多项目：keepRecentTokens 按会话项目配置解析（此前用启动目录配置）。
   app.post('/:id/compact', async (c) => {
     const id = c.req.param('id')
     let session: Awaited<ReturnType<typeof getSession>>
@@ -147,14 +173,24 @@ function createSessionRoute(ctx: ServerContext): Hono {
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     }
     if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    let sessionConfig = ctx.config
+    try {
+      const sessionCwd = await resolveAgentCwd(ctx, session)
+      if (sessionCwd !== ctx.cwd) {
+        const projectScope = loadConfigScopes(sessionCwd).project
+        if (projectScope) sessionConfig = mergeConfig(ctx.config, projectScope)
+      }
+    } catch {
+      // cwd 解析失败不阻塞压缩：回退服务级配置（压缩优于报错）
+    }
     const segs = await getLLMSegments(ctx.db, id)
     const lastSeg = segs[segs.length - 1]
-    const provider = lastSeg?.provider ?? ctx.config.defaultProvider
-    const model = lastSeg?.model ?? ctx.config.defaultModel
+    const provider = lastSeg?.provider ?? sessionConfig.defaultProvider
+    const model = lastSeg?.model ?? sessionConfig.defaultModel
     try {
       const summarizer = createSummarizer(ctx.llmRegistry, provider, model, {})
       const result = await runCompaction(ctx.db, id, summarizer, {
-        keepRecentTokens: ctx.config.compaction.keepRecentTokens,
+        keepRecentTokens: sessionConfig.compaction.keepRecentTokens,
       })
       return c.json(result)
     } catch (e) {

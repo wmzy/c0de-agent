@@ -32,7 +32,8 @@ import {
   registerProvider,
 } from '../llm/registry.js'
 import { initPlugins } from '../plugins/index.js'
-import { purgeDeletedSessions } from '../session/session.js'
+import { markDeadBackgroundJobs } from '../session/jobs.js'
+import { purgeDeletedSessions, purgeTemporarySessions } from '../session/session.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
@@ -421,10 +422,17 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
   const purgeTimer = setInterval(
     () => {
       void purgeDeletedSessions(db).catch(() => {})
+      // P2：CLI print / 工作流临时会话同样每日清理（30 天保留）
+      void purgeTemporarySessions(db).catch(() => {})
     },
     24 * 60 * 60 * 1000,
   )
   purgeTimer.unref()
+  // P2：启动时同步清一次临时会话（每日定时之外的兜底）
+  void purgeTemporarySessions(db).catch(() => {})
+  // P2：标记崩溃遗留的后台子 agent 任务（lastRun=running 的 subagent 会话）
+  // 并给父会话注入失败通知。fire-and-forget：失败不阻塞启动。
+  void markDeadBackgroundJobs(db).catch(() => {})
 
   // P2-15：PGLite WAL 周期刷盘（30s），缩短 kill -9 等突然停机时的已提交数据丢失窗口。
   const syncTimer = db.sync
@@ -440,7 +448,15 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
       clearInterval(purgeTimer)
       if (syncTimer) clearInterval(syncTimer)
       await dispose()
-      if (ownsDb) await db.close()
+      if (ownsDb) {
+        await db.close()
+        // P0 修复：优雅关闭（含热更新 handoff）时显式释放 .dev.lock。
+        // 旧流程依赖新实例的 stale-PID 检测清理锁文件，而旧进程在 handoff
+        // 响应后延迟 250ms 才退出——新实例若在该窗口内做锁检查（PID 仍存活）
+        // 会抛「Database is locked」崩溃，且旧实例已退出，双输。显式释放后
+        // 锁文件在进程存活期就已移除，新实例直接重建锁，无竞态窗口。
+        releaseDevDbLock(resolveDbDir())
+      }
     },
   }
 }

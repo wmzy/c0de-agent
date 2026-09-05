@@ -1,20 +1,21 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // vi.mock 工厂被 hoist 到顶部，必须用 vi.hoisted 创建 mock 引用，避免 ReferenceError。
-const { performHotUpdateMock, serializeSessionsMock } = vi.hoisted(() => ({
-  performHotUpdateMock: vi.fn(),
-  serializeSessionsMock: vi.fn().mockResolvedValue({
-    version: '0.1.0',
-    sessions: [],
-    entries: [],
-    config: null,
-    timestamp: 1,
-  }),
-}))
+const { performInstallMock, performHandoffMock, serializeSessionsMock, manualInstallCommandMock } =
+  vi.hoisted(() => ({
+    performInstallMock: vi.fn(),
+    performHandoffMock: vi.fn(),
+    serializeSessionsMock: vi
+      .fn()
+      .mockResolvedValue({ version: '0.1.0', sessions: [], entries: [], timestamp: 1 }),
+    manualInstallCommandMock: vi.fn().mockReturnValue('npm install -g c0de-agent'),
+  }))
 
 vi.mock('../../update/index.js', () => ({
-  performHotUpdate: performHotUpdateMock,
+  performInstall: performInstallMock,
+  performHandoff: performHandoffMock,
   serializeSessions: serializeSessionsMock,
+  manualInstallCommand: manualInstallCommandMock,
   checkForUpdate: vi.fn(),
   getCurrentVersion: () => '0.1.0',
 }))
@@ -28,29 +29,45 @@ function makeCtx(opts: {
   checkNowResult?: { hasUpdate: boolean; currentVersion: string; latestVersion: string }
   handoffPort?: number
 }): ServerContext {
+  const pausedIds: string[] = []
+  const agentManager = {
+    pauseAll: vi.fn().mockResolvedValue({ paused: 0, forcedAbort: 0, pausedIds }),
+    resume: vi.fn().mockReturnValue(true),
+    get: vi.fn(),
+    isStarting: vi.fn().mockReturnValue(false),
+  }
   return {
     updateScheduler: {
       getLastResult: () => opts.lastResult ?? null,
-      checkNow: async () =>
-        opts.checkNowResult ?? {
-          hasUpdate: false,
-          currentVersion: '0.0.0',
-          latestVersion: '0.0.0',
-        },
+      checkNow: () =>
+        Promise.resolve(
+          opts.checkNowResult ?? {
+            hasUpdate: false,
+            currentVersion: '0.1.0',
+            latestVersion: '0.1.0',
+          },
+        ),
       start: vi.fn(),
       stop: vi.fn(),
     },
-    agentManager: {
-      pauseAll: vi.fn().mockResolvedValue({ paused: 0, forcedAbort: 0 }),
-    } as never,
-    authManager: undefined,
-    authToken: undefined,
-    config: { update: { pauseTimeoutMs: 30_000 } } as never,
-    db: {} as never,
+    config: {
+      update: { enabled: true, pauseTimeoutMs: 30_000 },
+    },
+    agentManager,
+    db: {},
+    port: 3000,
     handoff:
       opts.handoffPort !== undefined ? { port: opts.handoffPort, server: {} as never } : undefined,
+    authManager: undefined,
+    authToken: undefined,
   } as unknown as ServerContext
 }
+
+beforeEach(() => {
+  performInstallMock.mockReset()
+  performHandoffMock.mockReset()
+  serializeSessionsMock.mockClear()
+})
 
 describe('GET /api/update', () => {
   it('returns cached result when scheduler has one', async () => {
@@ -103,7 +120,6 @@ describe('GET /api/update', () => {
 
 describe('POST /api/update/apply', () => {
   it('returns 409 HOT_UPDATE_UNAVAILABLE when no handoff server (dev mode)', async () => {
-    performHotUpdateMock.mockClear()
     const ctx = makeCtx({
       checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
     })
@@ -112,11 +128,11 @@ describe('POST /api/update/apply', () => {
     expect(res.status).toBe(409)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe('HOT_UPDATE_UNAVAILABLE')
-    expect(performHotUpdateMock).not.toHaveBeenCalled()
+    expect(performInstallMock).not.toHaveBeenCalled()
+    expect(performHandoffMock).not.toHaveBeenCalled()
   })
 
   it('returns 409 NO_UPDATE when no update available', async () => {
-    performHotUpdateMock.mockClear()
     const ctx = makeCtx({
       checkNowResult: { hasUpdate: false, currentVersion: '0.1.0', latestVersion: '0.1.0' },
       handoffPort: 9999,
@@ -126,12 +142,51 @@ describe('POST /api/update/apply', () => {
     expect(res.status).toBe(409)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe('NO_UPDATE')
-    expect(performHotUpdateMock).not.toHaveBeenCalled()
+    expect(performInstallMock).not.toHaveBeenCalled()
   })
 
-  it('invokes performHotUpdate with handoffPort when update available', async () => {
-    performHotUpdateMock.mockClear()
-    performHotUpdateMock.mockResolvedValue({ _tag: 'success', snapshotPath: '/tmp/x.json' })
+  it('P0：install 失败时返回 409 且不暂停任何会话', async () => {
+    performInstallMock.mockResolvedValue({ _tag: 'install_failed', error: 'network down' })
+    const ctx = makeCtx({
+      checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+      handoffPort: 9999,
+    })
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/apply', { method: 'POST' })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('INSTALL_FAILED')
+    // 关键断言：install 失败 → 不触碰会话状态（旧实现先 pause 后 install，失败无回滚）
+    expect(ctx.agentManager.pauseAll).not.toHaveBeenCalled()
+    expect(performHandoffMock).not.toHaveBeenCalled()
+  })
+
+  it('P0：manual_install_required 时返回 409 且不暂停任何会话', async () => {
+    performInstallMock.mockResolvedValue({
+      _tag: 'manual_install_required',
+      error: 'unknown install method',
+      command: 'npm install -g c0de-agent',
+    })
+    const ctx = makeCtx({
+      checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+      handoffPort: 9999,
+    })
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/apply', { method: 'POST' })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string; details?: { command?: string } } }
+    expect(body.error.code).toBe('MANUAL_UPDATE_REQUIRED')
+    expect(body.error.details?.command).toBe('npm install -g c0de-agent')
+    expect(ctx.agentManager.pauseAll).not.toHaveBeenCalled()
+  })
+
+  it('install 成功后 pause → serialize → handoff，且 install 先于 pause', async () => {
+    performInstallMock.mockResolvedValue({ _tag: 'success', installMethod: 'npm' })
+    performHandoffMock.mockResolvedValue({
+      _tag: 'success',
+      snapshotPath: '/tmp/x.json',
+      installMethod: 'npm',
+    })
     const ctx = makeCtx({
       checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
       handoffPort: 9999,
@@ -142,25 +197,47 @@ describe('POST /api/update/apply', () => {
     const body = (await res.json()) as { ok: boolean; latestVersion: string }
     expect(body.ok).toBe(true)
     expect(body.latestVersion).toBe('0.2.0')
-    // performHotUpdate 被调用，第二参数含 handoffPort
-    expect(performHotUpdateMock).toHaveBeenCalledTimes(1)
-    const secondArg = performHotUpdateMock.mock.calls[0]?.[1] as { handoffPort?: number }
-    expect(secondArg.handoffPort).toBe(9999)
+    expect(performInstallMock).toHaveBeenCalledTimes(1)
+    expect(ctx.agentManager.pauseAll).toHaveBeenCalledTimes(1)
+    // performHandoff 第二参为 installMethod，第三参含 handoffPort
+    expect(performHandoffMock).toHaveBeenCalledTimes(1)
+    const methodArg = performHandoffMock.mock.calls[0]?.[1] as { kind: string }
+    const optsArg = performHandoffMock.mock.calls[0]?.[2] as { handoffPort?: number }
+    expect(methodArg.kind).toBe('npm')
+    expect(optsArg.handoffPort).toBe(9999)
+    // 顺序：install 完成于 pause 之前
+    const pauseAllMock = ctx.agentManager.pauseAll as unknown as ReturnType<typeof vi.fn>
+    expect(
+      (performInstallMock.mock.invocationCallOrder[0] ?? 0) <
+        (pauseAllMock.mock.invocationCallOrder[0] ?? 1),
+    ).toBe(true)
   })
 
-  it('returns 500 when performHotUpdate fails', async () => {
-    performHotUpdateMock.mockClear()
-    performHotUpdateMock.mockResolvedValue({
-      _tag: 'install_failed',
-      error: 'network down',
+  it('P0：handoff spawn 失败时 resume 暂停的会话', async () => {
+    performInstallMock.mockResolvedValue({ _tag: 'success', installMethod: 'npm' })
+    performHandoffMock.mockResolvedValue({
+      _tag: 'spawn_failed',
+      error: 'spawn ENOENT',
       snapshotPath: '/tmp/y.json',
     })
     const ctx = makeCtx({
       checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
       handoffPort: 9999,
     })
+    // 模拟 2 个会话被成功暂停
+    ;(ctx.agentManager.pauseAll as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      paused: 2,
+      forcedAbort: 0,
+      pausedIds: ['s1', 's2'],
+    })
     const app = createUpdateRoute(ctx)
     const res = await app.request('/apply', { method: 'POST' })
     expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('HOT_UPDATE_FAILED')
+    // 回滚：两个暂停会话都被 resume
+    expect(ctx.agentManager.resume).toHaveBeenCalledTimes(2)
+    expect(ctx.agentManager.resume).toHaveBeenCalledWith('s1')
+    expect(ctx.agentManager.resume).toHaveBeenCalledWith('s2')
   })
 })

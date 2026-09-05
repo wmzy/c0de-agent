@@ -6,7 +6,19 @@ export type { UpdateScheduler, UpdateSchedulerOptions } from './scheduler.js'
 export { createUpdateScheduler } from './scheduler.js'
 export type { SerializedEntry, SerializedSession, SessionSnapshot } from './snapshot.js'
 export { orderSessionsByParent, restoreSessions, serializeSessions } from './snapshot.js'
-export type { HotUpdateOptions, HotUpdateResult, SpawnFn } from './updater.js'
-export { cleanupSnapshot, performHotUpdate, performInstall } from './updater.js'
+export type {
+  HotUpdateOptions,
+  HotUpdateResult,
+  InstallMethod,
+  InstallOnlyResult,
+  SpawnFn,
+} from './updater.js'
+export {
+  cleanupSnapshot,
+  manualInstallCommand,
+  performHandoff,
+  performHotUpdate,
+  performInstall,
+} from './updater.js'
 export type { UpdateCheckResult } from './version.js'
 export { checkForUpdate, compareSemver, getCurrentVersion } from './version.js'

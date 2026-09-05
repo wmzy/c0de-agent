@@ -47,8 +47,12 @@ type AgentManager = {
   abort(sessionId: string): boolean
   pause(sessionId: string): boolean
   resume(sessionId: string): boolean
-  /** 暂停全部活跃 run 并等待到达安全点；超时强制中止（热更新前调用）。 */
-  pauseAll(timeoutMs?: number): Promise<{ paused: number; forcedAbort: number }>
+  /** 暂停全部活跃 run 并等待到达安全点；超时强制中止（热更新前调用）。
+   *  返回 pausedIds：成功暂停的会话 id 列表——调用方在后续步骤（spawn 等）
+   *  失败时必须对其逐个 resume 回滚，避免更新失败连带冻结用户对话。 */
+  pauseAll(
+    timeoutMs?: number,
+  ): Promise<{ paused: number; forcedAbort: number; pausedIds: string[] }>
   steer(sessionId: string, message: string): boolean
   /** 查询某 session 的所有子 agent run（恢复/展示用）。 */
   children(parentSessionId: string): ActiveRun[]
@@ -114,7 +118,11 @@ function createAgentManager(): AgentManager {
      * 超时后对仍未暂停的 run 强制 abort（热更新不能无限等待）。
      * 返回 { paused: 已暂停数, forcedAbort: 超时中止数 }。
      */
-    async pauseAll(timeoutMs = 30_000): Promise<{ paused: number; forcedAbort: number }> {
+    async pauseAll(timeoutMs = 30_000): Promise<{
+      paused: number
+      forcedAbort: number
+      pausedIds: string[]
+    }> {
       const active = Array.from(runs.values())
         .map((slot) => slotRun(slot))
         .filter((r): r is ActiveRun => r !== undefined && r.state.status._tag === 'running')
@@ -134,7 +142,10 @@ function createAgentManager(): AgentManager {
           forcedAbort += 1
         }
       }
-      return { paused: active.length - forcedAbort, forcedAbort }
+      const pausedIds = active
+        .filter((r) => r.state.status._tag === 'paused')
+        .map((r) => r.sessionId)
+      return { paused: active.length - forcedAbort, forcedAbort, pausedIds }
     },
     steer(sessionId, message) {
       const run = slotRun(runs.get(sessionId))

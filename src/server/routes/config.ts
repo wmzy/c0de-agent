@@ -85,9 +85,12 @@ function createConfigRoute(ctx: ServerContext): Hono {
         : mergeConfig(scopes.global, nextScoped as Partial<Config>)
     // providers 变更后原地同步 registry，使运行中的连接立即生效
     syncRegistryFromConfig(ctx.llmRegistry, ctx.config)
-    // 安全类配置（token/authEnabled/allowedOrigins）由 authManager 在启动时一次性读取，
-    // 运行时修改不生效——告知前端提示重启。
-    const needsRestart = patch.security !== undefined
+    // 启动时一次性读取的配置：运行时修改不生效——告知前端提示重启。
+    //  - security：authManager/CORS 在启动时构建
+    //  - update：调度器 interval 与 handoff server 在启动时构建
+    //  - plugins：hookRunner/插件生命周期在启动时初始化
+    const needsRestart =
+      patch.security !== undefined || patch.update !== undefined || patch.plugins !== undefined
     return c.json({
       config: ctx.config,
       scope,

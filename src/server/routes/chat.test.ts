@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { SSEStreamingApi } from 'hono/streaming'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG } from '../../core/config.js'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
@@ -15,7 +16,12 @@ import { createSession, getLLMSegments } from '../../session/session.js'
 import { getFileSnapshots } from '../../session/snapshot.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
-import { createChatRoute, resolveAgentCwd } from './chat.js'
+import {
+  createChatRoute,
+  resolveAgentCwd,
+  SSE_HEARTBEAT_INTERVAL_MS,
+  startHeartbeat,
+} from './chat.js'
 import { createCommandsRoute } from './commands.js'
 
 /** 模拟 chatStream：返回简单的文本 + done。 */
@@ -165,6 +171,18 @@ describe('chat route (SSE)', () => {
     const text = await res.text()
     const events = parseSSEEvents(text)
     expect(events.some((e) => e.event === 'done')).toBe(true)
+  })
+
+  it('POST / 带 body.agents 全部无效 → 400（此前静默忽略）', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi', agents: ['nope', 'default'] }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('INVALID_AGENT_MENTION')
   })
 
   it('POST / text_delta events contain text content', async () => {
@@ -895,5 +913,33 @@ describe('workflowz 关键词 steering 注入', () => {
         m.content.includes('workflow-notice'),
     )
     expect(steeringMsgs).toHaveLength(0)
+  })
+})
+
+describe('SSE 心跳', () => {
+  it('startHeartbeat 每 30s 发送 heartbeat 帧', async () => {
+    vi.useFakeTimers()
+    try {
+      const writeSSE = vi.fn().mockResolvedValue(undefined)
+      const stream = { writeSSE } as unknown as SSEStreamingApi
+      const stop = startHeartbeat(stream)
+
+      await vi.advanceTimersByTimeAsync(61_000)
+      expect(writeSSE).toHaveBeenCalledTimes(2)
+      expect(writeSSE).toHaveBeenCalledWith({ event: 'heartbeat', data: '' })
+
+      stop()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(writeSSE).toHaveBeenCalledTimes(2) // stop 后不再发送
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('心跳间隔严格小于前端 90s 静默看门狗（防长任务误杀）', () => {
+    // web/services/chat.ts 看门狗 90_000ms；心跳必须远小于它，
+    // 否则 bash 120s 上限/权限 5 分钟/子 agent 长跑期间连接仍会被误杀。
+    expect(SSE_HEARTBEAT_INTERVAL_MS).toBeLessThan(90_000)
+    expect(90_000 / SSE_HEARTBEAT_INTERVAL_MS).toBeGreaterThanOrEqual(3)
   })
 })

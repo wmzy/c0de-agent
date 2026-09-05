@@ -125,7 +125,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   const qc = useQueryClient()
   const { data: history, isLoading } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
-    useComposerDefaults()
+    useComposerDefaults(projectId)
   const { data: agentsData } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),

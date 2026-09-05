@@ -1,5 +1,5 @@
 import { appendMessage } from '../../session/message.js'
-import { createSession } from '../../session/session.js'
+import { createSession, updateSessionLastRun } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { AgentState } from '../../shared/types/agent.js'
 import type { Session } from '../../shared/types/message.js'
@@ -55,7 +55,8 @@ export async function runSubAgent(
     background: request.background ?? false,
   })
 
-  // 2. 创建子 session（记录 agentType）
+  // 2. 创建子 session（记录 agentType；parentId 挂到父会话——树内嵌套、
+  //    删除父会话时级联，不再是游离根节点）
   let childSession: Session
   try {
     childSession = await createSession(
@@ -63,6 +64,8 @@ export async function runSubAgent(
       title,
       parent.session.projectId ?? undefined,
       request.agentType,
+      undefined,
+      parent.session.id,
     )
   } catch (e) {
     return { _tag: 'error', error: e instanceof Error ? e.message : String(e) }
@@ -188,13 +191,30 @@ export async function runSubAgent(
   // 6. background 模式：fork 异步运行，立即返回 running；完成时向父 session 注入合成通知
   if (request.background) {
     const jobId = childSession.id
+    // P2：落库 running 标记——进程崩溃后 markDeadBackgroundJobs 可识别悬空任务
+    // 并给父会话发失败通知（此前仅内存 jobId，重启即静默丢失）。
+    // 此写 await 完成再返回：保证「返回 running」时 DB 已记录；同时避免与
+    // 子 loop 的并发写入叠加。
+    await updateSessionLastRun(deps.db, childSession.id, {
+      status: 'running',
+      agentName: request.agentType,
+      startedAt: Date.now(),
+    }).catch(() => {})
     void runBody()
-      .then((result) => {
+      .then(async (result) => {
+        // 无论成败都置 completed：任务已终结，状态体现在合成通知里。
+        // 顺序 await（不并发发起）：PGLite WASM 对同实例并发查询会忙等，
+        // 与 appendMessage 并发叠加曾导致 100% CPU 自旋（loop.test.ts 复现）。
+        await updateSessionLastRun(deps.db, childSession.id, {
+          status: 'completed',
+          agentName: request.agentType,
+          startedAt: Date.now(),
+        }).catch(() => {})
         const success = result._tag === 'success'
         const output = success ? result.output : (result as { error: string }).error
         const tag = success ? 'task_result' : 'task_error'
         const synthetic = `<task id="${childSession.id}" state="${success ? 'completed' : 'failed'}">\n<${tag}>\n${output}\n</${tag}>\n</task>`
-        void appendMessage(deps.db, parent.session.id, {
+        await appendMessage(deps.db, parent.session.id, {
           role: 'user',
           content: [{ _tag: 'text', text: synthetic }],
         }).catch((e) => {

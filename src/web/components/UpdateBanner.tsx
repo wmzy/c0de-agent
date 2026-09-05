@@ -114,7 +114,9 @@ function saveDismissed(version: string): void {
  * 或"稍后"关闭——dismissed 版本号记入 sessionStorage，本次标签页会话内
  * （含路由切换/刷新）不再展示，出现新版本号时重新提示。
  *
- * 应用后预期旧实例 handoff 退出、新实例接管，前端 SSE 会重连。
+ * 应用后预期旧实例 handoff 退出、新实例接管端口。进行中的 SSE 流会中断
+ * （会话显示 interrupted，可重发上一条消息继续）；页面无需刷新，后续请求
+ * 自动落到新实例。
  */
 export function UpdateBanner() {
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(loadDismissed)
@@ -130,12 +132,15 @@ export function UpdateBanner() {
     mutationFn: updateAPI.apply,
   })
 
-  // P0-2：无法自动安装（未知安装方式/等待手动安装超时）→ 显示手动更新指引
+  // P0-2：无法自动安装（未知安装方式）或安装失败 → 显示手动更新指引。
+  // 新流程：install 失败发生在 pause 之前，服务端不等待、不会自动滚动切换；
+  // 用户手动安装后需自行重启 c0de serve（数据持久化，会话无需快照即可恢复）。
   const manual = apply.isError
     ? (() => {
         const err = apply.error as unknown as { code?: string; details?: { command?: string } }
-        return err?.code === 'MANUAL_UPDATE_REQUIRED'
-          ? { command: err.details?.command ?? 'npm install -g c0de-agent' }
+        const command = err.details?.command ?? 'npm install -g c0de-agent'
+        return err?.code === 'MANUAL_UPDATE_REQUIRED' || err?.code === 'INSTALL_FAILED'
+          ? { command }
           : null
       })()
     : null
@@ -160,7 +165,7 @@ export function UpdateBanner() {
       </span>
       {manual && (
         <span className={text} data-testid="manual-update-hint" style={{ color: 'var(--warning)' }}>
-          <code>{manual.command}</code>（完成后服务将自动滚动切换）
+          <code>{manual.command}</code>（完成后请重启 c0de serve 生效）
         </span>
       )}
       <span className={actions}>

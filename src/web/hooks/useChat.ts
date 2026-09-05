@@ -209,6 +209,9 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         ...state,
         pendingPermission: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
       }
+    case 'heartbeat':
+      // 服务端 30s 心跳（防 90s 静默看门狗误杀长工具/权限等待）；不产生任何 UI 变化。
+      return state
     case 'permission_timeout':
       // P1-6：确认超时被自动拒绝。保留最后一条 user 文本供「重新询问」入口使用，
       // error 显示可操作提示而非静默失败。

@@ -41,6 +41,8 @@ type SessionMetadata = {
   lastRun?: LastRun
   /** 上次打开时间戳（ms），用于会话列表按最近打开排序。 */
   lastOpenedAt?: number
+  /** P2：会话级授权模式覆盖（'auto'/'default'），跨重启持久化。 */
+  permissionMode?: 'auto' | 'default'
 }
 
 /** A conversation session (may have a parent for branching). */

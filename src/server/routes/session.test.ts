@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
+import { projects, sessions } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
 import { updateSessionLastRun } from '../../session/session.js'
@@ -436,6 +438,40 @@ describe('session route', () => {
       const sessions = (await res.json()) as Session[]
       expect(sessions.every((s) => s.projectId === project.id)).toBe(true)
       expect(sessions.some((s) => s.title === 'WithProject')).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('POST /:id/restore 会话项目已删除时按 worktreePath 重建归属', async () => {
+    const { app, ctx } = await setup()
+    const dir = mkdtempSync(join(tmpdir(), 'rebind-'))
+    try {
+      // 会话绑定项目 + 记录 worktreePath（模拟项目删除前的落盘）
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'R', directory: dir }),
+      })
+      const session = (await created.json()) as Session
+      await ctx.db.db.update(sessions).set({ worktreePath: dir }).where(eq(sessions.id, session.id))
+      // 模拟项目已删除：FK set null + 软删除会话
+      const project = await fromDirectory(ctx.db, dir)
+      await ctx.db.db.delete(projects).where(eq(projects.id, project.id))
+      await ctx.db.db
+        .update(sessions)
+        .set({ deletedAt: new Date() })
+        .where(eq(sessions.id, session.id))
+
+      const res = await app.request(`/${session.id}/restore`, { method: 'POST' })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { ok: boolean; rebound?: boolean; orphaned?: boolean }
+      expect(body.ok).toBe(true)
+      expect(body.rebound).toBe(true)
+      // 归属重建：会话 projectId 不再为空
+      const after = await app.request(`/${session.id}`)
+      const restored = (await after.json()) as Session
+      expect(restored.projectId).toBeTruthy()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

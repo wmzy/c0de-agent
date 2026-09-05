@@ -156,6 +156,8 @@ type AgentEvent =
       _tag: 'todo_update'
       phases: { name: string; tasks: { content: string; status: string }[] }[]
     }
+  /** SSE 心跳（服务端防前端 90s 静默看门狗误杀长任务）；前端无 UI 变化，直接忽略。 */
+  | { _tag: 'heartbeat' }
   | { _tag: 'done' }
 
 /**

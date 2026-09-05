@@ -40,6 +40,8 @@ async function createSession(
   projectId?: string,
   agentType?: string,
   source?: 'web' | 'cli',
+  /** P1 会话树治理：子 agent 会话挂到父会话（树内嵌套 + 删除级联）。 */
+  parentId?: string,
 ): Promise<Session> {
   const [row] = await handle.db
     .insert(sessions)
@@ -48,6 +50,7 @@ async function createSession(
       projectId: projectId ?? null,
       agentType: agentType ?? null,
       source: source ?? null,
+      parentId: parentId ?? null,
     })
     .returning()
   if (!row) throw new Error('Failed to insert session')
@@ -120,7 +123,7 @@ async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
  */
 async function restoreSession(handle: DB, id: string): Promise<boolean> {
   const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
-  if (!row || !row.deletedAt) return false
+  if (!row?.deletedAt) return false
   const ids = new Set<string>([id])
   let parentId = row.parentId
   while (parentId) {
@@ -181,6 +184,31 @@ async function purgeDeletedSessions(
 /** Update a session's title. */
 async function updateSessionTitle(handle: DB, id: string, title: string): Promise<void> {
   await handle.db.update(sessions).set({ title, updatedAt: new Date() }).where(eq(sessions.id, id))
+}
+
+/**
+ * 清理过期临时会话（P2：CLI print 与工作流运行的会话永不软删除、不参与
+ * Web 会话树展示，会无限积累）。保留期默认 30 天；子条目经 FK cascade 一并删除。
+ * 返回清除数量。启动时与每日定时调用。
+ */
+async function purgeTemporarySessions(
+  handle: DB,
+  retentionMs = 30 * 24 * 60 * 60 * 1000,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionMs)
+  const rows = await handle.db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(
+      and(
+        lt(sessions.updatedAt, cutoff),
+        or(eq(sessions.source, 'cli'), eq(sessions.agentType, 'workflow')),
+      ),
+    )
+  for (const row of rows) {
+    await handle.db.delete(sessions).where(eq(sessions.id, row.id))
+  }
+  return rows.length
 }
 
 /** Bump updatedAt to now (used after appending messages). */
@@ -326,6 +354,7 @@ export {
   listSessions,
   listSessionsByProject,
   purgeDeletedSessions,
+  purgeTemporarySessions,
   restoreSession,
   softDeleteSession,
   touchLastOpened,

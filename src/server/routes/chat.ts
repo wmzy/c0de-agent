@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { type Context, Hono } from 'hono'
-import { streamSSE } from 'hono/streaming'
+import { type SSEStreamingApi, streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
+import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { compactContext } from '../../core/loop.js'
 import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
@@ -51,6 +52,25 @@ export async function resolveAgentCwd(
   return project.worktree
 }
 
+/**
+ * SSE 心跳间隔。前端有 90s 静默看门狗（web/services/chat.ts），而服务端各
+ * 等待语义远长于此：bash 默认超时 120s、权限确认 5 分钟、子 agent 执行数分钟。
+ * 这些等待期间没有业务事件帧——若无心跳，前端会在 90s 时 abort 连接，
+ * 服务端 stream.onAbort 随即中止 agent，长命令/权限弹窗/多 agent 全部误杀。
+ * 30s 心跳保证看门狗只对「连接真正死亡」（连续 3 个心跳周期无数据）生效。
+ */
+const SSE_HEARTBEAT_INTERVAL_MS = 30_000
+
+/** 启动心跳定时器；返回停止函数（幂等）。流关闭后写入会被吞掉，安全。 */
+function startHeartbeat(stream: SSEStreamingApi): () => void {
+  const timer = setInterval(() => {
+    stream.writeSSE({ event: 'heartbeat', data: '' }).catch(() => {}) // 流已关闭/客户端断开时写入失败，忽略
+  }, SSE_HEARTBEAT_INTERVAL_MS)
+  return () => clearInterval(timer)
+}
+
+export { SSE_HEARTBEAT_INTERVAL_MS, startHeartbeat }
+
 function createChatRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -74,6 +94,15 @@ function createChatRoute(ctx: ServerContext): Hono {
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     }
 
+    // P2：会话级权限覆盖持久化在 metadata——重启后从 DB 恢复到内存 Map，
+    // 使 getMode 的「会话覆盖」优先级跨重启成立。
+    if (
+      session.metadata.permissionMode === 'auto' ||
+      session.metadata.permissionMode === 'default'
+    ) {
+      ctx.sessionPermissionModes.set(sessionId, session.metadata.permissionMode)
+    }
+
     // 提前解析 cwd（slash 拦截与 agent 路径都需使用）
     // P1-9：worktree 失效/项目缺失 → 明确 409，不静默回退服务端 cwd。
     let cwd: string
@@ -90,6 +119,17 @@ function createChatRoute(ctx: ServerContext): Hono {
       return apiError(c, 500, 'CWD_RESOLVE_FAILED', msg)
     }
 
+    // P1 多项目配置：会话级配置按会话工作目录解析（该项目 .c0de/config.json 的原始
+    // 作用域合并到服务级配置之上）。此前所有项目共用启动目录配置——在其他项目里
+    // 修改「项目配置」实际写的是启动项目。cwd === ctx.cwd 时直接复用服务级配置。
+    // 权限默认模式单独取原始 project 作用域：项目文件未显式设置时回退运行时全局
+    // 模式（启动默认或 PUT /api/permissions 覆盖），避免启动项目配置泄漏到其他项目。
+    const sessionProjectScope = cwd === ctx.cwd ? undefined : loadConfigScopes(cwd).project
+    const sessionConfig = sessionProjectScope
+      ? mergeConfig(ctx.config, sessionProjectScope)
+      : ctx.config
+    const sessionDefaultMode = sessionProjectScope?.permission?.defaultMode
+
     // 斜杠命令拦截
     const parsed = parseSlashInput(message)
     if (parsed) {
@@ -98,7 +138,7 @@ function createChatRoute(ctx: ServerContext): Hono {
       if (cmd) {
         // P2-4：执行 config.slashCommands.enabled 过滤（此前该配置无任何消费方）。
         // enabled 为空 = 全部启用（与 tools.enabled 语义一致）；名称兼容带/不带前缀斜杠。
-        const enabledList = ctx.config.slashCommands?.enabled ?? []
+        const enabledList = sessionConfig.slashCommands?.enabled ?? []
         const enabledSet = new Set(enabledList.map((n) => (n.startsWith('/') ? n.slice(1) : n)))
         if (enabledSet.size > 0 && !enabledSet.has(parsed.name)) {
           return streamSSE(c, async (stream) => {
@@ -114,18 +154,19 @@ function createChatRoute(ctx: ServerContext): Hono {
         }
         const commandCtx = {
           cwd,
-          config: ctx.config,
+          config: sessionConfig,
           // 当前会话 id：/clear /fork 等命令默认作用于当前会话（P2-4）。
           sessionId,
           // 内置斜杠命令（/clear、/fork、/config）仅需 db + config；
           // 但 /workflow run 会走 executeWorkflow → buildWorkflowContext → runSubAgent，
           // 该路径需要 agentRegistry 来派生子 agent，因此必须注入。
-          // permission/toolRegistry 用 autoAllow 凑齐类型（子命令不触发交互权限）。
           workflowRegistry: ctx.workflowRegistry,
           deps: {
             db: ctx.db,
-            config: ctx.config,
+            config: sessionConfig,
             cwd,
+            // P1 工作流权限：占位 checker 在 streamSSE 回调内被替换为交互式
+            // checker——/workflow run 的子 agent 才能对 ask 工具弹窗确认。
             permission: autoAllowChecker,
             toolRegistry: ctx.toolRegistry,
             llmRegistry: ctx.llmRegistry,
@@ -133,19 +174,49 @@ function createChatRoute(ctx: ServerContext): Hono {
           },
         }
         return streamSSE(c, async (stream) => {
+          const stopHeartbeat = startHeartbeat(stream)
           try {
-            const result = await cmd.execute(parsed.args, commandCtx)
+            // P1 工作流权限：子命令（尤其 /workflow run）的子 agent 继承此 checker。
+            // 此前用 autoAllowChecker：ask 工具返回 permission_required 结果但无
+            // 确认通道（confirm 是 no-op），写/执行工具在工作流里静默不可用。
+            // 现在与主 agent 一致：permission_required 经 SSE 弹窗，用户确认后
+            // 经 /api/tools/confirm 消费全局 store。
+            const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
+              getMode: () =>
+                ctx.sessionPermissionModes.get(sessionId) ??
+                sessionDefaultMode ??
+                ctx.permissionMode,
+              onPermissionRequired: async (req) => {
+                await stream.writeSSE({
+                  event: 'permission_required',
+                  data: JSON.stringify({ _tag: 'permission_required', ...req }),
+                })
+              },
+              onPermissionTimeout: (req) => {
+                stream
+                  .writeSSE({
+                    event: 'permission_timeout',
+                    data: JSON.stringify({ _tag: 'permission_timeout', ...req }),
+                  })
+                  .catch(() => {})
+              },
+            })
+            const streamCommandCtx = {
+              ...commandCtx,
+              deps: { ...commandCtx.deps, permission: permissionChecker },
+            }
+            const result = await cmd.execute(parsed.args, streamCommandCtx)
             if (result._tag === 'compact') {
               // /compact：手动触发上下文压缩。复用 loop.compactContext（createSummarizer +
               // runCompaction），不创建主 agent、不进入 LLM turn 循环（不把 /compact 当作
               // user 消息发给模型）。
-              const provider = (body.provider as string) ?? ctx.config.defaultProvider
-              const model = (body.model as string) ?? ctx.config.defaultModel
+              const provider = (body.provider as string) ?? sessionConfig.defaultProvider
+              const model = (body.model as string) ?? sessionConfig.defaultModel
               const agentConfig: AgentConfig = {
                 provider,
                 model,
                 tools: [],
-                plugins: ctx.config.plugins.enabled,
+                plugins: sessionConfig.plugins.enabled,
                 agentName: 'default',
               }
               const compactState = await createAgent(session, agentConfig, commandCtx.deps)
@@ -193,6 +264,8 @@ function createChatRoute(ctx: ServerContext): Hono {
               }),
             })
             await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+          } finally {
+            stopHeartbeat()
           }
         })
       }
@@ -214,12 +287,19 @@ function createChatRoute(ctx: ServerContext): Hono {
       const valid = mentionedAgents
         .map((n) => ctx.agentRegistry.get(n))
         .filter((d): d is NonNullable<typeof d> => Boolean(d && d.mode !== 'primary'))
-      if (valid.length > 0) {
-        const names = valid.map((d) => d.name).join(', ')
-        const first = userContent[0]
-        if (first && first._tag === 'text') {
-          first.text = `[User requested subagent(s): ${names}]\n\n${first.text}`
-        }
+      // P2：全部无效（拼错/未注册/primary）→ 明确 400，此前静默忽略，用户以为已派发
+      if (valid.length === 0) {
+        return apiError(
+          c,
+          400,
+          'INVALID_AGENT_MENTION',
+          `未知或非 subagent 类型的 agent 提及：${mentionedAgents.join(', ')}`,
+        )
+      }
+      const names = valid.map((d) => d.name).join(', ')
+      const first = userContent[0]
+      if (first && first._tag === 'text') {
+        first.text = `[User requested subagent(s): ${names}]\n\n${first.text}`
       }
     }
 
@@ -289,9 +369,10 @@ function createChatRoute(ctx: ServerContext): Hono {
     try {
       // 工具解析（P1-1）：config.tools.enabled 非空时作为默认集；空 = 全部注册工具。
       // disabled 已在 registry 层过滤（createDefaultRegistry），此处兜底。
+      // P1 多项目：按会话项目配置解析（此前用启动目录配置）。
       const tools = resolveEnabledToolNames(
         ctx.toolRegistry,
-        ctx.config,
+        sessionConfig,
         body.tools as string[] | undefined,
       )
 
@@ -341,13 +422,17 @@ function createChatRoute(ctx: ServerContext): Hono {
         // P0-4：回调从首行起全部纳入 try/finally——createAgent、updateSessionLastRun
         // 等启动阶段失败同样必须释放占位并补发 error/done（hono 的 stream 包装器
         // 只 console.error 不善后），不得泄漏占位或让前端卡在 streaming 态。
+        // P0 心跳：长工具执行/权限确认等待期间无业务帧，心跳防前端 90s 看门狗误杀。
+        const stopHeartbeat = startHeartbeat(stream)
         let doneSent = false
         let runStartedAt: number | undefined
         try {
           // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认。
-          // P1-5：模式按会话隔离（sessionPermissionModes 覆盖优先）。
+          // 模式优先级：会话级覆盖（PUT /:sessionId）> 会话项目配置 defaultMode
+          // > 运行时全局模式（启动默认或 PUT / 覆盖）。
           const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
-            getMode: () => ctx.sessionPermissionModes.get(sessionId) ?? ctx.permissionMode,
+            getMode: () =>
+              ctx.sessionPermissionModes.get(sessionId) ?? sessionDefaultMode ?? ctx.permissionMode,
             onPermissionRequired: async (req) => {
               await stream.writeSSE({
                 event: 'permission_required',
@@ -375,7 +460,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             urlRegistry: ctx.urlRegistry,
             hookRunner: ctx.hookRunner,
             permission: permissionChecker,
-            config: ctx.config,
+            config: sessionConfig,
             agentRegistry: ctx.agentRegistry,
             cwd,
             ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
@@ -385,7 +470,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             provider,
             model: resolvedModel,
             tools: resolvedTools,
-            plugins: ctx.config.plugins.enabled,
+            plugins: sessionConfig.plugins.enabled,
             agentName,
             ...(agentDef.systemPrompt ? { agentRolePrompt: agentDef.systemPrompt } : {}),
           }
@@ -469,6 +554,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             })
             .catch(() => {})
         } finally {
+          stopHeartbeat()
           // 先从 agentManager 释放（占位与活跃 run 均幂等）：必须最先执行，确保
           // 客户端断开使 writeSSE reject 时 agent 状态（state/deps/AbortController）
           // 不会泄漏到 Map（unregister 仅做 Map.delete、不依赖 state，放最前安全）。

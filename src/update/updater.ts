@@ -240,6 +240,59 @@ function buildSpawnArgv(snapshotPath: string, opts: HotUpdateOptions): string[] 
 }
 
 /**
+ * 把快照写入临时目录（或 opts.snapshotPath），返回实际路径。
+ * 独立成函数供 performHotUpdate（一体流程）与 performHandoff（分阶段流程）共用。
+ */
+async function writeSnapshot(snapshot: SessionSnapshot, opts: HotUpdateOptions): Promise<string> {
+  const snapshotPath =
+    opts.snapshotPath ?? join(await mkdtemp(join(tmpdir(), 'c0de-update-')), 'snapshot.json')
+  await writeFile(snapshotPath, JSON.stringify(snapshot), 'utf8')
+  return snapshotPath
+}
+
+/** 安装完成后的滚动切换：spawn 新实例（restore 快照 + handoff 端口接管由新实例发起）。 */
+async function spawnAfterInstall(
+  snapshotPath: string,
+  method: InstallMethod,
+  opts: HotUpdateOptions,
+): Promise<HotUpdateResult> {
+  const spawnNew = opts.spawnNewInstanceFn ?? defaultSpawn
+  const argv = buildSpawnArgv(snapshotPath, opts)
+  try {
+    await spawnNew(snapshotPath, argv, opts)
+  } catch (error) {
+    return {
+      _tag: 'spawn_failed',
+      error: error instanceof Error ? error.message : String(error),
+      snapshotPath,
+    }
+  }
+  return { _tag: 'success', snapshotPath, installMethod: method.kind }
+}
+
+/**
+ * 分阶段热更新的第二阶段（P0 修复：install 与 pause 解耦）。
+ *
+ * 调用方（/api/update/apply）顺序：
+ *   1. checkNow → hasUpdate
+ *   2. performInstall（仅安装；失败时**尚未暂停任何会话**，直接 409 可操作错误）
+ *   3. 安装成功 → pauseAll（暂停活跃 run 至安全点）
+ *   4. serializeSessions → performHandoff（本函数：写快照 + spawn 新实例）
+ *   5. spawn 失败 → 调用方 resumeAll 回滚暂停的会话
+ *
+ * 对比旧流程（pause → 序列化 → performHotUpdate 内含 install）：install 失败时
+ * 会话已被 pause/forcedAbort 且无回滚路径——更新失败顺带销毁进行中的工作。
+ */
+async function performHandoff(
+  snapshot: SessionSnapshot,
+  method: InstallMethod,
+  opts: HotUpdateOptions = {},
+): Promise<HotUpdateResult> {
+  const snapshotPath = await writeSnapshot(snapshot, opts)
+  return spawnAfterInstall(snapshotPath, method, opts)
+}
+
+/**
  * 执行热更新（spec §18.1-18.2 + P0-2 修订流程）：
  *   1. 序列化当前会话状态到快照文件
  *   2. 识别当前进程安装方式（npm/pnpm/unknown）
@@ -255,10 +308,7 @@ async function performHotUpdate(
   opts: HotUpdateOptions = {},
 ): Promise<HotUpdateResult> {
   const pkg = opts.packageName ?? DEFAULT_PACKAGE
-  const dir = await mkdtemp(join(tmpdir(), 'c0de-update-'))
-  const snapshotPath = opts.snapshotPath ?? join(dir, 'snapshot.json')
-
-  await writeFile(snapshotPath, JSON.stringify(snapshot), 'utf8')
+  const snapshotPath = await writeSnapshot(snapshot, opts)
 
   // 识别安装方式
   const method = detectInstallMethod()
@@ -310,19 +360,7 @@ async function performHotUpdate(
   }
 
   // 程序文件已变更（自动安装落盘或用户手动安装完成）→ 滚动切换
-  const spawnNew = opts.spawnNewInstanceFn ?? defaultSpawn
-  const argv = buildSpawnArgv(snapshotPath, opts)
-  try {
-    await spawnNew(snapshotPath, argv, opts)
-  } catch (error) {
-    return {
-      _tag: 'spawn_failed',
-      error: error instanceof Error ? error.message : String(error),
-      snapshotPath,
-    }
-  }
-
-  return { _tag: 'success', snapshotPath, installMethod: method.kind }
+  return spawnAfterInstall(snapshotPath, method, opts)
 }
 
 /**
@@ -362,6 +400,7 @@ export {
   cleanupSnapshot,
   detectInstallMethod,
   manualInstallCommand,
+  performHandoff,
   performHotUpdate,
   performInstall,
 }

@@ -20,7 +20,10 @@ const sessionAPI = {
   remove: (id: string) => apiRequest<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
   deleted: () => apiRequest<Session[]>('/api/sessions/deleted'),
   restore: (id: string) =>
-    apiRequest<{ ok: boolean }>(`/api/sessions/${id}/restore`, { method: 'POST' }),
+    apiRequest<{ ok: boolean; rebound?: boolean; orphaned?: boolean }>(
+      `/api/sessions/${id}/restore`,
+      { method: 'POST' },
+    ),
   messages: (id: string) => apiRequest<Message[]>(`/api/sessions/${id}/messages`),
   llmDetails: (id: string) => apiRequest<LLMSegment[]>(`/api/sessions/${id}/llm-details`),
   compact: (id: string) =>

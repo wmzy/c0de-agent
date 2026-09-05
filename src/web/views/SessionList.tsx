@@ -73,6 +73,13 @@ const errorBar = css`
   border-bottom: 1px solid var(--border);
 `
 
+const noticeBar = css`
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+`
+
 const deletedRow = css`
   display: flex;
   align-items: center;
@@ -164,7 +171,8 @@ export function SessionList({
     // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
     const node = findNode(visibleTree, id)
     const branches = node ? countDescendants(node) : 0
-    const branchNote = branches > 0 ? `其 ${branches} 个分支会话将一并移入回收站。` : ''
+    const branchNote =
+      branches > 0 ? `其 ${branches} 个派生会话（分支/子任务）将一并移入回收站。` : ''
     if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，30 天内可恢复。`))
       return
     del.mutate(id, {
@@ -227,6 +235,8 @@ function RecycleBin() {
   const { data: deleted, isLoading } = useDeletedSessions()
   const restore = useRestoreSession()
   const [error, setError] = useState<string | null>(null)
+  // P1 可达性：恢复结果反馈（重新归属项目 / 项目目录缺失的孤儿状态）
+  const [notice, setNotice] = useState<string | null>(null)
 
   if (isLoading) return <div className={empty}>加载中…</div>
   if (!deleted || deleted.length === 0) return <div className={empty}>回收站为空</div>
@@ -240,6 +250,11 @@ function RecycleBin() {
       {error && (
         <div className={errorBar} data-testid="restore-error">
           恢复失败：{error}
+        </div>
+      )}
+      {notice && (
+        <div className={noticeBar} data-testid="restore-notice">
+          {notice}
         </div>
       )}
       {deleted.map((s) => (
@@ -260,6 +275,16 @@ function RecycleBin() {
             onClick={() =>
               restore.mutate(s.id, {
                 onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+                onSuccess: (d) => {
+                  setError(null)
+                  if (d?.orphaned) {
+                    setNotice(`「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目`)
+                  } else if (d?.rebound) {
+                    setNotice(`「${s.title}」已恢复并重新归属到原项目目录`)
+                  } else {
+                    setNotice(null)
+                  }
+                },
               })
             }
             data-testid={`restore-${s.id}`}
