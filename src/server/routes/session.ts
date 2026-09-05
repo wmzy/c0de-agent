@@ -5,7 +5,7 @@ import { createSummarizer, runCompaction } from '../../core/compact.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import { sessions } from '../../db/schema.js'
 import { fromDirectory } from '../../project/index.js'
-import { archiveOriginalEntries } from '../../session/archive.js'
+import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
 import {
   BranchPointOutOfRangeError,
   forkSession,
@@ -15,11 +15,13 @@ import {
 import { deleteEntriesByIds, getMessages, insertEntry } from '../../session/message.js'
 import {
   createSession,
+  emptyTrash,
   getLLMSegments,
   getSession,
   listDeletedSessions,
   listSessions,
   listSessionsByProject,
+  permanentlyDeleteSession,
   restoreSession,
   softDeleteSession,
   touchLastOpened,
@@ -77,6 +79,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json(sessions)
   })
 
+  // 清空回收站：物理删除所有软删除会话（不可恢复）
+  app.delete('/deleted', async (c) => {
+    const count = await emptyTrash(ctx.db)
+    return c.json({ ok: true, deleted: count })
+  })
+
   // 获取会话详情
   app.get('/:id', async (c) => {
     try {
@@ -119,6 +127,54 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const ok = await softDeleteSession(ctx.db, c.req.param('id'))
     if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     return c.body(null, 204)
+  })
+
+  // 彻底删除回收站会话（不可恢复）：会话 + 全部后代物理清除
+  app.delete('/:id/forever', async (c) => {
+    let count: number
+    try {
+      count = await permanentlyDeleteSession(ctx.db, c.req.param('id'))
+    } catch {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或不在回收站')
+    }
+    if (count === 0) return apiError(c, 404, 'NOT_FOUND', '会话不存在或不在回收站')
+    return c.json({ ok: true, deleted: count })
+  })
+
+  // 会话归档列表（compaction/squash/shake/clear 的原始内容）；?q= 搜索归档文本
+  app.get('/:id/archives', async (c) => {
+    const id = c.req.param('id')
+    let session: Awaited<ReturnType<typeof getSession>>
+    try {
+      session = await getSession(ctx.db, id)
+    } catch {
+      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    }
+    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    const q = c.req.query('q')
+    const archives = await listArchives(ctx.db, id, q)
+    return c.json({ archives })
+  })
+
+  // 会话导出：元数据 + 消息 + 全部归档（JSON 下载，数据可迁移）
+  app.get('/:id/export', async (c) => {
+    const id = c.req.param('id')
+    let session: Awaited<ReturnType<typeof getSession>>
+    try {
+      session = await getSession(ctx.db, id)
+    } catch {
+      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    }
+    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    const messages = await getMessages(ctx.db, id)
+    const archives = await listArchives(ctx.db, id)
+    return c.json({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      session,
+      messages,
+      archives,
+    })
   })
 
   // 恢复会话（从回收站还原；仅还原该会话本身）。

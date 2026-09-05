@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { Session } from '@shared/types/message.js'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { BranchTree } from '../components/BranchTree.js'
 import {
@@ -8,6 +9,7 @@ import {
   useRestoreSession,
   useSessionTree,
 } from '../hooks/useSession.js'
+import { sessionAPI } from '../services/session.js'
 import type { SessionTreeNode } from '../types/index.js'
 
 const panel = css`
@@ -23,6 +25,24 @@ const header = css`
   gap: 8px;
   padding: 12px;
   border-bottom: 1px solid var(--border);
+`
+
+const searchInput = css`
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  min-height: auto;
+  width: auto;
+`
+
+const trashHint = css`
+  color: var(--text-secondary);
+  font-size: 11px;
+  flex-shrink: 0;
 `
 
 const addBtn = css`
@@ -144,6 +164,23 @@ function countDescendants(node: SessionTreeNode): number {
   return n
 }
 
+/** 按标题搜索过滤会话树：保留命中节点及其祖先；命中节点的子树原样保留。 */
+function searchTree(nodes: SessionTreeNode[], q: string): SessionTreeNode[] {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return nodes
+  const out: SessionTreeNode[] = []
+  for (const node of nodes) {
+    const selfHit = node.session.title.toLowerCase().includes(needle)
+    const children = searchTree(node.children ?? [], q)
+    if (selfHit) {
+      out.push({ ...node, children: node.children ?? [] })
+    } else if (children.length > 0) {
+      out.push({ ...node, children })
+    }
+  }
+  return out
+}
+
 export function SessionList({
   projectId,
   activeId,
@@ -163,8 +200,9 @@ export function SessionList({
   const del = useDeleteSession()
   const [showRecycle, setShowRecycle] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
-  const visibleTree = tree ? filterTree(tree, projectId) : []
+  const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
 
   const handleDelete = (id: string) => {
     setDeleteError(null)
@@ -208,6 +246,16 @@ export function SessionList({
           删除失败：{deleteError}
         </div>
       )}
+      {!showRecycle && (
+        <input
+          className={searchInput}
+          type="search"
+          placeholder="搜索会话标题…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          data-testid="session-search"
+        />
+      )}
       {isLoading && !showRecycle ? <div className={empty}>加载中…</div> : null}
       {!showRecycle ? (
         <>
@@ -230,13 +278,42 @@ export function SessionList({
   )
 }
 
-/** 回收站列表：软删除会话 + 恢复按钮。父会话也在回收站的行做标记（恢复时连带还原祖先链）。 */
+/** 回收站保留期（与后端 purgeDeletedSessions 默认 30 天一致，仅展示用）。 */
+const TRASH_RETENTION_DAYS = 30
+
+/** 剩余保留天数（负数视为 0：即将被后台清理）。 */
+function daysLeft(deletedAt: number | null | undefined): number {
+  if (!deletedAt) return TRASH_RETENTION_DAYS
+  const ms = TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000 - (Date.now() - deletedAt)
+  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)))
+}
+
+/** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
+ *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。 */
 function RecycleBin() {
   const { data: deleted, isLoading } = useDeletedSessions()
   const restore = useRestoreSession()
+  const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   // P1 可达性：恢复结果反馈（重新归属项目 / 项目目录缺失的孤儿状态）
   const [notice, setNotice] = useState<string | null>(null)
+
+  const removeForever = useMutation({
+    mutationFn: (id: string) => sessionAPI.removeForever(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  })
+
+  const emptyTrashMut = useMutation({
+    mutationFn: () => sessionAPI.emptyTrash(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+      setNotice(null)
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  })
 
   if (isLoading) return <div className={empty}>加载中…</div>
   if (!deleted || deleted.length === 0) return <div className={empty}>回收站为空</div>
@@ -244,6 +321,18 @@ function RecycleBin() {
   const deletedIds = new Set(deleted.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
     s.parentId !== null && deletedIds.has(s.parentId)
+
+  const handleRemoveForever = (s: Session) => {
+    // fail-closed：彻底删除不可恢复，confirm 不可用时宁可阻止
+    if (!window.confirm(`彻底删除「${s.title}」及其派生会话？此操作不可恢复。`)) return
+    removeForever.mutate(s.id)
+  }
+
+  const handleEmptyTrash = () => {
+    if (!window.confirm(`清空回收站将永久删除全部 ${deleted.length} 个会话，不可恢复。确定？`))
+      return
+    emptyTrashMut.mutate()
+  }
 
   return (
     <div>
@@ -257,6 +346,18 @@ function RecycleBin() {
           {notice}
         </div>
       )}
+      <div className={deletedRow}>
+        <span className={trashHint}>超过 {TRASH_RETENTION_DAYS} 天自动清除</span>
+        <button
+          type="button"
+          className={restoreBtn}
+          onClick={handleEmptyTrash}
+          disabled={emptyTrashMut.isPending}
+          data-testid="empty-trash"
+        >
+          清空回收站
+        </button>
+      </div>
       {deleted.map((s) => (
         <div key={s.id} className={deletedRow}>
           <span title={s.title}>{s.title}</span>
@@ -268,7 +369,9 @@ function RecycleBin() {
               父会话已删除（恢复时一并还原）
             </span>
           )}
-          <span>{s.deletedAt ? new Date(s.deletedAt).toLocaleDateString() : ''}</span>
+          <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
+            {`剩 ${daysLeft(s.deletedAt)} 天`}
+          </span>
           <button
             type="button"
             className={restoreBtn}
@@ -290,6 +393,17 @@ function RecycleBin() {
             data-testid={`restore-${s.id}`}
           >
             恢复
+          </button>
+          <button
+            type="button"
+            className={restoreBtn}
+            style={{ color: 'var(--error)' }}
+            onClick={() => handleRemoveForever(s)}
+            disabled={removeForever.isPending}
+            data-testid={`remove-forever-${s.id}`}
+            title="彻底删除，不可恢复"
+          >
+            彻底删除
           </button>
         </div>
       ))}

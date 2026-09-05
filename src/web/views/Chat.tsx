@@ -32,7 +32,8 @@ type ChatProps = {
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
   onSend: (payload: SendPayload) => void
   onAbort: () => void
-  onConfirm: (toolCallId: string, approved: boolean) => void
+  /** 确认/拒绝权限请求；alwaysAllow=true 时同时把该工具加入会话白名单。 */
+  onConfirm: (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => void
   /** 暂停 agent loop（spec §19）；isStreaming 时可用。 */
   onPause?: () => void
   /** 恢复已暂停的 agent loop。 */
@@ -290,6 +291,42 @@ const modeWarn = css`
   white-space: nowrap;
 `
 
+/** 会话级「始终允许」白名单 chips 行（可逐项移除）。 */
+const allowChips = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+`
+
+const allowChip = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+`
+
+const chipRemove = css`
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  min-height: auto;
+  min-width: auto;
+  &:hover {
+    color: var(--error);
+  }
+`
+
 export function Chat({
   timeline,
   isStreaming,
@@ -340,11 +377,17 @@ export function Chat({
 
   // steering 由 Composer 直接驱动：流式态下「追加指令」按钮/Enter 注入运行中消息。
   // P1-5：权限模式按会话隔离（sessionId），跨标签页通过 BroadcastChannel 同步。
+  // P2：同一控件在两个页面上作用域不同——会话页 = 会话级覆盖（持久化），
+  // 草稿页（sessionId 缺省）= 全局运行时模式。标签与提示必须显式标注作用域。
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
+  const [alwaysAllow, setAlwaysAllow] = useState<string[]>([])
   useEffect(() => {
     permissionAPI
       .getMode(sessionId)
-      .then((res) => setPermissionMode(res.mode))
+      .then((res) => {
+        setPermissionMode(res.mode)
+        if (Array.isArray(res.alwaysAllow)) setAlwaysAllow(res.alwaysAllow)
+      })
       .catch(() => {})
     const unsubscribe = subscribeModeChange(sessionId ?? null, setPermissionMode)
     return unsubscribe
@@ -356,6 +399,13 @@ export function Chat({
       .setMode(next, sessionId)
       .then(() => broadcastModeChange({ sessionId: sessionId ?? null, mode: next }))
       .catch(() => setPermissionMode(permissionMode))
+  }
+  const removeAlwaysAllow = (tool: string) => {
+    if (!sessionId) return
+    permissionAPI
+      .removeAlwaysAllow(tool, sessionId)
+      .then((res) => setAlwaysAllow(res.alwaysAllow))
+      .catch(() => {})
   }
 
   return (
@@ -466,6 +516,24 @@ export function Chat({
       >
         {modelBar && <div className={footerLeft}>{modelBar}</div>}
         <div className={footerRight}>
+          {alwaysAllow.length > 0 && (
+            <div className={allowChips} data-testid="always-allow-chips">
+              {alwaysAllow.map((tool) => (
+                <span key={tool} className={allowChip}>
+                  始终允许 {tool}
+                  <button
+                    type="button"
+                    className={chipRemove}
+                    onClick={() => removeAlwaysAllow(tool)}
+                    aria-label={`移除 ${tool} 的始终允许`}
+                    title="移出本会话白名单"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <label className={modeToggle}>
             <input
               type="checkbox"
@@ -473,24 +541,32 @@ export function Chat({
               onChange={togglePermissionMode}
               data-testid="permission-mode-toggle"
             />
-            自动授权
+            自动授权{sessionId ? '（本会话）' : '（全局）'}
           </label>
           {permissionMode === 'auto' ? (
             <span
               className={modeWarn}
               data-testid="permission-mode-warning"
               role="status"
-              title="自动授权已开启：所有工具（含 bash）免确认执行（重启后恢复默认模式）"
+              title={
+                sessionId
+                  ? '本会话自动授权已开启：所有工具（含 bash）免确认执行（重启后恢复默认模式）'
+                  : '全局自动授权已开启：所有会话的所有工具（含 bash）免确认执行（仅本次运行有效）'
+              }
             >
-              ⚠ 自动授权已开启（重启后恢复默认）
+              ⚠ 自动授权已开启{sessionId ? '（本会话，重启后恢复默认）' : '（全局，仅本次运行）'}
             </span>
           ) : (
             <span
               className={modeHint}
               data-testid="permission-mode-hint"
-              title="授权模式为运行时状态，重启后恢复配置的默认模式"
+              title={
+                sessionId
+                  ? '本会话工具执行前逐个确认；「始终允许」白名单除外（重启后仍生效）'
+                  : '全局默认授权模式：所有会话的工具执行前逐个确认'
+              }
             >
-              工具执行前逐个确认（重启后恢复默认）
+              工具执行前逐个确认{sessionId ? '（本会话）' : '（全局，重启后恢复默认）'}
             </span>
           )}
           {toolToggle}
@@ -510,8 +586,9 @@ export function Chat({
             ? { tool: pendingPermission.tool, input: pendingPermission.input }
             : null
         }
-        onPermissionConfirm={() =>
-          pendingPermission && onConfirm(pendingPermission.toolCallId, true)
+        permissionAllowAlways={!!sessionId}
+        onPermissionConfirm={(alwaysAllow) =>
+          pendingPermission && onConfirm(pendingPermission.toolCallId, true, alwaysAllow)
         }
         onPermissionCancel={() =>
           pendingPermission && onConfirm(pendingPermission.toolCallId, false)

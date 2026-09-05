@@ -78,6 +78,52 @@ describe('c0de sessions', () => {
     ).rejects.toThrow(/not found/i)
   })
 
+  it('restore 恢复已软删除会话（delete → restore 闭环）', async () => {
+    const s = await createSession(db, 'to-restore', undefined, undefined, 'cli')
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['delete', s.id] },
+      db,
+      write: () => {},
+    })
+    expect(await listDeletedSessions(db)).toHaveLength(1)
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['restore', s.id] },
+      db,
+      write: (x) => out.push(x),
+    })
+    expect(out.join('')).toContain('已恢复')
+    expect(await listAllSessions(db)).toHaveLength(1)
+    expect(await listDeletedSessions(db)).toHaveLength(0)
+  })
+
+  it('restore 未删除/不存在会话报错', async () => {
+    const s = await createSession(db, 'alive', undefined, undefined, 'cli')
+    await expect(
+      runSessionsCommand({
+        args: { options: {}, positionals: ['restore', s.id] },
+        db,
+        write: () => {},
+      }),
+    ).rejects.toThrow(/not found|not deleted/i)
+  })
+
+  it('deleted 列出回收站会话', async () => {
+    const s = await createSession(db, 'in-trash', undefined, undefined, 'cli')
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['delete', s.id] },
+      db,
+      write: () => {},
+    })
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['deleted'] },
+      db,
+      write: (x) => out.push(x),
+    })
+    expect(out.join('')).toContain('in-trash')
+  })
+
   it('未知子命令报错', async () => {
     await expect(
       runSessionsCommand({ args: { options: {}, positionals: ['nope'] }, db, write: () => {} }),

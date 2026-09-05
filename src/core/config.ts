@@ -34,7 +34,9 @@ const DEFAULT_CONFIG: Config = {
   tools: { enabled: [], disabled: [] },
   plugins: { enabled: [] },
   mcpServers: [],
-  slashCommands: { enabled: ['/compact', '/model', '/clear', '/help', '/fork', '/config'] },
+  slashCommands: {
+    enabled: ['/compact', '/model', '/clear', '/help', '/fork', '/config', '/workflow'],
+  },
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: true, allowedOrigins: [] },
   websearch: { provider: 'auto' },

@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { agentAPI } from '../services/agent.js'
 import { sendChatMessage } from '../services/chat.js'
+import { permissionAPI } from '../services/permission.js'
 import { sessionAPI } from '../services/session.js'
 import type { APIError } from '../types/index.js'
 import { generateId } from './id.js'
@@ -50,18 +51,20 @@ type ChatOpts = {
 }
 
 type ChatActions = {
-  sendMessage: (content: string, opts?: ChatOpts) => Promise<void>
+  /** 发送消息；返回 false = 本轮未正常完成（供调用方做首条失败清理）。 */
+  sendMessage: (content: string, opts?: ChatOpts) => Promise<boolean>
   abort: () => void
-  /** 确认/拒绝权限请求：乐观关闭弹窗并通知后端。 */
-  confirm: (toolCallId: string, approved: boolean) => void
+  /** 确认/拒绝权限请求：乐观关闭弹窗并通知后端。
+   *  alwaysAllowTool 非空时先把该工具加入会话白名单。 */
+  confirm: (toolCallId: string, approved: boolean, alwaysAllowTool?: string) => void
   /** 用户确认开新段：withCompaction 时先压缩会话再重发。 */
   confirmBreak: (withCompaction: boolean) => Promise<void>
   /** 用户取消开新段：清除待发状态并移除乐观追加的 user 消息。 */
   cancelBreak: () => void
   /** 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。 */
-  retry: (content: string, opts?: ChatOpts) => Promise<void>
+  retry: (content: string, opts?: ChatOpts) => Promise<boolean>
   /** P1-6：权限确认超时后重新询问（重发上一条用户消息）。 */
-  reask: (content: string, opts?: ChatOpts) => Promise<void>
+  reask: (content: string, opts?: ChatOpts) => Promise<boolean>
   /** 清除权限超时提示。 */
   dismissPermissionTimeout: () => void
   /** 清除中断状态。 */
@@ -261,8 +264,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // 执行 SSE 流并归约事件；捕获 409 SEGMENT_BREAK_REQUIRED 时存入 pendingSegmentBreak。
   // SSE 流未收到 done 事件结束时标记 interrupted（服务重启等）；
   // 但若已收到 error 事件，说明是服务端正常错误（LLM 报错等），不标记中断。
+  // 返回 ok=false 表示本轮未正常完成（供调用方做首条消息失败清理等）。
   const doStream = useCallback(
-    async (content: string, opts: ChatOpts | undefined) => {
+    async (content: string, opts: ChatOpts | undefined): Promise<boolean> => {
       abortRef.current = new AbortController()
       // 追踪是否收到 error 事件（区分服务端正常错误与连接中断）
       let gotError = false
@@ -301,6 +305,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断
           setState((s) => ({ ...s, isStreaming: false }))
         }
+        return result.done
       } catch (err) {
         const e = err as unknown as APIError
         if (e.code === 'RUN_ACTIVE') {
@@ -311,7 +316,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             if (last && last.role === 'user') msgs.pop()
             return { ...s, messages: msgs, isStreaming: false, error: '该会话已有进行中的对话' }
           })
-          return
+          return false
         }
         if (e.code === 'NO_PROVIDER_CONFIGURED') {
           // P0-1：未配置 AI 服务 → 撤回乐观 user 消息并给出可操作提示
@@ -326,7 +331,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               error: '未配置可用的 AI 服务。请前往「设置 → Provider」添加 API 服务并测试连接',
             }
           })
-          return
+          return false
         }
         if (e.code === 'WORKTREE_MISSING' || e.code === 'PROJECT_MISSING') {
           setState((s) => {
@@ -335,7 +340,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             if (last && last.role === 'user') msgs.pop()
             return { ...s, messages: msgs, isStreaming: false, error: e.message }
           })
-          return
+          return false
         }
         if (e.code === 'SEGMENT_BREAK_REQUIRED') {
           const details = e.details as
@@ -348,7 +353,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           }
           pendingRef.current = pending
           setState((s) => ({ ...s, isStreaming: false, pendingSegmentBreak: pending }))
-          return
+          return false
         }
         // 网络错误（服务不可达）也视为中断
         if (!abortRef.current.signal.aborted) {
@@ -361,13 +366,14 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
           setState((s) => ({ ...s, isStreaming: false }))
         }
+        return false
       }
     },
     [sessionId, qc],
   )
 
   const sendMessage = useCallback(
-    async (content: string, opts?: ChatOpts) => {
+    async (content: string, opts?: ChatOpts): Promise<boolean> => {
       const userMsg: Message = {
         id: generateId(),
         sessionId,
@@ -378,7 +384,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       }
       // 追加到已有消息（保留历史/多轮），仅重置 usage/error/permission
       setState((s) => ({ ...INITIAL, messages: [...s.messages, userMsg], isStreaming: true }))
-      await doStream(content, opts)
+      return doStream(content, opts)
     },
     [doStream, sessionId],
   )
@@ -425,35 +431,50 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // 权限确认：乐观清空 pending，弹窗立即关闭。后端 store 的 pending 一次消费即删除，
   // 若不清空前端状态，弹窗会一直显示到 done 事件，期间用户重复点击会对已消费的
   // toolCallId 触发 404（"No pending permission"）。
-  const confirm = useCallback((toolCallId: string, approved: boolean) => {
-    setState((s) => ({ ...s, pendingPermission: null }))
-    agentAPI.confirmTool(toolCallId, approved).catch((err) => {
-      const e = err as { status?: number }
-      if (e?.status === 404) {
-        // 超时（5 分钟）或已被其他标签页处理：明确提示，避免「以为已批准」。
-        setState((s) => ({
-          ...s,
-          error: '权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行',
-        }))
+  // alwaysAllowTool：用户勾选「本会话始终允许」时，先追加会话白名单再确认。
+  const confirm = useCallback(
+    (toolCallId: string, approved: boolean, alwaysAllowTool?: string) => {
+      setState((s) => ({ ...s, pendingPermission: null }))
+      const doConfirm = () =>
+        agentAPI.confirmTool(toolCallId, approved).catch((err) => {
+          const e = err as { status?: number }
+          if (e?.status === 404) {
+            // 超时（5 分钟）或已被其他标签页处理：明确提示，避免「以为已批准」。
+            setState((s) => ({
+              ...s,
+              error: '权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行',
+            }))
+          } else {
+            console.error('[权限确认] 失败，工具调用可能已过期:', err)
+          }
+        })
+      if (approved && alwaysAllowTool) {
+        permissionAPI
+          .setAlwaysAllow(alwaysAllowTool, sessionId)
+          .catch(() => {
+            console.error('[权限白名单] 追加失败:', alwaysAllowTool)
+          })
+          .finally(() => void doConfirm())
       } else {
-        console.error('[权限确认] 失败，工具调用可能已过期:', err)
+        void doConfirm()
       }
-    })
-  }, [])
+    },
+    [sessionId],
+  )
 
   // 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。
   // 后端 runAgent 幂等检查会跳过重复 append。
   const retry = useCallback(
-    async (content: string, opts?: ChatOpts) => {
+    async (content: string, opts?: ChatOpts): Promise<boolean> => {
       setState((s) => ({ ...s, isStreaming: true, error: null, interrupted: false }))
-      await doStream(content, opts)
+      return doStream(content, opts)
     },
     [doStream],
   )
 
   // P1-6：权限确认超时后重新询问——重发上一条用户消息（不追加、清超时提示）。
   const reask = useCallback(
-    async (content: string, opts?: ChatOpts) => {
+    async (content: string, opts?: ChatOpts): Promise<boolean> => {
       setState((s) => ({
         ...s,
         isStreaming: true,
@@ -461,7 +482,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         interrupted: false,
         permissionTimeout: null,
       }))
-      await doStream(content, opts)
+      return doStream(content, opts)
     },
     [doStream],
   )

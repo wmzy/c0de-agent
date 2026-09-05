@@ -135,9 +135,21 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     const mgr = managerWithBootstrap({ dataDir: dir })
     await registered(mgr)
     for (let i = 0; i < 10; i++) {
-      expect(mgr.requestPairing(`d${i}`)).not.toBeNull()
+      // P2 限流：同一来源最多 3 个 pending——用不同来源逼近全局上限
+      expect(mgr.requestPairing(`d${i}`, `src-${i % 4}`)).not.toBeNull()
     }
-    expect(mgr.requestPairing('d11')).toBeNull()
+    expect(mgr.requestPairing('d11', 'src-11')).toBeNull()
+  })
+
+  it('同一来源最多 3 个待审批：第 4 个返回 null（防刷满队列）', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir })
+    await registered(mgr)
+    for (let i = 0; i < 3; i++) {
+      expect(mgr.requestPairing(`d${i}`, 'same-ip')).not.toBeNull()
+    }
+    expect(mgr.requestPairing('d4', 'same-ip')).toBeNull()
+    // 其他来源不受影响
+    expect(mgr.requestPairing('d5', 'other-ip')).not.toBeNull()
   })
 })
 

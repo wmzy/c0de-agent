@@ -102,6 +102,15 @@ function createChatRoute(ctx: ServerContext): Hono {
     ) {
       ctx.sessionPermissionModes.set(sessionId, session.metadata.permissionMode)
     }
+    // P2：会话级「始终允许」白名单同样持久化于 metadata，checker 经 getter 实时读取
+    // （run 期间用户可追加；此处仅在本会话 Map 尚未加载时注入，已有值优先）。
+    if (!ctx.sessionAlwaysAllow.has(sessionId)) {
+      const list = (session.metadata as { alwaysAllow?: unknown }).alwaysAllow
+      ctx.sessionAlwaysAllow.set(
+        sessionId,
+        Array.isArray(list) ? list.filter((t): t is string => typeof t === 'string') : [],
+      )
+    }
 
     // 提前解析 cwd（slash 拦截与 agent 路径都需使用）
     // P1-9：worktree 失效/项目缺失 → 明确 409，不静默回退服务端 cwd。
@@ -186,6 +195,7 @@ function createChatRoute(ctx: ServerContext): Hono {
                 ctx.sessionPermissionModes.get(sessionId) ??
                 sessionDefaultMode ??
                 ctx.permissionMode,
+              alwaysAllow: () => ctx.sessionAlwaysAllow.get(sessionId) ?? [],
               onPermissionRequired: async (req) => {
                 await stream.writeSSE({
                   event: 'permission_required',
@@ -433,6 +443,7 @@ function createChatRoute(ctx: ServerContext): Hono {
           const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
             getMode: () =>
               ctx.sessionPermissionModes.get(sessionId) ?? sessionDefaultMode ?? ctx.permissionMode,
+            alwaysAllow: () => ctx.sessionAlwaysAllow.get(sessionId) ?? [],
             onPermissionRequired: async (req) => {
               await stream.writeSSE({
                 event: 'permission_required',

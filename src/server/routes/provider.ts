@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { decryptSecret } from '../../core/secret.js'
+import { resolveRoute } from '../../llm/registry.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -58,6 +59,27 @@ function createProviderRoute(ctx: ServerContext): Hono {
       hasKey: !!p.apiKey,
     }))
     return c.json({ providers, defaultProvider: ctx.config.defaultProvider })
+  })
+
+  // 模型能力查询：前端据此控制多模态入口（supportsVision）等
+  app.get('/capabilities', (c) => {
+    const provider = c.req.query('provider')
+    const model = c.req.query('model')
+    if (!provider || !model) {
+      return apiError(c, 400, 'BAD_REQUEST', 'provider and model are required')
+    }
+    try {
+      const resolved = resolveRoute(ctx.llmRegistry, provider, model)
+      return c.json({
+        provider,
+        model,
+        supportsVision: resolved.capabilities.supportsVision,
+        supportsThinking: resolved.capabilities.supportsThinking,
+        contextWindow: resolved.capabilities.contextWindow,
+      })
+    } catch {
+      return apiError(c, 404, 'NOT_FOUND', 'provider/model not registered')
+    }
   })
 
   // 连接测试：用请求体里的凭据探测 /models，不污染 registry

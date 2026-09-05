@@ -10,10 +10,22 @@
 //   GET  /api/auth/pairing           列出待审批配对
 //   POST /api/auth/pairing/approve   审批通过（签发设备 token）
 //   POST /api/auth/pairing/deny      拒绝配对
+//   GET  /api/auth/devices           列出已授权设备
+//   DELETE /api/auth/devices/:id     撤销设备（立即生效）
 
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+
+/** 尽力而为的请求来源：x-forwarded-for 首跳（反代场景），否则视为本地回环。仅展示/软限流。 */
+function requestSource(c: Context): string {
+  const fwd = c.req.header('x-forwarded-for')
+  if (fwd) {
+    const first = fwd.split(',')[0]?.trim()
+    if (first) return first
+  }
+  return 'local'
+}
 
 function createAuthRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -49,7 +61,7 @@ function createAuthRoute(ctx: ServerContext): Hono {
       return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
     }
     const body = (await c.req.json().catch(() => ({}))) as { deviceName?: string }
-    const result = ctx.authManager.requestPairing(body.deviceName ?? '新设备')
+    const result = ctx.authManager.requestPairing(body.deviceName ?? '新设备', requestSource(c))
     if (!result) {
       return apiError(c, 429, 'PAIRING_LIMIT', '待审批的配对请求过多，请稍后再试')
     }
@@ -99,6 +111,24 @@ function createAuthRoute(ctx: ServerContext): Hono {
     if (!body.pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
     const ok = ctx.authManager.denyPairing(body.pairingId)
     if (!ok) return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
+    return c.json({ ok: true })
+  })
+
+  // 列出已授权设备（需认证；设置页「已授权设备」面板）。
+  app.get('/devices', (c) => {
+    if (!ctx.authManager) {
+      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
+    }
+    return c.json({ devices: ctx.authManager.listDevices() })
+  })
+
+  // 撤销设备（需认证）。撤销唯一设备后如需重新注册首设备，请运行 c0de auth reset。
+  app.delete('/devices/:id', async (c) => {
+    if (!ctx.authManager) {
+      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
+    }
+    const ok = ctx.authManager.revokeDevice(c.req.param('id'))
+    if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Device not found')
     return c.json({ ok: true })
   })
 

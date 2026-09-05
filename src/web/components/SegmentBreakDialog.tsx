@@ -37,8 +37,8 @@ const primary = css`
 `
 
 /**
- * 段切换确认弹窗：切换 provider/model/tools 将使前缀失效、开新上下文段（缓存 miss），
- * 需用户确认。三选项：继续（仅开新段）/ 顺便压缩会话（压缩后再开新段）/ 取消（还原选择）。
+ * 段切换确认弹窗：切换 provider/model/tools 将开新上下文段，需用户确认。
+ * 三选项：继续（仅开新段）/ 顺便压缩会话（压缩后再开新段）/ 取消（还原选择）。
  */
 export function SegmentBreakDialog({
   activeSegment,
@@ -54,7 +54,7 @@ export function SegmentBreakDialog({
   return (
     <Dialog
       onClose={onCancel}
-      title="切换将开始新的上下文段"
+      title="切换模型或工具"
       width="min(420px, 92vw)"
       testId="segment-break-dialog"
       footer={
@@ -87,8 +87,10 @@ export function SegmentBreakDialog({
       }
     >
       <div className={bodyText}>
-        当前段使用 {activeSegment.provider}/{activeSegment.model}（{activeSegment.tools.length}{' '}
-        个工具）。 切换模型或工具会使前缀失效（缓存 miss），后续调用归入新段。
+        当前对话使用 {activeSegment.provider}/{activeSegment.model}（{activeSegment.tools.length}{' '}
+        个工具）。切换后，新消息将基于新的模型/工具继续；之前的对话内容会完整保留，
+        但不再作为新回复的直接上下文基础。「顺便压缩会话」会先把早前对话总结成摘要，
+        让新模型快速了解背景。
       </div>
     </Dialog>
   )

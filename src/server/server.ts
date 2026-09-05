@@ -278,6 +278,7 @@ async function buildServerContext(
     permissionStore: createPermissionStore(),
     permissionMode: config.permission.defaultMode,
     sessionPermissionModes: new Map(),
+    sessionAlwaysAllow: new Map(),
     authToken: resolvedToken,
     authManager: config.security.authEnabled === false ? undefined : authManager,
     // Agent 注册表：内置 4 个默认 agent；项目/用户自定义 agent 可在启动后补充加载。

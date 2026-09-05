@@ -5,7 +5,9 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AgentSelector } from '../components/AgentSelector.js'
+import { ArchivePanel } from '../components/ArchivePanel.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
 import { SessionSummary } from '../components/SessionSummary.js'
@@ -20,6 +22,7 @@ import { useChat } from '../hooks/useChat.js'
 import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
 import { useMessages } from '../hooks/useSession.js'
 import { agentAPI } from '../services/agent.js'
+import { providerAPI } from '../services/provider.js'
 import { sessionAPI } from '../services/session.js'
 import type { ShakeRegionView } from '../types/index.js'
 import { Chat, type SendPayload } from './Chat.js'
@@ -123,6 +126,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const { data: history, isLoading } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
@@ -191,26 +195,50 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
       setSelection({ provider: pending.opts.provider, model: pending.opts.model })
     }
     if (pending.opts.tools) setEnabledTools(new Set(pending.opts.tools))
-    void chat.sendMessage(pending.text, pending.opts)
+    void chat.sendMessage(pending.text, pending.opts).then((ok) => {
+      void cleanupEmptySessionOnFailure(ok, true)
+    })
   }, [sessionId])
 
   // 启用工具白名单：null = 默认全启用（不传 tools，走后端 config）；Set = 显式选择
   const handleSend = (payload: SendPayload) => {
     // 新一轮发送：清除上轮残留的暂停态（paused 仅在运行中有意义）。
     agent.resetPaused()
-    void chat.sendMessage(payload.text, {
-      provider: selection.provider,
-      model: selection.model,
-      agent: agentName,
-      ...(enabledTools ? { tools: Array.from(enabledTools) } : {}),
-      ...(payload.images.length ? { images: payload.images } : {}),
-      ...(payload.files.length ? { files: payload.files } : {}),
-      ...(payload.agents.length ? { agents: payload.agents } : {}),
-    })
+    const firstMessage = messages.length === 0
+    void chat
+      .sendMessage(payload.text, {
+        provider: selection.provider,
+        model: selection.model,
+        agent: agentName,
+        ...(enabledTools ? { tools: Array.from(enabledTools) } : {}),
+        ...(payload.images.length ? { images: payload.images } : {}),
+        ...(payload.files.length ? { files: payload.files } : {}),
+        ...(payload.agents.length ? { agents: payload.agents } : {}),
+      })
+      .then((ok) => {
+        void cleanupEmptySessionOnFailure(ok, firstMessage)
+      })
   }
 
-  const handleConfirm = (toolCallId: string, approved: boolean) => {
-    chat.confirm(toolCallId, approved)
+  const handleConfirm = (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => {
+    chat.confirm(toolCallId, approved, alwaysAllow ? chat.pendingPermission?.tool : undefined)
+  }
+
+  /** 首条消息发送失败（未配 provider/网络中断且无持久化消息）→ 删除空会话回草稿页，
+   *  避免每次失败尝试在会话树里留下空「New Session」堆积（P3 空会话治理）。 */
+  const cleanupEmptySessionOnFailure = async (ok: boolean, firstMessage: boolean) => {
+    if (ok || !firstMessage) return
+    try {
+      const msgs = await sessionAPI.messages(sessionId)
+      if (msgs.length === 0) {
+        await sessionAPI.remove(sessionId)
+        qc.invalidateQueries({ queryKey: ['sessions'] })
+        qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+        navigate(`/projects/${projectId}`)
+      }
+    } catch {
+      // 清理失败不阻塞：会话树里至多多一个空会话，可手动删除
+    }
   }
 
   // shake 内联模式状态
@@ -229,6 +257,26 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     setShakeMode(false)
     setShakeRegions([])
     setShakeSelected(new Set())
+  }
+
+  // 归档面板开关
+  const [showArchives, setShowArchives] = useState(false)
+
+  // 会话导出：下载 JSON（元数据 + 消息 + 归档），数据可迁移（改进建议 #4）
+  const handleExport = async () => {
+    try {
+      const data = await sessionAPI.exportSession(sessionId)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const title = (data.session.title || 'session').replace(/[^\w\u4e00-\u9fff-]+/g, '_')
+      a.href = url
+      a.download = `${title}.c0de-session.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // 导出失败静默：不阻塞主界面（可重试）
+    }
   }
 
   const handleShakeOpen = async () => {
@@ -333,8 +381,16 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     })
   }
 
-  // TODO: 从当前选中 model 的 capabilities 读取 supportsVision（providersData 已含）
-  const supportsVision = true
+  // 视觉能力按选中模型查询（provider/model capabilities）：不支持视觉的模型隐藏图片入口，
+  // 避免贴图后 provider 直接 400（P3 一致性）。
+  const { data: capabilitiesData } = useQuery({
+    queryKey: ['capabilities', selection.provider, selection.model],
+    queryFn: () => providerAPI.capabilities(selection.provider, selection.model),
+    enabled: Boolean(selection.provider && selection.model),
+    staleTime: 60_000,
+    retry: false,
+  })
+  const supportsVision = capabilitiesData?.supportsVision ?? true
 
   if (isLoading && messages.length === 0) return <ChatSkeleton />
 
@@ -384,8 +440,14 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             <SetupBanner />
             {showInterruptBanner && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="interrupt-banner">
-                <span>连接已中断（服务可能已重启）</span>
-                <button onClick={() => void handleResume()} type="button">
+                <span>
+                  连接已中断（服务可能已重启）。恢复将重发上一条消息，已执行的工具可能重复执行
+                </span>
+                <button
+                  onClick={() => void handleResume()}
+                  type="button"
+                  title="重发上一条消息继续；中断前已执行的工具（bash/git 等）可能再次执行"
+                >
                   恢复对话
                 </button>
                 <button
@@ -474,6 +536,24 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                   ⚡ Shake
                 </button>
               )}
+              <button
+                type="button"
+                className={shakeBtn}
+                onClick={() => setShowArchives(true)}
+                data-testid="archive-button"
+                title="查看 /clear、Shake、压缩归档的原始内容"
+              >
+                归档
+              </button>
+              <button
+                type="button"
+                className={shakeBtn}
+                onClick={() => void handleExport()}
+                data-testid="export-button"
+                title="导出会话（消息 + 归档）为 JSON 文件"
+              >
+                导出
+              </button>
               <SessionSummary sessionId={sessionId} />
             </div>
           </>
@@ -494,6 +574,9 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             chat.cancelBreak()
           }}
         />
+      )}
+      {showArchives && (
+        <ArchivePanel sessionId={sessionId} onClose={() => setShowArchives(false)} />
       )}
     </ShakeProvider>
   )

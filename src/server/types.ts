@@ -35,6 +35,9 @@ type ServerContext = {
   /** 会话级授权模式覆盖：Map<sessionId, mode>。会话未覆盖时回退 permissionMode。
    *  P1-5：auto 是高风险状态，按会话隔离避免一个标签页切换影响全部会话。 */
   sessionPermissionModes: Map<string, 'default' | 'auto'>
+  /** 会话级「始终允许」工具白名单：Map<sessionId, string[]>。持久化于
+   *  session.metadata.alwaysAllow；checker 经 getter 实时读取（run 中可追加）。 */
+  sessionAlwaysAllow: Map<string, string[]>
   /**
    * API Bearer token（认证未显式关闭时必存在）。
    * 用户配置 security.token 优先；否则自动生成并持久化到数据目录 auth-token 文件

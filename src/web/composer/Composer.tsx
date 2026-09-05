@@ -139,7 +139,9 @@ type ComposerProps = {
   hasHistory: boolean
   supportsVision?: boolean
   permission?: { tool: string; input: unknown } | null
-  onPermissionConfirm?: () => void
+  /** 允许「本会话始终允许」勾选（会话级 dock 为 true，草稿页无会话概念为 false）。 */
+  permissionAllowAlways?: boolean
+  onPermissionConfirm?: (alwaysAllow: boolean) => void
   onPermissionCancel?: () => void
   /** 当前项目 id（用于 @ 文件提及按项目 worktree 搜索）。 */
   projectId?: string
@@ -378,6 +380,7 @@ function Composer(props: ComposerProps) {
         <PermissionDock
           tool={props.permission.tool}
           input={props.permission.input}
+          allowAlways={props.permissionAllowAlways ?? false}
           onConfirm={props.onPermissionConfirm}
           onCancel={props.onPermissionCancel}
         />

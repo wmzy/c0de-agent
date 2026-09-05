@@ -19,7 +19,19 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
   const err = ctx.stderr ?? process.stderr.write.bind(process.stderr)
   const format = (ctx.args.options.format as 'text' | 'json' | undefined) ?? 'text'
   const model = ctx.args.options.model as string | undefined
-  const continueId = ctx.args.options.continue as string | undefined
+  let continueId = ctx.args.options.continue as string | undefined
+
+  // --continue last：续接最近一次会话，免手抄 UUID（P3 产品发现性）。
+  if (continueId === 'last') {
+    const { listAllSessions } = await import('../../session/session.js')
+    const sessions = await listAllSessions(ctx.deps.db)
+    if (sessions.length === 0) {
+      throw new Error('chat: no sessions to continue (run c0de chat once first)')
+    }
+    sessions.sort((a, b) => b.updatedAt - a.updatedAt)
+    continueId = sessions[0]?.id
+    if (!continueId) throw new Error('chat: no sessions to continue')
+  }
 
   const text = await runPrintMode(ctx.config, message, ctx.deps, {
     ...(model ? { model } : {}),

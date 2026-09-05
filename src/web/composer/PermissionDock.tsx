@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { useState } from 'react'
 
 const dock = css`
   display: flex;
@@ -27,6 +28,7 @@ const info = css`
 
 const actions = css`
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-shrink: 0;
 `
@@ -57,14 +59,32 @@ const approve = css`
   }
 `
 
+const allowAlways = css`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  & input {
+    min-height: auto;
+    min-width: auto;
+    margin: 0;
+  }
+`
+
 type Props = {
   tool: string
   input: unknown
-  onConfirm: () => void
+  /** 允许「本会话始终允许」勾选（仅会话级 dock；全局/草稿页不提供）。 */
+  allowAlways?: boolean
+  onConfirm: (alwaysAllow: boolean) => void
   onCancel: () => void
 }
 
 function PermissionDock(props: Props) {
+  const [alwaysAllow, setAlwaysAllow] = useState(false)
   return (
     <div className={dock} data-testid="permission-dock">
       <div className={info}>
@@ -75,9 +95,25 @@ function PermissionDock(props: Props) {
         <button className={btn} onClick={props.onCancel} type="button">
           拒绝
         </button>
-        <button className={approve} onClick={props.onConfirm} type="button" data-testid="approve">
+        <button
+          className={approve}
+          onClick={() => props.onConfirm(alwaysAllow)}
+          type="button"
+          data-testid="approve"
+        >
           允许
         </button>
+        {props.allowAlways && (
+          <label className={allowAlways}>
+            <input
+              type="checkbox"
+              checked={alwaysAllow}
+              onChange={(e) => setAlwaysAllow(e.target.checked)}
+              data-testid="allow-always-checkbox"
+            />
+            本会话始终允许 {props.tool}
+          </label>
+        )}
       </div>
     </div>
   )

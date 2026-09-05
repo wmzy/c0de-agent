@@ -132,7 +132,7 @@ function PairingRequestFlow() {
       <div className={title}>新设备配对</div>
       <div className={desc}>
         本设备尚未获得访问授权。请在下方生成配对码，然后在<b>已授权的设备</b>上打开 c0de，
-        在「设备配对」弹窗中输入该码并批准。
+        在「设备配对」弹窗中核对与本页一致的配对码并批准。
       </div>
       {approved ? (
         <div className={desc}>已批准，正在进入…</div>
@@ -159,7 +159,9 @@ function PairingRequestFlow() {
 
 /** 已授权设备：展示待审批配对并批准/拒绝。由 App 在收到配对列表后弹层。 */
 export function PairingApproval({ onDone }: { onDone: () => void }) {
-  const [items, setItems] = useState<{ pairingId: string; deviceName: string; code: string }[]>([])
+  const [items, setItems] = useState<
+    { pairingId: string; deviceName: string; code: string; source: string }[]
+  >([])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -198,6 +200,7 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
         <div className={title}>设备配对审批</div>
         <div className={desc}>
           以下设备请求访问 c0de。请核对对方屏幕上显示的配对码，确认后批准。
+          设备名由请求方自报，仅作参考。
         </div>
         {items.map((p) => (
           <div
@@ -207,7 +210,15 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
             <span className={code} style={{ fontSize: 20, letterSpacing: 4 }}>
               {p.code}
             </span>
-            <span className={desc}>{p.deviceName}</span>
+            <span className={desc}>
+              {p.deviceName}
+              <span
+                style={{ display: 'block', fontSize: 11, color: 'var(--text-secondary)' }}
+                title="请求来源（IP 等，尽力而为；设备名由请求方自报）"
+              >
+                来源：{p.source}
+              </span>
+            </span>
             <button
               type="button"
               className={`${btn} ${approveBtn}`}

@@ -123,6 +123,23 @@ async function searchArchives(
   return rows.map(rowToArchive)
 }
 
+/** List archives for a session（按创建时间倒序）。可选 query 走搜索过滤。 */
+async function listArchives(
+  handle: DB,
+  sessionId: string,
+  query?: string,
+): Promise<CompactionArchive[]> {
+  if (query && query.trim().length > 0) {
+    return searchArchives(handle, sessionId, query.trim())
+  }
+  const rows = await handle.db
+    .select()
+    .from(compactionArchives)
+    .where(eq(compactionArchives.sessionId, sessionId))
+    .orderBy(desc(compactionArchives.createdAt))
+  return rows.map(rowToArchive)
+}
+
 /** Parse a `@[archive:<id>]` or `@[squash:<n>]` reference from text. Returns null if none. */
 function parseArchiveReference(text: string): ArchiveRef | null {
   const archiveId = text.match(/@\[archive:([^\]]+)\]/)?.[1]
@@ -167,6 +184,7 @@ export {
   archiveOriginalEntries,
   getArchive,
   getArchiveOriginalEntries,
+  listArchives,
   parseArchiveReference,
   resolveArchiveReference,
   searchArchives,

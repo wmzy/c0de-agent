@@ -75,6 +75,14 @@ vi.mock('../services/catalog.js', () => ({
   },
 }))
 
+// 设备管理面板依赖 auth service，mock 掉避免测试中发起网络请求
+vi.mock('../services/auth.js', () => ({
+  authAPI: {
+    listDevices: vi.fn().mockResolvedValue({ devices: [] }),
+    revokeDevice: vi.fn().mockResolvedValue({ ok: true }),
+  },
+}))
+
 vi.mock('../contexts/ThemeContext.js', () => ({
   useTheme: () => ({ mode: 'light', setMode: vi.fn() }),
 }))

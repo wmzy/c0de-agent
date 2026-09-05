@@ -101,16 +101,54 @@ type ShakeRegionView = {
   toolCallId?: string
 }
 
+/** 归档条目（原始消息/压缩摘要/转向等，与后端 SessionEntry 同构）。 */
+type ArchiveEntry =
+  | { _tag: 'compaction' | 'squash' | 'branch_summary'; summary: string }
+  | { _tag: 'steering'; content: string }
+  | {
+      role: string
+      content: Array<{
+        _tag: string
+        text?: string
+        tool?: string
+        input?: unknown
+        output?: unknown
+      }>
+    }
+
+/** 会话归档行（GET /sessions/:id/archives 返回）。 */
+type CompactionArchive = {
+  id: string
+  sessionId: string
+  archiveType: 'compaction' | 'squash' | 'shake' | 'clear'
+  originalEntries: ArchiveEntry[]
+  summary: string
+  tokenCount: number
+  createdAt: number
+}
+
+/** 会话导出（GET /sessions/:id/export 返回）。 */
+type SessionExport = {
+  version: 1
+  exportedAt: string
+  session: Session
+  messages: Message[]
+  archives: CompactionArchive[]
+}
+
 export type {
   APIError,
+  ArchiveEntry,
   CodeReference,
   CommitResponse,
+  CompactionArchive,
   FileContent,
   FileEntry,
   FileSearchResult,
   GitStatusCode,
   GitStatusMap,
   Project,
+  SessionExport,
   SessionTreeNode,
   ShakeRegionView,
   ToolListItem,

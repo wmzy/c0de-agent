@@ -28,6 +28,8 @@ type PendingPairing = {
   code: string
   createdAt: number
   status: 'pending' | 'approved' | 'denied'
+  /** 请求来源（尽力而为：x-forwarded-for 首跳，本地回环时为 local）。仅展示 + 软限流，不作身份断言。 */
+  source: string
   deviceToken?: string
 }
 
@@ -60,8 +62,9 @@ export type AuthManager = {
    *  无设备时首个凭 bootstrap 的请求即视为首设备（免审批），后续请求需配对审批。
    *  返回新设备 token；bootstrap 已失效/已注册过 → 返回 null。 */
   registerFirstDevice(bootstrapToken: string, deviceName: string): Promise<string | null>
-  /** 发起配对请求（未认证）：返回 { pairingId, code }；静态模式/未启用返回 null。 */
-  requestPairing(deviceName: string): { pairingId: string; code: string } | null
+  /** 发起配对请求（未认证）：返回 { pairingId, code }；静态模式/未启用返回 null。
+   *  source 为请求来源（IP 等，尽力而为），用于审批展示与按来源限流。 */
+  requestPairing(deviceName: string, source?: string): { pairingId: string; code: string } | null
   /** 查询配对状态（未认证）：pending / approved(含 token) / denied / not_found。 */
   pairingStatus(
     pairingId: string,
@@ -71,7 +74,13 @@ export type AuthManager = {
     | { status: 'denied' }
     | { status: 'not_found' }
   /** 列出待审批配对（需已认证设备调用）。 */
-  listPairings(): Array<{ pairingId: string; deviceName: string; code: string; createdAt: number }>
+  listPairings(): Array<{
+    pairingId: string
+    deviceName: string
+    code: string
+    createdAt: number
+    source: string
+  }>
   /** 审批配对（需已认证设备调用）：通过后为请求设备签发 token。 */
   approvePairing(pairingId: string): boolean
   /** 拒绝配对。 */
@@ -247,12 +256,18 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
       return deviceToken
     },
 
-    requestPairing(deviceName) {
+    requestPairing(deviceName, source) {
       if (staticToken && staticToken.length > 0) return null
       cleanExpiredPairings()
-      // 限流：最多 10 个待审批
+      // 限流：最多 10 个待审批；同一来源最多 3 个（防本地/远程进程刷满队列，
+      // 使合法设备 10 分钟内无法配对）。source 尽力而为，缺省视为 'unknown'。
       const pendingCount = Array.from(pending.values()).filter((p) => p.status === 'pending').length
       if (pendingCount >= 10) return null
+      const src = source ?? 'unknown'
+      const perSource = Array.from(pending.values()).filter(
+        (p) => p.status === 'pending' && p.source === src,
+      ).length
+      if (perSource >= 3) return null
       const pairingId = randomBytes(16).toString('hex')
       const code = String(100000 + Math.floor(Math.random() * 900000)) // 6 位数字
       pending.set(pairingId, {
@@ -261,6 +276,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
         code,
         createdAt: now(),
         status: 'pending',
+        source: src,
       })
       return { pairingId, code }
     },
@@ -286,6 +302,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
           deviceName: p.deviceName,
           code: p.code,
           createdAt: p.createdAt,
+          source: p.source,
         }))
     },
 

@@ -9,8 +9,9 @@ export type { PermissionRequest }
 type PermissionMode = 'default' | 'auto'
 
 type InteractivePermissionCheckerOptions = {
-  /** 始终允许的工具名（覆盖 permission 字段）。 */
-  alwaysAllow?: string[]
+  /** 始终允许的工具名（覆盖 permission 字段）。可为 getter：会话级「始终允许」
+   *  白名单在 run 期间可被用户追加，getter 使每次 check 读取最新集合。 */
+  alwaysAllow?: string[] | (() => string[])
   /** 始终拒绝的工具名（覆盖 permission 字段）。 */
   alwaysDeny?: string[]
   /** 读取当前授权模式：'auto' 时跳过 ask 交互确认（YOLO 自动授权）。 */
@@ -33,7 +34,11 @@ function createInteractivePermissionChecker(
   store: PermissionStore,
   opts: InteractivePermissionCheckerOptions = {},
 ): InteractivePermissionChecker {
-  const allowSet = new Set(opts.alwaysAllow ?? [])
+  const allowSet = opts.alwaysAllow
+    ? Array.isArray(opts.alwaysAllow)
+      ? new Set(opts.alwaysAllow)
+      : null
+    : null
   const denySet = new Set(opts.alwaysDeny ?? [])
 
   return {
@@ -41,7 +46,12 @@ function createInteractivePermissionChecker(
       if (denySet.has(tool.name)) {
         return { _tag: 'deny', reason: `Tool "${tool.name}" is denied by configuration` }
       }
-      if (allowSet.has(tool.name) || tool.permission === 'auto') {
+      // 静态集合或动态 getter（会话级白名单可在 run 期间追加）
+      const dynamicAllowed =
+        allowSet === null && typeof opts.alwaysAllow === 'function'
+          ? opts.alwaysAllow().includes(tool.name)
+          : allowSet?.has(tool.name)
+      if (dynamicAllowed || tool.permission === 'auto') {
         return { _tag: 'allow' }
       }
       if (tool.permission === 'deny') {

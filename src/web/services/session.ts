@@ -1,6 +1,11 @@
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
-import type { SessionTreeNode, ShakeRegionView } from '../types/index.js'
+import type {
+  CompactionArchive,
+  SessionExport,
+  SessionTreeNode,
+  ShakeRegionView,
+} from '../types/index.js'
 import { apiRequest } from './api.js'
 
 const sessionAPI = {
@@ -31,6 +36,21 @@ const sessionAPI = {
       method: 'POST',
       body: JSON.stringify({}),
     }),
+  /** 彻底删除回收站会话（不可恢复）。 */
+  removeForever: (id: string) =>
+    apiRequest<{ ok: boolean; deleted: number }>(`/api/sessions/${id}/forever`, {
+      method: 'DELETE',
+    }),
+  /** 清空回收站（不可恢复）。 */
+  emptyTrash: () =>
+    apiRequest<{ ok: boolean; deleted: number }>('/api/sessions/deleted', { method: 'DELETE' }),
+  /** 会话归档列表（compaction/squash/shake/clear 原始内容）；q 为搜索词。 */
+  archives: (id: string, q?: string) =>
+    apiRequest<{ archives: CompactionArchive[] }>(
+      `/api/sessions/${id}/archives${q ? `?q=${encodeURIComponent(q)}` : ''}`,
+    ),
+  /** 会话导出（元数据 + 消息 + 归档），数据可迁移。 */
+  exportSession: (id: string) => apiRequest<SessionExport>(`/api/sessions/${id}/export`),
   branches: (id: string) => apiRequest<Session[]>(`/api/sessions/${id}/branches`),
   status: (id: string) => apiRequest<{ _tag: string }>(`/api/sessions/${id}/status`),
   open: (id: string) =>

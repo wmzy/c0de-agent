@@ -9,6 +9,7 @@ import { migrateDB } from '../../db/migrate.js'
 import { projects, sessions } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
+import { archiveOriginalEntries } from '../../session/archive.js'
 import { updateSessionLastRun } from '../../session/session.js'
 import type { Session } from '../../shared/types/message.js'
 import { createServerContext } from '../context.js'
@@ -475,5 +476,114 @@ describe('session route', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('DELETE /:id/forever 彻底删除回收站会话（不可恢复）', async () => {
+    const { app, db } = await setup()
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'HardDelete' }),
+    })
+    const session = (await created.json()) as Session
+    await app.request(`/${session.id}`, { method: 'DELETE' })
+    const res = await app.request(`/${session.id}/forever`, { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; deleted: number }
+    expect(body.ok).toBe(true)
+    expect(body.deleted).toBeGreaterThanOrEqual(1)
+    // 物理删除：回收站也不再有
+    const deleted = await app.request('/deleted')
+    const list = (await deleted.json()) as Session[]
+    expect(list.some((s) => s.id === session.id)).toBe(false)
+    // 未删除会话不可彻底删除 → 404
+    const created2 = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Alive' }),
+    })
+    const alive = (await created2.json()) as Session
+    const res2 = await app.request(`/${alive.id}/forever`, { method: 'DELETE' })
+    expect(res2.status).toBe(404)
+    void db
+  })
+
+  it('DELETE /deleted 清空回收站', async () => {
+    const { app } = await setup()
+    for (const title of ['A', 'B']) {
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      })
+      const session = (await created.json()) as Session
+      await app.request(`/${session.id}`, { method: 'DELETE' })
+    }
+    const res = await app.request('/deleted', { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; deleted: number }
+    expect(body.ok).toBe(true)
+    expect(body.deleted).toBeGreaterThanOrEqual(2)
+    const after = await app.request('/deleted')
+    expect((await after.json()) as Session[]).toEqual([])
+  })
+
+  it('GET /:id/archives 列出归档（含 /clear 归档），?q= 搜索', async () => {
+    const { app, db } = await setup()
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Archived' }),
+    })
+    const session = (await created.json()) as Session
+    await archiveOriginalEntries(
+      db,
+      session.id,
+      [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          sessionId: session.id,
+          role: 'user',
+          content: [{ _tag: 'text', text: '机密内容 xyz' }],
+          tokenCount: 1,
+          createdAt: Date.now(),
+        },
+      ],
+      'clear',
+      'Cleared 1 entries',
+      '22222222-2222-4222-8222-222222222222',
+    )
+    const res = await app.request(`/${session.id}/archives`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { archives: unknown[] }
+    expect(body.archives).toHaveLength(1)
+    // 搜索命中
+    const hit = await app.request(`/${session.id}/archives?q=${encodeURIComponent('xyz')}`)
+    expect(((await hit.json()) as { archives: unknown[] }).archives).toHaveLength(1)
+    // 搜索未命中
+    const miss = await app.request(`/${session.id}/archives?q=${encodeURIComponent('nope')}`)
+    expect(((await miss.json()) as { archives: unknown[] }).archives).toHaveLength(0)
+  })
+
+  it('GET /:id/export 导出会话（元数据 + 消息 + 归档）', async () => {
+    const { app } = await setup()
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'ExportMe' }),
+    })
+    const session = (await created.json()) as Session
+    const res = await app.request(`/${session.id}/export`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      version: number
+      session: Session
+      messages: unknown[]
+      archives: unknown[]
+    }
+    expect(body.version).toBe(1)
+    expect(body.session.id).toBe(session.id)
+    expect(Array.isArray(body.messages)).toBe(true)
+    expect(Array.isArray(body.archives)).toBe(true)
   })
 })

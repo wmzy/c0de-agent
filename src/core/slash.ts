@@ -113,7 +113,7 @@ const clearCommand: SlashCommand = {
       return {
         _tag: 'error',
         message:
-          '清空消息不可逆。原始消息将归档到本地数据存储（compaction_archives，暂无界面恢复入口），确认请执行 /clear --yes（或 /clear <session-id> --yes）。',
+          '清空消息不可逆。原始消息将归档到「会话归档」面板（会话页顶部「归档」按钮可查看/搜索），确认请执行 /clear --yes（或 /clear <session-id> --yes）。',
       }
     }
     const { getEntries, deleteEntriesByIds } = await import('../session/message.js')
@@ -135,7 +135,7 @@ const clearCommand: SlashCommand = {
     }
     return {
       _tag: 'success',
-      message: `Cleared ${ids.length} entries (archived to local data store, no UI restore path)`,
+      message: `Cleared ${ids.length} entries (archived — view via the 归档 button in the session page)`,
     }
   },
 }
@@ -191,14 +191,20 @@ const configCommand: SlashCommand = {
   execute: async (args, ctx) => {
     const { getByPath, setPathPatch, coerce } = await import('./config-path.js')
     if (!args) {
-      return { _tag: 'text', text: JSON.stringify(ctx.config, null, 2) }
+      return {
+        _tag: 'text',
+        text: `（合并视图：global + project 作用域；修改请用 /config <key> <value>，写入 project 作用域）\n${JSON.stringify(ctx.config, null, 2)}`,
+      }
     }
     const parts = args.split(/\s+/)
     const key = parts[0] ?? ''
     if (parts.length === 1) {
       try {
         const value = getByPath(ctx.config, key)
-        return { _tag: 'text', text: `${key}: ${JSON.stringify(value)}` }
+        return {
+          _tag: 'text',
+          text: `${key}: ${JSON.stringify(value)}（合并视图：global + project 作用域）`,
+        }
       } catch (error) {
         return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
       }
@@ -334,21 +340,17 @@ const workflowCommand: SlashCommand = {
       if (!wf.filePath) {
         return { _tag: 'error', message: `Workflow file path not available for "${name}"` }
       }
-
-      const editor = process.env.EDITOR || process.env.VISUAL || 'vi'
-      try {
-        const { spawnSync } = await import('node:child_process')
-        spawnSync(editor, [wf.filePath], { stdio: 'inherit' })
-      } catch {
-        return { _tag: 'error', message: `Failed to launch editor: ${editor}` }
+      // 斜杠命令经 Web SSE 执行，无法在浏览器里交互式打开终端编辑器——
+      // 在 serve 进程 spawn vi 会让用户既看不到也无法输入，SSE 流还会阻塞。
+      // 改为给出文件路径引导用户在本地编辑器/文件面板中编辑。
+      return {
+        _tag: 'error',
+        message:
+          `Web 端不支持交互式编辑器。请用本地编辑器打开工作流文件后保存：\n` +
+          `  ${wf.filePath}\n` +
+          `保存后下次 /workflow run ${name} 会读取最新内容（项目工作流按需从磁盘发现）。` +
+          `或使用 /workflow create <name> --file <path> 覆盖。`,
       }
-
-      // 编辑后热重载
-      if (ctx.workflowRegistry) {
-        await reloadRegistry(ctx.workflowRegistry, ctx.cwd)
-      }
-
-      return { _tag: 'success', message: `Workflow "${name}" reloaded after edit.` }
     }
 
     if (subcommand === 'run') {

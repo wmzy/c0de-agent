@@ -14,6 +14,15 @@ type PendingPairing = {
   deviceName: string
   code: string
   createdAt: number
+  /** 请求来源（IP，尽力而为）；设备名由请求方自报，来源仅供辅助判断。 */
+  source: string
+}
+
+/** 已授权设备（GET /api/auth/devices）。 */
+type AuthorizedDevice = {
+  id: string
+  name: string
+  createdAt: number
 }
 
 const authAPI = {
@@ -42,7 +51,14 @@ const authAPI = {
       method: 'POST',
       body: JSON.stringify({ pairingId }),
     }),
+  /** 已授权设备列表（设置页设备管理）。 */
+  listDevices: () => apiRequest<{ devices: AuthorizedDevice[] }>('/api/auth/devices'),
+  /** 撤销设备（立即生效）。 */
+  revokeDevice: (id: string) =>
+    apiRequest<{ ok: boolean }>(`/api/auth/devices/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
 }
 
-export type { PairingRequestResult, PairingStatus, PendingPairing }
+export type { AuthorizedDevice, PairingRequestResult, PairingStatus, PendingPairing }
 export { authAPI }

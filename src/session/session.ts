@@ -187,6 +187,91 @@ async function updateSessionTitle(handle: DB, id: string, title: string): Promis
 }
 
 /**
+ * 彻底删除某个回收站会话及其全部后代（含未软删除的 fork 后代，防御数据异常）。
+ * 子会话先于父会话删除（自引用 FK RESTRICT 要求）；entries/archives 经 FK cascade 清理。
+ * 返回删除数量。会话不存在或不在回收站 → 返回 0。
+ */
+async function permanentlyDeleteSession(handle: DB, id: string): Promise<number> {
+  const [row] = await handle.db
+    .select({ id: sessions.id, deletedAt: sessions.deletedAt })
+    .from(sessions)
+    .where(eq(sessions.id, id))
+  if (!row || !row.deletedAt) return 0
+  const all = await handle.db
+    .select({ id: sessions.id, parentId: sessions.parentId })
+    .from(sessions)
+  const ids = new Set<string>([id])
+  let frontier = [id]
+  while (frontier.length > 0) {
+    const children = all
+      .filter((r) => r.parentId && frontier.includes(r.parentId))
+      .map((r) => r.id)
+      .filter((cid) => !ids.has(cid))
+    for (const cid of children) ids.add(cid)
+    frontier = children
+  }
+  // 拓扑序：无子会话的先删（与 purgeDeletedSessions 同策略）
+  const remaining = new Set(ids)
+  let deleted = 0
+  while (remaining.size > 0) {
+    const hasChildParent = new Set(
+      Array.from(remaining).filter((rid) => {
+        const r = all.find((x) => x.id === rid)
+        return r?.parentId && remaining.has(r.parentId)
+      }),
+    )
+    const leaves = Array.from(remaining).filter((rid) => !hasChildParent.has(rid))
+    if (leaves.length === 0) {
+      for (const rid of Array.from(remaining)) {
+        await handle.db.delete(sessions).where(eq(sessions.id, rid))
+        remaining.delete(rid)
+        deleted += 1
+      }
+      break
+    }
+    for (const rid of leaves) {
+      await handle.db.delete(sessions).where(eq(sessions.id, rid))
+      remaining.delete(rid)
+      deleted += 1
+    }
+  }
+  return deleted
+}
+
+/** 清空回收站：物理删除所有已软删除会话（子先于父）。返回删除数量。 */
+async function emptyTrash(handle: DB): Promise<number> {
+  const rows = await handle.db
+    .select({ id: sessions.id, parentId: sessions.parentId })
+    .from(sessions)
+    .where(gt(sessions.deletedAt, new Date(0)))
+  if (rows.length === 0) return 0
+  const remaining = new Set(rows.map((r) => r.id))
+  let deleted = 0
+  while (remaining.size > 0) {
+    const hasChildParent = new Set(
+      rows.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
+    )
+    const leaves = rows
+      .filter((r) => remaining.has(r.id) && !hasChildParent.has(r.id))
+      .map((r) => r.id)
+    if (leaves.length === 0) {
+      for (const id of Array.from(remaining)) {
+        await handle.db.delete(sessions).where(eq(sessions.id, id))
+        remaining.delete(id)
+        deleted += 1
+      }
+      break
+    }
+    for (const id of leaves) {
+      await handle.db.delete(sessions).where(eq(sessions.id, id))
+      remaining.delete(id)
+      deleted += 1
+    }
+  }
+  return deleted
+}
+
+/**
  * 清理过期临时会话（P2：CLI print 与工作流运行的会话永不软删除、不参与
  * Web 会话树展示，会无限积累）。保留期默认 30 天；子条目经 FK cascade 一并删除。
  * 返回清除数量。启动时与每日定时调用。
@@ -348,11 +433,13 @@ async function listSessionsByProject(handle: DB, projectId: string): Promise<Ses
 
 export {
   createSession,
+  emptyTrash,
   getSession,
   listAllSessions,
   listDeletedSessions,
   listSessions,
   listSessionsByProject,
+  permanentlyDeleteSession,
   purgeDeletedSessions,
   purgeTemporarySessions,
   restoreSession,
