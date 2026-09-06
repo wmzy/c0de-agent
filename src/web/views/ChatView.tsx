@@ -40,16 +40,16 @@ const setupBanner = css`
   }
 `
 
-/** 未配置 provider 时的引导横幅（首条消息前展示）。 */
-export function SetupBanner() {
-  const { config, loading } = useConfig()
+/** 未配置 provider 时的引导横幅（首条消息前展示；按项目配置判断）。 */
+export function SetupBanner({ projectId }: { projectId?: string }) {
+  const { config, loading } = useConfig(projectId)
   if (loading || !config) return null
   const hasProvider = (config.providers ?? []).length > 0
   if (hasProvider) return null
   return (
     <div className={setupBanner} data-testid="setup-banner">
       <span>尚未配置 AI 服务（Provider / API Key），无法开始对话</span>
-      <Link to="/settings">去设置</Link>
+      <Link to={projectId ? `/projects/${projectId}/settings` : '/settings'}>去设置</Link>
     </div>
   )
 }
@@ -295,13 +295,13 @@ function DraftSession({ projectId }: { projectId: string }) {
             onChange={setAgentName}
             agents={agentsData?.agents ?? []}
           />
-          <ModelSelector value={selection} onChange={setSelection} />
+          <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
         </>
       }
       toolToggle={
         <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={creating} />
       }
-      topPanel={<SetupBanner />}
+      topPanel={<SetupBanner projectId={projectId} />}
       supportsVision
     />
   )

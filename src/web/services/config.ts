@@ -13,14 +13,24 @@ type ConfigResponse = {
   gitWarning?: string | null
   /** 安全类配置（token/authEnabled）运行时修改不生效，需重启 serve（PATCH 响应）。 */
   needsRestart?: boolean
+  /** P1-1：请求指定项目（projectId）时的项目目录（设置页标注编辑目标用）。 */
+  projectDir?: string
 }
 
 const configAPI = {
-  get: () => apiRequest<ConfigResponse>('/api/config'),
-  update: (patch: Partial<Config>, scope?: 'global' | 'project') =>
+  /** projectId 提供时读取该项目的合并配置（P1-1 多项目配置贯通）。 */
+  get: (projectId?: string) =>
+    apiRequest<ConfigResponse>(
+      `/api/config${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
+  update: (patch: Partial<Config>, scope?: 'global' | 'project', projectId?: string) =>
     apiRequest<ConfigResponse>('/api/config', {
       method: 'PATCH',
-      body: JSON.stringify({ ...patch, ...(scope ? { scope } : {}) }),
+      body: JSON.stringify({
+        ...patch,
+        ...(scope ? { scope } : {}),
+        ...(projectId ? { projectId } : {}),
+      }),
     }),
 }
 

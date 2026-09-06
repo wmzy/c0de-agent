@@ -1,8 +1,9 @@
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MOBILE } from '../styles/breakpoints.js'
+import { checkNavGuard } from '../utils/nav-guard.js'
 
 const bar = css`
   display: none;
@@ -157,6 +158,7 @@ type MobileNavProps = {
 export function MobileNav({ sidebar }: MobileNavProps) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { projectId } = useParams<{ projectId: string }>()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   // 路由变化（如在抽屉内选择会话/进入设置）时收起抽屉
@@ -181,18 +183,23 @@ export function MobileNav({ sidebar }: MobileNavProps) {
   }, [drawerOpen])
 
   // 抽屉打开时高亮 sessions 标签；否则按路由判定
-  const activeId = drawerOpen
-    ? 'sessions'
-    : location.pathname.startsWith('/settings')
-      ? 'settings'
-      : 'chat'
+  const isSettingsRoute =
+    location.pathname.startsWith('/settings') || location.pathname.includes('/settings')
+  const activeId = drawerOpen ? 'sessions' : isSettingsRoute ? 'settings' : 'chat'
 
   const onPick = (t: Tab) => {
     if (t.kind === 'settings') {
-      navigate('/settings')
+      navigate(projectId ? `/projects/${projectId}/settings` : '/settings')
       return
     }
     if (t.kind === 'chat') {
+      // 设置页上点「对话」应回到聊天页（此前仅收起抽屉，无导航）；
+      // 程序化 navigate 不经 <a> 拦截，离开前查询未保存更改守卫。
+      if (isSettingsRoute) {
+        const blockMsg = checkNavGuard()
+        if (blockMsg && !window.confirm(blockMsg)) return
+        navigate(projectId ? `/projects/${projectId}` : '/')
+      }
       setDrawerOpen(false)
       return
     }

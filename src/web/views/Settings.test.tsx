@@ -5,6 +5,7 @@
 import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Settings } from './Settings.js'
@@ -99,9 +100,11 @@ function renderSettings() {
     },
   })
   return render(
-    <QueryClientProvider client={qc}>
-      <Settings />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={['/settings']}>
+      <QueryClientProvider client={qc}>
+        <Settings />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
 

@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { Dialog } from '../components/Dialog.js'
 import { AppearancePanel } from '../components/settings/AppearancePanel.js'
 import { CommaListInput } from '../components/settings/CommaListInput.js'
@@ -30,6 +31,7 @@ import { ToolsPanel } from '../components/settings/ToolsPanel.js'
 import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
 import { configAPI } from '../services/config.js'
 import { diffConfig, isPatchEmpty } from '../utils/config-diff.js'
+import { registerNavGuard } from '../utils/nav-guard.js'
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -60,9 +62,13 @@ const dialogActions = css`
 
 export function Settings() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
+  // P1-1：项目上下文来自路由（/projects/:projectId/settings）；
+  // 无上下文时保持旧行为（服务启动目录项目 + 全局作用域）。
+  const { projectId } = useParams<{ projectId: string }>()
   const { data: resp, isLoading } = useQuery({
-    queryKey: ['config'],
-    queryFn: () => configAPI.get(),
+    queryKey: ['config', projectId ?? 'server'],
+    queryFn: () => configAPI.get(projectId),
   })
   const config = resp?.config ?? null
   const warnings = resp?.warnings ?? []
@@ -84,18 +90,22 @@ export function Settings() {
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
   const [needsRestart, setNeedsRestart] = useState(false)
 
-  // 未保存导航防护：待确认的离开链接；bypass 标记放行「离开」确认后的重放点击。
+  // 未保存导航防护：待确认的离开目标；bypass 标记放行「离开」确认后的重放导航。
+  // el 为被拦截的 <a>（重放点击）；el 为 null 表示浏览器后退/前进（popstate），
+  // 离开时经 navigate 程序化跳转。
   const [pendingLeave, setPendingLeave] = useState<{
-    el: HTMLAnchorElement
+    el: HTMLAnchorElement | null
     href: string
   } | null>(null)
   const bypassGuardRef = useRef(false)
+  // 设置页自身路径（含项目上下文），popstate 拦截时用于回跳。
+  const settingsPathRef = useRef(window.location.pathname + window.location.search)
 
   // dirty 仅指「需手动保存的草稿」；外观面板即时生效、不进 draft，不影响此判定。
   const isDirty = draft !== null
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Config>) => configAPI.update(patch, scope),
+    mutationFn: (patch: Partial<Config>) => configAPI.update(patch, scope, projectId),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
     onSuccess: (resp) => {
       qc.invalidateQueries({ queryKey: ['config'] })
@@ -164,6 +174,32 @@ export function Settings() {
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isDirty])
+
+  // P1-8：浏览器后退/前进（popstate）拦截。BrowserRouter 非 data router，
+  // useBlocker 不可用；popstate 到达时路由状态已更新，故立即 replace 回设置页
+  // 并弹出与 <a> 拦截共用的离开确认，用户确认后 navigate 到原目标。
+  useEffect(() => {
+    if (!isDirty) return
+    const onPop = () => {
+      if (bypassGuardRef.current) {
+        bypassGuardRef.current = false
+        return
+      }
+      const target = window.location.pathname + window.location.search
+      // 目标仍是设置页（项目上下文切换等）不拦截
+      if (target === settingsPathRef.current) return
+      navigate(settingsPathRef.current, { replace: true })
+      setPendingLeave({ el: null, href: target })
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [isDirty, navigate])
+
+  // P1-8：程序化导航守卫（MobileNav 等不经 <a> 点击/popstate 的路径）。
+  useEffect(() => {
+    if (!isDirty) return
+    return registerNavGuard(() => '设置有未保存的更改，离开页面将丢失这些更改。确定离开？')
   }, [isDirty])
 
   if (isLoading || !config) return <div className={loadingWrap}>加载中…</div>
@@ -341,15 +377,19 @@ export function Settings() {
   /** 离开确认弹窗：「留下」= 关闭弹窗，留在设置页继续编辑。 */
   const stayOnSettings = () => setPendingLeave(null)
 
-  /** 离开确认弹窗：「离开」= 丢弃草稿并重放被拦截的链接点击（放行一次）。 */
+  /** 离开确认弹窗：「离开」= 丢弃草稿并重放被拦截的导航
+   *  （<a> 点击重放；popstate 经 navigate 跳转原目标）。 */
   const confirmLeave = () => {
     const pending = pendingLeave
     setPendingLeave(null)
     setDraft(null)
     if (!pending) return
     bypassGuardRef.current = true
-    if (pending.el.isConnected) pending.el.click()
-    else window.location.assign(pending.href)
+    if (pending.el?.isConnected) {
+      pending.el.click()
+    } else {
+      navigate(pending.href)
+    }
   }
 
   return (
@@ -367,13 +407,46 @@ export function Settings() {
         <span style={{ color: 'var(--text-secondary)' }}>配置作用域</span>
         <select
           value={scope}
-          onChange={(e) => setScope(e.target.value as 'global' | 'project')}
+          onChange={(e) => {
+            const next = e.target.value as 'global' | 'project'
+            // P2-10：dirty 时切换作用域会把草稿整体落盘到新作用域——先确认，防止误写。
+            if (
+              next !== scope &&
+              draft !== null &&
+              !window.confirm('切换作用域将丢失未保存的更改。确定切换？')
+            ) {
+              return
+            }
+            if (next !== scope) {
+              setDraft(null)
+              setSaveFeedback({ kind: 'idle' })
+            }
+            setScope(next)
+          }}
           data-testid="scope-select"
           style={{ fontSize: 12, padding: '3px 8px' }}
         >
-          <option value="project">项目配置（当前目录 .c0de/config.json）</option>
+          <option value="project">
+            {projectId
+              ? '项目配置（当前查看项目 .c0de/config.json）'
+              : '项目配置（当前目录 .c0de/config.json）'}
+          </option>
           <option value="global">全局配置（~/.c0de/config.json）</option>
         </select>
+        {projectId && resp?.projectDir && (
+          <span
+            style={{
+              color: 'var(--text-secondary)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              maxWidth: '40%',
+            }}
+            title={resp.projectDir}
+          >
+            目标：{resp.projectDir}
+          </span>
+        )}
       </div>
       {warnings.length > 0 && (
         <div

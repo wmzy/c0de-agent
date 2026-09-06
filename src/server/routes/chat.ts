@@ -19,6 +19,7 @@ import { resolveEnabledToolNames } from '../../tools/index.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
+import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
 import { safeResolve } from '../util/safe-path.js'
 
@@ -79,9 +80,12 @@ function createChatRoute(ctx: ServerContext): Hono {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const sessionId = body.sessionId as string | undefined
     const message = body.message as string | undefined
+    const images = body.images as Array<{ mediaType: string; data: string }> | undefined
 
-    if (!sessionId || !message) {
-      return apiError(c, 400, 'BAD_REQUEST', 'sessionId and message are required')
+    // P1-5：纯图片消息放行（Composer 允许只带图片不带文本），
+    // 仅当文本与图片皆无时拒绝，错误信息说明可操作原因。
+    if (!sessionId || (!message && !images?.length)) {
+      return apiError(c, 400, 'BAD_REQUEST', '消息内容不能为空：请输入文字或附带图片后再发送')
     }
 
     let session: Awaited<ReturnType<typeof getSession>>
@@ -139,8 +143,23 @@ function createChatRoute(ctx: ServerContext): Hono {
       : ctx.config
     const sessionDefaultMode = sessionProjectScope?.permission?.defaultMode
 
-    // 斜杠命令拦截
-    const parsed = parseSlashInput(message)
+    // P1-1：会话项目注册表——项目级配置含 providers 时，按该项目合并配置
+    // 构建/复用 LLM 注册表（否则项目配置的 provider 永远 NoRoute）。
+    // 服务启动目录项目直接复用服务级注册表。
+    let sessionRegistry = ctx.llmRegistry
+    if (sessionProjectScope && session.projectId) {
+      const pid = session.projectId
+      const cached = ctx.projectRegistries?.get(pid)
+      if (cached) {
+        sessionRegistry = cached
+      } else if (sessionConfig.providers.length > 0) {
+        sessionRegistry = buildRegistryFromConfig(sessionConfig)
+        ctx.projectRegistries?.set(pid, sessionRegistry)
+      }
+    }
+
+    // 斜杠命令拦截（纯图片消息无文本，跳过命令解析）
+    const parsed = parseSlashInput(message ?? '')
     if (parsed) {
       const registry = createSlashRegistry()
       const cmd = registry.get(parsed.name)
@@ -178,7 +197,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             // checker——/workflow run 的子 agent 才能对 ask 工具弹窗确认。
             permission: autoAllowChecker,
             toolRegistry: ctx.toolRegistry,
-            llmRegistry: ctx.llmRegistry,
+            llmRegistry: sessionRegistry,
             agentRegistry: ctx.agentRegistry,
           },
         }
@@ -282,9 +301,9 @@ function createChatRoute(ctx: ServerContext): Hono {
       // 未知斜杠命令：回退为正常消息发给 agent
     }
 
-    // 构建多模态 user content：文本在前，images（dataURL base64）在后
-    const userContent: MessageContent[] = [{ _tag: 'text', text: message }]
-    const images = body.images as Array<{ mediaType: string; data: string }> | undefined
+    // 构建多模态 user content：文本在前（可为空串/缺省，纯图片消息），
+    // images（dataURL base64）在后。文本为空时跳过 text part，避免把空文本发给模型。
+    const userContent: MessageContent[] = message ? [{ _tag: 'text', text: message }] : []
     if (images?.length) {
       for (const img of images) {
         userContent.push({ _tag: 'image', mediaType: img.mediaType, data: img.data })
@@ -310,6 +329,9 @@ function createChatRoute(ctx: ServerContext): Hono {
       const first = userContent[0]
       if (first && first._tag === 'text') {
         first.text = `[User requested subagent(s): ${names}]\n\n${first.text}`
+      } else {
+        // 纯图片消息：前置文本 part 承载 subagent 指令，避免指令静默丢失
+        userContent.unshift({ _tag: 'text', text: `[User requested subagent(s): ${names}]` })
       }
     }
 
@@ -335,30 +357,52 @@ function createChatRoute(ctx: ServerContext): Hono {
       }
     }
 
-    const provider = (body.provider as string) ?? ctx.config.defaultProvider
-    const model = (body.model as string) ?? ctx.config.defaultModel
+    // P1-1：默认 provider/model 按会话项目配置解析（此前用服务启动目录配置，
+    // 其他项目的 defaultProvider 设置被静默忽略）。
+    const provider = (body.provider as string) ?? sessionConfig.defaultProvider
+    const model = (body.model as string) ?? sessionConfig.defaultModel
 
     // P0-1 首次运行引导：provider 未配置/未注册时立即返回可操作错误，
     // 不让错误延迟到 SSE 流内以英文 NoRoute 冒出。前端据此引导用户去设置页。
     // 注：测试注入 ctx.chatStream 时跳过——测试 registry 空壳不代表生产未配置。
+    // P2-4：区分两种失败——完全没有配置 provider vs 配置了但名字不匹配。
     if (!ctx.chatStream) {
       try {
-        resolveRoute(ctx.llmRegistry, provider, model)
+        resolveRoute(sessionRegistry, provider, model)
       } catch {
-        const configured = ctx.config.providers
+        const configured = sessionConfig.providers
           .map((p) => p.name)
           .filter(Boolean)
           .join(', ')
+        const hasAny = sessionConfig.providers.length > 0
         return apiError(
           c,
           400,
-          'NO_PROVIDER_CONFIGURED',
-          `未配置可用的 AI 服务（provider: ${provider}）。请前往「设置 → Provider」添加 API 服务并测试连接`,
+          hasAny ? 'PROVIDER_NOT_FOUND' : 'NO_PROVIDER_CONFIGURED',
+          hasAny
+            ? `未找到名为「${provider}」的 AI 服务。已配置：${configured}。` +
+                '请检查拼写，或前往「设置 → Provider」添加该服务。'
+            : `未配置可用的 AI 服务（provider: ${provider}）。请前往「设置 → Provider」添加 API 服务并测试连接`,
           {
             provider,
-            configuredProviders: ctx.config.providers.map((p) => p.name).filter(Boolean),
+            configuredProviders: sessionConfig.providers.map((p) => p.name).filter(Boolean),
             ...(configured ? { hint: `已配置：${configured}` } : {}),
           },
+        )
+      }
+      // P2-4：provider 显式声明了模型清单但请求模型不在其中 → 大概率拼写错误。
+      // 未声明清单的 provider（自建网关等）接受任意模型名，不做校验。
+      const providerDef = sessionConfig.providers.find(
+        (p) => (p.name || (p as { _tag?: string })._tag) === provider,
+      )
+      const modelNames = providerDef?.models ? Object.keys(providerDef.models) : undefined
+      if (modelNames && modelNames.length > 0 && !modelNames.includes(model)) {
+        return apiError(
+          c,
+          400,
+          'MODEL_NOT_FOUND',
+          `provider「${provider}」没有名为「${model}」的模型。已配置模型：${modelNames.join(', ')}`,
+          { provider, model, knownModels: modelNames },
         )
       }
     }
@@ -450,7 +494,7 @@ function createChatRoute(ctx: ServerContext): Hono {
                 data: JSON.stringify({ _tag: 'permission_required', ...req }),
               })
             },
-            // P1-6：确认超时（5 分钟）被自动拒绝时通知前端，避免用户误以为已执行
+            // P2-9：确认超时（5 分钟）仅通知前端（pending 保持，重开弹窗不重发消息）
             onPermissionTimeout: (req) => {
               stream
                 .writeSSE({
@@ -466,7 +510,7 @@ function createChatRoute(ctx: ServerContext): Hono {
           // 构建 agent 依赖（注入测试用 chatStream）
           const deps: LoopDeps = {
             db: ctx.db,
-            llmRegistry: ctx.llmRegistry,
+            llmRegistry: sessionRegistry,
             toolRegistry: ctx.toolRegistry,
             urlRegistry: ctx.urlRegistry,
             hookRunner: ctx.hookRunner,
@@ -505,7 +549,7 @@ function createChatRoute(ctx: ServerContext): Hono {
 
           // workflowz 关键词检测：用户消息包含独立关键词时注入工作流通知（steering），
           // 引导模型用 task 工具批量 fan-out 做确定性多子 agent 分解。
-          if (containsWorkflow(message)) {
+          if (message && containsWorkflow(message)) {
             const wfList = ctx.workflowRegistry
               ? ctx.workflowRegistry.list().map((w) => ({
                   name: w.meta.name,

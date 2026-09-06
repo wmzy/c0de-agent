@@ -58,12 +58,12 @@ type ChatProps = {
   agents?: AgentListItem[]
   /** 时间线为空时渲染在消息流中央的空状态（欢迎区/示例卡片），由 ChatView 注入。 */
   emptyState?: ReactNode
-  /** P1-6：权限确认超时被自动拒绝（显示提示 + 重新询问入口）。 */
-  permissionTimeout?: { toolCallId: string; tool: string } | null
-  /** 重新询问（P1-6）：重发上一条用户消息。 */
-  onReask?: () => void
-  /** 关闭超时提示。 */
-  onDismissPermissionTimeout?: () => void
+  /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
+  permissionTimeout?: { toolCallId: string; tool: string; input: unknown } | null
+  /** 重新打开确认弹窗（P2-9）：不重发消息，工具只执行一次。 */
+  onReopenPermission?: () => void
+  /** 超时后拒绝该工具（run 继续）。 */
+  onDenyTimedOutPermission?: () => void
 }
 
 /* 顶栏合并行：视图切换 + 运行状态 + 流控按钮 + 原始 JSON 单行排布，
@@ -334,8 +334,8 @@ export function Chat({
   error,
   pendingPermission,
   permissionTimeout,
-  onReask,
-  onDismissPermissionTimeout,
+  onReopenPermission,
+  onDenyTimedOutPermission,
   onSend,
   onAbort,
   onConfirm,
@@ -478,22 +478,22 @@ export function Chat({
       {permissionTimeout ? (
         <div className={interruptBanner} data-testid="permission-timeout-banner">
           <span>
-            权限确认超时，工具「{permissionTimeout.tool}
-            」已被自动拒绝。重新询问将重发上一条消息，本回合已执行的工具可能重复执行
+            工具「{permissionTimeout.tool}
+            」等待确认超时（5 分钟）。重新询问将重新打开确认弹窗，不会重复执行已完成的工具
           </span>
-          {onReask ? (
+          {onReopenPermission ? (
             <button
               type="button"
-              onClick={onReask}
-              data-testid="permission-reask"
-              title="重发上一条消息继续；已执行的工具（bash/git 等）可能再次执行"
+              onClick={onReopenPermission}
+              data-testid="permission-reopen"
+              title="重新打开该工具的确认弹窗；本回合已执行的工具不会重复执行"
             >
               重新询问
             </button>
           ) : null}
-          {onDismissPermissionTimeout ? (
-            <button type="button" onClick={onDismissPermissionTimeout}>
-              忽略
+          {onDenyTimedOutPermission ? (
+            <button type="button" onClick={onDenyTimedOutPermission} title="拒绝该工具并继续">
+              拒绝并继续
             </button>
           ) : null}
         </div>

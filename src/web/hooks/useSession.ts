@@ -42,16 +42,20 @@ export function useDeleteSession() {
   })
 }
 
-/** 回收站：已软删除的会话列表。 */
-export function useDeletedSessions() {
-  return useQuery({ queryKey: ['sessions', 'deleted'], queryFn: () => sessionAPI.deleted() })
+/** 回收站：已软删除的会话列表（按项目过滤，P1-7）。 */
+export function useDeletedSessions(projectId?: string) {
+  return useQuery({
+    queryKey: ['sessions', 'deleted', projectId],
+    queryFn: () => sessionAPI.deleted(projectId),
+  })
 }
 
-/** 从回收站恢复会话。 */
+/** 从回收站恢复会话（可带当前项目上下文，孤儿会话自动归属）。 */
 export function useRestoreSession() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => sessionAPI.restore(id),
+    mutationFn: ({ id, projectId }: { id: string; projectId?: string }) =>
+      sessionAPI.restore(id, projectId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })

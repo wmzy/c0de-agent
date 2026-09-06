@@ -20,22 +20,13 @@ import type { Hono } from 'hono'
 import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import { loadConfig } from '../core/config.js'
-import { decryptSecret } from '../core/secret.js'
 import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
-import type { Registry } from '../llm/registry.js'
-import {
-  createRegistry,
-  overrideToCapabilities,
-  rebuildRegistry,
-  registerProvider,
-} from '../llm/registry.js'
 import { initPlugins } from '../plugins/index.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import { purgeDeletedSessions, purgeTemporarySessions } from '../session/session.js'
 import type { Config } from '../shared/types/config.js'
-import type { ProviderConfig } from '../shared/types/llm.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import {
   checkForUpdate,
@@ -53,6 +44,7 @@ import { createApp } from './app.js'
 import { createAuthManager } from './auth-manager.js'
 import { isAllowedOrigin } from './middleware/cors.js'
 import { createPermissionStore } from './permission/store.js'
+import { buildRegistryFromConfig, syncRegistryFromConfig } from './registry-config.js'
 import { PTYManager } from './terminal/pty-manager.js'
 import type { HandoffServer, ServerContext } from './types.js'
 
@@ -84,46 +76,6 @@ type RunningServer = {
 type BootstrappedServer = {
   ctx: ServerContext
   close(): Promise<void>
-}
-
-/** 把 config.providers 注册到新建的 LLM registry（修复此前空 registry 的遗漏）。 */
-function buildRegistryFromConfig(config: Config): Registry {
-  const registry = createRegistry()
-  for (const p of config.providers) {
-    registerProviderFromConfig(registry, p)
-  }
-  return registry
-}
-
-function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void {
-  // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
-  const name = p.name || (p as { _tag?: string })._tag
-  if (!name || !p.baseURL) return
-  // baseURL 已含 /v1 时用 /chat/completions，避免 /v1/v1 双重前缀
-  const path = p.baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/chat/completions' : undefined
-  registerProvider(registry, {
-    name,
-    baseURL: p.baseURL,
-    apiKey: p.apiKey ? decryptSecret(p.apiKey) : p.apiKey,
-    ...(path ? { path } : {}),
-    // 传递用户配置的 per-model capabilities（contextWindow 等），
-    // 否则 resolveRoute 回退到 DEFAULT_MODEL_CAPABILITIES，可能导致预算过小。
-    ...(p.models ? { models: overrideToCapabilities(p.models) } : {}),
-  })
-}
-
-/**
- * config 变更后原子地同步 registry：在隔离的 next registry 上重建全部路由，
- * 完成后一次性替换 registry 内部 table 引用。运行中的 resolveRoute 任何时刻
- * 看到的都是完整的旧表或完整的新表，不会读到「已清空但未注册完」的半状态，
- * 因此不会把本可用的 provider 误判为 NoRoute。ServerContext 立即生效，无需重启。
- */
-function syncRegistryFromConfig(registry: Registry, config: Config): void {
-  rebuildRegistry(registry, (next) => {
-    for (const p of config.providers) {
-      registerProviderFromConfig(next, p)
-    }
-  })
 }
 
 /** 全局数据根目录：XDG_DATA_HOME 优先，否则 ~/.local/share/c0de。
@@ -604,6 +556,8 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }
+// P1-1：buildRegistryFromConfig/syncRegistryFromConfig 实现移入 registry-config.ts，
+// 此处 re-export 保留 server.ts 历史导出兼容（测试/CLI 引用）。
 export {
   acquireDevDbLock,
   bootstrapServerContext,

@@ -2,7 +2,12 @@ import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { generateId } from '../../hooks/id.js'
-import { type KanbanColumnDef, type KanbanLabelDef, kanbanAPI } from '../../services/kanban.js'
+import {
+  type KanbanCard,
+  type KanbanColumnDef,
+  type KanbanLabelDef,
+  kanbanAPI,
+} from '../../services/kanban.js'
 import { Dialog } from '../Dialog.js'
 
 const sectionTitle = css`
@@ -73,6 +78,8 @@ type BoardConfigDialogProps = {
   projectId: string
   columns: KanbanColumnDef[]
   labels: KanbanLabelDef[]
+  /** 全部卡片：删除列前校验该列内是否仍有卡片（否则卡片静默不可见）。 */
+  cards: KanbanCard[]
   onClose: () => void
 }
 
@@ -81,6 +88,7 @@ export function BoardConfigDialog({
   projectId,
   columns: initColumns,
   labels: initLabels,
+  cards,
   onClose,
 }: BoardConfigDialogProps) {
   const qc = useQueryClient()
@@ -89,6 +97,7 @@ export function BoardConfigDialog({
   const [newColumnName, setNewColumnName] = useState('')
   const [newLabelName, setNewLabelName] = useState('')
   const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0] ?? '#ef4444')
+  const [error, setError] = useState<string | null>(null)
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -99,6 +108,13 @@ export function BoardConfigDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['kanban', projectId] })
       onClose()
+    },
+    onError: (e: unknown) => {
+      const msg =
+        e && typeof e === 'object' && 'message' in e
+          ? String((e as { message: string }).message)
+          : '保存失败'
+      setError(msg)
     },
   })
 
@@ -112,6 +128,13 @@ export function BoardConfigDialog({
     setColumns((prev) => prev.map((c) => (c.id === id ? { ...c, name } : c)))
   }
   const removeColumn = (id: string) => {
+    // P1-4：列内有卡片时阻止删除（前端即时反馈；后端 409 兜底）
+    const count = cards.filter((c) => c.columnId === id).length
+    if (count > 0) {
+      setError(`该列中仍有 ${count} 张卡片，无法删除。请先移动或删除这些卡片。`)
+      return
+    }
+    setError(null)
     setColumns((prev) => prev.filter((c) => c.id !== id))
   }
 
@@ -125,9 +148,10 @@ export function BoardConfigDialog({
     setNewLabelName('')
   }
   const updateLabel = (id: string, patch: Partial<KanbanLabelDef>) => {
-    setLabels((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)))
+    setLabels((prev) => prev.map((l) => (l.id === id ? { ...l, name: l.name, ...patch } : l)))
   }
   const removeLabel = (id: string) => {
+    setError(null)
     setLabels((prev) => prev.filter((l) => l.id !== id))
   }
 
@@ -159,6 +183,22 @@ export function BoardConfigDialog({
         </div>
       }
     >
+      {error && (
+        <div
+          style={{
+            color: 'var(--error)',
+            fontSize: 12,
+            marginBottom: 8,
+            padding: '6px 10px',
+            border: '1px solid color-mix(in srgb, var(--error) 45%, transparent)',
+            borderRadius: 6,
+            background: 'color-mix(in srgb, var(--error) 8%, transparent)',
+          }}
+          data-testid="board-config-error"
+        >
+          {error}
+        </div>
+      )}
       {/* 列管理 */}
       <div>
         <div className={sectionTitle}>列</div>
@@ -169,11 +209,19 @@ export function BoardConfigDialog({
               value={col.name}
               onChange={(e) => updateColumnName(col.id, e.target.value)}
             />
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', flexShrink: 0 }}>
+              {cards.filter((c) => c.columnId === col.id).length} 卡
+            </span>
             <button
               type="button"
               data-variant="danger"
               className={rowBtn}
               onClick={() => removeColumn(col.id)}
+              title={
+                cards.some((c) => c.columnId === col.id)
+                  ? '该列中仍有卡片，需先移动或删除卡片'
+                  : '删除该列'
+              }
             >
               删除
             </button>

@@ -73,21 +73,8 @@ export function App() {
                   <Route path="/projects/:projectId" element={<ChatPage />} />
                   <Route path="/projects/:projectId/sessions/:sessionId" element={<ChatPage />} />
                   <Route path="/projects/:projectId/kanban" element={<KanbanPage />} />
-                  <Route
-                    path="/settings"
-                    element={
-                      <Layout
-                        header={<TopBar />}
-                        main={
-                          <ErrorBoundary>
-                            <Suspense fallback={<div className={redirectMsg}>加载中…</div>}>
-                              <Settings />
-                            </Suspense>
-                          </ErrorBoundary>
-                        }
-                      />
-                    }
-                  />
+                  <Route path="/projects/:projectId/settings" element={<SettingsPage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
                   <Route path="*" element={<Layout header={<TopBar />} main={<NotFound />} />} />
                 </Routes>
               </div>
@@ -108,6 +95,22 @@ const redirectMsg = css`
   font-size: 14px;
   padding: 24px;
 `
+
+/** 设置页（P1-1）：/settings 与 /projects/:projectId/settings 共用同一布局包装。 */
+function SettingsPage() {
+  return (
+    <Layout
+      header={<TopBar />}
+      main={
+        <ErrorBoundary>
+          <Suspense fallback={<div className={redirectMsg}>加载中…</div>}>
+            <Settings />
+          </Suspense>
+        </ErrorBoundary>
+      }
+    />
+  )
+}
 
 const errorState = css`
   display: flex;

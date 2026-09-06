@@ -46,6 +46,7 @@ function makeChecker(
       tool: string
       input: unknown
     }) => void | Promise<void>
+    onPermissionTimeout?: (req: { toolCallId: string; tool: string; input: unknown }) => void
   } = {},
 ) {
   const { timeoutMs, ...checkerOpts } = opts
@@ -236,6 +237,42 @@ describe('InteractivePermissionChecker', () => {
       if (result._tag === 'deny') {
         expect(result.reason).toBe('Permission request timed out')
       }
+      expect(checker.hasPending(id)).toBe(false)
+      expect(checker.pendingCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('P2-9：带 onPermissionTimeout 时超时仅通知，pending 保持可确认（不重发消息）', async () => {
+    vi.useFakeTimers()
+    try {
+      let captured: string | null = null
+      const timedOut: Array<{ toolCallId: string }> = []
+      const checker = makeChecker({
+        timeoutMs: 1000,
+        onPermissionRequired: (req) => {
+          captured = req.toolCallId
+        },
+        onPermissionTimeout: (req) => {
+          timedOut.push({ toolCallId: req.toolCallId })
+        },
+      })
+      const checkPromise = checker.check(askTool, { path: 'a.txt' }, ctx)
+      await Promise.resolve()
+      const id = captured as unknown as string
+
+      // 超时：仅触发通知，pending 仍在
+      vi.advanceTimersByTime(1000)
+      await Promise.resolve()
+      expect(timedOut).toHaveLength(1)
+      expect(checker.hasPending(id)).toBe(true)
+      expect(checker.pendingCount()).toBe(1)
+
+      // 用户重开弹窗后确认：工具执行一次，无重复
+      expect(checker.confirm(id, true)).toBe(true)
+      const result = await checkPromise
+      expect(result._tag).toBe('allow')
       expect(checker.hasPending(id)).toBe(false)
       expect(checker.pendingCount()).toBe(0)
     } finally {

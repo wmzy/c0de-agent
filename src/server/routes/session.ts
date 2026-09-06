@@ -24,9 +24,12 @@ import {
   listSessions,
   listSessionsByProject,
   permanentlyDeleteSession,
+  rebindSession,
   restoreSession,
+  searchSessions,
   softDeleteSession,
   touchLastOpened,
+  updateSessionTitle,
 } from '../../session/session.js'
 import {
   applyShakeRegions,
@@ -37,6 +40,7 @@ import {
 import { estimateMessageTokens } from '../../session/token.js'
 import { generateId } from '../../shared/index.js'
 import { apiError } from '../middleware/error.js'
+import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
 import { resolveAgentCwd } from './chat.js'
 
@@ -46,6 +50,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 会话导入：GET /:id/export 的逆操作（数据备份/迁移闭环）。
   // 消息/归档重新生成 id（保留内容与时间戳），同库复制、重复导入均安全。
   // 绑定 projectId 后立即出现在对应项目视图。
+  // P1-2：projectId 必填——无归属会话在任何项目视图都不可见，导入即孤儿。
   app.post('/import', async (c) => {
     const body = (await c.req.json().catch(() => null)) as {
       version?: unknown
@@ -62,13 +67,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
         '无效的会话导出 JSON：需要 version/session/messages 字段',
       )
     }
-    const projectId =
-      typeof body.projectId === 'string' && body.projectId ? body.projectId : undefined
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
-      }
+    const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
+    if (!projectId) {
+      return apiError(c, 400, 'PROJECT_REQUIRED', '导入会话必须指定目标项目（projectId）')
+    }
+    const project = await getProject(ctx.db, projectId)
+    if (!project) {
+      return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
     }
     const title =
       typeof body.session.title === 'string' && body.session.title
@@ -117,15 +122,28 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json(tree)
   })
 
-  // 回收站：已软删除的会话列表（必须注册在 /:id 之前，避免被参数路由吞掉）
+  // 跨会话搜索（P2-6）：标题 + 消息内容匹配；?q= 关键词，?projectId= 限定项目。
+  // 注册在 /:id 之前避免被参数路由吞掉。
+  app.get('/search', async (c) => {
+    const q = c.req.query('q') ?? ''
+    const projectId = c.req.query('projectId')
+    if (!q.trim()) return c.json({ results: [] })
+    const results = await searchSessions(ctx.db, q, projectId)
+    return c.json({ results })
+  })
+
+  // 回收站：已软删除的会话列表（必须注册在 /:id 之前，避免被参数路由吞掉）。
+  // ?projectId= 过滤本项目（P1-7：回收站此前全库共享，跨项目可见可清空）。
   app.get('/deleted', async (c) => {
-    const sessions = await listDeletedSessions(ctx.db)
+    const projectId = c.req.query('projectId')
+    const sessions = await listDeletedSessions(ctx.db, projectId)
     return c.json(sessions)
   })
 
-  // 清空回收站：物理删除所有软删除会话（不可恢复）
+  // 清空回收站：物理删除所有软删除会话（不可恢复）。?projectId= 仅清空该项目。
   app.delete('/deleted', async (c) => {
-    const count = await emptyTrash(ctx.db)
+    const projectId = c.req.query('projectId')
+    const count = await emptyTrash(ctx.db, projectId)
     return c.json({ ok: true, deleted: count })
   })
 
@@ -140,6 +158,21 @@ function createSessionRoute(ctx: ServerContext): Hono {
     } catch {
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     }
+  })
+
+  // P2-5：会话重命名（此前标题只能由 LLM 自动生成，用户无法修改）
+  app.patch('/:id', async (c) => {
+    const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => ({}))) as { title?: unknown }
+    const title = typeof body.title === 'string' ? body.title.trim() : ''
+    if (!title) return apiError(c, 400, 'BAD_REQUEST', 'title is required')
+    if (title.length > 120) {
+      return apiError(c, 400, 'BAD_REQUEST', 'title must be at most 120 characters')
+    }
+    const session = await getSession(ctx.db, id)
+    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    await updateSessionTitle(ctx.db, id, title)
+    return c.json({ ok: true, title })
   })
 
   // 分支会话：未指定 messageIndex 时默认在最新一条消息处分叉（fork=完整副本语义）
@@ -224,8 +257,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 恢复会话（从回收站还原；仅还原该会话本身）。
   // P1 可达性修复：会话所属项目已被删除时（FK set null），按 worktreePath 重建
   // 项目记录并重新归属——否则恢复成功但会话不属于任何项目视图，UI 不可达。
+  // P1-2：body.projectId 提供时（当前项目视图），目录失效无法重建归属的孤儿
+  // 会话直接归属到该请求项目，恢复即可达。
   app.post('/:id/restore', async (c) => {
     const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
+    const requestProjectId =
+      typeof body.projectId === 'string' && body.projectId ? body.projectId : undefined
     const ok = await restoreSession(ctx.db, id)
     if (!ok) return apiError(c, 404, 'NOT_FOUND', '会话不存在或未删除')
     const session = await getSession(ctx.db, id)
@@ -244,8 +282,30 @@ function createSessionRoute(ctx: ServerContext): Hono {
       } else {
         orphaned = true
       }
+      // P1-2：目录失效且请求方提供了项目上下文 → 归属到该请求项目
+      if (orphaned && requestProjectId) {
+        const project = await getProject(ctx.db, requestProjectId)
+        if (project) {
+          await rebindSession(ctx.db, id, project)
+          orphaned = false
+          rebound = true
+        }
+      }
     }
     return c.json({ ok: true, rebound, orphaned })
+  })
+
+  // 会话归属变更（P1-2）：孤儿会话归属到指定项目，恢复后即可达。
+  app.post('/:id/rebind', async (c) => {
+    const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
+    const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
+    if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', 'projectId is required')
+    const project = await getProject(ctx.db, projectId)
+    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
+    const ok = await rebindSession(ctx.db, id, project)
+    if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    return c.json({ ok: true, projectId: project.id })
   })
 
   // 获取消息列表
@@ -274,11 +334,18 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
     if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     let sessionConfig = ctx.config
+    let sessionRegistry = ctx.llmRegistry
     try {
       const sessionCwd = await resolveAgentCwd(ctx, session)
       if (sessionCwd !== ctx.cwd) {
         const projectScope = loadConfigScopes(sessionCwd).project
-        if (projectScope) sessionConfig = mergeConfig(ctx.config, projectScope)
+        if (projectScope) {
+          sessionConfig = mergeConfig(ctx.config, projectScope)
+          // P1-1：压缩摘要同样需要项目级 provider 注册表。
+          if (sessionConfig.providers.length > 0) {
+            sessionRegistry = buildRegistryFromConfig(sessionConfig)
+          }
+        }
       }
     } catch {
       // cwd 解析失败不阻塞压缩：回退服务级配置（压缩优于报错）
@@ -288,7 +355,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const provider = lastSeg?.provider ?? sessionConfig.defaultProvider
     const model = lastSeg?.model ?? sessionConfig.defaultModel
     try {
-      const summarizer = createSummarizer(ctx.llmRegistry, provider, model, {})
+      const summarizer = createSummarizer(sessionRegistry, provider, model, {})
       const result = await runCompaction(ctx.db, id, summarizer, {
         keepRecentTokens: sessionConfig.compaction.keepRecentTokens,
       })

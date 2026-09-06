@@ -20,6 +20,16 @@ const DEFAULT_COLUMN_ID = 'todo'
 /** Position increment — large gap avoids frequent re-indexing on reorder. */
 const POSITION_GAP = 1000
 
+/** 列内仍有卡片时禁止删除该列（否则卡片静默不可见）。 */
+class KanbanColumnInUseError extends Error {
+  constructor(columnNames: string[], cardCount: number) {
+    super(
+      `列 [${columnNames.join(', ')}] 中仍有 ${cardCount} 张卡片，无法删除。` +
+        '请先移动或删除这些卡片。',
+    )
+  }
+}
+
 // ── Row → API mappers ──────────────────────────────────────
 
 function rowToBoard(row: BoardRow): KanbanBoard {
@@ -164,7 +174,39 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     },
 
     async updateBoard(patch): Promise<KanbanBoard> {
-      await getOrCreateBoardId()
+      const boardId = await getOrCreateBoardId()
+      // P1-4：删除列前校验该列内是否有卡片；删除标签前把悬空 labelId 从卡片上清掉。
+      if (patch.columns !== undefined) {
+        const cards = await db
+          .select({ columnId: kanbanCards.columnId })
+          .from(kanbanCards)
+          .where(eq(kanbanCards.boardId, boardId))
+        const newColumnIds = new Set(patch.columns.map((c) => c.id))
+        const removedWithCards = new Map<string, number>()
+        for (const card of cards) {
+          if (!newColumnIds.has(card.columnId)) {
+            removedWithCards.set(card.columnId, (removedWithCards.get(card.columnId) ?? 0) + 1)
+          }
+        }
+        if (removedWithCards.size > 0) {
+          const total = Array.from(removedWithCards.values()).reduce((a, b) => a + b, 0)
+          throw new KanbanColumnInUseError(Array.from(removedWithCards.keys()), total)
+        }
+      }
+      if (patch.labels !== undefined) {
+        const labelIds = new Set(patch.labels.map((l) => l.id))
+        const cards = await db
+          .select({ id: kanbanCards.id, labels: kanbanCards.labels })
+          .from(kanbanCards)
+          .where(eq(kanbanCards.boardId, boardId))
+        for (const card of cards) {
+          const current = (card.labels ?? []) as string[]
+          const kept = current.filter((lid) => labelIds.has(lid))
+          if (kept.length !== current.length) {
+            await db.update(kanbanCards).set({ labels: kept }).where(eq(kanbanCards.id, card.id))
+          }
+        }
+      }
       const [boardRow] = await db
         .update(kanbanBoards)
         .set({
@@ -180,4 +222,4 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
   }
 }
 
-export { createKanbanStore }
+export { createKanbanStore, KanbanColumnInUseError }

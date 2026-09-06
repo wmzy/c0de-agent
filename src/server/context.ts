@@ -58,6 +58,8 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     permissionMode: config.permission.defaultMode,
     sessionPermissionModes: new Map(),
     sessionAlwaysAllow: new Map(),
+    // P1-1：项目级 LLM 注册表缓存（按项目合并配置构建，chat 路由按需创建）。
+    projectRegistries: new Map(),
     // 测试工厂不解析/生成 token（不触碰用户全局数据目录）。
     authToken: undefined,
     agentRegistry,

@@ -135,11 +135,15 @@ export function UpdateBanner() {
   // P0-2：无法自动安装（未知安装方式）或安装失败 → 显示手动更新指引。
   // 新流程：install 失败发生在 pause 之前，服务端不等待、不会自动滚动切换；
   // 用户手动安装后需自行重启 c0de serve（数据持久化，会话无需快照即可恢复）。
+  const applyErr = apply.error as unknown as { code?: string; details?: { command?: string } }
+  const errCode = applyErr?.code
+  // P2-8：dev 模式无 handoff server——区分「不支持」与「失败」，给出正确指引而非
+  // 「请稍后重试或使用 c0de update --apply」这种对 dev 用户无解的建议。
+  const devUnavailable = errCode === 'HOT_UPDATE_UNAVAILABLE'
   const manual = apply.isError
     ? (() => {
-        const err = apply.error as unknown as { code?: string; details?: { command?: string } }
-        const command = err.details?.command ?? 'npm install -g c0de-agent'
-        return err?.code === 'MANUAL_UPDATE_REQUIRED' || err?.code === 'INSTALL_FAILED'
+        const command = applyErr?.details?.command ?? 'npm install -g c0de-agent'
+        return errCode === 'MANUAL_UPDATE_REQUIRED' || errCode === 'INSTALL_FAILED'
           ? { command }
           : null
       })()
@@ -161,7 +165,10 @@ export function UpdateBanner() {
         发现新版本 <strong>{data.latestVersion}</strong>（当前 {data.currentVersion}）
         {apply.isSuccess ? '· 已触发热更新，新实例即将接管…' : null}
         {manual ? '· 无法自动更新，请手动执行以下命令' : null}
-        {apply.isError && !manual ? '· 热更新失败，请稍后重试或使用 c0de update --apply' : null}
+        {devUnavailable ? '· 开发模式（vite dev）不支持热更新，请使用独立 c0de serve' : null}
+        {apply.isError && !manual && !devUnavailable
+          ? '· 热更新失败，请稍后重试或使用 c0de update --apply'
+          : null}
       </span>
       {manual && (
         <span className={text} data-testid="manual-update-hint" style={{ color: 'var(--warning)' }}>
@@ -169,7 +176,7 @@ export function UpdateBanner() {
         </span>
       )}
       <span className={actions}>
-        {!apply.isSuccess && !manual && (
+        {!apply.isSuccess && !manual && !devUnavailable && (
           <button
             type="button"
             className={btn}

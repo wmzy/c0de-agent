@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
 import trash from 'trash'
 import { createSummarizer } from '../../core/compact.js'
+import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import { getProject } from '../../project/project.js'
 import {
   appendToGitignore,
@@ -17,6 +18,7 @@ import {
   performGitCommit,
 } from '../../project/resolve.js'
 import { apiError } from '../middleware/error.js'
+import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
 import { safeResolve } from '../util/safe-path.js'
 
@@ -191,9 +193,15 @@ function createFilesRoute(ctx: ServerContext): Hono {
     }
 
     // --- 默认模式：LLM 生成 message + 检查可疑文件 ---
-    const cm = ctx.config.commitModel
-    const provider = cm?.provider ?? ctx.config.defaultProvider
-    const model = cm?.model ?? ctx.config.defaultModel
+    // P1-1：commitModel/defaultProvider 按项目配置解析（此前一律用服务启动目录配置）。
+    let projectConfig = ctx.config
+    if (root !== ctx.cwd) {
+      const projectScope = loadConfigScopes(root).project
+      if (projectScope) projectConfig = mergeConfig(ctx.config, projectScope)
+    }
+    const cm = projectConfig.commitModel
+    const provider = cm?.provider ?? projectConfig.defaultProvider
+    const model = cm?.model ?? projectConfig.defaultModel
     const prompt = `Based on the following git diff, generate a concise commit message in conventional-commits format (e.g. "feat: add login page").
 
 ALSO review the changed/new files: are any of them files that SHOULD be in .gitignore but are currently missing? (e.g. secrets, .env, build output, dependencies, temp files, large binaries)
@@ -207,7 +215,12 @@ ${summary.diff.slice(0, 8000)}`
 
     let raw: string
     try {
-      const summarizer = createSummarizer(ctx.llmRegistry, provider, model, { maxTokens: 400 })
+      // P1-1：项目级 provider 注册表（项目配置的 provider 才能路由）。
+      const registry =
+        root !== ctx.cwd && projectConfig.providers.length > 0
+          ? buildRegistryFromConfig(projectConfig)
+          : ctx.llmRegistry
+      const summarizer = createSummarizer(registry, provider, model, { maxTokens: 400 })
       raw = (await summarizer(prompt)).trim()
     } catch (err) {
       return apiError(c, 502, 'LLM_ERROR', `Failed to generate commit message: ${String(err)}`)

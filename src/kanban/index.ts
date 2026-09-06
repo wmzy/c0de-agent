@@ -1,1 +1,1 @@
-export { createKanbanStore } from './store.js'
+export { createKanbanStore, KanbanColumnInUseError } from './store.js'

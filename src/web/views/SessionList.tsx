@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { Session } from '@shared/types/message.js'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { type ChangeEvent, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { BranchTree } from '../components/BranchTree.js'
 import {
   useDeletedSessions,
@@ -140,6 +140,49 @@ const restoreBtn = css`
   }
 `
 
+/* P2-6 内容匹配区：标题树下方平铺的消息内容命中行 */
+const matchSection = css`
+  padding: 4px 12px 8px;
+  border-top: 1px solid var(--border);
+`
+
+const matchHeader = css`
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 0;
+`
+
+const matchRow = css`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: auto;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  &:hover {
+    background: var(--bg-secondary);
+  }
+`
+
+const matchIcon = css`
+  flex-shrink: 0;
+  font-size: 12px;
+`
+
+const matchTitle = css`
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
 /** 按项目 id 过滤会话树（以根会话的 projectId 为准）。项目为路由顶级维度，仅显示归属本项目的会话。 */
 function filterTree(tree: SessionTreeNode[], projectId: string): SessionTreeNode[] {
   return tree.filter((node) => node.session.projectId === projectId)
@@ -199,14 +242,56 @@ export function SessionList({
   const { data: tree, isLoading } = useSessionTree()
   const del = useDeleteSession()
   const qc = useQueryClient()
+
+  /** P2-5：重命名会话（成功后刷新会话树）。 */
+  const handleRename = async (id: string, title: string): Promise<boolean> => {
+    try {
+      await sessionAPI.rename(id, title)
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      return true
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : '重命名失败')
+      return false
+    }
+  }
   const [showRecycle, setShowRecycle] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [search, setSearch] = useState('')
+  // P2-6：跨会话内容搜索的防抖词（用户停止输入 300ms 后触发服务端查询）
+  const [searchDebounced, setSearchDebounced] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
+    return () => clearTimeout(t)
+  }, [search])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
+
+  // P2-6：标题未命中时再搜消息内容（标题树之外的补充结果）。
+  const { data: contentMatches } = useQuery({
+    queryKey: ['sessions', 'search', projectId, searchDebounced],
+    queryFn: () => sessionAPI.search(searchDebounced, projectId),
+    enabled: searchDebounced.length > 1,
+    staleTime: 10_000,
+  })
+  const visibleIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const n of visibleTree) {
+      ids.add(n.session.id)
+      for (const c of n.children ?? []) ids.add(c.session.id)
+    }
+    return ids
+  }, [visibleTree])
+  const extraMatches = useMemo(
+    () =>
+      (contentMatches?.results ?? []).filter(
+        (r) => r.matchedBy === 'content' && !visibleIds.has(r.session.id),
+      ),
+    [contentMatches, visibleIds],
+  )
 
   const handleDelete = (id: string) => {
     setDeleteError(null)
@@ -297,7 +382,7 @@ export function SessionList({
         <input
           className={searchInput}
           type="search"
-          placeholder="搜索会话标题…"
+          placeholder="搜索会话标题或消息内容…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           data-testid="session-search"
@@ -306,8 +391,8 @@ export function SessionList({
       {isLoading && !showRecycle ? <div className={empty}>加载中…</div> : null}
       {!showRecycle ? (
         <>
-          {!isLoading && visibleTree.length === 0 ? (
-            <div className={empty}>该项目下暂无会话</div>
+          {!isLoading && visibleTree.length === 0 && extraMatches.length === 0 ? (
+            <div className={empty}>{search ? '无匹配会话' : '该项目下暂无会话'}</div>
           ) : null}
           {visibleTree.length > 0 && (
             <BranchTree
@@ -315,11 +400,31 @@ export function SessionList({
               activeId={activeId}
               onSelect={onSelect}
               onDelete={handleDelete}
+              onRename={handleRename}
             />
+          )}
+          {/* P2-6：标题未命中、消息内容命中的会话 */}
+          {extraMatches.length > 0 && (
+            <div className={matchSection}>
+              <div className={matchHeader}>消息内容匹配</div>
+              {extraMatches.map((r) => (
+                <button
+                  key={r.session.id}
+                  type="button"
+                  className={matchRow}
+                  onClick={() => onSelect(r.session.id)}
+                  data-testid={`content-match-${r.session.id}`}
+                  title={r.session.title}
+                >
+                  <span className={matchIcon}>🔎</span>
+                  <span className={matchTitle}>{r.session.title}</span>
+                </button>
+              ))}
+            </div>
           )}
         </>
       ) : (
-        <RecycleBin />
+        <RecycleBin projectId={projectId} />
       )}
     </div>
   )
@@ -336,14 +441,29 @@ function daysLeft(deletedAt: number | null | undefined): number {
 }
 
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
- *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。 */
-function RecycleBin() {
-  const { data: deleted, isLoading } = useDeletedSessions()
+ *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。
+ *  P1-7：仅显示当前项目的删除会话；「清空」仅清空当前项目。 */
+function RecycleBin({ projectId }: { projectId: string }) {
+  const { data: deleted, isLoading } = useDeletedSessions(projectId)
   const restore = useRestoreSession()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   // P1 可达性：恢复结果反馈（重新归属项目 / 项目目录缺失的孤儿状态）
   const [notice, setNotice] = useState<string | null>(null)
+  // P1-2：当前孤儿会话 id（目录失效且未随 restore 归属成功），提供「归属到当前项目」入口
+  const [orphanId, setOrphanId] = useState<string | null>(null)
+
+  const rebindMut = useMutation({
+    mutationFn: (id: string) => sessionAPI.rebind(id, projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+      setNotice(null)
+      setOrphanId(null)
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  })
 
   const removeForever = useMutation({
     mutationFn: (id: string) => sessionAPI.removeForever(id),
@@ -354,7 +474,7 @@ function RecycleBin() {
   })
 
   const emptyTrashMut = useMutation({
-    mutationFn: () => sessionAPI.emptyTrash(),
+    mutationFn: () => sessionAPI.emptyTrash(projectId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
       setNotice(null)
@@ -376,7 +496,9 @@ function RecycleBin() {
   }
 
   const handleEmptyTrash = () => {
-    if (!window.confirm(`清空回收站将永久删除全部 ${deleted.length} 个会话，不可恢复。确定？`))
+    if (
+      !window.confirm(`清空本项目的回收站将永久删除全部 ${deleted.length} 个会话，不可恢复。确定？`)
+    )
       return
     emptyTrashMut.mutate()
   }
@@ -390,7 +512,19 @@ function RecycleBin() {
       )}
       {notice && (
         <div className={noticeBar} data-testid="restore-notice">
-          {notice}
+          <span>{notice}</span>
+          {orphanId && (
+            <button
+              type="button"
+              className={restoreBtn}
+              onClick={() => rebindMut.mutate(orphanId)}
+              disabled={rebindMut.isPending}
+              data-testid="rebind-orphan"
+              title="把该会话归属到当前项目，之后可在本项目会话列表中打开"
+            >
+              归属到当前项目
+            </button>
+          )}
         </div>
       )}
       <div className={deletedRow}>
@@ -423,19 +557,25 @@ function RecycleBin() {
             type="button"
             className={restoreBtn}
             onClick={() =>
-              restore.mutate(s.id, {
-                onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
-                onSuccess: (d) => {
-                  setError(null)
-                  if (d?.orphaned) {
-                    setNotice(`「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目`)
-                  } else if (d?.rebound) {
-                    setNotice(`「${s.title}」已恢复并重新归属到原项目目录`)
-                  } else {
-                    setNotice(null)
-                  }
+              restore.mutate(
+                { id: s.id, projectId },
+                {
+                  onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+                  onSuccess: (d) => {
+                    setError(null)
+                    if (d?.orphaned) {
+                      setNotice(`「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目`)
+                      setOrphanId(s.id)
+                    } else if (d?.rebound) {
+                      setNotice(`「${s.title}」已恢复并重新归属到项目`)
+                      setOrphanId(null)
+                    } else {
+                      setNotice(null)
+                      setOrphanId(null)
+                    }
+                  },
                 },
-              })
+              )
             }
             data-testid={`restore-${s.id}`}
           >

@@ -768,6 +768,38 @@ describe('POST / 多模态与文件上下文', () => {
     expect(imagePart).toBeTruthy()
   })
 
+  it('纯图片消息（无文本）被放行并持久化为 image part', async () => {
+    const { app, sessionId, ctx } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        images: [{ mediaType: 'image/png', data: 'BASE64DATA' }],
+      }),
+    })
+    expect(res.status).toBe(200)
+    await res.text() // 消费 SSE 流
+    const entries = await getEntries(ctx.db, sessionId)
+    const userMsg = entries.find((e) => !('_tag' in e) && e.role === 'user')
+    expect(userMsg).toBeTruthy()
+    const content = (userMsg as { content: Array<{ _tag: string }> }).content
+    expect(content.some((p) => p._tag === 'image')).toBe(true)
+    expect(content.some((p) => p._tag === 'text')).toBe(false)
+  })
+
+  it('无文本无图片时返回可操作的 400', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, images: [] }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error?: { message?: string } }
+    expect(body.error?.message).toContain('消息内容不能为空')
+  })
+
   it('files 字段写入文件快照', async () => {
     tmpCwd = mkdtempSync(join(tmpdir(), 'c0de-files-'))
     await writeFile(join(tmpCwd, 'tmp.txt'), 'hello file context')

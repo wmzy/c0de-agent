@@ -67,11 +67,13 @@ const activeLink = css`
 export function TopBar() {
   const { pathname } = useLocation()
   const { projectId } = useParams<{ projectId: string }>()
-  const isSettings = pathname.startsWith('/settings')
+  const isSettings = pathname.startsWith('/settings') || pathname.includes('/settings')
   const isKanban = pathname.includes('/kanban')
   // 会话入口：项目上下文跳当前项目，否则回根路径（由 RootRedirect 解析当前项目）。
   const sessionsPath = projectId ? `/projects/${projectId}` : '/'
   const kanbanPath = projectId ? `/projects/${projectId}/kanban` : '/'
+  // P1-1：设置入口保留项目上下文（配置编辑对准当前项目）。
+  const settingsPath = projectId ? `/projects/${projectId}/settings` : '/settings'
 
   return (
     <header className={bar} data-testid="topbar">
@@ -106,7 +108,7 @@ export function TopBar() {
           看板
         </Link>
         <Link
-          to="/settings"
+          to={settingsPath}
           className={`${link} ${isSettings ? activeLink : ''}`}
           data-active={isSettings || undefined}
         >

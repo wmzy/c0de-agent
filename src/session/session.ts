@@ -1,6 +1,6 @@
-import { and, eq, gt, inArray, isNull, lt, ne, or } from 'drizzle-orm'
+import { and, eq, gt, ilike, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
-import { sessions } from '../db/schema.js'
+import { sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
@@ -78,12 +78,17 @@ async function listAllSessions(handle: DB): Promise<Session[]> {
   return rows.map(rowToSession)
 }
 
-/** List soft-deleted sessions (回收站). */
-async function listDeletedSessions(handle: DB): Promise<Session[]> {
+/** List soft-deleted sessions (回收站)；projectId 提供时仅列出归属该项目的会话
+ *  （P1-7：回收站此前全库共享，项目 A 的界面能清空项目 B 的删除会话）。 */
+async function listDeletedSessions(handle: DB, projectId?: string): Promise<Session[]> {
   const rows = await handle.db
     .select()
     .from(sessions)
-    .where(gt(sessions.deletedAt, new Date(0)))
+    .where(
+      projectId
+        ? and(gt(sessions.deletedAt, new Date(0)), eq(sessions.projectId, projectId))
+        : gt(sessions.deletedAt, new Date(0)),
+    )
   return rows.map(rowToSession)
 }
 
@@ -113,6 +118,24 @@ async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
   for (const sid of ids) {
     await handle.db.update(sessions).set({ deletedAt: now }).where(eq(sessions.id, sid))
   }
+  return true
+}
+
+/**
+ * 把会话归属到指定项目（P1-2 孤儿会话补救）：设置 projectId 与 worktreePath。
+ * 会话不存在返回 false。
+ */
+async function rebindSession(
+  handle: DB,
+  id: string,
+  project: { id: string; worktree: string },
+): Promise<boolean> {
+  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  if (!row) return false
+  await handle.db
+    .update(sessions)
+    .set({ projectId: project.id, worktreePath: project.worktree })
+    .where(eq(sessions.id, id))
   return true
 }
 
@@ -238,12 +261,17 @@ async function permanentlyDeleteSession(handle: DB, id: string): Promise<number>
   return deleted
 }
 
-/** 清空回收站：物理删除所有已软删除会话（子先于父）。返回删除数量。 */
-async function emptyTrash(handle: DB): Promise<number> {
+/** 清空回收站：物理删除所有已软删除会话（子先于父）。返回删除数量。
+ *  projectId 提供时仅清空该项目（P1-7）。 */
+async function emptyTrash(handle: DB, projectId?: string): Promise<number> {
   const rows = await handle.db
     .select({ id: sessions.id, parentId: sessions.parentId })
     .from(sessions)
-    .where(gt(sessions.deletedAt, new Date(0)))
+    .where(
+      projectId
+        ? and(gt(sessions.deletedAt, new Date(0)), eq(sessions.projectId, projectId))
+        : gt(sessions.deletedAt, new Date(0)),
+    )
   if (rows.length === 0) return 0
   const remaining = new Set(rows.map((r) => r.id))
   let deleted = 0
@@ -272,8 +300,12 @@ async function emptyTrash(handle: DB): Promise<number> {
 }
 
 /**
- * 清理过期临时会话（P2：CLI print 与工作流运行的会话永不软删除、不参与
- * Web 会话树展示，会无限积累）。保留期默认 30 天；子条目经 FK cascade 一并删除。
+ * 清理过期临时会话（P2 → P1 收紧：仅清理显式标记的临时会话）。
+ * - agentType='print'：CLI 一次性问答（c0de chat，非 --continue）创建的会话。
+ * - agentType='workflow'：工作流运行产生的会话。
+ * 普通 CLI 会话（ACP）与 --continue 续接的会话（续接时已升级）永不清理——
+ * 此前按 source='cli' 全删会把用户显式续接的历史静默物理删除。
+ * 保留期默认 30 天；子条目经 FK cascade 一并删除。
  * 返回清除数量。启动时与每日定时调用。
  */
 async function purgeTemporarySessions(
@@ -287,13 +319,21 @@ async function purgeTemporarySessions(
     .where(
       and(
         lt(sessions.updatedAt, cutoff),
-        or(eq(sessions.source, 'cli'), eq(sessions.agentType, 'workflow')),
+        or(eq(sessions.agentType, 'print'), eq(sessions.agentType, 'workflow')),
       ),
     )
   for (const row of rows) {
     await handle.db.delete(sessions).where(eq(sessions.id, row.id))
   }
   return rows.length
+}
+
+/**
+ * 把临时会话升级为持久会话（--continue 续接时调用）：
+ * 清除 print 标记，30 天临时清理不再触及。
+ */
+async function upgradeTemporarySession(handle: DB, id: string): Promise<void> {
+  await handle.db.update(sessions).set({ agentType: null }).where(eq(sessions.id, id))
 }
 
 /** Bump updatedAt to now (used after appending messages). */
@@ -431,6 +471,74 @@ async function listSessionsByProject(handle: DB, projectId: string): Promise<Ses
   return rows.map(rowToSession)
 }
 
+/**
+ * 跨会话搜索（P2-6）：标题 + 消息内容子串匹配。
+ * 仅搜索未软删除的非 CLI 会话（与 Web 会话树一致）；projectId 提供时限定项目。
+ * 返回 { session, matchedBy: 'title' | 'content' }。
+ */
+async function searchSessions(
+  handle: DB,
+  query: string,
+  projectId?: string,
+): Promise<Array<{ session: Session; matchedBy: 'title' | 'content' }>> {
+  const needle = query.trim()
+  if (!needle) return []
+  const pattern = `%${needle.replace(/[%_\\]/g, '\\$&')}%`
+
+  const baseWhere = and(
+    isNull(sessions.deletedAt),
+    or(isNull(sessions.source), ne(sessions.source, 'cli')),
+    ...(projectId ? [eq(sessions.projectId, projectId)] : []),
+  )
+
+  // 标题命中（ILIKE 转义后按字面子串）
+  const byTitle = await handle.db
+    .select()
+    .from(sessions)
+    .where(and(baseWhere, ilike(sessions.title, pattern)))
+  const byContent = await handle.db
+    .selectDistinctOn([sessions.id], {
+      id: sessions.id,
+      title: sessions.title,
+      parentId: sessions.parentId,
+      projectId: sessions.projectId,
+      branchPoint: sessions.branchPoint,
+      metadata: sessions.metadata,
+      agentType: sessions.agentType,
+      worktreePath: sessions.worktreePath,
+      source: sessions.source,
+      deletedAt: sessions.deletedAt,
+      createdAt: sessions.createdAt,
+      updatedAt: sessions.updatedAt,
+    })
+    .from(sessionEntries)
+    .innerJoin(sessions, eq(sessionEntries.sessionId, sessions.id))
+    .where(
+      and(
+        baseWhere,
+        eq(sessionEntries.tag, 'message'),
+        sql`${sessionEntries.content}::text ILIKE ${pattern}`,
+      ),
+    )
+    .orderBy(sessions.id, sessions.updatedAt)
+
+  const result: Array<{ session: Session; matchedBy: 'title' | 'content' }> = []
+  const seen = new Set<string>()
+  for (const row of byTitle) {
+    const s = rowToSession(row)
+    result.push({ session: s, matchedBy: 'title' })
+    seen.add(s.id)
+  }
+  for (const row of byContent) {
+    const s = rowToSession(row)
+    if (!seen.has(s.id)) {
+      result.push({ session: s, matchedBy: 'content' })
+      seen.add(s.id)
+    }
+  }
+  return result
+}
+
 export {
   createSession,
   emptyTrash,
@@ -442,10 +550,13 @@ export {
   permanentlyDeleteSession,
   purgeDeletedSessions,
   purgeTemporarySessions,
+  rebindSession,
   restoreSession,
+  searchSessions,
   softDeleteSession,
   touchLastOpened,
   touchSession,
   updateSessionLastRun,
   updateSessionTitle,
+  upgradeTemporarySession,
 }

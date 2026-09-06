@@ -130,6 +130,29 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   const { data: history, isLoading } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
+  // P2-3：会话归属校验——URL 与会话所属项目不一致时跳转到正确项目；
+  // 会话无归属（孤儿）时提供归属到当前项目的入口。
+  const { data: sessionMeta } = useQuery({
+    queryKey: ['session', sessionId, 'meta'],
+    queryFn: () => sessionAPI.get(sessionId),
+  })
+  const [orphanNotice, setOrphanNotice] = useState(false)
+  const rebindToCurrent = useMutation({
+    mutationFn: () => sessionAPI.rebind(sessionId, projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
+      setOrphanNotice(false)
+    },
+  })
+  useEffect(() => {
+    if (!sessionMeta) return
+    if (sessionMeta.projectId && sessionMeta.projectId !== projectId) {
+      navigate(`/projects/${sessionMeta.projectId}/sessions/${sessionId}`, { replace: true })
+    } else if (!sessionMeta.projectId) {
+      setOrphanNotice(true)
+    }
+  }, [sessionMeta, projectId, sessionId, navigate])
   const { data: agentsData } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),
@@ -362,25 +385,6 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     }
   }
 
-  // P1-6：权限确认超时后重新询问（重发上一条用户消息）
-  const handleReask = async () => {
-    const msgs = await sessionAPI.messages(sessionId)
-    const lastMsg = msgs[msgs.length - 1]
-    if (lastMsg?.role !== 'user') return
-    const text = lastMsg.content
-      .filter((p) => p._tag === 'text')
-      .map((p) => (p._tag === 'text' ? p.text : ''))
-      .join('')
-    if (!text) return
-    const session = await sessionAPI.get(sessionId)
-    const lr = session.metadata.lastRun
-    await chat.reask(text, {
-      ...(lr?.provider ? { provider: lr.provider } : { provider: selection.provider }),
-      ...(lr?.model ? { model: lr.model } : { model: selection.model }),
-      ...(lr?.agentName ? { agent: lr.agentName } : { agent: agentName }),
-    })
-  }
-
   // 视觉能力按选中模型查询（provider/model capabilities）：不支持视觉的模型隐藏图片入口，
   // 避免贴图后 provider 直接 400（P3 一致性）。
   const { data: capabilitiesData } = useQuery({
@@ -406,8 +410,8 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         error={chat.error}
         pendingPermission={chat.pendingPermission}
         permissionTimeout={chat.permissionTimeout}
-        onReask={() => void handleReask()}
-        onDismissPermissionTimeout={chat.dismissPermissionTimeout}
+        onReopenPermission={chat.reopenPermission}
+        onDenyTimedOutPermission={chat.denyTimedOutPermission}
         onSend={handleSend}
         onAbort={chat.abort}
         onConfirm={handleConfirm}
@@ -424,7 +428,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
               onChange={setAgentName}
               agents={agentsData?.agents ?? []}
             />
-            <ModelSelector value={selection} onChange={setSelection} />
+            <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
           </>
         }
         toolToggle={
@@ -437,7 +441,21 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         bottomPanel={<TodoPanel sessionId={sessionId} projectId={projectId} />}
         topPanel={
           <>
-            <SetupBanner />
+            <SetupBanner projectId={projectId} />
+            {orphanNotice && (
+              <div className={interruptBanner} data-testid="orphan-session-banner">
+                <span>
+                  该会话未归属任何项目（原项目已删除），无法执行工具。归属到当前项目后可继续使用。
+                </span>
+                <button
+                  type="button"
+                  onClick={() => rebindToCurrent.mutate()}
+                  disabled={rebindToCurrent.isPending}
+                >
+                  归属到当前项目
+                </button>
+              </div>
+            )}
             {showInterruptBanner && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="interrupt-banner">
                 <span>

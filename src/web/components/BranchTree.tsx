@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
-import { Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import type { SessionTreeNode } from '../types/index.js'
 
 const node = css`
@@ -88,16 +89,37 @@ const childList = css`
   margin-left: 8px;
 `
 
+const renameForm = css`
+  flex: 1;
+  min-width: 0;
+  display: flex;
+`
+
+const renameInput = css`
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+`
+
 export function BranchTree({
   nodes,
   activeId,
   onSelect,
   onDelete,
+  onRename,
 }: {
   nodes: SessionTreeNode[]
   activeId: string | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  /** P2-5：重命名会话（返回 false 表示取消/失败，父级决定是否刷新）。 */
+  onRename?: (id: string, current: string) => Promise<boolean>
 }) {
   return (
     <div data-testid="branch-tree">
@@ -109,6 +131,7 @@ export function BranchTree({
           depth={0}
           onSelect={onSelect}
           onDelete={onDelete}
+          onRename={onRename}
         />
       ))}
     </div>
@@ -121,39 +144,113 @@ function TreeNode({
   depth,
   onSelect,
   onDelete,
+  onRename,
 }: {
   node: SessionTreeNode
   activeId: string | null
   depth: number
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onRename?: (id: string, current: string) => Promise<boolean>
 }) {
   const isActive = n.session.id === activeId
+  const [renaming, setRenaming] = useState(false)
+  const [title, setTitle] = useState(n.session.title)
+  const [pending, setPending] = useState(false)
+
+  const commitRename = async () => {
+    const next = title.trim()
+    if (!next || next === n.session.title) {
+      setTitle(n.session.title)
+      setRenaming(false)
+      return
+    }
+    setPending(true)
+    const ok = onRename ? await onRename(n.session.id, next) : false
+    setPending(false)
+    if (!ok) {
+      setTitle(n.session.title)
+    }
+    setRenaming(false)
+  }
+
   return (
     <div className={node}>
       <div className={`${rowWrap} ${isActive ? active : ''}`}>
-        <button
-          type="button"
-          className={selectBtn}
-          onClick={() => onSelect(n.session.id)}
-          data-testid={`node-${n.session.id}`}
-        >
-          <span className={iconCls}>{n.children.length > 0 ? '📂' : '💬'}</span>
-          <span className={`${titleCls} ${isActive ? titleActive : ''}`}>{n.session.title}</span>
-        </button>
-        <button
-          type="button"
-          className={delBtn}
-          data-delete-btn
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(n.session.id)
-          }}
-          aria-label={`删除会话 ${n.session.title}`}
-          data-testid={`delete-${n.session.id}`}
-        >
-          <Trash2 size={14} />
-        </button>
+        {renaming ? (
+          <form
+            className={renameForm}
+            onSubmit={(e) => {
+              e.preventDefault()
+              void commitRename()
+            }}
+            data-testid={`rename-form-${n.session.id}`}
+          >
+            <input
+              ref={(el) => {
+                // a11y：避免 autoFocus，挂载后程序化聚焦
+                el?.focus()
+              }}
+              className={renameInput}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              disabled={pending}
+              maxLength={120}
+              aria-label={`重命名会话 ${n.session.title}`}
+              onBlur={() => void commitRename()}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setTitle(n.session.title)
+                  setRenaming(false)
+                }
+              }}
+            />
+          </form>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={selectBtn}
+              onClick={() => onSelect(n.session.id)}
+              data-testid={`node-${n.session.id}`}
+            >
+              <span className={iconCls}>{n.children.length > 0 ? '📂' : '💬'}</span>
+              <span className={`${titleCls} ${isActive ? titleActive : ''}`}>
+                {n.session.title}
+              </span>
+            </button>
+            {onRename && (
+              <button
+                type="button"
+                className={delBtn}
+                data-rename-btn
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setTitle(n.session.title)
+                  setRenaming(true)
+                }}
+                aria-label={`重命名会话 ${n.session.title}`}
+                title="重命名会话"
+                data-testid={`rename-${n.session.id}`}
+              >
+                <Pencil size={13} />
+              </button>
+            )}
+            <button
+              type="button"
+              className={delBtn}
+              data-delete-btn
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete(n.session.id)
+              }}
+              aria-label={`删除会话 ${n.session.title}`}
+              data-testid={`delete-${n.session.id}`}
+            >
+              <Trash2 size={14} />
+            </button>
+          </>
+        )}
       </div>
       {n.children.length > 0 && (
         <div className={childList}>
@@ -165,6 +262,7 @@ function TreeNode({
               depth={depth + 1}
               onSelect={onSelect}
               onDelete={onDelete}
+              onRename={onRename}
             />
           ))}
         </div>

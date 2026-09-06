@@ -1,7 +1,7 @@
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { resolveRoute } from '../../llm/registry.js'
-import { createSession, getSession } from '../../session/session.js'
+import { createSession, getSession, upgradeTemporarySession } from '../../session/session.js'
 import type { AgentConfig, AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
 import { resolveEnabledToolNames } from '../../tools/index.js'
@@ -42,9 +42,16 @@ async function runPrintMode(
     if (!UUID_PATTERN.test(opts.sessionId)) throw new Error(`session not found: ${opts.sessionId}`)
     const existing = await getSession(deps.db, opts.sessionId)
     if (!existing) throw new Error(`session not found: ${opts.sessionId}`)
+    // 续接即升级为持久会话：30 天临时清理不再触及（P1：此前 --continue 的
+    // 会话同样会在 30 天不活动后被物理删除，用户显式续接的历史静默丢失）。
+    if (existing.agentType === 'print') {
+      await upgradeTemporarySession(deps.db, opts.sessionId)
+    }
     session = existing
   } else {
-    session = await createSession(deps.db, 'cli-print', undefined, undefined, 'cli')
+    // agentType='print'：一次性 print 会话标记。purgeTemporarySessions 仅清理
+    // print/workflow 会话；普通 CLI 会话（ACP 等）与 --continue 续接的历史永不误删。
+    session = await createSession(deps.db, 'cli-print', undefined, 'print', 'cli')
   }
 
   const agentConfig: AgentConfig = {

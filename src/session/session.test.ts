@@ -20,6 +20,7 @@ import {
   touchSession,
   updateSessionLastRun,
   updateSessionTitle,
+  upgradeTemporarySession,
 } from './session.js'
 
 async function setupDB(): Promise<DB> {
@@ -147,20 +148,34 @@ describe('purgeTemporarySessions', () => {
     handle = await setupDB()
   })
 
-  it('清理过期的 CLI/workflow 临时会话，保留 web 与近期会话', async () => {
+  it('仅清理标记 print/workflow 的临时会话，保留普通 CLI 与 web 会话', async () => {
     const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000)
-    const cli = await createSession(handle, 'cli-old', undefined, undefined, 'cli')
+    const print = await createSession(handle, 'cli-print', undefined, 'print', 'cli')
     const wf = await createSession(handle, 'workflow:x', undefined, 'workflow')
     const web = await createSession(handle, 'web')
-    const recentCli = await createSession(handle, 'cli-recent', undefined, undefined, 'cli')
-    await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, cli.id))
+    // 普通 CLI 会话（ACP 等，无 print 标记）：过期也不清理
+    const plainCli = await createSession(handle, 'cli-persist', undefined, undefined, 'cli')
+    const recentPrint = await createSession(handle, 'cli-recent', undefined, 'print', 'cli')
+    await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, print.id))
     await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, wf.id))
+    await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, plainCli.id))
     const purged = await purgeTemporarySessions(handle)
     expect(purged).toBe(2)
-    expect(await getSession(handle, cli.id)).toBeNull()
+    expect(await getSession(handle, print.id)).toBeNull()
     expect(await getSession(handle, wf.id)).toBeNull()
     expect(await getSession(handle, web.id)).not.toBeNull()
-    expect(await getSession(handle, recentCli.id)).not.toBeNull()
+    expect(await getSession(handle, plainCli.id)).not.toBeNull()
+    expect(await getSession(handle, recentPrint.id)).not.toBeNull()
+  })
+
+  it('upgradeTemporarySession 清除 print 标记后不再被清理', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000)
+    const print = await createSession(handle, 'cli-print', undefined, 'print', 'cli')
+    await upgradeTemporarySession(handle, print.id)
+    await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, print.id))
+    const purged = await purgeTemporarySessions(handle)
+    expect(purged).toBe(0)
+    expect(await getSession(handle, print.id)).not.toBeNull()
   })
 })
 

@@ -4,7 +4,7 @@ import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { projects } from '../db/schema.js'
 import { DEFAULT_KANBAN_COLUMNS } from '../shared/types/kanban.js'
-import { createKanbanStore } from './store.js'
+import { createKanbanStore, KanbanColumnInUseError } from './store.js'
 
 let handle: DB
 
@@ -263,6 +263,34 @@ describe('updateBoard', () => {
 
     expect(board.columns).toEqual([{ id: 'c', name: 'C' }])
     expect(board.labels).toEqual(labels)
+  })
+
+  it('删除仍有卡片的列时抛 KanbanColumnInUseError（卡片不静默隐形）', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+    await store.addCard({ title: 'todo-card', columnId: 'todo' })
+
+    const columns = DEFAULT_KANBAN_COLUMNS.filter((c) => c.id !== 'todo')
+    await expect(store.updateBoard({ columns: [...columns] })).rejects.toThrow(
+      KanbanColumnInUseError,
+    )
+    // 卡片仍在
+    const board = await store.getBoard()
+    expect(board.cards).toHaveLength(1)
+  })
+
+  it('删除标签时把悬空 labelId 从卡片上清掉', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+    const card = await store.addCard({ title: 't', labels: ['keep', 'gone'] })
+
+    await store.updateBoard({
+      labels: [{ id: 'keep', name: 'Keep', color: '#ef4444' }],
+    })
+
+    const board = await store.getBoard()
+    expect(board.cards[0]?.labels).toEqual(['keep'])
+    expect(card.id).toBe(board.cards[0]?.id)
   })
 })
 

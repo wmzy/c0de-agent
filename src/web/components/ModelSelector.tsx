@@ -124,16 +124,19 @@ export type ModelSelection = { provider: string; model: string }
 export function ModelSelector({
   value,
   onChange,
+  projectId,
 }: {
   value: ModelSelection
   onChange: (v: ModelSelection) => void
+  /** P1-1：按项目读取配置（模型建议/默认值来自该项目合并配置）。 */
+  projectId?: string
 }) {
   const { data } = useQuery({
-    queryKey: ['providers'],
-    queryFn: () => providerAPI.list(),
+    queryKey: ['providers', projectId],
+    queryFn: () => providerAPI.list(projectId),
     staleTime: 60_000,
   })
-  const { config } = useConfig()
+  const { config } = useConfig(projectId)
 
   const providers = data?.providers ?? []
   const hasMatch = providers.some((p) => p.name === value.provider)

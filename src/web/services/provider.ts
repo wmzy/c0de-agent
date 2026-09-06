@@ -26,12 +26,15 @@ type ModelCapabilitiesInfo = {
 }
 
 const providerAPI = {
-  /** 列出已配置 providers（apiKey 脱敏）。 */
-  list: () => apiRequest<ProviderListResponse>('/api/providers'),
-  /** 查询模型能力（多模态入口按能力显隐）。 */
-  capabilities: (provider: string, model: string) =>
+  /** 列出已配置 providers（apiKey 脱敏）；projectId 提供时按该项目合并配置（P1-1）。 */
+  list: (projectId?: string) =>
+    apiRequest<ProviderListResponse>(
+      `/api/providers${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
+  /** 查询模型能力（多模态入口按能力显隐）；projectId 提供时按项目注册表解析。 */
+  capabilities: (provider: string, model: string, projectId?: string) =>
     apiRequest<ModelCapabilitiesInfo>(
-      `/api/providers/capabilities?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}`,
+      `/api/providers/capabilities?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
   /** 用给定凭据探测 OpenAI 兼容 /models 端点。 */
   test: (baseURL: string, apiKey: string) =>

@@ -1,7 +1,7 @@
 // REST routes for the kanban board — frontend UI uses these for drag-and-drop
 // card operations, board config, and initial load.
 import { Hono } from 'hono'
-import { createKanbanStore } from '../../kanban/index.js'
+import { createKanbanStore, KanbanColumnInUseError } from '../../kanban/index.js'
 import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shared/types/kanban.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -22,11 +22,18 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     const projectId = c.req.param('projectId')
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const store = createKanbanStore(ctx.db, projectId)
-    const board = await store.updateBoard({
-      ...(body.columns !== undefined && { columns: body.columns as KanbanColumnDef[] }),
-      ...(body.labels !== undefined && { labels: body.labels as KanbanLabelDef[] }),
-    })
-    return c.json(board)
+    try {
+      const board = await store.updateBoard({
+        ...(body.columns !== undefined && { columns: body.columns as KanbanColumnDef[] }),
+        ...(body.labels !== undefined && { labels: body.labels as KanbanLabelDef[] }),
+      })
+      return c.json(board)
+    } catch (err) {
+      if (err instanceof KanbanColumnInUseError) {
+        return apiError(c, 409, 'KANBAN_COLUMN_IN_USE', err.message)
+      }
+      throw err
+    }
   })
 
   // POST /:projectId/cards — add a card

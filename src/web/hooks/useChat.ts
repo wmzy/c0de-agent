@@ -22,8 +22,8 @@ type ChatState = {
   usage: { input: number; output: number } | null
   error: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
-  /** P1-6：权限确认超时被自动拒绝（显示提示 + 重新询问入口）。 */
-  permissionTimeout: { toolCallId: string; tool: string } | null
+  /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
+  permissionTimeout: { toolCallId: string; tool: string; input: unknown } | null
   /** 本轮派发的子 agent 进度（spec: multi-agent-design §4.5）。 */
   subagents: SubagentInfo[]
   /** 后端检测到模型/工具变更需用户确认开新段时设置；携带活跃段信息与待重发内容。 */
@@ -63,10 +63,10 @@ type ChatActions = {
   cancelBreak: () => void
   /** 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。 */
   retry: (content: string, opts?: ChatOpts) => Promise<boolean>
-  /** P1-6：权限确认超时后重新询问（重发上一条用户消息）。 */
-  reask: (content: string, opts?: ChatOpts) => Promise<boolean>
-  /** 清除权限超时提示。 */
-  dismissPermissionTimeout: () => void
+  /** 权限确认超时后重新打开确认弹窗（不重发消息，工具只执行一次，P2-9）。 */
+  reopenPermission: () => void
+  /** 超时后拒绝该工具（显式终止 pending，run 继续）。 */
+  denyTimedOutPermission: () => void
   /** 清除中断状态。 */
   clearInterrupted: () => void
   reset: () => void
@@ -216,12 +216,12 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
       // 服务端 30s 心跳（防 90s 静默看门狗误杀长工具/权限等待）；不产生任何 UI 变化。
       return state
     case 'permission_timeout':
-      // P1-6：确认超时被自动拒绝。保留最后一条 user 文本供「重新询问」入口使用，
-      // error 显示可操作提示而非静默失败。
+      // P2-9：超时仅提示（store 保持 pending 等待显式确认/拒绝）。
+      // 保留 input 供「重新询问」重开弹窗——不重发消息，工具只执行一次。
       return {
         ...state,
         pendingPermission: null,
-        permissionTimeout: { toolCallId: event.toolCallId, tool: event.tool },
+        permissionTimeout: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
       }
     case 'error':
       return { ...state, error: errorToMessage(event.error) }
@@ -318,8 +318,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           })
           return false
         }
-        if (e.code === 'NO_PROVIDER_CONFIGURED') {
-          // P0-1：未配置 AI 服务 → 撤回乐观 user 消息并给出可操作提示
+        if (
+          e.code === 'NO_PROVIDER_CONFIGURED' ||
+          e.code === 'PROVIDER_NOT_FOUND' ||
+          e.code === 'MODEL_NOT_FOUND'
+        ) {
+          // P0-1/P2-4：provider/模型配置问题 → 撤回乐观 user 消息并给出服务端可操作提示
           setState((s) => {
             const msgs = [...s.messages]
             const last = msgs[msgs.length - 1]
@@ -328,7 +332,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               ...s,
               messages: msgs,
               isStreaming: false,
-              error: '未配置可用的 AI 服务。请前往「设置 → Provider」添加 API 服务并测试连接',
+              error: e.message,
             }
           })
           return false
@@ -472,23 +476,32 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     [doStream],
   )
 
-  // P1-6：权限确认超时后重新询问——重发上一条用户消息（不追加、清超时提示）。
-  const reask = useCallback(
-    async (content: string, opts?: ChatOpts): Promise<boolean> => {
-      setState((s) => ({
+  // P2-9：权限确认超时后重新打开确认弹窗——store 中 pending 仍在，
+  // 把超时信息还原为 pendingPermission 即可，不重发消息、工具只执行一次。
+  const reopenPermission = useCallback(() => {
+    setState((s) => {
+      if (!s.permissionTimeout) return s
+      return {
         ...s,
-        isStreaming: true,
-        error: null,
-        interrupted: false,
         permissionTimeout: null,
-      }))
-      return doStream(content, opts)
-    },
-    [doStream],
-  )
+        pendingPermission: {
+          toolCallId: s.permissionTimeout.toolCallId,
+          tool: s.permissionTimeout.tool,
+          input: s.permissionTimeout.input,
+        },
+      }
+    })
+  }, [])
 
-  const dismissPermissionTimeout = useCallback(() => {
-    setState((s) => ({ ...s, permissionTimeout: null }))
+  // 超时后显式拒绝：resolve store 中的 pending 为 deny，run 继续执行。
+  const denyTimedOutPermission = useCallback(() => {
+    setState((s) => {
+      if (s.permissionTimeout) {
+        const { toolCallId } = s.permissionTimeout
+        agentAPI.confirmTool(toolCallId, false).catch(() => {})
+      }
+      return { ...s, permissionTimeout: null }
+    })
   }, [])
 
   const clearInterrupted = useCallback(() => {
@@ -505,8 +518,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     confirmBreak,
     cancelBreak,
     retry,
-    reask,
-    dismissPermissionTimeout,
+    reopenPermission,
+    denyTimedOutPermission,
     clearInterrupted,
     reset,
   }

@@ -72,8 +72,15 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
       if (existing) clearTimeout(existing.timer)
 
       const timer = setTimeout(() => {
+        // P2-9：带 onTimeout 回调（交互式权限）超时**仅提示**，不自动拒绝——
+        // pending 保持到用户显式确认/拒绝，前端「重新询问」直接重开确认弹窗，
+        // 工具只执行一次；重发整条消息的旧方案会重复执行已完成的工具。
+        // 无回调（非交互式 store）保留旧的自动拒绝语义。
+        if (entry.onTimeout) {
+          entry.onTimeout(entry.request)
+          return
+        }
         settle(toolCallId, { _tag: 'deny', reason: 'Permission request timed out' })
-        entry.onTimeout?.(entry.request)
       }, timeoutMs)
       pending.set(toolCallId, { ...entry, timer })
     },

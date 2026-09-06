@@ -660,10 +660,13 @@ describe('session route', () => {
     })
 
     it('同一导出重复导入 → 每次生成新会话（同库复制/恢复安全）', async () => {
-      const { app } = await setup()
+      const { app, ctx } = await setup()
+      const projectId = 'import-dup-project'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-dup' })
       const payload = {
         version: 1,
         session: { title: 'Dup' },
+        projectId,
         messages: [
           {
             id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
