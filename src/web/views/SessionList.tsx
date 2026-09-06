@@ -3,14 +3,17 @@ import type { Session } from '@shared/types/message.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { BranchTree } from '../components/BranchTree.js'
+import { DangerConfirmDialog } from '../components/DangerConfirmDialog.js'
+import { Dialog } from '../components/Dialog.js'
 import {
   useDeletedSessions,
   useDeleteSession,
+  useProjects,
   useRestoreSession,
   useSessionTree,
 } from '../hooks/useSession.js'
 import { sessionAPI } from '../services/session.js'
-import type { SessionTreeNode } from '../types/index.js'
+import type { Project, SessionTreeNode } from '../types/index.js'
 
 const panel = css`
   display: flex;
@@ -43,6 +46,15 @@ const trashHint = css`
   color: var(--text-secondary);
   font-size: 11px;
   flex-shrink: 0;
+`
+
+/* P2-5：会话树底部 CLI 会话可见性说明（CLI/Web 同库不同视图的心智提示）。 */
+const cliHint = css`
+  margin-top: auto;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
 `
 
 const addBtn = css`
@@ -98,6 +110,16 @@ const noticeBar = css`
   font-size: 12px;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
+`
+
+/* P1-1：回收站行来源标记（CLI 会话恢复后不出现在 Web 会话树）。 */
+const sourceBadge = css`
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
 `
 
 const deletedRow = css`
@@ -303,7 +325,7 @@ export function SessionList({
     const branches = node ? countDescendants(node) : 0
     const branchNote =
       branches > 0 ? `其 ${branches} 个派生会话（分支/子任务）将一并移入回收站。` : ''
-    if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，30 天内可恢复。`))
+    if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，60 天内可恢复。`))
       return
     del.mutate(id, {
       onSuccess: () => onDeleted?.(id),
@@ -313,7 +335,34 @@ export function SessionList({
     })
   }
 
-  /** 导入会话导出 JSON：成功后刷新会话树并跳转到导入的会话。
+  /** P1-2：导入目标选择（导出文件原项目在本机存在且非当前项目时弹窗选择）。 */
+  const [importChoice, setImportChoice] = useState<{ data: unknown; original: Project } | null>(
+    null,
+  )
+  const { data: projects } = useProjects()
+
+  /** 执行导入：绑定目标项目后刷新树并跳转；notice 明示工具执行目录。 */
+  const doImport = async (data: unknown, targetId: string) => {
+    setImporting(true)
+    try {
+      const result = await sessionAPI.importSession(data, targetId)
+      await qc.invalidateQueries({ queryKey: ['sessions'] })
+      await qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      const target = projects?.find((p) => p.id === targetId)
+      const notes: string[] = []
+      if (result.flattened) notes.push('原会话的分支树结构无法随迁，已作为独立会话导入。')
+      // P1-2：明示工具执行目录，防用户在错误项目继续对话误改文件。
+      notes.push(`该会话的工具将在 ${target?.worktree ?? '目标项目的目录'} 执行。`)
+      setImportNotice(`已导入到项目「${target?.name ?? '未命名项目'}」：${notes.join(' ')}`)
+      onSelect(result.sessionId)
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  /** 导入会话导出 JSON：解析后匹配原项目归属，冲突时弹目标选择。
    *  flattened 提示（P2）：原会话的分支树结构被扁平化为独立根会话。 */
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -321,20 +370,30 @@ export function SessionList({
     if (!file) return
     setImportError(null)
     setImportNotice(null)
-    setImporting(true)
     try {
-      const data = JSON.parse(await file.text()) as unknown
-      const result = await sessionAPI.importSession(data, projectId)
-      await qc.invalidateQueries({ queryKey: ['sessions'] })
-      await qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
-      if (result.flattened) {
-        setImportNotice('已导入：原会话的分支树结构无法随迁，已作为独立会话导入。')
+      const data = JSON.parse(await file.text()) as {
+        session?: { projectId?: unknown; worktreePath?: unknown } | null
+      } | null
+      // P1-2：导出文件带原项目归属；原项目在本机存在且非当前项目时让用户
+      // 选择导入目标，避免会话绑定到错误项目后工具在错误目录执行。
+      const exportedProjectId =
+        typeof data?.session?.projectId === 'string' ? data.session.projectId : ''
+      const exportedWorktree =
+        typeof data?.session?.worktreePath === 'string' && data.session.worktreePath
+          ? data.session.worktreePath
+          : ''
+      const original = (projects ?? []).find(
+        (p) =>
+          (exportedProjectId && p.id === exportedProjectId) ||
+          (exportedWorktree && p.worktree === exportedWorktree),
+      )
+      if (original && original.id !== projectId) {
+        setImportChoice({ data, original })
+        return
       }
-      onSelect(result.sessionId)
+      await doImport(data, projectId)
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setImporting(false)
     }
   }
 
@@ -444,16 +503,62 @@ export function SessionList({
               ))}
             </div>
           )}
+          {!isLoading && (
+            <div className={cliHint} data-testid="cli-session-hint">
+              CLI 会话（c0de chat）不在此显示；可用 `c0de sessions list` 查看全部会话。
+            </div>
+          )}
         </>
       ) : (
         <RecycleBin projectId={projectId} />
+      )}
+      {importChoice && (
+        <Dialog
+          testId="import-target-dialog"
+          onClose={() => setImportChoice(null)}
+          title="选择导入目标"
+          footer={
+            <>
+              <button type="button" className={addBtn} onClick={() => setImportChoice(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className={addBtn}
+                onClick={() => {
+                  const choice = importChoice
+                  setImportChoice(null)
+                  void doImport(choice.data, projectId)
+                }}
+              >
+                导入到当前项目
+              </button>
+              <button
+                type="button"
+                className={addBtn}
+                data-testid="import-to-original"
+                onClick={() => {
+                  const choice = importChoice
+                  setImportChoice(null)
+                  void doImport(choice.data, choice.original.id)
+                }}
+              >
+                恢复到原项目「{importChoice.original.name ?? '未命名项目'}」
+              </button>
+            </>
+          }
+        >
+          该会话导出自项目「{importChoice.original.name ?? '未命名项目'}」（
+          {importChoice.original.worktree}
+          ）。导入到哪个项目？继续对话时工具将在目标项目的工作目录中执行。
+        </Dialog>
       )}
     </div>
   )
 }
 
-/** 回收站保留期（与后端 purgeDeletedSessions 默认 30 天一致，仅展示用）。 */
-const TRASH_RETENTION_DAYS = 30
+/** 回收站保留期（与后端 purgeDeletedSessions 默认 60 天一致，仅展示用）。 */
+const TRASH_RETENTION_DAYS = 60
 
 /** 剩余保留天数（负数视为 0：即将被后台清理）。 */
 function daysLeft(deletedAt: number | null | undefined): number {
@@ -517,8 +622,44 @@ function RecycleBin({ projectId }: { projectId: string }) {
     onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
   })
 
+  // P2-6：永久操作（彻底删除/清空回收站）分级确认弹层；软删除保留轻确认。
+  // 状态必须声明在 early return 之前（hooks 规则：回收站空 → 非空的切换不得增减 hooks）。
+  const [removeTarget, setRemoveTarget] = useState<Session | null>(null)
+  const [showEmptyTrash, setShowEmptyTrash] = useState(false)
+
   if (isLoading) return <div className={empty}>加载中…</div>
-  if (!deleted || deleted.length === 0) return <div className={empty}>回收站为空</div>
+  // P1-1：恢复/归属结果 notice 必须独立于「回收站为空」early return——
+  // 恢复最后一个会话时回收站变空，若直接返回空态，notice（如 CLI 会话恢复提示）
+  // 永远不会展示，用户只能看到列表消失。
+  if (!deleted || deleted.length === 0) {
+    return (
+      <div>
+        {error && (
+          <div className={errorBar} data-testid="restore-error">
+            恢复失败：{error}
+          </div>
+        )}
+        {notice && (
+          <div className={noticeBar} data-testid="restore-notice">
+            <span>{notice}</span>
+            {orphanId && (
+              <button
+                type="button"
+                className={restoreBtn}
+                onClick={() => rebindMut.mutate(orphanId)}
+                disabled={rebindMut.isPending}
+                data-testid="rebind-orphan"
+                title="把该会话归属到当前项目，之后可在本项目会话列表中打开"
+              >
+                归属到当前项目
+              </button>
+            )}
+          </div>
+        )}
+        <div className={empty}>回收站为空</div>
+      </div>
+    )
+  }
 
   const deletedIds = new Set(deleted.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
@@ -549,17 +690,11 @@ function RecycleBin({ projectId }: { projectId: string }) {
   }
 
   const handleRemoveForever = (s: Session) => {
-    // fail-closed：彻底删除不可恢复，confirm 不可用时宁可阻止
-    if (!window.confirm(`彻底删除「${s.title}」及其派生会话？此操作不可恢复。`)) return
-    removeForever.mutate(s.id)
+    setRemoveTarget(s)
   }
 
   const handleEmptyTrash = () => {
-    if (
-      !window.confirm(`清空本项目的回收站将永久删除全部 ${deleted.length} 个会话，不可恢复。确定？`)
-    )
-      return
-    emptyTrashMut.mutate()
+    setShowEmptyTrash(true)
   }
 
   return (
@@ -625,6 +760,15 @@ function RecycleBin({ projectId }: { projectId: string }) {
             <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
               {`剩 ${daysLeft(s.deletedAt)} 天`}
             </span>
+            {s.source === 'cli' && (
+              <span
+                className={sourceBadge}
+                data-testid={`cli-source-${s.id}`}
+                title="CLI 会话（c0de chat）。恢复后不会出现在 Web 会话列表"
+              >
+                CLI
+              </span>
+            )}
             <button
               type="button"
               className={restoreBtn}
@@ -646,6 +790,13 @@ function RecycleBin({ projectId }: { projectId: string }) {
                         setOrphanId(s.id)
                       } else if (d?.rebound) {
                         setNotice(`「${s.title}」已恢复并重新归属到项目`)
+                        setOrphanId(null)
+                      } else if (s.source === 'cli') {
+                        // P1-1：CLI 会话恢复后不进 Web 会话树，明确告知查看途径，
+                        // 避免用户以为恢复失败。
+                        setNotice(
+                          `「${s.title}」已恢复。该会话为 CLI 会话，不会出现在 Web 会话列表，可用 \`c0de sessions list\` 查看。`,
+                        )
                         setOrphanId(null)
                       } else {
                         setNotice(null)
@@ -673,6 +824,35 @@ function RecycleBin({ projectId }: { projectId: string }) {
           </div>
         )
       })}
+      {removeTarget && (
+        <DangerConfirmDialog
+          open={true}
+          title="彻底删除会话"
+          description={`将彻底删除「${removeTarget.title}」及其 ${countDescendants(removeTarget.id)} 个派生会话。`}
+          confirmWord={removeTarget.title}
+          confirmLabel="彻底删除"
+          onConfirm={() => {
+            const id = removeTarget.id
+            setRemoveTarget(null)
+            removeForever.mutate(id)
+          }}
+          onClose={() => setRemoveTarget(null)}
+        />
+      )}
+      {showEmptyTrash && (
+        <DangerConfirmDialog
+          open={true}
+          title="清空回收站"
+          description={`将永久删除本项目的全部 ${deleted.length} 个回收站会话。`}
+          confirmWord="清空"
+          confirmLabel="清空回收站"
+          onConfirm={() => {
+            setShowEmptyTrash(false)
+            emptyTrashMut.mutate()
+          }}
+          onClose={() => setShowEmptyTrash(false)}
+        />
+      )}
     </div>
   )
 }

@@ -7,6 +7,7 @@ import { fileAPI } from '../services/file.js'
 import { projectAPI } from '../services/project.js'
 import { MOBILE } from '../styles/breakpoints.js'
 import { AddProjectDialog } from './AddProjectDialog.js'
+import { DangerConfirmDialog } from './DangerConfirmDialog.js'
 import { DropdownMenu } from './DropdownMenu.js'
 
 const indicator = css`
@@ -220,6 +221,8 @@ export function ProjectIndicator({
 
   const [showAddProject, setShowAddProject] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  // P2-6：删除项目（看板永久丢失）分级确认弹层；会话仅入回收站可恢复。
+  const [showDelete, setShowDelete] = useState(false)
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => projectAPI.remove(id),
@@ -322,15 +325,9 @@ export function ProjectIndicator({
               className={footerBtn}
               style={{ color: 'var(--error)' }}
               onClick={() => {
-                if (
-                  window.confirm(
-                    `确定删除项目「${project.name ?? '未命名项目'}」？\n看板将一并删除；该项目的全部会话将移入回收站（30 天内可恢复）。`,
-                  )
-                ) {
-                  setDeleteError(null)
-                  close()
-                  deleteMut.mutate(project.id)
-                }
+                setDeleteError(null)
+                close()
+                setShowDelete(true)
               }}
               data-testid="delete-project"
             >
@@ -439,6 +436,21 @@ export function ProjectIndicator({
             setShowAddProject(false)
             navigate(`/projects/${p.id}`)
           }}
+        />
+      )}
+      {showDelete && (
+        <DangerConfirmDialog
+          open={true}
+          title="删除项目"
+          description={`将删除项目「${project.name ?? '未命名项目'}」。该项目的看板将永久删除；全部会话将移入回收站（60 天内可恢复）。`}
+          confirmWord={project.name ?? '未命名项目'}
+          confirmLabel="删除项目"
+          busy={deleteMut.isPending}
+          onConfirm={() => {
+            setShowDelete(false)
+            deleteMut.mutate(project.id)
+          }}
+          onClose={() => setShowDelete(false)}
         />
       )}
     </div>

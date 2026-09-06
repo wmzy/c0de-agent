@@ -84,12 +84,13 @@ const linkBtn = css`
 
 const POLL_INTERVAL = 5 * 60 * 1000 // 5 分钟轮询一次后台缓存
 
-/** 「稍后」dismissal 记录：值为版本号，存 sessionStorage（本次标签页会话内不再展示）。 */
+/** 「稍后」dismissal 记录：值为版本号，存 localStorage（该版本号跨会话不再提示，
+ *  出现新版本时重新展示）。P2-8：原 sessionStorage 每次重开标签页都再弹，低频用户被同一版本持续打扰。 */
 const DISMISS_KEY = 'c0de-agent:updateDismissed'
 
 function loadDismissed(): string | null {
   try {
-    return sessionStorage.getItem(DISMISS_KEY)
+    return localStorage.getItem(DISMISS_KEY)
   } catch {
     return null
   }
@@ -97,7 +98,7 @@ function loadDismissed(): string | null {
 
 function saveDismissed(version: string): void {
   try {
-    sessionStorage.setItem(DISMISS_KEY, version)
+    localStorage.setItem(DISMISS_KEY, version)
   } catch {
     // 存储不可用（隐私模式等）时静默降级：仅本次组件实例内生效
   }
@@ -111,8 +112,8 @@ function saveDismissed(version: string): void {
  * 数据源是后端 scheduler 缓存的版本检查结果，因此轮询本身不打外网。
  * 发现 hasUpdate 时展示横幅；用户可"立即应用"触发 POST /api/update/apply
  * （后端序列化快照 + npm 自更新 + spawn 新实例 + handoff 端口接管），
- * 或"稍后"关闭——dismissed 版本号记入 sessionStorage，本次标签页会话内
- * （含路由切换/刷新）不再展示，出现新版本号时重新提示。
+ * 或"稍后"关闭——dismissed 版本号记入 localStorage，该版本跨标签页会话
+ * 不再展示，出现新版本号时重新提示。
  *
  * 应用后预期旧实例 handoff 退出、新实例接管端口。进行中的 SSE 流会中断
  * （会话显示 interrupted，可重发上一条消息继续）；页面无需刷新，后续请求

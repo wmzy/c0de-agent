@@ -42,6 +42,7 @@ export {
   saveLLMSegments,
   segmentFingerprint,
   softDeleteSession,
+  TRASH_RETENTION_MS,
   touchSession,
   updateSessionTitle,
 } from './session.js'

@@ -66,6 +66,7 @@ export function App() {
             <ErrorBoundary>
               <div className={appShell}>
                 <UpdateBanner />
+                <FirstDeviceNotice />
                 {authRequired && <PairingRequestFlow />}
                 <PairingApproval onDone={() => {}} />
                 <Routes>
@@ -130,6 +131,60 @@ const appShell = css`
   flex-direction: column;
   height: 100dvh;
 `
+
+/* P1-3：首设备注册一次性确认条（sessionStorage 标记，注册后刷新展示一次）。 */
+const FIRST_DEVICE_KEY = 'c0de-auth-registered'
+
+const deviceNotice = css`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  flex-shrink: 0;
+
+  & > button {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 8px;
+  }
+`
+
+/** 展示首设备注册结果：用户可核对注册的确实是本浏览器（先到先得竞态的可见性补偿）。 */
+function FirstDeviceNotice() {
+  const [name, setName] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(FIRST_DEVICE_KEY)
+    } catch {
+      return null
+    }
+  })
+  if (!name) return null
+  const dismiss = () => {
+    setName(null)
+    try {
+      sessionStorage.removeItem(FIRST_DEVICE_KEY)
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <div className={deviceNotice} data-testid="first-device-notice">
+      <span>本浏览器已注册为本机设备「{name}」。可在 设置 → 安全 → 已授权设备 查看与管理。</span>
+      <button type="button" onClick={dismiss}>
+        知道了
+      </button>
+    </div>
+  )
+}
 
 const errorIcon = css`
   font-size: 32px;

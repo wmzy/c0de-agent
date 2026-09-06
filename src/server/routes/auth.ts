@@ -52,7 +52,8 @@ function createAuthRoute(ctx: ServerContext): Hono {
         'bootstrap token 已失效（已有设备注册）。请在新设备发起配对，由已授权设备审批。',
       )
     }
-    return c.json({ deviceToken })
+    // P1-3：回传注册成功的设备名，前端展示一次性确认（用户可核对注册的是否自己）。
+    return c.json({ deviceToken, deviceName: body.deviceName ?? '设备' })
   })
 
   // 新设备发起配对请求（公开）。

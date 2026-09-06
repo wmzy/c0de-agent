@@ -25,7 +25,11 @@ import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { initPlugins } from '../plugins/index.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
-import { purgeDeletedSessions, purgeTemporarySessions } from '../session/session.js'
+import {
+  purgeDeletedSessions,
+  purgeTemporarySessions,
+  TRASH_RETENTION_MS,
+} from '../session/session.js'
 import type { Config } from '../shared/types/config.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import {
@@ -370,12 +374,27 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
 
   const { ctx, dispose } = await buildServerContext(db, opts)
 
-  // 回收站清理：启动时清一次 + 每 24h 清一次（软删除保留 30 天）。
-  // fire-and-forget：清理失败不阻塞服务启动。
-  void purgeDeletedSessions(db).catch(() => {})
+  // P2-4：回收站清理——启动时清一次 + 每 24h 清一次（软删除保留 60 天）。
+  // fire-and-forget：清理失败不阻塞服务启动；清理结果落日志，
+  // 用户长期未启动、重启即清仓时至少有启动日志可查。
+  void purgeDeletedSessions(db)
+    .then((n) => {
+      if (n > 0) {
+        console.log(
+          `[server] 回收站清理：已物理清除 ${n} 个超过保留期的会话（保留期 ${TRASH_RETENTION_MS / (24 * 60 * 60 * 1000)} 天）`,
+        )
+      }
+    })
+    .catch(() => {})
   const purgeTimer = setInterval(
     () => {
-      void purgeDeletedSessions(db).catch(() => {})
+      void purgeDeletedSessions(db)
+        .then((n) => {
+          if (n > 0) {
+            console.log(`[server] 回收站清理：已物理清除 ${n} 个超过保留期的会话`)
+          }
+        })
+        .catch(() => {})
       // P2：CLI print / 工作流临时会话同样每日清理（30 天保留）
       void purgeTemporarySessions(db).catch(() => {})
     },

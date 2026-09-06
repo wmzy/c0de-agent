@@ -94,7 +94,7 @@ async function listDeletedSessions(handle: DB, projectId?: string): Promise<Sess
 
 /**
  * 软删除会话（级联其所有 fork 后代）。设置 deletedAt = now；
- * 30 天后由 purgeDeletedSessions 物理清除。
+ * 60 天后由 purgeDeletedSessions 物理清除。
  * 会话不存在或已在回收站 → 返回 false（调用方按 404 处理）。
  */
 async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
@@ -145,7 +145,7 @@ async function rebindSession(
  * 祖先中未删除的（活跃）节点不需要也不应该被改动。
  *
  * P2 修复：删除级联后代入回收站，恢复同样级联还原目标会话的整棵后代子树——
- * 否则「删除根会话 → 恢复根会话」后分支仍滞留回收站且无任何提示，30 天后被清。
+ * 否则「删除根会话 → 恢复根会话」后分支仍滞留回收站且无任何提示，保留期后被清。
  * 兄弟分支（祖先的其他后代）不受影响。
  */
 async function restoreSession(
@@ -184,14 +184,19 @@ async function restoreSession(
 }
 
 /**
- * 物理清除回收站中超过保留期（默认 30 天）的会话。
+ * P2-4：回收站保留期 60 天（原 30 天）。服务不启动的日子不计入用户的
+ * "可见倒计时"——用户 40 天不开服务，重启即被清空，从未见过任何提示。
+ * 60 天给足两次月度使用周期；界面倒计时与确认文案须与此同步。
+ * 临时会话（CLI print / workflow）保留期仍为 30 天，见 purgeTemporarySessions。
+ */
+export const TRASH_RETENTION_MS = 60 * 24 * 60 * 60 * 1000
+
+/**
+ * 物理清除回收站中超过保留期（默认 60 天）的会话。
  * 子会话先于父会话删除（自引用 FK 要求）。
  * 返回清除数量。启动时与每日定时调用。
  */
-async function purgeDeletedSessions(
-  handle: DB,
-  retentionMs = 30 * 24 * 60 * 60 * 1000,
-): Promise<number> {
+async function purgeDeletedSessions(handle: DB, retentionMs = TRASH_RETENTION_MS): Promise<number> {
   const cutoff = new Date(Date.now() - retentionMs)
   const rows = await handle.db
     .select({ id: sessions.id, parentId: sessions.parentId })

@@ -21,8 +21,8 @@ const { updateAPI } = await import('../services/update.js')
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
-  // 「稍后」dismissal 记录在 sessionStorage，跨用例隔离必须清掉
-  sessionStorage.clear()
+  // 「稍后」dismissal 记录在 localStorage（P2-8），跨用例隔离必须清掉
+  localStorage.clear()
   vi.unstubAllGlobals()
 })
 
@@ -114,11 +114,11 @@ describe('UpdateBanner', () => {
     await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
     first.unmount()
 
-    // 重新挂载（模拟路由切换/刷新）：query 已返回 hasUpdate，但本会话已 dismiss 该版本
+    // 重新挂载（模拟路由切换/刷新）：query 已返回 hasUpdate，但该版本已 dismiss
     renderWithClient(<UpdateBanner />)
     await waitFor(() => expect(updateAPI.status).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
-    expect(sessionStorage.getItem('c0de-agent:updateDismissed')).toBe('0.2.0')
+    expect(localStorage.getItem('c0de-agent:updateDismissed')).toBe('0.2.0')
   })
 
   it('shows the banner again for a newer version after dismissing an older one', async () => {

@@ -5,7 +5,7 @@
 // 复用 withAgentDeps 的持久库生命周期（serve 占用时退化为内存库则明确报错）。
 //
 // P1 闭环修复：delete 移入回收站后必须有 CLI 恢复途径（此前文案承诺
-// 「30 天内可恢复」但 CLI 无 restore 子命令，恢复只能绕道 Web 界面）。
+// 「60 天内可恢复」但 CLI 无 restore 子命令，恢复只能绕道 Web 界面）。
 
 import type { DB } from '../../db/client.js'
 import { fromDirectory } from '../../project/project.js'
@@ -48,7 +48,7 @@ async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
     if (!id) throw new Error('sessions delete: a session id is required (use `c0de sessions list`)')
     const ok = await softDeleteSession(ctx.db, id)
     if (!ok) throw new Error(`sessions delete: session not found or already deleted: ${id}`)
-    write(`已删除会话 ${id}（移入回收站，30 天内可用 \`c0de sessions restore ${id}\` 恢复）。\n`)
+    write(`已删除会话 ${id}（移入回收站，60 天内可用 \`c0de sessions restore ${id}\` 恢复）。\n`)
     return
   }
 

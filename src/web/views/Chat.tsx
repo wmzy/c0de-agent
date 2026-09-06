@@ -479,7 +479,8 @@ export function Chat({
         <div className={interruptBanner} data-testid="permission-timeout-banner">
           <span>
             工具「{permissionTimeout.tool}
-            」等待确认超时（5 分钟）。重新询问将重新打开确认弹窗，不会重复执行已完成的工具
+            」等待确认超时（5 分钟）。重新询问将重新打开确认弹窗，不会重复执行已完成的工具；
+            在弹窗中勾选「本会话始终允许」可避免该工具反复请求确认
           </span>
           {onReopenPermission ? (
             <button

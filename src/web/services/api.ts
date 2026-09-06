@@ -47,9 +47,18 @@ function bootstrapAuthToken(): void {
       })
         .then(async (res) => {
           if (!res.ok) throw new Error(String(res.status))
-          const body = (await res.json()) as { deviceToken?: string }
+          const body = (await res.json()) as { deviceToken?: string; deviceName?: string }
           if (body.deviceToken) {
             localStorage.setItem(TOKEN_KEY, body.deviceToken)
+            // P1-3：记录注册成功的设备名，刷新后展示一次性确认，用户可核对
+            // 首设备注册的确实是本浏览器（先到先得竞态的可见性补偿）。
+            if (body.deviceName) {
+              try {
+                sessionStorage.setItem('c0de-auth-registered', body.deviceName)
+              } catch {
+                // sessionStorage 不可用时跳过提示，不阻塞刷新
+              }
+            }
             // 设备 token 生效后刷新一次：注册期间的并发请求可能已因 bootstrap 401
             // 触发配对 UI，刷新以设备 token 重新加载避免用户卡在配对页。
             window.location.reload()

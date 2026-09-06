@@ -56,21 +56,26 @@ describe('runChatCommand', () => {
       config,
       deps,
       stdout: (s: string) => lines.push(s),
+      stderr: () => {},
     })
     expect(lines.join('')).toContain('answer')
   })
 
   it('outputs json when format=json', async () => {
     const lines: string[] = []
+    const errs: string[] = []
     const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream: mockStream })
     await runChatCommand({
       args: { options: { format: 'json' }, positionals: ['hello'] },
       config,
       deps,
       stdout: (s: string) => lines.push(s),
+      stderr: (s: string) => errs.push(s),
     })
     const parsed = JSON.parse(lines.join(''))
     expect(parsed.text).toBe('answer')
+    // P2-5：一次性问答会话提示走 stderr，不污染 JSON stdout
+    expect(errs.join('')).toContain('c0de sessions list')
   })
 
   it('errors when no message positional', async () => {

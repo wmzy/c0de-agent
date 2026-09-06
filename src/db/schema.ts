@@ -47,7 +47,7 @@ export const sessions = pgTable(
     worktreePath: text('worktree_path'),
     /** 会话来源：'web'（Web UI）/ 'cli'（CLI print 模式）；null=旧数据视为 web。 */
     source: text('source').default(sql`null`),
-    /** 软删除时间戳；null=未删除。回收站保留 30 天后物理清除。 */
+    /** 软删除时间戳；null=未删除。回收站保留 60 天后物理清除。 */
     deletedAt: timestamp('deleted_at', { withTimezone: true }).default(sql`null`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
