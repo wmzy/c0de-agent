@@ -60,22 +60,36 @@ async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
     if (!ok) throw new Error(`sessions restore: session not found or not deleted: ${id}`)
     // P2-2：与 Web restore 对齐——会话项目已删除（FK set null）时按 worktreePath
     // 重建归属，避免恢复成功但在 Web 各项目视图不可达。
+    // P2 修复：--project <path> 提供显式归属出口（Web 有「归属到当前项目」，
+    // CLI 此前只有警告、用户自己修不了）。
+    const projectPath = ctx.args.options.project as string | undefined
     const session = await getSession(ctx.db, id)
-    if (session && !session.projectId && session.worktreePath) {
+    if (session && !session.projectId && (session.worktreePath || projectPath)) {
       try {
         const { existsSync } = await import('node:fs')
-        if (existsSync(session.worktreePath)) {
-          const project = await fromDirectory(ctx.db, session.worktreePath)
+        const target = projectPath ?? session.worktreePath
+        if (target && existsSync(target)) {
+          const project = await fromDirectory(ctx.db, target)
           await rebindSession(ctx.db, id, project)
           write(`已恢复会话 ${id}（已重新归属到项目 ${project.id}）。\n`)
           return
         }
+        if (projectPath) {
+          throw new Error(`项目目录不存在：${projectPath}`)
+        }
         write(`已恢复会话 ${id}（警告：原项目目录不存在，会话未归属任何项目，Web 不可见）。\n`)
+        write(`提示：c0de sessions restore ${id} --project <项目路径> 可显式归属。\n`)
         return
-      } catch {
-        write(`已恢复会话 ${id}（警告：项目归属恢复失败，会话可能不可见）。\n`)
+      } catch (error) {
+        write(
+          `已恢复会话 ${id}（警告：项目归属失败——${error instanceof Error ? error.message : String(error)}，会话可能不可见）。\n`,
+        )
         return
       }
+    }
+    if (session?.projectId && projectPath) {
+      write(`已恢复会话 ${id}（会话已有项目归属，忽略 --project）。\n`)
+      return
     }
     write(`已恢复会话 ${id}。\n`)
     return

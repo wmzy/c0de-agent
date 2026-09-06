@@ -139,6 +139,10 @@ function createConfigRoute(ctx: ServerContext): Hono {
       const serverScopes = loadConfigScopes(ctx.cwd)
       ctx.config = mergeConfig(serverScopes.global, serverScopes.project)
       syncRegistryFromConfig(ctx.llmRegistry, ctx.config)
+      // P1 修复：权限默认模式运行时同步——设置页保存后立即生效，
+      // 与草稿页底栏开关（PUT /api/permissions，既持久化又即时生效）语义一致。
+      // 此前仅落盘、ctx.permissionMode 仍为启动值，UI 显示已保存但弹窗照旧。
+      ctx.permissionMode = ctx.config.permission.defaultMode
       // 项目级注册表基于全局作用域构建，global 变更后全部失效。
       ctx.projectRegistries?.clear()
     } else if (projectId) {

@@ -252,6 +252,21 @@ describe('chat route (SSE)', () => {
     expect(body.error.code).toBe('RUN_ACTIVE')
   })
 
+  it('POST / 活跃 run 期间变更型斜杠命令（/clear）→ 409 RUN_ACTIVE（P3 竞态守卫）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    ctx.agentManager.register({ sessionId, state: {} as never, deps: {} as never })
+    for (const cmd of ['/clear --yes', '/compact', '/fork']) {
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, message: cmd }),
+      })
+      expect(res.status).toBe(409)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe('RUN_ACTIVE')
+    }
+  })
+
   // P0-4 竞态回归：旧实现守卫用 get 检查、真正 register 在 SSE 回调内，中间隔
   // 多个 await，双发 POST 均通过守卫后后注册覆盖前者（runs.set），且 A 结束时
   // unregister 误删仍在跑的 B。现守卫为同步原子占位 tryAcquire。

@@ -1,5 +1,6 @@
+import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
-import { compactionArchives, sessionEntries } from '../db/schema.js'
+import { compactionArchives, sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import type { MessageRole } from '../shared/types/base.js'
 import type { MessageContent } from '../shared/types/message.js'
@@ -63,6 +64,8 @@ function sanitizeContent(content: unknown): MessageContent[] {
  * 导入副本可重复执行（同库内复制/恢复场景），不与原会话或既往导入冲突。
  * 说明：导出仅含 tag='message' 的消息——compaction/steering 等特殊条目不随迁，
  * 导入后会话显示完整原始消息流（上下文重建略长，但不丢内容）。
+ * P2：会话 metadata 中的权限态（permissionMode/alwaysAllow）随迁——
+ * 用户在导出会话中建立的授权信任不应在导入后失效。
  */
 async function importSessionData(
   handle: DB,
@@ -71,10 +74,15 @@ async function importSessionData(
     projectId?: string
     messages: ImportMessage[]
     archives: ImportArchive[]
+    /** 随迁的会话 metadata（仅权限态等安全字段，由调用方过滤）。 */
+    metadata?: Record<string, unknown>
   },
 ): Promise<{ sessionId: string; messageCount: number; archiveCount: number }> {
   const session = await createSession(handle, opts.title, opts.projectId, undefined, 'web')
   return handle.db.transaction(async (tx) => {
+    if (opts.metadata && Object.keys(opts.metadata).length > 0) {
+      await tx.update(sessions).set({ metadata: opts.metadata }).where(eq(sessions.id, session.id))
+    }
     let messageCount = 0
     for (const m of opts.messages) {
       const role = m.role

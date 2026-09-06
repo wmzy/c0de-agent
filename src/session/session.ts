@@ -143,11 +143,33 @@ async function rebindSession(
  * 从回收站恢复会话：默认连带恢复其已软删除的祖先链——
  * 否则恢复的会话因父仍在回收站而游离于会话树之外（P2-1：UI 不可达）。
  * 祖先中未删除的（活跃）节点不需要也不应该被改动。
+ *
+ * P2 修复：删除级联后代入回收站，恢复同样级联还原目标会话的整棵后代子树——
+ * 否则「删除根会话 → 恢复根会话」后分支仍滞留回收站且无任何提示，30 天后被清。
+ * 兄弟分支（祖先的其他后代）不受影响。
  */
-async function restoreSession(handle: DB, id: string): Promise<boolean> {
+async function restoreSession(
+  handle: DB,
+  id: string,
+  opts: { includeDescendants?: boolean } = {},
+): Promise<boolean> {
+  const includeDescendants = opts.includeDescendants !== false
   const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
   if (!row?.deletedAt) return false
   const ids = new Set<string>([id])
+  // 后代 BFS（与 softDeleteSession 的级联收集对称）
+  if (includeDescendants) {
+    let frontier = [id]
+    while (frontier.length > 0) {
+      const children = await handle.db
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(and(gt(sessions.deletedAt, new Date(0)), inArray(sessions.parentId, frontier)))
+      frontier = children.map((r) => r.id).filter((cid) => !ids.has(cid))
+      for (const r of children) ids.add(r.id)
+    }
+  }
+  // 祖先链（仅还原其中已软删除的节点）
   let parentId = row.parentId
   while (parentId) {
     const [parent] = await handle.db.select().from(sessions).where(eq(sessions.id, parentId))
@@ -473,21 +495,24 @@ async function listSessionsByProject(handle: DB, projectId: string): Promise<Ses
 
 /**
  * 跨会话搜索（P2-6）：标题 + 消息内容子串匹配。
- * 仅搜索未软删除的非 CLI 会话（与 Web 会话树一致）；projectId 提供时限定项目。
+ * 默认仅搜索未软删除的非 CLI 会话（与 Web 会话树一致）；projectId 提供时限定项目。
+ * opts.includeDeleted=true 时搜索回收站（P3：回收站无搜索，删后找内容只能逐行翻）。
  * 返回 { session, matchedBy: 'title' | 'content' }。
  */
 async function searchSessions(
   handle: DB,
   query: string,
   projectId?: string,
+  opts: { includeDeleted?: boolean } = {},
 ): Promise<Array<{ session: Session; matchedBy: 'title' | 'content' }>> {
   const needle = query.trim()
   if (!needle) return []
   const pattern = `%${needle.replace(/[%_\\]/g, '\\$&')}%`
 
   const baseWhere = and(
-    isNull(sessions.deletedAt),
-    or(isNull(sessions.source), ne(sessions.source, 'cli')),
+    opts.includeDeleted ? gt(sessions.deletedAt, new Date(0)) : isNull(sessions.deletedAt),
+    // 回收站搜索与回收站列表（listDeletedSessions）一致：不过滤 source。
+    ...(opts.includeDeleted ? [] : [or(isNull(sessions.source), ne(sessions.source, 'cli'))]),
     ...(projectId ? [eq(sessions.projectId, projectId)] : []),
   )
 

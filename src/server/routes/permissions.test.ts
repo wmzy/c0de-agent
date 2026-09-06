@@ -151,4 +151,36 @@ describe('permissions route', () => {
     })
     expect(res.status).toBe(400)
   })
+
+  it('GET /:sessionId/pending 返回会话挂起的权限请求（P1 重挂弹窗）', async () => {
+    const { app, ctx } = await setup()
+    const sid = 'session-pending-1'
+    // 无挂起 → pending: null
+    const emptyRes = await app.request(`/${sid}/pending`)
+    expect(emptyRes.status).toBe(200)
+    expect(await emptyRes.json()).toEqual({ pending: null })
+
+    // 注册挂起请求（绑定会话）
+    ctx.permissionStore.register('tc-pending-1', {
+      request: {
+        toolCallId: 'tc-pending-1',
+        tool: 'bash',
+        input: { command: 'echo hi' },
+        sessionId: sid,
+      },
+      resolve: () => {},
+    })
+    const res = await app.request(`/${sid}/pending`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      pending: { toolCallId: string; tool: string; sessionId?: string } | null
+    }
+    expect(body.pending?.toolCallId).toBe('tc-pending-1')
+    expect(body.pending?.tool).toBe('bash')
+    expect(body.pending?.sessionId).toBe(sid)
+
+    // 其他会话不可见
+    const otherRes = await app.request('/other-session/pending')
+    expect(((await otherRes.json()) as { pending: unknown }).pending).toBeNull()
+  })
 })

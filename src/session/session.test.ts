@@ -108,6 +108,47 @@ describe('session CRUD', () => {
     expect(restoredParent?.deletedAt).toBeNull()
   })
 
+  it('restore 连带还原整棵后代子树（P2：删除级联的对称）', async () => {
+    const root = await createSession(handle, 'Root')
+    const branch = await createSession(handle, 'Branch', undefined, undefined, undefined, root.id)
+    const leaf = await createSession(handle, 'Leaf', undefined, undefined, undefined, branch.id)
+    // 删除根会话 → 级联删除 branch 与 leaf
+    await softDeleteSession(handle, root.id)
+    expect(await listDeletedSessions(handle)).toHaveLength(3)
+
+    const ok = await restoreSession(handle, root.id)
+    expect(ok).toBe(true)
+    expect(await listDeletedSessions(handle)).toHaveLength(0)
+    expect((await getSession(handle, branch.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, leaf.id))?.deletedAt).toBeNull()
+  })
+
+  it('restore 子会话不还原兄弟分支（只还原目标子树 + 祖先）', async () => {
+    const root = await createSession(handle, 'Root')
+    const branchA = await createSession(handle, 'A', undefined, undefined, undefined, root.id)
+    const branchB = await createSession(handle, 'B', undefined, undefined, undefined, root.id)
+    await softDeleteSession(handle, root.id)
+    expect(await listDeletedSessions(handle)).toHaveLength(3)
+
+    // 恢复 A → A + root 还原；兄弟 B 留在回收站
+    const ok = await restoreSession(handle, branchA.id)
+    expect(ok).toBe(true)
+    expect((await getSession(handle, root.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, branchA.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, branchB.id))?.deletedAt).not.toBeNull()
+  })
+
+  it('restore includeDescendants:false 仅还原自身 + 祖先（旧语义可选）', async () => {
+    const root = await createSession(handle, 'Root')
+    const branch = await createSession(handle, 'Branch', undefined, undefined, undefined, root.id)
+    await softDeleteSession(handle, root.id)
+
+    const ok = await restoreSession(handle, root.id, { includeDescendants: false })
+    expect(ok).toBe(true)
+    expect((await getSession(handle, root.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, branch.id))?.deletedAt).not.toBeNull()
+  })
+
   it('touches updatedAt without changing title', async () => {
     const created = await createSession(handle, 'Persist')
     const originalUpdatedAt = created.updatedAt

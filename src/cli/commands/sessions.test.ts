@@ -108,6 +108,49 @@ describe('c0de sessions', () => {
     ).rejects.toThrow(/not found|not deleted/i)
   })
 
+  it('restore --project 把孤儿会话归属到指定项目（P2 CLI rebind 出口）', async () => {
+    // 无归属的已删会话（模拟项目被删除后的孤儿）
+    const s = await createSession(db, 'orphan', undefined, undefined, 'web')
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['delete', s.id] },
+      db,
+      write: () => {},
+    })
+    // 目标项目目录
+    const projDir = mkdtempSync(join(tmpdir(), 'c0de-sessproj-'))
+    try {
+      const out: string[] = []
+      await runSessionsCommand({
+        args: { options: { project: projDir }, positionals: ['restore', s.id] },
+        db,
+        write: (x) => out.push(x),
+      })
+      expect(out.join('')).toContain('已重新归属到项目')
+      const { getSession } = await import('../../session/session.js')
+      const restored = await getSession(db, s.id)
+      expect(restored?.projectId).toBeTruthy()
+      expect(restored?.worktreePath).toBe(projDir)
+    } finally {
+      rmSync(projDir, { recursive: true, force: true })
+    }
+  })
+
+  it('restore --project 目录不存在时报错提示', async () => {
+    const s = await createSession(db, 'orphan2', undefined, undefined, 'web')
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['delete', s.id] },
+      db,
+      write: () => {},
+    })
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: { project: '/no/such/dir-xyz' }, positionals: ['restore', s.id] },
+      db,
+      write: (x) => out.push(x),
+    })
+    expect(out.join('')).toContain('项目归属失败')
+  })
+
   it('deleted 列出回收站会话', async () => {
     const s = await createSession(db, 'in-trash', undefined, undefined, 'cli')
     await runSessionsCommand({

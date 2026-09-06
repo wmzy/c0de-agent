@@ -69,11 +69,18 @@ const sessionAPI = {
     }),
   /** 会话导出（元数据 + 消息 + 归档），数据可迁移。 */
   exportSession: (id: string) => apiRequest<SessionExport>(`/api/sessions/${id}/export`),
-  /** 会话导入（导出的逆操作；绑定 projectId 后出现在对应项目视图）。 */
+  /** 会话导入（导出的逆操作；绑定 projectId 后出现在对应项目视图）。
+   *  flattened=true 表示原会话的分支树结构被扁平化为独立根会话（P2）。 */
   importSession: (
     data: unknown,
     projectId?: string,
-  ): Promise<{ ok: boolean; sessionId: string; messageCount: number; archiveCount: number }> =>
+  ): Promise<{
+    ok: boolean
+    sessionId: string
+    messageCount: number
+    archiveCount: number
+    flattened: boolean
+  }> =>
     apiRequest('/api/sessions/import', {
       method: 'POST',
       body: JSON.stringify({
@@ -81,11 +88,16 @@ const sessionAPI = {
         ...(projectId ? { projectId } : {}),
       }),
     }),
-  /** 跨会话搜索（P2-6）：标题 + 消息内容。 */
-  search: (q: string, projectId?: string) =>
+  /** 跨会话搜索（P2-6）：标题 + 消息内容。includeDeleted 搜索回收站（P3）。 */
+  search: (q: string, projectId?: string, includeDeleted = false) =>
     apiRequest<{ results: Array<{ session: Session; matchedBy: 'title' | 'content' }> }>(
-      `/api/sessions/search?q=${encodeURIComponent(q)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`,
+      `/api/sessions/search?q=${encodeURIComponent(q)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}${includeDeleted ? '&includeDeleted=1' : ''}`,
     ),
+  /** 会话挂起的权限请求（P1：挂起期间切换页面/刷新后重挂确认弹窗）。 */
+  pendingPermission: (sessionId: string) =>
+    apiRequest<{
+      pending: { toolCallId: string; tool: string; input: unknown } | null
+    }>(`/api/permissions/${encodeURIComponent(sessionId)}/pending`),
   branches: (id: string) => apiRequest<Session[]>(`/api/sessions/${id}/branches`),
   status: (id: string) => apiRequest<{ _tag: string }>(`/api/sessions/${id}/status`),
   open: (id: string) =>

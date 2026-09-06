@@ -244,6 +244,24 @@ describe('builtin commands', () => {
     }
   })
 
+  it('/model channel=cli 给出 CLI 可操作指引（P3：不再指向 Web-only 控件）', async () => {
+    const cmd = builtinCommands.find((c) => c.name === 'model')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+      channel: 'cli',
+    })) as CommandResult
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).toContain('c0de chat --model')
+      expect(result.text).toContain('c0de config set defaultModel')
+      // CLI 无底部模型选择器，不得输出 Web-only 指引
+      expect(result.text).not.toContain('模型选择器')
+    }
+  })
+
   it('/clear 缺 --yes 拒绝执行', async () => {
     const session = await createSession(db, 't')
     const { appendMessage } = await import('../session/message.js')

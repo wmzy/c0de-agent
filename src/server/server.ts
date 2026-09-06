@@ -30,6 +30,7 @@ import type { Config } from '../shared/types/config.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import {
   checkForUpdate,
+  confirmHandoff,
   createHandoffServer,
   createUpdateScheduler,
   requestHandoff,
@@ -458,28 +459,16 @@ async function requestHandoffWithRetry(
     `handoff: old instance on port ${port} did not release after ${maxAttempts} attempts`,
   )
 }
-async function startServer(opts: StartServerOptions = {}): Promise<RunningServer> {
-  const port = opts.port ?? 3000
+/**
+ * 两阶段 handoff 的确认窗口（P3 回滚修复）：旧实例响应 POST /handoff 后不退出，
+ * 等待新实例绑定端口成功后 POST /handoff-confirm 再退。窗口内未收到确认
+ * （新实例启动失败）→ 旧实例原地复活重新接管端口，用户工作零损失。
+ * 窗口需覆盖新实例 bootstrap（DB 迁移/快照恢复）耗时，取 60s 留裕量。
+ */
+const HANDOFF_CONFIRM_WINDOW_MS = 60_000
 
-  // spec §18.3：新实例从 --handoff-port 拿到旧实例端口，请求优雅退出后绑端口。
-  // 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，否则读 auth-token 文件。
-  if (opts.handoffPort && !opts.skipHandoff) {
-    const pendingToken = process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
-    await requestHandoffWithRetry(opts.handoffPort, pendingToken)
-  }
-
-  const { ctx, close: closeCtx } = await bootstrapServerContext(opts)
-  const app = createApp(ctx)
-
-  // config.update.enabled 时启动后台调度器。
-  if (ctx.config.update.enabled) ctx.updateScheduler.start()
-
-  const server = serve({ fetch: app.fetch, port }) as unknown as NodeServer
-  ctx.port = port
-
-  // WebSocket：终端双向流。Hono v2 无原生 WS，用 ws 包直接挂载到 HTTP server。
-  // 匹配 /api/terminal/:id/ws → ptyManager.attachWebSocket
-  const wss = new WebSocketServer({ noServer: true })
+/** 组装终端 WebSocket upgrade 处理器（bringUp 与复活共用）。 */
+function attachTerminalUpgrade(ctx: ServerContext, wss: WebSocketServer, server: NodeServer): void {
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
     const match = url.pathname.match(/^\/api\/terminal\/([^/]+)\/ws$/)
@@ -521,38 +510,132 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
       }
     })
   })
+}
 
-  let closed = false
-  const closeMain = async () => {
-    if (closed) return
-    closed = true
-    wss.close()
-    server.close()
-    await closeCtx()
-  }
-  const close = async () => {
-    await closeMain()
-    await handoffServer?.close()
+async function startServer(opts: StartServerOptions = {}): Promise<RunningServer> {
+  const port = opts.port ?? 3000
+
+  // spec §18.3：新实例从 --handoff-port 拿到旧实例端口，请求优雅退出后绑端口。
+  // 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，否则读 auth-token 文件。
+  if (opts.handoffPort && !opts.skipHandoff) {
+    const pendingToken = process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+    await requestHandoffWithRetry(opts.handoffPort, pendingToken)
   }
 
-  // spec §18.3 handoff server：旧实例收到 POST /handoff 后关闭主服务与资源，
-  // 响应 200，随后退出进程（exitAfterResponse），端口让渡给新实例。
-  // config.update.enabled=false 或 skipHandoff 时跳过。
+  // 两阶段 handoff 状态（旧实例视角）：确认窗口定时器与复活互斥锁。
+  let confirmTimer: ReturnType<typeof setTimeout> | null = null
+  let reviving = false
   let handoffServer: HandoffServer | undefined
-  if (ctx.config.update.enabled && !opts.skipHandoff) {
-    const createHandoff = opts.createHandoffFn ?? createHandoffServer
-    handoffServer = await createHandoff(closeMain, {
-      // P2-16：token 轮换后新旧实例 bootstrap 可能不同，用 verifyHandoff 接受
-      // 当前/历史 bootstrap 与设备 token；无 authManager 回退字符串比较。
-      ...(ctx.authManager
-        ? { verify: (t) => ctx.authManager?.verifyHandoff(t) ?? false }
-        : { expectedToken: ctx.authToken }),
-      exitAfterResponse: true,
-    })
-    ctx.handoff = { port: handoffServer.port, server: handoffServer }
+  let currentClose: (() => Promise<void>) | null = null
+  // RunningServer 暴露的稳定句柄（复活后更新；app/authToken 每次 bringUp 重建）。
+  let currentApp: RunningServer['app'] | null = null
+  let currentAuthToken: string | undefined
+
+  const clearConfirmTimer = (): void => {
+    if (confirmTimer) {
+      clearTimeout(confirmTimer)
+      confirmTimer = null
+    }
   }
 
-  return { app, port, close, ...(ctx.authToken ? { authToken: ctx.authToken } : {}) }
+  /**
+   * 组装完整服务栈（bootstrap → app → 调度器 → 绑定端口 → WS → handoff server）。
+   * 首次启动与超时复活共用。复活时新实例可能已绑定端口：serve() 抛 EADDRINUSE
+   * 说明新实例实际上已接管（确认请求丢失），旧实例退出即可。
+   */
+  const bringUp = async (): Promise<void> => {
+    const { ctx, close: closeCtx } = await bootstrapServerContext(opts)
+    const app = createApp(ctx)
+
+    // config.update.enabled 时启动后台调度器。
+    if (ctx.config.update.enabled) ctx.updateScheduler.start()
+
+    const server = serve({ fetch: app.fetch, port }) as unknown as NodeServer
+    ctx.port = port
+
+    // WebSocket：终端双向流。Hono v2 无原生 WS，用 ws 包直接挂载到 HTTP server。
+    const wss = new WebSocketServer({ noServer: true })
+    attachTerminalUpgrade(ctx, wss, server)
+
+    let closed = false
+    const closeMain = async () => {
+      if (closed) return
+      closed = true
+      wss.close()
+      server.close()
+      await closeCtx()
+    }
+    const close = async () => {
+      clearConfirmTimer()
+      await closeMain()
+      await handoffServer?.close()
+    }
+    currentClose = close
+    currentApp = app
+    currentAuthToken = ctx.authToken
+
+    // spec §18.3 handoff server：旧实例收到 POST /handoff 后关闭主服务与资源，
+    // 响应 200。两阶段交接：不再立即退出——等待新实例 POST /handoff-confirm
+    // （onConfirm）确认接管；窗口超时未确认则 revive 原地复活。
+    // config.update.enabled=false 或 skipHandoff 时跳过。
+    if (ctx.config.update.enabled && !opts.skipHandoff) {
+      const createHandoff = opts.createHandoffFn ?? createHandoffServer
+      handoffServer = await createHandoff(closeMain, {
+        // P2-16：token 轮换后新旧实例 bootstrap 可能不同，用 verifyHandoff 接受
+        // 当前/历史 bootstrap 与设备 token；无 authManager 回退字符串比较。
+        ...(ctx.authManager
+          ? { verify: (t) => ctx.authManager?.verifyHandoff(t) ?? false }
+          : { expectedToken: ctx.authToken }),
+        exitAfterResponse: false,
+        onConfirm: () => {
+          // 新实例确认已接管端口 → 旧实例退出（延迟保证确认响应刷出）。
+          clearConfirmTimer()
+          setTimeout(() => process.exit(0), 250)
+        },
+      })
+      ctx.handoff = { port: handoffServer.port, server: handoffServer }
+      // 确认窗口：新实例启动失败时旧实例复活（保留进程句柄，定时器不可 unref）。
+      confirmTimer = setTimeout(() => {
+        void (async () => {
+          if (reviving) return
+          reviving = true
+          try {
+            await bringUp()
+            console.warn('[handoff] 新实例未确认接管，旧实例已复活并重新接管端口')
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+              // 新实例已绑定端口（确认请求丢失）→ 它已接管，旧实例正常退出。
+              console.warn('[handoff] 端口已被新实例接管，旧实例退出')
+              process.exit(0)
+            }
+            console.error('[handoff] 旧实例复活失败，退出：', err)
+            process.exit(1)
+          } finally {
+            reviving = false
+          }
+        })()
+      }, HANDOFF_CONFIRM_WINDOW_MS)
+    }
+
+    // 两阶段交接第二阶段：新实例绑定成功后确认旧实例可退出。
+    // 旧实例（无 handoffPort）跳过；确认失败静默（窗口超时兜底）。
+    if (opts.handoffPort) {
+      const confirmToken = process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+      void confirmHandoff(opts.handoffPort, '127.0.0.1', confirmToken)
+    }
+  }
+
+  await bringUp()
+  if (!currentApp) throw new Error('server failed to start: app not built')
+
+  return {
+    app: currentApp,
+    port,
+    close: async () => {
+      await currentClose?.()
+    },
+    ...(currentAuthToken ? { authToken: currentAuthToken } : {}),
+  }
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }

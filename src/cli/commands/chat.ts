@@ -47,6 +47,8 @@ async function runSlashCommand(
     config: ctx.config,
     deps: ctx.deps,
     sessionId: continueId,
+    // 消费渠道：/model 等命令按渠道给指引（CLI 无底部模型选择器）。
+    channel: 'cli',
   })
 
   if (result._tag === 'compact') {

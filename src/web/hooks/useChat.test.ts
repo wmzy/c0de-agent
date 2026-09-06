@@ -18,6 +18,7 @@ const base: ChatState = {
   subagents: [],
   pendingSegmentBreak: null,
   interrupted: false,
+  attachedRun: false,
 }
 
 function asst(parts: MessageContent[]): Message[] {
@@ -273,8 +274,10 @@ describe('useChat confirm', () => {
     })
     // 乐观关闭仍生效
     expect(result.current.pendingPermission).toBeNull()
-    // 明确提示文案
-    expect(result.current.error).toBe('权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行')
+    // 明确提示文案（P3 修正：不再宣称「超过 5 分钟未确认」过期）
+    expect(result.current.error).toBe(
+      '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
+    )
   })
 })
 

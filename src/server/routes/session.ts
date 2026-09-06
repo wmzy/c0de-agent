@@ -54,7 +54,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.post('/import', async (c) => {
     const body = (await c.req.json().catch(() => null)) as {
       version?: unknown
-      session?: { title?: unknown } | null
+      session?: { title?: unknown; parentId?: unknown; metadata?: unknown } | null
       messages?: unknown
       archives?: unknown
       projectId?: unknown
@@ -79,6 +79,20 @@ function createSessionRoute(ctx: ServerContext): Hono {
       typeof body.session.title === 'string' && body.session.title
         ? body.session.title
         : '导入的会话'
+    // P2：导出会话的权限态（permissionMode/alwaysAllow）随迁，仅取安全白名单字段。
+    const metadata: Record<string, unknown> = {}
+    const srcMeta = body.session.metadata
+    if (srcMeta && typeof srcMeta === 'object' && !Array.isArray(srcMeta)) {
+      const m = srcMeta as Record<string, unknown>
+      if (m.permissionMode === 'auto' || m.permissionMode === 'default') {
+        metadata.permissionMode = m.permissionMode
+      }
+      if (Array.isArray(m.alwaysAllow)) {
+        metadata.alwaysAllow = m.alwaysAllow.filter((x): x is string => typeof x === 'string')
+      }
+    }
+    // P2：导出含分支树结构（parentId），导入为独立根会话——告知前端提示扁平化。
+    const flattened = typeof body.session.parentId === 'string' && body.session.parentId.length > 0
     const result = await importSessionData(ctx.db, {
       title,
       projectId,
@@ -86,8 +100,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
       archives: Array.isArray(body.archives)
         ? (body.archives as Parameters<typeof importSessionData>[1]['archives'])
         : [],
+      metadata,
     })
-    return c.json({ ok: true, ...result })
+    return c.json({ ok: true, ...result, flattened })
   })
 
   // 创建会话
@@ -123,12 +138,15 @@ function createSessionRoute(ctx: ServerContext): Hono {
   })
 
   // 跨会话搜索（P2-6）：标题 + 消息内容匹配；?q= 关键词，?projectId= 限定项目。
+  // P3：?includeDeleted=1 搜索回收站（配合回收站搜索框）。
   // 注册在 /:id 之前避免被参数路由吞掉。
   app.get('/search', async (c) => {
     const q = c.req.query('q') ?? ''
     const projectId = c.req.query('projectId')
+    const includeDeleted =
+      c.req.query('includeDeleted') === '1' || c.req.query('includeDeleted') === 'true'
     if (!q.trim()) return c.json({ results: [] })
-    const results = await searchSessions(ctx.db, q, projectId)
+    const results = await searchSessions(ctx.db, q, projectId, { includeDeleted })
     return c.json({ results })
   })
 
@@ -178,6 +196,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 分支会话：未指定 messageIndex 时默认在最新一条消息处分叉（fork=完整副本语义）
   app.post('/:id/fork', async (c) => {
     const id = c.req.param('id')
+    // P3：fork 复制消息树，与正在写库的活跃 run 存在竞态——先拒绝。
+    if (ctx.agentManager.get(id)) {
+      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再分支')
+    }
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     let messageIndex = body.messageIndex as number | undefined
     if (messageIndex === undefined || !Number.isFinite(messageIndex)) {
@@ -199,9 +221,16 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
   })
 
-  // 删除会话（软删除：级联其 fork 后代进入回收站，30 天后物理清除）
+  // 删除会话（软删除：级联其 fork 后代进入回收站，30 天后物理清除）。
+  // P2 修复：删除运行中的会话前先中止其活跃 run（含子 agent）——
+  // 否则 run 继续向已删除会话写入消息，用户以为已删除而 agent 仍在执行。
   app.delete('/:id', async (c) => {
-    const ok = await softDeleteSession(ctx.db, c.req.param('id'))
+    const id = c.req.param('id')
+    ctx.agentManager.abort(id)
+    for (const child of ctx.agentManager.children(id)) {
+      ctx.agentManager.abort(child.sessionId)
+    }
+    const ok = await softDeleteSession(ctx.db, id)
     if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     return c.body(null, 204)
   })
@@ -326,6 +355,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // P1 多项目：keepRecentTokens 按会话项目配置解析（此前用启动目录配置）。
   app.post('/:id/compact', async (c) => {
     const id = c.req.param('id')
+    // P3：压缩改写消息树，与活跃 run 的并发写入存在竞态——先拒绝。
+    if (ctx.agentManager.get(id)) {
+      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再压缩')
+    }
     let session: Awaited<ReturnType<typeof getSession>>
     try {
       session = await getSession(ctx.db, id)
@@ -409,6 +442,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // shake apply：归档原始内容 + 原位替换
   app.post('/:id/shake/apply', async (c) => {
     const id = c.req.param('id')
+    // P3：shake 原位改写消息，与活跃 run 的并发写入存在竞态——先拒绝。
+    if (ctx.agentManager.get(id)) {
+      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再 Shake')
+    }
     let session: Awaited<ReturnType<typeof getSession>>
     try {
       session = await getSession(ctx.db, id)

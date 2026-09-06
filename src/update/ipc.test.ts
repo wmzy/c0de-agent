@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createHandoffServer, requestHandoff } from './ipc.js'
+import { confirmHandoff, createHandoffServer, requestHandoff } from './ipc.js'
 
 describe('handoff IPC', () => {
   it('new instance requests handoff, old instance handler invoked', async () => {
@@ -128,6 +128,51 @@ describe('handoff IPC', () => {
       await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0))
     } finally {
       exitSpy.mockRestore()
+      await server.close()
+    }
+  })
+
+  it('POST /handoff-confirm 触发 onConfirm（两阶段交接第二阶段）', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined)
+    const server = await createHandoffServer(async () => {}, { onConfirm })
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/handoff-confirm`, {
+        method: 'POST',
+      })
+      expect(res.status).toBe(200)
+      await vi.waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1))
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('confirmHandoff 向旧实例发起确认；旧实例不可达时静默（尽力而为）', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined)
+    const server = await createHandoffServer(async () => {}, { onConfirm })
+    try {
+      await confirmHandoff(server.port)
+      await vi.waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1))
+      // 不可达端口：不抛错
+      await expect(confirmHandoff(1)).resolves.toBeUndefined()
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('handoff-confirm token 不匹配返回 401 且不触发 onConfirm', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined)
+    const server = await createHandoffServer(async () => {}, {
+      expectedToken: 'right-token',
+      onConfirm,
+    })
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/handoff-confirm`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer wrong-token' },
+      })
+      expect(res.status).toBe(401)
+      expect(onConfirm).not.toHaveBeenCalled()
+    } finally {
       await server.close()
     }
   })

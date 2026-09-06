@@ -182,6 +182,13 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
       .catch(() => {})
   }, [sessionId, qc])
 
+  // P1：附着后台 run——挂起期间切换页面后回来 / 刷新时，重挂权限弹窗并显示运行态，
+  // 消除「权限弹窗挂起 + 导航离开 = 会话锁死无 UI 可恢复」的死角。
+  // attach 经 useCallback 稳定且随 sessionId 重建，直接作为唯一依赖。
+  useEffect(() => {
+    void chat.attach()
+  }, [chat.attach])
+
   const showInterruptBanner = coldStartInterrupted || chat.interrupted
 
   // 历史重载时，持久化层把同轮 assistant(tool_call) 与 tool(tool_result) 存成独立
@@ -476,6 +483,16 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                   type="button"
                 >
                   忽略
+                </button>
+              </div>
+            )}
+            {chat.attachedRun && (
+              <div className={interruptBanner} data-testid="attached-run-banner">
+                <span>
+                  对话正在运行中（可能在其他标签页启动，或挂起期间切换了页面）。完成后自动刷新。
+                </span>
+                <button onClick={() => chat.abort()} type="button" title="中止后台运行中的对话">
+                  中止
                 </button>
               </div>
             )}

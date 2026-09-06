@@ -67,7 +67,14 @@ function createInteractivePermissionChecker(
 
       // 交互式确认
       const toolCallId = randomUUID()
-      const request: PermissionRequest = { toolCallId, tool: tool.name, input }
+      const request: PermissionRequest = {
+        toolCallId,
+        tool: tool.name,
+        input,
+        // P1：绑定会话 id——挂起期间用户切换页面后，前端经
+        // GET /api/permissions/:sessionId/pending 重挂确认弹窗。
+        ...(ctx.session?.id ? { sessionId: ctx.session.id } : {}),
+      }
       const promise = new Promise<PermissionResult>((resolve) => {
         // pending 注册到全局 store，confirm 端点按 toolCallId 直接寻址，
         // 不依赖当前 agent run 是否仍在 agentManager 中注册。

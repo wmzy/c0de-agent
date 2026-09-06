@@ -251,13 +251,16 @@ export function SessionList({
       qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
       return true
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : '重命名失败')
+      // P3：重命名失败此前写入 deleteError，错误条误显示「删除失败」前缀。
+      setRenameError(err instanceof Error ? err.message : '重命名失败')
       return false
     }
   }
   const [showRecycle, setShowRecycle] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [renameError, setRenameError] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  const [importNotice, setImportNotice] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [search, setSearch] = useState('')
   // P2-6：跨会话内容搜索的防抖词（用户停止输入 300ms 后触发服务端查询）
@@ -310,18 +313,23 @@ export function SessionList({
     })
   }
 
-  /** 导入会话导出 JSON：成功后刷新会话树并跳转到导入的会话。 */
+  /** 导入会话导出 JSON：成功后刷新会话树并跳转到导入的会话。
+   *  flattened 提示（P2）：原会话的分支树结构被扁平化为独立根会话。 */
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = '' // 允许重复选择同一文件
     if (!file) return
     setImportError(null)
+    setImportNotice(null)
     setImporting(true)
     try {
       const data = JSON.parse(await file.text()) as unknown
       const result = await sessionAPI.importSession(data, projectId)
       await qc.invalidateQueries({ queryKey: ['sessions'] })
       await qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      if (result.flattened) {
+        setImportNotice('已导入：原会话的分支树结构无法随迁，已作为独立会话导入。')
+      }
       onSelect(result.sessionId)
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err))
@@ -373,9 +381,19 @@ export function SessionList({
           删除失败：{deleteError}
         </div>
       )}
+      {renameError && (
+        <div className={errorBar} data-testid="rename-error">
+          重命名失败：{renameError}
+        </div>
+      )}
       {importError && (
         <div className={errorBar} data-testid="import-error">
           导入失败：{importError}
+        </div>
+      )}
+      {importNotice && (
+        <div className={noticeBar} data-testid="import-notice">
+          {importNotice}
         </div>
       )}
       {!showRecycle && (
@@ -392,7 +410,11 @@ export function SessionList({
       {!showRecycle ? (
         <>
           {!isLoading && visibleTree.length === 0 && extraMatches.length === 0 ? (
-            <div className={empty}>{search ? '无匹配会话' : '该项目下暂无会话'}</div>
+            <div className={empty}>
+              {search
+                ? '无匹配会话（CLI 会话不在 Web 会话树中，可用 `c0de sessions list` 查看）'
+                : '该项目下暂无会话'}
+            </div>
           ) : null}
           {visibleTree.length > 0 && (
             <BranchTree
@@ -453,6 +475,19 @@ function RecycleBin({ projectId }: { projectId: string }) {
   // P1-2：当前孤儿会话 id（目录失效且未随 restore 归属成功），提供「归属到当前项目」入口
   const [orphanId, setOrphanId] = useState<string | null>(null)
 
+  // P3：回收站搜索（此前删掉的会话只能逐行翻）——标题+消息内容，服务端搜索。
+  const [search, setSearch] = useState('')
+  const [searchDebounced, setSearchDebounced] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
+    return () => clearTimeout(t)
+  }, [search])
+  const { data: searchResults } = useQuery({
+    queryKey: ['sessions', 'search-deleted', projectId, searchDebounced],
+    queryFn: () => sessionAPI.search(searchDebounced, projectId, true),
+    enabled: searchDebounced.length > 1,
+  })
+
   const rebindMut = useMutation({
     mutationFn: (id: string) => sessionAPI.rebind(id, projectId),
     onSuccess: () => {
@@ -488,6 +523,30 @@ function RecycleBin({ projectId }: { projectId: string }) {
   const deletedIds = new Set(deleted.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
     s.parentId !== null && deletedIds.has(s.parentId)
+
+  // 搜索态展示搜索结果（仍限制在回收站内）；默认展示完整列表。
+  const rows =
+    searchDebounced.length > 1 ? (searchResults?.results.map((r) => r.session) ?? []) : deleted
+
+  // P2 子树恢复：统计会话在回收站内的派生后代（任意深度），恢复确认时提示。
+  const byParent = new Map<string, Session[]>()
+  for (const d of deleted) {
+    if (!d.parentId) continue
+    const list = byParent.get(d.parentId) ?? []
+    list.push(d)
+    byParent.set(d.parentId, list)
+  }
+  const countDescendants = (id: string): number => {
+    let n = 0
+    const stack = [...(byParent.get(id) ?? [])]
+    while (stack.length > 0) {
+      const cur = stack.pop()
+      if (!cur) continue
+      n += 1
+      stack.push(...(byParent.get(cur.id) ?? []))
+    }
+    return n
+  }
 
   const handleRemoveForever = (s: Session) => {
     // fail-closed：彻底删除不可恢复，confirm 不可用时宁可阻止
@@ -539,61 +598,81 @@ function RecycleBin({ projectId }: { projectId: string }) {
           清空回收站
         </button>
       </div>
-      {deleted.map((s) => (
-        <div key={s.id} className={deletedRow}>
-          <span title={s.title}>{s.title}</span>
-          {hasDeletedParent(s) && (
-            <span
-              style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }}
-              data-testid={`deleted-parent-${s.id}`}
-            >
-              父会话已删除（恢复时一并还原）
+      <input
+        className={searchInput}
+        type="search"
+        placeholder="搜索回收站标题或消息内容…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        data-testid="trash-search"
+      />
+      {rows.length === 0 && searchDebounced.length > 1 ? (
+        <div className={empty}>回收站无匹配会话</div>
+      ) : null}
+      {rows.map((s) => {
+        const descendants = countDescendants(s.id)
+        return (
+          <div key={s.id} className={deletedRow}>
+            <span title={s.title}>{s.title}</span>
+            {hasDeletedParent(s) && (
+              <span
+                style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }}
+                data-testid={`deleted-parent-${s.id}`}
+              >
+                父会话已删除（恢复时一并还原）
+              </span>
+            )}
+            <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
+              {`剩 ${daysLeft(s.deletedAt)} 天`}
             </span>
-          )}
-          <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-            {`剩 ${daysLeft(s.deletedAt)} 天`}
-          </span>
-          <button
-            type="button"
-            className={restoreBtn}
-            onClick={() =>
-              restore.mutate(
-                { id: s.id, projectId },
-                {
-                  onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
-                  onSuccess: (d) => {
-                    setError(null)
-                    if (d?.orphaned) {
-                      setNotice(`「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目`)
-                      setOrphanId(s.id)
-                    } else if (d?.rebound) {
-                      setNotice(`「${s.title}」已恢复并重新归属到项目`)
-                      setOrphanId(null)
-                    } else {
-                      setNotice(null)
-                      setOrphanId(null)
-                    }
+            <button
+              type="button"
+              className={restoreBtn}
+              onClick={() => {
+                // P2 子树恢复：恢复会连带还原派生会话，有后代时确认框明示数量。
+                if (
+                  descendants > 0 &&
+                  !window.confirm(`恢复「${s.title}」？其 ${descendants} 个派生会话将一并恢复。`)
+                )
+                  return
+                restore.mutate(
+                  { id: s.id, projectId },
+                  {
+                    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+                    onSuccess: (d) => {
+                      setError(null)
+                      if (d?.orphaned) {
+                        setNotice(`「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目`)
+                        setOrphanId(s.id)
+                      } else if (d?.rebound) {
+                        setNotice(`「${s.title}」已恢复并重新归属到项目`)
+                        setOrphanId(null)
+                      } else {
+                        setNotice(null)
+                        setOrphanId(null)
+                      }
+                    },
                   },
-                },
-              )
-            }
-            data-testid={`restore-${s.id}`}
-          >
-            恢复
-          </button>
-          <button
-            type="button"
-            className={restoreBtn}
-            style={{ color: 'var(--error)' }}
-            onClick={() => handleRemoveForever(s)}
-            disabled={removeForever.isPending}
-            data-testid={`remove-forever-${s.id}`}
-            title="彻底删除，不可恢复"
-          >
-            彻底删除
-          </button>
-        </div>
-      ))}
+                )
+              }}
+              data-testid={`restore-${s.id}`}
+            >
+              恢复
+            </button>
+            <button
+              type="button"
+              className={restoreBtn}
+              style={{ color: 'var(--error)' }}
+              onClick={() => handleRemoveForever(s)}
+              disabled={removeForever.isPending}
+              data-testid={`remove-forever-${s.id}`}
+              title="彻底删除，不可恢复"
+            >
+              彻底删除
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

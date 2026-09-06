@@ -68,7 +68,8 @@ c0de update --check
 > **CLI 与 Web 的会话隔离**：`c0de chat` 产生的会话标记为 `cli` 来源，不会出现在
 > Web 界面的会话树中（Web 会话树仅展示 web 会话）。CLI 侧 `c0de sessions list` 会列出
 > 全部会话（`[cli]`/`[web]` 标注），并可删除/恢复任意会话——这是 Web 会话的 CLI 恢复途径。
-> 两者存于同一数据库。`c0de chat --continue` 续接过的 CLI 会话不会被自动清理；
+> 恢复的会话若原项目目录已不存在（孤儿会话），可用 `c0de sessions restore <id> --project <路径>`
+> 显式归属到项目。两者存于同一数据库。`c0de chat --continue` 续接过的 CLI 会话不会被自动清理；
 > 未续接的一次性问答会话 30 天后自动清除。
 
 ## 开发

@@ -100,6 +100,8 @@ type CommandContext = {
   /** 当前会话 id（Web chat 路由注入）：/clear /fork 等命令默认作用于当前会话。 */
   sessionId?: string
   workflowRegistry?: import('./workflows/registry.js').WorkflowRegistry
+  /** 消费渠道（P3）：/model 等命令按渠道给可操作指引（CLI 无底部模型选择器）。 */
+  channel?: 'web' | 'cli'
 }
 
 /** Declarative subcommand definition for commands like /workflow. */

@@ -199,3 +199,24 @@ describe('config route — git 误提交警告', () => {
     expect(body.gitWarning).toBeNull()
   })
 })
+
+describe('config route — 权限模式运行时同步（P1 修复）', () => {
+  it('PATCH permission.defaultMode=auto → ctx.permissionMode 立即生效（无需重启）', async () => {
+    const { app, ctx } = await setup()
+    expect(ctx.permissionMode).toBe('default')
+    const res = await patchBody(app, { permission: { defaultMode: 'auto' } })
+    expect(res.status).toBe(200)
+    expect(ctx.permissionMode).toBe('auto')
+    // 与草稿页底栏开关（PUT /api/permissions）语义一致：既持久化又即时生效
+    const file = JSON.parse(readFileSync(join(ctx.cwd, '.c0de', 'config.json'), 'utf-8')) as {
+      permission?: { defaultMode?: string }
+    }
+    expect(file.permission?.defaultMode).toBe('auto')
+  })
+
+  it('PATCH 其他键不影响 permissionMode（按合并结果同步，不误写）', async () => {
+    const { app, ctx } = await setup()
+    await patchBody(app, { defaultModel: 'gpt-5' })
+    expect(ctx.permissionMode).toBe('default')
+  })
+})

@@ -27,9 +27,14 @@ type HandoffOptions = {
   verify?: (token: string | undefined) => boolean
   /**
    * 响应发出后退出进程（旧实例完整让渡：主服务与资源已在 onHandoff 中关闭）。
-   * 退出延迟 250ms 保证 HTTP 响应刷出；不设时仅响应不退出（测试用）。
+   * 退出延迟 250ms 保证 HTTP 响应刷出；不设时仅响应不退出（测试用 / 两阶段交接）。
    */
   exitAfterResponse?: boolean
+  /**
+   * 收到 POST /handoff-confirm 时调用（两阶段交接第二阶段）：
+   * 新实例绑定端口成功后的确认。调用方在此清理定时器并退出进程。
+   */
+  onConfirm?: () => void | Promise<void>
 }
 
 /**
@@ -63,7 +68,7 @@ function createHandoffServer(
     const expected =
       opts.expectedToken && opts.expectedToken.length > 0 ? `Bearer ${opts.expectedToken}` : ''
     const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      if (req.method === 'POST' && req.url === '/handoff') {
+      if (req.method === 'POST' && (req.url === '/handoff' || req.url === '/handoff-confirm')) {
         const authorized = opts.verify
           ? opts.verify(req.headers.authorization?.replace(/^Bearer\s+/i, ''))
           : expected.length > 0
@@ -72,6 +77,22 @@ function createHandoffServer(
         if (!authorized) {
           res.writeHead(401, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ ok: false, error: 'unauthorized' }))
+          return
+        }
+        if (req.url === '/handoff-confirm') {
+          // 两阶段交接第二阶段：新实例绑定成功后的确认。响应后由 onConfirm
+          // 调度退出；不设 onConfirm 时直接退出（与 exitAfterResponse 独立）。
+          try {
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ ok: true }))
+            if (opts.onConfirm) {
+              await opts.onConfirm()
+            } else {
+              setTimeout(() => process.exit(0), 250)
+            }
+          } catch (error) {
+            console.error('[handoff] confirm handler failed:', error)
+          }
           return
         }
         try {
@@ -135,5 +156,21 @@ async function requestHandoff(port: number, host = '127.0.0.1', token?: string):
   }
 }
 
+/**
+ * 两阶段交接第二阶段（P3 回滚修复）：新实例绑定端口成功后 POST /handoff-confirm，
+ * 旧实例收到才退出进程。连接失败/旧实例已退出时静默——确认是尽力而为，
+ * 超时兜底由旧实例的复活窗口负责（端口占用状态是最终裁判）。
+ */
+async function confirmHandoff(port: number, host = '127.0.0.1', token?: string): Promise<void> {
+  try {
+    await fetch(`http://${host}:${port}/handoff-confirm`, {
+      method: 'POST',
+      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+    })
+  } catch {
+    // 旧实例已退出或不可达：无确认对象，忽略。
+  }
+}
+
 export type { HandoffError, HandoffOptions, HandoffServer }
-export { createHandoffServer, requestHandoff }
+export { confirmHandoff, createHandoffServer, requestHandoff }

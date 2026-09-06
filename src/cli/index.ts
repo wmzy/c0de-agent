@@ -65,8 +65,8 @@ const COMMANDS: CommandSpec[] = [
   },
   {
     name: 'sessions',
-    description: 'Manage CLI/web sessions (list / delete).',
-    options: [],
+    description: 'Manage CLI/web sessions (list / delete / restore / deleted).',
+    options: [{ name: 'project', type: 'string' }],
   },
   {
     name: 'acp',

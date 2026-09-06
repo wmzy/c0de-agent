@@ -30,6 +30,9 @@ type ChatState = {
   pendingSegmentBreak: PendingSegmentBreak | null
   /** SSE 流中断（服务重启等）：true 时显示恢复提示。 */
   interrupted: boolean
+  /** P1：后台附着——本组件实例未发起 SSE 流，但检测到会话有活跃 run
+   *  （其他标签页启动 / 挂起期间切换页面后回来）。true 时显示运行态横幅。 */
+  attachedRun: boolean
 }
 
 type PendingSegmentBreak = {
@@ -69,6 +72,8 @@ type ChatActions = {
   denyTimedOutPermission: () => void
   /** 清除中断状态。 */
   clearInterrupted: () => void
+  /** P1：附着后台 run——查询状态与挂起权限，重挂弹窗并轮询直到 run 结束。 */
+  attach: () => Promise<void>
   reset: () => void
 }
 
@@ -82,6 +87,7 @@ const INITIAL: ChatState = {
   subagents: [],
   pendingSegmentBreak: null,
   interrupted: false,
+  attachedRun: false,
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -226,7 +232,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     case 'error':
       return { ...state, error: errorToMessage(event.error) }
     case 'done':
-      return { ...state, isStreaming: false, pendingPermission: null }
+      return { ...state, isStreaming: false, pendingPermission: null, attachedRun: false }
     default:
       return state
   }
@@ -247,17 +253,59 @@ function errorToMessage(err: AgentError): string {
   }
 }
 
+/** 跨标签页 run 状态频道（P1：同会话多标签页启动/结束广播，触发他页附着/刷新）。 */
+const RUN_CHANNEL = 'c0de-run-state'
+/** 本标签页唯一 id：BroadcastChannel 会把消息投递给同页的其他频道对象
+ *  （仅排除投递对象本身），订阅侧据此忽略本页广播，避免自发自收。 */
+const TAB_ID =
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2)
+
+type RunStateMessage = { from: string; sessionId: string; active: boolean }
+
+function broadcastRunState(msg: Omit<RunStateMessage, 'from'>): void {
+  if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return
+  try {
+    const ch = new BroadcastChannel(RUN_CHANNEL)
+    ch.postMessage({ ...msg, from: TAB_ID })
+    ch.close()
+  } catch {
+    // BroadcastChannel 不可用：忽略（无跨标签页同步）
+  }
+}
+
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
+  // P1 后台附着：流式/附着态镜像 + 轮询代数与定时器。
+  const streamingRef = useRef(false)
+  const attachedRef = useRef(false)
+  const attachingRef = useRef(false)
+  const pollGenRef = useRef(0)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 段切换确认待发内容（confirmBreak/cancelBreak 读取，避免闭包staleness）
   const pendingRef = useRef<PendingSegmentBreak | null>(null)
   const llmDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const qc = useQueryClient()
 
+  /** 停止附着轮询（幂等：递增代数使在途 tick 失效）。 */
+  const stopPoll = useCallback(() => {
+    pollGenRef.current += 1
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+  }, [])
+
   // 切换会话时重置本地流式状态；历史消息由调用方合并加载
+  // P1：同时停止附着轮询并复位镜像 ref——挂起/附着态随会话切换整体作废。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅依赖 sessionId 触发重置
   useEffect(() => {
+    stopPoll()
+    streamingRef.current = false
+    attachedRef.current = false
+    attachingRef.current = false
     setState(INITIAL)
   }, [sessionId])
 
@@ -268,6 +316,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const doStream = useCallback(
     async (content: string, opts: ChatOpts | undefined): Promise<boolean> => {
       abortRef.current = new AbortController()
+      // P1：标记流式态并广播 run 启动——同会话其他标签页据此附着显示运行态。
+      streamingRef.current = true
+      broadcastRunState({ sessionId, active: true })
       // 追踪是否收到 error 事件（区分服务端正常错误与连接中断）
       let gotError = false
       try {
@@ -371,6 +422,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           setState((s) => ({ ...s, isStreaming: false }))
         }
         return false
+      } finally {
+        // P1：无论正常完成/错误/中止，广播 run 结束——他页附着者据此停止轮询刷新。
+        streamingRef.current = false
+        broadcastRunState({ sessionId, active: false })
       }
     },
     [sessionId, qc],
@@ -443,10 +498,11 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         agentAPI.confirmTool(toolCallId, approved).catch((err) => {
           const e = err as { status?: number }
           if (e?.status === 404) {
-            // 超时（5 分钟）或已被其他标签页处理：明确提示，避免「以为已批准」。
+            // 已被处理（其他标签页确认/拒绝）或 run 已中止：明确提示，避免「以为已批准」。
+            // P3 文案修正：此前写「超过 5 分钟未确认」，但 P2-9 后交互式权限不再超时自动拒绝。
             setState((s) => ({
               ...s,
-              error: '权限请求已过期（超过 5 分钟未确认）或已处理，工具未执行',
+              error: '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
             }))
           } else {
             console.error('[权限确认] 失败，工具调用可能已过期:', err)
@@ -493,7 +549,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     })
   }, [])
 
-  // 超时后显式拒绝：resolve store 中的 pending 为 deny，run 继续执行。
+  /** 超时后显式拒绝：resolve store 中的 pending 为 deny，run 继续执行。 */
   const denyTimedOutPermission = useCallback(() => {
     setState((s) => {
       if (s.permissionTimeout) {
@@ -503,6 +559,90 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       return { ...s, permissionTimeout: null }
     })
   }, [])
+
+  /** P1：附着结束——停止轮询、复位附着态并刷新消息/调用详情。 */
+  const finishAttach = useCallback(() => {
+    stopPoll()
+    attachedRef.current = false
+    streamingRef.current = false
+    setState((s) => ({
+      ...s,
+      isStreaming: false,
+      attachedRun: false,
+      pendingPermission: null,
+      permissionTimeout: null,
+    }))
+    qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
+    qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
+  }, [qc, sessionId, stopPoll])
+
+  /** P1：附着轮询——每 2s 查状态，run 结束即刷新收尾。代数守卫防重复轮询。 */
+  const pollAttachedRun = useCallback(() => {
+    stopPoll()
+    const token = ++pollGenRef.current
+    const tick = async () => {
+      if (token !== pollGenRef.current) return
+      try {
+        const st = await sessionAPI.status(sessionId)
+        if (st?._tag === 'running') {
+          if (token !== pollGenRef.current) return
+          pollTimerRef.current = setTimeout(() => void tick(), 2000)
+        } else {
+          finishAttach()
+        }
+      } catch {
+        if (token !== pollGenRef.current) return
+        pollTimerRef.current = setTimeout(() => void tick(), 3000)
+      }
+    }
+    pollTimerRef.current = setTimeout(() => void tick(), 2000)
+  }, [finishAttach, sessionId, stopPoll])
+
+  /**
+   * P1：附着后台 run。本实例未发起流（挂起期间切换页面后回来 / 另一标签页启动）时：
+   * 查状态确认 run 活跃 → 查询挂起权限并重挂确认弹窗（有则恢复阻塞的可操作路径）
+   * → 进入附着态并轮询到 run 结束。本实例已在流式时 no-op。
+   */
+  const attach = useCallback(async () => {
+    // attachingRef 同步占位：attach 内有 await，StrictMode/依赖变化下的重入
+    // 若不拦截会并发多份查询与轮询。
+    if (streamingRef.current || attachingRef.current) return
+    attachingRef.current = true
+    try {
+      const st = await sessionAPI.status(sessionId).catch(() => null)
+      if (st?._tag !== 'running') return
+      const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
+      attachedRef.current = true
+      streamingRef.current = true
+      setState((s) => ({
+        ...s,
+        isStreaming: true,
+        attachedRun: true,
+        error: null,
+        ...(pend?.pending ? { pendingPermission: pend.pending, permissionTimeout: null } : {}),
+      }))
+      pollAttachedRun()
+    } finally {
+      attachingRef.current = false
+    }
+  }, [pollAttachedRun, sessionId])
+
+  // P1：订阅同会话其他标签页的 run 状态广播——他页启动时附着，结束时刷新收尾。
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return
+    const ch = new BroadcastChannel(RUN_CHANNEL)
+    ch.onmessage = (ev: MessageEvent<RunStateMessage>) => {
+      const msg = ev.data
+      // 忽略本页广播（BroadcastChannel 同页多频道对象会互投）。
+      if (!msg || msg.from === TAB_ID || msg.sessionId !== sessionId) return
+      if (msg.active) {
+        void attach()
+      } else if (attachedRef.current) {
+        finishAttach()
+      }
+    }
+    return () => ch.close()
+  }, [sessionId, attach, finishAttach])
 
   const clearInterrupted = useCallback(() => {
     setState((s) => ({ ...s, interrupted: false }))
@@ -521,6 +661,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     reopenPermission,
     denyTimedOutPermission,
     clearInterrupted,
+    attach,
     reset,
   }
 }

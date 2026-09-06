@@ -164,6 +164,20 @@ function createChatRoute(ctx: ServerContext): Hono {
       const registry = createSlashRegistry()
       const cmd = registry.get(parsed.name)
       if (cmd) {
+        // P3：变更型命令（清空/压缩/分支直接改写消息树）与活跃 run 的并发
+        // 写入存在竞态——斜杠拦截早于 tryAcquire，须在此显式拒绝。
+        const MUTATING_SLASH = new Set(['compact', 'clear', 'fork'])
+        if (
+          MUTATING_SLASH.has(parsed.name) &&
+          (ctx.agentManager.get(sessionId) || ctx.agentManager.isStarting(sessionId))
+        ) {
+          return apiError(
+            c,
+            409,
+            'RUN_ACTIVE',
+            `该会话已有进行中的对话，请等待完成或中止后再执行 /${parsed.name}`,
+          )
+        }
         // P2-4：执行 config.slashCommands.enabled 过滤（此前该配置无任何消费方）。
         // enabled 为空 = 全部启用（与 tools.enabled 语义一致）；名称兼容带/不带前缀斜杠。
         const enabledList = sessionConfig.slashCommands?.enabled ?? []
@@ -185,6 +199,8 @@ function createChatRoute(ctx: ServerContext): Hono {
           config: sessionConfig,
           // 当前会话 id：/clear /fork 等命令默认作用于当前会话（P2-4）。
           sessionId,
+          // 消费渠道：/model 等命令按渠道给指引（Web 有底部模型选择器）。
+          channel: 'web' as const,
           // 内置斜杠命令（/clear、/fork、/config）仅需 db + config；
           // 但 /workflow run 会走 executeWorkflow → buildWorkflowContext → runSubAgent，
           // 该路径需要 agentRegistry 来派生子 agent，因此必须注入。

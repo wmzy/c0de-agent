@@ -1,7 +1,7 @@
 // 热更新 + 会话迁移包（spec §18）。
 
 export type { HandoffServer } from './ipc.js'
-export { createHandoffServer, requestHandoff } from './ipc.js'
+export { confirmHandoff, createHandoffServer, requestHandoff } from './ipc.js'
 export type { UpdateScheduler, UpdateSchedulerOptions } from './scheduler.js'
 export { createUpdateScheduler } from './scheduler.js'
 export type { SerializedEntry, SerializedSession, SessionSnapshot } from './snapshot.js'

@@ -80,25 +80,35 @@ const modelCommand: SlashCommand = {
   execute: async (_args, ctx) => {
     // P2：诚实化——此前返回「Model set to X」但什么都不生效，后改为引导文案。
     // 现在提供真实信息：优先读本会话活跃段的 provider/model（若存在），
-    // 否则回退默认配置。会话模型切换由底部 ModelSelector 完成。
-    if (ctx.sessionId) {
+    // 否则回退默认配置。会话模型切换由底部 ModelSelector 完成（Web）；
+    // CLI 按渠道给出可操作指引（P3：此前 CLI 输出指向 Web-only 控件，是死路）。
+    const model = async (): Promise<string | null> => {
+      if (!ctx.sessionId) return null
       try {
         const { getLLMSegments } = await import('../session/session.js')
         const segs = await getLLMSegments(ctx.deps.db, ctx.sessionId)
         const last = segs[segs.length - 1]
-        if (last) {
-          return {
-            _tag: 'text',
-            text: `当前会话模型：${last.model}（provider: ${last.provider}）\n切换模型请使用聊天页底部的模型选择器。`,
-          }
-        }
+        if (last) return `${last.model}（provider: ${last.provider}）`
       } catch {
         // 段查询失败回退默认值展示
+      }
+      return null
+    }
+    const sessionModel = await model()
+    if (ctx.channel === 'cli') {
+      return {
+        _tag: 'text',
+        text:
+          `${sessionModel ? `当前会话模型：${sessionModel}` : `默认模型：${ctx.config.defaultModel}（provider: ${ctx.config.defaultProvider}）`}\n` +
+          'CLI 模式不支持会话内切换模型：新会话用 c0de chat --model <model>，' +
+          '或 c0de config set defaultModel <model> 修改默认模型。',
       }
     }
     return {
       _tag: 'text',
-      text: `默认模型：${ctx.config.defaultModel}（provider: ${ctx.config.defaultProvider}）\n切换模型请使用聊天页底部的模型选择器。`,
+      text:
+        `${sessionModel ? `当前会话模型：${sessionModel}` : `默认模型：${ctx.config.defaultModel}（provider: ${ctx.config.defaultProvider}）`}\n` +
+        '切换模型请使用聊天页底部的模型选择器。',
     }
   },
 }

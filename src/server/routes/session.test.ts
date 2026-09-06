@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
@@ -10,7 +10,12 @@ import { projects, sessionEntries, sessions } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries } from '../../session/archive.js'
-import { getSession, updateSessionLastRun } from '../../session/session.js'
+import {
+  createSession,
+  getSession,
+  listDeletedSessions,
+  updateSessionLastRun,
+} from '../../session/session.js'
 import type { Session } from '../../shared/types/message.js'
 import { createServerContext } from '../context.js'
 import type { APIErrorBody } from '../types.js'
@@ -698,6 +703,139 @@ describe('session route', () => {
       const b = (await (await app.request(`/${secondBody.sessionId}/messages`)).json()) as unknown[]
       expect(a).toHaveLength(1)
       expect(b).toHaveLength(1)
+    })
+
+    it('导入带 parentId 的导出 → flattened=true（分支树被扁平化）', async () => {
+      const { app, ctx } = await setup()
+      const projectId = 'import-flat-project'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-flat' })
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: 1,
+          session: { title: 'Forked', parentId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+          messages: [],
+          projectId,
+        }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { flattened: boolean }
+      expect(body.flattened).toBe(true)
+    })
+
+    it('导入携带权限态 metadata → permissionMode/alwaysAllow 随迁', async () => {
+      const { app, ctx } = await setup()
+      const projectId = 'import-meta-project'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-meta' })
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: 1,
+          session: {
+            title: 'Auto',
+            metadata: { permissionMode: 'auto', alwaysAllow: ['bash', 42], junk: 'x' },
+          },
+          messages: [],
+          projectId,
+        }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { sessionId: string; flattened: boolean }
+      expect(body.flattened).toBe(false)
+      const imported = await getSession(ctx.db, body.sessionId)
+      expect(imported?.metadata.permissionMode).toBe('auto')
+      // 白名单仅保留字符串工具名
+      const meta = imported?.metadata as Record<string, unknown>
+      expect(meta.alwaysAllow).toEqual(['bash'])
+    })
+  })
+
+  describe('搜索回收站（P3）', () => {
+    it('GET /search includeDeleted=1 命中回收站会话，默认搜索不含', async () => {
+      const { app, ctx } = await setup()
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'trash-me' }),
+      })
+      const session = (await created.json()) as Session
+      await ctx.db.db.insert(sessionEntries).values({
+        sessionId: session.id,
+        tag: 'message',
+        role: 'user',
+        content: [{ _tag: 'text', text: 'needle-content' }],
+      })
+      await app.request(`/${session.id}`, { method: 'DELETE' })
+
+      // 默认搜索不含回收站
+      const normalRes = await app.request('/search?q=trash-me')
+      expect(((await normalRes.json()) as { results: unknown[] }).results).toHaveLength(0)
+
+      // includeDeleted=1：标题与内容均可命中
+      const titleRes = await app.request('/search?q=trash-me&includeDeleted=1')
+      const titleBody = (await titleRes.json()) as {
+        results: Array<{ session: { id: string }; matchedBy: string }>
+      }
+      expect(titleBody.results).toHaveLength(1)
+      expect(titleBody.results[0]?.session.id).toBe(session.id)
+
+      const contentRes = await app.request('/search?q=needle-content&includeDeleted=1')
+      const contentBody = (await contentRes.json()) as {
+        results: Array<{ session: { id: string }; matchedBy: string }>
+      }
+      expect(contentBody.results).toHaveLength(1)
+      expect(contentBody.results[0]?.matchedBy).toBe('content')
+    })
+  })
+
+  describe('删除运行中会话（P2）', () => {
+    it('DELETE /:id 先中止该会话的活跃 run 再软删除', async () => {
+      const { app, ctx } = await setup()
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'running' }),
+      })
+      const session = (await created.json()) as Session
+      // 占位一个活跃 run（真实中止由 agentManager 内部处理，此处断言调用）
+      ctx.agentManager.tryAcquire(session.id)
+      const abortSpy = vi.spyOn(ctx.agentManager, 'abort')
+
+      const res = await app.request(`/${session.id}`, { method: 'DELETE' })
+      expect(res.status).toBe(204)
+      expect(abortSpy).toHaveBeenCalledWith(session.id)
+    })
+  })
+
+  describe('子树恢复（P2）', () => {
+    it('POST /:id/restore 连带还原派生会话（删除级联的对称）', async () => {
+      const { app, ctx } = await setup()
+      const parent = await createSession(ctx.db, 'root')
+      const child = await createSession(
+        ctx.db,
+        'branch',
+        undefined,
+        undefined,
+        undefined,
+        parent.id,
+      )
+      await app.request(`/${parent.id}`, { method: 'DELETE' })
+      // 级联入回收站
+      const deletedBefore = await listDeletedSessions(ctx.db)
+      expect(deletedBefore).toHaveLength(2)
+
+      const res = await app.request(`/${parent.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      expect(res.status).toBe(200)
+      // 父与分支一并还原
+      expect(await listDeletedSessions(ctx.db)).toHaveLength(0)
+      const restoredChild = await getSession(ctx.db, child.id)
+      expect(restoredChild?.deletedAt).toBeNull()
     })
   })
 })

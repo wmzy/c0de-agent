@@ -16,6 +16,8 @@ type PermissionRequest = {
   toolCallId: string
   tool: string
   input: unknown
+  /** 请求所属会话（P1：跨页面挂起恢复用；无会话上下文的调用方省略）。 */
+  sessionId?: string
 }
 
 /** 待处理的权限确认。 */
@@ -45,6 +47,8 @@ type PermissionStore = {
   resolve(toolCallId: string, approved: boolean): boolean
   has(toolCallId: string): boolean
   size(): number
+  /** 查询某会话当前挂起的权限请求（P1：前端重挂弹窗；无则 null）。 */
+  pendingForSession(sessionId: string): PermissionRequest | null
   /** settle 所有 pending 为 deny 并清空（dev 热重载重建前调用）。 */
   dispose(): void
 }
@@ -95,6 +99,12 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
     },
     size() {
       return pending.size
+    },
+    pendingForSession(sessionId) {
+      for (const p of pending.values()) {
+        if (p.request.sessionId === sessionId) return p.request
+      }
+      return null
     },
     dispose() {
       // dev 热重载重建前调用：所有 pending settle 为 deny（避免悬空 Promise +

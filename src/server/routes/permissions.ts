@@ -138,6 +138,14 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     return c.json({ mode: ctx.sessionPermissionModes.get(sessionId) ?? ctx.permissionMode })
   })
 
+  // GET /:sessionId/pending — 查询会话当前挂起的权限请求（P1：挂起期间切换页面/
+  // 刷新后前端重挂确认弹窗，恢复被阻塞 run 的可操作路径。无挂起返回 pending: null。
+  app.get('/:sessionId/pending', (c) => {
+    const sessionId = c.req.param('sessionId')
+    const pending = ctx.permissionStore.pendingForSession(sessionId)
+    return c.json({ pending })
+  })
+
   // POST /:sessionId/always-allow — 追加工具到会话白名单（幂等）
   app.post('/:sessionId/always-allow', async (c) => {
     const sessionId = c.req.param('sessionId')
