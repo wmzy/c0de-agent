@@ -21,6 +21,7 @@ import {
   getLLMSegments,
   getSession,
   listDeletedSessions,
+  listOrphanDeletedSessions,
   listSessions,
   listSessionsByProject,
   permanentlyDeleteSession,
@@ -152,8 +153,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
 
   // 回收站：已软删除的会话列表（必须注册在 /:id 之前，避免被参数路由吞掉）。
   // ?projectId= 过滤本项目（P1-7：回收站此前全库共享，跨项目可见可清空）。
+  // ?orphan=1 → 仅列出未归属项目的已删会话（删除项目后 FK set null 导致的孤儿，F1）。
   app.get('/deleted', async (c) => {
     const projectId = c.req.query('projectId')
+    if (c.req.query('orphan') === '1') {
+      return c.json(await listOrphanDeletedSessions(ctx.db))
+    }
     const sessions = await listDeletedSessions(ctx.db, projectId)
     return c.json(sessions)
   })

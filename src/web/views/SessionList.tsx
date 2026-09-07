@@ -6,6 +6,7 @@ import { BranchTree } from '../components/BranchTree.js'
 import { DangerConfirmDialog } from '../components/DangerConfirmDialog.js'
 import { Dialog } from '../components/Dialog.js'
 import {
+  useDeletedOrphans,
   useDeletedSessions,
   useDeleteSession,
   useProjects,
@@ -350,7 +351,8 @@ export function SessionList({
       await qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
       const target = projects?.find((p) => p.id === targetId)
       const notes: string[] = []
-      if (result.flattened) notes.push('原会话的分支树结构无法随迁，已作为独立会话导入。')
+      if (result.flattened)
+        notes.push('注意：该会话原属分支树，导入后层级关系已丢失，将作为独立根会话导入。')
       // P1-2：明示工具执行目录，防用户在错误项目继续对话误改文件。
       notes.push(`该会话的工具将在 ${target?.worktree ?? '目标项目的目录'} 执行。`)
       setImportNotice(`已导入到项目「${target?.name ?? '未命名项目'}」：${notes.join(' ')}`)
@@ -567,11 +569,22 @@ function daysLeft(deletedAt: number | null | undefined): number {
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)))
 }
 
+/** 剩余天数 + 绝对到期日（F6：60 天按墙钟倒计时，删除后即使不打开应用也照常到期，
+ *  因此显式给出绝对清除日期，避免用户「以为还有 60 天可用期」的错觉）。 */
+function expiryLabel(deletedAt: number | null | undefined): string {
+  if (!deletedAt) return `剩 ${TRASH_RETENTION_DAYS} 天`
+  const expires = new Date(deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  return `剩 ${daysLeft(deletedAt)} 天 · ${expires.toLocaleDateString()} 清除`
+}
+
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
  *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。
  *  P1-7：仅显示当前项目的删除会话；「清空」仅清空当前项目。 */
 function RecycleBin({ projectId }: { projectId: string }) {
   const { data: deleted, isLoading } = useDeletedSessions(projectId)
+  // F1：孤儿（projectId=null）已删会话——删除项目所产生，任何项目回收站视图都不可见，
+  // 需在本回收站内单独分组暴露，否则 60 天后被静默物理清除。
+  const { data: orphans } = useDeletedOrphans()
   const restore = useRestoreSession()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -758,7 +771,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
               </span>
             )}
             <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-              {`剩 ${daysLeft(s.deletedAt)} 天`}
+              {expiryLabel(s.deletedAt)}
             </span>
             {s.source === 'cli' && (
               <span
@@ -824,6 +837,59 @@ function RecycleBin({ projectId }: { projectId: string }) {
           </div>
         )
       })}
+      {(orphans?.length ?? 0) > 0 && (
+        <>
+          <div className={deletedRow} data-testid="orphan-trash-header">
+            <span style={{ color: 'var(--warning)', fontSize: 12 }}>
+              未归属项目（来自已删除的项目，恢复后可归属到当前项目）
+            </span>
+          </div>
+          {(orphans ?? []).map((s) => (
+            <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
+              <span title={s.worktreePath ?? s.title}>{s.title}</span>
+              <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
+                {expiryLabel(s.deletedAt)}
+              </span>
+              <button
+                type="button"
+                className={restoreBtn}
+                onClick={() =>
+                  restore.mutate(
+                    { id: s.id, projectId },
+                    {
+                      onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+                      onSuccess: (d) => {
+                        setError(null)
+                        setNotice(
+                          d?.orphaned
+                            ? `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`
+                            : `「${s.title}」已恢复并归属到当前项目。`,
+                        )
+                        setOrphanId(d?.orphaned ? s.id : null)
+                      },
+                    },
+                  )
+                }
+                data-testid={`restore-orphan-${s.id}`}
+                title="恢复并归属到当前项目"
+              >
+                恢复到这里
+              </button>
+              <button
+                type="button"
+                className={restoreBtn}
+                style={{ color: 'var(--error)' }}
+                onClick={() => handleRemoveForever(s)}
+                disabled={removeForever.isPending}
+                data-testid={`remove-orphan-${s.id}`}
+                title="彻底删除，不可恢复"
+              >
+                彻底删除
+              </button>
+            </div>
+          ))}
+        </>
+      )}
       {removeTarget && (
         <DangerConfirmDialog
           open={true}

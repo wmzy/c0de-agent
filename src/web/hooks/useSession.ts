@@ -50,6 +50,14 @@ export function useDeletedSessions(projectId?: string) {
   })
 }
 
+/** 未归属项目的已删会话（孤儿，F1）：删除项目后 FK set null，需专门视图暴露。 */
+export function useDeletedOrphans() {
+  return useQuery({
+    queryKey: ['sessions', 'deleted', 'orphans'],
+    queryFn: () => sessionAPI.deletedOrphans(),
+  })
+}
+
 /** 从回收站恢复会话（可带当前项目上下文，孤儿会话自动归属）。 */
 export function useRestoreSession() {
   const qc = useQueryClient()

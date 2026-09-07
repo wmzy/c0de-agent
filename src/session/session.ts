@@ -92,6 +92,16 @@ async function listDeletedSessions(handle: DB, projectId?: string): Promise<Sess
   return rows.map(rowToSession)
 }
 
+/** 列出未归属任何项目的已软删除会话（孤儿）。删除项目时 FK set null 使会话失去 projectId，
+ *  在任何项目的回收站视图都不可见（F1），需专门的全局视图暴露以便恢复/归巢。 */
+async function listOrphanDeletedSessions(handle: DB): Promise<Session[]> {
+  const rows = await handle.db
+    .select()
+    .from(sessions)
+    .where(and(gt(sessions.deletedAt, new Date(0)), isNull(sessions.projectId)))
+  return rows.map(rowToSession)
+}
+
 /**
  * 软删除会话（级联其所有 fork 后代）。设置 deletedAt = now；
  * 60 天后由 purgeDeletedSessions 物理清除。
@@ -115,8 +125,14 @@ async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
     for (const r of children) ids.add(r.id)
   }
   const now = new Date()
+  // 同一次删除级联共享同一批次号：恢复时仅还原同批次后代，避免把早先
+  // 被用户单独删除的分支一并复活（删除/恢复级联的语义不对称缺陷）。
+  const batchId = generateId()
   for (const sid of ids) {
-    await handle.db.update(sessions).set({ deletedAt: now }).where(eq(sessions.id, sid))
+    await handle.db
+      .update(sessions)
+      .set({ deletedAt: now, deletedBatchId: batchId })
+      .where(eq(sessions.id, sid))
   }
   return true
 }
@@ -157,19 +173,29 @@ async function restoreSession(
   const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
   if (!row?.deletedAt) return false
   const ids = new Set<string>([id])
-  // 后代 BFS（与 softDeleteSession 的级联收集对称）
+  // 后代 BFS：仅还原属于同一删除批次的后代（删除时父+后代共享 deletedBatchId）。
+  // 若只按「已删除」收集，会把早先被用户单独删除的分支一并复活（F2 不对称缺陷）。
   if (includeDescendants) {
     let frontier = [id]
     while (frontier.length > 0) {
       const children = await handle.db
         .select({ id: sessions.id })
         .from(sessions)
-        .where(and(gt(sessions.deletedAt, new Date(0)), inArray(sessions.parentId, frontier)))
+        .where(
+          and(
+            gt(sessions.deletedAt, new Date(0)),
+            inArray(sessions.parentId, frontier),
+            row.deletedBatchId
+              ? eq(sessions.deletedBatchId, row.deletedBatchId)
+              : isNull(sessions.deletedBatchId),
+          ),
+        )
       frontier = children.map((r) => r.id).filter((cid) => !ids.has(cid))
       for (const r of children) ids.add(r.id)
     }
   }
-  // 祖先链（仅还原其中已软删除的节点）
+  // 祖先链（仅还原其中已软删除的节点）：为保证恢复节点在会话树可达，
+  // 已删除的祖先无论批次均需一并还原。
   let parentId = row.parentId
   while (parentId) {
     const [parent] = await handle.db.select().from(sessions).where(eq(sessions.id, parentId))
@@ -178,7 +204,10 @@ async function restoreSession(
     parentId = parent.parentId
   }
   for (const sid of ids) {
-    await handle.db.update(sessions).set({ deletedAt: null }).where(eq(sessions.id, sid))
+    await handle.db
+      .update(sessions)
+      .set({ deletedAt: null, deletedBatchId: null })
+      .where(eq(sessions.id, sid))
   }
   return true
 }
@@ -340,19 +369,63 @@ async function purgeTemporarySessions(
   retentionMs = 30 * 24 * 60 * 60 * 1000,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - retentionMs)
-  const rows = await handle.db
-    .select({ id: sessions.id })
+  const all = await handle.db
+    .select({
+      id: sessions.id,
+      parentId: sessions.parentId,
+      agentType: sessions.agentType,
+      updatedAt: sessions.updatedAt,
+    })
     .from(sessions)
-    .where(
-      and(
-        lt(sessions.updatedAt, cutoff),
-        or(eq(sessions.agentType, 'print'), eq(sessions.agentType, 'workflow')),
-      ),
-    )
-  for (const row of rows) {
-    await handle.db.delete(sessions).where(eq(sessions.id, row.id))
+  const roots = all.filter(
+    (r) =>
+      (r.agentType === 'print' || r.agentType === 'workflow') &&
+      r.updatedAt != null &&
+      r.updatedAt.getTime() < cutoff.getTime(),
+  )
+  if (roots.length === 0) return 0
+
+  // 临时会话可能派发过子 agent（其子会话挂 parentId）。父会话直接删除会撞自引用
+  // FK（RESTRICT），且子会话失去父后成为游离节点——故连同全部后代一起物理清除，
+  // 并按拓扑序「子先于父」删除（与 emptyTrash / purgeDeletedSessions 同一策略）。
+  const childrenOf = new Map<string, string[]>()
+  for (const r of all) {
+    if (r.parentId) {
+      const list = childrenOf.get(r.parentId) ?? []
+      list.push(r.id)
+      childrenOf.set(r.parentId, list)
+    }
   }
-  return rows.length
+  const ids = new Set<string>()
+  const collect = (sid: string): void => {
+    if (ids.has(sid)) return
+    ids.add(sid)
+    for (const c of childrenOf.get(sid) ?? []) collect(c)
+  }
+  for (const r of roots) collect(r.id)
+
+  const remaining = new Set(ids)
+  let deleted = 0
+  while (remaining.size > 0) {
+    const leaves = Array.from(remaining).filter(
+      (sid) => !(childrenOf.get(sid) ?? []).some((c) => remaining.has(c)),
+    )
+    if (leaves.length === 0) {
+      // 循环引用兜底：强制逐个删除（数据异常场景）
+      for (const sid of Array.from(remaining)) {
+        await handle.db.delete(sessions).where(eq(sessions.id, sid))
+        remaining.delete(sid)
+        deleted += 1
+      }
+      break
+    }
+    for (const sid of leaves) {
+      await handle.db.delete(sessions).where(eq(sessions.id, sid))
+      remaining.delete(sid)
+      deleted += 1
+    }
+  }
+  return deleted
 }
 
 /**
@@ -538,6 +611,7 @@ async function searchSessions(
       worktreePath: sessions.worktreePath,
       source: sessions.source,
       deletedAt: sessions.deletedAt,
+      deletedBatchId: sessions.deletedBatchId,
       createdAt: sessions.createdAt,
       updatedAt: sessions.updatedAt,
     })
@@ -575,6 +649,7 @@ export {
   getSession,
   listAllSessions,
   listDeletedSessions,
+  listOrphanDeletedSessions,
   listSessions,
   listSessionsByProject,
   permanentlyDeleteSession,

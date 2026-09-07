@@ -27,6 +27,8 @@ const sessionAPI = {
     apiRequest<Session[]>(
       `/api/sessions/deleted${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
+  /** 未归属任何项目的已删会话（删除项目后 FK set null 导致的孤儿，需专门视图暴露）。 */
+  deletedOrphans: () => apiRequest<Session[]>('/api/sessions/deleted?orphan=1'),
   restore: (id: string, projectId?: string) =>
     apiRequest<{ ok: boolean; rebound?: boolean; orphaned?: boolean }>(
       `/api/sessions/${id}/restore`,

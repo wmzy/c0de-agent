@@ -1,4 +1,4 @@
-import { and, isNotNull, sql } from 'drizzle-orm'
+import { and, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessions } from '../db/schema.js'
 import { appendMessage } from './message.js'
@@ -29,13 +29,24 @@ export async function markDeadBackgroundJobs(handle: DB): Promise<number> {
         sql`${sessions.metadata}->'lastRun'->>'status' = 'running'`,
       ),
     )
+  // 父会话已入回收站的不再注入失败通知（否则向 60 天后将清除的会话写死消息）。
+  const parentIds = Array.from(new Set(rows.map((r) => r.parentId).filter((p): p is string => !!p)))
+  const trashedParents = new Set<string>()
+  if (parentIds.length > 0) {
+    const parents = await handle.db
+      .select({ id: sessions.id, deletedAt: sessions.deletedAt })
+      .from(sessions)
+      .where(inArray(sessions.id, parentIds))
+    for (const p of parents) if (p.deletedAt) trashedParents.add(p.id)
+  }
+
   for (const row of rows) {
     await updateSessionLastRun(handle, row.id, {
       status: 'completed',
       agentName: row.agentType ?? undefined,
       startedAt: Date.now(),
     })
-    if (row.parentId) {
+    if (row.parentId && !trashedParents.has(row.parentId)) {
       const synthetic = `<task id="${row.id}" state="failed">\n<task_error>\n后台任务在服务重启前未完成，已标记为失败（可重新派发）\n</task_error>\n</task>`
       await appendMessage(handle, row.parentId, {
         role: 'user',

@@ -13,6 +13,7 @@ type SerializedSession = {
   worktreePath: string | null
   source: string | null
   deletedAt: number | null
+  deletedBatchId: string | null
   createdAt: number
   updatedAt: number
 }
@@ -58,6 +59,7 @@ function toSerializedSession(row: typeof sessions.$inferSelect): SerializedSessi
     worktreePath: row.worktreePath,
     source: row.source,
     deletedAt: row.deletedAt ? toDateMs(row.deletedAt) : null,
+    deletedBatchId: row.deletedBatchId ?? null,
     createdAt: toDateMs(row.createdAt),
     updatedAt: toDateMs(row.updatedAt),
   }
@@ -123,6 +125,7 @@ async function restoreSessions(handle: DB, snapshot: SessionSnapshot): Promise<v
         worktreePath: s.worktreePath,
         source: s.source,
         deletedAt: s.deletedAt != null ? new Date(s.deletedAt) : null,
+        deletedBatchId: s.deletedBatchId ?? null,
         createdAt: new Date(s.createdAt),
         updatedAt: new Date(s.updatedAt),
       })

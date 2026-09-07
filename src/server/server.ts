@@ -221,6 +221,9 @@ async function buildServerContext(
     ...(config.security.token && config.security.token.length > 0
       ? { staticToken: config.security.token }
       : {}),
+    ...(config.security.firstDeviceTtlMs !== undefined
+      ? { firstDeviceTtlMs: config.security.firstDeviceTtlMs }
+      : {}),
   })
 
   const ctx: ServerContext = {

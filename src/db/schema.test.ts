@@ -104,6 +104,7 @@ describe('type inference', () => {
       worktreePath: null,
       source: null,
       deletedAt: null,
+      deletedBatchId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     }

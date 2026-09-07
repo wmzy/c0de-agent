@@ -442,7 +442,7 @@ export function ProjectIndicator({
         <DangerConfirmDialog
           open={true}
           title="删除项目"
-          description={`将删除项目「${project.name ?? '未命名项目'}」。该项目的看板将永久删除；全部会话将移入回收站（60 天内可恢复）。`}
+          description={`将删除项目「${project.name ?? '未命名项目'}」。看板将永久删除；该项目的全部会话将移入回收站的「未归属项目」分组（60 天后自动清除），恢复后需重新归属到某个项目。若项目目录也被删除，会话仅能在 CLI 用 c0de sessions restore <id> --project <路径> 恢复。`}
           confirmWord={project.name ?? '未命名项目'}
           confirmLabel="删除项目"
           busy={deleteMut.isPending}

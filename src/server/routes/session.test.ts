@@ -129,6 +129,30 @@ describe('session route', () => {
     expect(after.some((s) => s.id === created.id)).toBe(false)
   })
 
+  it('GET /deleted?orphan=1 返回项目删除后失去归属的会话（F1）', async () => {
+    const { app, ctx } = await setup()
+    const dir = mkdtempSync(join(tmpdir(), 'orphan-trash-'))
+    try {
+      const project = await fromDirectory(ctx.db, dir)
+      const created = await createSession(ctx.db, 'Orphan', project.id)
+      // 软删除后清空 projectId，模拟「删除项目 → FK set null」留下的孤儿
+      await app.request(`/${created.id}`, { method: 'DELETE' })
+      await ctx.db.db.update(sessions).set({ projectId: null }).where(eq(sessions.id, created.id))
+
+      const orphanRes = await app.request('/deleted?orphan=1')
+      expect(orphanRes.status).toBe(200)
+      const orphans = (await orphanRes.json()) as Session[]
+      expect(orphans.some((s) => s.id === created.id)).toBe(true)
+
+      // 任一项目的回收站视图都不包含孤儿（此前正是不可见的根因）
+      const scopedRes = await app.request(`/deleted?projectId=${encodeURIComponent(project.id)}`)
+      const scoped = (await scopedRes.json()) as Session[]
+      expect(scoped.some((s) => s.id === created.id)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('GET /:id/messages returns message list', async () => {
     const { app, ctx } = await setup()
     const createRes = await app.request('/', {

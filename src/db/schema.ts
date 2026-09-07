@@ -49,6 +49,8 @@ export const sessions = pgTable(
     source: text('source').default(sql`null`),
     /** 软删除时间戳；null=未删除。回收站保留 60 天后物理清除。 */
     deletedAt: timestamp('deleted_at', { withTimezone: true }).default(sql`null`),
+    /** 删除级联批次号：同一次 softDeleteSession 的父+后代共享；恢复时仅还原同批次后代。 */
+    deletedBatchId: uuid('deleted_batch_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

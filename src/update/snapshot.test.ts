@@ -38,6 +38,7 @@ describe('orderSessionsByParent', () => {
       worktreePath: null,
       source: null,
       deletedAt: null,
+      deletedBatchId: null,
       createdAt: 1,
       updatedAt: 1,
     }
@@ -52,6 +53,7 @@ describe('orderSessionsByParent', () => {
       worktreePath: null,
       source: null,
       deletedAt: null,
+      deletedBatchId: null,
       createdAt: 1,
       updatedAt: 1,
     }

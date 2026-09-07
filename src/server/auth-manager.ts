@@ -10,7 +10,15 @@
 //   - authEnabled=false 时不启用。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync, type FSWatcher, mkdirSync, readFileSync, watch, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  type FSWatcher,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  watch,
+  writeFileSync,
+} from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 const DEVICES_FILENAME = 'devices.json'
@@ -46,8 +54,9 @@ type AuthManagerOptions = {
   tokenFilePath?: string
   /** 配对码有效期（ms），默认 10 分钟。 */
   pairingTtlMs?: number
-  /** 轮换后仍接受为 handoff 凭据的旧 bootstrap 数量，默认 3。 */
-  handoffTokenRetention?: number
+  /** 首设备 bootstrap TTL（ms）：>0 时，bootstrap 超过此时长即拒绝首设备注册
+   *  （需重启 serve 重新生成）。0=不限制。用于缩短「URL 泄漏后被抢先注册」的窗口。 */
+  firstDeviceTtlMs?: number
   now?: () => number
 }
 
@@ -56,7 +65,8 @@ export type AuthManager = {
   readonly bootstrap: string | undefined
   /** API/WS 请求校验：仅设备 token 有效（静态模式下 staticToken 有效）。 */
   verify(token: string | undefined): boolean
-  /** handoff 端点校验：设备 token + 当前/历史 bootstrap。 */
+  /** handoff 端点校验：设备 token + 当前 bootstrap（历史 bootstrap 不接受，
+   *  否则已泄漏的旧 URL token 仍可借 handoff 强杀本地服务）。 */
   verifyHandoff(token: string | undefined): boolean
   /** 首次设备注册：校验 bootstrap 后换发设备 token 并轮换 bootstrap。
    *  无设备时首个凭 bootstrap 的请求即视为首设备（免审批），后续请求需配对审批。
@@ -109,7 +119,7 @@ function safeEqual(a: string, b: string): boolean {
 export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   const { dataDir, staticToken, tokenFilePath, now = Date.now } = opts
   const pairingTtlMs = opts.pairingTtlMs ?? 10 * 60 * 1000
-  const handoffRetention = opts.handoffTokenRetention ?? 3
+  const firstDeviceTtlMs = opts.firstDeviceTtlMs ?? 0
   const tokenPath = tokenFilePath ?? join(dataDir, 'auth-token')
   const devicesPath = join(dataDir, DEVICES_FILENAME)
 
@@ -119,9 +129,6 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
 
   const devices = new Map<string, DeviceRecord>()
   loadDevices()
-
-  // 轮换历史 bootstrap（仅 handoff 校验接受，API 不接受）
-  const previousBootstraps: string[] = []
 
   const pending = new Map<string, PendingPairing>()
 
@@ -180,15 +187,10 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   /** 轮换 bootstrap：写入新 token 文件并保留历史（handoff 用）。 */
   function rotateBootstrap(): void {
     if (staticToken && staticToken.length > 0) return // 静态模式不轮换
-    const next = randomBytes(32).toString('hex')
-    if (bootstrap) {
-      previousBootstraps.push(bootstrap)
-      if (previousBootstraps.length > handoffRetention) previousBootstraps.shift()
-    }
-    bootstrap = next
+    bootstrap = randomBytes(32).toString('hex')
     try {
       if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
-      writeFileSync(tokenPath, next, 'utf-8')
+      writeFileSync(tokenPath, bootstrap, 'utf-8')
     } catch {
       // 写文件失败：内存 token 仍已轮换，进程内一致
     }
@@ -205,6 +207,16 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   function verifyBootstrap(token: string | undefined): boolean {
     if (!token || !bootstrap) return false
     return safeEqual(token, bootstrap)
+  }
+
+  /** bootstrap 自生成（token 文件 mtime）起的存活时长；静态模式或无法读取返回 null。 */
+  function bootstrapAge(): number | null {
+    if (staticToken && staticToken.length > 0) return null
+    try {
+      return now() - statSync(tokenPath).mtimeMs
+    } catch {
+      return null
+    }
   }
 
   function cleanExpiredPairings(): void {
@@ -231,9 +243,6 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
       if (!token) return false
       if (verifyDeviceToken(token)) return true
       if (verifyBootstrap(token)) return true
-      for (const prev of previousBootstraps) {
-        if (safeEqual(token, prev)) return true
-      }
       return false
     },
 
@@ -242,6 +251,11 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
       if (!verifyBootstrap(bootstrapToken)) return null
       // 已有设备 → bootstrap 已失效，不得再凭它注册（需配对审批）
       if (devices.size > 0) return null
+      // 首设备注册窗口：bootstrap 超过 firstDeviceTtlMs 后拒绝（缩短先到先得竞态窗口）。
+      if (firstDeviceTtlMs > 0) {
+        const age = bootstrapAge()
+        if (age != null && age > firstDeviceTtlMs) return null
+      }
 
       const deviceToken = randomBytes(32).toString('hex')
       const record: DeviceRecord = {

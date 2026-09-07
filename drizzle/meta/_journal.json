@@ -57,6 +57,13 @@
       "when": 1788425007432,
       "tag": "0007_same_wilson_fisk",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788730611917,
+      "tag": "0008_tranquil_lily_hollister",
+      "breakpoints": true
     }
   ]
 }

@@ -123,6 +123,24 @@ describe('session CRUD', () => {
     expect((await getSession(handle, leaf.id))?.deletedAt).toBeNull()
   })
 
+  it('恢复根会话不复活早先被单独删除的分支（删除/恢复批次对称，F2）', async () => {
+    const root = await createSession(handle, 'Root')
+    const branchA = await createSession(handle, 'A', undefined, undefined, undefined, root.id)
+    const branchB = await createSession(handle, 'B', undefined, undefined, undefined, root.id)
+    // 先单独删除 B
+    await softDeleteSession(handle, branchB.id)
+    // 再删除根：级联 root + A（B 先入回收站，保留更早的删除批次）
+    await softDeleteSession(handle, root.id)
+    expect(await listDeletedSessions(handle)).toHaveLength(3)
+
+    // 恢复 root → 只还原 root + A；早先单独删除的 B 仍留在回收站
+    const ok = await restoreSession(handle, root.id)
+    expect(ok).toBe(true)
+    expect((await getSession(handle, root.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, branchA.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, branchB.id))?.deletedAt).not.toBeNull()
+  })
+
   it('restore 子会话不还原兄弟分支（只还原目标子树 + 祖先）', async () => {
     const root = await createSession(handle, 'Root')
     const branchA = await createSession(handle, 'A', undefined, undefined, undefined, root.id)

@@ -3,7 +3,7 @@
 // 新建文件原因：auth-manager 是新增模块，无既有测试文件覆盖。
 
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,8 +46,9 @@ describe('createAuthManager — 设备注册与 token 轮换（P2-16）', () => 
     // 新 bootstrap 已写入文件且与旧值不同
     expect(mgr.bootstrap).toBeDefined()
     expect(mgr.bootstrap).not.toBe(bootstrap)
-    // handoff 校验仍接受历史 bootstrap（热更新新旧实例握手）
-    expect(mgr.verifyHandoff(bootstrap ?? '')).toBe(true)
+    // handoff 校验不再接受已轮换的历史 bootstrap（仅当前 bootstrap + 设备 token，
+    // 防止已泄漏的旧 URL token 借 handoff 强杀本地服务）
+    expect(mgr.verifyHandoff(bootstrap ?? '')).toBe(false)
   })
 
   it('bootstrap 已消费后不允许再次注册（需配对审批）', async () => {
@@ -77,6 +78,25 @@ describe('createAuthManager — 设备注册与 token 轮换（P2-16）', () => 
     expect(mgr.verify('other')).toBe(false)
     expect(await mgr.registerFirstDevice('fixed-token', 'x')).toBeNull()
     expect(mgr.requestPairing('x')).toBeNull()
+  })
+
+  it('bootstrap 超过 firstDeviceTtlMs 后拒绝首设备注册', async () => {
+    const token = randomBytes(16).toString('hex')
+    const tokenPath = join(dir, 'auth-token')
+    writeFileSync(tokenPath, token, { mode: 0o600 })
+    const past = (Date.now() - 60_000) / 1000
+    utimesSync(tokenPath, past, past)
+
+    const mgr = createAuthManager({ dataDir: dir, firstDeviceTtlMs: 30_000 })
+    expect(mgr.bootstrap).toBe(token)
+    expect(await mgr.registerFirstDevice(token, 'x')).toBeNull()
+  })
+
+  it('bootstrap 在 firstDeviceTtlMs 内可注册首设备', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir, firstDeviceTtlMs: 60_000 })
+    const token = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'x')
+    expect(token).toBeDefined()
+    expect(mgr.verify(token ?? '')).toBe(true)
   })
 })
 

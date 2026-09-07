@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "deleted_batch_id" uuid;
