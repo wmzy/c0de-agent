@@ -96,7 +96,8 @@ export async function recoverFromOverflow(state: AgentState, deps: LoopDeps): Pr
  *    死锁在下一轮用户输入（agentLoop 重入）时重置。
  *  - mid-turn：midTurnEnabled 单独 opt-in（默认关闭）时按 enabled:true 阈值静默压缩，
  *    复用 shouldCompact 逻辑但不发 error/warning，压缩后刷新内存消息视图。
- *  两者都静默消费 compactContext 的 text_delta 通知（不透传给用户）。 */
+ *  两者都静默消费 compactContext 的 text_delta 通知，但把 compaction_done 透传给前端，
+ *  让用户在上下文被改写时得到提示（可在归档面板查看原始内容）。 */
 export async function* runCompactionIfNeeded(
   state: AgentState,
   deps: LoopDeps,
@@ -109,8 +110,10 @@ export async function* runCompactionIfNeeded(
   ) {
     // 自动压缩：复用 compactContext；失败非致命，仅记录警告不中断主循环。
     try {
-      for await (const _ev of compactContext(state, deps)) {
-        // 静默消费压缩通知事件，不透传给用户（保持自动压缩的原有静默语义）
+      for await (const ev of compactContext(state, deps)) {
+        // 静默消费 text_delta 通知，但把 compaction_done 透传给前端——
+        // 上下文被改写，用户应被告知（可在归档面板查看原始内容），而非悄然失忆。
+        if (ev._tag === 'compaction_done') yield ev
       }
       // 进度保护：compactContext 已重算 state.tokenBudget.used。若压缩后仍超阈值
       // （典型成因：keepRecentTokens 本身已超 historyBudget），压缩无法再释放足够
@@ -152,8 +155,9 @@ export async function* runCompactionIfNeeded(
     // 中轮压缩静默执行：compactContext 内部已发 text_delta 通知，
     // 不再 yield error/warning（与 turn-end 自动压缩的进度保护语义不同）。
     try {
-      for await (const _ev of compactContext(state, deps)) {
-        // 静默消费压缩通知，不透传给用户
+      for await (const ev of compactContext(state, deps)) {
+        // 静默消费 text_delta 通知，透传 compaction_done（与 turn-end 一致）。
+        if (ev._tag === 'compaction_done') yield ev
       }
       // 压缩改写了消息历史 → 刷新内存视图，供下一轮上下文重建使用
       state.messages = await getMessages(deps.db, state.session.id)

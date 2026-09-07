@@ -33,6 +33,8 @@ type ChatState = {
   /** P1：后台附着——本组件实例未发起 SSE 流，但检测到会话有活跃 run
    *  （其他标签页启动 / 挂起期间切换页面后回来）。true 时显示运行态横幅。 */
   attachedRun: boolean
+  /** 自动压缩发生后的提示（可关闭）。上下文被改写，用户应可知晓。 */
+  compactionNotice: string | null
 }
 
 type PendingSegmentBreak = {
@@ -72,6 +74,8 @@ type ChatActions = {
   denyTimedOutPermission: () => void
   /** 清除中断状态。 */
   clearInterrupted: () => void
+  /** 清除压缩提示横幅。 */
+  clearCompactionNotice: () => void
   /** P1：附着后台 run——查询状态与挂起权限，重挂弹窗并轮询直到 run 结束。 */
   attach: () => Promise<void>
   reset: () => void
@@ -88,6 +92,7 @@ const INITIAL: ChatState = {
   pendingSegmentBreak: null,
   interrupted: false,
   attachedRun: false,
+  compactionNotice: null,
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -231,6 +236,11 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
       }
     case 'error':
       return { ...state, error: errorToMessage(event.error) }
+    case 'compaction_done':
+      return {
+        ...state,
+        compactionNotice: `已自动压缩上下文：${event.compactedCount} 条历史被摘要，保留最近 ${event.keptCount} 条。可在归档面板查看原始内容。`,
+      }
     case 'done':
       return { ...state, isStreaming: false, pendingPermission: null, attachedRun: false }
     default:
@@ -648,6 +658,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     setState((s) => ({ ...s, interrupted: false }))
   }, [])
 
+  const clearCompactionNotice = useCallback(() => {
+    setState((s) => ({ ...s, compactionNotice: null }))
+  }, [])
+
   const reset = useCallback(() => setState(INITIAL), [])
 
   return {
@@ -661,6 +675,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     reopenPermission,
     denyTimedOutPermission,
     clearInterrupted,
+    clearCompactionNotice,
     attach,
     reset,
   }

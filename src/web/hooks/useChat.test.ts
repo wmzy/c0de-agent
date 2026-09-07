@@ -19,6 +19,7 @@ const base: ChatState = {
   pendingSegmentBreak: null,
   interrupted: false,
   attachedRun: false,
+  compactionNotice: null,
 }
 
 function asst(parts: MessageContent[]): Message[] {
@@ -154,6 +155,17 @@ describe('reduceChatEvent', () => {
       success: false,
     })
     expect(s.subagents.find((x) => x.childId === 'c2')?.status).toBe('failed')
+  })
+
+  it('compaction_done 设置压缩提示（自动压缩不再静默）', () => {
+    const s = reduceChatEvent(base, {
+      _tag: 'compaction_done',
+      summary: 'sum',
+      compactedCount: 12,
+      keptCount: 5,
+    })
+    expect(s.compactionNotice).toContain('12')
+    expect(s.compactionNotice).toContain('5')
   })
 })
 

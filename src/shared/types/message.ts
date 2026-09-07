@@ -43,6 +43,9 @@ type SessionMetadata = {
   lastOpenedAt?: number
   /** P2：会话级授权模式覆盖（'auto'/'default'），跨重启持久化。 */
   permissionMode?: 'auto' | 'default'
+  /** 回收站条目首次被用户看到的时间戳（ms）。回收站保留期自此起算，而非删除时间——
+   *  避免「删除后长期不开服务，重启即被静默物理清除、从未见过倒计时」的墙钟缺陷。 */
+  trashSeenAt?: number
 }
 
 /** A conversation session (may have a parent for branching). */

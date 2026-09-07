@@ -14,10 +14,13 @@ import {
   getSession,
   listDeletedSessions,
   listSessions,
+  purgeDeletedSessions,
   purgeTemporarySessions,
   restoreSession,
+  restoreSessionCore,
   softDeleteSession,
   touchSession,
+  touchTrashSeen,
   updateSessionLastRun,
   updateSessionTitle,
   upgradeTemporarySession,
@@ -198,6 +201,103 @@ describe('session CRUD', () => {
     const parent = await createSession(handle, 'P')
     const child = await createSession(handle, 'C', undefined, 'coder', undefined, parent.id)
     expect(child.parentId).toBe(parent.id)
+  })
+
+  it('restoreSessionCore 报告跨批次祖先还原（用户早先单独删除的父会话被连带还原）', async () => {
+    const root = await createSession(handle, 'Root')
+    const a = await createSession(handle, 'A', undefined, undefined, undefined, root.id)
+    const b = await createSession(handle, 'B', undefined, undefined, undefined, root.id)
+    // 先单独删除 A（批次1）
+    await softDeleteSession(handle, a.id)
+    // 再删除 root（批次2：级联 root + B；A 已删不重复收集）
+    await softDeleteSession(handle, root.id)
+    expect(await listDeletedSessions(handle)).toHaveLength(3)
+
+    // 恢复 A → 为可达性连带还原祖先 root（跨批次），兄弟 B 仍留回收站
+    const r = await restoreSessionCore(handle, a.id)
+    expect(r.restored).toBe(true)
+    expect(r.restoredAncestorCount).toBe(1)
+    expect(r.crossedBatchAncestor).toBe(true)
+    expect((await getSession(handle, root.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, b.id))?.deletedAt).not.toBeNull()
+  })
+
+  it('restoreSessionCore 同批次祖先还原不标记跨批次', async () => {
+    const root = await createSession(handle, 'Root')
+    const a = await createSession(handle, 'A', undefined, undefined, undefined, root.id)
+    await softDeleteSession(handle, root.id)
+    const r = await restoreSessionCore(handle, a.id)
+    expect(r.restored).toBe(true)
+    expect(r.restoredAncestorCount).toBe(1)
+    expect(r.crossedBatchAncestor).toBe(false)
+  })
+})
+
+describe('purgeDeletedSessions — 保留期自首次看到起算（F6）', () => {
+  let handle: DB
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  it('从未被看到的已删会话（超期）不会被物理清除', async () => {
+    const s = await createSession(handle, 'NeverSeen')
+    await softDeleteSession(handle, s.id)
+    const old = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000)
+    await handle.db.update(sessions).set({ deletedAt: old }).where(eq(sessions.id, s.id))
+    expect(await purgeDeletedSessions(handle)).toBe(0)
+    expect(await getSession(handle, s.id)).not.toBeNull()
+  })
+
+  it('被看到且超过保留期的会话被清除', async () => {
+    const s = await createSession(handle, 'Seen')
+    await softDeleteSession(handle, s.id)
+    await touchTrashSeen(handle)
+    const oldMs = Date.now() - 100 * 24 * 60 * 60 * 1000
+    await handle.db
+      .update(sessions)
+      .set({ deletedAt: new Date(oldMs - 1000), metadata: { trashSeenAt: oldMs } })
+      .where(eq(sessions.id, s.id))
+    expect(await purgeDeletedSessions(handle)).toBe(1)
+    expect(await getSession(handle, s.id)).toBeNull()
+  })
+
+  it('恢复后重删、未重新看到 → 旧 trashSeenAt 早于最近删除，不被过早清除', async () => {
+    const s = await createSession(handle, 'Redel')
+    await softDeleteSession(handle, s.id)
+    await touchTrashSeen(handle)
+    // 上一周期的「看到」时间拨到 120 天前
+    const prevSeen = Date.now() - 120 * 24 * 60 * 60 * 1000
+    await handle.db
+      .update(sessions)
+      .set({ metadata: { trashSeenAt: prevSeen } })
+      .where(eq(sessions.id, s.id))
+    await restoreSession(handle, s.id)
+    await softDeleteSession(handle, s.id)
+    // 重删时间拨到 100 天前（同样超期）
+    const reDeleted = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000)
+    await handle.db.update(sessions).set({ deletedAt: reDeleted }).where(eq(sessions.id, s.id))
+    // trashSeenAt（120 天前）早于最近一次删除（100 天前）→ 不算已重新看到，不清除
+    expect(await purgeDeletedSessions(handle)).toBe(0)
+    expect(await getSession(handle, s.id)).not.toBeNull()
+  })
+
+  it('touchTrashSeen 按 projectId 隔离标记', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'seen-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'seen-b-'))
+    try {
+      const pa = await fromDirectory(handle, dirA)
+      const pb = await fromDirectory(handle, dirB)
+      const sa = await createSession(handle, 'A', pa.id)
+      const sb = await createSession(handle, 'B', pb.id)
+      await softDeleteSession(handle, sa.id)
+      await softDeleteSession(handle, sb.id)
+      await touchTrashSeen(handle, { projectId: pa.id })
+      expect((await getSession(handle, sa.id))?.metadata.trashSeenAt).toBeDefined()
+      expect((await getSession(handle, sb.id))?.metadata.trashSeenAt).toBeUndefined()
+    } finally {
+      rmSync(dirA, { recursive: true, force: true })
+      rmSync(dirB, { recursive: true, force: true })
+    }
   })
 })
 

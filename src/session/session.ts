@@ -103,6 +103,40 @@ async function listOrphanDeletedSessions(handle: DB): Promise<Session[]> {
 }
 
 /**
+ * 标记回收站条目「已被用户看到」，记录 metadata.trashSeenAt = now。
+ * 回收站保留期自首次看到起算（见 purgeDeletedSessions），在此前无需清除 trashSeenAt：
+ * 若会话被恢复后再次删除，`trashSeenAt > deletedAt` 判据会自动失效，待用户再次看到
+ * 回收站时才重新起算——避免「未重新看到就被过早清空」。
+ * scope.orphan=true 时仅标记未归属项目的孤儿会话（与 listOrphanDeletedSessions 对齐）。
+ */
+async function touchTrashSeen(
+  handle: DB,
+  scope: { projectId?: string; orphan?: boolean } = {},
+): Promise<number> {
+  const where = scope.orphan
+    ? and(gt(sessions.deletedAt, new Date(0)), isNull(sessions.projectId))
+    : scope.projectId
+      ? and(gt(sessions.deletedAt, new Date(0)), eq(sessions.projectId, scope.projectId))
+      : gt(sessions.deletedAt, new Date(0))
+  const rows = await handle.db
+    .select({ id: sessions.id, metadata: sessions.metadata })
+    .from(sessions)
+    .where(where)
+  const now = Date.now()
+  let touched = 0
+  for (const row of rows) {
+    const meta = (row.metadata ?? {}) as SessionMetadata
+    if (meta.trashSeenAt === now) continue
+    await handle.db
+      .update(sessions)
+      .set({ metadata: { ...meta, trashSeenAt: now } })
+      .where(eq(sessions.id, row.id))
+    touched += 1
+  }
+  return touched
+}
+
+/**
  * 软删除会话（级联其所有 fork 后代）。设置 deletedAt = now；
  * 60 天后由 purgeDeletedSessions 物理清除。
  * 会话不存在或已在回收站 → 返回 false（调用方按 404 处理）。
@@ -164,14 +198,24 @@ async function rebindSession(
  * 否则「删除根会话 → 恢复根会话」后分支仍滞留回收站且无任何提示，保留期后被清。
  * 兄弟分支（祖先的其他后代）不受影响。
  */
-async function restoreSession(
+export type RestoreResult = {
+  restored: boolean
+  /** 为可达性连带还原的祖先会话数量（不含目标会话与其同批次后代）。 */
+  restoredAncestorCount: number
+  /** 是否连带还原了与目标非同一次删除批次的祖先（用户早先单独删除的会话）。 */
+  crossedBatchAncestor: boolean
+}
+
+async function restoreSessionCore(
   handle: DB,
   id: string,
   opts: { includeDescendants?: boolean } = {},
-): Promise<boolean> {
+): Promise<RestoreResult> {
   const includeDescendants = opts.includeDescendants !== false
   const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
-  if (!row?.deletedAt) return false
+  if (!row?.deletedAt)
+    return { restored: false, restoredAncestorCount: 0, crossedBatchAncestor: false }
+  const targetBatch = row.deletedBatchId
   const ids = new Set<string>([id])
   // 后代 BFS：仅还原属于同一删除批次的后代（删除时父+后代共享 deletedBatchId）。
   // 若只按「已删除」收集，会把早先被用户单独删除的分支一并复活（F2 不对称缺陷）。
@@ -195,12 +239,19 @@ async function restoreSession(
     }
   }
   // 祖先链（仅还原其中已软删除的节点）：为保证恢复节点在会话树可达，
-  // 已删除的祖先无论批次均需一并还原。
+  // 已删除的祖先无论批次均需一并还原。记录还原的祖先数量与是否跨越删除批次，
+  // 供前端提示「为保持会话树完整，同时还原了 N 个父会话」。
+  let restoredAncestorCount = 0
+  let crossedBatchAncestor = false
   let parentId = row.parentId
   while (parentId) {
     const [parent] = await handle.db.select().from(sessions).where(eq(sessions.id, parentId))
     if (!parent) break
-    if (parent.deletedAt) ids.add(parent.id)
+    if (parent.deletedAt && !ids.has(parent.id)) {
+      ids.add(parent.id)
+      restoredAncestorCount += 1
+      if (parent.deletedBatchId !== targetBatch) crossedBatchAncestor = true
+    }
     parentId = parent.parentId
   }
   for (const sid of ids) {
@@ -209,28 +260,50 @@ async function restoreSession(
       .set({ deletedAt: null, deletedBatchId: null })
       .where(eq(sessions.id, sid))
   }
-  return true
+  return { restored: true, restoredAncestorCount, crossedBatchAncestor }
+}
+
+async function restoreSession(
+  handle: DB,
+  id: string,
+  opts: { includeDescendants?: boolean } = {},
+): Promise<boolean> {
+  return (await restoreSessionCore(handle, id, opts)).restored
 }
 
 /**
- * P2-4：回收站保留期 60 天（原 30 天）。服务不启动的日子不计入用户的
- * "可见倒计时"——用户 40 天不开服务，重启即被清空，从未见过任何提示。
- * 60 天给足两次月度使用周期；界面倒计时与确认文案须与此同步。
- * 临时会话（CLI print / workflow）保留期仍为 30 天，见 purgeTemporarySessions。
+ * P2-4：回收站保留期 60 天（原 30 天），自此修复起自「用户首次在回收站看到该条目」
+ * （metadata.trashSeenAt）起算，而非删除时间（墙钟）——否则用户删除后长期不开服务、
+ * 重启即被静默物理清除，从未见过任何倒计时。临时会话（CLI print / workflow）保留期
+ * 仍为 30 天，见 purgeTemporarySessions。
  */
 export const TRASH_RETENTION_MS = 60 * 24 * 60 * 60 * 1000
 
 /**
- * 物理清除回收站中超过保留期（默认 60 天）的会话。
- * 子会话先于父会话删除（自引用 FK 要求）。
- * 返回清除数量。启动时与每日定时调用。
+ * 物理清除回收站中「已被用户看到且超过保留期（默认 60 天）」的会话。
+ * 子会话先于父会话删除（自引用 FK 要求）。返回清除数量。启动时与每日定时调用。
+ * 未被看到过（trashSeenAt 缺失）或恢复后重删、尚未重新看到的会话永不在此清除。
  */
 async function purgeDeletedSessions(handle: DB, retentionMs = TRASH_RETENTION_MS): Promise<number> {
   const cutoff = new Date(Date.now() - retentionMs)
-  const rows = await handle.db
-    .select({ id: sessions.id, parentId: sessions.parentId })
+  const cutoffMs = cutoff.getTime()
+  const candidates = await handle.db
+    .select({
+      id: sessions.id,
+      parentId: sessions.parentId,
+      deletedAt: sessions.deletedAt,
+      metadata: sessions.metadata,
+    })
     .from(sessions)
     .where(lt(sessions.deletedAt, cutoff))
+  // 保留期自「首次看到」起算：trashSeenAt 缺失，或早于最近一次删除
+  // （恢复后重删、尚未重新看到）→ 不进入清理集合，避免静默数据丢失。
+  const rows = candidates.filter((r) => {
+    if (!r.deletedAt) return false
+    const seen = (r.metadata as SessionMetadata | null | undefined)?.trashSeenAt
+    const deletedMs = r.deletedAt.getTime()
+    return typeof seen === 'number' && seen > deletedMs && seen < cutoffMs
+  })
   if (rows.length === 0) return 0
   // 拓扑序：无子会话的先删
   const remaining = new Set(rows.map((r) => r.id))
@@ -657,10 +730,12 @@ export {
   purgeTemporarySessions,
   rebindSession,
   restoreSession,
+  restoreSessionCore,
   searchSessions,
   softDeleteSession,
   touchLastOpened,
   touchSession,
+  touchTrashSeen,
   updateSessionLastRun,
   updateSessionTitle,
   upgradeTemporarySession,

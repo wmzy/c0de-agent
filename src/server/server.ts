@@ -107,8 +107,9 @@ function resolveDbDir(): string {
  * 1. security.authEnabled 显式为 false → 无认证（用户显式选择）。
  * 2. 用户配置 security.token → 使用。
  * 3. 环境变量 C0DE_AUTH_TOKEN（热更新新实例经 updater 传入）→ 采用并落盘。
- * 4. dataDir 下 auth-token 文件（跨重启/热更新稳定）→ 复用。
- * 5. 都没有 → 生成随机 token 并写入 auth-token（0600）。
+ * 4. 已有已注册设备 → 复用 auth-token 文件（跨重启稳定；设备 token 存 devices.json）。
+ * 5. 无已注册设备（首设备待注册态）→ 每次 serve 都重新生成 bootstrap，刷新
+ *    firstDeviceTtlMs 窗口。此前「复用旧文件」会让过期 bootstrap 无法通过重启恢复。
  */
 function resolveAuthToken(config: Config, dataDir: string): string | undefined {
   if (config.security.authEnabled === false) return undefined
@@ -127,11 +128,14 @@ function resolveAuthToken(config: Config, dataDir: string): string | undefined {
     return envToken
   }
 
-  try {
-    const existing = readFileSync(tokenFile, 'utf-8').trim()
-    if (existing) return existing
-  } catch {
-    // 文件不存在，走生成分支
+  // 已有设备 → 复用 auth-token 文件，保持跨重启稳定（已授权设备经 devices.json 认 token）。
+  if (hasRegisteredDevices(dataDir)) {
+    try {
+      const existing = readFileSync(tokenFile, 'utf-8').trim()
+      if (existing) return existing
+    } catch {
+      // 文件不存在，走生成分支
+    }
   }
 
   const generated = randomBytes(24).toString('hex')
@@ -142,6 +146,18 @@ function resolveAuthToken(config: Config, dataDir: string): string | undefined {
     // 落盘失败：本次运行仍可用内存 token
   }
   return generated
+}
+
+/** dataDir 下是否存在已授权设备（devices.json 非空）。 */
+function hasRegisteredDevices(dataDir: string): boolean {
+  try {
+    const path = join(dataDir, 'devices.json')
+    if (!existsSync(path)) return false
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { devices?: unknown[] }
+    return Array.isArray(parsed.devices) && parsed.devices.length > 0
+  } catch {
+    return false
+  }
 }
 
 /** 只读 dataDir 下已存在的 auth-token（新实例 handoff 握手用；不生成）。 */

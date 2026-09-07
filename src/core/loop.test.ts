@@ -838,9 +838,9 @@ describe('agentLoop', () => {
       // 压缩后以 trigger=compaction 开新段
       const compactionSeg = state.segments.find((s) => s.trigger === 'compaction')
       expect(compactionSeg).toBeDefined()
-      // 静默执行：与 turn-end 自动压缩一致，compactContext 的事件被静默消费，
-      // 不向用户透传 compaction_done/error/warning
-      expect(events.some((e) => e._tag === 'compaction_done')).toBe(false)
+      // 中轮压缩透传 compaction_done（用户可知上下文被改写），其余 text_delta 静默，
+      // 不复用 error/warning
+      expect(events.some((e) => e._tag === 'compaction_done')).toBe(true)
       expect(events.some((e) => e._tag === 'error')).toBe(false)
       // 循环正常完成
       expect(events.some((e) => e._tag === 'done')).toBe(true)
@@ -1144,6 +1144,27 @@ describe('agentLoop task delegation (spec §12.3)', () => {
     const child = all.find((s) => s.title === 'Test writer')
     expect(child).toBeTruthy()
     expect(child?.id).not.toBe(session.id)
+  })
+
+  it('子 agent 会话继承父会话 source（CLI 父会话派生子不再泄漏进 Web 树）', async () => {
+    // 父会话改为 CLI 来源（c0de chat 场景）
+    session = { ...session, source: 'cli' }
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    state.config = { ...state.config, tools: ['task'] }
+    const deps = makeMockDeps(db, mockTaskDelegationStream())
+    for await (const _ev of agentLoop(state, deps)) {
+      // consume
+    }
+    const { listAllSessions } = await import('../session/session.js')
+    const { listSessions } = await import('../session/index.js')
+    const child = (await listAllSessions(db)).find((s) => s.title === 'Test writer')
+    expect(child).toBeTruthy()
+    // 修复前子会话 source=null（被视为 web），会出现在 Web 会话树中且父不可见
+    expect(child?.source).toBe('cli')
+    // 与 CLI 父会话一致：不出现在 Web 会话列表（getTree/listSessions 排除 CLI 来源）
+    const webVisible = (await listSessions(db)).some((s) => s.title === 'Test writer')
+    expect(webVisible).toBe(false)
   })
 })
 

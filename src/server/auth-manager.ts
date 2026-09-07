@@ -23,6 +23,10 @@ import { basename, dirname, join } from 'node:path'
 
 const DEVICES_FILENAME = 'devices.json'
 
+/** 首设备 bootstrap token 默认有效期：5 分钟。缩短「URL 泄漏后抢先注册」竞态窗口。
+ *  重新 `c0de serve` 会重新生成 bootstrap（无已注册设备时），刷新该窗口。 */
+const DEFAULT_FIRST_DEVICE_TTL_MS = 5 * 60 * 1000
+
 type DeviceRecord = {
   id: string
   name: string
@@ -119,7 +123,7 @@ function safeEqual(a: string, b: string): boolean {
 export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   const { dataDir, staticToken, tokenFilePath, now = Date.now } = opts
   const pairingTtlMs = opts.pairingTtlMs ?? 10 * 60 * 1000
-  const firstDeviceTtlMs = opts.firstDeviceTtlMs ?? 0
+  const firstDeviceTtlMs = opts.firstDeviceTtlMs ?? DEFAULT_FIRST_DEVICE_TTL_MS
   const tokenPath = tokenFilePath ?? join(dataDir, 'auth-token')
   const devicesPath = join(dataDir, DEVICES_FILENAME)
 

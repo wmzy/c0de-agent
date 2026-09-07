@@ -113,9 +113,11 @@ describe('session route', () => {
     const created = (await createRes.json()) as Session
     const delRes = await app.request(`/${created.id}`, { method: 'DELETE' })
     expect(delRes.status).toBe(204)
-    // 软删除：详情仍可读，但活跃列表与回收站分开
+    // 软删除：详情与消息读取路径 404（删除=对常规读取不可见；元数据仅经 /deleted 可达）
     const getRes = await app.request(`/${created.id}`)
-    expect(getRes.status).toBe(200)
+    expect(getRes.status).toBe(404)
+    const msgRes = await app.request(`/${created.id}/messages`)
+    expect(msgRes.status).toBe(404)
     const deletedRes = await app.request('/deleted')
     expect(deletedRes.status).toBe(200)
     const deleted = (await deletedRes.json()) as Session[]
@@ -860,6 +862,47 @@ describe('session route', () => {
       expect(await listDeletedSessions(ctx.db)).toHaveLength(0)
       const restoredChild = await getSession(ctx.db, child.id)
       expect(restoredChild?.deletedAt).toBeNull()
+    })
+
+    it('POST /:id/restore 返回连带还原的祖先信息（供前端提示）', async () => {
+      const { app, ctx } = await setup()
+      const root = await createSession(ctx.db, 'root')
+      const a = await createSession(ctx.db, 'a', undefined, undefined, undefined, root.id)
+      const b = await createSession(ctx.db, 'b', undefined, undefined, undefined, root.id)
+      // 先单独删除 a（批次1），再删除 root（批次2，级联 root+b）
+      await app.request(`/${a.id}`, { method: 'DELETE' })
+      await app.request(`/${root.id}`, { method: 'DELETE' })
+
+      const res = await app.request(`/${a.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        ok: boolean
+        restoredAncestorCount: number
+        crossedBatchAncestor: boolean
+      }
+      expect(body.ok).toBe(true)
+      // 祖先 root 属于另一删除批次，被连带还原
+      expect(body.restoredAncestorCount).toBe(1)
+      expect(body.crossedBatchAncestor).toBe(true)
+      // 兄弟 b 仍留回收站
+      expect((await getSession(ctx.db, b.id))?.deletedAt).not.toBeNull()
+    })
+
+    it('GET /deleted 列表会标记首次看到时间（trashSeenAt）', async () => {
+      const { app, ctx } = await setup()
+      const s = await createSession(ctx.db, 'SeenSoon')
+      await app.request(`/${s.id}`, { method: 'DELETE' })
+      const before = await getSession(ctx.db, s.id)
+      expect(before?.metadata.trashSeenAt).toBeUndefined()
+      const res = await app.request('/deleted')
+      expect(res.status).toBe(200)
+      const after = await getSession(ctx.db, s.id)
+      expect(after?.metadata.trashSeenAt).toBeDefined()
+      expect(after?.metadata.trashSeenAt).toBeGreaterThan(after?.deletedAt ?? 0)
     })
   })
 })

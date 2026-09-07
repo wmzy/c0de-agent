@@ -86,8 +86,9 @@ type SecurityConfig = {
   token?: string
   /** 额外允许的 CORS origin（本地回环始终允许；局域网/远程访问需显式添加）。 */
   allowedOrigins: string[]
-  /** 首设备 bootstrap token 有效期（毫秒）。>0 时，bootstrap 自生成（auth-token 文件
-   *  mtime）起超过此时长即拒绝首设备注册（需重启 serve 重新生成）。未设置=不限制。
+  /** 首设备 bootstrap token 有效期（毫秒）。bootstrap 自生成（auth-token 文件
+   *  mtime）起超过此时长即拒绝首设备注册。未设置时默认 5 分钟（auth-manager 内置）；
+   * 无已注册设备时每次 serve 都会重新生成 bootstrap，故重启即可恢复注册。
    *  用于共享主机等 URL 可能泄漏的场景，缩短「先到先得」竞态窗口。 */
   firstDeviceTtlMs?: number
 }

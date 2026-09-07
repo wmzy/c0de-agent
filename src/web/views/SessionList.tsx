@@ -563,18 +563,19 @@ export function SessionList({
 const TRASH_RETENTION_DAYS = 60
 
 /** 剩余保留天数（负数视为 0：即将被后台清理）。 */
-function daysLeft(deletedAt: number | null | undefined): number {
-  if (!deletedAt) return TRASH_RETENTION_DAYS
-  const ms = TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000 - (Date.now() - deletedAt)
+function daysLeft(baseline: number | null | undefined): number {
+  if (!baseline) return TRASH_RETENTION_DAYS
+  const ms = TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000 - (Date.now() - baseline)
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)))
 }
 
-/** 剩余天数 + 绝对到期日（F6：60 天按墙钟倒计时，删除后即使不打开应用也照常到期，
- *  因此显式给出绝对清除日期，避免用户「以为还有 60 天可用期」的错觉）。 */
-function expiryLabel(deletedAt: number | null | undefined): string {
-  if (!deletedAt) return `剩 ${TRASH_RETENTION_DAYS} 天`
-  const expires = new Date(deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
-  return `剩 ${daysLeft(deletedAt)} 天 · ${expires.toLocaleDateString()} 清除`
+/** 剩余天数 + 绝对到期日（F6 修复：保留期自「首次在回收站看到该会话」
+ *  （metadata.trashSeenAt）起算，与后端 purgeDeletedSessions 一致；尚未看到的
+ *  会话显示完整 60 天，不会被静默提前清除）。 */
+function expiryLabel(baseline: number | null | undefined): string {
+  if (!baseline) return `剩 ${TRASH_RETENTION_DAYS} 天`
+  const expires = new Date(baseline + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  return `剩 ${daysLeft(baseline)} 天 · ${expires.toLocaleDateString()} 清除`
 }
 
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
@@ -771,7 +772,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
               </span>
             )}
             <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-              {expiryLabel(s.deletedAt)}
+              {expiryLabel(s.metadata.trashSeenAt ?? s.deletedAt)}
             </span>
             {s.source === 'cli' && (
               <span
@@ -798,21 +799,27 @@ function RecycleBin({ projectId }: { projectId: string }) {
                     onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
                     onSuccess: (d) => {
                       setError(null)
+                      const ancestorNote =
+                        (d?.restoredAncestorCount ?? 0) > 0
+                          ? `${d.crossedBatchAncestor ? '；同时连带还原了' : '；已连带还原'} ${d.restoredAncestorCount} 个父会话以保证会话树完整`
+                          : ''
                       if (d?.orphaned) {
-                        setNotice(`「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目`)
+                        setNotice(
+                          `「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目${ancestorNote}`,
+                        )
                         setOrphanId(s.id)
                       } else if (d?.rebound) {
-                        setNotice(`「${s.title}」已恢复并重新归属到项目`)
+                        setNotice(`「${s.title}」已恢复并重新归属到项目${ancestorNote}`)
                         setOrphanId(null)
                       } else if (s.source === 'cli') {
                         // P1-1：CLI 会话恢复后不进 Web 会话树，明确告知查看途径，
                         // 避免用户以为恢复失败。
                         setNotice(
-                          `「${s.title}」已恢复。该会话为 CLI 会话，不会出现在 Web 会话列表，可用 \`c0de sessions list\` 查看。`,
+                          `「${s.title}」已恢复。该会话为 CLI 会话，不会出现在 Web 会话列表，可用 \`c0de sessions list\` 查看。${ancestorNote}`,
                         )
                         setOrphanId(null)
                       } else {
-                        setNotice(null)
+                        setNotice(ancestorNote.slice(1) || null)
                         setOrphanId(null)
                       }
                     },
@@ -848,7 +855,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
             <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
               <span title={s.worktreePath ?? s.title}>{s.title}</span>
               <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-                {expiryLabel(s.deletedAt)}
+                {expiryLabel(s.metadata.trashSeenAt ?? s.deletedAt)}
               </span>
               <button
                 type="button"

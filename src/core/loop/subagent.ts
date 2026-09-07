@@ -64,7 +64,7 @@ export async function runSubAgent(
       title,
       parent.session.projectId ?? undefined,
       request.agentType,
-      undefined,
+      parent.session.source ?? undefined,
       parent.session.id,
     )
   } catch (e) {

@@ -236,12 +236,27 @@ describe('resolveAuthToken 认证 token 解析（P0 安全）', () => {
     expect(statSync(file).mode & 0o777).toBe(0o600)
   })
 
-  it('文件已有 token → 读取复用，不重新生成', () => {
+  it('已有已注册设备时，文件已有 token → 读取复用，不重新生成', () => {
+    writeFileSync(
+      join(tmpDir, 'devices.json'),
+      JSON.stringify({
+        version: 1,
+        devices: [{ id: 'd1', name: 'A', tokenHash: 'h', createdAt: 1 }],
+      }),
+    )
     writeFileSync(join(tmpDir, 'auth-token'), 'file-token', { mode: 0o600 })
     expect(resolveAuthToken(DEFAULT_CONFIG, tmpDir)).toBe('file-token')
   })
 
-  it('无任何来源 → 生成随机 token 并 0600 落盘，二次调用（bootstrap 后）稳定', () => {
+  it('无已注册设备时，即使文件已有 token 也重新生成（刷新首设备 TTL 窗口）', () => {
+    writeFileSync(join(tmpDir, 'devices.json'), JSON.stringify({ version: 1, devices: [] }))
+    writeFileSync(join(tmpDir, 'auth-token'), 'stale-token', { mode: 0o600 })
+    const token = resolveAuthToken(DEFAULT_CONFIG, tmpDir)
+    expect(token).toBeTruthy()
+    expect(token).not.toBe('stale-token')
+  })
+
+  it('无任何来源 → 生成随机 token 并 0600 落盘；设备注册后二次调用稳定', () => {
     const first = resolveAuthToken(DEFAULT_CONFIG, tmpDir)
     expect(typeof first).toBe('string')
     expect(first?.length).toBeGreaterThan(0)
@@ -249,7 +264,15 @@ describe('resolveAuthToken 认证 token 解析（P0 安全）', () => {
     expect(readFileSync(file, 'utf-8')).toBe(first)
     expect(statSync(file).mode & 0o777).toBe(0o600)
 
-    // 重启（再次解析）后 token 稳定，浏览器保存的 token 不失效
+    // 模拟首设备注册：写 devices.json
+    writeFileSync(
+      join(tmpDir, 'devices.json'),
+      JSON.stringify({
+        version: 1,
+        devices: [{ id: 'd1', name: 'A', tokenHash: 'h', createdAt: 1 }],
+      }),
+    )
+    // 此后（再解析）token 稳定，浏览器保存的设备 token 不失效
     expect(resolveAuthToken(DEFAULT_CONFIG, tmpDir)).toBe(first)
   })
 })

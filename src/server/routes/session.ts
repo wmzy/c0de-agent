@@ -26,10 +26,11 @@ import {
   listSessionsByProject,
   permanentlyDeleteSession,
   rebindSession,
-  restoreSession,
+  restoreSessionCore,
   searchSessions,
   softDeleteSession,
   touchLastOpened,
+  touchTrashSeen,
   updateSessionTitle,
 } from '../../session/session.js'
 import {
@@ -157,8 +158,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.get('/deleted', async (c) => {
     const projectId = c.req.query('projectId')
     if (c.req.query('orphan') === '1') {
+      await touchTrashSeen(ctx.db, { orphan: true })
       return c.json(await listOrphanDeletedSessions(ctx.db))
     }
+    await touchTrashSeen(ctx.db, projectId ? { projectId } : {})
     const sessions = await listDeletedSessions(ctx.db, projectId)
     return c.json(sessions)
   })
@@ -174,8 +177,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.get('/:id', async (c) => {
     try {
       const session = await getSession(ctx.db, c.req.param('id'))
-      if (!session) {
-        return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+      if (!session || session.deletedAt) {
+        return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
       }
       return c.json(session)
     } catch {
@@ -298,8 +301,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
     const requestProjectId =
       typeof body.projectId === 'string' && body.projectId ? body.projectId : undefined
-    const ok = await restoreSession(ctx.db, id)
-    if (!ok) return apiError(c, 404, 'NOT_FOUND', '会话不存在或未删除')
+    const result = await restoreSessionCore(ctx.db, id)
+    if (!result.restored) return apiError(c, 404, 'NOT_FOUND', '会话不存在或未删除')
     const session = await getSession(ctx.db, id)
     let rebound = false
     let orphaned = false
@@ -326,7 +329,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
         }
       }
     }
-    return c.json({ ok: true, rebound, orphaned })
+    return c.json({
+      ok: true,
+      rebound,
+      orphaned,
+      restoredAncestorCount: result.restoredAncestorCount,
+      crossedBatchAncestor: result.crossedBatchAncestor,
+    })
   })
 
   // 会话归属变更（P1-2）：孤儿会话归属到指定项目，恢复后即可达。
@@ -344,7 +353,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
 
   // 获取消息列表
   app.get('/:id/messages', async (c) => {
-    const messages = await getMessages(ctx.db, c.req.param('id'))
+    const id = c.req.param('id')
+    const session = await getSession(ctx.db, id)
+    if (!session || session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
+    const messages = await getMessages(ctx.db, id)
     return c.json(messages)
   })
 

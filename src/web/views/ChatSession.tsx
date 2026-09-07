@@ -496,6 +496,14 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                 </button>
               </div>
             )}
+            {chat.compactionNotice && (
+              <div className={interruptBanner} data-testid="compaction-notice-banner">
+                <span>{chat.compactionNotice}</span>
+                <button onClick={() => chat.clearCompactionNotice()} type="button" title="关闭提示">
+                  知道了
+                </button>
+              </div>
+            )}
             {coldStartPaused && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="paused-banner">
                 <span>对话处于暂停状态，可继续执行</span>

@@ -30,10 +30,16 @@ const sessionAPI = {
   /** 未归属任何项目的已删会话（删除项目后 FK set null 导致的孤儿，需专门视图暴露）。 */
   deletedOrphans: () => apiRequest<Session[]>('/api/sessions/deleted?orphan=1'),
   restore: (id: string, projectId?: string) =>
-    apiRequest<{ ok: boolean; rebound?: boolean; orphaned?: boolean }>(
-      `/api/sessions/${id}/restore`,
-      { method: 'POST', body: JSON.stringify(projectId ? { projectId } : {}) },
-    ),
+    apiRequest<{
+      ok: boolean
+      rebound?: boolean
+      orphaned?: boolean
+      restoredAncestorCount?: number
+      crossedBatchAncestor?: boolean
+    }>(`/api/sessions/${id}/restore`, {
+      method: 'POST',
+      body: JSON.stringify(projectId ? { projectId } : {}),
+    }),
   /** 孤儿会话归属到指定项目（P1-2）。 */
   rebind: (id: string, projectId: string) =>
     apiRequest<{ ok: boolean; projectId: string }>(`/api/sessions/${id}/rebind`, {

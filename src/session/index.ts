@@ -39,11 +39,13 @@ export {
   migrateLegacyDetails,
   purgeDeletedSessions,
   restoreSession,
+  restoreSessionCore,
   saveLLMSegments,
   segmentFingerprint,
   softDeleteSession,
   TRASH_RETENTION_MS,
   touchSession,
+  touchTrashSeen,
   updateSessionTitle,
 } from './session.js'
 export {
