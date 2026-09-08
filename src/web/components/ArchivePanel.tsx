@@ -159,8 +159,8 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
               <span className={summary} title={a.summary}>
                 {a.summary}
               </span>
-              <span className={meta}>
-                {new Date(a.createdAt).toLocaleString()} · {a.originalEntries.length} 条 ·{' '}
+              <span className={meta} title="归档时估算的 token 数（启发式，非精确计费值）">
+                {new Date(a.createdAt).toLocaleString()} · {a.originalEntries.length} 条 · ~
                 {a.tokenCount}t
               </span>
               <button

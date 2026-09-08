@@ -7,6 +7,7 @@ import { DangerConfirmDialog } from '../components/DangerConfirmDialog.js'
 import { Dialog } from '../components/Dialog.js'
 import {
   useDeletedOrphans,
+  useDeletedOrphansCount,
   useDeletedSessions,
   useDeleteSession,
   useProjects,
@@ -590,6 +591,8 @@ export function SessionList({
 
 /** 回收站保留期（与后端 purgeDeletedSessions 默认 60 天一致，仅展示用）。 */
 const TRASH_RETENTION_DAYS = 60
+/** A3：到期标记 → 物理清除的宽限期（与后端 TRASH_PURGE_GRACE_MS 一致，仅展示用）。 */
+const TRASH_PURGE_GRACE_DAYS = 7
 
 /** 剩余保留天数（负数视为 0：即将被后台清理）。 */
 function daysLeft(baseline: number | null | undefined): number {
@@ -600,8 +603,16 @@ function daysLeft(baseline: number | null | undefined): number {
 
 /** 剩余天数 + 绝对到期日（F6 修复：保留期自「首次在回收站看到该会话」
  *  （metadata.trashSeenAt）起算，与后端 purgeDeletedSessions 一致；尚未看到的
- *  会话显示完整 60 天，不会被静默提前清除）。 */
-function expiryLabel(baseline: number | null | undefined): string {
+ *  会话显示完整 60 天，不会被静默提前清除）。
+ *  A3：purgePendingAt 存在 = 已到期进入宽限期——显示「即将清除」，恢复可保留。 */
+function expiryLabel(s: Session): string {
+  const pending = s.metadata.purgePendingAt
+  if (pending) {
+    const deadline = new Date(pending + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000)
+    const left = Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+    return `\u26A0 ${deadline.toLocaleDateString()} 清除（剩 ${left} 天）`
+  }
+  const baseline = s.metadata.trashSeenAt ?? s.deletedAt
   if (!baseline) return `剩 ${TRASH_RETENTION_DAYS} 天`
   const expires = new Date(baseline + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
   return `剩 ${daysLeft(baseline)} 天 · ${expires.toLocaleDateString()} 清除`
@@ -614,7 +625,18 @@ function RecycleBin({ projectId }: { projectId: string }) {
   const { data: deleted, isLoading } = useDeletedSessions(projectId)
   // F1：孤儿（projectId=null）已删会话——删除项目所产生，任何项目回收站视图都不可见，
   // 需在本回收站内单独分组暴露，否则 60 天后被静默物理清除。
-  const { data: orphans } = useDeletedOrphans()
+  // A3：折叠态只拉计数；展开时才拉列表并显式标记「已看到」（启动倒计时），
+  // 打开任意项目回收站不再连带启动无关孤儿条目的保留期。
+  const [orphansOpen, setOrphansOpen] = useState(false)
+  const { data: orphanCountData } = useDeletedOrphansCount()
+  const { data: orphans } = useDeletedOrphans(orphansOpen)
+  const toggleOrphans = () => {
+    const next = !orphansOpen
+    setOrphansOpen(next)
+    if (next) {
+      sessionAPI.touchOrphansSeen().catch(() => {})
+    }
+  }
   const restore = useRestoreSession()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -671,50 +693,25 @@ function RecycleBin({ projectId }: { projectId: string }) {
   const [showEmptyTrash, setShowEmptyTrash] = useState(false)
 
   if (isLoading) return <div className={empty}>加载中…</div>
-  // P1-1：恢复/归属结果 notice 必须独立于「回收站为空」early return——
+  // P1-1：恢复/归属结果 notice 必须独立于「回收站为空」分支——
   // 恢复最后一个会话时回收站变空，若直接返回空态，notice（如 CLI 会话恢复提示）
-  // 永远不会展示，用户只能看到列表消失。
-  if (!deleted || deleted.length === 0) {
-    return (
-      <div>
-        {error && (
-          <div className={errorBar} data-testid="restore-error">
-            恢复失败：{error}
-          </div>
-        )}
-        {notice && (
-          <div className={noticeBar} data-testid="restore-notice">
-            <span>{notice}</span>
-            {orphanId && (
-              <button
-                type="button"
-                className={restoreBtn}
-                onClick={() => rebindMut.mutate(orphanId)}
-                disabled={rebindMut.isPending}
-                data-testid="rebind-orphan"
-                title="把该会话归属到当前项目，之后可在本项目会话列表中打开"
-              >
-                归属到当前项目
-              </button>
-            )}
-          </div>
-        )}
-        <div className={empty}>回收站为空</div>
-      </div>
-    )
-  }
+  // 永远不会展示，用户只能看到列表消失。A3：孤儿分组同样独立于空态渲染。
 
-  const deletedIds = new Set(deleted.map((s) => s.id))
+  const deletedList = deleted ?? []
+  const deletedIds = new Set(deletedList.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
     s.parentId !== null && deletedIds.has(s.parentId)
 
   // 搜索态展示搜索结果（仍限制在回收站内）；默认展示完整列表。
   const rows =
-    searchDebounced.length > 1 ? (searchResults?.results.map((r) => r.session) ?? []) : deleted
+    searchDebounced.length > 1 ? (searchResults?.results.map((r) => r.session) ?? []) : deletedList
+
+  // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
+  const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
 
   // P2 子树恢复：统计会话在回收站内的派生后代（任意深度），恢复确认时提示。
   const byParent = new Map<string, Session[]>()
-  for (const d of deleted) {
+  for (const d of deletedList) {
     if (!d.parentId) continue
     const list = byParent.get(d.parentId) ?? []
     list.push(d)
@@ -764,166 +761,208 @@ function RecycleBin({ projectId }: { projectId: string }) {
           )}
         </div>
       )}
-      <div className={deletedRow}>
-        <span className={trashHint}>超过 {TRASH_RETENTION_DAYS} 天自动清除</span>
-        <button
-          type="button"
-          className={restoreBtn}
-          onClick={handleEmptyTrash}
-          disabled={emptyTrashMut.isPending}
-          data-testid="empty-trash"
-        >
-          清空回收站
-        </button>
-      </div>
-      <input
-        className={searchInput}
-        type="search"
-        placeholder="搜索回收站标题或消息内容…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        data-testid="trash-search"
-      />
-      {rows.length === 0 && searchDebounced.length > 1 ? (
-        <div className={empty}>回收站无匹配会话</div>
-      ) : null}
-      {rows.map((s) => {
-        const descendants = countDescendants(s.id)
-        return (
-          <div key={s.id} className={deletedRow}>
-            <span title={s.title}>{s.title}</span>
-            {hasDeletedParent(s) && (
-              <span
-                style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }}
-                data-testid={`deleted-parent-${s.id}`}
-              >
-                父会话已删除（恢复时一并还原）
-              </span>
-            )}
-            <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-              {expiryLabel(s.metadata.trashSeenAt ?? s.deletedAt)}
+      {pendingPurgeCount > 0 && (
+        <div className={noticeBar} data-testid="purge-pending-notice">
+          <span style={{ color: 'var(--warning)' }}>
+            {pendingPurgeCount} 条已到期进入 {TRASH_PURGE_GRACE_DAYS}{' '}
+            天宽限期：恢复可保留，逾期自动清除
+          </span>
+        </div>
+      )}
+      {deletedList.length === 0 && (
+        <div className={empty} data-testid="trash-empty">
+          回收站为空
+        </div>
+      )}
+      {deletedList.length > 0 && (
+        <>
+          <div className={deletedRow}>
+            <span className={trashHint}>
+              超过 {TRASH_RETENTION_DAYS} 天自动清除，到期后宽限 {TRASH_PURGE_GRACE_DAYS} 天
             </span>
-            {s.source === 'cli' && (
-              <span
-                className={sourceBadge}
-                data-testid={`cli-source-${s.id}`}
-                title="CLI 会话（c0de chat）。恢复后不会出现在 Web 会话列表"
-              >
-                CLI
-              </span>
-            )}
             <button
               type="button"
               className={restoreBtn}
-              onClick={() => {
-                // P2 子树恢复：恢复会连带还原派生会话，有后代时确认框明示数量。
-                if (
-                  descendants > 0 &&
-                  !window.confirm(`恢复「${s.title}」？其 ${descendants} 个派生会话将一并恢复。`)
-                )
-                  return
-                restore.mutate(
-                  { id: s.id, projectId },
-                  {
-                    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
-                    onSuccess: (d) => {
-                      setError(null)
-                      const ancestorNote =
-                        (d?.restoredAncestorCount ?? 0) > 0
-                          ? `${d.crossedBatchAncestor ? '；同时连带还原了' : '；已连带还原'} ${d.restoredAncestorCount} 个父会话以保证会话树完整`
-                          : ''
-                      if (d?.orphaned) {
-                        setNotice(
-                          `「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目${ancestorNote}`,
-                        )
-                        setOrphanId(s.id)
-                      } else if (d?.rebound) {
-                        setNotice(`「${s.title}」已恢复并重新归属到项目${ancestorNote}`)
-                        setOrphanId(null)
-                      } else if (s.source === 'cli') {
-                        // P1-1：CLI 会话恢复后不进 Web 会话树，明确告知查看途径，
-                        // 避免用户以为恢复失败。
-                        setNotice(
-                          `「${s.title}」已恢复。该会话为 CLI 会话，不会出现在 Web 会话列表，可用 \`c0de sessions list\` 查看。${ancestorNote}`,
-                        )
-                        setOrphanId(null)
-                      } else {
-                        setNotice(ancestorNote.slice(1) || null)
-                        setOrphanId(null)
-                      }
-                    },
-                  },
-                )
-              }}
-              data-testid={`restore-${s.id}`}
+              onClick={handleEmptyTrash}
+              disabled={emptyTrashMut.isPending}
+              data-testid="empty-trash"
             >
-              恢复
-            </button>
-            <button
-              type="button"
-              className={restoreBtn}
-              style={{ color: 'var(--error)' }}
-              onClick={() => handleRemoveForever(s)}
-              disabled={removeForever.isPending}
-              data-testid={`remove-forever-${s.id}`}
-              title="彻底删除，不可恢复"
-            >
-              彻底删除
+              清空回收站
             </button>
           </div>
-        )
-      })}
-      {(orphans?.length ?? 0) > 0 && (
+          <input
+            className={searchInput}
+            type="search"
+            placeholder="搜索回收站标题或消息内容…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            data-testid="trash-search"
+          />
+          {rows.length === 0 && searchDebounced.length > 1 ? (
+            <div className={empty}>回收站无匹配会话</div>
+          ) : null}
+          {rows.map((s) => {
+            const descendants = countDescendants(s.id)
+            return (
+              <div key={s.id} className={deletedRow}>
+                <span title={s.title}>{s.title}</span>
+                {hasDeletedParent(s) && (
+                  <span
+                    style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }}
+                    data-testid={`deleted-parent-${s.id}`}
+                  >
+                    父会话已删除（恢复时一并还原）
+                  </span>
+                )}
+                <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
+                  {expiryLabel(s)}
+                </span>
+                {s.source === 'cli' && (
+                  <span
+                    className={sourceBadge}
+                    data-testid={`cli-source-${s.id}`}
+                    title="CLI 会话（c0de chat）。恢复后不会出现在 Web 会话列表"
+                  >
+                    CLI
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className={restoreBtn}
+                  onClick={() => {
+                    // P2 子树恢复：恢复会连带还原派生会话，有后代时确认框明示数量。
+                    if (
+                      descendants > 0 &&
+                      !window.confirm(
+                        `恢复「${s.title}」？其 ${descendants} 个派生会话将一并恢复。`,
+                      )
+                    )
+                      return
+                    restore.mutate(
+                      { id: s.id, projectId },
+                      {
+                        onError: (e: unknown) =>
+                          setError(e instanceof Error ? e.message : String(e)),
+                        onSuccess: (d) => {
+                          setError(null)
+                          const ancestorNote =
+                            (d?.restoredAncestorCount ?? 0) > 0
+                              ? `${d.crossedBatchAncestor ? '；同时连带还原了' : '；已连带还原'} ${d.restoredAncestorCount} 个父会话以保证会话树完整`
+                              : ''
+                          // A2：批次不同的已删后代滞留在回收站，显式提示单独恢复
+                          const leftBehindNote =
+                            (d?.leftBehindDescendantCount ?? 0) > 0
+                              ? `；另有 ${d.leftBehindDescendantCount} 个分支未随本次恢复（删除批次不同），可在回收站单独恢复`
+                              : ''
+                          if (d?.orphaned) {
+                            setNotice(
+                              `「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目${ancestorNote}${leftBehindNote}`,
+                            )
+                            setOrphanId(s.id)
+                          } else if (d?.rebound) {
+                            setNotice(
+                              `「${s.title}」已恢复并重新归属到项目${ancestorNote}${leftBehindNote}`,
+                            )
+                            setOrphanId(null)
+                          } else if (s.source === 'cli') {
+                            // P1-1：CLI 会话恢复后不进 Web 会话树，明确告知查看途径，
+                            // 避免用户以为恢复失败。
+                            setNotice(
+                              `「${s.title}」已恢复。该会话为 CLI 会话，不会出现在 Web 会话列表，可用 \`c0de sessions list\` 查看。${ancestorNote}${leftBehindNote}`,
+                            )
+                            setOrphanId(null)
+                          } else {
+                            setNotice((ancestorNote + leftBehindNote).slice(1) || null)
+                            setOrphanId(null)
+                          }
+                        },
+                      },
+                    )
+                  }}
+                  data-testid={`restore-${s.id}`}
+                >
+                  恢复
+                </button>
+                <button
+                  type="button"
+                  className={restoreBtn}
+                  style={{ color: 'var(--error)' }}
+                  onClick={() => handleRemoveForever(s)}
+                  disabled={removeForever.isPending}
+                  data-testid={`remove-forever-${s.id}`}
+                  title="彻底删除，不可恢复"
+                >
+                  彻底删除
+                </button>
+              </div>
+            )
+          })}
+        </>
+      )}
+      {(orphanCountData?.count ?? 0) > 0 && (
         <>
           <div className={deletedRow} data-testid="orphan-trash-header">
+            <button
+              type="button"
+              className={restoreBtn}
+              onClick={toggleOrphans}
+              aria-expanded={orphansOpen}
+              data-testid="orphan-trash-toggle"
+              title={orphansOpen ? '收起未归属项目的会话' : '展开未归属项目的会话'}
+            >
+              {orphansOpen ? '\u25BE' : '\u25B8'}
+            </button>
             <span style={{ color: 'var(--warning)', fontSize: 12 }}>
-              未归属项目（来自已删除的项目，恢复后可归属到当前项目）
+              未归属项目（{orphanCountData?.count ?? 0}{' '}
+              条，来自已删除的项目，恢复后可归属到当前项目）
             </span>
           </div>
-          {(orphans ?? []).map((s) => (
-            <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
-              <span title={s.worktreePath ?? s.title}>{s.title}</span>
-              <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-                {expiryLabel(s.metadata.trashSeenAt ?? s.deletedAt)}
-              </span>
-              <button
-                type="button"
-                className={restoreBtn}
-                onClick={() =>
-                  restore.mutate(
-                    { id: s.id, projectId },
-                    {
-                      onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
-                      onSuccess: (d) => {
-                        setError(null)
-                        setNotice(
-                          d?.orphaned
-                            ? `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`
-                            : `「${s.title}」已恢复并归属到当前项目。`,
-                        )
-                        setOrphanId(d?.orphaned ? s.id : null)
+          {orphansOpen &&
+            (orphans ?? []).map((s) => (
+              <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
+                <span title={s.worktreePath ?? s.title}>{s.title}</span>
+                <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
+                  {expiryLabel(s)}
+                </span>
+                <button
+                  type="button"
+                  className={restoreBtn}
+                  onClick={() =>
+                    restore.mutate(
+                      { id: s.id, projectId },
+                      {
+                        onError: (e: unknown) =>
+                          setError(e instanceof Error ? e.message : String(e)),
+                        onSuccess: (d) => {
+                          setError(null)
+                          setNotice(
+                            d?.orphaned
+                              ? `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`
+                              : `「${s.title}」已恢复并归属到当前项目。`,
+                          )
+                          setOrphanId(d?.orphaned ? s.id : null)
+                        },
                       },
-                    },
-                  )
-                }
-                data-testid={`restore-orphan-${s.id}`}
-                title="恢复并归属到当前项目"
-              >
-                恢复到这里
-              </button>
-              <button
-                type="button"
-                className={restoreBtn}
-                style={{ color: 'var(--error)' }}
-                onClick={() => handleRemoveForever(s)}
-                disabled={removeForever.isPending}
-                data-testid={`remove-orphan-${s.id}`}
-                title="彻底删除，不可恢复"
-              >
-                彻底删除
-              </button>
-            </div>
-          ))}
+                    )
+                  }
+                  data-testid={`restore-orphan-${s.id}`}
+                  title="恢复并归属到当前项目"
+                >
+                  恢复到这里
+                </button>
+                <button
+                  type="button"
+                  className={restoreBtn}
+                  style={{ color: 'var(--error)' }}
+                  onClick={() => handleRemoveForever(s)}
+                  disabled={removeForever.isPending}
+                  data-testid={`remove-orphan-${s.id}`}
+                  title="彻底删除，不可恢复"
+                >
+                  彻底删除
+                </button>
+              </div>
+            ))}
         </>
       )}
       {removeTarget && (
@@ -945,7 +984,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
         <DangerConfirmDialog
           open={true}
           title="清空回收站"
-          description={`将永久删除本项目的全部 ${deleted.length} 个回收站会话。`}
+          description={`将永久删除本项目的全部 ${deletedList.length} 个回收站会话。`}
           confirmWord="清空"
           confirmLabel="清空回收站"
           onConfirm={() => {

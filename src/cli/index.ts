@@ -138,7 +138,9 @@ async function withAgentDeps(
     if (!isDbLockConflict(err)) throw err
     if (opts.requirePersistent) {
       throw new Error(
-        'c0de serve 正在运行并占用会话库。请通过 Web UI 管理会话，或停止 serve 后重试。',
+        'c0de serve 正在运行并占用会话库，CLI 会话管理暂不可用（单写者限制）。\n' +
+          '  1) 在 Web 界面管理会话；\n' +
+          '  2) 或停止 serve（Ctrl+C）后重试本命令。',
       )
     }
     if (opts.continueSessionId) {

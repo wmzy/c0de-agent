@@ -116,8 +116,9 @@ function saveDismissed(version: string): void {
  * 不再展示，出现新版本号时重新提示。
  *
  * 应用后预期旧实例 handoff 退出、新实例接管端口。进行中的 SSE 流会中断
- * （会话显示 interrupted，可重发上一条消息继续）；页面无需刷新，后续请求
- * 自动落到新实例。
+ * （会话显示 interrupted，可重发上一条消息继续）；后续请求自动落到新实例。
+ * B1：页面仍在运行旧版前端 JS——apply 成功后横幅提示「刷新页面」完成界面切换，
+ * 避免旧前端 + 新后端的混版本行为异常。
  */
 export function UpdateBanner() {
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(loadDismissed)
@@ -164,7 +165,7 @@ export function UpdateBanner() {
       <span className={dot} aria-hidden="true" />
       <span className={text}>
         发现新版本 <strong>{data.latestVersion}</strong>（当前 {data.currentVersion}）
-        {apply.isSuccess ? '· 已触发热更新，新实例即将接管…' : null}
+        {apply.isSuccess ? '· 新版本已就绪：后续请求已落到新实例，请刷新页面完成界面切换' : null}
         {manual ? '· 无法自动更新，请手动执行以下命令' : null}
         {devUnavailable ? '· 开发模式（vite dev）不支持热更新，请使用独立 c0de serve' : null}
         {apply.isError && !manual && !devUnavailable
@@ -177,6 +178,18 @@ export function UpdateBanner() {
         </span>
       )}
       <span className={actions}>
+        {apply.isSuccess && (
+          // B1：页面仍在运行旧版前端 JS——刷新才加载新版本界面，
+          // 避免「更新成功但界面行为异常」的混版本困惑。
+          <button
+            type="button"
+            className={btn}
+            onClick={() => window.location.reload()}
+            data-testid="update-reload"
+          >
+            刷新页面
+          </button>
+        )}
         {!apply.isSuccess && !manual && !devUnavailable && (
           <button
             type="button"

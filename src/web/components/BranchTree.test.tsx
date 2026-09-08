@@ -104,4 +104,25 @@ describe('BranchTree', () => {
     render(<BranchTree nodes={tree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
     expect(screen.queryByTestId('usage-badge')).toBeNull()
   })
+
+  it('C2：会话级 auto 授权显示徽标，default/未设置不渲染', () => {
+    const root = tree[0]
+    if (!root) throw new Error('fixture missing')
+    const autoTree: SessionTreeNode[] = [
+      {
+        session: {
+          ...root.session,
+          id: 'auto-s1',
+          metadata: { permissionMode: 'auto' },
+        },
+        children: root.children,
+        usage: root.usage,
+      },
+    ]
+    render(<BranchTree nodes={autoTree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByTestId('auto-badge-auto-s1').textContent).toContain('自动授权')
+    cleanup()
+    render(<BranchTree nodes={tree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.queryByTestId('auto-badge-s1')).toBeNull()
+  })
 })

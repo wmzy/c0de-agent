@@ -178,15 +178,27 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 回收站：已软删除的会话列表（必须注册在 /:id 之前，避免被参数路由吞掉）。
   // ?projectId= 过滤本项目（P1-7：回收站此前全库共享，跨项目可见可清空）。
   // ?orphan=1 → 仅列出未归属项目的已删会话（删除项目后 FK set null 导致的孤儿，F1）。
+  // A3：孤儿列表查询不再自动标记「已看到」——标记改为用户展开分组时显式调用
+  // POST /deleted/orphans/seen，避免打开任意项目回收站连带启动无关孤儿倒计时。
   app.get('/deleted', async (c) => {
     const projectId = c.req.query('projectId')
     if (c.req.query('orphan') === '1') {
-      await touchTrashSeen(ctx.db, { orphan: true })
       return c.json(await listOrphanDeletedSessions(ctx.db))
     }
     await touchTrashSeen(ctx.db, projectId ? { projectId } : {})
-    const sessions = await listDeletedSessions(ctx.db, projectId)
-    return c.json(sessions)
+    return c.json(await listDeletedSessions(ctx.db, projectId))
+  })
+
+  // A3：孤儿条目计数（不标记 seen；分组折叠时展示「N 条」用）。
+  app.get('/deleted/orphans/count', async (c) => {
+    const orphans = await listOrphanDeletedSessions(ctx.db)
+    return c.json({ count: orphans.length })
+  })
+
+  // A3：用户展开「未归属项目」分组时显式标记孤儿已看到（保留期自此刻起算）。
+  app.post('/deleted/orphans/seen', async (c) => {
+    const touched = await touchTrashSeen(ctx.db, { orphan: true })
+    return c.json({ ok: true, touched })
   })
 
   // 清空回收站：物理删除所有软删除会话（不可恢复）。?projectId= 仅清空该项目。
@@ -358,6 +370,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
       orphaned,
       restoredAncestorCount: result.restoredAncestorCount,
       crossedBatchAncestor: result.crossedBatchAncestor,
+      // A2：批次不同的已删后代滞留在回收站，显式告知数量供前端提示单独恢复。
+      leftBehindDescendantCount: result.leftBehindDescendantCount,
     })
   })
 

@@ -480,7 +480,8 @@ export function Chat({
           <span>
             工具「{permissionTimeout.tool}
             」等待确认超时（5 分钟）。重新询问将重新打开确认弹窗，不会重复执行已完成的工具；
-            在弹窗中勾选「本会话始终允许」可避免该工具反复请求确认
+            在弹窗中勾选「本会话始终允许」可避免该工具反复请求确认。 若在 25
+            分钟后仍未处理，该工具将被自动拒绝，对话继续执行。
           </span>
           {onReopenPermission ? (
             <button

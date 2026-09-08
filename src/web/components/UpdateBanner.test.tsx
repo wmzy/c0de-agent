@@ -71,9 +71,9 @@ describe('UpdateBanner', () => {
     await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('update-apply'))
     await waitFor(() => expect(updateAPI.apply).toHaveBeenCalledTimes(1))
-    // 成功后显示"已触发热更新"
+    // 成功后提示新版本已就绪（B1：建议刷新页面完成界面切换）
     await waitFor(() =>
-      expect(screen.getByTestId('update-banner').textContent).toContain('已触发热更新'),
+      expect(screen.getByTestId('update-banner').textContent).toContain('新版本已就绪'),
     )
   })
 

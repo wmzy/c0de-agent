@@ -7,10 +7,14 @@ import {
   fromDirectory,
   getProject,
   listProjects,
+  relocateProject,
   resolveProject,
   updateProjectName,
 } from '../../project/index.js'
 import type { Project } from '../../project/project.js'
+import { clearTrashMarks } from '../../session/session.js'
+import { generateId } from '../../shared/index.js'
+import type { SessionMetadata } from '../../shared/types/message.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { expandPath } from './filesystem.js'
@@ -65,6 +69,46 @@ function createProjectRoute(ctx: ServerContext): Hono {
     return c.json(withBranch(project))
   })
 
+  // A1：项目重新定位——目录被移动/重命名后的恢复通道。
+  // 整体迁移会话与看板到新目录身份（替代「删项目 + 逐条恢复 + 看板丢失」）。
+  // 目标目录已注册为另一项目 → 409；有活跃 run → 拒绝（agent 工作目录悬空）。
+  app.post('/:id/relocate', async (c) => {
+    const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => ({}))) as { directory?: unknown }
+    const directory = typeof body.directory === 'string' ? body.directory.trim() : ''
+    if (!directory) return apiError(c, 400, 'DIRECTORY_REQUIRED', 'directory is required')
+    if (!existsSync(directory)) {
+      return apiError(c, 400, 'DIRECTORY_MISSING', `目录不存在或不可访问：${directory}`)
+    }
+
+    // 活跃 run 守卫（与 DELETE 同语义）
+    const rows = await ctx.db.db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.projectId, id))
+    const activeCount = rows.filter((r) => ctx.agentManager.get(r.id)).length
+    if (activeCount > 0) {
+      return apiError(
+        c,
+        409,
+        'PROJECT_HAS_ACTIVE_SESSIONS',
+        `项目下有 ${activeCount} 个进行中的对话，请先中止后再重新定位`,
+      )
+    }
+
+    try {
+      const project = await relocateProject(ctx.db, id, directory)
+      return c.json({ ok: true, project: withBranch(project) })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg === 'PROJECT_NOT_FOUND') return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+      if (msg.startsWith('TARGET_OCCUPIED')) {
+        return apiError(c, 409, 'TARGET_OCCUPIED', msg.replace('TARGET_OCCUPIED: ', ''))
+      }
+      return apiError(c, 500, 'RELOCATE_FAILED', msg)
+    }
+  })
+
   // P1-9 + P2-2：删除项目记录（看板级联删除）。
   // 会话不再留孤儿（FK set null 后在任何项目视图都不可见且 cwd 回退 serve 目录）：
   // 删除前把该项目全部未删除会话软删除进回收站（30 天内可恢复），
@@ -99,20 +143,32 @@ function createProjectRoute(ctx: ServerContext): Hono {
 
     let deletedSessions = 0
     await ctx.db.db.transaction(async (tx) => {
-      // 该项目下所有未删除会话：记录 worktreePath（若尚无）并软删除进回收站
+      // 该项目下所有未删除会话：记录 worktreePath（若尚无）并软删除进回收站。
+      // A2：删除项目是一次用户操作——全部会话共享同一 deletedBatchId，
+      // 恢复任一会话时其 fork 子树一并还原（与 softDeleteSession 语义对齐），
+      // 不再因批次断裂导致分支滞留回收站被静默清除。
       const now = new Date()
+      const batchId = generateId()
       const bound = await tx
-        .select({ id: sessions.id, worktreePath: sessions.worktreePath })
+        .select({
+          id: sessions.id,
+          worktreePath: sessions.worktreePath,
+          metadata: sessions.metadata,
+        })
         .from(sessions)
         .where(and(eq(sessions.projectId, id), isNull(sessions.deletedAt)))
       for (const s of bound) {
-        if (!s.worktreePath) {
-          await tx
-            .update(sessions)
-            .set({ worktreePath: project.worktree })
-            .where(eq(sessions.id, s.id))
-        }
-        await tx.update(sessions).set({ deletedAt: now }).where(eq(sessions.id, s.id))
+        // A3：软删除清除回收站倒计时/宽限期标记（恢复后重删须重新看到才起算）。
+        const metadata = clearTrashMarks((s.metadata ?? {}) as SessionMetadata)
+        await tx
+          .update(sessions)
+          .set({
+            worktreePath: s.worktreePath ?? project.worktree,
+            deletedAt: now,
+            deletedBatchId: batchId,
+            metadata,
+          })
+          .where(eq(sessions.id, s.id))
         deletedSessions += 1
       }
       await tx.delete(kanbanBoards).where(eq(kanbanBoards.projectId, id))

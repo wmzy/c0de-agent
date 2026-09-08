@@ -1,7 +1,7 @@
 import { basename } from 'node:path'
 import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
-import { projects, sessions } from '../db/schema.js'
+import { kanbanBoards, projects, sessions } from '../db/schema.js'
 import { resolveProject } from './resolve.js'
 
 export type Project = {
@@ -112,4 +112,80 @@ export async function updateProjectName(
     .where(eq(projects.id, id))
     .returning()
   return row ? rowToProject(row) : null
+}
+
+/**
+ * 项目重新定位（A1：目录被移动/重命名后的恢复通道）。
+ *
+ * 项目身份 = sha256(worktree)，目录移动后旧项目记录的 worktree 失效且不可改 id。
+ * 此前唯一恢复路径是「删除项目」：会话打散进孤儿回收站逐条恢复，看板永久丢失。
+ * 本函数在单事务内把项目整体迁移到新目录身份（新 id），保住看板与会话归属：
+ *   1. 以新目录解析出的 id upsert 项目行（沿用旧名称）；
+ *   2. 会话 projectId/worktreePath 迁移到新身份；
+ *   3. 看板 projectId 迁移（目标为新身份，唯一约束无冲突）；
+ *   4. 删除旧项目行。
+ * 同一 id（如 git 仓库根未变、仅路径符号变化）→ 仅更新 worktree，不换身份。
+ * 目标目录已注册为另一项目时抛 TARGET_OCCUPIED（调用方转 409），绝不静默合并。
+ */
+export async function relocateProject(handle: DB, id: string, directory: string): Promise<Project> {
+  const current = await getProject(handle, id)
+  if (!current) throw new Error('PROJECT_NOT_FOUND')
+  const resolved = resolveProject(directory)
+
+  if (resolved.id === id) {
+    // 身份不变：仅刷新 worktree 与 git 元数据；会话 worktreePath 同步。
+    await handle.db.transaction(async (tx) => {
+      await tx
+        .update(projects)
+        .set({
+          worktree: resolved.worktree,
+          vcs: resolved.vcs,
+          gitRemote: resolved.gitRemote,
+          updatedAt: new Date(),
+        })
+        .where(eq(projects.id, id))
+      await tx
+        .update(sessions)
+        .set({ worktreePath: resolved.worktree })
+        .where(eq(sessions.projectId, id))
+    })
+  } else {
+    const occupied = await getProject(handle, resolved.id)
+    if (occupied) {
+      throw new Error(`TARGET_OCCUPIED: 目标目录已注册为项目「${occupied.name ?? '未命名项目'}」`)
+    }
+    await handle.db.transaction(async (tx) => {
+      await tx
+        .insert(projects)
+        .values({
+          id: resolved.id,
+          worktree: resolved.worktree,
+          vcs: resolved.vcs,
+          name: current.name ?? basename(resolved.worktree),
+          gitRemote: resolved.gitRemote,
+        })
+        .onConflictDoUpdate({
+          target: projects.id,
+          set: {
+            worktree: resolved.worktree,
+            vcs: resolved.vcs,
+            gitRemote: resolved.gitRemote,
+            updatedAt: new Date(),
+          },
+        })
+      await tx
+        .update(sessions)
+        .set({ projectId: resolved.id, worktreePath: resolved.worktree })
+        .where(eq(sessions.projectId, id))
+      await tx
+        .update(kanbanBoards)
+        .set({ projectId: resolved.id })
+        .where(eq(kanbanBoards.projectId, id))
+      await tx.delete(projects).where(eq(projects.id, id))
+    })
+  }
+
+  const result = await getProject(handle, resolved.id)
+  if (!result) throw new Error(`Relocate failed for ${directory}`)
+  return result
 }

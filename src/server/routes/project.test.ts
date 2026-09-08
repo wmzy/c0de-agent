@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
-import { sessions } from '../../db/schema.js'
+import { kanbanBoards, sessions } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import type { Project } from '../../project/project.js'
 import { createSession, listDeletedSessions } from '../../session/session.js'
@@ -186,9 +186,131 @@ describe('project route', () => {
       expect(byId.get(s1.id)?.worktreePath).toBe(dir)
       expect(byId.get(s2.id)?.worktreePath).toBe(join(dir, 'wt'))
 
+      // A2：项目删除是一次操作——全部会话共享同一 deletedBatchId，
+      // 恢复任一会话时 fork 子树一并还原（批次不断裂）。
+      expect(byId.get(s1.id)?.deletedBatchId).toBeTruthy()
+      expect(byId.get(s1.id)?.deletedBatchId).toBe(byId.get(s2.id)?.deletedBatchId)
+
       // 项目记录已删除
       const projRes = await app.request(`/${project.id}`)
       expect(projRes.status).toBe(404)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('POST /:id/relocate 迁移会话与看板到新目录身份（A1）', async () => {
+    const dirOld = mkdtempSync(join(tmpdir(), 'projr-old-'))
+    const dirNew = mkdtempSync(join(tmpdir(), 'projr-new-'))
+    try {
+      const { app, db } = await setup()
+      const created = await app.request('/from-directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: dirOld }),
+      })
+      const project = (await created.json()) as Project
+      const s = await createSession(db, 'Moved', project.id)
+      // 项目级看板随迁（迁移后按新项目 id 仍可查到）
+      await db.db.insert(kanbanBoards).values({ projectId: project.id, columns: [], labels: [] })
+
+      const res = await app.request(`/${project.id}/relocate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: dirNew }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { ok: boolean; project: Project }
+      expect(body.ok).toBe(true)
+      expect(body.project.worktree).toBe(dirNew)
+
+      // 会话归属新项目
+      const [row] = await db.db.select().from(sessions).where(eq(sessions.id, s.id))
+      expect(row?.projectId).toBe(body.project.id)
+      expect(row?.worktreePath).toBe(dirNew)
+
+      // 看板迁移到新项目 id
+      const [board] = await db.db
+        .select()
+        .from(kanbanBoards)
+        .where(eq(kanbanBoards.projectId, body.project.id))
+      expect(board).toBeDefined()
+
+      // 旧项目记录已删除；旧 id 不可用
+      const oldRes = await app.request(`/${project.id}`)
+      expect(oldRes.status).toBe(404)
+    } finally {
+      rmSync(dirOld, { recursive: true, force: true })
+      rmSync(dirNew, { recursive: true, force: true })
+    }
+  })
+
+  it('POST /:id/relocate 目标目录已被其他项目占用 → 409', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'projr-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'projr-b-'))
+    try {
+      const { app } = await setup()
+      const pa = (await (
+        await app.request('/from-directory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ directory: dirA }),
+        })
+      ).json()) as Project
+      const pb = (await (
+        await app.request('/from-directory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ directory: dirB }),
+        })
+      ).json()) as Project
+
+      const res = await app.request(`/${pa.id}/relocate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: dirB }),
+      })
+      expect(res.status).toBe(409)
+      const body = (await res.json()) as { error: { code?: string } }
+      expect(body.error.code).toBe('TARGET_OCCUPIED')
+
+      // 原项目未受影响
+      expect((await app.request(`/${pa.id}`)).status).toBe(200)
+      expect((await app.request(`/${pb.id}`)).status).toBe(200)
+    } finally {
+      rmSync(dirA, { recursive: true, force: true })
+      rmSync(dirB, { recursive: true, force: true })
+    }
+  })
+
+  it('POST /:id/relocate 目录不存在 → 400；项目不存在 → 404', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'projr-e-'))
+    try {
+      const { app } = await setup()
+      const project = (await (
+        await app.request('/from-directory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ directory: dir }),
+        })
+      ).json()) as Project
+
+      const missing = await app.request(`/${project.id}/relocate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: join(dir, 'nope') }),
+      })
+      expect(missing.status).toBe(400)
+      expect(((await missing.json()) as { error: { code?: string } }).error.code).toBe(
+        'DIRECTORY_MISSING',
+      )
+
+      const nf = await app.request('/nonexistent/relocate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: dir }),
+      })
+      expect(nf.status).toBe(404)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

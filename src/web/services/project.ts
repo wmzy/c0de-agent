@@ -21,6 +21,12 @@ const projectAPI = {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     }),
+  /** A1：项目重新定位——目录被移动/重命名后，整体迁移会话与看板到新目录身份。 */
+  relocate: (id: string, directory: string) =>
+    apiRequest<{ ok: boolean; project: Project }>(`/api/projects/${id}/relocate`, {
+      method: 'POST',
+      body: JSON.stringify({ directory }),
+    }),
   /** 删除项目记录（看板级联删除；会话保留）。 */
   remove: (id: string) => apiRequest<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 }

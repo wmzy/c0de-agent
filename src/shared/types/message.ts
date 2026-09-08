@@ -44,8 +44,12 @@ type SessionMetadata = {
   /** P2：会话级授权模式覆盖（'auto'/'default'），跨重启持久化。 */
   permissionMode?: 'auto' | 'default'
   /** 回收站条目首次被用户看到的时间戳（ms）。回收站保留期自此起算，而非删除时间——
-   *  避免「删除后长期不开服务，重启即被静默物理清除、从未见过倒计时」的墙钟缺陷。 */
+   *  避免「删除后长期不开服务，重启即被静默物理清除、从未见过倒计时」的墙钟缺陷。
+   *  只标记一次（touchTrashSeen 不重置），保证倒计时稳定可预期。 */
   trashSeenAt?: number
+  /** 回收站条目已到期、进入物理清除宽限期的时间戳（ms）。
+   *  到期先标记，宽限期（默认 7 天）内可在 UI 恢复；期满后由 purgeDeletedSessions 物理清除。 */
+  purgePendingAt?: number
 }
 
 /** A conversation session (may have a parent for branching). */

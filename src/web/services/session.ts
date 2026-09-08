@@ -27,8 +27,16 @@ const sessionAPI = {
     apiRequest<Session[]>(
       `/api/sessions/deleted${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
-  /** 未归属任何项目的已删会话（删除项目后 FK set null 导致的孤儿，需专门视图暴露）。 */
+  /** 未归属任何项目的已删会话（删除项目后 FK set null 导致的孤儿，需专门视图暴露）。
+   *  A3：列表查询不再自动标记「已看到」；标记由 touchOrphansSeen 在展开分组时显式触发。 */
   deletedOrphans: () => apiRequest<Session[]>('/api/sessions/deleted?orphan=1'),
+  /** A3：孤儿条目计数（不标记 seen；分组折叠时展示数量）。 */
+  deletedOrphansCount: () => apiRequest<{ count: number }>('/api/sessions/deleted/orphans/count'),
+  /** A3：展开「未归属项目」分组时显式标记孤儿已看到（保留期自此刻起算）。 */
+  touchOrphansSeen: () =>
+    apiRequest<{ ok: boolean; touched: number }>('/api/sessions/deleted/orphans/seen', {
+      method: 'POST',
+    }),
   restore: (id: string, projectId?: string) =>
     apiRequest<{
       ok: boolean
@@ -36,6 +44,8 @@ const sessionAPI = {
       orphaned?: boolean
       restoredAncestorCount?: number
       crossedBatchAncestor?: boolean
+      /** A2：已删但未随本次恢复的后代数量（批次不同 → 滞留回收站需单独恢复）。 */
+      leftBehindDescendantCount?: number
     }>(`/api/sessions/${id}/restore`, {
       method: 'POST',
       body: JSON.stringify(projectId ? { projectId } : {}),

@@ -1,4 +1,5 @@
-import { and, eq, gt, ilike, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm'
+import { and, eq, gt, ilike, inArray, isNull, lt, ne, notExists, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
@@ -103,11 +104,12 @@ async function listOrphanDeletedSessions(handle: DB): Promise<Session[]> {
 }
 
 /**
- * 标记回收站条目「已被用户看到」，记录 metadata.trashSeenAt = now。
- * 回收站保留期自首次看到起算（见 purgeDeletedSessions），在此前无需清除 trashSeenAt：
- * 若会话被恢复后再次删除，`trashSeenAt > deletedAt` 判据会自动失效，待用户再次看到
- * 回收站时才重新起算——避免「未重新看到就被过早清空」。
- * scope.orphan=true 时仅标记未归属项目的孤儿会话（与 listOrphanDeletedSessions 对齐）。
+ * 标记回收站条目「已被用户看到」，记录 metadata.trashSeenAt = now（仅首次，不重置）。
+ * 回收站保留期自首次看到起算（见 purgeDeletedSessions）。软删除时会清除旧标记，
+ * 恢复后再次删除须重新看到回收站才重新起算——避免「未重新看到就被过早清空」。
+ * scope.orphan=true 时仅标记未归属项目的孤儿会话（与 listOrphanDeletedSessions 对齐）；
+ * 孤儿标记仅在用户展开「未归属项目」分组时由前端显式调用（POST /deleted/orphans/seen），
+ * 避免打开任意项目回收站连带启动无关孤儿条目的倒计时。
  */
 async function touchTrashSeen(
   handle: DB,
@@ -126,7 +128,9 @@ async function touchTrashSeen(
   let touched = 0
   for (const row of rows) {
     const meta = (row.metadata ?? {}) as SessionMetadata
-    if (meta.trashSeenAt === now) continue
+    // A3：只标记首次看到，不随每次打开重置——否则「剩余天数」虚标，
+    // 经常打开回收站的用户条目永不清理，保留期形同虚设。
+    if (typeof meta.trashSeenAt === 'number') continue
     await handle.db
       .update(sessions)
       .set({ metadata: { ...meta, trashSeenAt: now } })
@@ -138,25 +142,31 @@ async function touchTrashSeen(
 
 /**
  * 软删除会话（级联其所有 fork 后代）。设置 deletedAt = now；
- * 60 天后由 purgeDeletedSessions 物理清除。
+ * 60 天后由 purgeDeletedSessions 物理清除（到期先标记、宽限 7 天）。
+ * A3：同时清除 trashSeenAt/purgePendingAt——恢复后重删的会话必须重新被
+ * 用户看到才重新起算，宽限期标记不跨删除周期生效。
  * 会话不存在或已在回收站 → 返回 false（调用方按 404 处理）。
  */
 async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
   const [row] = await handle.db
-    .select({ id: sessions.id, deletedAt: sessions.deletedAt })
+    .select({ id: sessions.id, deletedAt: sessions.deletedAt, metadata: sessions.metadata })
     .from(sessions)
     .where(eq(sessions.id, id))
   if (!row || row.deletedAt) return false
   const ids = new Set<string>([id])
+  const metas = new Map<string, unknown>([[id, row.metadata]])
   let frontier = [id]
   while (frontier.length > 0) {
     // 用 parentId 过滤：收集下一层子会话
     const children = await handle.db
-      .select({ id: sessions.id })
+      .select({ id: sessions.id, metadata: sessions.metadata })
       .from(sessions)
       .where(and(isNull(sessions.deletedAt), inArray(sessions.parentId, frontier)))
     frontier = children.map((r) => r.id).filter((cid) => !ids.has(cid))
-    for (const r of children) ids.add(r.id)
+    for (const r of children) {
+      ids.add(r.id)
+      metas.set(r.id, r.metadata)
+    }
   }
   const now = new Date()
   // 同一次删除级联共享同一批次号：恢复时仅还原同批次后代，避免把早先
@@ -165,10 +175,25 @@ async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
   for (const sid of ids) {
     await handle.db
       .update(sessions)
-      .set({ deletedAt: now, deletedBatchId: batchId })
+      .set({
+        deletedAt: now,
+        deletedBatchId: batchId,
+        metadata: clearTrashMarks((metas.get(sid) ?? {}) as SessionMetadata),
+      })
       .where(eq(sessions.id, sid))
   }
   return true
+}
+
+/**
+ * A3：清除回收站倒计时/宽限期标记（软删除与项目删除共用）。
+ * 恢复后重删的会话须重新被看到才重新起算；宽限期标记不跨删除周期生效。
+ * 无标记时原样返回，避免无谓的 jsonb 覆写。
+ */
+function clearTrashMarks(meta: SessionMetadata): SessionMetadata {
+  if (typeof meta.trashSeenAt !== 'number' && typeof meta.purgePendingAt !== 'number') return meta
+  const { trashSeenAt: _seen, purgePendingAt: _purge, ...rest } = meta
+  return rest
 }
 
 /**
@@ -204,6 +229,12 @@ export type RestoreResult = {
   restoredAncestorCount: number
   /** 是否连带还原了与目标非同一次删除批次的祖先（用户早先单独删除的会话）。 */
   crossedBatchAncestor: boolean
+  /**
+   * A2：已删除但未随本次恢复的后代数量（删除批次不同——典型场景是项目删除时
+   * 各会话批次断裂）。这些 fork 分支滞留在回收站，必须显式告知用户单独恢复，
+   * 否则会被静默物理清除。
+   */
+  leftBehindDescendantCount: number
 }
 
 async function restoreSessionCore(
@@ -214,7 +245,12 @@ async function restoreSessionCore(
   const includeDescendants = opts.includeDescendants !== false
   const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
   if (!row?.deletedAt)
-    return { restored: false, restoredAncestorCount: 0, crossedBatchAncestor: false }
+    return {
+      restored: false,
+      restoredAncestorCount: 0,
+      crossedBatchAncestor: false,
+      leftBehindDescendantCount: 0,
+    }
   const targetBatch = row.deletedBatchId
   const ids = new Set<string>([id])
   // 后代 BFS：仅还原属于同一删除批次的后代（删除时父+后代共享 deletedBatchId）。
@@ -236,6 +272,25 @@ async function restoreSessionCore(
         )
       frontier = children.map((r) => r.id).filter((cid) => !ids.has(cid))
       for (const r of children) ids.add(r.id)
+    }
+  }
+  // A2：统计所有已删后代中未随本次恢复的数量（批次不同 → 滞留回收站）。
+  let leftBehindDescendantCount = 0
+  if (includeDescendants) {
+    const seen = new Set<string>()
+    let frontier = [id]
+    while (frontier.length > 0) {
+      const children = await handle.db
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(and(gt(sessions.deletedAt, new Date(0)), inArray(sessions.parentId, frontier)))
+      frontier = []
+      for (const ch of children) {
+        if (seen.has(ch.id)) continue
+        seen.add(ch.id)
+        frontier.push(ch.id)
+        if (!ids.has(ch.id)) leftBehindDescendantCount += 1
+      }
     }
   }
   // 祖先链（仅还原其中已软删除的节点）：为保证恢复节点在会话树可达，
@@ -260,7 +315,12 @@ async function restoreSessionCore(
       .set({ deletedAt: null, deletedBatchId: null })
       .where(eq(sessions.id, sid))
   }
-  return { restored: true, restoredAncestorCount, crossedBatchAncestor }
+  return {
+    restored: true,
+    restoredAncestorCount,
+    crossedBatchAncestor,
+    leftBehindDescendantCount,
+  }
 }
 
 async function restoreSession(
@@ -272,7 +332,7 @@ async function restoreSession(
 }
 
 /**
- * P2-4：回收站保留期 60 天（原 30 天），自此修复起自「用户首次在回收站看到该条目」
+ * P2-4：回收站保留期 60 天（原 30 天），自「用户首次在回收站看到该条目」
  * （metadata.trashSeenAt）起算，而非删除时间（墙钟）——否则用户删除后长期不开服务、
  * 重启即被静默物理清除，从未见过任何倒计时。临时会话（CLI print / workflow）保留期
  * 仍为 30 天，见 purgeTemporarySessions。
@@ -280,14 +340,29 @@ async function restoreSession(
 export const TRASH_RETENTION_MS = 60 * 24 * 60 * 60 * 1000
 
 /**
- * 物理清除回收站中「已被用户看到且超过保留期（默认 60 天）」的会话。
- * 子会话先于父会话删除（自引用 FK 要求）。返回清除数量。启动时与每日定时调用。
- * 未被看到过（trashSeenAt 缺失）或恢复后重删、尚未重新看到的会话永不在此清除。
+ * A3：到期标记 → 物理清除的宽限期（默认 7 天）。
+ * 条目到期后先写 metadata.purgePendingAt，UI 显示「即将清除」并可恢复；
+ * 宽限期满才物理清除——杜绝「到期即静默物理清空」的数据丢失死角。
  */
-async function purgeDeletedSessions(handle: DB, retentionMs = TRASH_RETENTION_MS): Promise<number> {
-  const cutoff = new Date(Date.now() - retentionMs)
-  const cutoffMs = cutoff.getTime()
-  const candidates = await handle.db
+export const TRASH_PURGE_GRACE_MS = 7 * 24 * 60 * 60 * 1000
+
+/** 清除结果：marked = 本次新标记进入宽限期的条目数；deleted = 本次物理清除数。 */
+export type TrashPurgeResult = { marked: number; deleted: number }
+
+/**
+ * 回收站两阶段清理（启动时与每日定时调用）：
+ * 阶段一：trashSeenAt 超过保留期且未标记 → 标记 purgePendingAt（进入宽限期，可恢复）。
+ * 阶段二：purgePendingAt 早于宽限截止 → 物理清除（子会话先于父，自引用 FK 要求）。
+ * 未被看到过（trashSeenAt 缺失）或恢复后重删、尚未重新看到的会话永不进入任一阶段。
+ */
+async function purgeDeletedSessions(
+  handle: DB,
+  retentionMs = TRASH_RETENTION_MS,
+  graceMs = TRASH_PURGE_GRACE_MS,
+): Promise<TrashPurgeResult> {
+  const retentionCutoff = Date.now() - retentionMs
+  const graceCutoff = Date.now() - graceMs
+  const rows = await handle.db
     .select({
       id: sessions.id,
       parentId: sessions.parentId,
@@ -295,42 +370,99 @@ async function purgeDeletedSessions(handle: DB, retentionMs = TRASH_RETENTION_MS
       metadata: sessions.metadata,
     })
     .from(sessions)
-    .where(lt(sessions.deletedAt, cutoff))
-  // 保留期自「首次看到」起算：trashSeenAt 缺失，或早于最近一次删除
-  // （恢复后重删、尚未重新看到）→ 不进入清理集合，避免静默数据丢失。
-  const rows = candidates.filter((r) => {
-    if (!r.deletedAt) return false
-    const seen = (r.metadata as SessionMetadata | null | undefined)?.trashSeenAt
+    .where(gt(sessions.deletedAt, new Date(0)))
+
+  // —— 阶段一：到期标记（先宽限，不直接清除）——
+  let marked = 0
+  for (const r of rows) {
+    if (!r.deletedAt) continue
+    const meta = (r.metadata ?? {}) as SessionMetadata
+    const seen = meta.trashSeenAt
     const deletedMs = r.deletedAt.getTime()
-    return typeof seen === 'number' && seen > deletedMs && seen < cutoffMs
+    // 保留期自「首次看到」起算：seen 缺失或早于最近一次删除 → 未重新看到，不标记。
+    if (typeof seen !== 'number' || seen <= deletedMs || seen >= retentionCutoff) continue
+    if (typeof meta.purgePendingAt === 'number') continue
+    await handle.db
+      .update(sessions)
+      .set({ metadata: { ...meta, purgePendingAt: Date.now() } })
+      .where(eq(sessions.id, r.id))
+    marked += 1
+  }
+
+  // —— 阶段二：宽限期满物理清除 ——
+  const pending = rows.filter((r) => {
+    if (!r.deletedAt) return false
+    const meta = (r.metadata ?? {}) as SessionMetadata
+    const p = meta.purgePendingAt
+    return typeof p === 'number' && p < graceCutoff
   })
-  if (rows.length === 0) return 0
-  // 拓扑序：无子会话的先删
-  const remaining = new Set(rows.map((r) => r.id))
   let deleted = 0
-  while (remaining.size > 0) {
-    const hasChildParent = new Set(
-      rows.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
-    )
-    const leaves = rows
-      .filter((r) => remaining.has(r.id) && !hasChildParent.has(r.id))
-      .map((r) => r.id)
-    if (leaves.length === 0) {
-      // 循环引用兜底：强制按 id 逐个删除（自引用环数据异常场景）
-      for (const id of Array.from(remaining)) {
+  if (pending.length > 0) {
+    // 拓扑序：无子会话的先删
+    const remaining = new Set(pending.map((r) => r.id))
+    while (remaining.size > 0) {
+      const hasChildParent = new Set(
+        pending.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
+      )
+      const leaves = pending
+        .filter((r) => remaining.has(r.id) && !hasChildParent.has(r.id))
+        .map((r) => r.id)
+      if (leaves.length === 0) {
+        // 循环引用兜底：强制按 id 逐个删除（自引用环数据异常场景）
+        for (const id of Array.from(remaining)) {
+          await handle.db.delete(sessions).where(eq(sessions.id, id))
+          remaining.delete(id)
+          deleted += 1
+        }
+        break
+      }
+      for (const id of leaves) {
         await handle.db.delete(sessions).where(eq(sessions.id, id))
         remaining.delete(id)
         deleted += 1
       }
-      break
-    }
-    for (const id of leaves) {
-      await handle.db.delete(sessions).where(eq(sessions.id, id))
-      remaining.delete(id)
-      deleted += 1
     }
   }
-  return deleted
+  return { marked, deleted }
+}
+
+/** C4：空会话 GC 保留期（7 天）。仅覆盖「从未写入任何消息/工具条目」的会话。 */
+const EMPTY_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * C4：清理长期空置的 web 会话（无任何条目、无子会话、未删除、创建早于保留期）。
+ * 覆盖「新建会话后未发言」的残留：首条消息失败清理依赖前端 JS 执行，
+ * 崩溃/断电/离线时必然残留空「New Session」行。CLI 临时会话由 purgeTemporarySessions 负责。
+ */
+async function purgeEmptySessions(
+  handle: DB,
+  retentionMs = EMPTY_SESSION_RETENTION_MS,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionMs)
+  const children = alias(sessions, 'empty_children')
+  const result = await handle.db
+    .delete(sessions)
+    .where(
+      and(
+        lt(sessions.createdAt, cutoff),
+        isNull(sessions.deletedAt),
+        or(isNull(sessions.source), eq(sessions.source, 'web')),
+        notExists(
+          handle.db
+            .select({ one: sql`1` })
+            .from(sessionEntries)
+            .where(eq(sessionEntries.sessionId, sessions.id)),
+        ),
+        notExists(
+          handle.db
+            .select({ one: sql`1` })
+            .from(children)
+            .where(eq(children.parentId, sessions.id)),
+        ),
+      ),
+    )
+    .returning({ id: sessions.id })
+  return result.length
 }
 
 /** Update a session's title. */
@@ -717,6 +849,7 @@ async function searchSessions(
 }
 
 export {
+  clearTrashMarks,
   createSession,
   emptyTrash,
   getSession,
@@ -727,6 +860,7 @@ export {
   listSessionsByProject,
   permanentlyDeleteSession,
   purgeDeletedSessions,
+  purgeEmptySessions,
   purgeTemporarySessions,
   rebindSession,
   restoreSession,

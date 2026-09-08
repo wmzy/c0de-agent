@@ -104,8 +104,9 @@ export function TopBar() {
           className={`${link} ${isKanban ? activeLink : ''}`}
           data-active={isKanban || undefined}
           data-testid="nav-kanban"
+          title="项目级任务看板（与会话内的 agent 待办相互独立）"
         >
-          看板
+          项目看板
         </Link>
         <Link
           to={settingsPath}

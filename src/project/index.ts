@@ -4,6 +4,7 @@ export {
   getByDirectory,
   getProject,
   listProjects,
+  relocateProject,
   updateProjectName,
 } from './project.js'
 export type { ResolvedProject } from './resolve.js'

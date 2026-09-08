@@ -209,13 +209,16 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
               <StatRow label="缓存 token（读/写）">{formatNumber(stats.cacheRead)} / 0</StatRow>
               <StatRow label="用户消息">{formatNumber(stats.userMessages)}</StatRow>
               <StatRow label="助手消息">{formatNumber(stats.assistantMessages)}</StatRow>
-              <StatRow label="总成本">{formatCostUSD(stats.cost)}</StatRow>
+              <StatRow label="总成本（估算）">{formatCostUSD(stats.cost)}</StatRow>
               <StatRow label="创建时间">
                 {stats.createdAt ? formatDateTime(stats.createdAt) : '—'}
               </StatRow>
               <StatRow label="最后活动">
                 {stats.updatedAt ? formatDateTime(stats.updatedAt) : '—'}
               </StatRow>
+              <span className={status} data-testid="summary-provenance">
+                成本按配置价目估算，可能与账单略有差异；token 为服务端上报用量。
+              </span>
             </>
           )}
         </div>

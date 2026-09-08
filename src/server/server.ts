@@ -27,7 +27,9 @@ import { initPlugins } from '../plugins/index.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import {
   purgeDeletedSessions,
+  purgeEmptySessions,
   purgeTemporarySessions,
+  TRASH_PURGE_GRACE_MS,
   TRASH_RETENTION_MS,
 } from '../session/session.js'
 import type { Config } from '../shared/types/config.js'
@@ -393,35 +395,41 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
 
   const { ctx, dispose } = await buildServerContext(db, opts)
 
-  // P2-4：回收站清理——启动时清一次 + 每 24h 清一次（软删除保留 60 天）。
-  // fire-and-forget：清理失败不阻塞服务启动；清理结果落日志，
-  // 用户长期未启动、重启即清仓时至少有启动日志可查。
-  void purgeDeletedSessions(db)
-    .then((n) => {
-      if (n > 0) {
-        console.log(
-          `[server] 回收站清理：已物理清除 ${n} 个超过保留期的会话（保留期 ${TRASH_RETENTION_MS / (24 * 60 * 60 * 1000)} 天）`,
-        )
-      }
-    })
-    .catch(() => {})
+  // P2-4 + A3：回收站两阶段清理——启动时清一次 + 每 24h 清一次。
+  // 阶段一标记到期条目进入宽限期（UI 可见可恢复），阶段二物理清除宽限期满的条目。
+  // fire-and-forget：清理失败不阻塞服务启动；结果落日志可查。
+  const runTrashPurge = () => {
+    void purgeDeletedSessions(db)
+      .then(({ marked, deleted }) => {
+        if (marked > 0) {
+          console.log(
+            `[server] 回收站清理：${marked} 个会话已到期，进入 ${TRASH_PURGE_GRACE_MS / (24 * 60 * 60 * 1000)} 天宽限期（期间可恢复）`,
+          )
+        }
+        if (deleted > 0) {
+          console.log(
+            `[server] 回收站清理：已物理清除 ${deleted} 个超过宽限期的会话（保留期 ${TRASH_RETENTION_MS / (24 * 60 * 60 * 1000)} 天）`,
+          )
+        }
+      })
+      .catch(() => {})
+  }
+  runTrashPurge()
   const purgeTimer = setInterval(
     () => {
-      void purgeDeletedSessions(db)
-        .then((n) => {
-          if (n > 0) {
-            console.log(`[server] 回收站清理：已物理清除 ${n} 个超过保留期的会话`)
-          }
-        })
-        .catch(() => {})
+      runTrashPurge()
       // P2：CLI print / 工作流临时会话同样每日清理（30 天保留）
       void purgeTemporarySessions(db).catch(() => {})
+      // C4：长期空置的 web 空会话每日清理（7 天保留）
+      void purgeEmptySessions(db).catch(() => {})
     },
     24 * 60 * 60 * 1000,
   )
   purgeTimer.unref()
   // P2：启动时同步清一次临时会话（每日定时之外的兜底）
   void purgeTemporarySessions(db).catch(() => {})
+  // C4：启动时同步清一次空会话（兜底）
+  void purgeEmptySessions(db).catch(() => {})
   // P2：标记崩溃遗留的后台子 agent 任务（lastRun=running 的 subagent 会话）
   // 并给父会话注入失败通知。fire-and-forget：失败不阻塞启动。
   void markDeadBackgroundJobs(db).catch(() => {})

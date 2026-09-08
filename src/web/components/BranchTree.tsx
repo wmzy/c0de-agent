@@ -130,6 +130,31 @@ function UsageBadge({ usage }: { usage: SessionUsage }) {
   )
 }
 
+const autoBadge = css`
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  border-radius: 3px;
+  color: var(--warning);
+  white-space: nowrap;
+`
+
+/** C2：会话级「自动授权」徽标——auto 模式持久化在 metadata，
+ *  列表可见性不足会让用户回到旧会话时误以为仍有确认流程。 */
+function AutoBadge({ node }: { node: SessionTreeNode }) {
+  if (node.session.metadata.permissionMode !== 'auto') return null
+  return (
+    <span
+      className={autoBadge}
+      data-testid={`auto-badge-${node.session.id}`}
+      title="该会话开启了自动授权：工具执行不再逐次确认。可在聊天页底栏关闭。"
+    >
+      自动授权
+    </span>
+  )
+}
+
 export function BranchTree({
   nodes,
   activeId,
@@ -242,6 +267,7 @@ function TreeNode({
                 {n.session.title}
               </span>
               <UsageBadge usage={n.usage} />
+              <AutoBadge node={n} />
             </button>
             {onRename && (
               <button

@@ -9,12 +9,14 @@ import { migrateDB } from '../db/migrate.js'
 import { sessions } from '../db/schema.js'
 import { fromDirectory } from '../project/project.js'
 import { markDeadBackgroundJobs } from './jobs.js'
+import { insertEntry } from './message.js'
 import {
   createSession,
   getSession,
   listDeletedSessions,
   listSessions,
   purgeDeletedSessions,
+  purgeEmptySessions,
   purgeTemporarySessions,
   restoreSession,
   restoreSessionCore,
@@ -233,35 +235,65 @@ describe('session CRUD', () => {
   })
 })
 
-describe('purgeDeletedSessions — 保留期自首次看到起算（F6）', () => {
+describe('purgeDeletedSessions — 两阶段清理（A3：到期先标记，宽限期后清除）', () => {
   let handle: DB
   beforeEach(async () => {
     handle = await setupDB()
   })
 
-  it('从未被看到的已删会话（超期）不会被物理清除', async () => {
+  it('从未被看到的已删会话（超期）不会被标记也不会被清除', async () => {
     const s = await createSession(handle, 'NeverSeen')
     await softDeleteSession(handle, s.id)
     const old = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000)
     await handle.db.update(sessions).set({ deletedAt: old }).where(eq(sessions.id, s.id))
-    expect(await purgeDeletedSessions(handle)).toBe(0)
+    const r = await purgeDeletedSessions(handle)
+    expect(r).toEqual({ marked: 0, deleted: 0 })
     expect(await getSession(handle, s.id)).not.toBeNull()
   })
 
-  it('被看到且超过保留期的会话被清除', async () => {
+  it('被看到且超过保留期 → 首次仅标记进入宽限期，不物理清除', async () => {
     const s = await createSession(handle, 'Seen')
     await softDeleteSession(handle, s.id)
-    await touchTrashSeen(handle)
     const oldMs = Date.now() - 100 * 24 * 60 * 60 * 1000
     await handle.db
       .update(sessions)
       .set({ deletedAt: new Date(oldMs - 1000), metadata: { trashSeenAt: oldMs } })
       .where(eq(sessions.id, s.id))
-    expect(await purgeDeletedSessions(handle)).toBe(1)
+    const r = await purgeDeletedSessions(handle)
+    expect(r).toEqual({ marked: 1, deleted: 0 })
+    expect(await getSession(handle, s.id)).not.toBeNull()
+    expect((await getSession(handle, s.id))?.metadata.purgePendingAt).toBeDefined()
+  })
+
+  it('标记后宽限期未满 → 不物理清除；再次调用不重复标记', async () => {
+    const s = await createSession(handle, 'Grace')
+    await softDeleteSession(handle, s.id)
+    const oldMs = Date.now() - 100 * 24 * 60 * 60 * 1000
+    await handle.db
+      .update(sessions)
+      .set({ deletedAt: new Date(oldMs - 1000), metadata: { trashSeenAt: oldMs } })
+      .where(eq(sessions.id, s.id))
+    expect(await purgeDeletedSessions(handle)).toEqual({ marked: 1, deleted: 0 })
+    // 宽限期内重复调用：不重复标记
+    expect(await purgeDeletedSessions(handle)).toEqual({ marked: 0, deleted: 0 })
+    expect(await getSession(handle, s.id)).not.toBeNull()
+  })
+
+  it('标记超过宽限期后物理清除', async () => {
+    const s = await createSession(handle, 'PurgeNow')
+    await softDeleteSession(handle, s.id)
+    const oldMs = Date.now() - 100 * 24 * 60 * 60 * 1000
+    const meta = { trashSeenAt: oldMs, purgePendingAt: Date.now() - 10 * 24 * 60 * 60 * 1000 }
+    await handle.db
+      .update(sessions)
+      .set({ deletedAt: new Date(oldMs - 1000), metadata: meta })
+      .where(eq(sessions.id, s.id))
+    const r = await purgeDeletedSessions(handle)
+    expect(r.deleted).toBe(1)
     expect(await getSession(handle, s.id)).toBeNull()
   })
 
-  it('恢复后重删、未重新看到 → 旧 trashSeenAt 早于最近删除，不被过早清除', async () => {
+  it('恢复后重删、未重新看到 → 软删除已清除旧标记，不被过早标记', async () => {
     const s = await createSession(handle, 'Redel')
     await softDeleteSession(handle, s.id)
     await touchTrashSeen(handle)
@@ -273,12 +305,24 @@ describe('purgeDeletedSessions — 保留期自首次看到起算（F6）', () =
       .where(eq(sessions.id, s.id))
     await restoreSession(handle, s.id)
     await softDeleteSession(handle, s.id)
+    // A3：软删除清除 trashSeenAt → 重删会话未被重新看到，不进宽限期
+    expect((await getSession(handle, s.id))?.metadata.trashSeenAt).toBeUndefined()
     // 重删时间拨到 100 天前（同样超期）
     const reDeleted = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000)
     await handle.db.update(sessions).set({ deletedAt: reDeleted }).where(eq(sessions.id, s.id))
-    // trashSeenAt（120 天前）早于最近一次删除（100 天前）→ 不算已重新看到，不清除
-    expect(await purgeDeletedSessions(handle)).toBe(0)
+    expect(await purgeDeletedSessions(handle)).toEqual({ marked: 0, deleted: 0 })
     expect(await getSession(handle, s.id)).not.toBeNull()
+  })
+
+  it('touchTrashSeen 仅标记首次看到，不随重复打开重置', async () => {
+    const s = await createSession(handle, 'SeenOnce')
+    await softDeleteSession(handle, s.id)
+    await touchTrashSeen(handle)
+    const first = (await getSession(handle, s.id))?.metadata.trashSeenAt
+    expect(first).toBeDefined()
+    // 第二次打开回收站：标记不重置，倒计时稳定
+    await touchTrashSeen(handle)
+    expect((await getSession(handle, s.id))?.metadata.trashSeenAt).toBe(first)
   })
 
   it('touchTrashSeen 按 projectId 隔离标记', async () => {
@@ -298,6 +342,55 @@ describe('purgeDeletedSessions — 保留期自首次看到起算（F6）', () =
       rmSync(dirA, { recursive: true, force: true })
       rmSync(dirB, { recursive: true, force: true })
     }
+  })
+
+  it('A2：restoreSessionCore 返回未随恢复的已删后代数量', async () => {
+    const root = await createSession(handle, 'Root')
+    const branchA = await createSession(handle, 'BranchA', undefined, undefined, 'web', root.id)
+    const branchB = await createSession(handle, 'BranchB', undefined, undefined, 'web', root.id)
+    // 批次一：branchB 早先单独删除
+    await softDeleteSession(handle, branchB.id)
+    // 批次二：root + branchA（branchB 已删，不参与级联）一起删除
+    await softDeleteSession(handle, root.id)
+    const r = await restoreSessionCore(handle, root.id)
+    expect(r.restored).toBe(true)
+    expect(r.leftBehindDescendantCount).toBe(1)
+    expect((await getSession(handle, branchA.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, branchB.id))?.deletedAt).not.toBeNull()
+  })
+})
+
+describe('purgeEmptySessions — 空会话 GC（C4）', () => {
+  let handle: DB
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  it('清理超过保留期的空 web 会话，保留有消息/子会话/CLI/新会话', async () => {
+    const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
+    const empty = await createSession(handle, 'Empty')
+    const withMsg = await createSession(handle, 'HasMsg')
+    const parent = await createSession(handle, 'Parent')
+    await createSession(handle, 'Child', undefined, undefined, 'web', parent.id)
+    const cli = await createSession(handle, 'Cli', undefined, undefined, 'cli')
+    const fresh = await createSession(handle, 'Fresh')
+    // 有消息的会话写入一条条目
+    await insertEntry(handle, {
+      sessionId: withMsg.id,
+      tag: 'message',
+      role: 'user',
+      content: [{ _tag: 'text', text: 'hi' }],
+    })
+    for (const id of [empty.id, withMsg.id, parent.id, cli.id]) {
+      await handle.db.update(sessions).set({ createdAt: old }).where(eq(sessions.id, id))
+    }
+    const purged = await purgeEmptySessions(handle)
+    expect(purged).toBe(1)
+    expect(await getSession(handle, empty.id)).toBeNull()
+    expect(await getSession(handle, withMsg.id)).not.toBeNull()
+    expect(await getSession(handle, parent.id)).not.toBeNull()
+    expect(await getSession(handle, cli.id)).not.toBeNull()
+    expect(await getSession(handle, fresh.id)).not.toBeNull()
   })
 })
 

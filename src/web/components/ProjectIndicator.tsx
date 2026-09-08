@@ -9,6 +9,7 @@ import { MOBILE } from '../styles/breakpoints.js'
 import { AddProjectDialog } from './AddProjectDialog.js'
 import { DangerConfirmDialog } from './DangerConfirmDialog.js'
 import { DropdownMenu } from './DropdownMenu.js'
+import { RelocateProjectDialog } from './RelocateProjectDialog.js'
 
 const indicator = css`
   display: flex;
@@ -223,6 +224,8 @@ export function ProjectIndicator({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   // P2-6：删除项目（看板永久丢失）分级确认弹层；会话仅入回收站可恢复。
   const [showDelete, setShowDelete] = useState(false)
+  // A1：目录失效时的「重新定位」弹窗（整体迁移会话与看板，替代删除）。
+  const [showRelocate, setShowRelocate] = useState(false)
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => projectAPI.remove(id),
@@ -360,13 +363,26 @@ export function ProjectIndicator({
 
       {/* worktree 失效警告（P1-9：目录被删除/移动时明确提示，避免 agent 在错误目录执行） */}
       {project.worktreeMissing ? (
-        <span
-          style={{ color: 'var(--warning)', fontSize: 11 }}
-          title="项目工作目录已失效（被删除或移动）。对话将无法执行工具，请删除该项目或恢复目录。"
-          data-testid="worktree-missing"
-        >
-          {'\u26A0'} 目录已失效
-        </span>
+        <>
+          <span
+            style={{ color: 'var(--warning)', fontSize: 11 }}
+            title="项目工作目录已失效（被删除或移动）。对话将无法执行工具。"
+            data-testid="worktree-missing"
+          >
+            {'\u26A0'} 目录已失效
+          </span>
+          {/* A1：目录被移动/重命名 → 重新定位（整体迁移会话与看板），删除项目是最后手段 */}
+          <button
+            type="button"
+            className={footerBtn}
+            style={{ color: 'var(--primary)', fontSize: 11, padding: '1px 8px' }}
+            onClick={() => setShowRelocate(true)}
+            data-testid="relocate-project-btn"
+            title="目录被移动或重命名？输入新路径，会话与看板将整体迁移（看板不会丢失）"
+          >
+            重新定位
+          </button>
+        </>
       ) : null}
 
       {/* 分支下拉 */}
@@ -438,11 +454,21 @@ export function ProjectIndicator({
           }}
         />
       )}
+      {showRelocate && (
+        <RelocateProjectDialog
+          project={project}
+          onClose={() => setShowRelocate(false)}
+          onRelocated={(p) => {
+            // 项目身份已更换（id = sha256(新目录)），导航到新项目
+            navigate(`/projects/${p.id}`)
+          }}
+        />
+      )}
       {showDelete && (
         <DangerConfirmDialog
           open={true}
           title="删除项目"
-          description={`将删除项目「${project.name ?? '未命名项目'}」。看板将永久删除；该项目的全部会话将移入回收站的「未归属项目」分组（60 天后自动清除），恢复后需重新归属到某个项目。若项目目录也被删除，会话仅能在 CLI 用 c0de sessions restore <id> --project <路径> 恢复。`}
+          description={`将删除项目「${project.name ?? '未命名项目'}」。看板将永久删除；该项目的全部会话将移入回收站的「未归属项目」分组（60 天保留期，到期后宽限 7 天再自动清除），恢复后需重新归属到某个项目。若目录只是被移动或重命名，请改用「重新定位」以保留看板与会话归属。`}
           confirmWord={project.name ?? '未命名项目'}
           confirmLabel="删除项目"
           busy={deleteMut.isPending}

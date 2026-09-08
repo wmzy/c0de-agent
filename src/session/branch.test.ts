@@ -103,9 +103,10 @@ describe('branching', () => {
 
   it('fork 复制源会话最新文件快照', async () => {
     const parent = await createSession(handle, 'Parent')
-    await appendMessage(handle, parent.id, { role: 'user', content: textContent('hi') })
+    // 快照先于分支点消息创建（@文件上下文先于消息）——最新版本 ≤ 分支点时间，被复制
     await upsertFileSnapshot(handle, parent.id, 'a.ts', 'v1')
     await upsertFileSnapshot(handle, parent.id, 'a.ts', 'v2')
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('hi') })
 
     const forked = await forkSession(handle, parent.id, 0)
     const snaps = await getFileSnapshots(handle, forked.id)
@@ -114,6 +115,23 @@ describe('branching', () => {
     expect(aSnaps).toHaveLength(1)
     expect(aSnaps[0]?.content).toBe('v2')
     expect(aSnaps[0]?.version).toBe(2)
+  })
+
+  it('C3：从较早消息点 fork 不复制分支点之后更新的快照', async () => {
+    const parent = await createSession(handle, 'Parent')
+    // 分支点（messageIndex=0）之前：快照 v1
+    await upsertFileSnapshot(handle, parent.id, 'a.ts', 'v1')
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('msg-0') })
+    // 分支点之后：追加一条消息并更新快照 v2——v2 反映「未来」文件状态
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('msg-1') })
+    await upsertFileSnapshot(handle, parent.id, 'a.ts', 'v2')
+
+    const forked = await forkSession(handle, parent.id, 0)
+    const snaps = await getFileSnapshots(handle, forked.id)
+    const aSnaps = snaps.filter((s) => s.filePath === 'a.ts')
+    // 只有 v1 的 createdAt ≤ 分支点时间，复制 v1；无合格版本的文件跳过
+    expect(aSnaps).toHaveLength(1)
+    expect(aSnaps[0]?.content).toBe('v1')
   })
 
   it('throws when forking a non-existent session', async () => {

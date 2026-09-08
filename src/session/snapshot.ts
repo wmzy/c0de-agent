@@ -97,11 +97,15 @@ async function checkFileSnapshot(
   return snapshot?.content ?? null
 }
 
-/** 把源会话每个文件的最新快照复制到目标会话（fork 分支用，P1-4）。 */
+/** 把源会话每个文件的最新快照复制到目标会话（fork 分支用，P1-4）。
+ *  C3：beforeMs 提供时只复制创建时间 ≤ 分支点的快照版本——从较早消息点 fork 时，
+ *  分支点之后更新的快照反映的是「未来」文件状态，复制会污染分支上下文；
+ *  无合格版本的文件夹跳过（宁可缺快照由磁盘重读，也不注入错误内容）。 */
 async function copyFileSnapshots(
   handle: DB,
   fromSessionId: string,
   toSessionId: string,
+  beforeMs?: number,
 ): Promise<void> {
   const rows = await handle.db
     .select()
@@ -109,6 +113,11 @@ async function copyFileSnapshots(
     .where(eq(fileSnapshots.sessionId, fromSessionId))
   const latest = new Map<string, typeof fileSnapshots.$inferSelect>()
   for (const r of rows) {
+    if (beforeMs !== undefined) {
+      const created =
+        r.createdAt instanceof Date ? r.createdAt.getTime() : new Date(r.createdAt).getTime()
+      if (created > beforeMs) continue
+    }
     const prev = latest.get(r.filePath)
     if (!prev || (r.version ?? 0) > (prev.version ?? 0)) latest.set(r.filePath, r)
   }

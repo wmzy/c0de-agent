@@ -115,8 +115,11 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
       },
     })
 
-    // 复制源会话最新文件快照（P1-4：@文件上下文随分支保留）。
-    await copyFileSnapshots(txHandle, sessionId, forked.id)
+    // 复制源会话文件快照（P1-4：@文件上下文随分支保留）。
+    // C3：按分支点时间过滤——分支点之后更新的快照是「未来」状态，不复制。
+    const branchPointMs =
+      typeof target.createdAt === 'number' ? target.createdAt : new Date(target.createdAt).getTime()
+    await copyFileSnapshots(txHandle, sessionId, forked.id, branchPointMs)
 
     const created = await getSession(txHandle, forked.id)
     if (!created) throw new Error('Forked session not found after creation')
