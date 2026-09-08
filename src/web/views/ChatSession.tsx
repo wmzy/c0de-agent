@@ -292,10 +292,21 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   // 归档面板开关
   const [showArchives, setShowArchives] = useState(false)
 
-  // 会话导出：下载 JSON（元数据 + 消息 + 归档），数据可迁移（改进建议 #4）
+  // 会话导出：下载 JSON（元数据 + 消息 + 归档），数据可迁移（改进建议 #4）。
+  // P0 明示：导出仅含本会话消息与归档，fork 分支/子会话不在其中——有分支时
+  // 导出前确认告知（此前用户以为完整备份，分支关系静默丢失）。
   const handleExport = async () => {
     try {
-      const data = await sessionAPI.exportSession(sessionId)
+      const [data, branches] = await Promise.all([
+        sessionAPI.exportSession(sessionId),
+        sessionAPI.branches(sessionId).catch(() => []),
+      ])
+      if (branches.length > 0) {
+        const ok = window.confirm(
+          `该会话有 ${branches.length} 个派生分支。导出仅包含本会话的消息与归档，分支内容不会导出。\n确定继续导出本会话？`,
+        )
+        if (!ok) return
+      }
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -368,15 +379,22 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     .filter((r) => shakeSelected.has(r.id))
     .reduce((sum, r) => sum + r.tokens, 0)
 
-  // 恢复中断的对话：从 DB 重载消息，若末尾是 user 消息则重发（后端幂等跳过 append）
+  // 恢复中断的对话：从 DB 重载消息，若末尾是 user 消息则重发（后端幂等跳过 append）。
+  // P0：steering 条目在 /messages 中以 user 角色返回但仅含 steering part——重发扫描
+  // 需跳过它们，否则中断恰发生在追加指令后时 resume 静默失效。
   const handleResume = async () => {
     setColdStartInterrupted(false)
     chat.clearInterrupted()
+    // 清空内存流式消息：中断前的乐观副本（user 消息/steering）与即将重载的
+    // DB 消息合并会重复渲染（同一类既有缺陷随 steering 持久化显性化）。
+    chat.reset()
     const msgs = await sessionAPI.messages(sessionId)
     qc.setQueryData(['session', sessionId, 'messages'], msgs)
-    const lastMsg = msgs[msgs.length - 1]
-    if (lastMsg?.role === 'user') {
-      const text = lastMsg.content
+    const lastUserWithText = [...msgs]
+      .reverse()
+      .find((m) => m.role === 'user' && m.content.some((p) => p._tag === 'text'))
+    if (lastUserWithText) {
+      const text = lastUserWithText.content
         .filter((p) => p._tag === 'text')
         .map((p) => (p._tag === 'text' ? p.text : ''))
         .join('')
@@ -424,7 +442,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         onConfirm={handleConfirm}
         onPause={agent.pause}
         onResume={agent.resume}
-        onSteer={agent.steer}
+        onSteer={chat.steer}
         paused={agent.paused}
         supportsVision={supportsVision}
         emptyState={<ChatWelcome />}

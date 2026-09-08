@@ -1,3 +1,4 @@
+import { buildFallbackChain } from '../../llm/routing.js'
 import { getMessages } from '../../session/message.js'
 import type { AgentEvent, AgentState } from '../../shared/types/agent.js'
 import type { Message } from '../../shared/types/message.js'
@@ -20,12 +21,13 @@ export async function* compactContext(
 ): AsyncGenerator<AgentEvent> {
   // summarizer 优先用 compactionModel 覆盖，否则回退当前会话 provider/model。
   const cm = state.compactionModel
-  const summarizer = createSummarizer(
-    deps.llmRegistry,
-    cm ? cm.provider : state.config.provider,
-    cm ? cm.model : state.config.model,
-    { signal: state.abortController.signal },
-  )
+  const provider = cm ? cm.provider : state.config.provider
+  const model = cm ? cm.model : state.config.model
+  const fallback = buildFallbackChain(deps.config, provider, model)
+  const summarizer = createSummarizer(deps.llmRegistry, provider, model, {
+    signal: state.abortController.signal,
+    ...(fallback ? { fallback } : {}),
+  })
   const result = await runCompaction(deps.db, state.session.id, summarizer, {
     keepRecentTokens: deps.config.compaction.keepRecentTokens,
   })

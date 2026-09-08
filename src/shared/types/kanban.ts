@@ -97,6 +97,19 @@ interface KanbanStore {
     columns?: KanbanColumnDef[]
     labels?: KanbanLabelDef[]
   }): Promise<KanbanBoard>
+  /** 导入/替换整板：列与标签配置 + 全部卡片原子替换（导入数据的落点）。 */
+  replaceBoard(input: {
+    columns: KanbanColumnDef[]
+    labels: KanbanLabelDef[]
+    cards: Array<{
+      title: string
+      description?: string | null
+      columnId: string
+      priority: KanbanPriority
+      position: number
+      labels: string[]
+    }>
+  }): Promise<KanbanBoardWithCards>
 }
 
 export type {

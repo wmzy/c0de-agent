@@ -122,6 +122,8 @@ type AgentEvent =
     }
   /** P1-6：权限确认超时（5 分钟）被自动拒绝时通知前端，提供「重新询问」入口。 */
   | { _tag: 'permission_timeout'; toolCallId: string; tool: string; input: unknown }
+  /** P0 双层超时：提示后仍无响应，pending 已兜底自动拒绝（run 继续）——前端须清理弹窗状态。 */
+  | { _tag: 'permission_expired'; toolCallId: string; tool: string; input: unknown }
   | { _tag: 'error'; error: AgentError }
   /** 通知前端：本轮 LLM 调用详情已持久化，应刷新调用详情面板。轻量通知，不带 payload。 */
   | { _tag: 'llm_detail' }

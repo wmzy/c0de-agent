@@ -38,8 +38,31 @@ const tree: SessionTreeNode[] = [
           updatedAt: 1,
         },
         children: [],
+        usage: { inputTokens: 0, outputTokens: 0, cacheRead: 0, cost: 0, calls: 0 },
       },
     ],
+    usage: { inputTokens: 0, outputTokens: 0, cacheRead: 0, cost: 0, calls: 0 },
+  },
+]
+
+const treeWithUsage: SessionTreeNode[] = [
+  {
+    session: {
+      id: 's1',
+      title: 'Root',
+      parentId: null,
+      projectId: null,
+      branchPoint: null,
+      metadata: {},
+      agentType: null,
+      worktreePath: null,
+      source: null,
+      deletedAt: null,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    children: [],
+    usage: { inputTokens: 12000, outputTokens: 3000, cacheRead: 500, cost: 0.03, calls: 8 },
   },
 ]
 
@@ -70,5 +93,15 @@ describe('BranchTree', () => {
     fireEvent.click(screen.getByTestId('delete-s2'))
     expect(onDelete).toHaveBeenCalledWith('s2')
     expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('有调用记录的会话行显示累计 token 徽标，空用量不渲染', () => {
+    render(
+      <BranchTree nodes={treeWithUsage} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />,
+    )
+    expect(screen.getByTestId('usage-badge').textContent).toContain('15,500')
+    cleanup()
+    render(<BranchTree nodes={tree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.queryByTestId('usage-badge')).toBeNull()
   })
 })

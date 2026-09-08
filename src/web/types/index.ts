@@ -14,10 +14,20 @@ export type {
   ToolResult,
 }
 
+/** 会话级用量汇总（列表展示；后端 getTree 从 metadata.segments 聚合）。 */
+type SessionUsage = {
+  inputTokens: number
+  outputTokens: number
+  cacheRead: number
+  cost: number
+  calls: number
+}
+
 /** 会话树节点（后端 GET /api/sessions/tree 返回）。 */
 type SessionTreeNode = {
   session: Session
   children: SessionTreeNode[]
+  usage: SessionUsage
 }
 
 /** 项目（GET /api/projects 返回，含实时 git 分支与 worktree 状态）。 */
@@ -150,6 +160,7 @@ export type {
   Project,
   SessionExport,
   SessionTreeNode,
+  SessionUsage,
   ShakeRegionView,
   ToolListItem,
 }

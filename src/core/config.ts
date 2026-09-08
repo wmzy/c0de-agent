@@ -45,7 +45,6 @@ const DEFAULT_CONFIG: Config = {
   permission: { defaultMode: 'default' },
   update: { enabled: true, intervalMs: 60 * 60 * 1000, initialDelayMs: 10_000 },
   theme: 'system',
-  locale: 'en',
 }
 
 function mergeConfig(...configs: (Partial<Config> | undefined)[]): Config {
@@ -187,19 +186,37 @@ async function saveConfigScoped(
   }
 }
 
-/** 落盘前的敏感值处理：providers[].apiKey 明文 → enc: 加密（spec §24.2）。 */
+/** 落盘前的敏感值处理：providers[].apiKey 与 websearch 后端 key 明文 → enc: 加密
+ *  （spec §24.2；此前 websearch.tavilyApiKey/braveApiKey 明文落盘，与 provider
+ *  apiKey 安全叙事不一致——git 误提交警告会命中它们，加密却不会）。 */
 function redactSensitiveOnSave(data: Record<string, unknown>): Record<string, unknown> {
-  const providers = data.providers
-  if (!Array.isArray(providers)) return data
-  const hardened = providers.map((p) => {
-    if (p === null || typeof p !== 'object') return p
-    const apiKey = (p as Record<string, unknown>).apiKey
-    if (typeof apiKey === 'string' && apiKey.length > 0 && !isEncryptedSecret(apiKey)) {
-      return { ...(p as Record<string, unknown>), apiKey: encryptSecret(apiKey) }
+  const out: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(data)) {
+    if (key === 'providers' && Array.isArray(val)) {
+      out[key] = (val as unknown[]).map((p) => {
+        if (p === null || typeof p !== 'object') return p
+        const apiKey = (p as Record<string, unknown>).apiKey
+        if (typeof apiKey === 'string' && apiKey.length > 0 && !isEncryptedSecret(apiKey)) {
+          return { ...(p as Record<string, unknown>), apiKey: encryptSecret(apiKey) }
+        }
+        return p
+      })
+      continue
     }
-    return p
-  })
-  return { ...data, providers: hardened }
+    if (key === 'websearch' && val !== null && typeof val === 'object') {
+      const ws = { ...(val as Record<string, unknown>) }
+      for (const k of ['tavilyApiKey', 'braveApiKey'] as const) {
+        const v = ws[k]
+        if (typeof v === 'string' && v.length > 0 && !isEncryptedSecret(v)) {
+          ws[k] = encryptSecret(v)
+        }
+      }
+      out[key] = ws
+      continue
+    }
+    out[key] = val
+  }
+  return out
 }
 
 async function loadConfig(projectDir?: string): Promise<Config> {
@@ -207,7 +224,35 @@ async function loadConfig(projectDir?: string): Promise<Config> {
   const projectPath = join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME)
   const global = readJsonIfExists(globalPath)
   const project = readJsonIfExists(projectPath)
+  warnUnknownConfigKeys('global', global)
+  warnUnknownConfigKeys('project', project)
   return mergeConfig(global, project)
+}
+
+/** Config 全部顶层键（DEFAULT_CONFIG + 可选键）。未知顶层键校验与告警共用。 */
+const KNOWN_CONFIG_KEYS = new Set<string>([
+  ...Object.keys(DEFAULT_CONFIG),
+  // 可选键不在 DEFAULT_CONFIG 中（缺失=未配置），但属于合法键。
+  'commitModel',
+])
+
+/** 收集对象中不属于 Config 顶层键的未知键。 */
+function collectUnknownConfigKeys(data: Record<string, unknown> | undefined): string[] {
+  if (!data) return []
+  return Object.keys(data).filter((k) => !KNOWN_CONFIG_KEYS.has(k))
+}
+
+/** 加载配置时对未知顶层键告警（拼写错误/旧版键静默失效的唯一提示）。 */
+function warnUnknownConfigKeys(
+  scope: 'global' | 'project',
+  data: Record<string, unknown> | undefined,
+): void {
+  const unknown = collectUnknownConfigKeys(data)
+  if (unknown.length === 0) return
+  console.warn(
+    `[config] ${scope} 配置包含未知键：${unknown.join(', ')}。` +
+      `这些键不会生效——请检查拼写，或移除过时配置。有效顶层键：${[...KNOWN_CONFIG_KEYS].join(', ')}`,
+  )
 }
 
 export type {
@@ -223,10 +268,13 @@ export type {
 }
 export {
   applyScopedPatch,
+  collectUnknownConfigKeys,
   DEFAULT_CONFIG,
+  KNOWN_CONFIG_KEYS,
   loadConfig,
   loadConfigScopes,
   mergeConfig,
   mergeRaw,
   saveConfigScoped,
+  warnUnknownConfigKeys,
 }

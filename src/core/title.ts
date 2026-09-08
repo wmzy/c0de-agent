@@ -13,6 +13,7 @@
 import type { DB } from '../db/client.js'
 import { chat as defaultChat } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
+import { buildFallbackChain } from '../llm/routing.js'
 import { updateSessionTitle } from '../session/session.js'
 import type { ChatMessage, ChatRequest } from '../shared/types/llm.js'
 import type { Config } from './config.js'
@@ -147,7 +148,12 @@ async function generateSessionTitle(
       stream: true,
       system: TITLE_PROMPT,
     }
-    const text = await chatFn({ registry: llmRegistry }, request, { provider, model })
+    const fallback = buildFallbackChain(config, provider, model)
+    const text = await chatFn({ registry: llmRegistry }, request, {
+      provider,
+      model,
+      ...(fallback ? { fallback } : {}),
+    })
     const title = cleanTitle(text)
     if (title.length === 0) return
     await updateSessionTitle(db, sessionId, title)

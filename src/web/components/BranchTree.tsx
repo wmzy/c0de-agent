@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import type { SessionTreeNode } from '../types/index.js'
+import type { SessionTreeNode, SessionUsage } from '../types/index.js'
 
 const node = css`
   padding: 1px 0;
@@ -106,6 +106,29 @@ const renameInput = css`
   color: var(--text);
   outline: none;
 `
+
+const usageBadge = css`
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+`
+
+/** 会话级用量徽标：总 token（输入+输出+缓存读）；无调用时不渲染。
+ *  P0 审查：列表视图此前无法回答「会话花了多少 token」——tree 载荷现在携带聚合值。 */
+function UsageBadge({ usage }: { usage: SessionUsage }) {
+  if (!usage || usage.calls === 0) return null
+  const total = usage.inputTokens + usage.outputTokens + usage.cacheRead
+  return (
+    <span
+      className={usageBadge}
+      data-testid="usage-badge"
+      title="本会话累计 token（输入+输出+缓存读）"
+    >
+      {total.toLocaleString('en-US')} tok
+    </span>
+  )
+}
 
 export function BranchTree({
   nodes,
@@ -218,6 +241,7 @@ function TreeNode({
               <span className={`${titleCls} ${isActive ? titleActive : ''}`}>
                 {n.session.title}
               </span>
+              <UsageBadge usage={n.usage} />
             </button>
             {onRename && (
               <button

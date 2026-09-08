@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/core'
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { type ChangeEvent, useRef, useState } from 'react'
 import { BoardConfigDialog } from '../components/kanban/BoardConfigDialog.js'
 import { CardEditDialog } from '../components/kanban/CardEditDialog.js'
 import { KanbanColumn } from '../components/kanban/KanbanColumn.js'
@@ -94,6 +94,8 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const qc = useQueryClient()
   const [editingCard, setEditingCard] = useState<KanbanCard | null>(null)
   const [showConfig, setShowConfig] = useState(false)
+  const [ioError, setIoError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -188,6 +190,50 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     moveMutation.mutate({ cardId: activeCard.id, columnId: targetColumnId, position })
   }
 
+  /** 导出整板为 JSON 文件（项目删除会永久级联删除看板——导出是唯一备份途径）。 */
+  const handleExport = async () => {
+    setIoError(null)
+    try {
+      const data = await kanbanAPI.exportBoard(projectId)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `kanban-${projectId}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setIoError(err instanceof Error ? err.message : '导出失败')
+    }
+  }
+
+  /** 导入整板：替换当前列+标签+卡片。fail-closed 确认（不可撤销）。 */
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setIoError(null)
+    try {
+      const data = JSON.parse(await file.text()) as unknown
+      const cards = (data as { cards?: unknown }).cards
+      const cardCount = Array.isArray(cards) ? cards.length : 0
+      if (
+        !window.confirm(
+          `导入将替换当前看板的列、标签与全部卡片（${cardCount} 张导入卡片），且不可撤销。确定继续？`,
+        )
+      ) {
+        return
+      }
+      const result = await kanbanAPI.importBoard(projectId, data)
+      await qc.invalidateQueries({ queryKey: ['kanban', projectId] })
+      setIoError(null)
+      // 静默成功即可：看板即时刷新可见
+      void result
+    } catch (err) {
+      setIoError(err instanceof Error ? err.message : '导入失败')
+    }
+  }
+
   if (isLoading) {
     return (
       <div className={view}>
@@ -222,7 +268,40 @@ export function KanbanView({ projectId }: KanbanViewProps) {
         >
           ⚙️ 设置
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          style={{ display: 'none' }}
+          onChange={(e) => void handleImportFile(e)}
+          data-testid="kanban-import-input"
+        />
+        <button
+          type="button"
+          className={configBtn}
+          onClick={() => void handleExport()}
+          data-testid="kanban-export-btn"
+        >
+          ⬇ 导出
+        </button>
+        <button
+          type="button"
+          className={configBtn}
+          onClick={() => fileInputRef.current?.click()}
+          data-testid="kanban-import-btn"
+        >
+          ⬆ 导入
+        </button>
       </div>
+      {ioError && (
+        <div
+          className={errorText}
+          style={{ height: 'auto', padding: '4px 12px' }}
+          data-testid="kanban-io-error"
+        >
+          {ioError}
+        </div>
+      )}
 
       <DndContext
         sensors={sensors}

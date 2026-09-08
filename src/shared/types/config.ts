@@ -115,7 +115,6 @@ type Config = {
   permission: PermissionConfig
   update: UpdateConfig
   theme: 'light' | 'dark' | 'system'
-  locale: string
 }
 
 export type {

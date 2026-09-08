@@ -130,6 +130,12 @@ function SecurityPanel({
                 placeholder="Bearer Token"
               />
             </label>
+            {security.token && (
+              <div className={hint}>
+                注意：静态 token 以明文存储在 config.json（chmod 600）。适用 CI/脚本场景；
+                交互使用建议留空，走设备配对机制。
+              </div>
+            )}
             <div className={field}>
               <span>已授权设备</span>
               <DevicesSection />

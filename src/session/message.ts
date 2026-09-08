@@ -115,6 +115,27 @@ async function getMessages(
   return rows.map(rowToMessage)
 }
 
+/**
+ * 会话 steering 条目映射为 Message 形态（role='user'，内容为 steering part）。
+ * 时间线渲染与消息合并使用（P0：追加指令持久化后的展示路径）；
+ * 不并入 getMessages——compaction/shake/export 等仅处理真实消息的消费者不受影响。
+ */
+async function getSteeringAsMessages(handle: DB, sessionId: string): Promise<Message[]> {
+  const rows = await handle.db
+    .select()
+    .from(sessionEntries)
+    .where(and(eq(sessionEntries.sessionId, sessionId), eq(sessionEntries.tag, 'steering')))
+    .orderBy(asc(sessionEntries.createdAt))
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    role: 'user' as const,
+    content: [{ _tag: 'steering' as const, text: (row.content as { text?: string }).text ?? '' }],
+    tokenCount: row.tokenCount ?? 0,
+    createdAt: toEpochMs(row.createdAt),
+  }))
+}
+
 /** Count messages in a session. */
 async function getMessageCount(handle: DB, sessionId: string): Promise<number> {
   const [result] = await handle.db
@@ -175,5 +196,6 @@ export {
   getEntries,
   getMessageCount,
   getMessages,
+  getSteeringAsMessages,
   insertEntry,
 }

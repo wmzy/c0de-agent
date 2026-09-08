@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { createSummarizer, runCompaction } from '../../core/compact.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import { sessions } from '../../db/schema.js'
+import { buildFallbackChain } from '../../llm/routing.js'
 import { fromDirectory } from '../../project/index.js'
 import { getProject } from '../../project/project.js'
 import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
@@ -14,7 +15,12 @@ import {
   getTree,
 } from '../../session/branch.js'
 import { importSessionData } from '../../session/import.js'
-import { deleteEntriesByIds, getMessages, insertEntry } from '../../session/message.js'
+import {
+  deleteEntriesByIds,
+  getMessages,
+  getSteeringAsMessages,
+  insertEntry,
+} from '../../session/message.js'
 import {
   createSession,
   emptyTrash,
@@ -60,6 +66,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
       messages?: unknown
       archives?: unknown
       projectId?: unknown
+      /** P0：显式请求迁移权限态（permissionMode/alwaysAllow）。默认不迁移——
+       *  导入他人导出的会话时静默继承「对 bash/write 自动放行」是安全隐患。 */
+      importPermissions?: unknown
     } | null
     if (body?.version !== 1 || !body?.session || !Array.isArray(body?.messages)) {
       return apiError(
@@ -81,16 +90,20 @@ function createSessionRoute(ctx: ServerContext): Hono {
       typeof body.session.title === 'string' && body.session.title
         ? body.session.title
         : '导入的会话'
-    // P2：导出会话的权限态（permissionMode/alwaysAllow）随迁，仅取安全白名单字段。
+    // P0：权限态仅当调用方显式确认（importPermissions=true）时随迁。
+    // 默认剥离——用户在导出会话中建立的授权信任不应跨机器静默生效。
+    const importPermissions = body.importPermissions === true
     const metadata: Record<string, unknown> = {}
-    const srcMeta = body.session.metadata
-    if (srcMeta && typeof srcMeta === 'object' && !Array.isArray(srcMeta)) {
-      const m = srcMeta as Record<string, unknown>
-      if (m.permissionMode === 'auto' || m.permissionMode === 'default') {
-        metadata.permissionMode = m.permissionMode
-      }
-      if (Array.isArray(m.alwaysAllow)) {
-        metadata.alwaysAllow = m.alwaysAllow.filter((x): x is string => typeof x === 'string')
+    if (importPermissions) {
+      const srcMeta = body.session.metadata
+      if (srcMeta && typeof srcMeta === 'object' && !Array.isArray(srcMeta)) {
+        const m = srcMeta as Record<string, unknown>
+        if (m.permissionMode === 'auto' || m.permissionMode === 'default') {
+          metadata.permissionMode = m.permissionMode
+        }
+        if (Array.isArray(m.alwaysAllow)) {
+          metadata.alwaysAllow = m.alwaysAllow.filter((x): x is string => typeof x === 'string')
+        }
       }
     }
     // P2：导出含分支树结构（parentId），导入为独立根会话——告知前端提示扁平化。
@@ -104,12 +117,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
         : [],
       metadata,
     })
-    return c.json({ ok: true, ...result, flattened })
+    return c.json({ ok: true, ...result, flattened, permissionsMigrated: importPermissions })
   })
 
   // 创建会话
   app.post('/', async (c) => {
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     const title = (body.title as string) ?? 'New Session'
     const directory = body.directory as string | undefined
     const explicitProjectId = body.projectId as string | undefined
@@ -119,6 +132,16 @@ function createSessionRoute(ctx: ServerContext): Hono {
       projectId = project.id
     } else if (explicitProjectId) {
       projectId = explicitProjectId
+    }
+    // P2 修复：projectId 必填——无归属 web 会话在任何项目视图都不可见，
+    // 且非删除孤儿无任何 UI 入口，API 直调会创建不可达会话。
+    if (!projectId) {
+      return apiError(
+        c,
+        400,
+        'PROJECT_REQUIRED',
+        '创建会话必须指定项目：传 directory（自动解析）或 projectId',
+      )
     }
     const session = await createSession(ctx.db, title, projectId)
     return c.json(session, 201)
@@ -351,15 +374,20 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json({ ok: true, projectId: project.id })
   })
 
-  // 获取消息列表
+  // 获取消息列表（含 steering 条目：P0 追加指令持久化后需在时间线可见）
   app.get('/:id/messages', async (c) => {
     const id = c.req.param('id')
     const session = await getSession(ctx.db, id)
     if (!session || session.deletedAt) {
       return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
     }
-    const messages = await getMessages(ctx.db, id)
-    return c.json(messages)
+    const [messages, steering] = await Promise.all([
+      getMessages(ctx.db, id),
+      getSteeringAsMessages(ctx.db, id),
+    ])
+    if (steering.length === 0) return c.json(messages)
+    // 按 createdAt 交错合并（steering 与消息时间序一致）
+    return c.json([...messages, ...steering].sort((a, b) => a.createdAt - b.createdAt))
   })
 
   // 获取 LLM 调用分段（段首快照 + 段内轻量 calls）：优先取活跃 run 的内存记录（实时），回退 DB 持久化
@@ -407,7 +435,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const provider = lastSeg?.provider ?? sessionConfig.defaultProvider
     const model = lastSeg?.model ?? sessionConfig.defaultModel
     try {
-      const summarizer = createSummarizer(sessionRegistry, provider, model, {})
+      const fallback = buildFallbackChain(sessionConfig, provider, model)
+      const summarizer = createSummarizer(sessionRegistry, provider, model, {
+        ...(fallback ? { fallback } : {}),
+      })
       const result = await runCompaction(ctx.db, id, summarizer, {
         keepRecentTokens: sessionConfig.compaction.keepRecentTokens,
       })

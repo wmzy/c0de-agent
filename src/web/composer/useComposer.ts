@@ -31,6 +31,38 @@ type UseComposerOptions = {
   commands?: CommandInfo[]
 }
 
+/** 单张图片大小上限（8MB）：base64 进 PGLite + SSE 载荷 + provider 请求，超限拒绝而非
+ *  静默失败（P0 审查：此前无任何限制，超大图导致 DB 膨胀/provider 400）。 */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+/** 图片数量上限。 */
+const MAX_IMAGE_COUNT = 6
+
+/** 校验待添加图片；违规返回错误信息（null=通过）。 */
+function validateImage(file: File, currentCount: number): string | null {
+  if (currentCount >= MAX_IMAGE_COUNT) {
+    return `最多添加 ${MAX_IMAGE_COUNT} 张图片（当前已有 ${currentCount} 张）`
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    const mb = (file.size / (1024 * 1024)).toFixed(1)
+    return `图片 ${file.name || '未命名'} 大小 ${mb}MB 超过上限 ${MAX_IMAGE_BYTES / (1024 * 1024)}MB`
+  }
+  if (file.size === 0) return '图片内容为空'
+  return null
+}
+
+/** 读取图片文件为 ImagePart（base64 dataURL → 纯 base64）。 */
+function readImagePart(file: File): Promise<ImagePart> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      const commaIdx = dataUrl.indexOf(',')
+      resolve({ type: 'image', mediaType: file.type, data: dataUrl.slice(commaIdx + 1) })
+    }
+    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
 /** 把一段纯文本包成单 TextPart 的 Prompt（start/end 仅占位，renderPrompt 不读它们）。 */
 function textPrompt(text: string): Prompt {
   return [{ type: 'text', content: text, start: 0, end: text.length }]
@@ -49,6 +81,7 @@ function useComposer({
   const mirrorRef = useRef({ input: false })
   const composingRef = useRef(false)
   const [images, setImages] = useState<ImagePart[]>([])
+  const [imageError, setImageError] = useState<string | null>(null)
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
   const [subcommandCmd, setSubcommandCmd] = useState<string | null>(null)
@@ -311,18 +344,16 @@ function useComposer({
       if (item.type.startsWith('image/')) {
         e.preventDefault()
         const file = item.getAsFile()
-        if (file) {
-          const reader = new FileReader()
-          reader.onload = () => {
-            const dataUrl = reader.result as string
-            const commaIdx = dataUrl.indexOf(',')
-            setImages((prev) => [
-              ...prev,
-              { type: 'image', mediaType: file.type, data: dataUrl.slice(commaIdx + 1) },
-            ])
-          }
-          reader.readAsDataURL(file)
-        }
+        if (!file) return
+        setImages((prev) => {
+          const err = validateImage(file, prev.length)
+          setImageError(err)
+          if (err) return prev
+          void readImagePart(file)
+            .then((part) => setImages((cur) => [...cur, part]))
+            .catch(() => setImageError('读取图片失败'))
+          return prev
+        })
         return
       }
     }
@@ -347,20 +378,20 @@ function useComposer({
 
   // 添加图片（拖拽/选择）
   const addImage = useCallback((file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = reader.result as string
-      const commaIdx = dataUrl.indexOf(',')
-      setImages((prev) => [
-        ...prev,
-        { type: 'image', mediaType: file.type, data: dataUrl.slice(commaIdx + 1) },
-      ])
-    }
-    reader.readAsDataURL(file)
+    setImages((prev) => {
+      const err = validateImage(file, prev.length)
+      setImageError(err)
+      if (err) return prev
+      void readImagePart(file)
+        .then((part) => setImages((cur) => [...cur, part]))
+        .catch(() => setImageError('读取图片失败'))
+      return prev
+    })
   }, [])
 
   const removeImage = useCallback((idx: number) => {
     setImages((prev) => prev.filter((_, i) => i !== idx))
+    setImageError(null)
   }, [])
 
   const send = useCallback(() => {
@@ -376,6 +407,7 @@ function useComposer({
     onSend({ text, files, images })
     if (text.trim()) saveHistory(prependHistoryEntry(loadHistory(), text))
     setImages([])
+    setImageError(null)
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
   }, [isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
@@ -445,6 +477,7 @@ function useComposer({
     promptRef,
     setPromptExternal,
     images,
+    imageError,
     popover,
     popoverQuery,
     subcommandCmd,

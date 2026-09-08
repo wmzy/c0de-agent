@@ -337,16 +337,18 @@ export function SessionList({
   }
 
   /** P1-2：导入目标选择（导出文件原项目在本机存在且非当前项目时弹窗选择）。 */
-  const [importChoice, setImportChoice] = useState<{ data: unknown; original: Project } | null>(
-    null,
-  )
+  const [importChoice, setImportChoice] = useState<{
+    data: unknown
+    original: Project
+    importPermissions: boolean
+  } | null>(null)
   const { data: projects } = useProjects()
 
   /** 执行导入：绑定目标项目后刷新树并跳转；notice 明示工具执行目录。 */
-  const doImport = async (data: unknown, targetId: string) => {
+  const doImport = async (data: unknown, targetId: string, importPermissions: boolean) => {
     setImporting(true)
     try {
-      const result = await sessionAPI.importSession(data, targetId)
+      const result = await sessionAPI.importSession(data, targetId, { importPermissions })
       await qc.invalidateQueries({ queryKey: ['sessions'] })
       await qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
       const target = projects?.find((p) => p.id === targetId)
@@ -355,6 +357,8 @@ export function SessionList({
         notes.push('注意：该会话原属分支树，导入后层级关系已丢失，将作为独立根会话导入。')
       // P1-2：明示工具执行目录，防用户在错误项目继续对话误改文件。
       notes.push(`该会话的工具将在 ${target?.worktree ?? '目标项目的目录'} 执行。`)
+      // P0：权限态剥离时明确告知（此前静默迁移 auto/alwaysAllow 有安全隐患）。
+      if (!result.permissionsMigrated) notes.push('权限态（自动授权/始终允许）未随迁。')
       setImportNotice(`已导入到项目「${target?.name ?? '未命名项目'}」：${notes.join(' ')}`)
       onSelect(result.sessionId)
     } catch (err) {
@@ -362,6 +366,14 @@ export function SessionList({
     } finally {
       setImporting(false)
     }
+  }
+
+  /** 检测导出文件的权限态（permissionMode=auto 或 alwaysAllow 非空）。 */
+  const detectExportPermissions = (data: unknown): { auto: boolean; allowCount: number } => {
+    const meta = (data as { session?: { metadata?: Record<string, unknown> } } | null)?.session
+      ?.metadata
+    const alwaysAllow = Array.isArray(meta?.alwaysAllow) ? meta.alwaysAllow : []
+    return { auto: meta?.permissionMode === 'auto', allowCount: alwaysAllow.length }
   }
 
   /** 导入会话导出 JSON：解析后匹配原项目归属，冲突时弹目标选择。
@@ -389,11 +401,28 @@ export function SessionList({
           (exportedProjectId && p.id === exportedProjectId) ||
           (exportedWorktree && p.worktree === exportedWorktree),
       )
+      // P0：权限态迁移需用户显式确认（默认剥离）。导出文件含 auto 模式或
+      // alwaysAllow 白名单时，导入前明示风险并让用户选择。
+      const perms = detectExportPermissions(data)
+      let importPermissions = false
+      if (perms.auto || perms.allowCount > 0) {
+        const detail = [
+          perms.auto ? '自动授权模式（auto）' : null,
+          perms.allowCount > 0 ? `始终允许工具白名单（${perms.allowCount} 个）` : null,
+        ]
+          .filter(Boolean)
+          .join('、')
+        importPermissions = window.confirm(
+          `该会话导出包含权限状态：${detail}。\n` +
+            `迁移后这些授权将在导入的会话中立即生效（工具免确认执行）。\n` +
+            `点「确定」随迁权限状态；点「取消」仅导入消息，权限使用默认设置（推荐）。`,
+        )
+      }
       if (original && original.id !== projectId) {
-        setImportChoice({ data, original })
+        setImportChoice({ data, original, importPermissions })
         return
       }
-      await doImport(data, projectId)
+      await doImport(data, projectId, importPermissions)
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err))
     }
@@ -530,7 +559,7 @@ export function SessionList({
                 onClick={() => {
                   const choice = importChoice
                   setImportChoice(null)
-                  void doImport(choice.data, projectId)
+                  void doImport(choice.data, projectId, choice.importPermissions)
                 }}
               >
                 导入到当前项目
@@ -542,7 +571,7 @@ export function SessionList({
                 onClick={() => {
                   const choice = importChoice
                   setImportChoice(null)
-                  void doImport(choice.data, choice.original.id)
+                  void doImport(choice.data, choice.original.id, choice.importPermissions)
                 }}
               >
                 恢复到原项目「{importChoice.original.name ?? '未命名项目'}」

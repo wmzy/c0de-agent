@@ -33,11 +33,14 @@ function ApiKeyInput({
   id,
   stored,
   onCommit,
+  testId = 'provider-apikey',
 }: {
   /** 关联外部 label（ProviderPanel 的「API Key」标签）。 */
   id?: string
   stored: string | undefined
   onCommit: (value: string) => void
+  /** 测试标识（多处复用本组件时需区分）。 */
+  testId?: string
 }) {
   const [text, setText] = useState('')
   // 外部 stored 变化（加载、保存后刷新、导入）时同步显示：密文→留空，明文→原样。
@@ -57,10 +60,10 @@ function ApiKeyInput({
           setText(e.target.value)
           onCommit(e.target.value)
         }}
-        data-testid="provider-apikey"
+        data-testid={testId}
       />
       {isEnc && (
-        <span className={apiKeySavedBadge} data-testid="provider-apikey-saved">
+        <span className={apiKeySavedBadge} data-testid={`${testId}-saved`}>
           ✓ 已加密
         </span>
       )}

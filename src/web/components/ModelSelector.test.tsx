@@ -51,7 +51,6 @@ const baseConfig: Config = {
   permission: { defaultMode: 'default' },
   update: { enabled: false, intervalMs: 3_600_000, initialDelayMs: 10_000 },
   theme: 'light',
-  locale: 'zh-CN',
 }
 
 vi.mock('../services/provider.js', () => ({

@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path'
 import { Hono } from 'hono'
 import {
   applyScopedPatch,
+  collectUnknownConfigKeys,
+  KNOWN_CONFIG_KEYS,
   loadConfigScopes,
   mergeConfig,
   saveConfigScoped,
@@ -78,13 +80,18 @@ function createConfigRoute(ctx: ServerContext): Hono {
     if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
     const scopes = loadConfigScopes(target.dir)
     const config = projectId ? mergeConfig(scopes.global, scopes.project) : ctx.config
+    // 未知顶层键告警并入 warnings：用户在设置页即可看到拼写错误/过时键，不必看终端日志。
+    const unknownWarnings = [
+      ...collectUnknownConfigKeys(scopes.global).map((k) => `全局配置含未知键 "${k}"，不会生效`),
+      ...collectUnknownConfigKeys(scopes.project).map((k) => `项目配置含未知键 "${k}"，不会生效`),
+    ]
     return c.json({
       config,
       scopes: {
         global: scopes.global ?? null,
         project: scopes.project ?? null,
       },
-      warnings: providerApiKeyWarnings(config.providers),
+      warnings: [...providerApiKeyWarnings(config.providers), ...unknownWarnings],
       gitWarning: projectConfigGitWarning(scopes.project, target.dir),
       projectDir: target.isProjectScoped ? target.dir : undefined,
     })
@@ -101,6 +108,16 @@ function createConfigRoute(ctx: ServerContext): Hono {
     }
     const scope = body.scope === 'global' ? 'global' : 'project'
     const { scope: _omit, projectId, ...patch } = body
+    // 未知顶层键拒绝：拼写错误/过时键经此路径写入只会埋雷（永不生效且难发现）。
+    const unknown = collectUnknownConfigKeys(patch)
+    if (unknown.length > 0) {
+      return apiError(
+        c,
+        400,
+        'UNKNOWN_CONFIG_KEYS',
+        `未知配置键：${unknown.join(', ')}。有效顶层键：${[...KNOWN_CONFIG_KEYS].join(', ')}`,
+      )
+    }
     // spec §24.2：provider apiKey 落盘前加密，明文不持久化。
     // 已加密（enc: 前缀）或无 apiKey 的透传。
     if (Array.isArray(patch.providers)) {

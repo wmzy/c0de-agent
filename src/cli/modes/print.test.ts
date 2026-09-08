@@ -37,7 +37,6 @@ const config: Config = {
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   permission: { defaultMode: 'default' },
   update: { enabled: false, intervalMs: 3_600_000, initialDelayMs: 10_000 },
-  locale: 'en',
 }
 
 /** mock chatStream：产出给定 StreamChunk 序列。签名须匹配 typeof chatStream：(ctx, request, options)。 */

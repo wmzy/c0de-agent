@@ -187,7 +187,7 @@ const streamTarget = async function* (
         signal: ctx.signal,
         fetchImpl: ctx.fetchImpl,
       }),
-    { maxRetries: chain.maxRetries, sleep: chain.sleep },
+    { maxRetries: chain.maxRetries, sleep: chain.sleep, initialDelayMs: chain.retryDelay },
   )
   let state: StepState = initialStepState()
   for await (const frame of sseFraming(stream)) {

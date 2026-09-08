@@ -59,6 +59,8 @@ type ChatActions = {
   /** 发送消息；返回 false = 本轮未正常完成（供调用方做首条失败清理）。 */
   sendMessage: (content: string, opts?: ChatOpts) => Promise<boolean>
   abort: () => void
+  /** 追加指令：注入运行中的 run 并乐观追加 steering 消息到时间线（P0 持久化）。 */
+  steer: (message: string) => void
   /** 确认/拒绝权限请求：乐观关闭弹窗并通知后端。
    *  alwaysAllowTool 非空时先把该工具加入会话白名单。 */
   confirm: (toolCallId: string, approved: boolean, alwaysAllowTool?: string) => void
@@ -233,6 +235,15 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         ...state,
         pendingPermission: null,
         permissionTimeout: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
+      }
+    case 'permission_expired':
+      // P0 双层超时兜底：pending 已被后端自动拒绝、run 已继续——弹窗与「重新询问」
+      // 按钮全部失效，必须清空。工具被拒的 deny 结果会以 tool 卡片出现在时间线，
+      // 无需额外错误提示。
+      return {
+        ...state,
+        pendingPermission: null,
+        permissionTimeout: null,
       }
     case 'error':
       return { ...state, error: errorToMessage(event.error) }
@@ -497,6 +508,36 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     setState((s) => ({ ...s, isStreaming: false }))
   }, [sessionId])
 
+  /** 追加指令（steer）：注入运行中的 run，并乐观追加 user/steering 消息到时间线
+   *  （与 sendMessage 乐观追加同生命周期：P0 前指令发出后从视图消失、刷新后彻底丢失）。
+   *  后端同时持久化 steering 条目；页面重载后 /messages 返回该条目、chat.messages 已
+   *  重置，单行展示。运行中若 history 重取，乐观副本与持久化条目并存与乐观 user
+   *  消息属同一类既有行为，不新增风险。 */
+  const steer = useCallback(
+    (message: string) => {
+      const text = message.trim()
+      if (!text || !streamingRef.current) return
+      agentAPI.steer(sessionId, text).catch(() => {
+        // 后端失败不阻塞 UI；条目未持久化时该指令仅本轮内存生效
+      })
+      setState((s) => ({
+        ...s,
+        messages: [
+          ...s.messages,
+          {
+            id: generateId(),
+            sessionId,
+            role: 'user',
+            content: [{ _tag: 'steering', text }],
+            tokenCount: 0,
+            createdAt: Date.now(),
+          },
+        ],
+      }))
+    },
+    [sessionId],
+  )
+
   // 权限确认：乐观清空 pending，弹窗立即关闭。后端 store 的 pending 一次消费即删除，
   // 若不清空前端状态，弹窗会一直显示到 done 事件，期间用户重复点击会对已消费的
   // toolCallId 触发 404（"No pending permission"）。
@@ -668,6 +709,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     ...state,
     sendMessage,
     abort,
+    steer,
     confirm,
     confirmBreak,
     cancelBreak,

@@ -219,6 +219,44 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
       const row = boardRow as BoardRow
       return rowToBoard(row)
     },
+
+    /** 整板替换（导入）：board 配置 + 卡片在单事务内重建；中途失败整体回滚，
+     *  不残留「配置已换、卡片半新半旧」的混合状态。 */
+    async replaceBoard(input): Promise<KanbanBoardWithCards> {
+      const boardId = await getOrCreateBoardId()
+      await db.transaction(async (tx) => {
+        await tx.delete(kanbanCards).where(eq(kanbanCards.boardId, boardId))
+        await tx
+          .update(kanbanBoards)
+          .set({ columns: input.columns, labels: input.labels, updatedAt: new Date() })
+          .where(eq(kanbanBoards.id, boardId))
+        if (input.cards.length > 0) {
+          await tx.insert(kanbanCards).values(
+            input.cards.map((c) => ({
+              boardId,
+              title: c.title,
+              description: c.description ?? null,
+              columnId: c.columnId,
+              priority: c.priority,
+              position: c.position,
+              labels: c.labels,
+            })),
+          )
+        }
+      })
+      const boardRow = await db
+        .select()
+        .from(kanbanBoards)
+        .where(eq(kanbanBoards.id, boardId))
+        .limit(1)
+      const board = boardRow[0] as BoardRow
+      const cards = await db
+        .select()
+        .from(kanbanCards)
+        .where(eq(kanbanCards.boardId, boardId))
+        .orderBy(asc(kanbanCards.columnId), asc(kanbanCards.position))
+      return { ...rowToBoard(board), cards: cards.map(rowToCard) }
+    },
   }
 }
 

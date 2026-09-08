@@ -1,12 +1,14 @@
 import type { Config } from '@shared/types/config.js'
-import { field, fieldInput, section, sectionTitle } from './styles.js'
+import { ApiKeyInput } from './ApiKeyInput.js'
+import { field, section, sectionTitle } from './styles.js'
 
 interface WebSearchPanelProps {
   websearch: Config['websearch']
   onWebSearchChange: (patch: Partial<Config['websearch']>) => void
 }
 
-/** Web 搜索配置：后端选择及各后端所需的 API key（也可由环境变量提供）。 */
+/** Web 搜索配置：后端选择及各后端所需的 API key（也可由环境变量提供）。
+ *  key 落盘时加密（enc: 前缀），输入框不回显密文——与 provider apiKey 一致。 */
 function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
   return (
     <div className={section}>
@@ -27,26 +29,24 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
           <option value="brave">Brave</option>
         </select>
       </label>
-      <label className={field}>
+      <div className={field}>
         <span>Tavily Key</span>
-        <input
-          className={fieldInput}
-          type="password"
-          value={websearch.tavilyApiKey ?? ''}
-          onChange={(e) => onWebSearchChange({ tavilyApiKey: e.target.value })}
-          placeholder="（可由环境变量 TAVILY_API_KEY 提供）"
+        <ApiKeyInput
+          id="websearch-tavily-key"
+          stored={websearch.tavilyApiKey}
+          onCommit={(v) => onWebSearchChange({ tavilyApiKey: v })}
+          testId="websearch-tavily-key-input"
         />
-      </label>
-      <label className={field}>
+      </div>
+      <div className={field}>
         <span>Brave Key</span>
-        <input
-          className={fieldInput}
-          type="password"
-          value={websearch.braveApiKey ?? ''}
-          onChange={(e) => onWebSearchChange({ braveApiKey: e.target.value })}
-          placeholder="（可由环境变量 BRAVE_API_KEY 提供）"
+        <ApiKeyInput
+          id="websearch-brave-key"
+          stored={websearch.braveApiKey}
+          onCommit={(v) => onWebSearchChange({ braveApiKey: v })}
+          testId="websearch-brave-key-input"
         />
-      </label>
+      </div>
     </div>
   )
 }

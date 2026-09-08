@@ -21,9 +21,10 @@ const capDelay = (ms: number): number => Math.min(ms, RETRY_MAX_DELAY)
 
 /**
  * Compute the delay before the next retry attempt (ms).
- * Honors retry-after / retry-after-ms headers when present, else exponential backoff.
+ * Honors retry-after / retry-after-ms headers when present, else exponential backoff
+ * from the given base delay (defaults to RETRY_INITIAL_DELAY).
  */
-const delay = (attempt: number, error?: unknown): number => {
+const delay = (attempt: number, error?: unknown, initialDelayMs = RETRY_INITIAL_DELAY): number => {
   const headers = errorHeaders(error)
   if (headers) {
     const retryAfterMs = headers['retry-after-ms']
@@ -38,13 +39,10 @@ const delay = (attempt: number, error?: unknown): number => {
       const parsed = Date.parse(retryAfter) - Date.now()
       if (!Number.isNaN(parsed) && parsed > 0) return capDelay(Math.ceil(parsed))
     }
-    return capDelay(RETRY_INITIAL_DELAY * RETRY_BACKOFF_FACTOR ** (attempt - 1))
+    return capDelay(initialDelayMs * RETRY_BACKOFF_FACTOR ** (attempt - 1))
   }
   return capDelay(
-    Math.min(
-      RETRY_INITIAL_DELAY * RETRY_BACKOFF_FACTOR ** (attempt - 1),
-      RETRY_MAX_DELAY_NO_HEADERS,
-    ),
+    Math.min(initialDelayMs * RETRY_BACKOFF_FACTOR ** (attempt - 1), RETRY_MAX_DELAY_NO_HEADERS),
   )
 }
 
@@ -74,6 +72,8 @@ type RetryOptions = {
   sleep?: (ms: number) => Promise<void>
   /** Called with each retry attempt metadata. */
   onRetry?: (info: { attempt: number; delayMs: number; error: unknown }) => void
+  /** Base delay for exponential backoff (default RETRY_INITIAL_DELAY). */
+  initialDelayMs?: number
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -98,7 +98,7 @@ const withRetry = async <T>(fn: () => Promise<T>, options: RetryOptions): Promis
         ? error.reason
         : { _tag: 'InvalidRequest', message: '' }
       const delayMs = Math.min(
-        reasonRetryAfterMs(fallbackReason) ?? delay(attempt, error),
+        reasonRetryAfterMs(fallbackReason) ?? delay(attempt, error, options.initialDelayMs),
         canRetry.policy.maxDelay,
       )
       options.onRetry?.({ attempt, delayMs, error })

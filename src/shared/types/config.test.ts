@@ -78,7 +78,6 @@ describe('Config', () => {
       agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
       permission: { defaultMode: 'default' },
       update: { enabled: true, intervalMs: 3_600_000, initialDelayMs: 10_000 },
-      locale: 'zh-CN',
     }
     expect(config.defaultProvider).toBe('openai')
     expect(config.roleRouting.smol?.model).toBe('gpt-4.1-mini')

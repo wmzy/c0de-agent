@@ -37,7 +37,6 @@ const config: Config = {
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   permission: { defaultMode: 'default' },
   update: { enabled: false, intervalMs: 3_600_000, initialDelayMs: 10_000 },
-  locale: 'en',
 }
 
 describe('buildLLMRegistry', () => {

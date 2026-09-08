@@ -1,5 +1,6 @@
 import type { chatStream as llmChatStream } from '../../llm/provider.js'
 import { isContextOverflowFailure } from '../../llm/provider-error.js'
+import { buildFallbackChain } from '../../llm/routing.js'
 import { isLLMError } from '../../llm/schema/errors.js'
 import type { AgentEvent, AgentState } from '../../shared/types/agent.js'
 import type { ChatRequest, FinishReason, StreamChunk } from '../../shared/types/llm.js'
@@ -100,13 +101,20 @@ export async function* collectStreamChunks(
   })
 
   try {
+    // config.fallback 接线：enabled 时按配置重试参数 + 声明同模型的其他 provider 回退。
+    // 未启用时保持内置默认（3 次重试、无跨 provider 回退），行为与以往一致。
+    const fallback = buildFallbackChain(deps.config, state.config.provider, state.config.model)
     for await (const chunk of streamFn(
       {
         registry: deps.llmRegistry,
         signal: state.abortController.signal,
       },
       request,
-      { provider: state.config.provider, model: state.config.model },
+      {
+        provider: state.config.provider,
+        model: state.config.model,
+        ...(fallback ? { fallback } : {}),
+      },
     )) {
       if (firstTokenTime === null && chunk._tag !== 'done') {
         firstTokenTime = Date.now()

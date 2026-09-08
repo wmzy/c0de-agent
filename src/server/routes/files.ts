@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import trash from 'trash'
 import { createSummarizer } from '../../core/compact.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
+import { buildFallbackChain } from '../../llm/routing.js'
 import { getProject } from '../../project/project.js'
 import {
   appendToGitignore,
@@ -220,7 +221,11 @@ ${summary.diff.slice(0, 8000)}`
         root !== ctx.cwd && projectConfig.providers.length > 0
           ? buildRegistryFromConfig(projectConfig)
           : ctx.llmRegistry
-      const summarizer = createSummarizer(registry, provider, model, { maxTokens: 400 })
+      const fallback = buildFallbackChain(projectConfig, provider, model)
+      const summarizer = createSummarizer(registry, provider, model, {
+        maxTokens: 400,
+        ...(fallback ? { fallback } : {}),
+      })
       raw = (await summarizer(prompt)).trim()
     } catch (err) {
       return apiError(c, 502, 'LLM_ERROR', `Failed to generate commit message: ${String(err)}`)

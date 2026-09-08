@@ -108,10 +108,21 @@ type ArchiveRef = {
   id: string
 }
 
+/** 会话级用量汇总（P0 审查：列表视图此前无法回答「会话花了多少 token/钱」）。
+ *  从 metadata.segments 聚合，零额外查询。 */
+type SessionUsage = {
+  inputTokens: number
+  outputTokens: number
+  cacheRead: number
+  cost: number
+  calls: number
+}
+
 /** A node in the session tree. */
 type SessionTreeNode = {
   session: Session
   children: SessionTreeNode[]
+  usage: SessionUsage
 }
 
 /** A decoded compaction archive row. */
@@ -153,6 +164,7 @@ export type {
   MessageInput,
   SessionEntry,
   SessionTreeNode,
+  SessionUsage,
   SquashConfig,
   SquashEntry,
   SteeringEntry,

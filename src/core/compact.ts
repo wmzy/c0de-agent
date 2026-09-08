@@ -1,6 +1,7 @@
 import type { DB } from '../db/client.js'
 import { chatStream } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
+import type { FallbackChain } from '../llm/routing.js'
 import { compactSession } from '../session/compaction.js'
 import type { CompactionConfig, CompactionResult, Summarizer } from '../session/types.js'
 import type { ChatRequest, StreamChunk } from '../shared/types/llm.js'
@@ -10,7 +11,7 @@ function createSummarizer(
   registry: Registry,
   provider: string,
   model: string,
-  opts?: { maxTokens?: number; signal?: AbortSignal },
+  opts?: { maxTokens?: number; signal?: AbortSignal; fallback?: FallbackChain },
 ): Summarizer {
   return async (prompt: string): Promise<string> => {
     const request: ChatRequest = {
@@ -23,6 +24,7 @@ function createSummarizer(
     for await (const chunk of chatStream({ registry, signal: opts?.signal }, request, {
       provider,
       model,
+      ...(opts?.fallback ? { fallback: opts.fallback } : {}),
     })) {
       if (chunk._tag === 'text') {
         chunks.push(chunk)

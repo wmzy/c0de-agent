@@ -10,6 +10,8 @@ import type { PermissionResult } from '../../tools/types.js'
 /** 默认 pending 超时时长：5 分钟（300_000ms）。
  *  超过后自动 resolve 为 deny 并清理 store 条目，避免 promise 永久挂起与 pending Map 泄漏。 */
 const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60 * 1000
+/** 首层超时（仅提示）后到兜底自动拒绝的宽限期：25 分钟。双层超时总窗口 30 分钟。 */
+const DEFAULT_PERMISSION_EXPIRE_GRACE_MS = 25 * 60 * 1000
 
 /** 权限请求（需要用户确认）。 */
 type PermissionRequest = {
@@ -24,8 +26,10 @@ type PermissionRequest = {
 type PendingPermission = {
   request: PermissionRequest
   resolve: (result: PermissionResult) => void
-  /** 该请求超时自动拒绝时的回调（P1-6：按请求绑定 SSE 流）。 */
+  /** 首层超时回调（P1-6：按请求绑定 SSE 流，仅提示不终结）。 */
   onTimeout?: (request: PermissionRequest) => void
+  /** 兜底过期回调（P0 双层超时：提示后仍无响应 → 自动拒绝，通知前端清理弹窗状态）。 */
+  onExpired?: (request: PermissionRequest) => void
 }
 
 /** store 内部条目：在 PendingPermission 之上附带超时定时器句柄，便于终结时 clearTimeout。 */
@@ -37,6 +41,8 @@ type StoredPermission = PendingPermission & {
 type PermissionStoreOptions = {
   /** pending 超时毫秒数；省略时取 DEFAULT_PERMISSION_TIMEOUT_MS（5 分钟）。 */
   timeoutMs?: number
+  /** 首层超时后到兜底自动拒绝的宽限毫秒数；省略时 25 分钟。 */
+  expireGraceMs?: number
   /** 超时自动拒绝时回调（P1-6：通知前端「确认超时已拒绝」，提供重新询问入口）。 */
   onTimeout?: (request: PermissionRequest) => void
 }
@@ -55,6 +61,7 @@ type PermissionStore = {
 
 function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionStore {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS
+  const expireGraceMs = opts.expireGraceMs ?? DEFAULT_PERMISSION_EXPIRE_GRACE_MS
   const pending = new Map<string, StoredPermission>()
 
   // 统一终结路径：clearTimeout → 删除条目 → resolve。
@@ -75,16 +82,25 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
       const existing = pending.get(toolCallId)
       if (existing) clearTimeout(existing.timer)
 
+      // P0 双层超时：首层仅提示（pending 保持，用户可「重新询问」）；提示后仍无响应
+      // 则宽限期后兜底自动拒绝——否则用户离开页面后 run 被永久阻塞、会话 409 锁死。
+      // 无 onTimeout（非交互式 store）保留旧的单层自动拒绝语义。
       const timer = setTimeout(() => {
-        // P2-9：带 onTimeout 回调（交互式权限）超时**仅提示**，不自动拒绝——
-        // pending 保持到用户显式确认/拒绝，前端「重新询问」直接重开确认弹窗，
-        // 工具只执行一次；重发整条消息的旧方案会重复执行已完成的工具。
-        // 无回调（非交互式 store）保留旧的自动拒绝语义。
-        if (entry.onTimeout) {
-          entry.onTimeout(entry.request)
+        if (!entry.onTimeout) {
+          settle(toolCallId, { _tag: 'deny', reason: 'Permission request timed out' })
           return
         }
-        settle(toolCallId, { _tag: 'deny', reason: 'Permission request timed out' })
+        entry.onTimeout(entry.request)
+        // 首层提示后：重新挂宽限定时器（句柄回写 entry，settle 才能清理它）
+        const expireTimer = setTimeout(() => {
+          const cur = pending.get(toolCallId)
+          if (!cur) return
+          pending.set(toolCallId, { ...cur, timer: expireTimer })
+          cur.onExpired?.(cur.request)
+          settle(toolCallId, { _tag: 'deny', reason: 'Permission request expired' })
+        }, expireGraceMs)
+        const cur = pending.get(toolCallId)
+        if (cur) pending.set(toolCallId, { ...cur, timer: expireTimer })
       }, timeoutMs)
       pending.set(toolCallId, { ...entry, timer })
     },
@@ -119,4 +135,4 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
 }
 
 export type { PendingPermission, PermissionRequest, PermissionStore, PermissionStoreOptions }
-export { createPermissionStore, DEFAULT_PERMISSION_TIMEOUT_MS }
+export { createPermissionStore, DEFAULT_PERMISSION_EXPIRE_GRACE_MS, DEFAULT_PERMISSION_TIMEOUT_MS }

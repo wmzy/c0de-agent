@@ -11,6 +11,7 @@ import { injectSteering } from '../../core/steering.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
+import { insertEntry } from '../../session/message.js'
 import { getLLMSegments, getSession, updateSessionLastRun } from '../../session/session.js'
 import { upsertFileSnapshot } from '../../session/snapshot.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
@@ -86,6 +87,30 @@ function createChatRoute(ctx: ServerContext): Hono {
     // 仅当文本与图片皆无时拒绝，错误信息说明可操作原因。
     if (!sessionId || (!message && !images?.length)) {
       return apiError(c, 400, 'BAD_REQUEST', '消息内容不能为空：请输入文字或附带图片后再发送')
+    }
+    // P0：图片大小/数量服务端限额（前端已限制，此为兜底——API 直调/旧客户端）。
+    if (images) {
+      const MAX_IMAGE_COUNT = 6
+      const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+      if (images.length > MAX_IMAGE_COUNT) {
+        return apiError(
+          c,
+          400,
+          'TOO_MANY_IMAGES',
+          `最多 ${MAX_IMAGE_COUNT} 张图片（收到 ${images.length} 张）`,
+        )
+      }
+      for (const img of images) {
+        if (typeof img.data === 'string' && img.data.length > MAX_IMAGE_BYTES) {
+          const mb = (img.data.length / (1024 * 1024)).toFixed(1)
+          return apiError(
+            c,
+            400,
+            'IMAGE_TOO_LARGE',
+            `图片大小 ${mb}MB 超过上限 ${MAX_IMAGE_BYTES / (1024 * 1024)}MB`,
+          )
+        }
+      }
     }
 
     let session: Awaited<ReturnType<typeof getSession>>
@@ -242,6 +267,14 @@ function createChatRoute(ctx: ServerContext): Hono {
                   .writeSSE({
                     event: 'permission_timeout',
                     data: JSON.stringify({ _tag: 'permission_timeout', ...req }),
+                  })
+                  .catch(() => {})
+              },
+              onPermissionExpired: (req) => {
+                stream
+                  .writeSSE({
+                    event: 'permission_expired',
+                    data: JSON.stringify({ _tag: 'permission_expired', ...req }),
                   })
                   .catch(() => {})
               },
@@ -519,6 +552,16 @@ function createChatRoute(ctx: ServerContext): Hono {
                 })
                 .catch(() => {})
             },
+            // P0 双层超时：提示后仍无响应 → 兜底拒绝，SSE 通知前端清理弹窗状态
+            //（run 已继续，重开弹窗/拒绝按钮均失效，必须显式清理）。
+            onPermissionExpired: (req) => {
+              stream
+                .writeSSE({
+                  event: 'permission_expired',
+                  data: JSON.stringify({ _tag: 'permission_expired', ...req }),
+                })
+                .catch(() => {})
+            },
           })
 
           // cwd 已在斜杠拦截前解析，此处直接复用
@@ -687,10 +730,24 @@ function createChatRoute(ctx: ServerContext): Hono {
 
   app.post('/steer', async (c) => {
     const body = await c.req.json()
-    return (
-      runStarting(c, body.sessionId) ??
-      c.json({ steered: ctx.agentManager.steer(body.sessionId, body.message) })
-    )
+    const starting = runStarting(c, body.sessionId)
+    if (starting) return starting
+    const message = typeof body.message === 'string' ? body.message.trim() : ''
+    if (!message) return c.json({ steered: false })
+    const steered = ctx.agentManager.steer(body.sessionId, message)
+    // P0 闭环：steering 持久化为会话条目——用户运行中输入追加指令曾是内存瞬态，
+    // 刷新后彻底丢失；现在与消息同样入史（context 重建时作为 system 消息注入，
+    // 时间线经 /messages 渲染为 user steering 块）。
+    if (steered) {
+      await insertEntry(ctx.db, {
+        sessionId: body.sessionId,
+        tag: 'steering',
+        content: { text: message },
+      }).catch(() => {
+        // 持久化失败不阻塞本轮生效（指令已进入 run 队列）
+      })
+    }
+    return c.json({ steered })
   })
 
   return app

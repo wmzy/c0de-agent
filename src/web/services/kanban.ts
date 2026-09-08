@@ -88,6 +88,14 @@ const kanbanAPI = {
     apiRequest<{ ok: boolean }>(`/api/kanban/${projectId}/cards/${cardId}`, {
       method: 'DELETE',
     }),
+  /** 导出整板（列+标签+卡片 JSON；项目删除会永久级联删除看板，导出是唯一备份）。 */
+  exportBoard: (projectId: string) => apiRequest<unknown>(`/api/kanban/${projectId}/export`),
+  /** 导入整板（原子替换列+标签+卡片）。 */
+  importBoard: (projectId: string, data: unknown) =>
+    apiRequest<{ ok: boolean; cardCount: number }>(`/api/kanban/${projectId}/import`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 }
 
 export { kanbanAPI }

@@ -60,14 +60,18 @@ describe('createApp (integration)', () => {
   })
 
   it('完整聊天流程：创建会话 → 发送消息 → 接收 SSE', async () => {
-    const { app } = await setupApp()
+    const { app, ctx, cwd } = await setupApp()
+    // P2 修复：POST /api/sessions 强制 projectId——经 directory 解析项目后创建
+    const { fromDirectory } = await import('../project/index.js')
+    const project = await fromDirectory(ctx.db, cwd)
 
     // 创建会话
     const createRes = await app.request('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Integration Test' }),
+      body: JSON.stringify({ title: 'Integration Test', projectId: project.id }),
     })
+    expect(createRes.status).toBe(201)
     const session = (await createRes.json()) as { id: string }
 
     // 发送消息（SSE）

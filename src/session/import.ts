@@ -64,8 +64,8 @@ function sanitizeContent(content: unknown): MessageContent[] {
  * 导入副本可重复执行（同库内复制/恢复场景），不与原会话或既往导入冲突。
  * 说明：导出仅含 tag='message' 的消息——compaction/steering 等特殊条目不随迁，
  * 导入后会话显示完整原始消息流（上下文重建略长，但不丢内容）。
- * P2：会话 metadata 中的权限态（permissionMode/alwaysAllow）随迁——
- * 用户在导出会话中建立的授权信任不应在导入后失效。
+ * P0：权限态（permissionMode/alwaysAllow）仅在调用方显式确认后随迁——
+ * metadata 由路由层过滤，未确认时不传入本函数。
  */
 async function importSessionData(
   handle: DB,

@@ -47,6 +47,7 @@ function makeChecker(
       input: unknown
     }) => void | Promise<void>
     onPermissionTimeout?: (req: { toolCallId: string; tool: string; input: unknown }) => void
+    onPermissionExpired?: (req: { toolCallId: string; tool: string; input: unknown }) => void
   } = {},
 ) {
   const { timeoutMs, ...checkerOpts } = opts
@@ -275,6 +276,84 @@ describe('InteractivePermissionChecker', () => {
       expect(result._tag).toBe('allow')
       expect(checker.hasPending(id)).toBe(false)
       expect(checker.pendingCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('P0 双层超时：提示后宽限期内未响应 → 兜底自动拒绝并通知 onExpired', async () => {
+    vi.useFakeTimers()
+    try {
+      let captured: string | null = null
+      const timedOut: string[] = []
+      const expired: string[] = []
+      const checker = makeChecker({
+        timeoutMs: 1000,
+        onPermissionRequired: (req) => {
+          captured = req.toolCallId
+        },
+        onPermissionTimeout: (req) => {
+          timedOut.push(req.toolCallId)
+        },
+        onPermissionExpired: (req) => {
+          expired.push(req.toolCallId)
+        },
+      })
+      const checkPromise = checker.check(askTool, { path: 'a.txt' }, ctx)
+      await Promise.resolve()
+      const id = captured as unknown as string
+
+      // 首层超时：仅提示，pending 仍在
+      vi.advanceTimersByTime(1000)
+      await Promise.resolve()
+      expect(timedOut).toHaveLength(1)
+      expect(expired).toHaveLength(0)
+      expect(checker.hasPending(id)).toBe(true)
+
+      // 宽限期（默认 25 分钟）过后：兜底拒绝 + onExpired + 清理
+      vi.advanceTimersByTime(25 * 60 * 1000)
+      await Promise.resolve()
+      expect(expired).toHaveLength(1)
+      expect(checker.hasPending(id)).toBe(false)
+      expect(checker.pendingCount()).toBe(0)
+      const result = await checkPromise
+      expect(result._tag).toBe('deny')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('首层超时后 confirm 仍有效：宽限定时器被清理，推进时间不重复 resolve', async () => {
+    vi.useFakeTimers()
+    try {
+      let captured: string | null = null
+      const expired: string[] = []
+      const checker = makeChecker({
+        timeoutMs: 1000,
+        onPermissionRequired: (req) => {
+          captured = req.toolCallId
+        },
+        onPermissionTimeout: () => {},
+        onPermissionExpired: (req) => {
+          expired.push(req.toolCallId)
+        },
+      })
+      const checkPromise = checker.check(askTool, { path: 'a.txt' }, ctx)
+      await Promise.resolve()
+      const id = captured as unknown as string
+
+      vi.advanceTimersByTime(1000) // 首层超时提示
+      await Promise.resolve()
+      expect(checker.hasPending(id)).toBe(true)
+
+      expect(checker.confirm(id, true)).toBe(true)
+      const result = await checkPromise
+      expect(result._tag).toBe('allow')
+
+      // 推进超过宽限期：onExpired 不应再触发（timer 已被 settle 清理）
+      vi.advanceTimersByTime(60 * 60 * 1000)
+      await Promise.resolve()
+      expect(expired).toHaveLength(0)
     } finally {
       vi.useRealTimers()
     }

@@ -5,7 +5,7 @@ import { generateId } from '../shared/index.js'
 import { getEntries, insertEntry } from './message.js'
 import { createSession, getSession, rowToSession } from './session.js'
 import { copyFileSnapshots } from './snapshot.js'
-import type { Session, SessionEntry, SessionTreeNode } from './types.js'
+import type { Session, SessionEntry, SessionTreeNode, SessionUsage } from './types.js'
 
 /**
  * fork 分支点 messageIndex 越界（评审 NIT：客户端索引过期/分页 bug）。
@@ -135,6 +135,22 @@ async function getBranches(handle: DB, sessionId: string): Promise<Session[]> {
   return rows.map(rowToSession)
 }
 
+/** 从会话 metadata.segments 聚合用量（零额外查询——段数据已在行内）。 */
+function sessionUsage(session: Session): SessionUsage {
+  const calls = (session.metadata.segments ?? []).flatMap((s) => s.calls ?? [])
+  let inputTokens = 0
+  let outputTokens = 0
+  let cacheRead = 0
+  let cost = 0
+  for (const c of calls) {
+    inputTokens += c.usage.input
+    outputTokens += c.usage.output
+    cacheRead += c.usage.cacheRead ?? 0
+    cost += c.cost
+  }
+  return { inputTokens, outputTokens, cacheRead, cost, calls: calls.length }
+}
+
 /** Build a full session tree from root sessions down.
  * 每层按 metadata.lastOpenedAt 降序（fallback updatedAt、createdAt）。
  * 排除软删除会话与 CLI 来源会话（Web 树仅展示 web 会话）。
@@ -162,6 +178,7 @@ async function getTree(handle: DB): Promise<SessionTreeNode[]> {
       .map((session) => ({
         session,
         children: build(session.id),
+        usage: sessionUsage(session),
       }))
 
   return build(null)

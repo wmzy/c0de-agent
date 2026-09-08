@@ -27,10 +27,15 @@ afterEach(async () => {
   dbHandle = undefined
 })
 
+/** 测试默认项目 id（POST / 强制 projectId 后各用例共用）。 */
+const TEST_PROJECT = 'session-test-project'
+
 async function setup() {
   const db = await createDB({ driver: 'pglite' })
   dbHandle = db
   await migrateDB(db)
+  // POST / 现在强制 projectId（FK 指向 projects）——预置默认项目行供各用例使用。
+  await db.db.insert(projects).values({ id: TEST_PROJECT, worktree: '/tmp/session-test' })
   const ctx = createServerContext({ db, llmRegistry: createRegistry() })
   const app = createSessionRoute(ctx)
   return { app, ctx, db }
@@ -42,13 +47,26 @@ describe('session route', () => {
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'My Session' }),
+      body: JSON.stringify({ title: 'My Session', projectId: TEST_PROJECT }),
     })
     expect(res.status).toBe(201)
     const session = (await res.json()) as Session
     expect(session.title).toBe('My Session')
     expect(session.id).toBeDefined()
     expect(session.parentId).toBeNull()
+    expect(session.projectId).toBe(TEST_PROJECT)
+  })
+
+  it('POST / without projectId → 400 PROJECT_REQUIRED', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('PROJECT_REQUIRED')
   })
 
   it('POST / without title uses default', async () => {
@@ -56,7 +74,7 @@ describe('session route', () => {
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ projectId: TEST_PROJECT }),
     })
     expect(res.status).toBe(201)
     const session = (await res.json()) as Session
@@ -68,12 +86,12 @@ describe('session route', () => {
     await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'S1' }),
+      body: JSON.stringify({ title: 'S1', projectId: TEST_PROJECT }),
     })
     await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'S2' }),
+      body: JSON.stringify({ title: 'S2', projectId: TEST_PROJECT }),
     })
     const res = await app.request('/')
     expect(res.status).toBe(200)
@@ -86,7 +104,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Detail' }),
+      body: JSON.stringify({ title: 'Detail', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     const res = await app.request(`/${created.id}`)
@@ -108,7 +126,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'ToDelete' }),
+      body: JSON.stringify({ title: 'ToDelete', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     const delRes = await app.request(`/${created.id}`, { method: 'DELETE' })
@@ -160,7 +178,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Msg' }),
+      body: JSON.stringify({ title: 'Msg', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     await ctx.db.db.insert((await import('../../db/schema.js')).sessionEntries).values({
@@ -181,7 +199,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Original' }),
+      body: JSON.stringify({ title: 'Original', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     await ctx.db.db.insert((await import('../../db/schema.js')).sessionEntries).values({
@@ -205,7 +223,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Original' }),
+      body: JSON.stringify({ title: 'Original', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     await ctx.db.db.insert((await import('../../db/schema.js')).sessionEntries).values({
@@ -231,7 +249,7 @@ describe('session route', () => {
     await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Root' }),
+      body: JSON.stringify({ title: 'Root', projectId: TEST_PROJECT }),
     })
     const res = await app.request('/tree')
     expect(res.status).toBe(200)
@@ -245,7 +263,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Detail' }),
+      body: JSON.stringify({ title: 'Detail', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     const res = await app.request(`/${created.id}/llm-details`)
@@ -259,7 +277,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Status' }),
+      body: JSON.stringify({ title: 'Status', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     const res = await app.request(`/${created.id}/status`)
@@ -273,7 +291,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Paused' }),
+      body: JSON.stringify({ title: 'Paused', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     // 直接写 DB：lastRun.status='paused'（模拟热更新前暂停、进程已退出的遗留状态）
@@ -294,7 +312,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'LLMSegment' }),
+      body: JSON.stringify({ title: 'LLMSegment', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     // /:callId 子端点已删除；/llm-details/nope 不匹配任何路由 → 404
@@ -313,7 +331,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Compact' }),
+      body: JSON.stringify({ title: 'Compact', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     const res = await app.request(`/${created.id}/compact`, { method: 'POST' })
@@ -327,7 +345,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Main' }),
+      body: JSON.stringify({ title: 'Main', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
     const res = await app.request(`/${created.id}/branches`)
@@ -358,7 +376,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Shake' }),
+      body: JSON.stringify({ title: 'Shake', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
 
@@ -393,7 +411,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'ShakeApply' }),
+      body: JSON.stringify({ title: 'ShakeApply', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
 
@@ -439,7 +457,7 @@ describe('session route', () => {
     const createRes = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Shake400' }),
+      body: JSON.stringify({ title: 'Shake400', projectId: TEST_PROJECT }),
     })
     const created = (await createRes.json()) as Session
 
@@ -460,11 +478,15 @@ describe('session route', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'WithProject', directory: dir }),
       })
-      await app.request('/', {
+      // P2 修复：POST / 强制 projectId——不传时 400（此前可创建任何视图都不可见的孤儿会话）
+      const noProject = await app.request('/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'NoProject' }),
       })
+      expect(noProject.status).toBe(400)
+      const errBody = (await noProject.json()) as { error?: { code?: string } }
+      expect(errBody.error?.code).toBe('PROJECT_REQUIRED')
       const project = await fromDirectory(db, dir)
       const res = await app.request(`/?projectId=${project.id}`)
       const sessions = (await res.json()) as Session[]
@@ -514,7 +536,7 @@ describe('session route', () => {
     const created = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'HardDelete' }),
+      body: JSON.stringify({ title: 'HardDelete', projectId: TEST_PROJECT }),
     })
     const session = (await created.json()) as Session
     await app.request(`/${session.id}`, { method: 'DELETE' })
@@ -531,7 +553,7 @@ describe('session route', () => {
     const created2 = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Alive' }),
+      body: JSON.stringify({ title: 'Alive', projectId: TEST_PROJECT }),
     })
     const alive = (await created2.json()) as Session
     const res2 = await app.request(`/${alive.id}/forever`, { method: 'DELETE' })
@@ -545,7 +567,7 @@ describe('session route', () => {
       const created = await app.request('/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({ title, projectId: TEST_PROJECT }),
       })
       const session = (await created.json()) as Session
       await app.request(`/${session.id}`, { method: 'DELETE' })
@@ -564,7 +586,7 @@ describe('session route', () => {
     const created = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Archived' }),
+      body: JSON.stringify({ title: 'Archived', projectId: TEST_PROJECT }),
     })
     const session = (await created.json()) as Session
     await archiveOriginalEntries(
@@ -601,7 +623,7 @@ describe('session route', () => {
     const created = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'ExportMe' }),
+      body: JSON.stringify({ title: 'ExportMe', projectId: TEST_PROJECT }),
     })
     const session = (await created.json()) as Session
     const res = await app.request(`/${session.id}/export`)
@@ -750,7 +772,7 @@ describe('session route', () => {
       expect(body.flattened).toBe(true)
     })
 
-    it('导入携带权限态 metadata → permissionMode/alwaysAllow 随迁', async () => {
+    it('未显式确认（importPermissions 缺省）→ 权限态剥离', async () => {
       const { app, ctx } = await setup()
       const projectId = 'import-meta-project'
       await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-meta' })
@@ -768,8 +790,44 @@ describe('session route', () => {
         }),
       })
       expect(res.status).toBe(200)
-      const body = (await res.json()) as { sessionId: string; flattened: boolean }
+      const body = (await res.json()) as {
+        sessionId: string
+        flattened: boolean
+        permissionsMigrated: boolean
+      }
       expect(body.flattened).toBe(false)
+      expect(body.permissionsMigrated).toBe(false)
+      const imported = await getSession(ctx.db, body.sessionId)
+      // 默认剥离：导入会话不携带任何权限态（防跨机器静默继承 auto/alwaysAllow）。
+      const importedMeta = imported?.metadata
+      expect(importedMeta?.permissionMode).toBeUndefined()
+      expect((importedMeta as Record<string, unknown> | undefined)?.alwaysAllow).toBeUndefined()
+    })
+
+    it('importPermissions=true → permissionMode/alwaysAllow 随迁（白名单仅保留字符串）', async () => {
+      const { app, ctx } = await setup()
+      const projectId = 'import-meta-project2'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-meta2' })
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: 1,
+          session: {
+            title: 'Auto',
+            metadata: { permissionMode: 'auto', alwaysAllow: ['bash', 42], junk: 'x' },
+          },
+          messages: [],
+          projectId,
+          importPermissions: true,
+        }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        sessionId: string
+        permissionsMigrated: boolean
+      }
+      expect(body.permissionsMigrated).toBe(true)
       const imported = await getSession(ctx.db, body.sessionId)
       expect(imported?.metadata.permissionMode).toBe('auto')
       // 白名单仅保留字符串工具名
@@ -784,7 +842,7 @@ describe('session route', () => {
       const created = await app.request('/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'trash-me' }),
+        body: JSON.stringify({ title: 'trash-me', projectId: TEST_PROJECT }),
       })
       const session = (await created.json()) as Session
       await ctx.db.db.insert(sessionEntries).values({
@@ -822,7 +880,7 @@ describe('session route', () => {
       const created = await app.request('/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'running' }),
+        body: JSON.stringify({ title: 'running', projectId: TEST_PROJECT }),
       })
       const session = (await created.json()) as Session
       // 占位一个活跃 run（真实中止由 agentManager 内部处理，此处断言调用）

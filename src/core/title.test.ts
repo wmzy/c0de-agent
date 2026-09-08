@@ -41,7 +41,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     mcpServers: [],
     slashCommands: { enabled: [] },
     theme: 'system',
-    locale: 'en',
     ...overrides,
   } as Config
 }

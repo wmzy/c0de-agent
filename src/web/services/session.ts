@@ -78,22 +78,26 @@ const sessionAPI = {
   /** 会话导出（元数据 + 消息 + 归档），数据可迁移。 */
   exportSession: (id: string) => apiRequest<SessionExport>(`/api/sessions/${id}/export`),
   /** 会话导入（导出的逆操作；绑定 projectId 后出现在对应项目视图）。
-   *  flattened=true 表示原会话的分支树结构被扁平化为独立根会话（P2）。 */
+   *  flattened=true 表示原会话的分支树结构被扁平化为独立根会话（P2）。
+   *  importPermissions=true 才会随迁权限态（permissionMode/alwaysAllow）；默认剥离（P0）。 */
   importSession: (
     data: unknown,
     projectId?: string,
+    opts?: { importPermissions?: boolean },
   ): Promise<{
     ok: boolean
     sessionId: string
     messageCount: number
     archiveCount: number
     flattened: boolean
+    permissionsMigrated: boolean
   }> =>
     apiRequest('/api/sessions/import', {
       method: 'POST',
       body: JSON.stringify({
         ...(data as Record<string, unknown>),
         ...(projectId ? { projectId } : {}),
+        ...(opts?.importPermissions ? { importPermissions: true } : {}),
       }),
     }),
   /** 跨会话搜索（P2-6）：标题 + 消息内容。includeDeleted 搜索回收站（P3）。 */

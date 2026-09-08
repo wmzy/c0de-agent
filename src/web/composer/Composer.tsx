@@ -387,9 +387,21 @@ function Composer(props: ComposerProps) {
       )}
       <AttachmentBar
         images={composer.images}
-        supportsVision={!!props.supportsVision}
+        supportsVision={props.supportsVision ?? true}
         onRemove={composer.removeImage}
       />
+      {composer.imageError && (
+        <div
+          className={css`
+            padding: 4px 12px 0;
+            font-size: 12px;
+            color: var(--error);
+          `}
+          data-testid="image-error"
+        >
+          {composer.imageError}
+        </div>
+      )}
       <div className={editorRow}>
         {composer.popover === 'slash' && (
           // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，fieldset 不适用于绝对定位浮层

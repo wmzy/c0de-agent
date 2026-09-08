@@ -23,6 +23,6 @@ export {
 export type { Retryable, RetryOptions } from './retry.js'
 export { delay, retryable, withRetry } from './retry.js'
 export type { FallbackChain } from './routing.js'
-export { runWithFallback, shouldFallOver } from './routing.js'
+export { buildFallbackChain, runWithFallback, shouldFallOver } from './routing.js'
 export * from './schema/index.js'
 export { estimateTokens } from './token.js'

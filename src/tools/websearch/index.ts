@@ -1,3 +1,4 @@
+import { decryptSecret } from '../../core/secret.js'
 import type { WebSearchConfig } from '../../shared/types/config.js'
 import { createFetch } from './fetch.js'
 import { braveProvider } from './providers/brave.js'
@@ -12,11 +13,13 @@ const PROVIDERS: Record<WebSearchProviderId, WebSearchProvider> = {
   brave: braveProvider,
 }
 
-/** 环境变量名 → config key 字段映射。环境变量优先于 config。 */
+/** 环境变量名 → config key 字段映射。环境变量优先于 config。
+ *  config 值落盘时已加密（enc: 前缀），此处解密后使用（明文兼容透传）。 */
 function resolveKeys(config: WebSearchConfig): { tavily?: string; brave?: string } {
+  const decrypt = (v?: string) => (v ? decryptSecret(v) : v)
   return {
-    tavily: process.env.TAVILY_API_KEY ?? config.tavilyApiKey,
-    brave: process.env.BRAVE_API_KEY ?? config.braveApiKey,
+    tavily: process.env.TAVILY_API_KEY ?? decrypt(config.tavilyApiKey),
+    brave: process.env.BRAVE_API_KEY ?? decrypt(config.braveApiKey),
   }
 }
 

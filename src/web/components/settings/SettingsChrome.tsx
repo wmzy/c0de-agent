@@ -197,50 +197,49 @@ function SettingsToolbar({
 
 type RoleRoutingSectionProps = {
   routing: Config['roleRouting']
-  onRename: (oldKey: string, newKey: string) => void
-  onUpdate: (role: string, field: 'provider' | 'model', value: string) => void
-  onRemove: (role: string) => void
-  onAdd: () => void
+  onUpdate: (field: 'provider' | 'model', value: string) => void
+  onClear: () => void
 }
 
-function RoleRoutingSection({
-  routing,
-  onRename,
-  onUpdate,
-  onRemove,
-  onAdd,
-}: RoleRoutingSectionProps) {
+/**
+ * 标题生成模型（roleRouting.smol）——运行时唯一消费方是会话标题生成
+ * （core/title.ts）。此前 UI 允许添加任意角色（role-1/role-2…），
+ * 但这些角色无任何消费者，属死配置；现固定为 smol 单角色。
+ */
+function RoleRoutingSection({ routing, onUpdate, onClear }: RoleRoutingSectionProps) {
+  const smol = routing?.smol
+  const unknownRoles = Object.keys(routing ?? {}).filter((r) => r !== 'smol')
   return (
     <div className={section}>
-      <h2 className={sectionTitle}>角色路由</h2>
+      <h2 className={sectionTitle}>标题生成模型</h2>
       <div className={`${hint} ${hintMb}`}>
-        为特定角色指定独立的 provider 和 model（覆盖默认）。
+        会话标题自动生成使用的模型（roleRouting.smol）；留空则使用对话默认模型。
       </div>
-      {Object.entries(routing ?? {}).map(([role, cfg]) => (
-        <div key={role} className={kvRow}>
-          <input
-            value={role}
-            placeholder="角色名"
-            onChange={(e) => onRename(role, e.target.value)}
-          />
-          <input
-            value={cfg.provider}
-            placeholder="provider"
-            onChange={(e) => onUpdate(role, 'provider', e.target.value)}
-          />
-          <input
-            value={cfg.model}
-            placeholder="model"
-            onChange={(e) => onUpdate(role, 'model', e.target.value)}
-          />
-          <button type="button" data-variant="danger" onClick={() => onRemove(role)}>
-            删除
+      <div className={kvRow}>
+        <span className={hint} style={{ minWidth: 48, flexShrink: 0 }}>
+          smol
+        </span>
+        <input
+          value={smol?.provider ?? ''}
+          placeholder="provider"
+          onChange={(e) => onUpdate('provider', e.target.value)}
+        />
+        <input
+          value={smol?.model ?? ''}
+          placeholder="model"
+          onChange={(e) => onUpdate('model', e.target.value)}
+        />
+        {smol && (
+          <button type="button" data-variant="danger" onClick={onClear}>
+            清除
           </button>
+        )}
+      </div>
+      {unknownRoles.length > 0 && (
+        <div className={hint} data-testid="unknown-roles-hint">
+          检测到未被使用的角色配置：{unknownRoles.join(', ')}（无效，请删除）
         </div>
-      ))}
-      <button type="button" onClick={onAdd} data-testid="role-add">
-        + 添加角色
-      </button>
+      )}
     </div>
   )
 }

@@ -256,41 +256,21 @@ export function Settings() {
       return { ...base, mcpServers: updater(base.mcpServers ?? []) }
     })
 
-  // ---- 角色路由 (roleRouting) ----
-  const addRoleRouting = () => {
+  // ---- 标题生成模型 (roleRouting.smol) ----
+  const updateRoleRouting = (field: 'provider' | 'model', value: string) => {
     setDraft((prev) => {
       const base = prev ?? config
       const routing = { ...(base.roleRouting ?? {}) }
-      routing[`role-${Object.keys(routing).length + 1}`] = { provider: '', model: '' }
+      routing.smol = { ...(routing.smol ?? { provider: '', model: '' }), [field]: value }
       return { ...base, roleRouting: routing }
     })
   }
-  const updateRoleRouting = (role: string, field: 'provider' | 'model', value: string) => {
+  const clearRoleRouting = () => {
     setDraft((prev) => {
       const base = prev ?? config
       const routing = { ...(base.roleRouting ?? {}) }
-      routing[role] = { ...(routing[role] ?? { provider: '', model: '' }), [field]: value }
+      delete routing.smol
       return { ...base, roleRouting: routing }
-    })
-  }
-  const removeRoleRouting = (role: string) => {
-    setDraft((prev) => {
-      const base = prev ?? config
-      const routing = { ...(base.roleRouting ?? {}) }
-      delete routing[role]
-      return { ...base, roleRouting: routing }
-    })
-  }
-  const renameRoleRouting = (oldKey: string, newKey: string) => {
-    setDraft((prev) => {
-      const base = prev ?? config
-      const entries = Object.entries(base.roleRouting ?? {})
-      return {
-        ...base,
-        roleRouting: Object.fromEntries(
-          entries.map(([k, v]) => (k === oldKey ? [newKey, v] : [k, v])),
-        ),
-      }
     })
   }
 
@@ -501,10 +481,8 @@ export function Settings() {
           />
           <RoleRoutingSection
             routing={merged.roleRouting}
-            onRename={renameRoleRouting}
             onUpdate={updateRoleRouting}
-            onRemove={removeRoleRouting}
-            onAdd={addRoleRouting}
+            onClear={clearRoleRouting}
           />
           <FallbackPanel
             fallback={merged.fallback}

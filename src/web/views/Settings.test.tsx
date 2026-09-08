@@ -40,7 +40,6 @@ const mockConfig = {
   mcpServers: [],
   slashCommands: { enabled: [] },
   theme: 'light',
-  locale: 'zh-CN',
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },
@@ -894,7 +893,7 @@ describe('Settings — 完整配置表单覆盖', () => {
       '外观',
       '默认 Provider / Model',
       'LLM Provider',
-      '角色路由',
+      '标题生成模型',
       '故障回退',
       '上下文压缩',
       '工具配置',
@@ -1277,12 +1276,18 @@ describe('Settings — 完整配置表单覆盖', () => {
 })
 
 describe('Settings — 吸底保存条与未保存导航防护', () => {
+  /** 制造未保存更改的稳定控件：故障回退启用开关（此前用 role-add，已随任意角色 UI 移除）。 */
+  const dirtyTrigger = (): HTMLElement =>
+    screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('启用自动重试与回退')) as HTMLElement
+
   it('修改字段后保存条出现「未保存更改」提示与「放弃更改」，未修改时弱化', async () => {
     const { configAPI } = await import('../services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
-    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
 
     // 初始干净状态：保存条在底部但禁用，无提示无放弃按钮
     expect(screen.getByTestId('settings-save-bar')).toBeTruthy()
@@ -1291,7 +1296,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     expect(screen.queryByTestId('settings-discard')).toBeNull()
 
     // 修改字段 → dirty：提示与放弃按钮出现，保存可用
-    fireEvent.click(screen.getByTestId('role-add'))
+    fireEvent.click(dirtyTrigger())
     expect(screen.getByTestId('settings-dirty-hint').textContent).toContain('未保存更改')
     expect(screen.getByTestId('settings-discard')).toBeTruthy()
     expect(screen.getByTestId('settings-save')).not.toBeDisabled()
@@ -1321,9 +1326,9 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
-    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
 
-    fireEvent.click(screen.getByTestId('role-add')) // 制造未保存更改
+    fireEvent.click(dirtyTrigger()) // 制造未保存更改
 
     // 模拟顶栏「会话」导航：TopBar 用 react-router Link 渲染为 <a href>
     const nav = document.createElement('a')
@@ -1353,9 +1358,9 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
-    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
 
-    fireEvent.click(screen.getByTestId('role-add')) // 制造未保存更改
+    fireEvent.click(dirtyTrigger()) // 制造未保存更改
 
     const nav = document.createElement('a')
     nav.setAttribute('href', '/projects/p1')
@@ -1383,7 +1388,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
-    await waitFor(() => expect(screen.getByTestId('role-add')).toBeTruthy())
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
 
     // 干净状态：站内链接直接放行、beforeunload 不拦截
     const nav = document.createElement('a')
@@ -1400,7 +1405,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     expect(clean.defaultPrevented).toBe(false)
 
     // dirty：beforeunload 被 preventDefault
-    fireEvent.click(screen.getByTestId('role-add'))
+    fireEvent.click(dirtyTrigger())
     const dirty = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(dirty)
     expect(dirty.defaultPrevented).toBe(true)

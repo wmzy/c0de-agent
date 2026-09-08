@@ -31,6 +31,9 @@ const COMMANDS: CommandSpec[] = [
       { name: 'format', type: 'string' },
       { name: 'yes', type: 'boolean', short: 'y' },
       { name: 'continue', type: 'string' },
+      // P2 修复：serve 运行时持久库被占用，此前静默退化为内存库（会话不保存，
+      // 仅 stderr 一行提示极易错过）。现须显式 --temp 才允许临时模式。
+      { name: 'temp', type: 'boolean' },
     ],
   },
   {
@@ -71,7 +74,10 @@ const COMMANDS: CommandSpec[] = [
   {
     name: 'acp',
     description: 'Run in Agent Client Protocol mode (editor integration).',
-    options: [],
+    options: [
+      // serve 占用持久库时的显式临时模式开关（与 chat --temp 同语义）。
+      { name: 'temp', type: 'boolean' },
+    ],
   },
   {
     name: 'update',
@@ -101,6 +107,8 @@ type AgentDepsOptions = {
   continueSessionId?: string
   /** 必须使用持久库（如 sessions 命令）；锁冲突时不降级内存库而是直接报错。 */
   requirePersistent?: boolean
+  /** 显式允许 serve 占用持久库时退化为内存库（--temp）；缺省时锁冲突直接报错。 */
+  allowTemp?: boolean
 }
 
 /** 封装 agent 依赖生命周期：加载配置 → 建库迁移 → 组装 deps → 使用后关库。
@@ -139,9 +147,17 @@ async function withAgentDeps(
           `请停止 serve 后重试，或去掉 --continue 开启新会话。`,
       )
     }
+    if (!opts.allowTemp) {
+      // P2 修复：锁冲突不再静默降级为不保存会话的内存模式（用户极易错过 stderr
+      // 提示导致对话丢失）。必须显式 --temp 确认放弃持久化。
+      throw new Error(
+        'c0de serve 正在运行并占用会话库，本次对话将无法保存。\n' +
+          '  1) 停止 serve 后重试（对话可持久化，推荐）；\n' +
+          '  2) 或加 --temp 显式接受临时模式（消息与工具调用不会保存）。',
+      )
+    }
     process.stderr.write(
-      '[c0de] ⚠ c0de serve 正在运行：本次对话为临时模式，消息与工具调用不会保存。\n' +
-        '       停止 serve 后重试可持久化，或直接使用浏览器界面。\n',
+      '[c0de] ⚠ 临时模式：消息与工具调用不会保存。停止 serve 后重试可持久化，或直接使用浏览器界面。\n',
     )
     db = await createDB({ driver: 'pglite' })
     await migrateDB(db)
@@ -183,11 +199,13 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       // --yes / -y 显式放行写操作；否则按 config.permission.defaultMode 决定（默认 safe）。
       const strategy = args.options.yes ? ('full-auto' as const) : undefined
       const continueId = args.options.continue as string | undefined
+      const allowTemp = args.options.temp === true
       await withAgentDeps(
         cwd,
         {
           ...(strategy ? { strategy } : {}),
           ...(continueId ? { continueSessionId: continueId } : {}),
+          ...(allowTemp ? { allowTemp } : {}),
         },
         (config, deps) => runChatCommand({ args, config, deps }),
       )
@@ -218,8 +236,13 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     }
     case 'acp': {
       // ACP 非交互：所有工具放行（编辑器侧自行控制执行授权）。
-      await withAgentDeps(cwd, { strategy: 'full-auto' }, (config, deps) =>
-        runAcpCommand({ config, deps }),
+      await withAgentDeps(
+        cwd,
+        {
+          strategy: 'full-auto',
+          ...(args.options.temp === true ? { allowTemp: true } : {}),
+        },
+        (config, deps) => runAcpCommand({ config, deps }),
       )
       return
     }
