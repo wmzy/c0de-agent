@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
-import { kanbanBoards, sessions } from '../../db/schema.js'
+import { kanbanBoards, projects, sessions } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import type { Project } from '../../project/project.js'
 import { createSession, listDeletedSessions } from '../../session/session.js'
@@ -97,6 +97,29 @@ describe('project route', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('GET /current cwd 为 home 目录 → 不自动注册，404 并给可操作指引', async () => {
+    const { app, db } = await setup(homedir())
+    const res = await app.request('/current')
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('PROJECT_DIR_REQUIRED')
+    expect(body.error?.message).toContain('不是项目')
+    // 未产生任何项目记录（home 不被污染为项目）
+    const rows = await db.db.select().from(projects)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('GET /current home 目录已显式注册 → 照常返回（尊重用户主动添加）', async () => {
+    const { app } = await setup(homedir())
+    await app.request('/from-directory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory: homedir() }),
+    })
+    const res = await app.request('/current')
+    expect(res.status).toBe(200)
   })
 
   it('GET /:id returns project', async () => {

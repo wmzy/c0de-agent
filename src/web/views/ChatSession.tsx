@@ -441,9 +441,14 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         onAbort={chat.abort}
         onConfirm={handleConfirm}
         onPause={agent.pause}
-        onResume={agent.resume}
+        onResume={() => {
+          // 服务端暂停（权限超时兜底）：乐观清除标记，resume 端点真正恢复 run；
+          // status_change(running) 事件随后复核状态。
+          chat.clearRunPaused()
+          agent.resume()
+        }}
         onSteer={chat.steer}
-        paused={agent.paused}
+        paused={agent.paused || chat.runPaused}
         supportsVision={supportsVision}
         emptyState={<ChatWelcome />}
         modelBar={
@@ -469,16 +474,35 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             <SetupBanner projectId={projectId} />
             {orphanNotice && (
               <div className={interruptBanner} data-testid="orphan-session-banner">
-                <span>
-                  该会话未归属任何项目（原项目已删除），无法执行工具。归属到当前项目后可继续使用。
-                </span>
-                <button
-                  type="button"
-                  onClick={() => rebindToCurrent.mutate()}
-                  disabled={rebindToCurrent.isPending}
-                >
-                  归属到当前项目
-                </button>
+                {sessionMeta?.worktreePath ? (
+                  <>
+                    <span>
+                      该会话未归属任何项目（来自 CLI）：工具将在其原目录执行（
+                      {sessionMeta.worktreePath}
+                      ）。归属到当前项目可将其纳入项目会话列表。
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => rebindToCurrent.mutate()}
+                      disabled={rebindToCurrent.isPending}
+                    >
+                      归属到当前项目
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      该会话未归属任何项目（原项目已删除），无法执行工具。归属到当前项目后可继续使用。
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => rebindToCurrent.mutate()}
+                      disabled={rebindToCurrent.isPending}
+                    >
+                      归属到当前项目
+                    </button>
+                  </>
+                )}
               </div>
             )}
             {showInterruptBanner && !chat.isStreaming && (
@@ -511,6 +535,23 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                 </span>
                 <button onClick={() => chat.abort()} type="button" title="中止后台运行中的对话">
                   中止
+                </button>
+              </div>
+            )}
+            {chat.runPaused && chat.isStreaming && (
+              <div className={interruptBanner} data-testid="run-paused-banner">
+                <span>
+                  权限确认超时：工具已被自动拒绝，对话已暂停（不会在无人确认时继续执行）。点击「恢复」继续。
+                </span>
+                <button
+                  onClick={() => {
+                    chat.clearRunPaused()
+                    agent.resume()
+                  }}
+                  type="button"
+                  title="恢复 run：从暂停点继续执行"
+                >
+                  恢复
                 </button>
               </div>
             )}

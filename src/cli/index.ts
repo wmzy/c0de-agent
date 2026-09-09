@@ -8,7 +8,12 @@ import { loadConfig } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
-import { acquireDevDbLock, releaseDevDbLock, resolveDbDir } from '../server/server.js'
+import {
+  acquireDevDbLock,
+  readServeInfo,
+  releaseDevDbLock,
+  resolveDbDir,
+} from '../server/server.js'
 import type { Config } from '../shared/types/config.js'
 import { runAcpCommand } from './commands/acp.js'
 import { runAuthCommand } from './commands/auth.js'
@@ -41,6 +46,7 @@ const COMMANDS: CommandSpec[] = [
     description: 'Start the HTTP server (default when no command given).',
     options: [
       { name: 'port', type: 'string' },
+      { name: 'host', type: 'string' },
       { name: 'open', type: 'boolean' },
       { name: 'restore', type: 'string' },
       { name: 'handoff-port', type: 'string' },
@@ -136,26 +142,31 @@ async function withAgentDeps(
     if (holdLock) releaseDevDbLock(dataDir)
     holdLock = false
     if (!isDbLockConflict(err)) throw err
+    // serve 运行时引导：读取运行中实例的端口（serve-info.json），直接给出可点击的
+    // Web 地址，而不是让用户面对「单写者限制」无从下手。
+    const info = readServeInfo(dataDir)
+    const webUrl = info && info.port > 0 ? `http://localhost:${info.port}/` : '启动日志中打印的地址'
     if (opts.requirePersistent) {
       throw new Error(
-        'c0de serve 正在运行并占用会话库，CLI 会话管理暂不可用（单写者限制）。\n' +
-          '  1) 在 Web 界面管理会话；\n' +
-          '  2) 或停止 serve（Ctrl+C）后重试本命令。',
+        `c0de serve 正在运行并占用会话库，CLI 会话管理暂不可用（单写者限制）。\n` +
+          `  1) 在浏览器打开 ${webUrl} 管理会话；\n` +
+          `  2) 或停止 serve（Ctrl+C）后重试本命令。`,
       )
     }
     if (opts.continueSessionId) {
       throw new Error(
         `无法续聊会话 ${opts.continueSessionId}：持久库被 c0de serve 占用，内存模式无法续聊。\n` +
-          `请停止 serve 后重试，或去掉 --continue 开启新会话。`,
+          `请在浏览器打开 ${webUrl} 找到该会话继续对话；或停止 serve 后重试。`,
       )
     }
     if (!opts.allowTemp) {
       // P2 修复：锁冲突不再静默降级为不保存会话的内存模式（用户极易错过 stderr
       // 提示导致对话丢失）。必须显式 --temp 确认放弃持久化。
       throw new Error(
-        'c0de serve 正在运行并占用会话库，本次对话将无法保存。\n' +
-          '  1) 停止 serve 后重试（对话可持久化，推荐）；\n' +
-          '  2) 或加 --temp 显式接受临时模式（消息与工具调用不会保存）。',
+        `c0de serve 正在运行并占用会话库，本次对话将无法保存。\n` +
+          `  1) 在浏览器打开 ${webUrl} 继续对话（推荐，会话自动保存）；\n` +
+          `  2) 或停止 serve 后重试（对话可持久化）；\n` +
+          `  3) 或加 --temp 显式接受临时模式（消息与工具调用不会保存）。`,
       )
     }
     process.stderr.write(

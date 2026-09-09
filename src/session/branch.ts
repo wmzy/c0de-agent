@@ -1,9 +1,9 @@
-import { and, eq, isNull, ne, or } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { type sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import { getEntries, insertEntry } from './message.js'
-import { createSession, getSession, rowToSession } from './session.js'
+import { createSession, getSession, rowToSession, webVisibleSessionCondition } from './session.js'
 import { copyFileSnapshots } from './snapshot.js'
 import type { Session, SessionEntry, SessionTreeNode, SessionUsage } from './types.js'
 
@@ -156,13 +156,14 @@ function sessionUsage(session: Session): SessionUsage {
 
 /** Build a full session tree from root sessions down.
  * 每层按 metadata.lastOpenedAt 降序（fallback updatedAt、createdAt）。
- * 排除软删除会话与 CLI 来源会话（Web 树仅展示 web 会话）。
+ * 排除软删除会话与临时 CLI 会话（print/workflow）；持久化 CLI 会话（--continue 续接）
+ * 与 Web 会话同树可见（CLI/Web 同库不同视图 → 同库同视图）。
  */
 async function getTree(handle: DB): Promise<SessionTreeNode[]> {
   const rows = await handle.db
     .select()
     .from(sessions)
-    .where(and(isNull(sessions.deletedAt), or(isNull(sessions.source), ne(sessions.source, 'cli'))))
+    .where(and(isNull(sessions.deletedAt), webVisibleSessionCondition()))
   const byParent = new Map<string | null, Session[]>()
   for (const row of rows) {
     const session = rowToSession(row)

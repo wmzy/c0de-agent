@@ -23,7 +23,12 @@ type ChatState = {
   error: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
   /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
-  permissionTimeout: { toolCallId: string; tool: string; input: unknown } | null
+  permissionTimeout: {
+    toolCallId: string
+    tool: string
+    input: unknown
+    timeoutAction: 'pause' | 'deny'
+  } | null
   /** 本轮派发的子 agent 进度（spec: multi-agent-design §4.5）。 */
   subagents: SubagentInfo[]
   /** 后端检测到模型/工具变更需用户确认开新段时设置；携带活跃段信息与待重发内容。 */
@@ -35,6 +40,9 @@ type ChatState = {
   attachedRun: boolean
   /** 自动压缩发生后的提示（可关闭）。上下文被改写，用户应可知晓。 */
   compactionNotice: string | null
+  /** 服务端暂停 run（权限确认超时兜底拒绝后按 timeoutAction='pause' 暂停；
+   *  经 status_change(paused)/permission_expired 事件同步）。true 时显示恢复入口。 */
+  runPaused: boolean
 }
 
 type PendingSegmentBreak = {
@@ -76,6 +84,8 @@ type ChatActions = {
   denyTimedOutPermission: () => void
   /** 清除中断状态。 */
   clearInterrupted: () => void
+  /** 清除服务端暂停态标记（点击「恢复」时乐观清除，status_change 事件随后复核）。 */
+  clearRunPaused: () => void
   /** 清除压缩提示横幅。 */
   clearCompactionNotice: () => void
   /** P1：附着后台 run——查询状态与挂起权限，重挂弹窗并轮询直到 run 结束。 */
@@ -95,6 +105,7 @@ const INITIAL: ChatState = {
   interrupted: false,
   attachedRun: false,
   compactionNotice: null,
+  runPaused: false,
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -234,17 +245,27 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
       return {
         ...state,
         pendingPermission: null,
-        permissionTimeout: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
+        permissionTimeout: {
+          toolCallId: event.toolCallId,
+          tool: event.tool,
+          input: event.input,
+          timeoutAction: event.timeoutAction,
+        },
       }
     case 'permission_expired':
-      // P0 双层超时兜底：pending 已被后端自动拒绝、run 已继续——弹窗与「重新询问」
-      // 按钮全部失效，必须清空。工具被拒的 deny 结果会以 tool 卡片出现在时间线，
-      // 无需额外错误提示。
+      // P0 双层超时兜底：pending 已被后端自动拒绝——弹窗与「重新询问」
+      // 按钮全部失效，必须清空。工具被拒的 deny 结果会以 tool 卡片出现在时间线。
+      // timeoutAction='pause' 时后端已暂停 run：置 runPaused，展示恢复入口。
       return {
         ...state,
         pendingPermission: null,
         permissionTimeout: null,
+        runPaused: event.timeoutAction === 'pause',
       }
+    case 'status_change':
+      // 服务端 run 状态同步：权限超时兜底暂停（或用户在其他标签页暂停/恢复）时，
+      // 本标签页据此显示「恢复」按钮。running → 清除暂停态。
+      return { ...state, runPaused: event.status._tag === 'paused' }
     case 'error':
       return { ...state, error: errorToMessage(event.error) }
     case 'compaction_done':
@@ -253,7 +274,13 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         compactionNotice: `已自动压缩上下文：${event.compactedCount} 条历史被摘要，保留最近 ${event.keptCount} 条。可在归档面板查看原始内容。`,
       }
     case 'done':
-      return { ...state, isStreaming: false, pendingPermission: null, attachedRun: false }
+      return {
+        ...state,
+        isStreaming: false,
+        pendingPermission: null,
+        attachedRun: false,
+        runPaused: false,
+      }
     default:
       return state
   }
@@ -699,6 +726,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     setState((s) => ({ ...s, interrupted: false }))
   }, [])
 
+  const clearRunPaused = useCallback(() => {
+    setState((s) => ({ ...s, runPaused: false }))
+  }, [])
+
   const clearCompactionNotice = useCallback(() => {
     setState((s) => ({ ...s, compactionNotice: null }))
   }, [])
@@ -717,6 +748,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     reopenPermission,
     denyTimedOutPermission,
     clearInterrupted,
+    clearRunPaused,
     clearCompactionNotice,
     attach,
     reset,

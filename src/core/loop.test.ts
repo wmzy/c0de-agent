@@ -1146,7 +1146,7 @@ describe('agentLoop task delegation (spec §12.3)', () => {
     expect(child?.id).not.toBe(session.id)
   })
 
-  it('子 agent 会话继承父会话 source（CLI 父会话派生子不再泄漏进 Web 树）', async () => {
+  it('子 agent 会话继承父会话 source（CLI 父会话派生子随父同树可见）', async () => {
     // 父会话改为 CLI 来源（c0de chat 场景）
     session = { ...session, source: 'cli' }
     const messages = await getMessages(db, session.id)
@@ -1162,9 +1162,10 @@ describe('agentLoop task delegation (spec §12.3)', () => {
     expect(child).toBeTruthy()
     // 修复前子会话 source=null（被视为 web），会出现在 Web 会话树中且父不可见
     expect(child?.source).toBe('cli')
-    // 与 CLI 父会话一致：不出现在 Web 会话列表（getTree/listSessions 排除 CLI 来源）
+    // P1-2 CLI/Web 同树：持久 CLI 会话（含其子 agent）与 Web 会话同树展示；
+    // 树内子会话嵌套在 CLI 父会话之下，来源徽标与父一致。
     const webVisible = (await listSessions(db)).some((s) => s.title === 'Test writer')
-    expect(webVisible).toBe(false)
+    expect(webVisible).toBe(true)
   })
 })
 

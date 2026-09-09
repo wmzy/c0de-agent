@@ -1,10 +1,13 @@
 // src/server/routes/project.ts
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { parse } from 'node:path'
 import { and, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { kanbanBoards, projects, sessions } from '../../db/schema.js'
 import {
   fromDirectory,
+  getByDirectory,
   getProject,
   listProjects,
   relocateProject,
@@ -20,6 +23,15 @@ import type { ServerContext } from '../types.js'
 import { expandPath } from './filesystem.js'
 
 type ProjectWithBranch = Project & { gitBranch: string | null; worktreeMissing: boolean }
+
+/** realpath 失败（目录不存在等）时返回 null，调用方回退原路径。 */
+function realpathSafe(p: string): string | null {
+  try {
+    return realpathSync(p)
+  } catch {
+    return null
+  }
+}
 
 /** 实时取 git 分支（分支随时变，不存 DB）。worktree 不存在时标记缺失。 */
 function withBranch(project: Project): ProjectWithBranch {
@@ -46,8 +58,25 @@ function createProjectRoute(ctx: ServerContext): Hono {
     return c.json(list.map(withBranch))
   })
 
-  // 解析服务端 cwd 对应的项目（未注册则自动创建）
+  // 解析服务端 cwd 对应的项目（未注册则自动创建）。
+  // 注册过滤（P2）：serve 在 home/文件系统根目录启动时不做自动注册——home 不是项目，
+  // 自动注册只会把 home 变成污染项目列表的假项目。已显式注册（/from-directory）的
+  // 目录照常返回，用户主动添加 home 为项目的选择被尊重。
   app.get('/current', async (c) => {
+    const existing = await getByDirectory(ctx.db, ctx.cwd)
+    if (existing) return c.json(withBranch(existing), 200)
+    const dir = realpathSafe(ctx.cwd) ?? ctx.cwd
+    const home = realpathSafe(homedir())
+    const root = parse(dir).root
+    if ((home && dir === home) || dir === root) {
+      return apiError(
+        c,
+        404,
+        'PROJECT_DIR_REQUIRED',
+        '当前目录（home 目录）不是项目，未自动注册。请在项目目录启动 c0de serve，' +
+          '或在项目列表中显式添加该目录。',
+      )
+    }
     const project = await fromDirectory(ctx.db, ctx.cwd)
     return c.json(withBranch(project), 200)
   })

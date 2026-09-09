@@ -120,6 +120,7 @@ function createUpdateRoute(ctx: ServerContext): Hono {
     const r = await performHandoff(snapshot, method, {
       handoffPort: ctx.handoff.port,
       port: ctx.port,
+      ...(ctx.host ? { host: ctx.host } : {}),
       // P2-16：传当前 bootstrap（轮换后 ctx.authToken 可能已过期）；
       // 旧实例 handoff 端点经 verifyHandoff 接受当前/历史 bootstrap 与设备 token。
       authToken: ctx.authManager?.bootstrap ?? ctx.authToken,

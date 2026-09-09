@@ -28,6 +28,7 @@ import {
   sectionTitle,
 } from '../components/settings/styles.js'
 import { ToolsPanel } from '../components/settings/ToolsPanel.js'
+import { UsagePanel } from '../components/settings/UsagePanel.js'
 import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
 import { configAPI } from '../services/config.js'
 import { diffConfig, isPatchEmpty } from '../utils/config-diff.js'
@@ -595,6 +596,10 @@ export function Settings() {
             permission={merged.permission}
             onSecurityChange={(patch) => updateSection('security', patch)}
             onPermissionChange={(patch) => updateSection('permission', patch)}
+          />
+          <UsagePanel
+            budget={merged.usage?.monthlyBudgetUsd ?? 0}
+            onBudgetChange={(v) => updateSection('usage', { monthlyBudgetUsd: v })}
           />
         </>
       )}

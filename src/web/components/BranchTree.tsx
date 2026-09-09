@@ -155,6 +155,31 @@ function AutoBadge({ node }: { node: SessionTreeNode }) {
   )
 }
 
+const cliBadge = css`
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+`
+
+/** CLI 来源徽标：c0de chat / ACP 会话（已持久化）与 Web 会话同树展示，
+ *  来源可见避免用户疑惑「这条会话哪来的」。 */
+function CliBadge({ node }: { node: SessionTreeNode }) {
+  if (node.session.source !== 'cli') return null
+  return (
+    <span
+      className={cliBadge}
+      data-testid={`cli-badge-${node.session.id}`}
+      title="来自 CLI（c0de chat / ACP）的会话。工具在其原工作目录执行。"
+    >
+      CLI
+    </span>
+  )
+}
+
 export function BranchTree({
   nodes,
   activeId,
@@ -267,6 +292,7 @@ function TreeNode({
                 {n.session.title}
               </span>
               <UsageBadge usage={n.usage} />
+              <CliBadge node={n} />
               <AutoBadge node={n} />
             </button>
             {onRename && (

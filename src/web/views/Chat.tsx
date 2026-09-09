@@ -59,7 +59,12 @@ type ChatProps = {
   /** 时间线为空时渲染在消息流中央的空状态（欢迎区/示例卡片），由 ChatView 注入。 */
   emptyState?: ReactNode
   /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
-  permissionTimeout?: { toolCallId: string; tool: string; input: unknown } | null
+  permissionTimeout?: {
+    toolCallId: string
+    tool: string
+    input: unknown
+    timeoutAction: 'pause' | 'deny'
+  } | null
   /** 重新打开确认弹窗（P2-9）：不重发消息，工具只执行一次。 */
   onReopenPermission?: () => void
   /** 超时后拒绝该工具（run 继续）。 */
@@ -481,7 +486,10 @@ export function Chat({
             工具「{permissionTimeout.tool}
             」等待确认超时（5 分钟）。重新询问将重新打开确认弹窗，不会重复执行已完成的工具；
             在弹窗中勾选「本会话始终允许」可避免该工具反复请求确认。 若在 25
-            分钟后仍未处理，该工具将被自动拒绝，对话继续执行。
+            分钟后仍未处理，该工具将被自动拒绝，
+            {permissionTimeout.timeoutAction === 'pause'
+              ? '对话随即暂停，等你点击「恢复」继续。'
+              : '对话继续执行。'}
           </span>
           {onReopenPermission ? (
             <button

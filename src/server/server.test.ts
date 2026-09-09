@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG } from '../core/config.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
 import {
@@ -21,6 +21,7 @@ import {
   createDevDb,
   releaseDevDbLock,
   resolveAuthToken,
+  startServer,
 } from './server.js'
 
 describe('bootstrapServerContext 数据持久化', () => {
@@ -274,5 +275,49 @@ describe('resolveAuthToken 认证 token 解析（P0 安全）', () => {
     )
     // 此后（再解析）token 稳定，浏览器保存的设备 token 不失效
     expect(resolveAuthToken(DEFAULT_CONFIG, tmpDir)).toBe(first)
+  })
+})
+
+describe('startServer handoff 确认窗口（P0：普通实例不得在窗口超时后误复活）', () => {
+  let tmpDir: string
+  const prevEnv = process.env.C0DE_DB_DIR
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'c0de-handoff-window-'))
+    process.env.C0DE_DB_DIR = tmpDir
+  })
+
+  afterEach(async () => {
+    process.env.C0DE_DB_DIR = prevEnv
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('无 handoff 请求时，运行超过确认窗口不会误复活（此前 60s 后 EADDRINUSE 崩溃）', async () => {
+    vi.useFakeTimers()
+    try {
+      // HandoffServer 形状：{ port, close }（见 update/ipc.ts）
+      const createHandoffFn = vi.fn().mockImplementation(async () => ({
+        port: 0,
+        close: async () => {},
+      }))
+      const handle = await startServer({
+        port: 0,
+        createHandoffFn,
+        // 屏蔽后台版本检查的真实 npm 请求（fake timers 推进会触发调度器）
+        checkForUpdateFn: async () => ({
+          hasUpdate: false,
+          currentVersion: '0.0.0',
+          latestVersion: '0.0.0',
+        }),
+      })
+      expect(createHandoffFn).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(61_000)
+      // 修复前：确认窗口在 bringUp 时无条件启动 → 超时误复活 → 第二次 bringUp
+      //（重新 createHandoff + 第二 listen EADDRINUSE，unhandled 'error' 崩溃）
+      expect(createHandoffFn).toHaveBeenCalledTimes(1)
+      await handle.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

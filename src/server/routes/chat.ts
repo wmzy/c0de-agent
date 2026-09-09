@@ -167,6 +167,19 @@ function createChatRoute(ctx: ServerContext): Hono {
       ? mergeConfig(ctx.config, sessionProjectScope)
       : ctx.config
     const sessionDefaultMode = sessionProjectScope?.permission?.defaultMode
+    // 权限确认超时（双层超时兜底）后的动作：'pause'（默认）拒绝该工具并暂停 run，
+    // 防 default 模式下 agent 在用户缺席时继续自主执行；'deny' 保持旧行为（run 继续）。
+    // 仅显式 'deny' 时选 deny，缺省/非法值一律 pause（安全默认）。
+    const permissionTimeoutAction =
+      sessionConfig.permission.timeoutAction === 'deny' ? ('deny' as const) : ('pause' as const)
+    // 暂停目标：会话自身 run + 其全部子 agent run（/workflow run 路径会话无主 run，
+    // 只有子 agent——仅 pause 主 run 会让子 agent 在用户缺席时继续执行）。
+    const pauseSessionRun = (): void => {
+      ctx.agentManager.pause(sessionId)
+      for (const child of ctx.agentManager.children(sessionId)) {
+        ctx.agentManager.pause(child.sessionId)
+      }
+    }
 
     // P1-1：会话项目注册表——项目级配置含 providers 时，按该项目合并配置
     // 构建/复用 LLM 注册表（否则项目配置的 provider 永远 NoRoute）。
@@ -266,15 +279,26 @@ function createChatRoute(ctx: ServerContext): Hono {
                 stream
                   .writeSSE({
                     event: 'permission_timeout',
-                    data: JSON.stringify({ _tag: 'permission_timeout', ...req }),
+                    data: JSON.stringify({
+                      _tag: 'permission_timeout',
+                      ...req,
+                      timeoutAction: permissionTimeoutAction,
+                    }),
                   })
                   .catch(() => {})
               },
               onPermissionExpired: (req) => {
+                // P1-1：timeoutAction='pause' 时拒绝并暂停（主 run + 子 agent），
+                // 不让 agent 在用户缺席时继续自主推进；'deny' 时仅拒绝、run 继续。
+                if (permissionTimeoutAction === 'pause') pauseSessionRun()
                 stream
                   .writeSSE({
                     event: 'permission_expired',
-                    data: JSON.stringify({ _tag: 'permission_expired', ...req }),
+                    data: JSON.stringify({
+                      _tag: 'permission_expired',
+                      ...req,
+                      timeoutAction: permissionTimeoutAction,
+                    }),
                   })
                   .catch(() => {})
               },
@@ -548,17 +572,26 @@ function createChatRoute(ctx: ServerContext): Hono {
               stream
                 .writeSSE({
                   event: 'permission_timeout',
-                  data: JSON.stringify({ _tag: 'permission_timeout', ...req }),
+                  data: JSON.stringify({
+                    _tag: 'permission_timeout',
+                    ...req,
+                    timeoutAction: permissionTimeoutAction,
+                  }),
                 })
                 .catch(() => {})
             },
             // P0 双层超时：提示后仍无响应 → 兜底拒绝，SSE 通知前端清理弹窗状态
             //（run 已继续，重开弹窗/拒绝按钮均失效，必须显式清理）。
             onPermissionExpired: (req) => {
+              if (permissionTimeoutAction === 'pause') pauseSessionRun()
               stream
                 .writeSSE({
                   event: 'permission_expired',
-                  data: JSON.stringify({ _tag: 'permission_expired', ...req }),
+                  data: JSON.stringify({
+                    _tag: 'permission_expired',
+                    ...req,
+                    timeoutAction: permissionTimeoutAction,
+                  }),
                 })
                 .catch(() => {})
             },

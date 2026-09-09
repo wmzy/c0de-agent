@@ -58,6 +58,13 @@ type AgentsConfig = {
 type PermissionConfig = {
   /** 启动时的默认授权模式：'default' 逐个确认（默认）；'auto' 自动放行 ask 工具（YOLO 自动授权）。 */
   defaultMode: 'default' | 'auto'
+  /**
+   * 权限确认超时（提示后 25 分钟宽限期满）兜底拒绝后的动作：
+   * - 'pause'（默认）：拒绝该工具并暂停 run，用户回来点「恢复」继续——
+   *   避免 default 模式下 agent 在用户缺席时继续自主执行后续工具；
+   * - 'deny'：拒绝该工具，run 继续执行（旧行为，会话绝不挂起）。
+   */
+  timeoutAction?: 'pause' | 'deny'
 }
 
 /** 自动升级配置（spec §18）。控制后台 npm registry 检查与无感知热更新行为。 */
@@ -93,6 +100,13 @@ type SecurityConfig = {
   firstDeviceTtlMs?: number
 }
 
+/** 用量与成本统计配置。 */
+type UsageConfig = {
+  /** 月度成本预算（USD，按配置价目估算）。0 = 不限制。
+   *  当前月成本超过预算时，设置页「用量」面板给出醒目告警。 */
+  monthlyBudgetUsd: number
+}
+
 /** Global application configuration. */
 type Config = {
   providers: ProviderConfig[]
@@ -114,6 +128,7 @@ type Config = {
   agents: AgentsConfig
   permission: PermissionConfig
   update: UpdateConfig
+  usage: UsageConfig
   theme: 'light' | 'dark' | 'system'
 }
 
@@ -126,5 +141,6 @@ export type {
   SecurityConfig,
   ToolMetricsConfig,
   UpdateConfig,
+  UsageConfig,
   WebSearchConfig,
 }

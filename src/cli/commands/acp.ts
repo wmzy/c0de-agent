@@ -1,5 +1,6 @@
 import readline from 'node:readline/promises'
 import type { LoopDeps } from '../../core/loop.js'
+import { getByDirectory } from '../../project/index.js'
 import { createSession, listAllSessions } from '../../session/session.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ACPHandler } from '../modes/acp.js'
@@ -19,7 +20,18 @@ function createAcpHandlers(
   return {
     'session/create': async (params) => {
       const title = (params.title as string | undefined) ?? 'acp-session'
-      const session = await createSession(deps.db, title, undefined, undefined, 'cli')
+      // P1-2 CLI/Web 同树：cwd 已注册为项目时直接绑定；worktreePath 落盘保证
+      // Web 打开时工具在原目录执行。ACP 会话无 print 标记，永不自动清理。
+      const existing = await getByDirectory(deps.db, deps.cwd)
+      const session = await createSession(
+        deps.db,
+        title,
+        existing?.id,
+        undefined,
+        'cli',
+        undefined,
+        deps.cwd,
+      )
       return { sessionId: session.id }
     },
     'session/list': async () => {

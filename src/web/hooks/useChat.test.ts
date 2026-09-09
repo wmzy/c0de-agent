@@ -20,6 +20,7 @@ const base: ChatState = {
   interrupted: false,
   attachedRun: false,
   compactionNotice: null,
+  runPaused: false,
 }
 
 function asst(parts: MessageContent[]): Message[] {
@@ -108,6 +109,62 @@ describe('reduceChatEvent', () => {
       input: {},
     })
     expect(s.pendingPermission).toEqual({ toolCallId: 'p1', tool: 'bash', input: {} })
+  })
+
+  it('permission_timeout 记录工具与超时动作（横幅文案由动作决定）', () => {
+    const s = reduceChatEvent(base, {
+      _tag: 'permission_timeout',
+      toolCallId: 'p2',
+      tool: 'write',
+      input: { path: 'a.ts' },
+      timeoutAction: 'pause',
+    })
+    expect(s.permissionTimeout).toMatchObject({ tool: 'write', timeoutAction: 'pause' })
+    expect(s.pendingPermission).toBeNull()
+  })
+
+  it('permission_expired pause → runPaused=true（显示恢复入口）', () => {
+    const s = reduceChatEvent(base, {
+      _tag: 'permission_expired',
+      toolCallId: 'p3',
+      tool: 'bash',
+      input: {},
+      timeoutAction: 'pause',
+    })
+    expect(s.runPaused).toBe(true)
+    expect(s.permissionTimeout).toBeNull()
+    expect(s.pendingPermission).toBeNull()
+  })
+
+  it('permission_expired deny → run 继续，runPaused 保持 false（旧行为）', () => {
+    const s = reduceChatEvent(base, {
+      _tag: 'permission_expired',
+      toolCallId: 'p4',
+      tool: 'bash',
+      input: {},
+      timeoutAction: 'deny',
+    })
+    expect(s.runPaused).toBe(false)
+  })
+
+  it('status_change 同步服务端暂停态：paused→true，running→false', () => {
+    let s = reduceChatEvent(base, {
+      _tag: 'status_change',
+      status: { _tag: 'paused', pauseReason: 'Permission request expired' },
+    })
+    expect(s.runPaused).toBe(true)
+    s = reduceChatEvent(s, { _tag: 'status_change', status: { _tag: 'running', turnCount: 1 } })
+    expect(s.runPaused).toBe(false)
+  })
+
+  it('done 清除 runPaused（暂停后恢复至完成）', () => {
+    let s = reduceChatEvent(base, {
+      _tag: 'status_change',
+      status: { _tag: 'paused', pauseReason: 'x' },
+    })
+    s = reduceChatEvent(s, { _tag: 'done' })
+    expect(s.runPaused).toBe(false)
+    expect(s.isStreaming).toBe(false)
   })
 
   it('subagent_start 记录运行中的子 agent', () => {

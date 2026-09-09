@@ -57,6 +57,9 @@ import type { HandoffServer, ServerContext } from './types.js'
 
 type StartServerOptions = {
   port?: number
+  /** 绑定地址（默认 127.0.0.1，仅本机可达）。显式配置非回环地址（0.0.0.0/局域网 IP）
+   *  时服务对网络可达，安全仅靠 token + allowedOrigins 保证——serve 命令会打印醒目警告。 */
+  host?: string
   cwd?: string
   /** 注入已有 DB（测试用）。 */
   db?: DB
@@ -351,6 +354,50 @@ function releaseDevDbLock(dataDir: string): void {
   }
 }
 
+const SERVE_INFO_FILE = 'serve-info.json'
+
+/** serve 运行信息落盘（port + pid）：CLI 在锁冲突（serve 占用持久库）时读取，
+ *  引导用户直接打开 Web 界面继续对话，而不是给出无从下手的报错。不落 token。 */
+function writeServeInfo(dataDir: string, port: number): void {
+  try {
+    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
+    writeFileSync(
+      join(dataDir, SERVE_INFO_FILE),
+      JSON.stringify({ pid: process.pid, port, startedAt: Date.now() }),
+      'utf8',
+    )
+  } catch {
+    /* best-effort：仅影响 CLI 引导文案，不影响服务本身 */
+  }
+}
+
+/** 关闭时清除本进程写入的 serve 信息（pid 匹配才删，防止误删热更新新实例的信息）。 */
+function removeServeInfo(dataDir: string): void {
+  try {
+    const path = join(dataDir, SERVE_INFO_FILE)
+    if (!existsSync(path)) return
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { pid?: unknown }
+    if (parsed.pid === process.pid) unlinkSync(path)
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** 读取运行中 serve 的端口（CLI 锁冲突引导用）。文件缺失/损坏 → null。 */
+function readServeInfo(dataDir: string): { pid: number; port: number } | null {
+  try {
+    const path = join(dataDir, SERVE_INFO_FILE)
+    if (!existsSync(path)) return null
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { pid?: unknown; port?: unknown }
+    if (typeof parsed.pid === 'number' && typeof parsed.port === 'number') {
+      return { pid: parsed.pid, port: parsed.port }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /** dev 专用：创建 + migrate PGLite，跨热重载复用（单写者，只建一次）。 */
 async function createDevDb(cwd: string): Promise<DB> {
   const dataDir = resolveDbDir()
@@ -560,6 +607,9 @@ function attachTerminalUpgrade(ctx: ServerContext, wss: WebSocketServer, server:
 
 async function startServer(opts: StartServerOptions = {}): Promise<RunningServer> {
   const port = opts.port ?? 3000
+  // 默认仅绑定回环地址（安全默认：本地工具不应默认暴露局域网/公网）。
+  // 需要容器/远程访问时显式 --host 0.0.0.0（serve 命令会打印非回环警告）。
+  const host = opts.host ?? '127.0.0.1'
 
   // spec §18.3：新实例从 --handoff-port 拿到旧实例端口，请求优雅退出后绑端口。
   // 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，否则读 auth-token 文件。
@@ -596,8 +646,10 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
     // config.update.enabled 时启动后台调度器。
     if (ctx.config.update.enabled) ctx.updateScheduler.start()
 
-    const server = serve({ fetch: app.fetch, port }) as unknown as NodeServer
+    const server = serve({ fetch: app.fetch, port, hostname: host }) as unknown as NodeServer
     ctx.port = port
+    ctx.host = host
+    writeServeInfo(resolveDbDir(), port)
 
     // WebSocket：终端双向流。Hono v2 无原生 WS，用 ws 包直接挂载到 HTTP server。
     const wss = new WebSocketServer({ noServer: true })
@@ -609,6 +661,7 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
       closed = true
       wss.close()
       server.close()
+      removeServeInfo(resolveDbDir())
       await closeCtx()
     }
     const close = async () => {
@@ -626,41 +679,53 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
     // config.update.enabled=false 或 skipHandoff 时跳过。
     if (ctx.config.update.enabled && !opts.skipHandoff) {
       const createHandoff = opts.createHandoffFn ?? createHandoffServer
-      handoffServer = await createHandoff(closeMain, {
-        // P2-16：token 轮换后新旧实例 bootstrap 可能不同，用 verifyHandoff 接受
-        // 当前/历史 bootstrap 与设备 token；无 authManager 回退字符串比较。
-        ...(ctx.authManager
-          ? { verify: (t) => ctx.authManager?.verifyHandoff(t) ?? false }
-          : { expectedToken: ctx.authToken }),
-        exitAfterResponse: false,
-        onConfirm: () => {
-          // 新实例确认已接管端口 → 旧实例退出（延迟保证确认响应刷出）。
-          clearConfirmTimer()
-          setTimeout(() => process.exit(0), 250)
-        },
-      })
-      ctx.handoff = { port: handoffServer.port, server: handoffServer }
-      // 确认窗口：新实例启动失败时旧实例复活（保留进程句柄，定时器不可 unref）。
-      confirmTimer = setTimeout(() => {
-        void (async () => {
-          if (reviving) return
-          reviving = true
-          try {
-            await bringUp()
-            console.warn('[handoff] 新实例未确认接管，旧实例已复活并重新接管端口')
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-              // 新实例已绑定端口（确认请求丢失）→ 它已接管，旧实例正常退出。
-              console.warn('[handoff] 端口已被新实例接管，旧实例退出')
-              process.exit(0)
+      // P0 修复：确认窗口必须在「收到 POST /handoff（交接开始）」时才启动，
+      // 而非 bringUp 时无条件启动——否则任何运行超过 HANDOFF_CONFIRM_WINDOW_MS
+      // 的普通实例都会在窗口超时后误判「新实例未确认」，重新 bringUp 时第二
+      // listen 触发 EADDRINUSE（unhandled 'error'）崩溃。窗口从交接实际发生起算。
+      const armConfirmWindow = (): void => {
+        clearConfirmTimer()
+        confirmTimer = setTimeout(() => {
+          void (async () => {
+            if (reviving) return
+            reviving = true
+            try {
+              await bringUp()
+              console.warn('[handoff] 新实例未确认接管，旧实例已复活并重新接管端口')
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+                // 新实例已绑定端口（确认请求丢失）→ 它已接管，旧实例正常退出。
+                console.warn('[handoff] 端口已被新实例接管，旧实例退出')
+                process.exit(0)
+              }
+              console.error('[handoff] 旧实例复活失败，退出：', err)
+              process.exit(1)
+            } finally {
+              reviving = false
             }
-            console.error('[handoff] 旧实例复活失败，退出：', err)
-            process.exit(1)
-          } finally {
-            reviving = false
-          }
-        })()
-      }, HANDOFF_CONFIRM_WINDOW_MS)
+          })()
+        }, HANDOFF_CONFIRM_WINDOW_MS)
+      }
+      handoffServer = await createHandoff(
+        async () => {
+          await closeMain()
+          armConfirmWindow()
+        },
+        {
+          // P2-16：token 轮换后新旧实例 bootstrap 可能不同，用 verifyHandoff 接受
+          // 当前/历史 bootstrap 与设备 token；无 authManager 回退字符串比较。
+          ...(ctx.authManager
+            ? { verify: (t) => ctx.authManager?.verifyHandoff(t) ?? false }
+            : { expectedToken: ctx.authToken }),
+          exitAfterResponse: false,
+          onConfirm: () => {
+            // 新实例确认已接管端口 → 旧实例退出（延迟保证确认响应刷出）。
+            clearConfirmTimer()
+            setTimeout(() => process.exit(0), 250)
+          },
+        },
+      )
+      ctx.handoff = { port: handoffServer.port, server: handoffServer }
     }
 
     // 两阶段交接第二阶段：新实例绑定成功后确认旧实例可退出。
@@ -693,6 +758,7 @@ export {
   buildRegistryFromConfig,
   buildServerContext,
   createDevDb,
+  readServeInfo,
   releaseDevDbLock,
   resolveAuthToken,
   resolveDbDir,

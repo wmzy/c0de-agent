@@ -77,6 +77,7 @@ describe('Config', () => {
       websearch: { provider: 'auto' },
       agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
       permission: { defaultMode: 'default' },
+      usage: { monthlyBudgetUsd: 0 },
       update: { enabled: true, intervalMs: 3_600_000, initialDelayMs: 10_000 },
     }
     expect(config.defaultProvider).toBe('openai')

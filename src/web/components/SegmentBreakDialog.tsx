@@ -89,8 +89,9 @@ export function SegmentBreakDialog({
       <div className={bodyText}>
         当前对话使用 {activeSegment.provider}/{activeSegment.model}（{activeSegment.tools.length}{' '}
         个工具）。切换后，新消息将基于新的模型/工具继续；之前的对话内容会完整保留，
-        但不再作为新回复的直接上下文基础。「顺便压缩会话」会先把早前对话总结成摘要，
-        让新模型快速了解背景。
+        但不再作为新回复的直接上下文基础——新段首轮需重新读取整个上下文， 可能产生额外的 token
+        费用。「顺便压缩会话」会先把早前对话总结成摘要， 让新模型快速了解背景，同时降低新段的 token
+        开销。
       </div>
     </Dialog>
   )

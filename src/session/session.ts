@@ -1,4 +1,17 @@
-import { and, eq, gt, ilike, inArray, isNull, lt, ne, notExists, or, sql } from 'drizzle-orm'
+import {
+  and,
+  eq,
+  gt,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  notExists,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
@@ -43,6 +56,8 @@ async function createSession(
   source?: 'web' | 'cli',
   /** P1 会话树治理：子 agent 会话挂到父会话（树内嵌套 + 删除级联）。 */
   parentId?: string,
+  /** 会话工作目录（CLI 会话必填：Web 打开时 agent 工具在该目录执行，而非 serve cwd）。 */
+  worktreePath?: string,
 ): Promise<Session> {
   const [row] = await handle.db
     .insert(sessions)
@@ -52,10 +67,28 @@ async function createSession(
       agentType: agentType ?? null,
       source: source ?? null,
       parentId: parentId ?? null,
+      worktreePath: worktreePath ?? null,
     })
     .returning()
   if (!row) throw new Error('Failed to insert session')
   return rowToSession(row)
+}
+
+/**
+ * Web 会话树可见性条件：web 会话（source 为 null/web）或「持久的 CLI 会话」。
+ * 一次性 CLI print 会话（agentType='print'）与 workflow 会话是临时数据
+ * （30 天自动清理，purgeTemporarySessions），继续隐藏；
+ * --continue 续接后 agentType 已清除（upgradeTemporarySession），即对 Web 可见。
+ */
+export function webVisibleSessionCondition() {
+  return or(
+    isNull(sessions.source),
+    ne(sessions.source, 'cli'),
+    and(
+      eq(sessions.source, 'cli'),
+      or(isNull(sessions.agentType), notInArray(sessions.agentType, ['print', 'workflow'])),
+    ),
+  )
 }
 
 /** Get a session by id, or null if not found. */
@@ -64,12 +97,12 @@ async function getSession(handle: DB, id: string): Promise<Session | null> {
   return row ? rowToSession(row) : null
 }
 
-/** List all active sessions (未软删除、非 CLI 来源；source 为 NULL 的旧数据视为 web). */
+/** List all active sessions（未软删除、Web 树可见：web 会话 + 持久化 CLI 会话）。 */
 async function listSessions(handle: DB): Promise<Session[]> {
   const rows = await handle.db
     .select()
     .from(sessions)
-    .where(and(isNull(sessions.deletedAt), or(isNull(sessions.source), ne(sessions.source, 'cli'))))
+    .where(and(isNull(sessions.deletedAt), webVisibleSessionCondition()))
   return rows.map(rowToSession)
 }
 
@@ -340,6 +373,13 @@ async function restoreSession(
 export const TRASH_RETENTION_MS = 60 * 24 * 60 * 60 * 1000
 
 /**
+ * 绝对上限（365 天）：自删除起超过此时长的条目，无论是否被看到都进入宽限期清理。
+ * 兜底「用户从不开回收站 → trashSeenAt 永不写入 → 条目永不清理」的无界增长死角。
+ * 到期仍走先标记（宽限 7 天、UI 显示「即将清除」可恢复）再物理清除的两阶段流程。
+ */
+export const TRASH_ABSOLUTE_MAX_MS = 365 * 24 * 60 * 60 * 1000
+
+/**
  * A3：到期标记 → 物理清除的宽限期（默认 7 天）。
  * 条目到期后先写 metadata.purgePendingAt，UI 显示「即将清除」并可恢复；
  * 宽限期满才物理清除——杜绝「到期即静默物理清空」的数据丢失死角。
@@ -351,9 +391,10 @@ export type TrashPurgeResult = { marked: number; deleted: number }
 
 /**
  * 回收站两阶段清理（启动时与每日定时调用）：
- * 阶段一：trashSeenAt 超过保留期且未标记 → 标记 purgePendingAt（进入宽限期，可恢复）。
+ * 阶段一：进入保留期截止（首次看到 + 60 天）或绝对上限（删除 + 365 天，无论是否
+ *   被看到）且未标记 → 标记 purgePendingAt（进入宽限期，可恢复）。
  * 阶段二：purgePendingAt 早于宽限截止 → 物理清除（子会话先于父，自引用 FK 要求）。
- * 未被看到过（trashSeenAt 缺失）或恢复后重删、尚未重新看到的会话永不进入任一阶段。
+ * 恢复后重删、尚未重新看到的会话按「首次看到 + 60 天」计（绝对上限兜底仍生效）。
  */
 async function purgeDeletedSessions(
   handle: DB,
@@ -362,6 +403,7 @@ async function purgeDeletedSessions(
 ): Promise<TrashPurgeResult> {
   const retentionCutoff = Date.now() - retentionMs
   const graceCutoff = Date.now() - graceMs
+  const absoluteCutoff = Date.now() - TRASH_ABSOLUTE_MAX_MS
   const rows = await handle.db
     .select({
       id: sessions.id,
@@ -379,8 +421,11 @@ async function purgeDeletedSessions(
     const meta = (r.metadata ?? {}) as SessionMetadata
     const seen = meta.trashSeenAt
     const deletedMs = r.deletedAt.getTime()
-    // 保留期自「首次看到」起算：seen 缺失或早于最近一次删除 → 未重新看到，不标记。
-    if (typeof seen !== 'number' || seen <= deletedMs || seen >= retentionCutoff) continue
+    // 保留期自「首次看到」起算：seen 缺失或早于最近一次删除 → 未重新看到，不计。
+    const seenExpired = typeof seen === 'number' && seen > deletedMs && seen < retentionCutoff
+    // 绝对上限兜底：删除后长期未被看到也进入宽限期，防条目永不清理的无界增长。
+    const absoluteExpired = deletedMs < absoluteCutoff
+    if (!seenExpired && !absoluteExpired) continue
     if (typeof meta.purgePendingAt === 'number') continue
     await handle.db
       .update(sessions)
@@ -770,7 +815,7 @@ async function listSessionsByProject(handle: DB, projectId: string): Promise<Ses
       and(
         eq(sessions.projectId, projectId),
         isNull(sessions.deletedAt),
-        or(isNull(sessions.source), ne(sessions.source, 'cli')),
+        webVisibleSessionCondition(),
       ),
     )
   return rows.map(rowToSession)
@@ -795,7 +840,7 @@ async function searchSessions(
   const baseWhere = and(
     opts.includeDeleted ? gt(sessions.deletedAt, new Date(0)) : isNull(sessions.deletedAt),
     // 回收站搜索与回收站列表（listDeletedSessions）一致：不过滤 source。
-    ...(opts.includeDeleted ? [] : [or(isNull(sessions.source), ne(sessions.source, 'cli'))]),
+    ...(opts.includeDeleted ? [] : [webVisibleSessionCondition()]),
     ...(projectId ? [eq(sessions.projectId, projectId)] : []),
   )
 

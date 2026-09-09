@@ -1,5 +1,5 @@
 // src/server/app.ts
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
@@ -24,6 +24,7 @@ import { createTerminalRoute } from './routes/terminal.js'
 import { createTodoRoute } from './routes/todo.js'
 import { createToolRoute } from './routes/tool.js'
 import { createUpdateRoute } from './routes/update.js'
+import { createUsageRoute } from './routes/usage.js'
 import { createWorkflowsRoute } from './routes/workflows.js'
 import type { ServerContext } from './types.js'
 
@@ -70,10 +71,24 @@ function createApp(ctx: ServerContext): Hono {
   app.route('/api/files', createFilesRoute(ctx))
   app.route('/api/terminal', createTerminalRoute(ctx))
   app.route('/api/workflows', createWorkflowsRoute(ctx))
+  app.route('/api/usage', createUsageRoute(ctx))
+
+  // 静态文件服务（生产环境 dist-web/ 存在时启用）。
+  // 根路径语义：dist-web 存在时 '/' 与所有未匹配路由回退 index.html（SPA history
+  // 路由深链刷新可用）；否则 '/' 返回 API 端点列表（无前端构建的开发/CI 场景）。
+  const distWebRoot = path.resolve(ctx.cwd, 'dist-web')
+  const indexHtmlPath = path.join(distWebRoot, 'index.html')
+  const hasWebAssets = existsSync(indexHtmlPath)
+
+  if (hasWebAssets) {
+    app.use('/*', serveStatic({ root: distWebRoot }))
+    app.get('/*', (c) => c.html(readFileSync(indexHtmlPath, 'utf-8')))
+  }
 
   // 根路径
-  app.get('/', (c) =>
-    c.json({
+  app.get('/', (c) => {
+    if (hasWebAssets) return c.html(readFileSync(indexHtmlPath, 'utf-8'))
+    return c.json({
       name: 'c0de-agent',
       version: '0.1.0',
       endpoints: [
@@ -96,14 +111,8 @@ function createApp(ctx: ServerContext): Hono {
         '/api/terminal',
         '/api/workflows',
       ],
-    }),
-  )
-
-  // 静态文件服务（生产环境 dist-web/ 存在时启用）
-  if (existsSync(path.resolve(ctx.cwd, 'dist-web'))) {
-    app.use('/*', serveStatic({ root: './dist-web' }))
-    app.get('/*', (c) => c.body(null)) // SPA fallback
-  }
+    })
+  })
 
   return app
 }

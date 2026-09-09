@@ -297,6 +297,16 @@ export function SessionList({
 
   const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
 
+  // P1-2：未绑定项目的持久化 CLI 会话（cwd 不属于任何已注册项目时产生）。
+  // 项目树按 projectId 过滤会漏掉它们——单独分组展示，保证 CLI 会话在 Web 可达。
+  const unboundCliRoots = useMemo(
+    () =>
+      search.length === 0
+        ? (tree ?? []).filter((n) => n.session.projectId == null && n.session.source === 'cli')
+        : [],
+    [tree, search],
+  )
+
   // P2-6：标题未命中时再搜消息内容（标题树之外的补充结果）。
   const { data: contentMatches } = useQuery({
     queryKey: ['sessions', 'search', projectId, searchDebounced],
@@ -501,11 +511,7 @@ export function SessionList({
       {!showRecycle ? (
         <>
           {!isLoading && visibleTree.length === 0 && extraMatches.length === 0 ? (
-            <div className={empty}>
-              {search
-                ? '无匹配会话（CLI 会话不在 Web 会话树中，可用 `c0de sessions list` 查看）'
-                : '该项目下暂无会话'}
-            </div>
+            <div className={empty}>{search ? '无匹配会话' : '该项目下暂无会话'}</div>
           ) : null}
           {visibleTree.length > 0 && (
             <BranchTree
@@ -515,6 +521,18 @@ export function SessionList({
               onDelete={handleDelete}
               onRename={handleRename}
             />
+          )}
+          {unboundCliRoots.length > 0 && (
+            <div className={matchSection} data-testid="unbound-cli-section">
+              <div className={matchHeader}>CLI 会话（未绑定项目）</div>
+              <BranchTree
+                nodes={unboundCliRoots}
+                activeId={activeId}
+                onSelect={onSelect}
+                onDelete={handleDelete}
+                onRename={handleRename}
+              />
+            </div>
           )}
           {/* P2-6：标题未命中、消息内容命中的会话 */}
           {extraMatches.length > 0 && (
@@ -537,7 +555,8 @@ export function SessionList({
           )}
           {!isLoading && (
             <div className={cliHint} data-testid="cli-session-hint">
-              CLI 会话（c0de chat）不在此显示；可用 `c0de sessions list` 查看全部会话。
+              已续接的 CLI 会话（c0de chat --continue）与 Web 会话同树显示；一次性 CLI 问答 30
+              天后自动清理，不在此显示。`c0de sessions list` 可查看全部会话。
             </div>
           )}
         </>
@@ -603,19 +622,21 @@ function daysLeft(baseline: number | null | undefined): number {
 
 /** 剩余天数 + 绝对到期日（F6 修复：保留期自「首次在回收站看到该会话」
  *  （metadata.trashSeenAt）起算，与后端 purgeDeletedSessions 一致；尚未看到的
- *  会话显示完整 60 天，不会被静默提前清除）。
+ *  会话不显示倒计时（保留期自查看时起算），不会被静默提前清除。
  *  A3：purgePendingAt 存在 = 已到期进入宽限期——显示「即将清除」，恢复可保留。 */
 function expiryLabel(s: Session): string {
   const pending = s.metadata.purgePendingAt
   if (pending) {
     const deadline = new Date(pending + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000)
     const left = Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-    return `\u26A0 ${deadline.toLocaleDateString()} 清除（剩 ${left} 天）`
+    return `即将清除 · 剩 ${left} 天内恢复`
   }
-  const baseline = s.metadata.trashSeenAt ?? s.deletedAt
-  if (!baseline) return `剩 ${TRASH_RETENTION_DAYS} 天`
-  const expires = new Date(baseline + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
-  return `剩 ${daysLeft(baseline)} 天 · ${expires.toLocaleDateString()} 清除`
+  const seen = s.metadata.trashSeenAt
+  if (!seen) {
+    return `待查看 · 首次打开后保留 ${TRASH_RETENTION_DAYS} 天`
+  }
+  const expires = new Date(seen + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  return `剩 ${daysLeft(seen)} 天 · ${expires.toLocaleDateString()} 清除`
 }
 
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
@@ -729,6 +750,23 @@ function RecycleBin({ projectId }: { projectId: string }) {
     return n
   }
 
+  /** 回收站内已删除的祖先链（按父→祖顺序）。恢复会连带还原它们——
+   *  事前在确认框中列出，比事后提示更符合「操作前知情」。 */
+  const deletedAncestorsOf = (s: Session): Session[] => {
+    const out: Session[] = []
+    const byId = new Map(deletedList.map((d) => [d.id, d]))
+    let pid = s.parentId
+    const seen = new Set<string>()
+    while (pid && !seen.has(pid)) {
+      seen.add(pid)
+      const p = byId.get(pid)
+      if (!p) break
+      out.push(p)
+      pid = p.parentId
+    }
+    return out
+  }
+
   const handleRemoveForever = (s: Session) => {
     setRemoveTarget(s)
   }
@@ -778,7 +816,8 @@ function RecycleBin({ projectId }: { projectId: string }) {
         <>
           <div className={deletedRow}>
             <span className={trashHint}>
-              超过 {TRASH_RETENTION_DAYS} 天自动清除，到期后宽限 {TRASH_PURGE_GRACE_DAYS} 天
+              自首次在回收站看到该条目起保留 {TRASH_RETENTION_DAYS} 天，到期后宽限{' '}
+              {TRASH_PURGE_GRACE_DAYS} 天；从未查看的条目自删除起最长保留 365 天
             </span>
             <button
               type="button"
@@ -821,7 +860,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
                   <span
                     className={sourceBadge}
                     data-testid={`cli-source-${s.id}`}
-                    title="CLI 会话（c0de chat）。恢复后不会出现在 Web 会话列表"
+                    title="CLI 会话（c0de chat）。恢复后与 Web 会话同树显示"
                   >
                     CLI
                   </span>
@@ -830,14 +869,23 @@ function RecycleBin({ projectId }: { projectId: string }) {
                   type="button"
                   className={restoreBtn}
                   onClick={() => {
-                    // P2 子树恢复：恢复会连带还原派生会话，有后代时确认框明示数量。
-                    if (
-                      descendants > 0 &&
-                      !window.confirm(
-                        `恢复「${s.title}」？其 ${descendants} 个派生会话将一并恢复。`,
-                      )
-                    )
-                      return
+                    // P2 子树恢复 + 事前祖先清单：恢复会连带还原派生会话与已删除的
+                    // 父会话（保证会话树可达），确认框在操作前明示受影响对象。
+                    const ancestors = deletedAncestorsOf(s)
+                    if (descendants > 0 || ancestors.length > 0) {
+                      const parts = [`恢复「${s.title}」？`]
+                      if (descendants > 0) {
+                        parts.push(`其 ${descendants} 个派生会话将一并恢复。`)
+                      }
+                      if (ancestors.length > 0) {
+                        parts.push(
+                          `为保持会话树完整，已删除的父会话将一并恢复：${ancestors
+                            .map((a) => `「${a.title}」`)
+                            .join('、')}。`,
+                        )
+                      }
+                      if (!window.confirm(parts.join('\n'))) return
+                    }
                     restore.mutate(
                       { id: s.id, projectId },
                       {
@@ -865,10 +913,10 @@ function RecycleBin({ projectId }: { projectId: string }) {
                             )
                             setOrphanId(null)
                           } else if (s.source === 'cli') {
-                            // P1-1：CLI 会话恢复后不进 Web 会话树，明确告知查看途径，
-                            // 避免用户以为恢复失败。
+                            // CLI 会话恢复后与 Web 会话同树显示（带 CLI 徽标）；
+                            // 未绑定项目时在「CLI 会话（未绑定项目）」分组。
                             setNotice(
-                              `「${s.title}」已恢复。该会话为 CLI 会话，不会出现在 Web 会话列表，可用 \`c0de sessions list\` 查看。${ancestorNote}${leftBehindNote}`,
+                              `「${s.title}」已恢复。CLI 会话与 Web 会话同树显示（未绑定项目时在列表底部分组）。${ancestorNote}${leftBehindNote}`,
                             )
                             setOrphanId(null)
                           } else {

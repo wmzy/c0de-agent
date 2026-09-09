@@ -132,11 +132,12 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
     out(`${text}\n`)
   }
 
-  // P2-5：一次性 CLI 问答不进 Web 会话树，明确告知查看/续接途径，
+  // P2-5：一次性 CLI 问答（未续接）不进 Web 会话树，明确告知查看/续接途径，
   // 避免「我的会话去哪了」（--continue 续接时用户已知会话存在，不提示）。
   if (!continueId) {
     err(
-      '此问答会话不会出现在 Web 界面；可用 `c0de sessions list` 查看，或 `c0de chat --continue` 续接。\n',
+      '此问答会话为一次性会话，暂不在 Web 会话树中；`c0de chat --continue <id>` 续接后即可在 Web 界面查看。\n' +
+        '可用 `c0de sessions list` 列出全部会话。\n',
     )
   }
 }

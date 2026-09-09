@@ -208,6 +208,7 @@ function RootRedirect() {
     data: project,
     isLoading,
     isError,
+    error,
   } = useQuery({
     queryKey: ['project', 'current'],
     queryFn: projectAPI.current,
@@ -219,13 +220,18 @@ function RootRedirect() {
     )
   }
   if (isError || !project) {
+    // APIError.message 是后端的中文可操作指引（如「请在项目目录启动 c0de serve」），
+    // 直接展示比通用文案更能引导用户走出死胡同。
+    const message =
+      (error as { message?: string } | null)?.message ??
+      '无法解析当前项目，请前往设置确认工作区配置。'
     return (
       <Layout
         header={<TopBar />}
         main={
           <div className={errorState}>
             <span className={errorIcon}>⚠️</span>
-            <span>无法解析当前项目，请前往设置确认工作区配置。</span>
+            <span>{message}</span>
             <Link to="/settings" className={errorLink}>
               前往设置
             </Link>

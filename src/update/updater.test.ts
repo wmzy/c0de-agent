@@ -98,6 +98,22 @@ describe('performHotUpdate', () => {
     )
   })
 
+  it('passes --host <host> argv when host provided（新实例接管同一绑定地址）', async () => {
+    const spawnFn = vi.fn().mockResolvedValue(undefined)
+    await performHotUpdate(snapshot, {
+      installFn: vi.fn().mockResolvedValue(undefined),
+      spawnNewInstanceFn: spawnFn,
+      snapshotPath: '/tmp/snap.json',
+      port: 3000,
+      host: '0.0.0.0',
+    })
+    expect(spawnFn).toHaveBeenCalledWith(
+      '/tmp/snap.json',
+      ['serve', '--restore', '/tmp/snap.json', '--port', '3000', '--host', '0.0.0.0'],
+      expect.anything(),
+    )
+  })
+
   it('honors custom restoreFlag in argv construction', async () => {
     const spawnFn = vi.fn().mockResolvedValue(undefined)
     await performHotUpdate(snapshot, {

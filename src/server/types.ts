@@ -49,6 +49,8 @@ type ServerContext = {
   authManager?: AuthManager
   /** 主 HTTP 服务实际绑定端口（startServer 绑定后回填；热更新 spawn 新实例复用）。 */
   port?: number
+  /** 主 HTTP 服务绑定地址（startServer 回填；热更新 spawn 新实例须复用同一地址）。 */
+  host?: string
   /** P1-1：项目级 LLM 注册表缓存 Map<projectId, Registry>——按项目合并配置
    *  （global + 项目 .c0de/config.json 的 providers）构建，会话聊天按所属项目
    *  解析路由。项目配置 PATCH 后失效重建。 */

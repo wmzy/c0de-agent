@@ -158,6 +158,7 @@ function SecurityPanel({
         <label className={field}>
           <span>默认模式</span>
           <select
+            aria-label="默认授权模式"
             value={permission?.defaultMode ?? 'default'}
             onChange={(e) =>
               onPermissionChange({
@@ -173,6 +174,26 @@ function SecurityPanel({
           启动时的默认授权模式。「自动授权」会跳过所有 ask 工具（含 bash）的确认。Chat
           页底部的「自动授权」开关与本项联动：会话页为会话级覆盖
           （持久化到会话）；草稿页（无会话）修改全局默认并持久化到此处。
+        </p>
+        <label className={field}>
+          <span>确认超时后的动作</span>
+          <select
+            aria-label="确认超时后的动作"
+            value={permission?.timeoutAction ?? 'pause'}
+            onChange={(e) =>
+              onPermissionChange({
+                timeoutAction: e.target.value as NonNullable<Config['permission']['timeoutAction']>,
+              })
+            }
+          >
+            <option value="pause">拒绝并暂停对话（推荐）</option>
+            <option value="deny">拒绝并继续执行</option>
+          </select>
+        </label>
+        <p className={hint}>
+          工具等待确认 5 分钟后仅提示；再过 25 分钟仍未处理则自动拒绝。
+          「拒绝并暂停」会在拒绝后暂停对话，等你点击「恢复」再继续——不会在无人确认时
+          继续自主执行；「拒绝并继续」保持会话永不挂起（旧行为）。
         </p>
       </div>
     </>

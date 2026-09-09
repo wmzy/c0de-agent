@@ -45,6 +45,7 @@ const mockConfig = {
   websearch: { provider: 'auto' },
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   permission: { defaultMode: 'default' },
+  usage: { monthlyBudgetUsd: 0 },
 }
 
 vi.mock('../services/config.js', () => ({
@@ -918,13 +919,15 @@ describe('Settings — 完整配置表单覆盖', () => {
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
 
-    // 定位「自动授权」段落并取其内 select
+    // 定位「自动授权」段落并取其内默认模式 select（段内现有两个下拉：模式 + 超时动作）
     const permHeading = screen
       .getAllByRole('heading', { level: 2 })
       .find((h) => h.textContent === '自动授权')
     expect(permHeading).toBeTruthy()
     const section = permHeading?.closest('div')
-    const select = within(section as HTMLElement).getByRole('combobox') as HTMLSelectElement
+    const select = within(section as HTMLElement).getByLabelText(
+      '默认授权模式',
+    ) as HTMLSelectElement
     expect(select.value).toBe('default')
 
     fireEvent.change(select, { target: { value: 'auto' } })

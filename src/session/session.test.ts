@@ -71,6 +71,34 @@ describe('session CRUD', () => {
     expect(list).toHaveLength(2)
   })
 
+  it('listSessions：一次性 print/workflow CLI 会话隐藏，持久 CLI（已续接/ACP）可见', async () => {
+    const print = await createSession(handle, 'cli-print', undefined, 'print', 'cli')
+    const wf = await createSession(handle, 'workflow:x', undefined, 'workflow')
+    const persistedCli = await createSession(handle, 'cli-persist', undefined, undefined, 'cli')
+    const web = await createSession(handle, 'web')
+    const ids = (await listSessions(handle)).map((s) => s.id)
+    expect(ids).toContain(persistedCli.id)
+    expect(ids).toContain(web.id)
+    expect(ids).not.toContain(print.id)
+    // workflow 会话 source 为 null（历史数据视为 web）：行为与改动前一致，不额外过滤。
+    expect(ids).toContain(wf.id)
+  })
+
+  it('createSession 携带 worktreePath 落盘（CLI 会话 Web 打开的 cwd 兜底）', async () => {
+    const s = await createSession(
+      handle,
+      'cli-cwd',
+      undefined,
+      undefined,
+      'cli',
+      undefined,
+      '/tmp/proj',
+    )
+    expect(s.worktreePath).toBe('/tmp/proj')
+    const loaded = await getSession(handle, s.id)
+    expect(loaded?.worktreePath).toBe('/tmp/proj')
+  })
+
   it('updates a session title', async () => {
     const created = await createSession(handle, 'Old')
     await updateSessionTitle(handle, created.id, 'New')
@@ -249,6 +277,33 @@ describe('purgeDeletedSessions — 两阶段清理（A3：到期先标记，宽�
     const r = await purgeDeletedSessions(handle)
     expect(r).toEqual({ marked: 0, deleted: 0 })
     expect(await getSession(handle, s.id)).not.toBeNull()
+  })
+
+  it('绝对上限：从未被看到但删除超过 365 天的条目进入宽限期标记（不再永久滞留）', async () => {
+    const s = await createSession(handle, 'AncientNeverSeen')
+    await softDeleteSession(handle, s.id)
+    const old = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000)
+    await handle.db.update(sessions).set({ deletedAt: old }).where(eq(sessions.id, s.id))
+    const r = await purgeDeletedSessions(handle)
+    expect(r).toEqual({ marked: 1, deleted: 0 })
+    const meta = (await getSession(handle, s.id))?.metadata
+    expect(meta?.purgePendingAt).toBeDefined()
+  })
+
+  it('绝对上限：宽限期满后物理清除（无论是否被看到过）', async () => {
+    const s = await createSession(handle, 'AncientPurged')
+    await softDeleteSession(handle, s.id)
+    const old = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000)
+    await handle.db
+      .update(sessions)
+      .set({
+        deletedAt: old,
+        metadata: { purgePendingAt: Date.now() - 10 * 24 * 60 * 60 * 1000 },
+      })
+      .where(eq(sessions.id, s.id))
+    const r = await purgeDeletedSessions(handle)
+    expect(r).toEqual({ marked: 0, deleted: 1 })
+    expect(await getSession(handle, s.id)).toBeNull()
   })
 
   it('被看到且超过保留期 → 首次仅标记进入宽限期，不物理清除', async () => {

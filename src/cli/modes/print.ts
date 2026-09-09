@@ -1,6 +1,7 @@
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { resolveRoute } from '../../llm/registry.js'
+import { getByDirectory } from '../../project/index.js'
 import { createSession, getSession, upgradeTemporarySession } from '../../session/session.js'
 import type { AgentConfig, AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
@@ -51,7 +52,18 @@ async function runPrintMode(
   } else {
     // agentType='print'：一次性 print 会话标记。purgeTemporarySessions 仅清理
     // print/workflow 会话；普通 CLI 会话（ACP 等）与 --continue 续接的历史永不误删。
-    session = await createSession(deps.db, 'cli-print', undefined, 'print', 'cli')
+    // P1-2 CLI/Web 同树：cwd 已注册为项目时直接绑定（续接后 Web 树按项目可见）；
+    // worktreePath 落盘——Web 打开时工具在原目录执行，而非回退 serve cwd。
+    const existing = await getByDirectory(deps.db, deps.cwd)
+    session = await createSession(
+      deps.db,
+      'cli-print',
+      existing?.id,
+      'print',
+      'cli',
+      undefined,
+      deps.cwd,
+    )
   }
 
   const agentConfig: AgentConfig = {

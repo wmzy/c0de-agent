@@ -17,6 +17,7 @@ type ServeCommandContext = {
 
 async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
   const port = (ctx.args.options.port as number | undefined) ?? 3000
+  const host = (ctx.args.options.host as string | undefined) ?? '127.0.0.1'
   const shouldOpen = (ctx.args.options.open as boolean | undefined) ?? true
 
   const starter = ctx.serverStarter ?? startServer
@@ -24,6 +25,7 @@ async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
   const handoffPort = ctx.args.options['handoff-port'] as number | undefined
   const handle = await starter({
     port,
+    host,
     cwd: ctx.cwd,
     ...(restore ? { restoreFrom: restore } : {}),
     ...(handoffPort ? { handoffPort } : {}),
@@ -34,6 +36,17 @@ async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
   const tokenQuery = handle.authToken ? `?token=${encodeURIComponent(handle.authToken)}` : ''
   const url = `http://localhost:${handle.port}${tokenQuery}`
   ;(ctx.banner ?? printStartupBanner)(url)
+
+  // 非回环监听警告：绑定 0.0.0.0/局域网 IP 时本机以外的主机均可访问，
+  // 安全性完全依赖 token + allowedOrigins——默认行为已收紧为 127.0.0.1。
+  const isLoopback =
+    host === '127.0.0.1' || host === 'localhost' || host === '::1' || host.startsWith('127.')
+  if (!isLoopback) {
+    console.warn(
+      `[c0de] ⚠ 监听地址为 ${host}（非回环）：本机以外的主机均可访问此服务。\n` +
+        `  请确认 security.authEnabled 已开启、token 未泄漏；仅在可信网络使用，或在防火墙限制访问。`,
+    )
+  }
 
   if (shouldOpen) {
     const opener = ctx.opener ?? ((u: string) => openBrowser(u))

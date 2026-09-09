@@ -40,6 +40,8 @@ type HotUpdateOptions = {
   handoffPort?: number
   /** 旧实例主服务端口；新实例 --port 复用（保证接管同一地址）。 */
   port?: number
+  /** 旧实例绑定地址；新实例 --host 复用（保证接管同一地址）。 */
+  host?: string
   /** 传给新实例的认证 token（经环境变量 C0DE_AUTH_TOKEN），保证新旧实例握手同 token。 */
   authToken?: string
   /** 手动安装等待程序文件变更的超时（ms）；默认 10 分钟，超时放弃等待。 */
@@ -224,7 +226,7 @@ function defaultSpawn(
   })
 }
 
-/** 组装新实例 argv（serve --restore <snapshot> [--port] [--handoff-port]）。 */
+/** 组装新实例 argv（serve --restore <snapshot> [--port] [--host] [--handoff-port]）。 */
 function buildSpawnArgv(snapshotPath: string, opts: HotUpdateOptions): string[] {
   const restoreFlag = opts.restoreFlag ?? '--restore'
   const argv = [
@@ -232,6 +234,7 @@ function buildSpawnArgv(snapshotPath: string, opts: HotUpdateOptions): string[] 
     restoreFlag,
     snapshotPath,
     ...(opts.port !== undefined ? ['--port', String(opts.port)] : []),
+    ...(opts.host ? ['--host', opts.host] : []),
   ]
   if (opts.handoffPort !== undefined) {
     argv.push('--handoff-port', String(opts.handoffPort))

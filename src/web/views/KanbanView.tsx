@@ -207,7 +207,8 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     }
   }
 
-  /** 导入整板：替换当前列+标签+卡片。fail-closed 确认（不可撤销）。 */
+  /** 导入整板：替换当前列+标签+卡片。fail-closed 确认（不可撤销），
+   *  明示「当前板将被覆盖」——防用户拿着旧备份导入后丢失新增卡片。 */
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
@@ -217,9 +218,11 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       const data = JSON.parse(await file.text()) as unknown
       const cards = (data as { cards?: unknown }).cards
       const cardCount = Array.isArray(cards) ? cards.length : 0
+      const currentCount = board?.cards.length ?? 0
       if (
         !window.confirm(
-          `导入将替换当前看板的列、标签与全部卡片（${cardCount} 张导入卡片），且不可撤销。确定继续？`,
+          `导入将替换当前看板的列、标签与全部卡片：现有 ${currentCount} 张卡片将被覆盖` +
+            `（导入 ${cardCount} 张卡片），且不可撤销。确定继续？`,
         )
       ) {
         return
