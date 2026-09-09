@@ -40,9 +40,11 @@ type ChatState = {
   attachedRun: boolean
   /** 自动压缩发生后的提示（可关闭）。上下文被改写，用户应可知晓。 */
   compactionNotice: string | null
-  /** 服务端暂停 run（权限确认超时兜底拒绝后按 timeoutAction='pause' 暂停；
+  /** 服务端暂停 run（权限确认超时兜底拒绝 / 成本预算超支后按配置暂停；
    *  经 status_change(paused)/permission_expired 事件同步）。true 时显示恢复入口。 */
   runPaused: boolean
+  /** 暂停原因（status_change 的 pauseReason；权限超时路径为本地合成文案）。 */
+  runPauseReason: string | null
 }
 
 type PendingSegmentBreak = {
@@ -106,6 +108,7 @@ const INITIAL: ChatState = {
   attachedRun: false,
   compactionNotice: null,
   runPaused: false,
+  runPauseReason: null,
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -261,11 +264,18 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         pendingPermission: null,
         permissionTimeout: null,
         runPaused: event.timeoutAction === 'pause',
+        runPauseReason:
+          event.timeoutAction === 'pause' ? '权限确认超时：工具已被自动拒绝，对话已暂停。' : null,
       }
     case 'status_change':
-      // 服务端 run 状态同步：权限超时兜底暂停（或用户在其他标签页暂停/恢复）时，
-      // 本标签页据此显示「恢复」按钮。running → 清除暂停态。
-      return { ...state, runPaused: event.status._tag === 'paused' }
+      // 服务端 run 状态同步：权限超时兜底暂停、成本预算超支暂停、或用户在其他
+      // 标签页暂停——本标签页据此显示「恢复」按钮。running → 清除暂停态。
+      // P3：暂停原因取服务端 pauseReason（预算超支等），无则保留 null。
+      return {
+        ...state,
+        runPaused: event.status._tag === 'paused',
+        runPauseReason: event.status._tag === 'paused' ? (event.status.pauseReason ?? null) : null,
+      }
     case 'error':
       return { ...state, error: errorToMessage(event.error) }
     case 'compaction_done':
@@ -280,6 +290,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         pendingPermission: null,
         attachedRun: false,
         runPaused: false,
+        runPauseReason: null,
       }
     default:
       return state
@@ -727,7 +738,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   }, [])
 
   const clearRunPaused = useCallback(() => {
-    setState((s) => ({ ...s, runPaused: false }))
+    setState((s) => ({ ...s, runPaused: false, runPauseReason: null }))
   }, [])
 
   const clearCompactionNotice = useCallback(() => {

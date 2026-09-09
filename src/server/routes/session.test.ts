@@ -519,15 +519,66 @@ describe('session route', () => {
 
       const res = await app.request(`/${session.id}/restore`, { method: 'POST' })
       expect(res.status).toBe(200)
-      const body = (await res.json()) as { ok: boolean; rebound?: boolean; orphaned?: boolean }
+      const body = (await res.json()) as {
+        ok: boolean
+        rebound?: boolean
+        orphaned?: boolean
+        recreatedProject?: { id: string; name: string | null } | null
+      }
       expect(body.ok).toBe(true)
       expect(body.rebound).toBe(true)
+      // P1-3：重建项目明示在响应中（前端据此提示，不再静默复活）
+      expect(body.recreatedProject?.id).toBeTruthy()
       // 归属重建：会话 projectId 不再为空
       const after = await app.request(`/${session.id}`)
       const restored = (await after.json()) as Session
       expect(restored.projectId).toBeTruthy()
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('P1-3：restoreMode=current-project 跳过重建，直接归属到请求项目', async () => {
+    const { app, ctx } = await setup()
+    const dir = mkdtempSync(join(tmpdir(), 'orphan-mode-'))
+    const targetDir = mkdtempSync(join(tmpdir(), 'orphan-target-'))
+    try {
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'R', directory: dir }),
+      })
+      const session = (await created.json()) as Session
+      await ctx.db.db.update(sessions).set({ worktreePath: dir }).where(eq(sessions.id, session.id))
+      // 模拟项目已删除：FK set null + 软删除会话
+      const project = await fromDirectory(ctx.db, dir)
+      await ctx.db.db.delete(projects).where(eq(projects.id, project.id))
+      await ctx.db.db
+        .update(sessions)
+        .set({ deletedAt: new Date() })
+        .where(eq(sessions.id, session.id))
+      const target = await fromDirectory(ctx.db, targetDir)
+
+      const res = await app.request(`/${session.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: target.id, restoreMode: 'current-project' }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        ok: boolean
+        rebound?: boolean
+        recreatedProject?: { id: string } | null
+      }
+      expect(body.ok).toBe(true)
+      expect(body.rebound).toBe(true)
+      // 未重建原项目：原目录项目记录保持删除状态
+      expect(body.recreatedProject).toBeNull()
+      const restored = await getSession(ctx.db, session.id)
+      expect(restored?.projectId).toBe(target.id)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(targetDir, { recursive: true, force: true })
     }
   })
 

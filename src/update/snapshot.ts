@@ -30,6 +30,15 @@ type SerializedEntry = {
   createdAt: number
 }
 
+/** 序列化后的终端元信息（热更新后新实例按原 id 重建 shell）。 */
+type SerializedTerminal = {
+  id: string
+  shell: string
+  cwd: string
+  title: string
+  projectId?: string
+}
+
 /** 热更新迁移快照（spec §18.2）。 */
 type SessionSnapshot = {
   version: string
@@ -37,6 +46,9 @@ type SessionSnapshot = {
   entries: SerializedEntry[]
   config: unknown
   timestamp: number
+  /** P1：活跃终端元信息——进程无法续命，新实例据此在原位重建 shell（同 id，
+   *  前端持久化布局可无感重连）。旧快照缺省视为无终端。 */
+  terminals?: SerializedTerminal[]
 }
 
 const CURRENT_SNAPSHOT_VERSION = '0.1.0'
@@ -94,8 +106,12 @@ function orderSessionsByParent(list: SerializedSession[]): SerializedSession[] {
   return ordered
 }
 
-/** 从 DB 导出所有会话与条目为可序列化快照。 */
-async function serializeSessions(handle: DB, config?: unknown): Promise<SessionSnapshot> {
+/** 从 DB 导出所有会话与条目为可序列化快照。terminals 为活跃终端元信息（可选）。 */
+async function serializeSessions(
+  handle: DB,
+  config?: unknown,
+  terminals?: SerializedTerminal[],
+): Promise<SessionSnapshot> {
   const [sRows, eRows] = await Promise.all([
     handle.db.select().from(sessions),
     handle.db.select().from(sessionEntries),
@@ -106,6 +122,7 @@ async function serializeSessions(handle: DB, config?: unknown): Promise<SessionS
     entries: eRows.map(toSerializedEntry),
     config: config ?? null,
     timestamp: Date.now(),
+    ...(terminals && terminals.length > 0 ? { terminals } : {}),
   }
 }
 
@@ -148,5 +165,5 @@ async function restoreSessions(handle: DB, snapshot: SessionSnapshot): Promise<v
   }
 }
 
-export type { SerializedEntry, SerializedSession, SessionSnapshot }
+export type { SerializedEntry, SerializedSession, SerializedTerminal, SessionSnapshot }
 export { orderSessionsByParent, restoreSessions, serializeSessions }

@@ -191,9 +191,41 @@ function SecurityPanel({
           </select>
         </label>
         <p className={hint}>
-          工具等待确认 5 分钟后仅提示；再过 25 分钟仍未处理则自动拒绝。
+          工具等待确认超时后仅提示；宽限期满仍未处理则自动拒绝。
           「拒绝并暂停」会在拒绝后暂停对话，等你点击「恢复」再继续——不会在无人确认时
           继续自主执行；「拒绝并继续」保持会话永不挂起（旧行为）。
+        </p>
+        <label className={field}>
+          <span>确认超时（分钟，默认 5）</span>
+          <input
+            className={fieldInput}
+            type="number"
+            min={1}
+            step={1}
+            value={permission?.timeoutMs !== undefined ? permission.timeoutMs / 60000 : 5}
+            onChange={(e) => {
+              const mins = Math.max(1, Number(e.target.value))
+              if (Number.isFinite(mins)) onPermissionChange({ timeoutMs: mins * 60000 })
+            }}
+          />
+        </label>
+        <label className={field}>
+          <span>超时后宽限期（分钟，默认 25）</span>
+          <input
+            className={fieldInput}
+            type="number"
+            min={1}
+            step={1}
+            value={permission?.expireGraceMs !== undefined ? permission.expireGraceMs / 60000 : 25}
+            onChange={(e) => {
+              const mins = Math.max(1, Number(e.target.value))
+              if (Number.isFinite(mins)) onPermissionChange({ expireGraceMs: mins * 60000 })
+            }}
+          />
+        </label>
+        <p className={hint}>
+          未显式设置时使用默认值：确认超时 5 分钟（超时仅提示，弹窗可重新确认）， 再过 25
+          分钟仍未处理则自动拒绝。
         </p>
       </div>
     </>

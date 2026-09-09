@@ -43,7 +43,7 @@ const DEFAULT_CONFIG: Config = {
   websearch: { provider: 'auto' },
   agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
   permission: { defaultMode: 'default', timeoutAction: 'pause' },
-  usage: { monthlyBudgetUsd: 0 },
+  usage: { monthlyBudgetUsd: 0, budgetAction: 'warn' },
   update: { enabled: true, intervalMs: 60 * 60 * 1000, initialDelayMs: 10_000 },
   theme: 'system',
 }

@@ -493,7 +493,7 @@ export function ProjectIndicator({
         <DangerConfirmDialog
           open={true}
           title="删除项目"
-          description={`将删除项目「${project.name ?? '未命名项目'}」。看板将永久删除；该项目的全部会话将移入回收站的「未归属项目」分组（60 天保留期，到期后宽限 7 天再自动清除），恢复后需重新归属到某个项目。若目录只是被移动或重命名，请改用「重新定位」以保留看板与会话归属。`}
+          description={`将删除项目「${project.name ?? '未命名项目'}」。看板将永久删除；该项目的全部会话将移入回收站的「未归属项目」分组（60 天保留期，到期后宽限 7 天再自动清除），恢复时可选择重建原项目或归属到当前项目。若目录只是被移动或重命名，请改用「重新定位」以保留看板与会话归属。`}
           confirmWord={project.name ?? '未命名项目'}
           confirmLabel="删除项目"
           busy={deleteMut.isPending}

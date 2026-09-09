@@ -54,7 +54,15 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     hookRunner,
     pluginRegistry: createPluginRegistry(hookRunner),
     agentManager: createAgentManager(),
-    permissionStore: createPermissionStore(),
+    // P3：与生产 buildServerContext 同口径——配置的确认超时/宽限期生效。
+    permissionStore: createPermissionStore({
+      ...(config.permission.timeoutMs !== undefined && config.permission.timeoutMs > 0
+        ? { timeoutMs: config.permission.timeoutMs }
+        : {}),
+      ...(config.permission.expireGraceMs !== undefined && config.permission.expireGraceMs > 0
+        ? { expireGraceMs: config.permission.expireGraceMs }
+        : {}),
+    }),
     permissionMode: config.permission.defaultMode,
     sessionPermissionModes: new Map(),
     sessionAlwaysAllow: new Map(),

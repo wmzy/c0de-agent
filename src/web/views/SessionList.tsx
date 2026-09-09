@@ -979,7 +979,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
             </button>
             <span style={{ color: 'var(--warning)', fontSize: 12 }}>
               未归属项目（{orphanCountData?.count ?? 0}{' '}
-              条，来自已删除的项目，恢复后可归属到当前项目）
+              条，来自已删除的项目；恢复时可重建原项目或归属到当前项目）
             </span>
           </div>
           {orphansOpen &&
@@ -994,7 +994,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
                   className={restoreBtn}
                   onClick={() =>
                     restore.mutate(
-                      { id: s.id, projectId },
+                      { id: s.id, projectId, restoreMode: 'current-project' },
                       {
                         onError: (e: unknown) =>
                           setError(e instanceof Error ? e.message : String(e)),
@@ -1011,9 +1011,46 @@ function RecycleBin({ projectId }: { projectId: string }) {
                     )
                   }
                   data-testid={`restore-orphan-${s.id}`}
-                  title="恢复并归属到当前项目"
+                  title="恢复并归属到当前项目（不重建原项目）"
                 >
-                  恢复到这里
+                  恢复到当前项目
+                </button>
+                <button
+                  type="button"
+                  className={restoreBtn}
+                  onClick={() =>
+                    restore.mutate(
+                      { id: s.id },
+                      {
+                        onError: (e: unknown) =>
+                          setError(e instanceof Error ? e.message : String(e)),
+                        onSuccess: (d) => {
+                          setError(null)
+                          // P1-3：自动模式（原目录仍存在）重建项目时明示，
+                          // 不再静默复活用户已删除的项目。
+                          const recreated = d?.recreatedProject
+                          if (recreated) {
+                            setNotice(
+                              `「${s.title}」已恢复，并重新创建了原项目「${recreated.name ?? '未命名项目'}」——该项目此前已删除，现在从回收站恢复而重建。`,
+                            )
+                            setOrphanId(null)
+                          } else if (d?.orphaned) {
+                            setNotice(
+                              `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`,
+                            )
+                            setOrphanId(s.id)
+                          } else {
+                            setNotice(`「${s.title}」已恢复并归属到原项目。`)
+                            setOrphanId(null)
+                          }
+                        },
+                      },
+                    )
+                  }
+                  data-testid={`restore-orphan-recreate-${s.id}`}
+                  title="恢复并在原目录重建项目（若目录仍存在）"
+                >
+                  恢复并重建原项目
                 </button>
                 <button
                   type="button"

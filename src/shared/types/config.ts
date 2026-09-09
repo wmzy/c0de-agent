@@ -65,6 +65,10 @@ type PermissionConfig = {
    * - 'deny'：拒绝该工具，run 继续执行（旧行为，会话绝不挂起）。
    */
   timeoutAction?: 'pause' | 'deny'
+  /** 首层确认超时（毫秒）——超过仅提示、pending 保持；默认 5 分钟。 */
+  timeoutMs?: number
+  /** 首层超时后到兜底自动拒绝的宽限期（毫秒）；默认 25 分钟。 */
+  expireGraceMs?: number
 }
 
 /** 自动升级配置（spec §18）。控制后台 npm registry 检查与无感知热更新行为。 */
@@ -105,6 +109,13 @@ type UsageConfig = {
   /** 月度成本预算（USD，按配置价目估算）。0 = 不限制。
    *  当前月成本超过预算时，设置页「用量」面板给出醒目告警。 */
   monthlyBudgetUsd: number
+  /**
+   * 超支动作（P3 成本护栏）：
+   * - 'warn'（默认）：仅告警（顶栏徽标/用量面板），agent 继续执行；
+   * - 'pause'：新一轮 LLM 请求前发现当月成本超预算 → 暂停 run（等同权限超时
+   *   暂停机制），用户点「恢复」后本 run 不再因预算重复暂停（用户已知情）。
+   */
+  budgetAction?: 'warn' | 'pause'
 }
 
 /** Global application configuration. */

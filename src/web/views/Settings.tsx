@@ -599,7 +599,10 @@ export function Settings() {
           />
           <UsagePanel
             budget={merged.usage?.monthlyBudgetUsd ?? 0}
+            budgetAction={merged.usage?.budgetAction ?? 'warn'}
             onBudgetChange={(v) => updateSection('usage', { monthlyBudgetUsd: v })}
+            onBudgetActionChange={(v) => updateSection('usage', { budgetAction: v })}
+            projectId={projectId}
           />
         </>
       )}

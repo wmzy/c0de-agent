@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { usageEvents } from '../db/schema.js'
 import * as provider from '../llm/provider.js'
 import { createRegistry, registerProvider } from '../llm/registry.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import type { HookRunner } from '../plugins/types.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
 import { getLLMSegments } from '../session/session.js'
-import type { AgentEvent, AgentState } from '../shared/types/agent.js'
+import { generateId } from '../shared/index.js'
+import type { AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import type { Message, Session } from '../shared/types/message.js'
 import { editTool } from '../tools/builtin/edit.js'
@@ -526,6 +528,105 @@ describe('agentLoop', () => {
     if (!seg2) throw new Error('missing segment 2')
     expect(seg2.trigger).toBe('model_change')
     expect(seg2.model).toBe('other-model')
+  })
+
+  it('P3：budgetPause 超支暂停 run，恢复后不再因预算重复暂停', async () => {
+    // 预置账本：当月成本 $11 已超 $10 预算
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: null,
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 11,
+      timestamp: Date.now(),
+    })
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('still running')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: { monthlyBudgetUsd: 10, budgetAction: 'pause' },
+      },
+      budgetPause: true,
+    }
+
+    const events: AgentEvent[] = []
+    const gen = agentLoop(state, deps)
+    // 消费到暂停事件（预算超支 pause → status_change + 持久化 → 等待恢复）
+    let pausedSeen = false
+    let pull = await gen.next()
+    let guard = 0
+    while (!pull.done && guard < 30) {
+      const value = pull.value
+      if (value) {
+        events.push(value)
+        if (value._tag === 'status_change' && value.status._tag === 'paused') {
+          pausedSeen = true
+          expect(value.status.pauseReason).toContain('预算')
+          break
+        }
+      }
+      pull = await gen.next()
+      guard += 1
+    }
+    expect(pausedSeen).toBe(true)
+    expect(state.budgetPauseTriggered).toBe(true)
+
+    // 模拟用户点「恢复」：状态置 running，loop 继续执行到 done。
+    state.status = { _tag: 'running', turnCount: 0 }
+    let sawDone = false
+    while (!pull.done && guard < 60) {
+      pull = await gen.next()
+      guard += 1
+      const value = pull.value
+      if (value) {
+        events.push(value)
+        if (value._tag === 'done') {
+          sawDone = true
+          break
+        }
+      }
+    }
+    expect(sawDone).toBe(true)
+    // 恢复后正常出文本，未被再次暂停
+    expect(events.some((e) => e._tag === 'text_delta' && e.text === 'still running')).toBe(true)
+    expect(
+      events.filter((e) => e._tag === 'status_change' && e.status._tag === 'paused'),
+    ).toHaveLength(1)
+  })
+
+  it('P3：budgetPause=false（CLI 等无恢复 UI）不暂停', async () => {
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: null,
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 11,
+      timestamp: Date.now(),
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('no pause')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: { monthlyBudgetUsd: 10, budgetAction: 'pause' },
+      },
+      // 不注入 budgetPause：CLI print 路径语义
+    }
+    const statuses: AgentStatus[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      if (ev._tag === 'status_change') statuses.push(ev.status)
+    }
+    expect(statuses.some((s) => s._tag === 'paused')).toBe(false)
   })
 
   it('压缩失败时记录警告但不中断循环（非致命）', async () => {

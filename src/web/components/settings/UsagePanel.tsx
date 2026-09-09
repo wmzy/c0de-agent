@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import type { UsageSummary } from '../../services/usage.js'
-import { usageAPI } from '../../services/usage.js'
+import { localMonthKey, usageAPI } from '../../services/usage.js'
 import { field, fieldInput, hint, section, sectionTitle } from './styles.js'
 
 const rowGrid = css`
@@ -38,7 +38,7 @@ const fmtCost = (n: number): string => `$${n.toFixed(2)}`
 
 function currentMonthCost(summary: UsageSummary | undefined): number {
   if (!summary) return 0
-  const now = new Date().toISOString().slice(0, 7)
+  const now = localMonthKey(Date.now())
   return summary.byMonth.find((m) => m.month === now)?.cost ?? 0
 }
 
@@ -46,17 +46,25 @@ function currentMonthCost(summary: UsageSummary | undefined): number {
  * 用量与成本面板（P2 成本聚合视图）：
  * - 总量 + 按月 + 按模型统计（成本按配置价目估算，与会话信息面板口径一致）；
  * - 月度预算告警：当前月成本超过 monthlyBudgetUsd 时醒目提示（0 = 不限制）。
+ * P1：projectId 提供时统计与预算均为本项目口径（项目配置的预算配本项目成本），
+ * 其他项目的花费不再触发本项目的预算告警。
  */
 function UsagePanel({
   budget,
+  budgetAction,
   onBudgetChange,
+  onBudgetActionChange,
+  projectId,
 }: {
   budget: number
+  budgetAction?: string
   onBudgetChange: (v: number) => void
+  onBudgetActionChange: (v: 'warn' | 'pause') => void
+  projectId?: string
 }) {
   const { data: summary } = useQuery({
-    queryKey: ['usage', 'summary'],
-    queryFn: () => usageAPI.summary(),
+    queryKey: ['usage', 'summary', projectId ?? 'all'],
+    queryFn: () => usageAPI.summary(projectId),
     staleTime: 30_000,
   })
 
@@ -71,8 +79,9 @@ function UsagePanel({
     <div className={section} data-testid="usage-panel">
       <h2 className={sectionTitle}>用量与成本</h2>
       <div className={hint}>
-        统计全部会话（含回收站内已删除会话）的 LLM 调用；成本按 provider 价目估算
+        统计本项目全部会话（含回收站内已删除会话）的 LLM 调用；成本按 provider 价目估算
         {summary ? `（价目版本 ${summary.priceCatalogVersion}，实际费用以账单为准）` : ''}。
+        成本是账本：会话彻底删除后已发生花费仍计入。
       </div>
       <label className={field}>
         <span>月度成本预算 (USD，0 = 不限制)</span>
@@ -85,6 +94,20 @@ function UsagePanel({
           onChange={(e) => onBudgetChange(Math.max(0, Number(e.target.value)))}
         />
       </label>
+      {budget > 0 && (
+        <label className={field}>
+          <span>超支动作</span>
+          <select
+            className={fieldInput}
+            value={budgetAction === 'pause' ? 'pause' : 'warn'}
+            onChange={(e) => onBudgetActionChange(e.target.value === 'pause' ? 'pause' : 'warn')}
+            data-testid="usage-budget-action"
+          >
+            <option value="warn">仅告警（顶栏徽标变红，对话继续）</option>
+            <option value="pause">暂停对话（新一轮回复前暂停，点「恢复」继续）</option>
+          </select>
+        </label>
+      )}
       {overBudget && (
         <div className={budgetWarn} data-testid="usage-budget-warning">
           ⚠ 本月成本 ${monthCost.toFixed(2)} 已超过预算 ${budget.toFixed(2)}

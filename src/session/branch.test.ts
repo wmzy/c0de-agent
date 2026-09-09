@@ -1,10 +1,12 @@
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { sessionEntries } from '../db/schema.js'
+import { sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import type { MessageContent } from '../shared/types/message.js'
+import { archiveOriginalEntries, listArchives } from './archive.js'
 import { BranchPointOutOfRangeError, forkSession, getBranches, getTree } from './branch.js'
 import { appendMessage, getEntries, getMessages, insertEntry } from './message.js'
 import { createSession, listSessions, touchLastOpened } from './session.js'
@@ -189,6 +191,96 @@ describe('branching', () => {
     expect(tree).toHaveLength(3)
     // s1 最近打开，排第一；s3、s2 未打开过按 updatedAt（创建时间）降序
     expect(tree[0]?.session.id).toBe(s1.id)
+  })
+
+  it('fork 复制分支点之前的归档，并重映射 archiveId 引用（归档面板不再为空）', async () => {
+    const parent = await createSession(handle, 'Parent')
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('old-0') })
+    // 分支点之前的归档 + 引用它的 compaction 条目
+    const archiveId = await archiveOriginalEntries(
+      handle,
+      parent.id,
+      [],
+      'compaction',
+      'archived',
+      generateId(),
+    )
+    await insertEntry(handle, {
+      id: generateId(),
+      sessionId: parent.id,
+      tag: 'compaction',
+      content: {
+        summary: 'compacted',
+        originalEntryIds: [],
+        archiveId,
+      },
+    })
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('branch-here') })
+    // 分支点之后的新归档（不应复制）
+    await archiveOriginalEntries(handle, parent.id, [], 'compaction', 'post-branch', generateId())
+
+    const forked = await forkSession(handle, parent.id, 1) // branch-here
+    const archives = await listArchives(handle, forked.id)
+    expect(archives).toHaveLength(1)
+    expect(archives[0]?.summary).toBe('archived')
+    // 归档换了新 id（不与源会话共享）
+    expect(archives[0]?.id).not.toBe(archiveId)
+    // fork 的 compaction 条目引用已重映射到新归档 id
+    const entries = await getEntries(handle, forked.id)
+    const compaction = entries.find((e) => '_tag' in e && e._tag === 'compaction')
+    expect(compaction).toBeDefined()
+    expect((compaction as { _tag: 'compaction'; archiveId: string }).archiveId).toBe(
+      archives[0]?.id,
+    )
+  })
+
+  it('fork 继承分支点之前的用量 segments（徽标显示继承成本）', async () => {
+    const parent = await createSession(handle, 'Parent')
+    const now = Date.now()
+    await handle.db
+      .update(sessions)
+      .set({
+        metadata: {
+          segments: [
+            {
+              id: 'seg1',
+              fingerprint: 'fp',
+              provider: 'p',
+              model: 'm',
+              systemPrompt: 'sys',
+              tools: [],
+              startedAt: now,
+              trigger: 'initial',
+              calls: [
+                {
+                  id: 'c-old',
+                  timestamp: now - 1000,
+                  usage: { input: 100, output: 0 },
+                  latency: { firstToken: 1, total: 1 },
+                  cost: 0.5,
+                  responseText: 'r',
+                },
+                {
+                  id: 'c-future',
+                  timestamp: now + 100_000,
+                  usage: { input: 200, output: 0 },
+                  latency: { firstToken: 1, total: 1 },
+                  cost: 1.0,
+                  responseText: 'r',
+                },
+              ],
+            },
+          ],
+        },
+      })
+      .where(eq(sessions.id, parent.id))
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('hi') })
+
+    const forked = await forkSession(handle, parent.id, 0)
+    const meta = forked.metadata as { segments?: Array<{ calls: Array<{ id: string }> }> }
+    // 仅继承分支点之前的调用
+    expect(meta.segments).toHaveLength(1)
+    expect(meta.segments?.[0]?.calls.map((c) => c.id)).toEqual(['c-old'])
   })
 
   it('fork 中途失败整体回滚，不残留半成品分支', async () => {

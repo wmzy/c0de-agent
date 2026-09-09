@@ -1,3 +1,4 @@
+import { usageEvents } from '../../db/schema.js'
 import { saveLLMSegments, segmentFingerprint } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { AgentState, LLMCall, LLMSegment, SegmentTrigger } from '../../shared/types/agent.js'
@@ -87,4 +88,27 @@ export async function manageSegment(
   currentSeg.calls.push(call)
 
   await saveLLMSegments(deps.db, state.session.id, state.segments)
+
+  // P2 成本账本：每个 LLM 调用同时落独立 usage_events 表（与 session 生命周期解耦——
+  // 会话物理清除后花费记录仍在，账本不随回收站到期/彻底删除而消失）。
+  await deps.db.db
+    .insert(usageEvents)
+    .values({
+      callId: call.id,
+      sessionId: state.session.id,
+      projectId: state.session.projectId ?? null,
+      provider: state.config.provider,
+      model: state.config.model,
+      inputTokens: call.usage.input,
+      outputTokens: call.usage.output,
+      cacheRead: call.usage.cacheRead ?? 0,
+      cost: computedCost,
+      timestamp: call.timestamp,
+    })
+    .catch((err: unknown) => {
+      // 账本写入失败不致命（会话元数据仍含 segments 备份）；告警便于排查。
+      console.warn(
+        `[loop] usage_events 写入失败（成本账本将缺失本次调用）：${err instanceof Error ? err.message : String(err)}`,
+      )
+    })
 }

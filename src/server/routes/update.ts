@@ -51,7 +51,18 @@ function createUpdateRoute(ctx: ServerContext): Hono {
         ...(r.agentType ? { agentType: r.agentType } : {}),
       })
     }
-    const impact = { runs, terminalCount: ctx.ptyManager.list().length }
+    const impact = {
+      runs,
+      terminalCount: ctx.ptyManager.list().length,
+      // P1：逐项列出终端（标题 + shell + 目录），确认弹窗据此展示——
+      // 用户可判断被关闭的终端是否正在跑重要进程。
+      terminals: ctx.ptyManager.list().map((t) => ({
+        id: t.id,
+        title: t.title,
+        shell: t.shell,
+        cwd: t.cwd,
+      })),
+    }
 
     // P2-8：update.enabled=false 时无 handoff server，apply 必然 409。
     // 不再触发 checkNow，也不返回 hasUpdate，避免横幅出现一个点了必失败的应用按钮。
@@ -116,7 +127,19 @@ function createUpdateRoute(ctx: ServerContext): Hono {
     const pauseTimeoutMs = ctx.config.update.pauseTimeoutMs ?? 30_000
     const pauseResult = await ctx.agentManager.pauseAll(pauseTimeoutMs)
 
-    const snapshot = await serializeSessions(ctx.db, ctx.config)
+    const snapshot = await serializeSessions(
+      ctx.db,
+      ctx.config,
+      // P1：终端元信息随快照迁移——新实例按原 id 原位重建 shell，
+      // 前端持久化布局重连无感（进程内状态无法续命，这是最优恢复）。
+      ctx.ptyManager.list().map((t) => ({
+        id: t.id,
+        shell: t.shell,
+        cwd: t.cwd,
+        title: t.title,
+        ...(t.projectId ? { projectId: t.projectId } : {}),
+      })),
+    )
     const r = await performHandoff(snapshot, method, {
       handoffPort: ctx.handoff.port,
       port: ctx.port,

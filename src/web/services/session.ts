@@ -37,18 +37,23 @@ const sessionAPI = {
     apiRequest<{ ok: boolean; touched: number }>('/api/sessions/deleted/orphans/seen', {
       method: 'POST',
     }),
-  restore: (id: string, projectId?: string) =>
+  restore: (id: string, projectId?: string, restoreMode?: 'auto' | 'current-project') =>
     apiRequest<{
       ok: boolean
       rebound?: boolean
       orphaned?: boolean
+      /** P1-3：会话原属项目已被删除、恢复时重建的项目（自动模式且目录仍存在）。 */
+      recreatedProject?: { id: string; name: string | null } | null
       restoredAncestorCount?: number
       crossedBatchAncestor?: boolean
       /** A2：已删但未随本次恢复的后代数量（批次不同 → 滞留回收站需单独恢复）。 */
       leftBehindDescendantCount?: number
     }>(`/api/sessions/${id}/restore`, {
       method: 'POST',
-      body: JSON.stringify(projectId ? { projectId } : {}),
+      body: JSON.stringify({
+        ...(projectId ? { projectId } : {}),
+        ...(restoreMode ? { restoreMode } : {}),
+      }),
     }),
   /** 孤儿会话归属到指定项目（P1-2）。 */
   rebind: (id: string, projectId: string) =>

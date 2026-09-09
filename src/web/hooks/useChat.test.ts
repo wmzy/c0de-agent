@@ -21,6 +21,7 @@ const base: ChatState = {
   attachedRun: false,
   compactionNotice: null,
   runPaused: false,
+  runPauseReason: null,
 }
 
 function asst(parts: MessageContent[]): Message[] {

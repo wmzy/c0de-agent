@@ -25,6 +25,16 @@ describe('PTYManager', () => {
     expect(mgr.get(info.id)).toBeDefined()
   })
 
+  it('P1：create 接受指定 id（热更新快照恢复沿用原 id，前端布局无感重连）', () => {
+    const info = mgr.create({ cwd: '/tmp', title: 'restored', id: 'pty_restored_1' })
+    expect(info.id).toBe('pty_restored_1')
+    expect(mgr.get('pty_restored_1')).toBeDefined()
+    // 重复 create 同 id 返回既有条目，不泄漏/覆盖进程
+    const again = mgr.create({ cwd: '/other', id: 'pty_restored_1' })
+    expect(again.pid).toBe(info.pid)
+    expect(mgr.list()).toHaveLength(1)
+  })
+
   it('list returns all active PTY sessions', () => {
     const a = mgr.create({ cwd: '/tmp', title: 'term-a' })
     const b = mgr.create({ cwd: '/tmp', title: 'term-b' })

@@ -620,6 +620,9 @@ function createChatRoute(ctx: ServerContext): Hono {
             config: sessionConfig,
             agentRegistry: ctx.agentRegistry,
             cwd,
+            // P3 成本护栏：会话项目配置 budgetAction='pause' 时启用预算暂停
+            // （CLI print 等无恢复 UI 的路径不注入此标志，永不挂起）。
+            ...(sessionConfig.usage?.budgetAction === 'pause' ? { budgetPause: true } : {}),
             ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
           }
 

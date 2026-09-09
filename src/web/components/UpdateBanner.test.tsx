@@ -55,7 +55,7 @@ describe('UpdateBanner', () => {
     expect(screen.getByTestId('update-banner').textContent).toContain('0.1.0')
   })
 
-  it('clicking 立即应用 calls updateAPI.apply', async () => {
+  it('clicking 立即应用 calls updateAPI.apply（分级确认输入版本号）', async () => {
     ;(updateAPI.status as Mock).mockResolvedValue({
       hasUpdate: true,
       currentVersion: '0.1.0',
@@ -66,10 +66,17 @@ describe('UpdateBanner', () => {
       snapshotPath: '/tmp/s.json',
       latestVersion: '0.2.0',
     })
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
     renderWithClient(<UpdateBanner />)
     await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('update-apply'))
+    // 分级确认弹层：确认按钮在输入正确版本号前禁用
+    const confirmBtn = screen.getByTestId('danger-confirm-btn')
+    expect(confirmBtn).toBeDisabled()
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), {
+      target: { value: '0.2.0' },
+    })
+    expect(confirmBtn).not.toBeDisabled()
+    fireEvent.click(confirmBtn)
     await waitFor(() => expect(updateAPI.apply).toHaveBeenCalledTimes(1))
     // 成功后提示新版本已就绪（B1：建议刷新页面完成界面切换）
     await waitFor(() =>
@@ -83,11 +90,33 @@ describe('UpdateBanner', () => {
       currentVersion: '0.1.0',
       latestVersion: '0.2.0',
     })
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
     renderWithClient(<UpdateBanner />)
     await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('update-apply'))
+    // 弹层打开；点击取消关闭
+    fireEvent.click(screen.getByText('取消'))
     expect(updateAPI.apply).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('danger-confirm-btn')).toBeNull()
+  })
+
+  it('确认弹层列出将中断的对话与将关闭的终端标题', async () => {
+    ;(updateAPI.status as Mock).mockResolvedValue({
+      hasUpdate: true,
+      currentVersion: '0.1.0',
+      latestVersion: '0.2.0',
+      impact: {
+        runs: [{ sessionId: 's1', title: '修复登录 bug' }],
+        terminalCount: 1,
+        terminals: [{ id: 'p1', title: 'pnpm dev', shell: '/bin/zsh', cwd: '/repo' }],
+      },
+    })
+    renderWithClient(<UpdateBanner />)
+    await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('update-apply'))
+    const dialog = screen.getByTestId('danger-confirm-dialog')
+    expect(dialog.textContent).toContain('修复登录 bug')
+    expect(dialog.textContent).toContain('pnpm dev')
+    expect(dialog.textContent).toContain('/repo')
   })
 
   it('clicking 稍后 dismisses the banner for current latest version', async () => {
@@ -149,10 +178,13 @@ describe('UpdateBanner', () => {
       latestVersion: '0.2.0',
     })
     ;(updateAPI.apply as Mock).mockRejectedValue(new Error('network'))
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
     renderWithClient(<UpdateBanner />)
     await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('update-apply'))
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), {
+      target: { value: '0.2.0' },
+    })
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
     await waitFor(() => expect(updateAPI.apply).toHaveBeenCalledTimes(1))
     await waitFor(() =>
       expect(screen.getByTestId('update-banner').textContent).toContain('热更新失败'),

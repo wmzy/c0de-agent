@@ -122,6 +122,8 @@ export interface CreatePTYOptions {
   shell?: string
   /** 所属项目 id。 */
   projectId?: string
+  /** 指定 PTY id（热更新快照恢复时沿用原 id，前端布局无感重连）。 */
+  id?: string
 }
 
 /**
@@ -163,7 +165,10 @@ export class PTYManager {
 
   /** 创建新 PTY 会话。 */
   create(opts: CreatePTYOptions): PTYInfo {
-    const id = `pty_${randomUUID()}`
+    const id = opts.id ?? `pty_${randomUUID()}`
+    // 指定 id 已存在（重复 restore 快照）→ 返回既有条目，避免泄漏/覆盖进程。
+    const existing = this.entries.get(id)
+    if (existing) return existing.info
     const cols = opts.cols ?? DEFAULT_COLS
     const rows = opts.rows ?? DEFAULT_ROWS
     const shell = opts.shell ?? detectShell()

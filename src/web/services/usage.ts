@@ -1,6 +1,6 @@
 import { apiRequest } from './api.js'
 
-/** 用量汇总（服务端从全部会话——含回收站内软删除会话——的 LLM 调用元数据聚合）。 */
+/** 用量汇总（服务端从 usage_events 成本账本聚合；?projectId= 过滤为项目口径）。 */
 export type UsageTotals = {
   inputTokens: number
   outputTokens: number
@@ -19,6 +19,16 @@ export type UsageSummary = {
   byModel: Array<{ model: string } & UsageTotals>
 }
 
+/** 本地时区的 YYYY-MM 月份键（与服务端 localMonthKey 同口径）。 */
+export function localMonthKey(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 export const usageAPI = {
-  summary: () => apiRequest<UsageSummary>('/api/usage/summary'),
+  /** projectId 提供时聚合该项目口径（项目设置页预算按本项目成本对比）。 */
+  summary: (projectId?: string) =>
+    apiRequest<UsageSummary>(
+      `/api/usage/summary${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
 }

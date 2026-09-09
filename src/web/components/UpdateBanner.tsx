@@ -2,6 +2,29 @@ import { css } from '@linaria/core'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { updateAPI } from '../services/update.js'
+import { DangerConfirmDialog } from './DangerConfirmDialog.js'
+
+const impactList = css`
+  margin-top: 8px;
+  font-size: 12px;
+  & ul {
+    margin: 4px 0 8px;
+    padding-left: 18px;
+    & li {
+      margin: 2px 0;
+    }
+  }
+`
+
+const impactHead = css`
+  font-weight: 600;
+  color: var(--text);
+`
+
+const impactMeta = css`
+  color: var(--text-secondary);
+  font-size: 11px;
+`
 
 // 紧凑单行窄条（高 28px ≤ 32px）：中性 --bg-secondary 底 + 1px 底边框 + 小圆点强调，
 // 取代全宽高饱和蓝，降低视觉压制；文字 --text 对 --bg-secondary 明暗主题均 ≥ 12:1（AA）。
@@ -122,6 +145,9 @@ function saveDismissed(version: string): void {
  */
 export function UpdateBanner() {
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(loadDismissed)
+  // P1-1/P3：热更新影响面分级确认弹层（替代 window.confirm）——
+  // 列出将被中断的对话与将被关闭的终端（含标题），输入版本号确认。
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const { data } = useQuery({
     queryKey: ['update-status'],
     queryFn: updateAPI.status,
@@ -195,29 +221,7 @@ export function UpdateBanner() {
             type="button"
             className={btn}
             disabled={applying}
-            onClick={() => {
-              // P1-1：热更新会暂停/中止进行中的任务并关闭所有终端面板，apply 前必须让用户知情。
-              // P2-11：逐项列出受影响会话与终端数（此前只给一句笼统文案）。
-              const impact = data?.impact
-              const runNote =
-                impact && impact.runs.length > 0
-                  ? `\n将中断 ${impact.runs.length} 个进行中的对话：\n${impact.runs
-                      .map((r) => `  · ${r.title}`)
-                      .join('\n')}`
-                  : ''
-              const termNote =
-                impact && impact.terminalCount > 0
-                  ? `\n将关闭 ${impact.terminalCount} 个终端面板。`
-                  : ''
-              if (
-                !window.confirm(
-                  `热更新将暂停进行中的对话任务（可能中止未达安全点的任务）${runNote}${termNote}\n确认继续？`,
-                )
-              ) {
-                return
-              }
-              apply.mutate()
-            }}
+            onClick={() => setConfirmOpen(true)}
             data-testid="update-apply"
           >
             {applying ? '应用中…' : '立即应用'}
@@ -227,6 +231,70 @@ export function UpdateBanner() {
           稍后
         </button>
       </span>
+      <DangerConfirmDialog
+        open={confirmOpen}
+        title="应用更新"
+        confirmWord={data.latestVersion}
+        confirmLabel="立即应用"
+        busy={applying}
+        onConfirm={() => {
+          setConfirmOpen(false)
+          apply.mutate()
+        }}
+        onClose={() => setConfirmOpen(false)}
+        description={
+          <div>
+            将更新到版本 <strong>{data.latestVersion}</strong>。热更新会暂停进行中的对话任务
+            （未达安全点的任务可能被中止），并关闭所有终端面板——终端里正在运行的进程 （如 dev
+            server）会停止；更新完成后将在原位重建 shell，可在刷新页面后继续使用。
+            <ImpactList runs={data?.impact?.runs ?? []} terminals={data?.impact?.terminals ?? []} />
+          </div>
+        }
+      />
+    </div>
+  )
+}
+
+/** 影响面清单：逐项列出将被中断的对话与将被关闭的终端（P1：含标题，可判断是否重要）。 */
+function ImpactList({
+  runs,
+  terminals,
+}: {
+  runs: Array<{ sessionId: string; title: string; agentType?: string }>
+  terminals: Array<{ id: string; title: string; shell: string; cwd: string }>
+}) {
+  const hasAny = runs.length > 0 || terminals.length > 0
+  if (!hasAny) return null
+  return (
+    <div className={impactList}>
+      {runs.length > 0 && (
+        <>
+          <div className={impactHead}>将中断 {runs.length} 个进行中的对话：</div>
+          <ul>
+            {runs.map((r) => (
+              <li key={r.sessionId}>
+                {r.title}
+                {r.agentType ? `（${r.agentType}）` : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {terminals.length > 0 && (
+        <>
+          <div className={impactHead}>将关闭 {terminals.length} 个终端面板：</div>
+          <ul>
+            {terminals.map((t) => (
+              <li key={t.id}>
+                {t.title}{' '}
+                <span className={impactMeta}>
+                  ({t.shell} · {t.cwd})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   )
 }

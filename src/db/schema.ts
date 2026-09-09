@@ -203,6 +203,38 @@ export const kanbanCards = pgTable(
   (table) => [index('idx_kanban_cards_board').on(table.boardId, table.columnId, table.position)],
 )
 
+/**
+ * Usage events — append-only LLM cost ledger (P2 cost accounting decoupled from
+ * session lifecycle). One row per LLM call, written by loop manageSegment.
+ * No FK to sessions/projects: physical purge of sessions (recycle-bin expiry,
+ * manual forever-delete, temp CLI cleanup) must NOT erase spent-cost records —
+ * 成本是账本. sessionId/projectId are denormalized provenance only.
+ */
+export const usageEvents = pgTable(
+  'usage_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** LLM 调用 id（segments 中 LLMCall.id）——唯一约束使 backfill 幂等。 */
+    callId: uuid('call_id').notNull(),
+    sessionId: uuid('session_id'),
+    projectId: text('project_id'),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    inputTokens: bigint('input_tokens', { mode: 'number' }).notNull().default(0),
+    outputTokens: bigint('output_tokens', { mode: 'number' }).notNull().default(0),
+    cacheRead: bigint('cache_read', { mode: 'number' }).default(0),
+    /** null = 价格未知（按 $0 计入并由聚合层计数提示）。 */
+    cost: real('cost'),
+    /** LLM 请求发起时间（epoch ms）。 */
+    timestamp: bigint('timestamp', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_usage_events_call').on(table.callId),
+    index('idx_usage_events_project_ts').on(table.projectId, table.timestamp),
+    index('idx_usage_events_ts').on(table.timestamp),
+  ],
+)
+
 /** Type exports for insert/select operations. */
 export type ProjectRow = typeof projects.$inferSelect
 export type ProjectInsert = typeof projects.$inferInsert
@@ -220,3 +252,5 @@ export type KanbanBoardRow = typeof kanbanBoards.$inferSelect
 export type KanbanBoardInsert = typeof kanbanBoards.$inferInsert
 export type KanbanCardRow = typeof kanbanCards.$inferSelect
 export type KanbanCardInsert = typeof kanbanCards.$inferInsert
+export type UsageEventRow = typeof usageEvents.$inferSelect
+export type UsageEventInsert = typeof usageEvents.$inferInsert

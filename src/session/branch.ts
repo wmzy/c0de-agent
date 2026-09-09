@@ -1,7 +1,8 @@
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, lte } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
-import { type sessionEntries, sessions } from '../db/schema.js'
+import { compactionArchives, type sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
+import type { LLMSegment } from '../shared/types/agent.js'
 import { getEntries, insertEntry } from './message.js'
 import { createSession, getSession, rowToSession, webVisibleSessionCondition } from './session.js'
 import { copyFileSnapshots } from './snapshot.js'
@@ -89,6 +90,9 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
   const updated = await handle.db.transaction(async (tx) => {
     const txHandle: DB = { db: tx, close: handle.close }
 
+    const branchPointMs =
+      typeof target.createdAt === 'number' ? target.createdAt : new Date(target.createdAt).getTime()
+
     const forked = await createSession(
       txHandle,
       `Branch of ${source.title}`,
@@ -101,8 +105,62 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
       .set({ parentId: sessionId, branchPoint: messageIndex })
       .where(eq(sessions.id, forked.id))
 
+    // P2：复制分支点之前的归档（compaction/squash/shake/clear 原始内容）——
+    // 此前 fork 后归档面板为空、时间线压缩条目引用悬空 archiveId。
+    // 新归档换新 id，并重映射复制条目中的 archiveId 引用。
+    const sourceArchives = await tx
+      .select()
+      .from(compactionArchives)
+      .where(
+        and(
+          eq(compactionArchives.sessionId, sessionId),
+          lte(compactionArchives.createdAt, new Date(branchPointMs)),
+        ),
+      )
+    const archiveIdMap = new Map<string, string>()
+    for (const a of sourceArchives) {
+      const newId = generateId()
+      archiveIdMap.set(a.id, newId)
+      await tx.insert(compactionArchives).values({
+        id: newId,
+        sessionId: forked.id,
+        compactionId: a.compactionId,
+        archiveType: a.archiveType,
+        originalEntries: a.originalEntries,
+        fileSnapshots: a.fileSnapshots,
+        summary: a.summary,
+        tokenCount: a.tokenCount,
+        searchableText: a.searchableText,
+        createdAt: a.createdAt,
+      })
+    }
+
+    // P2：继承分支点之前的用量 segments（徽标/会话信息面板显示继承成本；
+    // calls 按时间过滤，分支点之后的调用不属于本分支）。usage_events 账本不受影响——
+    // fork 不产生新调用，backfill 经 callId 唯一约束去重，无重复记账。
+    const inheritedSegments = ((source.metadata as { segments?: LLMSegment[] }).segments ?? [])
+      .map((seg) => ({
+        ...seg,
+        calls: seg.calls.filter((c) => c.timestamp <= branchPointMs),
+      }))
+      .filter((seg) => seg.calls.length > 0)
+    if (inheritedSegments.length > 0) {
+      await tx
+        .update(sessions)
+        .set({ metadata: { segments: inheritedSegments } })
+        .where(eq(sessions.id, forked.id))
+    }
+
     for (const e of toCopy) {
-      await insertEntry(txHandle, entryToRow(e, forked.id))
+      const row = entryToRow(e, forked.id)
+      // 归档 id 重映射：compaction/squash 条目引用新复制的归档
+      if (row.tag === 'compaction' || row.tag === 'squash') {
+        const content = row.content as { archiveId?: unknown }
+        if (typeof content.archiveId === 'string' && archiveIdMap.has(content.archiveId)) {
+          row.content = { ...content, archiveId: archiveIdMap.get(content.archiveId) }
+        }
+      }
+      await insertEntry(txHandle, row)
     }
 
     await insertEntry(txHandle, {
@@ -117,8 +175,6 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
 
     // 复制源会话文件快照（P1-4：@文件上下文随分支保留）。
     // C3：按分支点时间过滤——分支点之后更新的快照是「未来」状态，不复制。
-    const branchPointMs =
-      typeof target.createdAt === 'number' ? target.createdAt : new Date(target.createdAt).getTime()
     await copyFileSnapshots(txHandle, sessionId, forked.id, branchPointMs)
 
     const created = await getSession(txHandle, forked.id)

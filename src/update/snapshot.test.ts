@@ -122,4 +122,20 @@ describe('serialize / restore round-trip', () => {
     await restoreSessions(target, snapshot) // 第二次不应重复
     expect(await listSessions(target)).toHaveLength(1)
   })
+
+  it('P1：终端元信息随快照序列化（新实例据此原位重建 shell）', async () => {
+    const terminals = [
+      { id: 'pty_a', shell: '/bin/zsh', cwd: '/repo', title: 'dev server' },
+      { id: 'pty_b', shell: '/bin/bash', cwd: '/repo/pkg', title: 'bash', projectId: 'p1' },
+    ]
+    const snapshot = await serializeSessions(source, undefined, terminals)
+    expect(snapshot.terminals).toEqual(terminals)
+    // restoreSessions 只回放 DB；终端重建由 server bootstrap 消费 snapshot.terminals
+    await restoreSessions(target, snapshot)
+  })
+
+  it('无终端时不携带 terminals 字段（旧快照兼容）', async () => {
+    const snapshot = await serializeSessions(source)
+    expect(snapshot.terminals).toBeUndefined()
+  })
 })

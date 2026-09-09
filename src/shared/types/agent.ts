@@ -201,6 +201,9 @@ type AgentState = {
    *  createAgent 时从历史消息恢复；每次 todo 工具调用通过 todoState hook 更新。 */
   todoPhases: { name: string; tasks: { content: string; status: string }[] }[]
   compactionModel?: { provider: string; model: string }
+  /** P3 成本护栏：本 run 已因预算超支暂停过一次。恢复后不再重复暂停
+   *  （用户点「恢复」即知情同意继续，反复暂停是骚扰而非护栏）。 */
+  budgetPauseTriggered?: boolean
   /**
    * 压缩死锁标记：自动压缩成功后仍超阈值（如 keepRecentTokens 本身已超限）时置真，
    * 暂停后续自动压缩以防每轮重复触发（无限循环）。收到新用户消息（agentLoop 重入）时重置。

@@ -32,6 +32,7 @@ import {
   TRASH_PURGE_GRACE_MS,
   TRASH_RETENTION_MS,
 } from '../session/session.js'
+import { backfillUsageEvents } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import {
@@ -213,9 +214,28 @@ async function buildServerContext(
 ): Promise<{ ctx: ServerContext; dispose: () => Promise<void> }> {
   const cwd = opts.cwd ?? process.cwd()
 
+  // P1：快照携带的终端元信息——新实例原位重建 shell（同 id）。提前解析出来，
+  // ptyManager 创建后立即恢复；旧快照无 terminals 字段时为空。
+  let restoredTerminals: Array<{
+    id: string
+    shell: string
+    cwd: string
+    title: string
+    projectId?: string
+  }> = []
+
   if (opts.restoreFrom) {
     const snapshot = JSON.parse(readFileSync(opts.restoreFrom, 'utf8')) as SessionSnapshot
     await restoreSessions(db, snapshot)
+    restoredTerminals = Array.isArray(snapshot.terminals)
+      ? snapshot.terminals.filter(
+          (t): t is NonNullable<typeof t> =>
+            !!t &&
+            typeof t.id === 'string' &&
+            typeof t.shell === 'string' &&
+            typeof t.cwd === 'string',
+        )
+      : []
   }
 
   const config = await loadConfig(cwd)
@@ -247,6 +267,26 @@ async function buildServerContext(
       : {}),
   })
 
+  const ptyManager = new PTYManager()
+  // P1：热更新恢复——按快照元信息原位重建终端 shell（同 id，前端布局无感重连）。
+  // 进程内状态（运行中的 dev server 等）无法续命，但用户在熟悉的布局里得到新 shell，
+  // 且 cwd/title/shell 保持一致。恢复失败（极端环境）不阻塞启动。
+  for (const t of restoredTerminals) {
+    try {
+      ptyManager.create({
+        id: t.id,
+        shell: t.shell,
+        cwd: t.cwd,
+        title: t.title || undefined,
+        ...(t.projectId ? { projectId: t.projectId } : {}),
+      })
+    } catch (err) {
+      console.warn(
+        `[server] 终端恢复失败（${t.id}）：${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
   const ctx: ServerContext = {
     db,
     config,
@@ -256,7 +296,16 @@ async function buildServerContext(
     hookRunner,
     pluginRegistry,
     agentManager: createAgentManager(),
-    permissionStore: createPermissionStore(),
+    // P3：权限双层超时可配置（config.permission.timeoutMs/expireGraceMs）；
+    // 缺省回退 store 内置默认（5 分钟 + 25 分钟）。
+    permissionStore: createPermissionStore({
+      ...(config.permission.timeoutMs !== undefined && config.permission.timeoutMs > 0
+        ? { timeoutMs: config.permission.timeoutMs }
+        : {}),
+      ...(config.permission.expireGraceMs !== undefined && config.permission.expireGraceMs > 0
+        ? { expireGraceMs: config.permission.expireGraceMs }
+        : {}),
+    }),
     permissionMode: config.permission.defaultMode,
     sessionPermissionModes: new Map(),
     sessionAlwaysAllow: new Map(),
@@ -276,7 +325,7 @@ async function buildServerContext(
       initialDelayMs: config.update.initialDelayMs,
     }),
     cwd,
-    ptyManager: new PTYManager(),
+    ptyManager,
   }
 
   // handoff server 不在此创建：它需要持有主 HTTP server 引用以触发完整关停，
@@ -441,6 +490,16 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
   }
 
   const { ctx, dispose } = await buildServerContext(db, opts)
+
+  // P2 成本账本 backfill：把升级前已存在 segments（含 fork 复制的、导入的会话）
+  // 补齐进 usage_events（幂等，callId 唯一约束去重）。fire-and-forget。
+  void backfillUsageEvents(db)
+    .then((added) => {
+      if (added > 0) console.log(`[server] 成本账本补齐：新增 ${added} 条历史调用记录`)
+    })
+    .catch((err: unknown) => {
+      console.warn(`[server] 成本账本补齐失败：${err instanceof Error ? err.message : String(err)}`)
+    })
 
   // P2-4 + A3：回收站两阶段清理——启动时清一次 + 每 24h 清一次。
   // 阶段一标记到期条目进入宽限期（UI 可见可恢复），阶段二物理清除宽限期满的条目。

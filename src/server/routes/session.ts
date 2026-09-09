@@ -106,6 +106,21 @@ function createSessionRoute(ctx: ServerContext): Hono {
         }
       }
     }
+    // P2：携带用量 segments（会话信息面板/徽标显示历史成本与 token）。
+    // 与权限态不同，segments 是纯统计数据无安全含义，默认随迁。
+    // 宽松校验形状：非法调用静默丢弃，不阻塞导入。
+    const srcMetaAny = body.session?.metadata as { segments?: unknown } | undefined
+    if (Array.isArray(srcMetaAny?.segments)) {
+      metadata.segments = srcMetaAny.segments.filter(
+        (seg): seg is Record<string, unknown> =>
+          !!seg &&
+          typeof seg === 'object' &&
+          !Array.isArray(seg) &&
+          typeof (seg as { provider?: unknown }).provider === 'string' &&
+          typeof (seg as { model?: unknown }).model === 'string' &&
+          Array.isArray((seg as { calls?: unknown }).calls),
+      )
+    }
     // P2：导出含分支树结构（parentId），导入为独立根会话——告知前端提示扁平化。
     const flattened = typeof body.session.parentId === 'string' && body.session.parentId.length > 0
     const result = await importSessionData(ctx.db, {
@@ -331,30 +346,42 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 项目记录并重新归属——否则恢复成功但会话不属于任何项目视图，UI 不可达。
   // P1-2：body.projectId 提供时（当前项目视图），目录失效无法重建归属的孤儿
   // 会话直接归属到该请求项目，恢复即可达。
+  // P1-3：静默重建项目改为明示——响应带 recreatedProject（重建的项目信息），
+  // 前端据此展示「已重新创建项目 X」；同时支持 restoreMode='current-project'
+  // 显式跳过重建、直接归属到请求项目（用户在确认框中二选一）。
   app.post('/:id/restore', async (c) => {
     const id = c.req.param('id')
-    const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      projectId?: unknown
+      restoreMode?: unknown
+    }
     const requestProjectId =
       typeof body.projectId === 'string' && body.projectId ? body.projectId : undefined
+    const preferCurrentProject = body.restoreMode === 'current-project'
     const result = await restoreSessionCore(ctx.db, id)
     if (!result.restored) return apiError(c, 404, 'NOT_FOUND', '会话不存在或未删除')
     const session = await getSession(ctx.db, id)
     let rebound = false
     let orphaned = false
+    let recreatedProject: { id: string; name: string | null } | null = null
     if (session && !session.projectId) {
       const wt = session.worktreePath
-      if (wt && existsSync(wt)) {
+      // P1-3：用户选择「归属到当前项目」时跳过自动重建（删除项目是用户意图，
+      // 不静默复活）。否则目录仍存在则重建项目记录（明示在响应中）。
+      if (!preferCurrentProject && wt && existsSync(wt)) {
         try {
           const project = await fromDirectory(ctx.db, wt)
           await ctx.db.db.update(sessions).set({ projectId: project.id }).where(eq(sessions.id, id))
           rebound = true
+          recreatedProject = { id: project.id, name: project.name }
         } catch {
           orphaned = true
         }
       } else {
         orphaned = true
       }
-      // P1-2：目录失效且请求方提供了项目上下文 → 归属到该请求项目
+      // P1-2：目录失效且请求方提供了项目上下文 → 归属到该请求项目；
+      // P1-3：restoreMode='current-project' 时无论目录是否存在都归属请求项目。
       if (orphaned && requestProjectId) {
         const project = await getProject(ctx.db, requestProjectId)
         if (project) {
@@ -368,6 +395,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
       ok: true,
       rebound,
       orphaned,
+      recreatedProject,
       restoredAncestorCount: result.restoredAncestorCount,
       crossedBatchAncestor: result.crossedBatchAncestor,
       // A2：批次不同的已删后代滞留在回收站，显式告知数量供前端提示单独恢复。

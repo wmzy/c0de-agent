@@ -5,6 +5,7 @@ import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { getMessages } from '../session/message.js'
 import { updateSessionLastRun } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
+import { currentMonthCost } from '../session/usage.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
 import { calibrateEstimate, createTokenBudget, estimateBudget } from './context.js'
@@ -39,6 +40,9 @@ type LoopDeps = AgentDependencies & {
   readonly _subagentEventSink?: (event: AgentEvent) => void
   /** 当前递归深度（0=顶层主 agent）。用于 maxRecursion 控制（spec §4.5 step 4）。 */
   readonly _subagentDepth?: number
+  /** P3 成本护栏：仅 Web 会话启用（CLI print 无恢复 UI，暂停会永久挂起）。
+   *  由 chat 路由按 sessionConfig.usage.budgetAction==='pause' 注入。 */
+  readonly budgetPause?: boolean
 }
 
 export type { LoopDeps }
@@ -123,6 +127,43 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       }).catch(() => {})
       await waitForResume(state)
       if (state.status._tag === 'paused') return // 等待期间被 abort 等终结
+    }
+
+    // P3 成本护栏：budgetAction='pause' 时，每轮 LLM 请求前检查当月成本——
+    // 超支则暂停 run（等同权限超时暂停：状态事件 + 持久化 + 等待恢复）。
+    // 每 run 至多暂停一次（budgetPauseTriggered），恢复后用户知情继续。
+    // 仅主 agent 检查：子 agent 由主 run 驱动，主 run 暂停即整体停摆。
+    // deps.budgetPause 由 Web 路由按配置注入——CLI print 无恢复 UI，永不启用。
+    if (
+      deps.budgetPause === true &&
+      (deps.config.usage?.monthlyBudgetUsd ?? 0) > 0 &&
+      !state.budgetPauseTriggered &&
+      deps._subagentDepth === undefined
+    ) {
+      try {
+        const { cost } = await currentMonthCost(deps.db, state.session.projectId)
+        if (cost > deps.config.usage.monthlyBudgetUsd) {
+          state.budgetPauseTriggered = true
+          state.status = {
+            _tag: 'paused',
+            pauseReason: `月度成本预算超支（${
+              deps.config.usage.monthlyBudgetUsd
+            }）：本月已 $${cost.toFixed(2)}`,
+          }
+          yield { _tag: 'status_change', status: state.status }
+          await updateSessionLastRun(deps.db, state.session.id, {
+            status: 'paused',
+            agentName: state.config.agentName,
+            provider: state.config.provider,
+            model: state.config.model,
+            startedAt: state.lastRunStartedAt ?? Date.now(),
+          }).catch(() => {})
+          await waitForResume(state)
+          if (state.status._tag === 'paused') return
+        }
+      } catch {
+        // 账本查询失败不阻塞对话（fail-open：护栏故障不应瘫痪 agent）
+      }
     }
     state.status = { _tag: 'running', turnCount: turn }
 

@@ -69,12 +69,19 @@ export function useDeletedOrphansCount() {
   })
 }
 
-/** 从回收站恢复会话（可带当前项目上下文，孤儿会话自动归属）。 */
+/** 从回收站恢复会话（可带当前项目上下文与恢复模式；孤儿会话可选重建原项目或归属当前项目）。 */
 export function useRestoreSession() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, projectId }: { id: string; projectId?: string }) =>
-      sessionAPI.restore(id, projectId),
+    mutationFn: ({
+      id,
+      projectId,
+      restoreMode,
+    }: {
+      id: string
+      projectId?: string
+      restoreMode?: 'auto' | 'current-project'
+    }) => sessionAPI.restore(id, projectId, restoreMode),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })

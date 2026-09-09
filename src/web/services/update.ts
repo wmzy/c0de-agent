@@ -6,10 +6,11 @@ type UpdateStatus = {
   currentVersion: string
   latestVersion: string
   disabled?: boolean
-  /** 热更新影响面：进行中的对话与终端面板数（apply 确认框逐项展示）。 */
+  /** 热更新影响面：进行中的对话与终端面板（apply 确认框逐项展示）。 */
   impact?: {
     runs: Array<{ sessionId: string; title: string; agentType?: string }>
     terminalCount: number
+    terminals: Array<{ id: string; title: string; shell: string; cwd: string }>
   }
 }
 

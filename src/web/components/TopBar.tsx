@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { configAPI } from '../services/config.js'
-import { usageAPI } from '../services/usage.js'
+import { localMonthKey, usageAPI } from '../services/usage.js'
 import { CommitButton } from './CommitButton.js'
 import { Logo } from './Logo.js'
 import { ProjectIndicator } from './ProjectIndicator.js'
@@ -95,23 +95,25 @@ const costOver = css`
 `
 
 /** 本月成本徽标：显示当月估算成本，按预算阈值变色（≥80% 警示、超预算告警）。
- *  点击跳转设置页「用量与成本」面板。 */
-function MonthCostBadge({ settingsPath }: { settingsPath: string }) {
-  // 直接走共享 query 缓存（与 ConfigProvider 同一 queryKey，零额外请求），
+ *  点击跳转设置页「用量与成本」面板。P1：按当前项目口径统计——
+ *  汇总与预算均取项目合并配置 + 项目聚合成本，项目间互不干扰。
+ *  无项目上下文时退化为全局口径（'/settings' 根路由）。 */
+function MonthCostBadge({ settingsPath, projectId }: { settingsPath: string; projectId?: string }) {
+  // 直接走共享 query 缓存（与 Settings 同一 queryKey，零额外请求），
   // 避免 TopBar 依赖 ConfigProvider 的渲染层级。
   const { data: configResp } = useQuery({
-    queryKey: ['config', 'server'],
-    queryFn: () => configAPI.get(),
+    queryKey: ['config', projectId ?? 'server'],
+    queryFn: () => configAPI.get(projectId),
     staleTime: 60_000,
   })
   const budget = configResp?.config?.usage?.monthlyBudgetUsd ?? 0
   const { data: summary } = useQuery({
-    queryKey: ['usage', 'summary'],
-    queryFn: () => usageAPI.summary(),
+    queryKey: ['usage', 'summary', projectId ?? 'all'],
+    queryFn: () => usageAPI.summary(projectId),
     staleTime: 60_000,
     refetchInterval: 120_000,
   })
-  const now = new Date().toISOString().slice(0, 7)
+  const now = localMonthKey(Date.now())
   const monthEntry = summary?.byMonth.find((m) => m.month === now)
   const cost = monthEntry?.cost ?? 0
   const overBudget = budget > 0 && cost > budget
@@ -163,7 +165,7 @@ export function TopBar() {
         )}
       </div>
       <nav className={nav}>
-        <MonthCostBadge settingsPath={settingsPath} />
+        <MonthCostBadge settingsPath={settingsPath} projectId={projectId} />
         <Link
           to={sessionsPath}
           className={`${link} ${!isSettings && !isKanban ? activeLink : ''}`}
