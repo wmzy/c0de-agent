@@ -1,6 +1,14 @@
 import { css } from '@linaria/core'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  type RefObject,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { SegmentBreak, SegmentFooter } from '../LLMDetail.js'
 import { MessageItem } from './MessageItem.js'
 import {
@@ -35,6 +43,22 @@ const rowWrap = css`
   &:hover > button {
     opacity: 1;
   }
+`
+
+/** M3：中断轮次分隔条——半截内容前显式提示，避免与正常对话混淆。 */
+const unfinishedDivider = css`
+  margin: 6px 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-left: 3px solid var(--warning);
+  border-radius: 4px;
+`
+
+/** M3：未完成轮次的消息行置灰，弱化「已经发生过」的视觉权重。 */
+const unfinishedRow = css`
+  opacity: 0.55;
 `
 
 const jsonToggle = css`
@@ -135,29 +159,40 @@ export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showA
     return (
       <>
         {hasSegmentData && <SegmentBreak segment={g.segment} />}
-        {g.messages.map(({ message, latency }) => {
+        {g.messages.map(({ message, latency, unfinished }, idx) => {
           const key = `m:${message.id}`
           const isJson = showAllJson || localJson.has(key)
+          const prevUnfinished = idx > 0 ? (g.messages[idx - 1]?.unfinished ?? false) : false
+          // M3：未完成轮次（中断 run 的半截回复/工具结果）——置灰 + 首条前插分隔条，
+          // 明确告知该内容已从上下文剔除、重发后将被忽略。
+          const showDivider = unfinished && !prevUnfinished
           // 空壳消息：仅在 JSON 模式下露出（否则美化态无内容可显示）。
           if (isEmptyMessage(message) && !isJson) return null
           return (
-            <div className={rowWrap} key={key}>
-              <button
-                type="button"
-                className={jsonToggle}
-                onClick={() => toggle(key)}
-                data-testid={`row-json-${key}`}
-                aria-label={isJson ? '切换美化' : '切换 JSON'}
-                title={isJson ? '切回美化视图' : '查看该消息原始 JSON'}
-              >
-                {isJson ? '✦' : '{ }'}
-              </button>
-              {isJson ? (
-                <pre className={pre}>{JSON.stringify(message, null, 2)}</pre>
-              ) : (
-                <MessageItem message={message} latency={latency} />
+            <Fragment key={key}>
+              {showDivider && (
+                <div className={unfinishedDivider} data-testid="unfinished-divider">
+                  ↻ 未完成轮次：中断前的部分回复与工具结果（已从上下文剔除，不影响重发后的对话）
+                </div>
               )}
-            </div>
+              <div className={`${rowWrap}${unfinished ? ` ${unfinishedRow}` : ''}`}>
+                <button
+                  type="button"
+                  className={jsonToggle}
+                  onClick={() => toggle(key)}
+                  data-testid={`row-json-${key}`}
+                  aria-label={isJson ? '切换美化' : '切换 JSON'}
+                  title={isJson ? '切回美化视图' : '查看该消息原始 JSON'}
+                >
+                  {isJson ? '✦' : '{ }'}
+                </button>
+                {isJson ? (
+                  <pre className={pre}>{JSON.stringify(message, null, 2)}</pre>
+                ) : (
+                  <MessageItem message={message} latency={latency} />
+                )}
+              </div>
+            </Fragment>
           )
         })}
         {hasSegmentData && <SegmentFooter segment={g.segment} />}

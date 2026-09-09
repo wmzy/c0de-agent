@@ -208,7 +208,19 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   })
 
   // 统一时间线：消息 + LLM 调用 + 段标记按时间交错融合。
-  const timeline = useMemo(() => buildTimeline(messages, segments ?? []), [messages, segments])
+  // M3：session.metadata 记录的未完成轮次区间传入，中断前的半截内容置灰展示。
+  const unfinishedRange =
+    sessionMeta?.metadata.unfinishedSinceEntryId && sessionMeta?.metadata.unfinishedUntilEntryId
+      ? {
+          sinceId: sessionMeta.metadata.unfinishedSinceEntryId,
+          untilId: sessionMeta.metadata.unfinishedUntilEntryId,
+        }
+      : null
+  const timeline = useMemo(
+    () => buildTimeline(messages, segments ?? [], unfinishedRange),
+    // sessionMeta 仅用于 unfinishedRange；直接依赖区间值避免整体失效。
+    [messages, segments, unfinishedRange],
+  )
 
   // 消费草稿页暂存的首条消息：导航到新会话后自动发送，并恢复 model/工具选择。
   // 仅按 sessionId 消费一次；sendMessage/setSelection/setEnabledTools 在本实例内稳定，故不纳入依赖。
@@ -406,6 +418,9 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
           ...(lr?.model ? { model: lr.model } : { model: selection.model }),
           ...(lr?.agentName ? { agent: lr.agentName } : { agent: agentName }),
         })
+        // M3：重发会触发服务端标记未完成轮次（写入 session.metadata）——
+        // 刷新 meta 使时间线立即置灰半截内容。
+        qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
       }
     }
   }

@@ -74,7 +74,12 @@ const err = css`
 
 /** 新设备配对流程：请求配对码并轮询审批。 */
 function PairingRequestFlow() {
-  const [pairing, setPairing] = useState<{ pairingId: string; code: string } | null>(null)
+  const [pairing, setPairing] = useState<{
+    pairingId: string
+    code: string
+    /** L3：服务端当前是否有已授权设备；false = 无人可批准，展示恢复指引。 */
+    hasAuthorizedDevices?: boolean
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [approved, setApproved] = useState(false)
   const started = useRef(false)
@@ -98,6 +103,9 @@ function PairingRequestFlow() {
 
   useEffect(() => {
     if (!pairing) return
+    // L3：零已授权设备时无人可批准，轮询无意义（用户按指引重启 serve 后
+    // 点「重新检测」发起新请求再进入轮询）。
+    if (pairing.hasAuthorizedDevices === false) return
     let cancelled = false
     const poll = async () => {
       try {
@@ -136,6 +144,22 @@ function PairingRequestFlow() {
       </div>
       {approved ? (
         <div className={desc}>已批准，正在进入…</div>
+      ) : pairing && pairing.hasAuthorizedDevices === false ? (
+        <div data-testid="pairing-deadend">
+          <div className={desc}>
+            当前服务尚无任何<b>已授权设备</b>，配对请求不可能被批准。请在运行{' '}
+            <code>c0de serve</code> 的终端：1）重启服务（Ctrl+C 后重新运行）；2）打开启动日志中
+            打印的带 <code>?token=</code> 的链接完成首次设备注册。
+          </div>
+          <div className={desc}>
+            若唯一设备的浏览器数据已丢失，请先运行 <code>c0de auth reset</code> 清除设备记录，
+            再重启服务。
+          </div>
+          {error && <div className={err}>{error}</div>}
+          <button type="button" className={btn} onClick={start} data-testid="pairing-recheck">
+            重新检测
+          </button>
+        </div>
       ) : pairing ? (
         <>
           <div className={code} data-testid="pairing-code">

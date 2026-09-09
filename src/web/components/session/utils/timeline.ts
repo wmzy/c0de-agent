@@ -3,9 +3,12 @@ import type { Message, MessageContent } from '@shared/types/message.js'
 
 /** 时间线统一行类型。把消息、LLM 调用、段标记合并为单一有序序列。 */
 export type TimelineRow =
-  | { kind: 'message'; message: Message; ts: number; latency?: number }
+  | { kind: 'message'; message: Message; ts: number; latency?: number; unfinished?: boolean }
   | { kind: 'call'; call: LLMCall; segment: LLMSegment; ts: number }
   | { kind: 'segment'; segment: LLMSegment; ts: number }
+
+/** M3：中断轮次区间（session.metadata 记录，含两端）。 */
+export type UnfinishedRange = { sinceId: string; untilId: string }
 
 /** 段标记 < call < message：保证段头排在自身 calls 之前、消息之前（同时间戳稳定）。 */
 const ORDER: Record<TimelineRow['kind'], number> = { segment: 0, call: 1, message: 2 }
@@ -20,11 +23,29 @@ const ORDER: Record<TimelineRow['kind'], number> = { segment: 0, call: 1, messag
  * 时只记 call 不存 message）会作为无后续消息的孤立 call 行出现——这正是需被露出的
  * 「隐藏条目」。
  */
-export function buildTimeline(messages: Message[], segments: LLMSegment[]): TimelineRow[] {
+export function buildTimeline(
+  messages: Message[],
+  segments: LLMSegment[],
+  unfinished?: UnfinishedRange | null,
+): TimelineRow[] {
   const rows: TimelineRow[] = []
-  for (const message of messages) {
-    rows.push({ kind: 'message', message, ts: message.createdAt })
+  // M3：区间 (since, until] 内的消息标记 unfinished（时间线置灰 + 分隔条）。
+  // 两端点都必须存在（端点被压缩/清空归档后区间失效、不标记任何消息，
+  // 与上下文剔除的 stale-range 语义一致）。
+  let sinceIdx = -1
+  let untilIdx = -1
+  if (unfinished) {
+    sinceIdx = messages.findIndex((m) => m.id === unfinished.sinceId)
+    untilIdx = messages.findIndex((m) => m.id === unfinished.untilId)
+    if (sinceIdx < 0 || untilIdx <= sinceIdx) {
+      sinceIdx = -1
+      untilIdx = -1
+    }
   }
+  messages.forEach((message, i) => {
+    const unfinishedFlag = i > sinceIdx && i <= untilIdx
+    rows.push({ kind: 'message', message, ts: message.createdAt, unfinished: unfinishedFlag })
+  })
   for (const segment of segments) {
     rows.push({ kind: 'segment', segment, ts: segment.startedAt })
     for (const call of segment.calls) {
@@ -64,7 +85,7 @@ export function buildTimeline(messages: Message[], segments: LLMSegment[]): Time
 
 export type SegmentGroup = {
   segment: LLMSegment
-  messages: { message: Message; latency?: number }[]
+  messages: { message: Message; latency?: number; unfinished?: boolean }[]
   isFirst: boolean
 }
 
@@ -100,7 +121,11 @@ export function groupBySegment(rows: TimelineRow[]): SegmentGroup[] {
           isFirst: true,
         }
       }
-      current.messages.push({ message: row.message, latency: row.latency })
+      current.messages.push({
+        message: row.message,
+        latency: row.latency,
+        unfinished: row.unfinished,
+      })
     }
     // call 行：跳过（chat 不渲染）
   }

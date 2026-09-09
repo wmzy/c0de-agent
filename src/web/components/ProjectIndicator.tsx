@@ -4,6 +4,7 @@ import { type ReactNode, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjects } from '../hooks/useSession.js'
 import { fileAPI } from '../services/file.js'
+import { kanbanAPI } from '../services/kanban.js'
 import { projectAPI } from '../services/project.js'
 import { MOBILE } from '../styles/breakpoints.js'
 import { AddProjectDialog } from './AddProjectDialog.js'
@@ -239,6 +240,30 @@ export function ProjectIndicator({
     },
   })
 
+  // M4：删除确认弹窗内的逃生口——先导出看板备份再删除，避免永久丢失。
+  const [exportBusy, setExportBusy] = useState(false)
+  const exportBoardAndDelete = async () => {
+    if (!project) return
+    setExportBusy(true)
+    setDeleteError(null)
+    try {
+      const data = await kanbanAPI.exportBoard(project.id)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `kanban-${project.id}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setShowDelete(false)
+      deleteMut.mutate(project.id)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : '看板导出失败，项目未删除')
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
   // hover 分支名展示最后一次提交信息
   const gitLastCommitQ = useQuery({
     queryKey: ['files', 'git-last-commit', projectId],
@@ -472,6 +497,12 @@ export function ProjectIndicator({
           confirmWord={project.name ?? '未命名项目'}
           confirmLabel="删除项目"
           busy={deleteMut.isPending}
+          secondaryAction={{
+            label: '导出看板并删除',
+            onClick: () => void exportBoardAndDelete(),
+            busy: exportBusy,
+            disabled: deleteMut.isPending,
+          }}
           onConfirm={() => {
             setShowDelete(false)
             deleteMut.mutate(project.id)

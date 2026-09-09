@@ -620,8 +620,8 @@ function daysLeft(baseline: number | null | undefined): number {
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)))
 }
 
-/** 剩余天数 + 绝对到期日（F6 修复：保留期自「首次在回收站看到该会话」
- *  （metadata.trashSeenAt）起算，与后端 purgeDeletedSessions 一致；尚未看到的
+/** 剩余天数 + 绝对到期日（F6 修复：保留期自「首次打开回收站看到该分组」
+ *  （metadata.trashSeenAt，分组粒度）起算，与后端 purgeDeletedSessions 一致；尚未看到的
  *  会话不显示倒计时（保留期自查看时起算），不会被静默提前清除。
  *  A3：purgePendingAt 存在 = 已到期进入宽限期——显示「即将清除」，恢复可保留。 */
 function expiryLabel(s: Session): string {
@@ -724,8 +724,25 @@ function RecycleBin({ projectId }: { projectId: string }) {
     s.parentId !== null && deletedIds.has(s.parentId)
 
   // 搜索态展示搜索结果（仍限制在回收站内）；默认展示完整列表。
+  // M1：默认列表按紧迫度排序——宽限期内条目置顶，其次按「首次看到」起算的
+  // 到期先后（先到期的在前），尚未看到的条目最后（保留期尚未起算）。
+  const sortedDeleted = [...deletedList].sort((a, b) => {
+    const pa = a.metadata.purgePendingAt
+    const pb = b.metadata.purgePendingAt
+    if (pa && !pb) return -1
+    if (!pa && pb) return 1
+    if (pa && pb) return pa - pb
+    const sa = a.metadata.trashSeenAt
+    const sb = b.metadata.trashSeenAt
+    if (sa && sb) return sa - sb
+    if (sa) return -1
+    if (sb) return 1
+    return (b.deletedAt ?? 0) - (a.deletedAt ?? 0)
+  })
   const rows =
-    searchDebounced.length > 1 ? (searchResults?.results.map((r) => r.session) ?? []) : deletedList
+    searchDebounced.length > 1
+      ? (searchResults?.results.map((r) => r.session) ?? [])
+      : sortedDeleted
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
@@ -816,8 +833,8 @@ function RecycleBin({ projectId }: { projectId: string }) {
         <>
           <div className={deletedRow}>
             <span className={trashHint}>
-              自首次在回收站看到该条目起保留 {TRASH_RETENTION_DAYS} 天，到期后宽限{' '}
-              {TRASH_PURGE_GRACE_DAYS} 天；从未查看的条目自删除起最长保留 365 天
+              自首次打开回收站看到该分组起保留 {TRASH_RETENTION_DAYS} 天（分组内条目同时起算），
+              到期后宽限 {TRASH_PURGE_GRACE_DAYS} 天；从未查看的条目自删除起最长保留 365 天
             </span>
             <button
               type="button"

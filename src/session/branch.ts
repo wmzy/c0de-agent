@@ -145,13 +145,18 @@ function sessionUsage(session: Session): SessionUsage {
   let outputTokens = 0
   let cacheRead = 0
   let cost = 0
+  let unknownCostCalls = 0
   for (const c of calls) {
     inputTokens += c.usage.input
     outputTokens += c.usage.output
     cacheRead += c.usage.cacheRead ?? 0
-    cost += c.cost
+    if (c.cost == null) {
+      unknownCostCalls += 1
+    } else {
+      cost += c.cost
+    }
   }
-  return { inputTokens, outputTokens, cacheRead, cost, calls: calls.length }
+  return { inputTokens, outputTokens, cacheRead, cost, unknownCostCalls, calls: calls.length }
 }
 
 /** Build a full session tree from root sessions down.

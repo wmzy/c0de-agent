@@ -62,11 +62,18 @@ function UsagePanel({
 
   const monthCost = currentMonthCost(summary)
   const overBudget = budget > 0 && monthCost > budget
+  // H2：价格未知的调用按 $0 计入，显式提示成本可能低估。
+  const unknownCostTotal = summary?.totals.unknownCostCalls ?? 0
+  // L2：无时间戳调用归入「未知」月份，不参与本月预算比较——同样需要提示。
+  const unknownMonth = summary?.byMonth.find((m) => m.month === '未知')
 
   return (
     <div className={section} data-testid="usage-panel">
       <h2 className={sectionTitle}>用量与成本</h2>
-      <div className={hint}>统计全部会话（Web + CLI）的 LLM 调用；成本按 provider 价目估算。</div>
+      <div className={hint}>
+        统计全部会话（含回收站内已删除会话）的 LLM 调用；成本按 provider 价目估算
+        {summary ? `（价目版本 ${summary.priceCatalogVersion}，实际费用以账单为准）` : ''}。
+      </div>
       <label className={field}>
         <span>月度成本预算 (USD，0 = 不限制)</span>
         <input
@@ -81,6 +88,18 @@ function UsagePanel({
       {overBudget && (
         <div className={budgetWarn} data-testid="usage-budget-warning">
           ⚠ 本月成本 ${monthCost.toFixed(2)} 已超过预算 ${budget.toFixed(2)}
+        </div>
+      )}
+      {unknownCostTotal > 0 && (
+        <div className={budgetWarn} data-testid="usage-unknown-cost-warning">
+          ⚠ {unknownCostTotal} 次调用价格未知（自建网关/未登记模型），按 $0
+          计入——实际成本可能高于显示值。
+        </div>
+      )}
+      {unknownMonth && unknownMonth.calls > 0 && (
+        <div className={hint}>
+          另有 {unknownMonth.calls} 次无时间戳调用（合计 {fmtCost(unknownMonth.cost)}
+          ）未计入本月预算比较。
         </div>
       )}
       <div className={headRow}>

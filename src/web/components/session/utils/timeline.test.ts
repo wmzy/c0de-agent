@@ -46,6 +46,29 @@ describe('buildTimeline', () => {
     expect(buildTimeline([], [])).toEqual([])
   })
 
+  it('M3：unfinished 区间 (since, until] 内的消息标记 unfinished，区间外不受影响', () => {
+    const rows = buildTimeline(
+      [msg('a', 10), msg('b', 20), msg('c', 30), msg('d', 40), msg('e', 50)],
+      [],
+      { sinceId: 'b', untilId: 'd' },
+    )
+    const flags = rows.map((r) =>
+      r.kind === 'message' ? `${r.message.id}:${r.unfinished ? 'u' : '-'}` : '',
+    )
+    expect(flags).toEqual(['a:-', 'b:-', 'c:u', 'd:u', 'e:-'])
+  })
+
+  it('M3：untilId 不存在 → 区间失效，不标记任何消息（防误伤区间后新轮次）', () => {
+    const rows = buildTimeline([msg('a', 10), msg('b', 20), msg('c', 30)], [], {
+      sinceId: 'a',
+      untilId: 'gone',
+    })
+    const flags = rows.map((r) =>
+      r.kind === 'message' ? `${r.message.id}:${r.unfinished ? 'u' : '-'}` : '',
+    )
+    expect(flags).toEqual(['a:-', 'b:-', 'c:-'])
+  })
+
   it('仅消息：按 createdAt 升序', () => {
     const rows = buildTimeline([msg('a', 30), msg('b', 10), msg('c', 20)], [])
     expect(rows.map((r) => r.kind)).toEqual(['message', 'message', 'message'])

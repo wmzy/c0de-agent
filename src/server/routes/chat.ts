@@ -12,7 +12,12 @@ import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
 import { insertEntry } from '../../session/message.js'
-import { getLLMSegments, getSession, updateSessionLastRun } from '../../session/session.js'
+import {
+  getLLMSegments,
+  getSession,
+  markUnfinishedTurn,
+  updateSessionLastRun,
+} from '../../session/session.js'
 import { upsertFileSnapshot } from '../../session/snapshot.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import type { MessageContent } from '../../shared/types/message.js'
@@ -554,6 +559,11 @@ function createChatRoute(ctx: ServerContext): Hono {
         let doneSent = false
         let runStartedAt: number | undefined
         try {
+          // M3：上轮 run 未正常结束（崩溃/重启/热更新交接，lastRun 仍为
+          // running/paused）→ 把最后一条 user 消息之后的半截条目标记为
+          // 「未完成轮次」：构建上下文时剔除、时间线置灰。必须先于
+          // runAgent（其内部 append 新 user 消息）执行，保证边界判定正确。
+          await markUnfinishedTurn(ctx.db, sessionId).catch(() => {})
           // 权限检查器：ask 权限通过 SSE 通知前端，阻塞等待确认。
           // 模式优先级：会话级覆盖（PUT /:sessionId）> 会话项目配置 defaultMode
           // > 运行时全局模式（启动默认或 PUT / 覆盖）。

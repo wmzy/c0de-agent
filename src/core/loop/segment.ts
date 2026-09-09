@@ -21,7 +21,8 @@ export async function manageSegment(
   truncated: FinishReason | null,
   firstTokenTime: number | null,
   contextWindow: number | undefined,
-  computedCost: number,
+  /** null = 价格未知（loop 层已判定），按 $0 计入并由聚合层计数提示。 */
+  computedCost: number | null,
 ): Promise<void> {
   // —— 段管理：判断是否开新段 ——
   const fp = segmentFingerprint(systemPrompt, tools)

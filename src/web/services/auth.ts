@@ -1,7 +1,12 @@
 // P2-16：设备配对 API 服务。
 import { apiRequest } from './api.js'
 
-type PairingRequestResult = { pairingId: string; code: string }
+type PairingRequestResult = {
+  pairingId: string
+  code: string
+  /** L3：服务端当前是否存在已授权设备。false = 无人可批准配对，UI 展示恢复指引。 */
+  hasAuthorizedDevices?: boolean
+}
 
 type PairingStatus =
   | { status: 'pending' }

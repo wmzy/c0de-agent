@@ -119,11 +119,14 @@ const usageBadge = css`
 function UsageBadge({ usage }: { usage: SessionUsage }) {
   if (!usage || usage.calls === 0) return null
   const total = usage.inputTokens + usage.outputTokens + usage.cacheRead
+  const costText = `US$${usage.cost.toFixed(2)}`
+  const unknownText =
+    usage.unknownCostCalls > 0 ? `（${usage.unknownCostCalls} 次价格未知按 $0 计）` : ''
   return (
     <span
       className={usageBadge}
       data-testid="usage-badge"
-      title="本会话累计 token（输入+输出+缓存读）"
+      title={`本会话累计 token（输入+输出+缓存读）\n估算成本 ${costText}${unknownText}`}
     >
       {total.toLocaleString('en-US')} tok
     </span>

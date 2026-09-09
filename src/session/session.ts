@@ -19,6 +19,7 @@ import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
 import type { LastRun, Session, SessionMetadata } from '../shared/types/message.js'
+import { getEntries } from './message.js'
 
 /** Convert a DB row (with Date timestamps) to the shared Session type (with number timestamps). */
 export function rowToSession(row: typeof sessions.$inferSelect): Session {
@@ -138,8 +139,11 @@ async function listOrphanDeletedSessions(handle: DB): Promise<Session[]> {
 
 /**
  * 标记回收站条目「已被用户看到」，记录 metadata.trashSeenAt = now（仅首次，不重置）。
- * 回收站保留期自首次看到起算（见 purgeDeletedSessions）。软删除时会清除旧标记，
- * 恢复后再次删除须重新看到回收站才重新起算——避免「未重新看到就被过早清空」。
+ * 回收站保留期自首次看到起算（见 purgeDeletedSessions）。语义为分组粒度（M1）：
+ * 一次调用标记 scope 内全部条目——「首次看到」指用户打开该回收站分组，而非逐条
+ * 浏览到某个条目；分组内条目同时起算，列表按到期先后置顶展示以补偿该粒度。
+ * 软删除时会清除旧标记，恢复后再次删除须重新看到回收站才重新起算——
+ * 避免「未重新看到就被过早清空」。
  * scope.orphan=true 时仅标记未归属项目的孤儿会话（与 listOrphanDeletedSessions 对齐）；
  * 孤儿标记仅在用户展开「未归属项目」分组时由前端显式调用（POST /deleted/orphans/seen），
  * 避免打开任意项目回收站连带启动无关孤儿条目的倒计时。
@@ -893,6 +897,46 @@ async function searchSessions(
   return result
 }
 
+/**
+ * M3：把中断 run 的半截轮次标记为「未完成」——写入 metadata 的
+ * (unfinishedSinceEntryId, unfinishedUntilEntryId] 区间。
+ * 检测条件：lastRun.status 仍为 running/paused（进程崩溃/重启或热更新交接
+ * 未能写入 completed；deliberate abort 由 SSE finally 正常写 completed，不误标）。
+ * 边界 = 最后一条含文本的 user 消息；其后的条目全部属中断轮次——
+ * 上下文构建剔除（context.ts），前端时间线置灰。
+ * 边界已是最后一条 → 无半截内容，跳过标记。
+ * 重复中断：区间起点不变（重发不追加 user 消息），终点推进到最新末尾，天然合并。
+ */
+async function markUnfinishedTurn(handle: DB, sessionId: string): Promise<void> {
+  const [row] = await handle.db
+    .select({ metadata: sessions.metadata })
+    .from(sessions)
+    .where(eq(sessions.id, sessionId))
+  if (!row) return
+  const meta = (row.metadata ?? {}) as SessionMetadata
+  const status = meta.lastRun?.status
+  if (status !== 'running' && status !== 'paused') return
+  const entries = await getEntries(handle, sessionId)
+  let lastUserIdx = -1
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]
+    if (e && !('_tag' in e) && e.role === 'user' && e.content.some((p) => p._tag === 'text')) {
+      lastUserIdx = i
+      break
+    }
+  }
+  if (lastUserIdx < 0 || lastUserIdx === entries.length - 1) return
+  const sinceId = entries[lastUserIdx]?.id
+  const untilId = entries[entries.length - 1]?.id
+  if (!sinceId || !untilId) return
+  await handle.db
+    .update(sessions)
+    .set({
+      metadata: { ...meta, unfinishedSinceEntryId: sinceId, unfinishedUntilEntryId: untilId },
+    })
+    .where(eq(sessions.id, sessionId))
+}
+
 export {
   clearTrashMarks,
   createSession,
@@ -903,6 +947,7 @@ export {
   listOrphanDeletedSessions,
   listSessions,
   listSessionsByProject,
+  markUnfinishedTurn,
   permanentlyDeleteSession,
   purgeDeletedSessions,
   purgeEmptySessions,

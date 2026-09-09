@@ -157,6 +157,8 @@ function rowTokens(row: TimelineRow): string {
 
 function rowCost(row: TimelineRow): string {
   if (row.kind !== 'call') return ''
+  // H2：价格未知（cost=null）按 $0 展示并附注。
+  if (row.call.cost == null) return formatCost(0) + '（未估价）'
   return formatCost(row.call.cost)
 }
 

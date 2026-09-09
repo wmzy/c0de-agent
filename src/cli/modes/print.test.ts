@@ -4,6 +4,7 @@ import type { DB } from '../../db/client.js'
 import { createDB, migrateDB } from '../../db/index.js'
 import { sessionEntries, sessions } from '../../db/schema.js'
 import type { ChatOptions, ProviderContext } from '../../llm/index.js'
+import { softDeleteSession } from '../../session/session.js'
 import type { AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ChatRequest, StreamChunk } from '../../shared/types/llm.js'
@@ -117,6 +118,20 @@ describe('runPrintMode', () => {
     await expect(
       runPrintMode(config, 'hi', deps, { sessionId: '00000000-0000-4000-8000-000000000000' }),
     ).rejects.toThrow('session not found: 00000000-0000-4000-8000-000000000000')
+  })
+
+  it('--continue 指向回收站（已删除）会话 → 拒绝续接并给出恢复途径', async () => {
+    const chatStream = mockChatStream([{ _tag: 'text', text: 'ok' }, { _tag: 'done' }])
+    const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream })
+    await runPrintMode(config, 'first', deps, { onEvent: () => {} })
+    const [row] = await db.db.select({ id: sessions.id }).from(sessions)
+    const sessionId = row?.id ?? ''
+    expect(sessionId).toBeTruthy()
+    expect(await softDeleteSession(db, sessionId)).toBe(true)
+    // 消息不得写入回收站会话（此前写穿导致 Web 树不可见的数据死角）
+    await expect(
+      runPrintMode(config, 'hi', deps, { sessionId, onEvent: () => {} }),
+    ).rejects.toThrow(/回收站/)
   })
 
   it('未配置 provider 时给出引导性报错（不裸抛 NoRoute）', async () => {

@@ -39,6 +39,12 @@ type SessionMetadata = {
   segments?: LLMSegment[]
   /** 上次 agent run 状态；status='running' 且进程无活跃 run → 被中断。 */
   lastRun?: LastRun
+  /** M3：中断 run 的半截轮次区间起点——最后一条含文本 user 消息的条目 id。
+   *  区间 (since, until] 内的条目属「未完成轮次」：构建上下文时剔除、时间线置灰。
+   *  与 unfinishedUntilEntryId 成对使用；条目被 /clear、压缩归档后区间自然失效（no-op）。 */
+  unfinishedSinceEntryId?: string
+  /** M3：中断轮次区间终点——标记时数据库中最后一条条目的 id（含）。 */
+  unfinishedUntilEntryId?: string
   /** 上次打开时间戳（ms），用于会话列表按最近打开排序。 */
   lastOpenedAt?: number
   /** P2：会话级授权模式覆盖（'auto'/'default'），跨重启持久化。 */

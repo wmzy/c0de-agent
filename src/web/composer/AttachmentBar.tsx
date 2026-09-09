@@ -43,6 +43,17 @@ const warning = css`
   color: var(--danger, #e5484d);
 `
 
+/** L1：图片体积/成本提示——贴图直接计入 token，大图消耗显著，发送前明示。 */
+const sizeHint = css`
+  width: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
+`
+
+const sizeHintHeavy = css`
+  color: var(--warning);
+`
+
 type Props = {
   images: ImagePart[]
   supportsVision: boolean
@@ -51,6 +62,13 @@ type Props = {
 
 function AttachmentBar(props: Props) {
   if (props.images.length === 0) return null
+  // base64 解码后近似字节数（每 4 字符 ≈ 3 字节）。
+  const totalBytes = props.images.reduce(
+    (sum, img) => sum + Math.floor((img.data.length * 3) / 4),
+    0,
+  )
+  const sizeMb = totalBytes / (1024 * 1024)
+  const heavy = sizeMb >= 2
   return (
     <div className={bar} data-testid="attachment-bar">
       {!props.supportsVision && <span className={warning}>当前模型不支持图片</span>}
@@ -68,6 +86,13 @@ function AttachmentBar(props: Props) {
           </button>
         </div>
       ))}
+      <span
+        className={`${sizeHint}${heavy ? ` ${sizeHintHeavy}` : ''}`}
+        data-testid="image-size-hint"
+      >
+        {props.images.length} 张 · 约 {sizeMb >= 0.1 ? `${sizeMb.toFixed(1)} MB` : '< 0.1 MB'}
+        {heavy ? '——大图会显著增加 token 消耗与成本' : '——图片按 token 计费，发送后计入用量'}
+      </span>
     </div>
   )
 }

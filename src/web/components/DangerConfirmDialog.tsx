@@ -74,6 +74,8 @@ type DangerConfirmDialogProps = {
   confirmWord: string
   confirmLabel?: string
   busy?: boolean
+  /** M4：额外逃生动作（如「导出看板并删除」），渲染在取消与确认按钮之间。 */
+  secondaryAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean }
   onConfirm: () => void
   onClose: () => void
 }
@@ -85,6 +87,7 @@ export function DangerConfirmDialog({
   confirmWord,
   confirmLabel = '确认删除',
   busy = false,
+  secondaryAction,
   onConfirm,
   onClose,
 }: DangerConfirmDialogProps) {
@@ -101,6 +104,17 @@ export function DangerConfirmDialog({
           <button type="button" className={btn} onClick={onClose}>
             取消
           </button>
+          {secondaryAction && (
+            <button
+              type="button"
+              className={btn}
+              disabled={busy || secondaryAction.busy === true || secondaryAction.disabled === true}
+              onClick={secondaryAction.onClick}
+              data-testid="danger-secondary-btn"
+            >
+              {secondaryAction.busy === true ? '处理中…' : secondaryAction.label}
+            </button>
+          )}
           <button
             type="button"
             className={dangerBtn}

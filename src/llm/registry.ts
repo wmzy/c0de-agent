@@ -171,6 +171,13 @@ const rebuildRegistry = (registry: Registry, builder: (next: Registry) => void):
   registry.table = next.table
 }
 
+/**
+ * 内置价目表版本（H3）：记录 builtinCapabilities 最近一次人工核价的日期。
+ * LLM 价格频繁变动，前端在用量/成本面板展示此版本提醒「估算可能过期」；
+ * 发布新版本时同步核对 builtinCapabilities 并更新此常量（release checklist）。
+ */
+const PRICE_CATALOG_VERSION = '2026-09-09'
+
 /** Default role + a starter catalog of well-known models. */
 const builtinCapabilities: Record<string, Record<string, ModelCapabilities>> = {
   openai: {
@@ -212,6 +219,7 @@ export {
   createRegistry,
   DEFAULT_MODEL_CAPABILITIES,
   overrideToCapabilities,
+  PRICE_CATALOG_VERSION,
   rebuildRegistry,
   registerProvider,
   resolveModelByRole,

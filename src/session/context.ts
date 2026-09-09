@@ -1,6 +1,8 @@
 import { readFile, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
+import { sessions } from '../db/schema.js'
 import type { ChatMessage, ContentPart } from '../shared/types/llm.js'
 import type { Message } from '../shared/types/message.js'
 import { getEntries } from './message.js'
@@ -180,6 +182,25 @@ function injectSnapshots(messages: ChatMessage[], snapshots: FileSnapshot[]): Ch
   return [first, snapshotMessage, ...messages.slice(1)]
 }
 
+/**
+ * M3：剔除「未完成轮次」条目——metadata 记录的 (since, until] 区间（中断 run
+ * 的半截回复/工具结果）不进入 LLM 上下文，避免模型基于自己未跑完的半截成果
+ * 产生「我已改过了」的错位叙事。区间外条目原样保留。
+ * 两端点都必须存在于当前条目序列：端点因 /clear、压缩归档而消失时区间失效
+ * （整体不剔除）——绝不能把区间后新产生的正常轮次误伤。
+ */
+function excludeUnfinishedTurn(
+  entries: SessionEntry[],
+  sinceId?: string,
+  untilId?: string,
+): SessionEntry[] {
+  if (!sinceId || !untilId) return entries
+  const sinceIdx = entries.findIndex((e) => e.id === sinceId)
+  const untilIdx = entries.findIndex((e) => e.id === untilId)
+  if (sinceIdx < 0 || untilIdx <= sinceIdx) return entries
+  return entries.filter((_, i) => i <= sinceIdx || i > untilIdx)
+}
+
 /** Get the full session context: all entries + file snapshots.
  *  cwd 提供时刷新过期快照：文件磁盘 mtime 晚于快照记录 → 重读并升版本（P1-5）。 */
 async function getSessionContext(
@@ -188,11 +209,26 @@ async function getSessionContext(
   cwd?: string,
 ): Promise<{ entries: SessionEntry[]; snapshots: FileSnapshot[] }> {
   if (cwd) await refreshStaleSnapshots(handle, sessionId, cwd)
-  const [entries, snapshots] = await Promise.all([
+  const [metaRows, entries, snapshots] = await Promise.all([
+    handle.db
+      .select({ metadata: sessions.metadata })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId)),
     getEntries(handle, sessionId),
     getFileSnapshots(handle, sessionId),
   ])
-  return { entries, snapshots }
+  const meta = (metaRows[0]?.metadata ?? {}) as {
+    unfinishedSinceEntryId?: string
+    unfinishedUntilEntryId?: string
+  }
+  return {
+    entries: excludeUnfinishedTurn(
+      entries,
+      meta.unfinishedSinceEntryId,
+      meta.unfinishedUntilEntryId,
+    ),
+    snapshots,
+  }
 }
 
 /** 比对每个文件最新快照与磁盘 mtime，过期则重读并写入新版本。 */

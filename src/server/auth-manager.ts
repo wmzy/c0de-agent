@@ -64,6 +64,12 @@ type AuthManagerOptions = {
   now?: () => number
 }
 
+/** 首设备注册结果：成功返回设备 token；失败返回可区分原因（路由据此给出
+ *  正确的恢复指引——「注册链接过期」与「已有设备」的补救动作完全不同）。 */
+type FirstDeviceRegistration =
+  | { ok: true; deviceToken: string }
+  | { ok: false; reason: 'static_mode' | 'invalid_bootstrap' | 'devices_exist' | 'ttl_expired' }
+
 export type AuthManager = {
   /** 当前 bootstrap token（静态模式下即 staticToken）。 */
   readonly bootstrap: string | undefined
@@ -74,8 +80,8 @@ export type AuthManager = {
   verifyHandoff(token: string | undefined): boolean
   /** 首次设备注册：校验 bootstrap 后换发设备 token 并轮换 bootstrap。
    *  无设备时首个凭 bootstrap 的请求即视为首设备（免审批），后续请求需配对审批。
-   *  返回新设备 token；bootstrap 已失效/已注册过 → 返回 null。 */
-  registerFirstDevice(bootstrapToken: string, deviceName: string): Promise<string | null>
+   *  失败返回具体原因（static_mode / invalid_bootstrap / devices_exist / ttl_expired）。 */
+  registerFirstDevice(bootstrapToken: string, deviceName: string): Promise<FirstDeviceRegistration>
   /** 发起配对请求（未认证）：返回 { pairingId, code }；静态模式/未启用返回 null。
    *  source 为请求来源（IP 等，尽力而为），用于审批展示与按来源限流。 */
   requestPairing(deviceName: string, source?: string): { pairingId: string; code: string } | null
@@ -251,14 +257,16 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
     },
 
     async registerFirstDevice(bootstrapToken, deviceName) {
-      if (staticToken && staticToken.length > 0) return null // 静态模式无设备注册
-      if (!verifyBootstrap(bootstrapToken)) return null
-      // 已有设备 → bootstrap 已失效，不得再凭它注册（需配对审批）
-      if (devices.size > 0) return null
+      if (staticToken && staticToken.length > 0) return { ok: false, reason: 'static_mode' }
+      // 已有设备 → bootstrap 已失效（注册即轮换），不得再凭它注册（需配对审批）。
+      // 先于 verifyBootstrap 判定：轮换后的旧 URL token 属「已消费」而非「无效」，
+      // 两者给用户的恢复指引不同（配对审批 vs 检查 token）。
+      if (devices.size > 0) return { ok: false, reason: 'devices_exist' }
+      if (!verifyBootstrap(bootstrapToken)) return { ok: false, reason: 'invalid_bootstrap' }
       // 首设备注册窗口：bootstrap 超过 firstDeviceTtlMs 后拒绝（缩短先到先得竞态窗口）。
       if (firstDeviceTtlMs > 0) {
         const age = bootstrapAge()
-        if (age != null && age > firstDeviceTtlMs) return null
+        if (age != null && age > firstDeviceTtlMs) return { ok: false, reason: 'ttl_expired' }
       }
 
       const deviceToken = randomBytes(32).toString('hex')
@@ -271,7 +279,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
       devices.set(record.id, record)
       persist()
       rotateBootstrap() // 注册成功即轮换，旧 bootstrap（URL/shell history 中）立即失效
-      return deviceToken
+      return { ok: true, deviceToken }
     },
 
     requestPairing(deviceName, source) {

@@ -65,7 +65,9 @@ type LLMCall = {
   timestamp: number
   usage: { input: number; output: number; cacheRead?: number }
   latency: { firstToken: number; total: number }
-  cost: number
+  /** 估算成本（USD）。null = 价格未知（provider 未注册或模型无价目），
+   *  聚合时按 $0 计入并单独计数，UI 显式提示——不再静默记 0 造成预算漏报。 */
+  cost: number | null
   thinking?: string
   /** 模型回复文本（替代完整 responseChunks；前端只用文本拼接）。 */
   responseText: string

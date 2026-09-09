@@ -20,6 +20,8 @@ type SessionUsage = {
   outputTokens: number
   cacheRead: number
   cost: number
+  /** 价格未知（cost=null）的调用数：成本按 $0 计入，提示可能低估。 */
+  unknownCostCalls: number
   calls: number
 }
 

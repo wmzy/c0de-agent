@@ -37,10 +37,11 @@ describe('createAuthManager — 设备注册与 token 轮换（P2-16）', () => 
     const bootstrap = mgr.bootstrap
     expect(bootstrap).toBeDefined()
 
-    const deviceToken = await mgr.registerFirstDevice(bootstrap ?? '', '浏览器')
-    expect(deviceToken).toBeDefined()
+    const reg = await mgr.registerFirstDevice(bootstrap ?? '', '浏览器')
+    expect(reg.ok).toBe(true)
+    if (!reg.ok) return
     // 设备 token 可用于 API 校验
-    expect(mgr.verify(deviceToken ?? '')).toBe(true)
+    expect(mgr.verify(reg.deviceToken)).toBe(true)
     // bootstrap 已被轮换：旧 bootstrap 不再有效
     expect(mgr.verify(bootstrap ?? '')).toBe(false)
     // 新 bootstrap 已写入文件且与旧值不同
@@ -55,19 +56,21 @@ describe('createAuthManager — 设备注册与 token 轮换（P2-16）', () => 
     const mgr = managerWithBootstrap({ dataDir: dir })
     const bootstrap = mgr.bootstrap ?? ''
     const first = await mgr.registerFirstDevice(bootstrap, 'a')
-    expect(first).toBeDefined()
+    expect(first.ok).toBe(true)
     const second = await mgr.registerFirstDevice(bootstrap, 'b')
-    expect(second).toBeNull()
+    expect(second).toEqual({ ok: false, reason: 'devices_exist' })
   })
 
   it('设备注册表持久化：重启后设备 token 仍有效', async () => {
     const mgr1 = managerWithBootstrap({ dataDir: dir })
     const bootstrap = mgr1.bootstrap ?? ''
-    const deviceToken = await mgr1.registerFirstDevice(bootstrap, 'a')
+    const reg = await mgr1.registerFirstDevice(bootstrap, 'a')
+    expect(reg.ok).toBe(true)
+    if (!reg.ok) return
     mgr1.persist()
 
     const mgr2 = createAuthManager({ dataDir: dir })
-    expect(mgr2.verify(deviceToken ?? '')).toBe(true)
+    expect(mgr2.verify(reg.deviceToken)).toBe(true)
     // 重启后 bootstrap 取自文件（已轮换值），旧值无效
     expect(mgr2.verify(bootstrap)).toBe(false)
   })
@@ -76,7 +79,10 @@ describe('createAuthManager — 设备注册与 token 轮换（P2-16）', () => 
     const mgr = managerWithBootstrap({ dataDir: dir, staticToken: 'fixed-token' })
     expect(mgr.verify('fixed-token')).toBe(true)
     expect(mgr.verify('other')).toBe(false)
-    expect(await mgr.registerFirstDevice('fixed-token', 'x')).toBeNull()
+    expect(await mgr.registerFirstDevice('fixed-token', 'x')).toEqual({
+      ok: false,
+      reason: 'static_mode',
+    })
     expect(mgr.requestPairing('x')).toBeNull()
   })
 
@@ -89,22 +95,25 @@ describe('createAuthManager — 设备注册与 token 轮换（P2-16）', () => 
 
     const mgr = createAuthManager({ dataDir: dir, firstDeviceTtlMs: 30_000 })
     expect(mgr.bootstrap).toBe(token)
-    expect(await mgr.registerFirstDevice(token, 'x')).toBeNull()
+    expect(await mgr.registerFirstDevice(token, 'x')).toEqual({
+      ok: false,
+      reason: 'ttl_expired',
+    })
   })
 
   it('bootstrap 在 firstDeviceTtlMs 内可注册首设备', async () => {
     const mgr = managerWithBootstrap({ dataDir: dir, firstDeviceTtlMs: 60_000 })
-    const token = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'x')
-    expect(token).toBeDefined()
-    expect(mgr.verify(token ?? '')).toBe(true)
+    const reg = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'x')
+    expect(reg.ok).toBe(true)
+    if (reg.ok) expect(mgr.verify(reg.deviceToken)).toBe(true)
   })
 })
 
 describe('createAuthManager — 设备配对审批（P2-16）', () => {
   async function registered(mgr: ReturnType<typeof createAuthManager>): Promise<string> {
-    const token = await mgr.registerFirstDevice(mgr.bootstrap ?? '', '旧设备')
-    expect(token).toBeDefined()
-    return token ?? ''
+    const reg = await mgr.registerFirstDevice(mgr.bootstrap ?? '', '旧设备')
+    expect(reg.ok).toBe(true)
+    return reg.ok ? reg.deviceToken : ''
   }
 
   it('配对请求 → 审批 → 新设备轮询拿到 token', async () => {
@@ -176,33 +185,37 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
 describe('createAuthManager — 设备热重载与撤销（P1-4/P2-5）', () => {
   it('外部修改 devices.json 后 watcher 热重载：新设备 token 生效、被删设备失效', async () => {
     const mgr = managerWithBootstrap({ dataDir: dir })
-    const deviceToken = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'a')
-    expect(mgr.verify(deviceToken ?? '')).toBe(true)
+    const reg = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'a')
+    expect(reg.ok).toBe(true)
+    if (!reg.ok) return
+    expect(mgr.verify(reg.deviceToken)).toBe(true)
 
     // 模拟 c0de auth reset：外部删除注册表文件
     rmSync(join(dir, 'devices.json'))
     await vi.waitFor(() => {
-      expect(mgr.verify(deviceToken ?? '')).toBe(false)
+      expect(mgr.verify(reg.deviceToken)).toBe(false)
     })
     mgr.dispose()
   })
 
   it('revokeDevice 立即从内存移除并落盘', async () => {
     const mgr = managerWithBootstrap({ dataDir: dir })
-    const deviceToken = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'a')
+    const reg = await mgr.registerFirstDevice(mgr.bootstrap ?? '', 'a')
+    expect(reg.ok).toBe(true)
+    if (!reg.ok) return
     const devices = mgr.listDevices()
     expect(devices).toHaveLength(1)
     const id = devices[0]?.id ?? ''
 
     expect(mgr.revokeDevice(id)).toBe(true)
     expect(mgr.revokeDevice(id)).toBe(false)
-    expect(mgr.verify(deviceToken ?? '')).toBe(false)
+    expect(mgr.verify(reg.deviceToken)).toBe(false)
     expect(mgr.listDevices()).toHaveLength(0)
 
     // 重启后仍为空（落盘生效）
     const mgr2 = createAuthManager({ dataDir: dir })
     expect(mgr2.listDevices()).toHaveLength(0)
-    expect(mgr2.verify(deviceToken ?? '')).toBe(false)
+    expect(mgr2.verify(reg.deviceToken)).toBe(false)
     mgr.dispose()
   })
 

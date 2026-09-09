@@ -97,6 +97,8 @@ type Stats = {
   outputTokens: number
   cacheRead: number
   cost: number
+  /** 价格未知、按 $0 计入的调用数（H2）。 */
+  unknownCostCalls: number
   createdAt?: number
   updatedAt?: number
 }
@@ -114,7 +116,9 @@ function computeStats(
   const inputTokens = calls.reduce((s, c) => s + c.usage.input, 0)
   const outputTokens = calls.reduce((s, c) => s + c.usage.output, 0)
   const cacheRead = calls.reduce((s, c) => s + (c.usage.cacheRead ?? 0), 0)
-  const cost = calls.reduce((s, c) => s + c.cost, 0)
+  // H2：价格未知的调用 cost 为 null——按 $0 计入成本并单独计数提示。
+  const cost = calls.reduce((s, c) => s + (c.cost ?? 0), 0)
+  const unknownCostCalls = calls.reduce((s, c) => s + (c.cost == null ? 1 : 0), 0)
   // 总 token = 输入 + 输出 + 缓存读（推理/缓存写当前未采集，计 0）。
   const totalTokens = inputTokens + outputTokens + cacheRead
   const lastSeg = segments[segments.length - 1]
@@ -136,6 +140,7 @@ function computeStats(
     outputTokens,
     cacheRead,
     cost,
+    unknownCostCalls,
     createdAt: session?.createdAt,
     updatedAt: session?.updatedAt,
   }
@@ -210,6 +215,11 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
               <StatRow label="用户消息">{formatNumber(stats.userMessages)}</StatRow>
               <StatRow label="助手消息">{formatNumber(stats.assistantMessages)}</StatRow>
               <StatRow label="总成本（估算）">{formatCostUSD(stats.cost)}</StatRow>
+              {stats.unknownCostCalls > 0 && (
+                <StatRow label="未估价调用">
+                  {formatNumber(stats.unknownCostCalls)} 次（按 $0 计）
+                </StatRow>
+              )}
               <StatRow label="创建时间">
                 {stats.createdAt ? formatDateTime(stats.createdAt) : '—'}
               </StatRow>

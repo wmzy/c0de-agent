@@ -136,7 +136,9 @@ function Collapsible({
 
 export function SegmentFooter({ segment }: { segment: LLMSegment }) {
   const totalTokens = segment.calls.reduce((s, c) => s + c.usage.input + c.usage.output, 0)
-  const totalCost = segment.calls.reduce((s, c) => s + c.cost, 0)
+  // H2：价格未知的调用 cost 为 null——按 $0 计入，附「未估价」提示。
+  const totalCost = segment.calls.reduce((s, c) => s + (c.cost ?? 0), 0)
+  const unknownCostCalls = segment.calls.reduce((s, c) => s + (c.cost == null ? 1 : 0), 0)
   const totalLatency = segment.calls.reduce((s, c) => s + c.latency.total, 0)
   return (
     <div className={card} data-testid="segment-footer">
@@ -145,7 +147,10 @@ export function SegmentFooter({ segment }: { segment: LLMSegment }) {
         <span className={dim}>{segment.provider}</span>
         <span className={dim}>· {formatTokenCount(totalTokens)} tok</span>
         <span className={dim}>· {formatLatency(totalLatency)}</span>
-        <span className={dim}>· {formatCost(totalCost)}</span>
+        <span className={dim}>
+          · {formatCost(totalCost)}
+          {unknownCostCalls > 0 ? `（${unknownCostCalls} 次未估价）` : ''}
+        </span>
         <span className={dim}>· {segment.calls.length} 次调用</span>
       </div>
       <Collapsible title="System Prompt">

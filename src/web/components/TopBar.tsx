@@ -1,5 +1,8 @@
 import { css } from '@linaria/core'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useParams } from 'react-router-dom'
+import { configAPI } from '../services/config.js'
+import { usageAPI } from '../services/usage.js'
 import { CommitButton } from './CommitButton.js'
 import { Logo } from './Logo.js'
 import { ProjectIndicator } from './ProjectIndicator.js'
@@ -63,6 +66,74 @@ const activeLink = css`
   font-weight: 600;
 `
 
+/** M5：顶栏月成本徽标——成本护栏从设置页深处提升到全局可见。 */
+const costBadge = css`
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-decoration: none;
+  white-space: nowrap;
+  &:hover {
+    border-color: var(--text-secondary);
+  }
+`
+
+const costNear = css`
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+`
+
+const costOver = css`
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 55%, transparent);
+  font-weight: 600;
+`
+
+/** 本月成本徽标：显示当月估算成本，按预算阈值变色（≥80% 警示、超预算告警）。
+ *  点击跳转设置页「用量与成本」面板。 */
+function MonthCostBadge({ settingsPath }: { settingsPath: string }) {
+  // 直接走共享 query 缓存（与 ConfigProvider 同一 queryKey，零额外请求），
+  // 避免 TopBar 依赖 ConfigProvider 的渲染层级。
+  const { data: configResp } = useQuery({
+    queryKey: ['config', 'server'],
+    queryFn: () => configAPI.get(),
+    staleTime: 60_000,
+  })
+  const budget = configResp?.config?.usage?.monthlyBudgetUsd ?? 0
+  const { data: summary } = useQuery({
+    queryKey: ['usage', 'summary'],
+    queryFn: () => usageAPI.summary(),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  })
+  const now = new Date().toISOString().slice(0, 7)
+  const monthEntry = summary?.byMonth.find((m) => m.month === now)
+  const cost = monthEntry?.cost ?? 0
+  const overBudget = budget > 0 && cost > budget
+  const nearBudget = budget > 0 && !overBudget && cost >= budget * 0.8
+  const unknown = monthEntry?.unknownCostCalls ?? 0
+  const tip =
+    `本月估算成本 $${cost.toFixed(2)}` +
+    (budget > 0 ? `（预算 $${budget.toFixed(2)}${overBudget ? '，已超支' : ''}）` : '') +
+    (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
+    '。点击前往设置查看用量与成本。'
+  return (
+    <Link
+      to={settingsPath}
+      className={`${costBadge}${overBudget ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`}
+      title={tip}
+      data-testid="month-cost-badge"
+    >
+      {overBudget ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 ${cost.toFixed(2)}
+    </Link>
+  )
+}
+
 /** 全局顶部导航栏：品牌标识 + 主界面/看板/设置入口。 */
 export function TopBar() {
   const { pathname } = useLocation()
@@ -92,6 +163,7 @@ export function TopBar() {
         )}
       </div>
       <nav className={nav}>
+        <MonthCostBadge settingsPath={settingsPath} />
         <Link
           to={sessionsPath}
           className={`${link} ${!isSettings && !isKanban ? activeLink : ''}`}

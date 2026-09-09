@@ -43,6 +43,14 @@ async function runPrintMode(
     if (!UUID_PATTERN.test(opts.sessionId)) throw new Error(`session not found: ${opts.sessionId}`)
     const existing = await getSession(deps.db, opts.sessionId)
     if (!existing) throw new Error(`session not found: ${opts.sessionId}`)
+    // M2：会话在回收站（Web 已删除）时拒绝续接——否则消息会写入一个 Web 树
+    // 不可见的会话，与「删除」心智模型冲突。给出可操作的恢复途径。
+    if (existing.deletedAt) {
+      throw new Error(
+        `该会话在回收站中（已删除）。请先在 Web 界面回收站中恢复，` +
+          `或停止 serve 后运行 \`c0de sessions restore ${opts.sessionId}\` 恢复，再续接。`,
+      )
+    }
     // 续接即升级为持久会话：30 天临时清理不再触及（P1：此前 --continue 的
     // 会话同样会在 30 天不活动后被物理删除，用户显式续接的历史静默丢失）。
     if (existing.agentType === 'print') {

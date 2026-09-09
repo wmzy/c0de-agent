@@ -252,7 +252,10 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
 
     const totalLatency = Date.now() - requestStartTime
     let contextWindow: number | undefined
-    let computedCost = 0
+    // H2：价格未知时 cost=null（聚合按 $0 计 + 显式计数），不再静默记 0。
+    // 未知判定：provider 未注册/解析失败，或模型价目全为 0（未声明价格的
+    // 自建网关模型回退到 DEFAULT_MODEL_CAPABILITIES 的 0 价）。
+    let computedCost: number | null = null
     try {
       const { capabilities } = resolveRoute(
         deps.llmRegistry,
@@ -262,11 +265,13 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       contextWindow = capabilities.contextWindow
       const inputTokens = collected.usage?.inputTokens ?? 0
       const outputTokens = collected.usage?.outputTokens ?? 0
-      computedCost =
-        (inputTokens / 1000) * capabilities.costPer1kInput +
-        (outputTokens / 1000) * capabilities.costPer1kOutput
+      if (capabilities.costPer1kInput > 0 || capabilities.costPer1kOutput > 0) {
+        computedCost =
+          (inputTokens / 1000) * capabilities.costPer1kInput +
+          (outputTokens / 1000) * capabilities.costPer1kOutput
+      }
     } catch {
-      // provider 未注册或模型未知：保留 contextWindow=undefined、cost=0
+      // provider 未注册：保留 contextWindow=undefined、cost=null
     }
 
     // —— contextWindow 兜底 + token 预算同步 ——

@@ -39,21 +39,34 @@ function createAuthRoute(ctx: ServerContext): Hono {
     if (!body.token) {
       return apiError(c, 400, 'BAD_REQUEST', 'token is required')
     }
-    const deviceToken = await ctx.authManager.registerFirstDevice(
-      body.token,
-      body.deviceName ?? '设备',
-    )
-    if (!deviceToken) {
-      // bootstrap 已失效/已注册过设备 → 引导走配对审批
-      return apiError(
-        c,
-        403,
-        'BOOTSTRAP_CONSUMED',
-        'bootstrap token 已失效（已有设备注册）。请在新设备发起配对，由已授权设备审批。',
-      )
+    const result = await ctx.authManager.registerFirstDevice(body.token, body.deviceName ?? '设备')
+    if (!result.ok) {
+      // 区分失败原因给正确的恢复指引：链接过期 → 重启 serve 换新链接；
+      // 已有设备 → 走配对审批；两者补救动作完全不同，不得混用同一文案。
+      if (result.reason === 'ttl_expired') {
+        return apiError(
+          c,
+          403,
+          'BOOTSTRAP_EXPIRED',
+          '注册链接已过期（超过安全窗口未使用）。请重启 c0de serve——无已注册设备时' +
+            '重启会重新生成注册链接，打开启动日志中打印的新 URL 完成首次注册。',
+        )
+      }
+      if (result.reason === 'devices_exist') {
+        return apiError(
+          c,
+          403,
+          'BOOTSTRAP_CONSUMED',
+          'bootstrap token 已失效（已有设备注册）。请在新设备发起配对，由已授权设备审批。',
+        )
+      }
+      if (result.reason === 'invalid_bootstrap') {
+        return apiError(c, 403, 'BOOTSTRAP_INVALID', 'bootstrap token 无效。')
+      }
+      return apiError(c, 403, 'STATIC_TOKEN_MODE', '静态 token 模式不支持设备注册。')
     }
     // P1-3：回传注册成功的设备名，前端展示一次性确认（用户可核对注册的是否自己）。
-    return c.json({ deviceToken, deviceName: body.deviceName ?? '设备' })
+    return c.json({ deviceToken: result.deviceToken, deviceName: body.deviceName ?? '设备' })
   })
 
   // 新设备发起配对请求（公开）。
@@ -66,7 +79,12 @@ function createAuthRoute(ctx: ServerContext): Hono {
     if (!result) {
       return apiError(c, 429, 'PAIRING_LIMIT', '待审批的配对请求过多，请稍后再试')
     }
-    return c.json(result)
+    // L3：零已授权设备时配对审批不可能完成（无人可批准）——前端据此展示
+    // 恢复指引（重启 serve 重新生成 bootstrap 注册链接）而非干等审批。
+    return c.json({
+      ...result,
+      hasAuthorizedDevices: ctx.authManager.listDevices().length > 0,
+    })
   })
 
   // 新设备轮询配对审批结果（公开）。

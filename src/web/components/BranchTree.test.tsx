@@ -38,10 +38,24 @@ const tree: SessionTreeNode[] = [
           updatedAt: 1,
         },
         children: [],
-        usage: { inputTokens: 0, outputTokens: 0, cacheRead: 0, cost: 0, calls: 0 },
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheRead: 0,
+          cost: 0,
+          unknownCostCalls: 0,
+          calls: 0,
+        },
       },
     ],
-    usage: { inputTokens: 0, outputTokens: 0, cacheRead: 0, cost: 0, calls: 0 },
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 0,
+      unknownCostCalls: 0,
+      calls: 0,
+    },
   },
 ]
 
@@ -62,7 +76,14 @@ const treeWithUsage: SessionTreeNode[] = [
       updatedAt: 1,
     },
     children: [],
-    usage: { inputTokens: 12000, outputTokens: 3000, cacheRead: 500, cost: 0.03, calls: 8 },
+    usage: {
+      inputTokens: 12000,
+      outputTokens: 3000,
+      cacheRead: 500,
+      cost: 0.03,
+      unknownCostCalls: 0,
+      calls: 8,
+    },
   },
 ]
 
