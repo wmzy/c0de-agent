@@ -78,6 +78,20 @@
       "when": 1788995144108,
       "tag": "0011_slow_slapstick",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789032562634,
+      "tag": "0012_chief_timeslip",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789041898540,
+      "tag": "0013_swift_zeigeist",
+      "breakpoints": true
     }
   ]
 }

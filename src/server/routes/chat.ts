@@ -174,7 +174,7 @@ function createChatRoute(ctx: ServerContext): Hono {
       : ctx.config
     const sessionDefaultMode = sessionProjectScope?.permission?.defaultMode
     // P0-2 项目信任门禁：未信任项目 + 项目作用域原始配置含风险项
-    // （auto 权限/始终允许白名单/启用项目插件）→ 409 TRUST_REQUIRED，
+    // （auto 权限 / timeoutAction=deny 降级 / 启用项目插件）→ 409 TRUST_REQUIRED，
     // 前端弹窗明示风险，用户显式信任（POST /projects/:id/trust）后重发。
     // 只评估项目作用域原始配置（全局配置是用户本机显式编辑，天然可信）；
     // 信任是一次性动作，trustedAt 落盘后不再拦截。

@@ -1,14 +1,18 @@
 // REST routes for the kanban board — frontend UI uses these for drag-and-drop
 // card operations, board config, and initial load.
 // P2-5：/deleted* 为看板回收站端点（必须注册在 /:projectId 之前避免被参数路由吞掉）。
+
+import { existsSync } from 'node:fs'
 import { Hono } from 'hono'
 import {
   createKanbanStore,
+  getDeletedKanbanBoard,
   KanbanColumnInUseError,
   listDeletedKanbanBoards,
   permanentlyDeleteKanbanBoard,
   restoreKanbanBoard,
 } from '../../kanban/index.js'
+import { fromDirectory } from '../../project/index.js'
 import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shared/types/kanban.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -21,12 +25,48 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     return c.json({ boards: await listDeletedKanbanBoards(ctx.db) })
   })
 
-  // POST /deleted/:boardId/restore — 恢复到指定项目（目标已有看板 → 409）。
+  // POST /deleted/:boardId/restore — 恢复到指定项目，或「重建原项目」恢复。
   app.post('/deleted/:boardId/restore', async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      projectId?: unknown
+      rebuild?: unknown
+    }
+    const boardId = c.req.param('boardId')
+
+    // 重建原项目：目录仍存在时重建项目记录并恢复到该目录（与会话存储同语义）。
+    if (body.rebuild === true) {
+      const board = await getDeletedKanbanBoard(ctx.db, boardId)
+      if (!board) return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+      if (!board.deletedProjectWorktree) {
+        return apiError(
+          c,
+          400,
+          'NO_ORIGINAL_WORKTREE',
+          '该看板未记录原项目目录，无法重建原项目；请改为恢复到现有项目',
+        )
+      }
+      if (!existsSync(board.deletedProjectWorktree)) {
+        return apiError(
+          c,
+          409,
+          'ORIGINAL_DIR_MISSING',
+          '原项目目录已不存在，无法重建；请改为恢复到现有项目',
+        )
+      }
+      const project = await fromDirectory(ctx.db, board.deletedProjectWorktree)
+      const result = await restoreKanbanBoard(ctx.db, boardId, project.id)
+      if (result.ok) {
+        return c.json({ ok: true, recreatedProject: { id: project.id, name: project.name } })
+      }
+      if (result.reason === 'TARGET_HAS_BOARD') {
+        return apiError(c, 409, 'TARGET_HAS_BOARD', '原项目已存在看板，无法覆盖')
+      }
+      return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+    }
+
     const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
     if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', '恢复目标项目（projectId）必填')
-    const result = await restoreKanbanBoard(ctx.db, c.req.param('boardId'), projectId)
+    const result = await restoreKanbanBoard(ctx.db, boardId, projectId)
     if (result.ok) return c.json({ ok: true })
     if (result.reason === 'TARGET_HAS_BOARD') {
       return apiError(c, 409, 'TARGET_HAS_BOARD', '目标项目已有看板，请先导出/删除目标看板后再恢复')

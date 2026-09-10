@@ -58,7 +58,8 @@ export type TrustRiskItem = { kind: string; detail: string }
 
 /**
  * P0-2 项目信任确认弹窗：项目作用域配置（.c0de/config.json）含风险项
- * （auto 权限/启用项目插件）且项目尚未被信任时，后端 409 拦截并由本弹窗明示。
+ * （auto 权限 / timeoutAction=deny 降级 / 启用项目插件）且项目尚未被信任时，
+ * 后端 409 拦截并由本弹窗明示。
  * 「信任并继续」→ POST /api/projects/:id/trust（一次性）→ 原消息重发；
  * 「取消」→ 移除本次乐观消息，不发送。
  */

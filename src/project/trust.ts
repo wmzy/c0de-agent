@@ -14,7 +14,7 @@ import type { Config } from '../shared/types/config.js'
 
 /** 单个风险项：kind 供前端图标/文案映射，detail 为人类可读说明。 */
 export type TrustRiskItem = {
-  kind: 'permission-auto' | 'plugins-enabled'
+  kind: 'permission-auto' | 'permission-timeout-deny' | 'plugins-enabled'
   detail: string
 }
 
@@ -32,6 +32,17 @@ export function summarizeProjectRisk(raw: Partial<Config> | undefined): TrustRis
     items.push({
       kind: 'permission-auto',
       detail: '权限模式 auto：bash/write/edit 等需要确认的工具将被自动放行',
+    })
+  }
+
+  // 权限确认超时后的动作降级为 'deny'：安全默认是 'pause'（超时后暂停对话，
+  // 防 agent 在用户缺席时继续自主执行）；'deny' 会「拒绝该工具但继续自动执行」。
+  // 携带此键的可疑仓库可在不触发 auto 权限的前提下悄然弱化超时安全网。
+  if (raw.permission?.timeoutAction === 'deny') {
+    items.push({
+      kind: 'permission-timeout-deny',
+      detail:
+        '权限超时动作 timeoutAction=deny：确认超时后 agent 将继续自主执行（安全默认应为 pause）',
     })
   }
 

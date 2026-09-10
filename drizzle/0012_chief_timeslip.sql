@@ -1,0 +1,1 @@
+ALTER TABLE "kanban_boards" ADD COLUMN "purge_pending_at" timestamp with time zone DEFAULT null;

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, lt, max, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, isNull, max, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, kanbanCards } from '../db/schema.js'
 import type {
@@ -272,24 +272,49 @@ export type DeletedKanbanBoard = {
   projectName: string
   cardCount: number
   deletedAt: number
+  /** 已到期进入物理清除宽限期的时间戳（ms）；null=尚未到期。 */
+  purgePendingAt: number | null
+  /** 删除时记录的原项目工作目录；null 或目录已不存在时无法「重建原项目」恢复。 */
+  deletedProjectWorktree: string | null
 }
 
-/** 把活动看板软删除进回收站（记录原项目名）。项目行删除后 FK 将 projectId 置 null。 */
+/** 把活动看板软删除进回收站（记录原项目名与工作目录）。项目行删除后 FK 将 projectId 置 null。 */
 export async function softDeleteKanbanBoard(
   handle: DB,
   projectId: string,
   projectName: string | null,
+  worktree?: string | null,
 ): Promise<boolean> {
   const rows = await handle.db
     .update(kanbanBoards)
     .set({
       deletedAt: new Date(),
       deletedProjectName: projectName ?? undefined,
+      deletedProjectWorktree: worktree ?? undefined,
+      // 恢复后重删的看板须重新经历「到期 → 宽限」周期，宽限标记不跨删除周期生效。
+      purgePendingAt: null,
       updatedAt: new Date(),
     })
     .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
     .returning({ id: kanbanBoards.id })
   return rows.length > 0
+}
+
+/** 行 + 卡片数 → 回收站条目（时间戳统一转 ms，兼容 Date/null/字符串）。 */
+function toDeletedBoard(b: BoardRow, cardCount: number): DeletedKanbanBoard {
+  const toMs = (d: Date | string | number | null | undefined): number | null => {
+    if (d == null) return null
+    const t = d instanceof Date ? d.getTime() : new Date(d).getTime()
+    return Number.isFinite(t) ? t : null
+  }
+  return {
+    id: b.id,
+    projectName: b.deletedProjectName ?? '未知项目',
+    cardCount,
+    deletedAt: toMs(b.deletedAt) ?? 0,
+    purgePendingAt: toMs(b.purgePendingAt),
+    deletedProjectWorktree: b.deletedProjectWorktree ?? null,
+  }
 }
 
 /** 回收站看板列表（含卡片数）。 */
@@ -311,16 +336,25 @@ export async function listDeletedKanbanBoards(handle: DB): Promise<DeletedKanban
     )
     .groupBy(kanbanCards.boardId)
   const countMap = new Map(counts.map((c) => [c.boardId, c.n]))
-  return boards.map((b) => {
-    // isNotNull(deletedAt) 已过滤，此处必有值
-    const deletedAt = b.deletedAt as Date
-    return {
-      id: b.id,
-      projectName: b.deletedProjectName ?? '未知项目',
-      cardCount: countMap.get(b.id) ?? 0,
-      deletedAt: deletedAt instanceof Date ? deletedAt.getTime() : new Date(deletedAt).getTime(),
-    }
-  })
+  return boards.map((b) => toDeletedBoard(b, countMap.get(b.id) ?? 0))
+}
+
+/** 按 id 取单个回收站看板（供「重建原项目」恢复读取原工作目录）。 */
+export async function getDeletedKanbanBoard(
+  handle: DB,
+  boardId: string,
+): Promise<DeletedKanbanBoard | null> {
+  const [b] = await handle.db
+    .select()
+    .from(kanbanBoards)
+    .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
+    .limit(1)
+  if (!b) return null
+  const counts = await handle.db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(kanbanCards)
+    .where(eq(kanbanCards.boardId, boardId))
+  return toDeletedBoard(b, counts[0]?.n ?? 0)
 }
 
 export type RestoreKanbanBoardResult =
@@ -341,7 +375,14 @@ export async function restoreKanbanBoard(
   if (active) return { ok: false, reason: 'TARGET_HAS_BOARD' }
   const rows = await handle.db
     .update(kanbanBoards)
-    .set({ projectId, deletedAt: null, deletedProjectName: null, updatedAt: new Date() })
+    .set({
+      projectId,
+      deletedAt: null,
+      deletedProjectName: null,
+      deletedProjectWorktree: null,
+      purgePendingAt: null,
+      updatedAt: new Date(),
+    })
     .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
     .returning({ id: kanbanBoards.id })
   return rows.length > 0 ? { ok: true } : { ok: false, reason: 'BOARD_NOT_FOUND' }
@@ -356,12 +397,56 @@ export async function permanentlyDeleteKanbanBoard(handle: DB, boardId: string):
   return rows.length
 }
 
-/** 物理清除到期看板（软删除超过 retentionMs；与 purgeDeletedSessions 同调度）。 */
-export async function purgeDeletedKanbanBoards(handle: DB, retentionMs: number): Promise<number> {
-  const cutoff = new Date(Date.now() - retentionMs)
+/** 两阶段清理结果：marked = 本次新标记进入宽限期的条目数；deleted = 本次物理清除数。 */
+export type KanbanTrashPurgeResult = { marked: number; deleted: number }
+
+/**
+ * 看板回收站两阶段清理（与会话 purgeDeletedSessions 同策略，杜绝「到期即静默清空」）：
+ *  - 阶段一：软删除超过 retentionMs 且尚未标记 → 写 purgePendingAt（进入宽限期，
+ *    UI 显示「即将清除」仍可恢复）；
+ *  - 阶段二：purgePendingAt 早于 graceMs 截止 → 物理清除（卡片经 FK cascade 连带删除）。
+ * 看板回收站全局单一分组、无「首次查看才起算」语义，保留期自删除时刻起算，稳定可预期。
+ */
+export async function purgeDeletedKanbanBoards(
+  handle: DB,
+  retentionMs: number,
+  graceMs: number,
+): Promise<KanbanTrashPurgeResult> {
+  const retentionCutoff = new Date(Date.now() - retentionMs)
+  const graceCutoff = new Date(Date.now() - graceMs)
   const rows = await handle.db
-    .delete(kanbanBoards)
-    .where(and(isNotNull(kanbanBoards.deletedAt), lt(kanbanBoards.deletedAt, cutoff)))
-    .returning({ id: kanbanBoards.id })
-  return rows.length
+    .select({
+      id: kanbanBoards.id,
+      deletedAt: kanbanBoards.deletedAt,
+      purgePendingAt: kanbanBoards.purgePendingAt,
+    })
+    .from(kanbanBoards)
+    .where(isNotNull(kanbanBoards.deletedAt))
+
+  // —— 阶段一：到期标记（先宽限，不直接清除）——
+  let marked = 0
+  for (const r of rows) {
+    if (!r.deletedAt) continue
+    if (r.purgePendingAt) continue
+    if (r.deletedAt.getTime() >= retentionCutoff.getTime()) continue
+    await handle.db
+      .update(kanbanBoards)
+      .set({ purgePendingAt: new Date(), updatedAt: new Date() })
+      .where(eq(kanbanBoards.id, r.id))
+    marked += 1
+  }
+
+  // —— 阶段二：宽限期满物理清除 ——
+  const pendingIds = rows
+    .filter((r) => r.purgePendingAt && r.purgePendingAt.getTime() < graceCutoff.getTime())
+    .map((r) => r.id)
+  let deleted = 0
+  if (pendingIds.length > 0) {
+    const removed = await handle.db
+      .delete(kanbanBoards)
+      .where(inArray(kanbanBoards.id, pendingIds))
+      .returning({ id: kanbanBoards.id })
+    deleted = removed.length
+  }
+  return { marked, deleted }
 }

@@ -109,6 +109,46 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
   // 斜杠命令拦截：命中则执行本地语义，不把命令文本发给 LLM。
   if (await runSlashCommand(message, continueId, ctx)) return
 
+  // P1-4：CLI 无可恢复的「暂停」交互，budgetAction='pause' 时在单次询问前拦截——
+  // 当月成本超预算则明确拒绝并给出操作路径，而非静默放行继续烧钱。
+  // 与 Web 端暂停语义对齐（Web 暂停可恢复、CLI 直接拒绝本次执行）。
+  if (ctx.config.usage?.budgetAction === 'pause') {
+    const projectBudget = ctx.config.usage?.monthlyBudgetUsd ?? 0
+    const globalBudget = ctx.config.usage?.globalMonthlyBudgetUsd ?? 0
+    if (projectBudget > 0 || globalBudget > 0) {
+      const { currentMonthCost } = await import('../../session/usage.js')
+      const over: string[] = []
+      if (globalBudget > 0) {
+        const g = await currentMonthCost(ctx.deps.db)
+        if (g.cost > globalBudget) {
+          over.push(`全局预算 $${globalBudget.toFixed(2)}：本月已 $${g.cost.toFixed(2)}`)
+        }
+      }
+      if (projectBudget > 0) {
+        // 项目预算仅在 cwd 能解析到项目时检查；未归属目录的调用只受全局预算兜底。
+        const { getByDirectory } = await import('../../project/index.js')
+        let projectId: string | null = null
+        try {
+          projectId = (await getByDirectory(ctx.deps.db, ctx.deps.cwd))?.id ?? null
+        } catch {
+          projectId = null
+        }
+        if (projectId) {
+          const p = await currentMonthCost(ctx.deps.db, projectId)
+          if (p.cost > projectBudget) {
+            over.push(`项目预算 $${projectBudget.toFixed(2)}：本月已 $${p.cost.toFixed(2)}`)
+          }
+        }
+      }
+      if (over.length > 0) {
+        throw new Error(
+          `chat: 月度成本预算已超支（${over.join('；')}）。` +
+            'CLI 无法暂停对话，已拒绝本次执行。请提升预算、改用更便宜的模型，或经 Web 界面调整后再试。',
+        )
+      }
+    }
+  }
+
   const text = await runPrintMode(ctx.config, message, ctx.deps, {
     ...(model ? { model } : {}),
     ...(continueId ? { sessionId: continueId } : {}),

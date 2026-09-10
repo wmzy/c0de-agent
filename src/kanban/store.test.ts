@@ -7,6 +7,7 @@ import { kanbanBoards, projects } from '../db/schema.js'
 import { DEFAULT_KANBAN_COLUMNS } from '../shared/types/kanban.js'
 import {
   createKanbanStore,
+  getDeletedKanbanBoard,
   KanbanColumnInUseError,
   listDeletedKanbanBoards,
   permanentlyDeleteKanbanBoard,
@@ -377,7 +378,7 @@ describe('P2-5 kanban recycle bin', () => {
     expect(await permanentlyDeleteKanbanBoard(handle, boardId)).toBe(0)
     expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
 
-    // 到期清除：把 deletedAt 拨回过去 → purge 物理清除
+    // 到期清除：把 deletedAt 拨回过去 → 第一次 purge 仅标记进入宽限期（不物理清除）
     await seedProject('proj-b')
     const storeB = createKanbanStore(handle, 'proj-b')
     await storeB.addCard({ title: 'y' })
@@ -388,8 +389,52 @@ describe('P2-5 kanban recycle bin', () => {
       .update(kanbanBoards)
       .set({ deletedAt: past })
       .where(isNotNull(kanbanBoards.deletedAt))
-    expect(await purgeDeletedKanbanBoards(handle, 60 * 24 * 60 * 60 * 1000)).toBe(1)
+    const RETENTION = 60 * 24 * 60 * 60 * 1000
+    const GRACE = 7 * 24 * 60 * 60 * 1000
+
+    // 阶段一：到期 → 标记进入宽限期，仍在回收站可恢复
+    expect(await purgeDeletedKanbanBoards(handle, RETENTION, GRACE)).toEqual({
+      marked: 1,
+      deleted: 0,
+    })
+    const marked = await listDeletedKanbanBoards(handle)
+    expect(marked).toHaveLength(1)
+    expect(marked[0]?.purgePendingAt).toBeGreaterThan(0)
+    // 宽限期内重复调用不重复标记、不清除
+    expect(await purgeDeletedKanbanBoards(handle, RETENTION, GRACE)).toEqual({
+      marked: 0,
+      deleted: 0,
+    })
+
+    // 阶段二：把 purgePendingAt 拨回超过宽限期 → 物理清除
+    await handle.db
+      .update(kanbanBoards)
+      .set({ purgePendingAt: new Date(Date.now() - (GRACE + 24 * 60 * 60 * 1000)) })
+      .where(isNotNull(kanbanBoards.deletedAt))
+    expect(await purgeDeletedKanbanBoards(handle, RETENTION, GRACE)).toEqual({
+      marked: 0,
+      deleted: 1,
+    })
     expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
+  })
+
+  it('soft delete 记录原工作目录，getDeletedKanbanBoard 可读取（供重建原项目）', async () => {
+    await seedProject('proj-a')
+    const store = createKanbanStore(handle, 'proj-a')
+    await store.addCard({ title: 'w' })
+    const boardId = (await store.getBoard()).id
+
+    expect(await softDeleteKanbanBoard(handle, 'proj-a', 'A', '/repo/proj-a')).toBe(true)
+
+    const board = await getDeletedKanbanBoard(handle, boardId)
+    expect(board?.deletedProjectWorktree).toBe('/repo/proj-a')
+    expect(board?.cardCount).toBe(1)
+    // 未记录 worktree（旧调用路径/直接改行）时返回 null
+    await handle.db
+      .update(kanbanBoards)
+      .set({ deletedProjectWorktree: null })
+      .where(eq(kanbanBoards.id, boardId))
+    expect((await getDeletedKanbanBoard(handle, boardId))?.deletedProjectWorktree).toBeNull()
   })
 
   it('删除看板后新项目同 id 重建项目 → 新看板不被旧回收站看板遮蔽', async () => {

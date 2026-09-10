@@ -14,6 +14,13 @@ const mcpRow = css`
   background: var(--bg-secondary);
 `
 
+const mcpNotice = css`
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--warning);
+`
+
 interface MCPPanelProps {
   mcpServers: MCPServerConfig[]
   /** 函数式更新：Settings 在 setDraft 内对最新 draft.mcpServers 执行 updater。 */
@@ -41,6 +48,9 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
   return (
     <div className={section}>
       <h2 className={sectionTitle}>MCP 服务器</h2>
+      <span className={mcpNotice} data-testid="mcp-unimplemented-notice">
+        MCP 服务器当前未接入工具加载：此处配置会被保存，但不会向 AI 暴露任何工具（功能未生效）。
+      </span>
       {mcpServers.map((server, index) => (
         // 受控表单列表用 index 作 key，避免输入 name 即重挂载失焦（同 providers 行）
         // biome-ignore lint/suspicious/noArrayIndexKey: 受控表单列表，name 输入会改 key 导致重挂载失焦

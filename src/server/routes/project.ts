@@ -218,6 +218,8 @@ function createProjectRoute(ctx: ServerContext): Hono {
         .set({
           deletedAt: now,
           deletedProjectName: project.name ?? project.worktree,
+          deletedProjectWorktree: project.worktree,
+          purgePendingAt: null,
           updatedAt: now,
         })
         .where(and(eq(kanbanBoards.projectId, id), isNull(kanbanBoards.deletedAt)))

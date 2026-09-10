@@ -533,11 +533,17 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
         }
       })
       .catch(() => {})
-    // P2-5：回收站看板到期物理清除（与会话回收站同保留期）。
-    void purgeDeletedKanbanBoards(db, TRASH_RETENTION_MS)
-      .then((deleted) => {
+    // P2-5：回收站看板两阶段清理（与会话回收站同策略：到期先标记宽限，期满再物理清除，
+    // 杜绝「到期即静默清空」）。
+    void purgeDeletedKanbanBoards(db, TRASH_RETENTION_MS, TRASH_PURGE_GRACE_MS)
+      .then(({ marked, deleted }) => {
+        if (marked > 0) {
+          console.log(
+            `[server] 回收站清理：${marked} 个看板已到期，进入 ${TRASH_PURGE_GRACE_MS / (24 * 60 * 60 * 1000)} 天宽限期（期间可恢复）`,
+          )
+        }
         if (deleted > 0) {
-          console.log(`[server] 回收站清理：已物理清除 ${deleted} 个到期看板`)
+          console.log(`[server] 回收站清理：已物理清除 ${deleted} 个超过宽限期的看板`)
         }
       })
       .catch(() => {})

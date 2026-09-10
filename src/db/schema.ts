@@ -179,6 +179,13 @@ export const kanbanBoards = pgTable(
     /** 软删除时间戳；null=活动看板。删除时记录原项目名供回收站展示。 */
     deletedAt: timestamp('deleted_at', { withTimezone: true }).default(sql`null`),
     deletedProjectName: text('deleted_project_name'),
+    /** 删除项目时记录的原项目工作目录；null 或目录已不存在时无法「重建原项目」恢复。
+     *  与 deletedProjectName（展示名）分离——name 可能为 null 或重名，路径才是重建依据。 */
+    deletedProjectWorktree: text('deleted_project_worktree'),
+    /** 回收站条目已到期、进入物理清除宽限期的时间戳（null=未到期）。
+     *  到期先标记，宽限期（默认 7 天）内 UI 仍可恢复；期满后由
+     *  purgeDeletedKanbanBoards 物理清除——与会话回收站同策略，杜绝「到期即静默清空」。 */
+    purgePendingAt: timestamp('purge_pending_at', { withTimezone: true }).default(sql`null`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

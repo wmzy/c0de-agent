@@ -640,6 +640,18 @@ function expiryLabel(s: Session): string {
   return `剩 ${daysLeft(seen)} 天 · ${expires.toLocaleDateString()} 清除`
 }
 
+/** 看板回收站保留期自删除时刻起算（全局单一分组，无「首次查看」语义）；
+ *  purgePendingAt 存在 = 已到期进入宽限期（7 天内可恢复，逾期物理清除）。 */
+function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null }): string {
+  if (b.purgePendingAt) {
+    const deadline = b.purgePendingAt + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000
+    const left = Math.max(0, Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000)))
+    return `即将清除 · 剩 ${left} 天内恢复`
+  }
+  const expires = new Date(b.deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  return `${expires.toLocaleDateString()} 进入宽限`
+}
+
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
  *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。
  *  P1-7：仅显示当前项目的删除会话；「清空」仅清空当前项目。 */
@@ -676,6 +688,10 @@ function RecycleBin({ projectId }: { projectId: string }) {
   const restoreBoardMut = useMutation({
     mutationFn: (v: { boardId: string; projectId: string }) =>
       kanbanAPI.restoreDeletedBoard(v.boardId, v.projectId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] }),
+  })
+  const restoreBoardToOriginalMut = useMutation({
+    mutationFn: (boardId: string) => kanbanAPI.restoreDeletedBoardToOriginal(boardId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] }),
   })
   const destroyBoardMut = useMutation({
@@ -1089,8 +1105,8 @@ function RecycleBin({ projectId }: { projectId: string }) {
         <>
           <div className={deletedRow} data-testid="orphan-kanban-header">
             <span style={{ color: 'var(--warning)', fontSize: 12 }}>
-              未归属看板（{deletedBoards?.length ?? 0} 个，来自已删除的项目；保留{' '}
-              {TRASH_RETENTION_DAYS} 天后自动清除）
+              未归属看板（{deletedBoards?.length ?? 0} 个，来自已删除的项目；删除后保留{' '}
+              {TRASH_RETENTION_DAYS} 天，到期宽限 {TRASH_PURGE_GRACE_DAYS} 天再自动清除）
             </span>
           </div>
           {deletedBoards?.map((b) => (
@@ -1098,9 +1114,7 @@ function RecycleBin({ projectId }: { projectId: string }) {
               <span title={`看板来自「${b.projectName}」`}>
                 📋 {b.projectName}（{b.cardCount} 张卡片）
               </span>
-              <span title={new Date(b.deletedAt).toLocaleString()}>
-                {new Date(b.deletedAt).toLocaleDateString()}
-              </span>
+              <span title={new Date(b.deletedAt).toLocaleString()}>{kanbanExpiryLabel(b)}</span>
               <button
                 type="button"
                 className={restoreBtn}
@@ -1119,6 +1133,28 @@ function RecycleBin({ projectId }: { projectId: string }) {
               >
                 恢复到当前项目
               </button>
+              {b.deletedProjectWorktree && (
+                <button
+                  type="button"
+                  className={restoreBtn}
+                  onClick={() =>
+                    restoreBoardToOriginalMut.mutate(b.id, {
+                      onSuccess: (d) =>
+                        setNotice(
+                          d?.recreatedProject
+                            ? `看板「${b.projectName}」已恢复，并重新创建了原项目「${d.recreatedProject.name ?? '未命名项目'}」。`
+                            : `看板「${b.projectName}」已恢复到原项目。`,
+                        ),
+                      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+                    })
+                  }
+                  disabled={restoreBoardToOriginalMut.isPending}
+                  data-testid={`restore-orphan-kanban-recreate-${b.id}`}
+                  title="在原有目录重建项目并恢复看板（目录仍存在时生效）"
+                >
+                  恢复并重建原项目
+                </button>
+              )}
               <button
                 type="button"
                 className={restoreBtn}

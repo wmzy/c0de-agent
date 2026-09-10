@@ -46,6 +46,10 @@ export type DeletedKanbanBoard = {
   projectName: string
   cardCount: number
   deletedAt: number
+  /** 已到期进入物理清除宽限期的时间戳（ms）；null=尚未到期。 */
+  purgePendingAt: number | null
+  /** 删除时记录的原项目工作目录；null 或目录已不存在时无法「重建原项目」恢复。 */
+  deletedProjectWorktree: string | null
 }
 
 const kanbanAPI = {
@@ -107,6 +111,15 @@ const kanbanAPI = {
       method: 'POST',
       body: JSON.stringify({ projectId }),
     }),
+  /** P2-5：重建原项目并恢复看板（目录仍存在时；原目录已存在看板 → 409）。 */
+  restoreDeletedBoardToOriginal: (boardId: string) =>
+    apiRequest<{ ok: boolean; recreatedProject?: { id: string; name: string | null } }>(
+      `/api/kanban/deleted/${boardId}/restore`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ rebuild: true }),
+      },
+    ),
   /** P2-5：彻底删除回收站看板（不可恢复）。 */
   destroyDeletedBoard: (boardId: string) =>
     apiRequest<{ ok: boolean }>(`/api/kanban/deleted/${boardId}`, { method: 'DELETE' }),

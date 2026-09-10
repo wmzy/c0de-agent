@@ -21,6 +21,20 @@ describe('summarizeProjectRisk', () => {
     ).toEqual([])
   })
 
+  it('timeoutAction=deny → permission-timeout-deny 风险项', () => {
+    const items = summarizeProjectRisk({
+      permission: { timeoutAction: 'deny' },
+    } as Partial<Config>)
+    expect(items.map((i) => i.kind)).toEqual(['permission-timeout-deny'])
+    expect(items[0]?.detail).toContain('timeoutAction')
+  })
+
+  it('timeoutAction=pause → 不拦截（默认安全值）', () => {
+    expect(
+      summarizeProjectRisk({ permission: { timeoutAction: 'pause' } } as Partial<Config>),
+    ).toEqual([])
+  })
+
   it('plugins.enabled 非空 → plugins-enabled 风险项（仅字符串名）', () => {
     const items = summarizeProjectRisk({
       plugins: { enabled: ['p-a', 42] as unknown as string[] },
@@ -36,9 +50,13 @@ describe('summarizeProjectRisk', () => {
 
   it('多风险项全量列出', () => {
     const items = summarizeProjectRisk({
-      permission: { defaultMode: 'auto' },
+      permission: { defaultMode: 'auto', timeoutAction: 'deny' },
       plugins: { enabled: ['p-a'] },
     } as Partial<Config>)
-    expect(items.map((i) => i.kind)).toEqual(['permission-auto', 'plugins-enabled'])
+    expect(items.map((i) => i.kind)).toEqual([
+      'permission-auto',
+      'permission-timeout-deny',
+      'plugins-enabled',
+    ])
   })
 })
