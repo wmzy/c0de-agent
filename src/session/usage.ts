@@ -11,7 +11,7 @@
 
 import { and, eq, gte } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
-import { sessions, usageEvents } from '../db/schema.js'
+import { appMeta, sessions, usageEvents } from '../db/schema.js'
 
 /** segments 中单次调用的宽松形状（metadata JSON 反序列化后字段可能漂移）。 */
 type SegmentCall = {
@@ -107,4 +107,24 @@ export async function currentMonthCost(
 export function localMonthKey(ts: number): string {
   const d = new Date(ts)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** 一次性 backfill 标记键（app_meta）。 */
+export const USAGE_BACKFILL_MARKER = 'usage_backfill_v1'
+
+/**
+ * P3-8：backfill 只在「升级后的首次启动」执行一次，之后跳过——
+ * backfill 的真实消费者只有升级前遗留 segments（fork 复制的 segments 经 callId
+ * 唯一约束去重本就是 no-op；导入会话的 segments 已剥离 call id 不产生账本行），
+ * 每次启动全表扫描是纯浪费。标记写入与 backfill 同事务，失败不落标记可重试。
+ */
+export async function backfillUsageEventsOnce(handle: DB): Promise<number> {
+  const [marker] = await handle.db
+    .select()
+    .from(appMeta)
+    .where(eq(appMeta.key, USAGE_BACKFILL_MARKER))
+  if (marker) return 0
+  const added = await backfillUsageEvents(handle)
+  await handle.db.insert(appMeta).values({ key: USAGE_BACKFILL_MARKER, value: String(Date.now()) })
+  return added
 }

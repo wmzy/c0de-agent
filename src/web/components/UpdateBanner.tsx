@@ -247,7 +247,11 @@ export function UpdateBanner() {
             将更新到版本 <strong>{data.latestVersion}</strong>。热更新会暂停进行中的对话任务
             （未达安全点的任务可能被中止），并关闭所有终端面板——终端里正在运行的进程 （如 dev
             server）会停止；更新完成后将在原位重建 shell，可在刷新页面后继续使用。
-            <ImpactList runs={data?.impact?.runs ?? []} terminals={data?.impact?.terminals ?? []} />
+            <ImpactList
+              runs={data?.impact?.runs ?? []}
+              terminals={data?.impact?.terminals ?? []}
+              pendingPermissionCount={data?.impact?.pendingPermissionCount ?? 0}
+            />
           </div>
         }
       />
@@ -255,15 +259,18 @@ export function UpdateBanner() {
   )
 }
 
-/** 影响面清单：逐项列出将被中断的对话与将被关闭的终端（P1：含标题，可判断是否重要）。 */
+/** 影响面清单：逐项列出将被中断的对话与将被关闭的终端（P1：含标题，可判断是否重要）。
+ *  P3-9：待确认的权限请求会在更新后静默失效（隐含按拒绝处理），一并明示。 */
 function ImpactList({
   runs,
   terminals,
+  pendingPermissionCount,
 }: {
   runs: Array<{ sessionId: string; title: string; agentType?: string }>
   terminals: Array<{ id: string; title: string; shell: string; cwd: string }>
+  pendingPermissionCount: number
 }) {
-  const hasAny = runs.length > 0 || terminals.length > 0
+  const hasAny = runs.length > 0 || terminals.length > 0 || pendingPermissionCount > 0
   if (!hasAny) return null
   return (
     <div className={impactList}>
@@ -279,6 +286,12 @@ function ImpactList({
             ))}
           </ul>
         </>
+      )}
+      {pendingPermissionCount > 0 && (
+        <div className={impactHead}>
+          有 {pendingPermissionCount} 个等待确认的权限请求：更新后弹窗将失效（该工具按拒绝处理），
+          请先处理或更新后在时间线中重发。
+        </div>
       )}
       {terminals.length > 0 && (
         <>

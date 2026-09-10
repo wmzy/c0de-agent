@@ -23,6 +23,7 @@ import { runInitCommand } from './commands/init.js'
 import { runPluginCommand } from './commands/plugin.js'
 import { runServeCommand } from './commands/serve.js'
 import { runSessionsCommand } from './commands/sessions.js'
+import { runTrustCommand } from './commands/trust.js'
 import { runUpdateCommand } from './commands/update.js'
 import { buildAgentDeps, type PermissionStrategy } from './deps.js'
 import { type CommandSpec, parseCommand } from './parser.js'
@@ -76,6 +77,11 @@ const COMMANDS: CommandSpec[] = [
     name: 'sessions',
     description: 'Manage CLI/web sessions (list / delete / restore / deleted).',
     options: [{ name: 'project', type: 'string' }],
+  },
+  {
+    name: 'trust',
+    description: 'Trust a project directory: enable its project-scope config and plugins.',
+    options: [],
   },
   {
     name: 'acp',
@@ -244,6 +250,13 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
       // 需要持久库列出/清理会话；serve 运行时内存库不含数据，直接失败而不是列空表。
       await withAgentDeps(cwd, { requirePersistent: true }, (_config, deps) =>
         runSessionsCommand({ args, db: deps.db }),
+      )
+      return
+    }
+    case 'trust': {
+      // 与 sessions 同约束：持久库落盘 trustedAt；serve 运行时引导走 Web 信任弹窗。
+      await withAgentDeps(cwd, { requirePersistent: true }, (_config, deps) =>
+        runTrustCommand({ args, db: deps.db, cwd }),
       )
       return
     }

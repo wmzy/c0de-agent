@@ -55,11 +55,17 @@ function scanPluginDir(dir: string): { name: string; path: string }[] {
 
 async function discoverPlugins(
   projectDir: string,
+  /** P0-2：includeProject=false 时跳过项目 .c0de/plugins（未信任项目不加载，
+   *  信任后重启生效）；全局 ~/.c0de/plugins 始终加载（用户本机显式放置）。 */
+  opts: { includeProject?: boolean } = {},
 ): Promise<{ name: string; path: string; plugin: Plugin }[]> {
   const projectPluginsDir = join(projectDir, '.c0de', 'plugins')
   const globalPluginsDir = join(homedir(), '.c0de', 'plugins')
 
-  const discovered = [...scanPluginDir(projectPluginsDir), ...scanPluginDir(globalPluginsDir)]
+  const discovered = [
+    ...(opts.includeProject === false ? [] : scanPluginDir(projectPluginsDir)),
+    ...scanPluginDir(globalPluginsDir),
+  ]
 
   const results: { name: string; path: string; plugin: Plugin }[] = []
   for (const entry of discovered) {

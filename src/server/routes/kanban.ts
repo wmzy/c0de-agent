@@ -1,13 +1,45 @@
 // REST routes for the kanban board — frontend UI uses these for drag-and-drop
 // card operations, board config, and initial load.
+// P2-5：/deleted* 为看板回收站端点（必须注册在 /:projectId 之前避免被参数路由吞掉）。
 import { Hono } from 'hono'
-import { createKanbanStore, KanbanColumnInUseError } from '../../kanban/index.js'
+import {
+  createKanbanStore,
+  KanbanColumnInUseError,
+  listDeletedKanbanBoards,
+  permanentlyDeleteKanbanBoard,
+  restoreKanbanBoard,
+} from '../../kanban/index.js'
 import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shared/types/kanban.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
 function createKanbanRoute(ctx: ServerContext): Hono {
   const app = new Hono()
+
+  // GET /deleted — 回收站看板列表（项目删除软删除的看板，60 天保留期）。
+  app.get('/deleted', async (c) => {
+    return c.json({ boards: await listDeletedKanbanBoards(ctx.db) })
+  })
+
+  // POST /deleted/:boardId/restore — 恢复到指定项目（目标已有看板 → 409）。
+  app.post('/deleted/:boardId/restore', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
+    const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
+    if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', '恢复目标项目（projectId）必填')
+    const result = await restoreKanbanBoard(ctx.db, c.req.param('boardId'), projectId)
+    if (result.ok) return c.json({ ok: true })
+    if (result.reason === 'TARGET_HAS_BOARD') {
+      return apiError(c, 409, 'TARGET_HAS_BOARD', '目标项目已有看板，请先导出/删除目标看板后再恢复')
+    }
+    return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+  })
+
+  // DELETE /deleted/:boardId — 彻底删除回收站看板（不可恢复）。
+  app.delete('/deleted/:boardId', async (c) => {
+    const count = await permanentlyDeleteKanbanBoard(ctx.db, c.req.param('boardId'))
+    if (count === 0) return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+    return c.json({ ok: true })
+  })
 
   // GET /:projectId — full board with cards
   app.get('/:projectId', async (c) => {

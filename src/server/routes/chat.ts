@@ -11,6 +11,7 @@ import { injectSteering } from '../../core/steering.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
+import { summarizeProjectRisk } from '../../project/trust.js'
 import { insertEntry } from '../../session/message.js'
 import {
   getLLMSegments,
@@ -172,6 +173,26 @@ function createChatRoute(ctx: ServerContext): Hono {
       ? mergeConfig(ctx.config, sessionProjectScope)
       : ctx.config
     const sessionDefaultMode = sessionProjectScope?.permission?.defaultMode
+    // P0-2 项目信任门禁：未信任项目 + 项目作用域原始配置含风险项
+    // （auto 权限/始终允许白名单/启用项目插件）→ 409 TRUST_REQUIRED，
+    // 前端弹窗明示风险，用户显式信任（POST /projects/:id/trust）后重发。
+    // 只评估项目作用域原始配置（全局配置是用户本机显式编辑，天然可信）；
+    // 信任是一次性动作，trustedAt 落盘后不再拦截。
+    if (session.projectId) {
+      const project = await getProject(ctx.db, session.projectId)
+      if (project && !project.trustedAt) {
+        const risks = summarizeProjectRisk(loadConfigScopes(cwd).project)
+        if (risks.length > 0) {
+          return apiError(
+            c,
+            409,
+            'TRUST_REQUIRED',
+            `项目「${project.name ?? project.worktree}」的项目配置（.c0de/config.json）包含需要你确认的风险项`,
+            { projectId: project.id, projectName: project.name ?? project.worktree, items: risks },
+          )
+        }
+      }
+    }
     // 权限确认超时（双层超时兜底）后的动作：'pause'（默认）拒绝该工具并暂停 run，
     // 防 default 模式下 agent 在用户缺席时继续自主执行；'deny' 保持旧行为（run 继续）。
     // 仅显式 'deny' 时选 deny，缺省/非法值一律 pause（安全默认）。

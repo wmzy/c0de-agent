@@ -12,6 +12,8 @@ export type Project = {
   gitRemote: string | null
   createdAt: number
   updatedAt: number
+  /** 用户显式信任该项目作用域配置/插件的时间戳；null=未信任（P0-2 信任边界）。 */
+  trustedAt: number | null
 }
 
 function rowToProject(row: typeof projects.$inferSelect): Project {
@@ -25,6 +27,12 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
       row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime(),
     updatedAt:
       row.updatedAt instanceof Date ? row.updatedAt.getTime() : new Date(row.updatedAt).getTime(),
+    trustedAt:
+      row.trustedAt instanceof Date
+        ? row.trustedAt.getTime()
+        : row.trustedAt
+          ? new Date(row.trustedAt).getTime()
+          : null,
   }
 }
 
@@ -111,6 +119,21 @@ export async function updateProjectName(
     .set({ name, updatedAt: new Date() })
     .where(eq(projects.id, id))
     .returning()
+  return row ? rowToProject(row) : null
+}
+
+/**
+ * P0-2：显式信任项目——用户在信任确认弹窗中批准项目作用域配置/插件后落盘。
+ * 信任是「克隆即信任」防线的落点；未信任项目携带风险配置时聊天入口被门禁拦截。
+ * 一次性动作：信任后不再拦截（用户可随时在设置中收回项目级配置）。
+ */
+export async function trustProject(handle: DB, id: string): Promise<Project | null> {
+  const rows = await handle.db
+    .update(projects)
+    .set({ trustedAt: new Date() })
+    .where(eq(projects.id, id))
+    .returning()
+  const row = rows[0]
   return row ? rowToProject(row) : null
 }
 

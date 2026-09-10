@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { agentAPI } from '../services/agent.js'
 import { sendChatMessage } from '../services/chat.js'
 import { permissionAPI } from '../services/permission.js'
+import { projectAPI } from '../services/project.js'
 import { sessionAPI } from '../services/session.js'
 import type { APIError } from '../types/index.js'
 import { generateId } from './id.js'
@@ -33,6 +34,8 @@ type ChatState = {
   subagents: SubagentInfo[]
   /** 后端检测到模型/工具变更需用户确认开新段时设置；携带活跃段信息与待重发内容。 */
   pendingSegmentBreak: PendingSegmentBreak | null
+  /** P0-2：未信任项目的风险配置被 409 拦截，等待用户信任确认（或取消）。 */
+  pendingTrust: PendingTrust | null
   /** SSE 流中断（服务重启等）：true 时显示恢复提示。 */
   interrupted: boolean
   /** P1：后台附着——本组件实例未发起 SSE 流，但检测到会话有活跃 run
@@ -49,6 +52,16 @@ type ChatState = {
 
 type PendingSegmentBreak = {
   activeSegment: { provider: string; model: string; tools: string[] }
+  text: string
+  opts: ChatOpts
+}
+
+/** P0-2：项目信任确认待办——后端 409 TRUST_REQUIRED 拦截后设置；
+ *  用户显式信任后按原内容重发。 */
+type PendingTrust = {
+  projectId: string
+  projectName: string
+  items: Array<{ kind: string; detail: string }>
   text: string
   opts: ChatOpts
 }
@@ -78,6 +91,10 @@ type ChatActions = {
   confirmBreak: (withCompaction: boolean) => Promise<void>
   /** 用户取消开新段：清除待发状态并移除乐观追加的 user 消息。 */
   cancelBreak: () => void
+  /** P0-2：信任项目后按原内容重发。 */
+  confirmTrust: () => Promise<void>
+  /** P0-2：取消信任——清除待发并移除乐观追加的 user 消息。 */
+  cancelTrust: () => void
   /** 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。 */
   retry: (content: string, opts?: ChatOpts) => Promise<boolean>
   /** 权限确认超时后重新打开确认弹窗（不重发消息，工具只执行一次，P2-9）。 */
@@ -104,6 +121,7 @@ const INITIAL: ChatState = {
   permissionTimeout: null,
   subagents: [],
   pendingSegmentBreak: null,
+  pendingTrust: null,
   interrupted: false,
   attachedRun: false,
   compactionNotice: null,
@@ -345,6 +363,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 段切换确认待发内容（confirmBreak/cancelBreak 读取，避免闭包staleness）
   const pendingRef = useRef<PendingSegmentBreak | null>(null)
+  // P0-2：信任确认待发内容（confirmTrust/cancelTrust 读取）
+  const pendingTrustRef = useRef<PendingTrust | null>(null)
   const llmDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const qc = useQueryClient()
 
@@ -456,6 +476,32 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           })
           return false
         }
+        if (e.code === 'TRUST_REQUIRED') {
+          // P0-2：未信任项目的风险配置被后端拦截——保留乐观 user 消息，
+          // 弹窗展示风险项；用户信任后按原内容重发。
+          const details = e.details as
+            | {
+                projectId?: string
+                projectName?: string
+                items?: Array<{ kind?: string; detail?: string }>
+              }
+            | undefined
+          const pending: PendingTrust = {
+            projectId: typeof details?.projectId === 'string' ? details.projectId : '',
+            projectName: typeof details?.projectName === 'string' ? details.projectName : '该项目',
+            items: (details?.items ?? [])
+              .filter((i) => i && typeof i.detail === 'string')
+              .map((i) => ({
+                kind: typeof i.kind === 'string' ? i.kind : 'unknown',
+                detail: i.detail as string,
+              })),
+            text: content,
+            opts: opts ?? {},
+          }
+          pendingTrustRef.current = pending
+          setState((s) => ({ ...s, isStreaming: false, pendingTrust: pending }))
+          return false
+        }
         if (e.code === 'SEGMENT_BREAK_REQUIRED') {
           const details = e.details as
             | { activeSegment?: PendingSegmentBreak['activeSegment'] }
@@ -535,6 +581,38 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       const last = msgs[msgs.length - 1]
       if (msgs.length > 0 && last && last.role === 'user') msgs.pop()
       return { ...s, pendingSegmentBreak: null, isStreaming: false, messages: msgs }
+    })
+  }, [])
+
+  // P0-2：用户信任项目——落盘 trustedAt 后按原内容重发（不重复追加 user 消息）。
+  const confirmTrust = useCallback(async () => {
+    const pending = pendingTrustRef.current
+    if (!pending) return
+    pendingTrustRef.current = null
+    try {
+      await projectAPI.trust(pending.projectId)
+    } catch (err) {
+      // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消
+      pendingTrustRef.current = pending
+      setState((s) => ({
+        ...s,
+        pendingTrust: pending,
+        error: `信任项目失败：${err instanceof Error ? err.message : String(err)}`,
+      }))
+      return
+    }
+    setState((s) => ({ ...s, isStreaming: true, error: null, pendingTrust: null }))
+    await doStream(pending.text, pending.opts)
+  }, [doStream])
+
+  // P0-2：用户取消信任——清除待发并移除乐观追加的 user 消息。
+  const cancelTrust = useCallback(() => {
+    pendingTrustRef.current = null
+    setState((s) => {
+      const msgs = [...s.messages]
+      const last = msgs[msgs.length - 1]
+      if (msgs.length > 0 && last && last.role === 'user') msgs.pop()
+      return { ...s, pendingTrust: null, isStreaming: false, messages: msgs }
     })
   }, [])
 
@@ -755,6 +833,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     confirm,
     confirmBreak,
     cancelBreak,
+    confirmTrust,
+    cancelTrust,
     retry,
     reopenPermission,
     denyTimedOutPermission,

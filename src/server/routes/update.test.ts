@@ -60,6 +60,8 @@ function makeCtx(opts: {
     },
     agentManager: agentManagerMock,
     ptyManager: ptyManagerMock,
+    // P3-9：影响面含待确认权限数（GET / 读取 size()）。
+    permissionStore: { size: () => 0 },
     db: {},
     port: 3000,
     handoff:
@@ -112,11 +114,17 @@ describe('GET /api/update', () => {
     const res = await app.request('/')
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
-      impact: { runs: Array<{ sessionId: string; title: string }>; terminalCount: number }
+      impact: {
+        runs: Array<{ sessionId: string; title: string }>
+        terminalCount: number
+        pendingPermissionCount: number
+      }
     }
     expect(body.impact.runs).toHaveLength(1)
     expect(body.impact.runs[0]?.sessionId).toBe('11111111-1111-4111-8111-111111111111')
     expect(body.impact.terminalCount).toBe(2)
+    // P3-9：待确认权限数透出（mock 固定 0）
+    expect(body.impact.pendingPermissionCount).toBe(0)
   })
 
   it('returns placeholder when no cache and triggers checkNow (non-blocking)', async () => {

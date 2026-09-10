@@ -62,6 +62,9 @@ function createUpdateRoute(ctx: ServerContext): Hono {
         shell: t.shell,
         cwd: t.cwd,
       })),
+      // P3-9：正在等待确认的权限请求——更新会中断其所属 run，弹窗静默失效
+      // （隐含按拒绝处理），确认层明示数量让用户知情。
+      pendingPermissionCount: ctx.permissionStore.size(),
     }
 
     // P2-8：update.enabled=false 时无 handoff server，apply 必然 409。

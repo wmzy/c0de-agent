@@ -5,6 +5,7 @@ export {
   getProject,
   listProjects,
   relocateProject,
+  trustProject,
   updateProjectName,
 } from './project.js'
 export type { ResolvedProject } from './resolve.js'

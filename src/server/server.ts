@@ -23,7 +23,9 @@ import { loadConfig } from '../core/config.js'
 import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
+import { purgeDeletedKanbanBoards } from '../kanban/index.js'
 import { initPlugins } from '../plugins/index.js'
+import { getByDirectory } from '../project/index.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import {
   purgeDeletedSessions,
@@ -32,7 +34,7 @@ import {
   TRASH_PURGE_GRACE_MS,
   TRASH_RETENTION_MS,
 } from '../session/session.js'
-import { backfillUsageEvents } from '../session/usage.js'
+import { backfillUsageEventsOnce } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import {
@@ -242,11 +244,22 @@ async function buildServerContext(
   const toolRegistry = createDefaultRegistry(config)
   const llmRegistry = buildRegistryFromConfig(config)
   const urlRegistry = createDefaultURLRegistry()
+  // P0-2：项目插件只在项目被显式信任后加载（fail-closed）——克隆仓库自带的
+  // .c0de/plugins 不会在首次 serve 时静默执行；c0de trust / Web 信任后重启生效。
+  // 未注册项目（首次 serve、尚无项目记录）视为未信任。
+  let projectTrusted = false
+  try {
+    const p = await getByDirectory(db, cwd)
+    projectTrusted = p?.trustedAt != null
+  } catch {
+    // 信任状态查询失败 → 保持未信任（宁可少加载插件）
+  }
   const { pluginRegistry, hookRunner } = await initPlugins({
     cwd,
     config,
     toolRegistry,
     llmRegistry,
+    projectTrusted,
   })
 
   // 工作流注册表：三级发现（builtin → global → project），eager 初始化。
@@ -491,9 +504,10 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
 
   const { ctx, dispose } = await buildServerContext(db, opts)
 
-  // P2 成本账本 backfill：把升级前已存在 segments（含 fork 复制的、导入的会话）
-  // 补齐进 usage_events（幂等，callId 唯一约束去重）。fire-and-forget。
-  void backfillUsageEvents(db)
+  // P2 成本账本 backfill：升级后首次启动把遗留 segments 补齐进 usage_events
+  // （幂等，callId 唯一约束去重；app_meta 标记保证只执行一次——导入会话的
+  // segments 已剥离 call id，不产生账本行）。fire-and-forget。
+  void backfillUsageEventsOnce(db)
     .then((added) => {
       if (added > 0) console.log(`[server] 成本账本补齐：新增 ${added} 条历史调用记录`)
     })
@@ -516,6 +530,14 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
           console.log(
             `[server] 回收站清理：已物理清除 ${deleted} 个超过宽限期的会话（保留期 ${TRASH_RETENTION_MS / (24 * 60 * 60 * 1000)} 天）`,
           )
+        }
+      })
+      .catch(() => {})
+    // P2-5：回收站看板到期物理清除（与会话回收站同保留期）。
+    void purgeDeletedKanbanBoards(db, TRASH_RETENTION_MS)
+      .then((deleted) => {
+        if (deleted > 0) {
+          console.log(`[server] 回收站清理：已物理清除 ${deleted} 个到期看板`)
         }
       })
       .catch(() => {})

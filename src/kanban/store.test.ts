@@ -1,10 +1,19 @@
+import { eq, isNotNull } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { projects } from '../db/schema.js'
+import { kanbanBoards, projects } from '../db/schema.js'
 import { DEFAULT_KANBAN_COLUMNS } from '../shared/types/kanban.js'
-import { createKanbanStore, KanbanColumnInUseError } from './store.js'
+import {
+  createKanbanStore,
+  KanbanColumnInUseError,
+  listDeletedKanbanBoards,
+  permanentlyDeleteKanbanBoard,
+  purgeDeletedKanbanBoards,
+  restoreKanbanBoard,
+  softDeleteKanbanBoard,
+} from './store.js'
 
 let handle: DB
 
@@ -309,5 +318,93 @@ describe('project isolation', () => {
     expect(boardA.id).not.toBe(boardB.id)
     expect(boardA.cards.map((c) => c.title)).toEqual(['A-card'])
     expect(boardB.cards.map((c) => c.title)).toEqual(['B-card'])
+  })
+})
+
+describe('P2-5 kanban recycle bin', () => {
+  it('soft delete → list → restore to target project', async () => {
+    await seedProject('proj-a')
+    await seedProject('proj-b')
+    const storeA = createKanbanStore(handle, 'proj-a')
+    await storeA.addCard({ title: 'keep-me' })
+
+    // 项目删除时软删除看板（路由在删除项目行前调用；FK set null 由删除项目完成）
+    expect(await softDeleteKanbanBoard(handle, 'proj-a', 'Old Project')).toBe(true)
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-a'))
+
+    const deleted = await listDeletedKanbanBoards(handle)
+    expect(deleted).toHaveLength(1)
+    expect(deleted[0]?.projectName).toBe('Old Project')
+    expect(deleted[0]?.cardCount).toBe(1)
+
+    // 恢复到 proj-b
+    const result = await restoreKanbanBoard(handle, deleted[0]?.id as string, 'proj-b')
+    expect(result.ok).toBe(true)
+    expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
+    const storeB = createKanbanStore(handle, 'proj-b')
+    const board = await storeB.getBoard()
+    expect(board.cards.map((c) => c.title)).toEqual(['keep-me'])
+  })
+
+  it('restore to project with active board → TARGET_HAS_BOARD（不覆盖现有看板）', async () => {
+    await seedProject('proj-a')
+    await seedProject('proj-b')
+    const storeA = createKanbanStore(handle, 'proj-a')
+    const boardId = (await storeA.getBoard()).id
+    const storeB = createKanbanStore(handle, 'proj-b')
+    await storeB.addCard({ title: 'existing' })
+
+    await softDeleteKanbanBoard(handle, 'proj-a', 'A')
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-a'))
+
+    const result = await restoreKanbanBoard(handle, boardId, 'proj-b')
+    expect(result).toEqual({ ok: false, reason: 'TARGET_HAS_BOARD' })
+    // 现有看板未被覆盖
+    const board = await storeB.getBoard()
+    expect(board.cards.map((c) => c.title)).toEqual(['existing'])
+  })
+
+  it('permanent delete + purge retention', async () => {
+    await seedProject('proj-a')
+    const store = createKanbanStore(handle, 'proj-a')
+    await store.addCard({ title: 'x' })
+    const boardId = (await store.getBoard()).id
+    await softDeleteKanbanBoard(handle, 'proj-a', 'A')
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-a'))
+
+    // 彻底删除
+    expect(await permanentlyDeleteKanbanBoard(handle, boardId)).toBe(1)
+    expect(await permanentlyDeleteKanbanBoard(handle, boardId)).toBe(0)
+    expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
+
+    // 到期清除：把 deletedAt 拨回过去 → purge 物理清除
+    await seedProject('proj-b')
+    const storeB = createKanbanStore(handle, 'proj-b')
+    await storeB.addCard({ title: 'y' })
+    await softDeleteKanbanBoard(handle, 'proj-b', 'B')
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-b'))
+    const past = new Date(Date.now() - 61 * 24 * 60 * 60 * 1000)
+    await handle.db
+      .update(kanbanBoards)
+      .set({ deletedAt: past })
+      .where(isNotNull(kanbanBoards.deletedAt))
+    expect(await purgeDeletedKanbanBoards(handle, 60 * 24 * 60 * 60 * 1000)).toBe(1)
+    expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
+  })
+
+  it('删除看板后新项目同 id 重建项目 → 新看板不被旧回收站看板遮蔽', async () => {
+    await seedProject('proj-a')
+    const store = createKanbanStore(handle, 'proj-a')
+    await store.addCard({ title: 'old' })
+    await softDeleteKanbanBoard(handle, 'proj-a', 'A')
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-a'))
+
+    // 同 id 项目重建（同目录重新注册）：新看板应全新创建，不含旧卡片
+    await seedProject('proj-a')
+    const fresh = createKanbanStore(handle, 'proj-a')
+    const board = await fresh.getBoard()
+    expect(board.cards).toHaveLength(0)
+    // 旧看板仍在回收站（可恢复）
+    expect(await listDeletedKanbanBoards(handle)).toHaveLength(1)
   })
 })

@@ -26,6 +26,10 @@ export const projects = pgTable('projects', {
   gitRemote: text('git_remote'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  /** 用户显式信任该项目作用域配置/插件的时间；null=未信任。
+   *  信任是「克隆即信任」防线的落点：含风险配置（auto 权限/插件）的未信任项目
+   *  在聊天入口被门禁拦截，须显式确认。 */
+  trustedAt: timestamp('trusted_at', { withTimezone: true }).default(sql`null`),
 })
 
 /**
@@ -160,18 +164,21 @@ export const toolMetrics = pgTable(
 /**
  * Kanban boards — one per project (unique projectId). Stores column/label
  * configuration as JSON; cards live in kanban_cards.
+ * P2-5：项目删除不再级联销毁看板——projectId 置 null + deletedAt 标记，
+ * 进入回收站「未归属看板」分组，60 天后随清理任务物理清除；恢复时可重新归属。
  */
 export const kanbanBoards = pgTable(
   'kanban_boards',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    projectId: text('project_id')
-      .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
     /** Column definitions: [{ id, name }] */
     columns: jsonb('columns').notNull(),
     /** Label definitions: [{ id, name, color }] */
     labels: jsonb('labels').notNull().default([]),
+    /** 软删除时间戳；null=活动看板。删除时记录原项目名供回收站展示。 */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).default(sql`null`),
+    deletedProjectName: text('deleted_project_name'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -235,6 +242,16 @@ export const usageEvents = pgTable(
   ],
 )
 
+/**
+ * App metadata — 一次性迁移/初始化标记（key-value）。
+ * P3-8：usage backfill 迁移完成后写 'usage_backfill_v1' 标记，
+ * 后续启动跳过全表扫描（导入/备份路径不依赖 backfill 的会话不再产生账本行）。
+ */
+export const appMeta = pgTable('app_meta', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+})
+
 /** Type exports for insert/select operations. */
 export type ProjectRow = typeof projects.$inferSelect
 export type ProjectInsert = typeof projects.$inferInsert
@@ -254,3 +271,5 @@ export type KanbanCardRow = typeof kanbanCards.$inferSelect
 export type KanbanCardInsert = typeof kanbanCards.$inferInsert
 export type UsageEventRow = typeof usageEvents.$inferSelect
 export type UsageEventInsert = typeof usageEvents.$inferInsert
+export type AppMetaRow = typeof appMeta.$inferSelect
+export type AppMetaInsert = typeof appMeta.$inferInsert

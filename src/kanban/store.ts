@@ -1,4 +1,4 @@
-import { and, asc, eq, max } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, isNull, lt, max, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, kanbanCards } from '../db/schema.js'
 import type {
@@ -80,7 +80,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     const [row] = await db
       .select({ id: kanbanBoards.id })
       .from(kanbanBoards)
-      .where(eq(kanbanBoards.projectId, projectId))
+      .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
       .limit(1)
     // 行一定存在：上面 insert + onConflictDoNothing 保证了 projectId 对应的行已创建
     return (row as { id: string }).id
@@ -214,7 +214,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
           ...(patch.labels !== undefined && { labels: patch.labels }),
           updatedAt: new Date(),
         })
-        .where(eq(kanbanBoards.projectId, projectId))
+        .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
         .returning()
       const row = boardRow as BoardRow
       return rowToBoard(row)
@@ -261,3 +261,107 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
 }
 
 export { createKanbanStore, KanbanColumnInUseError }
+
+// ── P2-5：看板回收站（软删除 → 恢复/彻底删除 → 到期物理清除）──────────────
+// 与会话回收站同保留期（TRASH_RETENTION_MS）。项目删除时看板不再级联销毁。
+
+/** 回收站条目信息（列表展示用）。 */
+export type DeletedKanbanBoard = {
+  id: string
+  /** 删除时记录的原项目名（项目行已删除，无法再 join）。 */
+  projectName: string
+  cardCount: number
+  deletedAt: number
+}
+
+/** 把活动看板软删除进回收站（记录原项目名）。项目行删除后 FK 将 projectId 置 null。 */
+export async function softDeleteKanbanBoard(
+  handle: DB,
+  projectId: string,
+  projectName: string | null,
+): Promise<boolean> {
+  const rows = await handle.db
+    .update(kanbanBoards)
+    .set({
+      deletedAt: new Date(),
+      deletedProjectName: projectName ?? undefined,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+    .returning({ id: kanbanBoards.id })
+  return rows.length > 0
+}
+
+/** 回收站看板列表（含卡片数）。 */
+export async function listDeletedKanbanBoards(handle: DB): Promise<DeletedKanbanBoard[]> {
+  const boards = await handle.db
+    .select()
+    .from(kanbanBoards)
+    .where(isNotNull(kanbanBoards.deletedAt))
+    .orderBy(asc(kanbanBoards.deletedAt))
+  if (boards.length === 0) return []
+  const counts = await handle.db
+    .select({ boardId: kanbanCards.boardId, n: sql<number>`count(*)::int` })
+    .from(kanbanCards)
+    .where(
+      inArray(
+        kanbanCards.boardId,
+        boards.map((b) => b.id),
+      ),
+    )
+    .groupBy(kanbanCards.boardId)
+  const countMap = new Map(counts.map((c) => [c.boardId, c.n]))
+  return boards.map((b) => {
+    // isNotNull(deletedAt) 已过滤，此处必有值
+    const deletedAt = b.deletedAt as Date
+    return {
+      id: b.id,
+      projectName: b.deletedProjectName ?? '未知项目',
+      cardCount: countMap.get(b.id) ?? 0,
+      deletedAt: deletedAt instanceof Date ? deletedAt.getTime() : new Date(deletedAt).getTime(),
+    }
+  })
+}
+
+export type RestoreKanbanBoardResult =
+  | { ok: true }
+  | { ok: false; reason: 'BOARD_NOT_FOUND' | 'TARGET_HAS_BOARD' }
+
+/** 恢复看板到指定项目：目标项目已有活动看板 → 409 语义（不覆盖用户现有看板）。 */
+export async function restoreKanbanBoard(
+  handle: DB,
+  boardId: string,
+  projectId: string,
+): Promise<RestoreKanbanBoardResult> {
+  const [active] = await handle.db
+    .select({ id: kanbanBoards.id })
+    .from(kanbanBoards)
+    .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+    .limit(1)
+  if (active) return { ok: false, reason: 'TARGET_HAS_BOARD' }
+  const rows = await handle.db
+    .update(kanbanBoards)
+    .set({ projectId, deletedAt: null, deletedProjectName: null, updatedAt: new Date() })
+    .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
+    .returning({ id: kanbanBoards.id })
+  return rows.length > 0 ? { ok: true } : { ok: false, reason: 'BOARD_NOT_FOUND' }
+}
+
+/** 回收站内彻底删除看板（不可恢复）。 */
+export async function permanentlyDeleteKanbanBoard(handle: DB, boardId: string): Promise<number> {
+  const rows = await handle.db
+    .delete(kanbanBoards)
+    .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
+    .returning({ id: kanbanBoards.id })
+  return rows.length
+}
+
+/** 物理清除到期看板（软删除超过 retentionMs；与 purgeDeletedSessions 同调度）。 */
+export async function purgeDeletedKanbanBoards(handle: DB, retentionMs: number): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionMs)
+  const rows = await handle.db
+    .delete(kanbanBoards)
+    .where(and(isNotNull(kanbanBoards.deletedAt), lt(kanbanBoards.deletedAt, cutoff)))
+    .returning({ id: kanbanBoards.id })
+  return rows.length
+}

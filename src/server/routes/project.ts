@@ -12,6 +12,7 @@ import {
   listProjects,
   relocateProject,
   resolveProject,
+  trustProject,
   updateProjectName,
 } from '../../project/index.js'
 import type { Project } from '../../project/project.js'
@@ -98,6 +99,14 @@ function createProjectRoute(ctx: ServerContext): Hono {
     return c.json(withBranch(project))
   })
 
+  // P0-2：显式信任项目——用户在信任确认弹窗中批准项目作用域配置/插件后调用。
+  // 信任是一次性动作（trustedAt 落盘）；此后聊天入口不再拦截本项目。
+  app.post('/:id/trust', async (c) => {
+    const project = await trustProject(ctx.db, c.req.param('id'))
+    if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+    return c.json({ ok: true, project: withBranch(project) })
+  })
+
   // A1：项目重新定位——目录被移动/重命名后的恢复通道。
   // 整体迁移会话与看板到新目录身份（替代「删项目 + 逐条恢复 + 看板丢失」）。
   // 目标目录已注册为另一项目 → 409；有活跃 run → 拒绝（agent 工作目录悬空）。
@@ -138,10 +147,11 @@ function createProjectRoute(ctx: ServerContext): Hono {
     }
   })
 
-  // P1-9 + P2-2：删除项目记录（看板级联删除）。
+  // P1-9 + P2-2：删除项目记录。
   // 会话不再留孤儿（FK set null 后在任何项目视图都不可见且 cwd 回退 serve 目录）：
-  // 删除前把该项目全部未删除会话软删除进回收站（30 天内可恢复），
+  // 删除前把该项目全部未删除会话软删除进回收站（60 天内可恢复），
   // 并把 worktreePath 落盘——恢复后 resolveAgentCwd 仍能解析原工作目录。
+  // P2-5：看板同步软删除进回收站（可恢复/重新归属），不再永久级联销毁。
   // 有活跃 run 绑定该项目时拒绝删除，避免 agent 工作目录悬空。
   app.delete('/:id', async (c) => {
     const id = c.req.param('id')
@@ -200,7 +210,17 @@ function createProjectRoute(ctx: ServerContext): Hono {
           .where(eq(sessions.id, s.id))
         deletedSessions += 1
       }
-      await tx.delete(kanbanBoards).where(eq(kanbanBoards.projectId, id))
+      // P2-5：看板不再永久级联销毁——标记软删除（记录原项目名），项目行删除后
+      // FK set null 使其进入回收站「未归属看板」分组，60 天后随清理任务物理清除；
+      // 恢复端点可重新归属到任意项目。
+      await tx
+        .update(kanbanBoards)
+        .set({
+          deletedAt: now,
+          deletedProjectName: project.name ?? project.worktree,
+          updatedAt: now,
+        })
+        .where(and(eq(kanbanBoards.projectId, id), isNull(kanbanBoards.deletedAt)))
       await tx.delete(projects).where(eq(projects.id, id))
     })
     return c.json({ ok: true, deletedSessions })

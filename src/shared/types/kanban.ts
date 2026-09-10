@@ -35,10 +35,10 @@ type KanbanCard = {
   updatedAt: string
 }
 
-/** A kanban board (one per project). */
+/** A kanban board (one per project). P2-5：回收站（软删除）看板 projectId 为 null。 */
 type KanbanBoard = {
   id: string
-  projectId: string
+  projectId: string | null
   columns: KanbanColumnDef[]
   labels: KanbanLabelDef[]
   createdAt: string

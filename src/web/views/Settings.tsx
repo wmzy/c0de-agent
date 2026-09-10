@@ -600,8 +600,10 @@ export function Settings() {
           <UsagePanel
             budget={merged.usage?.monthlyBudgetUsd ?? 0}
             budgetAction={merged.usage?.budgetAction ?? 'warn'}
+            globalBudget={merged.usage?.globalMonthlyBudgetUsd ?? 0}
             onBudgetChange={(v) => updateSection('usage', { monthlyBudgetUsd: v })}
             onBudgetActionChange={(v) => updateSection('usage', { budgetAction: v })}
+            onGlobalBudgetChange={(v) => updateSection('usage', { globalMonthlyBudgetUsd: v })}
             projectId={projectId}
           />
         </>

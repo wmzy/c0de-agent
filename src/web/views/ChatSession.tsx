@@ -16,6 +16,7 @@ import { mergeToolMessages } from '../components/session/utils/normalizeParts.js
 import { buildTimeline } from '../components/session/utils/timeline.js'
 import { TodoPanel } from '../components/TodoPanel.js'
 import { ToolToggle } from '../components/ToolToggle.js'
+import { TrustRequiredDialog } from '../components/TrustRequiredDialog.js'
 import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
 import { useAgent } from '../hooks/useAgent.js'
 import { useChat } from '../hooks/useChat.js'
@@ -307,10 +308,15 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   // 会话导出：下载 JSON（元数据 + 消息 + 归档），数据可迁移（改进建议 #4）。
   // P0 明示：导出仅含本会话消息与归档，fork 分支/子会话不在其中——有分支时
   // 导出前确认告知（此前用户以为完整备份，分支关系静默丢失）。
+  // P2-6：归档 fileSnapshots 含文件内容，默认剥离；仅显式确认后随迁。
   const handleExport = async () => {
     try {
+      // 先询问快照策略，再按需携带（隐私默认：剥离）。
+      const includeSnapshots = window.confirm(
+        '导出会话 JSON。\n\n归档中的「文件快照」包含被压缩进上下文的文件内容，分享导出文件时会泄露这些内容。\n\n点「确定」包含文件快照（仅本机备份/迁移需要）；点「取消」剥离文件快照（推荐，对话与统计不受影响）。',
+      )
       const [data, branches] = await Promise.all([
-        sessionAPI.exportSession(sessionId),
+        sessionAPI.exportSession(sessionId, { includeSnapshots }),
         sessionAPI.branches(sessionId).catch(() => []),
       ])
       if (branches.length > 0) {
@@ -691,6 +697,14 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             }
             chat.cancelBreak()
           }}
+        />
+      )}
+      {chat.pendingTrust && (
+        <TrustRequiredDialog
+          projectName={chat.pendingTrust.projectName}
+          items={chat.pendingTrust.items}
+          onConfirm={() => void chat.confirmTrust()}
+          onCancel={() => chat.cancelTrust()}
         />
       )}
       {showArchives && (

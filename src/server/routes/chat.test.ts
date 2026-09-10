@@ -10,7 +10,7 @@ import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
-import { fromDirectory } from '../../project/project.js'
+import { fromDirectory, trustProject } from '../../project/project.js'
 import { appendMessage, getEntries } from '../../session/message.js'
 import { createSession, getLLMSegments } from '../../session/session.js'
 import { getFileSnapshots } from '../../session/snapshot.js'
@@ -988,5 +988,101 @@ describe('SSE 心跳', () => {
     // 否则 bash 120s 上限/权限 5 分钟/子 agent 长跑期间连接仍会被误杀。
     expect(SSE_HEARTBEAT_INTERVAL_MS).toBeLessThan(90_000)
     expect(90_000 / SSE_HEARTBEAT_INTERVAL_MS).toBeGreaterThanOrEqual(3)
+  })
+})
+
+describe('P0-2 项目信任门禁', () => {
+  let tmpDir: string | undefined
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true })
+      tmpDir = undefined
+    }
+  })
+
+  /** 建临时项目目录（含 .c0de/config.json）+ 注册项目 + 绑定会话。 */
+  async function setupTrustScenario(
+    projectConfig: Record<string, unknown>,
+  ): Promise<{ app: ReturnType<typeof createChatRoute>; sessionId: string; projectId: string }> {
+    tmpDir = mkdtempSync(join(tmpdir(), 'c0de-trust-'))
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(join(tmpDir as string, '.c0de'), { recursive: true })
+    await writeFile(
+      join(tmpDir as string, '.c0de', 'config.json'),
+      JSON.stringify(projectConfig),
+      'utf-8',
+    )
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const project = await fromDirectory(db, tmpDir as string)
+    const session = await createSession(db, 'TrustMe', project.id)
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      cwd: tmpDir as string,
+      chatStream: mockChatStream,
+    })
+    const app = createChatRoute(ctx)
+    return { app, sessionId: session.id, projectId: project.id }
+  }
+
+  it('未信任项目 + auto 权限配置 → 409 TRUST_REQUIRED，信任后放行', async () => {
+    const { app, sessionId, projectId } = await setupTrustScenario({
+      permission: { defaultMode: 'auto' },
+    })
+    const first = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(first.status).toBe(409)
+    const firstBody = (await first.json()) as {
+      error: { code: string; details: { projectId: string; items: Array<{ kind: string }> } }
+    }
+    expect(firstBody.error.code).toBe('TRUST_REQUIRED')
+    expect(firstBody.error.details.projectId).toBe(projectId)
+    expect(firstBody.error.details.items.map((i) => i.kind)).toContain('permission-auto')
+
+    // 信任后（一次性）→ 放行
+    await trustProject(dbHandle as DB, projectId)
+    const second = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(second.status).toBe(200)
+    const events = parseSSEEvents(await second.text())
+    expect(events.some((e) => e.event === 'done')).toBe(true)
+  })
+
+  it('未信任项目但配置无风险项 → 不拦截', async () => {
+    const { app, sessionId } = await setupTrustScenario({
+      permission: { defaultMode: 'default' },
+      plugins: { enabled: [] },
+    })
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('未信任项目 + 启用插件配置 → 409 携带 plugins-enabled 风险项', async () => {
+    const { app, sessionId } = await setupTrustScenario({
+      plugins: { enabled: ['evil-plugin'] },
+    })
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as {
+      error: { code: string; details: { items: Array<{ kind: string }> } }
+    }
+    expect(body.error.code).toBe('TRUST_REQUIRED')
+    expect(body.error.details.items.map((i) => i.kind)).toContain('plugins-enabled')
   })
 })

@@ -4,6 +4,7 @@ import type { DB } from '../db/client.js'
 import { createRegistry, overrideToCapabilities, registerProvider } from '../llm/index.js'
 import type { Registry } from '../llm/registry.js'
 import { initPlugins } from '../plugins/index.js'
+import { getByDirectory } from '../project/index.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
@@ -95,11 +96,21 @@ function resolvePermissionChecker(
 async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<LoopDeps> {
   const llmRegistry = buildLLMRegistry(config)
   const toolRegistry = createDefaultRegistry(config)
+  // P0-2：项目插件仅在项目被显式信任后加载（c0de trust <dir>）；内存库
+  // （--temp/锁冲突降级）不含项目记录 → 未信任，项目插件不加载。
+  let projectTrusted = false
+  try {
+    const p = await getByDirectory(opts.db, opts.cwd)
+    projectTrusted = p?.trustedAt != null
+  } catch {
+    // 查询失败 → 未信任
+  }
   const { hookRunner } = await initPlugins({
     cwd: opts.cwd,
     config,
     toolRegistry,
     llmRegistry,
+    projectTrusted,
   })
   const deps: LoopDeps = {
     db: opts.db,

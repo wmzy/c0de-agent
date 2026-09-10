@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
-import { projects, sessionEntries, sessions } from '../../db/schema.js'
+import { projects, sessionEntries, sessions, usageEvents } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries } from '../../session/archive.js'
@@ -884,6 +884,75 @@ describe('session route', () => {
       // 白名单仅保留字符串工具名
       const meta = imported?.metadata as Record<string, unknown>
       expect(meta.alwaysAllow).toEqual(['bash'])
+    })
+
+    it('P0-1/P2-7：导入 segments 剥离 call id 并按消息时间窗裁剪——不进入成本账本', async () => {
+      const { app, ctx } = await setup()
+      const projectId = 'import-ledger-project'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-ledger' })
+      const now = Date.now()
+      const oldCallId = crypto.randomUUID()
+      const futureCallId = crypto.randomUUID()
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: 1,
+          session: {
+            title: 'LedgerSafe',
+            metadata: {
+              segments: [
+                {
+                  provider: 'p',
+                  model: 'm',
+                  calls: [
+                    {
+                      id: oldCallId,
+                      timestamp: now - 1000,
+                      usage: { input: 10, output: 0 },
+                      cost: 0.5,
+                    },
+                    {
+                      // 晚于最后一条导入消息的调用不属于本副本（P2-7 裁剪）
+                      id: futureCallId,
+                      timestamp: now + 60_000,
+                      usage: { input: 999, output: 0 },
+                      cost: 99,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          messages: [
+            {
+              id: crypto.randomUUID(),
+              role: 'user',
+              content: [{ _tag: 'text', text: 'hello' }],
+              createdAt: now,
+            },
+          ],
+          projectId,
+        }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { sessionId: string }
+      const imported = await getSession(ctx.db, body.sessionId)
+      const segs = (imported?.metadata.segments ?? []) as Array<{
+        calls: Array<Record<string, unknown>>
+      }>
+      expect(segs).toHaveLength(1)
+      expect(segs[0]?.calls).toHaveLength(1)
+      const kept = segs[0]?.calls[0] as Record<string, unknown>
+      // P0-1：call id 被剥离 → backfill 跳过，账本保持本机真实消费
+      expect(kept.id).toBeUndefined()
+      // 展示统计保留（会话信息面板/徽标仍显示继承成本）
+      expect(kept.cost).toBe(0.5)
+      // 未来调用被裁剪
+      const { backfillUsageEvents } = await import('../../session/usage.js')
+      await expect(backfillUsageEvents(ctx.db)).resolves.toBe(0)
+      const rows = await ctx.db.db.select().from(usageEvents)
+      expect(rows).toHaveLength(0)
     })
   })
 

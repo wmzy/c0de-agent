@@ -629,6 +629,47 @@ describe('agentLoop', () => {
     expect(statuses.some((s) => s._tag === 'paused')).toBe(false)
   })
 
+  it('P1-3：全局预算超支暂停（项目预算 0，其他项目的花费触发全局护栏）', async () => {
+    // 其他项目的当月花费 $11：本会话项目预算未配置，但全局预算 $10 兜底。
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'another-project',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 11,
+      timestamp: Date.now(),
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('budget hit')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: { monthlyBudgetUsd: 0, globalMonthlyBudgetUsd: 10, budgetAction: 'pause' },
+      },
+      budgetPause: true,
+    }
+    const gen = agentLoop(state, deps)
+    let pausedReason = ''
+    let guard = 0
+    let pull = await gen.next()
+    while (!pull.done && guard < 30) {
+      const value = pull.value
+      if (value && value._tag === 'status_change' && value.status._tag === 'paused') {
+        pausedReason = value.status.pauseReason ?? ''
+        break
+      }
+      pull = await gen.next()
+      guard += 1
+    }
+    expect(pausedReason).toContain('全局预算')
+    expect(pausedReason).toContain('10')
+    expect(state.budgetPauseTriggered).toBe(true)
+  })
+
   it('压缩失败时记录警告但不中断循环（非致命）', async () => {
     // 多塞几条 user 消息，使 findSafeCutPoint 能在较早的 user 边界切分，
     // compactMessages 非空 → 触发 summarizer → 空 registry 抛错 → 进入 catch。

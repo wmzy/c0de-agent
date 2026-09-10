@@ -134,35 +134,53 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     // 每 run 至多暂停一次（budgetPauseTriggered），恢复后用户知情继续。
     // 仅主 agent 检查：子 agent 由主 run 驱动，主 run 暂停即整体停摆。
     // deps.budgetPause 由 Web 路由按配置注入——CLI print 无恢复 UI，永不启用。
+    // P1-3：项目预算与全局预算并存（任一超支即触发）——全局预算兜底
+    // 未归属项目/未配置项目预算的花费。
     if (
       deps.budgetPause === true &&
-      (deps.config.usage?.monthlyBudgetUsd ?? 0) > 0 &&
       !state.budgetPauseTriggered &&
       deps._subagentDepth === undefined
     ) {
-      try {
-        const { cost } = await currentMonthCost(deps.db, state.session.projectId)
-        if (cost > deps.config.usage.monthlyBudgetUsd) {
-          state.budgetPauseTriggered = true
-          state.status = {
-            _tag: 'paused',
-            pauseReason: `月度成本预算超支（${
-              deps.config.usage.monthlyBudgetUsd
-            }）：本月已 $${cost.toFixed(2)}`,
+      const projectBudget = deps.config.usage?.monthlyBudgetUsd ?? 0
+      const globalBudget = deps.config.usage?.globalMonthlyBudgetUsd ?? 0
+      if (projectBudget > 0 || globalBudget > 0) {
+        try {
+          const projectCost =
+            projectBudget > 0 ? (await currentMonthCost(deps.db, state.session.projectId)).cost : 0
+          const globalCost = globalBudget > 0 ? (await currentMonthCost(deps.db)).cost : 0
+          const globalOver = globalBudget > 0 && globalCost > globalBudget
+          const projectOver = projectBudget > 0 && projectCost > projectBudget
+          if (projectOver || globalOver) {
+            state.budgetPauseTriggered = true
+            const overParts: string[] = []
+            if (globalOver) {
+              overParts.push(
+                `全局预算 $${globalBudget.toFixed(2)}：本月全部项目已 $${globalCost.toFixed(2)}`,
+              )
+            }
+            if (projectOver) {
+              overParts.push(
+                `项目预算 $${projectBudget.toFixed(2)}：本项目已 $${projectCost.toFixed(2)}`,
+              )
+            }
+            state.status = {
+              _tag: 'paused',
+              pauseReason: `月度成本预算超支（${overParts.join('；')}）`,
+            }
+            yield { _tag: 'status_change', status: state.status }
+            await updateSessionLastRun(deps.db, state.session.id, {
+              status: 'paused',
+              agentName: state.config.agentName,
+              provider: state.config.provider,
+              model: state.config.model,
+              startedAt: state.lastRunStartedAt ?? Date.now(),
+            }).catch(() => {})
+            await waitForResume(state)
+            if (state.status._tag === 'paused') return
           }
-          yield { _tag: 'status_change', status: state.status }
-          await updateSessionLastRun(deps.db, state.session.id, {
-            status: 'paused',
-            agentName: state.config.agentName,
-            provider: state.config.provider,
-            model: state.config.model,
-            startedAt: state.lastRunStartedAt ?? Date.now(),
-          }).catch(() => {})
-          await waitForResume(state)
-          if (state.status._tag === 'paused') return
+        } catch {
+          // 账本查询失败不阻塞对话（fail-open：护栏故障不应瘫痪 agent）
         }
-      } catch {
-        // 账本查询失败不阻塞对话（fail-open：护栏故障不应瘫痪 agent）
       }
     }
     state.status = { _tag: 'running', turnCount: turn }

@@ -17,6 +17,7 @@ const base: ChatState = {
   permissionTimeout: null,
   subagents: [],
   pendingSegmentBreak: null,
+  pendingTrust: null,
   interrupted: false,
   attachedRun: false,
   compactionNotice: null,
@@ -461,6 +462,93 @@ describe('useChat segment break', () => {
     })
     expect(result.current.pendingSegmentBreak).toBeNull()
     expect(result.current.messages.some((m) => m.role === 'user')).toBe(false)
+  })
+
+  it('409 TRUST_REQUIRED → 设置 pendingTrust（含风险项 details）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: {
+            code: 'TRUST_REQUIRED',
+            message: '需要信任',
+            details: {
+              projectId: 'proj-1',
+              projectName: 'Sneaky Repo',
+              items: [
+                { kind: 'permission-auto', detail: '权限模式 auto' },
+                { kind: 'plugins-enabled', detail: '启用插件 evil' },
+              ],
+            },
+          },
+        }),
+      })),
+    )
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.pendingTrust).not.toBeNull()
+    expect(result.current.pendingTrust?.projectName).toBe('Sneaky Repo')
+    expect(result.current.pendingTrust?.items).toHaveLength(2)
+    expect(result.current.pendingTrust?.text).toBe('hi')
+    expect(result.current.error).toBeNull()
+  })
+
+  it('confirmTrust → 信任项目后按原内容重发并清除待办', async () => {
+    let chatCall = 0
+    const fetchMock = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      if (url === '/api/chat') {
+        chatCall++
+        if (chatCall === 1) {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: {
+                code: 'TRUST_REQUIRED',
+                message: '需要信任',
+                details: {
+                  projectId: 'proj-1',
+                  projectName: 'Repo',
+                  items: [{ kind: 'permission-auto', detail: 'auto' }],
+                },
+              },
+            }),
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({ read: async () => ({ done: true, value: undefined }) }),
+          },
+        }
+      }
+      if (url === '/api/projects/proj-1/trust' && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      }
+      return { ok: true, status: 200, json: async () => ({}) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.pendingTrust).not.toBeNull()
+
+    await act(async () => {
+      await result.current.confirmTrust()
+    })
+    expect(result.current.pendingTrust).toBeNull()
+    // 调用序列：首次 /api/chat → 信任端点 → 按原内容重发 /api/chat
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/projects/proj-1/trust')
+    const resend = fetchMock.mock.calls[2]
+    expect(resend?.[0]).toBe('/api/chat')
+    expect(JSON.parse(String(resend?.[1]?.body)).message).toBe('hi')
   })
 })
 

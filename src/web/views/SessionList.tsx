@@ -14,6 +14,7 @@ import {
   useRestoreSession,
   useSessionTree,
 } from '../hooks/useSession.js'
+import { kanbanAPI } from '../services/kanban.js'
 import { sessionAPI } from '../services/session.js'
 import type { Project, SessionTreeNode } from '../types/index.js'
 
@@ -666,6 +667,21 @@ function RecycleBin({ projectId }: { projectId: string }) {
   // P1-2：当前孤儿会话 id（目录失效且未随 restore 归属成功），提供「归属到当前项目」入口
   const [orphanId, setOrphanId] = useState<string | null>(null)
 
+  // P2-5：未归属看板（项目删除软删除的看板，60 天保留期）——恢复/彻底删除入口。
+  const { data: deletedBoardsData } = useQuery({
+    queryKey: ['kanban', 'deleted'],
+    queryFn: () => kanbanAPI.deletedBoards().then((d) => d.boards),
+  })
+  const deletedBoards = deletedBoardsData ?? []
+  const restoreBoardMut = useMutation({
+    mutationFn: (v: { boardId: string; projectId: string }) =>
+      kanbanAPI.restoreDeletedBoard(v.boardId, v.projectId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] }),
+  })
+  const destroyBoardMut = useMutation({
+    mutationFn: (boardId: string) => kanbanAPI.destroyDeletedBoard(boardId),
+  })
+
   // P3：回收站搜索（此前删掉的会话只能逐行翻）——标题+消息内容，服务端搜索。
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
@@ -1065,6 +1081,70 @@ function RecycleBin({ projectId }: { projectId: string }) {
                 </button>
               </div>
             ))}
+        </>
+      )}
+      {/* P2-5：未归属看板（删除项目软删除的看板，60 天保留期）——恢复需目标项目，
+          当前视图即「当前项目」，故恢复入口=归属到当前项目。 */}
+      {(deletedBoards?.length ?? 0) > 0 && (
+        <>
+          <div className={deletedRow} data-testid="orphan-kanban-header">
+            <span style={{ color: 'var(--warning)', fontSize: 12 }}>
+              未归属看板（{deletedBoards?.length ?? 0} 个，来自已删除的项目；保留{' '}
+              {TRASH_RETENTION_DAYS} 天后自动清除）
+            </span>
+          </div>
+          {deletedBoards?.map((b) => (
+            <div key={b.id} className={deletedRow} data-testid={`orphan-kanban-${b.id}`}>
+              <span title={`看板来自「${b.projectName}」`}>
+                📋 {b.projectName}（{b.cardCount} 张卡片）
+              </span>
+              <span title={new Date(b.deletedAt).toLocaleString()}>
+                {new Date(b.deletedAt).toLocaleDateString()}
+              </span>
+              <button
+                type="button"
+                className={restoreBtn}
+                onClick={() =>
+                  restoreBoardMut.mutate(
+                    { boardId: b.id, projectId },
+                    {
+                      onSuccess: () => setNotice(`看板「${b.projectName}」已恢复到当前项目。`),
+                      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+                    },
+                  )
+                }
+                disabled={restoreBoardMut.isPending}
+                data-testid={`restore-orphan-kanban-${b.id}`}
+                title="恢复到当前项目（当前项目已有看板时会失败）"
+              >
+                恢复到当前项目
+              </button>
+              <button
+                type="button"
+                className={restoreBtn}
+                style={{ color: 'var(--error)' }}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `彻底删除看板「${b.projectName}」（${b.cardCount} 张卡片）？此操作不可恢复。`,
+                    )
+                  ) {
+                    destroyBoardMut.mutate(b.id, {
+                      onSuccess: () => {
+                        qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] })
+                        setNotice(`看板「${b.projectName}」已彻底删除。`)
+                      },
+                    })
+                  }
+                }}
+                disabled={destroyBoardMut.isPending}
+                data-testid={`remove-orphan-kanban-${b.id}`}
+                title="彻底删除，不可恢复"
+              >
+                彻底删除
+              </button>
+            </div>
+          ))}
         </>
       )}
       {removeTarget && (

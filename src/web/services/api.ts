@@ -118,13 +118,17 @@ async function apiRequest<T>(path: string, opts?: RequestInit): Promise<T> {
     if (response.status === 401) {
       emitAuthRequired()
     }
-    // 后端 apiError 返回 { error: { code, message } }；兼容旧/裸 { message } 与无 JSON（fallback statusText）。
+    // 后端 apiError 返回 { error: { code, message, details? } }；兼容旧/裸 { message } 与无 JSON（fallback statusText）。
     const body = await response.json().catch(() => ({ message: response.statusText }))
-    const errBody = (body as { error?: { code?: string; message?: string } }).error
+    const errBody = (
+      body as { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
+    ).error
     const error: APIError = {
       status: response.status,
       message: errBody?.message ?? (body as { message?: string }).message ?? response.statusText,
       code: errBody?.code ?? (body as { code?: string }).code,
+      // P0-2：details 随错误下发（TRUST_REQUIRED 的风险项等），此前被静默丢弃。
+      ...(errBody?.details ? { details: errBody.details } : {}),
     }
     throw error
   }

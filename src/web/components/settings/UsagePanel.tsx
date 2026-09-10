@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import type { UsageSummary } from '../../services/usage.js'
-import { localMonthKey, usageAPI } from '../../services/usage.js'
+import { usageAPI } from '../../services/usage.js'
 import { field, fieldInput, hint, section, sectionTitle } from './styles.js'
 
 const rowGrid = css`
@@ -36,10 +36,9 @@ const fmtTokens = (n: number): string => n.toLocaleString('en-US')
 
 const fmtCost = (n: number): string => `$${n.toFixed(2)}`
 
+/** P1-4：本月口径由服务端下发（summary.currentMonth），客户端不再自行按时区计算。 */
 function currentMonthCost(summary: UsageSummary | undefined): number {
-  if (!summary) return 0
-  const now = localMonthKey(Date.now())
-  return summary.byMonth.find((m) => m.month === now)?.cost ?? 0
+  return summary?.currentMonth?.cost ?? 0
 }
 
 /**
@@ -52,14 +51,18 @@ function currentMonthCost(summary: UsageSummary | undefined): number {
 function UsagePanel({
   budget,
   budgetAction,
+  globalBudget,
   onBudgetChange,
   onBudgetActionChange,
+  onGlobalBudgetChange,
   projectId,
 }: {
   budget: number
   budgetAction?: string
+  globalBudget?: number
   onBudgetChange: (v: number) => void
   onBudgetActionChange: (v: 'warn' | 'pause') => void
+  onGlobalBudgetChange?: (v: number) => void
   projectId?: string
 }) {
   const { data: summary } = useQuery({
@@ -69,11 +72,15 @@ function UsagePanel({
   })
 
   const monthCost = currentMonthCost(summary)
-  const overBudget = budget > 0 && monthCost > budget
+  // 项目视图：项目预算；全局视图：全局预算（P1-3 两者并存，任一超支即触发动作）。
+  const effectiveBudget = projectId ? budget : (globalBudget ?? 0)
+  const overBudget = effectiveBudget > 0 && monthCost > effectiveBudget
+  const nearBudget = effectiveBudget > 0 && !overBudget && monthCost >= effectiveBudget * 0.8
   // H2：价格未知的调用按 $0 计入，显式提示成本可能低估。
   const unknownCostTotal = summary?.totals.unknownCostCalls ?? 0
   // L2：无时间戳调用归入「未知」月份，不参与本月预算比较——同样需要提示。
   const unknownMonth = summary?.byMonth.find((m) => m.month === '未知')
+  const unassigned = summary?.unassigned
 
   return (
     <div className={section} data-testid="usage-panel">
@@ -83,18 +90,38 @@ function UsagePanel({
         {summary ? `（价目版本 ${summary.priceCatalogVersion}，实际费用以账单为准）` : ''}。
         成本是账本：会话彻底删除后已发生花费仍计入。
       </div>
-      <label className={field}>
-        <span>月度成本预算 (USD，0 = 不限制)</span>
-        <input
-          className={fieldInput}
-          type="number"
-          min={0}
-          step="0.5"
-          value={budget}
-          onChange={(e) => onBudgetChange(Math.max(0, Number(e.target.value)))}
-        />
-      </label>
-      {budget > 0 && (
+      {projectId ? (
+        <label className={field}>
+          <span>月度成本预算（USD，0 = 不限制）</span>
+          <input
+            className={fieldInput}
+            type="number"
+            min={0}
+            step="0.5"
+            value={budget}
+            onChange={(e) => onBudgetChange(Math.max(0, Number(e.target.value)))}
+          />
+        </label>
+      ) : (
+        <label className={field}>
+          <span>全局月度预算（USD，0 = 不限制；所有项目 + 未归属调用聚合，兜底护栏）</span>
+          <input
+            className={fieldInput}
+            type="number"
+            min={0}
+            step="0.5"
+            value={globalBudget ?? 0}
+            onChange={(e) => onGlobalBudgetChange?.(Math.max(0, Number(e.target.value)))}
+            data-testid="usage-global-budget"
+          />
+        </label>
+      )}
+      {projectId && (globalBudget ?? 0) > 0 && (
+        <div className={hint}>
+          另有全局预算 ${(globalBudget ?? 0).toFixed(2)} 兜底（所有项目聚合）。
+        </div>
+      )}
+      {effectiveBudget > 0 && (
         <label className={field}>
           <span>超支动作</span>
           <select
@@ -110,7 +137,13 @@ function UsagePanel({
       )}
       {overBudget && (
         <div className={budgetWarn} data-testid="usage-budget-warning">
-          ⚠ 本月成本 ${monthCost.toFixed(2)} 已超过预算 ${budget.toFixed(2)}
+          ⚠ 本月成本 ${monthCost.toFixed(2)} 已超过{projectId ? '项目' : '全局'}预算 $
+          {effectiveBudget.toFixed(2)}
+        </div>
+      )}
+      {!overBudget && nearBudget && effectiveBudget > 0 && (
+        <div className={budgetWarn} data-testid="usage-budget-near">
+          ▲ 本月成本已达预算的 80%（${monthCost.toFixed(2)} / ${effectiveBudget.toFixed(2)}）
         </div>
       )}
       {unknownCostTotal > 0 && (
@@ -139,6 +172,18 @@ function UsagePanel({
           <span>{fmtCost(m.cost)}</span>
         </div>
       ))}
+      {!projectId && unassigned && unassigned.calls > 0 && (
+        <div className={rowGrid} data-testid="usage-unassigned">
+          <span title="未归属任何项目的调用（CLI 未绑定会话/孤儿会话），不计入任何项目预算">
+            ⚠ 未归属项目
+          </span>
+          <span>{unassigned.calls}</span>
+          <span>
+            {fmtTokens(unassigned.inputTokens + unassigned.outputTokens + unassigned.cacheRead)}
+          </span>
+          <span>{fmtCost(unassigned.cost)}</span>
+        </div>
+      )}
       <div className={headRow} style={{ marginTop: 10 }}>
         <span>模型</span>
         <span>调用</span>

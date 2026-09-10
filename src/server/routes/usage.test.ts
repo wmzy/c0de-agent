@@ -4,7 +4,7 @@ import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { sessions, usageEvents } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
-import { backfillUsageEvents } from '../../session/usage.js'
+import { backfillUsageEvents, backfillUsageEventsOnce } from '../../session/usage.js'
 import { createServerContext } from '../context.js'
 import { createUsageRoute } from './usage.js'
 
@@ -93,6 +93,42 @@ describe('usage route', () => {
     expect(body.totals).toMatchObject({ cost: 1, calls: 1 })
   })
 
+  it('P1-4：currentMonth 由服务端下发（key + 聚合）', async () => {
+    const { app, db } = await setup()
+    await seedEvent(db, { projectId: 'A', input: 1000, output: 0, cost: 1 })
+    // 上月事件不进入本月口径
+    const lastMonth = new Date()
+    lastMonth.setMonth(lastMonth.getMonth() - 1)
+    await seedEvent(db, {
+      projectId: 'A',
+      input: 500,
+      output: 0,
+      cost: 9,
+      timestamp: lastMonth.getTime(),
+    })
+    const res = await app.request('/summary?projectId=A')
+    const body = (await res.json()) as {
+      currentMonth: { key: string; cost: number; calls: number }
+    }
+    expect(typeof body.currentMonth.key).toBe('string')
+    expect(body.currentMonth).toMatchObject({ cost: 1, calls: 1 })
+  })
+
+  it('P1-3：全局视图下发 unassigned 桶（未归属调用不计入任何项目预算）', async () => {
+    const { app, db } = await setup()
+    await seedEvent(db, { projectId: 'A', input: 1000, output: 0, cost: 1 })
+    await seedEvent(db, { input: 2000, output: 0, cost: 4 })
+    const res = await app.request('/summary')
+    const body = (await res.json()) as {
+      unassigned: { cost: number; calls: number }
+    }
+    expect(body.unassigned).toMatchObject({ cost: 4, calls: 1 })
+    // 项目口径不携带 unassigned（与该项目无关）
+    const proj = await app.request('/summary?projectId=A')
+    const projBody = (await proj.json()) as { unassigned?: unknown }
+    expect(projBody.unassigned).toBeUndefined()
+  })
+
   it('backfill 幂等：重复执行不重复记账（callId 唯一约束）', async () => {
     const { app, db } = await setup()
     // 模拟升级前旧数据：sessions.metadata.segments 含两条调用
@@ -147,5 +183,57 @@ describe('usage route', () => {
     const { db } = await setup()
     await db.db.insert(sessions).values({ title: 'plain' })
     await expect(backfillUsageEvents(db)).resolves.toBe(0)
+  })
+
+  it('P3-8：backfillUsageEventsOnce 首次执行后写标记，再次调用跳过扫描', async () => {
+    const { db } = await setup()
+    const now = Date.now()
+    await db.db.insert(sessions).values({
+      title: 'legacy-once',
+      metadata: {
+        segments: [
+          {
+            provider: 'p',
+            model: 'm',
+            calls: [
+              {
+                id: crypto.randomUUID(),
+                timestamp: now,
+                usage: { input: 10, output: 0 },
+                cost: 0.5,
+              },
+            ],
+          },
+        ],
+      },
+    })
+    const first = await backfillUsageEventsOnce(db)
+    expect(first).toBe(1)
+    // 二次调用不重复记账、不再扫描
+    const second = await backfillUsageEventsOnce(db)
+    expect(second).toBe(0)
+    // 新增带 call id 的会话也不会被 once 变体重复 backfill（迁移语义：仅升级首启一次）
+    await db.db.insert(sessions).values({
+      title: 'post-migration',
+      metadata: {
+        segments: [
+          {
+            provider: 'p',
+            model: 'm',
+            calls: [
+              {
+                id: crypto.randomUUID(),
+                timestamp: now,
+                usage: { input: 5, output: 0 },
+                cost: 0.1,
+              },
+            ],
+          },
+        ],
+      },
+    })
+    await expect(backfillUsageEventsOnce(db)).resolves.toBe(0)
+    const rows = await db.db.select().from(usageEvents)
+    expect(rows).toHaveLength(1)
   })
 })

@@ -28,7 +28,8 @@ export type KanbanCard = {
 
 export type KanbanBoard = {
   id: string
-  projectId: string
+  /** P2-5：回收站（软删除）看板 projectId 为 null；活动看板恒有值。 */
+  projectId: string | null
   columns: KanbanColumnDef[]
   labels: KanbanLabelDef[]
   createdAt: string
@@ -37,6 +38,14 @@ export type KanbanBoard = {
 
 export type KanbanBoardWithCards = KanbanBoard & {
   cards: KanbanCard[]
+}
+
+/** P2-5：回收站看板条目。 */
+export type DeletedKanbanBoard = {
+  id: string
+  projectName: string
+  cardCount: number
+  deletedAt: number
 }
 
 const kanbanAPI = {
@@ -90,6 +99,17 @@ const kanbanAPI = {
     }),
   /** 导出整板（列+标签+卡片 JSON；项目删除会永久级联删除看板，导出是唯一备份）。 */
   exportBoard: (projectId: string) => apiRequest<unknown>(`/api/kanban/${projectId}/export`),
+  /** P2-5：回收站看板列表（项目删除软删除的看板）。 */
+  deletedBoards: () => apiRequest<{ boards: DeletedKanbanBoard[] }>('/api/kanban/deleted'),
+  /** P2-5：恢复回收站看板到指定项目（目标已有看板 → 409）。 */
+  restoreDeletedBoard: (boardId: string, projectId: string) =>
+    apiRequest<{ ok: boolean }>(`/api/kanban/deleted/${boardId}/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ projectId }),
+    }),
+  /** P2-5：彻底删除回收站看板（不可恢复）。 */
+  destroyDeletedBoard: (boardId: string) =>
+    apiRequest<{ ok: boolean }>(`/api/kanban/deleted/${boardId}`, { method: 'DELETE' }),
   /** 导入整板（原子替换列+标签+卡片）。 */
   importBoard: (projectId: string, data: unknown) =>
     apiRequest<{ ok: boolean; cardCount: number }>(`/api/kanban/${projectId}/import`, {

@@ -71,6 +71,13 @@
       "when": 1788950024430,
       "tag": "0010_usage_events_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788995144108,
+      "tag": "0011_slow_slapstick",
+      "breakpoints": true
     }
   ]
 }

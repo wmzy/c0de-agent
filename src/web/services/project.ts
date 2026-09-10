@@ -27,7 +27,12 @@ const projectAPI = {
       method: 'POST',
       body: JSON.stringify({ directory }),
     }),
-  /** 删除项目记录（看板级联删除；会话保留）。 */
+  /** P0-2：显式信任项目（用户批准项目作用域配置/插件后调用，一次性）。 */
+  trust: (id: string) =>
+    apiRequest<{ ok: boolean; project: Project }>(`/api/projects/${id}/trust`, {
+      method: 'POST',
+    }),
+  /** 删除项目记录（看板进入回收站可恢复；会话保留）。 */
   remove: (id: string) => apiRequest<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 }
 

@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { configAPI } from '../services/config.js'
-import { localMonthKey, usageAPI } from '../services/usage.js'
+import { usageAPI } from '../services/usage.js'
 import { CommitButton } from './CommitButton.js'
 import { Logo } from './Logo.js'
 import { ProjectIndicator } from './ProjectIndicator.js'
@@ -107,21 +107,26 @@ function MonthCostBadge({ settingsPath, projectId }: { settingsPath: string; pro
     staleTime: 60_000,
   })
   const budget = configResp?.config?.usage?.monthlyBudgetUsd ?? 0
+  const globalBudget = configResp?.config?.usage?.globalMonthlyBudgetUsd ?? 0
   const { data: summary } = useQuery({
     queryKey: ['usage', 'summary', projectId ?? 'all'],
     queryFn: () => usageAPI.summary(projectId),
     staleTime: 60_000,
     refetchInterval: 120_000,
   })
-  const now = localMonthKey(Date.now())
-  const monthEntry = summary?.byMonth.find((m) => m.month === now)
+  // P1-4：本月口径由服务端下发（服务端时区），与预算暂停判定同源。
+  // P1-3：无项目上下文时按全局预算比较（项目视图仍按项目预算）。
+  const monthEntry = summary?.currentMonth
   const cost = monthEntry?.cost ?? 0
-  const overBudget = budget > 0 && cost > budget
-  const nearBudget = budget > 0 && !overBudget && cost >= budget * 0.8
+  const effectiveBudget = projectId ? budget : globalBudget > 0 ? globalBudget : budget
+  const overBudget = effectiveBudget > 0 && cost > effectiveBudget
+  const nearBudget = effectiveBudget > 0 && !overBudget && cost >= effectiveBudget * 0.8
   const unknown = monthEntry?.unknownCostCalls ?? 0
   const tip =
     `本月估算成本 $${cost.toFixed(2)}` +
-    (budget > 0 ? `（预算 $${budget.toFixed(2)}${overBudget ? '，已超支' : ''}）` : '') +
+    (effectiveBudget > 0
+      ? `（${projectId ? '项目' : '全局'}预算 $${effectiveBudget.toFixed(2)}${overBudget ? '，已超支' : ''}）`
+      : '') +
     (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
     '。点击前往设置查看用量与成本。'
   return (

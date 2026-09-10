@@ -109,17 +109,43 @@ function createSessionRoute(ctx: ServerContext): Hono {
     // P2：携带用量 segments（会话信息面板/徽标显示历史成本与 token）。
     // 与权限态不同，segments 是纯统计数据无安全含义，默认随迁。
     // 宽松校验形状：非法调用静默丢弃，不阻塞导入。
+    // P0-1：导入的调用从未对本机 API key 计费——剥离 calls[].id 使
+    // backfillUsageEvents 自然跳过它们（要求 id 非空），成本账本保持
+    // 「本机真实消费」语义；cost/usage 字段保留，展示继承成本不受影响。
+    // P2-7：calls 按导入消息时间窗裁剪——导出后原会话新增的调用不属于本副本。
+    const importedMsgs = body.messages as Array<{ createdAt?: unknown }>
+    let maxMsgTs = 0
+    for (const m of importedMsgs) {
+      const raw = m?.createdAt
+      const ts =
+        typeof raw === 'number' && Number.isFinite(raw) && raw > 0
+          ? raw
+          : typeof raw === 'string'
+            ? Date.parse(raw)
+            : Number.NaN
+      if (Number.isFinite(ts) && ts > maxMsgTs) maxMsgTs = ts
+    }
     const srcMetaAny = body.session?.metadata as { segments?: unknown } | undefined
-    if (Array.isArray(srcMetaAny?.segments)) {
-      metadata.segments = srcMetaAny.segments.filter(
-        (seg): seg is Record<string, unknown> =>
-          !!seg &&
-          typeof seg === 'object' &&
-          !Array.isArray(seg) &&
-          typeof (seg as { provider?: unknown }).provider === 'string' &&
-          typeof (seg as { model?: unknown }).model === 'string' &&
-          Array.isArray((seg as { calls?: unknown }).calls),
-      )
+    if (maxMsgTs > 0 && Array.isArray(srcMetaAny?.segments)) {
+      metadata.segments = srcMetaAny.segments
+        .filter(
+          (seg): seg is Record<string, unknown> =>
+            !!seg &&
+            typeof seg === 'object' &&
+            !Array.isArray(seg) &&
+            typeof (seg as { provider?: unknown }).provider === 'string' &&
+            typeof (seg as { model?: unknown }).model === 'string' &&
+            Array.isArray((seg as { calls?: unknown }).calls),
+        )
+        .map((seg) => ({
+          ...seg,
+          calls: (seg.calls as Array<Record<string, unknown>>)
+            .filter((c) => {
+              const ts = c?.timestamp
+              return typeof ts === 'number' && ts > 0 && ts <= maxMsgTs
+            })
+            .map(({ id: _stripped, ...rest }) => rest),
+        }))
     }
     // P2：导出含分支树结构（parentId），导入为独立根会话——告知前端提示扁平化。
     const flattened = typeof body.session.parentId === 'string' && body.session.parentId.length > 0
@@ -332,12 +358,17 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     const messages = await getMessages(ctx.db, id)
     const archives = await listArchives(ctx.db, id)
+    // P2-6：归档的 fileSnapshots 含被压缩进上下文的文件内容——导出 JSON 常被
+    // 分享/迁移，默认剥离（隐私优先）；显式 ?includeSnapshots=1 才携带。
+    const includeSnapshots = c.req.query('includeSnapshots') === '1'
     return c.json({
       version: 1,
       exportedAt: new Date().toISOString(),
       session,
       messages,
-      archives,
+      archives: includeSnapshots
+        ? archives
+        : archives.map((a) => ({ ...a, fileSnapshots: undefined })),
     })
   })
 

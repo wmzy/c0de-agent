@@ -15,14 +15,12 @@ export type UsageSummary = {
   totals: UsageTotals
   /** 内置价目表最近核价日期（H3：估算可能随价格变动过期）。 */
   priceCatalogVersion: string
+  /** P1-4：服务端权威「本月」聚合（key + 统计），客户端不再自行按时区计算。 */
+  currentMonth: { key: string } & UsageTotals
+  /** P1-3：未归属任何项目的调用聚合（仅全局视图下发）。 */
+  unassigned?: UsageTotals
   byMonth: Array<{ month: string } & UsageTotals>
   byModel: Array<{ model: string } & UsageTotals>
-}
-
-/** 本地时区的 YYYY-MM 月份键（与服务端 localMonthKey 同口径）。 */
-export function localMonthKey(ts: number): string {
-  const d = new Date(ts)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
 export const usageAPI = {
