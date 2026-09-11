@@ -99,6 +99,8 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
       source.projectId ?? undefined,
       undefined,
       source.source === 'cli' ? 'cli' : 'web',
+      undefined,
+      source.worktreePath ?? undefined,
     )
     await tx
       .update(sessions)
@@ -144,11 +146,24 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
         calls: seg.calls.filter((c) => c.timestamp <= branchPointMs),
       }))
       .filter((seg) => seg.calls.length > 0)
-    if (inheritedSegments.length > 0) {
-      await tx
-        .update(sessions)
-        .set({ metadata: { segments: inheritedSegments } })
-        .where(eq(sessions.id, forked.id))
+    // fork 继承权限态（permissionMode/alwaysAllow）。fork 语义是「完整上下文副本」，
+    // 此前不复制权限态会使分支静默回退 default 模式、白名单丢失、用户重遇权限疲劳。
+    // 同机同用户 fork 继承 auto/白名单安全（与跨机器 import 的「默认剥离」相反——
+    // import 面向陌生来源，fork 面向本人上下文）。
+    const srcMeta = source.metadata as {
+      permissionMode?: 'auto' | 'default'
+      alwaysAllow?: unknown
+    }
+    const forkedMeta: Record<string, unknown> = {}
+    if (inheritedSegments.length > 0) forkedMeta.segments = inheritedSegments
+    if (srcMeta.permissionMode === 'auto' || srcMeta.permissionMode === 'default') {
+      forkedMeta.permissionMode = srcMeta.permissionMode
+    }
+    if (Array.isArray(srcMeta.alwaysAllow)) {
+      forkedMeta.alwaysAllow = srcMeta.alwaysAllow.filter((x): x is string => typeof x === 'string')
+    }
+    if (Object.keys(forkedMeta).length > 0) {
+      await tx.update(sessions).set({ metadata: forkedMeta }).where(eq(sessions.id, forked.id))
     }
 
     for (const e of toCopy) {

@@ -11,7 +11,7 @@ import { injectSteering } from '../../core/steering.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
-import { summarizeProjectRisk } from '../../project/trust.js'
+import { enrichProjectRiskWithGlobal, summarizeProjectRisk } from '../../project/trust.js'
 import { insertEntry } from '../../session/message.js'
 import {
   getLLMSegments,
@@ -181,14 +181,19 @@ function createChatRoute(ctx: ServerContext): Hono {
     if (session.projectId) {
       const project = await getProject(ctx.db, session.projectId)
       if (project && !project.trustedAt) {
-        const risks = summarizeProjectRisk(loadConfigScopes(cwd).project)
+        const scopes = loadConfigScopes(cwd)
+        const risks = summarizeProjectRisk(scopes.project)
         if (risks.length > 0) {
+          // 并入全局配置的权限风险上下文（不改变门禁触发条件）：用户做信任决策时
+          // 能看到完整生效的权限状态（如全局已 auto），避免「信任了项目却困惑于
+          // 权限为何仍自动放行」。
+          const items = enrichProjectRiskWithGlobal(risks, scopes.global)
           return apiError(
             c,
             409,
             'TRUST_REQUIRED',
             `项目「${project.name ?? project.worktree}」的项目配置（.c0de/config.json）包含需要你确认的风险项`,
-            { projectId: project.id, projectName: project.name ?? project.worktree, items: risks },
+            { projectId: project.id, projectName: project.name ?? project.worktree, items },
           )
         }
       }

@@ -1,7 +1,7 @@
 // src/project/trust.test.ts — P0-2 项目信任风险检测单元测试。
 import { describe, expect, it } from 'vitest'
 import type { Config } from '../shared/types/config.js'
-import { summarizeProjectRisk } from './trust.js'
+import { enrichProjectRiskWithGlobal, summarizeProjectRisk } from './trust.js'
 
 describe('summarizeProjectRisk', () => {
   it('无项目配置 → 无风险', () => {
@@ -58,5 +58,57 @@ describe('summarizeProjectRisk', () => {
       'permission-timeout-deny',
       'plugins-enabled',
     ])
+  })
+})
+
+describe('enrichProjectRiskWithGlobal', () => {
+  it('全局无风险 → 原样返回（无全局配置）', () => {
+    const risks = summarizeProjectRisk({ plugins: { enabled: ['p'] } } as Partial<Config>)
+    expect(enrichProjectRiskWithGlobal(risks, undefined)).toEqual(risks)
+  })
+
+  it('全局 auto 并入项目风险（项目未含 auto），detail 标注来源', () => {
+    const risks = summarizeProjectRisk({ plugins: { enabled: ['p'] } } as Partial<Config>)
+    const items = enrichProjectRiskWithGlobal(risks, {
+      permission: { defaultMode: 'auto' },
+    } as Partial<Config>)
+    expect(items.map((i) => i.kind)).toEqual(['plugins-enabled', 'permission-auto'])
+    const globalItem = items.find((i) => i.kind === 'permission-auto')
+    expect(globalItem?.detail).toContain('全局配置')
+  })
+
+  it('项目已含 auto → 不重复并入全局 auto', () => {
+    const risks = summarizeProjectRisk({ permission: { defaultMode: 'auto' } } as Partial<Config>)
+    const items = enrichProjectRiskWithGlobal(risks, {
+      permission: { defaultMode: 'auto' },
+    } as Partial<Config>)
+    expect(items).toHaveLength(1)
+    expect(items[0]?.detail).not.toContain('全局配置')
+  })
+
+  it('全局 timeoutAction=deny 并入项目风险，项目已含则跳过', () => {
+    const empty = summarizeProjectRisk(undefined)
+    const withDeny = enrichProjectRiskWithGlobal(empty, {
+      permission: { timeoutAction: 'deny' },
+    } as Partial<Config>)
+    expect(withDeny.map((i) => i.kind)).toEqual(['permission-timeout-deny'])
+    expect(withDeny[0]?.detail).toContain('全局配置')
+
+    const already = summarizeProjectRisk({
+      permission: { timeoutAction: 'deny' },
+    } as Partial<Config>)
+    const noDup = enrichProjectRiskWithGlobal(already, {
+      permission: { timeoutAction: 'deny' },
+    } as Partial<Config>)
+    expect(noDup).toHaveLength(1)
+  })
+
+  it('全局合法值（default/pause）不并入', () => {
+    const risks = summarizeProjectRisk({ plugins: { enabled: ['p'] } } as Partial<Config>)
+    expect(
+      enrichProjectRiskWithGlobal(risks, {
+        permission: { defaultMode: 'default', timeoutAction: 'pause' },
+      } as Partial<Config>),
+    ).toEqual(risks)
   })
 })

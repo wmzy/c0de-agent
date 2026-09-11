@@ -234,6 +234,38 @@ describe('branching', () => {
     )
   })
 
+  it('fork 继承权限态（permissionMode/alwaysAllow）与 worktreePath', async () => {
+    const parent = await createSession(
+      handle,
+      'Parent',
+      undefined,
+      undefined,
+      'cli',
+      undefined,
+      '/tmp/cli-workdir',
+    )
+    await handle.db
+      .update(sessions)
+      .set({ metadata: { permissionMode: 'auto', alwaysAllow: ['bash', 42, 'edit'] } })
+      .where(eq(sessions.id, parent.id))
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('hi') })
+
+    const forked = await forkSession(handle, parent.id, 0)
+    const meta = forked.metadata as { permissionMode?: string; alwaysAllow?: unknown }
+    expect(meta.permissionMode).toBe('auto')
+    // 白名单仅保留字符串工具名（与跨机器 import 同口径），非字符串被剥离
+    expect(meta.alwaysAllow).toEqual(['bash', 'edit'])
+    expect(forked.worktreePath).toBe('/tmp/cli-workdir')
+  })
+
+  it('fork 不继承非法权限态（源会话无权限元数据时回退默认）', async () => {
+    const parent = await createSession(handle, 'Parent')
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('hi') })
+    const forked = await forkSession(handle, parent.id, 0)
+    expect(forked.metadata.permissionMode).toBeUndefined()
+    expect((forked.metadata as Record<string, unknown>).alwaysAllow).toBeUndefined()
+  })
+
   it('fork 继承分支点之前的用量 segments（徽标显示继承成本）', async () => {
     const parent = await createSession(handle, 'Parent')
     const now = Date.now()

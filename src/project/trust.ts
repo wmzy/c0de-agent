@@ -10,6 +10,9 @@
 //
 // 仅评估「项目作用域原始配置」（loadConfigScopes(cwd).project），绝不评估
 // 合并结果/全局配置——全局配置是用户在本机自己的显式编辑，天然可信。
+// 注意边界：全局配置的 permission.defaultMode=auto / timeoutAction=deny **不触发**
+// 项目信任门禁，且直接作用于所有项目（含未信任的克隆仓库）。门禁只拦「仓库自带的
+// 项目作用域配置/插件」，不拦用户自己在本机做的全局选择。
 import type { Config } from '../shared/types/config.js'
 
 /** 单个风险项：kind 供前端图标/文案映射，detail 为人类可读说明。 */
@@ -19,7 +22,35 @@ export type TrustRiskItem = {
 }
 
 /**
- * 汇总项目作用域原始配置中的风险项。无风险返回空数组。
+ * 把「全局配置中会作用于本项目的权限风险」并入项目风险列表（仅作为额外的可见
+ * 上下文，不改变门禁触发条件——门禁只由项目作用域配置触发）。目的：用户在做信任
+ * 决策时能看到完整生效的权限状态，避免「信任了项目却发现全局早已 auto」的困惑。
+ * 复用现有 kind（前端无需新增映射）；若项目风险已含同类 kind 则跳过，避免重复项。
+ */
+export function enrichProjectRiskWithGlobal(
+  risks: TrustRiskItem[],
+  globalRaw: Partial<Config> | undefined,
+): TrustRiskItem[] {
+  if (!globalRaw) return risks
+  const out = [...risks]
+  const hasAuto = out.some((r) => r.kind === 'permission-auto')
+  if (globalRaw.permission?.defaultMode === 'auto' && !hasAuto) {
+    out.push({
+      kind: 'permission-auto',
+      detail: '（全局配置）权限模式 auto：本机已全局设为自动放行，本项目同样生效',
+    })
+  }
+  const hasDeny = out.some((r) => r.kind === 'permission-timeout-deny')
+  if (globalRaw.permission?.timeoutAction === 'deny' && !hasDeny) {
+    out.push({
+      kind: 'permission-timeout-deny',
+      detail: '（全局配置）权限超时动作 timeoutAction=deny：本机已全局设为超时后继续自主执行',
+    })
+  }
+  return out
+}
+
+/** 汇总项目作用域原始配置中的风险项。无风险返回空数组。
  * 宽松形状：项目 JSON 可能字段漂移，非法值一律忽略（fail-closed 由
  * 「未信任 + 无风险项 = 不拦截」与「有风险项必拦截」共同保证——解析不出
  * 风险的配置也不含可信风险）。
