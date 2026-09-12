@@ -56,7 +56,13 @@ type AgentsConfig = {
 
 /** 权限配置：控制工具执行授权的默认行为。 */
 type PermissionConfig = {
-  /** 启动时的默认授权模式：'default' 逐个确认（默认）；'auto' 自动放行 ask 工具（YOLO 自动授权）。 */
+  /**
+   * 启动时的默认授权模式：
+   * - 'default'（默认）：只读工具自动放行；写/执行工具需确认。Web 为交互弹窗；
+   *   CLI 非交互（`c0de chat` 未加 -y）下写/执行工具直接拒绝并提示加 -y 或改 auto。
+   *   （`c0de acp` 恒为 full-auto，由编辑器侧自行控制执行授权，不受本项影响。）
+   * - 'auto'：全部工具自动放行（YOLO）。克隆仓库前务必先审查其 .c0de/config.json。
+   */
   defaultMode: 'default' | 'auto'
   /**
    * 权限确认超时（提示后 25 分钟宽限期满）兜底拒绝后的动作：
@@ -117,14 +123,15 @@ type UsageConfig = {
    *  建议只配置在 global 作用域（项目配置里设置全局预算无意义但会生效）。 */
   globalMonthlyBudgetUsd?: number
   /**
-   * 月度 token 预算（input+output tokens 之和），0 = 不限制。
+   * 月度 token 预算（input + output + cacheRead tokens 之和），0 = 不限制。
    *  P0：价格独立护栏——自建网关/未登记模型的 cost 恒 $0，金额护栏拦不住，
-   *  token 护栏按 token 量兜底。仅 budgetAction='pause' 时硬性生效（超支暂停/
-   *  拒绝）；'warn' 下金额徽标照旧，token 不额外告警。 */
+   *  token 护栏按 token 量兜底（缓存读取亦按用量计费，故纳入口径）。
+   *  仅 budgetAction='pause' 时硬性生效（超支暂停/拒绝）；
+   *  'warn' 下徽标/面板仍显示告警，但不暂停对话。 */
   monthlyTokenBudget?: number
   /**
    * 全局月度 token 预算（所有项目 + 未归属调用聚合），0 = 不限制。
-   *  与 monthlyTokenBudget 并存，任一超支且 budgetAction='pause' 即触发。 */
+   *  与 monthlyTokenBudget 并存，任一超支即按 budgetAction 触发（pause 暂停 / warn 告警）。 */
   globalMonthlyTokenBudget?: number
   /**
    * 超支动作（P3 成本护栏）：

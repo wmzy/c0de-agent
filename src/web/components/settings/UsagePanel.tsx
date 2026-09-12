@@ -2,6 +2,11 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import type { UsageSummary } from '../../services/usage.js'
 import { usageAPI } from '../../services/usage.js'
+import {
+  monthTokenSum,
+  resolveEffectiveBudget,
+  resolveEffectiveTokenBudget,
+} from '../../utils/usage.js'
 import { field, fieldInput, hint, section, sectionTitle } from './styles.js'
 
 const rowGrid = css`
@@ -80,15 +85,18 @@ function UsagePanel({
   })
 
   const monthCost = currentMonthCost(summary)
-  // token 口径与预算暂停判定同源（input+output，不含 cacheRead）。
-  const monthTokens =
-    (summary?.currentMonth?.inputTokens ?? 0) + (summary?.currentMonth?.outputTokens ?? 0)
+  // token 口径与预算暂停判定同源（input+output+cacheRead）。
+  const monthTokens = monthTokenSum(summary?.currentMonth)
   // 项目视图：项目预算；全局视图：全局预算（P1-3 两者并存，任一超支即触发动作）。
-  const effectiveBudget = projectId ? budget : (globalBudget ?? 0)
+  const effectiveBudget = resolveEffectiveBudget(projectId, budget, globalBudget)
   const overBudget = effectiveBudget > 0 && monthCost > effectiveBudget
   const nearBudget = effectiveBudget > 0 && !overBudget && monthCost >= effectiveBudget * 0.8
   // token 预算：项目/全局同口径（价格独立护栏，兜底 cost=$0 的自建网关）。
-  const effectiveTokenBudget = projectId ? (tokenBudget ?? 0) : (globalTokenBudget ?? 0)
+  const effectiveTokenBudget = resolveEffectiveTokenBudget(
+    projectId,
+    tokenBudget,
+    globalTokenBudget,
+  )
   const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
   // H2：价格未知的调用按 $0 计入，显式提示成本可能低估。
   const unknownCostTotal = summary?.totals.unknownCostCalls ?? 0
@@ -132,7 +140,7 @@ function UsagePanel({
       )}
       {projectId ? (
         <label className={field}>
-          <span>月度 token 预算（input+output，0 = 不限制；兜底价格未知的调用）</span>
+          <span>月度 token 预算（input+output+cacheRead，0 = 不限制；兜底价格未知的调用）</span>
           <input
             className={fieldInput}
             type="number"
@@ -145,7 +153,7 @@ function UsagePanel({
         </label>
       ) : (
         <label className={field}>
-          <span>全局月度 token 预算（input+output，0 = 不限制）</span>
+          <span>全局月度 token 预算（input+output+cacheRead，0 = 不限制）</span>
           <input
             className={fieldInput}
             type="number"

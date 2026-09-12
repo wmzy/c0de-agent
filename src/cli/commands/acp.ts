@@ -49,7 +49,6 @@ function createAcpHandlers(
       return { text }
     },
     abort: async () => ({ ok: true }),
-    'tool/confirm': async () => ({ ok: true }),
   }
 }
 

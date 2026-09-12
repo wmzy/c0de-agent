@@ -77,8 +77,8 @@ export async function backfillUsageEvents(handle: DB): Promise<number> {
 
 /** 当月用量汇总（金额 + token），预算护栏判定用。
  *  cost：已发生成本——价格未知（cost=null）的调用按 $0 计入，故金额口径对自建
- *  网关/未登记模型会系统性低估；tokens：input+output tokens 之和，与价格无关，
- *  作为价格独立的兜底口径。
+ *  网关/未登记模型会系统性低估；tokens：input+output+cacheRead tokens 之和，
+ *  与价格无关，作为价格独立的兜底口径（缓存读取也按用量计费，须计入）。
  */
 export async function monthUsage(
   handle: DB,
@@ -91,6 +91,7 @@ export async function monthUsage(
       cost: usageEvents.cost,
       inputTokens: usageEvents.inputTokens,
       outputTokens: usageEvents.outputTokens,
+      cacheRead: usageEvents.cacheRead,
     })
     .from(usageEvents)
     .where(and(...conds))
@@ -98,7 +99,7 @@ export async function monthUsage(
   let tokens = 0
   for (const r of rows) {
     if (typeof r.cost === 'number') cost += r.cost
-    tokens += r.inputTokens + r.outputTokens
+    tokens += r.inputTokens + r.outputTokens + (r.cacheRead ?? 0)
   }
   return { cost, tokens }
 }

@@ -3,6 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { configAPI } from '../services/config.js'
 import { usageAPI } from '../services/usage.js'
+import {
+  monthTokenSum,
+  resolveEffectiveBudget,
+  resolveEffectiveTokenBudget,
+} from '../utils/usage.js'
 import { CommitButton } from './CommitButton.js'
 import { Logo } from './Logo.js'
 import { ProjectIndicator } from './ProjectIndicator.js'
@@ -120,17 +125,17 @@ function MonthCostBadge({ settingsPath, projectId }: { settingsPath: string; pro
   // P1-3：无项目上下文时按全局预算比较（项目视图仍按项目预算）。
   const monthEntry = summary?.currentMonth
   const cost = monthEntry?.cost ?? 0
-  const effectiveBudget = projectId ? budget : globalBudget > 0 ? globalBudget : budget
+  const effectiveBudget = resolveEffectiveBudget(projectId, budget, globalBudget)
   const overBudget = effectiveBudget > 0 && cost > effectiveBudget
   const nearBudget = effectiveBudget > 0 && !overBudget && cost >= effectiveBudget * 0.8
-  // token 口径（input+output，与预算暂停判定同源）——价格未知的自建网关 cost 恒 $0，
-  // 金额徽标显示 $0 时 token 超支仍应有告警。
-  const monthTokens = (monthEntry?.inputTokens ?? 0) + (monthEntry?.outputTokens ?? 0)
-  const effectiveTokenBudget = projectId
-    ? tokenBudget
-    : globalTokenBudget > 0
-      ? globalTokenBudget
-      : tokenBudget
+  // token 口径（input+output+cacheRead，与预算暂停判定同源）——价格未知的自建网关
+  // cost 恒 $0，金额徽标显示 $0 时 token 超支仍应有告警。
+  const monthTokens = monthTokenSum(monthEntry)
+  const effectiveTokenBudget = resolveEffectiveTokenBudget(
+    projectId,
+    tokenBudget,
+    globalTokenBudget,
+  )
   const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
   const overAny = overBudget || overTokenBudget
   const unknown = monthEntry?.unknownCostCalls ?? 0
