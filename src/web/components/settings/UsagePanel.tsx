@@ -52,17 +52,25 @@ function UsagePanel({
   budget,
   budgetAction,
   globalBudget,
+  tokenBudget,
+  globalTokenBudget,
   onBudgetChange,
   onBudgetActionChange,
   onGlobalBudgetChange,
+  onTokenBudgetChange,
+  onGlobalTokenBudgetChange,
   projectId,
 }: {
   budget: number
   budgetAction?: string
   globalBudget?: number
+  tokenBudget?: number
+  globalTokenBudget?: number
   onBudgetChange: (v: number) => void
   onBudgetActionChange: (v: 'warn' | 'pause') => void
   onGlobalBudgetChange?: (v: number) => void
+  onTokenBudgetChange?: (v: number) => void
+  onGlobalTokenBudgetChange?: (v: number) => void
   projectId?: string
 }) {
   const { data: summary } = useQuery({
@@ -72,10 +80,16 @@ function UsagePanel({
   })
 
   const monthCost = currentMonthCost(summary)
+  // token 口径与预算暂停判定同源（input+output，不含 cacheRead）。
+  const monthTokens =
+    (summary?.currentMonth?.inputTokens ?? 0) + (summary?.currentMonth?.outputTokens ?? 0)
   // 项目视图：项目预算；全局视图：全局预算（P1-3 两者并存，任一超支即触发动作）。
   const effectiveBudget = projectId ? budget : (globalBudget ?? 0)
   const overBudget = effectiveBudget > 0 && monthCost > effectiveBudget
   const nearBudget = effectiveBudget > 0 && !overBudget && monthCost >= effectiveBudget * 0.8
+  // token 预算：项目/全局同口径（价格独立护栏，兜底 cost=$0 的自建网关）。
+  const effectiveTokenBudget = projectId ? (tokenBudget ?? 0) : (globalTokenBudget ?? 0)
+  const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
   // H2：价格未知的调用按 $0 计入，显式提示成本可能低估。
   const unknownCostTotal = summary?.totals.unknownCostCalls ?? 0
   // L2：无时间戳调用归入「未知」月份，不参与本月预算比较——同样需要提示。
@@ -116,6 +130,33 @@ function UsagePanel({
           />
         </label>
       )}
+      {projectId ? (
+        <label className={field}>
+          <span>月度 token 预算（input+output，0 = 不限制；兜底价格未知的调用）</span>
+          <input
+            className={fieldInput}
+            type="number"
+            min={0}
+            step="1000"
+            value={tokenBudget ?? 0}
+            onChange={(e) => onTokenBudgetChange?.(Math.max(0, Number(e.target.value)))}
+            data-testid="usage-token-budget"
+          />
+        </label>
+      ) : (
+        <label className={field}>
+          <span>全局月度 token 预算（input+output，0 = 不限制）</span>
+          <input
+            className={fieldInput}
+            type="number"
+            min={0}
+            step="1000"
+            value={globalTokenBudget ?? 0}
+            onChange={(e) => onGlobalTokenBudgetChange?.(Math.max(0, Number(e.target.value)))}
+            data-testid="usage-global-token-budget"
+          />
+        </label>
+      )}
       {projectId && (globalBudget ?? 0) > 0 && (
         <div className={hint}>
           另有全局预算 ${(globalBudget ?? 0).toFixed(2)} 兜底（所有项目聚合）。
@@ -144,6 +185,18 @@ function UsagePanel({
       {!overBudget && nearBudget && effectiveBudget > 0 && (
         <div className={budgetWarn} data-testid="usage-budget-near">
           ▲ 本月成本已达预算的 80%（${monthCost.toFixed(2)} / ${effectiveBudget.toFixed(2)}）
+        </div>
+      )}
+      {overTokenBudget && (
+        <div className={budgetWarn} data-testid="usage-token-budget-warning">
+          ⚠ 本月 token 用量 {fmtTokens(monthTokens)} 已超过{projectId ? '项目' : '全局'} token 预算{' '}
+          {fmtTokens(effectiveTokenBudget)}
+          {budgetAction !== 'pause' ? '（当前为「仅告警」，对话继续）' : ''}
+        </div>
+      )}
+      {effectiveTokenBudget > 0 && budgetAction !== 'pause' && (
+        <div className={hint} data-testid="usage-token-budget-hint">
+          token 预算在「仅告警」模式下超支仅提示、不暂停；设为「暂停对话」才会在超支时硬性拦截。
         </div>
       )}
       {unknownCostTotal > 0 && (

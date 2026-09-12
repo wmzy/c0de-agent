@@ -30,6 +30,10 @@ export const projects = pgTable('projects', {
    *  信任是「克隆即信任」防线的落点：含风险配置（auto 权限/插件）的未信任项目
    *  在聊天入口被门禁拦截，须显式确认。 */
   trustedAt: timestamp('trusted_at', { withTimezone: true }).default(sql`null`),
+  /** 信任时项目作用域风险配置的指纹（sha256 over summarizeProjectRisk 输出）。
+   *  用于检测「信任后配置漂移」：仓库后续 git pull 新增 auto 权限/插件/MCP 等
+   *  风险键时，指纹变化 → 重新触发信任门禁，而非永久信任。null=历史记录/无指纹。 */
+  riskFingerprint: text('risk_fingerprint').default(sql`null`),
 })
 
 /**

@@ -220,7 +220,18 @@ describe('control functions', () => {
     )
     agent.status = { _tag: 'running', turnCount: 0 }
     pauseAgent(agent)
-    expect(agent.status._tag).toBe('paused')
+    expect(agent.status).toEqual({ _tag: 'paused', pauseReason: 'User requested pause' })
+  })
+
+  it('pauseAgent carries a custom reason when provided', async () => {
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [] },
+      makeDeps(db, mockTextStream('x')),
+    )
+    agent.status = { _tag: 'running', turnCount: 0 }
+    pauseAgent(agent, '权限确认超时')
+    expect(agent.status).toEqual({ _tag: 'paused', pauseReason: '权限确认超时' })
   })
 
   it('resumeAgent sets running status', async () => {

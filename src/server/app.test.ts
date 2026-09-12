@@ -19,9 +19,13 @@ function mockChatStream(): AsyncGenerator<StreamChunk> {
 }
 
 let dbHandle: DB | undefined
+let prevHome: string | undefined
 afterEach(async () => {
   await dbHandle?.close()
   dbHandle = undefined
+  if (prevHome === undefined) delete process.env.HOME
+  else process.env.HOME = prevHome
+  prevHome = undefined
 })
 
 async function setupApp() {
@@ -29,6 +33,10 @@ async function setupApp() {
   dbHandle = db
   await migrateDB(db)
   const cwd = mkdtempSync(join(tmpdir(), 'c0de-app-'))
+  // 隔离全局配置：HOME 指向空目录，避免用户 ~/.c0de/config.json 的 auto
+  // 渗入项目信任门禁（否则完整聊天流程会因全局 auto + 未信任项目被 409 拦截）。
+  prevHome = process.env.HOME
+  process.env.HOME = cwd
   const ctx = createServerContext({
     db,
     llmRegistry: createRegistry(),

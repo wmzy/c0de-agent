@@ -45,7 +45,7 @@ type AgentManager = {
   /** 活跃 run 数（不含占位）。 */
   size(): number
   abort(sessionId: string): boolean
-  pause(sessionId: string): boolean
+  pause(sessionId: string, reason?: string): boolean
   resume(sessionId: string): boolean
   /** 暂停全部活跃 run 并等待到达安全点；超时强制中止（热更新前调用）。
    *  返回 pausedIds：成功暂停的会话 id 列表——调用方在后续步骤（spawn 等）
@@ -107,10 +107,10 @@ function createAgentManager(): AgentManager {
       abortAgent(run.state)
       return true
     },
-    pause(sessionId) {
+    pause(sessionId, reason) {
       const run = slotRun(runs.get(sessionId))
       if (!run) return false
-      pauseAgent(run.state)
+      pauseAgent(run.state, reason)
       return true
     },
     resume(sessionId) {

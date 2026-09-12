@@ -11,7 +11,7 @@ import { injectSteering } from '../../core/steering.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
-import { enrichProjectRiskWithGlobal, summarizeProjectRisk } from '../../project/trust.js'
+import { enrichProjectRiskWithGlobal, projectTrustNeeded } from '../../project/trust.js'
 import { insertEntry } from '../../session/message.js'
 import {
   getLLMSegments,
@@ -67,6 +67,9 @@ export async function resolveAgentCwd(
  * 服务端 stream.onAbort 随即中止 agent，长命令/权限弹窗/多 agent 全部误杀。
  * 30s 心跳保证看门狗只对「连接真正死亡」（连续 3 个心跳周期无数据）生效。
  */
+/** 权限确认超时兜底拒绝后暂停 run 的暂停原因（区别于用户主动暂停）。 */
+const PERMISSION_TIMEOUT_PAUSE_REASON = '权限确认超时，已自动拒绝该工具并暂停'
+
 const SSE_HEARTBEAT_INTERVAL_MS = 30_000
 
 /** 启动心跳定时器；返回停止函数（幂等）。流关闭后写入会被吞掉，安全。 */
@@ -173,16 +176,22 @@ function createChatRoute(ctx: ServerContext): Hono {
       ? mergeConfig(ctx.config, sessionProjectScope)
       : ctx.config
     const sessionDefaultMode = sessionProjectScope?.permission?.defaultMode
-    // P0-2 项目信任门禁：未信任项目 + 项目作用域原始配置含风险项
-    // （auto 权限 / timeoutAction=deny 降级 / 启用项目插件）→ 409 TRUST_REQUIRED，
-    // 前端弹窗明示风险，用户显式信任（POST /projects/:id/trust）后重发。
-    // 只评估项目作用域原始配置（全局配置是用户本机显式编辑，天然可信）；
-    // 信任是一次性动作，trustedAt 落盘后不再拦截。
+    // P0-2 项目信任门禁：未信任项目（或信任后配置漂移）+ 项目作用域原始配置含
+    // 风险项（auto 权限 / timeoutAction=deny 降级 / 启用项目插件 / MCP）→ 409
+    // TRUST_REQUIRED，前端弹窗明示风险，用户显式信任（POST /projects/:id/trust）
+    // 后重发。只评估项目作用域原始配置（全局配置是用户本机显式编辑，天然可信）；
+    // 信任非永久：trustedAt 落盘时附带风险指纹，其后仓库 git pull 新增风险键
+    // （指纹漂移）同样重新触发门禁（P1 信任指纹复检）。
     if (session.projectId) {
       const project = await getProject(ctx.db, session.projectId)
-      if (project && !project.trustedAt) {
+      if (project) {
         const scopes = loadConfigScopes(cwd)
-        const risks = summarizeProjectRisk(scopes.project)
+        const risks = projectTrustNeeded(
+          scopes.project,
+          scopes.global,
+          project.trustedAt,
+          project.riskFingerprint,
+        )
         if (risks.length > 0) {
           // 并入全局配置的权限风险上下文（不改变门禁触发条件）：用户做信任决策时
           // 能看到完整生效的权限状态（如全局已 auto），避免「信任了项目却困惑于
@@ -205,10 +214,11 @@ function createChatRoute(ctx: ServerContext): Hono {
       sessionConfig.permission.timeoutAction === 'deny' ? ('deny' as const) : ('pause' as const)
     // 暂停目标：会话自身 run + 其全部子 agent run（/workflow run 路径会话无主 run，
     // 只有子 agent——仅 pause 主 run 会让子 agent 在用户缺席时继续执行）。
-    const pauseSessionRun = (): void => {
-      ctx.agentManager.pause(sessionId)
+    // reason 透传给 pauseAgent，使权限超时暂停与用户主动暂停在状态栏可区分。
+    const pauseSessionRun = (reason: string): void => {
+      ctx.agentManager.pause(sessionId, reason)
       for (const child of ctx.agentManager.children(sessionId)) {
-        ctx.agentManager.pause(child.sessionId)
+        ctx.agentManager.pause(child.sessionId, reason)
       }
     }
 
@@ -321,7 +331,8 @@ function createChatRoute(ctx: ServerContext): Hono {
               onPermissionExpired: (req) => {
                 // P1-1：timeoutAction='pause' 时拒绝并暂停（主 run + 子 agent），
                 // 不让 agent 在用户缺席时继续自主推进；'deny' 时仅拒绝、run 继续。
-                if (permissionTimeoutAction === 'pause') pauseSessionRun()
+                if (permissionTimeoutAction === 'pause')
+                  pauseSessionRun(PERMISSION_TIMEOUT_PAUSE_REASON)
                 stream
                   .writeSSE({
                     event: 'permission_expired',
@@ -619,7 +630,8 @@ function createChatRoute(ctx: ServerContext): Hono {
             // P0 双层超时：提示后仍无响应 → 兜底拒绝，SSE 通知前端清理弹窗状态
             //（run 已继续，重开弹窗/拒绝按钮均失效，必须显式清理）。
             onPermissionExpired: (req) => {
-              if (permissionTimeoutAction === 'pause') pauseSessionRun()
+              if (permissionTimeoutAction === 'pause')
+                pauseSessionRun(PERMISSION_TIMEOUT_PAUSE_REASON)
               stream
                 .writeSSE({
                   event: 'permission_expired',

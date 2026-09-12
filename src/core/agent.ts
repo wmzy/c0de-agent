@@ -112,9 +112,9 @@ async function* runAgent(
   yield* agentLoop(state, deps)
 }
 
-function pauseAgent(state: AgentState): void {
+function pauseAgent(state: AgentState, reason?: string): void {
   if (state.status._tag !== 'running') return
-  state.status = { _tag: 'paused', pauseReason: 'User requested pause' }
+  state.status = { _tag: 'paused', pauseReason: reason ?? 'User requested pause' }
 }
 
 function resumeAgent(state: AgentState): void {

@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "risk_fingerprint" text DEFAULT null;

@@ -1,5 +1,6 @@
 export type { Project } from './project.js'
 export {
+  enforceProjectTrust,
   fromDirectory,
   getByDirectory,
   getProject,

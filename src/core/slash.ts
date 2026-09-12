@@ -1,4 +1,6 @@
-import { createSession } from '../session/session.js'
+import { resolve } from 'node:path'
+import type { DB } from '../db/client.js'
+import { createSession, getSession } from '../session/session.js'
 
 import { createAgent } from './agent.js'
 import type { SlashCommand } from './types.js'
@@ -19,6 +21,25 @@ function parseSlashInput(input: string): { name: string; args: string } | null {
     return { name: trimmed.slice(1), args: '' }
   }
   return { name: trimmed.slice(1, spaceIdx), args: trimmed.slice(spaceIdx + 1).trim() }
+}
+
+/** 校验跨会话操作的归属：目标会话必须存在；当前会话与目标均挂项目时须同项目，
+ *  防 Web 端误输/被注入 id 清空或分支其他项目的会话。CLI 无当前会话上下文
+ *  （sessionId 缺省）时放行——终端单用户显式操作。 */
+async function assertSameProjectSession(
+  db: DB,
+  currentId: string | undefined,
+  targetId: string,
+): Promise<void> {
+  const target = await getSession(db, targetId)
+  if (!target) throw new Error(`目标会话不存在：${targetId}`)
+  if (!currentId || currentId === targetId) return
+  const current = await getSession(db, currentId)
+  const currentProject = current?.projectId ?? null
+  const targetProject = target.projectId ?? null
+  if (currentProject !== null && targetProject !== null && currentProject !== targetProject) {
+    throw new Error(`会话 ${targetId} 属于其他项目，不能从当前会话操作`)
+  }
 }
 
 type SlashRegistry = {
@@ -124,6 +145,11 @@ const clearCommand: SlashCommand = {
     if (!sessionId) {
       return { _tag: 'error', message: 'Usage: /clear [session-id] --yes（当前会话可省略 id）' }
     }
+    try {
+      await assertSameProjectSession(ctx.deps.db, ctx.sessionId, sessionId)
+    } catch (error) {
+      return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
+    }
     if (!yes) {
       return {
         _tag: 'error',
@@ -161,13 +187,13 @@ const forkCommand: SlashCommand = {
   argsHint: '[session-id] [message-index]',
   execute: async (args, ctx) => {
     const parts = args.split(/\s+/).filter(Boolean)
-    // 默认当前会话；第一个参数若是 session id（非纯数字）则用它。
+    // 默认当前会话；第一个非纯数字参数视为 session id 覆盖（fork 其他会话）。
     let sessionId = ctx.sessionId
     let messageIndex: number | undefined
     for (const p of parts) {
       if (/^\d+$/.test(p)) {
         messageIndex = Number.parseInt(p, 10)
-      } else if (!sessionId) {
+      } else {
         sessionId = p
       }
     }
@@ -176,6 +202,11 @@ const forkCommand: SlashCommand = {
         _tag: 'error',
         message: 'Usage: /fork [session-id] [message-index]（当前会话可省略 id）',
       }
+    }
+    try {
+      await assertSameProjectSession(ctx.deps.db, ctx.sessionId, sessionId)
+    } catch (error) {
+      return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
     }
     // 未指定 index → 默认最新一条消息处分支（与 web fork API 语义一致，不再是 index 0）
     if (messageIndex === undefined) {
@@ -318,12 +349,15 @@ const workflowCommand: SlashCommand = {
         }
       }
       const filePath = parts[fileIdx + 1] ?? ''
+      // 相对路径以 agent 的 cwd（项目 worktree / CLI 工作目录）解析，而非 serve 进程 cwd——
+      // 否则 Web 端 `/workflow create wf --file ./wf.md` 会读错基准目录。
+      const resolvedPath = resolve(ctx.cwd, filePath)
 
       let source: string
       try {
-        source = await import('node:fs/promises').then((fs) => fs.readFile(filePath, 'utf-8'))
+        source = await import('node:fs/promises').then((fs) => fs.readFile(resolvedPath, 'utf-8'))
       } catch {
-        return { _tag: 'error', message: `无法读取文件：${filePath}` }
+        return { _tag: 'error', message: `无法读取文件：${resolvedPath}` }
       }
 
       const result = await saveWorkflow(name, source, 'project', ctx.cwd)

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { projects } from '../db/schema.js'
 import { createSession } from '../session/session.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
@@ -307,6 +308,48 @@ describe('builtin commands', () => {
     const archives = await searchArchives(db, session.id, 'hello')
     expect(archives.length).toBeGreaterThan(0)
     expect(archives.some((a) => a.archiveType === 'clear')).toBe(true)
+  })
+
+  it('/clear 跨项目会话 → 拒绝（归属校验）', async () => {
+    await db.db.insert(projects).values([
+      { id: 'proj-a', worktree: '/tmp/a' },
+      { id: 'proj-b', worktree: '/tmp/b' },
+    ])
+    const a = await createSession(db, 'A', 'proj-a')
+    const b = await createSession(db, 'B', 'proj-b')
+    const cmd = builtinCommands.find((c) => c.name === 'clear')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute(`${b.id} --yes`, {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+      sessionId: a.id,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('其他项目')
+    }
+  })
+
+  it('/fork 跨项目会话 → 拒绝（归属校验）', async () => {
+    await db.db.insert(projects).values([
+      { id: 'proj-a', worktree: '/tmp/a' },
+      { id: 'proj-b', worktree: '/tmp/b' },
+    ])
+    const a = await createSession(db, 'A', 'proj-a')
+    const b = await createSession(db, 'B', 'proj-b')
+    const cmd = builtinCommands.find((c) => c.name === 'fork')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute(`${b.id} 1`, {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+      sessionId: a.id,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('其他项目')
+    }
   })
 
   it('/fork 默认当前会话最新消息分支', async () => {

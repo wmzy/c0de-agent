@@ -108,6 +108,8 @@ function MonthCostBadge({ settingsPath, projectId }: { settingsPath: string; pro
   })
   const budget = configResp?.config?.usage?.monthlyBudgetUsd ?? 0
   const globalBudget = configResp?.config?.usage?.globalMonthlyBudgetUsd ?? 0
+  const tokenBudget = configResp?.config?.usage?.monthlyTokenBudget ?? 0
+  const globalTokenBudget = configResp?.config?.usage?.globalMonthlyTokenBudget ?? 0
   const { data: summary } = useQuery({
     queryKey: ['usage', 'summary', projectId ?? 'all'],
     queryFn: () => usageAPI.summary(projectId),
@@ -121,22 +123,35 @@ function MonthCostBadge({ settingsPath, projectId }: { settingsPath: string; pro
   const effectiveBudget = projectId ? budget : globalBudget > 0 ? globalBudget : budget
   const overBudget = effectiveBudget > 0 && cost > effectiveBudget
   const nearBudget = effectiveBudget > 0 && !overBudget && cost >= effectiveBudget * 0.8
+  // token 口径（input+output，与预算暂停判定同源）——价格未知的自建网关 cost 恒 $0，
+  // 金额徽标显示 $0 时 token 超支仍应有告警。
+  const monthTokens = (monthEntry?.inputTokens ?? 0) + (monthEntry?.outputTokens ?? 0)
+  const effectiveTokenBudget = projectId
+    ? tokenBudget
+    : globalTokenBudget > 0
+      ? globalTokenBudget
+      : tokenBudget
+  const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
+  const overAny = overBudget || overTokenBudget
   const unknown = monthEntry?.unknownCostCalls ?? 0
   const tip =
     `本月估算成本 $${cost.toFixed(2)}` +
     (effectiveBudget > 0
       ? `（${projectId ? '项目' : '全局'}预算 $${effectiveBudget.toFixed(2)}${overBudget ? '，已超支' : ''}）`
       : '') +
+    (overTokenBudget
+      ? `；token 用量 ${monthTokens.toLocaleString()} 已超 ${effectiveTokenBudget.toLocaleString()}`
+      : '') +
     (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
     '。点击前往设置查看用量与成本。'
   return (
     <Link
       to={settingsPath}
-      className={`${costBadge}${overBudget ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`}
+      className={`${costBadge}${overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`}
       title={tip}
       data-testid="month-cost-badge"
     >
-      {overBudget ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 ${cost.toFixed(2)}
+      {overAny ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 ${cost.toFixed(2)}
     </Link>
   )
 }

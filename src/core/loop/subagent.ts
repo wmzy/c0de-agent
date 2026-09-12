@@ -117,6 +117,10 @@ export async function runSubAgent(
     }
 
     const childState = await createAgent(childSession, childConfig, childDeps)
+    // 继承父 agent 的「预算已确认超支」标记：父 run 已因预算暂停、用户点「恢复」
+    // 继续后，子 agent 不应再因同一预算超支提前中止（用户已知情继续）；父未超支
+    // 时标记为 undefined，子 agent 自跑其 loop 仍会按轮次独立检查预算。
+    childState.budgetPauseTriggered = parent.budgetPauseTriggered
 
     // abort 链接：父 abort 则子 abort
     if (parent.abortController.signal.aborted) {

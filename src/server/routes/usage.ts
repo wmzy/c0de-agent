@@ -89,7 +89,7 @@ function createUsageRoute(ctx: ServerContext): Hono {
 
     // P1-4：本月口径由服务端本地时区计算并下发——此前前端用自己的时区
     // 过滤 byMonth 找「本月」，远程访问/容器时区不同时与预算暂停判定
-    // （服务端 currentMonthCost）口径不一致，徽标显示未超支却被打断。
+    // （服务端 budgetOverageParts 同用本地时区口径）不一致，徽标显示未超支却被打断。
     const monthKey = localMonthKey(Date.now())
     const current = byMonth.get(monthKey) ?? emptyTotals()
 

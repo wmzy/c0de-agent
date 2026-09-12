@@ -117,6 +117,16 @@ type UsageConfig = {
    *  建议只配置在 global 作用域（项目配置里设置全局预算无意义但会生效）。 */
   globalMonthlyBudgetUsd?: number
   /**
+   * 月度 token 预算（input+output tokens 之和），0 = 不限制。
+   *  P0：价格独立护栏——自建网关/未登记模型的 cost 恒 $0，金额护栏拦不住，
+   *  token 护栏按 token 量兜底。仅 budgetAction='pause' 时硬性生效（超支暂停/
+   *  拒绝）；'warn' 下金额徽标照旧，token 不额外告警。 */
+  monthlyTokenBudget?: number
+  /**
+   * 全局月度 token 预算（所有项目 + 未归属调用聚合），0 = 不限制。
+   *  与 monthlyTokenBudget 并存，任一超支且 budgetAction='pause' 即触发。 */
+  globalMonthlyTokenBudget?: number
+  /**
    * 超支动作（P3 成本护栏）：
    * - 'warn'（默认）：仅告警（顶栏徽标/用量面板），agent 继续执行；
    * - 'pause'：新一轮 LLM 请求前发现当月成本超预算 → 暂停 run（等同权限超时

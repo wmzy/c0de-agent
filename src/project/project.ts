@@ -1,8 +1,11 @@
 import { basename } from 'node:path'
 import { eq } from 'drizzle-orm'
+import { loadConfigScopes } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, projects, sessions } from '../db/schema.js'
+import type { Config } from '../shared/types/config.js'
 import { resolveProject } from './resolve.js'
+import { computeProjectRiskFingerprint, projectTrustNeeded } from './trust.js'
 
 export type Project = {
   id: string
@@ -14,6 +17,8 @@ export type Project = {
   updatedAt: number
   /** 用户显式信任该项目作用域配置/插件的时间戳；null=未信任（P0-2 信任边界）。 */
   trustedAt: number | null
+  /** 信任时的风险配置指纹；null=历史记录（无指纹，见 schema 注释）。 */
+  riskFingerprint: string | null
 }
 
 function rowToProject(row: typeof projects.$inferSelect): Project {
@@ -33,6 +38,7 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
         : row.trustedAt
           ? new Date(row.trustedAt).getTime()
           : null,
+    riskFingerprint: row.riskFingerprint,
   }
 }
 
@@ -126,15 +132,61 @@ export async function updateProjectName(
  * P0-2：显式信任项目——用户在信任确认弹窗中批准项目作用域配置/插件后落盘。
  * 信任是「克隆即信任」防线的落点；未信任项目携带风险配置时聊天入口被门禁拦截。
  * 一次性动作：信任后不再拦截（用户可随时在设置中收回项目级配置）。
+ * P1：信任时同时落盘「风险配置指纹」（当前项目作用域的 summarizeProjectRisk
+ * 快照）——此后若仓库 git pull 新增 auto 权限/插件/MCP 等风险键，指纹漂移会
+ * 重新触发门禁复检，而非永久信任。
  */
 export async function trustProject(handle: DB, id: string): Promise<Project | null> {
+  const existing = await getProject(handle, id)
+  if (!existing) return null
+  const scope = loadConfigScopes(existing.worktree).project
+  const riskFingerprint = computeProjectRiskFingerprint(scope)
   const rows = await handle.db
     .update(projects)
-    .set({ trustedAt: new Date() })
+    .set({ trustedAt: new Date(), riskFingerprint })
     .where(eq(projects.id, id))
     .returning()
   const row = rows[0]
   return row ? rowToProject(row) : null
+}
+
+/**
+ * P0 CLI 项目信任门禁：agent 执行路径（c0de chat / c0de acp）在无 Web 确认弹窗的
+ * 情况下，若目录项目未信任（或信任后未 config 漂移）且项目作用域/全局权限配置含
+ * 风险项，直接抛错引导 `c0de trust <dir>`——与 Web 聊天入口 409 TRUST_REQUIRED 用
+ * 同一套 projectTrustNeeded 判定，杜绝「Web 拦、CLI 裸奔」的不对称。
+ * 无风险项时不拦；trust/sessions 等非 agent 命令由调用方跳过此门禁。
+ * `globalRaw` 参数仅供测试注入确定性全局配置（生产走本机 ~/.c0de/config.json）。
+ */
+export async function enforceProjectTrust(
+  handle: DB,
+  cwd: string,
+  globalRaw?: Partial<Config> | undefined,
+): Promise<void> {
+  const scopes = loadConfigScopes(cwd)
+  const effectiveGlobal = globalRaw === undefined ? scopes.global : globalRaw
+  let trustedAt: number | null = null
+  let riskFingerprint: string | null = null
+  try {
+    const project = await getByDirectory(handle, cwd)
+    trustedAt = project?.trustedAt ?? null
+    riskFingerprint = project?.riskFingerprint ?? null
+  } catch {
+    // 信任状态查询失败 → 按未信任处理（宁可拦截，不静默放行）
+  }
+  const risks = projectTrustNeeded(scopes.project, effectiveGlobal, trustedAt, riskFingerprint)
+  if (risks.length === 0) return
+  const hasProjectRisk = risks.some(
+    (r) => r.kind !== 'permission-auto' && r.kind !== 'permission-timeout-deny',
+  )
+  const sourceNote = hasProjectRisk
+    ? ''
+    : '（风险来自全局配置 permission；如有意为之可执行 c0de trust 一次性放行本项目）'
+  throw new Error(
+    `项目目录 ${cwd} 的配置含需要你确认的风险项。\n` +
+      `  请先审查后执行 c0de trust <目录> 显式信任；或改用 c0de serve 在浏览器确认。\n` +
+      `  风险项：${risks.map((r) => r.kind).join('、')}${sourceNote}`,
+  )
 }
 
 /**

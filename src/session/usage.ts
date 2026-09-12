@@ -7,11 +7,13 @@
 //  1. backfillUsageEvents：把 sessions.metadata.segments 中已有调用补齐进账本
 //     （升级前产生的历史数据 + fork 复制的 segments + 导入的会话）。
 //     幂等：callId 唯一约束 + onConflictDoNothing，可安全重复执行。
-//  2. monthCost：预算暂停（usage.budgetAction='pause'）用的当月成本查询。
+//  2. budgetOverageParts：预算暂停/拒绝（usage.budgetAction='pause'）用的当月
+//     金额 + token 双口径超支判定（token 兜底价格未知的自建网关/未登记模型）。
 
 import { and, eq, gte } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { appMeta, sessions, usageEvents } from '../db/schema.js'
+import type { UsageConfig } from '../shared/types/config.js'
 
 /** segments 中单次调用的宽松形状（metadata JSON 反序列化后字段可能漂移）。 */
 type SegmentCall = {
@@ -73,34 +75,85 @@ export async function backfillUsageEvents(handle: DB): Promise<number> {
   return added
 }
 
-/** 当月成本汇总（预算暂停判定用；cost=null 按 $0 计，另计未知次数）。 */
-export async function monthCost(
+/** 当月用量汇总（金额 + token），预算护栏判定用。
+ *  cost：已发生成本——价格未知（cost=null）的调用按 $0 计入，故金额口径对自建
+ *  网关/未登记模型会系统性低估；tokens：input+output tokens 之和，与价格无关，
+ *  作为价格独立的兜底口径。
+ */
+export async function monthUsage(
   handle: DB,
   opts: { projectId?: string | null; sinceMs: number },
-): Promise<{ cost: number; unknownCostCalls: number }> {
+): Promise<{ cost: number; tokens: number }> {
   const conds = [gte(usageEvents.timestamp, opts.sinceMs)]
   if (opts.projectId) conds.push(eq(usageEvents.projectId, opts.projectId))
   const rows = await handle.db
-    .select({ cost: usageEvents.cost })
+    .select({
+      cost: usageEvents.cost,
+      inputTokens: usageEvents.inputTokens,
+      outputTokens: usageEvents.outputTokens,
+    })
     .from(usageEvents)
     .where(and(...conds))
   let cost = 0
-  let unknownCostCalls = 0
+  let tokens = 0
   for (const r of rows) {
     if (typeof r.cost === 'number') cost += r.cost
-    else unknownCostCalls += 1
+    tokens += r.inputTokens + r.outputTokens
   }
-  return { cost, unknownCostCalls }
+  return { cost, tokens }
 }
 
-/** 当月累计成本（本月 1 日 00:00 本地时区起算），返回 {cost, unknownCostCalls}。 */
-export async function currentMonthCost(
+/** 当月累计用量（本月 1 日 00:00 本地时区起算）。 */
+export async function currentMonthUsage(
   handle: DB,
   projectId?: string | null,
   now = new Date(),
-): Promise<{ cost: number; unknownCostCalls: number }> {
+): Promise<{ cost: number; tokens: number }> {
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
-  return monthCost(handle, { projectId, sinceMs: monthStart })
+  return monthUsage(handle, { projectId, sinceMs: monthStart })
+}
+
+/** 预算护栏判定：金额（USD）+ token 双口径，任一超支返回人类可读描述片段
+ *  （空数组 = 未超支）。供 Web loop 暂停、CLI 拒绝、子 agent 提前中止共用。
+ *  项目口径仅在 projectId 可归属时检查（未归属会话只受全局口径兜底）。
+ *  token 口径独立于价格，兜底自建网关/未登记模型（cost 恒 $0）的场景。 */
+export async function budgetOverageParts(
+  handle: DB,
+  usage: UsageConfig,
+  projectId: string | null | undefined,
+  now = new Date(),
+): Promise<string[]> {
+  const projectBudgetUsd = usage.monthlyBudgetUsd ?? 0
+  const globalBudgetUsd = usage.globalMonthlyBudgetUsd ?? 0
+  const projectTokenBudget = usage.monthlyTokenBudget ?? 0
+  const globalTokenBudget = usage.globalMonthlyTokenBudget ?? 0
+  const projectScoped = projectId != null && (projectBudgetUsd > 0 || projectTokenBudget > 0)
+  const globalScoped = globalBudgetUsd > 0 || globalTokenBudget > 0
+  if (!projectScoped && !globalScoped) return []
+
+  const [project, global] = await Promise.all([
+    projectScoped ? currentMonthUsage(handle, projectId, now) : Promise.resolve(null),
+    globalScoped ? currentMonthUsage(handle, undefined, now) : Promise.resolve(null),
+  ])
+
+  const parts: string[] = []
+  if (globalBudgetUsd > 0 && global && global.cost > globalBudgetUsd) {
+    parts.push(`全局预算 $${globalBudgetUsd.toFixed(2)}：本月全部项目已 $${global.cost.toFixed(2)}`)
+  }
+  if (projectBudgetUsd > 0 && project && project.cost > projectBudgetUsd) {
+    parts.push(`项目预算 $${projectBudgetUsd.toFixed(2)}：本项目已 $${project.cost.toFixed(2)}`)
+  }
+  if (globalTokenBudget > 0 && global && global.tokens > globalTokenBudget) {
+    parts.push(
+      `全局 token 预算 ${globalTokenBudget.toLocaleString()}：本月已 ${global.tokens.toLocaleString()} tokens`,
+    )
+  }
+  if (projectTokenBudget > 0 && project && project.tokens > projectTokenBudget) {
+    parts.push(
+      `项目 token 预算 ${projectTokenBudget.toLocaleString()}：本项目已 ${project.tokens.toLocaleString()} tokens`,
+    )
+  }
+  return parts
 }
 
 /** 本地时区的 YYYY-MM 月份键（与 usage 聚合、前端徽标同口径）。 */

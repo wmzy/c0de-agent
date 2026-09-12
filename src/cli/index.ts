@@ -8,6 +8,7 @@ import { loadConfig } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
+import { enforceProjectTrust } from '../project/index.js'
 import {
   acquireDevDbLock,
   readServeInfo,
@@ -121,6 +122,8 @@ type AgentDepsOptions = {
   requirePersistent?: boolean
   /** 显式允许 serve 占用持久库时退化为内存库（--temp）；缺省时锁冲突直接报错。 */
   allowTemp?: boolean
+  /** 跳过项目信任门禁（trust/sessions 等非 agent 执行命令使用；chat/acp 不跳过）。 */
+  skipTrustGate?: boolean
 }
 
 /** 封装 agent 依赖生命周期：加载配置 → 建库迁移 → 组装 deps → 使用后关库。
@@ -187,6 +190,11 @@ async function withAgentDeps(
       cwd,
       ...(opts.strategy ? { permissionStrategy: opts.strategy } : {}),
     })
+    // P0：agent 执行路径（chat/acp）在无 Web 确认弹窗下硬拦未信任项目的风险配置，
+    // 引导 c0de trust；trust/sessions 等非 agent 命令经 skipTrustGate 跳过。
+    if (opts.skipTrustGate !== true) {
+      await enforceProjectTrust(db, cwd)
+    }
     await fn(config, deps)
   } finally {
     await db.close()
@@ -248,14 +256,14 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     }
     case 'sessions': {
       // 需要持久库列出/清理会话；serve 运行时内存库不含数据，直接失败而不是列空表。
-      await withAgentDeps(cwd, { requirePersistent: true }, (_config, deps) =>
+      await withAgentDeps(cwd, { requirePersistent: true, skipTrustGate: true }, (_config, deps) =>
         runSessionsCommand({ args, db: deps.db }),
       )
       return
     }
     case 'trust': {
       // 与 sessions 同约束：持久库落盘 trustedAt；serve 运行时引导走 Web 信任弹窗。
-      await withAgentDeps(cwd, { requirePersistent: true }, (_config, deps) =>
+      await withAgentDeps(cwd, { requirePersistent: true, skipTrustGate: true }, (_config, deps) =>
         runTrustCommand({ args, db: deps.db, cwd }),
       )
       return

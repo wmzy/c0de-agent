@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SSEStreamingApi } from 'hono/streaming'
@@ -993,34 +993,45 @@ describe('SSE 心跳', () => {
 
 describe('P0-2 项目信任门禁', () => {
   let tmpDir: string | undefined
+  let prevHome: string | undefined
   afterEach(() => {
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true })
       tmpDir = undefined
     }
+    // 恢复 HOME，避免隔离配置泄漏到同 worker 的其他测试。
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    prevHome = undefined
   })
 
-  /** 建临时项目目录（含 .c0de/config.json）+ 注册项目 + 绑定会话。 */
+  /** 建临时项目目录（含 .c0de/config.json）+ 注册项目 + 绑定会话。
+   *  将 HOME 指向临时空目录以隔离全局配置（否则用户 ~/.c0de/config.json 的 auto
+   *  会渗入门禁判定）；globalConfig 提供时写入隔离 HOME 的 .c0de/config.json。 */
   async function setupTrustScenario(
     projectConfig: Record<string, unknown>,
+    globalConfig?: Record<string, unknown>,
   ): Promise<{ app: ReturnType<typeof createChatRoute>; sessionId: string; projectId: string }> {
     tmpDir = mkdtempSync(join(tmpdir(), 'c0de-trust-'))
-    const { mkdir } = await import('node:fs/promises')
-    await mkdir(join(tmpDir as string, '.c0de'), { recursive: true })
-    await writeFile(
-      join(tmpDir as string, '.c0de', 'config.json'),
-      JSON.stringify(projectConfig),
-      'utf-8',
-    )
+    const homeDir = join(tmpDir, 'home')
+    const projDir = join(tmpDir, 'proj')
+    await mkdir(join(homeDir, '.c0de'), { recursive: true })
+    prevHome = process.env.HOME
+    process.env.HOME = homeDir
+    if (globalConfig) {
+      await writeFile(join(homeDir, '.c0de', 'config.json'), JSON.stringify(globalConfig), 'utf-8')
+    }
+    await mkdir(join(projDir, '.c0de'), { recursive: true })
+    await writeFile(join(projDir, '.c0de', 'config.json'), JSON.stringify(projectConfig), 'utf-8')
     const db = await createDB({ driver: 'pglite' })
     dbHandle = db
     await migrateDB(db)
-    const project = await fromDirectory(db, tmpDir as string)
+    const project = await fromDirectory(db, projDir)
     const session = await createSession(db, 'TrustMe', project.id)
     const ctx = createServerContext({
       db,
       llmRegistry: createRegistry(),
-      cwd: tmpDir as string,
+      cwd: projDir,
       chatStream: mockChatStream,
     })
     const app = createChatRoute(ctx)
@@ -1069,6 +1080,43 @@ describe('P0-2 项目信任门禁', () => {
     expect(res.status).toBe(200)
   })
 
+  it('未信任项目 + 全局 auto（项目无风险）→ 409 拦截（全局权限风险兜底）', async () => {
+    const { app, sessionId, projectId } = await setupTrustScenario(
+      { permission: { defaultMode: 'default' } },
+      { permission: { defaultMode: 'auto' } },
+    )
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as {
+      error: {
+        code: string
+        details: { projectId: string; items: Array<{ kind: string; detail: string }> }
+      }
+    }
+    expect(body.error.code).toBe('TRUST_REQUIRED')
+    expect(body.error.details.projectId).toBe(projectId)
+    const item = body.error.details.items.find((i) => i.kind === 'permission-auto')
+    expect(item?.detail).toContain('全局配置')
+  })
+
+  it('信任后 + 全局 auto（项目无风险）→ 放行（全局不复检）', async () => {
+    const { app, sessionId, projectId } = await setupTrustScenario(
+      { permission: { defaultMode: 'default' } },
+      { permission: { defaultMode: 'auto' } },
+    )
+    await trustProject(dbHandle as DB, projectId)
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(res.status).toBe(200)
+  })
+
   it('未信任项目 + 启用插件配置 → 409 携带 plugins-enabled 风险项', async () => {
     const { app, sessionId } = await setupTrustScenario({
       plugins: { enabled: ['evil-plugin'] },
@@ -1084,5 +1132,46 @@ describe('P0-2 项目信任门禁', () => {
     }
     expect(body.error.code).toBe('TRUST_REQUIRED')
     expect(body.error.details.items.map((i) => i.kind)).toContain('plugins-enabled')
+  })
+
+  it('信任后配置漂移（新增风险键）→ 重新 409 TRUST_REQUIRED（指纹复检）', async () => {
+    const { app, sessionId, projectId } = await setupTrustScenario({
+      permission: { defaultMode: 'auto' },
+    })
+    await trustProject(dbHandle as DB, projectId)
+
+    // 模拟仓库 git pull 后新增插件风险键：指纹漂移 → 门禁复发，而非永久信任。
+    await writeFile(
+      join(tmpDir as string, 'proj', '.c0de', 'config.json'),
+      JSON.stringify({
+        permission: { defaultMode: 'auto' },
+        plugins: { enabled: ['evil-plugin'] },
+      }),
+      'utf-8',
+    )
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as {
+      error: { code: string; details: { items: Array<{ kind: string }> } }
+    }
+    expect(body.error.code).toBe('TRUST_REQUIRED')
+    expect(body.error.details.items.map((i) => i.kind)).toContain('plugins-enabled')
+  })
+
+  it('信任后配置未变 → 不再拦截', async () => {
+    const { app, sessionId, projectId } = await setupTrustScenario({
+      permission: { defaultMode: 'auto' },
+    })
+    await trustProject(dbHandle as DB, projectId)
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(res.status).toBe(200)
   })
 })

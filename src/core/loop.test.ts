@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { usageEvents } from '../db/schema.js'
+import { projects, usageEvents } from '../db/schema.js'
 import * as provider from '../llm/provider.js'
 import { createRegistry, registerProvider } from '../llm/registry.js'
 import { createHookRunner } from '../plugins/hooks.js'
@@ -531,10 +531,16 @@ describe('agentLoop', () => {
   })
 
   it('P3：budgetPause 超支暂停 run，恢复后不再因预算重复暂停', async () => {
-    // 预置账本：当月成本 $11 已超 $10 预算
+    // 会话绑定项目 proj-1，项目预算 $10，账本里本项目已 $11。
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
     await db.db.insert(usageEvents).values({
       callId: generateId(),
-      projectId: null,
+      projectId: 'proj-1',
       provider: 'mock',
       model: 'mock',
       inputTokens: 1000,
@@ -667,6 +673,54 @@ describe('agentLoop', () => {
     }
     expect(pausedReason).toContain('全局预算')
     expect(pausedReason).toContain('10')
+    expect(state.budgetPauseTriggered).toBe(true)
+  })
+
+  it('P0：token 预算超支暂停（价格未知 cost=null，金额护栏失效，token 兜底）', async () => {
+    // 会话绑定项目 proj-1，价格未知（cost=null）但 token 已超 500 预算。
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 400,
+      outputTokens: 200,
+      cacheRead: 0,
+      cost: null,
+      timestamp: Date.now(),
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('token over')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: { monthlyBudgetUsd: 0, monthlyTokenBudget: 500, budgetAction: 'pause' },
+      },
+      budgetPause: true,
+    }
+    const gen = agentLoop(state, deps)
+    let pausedReason = ''
+    let guard = 0
+    let pull = await gen.next()
+    while (!pull.done && guard < 30) {
+      const value = pull.value
+      if (value && value._tag === 'status_change' && value.status._tag === 'paused') {
+        pausedReason = value.status.pauseReason ?? ''
+        break
+      }
+      pull = await gen.next()
+      guard += 1
+    }
+    // 金额口径 cost 全空（$0），仅 token 口径能拦得住。
+    expect(pausedReason).toContain('token 预算')
+    expect(pausedReason).toContain('600')
     expect(state.budgetPauseTriggered).toBe(true)
   })
 

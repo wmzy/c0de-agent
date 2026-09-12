@@ -601,9 +601,15 @@ export function Settings() {
             budget={merged.usage?.monthlyBudgetUsd ?? 0}
             budgetAction={merged.usage?.budgetAction ?? 'warn'}
             globalBudget={merged.usage?.globalMonthlyBudgetUsd ?? 0}
+            tokenBudget={merged.usage?.monthlyTokenBudget ?? 0}
+            globalTokenBudget={merged.usage?.globalMonthlyTokenBudget ?? 0}
             onBudgetChange={(v) => updateSection('usage', { monthlyBudgetUsd: v })}
             onBudgetActionChange={(v) => updateSection('usage', { budgetAction: v })}
             onGlobalBudgetChange={(v) => updateSection('usage', { globalMonthlyBudgetUsd: v })}
+            onTokenBudgetChange={(v) => updateSection('usage', { monthlyTokenBudget: v })}
+            onGlobalTokenBudgetChange={(v) =>
+              updateSection('usage', { globalMonthlyTokenBudget: v })
+            }
             projectId={projectId}
           />
         </>
