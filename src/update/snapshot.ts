@@ -37,6 +37,9 @@ type SerializedTerminal = {
   cwd: string
   title: string
   projectId?: string
+  /** P3-7：用户勾选「更新后自动重启」的前台命令（如 `npm run dev`）；
+   *  新实例重建 shell 后把该命令写入 stdin 重跑。仅显式勾选才携带。 */
+  command?: string
 }
 
 /** 热更新迁移快照（spec §18.2）。 */

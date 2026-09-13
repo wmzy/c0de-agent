@@ -22,12 +22,12 @@ describe('DEFAULT_CONFIG', () => {
     expect(DEFAULT_CONFIG.providers).toEqual([])
     expect(DEFAULT_CONFIG.compaction.enabled).toBe(true)
     expect(DEFAULT_CONFIG.compaction.threshold).toBe(0.8)
-    expect(DEFAULT_CONFIG.tools.enabled).toEqual([])
+    expect(DEFAULT_CONFIG.tools.enabled).toEqual(['*'])
     expect(DEFAULT_CONFIG.fallback.maxRetries).toBe(3)
   })
 
-  it('tools.enabled empty means all registered tools', () => {
-    expect(DEFAULT_CONFIG.tools.enabled).toEqual([])
+  it('tools.enabled defaults to ["*"] (all registered tools)', () => {
+    expect(DEFAULT_CONFIG.tools.enabled).toEqual(['*'])
     expect(DEFAULT_CONFIG.tools.disabled).toEqual([])
   })
 

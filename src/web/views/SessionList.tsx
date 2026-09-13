@@ -611,6 +611,8 @@ export function SessionList({
 
 /** 回收站保留期（与后端 purgeDeletedSessions 默认 60 天一致，仅展示用）。 */
 const TRASH_RETENTION_DAYS = 60
+/** 绝对上限（与后端 TRASH_ABSOLUTE_MAX_MS 一致）：从未查看的条目自删除起最长保留 365 天。 */
+const TRASH_ABSOLUTE_MAX_DAYS = 365
 /** A3：到期标记 → 物理清除的宽限期（与后端 TRASH_PURGE_GRACE_MS 一致，仅展示用）。 */
 const TRASH_PURGE_GRACE_DAYS = 7
 
@@ -630,11 +632,18 @@ function expiryLabel(s: Session): string {
   if (pending) {
     const deadline = new Date(pending + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000)
     const left = Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-    return `即将清除 · 剩 ${left} 天内恢复`
+    return `即将清除 · ${deadline.toLocaleDateString()} 前可恢复（剩 ${left} 天）`
   }
   const seen = s.metadata.trashSeenAt
   if (!seen) {
-    return `待查看 · 首次打开后保留 ${TRASH_RETENTION_DAYS} 天`
+    // 未查看：保留期自首次打开回收站起算；但删除后仍有 365 天绝对上限兜底，
+    // 给出绝对清除日避免「不打开就永不清理」的误读。
+    const absCap = s.deletedAt
+      ? new Date(s.deletedAt + TRASH_ABSOLUTE_MAX_DAYS * 24 * 60 * 60 * 1000)
+      : null
+    return absCap
+      ? `待查看 · 首次打开后保留 ${TRASH_RETENTION_DAYS} 天（最长 ${absCap.toLocaleDateString()} 自动清除）`
+      : `待查看 · 首次打开后保留 ${TRASH_RETENTION_DAYS} 天`
   }
   const expires = new Date(seen + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
   return `剩 ${daysLeft(seen)} 天 · ${expires.toLocaleDateString()} 清除`
@@ -646,7 +655,8 @@ function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null
   if (b.purgePendingAt) {
     const deadline = b.purgePendingAt + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000
     const left = Math.max(0, Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000)))
-    return `即将清除 · 剩 ${left} 天内恢复`
+    const when = new Date(deadline).toLocaleDateString()
+    return `即将清除 · ${when} 前可恢复（剩 ${left} 天）`
   }
   const expires = new Date(b.deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
   return `${expires.toLocaleDateString()} 进入宽限`

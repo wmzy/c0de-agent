@@ -1,7 +1,7 @@
 // src/server/terminal/pty-manager.ts
 
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import { type IPty, spawn } from 'node-pty'
@@ -151,6 +151,39 @@ const SCROLLBACK_MAX = 50_000
 function truncateTitle(title: string): string {
   const clean = title.replace(/[\r\n]/g, ' ').trim()
   return clean.length > MAX_TITLE_LEN ? `${clean.slice(0, MAX_TITLE_LEN)}…` : clean
+}
+
+/** POSIX 单引号转义：仅安全字符（字母数字与常见路径/别名符号）原样，否则单引号包裹。 */
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_./:,+@%=-]+$/.test(arg)) return arg
+  return `'${arg.replace(/'/g, `'\\''`)}'`
+}
+
+/** 把 argv 拼回可安全经 shell 重放的命令行（导出便于单测安全转义）。 */
+export function argvToCommand(argv: string[]): string {
+  return argv.map(shellQuote).join(' ')
+}
+
+/**
+ * 尽力捕获 shell 当前前台命令（Linux 专有，最佳努力）——热更新后可选自动重跑。
+ * 读取 /proc/<shellPid>/task/<shellPid>/children：
+ *   - 恰好 1 个直接子进程 → 返回其 cmdline（如 `npm run dev`）。
+ *   - 0 个 / 多个（后台任务、管道、子 shell）→ 返回 null（不猜，回退默认不重跑）。
+ * 非 Linux 平台或任何读取异常 → null（能力不可用，优雅降级）。
+ */
+export function captureForegroundCommand(shellPid: number): string | null {
+  if (process.platform !== 'linux') return null
+  try {
+    const childrenRaw = readFileSync(`/proc/${shellPid}/task/${shellPid}/children`, 'utf8')
+    const children = childrenRaw.trim().split(/\s+/).filter(Boolean).map(Number)
+    if (children.length !== 1) return null
+    const cmdline = readFileSync(`/proc/${children[0]}/cmdline`, 'utf8')
+    const argv = cmdline.split('\0').filter((s) => s.length > 0)
+    if (argv.length === 0) return null
+    return argvToCommand(argv)
+  } catch {
+    return null
+  }
 }
 
 /**

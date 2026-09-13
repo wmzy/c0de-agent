@@ -24,7 +24,7 @@ const config: Config = {
   roleRouting: {},
   fallback: { enabled: false, maxRetries: 0, retryDelay: 0 },
   compaction: { enabled: false, threshold: 0.8, reserveTokens: 8000, keepRecentTokens: 4000 },
-  tools: { enabled: [], disabled: [] },
+  tools: { enabled: ['*'], disabled: [] },
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: { enabled: [] },

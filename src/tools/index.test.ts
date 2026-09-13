@@ -16,6 +16,7 @@ import {
   listTools,
   readTool,
   registerTool,
+  resolveEnabledToolNames,
   truncateOutput,
   validateInput,
   writeTool,
@@ -107,5 +108,43 @@ describe('tools index', () => {
 
   it('exports globToRegex', () => {
     expect(globToRegex('*.ts').test('foo.ts')).toBe(true)
+  })
+})
+
+describe('resolveEnabledToolNames 语义（P1-1：空=无工具 fail-closed）', () => {
+  const registry = createDefaultRegistry()
+
+  it('enabled: [] → 无工具（fail-closed，不再是旧版「全部」）', () => {
+    expect(resolveEnabledToolNames(registry, { tools: { enabled: [], disabled: [] } })).toEqual([])
+  })
+
+  it("enabled: ['*'] → 全部注册工具", () => {
+    const all = listTools(registry)
+      .map((t) => t.name)
+      .sort()
+    const resolved = resolveEnabledToolNames(registry, {
+      tools: { enabled: ['*'], disabled: [] },
+    }).sort()
+    expect(resolved).toEqual(all)
+  })
+
+  it('enabled: 名单 → 仅返回名单（∩ registered）', () => {
+    expect(
+      resolveEnabledToolNames(registry, { tools: { enabled: ['read', 'write'], disabled: [] } }),
+    ).toEqual(['read', 'write'])
+  })
+
+  it('disabled 恒过滤（即使通配 *）', () => {
+    const resolved = resolveEnabledToolNames(registry, {
+      tools: { enabled: ['*'], disabled: ['bash'] },
+    })
+    expect(resolved).not.toContain('bash')
+    expect(resolved).toContain('read')
+  })
+
+  it('explicit 空数组 → 无工具（前端显式全不选）', () => {
+    expect(
+      resolveEnabledToolNames(registry, { tools: { enabled: ['read'], disabled: [] } }, []),
+    ).toEqual([])
   })
 })

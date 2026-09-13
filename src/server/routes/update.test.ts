@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // vi.mock 工厂被 hoist 到顶部，必须用 vi.hoisted 创建 mock 引用，避免 ReferenceError。
-const { performInstallMock, performHandoffMock, serializeSessionsMock, manualInstallCommandMock } =
-  vi.hoisted(() => ({
-    performInstallMock: vi.fn(),
-    performHandoffMock: vi.fn(),
-    serializeSessionsMock: vi
-      .fn()
-      .mockResolvedValue({ version: '0.1.0', sessions: [], entries: [], timestamp: 1 }),
-    manualInstallCommandMock: vi.fn().mockReturnValue('npm install -g c0de-agent'),
-  }))
+const {
+  performInstallMock,
+  performHandoffMock,
+  serializeSessionsMock,
+  manualInstallCommandMock,
+  captureForegroundCommandMock,
+} = vi.hoisted(() => ({
+  performInstallMock: vi.fn(),
+  performHandoffMock: vi.fn(),
+  serializeSessionsMock: vi
+    .fn()
+    .mockResolvedValue({ version: '0.1.0', sessions: [], entries: [], timestamp: 1 }),
+  manualInstallCommandMock: vi.fn().mockReturnValue('npm install -g c0de-agent'),
+  captureForegroundCommandMock: vi.fn(),
+}))
 
 vi.mock('../../update/index.js', () => ({
   performInstall: performInstallMock,
@@ -18,6 +24,10 @@ vi.mock('../../update/index.js', () => ({
   manualInstallCommand: manualInstallCommandMock,
   checkForUpdate: vi.fn(),
   getCurrentVersion: () => '0.1.0',
+}))
+
+vi.mock('../terminal/pty-manager.js', () => ({
+  captureForegroundCommand: captureForegroundCommandMock,
 }))
 
 import type { ServerContext } from '../types.js'
@@ -75,6 +85,7 @@ beforeEach(() => {
   performInstallMock.mockReset()
   performHandoffMock.mockReset()
   serializeSessionsMock.mockClear()
+  captureForegroundCommandMock.mockReset()
   agentManagerMock.pauseAll
     .mockReset()
     .mockResolvedValue({ paused: 0, forcedAbort: 0, pausedIds: [] })
@@ -125,6 +136,23 @@ describe('GET /api/update', () => {
     expect(body.impact.terminalCount).toBe(2)
     // P3-9：待确认权限数透出（mock 固定 0）
     expect(body.impact.pendingPermissionCount).toBe(0)
+  })
+
+  it('P3-7：impact 终端含检测到的前台命令（确认框据此勾选重启）', async () => {
+    const ctx = makeCtx({
+      lastResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+    })
+    captureForegroundCommandMock.mockReturnValue('npm run dev')
+    ptyManagerMock.list.mockReturnValue([
+      { id: 'pty_1', pid: 123, title: 'dev', shell: '/bin/bash', cwd: '/app' },
+    ] as never)
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      impact: { terminals: Array<{ id: string; command?: string }> }
+    }
+    expect(body.impact.terminals[0]?.command).toBe('npm run dev')
   })
 
   it('returns placeholder when no cache and triggers checkNow (non-blocking)', async () => {
@@ -255,6 +283,44 @@ describe('POST /api/update/apply', () => {
       (performInstallMock.mock.invocationCallOrder[0] ?? 0) <
         (pauseAllMock.mock.invocationCallOrder[0] ?? 1),
     ).toBe(true)
+  })
+
+  it('P3-7：apply 仅对勾选 rerunTerminalIds 的终端把前台命令写进快照', async () => {
+    performInstallMock.mockResolvedValue({ _tag: 'success', installMethod: 'npm' })
+    performHandoffMock.mockResolvedValue({
+      _tag: 'success',
+      snapshotPath: '/tmp/x.json',
+      installMethod: 'npm',
+    })
+    captureForegroundCommandMock.mockReturnValue('npm run dev')
+    ptyManagerMock.list.mockReturnValue([
+      { id: 'pty_1', pid: 111, title: 'a', shell: '/bin/bash', cwd: '/app' },
+      { id: 'pty_2', pid: 222, title: 'b', shell: '/bin/bash', cwd: '/app' },
+    ] as never)
+    const ctx = makeCtx({
+      checkNowResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+      handoffPort: 9999,
+    })
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rerunTerminalIds: ['pty_1'] }),
+    })
+    expect(res.status).toBe(200)
+    const terminalsArg = serializeSessionsMock.mock.calls[0]?.[2] as Array<{
+      id: string
+      command?: string
+    }>
+    expect(terminalsArg).toHaveLength(2)
+    expect(terminalsArg[0]).toEqual(
+      expect.objectContaining({ id: 'pty_1', command: 'npm run dev' }),
+    )
+    expect(terminalsArg[1]?.id).toBe('pty_2')
+    expect(terminalsArg[1]).not.toHaveProperty('command')
+    // 仅对勾选终端查询前台命令（未勾选不查询）
+    expect(captureForegroundCommandMock).toHaveBeenCalledTimes(1)
+    expect(captureForegroundCommandMock).toHaveBeenCalledWith(111)
   })
 
   it('P0：handoff spawn 失败时 resume 暂停的会话', async () => {

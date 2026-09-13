@@ -26,6 +26,21 @@ const impactMeta = css`
   font-size: 11px;
 `
 
+const rerunOption = css`
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  & input {
+    vertical-align: middle;
+    margin-right: 4px;
+  }
+  & code {
+    font-size: 11px;
+    color: var(--text);
+  }
+`
+
 // 紧凑单行窄条（高 28px ≤ 32px）：中性 --bg-secondary 底 + 1px 底边框 + 小圆点强调，
 // 取代全宽高饱和蓝，降低视觉压制；文字 --text 对 --bg-secondary 明暗主题均 ≥ 12:1（AA）。
 const banner = css`
@@ -148,6 +163,8 @@ export function UpdateBanner() {
   // P1-1/P3：热更新影响面分级确认弹层（替代 window.confirm）——
   // 列出将被中断的对话与将被关闭的终端（含标题），输入版本号确认。
   const [confirmOpen, setConfirmOpen] = useState(false)
+  // P3-7：用户勾选「更新后自动重启」的终端 id（仅对检测到前台命令的终端展示）。
+  const [rerunIds, setRerunIds] = useState<Set<string>>(new Set())
   const { data } = useQuery({
     queryKey: ['update-status'],
     queryFn: updateAPI.status,
@@ -221,7 +238,10 @@ export function UpdateBanner() {
             type="button"
             className={btn}
             disabled={applying}
-            onClick={() => setConfirmOpen(true)}
+            onClick={() => {
+              setRerunIds(new Set())
+              setConfirmOpen(true)
+            }}
             data-testid="update-apply"
           >
             {applying ? '应用中…' : '立即应用'}
@@ -239,7 +259,7 @@ export function UpdateBanner() {
         busy={applying}
         onConfirm={() => {
           setConfirmOpen(false)
-          apply.mutate()
+          apply.mutate([...rerunIds])
         }}
         onClose={() => setConfirmOpen(false)}
         description={
@@ -251,6 +271,15 @@ export function UpdateBanner() {
               runs={data?.impact?.runs ?? []}
               terminals={data?.impact?.terminals ?? []}
               pendingPermissionCount={data?.impact?.pendingPermissionCount ?? 0}
+              rerunIds={rerunIds}
+              onToggleRerun={(id) =>
+                setRerunIds((prev) => {
+                  const next = new Set(prev)
+                  if (next.has(id)) next.delete(id)
+                  else next.add(id)
+                  return next
+                })
+              }
             />
           </div>
         }
@@ -265,10 +294,14 @@ function ImpactList({
   runs,
   terminals,
   pendingPermissionCount,
+  rerunIds,
+  onToggleRerun,
 }: {
   runs: Array<{ sessionId: string; title: string; agentType?: string }>
-  terminals: Array<{ id: string; title: string; shell: string; cwd: string }>
+  terminals: Array<{ id: string; title: string; shell: string; cwd: string; command?: string }>
   pendingPermissionCount: number
+  rerunIds: Set<string>
+  onToggleRerun: (id: string) => void
 }) {
   const hasAny = runs.length > 0 || terminals.length > 0 || pendingPermissionCount > 0
   if (!hasAny) return null
@@ -303,6 +336,17 @@ function ImpactList({
                 <span className={impactMeta}>
                   ({t.shell} · {t.cwd})
                 </span>
+                {t.command && (
+                  <label className={rerunOption}>
+                    <input
+                      type="checkbox"
+                      checked={rerunIds.has(t.id)}
+                      onChange={() => onToggleRerun(t.id)}
+                      data-testid={`rerun-${t.id}`}
+                    />{' '}
+                    更新后自动重启 <code>{t.command}</code>
+                  </label>
+                )}
               </li>
             ))}
           </ul>

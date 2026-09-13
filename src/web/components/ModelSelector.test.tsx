@@ -40,7 +40,7 @@ const baseConfig: Config = {
   roleRouting: {},
   fallback: { enabled: false, maxRetries: 2, retryDelay: 1000 },
   compaction: { enabled: true, threshold: 0.8, reserveTokens: 1000, keepRecentTokens: 500 },
-  tools: { enabled: [], disabled: [] },
+  tools: { enabled: ['*'], disabled: [] },
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: { enabled: [] },

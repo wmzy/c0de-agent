@@ -42,6 +42,8 @@ const COMMANDS: CommandSpec[] = [
       // P2 修复：serve 运行时持久库被占用，此前静默退化为内存库（会话不保存，
       // 仅 stderr 一行提示极易错过）。现须显式 --temp 才允许临时模式。
       { name: 'temp', type: 'boolean' },
+      // P1-2：CLI 无「恢复」交互，预算 pause 在此等效「超支中止」；允许本 run 覆盖。
+      { name: 'budget-action', type: 'string' },
     ],
   },
   {
@@ -91,6 +93,8 @@ const COMMANDS: CommandSpec[] = [
     options: [
       // serve 占用持久库时的显式临时模式开关（与 chat --temp 同语义）。
       { name: 'temp', type: 'boolean' },
+      // P1-2：ACP 同样无恢复 UI（超支中止），允许本 run 覆盖 warn/abort。
+      { name: 'budget-action', type: 'string' },
     ],
   },
   {
@@ -114,6 +118,17 @@ function isDbLockConflict(err: unknown): boolean {
   return err.name === 'RuntimeError' && /abort/i.test(err.message)
 }
 
+/** P1-2：解析 --budget-action 覆盖值。CLI 无「恢复」UI，config 的 pause 在此等效 abort；
+ *  接受 warn|abort（pause 兼容映射到 abort）。非法值抛错并提示可取值。 */
+function parseBudgetActionOption(value: string | undefined): 'warn' | 'abort' | undefined {
+  if (value === undefined) return undefined
+  if (value === 'warn') return 'warn'
+  if (value === 'abort' || value === 'pause') return 'abort'
+  throw new Error(
+    `--budget-action 仅支持 warn|abort（CLI 无恢复 UI，config 的 pause 在此等效 abort）`,
+  )
+}
+
 type AgentDepsOptions = {
   /** 权限策略：undefined → 按 config.permission.defaultMode 决定。 */
   strategy?: PermissionStrategy
@@ -127,6 +142,8 @@ type AgentDepsOptions = {
   allowTemp?: boolean
   /** 跳过项目信任门禁（trust/sessions 等非 agent 执行命令使用；chat/acp 不跳过）。 */
   skipTrustGate?: boolean
+  /** P1-2：本 run 的预算动作覆盖（warn=仅告警不中止；abort=超支中止，等效 config pause）。 */
+  budgetAction?: 'warn' | 'abort'
 }
 
 /** 封装 agent 依赖生命周期：加载配置 → 建库迁移 → 组装 deps → 使用后关库。
@@ -141,6 +158,26 @@ async function withAgentDeps(
   fn: (config: Config, deps: LoopDeps) => Promise<void>,
 ): Promise<void> {
   const config = await loadConfig(cwd)
+  // P1-2：--budget-action 覆盖（warn=不中止；abort=超支中止，内部映射为 config pause）。
+  // CLI 无「恢复」UI，预算动作为 pause 时在入口显式提示——此前「护栏」会静默变成
+  // 「长任务中途硬中止且无断点续跑」，用户易误设全局 pause 后丢进度。
+  if (opts.budgetAction) {
+    const action = opts.budgetAction === 'abort' ? ('pause' as const) : ('warn' as const)
+    config.usage = { ...config.usage, budgetAction: action, tokenBudgetAction: action }
+  }
+  const budgetWillAbort =
+    config.usage?.budgetAction === 'pause' || config.usage?.tokenBudgetAction === 'pause'
+  const budgetConfigured =
+    (config.usage?.monthlyBudgetUsd ?? 0) > 0 ||
+    (config.usage?.globalMonthlyBudgetUsd ?? 0) > 0 ||
+    (config.usage?.monthlyTokenBudget ?? 0) > 0 ||
+    (config.usage?.globalMonthlyTokenBudget ?? 0) > 0
+  if (opts.budgetAction === undefined && budgetWillAbort && budgetConfigured) {
+    process.stderr.write(
+      '[c0de] ⚠ 预算动作为 pause：CLI 无「恢复」交互，超预算将中止本次 run（无断点续跑）。' +
+        '如需仅告警不中止，加 `--budget-action warn`。\n',
+    )
+  }
   const dataDir = resolveDbDir()
   let db: DB
   let holdLock = false
@@ -237,6 +274,9 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
         : undefined
       const continueId = args.options.continue as string | undefined
       const allowTemp = args.options.temp === true
+      const budgetAction = parseBudgetActionOption(
+        args.options['budget-action'] as string | undefined,
+      )
       await withAgentDeps(
         cwd,
         {
@@ -244,6 +284,7 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
           ...(allowTools && allowTools.length > 0 ? { allowTools } : {}),
           ...(continueId ? { continueSessionId: continueId } : {}),
           ...(allowTemp ? { allowTemp } : {}),
+          ...(budgetAction ? { budgetAction } : {}),
         },
         (config, deps) => runChatCommand({ args, config, deps }),
       )
@@ -281,11 +322,15 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     }
     case 'acp': {
       // ACP 非交互：所有工具放行（编辑器侧自行控制执行授权）。
+      const budgetAction = parseBudgetActionOption(
+        args.options['budget-action'] as string | undefined,
+      )
       await withAgentDeps(
         cwd,
         {
           strategy: 'full-auto',
           ...(args.options.temp === true ? { allowTemp: true } : {}),
+          ...(budgetAction ? { budgetAction } : {}),
         },
         (config, deps) => runAcpCommand({ config, deps }),
       )
@@ -311,7 +356,7 @@ async function main(): Promise<void> {
   }
 }
 
-export { COMMANDS, dispatch }
+export { COMMANDS, dispatch, parseBudgetActionOption }
 
 // bin 入口：仅在直接执行时运行 main（非被 import）。
 const isMain = process.argv[1] === fileURLToPath(import.meta.url)

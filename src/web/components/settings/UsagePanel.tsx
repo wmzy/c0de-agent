@@ -116,7 +116,9 @@ function UsagePanel({
       <div className={hint}>
         统计本项目全部会话（含回收站内已删除会话）的 LLM 调用；成本按 provider 价目估算
         {summary ? `（价目版本 ${summary.priceCatalogVersion}，实际费用以账单为准）` : ''}。
-        成本是账本：会话彻底删除后已发生花费仍计入。
+        成本是账本：会话彻底删除后已发生花费仍计入。本面板为「本机实际发生」口径——从其他机器
+        导入的会话、以及分支「继承」的历史成本仅是会话信息面板里的展示值，不写入本账本、
+        也不参与预算护栏与预算告警判定。
       </div>
       {projectId ? (
         <label className={field}>

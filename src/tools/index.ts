@@ -118,10 +118,12 @@ export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
 }
 
 /**
- * 解析本轮启用的工具名列表（P1-1 修复：config.tools.enabled/disabled 双入口统一生效）。
+ * 解析本轮启用的工具名列表（config.tools.enabled/disabled 双入口统一生效）。
  *
- * - explicit（前端显式选择）非 undefined → 以其为准，但过滤掉 disabled 与未注册名。
- * - 否则 enabled 非空 → enabled ∩ registered；enabled 空 → 全部 registered（空=全部）。
+ * 语义（P1-1 修复「空=全部」安全陷阱）：
+ * - explicit（前端显式选择）非 undefined → 以其为准（显式空数组 = 无工具，fail-closed）。
+ * - 否则 config.tools.enabled：含 '*'（通配）→ 全部注册工具；
+ *   空数组 → 无工具（fail-closed）；否则 → 显式名单。
  * - disabled 恒过滤（registry 已排除，此处兜底）。
  */
 export function resolveEnabledToolNames(
@@ -131,8 +133,12 @@ export function resolveEnabledToolNames(
 ): string[] {
   const all = listTools(registry).map((t) => t.name)
   const disabled = new Set(config.tools?.disabled ?? [])
+  const enabled = config.tools?.enabled
   const base =
-    explicit ??
-    (config.tools?.enabled && config.tools.enabled.length > 0 ? config.tools.enabled : all)
+    explicit !== undefined
+      ? explicit
+      : enabled && enabled.length > 0 && enabled.includes('*')
+        ? all
+        : (enabled ?? [])
   return base.filter((n) => all.includes(n) && !disabled.has(n))
 }

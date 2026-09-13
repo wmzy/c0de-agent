@@ -227,7 +227,9 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
                 {stats.updatedAt ? formatDateTime(stats.updatedAt) : '—'}
               </StatRow>
               <span className={status} data-testid="summary-provenance">
-                成本按配置价目估算，可能与账单略有差异；token 为服务端上报用量。
+                成本按配置价目估算，可能与账单略有差异；token 为服务端上报用量。总成本为
+                「累计展示值」，可能含分支继承、跨机器导入的历史调用；计入预算护栏的「本机实际
+                发生」用量见设置 →「用量与成本」面板。
               </span>
             </>
           )}

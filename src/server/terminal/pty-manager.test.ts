@@ -2,7 +2,7 @@
 
 import { userInfo } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { detectShell, PTYManager } from './pty-manager.js'
+import { argvToCommand, detectShell, PTYManager } from './pty-manager.js'
 
 describe('PTYManager', () => {
   let mgr: PTYManager
@@ -90,5 +90,29 @@ describe('detectShell', () => {
     expect(detectShell()).toBe(userInfo().shell)
     // 不应错误回退到硬编码 /bin/bash（除非用户登录 shell 真是 bash）
     expect(detectShell()).not.toBe('/bin/bash')
+  })
+})
+
+describe('argvToCommand（前台命令重放的安全转义）', () => {
+  it('安全字符不额外加引号', () => {
+    expect(argvToCommand(['npm', 'run', 'dev'])).toBe('npm run dev')
+    expect(argvToCommand(['--port', '3000'])).toBe('--port 3000')
+  })
+
+  it('含空格参数用单引号包裹', () => {
+    expect(argvToCommand(['echo', 'a b'])).toBe("echo 'a b'")
+  })
+
+  it('shell 元字符参数被引用（防重放时注入）', () => {
+    expect(argvToCommand(['echo', 'a;b'])).toBe("echo 'a;b'")
+    expect(argvToCommand(['bash', '-c', 'rm -rf /'])).toBe("bash -c 'rm -rf /'")
+  })
+
+  it('单引号参数按 POSIX 规则转义', () => {
+    expect(argvToCommand(['printf', "it's"])).toBe("printf 'it'\\''s'")
+  })
+
+  it('空 argv 返回空串', () => {
+    expect(argvToCommand([])).toBe('')
   })
 })

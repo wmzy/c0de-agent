@@ -19,7 +19,7 @@ function ToolsPanel({ tools, onToolsChange }: ToolsPanelProps) {
           className={fieldInput}
           value={tools.enabled}
           onCommit={(items) => onToolsChange({ enabled: items })}
-          placeholder="read, write, edit, glob, grep, bash"
+          placeholder="* 或 read, write, edit, glob, grep, bash"
         />
       </label>
       <label className={field} htmlFor="cfg-tools-disabled">
@@ -33,8 +33,9 @@ function ToolsPanel({ tools, onToolsChange }: ToolsPanelProps) {
         />
       </label>
       <div className={hint}>
-        用逗号分隔工具名称。「已启用」留空 =
-        启用全部已注册工具；要禁用全部工具，请将全部工具名列入「已禁用」。
+        用逗号分隔工具名称。「已启用」填 <code>*</code> 表示启用全部已注册工具；
+        留空表示禁用全部工具（fail-closed）；也可列出指定工具名，如 read, write,
+        grep。已禁用恒优先于已启用。
       </div>
     </div>
   )

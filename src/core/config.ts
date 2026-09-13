@@ -30,9 +30,10 @@ const DEFAULT_CONFIG: Config = {
     keepRecentTokens: 4000,
     midTurnEnabled: false,
   },
-  // enabled 为空 = 启用全部注册工具（registry 层过滤 disabled）。
-  // 非空 = 默认工具集。CLI print 与 Web chat 统一经 resolveEnabledToolNames 解析。
-  tools: { enabled: [], disabled: [] },
+  // enabled 语义（P1-1 修复「空=全部」安全陷阱）：
+  //   ['*']（通配）= 启用全部注册工具（默认）；[] = 无工具（fail-closed）；
+  //   非空名单 = 默认工具集。CLI print 与 Web chat 统一经 resolveEnabledToolNames 解析。
+  tools: { enabled: ['*'], disabled: [] },
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: {
@@ -275,7 +276,31 @@ async function loadConfig(projectDir?: string): Promise<Config> {
   const project = readJsonIfExists(projectPath)
   warnUnknownConfigKeys('global', global)
   warnUnknownConfigKeys('project', project)
+  warnToolsEnabledEmpty('global', global)
+  warnToolsEnabledEmpty('project', project)
   return mergeConfig(global, project)
+}
+
+/**
+ * P1-1：配置文件里显式出现 tools.enabled: []（旧语义=启用全部，新语义=禁用全部）
+ * 时告警——用户若曾按旧文档把空数组当「全启用」，升级后会静默变成「无工具」，
+ * 必须提示改用 ['*'] 或删除该键恢复默认。仅对「文件里显式写出空数组」告警；
+ * 默认态不再落空数组（DEFAULT_CONFIG 已是 ['*']）。
+ */
+function warnToolsEnabledEmpty(
+  scope: 'global' | 'project',
+  data: Record<string, unknown> | undefined,
+): void {
+  const tools = data?.tools
+  if (typeof tools !== 'object' || tools === null || Array.isArray(tools)) return
+  const enabled = (tools as Record<string, unknown>).enabled
+  if (Array.isArray(enabled) && enabled.length === 0) {
+    console.warn(
+      `[config] ${scope} 配置的 tools.enabled 为空数组——旧版含义是「启用全部」，` +
+        `现已改为「禁用全部工具」。如需启用全部，请改为 "tools": { "enabled": ["*"] }，` +
+        `或删除该键恢复默认值。`,
+    )
+  }
 }
 
 /** Config 全部顶层键（DEFAULT_CONFIG + 可选键）。未知顶层键校验与告警共用。 */

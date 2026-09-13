@@ -224,6 +224,7 @@ async function buildServerContext(
     cwd: string
     title: string
     projectId?: string
+    command?: string
   }> = []
 
   if (opts.restoreFrom) {
@@ -293,6 +294,17 @@ async function buildServerContext(
         title: t.title || undefined,
         ...(t.projectId ? { projectId: t.projectId } : {}),
       })
+      // P3-7：用户勾选的「更新后自动重启」——重建 shell 后把前台命令写入 stdin 重跑
+      // （如 `npm run dev`）。写入由 PTY 缓冲，shell 初始化完成后即执行；失败不阻塞启动。
+      if (typeof t.command === 'string' && t.command.length > 0) {
+        try {
+          ptyManager.write(t.id, `${t.command}\n`)
+        } catch (err) {
+          console.warn(
+            `[server] 终端命令重跑失败（${t.id}）：${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
     } catch (err) {
       console.warn(
         `[server] 终端恢复失败（${t.id}）：${err instanceof Error ? err.message : String(err)}`,

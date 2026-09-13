@@ -159,4 +159,31 @@ describe('buildAgentDeps', () => {
     expect(deps.urlRegistry?.resolvers.has('file')).toBe(true)
     expect(deps.urlRegistry?.resolvers.has('skill')).toBe(true)
   })
+
+  it('injects budgetAbort when usage action is pause（CLI 无恢复 UI，超支中止而非挂起）', async () => {
+    const paused = {
+      ...config,
+      usage: { ...config.usage, budgetAction: 'pause' as const, monthlyBudgetUsd: 10 },
+    }
+    const deps = await buildAgentDeps(paused, { db, cwd: process.cwd() })
+    expect(deps.budgetAbort).toBe(true)
+  })
+
+  it('injects budgetAbort when tokenBudgetAction is pause（token 口径同样中止）', async () => {
+    const paused = {
+      ...config,
+      usage: {
+        ...config.usage,
+        tokenBudgetAction: 'pause' as const,
+        monthlyTokenBudget: 1_000_000,
+      },
+    }
+    const deps = await buildAgentDeps(paused, { db, cwd: process.cwd() })
+    expect(deps.budgetAbort).toBe(true)
+  })
+
+  it('does not inject budgetAbort on default/warn action', async () => {
+    const deps = await buildAgentDeps(config, { db, cwd: process.cwd() })
+    expect(deps.budgetAbort).toBeUndefined()
+  })
 })

@@ -77,7 +77,8 @@ async function runPrintMode(
   const agentConfig: AgentConfig = {
     provider: config.defaultProvider,
     model: opts.model ?? config.defaultModel,
-    // 工具集：enabled 非空 → enabled ∩ registered；空 → 全部 registered（disabled 已在 registry 层过滤）。
+    // 工具集：enabled 含 '*' → 全部 registered；空 → 无工具（fail-closed）；否则 enabled ∩ registered
+    // （disabled 已在 registry 层过滤）。
     tools: resolveEnabledToolNames(deps.toolRegistry, config),
     plugins: config.plugins.enabled,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),

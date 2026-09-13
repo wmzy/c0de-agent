@@ -258,7 +258,8 @@ function createChatRoute(ctx: ServerContext): Hono {
           )
         }
         // P2-4：执行 config.slashCommands.enabled 过滤（此前该配置无任何消费方）。
-        // enabled 为空 = 全部启用（与 tools.enabled 语义一致）；名称兼容带/不带前缀斜杠。
+        // enabled 为空 = 全部启用（斜杠命令独立语义，非 tools.enabled 的 fail-closed 语义）；
+        // 名称兼容带/不带前缀斜杠。
         const enabledList = sessionConfig.slashCommands?.enabled ?? []
         const enabledSet = new Set(enabledList.map((n) => (n.startsWith('/') ? n.slice(1) : n)))
         if (enabledSet.size > 0 && !enabledSet.has(parsed.name)) {
@@ -536,8 +537,8 @@ function createChatRoute(ctx: ServerContext): Hono {
     // （其 finally 负责幂等释放），移交前的全部路径在 finally 统一兜底释放。
     let handedOff = false
     try {
-      // 工具解析（P1-1）：config.tools.enabled 非空时作为默认集；空 = 全部注册工具。
-      // disabled 已在 registry 层过滤（createDefaultRegistry），此处兜底。
+      // 工具解析（P1-1）：config.tools.enabled 含 '*' = 全部注册工具；空 = 无工具（fail-closed）；
+      // 非空名单 = 默认集。disabled 已在 registry 层过滤，此处兜底。
       // P1 多项目：按会话项目配置解析（此前用启动目录配置）。
       const tools = resolveEnabledToolNames(
         ctx.toolRegistry,

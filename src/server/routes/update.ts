@@ -9,6 +9,7 @@ import {
   serializeSessions,
 } from '../../update/index.js'
 import { apiError } from '../middleware/error.js'
+import { captureForegroundCommand } from '../terminal/pty-manager.js'
 import type { ServerContext } from '../types.js'
 
 /**
@@ -56,12 +57,17 @@ function createUpdateRoute(ctx: ServerContext): Hono {
       terminalCount: ctx.ptyManager.list().length,
       // P1：逐项列出终端（标题 + shell + 目录），确认弹窗据此展示——
       // 用户可判断被关闭的终端是否正在跑重要进程。
-      terminals: ctx.ptyManager.list().map((t) => ({
-        id: t.id,
-        title: t.title,
-        shell: t.shell,
-        cwd: t.cwd,
-      })),
+      terminals: ctx.ptyManager.list().map((t) => {
+        const command = captureForegroundCommand(t.pid)
+        return {
+          id: t.id,
+          title: t.title,
+          shell: t.shell,
+          cwd: t.cwd,
+          // P3-7：检测到的前台命令（仅单一前台子进程时非空），供确认框勾选「自动重启」。
+          ...(command ? { command } : {}),
+        }
+      }),
       // P3-9：正在等待确认的权限请求——更新会中断其所属 run，弹窗静默失效
       // （隐含按拒绝处理），确认层明示数量让用户知情。
       pendingPermissionCount: ctx.permissionStore.size(),
@@ -102,6 +108,13 @@ function createUpdateRoute(ctx: ServerContext): Hono {
         '热更新仅在独立 serve 进程可用（dev 模式请手动更新）',
       )
     }
+    // P3-7：用户勾选「更新后自动重启」的终端 id；命中者在快照中携带前台命令。
+    const body = (await c.req.json().catch(() => ({}))) as { rerunTerminalIds?: unknown }
+    const rerunIds = new Set(
+      Array.isArray(body.rerunTerminalIds)
+        ? body.rerunTerminalIds.filter((x): x is string => typeof x === 'string')
+        : [],
+    )
     const result = await ctx.updateScheduler.checkNow()
     if (!result.hasUpdate) {
       return apiError(c, 409, 'NO_UPDATE', '已是最新版本，无需热更新')
@@ -135,13 +148,17 @@ function createUpdateRoute(ctx: ServerContext): Hono {
       ctx.config,
       // P1：终端元信息随快照迁移——新实例按原 id 原位重建 shell，
       // 前端持久化布局重连无感（进程内状态无法续命，这是最优恢复）。
-      ctx.ptyManager.list().map((t) => ({
-        id: t.id,
-        shell: t.shell,
-        cwd: t.cwd,
-        title: t.title,
-        ...(t.projectId ? { projectId: t.projectId } : {}),
-      })),
+      ctx.ptyManager.list().map((t) => {
+        const command = rerunIds.has(t.id) ? captureForegroundCommand(t.pid) : null
+        return {
+          id: t.id,
+          shell: t.shell,
+          cwd: t.cwd,
+          title: t.title,
+          ...(t.projectId ? { projectId: t.projectId } : {}),
+          ...(command ? { command } : {}),
+        }
+      }),
     )
     const r = await performHandoff(snapshot, method, {
       handoffPort: ctx.handoff.port,

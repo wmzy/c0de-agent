@@ -10,7 +10,7 @@ type UpdateStatus = {
   impact?: {
     runs: Array<{ sessionId: string; title: string; agentType?: string }>
     terminalCount: number
-    terminals: Array<{ id: string; title: string; shell: string; cwd: string }>
+    terminals: Array<{ id: string; title: string; shell: string; cwd: string; command?: string }>
     /** P3-9：等待确认的权限请求数（更新后弹窗失效、按拒绝处理）。 */
     pendingPermissionCount?: number
   }
@@ -25,7 +25,11 @@ type ApplyResult = {
 
 const updateAPI = {
   status: () => apiRequest<UpdateStatus>('/api/update'),
-  apply: () => apiRequest<ApplyResult>('/api/update/apply', { method: 'POST' }),
+  apply: (rerunTerminalIds?: string[]) =>
+    apiRequest<ApplyResult>('/api/update/apply', {
+      method: 'POST',
+      body: JSON.stringify({ rerunTerminalIds: rerunTerminalIds ?? [] }),
+    }),
 }
 
 export type { ApplyResult, UpdateStatus }
