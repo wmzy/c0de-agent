@@ -10,7 +10,12 @@ import { createSession } from '../session/session.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
 import { DEFAULT_CONFIG } from './config.js'
-import { builtinCommands, createSlashRegistry, parseSlashInput } from './slash.js'
+import {
+  builtinCommands,
+  createSlashRegistry,
+  isSlashCommandEnabled,
+  parseSlashInput,
+} from './slash.js'
 import type { AgentDependencies, CommandResult } from './types.js'
 
 let db: DB
@@ -589,5 +594,30 @@ export default async function workflow(ctx) {
     }
 
     await rm(projDir, { recursive: true, force: true })
+  })
+})
+
+describe('isSlashCommandEnabled（P0-2 统一启用判定）', () => {
+  it('空数组/缺失 = 全部启用（历史语义）', () => {
+    expect(isSlashCommandEnabled(undefined, 'compact')).toBe(true)
+    expect(isSlashCommandEnabled([], 'compact')).toBe(true)
+  })
+
+  it('含 ["*"] 通配 = 全部启用（与 tools.enabled 的 ["*"] 对齐）', () => {
+    expect(isSlashCommandEnabled(['*'], 'compact')).toBe(true)
+    expect(isSlashCommandEnabled(['*'], 'help')).toBe(true)
+    expect(isSlashCommandEnabled(['/help', '*'], 'compact')).toBe(true)
+  })
+
+  it('显式名单只放行列出的命令', () => {
+    const enabled = ['/help', '/model']
+    expect(isSlashCommandEnabled(enabled, 'help')).toBe(true)
+    expect(isSlashCommandEnabled(enabled, 'model')).toBe(true)
+    expect(isSlashCommandEnabled(enabled, 'compact')).toBe(false)
+  })
+
+  it('名称兼容带/不带前缀斜杠', () => {
+    expect(isSlashCommandEnabled(['compact'], '/compact')).toBe(true)
+    expect(isSlashCommandEnabled(['/compact'], 'compact')).toBe(true)
   })
 })

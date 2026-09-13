@@ -133,6 +133,9 @@ export async function budgetOverageParts(
   const globalTokenBudget = usage.globalMonthlyTokenBudget ?? 0
   const amountAction = usage.budgetAction ?? 'warn'
   const tokenAction = usage.tokenBudgetAction ?? amountAction
+  // P0-3：'pause' 与 'abort' 都是阻断动作（均需 loop 放行前检查）；'warn' 不阻断。
+  const amountBlocks = amountAction === 'pause' || amountAction === 'abort'
+  const tokenBlocks = tokenAction === 'pause' || tokenAction === 'abort'
   const projectScoped = projectId != null && (projectBudgetUsd > 0 || projectTokenBudget > 0)
   const globalScoped = globalBudgetUsd > 0 || globalTokenBudget > 0
   if (!projectScoped && !globalScoped) return []
@@ -143,33 +146,18 @@ export async function budgetOverageParts(
   ])
 
   const parts: string[] = []
-  if (amountAction === 'pause' && globalBudgetUsd > 0 && global && global.cost > globalBudgetUsd) {
+  if (amountBlocks && globalBudgetUsd > 0 && global && global.cost > globalBudgetUsd) {
     parts.push(`全局预算 $${globalBudgetUsd.toFixed(2)}：本月全部项目已 $${global.cost.toFixed(2)}`)
   }
-  if (
-    amountAction === 'pause' &&
-    projectBudgetUsd > 0 &&
-    project &&
-    project.cost > projectBudgetUsd
-  ) {
+  if (amountBlocks && projectBudgetUsd > 0 && project && project.cost > projectBudgetUsd) {
     parts.push(`项目预算 $${projectBudgetUsd.toFixed(2)}：本项目已 $${project.cost.toFixed(2)}`)
   }
-  if (
-    tokenAction === 'pause' &&
-    globalTokenBudget > 0 &&
-    global &&
-    global.tokens > globalTokenBudget
-  ) {
+  if (tokenBlocks && globalTokenBudget > 0 && global && global.tokens > globalTokenBudget) {
     parts.push(
       `全局 token 预算 ${globalTokenBudget.toLocaleString()}：本月已 ${global.tokens.toLocaleString()} tokens`,
     )
   }
-  if (
-    tokenAction === 'pause' &&
-    projectTokenBudget > 0 &&
-    project &&
-    project.tokens > projectTokenBudget
-  ) {
+  if (tokenBlocks && projectTokenBudget > 0 && project && project.tokens > projectTokenBudget) {
     parts.push(
       `项目 token 预算 ${projectTokenBudget.toLocaleString()}：本项目已 ${project.tokens.toLocaleString()} tokens`,
     )

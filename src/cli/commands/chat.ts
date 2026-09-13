@@ -22,7 +22,9 @@ async function runSlashCommand(
   continueId: string | undefined,
   ctx: ChatCommandContext,
 ): Promise<boolean> {
-  const { createSlashRegistry, parseSlashInput } = await import('../../core/slash.js')
+  const { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } = await import(
+    '../../core/slash.js'
+  )
   const parsed = parseSlashInput(message)
   if (!parsed) return false
   const registry = createSlashRegistry()
@@ -31,9 +33,7 @@ async function runSlashCommand(
 
   const out = ctx.stdout ?? process.stdout.write.bind(process.stdout)
   const err = ctx.stderr ?? process.stderr.write.bind(process.stderr)
-  const enabledList = ctx.config.slashCommands?.enabled ?? []
-  const enabledSet = new Set(enabledList.map((n) => (n.startsWith('/') ? n.slice(1) : n)))
-  if (enabledSet.size > 0 && !enabledSet.has(parsed.name)) {
+  if (!isSlashCommandEnabled(ctx.config.slashCommands?.enabled, parsed.name)) {
     err(`斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）\n`)
     return true
   }
@@ -109,12 +109,14 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
   // 斜杠命令拦截：命中则执行本地语义，不把命令文本发给 LLM。
   if (await runSlashCommand(message, continueId, ctx)) return
 
-  // P1-4：CLI 无可恢复的「暂停」交互，budgetAction='pause' 时在单次询问前拦截——
+  // P1-4：CLI 无可恢复的「暂停」交互，budgetAction='pause'/'abort' 时在单次询问前拦截——
   // 当月金额/token 预算超支则明确拒绝并给出操作路径，而非静默放行继续烧钱。
   // 与 Web 端暂停语义对齐（Web 暂停可恢复、CLI 直接拒绝本次执行）。
   if (
     ctx.config.usage?.budgetAction === 'pause' ||
-    ctx.config.usage?.tokenBudgetAction === 'pause'
+    ctx.config.usage?.budgetAction === 'abort' ||
+    ctx.config.usage?.tokenBudgetAction === 'pause' ||
+    ctx.config.usage?.tokenBudgetAction === 'abort'
   ) {
     const { budgetOverageParts } = await import('../../session/usage.js')
     // 项目预算仅在 cwd 能解析到项目时检查；未归属目录的调用只受全局预算兜底。
@@ -133,6 +135,30 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
       )
     }
   }
+
+  // P1-1：显式打印「权限水位」，消除 Web↔CLI 的静默授权差异——未经确认的写工具在
+  // 非交互下会被拒绝（default）或全自动放行（auto/-y），用户须在入口即知情。
+  const yes = ctx.args.options.yes === true
+  const allowRaw = ctx.args.options.allow ? String(ctx.args.options.allow) : undefined
+  const allowList = allowRaw
+    ? allowRaw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : []
+  const defaultMode = ctx.config.permission?.defaultMode ?? 'default'
+  let waterLevel: string
+  if (yes) {
+    waterLevel = '全部工具自动放行（-y）'
+  } else if (defaultMode === 'auto') {
+    waterLevel = '全部工具自动放行（permission.defaultMode=auto）'
+  } else if (allowList.length > 0) {
+    waterLevel = `只读自动放行，写/执行工具定向放行：${allowList.join(', ')}（其余写工具将被拒绝）`
+  } else {
+    waterLevel =
+      '只读工具自动放行，写/执行工具将被拒绝（非交互）。加 -y 全量放行或 --allow <工具> 定向放行'
+  }
+  err(`[c0de] 权限水位：${waterLevel}\n`)
 
   const text = await runPrintMode(ctx.config, message, ctx.deps, {
     ...(model ? { model } : {}),

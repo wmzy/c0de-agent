@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { Hono } from 'hono'
 import {
   applyScopedPatch,
+  collectConfigMigrationWarnings,
   collectUnknownConfigKeys,
   GLOBAL_ONLY_USAGE_KEYS,
   KNOWN_CONFIG_KEYS,
@@ -93,6 +94,31 @@ function createConfigRoute(ctx: ServerContext): Hono {
       (k) =>
         `项目配置含全局口径预算键 "${k}"，已忽略（该键仅在全局作用域生效，请改在全局配置设置）`,
     )
+    // P0-1：语义翻转/易混键（tools.enabled/slashCommands.enabled 空数组）在 Web 可见。
+    const migrationWarnings = [
+      ...collectConfigMigrationWarnings('global', scopes.global),
+      ...collectConfigMigrationWarnings('project', scopes.project),
+    ]
+    // P2-1 / P2-2：无可用 provider 与项目 providers 空数组覆盖本机全局 providers。
+    const providerWarnings: string[] = []
+    if (config.providers.length === 0) {
+      providerWarnings.push(
+        '尚未配置任何 AI 服务（providers 为空）。请到「设置 → Provider」添加并测试连接，否则无法发起对话。',
+      )
+    }
+    const projProviders = scopes.project?.providers
+    const globalProviders = scopes.global?.providers
+    if (
+      Array.isArray(projProviders) &&
+      projProviders.length === 0 &&
+      Array.isArray(globalProviders) &&
+      globalProviders.length > 0
+    ) {
+      providerWarnings.push(
+        `项目配置的 providers 为空数组，会整体替换本机全局 providers（${globalProviders.length} 项），` +
+          '导致无可用服务。请删除项目配置中的 providers 键，或在项目配置中显式填写服务。',
+      )
+    }
     return c.json({
       config,
       scopes: {
@@ -103,6 +129,8 @@ function createConfigRoute(ctx: ServerContext): Hono {
         ...providerApiKeyWarnings(config.providers),
         ...globalBudgetWarnings,
         ...unknownWarnings,
+        ...migrationWarnings,
+        ...providerWarnings,
       ],
       gitWarning: projectConfigGitWarning(scopes.project, target.dir),
       projectDir: target.isProjectScoped ? target.dir : undefined,

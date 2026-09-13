@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   applyScopedPatch,
+  collectConfigMigrationWarnings,
   DEFAULT_CONFIG,
   loadConfig,
   loadConfigScopes,
@@ -267,5 +268,37 @@ describe('loadConfigScopes / mergeRaw / saveConfigScoped 作用域隔离', () =>
     const scopes = loadConfigScopes(projectDir)
     expect(scopes.global).toEqual({ defaultModel: 'global-model' })
     expect(scopes.project?.compaction).toBeUndefined()
+  })
+})
+
+describe('collectConfigMigrationWarnings（P0-1 配置迁移告警）', () => {
+  it('tools.enabled 空数组 → 告警（旧「全启」已改为「全禁」）', () => {
+    const out = collectConfigMigrationWarnings('project', { tools: { enabled: [] } })
+    expect(out).toHaveLength(1)
+    expect(out[0]).toContain('tools.enabled 为空数组')
+    expect(out[0]).toContain('["*"]')
+  })
+
+  it('slashCommands.enabled 空数组 → 告警（仍是全启，与 tools 相反）', () => {
+    const out = collectConfigMigrationWarnings('global', { slashCommands: { enabled: [] } })
+    expect(out).toHaveLength(1)
+    expect(out[0]).toContain('slashCommands.enabled 为空数组')
+    expect(out[0]).toContain('["*"]')
+  })
+
+  it('非空数组 / 缺省不告警', () => {
+    expect(collectConfigMigrationWarnings('project', { tools: { enabled: ['read'] } })).toEqual([])
+    expect(collectConfigMigrationWarnings('project', {})).toEqual([])
+    expect(collectConfigMigrationWarnings('project', undefined)).toEqual([])
+    expect(
+      collectConfigMigrationWarnings('project', { slashCommands: { enabled: ['/help'] } }),
+    ).toEqual([])
+  })
+
+  it('两层都含空数组时分别标记作用域', () => {
+    const g = collectConfigMigrationWarnings('global', { tools: { enabled: [] } })
+    const p = collectConfigMigrationWarnings('project', { tools: { enabled: [] } })
+    expect(g[0]).toContain('全局配置')
+    expect(p[0]).toContain('项目配置')
   })
 })

@@ -137,15 +137,17 @@ type UsageConfig = {
    * 超支动作（P3 成本护栏），作用于**金额**预算：
    * - 'warn'（默认）：仅告警（顶栏徽标/用量面板），agent 继续执行；
    * - 'pause'：新一轮 LLM 请求前发现当月成本超预算 → 暂停 run（等同权限超时
-   *   暂停机制），用户点「恢复」后本 run 不再因预算重复暂停（用户已知情）。
+   *   暂停机制），用户点「恢复」后本 run 不再因预算重复暂停（用户已知情）；
+   * - 'abort'：新一轮 LLM 请求前发现超预算 → 中止 run（硬封顶，无「恢复」按钮，
+   *   需重新发送消息/调高预算后重试），适合需要「撞线即硬停、不可在界面原地放行」的场景。
    */
-  budgetAction?: 'warn' | 'pause'
+  budgetAction?: 'warn' | 'pause' | 'abort'
   /**
    * token 预算的超支动作，独立于金额预算（P：token 是兜底口径，用户可能希望
    * 「金额超支暂停、token 超支只告警」或反之）。缺省回退 budgetAction。
-   * 语义同 budgetAction：'pause' 硬性暂停/拒绝，'warn' 仅徽标/面板告警。
+   * 语义同 budgetAction：'pause'/'abort' 硬性暂停/中止，'warn' 仅徽标/面板告警。
    */
-  tokenBudgetAction?: 'warn' | 'pause'
+  tokenBudgetAction?: 'warn' | 'pause' | 'abort'
 }
 
 /** Global application configuration. */

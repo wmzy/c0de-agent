@@ -75,11 +75,11 @@ function UsagePanel({
   globalTokenBudget?: number
   tokenBudgetAction?: string
   onBudgetChange: (v: number) => void
-  onBudgetActionChange: (v: 'warn' | 'pause') => void
+  onBudgetActionChange: (v: 'warn' | 'pause' | 'abort') => void
   onGlobalBudgetChange?: (v: number) => void
   onTokenBudgetChange?: (v: number) => void
   onGlobalTokenBudgetChange?: (v: number) => void
-  onTokenBudgetActionChange?: (v: 'warn' | 'pause') => void
+  onTokenBudgetActionChange?: (v: 'warn' | 'pause' | 'abort') => void
   projectId?: string
 }) {
   const { data: summary } = useQuery({
@@ -103,7 +103,10 @@ function UsagePanel({
   )
   const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
   // token 预算动作独立于金额预算（缺省回退 budgetAction），用于告警文案与选择器。
-  const tokenAction = (tokenBudgetAction ?? budgetAction) === 'pause' ? 'pause' : 'warn'
+  const tokenAction = (() => {
+    const v = (tokenBudgetAction ?? budgetAction) as string | undefined
+    return v === 'pause' || v === 'abort' ? v : 'warn'
+  })()
   // H2：价格未知的调用按 $0 计入，显式提示成本可能低估。
   const unknownCostTotal = summary?.totals.unknownCostCalls ?? 0
   // L2：无时间戳调用归入「未知」月份，不参与本月预算比较——同样需要提示。
@@ -183,12 +186,13 @@ function UsagePanel({
           <span>超支动作</span>
           <select
             className={fieldInput}
-            value={budgetAction === 'pause' ? 'pause' : 'warn'}
-            onChange={(e) => onBudgetActionChange(e.target.value === 'pause' ? 'pause' : 'warn')}
+            value={budgetAction === 'pause' || budgetAction === 'abort' ? budgetAction : 'warn'}
+            onChange={(e) => onBudgetActionChange(e.target.value as 'warn' | 'pause' | 'abort')}
             data-testid="usage-budget-action"
           >
             <option value="warn">仅告警（顶栏徽标变红，对话继续）</option>
             <option value="pause">暂停对话（新一轮回复前暂停，点「恢复」继续）</option>
+            <option value="abort">中止对话（撞线即硬停，无「恢复」，需重新发送消息）</option>
           </select>
         </label>
       )}
@@ -199,12 +203,13 @@ function UsagePanel({
             className={fieldInput}
             value={tokenAction}
             onChange={(e) =>
-              onTokenBudgetActionChange?.(e.target.value === 'pause' ? 'pause' : 'warn')
+              onTokenBudgetActionChange?.(e.target.value as 'warn' | 'pause' | 'abort')
             }
             data-testid="usage-token-budget-action"
           >
             <option value="warn">仅告警（顶栏徽标变红，对话继续）</option>
             <option value="pause">暂停对话（新一轮回复前暂停，点「恢复」继续）</option>
+            <option value="abort">中止对话（撞线即硬停，无「恢复」，需重新发送消息）</option>
           </select>
         </label>
       )}

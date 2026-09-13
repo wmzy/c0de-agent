@@ -276,31 +276,51 @@ async function loadConfig(projectDir?: string): Promise<Config> {
   const project = readJsonIfExists(projectPath)
   warnUnknownConfigKeys('global', global)
   warnUnknownConfigKeys('project', project)
-  warnToolsEnabledEmpty('global', global)
-  warnToolsEnabledEmpty('project', project)
+  for (const [scope, data] of [
+    ['global', global],
+    ['project', project],
+  ] as const) {
+    for (const w of collectConfigMigrationWarnings(scope, data)) console.warn(`[config] ${w}`)
+  }
   return mergeConfig(global, project)
 }
 
 /**
- * P1-1：配置文件里显式出现 tools.enabled: []（旧语义=启用全部，新语义=禁用全部）
- * 时告警——用户若曾按旧文档把空数组当「全启用」，升级后会静默变成「无工具」，
- * 必须提示改用 ['*'] 或删除该键恢复默认。仅对「文件里显式写出空数组」告警；
- * 默认态不再落空数组（DEFAULT_CONFIG 已是 ['*']）。
+ * P0-1：配置迁移告警（返回值，供 Web 设置页 warnings 展示；CLI 侧 console.warn
+ * 复用）。检测语义翻转/易混淆键：
+ *  - tools.enabled: [] —— 旧版含义「启用全部」已改为「禁用全部」（fail-closed），
+ *    老用户升级后会静默失去全部工具，必须在 Web 界面可见（不只落在 stderr）。
+ *  - slashCommands.enabled: [] —— 其含义仍是「全部启用」，与同形 tools.enabled
+ *    相反，易误配；提示可用 ["*"] 显式全启用。
  */
-function warnToolsEnabledEmpty(
+export function collectConfigMigrationWarnings(
   scope: 'global' | 'project',
   data: Record<string, unknown> | undefined,
-): void {
-  const tools = data?.tools
-  if (typeof tools !== 'object' || tools === null || Array.isArray(tools)) return
-  const enabled = (tools as Record<string, unknown>).enabled
-  if (Array.isArray(enabled) && enabled.length === 0) {
-    console.warn(
-      `[config] ${scope} 配置的 tools.enabled 为空数组——旧版含义是「启用全部」，` +
-        `现已改为「禁用全部工具」。如需启用全部，请改为 "tools": { "enabled": ["*"] }，` +
-        `或删除该键恢复默认值。`,
-    )
+): string[] {
+  if (!data) return []
+  const scopeLabel = scope === 'global' ? '全局' : '项目'
+  const out: string[] = []
+  const tools = data.tools
+  if (typeof tools === 'object' && tools !== null && !Array.isArray(tools)) {
+    const enabled = (tools as Record<string, unknown>).enabled
+    if (Array.isArray(enabled) && enabled.length === 0) {
+      out.push(
+        `${scopeLabel}配置的 tools.enabled 为空数组：旧版含义「启用全部」已改为「禁用全部」——` +
+          `如需启用全部，请改为 ["*"]，或删除该键恢复默认值。`,
+      )
+    }
   }
+  const slash = data.slashCommands
+  if (typeof slash === 'object' && slash !== null && !Array.isArray(slash)) {
+    const enabled = (slash as Record<string, unknown>).enabled
+    if (Array.isArray(enabled) && enabled.length === 0) {
+      out.push(
+        `${scopeLabel}配置的 slashCommands.enabled 为空数组：其含义仍是「全部启用」` +
+          `（与 tools.enabled 空数组=禁用全部相反）——如需显式全启用，可用 ["*"]。`,
+      )
+    }
+  }
+  return out
 }
 
 /** Config 全部顶层键（DEFAULT_CONFIG + 可选键）。未知顶层键校验与告警共用。 */

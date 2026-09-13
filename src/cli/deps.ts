@@ -141,8 +141,11 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
     cwd: opts.cwd,
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
     // P：预算护栏 CLI 变体——print/acp 无恢复 UI，超支中止 run（产出 error）而非
-    // 暂停永久挂起。金额与 token 任一动作='pause' 即启用（每轮 LLM 请求前检查）。
-    ...(config.usage?.budgetAction === 'pause' || config.usage?.tokenBudgetAction === 'pause'
+    // 暂停永久挂起。金额与 token 任一动作='pause'/'abort' 即启用（每轮 LLM 请求前检查）。
+    ...(config.usage?.budgetAction === 'pause' ||
+    config.usage?.budgetAction === 'abort' ||
+    config.usage?.tokenBudgetAction === 'pause' ||
+    config.usage?.tokenBudgetAction === 'abort'
       ? { budgetAbort: true }
       : {}),
   }

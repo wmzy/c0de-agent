@@ -6,7 +6,7 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { compactContext } from '../../core/loop.js'
-import { createSlashRegistry, parseSlashInput } from '../../core/slash.js'
+import { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { resolveRoute } from '../../llm/registry.js'
@@ -258,11 +258,8 @@ function createChatRoute(ctx: ServerContext): Hono {
           )
         }
         // P2-4：执行 config.slashCommands.enabled 过滤（此前该配置无任何消费方）。
-        // enabled 为空 = 全部启用（斜杠命令独立语义，非 tools.enabled 的 fail-closed 语义）；
-        // 名称兼容带/不带前缀斜杠。
-        const enabledList = sessionConfig.slashCommands?.enabled ?? []
-        const enabledSet = new Set(enabledList.map((n) => (n.startsWith('/') ? n.slice(1) : n)))
-        if (enabledSet.size > 0 && !enabledSet.has(parsed.name)) {
+        // enabled 为空 = 全部启用；含 ['*'] = 全部启用；名称兼容带/不带前缀斜杠。
+        if (!isSlashCommandEnabled(sessionConfig.slashCommands?.enabled, parsed.name)) {
           return streamSSE(c, async (stream) => {
             await stream.writeSSE({
               event: 'text_delta',
@@ -659,12 +656,15 @@ function createChatRoute(ctx: ServerContext): Hono {
             config: sessionConfig,
             agentRegistry: ctx.agentRegistry,
             cwd,
-            // P3 成本护栏：会话项目配置 budgetAction='pause' 或 tokenBudgetAction='pause'
-            // 时启用预算暂停（CLI print 等无恢复 UI 的路径不注入此标志，永不挂起）。
+            // P3 成本护栏：会话项目配置 budgetAction='pause'（或 'abort'）时启用预算
+            // 暂停/中止（CLI print 等无恢复 UI 的路径由 deps 组装注入 budgetAbort）。
             ...(sessionConfig.usage?.budgetAction === 'pause' ||
             sessionConfig.usage?.tokenBudgetAction === 'pause'
               ? { budgetPause: true }
-              : {}),
+              : sessionConfig.usage?.budgetAction === 'abort' ||
+                  sessionConfig.usage?.tokenBudgetAction === 'abort'
+                ? { budgetAbort: true }
+                : {}),
             ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
           }
 

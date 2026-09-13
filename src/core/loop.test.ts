@@ -635,6 +635,51 @@ describe('agentLoop', () => {
     expect(statuses.some((s) => s._tag === 'paused')).toBe(false)
   })
 
+  it('P0-3：budgetAbort 超支中止 run（硬封顶，产出 error 而非暂停挂起）', async () => {
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 11,
+      timestamp: Date.now(),
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('should not run')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: { monthlyBudgetUsd: 10, budgetAction: 'abort' },
+      },
+      budgetAbort: true,
+    }
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) events.push(ev)
+
+    // 超支 → 硬中止：产出 error（含预算）且不产出文本（run 未继续执行）。
+    const errEv = events.find((e) => e._tag === 'error')
+    expect(errEv).toBeDefined()
+    const err = errEv?._tag === 'error' ? errEv.error : undefined
+    expect(err?._tag).toBe('unexpected')
+    if (err?._tag === 'unexpected') {
+      expect(err.message).toContain('预算')
+    }
+    expect(events.some((e) => e._tag === 'text_delta')).toBe(false)
+    expect(events.some((e) => e._tag === 'status_change' && e.status._tag === 'paused')).toBe(false)
+    expect(state.status._tag).toBe('stopped')
+    expect(state.budgetPauseTriggered).toBe(true)
+  })
+
   it('P1-3：全局预算超支暂停（项目预算 0，其他项目的花费触发全局护栏）', async () => {
     // 其他项目的当月花费 $11：本会话项目预算未配置，但全局预算 $10 兜底。
     await db.db.insert(usageEvents).values({

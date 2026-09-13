@@ -166,7 +166,10 @@ async function withAgentDeps(
     config.usage = { ...config.usage, budgetAction: action, tokenBudgetAction: action }
   }
   const budgetWillAbort =
-    config.usage?.budgetAction === 'pause' || config.usage?.tokenBudgetAction === 'pause'
+    config.usage?.budgetAction === 'pause' ||
+    config.usage?.budgetAction === 'abort' ||
+    config.usage?.tokenBudgetAction === 'pause' ||
+    config.usage?.tokenBudgetAction === 'abort'
   const budgetConfigured =
     (config.usage?.monthlyBudgetUsd ?? 0) > 0 ||
     (config.usage?.globalMonthlyBudgetUsd ?? 0) > 0 ||

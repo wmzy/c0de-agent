@@ -34,6 +34,11 @@ pnpm add -g c0de-agent
 
 要求 Node.js >= 22.0.0。
 
+> **首次使用前先配置 AI 服务**：项目默认不携带 `providers`（`providers: []`）。启动
+> `c0de serve` 后，先在 Web 界面「设置 → Provider」添加 API 服务并「测试连接」，或在
+> `~/.c0de/config.json` 中手动写入 `providers`（`c0de config set providers …`）。未配置
+> provider 时发送消息会得到「未配置可用的 AI 服务」引导，而非模型响应。
+
 ## 安全
 
 - **密钥存储**：`config.json` 写入时强制 `chmod 600`；`providers[].apiKey` 与 `websearch.tavilyApiKey/braveApiKey` 落盘前自动加密（AES-256-GCM，机器绑定，`enc:` 前缀），无论经 Web 设置、`c0de config set` 还是 `/config` 斜杠命令写入均不落明文。例外：`security.token`（静态模式专用）以明文存储，仅建议 CI/脚本场景使用，交互使用请走设备配对。`/config` 与 `c0de config get` 展示配置时对 apiKey/token 等字段自动脱敏。
