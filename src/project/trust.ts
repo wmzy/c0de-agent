@@ -19,7 +19,12 @@ import type { Config } from '../shared/types/config.js'
 
 /** 单个风险项：kind 供前端图标/文案映射，detail 为人类可读说明。 */
 export type TrustRiskItem = {
-  kind: 'permission-auto' | 'permission-timeout-deny' | 'plugins-enabled' | 'mcp-enabled'
+  kind:
+    | 'permission-auto'
+    | 'permission-timeout-deny'
+    | 'plugins-enabled'
+    | 'mcp-enabled'
+    | 'provider-rerouting'
   detail: string
 }
 
@@ -122,6 +127,36 @@ export function summarizeProjectRisk(raw: Partial<Config> | undefined): TrustRis
       kind: 'mcp-enabled',
       detail: `启用 MCP 服务器：${names.join('、')}（stdio 类会在本地执行命令）`,
     })
+  }
+
+  // P1：自定义 Provider 端点（baseURL 非空）会把「所有对话提示词（含代码上下文、
+  // 私有文件内容）」默认路由到该第三方地址，是比 auto 权限更直接的数据外泄面。
+  // 任何项目作用域配置声明了自定义 baseURL 的 provider 都拦截（fail-closed），
+  // 绝不静默把请求发往非官方端点。空 baseURL（官方默认端点）不视为风险。
+  const providers = raw.providers
+  if (Array.isArray(providers)) {
+    const custom = providers
+      .map((p) => {
+        const e = (typeof p === 'object' && p !== null ? p : {}) as {
+          name?: unknown
+          baseURL?: unknown
+          baseUrl?: unknown
+        }
+        const url =
+          typeof e.baseURL === 'string' ? e.baseURL : typeof e.baseUrl === 'string' ? e.baseUrl : ''
+        return {
+          name: typeof e.name === 'string' && e.name.length > 0 ? e.name : '（未命名）',
+          url: url.trim(),
+        }
+      })
+      .filter((p) => p.url.length > 0)
+    if (custom.length > 0) {
+      const desc = custom.map((p) => `${p.name} → ${p.url}`).join('、')
+      items.push({
+        kind: 'provider-rerouting',
+        detail: `自定义 Provider 端点（baseURL）：${desc}。你的所有对话提示词将发往该地址`,
+      })
+    }
   }
 
   return items

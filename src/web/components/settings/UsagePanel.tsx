@@ -59,11 +59,13 @@ function UsagePanel({
   globalBudget,
   tokenBudget,
   globalTokenBudget,
+  tokenBudgetAction,
   onBudgetChange,
   onBudgetActionChange,
   onGlobalBudgetChange,
   onTokenBudgetChange,
   onGlobalTokenBudgetChange,
+  onTokenBudgetActionChange,
   projectId,
 }: {
   budget: number
@@ -71,11 +73,13 @@ function UsagePanel({
   globalBudget?: number
   tokenBudget?: number
   globalTokenBudget?: number
+  tokenBudgetAction?: string
   onBudgetChange: (v: number) => void
   onBudgetActionChange: (v: 'warn' | 'pause') => void
   onGlobalBudgetChange?: (v: number) => void
   onTokenBudgetChange?: (v: number) => void
   onGlobalTokenBudgetChange?: (v: number) => void
+  onTokenBudgetActionChange?: (v: 'warn' | 'pause') => void
   projectId?: string
 }) {
   const { data: summary } = useQuery({
@@ -98,6 +102,8 @@ function UsagePanel({
     globalTokenBudget,
   )
   const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
+  // token 预算动作独立于金额预算（缺省回退 budgetAction），用于告警文案与选择器。
+  const tokenAction = (tokenBudgetAction ?? budgetAction) === 'pause' ? 'pause' : 'warn'
   // H2：价格未知的调用按 $0 计入，显式提示成本可能低估。
   const unknownCostTotal = summary?.totals.unknownCostCalls ?? 0
   // L2：无时间戳调用归入「未知」月份，不参与本月预算比较——同样需要提示。
@@ -184,6 +190,22 @@ function UsagePanel({
           </select>
         </label>
       )}
+      {effectiveTokenBudget > 0 && (
+        <label className={field}>
+          <span>token 预算超支动作（独立于金额预算）</span>
+          <select
+            className={fieldInput}
+            value={tokenAction}
+            onChange={(e) =>
+              onTokenBudgetActionChange?.(e.target.value === 'pause' ? 'pause' : 'warn')
+            }
+            data-testid="usage-token-budget-action"
+          >
+            <option value="warn">仅告警（顶栏徽标变红，对话继续）</option>
+            <option value="pause">暂停对话（新一轮回复前暂停，点「恢复」继续）</option>
+          </select>
+        </label>
+      )}
       {overBudget && (
         <div className={budgetWarn} data-testid="usage-budget-warning">
           ⚠ 本月成本 ${monthCost.toFixed(2)} 已超过{projectId ? '项目' : '全局'}预算 $
@@ -199,10 +221,10 @@ function UsagePanel({
         <div className={budgetWarn} data-testid="usage-token-budget-warning">
           ⚠ 本月 token 用量 {fmtTokens(monthTokens)} 已超过{projectId ? '项目' : '全局'} token 预算{' '}
           {fmtTokens(effectiveTokenBudget)}
-          {budgetAction !== 'pause' ? '（当前为「仅告警」，对话继续）' : ''}
+          {tokenAction !== 'pause' ? '（当前 token 预算动作为「仅告警」，对话继续）' : ''}
         </div>
       )}
-      {effectiveTokenBudget > 0 && budgetAction !== 'pause' && (
+      {effectiveTokenBudget > 0 && tokenAction !== 'pause' && (
         <div className={hint} data-testid="usage-token-budget-hint">
           token 预算在「仅告警」模式下超支仅提示、不暂停；设为「暂停对话」才会在超支时硬性拦截。
         </div>

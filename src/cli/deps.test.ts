@@ -126,6 +126,28 @@ describe('buildAgentDeps', () => {
     expect(deps.permission).toBe(nonInteractiveSafeChecker)
   })
 
+  it('--allow 白名单放行指定 ask 工具，未列出的仍拒绝（含可操作提示）', async () => {
+    const deps = await buildAgentDeps(config, {
+      db,
+      cwd: process.cwd(),
+      permissionStrategy: 'safe',
+      allowTools: ['write'],
+    })
+    const allowed = await deps.permission.check(
+      { name: 'write', permission: 'ask' } as never,
+      {},
+      {} as never,
+    )
+    expect(allowed._tag).toBe('allow')
+    const denied = await deps.permission.check(
+      { name: 'bash', permission: 'ask' } as never,
+      {},
+      {} as never,
+    )
+    expect(denied._tag).toBe('deny')
+    if (denied._tag === 'deny') expect(denied.reason).toContain('--allow')
+  })
+
   it('falls back to config.permission.defaultMode when strategy omitted', async () => {
     const yolo = { ...config, permission: { defaultMode: 'auto' as const } }
     const deps = await buildAgentDeps(yolo, { db, cwd: process.cwd() })

@@ -120,26 +120,32 @@ type UsageConfig = {
    * 全局月度成本预算（USD，所有项目 + 未归属调用聚合）。0 = 不限制。
    *  P1-3：与项目预算并存，任一超支即触发 budgetAction——
    *  未归属项目/未配置项目预算的花费至少受全局预算兜底。
-   *  建议只配置在 global 作用域（项目配置里设置全局预算无意义但会生效）。 */
+   *  仅 global 作用域生效：项目作用域写入会被剥离并忽略（作用域收敛）。 */
   globalMonthlyBudgetUsd?: number
   /**
    * 月度 token 预算（input + output + cacheRead tokens 之和），0 = 不限制。
    *  P0：价格独立护栏——自建网关/未登记模型的 cost 恒 $0，金额护栏拦不住，
    *  token 护栏按 token 量兜底（缓存读取亦按用量计费，故纳入口径）。
-   *  仅 budgetAction='pause' 时硬性生效（超支暂停/拒绝）；
-   *  'warn' 下徽标/面板仍显示告警，但不暂停对话。 */
+   *  动作由 tokenBudgetAction 决定（缺省回退 budgetAction，向后兼容）。 */
   monthlyTokenBudget?: number
   /**
    * 全局月度 token 预算（所有项目 + 未归属调用聚合），0 = 不限制。
-   *  与 monthlyTokenBudget 并存，任一超支即按 budgetAction 触发（pause 暂停 / warn 告警）。 */
+   *  与 monthlyTokenBudget 并存，任一超支即按 tokenBudgetAction 触发。
+   *  仅 global 作用域生效（与 globalMonthlyBudgetUsd 同口径）。 */
   globalMonthlyTokenBudget?: number
   /**
-   * 超支动作（P3 成本护栏）：
+   * 超支动作（P3 成本护栏），作用于**金额**预算：
    * - 'warn'（默认）：仅告警（顶栏徽标/用量面板），agent 继续执行；
    * - 'pause'：新一轮 LLM 请求前发现当月成本超预算 → 暂停 run（等同权限超时
    *   暂停机制），用户点「恢复」后本 run 不再因预算重复暂停（用户已知情）。
    */
   budgetAction?: 'warn' | 'pause'
+  /**
+   * token 预算的超支动作，独立于金额预算（P：token 是兜底口径，用户可能希望
+   * 「金额超支暂停、token 超支只告警」或反之）。缺省回退 budgetAction。
+   * 语义同 budgetAction：'pause' 硬性暂停/拒绝，'warn' 仅徽标/面板告警。
+   */
+  tokenBudgetAction?: 'warn' | 'pause'
 }
 
 /** Global application configuration. */

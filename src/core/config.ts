@@ -89,9 +89,48 @@ function readJsonIfExists(path: string): Partial<Config> | undefined {
 }
 
 /**
+ * usage 下「全局口径」预算键——仅 global 作用域生效。项目作用域写入这些键
+ * 会被忽略（作用域收敛）：此前「项目配置里设全局预算无意义但会生效」既造成
+ * 双预算语义混乱，又会随 git clone 传播、未被信任门禁拦截。收敛后项目作用域
+ * 的这两键不再进入任何合并视图，也不随 clone 影响本机护栏。
+ */
+const GLOBAL_ONLY_USAGE_KEYS = ['globalMonthlyBudgetUsd', 'globalMonthlyTokenBudget'] as const
+
+/** 从项目作用域原始配置中剥离全局口径预算键（浅拷贝，不改入参；无此键时原样返回）。 */
+function stripProjectGlobalOnlyKeys(
+  project: Partial<Config> | undefined,
+): Partial<Config> | undefined {
+  if (!project) return project
+  const usage = project.usage
+  if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) return project
+  const next: Record<string, unknown> = { ...(usage as Record<string, unknown>) }
+  let stripped = false
+  for (const k of GLOBAL_ONLY_USAGE_KEYS) {
+    if (k in next) {
+      delete next[k]
+      stripped = true
+    }
+  }
+  if (!stripped) return project
+  return { ...project, usage: next as Config['usage'] }
+}
+
+/**
+ * 返回项目作用域**原始文件**中出现的全局口径预算键名（strip 前的原始内容）。
+ * 供设置页告警展示：这些键来自旧版本或手动编辑，加载时已被剥离、不再生效。
+ */
+function projectGlobalOnlyUsageKeys(projectDir?: string): string[] {
+  const raw = readJsonIfExists(join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME))
+  const usage = raw?.usage
+  if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) return []
+  return GLOBAL_ONLY_USAGE_KEYS.filter((k) => k in (usage as Record<string, unknown>))
+}
+
+/**
  * 读取 global/project 两个作用域的**原始文件内容**（不经 DEFAULT 合并）。
  * 供配置持久化使用：写回某个作用域时只落该作用域应有的键，
  * 避免把合并结果（含默认值与另一作用域的配置）整体序列化进文件。
+ * 项目作用域经 stripProjectGlobalOnlyKeys 收敛——全局口径预算键只会从 global 读。
  */
 function loadConfigScopes(projectDir?: string): {
   global: Partial<Config> | undefined
@@ -99,7 +138,10 @@ function loadConfigScopes(projectDir?: string): {
 } {
   const globalPath = join(homedir(), GLOBAL_CONFIG_DIR, CONFIG_FILENAME)
   const projectPath = join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME)
-  return { global: readJsonIfExists(globalPath), project: readJsonIfExists(projectPath) }
+  return {
+    global: readJsonIfExists(globalPath),
+    project: stripProjectGlobalOnlyKeys(readJsonIfExists(projectPath)),
+  }
 }
 
 /**
@@ -277,11 +319,14 @@ export {
   applyScopedPatch,
   collectUnknownConfigKeys,
   DEFAULT_CONFIG,
+  GLOBAL_ONLY_USAGE_KEYS,
   KNOWN_CONFIG_KEYS,
   loadConfig,
   loadConfigScopes,
   mergeConfig,
   mergeRaw,
+  projectGlobalOnlyUsageKeys,
   saveConfigScoped,
+  stripProjectGlobalOnlyKeys,
   warnUnknownConfigKeys,
 }

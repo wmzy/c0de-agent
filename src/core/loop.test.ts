@@ -724,6 +724,57 @@ describe('agentLoop', () => {
     expect(state.budgetPauseTriggered).toBe(true)
   })
 
+  it('P：tokenBudgetAction=warn 时 token 超支不暂停（金额与 token 动作解耦）', async () => {
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 400,
+      outputTokens: 200,
+      cacheRead: 0,
+      cost: null,
+      timestamp: Date.now(),
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('token over')),
+      config: {
+        ...DEFAULT_CONFIG,
+        // 金额动作 pause、token 动作 warn：token 超支只告警，不暂停。
+        usage: {
+          monthlyBudgetUsd: 0,
+          monthlyTokenBudget: 500,
+          budgetAction: 'pause',
+          tokenBudgetAction: 'warn',
+        },
+      },
+      budgetPause: true,
+    }
+    const gen = agentLoop(state, deps)
+    let paused = false
+    let guard = 0
+    let pull = await gen.next()
+    while (!pull.done && guard < 30) {
+      const value = pull.value
+      if (value && value._tag === 'status_change' && value.status._tag === 'paused') {
+        paused = true
+        break
+      }
+      pull = await gen.next()
+      guard += 1
+    }
+    expect(paused).toBe(false)
+    expect(state.budgetPauseTriggered).toBeFalsy()
+  })
+
   it('压缩失败时记录警告但不中断循环（非致命）', async () => {
     // 多塞几条 user 消息，使 findSafeCutPoint 能在较早的 user 边界切分，
     // compactMessages 非空 → 触发 summarizer → 空 registry 抛错 → 进入 catch。

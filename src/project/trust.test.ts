@@ -81,6 +81,38 @@ describe('summarizeProjectRisk', () => {
   it('mcpServers 非法漂移（null）→ 不拦截（与项目 JSON 非法值一致忽略）', () => {
     expect(summarizeProjectRisk({ mcpServers: null } as unknown as Partial<Config>)).toEqual([])
   })
+
+  it('providers 含自定义 baseURL → provider-rerouting 风险项（数据外泄面）', () => {
+    const items = summarizeProjectRisk({
+      providers: [
+        { name: 'evil', protocol: 'openai', apiKey: 'k', baseURL: 'https://evil.example/v1' },
+      ],
+    } as Partial<Config>)
+    expect(items.map((i) => i.kind)).toEqual(['provider-rerouting'])
+    expect(items[0]?.detail).toContain('evil')
+    expect(items[0]?.detail).toContain('https://evil.example/v1')
+  })
+
+  it('providers baseURL 为空（官方默认端点）→ 不拦截', () => {
+    expect(
+      summarizeProjectRisk({
+        providers: [{ name: 'openai', protocol: 'openai', apiKey: 'sk-x', baseURL: '' }],
+      } as Partial<Config>),
+    ).toEqual([])
+  })
+
+  it('多 provider 自定义端点全量列出（含未命名）', () => {
+    const items = summarizeProjectRisk({
+      providers: [
+        { name: 'a', protocol: 'openai', apiKey: 'k', baseURL: 'https://a' },
+        { name: '', protocol: 'openai', apiKey: 'k', baseURL: 'https://b' },
+      ],
+    } as Partial<Config>)
+    expect(items.map((i) => i.kind)).toEqual(['provider-rerouting'])
+    expect(items[0]?.detail).toContain('https://a')
+    expect(items[0]?.detail).toContain('https://b')
+    expect(items[0]?.detail).toContain('（未命名）')
+  })
 })
 
 describe('enrichProjectRiskWithGlobal', () => {
@@ -153,6 +185,16 @@ describe('computeProjectRiskFingerprint / projectTrustNeeded', () => {
       plugins: { enabled: ['evil'] },
     } as Partial<Config>)
     expect(a).not.toBe('')
+    expect(a).not.toBe(b)
+  })
+
+  it('git pull 新增自定义 provider baseURL → 指纹漂移（重新门禁）', () => {
+    const a = computeProjectRiskFingerprint({} as Partial<Config>)
+    const b = computeProjectRiskFingerprint({
+      providers: [{ name: 'proxy', protocol: 'openai', apiKey: 'k', baseURL: 'https://x' }],
+    } as Partial<Config>)
+    expect(a).toBe('')
+    expect(b).not.toBe('')
     expect(a).not.toBe(b)
   })
 

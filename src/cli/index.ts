@@ -37,6 +37,7 @@ const COMMANDS: CommandSpec[] = [
       { name: 'model', type: 'string' },
       { name: 'format', type: 'string' },
       { name: 'yes', type: 'boolean', short: 'y' },
+      { name: 'allow', type: 'string' },
       { name: 'continue', type: 'string' },
       // P2 修复：serve 运行时持久库被占用，此前静默退化为内存库（会话不保存，
       // 仅 stderr 一行提示极易错过）。现须显式 --temp 才允许临时模式。
@@ -116,6 +117,8 @@ function isDbLockConflict(err: unknown): boolean {
 type AgentDepsOptions = {
   /** 权限策略：undefined → 按 config.permission.defaultMode 决定。 */
   strategy?: PermissionStrategy
+  /** --allow 白名单（safe 模式下 ask 工具定向放行）。 */
+  allowTools?: string[]
   /** --continue 指定的会话 id：依赖持久库，降级内存模式时无法续聊。 */
   continueSessionId?: string
   /** 必须使用持久库（如 sessions 命令）；锁冲突时不降级内存库而是直接报错。 */
@@ -189,6 +192,7 @@ async function withAgentDeps(
       db,
       cwd,
       ...(opts.strategy ? { permissionStrategy: opts.strategy } : {}),
+      ...(opts.allowTools ? { allowTools: opts.allowTools } : {}),
     })
     // P0：agent 执行路径（chat/acp）在无 Web 确认弹窗下硬拦未信任项目的风险配置，
     // 引导 c0de trust；trust/sessions 等非 agent 命令经 skipTrustGate 跳过。
@@ -225,12 +229,19 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     case 'chat': {
       // --yes / -y 显式放行写操作；否则按 config.permission.defaultMode 决定（默认 safe）。
       const strategy = args.options.yes ? ('full-auto' as const) : undefined
+      const allowTools = args.options.allow
+        ? String(args.options.allow)
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+        : undefined
       const continueId = args.options.continue as string | undefined
       const allowTemp = args.options.temp === true
       await withAgentDeps(
         cwd,
         {
           ...(strategy ? { strategy } : {}),
+          ...(allowTools && allowTools.length > 0 ? { allowTools } : {}),
           ...(continueId ? { continueSessionId: continueId } : {}),
           ...(allowTemp ? { allowTemp } : {}),
         },

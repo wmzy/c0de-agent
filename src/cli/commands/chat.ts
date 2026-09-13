@@ -112,7 +112,10 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
   // P1-4：CLI 无可恢复的「暂停」交互，budgetAction='pause' 时在单次询问前拦截——
   // 当月金额/token 预算超支则明确拒绝并给出操作路径，而非静默放行继续烧钱。
   // 与 Web 端暂停语义对齐（Web 暂停可恢复、CLI 直接拒绝本次执行）。
-  if (ctx.config.usage?.budgetAction === 'pause') {
+  if (
+    ctx.config.usage?.budgetAction === 'pause' ||
+    ctx.config.usage?.tokenBudgetAction === 'pause'
+  ) {
     const { budgetOverageParts } = await import('../../session/usage.js')
     // 项目预算仅在 cwd 能解析到项目时检查；未归属目录的调用只受全局预算兜底。
     const { getByDirectory } = await import('../../project/index.js')

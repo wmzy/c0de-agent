@@ -98,6 +98,21 @@ describe('saveConfigScoped / loadConfig', () => {
     expect(loaded.defaultModel).toBe('project-model')
   })
 
+  it('loadConfigScopes 剥离项目作用域的全局口径预算键（作用域收敛）', async () => {
+    await saveConfigScoped('project', tmp, {
+      usage: { monthlyBudgetUsd: 50, globalMonthlyBudgetUsd: 999, globalMonthlyTokenBudget: 88 },
+    })
+    const scopes = loadConfigScopes(tmp)
+    const usage = (scopes.project?.usage ?? {}) as {
+      monthlyBudgetUsd?: number
+      globalMonthlyBudgetUsd?: number
+      globalMonthlyTokenBudget?: number
+    }
+    expect(usage.monthlyBudgetUsd).toBe(50)
+    expect(usage.globalMonthlyBudgetUsd).toBeUndefined()
+    expect(usage.globalMonthlyTokenBudget).toBeUndefined()
+  })
+
   it('saveConfigScoped 落盘前加密 providers[].apiKey（不明文持久化）', async () => {
     const { decryptSecret, encryptSecret, isEncryptedSecret } = await import('./secret.js')
     const preEncrypted = encryptSecret('sk-orig')

@@ -114,8 +114,11 @@ export async function currentMonthUsage(
   return monthUsage(handle, { projectId, sinceMs: monthStart })
 }
 
-/** 预算护栏判定：金额（USD）+ token 双口径，任一超支返回人类可读描述片段
- *  （空数组 = 未超支）。供 Web loop 暂停、CLI 拒绝、子 agent 提前中止共用。
+/** 预算护栏判定：金额（USD）+ token 双口径，返回「需要阻断行动（pause/拒绝）」
+ *  的超支描述片段（空数组 = 无需阻断——可能超支但动作仅 warn）。
+ *  金额口径受 budgetAction 控制；token 口径受 tokenBudgetAction 控制（缺省回退
+ *  budgetAction，向后兼容）。warn 动作只走前端徽标/面板告警，不进本判定。
+ *  供 Web loop 暂停、CLI 拒绝、子 agent 提前中止共用。
  *  项目口径仅在 projectId 可归属时检查（未归属会话只受全局口径兜底）。
  *  token 口径独立于价格，兜底自建网关/未登记模型（cost 恒 $0）的场景。 */
 export async function budgetOverageParts(
@@ -128,6 +131,8 @@ export async function budgetOverageParts(
   const globalBudgetUsd = usage.globalMonthlyBudgetUsd ?? 0
   const projectTokenBudget = usage.monthlyTokenBudget ?? 0
   const globalTokenBudget = usage.globalMonthlyTokenBudget ?? 0
+  const amountAction = usage.budgetAction ?? 'warn'
+  const tokenAction = usage.tokenBudgetAction ?? amountAction
   const projectScoped = projectId != null && (projectBudgetUsd > 0 || projectTokenBudget > 0)
   const globalScoped = globalBudgetUsd > 0 || globalTokenBudget > 0
   if (!projectScoped && !globalScoped) return []
@@ -138,18 +143,33 @@ export async function budgetOverageParts(
   ])
 
   const parts: string[] = []
-  if (globalBudgetUsd > 0 && global && global.cost > globalBudgetUsd) {
+  if (amountAction === 'pause' && globalBudgetUsd > 0 && global && global.cost > globalBudgetUsd) {
     parts.push(`全局预算 $${globalBudgetUsd.toFixed(2)}：本月全部项目已 $${global.cost.toFixed(2)}`)
   }
-  if (projectBudgetUsd > 0 && project && project.cost > projectBudgetUsd) {
+  if (
+    amountAction === 'pause' &&
+    projectBudgetUsd > 0 &&
+    project &&
+    project.cost > projectBudgetUsd
+  ) {
     parts.push(`项目预算 $${projectBudgetUsd.toFixed(2)}：本项目已 $${project.cost.toFixed(2)}`)
   }
-  if (globalTokenBudget > 0 && global && global.tokens > globalTokenBudget) {
+  if (
+    tokenAction === 'pause' &&
+    globalTokenBudget > 0 &&
+    global &&
+    global.tokens > globalTokenBudget
+  ) {
     parts.push(
       `全局 token 预算 ${globalTokenBudget.toLocaleString()}：本月已 ${global.tokens.toLocaleString()} tokens`,
     )
   }
-  if (projectTokenBudget > 0 && project && project.tokens > projectTokenBudget) {
+  if (
+    tokenAction === 'pause' &&
+    projectTokenBudget > 0 &&
+    project &&
+    project.tokens > projectTokenBudget
+  ) {
     parts.push(
       `项目 token 预算 ${projectTokenBudget.toLocaleString()}：本项目已 ${project.tokens.toLocaleString()} tokens`,
     )

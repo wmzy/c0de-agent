@@ -4,9 +4,11 @@ import { Hono } from 'hono'
 import {
   applyScopedPatch,
   collectUnknownConfigKeys,
+  GLOBAL_ONLY_USAGE_KEYS,
   KNOWN_CONFIG_KEYS,
   loadConfigScopes,
   mergeConfig,
+  projectGlobalOnlyUsageKeys,
   saveConfigScoped,
 } from '../../core/config.js'
 import { containsSecrets } from '../../core/redact.js'
@@ -85,13 +87,23 @@ function createConfigRoute(ctx: ServerContext): Hono {
       ...collectUnknownConfigKeys(scopes.global).map((k) => `全局配置含未知键 "${k}"，不会生效`),
       ...collectUnknownConfigKeys(scopes.project).map((k) => `项目配置含未知键 "${k}"，不会生效`),
     ]
+    // 作用域收敛：项目配置里遗留的全局口径预算键加载时已被剥离（不再生效），在此明示。
+    const strippedGlobalKeys = projectGlobalOnlyUsageKeys(target.dir)
+    const globalBudgetWarnings = strippedGlobalKeys.map(
+      (k) =>
+        `项目配置含全局口径预算键 "${k}"，已忽略（该键仅在全局作用域生效，请改在全局配置设置）`,
+    )
     return c.json({
       config,
       scopes: {
         global: scopes.global ?? null,
         project: scopes.project ?? null,
       },
-      warnings: [...providerApiKeyWarnings(config.providers), ...unknownWarnings],
+      warnings: [
+        ...providerApiKeyWarnings(config.providers),
+        ...globalBudgetWarnings,
+        ...unknownWarnings,
+      ],
       gitWarning: projectConfigGitWarning(scopes.project, target.dir),
       projectDir: target.isProjectScoped ? target.dir : undefined,
     })
@@ -117,6 +129,26 @@ function createConfigRoute(ctx: ServerContext): Hono {
         'UNKNOWN_CONFIG_KEYS',
         `未知配置键：${unknown.join(', ')}。有效顶层键：${[...KNOWN_CONFIG_KEYS].join(', ')}`,
       )
+    }
+    // 作用域收敛：usage 的全局口径预算键仅 global 作用域生效（项目作用域读取时被剥离）。
+    // 项目作用域写入这些键会被静默忽略，与其落盘后再丢弃，不如直接拒绝并给出正解路径。
+    if (
+      scope === 'project' &&
+      typeof patch.usage === 'object' &&
+      patch.usage !== null &&
+      !Array.isArray(patch.usage)
+    ) {
+      const offending = GLOBAL_ONLY_USAGE_KEYS.filter(
+        (k) => k in (patch.usage as Record<string, unknown>),
+      )
+      if (offending.length > 0) {
+        return apiError(
+          c,
+          400,
+          'GLOBAL_BUDGET_IN_PROJECT_SCOPE',
+          `「${offending.join(' / ')}」是全局口径预算，仅在全局作用域生效。请在设置页切换到「全局」作用域后再修改。`,
+        )
+      }
     }
     // spec §24.2：provider apiKey 落盘前加密，明文不持久化。
     // 已加密（enc: 前缀）或无 apiKey 的透传。

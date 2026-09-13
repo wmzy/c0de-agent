@@ -102,6 +102,13 @@ async function runPrintMode(
     opts.onEvent?.(event)
   }
 
+  // 终态错误（unexpected，含预算中止）必须反馈给用户而非静默返回半截文本——
+  // 抛出后 dispatch 打印 message 并以非零码退出（预算超支中止等硬性护栏由此可见）。
+  const terminal = events.find((e) => e._tag === 'error' && e.error._tag === 'unexpected')
+  if (terminal && terminal._tag === 'error' && terminal.error._tag === 'unexpected') {
+    throw new Error(terminal.error.message)
+  }
+
   return collectAssistantText(events)
 }
 

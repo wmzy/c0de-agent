@@ -43,6 +43,9 @@ type LoopDeps = AgentDependencies & {
   /** P3 成本护栏：仅 Web 会话启用（CLI print 无恢复 UI，暂停会永久挂起）。
    *  由 chat 路由按 sessionConfig.usage.budgetAction==='pause' 注入。 */
   readonly budgetPause?: boolean
+  /** 预算护栏的 CLI 变体：无恢复 UI，超支时**中止 run**并产出 error（而非暂停挂起）。
+   *  由 CLI deps 组装（buildAgentDeps）按 usage 动作注入，替代 budgetPause。 */
+  readonly budgetAbort?: boolean
 }
 
 export type { LoopDeps }
@@ -131,18 +134,27 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
 
     // 预算护栏：金额 + token 双口径（token 兜底价格未知的自建网关/未登记模型），
     // 每轮 LLM 请求前检查。每 run 至多触发一次（budgetPauseTriggered），恢复后
-    // 用户已知情继续。deps.budgetPause 由 Web 路由按配置注入——CLI print 无恢复
-    // UI，永不启用（CLI 在 chat 入口单次询问前自行拦截）。
-    // 顶层 agent：超支 → 暂停 run（可恢复，等同权限超时暂停机制）。
+    // 用户已知情继续。deps.budgetPause 由 Web 路由按配置注入；deps.budgetAbort
+    // 由 CLI 组装注入（无恢复 UI，超支中止而非暂停挂起）。
+    // 顶层 agent：超支 → 暂停（Web，可恢复）/ 中止（CLI，产出 error）。
     // 子 agent：无恢复 UI，超支 → 提前中止自身（把超支作为错误回报父 agent，父
     //   run 下一轮检查将暂停）——收紧子 agent 单轮内 fan-out 的超支粒度。
-    if (deps.budgetPause === true && !state.budgetPauseTriggered) {
+    if ((deps.budgetPause === true || deps.budgetAbort === true) && !state.budgetPauseTriggered) {
       try {
         const parts = await budgetOverageParts(deps.db, deps.config.usage, state.session.projectId)
         if (parts.length > 0) {
           state.budgetPauseTriggered = true
           const reason = `月度预算超支（${parts.join('；')}）`
           if (deps._subagentDepth === undefined) {
+            if (deps.budgetAbort === true) {
+              state.status = {
+                _tag: 'stopped',
+                reason: 'error',
+                error: { _tag: 'unexpected', message: reason },
+              }
+              yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
+              return
+            }
             state.status = { _tag: 'paused', pauseReason: reason }
             yield { _tag: 'status_change', status: state.status }
             await updateSessionLastRun(deps.db, state.session.id, {
