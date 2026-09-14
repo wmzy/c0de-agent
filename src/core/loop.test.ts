@@ -820,6 +820,94 @@ describe('agentLoop', () => {
     expect(state.budgetPauseTriggered).toBeFalsy()
   })
 
+  it('P1：金额=pause、token=abort 时 token 超支独立中止（不再被 pause 分支降级）', async () => {
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+    // 金额未超（$5 < $10），token 已超（600 > 500）。
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 400,
+      outputTokens: 200,
+      cacheRead: 0,
+      cost: 5,
+      timestamp: Date.now(),
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('should not run')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: {
+          monthlyBudgetUsd: 10,
+          monthlyTokenBudget: 500,
+          budgetAction: 'pause',
+          tokenBudgetAction: 'abort',
+        },
+      },
+      budgetPause: true,
+    }
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) events.push(ev)
+
+    // token 超支 → 按 tokenBudgetAction='abort' 硬中止，而非被 pause 分支降级为暂停。
+    expect(events.some((e) => e._tag === 'error')).toBe(true)
+    expect(events.some((e) => e._tag === 'status_change' && e.status._tag === 'paused')).toBe(false)
+    expect(state.status._tag).toBe('stopped')
+    expect(state.budgetPauseTriggered).toBe(true)
+  })
+
+  it('P1：金额=abort、token=pause 时金额超支独立中止（不再被 token pause 分支降级）', async () => {
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+    // 金额已超（$11 > $10），token 未超（100 < 500）。
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 100,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 11,
+      timestamp: Date.now(),
+    })
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('should not run')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: {
+          monthlyBudgetUsd: 10,
+          monthlyTokenBudget: 500,
+          budgetAction: 'abort',
+          tokenBudgetAction: 'pause',
+        },
+      },
+      budgetPause: true,
+    }
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) events.push(ev)
+
+    // 金额超支 → 按 budgetAction='abort' 硬中止，而非被 token pause 分支降级为暂停。
+    expect(events.some((e) => e._tag === 'error')).toBe(true)
+    expect(events.some((e) => e._tag === 'status_change' && e.status._tag === 'paused')).toBe(false)
+    expect(state.status._tag).toBe('stopped')
+    expect(state.budgetPauseTriggered).toBe(true)
+  })
+
   it('压缩失败时记录警告但不中断循环（非致命）', async () => {
     // 多塞几条 user 消息，使 findSafeCutPoint 能在较早的 user 边界切分，
     // compactMessages 非空 → 触发 summarizer → 空 registry 抛错 → 进入 catch。

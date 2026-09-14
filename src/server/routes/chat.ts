@@ -656,15 +656,16 @@ function createChatRoute(ctx: ServerContext): Hono {
             config: sessionConfig,
             agentRegistry: ctx.agentRegistry,
             cwd,
-            // P3 成本护栏：会话项目配置 budgetAction='pause'（或 'abort'）时启用预算
-            // 暂停/中止（CLI print 等无恢复 UI 的路径由 deps 组装注入 budgetAbort）。
+            // P3 成本护栏：会话项目配置任一轴动作为 'pause'/'abort' 时启用预算检查。
+            // 具体 pause/abort 由 budgetOverageParts 按超支轴配置动作判定（abort >
+            // pause），此处仅注入「启用」门禁——修 P1 双轴动作坍缩（此前 pause 分支
+            // 优先，金额=abort+token=pause 等混合配置被静默降级为暂停）。
             ...(sessionConfig.usage?.budgetAction === 'pause' ||
-            sessionConfig.usage?.tokenBudgetAction === 'pause'
+            sessionConfig.usage?.budgetAction === 'abort' ||
+            sessionConfig.usage?.tokenBudgetAction === 'pause' ||
+            sessionConfig.usage?.tokenBudgetAction === 'abort'
               ? { budgetPause: true }
-              : sessionConfig.usage?.budgetAction === 'abort' ||
-                  sessionConfig.usage?.tokenBudgetAction === 'abort'
-                ? { budgetAbort: true }
-                : {}),
+              : {}),
             ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
           }
 

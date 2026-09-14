@@ -240,6 +240,13 @@ function UsagePanel({
         <div className={budgetWarn} data-testid="usage-unknown-cost-warning">
           ⚠ {unknownCostTotal} 次调用价格未知（自建网关/未登记模型），按 $0
           计入——实际成本可能高于显示值。
+          {effectiveBudget > 0 && effectiveTokenBudget === 0 && (
+            <>
+              {' '}
+              你已设金额预算但未设 token 预算：价格未知的调用金额恒为 $0，金额护栏拦不住，
+              建议设置上方 token 预算兜底。
+            </>
+          )}
         </div>
       )}
       {unknownMonth && unknownMonth.calls > 0 && (

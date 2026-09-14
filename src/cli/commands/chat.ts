@@ -128,9 +128,9 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
       projectId = null
     }
     const over = await budgetOverageParts(ctx.deps.db, ctx.config.usage, projectId)
-    if (over.length > 0) {
+    if (over.parts.length > 0) {
       throw new Error(
-        `chat: 月度预算已超支（${over.join('；')}）。` +
+        `chat: 月度预算已超支（${over.parts.join('；')}）。` +
           'CLI 无法暂停对话，已拒绝本次执行。请提升预算、改用更便宜的模型，或经 Web 界面调整后再试。',
       )
     }

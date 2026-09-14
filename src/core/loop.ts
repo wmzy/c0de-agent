@@ -40,11 +40,12 @@ type LoopDeps = AgentDependencies & {
   readonly _subagentEventSink?: (event: AgentEvent) => void
   /** 当前递归深度（0=顶层主 agent）。用于 maxRecursion 控制（spec §4.5 step 4）。 */
   readonly _subagentDepth?: number
-  /** P3 成本护栏：仅 Web 会话启用（CLI print 无恢复 UI，暂停会永久挂起）。
-   *  由 chat 路由按 sessionConfig.usage.budgetAction==='pause' 注入。 */
+  /** P3 成本护栏：Web 会话「启用预算检查」的门禁。具体 pause/abort 由
+   *  budgetOverageParts 按超支轴配置动作判定（abort > pause），此处仅表启用。
+   *  由 chat 路由按 usage 任一轴动作为 'pause'/'abort' 注入。 */
   readonly budgetPause?: boolean
   /** 预算护栏的 CLI 变体：无恢复 UI，超支时**中止 run**并产出 error（而非暂停挂起）。
-   *  由 CLI deps 组装（buildAgentDeps）按 usage 动作注入，替代 budgetPause。 */
+   *  由 CLI deps 组装（buildAgentDeps）按 usage 动作注入，替代 budgetPause（恒 abort）。 */
   readonly budgetAbort?: boolean
 }
 
@@ -141,12 +142,17 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     //   run 下一轮检查将暂停）——收紧子 agent 单轮内 fan-out 的超支粒度。
     if ((deps.budgetPause === true || deps.budgetAbort === true) && !state.budgetPauseTriggered) {
       try {
-        const parts = await budgetOverageParts(deps.db, deps.config.usage, state.session.projectId)
+        const { parts, action } = await budgetOverageParts(
+          deps.db,
+          deps.config.usage,
+          state.session.projectId,
+        )
         if (parts.length > 0) {
           state.budgetPauseTriggered = true
           const reason = `月度预算超支（${parts.join('；')}）`
           if (deps._subagentDepth === undefined) {
-            if (deps.budgetAbort === true) {
+            // CLI（budgetAbort）恒中止；Web 按超支轴配置动作判定（abort > pause）。
+            if (deps.budgetAbort === true || action === 'abort') {
               state.status = {
                 _tag: 'stopped',
                 reason: 'error',
@@ -176,8 +182,25 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             return
           }
         }
-      } catch {
-        // 账本查询失败不阻塞对话（fail-open：护栏故障不应瘫痪 agent）
+      } catch (err) {
+        // 账本查询失败：记录告警。'warn'/'pause' 路径 fail-open（可用性优先）；
+        // 'abort' 路径（用户显式要求硬封顶）保守 fail-closed——账本不可用即无法
+        // 保证「绝不超限」，宁可本轮中止并明示，而非静默放行继续烧钱。
+        console.error('[usage] 预算护栏账本查询失败：', err)
+        const abortSeverity =
+          deps.config.usage.budgetAction === 'abort' ||
+          deps.config.usage.tokenBudgetAction === 'abort'
+        if (abortSeverity) {
+          const reason =
+            '月度预算账本查询失败且预算动作为 abort（硬封顶）：无法确认是否超支，出于安全中止本轮'
+          state.status = {
+            _tag: 'stopped',
+            reason: 'error',
+            error: { _tag: 'unexpected', message: reason },
+          }
+          yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
+          return
+        }
       }
     }
     state.status = { _tag: 'running', turnCount: turn }

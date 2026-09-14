@@ -104,7 +104,9 @@ export async function monthUsage(
   return { cost, tokens }
 }
 
-/** 当月累计用量（本月 1 日 00:00 本地时区起算）。 */
+/** 当月累计用量（本月 1 日 00:00 本地时区起算）。
+ *  已知限制：跨时区/换机时「本月」边界随本地时区漂移，成本护栏阈值随之平移——
+ *  本地单机（服务端与用户同机）场景无影响。 */
 export async function currentMonthUsage(
   handle: DB,
   projectId?: string | null,
@@ -114,19 +116,28 @@ export async function currentMonthUsage(
   return monthUsage(handle, { projectId, sinceMs: monthStart })
 }
 
-/** 预算护栏判定：金额（USD）+ token 双口径，返回「需要阻断行动（pause/拒绝）」
- *  的超支描述片段（空数组 = 无需阻断——可能超支但动作仅 warn）。
+/** 预算护栏判定结果：parts 为超支描述片段，action 为实际超支轴中最严格的动作
+ *  （'abort' > 'pause'；'warn' 不阻断、不会进入本判定）。 */
+export type BudgetOverage = {
+  parts: string[]
+  action: 'pause' | 'abort'
+}
+
+/** 预算护栏判定：金额（USD）+ token 双口径，返回超支描述 + 阻断动作（空 parts =
+ *  无需阻断——可能超支但动作仅 warn）。
  *  金额口径受 budgetAction 控制；token 口径受 tokenBudgetAction 控制（缺省回退
  *  budgetAction，向后兼容）。warn 动作只走前端徽标/面板告警，不进本判定。
- *  供 Web loop 暂停、CLI 拒绝、子 agent 提前中止共用。
+ *  供 Web loop 暂停/中止、CLI 拒绝、子 agent 提前中止共用。
  *  项目口径仅在 projectId 可归属时检查（未归属会话只受全局口径兜底）。
- *  token 口径独立于价格，兜底自建网关/未登记模型（cost 恒 $0）的场景。 */
+ *  token 口径独立于价格，兜底自建网关/未登记模型（cost 恒 $0）的场景。
+ *  P1：金额/token 两轴动作各自求值，多轴同时超支取更严格者（abort > pause），
+ *  不再被单一布尔预算标志坍缩降级。 */
 export async function budgetOverageParts(
   handle: DB,
   usage: UsageConfig,
   projectId: string | null | undefined,
   now = new Date(),
-): Promise<string[]> {
+): Promise<BudgetOverage> {
   const projectBudgetUsd = usage.monthlyBudgetUsd ?? 0
   const globalBudgetUsd = usage.globalMonthlyBudgetUsd ?? 0
   const projectTokenBudget = usage.monthlyTokenBudget ?? 0
@@ -138,7 +149,7 @@ export async function budgetOverageParts(
   const tokenBlocks = tokenAction === 'pause' || tokenAction === 'abort'
   const projectScoped = projectId != null && (projectBudgetUsd > 0 || projectTokenBudget > 0)
   const globalScoped = globalBudgetUsd > 0 || globalTokenBudget > 0
-  if (!projectScoped && !globalScoped) return []
+  if (!projectScoped && !globalScoped) return { parts: [], action: 'pause' }
 
   const [project, global] = await Promise.all([
     projectScoped ? currentMonthUsage(handle, projectId, now) : Promise.resolve(null),
@@ -146,23 +157,29 @@ export async function budgetOverageParts(
   ])
 
   const parts: string[] = []
+  // 实际超支轴中的最严格阻断动作：任一超支轴动作 === 'abort' 即整体 abort，否则 pause。
+  let action: 'pause' | 'abort' = 'pause'
   if (amountBlocks && globalBudgetUsd > 0 && global && global.cost > globalBudgetUsd) {
     parts.push(`全局预算 $${globalBudgetUsd.toFixed(2)}：本月全部项目已 $${global.cost.toFixed(2)}`)
+    if (amountAction === 'abort') action = 'abort'
   }
   if (amountBlocks && projectBudgetUsd > 0 && project && project.cost > projectBudgetUsd) {
     parts.push(`项目预算 $${projectBudgetUsd.toFixed(2)}：本项目已 $${project.cost.toFixed(2)}`)
+    if (amountAction === 'abort') action = 'abort'
   }
   if (tokenBlocks && globalTokenBudget > 0 && global && global.tokens > globalTokenBudget) {
     parts.push(
       `全局 token 预算 ${globalTokenBudget.toLocaleString()}：本月已 ${global.tokens.toLocaleString()} tokens`,
     )
+    if (tokenAction === 'abort') action = 'abort'
   }
   if (tokenBlocks && projectTokenBudget > 0 && project && project.tokens > projectTokenBudget) {
     parts.push(
       `项目 token 预算 ${projectTokenBudget.toLocaleString()}：本项目已 ${project.tokens.toLocaleString()} tokens`,
     )
+    if (tokenAction === 'abort') action = 'abort'
   }
-  return parts
+  return { parts, action }
 }
 
 /** 本地时区的 YYYY-MM 月份键（与 usage 聚合、前端徽标同口径）。 */

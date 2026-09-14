@@ -123,4 +123,52 @@ describe('UsagePanel — token 预算护栏', () => {
 
     expect(await screen.findByTestId('usage-global-token-budget')).toBeTruthy()
   })
+
+  it('金额预算已设但未设 token 预算 + 价格未知调用 → 提示设置 token 预算兜底', async () => {
+    const { usageAPI } = await import('../../services/usage.js')
+    const summary = baseSummary()
+    summary.totals.unknownCostCalls = 3
+    ;(usageAPI.summary as Mock).mockResolvedValue(summary)
+
+    renderPanel({
+      budget: 10,
+      budgetAction: 'warn',
+      globalBudget: 0,
+      tokenBudget: 0,
+      globalTokenBudget: 0,
+      onBudgetChange: vi.fn(),
+      onBudgetActionChange: vi.fn(),
+      onGlobalBudgetChange: vi.fn(),
+      onTokenBudgetChange: vi.fn(),
+      onGlobalTokenBudgetChange: vi.fn(),
+      projectId: 'proj-1',
+    })
+
+    const warn = await screen.findByTestId('usage-unknown-cost-warning')
+    expect(warn.textContent).toContain('token 预算兜底')
+  })
+
+  it('已设 token 预算时，价格未知调用的告警不含兜底引导', async () => {
+    const { usageAPI } = await import('../../services/usage.js')
+    const summary = baseSummary()
+    summary.totals.unknownCostCalls = 3
+    ;(usageAPI.summary as Mock).mockResolvedValue(summary)
+
+    renderPanel({
+      budget: 10,
+      budgetAction: 'warn',
+      globalBudget: 0,
+      tokenBudget: 1000,
+      globalTokenBudget: 0,
+      onBudgetChange: vi.fn(),
+      onBudgetActionChange: vi.fn(),
+      onGlobalBudgetChange: vi.fn(),
+      onTokenBudgetChange: vi.fn(),
+      onGlobalTokenBudgetChange: vi.fn(),
+      projectId: 'proj-1',
+    })
+
+    const warn = await screen.findByTestId('usage-unknown-cost-warning')
+    expect(warn.textContent).not.toContain('token 预算兜底')
+  })
 })
