@@ -283,7 +283,9 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         permissionTimeout: null,
         runPaused: event.timeoutAction === 'pause',
         runPauseReason:
-          event.timeoutAction === 'pause' ? '权限确认超时：工具已被自动拒绝，对话已暂停。' : null,
+          event.timeoutAction === 'pause'
+            ? '权限确认超时：工具已被自动拒绝，对话已暂停。恢复后可直接要求 agent 重试该工具。'
+            : null,
       }
     case 'status_change':
       // 服务端 run 状态同步：权限超时兜底暂停、成本预算超支暂停、或用户在其他

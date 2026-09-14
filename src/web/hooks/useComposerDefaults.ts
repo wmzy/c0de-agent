@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModelSelection } from '../components/ModelSelector.js'
 import { useConfig } from '../contexts/ConfigContext.js'
 import { providerAPI } from '../services/provider.js'
@@ -52,7 +52,24 @@ export function useComposerDefaults(projectId?: string) {
     }
     return { provider: '', model: '' }
   })
+  // 用户是否在本次项目会话中操作过模型选择（输入/点选/切换 provider）。
+  // 校正逻辑只作用于「未操作过」的选择值（持久化恢复/默认填充），避免与自由输入互搏。
+  const selectionTouchedRef = useRef(false)
   const setAndPersistSelection = useCallback(
+    (v: ModelSelection) => {
+      selectionTouchedRef.current = true
+      try {
+        localStorage.setItem(selectionKey(projectId), JSON.stringify(v))
+      } catch {
+        // 忽略写入失败
+      }
+      setSelection(v)
+    },
+    [projectId],
+  )
+
+  /** 程序化校正/默认填充：同样落盘，但不视为用户操作（后续校正仍可继续）。 */
+  const applyCorrectedSelection = useCallback(
     (v: ModelSelection) => {
       try {
         localStorage.setItem(selectionKey(projectId), JSON.stringify(v))
@@ -100,7 +117,9 @@ export function useComposerDefaults(projectId?: string) {
   // P1-6/P2：切换项目时重载该项目的持久化选择（selection/enabledTools/agentName）。
   // ChatPage 在项目间导航时组件实例复用，不重载会让上一个项目的工具白名单
   // 泄漏到当前项目（安全相关状态跨项目串味）。
+  // P1-2：重载后的选择来自持久化/默认值（非用户操作），允许后续默认值校正。
   useEffect(() => {
+    selectionTouchedRef.current = false
     try {
       const saved = localStorage.getItem(selectionKey(projectId))
       if (saved) setSelection(JSON.parse(saved) as ModelSelection)
@@ -127,18 +146,31 @@ export function useComposerDefaults(projectId?: string) {
     )
   }, [projectId])
 
+  // P1-2：默认值校正（provider 与 model 都要校正，此前只校正 provider）：
+  // - provider：选择值/defaultProvider 不在已配置列表时回退首个已配置 provider；
+  // - model：所选 provider 在 config 中声明了模型清单、且当前模型不在其中
+  //   （典型首跑：defaultModel 仍是默认 'gpt-4o'，用户只配置了 Anthropic）→
+  //   回退清单首项；未声明清单的 provider（自建网关）保持自由输入原值。
+  // 仅在「用户未操作过」时校正（持久化恢复/默认填充）；用户输入期间不干预。
+  // providersData 缺失（列表加载中）时跳过，避免用空列表误清持久化选择。
   useEffect(() => {
-    if (selection.provider && selection.model) return
-    const def = providersData?.defaultProvider
-    const provider = providers.some((p) => p.name === def)
-      ? def
-      : (providers[0]?.name ?? selection.provider)
-    const model = config?.defaultModel ?? selection.model
+    if (!providersData || selectionTouchedRef.current) return
+    const def = providersData.defaultProvider
+    const provider =
+      selection.provider && providers.some((p) => p.name === selection.provider)
+        ? selection.provider
+        : providers.some((p) => p.name === def)
+          ? def
+          : (providers[0]?.name ?? '')
+    const provDef = config?.providers?.find((p) => p.name === provider)
+    const declared = provDef?.models ? Object.keys(provDef.models) : undefined
+    const preferred = selection.model || config?.defaultModel || ''
+    let model = preferred
+    if (declared && declared.length > 0 && !declared.includes(preferred)) {
+      model = declared[0] ?? ''
+    }
     if (provider !== selection.provider || model !== selection.model) {
-      setAndPersistSelection({
-        provider: provider || selection.provider,
-        model: model || selection.model,
-      })
+      applyCorrectedSelection({ provider, model })
     }
   }, [
     providers,
@@ -146,7 +178,7 @@ export function useComposerDefaults(projectId?: string) {
     config,
     selection.provider,
     selection.model,
-    setAndPersistSelection,
+    applyCorrectedSelection,
   ])
 
   return {

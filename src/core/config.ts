@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: Config = {
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: true, allowedOrigins: [] },
   websearch: { provider: 'auto' },
-  agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
+  agents: { subagentConcurrency: 3 },
   permission: { defaultMode: 'default', timeoutAction: 'pause' },
   usage: {
     monthlyBudgetUsd: 0,

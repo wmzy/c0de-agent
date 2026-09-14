@@ -1,5 +1,4 @@
 export { BUILTIN_AGENTS, WORKER_BASE } from './builtin.js'
-export { loadAgentFile, loadAgents } from './discovery.js'
 export type { ParallelResult } from './parallel.js'
 export { mapWithConcurrencyLimit } from './parallel.js'
 export { createAgentRegistry } from './registry.js'

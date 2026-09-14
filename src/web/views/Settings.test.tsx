@@ -43,7 +43,7 @@ const mockConfig = {
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },
-  agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
+  agents: { subagentConcurrency: 3 },
   permission: { defaultMode: 'default' },
   usage: { monthlyBudgetUsd: 0 },
 }
@@ -247,6 +247,90 @@ describe('Settings — Provider 管理', () => {
     }
     expect(updateCallArgs.providers).toHaveLength(3)
     expect(updateCallArgs.providers.at(2)?.name).toBe('MyProvider')
+  })
+
+  // P1-1：首跑作用域引导——全局与当前项目都还没有 provider、且本次保存引入了
+  // provider 时，弹一次「全局 or 项目」确认；确认后写入全局作用域（所有项目与
+  // CLI 可见），作用域选择器同步。
+  it('首跑保存 provider：确认 → 写入全局作用域', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: { ...mockConfig, providers: [] },
+      scopes: { global: {}, project: {} },
+      warnings: [],
+    })
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('provider-add'))
+    const nameInputs = screen.getAllByPlaceholderText('名称')
+    fireEvent.change(nameInputs[nameInputs.length - 1] as HTMLElement, {
+      target: { value: 'MyProvider' },
+    })
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const [, scopeArg] = (configAPI.update as Mock).mock.calls[0] ?? []
+    expect(scopeArg).toBe('global')
+    expect(screen.getByTestId('scope-select')).toHaveProperty('value', 'global')
+    vi.unstubAllGlobals()
+  })
+
+  it('首跑保存 provider：取消 → 保持项目作用域', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: { ...mockConfig, providers: [] },
+      scopes: { global: {}, project: {} },
+      warnings: [],
+    })
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('provider-add'))
+    const nameInputs = screen.getAllByPlaceholderText('名称')
+    fireEvent.change(nameInputs[nameInputs.length - 1] as HTMLElement, {
+      target: { value: 'MyProvider' },
+    })
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const [, scopeArg] = (configAPI.update as Mock).mock.calls[0] ?? []
+    expect(scopeArg).toBe('project')
+    vi.unstubAllGlobals()
+  })
+
+  it('全局已有 provider 时不弹确认（用户已做出作用域选择）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: { ...mockConfig, providers: [] },
+      scopes: { global: { providers: [mockConfig.providers[0]] }, project: {} },
+      warnings: [],
+    })
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+    const confirmSpy = vi.fn().mockReturnValue(true)
+    vi.stubGlobal('confirm', confirmSpy)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('provider-add'))
+    const nameInputs = screen.getAllByPlaceholderText('名称')
+    fireEvent.change(nameInputs[nameInputs.length - 1] as HTMLElement, {
+      target: { value: 'MyProvider' },
+    })
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    expect(confirmSpy).not.toHaveBeenCalled()
+    const [, scopeArg] = (configAPI.update as Mock).mock.calls[0] ?? []
+    expect(scopeArg).toBe('project')
+    vi.unstubAllGlobals()
   })
 
   it('测试成功后将检测到的模型写入 provider.models，保存时一并提交', async () => {
@@ -1460,5 +1544,20 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
 
     clickSpy.mockRestore()
     nav.remove()
+  })
+})
+
+describe('Settings — 用量面板零预算引导', () => {
+  it('未设置任何预算时显示引导提示，设置全局预算后消失', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('usage-global-budget')).toBeTruthy())
+    expect(screen.getByTestId('usage-no-budget-hint')).toBeTruthy()
+
+    fireEvent.change(screen.getByTestId('usage-global-budget'), { target: { value: '10' } })
+    await waitFor(() => expect(screen.queryByTestId('usage-no-budget-hint')).toBeNull())
   })
 })

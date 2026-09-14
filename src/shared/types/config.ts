@@ -48,8 +48,6 @@ type WebSearchConfig = {
 
 /** 多 agent 配置（spec: multi-agent-design §4.12）。 */
 type AgentsConfig = {
-  /** agent markdown 目录（相对项目根），默认 '.c0de/agents'。 */
-  dir: string
   /** 并行子 agent 数上限，默认 3。 */
   subagentConcurrency: number
 }

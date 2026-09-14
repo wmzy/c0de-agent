@@ -106,7 +106,8 @@ export function Settings() {
   const isDirty = draft !== null
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Config>) => configAPI.update(patch, scope, projectId),
+    mutationFn: (payload: { patch: Partial<Config>; scope: 'global' | 'project' }) =>
+      configAPI.update(payload.patch, payload.scope, projectId),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
     onSuccess: (resp) => {
       qc.invalidateQueries({ queryKey: ['config'] })
@@ -221,7 +222,35 @@ export function Settings() {
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
       return
     }
-    save.mutate(patch as Partial<Config>)
+    // P1-1 首跑作用域引导：全局与当前项目都还没有 provider、且本次保存引入了
+    // provider 时，用户大概率以为在配置「本机 AI 服务」——默认落项目作用域会让
+    // 配置在其他项目与 CLI（c0de chat）不可见。给一次「全局 or 项目」选择；
+    // 项目作用域已有 provider（= 用户此前已选择过）时不再打扰。
+    let effectiveScope: 'global' | 'project' = scope
+    const globalProviders = Array.isArray(resp?.scopes?.global?.providers)
+      ? (resp.scopes.global.providers as unknown[])
+      : []
+    const projectProviders = Array.isArray(resp?.scopes?.project?.providers)
+      ? (resp.scopes.project.providers as unknown[])
+      : []
+    if (
+      scope === 'project' &&
+      (patch as Record<string, unknown>).providers !== undefined &&
+      globalProviders.length === 0 &&
+      projectProviders.length === 0 &&
+      typeof window.confirm === 'function'
+    ) {
+      const useGlobal = window.confirm(
+        '本机全局配置中还没有任何 AI 服务。\n\n' +
+          '「确定」= 保存到全局配置（~/.c0de/config.json），所有项目与 c0de chat 均可直接使用（推荐）；\n' +
+          '「取消」= 仅保存到当前项目配置（.c0de/config.json），其他项目与 CLI 不可见。',
+      )
+      if (useGlobal) {
+        effectiveScope = 'global'
+        setScope('global')
+      }
+    }
+    save.mutate({ patch: patch as Partial<Config>, scope: effectiveScope })
   }
 
   /**
@@ -570,15 +599,6 @@ export function Settings() {
           <div className={section}>
             <h2 className={sectionTitle}>多 Agent</h2>
             <label className={field}>
-              <span>Agent 目录</span>
-              <input
-                className={fieldInput}
-                value={merged.agents.dir}
-                onChange={(e) => updateSection('agents', { dir: e.target.value })}
-                placeholder=".c0de/agents"
-              />
-            </label>
-            <label className={field}>
               <span>子 Agent 并发数</span>
               <input
                 className={fieldInput}
@@ -639,7 +659,8 @@ export function Settings() {
           }}
           data-testid="settings-restart-hint"
         >
-          安全配置已保存，但需重启 c0de serve 后生效。
+          安全配置已保存，但需重启 c0de serve 后生效：请在启动 c0de serve 的终端按 Ctrl+C
+          停止后，重新运行 c0de serve。
         </div>
       )}
 

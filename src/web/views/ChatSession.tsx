@@ -563,7 +563,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
               <div className={interruptBanner} data-testid="run-paused-banner">
                 <span>
                   {chat.runPauseReason ??
-                    '权限确认超时：工具已被自动拒绝，对话已暂停（不会在无人确认时继续执行）。点击「恢复」继续。'}
+                    '权限确认超时：工具已被自动拒绝，对话已暂停（不会在无人确认时继续执行）。点击「恢复」继续，恢复后可直接要求 agent 重试该工具。'}
                 </span>
                 <button
                   onClick={() => {

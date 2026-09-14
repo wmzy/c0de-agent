@@ -35,7 +35,7 @@ const config: Config = {
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },
-  agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
+  agents: { subagentConcurrency: 3 },
   permission: { defaultMode: 'default' },
   usage: { monthlyBudgetUsd: 0 },
   update: { enabled: false, intervalMs: 3_600_000, initialDelayMs: 10_000 },
@@ -140,5 +140,39 @@ describe('runPrintMode', () => {
     const bareConfig: Config = { ...config, providers: [] }
     const deps = await buildAgentDeps(bareConfig, { db, cwd: process.cwd(), chatStream })
     await expect(runPrintMode(bareConfig, 'hi', deps)).rejects.toThrow(/未配置可用的 AI 服务/)
+  })
+
+  // P1-3：defaultProvider 与已配置 provider 名不匹配时，报错必须列出已配置清单
+  // 与修正指引（此前坍缩成「未配置可用的 AI 服务」，用户已配置却被误导）。
+  it('provider 名不匹配 → 列出已配置服务并指引修正 defaultProvider', async () => {
+    const chatStream = mockChatStream([])
+    const mismatched: Config = { ...config, defaultProvider: 'openai' }
+    const deps = await buildAgentDeps(mismatched, { db, cwd: process.cwd(), chatStream })
+    await expect(runPrintMode(mismatched, 'hi', deps)).rejects.toThrow(/未找到名为「openai」/)
+    await expect(runPrintMode(mismatched, 'hi', deps)).rejects.toThrow(/已配置：demo/)
+    await expect(runPrintMode(mismatched, 'hi', deps)).rejects.toThrow(/defaultProvider/)
+  })
+
+  // P1-3：provider 声明了模型清单但请求模型不在其中 → 列出可用模型（与 Web
+  // MODEL_NOT_FOUND 对齐）。
+  it('模型不在 provider 声明清单 → 列出可用模型并指引 --model', async () => {
+    const chatStream = mockChatStream([])
+    const withModels: Config = {
+      ...config,
+      providers: [
+        {
+          name: 'demo',
+          protocol: 'openai',
+          apiKey: 'k',
+          baseURL: 'https://demo/v1',
+          models: { 'demo-model': {}, 'demo-model-fast': {} },
+        },
+      ],
+      defaultModel: 'demo-other',
+    }
+    const deps = await buildAgentDeps(withModels, { db, cwd: process.cwd(), chatStream })
+    await expect(runPrintMode(withModels, 'hi', deps)).rejects.toThrow(/demo-other/)
+    await expect(runPrintMode(withModels, 'hi', deps)).rejects.toThrow(/demo-model-fast/)
+    await expect(runPrintMode(withModels, 'hi', deps)).rejects.toThrow(/--model/)
   })
 })

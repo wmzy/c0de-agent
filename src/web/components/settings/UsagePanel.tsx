@@ -121,7 +121,8 @@ function UsagePanel({
         {summary ? `（价目版本 ${summary.priceCatalogVersion}，实际费用以账单为准）` : ''}。
         成本是账本：会话彻底删除后已发生花费仍计入。本面板为「本机实际发生」口径——从其他机器
         导入的会话、以及分支「继承」的历史成本仅是会话信息面板里的展示值，不写入本账本、
-        也不参与预算护栏与预算告警判定。
+        也不参与预算护栏与预算告警判定。预算护栏与用量统计均为本机口径：多台设备各自独立
+        累计与判定。
       </div>
       {projectId ? (
         <label className={field}>
@@ -179,6 +180,13 @@ function UsagePanel({
       {projectId && (globalBudget ?? 0) > 0 && (
         <div className={hint}>
           另有全局预算 ${(globalBudget ?? 0).toFixed(2)} 兜底（所有项目聚合）。
+        </div>
+      )}
+      {effectiveBudget === 0 && effectiveTokenBudget === 0 && (
+        <div className={hint} data-testid="usage-no-budget-hint">
+          当前未设置任何月度预算（0 = 不限制）：agent 连续运行时不会有成本告警或拦截。 建议设置
+          {projectId ? '项目' : '全局'}月度成本预算（可另加 token 预算兜底价格未知的调用），启用 80%
+          与超支两级告警。
         </div>
       )}
       {effectiveBudget > 0 && (

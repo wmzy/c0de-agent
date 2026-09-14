@@ -75,7 +75,7 @@ describe('Config', () => {
       toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
       security: { authEnabled: false, allowedOrigins: [] },
       websearch: { provider: 'auto' },
-      agents: { dir: '.c0de/agents', subagentConcurrency: 3 },
+      agents: { subagentConcurrency: 3 },
       permission: { defaultMode: 'default' },
       usage: { monthlyBudgetUsd: 0 },
       update: { enabled: true, intervalMs: 3_600_000, initialDelayMs: 10_000 },

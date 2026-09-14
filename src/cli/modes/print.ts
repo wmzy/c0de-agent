@@ -86,12 +86,36 @@ async function runPrintMode(
 
   // P3：首跑友好报错——未配置 provider 时不再让底层 NoRoute 异常裸抛，
   // 给出与 Web 端一致的引导（c0de serve → 设置 → Provider）。
+  // P1-3：区分三种失败（此前一律报「未配置」，配置了 provider 的用户被误导）：
+  //  - 完全没有配置 provider → 引导添加；
+  //  - provider 名不匹配（如 defaultProvider 仍是默认 'openai'，只配了 anthropic）
+  //    → 列出已配置清单 + 修正指引（与 Web PROVIDER_NOT_FOUND 对齐）；
+  //  - provider 声明了模型清单但请求模型不在其中 → 列出可用模型（与 Web
+  //    MODEL_NOT_FOUND 对齐）。
   try {
     resolveRoute(deps.llmRegistry, agentConfig.provider, agentConfig.model)
   } catch {
+    if (config.providers.length === 0) {
+      throw new Error(
+        '未配置可用的 AI 服务。请运行 `c0de serve` 并在「设置 → Provider」中添加 API 服务并测试连接，' +
+          '或使用 `c0de config set` 配置 providers。',
+      )
+    }
+    const configured = config.providers
+      .map((p) => p.name)
+      .filter(Boolean)
+      .join(', ')
     throw new Error(
-      '未配置可用的 AI 服务。请运行 `c0de serve` 并在「设置 → Provider」中添加 API 服务并测试连接，' +
-        '或使用 `c0de config set` 配置 providers。',
+      `未找到名为「${agentConfig.provider}」的 AI 服务。已配置：${configured}。` +
+        `请检查拼写，或用 \`c0de config set defaultProvider <name>\` 修正默认服务。`,
+    )
+  }
+  const providerDef = config.providers.find((p) => p.name === agentConfig.provider)
+  const modelNames = providerDef?.models ? Object.keys(providerDef.models) : undefined
+  if (modelNames && modelNames.length > 0 && !modelNames.includes(agentConfig.model)) {
+    throw new Error(
+      `provider「${agentConfig.provider}」没有名为「${agentConfig.model}」的模型。` +
+        `已配置模型：${modelNames.join(', ')}（可用 \`c0de chat --model <model>\` 指定）。`,
     )
   }
 

@@ -191,7 +191,7 @@ const clearCommand: SlashCommand = {
     }
     return {
       _tag: 'success',
-      message: `已清空 ${ids.length} 条消息（原内容已归档，可在会话页「归档」面板查看）`,
+      message: `已清空 ${ids.length} 条消息（原内容已归档，可在会话页「归档」面板查看；历史 token/成本仍计入本会话用量统计）`,
     }
   },
 }
