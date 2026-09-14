@@ -276,6 +276,15 @@ const configCommand: SlashCommand = {
     }
     // 点路径写值：与 CLI config set 同语义（project 作用域最小落盘，null=unset）
     const { applyScopedPatch, loadConfigScopes, saveConfigScoped } = await import('./config.js')
+    // 作用域收敛：security 是服务端全局参数，项目作用域写入会被加载时剥离（不生效），
+    // 直接拒绝并给出正解路径（与 CLI config set --global / Web PATCH /api/config 同语义）。
+    if (key.split('.')[0] === 'security') {
+      return {
+        _tag: 'error',
+        message:
+          'security 是服务端全局参数，仅在全局作用域生效。请在全局配置（~/.c0de/config.json）中设置，或用 c0de config set --global 写入。',
+      }
+    }
     const scopes = loadConfigScopes(ctx.cwd)
     const value = coerce(parts.slice(1).join(' '))
     const next = applyScopedPatch(scopes.project ?? {}, setPathPatch(key, value))

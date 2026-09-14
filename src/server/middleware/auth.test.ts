@@ -64,4 +64,71 @@ describe('createAuthMiddleware', () => {
     const xRes = await app.request('/api/x')
     expect(xRes.status).toBe(401)
   })
+
+  it('认证关闭 + 跨域写请求（非本地 Origin）→ 403 ORIGIN_FORBIDDEN（盲 CSRF 防线）', async () => {
+    const app = new Hono()
+    app.use('/api/*', createAuthMiddleware(undefined))
+    app.post('/api/x', (c) => c.json({ ok: true }))
+    const res = await app.request('/api/x', {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example' },
+    })
+    expect(res.status).toBe(403)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('ORIGIN_FORBIDDEN')
+  })
+
+  it('认证关闭 + 本地 Origin 写请求 → 放行', async () => {
+    const app = new Hono()
+    app.use('/api/*', createAuthMiddleware(undefined))
+    app.post('/api/x', (c) => c.json({ ok: true }))
+    const res = await app.request('/api/x', {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:5173' },
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('认证关闭 + allowedOrigins 中的跨域写请求 → 放行', async () => {
+    const app = new Hono()
+    app.use(
+      '/api/*',
+      createAuthMiddleware(undefined, { allowedOrigins: ['https://trusted.example'] }),
+    )
+    app.post('/api/x', (c) => c.json({ ok: true }))
+    const res = await app.request('/api/x', {
+      method: 'POST',
+      headers: { Origin: 'https://trusted.example' },
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('认证关闭 + 无 Origin 写请求（curl/CLI/脚本）→ 放行', async () => {
+    const app = new Hono()
+    app.use('/api/*', createAuthMiddleware(undefined))
+    app.post('/api/x', (c) => c.json({ ok: true }))
+    const res = await app.request('/api/x', { method: 'POST' })
+    expect(res.status).toBe(200)
+  })
+
+  it('认证关闭 + 跨域读请求（GET）→ 放行（读由 CORS 回显防线负责）', async () => {
+    const app = new Hono()
+    app.use('/api/*', createAuthMiddleware(undefined))
+    app.get('/api/x', (c) => c.json({ ok: true }))
+    const res = await app.request('/api/x', {
+      headers: { Origin: 'https://evil.example' },
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('认证开启 + 跨域写请求带错 token → 401（token 防线，非 origin 防线）', async () => {
+    const app = new Hono()
+    app.use('/api/*', createAuthMiddleware('secret-token'))
+    app.post('/api/x', (c) => c.json({ ok: true }))
+    const res = await app.request('/api/x', {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example' },
+    })
+    expect(res.status).toBe(401)
+  })
 })

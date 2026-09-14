@@ -22,12 +22,14 @@ function CommaListInput({
   placeholder,
   className,
   id,
+  disabled,
 }: {
   value: string[]
   onCommit: (items: string[]) => void
   placeholder?: string
   className?: string
   id?: string
+  disabled?: boolean
 }) {
   const [text, setText] = useState(value.join(', '))
   const joined = value.join(', ')
@@ -42,6 +44,7 @@ function CommaListInput({
       className={className}
       value={text}
       placeholder={placeholder}
+      disabled={disabled}
       onChange={(e) => {
         setText(e.target.value)
         onCommit(splitList(e.target.value))

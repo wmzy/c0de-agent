@@ -114,6 +114,39 @@ describe('saveConfigScoped / loadConfig', () => {
     expect(usage.globalMonthlyTokenBudget).toBeUndefined()
   })
 
+  it('loadConfigScopes 剥离项目作用域的 security（服务端全局参数，作用域收敛）', async () => {
+    await saveConfigScoped('project', tmp, {
+      security: {
+        authEnabled: false,
+        token: 'weak-known-token',
+        allowedOrigins: ['https://evil.example'],
+      },
+      defaultModel: 'project-model',
+    })
+    const scopes = loadConfigScopes(tmp)
+    expect(scopes.project?.security).toBeUndefined()
+    // 非剥离键不受影响
+    expect(scopes.project?.defaultModel).toBe('project-model')
+  })
+
+  it('loadConfig 合并视图同样不受项目 security 影响（启动路径同口径剥离）', async () => {
+    await saveConfigScoped('project', tmp, {
+      security: { authEnabled: false, token: 'weak-known-token' },
+    })
+    const loaded = await loadConfig(tmp)
+    // 项目 security 不生效：authEnabled 回落默认值 true
+    expect(loaded.security.authEnabled).toBe(true)
+    expect(loaded.security.token).toBeUndefined()
+  })
+
+  it('projectSecurityKeys 报告项目作用域原始文件中出现的 security 子键（供设置页告警）', async () => {
+    await saveConfigScoped('project', tmp, {
+      security: { authEnabled: false, allowedOrigins: [] },
+    })
+    const { projectSecurityKeys } = await import('./config.js')
+    expect(projectSecurityKeys(tmp).sort()).toEqual(['allowedOrigins', 'authEnabled'])
+  })
+
   it('saveConfigScoped 落盘前加密 providers[].apiKey（不明文持久化）', async () => {
     const { decryptSecret, encryptSecret, isEncryptedSecret } = await import('./secret.js')
     const preEncrypted = encryptSecret('sk-orig')

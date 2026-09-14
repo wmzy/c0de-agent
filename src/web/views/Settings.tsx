@@ -594,6 +594,7 @@ export function Settings() {
           <SecurityPanel
             security={merged.security}
             permission={merged.permission}
+            securityScope={scope}
             onSecurityChange={(patch) => updateSection('security', patch)}
             onPermissionChange={(patch) => updateSection('permission', patch)}
           />

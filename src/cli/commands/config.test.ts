@@ -95,4 +95,20 @@ describe('config set', () => {
     const cfg = JSON.parse(readFileSync(join(tmp, '.c0de', 'config.json'), 'utf-8'))
     expect(cfg.compaction).toEqual({ threshold: 0.9, reserveTokens: 1000 })
   })
+
+  it('项目作用域写入 security → 拒绝并引导 --global（服务端全局参数）', async () => {
+    seedConfig({ defaultModel: 'gpt-4o' })
+    await expect(
+      runConfigCommand({
+        args: { options: {}, positionals: ['set', 'security.authEnabled', 'false'] },
+        cwd: tmp,
+        write: () => {},
+      }),
+    ).rejects.toThrow(/--global/)
+    const cfg = JSON.parse(readFileSync(join(tmp, '.c0de', 'config.json'), 'utf-8')) as Record<
+      string,
+      unknown
+    >
+    expect(cfg.security).toBeUndefined()
+  })
 })

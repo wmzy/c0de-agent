@@ -97,23 +97,46 @@ function readJsonIfExists(path: string): Partial<Config> | undefined {
  */
 const GLOBAL_ONLY_USAGE_KEYS = ['globalMonthlyBudgetUsd', 'globalMonthlyTokenBudget'] as const
 
-/** 从项目作用域原始配置中剥离全局口径预算键（浅拷贝，不改入参；无此键时原样返回）。 */
-function stripProjectGlobalOnlyKeys(
-  project: Partial<Config> | undefined,
-): Partial<Config> | undefined {
+/**
+ * 项目作用域中「服务端/全局生效、随 git clone 传播有安全风险」的顶层键：整体剥离。
+ * `security` 是服务级信任边界（鉴权开关 / token / CORS origin / 首设备窗口）——单进程
+ * 多项目架构下不存在「按项目」的安全参数。此前项目配置可静默改写服务端安全参数
+ * （如 authEnabled:false、security.token 静态弱 token、allowedOrigins 放宽），且这些键
+ * 不在信任门禁的风险 kind（trust.ts summarizeProjectRisk）内，克隆仓库即可无确认生效。
+ * 收敛为 global-only：security 仅从全局作用域读取。
+ */
+const PROJECT_SERVER_ONLY_KEYS = ['security'] as const
+
+/** 从项目作用域原始配置中剥离「服务端/全局」键（security 顶层键 + usage 全局口径预算键）。
+ *  浅拷贝，不改入参；无剥离键时原样返回（保持身份，调用方可安全比较）。 */
+function stripProjectServerKeys(project: Partial<Config> | undefined): Partial<Config> | undefined {
   if (!project) return project
-  const usage = project.usage
-  if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) return project
-  const next: Record<string, unknown> = { ...(usage as Record<string, unknown>) }
   let stripped = false
-  for (const k of GLOBAL_ONLY_USAGE_KEYS) {
+  const next: Record<string, unknown> = { ...(project as Record<string, unknown>) }
+
+  // 顶层「服务端/全局」键整体移除（见 PROJECT_SERVER_ONLY_KEYS）。
+  for (const k of PROJECT_SERVER_ONLY_KEYS) {
     if (k in next) {
       delete next[k]
       stripped = true
     }
   }
+
+  // usage 下全局口径预算键移除（仅 global 作用域生效）。
+  const usage = project.usage
+  if (typeof usage === 'object' && usage !== null && !Array.isArray(usage)) {
+    const u = { ...(usage as Record<string, unknown>) }
+    for (const k of GLOBAL_ONLY_USAGE_KEYS) {
+      if (k in u) {
+        delete u[k]
+        stripped = true
+      }
+    }
+    next.usage = u
+  }
+
   if (!stripped) return project
-  return { ...project, usage: next as Config['usage'] }
+  return next as Partial<Config>
 }
 
 /**
@@ -128,10 +151,30 @@ function projectGlobalOnlyUsageKeys(projectDir?: string): string[] {
 }
 
 /**
+ * 返回项目作用域**原始文件**中出现的 security 子键名（strip 前的原始内容）。
+ * 供设置页告警展示：security 是服务端全局参数，随项目配置出现时已被剥离、不再生效。
+ */
+function projectSecurityKeys(projectDir?: string): string[] {
+  const raw = readJsonIfExists(join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME))
+  const sec = raw?.security
+  if (typeof sec !== 'object' || sec === null || Array.isArray(sec)) return []
+  return Object.keys(sec as Record<string, unknown>)
+}
+
+/**
+ * 读取项目作用域原始文件内容（不剥离 security/全局键）。
+ * 供「文件原文」敏感的检查使用——被剥离的键仍可能携带明文密钥（如 security.token），
+ * 配置落在 git 仓库内同样要防误提交，不能因键不生效而漏掉警告。
+ */
+function loadProjectRawScope(projectDir?: string): Partial<Config> | undefined {
+  return readJsonIfExists(join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME))
+}
+
+/**
  * 读取 global/project 两个作用域的**原始文件内容**（不经 DEFAULT 合并）。
  * 供配置持久化使用：写回某个作用域时只落该作用域应有的键，
  * 避免把合并结果（含默认值与另一作用域的配置）整体序列化进文件。
- * 项目作用域经 stripProjectGlobalOnlyKeys 收敛——全局口径预算键只会从 global 读。
+ * 项目作用域经 stripProjectServerKeys 收敛——security 与全局口径预算键只会从 global 读。
  */
 function loadConfigScopes(projectDir?: string): {
   global: Partial<Config> | undefined
@@ -141,7 +184,7 @@ function loadConfigScopes(projectDir?: string): {
   const projectPath = join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME)
   return {
     global: readJsonIfExists(globalPath),
-    project: stripProjectGlobalOnlyKeys(readJsonIfExists(projectPath)),
+    project: stripProjectServerKeys(readJsonIfExists(projectPath)),
   }
 }
 
@@ -273,7 +316,23 @@ async function loadConfig(projectDir?: string): Promise<Config> {
   const globalPath = join(homedir(), GLOBAL_CONFIG_DIR, CONFIG_FILENAME)
   const projectPath = join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME)
   const global = readJsonIfExists(globalPath)
-  const project = readJsonIfExists(projectPath)
+  // 与 loadConfigScopes 同口径剥离：security 与 usage 全局口径预算键不进合并视图
+  // （此前 loadConfig 不剥离，服务启动目录项目的 security/全局预算键会静默生效——
+  //  安全键可被克隆仓库无确认改写，全局预算可被项目作用域注入）。
+  const projectRaw = readJsonIfExists(projectPath)
+  const project = stripProjectServerKeys(projectRaw)
+  // 项目配置遗留 security 键（旧版本/手动编辑/克隆仓库自带）→ CLI 侧明示已忽略，
+  // 与 Web 设置页 securityWarnings 同口径（stderr 可见，不必等到打开设置页）。
+  const rawSecurity = projectRaw?.security
+  if (typeof rawSecurity === 'object' && rawSecurity !== null && !Array.isArray(rawSecurity)) {
+    const keys = Object.keys(rawSecurity as Record<string, unknown>)
+    if (keys.length > 0) {
+      console.warn(
+        `[config] 项目配置含 security 键（${keys.join('、')}，服务端全局参数），已忽略——` +
+          '请在全局配置（~/.c0de/config.json）或 c0de config set --global 设置。',
+      )
+    }
+  }
   warnUnknownConfigKeys('global', global)
   warnUnknownConfigKeys('project', project)
   for (const [scope, data] of [
@@ -368,10 +427,12 @@ export {
   KNOWN_CONFIG_KEYS,
   loadConfig,
   loadConfigScopes,
+  loadProjectRawScope,
   mergeConfig,
   mergeRaw,
   projectGlobalOnlyUsageKeys,
+  projectSecurityKeys,
   saveConfigScoped,
-  stripProjectGlobalOnlyKeys,
+  stripProjectServerKeys,
   warnUnknownConfigKeys,
 }

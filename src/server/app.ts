@@ -47,6 +47,7 @@ function createApp(ctx: ServerContext): Hono {
         '/api/auth/pairing/request',
         '/api/auth/pairing/status',
       ],
+      allowedOrigins: ctx.config.security.allowedOrigins,
       ...(ctx.authManager ? { verify: (t) => ctx.authManager?.verify(t) ?? false } : {}),
     }),
   )

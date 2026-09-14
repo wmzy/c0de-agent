@@ -235,6 +235,22 @@ describe('builtin commands', () => {
     expect(result._tag).toBe('error')
   })
 
+  it('/config 项目作用域写入 security → 拒绝（服务端全局参数）', async () => {
+    const projDir = await mkdtemp(join(tmpdir(), 'slash-security-'))
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('security.authEnabled false', {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') expect(result.message).toContain('全局')
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(join(projDir, '.c0de', 'config.json'))).toBe(false)
+    await rm(projDir, { recursive: true, force: true })
+  })
+
   it('/model 诚实指引到模型选择器', async () => {
     const cmd = builtinCommands.find((c) => c.name === 'model')
     expect(cmd).toBeDefined()

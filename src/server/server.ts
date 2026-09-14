@@ -844,7 +844,13 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
     close: async () => {
       await currentClose?.()
     },
-    ...(currentAuthToken ? { authToken: currentAuthToken } : {}),
+    // P：仅「首设备待注册」时回传 bootstrap 供 serve 命令拼 ?token= 注册 URL。
+    // 已有已注册设备时 auth-token 文件里是注册后被轮换的旧值——带进 URL 会让新浏览器
+    // 误点「注册链接」却得到 BOOTSTRAP_CONSUMED 引导配对（横幅文案误导）。此时不携带，
+    // serve 打印无 token 的 URL，新浏览器自然走配对流程。
+    ...(currentAuthToken && !hasRegisteredDevices(resolveDbDir())
+      ? { authToken: currentAuthToken }
+      : {}),
   }
 }
 

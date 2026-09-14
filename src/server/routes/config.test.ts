@@ -115,12 +115,20 @@ describe('config route — apiKey 加密（spec §24.2）', () => {
 })
 
 describe('config route — scoped patch 与保存反馈（P1-2/P2-3）', () => {
-  it('PATCH security 变更返回 needsRestart: true', async () => {
+  it('PATCH security 变更返回 needsRestart: true（security 仅全局作用域）', async () => {
     const { app } = await setup()
-    const res = await patchBody(app, { security: { authEnabled: true } })
+    const res = await patchBody(app, { scope: 'global', security: { authEnabled: true } })
     expect(res.status).toBe(200)
     const body = (await res.json()) as { needsRestart?: boolean }
     expect(body.needsRestart).toBe(true)
+  })
+
+  it('PATCH 项目作用域写入 security → 400 SECURITY_IN_PROJECT_SCOPE', async () => {
+    const { app } = await setup()
+    const res = await patchBody(app, { scope: 'project', security: { authEnabled: false } })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('SECURITY_IN_PROJECT_SCOPE')
   })
 
   it('PATCH 非 security 变更 needsRestart 为 false', async () => {

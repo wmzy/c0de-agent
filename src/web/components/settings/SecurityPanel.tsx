@@ -9,6 +9,9 @@ interface SecurityPanelProps {
   permission: Config['permission']
   onSecurityChange: (patch: Partial<Config['security']>) => void
   onPermissionChange: (patch: Partial<Config['permission']>) => void
+  /** 当前设置页作用域。security 是服务端全局参数（项目作用域写入会被后端拒绝/加载时剥离），
+   *  项目作用域下安全字段禁用并提示切换「全局」。 */
+  securityScope?: 'global' | 'project'
 }
 
 /** 已授权设备管理（P2-16 配套）：列出/撤销设备。撤销唯一设备将退出本页面（token 失效）。 */
@@ -90,15 +93,25 @@ function SecurityPanel({
   permission,
   onSecurityChange,
   onPermissionChange,
+  securityScope = 'global',
 }: SecurityPanelProps) {
+  // security 是服务端全局参数：项目作用域下禁用编辑（后端会拒绝项目作用域 security 写入），
+  // 仅展示当前生效值（来自全局作用域合并视图）。
+  const securityLocked = securityScope === 'project'
   return (
     <>
       <div className={section}>
         <h2 className={sectionTitle}>安全</h2>
+        {securityLocked && (
+          <p className={hint} data-testid="security-scope-hint">
+            安全设置为服务端全局参数，仅在「全局」作用域生效。请切换顶部作用域为「全局」后再修改。
+          </p>
+        )}
         <label className={checkRow}>
           <input
             type="checkbox"
             checked={security.authEnabled}
+            disabled={securityLocked}
             onChange={(e) => {
               const next = e.target.checked
               if (next) {
@@ -126,6 +139,7 @@ function SecurityPanel({
                 className={fieldInput}
                 type="password"
                 value={security.token ?? ''}
+                disabled={securityLocked}
                 onChange={(e) => onSecurityChange({ token: e.target.value })}
                 placeholder="Bearer Token"
               />
@@ -148,6 +162,7 @@ function SecurityPanel({
             id="cfg-allowed-origins"
             className={fieldInput}
             value={security.allowedOrigins}
+            disabled={securityLocked}
             onCommit={(items) => onSecurityChange({ allowedOrigins: items })}
             placeholder="（本地回环始终允许）"
           />

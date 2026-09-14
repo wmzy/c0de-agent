@@ -54,6 +54,13 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
       )
     }
     const scope = (ctx.args.options.global as boolean | undefined) ? 'global' : 'project'
+    // 作用域收敛：security 是服务端全局参数，项目作用域写入会被加载时剥离（不生效）。
+    // 与其写入一个永不生效的键，不如直接拒绝并给出正解路径（与 Web PATCH /api/config 同语义）。
+    if (scope === 'project' && topKey === 'security') {
+      throw new Error(
+        'config set: security 是服务端全局参数，仅在全局作用域生效。请加 --global 写入全局配置。',
+      )
+    }
     // 只把 patch 合并进目标作用域的原始文件，不写入默认值与其他作用域的配置（P2-3）。
     // 值为 null → 删除该键（作用域内取消覆盖，回落另一作用域/默认值）。
     const scopeCfg = scope === 'global' ? scopes.global : scopes.project

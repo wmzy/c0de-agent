@@ -232,9 +232,9 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   function cleanExpiredPairings(): void {
     const cutoff = now() - pairingTtlMs
     for (const [id, p] of pending) {
-      if (p.status === 'pending' && p.createdAt <= cutoff) {
-        pending.delete(id)
-      }
+      // 不论状态一律过期清理：approved 但新设备始终未取走 token 的条目（客户端放弃轮询）
+      // 同样需要回收，否则长驻内存且其明文 token 无期限留存。
+      if (p.createdAt <= cutoff) pending.delete(id)
     }
   }
 
@@ -310,7 +310,24 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
     pairingStatus(pairingId) {
       const p = pending.get(pairingId)
       if (!p) return { status: 'not_found' }
-      if (p.status === 'approved') return { status: 'approved', deviceToken: p.deviceToken ?? '' }
+      if (p.status === 'approved') {
+        // 交付点：把设备登记落盘与「新设备取走 token」原子化到同一时刻——
+        // 审批后、取 token 前服务重启时 pending 随内存清空（status=not_found），
+        // 不会留下拿不到 token 的僵尸设备条目；此后新设备重新发起配对即可。
+        const deviceToken = p.deviceToken ?? ''
+        if (deviceToken) {
+          const record: DeviceRecord = {
+            id: randomBytes(16).toString('hex'),
+            name: p.deviceName,
+            tokenHash: hashToken(deviceToken),
+            createdAt: now(),
+          }
+          devices.set(record.id, record)
+          persist()
+          pending.delete(pairingId)
+        }
+        return { status: 'approved', deviceToken }
+      }
       if (p.status === 'denied') return { status: 'denied' }
       if (p.createdAt <= now() - pairingTtlMs) {
         pending.delete(pairingId)
@@ -340,17 +357,13 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
         pending.delete(pairingId)
         return false
       }
+      // P：登记推迟到新设备真正取走 token 时（pairingStatus 消费）。此前审批即落盘，
+      // 若审批后、新设备轮询前服务重启，devices.json 里会出现一个永远拿不到 token
+      // 的僵尸条目（pending 不落盘、明文 token 只在内存）——「已授权设备」列表与
+      // 实际可登录设备自相矛盾，用户只能撤销后重新配对。
       const deviceToken = randomBytes(32).toString('hex')
-      const record: DeviceRecord = {
-        id: randomBytes(16).toString('hex'),
-        name: p.deviceName,
-        tokenHash: hashToken(deviceToken),
-        createdAt: now(),
-      }
-      devices.set(record.id, record)
       p.status = 'approved'
       p.deviceToken = deviceToken
-      persist()
       return true
     },
 

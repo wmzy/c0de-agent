@@ -1115,6 +1115,9 @@ describe('Settings — 完整配置表单覆盖', () => {
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
 
+    // security 仅全局作用域生效：切到全局作用域后字段才可编辑
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+
     // 初始 authEnabled=false，Token 输入框不显示
     expect(screen.queryByPlaceholderText('Bearer Token')).toBeNull()
 
@@ -1128,6 +1131,36 @@ describe('Settings — 完整配置表单覆盖', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Bearer Token')).toBeTruthy())
   })
 
+  it('项目作用域下安全字段禁用并提示切全局作用域', async () => {
+    const { configAPI } = await import('../services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 默认作用域为 project：安全字段禁用 + 提示
+    expect(screen.getByTestId('security-scope-hint')).toBeTruthy()
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) =>
+        cb.closest('label')?.textContent?.includes('Bearer Token 认证'),
+      ) as HTMLInputElement
+    expect(authCheck.disabled).toBe(true)
+    // 自动授权（permission）仍是项目级可编辑，不受影响
+    const permSelect = screen.getByLabelText('默认授权模式') as HTMLSelectElement
+    expect(permSelect.disabled).toBe(false)
+
+    // 切到全局作用域后安全字段解禁、提示消失
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    expect(screen.queryByTestId('security-scope-hint')).toBeNull()
+    const authCheckGlobal = screen
+      .getAllByRole('checkbox')
+      .find((cb) =>
+        cb.closest('label')?.textContent?.includes('Bearer Token 认证'),
+      ) as HTMLInputElement
+    expect(authCheckGlobal.disabled).toBe(false)
+  })
+
   it('关闭认证需确认：取消不生效，确认后写入 security 变更', async () => {
     const { configAPI } = await import('../services/config.js')
     const withAuth = { ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }
@@ -1136,6 +1169,9 @@ describe('Settings — 完整配置表单覆盖', () => {
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // security 仅全局作用域生效：切到全局作用域后字段才可编辑
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
 
     const authCheck = screen
       .getAllByRole('checkbox')
@@ -1178,6 +1214,9 @@ describe('Settings — 完整配置表单覆盖', () => {
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // security 仅全局作用域生效：切到全局作用域后字段才可编辑
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
 
     const authCheck = screen
       .getAllByRole('checkbox')

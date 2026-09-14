@@ -139,6 +139,43 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     expect(mgr.listPairings()).toHaveLength(0)
   })
 
+  it('审批后、新设备取 token 前：设备尚未登记（交付时才算授权）', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir })
+    await registered(mgr)
+    const req = mgr.requestPairing('新手机')
+
+    expect(mgr.approvePairing(req?.pairingId ?? '')).toBe(true)
+    // 登记推迟到 token 交付：此时设备列表仍只有旧设备，不存在「拿不到 token 的僵尸条目」
+    expect(mgr.listDevices()).toHaveLength(1)
+
+    const status = mgr.pairingStatus(req?.pairingId ?? '')
+    expect(status.status).toBe('approved')
+    if (status.status === 'approved') expect(mgr.verify(status.deviceToken)).toBe(true)
+    // 交付后设备落盘
+    expect(mgr.listDevices()).toHaveLength(2)
+  })
+
+  it('审批后服务重启（新设备未取 token）：配对失效且无僵尸设备条目，可重新配对', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir })
+    await registered(mgr)
+    const req = mgr.requestPairing('新手机')
+    expect(mgr.approvePairing(req?.pairingId ?? '')).toBe(true)
+
+    // 模拟服务重启：pending 不落盘，审批态随内存清空
+    const mgr2 = createAuthManager({ dataDir: dir })
+    expect(mgr2.pairingStatus(req?.pairingId ?? '')).toEqual({ status: 'not_found' })
+    // 设备注册表没有僵尸条目（此前 approve 即落盘，重启后列表里会多一个无 token 的设备）
+    expect(mgr2.listDevices()).toHaveLength(1)
+    // 新设备重新发起配对仍可走完整流程
+    const req2 = mgr2.requestPairing('新手机')
+    expect(mgr2.approvePairing(req2?.pairingId ?? '')).toBe(true)
+    const status2 = mgr2.pairingStatus(req2?.pairingId ?? '')
+    expect(status2.status).toBe('approved')
+    if (status2.status === 'approved') expect(mgr2.verify(status2.deviceToken)).toBe(true)
+    mgr.dispose()
+    mgr2.dispose()
+  })
+
   it('拒绝配对：新设备轮询得到 denied', async () => {
     const mgr = managerWithBootstrap({ dataDir: dir })
     await registered(mgr)

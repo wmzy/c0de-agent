@@ -8,8 +8,10 @@ import {
   GLOBAL_ONLY_USAGE_KEYS,
   KNOWN_CONFIG_KEYS,
   loadConfigScopes,
+  loadProjectRawScope,
   mergeConfig,
   projectGlobalOnlyUsageKeys,
+  projectSecurityKeys,
   saveConfigScoped,
 } from '../../core/config.js'
 import { containsSecrets } from '../../core/redact.js'
@@ -94,6 +96,29 @@ function createConfigRoute(ctx: ServerContext): Hono {
       (k) =>
         `项目配置含全局口径预算键 "${k}"，已忽略（该键仅在全局作用域生效，请改在全局配置设置）`,
     )
+    // P：security 收敛为 global-only（此前克隆仓库可静默改写服务端鉴权/CORS 参数）。
+    const strippedSecurityKeys = projectSecurityKeys(target.dir)
+    const securityWarnings =
+      strippedSecurityKeys.length > 0
+        ? [
+            `项目配置含 security 键（${strippedSecurityKeys.join('、')}，服务端全局参数），已忽略——` +
+              '请在设置页切换到「全局」作用域修改安全设置。',
+          ]
+        : []
+    // P：未归属调用（CLI 临时会话/未绑定项目的续接会话）只受全局口径预算兜底。
+    // 仅设项目预算、未设全局预算时这些调用零护栏——在设置页明示而非静默裸奔。
+    const budgetScopeWarnings: string[] = []
+    const hasProjectBudget =
+      (config.usage.monthlyBudgetUsd ?? 0) > 0 || (config.usage.monthlyTokenBudget ?? 0) > 0
+    const hasGlobalBudget =
+      (config.usage.globalMonthlyBudgetUsd ?? 0) > 0 ||
+      (config.usage.globalMonthlyTokenBudget ?? 0) > 0
+    if (hasProjectBudget && !hasGlobalBudget) {
+      budgetScopeWarnings.push(
+        '已设置项目预算但未设置全局预算：CLI（c0de chat）与未归属项目的调用不受任何预算护栏约束。' +
+          '建议在设置页切换到「全局」作用域补充全局月度预算。',
+      )
+    }
     // P0-1：语义翻转/易混键（tools.enabled/slashCommands.enabled 空数组）在 Web 可见。
     const migrationWarnings = [
       ...collectConfigMigrationWarnings('global', scopes.global),
@@ -128,11 +153,13 @@ function createConfigRoute(ctx: ServerContext): Hono {
       warnings: [
         ...providerApiKeyWarnings(config.providers),
         ...globalBudgetWarnings,
+        ...securityWarnings,
         ...unknownWarnings,
         ...migrationWarnings,
         ...providerWarnings,
+        ...budgetScopeWarnings,
       ],
-      gitWarning: projectConfigGitWarning(scopes.project, target.dir),
+      gitWarning: projectConfigGitWarning(loadProjectRawScope(target.dir), target.dir),
       projectDir: target.isProjectScoped ? target.dir : undefined,
     })
   })
@@ -156,6 +183,16 @@ function createConfigRoute(ctx: ServerContext): Hono {
         400,
         'UNKNOWN_CONFIG_KEYS',
         `未知配置键：${unknown.join(', ')}。有效顶层键：${[...KNOWN_CONFIG_KEYS].join(', ')}`,
+      )
+    }
+    // 作用域收敛：security 是服务端全局参数，仅 global 作用域生效（项目作用域读取时被剥离）。
+    // 项目作用域写入会被静默忽略，与其落盘后再丢弃，不如直接拒绝并给出正解路径。
+    if (scope === 'project' && patch.security !== undefined) {
+      return apiError(
+        c,
+        400,
+        'SECURITY_IN_PROJECT_SCOPE',
+        'security 是服务端全局参数，仅在全局作用域生效。请在设置页切换到「全局」作用域后再修改。',
       )
     }
     // 作用域收敛：usage 的全局口径预算键仅 global 作用域生效（项目作用域读取时被剥离）。
