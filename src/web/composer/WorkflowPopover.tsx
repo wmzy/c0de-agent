@@ -69,6 +69,16 @@ const nameRow = css`
   gap: 4px;
 `
 
+const overrideTag = css`
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 2px;
+  vertical-align: middle;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+`
+
 type Props = {
   workflows: WorkflowInfo[]
   activeIndex: number
@@ -96,6 +106,11 @@ function WorkflowPopover(props: Props) {
           <span className={nameRow}>
             <strong>{wf.name}</strong>
             <span className={`${sourceTag} ${wf.source}`}>{wf.source}</span>
+            {wf.overrides ? (
+              <span className={overrideTag} title="该项目工作流与内置/用户工作流同名，将覆盖原实现">
+                覆盖{wf.overrides === 'builtin' ? '内置' : '用户'}
+              </span>
+            ) : null}
           </span>
           {wf.description && <span className={wfDesc}>{wf.description}</span>}
           {wf.argsHint && <span className={wfArgs}>参数: {wf.argsHint}</span>}

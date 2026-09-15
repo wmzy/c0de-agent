@@ -26,8 +26,12 @@ async function runTrustCommand(ctx: TrustCommandContext): Promise<void> {
   const yes = ctx.args.options.yes === true
 
   // 信任前明示即将接受的风险（与 Web 信任弹窗同口径：项目风险 + 全局权限风险上下文）。
+  // dir 传入使 summarizeProjectRisk 检测 .c0de/workflows（纯文件系统风险面）。
   const scopes = loadConfigScopes(dir)
-  const risks = enrichProjectRiskWithGlobal(summarizeProjectRisk(scopes.project), scopes.global)
+  const risks = enrichProjectRiskWithGlobal(
+    summarizeProjectRisk(scopes.project, dir),
+    scopes.global,
+  )
   if (risks.length > 0 && !yes) {
     const lines = risks.map((r) => `  - ${r.kind}: ${r.detail}`).join('\n')
     throw new Error(
@@ -41,7 +45,7 @@ async function runTrustCommand(ctx: TrustCommandContext): Promise<void> {
   const accepted = risks.length > 0 ? `（已确认 ${risks.length} 项风险）` : '（无风险项）'
   write(
     `已信任项目「${project.name ?? project.worktree}」（${project.worktree}）${accepted}。\n` +
-      `该项目作用域配置（.c0de/config.json）生效，项目插件在下次启动时加载。\n`,
+      `该项目作用域配置（.c0de/config.json）生效，项目插件与工作流在下次启动/刷新后加载。\n`,
   )
 }
 

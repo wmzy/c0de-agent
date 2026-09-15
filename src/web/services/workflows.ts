@@ -7,6 +7,8 @@ type WorkflowInfo = {
   argsHint?: string
   phases?: string[]
   source: string
+  /** 项目级工作流同名覆盖了内置（builtin）或用户（user）工作流时非空。 */
+  overrides?: 'builtin' | 'user' | null
 }
 
 const workflowsAPI = {

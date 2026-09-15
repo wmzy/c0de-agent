@@ -81,6 +81,21 @@ describe('Chat pause/resume/steer controls', () => {
     expect(screen.queryByTestId('resume')).toBeNull()
   })
 
+  it('运行出错且非流式时展示重试按钮并回调 onRetry', () => {
+    const onRetry = vi.fn()
+    renderChat({ isStreaming: false, error: 'LLM 请求失败', onRetry })
+    const btn = screen.getByTestId('retry')
+    expect(btn.textContent).toBe('重试')
+    fireEvent.click(btn)
+    expect(onRetry).toHaveBeenCalledOnce()
+  })
+
+  it('流式中不展示重试按钮（避免与中止竞争）', () => {
+    const onRetry = vi.fn()
+    renderChat({ isStreaming: true, error: 'x', onRetry })
+    expect(screen.queryByTestId('retry')).toBeNull()
+  })
+
   it('流式态「追加指令」按钮注入 steering 文本，不走 onSend', () => {
     const h = renderChat()
     const editor = screen.getByTestId('composer-editor')
@@ -383,6 +398,29 @@ describe('workflow run 补全 popover', () => {
     editor.textContent = '/workflow show code-review '
     fireEvent.input(editor)
     expect(screen.queryByTestId('workflow-menu')).toBeNull()
+  })
+
+  it('项目工作流同名覆盖内置时展示「覆盖内置」徽标', async () => {
+    vi.mocked(workflowsAPI.list).mockResolvedValue({
+      workflows: [
+        ...TEST_WORKFLOWS,
+        {
+          name: 'security-audit',
+          description: 'custom override',
+          source: 'project' as const,
+          overrides: 'builtin' as const,
+        },
+      ],
+    })
+    renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/workflow run '
+    fireEvent.input(editor)
+
+    const menu = await screen.findByTestId('workflow-menu')
+    const texts = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent ?? '')
+    expect(texts.some((t) => t.includes('覆盖内置'))).toBe(true)
   })
 })
 

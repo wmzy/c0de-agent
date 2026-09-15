@@ -49,8 +49,8 @@ export default async function workflow(ctx) {
     await mkdir(join(tmpDir, '.c0de/workflows'), { recursive: true })
     await writeFile(join(tmpDir, '.c0de/workflows', 'echo-test.js'), wfSource, 'utf-8')
 
-    // 创建注册表
-    const registry = await createAndPopulateRegistry(tmpDir)
+    // 创建注册表（projectTrusted 显式放行项目级发现）
+    const registry = await createAndPopulateRegistry(tmpDir, { projectTrusted: true })
     expect(registry.has('echo-test')).toBe(true)
     expect(registry.has('security-audit')).toBe(true) // 内置也在
 
@@ -114,7 +114,7 @@ export default async function workflow(ctx) {
     await mkdir(join(tmpDir, '.c0de/workflows'), { recursive: true })
     await writeFile(join(tmpDir, '.c0de/workflows', 'security-audit.js'), overrideSource, 'utf-8')
 
-    const registry = await createAndPopulateRegistry(tmpDir)
+    const registry = await createAndPopulateRegistry(tmpDir, { projectTrusted: true })
     const entry = registry.get('security-audit')
     expect(entry?.source).toBe('project')
     expect(entry?.meta.description).toBe('custom override')

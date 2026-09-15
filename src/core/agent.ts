@@ -66,14 +66,18 @@ async function* runAgent(
   deps: AgentDependencies,
 ): AsyncGenerator<AgentEvent> {
   // 幂等重发保护：若 DB 末尾已是相同 user message（服务重启后续传场景），
-  // 跳过 append 避免重复。比较 text parts 内容即可区分不同消息。
+  // 跳过 append 避免重复。比较 text/image parts 全量内容——纯文本比较会在
+  // 「含图片消息重发」时误判为不同消息而追加重复条目（P1-2 修复）。
   const last = state.messages[state.messages.length - 1]
   const isDupUser =
     last?.role === 'user' &&
     last.content.length === userInput.length &&
     last.content.every((p, i) => {
       const q = userInput[i]
-      return p._tag === 'text' && q?._tag === 'text' ? p.text === q.text : false
+      if (p._tag === 'text' && q?._tag === 'text') return p.text === q.text
+      if (p._tag === 'image' && q?._tag === 'image')
+        return p.mediaType === q.mediaType && p.data === q.data
+      return false
     })
 
   if (!isDupUser) {

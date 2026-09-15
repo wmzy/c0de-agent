@@ -31,7 +31,8 @@
 
 | 领域 | 机制 |
 |------|------|
-| 信任边界 | 风险配置指纹 = 风险键 + MCP 完整参数 + 插件文件内容 hash；漂移复检含插件代码/MCP args；聊天门禁与 serve 启动插件加载同口径（漂移即不加载）；CLI `c0de trust` 展示风险清单并要求 `--yes` |
+| 信任边界 | 风险配置指纹 = 风险键 + MCP 完整参数 + 插件/**工作流**文件内容 hash（`.c0de/workflows/*.js` 与插件同为仓库自带任意代码执行面，纯文件系统检测）；漂移复检含插件/工作流代码、MCP args；聊天门禁与 serve 启动插件/工作流加载同口径（漂移即不加载）；CLI `c0de trust` 展示风险清单并要求 `--yes`；用户经 REST/斜杠新建工作流后自动刷新指纹（防「信任→新建→自锁复检」） |
+| 工作流执行 | REST `POST /api/workflows/:name/run` 与 chat 斜杠路径对齐：信任门禁（409 TRUST_REQUIRED）、交互式权限（SSE + 全局 store）、预算护栏注入、会话绑定 projectId/worktreePath；同名覆盖内置工作流在 UI 明示「覆盖内置」徽标 |
 | 配置语义 | `tools.enabled` 与 `slashCommands.enabled` 统一 fail-closed（`['*']`=全部、`[]`=全禁），迁移告警引导 |
 | 会话回收站 | 60 天（首次看到起算）+ 365 天绝对上限 + 7 天宽限；批次对称恢复；CLI 闭环：`deleted` 列出即标记 seen、`purge <id>/--all --yes` 彻底删除 |
 | 用量预算 | 金额 + token 双口径，warn/pause/abort；账本查询失败按动作 fail-open/fail-closed；导入调用剥离 callId 不进账本 |

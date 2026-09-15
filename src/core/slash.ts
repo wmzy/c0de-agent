@@ -390,9 +390,30 @@ const workflowCommand: SlashCommand = {
         return { _tag: 'error', message: result.error }
       }
 
-      // 热重载注册表
-      if (ctx.workflowRegistry) {
-        await reloadRegistry(ctx.workflowRegistry, ctx.cwd)
+      // 先刷新信任指纹（用户刚写入的 workflow 是自己写的代码）再热重载：
+      // reload 的项目级发现按 projectTrustCurrent 判定，新文件未入指纹时会
+      // 误判漂移而跳过，且「信任 → 新建 → 漂移复检」会把自己锁出门禁。
+      let projectTrusted = false
+      try {
+        const { getByDirectory, trustProject } = await import('../project/index.js')
+        const { projectTrustCurrent } = await import('../project/trust.js')
+        const { loadConfigScopes } = await import('./config.js')
+        const p = await getByDirectory(ctx.deps.db, ctx.cwd)
+        if (p?.trustedAt != null) await trustProject(ctx.deps.db, p.id)
+        projectTrusted =
+          p?.trustedAt != null &&
+          projectTrustCurrent(
+            loadConfigScopes(ctx.cwd).project,
+            p.trustedAt,
+            p.riskFingerprint,
+            ctx.cwd,
+          )
+        if (ctx.workflowRegistry) {
+          await reloadRegistry(ctx.workflowRegistry, ctx.cwd, { projectTrusted })
+        }
+      } catch {
+        // 信任查询/指纹刷新失败不阻塞创建结果（fail-closed：项目级不 import）
+        if (ctx.workflowRegistry) await reloadRegistry(ctx.workflowRegistry, ctx.cwd)
       }
 
       return {
@@ -454,7 +475,25 @@ const workflowCommand: SlashCommand = {
         plugins: ctx.config.plugins.enabled,
         agentName: 'default',
       }
-      const session = await createSession(ctx.deps.db, `workflow:${name}`, undefined, 'workflow')
+      // 工作流会话绑定 projectId + worktreePath（P1-1）：此前丢失项目归属，
+      // 子 agent 会话继承 null projectId，且后续继续该会话时代理会回退到
+      // serve 启动目录执行。
+      let workflowProjectId: string | undefined
+      try {
+        const { getByDirectory } = await import('../project/index.js')
+        workflowProjectId = (await getByDirectory(ctx.deps.db, ctx.cwd))?.id ?? undefined
+      } catch {
+        workflowProjectId = undefined
+      }
+      const session = await createSession(
+        ctx.deps.db,
+        `workflow:${name}`,
+        workflowProjectId,
+        'workflow',
+        undefined,
+        undefined,
+        ctx.cwd,
+      )
       const parent = await createAgent(session, agentConfig, ctx.deps)
 
       return executeWorkflow({

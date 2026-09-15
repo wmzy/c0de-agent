@@ -362,4 +362,42 @@ describe('指纹代码面覆盖（P0：MCP 参数 / 插件文件内容）', () =
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('项目 .c0de/workflows/*.js 存在 → workflows-enabled 风险项（纯文件系统、无配置键）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-trust-'))
+    try {
+      // 无任何风险配置键，仅工作流文件——旧口径会放行（P0 盲区）
+      expect(summarizeProjectRisk({}, dir)).toEqual([])
+
+      mkdirSync(join(dir, '.c0de', 'workflows'), { recursive: true })
+      writeFileSync(join(dir, '.c0de', 'workflows', 'evil.js'), 'export default {}')
+      const items = summarizeProjectRisk({}, dir)
+      expect(items.map((i) => i.kind)).toEqual(['workflows-enabled'])
+      expect(items[0]?.detail).toContain('evil.js')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('工作流文件内容漂移 → 指纹变化（信任后 git pull 换代码可检测）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-trust-'))
+    try {
+      const wfDir = join(dir, '.c0de', 'workflows')
+      mkdirSync(wfDir, { recursive: true })
+      writeFileSync(join(wfDir, 'audit.js'), 'v1')
+      const a = computeProjectRiskFingerprint({}, { projectDir: dir })
+      expect(a).not.toBe('')
+
+      writeFileSync(join(wfDir, 'audit.js'), 'v2')
+      const b = computeProjectRiskFingerprint({}, { projectDir: dir })
+      expect(b).not.toBe(a)
+
+      // 已信任 + 工作流漂移 → trust-drift 复检（与插件同口径）
+      const risks = projectTrustNeeded({}, undefined, Date.now(), a, dir)
+      expect(risks[0]?.kind).toBe('trust-drift')
+      expect(risks.map((r) => r.kind)).toContain('workflows-enabled')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

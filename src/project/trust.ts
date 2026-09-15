@@ -1,12 +1,14 @@
 // src/project/trust.ts
 // P0-2 项目信任边界：评估「项目作用域原始配置」中的风险项。
 //
-// 背景：`git clone` 一个携带 `.c0de/config.json`（或 `.c0de/plugins`）的仓库后
-// `c0de serve`，此前配置静默合并生效（可把权限降级为 auto/YOLO），插件在启动时
-// 直接加载执行——信任在克隆完成时被默认授予。现在：
+// 背景：`git clone` 一个携带 `.c0de/config.json`（或 `.c0de/plugins` /
+// `.c0de/workflows`）的仓库后 `c0de serve`，此前配置静默合并生效（可把权限
+// 降级为 auto/YOLO），插件在启动时直接加载执行、工作流在列出/运行时 dynamic
+// import 执行——信任在克隆完成时被默认授予。现在：
 //  - 聊天入口：未信任项目 + 风险配置 → 409 TRUST_REQUIRED（前端弹窗确认后
 //    POST /api/projects/:id/trust 落盘 trustedAt，一次性）；
-//  - 启动入口：未信任项目的 .c0de/plugins 不加载（信任后重启生效）。
+//  - 启动入口：未信任项目的 .c0de/plugins 与 .c0de/workflows 不加载
+//    （信任后重启生效；工作流侧发现入口同样按信任门禁）。
 //
 // 评估「项目作用域原始配置」（loadConfigScopes(cwd).project），并额外评估
 // 「全局权限风险」（permission.defaultMode=auto / timeoutAction=deny）。
@@ -29,6 +31,7 @@ export type TrustRiskItem = {
     | 'plugins-enabled'
     | 'mcp-enabled'
     | 'provider-rerouting'
+    | 'workflows-enabled'
     | 'trust-drift'
   detail: string
 }
@@ -82,9 +85,29 @@ export function enrichProjectRiskWithGlobal(
  * 宽松形状：项目 JSON 可能字段漂移，非法值一律忽略（fail-closed 由
  * 「未信任 + 无风险项 = 不拦截」与「有风险项必拦截」共同保证——解析不出
  * 风险的配置也不含可信风险）。
+ * projectDir 提供时额外检测 `.c0de/workflows/*.js`（项目工作流是 dynamic
+ * import 的任意代码执行面，与 .c0de/plugins 同级，纯文件系统、无配置键）。
  */
-export function summarizeProjectRisk(raw: Partial<Config> | undefined): TrustRiskItem[] {
+export function summarizeProjectRisk(
+  raw: Partial<Config> | undefined,
+  projectDir?: string,
+): TrustRiskItem[] {
   const items: TrustRiskItem[] = []
+
+  // P0（代码面）：项目工作流 `.c0de/workflows/*.js` 会在「列出/运行」时被
+  // dynamic import（模块顶层代码即刻执行），与 .c0de/plugins 同级的任意代码
+  // 执行面——克隆仓库自带即拦截，与插件一致。纯文件系统检测、不依赖配置键，
+  // 必须在下方 `!raw` 早退之前执行（仓库可能完全不携带 .c0de/config.json）。
+  if (projectDir) {
+    const names = workflowFileNames(projectDir)
+    if (names.length > 0) {
+      items.push({
+        kind: 'workflows-enabled',
+        detail: `项目工作流（.c0de/workflows，列出/运行时会执行其中代码）：${names.join('、')}`,
+      })
+    }
+  }
+
   if (!raw) return items
 
   if (raw.permission?.defaultMode === 'auto') {
@@ -194,15 +217,16 @@ export function computeProjectRiskFingerprint(
   return hashLines(fingerprintLines(raw, opts?.projectDir))
 }
 
-/** 指纹的 canonical 行集合（排序前）：风险项 + MCP 参数 + 插件文件内容。 */
+/** 指纹的 canonical 行集合（排序前）：风险项 + MCP 参数 + 插件/工作流文件内容。 */
 function fingerprintLines(
   raw: Partial<Config> | undefined,
   projectDir: string | undefined,
 ): string[] {
   return [
-    ...summarizeProjectRisk(raw).map((r) => `${r.kind}:${r.detail}`),
+    ...summarizeProjectRisk(raw, projectDir).map((r) => `${r.kind}:${r.detail}`),
     ...mcpCanonicalLines(raw),
     ...pluginDirHashes(projectDir),
+    ...workflowDirHashes(projectDir),
   ].sort()
 }
 
@@ -271,16 +295,52 @@ function pluginDirHashes(projectDir: string | undefined): string[] {
   return lines
 }
 
+/** 项目工作流目录 `.c0de/workflows` 下的 `*.js` 文件名（排序；目录缺失 → 空）。
+ *  工作流文件是 dynamic import 的任意代码执行面（模块顶层代码在「列出」时即执行），
+ *  因此只要存在即构成风险项——无需配置键，纯文件系统检测。 */
+function workflowFileNames(projectDir: string): string[] {
+  const dir = join(projectDir, '.c0de', 'workflows')
+  try {
+    if (!existsSync(dir)) return []
+    return readdirSync(dir)
+      .filter((f) => f.endsWith('.js'))
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/** 项目工作流目录内全部文件的内容 hash 行（与 pluginDirHashes 同口径：
+ *  相对路径 + sha256；目录不存在 → 空）。工作流文件内容漂移（同名改代码）
+ *  与插件一样触发 trust-drift 复检，杜绝「信任后 git pull 换代码」绕过。 */
+function workflowDirHashes(projectDir: string | undefined): string[] {
+  if (!projectDir) return []
+  const dir = join(projectDir, '.c0de', 'workflows')
+  const lines: string[] = []
+  for (const entry of workflowFileNames(projectDir)) {
+    try {
+      lines.push(
+        `workflow-file:${entry}:${createHash('sha256')
+          .update(readFileSync(join(dir, entry)))
+          .digest('hex')}`,
+      )
+    } catch {
+      // 单个文件读取失败跳过（不因无法 hash 而放行或误报）
+    }
+  }
+  return lines
+}
+
 /**
  * 判定项目是否需要（重新）信任：返回「需要用户确认的风险项」数组，空数组 = 放行。
  * 门禁条件：
  *  - 未信任：项目风险 或 全局权限风险（auto / timeoutAction=deny）任一存在即拦。
  *    全局权限风险兜底「仓库未携带 .c0de 但本机已全局 auto」的裸奔场景。
  *  - 已信任：仅当项目作用域指纹漂移（git pull 新增风险键 / MCP 参数变更 /
- *    插件代码变更）时复检——返回项目风险项 + 前置 trust-drift 说明项，
+ *    插件或工作流代码变更）时复检——返回项目风险项 + 前置 trust-drift 说明项，
  *    用户能看到「为什么又要确认」；全局配置是用户本机显式选择，不因漂移重新门禁。
- * projectDir 提供时插件文件内容纳入指纹（serve 启动的插件加载门禁与聊天入口
- * 使用同一口径）。
+ * projectDir 提供时插件/工作流文件内容纳入指纹（serve 启动的插件加载门禁与
+ * 聊天入口使用同一口径）。
  * 供 Web 聊天入口（返回 409）与 CLI agent 路径（抛错引导 c0de trust）共用，
  * 保证两处「什么时候拦」判定完全一致，不再各自为政。
  */
@@ -291,14 +351,14 @@ export function projectTrustNeeded(
   riskFingerprint: string | null | undefined,
   projectDir?: string,
 ): TrustRiskItem[] {
-  const projectRisks = summarizeProjectRisk(raw)
+  const projectRisks = summarizeProjectRisk(raw, projectDir)
   const untrusted = trustedAt == null
 
   if (untrusted) {
     return mergeRiskItems(projectRisks, globalPermissionRiskItems(globalRaw))
   }
 
-  // 已信任 + 无风险键且无插件文件：无漂移面，直接放行（保持旧行为——
+  // 已信任 + 无风险键且无插件/工作流文件：无漂移面，直接放行（保持旧行为——
   // 信任后删光风险配置不触发复检）。
   const lines = fingerprintLines(raw, projectDir)
   if (lines.length === 0) return []
@@ -308,7 +368,7 @@ export function projectTrustNeeded(
       {
         kind: 'trust-drift',
         detail:
-          '自上次信任以来，项目风险配置、MCP 参数或插件代码已变更（如仓库 git pull 更新）——需重新确认信任后才会放行',
+          '自上次信任以来，项目风险配置、MCP 参数、插件代码或工作流文件已变更（如仓库 git pull 更新）——需重新确认信任后才会放行',
       },
       ...projectRisks,
     ]

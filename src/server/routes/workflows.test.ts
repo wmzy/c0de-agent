@@ -8,7 +8,7 @@ import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
-import { fromDirectory } from '../../project/project.js'
+import { fromDirectory, trustProject } from '../../project/project.js'
 import { createServerContext } from '../context.js'
 import type { ServerContext } from '../types.js'
 import { createWorkflowsRoute } from './workflows.js'
@@ -80,16 +80,17 @@ describe('workflows route — GET /', () => {
     }
   })
 
-  it('?projectId 合并项目级 .c0de/workflows/*.js', async () => {
+  it('?projectId 合并项目级 .c0de/workflows/*.js（信任后）', async () => {
     const { app, ctx } = await setup()
 
-    // 注册项目并写入工作流文件
+    // 注册项目、写入工作流文件（先落盘再信任：指纹覆盖工作流文件内容）
     const project = await fromDirectory(ctx.db, projectCwd)
     await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
     await writeFile(
       join(projectCwd, '.c0de', 'workflows', 'proj-test-wf.js'),
       `export const meta = { name: 'proj-test-wf', description: 'project-level test', phases: ['go'] }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
     )
+    await trustProject(ctx.db, project.id)
 
     const res = await app.request(`/?projectId=${project.id}`, { method: 'GET' })
     expect(res.status).toBe(200)
@@ -102,6 +103,27 @@ describe('workflows route — GET /', () => {
     expect(names).toContain('proj-test-wf')
     const projWf = body.workflows.find((w) => w.name === 'proj-test-wf')
     expect(projWf?.source).toBe('project')
+  })
+
+  it('未信任项目跳过项目级发现（不执行仓库代码）并返回 trustRequired', async () => {
+    const { app, ctx } = await setup()
+
+    // 注册项目并写入工作流文件，但不信任——列出绝不 dynamic import 仓库代码
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'evil-wf.js'),
+      `globalThis.__wfExecuted = true\nexport const meta = { name: 'evil-wf', description: 'evil' }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+
+    const res = await app.request(`/?projectId=${project.id}`, { method: 'GET' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      workflows: Array<{ name: string }>
+      trustRequired?: boolean
+    }
+    expect(body.workflows.map((w) => w.name)).not.toContain('evil-wf')
+    expect(body.trustRequired).toBe(true)
   })
 
   it('无 projectId 时项目级工作流不出现', async () => {
@@ -257,6 +279,81 @@ describe('workflows route — DELETE /:name', () => {
   })
 })
 
+describe('workflows route — POST /:name/run', () => {
+  const TRIVIAL_WF = `
+export const meta = { name: 'trivial-wf', description: 'trivial', phases: ['run'] }
+export default async function wf(ctx) {
+  return { output: 'ok' }
+}
+`
+
+  it('未信任项目运行项目级工作流 → 409 TRUST_REQUIRED（不执行仓库代码）', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'trivial-wf.js'),
+      `globalThis.__wfRun = true\n${TRIVIAL_WF}`,
+    )
+
+    const res = await app.request(`/trivial-wf/run?projectId=${project.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args: '' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('TRUST_REQUIRED')
+    // 仓库代码未被执行（发现本身即门禁拦截）
+    expect('__wfRun' in globalThis).toBe(false)
+  })
+
+  it('信任项目运行项目级工作流 → 200，会话绑定 projectId + worktreePath', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(join(projectCwd, '.c0de', 'workflows', 'trivial-wf.js'), TRIVIAL_WF, 'utf-8')
+    await trustProject(ctx.db, project.id)
+
+    const res = await app.request(`/trivial-wf/run?projectId=${project.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args: '' }),
+    })
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(text).toContain('event: result')
+    expect(text).toContain('"text":"ok"')
+
+    // 会话绑定：workflow 会话挂到该项目 + 记录 worktreePath（P1-1）
+    const { listAllSessions, getSession } = await import('../../session/session.js')
+    const sessions = await listAllSessions(ctx.db)
+    const wfSession = sessions.find((s) => s.agentType === 'workflow')
+    expect(wfSession).toBeTruthy()
+    const loaded = await getSession(ctx.db, wfSession?.id ?? '')
+    expect(loaded?.projectId).toBe(project.id)
+    expect(loaded?.worktreePath).toBe(projectCwd)
+  })
+
+  it('未信任项目（无风险键但有工作流）不会执行模块顶层代码（run 入口）', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'top-level.js'),
+      `globalThis.__topLevelRan = true\nexport const meta = { name: 'top-level', description: 'x' }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+
+    const res = await app.request(`/top-level/run?projectId=${project.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args: '' }),
+    })
+    expect(res.status).toBe(409)
+    expect('__topLevelRan' in globalThis).toBe(false)
+  })
+})
+
 describe('workflows route — registry not initialized', () => {
   it('GET / returns empty list when registry is undefined', async () => {
     const ctx = makeCtxWithoutRegistry()
@@ -296,6 +393,9 @@ export default async function workflow(ctx) {
 
   it('creates a valid workflow and reloads registry', async () => {
     const { app, ctx } = await setup()
+    // 显式信任 serve 目录项目：热重载才会 dynamic import 项目级工作流（fail-closed）
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await trustProject(ctx.db, project.id)
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -920,7 +920,14 @@ async function markUnfinishedTurn(handle: DB, sessionId: string): Promise<void> 
   let lastUserIdx = -1
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]
-    if (e && !('_tag' in e) && e.role === 'user' && e.content.some((p) => p._tag === 'text')) {
+    // P1-2：边界取「含任意内容（text 或 image）的 user 消息」——此前仅认 text，
+    // 纯图片消息不在边界判定内，中断轮次起点会错误回退到更早的文本消息。
+    if (
+      e &&
+      !('_tag' in e) &&
+      e.role === 'user' &&
+      e.content.some((p) => p._tag === 'text' || p._tag === 'image')
+    ) {
       lastUserIdx = i
       break
     }

@@ -275,7 +275,10 @@ async function buildServerContext(
 
   // 工作流注册表：三级发现（builtin → global → project），eager 初始化。
   // 此前是惰性 getter 只注册 builtin，导致项目级 .c0de/workflows/*.js 永远不可见。
-  const workflowRegistry = await createAndPopulateRegistry(cwd)
+  // P0 信任边界：项目级工作流与 .c0de/plugins 同为仓库自带任意代码执行面，
+  // 仅在 serve 目录项目当前可信任（projectTrusted）时 dynamic import——与上方
+  // 插件加载同口径，杜绝「克隆即执行」。
+  const workflowRegistry = await createAndPopulateRegistry(cwd, { projectTrusted })
 
   const dataDir = resolveDbDir()
   // 先解析/生成 bootstrap token（落盘），再创建 authManager 读取——

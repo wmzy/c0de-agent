@@ -96,7 +96,7 @@ export default async function workflow(ctx) {
 }
 `
 
-  it('repopulates registry from disk (project-level workflow discovered)', async () => {
+  it('repopulates registry from disk (project-level workflow discovered when trusted)', async () => {
     // 初始注册表：只有内置
     const registry = await createAndPopulateRegistry(projectDir)
     expect(registry.has('security-audit')).toBe(true)
@@ -106,18 +106,20 @@ export default async function workflow(ctx) {
     await mkdir(join(projectDir, '.c0de/workflows'), { recursive: true })
     await writeFile(join(projectDir, '.c0de/workflows', 'reload-test.js'), WF_SOURCE, 'utf-8')
 
-    // 热重载
+    // 热重载：未信任（缺省）跳过项目级发现（fail-closed）
     await reloadRegistry(registry, projectDir)
+    expect(registry.has('reload-test')).toBe(false)
 
-    // 内置仍在，自定义工作流被发现
+    // 显式信任后热重载：项目级工作流被发现
+    await reloadRegistry(registry, projectDir, { projectTrusted: true })
     expect(registry.has('security-audit')).toBe(true)
     expect(registry.has('reload-test')).toBe(true)
   })
 
   it('preserves same registry reference after reload', async () => {
-    const registry = await createAndPopulateRegistry(projectDir)
+    const registry = await createAndPopulateRegistry(projectDir, { projectTrusted: true })
     const refBefore = registry
-    await reloadRegistry(registry, projectDir)
+    await reloadRegistry(registry, projectDir, { projectTrusted: true })
     expect(refBefore).toBe(registry)
   })
 })

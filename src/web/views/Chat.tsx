@@ -34,6 +34,8 @@ type ChatProps = {
   onAbort: () => void
   /** 确认/拒绝权限请求；alwaysAllow=true 时同时把该工具加入会话白名单。 */
   onConfirm: (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => void
+  /** 运行出错后重试最后一条 user 消息（P2-1：与中断恢复对等的入口）。 */
+  onRetry?: () => void
   /** 暂停 agent loop（spec §19）；isStreaming 时可用。 */
   onPause?: () => void
   /** 恢复已暂停的 agent loop。 */
@@ -344,6 +346,7 @@ export function Chat({
   onSend,
   onAbort,
   onConfirm,
+  onRetry,
   onPause,
   onResume,
   onSteer,
@@ -437,17 +440,30 @@ export function Chat({
         <div className={topSpacer} />
         {/* topStatus 单行截断仅是排布：错误全文经 title 悬停可达（usage 态无需） */}
         {error || usage ? (
-          <span
-            className={topStatus}
-            style={error ? { color: 'var(--error)' } : undefined}
-            title={error ?? undefined}
-          >
-            {error
-              ? error
-              : usage
-                ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
-                : ''}
-          </span>
+          <>
+            <span
+              className={topStatus}
+              style={error ? { color: 'var(--error)' } : undefined}
+              title={error ?? undefined}
+            >
+              {error
+                ? error
+                : usage
+                  ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
+                  : ''}
+            </span>
+            {error && !isStreaming && onRetry ? (
+              <button
+                type="button"
+                className={ctlBtn}
+                onClick={onRetry}
+                data-testid="retry"
+                title="重发最后一条消息；失败前已执行的工具可能重复执行"
+              >
+                重试
+              </button>
+            ) : null}
+          </>
         ) : null}
         {isStreaming && !paused ? (
           <button onClick={onPause} type="button" className={ctlBtn} data-testid="pause">
