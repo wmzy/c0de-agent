@@ -80,23 +80,63 @@ function currentFetch(): typeof fetch {
   return fetchOverride ?? createFetch()
 }
 
-/** 工具入口：解析 provider → search → 返回 WebSearchResponse。 */
+/** 运行时降级判定：鉴权失效（key 过期/被撤）、限流、服务端错误可换后端重试；
+ *  4xx 参数错误（400 等）换后端无意义；网络层错误（无 status）也降级（该后端连通性
+ *  问题，duckduckgo 兜底）。 */
+function isFallbackable(err: unknown): boolean {
+  const status = (err as { status?: unknown })?.status
+  return (
+    typeof status !== 'number' ||
+    status >= 500 ||
+    status === 401 ||
+    status === 403 ||
+    status === 429
+  )
+}
+
+/** 工具入口：解析 provider → search → 返回 WebSearchResponse。
+ *  'auto' 模式带运行时降级链：候选后端按 key 可用性排列（tavily > brave >
+ *  duckduckgo），当前后端因鉴权/限流/服务端/网络错误失败时依次降级——
+ *  此前 auto 只按 key **存在性**选一次，key 失效/过期即整体失败。
+ *  显式指定后端时尊重用户选择，单后端不降级。abort 立即上抛，不沿链继续。 */
 export async function runWebSearch(
   input: { query: string; numResults?: number; recency?: Recency },
   config: WebSearchConfig,
   abort: AbortSignal,
 ): Promise<WebSearchResponse> {
   const keys = resolveKeys(config)
+  const apiKeyFor = (provider: WebSearchProvider) =>
+    provider.id === 'tavily' ? keys.tavily : provider.id === 'brave' ? keys.brave : undefined
+  const search = (provider: WebSearchProvider) =>
+    provider.search({
+      query: input.query,
+      limit: clampNumResults(input.numResults),
+      recency: input.recency,
+      signal: abort,
+      apiKey: apiKeyFor(provider),
+      fetchImpl: currentFetch(),
+    })
+
+  if (config.provider === 'auto') {
+    const chain = [tavilyProvider, braveProvider, duckduckgoProvider].filter((p) =>
+      p.isAvailable(apiKeyFor(p)),
+    )
+    let lastError: unknown = null
+    for (const provider of chain) {
+      try {
+        return await search(provider)
+      } catch (err) {
+        if (abort.aborted) throw err
+        if (!isFallbackable(err)) throw err
+        lastError = err
+      }
+    }
+    if (lastError instanceof Error) throw lastError
+    throw new Error(`websearch 无可用后端：${String(lastError)}`)
+  }
+
   const provider = resolveProvider(config.provider, keys)
-  return provider.search({
-    query: input.query,
-    limit: clampNumResults(input.numResults),
-    recency: input.recency,
-    signal: abort,
-    apiKey:
-      provider.id === 'tavily' ? keys.tavily : provider.id === 'brave' ? keys.brave : undefined,
-    fetchImpl: currentFetch(),
-  })
+  return search(provider)
 }
 
 export { clampNumResults, DEFAULT_NUM_RESULTS }

@@ -44,11 +44,11 @@ const authAPI = {
     ),
   /** 已授权设备：列出待审批配对。 */
   listPairings: () => apiRequest<{ pairings: PendingPairing[] }>('/api/auth/pairing'),
-  /** 已授权设备：审批通过。 */
-  approvePairing: (pairingId: string) =>
+  /** 已授权设备：审批通过（携带审批方输入的 6 位配对码，服务端核对防误批）。 */
+  approvePairing: (pairingId: string, code: string) =>
     apiRequest<{ ok: boolean }>('/api/auth/pairing/approve', {
       method: 'POST',
-      body: JSON.stringify({ pairingId }),
+      body: JSON.stringify({ pairingId, code }),
     }),
   /** 已授权设备：拒绝配对。 */
   denyPairing: (pairingId: string) =>

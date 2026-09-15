@@ -10,12 +10,15 @@
 import type { DB } from '../../db/client.js'
 import { fromDirectory } from '../../project/project.js'
 import {
+  emptyTrash,
   getSession,
   listAllSessions,
   listDeletedSessions,
+  permanentlyDeleteSession,
   rebindSession,
   restoreSession,
   softDeleteSession,
+  touchTrashSeen,
 } from '../../session/session.js'
 import type { CommandArgs } from '../parser.js'
 
@@ -95,8 +98,12 @@ async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
     return
   }
 
-  // 回收站列表：软删除会话 + 剩余保留信息（辅助 restore）
+  // 回收站列表：软删除会话 + 剩余保留信息（辅助 restore）。
+  // P2：列出即「看到」——CLI-only 用户此前无 Web 回收站可打开，trashSeenAt 永不写入，
+  // 60 天保留期永不启动（条目只能等 365 天绝对上限）。此处与 Web 打开分组同口径
+  // 标记（仅首次、全量、含孤儿）。
   if (sub === 'deleted') {
+    await touchTrashSeen(ctx.db)
     const sessions = await listDeletedSessions(ctx.db)
     if (sessions.length === 0) {
       write('回收站为空。\n')
@@ -109,7 +116,41 @@ async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
     return
   }
 
-  throw new Error(`sessions: unknown subcommand "${sub}" (expected list|delete|restore|deleted)`)
+  // 彻底删除（不可恢复）：purge <id> 单条；purge --all 清空回收站。
+  // P2：CLI 回收站闭环——此前 CLI 无永久删除途径，条目只能被动等 purge 任务。
+  // 永久操作需 --yes（与 Web 键入确认的「彻底删除/清空回收站」同强度）。
+  if (sub === 'purge') {
+    const all = ctx.args.options.all === true
+    const yes = ctx.args.options.yes === true
+    const id = ctx.args.positionals[1]
+    if (!all && !id) {
+      throw new Error(
+        'sessions purge: 需要会话 id（purge <id>）或 --all（清空回收站），两者均不可恢复，需 --yes 确认',
+      )
+    }
+    if (!yes) {
+      throw new Error(
+        all
+          ? 'sessions purge --all 将永久删除回收站全部会话，不可恢复。确认执行请加 --yes。'
+          : `sessions purge ${id} 将永久删除该会话及其派生分支，不可恢复。确认执行请加 --yes。`,
+      )
+    }
+    const deleted = all
+      ? await emptyTrash(ctx.db)
+      : await permanentlyDeleteSession(ctx.db, id ?? '')
+    if (all) {
+      write(`已清空回收站（永久删除 ${deleted} 个会话）。\n`)
+    } else if (deleted > 0) {
+      write(`已永久删除会话 ${id}（含 ${deleted - 1} 个派生会话）。\n`)
+    } else {
+      throw new Error(`sessions purge: 会话不在回收站或不存在：${id}`)
+    }
+    return
+  }
+
+  throw new Error(
+    `sessions: unknown subcommand "${sub}" (expected list|delete|restore|deleted|purge)`,
+  )
 }
 
 export type { SessionsCommandContext }

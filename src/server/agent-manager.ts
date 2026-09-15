@@ -58,11 +58,15 @@ type AgentManager = {
   children(parentSessionId: string): ActiveRun[]
   /** 查询所有后台任务（jobId 非空的 run）。 */
   backgroundJobs(): ActiveRun[]
-  /** 列出全部活跃 run（含子 agent）——热更新影响面展示用。 */
+  /** 列出全部活跃 run（含子 agent）——热更新影响面展示用。
+   *  status/currentTool（P2-9）：确认弹窗区分「正在执行工具、超时将被强杀」的
+   *  run 与普通 running/paused run，用户可判断被中断的代价。 */
   listActive(): Array<{
     sessionId: string
     agentType?: string
     parentSessionId?: string
+    status: 'running' | 'paused' | 'idle' | 'stopped' | 'interrupted'
+    currentTool?: string
   }>
   /** 中止所有活跃 run 并清空（dev 热重载重建前调用）。 */
   dispose(): void
@@ -177,6 +181,8 @@ function createAgentManager(): AgentManager {
           sessionId: r.sessionId,
           agentType: r.agentType,
           parentSessionId: r.parentSessionId,
+          status: r.state.status._tag,
+          currentTool: r.state.status._tag === 'running' ? r.state.status.currentTool : undefined,
         }))
     },
     dispose() {

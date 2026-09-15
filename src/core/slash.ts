@@ -64,15 +64,16 @@ function createSlashRegistry(): SlashRegistry {
 
 /**
  * P0-2：统一斜杠命令启用判定（Web chat / CLI chat / 命令列表 / /help 共用）。
- * 语义：
- *  - enabled 为空数组/缺失 → 全部启用（历史语义，向后兼容）。
- *  - enabled 含 '*'（通配）→ 全部启用（与 tools.enabled 的 ['*'] 对齐）。
- *  - 否则 → 显式名单（名称兼容带/不带前缀斜杠）。
+ * 语义（fail-closed，与 tools.enabled 对齐）：
+ *  - enabled 含 '*'（通配）→ 全部启用。
+ *  - enabled 为显式名单 → 仅名单内启用（名称兼容带/不带前缀斜杠）。
+ *  - enabled 为空数组/缺失 → 全部禁用（旧版含义「空=全部启用」，升级告警见
+ *    collectConfigMigrationWarnings——两处同形键不再语义相反）。
  * `enabled` 已含 '/' 前缀或裸名均可。
  */
 export function isSlashCommandEnabled(enabled: string[] | undefined, name: string): boolean {
   const list = enabled ?? []
-  if (list.length === 0) return true
+  if (list.length === 0) return false
   if (list.includes('*')) return true
   const norm = name.startsWith('/') ? name.slice(1) : name
   return list.some((n) => (n.startsWith('/') ? n.slice(1) : n) === norm)
@@ -83,7 +84,7 @@ const helpCommand: SlashCommand = {
   description: '列出可用斜杠命令',
   execute: async (_args, ctx) => {
     // 从 registry 动态生成，避免静态文案随命令增删漂移；
-    // 尊重 slashCommands.enabled 过滤（空 = 全部启用；含 ['*'] = 全部启用）。
+    // 尊重 slashCommands.enabled 过滤（含 ['*'] = 全部启用；空 = 全部禁用）。
     const enabledList = ctx.config.slashCommands?.enabled
     const commands = createSlashRegistry()
       .list()

@@ -101,8 +101,13 @@ export type AuthManager = {
     createdAt: number
     source: string
   }>
-  /** 审批配对（需已认证设备调用）：通过后为请求设备签发 token。 */
-  approvePairing(pairingId: string): boolean
+  /** 审批配对（需已认证设备调用）：核对审批方输入的 6 位配对码，匹配才签发 token。
+   *  P2-9：此前按 pairingId 直接批准，多请求并存时看错行批准即给错设备发 token；
+   *  码是展示信息不参与校验。现在码必须由审批方输入（新设备屏幕显示）——防误批。 */
+  approvePairing(
+    pairingId: string,
+    code: string,
+  ): 'approved' | 'not_found' | 'expired' | 'code_mismatch' | 'already_handled'
   /** 拒绝配对。 */
   denyPairing(pairingId: string): boolean
   /** 列出已授权设备（id/name/createdAt）。 */
@@ -349,14 +354,15 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
         }))
     },
 
-    approvePairing(pairingId) {
+    approvePairing(pairingId, code) {
       const p = pending.get(pairingId)
-      if (!p) return false
-      if (p.status !== 'pending') return false
+      if (!p) return 'not_found'
+      if (p.status !== 'pending') return 'already_handled'
       if (p.createdAt <= now() - pairingTtlMs) {
         pending.delete(pairingId)
-        return false
+        return 'expired'
       }
+      if (String(code ?? '').trim() !== p.code) return 'code_mismatch'
       // P：登记推迟到新设备真正取走 token 时（pairingStatus 消费）。此前审批即落盘，
       // 若审批后、新设备轮询前服务重启，devices.json 里会出现一个永远拿不到 token
       // 的僵尸条目（pending 不落盘、明文 token 只在内存）——「已授权设备」列表与
@@ -364,7 +370,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
       const deviceToken = randomBytes(32).toString('hex')
       p.status = 'approved'
       p.deviceToken = deviceToken
-      return true
+      return 'approved'
     },
 
     denyPairing(pairingId) {

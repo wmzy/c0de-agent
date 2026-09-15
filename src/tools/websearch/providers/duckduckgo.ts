@@ -4,6 +4,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
+import { httpStatusError } from '../types.js'
 
 const DUCKDUCKGO_SEARCH_URL = 'https://api.duckduckgo.com/'
 const AGENT_TOKEN = 'c0de-agent'
@@ -77,7 +78,7 @@ async function callDuckDuckGoSearch(params: WebSearchParams): Promise<DuckDuckGo
   })
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText)
-    throw new Error(`DuckDuckGo API error (${response.status}): ${text}`)
+    throw httpStatusError(`DuckDuckGo API error (${response.status}): ${text}`, response.status)
   }
   return (await response.json()) as DuckDuckGoResponse
 }

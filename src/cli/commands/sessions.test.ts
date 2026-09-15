@@ -3,11 +3,18 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
-import { createSession, listAllSessions, listDeletedSessions } from '../../session/session.js'
+import { sessions } from '../../db/schema.js'
+import {
+  createSession,
+  listAllSessions,
+  listDeletedSessions,
+  softDeleteSession,
+} from '../../session/session.js'
 import { runSessionsCommand } from './sessions.js'
 
 let dir: string
@@ -165,6 +172,72 @@ describe('c0de sessions', () => {
       write: (x) => out.push(x),
     })
     expect(out.join('')).toContain('in-trash')
+  })
+
+  it('deleted 列出即标记「已看到」（启动 60 天保留期倒计时）', async () => {
+    const s = await createSession(db, 'cli-trash', undefined, undefined, 'cli')
+    await softDeleteSession(db, s.id)
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['deleted'] },
+      db,
+      write: () => {},
+    })
+    const [row] = await db.db
+      .select({ metadata: sessions.metadata })
+      .from(sessions)
+      .where(eq(sessions.id, s.id))
+    expect((row?.metadata ?? {}) as { trashSeenAt?: number }).toHaveProperty('trashSeenAt')
+  })
+
+  it('purge <id> 缺 --yes → 拒绝（不可恢复需显式确认）', async () => {
+    const s = await createSession(db, 'p1', undefined, undefined, 'cli')
+    await softDeleteSession(db, s.id)
+    await expect(
+      runSessionsCommand({
+        args: { options: {}, positionals: ['purge', s.id] },
+        db,
+        write: () => {},
+      }),
+    ).rejects.toThrow(/--yes/)
+  })
+
+  it('purge <id> --yes → 永久删除该会话', async () => {
+    const s = await createSession(db, 'p2', undefined, undefined, 'cli')
+    await softDeleteSession(db, s.id)
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: { yes: true }, positionals: ['purge', s.id] },
+      db,
+      write: (x) => out.push(x),
+    })
+    expect(out.join('')).toContain('已永久删除')
+    expect(await listDeletedSessions(db)).toHaveLength(0)
+  })
+
+  it('purge --all --yes → 清空回收站', async () => {
+    const a = await createSession(db, 'pa', undefined, undefined, 'cli')
+    const b = await createSession(db, 'pb', undefined, undefined, 'web')
+    await softDeleteSession(db, a.id)
+    await softDeleteSession(db, b.id)
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: { yes: true, all: true }, positionals: ['purge'] },
+      db,
+      write: (x) => out.push(x),
+    })
+    expect(out.join('')).toContain('已清空回收站')
+    expect(await listDeletedSessions(db)).toHaveLength(0)
+  })
+
+  it('purge 不在回收站的会话 → 报错', async () => {
+    const s = await createSession(db, 'alive', undefined, undefined, 'cli')
+    await expect(
+      runSessionsCommand({
+        args: { options: { yes: true }, positionals: ['purge', s.id] },
+        db,
+        write: () => {},
+      }),
+    ).rejects.toThrow(/不在回收站/)
   })
 
   it('未知子命令报错', async () => {

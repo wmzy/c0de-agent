@@ -140,7 +140,9 @@ export async function trustProject(handle: DB, id: string): Promise<Project | nu
   const existing = await getProject(handle, id)
   if (!existing) return null
   const scope = loadConfigScopes(existing.worktree).project
-  const riskFingerprint = computeProjectRiskFingerprint(scope)
+  // 指纹含 MCP 参数与插件文件内容（trust.ts computeProjectRiskFingerprint）——
+  // 信任批准的是「当时的完整风险面」，此后任何漂移（含插件代码变更）都会复检。
+  const riskFingerprint = computeProjectRiskFingerprint(scope, { projectDir: existing.worktree })
   const rows = await handle.db
     .update(projects)
     .set({ trustedAt: new Date(), riskFingerprint })
@@ -174,17 +176,16 @@ export async function enforceProjectTrust(
   } catch {
     // 信任状态查询失败 → 按未信任处理（宁可拦截，不静默放行）
   }
-  const risks = projectTrustNeeded(scopes.project, effectiveGlobal, trustedAt, riskFingerprint)
+  const risks = projectTrustNeeded(scopes.project, effectiveGlobal, trustedAt, riskFingerprint, cwd)
   if (risks.length === 0) return
-  const hasProjectRisk = risks.some(
-    (r) => r.kind !== 'permission-auto' && r.kind !== 'permission-timeout-deny',
-  )
-  const sourceNote = hasProjectRisk
-    ? ''
-    : '（风险来自全局配置 permission；如有意为之可执行 c0de trust 一次性放行本项目）'
+  const globalKinds = new Set(['permission-auto', 'permission-timeout-deny'])
+  const globalOnly = risks.every((r) => globalKinds.has(r.kind))
+  const sourceNote = globalOnly
+    ? '（风险来自全局配置 permission；如有意为之可执行 c0de trust 一次性放行本项目）'
+    : ''
   throw new Error(
     `项目目录 ${cwd} 的配置含需要你确认的风险项。\n` +
-      `  请先审查后执行 c0de trust <目录> 显式信任；或改用 c0de serve 在浏览器确认。\n` +
+      `  请先审查后执行 c0de trust <目录> --yes 显式信任；或改用 c0de serve 在浏览器确认。\n` +
       `  风险项：${risks.map((r) => r.kind).join('、')}${sourceNote}`,
   )
 }

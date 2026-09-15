@@ -5,7 +5,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
-import { DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from '../types.js'
+import { DEFAULT_NUM_RESULTS, httpStatusError, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from '../types.js'
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search'
 
@@ -94,7 +94,7 @@ async function callTavilySearch(
   if (!response.ok) {
     const raw = await response.text().catch(() => response.statusText)
     const msg = getErrorMessage(safeParse(raw)) ?? (raw.trim() || response.statusText)
-    throw new Error(`Tavily API error (${response.status}): ${msg}`)
+    throw httpStatusError(`Tavily API error (${response.status}): ${msg}`, response.status)
   }
   return (await response.json()) as TavilySearchResponse
 }

@@ -37,7 +37,13 @@ function createUpdateRoute(ctx: ServerContext): Hono {
     // 顶层 run（主 agent）+ 终端数；子 agent 归父会话，不重复列出。
     const active = ctx.agentManager.listActive()
     const topRuns = active.filter((r) => !r.parentSessionId)
-    const runs: Array<{ sessionId: string; title: string; agentType?: string }> = []
+    const runs: Array<{
+      sessionId: string
+      title: string
+      agentType?: string
+      status?: string
+      currentTool?: string
+    }> = []
     for (const r of topRuns) {
       let title = r.sessionId.slice(0, 8)
       try {
@@ -50,6 +56,8 @@ function createUpdateRoute(ctx: ServerContext): Hono {
         sessionId: r.sessionId,
         title,
         ...(r.agentType ? { agentType: r.agentType } : {}),
+        ...(r.status ? { status: r.status } : {}),
+        ...(r.currentTool ? { currentTool: r.currentTool } : {}),
       })
     }
     const impact = {

@@ -39,7 +39,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     tools: { enabled: ['*'], disabled: [] },
     plugins: { enabled: [] },
     mcpServers: [],
-    slashCommands: { enabled: [] },
+    slashCommands: { enabled: ['*'] },
     theme: 'system',
     ...overrides,
   } as Config

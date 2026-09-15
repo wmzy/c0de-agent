@@ -133,4 +133,93 @@ describe('runWebSearch', () => {
       if (prevTavily !== undefined) process.env.TAVILY_API_KEY = prevTavily
     }
   })
+
+  it('auto：tavily 401（key 失效）→ 降级 brave 成功（运行时降级链）', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            web: { results: [{ url: 'https://x', title: 't', description: 'd' }] },
+          }),
+          { status: 200 },
+        ),
+      ) as unknown as typeof fetch
+    setFetchOverride(f)
+    try {
+      const res = await runWebSearch(
+        { query: 'q' },
+        cfg('auto', { tavily: 'bad-key', brave: 'good-key' }),
+        new AbortController().signal,
+      )
+      expect(res.provider).toBe('brave')
+      expect(f).toHaveBeenCalledTimes(2)
+    } finally {
+      setFetchOverride(undefined)
+    }
+  })
+
+  it('auto：tavily 429、brave 500 → 降级 duckduckgo 兜底成功', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(new Response('boom', { status: 500 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ AbstractText: 'ddg-answer', AbstractURL: 'https://x' }), {
+          status: 200,
+        }),
+      ) as unknown as typeof fetch
+    setFetchOverride(f)
+    try {
+      const res = await runWebSearch(
+        { query: 'q' },
+        cfg('auto', { tavily: 'k1', brave: 'k2' }),
+        new AbortController().signal,
+      )
+      expect(res.provider).toBe('duckduckgo')
+      expect(res.answer).toBe('ddg-answer')
+      expect(f).toHaveBeenCalledTimes(3)
+    } finally {
+      setFetchOverride(undefined)
+    }
+  })
+
+  it('auto：tavily 400（参数错误）→ 不降级，直接上抛（换后端无意义）', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('bad query', { status: 400 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ AbstractText: 'should-not-be-called' }), { status: 200 }),
+      ) as unknown as typeof fetch
+    setFetchOverride(f)
+    try {
+      await expect(
+        runWebSearch({ query: 'q' }, cfg('auto', { tavily: 'k1' }), new AbortController().signal),
+      ).rejects.toThrow(/Tavily API error \(400\)/)
+      expect(f).toHaveBeenCalledTimes(1)
+    } finally {
+      setFetchOverride(undefined)
+    }
+  })
+
+  it('显式 tavily 401 → 不降级（尊重显式选择）', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ AbstractText: 'x' }), { status: 200 }))
+    setFetchOverride(f as unknown as typeof fetch)
+    try {
+      await expect(
+        runWebSearch(
+          { query: 'q' },
+          cfg('tavily', { tavily: 'bad', brave: 'good' }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(/Tavily API error \(401\)/)
+      expect(f).toHaveBeenCalledTimes(1)
+    } finally {
+      setFetchOverride(undefined)
+    }
+  })
 })

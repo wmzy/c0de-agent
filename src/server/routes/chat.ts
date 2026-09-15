@@ -193,6 +193,7 @@ function createChatRoute(ctx: ServerContext): Hono {
           scopes.global,
           project.trustedAt,
           project.riskFingerprint,
+          project.worktree,
         )
         if (risks.length > 0) {
           // 并入全局配置的权限风险上下文（不改变门禁触发条件）：用户做信任决策时
@@ -260,7 +261,7 @@ function createChatRoute(ctx: ServerContext): Hono {
           )
         }
         // P2-4：执行 config.slashCommands.enabled 过滤（此前该配置无任何消费方）。
-        // enabled 为空 = 全部启用；含 ['*'] = 全部启用；名称兼容带/不带前缀斜杠。
+        // enabled 为空 = 全部禁用（fail-closed）；含 ['*'] = 全部启用；名称兼容带/不带前缀斜杠。
         if (!isSlashCommandEnabled(sessionConfig.slashCommands?.enabled, parsed.name)) {
           return streamSSE(c, async (stream) => {
             await stream.writeSSE({

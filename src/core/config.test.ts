@@ -311,7 +311,7 @@ describe('collectConfigMigrationWarnings（P0-1 配置迁移告警）', () => {
     expect(out[0]).toContain('["*"]')
   })
 
-  it('slashCommands.enabled 空数组 → 告警（仍是全启，与 tools 相反）', () => {
+  it('slashCommands.enabled 空数组 → 告警（旧「全启」已同步改为「全禁」）', () => {
     const out = collectConfigMigrationWarnings('global', { slashCommands: { enabled: [] } })
     expect(out).toHaveLength(1)
     expect(out[0]).toContain('slashCommands.enabled 为空数组')

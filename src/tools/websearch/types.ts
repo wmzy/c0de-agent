@@ -59,6 +59,13 @@ function clampNumResults(n: number | undefined, fallback: number = DEFAULT_NUM_R
   return Math.min(MAX_NUM_RESULTS, Math.max(MIN_NUM_RESULTS, Math.trunc(n)))
 }
 
+/** 携带 HTTP 状态码的错误（降级链按 401/403/429/5xx 判定是否换后端重试）。 */
+function httpStatusError(message: string, status: number): Error & { status: number } {
+  const err = new Error(message) as Error & { status: number }
+  err.status = status
+  return err
+}
+
 export type {
   Recency,
   WebSearchParams,
@@ -67,4 +74,4 @@ export type {
   WebSearchResponse,
   WebSearchSource,
 }
-export { clampNumResults, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS }
+export { clampNumResults, DEFAULT_NUM_RESULTS, httpStatusError, MAX_NUM_RESULTS, MIN_NUM_RESULTS }

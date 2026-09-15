@@ -43,7 +43,7 @@ const baseConfig: Config = {
   tools: { enabled: ['*'], disabled: [] },
   plugins: { enabled: [] },
   mcpServers: [],
-  slashCommands: { enabled: [] },
+  slashCommands: { enabled: ['*'] },
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: false, allowedOrigins: [] },
   websearch: { provider: 'auto' },

@@ -349,8 +349,8 @@ async function loadConfig(projectDir?: string): Promise<Config> {
  * 复用）。检测语义翻转/易混淆键：
  *  - tools.enabled: [] —— 旧版含义「启用全部」已改为「禁用全部」（fail-closed），
  *    老用户升级后会静默失去全部工具，必须在 Web 界面可见（不只落在 stderr）。
- *  - slashCommands.enabled: [] —— 其含义仍是「全部启用」，与同形 tools.enabled
- *    相反，易误配；提示可用 ["*"] 显式全启用。
+ *  - slashCommands.enabled: [] —— 旧版含义「全部启用」已同步改为「禁用全部」
+ *    （与 tools.enabled 语义统一），升级后斜杠命令将全部失效，须显式引导。
  */
 export function collectConfigMigrationWarnings(
   scope: 'global' | 'project',
@@ -374,8 +374,8 @@ export function collectConfigMigrationWarnings(
     const enabled = (slash as Record<string, unknown>).enabled
     if (Array.isArray(enabled) && enabled.length === 0) {
       out.push(
-        `${scopeLabel}配置的 slashCommands.enabled 为空数组：其含义仍是「全部启用」` +
-          `（与 tools.enabled 空数组=禁用全部相反）——如需显式全启用，可用 ["*"]。`,
+        `${scopeLabel}配置的 slashCommands.enabled 为空数组：旧版含义「全部启用」已改为「禁用全部」` +
+          `（与 tools.enabled 语义统一）——如需启用全部，请改为 ["*"]，或删除该键恢复默认值。`,
       )
     }
   }

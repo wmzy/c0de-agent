@@ -8,7 +8,14 @@ type UpdateStatus = {
   disabled?: boolean
   /** 热更新影响面：进行中的对话与终端面板（apply 确认框逐项展示）。 */
   impact?: {
-    runs: Array<{ sessionId: string; title: string; agentType?: string }>
+    runs: Array<{
+      sessionId: string
+      title: string
+      agentType?: string
+      /** P2-9：run 状态（running/paused/…），currentTool 非空 = 正在执行工具。 */
+      status?: string
+      currentTool?: string
+    }>
     terminalCount: number
     terminals: Array<{ id: string; title: string; shell: string; cwd: string; command?: string }>
     /** P3-9：等待确认的权限请求数（更新后弹窗失效、按拒绝处理）。 */

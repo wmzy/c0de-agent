@@ -56,8 +56,8 @@ async function initPlugins(opts: InitPluginsOptions): Promise<InitPluginsResult>
     try {
       if (existsSync(projectPluginsDir) && readdirSync(projectPluginsDir).length > 0) {
         console.warn(
-          `[plugin] 项目插件目录 ${projectPluginsDir} 存在插件，但项目尚未被信任——已跳过加载。\n` +
-            `  信任方式：c0de trust（CLI），或在 Web 界面遇到信任确认时点击「信任项目」；信任后重启 serve 生效。`,
+          `[plugin] 项目插件目录 ${projectPluginsDir} 存在插件，但项目尚未被信任（或信任后风险配置/插件代码已变更）——已跳过加载。\n` +
+            `  信任/重新确认方式：c0de trust（CLI），或在 Web 界面遇到信任确认时点击「信任项目」；信任后重启 serve 生效。`,
         )
       }
     } catch {

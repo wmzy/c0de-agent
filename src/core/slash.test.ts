@@ -614,9 +614,9 @@ export default async function workflow(ctx) {
 })
 
 describe('isSlashCommandEnabled（P0-2 统一启用判定）', () => {
-  it('空数组/缺失 = 全部启用（历史语义）', () => {
-    expect(isSlashCommandEnabled(undefined, 'compact')).toBe(true)
-    expect(isSlashCommandEnabled([], 'compact')).toBe(true)
+  it('空数组/缺失 = 全部禁用（fail-closed，与 tools.enabled 对齐）', () => {
+    expect(isSlashCommandEnabled(undefined, 'compact')).toBe(false)
+    expect(isSlashCommandEnabled([], 'compact')).toBe(false)
   })
 
   it('含 ["*"] 通配 = 全部启用（与 tools.enabled 的 ["*"] 对齐）', () => {

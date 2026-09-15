@@ -109,15 +109,30 @@ function createAuthRoute(ctx: ServerContext): Hono {
     return c.json({ pairings: ctx.authManager.listPairings() })
   })
 
-  // 审批通过（需认证）。
+  // 审批通过（需认证）。P2-9：必须携带审批方输入的 6 位配对码（新设备屏幕显示），
+  // 服务端核对匹配才签发——防多请求并存时看错行误批给错设备。
   app.post('/pairing/approve', async (c) => {
     if (!ctx.authManager) {
       return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
     }
-    const body = (await c.req.json().catch(() => ({}))) as { pairingId?: string }
+    const body = (await c.req.json().catch(() => ({}))) as { pairingId?: string; code?: string }
     if (!body.pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
-    const ok = ctx.authManager.approvePairing(body.pairingId)
-    if (!ok) return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
+    if (!body.code) return apiError(c, 400, 'BAD_REQUEST', 'code is required')
+    const result = ctx.authManager.approvePairing(body.pairingId, body.code)
+    if (result === 'code_mismatch') {
+      return apiError(
+        c,
+        400,
+        'PAIRING_CODE_MISMATCH',
+        '配对码不匹配：请核对新设备屏幕显示的 6 位配对码后重新输入',
+      )
+    }
+    if (result === 'not_found' || result === 'expired') {
+      return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
+    }
+    if (result === 'already_handled') {
+      return apiError(c, 409, 'PAIRING_ALREADY_HANDLED', '该配对请求已被处理')
+    }
     return c.json({ ok: true })
   })
 

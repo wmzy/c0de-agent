@@ -155,6 +155,27 @@ describe('GET /api/update', () => {
     expect(body.impact.terminals[0]?.command).toBe('npm run dev')
   })
 
+  it('P2-9：impact run 透出运行态与当前工具（确认框标注强杀风险）', async () => {
+    const ctx = makeCtx({
+      lastResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+    })
+    agentManagerMock.listActive.mockReturnValue([
+      { sessionId: '11111111-1111-4111-8111-111111111111', status: 'running', currentTool: 'bash' },
+      { sessionId: '22222222-2222-4222-8222-222222222222', status: 'paused' },
+    ])
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      impact: { runs: Array<{ status?: string; currentTool?: string }> }
+    }
+    expect(body.impact.runs).toHaveLength(2)
+    const running = body.impact.runs.find((r) => r.status === 'running')
+    expect(running?.currentTool).toBe('bash')
+    const paused = body.impact.runs.find((r) => r.status === 'paused')
+    expect(paused?.currentTool).toBeUndefined()
+  })
+
   it('returns placeholder when no cache and triggers checkNow (non-blocking)', async () => {
     const checkNow = vi.fn().mockResolvedValue({
       hasUpdate: true,

@@ -1,3 +1,4 @@
+import { loadConfigScopes } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
 import { decryptSecret } from '../core/secret.js'
 import type { DB } from '../db/client.js'
@@ -5,6 +6,7 @@ import { createRegistry, overrideToCapabilities, registerProvider } from '../llm
 import type { Registry } from '../llm/registry.js'
 import { initPlugins } from '../plugins/index.js'
 import { getByDirectory } from '../project/index.js'
+import { projectTrustCurrent } from '../project/trust.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
@@ -116,10 +118,19 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
   const toolRegistry = createDefaultRegistry(config)
   // P0-2：项目插件仅在项目被显式信任后加载（c0de trust <dir>）；内存库
   // （--temp/锁冲突降级）不含项目记录 → 未信任，项目插件不加载。
+  // P0（代码面）：已信任但指纹漂移（插件代码/MCP 参数/风险键变更）→ 不加载，
+  // 与聊天门禁同口径。
   let projectTrusted = false
   try {
     const p = await getByDirectory(opts.db, opts.cwd)
-    projectTrusted = p?.trustedAt != null
+    if (p?.trustedAt != null) {
+      projectTrusted = projectTrustCurrent(
+        loadConfigScopes(opts.cwd).project,
+        p.trustedAt,
+        p.riskFingerprint,
+        opts.cwd,
+      )
+    }
   } catch {
     // 查询失败 → 未信任
   }

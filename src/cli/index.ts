@@ -79,13 +79,17 @@ const COMMANDS: CommandSpec[] = [
   },
   {
     name: 'sessions',
-    description: 'Manage CLI/web sessions (list / delete / restore / deleted).',
-    options: [{ name: 'project', type: 'string' }],
+    description: 'Manage CLI/web sessions (list / delete / restore / deleted / purge).',
+    options: [
+      { name: 'project', type: 'string' },
+      { name: 'yes', type: 'boolean', short: 'y' },
+      { name: 'all', type: 'boolean' },
+    ],
   },
   {
     name: 'trust',
     description: 'Trust a project directory: enable its project-scope config and plugins.',
-    options: [],
+    options: [{ name: 'yes', type: 'boolean', short: 'y' }],
   },
   {
     name: 'acp',

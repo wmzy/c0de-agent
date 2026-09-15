@@ -181,12 +181,14 @@ function PairingRequestFlow() {
   )
 }
 
-/** 已授权设备：展示待审批配对并批准/拒绝。由 App 在收到配对列表后弹层。 */
+/** 已授权设备：展示待审批配对并批准/拒绝。由 App 在收到配对列表后弹层。
+ *  P2-9：批准需输入新设备屏幕显示的 6 位配对码——多请求并存时防看错行误批。 */
 export function PairingApproval({ onDone }: { onDone: () => void }) {
   const [items, setItems] = useState<
     { pairingId: string; deviceName: string; code: string; source: string }[]
   >([])
   const [error, setError] = useState<string | null>(null)
+  const [codes, setCodes] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -211,9 +213,22 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
 
   if (items.length === 0 && !error) return null
 
-  const act = (id: string, approve: boolean) => {
-    const fn = approve ? authAPI.approvePairing : authAPI.denyPairing
-    fn(id)
+  const approve = (id: string, code: string) => {
+    authAPI
+      .approvePairing(id, code)
+      .then(() => setItems((prev) => prev.filter((p) => p.pairingId !== id)))
+      .catch((e) => {
+        setError(
+          (e as { code?: string }).code === 'PAIRING_CODE_MISMATCH'
+            ? '配对码不匹配，请核对新设备屏幕显示的 6 位码'
+            : '操作失败，请重试',
+        )
+      })
+  }
+
+  const deny = (id: string) => {
+    authAPI
+      .denyPairing(id)
       .then(() => setItems((prev) => prev.filter((p) => p.pairingId !== id)))
       .catch(() => setError('操作失败，请重试'))
   }
@@ -223,8 +238,8 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
       <div className={card}>
         <div className={title}>设备配对审批</div>
         <div className={desc}>
-          以下设备请求访问 c0de。请核对对方屏幕上显示的配对码，确认后批准。
-          设备名由请求方自报，仅作参考。
+          以下设备请求访问 c0de。请与对方核对设备信息后，<b>输入对方屏幕上显示的 6 位配对码</b>
+          再批准。 设备名由请求方自报，仅作参考。
         </div>
         {items.map((p) => (
           <div
@@ -243,15 +258,27 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
                 来源：{p.source}
               </span>
             </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="输入 6 位码"
+              value={codes[p.pairingId] ?? ''}
+              onChange={(e) =>
+                setCodes((prev) => ({ ...prev, [p.pairingId]: e.target.value.replace(/\D/g, '') }))
+              }
+              data-testid={`pairing-code-input-${p.pairingId}`}
+            />
             <button
               type="button"
               className={`${btn} ${approveBtn}`}
-              onClick={() => act(p.pairingId, true)}
+              disabled={(codes[p.pairingId] ?? '').length !== 6}
+              onClick={() => approve(p.pairingId, codes[p.pairingId] ?? '')}
               data-testid="pairing-approve"
             >
               批准
             </button>
-            <button type="button" className={btn} onClick={() => act(p.pairingId, false)}>
+            <button type="button" className={btn} onClick={() => deny(p.pairingId)}>
               拒绝
             </button>
           </div>

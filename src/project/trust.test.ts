@@ -1,4 +1,7 @@
 // src/project/trust.test.ts — P0-2 项目信任风险检测单元测试。
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Config } from '../shared/types/config.js'
 import {
@@ -282,5 +285,81 @@ describe('computeProjectRiskFingerprint / projectTrustNeeded', () => {
     )
     expect(risks).toHaveLength(1)
     expect(risks[0]?.detail).not.toContain('全局配置')
+  })
+})
+
+describe('指纹代码面覆盖（P0：MCP 参数 / 插件文件内容）', () => {
+  it('MCP 同名改 args → 指纹变化（此前单字段 detail 检测不到）', () => {
+    const base = {
+      mcpServers: [{ name: 'git-mcp', command: 'node', args: ['server.js'] }],
+    } as Partial<Config>
+    const a = computeProjectRiskFingerprint(base)
+    const b = computeProjectRiskFingerprint({
+      mcpServers: [{ name: 'git-mcp', command: 'node', args: ['server.js', '--evil'] }],
+    } as Partial<Config>)
+    expect(a).not.toBe('')
+    expect(a).not.toBe(b)
+  })
+
+  it('MCP 条目顺序无关 → 指纹稳定', () => {
+    const a = computeProjectRiskFingerprint({
+      mcpServers: [
+        { name: 'x', command: 'a' },
+        { name: 'y', command: 'b' },
+      ],
+    } as Partial<Config>)
+    const b = computeProjectRiskFingerprint({
+      mcpServers: [
+        { name: 'y', command: 'b' },
+        { name: 'x', command: 'a' },
+      ],
+    } as Partial<Config>)
+    expect(a).toBe(b)
+  })
+
+  it('插件文件内容变化 → 指纹变化（同名插件、git pull 改代码可检测）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-trust-'))
+    try {
+      const pluginDir = join(dir, '.c0de', 'plugins', 'evil')
+      mkdirSync(pluginDir, { recursive: true })
+      writeFileSync(join(pluginDir, 'index.js'), 'export default { setup() {} }')
+      const raw = { plugins: { enabled: ['evil'] } } as Partial<Config>
+      const a = computeProjectRiskFingerprint(raw, { projectDir: dir })
+      expect(a).not.toBe('')
+
+      writeFileSync(join(pluginDir, 'index.js'), 'export default { setup() { steal() } }')
+      const b = computeProjectRiskFingerprint(raw, { projectDir: dir })
+      expect(b).not.toBe(a)
+
+      // 插件可 import 同目录其它文件：整个目录纳入内容面
+      writeFileSync(join(pluginDir, 'index.js'), 'export default { setup() {} }')
+      expect(computeProjectRiskFingerprint(raw, { projectDir: dir })).toBe(a)
+      writeFileSync(join(pluginDir, 'helper.js'), 'malicious()')
+      expect(computeProjectRiskFingerprint(raw, { projectDir: dir })).not.toBe(a)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('已信任 + 插件代码漂移 → trust-drift 说明项前置（用户看到复检原因）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-trust-'))
+    try {
+      const pluginDir = join(dir, '.c0de', 'plugins', 'evil')
+      mkdirSync(pluginDir, { recursive: true })
+      writeFileSync(join(pluginDir, 'index.js'), 'v1')
+      const raw = { plugins: { enabled: ['evil'] } } as Partial<Config>
+      const fp = computeProjectRiskFingerprint(raw, { projectDir: dir })
+
+      writeFileSync(join(pluginDir, 'index.js'), 'v2')
+      const risks = projectTrustNeeded(raw, undefined, Date.now(), fp, dir)
+      expect(risks[0]?.kind).toBe('trust-drift')
+      expect(risks.map((r) => r.kind)).toContain('plugins-enabled')
+
+      // 恢复原内容 → 指纹匹配 → 放行
+      writeFileSync(join(pluginDir, 'index.js'), 'v1')
+      expect(projectTrustNeeded(raw, undefined, Date.now(), fp, dir)).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

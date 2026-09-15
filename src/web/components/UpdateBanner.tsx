@@ -289,7 +289,9 @@ export function UpdateBanner() {
 }
 
 /** 影响面清单：逐项列出将被中断的对话与将被关闭的终端（P1：含标题，可判断是否重要）。
- *  P3-9：待确认的权限请求会在更新后静默失效（隐含按拒绝处理），一并明示。 */
+ *  P3-9：待确认的权限请求会在更新后静默失效（隐含按拒绝处理），一并明示。
+ *  P2-9：run 标注运行态——正在执行工具的 run 超时未暂停将被强制中止（其子进程
+ *  会被终止），用户据此判断被中断的代价。 */
 function ImpactList({
   runs,
   terminals,
@@ -297,7 +299,13 @@ function ImpactList({
   rerunIds,
   onToggleRerun,
 }: {
-  runs: Array<{ sessionId: string; title: string; agentType?: string }>
+  runs: Array<{
+    sessionId: string
+    title: string
+    agentType?: string
+    status?: string
+    currentTool?: string
+  }>
   terminals: Array<{ id: string; title: string; shell: string; cwd: string; command?: string }>
   pendingPermissionCount: number
   rerunIds: Set<string>
@@ -315,6 +323,15 @@ function ImpactList({
               <li key={r.sessionId}>
                 {r.title}
                 {r.agentType ? `（${r.agentType}）` : ''}
+                {r.currentTool ? (
+                  <span className={impactMeta}>
+                    {' '}
+                    · 正在执行工具 {r.currentTool}——更新会先等待其完成；若超时未完成将被强制中止，
+                    其子进程会被终止
+                  </span>
+                ) : r.status === 'paused' ? (
+                  <span className={impactMeta}> · 已暂停（安全点）</span>
+                ) : null}
               </li>
             ))}
           </ul>

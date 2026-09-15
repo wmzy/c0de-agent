@@ -19,13 +19,14 @@ import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
 import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
-import { loadConfig } from '../core/config.js'
+import { loadConfig, loadConfigScopes } from '../core/config.js'
 import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { purgeDeletedKanbanBoards } from '../kanban/index.js'
 import { initPlugins } from '../plugins/index.js'
 import { getByDirectory } from '../project/index.js'
+import { projectTrustCurrent } from '../project/trust.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import {
   purgeDeletedSessions,
@@ -248,10 +249,19 @@ async function buildServerContext(
   // P0-2：项目插件只在项目被显式信任后加载（fail-closed）——克隆仓库自带的
   // .c0de/plugins 不会在首次 serve 时静默执行；c0de trust / Web 信任后重启生效。
   // 未注册项目（首次 serve、尚无项目记录）视为未信任。
+  // P0（代码面）：已信任但指纹漂移（git pull 改了插件代码/MCP 参数/风险键）→
+  // 同样不加载——与聊天门禁同口径，杜绝「先重启、后门禁」窗口里执行漂移代码。
   let projectTrusted = false
   try {
     const p = await getByDirectory(db, cwd)
-    projectTrusted = p?.trustedAt != null
+    if (p?.trustedAt != null) {
+      projectTrusted = projectTrustCurrent(
+        loadConfigScopes(cwd).project,
+        p.trustedAt,
+        p.riskFingerprint,
+        cwd,
+      )
+    }
   } catch {
     // 信任状态查询失败 → 保持未信任（宁可少加载插件）
   }

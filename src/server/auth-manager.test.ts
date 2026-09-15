@@ -129,7 +129,7 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     expect(pending).toHaveLength(1)
     expect(pending[0]?.code).toBe(req?.code)
 
-    expect(mgr.approvePairing(req?.pairingId ?? '')).toBe(true)
+    expect(mgr.approvePairing(req?.pairingId ?? '', req?.code ?? '')).toBe('approved')
     const status = mgr.pairingStatus(req?.pairingId ?? '')
     expect(status.status).toBe('approved')
     if (status.status === 'approved') {
@@ -139,12 +139,37 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     expect(mgr.listPairings()).toHaveLength(0)
   })
 
+  it('配对码不匹配 → code_mismatch，不签发 token（防误批）', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir })
+    await registered(mgr)
+    const req = mgr.requestPairing('新手机')
+
+    expect(mgr.approvePairing(req?.pairingId ?? '', '000000')).toBe('code_mismatch')
+    // 未签发：仍是 pending，设备未登记
+    expect(mgr.pairingStatus(req?.pairingId ?? '')).toEqual({ status: 'pending' })
+    expect(mgr.listDevices()).toHaveLength(1)
+
+    // 输入正确码后正常批准
+    expect(mgr.approvePairing(req?.pairingId ?? '', req?.code ?? '')).toBe('approved')
+    expect(mgr.listDevices()).toHaveLength(1) // 交付前仍未登记
+  })
+
+  it('approvePairing 不存在的配对 → not_found；已处理 → already_handled', async () => {
+    const mgr = managerWithBootstrap({ dataDir: dir })
+    await registered(mgr)
+    expect(mgr.approvePairing('nope', '123456')).toBe('not_found')
+
+    const req = mgr.requestPairing('新手机')
+    expect(mgr.approvePairing(req?.pairingId ?? '', req?.code ?? '')).toBe('approved')
+    expect(mgr.approvePairing(req?.pairingId ?? '', req?.code ?? '')).toBe('already_handled')
+  })
+
   it('审批后、新设备取 token 前：设备尚未登记（交付时才算授权）', async () => {
     const mgr = managerWithBootstrap({ dataDir: dir })
     await registered(mgr)
     const req = mgr.requestPairing('新手机')
 
-    expect(mgr.approvePairing(req?.pairingId ?? '')).toBe(true)
+    expect(mgr.approvePairing(req?.pairingId ?? '', req?.code ?? '')).toBe('approved')
     // 登记推迟到 token 交付：此时设备列表仍只有旧设备，不存在「拿不到 token 的僵尸条目」
     expect(mgr.listDevices()).toHaveLength(1)
 
@@ -159,7 +184,7 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     const mgr = managerWithBootstrap({ dataDir: dir })
     await registered(mgr)
     const req = mgr.requestPairing('新手机')
-    expect(mgr.approvePairing(req?.pairingId ?? '')).toBe(true)
+    expect(mgr.approvePairing(req?.pairingId ?? '', req?.code ?? '')).toBe('approved')
 
     // 模拟服务重启：pending 不落盘，审批态随内存清空
     const mgr2 = createAuthManager({ dataDir: dir })
@@ -168,7 +193,7 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     expect(mgr2.listDevices()).toHaveLength(1)
     // 新设备重新发起配对仍可走完整流程
     const req2 = mgr2.requestPairing('新手机')
-    expect(mgr2.approvePairing(req2?.pairingId ?? '')).toBe(true)
+    expect(mgr2.approvePairing(req2?.pairingId ?? '', req2?.code ?? '')).toBe('approved')
     const status2 = mgr2.pairingStatus(req2?.pairingId ?? '')
     expect(status2.status).toBe('approved')
     if (status2.status === 'approved') expect(mgr2.verify(status2.deviceToken)).toBe(true)

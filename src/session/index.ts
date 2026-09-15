@@ -32,11 +32,13 @@ export {
 } from './message.js'
 export {
   createSession,
+  emptyTrash,
   getLLMSegments,
   getSession,
   listDeletedSessions,
   listSessions,
   migrateLegacyDetails,
+  permanentlyDeleteSession,
   purgeDeletedSessions,
   restoreSession,
   restoreSessionCore,
