@@ -77,8 +77,10 @@ async function createSession(
 
 /**
  * Web 会话树可见性条件：web 会话（source 为 null/web）或「持久的 CLI 会话」。
- * 一次性 CLI print 会话（agentType='print'）与 workflow 会话是临时数据
- * （30 天自动清理，purgeTemporarySessions），继续隐藏；
+ * 一次性 CLI print 会话与 CLI 来源的 workflow 会话是临时数据，隐藏；
+ * Web 来源的 workflow 会话（source=null）在树中可见（标题带时间戳）。
+ * 两类临时会话到期后统一**移入回收站**（purgeTemporarySessions），不再物理清除——
+ * 可见节点（含其子 agent 会话）享有 60 天可恢复承诺。
  * --continue 续接后 agentType 已清除（upgradeTemporarySession），即对 Web 可见。
  */
 export function webVisibleSessionCondition() {
@@ -610,76 +612,41 @@ async function emptyTrash(handle: DB, projectId?: string): Promise<number> {
 }
 
 /**
- * 清理过期临时会话（P2 → P1 收紧：仅清理显式标记的临时会话）。
+ * 清理过期临时会话（P2 → P1 收紧：仅处理显式标记的临时会话）。
  * - agentType='print'：CLI 一次性问答（c0de chat，非 --continue）创建的会话。
  * - agentType='workflow'：工作流运行产生的会话。
  * 普通 CLI 会话（ACP）与 --continue 续接的会话（续接时已升级）永不清理——
  * 此前按 source='cli' 全删会把用户显式续接的历史静默物理删除。
- * 保留期默认 30 天；子条目经 FK cascade 一并删除。
- * 返回清除数量。启动时与每日定时调用。
+ * 保留期默认 30 天。
+ *
+ * P1（本轮）：清理方式从物理删除改为**移入回收站**（softDeleteSession）——
+ * 工作流/print 会话的子 agent 会话在 Web 树中可见，此前「30 天到点即物理清除」
+ * 让可见节点无回收站保护地凭空消失，与「60 天可恢复」的产品承诺冲突。
+ * 软删除级联同批次后代；随后由 purgeDeletedSessions 的两阶段回收站机制
+ * （trashSeenAt 60 天 / 绝对上限 365 天 + 7 天宽限）统一兜底。
+ * 返回本次移入回收站的会话数。
  */
 async function purgeTemporarySessions(
   handle: DB,
   retentionMs = 30 * 24 * 60 * 60 * 1000,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - retentionMs)
-  const all = await handle.db
-    .select({
-      id: sessions.id,
-      parentId: sessions.parentId,
-      agentType: sessions.agentType,
-      updatedAt: sessions.updatedAt,
-    })
+  const rows = await handle.db
+    .select({ id: sessions.id, agentType: sessions.agentType, updatedAt: sessions.updatedAt })
     .from(sessions)
-  const roots = all.filter(
+    .where(isNull(sessions.deletedAt))
+  const roots = rows.filter(
     (r) =>
       (r.agentType === 'print' || r.agentType === 'workflow') &&
       r.updatedAt != null &&
       r.updatedAt.getTime() < cutoff.getTime(),
   )
-  if (roots.length === 0) return 0
-
-  // 临时会话可能派发过子 agent（其子会话挂 parentId）。父会话直接删除会撞自引用
-  // FK（RESTRICT），且子会话失去父后成为游离节点——故连同全部后代一起物理清除，
-  // 并按拓扑序「子先于父」删除（与 emptyTrash / purgeDeletedSessions 同一策略）。
-  const childrenOf = new Map<string, string[]>()
-  for (const r of all) {
-    if (r.parentId) {
-      const list = childrenOf.get(r.parentId) ?? []
-      list.push(r.id)
-      childrenOf.set(r.parentId, list)
-    }
+  let trashed = 0
+  for (const r of roots) {
+    // softDeleteSession 级联标记其后代（同 deletedBatchId），恢复父即恢复子树。
+    if (await softDeleteSession(handle, r.id)) trashed += 1
   }
-  const ids = new Set<string>()
-  const collect = (sid: string): void => {
-    if (ids.has(sid)) return
-    ids.add(sid)
-    for (const c of childrenOf.get(sid) ?? []) collect(c)
-  }
-  for (const r of roots) collect(r.id)
-
-  const remaining = new Set(ids)
-  let deleted = 0
-  while (remaining.size > 0) {
-    const leaves = Array.from(remaining).filter(
-      (sid) => !(childrenOf.get(sid) ?? []).some((c) => remaining.has(c)),
-    )
-    if (leaves.length === 0) {
-      // 循环引用兜底：强制逐个删除（数据异常场景）
-      for (const sid of Array.from(remaining)) {
-        await handle.db.delete(sessions).where(eq(sessions.id, sid))
-        remaining.delete(sid)
-        deleted += 1
-      }
-      break
-    }
-    for (const sid of leaves) {
-      await handle.db.delete(sessions).where(eq(sessions.id, sid))
-      remaining.delete(sid)
-      deleted += 1
-    }
-  }
-  return deleted
+  return trashed
 }
 
 /**

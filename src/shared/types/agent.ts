@@ -143,6 +143,9 @@ type AgentEvent =
   | { _tag: 'error'; error: AgentError }
   /** 通知前端：本轮 LLM 调用详情已持久化，应刷新调用详情面板。轻量通知，不带 payload。 */
   | { _tag: 'llm_detail' }
+  /** 工作流执行进度（/workflow run 的 onProgress → SSE progress 事件）：
+   *  前端以横幅展示当前阶段，不再对长工作流黑盒等待。 */
+  | { _tag: 'progress'; message: string; detail?: unknown }
   | {
       _tag: 'subagent_start'
       childId: string

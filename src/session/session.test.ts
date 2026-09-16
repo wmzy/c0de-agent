@@ -468,11 +468,38 @@ describe('purgeTemporarySessions', () => {
     await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, plainCli.id))
     const purged = await purgeTemporarySessions(handle)
     expect(purged).toBe(2)
-    expect(await getSession(handle, print.id)).toBeNull()
-    expect(await getSession(handle, wf.id)).toBeNull()
+    // P1：清理方式为移入回收站（可恢复）而非物理删除——子 agent 会话在 Web 树可见，
+    // 物理清除会绕过 60 天可恢复承诺。
+    const trashedPrint = await getSession(handle, print.id)
+    const trashedWf = await getSession(handle, wf.id)
+    expect(trashedPrint?.deletedAt).not.toBeNull()
+    expect(trashedWf?.deletedAt).not.toBeNull()
     expect(await getSession(handle, web.id)).not.toBeNull()
     expect(await getSession(handle, plainCli.id)).not.toBeNull()
     expect(await getSession(handle, recentPrint.id)).not.toBeNull()
+    // 已在回收站的条目不被重复计数（幂等）
+    expect(await purgeTemporarySessions(handle)).toBe(0)
+  })
+
+  it('临时会话清理级联子 agent 会话（同批次入回收站，可随父恢复）', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000)
+    const wf = await createSession(handle, 'workflow:x', undefined, 'workflow')
+    const child = await createSession(
+      handle,
+      'sub-agent',
+      undefined,
+      'researcher',
+      undefined,
+      wf.id,
+    )
+    await handle.db.update(sessions).set({ updatedAt: old }).where(eq(sessions.id, wf.id))
+    const purged = await purgeTemporarySessions(handle)
+    expect(purged).toBe(1)
+    expect((await getSession(handle, child.id))?.deletedAt).not.toBeNull()
+    // 恢复父会话连带恢复同批次后代
+    const restored = await restoreSessionCore(handle, wf.id)
+    expect(restored.restored).toBe(true)
+    expect((await getSession(handle, child.id))?.deletedAt).toBeNull()
   })
 
   it('upgradeTemporarySession 清除 print 标记后不再被清理', async () => {

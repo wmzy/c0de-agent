@@ -71,6 +71,8 @@ type ChatProps = {
   onReopenPermission?: () => void
   /** 超时后拒绝该工具（run 继续）。 */
   onDenyTimedOutPermission?: () => void
+  /** 工作流执行进度（/workflow run）：非空时以横幅展示当前阶段。 */
+  workflowProgress?: { message: string; detail?: unknown } | null
 }
 
 /* 顶栏合并行：视图切换 + 运行状态 + 流控按钮 + 原始 JSON 单行排布，
@@ -212,6 +214,43 @@ const interruptBanner = css`
   }
 `
 
+/* 工作流进度横幅：窄条展示当前阶段，脉冲圆点表进行中。 */
+const wfProgressBanner = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--text-secondary);
+`
+
+const wfProgressDot = css`
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  flex-shrink: 0;
+  animation: wfProgressPulse 1.4s ease-in-out infinite;
+  @keyframes wfProgressPulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+`
+
+const wfProgressText = css`
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
 /* 底栏合并行：模型/工具选择 + 自动授权开关单行排布，替代原 footerBar/modeBar 两层。 */
 const footerBar = css`
   display: flex;
@@ -343,6 +382,7 @@ export function Chat({
   permissionTimeout,
   onReopenPermission,
   onDenyTimedOutPermission,
+  workflowProgress,
   onSend,
   onAbort,
   onConfirm,
@@ -522,6 +562,14 @@ export function Chat({
               拒绝并继续
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {workflowProgress ? (
+        <div className={wfProgressBanner} data-testid="workflow-progress-banner">
+          <span className={wfProgressDot} aria-hidden="true" />
+          <span className={wfProgressText} title="工作流执行进度">
+            工作流进行中：{workflowProgress.message}
+          </span>
         </div>
       ) : null}
       {topPanel}

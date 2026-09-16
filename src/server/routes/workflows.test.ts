@@ -277,6 +277,59 @@ describe('workflows route — DELETE /:name', () => {
     expect(res.status).toBe(200)
     expect(ctx.workflowRegistry?.has('test-user-wf')).toBe(false)
   })
+
+  it('DELETE ?projectId 直接删除该项目工作流文件（无信任门禁、不执行仓库代码）', async () => {
+    const { app, ctx } = await setup()
+    const otherDir = await mkdtemp(join(tmpdir(), 'wf-other-proj-'))
+    const project = await fromDirectory(ctx.db, otherDir)
+    const wfPath = join(otherDir, '.c0de', 'workflows', 'proj-only.js')
+    await mkdir(join(otherDir, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      wfPath,
+      `export const meta = { name: 'proj-only' }\nexport default async () => ({ output: 'x' })`,
+      'utf-8',
+    )
+    // 不信任该项目：删除仍应成功（按路径操作，不 dynamic import）
+    const res = await app.request(`/proj-only?projectId=${project.id}`, { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    expect(existsSync(wfPath)).toBe(false)
+    await rm(otherDir, { recursive: true, force: true })
+  })
+
+  it('DELETE ?projectId 删除项目级同名工作流不误删 user 级注册表条目', async () => {
+    const { app, ctx } = await setup()
+    // user 级同名条目在注册表中（filePath 指向 ~/.c0de/workflows）
+    const userEntry: WorkflowEntry = {
+      meta: { name: 'shared-wf', description: 'user level' },
+      source: 'user',
+      filePath: join(process.env.HOME ?? '', '.c0de', 'workflows', 'shared-wf.js'),
+      execute: async () => ({ output: 'user' }),
+    }
+    ctx.workflowRegistry?.register(userEntry)
+    // 另一项目有同名项目级文件
+    const otherDir = await mkdtemp(join(tmpdir(), 'wf-shadow-proj-'))
+    const project = await fromDirectory(ctx.db, otherDir)
+    await mkdir(join(otherDir, '.c0de', 'workflows'), { recursive: true })
+    const projPath = join(otherDir, '.c0de', 'workflows', 'shared-wf.js')
+    await writeFile(
+      projPath,
+      `export const meta = { name: 'shared-wf' }\nexport default async () => ({ output: 'project' })`,
+      'utf-8',
+    )
+
+    const res = await app.request(`/shared-wf?projectId=${project.id}`, { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    expect(existsSync(projPath)).toBe(false)
+    // 遮蔽解除后 user 级条目应保留
+    expect(ctx.workflowRegistry?.has('shared-wf')).toBe(true)
+    await rm(otherDir, { recursive: true, force: true })
+  })
+
+  it('DELETE ?projectId 项目不存在 → 404', async () => {
+    const { app } = await setup()
+    const res = await app.request('/ghost?projectId=missing-project', { method: 'DELETE' })
+    expect(res.status).toBe(404)
+  })
 })
 
 describe('workflows route — POST /:name/run', () => {
@@ -399,7 +452,7 @@ export default async function workflow(ctx) {
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE }),
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE, target: 'project' }),
     })
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
@@ -450,12 +503,52 @@ export default async function workflow(ctx) {
     expect(body.error.message).toContain('source')
   })
 
+  it('returns 409 TRUST_REQUIRED when creating workflow in untrusted project', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'api-wf',
+        source: VALID_SOURCE,
+        target: 'project',
+        projectId: project.id,
+      }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('TRUST_REQUIRED')
+    // 文件未落盘：未信任项目的执行面不得写入
+    expect(existsSync(join(projectCwd, '.c0de', 'workflows', 'api-wf.js'))).toBe(false)
+  })
+
+  it('returns 400 when target is missing or invalid（必填：缺省落盘目录与 GET/run 的 projectId 口径分裂）', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('BAD_REQUEST')
+    expect(body.error.message).toContain('target')
+
+    const resInvalid = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE, target: 'global' }),
+    })
+    expect(resInvalid.status).toBe(400)
+  })
+
   it('returns 400 for invalid name (uppercase)', async () => {
     const { app } = await setup()
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'InvalidName', source: VALID_SOURCE }),
+      body: JSON.stringify({ name: 'InvalidName', source: VALID_SOURCE, target: 'project' }),
     })
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: { code: string; message: string } }
@@ -469,7 +562,7 @@ export default async function workflow(ctx) {
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'bad-wf', source: badSource }),
+      body: JSON.stringify({ name: 'bad-wf', source: badSource, target: 'project' }),
     })
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: { code: string; message: string } }

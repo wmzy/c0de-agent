@@ -199,6 +199,25 @@ describe('buildWorkflowContext', () => {
     expect(files.length).toBeGreaterThanOrEqual(2)
   })
 
+  it('utils.glob 支持 ** 跨目录（src/**/*.ts 命中嵌套路径）', async () => {
+    await mkdir(join(tmpDir, 'src', 'nested'), { recursive: true })
+    await mkdir(join(tmpDir, 'docs'), { recursive: true })
+    await writeFile(join(tmpDir, 'src', 'a.ts'), 'x')
+    await writeFile(join(tmpDir, 'src', 'nested', 'b.ts'), 'y')
+    await writeFile(join(tmpDir, 'docs', 'c.ts'), 'z')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    const files = await ctx.utils.glob('src/**/*.ts')
+    expect(files.sort()).toEqual(['src/a.ts', 'src/nested/b.ts'].sort())
+    // 单段 * 不跨目录
+    const shallow = await ctx.utils.glob('src/*.ts')
+    expect(shallow).toEqual(['src/a.ts'])
+  })
+
   it('utils.read reads file content', async () => {
     await writeFile(join(tmpDir, 'hello.txt'), 'line1\nline2\nline3')
     const ctx = buildWorkflowContext({

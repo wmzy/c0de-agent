@@ -11,6 +11,7 @@ import {
   executeWorkflow,
   reloadRegistry,
   saveWorkflow,
+  workflowSessionTitle,
 } from './workflows/index.js'
 
 function parseSlashInput(input: string): { name: string; args: string } | null {
@@ -378,6 +379,18 @@ const workflowCommand: SlashCommand = {
       // 否则 Web 端 `/workflow create wf --file ./wf.md` 会读错基准目录。
       const resolvedPath = resolve(ctx.cwd, filePath)
 
+      // 同名工作流已存在时覆盖需显式确认——否则误输名称会静默替换
+      // 用户级/项目级既有工作流（尤其跨层级：项目级同名会遮蔽用户级）。
+      const existing = registry?.get(name) ?? projectByName.get(name)
+      if (existing && !parts.includes('--yes')) {
+        return {
+          _tag: 'error',
+          message:
+            `工作流 "${name}" 已存在（${existing.source} 级），覆盖会替换其内容。` +
+            '确认覆盖请加 --yes：/workflow create <name> --file <path> --yes',
+        }
+      }
+
       let source: string
       try {
         source = await import('node:fs/promises').then((fs) => fs.readFile(resolvedPath, 'utf-8'))
@@ -487,7 +500,7 @@ const workflowCommand: SlashCommand = {
       }
       const session = await createSession(
         ctx.deps.db,
-        `workflow:${name}`,
+        workflowSessionTitle(name),
         workflowProjectId,
         'workflow',
         undefined,

@@ -497,6 +497,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         error={chat.error}
         pendingPermission={chat.pendingPermission}
         permissionTimeout={chat.permissionTimeout}
+        workflowProgress={chat.workflowProgress}
         onReopenPermission={chat.reopenPermission}
         onDenyTimedOutPermission={chat.denyTimedOutPermission}
         onSend={handleSend}

@@ -22,6 +22,15 @@ function createTimeoutPromise(timeoutMs: number, timeoutSeconds: number): Promis
   })
 }
 
+/**
+ * 工作流运行会话标题：`workflow:<name> MM-DD HH:mm`。
+ * 同名工作流多次运行在会话树里可区分，不再是无时间戳的同名行。
+ */
+function workflowSessionTitle(name: string, now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `workflow:${name} ${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+}
+
 /** executeWorkflow 的参数。 */
 type ExecuteWorkflowOpts = {
   registry: WorkflowRegistry
@@ -80,9 +89,18 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
     }
   } catch (e) {
     if (e instanceof WorkflowTimeoutError) {
+      // 超时必须真正终止执行，而不是只对用户报错——此前仅 race reject，
+      // 工作流的子 agent 仍在后台继续调 LLM/改文件（继续计费且无中止手柄）。
+      // 与 abortAgent 同语义；内联实现避免 import 循环
+      // （agent.ts → loop.ts → prompt-registry.ts → slash.ts → workflows/index.ts → 本文件）。
+      // 父 abort 经 runSubAgent 的 abort 级联传递给全部子 agent。
+      parent.abortController.abort()
+      if (parent.status._tag === 'running' || parent.status._tag === 'paused') {
+        parent.status = { _tag: 'stopped', reason: 'aborted' }
+      }
       return {
         _tag: 'error',
-        message: `Workflow "${name}" timed out after ${timeoutSeconds}s`,
+        message: `Workflow "${name}" timed out after ${timeoutSeconds}s（执行已中止）`,
       }
     }
     return {
@@ -92,4 +110,4 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
   }
 }
 
-export { executeWorkflow }
+export { executeWorkflow, workflowSessionTitle }

@@ -48,6 +48,8 @@ type ChatState = {
   runPaused: boolean
   /** 暂停原因（status_change 的 pauseReason；权限超时路径为本地合成文案）。 */
   runPauseReason: string | null
+  /** 工作流执行进度（/workflow run 的 progress 事件）：横幅展示当前阶段文案。 */
+  workflowProgress: { message: string; detail?: unknown } | null
 }
 
 type PendingSegmentBreak = {
@@ -127,6 +129,7 @@ const INITIAL: ChatState = {
   compactionNotice: null,
   runPaused: false,
   runPauseReason: null,
+  workflowProgress: null,
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -244,6 +247,9 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     case 'subagent_progress':
       // 进度更新（工具名/状态）暂不改变状态，避免频繁重渲
       return state
+    case 'progress':
+      // 工作流进度：横幅展示当前阶段（长工作流此前无任何执行期反馈）
+      return { ...state, workflowProgress: { message: event.message, detail: event.detail } }
     case 'subagent_end': {
       const subagents = state.subagents.map((s) =>
         s.childId === event.childId
@@ -297,7 +303,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         runPauseReason: event.status._tag === 'paused' ? (event.status.pauseReason ?? null) : null,
       }
     case 'error':
-      return { ...state, error: errorToMessage(event.error) }
+      return { ...state, error: errorToMessage(event.error), workflowProgress: null }
     case 'compaction_done':
       return {
         ...state,
@@ -311,6 +317,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         attachedRun: false,
         runPaused: false,
         runPauseReason: null,
+        workflowProgress: null,
       }
     default:
       return state

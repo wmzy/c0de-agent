@@ -102,12 +102,28 @@ async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
   // P2：列出即「看到」——CLI-only 用户此前无 Web 回收站可打开，trashSeenAt 永不写入，
   // 60 天保留期永不启动（条目只能等 365 天绝对上限）。此处与 Web 打开分组同口径
   // 标记（仅首次、全量、含孤儿）。
+  // --project <path>：把「看到」标记与列表限定到单个项目（与 Web 按项目分组一致）——
+  // 缺省全库标记会启动所有项目回收站条目的倒计时，多项目用户应显式限定作用域。
   if (sub === 'deleted') {
-    await touchTrashSeen(ctx.db)
-    const sessions = await listDeletedSessions(ctx.db)
+    const projectPath = ctx.args.options.project as string | undefined
+    let projectId: string | undefined
+    if (projectPath) {
+      const { existsSync } = await import('node:fs')
+      if (!existsSync(projectPath)) {
+        throw new Error(`sessions deleted: 项目目录不存在：${projectPath}`)
+      }
+      projectId = (await fromDirectory(ctx.db, projectPath)).id
+    }
+    await touchTrashSeen(ctx.db, projectId ? { projectId } : {})
+    const sessions = await listDeletedSessions(ctx.db, projectId)
     if (sessions.length === 0) {
       write('回收站为空。\n')
       return
+    }
+    if (!projectId) {
+      write(
+        '（全库回收站。多项目用户建议加 --project <路径> 限定作用域：全库「看到」标记会启动所有项目条目的保留期倒计时。）\n',
+      )
     }
     for (const s of sessions) {
       const when = s.deletedAt ? new Date(s.deletedAt).toISOString() : '-'

@@ -22,6 +22,11 @@ type InteractivePermissionCheckerOptions = {
   onPermissionTimeout?: (request: PermissionRequest) => void
   /** 兜底过期（提示后仍无响应，自动拒绝）时调用（P0 双层超时：前端清理弹窗状态）。 */
   onPermissionExpired?: (request: PermissionRequest) => void
+  /** 权限请求「报告归属」的会话 id。缺省取 tool context 的会话——子 agent 的 ask
+   *  请求会挂在各自子会话上，用户所在的主/工作流会话按 sessionId 重挂 pending
+   *  弹窗时找不到。传入发起 run 的用户可见会话 id，使 GET /api/permissions/:id/pending
+   *  能从该会话恢复全部子 agent 的挂起请求。 */
+  reportSessionId?: string
 }
 
 /** 阻塞式权限检查器：ask 权限会阻塞等待用户确认。
@@ -69,13 +74,16 @@ function createInteractivePermissionChecker(
 
       // 交互式确认
       const toolCallId = randomUUID()
+      const reportedSessionId = opts.reportSessionId ?? ctx.session?.id
       const request: PermissionRequest = {
         toolCallId,
         tool: tool.name,
         input,
         // P1：绑定会话 id——挂起期间用户切换页面后，前端经
         // GET /api/permissions/:sessionId/pending 重挂确认弹窗。
-        ...(ctx.session?.id ? { sessionId: ctx.session.id } : {}),
+        // 子 agent 请求按 reportSessionId 归属到发起 run 的用户可见会话，
+        // 而不是各自的子会话（用户不会停留在子会话页面上等确认）。
+        ...(reportedSessionId ? { sessionId: reportedSessionId } : {}),
       }
       const promise = new Promise<PermissionResult>((resolve) => {
         // pending 注册到全局 store，confirm 端点按 toolCallId 直接寻址，

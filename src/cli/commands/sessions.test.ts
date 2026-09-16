@@ -9,6 +9,7 @@ import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { sessions } from '../../db/schema.js'
+import { fromDirectory } from '../../project/project.js'
 import {
   createSession,
   listAllSessions,
@@ -187,6 +188,46 @@ describe('c0de sessions', () => {
       .from(sessions)
       .where(eq(sessions.id, s.id))
     expect((row?.metadata ?? {}) as { trashSeenAt?: number }).toHaveProperty('trashSeenAt')
+  })
+
+  it('deleted --project 限定作用域：仅标记并列出该项目回收站（与 Web 分组同口径）', async () => {
+    const project = await fromDirectory(db, dir)
+    const bound = await createSession(db, 'proj-trash', project.id, undefined, 'web')
+    const orphan = await createSession(db, 'other-trash', undefined, undefined, 'cli')
+    await softDeleteSession(db, bound.id)
+    await softDeleteSession(db, orphan.id)
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: { project: dir }, positionals: ['deleted'] },
+      db,
+      write: (x) => out.push(x),
+    })
+    const text = out.join('')
+    expect(text).toContain('proj-trash')
+    expect(text).not.toContain('other-trash')
+    // 仅该项目条目启动 60 天倒计时；他项目/孤儿条目不受 CLI 全局标记连带
+    const [boundRow] = await db.db
+      .select({ metadata: sessions.metadata })
+      .from(sessions)
+      .where(eq(sessions.id, bound.id))
+    expect((boundRow?.metadata ?? {}) as { trashSeenAt?: number }).toHaveProperty('trashSeenAt')
+    const [orphanRow] = await db.db
+      .select({ metadata: sessions.metadata })
+      .from(sessions)
+      .where(eq(sessions.id, orphan.id))
+    expect((orphanRow?.metadata ?? {}) as { trashSeenAt?: number }).not.toHaveProperty(
+      'trashSeenAt',
+    )
+  })
+
+  it('deleted --project 目录不存在时报错', async () => {
+    await expect(
+      runSessionsCommand({
+        args: { options: { project: join(dir, 'nope') }, positionals: ['deleted'] },
+        db,
+        write: () => {},
+      }),
+    ).rejects.toThrow(/项目目录不存在/)
   })
 
   it('purge <id> 缺 --yes → 拒绝（不可恢复需显式确认）', async () => {

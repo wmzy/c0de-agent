@@ -1,11 +1,17 @@
+import { existsSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent } from '../../core/agent.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
-import { discoverWorkflows, saveWorkflow } from '../../core/workflows/discovery.js'
+import {
+  discoverWorkflows,
+  executeWorkflow,
+  saveWorkflow,
+  workflowSessionTitle,
+} from '../../core/workflows/index.js'
 import { reloadRegistry } from '../../core/workflows/registry.js'
-import { executeWorkflow } from '../../core/workflows/runtime.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
 import { getByDirectory, getProject, trustProject } from '../../project/project.js'
 import {
@@ -112,10 +118,11 @@ function createWorkflowsRoute(ctx: ServerContext) {
     }
 
     const body = await c.req.json().catch(() => ({}))
-    const { name, source, target } = body as {
+    const { name, source, target, projectId } = body as {
       name?: string
       source?: string
       target?: 'project' | 'user'
+      projectId?: string
     }
 
     if (!name || typeof name !== 'string') {
@@ -124,9 +131,33 @@ function createWorkflowsRoute(ctx: ServerContext) {
     if (!source || typeof source !== 'string') {
       return apiError(c, 400, 'BAD_REQUEST', 'Missing required field: source')
     }
+    // 目标层级必填：此前缺省 target ?? 'project' 落到 serve cwd，与 GET/run 的
+    // ?projectId 口径分裂——serve cwd ≠ 目标项目时静默写错目录。
+    if (target !== 'project' && target !== 'user') {
+      return apiError(c, 400, 'BAD_REQUEST', 'Missing or invalid field: target (project|user)')
+    }
+
+    // 落盘目录：target=project 缺省 serve cwd；显式 projectId 时解析项目 worktree。
+    // 项目级工作流是任意代码执行面，写入前必须已信任（与发现/执行同一道闸）。
+    let saveDir = ctx.cwd
+    if (target === 'project' && projectId) {
+      const st = await projectTrustState(ctx, projectId)
+      if (!st.project) {
+        return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
+      }
+      if (!st.trusted) {
+        return apiError(
+          c,
+          409,
+          'TRUST_REQUIRED',
+          `项目「${st.project.name ?? st.project.worktree}」未信任（或信任后配置漂移），请先信任项目再创建工作流`,
+        )
+      }
+      saveDir = st.project.worktree
+    }
 
     // 保存到磁盘 + dynamic import 验证
-    const result = await saveWorkflow(name, source, target ?? 'project', ctx.cwd)
+    const result = await saveWorkflow(name, source, target, saveDir)
     if (!result.ok) {
       return apiError(c, 400, 'SAVE_FAILED', result.error)
     }
@@ -137,7 +168,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // 必须先于 reloadRegistry：reload 的项目级发现按 projectTrustCurrent 判定，
     // 新文件未入指纹时会误判漂移而跳过（registry 里看不到刚创建的工作流）。
     try {
-      const p = await getByDirectory(ctx.db, ctx.cwd)
+      const p = await getByDirectory(ctx.db, saveDir)
       if (p?.trustedAt != null) await trustProject(ctx.db, p.id)
     } catch {
       // 指纹刷新失败不阻塞创建结果（最坏回到「需重新信任」的 fail-closed 路径）
@@ -273,7 +304,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // 项目目录执行（resolveAgentCwd 不再回退 serve cwd）。
     const session = await createSession(
       ctx.db,
-      `workflow:${name}`,
+      workflowSessionTitle(name),
       project?.id ?? undefined,
       'workflow',
       undefined,
@@ -309,6 +340,9 @@ function createWorkflowsRoute(ctx: ServerContext) {
               sessionDefaultMode ??
               ctx.permissionMode,
             alwaysAllow: () => ctx.sessionAlwaysAllow.get(session.id) ?? [],
+            // 子 agent 的 ask 请求统一归属到工作流会话（树中可见节点），
+            // 打开该会话即可重挂全部挂起弹窗。
+            reportSessionId: session.id,
             onPermissionRequired: async (req) => {
               await stream.writeSSE({
                 event: 'permission_required',
@@ -410,7 +444,9 @@ function createWorkflowsRoute(ctx: ServerContext) {
     }
   })
 
-  // DELETE /:name — 删除（仅非 builtin）
+  // DELETE /:name — 删除（仅非 builtin）。可选 ?projectId=xxx 直接删除该项目
+  // 的 .c0de/workflows/<name>.js——不 dynamic import 仓库代码（删除无需信任门禁，
+  // 未信任项目也可清理自己的文件），仅按路径操作。
   app.delete('/:name', async (c) => {
     const name = c.req.param('name')
 
@@ -423,24 +459,44 @@ function createWorkflowsRoute(ctx: ServerContext) {
     if (!registry) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
     }
-    const entry = registry.get(name)
-    if (!entry) {
+    const registryEntry = registry.get(name)
+
+    // 项目级删除目标：按 worktree 拼路径，不做 discovery（避免执行仓库代码）。
+    const projectId = c.req.query('projectId')
+    let projectFilePath: string | null = null
+    if (projectId) {
+      const project = await getProject(ctx.db, projectId)
+      if (!project) {
+        return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
+      }
+      const candidate = join(project.worktree, '.c0de', 'workflows', `${name}.js`)
+      if (existsSync(candidate)) projectFilePath = candidate
+    }
+
+    // 无项目级文件且注册表无同名条目 → 404
+    if (!projectFilePath && !registryEntry) {
       return apiError(c, 404, 'NOT_FOUND', `Workflow "${name}" not found`)
     }
-    if (entry.source === 'builtin') {
+    // 仅注册表条目且为内置 → 拒绝；项目级文件是用户自建代码，可删
+    if (!projectFilePath && registryEntry?.source === 'builtin') {
       return apiError(c, 400, 'BAD_REQUEST', 'Cannot delete builtin workflow')
     }
 
+    const fileToUnlink = projectFilePath ?? registryEntry?.filePath
     // 先从磁盘删除文件（若存在），失败则告知用户且不清理 registry 以保持状态一致
-    if (entry.filePath) {
+    if (fileToUnlink) {
       try {
-        await unlink(entry.filePath)
+        await unlink(fileToUnlink)
       } catch {
         return apiError(c, 500, 'DELETE_FAILED', `Failed to delete workflow file for "${name}"`)
       }
     }
 
-    registry.delete(name)
+    // registry 清理：仅在注册表同名条目就是被删文件时才移除——删除项目级同名
+    // 工作流不得误删 user 级条目（project > user 遮蔽解除后 user 级应重新可见）。
+    if (registryEntry && (!fileToUnlink || registryEntry.filePath === fileToUnlink)) {
+      registry.delete(name)
+    }
     return c.json({ ok: true })
   })
 

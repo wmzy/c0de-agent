@@ -20,8 +20,10 @@ function makeMockParent(): AgentState {
     session: { id: 'test', title: 't', projectId: null },
     messages: [],
     config: { provider: 'x', model: 'x', tools: [], plugins: [], agentName: 'default' },
-    status: { _tag: 'idle' },
+    // running：超时中止路径要求 status 为 running/paused 才会置 stopped
+    status: { _tag: 'running', turnCount: 0 },
     tools: [],
+    abortController: new AbortController(),
   } as unknown as AgentState
 }
 
@@ -152,11 +154,25 @@ describe('executeWorkflow', () => {
 
   it('returns timeout error when workflow exceeds meta.timeout', async () => {
     const registry = createWorkflowRegistry()
+    const parent = makeMockParent()
+    // execute 等待 abort 信号：超时必须真正中止执行，而非仅报错后让
+    // 工作流在后台继续烧钱（P0 修复）。
+    let aborted = false
     const entry: WorkflowEntry = {
       meta: { name: 'slow', description: 'sleeps', timeout: 0.1 },
       source: 'builtin',
       execute: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 2000))
+        await new Promise<void>((resolve) => {
+          parent.abortController.signal.addEventListener(
+            'abort',
+            () => {
+              aborted = true
+              resolve()
+            },
+            { once: true },
+          )
+          setTimeout(resolve, 2000)
+        })
         return { output: 'should not reach' }
       },
     }
@@ -166,12 +182,16 @@ describe('executeWorkflow', () => {
       name: 'slow',
       args: '',
       deps: makeMockDeps(),
-      parent: makeMockParent(),
+      parent,
     })
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
       expect(result.message).toContain('timed out')
       expect(result.message).toContain('0.1s')
+      expect(result.message).toContain('已中止')
     }
+    expect(aborted).toBe(true)
+    expect(parent.abortController.signal.aborted).toBe(true)
+    expect(parent.status).toEqual({ _tag: 'stopped', reason: 'aborted' })
   })
 })

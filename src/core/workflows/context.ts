@@ -115,10 +115,43 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
 
 // ── 工具函数 ──
 
-/** 递归 glob（简单实现，匹配文件名后缀或通配符）。 */
+/** 把 glob 模式编译为正则：双星号跨目录，单星号与问号不跨路径分隔符，其余字符转义。 */
+function globToRegExp(pattern: string): RegExp {
+  let re = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i] ?? ''
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        // `**/` 须能匹配零层目录（globstar 语义：src/**/*.ts 命中 src/a.ts）
+        if (pattern[i + 2] === '/') {
+          re += '(?:.*/)?'
+          i += 2
+        } else {
+          re += '.*'
+          i++
+        }
+      } else {
+        re += '[^/]*'
+      }
+    } else if (ch === '?') {
+      re += '[^/]'
+    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
+      re += `\\${ch}`
+    } else {
+      re += ch
+    }
+  }
+  return new RegExp(`^${re}$`)
+}
+
+/**
+ * 递归 glob。模式含路径分隔符时按相对路径匹配（双星号跨目录，如「src 下任意层级的 .ts」）；
+ * 不含分隔符时按文件名匹配（与旧行为兼容：星号 .ts 命中任意层级）。
+ */
 async function globRecursive(rootDir: string, pattern: string): Promise<string[]> {
   const results: string[] = []
-  const regex = new RegExp(pattern.replace(/\./g, '\\.').replace(/\*/g, '.*'))
+  const regex = globToRegExp(pattern)
+  const matchRel = pattern.includes('/')
 
   async function walk(dir: string): Promise<void> {
     let entries: import('node:fs').Dirent[]
@@ -132,8 +165,11 @@ async function globRecursive(rootDir: string, pattern: string): Promise<string[]
       const fullPath = join(dir, entry.name)
       if (entry.isDirectory()) {
         await walk(fullPath)
-      } else if (regex.test(entry.name)) {
-        results.push(relative(rootDir, fullPath))
+      } else {
+        const rel = relative(rootDir, fullPath)
+        if (regex.test(matchRel ? rel : entry.name)) {
+          results.push(rel)
+        }
       }
     }
   }

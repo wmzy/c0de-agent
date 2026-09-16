@@ -30,6 +30,7 @@ import {
 import { ToolsPanel } from '../components/settings/ToolsPanel.js'
 import { UsagePanel } from '../components/settings/UsagePanel.js'
 import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
+import { WorkflowsPanel } from '../components/settings/WorkflowsPanel.js'
 import { configAPI } from '../services/config.js'
 import { diffConfig, isPatchEmpty } from '../utils/config-diff.js'
 import { registerNavGuard } from '../utils/nav-guard.js'
@@ -596,6 +597,7 @@ export function Settings() {
             websearch={merged.websearch}
             onWebSearchChange={(patch) => updateSection('websearch', patch)}
           />
+          <WorkflowsPanel projectId={projectId} />
           <div className={section}>
             <h2 className={sectionTitle}>多 Agent</h2>
             <label className={field}>

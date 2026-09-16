@@ -12,7 +12,7 @@ import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory, trustProject } from '../../project/project.js'
 import { appendMessage, getEntries } from '../../session/message.js'
-import { createSession, getLLMSegments } from '../../session/session.js'
+import { createSession, getLLMSegments, listAllSessions } from '../../session/session.js'
 import { getFileSnapshots } from '../../session/snapshot.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
@@ -1172,5 +1172,63 @@ describe('P0-2 项目信任门禁', () => {
       body: JSON.stringify({ sessionId, message: 'hi' }),
     })
     expect(res.status).toBe(200)
+  })
+})
+
+describe('/workflow run 专用斜杠通道', () => {
+  const TRIVIAL_WF: WorkflowEntry = {
+    meta: { name: 'slash-wf', description: 'trivial slash workflow' },
+    source: 'user',
+    execute: async () => ({ output: 'slash-wf-done' }),
+  }
+
+  it('执行注册工作流：SSE 返回结果并创建带时间戳标题的工作流会话', async () => {
+    const { app, ctx, sessionId } = await setup()
+    ctx.workflowRegistry?.register(TRIVIAL_WF)
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/workflow run slash-wf' }),
+    })
+    expect(res.status).toBe(200)
+    const events = parseSSEEvents(await res.text())
+    const types = events.map((e) => e.event)
+    expect(types).toContain('done')
+    const delta = events.find((e) => e.event === 'text_delta')
+    expect(delta?.data).toContain('slash-wf-done')
+
+    const all = await listAllSessions(dbHandle as DB)
+    const wfSession = all.find((s) => s.agentType === 'workflow')
+    expect(wfSession).toBeTruthy()
+    // 标题含时间戳：多次运行在会话树中可区分
+    expect(wfSession?.title).toMatch(/^workflow:slash-wf \d{2}-\d{2} \d{2}:\d{2}$/)
+    expect(wfSession?.projectId).toBeNull()
+  })
+
+  it('主 run 活跃时拒绝并发发起工作流（RUN_ACTIVE）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    ctx.agentManager.register({ sessionId, state: {} as never, deps: {} as never })
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/workflow run slash-wf' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+  })
+
+  it('未知工作流返回可用列表提示', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/workflow run ghost-wf' }),
+    })
+    expect(res.status).toBe(200)
+    const events = parseSSEEvents(await res.text())
+    const delta = events.find((e) => e.event === 'text_delta')
+    expect(delta?.data).toContain('未知工作流')
+    expect(delta?.data).toContain('security-audit')
   })
 })

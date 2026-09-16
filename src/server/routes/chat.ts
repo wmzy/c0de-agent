@@ -9,11 +9,18 @@ import { compactContext } from '../../core/loop.js'
 import { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
+import {
+  createWorkflowRegistry,
+  discoverWorkflows,
+  executeWorkflow,
+  workflowSessionTitle,
+} from '../../core/workflows/index.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
 import { enrichProjectRiskWithGlobal, projectTrustNeeded } from '../../project/trust.js'
 import { insertEntry } from '../../session/message.js'
 import {
+  createSession,
   getLLMSegments,
   getSession,
   markUnfinishedTurn,
@@ -225,6 +232,208 @@ function createChatRoute(ctx: ServerContext): Hono {
       }
     }
 
+    // /workflow run 专用执行通道：与 REST POST /api/workflows/:name/run 同口径——
+    // 预算护栏、urlRegistry/hookRunner、agentManager 注册 + 断连 abort、进度 SSE。
+    // 此前经通用 commandCtx.deps 执行：子 agent 预算旁路（P0）、内部 URL 解析失败、
+    // run 游离于 agentManager（不可中止、热更新不可见）。
+    const runWorkflowSlash = async (c: Context, workflowArgs: string): Promise<Response> => {
+      // 并发守卫：主 run 活跃时不允许同会话发起工作流（权限弹窗/预算/终端混淆）。
+      if (ctx.agentManager.get(sessionId) || ctx.agentManager.isStarting(sessionId)) {
+        return apiError(
+          c,
+          409,
+          'RUN_ACTIVE',
+          '该会话已有进行中的对话，请等待完成或中止后再运行工作流',
+        )
+      }
+      const parts = workflowArgs.split(/\s+/).filter(Boolean)
+      const name = parts[1]
+      if (!name) {
+        return apiError(c, 400, 'BAD_REQUEST', 'Usage: /workflow run <name> [args]')
+      }
+      const wfArgs = parts.slice(2).join(' ')
+      const registry = ctx.workflowRegistry ?? createWorkflowRegistry()
+      let entry = ctx.workflowRegistry?.get(name)
+      if (!entry) {
+        const projectWorkflows = await discoverWorkflows(cwd)
+        entry = projectWorkflows.find((w) => w.meta.name === name)
+      }
+      if (!entry) {
+        const discovered = await discoverWorkflows(cwd)
+        const available = [
+          ...registry.list().map((e) => e.meta.name),
+          ...discovered.map((e) => e.meta.name),
+        ].join(', ')
+        return streamSSE(c, async (stream) => {
+          await stream.writeSSE({
+            event: 'text_delta',
+            data: JSON.stringify({
+              _tag: 'text_delta',
+              text: `未知工作流："${name}"。可用：${available || '(无)'}`,
+            }),
+          })
+          await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+        })
+      }
+
+      // 工作流运行会话：绑定当前会话项目 + worktree（与 REST 路由同口径），
+      // 标题带时间戳区分多次运行。
+      const workflowSession = await createSession(
+        ctx.db,
+        workflowSessionTitle(name),
+        session.projectId ?? undefined,
+        'workflow',
+        undefined,
+        undefined,
+        cwd,
+      )
+      if (!ctx.agentManager.tryAcquire(workflowSession.id)) {
+        return apiError(c, 409, 'RUN_ACTIVE', '该工作流会话已有进行中的执行')
+      }
+      let handedOff = false
+      try {
+        const response = streamSSE(c, async (stream) => {
+          const stopHeartbeat = startHeartbeat(stream)
+          try {
+            const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
+              getMode: () =>
+                ctx.sessionPermissionModes.get(sessionId) ??
+                sessionDefaultMode ??
+                ctx.permissionMode,
+              alwaysAllow: () => ctx.sessionAlwaysAllow.get(sessionId) ?? [],
+              // 子 agent 的 ask 请求统一归属到用户所在的会话（而非各自子会话），
+              // 刷新/切换页面后按当前会话即可重挂挂起弹窗。
+              reportSessionId: sessionId,
+              onPermissionRequired: async (req) => {
+                await stream.writeSSE({
+                  event: 'permission_required',
+                  data: JSON.stringify({ _tag: 'permission_required', ...req }),
+                })
+              },
+              onPermissionTimeout: (req) => {
+                stream
+                  .writeSSE({
+                    event: 'permission_timeout',
+                    data: JSON.stringify({
+                      _tag: 'permission_timeout',
+                      ...req,
+                      timeoutAction: permissionTimeoutAction,
+                    }),
+                  })
+                  .catch(() => {})
+              },
+              onPermissionExpired: (req) => {
+                if (permissionTimeoutAction === 'pause') {
+                  ctx.agentManager.pause(workflowSession.id, PERMISSION_TIMEOUT_PAUSE_REASON)
+                }
+                stream
+                  .writeSSE({
+                    event: 'permission_expired',
+                    data: JSON.stringify({
+                      _tag: 'permission_expired',
+                      ...req,
+                      timeoutAction: permissionTimeoutAction,
+                    }),
+                  })
+                  .catch(() => {})
+              },
+            })
+            const deps = {
+              db: ctx.db,
+              llmRegistry: sessionRegistry,
+              toolRegistry: ctx.toolRegistry,
+              urlRegistry: ctx.urlRegistry,
+              hookRunner: ctx.hookRunner,
+              permission: permissionChecker,
+              config: sessionConfig,
+              cwd,
+              agentRegistry: ctx.agentRegistry,
+              // 预算护栏：与主 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
+              ...(sessionConfig.usage?.budgetAction === 'pause' ||
+              sessionConfig.usage?.budgetAction === 'abort' ||
+              sessionConfig.usage?.tokenBudgetAction === 'pause' ||
+              sessionConfig.usage?.tokenBudgetAction === 'abort'
+                ? { budgetPause: true }
+                : {}),
+            }
+            const agentConfig: AgentConfig = {
+              provider: sessionConfig.defaultProvider,
+              model: sessionConfig.defaultModel,
+              tools: [],
+              plugins: sessionConfig.plugins.enabled,
+              agentName: 'default',
+            }
+            const parent = await createAgent(workflowSession, agentConfig, deps)
+            ctx.agentManager.register({ sessionId: workflowSession.id, state: parent, deps })
+            stream.onAbort(() => {
+              ctx.agentManager.abort(workflowSession.id)
+            })
+
+            const result = await executeWorkflow({
+              registry,
+              name,
+              entry,
+              args: wfArgs,
+              deps,
+              parent,
+              onProgress: async (progressMessage, detail) => {
+                await stream.writeSSE({
+                  event: 'progress',
+                  data: JSON.stringify({ _tag: 'progress', message: progressMessage, detail }),
+                })
+              },
+            })
+
+            if (result._tag === 'error') {
+              await stream.writeSSE({
+                event: 'error',
+                data: JSON.stringify({
+                  _tag: 'error',
+                  error: { _tag: 'unexpected', message: result.message },
+                }),
+              })
+            } else {
+              // executeWorkflow 只产出 text/error（success/compact 是斜杠命令泛型变体，不会到达）
+              const text =
+                result._tag === 'text'
+                  ? result.text
+                  : result._tag === 'success'
+                    ? result.message
+                    : ''
+              await stream.writeSSE({
+                event: 'text_delta',
+                data: JSON.stringify({ _tag: 'text_delta', text }),
+              })
+            }
+            await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+          } catch (e) {
+            await stream
+              .writeSSE({
+                event: 'error',
+                data: JSON.stringify({
+                  _tag: 'error',
+                  error: {
+                    _tag: 'unexpected',
+                    message: e instanceof Error ? e.message : String(e),
+                  },
+                }),
+              })
+              .catch(() => {})
+            await stream
+              .writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+              .catch(() => {})
+          } finally {
+            stopHeartbeat()
+            ctx.agentManager.unregister(workflowSession.id)
+          }
+        })
+        handedOff = true
+        return response
+      } finally {
+        if (!handedOff) ctx.agentManager.unregister(workflowSession.id)
+      }
+    }
+
     // P1-1：会话项目注册表——项目级配置含 providers 时，按该项目合并配置
     // 构建/复用 LLM 注册表（否则项目配置的 provider 永远 NoRoute）。
     // 服务启动目录项目直接复用服务级注册表。
@@ -274,6 +483,11 @@ function createChatRoute(ctx: ServerContext): Hono {
             await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
           })
         }
+        // /workflow run 走专用通道（预算/URL 注册表/agentManager 生命周期与 REST 同口径）；
+        // 其余 workflow 子命令（list/show/create/edit）继续走通用 commandCtx。
+        if (parsed.name === 'workflow' && /^run(?:\s|$)/.test(parsed.args.trim())) {
+          return runWorkflowSlash(c, parsed.args.trim())
+        }
         const commandCtx = {
           cwd,
           config: sessionConfig,
@@ -294,7 +508,16 @@ function createChatRoute(ctx: ServerContext): Hono {
             permission: autoAllowChecker,
             toolRegistry: ctx.toolRegistry,
             llmRegistry: sessionRegistry,
+            urlRegistry: ctx.urlRegistry,
+            hookRunner: ctx.hookRunner,
             agentRegistry: ctx.agentRegistry,
+            // 预算护栏：/compact 的压缩 LLM 调用与子 agent 同样受护栏约束。
+            ...(sessionConfig.usage?.budgetAction === 'pause' ||
+            sessionConfig.usage?.budgetAction === 'abort' ||
+            sessionConfig.usage?.tokenBudgetAction === 'pause' ||
+            sessionConfig.usage?.tokenBudgetAction === 'abort'
+              ? { budgetPause: true }
+              : {}),
           },
         }
         return streamSSE(c, async (stream) => {
@@ -311,6 +534,9 @@ function createChatRoute(ctx: ServerContext): Hono {
                 sessionDefaultMode ??
                 ctx.permissionMode,
               alwaysAllow: () => ctx.sessionAlwaysAllow.get(sessionId) ?? [],
+              // 子 agent 的 ask 请求统一归属到用户所在的会话（而非各自子会话），
+              // 刷新/切换页面后按当前会话即可重挂挂起弹窗。
+              reportSessionId: sessionId,
               onPermissionRequired: async (req) => {
                 await stream.writeSSE({
                   event: 'permission_required',
@@ -609,6 +835,9 @@ function createChatRoute(ctx: ServerContext): Hono {
             getMode: () =>
               ctx.sessionPermissionModes.get(sessionId) ?? sessionDefaultMode ?? ctx.permissionMode,
             alwaysAllow: () => ctx.sessionAlwaysAllow.get(sessionId) ?? [],
+            // 子 agent 的 ask 请求统一归属到用户所在的会话（而非各自子会话），
+            // 刷新/切换页面后按当前会话即可重挂挂起弹窗。
+            reportSessionId: sessionId,
             onPermissionRequired: async (req) => {
               await stream.writeSSE({
                 event: 'permission_required',

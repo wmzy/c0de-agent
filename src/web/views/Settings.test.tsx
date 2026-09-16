@@ -88,6 +88,16 @@ vi.mock('../contexts/ThemeContext.js', () => ({
   useTheme: () => ({ mode: 'light', setMode: vi.fn() }),
 }))
 
+// 工作流管理面板依赖 workflows service，mock 掉避免测试中发起网络请求
+vi.mock('../services/workflows.js', () => ({
+  workflowsAPI: {
+    list: vi.fn().mockResolvedValue({ workflows: [] }),
+    get: vi.fn(),
+    save: vi.fn(),
+    remove: vi.fn(),
+  },
+}))
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -987,6 +997,7 @@ describe('Settings — 完整配置表单覆盖', () => {
       '斜杠命令',
       'MCP 服务器',
       'Web 搜索',
+      '工作流',
       '多 Agent',
       '安全',
       '自动授权',
@@ -1559,5 +1570,91 @@ describe('Settings — 用量面板零预算引导', () => {
 
     fireEvent.change(screen.getByTestId('usage-global-budget'), { target: { value: '10' } })
     await waitFor(() => expect(screen.queryByTestId('usage-no-budget-hint')).toBeNull())
+  })
+})
+
+describe('Settings — 工作流管理面板', () => {
+  const WF_FIXTURES = [
+    { name: 'security-audit', description: '内置审计', source: 'builtin', overrides: null },
+    {
+      name: 'my-wf',
+      description: '自定义工作流',
+      source: 'user',
+      overrides: 'builtin' as const,
+    },
+  ]
+
+  it('渲染工作流列表：来源徽标 + 覆盖徽标，内置行无编辑/删除', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const { workflowsAPI } = await import('../services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: WF_FIXTURES })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(2))
+
+    expect(screen.getByText('内置')).toBeTruthy()
+    expect(screen.getByText('用户')).toBeTruthy()
+    // 项目级工作流同名覆盖内置时明示「覆盖内置」
+    expect(screen.getByText('覆盖内置')).toBeTruthy()
+
+    const builtinRow = screen.getByText('security-audit').closest('[data-testid="workflow-row"]')
+    expect(within(builtinRow as HTMLElement).queryByTestId('workflow-edit')).toBeNull()
+    expect(within(builtinRow as HTMLElement).queryByTestId('workflow-delete')).toBeNull()
+    expect(within(builtinRow as HTMLElement).queryByTestId('workflow-view')).toBeTruthy()
+  })
+
+  it('新建工作流：非法名称被拒；合法名称保存（无项目上下文默认 target=user）', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const { workflowsAPI } = await import('../services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: [] })
+    ;(workflowsAPI.save as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('workflow-add')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('workflow-add'))
+
+    // 非法名称（大写/下划线）被拒，不发起请求
+    fireEvent.change(screen.getByTestId('workflow-name-input'), { target: { value: 'Bad_Name' } })
+    fireEvent.click(screen.getByTestId('workflow-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workflow-panel-error').textContent).toContain('不合法'),
+    )
+    expect(workflowsAPI.save).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByTestId('workflow-name-input'), { target: { value: 'my-wf' } })
+    fireEvent.click(screen.getByTestId('workflow-save'))
+    await waitFor(() => expect(workflowsAPI.save).toHaveBeenCalled())
+    // mutationFn 首参为 payload（react-query 会把 context 作为第二参传入）
+    const payload = (workflowsAPI.save as Mock).mock.calls[0]?.[0] as {
+      name: string
+      source: string
+      target: string
+    }
+    expect(payload.name).toBe('my-wf')
+    expect(payload.target).toBe('user')
+    expect(payload.source).toContain('export default async function workflow')
+  })
+
+  it('删除工作流：必须输入确认词才可确认，成功后调用 remove', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const { workflowsAPI } = await import('../services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({
+      workflows: [WF_FIXTURES[1]],
+    })
+    ;(workflowsAPI.remove as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(1))
+    fireEvent.click(screen.getByTestId('workflow-delete'))
+
+    const confirmBtn = screen.getByTestId('danger-confirm-btn') as HTMLButtonElement
+    expect(confirmBtn.disabled).toBe(true)
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: 'my-wf' } })
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
+    await waitFor(() => expect(workflowsAPI.remove).toHaveBeenCalledWith('my-wf', undefined))
   })
 })

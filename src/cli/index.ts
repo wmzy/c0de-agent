@@ -162,11 +162,12 @@ async function withAgentDeps(
   fn: (config: Config, deps: LoopDeps) => Promise<void>,
 ): Promise<void> {
   const config = await loadConfig(cwd)
-  // P1-2：--budget-action 覆盖（warn=不中止；abort=超支中止，内部映射为 config pause）。
-  // CLI 无「恢复」UI，预算动作为 pause 时在入口显式提示——此前「护栏」会静默变成
-  // 「长任务中途硬中止且无断点续跑」，用户易误设全局 pause 后丢进度。
+  // P1-2：--budget-action 覆盖（warn=不中止；abort=超支中止）。
+  // 直接映射为 config 的 abort 动作（不再借 'pause' 中转）：
+  // 预算预检、buildAgentDeps 的 budgetAbort 注入、超支判定文案三处口径一致。
+  // CLI 无「恢复」UI，config 的 pause 在此等效 abort。
   if (opts.budgetAction) {
-    const action = opts.budgetAction === 'abort' ? ('pause' as const) : ('warn' as const)
+    const action = opts.budgetAction === 'abort' ? ('abort' as const) : ('warn' as const)
     config.usage = { ...config.usage, budgetAction: action, tokenBudgetAction: action }
   }
   const budgetWillAbort =
@@ -180,8 +181,14 @@ async function withAgentDeps(
     (config.usage?.monthlyTokenBudget ?? 0) > 0 ||
     (config.usage?.globalMonthlyTokenBudget ?? 0) > 0
   if (opts.budgetAction === undefined && budgetWillAbort && budgetConfigured) {
+    // 文案按配置实际动作区分：pause 与 abort 在 CLI 下都等价于中止本次 run，
+    // 但用户应知道自己配置的是什么。
+    const effective =
+      config.usage?.budgetAction === 'abort' || config.usage?.tokenBudgetAction === 'abort'
+        ? 'abort'
+        : 'pause'
     process.stderr.write(
-      '[c0de] ⚠ 预算动作为 pause：CLI 无「恢复」交互，超预算将中止本次 run（无断点续跑）。' +
+      `[c0de] ⚠ 预算动作为 ${effective}：CLI 无「恢复」交互，超预算将中止本次 run（无断点续跑）。` +
         '如需仅告警不中止，加 `--budget-action warn`。\n',
     )
   }

@@ -23,6 +23,7 @@ const base: ChatState = {
   compactionNotice: null,
   runPaused: false,
   runPauseReason: null,
+  workflowProgress: null,
 }
 
 function asst(parts: MessageContent[]): Message[] {
@@ -90,6 +91,24 @@ describe('reduceChatEvent', () => {
   it('done 结束流式', () => {
     const s = reduceChatEvent(base, { _tag: 'done' })
     expect(s.isStreaming).toBe(false)
+  })
+
+  it('progress 设置工作流进度横幅，done 清除', () => {
+    let s = reduceChatEvent(base, { _tag: 'progress', message: '并行扫描 12 个模块...' })
+    expect(s.workflowProgress).toEqual({
+      message: '并行扫描 12 个模块...',
+      detail: undefined,
+    })
+    s = reduceChatEvent(s, { _tag: 'done' })
+    expect(s.workflowProgress).toBeNull()
+  })
+
+  it('error 清除工作流进度横幅', () => {
+    let s = reduceChatEvent(base, { _tag: 'progress', message: '生成报告...' })
+    const err: AgentError = { _tag: 'provider', message: 'boom', retryable: false }
+    s = reduceChatEvent(s, { _tag: 'error', error: err })
+    expect(s.workflowProgress).toBeNull()
+    expect(s.error).toBe('boom')
   })
 
   it('llm_detail 是纯通知，状态不变（调用详情由 query 刷新）', () => {
