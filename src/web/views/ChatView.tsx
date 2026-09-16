@@ -299,7 +299,12 @@ function DraftSession({ projectId }: { projectId: string }) {
         </>
       }
       toolToggle={
-        <ToolToggle enabled={enabledTools} onChange={setEnabledTools} disabled={creating} />
+        <ToolToggle
+          enabled={enabledTools}
+          onChange={setEnabledTools}
+          disabled={creating}
+          projectId={projectId}
+        />
       }
       topPanel={<SetupBanner projectId={projectId} />}
       supportsVision

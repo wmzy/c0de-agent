@@ -120,14 +120,24 @@ function createChatRoute(ctx: ServerContext): Hono {
         )
       }
       for (const img of images) {
-        if (typeof img.data === 'string' && img.data.length > MAX_IMAGE_BYTES) {
-          const mb = (img.data.length / (1024 * 1024)).toFixed(1)
-          return apiError(
-            c,
-            400,
-            'IMAGE_TOO_LARGE',
-            `图片大小 ${mb}MB 超过上限 ${MAX_IMAGE_BYTES / (1024 * 1024)}MB`,
-          )
+        // P3：按解码字节校验（base64 字符串长度比真实字节约大 33%）；
+        // 无法解码（非法 base64/含 dataURL 前缀等）时按字符串长度保守拦截。
+        if (typeof img.data === 'string') {
+          let bytes = img.data.length
+          try {
+            bytes = Buffer.from(img.data, 'base64').length
+          } catch {
+            // 解码失败保留字符串长度兜底
+          }
+          if (bytes > MAX_IMAGE_BYTES) {
+            const mb = (bytes / (1024 * 1024)).toFixed(1)
+            return apiError(
+              c,
+              400,
+              'IMAGE_TOO_LARGE',
+              `图片大小 ${mb}MB 超过上限 ${MAX_IMAGE_BYTES / (1024 * 1024)}MB`,
+            )
+          }
         }
       }
     }
@@ -140,6 +150,12 @@ function createChatRoute(ctx: ServerContext): Hono {
     }
     if (!session) {
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    }
+    // P2 修复：拒绝向回收站会话发消息——此前 getSession 不检查 deletedAt，
+    // API 直调可继续向软删除会话写消息，与「删除」心智模型冲突
+    // （CLI --continue 已拒绝，Web API 未对齐）。前端正常流程不会触发（会话 404）。
+    if (session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除（如需继续对话请先从回收站恢复）')
     }
 
     // P2：会话级权限覆盖持久化在 metadata——重启后从 DB 恢复到内存 Map，
@@ -378,7 +394,12 @@ function createChatRoute(ctx: ServerContext): Hono {
               },
               onPermissionExpired: (req) => {
                 if (permissionTimeoutAction === 'pause') {
+                  // P1 级联暂停：与主 chat 通道 pauseSessionRun 同口径——
+                  // 仅暂停父 run 会让子 agent 在用户缺席时继续执行。
                   ctx.agentManager.pause(workflowSession.id, PERMISSION_TIMEOUT_PAUSE_REASON)
+                  for (const child of ctx.agentManager.children(workflowSession.id)) {
+                    ctx.agentManager.pause(child.sessionId, PERMISSION_TIMEOUT_PAUSE_REASON)
+                  }
                 }
                 stream
                   .writeSSE({
@@ -1145,7 +1166,10 @@ function createChatRoute(ctx: ServerContext): Hono {
     if (starting) return starting
     const message = typeof body.message === 'string' ? body.message.trim() : ''
     if (!message) return c.json({ steered: false })
-    const steered = ctx.agentManager.steer(body.sessionId, message)
+    // P1 工作流路由：工作流运行期间 steer 目标为实际的 workflow run
+    //（此前 steer 恒 false、指令静默丢失，用户以为已生效）。
+    const busyWorkflowId = ctx.workflowBusyBySession.get(body.sessionId)
+    const steered = ctx.agentManager.steer(busyWorkflowId ?? body.sessionId, message)
     // P0 闭环：steering 持久化为会话条目——用户运行中输入追加指令曾是内存瞬态，
     // 刷新后彻底丢失；现在与消息同样入史（context 重建时作为 system 消息注入，
     // 时间线经 /messages 渲染为 user steering 块）。

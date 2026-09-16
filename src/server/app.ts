@@ -48,6 +48,9 @@ function createApp(ctx: ServerContext): Hono {
         '/api/auth/pairing/status',
       ],
       allowedOrigins: ctx.config.security.allowedOrigins,
+      // P1 媒体预览：文件 raw 端点（FilePreview 的 img/audio/video/embed src）
+      // 无法携带 Authorization 头，接受 ?token= query 认证（仅 GET raw 路径）。
+      queryTokenPath: (p) => p.startsWith('/api/files/') && p.endsWith('/raw'),
       ...(ctx.authManager ? { verify: (t) => ctx.authManager?.verify(t) ?? false } : {}),
     }),
   )

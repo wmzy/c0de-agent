@@ -6,6 +6,7 @@ import { Dialog } from '../components/Dialog.js'
 import { Markdown } from '../components/Markdown.js'
 import { useFileSelection } from '../contexts/FileSelectionContext.js'
 import { useFileReference } from '../contexts/ReferenceContext.js'
+import { getAuthToken } from '../services/api.js'
 import { fileAPI } from '../services/file.js'
 
 const wrap = css`
@@ -162,7 +163,11 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   const isMedia =
     IMG_EXT.includes(ext) || AUDIO_EXT.includes(ext) || VIDEO_EXT.includes(ext) || ext === 'pdf'
 
+  // P1 媒体预览：img/audio/video/embed 无法携带 Authorization 头，
+  // 经 ?token= query 认证（服务端仅对 /api/files/*/raw 白名单路径接受）。
   const projectQuery = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
+  const token = getAuthToken()
+  const mediaQuery = `${projectQuery}${token ? `${projectQuery ? '&' : '?'}token=${encodeURIComponent(token)}` : ''}`
 
   const q = useQuery({
     queryKey: ['file', path, projectId],
@@ -179,7 +184,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     if (IMG_EXT.includes(ext)) {
       body = (
         <img
-          src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
+          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
           alt={path}
           className={mediaImg}
         />
@@ -187,7 +192,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     } else if (ext === 'pdf') {
       body = (
         <embed
-          src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
+          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
           type="application/pdf"
           className={embedFill}
           data-testid="pdf-preview"
@@ -197,7 +202,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       body = (
         <audio
           controls
-          src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
+          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
           className={audioFull}
           data-testid="audio-preview"
         >
@@ -208,7 +213,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       body = (
         <video
           controls
-          src={`/api/files/${encodeURI(path)}/raw${projectQuery}`}
+          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
           className={mediaImg}
           data-testid="video-preview"
         >

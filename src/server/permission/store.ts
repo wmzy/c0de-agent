@@ -55,6 +55,8 @@ type PermissionStore = {
   size(): number
   /** 查询某会话当前挂起的权限请求（P1：前端重挂弹窗；无则 null）。 */
   pendingForSession(sessionId: string): PermissionRequest | null
+  /** P3：统计指定会话集合内的挂起请求数（update 影响面按受影响会话过滤用）。 */
+  countForSessions(sessionIds: ReadonlySet<string>): number
   /** settle 所有 pending 为 deny 并清空（dev 热重载重建前调用）。 */
   dispose(): void
 }
@@ -121,6 +123,13 @@ function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionSto
         if (p.request.sessionId === sessionId) return p.request
       }
       return null
+    },
+    countForSessions(sessionIds) {
+      let n = 0
+      for (const p of pending.values()) {
+        if (p.request.sessionId && sessionIds.has(p.request.sessionId)) n += 1
+      }
+      return n
     },
     dispose() {
       // dev 热重载重建前调用：所有 pending settle 为 deny（避免悬空 Promise +

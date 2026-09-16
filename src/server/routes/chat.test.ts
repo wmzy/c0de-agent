@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { eq } from 'drizzle-orm'
 import type { SSEStreamingApi } from 'hono/streaming'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG } from '../../core/config.js'
@@ -9,10 +10,16 @@ import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
+import { sessions } from '../../db/schema.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory, trustProject } from '../../project/project.js'
 import { appendMessage, getEntries } from '../../session/message.js'
-import { createSession, getLLMSegments, listAllSessions } from '../../session/session.js'
+import {
+  createSession,
+  getLLMSegments,
+  getSession,
+  listAllSessions,
+} from '../../session/session.js'
 import { getFileSnapshots } from '../../session/snapshot.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
@@ -102,6 +109,24 @@ describe('chat route (SSE)', () => {
       body: JSON.stringify({ sessionId: 'nonexistent', message: 'hi' }),
     })
     expect(res.status).toBe(404)
+  })
+
+  it('P2：POST / 拒绝回收站会话（与删除心智模型对齐，不再向软删除会话写消息）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    const session = await getSession(ctx.db, sessionId)
+    if (!session) throw new Error('session missing')
+    await ctx.db.db
+      .update(sessions)
+      .set({ deletedAt: new Date() })
+      .where(eq(sessions.id, sessionId))
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('NOT_FOUND')
   })
 
   it('POST / streams agent events', async () => {
@@ -748,6 +773,35 @@ describe('chat route (control endpoints)', () => {
     })
     expect(res.status).toBe(200)
     expect(((await res.json()) as { steered: boolean }).steered).toBe(false)
+  })
+
+  it('P1：工作流运行期间 steer 路由到实际 workflow run（此前恒 false 静默丢失）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    const wfSession = await createSession(
+      ctx.db,
+      'workflow: deploy 01-01 00:00',
+      undefined,
+      'workflow',
+    )
+    ctx.workflowBusyBySession.set(sessionId, wfSession.id)
+    ctx.agentManager.register({
+      sessionId: wfSession.id,
+      state: { steeringQueue: [] } as never,
+      deps: {} as never,
+    })
+
+    const res = await app.request('/steer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '改用 pnpm 安装' }),
+    })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { steered: boolean }).steered).toBe(true)
+    // 指令已注入 workflow run 的 steering 队列（路由到 busy 映射的工作流会话）
+    const wfRun = ctx.agentManager.get(wfSession.id)
+    expect(wfRun).toBeDefined()
+    const steeringQueue = (wfRun?.state as { steeringQueue: string[] } | undefined)?.steeringQueue
+    expect(steeringQueue).toContain('改用 pnpm 安装')
   })
 })
 

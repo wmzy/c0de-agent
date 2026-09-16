@@ -127,8 +127,56 @@ describe('createAuthMiddleware', () => {
     app.post('/api/x', (c) => c.json({ ok: true }))
     const res = await app.request('/api/x', {
       method: 'POST',
-      headers: { Origin: 'https://evil.example' },
+      headers: { Origin: 'https://evil.example', Authorization: 'Bearer wrong' },
     })
     expect(res.status).toBe(401)
+  })
+
+  describe('queryTokenPath（P1 媒体预览）', () => {
+    const appWithQuery = (token: string | undefined) => {
+      const app = new Hono()
+      app.use(
+        '/api/*',
+        createAuthMiddleware(token, {
+          queryTokenPath: (p) => p.startsWith('/api/files/') && p.endsWith('/raw'),
+        }),
+      )
+      app.get('/api/files/a.png/raw', (c) => c.json({ ok: true }))
+      app.get('/api/files/a.png', (c) => c.json({ ok: true }))
+      app.get('/api/x', (c) => c.json({ ok: true }))
+      return app
+    }
+
+    it('白名单 raw 路径 + 正确 ?token= → 放行（媒体元素无 Authorization 头）', async () => {
+      const res = await appWithQuery('secret-token').request(
+        '/api/files/a.png/raw?token=secret-token',
+      )
+      expect(res.status).toBe(200)
+    })
+
+    it('白名单 raw 路径 + 错误 ?token= → 401', async () => {
+      const res = await appWithQuery('secret-token').request('/api/files/a.png/raw?token=wrong')
+      expect(res.status).toBe(401)
+    })
+
+    it('非白名单路径不接受 ?token=（query 认证不泄漏到其他端点）', async () => {
+      const app = appWithQuery('secret-token')
+      const rawNonMatch = await app.request('/api/files/a.png?token=secret-token')
+      expect(rawNonMatch.status).toBe(401)
+      const xRes = await app.request('/api/x?token=secret-token')
+      expect(xRes.status).toBe(401)
+    })
+
+    it('Authorization 头有效时不检查 query（头优先，无效 query 不影响）', async () => {
+      const res = await appWithQuery('secret-token').request('/api/files/a.png/raw?token=garbage', {
+        headers: { Authorization: 'Bearer secret-token' },
+      })
+      expect(res.status).toBe(200)
+    })
+
+    it('未配置 token 时照常放行（本地开发）', async () => {
+      const res = await appWithQuery(undefined).request('/api/files/a.png/raw')
+      expect(res.status).toBe(200)
+    })
   })
 })

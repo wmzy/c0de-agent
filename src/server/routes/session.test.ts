@@ -272,6 +272,36 @@ describe('session route', () => {
     expect(Array.isArray(details)).toBe(true)
   })
 
+  it('P3：回收站会话不可改名（与详情读取 404 口径一致）', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Rename Me', projectId: TEST_PROJECT }),
+    })
+    const created = (await createRes.json()) as Session
+    await app.request(`/${created.id}`, { method: 'DELETE' })
+    const res = await app.request(`/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Renamed' }),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('P3：回收站会话的 llm-details 404（会话本身已不可达）', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Detail Trash', projectId: TEST_PROJECT }),
+    })
+    const created = (await createRes.json()) as Session
+    await app.request(`/${created.id}`, { method: 'DELETE' })
+    const res = await app.request(`/${created.id}/llm-details`)
+    expect(res.status).toBe(404)
+  })
+
   it('GET /:id/status 无活跃 run 返回 idle', async () => {
     const { app } = await setup()
     const createRes = await app.request('/', {
@@ -1010,6 +1040,37 @@ describe('session route', () => {
       const res = await app.request(`/${session.id}`, { method: 'DELETE' })
       expect(res.status).toBe(204)
       expect(abortSpy).toHaveBeenCalledWith(session.id)
+    })
+
+    it('P1：删除发起会话时一并中止其进行中的工作流 run（busy 映射路由）', async () => {
+      const { app, ctx } = await setup()
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'workflow-initiator', projectId: TEST_PROJECT }),
+      })
+      const session = (await created.json()) as Session
+      const wfSession = await createSession(
+        ctx.db,
+        'workflow: deploy 01-01 00:00',
+        TEST_PROJECT,
+        'workflow',
+      )
+      // 模拟 /workflow run：busy 映射 + 工作流会话活跃 run
+      ctx.workflowBusyBySession.set(session.id, wfSession.id)
+      ctx.agentManager.register({
+        sessionId: wfSession.id,
+        state: {
+          abortController: new AbortController(),
+          status: { _tag: 'running', turnCount: 0, currentTool: undefined },
+        } as never,
+        deps: {} as never,
+      })
+      const abortSpy = vi.spyOn(ctx.agentManager, 'abort')
+
+      const res = await app.request(`/${session.id}`, { method: 'DELETE' })
+      expect(res.status).toBe(204)
+      expect(abortSpy).toHaveBeenCalledWith(wfSession.id)
     })
   })
 

@@ -39,6 +39,24 @@ async function seedCard(app: ReturnType<typeof createKanbanRoute>) {
 }
 
 describe('kanban export/import', () => {
+  it('P2：恢复到不存在的项目 → 404 PROJECT_NOT_FOUND（与会话恢复口径一致）', async () => {
+    const { app, db } = await setup()
+    await seedCard(app)
+    const { softDeleteKanbanBoard } = await import('../../kanban/index.js')
+    const boards = await db.db.query.kanbanBoards.findMany()
+    const boardId = boards[0]?.id
+    if (!boardId) throw new Error('board not seeded')
+    await softDeleteKanbanBoard(db, PROJECT_ID, null)
+
+    const res = await app.request(`/deleted/${boardId}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'nonexistent-project' }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('PROJECT_NOT_FOUND')
+  })
   it('导出包含 version/projectId/columns/labels/cards，且卡片不含内部字段', async () => {
     const { app } = await setup()
     await seedCard(app)

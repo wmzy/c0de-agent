@@ -147,4 +147,53 @@ describe('resolveEnabledToolNames 语义（P1-1：空=无工具 fail-closed）',
       resolveEnabledToolNames(registry, { tools: { enabled: ['read'], disabled: [] } }, []),
     ).toEqual([])
   })
+
+  describe('P2 交集语义：explicit 不能扩大 config.tools.enabled 的禁用面', () => {
+    it("enabled: ['read'] + explicit ['bash'] → 交集为空（配置是上限）", () => {
+      expect(
+        resolveEnabledToolNames(registry, { tools: { enabled: ['read'], disabled: [] } }, ['bash']),
+      ).toEqual([])
+    })
+
+    it("enabled: ['read','bash'] + explicit ['bash','write'] → ['bash']", () => {
+      expect(
+        resolveEnabledToolNames(registry, { tools: { enabled: ['read', 'bash'], disabled: [] } }, [
+          'bash',
+          'write',
+        ]),
+      ).toEqual(['bash'])
+    })
+
+    it("enabled: [] + explicit ['bash'] → 空（fail-closed 不可被请求绕过）", () => {
+      expect(
+        resolveEnabledToolNames(registry, { tools: { enabled: [], disabled: [] } }, ['bash']),
+      ).toEqual([])
+    })
+
+    it("enabled: ['*'] + explicit ['bash'] → 原样生效（通配无上限）", () => {
+      expect(
+        resolveEnabledToolNames(registry, { tools: { enabled: ['*'], disabled: [] } }, ['bash']),
+      ).toEqual(['bash'])
+    })
+
+    it('enabled 未配置 + explicit → 原样生效（未配置视为通配）', () => {
+      expect(
+        resolveEnabledToolNames(registry, { tools: { enabled: ['*'], disabled: [] } }, ['bash']),
+      ).toEqual(['bash'])
+      // 未配置 enabled（无 tools 键）同样视为通配
+      expect(
+        resolveEnabledToolNames(registry, { tools: { disabled: [] } } as never, ['bash']),
+      ).toEqual(['bash'])
+    })
+
+    it('交集后 disabled 仍恒过滤', () => {
+      expect(
+        resolveEnabledToolNames(
+          registry,
+          { tools: { enabled: ['read', 'bash'], disabled: ['bash'] } },
+          ['bash', 'read'],
+        ),
+      ).toEqual(['read'])
+    })
+  })
 })

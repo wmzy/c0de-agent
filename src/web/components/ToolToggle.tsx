@@ -133,17 +133,20 @@ export function ToolToggle({
   enabled,
   onChange,
   disabled,
+  projectId,
 }: {
   enabled: Set<string> | null
   onChange: (next: Set<string> | null) => void
   disabled?: boolean
+  /** P2 交集语义：工具列表按该项目合并配置过滤（与服务端解析同口径）。 */
+  projectId?: string
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   const { data: tools, isLoading } = useQuery({
-    queryKey: ['tools'],
-    queryFn: () => toolAPI.list(),
+    queryKey: ['tools', projectId ?? 'server'],
+    queryFn: () => toolAPI.list(projectId),
     staleTime: 60_000,
   })
 

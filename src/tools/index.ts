@@ -120,8 +120,11 @@ export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
 /**
  * 解析本轮启用的工具名列表（config.tools.enabled/disabled 双入口统一生效）。
  *
- * 语义（P1-1 修复「空=全部」安全陷阱）：
- * - explicit（前端显式选择）非 undefined → 以其为准（显式空数组 = 无工具，fail-closed）。
+ * 语义（P1-1 修复「空=全部」安全陷阱 + P2 交集收紧）：
+ * - explicit（前端显式选择）非 undefined → 与 config.tools.enabled 取交集——
+ *   enabled 含 '*' 或未配置时视为无上限（explicit 原样生效）。此前 explicit 完全
+ *   覆盖 enabled：config.tools.enabled=[] 的 fail-closed 语义可被请求级 tools
+ *   静默绕过，设置页「禁用全部」与实际行为矛盾。
  * - 否则 config.tools.enabled：含 '*'（通配）→ 全部注册工具；
  *   空数组 → 无工具（fail-closed）；否则 → 显式名单。
  * - disabled 恒过滤（registry 已排除，此处兜底）。
@@ -134,10 +137,13 @@ export function resolveEnabledToolNames(
   const all = listTools(registry).map((t) => t.name)
   const disabled = new Set(config.tools?.disabled ?? [])
   const enabled = config.tools?.enabled
+  const enabledIsWildcard = enabled === undefined || (enabled.length > 0 && enabled.includes('*'))
   const base =
     explicit !== undefined
-      ? explicit
-      : enabled && enabled.length > 0 && enabled.includes('*')
+      ? enabledIsWildcard
+        ? explicit
+        : explicit.filter((n) => enabled.includes(n))
+      : enabledIsWildcard
         ? all
         : (enabled ?? [])
   return base.filter((n) => all.includes(n) && !disabled.has(n))

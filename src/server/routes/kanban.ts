@@ -12,7 +12,7 @@ import {
   permanentlyDeleteKanbanBoard,
   restoreKanbanBoard,
 } from '../../kanban/index.js'
-import { fromDirectory } from '../../project/index.js'
+import { fromDirectory, getProject } from '../../project/index.js'
 import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shared/types/kanban.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -66,6 +66,10 @@ function createKanbanRoute(ctx: ServerContext): Hono {
 
     const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
     if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', '恢复目标项目（projectId）必填')
+    // P2 修复：目标项目必须存在（与会话恢复口径一致）——此前不校验，
+    // 可恢复出挂在不存在项目下、任何视图都不可见的看板。
+    const target = await getProject(ctx.db, projectId)
+    if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '恢复目标项目不存在')
     const result = await restoreKanbanBoard(ctx.db, boardId, projectId)
     if (result.ok) return c.json({ ok: true })
     if (result.reason === 'TARGET_HAS_BOARD') {

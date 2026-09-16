@@ -149,6 +149,34 @@ describe('files route', () => {
     expect(await res.text()).toBe('Hello World')
   })
 
+  describe('P2 raw 内容类型与安全头', () => {
+    it('html 不再以 text/html 同源直出（改 octet-stream）', async () => {
+      const { app, dir } = await setupWithDir()
+      writeFileSync(join(dir, 'evil.html'), '<script>alert(1)</script>')
+      const res = await app.request('/evil.html/raw')
+      expect(res.status).toBe(200)
+      const ct = res.headers.get('content-type') ?? ''
+      expect(ct).not.toContain('text/html')
+      expect(ct).toContain('application/octet-stream')
+    })
+
+    it('raw 响应带 nosniff（防浏览器把未知类型嗅探为可执行文档）', async () => {
+      const { app } = await setupWithDir()
+      const res = await app.request('/hello.txt/raw')
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    })
+
+    it('svg raw 保留 image/svg+xml 供 img 预览，但附加沙箱 CSP 兜底直接导航', async () => {
+      const { app, dir } = await setupWithDir()
+      writeFileSync(join(dir, 'a.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
+      const res = await app.request('/a.svg/raw')
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('image/svg+xml')
+      const csp = res.headers.get('content-security-policy') ?? ''
+      expect(csp).toContain('sandbox')
+    })
+  })
+
   it('GET /search without q returns 400', async () => {
     const { app } = await setupWithDir()
     const res = await app.request('/search')

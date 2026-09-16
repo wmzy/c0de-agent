@@ -11,6 +11,11 @@ export type AuthOptions = {
    *  服务的 POST/DELETE 等请求副作用仍会执行，只是读不到响应。开启认证（token/verify
    *  存在）时凭 token 校验已构成防线，此项不生效。 */
   allowedOrigins?: string[]
+  /** 允许经 `?token=` 查询参数认证的路径判定（P1 媒体预览修复：浏览器
+   *  <img>/<audio>/<video>/<embed> 元素无法携带 Authorization 头，与终端
+   *  WebSocket 的 query token 同口径）。仅当 Authorization 头缺失/无效时才
+   *  检查 query token——头优先，不会因路径匹配而放行任意 query token。 */
+  queryTokenPath?: (path: string) => boolean
 }
 
 /**
@@ -28,6 +33,7 @@ export function createAuthMiddleware(
 ): MiddlewareHandler {
   const expected = token && token.length > 0 ? `Bearer ${token}` : ''
   const publicPaths = new Set(opts.publicPaths ?? ['/api/health'])
+  const queryTokenPath = opts.queryTokenPath
   return async (c: Context, next: () => Promise<void>) => {
     if (!expected && !opts.verify) {
       // 认证关闭：无 token 可验证。带 Origin 的非安全方法（浏览器跨域写）需显式放行
@@ -52,8 +58,17 @@ export function createAuthMiddleware(
       await next()
       return
     }
-    const auth = c.req.header('Authorization') ?? ''
-    const ok = opts.verify ? opts.verify(auth.replace(/^Bearer\s+/i, '')) : auth === expected
+    const headerAuth = c.req.header('Authorization') ?? ''
+    let ok = opts.verify
+      ? opts.verify(headerAuth.replace(/^Bearer\s+/i, ''))
+      : headerAuth === expected
+    // P1 媒体预览：浏览器媒体元素无 Authorization 头——对判定命中的路径尝试
+    // query token 认证。头已有效则不再检查（头优先）；路径不匹配时 query token
+    // 不参与判定，仅在白名单路径上接受 query 认证。
+    if (!ok && queryTokenPath?.(c.req.path)) {
+      const queryToken = c.req.query('token') ?? ''
+      ok = opts.verify ? opts.verify(queryToken) : `Bearer ${queryToken}` === expected
+    }
     if (!ok) {
       return apiError(c, 401, 'UNAUTHORIZED', 'Missing or invalid bearer token')
     }

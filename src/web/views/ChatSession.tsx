@@ -530,6 +530,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             enabled={enabledTools}
             onChange={setEnabledTools}
             disabled={chat.isStreaming}
+            projectId={projectId}
           />
         }
         bottomPanel={<TodoPanel sessionId={sessionId} projectId={projectId} />}

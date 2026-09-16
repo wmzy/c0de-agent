@@ -72,6 +72,16 @@ describe('ToolToggle', () => {
     })
   })
 
+  it('P2：projectId 传入时工具列表按项目过滤（queryKey 按项目分桶，list 带 projectId）', async () => {
+    mockTools()
+    renderWithClient(<ToolToggle enabled={null} onChange={vi.fn()} projectId="proj-1" />)
+    await waitFor(() => expect(toolAPI.list).toHaveBeenCalled())
+    expect(toolAPI.list).toHaveBeenCalledWith('proj-1')
+    // 切换项目不复用上一项目的列表缓存（queryKey 含 projectId）
+    renderWithClient(<ToolToggle enabled={null} onChange={vi.fn()} projectId="proj-2" />)
+    await waitFor(() => expect(toolAPI.list).toHaveBeenCalledWith('proj-2'))
+  })
+
   it('点击触发按钮展开工具列表', async () => {
     mockTools()
     renderWithClient(<ToolToggle enabled={null} onChange={vi.fn()} />)

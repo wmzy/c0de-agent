@@ -44,6 +44,8 @@ const agentManagerMock = {
 const ptyManagerMock = {
   list: vi.fn(),
 }
+/** P3：workflow busy 映射 mock（多数用例为空 Map）。 */
+const workflowBusyMock = new Map<string, string>()
 
 /** 构造带 mock scheduler 的 ctx；getLastResult / checkNow 行为由用例控制。 */
 function makeCtx(opts: {
@@ -70,8 +72,10 @@ function makeCtx(opts: {
     },
     agentManager: agentManagerMock,
     ptyManager: ptyManagerMock,
-    // P3-9：影响面含待确认权限数（GET / 读取 size()）。
-    permissionStore: { size: () => 0 },
+    // P3：受影响会话集合含 workflow busy 发起/工作流会话。
+    workflowBusyBySession: workflowBusyMock,
+    // P3-9：影响面含待确认权限数（GET / 读取 size()；P3 后按会话集合过滤）。
+    permissionStore: { size: () => 0, countForSessions: () => 0 },
     db: {},
     port: 3000,
     handoff:
@@ -94,6 +98,7 @@ beforeEach(() => {
   agentManagerMock.isStarting.mockReset().mockReturnValue(false)
   agentManagerMock.listActive.mockReset().mockReturnValue([])
   ptyManagerMock.list.mockReset().mockReturnValue([])
+  workflowBusyMock.clear()
 })
 
 describe('GET /api/update', () => {
@@ -136,6 +141,34 @@ describe('GET /api/update', () => {
     expect(body.impact.terminalCount).toBe(2)
     // P3-9：待确认权限数透出（mock 固定 0）
     expect(body.impact.pendingPermissionCount).toBe(0)
+  })
+
+  it('P3：权限计数只统计受影响会话（活跃 run + workflow busy 发起/工作流会话）', async () => {
+    const ctx = makeCtx({
+      lastResult: { hasUpdate: true, currentVersion: '0.1.0', latestVersion: '0.2.0' },
+    })
+    agentManagerMock.listActive.mockReturnValue([
+      { sessionId: 'run-1' },
+      { sessionId: 'run-child', parentSessionId: 'run-1' },
+    ])
+    workflowBusyMock.set('initiator-1', 'wf-1')
+    const captured: Set<string>[] = []
+    ;(ctx.permissionStore as { countForSessions: (s: Set<string>) => number }).countForSessions = (
+      ids,
+    ) => {
+      captured.push(new Set(ids))
+      return 2
+    }
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { impact: { pendingPermissionCount: number } }
+    expect(body.impact.pendingPermissionCount).toBe(2)
+    const ids = captured[0] as Set<string>
+    expect(ids.has('run-1')).toBe(true)
+    expect(ids.has('run-child')).toBe(true)
+    expect(ids.has('initiator-1')).toBe(true)
+    expect(ids.has('wf-1')).toBe(true)
   })
 
   it('P3-7：impact 终端含检测到的前台命令（确认框据此勾选重启）', async () => {

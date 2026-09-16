@@ -37,8 +37,8 @@ type SearchResult = {
 /** 递归搜索时跳过的目录（体积大/为元数据噪音，避免递归进入）。 */
 const SEARCH_SKIP_DIRS = new Set(['.git', 'node_modules'])
 
-/** 递归收集文件列表（用于搜索）。 */
-async function collectFiles(dir: string, basePath: string, maxDepth = 5): Promise<SearchResult[]> {
+/** 递归收集文件列表（用于搜索）。P3：深度上限 5 → 8，深层文件此前搜不到。 */
+async function collectFiles(dir: string, basePath: string, maxDepth = 8): Promise<SearchResult[]> {
   if (maxDepth < 0) return []
   const results: SearchResult[] = []
   let entries: import('node:fs').Dirent[]
@@ -80,7 +80,6 @@ function contentTypeFor(name: string): string {
     webm: 'video/webm',
     mov: 'video/quicktime',
     json: 'application/json; charset=utf-8',
-    html: 'text/html; charset=utf-8',
     md: 'text/markdown; charset=utf-8',
     txt: 'text/plain; charset=utf-8',
     ts: 'text/plain; charset=utf-8',
@@ -416,9 +415,21 @@ ${summary.diff.slice(0, 8000)}`
     try {
       if (raw) {
         const buf = await readFile(resolved)
+        // P2 加固：raw 同源直出，nosniff 防「工作区内 html/svg 被浏览器当
+        // 活动文档执行」的同源 XSS 面；html 已改 octet-stream（见 contentTypeFor），
+        // svg 保留 image/svg+xml 供 <img> 预览（img 上下文中不执行脚本），
+        // 仅对 svg 附加沙箱 CSP 兜底「直接导航打开」场景。
+        const contentType = contentTypeFor(filePath)
         return c.body(buf, 200, {
-          'Content-Type': contentTypeFor(filePath),
+          'Content-Type': contentType,
           'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+          ...(contentType === 'image/svg+xml'
+            ? {
+                'Content-Security-Policy':
+                  "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+              }
+            : {}),
         })
       }
       const content = await readFile(resolved, 'utf-8')

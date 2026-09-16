@@ -119,12 +119,14 @@ function createProjectRoute(ctx: ServerContext): Hono {
       return apiError(c, 400, 'DIRECTORY_MISSING', `目录不存在或不可访问：${directory}`)
     }
 
-    // 活跃 run 守卫（与 DELETE 同语义）
+    // 活跃 run 守卫（与 DELETE 同语义；含 starting 占位态）
     const rows = await ctx.db.db
       .select({ id: sessions.id })
       .from(sessions)
       .where(eq(sessions.projectId, id))
-    const activeCount = rows.filter((r) => ctx.agentManager.get(r.id)).length
+    const activeCount = rows.filter(
+      (r) => ctx.agentManager.get(r.id) !== undefined || ctx.agentManager.isStarting(r.id),
+    ).length
     if (activeCount > 0) {
       return apiError(
         c,
@@ -158,26 +160,25 @@ function createProjectRoute(ctx: ServerContext): Hono {
     const project = await getProject(ctx.db, id)
     if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
 
-    // 活跃 run 守卫：任一活跃会话归属于该项目 → 拒绝
-    const activeSessionIds = new Set<string>()
-    for (const run of ctx.agentManager.children(id)) {
-      activeSessionIds.add(run.sessionId)
-    }
-    if (activeSessionIds.size === 0) {
-      // 检查该项目下是否有正在进行（含占位）的会话
-      const rows = await ctx.db.db
-        .select({ id: sessions.id, projectId: sessions.projectId })
-        .from(sessions)
-        .where(and(eq(sessions.projectId, id)))
-      const active = rows.filter((r) => ctx.agentManager.get(r.id))
-      if (active.length > 0) {
-        return apiError(
-          c,
-          409,
-          'PROJECT_HAS_ACTIVE_SESSIONS',
-          `项目下有 ${active.length} 个进行中的对话，请先中止后再删除`,
-        )
-      }
+    // 活跃 run 守卫：该项目下任一进行中（含占位 isStarting）的会话 → 拒绝。
+    // P1 修复：原实现先查 agentManager.children(projectId)——children 按
+    // parentSessionId（子 agent 归属）过滤，项目 id 恒不命中属死代码；且回退
+    // 检查只用 get() 漏掉 tryAcquire 后的 starting 占位态，窗口内删除会让 run
+    // 继续向已软删除会话写消息。现在直接按项目会话查 get()+isStarting()。
+    const rows = await ctx.db.db
+      .select({ id: sessions.id, projectId: sessions.projectId })
+      .from(sessions)
+      .where(and(eq(sessions.projectId, id)))
+    const active = rows.filter(
+      (r) => ctx.agentManager.get(r.id) !== undefined || ctx.agentManager.isStarting(r.id),
+    )
+    if (active.length > 0) {
+      return apiError(
+        c,
+        409,
+        'PROJECT_HAS_ACTIVE_SESSIONS',
+        `项目下有 ${active.length} 个进行中的对话，请先中止后再删除`,
+      )
     }
 
     let deletedSessions = 0

@@ -78,6 +78,26 @@ function createSessionRoute(ctx: ServerContext): Hono {
         '无效的会话导出 JSON：需要 version/session/messages 字段',
       )
     }
+    // P3：导入体积上限——导出文件可任意大，无上限的数组会让服务端
+    // 逐条插入时 OOM/长事务。上限按合理会话规模取 20 倍余量。
+    const MAX_IMPORT_MESSAGES = 20000
+    const MAX_IMPORT_ARCHIVES = 2000
+    if (body.messages.length > MAX_IMPORT_MESSAGES) {
+      return apiError(
+        c,
+        400,
+        'IMPORT_TOO_LARGE',
+        `导入消息数 ${body.messages.length} 超过上限 ${MAX_IMPORT_MESSAGES}`,
+      )
+    }
+    if (Array.isArray(body.archives) && body.archives.length > MAX_IMPORT_ARCHIVES) {
+      return apiError(
+        c,
+        400,
+        'IMPORT_TOO_LARGE',
+        `导入归档数 ${body.archives.length} 超过上限 ${MAX_IMPORT_ARCHIVES}`,
+      )
+    }
     const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
     if (!projectId) {
       return apiError(c, 400, 'PROJECT_REQUIRED', '导入会话必须指定目标项目（projectId）')
@@ -273,6 +293,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
     const session = await getSession(ctx.db, id)
     if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    // P3 口径统一：回收站会话不可改名（与 GET /:id、/messages 的 404 语义一致）。
+    if (session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     await updateSessionTitle(ctx.db, id, title)
     return c.json({ ok: true, title })
   })
@@ -305,11 +329,20 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
   })
 
-  // 删除会话（软删除：级联其 fork 后代进入回收站，30 天后物理清除）。
+  // 删除会话（软删除：级联其 fork 后代进入回收站，60 天后物理清除）。
   // P2 修复：删除运行中的会话前先中止其活跃 run（含子 agent）——
   // 否则 run 继续向已删除会话写入消息，用户以为已删除而 agent 仍在执行。
+  // P1 工作流路由：发起会话有进行中的工作流时一并中止 workflow run
+  //（此前仅中止会话自身 run + 子 agent，工作流继续后台执行且 busy 映射悬挂）。
   app.delete('/:id', async (c) => {
     const id = c.req.param('id')
+    const busyWorkflowId = ctx.workflowBusyBySession.get(id)
+    if (busyWorkflowId) {
+      ctx.agentManager.abort(busyWorkflowId)
+      for (const child of ctx.agentManager.children(busyWorkflowId)) {
+        ctx.agentManager.abort(child.sessionId)
+      }
+    }
     ctx.agentManager.abort(id)
     for (const child of ctx.agentManager.children(id)) {
       ctx.agentManager.abort(child.sessionId)
@@ -467,6 +500,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.get('/:id/llm-details', async (c) => {
     const run = ctx.agentManager.get(c.req.param('id'))
     if (run) return c.json(run.state.segments)
+    const session = await getSession(ctx.db, c.req.param('id'))
+    // P3 口径统一：回收站会话的持久化分段不再下发（会话本身已 404）。
+    if (!session || session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     const persisted = await getLLMSegments(ctx.db, c.req.param('id'))
     return c.json(persisted)
   })
@@ -527,10 +565,17 @@ function createSessionRoute(ctx: ServerContext): Hono {
   })
 
   // 获取会话状态：内存有活跃 run → 返回其 status；否则查 DB lastRun。
+  // P1 工作流路由：发起会话在 workflowBusyBySession 中时状态取实际 workflow run
+  //（此前工作流运行期间状态栏显示 idle）。
   // lastRun.status='running' 且无活跃 run → 服务重启被中断。
   // lastRun.status='paused' 但无活跃 run（热更新/重启后 run 状态未迁移）→ 同样按中断处理：
   // agent 内存态已丢失，resume 端点无法恢复，唯一可行路径是重发上一条消息。
   app.get('/:id/status', async (c) => {
+    const busyWorkflowId = ctx.workflowBusyBySession.get(c.req.param('id'))
+    if (busyWorkflowId) {
+      const wfRun = ctx.agentManager.get(busyWorkflowId)
+      if (wfRun) return c.json(wfRun.state.status)
+    }
     const run = ctx.agentManager.get(c.req.param('id'))
     if (run) return c.json(run.state.status)
     const session = await getSession(ctx.db, c.req.param('id'))

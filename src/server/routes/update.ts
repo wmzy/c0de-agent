@@ -37,6 +37,13 @@ function createUpdateRoute(ctx: ServerContext): Hono {
     // 顶层 run（主 agent）+ 终端数；子 agent 归父会话，不重复列出。
     const active = ctx.agentManager.listActive()
     const topRuns = active.filter((r) => !r.parentSessionId)
+    // P3：受影响会话集合——全部活跃 run 会话 + workflow busy 的发起/工作流会话
+    //（工作流运行期发起会话无主 run，但其挂起权限同样会被更新中断）。
+    const affectedSessionIds = new Set<string>(active.map((r) => r.sessionId))
+    for (const [initiator, wf] of ctx.workflowBusyBySession) {
+      affectedSessionIds.add(initiator)
+      affectedSessionIds.add(wf)
+    }
     const runs: Array<{
       sessionId: string
       title: string
@@ -78,7 +85,10 @@ function createUpdateRoute(ctx: ServerContext): Hono {
       }),
       // P3-9：正在等待确认的权限请求——更新会中断其所属 run，弹窗静默失效
       // （隐含按拒绝处理），确认层明示数量让用户知情。
-      pendingPermissionCount: ctx.permissionStore.size(),
+      // P3 修复：仅统计受影响会话（活跃 run 会话 + workflow busy 发起会话）的挂起
+      // 请求——此前用全局 store.size()，其他无关会话/已结束 run 的遗留 pending
+      // 也计入，数量虚高。
+      pendingPermissionCount: ctx.permissionStore.countForSessions(affectedSessionIds),
     }
 
     // P2-8：update.enabled=false 时无 handoff server，apply 必然 409。

@@ -433,7 +433,11 @@ function createWorkflowsRoute(ctx: ServerContext) {
             },
             onPermissionExpired: (req) => {
               if (permissionTimeoutAction === 'pause') {
+                // P1 级联暂停：与主 chat 通道同口径，子 agent 一并暂停。
                 ctx.agentManager.pause(session.id, PERMISSION_TIMEOUT_PAUSE_REASON)
+                for (const child of ctx.agentManager.children(session.id)) {
+                  ctx.agentManager.pause(child.sessionId, PERMISSION_TIMEOUT_PAUSE_REASON)
+                }
               }
               stream
                 .writeSSE({

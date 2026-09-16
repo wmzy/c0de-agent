@@ -90,6 +90,31 @@ describe('FilePreview', () => {
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
   })
 
+  it('P1：认证 token 存在时媒体 src 附加 ?token=（媒体元素无法携带 Authorization 头）', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (k === 'c0de-auth-token' ? 'device-tok-123' : null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+    withClient(<FilePreview projectId="p1" path="a.png" />)
+    const img = document.querySelector('img')
+    const src = img?.getAttribute('src') ?? ''
+    expect(src).toContain('/api/files/a.png/raw')
+    expect(src).toContain('projectId=p1')
+    expect(src).toContain(`token=${encodeURIComponent('device-tok-123')}`)
+    // token 不应出现在非媒体（CodeEditor）路径的读取请求里
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
+        >
+          <FilePreview projectId="p1" path="notes.txt" />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+  })
+
   it('渲染 header 显示路径', async () => {
     vi.stubGlobal('fetch', fetchMock('# Title'))
     withClient(<FilePreview projectId="p1" path="readme.md" />)

@@ -170,6 +170,32 @@ describe('project route', () => {
     }
   })
 
+  it('P1：DELETE /:id 拒绝含 starting 占位 run 的项目（此前 get() 漏掉占位态）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'projr-starting-'))
+    try {
+      const { app, ctx, db } = await setup()
+      const created = await app.request('/from-directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: dir }),
+      })
+      const project = (await created.json()) as Project
+      const s = await createSession(db, 'Starting', project.id)
+      // 占位态：tryAcquire 后 register 前（POST /api/chat 并发守卫窗口）
+      ctx.agentManager.tryAcquire(s.id)
+
+      const res = await app.request(`/${project.id}`, { method: 'DELETE' })
+      expect(res.status).toBe(409)
+      const body = (await res.json()) as { error?: { code?: string } }
+      expect(body.error?.code).toBe('PROJECT_HAS_ACTIVE_SESSIONS')
+      // 项目未被删除
+      const after = await app.request(`/${project.id}`)
+      expect(after.status).toBe(200)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('DELETE /:id 项目下会话进回收站并落盘 worktreePath（P2-2）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'projr-del-'))
     try {
