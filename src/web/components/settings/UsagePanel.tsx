@@ -236,12 +236,17 @@ function UsagePanel({
         <div className={budgetWarn} data-testid="usage-token-budget-warning">
           ⚠ 本月 token 用量 {fmtTokens(monthTokens)} 已超过{projectId ? '项目' : '全局'} token 预算{' '}
           {fmtTokens(effectiveTokenBudget)}
-          {tokenAction !== 'pause' ? '（当前 token 预算动作为「仅告警」，对话继续）' : ''}
+          {tokenAction === 'warn'
+            ? '（当前 token 预算动作为「仅告警」，对话继续）'
+            : tokenAction === 'abort'
+              ? '（当前 token 预算动作为「中止对话」，撞线已硬停，需重新发送消息）'
+              : ''}
         </div>
       )}
-      {effectiveTokenBudget > 0 && tokenAction !== 'pause' && (
+      {effectiveTokenBudget > 0 && tokenAction === 'warn' && (
         <div className={hint} data-testid="usage-token-budget-hint">
-          token 预算在「仅告警」模式下超支仅提示、不暂停；设为「暂停对话」才会在超支时硬性拦截。
+          token
+          预算在「仅告警」模式下超支仅提示、不暂停；设为「暂停对话」或「中止对话」才会在超支时硬性拦截。
         </div>
       )}
       {unknownCostTotal > 0 && (

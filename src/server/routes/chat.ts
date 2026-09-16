@@ -13,6 +13,7 @@ import {
   createWorkflowRegistry,
   discoverWorkflows,
   executeWorkflow,
+  resolveWorkflow,
   workflowSessionTitle,
 } from '../../core/workflows/index.js'
 import { resolveRoute } from '../../llm/registry.js'
@@ -253,13 +254,24 @@ function createChatRoute(ctx: ServerContext): Hono {
       }
       const wfArgs = parts.slice(2).join(' ')
       const registry = ctx.workflowRegistry ?? createWorkflowRegistry()
+      // 统一解析：项目级（已信任）> 用户 > 内置。仅在会话已绑定项目时发现
+      // 项目级工作流——聊天门禁已保证该项目可信且指纹未漂移；孤儿会话
+      // （无 projectId）不再按 cwd 无条件发现：其目录未注册、信任状态未知，
+      // 此前会在未信任仓库直接 dynamic import 其工作流代码。
       let entry = ctx.workflowRegistry?.get(name)
-      if (!entry) {
-        const projectWorkflows = await discoverWorkflows(cwd)
-        entry = projectWorkflows.find((w) => w.meta.name === name)
+      if (session.projectId) {
+        entry =
+          (await resolveWorkflow({
+            name,
+            registry,
+            projectDir: cwd,
+            projectTrusted: true,
+          })) ?? entry
       }
       if (!entry) {
-        const discovered = await discoverWorkflows(cwd)
+        // 错误提示里列出可用工作流：仅在会话绑定项目（门禁已通过）时发现
+        // 项目级——与上方解析同口径，不因「拼错名字」在未信任目录执行仓库代码。
+        const discovered = session.projectId ? await discoverWorkflows(cwd) : []
         const available = [
           ...registry.list().map((e) => e.meta.name),
           ...discovered.map((e) => e.meta.name),
@@ -276,20 +288,62 @@ function createChatRoute(ctx: ServerContext): Hono {
         })
       }
 
+      // 并发守卫（同步原子占位）：执行作用域 = 项目或目录。此前
+      // tryAcquire(workflowSession.id) 作用在刚创建的全新会话 id 上（永真），且主会话
+      // 在整段工作流期间不注册任何 run——双发 /workflow run、REST 与斜杠并行都能
+      // 并发执行。现在同一作用域仅允许一个工作流运行。
+      const scopeKey = session.projectId ? `project:${session.projectId}` : `dir:${cwd}`
+      if (ctx.workflowBusyByScope.has(scopeKey)) {
+        return apiError(
+          c,
+          409,
+          'RUN_ACTIVE',
+          '该项目/目录已有进行中的工作流执行，请等待完成或中止后重试',
+        )
+      }
+      ctx.workflowBusyByScope.set(scopeKey, '')
+
       // 工作流运行会话：绑定当前会话项目 + worktree（与 REST 路由同口径），
       // 标题带时间戳区分多次运行。
-      const workflowSession = await createSession(
-        ctx.db,
-        workflowSessionTitle(name),
-        session.projectId ?? undefined,
-        'workflow',
-        undefined,
-        undefined,
-        cwd,
-      )
+      let workflowSession: Awaited<ReturnType<typeof createSession>>
+      try {
+        workflowSession = await createSession(
+          ctx.db,
+          workflowSessionTitle(name),
+          session.projectId ?? undefined,
+          'workflow',
+          undefined,
+          undefined,
+          cwd,
+          // 中断恢复指引需要工作流名（重启后会话内无 user 消息可重发）。
+          { workflowName: name },
+        )
+      } catch (e) {
+        ctx.workflowBusyByScope.delete(scopeKey)
+        throw e
+      }
+      ctx.workflowBusyByScope.set(scopeKey, workflowSession.id)
+      // 发起会话在工作流运行期间视为占用：普通消息 409；控制端点据此路由到工作流 run。
+      ctx.workflowBusyBySession.set(sessionId, workflowSession.id)
+      const releaseWorkflowBusy = () => {
+        if (ctx.workflowBusyByScope.get(scopeKey) === workflowSession.id) {
+          ctx.workflowBusyByScope.delete(scopeKey)
+        }
+        if (ctx.workflowBusyBySession.get(sessionId) === workflowSession.id) {
+          ctx.workflowBusyBySession.delete(sessionId)
+        }
+      }
       if (!ctx.agentManager.tryAcquire(workflowSession.id)) {
+        releaseWorkflowBusy()
         return apiError(c, 409, 'RUN_ACTIVE', '该工作流会话已有进行中的执行')
       }
+      // 持久化 run 状态：运行中 → completed。服务崩溃时停留在 running，
+      // 重启后 /:id/status 据此识别为 interrupted（此前工作流 run 不写 lastRun）。
+      const startedAtMs = Date.now()
+      await updateSessionLastRun(ctx.db, workflowSession.id, {
+        status: 'running',
+        startedAt: startedAtMs,
+      }).catch(() => {})
       let handedOff = false
       try {
         const response = streamSSE(c, async (stream) => {
@@ -425,12 +479,20 @@ function createChatRoute(ctx: ServerContext): Hono {
           } finally {
             stopHeartbeat()
             ctx.agentManager.unregister(workflowSession.id)
+            void updateSessionLastRun(ctx.db, workflowSession.id, {
+              status: 'completed',
+              startedAt: startedAtMs,
+            }).catch(() => {})
+            releaseWorkflowBusy()
           }
         })
         handedOff = true
         return response
       } finally {
-        if (!handedOff) ctx.agentManager.unregister(workflowSession.id)
+        if (!handedOff) {
+          ctx.agentManager.unregister(workflowSession.id)
+          releaseWorkflowBusy()
+        }
       }
     }
 
@@ -460,7 +522,9 @@ function createChatRoute(ctx: ServerContext): Hono {
         const MUTATING_SLASH = new Set(['compact', 'clear', 'fork'])
         if (
           MUTATING_SLASH.has(parsed.name) &&
-          (ctx.agentManager.get(sessionId) || ctx.agentManager.isStarting(sessionId))
+          (ctx.agentManager.get(sessionId) ||
+            ctx.agentManager.isStarting(sessionId) ||
+            ctx.workflowBusyBySession.has(sessionId))
         ) {
           return apiError(
             c,
@@ -747,6 +811,18 @@ function createChatRoute(ctx: ServerContext): Hono {
           { provider, model, knownModels: modelNames },
         )
       }
+    }
+
+    // 对称并发守卫：该会话的工作流运行期间不允许发起普通对话（与 /workflow run
+    // 侧「主 run 活跃时拒绝工作流」互斥）；工作流进度在其运行会话中可见。
+    // 控制端点（abort/pause/resume）经 workflowBusyBySession 路由到工作流 run。
+    if (ctx.workflowBusyBySession.has(sessionId)) {
+      return apiError(
+        c,
+        409,
+        'RUN_ACTIVE',
+        '该会话有进行中的工作流执行（进度见工作流运行会话），请等待完成或中止后重试',
+      )
     }
 
     // 并发守卫（P0-4）：同步原子占位 tryAcquire（Map has+set 一气呵成、无 await）。
@@ -1036,16 +1112,30 @@ function createChatRoute(ctx: ServerContext): Hono {
 
   app.post('/abort', async (c) => {
     const { sessionId } = await c.req.json()
+    // 工作流运行期间发起会话无主 run：中止请求路由到实际的工作流 run。
+    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
+    if (busyWorkflowId) {
+      return c.json({ aborted: ctx.agentManager.abort(busyWorkflowId) })
+    }
     return runStarting(c, sessionId) ?? c.json({ aborted: ctx.agentManager.abort(sessionId) })
   })
 
   app.post('/pause', async (c) => {
     const { sessionId } = await c.req.json()
+    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
+    if (busyWorkflowId) {
+      return c.json({ paused: ctx.agentManager.pause(busyWorkflowId) })
+    }
     return runStarting(c, sessionId) ?? c.json({ paused: ctx.agentManager.pause(sessionId) })
   })
 
   app.post('/resume', async (c) => {
     const { sessionId } = await c.req.json()
+    // 权限超时暂停工作流后，发起会话展示「恢复」按钮——路由到工作流 run 真正恢复。
+    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
+    if (busyWorkflowId) {
+      return c.json({ resumed: ctx.agentManager.resume(busyWorkflowId) })
+    }
     return runStarting(c, sessionId) ?? c.json({ resumed: ctx.agentManager.resume(sessionId) })
   })
 

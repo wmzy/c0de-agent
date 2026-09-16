@@ -11,6 +11,13 @@ type WorkflowInfo = {
   overrides?: 'builtin' | 'user' | null
 }
 
+/** GET /api/workflows 返回的列表载荷；trustRequired 表示项目未信任（或漂移），
+ *  项目级工作流被隐藏（列表仅含内置+用户级）。 */
+type WorkflowListPayload = {
+  workflows: WorkflowInfo[]
+  trustRequired?: boolean
+}
+
 /** GET /api/workflows/:name 返回的源码视图。 */
 type WorkflowDetail = WorkflowInfo & {
   sourceCode: string
@@ -23,11 +30,16 @@ type WorkflowSavePayload = {
   target: 'project' | 'user'
   /** target=project 时写入选定项目的 worktree；缺省落 serve cwd 项目。 */
   projectId?: string
+  /** 同名覆盖已存在工作流（编辑模式为 true；新建缺省 false → 409 ALREADY_EXISTS）。 */
+  overwrite?: boolean
 }
+
+/** DELETE 的删除层级：按列表行来源显式指定，消除服务端按文件存在性猜测层级。 */
+type WorkflowRemoveTarget = 'project' | 'user'
 
 const workflowsAPI = {
   list: (projectId?: string) =>
-    apiRequest<{ workflows: WorkflowInfo[] }>(
+    apiRequest<WorkflowListPayload>(
       projectId ? `/api/workflows?projectId=${encodeURIComponent(projectId)}` : '/api/workflows',
     ),
   get: (name: string, projectId?: string) =>
@@ -42,14 +54,15 @@ const workflowsAPI = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  remove: (name: string, projectId?: string) =>
+  remove: (name: string, projectId: string | undefined, target: WorkflowRemoveTarget) =>
     apiRequest<{ ok: boolean }>(
-      `/api/workflows/${encodeURIComponent(name)}${
-        projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
-      }`,
+      `/api/workflows/${encodeURIComponent(name)}?${new URLSearchParams({
+        ...(projectId ? { projectId } : {}),
+        target,
+      })}`,
       { method: 'DELETE' },
     ),
 }
 
-export type { WorkflowDetail, WorkflowInfo, WorkflowSavePayload }
+export type { WorkflowDetail, WorkflowInfo, WorkflowListPayload, WorkflowSavePayload }
 export { workflowsAPI }

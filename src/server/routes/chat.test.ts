@@ -1231,4 +1231,63 @@ describe('/workflow run 专用斜杠通道', () => {
     expect(delta?.data).toContain('未知工作流')
     expect(delta?.data).toContain('security-audit')
   })
+
+  it('同一作用域已有工作流执行 → 409 RUN_ACTIVE 且不产生孤儿会话（并发守卫）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    ctx.workflowRegistry?.register(TRIVIAL_WF)
+    // 模拟同项目已有进行中的工作流运行（无 projectId 会话按目录为作用域）
+    ctx.workflowBusyByScope.set(`dir:${ctx.cwd}`, 'wf-running')
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/workflow run slash-wf' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+
+    // 守卫先于 createSession：不残留空工作流会话行
+    const all = await listAllSessions(dbHandle as DB)
+    expect(all.filter((s) => s.agentType === 'workflow')).toHaveLength(0)
+  })
+
+  it('工作流运行期间同会话发普通消息 → 409 RUN_ACTIVE（对称拦截）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    // 该会话有进行中的工作流（发起会话 → 工作流会话映射）
+    ctx.workflowBusyBySession.set(sessionId, 'wf-running')
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '工作流跑的时候发条普通消息' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+  })
+
+  it('工作流运行期间对发起会话 abort/pause/resume → 路由到工作流 run', async () => {
+    const { app, ctx, sessionId } = await setup()
+    ctx.workflowBusyBySession.set(sessionId, 'wf-running')
+    const abortSpy = vi.spyOn(ctx.agentManager, 'abort').mockReturnValue(true)
+    const pauseSpy = vi.spyOn(ctx.agentManager, 'pause').mockReturnValue(true)
+    const resumeSpy = vi.spyOn(ctx.agentManager, 'resume').mockReturnValue(true)
+
+    for (const [path, key, spy] of [
+      ['/abort', 'aborted', abortSpy],
+      ['/pause', 'paused', pauseSpy],
+      ['/resume', 'resumed', resumeSpy],
+    ] as const) {
+      const res = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as Record<string, boolean>
+      expect(body[key]).toBe(true)
+      expect(spy).toHaveBeenCalledWith('wf-running')
+    }
+  })
 })

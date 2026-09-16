@@ -571,25 +571,48 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
             )}
             {showInterruptBanner && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="interrupt-banner">
-                <span>
-                  连接已中断（服务可能已重启）。恢复将重发上一条消息，已执行的工具可能重复执行
-                </span>
-                <button
-                  onClick={() => void handleResume()}
-                  type="button"
-                  title="重发上一条消息继续；中断前已执行的工具（bash/git 等）可能再次执行"
-                >
-                  恢复对话
-                </button>
-                <button
-                  onClick={() => {
-                    setColdStartInterrupted(false)
-                    chat.clearInterrupted()
-                  }}
-                  type="button"
-                >
-                  忽略
-                </button>
+                {sessionMeta?.agentType === 'workflow' ? (
+                  <>
+                    <span>
+                      工作流执行已中断（服务可能已重启）。工作流运行会话无 user 消息可重发，
+                      无法原地恢复：
+                      {sessionMeta.metadata?.workflowName
+                        ? `可在任意会话重新执行 /workflow run ${sessionMeta.metadata.workflowName} 发起新的运行（新会话节点）。`
+                        : '可重新执行 /workflow run <name> 发起新的运行（新会话节点）。'}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setColdStartInterrupted(false)
+                        chat.clearInterrupted()
+                      }}
+                      type="button"
+                    >
+                      知道了
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      连接已中断（服务可能已重启）。恢复将重发上一条消息，已执行的工具可能重复执行
+                    </span>
+                    <button
+                      onClick={() => void handleResume()}
+                      type="button"
+                      title="重发上一条消息继续；中断前已执行的工具（bash/git 等）可能再次执行"
+                    >
+                      恢复对话
+                    </button>
+                    <button
+                      onClick={() => {
+                        setColdStartInterrupted(false)
+                        chat.clearInterrupted()
+                      }}
+                      type="button"
+                    >
+                      忽略
+                    </button>
+                  </>
+                )}
               </div>
             )}
             {chat.attachedRun && (

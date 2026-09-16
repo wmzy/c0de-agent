@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
@@ -8,6 +9,7 @@ import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import {
   discoverWorkflows,
   executeWorkflow,
+  resolveWorkflow,
   saveWorkflow,
   workflowSessionTitle,
 } from '../../core/workflows/index.js'
@@ -19,7 +21,7 @@ import {
   projectTrustCurrent,
   projectTrustNeeded,
 } from '../../project/trust.js'
-import { createSession } from '../../session/session.js'
+import { createSession, updateSessionLastRun } from '../../session/session.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
@@ -118,11 +120,12 @@ function createWorkflowsRoute(ctx: ServerContext) {
     }
 
     const body = await c.req.json().catch(() => ({}))
-    const { name, source, target, projectId } = body as {
+    const { name, source, target, projectId, overwrite } = body as {
       name?: string
       source?: string
       target?: 'project' | 'user'
       projectId?: string
+      overwrite?: boolean
     }
 
     if (!name || typeof name !== 'string') {
@@ -154,6 +157,26 @@ function createWorkflowsRoute(ctx: ServerContext) {
         )
       }
       saveDir = st.project.worktree
+    }
+
+    // 同名覆盖保护：目标层级已有同名工作流且未显式 overwrite → 409。
+    // 此前 POST 无条件写文件截断——新建误输已有名称会静默替换其内容
+    // （斜杠 /workflow create 有 --yes 确认，这里没有）。编辑模式由前端
+    // 显式传 overwrite: true。
+    const targetFilePath = join(
+      target === 'project' ? saveDir : homedir(),
+      '.c0de',
+      'workflows',
+      `${name}.js`,
+    )
+    if (existsSync(targetFilePath) && overwrite !== true) {
+      return apiError(
+        c,
+        409,
+        'ALREADY_EXISTS',
+        `工作流 "${name}" 已存在（${target === 'project' ? '项目' : '用户'}级）——覆盖会替换其内容。` +
+          '确认覆盖请使用「编辑」该工作流，或改用 /workflow create --yes',
+      )
     }
 
     // 保存到磁盘 + dynamic import 验证
@@ -196,19 +219,24 @@ function createWorkflowsRoute(ctx: ServerContext) {
     if (!registry) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
     }
-    let entry = registry.get(name)
 
-    // 项目级 fallback：仅信任项目才 dynamic import 其工作流文件。
-    if (!entry) {
-      const projectId = c.req.query('projectId')
-      if (projectId) {
-        const { project, trusted } = await projectTrustState(ctx, projectId)
-        if (project && trusted) {
-          const discovered = await discoverWorkflows(project.worktree)
-          entry = discovered.find((w) => w.meta.name === name)
-        }
+    // 统一解析：项目级（已信任）> 用户 > 内置，与 GET / 列表口径一致。
+    // 此前注册表优先——项目级同名工作流被用户级/内置遮蔽，列表显示项目版、
+    // 查看/编辑打开的却是另一份。
+    const projectId = c.req.query('projectId')
+    let entry: WorkflowEntry | undefined
+    if (projectId) {
+      const { project, trusted } = await projectTrustState(ctx, projectId)
+      if (project && trusted) {
+        entry = await resolveWorkflow({
+          name,
+          registry,
+          projectDir: project.worktree,
+          projectTrusted: true,
+        })
       }
     }
+    entry ??= registry.get(name)
 
     if (!entry) {
       return apiError(c, 404, 'NOT_FOUND', `Workflow "${name}" not found`)
@@ -238,7 +266,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     }
     let entry = registry.get(name)
 
-    // 项目级 fallback + 解析项目 worktree 作为 agent cwd
+    // 项目级解析 + 项目 worktree 作为 agent cwd
     let agentCwd = ctx.cwd
     let project: Awaited<ReturnType<typeof getProject>> = null
     const projectId = c.req.query('projectId')
@@ -267,9 +295,15 @@ function createWorkflowsRoute(ctx: ServerContext) {
             { projectId: project.id, projectName: project.name ?? project.worktree, items },
           )
         }
-        if (st.trusted && !entry) {
-          const discovered = await discoverWorkflows(project.worktree)
-          entry = discovered.find((w) => w.meta.name === name)
+        // 门禁通过后按「项目 > 用户 > 内置」解析——此前注册表优先，项目级
+        // 同名工作流被用户级条目遮蔽，运行的不是列表展示的那份。
+        if (st.trusted) {
+          entry = await resolveWorkflow({
+            name,
+            registry,
+            projectDir: project.worktree,
+            projectTrusted: true,
+          })
         }
       }
     }
@@ -300,17 +334,45 @@ function createWorkflowsRoute(ctx: ServerContext) {
       }
     }
 
+    // 并发守卫（同步原子占位）：同一执行作用域（项目/目录）仅允许一个工作流运行。
+    // 此前 tryAcquire(session.id) 作用在刚创建的全新会话 id 上（永真）——双 POST、
+    // REST 与斜杠并行都能并发执行同一项目的工作流。
+    const scopeKey = projectId ? `project:${projectId}` : `dir:${ctx.cwd}`
+    if (ctx.workflowBusyByScope.has(scopeKey)) {
+      return apiError(
+        c,
+        409,
+        'RUN_ACTIVE',
+        '该项目/目录已有进行中的工作流执行，请等待完成或中止后重试',
+      )
+    }
+    ctx.workflowBusyByScope.set(scopeKey, '')
+
     // 会话绑定 projectId + worktreePath：后续继续该会话时 agent 在正确的
     // 项目目录执行（resolveAgentCwd 不再回退 serve cwd）。
-    const session = await createSession(
-      ctx.db,
-      workflowSessionTitle(name),
-      project?.id ?? undefined,
-      'workflow',
-      undefined,
-      undefined,
-      project?.worktree ?? agentCwd,
-    )
+    let session: Awaited<ReturnType<typeof createSession>>
+    try {
+      session = await createSession(
+        ctx.db,
+        workflowSessionTitle(name),
+        project?.id ?? undefined,
+        'workflow',
+        undefined,
+        undefined,
+        project?.worktree ?? agentCwd,
+        // 中断恢复指引需要工作流名（重启后会话内无 user 消息可重发）。
+        { workflowName: name },
+      )
+    } catch (e) {
+      ctx.workflowBusyByScope.delete(scopeKey)
+      throw e
+    }
+    ctx.workflowBusyByScope.set(scopeKey, session.id)
+    const releaseScopeBusy = () => {
+      if (ctx.workflowBusyByScope.get(scopeKey) === session.id) {
+        ctx.workflowBusyByScope.delete(scopeKey)
+      }
+    }
 
     const permissionTimeoutAction =
       sessionConfig.permission.timeoutAction === 'deny' ? ('deny' as const) : ('pause' as const)
@@ -325,8 +387,16 @@ function createWorkflowsRoute(ctx: ServerContext) {
 
     // 并发占位：同步原子占位（与 chat 路由同语义），SSE 回调内 register 填充。
     if (!ctx.agentManager.tryAcquire(session.id)) {
+      releaseScopeBusy()
       return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的工作流执行')
     }
+    // 持久化 run 状态：运行中 → completed。服务崩溃时停留在 running，
+    // 重启后 /:id/status 据此识别为 interrupted（与斜杠通道同口径）。
+    const startedAtMs = Date.now()
+    await updateSessionLastRun(ctx.db, session.id, {
+      status: 'running',
+      startedAt: startedAtMs,
+    }).catch(() => {})
     let handedOff = false
     try {
       const response = streamSSE(c, async (stream) => {
@@ -435,18 +505,27 @@ function createWorkflowsRoute(ctx: ServerContext) {
         } finally {
           stopHeartbeat()
           ctx.agentManager.unregister(session.id)
+          void updateSessionLastRun(ctx.db, session.id, {
+            status: 'completed',
+            startedAt: startedAtMs,
+          }).catch(() => {})
+          releaseScopeBusy()
         }
       })
       handedOff = true
       return response
     } finally {
-      if (!handedOff) ctx.agentManager.unregister(session.id)
+      if (!handedOff) {
+        ctx.agentManager.unregister(session.id)
+        releaseScopeBusy()
+      }
     }
   })
 
-  // DELETE /:name — 删除（仅非 builtin）。可选 ?projectId=xxx 直接删除该项目
-  // 的 .c0de/workflows/<name>.js——不 dynamic import 仓库代码（删除无需信任门禁，
-  // 未信任项目也可清理自己的文件），仅按路径操作。
+  // DELETE /:name — 删除（仅非 builtin）。可选 ?projectId=xxx&target=project|user 删除指定层级。
+  // 不 dynamic import 仓库代码（删除无需信任门禁，未信任项目也可清理自己的文件），仅按路径操作。
+  // target 显式指定层级：此前仅凭「项目文件是否存在」猜测——?projectId 下项目文件缺失时
+  // 会静默回退删除用户级同名文件（竞态/作用域歧义），现按目标层级 404，不回退。
   app.delete('/:name', async (c) => {
     const name = c.req.param('name')
 
@@ -460,9 +539,60 @@ function createWorkflowsRoute(ctx: ServerContext) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
     }
     const registryEntry = registry.get(name)
-
-    // 项目级删除目标：按 worktree 拼路径，不做 discovery（避免执行仓库代码）。
     const projectId = c.req.query('projectId')
+    const target = c.req.query('target')
+
+    // 项目级删除：?projectId 指定项目 worktree；缺省 serve cwd（全局设置视图下
+    // 的启动目录项目工作流）。文件缺失 → 404，绝不回退删除其他层级。
+    if (target === 'project') {
+      let baseDir = ctx.cwd
+      if (projectId) {
+        const project = await getProject(ctx.db, projectId)
+        if (!project) {
+          return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
+        }
+        baseDir = project.worktree
+      }
+      const filePath = join(baseDir, '.c0de', 'workflows', `${name}.js`)
+      if (!existsSync(filePath)) {
+        return apiError(
+          c,
+          404,
+          'NOT_FOUND',
+          `项目级工作流 "${name}" 不存在（${join(baseDir, '.c0de', 'workflows')}）`,
+        )
+      }
+      try {
+        await unlink(filePath)
+      } catch {
+        return apiError(c, 500, 'DELETE_FAILED', `Failed to delete workflow file for "${name}"`)
+      }
+      // 仅在注册表同名条目就是被删文件时移除——删除项目级同名工作流不得误删
+      // user 级条目（project > user 遮蔽解除后 user 级应重新可见）。
+      if (registryEntry && registryEntry.filePath === filePath) {
+        registry.delete(name)
+      }
+      return c.json({ ok: true })
+    }
+
+    // 用户级删除：仅删用户级条目（~/.c0de/workflows）。同名项目级文件存在时
+    // 注册表条目是项目级——此时列表也不展示用户行，不存在此删除请求。
+    if (target === 'user') {
+      const userEntry = registryEntry?.source === 'user' ? registryEntry : undefined
+      if (!userEntry?.filePath) {
+        return apiError(c, 404, 'NOT_FOUND', `用户级工作流 "${name}" 不存在`)
+      }
+      try {
+        await unlink(userEntry.filePath)
+      } catch {
+        return apiError(c, 500, 'DELETE_FAILED', `Failed to delete workflow file for "${name}"`)
+      }
+      registry.delete(name)
+      return c.json({ ok: true })
+    }
+
+    // 兼容旧行为（无 target）：按注册表条目删除（旧客户端调用）。
+    // 项目级删除目标：按 worktree 拼路径，不做 discovery（避免执行仓库代码）。
     let projectFilePath: string | null = null
     if (projectId) {
       const project = await getProject(ctx.db, projectId)

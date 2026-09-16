@@ -59,6 +59,8 @@ async function createSession(
   parentId?: string,
   /** 会话工作目录（CLI 会话必填：Web 打开时 agent 工具在该目录执行，而非 serve cwd）。 */
   worktreePath?: string,
+  /** 初始 metadata（如工作流运行会话记录 workflowName，供中断恢复指引展示）。 */
+  metadata?: Record<string, unknown>,
 ): Promise<Session> {
   const [row] = await handle.db
     .insert(sessions)
@@ -69,6 +71,7 @@ async function createSession(
       source: source ?? null,
       parentId: parentId ?? null,
       worktreePath: worktreePath ?? null,
+      ...(metadata ? { metadata } : {}),
     })
     .returning()
   if (!row) throw new Error('Failed to insert session')

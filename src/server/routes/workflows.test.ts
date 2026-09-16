@@ -171,6 +171,32 @@ describe('workflows route — GET /:name', () => {
     expect(body.error.code).toBe('NOT_FOUND')
     expect(body.error.message).toContain('does-not-exist')
   })
+
+  it('项目级同名工作流遮蔽用户级：GET ?projectId 返回项目版（统一解析优先级）', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'shared-wf.js'),
+      `export const meta = { name: 'shared-wf', description: 'project version' }\nexport default async () => ({ output: 'project' })`,
+      'utf-8',
+    )
+    await trustProject(ctx.db, project.id)
+    // 用户级同名条目（此前注册表优先——列表显示项目版、详情却返回用户版）
+    ctx.workflowRegistry?.register({
+      meta: { name: 'shared-wf', description: 'user version' },
+      source: 'user',
+      filePath: join(process.env.HOME ?? '', '.c0de', 'workflows', 'shared-wf.js'),
+      execute: async () => ({ output: 'user' }),
+      sourceCode: '// user source',
+    })
+
+    const res = await app.request(`/shared-wf?projectId=${project.id}`, { method: 'GET' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { description: string; source: string }
+    expect(body.source).toBe('project')
+    expect(body.description).toBe('project version')
+  })
 })
 
 describe('workflows route — DELETE /:name', () => {
@@ -330,6 +356,48 @@ describe('workflows route — DELETE /:name', () => {
     const res = await app.request('/ghost?projectId=missing-project', { method: 'DELETE' })
     expect(res.status).toBe(404)
   })
+
+  it('DELETE target=project 项目文件缺失 → 404，不回退删除用户级同名文件', async () => {
+    const { app, ctx } = await setup()
+    // 用户级同名条目（带磁盘文件）
+    const userPath = join(process.env.HOME ?? '', '.c0de', 'workflows', 'shared-only.js')
+    await mkdir(join(process.env.HOME ?? '', '.c0de', 'workflows'), { recursive: true })
+    await writeFile(userPath, '// user file on disk', 'utf-8')
+    ctx.workflowRegistry?.register({
+      meta: { name: 'shared-only', description: 'user' },
+      source: 'user',
+      filePath: userPath,
+      execute: async () => ({ output: 'user' }),
+    })
+    // 项目无同名文件
+    const project = await fromDirectory(ctx.db, projectCwd)
+
+    const res = await app.request(`/shared-only?projectId=${project.id}&target=project`, {
+      method: 'DELETE',
+    })
+    expect(res.status).toBe(404)
+    // 用户级文件未被误删（此前会静默回退删除）
+    expect(existsSync(userPath)).toBe(true)
+    expect(ctx.workflowRegistry?.has('shared-only')).toBe(true)
+  })
+
+  it('DELETE target=user 显式删除用户级文件并清理注册表', async () => {
+    const { app, ctx } = await setup()
+    const userPath = join(process.env.HOME ?? '', '.c0de', 'workflows', 'user-only.js')
+    await mkdir(join(process.env.HOME ?? '', '.c0de', 'workflows'), { recursive: true })
+    await writeFile(userPath, '// user file', 'utf-8')
+    ctx.workflowRegistry?.register({
+      meta: { name: 'user-only', description: 'user' },
+      source: 'user',
+      filePath: userPath,
+      execute: async () => ({ output: 'user' }),
+    })
+
+    const res = await app.request('/user-only?target=user', { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    expect(existsSync(userPath)).toBe(false)
+    expect(ctx.workflowRegistry?.has('user-only')).toBe(false)
+  })
 })
 
 describe('workflows route — POST /:name/run', () => {
@@ -404,6 +472,59 @@ export default async function wf(ctx) {
     })
     expect(res.status).toBe(409)
     expect('__topLevelRan' in globalThis).toBe(false)
+  })
+
+  it('项目级同名工作流优先于用户级执行（run 与列表同口径）', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'shared-wf.js'),
+      `export const meta = { name: 'shared-wf', description: 'project version' }\nexport default async () => ({ output: 'project-ran' })`,
+      'utf-8',
+    )
+    await trustProject(ctx.db, project.id)
+    ctx.workflowRegistry?.register({
+      meta: { name: 'shared-wf', description: 'user version' },
+      source: 'user',
+      filePath: join(process.env.HOME ?? '', '.c0de', 'workflows', 'shared-wf.js'),
+      execute: async () => ({ output: 'user-ran' }),
+    })
+
+    const res = await app.request(`/shared-wf/run?projectId=${project.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args: '' }),
+    })
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    // 执行的是项目版（此前注册表优先会跑到用户版）
+    expect(text).toContain('project-ran')
+    expect(text).not.toContain('user-ran')
+  })
+
+  it('同一项目已有工作流执行 → 409 RUN_ACTIVE 且不产生会话（并发守卫）', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(join(projectCwd, '.c0de', 'workflows', 'trivial-wf.js'), TRIVIAL_WF, 'utf-8')
+    await trustProject(ctx.db, project.id)
+    // 模拟同项目已有进行中的工作流运行
+    ctx.workflowBusyByScope.set(`project:${project.id}`, 'wf-running')
+
+    const res = await app.request(`/trivial-wf/run?projectId=${project.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args: '' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+
+    // 守卫先于 createSession：不残留空工作流会话行
+    const { listAllSessions } = await import('../../session/session.js')
+    const sessions = await listAllSessions(ctx.db)
+    expect(sessions.filter((s) => s.agentType === 'workflow')).toHaveLength(0)
   })
 })
 
@@ -595,5 +716,66 @@ export default async function workflow(ctx) {
     expect(body.ok).toBe(true)
     expect(body.filePath).toContain('.c0de')
     expect(body.filePath).toContain('workflows')
+  })
+
+  it('目标层级已有同名工作流且无 overwrite → 409 ALREADY_EXISTS，磁盘内容不被覆盖', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await trustProject(ctx.db, project.id)
+
+    const first = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE, target: 'project' }),
+    })
+    expect(first.status).toBe(200)
+
+    const V2_SOURCE = `export const meta = { name: 'api-wf', description: 'v2' }\nexport default async () => ({ output: 'v2' })`
+    const second = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: V2_SOURCE, target: 'project' }),
+    })
+    expect(second.status).toBe(409)
+    const body = (await second.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('ALREADY_EXISTS')
+
+    // 磁盘内容未被静默覆盖
+    const onDisk = await readFile(join(projectCwd, '.c0de', 'workflows', 'api-wf.js'), 'utf-8')
+    expect(onDisk).toContain('API created workflow')
+
+    // overwrite: true 显式覆盖（编辑模式）
+    const third = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'api-wf',
+        source: V2_SOURCE,
+        target: 'project',
+        overwrite: true,
+      }),
+    })
+    expect(third.status).toBe(200)
+    const after = await readFile(join(projectCwd, '.c0de', 'workflows', 'api-wf.js'), 'utf-8')
+    expect(after).toContain('v2')
+  })
+
+  it('不同层级同名不冲突：项目级已有 api-wf 时可创建用户级 api-wf', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await trustProject(ctx.db, project.id)
+    const first = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE, target: 'project' }),
+    })
+    expect(first.status).toBe(200)
+
+    const second = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE, target: 'user' }),
+    })
+    expect(second.status).toBe(200)
   })
 })

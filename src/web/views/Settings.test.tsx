@@ -1655,6 +1655,58 @@ describe('Settings — 工作流管理面板', () => {
     fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: 'my-wf' } })
     expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(screen.getByTestId('danger-confirm-btn'))
-    await waitFor(() => expect(workflowsAPI.remove).toHaveBeenCalledWith('my-wf', undefined))
+    await waitFor(() =>
+      expect(workflowsAPI.remove).toHaveBeenCalledWith('my-wf', undefined, 'user'),
+    )
+  })
+
+  it('编辑工作流保存带 overwrite: true；新建不带 overwrite', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const { workflowsAPI } = await import('../services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: [WF_FIXTURES[1]] })
+    ;(workflowsAPI.get as Mock).mockResolvedValue({
+      ...WF_FIXTURES[1],
+      sourceCode: 'export const meta = { name: "my-wf" }\n',
+    })
+    ;(workflowsAPI.save as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(1))
+
+    // 编辑模式：overwrite: true
+    fireEvent.click(screen.getByTestId('workflow-edit'))
+    await waitFor(() => expect(screen.getByTestId('workflow-source-editor')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('workflow-save'))
+    await waitFor(() => expect(workflowsAPI.save).toHaveBeenCalled())
+    const editPayload = (workflowsAPI.save as Mock).mock.calls.at(-1)?.[0] as {
+      overwrite?: boolean
+    }
+    expect(editPayload.overwrite).toBe(true)
+
+    // 新建模式：不带 overwrite（服务端 409 防误覆盖）
+    ;(workflowsAPI.save as Mock).mockClear()
+    fireEvent.click(screen.getByTestId('workflow-add'))
+    fireEvent.change(screen.getByTestId('workflow-name-input'), { target: { value: 'new-wf' } })
+    fireEvent.click(screen.getByTestId('workflow-save'))
+    await waitFor(() => expect(workflowsAPI.save).toHaveBeenCalled())
+    const createPayload = (workflowsAPI.save as Mock).mock.calls.at(-1)?.[0] as {
+      overwrite?: boolean
+    }
+    expect(createPayload.overwrite).toBeUndefined()
+  })
+
+  it('未信任项目：list 返回 trustRequired 时展示隐藏提示', async () => {
+    const { configAPI } = await import('../services/config.js')
+    const { workflowsAPI } = await import('../services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({
+      workflows: [WF_FIXTURES[0]],
+      trustRequired: true,
+    })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('workflow-trust-required')).toBeTruthy())
+    expect(screen.getByTestId('workflow-trust-required').textContent).toContain('未信任')
   })
 })

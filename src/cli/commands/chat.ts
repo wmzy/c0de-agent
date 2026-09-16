@@ -42,6 +42,19 @@ async function runSlashCommand(
   const { createAgent } = await import('../../core/agent.js')
   const { getSession } = await import('../../session/session.js')
 
+  // /workflow 命令注入三级注册表（内置 + 用户级 + 受信任的项目级）：
+  // 此前 CLI 缺省回退仅内置注册表，~/.c0de/workflows 用户级工作流在 CLI
+  // 完全不可见/不可运行。项目级仅在 cwd 当前可信时 import（fail-closed）。
+  let workflowRegistry: import('../../core/workflows/registry.js').WorkflowRegistry | undefined
+  if (parsed.name === 'workflow') {
+    const { createAndPopulateRegistry } = await import('../../core/workflows/index.js')
+    const { resolveCwdProjectTrusted } = await import('../deps.js')
+    const projectTrusted = await resolveCwdProjectTrusted(ctx.deps.db, ctx.deps.cwd).catch(
+      () => false,
+    )
+    workflowRegistry = await createAndPopulateRegistry(ctx.deps.cwd, { projectTrusted })
+  }
+
   const result = await cmd.execute(parsed.args, {
     cwd: ctx.deps.cwd,
     config: ctx.config,
@@ -49,6 +62,7 @@ async function runSlashCommand(
     sessionId: continueId,
     // 消费渠道：/model 等命令按渠道给指引（CLI 无底部模型选择器）。
     channel: 'cli',
+    ...(workflowRegistry ? { workflowRegistry } : {}),
   })
 
   if (result._tag === 'compact') {

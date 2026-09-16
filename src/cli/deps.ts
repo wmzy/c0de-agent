@@ -112,6 +112,22 @@ function resolvePermissionChecker(
       : nonInteractiveSafeChecker
 }
 
+/**
+ * cwd 是否当前可信项目（trustedAt 非空且指纹未漂移）。与聊天门禁/插件加载同口径；
+ * CLI 工作流注册表（内置+用户级+项目级）的构建也用它决定是否 import 项目级文件。
+ */
+async function resolveCwdProjectTrusted(db: DB, cwd: string): Promise<boolean> {
+  try {
+    const p = await getByDirectory(db, cwd)
+    if (p?.trustedAt != null) {
+      return projectTrustCurrent(loadConfigScopes(cwd).project, p.trustedAt, p.riskFingerprint, cwd)
+    }
+  } catch {
+    // 查询失败 → 未信任
+  }
+  return false
+}
+
 /** 组装完整 LoopDeps（默认 safe 放行 + 默认工具注册表）。 */
 async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<LoopDeps> {
   const llmRegistry = buildLLMRegistry(config)
@@ -120,20 +136,7 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
   // （--temp/锁冲突降级）不含项目记录 → 未信任，项目插件不加载。
   // P0（代码面）：已信任但指纹漂移（插件代码/MCP 参数/风险键变更）→ 不加载，
   // 与聊天门禁同口径。
-  let projectTrusted = false
-  try {
-    const p = await getByDirectory(opts.db, opts.cwd)
-    if (p?.trustedAt != null) {
-      projectTrusted = projectTrustCurrent(
-        loadConfigScopes(opts.cwd).project,
-        p.trustedAt,
-        p.riskFingerprint,
-        opts.cwd,
-      )
-    }
-  } catch {
-    // 查询失败 → 未信任
-  }
+  const projectTrusted = await resolveCwdProjectTrusted(opts.db, opts.cwd)
   const { hookRunner } = await initPlugins({
     cwd: opts.cwd,
     config,
@@ -164,4 +167,10 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
 }
 
 export type { BuildDepsOptions, PermissionStrategy }
-export { buildAgentDeps, buildLLMRegistry, fullyAutoApproveChecker, nonInteractiveSafeChecker }
+export {
+  buildAgentDeps,
+  buildLLMRegistry,
+  fullyAutoApproveChecker,
+  nonInteractiveSafeChecker,
+  resolveCwdProjectTrusted,
+}

@@ -167,12 +167,13 @@ type WorkflowsPanelProps = {
 function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const qc = useQueryClient()
   const queryKey = ['workflows', projectId]
-  const { data: workflows = [] } = useQuery({
+  const { data } = useQuery({
     queryKey,
     queryFn: () => workflowsAPI.list(projectId),
     staleTime: 30_000,
-    select: (d) => d.workflows,
   })
+  const workflows = data?.workflows ?? []
+  const trustRequired = data?.trustRequired
 
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [draftName, setDraftName] = useState('')
@@ -193,7 +194,8 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   })
 
   const removeMut = useMutation({
-    mutationFn: ({ name }: { name: string }) => workflowsAPI.remove(name, projectId),
+    mutationFn: ({ name, target }: { name: string; target: 'project' | 'user' }) =>
+      workflowsAPI.remove(name, projectId, target),
     onSuccess: () => {
       invalidate()
       setPendingDelete(null)
@@ -237,6 +239,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   }
 
   const submitSave = () => {
+    if (!editor) return
     const name = draftName.trim()
     if (!WORKFLOW_NAME_RE.test(name)) {
       setError(`名称 "${name}" 不合法：仅小写字母、数字、连字符（[a-z0-9-]+）`)
@@ -251,6 +254,9 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       name,
       source: draftSource,
       target: draftTarget,
+      // 编辑模式覆盖同名文件是用户显式意图（对话框标题即「编辑：name」）；
+      // 新建模式不带 overwrite——同名时服务端 409 并提示既有层级，防误覆盖。
+      ...(editor.mode === 'edit' ? { overwrite: true } : {}),
       ...(draftTarget === 'project' && projectId ? { projectId } : {}),
     })
   }
@@ -261,6 +267,12 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       {error && !editor ? (
         <div className={errorText} data-testid="workflow-panel-error">
           {error}
+        </div>
+      ) : null}
+      {trustRequired ? (
+        <div className={hint} data-testid="workflow-trust-required">
+          项目未信任（或信任后配置漂移）：项目级工作流（.c0de/workflows/）已被隐藏。
+          信任该项目后可在聊天中列出与运行。
         </div>
       ) : null}
       {workflows.length === 0 ? (
@@ -403,7 +415,14 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
         confirmLabel="删除"
         busy={removeMut.isPending}
         onConfirm={() => {
-          if (pendingDelete) removeMut.mutate({ name: pendingDelete.name })
+          if (pendingDelete) {
+            removeMut.mutate({
+              name: pendingDelete.name,
+              // 按行来源显式指定删除层级：用户级条目永远删用户级文件，绝不因
+              // 项目文件缺失/竞态回退到另一层级。
+              target: pendingDelete.source === 'user' ? 'user' : 'project',
+            })
+          }
         }}
         onClose={() => setPendingDelete(null)}
       />

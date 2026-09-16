@@ -557,7 +557,7 @@ export default async function workflow(ctx) {
     }
   })
 
-  it('/workflow show 发现项目级 .c0de/workflows/*.js', async () => {
+  it('/workflow show 发现项目级 .c0de/workflows/*.js（项目已信任）', async () => {
     const projDir = await mkdtemp(join(tmpdir(), 'wf-proj-show-'))
     const wfDir = join(projDir, '.c0de', 'workflows')
     await mkdir(wfDir, { recursive: true })
@@ -565,6 +565,10 @@ export default async function workflow(ctx) {
       join(wfDir, 'proj-only.js'),
       `export const meta = { name: 'proj-only', description: 'project-level wf', phases: ['go'] }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
     )
+    // 项目级发现受信任门禁：先落盘再注册+信任（指纹覆盖工作流文件）
+    const { fromDirectory, trustProject } = await import('../project/project.js')
+    const project = await fromDirectory(db, projDir)
+    await trustProject(db, project.id)
 
     const reg = createSlashRegistry()
     const cmd = reg.get('workflow')
@@ -583,7 +587,34 @@ export default async function workflow(ctx) {
     await rm(projDir, { recursive: true, force: true })
   })
 
-  it('/workflow list 合并项目级工作流', async () => {
+  it('/workflow show 未信任项目不发现项目级工作流（fail-closed）', async () => {
+    const projDir = await mkdtemp(join(tmpdir(), 'wf-proj-show-untrusted-'))
+    const wfDir = join(projDir, '.c0de', 'workflows')
+    await mkdir(wfDir, { recursive: true })
+    await writeFile(
+      join(wfDir, 'evil-show.js'),
+      `globalThis.__slashShowRan = true\nexport const meta = { name: 'evil-show', description: 'x' }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+    // 不注册/不信任该项目：发现本身就会执行仓库代码，必须跳过
+
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('show evil-show', {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('未知工作流')
+    }
+    expect('__slashShowRan' in globalThis).toBe(false)
+
+    await rm(projDir, { recursive: true, force: true })
+  })
+
+  it('/workflow list 合并项目级工作流（项目已信任）', async () => {
     const projDir = await mkdtemp(join(tmpdir(), 'wf-proj-list-'))
     const wfDir = join(projDir, '.c0de', 'workflows')
     await mkdir(wfDir, { recursive: true })
@@ -591,6 +622,9 @@ export default async function workflow(ctx) {
       join(wfDir, 'list-test.js'),
       `export const meta = { name: 'list-test', description: 'listed from project', phases: ['go'] }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
     )
+    const { fromDirectory, trustProject } = await import('../project/project.js')
+    const project = await fromDirectory(db, projDir)
+    await trustProject(db, project.id)
 
     const reg = createSlashRegistry()
     const cmd = reg.get('workflow')
@@ -608,6 +642,33 @@ export default async function workflow(ctx) {
       expect(result.text).toContain('list-test')
       expect(result.text).toContain('project')
     }
+
+    await rm(projDir, { recursive: true, force: true })
+  })
+
+  it('/workflow list 未信任项目不发现项目级工作流（fail-closed 信任门禁）', async () => {
+    const projDir = await mkdtemp(join(tmpdir(), 'wf-proj-list-untrusted-'))
+    const wfDir = join(projDir, '.c0de', 'workflows')
+    await mkdir(wfDir, { recursive: true })
+    await writeFile(
+      join(wfDir, 'evil-list.js'),
+      `globalThis.__slashListRan = true\nexport const meta = { name: 'evil-list', description: 'x' }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+    )
+
+    const reg = createSlashRegistry()
+    const cmd = reg.get('workflow')
+    const result = (await cmd?.execute('list', {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+
+    expect(result._tag).toBe('text')
+    if (result._tag === 'text') {
+      expect(result.text).not.toContain('evil-list')
+    }
+    // 仓库代码未被 dynamic import 执行
+    expect('__slashListRan' in globalThis).toBe(false)
 
     await rm(projDir, { recursive: true, force: true })
   })

@@ -35,6 +35,8 @@ type SessionMetadata = {
   mainThreadId?: string
   squashCount?: number
   fileSnapshots?: string[]
+  /** 工作流运行会话对应的 /workflow 名称（创建时写入；中断恢复指引展示用）。 */
+  workflowName?: string
   /** 本会话分段增量 LLM 调用记录，用于调用详情面板展示。 */
   segments?: LLMSegment[]
   /** 上次 agent run 状态；status='running' 且进程无活跃 run → 被中断。 */

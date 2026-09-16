@@ -322,11 +322,28 @@ const workflowCommand: SlashCommand = {
       }
     }
 
-    // 项目级工作流：从 agent cwd（= project worktree）动态发现。
-    // registry 是 server 单例（含 builtin + global + server-cwd），不含其他项目的工作流。
-    const projectWorkflows = await discoverWorkflows(ctx.cwd)
+    // 项目级工作流：从 agent cwd（= project worktree）动态发现。发现即执行
+    // 仓库代码（dynamic import 顶层即刻运行）——必须与信任门禁同口径：仅在
+    // 目录已注册为项目且 trustedAt + 指纹一致时发现（fail-closed，回退注册表）。
+    // 此前无条件发现：Web 未注册目录的会话/CLI 路径会在未信任仓库执行工作流代码。
+    let projectWorkflows: Awaited<ReturnType<typeof discoverWorkflows>> = []
+    try {
+      const { getByDirectory } = await import('../project/index.js')
+      const { projectTrustCurrent } = await import('../project/trust.js')
+      const { loadConfigScopes } = await import('./config.js')
+      const p = await getByDirectory(ctx.deps.db, ctx.cwd)
+      if (p?.trustedAt != null) {
+        const scopes = loadConfigScopes(ctx.cwd)
+        if (projectTrustCurrent(scopes.project, p.trustedAt, p.riskFingerprint, ctx.cwd)) {
+          projectWorkflows = await discoverWorkflows(ctx.cwd)
+        }
+      }
+    } catch {
+      // 信任查询失败 → 不发现项目级（fail-closed）
+    }
     const projectByName = new Map(projectWorkflows.map((w) => [w.meta.name, w]))
-    const resolveEntry = (name: string) => registry?.get(name) ?? projectByName.get(name)
+    // 统一优先级：项目 > 用户 > 内置（与列表/resolveWorkflow 一致；此前注册表优先）。
+    const resolveEntry = (name: string) => projectByName.get(name) ?? registry?.get(name)
 
     if (subcommand === 'list') {
       // 合并 registry + 项目级（去重：同名项目级覆盖）

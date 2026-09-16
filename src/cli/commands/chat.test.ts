@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB, migrateDB } from '../../db/index.js'
@@ -147,6 +150,43 @@ describe('runChatCommand', () => {
         stdout: (s: string) => lines.push(s),
       })
       expect(lines.join('')).toContain('answer')
+    })
+
+    it('/workflow list 展示用户级工作流（CLI 注入三级注册表）', async () => {
+      const originalHome = process.env.HOME
+      const tmpHome = await mkdtemp(join(tmpdir(), 'cli-wf-home-'))
+      process.env.HOME = tmpHome
+      try {
+        await mkdir(join(tmpHome, '.c0de', 'workflows'), { recursive: true })
+        await writeFile(
+          join(tmpHome, '.c0de', 'workflows', 'cli-user-wf.js'),
+          `export const meta = { name: 'cli-user-wf', description: 'user level for CLI' }\nexport default async function wf(ctx) { return { output: 'ok' } }`,
+          'utf-8',
+        )
+        const lines: string[] = []
+        const deps = await buildAgentDeps(config, {
+          db,
+          cwd: process.cwd(),
+          chatStream: mockStream,
+        })
+        await runChatCommand({
+          args: { options: {}, positionals: ['/workflow', 'list'] },
+          config,
+          deps,
+          stdout: (s: string) => lines.push(s),
+          stderr: () => {},
+        })
+        // 此前 CLI 回退仅内置注册表，用户级工作流完全不可见
+        expect(lines.join('')).toContain('cli-user-wf')
+        expect(lines.join('')).toContain('(user)')
+      } finally {
+        if (originalHome === undefined) {
+          delete process.env.HOME
+        } else {
+          process.env.HOME = originalHome
+        }
+        await rm(tmpHome, { recursive: true, force: true })
+      }
     })
   })
 })
