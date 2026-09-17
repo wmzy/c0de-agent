@@ -1,16 +1,17 @@
 import { css } from '@linaria/core'
+import { TypedLink, useMatched } from '@native-router/react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useLocation, useParams } from 'react-router-dom'
-import { configAPI } from '../services/config.js'
-import { usageAPI } from '../services/usage.js'
+import { CommitButton } from '@/components/CommitButton.js'
+import { Logo } from '@/components/Logo.js'
+import { ProjectIndicator } from '@/components/ProjectIndicator.js'
+import type { AppPaths } from '@/routes.js'
+import { configAPI } from '@/services/config.js'
+import { usageAPI } from '@/services/usage.js'
 import {
   monthTokenSum,
   resolveEffectiveBudget,
   resolveEffectiveTokenBudget,
-} from '../utils/usage.js'
-import { CommitButton } from './CommitButton.js'
-import { Logo } from './Logo.js'
-import { ProjectIndicator } from './ProjectIndicator.js'
+} from '@/utils/usage.js'
 
 const bar = css`
   display: flex;
@@ -103,7 +104,7 @@ const costOver = css`
  *  点击跳转设置页「用量与成本」面板。P1：按当前项目口径统计——
  *  汇总与预算均取项目合并配置 + 项目聚合成本，项目间互不干扰。
  *  无项目上下文时退化为全局口径（'/settings' 根路由）。 */
-function MonthCostBadge({ settingsPath, projectId }: { settingsPath: string; projectId?: string }) {
+function MonthCostBadge({ projectId }: { projectId?: string }) {
   // 直接走共享 query 缓存（与 Settings 同一 queryKey，零额外请求），
   // 避免 TopBar 依赖 ConfigProvider 的渲染层级。
   const { data: configResp } = useQuery({
@@ -149,38 +150,50 @@ function MonthCostBadge({ settingsPath, projectId }: { settingsPath: string; pro
       : '') +
     (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
     '。点击前往设置查看用量与成本。'
-  return (
-    <Link
-      to={settingsPath}
-      className={`${costBadge}${overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`}
+  const badgeClass = `${costBadge}${overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`
+  const badgeText = `${overAny ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 $${cost.toFixed(2)}`
+  return projectId ? (
+    <TypedLink<AppPaths>
+      to="/projects/:projectId/settings"
+      params={{ projectId }}
+      className={badgeClass}
       title={tip}
       data-testid="month-cost-badge"
     >
-      {overAny ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 ${cost.toFixed(2)}
-    </Link>
+      {badgeText}
+    </TypedLink>
+  ) : (
+    <TypedLink<AppPaths>
+      to="/settings"
+      className={badgeClass}
+      title={tip}
+      data-testid="month-cost-badge"
+    >
+      {badgeText}
+    </TypedLink>
   )
 }
 
 /** 全局顶部导航栏：品牌标识 + 主界面/看板/设置入口。 */
 export function TopBar() {
-  const { pathname } = useLocation()
-  const { projectId } = useParams<{ projectId: string }>()
-  const isSettings = pathname.startsWith('/settings') || pathname.includes('/settings')
-  const isKanban = pathname.includes('/kanban')
+  // notFound 视图提交在匹配链之外（无 MatchedContext），useMatched 返回 undefined；
+  // 404 页仍需渲染 TopBar，故按缺省路径处理（无 projectId、无高亮）。
+  const matchedCtx = useMatched()
+  const routePath = matchedCtx?.matched[matchedCtx.matched.length - 1]?.route.path ?? ''
+  const projectId = matchedCtx?.params.projectId
+  const isSettings = routePath === '/settings' || routePath === '/projects/:projectId/settings'
+  const isKanban = routePath === '/projects/:projectId/kanban'
   // 会话入口：项目上下文跳当前项目，否则回根路径（由 RootRedirect 解析当前项目）。
-  const sessionsPath = projectId ? `/projects/${projectId}` : '/'
-  const kanbanPath = projectId ? `/projects/${projectId}/kanban` : '/'
-  // P1-1：设置入口保留项目上下文（配置编辑对准当前项目）。
-  const settingsPath = projectId ? `/projects/${projectId}/settings` : '/settings'
+  const sessionsActive = !isSettings && !isKanban
 
   return (
     <header className={bar} data-testid="topbar">
       <div className={brandGroup}>
-        <Link to="/" className={brand} title="c0de-agent 首页">
+        <TypedLink<AppPaths> to="/" className={brand} title="c0de-agent 首页">
           {/* 仅显示品牌 mark：字标与右侧项目切换器的项目名（可能恰为 c0de-agent）
               同字样相邻会造成品牌/项目身份混淆，品牌名由 Logo 内 sr-only 文本保留 */}
           <Logo wordmark={false} />
-        </Link>
+        </TypedLink>
         {projectId && (
           <ProjectIndicator
             projectId={projectId}
@@ -190,30 +203,65 @@ export function TopBar() {
         )}
       </div>
       <nav className={nav}>
-        <MonthCostBadge settingsPath={settingsPath} projectId={projectId} />
-        <Link
-          to={sessionsPath}
-          className={`${link} ${!isSettings && !isKanban ? activeLink : ''}`}
-          data-active={(!isSettings && !isKanban) || undefined}
-        >
-          会话
-        </Link>
-        <Link
-          to={kanbanPath}
-          className={`${link} ${isKanban ? activeLink : ''}`}
-          data-active={isKanban || undefined}
-          data-testid="nav-kanban"
-          title="项目级任务看板（与会话内的 agent 待办相互独立）"
-        >
-          项目看板
-        </Link>
-        <Link
-          to={settingsPath}
-          className={`${link} ${isSettings ? activeLink : ''}`}
-          data-active={isSettings || undefined}
-        >
-          设置
-        </Link>
+        <MonthCostBadge projectId={projectId} />
+        {projectId ? (
+          <TypedLink<AppPaths>
+            to="/projects/:projectId"
+            params={{ projectId }}
+            className={`${link} ${sessionsActive ? activeLink : ''}`}
+            data-active={sessionsActive || undefined}
+          >
+            会话
+          </TypedLink>
+        ) : (
+          <TypedLink<AppPaths>
+            to="/"
+            className={`${link} ${sessionsActive ? activeLink : ''}`}
+            data-active={sessionsActive || undefined}
+          >
+            会话
+          </TypedLink>
+        )}
+        {projectId ? (
+          <TypedLink<AppPaths>
+            to="/projects/:projectId/kanban"
+            params={{ projectId }}
+            className={`${link} ${isKanban ? activeLink : ''}`}
+            data-active={isKanban || undefined}
+            data-testid="nav-kanban"
+            title="项目级任务看板（与会话内的 agent 待办相互独立）"
+          >
+            项目看板
+          </TypedLink>
+        ) : (
+          <TypedLink<AppPaths>
+            to="/"
+            className={`${link} ${isKanban ? activeLink : ''}`}
+            data-active={isKanban || undefined}
+            data-testid="nav-kanban"
+            title="项目级任务看板（与会话内的 agent 待办相互独立）"
+          >
+            项目看板
+          </TypedLink>
+        )}
+        {projectId ? (
+          <TypedLink<AppPaths>
+            to="/projects/:projectId/settings"
+            params={{ projectId }}
+            className={`${link} ${isSettings ? activeLink : ''}`}
+            data-active={isSettings || undefined}
+          >
+            设置
+          </TypedLink>
+        ) : (
+          <TypedLink<AppPaths>
+            to="/settings"
+            className={`${link} ${isSettings ? activeLink : ''}`}
+            data-active={isSettings || undefined}
+          >
+            设置
+          </TypedLink>
+        )}
       </nav>
     </header>
   )

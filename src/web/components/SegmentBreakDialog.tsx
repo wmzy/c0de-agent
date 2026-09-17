@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { Dialog } from './Dialog.js'
+import { Dialog } from '@/components/Dialog.js'
 
 const bodyText = css`
   color: var(--text-secondary);

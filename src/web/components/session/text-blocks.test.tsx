@@ -7,9 +7,9 @@ vi.mock('../../utils/highlight.js', () => ({
   highlightCode: vi.fn(async (code: string) => `<pre><code>${code}</code></pre>`),
 }))
 
-import { AssistantTextBlock } from './AssistantTextBlock.js'
-import { ReasoningBlock } from './ReasoningBlock.js'
-import { UserTextBlock } from './UserTextBlock.js'
+import { AssistantTextBlock } from '@/components/session/AssistantTextBlock.js'
+import { ReasoningBlock } from '@/components/session/ReasoningBlock.js'
+import { UserTextBlock } from '@/components/session/UserTextBlock.js'
 
 afterEach(() => {
   cleanup()
@@ -55,6 +55,7 @@ describe('AssistantTextBlock', () => {
         ok: true,
         status: 200,
         json: async () => ({ path: 'a.ts', content: 'line1\nline2\nline3' }),
+        text: async () => JSON.stringify({ path: 'a.ts', content: 'line1\nline2\nline3' }),
       }),
     )
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })

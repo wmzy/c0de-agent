@@ -18,7 +18,7 @@ vi.mock('../services/terminal.js', () => ({
   terminalWsUrl: (id: string) => `ws://localhost/${id}`,
 }))
 
-import { useTerminal } from './useTerminal.js'
+import { useTerminal } from '@/hooks/useTerminal.js'
 
 function fakeInfo(id: string, projectId?: string) {
   return {

@@ -5,7 +5,7 @@
 import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
 import type { RefObject } from 'react'
-import { hint, hintMb, kvRow, section, sectionTitle } from './styles.js'
+import { hint, hintMb, kvRow, section, sectionTitle } from '@/components/settings/styles.js'
 
 const toolbar = css`
   display: flex;

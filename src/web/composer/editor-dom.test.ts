@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { getCursorPosition, setCursorPosition } from './editor-dom.js'
+import { getCursorPosition, setCursorPosition } from '@/composer/editor-dom.js'
 
 afterEach(() => document.body.replaceChildren())
 

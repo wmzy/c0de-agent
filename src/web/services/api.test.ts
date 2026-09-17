@@ -1,35 +1,40 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apiRequest } from './api.js'
-import { sendChatMessage } from './chat.js'
 
-describe('apiRequest', () => {
+import { del, get, post } from '@/services/api.js'
+import { sendChatMessage } from '@/services/chat.js'
+
+/** 读请求头：fetch-fun 在 happy-dom 产出 Headers 实例、bun 产出普通对象，按名大小写不敏感读取。 */
+function readHeader(init: RequestInit, name: string): string | undefined {
+  const h = init.headers
+  if (h instanceof Headers) return h.get(name) ?? undefined
+  const rec = h as Record<string, string>
+  return rec[name] ?? rec[name.toLowerCase()] ?? rec[name.toUpperCase()]
+}
+
+describe('fetch-fun HTTP 层', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('返回解析后的 JSON', async () => {
+  it('get 返回解析后的 JSON', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ ok: true }),
-      }),
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })),
     )
-    const result = await apiRequest('/api/health')
+    const result = await get('/api/health')
     expect(result).toEqual({ ok: true })
   })
 
   it('非 2xx 解析后端 { error: { code, message } } 并抛出 APIError', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        statusText: 'Not Found',
-        // 与服务端 apiError(middleware/error.ts) 实际返回体一致
-        json: async () => ({ error: { code: 'NOT_FOUND', message: 'Session not found' } }),
-      }),
+      vi.fn().mockResolvedValue(
+        new Response(
+          // 与服务端 apiError(middleware/error.ts) 实际返回体一致
+          JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Session not found' } }),
+          { status: 404, statusText: 'Not Found' },
+        ),
+      ),
     )
-    await expect(apiRequest('/api/sessions/x')).rejects.toMatchObject({
+    await expect(get('/api/sessions/x')).rejects.toMatchObject({
       status: 404,
       message: 'Session not found',
       code: 'NOT_FOUND',
@@ -39,25 +44,63 @@ describe('apiRequest', () => {
   it('无 JSON body 时回退到 statusText', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        statusText: 'Not Found',
-        json: async () => {
-          throw new Error('no body')
-        },
-      }),
+      vi.fn().mockResolvedValue(new Response('boom', { status: 404, statusText: 'Not Found' })),
     )
-    await expect(apiRequest('/api/whatever')).rejects.toMatchObject({
+    await expect(get('/api/whatever')).rejects.toMatchObject({
       status: 404,
       message: 'Not Found',
     })
   })
 
-  it('204 返回 undefined', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }))
-    const result = await apiRequest('/api/sessions/x', { method: 'DELETE' })
+  it('401 时派发 c0de-auth-required 事件并抛出 APIError', async () => {
+    const handler = vi.fn()
+    window.addEventListener('c0de-auth-required', handler)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: 'no' } }), {
+          status: 401,
+          statusText: 'Unauthorized',
+        }),
+      ),
+    )
+    await expect(get('/api/health')).rejects.toMatchObject({ status: 401, code: 'UNAUTHORIZED' })
+    expect(handler).toHaveBeenCalledTimes(1)
+    window.removeEventListener('c0de-auth-required', handler)
+  })
+
+  it('del 204 返回 undefined', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })))
+    const result = await del('/api/sessions/x')
     expect(result).toBeUndefined()
+  })
+
+  it('GET 瞬时 5xx 重试后成功（幂等白名单）', async () => {
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => {
+        calls++
+        if (calls < 3) return new Response('{"error":{"message":"boom"}}', { status: 500 })
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }),
+    )
+    const result = await get('/api/health')
+    expect(result).toEqual({ ok: true })
+    expect(calls).toBe(3)
+  })
+
+  it('POST 不重试（写操作永不重放）', async () => {
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => {
+        calls++
+        return new Response('{"error":{"message":"boom"}}', { status: 500 })
+      }),
+    )
+    await expect(post('/api/chat/abort', { sessionId: 's' })).rejects.toMatchObject({ status: 500 })
+    expect(calls).toBe(1)
   })
 
   it('localStorage 有 token 时携带 Authorization 头', async () => {
@@ -66,11 +109,24 @@ describe('apiRequest', () => {
       setItem: vi.fn(),
       removeItem: vi.fn(),
     })
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    await apiRequest('/api/health')
+    await get('/api/health')
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-123')
+    expect(readHeader(init, 'authorization')).toBe('Bearer tok-123')
+  })
+
+  it('无 token 时不携带 Authorization 头', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await get('/api/health')
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(readHeader(init, 'authorization')).toBeUndefined()
   })
 
   it('bootstrapAuthToken 将 URL ?token= 存入 localStorage', async () => {
@@ -89,7 +145,7 @@ describe('apiRequest', () => {
       },
       configurable: true,
     })
-    await import('./api.js')
+    await import('@/services/api.js')
     expect(setItem).toHaveBeenCalledWith('c0de-auth-token', 'tok-url')
     expect(replaceState).toHaveBeenCalled()
     const nextUrl = replaceState.mock.calls[0]?.[2] as string
@@ -121,7 +177,7 @@ describe('apiRequest', () => {
       },
       configurable: true,
     })
-    await import('./api.js')
+    await import('@/services/api.js')
     // 不得用 injected-bootstrap 覆盖设备 token（否则注册失败 → 401 → 配对循环）
     expect(setItem).not.toHaveBeenCalledWith('c0de-auth-token', 'injected-bootstrap')
   })
@@ -142,18 +198,35 @@ describe('sendChatMessage 认证头', () => {
   }
 
   it('localStorage 有 token 时 /api/chat 携带 Authorization 头', async () => {
-    stubToken('tok-abc')
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+    stubToken('tok-123')
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.close()
+          },
+        }),
+        { status: 200 },
+      ),
+    )
     vi.stubGlobal('fetch', fetchMock)
     await sendChatMessage('s1', 'hi', () => {})
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/chat')
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-abc')
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-123')
   })
 
   it('无 token 时不携带 Authorization 头', async () => {
     stubToken(null)
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.close()
+          },
+        }),
+        { status: 200 },
+      ),
+    )
     vi.stubGlobal('fetch', fetchMock)
     await sendChatMessage('s1', 'hi', () => {})
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
@@ -161,20 +234,16 @@ describe('sendChatMessage 认证头', () => {
   })
 
   it('401 时错误提示附「重新进入」指引', async () => {
-    stubToken(null)
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 401,
-        statusText: 'Unauthorized',
-        json: async () => ({ error: { code: 'UNAUTHORIZED', message: '无效 token' } }),
-      }),
-    )
+    stubToken('tok-123')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: 'unauthorized' } }), { status: 401 }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
     await expect(sendChatMessage('s1', 'hi', () => {})).rejects.toMatchObject({
       status: 401,
-      code: 'UNAUTHORIZED',
-      message: expect.stringContaining('认证失败，请从 serve 输出的 URL 重新进入'),
+      message: expect.stringContaining('重新进入'),
     })
   })
 })

@@ -1,7 +1,7 @@
 import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { SegmentBreak, SegmentFooter } from './LLMDetail.js'
+import { SegmentBreak, SegmentFooter } from '@/components/LLMDetail.js'
 
 const tools: LLMSegment['tools'] = [
   {

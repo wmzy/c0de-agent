@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from 'react'
-import { renderMarkdown } from '../utils/markdown.js'
+import { renderMarkdown } from '@/utils/markdown.js'
 
 const mdCache = new Map<string, string>()
 

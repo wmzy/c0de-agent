@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FileSelectionContext, useFileSelection } from './FileSelectionContext.js'
+import { FileSelectionContext, useFileSelection } from '@/contexts/FileSelectionContext.js'
 
 afterEach(cleanup)
 

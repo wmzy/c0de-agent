@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
-import { getCursorPosition, setCursorPosition } from './editor-dom.js'
-import type { Prompt, SnippetPart, TerminalPart } from './types.js'
-import { DEFAULT_PROMPT } from './types.js'
+import { getCursorPosition, setCursorPosition } from '@/composer/editor-dom.js'
+import type { Prompt, SnippetPart, TerminalPart } from '@/composer/types.js'
+import { DEFAULT_PROMPT } from '@/composer/types.js'
 
 /** workflowz 高亮样式：琥珀→翠绿渐变文字，与 oh-my-pi 的 hue 30→150 一致。 */
 const wfHighlight = css`

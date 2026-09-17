@@ -9,9 +9,9 @@ import { cleanup, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { UsagePanel } from './UsagePanel.js'
+import { UsagePanel } from '@/components/settings/UsagePanel.js'
 
-vi.mock('../../services/usage.js', () => ({
+vi.mock('@/services/usage.js', () => ({
   usageAPI: { summary: vi.fn() },
 }))
 
@@ -57,7 +57,7 @@ afterEach(() => {
 
 describe('UsagePanel — token 预算护栏', () => {
   it('warn 模式 token 超支 → 显示告警与生效提示（不再静默）', async () => {
-    const { usageAPI } = await import('../../services/usage.js')
+    const { usageAPI } = await import('@/services/usage.js')
     ;(usageAPI.summary as Mock).mockResolvedValue(
       baseSummary({ inputTokens: 1500, outputTokens: 0 }),
     )
@@ -81,7 +81,7 @@ describe('UsagePanel — token 预算护栏', () => {
   })
 
   it('token 未超支 → 不显示告警', async () => {
-    const { usageAPI } = await import('../../services/usage.js')
+    const { usageAPI } = await import('@/services/usage.js')
     ;(usageAPI.summary as Mock).mockResolvedValue(baseSummary({ inputTokens: 10, outputTokens: 0 }))
 
     renderPanel({
@@ -104,7 +104,7 @@ describe('UsagePanel — token 预算护栏', () => {
   })
 
   it('全局视图渲染全局 token 预算输入框', async () => {
-    const { usageAPI } = await import('../../services/usage.js')
+    const { usageAPI } = await import('@/services/usage.js')
     ;(usageAPI.summary as Mock).mockResolvedValue(baseSummary())
 
     renderPanel({
@@ -125,7 +125,7 @@ describe('UsagePanel — token 预算护栏', () => {
   })
 
   it('金额预算已设但未设 token 预算 + 价格未知调用 → 提示设置 token 预算兜底', async () => {
-    const { usageAPI } = await import('../../services/usage.js')
+    const { usageAPI } = await import('@/services/usage.js')
     const summary = baseSummary()
     summary.totals.unknownCostCalls = 3
     ;(usageAPI.summary as Mock).mockResolvedValue(summary)
@@ -149,7 +149,7 @@ describe('UsagePanel — token 预算护栏', () => {
   })
 
   it('已设 token 预算时，价格未知调用的告警不含兜底引导', async () => {
-    const { usageAPI } = await import('../../services/usage.js')
+    const { usageAPI } = await import('@/services/usage.js')
     const summary = baseSummary()
     summary.totals.unknownCostCalls = 3
     ;(usageAPI.summary as Mock).mockResolvedValue(summary)

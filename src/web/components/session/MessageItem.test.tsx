@@ -1,10 +1,10 @@
 import type { Message, MessageContent } from '@shared/types/message.js'
 import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FileSelectionContext } from '../../contexts/FileSelectionContext.js'
-import type { ShakeRegionView } from '../../types/index.js'
-import { MessageItem } from './MessageItem.js'
-import { type ShakeModeValue, ShakeProvider } from './ShakeContext.js'
+import { MessageItem } from '@/components/session/MessageItem.js'
+import { type ShakeModeValue, ShakeProvider } from '@/components/session/ShakeContext.js'
+import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import type { ShakeRegionView } from '@/types/index.js'
 
 afterEach(() => cleanup())
 

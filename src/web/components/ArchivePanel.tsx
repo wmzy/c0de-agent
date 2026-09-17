@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { sessionAPI } from '../services/session.js'
-import type { ArchiveEntry, CompactionArchive } from '../types/index.js'
-import { Dialog } from './Dialog.js'
+import { Dialog } from '@/components/Dialog.js'
+import { sessionAPI } from '@/services/session.js'
+import type { ArchiveEntry, CompactionArchive } from '@/types/index.js'
 
 const list = css`
   display: flex;

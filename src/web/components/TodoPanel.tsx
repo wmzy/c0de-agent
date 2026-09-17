@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { kanbanAPI } from '../services/kanban.js'
-import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '../services/todo.js'
-import { inputStyle } from '../styles/tokens.js'
+import { kanbanAPI } from '@/services/kanban.js'
+import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
+import { inputStyle } from '@/styles/tokens.js'
 
 // ── Status icons & colors ─────────────────────────────────
 

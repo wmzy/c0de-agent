@@ -1,13 +1,13 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CodeEditor } from '../components/CodeEditor.js'
-import { Dialog } from '../components/Dialog.js'
-import { Markdown } from '../components/Markdown.js'
-import { useFileSelection } from '../contexts/FileSelectionContext.js'
-import { useFileReference } from '../contexts/ReferenceContext.js'
-import { getAuthToken } from '../services/api.js'
-import { fileAPI } from '../services/file.js'
+import { CodeEditor } from '@/components/CodeEditor.js'
+import { Dialog } from '@/components/Dialog.js'
+import { Markdown } from '@/components/Markdown.js'
+import { useFileSelection } from '@/contexts/FileSelectionContext.js'
+import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { getAuthToken } from '@/services/api.js'
+import { fileAPI } from '@/services/file.js'
 
 const wrap = css`
   height: 100%;

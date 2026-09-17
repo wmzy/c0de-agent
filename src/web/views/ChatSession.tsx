@@ -3,31 +3,33 @@
 // 从 ChatView.tsx 拆出（2026-09），样式与状态只服务于本组件。
 
 import { css } from '@linaria/core'
+import { useRouter } from '@native-router/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { AgentSelector } from '../components/AgentSelector.js'
-import { ArchivePanel } from '../components/ArchivePanel.js'
-import { ModelSelector } from '../components/ModelSelector.js'
-import { SegmentBreakDialog } from '../components/SegmentBreakDialog.js'
-import { SessionSummary } from '../components/SessionSummary.js'
-import { type ShakeModeValue, ShakeProvider } from '../components/session/ShakeContext.js'
-import { mergeToolMessages } from '../components/session/utils/normalizeParts.js'
-import { buildTimeline } from '../components/session/utils/timeline.js'
-import { TodoPanel } from '../components/TodoPanel.js'
-import { ToolToggle } from '../components/ToolToggle.js'
-import { TrustRequiredDialog } from '../components/TrustRequiredDialog.js'
-import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
-import { useAgent } from '../hooks/useAgent.js'
-import { useChat } from '../hooks/useChat.js'
-import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
-import { useMessages } from '../hooks/useSession.js'
-import { agentAPI } from '../services/agent.js'
-import { providerAPI } from '../services/provider.js'
-import { sessionAPI } from '../services/session.js'
-import type { Message, ShakeRegionView } from '../types/index.js'
-import { Chat, type SendPayload } from './Chat.js'
-import { ChatSkeleton, ChatWelcome, SetupBanner } from './ChatView.js'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AgentSelector } from '@/components/AgentSelector.js'
+import { ArchivePanel } from '@/components/ArchivePanel.js'
+import { ModelSelector } from '@/components/ModelSelector.js'
+import { SegmentBreakDialog } from '@/components/SegmentBreakDialog.js'
+import { SessionSummary } from '@/components/SessionSummary.js'
+import { ShakeProvider } from '@/components/session/ShakeContext.js'
+import { mergeToolMessages } from '@/components/session/utils/normalizeParts.js'
+import { buildTimeline } from '@/components/session/utils/timeline.js'
+import { TodoPanel } from '@/components/TodoPanel.js'
+import { ToolToggle } from '@/components/ToolToggle.js'
+import { TrustRequiredDialog } from '@/components/TrustRequiredDialog.js'
+import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
+import { useAgent } from '@/hooks/useAgent.js'
+import { useChat } from '@/hooks/useChat.js'
+import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
+import { useRetryResume } from '@/hooks/useRetryResume.js'
+import { useMessages } from '@/hooks/useSession.js'
+import { useShake } from '@/hooks/useShake.js'
+import { navigateTo } from '@/navigateTo.js'
+import { agentAPI } from '@/services/agent.js'
+import { providerAPI } from '@/services/provider.js'
+import { sessionAPI } from '@/services/session.js'
+import { Chat, type SendPayload } from '@/views/Chat.js'
+import { ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
 
 const interruptBanner = css`
   display: flex;
@@ -127,7 +129,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const qc = useQueryClient()
-  const navigate = useNavigate()
+  const router = useRouter()
   const { data: history, isLoading } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
@@ -149,11 +151,13 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   useEffect(() => {
     if (!sessionMeta) return
     if (sessionMeta.projectId && sessionMeta.projectId !== projectId) {
-      navigate(`/projects/${sessionMeta.projectId}/sessions/${sessionId}`, { replace: true })
+      navigateTo(router, '/projects/:projectId/sessions/:sessionId', {
+        params: { projectId: sessionMeta.projectId, sessionId },
+      })
     } else if (!sessionMeta.projectId) {
       setOrphanNotice(true)
     }
-  }, [sessionMeta, projectId, sessionId, navigate])
+  }, [sessionMeta, projectId, sessionId, router])
   const { data: agentsData } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),
@@ -277,30 +281,15 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         await sessionAPI.remove(sessionId)
         qc.invalidateQueries({ queryKey: ['sessions'] })
         qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
-        navigate(`/projects/${projectId}`)
+        navigateTo(router, '/projects/:projectId', { params: { projectId } })
       }
     } catch {
       // 清理失败不阻塞：会话树里至多多一个空会话，可手动删除
     }
   }
 
-  // shake 内联模式状态
-  const [shakeMode, setShakeMode] = useState(false)
-  const [shakeRegions, setShakeRegions] = useState<ShakeRegionView[]>([])
-  const [shakeSelected, setShakeSelected] = useState<Set<string>>(new Set())
-  const shakeMutation = useMutation({
-    mutationFn: (regionIds: string[]) => sessionAPI.shakeApply(sessionId, regionIds),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
-      exitShakeMode()
-    },
-  })
-
-  const exitShakeMode = () => {
-    setShakeMode(false)
-    setShakeRegions([])
-    setShakeSelected(new Set())
-  }
+  // shake 内联模式：状态与交互流收敛在 useShake（ChatSession 只渲染工具栏）
+  const shake = useShake(sessionId, messages, qc)
 
   // 归档面板开关
   const [showArchives, setShowArchives] = useState(false)
@@ -338,140 +327,15 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     }
   }
 
-  const handleShakeOpen = async () => {
-    try {
-      const result = await sessionAPI.shakePreview(sessionId)
-      setShakeRegions(result.regions)
-      setShakeSelected(
-        new Set(result.regions.filter((r) => r.isAfterProtectWindow).map((r) => r.id)),
-      )
-      setShakeMode(true)
-    } catch {
-      // 静默失败，不阻塞用户
-    }
-  }
-
-  const shakeToggle = useCallback((id: string) => {
-    setShakeSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
-  const regionsByMessage = useMemo(() => {
-    // tool_result 在 DB 中是独立 role:'tool' 消息，前端 mergeToolMessages 合并进 assistant
-    // 后该消息被 drop。region.messageId 指向被 drop 的 tool 消息；用 toolCallId 重映射到
-    // 含 tool_call 的 assistant 消息，block region 的 messageId 本就是 assistant。
-    const callIdToMsgId = new Map<string, string>()
-    for (const m of messages) {
-      for (const part of m.content) {
-        if (part._tag === 'tool_call') callIdToMsgId.set(part.id, m.id)
-      }
-    }
-    const map = new Map<string, ShakeRegionView[]>()
-    for (const r of shakeRegions) {
-      const targetMsgId =
-        r.kind === 'toolResult' && r.toolCallId
-          ? (callIdToMsgId.get(r.toolCallId) ?? r.messageId)
-          : r.messageId
-      const list = map.get(targetMsgId) ?? []
-      list.push(r)
-      map.set(targetMsgId, list)
-    }
-    return map
-  }, [shakeRegions, messages])
-
-  const shakeContextValue: ShakeModeValue = useMemo(
-    () => ({
-      enabled: shakeMode,
-      regionsByMessage,
-      selected: shakeSelected,
-      onToggle: shakeToggle,
-    }),
-    [shakeMode, regionsByMessage, shakeSelected, shakeToggle],
-  )
-
-  const shakeSelectedTokens = shakeRegions
-    .filter((r) => shakeSelected.has(r.id))
-    .reduce((sum, r) => sum + r.tokens, 0)
-
-  // 恢复中断的对话：从 DB 重载消息，定位「最后一条 assistant 回复之后」的
-  // 最后一条 user 消息重发（后端幂等跳过 append）。
-  // P0：steering 条目在 /messages 中以 user 角色返回但仅含 steering part——重发扫描
-  // 需跳过它们，否则中断恰发生在追加指令后时 resume 静默失效。
-  // P1-2：此前按「含 text part」向前找，纯图片消息（无 text）会被跳过，导致把
-  // **更早的文本消息**重发给模型（旧指令重复执行）。现在定位最后一条 assistant
-  // 之后、含任意内容（text 或 image）的 user 消息，图片经 images 参数一并重发。
-  const handleResume = async () => {
-    setColdStartInterrupted(false)
-    chat.clearInterrupted()
-    // 清空内存流式消息：中断前的乐观副本（user 消息/steering）与即将重载的
-    // DB 消息合并会重复渲染（同一类既有缺陷随 steering 持久化显性化）。
-    chat.reset()
-    const msgs = await sessionAPI.messages(sessionId)
-    qc.setQueryData(['session', sessionId, 'messages'], msgs)
-    let lastAssistantIdx = -1
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i]?.role === 'assistant') {
-        lastAssistantIdx = i
-        break
-      }
-    }
-    const prompt = findLastPrompt(msgs, lastAssistantIdx)
-    if (prompt) {
-      await retryPrompt(prompt)
-      // M3：重发会触发服务端标记未完成轮次（写入 session.metadata）——
-      // 刷新 meta 使时间线立即置灰半截内容。
-      qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
-    }
-  }
-
-  // 运行出错后的重试（P2-1）：与服务端错误（LLM 429/5xx 等）对等的中断恢复入口。
-  // 复用同一套「定位最后一条 user prompt + 完整重发（含图片）」逻辑。
-  const handleRetryLast = async () => {
-    const msgs = await sessionAPI.messages(sessionId)
-    const prompt = findLastPrompt(msgs, -1)
-    if (prompt) await retryPrompt(prompt)
-  }
-
-  /** 从重载消息中定位待重发的 user prompt（跳过仅含 steering 的空条目）。 */
-  const findLastPrompt = (
-    msgs: Message[],
-    afterIdx: number,
-  ): { text: string; images: Array<{ mediaType: string; data: string }> } | null => {
-    for (let i = msgs.length - 1; i > afterIdx; i--) {
-      const m = msgs[i]
-      if (m?.role !== 'user') continue
-      const images = m.content
-        .filter((p): p is { _tag: 'image'; mediaType: string; data: string } => p._tag === 'image')
-        .map((p) => ({ mediaType: p.mediaType, data: p.data }))
-      const text = m.content
-        .filter((p): p is { _tag: 'text'; text: string } => p._tag === 'text')
-        .map((p) => p.text)
-        .join('')
-      if (text.length === 0 && images.length === 0) continue // steering-only 条目
-      return { text, images }
-    }
-    return null
-  }
-
-  /** 按原 run 的 provider/model/agent（缺省回退当前选择）重发 prompt。 */
-  const retryPrompt = async (prompt: {
-    text: string
-    images: Array<{ mediaType: string; data: string }>
-  }) => {
-    const session = await sessionAPI.get(sessionId)
-    const lr = session.metadata.lastRun
-    await chat.retry(prompt.text, {
-      ...(lr?.provider ? { provider: lr.provider } : { provider: selection.provider }),
-      ...(lr?.model ? { model: lr.model } : { model: selection.model }),
-      ...(lr?.agentName ? { agent: lr.agentName } : { agent: agentName }),
-      ...(prompt.images.length > 0 ? { images: prompt.images } : {}),
-    })
-  }
-
+  // 中断恢复/出错重试：prompt 定位与重发编排收敛在 useRetryResume
+  const { handleResume, handleRetryLast } = useRetryResume({
+    sessionId,
+    chat,
+    qc,
+    selection,
+    agentName,
+    onResumeStart: () => setColdStartInterrupted(false),
+  })
   // 视觉能力按选中模型查询（provider/model capabilities）：不支持视觉的模型隐藏图片入口，
   // 避免贴图后 provider 直接 400（P3 一致性）。
   const { data: capabilitiesData } = useQuery({
@@ -486,7 +350,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   if (isLoading && messages.length === 0) return <ChatSkeleton />
 
   return (
-    <ShakeProvider value={shakeContextValue}>
+    <ShakeProvider value={shake.shakeContextValue}>
       <Chat
         projectId={projectId}
         sessionId={sessionId}
@@ -678,30 +542,33 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, padding: '4px 12px' }}>
-              {shakeMode ? (
+              {shake.shakeMode ? (
                 <div className={shakeToolbar} data-testid="shake-toolbar">
                   <span>⚡ Shake 模式</span>
                   <span>
-                    已选 {shakeSelected.size}/{shakeRegions.length} · 省 {shakeSelectedTokens}t
+                    已选 {shake.shakeSelected.size}/{shake.shakeRegions.length} · 省{' '}
+                    {shake.shakeSelectedTokens}t
                   </span>
                   <button
                     type="button"
-                    onClick={() => setShakeSelected(new Set(shakeRegions.map((r) => r.id)))}
+                    onClick={() =>
+                      shake.setShakeSelected(new Set(shake.shakeRegions.map((r) => r.id)))
+                    }
                     data-testid="shake-select-all"
                   >
                     全选
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShakeSelected(new Set())}
+                    onClick={() => shake.setShakeSelected(new Set())}
                     data-testid="shake-deselect-all"
                   >
                     取消全选
                   </button>
                   <button
                     type="button"
-                    onClick={() => shakeMutation.mutate([...shakeSelected])}
-                    disabled={shakeSelected.size === 0}
+                    onClick={() => shake.shakeMutation.mutate([...shake.shakeSelected])}
+                    disabled={shake.shakeSelected.size === 0}
                     data-testid="shake-submit"
                   >
                     提交 Shake
@@ -709,7 +576,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                   <button
                     type="button"
                     className={shakeExitBtn}
-                    onClick={exitShakeMode}
+                    onClick={shake.exitShakeMode}
                     data-testid="shake-exit"
                     aria-label="退出 Shake"
                   >
@@ -720,7 +587,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                 <button
                   type="button"
                   className={shakeBtn}
-                  onClick={() => void handleShakeOpen()}
+                  onClick={() => void shake.handleShakeOpen()}
                   disabled={chat.isStreaming}
                   data-testid="shake-button"
                 >

@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { projectAPI } from '../services/project.js'
-import type { Project } from '../types/index.js'
-import { DirectoryPicker } from './DirectoryPicker.js'
+import { DirectoryPicker } from '@/components/DirectoryPicker.js'
+import { projectAPI } from '@/services/project.js'
+import type { Project } from '@/types/index.js'
 
 const overlay = css`
   position: fixed;

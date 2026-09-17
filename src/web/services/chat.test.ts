@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { consumeSSEBuffer, parseSSEFrame } from './chat.js'
+import { consumeSSEBuffer, parseSSEFrame } from '@/services/chat.js'
 
 describe('parseSSEFrame', () => {
   it('解析 data 行 JSON', () => {

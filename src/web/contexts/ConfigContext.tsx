@@ -1,7 +1,7 @@
 import type { Config } from '@shared/types/config.js'
 import { useQuery } from '@tanstack/react-query'
 import { createContext, useCallback, useContext } from 'react'
-import { configAPI } from '../services/config.js'
+import { configAPI } from '@/services/config.js'
 
 type ConfigContextValue = {
   config: Config | null

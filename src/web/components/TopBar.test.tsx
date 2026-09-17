@@ -1,13 +1,14 @@
 // TopBar 组件测试，对应 src/web/components/TopBar.tsx
 // TopBar 内嵌 ProjectIndicator（项目名/分支可下拉切换 + 添加按钮）+ CommitButton（提交按钮）。
+
+import { createRoutes, MemoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { TopBar } from './TopBar.js'
+import { TopBar } from '@/components/TopBar.js'
 
 // ---- mocks ----
-vi.mock('../services/file.js', () => ({
+vi.mock('@/services/file.js', () => ({
   fileAPI: {
     gitStatus: vi.fn().mockResolvedValue({}),
     gitCommit: vi.fn(),
@@ -62,29 +63,42 @@ function makeQC() {
   })
 }
 
-function renderWithProvider(node: React.ReactNode) {
+async function renderWithProvider(node: React.ReactNode) {
   const qc = makeQC()
-  return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>)
+  const view = render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>)
+  await act(async () => {})
+  return view
 }
 
-function renderAt(path: string) {
-  return renderWithProvider(
-    <MemoryRouter initialEntries={[path]}>
-      <TopBar />
+// TopBar 经 useMatched 读路由：覆盖全部可达路径，点击导航（如看板/设置跳转）
+// 在内存路由内仍命中同一 TestView。
+const testRoutes = createRoutes({
+  children: [
+    { path: '/', component: () => TestView },
+    { path: '/settings', component: () => TestView },
+    { path: '/projects/:projectId', component: () => TestView },
+    { path: '/projects/:projectId/sessions/:sessionId', component: () => TestView },
+    { path: '/projects/:projectId/kanban', component: () => TestView },
+    { path: '/projects/:projectId/settings', component: () => TestView },
+  ],
+})
+
+function TestView() {
+  return <TopBar />
+}
+
+async function renderAt(path: string) {
+  return await renderWithProvider(
+    <MemoryRouter routes={testRoutes} initialEntries={[path]}>
+      <View />
     </MemoryRouter>,
   )
 }
 
-/** 项目上下文下渲染 TopBar：需匹配项目路由以让 useParams 解析 projectId。 */
-function renderAtProject(projectId: string) {
-  return renderWithProvider(
-    <MemoryRouter initialEntries={[`/projects/${projectId}`]}>
-      <Routes>
-        <Route path="/projects/:projectId" element={<TopBar />} />
-        <Route path="/projects/:projectId/*" element={<TopBar />} />
-      </Routes>
-    </MemoryRouter>,
-  )
+/** 项目上下文下渲染 TopBar：需匹配项目路由以让 useMatched 解析 projectId。 */
+async function renderAtProject(projectId: string) {
+  return renderAt(`/projects/${projectId}`)
+  await act(async () => {})
 }
 
 describe('TopBar', () => {
@@ -93,34 +107,34 @@ describe('TopBar', () => {
     state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
   })
 
-  it('渲染品牌与导航入口', () => {
-    renderAt('/')
+  it('渲染品牌与导航入口', async () => {
+    await renderAt('/')
     expect(screen.getByText('c0de-agent')).toBeTruthy()
     expect(screen.getByText('会话')).toBeTruthy()
     expect(screen.getByText('设置')).toBeTruthy()
   })
 
-  it('设置页可导航（设置链接存在且带 href）', () => {
-    renderAt('/')
+  it('设置页可导航（设置链接存在且带 href）', async () => {
+    await renderAt('/')
     const settingsLink = screen.getByText('设置').closest('a')
     expect(settingsLink).toBeTruthy()
     expect(settingsLink?.getAttribute('href')).toBe('/settings')
   })
 
-  it('在设置路由时高亮设置入口', () => {
-    renderAt('/settings')
+  it('在设置路由时高亮设置入口', async () => {
+    await renderAt('/settings')
     const settingsLink = screen.getByText('设置').closest('a')
     expect(settingsLink?.getAttribute('data-active')).not.toBeUndefined()
   })
 
-  it('无项目上下文时会话入口指向根路径', () => {
-    renderAt('/settings')
+  it('无项目上下文时会话入口指向根路径', async () => {
+    await renderAt('/settings')
     const sessionsLink = screen.getByText('会话').closest('a')
     expect(sessionsLink?.getAttribute('href')).toBe('/')
   })
 
-  it('项目上下文时会话入口指向当前项目路由', () => {
-    renderAtProject('abc123')
+  it('项目上下文时会话入口指向当前项目路由', async () => {
+    await renderAtProject('abc123')
     const sessionsLink = screen.getByText('会话').closest('a')
     expect(sessionsLink?.getAttribute('href')).toBe('/projects/abc123')
   })
@@ -129,7 +143,7 @@ describe('TopBar', () => {
 
   it('项目上下文时显示项目名与分支', async () => {
     state.projects = [{ id: 'p1', name: 'my-app', gitBranch: 'develop' }]
-    renderAtProject('p1')
+    await renderAtProject('p1')
 
     await waitFor(() => {
       expect(screen.getByText('my-app')).toBeTruthy()
@@ -137,13 +151,13 @@ describe('TopBar', () => {
     expect(screen.getByTestId('project-branch').textContent).toContain('develop')
   })
 
-  it('无项目上下文时不渲染项目指示器', () => {
-    renderAt('/')
+  it('无项目上下文时不渲染项目指示器', async () => {
+    await renderAt('/')
     expect(screen.queryByTestId('project-indicator')).toBeNull()
   })
 
   it('hover 分支名 title 展示最后一次提交 message', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitLastCommit as ReturnType<typeof vi.fn>).mockResolvedValue({
       commit: {
         subject: 'feat: add login page',
@@ -153,7 +167,7 @@ describe('TopBar', () => {
       },
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       const label = screen.getByTestId('project-branch')
       expect(label.getAttribute('title')).toContain('feat: add login page')
@@ -162,10 +176,10 @@ describe('TopBar', () => {
   })
 
   it('无提交记录时分支名 title 不展示', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitLastCommit as ReturnType<typeof vi.fn>).mockResolvedValue({ commit: null })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       expect(screen.getByTestId('project-branch').textContent).toContain('main')
     })
@@ -174,7 +188,7 @@ describe('TopBar', () => {
 
   it('无 git 分支时不渲染分支标签', async () => {
     state.projects = [{ id: 'p1', name: 'proj', gitBranch: null }]
-    renderAtProject('p1')
+    await renderAtProject('p1')
 
     await waitFor(() => {
       expect(screen.getByText('proj')).toBeTruthy()
@@ -189,7 +203,7 @@ describe('TopBar', () => {
       { id: 'p1', name: 'proj-a', gitBranch: 'main' },
       { id: 'p2', name: 'proj-b', gitBranch: 'develop' },
     ]
-    renderAtProject('p1')
+    await renderAtProject('p1')
 
     // 下拉未打开时看不到 proj-b
     expect(screen.queryByText('proj-b')).toBeNull()
@@ -208,7 +222,7 @@ describe('TopBar', () => {
       { id: 'p1', name: 'proj-a', gitBranch: 'main' },
       { id: 'p2', name: 'proj-b', gitBranch: 'develop' },
     ]
-    renderAtProject('p1')
+    await renderAtProject('p1')
 
     fireEvent.click(screen.getByTestId('project-dropdown-trigger'))
     await waitFor(() => {
@@ -225,7 +239,7 @@ describe('TopBar', () => {
   })
 
   it('点击"添加项目"打开对话框', async () => {
-    renderAtProject('p1')
+    await renderAtProject('p1')
 
     fireEvent.click(screen.getByTestId('project-dropdown-trigger'))
     await waitFor(() => {
@@ -239,7 +253,7 @@ describe('TopBar', () => {
   // ---- 分支下拉切换 ----
 
   it('点击分支名展开下拉，列出本地分支', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
       branches: [
         { name: 'main', current: true, lastSubject: 'init' },
@@ -247,7 +261,7 @@ describe('TopBar', () => {
       ],
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
 
     await waitFor(() => {
@@ -258,7 +272,7 @@ describe('TopBar', () => {
   })
 
   it('点击非当前分支调用 gitCheckout API', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
       branches: [
         { name: 'main', current: true, lastSubject: null },
@@ -266,7 +280,7 @@ describe('TopBar', () => {
       ],
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
 
     await waitFor(() => {
@@ -281,12 +295,12 @@ describe('TopBar', () => {
   })
 
   it('当前分支项 disabled 不可点击', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
       branches: [{ name: 'main', current: true, lastSubject: null }],
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
 
     await waitFor(() => {
@@ -297,12 +311,12 @@ describe('TopBar', () => {
   })
 
   it('输入新分支名并 Enter 调用 gitBranchCreate API', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
       branches: [{ name: 'main', current: true, lastSubject: null }],
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
 
     await waitFor(() => {
@@ -321,10 +335,10 @@ describe('TopBar', () => {
   // ---- CommitButton（内嵌在 TopBar via ProjectIndicator actions）----
 
   it('无变更时提交按钮 disabled 且不高亮', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({})
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       expect(screen.getByTestId('git-commit-btn')).toBeInTheDocument()
     })
@@ -334,13 +348,13 @@ describe('TopBar', () => {
   })
 
   it('有未提交变更时提交按钮高亮（data-has-changes）', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       'foo.ts': 'modified',
       'bar.ts': 'untracked',
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       const btn = screen.getByTestId('git-commit-btn')
       expect(btn.getAttribute('data-has-changes')).toBe('true')
@@ -350,12 +364,12 @@ describe('TopBar', () => {
   })
 
   it('只有 ignored 文件时提交按钮不高亮', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       'node_modules/x.js': 'ignored',
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       const btn = screen.getByTestId('git-commit-btn')
       expect(btn.getAttribute('data-has-changes')).toBeNull()
@@ -363,7 +377,7 @@ describe('TopBar', () => {
   })
 
   it('点击提交按钮调用 gitCommit API', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       'foo.ts': 'modified',
     })
@@ -374,7 +388,7 @@ describe('TopBar', () => {
       fileCount: 1,
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
     })
@@ -391,13 +405,13 @@ describe('TopBar', () => {
   })
 
   it('提交失败时显示错误状态', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       'foo.ts': 'modified',
     })
     ;(fileAPI.gitCommit as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('LLM error'))
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
     })
@@ -410,7 +424,7 @@ describe('TopBar', () => {
   })
 
   it('LLM 检测到可疑文件时弹审查框，选「仍然提交」后调用 force 模式', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       'foo.ts': 'modified',
     })
@@ -428,7 +442,7 @@ describe('TopBar', () => {
         fileCount: 2,
       })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
     })
@@ -458,7 +472,7 @@ describe('TopBar', () => {
   })
 
   it('LLM 检测到可疑文件时选「加入 .gitignore」调用 append-ignore 模式', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       'foo.ts': 'modified',
     })
@@ -475,7 +489,7 @@ describe('TopBar', () => {
         fileCount: 3,
       })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
     })
@@ -501,7 +515,7 @@ describe('TopBar', () => {
   })
 
   it('审查框选「取消」关闭弹框不提交', async () => {
-    const { fileAPI } = await import('../services/file.js')
+    const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       'foo.ts': 'modified',
     })
@@ -511,7 +525,7 @@ describe('TopBar', () => {
       suggestions: ['.env'],
     })
 
-    renderAtProject('p1')
+    await renderAtProject('p1')
     await waitFor(() => {
       expect(screen.getByTestId('git-commit-btn').getAttribute('data-has-changes')).toBe('true')
     })

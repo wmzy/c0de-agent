@@ -3,7 +3,7 @@
 //  - 已授权设备：轮询待审批列表 → 弹窗展示配对码与设备名 → 批准/拒绝。
 import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { authAPI } from '../services/auth.js'
+import { authAPI } from '@/services/auth.js'
 
 const overlay = css`
   position: fixed;

@@ -2,13 +2,14 @@
  * Settings 视图测试，对应 src/web/views/Settings.tsx。
  */
 
+import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Settings } from './Settings.js'
+import type { AppPaths } from '@/routes.js'
+import { Settings } from '@/views/Settings.js'
 
 const mockConfig = {
   providers: [
@@ -48,7 +49,7 @@ const mockConfig = {
   usage: { monthlyBudgetUsd: 0 },
 }
 
-vi.mock('../services/config.js', () => ({
+vi.mock('@/services/config.js', () => ({
   configAPI: {
     get: vi.fn(),
     update: vi.fn(),
@@ -60,14 +61,14 @@ function wrapConfig(config: unknown): { config: Partial<Config> } {
   return { config: config as Partial<Config> }
 }
 
-vi.mock('../services/provider.js', () => ({
+vi.mock('@/services/provider.js', () => ({
   providerAPI: {
     test: vi.fn(),
   },
 }))
 
 // ProviderCatalogDialog 依赖 catalog service，mock 掉避免测试中发起网络请求
-vi.mock('../services/catalog.js', () => ({
+vi.mock('@/services/catalog.js', () => ({
   catalogAPI: {
     listProviders: vi.fn(),
     getProviderModels: vi.fn(),
@@ -89,7 +90,7 @@ vi.mock('../contexts/ThemeContext.js', () => ({
 }))
 
 // 工作流管理面板依赖 workflows service，mock 掉避免测试中发起网络请求
-vi.mock('../services/workflows.js', () => ({
+vi.mock('@/services/workflows.js', () => ({
   workflowsAPI: {
     list: vi.fn().mockResolvedValue({ workflows: [] }),
     get: vi.fn(),
@@ -110,9 +111,59 @@ function renderSettings() {
     },
   })
   return render(
-    <MemoryRouter initialEntries={['/settings']}>
+    <MemoryRouter routes={settingsTestRoutes} initialEntries={['/settings']}>
       <QueryClientProvider client={qc}>
-        <Settings />
+        <View />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+}
+
+// Settings 经 useMatched 读路由 params（/projects/:projectId/settings 提供 projectId），
+// useBlocker 需 Router 上下文——测试路由表覆盖两种设置页形态。
+const settingsTestRoutes = createRoutes({
+  children: [
+    { path: '/settings', component: () => Settings },
+    { path: '/projects/:projectId/settings', component: () => Settings },
+  ],
+})
+
+// 未保存防护集成测试：真实 in-app 导航（TypedLink → navigate）触发 useBlocker veto。
+// 目标路由渲染 ProjectProbe 作为「导航已提交」的可观察标记。
+const guardTestRoutes = createRoutes({
+  children: [
+    { path: '/settings', component: () => Settings },
+    { path: '/projects/:projectId', component: () => ProjectProbe },
+  ],
+})
+
+function ProjectProbe() {
+  return <div data-testid="project-view" />
+}
+
+function NavigateProbe() {
+  return (
+    <TypedLink<AppPaths>
+      to="/projects/:projectId"
+      params={{ projectId: 'p1' }}
+      data-testid="leave-link"
+    >
+      会话
+    </TypedLink>
+  )
+}
+
+function renderSettingsGuarded() {
+  const qc = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  })
+  return render(
+    <MemoryRouter routes={guardTestRoutes} initialEntries={['/settings']}>
+      <QueryClientProvider client={qc}>
+        <View />
+        <NavigateProbe />
       </QueryClientProvider>
     </MemoryRouter>,
   )
@@ -120,7 +171,7 @@ function renderSettings() {
 
 describe('Settings — Provider 管理', () => {
   it('渲染时显示已加载 config 的 providers', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -141,7 +192,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('点击「添加 Provider」新增一行', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -157,8 +208,8 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('点击「测试」调用 providerAPI.test 并显示成功结果', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { providerAPI } = await import('../services/provider.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { providerAPI } = await import('@/services/provider.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(providerAPI.test as Mock).mockResolvedValue({
       ok: true,
@@ -183,7 +234,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('点击「删除」移除一行', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -204,8 +255,8 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('点击「从 models.dev 选择」打开 catalog 弹窗', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { catalogAPI } = await import('../services/catalog.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { catalogAPI } = await import('@/services/catalog.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(catalogAPI.listProviders as Mock).mockResolvedValue({ providers: [] })
 
@@ -223,7 +274,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('点击「保存」调用 configAPI.update 并带 providers', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -263,7 +314,7 @@ describe('Settings — Provider 管理', () => {
   // provider 时，弹一次「全局 or 项目」确认；确认后写入全局作用域（所有项目与
   // CLI 可见），作用域选择器同步。
   it('首跑保存 provider：确认 → 写入全局作用域', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue({
       config: { ...mockConfig, providers: [] },
       scopes: { global: {}, project: {} },
@@ -290,7 +341,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('首跑保存 provider：取消 → 保持项目作用域', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue({
       config: { ...mockConfig, providers: [] },
       scopes: { global: {}, project: {} },
@@ -316,7 +367,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('全局已有 provider 时不弹确认（用户已做出作用域选择）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue({
       config: { ...mockConfig, providers: [] },
       scopes: { global: { providers: [mockConfig.providers[0]] }, project: {} },
@@ -344,8 +395,8 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('测试成功后将检测到的模型写入 provider.models，保存时一并提交', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { providerAPI } = await import('../services/provider.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { providerAPI } = await import('@/services/provider.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
     ;(providerAPI.test as Mock).mockResolvedValue({
@@ -384,8 +435,8 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('测试成功时保留 provider 已有的 models override，仅补全新模型', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { providerAPI } = await import('../services/provider.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { providerAPI } = await import('@/services/provider.js')
     // ProviderA 已预设一个带 override 的模型
     ;(configAPI.get as Mock).mockResolvedValue(
       wrapConfig({
@@ -459,7 +510,7 @@ describe('Settings — Provider 管理', () => {
   }
 
   it('provider 含 models 时展示模型管理面板与计数', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
@@ -478,7 +529,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('过滤输入框按模型名筛选列表', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
@@ -501,7 +552,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('切换单个模型开关翻转其启用状态与计数', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
@@ -524,7 +575,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('禁用所有将全部模型标记 enabled:false 并随保存提交', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -554,7 +605,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('启用所有恢复全部模型为启用', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
@@ -575,7 +626,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('编辑模型的上下文窗口/最大输出后随保存提交', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -612,7 +663,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('编辑 provider name 不会重新挂载输入行（避免输入一个字符即失焦）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -641,7 +692,7 @@ describe('Settings — Provider 管理', () => {
   // 回归：保存后 apiKey 落盘为 enc: 密文，刷新后 Settings 不应把密文回显到输入框
   // （否则用户误以为「key 没保存」）。应留空并显示「已加密」徽章。
   it('已加密的 apiKey 不回显密文，留空并显示「已加密」徽章', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     const encConfig = {
       ...mockConfig,
       providers: [
@@ -662,7 +713,7 @@ describe('Settings — Provider 管理', () => {
   })
 
   it('重新输入 apiKey 后保存提交明文（可被服务端加密）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     const encConfig = {
       ...mockConfig,
       providers: [
@@ -689,7 +740,7 @@ describe('Settings — Provider 管理', () => {
 
   // 回归：保存后应有成功反馈，并清空草稿（按钮禁用）。
   it('保存成功后显示「已保存」反馈并清空草稿', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -709,7 +760,7 @@ describe('Settings — Provider 管理', () => {
 
   // 可访问性：每个 Provider 表单控件须有显式关联的 label（label[for] ↔ control#id）
   it('Provider 表单控件均有显式关联的 label（名称/协议/URL/API Key）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -740,7 +791,7 @@ describe('Settings — Provider 管理', () => {
 
   // 可访问性：设置页标题为页面唯一 h1；Provider/区块标题为 h2
   it('页面标题「⚙ 设置」为唯一 h1，区块标题为 h2', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -781,7 +832,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
   }
 
   it('默认 Provider select 选项来自已配置 provider', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
@@ -793,7 +844,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
   })
 
   it('默认 Model select 仅列出当前 provider 启用的模型', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
 
     renderSettings()
@@ -806,7 +857,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
   })
 
   it('切换默认 provider 时 model 自动校正为该 provider 首个启用模型', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
     ;(configAPI.update as Mock).mockResolvedValue(configWithModels)
 
@@ -833,7 +884,7 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
 
 describe('Settings — JSON 模式与导入导出', () => {
   it('点击 JSON 切换显示编辑器，内容为当前配置序列化', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -848,7 +899,7 @@ describe('Settings — JSON 模式与导入导出', () => {
   })
 
   it('JSON 编辑合法时同步到 draft，保存提交新值', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -869,7 +920,7 @@ describe('Settings — JSON 模式与导入导出', () => {
   })
 
   it('JSON 语法错误时显示错误条', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -883,7 +934,7 @@ describe('Settings — JSON 模式与导入导出', () => {
   })
 
   it('JSON 错误时切回表单被阻止（停留在 JSON）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -900,7 +951,7 @@ describe('Settings — JSON 模式与导入导出', () => {
   })
 
   it('导出触发 Blob 下载，且剔除明文 security.token', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     const withToken = {
       ...mockConfig,
       security: { authEnabled: true, token: 'secret-plain-token', allowedOrigins: [] },
@@ -933,7 +984,7 @@ describe('Settings — JSON 模式与导入导出', () => {
   })
 
   it('导入合法 JSON 文件后应用配置并切回表单，保存提交导入值', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -960,7 +1011,7 @@ describe('Settings — JSON 模式与导入导出', () => {
   })
 
   it('导入非法 JSON 文件时显示错误并切到 JSON 模式', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -977,7 +1028,7 @@ describe('Settings — JSON 模式与导入导出', () => {
 
 describe('Settings — 完整配置表单覆盖', () => {
   it('所有配置分区均渲染', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -1007,7 +1058,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('自动授权段落 select 切换并保存', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1036,7 +1087,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('编辑故障回退字段后保存提交正确值', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1059,7 +1110,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('编辑上下文压缩单个字段后保存最小 diff（仅变化的键）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1083,7 +1134,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('勾选压缩独立模型后显示 provider/model 下拉并保存', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     const cfg = {
       ...mockConfig,
       providers: [
@@ -1140,7 +1191,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('取消勾选压缩独立模型后 compactionModel 被清除', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     const cfg = {
       ...mockConfig,
       compaction: {
@@ -1190,7 +1241,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('添加并删除 MCP 服务器', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -1204,7 +1255,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('启用安全认证后显示 Token 输入框', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -1227,7 +1278,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('项目作用域下安全字段禁用并提示切全局作用域', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -1257,7 +1308,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('关闭认证需确认：取消不生效，确认后写入 security 变更', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     const withAuth = { ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(withAuth))
     ;(configAPI.update as Mock).mockResolvedValue(withAuth)
@@ -1298,7 +1349,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('保存 security 变更后显示重启提示（needsRestart）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue({
       config: mockConfig,
@@ -1324,7 +1375,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('最小 patch：只保存变化字段，未变化的顶层键不出现在 payload', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1341,7 +1392,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('切换 Web 搜索后端并保存', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1367,7 +1418,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   })
 
   it('编辑多 Agent 并发数并保存', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1390,7 +1441,7 @@ describe('Settings — 完整配置表单覆盖', () => {
   // onChange=parseList，每次按键 parse→join 会抹掉刚输入的逗号，导致无法输入分隔符、
   // 最终保存空数组（“保存无效、刷新后恢复原值”的根因）。CommaListInput 用内部文本缓冲修复。
   it('逗号分隔列表输入可输入逗号并随保存提交（tools.enabled）', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1420,7 +1471,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
       .find((cb) => cb.closest('label')?.textContent?.includes('启用自动重试与回退')) as HTMLElement
 
   it('修改字段后保存条出现「未保存更改」提示与「放弃更改」，未修改时弱化', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -1440,7 +1491,7 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
   })
 
   it('点击「放弃更改」清空草稿，表单恢复到已保存配置', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
     renderSettings()
@@ -1459,83 +1510,53 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
   })
 
   it('dirty 时点击离开设置页的站内链接弹确认，「留下」则留在设置页', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
-    renderSettings()
+    renderSettingsGuarded()
     await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
 
     fireEvent.click(dirtyTrigger()) // 制造未保存更改
 
-    // 模拟顶栏「会话」导航：TopBar 用 react-router Link 渲染为 <a href>
-    const nav = document.createElement('a')
-    nav.setAttribute('href', '/projects/p1')
-    nav.textContent = '会话'
-    document.body.appendChild(nav)
-    // 阻止重放点击触发真实导航（happy-dom 未接 react-router）
-    const clickSpy = vi.spyOn(nav, 'click').mockImplementation(() => {})
+    fireEvent.click(screen.getByTestId('leave-link'))
 
-    fireEvent.click(nav)
-
-    expect(screen.getByTestId('settings-unsaved-dialog')).toBeTruthy()
-    expect(clickSpy).not.toHaveBeenCalled() // 未确认离开，导航未放行
+    // veto 挂起 → 确认弹窗出现，导航未提交（仍渲染 Settings）
+    await waitFor(() => expect(screen.getByTestId('settings-unsaved-dialog')).toBeTruthy())
+    expect(screen.queryByTestId('project-view')).toBeNull()
 
     fireEvent.click(screen.getByTestId('settings-unsaved-stay'))
 
     expect(screen.queryByTestId('settings-unsaved-dialog')).toBeNull()
-    expect(clickSpy).not.toHaveBeenCalled() // 仍停留在设置页
+    expect(screen.queryByTestId('project-view')).toBeNull() // 仍停留在设置页
     expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy() // 草稿保留
-
-    clickSpy.mockRestore()
-    nav.remove()
   })
 
   it('确认「离开」丢弃草稿并放行被拦截的链接点击', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
-    renderSettings()
+    renderSettingsGuarded()
     await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
 
     fireEvent.click(dirtyTrigger()) // 制造未保存更改
 
-    const nav = document.createElement('a')
-    nav.setAttribute('href', '/projects/p1')
-    nav.textContent = '会话'
-    document.body.appendChild(nav)
-    const clickSpy = vi.spyOn(nav, 'click').mockImplementation(() => {})
-
-    fireEvent.click(nav)
-    expect(screen.getByTestId('settings-unsaved-dialog')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('leave-link'))
+    await waitFor(() => expect(screen.getByTestId('settings-unsaved-dialog')).toBeTruthy())
 
     fireEvent.click(screen.getByTestId('settings-unsaved-leave'))
 
-    // 弹窗关闭、草稿丢弃（保存回到禁用）、被拦截的链接点击重放放行
+    // proceed 重放导航：草稿丢弃、设置页卸载、目标视图落地
+    await waitFor(() => expect(screen.getByTestId('project-view')).toBeTruthy())
     expect(screen.queryByTestId('settings-unsaved-dialog')).toBeNull()
-    expect(screen.getByTestId('settings-save')).toBeDisabled()
-    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
-    expect(clickSpy).toHaveBeenCalledTimes(1)
-
-    clickSpy.mockRestore()
-    nav.remove()
+    expect(screen.queryByTestId('settings')).toBeNull()
   })
 
   it('干净状态点击站内链接不弹确认；dirty 时刷新被 beforeunload 拦截，放弃后解除', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
-    renderSettings()
+    renderSettingsGuarded()
     await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
-
-    // 干净状态：站内链接直接放行、beforeunload 不拦截
-    const nav = document.createElement('a')
-    nav.setAttribute('href', '/projects/p1')
-    nav.textContent = '会话'
-    document.body.appendChild(nav)
-    const clickSpy = vi.spyOn(nav, 'click').mockImplementation(() => {})
-    fireEvent.click(nav)
-    expect(screen.queryByTestId('settings-unsaved-dialog')).toBeNull()
-    expect(clickSpy).not.toHaveBeenCalled()
 
     const clean = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(clean)
@@ -1553,14 +1574,16 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     window.dispatchEvent(after)
     expect(after.defaultPrevented).toBe(false)
 
-    clickSpy.mockRestore()
-    nav.remove()
+    // 干净状态：站内链接直接放行（无确认弹窗），目标视图落地
+    fireEvent.click(screen.getByTestId('leave-link'))
+    expect(screen.queryByTestId('settings-unsaved-dialog')).toBeNull()
+    await waitFor(() => expect(screen.getByTestId('project-view')).toBeTruthy())
   })
 })
 
 describe('Settings — 用量面板零预算引导', () => {
   it('未设置任何预算时显示引导提示，设置全局预算后消失', async () => {
-    const { configAPI } = await import('../services/config.js')
+    const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
@@ -1585,8 +1608,8 @@ describe('Settings — 工作流管理面板', () => {
   ]
 
   it('渲染工作流列表：来源徽标 + 覆盖徽标，内置行无编辑/删除', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { workflowsAPI } = await import('../services/workflows.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: WF_FIXTURES })
 
@@ -1605,8 +1628,8 @@ describe('Settings — 工作流管理面板', () => {
   })
 
   it('新建工作流：非法名称被拒；合法名称保存（无项目上下文默认 target=user）', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { workflowsAPI } = await import('../services/workflows.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: [] })
     ;(workflowsAPI.save as Mock).mockResolvedValue({ ok: true })
@@ -1638,8 +1661,8 @@ describe('Settings — 工作流管理面板', () => {
   })
 
   it('删除工作流：必须输入确认词才可确认，成功后调用 remove', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { workflowsAPI } = await import('../services/workflows.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(workflowsAPI.list as Mock).mockResolvedValue({
       workflows: [WF_FIXTURES[1]],
@@ -1661,8 +1684,8 @@ describe('Settings — 工作流管理面板', () => {
   })
 
   it('编辑工作流保存带 overwrite: true；新建不带 overwrite', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { workflowsAPI } = await import('../services/workflows.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: [WF_FIXTURES[1]] })
     ;(workflowsAPI.get as Mock).mockResolvedValue({
@@ -1697,8 +1720,8 @@ describe('Settings — 工作流管理面板', () => {
   })
 
   it('未信任项目：list 返回 trustRequired 时展示隐藏提示', async () => {
-    const { configAPI } = await import('../services/config.js')
-    const { workflowsAPI } = await import('../services/workflows.js')
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(workflowsAPI.list as Mock).mockResolvedValue({
       workflows: [WF_FIXTURES[0]],

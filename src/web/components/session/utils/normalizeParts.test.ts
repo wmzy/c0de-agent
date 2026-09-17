@@ -1,6 +1,6 @@
 import type { Message, MessageContent } from '@shared/types/message.js'
 import { describe, expect, it } from 'vitest'
-import { mergeToolMessages, normalizeParts } from './normalizeParts.js'
+import { mergeToolMessages, normalizeParts } from '@/components/session/utils/normalizeParts.js'
 
 function msg(role: Message['role'], parts: MessageContent[]): Message {
   return { id: '1', sessionId: 's', role, content: parts, tokenCount: 0, createdAt: 1 }

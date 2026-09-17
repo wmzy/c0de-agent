@@ -8,14 +8,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useState } from 'react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ToolListItem } from '../types/index.js'
-import { ToolToggle } from './ToolToggle.js'
+import { ToolToggle } from '@/components/ToolToggle.js'
+import type { ToolListItem } from '@/types/index.js'
 
-vi.mock('../services/tool.js', () => ({
+vi.mock('@/services/tool.js', () => ({
   toolAPI: { list: vi.fn() },
 }))
 
-const { toolAPI } = await import('../services/tool.js')
+const { toolAPI } = await import('@/services/tool.js')
 
 const TOOLS: ToolListItem[] = [
   { name: 'read', description: '读取文件', parameters: {}, permission: {} },

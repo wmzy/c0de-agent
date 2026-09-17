@@ -11,8 +11,8 @@ import {
   ToolIcon,
   UserIcon,
   WriteIcon,
-} from './icons.js'
-import type { RenderBlock } from './utils/normalizeParts.js'
+} from '@/components/session/icons.js'
+import type { RenderBlock } from '@/components/session/utils/normalizeParts.js'
 
 const wrap = css`
   display: flex;

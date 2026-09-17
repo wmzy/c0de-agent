@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCost, formatLatency, formatTokenCount, parseCodeReference } from './format.js'
+import { formatCost, formatLatency, formatTokenCount, parseCodeReference } from '@/utils/format.js'
 
 describe('parseCodeReference', () => {
   it('文件引用单行', () => {

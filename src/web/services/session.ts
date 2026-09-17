@@ -1,44 +1,37 @@
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
+import { del, get, patch, post } from '@/services/api.js'
+
 import type {
   CompactionArchive,
   SessionExport,
   SessionTreeNode,
   ShakeRegionView,
-} from '../types/index.js'
-import { apiRequest } from './api.js'
+} from '@/types/index.js'
 
 const sessionAPI = {
-  list: () => apiRequest<Session[]>('/api/sessions'),
-  tree: () => apiRequest<SessionTreeNode[]>('/api/sessions/tree'),
-  get: (id: string) => apiRequest<Session>(`/api/sessions/${id}`),
+  list: () => get<Session[]>('/api/sessions'),
+  tree: () => get<SessionTreeNode[]>('/api/sessions/tree'),
+  get: (id: string) => get<Session>(`/api/sessions/${id}`),
   create: (params?: { title?: string; directory?: string; projectId?: string }) =>
-    apiRequest<Session>('/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify(params ?? {}),
-    }),
+    post<Session>('/api/sessions', params ?? {}),
   fork: (id: string, messageIndex: number) =>
-    apiRequest<Session>(`/api/sessions/${id}/fork`, {
-      method: 'POST',
-      body: JSON.stringify({ messageIndex }),
-    }),
-  remove: (id: string) => apiRequest<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
+    post<Session>(`/api/sessions/${id}/fork`, { messageIndex }),
+  remove: (id: string) => del<void>(`/api/sessions/${id}`),
   deleted: (projectId?: string) =>
-    apiRequest<Session[]>(
+    get<Session[]>(
       `/api/sessions/deleted${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
   /** 未归属任何项目的已删会话（删除项目后 FK set null 导致的孤儿，需专门视图暴露）。
    *  A3：列表查询不再自动标记「已看到」；标记由 touchOrphansSeen 在展开分组时显式触发。 */
-  deletedOrphans: () => apiRequest<Session[]>('/api/sessions/deleted?orphan=1'),
+  deletedOrphans: () => get<Session[]>('/api/sessions/deleted?orphan=1'),
   /** A3：孤儿条目计数（不标记 seen；分组折叠时展示数量）。 */
-  deletedOrphansCount: () => apiRequest<{ count: number }>('/api/sessions/deleted/orphans/count'),
+  deletedOrphansCount: () => get<{ count: number }>('/api/sessions/deleted/orphans/count'),
   /** A3：展开「未归属项目」分组时显式标记孤儿已看到（保留期自此刻起算）。 */
   touchOrphansSeen: () =>
-    apiRequest<{ ok: boolean; touched: number }>('/api/sessions/deleted/orphans/seen', {
-      method: 'POST',
-    }),
+    post<{ ok: boolean; touched: number }>('/api/sessions/deleted/orphans/seen'),
   restore: (id: string, projectId?: string, restoreMode?: 'auto' | 'current-project') =>
-    apiRequest<{
+    post<{
       ok: boolean
       rebound?: boolean
       orphaned?: boolean
@@ -49,47 +42,32 @@ const sessionAPI = {
       /** A2：已删但未随本次恢复的后代数量（批次不同 → 滞留回收站需单独恢复）。 */
       leftBehindDescendantCount?: number
     }>(`/api/sessions/${id}/restore`, {
-      method: 'POST',
-      body: JSON.stringify({
-        ...(projectId ? { projectId } : {}),
-        ...(restoreMode ? { restoreMode } : {}),
-      }),
+      ...(projectId ? { projectId } : {}),
+      ...(restoreMode ? { restoreMode } : {}),
     }),
   /** 孤儿会话归属到指定项目（P1-2）。 */
   rebind: (id: string, projectId: string) =>
-    apiRequest<{ ok: boolean; projectId: string }>(`/api/sessions/${id}/rebind`, {
-      method: 'POST',
-      body: JSON.stringify({ projectId }),
-    }),
-  messages: (id: string) => apiRequest<Message[]>(`/api/sessions/${id}/messages`),
-  llmDetails: (id: string) => apiRequest<LLMSegment[]>(`/api/sessions/${id}/llm-details`),
+    post<{ ok: boolean; projectId: string }>(`/api/sessions/${id}/rebind`, { projectId }),
+  messages: (id: string) => get<Message[]>(`/api/sessions/${id}/messages`),
+  llmDetails: (id: string) => get<LLMSegment[]>(`/api/sessions/${id}/llm-details`),
   compact: (id: string) =>
-    apiRequest<{ compacted: boolean; reason?: string }>(`/api/sessions/${id}/compact`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
+    post<{ compacted: boolean; reason?: string }>(`/api/sessions/${id}/compact`, {}),
   /** 彻底删除回收站会话（不可恢复）。 */
   removeForever: (id: string) =>
-    apiRequest<{ ok: boolean; deleted: number }>(`/api/sessions/${id}/forever`, {
-      method: 'DELETE',
-    }),
+    del<{ ok: boolean; deleted: number }>(`/api/sessions/${id}/forever`),
   /** 清空回收站（不可恢复）；projectId 提供时仅清空该项目。 */
   emptyTrash: (projectId?: string) =>
-    apiRequest<{ ok: boolean; deleted: number }>(
+    del<{ ok: boolean; deleted: number }>(
       `/api/sessions/deleted${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
-      { method: 'DELETE' },
     ),
   /** 会话归档列表（compaction/squash/shake/clear 原始内容）；q 为搜索词。 */
   archives: (id: string, q?: string) =>
-    apiRequest<{ archives: CompactionArchive[] }>(
+    get<{ archives: CompactionArchive[] }>(
       `/api/sessions/${id}/archives${q ? `?q=${encodeURIComponent(q)}` : ''}`,
     ),
   /** 会话重命名（P2-5）。 */
   rename: (id: string, title: string) =>
-    apiRequest<{ ok: boolean; title: string }>(`/api/sessions/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ title }),
-    }),
+    patch<{ ok: boolean; title: string }>(`/api/sessions/${id}`, { title }),
   /** 会话导出（元数据 + 消息 + 归档），数据可迁移。
    *  includeSnapshots=false（默认）：归档的 fileSnapshots（文件内容）被剥离，
    *  分享导出 JSON 不泄露文件内容。 */
@@ -97,7 +75,7 @@ const sessionAPI = {
     id: string,
     opts?: { includeSnapshots?: boolean; includePermissions?: boolean },
   ) =>
-    apiRequest<SessionExport>(
+    get<SessionExport>(
       `/api/sessions/${id}/export${opts?.includeSnapshots || opts?.includePermissions ? '?' : ''}${
         opts?.includeSnapshots ? 'includeSnapshots=1' : ''
       }${opts?.includeSnapshots && opts?.includePermissions ? '&' : ''}${
@@ -119,41 +97,28 @@ const sessionAPI = {
     flattened: boolean
     permissionsMigrated: boolean
   }> =>
-    apiRequest('/api/sessions/import', {
-      method: 'POST',
-      body: JSON.stringify({
-        ...(data as Record<string, unknown>),
-        ...(projectId ? { projectId } : {}),
-        ...(opts?.importPermissions ? { importPermissions: true } : {}),
-      }),
+    post('/api/sessions/import', {
+      ...(data as Record<string, unknown>),
+      ...(projectId ? { projectId } : {}),
+      ...(opts?.importPermissions ? { importPermissions: true } : {}),
     }),
   /** 跨会话搜索（P2-6）：标题 + 消息内容。includeDeleted 搜索回收站（P3）。 */
   search: (q: string, projectId?: string, includeDeleted = false) =>
-    apiRequest<{ results: Array<{ session: Session; matchedBy: 'title' | 'content' }> }>(
+    get<{ results: Array<{ session: Session; matchedBy: 'title' | 'content' }> }>(
       `/api/sessions/search?q=${encodeURIComponent(q)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}${includeDeleted ? '&includeDeleted=1' : ''}`,
     ),
   /** 会话挂起的权限请求（P1：挂起期间切换页面/刷新后重挂确认弹窗）。 */
   pendingPermission: (sessionId: string) =>
-    apiRequest<{
+    get<{
       pending: { toolCallId: string; tool: string; input: unknown } | null
     }>(`/api/permissions/${encodeURIComponent(sessionId)}/pending`),
-  branches: (id: string) => apiRequest<Session[]>(`/api/sessions/${id}/branches`),
-  status: (id: string) => apiRequest<{ _tag: string }>(`/api/sessions/${id}/status`),
-  open: (id: string) =>
-    apiRequest<{ ok: boolean }>(`/api/sessions/${id}/open`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
+  branches: (id: string) => get<Session[]>(`/api/sessions/${id}/branches`),
+  status: (id: string) => get<{ _tag: string }>(`/api/sessions/${id}/status`),
+  open: (id: string) => post<{ ok: boolean }>(`/api/sessions/${id}/open`, {}),
   shakePreview: (id: string) =>
-    apiRequest<{ regions: ShakeRegionView[] }>(`/api/sessions/${id}/shake/preview`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
+    post<{ regions: ShakeRegionView[] }>(`/api/sessions/${id}/shake/preview`, {}),
   shakeApply: (id: string, regionIds: string[]) =>
-    apiRequest<{ shaken: number; archiveId: string }>(`/api/sessions/${id}/shake/apply`, {
-      method: 'POST',
-      body: JSON.stringify({ regionIds }),
-    }),
+    post<{ shaken: number; archiveId: string }>(`/api/sessions/${id}/shake/apply`, { regionIds }),
 }
 
 export { sessionAPI }

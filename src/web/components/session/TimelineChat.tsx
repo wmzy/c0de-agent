@@ -9,14 +9,14 @@ import {
   useRef,
   useState,
 } from 'react'
-import { SegmentBreak, SegmentFooter } from '../LLMDetail.js'
-import { MessageItem } from './MessageItem.js'
+import { SegmentBreak, SegmentFooter } from '@/components/LLMDetail.js'
+import { MessageItem } from '@/components/session/MessageItem.js'
 import {
   groupBySegment,
   isEmptyMessage,
   type SegmentGroup,
   type TimelineRow,
-} from './utils/timeline.js'
+} from '@/components/session/utils/timeline.js'
 
 const virtualInner = css`
   position: relative;

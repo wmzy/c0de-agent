@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CommandInfo } from '../hooks/useCommands.js'
-import { currentCursor, decorateWorkflowz, parseFromDOM, reconcile } from './editor-sync.js'
+import {
+  currentCursor,
+  decorateWorkflowz,
+  parseFromDOM,
+  reconcile,
+} from '@/composer/editor-sync.js'
 import {
   canNavigateHistoryAtCursor,
   loadHistory,
   navigatePromptHistory,
   prependHistoryEntry,
   saveHistory,
-} from './history.js'
-import { normalizePaste, pasteMode } from './paste.js'
-import type { ImagePart, Prompt } from './types.js'
+} from '@/composer/history.js'
+import { normalizePaste, pasteMode } from '@/composer/paste.js'
+import type { ImagePart, Prompt } from '@/composer/types.js'
 import {
   DEFAULT_PROMPT,
   isPromptEmpty,
   promptToMessageText,
   promptToText,
   snippetLabel,
-} from './types.js'
+} from '@/composer/types.js'
+import type { CommandInfo } from '@/hooks/useCommands.js'
 
 type PopoverState = 'slash' | 'subcommand' | 'at' | 'workflow' | null
 

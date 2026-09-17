@@ -4,7 +4,7 @@
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SegmentBreakDialog } from './SegmentBreakDialog.js'
+import { SegmentBreakDialog } from '@/components/SegmentBreakDialog.js'
 
 const activeSegment = { provider: 'openai', model: 'gpt-4', tools: ['read', 'edit'] }
 

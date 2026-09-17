@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { FileCodeBlock } from './FileCodeBlock.js'
+import { FileCodeBlock } from '@/components/session/tools/FileCodeBlock.js'
 
 const err = css`
   font-size: 13px;

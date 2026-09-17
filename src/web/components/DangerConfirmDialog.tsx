@@ -5,7 +5,7 @@
 
 import { css } from '@linaria/core'
 import { type ReactNode, useState } from 'react'
-import { Dialog } from './Dialog.js'
+import { Dialog } from '@/components/Dialog.js'
 
 const desc = css`
   font-size: 13px;

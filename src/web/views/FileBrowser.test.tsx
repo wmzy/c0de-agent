@@ -7,12 +7,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fileAPI } from '../services/file.js'
-import type { FileEntry } from '../types/index.js'
-import { FileBrowser } from './FileBrowser.js'
+import { fileAPI } from '@/services/file.js'
+import type { FileEntry } from '@/types/index.js'
+import { FileBrowser } from '@/views/FileBrowser.js'
 
 // ---- mocks ----
-vi.mock('../services/file.js', () => ({
+vi.mock('@/services/file.js', () => ({
   fileAPI: {
     list: vi.fn(),
     search: vi.fn(),

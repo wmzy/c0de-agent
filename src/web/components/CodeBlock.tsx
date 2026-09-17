@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { useEffect, useState } from 'react'
-import { highlightCode } from '../utils/highlight.js'
+import { highlightCode } from '@/utils/highlight.js'
 
 const wrap = css`
   position: relative;

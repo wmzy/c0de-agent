@@ -14,7 +14,7 @@ import {
   pickerParent,
   pickerRoot,
   trimPickerPath,
-} from './directory-picker-domain.js'
+} from '@/components/directory-picker-domain.js'
 
 describe('cleanPickerInput', () => {
   it('取首行、去控制字符、trim', () => {

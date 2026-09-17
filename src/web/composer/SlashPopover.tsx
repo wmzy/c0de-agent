@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
-import type { CommandInfo } from '../hooks/useCommands.js'
-import type { SubcommandDef } from '../services/commands.js'
+import type { CommandInfo } from '@/hooks/useCommands.js'
+import type { SubcommandDef } from '@/services/commands.js'
 
 const popover = css`
   position: absolute;

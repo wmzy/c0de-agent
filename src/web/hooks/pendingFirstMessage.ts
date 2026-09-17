@@ -1,4 +1,4 @@
-import type { ChatOpts } from './useChat.js'
+import type { ChatOpts } from '@/hooks/chatState.js'
 
 /**
  * 草稿页（sessionId===null）发送首条消息时，先创建会话再导航到新会话路由。

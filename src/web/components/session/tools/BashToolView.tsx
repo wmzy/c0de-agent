@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { CodeBlock } from '../../CodeBlock.js'
-import { useOverflow } from '../hooks/useOverflow.js'
+import { CodeBlock } from '@/components/CodeBlock.js'
+import { useOverflow } from '@/components/session/hooks/useOverflow.js'
 
 const out = css`
   margin: 4px 0 0;

@@ -7,7 +7,7 @@ import {
   isEmptyMessage,
   type TimelineRow,
   userMessageText,
-} from './timeline.js'
+} from '@/components/session/utils/timeline.js'
 
 function msg(id: string, createdAt: number, content: Message['content'] = []): Message {
   return { id, sessionId: 's', role: 'assistant', content, tokenCount: 0, createdAt }

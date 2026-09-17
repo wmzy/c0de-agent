@@ -1,6 +1,6 @@
 import type { Config } from '@shared/types/config.js'
-import { CommaListInput } from './CommaListInput.js'
-import { field, fieldInput, hint, section, sectionTitle } from './styles.js'
+import { CommaListInput } from '@/components/settings/CommaListInput.js'
+import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 
 interface ToolsPanelProps {
   tools: Config['tools']

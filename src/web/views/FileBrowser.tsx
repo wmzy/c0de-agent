@@ -1,11 +1,11 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { FileTree, type TreeNode } from '../components/FileTree.js'
-import { useFileReference } from '../contexts/ReferenceContext.js'
-import { useProjects } from '../hooks/useSession.js'
-import { fileAPI } from '../services/file.js'
-import type { FileEntry, FileSearchResult, GitStatusMap } from '../types/index.js'
+import { FileTree, type TreeNode } from '@/components/FileTree.js'
+import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { useProjects } from '@/hooks/useSession.js'
+import { fileAPI } from '@/services/file.js'
+import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
 
 const panel = css`
   display: flex;

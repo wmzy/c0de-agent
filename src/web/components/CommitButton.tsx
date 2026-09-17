@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { fileAPI } from '../services/file.js'
-import { btnSm } from '../styles/tokens.js'
-import { CommitReviewDialog } from './CommitReviewDialog.js'
+import { CommitReviewDialog } from '@/components/CommitReviewDialog.js'
+import { fileAPI } from '@/services/file.js'
+import { btnSm } from '@/styles/tokens.js'
 
 const commitBtn = css`
   display: inline-flex;

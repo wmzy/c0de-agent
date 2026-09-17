@@ -7,16 +7,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { UpdateBanner } from './UpdateBanner.js'
+import { UpdateBanner } from '@/components/UpdateBanner.js'
 
-vi.mock('../services/update.js', () => ({
+vi.mock('@/services/update.js', () => ({
   updateAPI: {
     status: vi.fn(),
     apply: vi.fn(),
   },
 }))
 
-const { updateAPI } = await import('../services/update.js')
+const { updateAPI } = await import('@/services/update.js')
 
 afterEach(() => {
   cleanup()

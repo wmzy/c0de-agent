@@ -5,7 +5,7 @@
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DangerConfirmDialog } from './DangerConfirmDialog.js'
+import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 
 afterEach(() => {
   cleanup()

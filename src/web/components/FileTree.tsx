@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { memo } from 'react'
-import type { GitStatusCode } from '../types/index.js'
+import type { GitStatusCode } from '@/types/index.js'
 
 /** 文件树节点。children 为 undefined 表示尚未加载子目录。type 缺省视为 directory（兼容目录选择器）。 */
 export type TreeNode = {

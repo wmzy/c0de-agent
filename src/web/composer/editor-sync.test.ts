@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { decorateWorkflowz, parseFromDOM, renderPrompt } from './editor-sync.js'
-import type { Prompt } from './types.js'
-import { DEFAULT_PROMPT, promptToMessageText, promptToText } from './types.js'
+import { decorateWorkflowz, parseFromDOM, renderPrompt } from '@/composer/editor-sync.js'
+import type { Prompt } from '@/composer/types.js'
+import { DEFAULT_PROMPT, promptToMessageText, promptToText } from '@/composer/types.js'
 
 function makeEditor(html = ''): HTMLDivElement {
   const el = document.createElement('div')

@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { ShakeRegionView } from '../../types/index.js'
+import type { ShakeRegionView } from '@/types/index.js'
 
 /**
  * Shake 模式上下文：驱动会话内原地选择。

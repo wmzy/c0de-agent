@@ -1,6 +1,6 @@
 import type { AgentEvent } from '@shared/types/agent.js'
-import type { APIError } from '../types/index.js'
-import { getAuthToken } from './api.js'
+import { getAuthToken } from '@/services/api.js'
+import type { APIError } from '@/types/index.js'
 
 /** 从单个 SSE 帧文本提取 data 字段并解析为 AgentEvent。 */
 export function parseSSEFrame(frame: string): AgentEvent | null {

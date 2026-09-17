@@ -1,8 +1,8 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { toolAPI } from '../services/tool.js'
-import { cardStyle, inputStyle } from '../styles/tokens.js'
+import { toolAPI } from '@/services/tool.js'
+import { cardStyle, inputStyle } from '@/styles/tokens.js'
 
 const wrap = css`
   position: relative;

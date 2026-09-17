@@ -5,11 +5,11 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import type { WorkflowInfo } from '../../services/workflows.js'
-import { workflowsAPI } from '../../services/workflows.js'
-import { DangerConfirmDialog } from '../DangerConfirmDialog.js'
-import { Dialog } from '../Dialog.js'
-import { field, fieldInput, hint, section, sectionTitle } from './styles.js'
+import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
+import { Dialog } from '@/components/Dialog.js'
+import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
+import type { WorkflowInfo } from '@/services/workflows.js'
+import { workflowsAPI } from '@/services/workflows.js'
 
 const row = css`
   display: flex;

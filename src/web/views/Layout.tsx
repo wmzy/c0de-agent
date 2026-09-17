@@ -1,8 +1,8 @@
 import { css } from '@linaria/core'
 import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MobileNav } from '../components/MobileNav.js'
-import { DESKTOP, MOBILE } from '../styles/breakpoints.js'
+import { MobileNav } from '@/components/MobileNav.js'
+import { DESKTOP, MOBILE } from '@/styles/breakpoints.js'
 
 // 三栏宽度常量：左 sidebar / 右 panel 各自可拖拽，中间 main flex 填充剩余空间。
 const DEFAULT_SIDEBAR = 280

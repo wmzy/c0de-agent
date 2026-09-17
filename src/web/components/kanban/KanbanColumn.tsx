@@ -6,7 +6,7 @@ import type {
   KanbanCard as KanbanCardType,
   KanbanLabelDef,
   KanbanPriority,
-} from '../../services/kanban.js'
+} from '@/services/kanban.js'
 
 // ── Styles ─────────────────────────────────────────────────
 

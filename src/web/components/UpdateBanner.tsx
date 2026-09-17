@@ -1,8 +1,8 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { updateAPI } from '../services/update.js'
-import { DangerConfirmDialog } from './DangerConfirmDialog.js'
+import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
+import { updateAPI } from '@/services/update.js'
 
 const impactList = css`
   margin-top: 8px;

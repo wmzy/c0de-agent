@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import type { ImagePart } from './types.js'
+import type { ImagePart } from '@/composer/types.js'
 
 const bar = css`
   display: flex;

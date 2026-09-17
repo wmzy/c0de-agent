@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { useOverflow } from '../hooks/useOverflow.js'
+import { useOverflow } from '@/components/session/hooks/useOverflow.js'
 
 const pre = css`
   margin: 0;

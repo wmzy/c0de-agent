@@ -5,9 +5,9 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { Decoration, type DecorationSet, EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { css } from '@linaria/core'
 import { useEffect, useRef, useState } from 'react'
-import type { LineRange } from '../contexts/FileSelectionContext.js'
-import { useTheme } from '../contexts/ThemeContext.js'
-import { fileAPI } from '../services/file.js'
+import type { LineRange } from '@/contexts/FileSelectionContext.js'
+import { useTheme } from '@/contexts/ThemeContext.js'
+import { fileAPI } from '@/services/file.js'
 
 /** 设置当前高亮行范围的副作用；null 清除高亮。 */
 const setHighlightRange = StateEffect.define<LineRange | null>()

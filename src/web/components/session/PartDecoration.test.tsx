@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PartDecoration } from './PartDecoration.js'
-import type { RenderBlock } from './utils/normalizeParts.js'
+import { PartDecoration } from '@/components/session/PartDecoration.js'
+import type { RenderBlock } from '@/components/session/utils/normalizeParts.js'
 
 afterEach(() => cleanup())
 

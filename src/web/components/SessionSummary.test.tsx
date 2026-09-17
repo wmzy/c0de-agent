@@ -9,9 +9,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SessionSummary } from './SessionSummary.js'
+import { SessionSummary } from '@/components/SessionSummary.js'
 
-vi.mock('../services/session.js', () => ({
+vi.mock('@/services/session.js', () => ({
   sessionAPI: {
     get: vi.fn(),
     messages: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock('../services/session.js', () => ({
   },
 }))
 
-const { sessionAPI } = await import('../services/session.js')
+const { sessionAPI } = await import('@/services/session.js')
 
 const session: Session = {
   id: 's1',

@@ -10,9 +10,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useConfig } from '../contexts/ConfigContext.js'
-import { providerAPI } from '../services/provider.js'
-import { type ModelSelection, ModelSelector } from './ModelSelector.js'
+import { type ModelSelection, ModelSelector } from '@/components/ModelSelector.js'
+import { useConfig } from '@/contexts/ConfigContext.js'
+import { providerAPI } from '@/services/provider.js'
 
 const baseConfig: Config = {
   providers: [
@@ -54,11 +54,11 @@ const baseConfig: Config = {
   theme: 'light',
 }
 
-vi.mock('../services/provider.js', () => ({
+vi.mock('@/services/provider.js', () => ({
   providerAPI: { list: vi.fn() },
 }))
 
-vi.mock('../contexts/ConfigContext.js', () => ({
+vi.mock('@/contexts/ConfigContext.js', () => ({
   useConfig: vi.fn(),
 }))
 

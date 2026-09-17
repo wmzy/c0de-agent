@@ -1,7 +1,7 @@
 // diffConfig / isPatchEmpty 单测：Settings 保存只提交最小 patch（P1-2 作用域污染修复）。
 
 import { describe, expect, it } from 'vitest'
-import { diffConfig, isPatchEmpty } from './config-diff.js'
+import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
 
 describe('diffConfig', () => {
   it('无变化返回空 patch', () => {

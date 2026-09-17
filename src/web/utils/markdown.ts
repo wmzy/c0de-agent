@@ -1,5 +1,5 @@
 import { Marked, type MarkedExtension, type Token } from 'marked'
-import { highlightCode } from './highlight.js'
+import { highlightCode } from '@/utils/highlight.js'
 
 const marked = new Marked({ gfm: true, breaks: true })
 

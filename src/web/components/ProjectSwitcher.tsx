@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
-import { inputStyle } from '../styles/tokens.js'
-import type { Project } from '../types/index.js'
+import { inputStyle } from '@/styles/tokens.js'
+import type { Project } from '@/types/index.js'
 
 const select = css`
   width: 100%;

@@ -1,10 +1,10 @@
 import { css } from '@linaria/core'
 import { memo, useMemo } from 'react'
-import { formatLatency } from '../../utils/format.js'
-import { CodeReference } from '../CodeReference.js'
-import { CopyButton } from '../CopyButton.js'
-import { Markdown } from '../Markdown.js'
-import { useOverflow } from './hooks/useOverflow.js'
+import { CodeReference } from '@/components/CodeReference.js'
+import { CopyButton } from '@/components/CopyButton.js'
+import { Markdown } from '@/components/Markdown.js'
+import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { formatLatency } from '@/utils/format.js'
 
 const wrap = css`
   display: flex;

@@ -1,4 +1,5 @@
-import type { APIError } from '../types/index.js'
+import * as ff from 'fetch-fun'
+import type { APIError } from '@/types/index.js'
 
 const API_BASE = ''
 
@@ -95,46 +96,108 @@ export function getAuthToken(): string | null {
   }
 }
 
-/** 通知 App 显示设备配对 UI（apiRequest 收到 401 时调用）。 */
+/** 通知 App 显示设备配对 UI（收到 401 时调用）。 */
 function emitAuthRequired(): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent('c0de-auth-required'))
 }
 
-async function apiRequest<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getAuthToken()
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...opts?.headers,
-    },
-    credentials: 'same-origin',
-  })
+/**
+ * 请求链（fetch-fun 管道，形态对齐 painless 模板 http.ts）：
+ * - timeout=每趟尝试预算（新信号），totalTimeout=整链预算；
+ *   后端多为本机接口，但 provider 探测等会代理外部端点，预算放宽到 30s/120s。
+ * - withAuth 每趟尝试重取 token（getAuthToken 每次请求时求值）；空凭据跳过报头。
+ * - withRetry(2) 仅白名单幂等方法（GET），写操作永不重放。
+ */
+const client = ff
+  .create({ baseUrl: API_BASE })
+  .pipe(ff.header, 'content-type', 'application/json')
+  .pipe(ff.header, 'accept', 'application/json')
+  .pipe(ff.timeout, 30_000)
+  .pipe(ff.totalTimeout, 120_000)
+  .pipe(
+    ff.use,
+    ff.withAuth(() => getAuthToken() ?? '', 'Bearer'),
+  )
+  .pipe(ff.use, ff.withRetry(2))
 
-  if (!response.ok) {
-    // P2-16：401 → 通知配对 UI 接管（不再静默抛错让页面空白）。
-    if (response.status === 401) {
-      emitAuthRequired()
+// 请求函数只收 api 派生链：phantom symbol 无法自然构造，
+// auth/401/retry/timeout 不变量由约定升级为类型保证（painless http.ts 同款）。
+declare const apiBrand: unique symbol
+
+/** 由基链派生的客户端类型。 */
+export type ApiClient = ff.Options & ff.Pipe & { readonly [apiBrand]: never }
+
+const api = client as unknown as ApiClient
+
+/**
+ * HTTPError → APIError 契约（服务端 { error: { code, message, details? } }，
+ * 兼容旧/裸 { message } 与无 JSON（fallback statusText））。
+ * 错误体在重试耗尽的最终错误上解析一次。
+ */
+async function toAPIError(e: ff.HTTPError): Promise<APIError> {
+  let body: unknown = e.data
+  if (body === undefined) {
+    try {
+      body = await e.response.clone().json()
+    } catch {
+      // 非 JSON 错误体：保持 undefined，message 落回 statusText
     }
-    // 后端 apiError 返回 { error: { code, message, details? } }；兼容旧/裸 { message } 与无 JSON（fallback statusText）。
-    const body = await response.json().catch(() => ({ message: response.statusText }))
-    const errBody = (
-      body as { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
-    ).error
-    const error: APIError = {
-      status: response.status,
-      message: errBody?.message ?? (body as { message?: string }).message ?? response.statusText,
-      code: errBody?.code ?? (body as { code?: string }).code,
-      // P0-2：details 随错误下发（TRUST_REQUIRED 的风险项等），此前被静默丢弃。
-      ...(errBody?.details ? { details: errBody.details } : {}),
-    }
-    throw error
   }
-
-  if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  const errBody = (
+    body as
+      | { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
+      | undefined
+  )?.error
+  const flat = body as { message?: string; code?: string } | undefined
+  return {
+    status: e.status,
+    message: errBody?.message ?? flat?.message ?? e.response.statusText,
+    ...((errBody?.code ?? flat?.code) ? { code: (errBody?.code ?? flat?.code) as string } : {}),
+    // P0-2：details 随错误下发（TRUST_REQUIRED 的风险项等），此前被静默丢弃。
+    ...(errBody?.details ? { details: errBody.details } : {}),
+  }
 }
 
-export { API_BASE, apiRequest }
+async function request<T>(
+  url: string,
+  method?: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  body?: unknown,
+): Promise<T> {
+  let o = ff.url(api, url)
+  if (method) o = ff.method(o, method)
+  if (body !== undefined) o = ff.jsonBody(o, body)
+  try {
+    return await (ff.fetchJSON<T>(o) as Promise<T>)
+  } catch (e) {
+    if (e instanceof ff.HTTPError) {
+      // P2-16：401 → 通知配对 UI 接管（不再静默抛错让页面空白）。
+      if (e.status === 401) emitAuthRequired()
+      throw await toAPIError(e)
+    }
+    throw e
+  }
+}
+
+export function get<T = unknown>(url: string): Promise<T> {
+  return request<T>(url)
+}
+
+export function post<T = unknown>(url: string, body?: unknown): Promise<T> {
+  return request<T>(url, 'POST', body)
+}
+
+export function put<T = unknown>(url: string, body?: unknown): Promise<T> {
+  return request<T>(url, 'PUT', body)
+}
+
+export function patch<T = unknown>(url: string, body?: unknown): Promise<T> {
+  return request<T>(url, 'PATCH', body)
+}
+
+/** 204 空响应体 → undefined（同 apiRequest 旧契约）。 */
+export function del<T = unknown>(url: string): Promise<T> {
+  return request<T>(url, 'DELETE')
+}
+
+export { API_BASE }

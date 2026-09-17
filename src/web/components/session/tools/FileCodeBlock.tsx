@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
-import { CodeBlock } from '../../CodeBlock.js'
-import { useOverflow } from '../hooks/useOverflow.js'
-import { extToLang } from '../utils/lang.js'
+import { CodeBlock } from '@/components/CodeBlock.js'
+import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { extToLang } from '@/components/session/utils/lang.js'
 
 const wrap = css`
   display: flex;

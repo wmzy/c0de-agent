@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { get, post } from '@/services/api.js'
 
 export type TodoTaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
 
@@ -31,12 +31,8 @@ export type TodoOpResult = {
 }
 
 const todoAPI = {
-  get: (sessionId: string) => apiRequest<TodoState>(`/api/todo/${sessionId}`),
-  exec: (sessionId: string, op: TodoOp) =>
-    apiRequest<TodoOpResult>(`/api/todo/${sessionId}`, {
-      method: 'POST',
-      body: JSON.stringify(op),
-    }),
+  get: (sessionId: string) => get<TodoState>(`/api/todo/${sessionId}`),
+  exec: (sessionId: string, op: TodoOp) => post<TodoOpResult>(`/api/todo/${sessionId}`, op),
 }
 
 export { todoAPI }

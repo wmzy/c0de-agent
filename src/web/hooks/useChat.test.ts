@@ -1,12 +1,13 @@
 import type { AgentError } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ChatState } from './useChat.js'
-import { reduceChatEvent, useChat } from './useChat.js'
+import type { ChatState } from '@/hooks/chatState.js'
+import { reduceChatEvent } from '@/hooks/chatState.js'
+import { useChat } from '@/hooks/useChat.js'
 
 const base: ChatState = {
   messages: [],
@@ -275,7 +276,12 @@ describe('useChat confirm', () => {
           },
         }
       }
-      return { ok: true, status: 200, json: async () => ({ confirmed: true }) }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ confirmed: true }),
+        text: async () => JSON.stringify({ confirmed: true }),
+      }
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -293,19 +299,22 @@ describe('useChat confirm', () => {
     // permission_required 事件已设置 pending
     expect(result.current.pendingPermission?.toolCallId).toBe('tc1')
 
-    act(() => {
+    // fetch-fun 请求在微任务内派发，async act 排空后断言后端调用
+    await act(async () => {
       result.current.confirm('tc1', true)
     })
 
     // 乐观关闭：弹窗立即消失
     expect(result.current.pendingPermission).toBeNull()
-    // 后端确认端点被调用（method POST + toolCallId）
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/tools/confirm',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ toolCallId: 'tc1', approved: true }),
-      }),
+    // 后端确认端点被调用（method POST + toolCallId）；fetch-fun 派发异步，waitFor 轮询
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/tools/confirm',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ toolCallId: 'tc1', approved: true }),
+        }),
+      ),
     )
   })
 
@@ -340,6 +349,8 @@ describe('useChat confirm', () => {
         status: 404,
         statusText: 'Not Found',
         json: async () => ({ error: { code: 'NOT_FOUND', message: 'No pending permission' } }),
+        text: async () =>
+          JSON.stringify({ error: { code: 'NOT_FOUND', message: 'No pending permission' } }),
       }
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -393,6 +404,14 @@ describe('useChat segment break', () => {
             details: { activeSegment: { provider: 'p', model: 'm', tools: ['read'] } },
           },
         }),
+        text: async () =>
+          JSON.stringify({
+            error: {
+              code: 'SEGMENT_BREAK_REQUIRED',
+              message: '切换',
+              details: { activeSegment: { provider: 'p', model: 'm', tools: ['read'] } },
+            },
+          }),
       })),
     )
     const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
@@ -421,6 +440,14 @@ describe('useChat segment break', () => {
                 details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
               },
             }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  code: 'SEGMENT_BREAK_REQUIRED',
+                  message: '切换',
+                  details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
+                },
+              }),
           }
         }
         return {
@@ -433,7 +460,7 @@ describe('useChat segment break', () => {
           },
         }
       }
-      return { ok: true, status: 200, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => JSON.stringify({}) }
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -467,6 +494,14 @@ describe('useChat segment break', () => {
             details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
           },
         }),
+        text: async () =>
+          JSON.stringify({
+            error: {
+              code: 'SEGMENT_BREAK_REQUIRED',
+              message: '切换',
+              details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
+            },
+          }),
       })),
     )
     const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
@@ -503,6 +538,21 @@ describe('useChat segment break', () => {
             },
           },
         }),
+        text: async () =>
+          JSON.stringify({
+            error: {
+              code: 'TRUST_REQUIRED',
+              message: '需要信任',
+              details: {
+                projectId: 'proj-1',
+                projectName: 'Sneaky Repo',
+                items: [
+                  { kind: 'permission-auto', detail: '权限模式 auto' },
+                  { kind: 'plugins-enabled', detail: '启用插件 evil' },
+                ],
+              },
+            },
+          }),
       })),
     )
     const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
@@ -536,6 +586,18 @@ describe('useChat segment break', () => {
                 },
               },
             }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  code: 'TRUST_REQUIRED',
+                  message: '需要信任',
+                  details: {
+                    projectId: 'proj-1',
+                    projectName: 'Repo',
+                    items: [{ kind: 'permission-auto', detail: 'auto' }],
+                  },
+                },
+              }),
           }
         }
         return {
@@ -547,9 +609,14 @@ describe('useChat segment break', () => {
         }
       }
       if (url === '/api/projects/proj-1/trust' && init?.method === 'POST') {
-        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+          text: async () => JSON.stringify({ ok: true }),
+        }
       }
-      return { ok: true, status: 200, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => JSON.stringify({}) }
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -600,7 +667,12 @@ describe('useChat abort', () => {
           },
         }
       }
-      return { ok: true, status: 200, json: async () => ({ aborted: true }) }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ aborted: true }),
+        text: async () => JSON.stringify({ aborted: true }),
+      }
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -618,19 +690,22 @@ describe('useChat abort', () => {
     })
     expect(result.current.isStreaming).toBe(true)
 
-    act(() => {
+    // fetch-fun 请求在微任务内派发，async act 排空后断言后端调用
+    await act(async () => {
       result.current.abort()
     })
 
     // isStreaming 立即变 false
     expect(result.current.isStreaming).toBe(false)
-    // 后端 abort 端点被调用
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/chat/abort',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ sessionId: 's1' }),
-      }),
+    // 后端 abort 端点被调用；fetch-fun 派发异步，waitFor 轮询
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/chat/abort',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ sessionId: 's1' }),
+        }),
+      ),
     )
   })
 })
@@ -647,6 +722,8 @@ describe('useChat 并发守卫（RUN_ACTIVE）', () => {
         ok: false,
         status: 409,
         json: async () => ({ error: { code: 'RUN_ACTIVE', message: '已有进行中的对话' } }),
+        text: async () =>
+          JSON.stringify({ error: { code: 'RUN_ACTIVE', message: '已有进行中的对话' } }),
       })),
     )
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

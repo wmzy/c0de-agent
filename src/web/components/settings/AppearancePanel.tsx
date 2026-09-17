@@ -1,5 +1,5 @@
-import { useTheme } from '../../contexts/ThemeContext.js'
-import { field, section, sectionTitle } from './styles.js'
+import { field, section, sectionTitle } from '@/components/settings/styles.js'
+import { useTheme } from '@/contexts/ThemeContext.js'
 
 /** 外观配置：主题（由 ThemeContext 管理，存于 localStorage）。
  *  P2-11：语言切换已下架（UI 未实现 i18n，切换无实际效果，避免假功能）。 */

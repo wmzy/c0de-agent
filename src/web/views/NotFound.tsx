@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
-import { Link } from 'react-router-dom'
+import { TypedLink } from '@native-router/react'
+import type { AppPaths } from '@/routes.js'
 
 const notFound = css`
   display: flex;
@@ -41,9 +42,9 @@ export function NotFound() {
     <div className={notFound}>
       <div className={code}>404</div>
       <div>页面不存在，地址可能已失效</div>
-      <Link to="/" className={backLink}>
+      <TypedLink<AppPaths> to="/" className={backLink}>
         返回会话
-      </Link>
+      </TypedLink>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { get } from '@/services/api.js'
 
 type SubcommandDef = {
   name: string
@@ -14,7 +14,7 @@ type CommandInfo = {
 }
 
 const commandsAPI = {
-  list: () => apiRequest<{ commands: CommandInfo[] }>('/api/commands'),
+  list: () => get<{ commands: CommandInfo[] }>('/api/commands'),
 }
 
 export type { CommandInfo, SubcommandDef }

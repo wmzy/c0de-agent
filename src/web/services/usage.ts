@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { get } from '@/services/api.js'
 
 /** 用量汇总（服务端从 usage_events 成本账本聚合；?projectId= 过滤为项目口径）。 */
 export type UsageTotals = {
@@ -26,7 +26,7 @@ export type UsageSummary = {
 export const usageAPI = {
   /** projectId 提供时聚合该项目口径（项目设置页预算按本项目成本对比）。 */
   summary: (projectId?: string) =>
-    apiRequest<UsageSummary>(
+    get<UsageSummary>(
       `/api/usage/summary${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
 }

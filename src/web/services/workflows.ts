@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { del, get, post } from '@/services/api.js'
 
 /** GET /api/workflows 返回的工作流条目。 */
 type WorkflowInfo = {
@@ -39,28 +39,23 @@ type WorkflowRemoveTarget = 'project' | 'user'
 
 const workflowsAPI = {
   list: (projectId?: string) =>
-    apiRequest<WorkflowListPayload>(
+    get<WorkflowListPayload>(
       projectId ? `/api/workflows?projectId=${encodeURIComponent(projectId)}` : '/api/workflows',
     ),
   get: (name: string, projectId?: string) =>
-    apiRequest<WorkflowDetail>(
+    get<WorkflowDetail>(
       `/api/workflows/${encodeURIComponent(name)}${
         projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
       }`,
     ),
   save: (payload: WorkflowSavePayload) =>
-    apiRequest<{ ok: boolean; name: string; filePath: string }>('/api/workflows', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
+    post<{ ok: boolean; name: string; filePath: string }>('/api/workflows', payload),
   remove: (name: string, projectId: string | undefined, target: WorkflowRemoveTarget) =>
-    apiRequest<{ ok: boolean }>(
+    del<{ ok: boolean }>(
       `/api/workflows/${encodeURIComponent(name)}?${new URLSearchParams({
         ...(projectId ? { projectId } : {}),
         target,
       })}`,
-      { method: 'DELETE' },
     ),
 }
 

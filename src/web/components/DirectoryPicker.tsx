@@ -1,6 +1,5 @@
 import { css } from '@linaria/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { filesystemAPI } from '../services/filesystem.js'
 import {
   activeTreeNavigation,
   cleanPickerInput,
@@ -10,8 +9,9 @@ import {
   nextSuggestionIndex,
   pickerParent,
   pickerRoot,
-} from './directory-picker-domain.js'
-import { FileTree, type TreeNode } from './FileTree.js'
+} from '@/components/directory-picker-domain.js'
+import { FileTree, type TreeNode } from '@/components/FileTree.js'
+import { filesystemAPI } from '@/services/filesystem.js'
 
 const container = css`
   position: relative;

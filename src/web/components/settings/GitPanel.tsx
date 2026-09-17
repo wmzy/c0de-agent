@@ -1,7 +1,7 @@
 import type { Config } from '@shared/types/config.js'
 import type { ProviderConfig } from '@shared/types/llm.js'
-import { ProviderModelSelect } from './ProviderModelSelect.js'
-import { checkRow, section, sectionTitle } from './styles.js'
+import { ProviderModelSelect } from '@/components/settings/ProviderModelSelect.js'
+import { checkRow, section, sectionTitle } from '@/components/settings/styles.js'
 
 interface GitPanelProps {
   /** commitModel 配置（undefined 表示用默认模型）。 */

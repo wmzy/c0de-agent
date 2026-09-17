@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { generateId } from '../../hooks/id.js'
-import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '../../services/kanban.js'
-import { Dialog } from '../Dialog.js'
+import { Dialog } from '@/components/Dialog.js'
+import { generateId } from '@/hooks/id.js'
+import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '@/services/kanban.js'
 
 const field = css`
   display: flex;

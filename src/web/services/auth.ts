@@ -1,5 +1,6 @@
+import { del, get, post } from '@/services/api.js'
+
 // P2-16：设备配对 API 服务。
-import { apiRequest } from './api.js'
 
 type PairingRequestResult = {
   pairingId: string
@@ -33,36 +34,22 @@ type AuthorizedDevice = {
 const authAPI = {
   /** 新设备发起配对请求（公开端点）。 */
   requestPairing: (deviceName: string) =>
-    apiRequest<PairingRequestResult>('/api/auth/pairing/request', {
-      method: 'POST',
-      body: JSON.stringify({ deviceName }),
-    }),
+    post<PairingRequestResult>('/api/auth/pairing/request', { deviceName }),
   /** 新设备轮询审批结果（公开端点）。 */
   pairingStatus: (pairingId: string) =>
-    apiRequest<PairingStatus>(
-      `/api/auth/pairing/status?pairingId=${encodeURIComponent(pairingId)}`,
-    ),
+    get<PairingStatus>(`/api/auth/pairing/status?pairingId=${encodeURIComponent(pairingId)}`),
   /** 已授权设备：列出待审批配对。 */
-  listPairings: () => apiRequest<{ pairings: PendingPairing[] }>('/api/auth/pairing'),
+  listPairings: () => get<{ pairings: PendingPairing[] }>('/api/auth/pairing'),
   /** 已授权设备：审批通过（携带审批方输入的 6 位配对码，服务端核对防误批）。 */
   approvePairing: (pairingId: string, code: string) =>
-    apiRequest<{ ok: boolean }>('/api/auth/pairing/approve', {
-      method: 'POST',
-      body: JSON.stringify({ pairingId, code }),
-    }),
+    post<{ ok: boolean }>('/api/auth/pairing/approve', { pairingId, code }),
   /** 已授权设备：拒绝配对。 */
   denyPairing: (pairingId: string) =>
-    apiRequest<{ ok: boolean }>('/api/auth/pairing/deny', {
-      method: 'POST',
-      body: JSON.stringify({ pairingId }),
-    }),
+    post<{ ok: boolean }>('/api/auth/pairing/deny', { pairingId }),
   /** 已授权设备列表（设置页设备管理）。 */
-  listDevices: () => apiRequest<{ devices: AuthorizedDevice[] }>('/api/auth/devices'),
+  listDevices: () => get<{ devices: AuthorizedDevice[] }>('/api/auth/devices'),
   /** 撤销设备（立即生效）。 */
-  revokeDevice: (id: string) =>
-    apiRequest<{ ok: boolean }>(`/api/auth/devices/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
+  revokeDevice: (id: string) => del<{ ok: boolean }>(`/api/auth/devices/${encodeURIComponent(id)}`),
 }
 
 export type { AuthorizedDevice, PairingRequestResult, PairingStatus, PendingPairing }

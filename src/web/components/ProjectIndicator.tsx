@@ -1,16 +1,17 @@
 import { css } from '@linaria/core'
+import { useRouter } from '@native-router/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useProjects } from '../hooks/useSession.js'
-import { fileAPI } from '../services/file.js'
-import { kanbanAPI } from '../services/kanban.js'
-import { projectAPI } from '../services/project.js'
-import { MOBILE } from '../styles/breakpoints.js'
-import { AddProjectDialog } from './AddProjectDialog.js'
-import { DangerConfirmDialog } from './DangerConfirmDialog.js'
-import { DropdownMenu } from './DropdownMenu.js'
-import { RelocateProjectDialog } from './RelocateProjectDialog.js'
+import { AddProjectDialog } from '@/components/AddProjectDialog.js'
+import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
+import { DropdownMenu } from '@/components/DropdownMenu.js'
+import { RelocateProjectDialog } from '@/components/RelocateProjectDialog.js'
+import { useProjects } from '@/hooks/useSession.js'
+import { navigateTo } from '@/navigateTo.js'
+import { fileAPI } from '@/services/file.js'
+import { kanbanAPI } from '@/services/kanban.js'
+import { projectAPI } from '@/services/project.js'
+import { MOBILE } from '@/styles/breakpoints.js'
 
 const indicator = css`
   display: flex;
@@ -218,7 +219,7 @@ export function ProjectIndicator({
   const cls = variant === 'inline' ? indicatorInline : indicator
   const { data: projects } = useProjects()
   const project = projects?.find((p) => p.id === projectId)
-  const navigate = useNavigate()
+  const router = useRouter()
   const qc = useQueryClient()
 
   const [showAddProject, setShowAddProject] = useState(false)
@@ -233,7 +234,7 @@ export function ProjectIndicator({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['projects'] })
       // 删除的是当前项目 → 回根路径重新解析
-      navigate('/')
+      navigateTo(router, '/')
     },
     onError: (e: unknown) => {
       setDeleteError(e instanceof Error ? e.message : String(e))
@@ -372,7 +373,7 @@ export function ProjectIndicator({
               className={`${menuItem} ${p.id === projectId ? menuItemActive : ''}`}
               onClick={() => {
                 close()
-                navigate(`/projects/${p.id}`)
+                navigateTo(router, '/projects/:projectId', { params: { projectId: p.id } })
               }}
               data-testid={`project-dropdown-item-${p.id}`}
             >
@@ -475,7 +476,7 @@ export function ProjectIndicator({
           onClose={() => setShowAddProject(false)}
           onCreated={(p) => {
             setShowAddProject(false)
-            navigate(`/projects/${p.id}`)
+            navigateTo(router, '/projects/:projectId', { params: { projectId: p.id } })
           }}
         />
       )}
@@ -485,7 +486,7 @@ export function ProjectIndicator({
           onClose={() => setShowRelocate(false)}
           onRelocated={(p) => {
             // 项目身份已更换（id = sha256(新目录)），导航到新项目
-            navigate(`/projects/${p.id}`)
+            navigateTo(router, '/projects/:projectId', { params: { projectId: p.id } })
           }}
         />
       )}

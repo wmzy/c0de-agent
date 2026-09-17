@@ -1,14 +1,14 @@
 import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { generateId } from '../../hooks/id.js'
+import { Dialog } from '@/components/Dialog.js'
+import { generateId } from '@/hooks/id.js'
 import {
   type KanbanCard,
   type KanbanColumnDef,
   type KanbanLabelDef,
   kanbanAPI,
-} from '../../services/kanban.js'
-import { Dialog } from '../Dialog.js'
+} from '@/services/kanban.js'
 
 const sectionTitle = css`
   font-size: 13px;

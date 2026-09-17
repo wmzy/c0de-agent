@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { projectAPI } from '../services/project.js'
-import { sessionAPI } from '../services/session.js'
+import { projectAPI } from '@/services/project.js'
+import { sessionAPI } from '@/services/session.js'
 
 export function useSessionTree() {
   return useQuery({ queryKey: ['sessions', 'tree'], queryFn: () => sessionAPI.tree() })

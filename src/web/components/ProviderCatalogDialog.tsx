@@ -2,9 +2,9 @@ import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig, ProviderProtocol } from '@shared/types/llm.js'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import type { CatalogModel, CatalogProvider } from '../services/catalog.js'
-import { catalogAPI } from '../services/catalog.js'
-import { Dialog } from './Dialog.js'
+import { Dialog } from '@/components/Dialog.js'
+import type { CatalogModel, CatalogProvider } from '@/services/catalog.js'
+import { catalogAPI } from '@/services/catalog.js'
 
 const searchBar = css`
   width: 100%;

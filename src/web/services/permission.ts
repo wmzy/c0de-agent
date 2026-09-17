@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { del, get, post, put } from '@/services/api.js'
 
 /** 授权模式：'default' 逐个确认，'auto' 自动放行 ask 工具（YOLO）。 */
 type PermissionMode = 'default' | 'auto'
@@ -12,31 +12,24 @@ type SessionPermissionState = {
 /** P1-5：模式按会话隔离。sessionId 提供时读写该会话覆盖，否则默认模式。 */
 const permissionAPI = {
   getMode: (sessionId?: string) =>
-    apiRequest<SessionPermissionState>(
+    get<SessionPermissionState>(
       sessionId ? `/api/permissions/${encodeURIComponent(sessionId)}` : '/api/permissions',
     ),
   setMode: (mode: PermissionMode, sessionId?: string) =>
-    apiRequest<{ mode: PermissionMode }>(
+    put<{ mode: PermissionMode }>(
       sessionId ? `/api/permissions/${encodeURIComponent(sessionId)}` : '/api/permissions',
-      {
-        method: 'PUT',
-        body: JSON.stringify({ mode }),
-      },
+      { mode },
     ),
   /** 会话级「始终允许」白名单：追加工具（幂等）。 */
   setAlwaysAllow: (tool: string, sessionId: string) =>
-    apiRequest<{ alwaysAllow: string[] }>(
+    post<{ alwaysAllow: string[] }>(
       `/api/permissions/${encodeURIComponent(sessionId)}/always-allow`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ tool }),
-      },
+      { tool },
     ),
   /** 从会话级白名单移除工具。 */
   removeAlwaysAllow: (tool: string, sessionId: string) =>
-    apiRequest<{ alwaysAllow: string[] }>(
+    del<{ alwaysAllow: string[] }>(
       `/api/permissions/${encodeURIComponent(sessionId)}/always-allow/${encodeURIComponent(tool)}`,
-      { method: 'DELETE' },
     ),
 }
 

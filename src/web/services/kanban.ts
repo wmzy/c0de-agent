@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { del, get, patch, post } from '@/services/api.js'
 
 export type KanbanPriority = 'high' | 'medium' | 'low'
 
@@ -54,16 +54,12 @@ export type DeletedKanbanBoard = {
 
 const kanbanAPI = {
   /** 获取完整看板（列 + 标签 + 所有卡片）。 */
-  get: (projectId: string) => apiRequest<KanbanBoardWithCards>(`/api/kanban/${projectId}`),
+  get: (projectId: string) => get<KanbanBoardWithCards>(`/api/kanban/${projectId}`),
   /** 更新看板配置（列/标签）。 */
   updateBoard: (
     projectId: string,
-    patch: { columns?: KanbanColumnDef[]; labels?: KanbanLabelDef[] },
-  ) =>
-    apiRequest<KanbanBoard>(`/api/kanban/${projectId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    }),
+    changes: { columns?: KanbanColumnDef[]; labels?: KanbanLabelDef[] },
+  ) => patch<KanbanBoard>(`/api/kanban/${projectId}`, changes),
   /** 新建卡片。 */
   addCard: (
     projectId: string,
@@ -74,16 +70,12 @@ const kanbanAPI = {
       priority?: KanbanPriority
       labels?: string[]
     },
-  ) =>
-    apiRequest<KanbanCard>(`/api/kanban/${projectId}/cards`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }),
+  ) => post<KanbanCard>(`/api/kanban/${projectId}/cards`, input),
   /** 更新卡片字段或移动。 */
   updateCard: (
     projectId: string,
     cardId: string,
-    patch: {
+    changes: {
       title?: string
       description?: string | null
       priority?: KanbanPriority
@@ -91,44 +83,28 @@ const kanbanAPI = {
       columnId?: string
       position?: number
     },
-  ) =>
-    apiRequest<KanbanCard>(`/api/kanban/${projectId}/cards/${cardId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    }),
+  ) => patch<KanbanCard>(`/api/kanban/${projectId}/cards/${cardId}`, changes),
   /** 删除卡片。 */
   deleteCard: (projectId: string, cardId: string) =>
-    apiRequest<{ ok: boolean }>(`/api/kanban/${projectId}/cards/${cardId}`, {
-      method: 'DELETE',
-    }),
+    del<{ ok: boolean }>(`/api/kanban/${projectId}/cards/${cardId}`),
   /** 导出整板（列+标签+卡片 JSON；项目删除会永久级联删除看板，导出是唯一备份）。 */
-  exportBoard: (projectId: string) => apiRequest<unknown>(`/api/kanban/${projectId}/export`),
+  exportBoard: (projectId: string) => get<unknown>(`/api/kanban/${projectId}/export`),
   /** P2-5：回收站看板列表（项目删除软删除的看板）。 */
-  deletedBoards: () => apiRequest<{ boards: DeletedKanbanBoard[] }>('/api/kanban/deleted'),
+  deletedBoards: () => get<{ boards: DeletedKanbanBoard[] }>('/api/kanban/deleted'),
   /** P2-5：恢复回收站看板到指定项目（目标已有看板 → 409）。 */
   restoreDeletedBoard: (boardId: string, projectId: string) =>
-    apiRequest<{ ok: boolean }>(`/api/kanban/deleted/${boardId}/restore`, {
-      method: 'POST',
-      body: JSON.stringify({ projectId }),
-    }),
+    post<{ ok: boolean }>(`/api/kanban/deleted/${boardId}/restore`, { projectId }),
   /** P2-5：重建原项目并恢复看板（目录仍存在时；原目录已存在看板 → 409）。 */
   restoreDeletedBoardToOriginal: (boardId: string) =>
-    apiRequest<{ ok: boolean; recreatedProject?: { id: string; name: string | null } }>(
+    post<{ ok: boolean; recreatedProject?: { id: string; name: string | null } }>(
       `/api/kanban/deleted/${boardId}/restore`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ rebuild: true }),
-      },
+      { rebuild: true },
     ),
   /** P2-5：彻底删除回收站看板（不可恢复）。 */
-  destroyDeletedBoard: (boardId: string) =>
-    apiRequest<{ ok: boolean }>(`/api/kanban/deleted/${boardId}`, { method: 'DELETE' }),
+  destroyDeletedBoard: (boardId: string) => del<{ ok: boolean }>(`/api/kanban/deleted/${boardId}`),
   /** 导入整板（原子替换列+标签+卡片）。 */
   importBoard: (projectId: string, data: unknown) =>
-    apiRequest<{ ok: boolean; cardCount: number }>(`/api/kanban/${projectId}/import`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+    post<{ ok: boolean; cardCount: number }>(`/api/kanban/${projectId}/import`, data),
 }
 
 export { kanbanAPI }

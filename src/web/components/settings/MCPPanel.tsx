@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { MCPServerConfig } from '@shared/types/config.js'
-import { section, sectionTitle } from './styles.js'
+import { section, sectionTitle } from '@/components/settings/styles.js'
 
 const mcpRow = css`
   display: flex;

@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { WorkflowGraph, type WorkflowNode } from '../WorkflowGraph.js'
+import { WorkflowGraph, type WorkflowNode } from '@/components/session/WorkflowGraph.js'
 
 const wrapper = css`
   display: flex;

@@ -10,10 +10,10 @@ import {
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useRef, useState } from 'react'
-import { BoardConfigDialog } from '../components/kanban/BoardConfigDialog.js'
-import { CardEditDialog } from '../components/kanban/CardEditDialog.js'
-import { KanbanColumn } from '../components/kanban/KanbanColumn.js'
-import { type KanbanCard, kanbanAPI } from '../services/kanban.js'
+import { BoardConfigDialog } from '@/components/kanban/BoardConfigDialog.js'
+import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
+import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
+import { type KanbanCard, kanbanAPI } from '@/services/kanban.js'
 
 const view = css`
   display: flex;

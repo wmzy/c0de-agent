@@ -2,7 +2,7 @@ import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import type { Message } from '@shared/types/message.js'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TimelineRow } from './utils/timeline.js'
+import type { TimelineRow } from '@/components/session/utils/timeline.js'
 
 // mock MessageItem 为占位（含 latency 透传验证）
 vi.mock('./MessageItem.js', () => ({
@@ -24,7 +24,7 @@ vi.mock('../LLMDetail.js', () => ({
     ),
 }))
 
-const { TimelineChat } = await import('./TimelineChat.js')
+const { TimelineChat } = await import('@/components/session/TimelineChat.js')
 
 function mkMessage(id: string, text: string | null, createdAt = 1): Message {
   return {

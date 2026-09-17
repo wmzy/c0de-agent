@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
-import type { AgentListItem } from '../services/agent.js'
-import { inputStyle } from '../styles/tokens.js'
+import type { AgentListItem } from '@/services/agent.js'
+import { inputStyle } from '@/styles/tokens.js'
 
 /** 控件增量样式（自包含 min-height，否则被全局 select{min-height:44px} 覆盖；边框/圆角/背景/文字色来自 inputStyle）。 */
 const selectControl = css`

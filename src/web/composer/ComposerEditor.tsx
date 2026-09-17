@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import type { ClipboardEvent, KeyboardEvent, MouseEvent, RefObject } from 'react'
 import { useRef, useState } from 'react'
-import { useFileSelection } from '../contexts/FileSelectionContext.js'
-import { MOBILE } from '../styles/breakpoints.js'
-import { promptPlaceholder } from './placeholder.js'
+import { promptPlaceholder } from '@/composer/placeholder.js'
+import { useFileSelection } from '@/contexts/FileSelectionContext.js'
+import { MOBILE } from '@/styles/breakpoints.js'
 
 const editorWrap = css`
   position: relative;

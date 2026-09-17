@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import type { WorkflowInfo } from '../services/workflows.js'
+import type { WorkflowInfo } from '@/services/workflows.js'
 
 const popover = css`
   position: absolute;

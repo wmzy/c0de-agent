@@ -3,9 +3,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DirectoryPicker } from './DirectoryPicker.js'
+import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 
-vi.mock('../services/filesystem.js', () => ({
+vi.mock('@/services/filesystem.js', () => ({
   filesystemAPI: {
     browse: vi.fn(),
     home: vi.fn(),
@@ -13,7 +13,7 @@ vi.mock('../services/filesystem.js', () => ({
   },
 }))
 
-const { filesystemAPI } = await import('../services/filesystem.js')
+const { filesystemAPI } = await import('@/services/filesystem.js')
 
 beforeEach(() => {
   vi.clearAllMocks()

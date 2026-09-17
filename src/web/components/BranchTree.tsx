@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import type { SessionTreeNode, SessionUsage } from '../types/index.js'
+import type { SessionTreeNode, SessionUsage } from '@/types/index.js'
 
 const node = css`
   padding: 1px 0;

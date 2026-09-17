@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
+import { useMatched, useRouter } from '@native-router/react'
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { MOBILE } from '../styles/breakpoints.js'
-import { checkNavGuard } from '../utils/nav-guard.js'
+import { navigateTo } from '@/navigateTo.js'
+import { MOBILE } from '@/styles/breakpoints.js'
 
 const bar = css`
   display: none;
@@ -156,16 +156,19 @@ type MobileNavProps = {
  * 抽屉内导航（选择会话）时自动收起。无侧栏内容的页面（如看板）点击无操作。
  */
 export function MobileNav({ sidebar }: MobileNavProps) {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const { projectId } = useParams<{ projectId: string }>()
+  const router = useRouter()
+  // notFound 视图提交在匹配链之外（无 MatchedContext），useMatched 返回 undefined；
+  // 404 页仍需渲染移动导航，故按缺省路径处理。
+  const matchedCtx = useMatched()
+  const routePath = matchedCtx?.matched[matchedCtx.matched.length - 1]?.route.path ?? ''
+  const projectId = matchedCtx?.params.projectId
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   // 路由变化（如在抽屉内选择会话/进入设置）时收起抽屉
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅监听路由变化触发收起，effect 内无需读取 pathname
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅监听路由变化触发收起，effect 内无需读取
   useEffect(() => {
     setDrawerOpen(false)
-  }, [location.pathname])
+  }, [matchedCtx])
 
   // 抽屉打开时：Esc 关闭 + 锁定背景滚动
   useEffect(() => {
@@ -183,22 +186,27 @@ export function MobileNav({ sidebar }: MobileNavProps) {
   }, [drawerOpen])
 
   // 抽屉打开时高亮 sessions 标签；否则按路由判定
-  const isSettingsRoute =
-    location.pathname.startsWith('/settings') || location.pathname.includes('/settings')
+  const isSettingsRoute = routePath === '/settings' || routePath === '/projects/:projectId/settings'
   const activeId = drawerOpen ? 'sessions' : isSettingsRoute ? 'settings' : 'chat'
 
   const onPick = (t: Tab) => {
     if (t.kind === 'settings') {
-      navigate(projectId ? `/projects/${projectId}/settings` : '/settings')
+      if (projectId) {
+        navigateTo(router, '/projects/:projectId/settings', { params: { projectId } })
+      } else {
+        navigateTo(router, '/settings')
+      }
       return
     }
     if (t.kind === 'chat') {
-      // 设置页上点「对话」应回到聊天页（此前仅收起抽屉，无导航）；
-      // 程序化 navigate 不经 <a> 拦截，离开前查询未保存更改守卫。
+      // 设置页上点「对话」应回到聊天页（此前仅收起抽屉，无导航）。
+      // 未保存更改由 Settings 的 useBlocker 统一拦截（含程序化导航），此处直接跳。
       if (isSettingsRoute) {
-        const blockMsg = checkNavGuard()
-        if (blockMsg && !window.confirm(blockMsg)) return
-        navigate(projectId ? `/projects/${projectId}` : '/')
+        if (projectId) {
+          navigateTo(router, '/projects/:projectId', { params: { projectId } })
+        } else {
+          navigateTo(router, '/')
+        }
       }
       setDrawerOpen(false)
       return

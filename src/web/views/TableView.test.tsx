@@ -2,8 +2,8 @@ import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import type { Message } from '@shared/types/message.js'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { TimelineRow } from '../components/session/utils/timeline.js'
-import { TableView } from './TableView.js'
+import type { TimelineRow } from '@/components/session/utils/timeline.js'
+import { TableView } from '@/views/TableView.js'
 
 function mkMessage(id: string, role: Message['role'], text: string, createdAt = 1): Message {
   return {

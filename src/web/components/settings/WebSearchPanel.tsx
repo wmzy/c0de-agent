@@ -1,6 +1,6 @@
 import type { Config } from '@shared/types/config.js'
-import { ApiKeyInput } from './ApiKeyInput.js'
-import { field, section, sectionTitle } from './styles.js'
+import { ApiKeyInput } from '@/components/settings/ApiKeyInput.js'
+import { field, section, sectionTitle } from '@/components/settings/styles.js'
 
 interface WebSearchPanelProps {
   websearch: Config['websearch']

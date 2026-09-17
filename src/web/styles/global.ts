@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { themeVars } from './theme.js'
+import { themeVars } from '@/styles/theme.js'
 
 // linaria v5: 每个全局选择器单独用 :global(...)，不嵌套 :global() { block }。
 export const globalStyle = css`

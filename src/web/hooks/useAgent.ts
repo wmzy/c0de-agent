@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { agentAPI } from '../services/agent.js'
+import { agentAPI } from '@/services/agent.js'
 
 export function useAgent(sessionId: string) {
   const [busy, setBusy] = useState(false)

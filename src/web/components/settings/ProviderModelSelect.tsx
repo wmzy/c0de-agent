@@ -1,6 +1,6 @@
 import type { ProviderConfig } from '@shared/types/llm.js'
-import { enabledModelsOf, providerCandidates } from './shared.js'
-import { field, fieldInput } from './styles.js'
+import { enabledModelsOf, providerCandidates } from '@/components/settings/shared.js'
+import { field, fieldInput } from '@/components/settings/styles.js'
 
 interface ProviderModelValue {
   provider: string

@@ -1,25 +1,25 @@
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { StreamingIndicator } from '../components/StreamingIndicator.js'
-import { StickyUserMessage } from '../components/session/StickyUserMessage.js'
-import { TimelineChat } from '../components/session/TimelineChat.js'
+import { StreamingIndicator } from '@/components/StreamingIndicator.js'
+import { StickyUserMessage } from '@/components/session/StickyUserMessage.js'
+import { TimelineChat } from '@/components/session/TimelineChat.js'
 import {
   isEmptyMessage,
   type TimelineRow,
   userMessageText,
-} from '../components/session/utils/timeline.js'
-import { Composer, type SendPayload } from '../composer/Composer.js'
-import type { AgentListItem } from '../services/agent.js'
+} from '@/components/session/utils/timeline.js'
+import { Composer, type SendPayload } from '@/composer/Composer.js'
+import type { AgentListItem } from '@/services/agent.js'
 import {
   broadcastModeChange,
   type PermissionMode,
   permissionAPI,
   subscribeModeChange,
-} from '../services/permission.js'
-import { MOBILE } from '../styles/breakpoints.js'
-import { formatTokenCount } from '../utils/format.js'
-import { TableView } from './TableView.js'
+} from '@/services/permission.js'
+import { MOBILE } from '@/styles/breakpoints.js'
+import { formatTokenCount } from '@/utils/format.js'
+import { TableView } from '@/views/TableView.js'
 
 export type { SendPayload }
 

@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { get, post } from '@/services/api.js'
 
 /** GET /api/update 返回体。 */
 type UpdateStatus = {
@@ -31,12 +31,9 @@ type ApplyResult = {
 }
 
 const updateAPI = {
-  status: () => apiRequest<UpdateStatus>('/api/update'),
+  status: () => get<UpdateStatus>('/api/update'),
   apply: (rerunTerminalIds?: string[]) =>
-    apiRequest<ApplyResult>('/api/update/apply', {
-      method: 'POST',
-      body: JSON.stringify({ rerunTerminalIds: rerunTerminalIds ?? [] }),
-    }),
+    post<ApplyResult>('/api/update/apply', { rerunTerminalIds: rerunTerminalIds ?? [] }),
 }
 
 export type { ApplyResult, UpdateStatus }

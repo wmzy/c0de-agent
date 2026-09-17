@@ -4,8 +4,8 @@ import type { Message, Session } from '@shared/types/message.js'
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
-import { useMessages } from '../hooks/useSession.js'
-import { sessionAPI } from '../services/session.js'
+import { useMessages } from '@/hooks/useSession.js'
+import { sessionAPI } from '@/services/session.js'
 
 const wrap = css`
   border-bottom: 1px solid var(--border);

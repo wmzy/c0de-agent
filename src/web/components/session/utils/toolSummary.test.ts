@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toolSummary } from './toolSummary.js'
+import { toolSummary } from '@/components/session/utils/toolSummary.js'
 
 describe('toolSummary', () => {
   it('read/write/edit 取 path', () => {

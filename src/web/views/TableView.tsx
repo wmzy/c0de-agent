@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { Fragment, useMemo, useState } from 'react'
-import type { TimelineRow } from '../components/session/utils/timeline.js'
-import { formatCost, formatLatency, formatTimestamp, formatTokenCount } from '../utils/format.js'
+import type { TimelineRow } from '@/components/session/utils/timeline.js'
+import { formatCost, formatLatency, formatTimestamp, formatTokenCount } from '@/utils/format.js'
 
 const wrap = css`
   flex: 1;

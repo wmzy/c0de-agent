@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { memo, useState } from 'react'
-import { Markdown } from '../Markdown.js'
+import { Markdown } from '@/components/Markdown.js'
 
 const wrap = css`
   border: 1px solid var(--border);

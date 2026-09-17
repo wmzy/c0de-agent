@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { BashToolView } from './BashToolView.js'
+import { BashToolView } from '@/components/session/tools/BashToolView.js'
 
 describe('BashToolView', () => {
   afterEach(cleanup)

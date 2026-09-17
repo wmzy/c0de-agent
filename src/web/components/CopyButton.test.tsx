@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { CopyButton } from './CopyButton.js'
+import { CopyButton } from '@/components/CopyButton.js'
 
 describe('CopyButton', () => {
   it('点击后调用 clipboard 并切换为已复制', async () => {

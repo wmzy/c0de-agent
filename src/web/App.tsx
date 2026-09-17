@@ -1,42 +1,16 @@
 import { css } from '@linaria/core'
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { lazy, Suspense, useEffect, useState } from 'react'
-import {
-  BrowserRouter,
-  Link,
-  Navigate,
-  Route,
-  Routes,
-  useNavigate,
-  useParams,
-} from 'react-router-dom'
-import { ErrorBoundary } from './components/ErrorBoundary.js'
-import { PairingApproval, PairingRequestFlow } from './components/PairingView.js'
-import { type SidebarTab, SidebarTabs } from './components/SidebarTabs.js'
-import { TerminalPanel } from './components/TerminalPanel.js'
-import { TopBar } from './components/TopBar.js'
-import { UpdateBanner } from './components/UpdateBanner.js'
-import { ConfigProvider } from './contexts/ConfigContext.js'
-import {
-  type FileSelection,
-  FileSelectionContext,
-  type LineRange,
-} from './contexts/FileSelectionContext.js'
-import { FileReferenceProvider } from './contexts/ReferenceContext.js'
-import { ThemeProvider } from './contexts/ThemeContext.js'
-import { useTerminal } from './hooks/useTerminal.js'
-import { projectAPI } from './services/project.js'
-import { ChatView } from './views/ChatView.js'
-import { FileBrowser } from './views/FileBrowser.js'
-import { FilePreview } from './views/FilePreview.js'
-import { KanbanView } from './views/KanbanView.js'
-import { Layout } from './views/Layout.js'
-import { NotFound } from './views/NotFound.js'
-import { SessionList } from './views/SessionList.js'
-
-// Settings 体积最大（含 6+ 子面板：JsonConfigEditor/MCPPanel/ModelPanel 等），
-// 且仅在 /settings 路由访问时才需要，懒加载为独立 chunk 以降低首屏 bundle。
-const Settings = lazy(() => import('./views/Settings.js').then((m) => ({ default: m.Settings })))
+import { HistoryRouter, View } from '@native-router/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { ErrorBoundary } from '@/components/ErrorBoundary.js'
+import { PairingApproval, PairingRequestFlow } from '@/components/PairingView.js'
+import { TopBar } from '@/components/TopBar.js'
+import { UpdateBanner } from '@/components/UpdateBanner.js'
+import { ConfigProvider } from '@/contexts/ConfigContext.js'
+import { ThemeProvider } from '@/contexts/ThemeContext.js'
+import { routes } from '@/routes.js'
+import { Layout } from '@/views/Layout.js'
+import { NotFound } from '@/views/NotFound.js'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -48,6 +22,13 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+// 路由 baseUrl 与 vite base 同一事实源（painless 同款）：绝对 base 剥尾斜杠作
+// 前缀；相对 base（dev/可移植部署）→ 空串原样匹配。不接时子路径部署的 SPA
+// 全路径失配 → notFound。
+const routerBaseUrl = import.meta.env.BASE_URL.startsWith('/')
+  ? import.meta.env.BASE_URL.slice(0, -1)
+  : ''
 
 export function App() {
   // P2-16：API 401 → 显示新设备配对流程；已授权设备轮询待审批配对。
@@ -62,69 +43,26 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <ConfigProvider>
-          <BrowserRouter>
+          <HistoryRouter
+            routes={routes}
+            baseUrl={routerBaseUrl}
+            notFound={<Layout header={<TopBar />} main={<NotFound />} />}
+          >
             <ErrorBoundary>
               <div className={appShell}>
                 <UpdateBanner />
                 <FirstDeviceNotice />
                 {authRequired && <PairingRequestFlow />}
                 <PairingApproval onDone={() => {}} />
-                <Routes>
-                  <Route path="/" element={<RootRedirect />} />
-                  <Route path="/projects/:projectId" element={<ChatPage />} />
-                  <Route path="/projects/:projectId/sessions/:sessionId" element={<ChatPage />} />
-                  <Route path="/projects/:projectId/kanban" element={<KanbanPage />} />
-                  <Route path="/projects/:projectId/settings" element={<SettingsPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="*" element={<Layout header={<TopBar />} main={<NotFound />} />} />
-                </Routes>
+                <View />
               </div>
             </ErrorBoundary>
-          </BrowserRouter>
+          </HistoryRouter>
         </ConfigProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )
 }
-
-const redirectMsg = css`
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  font-size: 14px;
-  padding: 24px;
-`
-
-/** 设置页（P1-1）：/settings 与 /projects/:projectId/settings 共用同一布局包装。 */
-function SettingsPage() {
-  return (
-    <Layout
-      header={<TopBar />}
-      main={
-        <ErrorBoundary>
-          <Suspense fallback={<div className={redirectMsg}>加载中…</div>}>
-            <Settings />
-          </Suspense>
-        </ErrorBoundary>
-      }
-    />
-  )
-}
-
-const errorState = css`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  flex: 1;
-  color: var(--text-secondary);
-  font-size: 14px;
-  padding: 24px;
-  text-align: center;
-`
 
 const appShell = css`
   display: flex;
@@ -184,173 +122,4 @@ function FirstDeviceNotice() {
       </button>
     </div>
   )
-}
-
-const errorIcon = css`
-  font-size: 32px;
-`
-
-const errorLink = css`
-  color: var(--primary);
-  text-decoration: none;
-  padding: 8px 16px;
-  border: 1px solid var(--primary);
-  border-radius: 6px;
-`
-
-/**
- * 根路径重定向：解析当前工作区对应项目，跳转到项目路由。
- * history 模式下根路径无项目上下文，必须落到具体项目才能展示会话。
- * 加载中显示提示；失败显示错误引导而非静默循环。
- */
-function RootRedirect() {
-  const {
-    data: project,
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
-    queryKey: ['project', 'current'],
-    queryFn: projectAPI.current,
-  })
-
-  if (isLoading) {
-    return (
-      <Layout header={<TopBar />} main={<div className={redirectMsg}>正在解析当前项目…</div>} />
-    )
-  }
-  if (isError || !project) {
-    // APIError.message 是后端的中文可操作指引（如「请在项目目录启动 c0de serve」），
-    // 直接展示比通用文案更能引导用户走出死胡同。
-    const message =
-      (error as { message?: string } | null)?.message ??
-      '无法解析当前项目，请前往设置确认工作区配置。'
-    return (
-      <Layout
-        header={<TopBar />}
-        main={
-          <div className={errorState}>
-            <span className={errorIcon}>⚠️</span>
-            <span>{message}</span>
-            <Link to="/settings" className={errorLink}>
-              前往设置
-            </Link>
-          </div>
-        }
-      />
-    )
-  }
-  return <Navigate to={`/projects/${project.id}`} replace />
-}
-
-/**
- * 项目会话页：项目 id 来自路由（顶级维度），会话 id 可选。
- * 选会话 / 新建会话均导航到项目作用域路径，保证 URL 完整表达上下文。
- */
-function ChatPage() {
-  const { projectId, sessionId } = useParams<{ projectId: string; sessionId: string }>()
-  const navigate = useNavigate()
-  // projectId 来自路由 :projectId 段，缺失时下方 `if (!projectId)` 会渲染 NotFound；
-  // Hook 必须无条件调用，故用 `?? ''` 提供稳定 string，query 由 enabled 守卫。
-  const terminal = useTerminal(projectId ?? '')
-
-  // 获取项目信息（worktree 用于终端默认目录）
-  const { data: project } = useQuery({
-    queryKey: ['project', projectId],
-    queryFn: () => {
-      // enabled: !!projectId 保证仅当 projectId 为真值时执行
-      if (!projectId) throw new Error('projectId is required')
-      return projectAPI.get(projectId)
-    },
-    enabled: !!projectId,
-  })
-
-  // Ctrl+` 切换终端面板显示/隐藏
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === '`') {
-        e.preventDefault()
-        terminal.toggleOpen()
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [terminal])
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [revealRange, setRevealRange] = useState<LineRange | null>(null)
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
-    () => (localStorage.getItem('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
-  )
-  const switchTab = (t: SidebarTab) => {
-    setSidebarTab(t)
-    localStorage.setItem('c0de-agent:sidebarTab', t)
-  }
-
-  const fileCtx: FileSelection = {
-    selectedFile,
-    openFile: (path: string, range?: LineRange) => {
-      setSelectedFile(path)
-      setRevealRange(range ?? null)
-    },
-    closeFile: () => {
-      setSelectedFile(null)
-      setRevealRange(null)
-    },
-    revealRange,
-  }
-
-  if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
-
-  return (
-    <FileReferenceProvider>
-      <FileSelectionContext.Provider value={fileCtx}>
-        <Layout
-          header={<TopBar />}
-          sidebar={
-            <SidebarTabs
-              activeTab={sidebarTab}
-              onSwitch={switchTab}
-              sessions={
-                <SessionList
-                  projectId={projectId}
-                  activeId={sessionId ?? null}
-                  onSelect={(id) => navigate(`/projects/${projectId}/sessions/${id}`)}
-                  onNewSession={() => navigate(`/projects/${projectId}`)}
-                  onDeleted={(id) => {
-                    // 删除的是当前会话则跳回草稿新会话页
-                    if (id === (sessionId ?? null)) navigate(`/projects/${projectId}`)
-                  }}
-                />
-              }
-              files={
-                <FileBrowser
-                  projectId={projectId}
-                  onPick={(p) => fileCtx.openFile(p)}
-                  onDelete={(p) => {
-                    // 被删文件/目录是当前预览目标（含子路径）时关闭预览
-                    if (selectedFile === p || selectedFile?.startsWith(`${p}/`)) {
-                      fileCtx.closeFile()
-                    }
-                  }}
-                />
-              }
-            />
-          }
-          main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
-          panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
-          terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} />}
-        />
-      </FileSelectionContext.Provider>
-    </FileReferenceProvider>
-  )
-}
-
-/**
- * 项目看板页：展示项目级共享看板，支持拖拽、卡片编辑、列/标签配置。
- */
-function KanbanPage() {
-  const { projectId } = useParams<{ projectId: string }>()
-  if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
-
-  return <Layout header={<TopBar />} main={<KanbanView projectId={projectId} />} />
 }

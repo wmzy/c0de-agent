@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { useConfig } from '../contexts/ConfigContext.js'
-import { providerAPI } from '../services/provider.js'
-import { inputStyle } from '../styles/tokens.js'
+import { useConfig } from '@/contexts/ConfigContext.js'
+import { providerAPI } from '@/services/provider.js'
+import { inputStyle } from '@/styles/tokens.js'
 
 const field = css`
   display: flex;

@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FileSelectionContext } from '../../contexts/FileSelectionContext.js'
-import { ToolBlock } from './ToolBlock.js'
-import type { RenderBlock } from './utils/normalizeParts.js'
+import { ToolBlock } from '@/components/session/ToolBlock.js'
+import type { RenderBlock } from '@/components/session/utils/normalizeParts.js'
+import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 
 afterEach(() => cleanup())
 

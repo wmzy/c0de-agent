@@ -1,8 +1,8 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { FallbackToolView } from './FallbackToolView.js'
-import { GlobToolView } from './GlobToolView.js'
-import { GrepToolView } from './GrepToolView.js'
+import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
+import { GlobToolView } from '@/components/session/tools/GlobToolView.js'
+import { GrepToolView } from '@/components/session/tools/GrepToolView.js'
 
 describe('GrepToolView', () => {
   afterEach(cleanup)

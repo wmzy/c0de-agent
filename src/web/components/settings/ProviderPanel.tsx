@@ -1,13 +1,13 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useState } from 'react'
-import type { TestResult } from '../../services/provider.js'
-import { providerAPI } from '../../services/provider.js'
-import { MOBILE } from '../../styles/breakpoints.js'
-import { ProviderCatalogDialog } from '../ProviderCatalogDialog.js'
-import { ApiKeyInput } from './ApiKeyInput.js'
-import { ProviderModelsPanel } from './ModelPanel.js'
-import { section, sectionTitle } from './styles.js'
+import { ProviderCatalogDialog } from '@/components/ProviderCatalogDialog.js'
+import { ApiKeyInput } from '@/components/settings/ApiKeyInput.js'
+import { ProviderModelsPanel } from '@/components/settings/ModelPanel.js'
+import { section, sectionTitle } from '@/components/settings/styles.js'
+import type { TestResult } from '@/services/provider.js'
+import { providerAPI } from '@/services/provider.js'
+import { MOBILE } from '@/styles/breakpoints.js'
 
 /*
  * Provider 行网格：桌面 6 列（名称/协议/URL/APIKey + 测试/删除），窄屏 2 列堆叠。

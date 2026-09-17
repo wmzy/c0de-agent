@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FileSelectionContext } from '../contexts/FileSelectionContext.js'
-import { ReferenceContext } from '../contexts/ReferenceContext.js'
-import { ThemeProvider } from '../contexts/ThemeContext.js'
-import { FilePreview } from './FilePreview.js'
+import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { ReferenceContext } from '@/contexts/ReferenceContext.js'
+import { ThemeProvider } from '@/contexts/ThemeContext.js'
+import { FilePreview } from '@/views/FilePreview.js'
 
 // mock CodeEditor：本文件聚焦 FilePreview 行为（脏关闭守卫等），
 // 通过 mock-dirty 按钮驱动 onDirtyChange，避免在 jsdom 中模拟 CodeMirror 输入。
@@ -24,6 +24,7 @@ function fetchMock(content: string) {
     ok: true,
     status: 200,
     json: async () => ({ path: 'x', content }),
+    text: async () => JSON.stringify({ path: 'x', content }),
   })
 }
 
@@ -53,6 +54,7 @@ describe('FilePreview', () => {
         ok: true,
         status: 200,
         json: async () => ({ path: 'a.md', content: '# Title' }),
+        text: async () => JSON.stringify({ path: 'a.md', content: '# Title' }),
       }),
     )
     withClient(<FilePreview projectId="p1" path="a.md" />)
@@ -68,6 +70,7 @@ describe('FilePreview', () => {
         ok: true,
         status: 200,
         json: async () => ({ path: 'song.mp3', content: '' }),
+        text: async () => JSON.stringify({ path: 'song.mp3', content: '' }),
       }),
     )
     withClient(<FilePreview projectId="p1" path="song.mp3" />)

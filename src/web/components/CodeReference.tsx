@@ -1,9 +1,9 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { fileAPI } from '../services/file.js'
-import { parseCodeReference } from '../utils/format.js'
-import { CodeBlock } from './CodeBlock.js'
+import { CodeBlock } from '@/components/CodeBlock.js'
+import { fileAPI } from '@/services/file.js'
+import { parseCodeReference } from '@/utils/format.js'
 
 const chip = css`
   display: inline-flex;

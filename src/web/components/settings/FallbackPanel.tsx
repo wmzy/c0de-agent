@@ -1,5 +1,12 @@
 import type { Config } from '@shared/types/config.js'
-import { checkRow, field, fieldInput, hint, section, sectionTitle } from './styles.js'
+import {
+  checkRow,
+  field,
+  fieldInput,
+  hint,
+  section,
+  sectionTitle,
+} from '@/components/settings/styles.js'
 
 interface FallbackPanelProps {
   fallback: Config['fallback']

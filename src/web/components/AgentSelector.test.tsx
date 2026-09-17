@@ -1,8 +1,8 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentListItem } from '../services/agent.js'
-import { AgentSelector } from './AgentSelector.js'
+import { AgentSelector } from '@/components/AgentSelector.js'
+import type { AgentListItem } from '@/services/agent.js'
 
 afterEach(() => {
   cleanup()

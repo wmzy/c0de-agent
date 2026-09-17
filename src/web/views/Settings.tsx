@@ -1,24 +1,24 @@
 import { css } from '@linaria/core'
+import { useBlocker, useMatched } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { Dialog } from '../components/Dialog.js'
-import { AppearancePanel } from '../components/settings/AppearancePanel.js'
-import { CommaListInput } from '../components/settings/CommaListInput.js'
-import { CompactionPanel } from '../components/settings/CompactionPanel.js'
-import { FallbackPanel } from '../components/settings/FallbackPanel.js'
-import { GitPanel } from '../components/settings/GitPanel.js'
-import { JsonConfigEditor } from '../components/settings/JsonConfigEditor.js'
-import { MCPPanel } from '../components/settings/MCPPanel.js'
-import { ModelPanel } from '../components/settings/ModelPanel.js'
-import { ProviderPanel } from '../components/settings/ProviderPanel.js'
-import { SecurityPanel } from '../components/settings/SecurityPanel.js'
+import { Dialog } from '@/components/Dialog.js'
+import { AppearancePanel } from '@/components/settings/AppearancePanel.js'
+import { CommaListInput } from '@/components/settings/CommaListInput.js'
+import { CompactionPanel } from '@/components/settings/CompactionPanel.js'
+import { FallbackPanel } from '@/components/settings/FallbackPanel.js'
+import { GitPanel } from '@/components/settings/GitPanel.js'
+import { JsonConfigEditor } from '@/components/settings/JsonConfigEditor.js'
+import { MCPPanel } from '@/components/settings/MCPPanel.js'
+import { ModelPanel } from '@/components/settings/ModelPanel.js'
+import { ProviderPanel } from '@/components/settings/ProviderPanel.js'
+import { SecurityPanel } from '@/components/settings/SecurityPanel.js'
 import {
   RoleRoutingSection,
   SettingsSaveBar,
   SettingsToolbar,
-} from '../components/settings/SettingsChrome.js'
+} from '@/components/settings/SettingsChrome.js'
 import {
   checkRow,
   field,
@@ -26,14 +26,13 @@ import {
   hint,
   section,
   sectionTitle,
-} from '../components/settings/styles.js'
-import { ToolsPanel } from '../components/settings/ToolsPanel.js'
-import { UsagePanel } from '../components/settings/UsagePanel.js'
-import { WebSearchPanel } from '../components/settings/WebSearchPanel.js'
-import { WorkflowsPanel } from '../components/settings/WorkflowsPanel.js'
-import { configAPI } from '../services/config.js'
-import { diffConfig, isPatchEmpty } from '../utils/config-diff.js'
-import { registerNavGuard } from '../utils/nav-guard.js'
+} from '@/components/settings/styles.js'
+import { ToolsPanel } from '@/components/settings/ToolsPanel.js'
+import { UsagePanel } from '@/components/settings/UsagePanel.js'
+import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
+import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
+import { configAPI } from '@/services/config.js'
+import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -64,10 +63,10 @@ const dialogActions = css`
 
 export function Settings() {
   const qc = useQueryClient()
-  const navigate = useNavigate()
   // P1-1：项目上下文来自路由（/projects/:projectId/settings）；
   // 无上下文时保持旧行为（服务启动目录项目 + 全局作用域）。
-  const { projectId } = useParams<{ projectId: string }>()
+  const { params } = useMatched()
+  const projectId = params.projectId
   const { data: resp, isLoading } = useQuery({
     queryKey: ['config', projectId ?? 'server'],
     queryFn: () => configAPI.get(projectId),
@@ -92,19 +91,25 @@ export function Settings() {
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
   const [needsRestart, setNeedsRestart] = useState(false)
 
-  // 未保存导航防护：待确认的离开目标；bypass 标记放行「离开」确认后的重放导航。
-  // el 为被拦截的 <a>（重放点击）；el 为 null 表示浏览器后退/前进（popstate），
-  // 离开时经 navigate 程序化跳转。
-  const [pendingLeave, setPendingLeave] = useState<{
-    el: HTMLAnchorElement | null
-    href: string
-  } | null>(null)
-  const bypassGuardRef = useRef(false)
-  // 设置页自身路径（含项目上下文），popstate 拦截时用于回跳。
-  const settingsPathRef = useRef(window.location.pathname + window.location.search)
-
   // dirty 仅指「需手动保存的草稿」；外观面板即时生效、不进 draft，不影响此判定。
   const isDirty = draft !== null
+  // 未保存导航防护（native-router useBlocker，模板口径）：覆盖全部离开通道——
+  // 应用内导航、浏览器后退/前进（POP 自动回滚）、程序化 navigate。谓词按
+  // ALLOW-list 语义：dirty ⇒ false（veto，弹确认）；clean ⇒ true（放行）。
+  // 之前的 <a> 拦截 + popstate 回跳 + 程序化守卫注册表（utils/nav-guard）三通道已删除。
+  const blocker = useBlocker(() => !isDirty)
+
+  // 刷新/关闭页面前提示（useBlocker 只覆盖 SPA 内导航与后退/前进，
+  // 浏览器关闭/刷新走原生 beforeunload 通道）。
+  useEffect(() => {
+    if (!isDirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isDirty])
 
   const save = useMutation({
     mutationFn: (payload: { patch: Partial<Config>; scope: 'global' | 'project' }) =>
@@ -127,83 +132,6 @@ export function Settings() {
       setSaveFeedback({ kind: 'err', msg })
     },
   })
-
-  // SPA 内部导航防护：App 使用 BrowserRouter（非 data router），useBlocker 不可用，
-  // 改为捕获阶段拦截站内 <a> 点击（TopBar 等 Link 最终渲染为 <a href>）；
-  // preventDefault 后 react-router Link 的 onClick（先查 defaultPrevented）会放弃导航。
-  useEffect(() => {
-    if (!isDirty) return
-    const onClick = (e: MouseEvent) => {
-      if (bypassGuardRef.current) {
-        bypassGuardRef.current = false // 「离开」确认后的重放点击，放行一次
-        return
-      }
-      if (
-        e.defaultPrevented ||
-        e.button !== 0 ||
-        e.metaKey ||
-        e.ctrlKey ||
-        e.shiftKey ||
-        e.altKey
-      ) {
-        return
-      }
-      const el = (e.target as HTMLElement | null)?.closest('a[href]')
-      if (!(el instanceof HTMLAnchorElement)) return
-      if (el.target && el.target !== '_self') return
-      if (el.hasAttribute('download')) return
-      let url: URL
-      try {
-        url = new URL(el.getAttribute('href') ?? '', window.location.href)
-      } catch {
-        return
-      }
-      // 仅拦截同源且离开设置页的导航（导出用的 blob: 链接不同源，天然跳过）
-      if (url.origin !== window.location.origin) return
-      if (url.pathname.startsWith('/settings')) return
-      e.preventDefault()
-      setPendingLeave({ el, href: url.href })
-    }
-    document.addEventListener('click', onClick, true)
-    return () => document.removeEventListener('click', onClick, true)
-  }, [isDirty])
-
-  // 刷新/关闭页面前提示；SPA 内部导航不触发 beforeunload，由上面的拦截负责。
-  useEffect(() => {
-    if (!isDirty) return
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault()
-      e.returnValue = ''
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [isDirty])
-
-  // P1-8：浏览器后退/前进（popstate）拦截。BrowserRouter 非 data router，
-  // useBlocker 不可用；popstate 到达时路由状态已更新，故立即 replace 回设置页
-  // 并弹出与 <a> 拦截共用的离开确认，用户确认后 navigate 到原目标。
-  useEffect(() => {
-    if (!isDirty) return
-    const onPop = () => {
-      if (bypassGuardRef.current) {
-        bypassGuardRef.current = false
-        return
-      }
-      const target = window.location.pathname + window.location.search
-      // 目标仍是设置页（项目上下文切换等）不拦截
-      if (target === settingsPathRef.current) return
-      navigate(settingsPathRef.current, { replace: true })
-      setPendingLeave({ el: null, href: target })
-    }
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [isDirty, navigate])
-
-  // P1-8：程序化导航守卫（MobileNav 等不经 <a> 点击/popstate 的路径）。
-  useEffect(() => {
-    if (!isDirty) return
-    return registerNavGuard(() => '设置有未保存的更改，离开页面将丢失这些更改。确定离开？')
-  }, [isDirty])
 
   if (isLoading || !config) return <div className={loadingWrap}>加载中…</div>
 
@@ -386,21 +314,16 @@ export function Settings() {
   }
 
   /** 离开确认弹窗：「留下」= 关闭弹窗，留在设置页继续编辑。 */
-  const stayOnSettings = () => setPendingLeave(null)
+  const stayOnSettings = () => blocker.reset()
 
-  /** 离开确认弹窗：「离开」= 丢弃草稿并重放被拦截的导航
-   *  （<a> 点击重放；popstate 经 navigate 跳转原目标）。 */
+  /** 离开确认弹窗：「离开」= 丢弃草稿并放行被 veto 的导航（proceed 重放）。 */
   const confirmLeave = () => {
-    const pending = pendingLeave
-    setPendingLeave(null)
     setDraft(null)
-    if (!pending) return
-    bypassGuardRef.current = true
-    if (pending.el?.isConnected) {
-      pending.el.click()
-    } else {
-      navigate(pending.href)
+    if (viewMode === 'json') {
+      setJsonText(JSON.stringify(config, null, 2))
+      setJsonError(null)
     }
+    blocker.proceed()
   }
 
   return (
@@ -668,7 +591,7 @@ export function Settings() {
 
       {/* 未保存更改离开确认：弹窗遮罩阻断交互，「留下」恢复编辑，「离开」放行导航 */}
       <Dialog
-        open={pendingLeave != null}
+        open={blocker.state != null}
         onClose={stayOnSettings}
         title="未保存的更改"
         width="min(420px, 92vw)"

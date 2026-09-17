@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionTreeNode } from '../types/index.js'
-import { BranchTree } from './BranchTree.js'
+import { BranchTree } from '@/components/BranchTree.js'
+import type { SessionTreeNode } from '@/types/index.js'
 
 afterEach(() => cleanup())
 

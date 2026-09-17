@@ -2,8 +2,8 @@
 // 归并建议：FileTree 为 DirectoryPicker 的子组件，独立测试其递归渲染/展开/选中交互。
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TreeNode } from './FileTree.js'
-import { FileTree } from './FileTree.js'
+import type { TreeNode } from '@/components/FileTree.js'
+import { FileTree } from '@/components/FileTree.js'
 
 afterEach(cleanup)
 

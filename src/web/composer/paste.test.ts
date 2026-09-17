@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizePaste, pasteMode } from './paste.js'
+import { normalizePaste, pasteMode } from '@/composer/paste.js'
 
 describe('normalizePaste', () => {
   it('CRLF 规范化为 LF', () => {

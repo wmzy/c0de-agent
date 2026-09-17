@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { monthTokenSum, resolveEffectiveBudget, resolveEffectiveTokenBudget } from './usage.js'
+import {
+  monthTokenSum,
+  resolveEffectiveBudget,
+  resolveEffectiveTokenBudget,
+} from '@/utils/usage.js'
 
 describe('monthTokenSum', () => {
   it('input + output + cacheRead 三者求和', () => {

@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { diffLines } from 'diff'
-import { useOverflow } from './hooks/useOverflow.js'
+import { useOverflow } from '@/components/session/hooks/useOverflow.js'
 
 const wrap = css`
   margin: 4px 0;

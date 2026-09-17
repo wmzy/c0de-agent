@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { ContentDiff } from '../ContentDiff.js'
+import { ContentDiff } from '@/components/session/ContentDiff.js'
 
 const err = css`
   font-size: 13px;

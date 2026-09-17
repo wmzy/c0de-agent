@@ -1,19 +1,21 @@
 import { css } from '@linaria/core'
+import { TypedLink, useRouter } from '@native-router/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { AgentSelector } from '../components/AgentSelector.js'
-import { Logo } from '../components/Logo.js'
-import { ModelSelector } from '../components/ModelSelector.js'
-import { ToolToggle } from '../components/ToolToggle.js'
-import { useConfig } from '../contexts/ConfigContext.js'
-import { useFileReference } from '../contexts/ReferenceContext.js'
-import { pendingFirstMessage } from '../hooks/pendingFirstMessage.js'
-import { useComposerDefaults } from '../hooks/useComposerDefaults.js'
-import { agentAPI } from '../services/agent.js'
-import { sessionAPI } from '../services/session.js'
-import { Chat, type SendPayload } from './Chat.js'
-import { ChatSession } from './ChatSession.js'
+import { AgentSelector } from '@/components/AgentSelector.js'
+import { Logo } from '@/components/Logo.js'
+import { ModelSelector } from '@/components/ModelSelector.js'
+import { ToolToggle } from '@/components/ToolToggle.js'
+import { useConfig } from '@/contexts/ConfigContext.js'
+import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
+import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
+import { navigateTo } from '@/navigateTo.js'
+import type { AppPaths } from '@/routes.js'
+import { agentAPI } from '@/services/agent.js'
+import { sessionAPI } from '@/services/session.js'
+import { Chat, type SendPayload } from '@/views/Chat.js'
+import { ChatSession } from '@/views/ChatSession.js'
 
 /** P0-1：未配置 AI 服务的引导横幅（欢迎区上方，直达设置页）。 */
 const setupBanner = css`
@@ -49,7 +51,13 @@ export function SetupBanner({ projectId }: { projectId?: string }) {
   return (
     <div className={setupBanner} data-testid="setup-banner">
       <span>尚未配置 AI 服务（Provider / API Key），无法开始对话</span>
-      <Link to={projectId ? `/projects/${projectId}/settings` : '/settings'}>去设置</Link>
+      {projectId ? (
+        <TypedLink<AppPaths> to="/projects/:projectId/settings" params={{ projectId }}>
+          去设置
+        </TypedLink>
+      ) : (
+        <TypedLink<AppPaths> to="/settings">去设置</TypedLink>
+      )}
     </div>
   )
 }
@@ -237,7 +245,7 @@ export function ChatView({
  * 从而保证 SSE 流在拥有真实 sessionId 的组件实例中建立，不会被卸载中断。
  */
 function DraftSession({ projectId }: { projectId: string }) {
-  const navigate = useNavigate()
+  const router = useRouter()
   const qc = useQueryClient()
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
@@ -266,7 +274,9 @@ function DraftSession({ projectId }: { projectId: string }) {
       pendingFirstMessage.set(session.id, { text: payload.text, opts })
       // 让侧边栏立即显示新会话
       qc.invalidateQueries({ queryKey: ['sessions'] })
-      navigate(`/projects/${projectId}/sessions/${session.id}`)
+      navigateTo(router, '/projects/:projectId/sessions/:sessionId', {
+        params: { projectId, sessionId: session.id },
+      })
     } catch {
       setCreating(false)
       setError('创建会话失败，请重试')

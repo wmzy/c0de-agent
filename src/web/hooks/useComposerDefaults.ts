@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ModelSelection } from '../components/ModelSelector.js'
-import { useConfig } from '../contexts/ConfigContext.js'
-import { providerAPI } from '../services/provider.js'
+import type { ModelSelection } from '@/components/ModelSelector.js'
+import { useConfig } from '@/contexts/ConfigContext.js'
+import { providerAPI } from '@/services/provider.js'
 
 const SELECTION_KEY = 'c0de-agent:modelSelection'
 const AGENT_KEY = 'c0de-agent:selectedAgent'

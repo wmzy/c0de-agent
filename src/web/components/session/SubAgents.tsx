@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import type { SubagentInfo } from '../../hooks/useChat.js'
+import type { SubagentInfo } from '@/hooks/chatState.js'
 
 const card = css`
   border: 1px dashed var(--border);

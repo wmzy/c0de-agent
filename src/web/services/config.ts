@@ -1,5 +1,5 @@
 import type { Config } from '@shared/types/config.js'
-import { apiRequest } from './api.js'
+import { get, patch } from '@/services/api.js'
 
 /** GET/PATCH /api/config 响应（P1-7：含作用域信息与 apiKey 解密警告）。 */
 type ConfigResponse = {
@@ -20,17 +20,14 @@ type ConfigResponse = {
 const configAPI = {
   /** projectId 提供时读取该项目的合并配置（P1-1 多项目配置贯通）。 */
   get: (projectId?: string) =>
-    apiRequest<ConfigResponse>(
+    get<ConfigResponse>(
       `/api/config${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
-  update: (patch: Partial<Config>, scope?: 'global' | 'project', projectId?: string) =>
-    apiRequest<ConfigResponse>('/api/config', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        ...patch,
-        ...(scope ? { scope } : {}),
-        ...(projectId ? { projectId } : {}),
-      }),
+  update: (changes: Partial<Config>, scope?: 'global' | 'project', projectId?: string) =>
+    patch<ConfigResponse>('/api/config', {
+      ...changes,
+      ...(scope ? { scope } : {}),
+      ...(projectId ? { projectId } : {}),
     }),
 }
 

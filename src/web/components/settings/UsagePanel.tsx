@@ -1,13 +1,13 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import type { UsageSummary } from '../../services/usage.js'
-import { usageAPI } from '../../services/usage.js'
+import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
+import type { UsageSummary } from '@/services/usage.js'
+import { usageAPI } from '@/services/usage.js'
 import {
   monthTokenSum,
   resolveEffectiveBudget,
   resolveEffectiveTokenBudget,
-} from '../../utils/usage.js'
-import { field, fieldInput, hint, section, sectionTitle } from './styles.js'
+} from '@/utils/usage.js'
 
 const rowGrid = css`
   display: grid;

@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js'
+import { get, post } from '@/services/api.js'
 
 /** models.dev 目录中的 Provider 列表项。 */
 type CatalogProvider = {
@@ -40,15 +40,15 @@ type SearchResult = {
 
 const catalogAPI = {
   /** 列出所有 providers。 */
-  listProviders: () => apiRequest<{ providers: CatalogProvider[] }>('/api/catalog/providers'),
+  listProviders: () => get<{ providers: CatalogProvider[] }>('/api/catalog/providers'),
   /** 获取指定 provider 的模型列表。 */
   getProviderModels: (id: string) =>
-    apiRequest<ProviderDetailResult>(`/api/catalog/providers/${encodeURIComponent(id)}/models`),
+    get<ProviderDetailResult>(`/api/catalog/providers/${encodeURIComponent(id)}/models`),
   /** 搜索 providers 和 models。 */
   search: (query: string) =>
-    apiRequest<SearchResult>(`/api/catalog/search?q=${encodeURIComponent(query)}`),
+    get<SearchResult>(`/api/catalog/search?q=${encodeURIComponent(query)}`),
   /** 刷新缓存。 */
-  refresh: () => apiRequest<{ refreshed: boolean }>('/api/catalog/refresh', { method: 'POST' }),
+  refresh: () => post<{ refreshed: boolean }>('/api/catalog/refresh'),
 }
 
 export type { CatalogModel, CatalogProvider, ProviderDetailResult, SearchResult }

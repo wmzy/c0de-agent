@@ -3,7 +3,7 @@ import {
   canNavigateHistoryAtCursor,
   navigatePromptHistory,
   prependHistoryEntry,
-} from './history.js'
+} from '@/composer/history.js'
 
 describe('canNavigateHistoryAtCursor', () => {
   it('↑ 仅在光标处于第一行时触发', () => {

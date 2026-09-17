@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ReadToolView } from './ReadToolView.js'
-import { WriteToolView } from './WriteToolView.js'
+import { ReadToolView } from '@/components/session/tools/ReadToolView.js'
+import { WriteToolView } from '@/components/session/tools/WriteToolView.js'
 
 afterEach(cleanup)
 

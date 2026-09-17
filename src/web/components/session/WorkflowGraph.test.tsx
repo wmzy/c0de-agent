@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { WorkflowGraph, type WorkflowNode } from './WorkflowGraph.js'
+import { WorkflowGraph, type WorkflowNode } from '@/components/session/WorkflowGraph.js'
 
 afterEach(() => cleanup())
 

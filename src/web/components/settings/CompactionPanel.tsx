@@ -1,7 +1,7 @@
 import type { Config } from '@shared/types/config.js'
 import type { ProviderConfig } from '@shared/types/llm.js'
-import { ProviderModelSelect } from './ProviderModelSelect.js'
-import { checkRow, field, fieldInput, section, sectionTitle } from './styles.js'
+import { ProviderModelSelect } from '@/components/settings/ProviderModelSelect.js'
+import { checkRow, field, fieldInput, section, sectionTitle } from '@/components/settings/styles.js'
 
 interface CompactionPanelProps {
   compaction: Config['compaction']

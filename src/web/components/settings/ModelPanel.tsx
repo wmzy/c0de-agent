@@ -1,9 +1,15 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useState } from 'react'
-import { inputStyle } from '../../styles/tokens.js'
-import { enabledModelsOf, providerCandidates } from './shared.js'
-import { field, fieldInput, mutedHint, section, sectionTitle } from './styles.js'
+import { enabledModelsOf, providerCandidates } from '@/components/settings/shared.js'
+import {
+  field,
+  fieldInput,
+  mutedHint,
+  section,
+  sectionTitle,
+} from '@/components/settings/styles.js'
+import { inputStyle } from '@/styles/tokens.js'
 
 const modelPanel = css`
   grid-column: 1 / -1;

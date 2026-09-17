@@ -3,9 +3,9 @@ import type { ProviderConfig } from '@shared/types/llm.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ProviderCatalogDialog } from './ProviderCatalogDialog.js'
+import { ProviderCatalogDialog } from '@/components/ProviderCatalogDialog.js'
 
-vi.mock('../services/catalog.js', () => ({
+vi.mock('@/services/catalog.js', () => ({
   catalogAPI: {
     listProviders: vi.fn(),
     getProviderModels: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock('../services/catalog.js', () => ({
   },
 }))
 
-const { catalogAPI } = await import('../services/catalog.js')
+const { catalogAPI } = await import('@/services/catalog.js')
 
 beforeEach(() => {
   vi.clearAllMocks()

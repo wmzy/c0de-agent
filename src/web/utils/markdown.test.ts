@@ -9,7 +9,7 @@ vi.mock('./highlight.js', () => ({
 }))
 
 // Mock 必须在 import 之前生效
-const { renderMarkdown, renderMarkdownSync } = await import('./markdown.js')
+const { renderMarkdown, renderMarkdownSync } = await import('@/utils/markdown.js')
 
 describe('renderMarkdown', () => {
   it('代码块被正确高亮，绝不字符串化为 [object Promise]', async () => {

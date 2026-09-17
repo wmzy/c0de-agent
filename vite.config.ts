@@ -130,6 +130,7 @@ function honoApiPlugin(): Plugin {
 export default defineConfig({
   resolve: {
     alias: {
+      '@': path.resolve(__dirname, 'src/web'),
       '@shared': path.resolve(__dirname, 'src/shared'),
     },
   },

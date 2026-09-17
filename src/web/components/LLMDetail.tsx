@@ -3,7 +3,7 @@ import type { LLMSegment } from '@shared/types/agent.js'
 import type { ChatTool } from '@shared/types/llm.js'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
-import { formatCost, formatLatency, formatTokenCount } from '../utils/format.js'
+import { formatCost, formatLatency, formatTokenCount } from '@/utils/format.js'
 
 const card = css`
   border: 1px solid var(--border);

@@ -1,6 +1,6 @@
 // src/web/services/terminal.ts
 
-import { API_BASE, apiRequest, getAuthToken } from './api.js'
+import { API_BASE, del, get, getAuthToken, post, put } from '@/services/api.js'
 
 export interface TerminalInfo {
   id: string
@@ -15,7 +15,7 @@ export interface TerminalInfo {
 }
 
 const terminalAPI = {
-  list: () => apiRequest<{ terminals: TerminalInfo[] }>('/api/terminal'),
+  list: () => get<{ terminals: TerminalInfo[] }>('/api/terminal'),
   create: (params?: {
     cwd?: string
     cols?: number
@@ -23,18 +23,11 @@ const terminalAPI = {
     title?: string
     shell?: string
     projectId?: string
-  }) =>
-    apiRequest<TerminalInfo>('/api/terminal', {
-      method: 'POST',
-      body: JSON.stringify(params ?? {}),
-    }),
-  get: (id: string) => apiRequest<TerminalInfo>(`/api/terminal/${id}`),
+  }) => post<TerminalInfo>('/api/terminal', params ?? {}),
+  get: (id: string) => get<TerminalInfo>(`/api/terminal/${id}`),
   resize: (id: string, cols: number, rows: number, title?: string) =>
-    apiRequest<TerminalInfo>(`/api/terminal/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ cols, rows, ...(title ? { title } : {}) }),
-    }),
-  kill: (id: string) => apiRequest<{ ok: boolean }>(`/api/terminal/${id}`, { method: 'DELETE' }),
+    put<TerminalInfo>(`/api/terminal/${id}`, { cols, rows, ...(title ? { title } : {}) }),
+  kill: (id: string) => del<{ ok: boolean }>(`/api/terminal/${id}`),
 }
 
 /** 构建 WebSocket 连接 URL。token 通过 query 传递（浏览器 WS 不支持自定义 header）。 */

@@ -11,10 +11,10 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useConfig } from '../contexts/ConfigContext.js'
-import type { ProviderListResponse } from '../services/provider.js'
-import { providerAPI } from '../services/provider.js'
-import { useComposerDefaults } from './useComposerDefaults.js'
+import { useConfig } from '@/contexts/ConfigContext.js'
+import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
+import type { ProviderListResponse } from '@/services/provider.js'
+import { providerAPI } from '@/services/provider.js'
 
 const SELECTION_KEY = 'c0de-agent:modelSelection'
 
@@ -48,11 +48,11 @@ const config: Config = {
   theme: 'light',
 }
 
-vi.mock('../services/provider.js', () => ({
+vi.mock('@/services/provider.js', () => ({
   providerAPI: { list: vi.fn() },
 }))
 
-vi.mock('../contexts/ConfigContext.js', () => ({
+vi.mock('@/contexts/ConfigContext.js', () => ({
   useConfig: vi.fn(),
 }))
 

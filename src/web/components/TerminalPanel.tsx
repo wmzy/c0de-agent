@@ -2,8 +2,8 @@
 
 import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { SplitDirection, UseTerminalReturn } from '../hooks/useTerminal.js'
-import { PaneSplitContainer } from './PaneSplitContainer.js'
+import { PaneSplitContainer } from '@/components/PaneSplitContainer.js'
+import type { SplitDirection, UseTerminalReturn } from '@/hooks/useTerminal.js'
 
 interface TerminalPanelProps {
   terminal: UseTerminalReturn

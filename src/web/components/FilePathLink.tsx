@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useFileSelection } from '../contexts/FileSelectionContext.js'
+import { useFileSelection } from '@/contexts/FileSelectionContext.js'
 
 const link = css`
   color: var(--primary);

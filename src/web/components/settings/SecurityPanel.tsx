@@ -1,8 +1,15 @@
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { authAPI } from '../../services/auth.js'
-import { CommaListInput } from './CommaListInput.js'
-import { checkRow, field, fieldInput, hint, section, sectionTitle } from './styles.js'
+import { CommaListInput } from '@/components/settings/CommaListInput.js'
+import {
+  checkRow,
+  field,
+  fieldInput,
+  hint,
+  section,
+  sectionTitle,
+} from '@/components/settings/styles.js'
+import { authAPI } from '@/services/auth.js'
 
 interface SecurityPanelProps {
   security: Config['security']

@@ -1,7 +1,6 @@
 // src/web/hooks/useTerminal.ts
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { type TerminalInfo, terminalAPI, terminalWsUrl } from '../services/terminal.js'
 import {
   loadHeight,
   loadOpen,
@@ -13,7 +12,8 @@ import {
   reconcileSizes,
   savePersistedState,
   TERMINAL_HEIGHT_KEY,
-} from './terminal-persistence.js'
+} from '@/hooks/terminal-persistence.js'
+import { type TerminalInfo, terminalAPI, terminalWsUrl } from '@/services/terminal.js'
 
 export interface TerminalSession extends TerminalInfo {
   /** WebSocket 连接（null = 未连接/已断开）。 */

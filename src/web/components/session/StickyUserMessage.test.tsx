@@ -6,8 +6,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { StickyUser } from './StickyUserMessage.js'
-import { StickyUserMessage } from './StickyUserMessage.js'
+import type { StickyUser } from '@/components/session/StickyUserMessage.js'
+import { StickyUserMessage } from '@/components/session/StickyUserMessage.js'
 
 afterEach(() => {
   cleanup()

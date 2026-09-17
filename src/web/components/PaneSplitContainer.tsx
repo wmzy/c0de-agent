@@ -4,9 +4,9 @@
 
 import { css } from '@linaria/core'
 import { Fragment, useCallback } from 'react'
-import { useFileReference } from '../contexts/ReferenceContext.js'
-import type { SplitDirection, UseTerminalReturn } from '../hooks/useTerminal.js'
-import { Terminal } from './Terminal.js'
+import { Terminal } from '@/components/Terminal.js'
+import { useFileReference } from '@/contexts/ReferenceContext.js'
+import type { SplitDirection, UseTerminalReturn } from '@/hooks/useTerminal.js'
 
 const splitContainerHStyle = css`
   display: flex;

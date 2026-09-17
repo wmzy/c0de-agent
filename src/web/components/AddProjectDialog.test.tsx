@@ -2,10 +2,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { projectAPI } from '../services/project.js'
-import { AddProjectDialog } from './AddProjectDialog.js'
+import { AddProjectDialog } from '@/components/AddProjectDialog.js'
+import { projectAPI } from '@/services/project.js'
 
-vi.mock('../services/project.js', () => ({
+vi.mock('@/services/project.js', () => ({
   projectAPI: {
     fromDirectory: vi.fn(),
     list: vi.fn(),

@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
-import type { FileSearchResult } from '../hooks/useFiles.js'
-import type { AgentListItem } from '../services/agent.js'
+import type { FileSearchResult } from '@/hooks/useFiles.js'
+import type { AgentListItem } from '@/services/agent.js'
 
 const popover = css`
   position: absolute;

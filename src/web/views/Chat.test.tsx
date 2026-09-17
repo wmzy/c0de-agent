@@ -1,26 +1,26 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TimelineRow } from '../components/session/utils/timeline.js'
-import { FileSelectionContext } from '../contexts/FileSelectionContext.js'
-import { FileReferenceProvider } from '../contexts/ReferenceContext.js'
-import { commandsAPI } from '../services/commands.js'
-import { permissionAPI } from '../services/permission.js'
-import { workflowsAPI } from '../services/workflows.js'
-import { Chat } from './Chat.js'
-import { ChatWelcome, EXAMPLE_TASKS } from './ChatView.js'
+import type { TimelineRow } from '@/components/session/utils/timeline.js'
+import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { FileReferenceProvider } from '@/contexts/ReferenceContext.js'
+import { commandsAPI } from '@/services/commands.js'
+import { permissionAPI } from '@/services/permission.js'
+import { workflowsAPI } from '@/services/workflows.js'
+import { Chat } from '@/views/Chat.js'
+import { ChatWelcome, EXAMPLE_TASKS } from '@/views/ChatView.js'
 
 // Composer 内部 useCommands 会请求 /api/commands；mock 掉避免真实网络调用。
-vi.mock('../services/commands.js', () => ({
+vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
 }))
 
 // Composer 内部 useQuery 会请求 /api/workflows；mock 掉
-vi.mock('../services/workflows.js', () => ({
+vi.mock('@/services/workflows.js', () => ({
   workflowsAPI: { list: vi.fn().mockResolvedValue({ workflows: [] }) },
 }))
 
-vi.mock('../services/permission.js', () => ({
+vi.mock('@/services/permission.js', () => ({
   permissionAPI: {
     getMode: vi.fn().mockResolvedValue({ mode: 'default' }),
     setMode: vi.fn().mockResolvedValue({ mode: 'auto' }),
