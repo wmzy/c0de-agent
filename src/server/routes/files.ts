@@ -34,8 +34,25 @@ type SearchResult = {
   type: 'file' | 'directory'
 }
 
-/** 递归搜索时跳过的目录（体积大/为元数据噪音，避免递归进入）。 */
-const SEARCH_SKIP_DIRS = new Set(['.git', 'node_modules'])
+/** 递归搜索时跳过的目录（体积大/为元数据噪音，避免递归进入）。
+ *  P3：补齐常见构建/缓存产物目录——此前只跳 .git/node_modules，
+ *  大仓库每击键全量 walk 时 dist/.cache 等目录拖垮延迟。 */
+const SEARCH_SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  '.cache',
+  'coverage',
+  '.next',
+  '.nuxt',
+  '.turbo',
+  '.parcel-cache',
+  '.vite',
+  'target',
+  'vendor',
+  '__pycache__',
+])
 
 /** 递归收集文件列表（用于搜索）。P3：深度上限 5 → 8，深层文件此前搜不到。 */
 async function collectFiles(dir: string, basePath: string, maxDepth = 8): Promise<SearchResult[]> {
@@ -86,6 +103,24 @@ function contentTypeFor(name: string): string {
     js: 'text/plain; charset=utf-8',
   }
   return map[ext] ?? 'application/octet-stream'
+}
+
+/** P3：.gitignore 追加条目的白名单式校验。suggestions 源自 LLM 输出并经前端
+ *  「批准」回传——服务端兜底拒绝换行注入（一条变多条）、全局通配（`*` 直接
+ *  忽略整个仓库）与超长/超量条目。合法返回规范化的 trim 后数组，非法返回 null。 */
+function sanitizeIgnoreSuggestions(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null
+  if (raw.length === 0 || raw.length > 100) return null
+  const out: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') return null
+    const p = item.trim()
+    if (p.length === 0 || p.length > 200) return null
+    if (p.includes('\n') || p.includes('\r')) return null
+    if (p === '*' || p === '/*' || p === '/') return null
+    out.push(p)
+  }
+  return out.length > 0 ? out : null
 }
 
 function createFilesRoute(ctx: ServerContext): Hono {
@@ -156,16 +191,25 @@ function createFilesRoute(ctx: ServerContext): Hono {
 
     // --- mode: force — 跳过检查，用传入 message 直接提交 ---
     if (body.mode === 'force') {
-      if (!body.message) {
+      if (typeof body.message !== 'string' || !body.message.trim()) {
         return apiError(c, 400, 'MISSING_MESSAGE', 'mode=force requires a message')
       }
-      const result = performGitCommit(root, body.message)
+      const message = body.message.trim()
+      // P3：提交信息长度上限——commit message 是常规提交语义，超长/控制字符
+      // 通常是 API 误用，直接拒绝而非写入仓库历史。
+      if (message.length > 500) {
+        return apiError(c, 400, 'MESSAGE_TOO_LONG', 'commit message must be at most 500 characters')
+      }
+      if (/[\r\n]/.test(message)) {
+        return apiError(c, 400, 'BAD_REQUEST', 'commit message must be a single line')
+      }
+      const result = performGitCommit(root, message)
       if ('error' in result) {
         return apiError(c, 500, 'COMMIT_FAILED', result.error)
       }
       return c.json({
         committed: true,
-        message: body.message,
+        message,
         hash: result.hash,
         fileCount: summary.fileCount,
       })
@@ -173,20 +217,27 @@ function createFilesRoute(ctx: ServerContext): Hono {
 
     // --- mode: append-ignore — 追加 .gitignore 后提交 ---
     if (body.mode === 'append-ignore') {
-      if (!body.message) {
+      if (typeof body.message !== 'string' || !body.message.trim()) {
         return apiError(c, 400, 'MISSING_MESSAGE', 'mode=append-ignore requires a message')
       }
-      if (!body.suggestions || body.suggestions.length === 0) {
-        return apiError(c, 400, 'MISSING_SUGGESTIONS', 'mode=append-ignore requires suggestions')
+      // P3：suggestions 服务端白名单校验（换行注入/全局通配/超量直接 400）。
+      const suggestions = sanitizeIgnoreSuggestions(body.suggestions)
+      if (!suggestions) {
+        return apiError(
+          c,
+          400,
+          'INVALID_SUGGESTIONS',
+          'mode=append-ignore requires valid suggestions (non-empty paths, no newlines, no global wildcards)',
+        )
       }
-      appendToGitignore(root, body.suggestions)
-      const result = performGitCommit(root, body.message)
+      appendToGitignore(root, suggestions)
+      const result = performGitCommit(root, body.message.trim())
       if ('error' in result) {
         return apiError(c, 500, 'COMMIT_FAILED', result.error)
       }
       return c.json({
         committed: true,
-        message: body.message,
+        message: body.message.trim(),
         hash: result.hash,
         fileCount: summary.fileCount,
       })

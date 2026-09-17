@@ -59,6 +59,30 @@ describe('provider route', () => {
     expect(res.status).toBe(400)
   })
 
+  it('P3：POST /test 拒绝非 http(s) 协议（服务端不做任意协议代理）', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }))
+    try {
+      const { app } = await setup()
+      for (const baseURL of [
+        'file:///etc/passwd',
+        'gopher://internal:70/x',
+        'javascript:alert(1)',
+      ]) {
+        const res = await app.request('/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ baseURL, apiKey: '' }),
+        })
+        expect(res.status).toBe(400)
+      }
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   it('POST /test returns ok + models on successful probe', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] }), {

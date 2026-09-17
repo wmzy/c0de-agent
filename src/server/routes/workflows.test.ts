@@ -598,6 +598,21 @@ export default async function workflow(ctx) {
     expect(onDisk).toContain('API created workflow')
   })
 
+  it('P3：target=project 不带 projectId、serve 目录未信任 → 409 TRUST_REQUIRED（写入同受门禁）', async () => {
+    const { app, ctx } = await setup()
+    // serve cwd 未注册项目（fromDirectory 未调用）→ serveCwdTrusted=false
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-wf', source: VALID_SOURCE, target: 'project' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('TRUST_REQUIRED')
+    // 未信任项目的执行面不得写入
+    expect(existsSync(join(ctx.cwd, '.c0de', 'workflows', 'api-wf.js'))).toBe(false)
+  })
+
   it('returns 400 when name is missing', async () => {
     const { app } = await setup()
     const res = await app.request('/', {
@@ -665,7 +680,10 @@ export default async function workflow(ctx) {
   })
 
   it('returns 400 for invalid name (uppercase)', async () => {
-    const { app } = await setup()
+    const { app, ctx } = await setup()
+    // 信任 serve 目录项目：名字校验在信任门禁之后，先满足门禁才能测到 SAVE_FAILED
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await trustProject(ctx.db, project.id)
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -678,7 +696,9 @@ export default async function workflow(ctx) {
   })
 
   it('returns 400 for source missing default export', async () => {
-    const { app } = await setup()
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await trustProject(ctx.db, project.id)
     const badSource = `export const meta = { name: 'bad', description: 'no default' }\n`
     const res = await app.request('/', {
       method: 'POST',

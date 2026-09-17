@@ -19,6 +19,23 @@ import type { AgentRegistry } from './agents/types.js'
 import type { Config } from './config.js'
 
 /** Runtime services injected into every core function (DI pattern). */
+
+/** 子 agent run 句柄：注册到宿主 run 跟踪器所需的最小信息。
+ *  deps 为子 agent 的 LoopDeps（cwd=隔离 worktree/父 cwd、深度注入等），
+ *  宿主据此执行 pause/resume/abort（与主 run 同口径）。 */
+type ChildRunHandle = {
+  sessionId: string
+  /** 父会话 id——树级联（删除父中止全部后代、权限超时暂停主 run + 子 run）的依据。 */
+  parentSessionId?: string
+  /** 后台任务 jobId（= 子会话 id，仅 background 模式）。 */
+  jobId?: string
+  state: AgentState
+  deps: AgentDependencies
+}
+
+/** 注册子 agent run 到宿主 run 跟踪器；返回注销函数（幂等）。 */
+type RegisterChildRun = (run: ChildRunHandle) => () => void
+
 type AgentDependencies = {
   db: DB
   llmRegistry: Registry
@@ -40,6 +57,11 @@ type AgentDependencies = {
   debugSpawn?: (config: unknown) => DebugTransport
   /** Agent 类型注册表（spec: multi-agent-design）。注入后 task 工具可按类型派发。 */
   agentRegistry?: AgentRegistry
+  /** 子 agent run 注册回调（P1：此前子 run 从未入宿主 run 跟踪器，暂停/热更新/
+   *  删除会话/权限超时级联全部绕过同步与后台子 agent）。宿主注入实现：
+   *  Web = agentManager.register/unregister；CLI 无 run 跟踪器，不注入即 no-op。
+   *  返回注销函数（幂等），子 agent run 终止时（finally）调用。 */
+  registerChildRun?: RegisterChildRun
 }
 
 type ProjectInfo = {
@@ -129,6 +151,7 @@ export type {
   AgentState,
   AgentStatus,
   ChatTool,
+  ChildRunHandle,
   CommandContext,
   CommandResult,
   HookRunner,
@@ -139,6 +162,7 @@ export type {
   PromptContext,
   PromptRegistry,
   PromptSection,
+  RegisterChildRun,
   SlashCommand,
   SubcommandDef,
   TokenBudget,

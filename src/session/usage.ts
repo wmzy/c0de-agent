@@ -79,11 +79,13 @@ export async function backfillUsageEvents(handle: DB): Promise<number> {
  *  cost：已发生成本——价格未知（cost=null）的调用按 $0 计入，故金额口径对自建
  *  网关/未登记模型会系统性低估；tokens：input+output+cacheRead tokens 之和，
  *  与价格无关，作为价格独立的兜底口径（缓存读取也按用量计费，须计入）。
+ *  unknownCostCalls：当月价格未知的调用数——金额预算轴据此识别「口径低估」，
+ *  无 token 预算兜底时并入护栏告警文案（P2-2：预算静默失效不再无提示）。
  */
 export async function monthUsage(
   handle: DB,
   opts: { projectId?: string | null; sinceMs: number },
-): Promise<{ cost: number; tokens: number }> {
+): Promise<{ cost: number; tokens: number; unknownCostCalls: number }> {
   const conds = [gte(usageEvents.timestamp, opts.sinceMs)]
   if (opts.projectId) conds.push(eq(usageEvents.projectId, opts.projectId))
   const rows = await handle.db
@@ -97,11 +99,13 @@ export async function monthUsage(
     .where(and(...conds))
   let cost = 0
   let tokens = 0
+  let unknownCostCalls = 0
   for (const r of rows) {
     if (typeof r.cost === 'number') cost += r.cost
+    else unknownCostCalls += 1
     tokens += r.inputTokens + r.outputTokens + (r.cacheRead ?? 0)
   }
-  return { cost, tokens }
+  return { cost, tokens, unknownCostCalls }
 }
 
 /** 当月累计用量（本月 1 日 00:00 本地时区起算）。
@@ -111,16 +115,19 @@ export async function currentMonthUsage(
   handle: DB,
   projectId?: string | null,
   now = new Date(),
-): Promise<{ cost: number; tokens: number }> {
+): Promise<{ cost: number; tokens: number; unknownCostCalls: number }> {
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
   return monthUsage(handle, { projectId, sinceMs: monthStart })
 }
 
 /** 预算护栏判定结果：parts 为超支描述片段，action 为实际超支轴中最严格的动作
- *  （'abort' > 'pause'；'warn' 不阻断、不会进入本判定）。 */
+ *  （'abort' > 'pause'；'warn' 不阻断、不会进入本判定）。
+ *  warnings：非阻断的告警片段（P2-2）——金额轴启用但当月存在价格未知调用且
+ *  无 token 预算兜底时，「金额口径低估」不再静默；消费方并入暂停/中止文案。 */
 export type BudgetOverage = {
   parts: string[]
   action: 'pause' | 'abort'
+  warnings: string[]
 }
 
 /** 预算护栏判定：金额（USD）+ token 双口径，返回超支描述 + 阻断动作（空 parts =
@@ -149,12 +156,38 @@ export async function budgetOverageParts(
   const tokenBlocks = tokenAction === 'pause' || tokenAction === 'abort'
   const projectScoped = projectId != null && (projectBudgetUsd > 0 || projectTokenBudget > 0)
   const globalScoped = globalBudgetUsd > 0 || globalTokenBudget > 0
-  if (!projectScoped && !globalScoped) return { parts: [], action: 'pause' }
+  if (!projectScoped && !globalScoped) return { parts: [], action: 'pause', warnings: [] }
 
   const [project, global] = await Promise.all([
     projectScoped ? currentMonthUsage(handle, projectId, now) : Promise.resolve(null),
     globalScoped ? currentMonthUsage(handle, undefined, now) : Promise.resolve(null),
   ])
+
+  // P2-2：金额轴阻断启用但价格未知调用无 token 兜底 → 「金额口径低估」告警。
+  // 仅当对应范围未设置 token 预算（token 兜底缺失）且当月确有 cost=null 调用时
+  // 追加——warnings 不触发阻断，只并入暂停/中止文案让用户知道护栏口径不可靠。
+  const warnings: string[] = []
+  const amountAxisActive =
+    amountBlocks && (globalBudgetUsd > 0 || (projectBudgetUsd > 0 && projectId != null))
+  if (amountAxisActive) {
+    const globalUnknown = global?.unknownCostCalls ?? 0
+    if (globalBudgetUsd > 0 && globalTokenBudget <= 0 && globalUnknown > 0) {
+      warnings.push(
+        `金额口径低估：本月有 ${globalUnknown} 次调用价格未知（按 $0 计入），且未设置全局 token 预算兜底`,
+      )
+    }
+    const projectUnknown = project?.unknownCostCalls ?? 0
+    if (
+      projectBudgetUsd > 0 &&
+      projectTokenBudget <= 0 &&
+      projectId != null &&
+      projectUnknown > 0
+    ) {
+      warnings.push(
+        `金额口径低估：本项目有 ${projectUnknown} 次调用价格未知（按 $0 计入），且未设置项目 token 预算兜底`,
+      )
+    }
+  }
 
   const parts: string[] = []
   // 实际超支轴中的最严格阻断动作：任一超支轴动作 === 'abort' 即整体 abort，否则 pause。
@@ -179,7 +212,7 @@ export async function budgetOverageParts(
     )
     if (tokenAction === 'abort') action = 'abort'
   }
-  return { parts, action }
+  return { parts, action, warnings }
 }
 
 /** 本地时区的 YYYY-MM 月份键（与 usage 聚合、前端徽标同口径）。 */

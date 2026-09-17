@@ -753,6 +753,40 @@ describe('chat route (control endpoints)', () => {
     expect(((await res.json()) as { paused: boolean }).paused).toBe(false)
   })
 
+  it('P1：pause/resume 级联子 agent run（后台任务随主 run 暂停/恢复）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    const parentState = { status: { _tag: 'running' } } as never
+    const childState = { status: { _tag: 'running' } } as never
+    ctx.agentManager.register({ sessionId, state: parentState, deps: {} as never })
+    const childId = 'child-session-1'
+    ctx.agentManager.register({
+      sessionId: childId,
+      parentSessionId: sessionId,
+      state: childState,
+      deps: {} as never,
+    })
+
+    const pauseRes = await app.request('/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    })
+    expect(pauseRes.status).toBe(200)
+    expect(((await pauseRes.json()) as { paused: boolean }).paused).toBe(true)
+    expect(ctx.agentManager.get(sessionId)?.state.status._tag).toBe('paused')
+    expect(ctx.agentManager.get(childId)?.state.status._tag).toBe('paused')
+
+    const resumeRes = await app.request('/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    })
+    expect(resumeRes.status).toBe(200)
+    expect(((await resumeRes.json()) as { resumed: boolean }).resumed).toBe(true)
+    expect(ctx.agentManager.get(sessionId)?.state.status._tag).toBe('running')
+    expect(ctx.agentManager.get(childId)?.state.status._tag).toBe('running')
+  })
+
   it('POST /resume without active run returns resumed: false', async () => {
     const { app } = await setup()
     const res = await app.request('/resume', {

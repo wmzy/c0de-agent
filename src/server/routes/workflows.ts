@@ -26,7 +26,7 @@ import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
-import { startHeartbeat } from './chat.js'
+import { childRunBridge, startHeartbeat } from './chat.js'
 
 /** 权限确认超时兜底拒绝后暂停 run 的暂停原因（与 chat 路由同口径）。 */
 const PERMISSION_TIMEOUT_PAUSE_REASON =
@@ -141,22 +141,33 @@ function createWorkflowsRoute(ctx: ServerContext) {
     }
 
     // 落盘目录：target=project 缺省 serve cwd；显式 projectId 时解析项目 worktree。
-    // 项目级工作流是任意代码执行面，写入前必须已信任（与发现/执行同一道闸）。
+    // 项目级工作流是任意代码执行面，写入前必须已信任（与发现/执行同一道闸）——
+    // 带 projectId 与缺省 serve cwd 两条路径同口径（P3：此前不带 projectId 时
+    // 写入不查信任，未信任项目仍可被写入任意 JS 文件）。
     let saveDir = ctx.cwd
-    if (target === 'project' && projectId) {
-      const st = await projectTrustState(ctx, projectId)
-      if (!st.project) {
-        return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
-      }
-      if (!st.trusted) {
+    if (target === 'project') {
+      if (projectId) {
+        const st = await projectTrustState(ctx, projectId)
+        if (!st.project) {
+          return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
+        }
+        if (!st.trusted) {
+          return apiError(
+            c,
+            409,
+            'TRUST_REQUIRED',
+            `项目「${st.project.name ?? st.project.worktree}」未信任（或信任后配置漂移），请先信任项目再创建工作流`,
+          )
+        }
+        saveDir = st.project.worktree
+      } else if (!(await serveCwdTrusted(ctx))) {
         return apiError(
           c,
           409,
           'TRUST_REQUIRED',
-          `项目「${st.project.name ?? st.project.worktree}」未信任（或信任后配置漂移），请先信任项目再创建工作流`,
+          'serve 启动目录的项目未信任（或信任后配置漂移）——项目级工作流是仓库自带的任意代码执行面，请先信任项目再创建工作流',
         )
       }
-      saveDir = st.project.worktree
     }
 
     // 同名覆盖保护：目标层级已有同名工作流且未显式 overwrite → 409。
@@ -462,6 +473,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
             config: sessionConfig,
             cwd: agentCwd,
             agentRegistry: ctx.agentRegistry,
+            registerChildRun: childRunBridge(ctx.agentManager),
             // 预算护栏：与 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
             ...(sessionConfig.usage?.budgetAction === 'pause' ||
             sessionConfig.usage?.budgetAction === 'abort' ||

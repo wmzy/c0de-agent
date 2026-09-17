@@ -606,6 +606,107 @@ describe('agentLoop', () => {
     ).toHaveLength(1)
   })
 
+  it('P2-2：金额轴超支暂停时，价格未知调用并入暂停文案（口径低估不静默）', async () => {
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+    // 一条 $11 已超支 + 一条价格未知（按 $0 计）——金额口径存在低估。
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 11,
+      timestamp: Date.now(),
+    })
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 100,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: null,
+      timestamp: Date.now(),
+    })
+
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('x')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: { monthlyBudgetUsd: 10, budgetAction: 'pause' },
+      },
+      budgetPause: true,
+    }
+
+    const gen = agentLoop(state, deps)
+    let pausedReason = ''
+    let guard = 0
+    for (let pull = await gen.next(); !pull.done && guard < 30; pull = await gen.next()) {
+      guard += 1
+      const value = pull.value
+      if (value?._tag === 'status_change' && value.status._tag === 'paused') {
+        pausedReason = value.status.pauseReason ?? ''
+        break
+      }
+    }
+    expect(pausedReason).toContain('预算')
+    expect(pausedReason).toContain('金额口径低估')
+  })
+
+  it('P2-2：金额轴未超支但价格未知调用无 token 兜底 → 每 run 记一次告警日志，不阻断', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+      session = await createSession(db, 'test', 'proj-1')
+      await appendMessage(db, session.id, {
+        role: 'user',
+        content: [{ _tag: 'text', text: 'Hello' }],
+      })
+      await db.db.insert(usageEvents).values({
+        callId: generateId(),
+        projectId: 'proj-1',
+        provider: 'mock',
+        model: 'mock',
+        inputTokens: 100,
+        outputTokens: 0,
+        cacheRead: 0,
+        cost: null,
+        timestamp: Date.now(),
+      })
+
+      const messages = await getMessages(db, session.id)
+      const state = makeState(session, messages)
+      const deps: LoopDeps = {
+        ...makeMockDeps(db, () => mockTextStream('still running')),
+        config: {
+          ...DEFAULT_CONFIG,
+          usage: { monthlyBudgetUsd: 10, budgetAction: 'pause' },
+        },
+        budgetPause: true,
+      }
+
+      const events: AgentEvent[] = []
+      for await (const ev of agentLoop(state, deps)) events.push(ev)
+      expect(events.some((e) => e._tag === 'done')).toBe(true)
+      expect(events.some((e) => e._tag === 'status_change' && e.status._tag === 'paused')).toBe(
+        false,
+      )
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('金额口径低估'))
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
   it('P3：budgetPause=false（CLI 等无恢复 UI）不暂停', async () => {
     await db.db.insert(usageEvents).values({
       callId: generateId(),
@@ -1564,6 +1665,52 @@ describe('runSubAgent background', () => {
       expect(result.sessionId).toBeTruthy()
       expect(result.jobId).toBe(result.sessionId)
     }
+  })
+
+  it('P1：子 run 注册进宿主跟踪器（含 parentSessionId/jobId），完成后注销', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const unregister = vi.fn()
+    const registerChildRun = vi.fn(() => unregister)
+    const deps = {
+      ...makeMockDeps(db, () => mockTextStream('child output')),
+      registerChildRun,
+    }
+    const result = await runSubAgent(deps, state, {
+      agentType: 'general',
+      prompt: 'p',
+      background: true,
+    })
+    expect(result._tag).toBe('running')
+    // 注册必须先于返回 running（background 路径「返回即已可控制」）
+    expect(registerChildRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: expect.any(String),
+        parentSessionId: session.id,
+        jobId: expect.any(String),
+        state: expect.anything(),
+        deps: expect.anything(),
+      }),
+    )
+    // 后台任务结束后注销（父 run 结束后删除会话时中止仍可达）
+    await vi.waitFor(() => expect(unregister).toHaveBeenCalled(), { timeout: 10_000 })
+  })
+
+  it('P1：同步子 run 同样注册并在返回前注销', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const unregister = vi.fn()
+    const registerChildRun = vi.fn(() => unregister)
+    const deps = {
+      ...makeMockDeps(db, () => mockTextStream('sync child')),
+      registerChildRun,
+    }
+    const result = await runSubAgent(deps, state, { agentType: 'general', prompt: 'p' })
+    expect(result._tag).toBe('success')
+    expect(registerChildRun).toHaveBeenCalledWith(
+      expect.objectContaining({ parentSessionId: session.id }),
+    )
+    expect(unregister).toHaveBeenCalled()
   })
 
   it('未知 agentType 返回 error', async () => {

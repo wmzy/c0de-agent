@@ -86,53 +86,81 @@ export async function runSubAgent(
   }
   const childCwd = worktreePath ?? deps.cwd
 
-  // 实际运行子 agent 的内部函数（sync 与 background 共用）
+  // 4. 构建子 agent 配置：工具集隔离 + 模型覆盖 + 递归限制 + yield
+  const parentDepth = deps._subagentDepth ?? 0
+  const childDepth = parentDepth + 1
+  const declaredTools = def.tools ?? parent.config.tools
+  const maxRec = def.maxRecursion ?? 0
+  const baseTools = childDepth > maxRec ? declaredTools.filter((t) => t !== 'task') : declaredTools
+  const childTools = Array.from(new Set([...baseTools, 'yield']))
+  const childConfig = {
+    ...parent.config,
+    systemPrompt: def.systemPrompt,
+    // 子 agent 走整段 systemPrompt 替换，清除父的 role override 避免干扰
+    agentRolePrompt: undefined,
+    tools: childTools,
+    ...(def.model ? { model: def.model } : {}),
+    ...(request.model ? { model: request.model } : {}),
+  }
+
+  // 子 agent 的 deps：覆盖 cwd（worktree）+ 注入 yield 收集器 + 递归深度
+  const childDeps: LoopDeps = {
+    ...deps,
+    cwd: childCwd,
+    _subagentYieldCollector: (data: unknown) => {
+      yielded.push(data)
+    },
+    _subagentDepth: childDepth,
+  }
+
+  const childState = await createAgent(childSession, childConfig, childDeps)
+  // 继承父 agent 的「预算已确认超支」标记：父 run 已因预算暂停、用户点「恢复」
+  // 继续后，子 agent 不应再因同一预算超支提前中止（用户已知情继续）；父未超支
+  // 时标记为 undefined，子 agent 自跑其 loop 仍会按轮次独立检查预算。
+  childState.budgetPauseTriggered = parent.budgetPauseTriggered
+
+  // abort 链接：父 abort 则子 abort
+  if (parent.abortController.signal.aborted) {
+    childState.abortController.abort()
+  } else {
+    parent.abortController.signal.addEventListener(
+      'abort',
+      () => childState.abortController.abort(),
+      { once: true },
+    )
+  }
+
+  // P1：把子 run（同步 + 后台）注册进宿主 run 跟踪器（Web=agentManager）。
+  // 此前子 run 完全游离：暂停（权限超时/用户/预算）、热更新 pauseAll、
+  // 删除父会话的中止级联、更新影响面列表全部绕过后台子 agent。
+  // 注册必须先于 dispatch：background 路径「返回 running」时子 run 已可被控制。
+  const unregisterChild = deps.registerChildRun?.({
+    sessionId: childSession.id,
+    parentSessionId: parent.session.id,
+    ...(request.background ? { jobId: childSession.id } : {}),
+    state: childState,
+    deps: childDeps,
+  })
+
+  // 实际运行子 agent 的内部函数（sync 与 background 共用）。
+  // 无论正常完成/出错/被中止，finally 中注销宿主注册，避免 run 槽位泄漏。
   const runBody = async (): Promise<SubAgentResult> => {
-    // 4. 构建子 agent 配置：工具集隔离 + 模型覆盖 + 递归限制 + yield
-    const parentDepth = deps._subagentDepth ?? 0
-    const childDepth = parentDepth + 1
-    const declaredTools = def.tools ?? parent.config.tools
-    const maxRec = def.maxRecursion ?? 0
-    const baseTools =
-      childDepth > maxRec ? declaredTools.filter((t) => t !== 'task') : declaredTools
-    const childTools = Array.from(new Set([...baseTools, 'yield']))
-    const childConfig = {
-      ...parent.config,
-      systemPrompt: def.systemPrompt,
-      // 子 agent 走整段 systemPrompt 替换，清除父的 role override 避免干扰
-      agentRolePrompt: undefined,
-      tools: childTools,
-      ...(def.model ? { model: def.model } : {}),
-      ...(request.model ? { model: request.model } : {}),
+    try {
+      return await runChildBody(childState, childDeps, childSession, title, baseline, worktreePath)
+    } finally {
+      unregisterChild?.()
     }
+  }
 
-    // 子 agent 的 deps：覆盖 cwd（worktree）+ 注入 yield 收集器 + 递归深度
-    const childDeps: LoopDeps = {
-      ...deps,
-      cwd: childCwd,
-      _subagentYieldCollector: (data: unknown) => {
-        yielded.push(data)
-      },
-      _subagentDepth: childDepth,
-    }
-
-    const childState = await createAgent(childSession, childConfig, childDeps)
-    // 继承父 agent 的「预算已确认超支」标记：父 run 已因预算暂停、用户点「恢复」
-    // 继续后，子 agent 不应再因同一预算超支提前中止（用户已知情继续）；父未超支
-    // 时标记为 undefined，子 agent 自跑其 loop 仍会按轮次独立检查预算。
-    childState.budgetPauseTriggered = parent.budgetPauseTriggered
-
-    // abort 链接：父 abort 则子 abort
-    if (parent.abortController.signal.aborted) {
-      childState.abortController.abort()
-    } else {
-      parent.abortController.signal.addEventListener(
-        'abort',
-        () => childState.abortController.abort(),
-        { once: true },
-      )
-    }
-
+  // 子 agent loop 执行体：运行 loop → worktree delta 回传 → 发射结束事件。
+  const runChildBody = async (
+    childState: AgentState,
+    childDeps: LoopDeps,
+    childSession: Session,
+    title: string,
+    baseline: RepoBaseline | undefined,
+    worktreePath: string | undefined,
+  ): Promise<SubAgentResult> => {
     // 运行子 agent loop
     const childPrompt = request.context
       ? `CONTEXT\n${request.context}\n\nASSIGNMENT\n${request.prompt}`

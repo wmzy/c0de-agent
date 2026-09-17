@@ -743,6 +743,68 @@ describe('git-commit route', () => {
     expect(log).toContain('feat: add feature')
   })
 
+  it('P3：append-ignore suggestions 含换行注入/全局通配 → 400 拒绝', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-badsug-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'x')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'changed')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const cases = [['*'], ['.env\nsecrets.txt'], ['/'], ['/*'], ['']]
+    for (const suggestions of cases) {
+      const res = await app.request('/git-commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'append-ignore', message: 'm', suggestions }),
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe('INVALID_SUGGESTIONS')
+    }
+    // 全部拒绝后 .gitignore 未被污染（不存在或未追加恶意条目）
+    const gitignorePath = join(dir, '.gitignore')
+    if (existsSync(gitignorePath)) {
+      const gitignore = readFileSync(gitignorePath, 'utf-8')
+      expect(gitignore).not.toContain('secrets.txt')
+      expect(gitignore).not.toContain('*')
+    }
+  })
+
+  it('P3：force 模式 message 超长/含换行 → 400 拒绝', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-longmsg-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'x')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'changed')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    for (const message of ['a'.repeat(501), 'line1\nline2']) {
+      const res = await app.request('/git-commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'force', message }),
+      })
+      expect(res.status).toBe(400)
+    }
+  })
+
   it('POST /git-commit mode=force 缺少 message 返回 400', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-nomsg-'))
     const { execSync } = await import('node:child_process')

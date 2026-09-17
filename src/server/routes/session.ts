@@ -304,6 +304,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 分支会话：未指定 messageIndex 时默认在最新一条消息处分叉（fork=完整副本语义）
   app.post('/:id/fork', async (c) => {
     const id = c.req.param('id')
+    // P3：回收站会话不可分支——与 GET /:id、PATCH /:id 的 404 口径一致，
+    // 否则 API 直调 fork 已删除会话即可复活其内容、绕过回收站语义。
+    const existing = await getSession(ctx.db, id)
+    if (!existing) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    if (existing.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     // P3：fork 复制消息树，与正在写库的活跃 run 存在竞态——先拒绝。
     if (ctx.agentManager.get(id)) {
       return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再分支')
@@ -394,10 +401,26 @@ function createSessionRoute(ctx: ServerContext): Hono {
     // P2-6：归档的 fileSnapshots 含被压缩进上下文的文件内容——导出 JSON 常被
     // 分享/迁移，默认剥离（隐私优先）；显式 ?includeSnapshots=1 才携带。
     const includeSnapshots = c.req.query('includeSnapshots') === '1'
+    // P2-1：权限态（permissionMode/alwaysAllow）与 fileSnapshots 同口径默认剥离。
+    // 导出 JSON 被分享时不应携带用户的工具授权白名单结构；显式
+    // ?includePermissions=1 才保留（配合导入侧 importPermissions=true 完成
+    // 同机备份/迁移的权限态闭环——两开关对称）。
+    const includePermissions = c.req.query('includePermissions') === '1'
+    const exportSession = includePermissions
+      ? session
+      : {
+          ...session,
+          metadata: (() => {
+            const m = { ...((session.metadata ?? {}) as Record<string, unknown>) }
+            delete m.permissionMode
+            delete m.alwaysAllow
+            return m
+          })(),
+        }
     return c.json({
       version: 1,
       exportedAt: new Date().toISOString(),
-      session,
+      session: exportSession,
       messages,
       archives: includeSnapshots
         ? archives

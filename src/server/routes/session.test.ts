@@ -218,6 +218,34 @@ describe('session route', () => {
     expect(forked.parentId).toBe(created.id)
   })
 
+  it('P3：回收站会话不可分支（404，防绕过回收站复活内容）', async () => {
+    const { app, ctx } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'TrashMe', projectId: TEST_PROJECT }),
+    })
+    const created = (await createRes.json()) as Session
+    await ctx.db.db.insert(sessionEntries).values({
+      sessionId: created.id,
+      tag: 'message',
+      role: 'user',
+      content: { _tag: 'text', text: 'hi' },
+    })
+    await ctx.db.db
+      .update(sessions)
+      .set({ deletedAt: new Date() })
+      .where(eq(sessions.id, created.id))
+    const res = await app.request(`/${created.id}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageIndex: 0 }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as APIErrorBody
+    expect(body.error.code).toBe('NOT_FOUND')
+  })
+
   it('POST /:id/fork 分支点越界 → 400 BRANCH_POINT_OUT_OF_RANGE（区别于会话不存在 404）', async () => {
     const { app, ctx } = await setup()
     const createRes = await app.request('/', {
@@ -719,6 +747,47 @@ describe('session route', () => {
     expect(body.session.id).toBe(session.id)
     expect(Array.isArray(body.messages)).toBe(true)
     expect(Array.isArray(body.archives)).toBe(true)
+  })
+
+  it('P2-1：导出默认剥离权限态（permissionMode/alwaysAllow）', async () => {
+    const { app, ctx } = await setup()
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'ExportMe', projectId: TEST_PROJECT }),
+    })
+    const session = (await created.json()) as Session
+    // 给会话挂上权限态（等价于用户在会话内切换 auto + 建立白名单）
+    await ctx.db.db
+      .update(sessions)
+      .set({ metadata: { permissionMode: 'auto', alwaysAllow: ['bash'] } })
+      .where(eq(sessions.id, session.id))
+    const res = await app.request(`/${session.id}/export`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { session: Session }
+    const meta = body.session.metadata as Record<string, unknown>
+    expect(meta.permissionMode).toBeUndefined()
+    expect(meta.alwaysAllow).toBeUndefined()
+  })
+
+  it('P2-1：?includePermissions=1 显式保留权限态（与 importPermissions 对称）', async () => {
+    const { app, ctx } = await setup()
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'ExportMe', projectId: TEST_PROJECT }),
+    })
+    const session = (await created.json()) as Session
+    await ctx.db.db
+      .update(sessions)
+      .set({ metadata: { permissionMode: 'auto', alwaysAllow: ['bash'] } })
+      .where(eq(sessions.id, session.id))
+    const res = await app.request(`/${session.id}/export?includePermissions=1`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { session: Session }
+    const meta = body.session.metadata as Record<string, unknown>
+    expect(meta.permissionMode).toBe('auto')
+    expect(meta.alwaysAllow).toEqual(['bash'])
   })
 
   describe('POST /import 会话导入', () => {

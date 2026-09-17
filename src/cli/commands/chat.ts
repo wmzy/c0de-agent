@@ -148,6 +148,11 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
           'CLI 无法暂停对话，已拒绝本次执行。请提升预算、改用更便宜的模型，或经 Web 界面调整后再试。',
       )
     }
+    if (over.warnings.length > 0) {
+      // P2-2：未超支但金额口径不可靠（价格未知调用无 token 兜底）——不拒绝，
+      // 但显式告知用户预算护栏可能低估，保持「静默失效」零容忍。
+      console.warn(`chat: 预算金额口径可能低估——${over.warnings.join('；')}`)
+    }
   }
 
   // P1-1：显式打印「权限水位」，消除 Web↔CLI 的静默授权差异——未经确认的写工具在

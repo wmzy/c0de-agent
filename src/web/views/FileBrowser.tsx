@@ -234,6 +234,13 @@ export function FileBrowser({
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
   const [query, setQuery] = useState('')
+  /** P3：搜索输入 300ms 防抖——服务端 /api/files/search 是全仓递归扫描，
+   *  此前每击键触发一次全量 walk，大仓库明显卡顿。 */
+  const [searchDebounced, setSearchDebounced] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(query), 300)
+    return () => clearTimeout(t)
+  }, [query])
   /** 显示隐藏目录（node_modules/构建产物等），默认降噪过滤。 */
   const [showHidden, setShowHidden] = useState(false)
 
@@ -243,10 +250,10 @@ export function FileBrowser({
     [treeRoot, showHidden],
   )
 
-  const isSearch = query.length > 1
+  const isSearch = searchDebounced.length > 1
   const searchQ = useQuery({
-    queryKey: ['files', 'search', query, projectId],
-    queryFn: () => fileAPI.search(query, projectId),
+    queryKey: ['files', 'search', searchDebounced, projectId],
+    queryFn: () => fileAPI.search(searchDebounced, projectId),
     enabled: isSearch,
   })
   const refetchSearch = searchQ.refetch

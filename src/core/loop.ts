@@ -60,6 +60,9 @@ const FALLBACK_CONTEXT_WINDOW = 32_000
  *  避免每轮重复解析/告警，并防止估计值随每轮 input token 抖动导致预算基准漂移。 */
 const effectiveContextWindowCache = new WeakMap<AgentState, number>()
 
+/** 已记录「金额口径低估」告警的 agent（每 run 至多记一次，防逐轮刷屏）。 */
+const budgetWarnedStates = new WeakSet<AgentState>()
+
 /**
  * 解析本轮有效 contextWindow，确保 shouldCompact 始终有合理基准：
  *  - provider 已声明（capabilities.contextWindow 为正数）→ 原样采用，不改变正常配置行为。
@@ -142,14 +145,16 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     //   run 下一轮检查将暂停）——收紧子 agent 单轮内 fan-out 的超支粒度。
     if ((deps.budgetPause === true || deps.budgetAbort === true) && !state.budgetPauseTriggered) {
       try {
-        const { parts, action } = await budgetOverageParts(
+        const { parts, action, warnings } = await budgetOverageParts(
           deps.db,
           deps.config.usage,
           state.session.projectId,
         )
         if (parts.length > 0) {
           state.budgetPauseTriggered = true
-          const reason = `月度预算超支（${parts.join('；')}）`
+          const reason = `月度预算超支（${parts.join('；')}）${
+            warnings.length > 0 ? `；注意：${warnings.join('；')}` : ''
+          }`
           if (deps._subagentDepth === undefined) {
             // CLI（budgetAbort）恒中止；Web 按超支轴配置动作判定（abort > pause）。
             if (deps.budgetAbort === true || action === 'abort') {
@@ -181,6 +186,11 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
             return
           }
+        } else if (warnings.length > 0 && !budgetWarnedStates.has(state)) {
+          // P2-2：未超支但金额口径不可靠（价格未知调用无 token 兜底）——每 run
+          // 记日志一次，不阻断。用户主动看日志即可发现「预算未真正兜底」。
+          budgetWarnedStates.add(state)
+          console.warn(`[usage] 预算金额口径低估告警：${warnings.join('；')}`)
         }
       } catch (err) {
         // 账本查询失败：记录告警。'warn'/'pause' 路径 fail-open（可用性优先）；

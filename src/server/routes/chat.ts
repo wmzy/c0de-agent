@@ -8,6 +8,7 @@ import type { LoopDeps } from '../../core/loop.js'
 import { compactContext } from '../../core/loop.js'
 import { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
+import type { RegisterChildRun } from '../../core/types.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import {
   createWorkflowRegistry,
@@ -32,6 +33,7 @@ import type { AgentConfig } from '../../shared/types/agent.js'
 import type { MessageContent } from '../../shared/types/message.js'
 import { resolveEnabledToolNames } from '../../tools/index.js'
 import { autoAllowChecker } from '../../tools/permission.js'
+import type { AgentManager } from '../agent-manager.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
@@ -91,6 +93,25 @@ function startHeartbeat(stream: SSEStreamingApi): () => void {
 }
 
 export { SSE_HEARTBEAT_INTERVAL_MS, startHeartbeat }
+
+/**
+ * 子 agent run 注册桥接：core 的 registerChildRun → agentManager 槽位。
+ * P1：此前子 run（含后台任务）从不注册，暂停/热更新/删除级联/更新影响面
+ * 全部绕过它们；core 无 agentManager 引用，桥接由 Web 宿主注入。
+ * 返回的注销函数幂等（unregister 对不存在的 key 安全）。
+ */
+export function childRunBridge(manager: AgentManager): RegisterChildRun {
+  return (run) => {
+    manager.register({
+      sessionId: run.sessionId,
+      parentSessionId: run.parentSessionId,
+      jobId: run.jobId,
+      state: run.state,
+      deps: run.deps,
+    })
+    return () => manager.unregister(run.sessionId)
+  }
+}
 
 function createChatRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -423,6 +444,7 @@ function createChatRoute(ctx: ServerContext): Hono {
               config: sessionConfig,
               cwd,
               agentRegistry: ctx.agentRegistry,
+              registerChildRun: childRunBridge(ctx.agentManager),
               // 预算护栏：与主 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
               ...(sessionConfig.usage?.budgetAction === 'pause' ||
               sessionConfig.usage?.budgetAction === 'abort' ||
@@ -596,6 +618,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             urlRegistry: ctx.urlRegistry,
             hookRunner: ctx.hookRunner,
             agentRegistry: ctx.agentRegistry,
+            registerChildRun: childRunBridge(ctx.agentManager),
             // 预算护栏：/compact 的压缩 LLM 调用与子 agent 同样受护栏约束。
             ...(sessionConfig.usage?.budgetAction === 'pause' ||
             sessionConfig.usage?.budgetAction === 'abort' ||
@@ -984,6 +1007,7 @@ function createChatRoute(ctx: ServerContext): Hono {
             permission: permissionChecker,
             config: sessionConfig,
             agentRegistry: ctx.agentRegistry,
+            registerChildRun: childRunBridge(ctx.agentManager),
             cwd,
             // P3 成本护栏：会话项目配置任一轴动作为 'pause'/'abort' 时启用预算检查。
             // 具体 pause/abort 由 budgetOverageParts 按超支轴配置动作判定（abort >
@@ -1143,21 +1167,31 @@ function createChatRoute(ctx: ServerContext): Hono {
 
   app.post('/pause', async (c) => {
     const { sessionId } = await c.req.json()
+    // 级联子 run（P1：子 agent 现已注册，暂停主 run 必须一并暂停——
+    // 否则后台子 agent 在用户认为「已暂停」时继续执行）。
     const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
-    if (busyWorkflowId) {
-      return c.json({ paused: ctx.agentManager.pause(busyWorkflowId) })
+    const targetId = busyWorkflowId ?? sessionId
+    if (!busyWorkflowId && runStarting(c, sessionId)) return runStarting(c, sessionId)
+    const paused = ctx.agentManager.pause(targetId)
+    for (const child of ctx.agentManager.children(targetId)) {
+      ctx.agentManager.pause(child.sessionId)
     }
-    return runStarting(c, sessionId) ?? c.json({ paused: ctx.agentManager.pause(sessionId) })
+    return c.json({ paused })
   })
 
   app.post('/resume', async (c) => {
     const { sessionId } = await c.req.json()
     // 权限超时暂停工作流后，发起会话展示「恢复」按钮——路由到工作流 run 真正恢复。
+    // 级联恢复子 run：暂停时子 run 一并暂停，仅恢复主 run 会让父的工具批次
+    // 永远等待已暂停的子 agent（死锁）。
     const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
-    if (busyWorkflowId) {
-      return c.json({ resumed: ctx.agentManager.resume(busyWorkflowId) })
+    const targetId = busyWorkflowId ?? sessionId
+    if (!busyWorkflowId && runStarting(c, sessionId)) return runStarting(c, sessionId)
+    const resumed = ctx.agentManager.resume(targetId)
+    for (const child of ctx.agentManager.children(targetId)) {
+      ctx.agentManager.resume(child.sessionId)
     }
-    return runStarting(c, sessionId) ?? c.json({ resumed: ctx.agentManager.resume(sessionId) })
+    return c.json({ resumed })
   })
 
   app.post('/steer', async (c) => {

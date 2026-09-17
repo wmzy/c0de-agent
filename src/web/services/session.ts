@@ -93,9 +93,16 @@ const sessionAPI = {
   /** 会话导出（元数据 + 消息 + 归档），数据可迁移。
    *  includeSnapshots=false（默认）：归档的 fileSnapshots（文件内容）被剥离，
    *  分享导出 JSON 不泄露文件内容。 */
-  exportSession: (id: string, opts?: { includeSnapshots?: boolean }) =>
+  exportSession: (
+    id: string,
+    opts?: { includeSnapshots?: boolean; includePermissions?: boolean },
+  ) =>
     apiRequest<SessionExport>(
-      `/api/sessions/${id}/export${opts?.includeSnapshots ? '?includeSnapshots=1' : ''}`,
+      `/api/sessions/${id}/export${opts?.includeSnapshots || opts?.includePermissions ? '?' : ''}${
+        opts?.includeSnapshots ? 'includeSnapshots=1' : ''
+      }${opts?.includeSnapshots && opts?.includePermissions ? '&' : ''}${
+        opts?.includePermissions ? 'includePermissions=1' : ''
+      }`,
     ),
   /** 会话导入（导出的逆操作；绑定 projectId 后出现在对应项目视图）。
    *  flattened=true 表示原会话的分支树结构被扁平化为独立根会话（P2）。
