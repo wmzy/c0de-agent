@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { Fragment, useMemo, useState } from 'react'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import type { TimelineRow } from '@/components/session/utils/timeline.js'
 import { formatCost, formatLatency, formatTimestamp, formatTokenCount } from '@/utils/format.js'
 
@@ -16,23 +17,23 @@ const filterBar = css`
   gap: 8px;
   flex-wrap: wrap;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   font-size: 12px;
 `
 
 const filterInput = css`
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
   padding: 3px 8px;
-  color: var(--text);
+  color: var(--haze-color-text);
   font-size: 12px;
   min-width: 0;
 
   &:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -52,15 +53,15 @@ const table = css`
   td {
     padding: 4px 8px;
     text-align: left;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--haze-color-border);
     white-space: nowrap;
   }
 
   th {
     position: sticky;
     top: 0;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
+    background: var(--haze-color-bg-subtle);
+    color: var(--haze-color-text-secondary);
     font-weight: 500;
     z-index: 1;
   }
@@ -69,7 +70,7 @@ const table = css`
     cursor: pointer;
 
     &:hover {
-      background: var(--bg-secondary);
+      background: var(--haze-color-bg-subtle);
     }
   }
 `
@@ -81,7 +82,7 @@ const summaryCell = css`
 `
 
 const dim = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const typeTag = css`
@@ -89,13 +90,13 @@ const typeTag = css`
   padding: 1px 6px;
   border-radius: 3px;
   font-size: 11px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg);
+  border: 1px solid var(--haze-color-border);
 `
 
 const jsonRow = css`
   td {
-    background: var(--bg);
+    background: var(--haze-color-bg);
     white-space: normal !important;
   }
 
@@ -239,17 +240,17 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
   return (
     <div className={wrap} data-testid="table-view">
       <div className={filterBar}>
-        <input
+        <SyncedInput
           className={filterInput}
           placeholder="搜索…"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(v) => setQ(v)}
           data-testid="table-search"
         />
-        <select
+        <SyncedSelect
           className={select}
           value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value as 'all' | TimelineRow['kind'])}
+          onValuesChange={(v) => setTypeFilter(v as 'all' | TimelineRow['kind'])}
           aria-label="类型筛选"
           data-testid="table-filter-type"
         >
@@ -257,11 +258,11 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
           <option value="message">消息</option>
           <option value="call">调用</option>
           <option value="segment">段</option>
-        </select>
-        <select
+        </SyncedSelect>
+        <SyncedSelect
           className={select}
           value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value)}
+          onValuesChange={(v) => setRoleFilter(v as string)}
           aria-label="角色筛选"
           data-testid="table-filter-role"
         >
@@ -269,11 +270,11 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
           <option value="user">user</option>
           <option value="assistant">assistant</option>
           <option value="tool">tool</option>
-        </select>
-        <select
+        </SyncedSelect>
+        <SyncedSelect
           className={select}
           value={toolFilter}
-          onChange={(e) => setToolFilter(e.target.value)}
+          onValuesChange={(v) => setToolFilter(v as string)}
           aria-label="工具筛选"
         >
           <option value="all">全部工具</option>
@@ -282,7 +283,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
               {t}
             </option>
           ))}
-        </select>
+        </SyncedSelect>
         <span className={dim}>
           {filtered.length}/{rows.length}
         </span>

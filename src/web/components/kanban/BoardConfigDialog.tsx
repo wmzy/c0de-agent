@@ -1,7 +1,9 @@
 import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { generateId } from '@/hooks/id.js'
 import {
   type KanbanCard,
@@ -9,11 +11,12 @@ import {
   type KanbanLabelDef,
   kanbanAPI,
 } from '@/services/kanban.js'
+import { btnDanger } from '@/styles/tokens.js'
 
 const sectionTitle = css`
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   margin-bottom: 4px;
 `
 
@@ -42,7 +45,7 @@ const colorSwatch = css`
   width: 24px;
   height: 24px;
   border-radius: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   cursor: pointer;
   flex-shrink: 0;
   padding: 0;
@@ -163,36 +166,34 @@ export function BoardConfigDialog({
       testId="board-config-overlay"
       footer={
         <div className={actions}>
-          <button
-            type="button"
-            data-variant="ghost"
+          <Button
             onClick={onClose}
             style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
+            variant="ghost"
           >
             取消
-          </button>
-          <button
-            type="button"
-            data-variant="primary"
+          </Button>
+          <Button
+            variant="solid"
             onClick={() => saveMutation.mutate()}
             disabled={saveMutation.isPending}
             style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
           >
             保存
-          </button>
+          </Button>
         </div>
       }
     >
       {error && (
         <div
           style={{
-            color: 'var(--error)',
+            color: 'var(--haze-color-danger)',
             fontSize: 12,
             marginBottom: 8,
             padding: '6px 10px',
-            border: '1px solid color-mix(in srgb, var(--error) 45%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--haze-color-danger) 45%, transparent)',
             borderRadius: 6,
-            background: 'color-mix(in srgb, var(--error) 8%, transparent)',
+            background: 'color-mix(in srgb, var(--haze-color-danger) 8%, transparent)',
           }}
           data-testid="board-config-error"
         >
@@ -204,18 +205,19 @@ export function BoardConfigDialog({
         <div className={sectionTitle}>列</div>
         {columns.map((col) => (
           <div key={col.id} className={row}>
-            <input
+            <SyncedInput
               className={rowInput}
               value={col.name}
-              onChange={(e) => updateColumnName(col.id, e.target.value)}
+              onChange={(v) => updateColumnName(col.id, v)}
             />
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)', flexShrink: 0 }}>
+            <span
+              style={{ fontSize: 11, color: 'var(--haze-color-text-secondary)', flexShrink: 0 }}
+            >
               {cards.filter((c) => c.columnId === col.id).length} 卡
             </span>
-            <button
-              type="button"
-              data-variant="danger"
-              className={rowBtn}
+            <Button
+              className={`${btnDanger} ${rowBtn}`}
+              variant="outline"
               onClick={() => removeColumn(col.id)}
               title={
                 cards.some((c) => c.columnId === col.id)
@@ -224,15 +226,15 @@ export function BoardConfigDialog({
               }
             >
               删除
-            </button>
+            </Button>
           </div>
         ))}
         <div className={row}>
-          <input
+          <SyncedInput
             className={rowInput}
             placeholder="新列名…"
             value={newColumnName}
-            onChange={(e) => setNewColumnName(e.target.value)}
+            onChange={(v) => setNewColumnName(v)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') addColumn()
             }}
@@ -248,39 +250,38 @@ export function BoardConfigDialog({
         <div className={sectionTitle}>标签</div>
         {labels.map((l) => (
           <div key={l.id} className={row}>
-            <input
+            <SyncedInput
               type="color"
               className={colorSwatch}
               value={l.color}
-              onChange={(e) => updateLabel(l.id, { color: e.target.value })}
+              onChange={(v) => updateLabel(l.id, { color: v })}
             />
-            <input
+            <SyncedInput
               className={rowInput}
               value={l.name}
-              onChange={(e) => updateLabel(l.id, { name: e.target.value })}
+              onChange={(v) => updateLabel(l.id, { name: v })}
             />
-            <button
-              type="button"
-              data-variant="danger"
-              className={rowBtn}
+            <Button
+              className={`${btnDanger} ${rowBtn}`}
+              variant="outline"
               onClick={() => removeLabel(l.id)}
             >
               删除
-            </button>
+            </Button>
           </div>
         ))}
         <div className={row}>
-          <input
+          <SyncedInput
             type="color"
             className={colorSwatch}
             value={newLabelColor}
-            onChange={(e) => setNewLabelColor(e.target.value)}
+            onChange={(v) => setNewLabelColor(v)}
           />
-          <input
+          <SyncedInput
             className={rowInput}
             placeholder="新标签名…"
             value={newLabelName}
-            onChange={(e) => setNewLabelName(e.target.value)}
+            onChange={(v) => setNewLabelName(v)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') addLabel()
             }}
@@ -292,7 +293,7 @@ export function BoardConfigDialog({
       </div>
 
       {saveMutation.isError && (
-        <div style={{ color: 'var(--error)', fontSize: 12 }}>
+        <div style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
           保存失败：{(saveMutation.error as Error)?.message}
         </div>
       )}

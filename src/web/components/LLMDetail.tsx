@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { formatCost, formatLatency, formatTokenCount } from '@/utils/format.js'
 
 const card = css`
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   margin: 8px 0;
   font-size: 13px;
@@ -16,7 +16,7 @@ const header = css`
   display: flex;
   gap: 12px;
   padding: 8px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   flex-wrap: wrap;
 `
 
@@ -31,7 +31,7 @@ const sectionBody = css`
 `
 
 const section = css`
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--haze-color-border);
 
   &:first-child {
     border-top: none;
@@ -46,13 +46,13 @@ const sectionHead = css`
   padding: 6px 8px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   text-align: left;
   font-size: 12px;
 
   &:hover {
-    color: var(--text);
+    color: var(--haze-color-text);
   }
 `
 
@@ -61,7 +61,7 @@ const modelName = css`
 `
 
 const dim = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const pre = css`
@@ -73,7 +73,7 @@ const pre = css`
 const toolItem = css`
   margin-bottom: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--haze-color-border);
 
   &:last-child {
     border-bottom: none;
@@ -178,11 +178,11 @@ const breakStyle = css`
 const breakLine = css`
   flex: 1;
   height: 1px;
-  background: var(--border);
+  background: var(--haze-color-border);
 `
 
 const breakLabel = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   white-space: nowrap;
 `

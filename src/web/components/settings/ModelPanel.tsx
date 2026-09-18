@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { useState } from 'react'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { enabledModelsOf, providerCandidates } from '@/components/settings/shared.js'
 import {
   field,
@@ -14,9 +15,9 @@ import { inputStyle } from '@/styles/tokens.js'
 const modelPanel = css`
   grid-column: 1 / -1;
   margin-top: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--haze-color-bg);
   padding: 8px;
 `
 
@@ -37,17 +38,17 @@ const modelFilterInput = css`
 
 const modelToolbarBtn = css`
   padding: 3px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text);
+  background: var(--haze-color-bg-subtle);
+  color: var(--haze-color-text);
   font-size: 11px;
   cursor: pointer;
 `
 
 const modelCountText = css`
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const modelList = css`
@@ -64,7 +65,7 @@ const modelRow = css`
   gap: 4px;
   font-size: 12px;
   padding: 4px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
 `
 
 const modelCapRow = css`
@@ -79,22 +80,22 @@ const modelCapField = css`
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const modelCapInput = css`
   width: 90px;
   padding: 2px 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 3px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   font-size: 11px;
 `
 
 const modelEmpty = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   padding: 4px;
 `
 
@@ -141,10 +142,10 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
         <>
           <label className={field}>
             <span>Provider</span>
-            <select
+            <SyncedSelect
               className={fieldInput}
               value={defaultProvider}
-              onChange={(e) => changeDefaultProvider(e.target.value)}
+              onValuesChange={(v) => changeDefaultProvider(v as string)}
               data-testid="default-provider-select"
             >
               {/* 当前值不在已配置列表时兜底显示，避免受控 select 丢失值 */}
@@ -157,14 +158,14 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
                   {p.name}
                 </option>
               ))}
-            </select>
+            </SyncedSelect>
           </label>
           <label className={field}>
             <span>Model</span>
-            <select
+            <SyncedSelect
               className={fieldInput}
               value={defaultModel}
-              onChange={(e) => onChange({ defaultModel: e.target.value })}
+              onValuesChange={(v) => onChange({ defaultModel: v as string })}
               data-testid="default-model-select"
             >
               {defaultModelCandidates.length === 0 ? (
@@ -180,7 +181,7 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
                   {m}
                 </option>
               ))}
-            </select>
+            </SyncedSelect>
           </label>
         </>
       )}
@@ -219,10 +220,10 @@ function ProviderModelsPanel({
   return (
     <div className={modelPanel} data-testid="provider-models">
       <div className={modelToolbar}>
-        <input
+        <SyncedInput
           className={`${inputStyle} ${modelFilterInput}`}
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={(v) => setFilter(v)}
           placeholder="过滤模型…"
           data-testid="provider-model-filter"
         />
@@ -266,13 +267,13 @@ function ProviderModelsPanel({
                 <div className={modelCapRow}>
                   <label className={modelCapField}>
                     <span>上下文窗口</span>
-                    <input
+                    <SyncedInput
                       type="number"
                       className={modelCapInput}
-                      value={override.contextWindow ?? ''}
-                      onChange={(e) =>
+                      value={String(override.contextWindow ?? '')}
+                      onChange={(v) =>
                         onModelFieldChange(name, {
-                          contextWindow: e.target.value ? Number(e.target.value) : undefined,
+                          contextWindow: v ? Number(v) : undefined,
                         })
                       }
                       placeholder="留空=默认"
@@ -282,13 +283,13 @@ function ProviderModelsPanel({
                   </label>
                   <label className={modelCapField}>
                     <span>最大输出</span>
-                    <input
+                    <SyncedInput
                       type="number"
                       className={modelCapInput}
-                      value={override.maxOutput ?? ''}
-                      onChange={(e) =>
+                      value={String(override.maxOutput ?? '')}
+                      onChange={(v) =>
                         onModelFieldChange(name, {
-                          maxOutput: e.target.value ? Number(e.target.value) : undefined,
+                          maxOutput: v ? Number(v) : undefined,
                         })
                       }
                       placeholder="留空=默认"

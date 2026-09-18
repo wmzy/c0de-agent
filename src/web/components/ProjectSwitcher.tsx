@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { SyncedSelect } from '@/components/SyncedControls.js'
 import { inputStyle } from '@/styles/tokens.js'
 import type { Project } from '@/types/index.js'
 
@@ -8,11 +9,11 @@ const select = css`
   font-size: 13px;
   cursor: pointer;
   &:hover {
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
   &:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -27,10 +28,10 @@ type ProjectSwitcherProps = {
 /** 项目导航器：选择项目即切换到该项目的会话视图（项目为路由顶级维度）。 */
 export function ProjectSwitcher({ projects, value, onChange }: ProjectSwitcherProps) {
   return (
-    <select
+    <SyncedSelect
       className={`${inputStyle} ${select}`}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onValuesChange={(v) => onChange(v as string)}
       data-testid="project-switcher"
       aria-label="切换项目"
     >
@@ -39,7 +40,7 @@ export function ProjectSwitcher({ projects, value, onChange }: ProjectSwitcherPr
           {p.name ?? '未命名项目'}
         </option>
       ))}
-    </select>
+    </SyncedSelect>
   )
 }
 

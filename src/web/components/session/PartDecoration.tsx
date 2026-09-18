@@ -20,7 +20,7 @@ const wrap = css`
   align-items: center;
   width: 28px;
   flex-shrink: 0;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const iconWrap = css`
@@ -35,7 +35,7 @@ const bar = css`
   width: 2px;
   min-height: 8px;
   margin-top: 2px;
-  background: var(--border);
+  background: var(--haze-color-border);
 `
 
 const TOOL_ICONS: Record<string, (p: Record<string, unknown>) => ReactNode> = {

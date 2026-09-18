@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { SyncedInput } from '@/components/SyncedControls.js'
 
 /** 解析逗号分隔的字符串数组（trim + 去空）。 */
 function splitList(s: string): string[] {
@@ -39,15 +40,15 @@ function CommaListInput({
     setText((cur) => (splitList(cur).join(', ') === joined ? cur : joined))
   }, [joined])
   return (
-    <input
+    <SyncedInput
       id={id}
       className={className}
       value={text}
       placeholder={placeholder}
       disabled={disabled}
-      onChange={(e) => {
-        setText(e.target.value)
-        onCommit(splitList(e.target.value))
+      onChange={(v) => {
+        setText(v)
+        onCommit(splitList(v))
       }}
     />
   )

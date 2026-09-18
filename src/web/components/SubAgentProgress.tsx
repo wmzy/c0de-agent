@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { Button } from 'haze-ui'
 
 /** 后端 SubAgentEvent 类型（spec §2.10 定义，后端尚未实现）。 */
 type SubAgentEvent = {
@@ -16,7 +17,7 @@ type SubAgentProgressProps = {
 }
 
 const card = css`
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--haze-color-border);
   border-radius: 6px;
   padding: 8px;
   margin: 6px 0;
@@ -29,7 +30,7 @@ const rowBetween = css`
 `
 
 const muted = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 export function SubAgentProgress({
@@ -45,9 +46,9 @@ export function SubAgentProgress({
       <div className={rowBetween}>
         <span>子 Agent {childId.slice(0, 8)}</span>
         {onAbort && (
-          <button type="button" onClick={onAbort}>
+          <Button onClick={onAbort} variant="outline">
             中止
-          </button>
+          </Button>
         )}
       </div>
       <span className={muted}>

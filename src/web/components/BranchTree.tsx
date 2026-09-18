@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import type { SessionTreeNode, SessionUsage } from '@/types/index.js'
 
 const node = css`
@@ -16,7 +17,7 @@ const rowWrap = css`
   border-radius: 4px;
   &:hover,
   &:focus-within {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
     & [data-delete-btn] {
       opacity: 1;
     }
@@ -24,7 +25,7 @@ const rowWrap = css`
 `
 
 const active = css`
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
 `
 
 const selectBtn = css`
@@ -38,7 +39,7 @@ const selectBtn = css`
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text);
+  color: var(--haze-color-text);
   text-align: left;
   font-size: 13px;
   cursor: pointer;
@@ -72,20 +73,20 @@ const delBtn = css`
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   opacity: 0;
   transition:
     opacity 0.12s ease,
     color 0.12s ease;
   &:hover {
-    color: var(--danger, #e5484d);
+    color: var(--haze-color-danger, #e5484d);
   }
 `
 
 const childList = css`
   padding-left: 16px;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--haze-color-border);
   margin-left: 8px;
 `
 
@@ -100,17 +101,17 @@ const renameInput = css`
   min-width: 0;
   padding: 4px 8px;
   font-size: 13px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--haze-color-primary);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   outline: none;
 `
 
 const usageBadge = css`
   flex-shrink: 0;
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   white-space: nowrap;
 `
 
@@ -137,9 +138,9 @@ const autoBadge = css`
   flex-shrink: 0;
   font-size: 10px;
   padding: 1px 5px;
-  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--haze-color-warning) 55%, transparent);
   border-radius: 3px;
-  color: var(--warning);
+  color: var(--haze-color-warning);
   white-space: nowrap;
 `
 
@@ -162,9 +163,9 @@ const cliBadge = css`
   flex-shrink: 0;
   font-size: 10px;
   padding: 1px 5px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 3px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   white-space: nowrap;
 `
 
@@ -262,14 +263,14 @@ function TreeNode({
             }}
             data-testid={`rename-form-${n.session.id}`}
           >
-            <input
+            <SyncedInput
               ref={(el) => {
                 // a11y：避免 autoFocus，挂载后程序化聚焦
                 el?.focus()
               }}
               className={renameInput}
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(v) => setTitle(v)}
               disabled={pending}
               maxLength={120}
               aria-label={`重命名会话 ${n.session.title}`}

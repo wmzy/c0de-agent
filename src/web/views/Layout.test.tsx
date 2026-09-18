@@ -37,7 +37,6 @@ async function renderThree() {
       panel={<div data-testid="pn">panel</div>}
     />,
   )
-  await act(async () => {})
 }
 
 // 拖拽：pointerdown 设 dragging=true → useEffect 向 document 挂载 pointermove/up 监听。

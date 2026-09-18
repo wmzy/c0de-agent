@@ -89,13 +89,13 @@ const resizerStyle = css`
     border: 0;
     margin: 0;
     cursor: col-resize;
-    background: var(--border);
+    background: var(--haze-color-border);
     flex-shrink: 0;
     position: relative;
     z-index: 5;
     transition: background 0.12s ease;
     &:hover {
-      background: var(--primary);
+      background: var(--haze-color-primary);
     }
     &::before {
       content: '';
@@ -109,7 +109,7 @@ const resizerStyle = css`
 `
 
 const resizerActive = css`
-  background: var(--primary);
+  background: var(--haze-color-primary);
 `
 
 type LayoutProps = {

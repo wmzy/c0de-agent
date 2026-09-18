@@ -1,6 +1,8 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useState } from 'react'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
 import { inputStyle } from '@/styles/tokens.js'
@@ -17,17 +19,17 @@ const TASK_ICONS: Record<TaskStatus, string> = {
 }
 
 const STATUS_COLORS: Record<TaskStatus, string> = {
-  completed: 'var(--success)',
-  in_progress: 'var(--primary)',
-  abandoned: 'var(--text-secondary)',
-  pending: 'var(--text-secondary)',
+  completed: 'var(--haze-color-success)',
+  in_progress: 'var(--haze-color-primary)',
+  abandoned: 'var(--haze-color-text-secondary)',
+  pending: 'var(--haze-color-text-secondary)',
 }
 
 // ── Styles ────────────────────────────────────────────────
 
 const wrapper = css`
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-top: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   flex-shrink: 0;
 `
 
@@ -40,14 +42,14 @@ const summaryBar = css`
   font: inherit;
   font-size: 12px;
   text-align: left;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   background: none;
   border: none;
   cursor: pointer;
   user-select: none;
 
   &:hover {
-    background: var(--bg-hover, color-mix(in srgb, var(--bg) 95%, var(--text) 5%));
+    background: var(--haze-color-bg-subtle, color-mix(in srgb, var(--haze-color-bg) 95%, var(--haze-color-text) 5%));
   }
 `
 
@@ -58,7 +60,7 @@ const summaryIcon = css`
 
 const summaryProgress = css`
   font-weight: 600;
-  color: var(--text);
+  color: var(--haze-color-text);
   flex-shrink: 0;
 `
 
@@ -76,13 +78,13 @@ const summaryCurrent = css`
 `
 
 const summaryCurrentTask = css`
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const expandIcon = css`
   flex-shrink: 0;
   font-size: 10px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const body = css`
@@ -102,7 +104,7 @@ const phaseHeader = css`
   padding: 4px 12px 1px;
   font-size: 11px;
   font-weight: 700;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 `
@@ -122,7 +124,7 @@ const taskItem = css`
   line-height: 1.4;
 
   &:hover {
-    background: var(--bg-hover, color-mix(in srgb, var(--bg) 95%, var(--text) 5%));
+    background: var(--haze-color-bg-subtle, color-mix(in srgb, var(--haze-color-bg) 95%, var(--haze-color-text) 5%));
   }
 `
 
@@ -158,7 +160,7 @@ const taskText = css`
 
 const taskDone = css`
   text-decoration: line-through;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const taskAbandoned = css`
@@ -178,11 +180,11 @@ const taskActions = css`
     padding: 0 3px;
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--haze-color-text-secondary);
     cursor: pointer;
 
     &:hover {
-      color: var(--primary);
+      color: var(--haze-color-primary);
     }
   }
 `
@@ -208,7 +210,7 @@ const input = css`
   outline: none;
 
   &:focus {
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -219,8 +221,8 @@ const addBtn = css`
   cursor: pointer;
 
   &:hover {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
   }
 
   &:disabled {
@@ -230,18 +232,18 @@ const addBtn = css`
 `
 
 const primaryBtn = css`
-  background: var(--primary);
-  color: var(--bg);
-  border-color: var(--primary);
+  background: var(--haze-color-primary);
+  color: var(--haze-color-bg);
+  border-color: var(--haze-color-primary);
 
   &:hover {
     opacity: 0.9;
-    color: var(--bg);
+    color: var(--haze-color-bg);
   }
 `
 
 const errorText = css`
-  color: var(--error);
+  color: var(--haze-color-danger);
   font-size: 12px;
   padding: 2px 12px;
 `
@@ -440,13 +442,21 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                       </button>
                       <div className={taskActions}>
                         {status !== 'abandoned' && (
-                          <button type="button" title="放弃" onClick={() => dropTask(task.content)}>
+                          <Button
+                            title="放弃"
+                            variant="outline"
+                            onClick={() => dropTask(task.content)}
+                          >
                             ✕
-                          </button>
+                          </Button>
                         )}
-                        <button type="button" title="删除" onClick={() => removeTask(task.content)}>
+                        <Button
+                          title="删除"
+                          variant="outline"
+                          onClick={() => removeTask(task.content)}
+                        >
                           🗑
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   )
@@ -456,22 +466,22 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
           })}
           {showAdd && (
             <div className={addForm}>
-              <input
+              <SyncedInput
                 className={`${inputStyle} ${input}`}
                 placeholder="任务描述…"
                 value={newTask}
-                onChange={(e) => setNewTask(e.target.value)}
+                onChange={(v) => setNewTask(v)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleAdd()
                   if (e.key === 'Escape') setShowAdd(false)
                 }}
               />
-              <input
+              <SyncedInput
                 className={`${inputStyle} ${input}`}
                 placeholder="阶段（可选）"
                 style={{ flex: '0 0 100px' }}
                 value={newPhase}
-                onChange={(e) => setNewPhase(e.target.value)}
+                onChange={(v) => setNewPhase(v)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleAdd()
                   if (e.key === 'Escape') setShowAdd(false)
@@ -492,22 +502,22 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
 
       {showAdd && (collapsed || totalTasks === 0) && (
         <div className={addForm}>
-          <input
+          <SyncedInput
             className={`${inputStyle} ${input}`}
             placeholder="任务描述…"
             value={newTask}
-            onChange={(e) => setNewTask(e.target.value)}
+            onChange={(v) => setNewTask(v)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleAdd()
               if (e.key === 'Escape') setShowAdd(false)
             }}
           />
-          <input
+          <SyncedInput
             className={`${inputStyle} ${input}`}
             placeholder="阶段（可选）"
             style={{ flex: '0 0 100px' }}
             value={newPhase}
-            onChange={(e) => setNewPhase(e.target.value)}
+            onChange={(v) => setNewPhase(v)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleAdd()
               if (e.key === 'Escape') setShowAdd(false)
@@ -528,7 +538,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
       {exportResult && (
         <div
           className={errorText}
-          style={{ color: 'var(--success)' }}
+          style={{ color: 'var(--haze-color-success)' }}
           data-testid="todo-export-result"
         >
           {exportResult}

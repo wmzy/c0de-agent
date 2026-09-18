@@ -5,7 +5,7 @@ import { useOverflow } from '@/components/session/hooks/useOverflow.js'
 const pre = css`
   margin: 0;
   padding: 8px;
-  background: var(--code-bg);
+  background: var(--haze-color-bg-muted);
   border-radius: 6px;
   font-size: 13px;
   white-space: pre-wrap;
@@ -20,7 +20,7 @@ const collapsed = css`
 
 const btn = css`
   font-size: 12px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   background: transparent;
   border: none;
   cursor: pointer;

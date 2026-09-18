@@ -108,13 +108,13 @@ const pillStyle = css`
   padding: 1px 6px;
   margin: 0 2px;
   border-radius: 4px;
-  background: var(--bg-tertiary, #e8e8e8);
-  color: var(--primary, #4a9eff);
+  background: var(--haze-color-bg-subtle, #e8e8e8);
+  color: var(--haze-color-primary, #4a9eff);
   font-size: 0.92em;
   user-select: none;
   cursor: pointer;
   &:hover {
-    background: var(--primary, #4a9eff);
+    background: var(--haze-color-primary, #4a9eff);
     color: #fff;
   }
 `

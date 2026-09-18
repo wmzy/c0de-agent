@@ -98,7 +98,6 @@ async function renderAt(path: string) {
 /** 项目上下文下渲染 TopBar：需匹配项目路由以让 useMatched 解析 projectId。 */
 async function renderAtProject(projectId: string) {
   return renderAt(`/projects/${projectId}`)
-  await act(async () => {})
 }
 
 describe('TopBar', () => {
@@ -306,7 +305,10 @@ describe('TopBar', () => {
     await waitFor(() => {
       expect(screen.getByTestId('branch-dropdown-item-main')).toBeTruthy()
     })
-    const item = screen.getByTestId('branch-dropdown-item-main') as HTMLButtonElement
+    // testid 现在落在菜单项按钮内的内容行 span 上，向上取按钮断言 disabled
+    const item = screen
+      .getByTestId('branch-dropdown-item-main')
+      .closest('button') as HTMLButtonElement
     expect(item.disabled).toBe(true)
   })
 

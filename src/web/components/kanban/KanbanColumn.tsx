@@ -1,7 +1,9 @@
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { css } from '@linaria/core'
+import { Button } from 'haze-ui'
 import { useState } from 'react'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import type {
   KanbanCard as KanbanCardType,
   KanbanLabelDef,
@@ -11,14 +13,14 @@ import type {
 // ── Styles ─────────────────────────────────────────────────
 
 const PRIORITY_COLORS: Record<KanbanPriority, string> = {
-  high: 'var(--error)',
+  high: 'var(--haze-color-danger)',
   medium: '#eab308',
-  low: 'var(--text-secondary)',
+  low: 'var(--haze-color-text-secondary)',
 }
 
 const card = css`
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg-subtle);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   padding: 8px 10px;
   cursor: grab;
@@ -29,7 +31,7 @@ const card = css`
   min-height: auto;
 
   &:hover {
-    border-color: var(--text-secondary);
+    border-color: var(--haze-color-text-secondary);
   }
   &:active {
     cursor: grabbing;
@@ -38,8 +40,8 @@ const card = css`
 
 const cardDragging = css`
   opacity: 0.5;
-  border-color: var(--primary);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 30%, transparent);
+  border-color: var(--haze-color-primary);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--haze-color-primary) 30%, transparent);
 `
 
 const cardHeader = css`
@@ -165,9 +167,9 @@ const column = css`
   width: 280px;
   min-width: 280px;
   height: 100%;
-  background: var(--bg);
+  background: var(--haze-color-bg);
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   overflow: hidden;
 `
 
@@ -176,22 +178,22 @@ const columnHeader = css`
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   flex-shrink: 0;
 `
 
 const columnName = css`
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 `
 
 const columnCount = css`
   font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
+  color: var(--haze-color-text-secondary);
+  background: var(--haze-color-bg-subtle);
   border-radius: 3px;
   padding: 1px 6px;
   font-variant-numeric: tabular-nums;
@@ -208,7 +210,7 @@ const columnBody = css`
 `
 
 const columnDropActive = css`
-  background: color-mix(in srgb, var(--primary) 8%, var(--bg));
+  background: color-mix(in srgb, var(--haze-color-primary) 8%, var(--haze-color-bg));
 `
 
 const addCardBtn = css`
@@ -217,13 +219,13 @@ const addCardBtn = css`
   padding: 4px 8px;
   font-size: 12px;
   text-align: left;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   background: transparent;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--haze-color-border);
   border-radius: 4px;
   &:hover {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
   }
 `
 
@@ -293,10 +295,10 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
 
         {isAdding ? (
           <div className={quickAddRow}>
-            <input
+            <SyncedInput
               className={quickAddInput}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(v) => setDraft(v)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submit()
                 if (e.key === 'Escape') {
@@ -306,9 +308,9 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
               }}
               placeholder="卡片标题…"
             />
-            <button type="button" data-variant="primary" className={quickAddBtn} onClick={submit}>
+            <Button className={quickAddBtn} onClick={submit} variant="solid">
               添加
-            </button>
+            </Button>
           </div>
         ) : (
           <button type="button" className={addCardBtn} onClick={() => setIsAdding(true)}>

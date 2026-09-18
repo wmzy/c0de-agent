@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { BranchTree } from '@/components/BranchTree.js'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { useDeleteSession, useProjects, useSessionTree } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
@@ -21,15 +22,15 @@ const header = css`
   align-items: center;
   gap: 8px;
   padding: 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
 `
 
 /* P2-5：会话树底部 CLI 会话可见性说明（CLI/Web 同库不同视图的心智提示）。 */
 const cliHint = css`
   margin-top: auto;
   padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  color: var(--text-secondary);
+  border-top: 1px solid var(--haze-color-border);
+  color: var(--haze-color-text-secondary);
   font-size: 11px;
 `
 
@@ -39,13 +40,13 @@ const addBtn = css`
   min-width: auto;
   padding: 4px 8px;
   font-size: 13px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   &:hover {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
   }
 `
 
@@ -58,11 +59,11 @@ const recycleBtn = css`
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   &[aria-pressed='true'] {
-    color: var(--primary);
-    border-color: var(--primary);
+    color: var(--haze-color-primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -71,12 +72,12 @@ const recycleBtn = css`
 /* P2-6 内容匹配区：标题树下方平铺的消息内容命中行 */
 const matchSection = css`
   padding: 4px 12px 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--haze-color-border);
 `
 
 const matchHeader = css`
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   padding: 4px 0;
 `
 
@@ -90,12 +91,12 @@ const matchRow = css`
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text);
+  color: var(--haze-color-text);
   font-size: 13px;
   text-align: left;
   cursor: pointer;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
@@ -402,12 +403,12 @@ export function SessionList({
         </div>
       )}
       {!showRecycle && (
-        <input
+        <SyncedInput
           className={searchInput}
           type="search"
           placeholder="搜索会话标题或消息内容…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(v) => setSearch(v)}
           data-testid="session-search"
         />
       )}

@@ -18,7 +18,7 @@ const container = css`
   gap: 12px;
   flex: 1;
   height: 100dvh;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
   padding: 24px;
   text-align: center;
@@ -31,29 +31,29 @@ const icon = css`
 const title = css`
   font-size: 16px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const reloadBtn = css`
-  color: var(--primary);
+  color: var(--haze-color-primary);
   text-decoration: none;
   padding: 8px 16px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--haze-color-primary);
   border-radius: 6px;
   background: transparent;
   font: inherit;
   font-size: 14px;
   cursor: pointer;
   &:hover {
-    background: var(--primary);
-    color: var(--bg, #fff);
+    background: var(--haze-color-primary);
+    color: var(--haze-color-bg, #fff);
   }
 `
 
 const detailsToggle = css`
   background: none;
   border: none;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   cursor: pointer;
   font-size: 13px;
   padding: 4px 8px;
@@ -64,13 +64,13 @@ const details = css`
   max-width: 640px;
   width: 100%;
   text-align: left;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg-subtle);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   padding: 12px;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--haze-font-mono, monospace);
   font-size: 12px;
-  color: var(--danger, #e5484d);
+  color: var(--haze-color-danger, #e5484d);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;

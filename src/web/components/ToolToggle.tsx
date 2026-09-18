@@ -14,7 +14,7 @@ const trigger = css`
   gap: 6px;
   padding: 4px 10px;
   min-height: 28px;
-  color: var(--text);
+  color: var(--haze-color-text);
   font-size: 12px;
   cursor: pointer;
 
@@ -25,7 +25,7 @@ const trigger = css`
 `
 
 const badgeActive = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-weight: 600;
 `
 
@@ -35,7 +35,7 @@ const badgePartial = css`
 `
 
 const badgeNone = css`
-  color: var(--danger, #e5484d);
+  color: var(--haze-color-danger, #e5484d);
   font-weight: 700;
 `
 
@@ -46,10 +46,10 @@ const menu = css`
   margin-bottom: 4px;
   min-width: 260px;
   max-width: 360px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg);
+  border: 1px solid var(--haze-color-border);
   border-radius: 8px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--haze-shadow-md);
   z-index: 50;
 `
 
@@ -58,9 +58,9 @@ const header = css`
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const headerBtns = css`
@@ -86,7 +86,7 @@ const item = css`
   cursor: pointer;
 
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
@@ -103,7 +103,7 @@ const itemName = css`
 
 const itemDesc = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -112,15 +112,15 @@ const itemDesc = css`
 const empty = css`
   padding: 16px 12px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-align: center;
 `
 
 const hintLine = css`
   padding: 8px 12px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--haze-color-border);
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 /**

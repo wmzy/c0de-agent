@@ -28,15 +28,15 @@ const rootNode = css`
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg-subtle);
+  border: 1px solid var(--haze-color-border);
   align-self: flex-start;
 `
 
 const connector = css`
   width: 2px;
   height: 16px;
-  background: var(--border);
+  background: var(--haze-color-border);
   align-self: flex-start;
   margin-left: 20px;
 `
@@ -47,7 +47,7 @@ const branchLine = css`
   gap: 12px;
   flex-wrap: wrap;
   padding-left: 12px;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--haze-color-border);
 `
 
 const nodeWrap = css`
@@ -64,8 +64,8 @@ const nodeCard = css`
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 13px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   min-width: 140px;
   max-width: 280px;
   transition: border-color 0.2s, box-shadow 0.2s;
@@ -80,7 +80,7 @@ const nodeLabel = css`
 
 const nodeMeta = css`
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -103,23 +103,23 @@ const phaseItem = css`
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
 `
 
 const phaseItemActive = css`
-  border-color: var(--primary, #4a9eff);
-  color: var(--primary, #4a9eff);
+  border-color: var(--haze-color-primary, #4a9eff);
+  color: var(--haze-color-primary, #4a9eff);
   font-weight: 600;
 `
 
 const phaseItemDone = css`
-  color: var(--success, #22c55e);
-  border-color: var(--success, #22c55e);
+  color: var(--haze-color-success, #22c55e);
+  border-color: var(--haze-color-success, #22c55e);
 `
 
 const phaseArrow = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 11px;
 `
 
@@ -127,24 +127,24 @@ const phaseArrow = css`
 
 const statusColors: Record<WorkflowNodeStatus, { border: string; dot: string; text: string }> = {
   pending: {
-    border: 'var(--border)',
-    dot: 'var(--text-secondary)',
-    text: 'var(--text-secondary)',
+    border: 'var(--haze-color-border)',
+    dot: 'var(--haze-color-text-secondary)',
+    text: 'var(--haze-color-text-secondary)',
   },
   running: {
-    border: 'var(--primary, #4a9eff)',
-    dot: 'var(--primary, #4a9eff)',
-    text: 'var(--primary, #4a9eff)',
+    border: 'var(--haze-color-primary, #4a9eff)',
+    dot: 'var(--haze-color-primary, #4a9eff)',
+    text: 'var(--haze-color-primary, #4a9eff)',
   },
   completed: {
-    border: 'var(--success, #22c55e)',
-    dot: 'var(--success, #22c55e)',
-    text: 'var(--success, #22c55e)',
+    border: 'var(--haze-color-success, #22c55e)',
+    dot: 'var(--haze-color-success, #22c55e)',
+    text: 'var(--haze-color-success, #22c55e)',
   },
   failed: {
-    border: 'var(--error, #ef4444)',
-    dot: 'var(--error, #ef4444)',
-    text: 'var(--error, #ef4444)',
+    border: 'var(--haze-color-danger, #ef4444)',
+    dot: 'var(--haze-color-danger, #ef4444)',
+    text: 'var(--haze-color-danger, #ef4444)',
   },
 }
 

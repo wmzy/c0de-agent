@@ -1,4 +1,5 @@
 import type { Config } from '@shared/types/config.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import {
   checkRow,
   field,
@@ -34,22 +35,22 @@ function FallbackPanel({ fallback, onFallbackChange }: FallbackPanelProps) {
       </label>
       <label className={field}>
         <span>最大重试次数</span>
-        <input
+        <SyncedInput
           className={fieldInput}
           type="number"
           min={0}
-          value={fallback.maxRetries}
-          onChange={(e) => onFallbackChange({ maxRetries: Number(e.target.value) })}
+          value={String(fallback.maxRetries)}
+          onChange={(v) => onFallbackChange({ maxRetries: Number(v) })}
         />
       </label>
       <label className={field}>
         <span>重试间隔 (ms)</span>
-        <input
+        <SyncedInput
           className={fieldInput}
           type="number"
           min={0}
-          value={fallback.retryDelay}
-          onChange={(e) => onFallbackChange({ retryDelay: Number(e.target.value) })}
+          value={String(fallback.retryDelay)}
+          onChange={(v) => onFallbackChange({ retryDelay: Number(v) })}
         />
       </label>
     </div>

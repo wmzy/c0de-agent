@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { SyncedSelect } from '@/components/SyncedControls.js'
 import type { AgentListItem } from '@/services/agent.js'
 import { inputStyle } from '@/styles/tokens.js'
 
@@ -23,10 +24,10 @@ export function AgentSelector({
 }) {
   const primary = agents.filter((a) => a.mode !== 'subagent')
   return (
-    <select
+    <SyncedSelect
       className={`${inputStyle} ${selectControl}`}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onValuesChange={(v) => onChange(v as string)}
       aria-label="切换 agent"
       data-testid="agent-selector"
     >
@@ -35,6 +36,6 @@ export function AgentSelector({
           {a.name}
         </option>
       ))}
-    </select>
+    </SyncedSelect>
   )
 }

@@ -11,6 +11,7 @@ import {
   pickerRoot,
 } from '@/components/directory-picker-domain.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { filesystemAPI } from '@/services/filesystem.js'
 
 const container = css`
@@ -31,14 +32,14 @@ const input = css`
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   font-size: 13px;
   &:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -50,15 +51,15 @@ const actions = css`
 
 const actionBtn = css`
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text-secondary);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   cursor: pointer;
   &:hover {
-    border-color: var(--primary);
-    color: var(--text);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-text);
   }
 `
 
@@ -71,10 +72,10 @@ const suggestions = css`
   display: flex;
   flex-direction: column;
   padding: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
-  box-shadow: var(--shadow);
+  background: var(--haze-color-bg);
+  box-shadow: var(--haze-shadow-md);
   max-height: 220px;
   overflow-y: auto;
 `
@@ -85,7 +86,7 @@ const suggestion = css`
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   text-align: left;
   text-overflow: ellipsis;
@@ -93,8 +94,8 @@ const suggestion = css`
   cursor: pointer;
   &:hover,
   &[data-active] {
-    color: var(--text);
-    background: var(--bg-secondary);
+    color: var(--haze-color-text);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
@@ -104,7 +105,7 @@ const browser = css`
   flex: 1;
   max-height: 280px;
   overflow: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   background: transparent;
 `
@@ -114,7 +115,7 @@ const state = css`
   inset: 0;
   display: grid;
   place-items: center;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   pointer-events: none;
 `
@@ -122,7 +123,7 @@ const state = css`
 const selectionBar = css`
   overflow: hidden;
   flex-shrink: 0;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -383,12 +384,12 @@ export function DirectoryPicker({
       data-testid={testId ? undefined : 'directory-picker'}
     >
       <div className={pathRow} ref={pathAreaRef}>
-        <input
+        <SyncedInput
           ref={inputRef}
           className={input}
           value={value}
-          onChange={(e) => {
-            onChange(e.target.value)
+          onChange={(v) => {
+            onChange(v)
             setSelected(null)
             setSuggestionsOpen(true)
             setActiveSuggestion(-1)

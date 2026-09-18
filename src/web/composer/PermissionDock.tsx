@@ -6,8 +6,8 @@ const dock = css`
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-top: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   font-size: 13px;
 `
 
@@ -15,7 +15,7 @@ const info = css`
   flex: 1;
   min-width: 0;
   & strong {
-    color: var(--accent, #4a9eff);
+    color: var(--haze-color-primary, #4a9eff);
   }
   & pre {
     margin: 4px 0 0;
@@ -36,26 +36,26 @@ const actions = css`
 const btn = css`
   padding: 4px 12px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   cursor: pointer;
   font-size: 12px;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
 const approve = css`
   padding: 4px 12px;
   border-radius: 6px;
-  border: 1px solid var(--accent, #4a9eff);
-  background: var(--bg);
-  color: var(--accent, #4a9eff);
+  border: 1px solid var(--haze-color-primary, #4a9eff);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-primary, #4a9eff);
   cursor: pointer;
   font-size: 12px;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
@@ -64,7 +64,7 @@ const allowAlways = css`
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   white-space: nowrap;
   & input {

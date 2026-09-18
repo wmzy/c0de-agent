@@ -6,16 +6,17 @@
 import { css } from '@linaria/core'
 import { type ReactNode, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 
 const desc = css`
   font-size: 13px;
   line-height: 1.6;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const dangerNote = css`
   font-size: 12px;
-  color: var(--error);
+  color: var(--haze-color-danger);
 `
 
 const inputRow = css`
@@ -24,20 +25,20 @@ const inputRow = css`
   gap: 8px;
   margin-top: 8px;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 
   & > input {
     flex: 1;
     min-width: 0;
     padding: 6px 10px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--haze-color-border);
     border-radius: 6px;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
     font-size: 13px;
     &:focus {
       outline: none;
-      border-color: var(--error);
+      border-color: var(--haze-color-danger);
     }
   }
 `
@@ -45,19 +46,19 @@ const inputRow = css`
 const btn = css`
   padding: 4px 12px;
   font-size: 13px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   cursor: pointer;
 `
 
 const dangerBtn = css`
   padding: 4px 12px;
   font-size: 13px;
-  border: 1px solid var(--error);
+  border: 1px solid var(--haze-color-danger);
   border-radius: 6px;
-  background: var(--error);
+  background: var(--haze-color-danger);
   color: #fff;
   cursor: pointer;
   &:disabled {
@@ -131,9 +132,9 @@ export function DangerConfirmDialog({
       <div className={dangerNote}>此操作不可恢复。</div>
       <div className={inputRow}>
         <span>输入「{confirmWord}」以确认：</span>
-        <input
+        <SyncedInput
           value={typed}
-          onChange={(e) => setTyped(e.target.value)}
+          onChange={(v) => setTyped(v)}
           placeholder={confirmWord}
           autoFocus
           data-testid="danger-confirm-input"

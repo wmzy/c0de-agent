@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
@@ -25,14 +26,14 @@ const searchInputFlex = css`
   min-width: 0;
   min-height: 36px;
   padding: 4px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   font-size: 13px;
   &:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -53,11 +54,11 @@ const resultRow = css`
   cursor: pointer;
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--haze-color-text);
   font-size: 12.5px;
   text-align: left;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
@@ -66,7 +67,7 @@ const searchMentionBtn = css`
   background: transparent;
   border: none;
   border-radius: 3px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   font-size: 11px;
   padding: 0;
@@ -78,7 +79,7 @@ const searchMentionBtn = css`
   justify-content: center;
   transition: opacity 0.1s, color 0.1s;
   &:hover {
-    color: var(--primary);
+    color: var(--haze-color-primary);
   }
 `
 
@@ -87,7 +88,7 @@ const searchDeleteBtn = css`
   background: transparent;
   border: none;
   border-radius: 3px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   font-size: 12px;
   padding: 0;
@@ -99,19 +100,19 @@ const searchDeleteBtn = css`
   justify-content: center;
   transition: opacity 0.1s, color 0.1s;
   &:hover {
-    color: var(--error);
+    color: var(--haze-color-danger);
   }
 `
 
 const empty = css`
   padding: 12px 8px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
 `
 
 const loading = css`
   padding: 12px 8px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
 `
 
@@ -144,8 +145,8 @@ const hiddenToggle = css`
   font-size: 14px;
   line-height: 1;
   &[aria-pressed='true'] {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
   }
 `
 
@@ -353,11 +354,11 @@ export function FileBrowser({
   return (
     <div className={panel}>
       <div className={headerBar}>
-        <input
+        <SyncedInput
           className={searchInputFlex}
           placeholder="搜索文件…"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(v) => setQuery(v)}
           data-testid="file-search"
         />
         <button

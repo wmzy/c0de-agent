@@ -1,29 +1,31 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig, ProviderProtocol } from '@shared/types/llm.js'
 import { useQuery } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useMemo, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import type { CatalogModel, CatalogProvider } from '@/services/catalog.js'
 import { catalogAPI } from '@/services/catalog.js'
 
 const searchBar = css`
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   font-size: 13px;
   &:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
 const listContainer = css`
   flex: 1;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
 `
 
@@ -31,9 +33,9 @@ const providerItem = css`
   width: 100%;
   padding: 10px 12px;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   background: transparent;
-  color: var(--text);
+  color: var(--haze-color-text);
   cursor: pointer;
   text-align: left;
   display: flex;
@@ -41,12 +43,12 @@ const providerItem = css`
   align-items: center;
   gap: 8px;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
 const providerItemSelected = css`
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
 `
 
 const providerName = css`
@@ -56,13 +58,13 @@ const providerName = css`
 
 const providerMeta = css`
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const modelCount = css`
   font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
+  color: var(--haze-color-text-secondary);
+  background: var(--haze-color-bg-subtle);
   padding: 2px 8px;
   border-radius: 10px;
 `
@@ -76,7 +78,7 @@ const actions = css`
 const detailPanel = css`
   flex: 1;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
   padding: 8px;
 `
@@ -84,9 +86,9 @@ const detailPanel = css`
 const modelItem = css`
   padding: 6px 10px;
   margin-bottom: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   font-size: 12px;
   display: flex;
   justify-content: space-between;
@@ -107,18 +109,18 @@ const modelTag = css`
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 8px;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
+  border: 1px solid var(--haze-color-border);
+  color: var(--haze-color-text-secondary);
 `
 
 const modelTagActive = css`
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--haze-color-primary);
+  color: var(--haze-color-primary);
 `
 
 const sourceLink = css`
   font-size: 11px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   text-decoration: none;
   &:hover {
     text-decoration: underline;
@@ -139,7 +141,7 @@ const listFixed = css`
 const catalogHint = css`
   padding: 12px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const catalogItemHead = css`
@@ -231,24 +233,24 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
       testId="provider-catalog-dialog"
       footer={
         <div className={actions}>
-          <button type="button" onClick={onClose}>
+          <Button onClick={onClose} variant="outline">
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             onClick={handleSelect}
             disabled={!selectedProvider}
             data-testid="catalog-confirm"
+            variant="outline"
           >
             选择此 Provider
-          </button>
+          </Button>
         </div>
       }
     >
-      <input
+      <SyncedInput
         className={searchBar}
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(v) => setQuery(v)}
         placeholder="搜索 Provider 名称…"
         data-testid="catalog-search"
       />

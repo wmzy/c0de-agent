@@ -21,10 +21,10 @@ const TASK_ICONS: Record<TaskStatus, string> = {
 }
 
 const STATUS_COLORS: Record<TaskStatus, string> = {
-  completed: 'var(--success)',
-  in_progress: 'var(--primary)',
-  abandoned: 'var(--text-secondary)',
-  pending: 'var(--text-secondary)',
+  completed: 'var(--haze-color-success)',
+  in_progress: 'var(--haze-color-primary)',
+  abandoned: 'var(--haze-color-text-secondary)',
+  pending: 'var(--haze-color-text-secondary)',
 }
 
 const ROMAN_PAIRS: ReadonlyArray<readonly [number, string]> = [
@@ -60,8 +60,8 @@ const opLabel = css`
   display: inline-block;
   font-size: 11px;
   font-weight: 600;
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  color: var(--haze-color-primary);
+  background: color-mix(in srgb, var(--haze-color-primary) 10%, transparent);
   padding: 1px 6px;
   border-radius: 3px;
   margin-bottom: 6px;
@@ -70,7 +70,7 @@ const opLabel = css`
 const phaseHeader = css`
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin: 8px 0 2px;
@@ -80,7 +80,7 @@ const phaseHeader = css`
 `
 
 const romanNum = css`
-  color: var(--primary);
+  color: var(--haze-color-primary);
   font-weight: 700;
 `
 
@@ -109,7 +109,7 @@ const taskContent = css`
 
 const completed = css`
   text-decoration: line-through;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const abandoned = css`
@@ -122,7 +122,7 @@ const board = css`
 `
 
 const empty = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 13px;
   font-style: italic;
 `

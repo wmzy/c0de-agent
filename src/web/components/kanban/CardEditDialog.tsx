@@ -1,9 +1,12 @@
 import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput, SyncedTextarea } from '@/components/SyncedControls.js'
 import { generateId } from '@/hooks/id.js'
 import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '@/services/kanban.js'
+import { btnDanger } from '@/styles/tokens.js'
 
 const field = css`
   display: flex;
@@ -14,7 +17,7 @@ const field = css`
 const label = css`
   font-size: 12px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   min-height: auto;
 `
 
@@ -57,8 +60,8 @@ const labelChip = css`
   border-radius: 4px;
   font-size: 12px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
 `
 
 const labelChipSelected = css`
@@ -92,11 +95,11 @@ const labelChipDel = css`
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   min-height: auto;
   min-width: auto;
   &:hover {
-    color: var(--error);
+    color: var(--haze-color-danger);
   }
 `
 
@@ -109,7 +112,7 @@ const labelDot = css`
 
 const labelHint = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-style: italic;
 `
 
@@ -124,7 +127,7 @@ const colorSwatch = css`
   width: 22px;
   height: 22px;
   border-radius: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   cursor: pointer;
   flex-shrink: 0;
   padding: 0;
@@ -157,9 +160,9 @@ const actionsRight = css`
 `
 
 const PRIORITY_COLORS: Record<KanbanPriority, string> = {
-  high: 'var(--error)',
-  medium: 'var(--warning, #eab308)',
-  low: 'var(--text-secondary)',
+  high: 'var(--haze-color-danger)',
+  medium: 'var(--haze-color-warning, #eab308)',
+  low: 'var(--haze-color-text-secondary)',
 }
 
 const PRIORITY_LABELS: Record<KanbanPriority, string> = {
@@ -280,53 +283,51 @@ export function CardEditDialog({
       testId="card-edit-overlay"
       footer={
         <div className={actions}>
-          <button
-            type="button"
-            data-variant="danger"
+          <Button
+            className={btnDanger}
+            variant="outline"
             onClick={() => deleteMutation.mutate()}
             disabled={deleteMutation.isPending}
             style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
           >
             删除
-          </button>
+          </Button>
           <div className={actionsRight}>
-            <button
-              type="button"
-              data-variant="ghost"
+            <Button
+              variant="ghost"
               onClick={onClose}
               style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
             >
               取消
-            </button>
-            <button
-              type="button"
-              data-variant="primary"
+            </Button>
+            <Button
+              variant="solid"
               onClick={save}
               disabled={saveMutation.isPending || !titleVal.trim()}
               style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
             >
               保存
-            </button>
+            </Button>
           </div>
         </div>
       }
     >
       <div className={field}>
         <span className={label}>标题</span>
-        <input
+        <SyncedInput
           className={titleInput}
           value={titleVal}
-          onChange={(e) => setTitleVal(e.target.value)}
+          onChange={(v) => setTitleVal(v)}
           data-testid="card-title-input"
         />
       </div>
 
       <div className={field}>
         <span className={label}>描述</span>
-        <textarea
+        <SyncedTextarea
           className={descTextarea}
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={(v) => setDescription(v)}
           placeholder="添加详细描述…"
           data-testid="card-desc-input"
         />
@@ -382,18 +383,18 @@ export function CardEditDialog({
           <span className={labelHint}>暂无标签，可在下方创建</span>
         )}
         <div className={labelCreateRow}>
-          <input
+          <SyncedInput
             type="color"
             className={colorSwatch}
             value={newLabelColor}
-            onChange={(e) => setNewLabelColor(e.target.value)}
+            onChange={(v) => setNewLabelColor(v)}
             aria-label="标签颜色"
           />
-          <input
+          <SyncedInput
             className={labelNameInput}
             placeholder="新标签名…"
             value={newLabelName}
-            onChange={(e) => setNewLabelName(e.target.value)}
+            onChange={(v) => setNewLabelName(v)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') addLabel()
             }}
@@ -405,7 +406,7 @@ export function CardEditDialog({
       </div>
 
       {(saveMutation.isError || deleteMutation.isError) && (
-        <div style={{ color: 'var(--error)', fontSize: 12 }}>
+        <div style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
           操作失败：
           {(saveMutation.error as Error)?.message ?? (deleteMutation.error as Error)?.message}
         </div>

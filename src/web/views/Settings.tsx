@@ -2,8 +2,10 @@ import { css } from '@linaria/core'
 import { useBlocker, useMatched } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { AppearancePanel } from '@/components/settings/AppearancePanel.js'
 import { CommaListInput } from '@/components/settings/CommaListInput.js'
 import { CompactionPanel } from '@/components/settings/CompactionPanel.js'
@@ -32,6 +34,7 @@ import { UsagePanel } from '@/components/settings/UsagePanel.js'
 import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
+import { btnDanger } from '@/styles/tokens.js'
 import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
 
 /** 加载中占位。 */
@@ -48,7 +51,7 @@ const settingsScroll = css`
 
 /** 离开确认弹窗正文。 */
 const dialogBody = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 13px;
   line-height: 1.5;
 `
@@ -334,15 +337,15 @@ export function Settings() {
           alignItems: 'center',
           gap: 8,
           padding: '8px 16px',
-          borderBottom: '1px solid var(--border)',
+          borderBottom: '1px solid var(--haze-color-border)',
           fontSize: 12,
         }}
       >
-        <span style={{ color: 'var(--text-secondary)' }}>配置作用域</span>
-        <select
+        <span style={{ color: 'var(--haze-color-text-secondary)' }}>配置作用域</span>
+        <SyncedSelect
           value={scope}
-          onChange={(e) => {
-            const next = e.target.value as 'global' | 'project'
+          onValuesChange={(v) => {
+            const next = v as 'global' | 'project'
             // P2-10：dirty 时切换作用域会把草稿整体落盘到新作用域——先确认，防止误写。
             if (
               next !== scope &&
@@ -366,11 +369,11 @@ export function Settings() {
               : '项目配置（当前目录 .c0de/config.json）'}
           </option>
           <option value="global">全局配置（~/.c0de/config.json）</option>
-        </select>
+        </SyncedSelect>
         {projectId && resp?.projectDir && (
           <span
             style={{
-              color: 'var(--text-secondary)',
+              color: 'var(--haze-color-text-secondary)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -386,10 +389,10 @@ export function Settings() {
         <div
           style={{
             padding: '10px 16px',
-            borderBottom: '1px solid var(--border)',
-            background: 'color-mix(in srgb, var(--warning) 10%, transparent)',
+            borderBottom: '1px solid var(--haze-color-border)',
+            background: 'color-mix(in srgb, var(--haze-color-warning) 10%, transparent)',
             fontSize: 12,
-            color: 'var(--text)',
+            color: 'var(--haze-color-text)',
           }}
           data-testid="config-warnings"
         >
@@ -402,10 +405,10 @@ export function Settings() {
         <div
           style={{
             padding: '10px 16px',
-            borderBottom: '1px solid var(--border)',
-            background: 'color-mix(in srgb, var(--warning) 10%, transparent)',
+            borderBottom: '1px solid var(--haze-color-border)',
+            background: 'color-mix(in srgb, var(--haze-color-warning) 10%, transparent)',
             fontSize: 12,
-            color: 'var(--warning)',
+            color: 'var(--haze-color-warning)',
           }}
           data-testid="config-git-warning"
         >
@@ -424,7 +427,7 @@ export function Settings() {
       {viewMode === 'json' ? (
         <JsonConfigEditor jsonText={jsonText} jsonError={jsonError} onChange={onJsonChange} />
       ) : (
-        <>
+        <div>
           <AppearancePanel />
           <ProviderPanel providers={merged.providers} onProvidersChange={updateProviders} />
           <ModelPanel
@@ -472,28 +475,24 @@ export function Settings() {
             </label>
             <label className={field}>
               <span>成功率阈值</span>
-              <input
+              <SyncedInput
                 className={fieldInput}
                 type="number"
                 step="0.05"
                 min={0}
                 max={1}
-                value={merged.toolMetrics.threshold}
-                onChange={(e) =>
-                  updateSection('toolMetrics', { threshold: Number(e.target.value) })
-                }
+                value={String(merged.toolMetrics.threshold)}
+                onChange={(v) => updateSection('toolMetrics', { threshold: Number(v) })}
               />
             </label>
             <label className={field}>
               <span>最小样本数</span>
-              <input
+              <SyncedInput
                 className={fieldInput}
                 type="number"
                 min={0}
-                value={merged.toolMetrics.minSamples}
-                onChange={(e) =>
-                  updateSection('toolMetrics', { minSamples: Number(e.target.value) })
-                }
+                value={String(merged.toolMetrics.minSamples)}
+                onChange={(v) => updateSection('toolMetrics', { minSamples: Number(v) })}
               />
             </label>
           </div>
@@ -525,14 +524,12 @@ export function Settings() {
             <h2 className={sectionTitle}>多 Agent</h2>
             <label className={field}>
               <span>子 Agent 并发数</span>
-              <input
+              <SyncedInput
                 className={fieldInput}
                 type="number"
                 min={1}
-                value={merged.agents.subagentConcurrency}
-                onChange={(e) =>
-                  updateSection('agents', { subagentConcurrency: Number(e.target.value) })
-                }
+                value={String(merged.agents.subagentConcurrency)}
+                onChange={(v) => updateSection('agents', { subagentConcurrency: Number(v) })}
               />
             </label>
           </div>
@@ -562,7 +559,7 @@ export function Settings() {
             onTokenBudgetActionChange={(v) => updateSection('usage', { tokenBudgetAction: v })}
             projectId={projectId}
           />
-        </>
+        </div>
       )}
 
       <SettingsSaveBar
@@ -577,9 +574,9 @@ export function Settings() {
         <div
           style={{
             padding: '8px 16px',
-            borderTop: '1px solid var(--border)',
-            background: 'color-mix(in srgb, var(--warning) 10%, transparent)',
-            color: 'var(--warning)',
+            borderTop: '1px solid var(--haze-color-border)',
+            background: 'color-mix(in srgb, var(--haze-color-warning) 10%, transparent)',
+            color: 'var(--haze-color-warning)',
             fontSize: 12,
           }}
           data-testid="settings-restart-hint"
@@ -598,22 +595,17 @@ export function Settings() {
         testId="settings-unsaved-dialog"
         footer={
           <div className={dialogActions}>
-            <button
-              type="button"
-              data-variant="primary"
-              onClick={stayOnSettings}
-              data-testid="settings-unsaved-stay"
-            >
+            <Button onClick={stayOnSettings} data-testid="settings-unsaved-stay" variant="solid">
               留下
-            </button>
-            <button
-              type="button"
-              data-variant="danger"
+            </Button>
+            <Button
+              className={btnDanger}
+              variant="outline"
               onClick={confirmLeave}
               data-testid="settings-unsaved-leave"
             >
               离开
-            </button>
+            </Button>
           </div>
         }
       >

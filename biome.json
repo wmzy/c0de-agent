@@ -17,7 +17,25 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "a11y": {
+        "noLabelWithoutControl": {
+          "level": "error",
+          "options": {
+            "inputComponents": [
+              "Input",
+              "Select",
+              "Textarea",
+              "Checkbox",
+              "Switch",
+              "PasswordInput",
+              "SyncedInput",
+              "SyncedSelect",
+              "SyncedTextarea"
+            ]
+          }
+        }
+      }
     }
   },
   "javascript": {

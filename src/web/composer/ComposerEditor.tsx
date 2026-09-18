@@ -19,10 +19,10 @@ const editor = css`
   min-height: 44px;
   max-height: 200px;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text);
+  background: var(--haze-color-bg-subtle);
+  color: var(--haze-color-text);
   font: inherit;
   overflow-y: auto;
   line-height: 1.5;
@@ -34,7 +34,7 @@ const placeholderStyle = css`
   position: absolute;
   top: 10px;
   left: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   pointer-events: none;
   user-select: none;
   line-height: 1.5;
@@ -51,10 +51,10 @@ const pillTip = css`
   overflow: auto;
   padding: 8px 10px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono, monospace);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  font-family: var(--haze-font-mono, monospace);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre;

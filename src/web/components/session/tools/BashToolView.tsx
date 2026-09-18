@@ -6,7 +6,7 @@ import { useOverflow } from '@/components/session/hooks/useOverflow.js'
 const out = css`
   margin: 4px 0 0;
   padding: 8px;
-  background: var(--code-bg);
+  background: var(--haze-color-bg-muted);
   border-radius: 6px;
   font-size: 13px;
   white-space: pre-wrap;
@@ -21,7 +21,7 @@ const collapsed = css`
 
 const btn = css`
   font-size: 12px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -29,11 +29,11 @@ const btn = css`
 
 const exitOk = css`
   font-size: 12px;
-  color: var(--success);
+  color: var(--haze-color-success);
 `
 const exitErr = css`
   font-size: 12px;
-  color: var(--error);
+  color: var(--haze-color-danger);
 `
 
 const exitTag = css`

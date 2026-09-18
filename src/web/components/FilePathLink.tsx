@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useFileSelection } from '@/contexts/FileSelectionContext.js'
 
 const link = css`
-  color: var(--primary);
+  color: var(--haze-color-primary);
   background: transparent;
   border: none;
   padding: 0;

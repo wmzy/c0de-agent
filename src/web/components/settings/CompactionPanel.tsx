@@ -1,5 +1,6 @@
 import type { Config } from '@shared/types/config.js'
 import type { ProviderConfig } from '@shared/types/llm.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { ProviderModelSelect } from '@/components/settings/ProviderModelSelect.js'
 import { checkRow, field, fieldInput, section, sectionTitle } from '@/components/settings/styles.js'
 
@@ -36,34 +37,34 @@ function CompactionPanel({
       </label>
       <label className={field}>
         <span>触发阈值</span>
-        <input
+        <SyncedInput
           className={fieldInput}
           type="number"
           step="0.05"
           min={0}
           max={1}
-          value={compaction.threshold}
-          onChange={(e) => onCompactionChange({ threshold: Number(e.target.value) })}
+          value={String(compaction.threshold)}
+          onChange={(v) => onCompactionChange({ threshold: Number(v) })}
         />
       </label>
       <label className={field}>
         <span>保留 Token</span>
-        <input
+        <SyncedInput
           className={fieldInput}
           type="number"
           min={0}
-          value={compaction.reserveTokens}
-          onChange={(e) => onCompactionChange({ reserveTokens: Number(e.target.value) })}
+          value={String(compaction.reserveTokens)}
+          onChange={(v) => onCompactionChange({ reserveTokens: Number(v) })}
         />
       </label>
       <label className={field}>
         <span>近期保留 Token</span>
-        <input
+        <SyncedInput
           className={fieldInput}
           type="number"
           min={0}
-          value={compaction.keepRecentTokens}
-          onChange={(e) => onCompactionChange({ keepRecentTokens: Number(e.target.value) })}
+          value={String(compaction.keepRecentTokens)}
+          onChange={(v) => onCompactionChange({ keepRecentTokens: Number(v) })}
         />
       </label>
       <label className={checkRow}>

@@ -8,8 +8,8 @@ import { useMessages } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 
 const wrap = css`
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   font-size: 12px;
 `
 
@@ -21,12 +21,12 @@ const toggle = css`
   padding: 6px 16px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   text-align: left;
 
   &:hover {
-    color: var(--text);
+    color: var(--haze-color-text);
   }
 `
 
@@ -40,11 +40,11 @@ const grid = css`
 `
 
 const label = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const value = css`
-  color: var(--text);
+  color: var(--haze-color-text);
   font-variant-numeric: tabular-nums;
   word-break: break-word;
 `
@@ -52,14 +52,14 @@ const value = css`
 const sessionTitle = css`
   grid-column: 1 / -1;
   font-weight: 600;
-  color: var(--text);
+  color: var(--haze-color-text);
   font-size: 13px;
   margin-bottom: 2px;
 `
 
 const status = css`
   grid-column: 1 / -1;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 /** 千分位格式化（与 opencode 一致：1,000,000 / 302,253）。 */

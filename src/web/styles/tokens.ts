@@ -11,17 +11,17 @@ import { css } from '@linaria/core'
 
 /** 输入控件原子类：边框 / 4px 圆角 / 背景 / 文字色。 */
 export const inputStyle = css`
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
 `
 
 /** 卡片容器原子类：边框 / 6px 圆角 / 背景。 */
 export const cardStyle = css`
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--haze-color-bg);
 `
 
 /** 小号按钮原子类：自适应尺寸 / 内边距 / 字号 / 边框 / 圆角 / 背景 / 文字色 / 指针 / 禁用态。 */
@@ -30,15 +30,24 @@ export const btnSm = css`
   min-width: auto;
   padding: 4px 10px;
   font-size: 13px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   cursor: pointer;
   &:disabled,
   &[aria-disabled='true'] {
-    color: var(--text-disabled);
-    background: var(--bg-disabled);
+    color: var(--haze-color-text-muted);
+    background: var(--haze-color-bg-muted);
     cursor: not-allowed;
+  }
+`
+
+/** 危险操作按钮（配合 haze Button outline 变体：危险文字与边框、悬停淡红底）。 */
+export const btnDanger = css`
+  color: var(--haze-color-danger);
+  border-color: color-mix(in srgb, var(--haze-color-danger) 45%, var(--haze-color-border));
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    background: color-mix(in srgb, var(--haze-color-danger) 12%, var(--haze-color-bg-subtle));
   }
 `

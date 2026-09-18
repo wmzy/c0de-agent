@@ -11,7 +11,7 @@ const notFound = css`
   gap: 12px;
   padding: 24px;
   text-align: center;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
 `
 
@@ -19,21 +19,21 @@ const code = css`
   font-size: 48px;
   font-weight: 700;
   line-height: 1;
-  color: var(--text);
+  color: var(--haze-color-text);
   letter-spacing: 2px;
 `
 
 const backLink = css`
   margin-top: 8px;
   padding: 8px 16px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--haze-color-primary);
   border-radius: 6px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   text-decoration: none;
   font-size: 13px;
 
   &:hover {
-    background: color-mix(in srgb, var(--primary) 10%, transparent);
+    background: color-mix(in srgb, var(--haze-color-primary) 10%, transparent);
   }
 `
 

@@ -1,12 +1,13 @@
+// 内容 diff 视图：haze DiffViewer 渲染行级差异（行号 + +/- 符号 + 语义底色），
+// 外层保留项目的展开/收起（useOverflow 200px）与 testid 契约。
 import { css } from '@linaria/core'
-import { diffLines } from 'diff'
+import { DiffViewer } from 'haze-ui'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
 
 const wrap = css`
   margin: 4px 0;
   border-radius: 6px;
   overflow: auto;
-  border: 1px solid var(--border);
   font-size: 13px;
   max-height: 400px;
 `
@@ -18,71 +19,22 @@ const collapsed = css`
 
 const btn = css`
   font-size: 12px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   background: transparent;
   border: none;
   cursor: pointer;
 `
 
-const row = css`
-  display: flex;
-  white-space: pre-wrap;
-  word-break: break-word;
-  padding: 0 8px;
-  line-height: 1.5;
-  font-family: 'SFMono-Regular', Consolas, monospace;
-`
-
-const marker = css`
-  width: 16px;
-  flex-shrink: 0;
-  color: var(--text-secondary);
-  user-select: none;
-`
-
-const added = css`
-  background: var(--diff-add-bg);
-  color: var(--diff-add-text);
-`
-
-const removed = css`
-  background: var(--diff-del-bg);
-  color: var(--diff-del-text);
-`
-
-type RowKind = 'added' | 'removed' | 'unchanged'
-
 export function ContentDiff({ oldText, newText }: { oldText: string; newText: string }) {
-  const normalizedOld = oldText.endsWith('\n') ? oldText : `${oldText}\n`
-  const normalizedNew = newText.endsWith('\n') ? newText : `${newText}\n`
-  const parts = diffLines(normalizedOld, normalizedNew)
+  // DiffViewer 按 '\n' 切行，行尾换行会多出一行空行——先行归一化。
+  const stripTrailing = (s: string) => (s.endsWith('\n') ? s.slice(0, -1) : s)
   const { ref, overflowing, expanded, toggle } = useOverflow(200)
   const showToggle = overflowing && !expanded
-  const rows: { kind: RowKind; text: string }[] = []
-  for (const part of parts) {
-    const lines = part.value.split('\n')
-    // diffLines 的 value 末尾常带换行，会多一个空行，去掉
-    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
-    const kind: RowKind = part.added ? 'added' : part.removed ? 'removed' : 'unchanged'
-    for (const line of lines) rows.push({ kind, text: line })
-  }
   return (
     <div data-testid="diff-wrap">
       <div ref={ref} className={showToggle ? collapsed : ''}>
         <div className={wrap} data-testid="diff">
-          {rows.map((r, i) => (
-            <div
-              // biome-ignore lint/suspicious/noArrayIndexKey: diff 行无稳定 id
-              key={i}
-              className={`${row} ${r.kind === 'added' ? added : r.kind === 'removed' ? removed : ''}`}
-              data-diff={r.kind}
-            >
-              <span className={marker}>
-                {r.kind === 'added' ? '+' : r.kind === 'removed' ? '-' : ' '}
-              </span>
-              <span>{r.text}</span>
-            </div>
-          ))}
+          <DiffViewer oldValue={stripTrailing(oldText)} newValue={stripTrailing(newText)} />
         </div>
       </div>
       {overflowing && (

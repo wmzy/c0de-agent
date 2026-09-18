@@ -10,8 +10,14 @@ describe('EditToolView', () => {
       <EditToolView input={{ path: 'a.ts', oldText: 'old', newText: 'new' }} status="completed" />,
     )
     expect(screen.getByTestId('diff')).toBeInTheDocument()
-    const removed = screen.getByTestId('diff').querySelectorAll('[data-diff="removed"]')
-    const added = screen.getByTestId('diff').querySelectorAll('[data-diff="added"]')
+    // haze DiffViewer：行以 data-slot="line" 标识，类型由行内符号（+/-）判定。
+    const rows = screen.getByTestId('diff').querySelectorAll('[data-slot="line"]')
+    const removed = Array.from(rows).filter((r) =>
+      r.querySelector('[data-slot="sign"]')?.textContent?.startsWith('-'),
+    )
+    const added = Array.from(rows).filter((r) =>
+      r.querySelector('[data-slot="sign"]')?.textContent?.startsWith('+'),
+    )
     expect(removed.length).toBe(1)
     expect(added.length).toBe(1)
   })

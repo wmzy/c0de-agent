@@ -4,6 +4,7 @@ import { EditorState, StateEffect, StateField } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { Decoration, type DecorationSet, EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { css } from '@linaria/core'
+import { Button } from 'haze-ui'
 import { useEffect, useRef, useState } from 'react'
 import type { LineRange } from '@/contexts/FileSelectionContext.js'
 import { useTheme } from '@/contexts/ThemeContext.js'
@@ -45,7 +46,7 @@ const highlightField = StateField.define<DecorationSet>({
 const highlightTheme = EditorView.baseTheme({
   '.cm-highlight-line': {
     backgroundColor: 'rgba(255, 213, 79, 0.22)',
-    boxShadow: 'inset 3px 0 0 var(--primary, #0969da)',
+    boxShadow: 'inset 3px 0 0 var(--haze-color-primary, #0969da)',
   },
 })
 
@@ -154,9 +155,9 @@ export function CodeEditor({
     <div className={editorWrap}>
       <div className={editorBar}>
         <span className={editorPath}>{path}</span>
-        <button onClick={() => void save()} disabled={!dirty} type="button" data-testid="save">
+        <Button variant="outline" onClick={() => void save()} disabled={!dirty} data-testid="save">
           {dirty ? '保存*' : '已保存'}
-        </button>
+        </Button>
       </div>
       <div ref={hostRef} className={editorHost} />
     </div>

@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { Button } from 'haze-ui'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '@/components/StreamingIndicator.js'
@@ -82,8 +83,8 @@ const topBar = css`
   align-items: center;
   gap: 8px;
   padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   font-size: 12px;
 `
 
@@ -96,14 +97,14 @@ const topStatus = css`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 /* 流控按钮（暂停/恢复/中止）：ghost 化融入 secondary 底色横条；中止用 error 色警示 */
 const ctlBtn = css`
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -112,16 +113,16 @@ const ctlBtn = css`
   min-width: auto;
 
   &:hover:not(:disabled) {
-    color: var(--text);
-    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--haze-color-text);
+    background: color-mix(in srgb, var(--haze-color-text) 8%, transparent);
   }
 `
 
 const ctlDanger = css`
-  color: var(--error);
+  color: var(--haze-color-danger);
   &:hover:not(:disabled) {
-    color: var(--error);
-    background: color-mix(in srgb, var(--error) 10%, transparent);
+    color: var(--haze-color-danger);
+    background: color-mix(in srgb, var(--haze-color-danger) 10%, transparent);
   }
 `
 
@@ -135,24 +136,24 @@ const viewSwitch = css`
   padding: 2px;
   border: none;
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--haze-color-bg);
 
   & > button {
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--haze-color-text-secondary);
     padding: 3px 12px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 12px;
 
     &:hover {
-      color: var(--text);
+      color: var(--haze-color-text);
     }
 
     &[aria-pressed='true'] {
-      background: var(--bg-secondary);
-      color: var(--primary);
+      background: var(--haze-color-bg-subtle);
+      color: var(--haze-color-primary);
       font-weight: 600;
     }
   }
@@ -164,16 +165,16 @@ const viewJsonLink = css`
   background: none;
   padding: 3px 6px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-decoration: underline dotted;
   text-underline-offset: 3px;
   border-radius: 4px;
   cursor: pointer;
   &:hover {
-    color: var(--primary);
+    color: var(--haze-color-primary);
   }
   &[aria-pressed='true'] {
-    color: var(--primary);
+    color: var(--haze-color-primary);
     font-weight: 600;
   }
 `
@@ -193,23 +194,23 @@ const interruptBanner = css`
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 
   & > button {
-    border: 1px solid var(--border);
+    border: 1px solid var(--haze-color-border);
     border-radius: 6px;
     padding: 3px 12px;
     cursor: pointer;
     font-size: 12px;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
 
     &:first-of-type {
-      border-color: var(--primary);
-      color: var(--primary);
+      border-color: var(--haze-color-primary);
+      color: var(--haze-color-primary);
     }
   }
 `
@@ -220,17 +221,17 @@ const wfProgressBanner = css`
   align-items: center;
   gap: 8px;
   padding: 5px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg);
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const wfProgressDot = css`
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--haze-color-primary);
   flex-shrink: 0;
   animation: wfProgressPulse 1.4s ease-in-out infinite;
   @keyframes wfProgressPulse {
@@ -258,15 +259,15 @@ const footerBar = css`
   gap: 8px;
   flex-wrap: wrap;
   padding: 4px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-top: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   font-size: 12px;
 `
 
 /** auto 开启态的底栏：仅顶部 2px 警示细线提示状态（须在 footerBar 之后定义以按源序覆盖）。
  * 不再整条染橙——授权模式是持续状态而非错误，高饱和底色会长期压制消息流视觉。 */
 const footerBarAuto = css`
-  border-top: 2px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  border-top: 2px solid color-mix(in srgb, var(--haze-color-warning) 55%, transparent);
 `
 
 const footerLeft = css`
@@ -314,7 +315,7 @@ const modeToggle = css`
 
 /** 关闭态中性说明：次级文本色，无警示语义。 */
 const modeHint = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 /** 开启态警示 pill：描边淡底（--warning 前景 + 10% 底 + 45% 边框），短文案降噪，
@@ -325,9 +326,9 @@ const modeWarn = css`
   gap: 4px;
   padding: 2px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--haze-color-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--haze-color-warning) 10%, transparent);
+  color: var(--haze-color-warning);
   font-weight: 600;
   /* 窄屏换行后允许文本截断，不横向撑破底栏 */
   min-width: 0;
@@ -351,9 +352,9 @@ const allowChip = css`
   gap: 2px;
   padding: 1px 6px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-secondary);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text-secondary);
   font-size: 11px;
   white-space: nowrap;
 `
@@ -361,7 +362,7 @@ const allowChip = css`
 const chipRemove = css`
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
@@ -369,7 +370,7 @@ const chipRemove = css`
   min-height: auto;
   min-width: auto;
   &:hover {
-    color: var(--error);
+    color: var(--haze-color-danger);
   }
 `
 
@@ -460,22 +461,22 @@ export function Chat({
     <>
       <div className={topBar} data-testid="view-bar">
         <section className={viewSwitch} aria-label="视图模式">
-          <button
-            type="button"
+          <Button
             aria-pressed={viewMode === 'chat'}
+            variant="outline"
             onClick={() => setViewMode('chat')}
             data-testid="view-chat"
           >
             聊天
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             aria-pressed={viewMode === 'table'}
+            variant="outline"
             onClick={() => setViewMode('table')}
             data-testid="view-table"
           >
             表格
-          </button>
+          </Button>
         </section>
         <div className={topSpacer} />
         {/* topStatus 单行截断仅是排布：错误全文经 title 悬停可达（usage 态无需） */}
@@ -483,7 +484,7 @@ export function Chat({
           <>
             <span
               className={topStatus}
-              style={error ? { color: 'var(--error)' } : undefined}
+              style={error ? { color: 'var(--haze-color-danger)' } : undefined}
               title={error ?? undefined}
             >
               {error
@@ -548,19 +549,19 @@ export function Chat({
               : '对话继续执行。'}
           </span>
           {onReopenPermission ? (
-            <button
-              type="button"
+            <Button
               onClick={onReopenPermission}
               data-testid="permission-reopen"
               title="重新打开该工具的确认弹窗；本回合已执行的工具不会重复执行"
+              variant="outline"
             >
               重新询问
-            </button>
+            </Button>
           ) : null}
           {onDenyTimedOutPermission ? (
-            <button type="button" onClick={onDenyTimedOutPermission} title="拒绝该工具并继续">
+            <Button onClick={onDenyTimedOutPermission} title="拒绝该工具并继续" variant="outline">
               拒绝并继续
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}

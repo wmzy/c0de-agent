@@ -23,21 +23,21 @@ const setupBanner = css`
   align-items: center;
   gap: 10px;
   padding: 10px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--haze-color-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--haze-color-warning) 10%, transparent);
   font-size: 13px;
-  color: var(--text);
+  color: var(--haze-color-text);
 
   & > a {
-    color: var(--primary);
+    color: var(--haze-color-primary);
     text-decoration: none;
-    border: 1px solid var(--primary);
+    border: 1px solid var(--haze-color-primary);
     border-radius: 6px;
     padding: 3px 12px;
     font-size: 12px;
     flex-shrink: 0;
     &:hover {
-      background: color-mix(in srgb, var(--primary) 10%, transparent);
+      background: color-mix(in srgb, var(--haze-color-primary) 10%, transparent);
     }
   }
 `
@@ -74,7 +74,7 @@ const skeletonStream = css`
 const skeletonBar = css`
   height: 12px;
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   animation: skeletonPulse 1.5s ease-in-out infinite;
 
   @keyframes skeletonPulse {
@@ -101,7 +101,7 @@ const welcomeWrap = css`
 const welcomeSub = css`
   margin: 0;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-align: center;
 `
 
@@ -120,19 +120,19 @@ const exampleCard = css`
   align-items: flex-start;
   gap: 4px;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--haze-color-bg);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.12s ease,
     box-shadow 0.12s ease;
 
   &:hover {
-    background: var(--bg-secondary);
-    border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+    background: var(--haze-color-bg-subtle);
+    border-color: color-mix(in srgb, var(--haze-color-primary) 40%, var(--haze-color-border));
     transform: translateY(-1px);
-    box-shadow: var(--shadow);
+    box-shadow: var(--haze-shadow-md);
   }
 
   &:active {
@@ -144,18 +144,18 @@ const exampleCard = css`
 const cardTitle = css`
   font-size: 13px;
   font-weight: 500;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const cardDesc = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const welcomeHint = css`
   margin: 0;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 /** 空会话示例任务卡片：title 是卡片标签，prompt 是点击后填入 composer 的文本。 */

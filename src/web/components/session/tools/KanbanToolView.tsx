@@ -34,8 +34,8 @@ const opLabel = css`
   display: inline-block;
   font-size: 11px;
   font-weight: 600;
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  color: var(--haze-color-primary);
+  background: color-mix(in srgb, var(--haze-color-primary) 10%, transparent);
   padding: 1px 6px;
   border-radius: 3px;
   margin-bottom: 6px;
@@ -51,7 +51,7 @@ const boardStyle = css`
 const colHeader = css`
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 4px;
@@ -67,13 +67,13 @@ const cardRow = css`
 `
 
 const empty = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 13px;
   font-style: italic;
 `
 
 const detail = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   margin-bottom: 4px;
 `

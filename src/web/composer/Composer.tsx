@@ -23,8 +23,8 @@ const wrap = css`
   position: relative;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
+  border-top: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg);
 `
 
 const editorRow = css`
@@ -46,21 +46,21 @@ const sendBtn = css`
   padding: 8px 16px;
   border-radius: 8px;
   border: none;
-  background: var(--primary);
+  background: var(--haze-color-primary);
   color: #fff;
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
   &:hover:not(:disabled) {
-    background: var(--primary-hover);
+    background: var(--haze-color-primary-hover);
   }
   &:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 25%, transparent);
   }
   &:disabled {
-    color: var(--text-disabled);
-    background: var(--bg-disabled);
+    color: var(--haze-color-text-muted);
+    background: var(--haze-color-bg-muted);
     cursor: not-allowed;
   }
 `
@@ -69,24 +69,24 @@ const appendBtn = css`
   align-self: flex-end;
   padding: 8px 16px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   background: transparent;
-  color: var(--text);
+  color: var(--haze-color-text);
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
   &:hover:not(:disabled) {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
   }
   &:focus-visible {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+    border-color: var(--haze-color-primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 25%, transparent);
   }
   &:disabled {
-    color: var(--text-disabled);
-    background: var(--bg-disabled);
+    color: var(--haze-color-text-muted);
+    background: var(--haze-color-bg-muted);
     cursor: not-allowed;
   }
 `
@@ -96,7 +96,7 @@ const stopBtn = css`
   padding: 8px 16px;
   border-radius: 8px;
   border: none;
-  background: var(--error);
+  background: var(--haze-color-danger);
   color: #fff;
   cursor: pointer;
   font-size: 14px;
@@ -107,12 +107,12 @@ const dragOverlay = css`
   position: absolute;
   inset: 0;
   background: rgba(74, 158, 255, 0.12);
-  border: 2px dashed var(--accent, #4a9eff);
+  border: 2px dashed var(--haze-color-primary, #4a9eff);
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent, #4a9eff);
+  color: var(--haze-color-primary, #4a9eff);
   font-size: 14px;
   pointer-events: none;
   z-index: 20;
@@ -395,7 +395,7 @@ function Composer(props: ComposerProps) {
           className={css`
             padding: 4px 12px 0;
             font-size: 12px;
-            color: var(--error);
+            color: var(--haze-color-danger);
           `}
           data-testid="image-error"
         >

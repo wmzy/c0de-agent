@@ -23,8 +23,8 @@ const bar = css`
   gap: 4px;
   min-height: ${STICKY_H}px;
   padding: 0 6px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  background: var(--haze-color-bg-subtle);
+  border-bottom: 1px solid var(--haze-color-border);
   border-radius: 0 0 6px 6px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 `
@@ -38,7 +38,7 @@ const jump = css`
   cursor: pointer;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--text);
+  color: var(--haze-color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -52,17 +52,17 @@ const nav = css`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-secondary);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text-secondary);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
   padding: 0;
 
   &:hover:not(:disabled) {
-    color: var(--text);
-    border-color: var(--primary);
+    color: var(--haze-color-text);
+    border-color: var(--haze-color-primary);
   }
 
   &:disabled {

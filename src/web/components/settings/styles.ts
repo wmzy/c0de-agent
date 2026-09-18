@@ -10,7 +10,7 @@ import { css } from '@linaria/core'
 /** 设置分区容器：标题 + 字段纵向堆叠，底部分隔线。 */
 const section = css`
   padding: 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
 `
 
 /** 分区标题（h2 语义）：紧凑尺寸，避免浏览器 h2 默认字号放大分区头。 */
@@ -37,7 +37,7 @@ const fieldInput = css`
 /** 说明文本：小号、次级色、上间距。 */
 const hint = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   margin-top: 4px;
 `
 
@@ -60,7 +60,7 @@ const kvRow = css`
 
 /** 灰化提示文本（独立出现时）。 */
 const mutedHint = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 13px;
 `
 

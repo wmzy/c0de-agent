@@ -71,9 +71,9 @@ const addToChatBtnStyle = css`
   gap: 4px;
   padding: 3px 10px;
   font-size: 12px;
-  color: var(--text);
-  background: var(--bg-secondary, #1c2128);
-  border: 1px solid var(--primary, #4a9eff);
+  color: var(--haze-color-text);
+  background: var(--haze-color-bg-subtle, #1c2128);
+  border: 1px solid var(--haze-color-primary, #4a9eff);
   border-radius: 6px;
   cursor: pointer;
   user-select: none;
@@ -81,7 +81,7 @@ const addToChatBtnStyle = css`
   transition: background 0.12s;
 
   &:hover {
-    background: var(--primary, #4a9eff);
+    background: var(--haze-color-primary, #4a9eff);
     color: #fff;
   }
 `
@@ -92,7 +92,7 @@ const blockHighlightStyle = css`
   right: 0;
   z-index: 5;
   background: rgba(74, 158, 255, 0.08);
-  border-left: 2px solid var(--primary, #4a9eff);
+  border-left: 2px solid var(--haze-color-primary, #4a9eff);
   pointer-events: none;
 `
 

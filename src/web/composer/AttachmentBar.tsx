@@ -14,7 +14,7 @@ const thumb = css`
   height: 64px;
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   & img {
     width: 100%;
     height: 100%;
@@ -40,18 +40,18 @@ const removeBtn = css`
 const warning = css`
   width: 100%;
   font-size: 12px;
-  color: var(--danger, #e5484d);
+  color: var(--haze-color-danger, #e5484d);
 `
 
 /** L1：图片体积/成本提示——贴图直接计入 token，大图消耗显著，发送前明示。 */
 const sizeHint = css`
   width: 100%;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const sizeHintHeavy = css`
-  color: var(--warning);
+  color: var(--haze-color-warning);
 `
 
 type Props = {

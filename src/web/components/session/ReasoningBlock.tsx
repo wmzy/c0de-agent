@@ -3,7 +3,7 @@ import { memo, useState } from 'react'
 import { Markdown } from '@/components/Markdown.js'
 
 const wrap = css`
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   overflow: hidden;
 `
@@ -16,9 +16,9 @@ const header = css`
   padding: 6px 10px;
   text-align: left;
   cursor: pointer;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const title = css`
@@ -31,7 +31,7 @@ const preview = css`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   opacity: 0.7;
 `
 

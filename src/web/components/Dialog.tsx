@@ -1,5 +1,10 @@
+// 应用层对话框组件：对外保持 DialogProps API（footer/width/testId），
+// 内部由 haze-ui 的原生 <dialog> 驱动（showModal/焦点管理/::backdrop/Esc）。
+// 面板尺寸通过 --haze-dialog-width / --haze-dialog-padding 令牌注入，
+// 面板与内容布局（header/footer/滚动区）沿用项目 Linaria 类。
 import { css } from '@linaria/core'
-import { type ReactNode, useEffect } from 'react'
+import { Dialog as HazeDialog } from 'haze-ui'
+import type { ReactNode } from 'react'
 
 export type DialogProps = {
   open?: boolean
@@ -11,43 +16,32 @@ export type DialogProps = {
   testId?: string
 }
 
-const overlay = css`
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
-`
-
-const container = css`
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+/** 面板：全高列布局，内部滚动；外框圆角/阴影/边框由 haze 面板样式提供。 */
+const panel = css`
+  position: relative;
   display: flex;
   flex-direction: column;
-  max-height: 85vh;
-  max-width: 92vw;
-  width: min(480px, 92vw);
+  max-height: 85dvh;
+  overflow: hidden;
 `
 
+/** 标题行：h2 槽位类（haze classNames.header）。 */
 const header = css`
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-`
-
-const titleText = css`
+  padding: 16px 44px 16px 20px;
+  border-bottom: 1px solid var(--haze-color-border);
   font-size: 15px;
   font-weight: 600;
 `
 
+/** 关闭按钮：绝对定位在面板右上角，与标题行对齐。 */
 const closeButton = css`
+  position: absolute;
+  top: 10px;
+  right: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -56,16 +50,16 @@ const closeButton = css`
   border: none;
   border-radius: 4px;
   background: none;
-  color: var(--text-secondary);
-  font-size: 18px;
+  color: var(--haze-color-text-secondary);
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
 
   &:hover {
-    background: var(--bg-secondary);
-    color: var(--text);
+    background: var(--haze-color-bg-subtle);
+    color: var(--haze-color-text);
   }
 `
 
@@ -80,8 +74,11 @@ const content = css`
 `
 
 const footerBar = css`
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
   padding: 12px 20px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--haze-color-border);
 `
 
 export function Dialog({
@@ -93,39 +90,30 @@ export function Dialog({
   width,
   testId,
 }: DialogProps) {
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
+  // 与旧实现一致：关闭即卸载（调用点按条件挂载语义依赖）。
   if (!open) return null
-
   return (
     <div
-      className={overlay}
-      role="dialog"
-      aria-modal="true"
-      data-testid={testId}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
+      style={
+        {
+          '--haze-dialog-width': width ?? '480px',
+          '--haze-dialog-padding': '0',
+        } as React.CSSProperties
+      }
     >
-      <div className={container} style={width ? { width } : undefined}>
+      <HazeDialog open onClose={onClose} title={title} classNames={{ root: panel, header }}>
         {title != null && (
-          <div className={header}>
-            <div className={titleText}>{title}</div>
-            <button type="button" className={closeButton} onClick={onClose} aria-label="关闭">
-              ✕
-            </button>
+          <button type="button" className={closeButton} onClick={onClose} aria-label="关闭">
+            ✕
+          </button>
+        )}
+        {children != null && (
+          <div className={content} data-testid={testId}>
+            {children}
           </div>
         )}
-        {children != null && <div className={content}>{children}</div>}
         {footer != null && <div className={footerBar}>{footer}</div>}
-      </div>
+      </HazeDialog>
     </div>
   )
 }

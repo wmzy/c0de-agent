@@ -12,7 +12,7 @@ const wrap = css`
 const pre = css`
   margin: 0;
   padding: 8px;
-  background: var(--code-bg);
+  background: var(--haze-color-bg-muted);
   border-radius: 6px;
   font-size: 13px;
 `
@@ -30,7 +30,7 @@ const scrollExpanded = css`
 const btn = css`
   align-self: flex-start;
   font-size: 12px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   background: transparent;
   border: none;
   cursor: pointer;

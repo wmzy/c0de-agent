@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { Dialog } from '@/components/Dialog.js'
 
 const bodyText = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 13px;
   line-height: 1.5;
 `
@@ -10,9 +10,9 @@ const bodyText = css`
 const riskList = css`
   margin: 10px 0 0;
   padding: 8px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   font-size: 12px;
   display: flex;
   flex-direction: column;
@@ -34,24 +34,24 @@ const actions = css`
 
 const btn = css`
   padding: 6px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text);
+  background: var(--haze-color-bg-subtle);
+  color: var(--haze-color-text);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
 
   &:hover {
-    background: var(--bg);
+    background: var(--haze-color-bg);
   }
 `
 
 const primary = css`
   ${btn};
-  border-color: var(--accent, var(--border));
-  background: var(--accent, var(--bg-secondary));
-  color: var(--bg, #fff);
+  border-color: var(--haze-color-primary, var(--haze-color-border));
+  background: var(--haze-color-primary, var(--haze-color-bg-subtle));
+  color: var(--haze-color-bg, #fff);
 `
 
 export type TrustRiskItem = { kind: string; detail: string }

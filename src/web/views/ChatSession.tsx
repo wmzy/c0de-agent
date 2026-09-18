@@ -5,6 +5,7 @@
 import { css } from '@linaria/core'
 import { useRouter } from '@native-router/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { ArchivePanel } from '@/components/ArchivePanel.js'
@@ -36,23 +37,23 @@ const interruptBanner = css`
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 
   & > button {
-    border: 1px solid var(--border);
+    border: 1px solid var(--haze-color-border);
     border-radius: 6px;
     padding: 3px 12px;
     cursor: pointer;
     font-size: 12px;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
 
     &:first-of-type {
-      border-color: var(--primary);
-      color: var(--primary);
+      border-color: var(--haze-color-primary);
+      color: var(--haze-color-primary);
     }
   }
 `
@@ -62,15 +63,15 @@ const shakeBtn = css`
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
   background: transparent;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
 
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 
   &:disabled {
@@ -84,27 +85,27 @@ const shakeToolbar = css`
   align-items: center;
   gap: 8px;
   padding: 2px 10px;
-  border: 1px solid color-mix(in srgb, var(--warning) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--haze-color-warning) 50%, transparent);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  background: color-mix(in srgb, var(--haze-color-warning) 8%, transparent);
   font-size: 12px;
-  color: var(--warning);
+  color: var(--haze-color-warning);
 
   & > span {
-    color: var(--text-secondary);
+    color: var(--haze-color-text-secondary);
   }
 
   & > button {
-    border: 1px solid var(--border);
+    border: 1px solid var(--haze-color-border);
     border-radius: 3px;
     padding: 1px 8px;
     font-size: 11px;
     cursor: pointer;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
 
     &:hover {
-      background: var(--bg-secondary);
+      background: var(--haze-color-bg-subtle);
     }
 
     &:disabled {
@@ -117,11 +118,11 @@ const shakeToolbar = css`
 const shakeExitBtn = css`
   border: none !important;
   background: transparent !important;
-  color: var(--text-secondary) !important;
+  color: var(--haze-color-text-secondary) !important;
   padding: 0 4px !important;
 
   &:hover {
-    color: var(--text) !important;
+    color: var(--haze-color-text) !important;
   }
 `
 
@@ -410,26 +411,26 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                       {sessionMeta.worktreePath}
                       ）。归属到当前项目可将其纳入项目会话列表。
                     </span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="outline"
                       onClick={() => rebindToCurrent.mutate()}
                       disabled={rebindToCurrent.isPending}
                     >
                       归属到当前项目
-                    </button>
+                    </Button>
                   </>
                 ) : (
                   <>
                     <span>
                       该会话未归属任何项目（原项目已删除），无法执行工具。归属到当前项目后可继续使用。
                     </span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="outline"
                       onClick={() => rebindToCurrent.mutate()}
                       disabled={rebindToCurrent.isPending}
                     >
                       归属到当前项目
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -445,37 +446,37 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                         ? `可在任意会话重新执行 /workflow run ${sessionMeta.metadata.workflowName} 发起新的运行（新会话节点）。`
                         : '可重新执行 /workflow run <name> 发起新的运行（新会话节点）。'}
                     </span>
-                    <button
+                    <Button
+                      variant="outline"
                       onClick={() => {
                         setColdStartInterrupted(false)
                         chat.clearInterrupted()
                       }}
-                      type="button"
                     >
                       知道了
-                    </button>
+                    </Button>
                   </>
                 ) : (
                   <>
                     <span>
                       连接已中断（服务可能已重启）。恢复将重发上一条消息，已执行的工具可能重复执行
                     </span>
-                    <button
+                    <Button
+                      variant="outline"
                       onClick={() => void handleResume()}
-                      type="button"
                       title="重发上一条消息继续；中断前已执行的工具（bash/git 等）可能再次执行"
                     >
                       恢复对话
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="outline"
                       onClick={() => {
                         setColdStartInterrupted(false)
                         chat.clearInterrupted()
                       }}
-                      type="button"
                     >
                       忽略
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -485,9 +486,9 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                 <span>
                   对话正在运行中（可能在其他标签页启动，或挂起期间切换了页面）。完成后自动刷新。
                 </span>
-                <button onClick={() => chat.abort()} type="button" title="中止后台运行中的对话">
+                <Button variant="outline" onClick={() => chat.abort()} title="中止后台运行中的对话">
                   中止
-                </button>
+                </Button>
               </div>
             )}
             {chat.runPaused && chat.isStreaming && (
@@ -496,49 +497,53 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                   {chat.runPauseReason ??
                     '权限确认超时：工具已被自动拒绝，对话已暂停（不会在无人确认时继续执行）。点击「恢复」继续，恢复后可直接要求 agent 重试该工具。'}
                 </span>
-                <button
+                <Button
+                  variant="outline"
                   onClick={() => {
                     chat.clearRunPaused()
                     agent.resume()
                   }}
-                  type="button"
                   title="恢复 run：从暂停点继续执行"
                 >
                   恢复
-                </button>
+                </Button>
               </div>
             )}
             {chat.compactionNotice && (
               <div className={interruptBanner} data-testid="compaction-notice-banner">
                 <span>{chat.compactionNotice}</span>
-                <button onClick={() => chat.clearCompactionNotice()} type="button" title="关闭提示">
+                <Button
+                  variant="outline"
+                  onClick={() => chat.clearCompactionNotice()}
+                  title="关闭提示"
+                >
                   知道了
-                </button>
+                </Button>
               </div>
             )}
             {coldStartPaused && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="paused-banner">
                 <span>对话处于暂停状态，可继续执行</span>
-                <button
+                <Button
+                  variant="outline"
                   onClick={() => {
                     // 活跃 run 仍注册在服务端（页面刷新场景），resume 端点可真正恢复；
                     // 服务重启导致的 paused 已由 status 端点转为 interrupted（走重发路径）。
                     setColdStartPaused(false)
                     agent.resume()
                   }}
-                  type="button"
                 >
                   继续对话
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={() => {
                     setColdStartPaused(false)
                     chat.clearInterrupted()
                   }}
-                  type="button"
                 >
                   忽略
-                </button>
+                </Button>
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, padding: '4px 12px' }}>
@@ -549,30 +554,30 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                     已选 {shake.shakeSelected.size}/{shake.shakeRegions.length} · 省{' '}
                     {shake.shakeSelectedTokens}t
                   </span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
                     onClick={() =>
                       shake.setShakeSelected(new Set(shake.shakeRegions.map((r) => r.id)))
                     }
                     data-testid="shake-select-all"
                   >
                     全选
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="outline"
                     onClick={() => shake.setShakeSelected(new Set())}
                     data-testid="shake-deselect-all"
                   >
                     取消全选
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="outline"
                     onClick={() => shake.shakeMutation.mutate([...shake.shakeSelected])}
                     disabled={shake.shakeSelected.size === 0}
                     data-testid="shake-submit"
                   >
                     提交 Shake
-                  </button>
+                  </Button>
                   <button
                     type="button"
                     className={shakeExitBtn}

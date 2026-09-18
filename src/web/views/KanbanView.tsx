@@ -27,7 +27,7 @@ const header = css`
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   flex-shrink: 0;
 `
 
@@ -40,7 +40,7 @@ const headerTitle = css`
 const headerHint = css`
   flex: 1;
   margin-left: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -69,7 +69,7 @@ const loading = css`
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
 `
 
@@ -81,7 +81,7 @@ const errorText = css`
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--error);
+  color: var(--haze-color-danger);
   font-size: 14px;
 `
 

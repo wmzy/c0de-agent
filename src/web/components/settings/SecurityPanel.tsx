@@ -1,5 +1,7 @@
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { CommaListInput } from '@/components/settings/CommaListInput.js'
 import {
   checkRow,
@@ -59,20 +61,20 @@ function DevicesSection() {
           <span style={{ opacity: 0.6, fontSize: 11 }}>
             {new Date(d.createdAt).toLocaleDateString()}
           </span>
-          <button
-            type="button"
+          <Button
             style={{
-              border: '1px solid var(--border)',
+              border: '1px solid var(--haze-color-border)',
               borderRadius: 6,
               padding: '2px 8px',
               fontSize: 12,
               cursor: 'pointer',
-              color: 'var(--error)',
-              background: 'var(--bg)',
+              color: 'var(--haze-color-danger)',
+              background: 'var(--haze-color-bg)',
               minHeight: 'auto',
               minWidth: 'auto',
             }}
             disabled={revoke.isPending}
+            variant="outline"
             onClick={() => {
               // 撤销立即生效（服务端热加载）；撤销后本页 token 可能立即失效
               if (
@@ -88,7 +90,7 @@ function DevicesSection() {
             }}
           >
             撤销
-          </button>
+          </Button>
         </div>
       ))}
     </div>
@@ -143,12 +145,12 @@ function SecurityPanel({
           <>
             <label className={field}>
               <span>Token</span>
-              <input
+              <SyncedInput
                 className={fieldInput}
                 type="password"
                 value={security.token ?? ''}
                 disabled={securityLocked}
-                onChange={(e) => onSecurityChange({ token: e.target.value })}
+                onChange={(v) => onSecurityChange({ token: v })}
                 placeholder="Bearer Token"
               />
             </label>
@@ -180,18 +182,18 @@ function SecurityPanel({
         <h2 className={sectionTitle}>自动授权</h2>
         <label className={field}>
           <span>默认模式</span>
-          <select
+          <SyncedSelect
             aria-label="默认授权模式"
             value={permission?.defaultMode ?? 'default'}
-            onChange={(e) =>
+            onValuesChange={(v) =>
               onPermissionChange({
-                defaultMode: e.target.value as Config['permission']['defaultMode'],
+                defaultMode: v as Config['permission']['defaultMode'],
               })
             }
           >
             <option value="default">逐个确认（推荐）</option>
             <option value="auto">自动授权（YOLO，跳过确认）</option>
-          </select>
+          </SyncedSelect>
         </label>
         <p className={hint}>
           启动时的默认授权模式。「自动授权」会跳过所有 ask 工具（含 bash）的确认。Chat
@@ -200,18 +202,18 @@ function SecurityPanel({
         </p>
         <label className={field}>
           <span>确认超时后的动作</span>
-          <select
+          <SyncedSelect
             aria-label="确认超时后的动作"
             value={permission?.timeoutAction ?? 'pause'}
-            onChange={(e) =>
+            onValuesChange={(v) =>
               onPermissionChange({
-                timeoutAction: e.target.value as NonNullable<Config['permission']['timeoutAction']>,
+                timeoutAction: v as NonNullable<Config['permission']['timeoutAction']>,
               })
             }
           >
             <option value="pause">拒绝并暂停对话（推荐）</option>
             <option value="deny">拒绝并继续执行</option>
-          </select>
+          </SyncedSelect>
         </label>
         <p className={hint}>
           工具等待确认超时后仅提示；宽限期满仍未处理则自动拒绝。
@@ -221,28 +223,30 @@ function SecurityPanel({
         </p>
         <label className={field}>
           <span>确认超时（分钟，默认 5）</span>
-          <input
+          <SyncedInput
             className={fieldInput}
             type="number"
             min={1}
             step={1}
-            value={permission?.timeoutMs !== undefined ? permission.timeoutMs / 60000 : 5}
-            onChange={(e) => {
-              const mins = Math.max(1, Number(e.target.value))
+            value={String(permission?.timeoutMs !== undefined ? permission.timeoutMs / 60000 : 5)}
+            onChange={(v) => {
+              const mins = Math.max(1, Number(v))
               if (Number.isFinite(mins)) onPermissionChange({ timeoutMs: mins * 60000 })
             }}
           />
         </label>
         <label className={field}>
           <span>超时后宽限期（分钟，默认 25）</span>
-          <input
+          <SyncedInput
             className={fieldInput}
             type="number"
             min={1}
             step={1}
-            value={permission?.expireGraceMs !== undefined ? permission.expireGraceMs / 60000 : 25}
-            onChange={(e) => {
-              const mins = Math.max(1, Number(e.target.value))
+            value={String(
+              permission?.expireGraceMs !== undefined ? permission.expireGraceMs / 60000 : 25,
+            )}
+            onChange={(v) => {
+              const mins = Math.max(1, Number(v))
               if (Number.isFinite(mins)) onPermissionChange({ expireGraceMs: mins * 60000 })
             }}
           />

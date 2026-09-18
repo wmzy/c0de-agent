@@ -12,7 +12,7 @@ const container = css`
 
 const tabBar = css`
   display: flex;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   flex-shrink: 0;
 `
 
@@ -22,19 +22,19 @@ const tab = css`
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 
   &:hover {
-    color: var(--text);
+    color: var(--haze-color-text);
   }
 `
 
 const tabActive = css`
-  color: var(--primary);
-  border-bottom-color: var(--primary);
+  color: var(--haze-color-primary);
+  border-bottom-color: var(--haze-color-primary);
 `
 
 const content = css`

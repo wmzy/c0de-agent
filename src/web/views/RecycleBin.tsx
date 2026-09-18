@@ -3,6 +3,7 @@ import type { Session } from '@shared/types/message.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import {
   useDeletedOrphans,
   useDeletedOrphansCount,
@@ -19,8 +20,8 @@ const deletedRow = css`
   gap: 8px;
   padding: 6px 12px;
   font-size: 13px;
-  color: var(--text);
-  border-bottom: 1px solid var(--border);
+  color: var(--haze-color-text);
+  border-bottom: 1px solid var(--haze-color-border);
 
   & > span:first-child {
     flex: 1;
@@ -31,7 +32,7 @@ const deletedRow = css`
   }
 
   & > span:nth-child(2) {
-    color: var(--text-secondary);
+    color: var(--haze-color-text-secondary);
     font-size: 11px;
     flex-shrink: 0;
   }
@@ -42,25 +43,25 @@ const restoreBtn = css`
   min-width: auto;
   padding: 2px 8px;
   font-size: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--primary);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-primary);
   cursor: pointer;
   &:hover {
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 const sourceBadge = css`
   flex-shrink: 0;
   padding: 1px 6px;
   font-size: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 const trashHint = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 11px;
   flex-shrink: 0;
 `
@@ -315,7 +316,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
       )}
       {pendingPurgeCount > 0 && (
         <div className={noticeBar} data-testid="purge-pending-notice">
-          <span style={{ color: 'var(--warning)' }}>
+          <span style={{ color: 'var(--haze-color-warning)' }}>
             {pendingPurgeCount} 条已到期进入 {TRASH_PURGE_GRACE_DAYS}{' '}
             天宽限期：恢复可保留，逾期自动清除
           </span>
@@ -343,12 +344,12 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               清空回收站
             </button>
           </div>
-          <input
+          <SyncedInput
             className={searchInput}
             type="search"
             placeholder="搜索回收站标题或消息内容…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(v) => setSearch(v)}
             data-testid="trash-search"
           />
           {rows.length === 0 && searchDebounced.length > 1 ? (
@@ -361,7 +362,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 <span title={s.title}>{s.title}</span>
                 {hasDeletedParent(s) && (
                   <span
-                    style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }}
+                    style={{ color: 'var(--haze-color-warning)', fontSize: 11, flexShrink: 0 }}
                     data-testid={`deleted-parent-${s.id}`}
                   >
                     父会话已删除（恢复时一并还原）
@@ -448,7 +449,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   className={restoreBtn}
-                  style={{ color: 'var(--error)' }}
+                  style={{ color: 'var(--haze-color-danger)' }}
                   onClick={() => handleRemoveForever(s)}
                   disabled={removeForever.isPending}
                   data-testid={`remove-forever-${s.id}`}
@@ -474,7 +475,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             >
               {orphansOpen ? '\u25BE' : '\u25B8'}
             </button>
-            <span style={{ color: 'var(--warning)', fontSize: 12 }}>
+            <span style={{ color: 'var(--haze-color-warning)', fontSize: 12 }}>
               未归属项目（{orphanCountData?.count ?? 0}{' '}
               条，来自已删除的项目；恢复时可重建原项目或归属到当前项目）
             </span>
@@ -552,7 +553,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   className={restoreBtn}
-                  style={{ color: 'var(--error)' }}
+                  style={{ color: 'var(--haze-color-danger)' }}
                   onClick={() => handleRemoveForever(s)}
                   disabled={removeForever.isPending}
                   data-testid={`remove-orphan-${s.id}`}
@@ -569,7 +570,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
       {(deletedBoards?.length ?? 0) > 0 && (
         <>
           <div className={deletedRow} data-testid="orphan-kanban-header">
-            <span style={{ color: 'var(--warning)', fontSize: 12 }}>
+            <span style={{ color: 'var(--haze-color-warning)', fontSize: 12 }}>
               未归属看板（{deletedBoards?.length ?? 0} 个，来自已删除的项目；删除后保留{' '}
               {TRASH_RETENTION_DAYS} 天，到期宽限 {TRASH_PURGE_GRACE_DAYS} 天再自动清除）
             </span>
@@ -623,7 +624,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 className={restoreBtn}
-                style={{ color: 'var(--error)' }}
+                style={{ color: 'var(--haze-color-danger)' }}
                 onClick={() => {
                   if (
                     window.confirm(

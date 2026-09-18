@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { SyncedTextarea } from '@/components/SyncedControls.js'
 
 const jsonWrap = css`
   display: flex;
@@ -14,8 +15,8 @@ const jsonTextarea = css`
   box-sizing: border-box;
   padding: 16px;
   border: none;
-  background: var(--code-bg);
-  color: var(--text);
+  background: var(--haze-color-bg-muted);
+  color: var(--haze-color-text);
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 13px;
   line-height: 1.5;
@@ -27,8 +28,8 @@ const jsonTextarea = css`
 
 const jsonErrorBar = css`
   padding: 8px 16px;
-  background: var(--diff-del-bg);
-  color: var(--diff-del-text);
+  background: var(--haze-color-danger-subtle);
+  color: var(--haze-color-danger);
   font-size: 12px;
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   word-break: break-all;
@@ -36,8 +37,8 @@ const jsonErrorBar = css`
 
 const jsonOkBar = css`
   padding: 6px 16px;
-  background: var(--diff-add-bg);
-  color: var(--diff-add-text);
+  background: var(--haze-color-success-subtle);
+  color: var(--haze-color-success);
   font-size: 12px;
 `
 
@@ -52,10 +53,10 @@ interface JsonConfigEditorProps {
 function JsonConfigEditor({ jsonText, jsonError, onChange }: JsonConfigEditorProps) {
   return (
     <div className={jsonWrap}>
-      <textarea
+      <SyncedTextarea
         className={jsonTextarea}
         value={jsonText}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(v) => onChange(v)}
         spellCheck={false}
         data-testid="settings-json-editor"
       />

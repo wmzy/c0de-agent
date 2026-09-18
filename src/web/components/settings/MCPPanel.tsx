@@ -1,6 +1,9 @@
 import { css } from '@linaria/core'
 import type { MCPServerConfig } from '@shared/types/config.js'
+import { Button } from 'haze-ui'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { section, sectionTitle } from '@/components/settings/styles.js'
+import { btnDanger } from '@/styles/tokens.js'
 
 const mcpRow = css`
   display: flex;
@@ -9,16 +12,16 @@ const mcpRow = css`
   align-items: center;
   padding: 8px;
   margin-bottom: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
 `
 
 const mcpNotice = css`
   display: block;
   margin-bottom: 8px;
   font-size: 12px;
-  color: var(--warning);
+  color: var(--haze-color-warning);
 `
 
 interface MCPPanelProps {
@@ -55,54 +58,52 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
         // 受控表单列表用 index 作 key，避免输入 name 即重挂载失焦（同 providers 行）
         // biome-ignore lint/suspicious/noArrayIndexKey: 受控表单列表，name 输入会改 key 导致重挂载失焦
         <div key={index} className={mcpRow} data-testid="mcp-row">
-          <input
+          <SyncedInput
             value={server.name}
-            onChange={(e) => updateMcpServer(index, 'name', e.target.value)}
+            onChange={(v) => updateMcpServer(index, 'name', v)}
             placeholder="名称"
           />
-          <select
+          <SyncedSelect
             value={server.transport}
-            onChange={(e) => updateMcpServer(index, 'transport', e.target.value)}
+            onValuesChange={(v) => updateMcpServer(index, 'transport', v)}
           >
             <option value="stdio">stdio</option>
             <option value="sse">sse</option>
             <option value="http">http</option>
-          </select>
+          </SyncedSelect>
           {server.transport === 'stdio' ? (
             <>
-              <input
+              <SyncedInput
                 value={server.command ?? ''}
-                onChange={(e) => updateMcpServer(index, 'command', e.target.value)}
+                onChange={(v) => updateMcpServer(index, 'command', v)}
                 placeholder="command"
               />
-              <input
+              <SyncedInput
                 value={(server.args ?? []).join(' ')}
-                onChange={(e) =>
-                  updateMcpServer(index, 'args', e.target.value.split(/\s+/).filter(Boolean))
-                }
+                onChange={(v) => updateMcpServer(index, 'args', v.split(/\s+/).filter(Boolean))}
                 placeholder="args（空格分隔）"
               />
             </>
           ) : (
-            <input
+            <SyncedInput
               value={server.url ?? ''}
-              onChange={(e) => updateMcpServer(index, 'url', e.target.value)}
+              onChange={(v) => updateMcpServer(index, 'url', v)}
               placeholder="https://..."
             />
           )}
-          <button
-            type="button"
-            data-variant="danger"
+          <Button
+            className={btnDanger}
+            variant="outline"
             onClick={() => removeMcpServer(index)}
             data-testid="mcp-remove"
           >
             删除
-          </button>
+          </Button>
         </div>
       ))}
-      <button type="button" onClick={addMcpServer} data-testid="mcp-add">
+      <Button onClick={addMcpServer} data-testid="mcp-add" variant="outline">
         + 添加服务器
-      </button>
+      </Button>
     </div>
   )
 }

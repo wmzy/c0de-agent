@@ -8,7 +8,7 @@ const wrap = css`
      底色用 --bg-secondary，明暗主题下均与消息流底色有可感知差异 */
   padding: 8px 12px;
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
 `
 
 const text = css`
@@ -27,7 +27,7 @@ const collapsed = css`
 const btn = css`
   align-self: flex-start;
   font-size: 12px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   background: transparent;
   border: none;
   cursor: pointer;

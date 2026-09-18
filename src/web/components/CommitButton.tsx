@@ -10,33 +10,33 @@ const commitBtn = css`
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
   &:hover:not(:disabled) {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
   }
   &:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
   &:disabled {
-    color: var(--text-disabled);
-    background: var(--bg-disabled);
+    color: var(--haze-color-text-muted);
+    background: var(--haze-color-bg-muted);
     cursor: not-allowed;
   }
 `
 
 const commitBtnActive = css`
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--haze-color-primary);
+  border-color: var(--haze-color-primary);
   color: #fff;
   font-weight: 600;
   animation: pulse 2s ease-in-out infinite;
   &:hover {
-    background: var(--primary-hover);
-    border-color: var(--primary-hover);
+    background: var(--haze-color-primary-hover);
+    border-color: var(--haze-color-primary-hover);
     color: #fff;
     opacity: 0.9;
   }
@@ -52,25 +52,25 @@ const commitBtnActive = css`
 `
 
 const commitBtnSuccess = css`
-  background: var(--success);
-  border-color: var(--success);
+  background: var(--haze-color-success);
+  border-color: var(--haze-color-success);
   color: #fff;
   /* 反馈期间按钮已禁用（提交后无变更），重申语义色避免被全局禁用灰态覆盖 */
   &:disabled {
-    background: var(--success);
-    border-color: var(--success);
+    background: var(--haze-color-success);
+    border-color: var(--haze-color-success);
     color: #fff;
   }
 `
 
 const commitBtnError = css`
-  background: var(--error);
-  border-color: var(--error);
+  background: var(--haze-color-danger);
+  border-color: var(--haze-color-danger);
   color: #fff;
   /* 反馈期间按钮可能禁用（无变更），重申语义色避免被全局禁用灰态覆盖 */
   &:disabled {
-    background: var(--error);
-    border-color: var(--error);
+    background: var(--haze-color-danger);
+    border-color: var(--haze-color-danger);
     color: #fff;
   }
 `

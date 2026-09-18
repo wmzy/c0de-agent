@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import { darkTheme, lightTheme } from 'haze-ui/tokens'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext.js'
 
@@ -14,17 +15,19 @@ function Probe() {
 describe('ThemeProvider', () => {
   beforeEach(() => {
     localStorage.clear()
-    document.documentElement.classList.remove('dark')
+    document.documentElement.classList.remove(darkTheme, lightTheme)
   })
 
-  it('dark 模式添加 .dark class', () => {
+  it('按模式在 documentElement 挂 haze 主题类', () => {
+    localStorage.setItem('c0de-theme', 'dark')
     render(
       <ThemeProvider>
         <Probe />
       </ThemeProvider>,
     )
-    // 默认 system，此处仅验证 provider 正常渲染
-    expect(screen.getByTestId('probe')).toBeTruthy()
+    expect(document.documentElement.classList.contains(darkTheme)).toBe(true)
+    expect(document.documentElement.classList.contains(lightTheme)).toBe(false)
+    expect(screen.getByTestId('probe').textContent).toBe('dark:dark')
   })
 
   it('未在 Provider 内使用抛错', () => {

@@ -1,3 +1,4 @@
+import { darkTheme, lightTheme } from 'haze-ui/tokens'
 import type { ReactNode } from 'react'
 import { createContext, useContext, useEffect, useState } from 'react'
 
@@ -23,14 +24,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const resolved = mode === 'system' ? getSystemTheme() : mode
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', resolved === 'dark')
+    const root = document.documentElement
+    root.classList.toggle(darkTheme, resolved === 'dark')
+    root.classList.toggle(lightTheme, resolved === 'light')
     localStorage.setItem('c0de-theme', mode)
   }, [mode, resolved])
 
   useEffect(() => {
     if (mode !== 'system') return
     const mql = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = () => document.documentElement.classList.toggle('dark', mql.matches)
+    const handler = () => {
+      const root = document.documentElement
+      root.classList.toggle(darkTheme, mql.matches)
+      root.classList.toggle(lightTheme, !mql.matches)
+    }
     mql.addEventListener('change', handler)
     return () => mql.removeEventListener('change', handler)
   }, [mode])

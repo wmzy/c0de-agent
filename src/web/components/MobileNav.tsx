@@ -14,8 +14,8 @@ const bar = css`
     left: 0;
     right: 0;
     height: 56px;
-    border-top: 1px solid var(--border);
-    background: var(--bg);
+    border-top: 1px solid var(--haze-color-border);
+    background: var(--haze-color-bg);
     z-index: 100;
   }
 `
@@ -30,12 +30,12 @@ const tab = css`
   gap: 2px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   font-size: 11px;
   padding: 6px 0;
   &.active {
-    color: var(--primary);
+    color: var(--haze-color-primary);
     &::before {
       content: '';
       position: absolute;
@@ -43,7 +43,7 @@ const tab = css`
       left: 30%;
       right: 30%;
       height: 2px;
-      background: var(--primary);
+      background: var(--haze-color-primary);
       border-radius: 0 0 2px 2px;
     }
   }
@@ -92,8 +92,8 @@ const drawerPanel = css`
   width: min(85vw, 340px);
   display: flex;
   flex-direction: column;
-  background: var(--bg);
-  border-right: 1px solid var(--border);
+  background: var(--haze-color-bg);
+  border-right: 1px solid var(--haze-color-border);
   box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18);
   animation: mobile-drawer-in 0.2s ease;
   @keyframes mobile-drawer-in {
@@ -111,10 +111,10 @@ const drawerHeader = css`
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   font-size: 13px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--haze-color-text);
   flex-shrink: 0;
 `
 
@@ -124,7 +124,7 @@ const closeBtn = css`
   padding: 4px 10px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
 `
 

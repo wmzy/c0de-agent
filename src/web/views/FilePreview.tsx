@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeEditor } from '@/components/CodeEditor.js'
 import { Dialog } from '@/components/Dialog.js'
@@ -8,6 +9,7 @@ import { useFileSelection } from '@/contexts/FileSelectionContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { getAuthToken } from '@/services/api.js'
 import { fileAPI } from '@/services/file.js'
+import { btnDanger } from '@/styles/tokens.js'
 
 const wrap = css`
   height: 100%;
@@ -22,7 +24,7 @@ const header = css`
   align-items: center;
   justify-content: space-between;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   font-size: 12px;
   flex-shrink: 0;
 `
@@ -31,20 +33,20 @@ const pathText = css`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const closeBtn = css`
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   font-size: 14px;
   padding: 0 4px;
   flex-shrink: 0;
 
   &:hover {
-    color: var(--text);
+    color: var(--haze-color-text);
   }
 `
 
@@ -60,18 +62,18 @@ const quoteBtn = css`
   position: absolute;
   z-index: 10;
   transform: translate(-50%, -100%);
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
-  box-shadow: var(--shadow);
+  box-shadow: var(--haze-shadow-md);
   white-space: nowrap;
-  color: var(--text);
+  color: var(--haze-color-text);
   &:hover {
-    color: var(--primary);
-    border-color: var(--primary);
+    color: var(--haze-color-primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -361,21 +363,21 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         testId="discard-dialog"
         footer={
           <div className={discardActions}>
-            <button
-              type="button"
+            <Button
               data-testid="discard-cancel"
+              variant="outline"
               onClick={() => setConfirmDiscard(false)}
             >
               取消
-            </button>
-            <button
-              type="button"
-              data-variant="danger"
+            </Button>
+            <Button
               data-testid="discard-confirm"
               onClick={handleDiscard}
+              className={btnDanger}
+              variant="outline"
             >
               放弃修改
-            </button>
+            </Button>
           </div>
         }
       >

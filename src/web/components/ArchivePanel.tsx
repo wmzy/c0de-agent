@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI } from '@/services/session.js'
 import type { ArchiveEntry, CompactionArchive } from '@/types/index.js'
 
@@ -14,9 +15,9 @@ const list = css`
 `
 
 const item = css`
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--haze-color-bg);
   padding: 8px 10px;
 `
 
@@ -31,9 +32,9 @@ const typeBadge = css`
   padding: 1px 8px;
   border-radius: 999px;
   font-size: 11px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
+  background: var(--haze-color-bg-subtle);
+  border: 1px solid var(--haze-color-border);
+  color: var(--haze-color-text-secondary);
   flex-shrink: 0;
 `
 
@@ -43,18 +44,18 @@ const summary = css`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const meta = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   flex-shrink: 0;
 `
 
 const expandBtn = css`
   border: none;
   background: transparent;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   cursor: pointer;
   font-size: 12px;
   padding: 0 4px;
@@ -65,21 +66,21 @@ const expandBtn = css`
 const archEntry = css`
   margin-top: 8px;
   padding: 6px 8px;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--haze-color-border);
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const archRole = css`
   font-weight: 600;
-  color: var(--text);
+  color: var(--haze-color-text);
   margin-bottom: 2px;
 `
 
 const empty = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 13px;
   text-align: center;
   padding: 16px;
@@ -88,15 +89,15 @@ const empty = css`
 const searchInput = css`
   width: 100%;
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   font-size: 13px;
 `
 
 const hint = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   margin-top: 4px;
 `
@@ -139,12 +140,12 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
 
   return (
     <Dialog onClose={onClose} title="会话归档" width="min(560px, 94vw)" testId="archive-panel">
-      <input
+      <SyncedInput
         className={searchInput}
         type="search"
         placeholder="搜索归档内容…"
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(v) => setQ(v)}
         data-testid="archive-search"
       />
       <div className={list}>

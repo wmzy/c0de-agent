@@ -18,11 +18,11 @@ const impactList = css`
 
 const impactHead = css`
   font-weight: 600;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const impactMeta = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 11px;
 `
 
@@ -30,14 +30,14 @@ const rerunOption = css`
   display: block;
   margin-top: 2px;
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   & input {
     vertical-align: middle;
     margin-right: 4px;
   }
   & code {
     font-size: 11px;
-    color: var(--text);
+    color: var(--haze-color-text);
   }
 `
 
@@ -49,9 +49,9 @@ const banner = css`
   gap: 8px;
   height: 28px;
   padding: 0 12px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
+  background: var(--haze-color-bg-subtle);
+  border-bottom: 1px solid var(--haze-color-border);
+  color: var(--haze-color-text);
   font-size: 12px;
   flex-shrink: 0;
 `
@@ -61,7 +61,7 @@ const dot = css`
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--haze-color-primary);
   flex-shrink: 0;
 `
 
@@ -84,8 +84,8 @@ const actions = css`
 // 反色中性实心按钮：底 --text / 字 --bg，明暗主题对比度均 ≥ 16:1（AA），
 // 取代旧「白字压 rgba(255,255,255,.18)」的约 3.8:1。
 const btn = css`
-  background: var(--text);
-  color: var(--bg);
+  background: var(--haze-color-text);
+  color: var(--haze-color-bg);
   border: none;
   border-radius: 3px;
   padding: 3px 10px;
@@ -106,7 +106,7 @@ const btn = css`
 // 次级文字按钮「稍后」：--text-secondary 对 --bg-secondary 为 5.3:1（亮）/ 5.6:1（暗），≥ AA
 const linkBtn = css`
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   border: none;
   padding: 3px 6px;
   font-size: 12px;
@@ -116,7 +116,7 @@ const linkBtn = css`
   min-height: auto;
   min-width: auto;
   &:hover {
-    color: var(--text);
+    color: var(--haze-color-text);
   }
 `
 
@@ -216,7 +216,11 @@ export function UpdateBanner() {
           : null}
       </span>
       {manual && (
-        <span className={text} data-testid="manual-update-hint" style={{ color: 'var(--warning)' }}>
+        <span
+          className={text}
+          data-testid="manual-update-hint"
+          style={{ color: 'var(--haze-color-warning)' }}
+        >
           <code>{manual.command}</code>（完成后请重启 c0de serve 生效）
         </span>
       )}

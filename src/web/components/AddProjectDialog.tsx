@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useState } from 'react'
 import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 import { projectAPI } from '@/services/project.js'
@@ -16,11 +17,11 @@ const overlay = css`
 `
 
 const dialog = css`
-  background: var(--bg);
+  background: var(--haze-color-bg);
   border-radius: 8px;
   padding: 20px;
   width: min(480px, 92vw);
-  box-shadow: var(--shadow);
+  box-shadow: var(--haze-shadow-md);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -33,12 +34,12 @@ const title = css`
 
 const hint = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const errorMsg = css`
   font-size: 12px;
-  color: var(--error);
+  color: var(--haze-color-danger);
 `
 
 const actions = css`
@@ -100,17 +101,17 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
         <div className={hint}>输入目录名可递归搜索深层目录，或在文件树中浏览选择。</div>
         {error ? <div className={errorMsg}>{error}</div> : null}
         <div className={actions}>
-          <button type="button" onClick={onClose}>
+          <Button onClick={onClose} variant="outline">
             取消
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             onClick={submit}
             disabled={!directory.trim() || create.isPending}
             data-testid="add-project-confirm"
+            variant="outline"
           >
             {create.isPending ? '创建中…' : '添加'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

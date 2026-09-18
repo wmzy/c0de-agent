@@ -11,19 +11,19 @@ const chip = css`
   gap: 4px;
   margin: 2px 0;
   padding: 2px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
   font-size: 12px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   cursor: pointer;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--haze-font-mono, monospace);
 `
 const expanded = css`
   margin: 8px 0;
-  border-left: 3px solid var(--primary);
+  border-left: 3px solid var(--haze-color-primary);
 `
 const err = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
 `
 

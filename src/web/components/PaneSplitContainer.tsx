@@ -35,7 +35,7 @@ const paneStyle = css`
 
 const paneActiveStyle = css`
   // 用极细边框标识活动 pane
-  outline: 1px solid var(--primary);
+  outline: 1px solid var(--haze-color-primary);
   outline-offset: -1px;
 `
 
@@ -48,7 +48,7 @@ const paneHeaderStyle = css`
   background: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   user-select: none;
   flex-shrink: 0;
 `
@@ -62,7 +62,7 @@ const paneCloseStyle = css`
   height: 16px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   cursor: pointer;
   border-radius: 3px;
@@ -73,7 +73,7 @@ const paneCloseStyle = css`
   min-width: auto;
 
   &:hover {
-    background: var(--error);
+    background: var(--haze-color-danger);
     color: #fff;
   }
 `
@@ -81,7 +81,7 @@ const paneCloseStyle = css`
 const dividerHStyle = css`
   width: 4px;
   cursor: col-resize;
-  background: var(--border);
+  background: var(--haze-color-border);
   flex-shrink: 0;
   transition: background 0.12s;
   z-index: 1;
@@ -90,14 +90,14 @@ const dividerHStyle = css`
   margin: 0;
 
   &:hover {
-    background: var(--primary);
+    background: var(--haze-color-primary);
   }
 `
 
 const dividerVStyle = css`
   height: 4px;
   cursor: row-resize;
-  background: var(--border);
+  background: var(--haze-color-border);
   flex-shrink: 0;
   transition: background 0.12s;
   z-index: 1;
@@ -106,7 +106,7 @@ const dividerVStyle = css`
   margin: 0;
 
   &:hover {
-    background: var(--primary);
+    background: var(--haze-color-primary);
   }
 `
 

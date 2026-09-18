@@ -3,12 +3,13 @@
 //  - 已授权设备：轮询待审批列表 → 弹窗展示配对码与设备名 → 批准/拒绝。
 import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { authAPI } from '@/services/auth.js'
 
 const overlay = css`
   position: fixed;
   inset: 0;
-  background: var(--bg);
+  background: var(--haze-color-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -18,9 +19,9 @@ const overlay = css`
 const card = css`
   width: min(420px, 92vw);
   padding: 28px 24px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -30,12 +31,12 @@ const card = css`
 const title = css`
   font-size: 16px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const desc = css`
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   line-height: 1.6;
 `
 
@@ -43,33 +44,33 @@ const code = css`
   font-size: 34px;
   font-weight: 700;
   letter-spacing: 8px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   padding: 10px 0;
   font-variant-numeric: tabular-nums;
 `
 
 const btn = css`
   padding: 8px 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   cursor: pointer;
   font-size: 13px;
   &:hover {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
   }
 `
 
 const approveBtn = css`
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--haze-color-primary);
+  color: var(--haze-color-primary);
 `
 
 const err = css`
   font-size: 12px;
-  color: var(--error);
+  color: var(--haze-color-danger);
 `
 
 /** 新设备配对流程：请求配对码并轮询审批。 */
@@ -252,20 +253,24 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
             <span className={desc}>
               {p.deviceName}
               <span
-                style={{ display: 'block', fontSize: 11, color: 'var(--text-secondary)' }}
+                style={{
+                  display: 'block',
+                  fontSize: 11,
+                  color: 'var(--haze-color-text-secondary)',
+                }}
                 title="请求来源（IP 等，尽力而为；设备名由请求方自报）"
               >
                 来源：{p.source}
               </span>
             </span>
-            <input
+            <SyncedInput
               type="text"
               inputMode="numeric"
               maxLength={6}
               placeholder="输入 6 位码"
               value={codes[p.pairingId] ?? ''}
-              onChange={(e) =>
-                setCodes((prev) => ({ ...prev, [p.pairingId]: e.target.value.replace(/\D/g, '') }))
+              onChange={(v) =>
+                setCodes((prev) => ({ ...prev, [p.pairingId]: v.replace(/\D/g, '') }))
               }
               data-testid={`pairing-code-input-${p.pairingId}`}
             />

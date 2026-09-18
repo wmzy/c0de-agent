@@ -7,7 +7,7 @@ const wrap = css`
   font-weight: 700;
   font-size: 14px;
   letter-spacing: -0.01em;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const mark = css`
@@ -53,8 +53,8 @@ export function Logo({ wordmark = true }: { wordmark?: boolean }) {
             y2="22"
             gradientUnits="userSpaceOnUse"
           >
-            <stop stopColor="var(--primary)" />
-            <stop offset="1" stopColor="var(--primary-hover)" />
+            <stop stopColor="var(--haze-color-primary)" />
+            <stop offset="1" stopColor="var(--haze-color-primary-hover)" />
           </linearGradient>
         </defs>
         <rect x="2" y="2" width="20" height="20" rx="6" fill="url(#c0de-logo-grad)" />

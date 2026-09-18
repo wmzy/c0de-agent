@@ -4,8 +4,8 @@ import { ContentDiff } from '@/components/session/ContentDiff.js'
 
 const err = css`
   font-size: 13px;
-  color: var(--diff-del-text);
-  background: var(--diff-del-bg);
+  color: var(--haze-color-danger);
+  background: var(--haze-color-danger-subtle);
   padding: 6px 8px;
   border-radius: 4px;
 `

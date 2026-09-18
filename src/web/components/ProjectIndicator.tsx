@@ -1,11 +1,19 @@
 import { css } from '@linaria/core'
 import { useRouter } from '@native-router/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from 'haze-ui'
 import { type ReactNode, useState } from 'react'
+import { useControl } from 'react-use-control'
 import { AddProjectDialog } from '@/components/AddProjectDialog.js'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
-import { DropdownMenu } from '@/components/DropdownMenu.js'
 import { RelocateProjectDialog } from '@/components/RelocateProjectDialog.js'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { navigateTo } from '@/navigateTo.js'
 import { fileAPI } from '@/services/file.js'
@@ -18,10 +26,10 @@ const indicator = css`
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   font-size: 13px;
-  color: var(--text);
-  background: var(--bg-secondary);
+  color: var(--haze-color-text);
+  background: var(--haze-color-bg-subtle);
 `
 
 /** TopBar 内联模式：无边框、无背景、零 padding，与品牌并排。 */
@@ -32,7 +40,7 @@ const indicatorInline = css`
   padding: 0;
   border: none;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   background: transparent;
   margin-left: 4px;
   /* 随品牌区收缩（配合 brandGroup min-width:0），项目名省略号截断 */
@@ -49,13 +57,13 @@ const triggerBtn = css`
   min-width: 0;
   overflow: hidden;
   padding: 3px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   transition: border-color 0.12s ease;
   &:hover {
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -76,17 +84,17 @@ const projectName = css`
 const branchTag = css`
   font-family: ui-monospace, monospace;
   font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--bg);
+  color: var(--haze-color-text-secondary);
+  background: var(--haze-color-bg);
   /* 白底 pill 压在 --bg-secondary 顶栏上，无描边则边界几乎不可见 */
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   padding: 1px 6px;
   border-radius: 3px;
   flex-shrink: 0;
   transition: border-color 0.12s ease;
   &:hover {
-    border-color: var(--primary);
-    color: var(--text);
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-text);
   }
 `
 
@@ -113,32 +121,44 @@ const mobileHide = css`
   }
 `
 
-// ---- 下拉菜单项样式 ----
+// ---- 下拉菜单样式（haze DropdownMenu 组合件 + 项目自有的增量样式） ----
 
-const menuItem = css`
+/** 触发器按钮复位：haze Trigger 渲染 button，这里去掉按钮外观只留内联布局。 */
+const triggerReset = css`
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+`
+
+/** 面板增量：长列表限宽限高滚动（haze 面板自带 min-width/padding/边框/阴影）。 */
+const menuPanel = css`
+  max-width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+`
+
+/** 菜单项内容行：图标 + 文本，宽 100% 让省略号生效。 */
+const itemWrap = css`
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 5px 12px;
-  border: none;
-  background: none;
-  font: inherit;
+  min-width: 0;
   font-size: 13px;
   text-align: left;
-  color: var(--text);
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  &:hover {
-    background: var(--bg-secondary);
-  }
 `
 
 const menuItemActive = css`
   font-weight: 600;
-  color: var(--primary);
+  color: var(--haze-color-primary);
 `
 
 const menuItemCheck = css`
@@ -156,7 +176,7 @@ const menuItemSub = css`
 
 const menuItemHint = css`
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   opacity: 0.7;
   flex-shrink: 0;
   max-width: 140px;
@@ -175,11 +195,11 @@ const footerBtn = css`
   font: inherit;
   font-size: 13px;
   text-align: left;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   &:hover {
-    background: var(--bg-secondary);
-    color: var(--primary);
+    background: var(--haze-color-bg-subtle);
+    color: var(--haze-color-primary);
   }
 `
 
@@ -187,18 +207,18 @@ const branchInput = css`
   width: 100%;
   padding: 6px 12px;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   font: inherit;
   font-size: 13px;
   outline: none;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
 `
 
 const branchInputError = css`
   padding: 4px 12px;
   font-size: 11px;
-  color: var(--error);
+  color: var(--haze-color-danger);
 `
 
 /**
@@ -274,8 +294,11 @@ export function ProjectIndicator({
   })
   const lastCommit = gitLastCommitQ.data?.commit ?? null
 
+  // 项目下拉受控（footer 按钮需要主动关闭菜单后再开弹层）
+  const [, setProjectsOpen, projectsOpenCtrl] = useControl(false)
+
   // 分支列表（下拉打开时按需加载）
-  const [branchesOpen, setBranchesOpen] = useState(false)
+  const [branchesOpen, setBranchesOpen, branchesOpenCtrl] = useControl(false)
   const branchesQ = useQuery({
     queryKey: ['files', 'git-branches', projectId],
     queryFn: () => fileAPI.gitBranches(projectId),
@@ -313,85 +336,73 @@ export function ProjectIndicator({
   return (
     <div className={cls} data-testid="project-indicator">
       {/* 项目名下拉 */}
-      <DropdownMenu
-        testId="project-dropdown"
-        trigger={
-          <span className={triggerBtn}>
+      <DropdownMenu open={projectsOpenCtrl} onOpenChange={setProjectsOpen}>
+        <DropdownMenuTrigger className={triggerReset}>
+          <span className={triggerBtn} data-testid="project-dropdown-trigger">
             <span className={projectIcon}>{'\u{1F4C2}'}</span>
             <span className={projectName}>{project.name ?? '未命名项目'}</span>
             <span className={caret}>{'\u25BE'}</span>
           </span>
-        }
-        footer={(close) => (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              borderTop: '1px solid var(--border)',
-            }}
-          >
-            {deleteError && (
-              <span
-                style={{ padding: '4px 12px', fontSize: 11, color: 'var(--error)' }}
-                data-testid="project-delete-error"
-              >
-                {deleteError}
-              </span>
-            )}
-            <button
-              type="button"
-              className={footerBtn}
-              onClick={() => {
-                close()
-                setShowAddProject(true)
-              }}
-              data-testid="project-dropdown-add"
-            >
-              {'\uFF0B'} 添加项目
-            </button>
-            <button
-              type="button"
-              className={footerBtn}
-              style={{ color: 'var(--error)' }}
-              onClick={() => {
-                setDeleteError(null)
-                close()
-                setShowDelete(true)
-              }}
-              data-testid="delete-project"
-            >
-              {'\u{1F5D1}'} 删除项目
-            </button>
-          </div>
-        )}
-      >
-        {(close) =>
-          (projects ?? []).map((p) => (
-            <button
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className={menuPanel}>
+          {(projects ?? []).map((p) => (
+            <DropdownMenuItem
               key={p.id}
-              type="button"
-              className={`${menuItem} ${p.id === projectId ? menuItemActive : ''}`}
-              onClick={() => {
-                close()
+              className={p.id === projectId ? menuItemActive : undefined}
+              onClick={() =>
                 navigateTo(router, '/projects/:projectId', { params: { projectId: p.id } })
-              }}
-              data-testid={`project-dropdown-item-${p.id}`}
+              }
             >
-              <span className={menuItemCheck}>{p.id === projectId ? '\u2713' : ''}</span>
-              <span className={menuItemSub}>
-                {p.name ?? '未命名项目'}
-                {p.worktreeMissing ? '（目录已失效）' : ''}
+              <span className={itemWrap} data-testid={`project-dropdown-item-${p.id}`}>
+                <span className={menuItemCheck}>{p.id === projectId ? '\u2713' : ''}</span>
+                <span className={menuItemSub}>
+                  {p.name ?? '未命名项目'}
+                  {p.worktreeMissing ? '（目录已失效）' : ''}
+                </span>
               </span>
-            </button>
-          ))
-        }
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          {deleteError && (
+            <span
+              style={{ padding: '4px 12px', fontSize: 11, color: 'var(--haze-color-danger)' }}
+              data-testid="project-delete-error"
+            >
+              {deleteError}
+            </span>
+          )}
+          <button
+            type="button"
+            className={footerBtn}
+            onClick={() => {
+              setProjectsOpen(false)
+              setShowAddProject(true)
+            }}
+            data-testid="project-dropdown-add"
+          >
+            {'\uFF0B'} 添加项目
+          </button>
+          <button
+            type="button"
+            className={footerBtn}
+            style={{ color: 'var(--haze-color-danger)' }}
+            onClick={() => {
+              setDeleteError(null)
+              setProjectsOpen(false)
+              setShowDelete(true)
+            }}
+            data-testid="delete-project"
+          >
+            {'\u{1F5D1}'} 删除项目
+          </button>
+        </DropdownMenuContent>
       </DropdownMenu>
 
       {/* worktree 失效警告（P1-9：目录被删除/移动时明确提示，避免 agent 在错误目录执行） */}
       {project.worktreeMissing ? (
         <>
           <span
-            style={{ color: 'var(--warning)', fontSize: 11 }}
+            style={{ color: 'var(--haze-color-warning)', fontSize: 11 }}
             title="项目工作目录已失效（被删除或移动）。对话将无法执行工具。"
             data-testid="worktree-missing"
           >
@@ -401,7 +412,7 @@ export function ProjectIndicator({
           <button
             type="button"
             className={footerBtn}
-            style={{ color: 'var(--primary)', fontSize: 11, padding: '1px 8px' }}
+            style={{ color: 'var(--haze-color-primary)', fontSize: 11, padding: '1px 8px' }}
             onClick={() => setShowRelocate(true)}
             data-testid="relocate-project-btn"
             title="目录被移动或重命名？输入新路径，会话与看板将整体迁移（看板不会丢失）"
@@ -414,10 +425,8 @@ export function ProjectIndicator({
       {/* 分支下拉 */}
       {project.gitBranch ? (
         <span className={variant === 'inline' ? mobileHide : undefined}>
-          <DropdownMenu
-            testId="branch-dropdown"
-            onOpenChange={setBranchesOpen}
-            trigger={
+          <DropdownMenu open={branchesOpenCtrl} onOpenChange={setBranchesOpen}>
+            <DropdownMenuTrigger className={triggerReset}>
               <span
                 className={branchTag}
                 data-testid="project-branch"
@@ -427,40 +436,40 @@ export function ProjectIndicator({
                     : undefined
                 }
               >
-                {project.gitBranch}
-                <span className={caret}>{'\u25BE'}</span>
+                <span data-testid="branch-dropdown-trigger">
+                  {project.gitBranch}
+                  <span className={caret}>{'\u25BE'}</span>
+                </span>
               </span>
-            }
-            footer={() => (
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className={menuPanel}>
+              {(branchesQ.data?.branches ?? []).map((b) => (
+                <DropdownMenuItem
+                  key={b.name}
+                  className={b.current ? menuItemActive : undefined}
+                  disabled={b.current || checkoutMut.isPending}
+                  onClick={() => {
+                    if (!b.current) checkoutMut.mutate(b.name)
+                  }}
+                >
+                  <span className={itemWrap} data-testid={`branch-dropdown-item-${b.name}`}>
+                    <span className={menuItemCheck}>{b.current ? '\u2713' : ''}</span>
+                    <span className={menuItemSub}>{b.name}</span>
+                    {b.lastSubject ? (
+                      <span className={menuItemHint} title={b.lastSubject}>
+                        {b.lastSubject}
+                      </span>
+                    ) : null}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
               <NewBranchForm
                 onCreate={(name) => createBranchMut.mutate(name)}
                 pending={createBranchMut.isPending}
                 error={createBranchMut.error ? String(createBranchMut.error.message) : null}
               />
-            )}
-          >
-            {() =>
-              (branchesQ.data?.branches ?? []).map((b) => (
-                <button
-                  key={b.name}
-                  type="button"
-                  className={`${menuItem} ${b.current ? menuItemActive : ''}`}
-                  onClick={() => {
-                    if (!b.current) checkoutMut.mutate(b.name)
-                  }}
-                  disabled={b.current || checkoutMut.isPending}
-                  data-testid={`branch-dropdown-item-${b.name}`}
-                >
-                  <span className={menuItemCheck}>{b.current ? '\u2713' : ''}</span>
-                  <span className={menuItemSub}>{b.name}</span>
-                  {b.lastSubject ? (
-                    <span className={menuItemHint} title={b.lastSubject}>
-                      {b.lastSubject}
-                    </span>
-                  ) : null}
-                </button>
-              ))
-            }
+            </DropdownMenuContent>
           </DropdownMenu>
         </span>
       ) : null}
@@ -536,11 +545,11 @@ function NewBranchForm({
 
   return (
     <div>
-      <input
+      <SyncedInput
         className={branchInput}
         placeholder="新分支名…"
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        onChange={(v) => setName(v)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') submit()
         }}

@@ -1,3 +1,4 @@
+import { SyncedSelect } from '@/components/SyncedControls.js'
 import { field, section, sectionTitle } from '@/components/settings/styles.js'
 import { useTheme } from '@/contexts/ThemeContext.js'
 
@@ -11,14 +12,14 @@ function AppearancePanel() {
       <h2 className={sectionTitle}>外观</h2>
       <label className={field}>
         <span>主题</span>
-        <select
+        <SyncedSelect
           value={mode}
-          onChange={(e) => setMode(e.target.value as 'light' | 'dark' | 'system')}
+          onValuesChange={(v) => setMode(v as 'light' | 'dark' | 'system')}
         >
           <option value="light">浅色</option>
           <option value="dark">深色</option>
           <option value="system">跟随系统</option>
-        </select>
+        </SyncedSelect>
       </label>
     </div>
   )

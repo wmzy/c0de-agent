@@ -868,8 +868,11 @@ describe('Settings — 默认 Provider/Model 下拉选择', () => {
       target: { value: 'Beta' },
     })
 
-    const modelSel = screen.getByTestId('default-model-select') as HTMLSelectElement
-    await waitFor(() => expect(modelSel.value).toBe('b-1'))
+    // model 下拉随 defaultModel 变化 key 重挂载，等待期间重新查询元素
+    await waitFor(() => {
+      const sel = screen.getByTestId('default-model-select') as HTMLSelectElement
+      expect(sel.value).toBe('b-1')
+    })
 
     fireEvent.click(screen.getByTestId('settings-save'))
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
@@ -1178,9 +1181,12 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(providerSel.value).toBe('Alpha')
     expect(modelSel.value).toBe('a-1')
 
-    // 切换到 Beta → model 自动校正为 b-1
+    // 切换到 Beta → model 自动校正为 b-1（model 下拉随 key 重挂载，需重新查询）
     fireEvent.change(providerSel, { target: { value: 'Beta' } })
-    await waitFor(() => expect(modelSel.value).toBe('b-1'))
+    await waitFor(() => {
+      const sel = screen.getByTestId('compaction-model-select') as HTMLSelectElement
+      expect(sel.value).toBe('b-1')
+    })
 
     fireEvent.click(screen.getByTestId('settings-save'))
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())

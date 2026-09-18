@@ -13,7 +13,7 @@ const redirectMsg = css`
   flex: 1;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
   padding: 24px;
 `

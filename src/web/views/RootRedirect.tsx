@@ -13,7 +13,7 @@ const redirectMsg = css`
   flex: 1;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
   padding: 24px;
 `
@@ -25,7 +25,7 @@ const errorState = css`
   justify-content: center;
   gap: 12px;
   flex: 1;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
   padding: 24px;
   text-align: center;
@@ -36,10 +36,10 @@ const errorIcon = css`
 `
 
 const errorLink = css`
-  color: var(--primary);
+  color: var(--haze-color-primary);
   text-decoration: none;
   padding: 8px 16px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--haze-color-primary);
   border-radius: 6px;
 `
 

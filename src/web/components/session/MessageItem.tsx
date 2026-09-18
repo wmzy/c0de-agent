@@ -45,12 +45,12 @@ const toolGroupRow = css`
 const shakeable = css`
   border-radius: 6px;
   cursor: pointer;
-  background: color-mix(in srgb, var(--warning) 8%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--haze-color-warning) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--haze-color-warning) 40%, transparent);
   transition: background 0.12s ease;
 
   &:hover {
-    background: color-mix(in srgb, var(--warning) 15%, transparent);
+    background: color-mix(in srgb, var(--haze-color-warning) 15%, transparent);
   }
 `
 
@@ -58,11 +58,11 @@ const shakeable = css`
 const shakeSelected = css`
   border-radius: 6px;
   cursor: pointer;
-  background: color-mix(in srgb, var(--warning) 20%, transparent);
-  box-shadow: inset 0 0 0 2px var(--warning);
+  background: color-mix(in srgb, var(--haze-color-warning) 20%, transparent);
+  box-shadow: inset 0 0 0 2px var(--haze-color-warning);
 
   &:hover {
-    background: color-mix(in srgb, var(--warning) 25%, transparent);
+    background: color-mix(in srgb, var(--haze-color-warning) 25%, transparent);
   }
 `
 
@@ -73,9 +73,9 @@ const shakeBadge = css`
   z-index: 1;
   font-size: 10px;
   font-family: ui-monospace, monospace;
-  color: var(--warning);
-  background: color-mix(in srgb, var(--bg) 80%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning) 50%, transparent);
+  color: var(--haze-color-warning);
+  background: color-mix(in srgb, var(--haze-color-bg) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--haze-color-warning) 50%, transparent);
   border-radius: 3px;
   padding: 0 4px;
   pointer-events: none;

@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providerAPI } from '@/services/provider.js'
 import { inputStyle } from '@/styles/tokens.js'
@@ -10,7 +11,7 @@ const field = css`
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 /** 基础控件增量样式。注意：wyw-in-js 不会把 `${control}` 的样式内联进派生类，
@@ -65,10 +66,10 @@ const hintList = css`
   max-width: min(360px, calc(100vw - 24px));
   max-height: 220px;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
-  box-shadow: var(--shadow, 0 4px 12px rgba(0, 0, 0, 0.15));
+  background: var(--haze-color-bg);
+  box-shadow: var(--haze-shadow-md, 0 4px 12px rgba(0, 0, 0, 0.15));
   display: flex;
   flex-direction: column;
   padding: 4px 0;
@@ -81,24 +82,24 @@ const hintItem = css`
   text-align: left;
   background: none;
   border: none;
-  color: var(--text);
+  color: var(--haze-color-text);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
 /** 键盘/悬停高亮项。 */
 const hintItemHighlight = css`
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
 `
 
 /** 当前已选中的模型名。 */
 const hintItemActive = css`
-  color: var(--primary);
+  color: var(--haze-color-primary);
   font-weight: 600;
 `
 
@@ -106,7 +107,7 @@ const hintItemActive = css`
 const hintEmpty = css`
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -230,11 +231,11 @@ export function ModelSelector({
     <>
       <label className={field}>
         <span>Provider</span>
-        <select
+        <SyncedSelect
           className={`${inputStyle} ${selectControl}`}
           value={value.provider}
-          onChange={(e) => {
-            onChange({ ...value, provider: e.target.value })
+          onValuesChange={(v) => {
+            onChange({ ...value, provider: v as string })
             // 切换 provider 后旧列表不再适用，直接收起
             closeHints()
           }}
@@ -248,12 +249,12 @@ export function ModelSelector({
               {p.name}
             </option>
           ))}
-        </select>
+        </SyncedSelect>
       </label>
       <div className={modelWrap} ref={wrapRef}>
         <label className={field}>
           <span>Model</span>
-          <input
+          <SyncedInput
             ref={inputRef}
             className={`${inputStyle} ${input}`}
             value={value.model}
@@ -272,10 +273,10 @@ export function ModelSelector({
               }
               if (modelHints.length > 0) openHints()
             }}
-            onChange={(e) => {
+            onChange={(v) => {
               // 始终回传原始输入，允许列表外的自定义模型名（不合规则不清空）
-              onChange({ ...value, model: e.target.value })
-              setQuery(e.target.value)
+              onChange({ ...value, model: v })
+              setQuery(v)
               setHighlight(-1)
               if (modelHints.length > 0) setHintsOpen(true)
             }}

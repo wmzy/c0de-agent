@@ -37,7 +37,7 @@ const rowWrap = css`
   transition: background-color 0.12s ease;
 
   &:hover {
-    background: color-mix(in srgb, var(--bg-secondary) 88%, var(--text) 6%);
+    background: color-mix(in srgb, var(--haze-color-bg-subtle) 88%, var(--haze-color-text) 6%);
   }
 
   &:hover > button {
@@ -50,9 +50,9 @@ const unfinishedDivider = css`
   margin: 6px 0;
   padding: 4px 10px;
   font-size: 12px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  border-left: 3px solid var(--warning);
+  color: var(--haze-color-text-secondary);
+  background: color-mix(in srgb, var(--haze-color-warning) 10%, transparent);
+  border-left: 3px solid var(--haze-color-warning);
   border-radius: 4px;
 `
 
@@ -66,9 +66,9 @@ const jsonToggle = css`
   top: 2px;
   right: 0;
   z-index: 1;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
+  border: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
+  color: var(--haze-color-text-secondary);
   border-radius: 4px;
   padding: 0 6px;
   font-size: 11px;
@@ -80,8 +80,8 @@ const jsonToggle = css`
 
   &:hover {
     opacity: 1;
-    color: var(--text);
-    border-color: var(--primary);
+    color: var(--haze-color-text);
+    border-color: var(--haze-color-primary);
   }
 `
 
@@ -90,8 +90,8 @@ const pre = css`
   word-break: break-word;
   margin: 0;
   padding: 8px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg-subtle);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   font-size: 11px;
   max-height: 400px;

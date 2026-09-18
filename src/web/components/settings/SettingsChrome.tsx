@@ -4,16 +4,19 @@
 
 import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
+import { Button } from 'haze-ui'
 import type { RefObject } from 'react'
+import { SyncedInput } from '@/components/SyncedControls.js'
 import { hint, hintMb, kvRow, section, sectionTitle } from '@/components/settings/styles.js'
+import { btnDanger } from '@/styles/tokens.js'
 
 const toolbar = css`
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -28,7 +31,7 @@ const toolbarTitle = css`
 
 const segGroup = css`
   display: inline-flex;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   overflow: hidden;
 `
@@ -36,9 +39,9 @@ const segGroup = css`
 const segBtn = css`
   padding: 4px 12px;
   border: none;
-  border-right: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
+  border-right: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   cursor: pointer;
   font-size: 13px;
   display: inline-flex;
@@ -50,7 +53,7 @@ const segBtn = css`
 `
 
 const segBtnActive = css`
-  background: var(--primary);
+  background: var(--haze-color-primary);
   color: #fff;
 `
 
@@ -59,14 +62,14 @@ const toolBtn = css`
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   cursor: pointer;
   font-size: 13px;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
@@ -77,12 +80,12 @@ const hiddenInput = css`
 
 /** 保存反馈 — 成功色。 */
 const saveOk = css`
-  color: var(--success, #2a9d8f);
+  color: var(--haze-color-success, #2a9d8f);
 `
 
 /** 保存反馈 — 错误色。 */
 const saveErr = css`
-  color: var(--error, #e63946);
+  color: var(--haze-color-danger, #e63946);
 `
 
 /** 保存状态提示文本。 */
@@ -99,14 +102,14 @@ const saveBar = css`
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
+  background: var(--haze-color-bg-subtle);
+  border-top: 1px solid var(--haze-color-border);
   z-index: 10;
 `
 
 /** 有未保存更改时的强调：上浮阴影 + 主色分隔线。 */
 const saveBarDirty = css`
-  border-top-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  border-top-color: color-mix(in srgb, var(--haze-color-primary) 40%, var(--haze-color-border));
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
 `
 
@@ -117,7 +120,7 @@ const saveBarSpacer = css`
 
 /** 「未保存更改」提示：警示色。 */
 const dirtyHint = css`
-  color: var(--warning);
+  color: var(--haze-color-warning);
   font-size: 13px;
 `
 
@@ -219,20 +222,20 @@ function RoleRoutingSection({ routing, onUpdate, onClear }: RoleRoutingSectionPr
         <span className={hint} style={{ minWidth: 48, flexShrink: 0 }}>
           smol
         </span>
-        <input
+        <SyncedInput
           value={smol?.provider ?? ''}
           placeholder="provider"
-          onChange={(e) => onUpdate('provider', e.target.value)}
+          onChange={(v) => onUpdate('provider', v)}
         />
-        <input
+        <SyncedInput
           value={smol?.model ?? ''}
           placeholder="model"
-          onChange={(e) => onUpdate('model', e.target.value)}
+          onChange={(v) => onUpdate('model', v)}
         />
         {smol && (
-          <button type="button" data-variant="danger" onClick={onClear}>
+          <Button onClick={onClear} className={btnDanger} variant="outline">
             清除
-          </button>
+          </Button>
         )}
       </div>
       {unknownRoles.length > 0 && (
@@ -273,25 +276,24 @@ function SettingsSaveBar({ isDirty, feedback, onDiscard, onSave }: SettingsSaveB
       )}
       <span className={saveBarSpacer} />
       {isDirty && (
-        <button
-          type="button"
+        <Button
           onClick={onDiscard}
           data-testid="settings-discard"
           title="放弃当前未保存的修改，恢复到已保存配置"
+          variant="outline"
         >
           放弃更改
-        </button>
+        </Button>
       )}
-      <button
-        type="button"
-        data-variant="primary"
+      <Button
         onClick={onSave}
         disabled={!isDirty || feedback.kind === 'saving'}
         title={isDirty ? '保存配置' : '配置未变更或正在加载'}
         data-testid="settings-save"
+        variant="solid"
       >
         {feedback.kind === 'saving' ? '保存中…' : '保存'}
-      </button>
+      </Button>
     </div>
   )
 }

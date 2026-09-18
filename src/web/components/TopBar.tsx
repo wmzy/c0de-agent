@@ -19,8 +19,8 @@ const bar = css`
   justify-content: space-between;
   height: 44px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
   flex-shrink: 0;
 `
 
@@ -35,7 +35,7 @@ const brandGroup = css`
 const brand = css`
   display: inline-flex;
   align-items: center;
-  color: var(--text);
+  color: var(--haze-color-text);
   text-decoration: none;
   min-height: auto;
   flex-shrink: 0;
@@ -55,20 +55,20 @@ const link = css`
   padding: 6px 10px;
   border-radius: 4px;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   text-decoration: none;
   min-height: auto;
   min-width: auto;
   cursor: pointer;
   &:hover {
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
   }
 `
 
 const activeLink = css`
-  background: var(--bg);
-  color: var(--primary);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-primary);
   font-weight: 600;
 `
 
@@ -79,24 +79,24 @@ const costBadge = css`
   padding: 4px 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
+  color: var(--haze-color-text-secondary);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
   text-decoration: none;
   white-space: nowrap;
   &:hover {
-    border-color: var(--text-secondary);
+    border-color: var(--haze-color-text-secondary);
   }
 `
 
 const costNear = css`
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+  color: var(--haze-color-warning);
+  border-color: color-mix(in srgb, var(--haze-color-warning) 55%, transparent);
 `
 
 const costOver = css`
-  color: var(--error);
-  border-color: color-mix(in srgb, var(--error) 55%, transparent);
+  color: var(--haze-color-danger);
+  border-color: color-mix(in srgb, var(--haze-color-danger) 55%, transparent);
   font-weight: 600;
 `
 

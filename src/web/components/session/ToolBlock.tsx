@@ -39,7 +39,7 @@ const header = css`
   padding: 4px 0;
   cursor: pointer;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   background: transparent;
   border: none;
   width: 100%;
@@ -64,17 +64,17 @@ const summary = css`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const arrow = css`
   flex-shrink: 0;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const permissionPending = css`
   font-size: 13px;
-  color: var(--warning);
+  color: var(--haze-color-warning);
 `
 
 const body = css`

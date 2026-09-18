@@ -1,13 +1,16 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
+import { Button } from 'haze-ui'
 import { useState } from 'react'
 import { ProviderCatalogDialog } from '@/components/ProviderCatalogDialog.js'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { ApiKeyInput } from '@/components/settings/ApiKeyInput.js'
 import { ProviderModelsPanel } from '@/components/settings/ModelPanel.js'
 import { section, sectionTitle } from '@/components/settings/styles.js'
 import type { TestResult } from '@/services/provider.js'
 import { providerAPI } from '@/services/provider.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { btnDanger } from '@/styles/tokens.js'
 
 /*
  * Provider 行网格：桌面 6 列（名称/协议/URL/APIKey + 测试/删除），窄屏 2 列堆叠。
@@ -21,9 +24,9 @@ const providerRow = css`
   align-items: end;
   padding: 10px;
   margin-bottom: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   ${MOBILE} {
     /* 窄屏：6 列改 2 列；长字段（URL/API Key）由 providerFieldWide 整行展开 */
     grid-template-columns: 1fr 1fr;
@@ -47,7 +50,7 @@ const providerField = css`
 /** 字段标签：小号次级色（名称/协议/URL/API Key）。 */
 const providerFieldLabel = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 /** 窄屏整行字段：URL / API Key 输入较长，独占一行。 */
@@ -64,12 +67,12 @@ const testResultSpan = css`
 
 /** 测试结果 — 成功色。 */
 const testOk = css`
-  color: var(--success);
+  color: var(--haze-color-success);
 `
 
 /** 测试结果 — 错误色。 */
 const testErr = css`
-  color: var(--error);
+  color: var(--haze-color-danger);
 `
 
 const buttonRow = css`
@@ -81,11 +84,11 @@ const buttonRow = css`
 
 const sourceHint = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const sourceLink = css`
-  color: var(--primary);
+  color: var(--haze-color-primary);
   text-decoration: none;
   &:hover {
     text-decoration: underline;
@@ -226,10 +229,10 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
               <label className={providerFieldLabel} htmlFor={`provider-name-${index}`}>
                 名称
               </label>
-              <input
+              <SyncedInput
                 id={`provider-name-${index}`}
                 value={provider.name}
-                onChange={(e) => updateProvider(index, 'name', e.target.value)}
+                onChange={(v) => updateProvider(index, 'name', v)}
                 placeholder="名称"
               />
             </div>
@@ -237,25 +240,25 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
               <label className={providerFieldLabel} htmlFor={`provider-protocol-${index}`}>
                 协议
               </label>
-              <select
+              <SyncedSelect
                 id={`provider-protocol-${index}`}
                 value={provider.protocol}
-                onChange={(e) => updateProvider(index, 'protocol', e.target.value)}
+                onValuesChange={(v) => updateProvider(index, 'protocol', v as string)}
               >
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="google">Google</option>
                 <option value="openai-compat">OpenAI Compatible</option>
-              </select>
+              </SyncedSelect>
             </div>
             <div className={`${providerField} ${providerFieldWide}`}>
               <label className={providerFieldLabel} htmlFor={`provider-url-${index}`}>
                 URL
               </label>
-              <input
+              <SyncedInput
                 id={`provider-url-${index}`}
                 value={provider.baseURL ?? ''}
-                onChange={(e) => updateProvider(index, 'baseURL', e.target.value)}
+                onChange={(v) => updateProvider(index, 'baseURL', v)}
                 placeholder="https://api.openai.com/v1"
               />
             </div>
@@ -269,22 +272,22 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
                 onCommit={(value) => updateProvider(index, 'apiKey', value)}
               />
             </div>
-            <button
-              type="button"
+            <Button
+              variant="outline"
               onClick={() => testProvider(index, provider.baseURL ?? '', provider.apiKey)}
               disabled={test?.loading === true}
               data-testid="provider-test"
             >
               {test?.loading ? '测试中…' : '测试'}
-            </button>
-            <button
-              type="button"
-              data-variant="danger"
+            </Button>
+            <Button
+              className={btnDanger}
+              variant="outline"
               onClick={() => removeProvider(index)}
               data-testid="provider-remove"
             >
               删除
-            </button>
+            </Button>
             {test?.result && (
               <span className={`${testResultSpan} ${test.result.ok ? testOk : testErr}`}>
                 {test.result.ok
@@ -302,12 +305,12 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
         )
       })}
       <div className={buttonRow}>
-        <button type="button" onClick={addProvider} data-testid="provider-add">
+        <Button onClick={addProvider} data-testid="provider-add" variant="outline">
           + 手动添加
-        </button>
-        <button type="button" onClick={() => setCatalogOpen(true)} data-testid="provider-catalog">
+        </Button>
+        <Button onClick={() => setCatalogOpen(true)} data-testid="provider-catalog">
           从 models.dev 选择
-        </button>
+        </Button>
         <span className={sourceHint}>
           数据源：
           <a className={sourceLink} href="https://models.dev" target="_blank" rel="noreferrer">

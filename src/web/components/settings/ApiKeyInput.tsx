@@ -1,10 +1,10 @@
 import { css } from '@linaria/core'
-import { useEffect, useState } from 'react'
+import { SyncedInput } from '@/components/SyncedControls.js'
 
 /** 已加密保存徽章：apiKey 输入框旁的小提示，表示 key 已落盘。 */
 const apiKeySavedBadge = css`
   font-size: 0.8em;
-  color: var(--success, #2a9d8f);
+  color: var(--haze-color-success, #2a9d8f);
   white-space: nowrap;
 `
 
@@ -28,6 +28,8 @@ const pwdInput = css`
  * 不回显已加密的密文（enc: 前缀）：否则用户改完 key、保存、刷新后会看到 enc: 串
  * （而非自己输入的 key），误以为「没保存」。已加密时输入框留空，旁边提示「已加密」；
  * 用户重新输入即覆盖。未改动时 draft 仍保留原 enc: 值，保存不会误清空。
+ * SyncedInput 以 display 值驱动：外部 stored 变化（加载/保存后刷新/导入/行复用）
+ * 经 effect 同步进内部 control，无需组件自持 text 状态。
  */
 function ApiKeyInput({
   id,
@@ -42,24 +44,17 @@ function ApiKeyInput({
   /** 测试标识（多处复用本组件时需区分）。 */
   testId?: string
 }) {
-  const [text, setText] = useState('')
-  // 外部 stored 变化（加载、保存后刷新、导入）时同步显示：密文→留空，明文→原样。
-  useEffect(() => {
-    setText((stored ?? '').startsWith('enc:') ? '' : (stored ?? ''))
-  }, [stored])
   const isEnc = (stored ?? '').startsWith('enc:')
+  const display = isEnc ? '' : (stored ?? '')
   return (
     <span className={pwdField}>
-      <input
+      <SyncedInput
         id={id}
         className={pwdInput}
         type="password"
-        value={text}
+        value={display}
         placeholder={isEnc ? '已加密保存（重新输入以修改）' : 'API Key'}
-        onChange={(e) => {
-          setText(e.target.value)
-          onCommit(e.target.value)
-        }}
+        onChange={onCommit}
         data-testid={testId}
       />
       {isEnc && (

@@ -30,7 +30,7 @@ const collapsed = css`
 const btn = css`
   align-self: flex-start;
   font-size: 12px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -38,7 +38,7 @@ const btn = css`
 
 const footer = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const footerRow = css`

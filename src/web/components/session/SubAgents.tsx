@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import type { SubagentInfo } from '@/hooks/chatState.js'
 
 const card = css`
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--haze-color-border);
   border-radius: 6px;
   padding: 8px;
   margin: 6px 0;
@@ -15,17 +15,17 @@ const rowBetween = css`
 `
 
 const muted = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const statusColor = (status: SubagentInfo['status']): string => {
   switch (status) {
     case 'running':
-      return 'var(--accent)'
+      return 'var(--haze-color-primary)'
     case 'completed':
-      return 'var(--success, green)'
+      return 'var(--haze-color-success, green)'
     case 'failed':
-      return 'var(--danger, red)'
+      return 'var(--haze-color-danger, red)'
   }
 }
 

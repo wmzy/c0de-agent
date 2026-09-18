@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { HistoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Button, LocaleProvider, zhCN } from 'haze-ui'
 import { useEffect, useState } from 'react'
 import { ErrorBoundary } from '@/components/ErrorBoundary.js'
 import { PairingApproval, PairingRequestFlow } from '@/components/PairingView.js'
@@ -43,21 +44,23 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <ConfigProvider>
-          <HistoryRouter
-            routes={routes}
-            baseUrl={routerBaseUrl}
-            notFound={<Layout header={<TopBar />} main={<NotFound />} />}
-          >
-            <ErrorBoundary>
-              <div className={appShell}>
-                <UpdateBanner />
-                <FirstDeviceNotice />
-                {authRequired && <PairingRequestFlow />}
-                <PairingApproval onDone={() => {}} />
-                <View />
-              </div>
-            </ErrorBoundary>
-          </HistoryRouter>
+          <LocaleProvider strings={zhCN}>
+            <HistoryRouter
+              routes={routes}
+              baseUrl={routerBaseUrl}
+              notFound={<Layout header={<TopBar />} main={<NotFound />} />}
+            >
+              <ErrorBoundary>
+                <div className={appShell}>
+                  <UpdateBanner />
+                  <FirstDeviceNotice />
+                  {authRequired && <PairingRequestFlow />}
+                  <PairingApproval onDone={() => {}} />
+                  <View />
+                </div>
+              </ErrorBoundary>
+            </HistoryRouter>
+          </LocaleProvider>
         </ConfigProvider>
       </ThemeProvider>
     </QueryClientProvider>
@@ -79,17 +82,17 @@ const deviceNotice = css`
   justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  color: var(--text-secondary);
+  background: var(--haze-color-bg-subtle);
+  border-bottom: 1px solid var(--haze-color-border);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   flex-shrink: 0;
 
   & > button {
-    border: 1px solid var(--border);
+    border: 1px solid var(--haze-color-border);
     border-radius: 4px;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
     cursor: pointer;
     font-size: 12px;
     padding: 2px 8px;
@@ -117,9 +120,9 @@ function FirstDeviceNotice() {
   return (
     <div className={deviceNotice} data-testid="first-device-notice">
       <span>本浏览器已注册为本机设备「{name}」。可在 设置 → 安全 → 已授权设备 查看与管理。</span>
-      <button type="button" onClick={dismiss}>
+      <Button onClick={dismiss} variant="outline">
         知道了
-      </button>
+      </Button>
     </div>
   )
 }

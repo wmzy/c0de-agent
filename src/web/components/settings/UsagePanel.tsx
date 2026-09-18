@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
+import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { UsageSummary } from '@/services/usage.js'
 import { usageAPI } from '@/services/usage.js'
@@ -15,24 +16,24 @@ const rowGrid = css`
   gap: 4px 16px;
   font-size: 12px;
   padding: 2px 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
 
   & > span:nth-child(n + 2) {
     text-align: right;
-    color: var(--text-secondary);
+    color: var(--haze-color-text-secondary);
     font-variant-numeric: tabular-nums;
   }
 `
 
 const headRow = css`
   ${rowGrid};
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-weight: 600;
   border-bottom: none;
 `
 
 const budgetWarn = css`
-  color: var(--warning);
+  color: var(--haze-color-warning);
   font-size: 12px;
   margin-top: 6px;
 `
@@ -127,25 +128,25 @@ function UsagePanel({
       {projectId ? (
         <label className={field}>
           <span>月度成本预算（USD，0 = 不限制）</span>
-          <input
+          <SyncedInput
             className={fieldInput}
             type="number"
             min={0}
             step="0.5"
-            value={budget}
-            onChange={(e) => onBudgetChange(Math.max(0, Number(e.target.value)))}
+            value={String(budget)}
+            onChange={(v) => onBudgetChange(Math.max(0, Number(v)))}
           />
         </label>
       ) : (
         <label className={field}>
           <span>全局月度预算（USD，0 = 不限制；所有项目 + 未归属调用聚合，兜底护栏）</span>
-          <input
+          <SyncedInput
             className={fieldInput}
             type="number"
             min={0}
             step="0.5"
-            value={globalBudget ?? 0}
-            onChange={(e) => onGlobalBudgetChange?.(Math.max(0, Number(e.target.value)))}
+            value={String(globalBudget ?? 0)}
+            onChange={(v) => onGlobalBudgetChange?.(Math.max(0, Number(v)))}
             data-testid="usage-global-budget"
           />
         </label>
@@ -153,26 +154,26 @@ function UsagePanel({
       {projectId ? (
         <label className={field}>
           <span>月度 token 预算（input+output+cacheRead，0 = 不限制；兜底价格未知的调用）</span>
-          <input
+          <SyncedInput
             className={fieldInput}
             type="number"
             min={0}
             step="1000"
-            value={tokenBudget ?? 0}
-            onChange={(e) => onTokenBudgetChange?.(Math.max(0, Number(e.target.value)))}
+            value={String(tokenBudget ?? 0)}
+            onChange={(v) => onTokenBudgetChange?.(Math.max(0, Number(v)))}
             data-testid="usage-token-budget"
           />
         </label>
       ) : (
         <label className={field}>
           <span>全局月度 token 预算（input+output+cacheRead，0 = 不限制）</span>
-          <input
+          <SyncedInput
             className={fieldInput}
             type="number"
             min={0}
             step="1000"
-            value={globalTokenBudget ?? 0}
-            onChange={(e) => onGlobalTokenBudgetChange?.(Math.max(0, Number(e.target.value)))}
+            value={String(globalTokenBudget ?? 0)}
+            onChange={(v) => onGlobalTokenBudgetChange?.(Math.max(0, Number(v)))}
             data-testid="usage-global-token-budget"
           />
         </label>
@@ -192,33 +193,31 @@ function UsagePanel({
       {effectiveBudget > 0 && (
         <label className={field}>
           <span>超支动作</span>
-          <select
+          <SyncedSelect
             className={fieldInput}
             value={budgetAction === 'pause' || budgetAction === 'abort' ? budgetAction : 'warn'}
-            onChange={(e) => onBudgetActionChange(e.target.value as 'warn' | 'pause' | 'abort')}
+            onValuesChange={(v) => onBudgetActionChange(v as 'warn' | 'pause' | 'abort')}
             data-testid="usage-budget-action"
           >
             <option value="warn">仅告警（顶栏徽标变红，对话继续）</option>
             <option value="pause">暂停对话（新一轮回复前暂停，点「恢复」继续）</option>
             <option value="abort">中止对话（撞线即硬停，无「恢复」，需重新发送消息）</option>
-          </select>
+          </SyncedSelect>
         </label>
       )}
       {effectiveTokenBudget > 0 && (
         <label className={field}>
           <span>token 预算超支动作（独立于金额预算）</span>
-          <select
+          <SyncedSelect
             className={fieldInput}
             value={tokenAction}
-            onChange={(e) =>
-              onTokenBudgetActionChange?.(e.target.value as 'warn' | 'pause' | 'abort')
-            }
+            onValuesChange={(v) => onTokenBudgetActionChange?.(v as 'warn' | 'pause' | 'abort')}
             data-testid="usage-token-budget-action"
           >
             <option value="warn">仅告警（顶栏徽标变红，对话继续）</option>
             <option value="pause">暂停对话（新一轮回复前暂停，点「恢复」继续）</option>
             <option value="abort">中止对话（撞线即硬停，无「恢复」，需重新发送消息）</option>
-          </select>
+          </SyncedSelect>
         </label>
       )}
       {overBudget && (

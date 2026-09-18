@@ -19,7 +19,7 @@ const panelStyle = css`
   flex-shrink: 1;
   min-height: 40px;
   background: #0d1117;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--haze-color-border);
   overflow: hidden;
 `
 
@@ -30,8 +30,8 @@ const headerStyle = css`
   padding: 0 8px;
   height: 36px;
   flex-shrink: 0;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  background: var(--haze-color-bg-subtle);
+  border-bottom: 1px solid var(--haze-color-border);
   user-select: none;
 `
 
@@ -48,7 +48,7 @@ const tabsStyle = css`
     height: 3px;
   }
   &::-webkit-scrollbar-thumb {
-    background: var(--border);
+    background: var(--haze-color-border);
     border-radius: 2px;
   }
 `
@@ -59,7 +59,7 @@ const tabStyle = css`
   gap: 6px;
   padding: 4px 10px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -68,21 +68,21 @@ const tabStyle = css`
   transition: background 0.1s, color 0.1s;
 
   &:hover {
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
   }
 `
 
 const tabActiveStyle = css`
-  background: var(--bg);
-  color: var(--text);
-  border-color: var(--border);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  border-color: var(--haze-color-border);
 `
 
 const tabBadgeStyle = css`
   font-size: 10px;
-  background: var(--border);
-  color: var(--text);
+  background: var(--haze-color-border);
+  color: var(--haze-color-text);
   border-radius: 3px;
   padding: 0 4px;
   line-height: 16px;
@@ -98,7 +98,7 @@ const tabCloseStyle = css`
   height: 16px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 14px;
   cursor: pointer;
   border-radius: 3px;
@@ -109,7 +109,7 @@ const tabCloseStyle = css`
   min-width: auto;
 
   &:hover {
-    background: var(--error);
+    background: var(--haze-color-danger);
     color: #fff;
   }
 `
@@ -122,7 +122,7 @@ const iconBtnStyle = css`
   height: 24px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 15px;
   cursor: pointer;
   border-radius: 4px;
@@ -132,8 +132,8 @@ const iconBtnStyle = css`
   min-width: auto;
 
   &:hover {
-    background: var(--bg);
-    color: var(--text);
+    background: var(--haze-color-bg);
+    color: var(--haze-color-text);
   }
 
   &:disabled {
@@ -150,7 +150,7 @@ const closePanelBtnStyle = css`
   height: 24px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 16px;
   cursor: pointer;
   border-radius: 4px;
@@ -160,7 +160,7 @@ const closePanelBtnStyle = css`
   min-width: auto;
 
   &:hover {
-    background: var(--error);
+    background: var(--haze-color-danger);
     color: #fff;
   }
 `
@@ -176,7 +176,7 @@ const termAreaStyle = css`
 const resizeHandleStyle = css`
   height: 4px;
   cursor: row-resize;
-  background: var(--border);
+  background: var(--haze-color-border);
   flex-shrink: 0;
   transition: background 0.12s;
   border: none;
@@ -184,7 +184,7 @@ const resizeHandleStyle = css`
   margin: 0;
 
   &:hover {
-    background: var(--primary);
+    background: var(--haze-color-primary);
   }
 `
 
@@ -193,7 +193,7 @@ const connectingStyle = css`
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 13px;
 `
 

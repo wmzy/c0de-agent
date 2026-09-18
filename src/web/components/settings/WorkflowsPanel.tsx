@@ -4,9 +4,11 @@
 
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { Dialog } from '@/components/Dialog.js'
+import { SyncedInput, SyncedSelect, SyncedTextarea } from '@/components/SyncedControls.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 import { workflowsAPI } from '@/services/workflows.js'
@@ -16,7 +18,7 @@ const row = css`
   align-items: center;
   gap: 8px;
   padding: 6px 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--haze-color-border);
   font-size: 13px;
 
   &:last-child {
@@ -31,11 +33,11 @@ const rowMain = css`
 
 const rowName = css`
   font-weight: 500;
-  color: var(--text);
+  color: var(--haze-color-text);
 `
 
 const rowDesc = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -45,33 +47,33 @@ const rowDesc = css`
 const badge = css`
   flex-shrink: 0;
   padding: 1px 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 4px;
   font-size: 10px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const overrideBadge = css`
   flex-shrink: 0;
   padding: 1px 6px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--haze-color-primary);
   border-radius: 4px;
   font-size: 10px;
-  color: var(--primary);
+  color: var(--haze-color-primary);
 `
 
 const actionBtn = css`
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
   padding: 3px 8px;
   min-height: auto;
   cursor: pointer;
 
   &:hover:not(:disabled) {
-    color: var(--text);
+    color: var(--haze-color-text);
   }
 
   &:disabled {
@@ -81,10 +83,10 @@ const actionBtn = css`
 `
 
 const dangerAction = css`
-  color: var(--error);
+  color: var(--haze-color-danger);
 
   &:hover:not(:disabled) {
-    color: var(--error);
+    color: var(--haze-color-danger);
   }
 `
 
@@ -92,10 +94,10 @@ const editorArea = css`
   width: 100%;
   min-height: 260px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
@@ -104,12 +106,12 @@ const editorArea = css`
 
   &:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--haze-color-primary);
   }
 `
 
 const errorText = css`
-  color: var(--error);
+  color: var(--haze-color-danger);
   font-size: 12px;
   margin-top: 8px;
 `
@@ -346,22 +348,22 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
           footer={
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               {editor.mode === 'view' ? (
-                <button type="button" onClick={() => setEditor(null)}>
+                <Button variant="outline" onClick={() => setEditor(null)}>
                   关闭
-                </button>
+                </Button>
               ) : (
                 <>
-                  <button type="button" onClick={() => setEditor(null)}>
+                  <Button variant="outline" onClick={() => setEditor(null)}>
                     取消
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
                     onClick={submitSave}
                     disabled={saveMut.isPending}
                     data-testid="workflow-save"
+                    variant="outline"
                   >
                     {saveMut.isPending ? '保存中…' : '保存'}
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -369,11 +371,11 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
         >
           <div className={field}>
             <span>名称</span>
-            <input
+            <SyncedInput
               className={fieldInput}
               value={draftName}
               disabled={editor.mode !== 'create'}
-              onChange={(e) => setDraftName(e.target.value)}
+              onChange={(v) => setDraftName(v)}
               placeholder="my-workflow"
               data-testid="workflow-name-input"
             />
@@ -381,21 +383,21 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
           {editor.mode === 'create' ? (
             <div className={field}>
               <span>保存到</span>
-              <select
+              <SyncedSelect
                 value={draftTarget}
-                onChange={(e) => setDraftTarget(e.target.value as 'project' | 'user')}
+                onValuesChange={(v) => setDraftTarget(v as 'project' | 'user')}
                 data-testid="workflow-target-select"
               >
                 {projectId ? <option value="project">当前项目</option> : null}
                 <option value="user">全局（用户级）</option>
-              </select>
+              </SyncedSelect>
             </div>
           ) : null}
-          <textarea
+          <SyncedTextarea
             className={editorArea}
             value={draftSource}
             readOnly={editor.mode === 'view'}
-            onChange={(e) => setDraftSource(e.target.value)}
+            onChange={(v) => setDraftSource(v)}
             spellCheck={false}
             data-testid="workflow-source-editor"
           />

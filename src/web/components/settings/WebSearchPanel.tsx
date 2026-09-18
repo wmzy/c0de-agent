@@ -1,4 +1,5 @@
 import type { Config } from '@shared/types/config.js'
+import { SyncedSelect } from '@/components/SyncedControls.js'
 import { ApiKeyInput } from '@/components/settings/ApiKeyInput.js'
 import { field, section, sectionTitle } from '@/components/settings/styles.js'
 
@@ -15,11 +16,11 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
       <h2 className={sectionTitle}>Web 搜索</h2>
       <label className={field}>
         <span>后端</span>
-        <select
+        <SyncedSelect
           value={websearch.provider}
-          onChange={(e) =>
+          onValuesChange={(v) =>
             onWebSearchChange({
-              provider: e.target.value as Config['websearch']['provider'],
+              provider: v as Config['websearch']['provider'],
             })
           }
         >
@@ -27,7 +28,7 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
           <option value="duckduckgo">DuckDuckGo</option>
           <option value="tavily">Tavily</option>
           <option value="brave">Brave</option>
-        </select>
+        </SyncedSelect>
       </label>
       <div className={field}>
         <span>Tavily Key</span>

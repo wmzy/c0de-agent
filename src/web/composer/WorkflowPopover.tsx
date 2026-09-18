@@ -6,10 +6,10 @@ const popover = css`
   bottom: 100%;
   left: 0;
   right: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--haze-color-bg);
+  border: 1px solid var(--haze-color-border);
   border-radius: 6px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--haze-shadow-md);
   max-height: 240px;
   overflow: auto;
   z-index: 10;
@@ -24,23 +24,23 @@ const item = css`
   cursor: pointer;
   background: none;
   border: none;
-  color: var(--text);
+  color: var(--haze-color-text);
   &:hover,
   &.active {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
 `
 
 const wfDesc = css`
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
 `
 
 const wfArgs = css`
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   opacity: 0.7;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--haze-font-mono, monospace);
 `
 
 const sourceTag = css`

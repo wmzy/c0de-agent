@@ -1,4 +1,5 @@
 import type { ProviderConfig } from '@shared/types/llm.js'
+import { SyncedSelect } from '@/components/SyncedControls.js'
 import { enabledModelsOf, providerCandidates } from '@/components/settings/shared.js'
 import { field, fieldInput } from '@/components/settings/styles.js'
 
@@ -33,12 +34,12 @@ function ProviderModelSelect({
     <>
       <label className={field}>
         <span>{providerLabel}</span>
-        <select
+        <SyncedSelect
           className={fieldInput}
           value={value.provider}
-          onChange={(e) => {
-            const firstModel = enabledModelsOf(providers, e.target.value)[0] ?? value.model
-            onChange({ provider: e.target.value, model: firstModel })
+          onValuesChange={(v) => {
+            const firstModel = enabledModelsOf(providers, v as string)[0] ?? value.model
+            onChange({ provider: v as string, model: firstModel })
           }}
           data-testid={providerTestId}
         >
@@ -47,14 +48,14 @@ function ProviderModelSelect({
               {p.name}
             </option>
           ))}
-        </select>
+        </SyncedSelect>
       </label>
       <label className={field}>
         <span>{modelLabel}</span>
-        <select
+        <SyncedSelect
           className={fieldInput}
           value={value.model}
-          onChange={(e) => onChange({ provider: value.provider, model: e.target.value })}
+          onValuesChange={(v) => onChange({ provider: value.provider, model: v as string })}
           data-testid={modelTestId}
         >
           {(() => {
@@ -66,7 +67,7 @@ function ProviderModelSelect({
               </option>
             ))
           })()}
-        </select>
+        </SyncedSelect>
       </label>
     </>
   )

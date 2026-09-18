@@ -52,7 +52,7 @@ const row = css`
   cursor: pointer;
   border-radius: 4px;
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--haze-color-bg-subtle);
   }
   /* hover 时增强 @/删除 按钮（常驻低对比度，hover 提升到全亮） */
   &:hover [data-mention-btn] {
@@ -64,7 +64,7 @@ const row = css`
 `
 
 const selectedRow = css`
-  background: var(--bg-secondary);
+  background: var(--haze-color-bg-subtle);
   font-weight: 600;
 `
 
@@ -73,7 +73,7 @@ const toggle = css`
   text-align: center;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   padding: 0;
   font-size: 10px;
@@ -84,7 +84,7 @@ const toggleBtn = css`
   text-align: center;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   padding: 0;
   font-size: 10px;
@@ -103,13 +103,13 @@ const rowBtn = css`
 
 const childList = css`
   padding-left: 10px;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--haze-color-border);
   margin-left: 6px;
 `
 
 const hint = css`
   padding: 3px 8px 3px 24px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   font-size: 12px;
 `
 
@@ -120,7 +120,7 @@ const mentionBtn = css`
   background: transparent;
   border: none;
   border-radius: 3px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   font-size: 11px;
   padding: 0;
@@ -132,7 +132,7 @@ const mentionBtn = css`
   justify-content: center;
   transition: opacity 0.1s, color 0.1s;
   &:hover {
-    color: var(--primary);
+    color: var(--haze-color-primary);
   }
 `
 
@@ -141,7 +141,7 @@ const deleteBtn = css`
   background: transparent;
   border: none;
   border-radius: 3px;
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   cursor: pointer;
   font-size: 12px;
   padding: 0;
@@ -153,34 +153,34 @@ const deleteBtn = css`
   justify-content: center;
   transition: opacity 0.1s, color 0.1s;
   &:hover {
-    color: var(--error);
+    color: var(--haze-color-danger);
   }
 `
 
 /* git 状态高亮：文件名颜色 + 左缘色条。 */
 const gitModified = css`
-  color: var(--warning);
-  box-shadow: inset 2px 0 0 var(--warning);
+  color: var(--haze-color-warning);
+  box-shadow: inset 2px 0 0 var(--haze-color-warning);
 `
 const gitStaged = css`
-  color: var(--success);
-  box-shadow: inset 2px 0 0 var(--success);
+  color: var(--haze-color-success);
+  box-shadow: inset 2px 0 0 var(--haze-color-success);
 `
 const gitUntracked = css`
-  color: var(--primary);
-  box-shadow: inset 2px 0 0 var(--primary);
+  color: var(--haze-color-primary);
+  box-shadow: inset 2px 0 0 var(--haze-color-primary);
 `
 const gitConflict = css`
-  color: var(--error);
-  box-shadow: inset 2px 0 0 var(--error);
+  color: var(--haze-color-danger);
+  box-shadow: inset 2px 0 0 var(--haze-color-danger);
 `
 const gitDeleted = css`
-  color: var(--text-secondary);
-  box-shadow: inset 2px 0 0 var(--text-secondary);
+  color: var(--haze-color-text-secondary);
+  box-shadow: inset 2px 0 0 var(--haze-color-text-secondary);
   text-decoration: line-through;
 `
 const gitIgnored = css`
-  color: var(--text-secondary);
+  color: var(--haze-color-text-secondary);
   opacity: 0.55;
 `
 
