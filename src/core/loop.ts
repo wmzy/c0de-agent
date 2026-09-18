@@ -3,7 +3,7 @@ import { resolveRoute } from '../llm/registry.js'
 import { detectProjectInfo } from '../project/detect.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { getMessages } from '../session/message.js'
-import { updateSessionLastRun } from '../session/session.js'
+import { markBudgetPause, updateSessionLastRun } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import { budgetOverageParts } from '../session/usage.js'
 import type { AgentEvent, AgentState } from '../shared/types/agent.js'
@@ -175,6 +175,9 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
               model: state.config.model,
               startedAt: state.lastRunStartedAt ?? Date.now(),
             }).catch(() => {})
+            // P2-3：暂停原因落盘——热更新/重启后 run 重建，消费此标记还原
+            // budgetPauseTriggered，避免同一超支原因二次暂停打断用户。
+            await markBudgetPause(deps.db, state.session.id, reason).catch(() => {})
             await waitForResume(state)
             if (state.status._tag === 'paused') return
           } else {

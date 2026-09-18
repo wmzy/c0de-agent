@@ -3,13 +3,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { kanbanBoards, projects } from '../db/schema.js'
+import { kanbanBoards, kanbanCards, projects } from '../db/schema.js'
 import { DEFAULT_KANBAN_COLUMNS } from '../shared/types/kanban.js'
 import {
   createKanbanStore,
   getDeletedKanbanBoard,
   KanbanColumnInUseError,
+  KanbanColumnNotFoundError,
+  KanbanInvalidPriorityError,
   listDeletedKanbanBoards,
+  mergeKanbanBoard,
   permanentlyDeleteKanbanBoard,
   purgeDeletedKanbanBoards,
   restoreKanbanBoard,
@@ -125,6 +128,47 @@ describe('addCard', () => {
     expect(card.boardId).toBe(board.id)
     expect(board.cards).toHaveLength(1)
   })
+
+  it('rejects a columnId not in the board config, listing available columns', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+
+    await expect(store.addCard({ title: 'ghost', columnId: 'nonexistent' })).rejects.toThrow(
+      KanbanColumnNotFoundError,
+    )
+    await expect(store.addCard({ title: 'ghost', columnId: 'nonexistent' })).rejects.toThrow(
+      /可用列/,
+    )
+    // 失败不落库：看板仍为空，避免幽灵卡片不可见。
+    const board = await store.getBoard()
+    expect(board.cards).toHaveLength(0)
+  })
+
+  it('falls back to the first column when the todo column was removed', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+    // 删除空 todo 列后，无参 addCard 不再硬编码落到悬空的 'todo'。
+    await store.updateBoard({
+      columns: DEFAULT_KANBAN_COLUMNS.filter((c) => c.id !== 'todo'),
+    })
+
+    const card = await store.addCard({ title: 'no column given' })
+
+    expect(card.columnId).toBe('in_progress')
+    const board = await store.getBoard()
+    expect(board.columns.some((c) => c.id === card.columnId)).toBe(true)
+  })
+
+  it('rejects an invalid priority value', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+
+    await expect(store.addCard({ title: 'bad', priority: 'urgent' as never })).rejects.toThrow(
+      KanbanInvalidPriorityError,
+    )
+    const board = await store.getBoard()
+    expect(board.cards).toHaveLength(0)
+  })
 })
 
 describe('getBoard — card ordering', () => {
@@ -228,6 +272,17 @@ describe('moveCard', () => {
 
     await expect(store.moveCard(MISSING_ID, 'done')).rejects.toThrow('Kanban card not found')
   })
+
+  it('rejects moving to a column not in the board config', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+    const card = await store.addCard({ title: 'x', columnId: 'todo' })
+
+    await expect(store.moveCard(card.id, 'ghost-column')).rejects.toThrow(KanbanColumnNotFoundError)
+    // 卡片留在原列，未被静默移出可见范围。
+    const board = await store.getBoard()
+    expect(board.cards[0]?.columnId).toBe('todo')
+  })
 })
 
 describe('deleteCard', () => {
@@ -287,6 +342,31 @@ describe('updateBoard', () => {
     // 卡片仍在
     const board = await store.getBoard()
     expect(board.cards).toHaveLength(1)
+  })
+
+  it('幽灵卡片（悬空列）冻结删列时，报错附卡片 id 指引删除', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+    // 直接经 DB 写入悬空列卡片（历史脏数据/旧版本遗留），模拟死锁前状态。
+    const board = await store.getBoard()
+    const [ghost] = await handle.db
+      .insert(kanbanCards)
+      .values({
+        boardId: board.id,
+        title: 'invisible',
+        columnId: 'gone-column',
+        priority: 'medium',
+        position: 1000,
+        labels: [],
+      })
+      .returning()
+    if (!ghost) throw new Error('ghost seed failed')
+
+    // 删除任何现有列都会被幽灵卡片冻结——报错必须给出可执行的卡片 id。
+    const kept = DEFAULT_KANBAN_COLUMNS.filter((c) => c.id !== 'done')
+    await expect(store.updateBoard({ columns: [...kept] })).rejects.toThrow(
+      new RegExp(ghost.id.slice(0, 8)),
+    )
   })
 
   it('删除标签时把悬空 labelId 从卡片上清掉', async () => {
@@ -363,6 +443,68 @@ describe('P2-5 kanban recycle bin', () => {
     // 现有看板未被覆盖
     const board = await storeB.getBoard()
     expect(board.cards.map((c) => c.title)).toEqual(['existing'])
+  })
+
+  it('merge into a project with active board → 列追加、卡片并入、源看板移除', async () => {
+    await seedProject('proj-a')
+    await seedProject('proj-b')
+    const storeA = createKanbanStore(handle, 'proj-a')
+    // 源看板自定义列 + 卡片（含 todo 列卡片与自定义列卡片）
+    await storeA.updateBoard({
+      columns: [
+        { id: 'todo', name: '待办' },
+        { id: 'custom', name: '自定义' },
+      ],
+    })
+    await storeA.addCard({ title: 'src-todo', columnId: 'todo' })
+    await storeA.addCard({ title: 'src-custom', columnId: 'custom' })
+    await softDeleteKanbanBoard(handle, 'proj-a', 'A')
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-a'))
+
+    const storeB = createKanbanStore(handle, 'proj-b')
+    await storeB.addCard({ title: 'dst-todo', columnId: 'todo' })
+    const deleted = await listDeletedKanbanBoards(handle)
+    const boardId = deleted[0]?.id as string
+
+    const result = await mergeKanbanBoard(handle, boardId, 'proj-b')
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.mergedColumns).toBe(1)
+    expect(result.mergedCards).toBe(2)
+
+    const board = await storeB.getBoard()
+    // 目标列保留 + 自定义列追加
+    expect(board.columns.map((c) => c.id)).toContain('custom')
+    expect(board.columns.map((c) => c.id)).toContain('todo')
+    const titles = board.cards.map((c) => c.title).sort()
+    expect(titles).toEqual(['dst-todo', 'src-custom', 'src-todo'])
+    // 合并卡片 position 不重叠：同列 position 唯一
+    const todoPositions = board.cards.filter((c) => c.columnId === 'todo').map((c) => c.position)
+    expect(new Set(todoPositions).size).toBe(todoPositions.length)
+    // 源看板已从回收站移除（物理删除）
+    expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
+  })
+
+  it('merge into a project without board → 等价普通恢复', async () => {
+    await seedProject('proj-a')
+    await seedProject('proj-b')
+    const storeA = createKanbanStore(handle, 'proj-a')
+    await storeA.addCard({ title: 'only-card' })
+    await softDeleteKanbanBoard(handle, 'proj-a', 'A')
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-a'))
+    const boardId = (await listDeletedKanbanBoards(handle))[0]?.id as string
+
+    const result = await mergeKanbanBoard(handle, boardId, 'proj-b')
+    expect(result.ok).toBe(true)
+    const board = await createKanbanStore(handle, 'proj-b').getBoard()
+    expect(board.cards.map((c) => c.title)).toEqual(['only-card'])
+    expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
+  })
+
+  it('merge 未知看板 → BOARD_NOT_FOUND', async () => {
+    await seedProject('proj-b')
+    const result = await mergeKanbanBoard(handle, MISSING_ID, 'proj-b')
+    expect(result).toEqual({ ok: false, reason: 'BOARD_NOT_FOUND' })
   })
 
   it('permanent delete + purge retention', async () => {

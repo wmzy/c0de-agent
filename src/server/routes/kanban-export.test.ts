@@ -1,6 +1,7 @@
 // src/server/routes/kanban-export.test.ts
 // P0 审查修复：看板导出/导入端点测试（项目删除会永久级联删除看板，导出是唯一备份途径）。
 
+import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
@@ -162,5 +163,143 @@ describe('kanban export/import', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { cardCount: number }
     expect(body.cardCount).toBe(1)
+  })
+})
+
+describe('kanban route guards', () => {
+  it('GET 不存在项目的看板 → 404 PROJECT_NOT_FOUND（此前 FK violation 500）', async () => {
+    const { app } = await setup()
+    const res = await app.request('/ghost-project')
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('PROJECT_NOT_FOUND')
+    // 不泄漏 SQL/FK 内部信息
+    expect(JSON.stringify(body)).not.toContain('insert into')
+  })
+
+  it('POST 不存在项目的卡片 → 404', async () => {
+    const { app } = await setup()
+    const res = await app.request('/ghost-project/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'x' }),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('addCard 悬空列 → 400 KANBAN_COLUMN_NOT_FOUND（含可用列提示）', async () => {
+    const { app } = await setup()
+    const res = await app.request(`/${PROJECT_ID}/cards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'ghost', columnId: 'nowhere' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('KANBAN_COLUMN_NOT_FOUND')
+    expect(body.error?.message).toContain('可用列')
+    // 卡片未落库
+    const boardRes = await app.request(`/${PROJECT_ID}`)
+    const board = (await boardRes.json()) as { cards: unknown[] }
+    expect(board.cards).toHaveLength(0)
+  })
+
+  it('addCard 非法优先级 → 400 INVALID_PRIORITY', async () => {
+    const { app } = await setup()
+    const res = await app.request(`/${PROJECT_ID}/cards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'x', priority: 'urgent' }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_PRIORITY')
+  })
+
+  it('PATCH 移动卡片到悬空列 → 400；卡片留在原列', async () => {
+    const { app } = await setup()
+    const card = await seedCard(app)
+    const res = await app.request(`/${PROJECT_ID}/cards/${card.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columnId: 'nowhere' }),
+    })
+    expect(res.status).toBe(400)
+    const boardRes = await app.request(`/${PROJECT_ID}`)
+    const board = (await boardRes.json()) as { cards: Array<{ id: string; columnId: string }> }
+    expect(board.cards[0]?.columnId).toBe('todo')
+  })
+
+  it('PATCH 不存在的卡片 → 404 CARD_NOT_FOUND（此前 500）', async () => {
+    const { app } = await setup()
+    await seedCard(app)
+    const res = await app.request(`/${PROJECT_ID}/cards/00000000-0000-0000-0000-000000000000`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'nope' }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('CARD_NOT_FOUND')
+  })
+
+  it('restore merge=true 目标已有看板 → 200 合并（不再 409 死胡同）', async () => {
+    const { app, db } = await setup()
+    await seedCard(app)
+    const boards = await db.db.query.kanbanBoards.findMany()
+    const boardId = boards[0]?.id
+    if (!boardId) throw new Error('board not seeded')
+    const { softDeleteKanbanBoard } = await import('../../kanban/index.js')
+    await softDeleteKanbanBoard(db, PROJECT_ID, null)
+    await db.db.delete(projects).where(eq(projects.id, PROJECT_ID))
+
+    // 另一个项目已有看板 + 卡片
+    await db.db.insert(projects).values({ id: 'target-project', worktree: '/tmp/target' })
+    const targetSeed = await app.request('/target-project/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'dst-card', columnId: 'todo' }),
+    })
+    expect(targetSeed.status).toBe(201)
+
+    const res = await app.request(`/deleted/${boardId}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'target-project', merge: true }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; merged?: { mergedCards: number } }
+    expect(body.ok).toBe(true)
+    expect(body.merged?.mergedCards).toBe(1)
+
+    // 合并后目标板含两张卡片；源看板已不在回收站
+    const boardRes = await app.request('/target-project')
+    const board = (await boardRes.json()) as { cards: Array<{ title: string }> }
+    expect(board.cards.map((c) => c.title).sort()).toEqual(['Card A', 'dst-card'])
+    const deletedRes = await app.request('/deleted')
+    const deleted = (await deletedRes.json()) as { boards: unknown[] }
+    expect(deleted.boards).toHaveLength(0)
+  })
+
+  it('restore merge=true 目标无看板 → 等价恢复', async () => {
+    const { app, db } = await setup()
+    await seedCard(app)
+    const boards = await db.db.query.kanbanBoards.findMany()
+    const boardId = boards[0]?.id
+    if (!boardId) throw new Error('board not seeded')
+    const { softDeleteKanbanBoard } = await import('../../kanban/index.js')
+    await softDeleteKanbanBoard(db, PROJECT_ID, null)
+    await db.db.delete(projects).where(eq(projects.id, PROJECT_ID))
+    await db.db.insert(projects).values({ id: 'target-project', worktree: '/tmp/target' })
+
+    const res = await app.request(`/deleted/${boardId}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'target-project', merge: true }),
+    })
+    expect(res.status).toBe(200)
+    const boardRes = await app.request('/target-project')
+    const board = (await boardRes.json()) as { cards: Array<{ title: string }> }
+    expect(board.cards.map((c) => c.title)).toEqual(['Card A'])
   })
 })

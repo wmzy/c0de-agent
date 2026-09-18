@@ -1,17 +1,18 @@
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { projects, usageEvents } from '../db/schema.js'
+import { projects, sessions, usageEvents } from '../db/schema.js'
 import * as provider from '../llm/provider.js'
 import { createRegistry, registerProvider } from '../llm/registry.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import type { HookRunner } from '../plugins/types.js'
 import { appendMessage, createSession, getMessages } from '../session/index.js'
-import { getLLMSegments } from '../session/session.js'
+import { consumeBudgetPauseMarker, getLLMSegments } from '../session/session.js'
 import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
 import type { StreamChunk } from '../shared/types/llm.js'
-import type { Message, Session } from '../shared/types/message.js'
+import type { Message, Session, SessionMetadata } from '../shared/types/message.js'
 import { editTool } from '../tools/builtin/edit.js'
 import { createDefaultRegistry, createToolRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
@@ -604,6 +605,95 @@ describe('agentLoop', () => {
     expect(
       events.filter((e) => e._tag === 'status_change' && e.status._tag === 'paused'),
     ).toHaveLength(1)
+  })
+
+  it('P2-3：预算暂停原因落盘；重建 run 消费标记后不再暂停（热更新/重启场景）', async () => {
+    await db.db.insert(projects).values({ id: 'proj-1', worktree: '/tmp/proj-1' })
+    session = await createSession(db, 'test', 'proj-1')
+    await appendMessage(db, session.id, {
+      role: 'user',
+      content: [{ _tag: 'text', text: 'Hello' }],
+    })
+    await db.db.insert(usageEvents).values({
+      callId: generateId(),
+      projectId: 'proj-1',
+      provider: 'mock',
+      model: 'mock',
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheRead: 0,
+      cost: 11,
+      timestamp: Date.now(),
+    })
+
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, () => mockTextStream('after restart')),
+      config: {
+        ...DEFAULT_CONFIG,
+        usage: { monthlyBudgetUsd: 10, budgetAction: 'pause' },
+      },
+      budgetPause: true,
+    }
+
+    // —— 第一个 run：跑到预算暂停 ——
+    const state = makeState(session, await getMessages(db, session.id))
+    const gen = agentLoop(state, deps)
+    let pull = await gen.next()
+    let guard = 0
+    while (!pull.done && guard < 30) {
+      const value = pull.value
+      if (value?._tag === 'status_change' && value.status._tag === 'paused') break
+      pull = await gen.next()
+      guard += 1
+    }
+    expect(state.budgetPauseTriggered).toBe(true)
+
+    // 模拟重启：abort + 置 stopped 唤醒 waitForResume；generator 继续执行时会先完成
+    // 落盘（markBudgetPause 在 waitForResume 之前），随后在下一轮顶部因 aborted 退出。
+    state.abortController.abort()
+    state.status = { _tag: 'stopped', reason: 'aborted' }
+    guard = 0
+    while (!pull.done && guard < 30) {
+      pull = await gen.next()
+      guard += 1
+    }
+    expect(pull.done).toBe(true)
+    // 暂停原因已落盘
+    const row = await db.db.query.sessions.findFirst({ where: eq(sessions.id, session.id) })
+    const meta = (row?.metadata ?? {}) as SessionMetadata
+    expect(typeof meta.budgetPauseReason).toBe('string')
+
+    // —— 重建 run（chat 路由同款还原逻辑）——
+    const state2 = makeState(session, await getMessages(db, session.id))
+    expect(state2.budgetPauseTriggered).toBeFalsy()
+    const prior = await consumeBudgetPauseMarker(db, session.id)
+    expect(typeof prior).toBe('string')
+    if (prior) state2.budgetPauseTriggered = true
+
+    const gen2 = agentLoop(state2, deps)
+    let pausedAgain = false
+    let sawDone = false
+    pull = await gen2.next()
+    guard = 0
+    while (!pull.done && guard < 30) {
+      const value = pull.value
+      if (value) {
+        if (value._tag === 'status_change' && value.status._tag === 'paused') {
+          pausedAgain = true
+          break
+        }
+        if (value._tag === 'done') {
+          sawDone = true
+          break
+        }
+      }
+      pull = await gen2.next()
+      guard += 1
+    }
+    expect(pausedAgain).toBe(false)
+    expect(sawDone).toBe(true)
+    // 标记已被消费（单次语义）：再次消费返回 null
+    expect(await consumeBudgetPauseMarker(db, session.id)).toBeNull()
   })
 
   it('P2-2：金额轴超支暂停时，价格未知调用并入暂停文案（口径低估不静默）', async () => {

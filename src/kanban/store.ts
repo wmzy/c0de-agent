@@ -20,13 +20,54 @@ const DEFAULT_COLUMN_ID = 'todo'
 /** Position increment — large gap avoids frequent re-indexing on reorder. */
 const POSITION_GAP = 1000
 
+/** 合法优先级枚举（运行时校验用——REST/tool 层输入未经 TS 约束）。 */
+const VALID_PRIORITIES = new Set<KanbanPriority>(['high', 'medium', 'low'])
+
 /** 列内仍有卡片时禁止删除该列（否则卡片静默不可见）。 */
 class KanbanColumnInUseError extends Error {
-  constructor(columnNames: string[], cardCount: number) {
+  constructor(columnNames: string[], cardCount: number, cardIds: string[] = []) {
+    const idHint =
+      cardIds.length > 0
+        ? `（示例卡片 id：${cardIds.slice(0, 5).join('、')}${cardIds.length > 5 ? ' 等' : ''}，可直接按 id 删除这些卡片）`
+        : ''
     super(
       `列 [${columnNames.join(', ')}] 中仍有 ${cardCount} 张卡片，无法删除。` +
-        '请先移动或删除这些卡片。',
+        `请先移动或删除这些卡片。${idHint}`,
     )
+  }
+}
+
+/**
+ * 目标列不存在（add/move 引用未配置的列）——与 import/删列的悬空列防护同口径：
+ * 此前运行时 add/move 不校验，LLM 幻觉列名写入后卡片静默不可见，且幽灵卡片
+ * 会反过来冻结列配置删除（KanbanColumnInUseError 死锁）。
+ * 错误信息回传可用列清单，供 LLM 自纠而非再猜。
+ */
+class KanbanColumnNotFoundError extends Error {
+  constructor(
+    public readonly columnId: string,
+    availableColumns: string[],
+    op: 'add' | 'move',
+  ) {
+    const avail = availableColumns.length > 0 ? availableColumns.join('、') : '（看板无列）'
+    super(
+      `列 "${columnId}" 不存在，无法${op === 'add' ? '创建' : '移动'}卡片。` +
+        `可用列：${avail}。请改用其中一个列 id。`,
+    )
+  }
+}
+
+/** 非法优先级（REST PATCH / kanbanTool 透传未校验值）。 */
+class KanbanInvalidPriorityError extends Error {
+  constructor(public readonly value: string) {
+    super(`无效优先级 "${value}"，允许值：high、medium、low`)
+  }
+}
+
+/** 卡片不存在（update/move 目标 id 无效）。 */
+class KanbanCardNotFoundError extends Error {
+  constructor(public readonly cardId: string) {
+    super(`Kanban card not found: ${cardId}`)
   }
 }
 
@@ -95,6 +136,34 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     return row?.m ?? 0
   }
 
+  /** 当前板的列配置（add/move 的悬空列校验用）。 */
+  async function boardColumns(boardId: string): Promise<KanbanColumnDef[]> {
+    const [row] = await db
+      .select({ columns: kanbanBoards.columns })
+      .from(kanbanBoards)
+      .where(eq(kanbanBoards.id, boardId))
+      .limit(1)
+    return (row?.columns ?? []) as KanbanColumnDef[]
+  }
+
+  /** 校验列存在；不存在抛 KanbanColumnNotFoundError（消息含可用列清单）。 */
+  function assertColumn(columns: KanbanColumnDef[], columnId: string, op: 'add' | 'move'): void {
+    if (!columns.some((c) => c.id === columnId)) {
+      throw new KanbanColumnNotFoundError(
+        columnId,
+        columns.map((c) => c.id),
+        op,
+      )
+    }
+  }
+
+  /** 校验优先级合法；非法抛 KanbanInvalidPriorityError。 */
+  function assertPriority(priority: unknown): void {
+    if (priority !== undefined && !VALID_PRIORITIES.has(priority as KanbanPriority)) {
+      throw new KanbanInvalidPriorityError(String(priority))
+    }
+  }
+
   return {
     async getBoard(): Promise<KanbanBoardWithCards> {
       const boardId = await getOrCreateBoardId()
@@ -114,7 +183,12 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
 
     async addCard(input): Promise<KanbanCard> {
       const boardId = await getOrCreateBoardId()
-      const columnId = input.columnId ?? DEFAULT_COLUMN_ID
+      const columns = await boardColumns(boardId)
+      // 默认列 = 板上第一列（而非硬编码 'todo'）：todo 列被删除/重排后
+      // 硬编码默认会让无参 addCard 静默落入不存在的列（卡片不可见）。
+      const columnId = input.columnId ?? columns[0]?.id ?? DEFAULT_COLUMN_ID
+      assertColumn(columns, columnId, 'add')
+      assertPriority(input.priority)
       const position = (await maxPos(boardId, columnId)) + POSITION_GAP
       const [cardRow] = await db
         .insert(kanbanCards)
@@ -133,6 +207,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     },
 
     async updateCard(id, patch): Promise<KanbanCard> {
+      assertPriority(patch.priority)
       const [row] = await db
         .update(kanbanCards)
         .set({
@@ -144,29 +219,29 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
         })
         .where(eq(kanbanCards.id, id))
         .returning()
-      if (!row) throw new Error(`Kanban card not found: ${id}`)
+      if (!row) throw new KanbanCardNotFoundError(id)
       return rowToCard(row)
     },
 
     async moveCard(id, columnId, position?): Promise<KanbanCard> {
+      const [card] = await db
+        .select({ boardId: kanbanCards.boardId })
+        .from(kanbanCards)
+        .where(eq(kanbanCards.id, id))
+        .limit(1)
+      if (!card) throw new KanbanCardNotFoundError(id)
+      // 悬空列校验：目标列必须存在于当前列配置，否则卡片静默不可见。
+      const columns = await boardColumns(card.boardId)
+      assertColumn(columns, columnId, 'move')
       // If no explicit position, append to end of target column.
-      let newPos = position
-      if (newPos === undefined) {
-        const [card] = await db
-          .select({ boardId: kanbanCards.boardId })
-          .from(kanbanCards)
-          .where(eq(kanbanCards.id, id))
-          .limit(1)
-        if (!card) throw new Error(`Kanban card not found: ${id}`)
-        newPos = (await maxPos(card.boardId, columnId)) + POSITION_GAP
-      }
+      const newPos = position ?? (await maxPos(card.boardId, columnId)) + POSITION_GAP
       const [row] = await db
         .update(kanbanCards)
         .set({ columnId, position: newPos, updatedAt: new Date() })
         .where(eq(kanbanCards.id, id))
         .returning()
-      if (!row) throw new Error(`Kanban card not found: ${id}`)
-      return rowToCard(row)
+      const moved = row as CardRow
+      return rowToCard(moved)
     },
 
     async deleteCard(id): Promise<void> {
@@ -178,19 +253,25 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
       // P1-4：删除列前校验该列内是否有卡片；删除标签前把悬空 labelId 从卡片上清掉。
       if (patch.columns !== undefined) {
         const cards = await db
-          .select({ columnId: kanbanCards.columnId })
+          .select({ id: kanbanCards.id, columnId: kanbanCards.columnId })
           .from(kanbanCards)
           .where(eq(kanbanCards.boardId, boardId))
         const newColumnIds = new Set(patch.columns.map((c) => c.id))
         const removedWithCards = new Map<string, number>()
+        const orphanCardIds: string[] = []
         for (const card of cards) {
           if (!newColumnIds.has(card.columnId)) {
             removedWithCards.set(card.columnId, (removedWithCards.get(card.columnId) ?? 0) + 1)
+            orphanCardIds.push(card.id)
           }
         }
         if (removedWithCards.size > 0) {
           const total = Array.from(removedWithCards.values()).reduce((a, b) => a + b, 0)
-          throw new KanbanColumnInUseError(Array.from(removedWithCards.keys()), total)
+          throw new KanbanColumnInUseError(
+            Array.from(removedWithCards.keys()),
+            total,
+            orphanCardIds,
+          )
         }
       }
       if (patch.labels !== undefined) {
@@ -260,7 +341,13 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
   }
 }
 
-export { createKanbanStore, KanbanColumnInUseError }
+export {
+  createKanbanStore,
+  KanbanCardNotFoundError,
+  KanbanColumnInUseError,
+  KanbanColumnNotFoundError,
+  KanbanInvalidPriorityError,
+}
 
 // ── P2-5：看板回收站（软删除 → 恢复/彻底删除 → 到期物理清除）──────────────
 // 与会话回收站同保留期（TRASH_RETENTION_MS）。项目删除时看板不再级联销毁。
@@ -361,31 +448,146 @@ export type RestoreKanbanBoardResult =
   | { ok: true }
   | { ok: false; reason: 'BOARD_NOT_FOUND' | 'TARGET_HAS_BOARD' }
 
-/** 恢复看板到指定项目：目标项目已有活动看板 → 409 语义（不覆盖用户现有看板）。 */
+/** 恢复看板到指定项目：目标项目已有活动看板 → 409 语义（不覆盖用户现有看板）。
+ *  P2 修复：检查与更新放进单事务，并发下撞 uq_kanban_boards_project 唯一索引时
+ *  降级为 TARGET_HAS_BOARD（此前抛 PG 错误 500）。 */
 export async function restoreKanbanBoard(
   handle: DB,
   boardId: string,
   projectId: string,
 ): Promise<RestoreKanbanBoardResult> {
-  const [active] = await handle.db
-    .select({ id: kanbanBoards.id })
-    .from(kanbanBoards)
-    .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
-    .limit(1)
-  if (active) return { ok: false, reason: 'TARGET_HAS_BOARD' }
-  const rows = await handle.db
-    .update(kanbanBoards)
-    .set({
-      projectId,
-      deletedAt: null,
-      deletedProjectName: null,
-      deletedProjectWorktree: null,
-      purgePendingAt: null,
-      updatedAt: new Date(),
+  try {
+    return await handle.db.transaction(async (tx) => {
+      const [active] = await tx
+        .select({ id: kanbanBoards.id })
+        .from(kanbanBoards)
+        .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+        .limit(1)
+      if (active) return { ok: false, reason: 'TARGET_HAS_BOARD' } as const
+      const rows = await tx
+        .update(kanbanBoards)
+        .set({
+          projectId,
+          deletedAt: null,
+          deletedProjectName: null,
+          deletedProjectWorktree: null,
+          purgePendingAt: null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
+        .returning({ id: kanbanBoards.id })
+      if (rows.length === 0) return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
+      return { ok: true } as const
     })
-    .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
-    .returning({ id: kanbanBoards.id })
-  return rows.length > 0 ? { ok: true } : { ok: false, reason: 'BOARD_NOT_FOUND' }
+  } catch (err) {
+    // PG 23505 = unique_violation：并发窗口内目标板被创建。
+    if ((err as { code?: string }).code === '23505') {
+      return { ok: false, reason: 'TARGET_HAS_BOARD' }
+    }
+    throw err
+  }
+}
+
+export type MergeKanbanBoardResult =
+  | { ok: true; mergedColumns: number; mergedCards: number }
+  | { ok: false; reason: 'BOARD_NOT_FOUND' }
+
+/**
+ * P1 修复：把回收站看板合并进目标项目的活动看板（TARGET_HAS_BOARD 死胡同的出口）。
+ * 此前「目标项目已有看板」时恢复 409，而产品没有删除活动看板的能力，用户无法
+ * 把旧项目卡片拿回现有项目——现在 merge 模式下：
+ *  - 目标无活动看板 → 等价普通恢复（重新归属）；
+ *  - 目标有活动看板 → 追加缺失列，卡片并入对应列末尾（position 重新计算避免
+ *    与目标卡片重叠）；源卡片引用源板已不存在列时落到目标第一列（保证可见）；
+ *  - 合并成功后源看板物理删除（卡片已迁移，FK cascade 清源卡）。
+ * 全程单事务：失败整体回滚，不残留半合并状态。
+ */
+export async function mergeKanbanBoard(
+  handle: DB,
+  boardId: string,
+  projectId: string,
+): Promise<MergeKanbanBoardResult> {
+  return await handle.db.transaction(async (tx) => {
+    const [src] = await tx
+      .select({ id: kanbanBoards.id, columns: kanbanBoards.columns })
+      .from(kanbanBoards)
+      .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
+      .limit(1)
+    if (!src) return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
+
+    const [target] = await tx
+      .select({ id: kanbanBoards.id, columns: kanbanBoards.columns })
+      .from(kanbanBoards)
+      .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+      .limit(1)
+
+    // 目标无活动看板 → 重新归属（等价普通恢复，但保持 merge 调用幂等语义）。
+    if (!target) {
+      const rows = await tx
+        .update(kanbanBoards)
+        .set({
+          projectId,
+          deletedAt: null,
+          deletedProjectName: null,
+          deletedProjectWorktree: null,
+          purgePendingAt: null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
+        .returning({ id: kanbanBoards.id })
+      if (rows.length === 0) return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
+      return { ok: true, mergedColumns: 0, mergedCards: 0 } as const
+    }
+
+    // —— 合并路径 ——
+    const srcCols = (src.columns ?? []) as KanbanColumnDef[]
+    const targetCols = (target.columns ?? []) as KanbanColumnDef[]
+    const targetIds = new Set(targetCols.map((c) => c.id))
+    const newCols = srcCols.filter((c) => !targetIds.has(c.id))
+    if (newCols.length > 0) {
+      await tx
+        .update(kanbanBoards)
+        .set({ columns: [...targetCols, ...newCols], updatedAt: new Date() })
+        .where(eq(kanbanBoards.id, target.id))
+    }
+
+    const mergedCols = [...targetCols, ...newCols]
+    const fallbackCol = mergedCols[0]?.id ?? DEFAULT_COLUMN_ID
+    const srcCards = await tx
+      .select()
+      .from(kanbanCards)
+      .where(eq(kanbanCards.boardId, boardId))
+      .orderBy(asc(kanbanCards.position))
+
+    // 目标各列现有 max(position)：合并卡片追加到末尾，避免 position 重叠。
+    const targetMax = await tx
+      .select({ columnId: kanbanCards.columnId, m: max(kanbanCards.position) })
+      .from(kanbanCards)
+      .where(eq(kanbanCards.boardId, target.id))
+      .groupBy(kanbanCards.columnId)
+    const maxMap = new Map(targetMax.map((r) => [r.columnId, r.m ?? 0]))
+    const counters = new Map<string, number>()
+    let mergedCards = 0
+    for (const card of srcCards) {
+      const colId = mergedCols.some((c) => c.id === card.columnId) ? card.columnId : fallbackCol
+      const idx = counters.get(colId) ?? 0
+      counters.set(colId, idx + 1)
+      await tx.insert(kanbanCards).values({
+        boardId: target.id,
+        title: card.title,
+        description: card.description,
+        columnId: colId,
+        priority: card.priority,
+        position: (maxMap.get(colId) ?? 0) + POSITION_GAP * (idx + 1),
+        labels: card.labels ?? [],
+      })
+      mergedCards += 1
+    }
+
+    // 源看板物理删除（卡片已迁移；卡片行经 FK cascade 连带清除）。
+    await tx.delete(kanbanBoards).where(eq(kanbanBoards.id, boardId))
+    return { ok: true, mergedColumns: newCols.length, mergedCards } as const
+  })
 }
 
 /** 回收站内彻底删除看板（不可恢复）。 */

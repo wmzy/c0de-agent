@@ -76,6 +76,20 @@ function formatBoardSummary(
     if (cards.length === 0) lines.push('  (empty)')
   }
 
+  // P1 修复：历史幽灵卡片（列 id 不在当前列配置，旧版本脏数据）单独列出并附
+  // 完整 id——否则对 agent 完全不可见（且 Total 与列之和恒对不上），无法清理。
+  const colIds = new Set(board.columns.map((c) => c.id))
+  const orphans = board.cards.filter((c) => !colIds.has(c.columnId))
+  if (orphans.length > 0) {
+    lines.push(`## 未归属列 (${orphans.length})`)
+    for (const card of orphans) {
+      lines.push(
+        `  [${card.id}] "${card.title}"（引用已不存在的列 "${card.columnId}"，` +
+          `可 delete 清理或 move 到现有列）`,
+      )
+    }
+  }
+
   const total = board.cards.length
   lines.push(`\nTotal: ${total} card(s).`)
   if (total === 0) lines.push('Board is empty — use kanban add to create tasks.')

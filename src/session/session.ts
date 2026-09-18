@@ -781,6 +781,42 @@ async function updateSessionLastRun(handle: DB, id: string, lastRun: LastRun): P
     .where(eq(sessions.id, id))
 }
 
+/**
+ * P2-3：预算超支暂停时把原因写入 metadata.budgetPauseReason。
+ * 热更新/重启后 run 重建时由 consumeBudgetPauseMarker 消费——恢复内存
+ * budgetPauseTriggered 标记，避免同一超支原因二次暂停。
+ */
+async function markBudgetPause(handle: DB, id: string, reason: string): Promise<void> {
+  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  if (!row) return
+  const meta = (row.metadata ?? {}) as SessionMetadata
+  await handle.db
+    .update(sessions)
+    .set({ metadata: { ...meta, budgetPauseReason: reason }, updatedAt: new Date() })
+    .where(eq(sessions.id, id))
+}
+
+/**
+ * P2-3：消费预算暂停标记（新 run 启动时调用一次）。返回上次暂停原因并删除字段；
+ * 无标记返回 null。消费即删除——单次语义，之后 run 恢复常规预算检查。
+ */
+async function consumeBudgetPauseMarker(handle: DB, id: string): Promise<string | null> {
+  const [row] = await handle.db
+    .select({ metadata: sessions.metadata })
+    .from(sessions)
+    .where(eq(sessions.id, id))
+  if (!row) return null
+  const meta = (row.metadata ?? {}) as SessionMetadata
+  const reason = typeof meta.budgetPauseReason === 'string' ? meta.budgetPauseReason : null
+  if (reason === null) return null
+  const { budgetPauseReason: _omit, ...rest } = meta
+  await handle.db
+    .update(sessions)
+    .set({ metadata: rest, updatedAt: new Date() })
+    .where(eq(sessions.id, id))
+  return reason
+}
+
 async function listSessionsByProject(handle: DB, projectId: string): Promise<Session[]> {
   const rows = await handle.db
     .select()
@@ -916,6 +952,7 @@ async function markUnfinishedTurn(handle: DB, sessionId: string): Promise<void> 
 
 export {
   clearTrashMarks,
+  consumeBudgetPauseMarker,
   createSession,
   emptyTrash,
   getSession,
@@ -924,6 +961,7 @@ export {
   listOrphanDeletedSessions,
   listSessions,
   listSessionsByProject,
+  markBudgetPause,
   markUnfinishedTurn,
   permanentlyDeleteSession,
   purgeDeletedSessions,

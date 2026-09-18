@@ -830,4 +830,56 @@ describe('git-commit route', () => {
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe('MISSING_MESSAGE')
   })
+
+  it('P2：默认模式 LLM 生成多行 message → 502 拒绝（不写入仓库历史）', async () => {
+    mockLLMResponse.value =
+      '{"message":"feat: title\\n\\nbody line 1\\nbody line 2","ignoreSuggestions":[]}'
+
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-multiline-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'base.txt'), 'base')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', { method: 'POST' })
+    expect(res.status).toBe(502)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('INVALID_LLM_MESSAGE')
+    // 未提交：工作区仍有变更
+    const status = execSync('git status --porcelain', { cwd: dir, encoding: 'utf-8' })
+    expect(status.trim()).not.toBe('')
+  })
+
+  it('P2：默认模式 LLM 生成超长 message → 502 拒绝', async () => {
+    mockLLMResponse.value = `{"message":"${'a'.repeat(501)}","ignoreSuggestions":[]}`
+
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-long-'))
+    const { execSync } = await import('node:child_process')
+    execSync('git init -q', { cwd: dir })
+    execSync('git config user.email test@test.com', { cwd: dir })
+    execSync('git config user.name test', { cwd: dir })
+    writeFileSync(join(dir, 'base.txt'), 'base')
+    execSync('git add -A && git commit -q -m init', { cwd: dir })
+    writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
+
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+
+    const res = await app.request('/git-commit', { method: 'POST' })
+    expect(res.status).toBe(502)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('INVALID_LLM_MESSAGE')
+  })
 })

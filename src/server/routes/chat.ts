@@ -22,6 +22,7 @@ import { getProject } from '../../project/project.js'
 import { enrichProjectRiskWithGlobal, projectTrustNeeded } from '../../project/trust.js'
 import { insertEntry } from '../../session/message.js'
 import {
+  consumeBudgetPauseMarker,
   createSession,
   getLLMSegments,
   getSession,
@@ -1032,6 +1033,14 @@ function createChatRoute(ctx: ServerContext): Hono {
           }
 
           const state = await createAgent(session, agentConfig, deps)
+
+          // P2-3：热更新/重启后 run 重建，内存 budgetPauseTriggered 丢失——从会话
+          // metadata 消费上次预算暂停标记还原（单次语义），避免用户已确认继续后
+          // 又被同一超支原因二次暂停。
+          const priorBudgetPause = await consumeBudgetPauseMarker(ctx.db, sessionId).catch(
+            () => null,
+          )
+          if (priorBudgetPause) state.budgetPauseTriggered = true
 
           // 持久化 run 状态：status='running' 写入 DB。服务重启后此字段仍为 'running'
           // 而进程无活跃 run → 检测为 interrupted。finally 中标记 'completed'。

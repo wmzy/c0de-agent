@@ -588,16 +588,16 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   restoreBoardMut.mutate(
                     { boardId: b.id, projectId },
                     {
-                      onSuccess: () => setNotice(`看板「${b.projectName}」已恢复到当前项目。`),
+                      onSuccess: () => setNotice(`看板「${b.projectName}」已合并到当前项目看板。`),
                       onError: (e) => setError(e instanceof Error ? e.message : String(e)),
                     },
                   )
                 }
                 disabled={restoreBoardMut.isPending}
                 data-testid={`restore-orphan-kanban-${b.id}`}
-                title="恢复到当前项目（当前项目已有看板时会失败）"
+                title="合并到当前项目看板（缺失列与卡片并入现有看板；当前项目无看板时等价恢复）"
               >
-                恢复到当前项目
+                合并到当前项目
               </button>
               {b.deletedProjectWorktree && (
                 <button
@@ -616,7 +616,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   }
                   disabled={restoreBoardToOriginalMut.isPending}
                   data-testid={`restore-orphan-kanban-recreate-${b.id}`}
-                  title="在原有目录重建项目并恢复看板（目录仍存在时生效）"
+                  title="在原有目录重建项目并合并恢复看板（目录仍存在时生效；原目录已有看板时合并）"
                 >
                   恢复并重建原项目
                 </button>

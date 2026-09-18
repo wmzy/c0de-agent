@@ -58,6 +58,12 @@ type SessionMetadata = {
   /** 回收站条目已到期、进入物理清除宽限期的时间戳（ms）。
    *  到期先标记，宽限期（默认 7 天）内可在 UI 恢复；期满后由 purgeDeletedSessions 物理清除。 */
   purgePendingAt?: number
+  /**
+   * P2-3：最近一次预算超支暂停的原因（loop 暂停时写入）。热更新/重启后 run 重建，
+   * 内存 budgetPauseTriggered 标记丢失——新 run 启动时消费此字段还原标记，
+   * 避免用户已确认继续后又被同一超支原因二次暂停。消费即删除（单次语义）。
+   */
+  budgetPauseReason?: string
 }
 
 /** A conversation session (may have a parent for branching). */

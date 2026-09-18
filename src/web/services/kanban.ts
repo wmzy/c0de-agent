@@ -91,15 +91,20 @@ const kanbanAPI = {
   exportBoard: (projectId: string) => get<unknown>(`/api/kanban/${projectId}/export`),
   /** P2-5：回收站看板列表（项目删除软删除的看板）。 */
   deletedBoards: () => get<{ boards: DeletedKanbanBoard[] }>('/api/kanban/deleted'),
-  /** P2-5：恢复回收站看板到指定项目（目标已有看板 → 409）。 */
+  /** P1 修复：合并恢复回收站看板到指定项目——目标已有看板时缺失列与卡片
+   *  并入现有看板（目标无板时等价普通恢复），不再 409 死胡同。 */
   restoreDeletedBoard: (boardId: string, projectId: string) =>
-    post<{ ok: boolean }>(`/api/kanban/deleted/${boardId}/restore`, { projectId }),
-  /** P2-5：重建原项目并恢复看板（目录仍存在时；原目录已存在看板 → 409）。 */
-  restoreDeletedBoardToOriginal: (boardId: string) =>
-    post<{ ok: boolean; recreatedProject?: { id: string; name: string | null } }>(
+    post<{ ok: boolean; merged?: { mergedColumns: number; mergedCards: number } }>(
       `/api/kanban/deleted/${boardId}/restore`,
-      { rebuild: true },
+      { projectId, merge: true },
     ),
+  /** P1 修复：重建原项目并合并恢复看板（目录仍存在时；原目录已有看板时同样合并）。 */
+  restoreDeletedBoardToOriginal: (boardId: string) =>
+    post<{
+      ok: boolean
+      merged?: { mergedColumns: number; mergedCards: number }
+      recreatedProject?: { id: string; name: string | null }
+    }>(`/api/kanban/deleted/${boardId}/restore`, { rebuild: true, merge: true }),
   /** P2-5：彻底删除回收站看板（不可恢复）。 */
   destroyDeletedBoard: (boardId: string) => del<{ ok: boolean }>(`/api/kanban/deleted/${boardId}`),
   /** 导入整板（原子替换列+标签+卡片）。 */

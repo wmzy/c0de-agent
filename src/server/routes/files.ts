@@ -123,6 +123,37 @@ function sanitizeIgnoreSuggestions(raw: unknown): string[] | null {
   return out.length > 0 ? out : null
 }
 
+/** P2 修复：提交信息统一校验（三种模式同口径）。
+ *  合法返回 trim 后文本；非法返回判别原因。此前仅 force 模式校验长度/单行，
+ *  默认模式（LLM 生成）可把多行/超长 message 原样写入仓库历史。 */
+type CommitMessageCheck =
+  | { ok: true; message: string }
+  | { ok: false; reason: 'EMPTY' | 'TOO_LONG' | 'MULTILINE' }
+
+function checkCommitMessage(raw: unknown): CommitMessageCheck {
+  if (typeof raw !== 'string') return { ok: false, reason: 'EMPTY' }
+  const message = raw.trim()
+  if (!message) return { ok: false, reason: 'EMPTY' }
+  if (message.length > 500) return { ok: false, reason: 'TOO_LONG' }
+  if (/[\r\n]/.test(message)) return { ok: false, reason: 'MULTILINE' }
+  return { ok: true, message }
+}
+
+/** force/append-ignore 模式的 message 校验错误码映射（保持既有 API 契约）。 */
+function rejectCommitMessage(
+  c: import('hono').Context,
+  reason: 'EMPTY' | 'TOO_LONG' | 'MULTILINE',
+  mode: string,
+): Response {
+  if (reason === 'EMPTY') {
+    return apiError(c, 400, 'MISSING_MESSAGE', `mode=${mode} requires a message`)
+  }
+  if (reason === 'TOO_LONG') {
+    return apiError(c, 400, 'MESSAGE_TOO_LONG', 'commit message must be at most 500 characters')
+  }
+  return apiError(c, 400, 'BAD_REQUEST', 'commit message must be a single line')
+}
+
 function createFilesRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -191,18 +222,9 @@ function createFilesRoute(ctx: ServerContext): Hono {
 
     // --- mode: force — 跳过检查，用传入 message 直接提交 ---
     if (body.mode === 'force') {
-      if (typeof body.message !== 'string' || !body.message.trim()) {
-        return apiError(c, 400, 'MISSING_MESSAGE', 'mode=force requires a message')
-      }
-      const message = body.message.trim()
-      // P3：提交信息长度上限——commit message 是常规提交语义，超长/控制字符
-      // 通常是 API 误用，直接拒绝而非写入仓库历史。
-      if (message.length > 500) {
-        return apiError(c, 400, 'MESSAGE_TOO_LONG', 'commit message must be at most 500 characters')
-      }
-      if (/[\r\n]/.test(message)) {
-        return apiError(c, 400, 'BAD_REQUEST', 'commit message must be a single line')
-      }
+      const check = checkCommitMessage(body.message)
+      if (!check.ok) return rejectCommitMessage(c, check.reason, 'force')
+      const message = check.message
       const result = performGitCommit(root, message)
       if ('error' in result) {
         return apiError(c, 500, 'COMMIT_FAILED', result.error)
@@ -217,9 +239,8 @@ function createFilesRoute(ctx: ServerContext): Hono {
 
     // --- mode: append-ignore — 追加 .gitignore 后提交 ---
     if (body.mode === 'append-ignore') {
-      if (typeof body.message !== 'string' || !body.message.trim()) {
-        return apiError(c, 400, 'MISSING_MESSAGE', 'mode=append-ignore requires a message')
-      }
+      const check = checkCommitMessage(body.message)
+      if (!check.ok) return rejectCommitMessage(c, check.reason, 'append-ignore')
       // P3：suggestions 服务端白名单校验（换行注入/全局通配/超量直接 400）。
       const suggestions = sanitizeIgnoreSuggestions(body.suggestions)
       if (!suggestions) {
@@ -231,13 +252,13 @@ function createFilesRoute(ctx: ServerContext): Hono {
         )
       }
       appendToGitignore(root, suggestions)
-      const result = performGitCommit(root, body.message.trim())
+      const result = performGitCommit(root, check.message)
       if ('error' in result) {
         return apiError(c, 500, 'COMMIT_FAILED', result.error)
       }
       return c.json({
         committed: true,
-        message: body.message.trim(),
+        message: check.message,
         hash: result.hash,
         fileCount: summary.fileCount,
       })
@@ -303,16 +324,27 @@ ${summary.diff.slice(0, 8000)}`
     if (!message) {
       return apiError(c, 502, 'EMPTY_MESSAGE', 'LLM returned empty commit message')
     }
+    // P2 修复：与 force 模式同口径校验（长度/单行）——LLM 生成物同样不得
+    // 把多行/超长内容写入仓库历史。
+    const check = checkCommitMessage(message)
+    if (!check.ok) {
+      return apiError(
+        c,
+        502,
+        'INVALID_LLM_MESSAGE',
+        `LLM returned invalid commit message: ${check.reason === 'TOO_LONG' ? '超过 500 字符' : '包含换行'}`,
+      )
+    }
 
     const suggestions = Array.isArray(parsed.ignoreSuggestions) ? parsed.ignoreSuggestions : []
 
     // LLM 检测到可疑文件 → 阻断提交，返回供前端审查
     if (suggestions.length > 0) {
-      return c.json({ needsReview: true, message, suggestions })
+      return c.json({ needsReview: true, message: check.message, suggestions })
     }
 
     // 无可疑文件 → 直接提交
-    const result = performGitCommit(root, message)
+    const result = performGitCommit(root, check.message)
     if ('error' in result) {
       return apiError(c, 500, 'COMMIT_FAILED', result.error)
     }

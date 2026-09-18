@@ -31,12 +31,14 @@ export {
   insertEntry,
 } from './message.js'
 export {
+  consumeBudgetPauseMarker,
   createSession,
   emptyTrash,
   getLLMSegments,
   getSession,
   listDeletedSessions,
   listSessions,
+  markBudgetPause,
   migrateLegacyDetails,
   permanentlyDeleteSession,
   purgeDeletedSessions,

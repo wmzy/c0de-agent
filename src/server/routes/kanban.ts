@@ -7,8 +7,12 @@ import { Hono } from 'hono'
 import {
   createKanbanStore,
   getDeletedKanbanBoard,
+  KanbanCardNotFoundError,
   KanbanColumnInUseError,
+  KanbanColumnNotFoundError,
+  KanbanInvalidPriorityError,
   listDeletedKanbanBoards,
+  mergeKanbanBoard,
   permanentlyDeleteKanbanBoard,
   restoreKanbanBoard,
 } from '../../kanban/index.js'
@@ -26,12 +30,17 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   })
 
   // POST /deleted/:boardId/restore — 恢复到指定项目，或「重建原项目」恢复。
+  // P1 修复：merge=true 时目标已有看板不再 409——缺失列与卡片并入现有看板
+  // （目标无板时等价普通恢复）。此前 409 指引「删除目标看板」但产品无此能力，
+  // 恢复是死胡同。
   app.post('/deleted/:boardId/restore', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as {
       projectId?: unknown
       rebuild?: unknown
+      merge?: unknown
     }
     const boardId = c.req.param('boardId')
+    const merge = body.merge === true
 
     // 重建原项目：目录仍存在时重建项目记录并恢复到该目录（与会话存储同语义）。
     if (body.rebuild === true) {
@@ -54,6 +63,17 @@ function createKanbanRoute(ctx: ServerContext): Hono {
         )
       }
       const project = await fromDirectory(ctx.db, board.deletedProjectWorktree)
+      if (merge) {
+        const result = await mergeKanbanBoard(ctx.db, boardId, project.id)
+        if (result.ok) {
+          return c.json({
+            ok: true,
+            merged: result,
+            recreatedProject: { id: project.id, name: project.name },
+          })
+        }
+        return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+      }
       const result = await restoreKanbanBoard(ctx.db, boardId, project.id)
       if (result.ok) {
         return c.json({ ok: true, recreatedProject: { id: project.id, name: project.name } })
@@ -70,6 +90,11 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     // 可恢复出挂在不存在项目下、任何视图都不可见的看板。
     const target = await getProject(ctx.db, projectId)
     if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '恢复目标项目不存在')
+    if (merge) {
+      const result = await mergeKanbanBoard(ctx.db, boardId, projectId)
+      if (result.ok) return c.json({ ok: true, merged: result })
+      return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+    }
     const result = await restoreKanbanBoard(ctx.db, boardId, projectId)
     if (result.ok) return c.json({ ok: true })
     if (result.reason === 'TARGET_HAS_BOARD') {
@@ -84,6 +109,20 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     if (count === 0) return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
     return c.json({ ok: true })
   })
+
+  // P1 修复：所有 /:projectId* 端点的项目存在守卫（注册在 /deleted* 之后）。
+  // 此前不存在的项目会穿透到 getOrCreateBoardId 的 insert，FK violation 抛 500
+  // 且错误信息回显 SQL——应为 404。
+  const guardProject = async (
+    c: import('hono').Context,
+    next: () => Promise<void>,
+  ): Promise<Response | undefined> => {
+    const project = await getProject(ctx.db, c.req.param('projectId') ?? '')
+    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    await next()
+  }
+  app.use('/:projectId', guardProject)
+  app.use('/:projectId/*', guardProject)
 
   // GET /:projectId — full board with cards
   app.get('/:projectId', async (c) => {
@@ -195,14 +234,24 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     const title = (body.title as string)?.trim()
     if (!title) return apiError(c, 400, 'INVALID_INPUT', 'title is required')
     const store = createKanbanStore(ctx.db, projectId)
-    const card = await store.addCard({
-      title,
-      description: (body.description as string) ?? null,
-      columnId: body.columnId as string | undefined,
-      priority: body.priority as KanbanPriority | undefined,
-      labels: body.labels as string[] | undefined,
-    })
-    return c.json(card, 201)
+    try {
+      const card = await store.addCard({
+        title,
+        description: (body.description as string) ?? null,
+        columnId: body.columnId as string | undefined,
+        priority: body.priority as KanbanPriority | undefined,
+        labels: body.labels as string[] | undefined,
+      })
+      return c.json(card, 201)
+    } catch (err) {
+      if (err instanceof KanbanColumnNotFoundError) {
+        return apiError(c, 400, 'KANBAN_COLUMN_NOT_FOUND', err.message)
+      }
+      if (err instanceof KanbanInvalidPriorityError) {
+        return apiError(c, 400, 'INVALID_PRIORITY', err.message)
+      }
+      throw err
+    }
   })
 
   // PATCH /:projectId/cards/:cardId — update card fields or move
@@ -212,25 +261,38 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const store = createKanbanStore(ctx.db, projectId)
 
-    // columnId + position → moveCard; otherwise field update.
-    if (body.columnId !== undefined) {
-      const card = await store.moveCard(
-        cardId,
-        body.columnId as string,
-        body.position as number | undefined,
-      )
-      return c.json(card)
-    }
+    try {
+      // columnId + position → moveCard; otherwise field update.
+      if (body.columnId !== undefined) {
+        const card = await store.moveCard(
+          cardId,
+          body.columnId as string,
+          body.position as number | undefined,
+        )
+        return c.json(card)
+      }
 
-    const card = await store.updateCard(cardId, {
-      ...(body.title !== undefined && { title: body.title as string }),
-      ...(body.description !== undefined && {
-        description: body.description as string | null,
-      }),
-      ...(body.priority !== undefined && { priority: body.priority as KanbanPriority }),
-      ...(body.labels !== undefined && { labels: body.labels as string[] }),
-    })
-    return c.json(card)
+      const card = await store.updateCard(cardId, {
+        ...(body.title !== undefined && { title: body.title as string }),
+        ...(body.description !== undefined && {
+          description: body.description as string | null,
+        }),
+        ...(body.priority !== undefined && { priority: body.priority as KanbanPriority }),
+        ...(body.labels !== undefined && { labels: body.labels as string[] }),
+      })
+      return c.json(card)
+    } catch (err) {
+      if (err instanceof KanbanCardNotFoundError) {
+        return apiError(c, 404, 'CARD_NOT_FOUND', err.message)
+      }
+      if (err instanceof KanbanColumnNotFoundError) {
+        return apiError(c, 400, 'KANBAN_COLUMN_NOT_FOUND', err.message)
+      }
+      if (err instanceof KanbanInvalidPriorityError) {
+        return apiError(c, 400, 'INVALID_PRIORITY', err.message)
+      }
+      throw err
+    }
   })
 
   // DELETE /:projectId/cards/:cardId — delete a card

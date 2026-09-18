@@ -1,9 +1,8 @@
 # c0de-agent 项目分析报告
 
-> 分析时间：2026-09-16
-> 基线：产品逻辑审查批次（信任边界代码面、配置语义统一、CLI 回收站闭环、websearch 降级、更新影响面、配对防误批）
-> 本轮：工作流三通道同口径修复（预算/URL 注册表/agentManager 生命周期）、超时真中止、临时会话移入回收站、CLI 预算覆盖 abort 语义、回收站 --project 作用域、glob 双星号、REST 创建工作流 target/projectId 校验、前端工作流进度横幅
-> 本轮（续）：权限挂起请求按用户可见会话归属（reportSessionId）、Web 设置页工作流管理面板（查看/新建/编辑/删除）、DELETE ?projectId 按路径删除、CLI deleted 全库口径提示
+> 分析时间：2026-09-18
+> 基线：PM 产品逻辑审查批次（看板列引用一致性、merge 恢复死胡同、路由 404 化、commit message 校验、预算暂停标记跨重启）
+> 本轮（前序）：前端架构按 painless 模板收敛（native-router/fetch-fun/@ 别名/巨型组件拆分）、haze-ui 1.30 全面迁移 + react-use-control 受控控件统一
 
 ---
 
@@ -15,8 +14,8 @@
 |------|------|
 | 语言 | TypeScript (Node 22+) |
 | 后端 | Hono + SSE + Drizzle ORM + PGLite |
-| 前端 | React 19 + Vite 8 + Linaria CSS-in-JS |
-| 测试 | Vitest（node + web 双 project，2361 用例；node project 限 4 worker） |
+| 前端 | React 19 + Vite 8 + Linaria CSS-in-JS + haze-ui 1.30（组件层）+ native-router + fetch-fun |
+| 测试 | Vitest（node + web 双 project，2441 用例；node project 限 4 worker） |
 | Lint | Biome 2.x（check 同时校验格式） |
 | 包管理 | pnpm |
 
@@ -29,7 +28,7 @@
 | `pnpm lint` | ✅ 0 诊断 |
 | `pnpm test` | ✅ 全量通过（ECONNREFUSED:3000 与 snapshot PGLite 并发为预存噪音） |
 
-## 三、核心产品机制（2026-09-15 批次确认/落地）
+## 三、核心产品机制（截至 2026-09-18 批次确认/落地）
 
 | 领域 | 机制 |
 |------|------|
@@ -42,6 +41,9 @@
 | 认证 | bootstrap 轮换 + 5min TTL；设备配对 6 位码审批（须输入码核对，服务端校验防误批）；token 交付时登记（无僵尸设备） |
 | 热更新 | 先安装后暂停；失败零触碰；影响面确认列 run 运行态（正在执行工具的 run 超时强杀并明示）、终端、待确认权限数 |
 | Websearch | auto 模式运行时降级链（tavily > brave > duckduckgo；401/403/429/5xx/网络错误换后端，400 不降级）；显式选择不降级 |
+| 看板 | 项目级共享任务板（agent/human 双向协作）；回收站软删除 + 60 天保留 + 7 天宽限（与看板会话同口径）；导出/导入整板原子重建；**P1 列引用一致性**：add/move/import/删列全路径统一校验列存在（悬空列卡片此前静默不可见且冻结列配置删除，死锁已解）；**merge 恢复**：回收站看板可合并进任意现有看板（缺失列追加、卡片并入、源板移除，单事务），不再 409 死胡同 |
+| 前端架构 | native-router（类型化路由表 + TypedLink + navigateTo）+ fetch-fun HTTP 管道（timeout/重试/认证）+ @/ 别名 + 巨型组件拆分（useChat 858→517、SessionList 1227→539 等）；haze-ui 1.30 组件层 + react-use-control 受控控件统一（SyncedInput/Select/Textarea 包装，0 处直接使用 haze 控件）+ haze 双令牌体系 |
+| 预算暂停标记 | 预算超支暂停原因写入会话 metadata（budgetPauseReason）；热更新/重启后 run 重建时消费标记还原 budgetPauseTriggered（单次语义），用户确认继续后不被同一超支原因二次暂停 |
 
 ## 四、已知限制（按设计取舍）
 
@@ -49,6 +51,8 @@
 - 本地数据无界增长：web/CLI 持久会话永不清理、`usage_events` append-only。无磁盘管理面板，低优先级。
 - 推送通知未实现（README 未承诺）。
 - 远程访问需显式配置（`--host 0.0.0.0` + `security.allowedOrigins`/token）。
+- 看板无「删除活动看板」能力（设计取舍：看板只在项目删除时软删；恢复走 merge 模式后不再需要该能力）。
+- 预算暂停标记跨重启继承：标记随新 run 启动消费一次；若用户重启后连续多次发消息（多个 run），仅首个 run 免暂停——后续 run 若仍超支会再次暂停（与「每 run 一次」原语义一致）。
 
 ## 五、维护约定
 
