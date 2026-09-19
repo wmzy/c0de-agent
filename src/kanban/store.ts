@@ -123,8 +123,15 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
       .from(kanbanBoards)
       .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
       .limit(1)
-    // 行一定存在：上面 insert + onConflictDoNothing 保证了 projectId 对应的行已创建
-    return (row as { id: string }).id
+    // 正常路径行一定存在（insert + onConflictDoNothing 已保证）。防御性兜底：
+    // 唯一 projectId 槽位被软删行占用等异常态下不再返回 undefined id
+    //（后续查询会静默查空、上层误判「板不存在」），显式抛错暴露问题。
+    if (!row) {
+      throw new Error(
+        `Kanban board for project ${projectId} missing after ensure-insert (unique slot likely held by a soft-deleted row)`,
+      )
+    }
+    return row.id
   }
 
   /** Max position in a column (0 if empty). */
@@ -165,6 +172,23 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
   }
 
   return {
+    /** 只读获取板（不创建）：导出等纯读路径用——此前导出经 getBoard 懒建板，
+     *  「导出」一个从未打开过看板的项目会凭空产生空板行。无板返回 null。 */
+    async peekBoard(): Promise<KanbanBoardWithCards | null> {
+      const [boardRow] = await db
+        .select()
+        .from(kanbanBoards)
+        .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+        .limit(1)
+      if (!boardRow) return null
+      const cards = await db
+        .select()
+        .from(kanbanCards)
+        .where(eq(kanbanCards.boardId, boardRow.id))
+        .orderBy(asc(kanbanCards.columnId), asc(kanbanCards.position))
+      return { ...rowToBoard(boardRow), cards: cards.map(rowToCard) }
+    },
+
     async getBoard(): Promise<KanbanBoardWithCards> {
       const boardId = await getOrCreateBoardId()
       const [boardRow] = await db

@@ -430,7 +430,9 @@ describe('chat route (SSE)', () => {
     // 消费完整 SSE 流，驱动 agentLoop 执行到 saveLLMSegments
     await res.text()
 
-    // loop 持久化的 segment.tools 即发送给 LLM 的工具定义；不带 tools 时启用全部注册工具
+    // loop 持久化的 segment.tools 即发送给 LLM 的工具定义；不带 tools 时启用全部注册工具。
+    // P3-7：测试会话未绑定项目 → 项目绑定工具（kanban，store 按项目注入）被剔除；
+    // 项目绑定会话保留 kanban 的对称用例见下一测试。
     const segments = await getLLMSegments(db, session.id)
     expect(segments).toHaveLength(1)
     const toolNames = segments[0]?.tools.map((t) => t.name).sort()
@@ -447,7 +449,6 @@ describe('chat route (SSE)', () => {
       'edit',
       'glob',
       'grep',
-      'kanban',
       'read',
       'task',
       'todo',
@@ -455,6 +456,39 @@ describe('chat route (SSE)', () => {
       'write',
       'yield',
     ])
+  })
+
+  it('POST / 绑定项目的会话保留项目绑定工具（kanban），与未绑定会话剔除对称', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-kanban-tool-'))
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const project = await fromDirectory(db, dir)
+    // 未信任项目叠加全局权限风险（globalPermissionRiskItems）即触发 TRUST_REQUIRED
+    // 门禁——先显式信任（真实 HOME 的全局配置可能含 auto 权限）。
+    await trustProject(db, project.id)
+    const session = await createSession(db, 'WithProject', project.id)
+    const ctx = createServerContext({
+      db,
+      llmRegistry: createRegistry(),
+      config: { ...DEFAULT_CONFIG, tools: { enabled: ['*'], disabled: [] } },
+      cwd: dir,
+      chatStream: mockChatStream,
+    })
+    const app = createChatRoute(ctx)
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: session.id, message: 'hi' }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const segments = await getLLMSegments(db, session.id)
+    expect(segments).toHaveLength(1)
+    const toolNames = segments[0]?.tools.map((t) => t.name).sort()
+    expect(toolNames).toContain('kanban')
   })
 
   it('POST / config.tools.disabled 工具不进入 LLM 工具集', async () => {

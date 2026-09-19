@@ -75,6 +75,8 @@ const KANBAN_LABEL_COLORS: readonly string[] = [
  *  implementation, mirroring the todoState pattern). */
 interface KanbanStore {
   getBoard(): Promise<KanbanBoardWithCards>
+  /** 只读获取板（不懒创建）：纯读路径（导出等）用，无板返回 null。 */
+  peekBoard(): Promise<KanbanBoardWithCards | null>
   addCard(input: {
     title: string
     description?: string | null

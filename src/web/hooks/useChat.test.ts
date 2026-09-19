@@ -742,3 +742,78 @@ describe('useChat 并发守卫（RUN_ACTIVE）', () => {
     expect(result.current.interrupted).toBe(false)
   })
 })
+
+// 回归（P1 人机文件协作）：write/edit 工具结束 → 失效对应文件的预览/编辑器查询。
+// 此前全库无任何 ['file'] invalidation——agent 改完文件后已打开的 FilePreview
+// 永远陈旧，用户对着旧内容保存还会盲写覆盖（冲突检测由 CodeEditor 兜底）。
+describe('useChat 文件视图失效（P1）', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function makeSseFetch(events: string[]): ReturnType<typeof vi.fn> {
+    const sse = events.map((e) => `data: ${e}\n\n`).join('')
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    return vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (readIdx === 0) {
+              readIdx++
+              return { done: false, value: chunk }
+            }
+            return { done: true, value: undefined }
+          },
+        }),
+      },
+    }))
+  }
+
+  it('write 工具 tool_call_end → invalidateQueries ["file", path]（前缀命中所有 projectId 变体）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeSseFetch([
+        '{"_tag":"tool_call_start","id":"t1","tool":"write","input":{"path":"src/a.ts","content":"x"}}',
+        '{"_tag":"tool_call_end","id":"t1","result":{"_tag":"success","output":"ok"}}',
+        '{"_tag":"done"}',
+      ]),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['file', 'src/a.ts'] })
+  })
+
+  it('read 等非文件变更工具不触发文件失效', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeSseFetch([
+        '{"_tag":"tool_call_start","id":"t1","tool":"read","input":{"path":"src/a.ts"}}',
+        '{"_tag":"tool_call_end","id":"t1","result":{"_tag":"success","output":"ok"}}',
+        '{"_tag":"done"}',
+      ]),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+
+    const fileInvalidations = invalidateSpy.mock.calls.filter(([arg]) =>
+      Array.isArray(arg?.queryKey) && arg.queryKey[0] === 'file',
+    )
+    expect(fileInvalidations).toHaveLength(0)
+  })
+})

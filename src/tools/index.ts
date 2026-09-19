@@ -148,3 +148,10 @@ export function resolveEnabledToolNames(
         : (enabled ?? [])
   return base.filter((n) => all.includes(n) && !disabled.has(n))
 }
+
+/**
+ * 依赖「会话绑定项目」的工具：其运行时依赖（如 kanban 的 kanbanStore）由宿主按
+ * session.projectId 注入——无项目会话（CLI print 未注册 cwd 等）调用必失败，
+ * 只会浪费一轮工具调用。会话无 projectId 时从工具集中剔除。
+ */
+export const PROJECT_BOUND_TOOLS: ReadonlySet<string> = new Set(['kanban'])

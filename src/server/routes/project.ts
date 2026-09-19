@@ -135,6 +135,17 @@ function createProjectRoute(ctx: ServerContext): Hono {
         `项目下有 ${activeCount} 个进行中的对话，请先中止后再重新定位`,
       )
     }
+    // P2-5：打开的终端守卫——终端绑定项目 worktree，重定位后 shell 仍留在旧目录，
+    // cwd 身份悬空。与活跃 run 同语义：先关闭再操作。
+    const openTerminals = ctx.ptyManager.list().filter((t) => t.projectId === id)
+    if (openTerminals.length > 0) {
+      return apiError(
+        c,
+        409,
+        'PROJECT_HAS_OPEN_TERMINALS',
+        `项目下有 ${openTerminals.length} 个打开的终端，请先关闭终端后再重新定位`,
+      )
+    }
 
     try {
       const project = await relocateProject(ctx.db, id, directory)
@@ -178,6 +189,18 @@ function createProjectRoute(ctx: ServerContext): Hono {
         409,
         'PROJECT_HAS_ACTIVE_SESSIONS',
         `项目下有 ${active.length} 个进行中的对话，请先中止后再删除`,
+      )
+    }
+
+    // P2-5：打开的终端守卫——项目删除后其 worktree 上的 PTY 仍继续运行，
+    // cwd 指向已注销身份的目录。与活跃 run 同语义：先关闭再删除。
+    const openTerminals = ctx.ptyManager.list().filter((t) => t.projectId === id)
+    if (openTerminals.length > 0) {
+      return apiError(
+        c,
+        409,
+        'PROJECT_HAS_OPEN_TERMINALS',
+        `项目下有 ${openTerminals.length} 个打开的终端，请先关闭终端后再删除项目`,
       )
     }
 

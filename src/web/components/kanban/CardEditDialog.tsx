@@ -243,6 +243,18 @@ export function CardEditDialog({
     },
   })
 
+  // P1 删除防护：卡片删除是物理删除且不可恢复（会话/看板板均有回收站，唯独卡片没有），
+  // 且卡片 id 被 agent 引用——误删后 agent 后续 update/move 直接报错。二次确认（armed 态）。
+  // 确认态无需手动重置：父组件按 cardId 重挂载本对话框（key），换卡/重开天然回到初始态。
+  const [deleteArmed, setDeleteArmed] = useState(false)
+  const onDeleteClick = () => {
+    if (!deleteArmed) {
+      setDeleteArmed(true)
+      return
+    }
+    deleteMutation.mutate()
+  }
+
   const toggleLabel = (id: string) => {
     setSelectedLabels((prev) => {
       const next = new Set(prev)
@@ -286,11 +298,12 @@ export function CardEditDialog({
           <Button
             className={btnDanger}
             variant="outline"
-            onClick={() => deleteMutation.mutate()}
+            onClick={onDeleteClick}
             disabled={deleteMutation.isPending}
             style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
+            data-testid="card-delete-btn"
           >
-            删除
+            {deleteArmed ? '确认删除？（不可恢复）' : '删除'}
           </Button>
           <div className={actionsRight}>
             <Button

@@ -147,12 +147,12 @@ export const kanbanTool: ToolDef = {
   name: 'kanban',
   description: `Manage the project's shared kanban task board. 5 operations:
 - view: list all columns and cards (read-only)
-- add: create a new task card (title required; optional description, columnId defaults to todo, priority defaults to medium, labels)
+- add: create a new task card (title required; optional description, columnId defaults to the board's first column, priority defaults to medium, labels)
 - update: edit a card's title/description/priority/labels (id required)
 - move: move a card to a different column or reorder (id + columnId required; optional position)
 - delete: remove a card (id required)
 
-The board is shared across all sessions and agents in the same project — use it to coordinate work, track tasks visible to the user, and break down complex projects. Column ids are: todo, in_progress, in_review, done, cancelled (customizable by the user via the board config UI).`,
+The board is shared across all sessions and agents in the same project — use it to coordinate work, track tasks visible to the user, and break down complex projects. Column ids are user-configurable: do NOT guess them — run \`view\` first to discover the current columns, then reuse those exact ids. Adding/moving to an unknown column id fails with the list of valid ids.`,
   parameters: kanbanParameters,
   permission: 'auto',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {

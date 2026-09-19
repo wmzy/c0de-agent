@@ -32,7 +32,7 @@ import {
 import { upsertFileSnapshot } from '../../session/snapshot.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import type { MessageContent } from '../../shared/types/message.js'
-import { resolveEnabledToolNames } from '../../tools/index.js'
+import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import type { AgentManager } from '../agent-manager.js'
 import { apiError } from '../middleware/error.js'
@@ -112,6 +112,22 @@ export function childRunBridge(manager: AgentManager): RegisterChildRun {
     })
     return () => manager.unregister(run.sessionId)
   }
+}
+
+/**
+ * 会话「忙」判定统一口径：活跃 run / tryAcquire 占位（starting）/ 工作流运行期
+ * （发起会话无主 run，busy 映射承载）。变更型操作（fork/compact/clear 等）在斜杠与
+ * REST 双入口共用本判定，防止守卫漂移——REST fork 此前只查 get()，漏 starting
+ * 占位窗口与工作流运行期两种态（斜杠守卫早已覆盖）。
+ */
+export function hasBusySession(
+  ctx: ServerContext,
+  sessionId: string,
+): 'run' | 'starting' | 'workflow' | null {
+  if (ctx.agentManager.get(sessionId)) return 'run'
+  if (ctx.agentManager.isStarting(sessionId)) return 'starting'
+  if (ctx.workflowBusyBySession.has(sessionId)) return 'workflow'
+  return null
 }
 
 function createChatRoute(ctx: ServerContext): Hono {
@@ -563,13 +579,9 @@ function createChatRoute(ctx: ServerContext): Hono {
       if (cmd) {
         // P3：变更型命令（清空/压缩/分支直接改写消息树）与活跃 run 的并发
         // 写入存在竞态——斜杠拦截早于 tryAcquire，须在此显式拒绝。
+        // 守卫口径统一为 hasBusySession（get + isStarting + workflowBusy）。
         const MUTATING_SLASH = new Set(['compact', 'clear', 'fork'])
-        if (
-          MUTATING_SLASH.has(parsed.name) &&
-          (ctx.agentManager.get(sessionId) ||
-            ctx.agentManager.isStarting(sessionId) ||
-            ctx.workflowBusyBySession.has(sessionId))
-        ) {
+        if (MUTATING_SLASH.has(parsed.name) && hasBusySession(ctx, sessionId)) {
           return apiError(
             c,
             409,
@@ -887,11 +899,13 @@ function createChatRoute(ctx: ServerContext): Hono {
       // 工具解析（P1-1）：config.tools.enabled 含 '*' = 全部注册工具；空 = 无工具（fail-closed）；
       // 非空名单 = 默认集。disabled 已在 registry 层过滤，此处兜底。
       // P1 多项目：按会话项目配置解析（此前用启动目录配置）。
+      // 无项目会话（projectId null/undefined）剔除项目绑定工具（kanban 等）
+      const sessionHasProject = Boolean(session.projectId)
       const tools = resolveEnabledToolNames(
         ctx.toolRegistry,
         sessionConfig,
         body.tools as string[] | undefined,
-      )
+      ).filter((n) => sessionHasProject || !PROJECT_BOUND_TOOLS.has(n))
 
       // primary agent 解析（spec: agent-frontend-switching §4.3）
       const agentName = (body.agent as string) ?? 'default'

@@ -333,6 +333,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
 
       {editingCard && (
         <CardEditDialog
+          key={editingCard.id}
           projectId={projectId}
           cardId={editingCard.id}
           initialTitle={editingCard.title}

@@ -1102,13 +1102,39 @@ describe('session route', () => {
         body: JSON.stringify({ title: 'running', projectId: TEST_PROJECT }),
       })
       const session = (await created.json()) as Session
-      // 占位一个活跃 run（真实中止由 agentManager 内部处理，此处断言调用）
-      ctx.agentManager.tryAcquire(session.id)
+      // 注册一个活跃 run（真实中止由 agentManager 内部处理，此处断言调用）。
+      // 注意不能用 tryAcquire 占位模拟——占位期删除现返回 409（见下一用例）。
+      ctx.agentManager.register({
+        sessionId: session.id,
+        state: {
+          abortController: new AbortController(),
+          status: { _tag: 'running', turnCount: 0, currentTool: undefined },
+        } as never,
+        deps: {} as never,
+      })
       const abortSpy = vi.spyOn(ctx.agentManager, 'abort')
 
       const res = await app.request(`/${session.id}`, { method: 'DELETE' })
       expect(res.status).toBe(204)
       expect(abortSpy).toHaveBeenCalledWith(session.id)
+    })
+
+    it('DELETE /:id 占位期（starting）返回 409——占位无法中止，删除会让随后 register 的 run 写入已删除会话', async () => {
+      const { app, ctx } = await setup()
+      const created = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'starting', projectId: TEST_PROJECT }),
+      })
+      const session = (await created.json()) as Session
+      ctx.agentManager.tryAcquire(session.id)
+
+      const res = await app.request(`/${session.id}`, { method: 'DELETE' })
+      expect(res.status).toBe(409)
+      expect(((await res.json()) as { error?: { code?: string } }).error?.code).toBe('RUN_STARTING')
+      // 会话未被删除：占位释放后仍可正常访问
+      const getRes = await app.request(`/${session.id}`)
+      expect(getRes.status).toBe(200)
     })
 
     it('P1：删除发起会话时一并中止其进行中的工作流 run（busy 映射路由）', async () => {

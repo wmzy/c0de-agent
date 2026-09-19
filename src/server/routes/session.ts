@@ -50,7 +50,7 @@ import { generateId } from '../../shared/index.js'
 import { apiError } from '../middleware/error.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
-import { resolveAgentCwd } from './chat.js'
+import { hasBusySession, resolveAgentCwd } from './chat.js'
 
 function createSessionRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -312,8 +312,14 @@ function createSessionRoute(ctx: ServerContext): Hono {
       return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
     }
     // P3：fork 复制消息树，与正在写库的活跃 run 存在竞态——先拒绝。
-    if (ctx.agentManager.get(id)) {
+    // 守卫与斜杠 /fork 同口径（hasBusySession）：此前只查 get()，
+    // 漏 tryAcquire→register 占位窗口与工作流运行期。
+    const busy = hasBusySession(ctx, id)
+    if (busy === 'run' || busy === 'workflow') {
       return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再分支')
+    }
+    if (busy === 'starting') {
+      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
     }
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     let messageIndex = body.messageIndex as number | undefined
@@ -343,6 +349,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
   //（此前仅中止会话自身 run + 子 agent，工作流继续后台执行且 busy 映射悬挂）。
   app.delete('/:id', async (c) => {
     const id = c.req.param('id')
+    // starting 占位无法 abort（尚无 run）——删除会让随后 register 的 run 写入
+    // 已软删除会话。与控制端点同口径：占位期 409，稍后重试。
+    if (ctx.agentManager.isStarting(id)) {
+      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
+    }
     const busyWorkflowId = ctx.workflowBusyBySession.get(id)
     if (busyWorkflowId) {
       ctx.agentManager.abort(busyWorkflowId)

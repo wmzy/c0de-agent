@@ -70,12 +70,32 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       broadcastRunState({ sessionId, active: true })
       // 追踪是否收到 error 事件（区分服务端正常错误与连接中断）
       let gotError = false
+      // P1 人机文件协作：记录进行中的 write/edit 调用（id → 文件路径），
+      // tool_call_end 时失效对应文件的预览/编辑器查询——否则 agent 改完文件后，
+      // 已打开的 FilePreview 永远陈旧（无任何 ['file'] invalidation），
+      // 用户对着旧内容点保存还会盲写覆盖 agent 的修改（冲突检测在 CodeEditor 兜底）。
+      // bash 等无法提取路径的写途径由编辑器保存时的磁盘比对兜底。
+      const mutatingPaths = new Map<string, string>()
       try {
         const result = await sendChatMessage(
           sessionId,
           content,
           (event) => {
             if (event._tag === 'error') gotError = true
+            if (
+              event._tag === 'tool_call_start' &&
+              (event.tool === 'write' || event.tool === 'edit')
+            ) {
+              const p = (event.input as { path?: unknown } | null)?.path
+              if (typeof p === 'string' && p.length > 0) mutatingPaths.set(event.id, p)
+            } else if (event._tag === 'tool_call_end') {
+              const p = mutatingPaths.get(event.id)
+              if (p !== undefined) {
+                mutatingPaths.delete(event.id)
+                // 前缀失效：['file', path] 命中所有 projectId 变体的查询键
+                qc.invalidateQueries({ queryKey: ['file', p] })
+              }
+            }
             setState((s) => reduceChatEvent(s, event))
             // 收到调用详情通知时刷新调用详情面板，避免需手动刷新页面。
             // 高频 llm_detail 做 debounce（500ms），done/error 立即 flush。

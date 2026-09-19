@@ -28,6 +28,22 @@ import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
 import { childRunBridge, startHeartbeat } from './chat.js'
 
+/**
+ * 按名字查找运行中的工作流 run：遍历 busy 作用域占位（workflowBusyByScope 的
+ * 值为工作流会话 id），从活跃 run 的会话 metadata.workflowName 匹配（斜杠与
+ * REST 两条执行通道创建会话时均落盘该键）。返回工作流会话 id；无匹配返回 null。
+ */
+function findBusyWorkflowByName(ctx: ServerContext, name: string): string | null {
+  for (const wfSessionId of ctx.workflowBusyByScope.values()) {
+    if (!wfSessionId) continue // 同步占位空串（run 会话尚未创建）
+    const run = ctx.agentManager.get(wfSessionId)
+    if (!run) continue
+    const meta = run.state.session.metadata as { workflowName?: unknown }
+    if (meta?.workflowName === name) return wfSessionId
+  }
+  return null
+}
+
 /** 权限确认超时兜底拒绝后暂停 run 的暂停原因（与 chat 路由同口径）。 */
 const PERMISSION_TIMEOUT_PAUSE_REASON =
   '权限确认超时：该工具已被自动拒绝，工作流已暂停。点击「恢复」后可直接要求 agent 重试该工具'
@@ -557,6 +573,20 @@ function createWorkflowsRoute(ctx: ServerContext) {
     const registryEntry = registry.get(name)
     const projectId = c.req.query('projectId')
     const target = c.req.query('target')
+
+    // P2 运行中守卫：删除文件后运行中的 run 仍以内存模块继续执行（用户以为已停），
+    // 且 lastRun 记录随注册表条目消失——崩溃后 interrupted 识别丢失。
+    // 按名字匹配所有 busy 作用域（run 会话 metadata.workflowName，两通道均落盘）；
+    // 同名不同层级的运行会构成假阳性阻断，但安全侧（稍后重删）。
+    const busyRun = findBusyWorkflowByName(ctx, name)
+    if (busyRun) {
+      return apiError(
+        c,
+        409,
+        'RUN_ACTIVE',
+        `工作流 "${name}" 正在运行（会话 ${busyRun}），请先中止该运行再删除`,
+      )
+    }
 
     // 项目级删除：?projectId 指定项目 worktree；缺省 serve cwd（全局设置视图下
     // 的启动目录项目工作流）。文件缺失 → 404，绝不回退删除其他层级。

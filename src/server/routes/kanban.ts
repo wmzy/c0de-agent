@@ -134,10 +134,14 @@ function createKanbanRoute(ctx: ServerContext): Hono {
 
   // GET /:projectId/export — 看板 JSON 导出（项目删除会永久级联删除看板，
   // 会话有 60 天回收站而看板没有——导出是唯一的备份途径）。
+  // peek 语义：纯读不懒建板——导出从未初始化看板的项目此前会凭空产生空板行。
   app.get('/:projectId/export', async (c) => {
     const projectId = c.req.param('projectId')
     const store = createKanbanStore(ctx.db, projectId)
-    const board = await store.getBoard()
+    const board = await store.peekBoard()
+    if (!board) {
+      return apiError(c, 404, 'BOARD_NOT_FOUND', '该项目尚未初始化看板')
+    }
     return c.json({
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -165,6 +169,35 @@ function createKanbanRoute(ctx: ServerContext): Hono {
         400,
         'INVALID_EXPORT',
         '无效的看板导出 JSON：需要 version/columns/cards 字段',
+      )
+    }
+    // P3：导入体积上限——与会话导入（messages/archives 上限）同口径。
+    // 无上限的数组会让 replaceBoard 的单事务逐条重建 OOM/长事务拖垮 PGLite。
+    const MAX_IMPORT_COLUMNS = 100
+    const MAX_IMPORT_LABELS = 200
+    const MAX_IMPORT_CARDS = 20000
+    if (body.columns.length > MAX_IMPORT_COLUMNS) {
+      return apiError(
+        c,
+        400,
+        'IMPORT_TOO_LARGE',
+        `导入列数 ${body.columns.length} 超过上限 ${MAX_IMPORT_COLUMNS}`,
+      )
+    }
+    if (Array.isArray(body.labels) && body.labels.length > MAX_IMPORT_LABELS) {
+      return apiError(
+        c,
+        400,
+        'IMPORT_TOO_LARGE',
+        `导入标签数 ${body.labels.length} 超过上限 ${MAX_IMPORT_LABELS}`,
+      )
+    }
+    if (body.cards.length > MAX_IMPORT_CARDS) {
+      return apiError(
+        c,
+        400,
+        'IMPORT_TOO_LARGE',
+        `导入卡片数 ${body.cards.length} 超过上限 ${MAX_IMPORT_CARDS}`,
       )
     }
     const columns = body.columns as KanbanColumnDef[]

@@ -5,7 +5,7 @@ import { getByDirectory } from '../../project/index.js'
 import { createSession, getSession, upgradeTemporarySession } from '../../session/session.js'
 import type { AgentConfig, AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
-import { resolveEnabledToolNames } from '../../tools/index.js'
+import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 
 type PrintOptions = {
   model?: string
@@ -78,8 +78,11 @@ async function runPrintMode(
     provider: config.defaultProvider,
     model: opts.model ?? config.defaultModel,
     // 工具集：enabled 含 '*' → 全部 registered；空 → 无工具（fail-closed）；否则 enabled ∩ registered
-    // （disabled 已在 registry 层过滤）。
-    tools: resolveEnabledToolNames(deps.toolRegistry, config),
+    // （disabled 已在 registry 层过滤）。无项目绑定（cwd 未注册为项目）时剔除
+    // 项目绑定工具（kanban 等）——其 store 不会被注入，调用必失败。
+    tools: resolveEnabledToolNames(deps.toolRegistry, config).filter(
+      (n) => Boolean(session.projectId) || !PROJECT_BOUND_TOOLS.has(n),
+    ),
     plugins: config.plugins.enabled,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
   }
