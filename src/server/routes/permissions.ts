@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { sessions } from '../../db/schema.js'
+import { getSession } from '../../session/session.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -116,6 +117,12 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // PUT /:sessionId — 设置会话级覆盖；不传 mode 则清除覆盖。P2：落库持久化。
   app.put('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
+    // P3-11 修复：校验会话存在——此前对不存在的 id 设置 auto 也返回成功，
+    // 用户以为已生效，重启后无任何痕迹。回收站会话同口径 404。
+    const session = await getSession(ctx.db, sessionId)
+    if (!session || session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     const body = (await c.req.json().catch(() => null)) as { mode?: unknown } | null
     const mode = body?.mode
     if (mode !== undefined && mode !== 'default' && mode !== 'auto') {

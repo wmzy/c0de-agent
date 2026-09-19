@@ -4,7 +4,7 @@ import type { DB } from '../../db/client.js'
 import { createDB, migrateDB } from '../../db/index.js'
 import { sessionEntries, sessions } from '../../db/schema.js'
 import type { ChatOptions, ProviderContext } from '../../llm/index.js'
-import { softDeleteSession } from '../../session/session.js'
+import { createSession, softDeleteSession } from '../../session/session.js'
 import type { AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ChatRequest, StreamChunk } from '../../shared/types/llm.js'
@@ -132,6 +132,32 @@ describe('runPrintMode', () => {
     await expect(
       runPrintMode(config, 'hi', deps, { sessionId, onEvent: () => {} }),
     ).rejects.toThrow(/回收站/)
+  })
+
+  it('P2-6：--continue 会话 worktree 与 cwd 不一致 → 拒绝并给出切换目录指引', async () => {
+    const chatStream = mockChatStream([])
+    const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream })
+    // 会话绑定到别的目录（worktreePath 落盘），当前 cwd 不同
+    const session = await createSession(
+      db,
+      'bound-elsewhere',
+      undefined,
+      undefined,
+      'cli',
+      undefined,
+      '/some/other/project',
+    )
+    await expect(
+      runPrintMode(config, 'hi', deps, { sessionId: session.id, onEvent: () => {} }),
+    ).rejects.toThrow(/工作目录.*不一致/)
+  })
+
+  it('P2-6：--continue 会话无 worktree（孤儿/无项目）→ 不拦截', async () => {
+    const chatStream = mockChatStream([{ _tag: 'text', text: 'ok' }, { _tag: 'done' }])
+    const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream })
+    const session = await createSession(db, 'no-worktree', undefined, undefined, 'cli')
+    const text = await runPrintMode(config, 'hi', deps, { sessionId: session.id })
+    expect(text).toBe('ok')
   })
 
   it('未配置 provider 时给出引导性报错（不裸抛 NoRoute）', async () => {

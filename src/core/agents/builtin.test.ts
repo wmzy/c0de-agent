@@ -30,10 +30,13 @@ describe('BUILTIN_AGENTS', () => {
     expect(def?.systemPrompt).toBe('')
   })
 
-  it('plan 限定只读工具集', () => {
+  it('plan 限定只读工具集（不含 bash）', () => {
     const plan = BUILTIN_AGENTS.find((d) => d.name === 'plan')
-    expect(plan?.tools).toEqual(['read', 'grep', 'glob', 'bash'])
+    // P1 修复：plan 声称「只读」，但 bash 是完整 shell（可写/执行任意命令），
+    // 与只读承诺矛盾——与 researcher 同口径移除 bash。
+    expect(plan?.tools).toEqual(['read', 'grep', 'glob'])
     expect(plan?.systemPrompt).toContain('Plan Mode')
+    expect(plan?.systemPrompt).toContain('NO shell access')
   })
 
   it('researcher 是只读（不含 write/edit/bash）', () => {

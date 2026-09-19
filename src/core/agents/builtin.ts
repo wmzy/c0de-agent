@@ -22,7 +22,7 @@ const PLAN_ROLE = `You are c0de-agent in **Plan Mode**. Your job is to investiga
 - Use read-only tools (grep/glob/read) to understand the structure and relevant code.
 - Ask clarifying questions when requirements are ambiguous.
 - When ready, present a concrete implementation plan (files to touch, approach, risks).
-- Do NOT use edit/write tools to modify code. You may run bash for investigation only.`
+- You have NO shell access and NO write tools in this mode. If investigation requires running a command or modifying files, note it as a step for the user to execute in default mode.`
 
 /** 6 个内置 agent（2 primary + 4 subagent）。 */
 const BUILTIN_AGENTS: AgentDefinition[] = [
@@ -36,7 +36,7 @@ const BUILTIN_AGENTS: AgentDefinition[] = [
   {
     name: 'plan',
     description: '计划模式（只读）。专注调研与方案设计，不直接改代码。',
-    tools: ['read', 'grep', 'glob', 'bash'],
+    tools: ['read', 'grep', 'glob'],
     systemPrompt: PLAN_ROLE,
     mode: 'primary',
     source: 'builtin',

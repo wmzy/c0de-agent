@@ -28,6 +28,7 @@ import {
   getSession,
   markUnfinishedTurn,
   updateSessionLastRun,
+  upgradeTemporarySession,
 } from '../../session/session.js'
 import { upsertFileSnapshot } from '../../session/snapshot.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
@@ -194,6 +195,14 @@ function createChatRoute(ctx: ServerContext): Hono {
     // （CLI --continue 已拒绝，Web API 未对齐）。前端正常流程不会触发（会话 404）。
     if (session.deletedAt) {
       return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除（如需继续对话请先从回收站恢复）')
+    }
+    // P1-3：继续对话的 workflow 会话升级为持久会话——「续接即持久」此前仅
+    // 覆盖 CLI print（upgradeTemporarySession 只被 print --continue 调用），
+    // workflow 会话在 Web 继续追问后仍会被 30 天临时清理移入回收站。
+    if (session.agentType === 'workflow') {
+      await upgradeTemporarySession(ctx.db, sessionId).catch(() => {
+        // 升级失败不阻塞对话（最坏仍按临时会话清理）
+      })
     }
 
     // P2：会话级权限覆盖持久化在 metadata——重启后从 DB 恢复到内存 Map，
@@ -779,13 +788,16 @@ function createChatRoute(ctx: ServerContext): Hono {
       const valid = mentionedAgents
         .map((n) => ctx.agentRegistry.get(n))
         .filter((d): d is NonNullable<typeof d> => Boolean(d && d.mode !== 'primary'))
-      // P2：全部无效（拼错/未注册/primary）→ 明确 400，此前静默忽略，用户以为已派发
-      if (valid.length === 0) {
+      // P3-10 修复：部分无效也显式 400——此前仅全无效报错，拼错 1 个时该提及
+      // 被静默丢弃、用户以为已派发。列出全部无效名，供用户修正后重发。
+      const validNames = new Set(valid.map((d) => d.name))
+      const invalid = mentionedAgents.filter((n) => !validNames.has(n))
+      if (invalid.length > 0) {
         return apiError(
           c,
           400,
           'INVALID_AGENT_MENTION',
-          `未知或非 subagent 类型的 agent 提及：${mentionedAgents.join(', ')}`,
+          `未知或非 subagent 类型的 agent 提及：${invalid.join(', ')}`,
         )
       }
       const names = valid.map((d) => d.name).join(', ')
@@ -913,8 +925,11 @@ function createChatRoute(ctx: ServerContext): Hono {
       if (!agentDef || agentDef.mode === 'subagent') {
         return apiError(c, 400, 'INVALID_AGENT', `Unknown or non-primary agent: ${agentName}`)
       }
-      // agent def 覆盖：tools（plan 限只读）、model（可选）
-      const resolvedTools = agentDef.tools ?? tools
+      // agent def 覆盖：tools（plan 限只读）、model（可选）。
+      // P1 修复：def.tools 与配置解析结果取交集——此前完全覆盖会绕过
+      // config.tools.enabled 的 fail-closed 语义（禁用 bash 后切到 plan agent
+      // 又静默恢复）。def 未声明 tools 时原样沿用配置解析结果。
+      const resolvedTools = agentDef.tools ? agentDef.tools.filter((t) => tools.includes(t)) : tools
       const resolvedModel = agentDef.model ?? model
 
       // 分段预检：切换 provider/model/tools 将开新段（前缀失效→缓存 miss），

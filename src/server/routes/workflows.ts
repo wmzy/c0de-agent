@@ -613,10 +613,23 @@ function createWorkflowsRoute(ctx: ServerContext) {
       } catch {
         return apiError(c, 500, 'DELETE_FAILED', `Failed to delete workflow file for "${name}"`)
       }
-      // 仅在注册表同名条目就是被删文件时移除——删除项目级同名工作流不得误删
-      // user 级条目（project > user 遮蔽解除后 user 级应重新可见）。
-      if (registryEntry && registryEntry.filePath === filePath) {
-        registry.delete(name)
+      // P1 修复：删除文件同样改变信任指纹（workflowDirHashes 随文件集变化）——
+      // 不刷新会让已信任项目在下一次聊天时被误判「配置漂移」而重新门禁，
+      // 与 create 路径的 trustProject 刷新对称（防「信任→删除→自锁复检」）。
+      try {
+        const p = await getByDirectory(ctx.db, baseDir)
+        if (p?.trustedAt != null) await trustProject(ctx.db, p.id)
+      } catch {
+        // 指纹刷新失败不阻塞删除结果（最坏回到 fail-closed 复检路径）
+      }
+      // 热重载：项目级条目消失后，被其遮蔽的同名 user 级条目应重新可见——
+      // registry 单名单位（后注册覆盖），仅 delete 无法恢复被覆盖掉的 user 条目。
+      try {
+        await reloadRegistry(registry, ctx.cwd, {
+          projectTrusted: await serveCwdTrusted(ctx),
+        })
+      } catch {
+        // 重载失败不阻塞删除结果（其他文件损坏等）；下次启动/创建时自然恢复
       }
       return c.json({ ok: true })
     }
@@ -633,7 +646,15 @@ function createWorkflowsRoute(ctx: ServerContext) {
       } catch {
         return apiError(c, 500, 'DELETE_FAILED', `Failed to delete workflow file for "${name}"`)
       }
-      registry.delete(name)
+      // 热重载：user 级条目可能遮蔽同名 builtin，仅 delete 会让被覆盖的 builtin
+      // 永久消失（registry 单名单位），重建恢复完整层级。
+      try {
+        await reloadRegistry(registry, ctx.cwd, {
+          projectTrusted: await serveCwdTrusted(ctx),
+        })
+      } catch {
+        // 重载失败不阻塞删除结果
+      }
       return c.json({ ok: true })
     }
 
@@ -668,10 +689,23 @@ function createWorkflowsRoute(ctx: ServerContext) {
       }
     }
 
-    // registry 清理：仅在注册表同名条目就是被删文件时才移除——删除项目级同名
-    // 工作流不得误删 user 级条目（project > user 遮蔽解除后 user 级应重新可见）。
-    if (registryEntry && (!fileToUnlink || registryEntry.filePath === fileToUnlink)) {
-      registry.delete(name)
+    // P1 修复：删除项目级文件同样刷新信任指纹（与 target=project 分支同口径），
+    // 防「删除→指纹漂移→自锁复检」。
+    if (projectFilePath) {
+      try {
+        const project = await getProject(ctx.db, projectId ?? '')
+        if (project?.trustedAt != null) await trustProject(ctx.db, project.id)
+      } catch {
+        // 指纹刷新失败不阻塞删除结果
+      }
+    }
+    // 热重载：删除可能解除 user/builtin 同名条目的遮蔽，registry 单名单位必须重建。
+    try {
+      await reloadRegistry(registry, ctx.cwd, {
+        projectTrusted: await serveCwdTrusted(ctx),
+      })
+    } catch {
+      // 重载失败不阻塞删除结果
     }
     return c.json({ ok: true })
   })

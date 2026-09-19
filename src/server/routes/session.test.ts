@@ -670,6 +670,42 @@ describe('session route', () => {
     void db
   })
 
+  it('P3-9：DELETE /:id/empty 物理删除真空会话；非空会话 409（不绕过回收站语义）', async () => {
+    const { app, db } = await setup()
+    // 真空会话：创建后无任何消息
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'EmptyShell', projectId: TEST_PROJECT }),
+    })
+    const session = (await created.json()) as Session
+    const res = await app.request(`/${session.id}/empty`, { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    // 物理删除：行消失（getSession 返回 null），且不进回收站
+    expect(await getSession(db, session.id)).toBeNull()
+    const deleted = await app.request('/deleted')
+    const list = (await deleted.json()) as Session[]
+    expect(list.some((s) => s.id === session.id)).toBe(false)
+    // 非空会话（有消息）→ 409，且行保留
+    const created2 = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'HasMsg', projectId: TEST_PROJECT }),
+    })
+    const withMsg = (await created2.json()) as Session
+    await db.db.insert(sessionEntries).values({
+      id: 'b1e2d3c4-0000-4000-8000-000000000001',
+      sessionId: withMsg.id,
+      tag: 'message',
+      role: 'user',
+      content: { text: 'hi' },
+      tokenCount: 0,
+    })
+    const res2 = await app.request(`/${withMsg.id}/empty`, { method: 'DELETE' })
+    expect(res2.status).toBe(409)
+    expect(await getSession(db, withMsg.id)).not.toBeNull()
+  })
+
   it('DELETE /deleted 清空回收站', async () => {
     const { app } = await setup()
     for (const title of ['A', 'B']) {

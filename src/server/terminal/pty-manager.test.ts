@@ -58,6 +58,21 @@ describe('PTYManager', () => {
     expect(() => mgr.resize('nonexistent', 100, 40)).toThrow('PTY not found')
   })
 
+  it('P3-13：cols/rows 钳制到 [1, MAX]（负值与超大值不进入 spawn）', () => {
+    const tiny = mgr.create({ cwd: '/tmp', cols: -5, rows: -10 })
+    expect(tiny.cols).toBe(1)
+    expect(tiny.rows).toBe(1)
+    const huge = mgr.create({ cwd: '/tmp', cols: 100_000, rows: 90_000 })
+    expect(huge.cols).toBeLessThanOrEqual(1000)
+    expect(huge.rows).toBeLessThanOrEqual(500)
+    // resize 同口径钳制
+    mgr.resize(huge.id, 999_999, -1)
+    expect(mgr.get(huge.id)?.cols).toBeLessThanOrEqual(1000)
+    expect(mgr.get(huge.id)?.rows).toBe(1)
+    mgr.kill(tiny.id)
+    mgr.kill(huge.id)
+  })
+
   it('get returns undefined for unknown id', () => {
     expect(mgr.get('nonexistent')).toBeUndefined()
   })

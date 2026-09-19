@@ -135,6 +135,16 @@ function createUpdateRoute(ctx: ServerContext): Hono {
     )
     const result = await ctx.updateScheduler.checkNow()
     if (!result.hasUpdate) {
+      // P3-8：检查失败与「已是最新」分开——网络/registry 异常给可操作的
+      // 重试指引，不再误导为「无需更新」。
+      if (result.checkError) {
+        return apiError(
+          c,
+          502,
+          'UPDATE_CHECK_FAILED',
+          '无法检查最新版本（registry 连接失败），请检查网络后重试',
+        )
+      }
       return apiError(c, 409, 'NO_UPDATE', '已是最新版本，无需热更新')
     }
 

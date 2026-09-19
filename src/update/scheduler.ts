@@ -1,4 +1,5 @@
 import type { UpdateCheckResult } from './version.js'
+import { getCurrentVersion } from './version.js'
 
 /**
  * 后台版本检查调度器（spec §18.1 步骤 1）。
@@ -49,8 +50,10 @@ function createUpdateScheduler(opts: UpdateSchedulerOptions): UpdateScheduler {
     try {
       r = await opts.checkFn()
     } catch {
-      // 异常降级：缓存 hasUpdate:false，但不触发 onUpdate（避免误报）。
-      lastResult = { hasUpdate: false, currentVersion: '0.0.0', latestVersion: '0.0.0' }
+      // 异常降级：缓存 hasUpdate:false + checkError，且保留真实当前版本
+      //（此前写死 '0.0.0'，前端/API 会展示错误版本号）。不触发 onUpdate（避免误报）。
+      const v = getCurrentVersion()
+      lastResult = { hasUpdate: false, currentVersion: v, latestVersion: v, checkError: true }
       return lastResult
     }
     lastResult = r

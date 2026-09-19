@@ -60,7 +60,7 @@ describe('checkForUpdate', () => {
     expect(r.latestVersion).toBe('0.0.5')
   })
 
-  it('does not throw on network failure (returns hasUpdate false)', async () => {
+  it('does not throw on network failure (returns hasUpdate false + checkError)', async () => {
     const failing = vi.fn().mockRejectedValue(new Error('offline')) as unknown as typeof fetch
     const r = await checkForUpdate({
       fetchImpl: failing,
@@ -69,9 +69,11 @@ describe('checkForUpdate', () => {
     })
     expect(r.hasUpdate).toBe(false)
     expect(r.latestVersion).toBe('0.1.0')
+    // P3-8：检查失败与「无更新」区分，消费方给出重试指引
+    expect(r.checkError).toBe(true)
   })
 
-  it('treats non-ok response as no-update', async () => {
+  it('treats non-ok response as check failure (checkError)', async () => {
     const notOk = vi.fn().mockResolvedValue({ ok: false, status: 404 }) as unknown as typeof fetch
     const r = await checkForUpdate({
       fetchImpl: notOk,
@@ -79,5 +81,6 @@ describe('checkForUpdate', () => {
       packageName: 'c0de-agent',
     })
     expect(r.hasUpdate).toBe(false)
+    expect(r.checkError).toBe(true)
   })
 })

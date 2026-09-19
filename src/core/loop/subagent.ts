@@ -89,7 +89,15 @@ export async function runSubAgent(
   // 4. 构建子 agent 配置：工具集隔离 + 模型覆盖 + 递归限制 + yield
   const parentDepth = deps._subagentDepth ?? 0
   const childDepth = parentDepth + 1
-  const declaredTools = def.tools ?? parent.config.tools
+  // P1 修复：def.tools 与父工具集取交集——此前 def 固定名单完全覆盖父的
+  // 配置解析结果，config.tools.enabled 的 fail-closed 语义可被 coder 等
+  // 子 agent 的固定工具集绕过（父会话禁写，子 agent 仍持 write/edit/bash）。
+  // 例外：父 tools 为空（工作流运行器 parent 恒 tools=[]，工具集由工作流
+  // 自身按 agent 类型派发）时不取交集，保持 def 固定名单。
+  const declaredTools =
+    def.tools && parent.config.tools.length > 0
+      ? def.tools.filter((t) => parent.config.tools.includes(t))
+      : (def.tools ?? parent.config.tools)
   const maxRec = def.maxRecursion ?? 0
   const baseTools = childDepth > maxRec ? declaredTools.filter((t) => t !== 'task') : declaredTools
   const childTools = Array.from(new Set([...baseTools, 'yield']))

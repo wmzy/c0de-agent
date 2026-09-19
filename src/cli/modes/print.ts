@@ -1,4 +1,5 @@
-import { createAgent, runAgent } from '../../core/agent.js'
+import { resolve } from 'node:path'
+import { abortAgent, createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getByDirectory } from '../../project/index.js'
@@ -15,6 +16,9 @@ type PrintOptions = {
   sessionId?: string
   /** 事件观察回调（CLI 用于把 tool/thinking 写到 stderr）。 */
   onEvent?: (event: AgentEvent) => void
+  /** P2-4：外部中止信号（ACP abort）——触发即中止 run 并抛错，
+   *  让调用方如实返回失败而非谎报 ok。 */
+  abortSignal?: AbortSignal
 }
 
 /** 从事件流累积 assistant 文本。纯函数。 */
@@ -51,9 +55,21 @@ async function runPrintMode(
           `或停止 serve 后运行 \`c0de sessions restore ${opts.sessionId}\` 恢复，再续接。`,
       )
     }
+    // P2-6 修复：cwd 与会话 worktree 不一致时拒绝——文件工具在 cwd 执行，
+    // 而 kanban/预算等绑定 session.projectId，同一会话上下文会分裂到两个目录，
+    // 且毫无提示。给出切换目录的可操作指引，避免用户在错误目录误改文件。
+    const worktree = existing.worktreePath
+    if (worktree && resolve(worktree) !== resolve(deps.cwd)) {
+      throw new Error(
+        `该会话的工作目录（${worktree}）与当前目录（${deps.cwd}）不一致。` +
+          `请先切换到会话目录再续接：\n  cd "${worktree}"\n` +
+          `（会话绑定项目时，工具必须在原目录执行，否则看板与文件操作会分裂到两个目录）`,
+      )
+    }
     // 续接即升级为持久会话：30 天临时清理不再触及（P1：此前 --continue 的
     // 会话同样会在 30 天不活动后被物理删除，用户显式续接的历史静默丢失）。
-    if (existing.agentType === 'print') {
+    // P1-3：workflow 会话同口径——Web 继续追问的 workflow 会话此前无升级路径。
+    if (existing.agentType === 'print' || existing.agentType === 'workflow') {
       await upgradeTemporarySession(deps.db, opts.sessionId)
     }
     session = existing
@@ -124,10 +140,30 @@ async function runPrintMode(
 
   const state = await createAgent(session, agentConfig, deps)
 
+  // P2-4：ACP abort 真中止——把外部信号桥接到该 run 的 abortController。
+  // abortAgent 会使 loop 在 turn/流边界 unwind，runAgent 随即结束。
+  if (opts.abortSignal) {
+    if (opts.abortSignal.aborted) {
+      throw new Error('已中止')
+    }
+    opts.abortSignal.addEventListener(
+      'abort',
+      () => {
+        abortAgent(state)
+      },
+      { once: true },
+    )
+  }
+
   const events: AgentEvent[] = []
   for await (const event of runAgent(state, [{ _tag: 'text', text: message }], deps)) {
     events.push(event)
     opts.onEvent?.(event)
+  }
+
+  // P2-4：中止后如实报错（ACP 客户端收到 error 响应，而非谎报 ok 的完成结果）。
+  if (opts.abortSignal?.aborted) {
+    throw new Error('已中止')
   }
 
   // 终态错误（unexpected，含预算中止）必须反馈给用户而非静默返回半截文本——

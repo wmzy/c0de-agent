@@ -17,6 +17,9 @@ function createAcpHandlers(
   deps: LoopDeps,
   opts: AcpHandlersOptions,
 ): Record<string, ACPHandler> {
+  // P2-4：当前在途 chat run 的中止控制器。abort 请求触发其 abort，
+  // runPrintMode 桥接信号后真中止 agent（此前 abort 是空操作）。
+  let currentAbort: AbortController | null = null
   return {
     'session/create': async (params) => {
       const title = (params.title as string | undefined) ?? 'acp-session'
@@ -42,13 +45,23 @@ function createAcpHandlers(
       const message = params.message as string | undefined
       if (!message) throw new Error('chat: message is required')
       const sessionId = params.sessionId as string | undefined
-      const text = await runPrintMode(config, message, deps, {
-        ...(sessionId ? { sessionId } : {}),
-        onEvent: (e) => opts.onEvent('event', e as unknown as Record<string, unknown>),
-      })
-      return { text }
+      const controller = new AbortController()
+      currentAbort = controller
+      try {
+        const text = await runPrintMode(config, message, deps, {
+          ...(sessionId ? { sessionId } : {}),
+          onEvent: (e) => opts.onEvent('event', e as unknown as Record<string, unknown>),
+          abortSignal: controller.signal,
+        })
+        return { text }
+      } finally {
+        if (currentAbort === controller) currentAbort = null
+      }
     },
-    abort: async () => ({ ok: true }),
+    abort: async () => {
+      currentAbort?.abort()
+      return { ok: true }
+    },
   }
 }
 

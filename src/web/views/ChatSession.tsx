@@ -279,7 +279,9 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     try {
       const msgs = await sessionAPI.messages(sessionId)
       if (msgs.length === 0) {
-        await sessionAPI.remove(sessionId)
+        // P3-9：物理删除而非软删除——空「New Session」壳进回收站会污染列表，
+        // 且用户从未与之交互过，无回收价值（服务端二次校验非空即 409）。
+        await sessionAPI.purgeEmpty(sessionId)
         qc.invalidateQueries({ queryKey: ['sessions'] })
         qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
         navigateTo(router, '/projects/:projectId', { params: { projectId } })

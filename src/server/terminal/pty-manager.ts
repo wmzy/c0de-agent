@@ -144,6 +144,10 @@ export function detectShell(): string {
 
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
+/** P3-13：cols/rows 上限钳制——路由层只查 Number.isFinite，负值/超大值直接进
+ *  spawn 可能打爆 node-pty 缓冲区或 UI 布局。 */
+const MAX_COLS = 1000
+const MAX_ROWS = 500
 const MAX_TITLE_LEN = 100
 /** scrollback 环形缓冲最大字节数（约 50KB）。 */
 const SCROLLBACK_MAX = 50_000
@@ -202,8 +206,11 @@ export class PTYManager {
     // 指定 id 已存在（重复 restore 快照）→ 返回既有条目，避免泄漏/覆盖进程。
     const existing = this.entries.get(id)
     if (existing) return existing.info
-    const cols = opts.cols ?? DEFAULT_COLS
-    const rows = opts.rows ?? DEFAULT_ROWS
+    // P3-13：钳制到 [1, MAX]——负值/超大值不进入 spawn。
+    const clampDim = (v: number | undefined, dflt: number, max: number): number =>
+      Math.min(max, Math.max(1, Number.isFinite(v) ? (v as number) : dflt))
+    const cols = clampDim(opts.cols, DEFAULT_COLS, MAX_COLS)
+    const rows = clampDim(opts.rows, DEFAULT_ROWS, MAX_ROWS)
     const shell = opts.shell ?? detectShell()
     const integration = setupShellIntegration(shell)
 
@@ -260,6 +267,13 @@ export class PTYManager {
           ws.close(1000, 'pty exited')
         }
       }
+      // P3-12 修复：自然退出同样清理 shell 注入脚本/目录（bash --init-file、
+      // zsh ZDOTDIR 临时文件）——此前仅 kill() 清理，自然退出残留 /tmp。
+      try {
+        entry.integrationCleanup?.()
+      } catch {
+        // 清理失败不影响退出流程
+      }
       this.entries.delete(id)
     })
 
@@ -278,9 +292,12 @@ export class PTYManager {
   resize(id: string, cols: number, rows: number): void {
     const entry = this.entries.get(id)
     if (!entry) throw new Error(`PTY not found: ${id}`)
-    entry.pty.resize(Math.max(1, cols), Math.max(1, rows))
-    entry.info.cols = cols
-    entry.info.rows = rows
+    // P3-13：与 create 同口径钳制
+    const c = Math.min(MAX_COLS, Math.max(1, cols))
+    const r = Math.min(MAX_ROWS, Math.max(1, rows))
+    entry.pty.resize(c, r)
+    entry.info.cols = c
+    entry.info.rows = r
   }
 
   /** 更新 PTY 标题。 */

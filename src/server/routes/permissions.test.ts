@@ -67,6 +67,18 @@ describe('permissions route', () => {
     expect(res.status).toBe(400)
   })
 
+  it('P3-11：PUT /:sessionId 对不存在的会话返回 404（此前静默成功）', async () => {
+    const { app, ctx } = await setup()
+    const res = await app.request('/00000000-0000-4000-8000-000000000000', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'auto' }),
+    })
+    expect(res.status).toBe(404)
+    // 内存 Map 未被污染
+    expect(ctx.sessionPermissionModes.has('00000000-0000-4000-8000-000000000000')).toBe(false)
+  })
+
   it('PUT / 空 body 返回 400', async () => {
     const { app } = await setup()
     const res = await app.request('/', { method: 'PUT' })

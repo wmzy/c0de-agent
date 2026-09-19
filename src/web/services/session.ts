@@ -18,6 +18,8 @@ const sessionAPI = {
   fork: (id: string, messageIndex: number) =>
     post<Session>(`/api/sessions/${id}/fork`, { messageIndex }),
   remove: (id: string) => del<void>(`/api/sessions/${id}`),
+  /** P3-9：物理删除真空会话（无消息无子会话）——首条消息失败清理用；非空 409。 */
+  purgeEmpty: (id: string) => del<{ ok: boolean }>(`/api/sessions/${id}/empty`),
   deleted: (projectId?: string) =>
     get<Session[]>(
       `/api/sessions/deleted${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,

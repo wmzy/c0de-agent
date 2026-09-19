@@ -3,12 +3,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { loadConfigScopes } from '../../core/config.js'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import { createRegistry } from '../../llm/registry.js'
-import { fromDirectory, trustProject } from '../../project/project.js'
+import { fromDirectory, getProject, trustProject } from '../../project/project.js'
+import { projectTrustCurrent } from '../../project/trust.js'
 import { createServerContext } from '../context.js'
 import type { ServerContext } from '../types.js'
 import { createWorkflowsRoute } from './workflows.js'
@@ -322,16 +324,57 @@ describe('workflows route — DELETE /:name', () => {
     await rm(otherDir, { recursive: true, force: true })
   })
 
+  it('P1：已信任项目删除工作流后信任指纹同步刷新（不自锁 TRUST_REQUIRED）', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'finger-wf.js'),
+      `export const meta = { name: 'finger-wf' }\nexport default async () => ({ output: 'x' })`,
+      'utf-8',
+    )
+    // 信任时指纹包含 finger-wf.js 的内容 hash（trustProject 后重取行——
+    // fromDirectory 返回的对象不含更新后的 trustedAt/riskFingerprint）
+    await trustProject(ctx.db, project.id)
+    const trusted = await getProject(ctx.db, project.id)
+    expect(trusted).toBeTruthy()
+    expect(
+      projectTrustCurrent(
+        loadConfigScopes(projectCwd).project,
+        trusted?.trustedAt ?? null,
+        trusted?.riskFingerprint ?? null,
+        projectCwd,
+      ),
+    ).toBe(true)
+
+    const res = await app.request(`/finger-wf?projectId=${project.id}`, { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    expect(existsSync(join(projectCwd, '.c0de', 'workflows', 'finger-wf.js'))).toBe(false)
+
+    // 关键断言：删除后指纹已刷新，项目仍是可信态——此前漂移导致下次聊天 409 自锁
+    const after = await getProject(ctx.db, project.id)
+    expect(after).toBeTruthy()
+    expect(
+      projectTrustCurrent(
+        loadConfigScopes(projectCwd).project,
+        after?.trustedAt ?? null,
+        after?.riskFingerprint ?? null,
+        projectCwd,
+      ),
+    ).toBe(true)
+  })
+
   it('DELETE ?projectId 删除项目级同名工作流不误删 user 级注册表条目', async () => {
     const { app, ctx } = await setup()
-    // user 级同名条目在注册表中（filePath 指向 ~/.c0de/workflows）
-    const userEntry: WorkflowEntry = {
-      meta: { name: 'shared-wf', description: 'user level' },
-      source: 'user',
-      filePath: join(process.env.HOME ?? '', '.c0de', 'workflows', 'shared-wf.js'),
-      execute: async () => ({ output: 'user' }),
-    }
-    ctx.workflowRegistry?.register(userEntry)
+    // user 级同名条目落盘在隔离 HOME（reloadRegistry 重建后须重新发现——
+    // 仅内存注册的假条目会在热重载时消失，与真实场景不符）
+    const userWfDir = join(process.env.HOME ?? '', '.c0de', 'workflows')
+    await mkdir(userWfDir, { recursive: true })
+    await writeFile(
+      join(userWfDir, 'shared-wf.js'),
+      `export const meta = { name: 'shared-wf', description: 'user level' }\nexport default async () => ({ output: 'user' })`,
+      'utf-8',
+    )
     // 另一项目有同名项目级文件
     const otherDir = await mkdtemp(join(tmpdir(), 'wf-shadow-proj-'))
     const project = await fromDirectory(ctx.db, otherDir)
@@ -346,8 +389,8 @@ describe('workflows route — DELETE /:name', () => {
     const res = await app.request(`/shared-wf?projectId=${project.id}`, { method: 'DELETE' })
     expect(res.status).toBe(200)
     expect(existsSync(projPath)).toBe(false)
-    // 遮蔽解除后 user 级条目应保留
-    expect(ctx.workflowRegistry?.has('shared-wf')).toBe(true)
+    // P3-7：删除后热重载——user 级条目（磁盘文件）重新可见
+    expect(ctx.workflowRegistry?.get('shared-wf')?.source).toBe('user')
     await rm(otherDir, { recursive: true, force: true })
   })
 

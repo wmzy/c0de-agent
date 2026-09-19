@@ -7,6 +7,9 @@ type UpdateCheckResult = {
   currentVersion: string
   latestVersion: string
   releaseNotes?: string
+  /** P3-8：检查本身失败（网络/registry 异常），与「已是最新」区分——
+   *  消费方据此给出「稍后重试」而非误导性的「无更新」。 */
+  checkError?: boolean
 }
 
 type CheckOptions = {
@@ -69,13 +72,21 @@ async function checkForUpdate(opts: CheckOptions = {}): Promise<UpdateCheckResul
 
   try {
     const res = await fetchImpl(`${registry}/${pkg}/latest`)
-    if (!res.ok) return result
+    if (!res.ok) {
+      // 非 200（404/5xx/限流）→ 检查失败而非无更新
+      result.checkError = true
+      return result
+    }
     const data = (await res.json()) as { version?: string }
-    if (!data.version) return result
+    if (!data.version) {
+      result.checkError = true
+      return result
+    }
     result.latestVersion = data.version
     result.hasUpdate = compareSemver(current, data.version) < 0
   } catch {
-    // 离线/网络错误：保守地报告无更新
+    // 离线/网络错误：保守地报告无更新，但标记检查失败供上层区分提示
+    result.checkError = true
   }
   return result
 }

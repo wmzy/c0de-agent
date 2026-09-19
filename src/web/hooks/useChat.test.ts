@@ -811,8 +811,8 @@ describe('useChat 文件视图失效（P1）', () => {
       await result.current.sendMessage('hi')
     })
 
-    const fileInvalidations = invalidateSpy.mock.calls.filter(([arg]) =>
-      Array.isArray(arg?.queryKey) && arg.queryKey[0] === 'file',
+    const fileInvalidations = invalidateSpy.mock.calls.filter(
+      ([arg]) => Array.isArray(arg?.queryKey) && arg.queryKey[0] === 'file',
     )
     expect(fileInvalidations).toHaveLength(0)
   })

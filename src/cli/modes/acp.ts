@@ -42,31 +42,56 @@ function formatACPEvent(method: string, params: Record<string, unknown>): string
 }
 
 async function runAcpLoop(opts: AcpLoopOptions): Promise<void> {
+  // P2-4：chat 在后台单飞执行——loop 继续读取后续请求（abort 等）而不被阻塞。
+  // 此前串行 await 使 abort 请求永远排在 chat 完成之后，中止形同虚设。
+  let chatInFlight: Promise<void> | null = null
+  const writer = opts.writer
   for await (const line of opts.reader) {
     const trimmed = line.trim()
     if (!trimmed) continue
     const req = parseACPRequest(trimmed)
     if (!req) {
-      opts.writer(formatACPError(null, -32700, 'Parse error'))
+      writer(formatACPError(null, -32700, 'Parse error'))
       continue
     }
     const handler = opts.handlers[req.method]
     if (!handler) {
-      if (req.id !== null)
-        opts.writer(formatACPError(req.id, -32601, `Method not found: ${req.method}`))
+      if (req.id !== null) writer(formatACPError(req.id, -32601, `Method not found: ${req.method}`))
+      continue
+    }
+    const respond = (result: Record<string, unknown>): void => {
+      if (req.id !== null) writer(formatACPResponse(req.id, result))
+    }
+    const fail = (err: unknown): void => {
+      if (req.id !== null) {
+        writer(formatACPError(req.id, -32603, err instanceof Error ? err.message : String(err)))
+      }
+    }
+    if (req.method === 'chat') {
+      if (chatInFlight) {
+        fail(new Error('chat: another chat is already in progress (abort it first)'))
+        continue
+      }
+      chatInFlight = (async () => {
+        try {
+          respond(await handler(req.params))
+        } catch (err) {
+          fail(err)
+        } finally {
+          chatInFlight = null
+        }
+      })()
+      void chatInFlight
       continue
     }
     try {
-      const result = await handler(req.params)
-      if (req.id !== null) opts.writer(formatACPResponse(req.id, result))
+      respond(await handler(req.params))
     } catch (err) {
-      if (req.id !== null) {
-        opts.writer(
-          formatACPError(req.id, -32603, err instanceof Error ? err.message : String(err)),
-        )
-      }
+      fail(err)
     }
   }
+  // 流结束前等最后一个在途 chat 收尾，保证响应写全。
+  if (chatInFlight) await chatInFlight
 }
 
 export type { ACPHandler, ACPRequest, AcpLoopOptions }

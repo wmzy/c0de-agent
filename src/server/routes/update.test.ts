@@ -49,8 +49,18 @@ const workflowBusyMock = new Map<string, string>()
 
 /** 构造带 mock scheduler 的 ctx；getLastResult / checkNow 行为由用例控制。 */
 function makeCtx(opts: {
-  lastResult?: { hasUpdate: boolean; currentVersion: string; latestVersion: string } | null
-  checkNowResult?: { hasUpdate: boolean; currentVersion: string; latestVersion: string }
+  lastResult?: {
+    hasUpdate: boolean
+    currentVersion: string
+    latestVersion: string
+    checkError?: boolean
+  } | null
+  checkNowResult?: {
+    hasUpdate: boolean
+    currentVersion: string
+    latestVersion: string
+    checkError?: boolean
+  }
   handoffPort?: number
 }): ServerContext {
   return {
@@ -268,6 +278,24 @@ describe('POST /api/update/apply', () => {
     expect(res.status).toBe(409)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe('NO_UPDATE')
+    expect(performInstallMock).not.toHaveBeenCalled()
+  })
+
+  it('P3-8：检查失败（checkError）返回 502，不再误导为「已是最新」', async () => {
+    const ctx = makeCtx({
+      checkNowResult: {
+        hasUpdate: false,
+        currentVersion: '0.1.0',
+        latestVersion: '0.1.0',
+        checkError: true,
+      },
+      handoffPort: 9999,
+    })
+    const app = createUpdateRoute(ctx)
+    const res = await app.request('/apply', { method: 'POST' })
+    expect(res.status).toBe(502)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('UPDATE_CHECK_FAILED')
     expect(performInstallMock).not.toHaveBeenCalled()
   })
 

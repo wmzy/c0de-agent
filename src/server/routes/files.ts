@@ -54,9 +54,18 @@ const SEARCH_SKIP_DIRS = new Set([
   '__pycache__',
 ])
 
-/** 递归收集文件列表（用于搜索）。P3：深度上限 5 → 8，深层文件此前搜不到。 */
-async function collectFiles(dir: string, basePath: string, maxDepth = 8): Promise<SearchResult[]> {
-  if (maxDepth < 0) return []
+/** P3-14：递归收集的结果上限——大仓库无上限返回会拖垮前端渲染。 */
+const SEARCH_MAX_RESULTS = 5000
+
+/** 递归收集文件列表（用于搜索）。P3：深度上限 5 → 8，深层文件此前搜不到。
+ *  P3-14：达结果上限即停止遍历，防大仓库全量 walk。 */
+async function collectFiles(
+  dir: string,
+  basePath: string,
+  maxDepth = 8,
+  budget = SEARCH_MAX_RESULTS,
+): Promise<SearchResult[]> {
+  if (maxDepth < 0 || budget <= 0) return []
   const results: SearchResult[] = []
   let entries: import('node:fs').Dirent[]
   try {
@@ -65,12 +74,14 @@ async function collectFiles(dir: string, basePath: string, maxDepth = 8): Promis
     return []
   }
   for (const entry of entries) {
+    if (results.length >= budget) break
     if (entry.isDirectory() && SEARCH_SKIP_DIRS.has(entry.name)) continue
     const fullPath = join(dir, entry.name)
     const relPath = relative(basePath, fullPath)
     if (entry.isDirectory()) {
       results.push({ path: relPath, type: 'directory' })
-      results.push(...(await collectFiles(fullPath, basePath, maxDepth - 1)))
+      const rest = await collectFiles(fullPath, basePath, maxDepth - 1, budget - results.length)
+      results.push(...rest)
     } else {
       results.push({ path: relPath, type: 'file' })
     }
@@ -539,10 +550,19 @@ ${summary.diff.slice(0, 8000)}`
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
-    const body = await c.req.json()
+    // P3-14：content 必须是字符串（此前 undefined/非字符串 → writeFile 抛
+    // 类型错误 → 500）；空串合法（清空文件）；超大写入给出明确错误而非 OOM。
+    const body = (await c.req.json().catch(() => null)) as { content?: unknown } | null
+    if (typeof body?.content !== 'string') {
+      return apiError(c, 400, 'BAD_REQUEST', 'content must be a string')
+    }
+    const MAX_WRITE_BYTES = 20 * 1024 * 1024
+    if (Buffer.byteLength(body.content, 'utf8') > MAX_WRITE_BYTES) {
+      return apiError(c, 400, 'FILE_TOO_LARGE', '文件超过 20MB 上限，请用本地工具处理')
+    }
     try {
       await mkdir(dirname(resolved), { recursive: true })
-      await writeFile(resolved, body.content as string, 'utf-8')
+      await writeFile(resolved, body.content, 'utf-8')
       return c.json({ path, written: true })
     } catch (err) {
       return apiError(c, 500, 'WRITE_ERROR', `Failed to write file: ${String(err)}`)

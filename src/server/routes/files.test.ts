@@ -119,6 +119,32 @@ describe('files route', () => {
     expect(readRes.status).toBe(200)
   })
 
+  it('P3-14：PUT 非字符串 content（缺省/数字）→ 400 而非 500', async () => {
+    const { app } = await setupWithDir()
+    for (const payload of [{}, { content: 42 }, { content: null }]) {
+      const res = await app.request('/bad.txt', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe('BAD_REQUEST')
+    }
+  })
+
+  it('P3-14：PUT 超大 content（>20MB）→ 400 FILE_TOO_LARGE', async () => {
+    const { app } = await setupWithDir()
+    const res = await app.request('/huge.txt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'x'.repeat(21 * 1024 * 1024) }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('FILE_TOO_LARGE')
+  })
+
   it('GET /..%2Fetc%2Fpasswd path traversal rejected', async () => {
     const { app } = await setupWithDir()
     const res = await app.request('/..%2Fetc%2Fpasswd')

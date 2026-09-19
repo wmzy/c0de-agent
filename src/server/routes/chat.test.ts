@@ -148,7 +148,7 @@ describe('chat route (SSE)', () => {
   })
 
   it('POST / 带 body.agent=plan 使用只读工具集', async () => {
-    const { app, sessionId } = await setup()
+    const { app, ctx, sessionId } = await setup()
     const res = await app.request('/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -158,6 +158,14 @@ describe('chat route (SSE)', () => {
     const text = await res.text()
     const events = parseSSEEvents(text)
     expect(events.some((e) => e.event === 'done')).toBe(true)
+    // P1 修复断言：run 持久化的 LLM 段记录实际生效工具集——
+    // plan 是只读集（read/grep/glob），bash/write/edit 不得出现。
+    const segs = await getLLMSegments(ctx.db, sessionId)
+    const toolNames = new Set((segs[0]?.tools ?? []).map((t) => t.name))
+    expect(toolNames.has('read')).toBe(true)
+    expect(toolNames.has('bash')).toBe(false)
+    expect(toolNames.has('write')).toBe(false)
+    expect(toolNames.has('edit')).toBe(false)
   })
 
   it('POST / 带 body.agent=unknown 返回 400', async () => {
@@ -208,6 +216,19 @@ describe('chat route (SSE)', () => {
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe('INVALID_AGENT_MENTION')
+  })
+
+  it('P3-10：body.agents 部分无效 → 400 并列出无效名（此前静默丢弃、用户以为已派发）', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi', agents: ['coder', 'typo-agent'] }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message?: string } }
+    expect(body.error.code).toBe('INVALID_AGENT_MENTION')
+    expect(body.error.message).toContain('typo-agent')
   })
 
   it('POST / text_delta events contain text content', async () => {
@@ -1325,6 +1346,32 @@ describe('/workflow run 专用斜杠通道', () => {
     // 标题含时间戳：多次运行在会话树中可区分
     expect(wfSession?.title).toMatch(/^workflow:slash-wf \d{2}-\d{2} \d{2}:\d{2}$/)
     expect(wfSession?.projectId).toBeNull()
+  })
+
+  it('P1-3：继续对话的 workflow 会话升级为持久（agentType 清除，不再被临时清理）', async () => {
+    const { app } = await setup()
+    // 构造一个 workflow 会话（如工作流运行后用户在树中可见的那个）
+    const wfSession = await createSession(
+      dbHandle as DB,
+      'workflow:slash-wf 09-19 12:00',
+      undefined,
+      'workflow',
+      undefined,
+      undefined,
+      process.cwd(),
+      { workflowName: 'slash-wf' },
+    )
+    // 用户在该工作流会话里继续追问 → 应升级为持久会话
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: wfSession.id, message: '继续帮我看看' }),
+    })
+    expect(res.status).toBe(200)
+    const upgraded = await getSession(dbHandle as DB, wfSession.id)
+    expect(upgraded?.agentType).toBeNull()
+    // 原会话 id 保持不变（升级不改身份）
+    expect(upgraded?.id).toBe(wfSession.id)
   })
 
   it('主 run 活跃时拒绝并发发起工作流（RUN_ACTIVE）', async () => {

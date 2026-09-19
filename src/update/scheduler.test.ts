@@ -83,6 +83,10 @@ describe('createUpdateScheduler', () => {
     const r = await s.checkNow()
     expect(r.hasUpdate).toBe(false)
     expect(s.getLastResult()?.hasUpdate).toBe(false)
+    // P3-8：错误缓存带 checkError 且保留真实当前版本（此前写死 0.0.0）
+    expect(r.checkError).toBe(true)
+    expect(r.currentVersion).not.toBe('0.0.0')
+    expect(r.currentVersion).toBe(r.latestVersion)
     // onUpdate 在异常路径不调用（只在成功检查后通知）
     expect(onUpdate).not.toHaveBeenCalled()
     s.stop()

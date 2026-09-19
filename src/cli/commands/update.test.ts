@@ -15,6 +15,24 @@ describe('runUpdateCommand', () => {
     expect(out.mock.calls.flat().join(' ')).toContain('已是最新')
   })
 
+  it('P3-8：检查失败输出重试指引，而非「已是最新」', async () => {
+    const out = vi.fn()
+    await runUpdateCommand({
+      args: noArgs,
+      cwd: '/tmp',
+      checkFn: async () => ({
+        hasUpdate: false,
+        currentVersion: '0.1.0',
+        latestVersion: '0.1.0',
+        checkError: true,
+      }),
+      out,
+    })
+    const text = out.mock.calls.flat().join(' ')
+    expect(text).toContain('检查更新失败')
+    expect(text).not.toContain('已是最新')
+  })
+
   it('check-only: hints --apply when update available', async () => {
     const out = vi.fn()
     await runUpdateCommand({

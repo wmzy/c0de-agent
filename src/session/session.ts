@@ -525,6 +525,34 @@ async function updateSessionTitle(handle: DB, id: string, title: string): Promis
 }
 
 /**
+ * P3-9：物理删除一个「真空会话」——无任何条目且无子会话（首条消息发送失败后
+ * 的前端清理路径使用）。非空会话绝不触碰（返回 false），防误删走错回收站语义。
+ * 软删除会话（回收站条目）不在本路径处理。
+ */
+async function purgeEmptySession(handle: DB, id: string): Promise<boolean> {
+  const [row] = await handle.db
+    .select({ id: sessions.id, deletedAt: sessions.deletedAt })
+    .from(sessions)
+    .where(eq(sessions.id, id))
+  if (!row || row.deletedAt) return false
+  const children = alias(sessions, 'purge_children')
+  const [entry] = await handle.db
+    .select({ one: sql`1` })
+    .from(sessionEntries)
+    .where(eq(sessionEntries.sessionId, id))
+    .limit(1)
+  if (entry) return false
+  const [child] = await handle.db
+    .select({ one: sql`1` })
+    .from(children)
+    .where(eq(children.parentId, id))
+    .limit(1)
+  if (child) return false
+  await handle.db.delete(sessions).where(eq(sessions.id, id))
+  return true
+}
+
+/**
  * 彻底删除某个回收站会话及其全部后代（含未软删除的 fork 后代，防御数据异常）。
  * 子会话先于父会话删除（自引用 FK RESTRICT 要求）；entries/archives 经 FK cascade 清理。
  * 返回删除数量。会话不存在或不在回收站 → 返回 0。
@@ -965,6 +993,7 @@ export {
   markUnfinishedTurn,
   permanentlyDeleteSession,
   purgeDeletedSessions,
+  purgeEmptySession,
   purgeEmptySessions,
   purgeTemporarySessions,
   rebindSession,

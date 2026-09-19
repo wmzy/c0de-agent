@@ -31,6 +31,7 @@ import {
   listSessions,
   listSessionsByProject,
   permanentlyDeleteSession,
+  purgeEmptySession,
   rebindSession,
   restoreSessionCore,
   searchSessions,
@@ -382,6 +383,17 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json({ ok: true, deleted: count })
   })
 
+  // P3-9：物理删除真空会话（无消息且无子会话）——首条消息发送失败后的前端
+  // 清理路径。此前走 DELETE /:id 软删除，空壳进回收站污染列表；非空会话 409，
+  // 物理删除不绕过回收站语义。
+  app.delete('/:id/empty', async (c) => {
+    const ok = await purgeEmptySession(ctx.db, c.req.param('id'))
+    if (!ok) {
+      return apiError(c, 409, 'SESSION_NOT_EMPTY', '会话不存在或非空（请使用常规删除，移入回收站）')
+    }
+    return c.json({ ok: true })
+  })
+
   // 会话归档列表（compaction/squash/shake/clear 的原始内容）；?q= 搜索归档文本
   app.get('/:id/archives', async (c) => {
     const id = c.req.param('id')
@@ -547,9 +559,14 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // P1 多项目：keepRecentTokens 按会话项目配置解析（此前用启动目录配置）。
   app.post('/:id/compact', async (c) => {
     const id = c.req.param('id')
-    // P3：压缩改写消息树，与活跃 run 的并发写入存在竞态——先拒绝。
-    if (ctx.agentManager.get(id)) {
+    // P2-5 修复：守卫收敛 hasBusySession（与斜杠 /compact、REST fork 同口径）——
+    // 此前只查 get()，漏 tryAcquire→register 占位窗口与工作流运行期两态。
+    const busy = hasBusySession(ctx, id)
+    if (busy === 'run' || busy === 'workflow') {
       return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再压缩')
+    }
+    if (busy === 'starting') {
+      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
     }
     let session: Awaited<ReturnType<typeof getSession>>
     try {
@@ -644,9 +661,14 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // shake apply：归档原始内容 + 原位替换
   app.post('/:id/shake/apply', async (c) => {
     const id = c.req.param('id')
-    // P3：shake 原位改写消息，与活跃 run 的并发写入存在竞态——先拒绝。
-    if (ctx.agentManager.get(id)) {
+    // P2-5 修复：守卫收敛 hasBusySession（与 compact/fork 同口径），
+    // 补 starting 占位与工作流运行期两态。
+    const busy = hasBusySession(ctx, id)
+    if (busy === 'run' || busy === 'workflow') {
       return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再 Shake')
+    }
+    if (busy === 'starting') {
+      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
     }
     let session: Awaited<ReturnType<typeof getSession>>
     try {

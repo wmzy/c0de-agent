@@ -33,6 +33,10 @@ async function runUpdateCommand(ctx: UpdateCommandContext): Promise<void> {
   const check = ctx.checkFn ?? checkForUpdate
 
   const result = await check()
+  if (result.checkError) {
+    out('检查更新失败：无法连接 npm registry，请检查网络后重试')
+    return
+  }
   out(`当前版本 ${result.currentVersion}，最新版本 ${result.latestVersion}`)
   if (!result.hasUpdate) {
     out('已是最新版本')

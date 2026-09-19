@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createDB, migrateDB } from '../../db/index.js'
 import type { ChatOptions, ProviderContext } from '../../llm/index.js'
@@ -76,6 +76,43 @@ describe('createAcpHandlers', () => {
     const res = await invoke(handlers, 'chat', { message: 'hi' })
     expect(res.text).toBe('reply')
     expect(events.some((e) => e.method === 'event')).toBe(true)
+  })
+
+  it('P2-4：abort 真中止在途 chat（此前空操作，返回 ok 但 agent 继续烧 token）', async () => {
+    // chatStream 产出一段文本后阻塞，直到 state.abortController 被中止——
+    // 模拟长时间 LLM 流，验证 abort 桥接信号后真正停下。
+    const blockingStream = async function* (
+      ctx: ProviderContext,
+      _req: ChatRequest,
+      _opts: ChatOptions,
+    ): AsyncGenerator<StreamChunk> {
+      yield { _tag: 'text', text: 'partial' }
+      await new Promise<void>((resolve) => {
+        if (ctx.signal?.aborted) {
+          resolve()
+          return
+        }
+        ctx.signal?.addEventListener('abort', () => resolve(), { once: true })
+      })
+    }
+    const events: { method: string; params: Record<string, unknown> }[] = []
+    const deps = await buildAgentDeps(config, {
+      db,
+      cwd: process.cwd(),
+      chatStream: blockingStream,
+    })
+    const handlers = createAcpHandlers(config, deps, {
+      onEvent: (method, params) => events.push({ method, params }),
+    })
+    const chatPromise = invoke(handlers, 'chat', { message: 'long task' })
+    // 等待首段文本产出，确认 run 已启动
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.method === 'event')).toBe(true)
+    })
+    const res = await invoke(handlers, 'abort', {})
+    expect(res.ok).toBe(true)
+    // 中止后 chat 如实报错（而非静默完成），不再谎报成功
+    await expect(chatPromise).rejects.toThrow('已中止')
   })
 
   it('session/list returns array', async () => {

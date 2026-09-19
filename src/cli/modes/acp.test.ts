@@ -75,4 +75,43 @@ describe('runAcpLoop', () => {
     expect(responses[0].result.sessionId).toBe('s1')
     expect(responses[1].error).toBeDefined()
   })
+
+  it('P2-4：chat 单飞后台执行——abort 请求不被阻塞，可中止在途 chat', async () => {
+    const written: string[] = []
+    let release: (() => void) | null = null
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    async function* reader() {
+      // chat 先到：handler 阻塞在 gate 上
+      yield JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'chat', params: { message: 'x' } })
+      // abort 后到：必须在 chat 完成前被处理（此前串行 await 会让它排队到最后）
+      yield JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'abort', params: {} })
+    }
+    let aborted = false
+    await runAcpLoop({
+      reader: reader(),
+      writer: (s) => written.push(s),
+      handlers: {
+        chat: async () => {
+          await gate
+          return { text: 'done' }
+        },
+        abort: async () => {
+          // 模拟真实场景：abort 使在途 chat 结束
+          aborted = true
+          release?.()
+          return { ok: true }
+        },
+      },
+    })
+    // abort 在 chat 完成前被执行——证明 loop 未被串行 await 阻塞
+    expect(aborted).toBe(true)
+    const responses = written.map((l) => JSON.parse(l))
+    const byId = new Map<number, { result?: unknown; error?: unknown }>(
+      responses.map((r) => [r.id, r]),
+    )
+    expect(byId.get(2)?.result).toEqual({ ok: true })
+    expect(byId.get(1)?.result).toEqual({ text: 'done' })
+  })
 })
