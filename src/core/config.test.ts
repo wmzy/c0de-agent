@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   applyScopedPatch,
@@ -10,6 +10,7 @@ import {
   loadConfigScopes,
   mergeConfig,
   mergeRaw,
+  resolveGlobalConfigDir,
   saveConfigScoped,
 } from './config.js'
 
@@ -332,5 +333,33 @@ describe('collectConfigMigrationWarnings（P0-1 配置迁移告警）', () => {
     const p = collectConfigMigrationWarnings('project', { tools: { enabled: [] } })
     expect(g[0]).toContain('全局配置')
     expect(p[0]).toContain('项目配置')
+  })
+})
+
+describe('resolveGlobalConfigDir（C0DE_CONFIG_DIR 重定向）', () => {
+  const prevEnv = process.env.C0DE_CONFIG_DIR
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.C0DE_CONFIG_DIR
+    else process.env.C0DE_CONFIG_DIR = prevEnv
+  })
+
+  it('未设置 → ~/.c0de', () => {
+    delete process.env.C0DE_CONFIG_DIR
+    expect(resolveGlobalConfigDir()).toBe(join(homedir(), '.c0de'))
+  })
+
+  it('绝对路径 → 原样使用', () => {
+    process.env.C0DE_CONFIG_DIR = '/tmp/c0de-isolated-config'
+    expect(resolveGlobalConfigDir()).toBe('/tmp/c0de-isolated-config')
+  })
+
+  it('相对路径 → 按进程 cwd 解析', () => {
+    process.env.C0DE_CONFIG_DIR = '.c0de-dev'
+    expect(resolveGlobalConfigDir()).toBe(resolve(process.cwd(), '.c0de-dev'))
+  })
+
+  it('空白值 → 回落默认 ~/.c0de', () => {
+    process.env.C0DE_CONFIG_DIR = '   '
+    expect(resolveGlobalConfigDir()).toBe(join(homedir(), '.c0de'))
   })
 })

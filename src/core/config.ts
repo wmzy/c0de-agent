@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import type {
   AgentsConfig,
   CompactionConfig,
@@ -16,6 +16,17 @@ import { encryptSecret, isEncryptedSecret } from './secret.js'
 
 const GLOBAL_CONFIG_DIR = '.c0de'
 const CONFIG_FILENAME = 'config.json'
+
+/**
+ * 全局配置根目录：默认 `~/.c0de`；C0DE_CONFIG_DIR 环境变量可整体重定向
+ * （相对路径按进程 cwd 解析），全局工作流/插件同样落于此根下。
+ * 与 C0DE_DB_DIR 同口径——开发隔离场景把全局配置从安装版默认位置切到独立目录。
+ */
+function resolveGlobalConfigDir(): string {
+  const envDir = process.env.C0DE_CONFIG_DIR?.trim()
+  if (envDir) return isAbsolute(envDir) ? envDir : resolve(envDir)
+  return join(homedir(), GLOBAL_CONFIG_DIR)
+}
 
 const DEFAULT_CONFIG: Config = {
   providers: [],
@@ -180,7 +191,7 @@ function loadConfigScopes(projectDir?: string): {
   global: Partial<Config> | undefined
   project: Partial<Config> | undefined
 } {
-  const globalPath = join(homedir(), GLOBAL_CONFIG_DIR, CONFIG_FILENAME)
+  const globalPath = join(resolveGlobalConfigDir(), CONFIG_FILENAME)
   const projectPath = join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME)
   return {
     global: readJsonIfExists(globalPath),
@@ -265,9 +276,7 @@ async function saveConfigScoped(
   data: Record<string, unknown>,
 ): Promise<void> {
   const dir =
-    scope === 'global'
-      ? join(homedir(), GLOBAL_CONFIG_DIR)
-      : join(projectDir ?? process.cwd(), '.c0de')
+    scope === 'global' ? resolveGlobalConfigDir() : join(projectDir ?? process.cwd(), '.c0de')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   const path = join(dir, CONFIG_FILENAME)
   const hardened = redactSensitiveOnSave(data)
@@ -313,7 +322,7 @@ function redactSensitiveOnSave(data: Record<string, unknown>): Record<string, un
 }
 
 async function loadConfig(projectDir?: string): Promise<Config> {
-  const globalPath = join(homedir(), GLOBAL_CONFIG_DIR, CONFIG_FILENAME)
+  const globalPath = join(resolveGlobalConfigDir(), CONFIG_FILENAME)
   const projectPath = join(projectDir ?? process.cwd(), '.c0de', CONFIG_FILENAME)
   const global = readJsonIfExists(globalPath)
   // 与 loadConfigScopes 同口径剥离：security 与 usage 全局口径预算键不进合并视图
@@ -329,7 +338,7 @@ async function loadConfig(projectDir?: string): Promise<Config> {
     if (keys.length > 0) {
       console.warn(
         `[config] 项目配置含 security 键（${keys.join('、')}，服务端全局参数），已忽略——` +
-          '请在全局配置（~/.c0de/config.json）或 c0de config set --global 设置。',
+          `请在全局配置（${join(resolveGlobalConfigDir(), CONFIG_FILENAME)}）或 c0de config set --global 设置。`,
       )
     }
   }
@@ -432,6 +441,7 @@ export {
   mergeRaw,
   projectGlobalOnlyUsageKeys,
   projectSecurityKeys,
+  resolveGlobalConfigDir,
   saveConfigScoped,
   stripProjectServerKeys,
   warnUnknownConfigKeys,

@@ -60,8 +60,8 @@ pnpm add -g c0de-agent
 # 在项目目录启动
 c0de serve
 
-# 指定端口并自动打开浏览器
-c0de serve --port 3000 --open
+# 指定端口并自动打开浏览器（默认 7310）
+c0de serve --port 8080 --open
 
 # 从快照恢复会话
 c0de serve --restore snapshot.json
@@ -83,7 +83,7 @@ c0de update --check
 c0de trust /path/to/cloned-repo --yes
 ```
 
-启动后访问 `http://localhost:3000`。
+启动后访问 `http://localhost:7310`。
 
 > **CLI 与 Web 的会话互通**：`c0de chat --continue` 续接过的 CLI 会话与 Web 会话在
 > Web 会话树中**同树展示**（带 `CLI` 徽标；所在目录已注册为项目时归入该项目，否则在
@@ -106,7 +106,7 @@ c0de trust /path/to/cloned-repo --yes
 # 安装依赖
 pnpm install
 
-# 启动开发服务器（前端热更新）
+# 启动开发服务器（前端热更新，端口 3020）
 pnpm dev
 
 # 类型检查
@@ -124,6 +124,13 @@ pnpm build:web     # 构建前端到 dist-web/
 pnpm lint
 pnpm format
 ```
+
+> **开发环境隔离**：`.env.example` 是开发隔离模板（复制为 `.env` 后生效，`.env` 不入 git）。
+> 它把 dev server 的全局配置/工作流/插件（`C0DE_CONFIG_DIR`）与运行时数据 DB/设备认证
+> （`C0DE_DB_DIR`）从安装版默认位置（`~/.c0de`、`~/.local/share/c0de/pglite`）重定向到
+> 仓库内 `.c0de-dev/`（已 gitignore），与 `npm i -g c0de-agent` 安装版互不干扰、
+> 可同时运行。两个变量经 `vite.config.ts` 在 dev server 启动时注入进程环境
+> （vite 8 不再自动把 `.env` 合并进 `process.env`）。
 
 ## 架构
 

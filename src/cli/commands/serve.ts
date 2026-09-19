@@ -1,5 +1,5 @@
 import type { StartServerOptions } from '../../server/index.js'
-import { startServer } from '../../server/index.js'
+import { DEFAULT_SERVE_PORT, startServer } from '../../server/index.js'
 import type { CommandArgs } from '../parser.js'
 import { openBrowser, printStartupBanner } from '../utils/output.js'
 
@@ -16,7 +16,7 @@ type ServeCommandContext = {
 }
 
 async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
-  const port = (ctx.args.options.port as number | undefined) ?? 3000
+  const port = (ctx.args.options.port as number | undefined) ?? DEFAULT_SERVE_PORT
   const host = (ctx.args.options.host as string | undefined) ?? '127.0.0.1'
   const shouldOpen = (ctx.args.options.open as boolean | undefined) ?? true
 

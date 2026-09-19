@@ -92,6 +92,10 @@ type BootstrappedServer = {
   close(): Promise<void>
 }
 
+/** serve 默认端口：避开 node 生态常用端口（3000/4000/5173/8000/8080…），
+ * 降低与其他本地服务撞端口的概率。显式 --port 始终优先。 */
+export const DEFAULT_SERVE_PORT = 7310
+
 /** 全局数据根目录：XDG_DATA_HOME 优先，否则 ~/.local/share/c0de。
  * 与 opencode (~/.local/share/opencode/)、oh-my-pi (~/.omp/agent/) 同约定——
  * 数据库等运行时数据放全局，项目 .c0de/ 只留配置和扩展。 */
@@ -720,7 +724,7 @@ function attachTerminalUpgrade(ctx: ServerContext, wss: WebSocketServer, server:
 }
 
 async function startServer(opts: StartServerOptions = {}): Promise<RunningServer> {
-  const port = opts.port ?? 3000
+  const port = opts.port ?? DEFAULT_SERVE_PORT
   // 默认仅绑定回环地址（安全默认：本地工具不应默认暴露局域网/公网）。
   // 需要容器/远程访问时显式 --host 0.0.0.0（serve 命令会打印非回环警告）。
   const host = opts.host ?? '127.0.0.1'

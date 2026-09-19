@@ -1,9 +1,9 @@
-// src/web/vite.config.ts
+// vite.config.ts
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import wyw from '@wyw-in-js/vite'
 import type { Plugin } from 'vite'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 /**
@@ -14,6 +14,15 @@ function honoApiPlugin(): Plugin {
   return {
     name: 'c0de-hono-api',
     configureServer(server) {
+      // vite 8 已移除「.env 合并进 process.env」——.env 只进 import.meta.env。
+      // 后端经 ssrLoadModule 在 vite 进程内运行、只读 process.env，需手动注入
+      // .env 的 C0DE_*（开发隔离：C0DE_DB_DIR / C0DE_CONFIG_DIR）。
+      for (const [key, value] of Object.entries(
+        loadEnv(server.config.mode, process.cwd(), ['C0DE_']),
+      )) {
+        process.env[key] = value
+      }
+
       // 首次加载 dev.ts 时缓存 closeDevApp 引用。
       // 关闭阶段不能再调 ssrLoadModule——此时 vite module runner 已关闭会抛错。
       let closeDev: (() => Promise<void>) | null = null

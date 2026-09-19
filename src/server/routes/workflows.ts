@@ -1,11 +1,10 @@
 import { existsSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent } from '../../core/agent.js'
-import { loadConfigScopes, mergeConfig } from '../../core/config.js'
+import { loadConfigScopes, mergeConfig, resolveGlobalConfigDir } from '../../core/config.js'
 import {
   discoverWorkflows,
   executeWorkflow,
@@ -192,8 +191,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // （斜杠 /workflow create 有 --yes 确认，这里没有）。编辑模式由前端
     // 显式传 overwrite: true。
     const targetFilePath = join(
-      target === 'project' ? saveDir : homedir(),
-      '.c0de',
+      target === 'project' ? join(saveDir, '.c0de') : resolveGlobalConfigDir(),
       'workflows',
       `${name}.js`,
     )

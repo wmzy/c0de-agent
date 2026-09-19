@@ -11,9 +11,9 @@ describe('runServeCommand', () => {
       args: { options: {}, positionals: [] },
       cwd: process.cwd(),
       serverStarter: async (opts) => {
-        started.push({ port: opts.port ?? 3000 })
+        started.push({ port: opts.port ?? 7310 })
         return {
-          port: opts.port ?? 3000,
+          port: opts.port ?? 7310,
           close: async () => {
             closed = true
           },
@@ -26,9 +26,9 @@ describe('runServeCommand', () => {
       hold: false,
     })
     const [first] = started
-    expect(first?.port).toBe(3000)
-    expect(banners.join('')).toContain('3000')
-    expect(opens[0]).toContain('3000')
+    expect(first?.port).toBe(7310)
+    expect(banners.join('')).toContain('7310')
+    expect(opens[0]).toContain('7310')
     expect(closed).toBe(true)
   })
 
@@ -37,7 +37,7 @@ describe('runServeCommand', () => {
     await runServeCommand({
       args: { options: { port: 4000, open: false }, positionals: [] },
       cwd: process.cwd(),
-      serverStarter: async (opts) => ({ port: opts.port ?? 3000, close: async () => {} }),
+      serverStarter: async (opts) => ({ port: opts.port ?? 7310, close: async () => {} }),
       banner: () => {},
       opener: (url) => {
         opens.push(url)
@@ -53,7 +53,7 @@ describe('runServeCommand', () => {
       args: { options: {}, positionals: [] },
       cwd: process.cwd(),
       serverStarter: async (opts) => ({
-        port: opts.port ?? 3000,
+        port: opts.port ?? 7310,
         authToken: 'tok-abc',
         close: async () => {},
       }),
@@ -63,6 +63,6 @@ describe('runServeCommand', () => {
       },
       hold: false,
     })
-    expect(opens[0]).toBe('http://localhost:3000?token=tok-abc')
+    expect(opens[0]).toBe('http://localhost:7310?token=tok-abc')
   })
 })

@@ -1,7 +1,7 @@
 // src/plugins/loader.ts
 import { existsSync, readdirSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { resolveGlobalConfigDir } from '../core/config.js'
 import type { Plugin } from './types.js'
 
 type ValidationResult = { valid: true; plugin: Plugin } | { valid: false; error: string }
@@ -56,11 +56,13 @@ function scanPluginDir(dir: string): { name: string; path: string }[] {
 async function discoverPlugins(
   projectDir: string,
   /** P0-2：includeProject=false 时跳过项目 .c0de/plugins（未信任项目不加载，
-   *  信任后重启生效）；全局 ~/.c0de/plugins 始终加载（用户本机显式放置）。 */
+   *  信任后重启生效）；全局插件目录（默认 ~/.c0de/plugins，C0DE_CONFIG_DIR 可重定向）
+   *  始终加载（用户本机显式放置）。 */
   opts: { includeProject?: boolean } = {},
 ): Promise<{ name: string; path: string; plugin: Plugin }[]> {
   const projectPluginsDir = join(projectDir, '.c0de', 'plugins')
-  const globalPluginsDir = join(homedir(), '.c0de', 'plugins')
+  // 全局插件根（默认 ~/.c0de/plugins，C0DE_CONFIG_DIR 可重定向）。
+  const globalPluginsDir = join(resolveGlobalConfigDir(), 'plugins')
 
   const discovered = [
     ...(opts.includeProject === false ? [] : scanPluginDir(projectPluginsDir)),

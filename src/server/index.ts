@@ -13,7 +13,7 @@ export type {
 } from './permission/interactive.js'
 export { createInteractivePermissionChecker } from './permission/interactive.js'
 export type { RunningServer, StartServerOptions } from './server.js'
-export { startServer } from './server.js'
+export { DEFAULT_SERVE_PORT, startServer } from './server.js'
 export type {
   APIErrorBody,
   ChatRequest,

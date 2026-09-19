@@ -1,13 +1,11 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { resolveGlobalConfigDir } from '../config.js'
 import type { WorkflowEntry, WorkflowMeta, WorkflowModule, WorkflowSource } from './types.js'
 
 /** 项目级工作流目录相对路径。 */
 const PROJECT_WORKFLOWS_DIR = '.c0de/workflows'
-/** 用户级（全局）工作流目录：~/.c0de/workflows。 */
-const GLOBAL_WORKFLOWS_DIR = join('.c0de', 'workflows')
 
 /**
  * 扫描指定目录下的 `*.js` 工作流文件，dynamic import 后转为 WorkflowEntry。
@@ -69,11 +67,11 @@ async function discoverWorkflows(projectDir: string): Promise<WorkflowEntry[]> {
 }
 
 /**
- * 扫描全局 `~/.c0de/workflows/*.js` 文件，source 标记为 'user'。
- * 目录不存在时返回空数组（与项目级一致）。
+ * 扫描全局工作流目录（默认 `~/.c0de/workflows/*.js`，C0DE_CONFIG_DIR 可重定向），
+ * source 标记为 'user'。目录不存在时返回空数组（与项目级一致）。
  */
 async function discoverGlobalWorkflows(): Promise<WorkflowEntry[]> {
-  return discoverFromDir(join(homedir(), GLOBAL_WORKFLOWS_DIR), 'user')
+  return discoverFromDir(join(resolveGlobalConfigDir(), 'workflows'), 'user')
 }
 
 /** 合法工作流名称：仅小写字母、数字、连字符。 */
@@ -106,7 +104,7 @@ async function saveWorkflow(
   const dir =
     target === 'project'
       ? join(projectDir ?? '.', PROJECT_WORKFLOWS_DIR)
-      : join(homedir(), GLOBAL_WORKFLOWS_DIR)
+      : join(resolveGlobalConfigDir(), 'workflows')
 
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, `${name}.js`)
