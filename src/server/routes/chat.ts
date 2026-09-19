@@ -479,10 +479,16 @@ function createChatRoute(ctx: ServerContext): Hono {
                 ? { budgetPause: true }
                 : {}),
             }
+            // P2-5：runner 的工具集不再恒 []——传配置解析结果作为子 agent
+            // 工具集的交集基准（与主 chat/CLI print 同口径）。config.tools.enabled
+            // 的 fail-closed 语义对工作流派发的子 agent 成立（全禁 → 交集为空）。
+            // runner 自身不进 agentLoop，工具名单不产生任何 LLM 调用影响。
             const agentConfig: AgentConfig = {
               provider: sessionConfig.defaultProvider,
               model: sessionConfig.defaultModel,
-              tools: [],
+              tools: resolveEnabledToolNames(ctx.toolRegistry, sessionConfig).filter(
+                (n) => Boolean(session.projectId) || !PROJECT_BOUND_TOOLS.has(n),
+              ),
               plugins: sessionConfig.plugins.enabled,
               agentName: 'default',
             }

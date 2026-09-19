@@ -16,7 +16,7 @@ import {
 } from '../../core/config.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
-import { getProject } from '../../project/project.js'
+import { getByDirectory, getProject, trustProject } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ProviderConfig } from '../../shared/types/llm.js'
 import { apiError } from '../middleware/error.js'
@@ -244,6 +244,18 @@ function createConfigRoute(ctx: ServerContext): Hono {
         'CONFIG_SAVE_FAILED',
         `配置保存失败：${err instanceof Error ? err.message : String(err)}`,
       )
+    }
+
+    // P1：项目作用域写入是用户经产品入口的显式操作——已信任项目刷新风险指纹
+    //（与工作流 create/delete 同口径）。不刷新会让用户自己的设置修改触发
+    // trust-drift 复检，「信任 → 改设置 → 再信任」自锁循环。
+    if (scope === 'project') {
+      try {
+        const p = await getByDirectory(ctx.db, target.dir)
+        if (p?.trustedAt != null) await trustProject(ctx.db, p.id)
+      } catch {
+        // 指纹刷新失败不阻塞配置保存（最坏回到 fail-closed 复检路径）
+      }
     }
 
     const isServerCwdProject = target.dir === ctx.cwd

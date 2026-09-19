@@ -89,15 +89,15 @@ export async function runSubAgent(
   // 4. 构建子 agent 配置：工具集隔离 + 模型覆盖 + 递归限制 + yield
   const parentDepth = deps._subagentDepth ?? 0
   const childDepth = parentDepth + 1
-  // P1 修复：def.tools 与父工具集取交集——此前 def 固定名单完全覆盖父的
-  // 配置解析结果，config.tools.enabled 的 fail-closed 语义可被 coder 等
-  // 子 agent 的固定工具集绕过（父会话禁写，子 agent 仍持 write/edit/bash）。
-  // 例外：父 tools 为空（工作流运行器 parent 恒 tools=[]，工具集由工作流
-  // 自身按 agent 类型派发）时不取交集，保持 def 固定名单。
-  const declaredTools =
-    def.tools && parent.config.tools.length > 0
-      ? def.tools.filter((t) => parent.config.tools.includes(t))
-      : (def.tools ?? parent.config.tools)
+  // P1/P2-5：子 agent 工具集无条件取交集（def.tools ∩ 父工具集）——父工具集
+  // 已统一为 resolveEnabledToolNames 的配置解析结果（chat 主 run、CLI print、
+  // 工作流 runner 三处同口径），config.tools.enabled 的 fail-closed 语义对一切
+  // 派生路径成立：全禁时交集为空，子 agent 仅持 yield，写/执行能力不再被
+  // def 固定名单绕过。此前 length>0 例外为工作流 runner 恒 tools=[] 而设，
+  // 子 agent 因而拿到全套固定名单——现 runner 传解析结果，例外不再需要。
+  const declaredTools = def.tools
+    ? def.tools.filter((t) => parent.config.tools.includes(t))
+    : parent.config.tools
   const maxRec = def.maxRecursion ?? 0
   const baseTools = childDepth > maxRec ? declaredTools.filter((t) => t !== 'task') : declaredTools
   const childTools = Array.from(new Set([...baseTools, 'yield']))

@@ -22,6 +22,7 @@ import {
   projectTrustNeeded,
 } from '../../project/trust.js'
 import { createSession, updateSessionLastRun } from '../../session/session.js'
+import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
@@ -404,10 +405,15 @@ function createWorkflowsRoute(ctx: ServerContext) {
     const permissionTimeoutAction =
       sessionConfig.permission.timeoutAction === 'deny' ? ('deny' as const) : ('pause' as const)
 
+    // P2-5：runner 工具集传配置解析结果（与 chat 斜杠通道/CLI print 同口径），
+    // 作为子 agent 工具集交集基准——config.tools.enabled 的 fail-closed 语义
+    // 对工作流派发的子 agent 成立。runner 自身不进 agentLoop，无 LLM 影响。
     const agentConfig = {
       provider: sessionConfig.defaultProvider,
       model: sessionConfig.defaultModel,
-      tools: [],
+      tools: resolveEnabledToolNames(ctx.toolRegistry, sessionConfig).filter(
+        (n) => Boolean(project?.id) || !PROJECT_BOUND_TOOLS.has(n),
+      ),
       plugins: sessionConfig.plugins.enabled,
       agentName: 'default',
     }

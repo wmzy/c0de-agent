@@ -419,6 +419,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     }
     if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    // P3 口径统一：回收站会话不可导出——与 GET /:id、PATCH /:id、/messages、
+    // /llm-details 的 404 语义一致。回收站内容经「恢复」后即可导出。
+    if (session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     const messages = await getMessages(ctx.db, id)
     const archives = await listArchives(ctx.db, id)
     // P2-6：归档的 fileSnapshots 含被压缩进上下文的文件内容——导出 JSON 常被
@@ -516,6 +521,15 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 会话归属变更（P1-2）：孤儿会话归属到指定项目，恢复后即可达。
   app.post('/:id/rebind', async (c) => {
     const id = c.req.param('id')
+    // P3 口径统一：归属变更与 fork/compact/shake 同用 hasBusySession 守卫——
+    // 活跃 run 的 cwd 在启动时解析，rebind 会改变后续轮次的工作目录语义。
+    const busy = hasBusySession(ctx, id)
+    if (busy === 'run' || busy === 'workflow') {
+      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再更改归属')
+    }
+    if (busy === 'starting') {
+      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
+    }
     const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
     const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
     if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', 'projectId is required')
@@ -733,7 +747,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
 
   // 记录会话打开（更新 metadata.lastOpenedAt，用于会话列表按最近打开排序）
   app.post('/:id/open', async (c) => {
-    await touchLastOpened(ctx.db, c.req.param('id'))
+    const id = c.req.param('id')
+    // P3 口径统一：不存在/回收站会话不再静默返回成功（与 GET /:id 404 一致）。
+    const session = await getSession(ctx.db, id)
+    if (!session || session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
+    await touchLastOpened(ctx.db, id)
     return c.json({ ok: true })
   })
 

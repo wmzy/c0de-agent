@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import type { DB } from '../db/client.js'
 import { createSession, getSession } from '../session/session.js'
+import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../tools/index.js'
 
 import { createAgent } from './agent.js'
 import type { SlashCommand } from './types.js'
@@ -291,6 +292,15 @@ const configCommand: SlashCommand = {
     const value = coerce(parts.slice(1).join(' '))
     const next = applyScopedPatch(scopes.project ?? {}, setPathPatch(key, value))
     await saveConfigScoped('project', ctx.cwd, next)
+    // P1：/config 写入项目作用域是用户显式操作——已信任项目刷新风险指纹，
+    // 防「信任 → 改设置 → 再信任」自锁复检（与 /workflow create 同口径）。
+    try {
+      const { getByDirectory, trustProject } = await import('../project/index.js')
+      const p = await getByDirectory(ctx.deps.db, ctx.cwd)
+      if (p?.trustedAt != null) await trustProject(ctx.deps.db, p.id)
+    } catch {
+      // 指纹刷新失败不阻塞配置写入结果（最坏回到 fail-closed 复检路径）
+    }
     return {
       _tag: 'success',
       message: `${value === null ? '已取消设置' : '已设置'} ${key} (scope: project)`,
@@ -498,13 +508,6 @@ const workflowCommand: SlashCommand = {
         }
       }
 
-      const agentConfig = {
-        provider: ctx.config.defaultProvider,
-        model: ctx.config.defaultModel,
-        tools: [],
-        plugins: ctx.config.plugins.enabled,
-        agentName: 'default',
-      }
       // 工作流会话绑定 projectId + worktreePath（P1-1）：此前丢失项目归属，
       // 子 agent 会话继承 null projectId，且后续继续该会话时代理会回退到
       // serve 启动目录执行。
@@ -514,6 +517,19 @@ const workflowCommand: SlashCommand = {
         workflowProjectId = (await getByDirectory(ctx.deps.db, ctx.cwd))?.id ?? undefined
       } catch {
         workflowProjectId = undefined
+      }
+
+      // P2-5：runner 工具集传配置解析结果（与 Web 斜杠/REST/CLI print 同口径），
+      // 作为子 agent 工具集交集基准——config.tools.enabled 的 fail-closed 语义
+      // 对工作流派发的子 agent 成立。runner 自身不进 agentLoop，无 LLM 影响。
+      const agentConfig = {
+        provider: ctx.config.defaultProvider,
+        model: ctx.config.defaultModel,
+        tools: resolveEnabledToolNames(ctx.deps.toolRegistry, ctx.config).filter(
+          (n) => Boolean(workflowProjectId) || !PROJECT_BOUND_TOOLS.has(n),
+        ),
+        plugins: ctx.config.plugins.enabled,
+        agentName: 'default',
       }
       const session = await createSession(
         ctx.deps.db,

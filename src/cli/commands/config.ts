@@ -8,10 +8,46 @@ import { coerce, getByPath, setPathPatch } from '../../core/config-path.js'
 import type { Config } from '../../shared/types/config.js'
 import type { CommandArgs } from '../parser.js'
 
+/**
+ * P1：config set 写入项目作用域后刷新信任指纹（serve 未运行时生效）。
+ * config 命令无 agent deps 生命周期，此处独立打开持久库；serve 运行期间
+ * 持久库被占用（单写者）——跳过刷新，配置已落盘，信任复检的 fail-closed
+ * 路径兜底（下次聊天一次性确认，风险项即本次修改）。
+ */
+async function refreshTrustFingerprint(cwd: string): Promise<void> {
+  try {
+    const { mkdirSync } = await import('node:fs')
+    const { createDB, migrateDB } = await import('../../db/index.js')
+    const { acquireDevDbLock, releaseDevDbLock, resolveDbDir } = await import(
+      '../../server/server.js'
+    )
+    const { getByDirectory, trustProject } = await import('../../project/index.js')
+    const dataDir = resolveDbDir()
+    mkdirSync(dataDir, { recursive: true })
+    acquireDevDbLock(dataDir)
+    try {
+      const db = await createDB({ driver: 'pglite', dataDir })
+      try {
+        await migrateDB(db)
+        const p = await getByDirectory(db, cwd)
+        if (p?.trustedAt != null) await trustProject(db, p.id)
+      } finally {
+        await db.close()
+      }
+    } finally {
+      releaseDevDbLock(dataDir)
+    }
+  } catch {
+    // serve 锁冲突/库错误等：跳过刷新，不阻塞配置写入结果
+  }
+}
+
 type ConfigCommandContext = {
   args: CommandArgs
   cwd: string
   write?: (s: string) => void
+  /** 测试注入：覆盖指纹刷新实现（缺省走真实持久库路径）。 */
+  refreshTrust?: (cwd: string) => Promise<void>
 }
 
 async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
@@ -67,6 +103,12 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
     const value = coerce(rawArg)
     const next = applyScopedPatch(scopeCfg ?? {}, setPathPatch(key, value))
     await saveConfigScoped(scope, ctx.cwd, next)
+    // P1：项目作用域写入是用户显式操作——已信任项目刷新风险指纹（与 Web
+    // PATCH /api/config、/config 斜杠命令同口径），防「信任 → 改配置 → 再信任」
+    // 自锁复检循环。
+    if (scope === 'project') {
+      await (ctx.refreshTrust ?? refreshTrustFingerprint)(ctx.cwd)
+    }
     write(`${value === null ? '已取消设置' : '已设置'} ${key} (scope: ${scope})\n`)
     return
   }

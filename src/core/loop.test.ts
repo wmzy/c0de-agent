@@ -1811,6 +1811,23 @@ describe('runSubAgent background', () => {
     expect(result._tag).toBe('error')
     if (result._tag === 'error') expect(result.error).toMatch(/Unknown agent type/i)
   })
+
+  it('P2-5：父工具集全禁时子 agent 不拿 def 固定名单', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    // fail-closed 全禁：配置解析结果为空（工作流 runner 与 chat 同口径传入），
+    // def.tools 交集为空——写/执行能力不得被 coder 固定名单绕过。
+    state.config = { ...state.config, tools: [] }
+    const sent: Array<{ tools?: Array<{ name: string }> }> = []
+    const deps = makeMockDeps(db, ((_ctx: unknown, req: { tools?: Array<{ name: string }> }) => {
+      sent.push(req)
+      return mockTextStream('child output')
+    }) as never)
+    const result = await runSubAgent(deps, state, { agentType: 'coder', prompt: 'p' })
+    expect(result._tag).toBe('success')
+    const names = (sent[0]?.tools ?? []).map((t) => t.name).sort()
+    expect(names).toEqual(['yield'])
+  })
 })
 
 describe('agentLoop tool-mode metrics (spec §16.5)', () => {
