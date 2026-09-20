@@ -93,4 +93,21 @@ describe('truncateOutput', () => {
     const result = truncateOutput('a\nb\nc')
     expect(result.totalLines).toBe(3)
   })
+
+  it('行数与字符双超限时输出仍不突破 maxChars（单行巨内容走行截断路径）', () => {
+    // 101 行 > maxLines=50 且首行 5000 字符使总字符超 maxChars=1000。
+    // 行截断优先路径保留 head 10 行（含 5000 字符巨行），此前输出约 5x 字符上限。
+    const giant = 'x'.repeat(5_000)
+    const lines = [giant, ...Array.from({ length: 100 }, (_, i) => `line ${i}`)]
+    const result = truncateOutput(lines.join('\n'), {
+      ...DEFAULT_TRUNCATE_OPTIONS,
+      maxLines: 50,
+      maxChars: 1_000,
+      headLines: 10,
+      tailLines: 10,
+    })
+    expect(result.truncated).toBe(true)
+    expect(result.output.length).toBeLessThanOrEqual(1_000)
+    expect(result.output).toContain('truncated')
+  })
 })
