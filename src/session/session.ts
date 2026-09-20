@@ -15,6 +15,7 @@ import {
 import { alias } from 'drizzle-orm/pg-core'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
+import type { HookRunner } from '../plugins/types.js'
 import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
@@ -61,6 +62,8 @@ async function createSession(
   worktreePath?: string,
   /** 初始 metadata（如工作流运行会话记录 workflowName，供中断恢复指引展示）。 */
   metadata?: Record<string, unknown>,
+  /** 插件 hook runner：创建成功后广播 session:create（可选，纯广播不阻断）。 */
+  hooks?: HookRunner,
 ): Promise<Session> {
   const [row] = await handle.db
     .insert(sessions)
@@ -75,7 +78,15 @@ async function createSession(
     })
     .returning()
   if (!row) throw new Error('Failed to insert session')
-  return rowToSession(row)
+  const created = rowToSession(row)
+  if (hooks) {
+    try {
+      await hooks.fireHooks('session:create', { session: created })
+    } catch {
+      // 广播失败绝不阻断会话创建（fireHooks 内部已吞 handler 异常，双保险）
+    }
+  }
+  return created
 }
 
 /**

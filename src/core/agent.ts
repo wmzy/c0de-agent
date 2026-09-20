@@ -65,55 +65,75 @@ async function* runAgent(
   userInput: MessageContent[],
   deps: AgentDependencies,
 ): AsyncGenerator<AgentEvent> {
-  // 幂等重发保护：若 DB 末尾已是相同 user message（服务重启后续传场景），
-  // 跳过 append 避免重复。比较 text/image parts 全量内容——纯文本比较会在
-  // 「含图片消息重发」时误判为不同消息而追加重复条目（P1-2 修复）。
-  const last = state.messages[state.messages.length - 1]
-  const isDupUser =
-    last?.role === 'user' &&
-    last.content.length === userInput.length &&
-    last.content.every((p, i) => {
-      const q = userInput[i]
-      if (p._tag === 'text' && q?._tag === 'text') return p.text === q.text
-      if (p._tag === 'image' && q?._tag === 'image')
-        return p.mediaType === q.mediaType && p.data === q.data
-      return false
-    })
-
-  if (!isDupUser) {
-    await appendMessage(deps.db, state.session.id, {
-      role: 'user',
-      content: userInput,
-    })
+  // 生命周期 hook（spec §3.7）：agent:start 广播每次 run 的启动配置；
+  // agent:end 无论完成/出错/中止都广播（finally 保证）。
+  // 主 run 与子 agent run 都经此处，插件可按 config.agentName 等区分。
+  if (deps.hookRunner) {
+    try {
+      await deps.hookRunner.fireHooks('agent:start', { config: state.config })
+    } catch {
+      // fireHooks 内部已吞 handler 异常；双保险避免启动广播失败阻断 run
+    }
   }
+  try {
+    // 幂等重发保护：若 DB 末尾已是相同 user message（服务重启后续传场景），
+    // 跳过 append 避免重复。比较 text/image parts 全量内容——纯文本比较会在
+    // 「含图片消息重发」时误判为不同消息而追加重复条目（P1-2 修复）。
+    const last = state.messages[state.messages.length - 1]
+    const isDupUser =
+      last?.role === 'user' &&
+      last.content.length === userInput.length &&
+      last.content.every((p, i) => {
+        const q = userInput[i]
+        if (p._tag === 'text' && q?._tag === 'text') return p.text === q.text
+        if (p._tag === 'image' && q?._tag === 'image')
+          return p.mediaType === q.mediaType && p.data === q.data
+        return false
+      })
 
-  // 标题生成用纯文本（join text parts），忽略 image/tool 等非文本 part。
-  const titleText = userInput
-    .filter((p) => p._tag === 'text')
-    .map((p) => (p._tag === 'text' ? p.text : ''))
-    .join('')
+    if (!isDupUser) {
+      await appendMessage(deps.db, state.session.id, {
+        role: 'user',
+        content: userInput,
+      })
+    }
 
-  // 第一条用户消息后，后台为会话生成简短标题（fire-and-forget）。
-  // 条件：标题仍是默认占位 + 持久化前无任何消息（即首条消息）。
-  // 失败被吞掉，绝不阻塞主对话流。
-  if (state.session.title === DEFAULT_SESSION_TITLE && state.messages.length === 0) {
-    void generateSessionTitle(
-      {
-        db: deps.db,
-        llmRegistry: deps.llmRegistry,
-        config: deps.config,
-        ...(deps.titleChatFn ? { chatFn: deps.titleChatFn } : {}),
-      },
-      state.session.id,
-      titleText,
-      state.config.provider,
-      state.config.model,
-    ).catch(() => {})
+    // 标题生成用纯文本（join text parts），忽略 image/tool 等非文本 part。
+    const titleText = userInput
+      .filter((p) => p._tag === 'text')
+      .map((p) => (p._tag === 'text' ? p.text : ''))
+      .join('')
+
+    // 第一条用户消息后，后台为会话生成简短标题（fire-and-forget）。
+    // 条件：标题仍是默认占位 + 持久化前无任何消息（即首条消息）。
+    // 失败被吞掉，绝不阻塞主对话流。
+    if (state.session.title === DEFAULT_SESSION_TITLE && state.messages.length === 0) {
+      void generateSessionTitle(
+        {
+          db: deps.db,
+          llmRegistry: deps.llmRegistry,
+          config: deps.config,
+          ...(deps.titleChatFn ? { chatFn: deps.titleChatFn } : {}),
+        },
+        state.session.id,
+        titleText,
+        state.config.provider,
+        state.config.model,
+      ).catch(() => {})
+    }
+
+    state.status = { _tag: 'running', turnCount: 0 }
+
+    yield* agentLoop(state, deps)
+  } finally {
+    if (deps.hookRunner) {
+      try {
+        await deps.hookRunner.fireHooks('agent:end', {})
+      } catch {
+        // fireHooks 内部已吞 handler 异常；双保险
+      }
+    }
   }
-
-  state.status = { _tag: 'running', turnCount: 0 }
-
-  yield* agentLoop(state, deps)
 }
 
 function pauseAgent(state: AgentState, reason?: string): void {

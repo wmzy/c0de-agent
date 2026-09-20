@@ -73,6 +73,8 @@ type ServerContext = {
   cwd: string
   /** 终端 PTY 管理器（Web 终端面板用）。 */
   ptyManager: PTYManager
+  /** 已连接的 MCP 会话（spec §6）；dispose 时统一断开。 */
+  mcpSessions?: import('../mcp/types.js').MCPSession[]
   /** 测试注入：覆盖 LLM chat stream。生产环境为 undefined。 */
   chatStream?: typeof chatStreamFn
 }

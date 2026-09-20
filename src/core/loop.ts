@@ -47,6 +47,9 @@ type LoopDeps = AgentDependencies & {
   /** 预算护栏的 CLI 变体：无恢复 UI，超支时**中止 run**并产出 error（而非暂停挂起）。
    *  由 CLI deps 组装（buildAgentDeps）按 usage 动作注入，替代 budgetPause（恒 abort）。 */
   readonly budgetAbort?: boolean
+  /** 已发现技能名列表（src/core/skills.ts discoverSkills）→ PromptContext.skills →
+   *  system prompt ## Loaded Skills 段。宿主（CLI/Web 各通道）注入；未注入时为空。 */
+  readonly skills?: string[]
 }
 
 export type { LoopDeps }
@@ -259,7 +262,7 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       tools: state.tools,
       config: state.config,
       projectInfo: detectProjectInfo(deps.cwd),
-      skills: [],
+      skills: deps.skills ?? [],
     }
     // spec §16.5：edit 工具模式偏好。仅当该轮启用 edit 且某模式历史成功率
     // 显著优于默认时，向 system prompt 追加偏好提示，引导模型选择高成功率模式。

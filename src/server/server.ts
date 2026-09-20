@@ -24,6 +24,7 @@ import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { purgeDeletedKanbanBoards } from '../kanban/index.js'
+import { collectScopedMCPServers, disconnectMCPServer, registerMCPServers } from '../mcp/index.js'
 import { initPlugins } from '../plugins/index.js'
 import { getByDirectory } from '../project/index.js'
 import { projectTrustCurrent } from '../project/trust.js'
@@ -269,13 +270,26 @@ async function buildServerContext(
   } catch {
     // 信任状态查询失败 → 保持未信任（宁可少加载插件）
   }
-  const { pluginRegistry, hookRunner } = await initPlugins({
+  const {
+    pluginRegistry,
+    hookRunner,
+    config: resolvedConfig,
+  } = await initPlugins({
     cwd,
     config,
     toolRegistry,
     llmRegistry,
     projectTrusted,
   })
+
+  // MCP 客户端（spec §6）：把配置中的 MCP 服务器工具适配进 toolRegistry，对 agent
+  // 透明。全局作用域（用户本机显式配置）始终连接；项目作用域（随 git clone 传播的
+  // 任意命令执行面）仅在项目已信任时连接——与插件/工作流同口径。逐台隔离：单台
+  // 失败告警跳过，不拖垮启动。
+  const { sessions: mcpSessions } = await registerMCPServers(
+    toolRegistry,
+    collectScopedMCPServers(loadConfigScopes(cwd), projectTrusted),
+  )
 
   // 工作流注册表：三级发现（builtin → global → project），eager 初始化。
   // 此前是惰性 getter 只注册 builtin，导致项目级 .c0de/workflows/*.js 永远不可见。
@@ -287,14 +301,15 @@ async function buildServerContext(
   const dataDir = resolveDbDir()
   // 先解析/生成 bootstrap token（落盘），再创建 authManager 读取——
   // 首启时文件由 resolveAuthToken 生成，顺序颠倒会导致 bootstrap 读到空值。
-  const resolvedToken = resolveAuthToken(config, dataDir)
+  // 自 initPlugins 之后一律用 resolvedConfig（config:resolve hook 的产物）。
+  const resolvedToken = resolveAuthToken(resolvedConfig, dataDir)
   const authManager = createAuthManager({
     dataDir,
-    ...(config.security.token && config.security.token.length > 0
-      ? { staticToken: config.security.token }
+    ...(resolvedConfig.security.token && resolvedConfig.security.token.length > 0
+      ? { staticToken: resolvedConfig.security.token }
       : {}),
-    ...(config.security.firstDeviceTtlMs !== undefined
-      ? { firstDeviceTtlMs: config.security.firstDeviceTtlMs }
+    ...(resolvedConfig.security.firstDeviceTtlMs !== undefined
+      ? { firstDeviceTtlMs: resolvedConfig.security.firstDeviceTtlMs }
       : {}),
   })
 
@@ -331,7 +346,7 @@ async function buildServerContext(
 
   const ctx: ServerContext = {
     db,
-    config,
+    config: resolvedConfig,
     toolRegistry,
     llmRegistry,
     urlRegistry,
@@ -341,20 +356,22 @@ async function buildServerContext(
     // P3：权限双层超时可配置（config.permission.timeoutMs/expireGraceMs）；
     // 缺省回退 store 内置默认（5 分钟 + 25 分钟）。
     permissionStore: createPermissionStore({
-      ...(config.permission.timeoutMs !== undefined && config.permission.timeoutMs > 0
-        ? { timeoutMs: config.permission.timeoutMs }
+      ...(resolvedConfig.permission.timeoutMs !== undefined &&
+      resolvedConfig.permission.timeoutMs > 0
+        ? { timeoutMs: resolvedConfig.permission.timeoutMs }
         : {}),
-      ...(config.permission.expireGraceMs !== undefined && config.permission.expireGraceMs > 0
-        ? { expireGraceMs: config.permission.expireGraceMs }
+      ...(resolvedConfig.permission.expireGraceMs !== undefined &&
+      resolvedConfig.permission.expireGraceMs > 0
+        ? { expireGraceMs: resolvedConfig.permission.expireGraceMs }
         : {}),
     }),
-    permissionMode: config.permission.defaultMode,
+    permissionMode: resolvedConfig.permission.defaultMode,
     sessionPermissionModes: new Map(),
     sessionAlwaysAllow: new Map(),
     workflowBusyBySession: new Map(),
     workflowBusyByScope: new Map(),
     authToken: resolvedToken,
-    authManager: config.security.authEnabled === false ? undefined : authManager,
+    authManager: resolvedConfig.security.authEnabled === false ? undefined : authManager,
     // Agent 注册表：内置 4 个默认 agent；项目/用户自定义 agent 可在启动后补充加载。
     agentRegistry: (() => {
       const reg = createAgentRegistry()
@@ -365,11 +382,13 @@ async function buildServerContext(
     // spec §18.1 后台版本检查调度器；config.update.enabled 控制是否启动。
     updateScheduler: createUpdateScheduler({
       checkFn: opts.checkForUpdateFn ?? checkForUpdate,
-      intervalMs: config.update.intervalMs,
-      initialDelayMs: config.update.initialDelayMs,
+      intervalMs: resolvedConfig.update.intervalMs,
+      initialDelayMs: resolvedConfig.update.initialDelayMs,
     }),
     cwd,
     ptyManager,
+    // MCP 会话句柄：关闭时统一断开（stdio 子进程由 close 杀死）。
+    ...(mcpSessions.length > 0 ? { mcpSessions } : {}),
   }
 
   // handoff server 不在此创建：它需要持有主 HTTP server 引用以触发完整关停，
@@ -378,12 +397,14 @@ async function buildServerContext(
     ctx,
     dispose: async () => {
       // dev 重建前调用：中止活跃 run + settle pending permission +
-      // 停 scheduler + 关 devices.json watcher。**不 close db**（调用方持有）。
+      // 停 scheduler + 关 devices.json watcher + 断开 MCP 连接。
+      // **不 close db**（调用方持有）。
       ctx.agentManager.dispose()
       ctx.permissionStore.dispose()
       ctx.updateScheduler.stop()
       ctx.ptyManager.dispose()
       ctx.authManager?.dispose()
+      for (const session of ctx.mcpSessions ?? []) disconnectMCPServer(session)
     },
   }
 }

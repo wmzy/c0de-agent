@@ -6,6 +6,7 @@ import { createAgent, runAgent } from '../../core/agent.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { compactContext } from '../../core/loop.js'
+import { discoverSkills } from '../../core/skills.js'
 import { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
 import type { RegisterChildRun } from '../../core/types.js'
@@ -17,6 +18,7 @@ import {
   resolveWorkflow,
   workflowSessionTitle,
 } from '../../core/workflows/index.js'
+import { createDebugSpawn } from '../../dap/index.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
 import { enrichProjectRiskWithGlobal, projectTrustNeeded } from '../../project/trust.js'
@@ -380,6 +382,7 @@ function createChatRoute(ctx: ServerContext): Hono {
           cwd,
           // 中断恢复指引需要工作流名（重启后会话内无 user 消息可重发）。
           { workflowName: name },
+          ctx.hookRunner,
         )
       } catch (e) {
         ctx.workflowBusyByScope.delete(scopeKey)
@@ -1045,6 +1048,10 @@ function createChatRoute(ctx: ServerContext): Hono {
             agentRegistry: ctx.agentRegistry,
             registerChildRun: childRunBridge(ctx.agentManager),
             cwd,
+            // 技能发现（system prompt ## Loaded Skills 段数据源）。
+            skills: discoverSkills(cwd),
+            // DAP（spec §21）：Web 宿主注入真实适配器 spawn（与 CLI 同口径）。
+            debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
             // P3 成本护栏：会话项目配置任一轴动作为 'pause'/'abort' 时启用预算检查。
             // 具体 pause/abort 由 budgetOverageParts 按超支轴配置动作判定（abort >
             // pause），此处仅注入「启用」门禁——修 P1 双轴动作坍缩（此前 pause 分支

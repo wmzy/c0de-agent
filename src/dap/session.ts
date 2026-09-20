@@ -7,6 +7,26 @@ type DebugSpawn = (config: DAPConfig) => DAPTransport
 
 // ── 基于已建立 client 的原子操作（薄封装，对齐 DAP command） ──
 
+/** initialize 超时：适配器首启（如 npx 下载 js-debug）可慢，给足余量；
+ *  超时关闭 transport 并抛错，避免 debug_start 永久挂住 agent run。 */
+const DAP_INIT_TIMEOUT_MS = 120_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    promise.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
 async function dapInitialize(client: DAPClient, adapterID: string): Promise<unknown> {
   return client.request('initialize', {
     clientID: 'c0de-agent',
@@ -139,8 +159,18 @@ function createDebugSessionManager(): DebugSessionManager {
         session.state = 'stopped'
       })
 
-      await dapInitialize(client, config.adapter)
-      await dapLaunch(client, config)
+      try {
+        await withTimeout(
+          dapInitialize(client, config.adapter),
+          DAP_INIT_TIMEOUT_MS,
+          'DAP initialize',
+        )
+        await dapLaunch(client, config)
+      } catch (e) {
+        // 握手/launch 失败：dispose 关闭 transport（杀适配器子进程），不留悬挂会话。
+        client.dispose()
+        throw e
+      }
       sessions.set(session.id, { session, client, config })
       return { sessionId: session.id, threadId: lastThread }
     },

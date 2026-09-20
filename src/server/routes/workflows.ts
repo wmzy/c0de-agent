@@ -5,6 +5,8 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { createAgent } from '../../core/agent.js'
 import { loadConfigScopes, mergeConfig, resolveGlobalConfigDir } from '../../core/config.js'
+import type { LoopDeps } from '../../core/loop.js'
+import { discoverSkills } from '../../core/skills.js'
 import {
   discoverWorkflows,
   executeWorkflow,
@@ -14,6 +16,7 @@ import {
 } from '../../core/workflows/index.js'
 import { reloadRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
+import { createDebugSpawn } from '../../dap/index.js'
 import { getByDirectory, getProject, trustProject } from '../../project/project.js'
 import {
   enrichProjectRiskWithGlobal,
@@ -388,6 +391,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
         project?.worktree ?? agentCwd,
         // 中断恢复指引需要工作流名（重启后会话内无 user 消息可重发）。
         { workflowName: name },
+        ctx.hookRunner,
       )
     } catch (e) {
       ctx.workflowBusyByScope.delete(scopeKey)
@@ -494,6 +498,10 @@ function createWorkflowsRoute(ctx: ServerContext) {
             cwd: agentCwd,
             agentRegistry: ctx.agentRegistry,
             registerChildRun: childRunBridge(ctx.agentManager),
+            // 技能发现（system prompt ## Loaded Skills 段数据源）。
+            skills: discoverSkills(agentCwd),
+            // DAP（spec §21）：与主 chat 通道同口径注入真实适配器 spawn。
+            debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
             // 预算护栏：与 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
             ...(sessionConfig.usage?.budgetAction === 'pause' ||
             sessionConfig.usage?.budgetAction === 'abort' ||

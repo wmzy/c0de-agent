@@ -1,9 +1,12 @@
 import { loadConfigScopes } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
 import { decryptSecret } from '../core/secret.js'
+import { discoverSkills } from '../core/skills.js'
+import { createDebugSpawn } from '../dap/index.js'
 import type { DB } from '../db/client.js'
 import { createRegistry, overrideToCapabilities, registerProvider } from '../llm/index.js'
 import type { Registry } from '../llm/registry.js'
+import { collectScopedMCPServers, registerMCPServers } from '../mcp/index.js'
 import { initPlugins } from '../plugins/index.js'
 import { getByDirectory } from '../project/index.js'
 import { projectTrustCurrent } from '../project/trust.js'
@@ -137,29 +140,41 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
   // P0（代码面）：已信任但指纹漂移（插件代码/MCP 参数/风险键变更）→ 不加载，
   // 与聊天门禁同口径。
   const projectTrusted = await resolveCwdProjectTrusted(opts.db, opts.cwd)
-  const { hookRunner } = await initPlugins({
+  const { hookRunner, config: resolvedConfig } = await initPlugins({
     cwd: opts.cwd,
     config,
     toolRegistry,
     llmRegistry,
     projectTrusted,
   })
+  // MCP 客户端（spec §6）：全局作用域始终连接；项目作用域（随 git clone 传播的
+  // 任意命令执行面）仅项目已信任时连接——与插件加载同口径。stdio 子进程已
+  // unref：CLI 进程退出时 stdin 关闭，MCP 服务器自行退出。
+  await registerMCPServers(
+    toolRegistry,
+    collectScopedMCPServers(loadConfigScopes(opts.cwd), projectTrusted),
+  )
   const deps: LoopDeps = {
     db: opts.db,
     llmRegistry,
     toolRegistry,
     urlRegistry: createDefaultURLRegistry(),
     hookRunner,
-    permission: resolvePermissionChecker(config, opts.permissionStrategy, opts.allowTools),
-    config,
+    permission: resolvePermissionChecker(resolvedConfig, opts.permissionStrategy, opts.allowTools),
+    config: resolvedConfig,
     cwd: opts.cwd,
+    // 技能发现（system prompt ## Loaded Skills 段数据源）。
+    skills: discoverSkills(opts.cwd),
+    // DAP（spec §21）：CLI 宿主注入真实适配器 spawn——此前恒报「no debug adapter
+    // spawn is wired」。调试会话随进程结束自然消亡（transport 子进程非 unref）。
+    debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
     // P：预算护栏 CLI 变体——print/acp 无恢复 UI，超支中止 run（产出 error）而非
     // 暂停永久挂起。金额与 token 任一动作='pause'/'abort' 即启用（每轮 LLM 请求前检查）。
-    ...(config.usage?.budgetAction === 'pause' ||
-    config.usage?.budgetAction === 'abort' ||
-    config.usage?.tokenBudgetAction === 'pause' ||
-    config.usage?.tokenBudgetAction === 'abort'
+    ...(resolvedConfig.usage?.budgetAction === 'pause' ||
+    resolvedConfig.usage?.budgetAction === 'abort' ||
+    resolvedConfig.usage?.tokenBudgetAction === 'pause' ||
+    resolvedConfig.usage?.tokenBudgetAction === 'abort'
       ? { budgetAbort: true }
       : {}),
   }

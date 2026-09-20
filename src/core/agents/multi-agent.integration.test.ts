@@ -11,9 +11,11 @@ import { createDB } from '../../db/client.js'
 import { migrateDB } from '../../db/migrate.js'
 import type { Registry } from '../../llm/registry.js'
 import { listSessions } from '../../session/index.js'
+import { getMessages } from '../../session/message.js'
 import { createSession } from '../../session/session.js'
 import type { AgentEvent } from '../../shared/types/agent.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
+import type { MessageContent } from '../../shared/types/message.js'
 import { createDefaultRegistry } from '../../tools/index.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import { createAgent, runAgent } from '../agent.js'
@@ -58,6 +60,55 @@ function mockMultiAgentStream(): (() => AsyncGenerator<StreamChunk>) | undefined
       } else {
         // 父轮 1：总结
         yield { _tag: 'text', text: 'Research complete.' } as const
+        yield { _tag: 'done' } as const
+      }
+    }
+    return gen()
+  }
+}
+
+/** mock 调用序列：父派发 task(schema-agent) → 子 yield 非法 data → 子 yield 合法
+ *  data → 子文本收尾 → 父总结。验证 outputSchema 校验失败反馈给模型后可重试。 */
+function mockSchemaValidatedStream(): (() => AsyncGenerator<StreamChunk>) | undefined {
+  let call = 0
+  return () => {
+    const n = call++
+    async function* gen() {
+      if (n === 0) {
+        yield { _tag: 'tool_call_start', id: 'tc1', name: 'task' } as const
+        yield {
+          _tag: 'tool_call_end',
+          id: 'tc1',
+          argumentsFinal: JSON.stringify({
+            subagent_type: 'schema-agent',
+            prompt: 'report touched files',
+            description: 'schema scout',
+          }),
+        } as const
+        yield { _tag: 'done' } as const
+      } else if (n === 1) {
+        // 非法：缺 required 的 files
+        yield { _tag: 'tool_call_start', id: 'y1', name: 'yield' } as const
+        yield {
+          _tag: 'tool_call_end',
+          id: 'y1',
+          argumentsFinal: JSON.stringify({ data: { wrong: true } }),
+        } as const
+        yield { _tag: 'done' } as const
+      } else if (n === 2) {
+        // 合法：files 满足 schema
+        yield { _tag: 'tool_call_start', id: 'y2', name: 'yield' } as const
+        yield {
+          _tag: 'tool_call_end',
+          id: 'y2',
+          argumentsFinal: JSON.stringify({ data: { files: ['src/a.ts'] } }),
+        } as const
+        yield { _tag: 'done' } as const
+      } else if (n === 3) {
+        yield { _tag: 'text', text: 'child done' } as const
+        yield { _tag: 'done' } as const
+      } else {
+        yield { _tag: 'text', text: 'Parent complete.' } as const
         yield { _tag: 'done' } as const
       }
     }
@@ -162,6 +213,83 @@ describe('multi-agent integration', () => {
       if (taskEnd.result._tag === 'error') {
         expect(taskEnd.result.error).toMatch(/Unknown agent type/i)
       }
+    }
+  })
+
+  it('outputSchema 校验拒绝非法 yield，子 agent 修正后重试成功', async () => {
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+
+    const agentRegistry = createAgentRegistry()
+    agentRegistry.register({
+      name: 'schema-agent',
+      description: 'test agent with outputSchema',
+      systemPrompt: 'Return your result via yield.',
+      tools: [],
+      mode: 'subagent',
+      source: 'builtin',
+      outputSchema: {
+        type: 'object',
+        properties: { files: { type: 'array', items: { type: 'string' } } },
+        required: ['files'],
+      },
+    })
+
+    const deps: LoopDeps = {
+      db,
+      llmRegistry: {} as Registry,
+      toolRegistry: createDefaultRegistry(),
+      permission: autoAllowChecker,
+      config: DEFAULT_CONFIG,
+      cwd: '/tmp',
+      agentRegistry,
+      chatStream: mockSchemaValidatedStream() as unknown as LoopDeps['chatStream'],
+    }
+
+    const parentSession = await createSession(db, 'schema test')
+    const state = await createAgent(
+      parentSession,
+      { provider: 'mock', model: 'mock', tools: ['task'], plugins: [] },
+      deps,
+    )
+    const events: AgentEvent[] = []
+    for await (const ev of runAgent(state, [{ _tag: 'text', text: 'report' }], deps)) {
+      events.push(ev)
+    }
+
+    // 1. 回传父 agent 的是校验通过的 data（非法首轮 yield 被拒，未入收集数组）
+    const taskEnd = events.find((e) => e._tag === 'tool_call_end' && e.id === 'tc1')
+    expect(taskEnd).toBeTruthy()
+    if (taskEnd && taskEnd._tag === 'tool_call_end') {
+      expect(taskEnd.result._tag).toBe('success')
+      if (taskEnd.result._tag === 'success') {
+        expect(taskEnd.result.metadata?.data).toEqual({ files: ['src/a.ts'] })
+      }
+    }
+
+    // 2. 子会话中记录了非法 yield 的 error 工具结果（模型收到的失败反馈）
+    const child = (await listSessions(db)).find((s) => s.agentType === 'schema-agent')
+    expect(child).toBeTruthy()
+    if (child) {
+      const msgs = await getMessages(db, child.id)
+      const yieldResults = msgs
+        .flatMap((m) => m.content)
+        .filter(
+          (p): p is Extract<MessageContent, { _tag: 'tool_result' }> =>
+            p._tag === 'tool_result',
+        )
+        .filter((p) => p.tool === 'yield')
+      const invalid = yieldResults.find(
+        (p) => p.output._tag === 'error' && p.output.error.includes('outputSchema'),
+      )
+      expect(invalid).toBeTruthy()
+      // 合法的第二轮 yield 成功提交
+      expect(
+        yieldResults.some(
+          (p) => p.output._tag === 'success' && p.output.output === 'Result submitted.',
+        ),
+      ).toBe(true)
     }
   })
 })

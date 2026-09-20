@@ -14,6 +14,11 @@ function createProcessTransport(
   const dataHandlers: Array<(chunk: Uint8Array | string) => void> = []
   const closeHandlers: Array<() => void> = []
 
+  // spawn 失败（ENOENT 等）：无监听器时 unhandled 'error' 会击穿父进程。
+  // 仅记录——随后的 'close' 事件走既有关闭路径 reject pending。
+  child.on('error', (err: Error) => {
+    console.warn(`[dap] 调试适配器进程错误：${err.message}`)
+  })
   child.stdout.setEncoding('utf8')
   child.stdout.on('data', (chunk: string) => {
     for (const h of dataHandlers) h(chunk)

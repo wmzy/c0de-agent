@@ -2,8 +2,10 @@ import { appendMessage } from '../../session/message.js'
 import { createSession, updateSessionLastRun } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { AgentState } from '../../shared/types/agent.js'
+import type { JSONSchema } from '../../shared/types/base.js'
 import type { Session } from '../../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
+import { validateInput } from '../../tools/validate.js'
 import { createAgent, runAgent } from '../agent.js'
 import type { LoopDeps } from '../loop.js'
 import type { RepoBaseline } from '../worktree.js'
@@ -66,6 +68,9 @@ export async function runSubAgent(
       request.agentType,
       parent.session.source ?? undefined,
       parent.session.id,
+      undefined,
+      undefined,
+      deps.hookRunner,
     )
   } catch (e) {
     return { _tag: 'error', error: e instanceof Error ? e.message : String(e) }
@@ -111,11 +116,23 @@ export async function runSubAgent(
     ...(request.model ? { model: request.model } : {}),
   }
 
-  // 子 agent 的 deps：覆盖 cwd（worktree）+ 注入 yield 收集器 + 递归深度
+  // 子 agent 的 deps：覆盖 cwd（worktree）+ 注入 yield 收集器 + 递归深度。
+  // yield 收集器对 def.outputSchema 做 JSON Schema 校验（spec: multi-agent-design
+  // §4.5 声明但从未消费）：不合法抛错 → yield 工具折成 error 反馈给模型，模型可
+  // 修正后重试；合法才入收集数组（最终作为 task 结果 data 回传父 agent）。
   const childDeps: LoopDeps = {
     ...deps,
     cwd: childCwd,
     _subagentYieldCollector: (data: unknown) => {
+      if (def.outputSchema) {
+        const result = validateInput(def.outputSchema as JSONSchema, data)
+        if (!result.valid) {
+          throw new Error(
+            `yield data does not match the agent's outputSchema: ${result.error}. ` +
+              'Call yield again with data that satisfies the schema.',
+          )
+        }
+      }
       yielded.push(data)
     },
     _subagentDepth: childDepth,

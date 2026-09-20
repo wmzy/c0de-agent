@@ -1,4 +1,4 @@
-import type { ToolDef } from '../../shared/types/tool.js'
+import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 
 /**
  * yield 工具：子 agent 专用，提交结构化最终结果。
@@ -36,9 +36,16 @@ export const yieldTool: ToolDef = {
     required: ['data'],
   },
   permission: 'auto',
-  execute: async (input: unknown, ctx) => {
+  execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { data } = input as { data: unknown }
-    ctx.collectYield?.(data)
+    // collectYield 由宿主实现（runSubAgent）——宿主在收集时对 outputSchema 做
+    // 校验并抛错。把校验失败折成 error ToolResult 回给模型：模型看到失败原因后
+    // 可修正 data 重试，而非整个子 run 静默带上非法结果。
+    try {
+      ctx.collectYield?.(data)
+    } catch (error) {
+      return { _tag: 'error', error: error instanceof Error ? error.message : String(error) }
+    }
     return { _tag: 'success', output: 'Result submitted.' }
   },
 }

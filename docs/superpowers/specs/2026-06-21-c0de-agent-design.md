@@ -146,14 +146,19 @@ export function abortAgent(state: AgentState): void
 
 ### 3.4 Prompt 构建
 
-`prompt.ts` 负责组装 system prompt：
+> **状态（2026-09-20）**：本节描述的静态组装已被 **§17 动态 Prompt 构建**
+> （prompt-registry，`src/core/prompt-registry.ts`）取代——运行时按可用能力动态组装
+> 分段（role/project/tools/skills/agents/…），`src/core/prompt.ts` 仅剩委托壳。
+
+`buildSystemPrompt` 负责组装 system prompt：
 
 ```typescript
 type PromptContext = {
   tools: ToolDef[]
   projectInfo: ProjectInfo
-  skills: Skill[]
+  skills: string[]       // 技能名列表（src/core/skills.ts discoverSkills 发现）
   config: AgentConfig
+  cwd?: string
 }
 
 export function buildSystemPrompt(ctx: PromptContext): string
@@ -163,7 +168,7 @@ System prompt 包含：
 - 基础角色描述
 - 工具列表及其 JSON Schema 参数描述
 - 项目上下文（文件结构、git 状态、语言等）
-- 已加载的技能描述
+- 已加载的技能描述（`## Loaded Skills` 段，无技能时整段省略）
 - 编码范式约束（data + functions）
 
 ### 3.5 配置管理
@@ -331,18 +336,23 @@ Provider 抽象与 streaming。
 
 ### 4.1 文件结构
 
+> **状态（2026-09-20）**：以下为设计目标结构。实际实现：`src/llm/protocols/openai-compat.ts`
+> 是**唯一**已实现的协议（覆盖 OpenAI 兼容服务）；anthropic/google 原生协议、
+> `models.ts` 模型能力注册表**未实现**（见 §25 后续迭代）。现有目录：
+> `schema/ protocols/ transport/ registry/ routing/ provider/ retry/ token/`。
+
 ```
 src/llm/
 ├── provider.ts        provider 注册与管理
 ├── types.ts           Provider、Model、ChatRequest、ChatResponse
 ├── stream.ts          streaming 协议抽象
 ├── protocol/
-│   ├── openai.ts      OpenAI Chat Completions + Responses API
-│   ├── anthropic.ts   Anthropic Messages API
-│   ├── google.ts      Gemini API
-│   └── openai-compat.ts  OpenAI 兼容适配器
-├── token.ts           token 计数与成本估算
-├── models.ts          模型能力注册表
+│   ├── openai.ts      OpenAI Chat Completions + Responses API      [未实现]
+│   ├── anthropic.ts   Anthropic Messages API                      [未实现]
+│   ├── google.ts      Gemini API                                  [未实现]
+│   └── openai-compat.ts  OpenAI 兼容适配器                        [已实现]
+├── token.ts           token 计数与成本估算                         [已实现]
+├── models.ts          模型能力注册表                               [未实现]
 └── index.ts
 ```
 
@@ -411,10 +421,10 @@ type ProtocolHandler = {
 }
 ```
 
-- **openai.ts**：OpenAI Chat Completions API + Responses API，SSE 解析
-- **anthropic.ts**：Anthropic Messages API，支持 extended thinking、prompt caching
-- **google.ts**：Gemini API，支持多模态
-- **openai-compat.ts**：OpenAI 兼容适配器，覆盖 DeepSeek、Groq、Together 等
+- **openai.ts**：OpenAI Chat Completions API + Responses API，SSE 解析 — **[未实现]**
+- **anthropic.ts**：Anthropic Messages API，支持 extended thinking、prompt caching — **[未实现]**
+- **google.ts**：Gemini API，支持多模态 — **[未实现]**
+- **openai-compat.ts**：OpenAI 兼容适配器，覆盖 DeepSeek、Groq、Together 等 — **[已实现]**
 
 ### 4.6 多角色路由
 
@@ -472,6 +482,10 @@ Fallback 触发条件：
 - API key 无效
 
 ### 4.5 模型能力注册表
+
+> **状态（2026-09-20）**：**未实现**（后续迭代）。contextWindow 目前经 provider
+> registry 的 capabilities 提供（`src/llm/registry.ts` resolveRoute），vision 经
+> provider 能力查询接口；独立于 provider 的全局模型注册表（含成本元数据）不存在。
 
 ```typescript
 type ModelCapabilities = {
@@ -698,9 +712,10 @@ export function runHooks<K extends keyof HookMap>(
 ### 7.4 插件加载
 
 插件来源：
-1. 项目目录 `.c0de/plugins/` 下的本地插件
-2. npm 包（`c0de-plugin-*` 命名约定）
-3. 全局 `~/.c0de/plugins/` 目录
+1. 项目目录 `.c0de/plugins/` 下的本地插件（**仅在项目已信任时加载**，fail-closed）
+2. npm 包（`c0de-plugin-*` 命名约定）— **[未实现]**：`c0de plugin install` 目前只把
+   名字写进 `plugins.enabled` 名单，不做 npm 安装/发现
+3. 全局 `~/.c0de/plugins/` 目录（C0DE_CONFIG_DIR 可重定向）
 
 ```typescript
 export function discoverPlugins(projectDir: string): Promise<Plugin[]>
@@ -727,6 +742,13 @@ src/db/
 
 #### Schema
 
+> **状态（2026-09-20）**：以下为设计草图，实际 schema 见 `src/db/schema.ts`。
+> 关键差异：`messages` 表实为 `session_entries`（消息 + 工具调用对 + compaction/
+> squash/branch_summary/steering 特殊条目统一存储）；**`configs` 表未实现**——配置
+> 采用 JSON 文件方案（`~/.c0de/config.json` + 项目 `.c0de/config.json`，C0DE_CONFIG_DIR
+> 可重定向），无 DB 配置表；PGLite 数据目录为 `~/.local/share/c0de/pglite`
+> （C0DE_DB_DIR 可重定向），非 `~/.c0de/data/`。
+
 ```typescript
 // sessions 表
 type SessionRow = {
@@ -739,7 +761,7 @@ type SessionRow = {
   updatedAt: timestamp
 }
 
-// messages 表
+// messages 表（实际为 session_entries）
 type MessageRow = {
   id: string              // uuid
   sessionId: string       // FK → sessions.id
@@ -749,7 +771,7 @@ type MessageRow = {
   createdAt: timestamp
 }
 
-// configs 表
+// configs 表 — 【未实现，被 JSON 文件配置方案替代】
 type ConfigRow = {
   key: string             // PK
   value: JSONB
@@ -772,7 +794,7 @@ type DBConfig =
   | { driver: 'postgres'; connectionString: string }
 ```
 
-PGLite 模式数据存储在 `~/.c0de/data/` 目录。
+PGLite 模式数据存储在 `~/.local/share/c0de/pglite/` 目录。
 
 ### 8.2 Session 包（src/session/）
 
@@ -962,10 +984,10 @@ src/web/
 Web 前端作为 PWA 构建，支持移动端安装和使用：
 
 **PWA 要求**：
-- `manifest.json` 配置应用图标、主题色、启动 URL
-- Service Worker 缓存静态资源，支持离线访问
-- 支持 `beforeinstallprompt` 事件，引导用户安装
-- 响应式布局，移动端优先设计
+- `manifest.json` 配置应用图标、主题色、启动 URL — **[已实现]**（VitePWA + `public/icons/`）
+- Service Worker 缓存静态资源，支持离线访问 — **[已实现]**
+- 支持 `beforeinstallprompt` 事件，引导用户安装 — **[未实现]**（安装引导 UI 缺）
+- 响应式布局，移动端优先设计 — **[已实现]**（CSS 断点方案，`styles/breakpoints.ts`）
 
 **移动端优先设计原则**：
 - 断点：mobile（< 768px）→ tablet（768-1024px）→ desktop（> 1024px）
@@ -975,10 +997,11 @@ Web 前端作为 PWA 构建，支持移动端安装和使用：
 - 聊天界面全屏沉浸式，输入框固定在底部
 - 工具调用详情可折叠/展开
 
-**移动端特有功能**：
+**移动端特有功能**（均**未实现**，后续迭代）：
 - 语音输入（Web Speech API）
 - 推送通知（Push API）——agent 完成任务时通知
 - 分享目标（Web Share API）——从其他应用分享文本到 c0de
+- 离线消息队列（发消息失败排队重发）
 
 ### 10.4 核心页面
 
@@ -1489,39 +1512,47 @@ type AgentStatus =
 
 完整暴露 LLM 调用细节，包括 prompt、token 用量、延迟。
 
+> **状态（2026-09-20）**：观察模型已从单次 `LLMDetail` 演进为**段模型**
+> （`LLMSegment`/`LLMCall`，见 plan `2026-06-30-llm-call-segmentation.md`）：
+> 以压缩/分支为界把调用组织成段，段首存完整快照（prompt/工具定义），段内调用
+> 只存轻量记录（模型/token/延迟/成本）。`GET /:id/llm-details/:callId` 子端点
+> **已删除**（前端从段内 calls 取），仅保留 `GET /:id/llm-details`。
+
 ### 20.1 观察数据
 
-每次 LLM 调用记录：
+每次 LLM 调用记录（轻量调用记录 + 段首快照）：
 
 ```typescript
-type LLMDetail = {
+type LLMCall = {
   id: string
   timestamp: number
   model: string
   provider: string
   role: ModelRole
 
-  // 输入
-  systemPrompt: string      // 完整 system prompt
-  messages: ChatMessage[]    // 完整消息历史
-  tools: ChatTool[]          // 发送的工具定义
-
-  // 输出
-  responseChunks: StreamChunk[]  // 完整响应流
-  thinking?: string              // thinking 内容
-
   // 元数据
   usage: { input: number; output: number; cacheHit?: number }
   latency: { firstToken: number; total: number }
   cost: number
+}
+
+type LLMSegment = {
+  id: string
+  fingerprint: string         // 触发源指纹（压缩/分支）
+  trigger?: SegmentTrigger
+  calls: LLMCall[]
+  snapshot?: {                // 段首完整快照（仅段首存）
+    systemPrompt: string
+    messages: ChatMessage[]
+    tools: ChatTool[]
+  }
 }
 ```
 
 ### 20.2 观察 API
 
 ```
-GET /api/sessions/:id/llm-details        获取会话的所有 LLM 调用详情
-GET /api/sessions/:id/llm-details/:callId 获取单次调用详情
+GET /api/sessions/:id/llm-details        获取会话的 LLM 调用分段（活跃 run 实时，回退 DB）
 ```
 
 ### 20.3 前端展示
@@ -1538,7 +1569,13 @@ GET /api/sessions/:id/llm-details/:callId 获取单次调用详情
 
 Debug Adapter Protocol 支持，让 agent 能控制调试器。
 
-### 18.1 DAP 客户端
+> **状态（2026-09-20）**：协议/client/工具齐全，且宿主接线已补全——`src/dap/spawn.ts`
+> 提供 `createDebugSpawn()`（适配器映射：node→js-debug、python→debugpy、
+> go→dlv、lldb→lldb-dap；未知 id 视为命令名），CLI（`src/cli/deps.ts`）与
+> Web（chat/workflow 路由）均注入真实 spawn。`manager.start` 带 120s initialize
+> 超时；spawn 失败不再击穿进程。
+
+### 21.1 DAP 客户端
 
 ```
 src/tools/
@@ -1571,7 +1608,7 @@ export function evaluate(session: DAPSession, expression: string): Promise<strin
 export function stopDebugSession(session: DAPSession): void
 ```
 
-### 18.2 DAP 工具
+### 21.2 DAP 工具
 
 DAP 暴露为一组工具，agent 可以自然地使用调试能力：
 
@@ -1632,12 +1669,18 @@ DAP 暴露为一组工具，agent 可以自然地使用调试能力：
 10. **DAP**：调试器集成（基础 DAP 客户端）
 11. **Update**：热更新 + 会话迁移
 
-后续迭代：
-- 完整工具集（LSP、AST、Browser、MCP）
-- 多 provider 支持（Anthropic、Google 原生协议）
-- 插件市场
-- 技能发现（从 .claude/.cursor 等目录继承）
+> **状态（2026-09-20）**：MVP 全部落地且大幅超出（多 agent/worktree 隔离、kanban、
+> 工作流系统、Websearch、回收站、信任门禁、认证、预算护栏等）。原「后续迭代」
+> 中 **MCP 客户端已实现**（`src/mcp/`，stdio + streamable-http/SSE 传输、工具适配、
+> 信任门禁同口径接入），其余仍在迭代清单：
+
+后续迭代（未实现）：
+- 完整工具集：LSP、AST（ast_grep/ast_edit）、Browser（Puppeteer）
+- 多 provider 支持（Anthropic、Google 原生协议；模型能力注册表 §4.5）
+- 插件市场；npm 插件源（`c0de-plugin-*`）
+- 技能发现扩展（从 .claude/.cursor 等目录继承——当前仅 .c0de/skills 与全局目录）
 - 记忆引擎
 - 实时协作
 - 多 agent 编排（Swarm）
 - 统计面板
+- PWA 移动端增强（安装引导/语音输入/推送通知/分享/离线队列）

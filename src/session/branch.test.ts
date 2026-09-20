@@ -4,6 +4,7 @@ import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { sessionEntries, sessions } from '../db/schema.js'
+import { createHookRunner } from '../plugins/hooks.js'
 import { generateId } from '../shared/index.js'
 import type { MessageContent } from '../shared/types/message.js'
 import { archiveOriginalEntries, listArchives } from './archive.js'
@@ -351,5 +352,71 @@ describe('branching', () => {
     const e = (await forkSession(handle, parent.id, 99).catch((err: unknown) => err)) as Error
     expect(e.name).toBe('BranchPointOutOfRangeError')
     expect(e.message).toContain('99')
+  })
+})
+
+describe('session lifecycle hooks', () => {
+  let handle: DB
+
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  afterEach(async () => {
+    await handle.close()
+  })
+
+  it('createSession broadcasts session:create when hooks are provided', async () => {
+    const hookRunner = createHookRunner()
+    const handler = vi.fn()
+    hookRunner.on('session:create', handler)
+
+    const created = await createSession(
+      handle,
+      'hooked',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      hookRunner,
+    )
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith({ session: expect.objectContaining({ id: created.id }) })
+  })
+
+  it('createSession stays silent without hooks', async () => {
+    const hookRunner = createHookRunner()
+    const handler = vi.fn()
+    hookRunner.on('session:create', handler)
+    await createSession(handle, 'unhooked')
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('forkSession broadcasts session:fork with source and fork after commit', async () => {
+    const hookRunner = createHookRunner()
+    const handler = vi.fn()
+    hookRunner.on('session:fork', handler)
+
+    const parent = await createSession(handle, 'root')
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('hello') })
+    const forked = await forkSession(handle, parent.id, 0, hookRunner)
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith({
+      source: expect.objectContaining({ id: parent.id }),
+      fork: expect.objectContaining({ id: forked.id }),
+    })
+  })
+
+  it('forkSession stays silent without hooks', async () => {
+    const hookRunner = createHookRunner()
+    const handler = vi.fn()
+    hookRunner.on('session:fork', handler)
+    const parent = await createSession(handle, 'root')
+    await appendMessage(handle, parent.id, { role: 'user', content: textContent('hello') })
+    await forkSession(handle, parent.id, 0)
+    expect(handler).not.toHaveBeenCalled()
   })
 })

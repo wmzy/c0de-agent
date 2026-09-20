@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { createHookRunner } from '../plugins/hooks.js'
 import { getMessages } from '../session/message.js'
 import { createSession, getSession } from '../session/session.js'
+import type { AgentEvent } from '../shared/types/agent.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import type { Session } from '../shared/types/message.js'
 import { createDefaultRegistry } from '../tools/index.js'
@@ -285,5 +287,68 @@ describe('control functions', () => {
     expect(isAgentPaused(agent)).toBe(false)
     agent.status = { _tag: 'paused', pauseReason: 'test' }
     expect(isAgentPaused(agent)).toBe(true)
+  })
+})
+
+describe('runAgent lifecycle hooks', () => {
+  it('fires agent:start with config and agent:end when the run completes', async () => {
+    const hookRunner = createHookRunner()
+    const startHandler = vi.fn()
+    const endHandler = vi.fn()
+    hookRunner.on('agent:start', startHandler)
+    hookRunner.on('agent:end', endHandler)
+
+    const deps = makeDeps(db, mockTextStream('done'))
+    deps.hookRunner = hookRunner
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [] },
+      deps,
+    )
+    for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'hi' }], deps)) {
+      // consume
+    }
+
+    expect(startHandler).toHaveBeenCalledTimes(1)
+    expect(startHandler).toHaveBeenCalledWith({
+      config: expect.objectContaining({ model: 'm' }),
+    })
+    expect(endHandler).toHaveBeenCalledTimes(1)
+  })
+
+  it('fires agent:end when the run terminates with a provider error', async () => {
+    const hookRunner = createHookRunner()
+    const endHandler = vi.fn()
+    hookRunner.on('agent:end', endHandler)
+
+    const errorStream = async function* (): AsyncGenerator<StreamChunk> {
+      yield { _tag: 'error', error: { message: 'down' } }
+    }
+    const deps = makeDeps(db, errorStream)
+    deps.hookRunner = hookRunner
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [] },
+      deps,
+    )
+    const events: AgentEvent[] = []
+    for await (const ev of runAgent(agent, [{ _tag: 'text', text: 'hi' }], deps)) {
+      events.push(ev)
+    }
+
+    expect(events.some((e) => e._tag === 'error')).toBe(true)
+    expect(endHandler).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fire hooks when no hookRunner is wired', async () => {
+    const deps = makeDeps(db, mockTextStream('ok'))
+    const agent = await createAgent(
+      session,
+      { provider: 'p', model: 'm', tools: [], plugins: [] },
+      deps,
+    )
+    for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'hi' }], deps)) {
+      // consume — 无 hookRunner 不应抛错
+    }
   })
 })

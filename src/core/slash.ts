@@ -237,7 +237,7 @@ const forkCommand: SlashCommand = {
     }
     const { forkSession } = await import('../session/branch.js')
     try {
-      const forked = await forkSession(ctx.deps.db, sessionId, messageIndex)
+      const forked = await forkSession(ctx.deps.db, sessionId, messageIndex, ctx.deps.hookRunner)
       return { _tag: 'success', message: `已分支到新会话：${forked.id}` }
     } catch (error) {
       return {
@@ -539,6 +539,8 @@ const workflowCommand: SlashCommand = {
         undefined,
         undefined,
         ctx.cwd,
+        undefined,
+        ctx.deps.hookRunner,
       )
       const parent = await createAgent(session, agentConfig, ctx.deps)
 

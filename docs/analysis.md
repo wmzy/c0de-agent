@@ -1,8 +1,9 @@
 # c0de-agent 项目分析报告
 
-> 分析时间：2026-09-18
+> 分析时间：2026-09-18；缺口补齐批次核查更新：2026-09-20
 > 基线：PM 产品逻辑审查批次（看板列引用一致性、merge 恢复死胡同、路由 404 化、commit message 校验、预算暂停标记跨重启）
 > 本轮（前序）：前端架构按 painless 模板收敛（native-router/fetch-fun/@ 别名/巨型组件拆分）、haze-ui 1.30 全面迁移 + react-use-control 受控控件统一
+> 本轮（2026-09-20）：对照 docs/superpowers 全量规划文档的缺口补齐——MCP 客户端、DAP 宿主接线、插件 hook 死挂载点、outputSchema 校验、skills 数据源
 
 ---
 
@@ -44,11 +45,19 @@
 | 看板 | 项目级共享任务板（agent/human 双向协作）；回收站软删除 + 60 天保留 + 7 天宽限（与看板会话同口径）；导出/导入整板原子重建；**P1 列引用一致性**：add/move/import/删列全路径统一校验列存在（悬空列卡片此前静默不可见且冻结列配置删除，死锁已解）；**merge 恢复**：回收站看板可合并进任意现有看板（缺失列追加、卡片并入、源板移除，单事务），不再 409 死胡同 |
 | 前端架构 | native-router（类型化路由表 + TypedLink + navigateTo）+ fetch-fun HTTP 管道（timeout/重试/认证）+ @/ 别名 + 巨型组件拆分（useChat 858→517、SessionList 1227→539 等）；haze-ui 1.30 组件层 + react-use-control 受控控件统一（SyncedInput/Select/Textarea 包装，0 处直接使用 haze 控件）+ haze 双令牌体系 |
 | 预算暂停标记 | 预算超支暂停原因写入会话 metadata（budgetPauseReason）；热更新/重启后 run 重建时消费标记还原 budgetPauseTriggered（单次语义），用户确认继续后不被同一超支原因二次暂停 |
+| MCP 客户端（spec §6） | `src/mcp/` 完整实现：stdio（换行分帧 JSON-RPC）+ streamable HTTP/SSE 两种传输、initialize 握手、tools/list 发现、`mcp__<server>__<tool>` 命名空间适配进 ToolRegistry（权限 ask）、逐台隔离失败不拖垮启动；全局作用域始终连接、项目作用域仅项目已信任时连接（与插件/工作流同口径）；CLI 与 serve 双宿主接入，serve 关闭统一断开 |
+| DAP 宿主接线（spec §21） | `src/dap/spawn.ts` createDebugSpawn：适配器映射（node→npx js-debug、python→debugpy.adapter、go→dlv dap、lldb→lldb-dap，未知 id 视为命令名）；CLI/chat/workflow 三通道注入真实 spawn（此前恒报「no debug adapter spawn is wired」）；manager.start 120s initialize 超时、失败杀子进程；spawn 失败不再击穿进程 |
+| 插件 hook 挂载点 | HookMap 全部挂载点已接 fire 点：agent:start/end（runAgent 广播，finally 保证 end）、session:create/fork（createSession/forkSession 可选 hooks 参数，提交后广播）、config:resolve（initPlugins 激活后链式改写，产物随 InitPluginsResult 返回供宿主运行时消费） |
+| 子 agent outputSchema | yield 收集器对 AgentDefinition.outputSchema 做 JSON Schema 校验（复用 tools/validate.ts）：非法抛错 → yield 工具折成 error 反馈给模型，可修正重试；合法才入收集数组回传父 agent |
+| 技能发现 | `src/core/skills.ts` discoverSkills：项目 `.c0de/skills/` + 全局 `<config>/skills/` 下含 SKILL.md 的目录，frontmatter name 优先；三通道注入 LoopDeps.skills → system prompt `## Loaded Skills` 段（此前恒 `skills: []` 死占位） |
 
 ## 四、已知限制（按设计取舍）
 
 - CLI 与 Web 共享单写者 PGLite：serve 运行期间 `c0de chat`/`sessions` 被拒（给出 Web 地址与 `--temp` 出口）。根治需 CLI 经 serve HTTP API 转发（设备 token 不在 CLI 侧，需先做 CLI 侧认证设计），暂缓。
 - 本地数据无界增长：web/CLI 持久会话永不清理、`usage_events` append-only。无磁盘管理面板，低优先级。
+- LLM 协议仅 openai-compat 单协议：Anthropic/Gemini/Bedrock 原生协议、模型能力注册表（§4.5）未实现（设计 §25 后续迭代）。
+- PWA 移动端增强未实现：安装引导、语音输入、推送通知、Web Share、离线消息队列（manifest/SW 基建已就绪）。
+- npm 插件源（`c0de-plugin-*`）未实现：`c0de plugin install` 只写 enabled 名单。
 - 推送通知未实现（README 未承诺）。
 - 远程访问需显式配置（`--host 0.0.0.0` + `security.allowedOrigins`/token）。
 - 看板无「删除活动看板」能力（设计取舍：看板只在项目删除时软删；恢复走 merge 模式后不再需要该能力）。

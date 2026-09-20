@@ -205,7 +205,17 @@ function createSessionRoute(ctx: ServerContext): Hono {
         '创建会话必须指定项目：传 directory（自动解析）或 projectId',
       )
     }
-    const session = await createSession(ctx.db, title, projectId)
+    const session = await createSession(
+      ctx.db,
+      title,
+      projectId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ctx.hookRunner,
+    )
     return c.json(session, 201)
   })
 
@@ -332,7 +342,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
       messageIndex = messages.length - 1
     }
     try {
-      const forked = await forkSession(ctx.db, id, messageIndex)
+      const forked = await forkSession(ctx.db, id, messageIndex, ctx.hookRunner)
       return c.json(forked, 201)
     } catch (error) {
       // 分支点越界是客户端索引/分页 bug → 400 并透出明确语义；归 404 会误导排查

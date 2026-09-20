@@ -8,6 +8,7 @@ export {
 } from './protocol.js'
 export type { DebugSessionManager, DebugSpawn } from './session.js'
 export { createDebugSessionManager, dapVariables } from './session.js'
+export { ADAPTER_COMMANDS, createDebugSpawn, resolveAdapterCommand } from './spawn.js'
 export { createProcessTransport } from './transport.js'
 export type {
   Breakpoint,

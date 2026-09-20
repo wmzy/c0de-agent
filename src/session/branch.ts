@@ -1,6 +1,7 @@
 import { and, eq, isNull, lte } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { compactionArchives, type sessionEntries, sessions } from '../db/schema.js'
+import type { HookRunner } from '../plugins/types.js'
 import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
 import { getEntries, insertEntry } from './message.js'
@@ -72,7 +73,12 @@ function entryToRow(e: SessionEntry, sessionId: string): typeof sessionEntries.$
 
 /** Fork a session at a message index — copies all entries (messages + tool pairs)
  *  up to and including the branch point message, plus latest file snapshots. */
-async function forkSession(handle: DB, sessionId: string, messageIndex: number): Promise<Session> {
+async function forkSession(
+  handle: DB,
+  sessionId: string,
+  messageIndex: number,
+  hooks?: HookRunner,
+): Promise<Session> {
   const source = await getSession(handle, sessionId)
   if (!source) throw new Error(`Session not found: ${sessionId}`)
 
@@ -197,6 +203,14 @@ async function forkSession(handle: DB, sessionId: string, messageIndex: number):
     return created
   })
 
+  if (hooks) {
+    try {
+      // 事务提交后再广播（hook 处理器不做 DB 写回调，避免事务内嵌套 IO）
+      await hooks.fireHooks('session:fork', { source, fork: updated })
+    } catch {
+      // 广播失败不阻断分支返回
+    }
+  }
   return updated
 }
 

@@ -28,6 +28,8 @@ type InitPluginsOptions = {
 type InitPluginsResult = {
   pluginRegistry: PluginRegistry
   hookRunner: HookRunner
+  /** config:resolve hook 链之后的最终配置（无 handler 时为传入的 config 原引用）。 */
+  config: Config
 }
 
 /**
@@ -72,7 +74,16 @@ async function initPlugins(opts: InitPluginsOptions): Promise<InitPluginsResult>
     await activatePlugin(pluginRegistry, plugin, services)
   }
 
-  return { pluginRegistry, hookRunner }
+  // config:resolve hook（HookMap 承诺的挂载点）：插件激活后对最终合并配置做链式
+  // 改写（增补默认值/注入运行时密钥等）。handler 返回 false 视为「保持原配置」。
+  // 结果随 InitPluginsResult.config 返回，宿主用于后续运行时消费（权限/预算/auth/
+  // 调度器等）。注册表（llm/tool）在 resolve 之前构建、不重建——provider 运行时
+  // 变更本就需要重启，与 Web PATCH「providers 改动提示重启」的既有语义一致。
+  let resolvedConfig = opts.config
+  const hookResult = await hookRunner.runHooks('config:resolve', { config: opts.config })
+  if (hookResult !== false) resolvedConfig = hookResult.config
+
+  return { pluginRegistry, hookRunner, config: resolvedConfig }
 }
 
 export type { InitPluginsOptions, InitPluginsResult }
