@@ -107,8 +107,10 @@ function checkType(type: string, value: unknown, path: string): string | null {
       if (typeof value !== 'string') return `${label}: expected string, got ${typeof value}`
       break
     case 'number':
-      if (typeof value !== 'number' || Number.isNaN(value)) {
-        return `${label}: expected number, got ${typeof value}`
+      // JSON.parse('1e999') → Infinity 可真实到达（typeof number 且非 NaN），
+      // 放行后进入 slice/setTimeout/max() 等算术即静默错误行为——一律拒绝。
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return `${label}: expected finite number, got ${typeof value}`
       }
       break
     case 'integer':

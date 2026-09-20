@@ -10,6 +10,7 @@ export {
   KanbanCardNotFoundError,
   KanbanColumnInUseError,
   KanbanColumnNotFoundError,
+  KanbanInvalidPositionError,
   KanbanInvalidPriorityError,
   listDeletedKanbanBoards,
   mergeKanbanBoard,

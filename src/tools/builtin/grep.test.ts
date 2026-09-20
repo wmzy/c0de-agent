@@ -95,6 +95,26 @@ describe('grepTool', () => {
     expect(neg._tag).toBe('error')
   })
 
+  // 回归（同型扩展）：maxResults=1e999 → Infinity 使「matches.length >= max」
+  // 恒 false，上限静默失效、返回全部结果；小数同理无上限语义。显式报错供自纠。
+  it('rejects non-integer maxResults instead of silently disabling the cap', async () => {
+    await writeFile(join(workDir, 'a.ts'), 'match\nmatch\nmatch\nmatch\nmatch\n')
+    // JSON 里模型可写 1e999，JSON.parse 后即 Number.POSITIVE_INFINITY。
+    const inf = await grepTool.execute(
+      { pattern: 'match', maxResults: Number.POSITIVE_INFINITY },
+      ctx,
+    )
+    expect(inf._tag).toBe('error')
+    if (inf._tag === 'error') {
+      expect(inf.error).toContain('maxResults')
+    }
+    const frac = await grepTool.execute({ pattern: 'match', maxResults: 2.5 }, ctx)
+    expect(frac._tag).toBe('error')
+    if (frac._tag === 'error') {
+      expect(frac.error).toContain('maxResults')
+    }
+  })
+
   it('returns empty for no matches', async () => {
     await writeFile(join(workDir, 'a.ts'), 'nothing\n')
     const result = await grepTool.execute({ pattern: 'xyz123' }, ctx)

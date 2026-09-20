@@ -64,6 +64,15 @@ class KanbanInvalidPriorityError extends Error {
   }
 }
 
+/** 非有限 position（如 JSON 1e999 → Infinity）。
+ *  写入 position 列后 max(position) 恒 Infinity，后续追加卡片全部同值并列、
+ *  排序静默失效且无法自愈——入口显式拒绝。 */
+class KanbanInvalidPositionError extends Error {
+  constructor(public readonly value: number) {
+    super(`position 必须为有限数字，收到 ${value}`)
+  }
+}
+
 /** 卡片不存在（update/move 目标 id 无效）。 */
 class KanbanCardNotFoundError extends Error {
   constructor(public readonly cardId: string) {
@@ -248,6 +257,9 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     },
 
     async moveCard(id, columnId, position?): Promise<KanbanCard> {
+      if (position !== undefined && !Number.isFinite(position)) {
+        throw new KanbanInvalidPositionError(position)
+      }
       const [card] = await db
         .select({ boardId: kanbanCards.boardId })
         .from(kanbanCards)
@@ -370,6 +382,7 @@ export {
   KanbanCardNotFoundError,
   KanbanColumnInUseError,
   KanbanColumnNotFoundError,
+  KanbanInvalidPositionError,
   KanbanInvalidPriorityError,
 }
 

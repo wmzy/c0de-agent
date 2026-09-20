@@ -102,6 +102,34 @@ describe('bashTool', () => {
     }
   })
 
+  // 回归（同型扩展）：setTimeout 把 0/负数/Infinity（1e999）全部钳到 ~1ms——
+  // 命令刚 spawn 即被杀，模型收到「timeout after Infinityms」这类误导性错误，
+  // 无法区分「自己传了非法值」与「命令真超时」。显式报错供自纠。
+  it('rejects a non-positive timeout instead of killing the command instantly', async () => {
+    const zero = await bashTool.execute({ command: 'echo hi', timeout: 0 }, ctx)
+    expect(zero._tag).toBe('error')
+    if (zero._tag === 'error') {
+      expect(zero.error).toContain('timeout must be a positive integer')
+    }
+    const neg = await bashTool.execute({ command: 'echo hi', timeout: -5 }, ctx)
+    expect(neg._tag).toBe('error')
+    if (neg._tag === 'error') {
+      expect(neg.error).toContain('timeout must be a positive integer')
+    }
+  })
+
+  it('rejects a non-integer timeout instead of clamping to 1ms', async () => {
+    // JSON 里模型可写 1e999，JSON.parse 后即 Number.POSITIVE_INFINITY。
+    const inf = await bashTool.execute(
+      { command: 'echo hi', timeout: Number.POSITIVE_INFINITY },
+      ctx,
+    )
+    expect(inf._tag).toBe('error')
+    if (inf._tag === 'error') {
+      expect(inf.error).toContain('timeout must be a positive integer')
+    }
+  })
+
   it('handles abort signal', async () => {
     const ac = new AbortController()
     const abortCtx: ToolContext = {

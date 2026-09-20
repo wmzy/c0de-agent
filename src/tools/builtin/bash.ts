@@ -38,7 +38,7 @@ export const bashTool: ToolDef = {
     properties: {
       command: { type: 'string', description: 'Shell command to execute.' },
       cwd: { type: 'string', description: 'Working directory (default: ctx.cwd).' },
-      timeout: { type: 'number', description: 'Timeout in milliseconds (default: 120000).' },
+      timeout: { type: 'integer', description: 'Timeout in milliseconds (default: 120000).' },
       env: {
         type: 'object',
         description: 'Additional environment variables.',
@@ -50,6 +50,15 @@ export const bashTool: ToolDef = {
   permission: 'ask',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { command, cwd, timeout = DEFAULT_TIMEOUT, env } = input as BashInput
+    // setTimeout 把 0/负数/Infinity（1e999）/NaN 全部钳到 ~1ms——命令刚 spawn
+    // 即被杀，模型收到「timeout after Infinityms」这类误导性错误，无法区分
+    // 「自己传了非法值」与「命令真超时」。显式报错供自纠。
+    if (!Number.isInteger(timeout) || timeout < 1) {
+      return {
+        _tag: 'error',
+        error: `bash: timeout must be a positive integer (milliseconds), got ${timeout}`,
+      }
+    }
     // 与 read/write/edit/glob/grep 同口径：cwd 必须落在工作目录内。此前直接
     // resolve(ctx.cwd, cwd) 放行绝对路径/../——bash 是任意命令执行面，越界即
     // 在工作目录外执行（如读取 ~/.ssh），且用户偏好可将 bash 设为 auto。

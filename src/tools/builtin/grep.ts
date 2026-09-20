@@ -90,7 +90,7 @@ export const grepTool: ToolDef = {
       pattern: { type: 'string', description: 'Regular expression pattern.' },
       path: { type: 'string', description: 'Base directory to search (default: cwd).' },
       caseSensitive: { type: 'boolean', description: 'Case-sensitive search (default: true).' },
-      maxResults: { type: 'number', description: 'Maximum number of matches to return.' },
+      maxResults: { type: 'integer', description: 'Maximum number of matches to return.' },
     },
     required: ['pattern'],
   },
@@ -98,9 +98,14 @@ export const grepTool: ToolDef = {
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { pattern, path, caseSensitive = true, maxResults = 200 } = input as GrepInput
     // maxResults <= 0 会让「matches.length >= max」在首个匹配后立即成立，
-    // 静默返回 1 条且 truncated:true（语义应为最多 N 条）。显式报错供模型自纠。
-    if (maxResults < 1) {
-      return { _tag: 'error', error: `grep: maxResults must be >= 1, got ${maxResults}` }
+    // 静默返回 1 条且 truncated:true（语义应为最多 N 条）。
+    // Infinity（1e999）使比较恒 false、上限静默失效；小数语义无定义。
+    // 显式报错供模型自纠。
+    if (!Number.isInteger(maxResults) || maxResults < 1) {
+      return {
+        _tag: 'error',
+        error: `grep: maxResults must be an integer >= 1, got ${maxResults}`,
+      }
     }
     // 与 read/write/edit 同口径：path 必须落在 cwd 内——permission 是 auto，
     // 若放行绝对路径/../，模型可在无确认下读取工作目录外文件内容（如 ~/.ssh）。

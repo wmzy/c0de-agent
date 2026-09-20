@@ -78,6 +78,36 @@ describe('readTool', () => {
     }
   })
 
+  // 回归（同型扩展）：JSON 可表示 Infinity（模型输出 1e999 → JSON.parse 得到
+  // Infinity）与小数——slice 对非整数的处理是静默截断/错位：offset=Infinity
+  // 返回空串、offset=2.5 被截成 2 静默错行、limit=1e999 语义失效。显式报错。
+  it('rejects a fractional offset instead of silently shifting lines', async () => {
+    await writeFile(join(workDir, 'test.txt'), 'line1\nline2\nline3\nline4\nline5')
+    const result = await readTool.execute({ path: 'test.txt', offset: 2.5 }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('offset')
+    }
+  })
+
+  it('rejects Infinity offset/limit instead of silently returning the wrong slice', async () => {
+    await writeFile(join(workDir, 'test.txt'), 'line1\nline2\nline3\nline4\nline5')
+    // JSON 里模型可写 1e999，JSON.parse 后即 Number.POSITIVE_INFINITY。
+    const off = await readTool.execute({ path: 'test.txt', offset: Number.POSITIVE_INFINITY }, ctx)
+    expect(off._tag).toBe('error')
+    if (off._tag === 'error') {
+      expect(off.error).toContain('offset')
+    }
+    const lim = await readTool.execute(
+      { path: 'test.txt', offset: 1, limit: Number.POSITIVE_INFINITY },
+      ctx,
+    )
+    expect(lim._tag).toBe('error')
+    if (lim._tag === 'error') {
+      expect(lim.error).toContain('limit')
+    }
+  })
+
   it('returns error for non-existent file', async () => {
     const result = await readTool.execute({ path: 'nope.txt' }, ctx)
     expect(result._tag).toBe('error')

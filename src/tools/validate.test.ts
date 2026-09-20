@@ -50,6 +50,18 @@ describe('validateInput', () => {
     expect(validateInput(schema, '42').valid).toBe(false)
   })
 
+  // 回归：JSON.parse('1e999') → Infinity 可经模型 JSON 参数真实到达。此前
+  // typeof Infinity === 'number' 且非 NaN，通过校验后进入 slice/setTimeout/
+  // max() 等算术，静默产生错误行为（read 空切片、bash 1ms 秒杀、kanban
+  // max(position) 恒 Infinity）。
+  it('rejects non-finite numbers for number type', () => {
+    const schema: JSONSchema = { type: 'number' }
+    expect(validateInput(schema, Number.POSITIVE_INFINITY).valid).toBe(false)
+    expect(validateInput(schema, Number.NEGATIVE_INFINITY).valid).toBe(false)
+    expect(validateInput(schema, Number.NaN).valid).toBe(false)
+    expect(validateInput(schema, 42).valid).toBe(true)
+  })
+
   it('validates boolean type', () => {
     const schema: JSONSchema = { type: 'boolean' }
     expect(validateInput(schema, true)).toEqual({ valid: true })

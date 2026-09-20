@@ -10,6 +10,7 @@ import {
   getDeletedKanbanBoard,
   KanbanColumnInUseError,
   KanbanColumnNotFoundError,
+  KanbanInvalidPositionError,
   KanbanInvalidPriorityError,
   listDeletedKanbanBoards,
   mergeKanbanBoard,
@@ -282,6 +283,23 @@ describe('moveCard', () => {
     // 卡片留在原列，未被静默移出可见范围。
     const board = await store.getBoard()
     expect(board.cards[0]?.columnId).toBe('todo')
+  })
+
+  // 回归：position=1e999 → JSON.parse 得到 Infinity（typeof number，绕过
+  // REST 层 typeof 校验）写进 position 列——max(position) 恒 Infinity，
+  // 此后所有追加卡片全部同值并列、排序静默失效且无法自愈。
+  it('rejects a non-finite position instead of poisoning max(position) ordering', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+    const card = await store.addCard({ title: 'x', columnId: 'todo' })
+
+    await expect(store.moveCard(card.id, 'done', Number.POSITIVE_INFINITY)).rejects.toThrow(
+      KanbanInvalidPositionError,
+    )
+    // 卡片留在原列，position 未被污染。
+    const board = await store.getBoard()
+    expect(board.cards[0]?.columnId).toBe('todo')
+    expect(board.cards[0]?.position).toBe(1000)
   })
 })
 

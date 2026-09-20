@@ -25,8 +25,8 @@ export const readTool: ToolDef = {
     type: 'object',
     properties: {
       path: { type: 'string', description: 'File path (relative to cwd or absolute).' },
-      offset: { type: 'number', description: 'Starting line number (1-indexed). Default: 1.' },
-      limit: { type: 'number', description: 'Maximum number of lines to read.' },
+      offset: { type: 'integer', description: 'Starting line number (1-indexed). Default: 1.' },
+      limit: { type: 'integer', description: 'Maximum number of lines to read.' },
     },
     required: ['path'],
   },
@@ -34,14 +34,18 @@ export const readTool: ToolDef = {
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { path, offset, limit } = input as ReadInput
 
-    // offset 为 1-indexed 行号；offset < 1 或 limit < 0 会经 (offset ?? 1) - 1
+    // offset 为 1-indexed 行号。offset < 1 或 limit < 0 会经 (offset ?? 1) - 1
     // 产生负 slice 起点/终点，静默返回错位内容（如 offset=0 → 最后一行）。
-    // 显式报错让模型自纠，而非喂给它错误切片。
-    if (offset !== undefined && offset < 1) {
-      return { _tag: 'error', error: `read: offset must be >= 1 (1-indexed), got ${offset}` }
+    // JSON 还可表示 Infinity（1e999）与小数：slice 对非整数静默截断/错位
+    // （offset=Infinity → 空串、offset=2.5 → 错行）。一律显式报错让模型自纠。
+    if (offset !== undefined && (!Number.isInteger(offset) || offset < 1)) {
+      return {
+        _tag: 'error',
+        error: `read: offset must be an integer >= 1 (1-indexed), got ${offset}`,
+      }
     }
-    if (limit !== undefined && limit < 0) {
-      return { _tag: 'error', error: `read: limit must be >= 0, got ${limit}` }
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
+      return { _tag: 'error', error: `read: limit must be an integer >= 0, got ${limit}` }
     }
 
     // 内部 URL scheme（spec §3.10）：skill://, agent://, pr:// 等。

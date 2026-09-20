@@ -10,6 +10,7 @@ import {
   KanbanCardNotFoundError,
   KanbanColumnInUseError,
   KanbanColumnNotFoundError,
+  KanbanInvalidPositionError,
   KanbanInvalidPriorityError,
   listDeletedKanbanBoards,
   mergeKanbanBoard,
@@ -220,7 +221,8 @@ function createKanbanRoute(ctx: ServerContext): Hono {
         priority: (card.priority === 'high' || card.priority === 'medium' || card.priority === 'low'
           ? card.priority
           : 'medium') as KanbanPriority,
-        position: typeof card.position === 'number' ? card.position : 0,
+        position:
+          typeof card.position === 'number' && Number.isFinite(card.position) ? card.position : 0,
         labels: Array.isArray(card.labels)
           ? (card.labels as string[]).filter((l): l is string => typeof l === 'string')
           : [],
@@ -323,6 +325,9 @@ function createKanbanRoute(ctx: ServerContext): Hono {
       }
       if (err instanceof KanbanInvalidPriorityError) {
         return apiError(c, 400, 'INVALID_PRIORITY', err.message)
+      }
+      if (err instanceof KanbanInvalidPositionError) {
+        return apiError(c, 400, 'INVALID_POSITION', err.message)
       }
       throw err
     }
