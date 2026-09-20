@@ -39,22 +39,66 @@ function getCurrentVersion(): string {
   return DEFAULT_VERSION
 }
 
-/** 取 semver 的数值核心（去前导 v 与 prerelease）。 */
-function semverCore(v: string): number[] {
-  return (v.replace(/^v/, '').split('-')[0] ?? '').split('.').map(Number)
+/** 解析 semver：core（X.Y.Z 数值数组）+ prerelease 标识符数组。
+ *  前导 v 与 build metadata（+ 后缀）剥离；core 非「三个十进制非负整数」返回 null。
+ *  此前只取 split('-')[0]：prerelease 被静默丢弃（beta 与正式版判相等、beta 间
+ *  不分先后），且 '1.2.3+build' 的 patch 位解析为 NaN——NaN 参与比较恒返回 0，
+ *  带 build metadata 的版本与任何版本判相等、永不提示更新。 */
+function parseSemver(v: string): { core: number[]; prerelease: string[] } | null {
+  const cleaned = v.trim().replace(/^v/, '')
+  const noBuild = cleaned.replace(/\+.*$/, '')
+  const dash = noBuild.indexOf('-')
+  const coreStr = dash === -1 ? noBuild : noBuild.slice(0, dash)
+  const coreParts = coreStr.split('.')
+  if (coreParts.length !== 3 || coreParts.some((p) => !/^\d+$/.test(p))) return null
+  return {
+    core: coreParts.map(Number),
+    prerelease: dash === -1 ? [] : noBuild.slice(dash + 1).split('.'),
+  }
 }
 
-/** 语义化版本比较：a < b → -1，a == b → 0，a > b → 1。忽略前导 v 和 prerelease。 */
+/**
+ * 比较 prerelease 标识符（semver §11 优先级规则）：
+ * 数字标识符按数值、非数字按字典序，数字恒小于非数字；更短前缀为更小。
+ */
+function comparePrerelease(a: string[], b: string[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const xNum = /^\d+$/.test(x) ? Number(x) : null
+    const yNum = /^\d+$/.test(y) ? Number(y) : null
+    if (xNum !== null && yNum !== null) {
+      if (xNum !== yNum) return xNum < yNum ? -1 : 1
+    } else if (xNum !== null) {
+      return -1
+    } else if (yNum !== null) {
+      return 1
+    } else if (x !== y) {
+      return x < y ? -1 : 1
+    }
+  }
+  return 0
+}
+
+/** 语义化版本比较：a < b → -1，a == b → 0，a > b → 1。
+ *  前导 v 与 build metadata 忽略；prerelease 低于同 core 的正式版。
+ *  无法解析的版本保守返回 0（不误报更新）。 */
 function compareSemver(a: string, b: string): number {
-  const pa = semverCore(a)
-  const pb = semverCore(b)
+  const pa = parseSemver(a)
+  const pb = parseSemver(b)
+  if (!pa || !pb) return 0
   for (let i = 0; i < 3; i++) {
-    const x = pa[i] ?? 0
-    const y = pb[i] ?? 0
+    const x = pa.core[i] ?? 0
+    const y = pb.core[i] ?? 0
     if (x < y) return -1
     if (x > y) return 1
   }
-  return 0
+  if (pa.prerelease.length === 0 && pb.prerelease.length === 0) return 0
+  if (pa.prerelease.length === 0) return 1
+  if (pb.prerelease.length === 0) return -1
+  return comparePrerelease(pa.prerelease, pb.prerelease)
 }
 
 /** 查询 npm registry 判断是否有新版本。网络/解析失败时返回 hasUpdate:false，绝不抛错。 */

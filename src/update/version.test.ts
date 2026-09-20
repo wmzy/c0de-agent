@@ -16,9 +16,36 @@ describe('compareSemver', () => {
     expect(compareSemver('0.9.9', '1.0.0')).toBe(-1)
   })
 
-  it('strips leading v and prerelease suffix', () => {
+  it('strips leading v', () => {
     expect(compareSemver('v1.2.3', '1.2.3')).toBe(0)
-    expect(compareSemver('1.0.0-beta', '1.0.0')).toBe(0)
+  })
+
+  // 复现：prerelease 被静默丢弃——'1.0.0-beta' 与 '1.0.0' 判相等。
+  // beta 用户永远收不到同版本正式版发布通知。
+  it('orders prerelease below release', () => {
+    expect(compareSemver('1.0.0-beta', '1.0.0')).toBe(-1)
+    expect(compareSemver('1.0.0', '1.0.0-beta')).toBe(1)
+    expect(compareSemver('1.0.0-rc.1', '1.0.0')).toBe(-1)
+  })
+
+  it('orders prereleases by dot identifiers', () => {
+    expect(compareSemver('1.0.0-alpha', '1.0.0-beta')).toBe(-1)
+    expect(compareSemver('1.0.0-beta.2', '1.0.0-beta.11')).toBe(-1)
+    expect(compareSemver('1.0.0-beta.2', '1.0.0-beta.2')).toBe(0)
+    // 更短前缀为更小：1.0.0-alpha < 1.0.0-alpha.1
+    expect(compareSemver('1.0.0-alpha', '1.0.0-alpha.1')).toBe(-1)
+    expect(compareSemver('1.0.0-alpha.1', '1.0.0-alpha')).toBe(1)
+  })
+
+  // 复现：build metadata 未剥离——'1.2.3+build' 的 patch 位解析为
+  // Number('3+build') = NaN，与任何版本比较恒判相等 → 永不提示更新。
+  it('ignores build metadata', () => {
+    expect(compareSemver('1.2.3+build.4', '1.2.3')).toBe(0)
+    expect(compareSemver('1.2.3+build.4', '1.3.0')).toBe(-1)
+    expect(compareSemver('1.3.0', '1.2.3+build.4')).toBe(1)
+    // NaN 落在 patch 位：'1.2.3+build' 与 '1.2.4' 比较时走到第三段才见 NaN
+    expect(compareSemver('1.2.3+build.4', '1.2.4')).toBe(-1)
+    expect(compareSemver('1.2.4', '1.2.3+build.4')).toBe(1)
   })
 })
 
