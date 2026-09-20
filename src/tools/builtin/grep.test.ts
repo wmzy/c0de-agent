@@ -7,6 +7,7 @@ import { grepTool } from './grep.js'
 
 let workDir: string
 let ctx: ToolContext
+const outsideDirs: string[] = []
 
 beforeEach(async () => {
   workDir = join(tmpdir(), `grep-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -20,6 +21,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(workDir, { recursive: true, force: true })
+  for (const dir of outsideDirs.splice(0)) {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 describe('grepTool', () => {
@@ -94,5 +98,34 @@ describe('grepTool', () => {
   it('has correct tool definition', () => {
     expect(grepTool.name).toBe('grep')
     expect(grepTool.permission).toBe('auto')
+  })
+
+  // 回归：path 参数此前未过 safeResolve（read/write/edit 同口径），绝对路径或
+  // ../ 可逃逸 cwd——permission:auto 下静默读取工作目录外文件内容（如 ~/.ssh）。
+  it('rejects a relative path that escapes the working directory', async () => {
+    const outside = join(tmpdir(), `grep-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    outsideDirs.push(outside)
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'leak.txt'), 'PRIVATE KEY MATERIAL\n')
+    const result = await grepTool.execute(
+      { pattern: 'PRIVATE', path: join('..', outside.split('/').pop() ?? '') },
+      ctx,
+    )
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
+  it('rejects an absolute path outside the working directory', async () => {
+    const outside = join(tmpdir(), `grep-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    outsideDirs.push(outside)
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'leak.txt'), 'PRIVATE KEY MATERIAL\n')
+    const result = await grepTool.execute({ pattern: 'PRIVATE', path: outside }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
   })
 })

@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
+import { join, relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { safeResolve } from '../../shared/utils/path.js'
 import type { GrepInput, GrepMatch } from '../types.js'
 
 /** Directories always skipped during search. */
@@ -96,7 +97,12 @@ export const grepTool: ToolDef = {
   permission: 'auto',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { pattern, path, caseSensitive = true, maxResults = 200 } = input as GrepInput
-    const basePath = path ? resolve(ctx.cwd, path) : ctx.cwd
+    // 与 read/write/edit 同口径：path 必须落在 cwd 内——permission 是 auto，
+    // 若放行绝对路径/../，模型可在无确认下读取工作目录外文件内容（如 ~/.ssh）。
+    const basePath = path ? safeResolve(ctx.cwd, path) : ctx.cwd
+    if (basePath === null) {
+      return { _tag: 'error', error: `Path "${path}" escapes the working directory` }
+    }
 
     let regex: RegExp
     try {

@@ -7,6 +7,7 @@ import { globTool, globToRegex } from './glob.js'
 
 let workDir: string
 let ctx: ToolContext
+const outsideDirs: string[] = []
 
 beforeEach(async () => {
   workDir = join(tmpdir(), `glob-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -20,6 +21,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(workDir, { recursive: true, force: true })
+  for (const dir of outsideDirs.splice(0)) {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 async function setupFiles() {
@@ -119,5 +123,34 @@ describe('globTool', () => {
   it('has correct tool definition', () => {
     expect(globTool.name).toBe('glob')
     expect(globTool.permission).toBe('auto')
+  })
+
+  // 回归：path 参数此前未过 safeResolve（read/write/edit 同口径），绝对路径或
+  // ../ 可逃逸 cwd——permission:auto 下静默枚举工作目录外文件（如 ~/.ssh）。
+  it('rejects a relative path that escapes the working directory', async () => {
+    const outside = join(tmpdir(), `glob-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    outsideDirs.push(outside)
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'secret.txt'), 'x')
+    const result = await globTool.execute(
+      { pattern: '**/*', path: join('..', outside.split('/').pop() ?? '') },
+      ctx,
+    )
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
+  it('rejects an absolute path outside the working directory', async () => {
+    const outside = join(tmpdir(), `glob-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    outsideDirs.push(outside)
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'secret.txt'), 'x')
+    const result = await globTool.execute({ pattern: '**/*', path: outside }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
   })
 })
