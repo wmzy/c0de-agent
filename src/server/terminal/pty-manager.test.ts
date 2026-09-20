@@ -103,8 +103,6 @@ describe('detectShell', () => {
   it('process.env.SHELL 缺失时 fallback 到 userInfo().shell（/etc/passwd 登录 shell）', () => {
     delete process.env.SHELL
     expect(detectShell()).toBe(userInfo().shell)
-    // 不应错误回退到硬编码 /bin/bash（除非用户登录 shell 真是 bash）
-    expect(detectShell()).not.toBe('/bin/bash')
   })
 })
 
