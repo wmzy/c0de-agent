@@ -50,6 +50,25 @@ describe('estimateMessageTokens', () => {
     expect(estimateMessageTokens(content)).toBeGreaterThan(0)
   })
 
+  // 回归：image 部分是 MessageContent 联合的正式成员，此前 switch 无对应 case——
+  // 图片消息恒按 0 token 计，预算护栏/压缩窗口把图片轮次当免费（真实开销约
+  // 1100 token/张），预算与压缩口径系统性低估。
+  it('counts image parts (provider charges ~1100 tokens per image)', () => {
+    const content: MessageContent[] = [
+      { _tag: 'image', mediaType: 'image/png', data: 'AAAA' },
+      { _tag: 'image', mediaType: 'image/png', data: 'BBBB' },
+    ]
+    expect(estimateMessageTokens(content)).toBe(1100 * 2)
+  })
+
+  it('image-only message counts toward the estimate', () => {
+    const content: MessageContent[] = [
+      { _tag: 'text', text: 'describe this' },
+      { _tag: 'image', mediaType: 'image/png', data: 'AAAA' },
+    ]
+    expect(estimateMessageTokens(content)).toBeGreaterThan(1100)
+  })
+
   it('returns 0 for empty content', () => {
     expect(estimateMessageTokens([])).toBe(0)
   })

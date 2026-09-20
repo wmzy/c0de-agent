@@ -117,6 +117,27 @@ describe('collectShakeRegions — tool results', () => {
     expect(regions[0]?.messageId).toBe(older.id)
   })
 
+  // 回归：本模块私有的 messageTokens 与 token.ts 同型同缺口——image 部分此前
+  // 计 0 token。最近一条是纯图片消息时，保护窗口被低估（图片轮次真实开销约
+  // 1100 token），更早的过期 tool_result 被误判为「保护窗口内」而逃过 shake。
+  it('最近图片消息的 token 计入保护窗口', () => {
+    const text = 'word '.repeat(160) // ~200 token
+    const older = toolResultMessage('bash', text)
+    const recent: Message = {
+      id: 'msg-img',
+      sessionId: 's',
+      role: 'user',
+      content: [{ _tag: 'image', mediaType: 'image/png', data: 'AAAA' }],
+      tokenCount: 0,
+      createdAt: 1,
+    }
+    // 图片按 1100 token 计后，保护窗口（90）被图片轮次独自覆盖——
+    // 更早的 tool_result 落出窗口，应被标记。
+    const regions = collectShakeRegions([older, recent], cfg({ protectTokens: 90 }))
+    expect(regions).toHaveLength(1)
+    expect(regions[0]?.messageId).toBe(older.id)
+  })
+
   it('已标记 shakenAt 的不重复标记', () => {
     const msg = toolResultMessage('bash', 'z'.repeat(800), { shakenAt: Date.now() })
     expect(collectShakeRegions([msg], cfg())).toHaveLength(0)

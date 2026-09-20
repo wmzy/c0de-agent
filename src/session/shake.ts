@@ -1,7 +1,7 @@
 import type { Message, MessageContent } from '../shared/types/message.js'
 import type { ToolResult } from '../shared/types/tool.js'
 import { headChars } from '../shared/utils/string.js'
-import { estimateTokens } from './token.js'
+import { estimateMessageTokens, estimateTokens } from './token.js'
 
 /** Rough token cost of a placeholder line; used only for the savings gate. */
 const PLACEHOLDER_TOKEN_ESTIMATE = 16
@@ -154,26 +154,12 @@ function mergeRanges(ranges: Array<{ start: number; end: number }>): Array<{
   return kept
 }
 
-/** 单条消息的 token 估算（优先用缓存的 tokenCount）。 */
+/** 单条消息的 token 估算（优先用缓存的 tokenCount）。
+ *  委托 token.ts 的 estimateMessageTokens：此前本模块持有一份同型私有实现，
+ *  与权威实现同步漂移（image 部分两处同缺、恒计 0），收敛后口径单源。 */
 function messageTokens(m: Message): number {
   if (m.tokenCount > 0) return m.tokenCount
-  let total = 0
-  for (const part of m.content) {
-    switch (part._tag) {
-      case 'text':
-      case 'thinking':
-      case 'steering':
-        total += estimateTokens(part.text)
-        break
-      case 'tool_call':
-        total += estimateTokens(JSON.stringify(part.input))
-        break
-      case 'tool_result':
-        total += estimateTokens(JSON.stringify(part.output))
-        break
-    }
-  }
-  return total
+  return estimateMessageTokens(m.content)
 }
 
 /** tool_result part 的输出文本。 */
