@@ -84,6 +84,56 @@ describe('globToRegex', () => {
     expect(re.test('file-b')).toBe(true)
     expect(re.test('file-abc')).toBe(false)
   })
+
+  // 字符类取反：glob 标准语法 [!...] 意为「类内字符除外」。此前首字符 ! 被当作
+  // 字面量直接拼进正则，[!0-9] 语义反转为「! 或数字」——静默匹配应排除的文件、
+  // 漏掉应命中的文件。
+  it('treats [!...] as negated character class', () => {
+    const re = globToRegex('src/*[!0-9].ts')
+    expect(re.test('src/a.ts')).toBe(true)
+    expect(re.test('src/a0.ts')).toBe(false)
+    expect(re.test('src/0.ts')).toBe(false)
+  })
+
+  // 字面 ^（bash 口径 ^ 无取反义）：此前裸透传进正则被 JS 解释为取反。
+  it('treats leading ^ in class as literal (bash semantics)', () => {
+    const re = globToRegex('src/[^a].ts')
+    expect(re.test('src/^.ts')).toBe(true)
+    expect(re.test('src/a.ts')).toBe(true)
+    expect(re.test('src/b.ts')).toBe(false)
+  })
+
+  // 非法/退化字符类此前让 new RegExp 抛 SyntaxError 击穿工具调用；
+  // 应降级为字面量匹配，绝不抛出。
+  it('never throws on degenerate char classes', () => {
+    const empty = globToRegex('[]')
+    expect(empty.test('[]')).toBe(true)
+    expect(empty.test('a')).toBe(false)
+    const reversed = globToRegex('[z-a].ts')
+    expect(reversed.test('[z-a].ts')).toBe(true)
+    expect(reversed.test('b.ts')).toBe(false)
+    // 类首 ] 是字面量成员（bash 口径）
+    const bracketMember = globToRegex('[]a]')
+    expect(bracketMember.test(']')).toBe(true)
+    expect(bracketMember.test('a')).toBe(true)
+    expect(bracketMember.test('b')).toBe(false)
+  })
+
+  // [!] 若按「取反后空类」翻译会退化为匹配任意字符（正则 [^] = 一切）；
+  // 应保持字面量 !。
+  it('keeps lone [!] literal', () => {
+    const re = globToRegex('[!]')
+    expect(re.test('!')).toBe(true)
+    expect(re.test('a')).toBe(false)
+  })
+
+  // 空花括号分支此前生成 (?:a|) 正则——空分支匹配空串，模式命中一切文件。
+  it('treats brace with empty alternative as literal', () => {
+    const re = globToRegex('{a,}.ts')
+    expect(re.test('{a,}.ts')).toBe(true)
+    expect(re.test('a.ts')).toBe(false)
+    expect(re.test('.ts')).toBe(false)
+  })
 })
 
 describe('globTool', () => {
@@ -145,7 +195,10 @@ describe('globTool', () => {
   // 回归：path 参数此前未过 safeResolve（read/write/edit 同口径），绝对路径或
   // ../ 可逃逸 cwd——permission:auto 下静默枚举工作目录外文件（如 ~/.ssh）。
   it('rejects a relative path that escapes the working directory', async () => {
-    const outside = join(tmpdir(), `glob-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const outside = join(
+      tmpdir(),
+      `glob-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    )
     outsideDirs.push(outside)
     await mkdir(outside, { recursive: true })
     await writeFile(join(outside, 'secret.txt'), 'x')
@@ -160,7 +213,10 @@ describe('globTool', () => {
   })
 
   it('rejects an absolute path outside the working directory', async () => {
-    const outside = join(tmpdir(), `glob-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const outside = join(
+      tmpdir(),
+      `glob-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    )
     outsideDirs.push(outside)
     await mkdir(outside, { recursive: true })
     await writeFile(join(outside, 'secret.txt'), 'x')

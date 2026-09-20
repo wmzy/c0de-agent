@@ -15,6 +15,11 @@ export function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${globFragment(pattern)}$`)
 }
 
+/** 把字面量文本转义为正则原文（用于降级路径：非法字符类/含空分支的花括号）。 */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** Convert a glob fragment (may appear inside brace alternation) to regex source.
  *  Recursive so wildcards inside {a,b} stay wildcards instead of being escaped
  *  as literals（此前 {*.spec.ts,*.test.ts} 恒不匹配任何文件）。 */
@@ -42,16 +47,57 @@ function globFragment(pattern: string): string {
         i++
       } else {
         const inner = pattern.slice(i + 1, end)
-        re += `(?:${inner.split(',').map(globFragment).join('|')})`
+        const alts = inner.split(',')
+        // 空分支（{a,}）会生成空交替 (?:a|)——空串匹配一切，静默过匹配。
+        // 含空分支整体降级为字面量（宁可零命中，不可命中一切）。
+        if (alts.some((alt) => alt.length === 0)) {
+          re += `\\{${escapeRegex(inner)}\\}`
+        } else {
+          re += `(?:${alts.map(globFragment).join('|')})`
+        }
         i = end + 1
       }
     } else if (c === '[') {
-      const end = pattern.indexOf(']', i)
+      // 类首 ] 是字面量成员（bash 口径：[]a] 匹配 ] 或 a）——跳过后找真正的闭合。
+      let end = pattern.indexOf(']', i)
+      if (end === i + 1) {
+        const realEnd = pattern.indexOf(']', i + 2)
+        if (realEnd !== -1) end = realEnd
+      }
       if (end === -1) {
         re += '\\['
         i++
       } else {
-        re += pattern.slice(i, end + 1)
+        const inner = pattern.slice(i + 1, end)
+        // [] 在 JS 是「空类恒不匹配」（合法但不产生任何命中）——语义为字面量。
+        if (inner === '') {
+          re += '\\[\\]'
+          i = end + 1
+          continue
+        }
+        // glob 取反语义：类首 ! 转为正则 ^；类首 ^ 在 bash 口径是字面量，
+        // 必须转义，否则被 JS 解释为取反（[!0-9]/[^a] 均曾静默语义反转）。
+        let cls = inner
+        if (cls.startsWith('!')) {
+          // 单独 [!]：取反空类在正则中是 [^]（匹配一切）——保持普通单成员类。
+          if (cls.length === 1) {
+            cls = '!'
+          } else {
+            cls = `^${cls.slice(1)}`
+          }
+        } else if (cls.startsWith('^')) {
+          cls = `\\^${cls.slice(1)}`
+        } else if (cls.startsWith(']')) {
+          cls = `\\]${cls.slice(1)}`
+        }
+        // 退化类（反向区间 [z-a] 等）此前直接拼进 new RegExp 抛 SyntaxError
+        // 击穿工具调用——探测编译失败时按字面量降级，绝不抛出。
+        try {
+          new RegExp(`^[${cls}]$`)
+          re += `[${cls}]`
+        } catch {
+          re += `\\[${escapeRegex(inner)}\\]`
+        }
         i = end + 1
       }
     } else if ('.+^$()|\\'.includes(c)) {

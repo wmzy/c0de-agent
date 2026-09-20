@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
+import { globToRegex } from '../../tools/builtin/glob.js'
 import type { AgentDependencies, AgentState } from '../types.js'
 import type { WorkflowAgentResult, WorkflowContext } from './types.js'
 
@@ -115,42 +116,15 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
 
 // ── 工具函数 ──
 
-/** 把 glob 模式编译为正则：双星号跨目录，单星号与问号不跨路径分隔符，其余字符转义。 */
-function globToRegExp(pattern: string): RegExp {
-  let re = ''
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i] ?? ''
-    if (ch === '*') {
-      if (pattern[i + 1] === '*') {
-        // `**/` 须能匹配零层目录（globstar 语义：src/**/*.ts 命中 src/a.ts）
-        if (pattern[i + 2] === '/') {
-          re += '(?:.*/)?'
-          i += 2
-        } else {
-          re += '.*'
-          i++
-        }
-      } else {
-        re += '[^/]*'
-      }
-    } else if (ch === '?') {
-      re += '[^/]'
-    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
-      re += `\\${ch}`
-    } else {
-      re += ch
-    }
-  }
-  return new RegExp(`^${re}$`)
-}
-
 /**
  * 递归 glob。模式含路径分隔符时按相对路径匹配（双星号跨目录，如「src 下任意层级的 .ts」）；
  * 不含分隔符时按文件名匹配（与旧行为兼容：星号 .ts 命中任意层级）。
+ * 模式翻译统一走 glob 工具的 globToRegex——此前本模块自带的翻译器不支持
+ * 字符类/花括号（静默零命中），两处语义发散已收敛为单一实现。
  */
 async function globRecursive(rootDir: string, pattern: string): Promise<string[]> {
   const results: string[] = []
-  const regex = globToRegExp(pattern)
+  const regex = globToRegex(pattern)
   const matchRel = pattern.includes('/')
 
   async function walk(dir: string): Promise<void> {

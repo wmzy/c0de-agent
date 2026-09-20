@@ -218,6 +218,31 @@ describe('buildWorkflowContext', () => {
     expect(shallow).toEqual(['src/a.ts'])
   })
 
+  // 发散回归：workflow 自带 glob 翻译器与 glob 工具语义不一致——字符类/花括号
+  // 被当作字面量转义，`src/*.{ts,tsx}`、`src/file[0-9].ts` 静默零命中，
+  // 工作流拿到「无文件」错误结论。
+  it('utils.glob 支持花括号与字符类（与 glob 工具同语义）', async () => {
+    await mkdir(join(tmpDir, 'src'), { recursive: true })
+    await writeFile(join(tmpDir, 'src', 'a.ts'), 'x')
+    await writeFile(join(tmpDir, 'src', 'b.tsx'), 'y')
+    await writeFile(join(tmpDir, 'src', 'c.md'), 'z')
+    await writeFile(join(tmpDir, 'src', 'file1.ts'), '1')
+    await writeFile(join(tmpDir, 'src', 'file2.ts'), '2')
+    await writeFile(join(tmpDir, 'src', 'fileX.ts'), 'X')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    const braces = await ctx.utils.glob('src/*.{ts,tsx}')
+    expect(braces).toContain('src/a.ts')
+    expect(braces).toContain('src/b.tsx')
+    expect(braces).not.toContain('src/c.md')
+    const clazz = await ctx.utils.glob('src/file[0-9].ts')
+    expect(clazz.sort()).toEqual(['src/file1.ts', 'src/file2.ts'])
+  })
+
   it('utils.read reads file content', async () => {
     await writeFile(join(tmpDir, 'hello.txt'), 'line1\nline2\nline3')
     const ctx = buildWorkflowContext({
