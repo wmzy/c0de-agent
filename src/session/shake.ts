@@ -1,5 +1,6 @@
 import type { Message, MessageContent } from '../shared/types/message.js'
 import type { ToolResult } from '../shared/types/tool.js'
+import { headChars } from '../shared/utils/string.js'
 import { estimateTokens } from './token.js'
 
 /** Rough token cost of a placeholder line; used only for the savings gate. */
@@ -356,7 +357,7 @@ export function toRegionViews(
     partIndex: region.partIndex,
     tokens: region.tokens,
     label: region.label,
-    preview: region.originalText.slice(0, 200),
+    preview: headChars(region.originalText, 200),
     placeholder:
       region.kind === 'toolResult'
         ? `[shaken: ${region.label}, ${region.tokens} tokens]`

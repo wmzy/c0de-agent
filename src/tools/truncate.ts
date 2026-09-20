@@ -1,3 +1,4 @@
+import { headChars, tailChars } from '../shared/utils/string.js'
 import type { TruncateOptions, TruncateResult } from './types.js'
 
 /** Default truncation thresholds — tuned for LLM context windows. */
@@ -47,9 +48,11 @@ export function truncateOutput(
       marker = next
       keepChars = Math.max(0, opts.maxChars - marker.length)
     }
-    const headChars = Math.floor(keepChars / 2)
-    const tailChars = keepChars - headChars
-    return text.slice(0, headChars) + marker + text.slice(total - tailChars)
+    const headLen = Math.floor(keepChars / 2)
+    const tailLen = keepChars - headLen
+    // 切点代理对安全：head/tail 各取至多 headLen/tailLen 字符，
+    // 内收只会缩短输出，marker 计入预算后的 ≤ maxChars 不变量保持。
+    return headChars(text, headLen) + marker + tailChars(text, tailLen)
   }
 
   // Line-based truncation takes priority

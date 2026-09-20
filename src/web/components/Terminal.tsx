@@ -1,6 +1,7 @@
 // src/web/components/Terminal.tsx
 
 import { css } from '@linaria/core'
+import { headChars } from '@shared/utils/string.js'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal as XTerm } from '@xterm/xterm'
@@ -466,7 +467,9 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
     } else if (hoverBlock) {
       const content = extractBlockText(hoverBlock.block)
       const cmd = hoverBlock.block.command.trim()
-      const label = cmd ? `🖥 命令: ${cmd.length > 30 ? `${cmd.slice(0, 30)}…` : cmd}` : '🖥 终端输出'
+      const label = cmd
+        ? `🖥 命令: ${cmd.length > 30 ? `${headChars(cmd, 30)}…` : cmd}`
+        : '🖥 终端输出'
       onAddToChat?.(label, content)
     }
   }, [selection, hoverBlock, extractBlockText, onAddToChat])

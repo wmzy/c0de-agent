@@ -16,6 +16,9 @@ import {
 import { appendMessage, getEntries, getMessages } from './message.js'
 import { createSession } from './session.js'
 
+/** 孤立代理码元：高代理后不跟低代理，或低代理前不是高代理。 */
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
   await migrateDB(handle)
@@ -247,6 +250,17 @@ describe('buildCompactionPrompt', () => {
     expect(out).toContain('HEAD-')
     expect(out).toContain('-TAIL')
     expect(out.length).toBeLessThanOrEqual(TOOL_OUTPUT_MAX_CHARS)
+  })
+
+  // 回归：head/tail 硬切落在代理对中间时产出孤立代理码元，写入压缩 prompt
+  // 后经 JSON/UTF-8 往返损坏为 U+FFFD。
+  it('truncateToolOutput never splits surrogate pairs', () => {
+    const head = truncateToolOutput(`${'a'.repeat(1192)}😀${'b'.repeat(1200)}`)
+    expect(head).toContain('[truncated]')
+    expect(LONE_SURROGATE_RE.test(head)).toBe(false)
+    const tail = truncateToolOutput(`${'a'.repeat(1299)}😀${'c'.repeat(795)}`)
+    expect(LONE_SURROGATE_RE.test(tail)).toBe(false)
+    expect(tail.length).toBeLessThanOrEqual(TOOL_OUTPUT_MAX_CHARS)
   })
 
   it('uses incremental-update header when previousSummary is provided (P0-2)', () => {

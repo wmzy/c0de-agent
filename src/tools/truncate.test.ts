@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TRUNCATE_OPTIONS, truncateOutput } from './truncate.js'
 
+/** 孤立代理码元：高代理后不跟低代理，或低代理前不是高代理。 */
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
 describe('truncateOutput', () => {
   it('returns short output unchanged', () => {
     const result = truncateOutput('hello\nworld')
@@ -92,6 +95,19 @@ describe('truncateOutput', () => {
   it('counts lines correctly for string without trailing newline', () => {
     const result = truncateOutput('a\nb\nc')
     expect(result.totalLines).toBe(3)
+  })
+
+  // 回归：字符截断按 UTF-16 码元硬切——切点落在代理对中间时产出孤立代理码元，
+  // 经 JSON/UTF-8 往返损坏为 U+FFFD（输出内容被静默改写）。
+  it('never splits surrogate pairs at char-truncation cuts', () => {
+    // maxChars=50 → marker 31 字符 → keep=19 → head=9/tail=10；
+    // 两个 😀 分别落在 head 切点(9)与 tail 切点(总长-10)中间，两侧均验证。
+    const input = `${'x'.repeat(8)}😀${'y'.repeat(971)}😀${'z'.repeat(9)}`
+    const result = truncateOutput(input, { ...DEFAULT_TRUNCATE_OPTIONS, maxChars: 50 })
+    expect(result.truncated).toBe(true)
+    expect(LONE_SURROGATE_RE.test(result.output)).toBe(false)
+    // head/tail 预算不因内收而突破 maxChars
+    expect(result.output.length).toBeLessThanOrEqual(50)
   })
 
   it('行数与字符双超限时输出仍不突破 maxChars（单行巨内容走行截断路径）', () => {

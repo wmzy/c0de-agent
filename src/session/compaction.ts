@@ -1,6 +1,7 @@
 import type { DB } from '../db/client.js'
 import { generateId } from '../shared/index.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
+import { headChars, tailChars } from '../shared/utils/string.js'
 import { archiveOriginalEntries } from './archive.js'
 import { deleteEntriesByIds, getEntries, getMessages, insertEntry } from './message.js'
 import { upsertFileSnapshot } from './snapshot.js'
@@ -64,13 +65,14 @@ export const TOOL_OUTPUT_MAX_CHARS = 2000
  *  追加 11 字符标记，输出 2011 超出上限）。 */
 const TOOL_OUTPUT_MARKER = '[truncated]'
 
-/** 截断超长字符串：head 60% + "[truncated]" + tail 40%，而非硬切。 */
+/** 截断超长字符串：head 60% + "[truncated]" + tail 40%，而非硬切。
+ *  切点经 headChars/tailChars 内收，绝不产出孤立代理码元。 */
 export function truncateToolOutput(s: string): string {
   if (s.length <= TOOL_OUTPUT_MAX_CHARS) return s
   const budget = TOOL_OUTPUT_MAX_CHARS - TOOL_OUTPUT_MARKER.length
   const head = Math.floor(budget * 0.6)
   const tail = budget - head
-  return `${s.slice(0, head)}${TOOL_OUTPUT_MARKER}${s.slice(-tail)}`
+  return `${headChars(s, head)}${TOOL_OUTPUT_MARKER}${tailChars(s, tail)}`
 }
 
 /** 序列化单个 content part：text/thinking 保持原样，tool 输出超长时截断。 */

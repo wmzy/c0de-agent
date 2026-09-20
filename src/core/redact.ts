@@ -3,6 +3,8 @@
  * 防止 apiKey / token 等明文出现在聊天界面或终端输出中。
  */
 
+import { headChars, tailChars } from '../shared/utils/string.js'
+
 /** 敏感字段名模式（大小写不敏感，匹配完整键名）。 */
 const SECRET_KEY_RE = /(api[_-]?key|token|password|passwd|secret|authorization|auth[_-]?token)$/i
 
@@ -10,11 +12,12 @@ export function isSecretKey(key: string): boolean {
   return SECRET_KEY_RE.test(key)
 }
 
-/** 掩码敏感值：短值整体掩码；长值保留首尾各 4 位。非字符串统一返回 ****。 */
+/** 掩码敏感值：短值整体掩码；长值保留首尾各 4 位。非字符串统一返回 ****。
+ *  首尾切点经 headChars/tailChars 内收，绝不产出孤立代理码元。 */
 export function maskSecret(value: unknown): unknown {
   if (typeof value !== 'string') return '****'
   if (value.length <= 8) return '****'
-  return `${value.slice(0, 4)}****${value.slice(-4)}`
+  return `${headChars(value, 4)}****${tailChars(value, 4)}`
 }
 
 /** 递归脱敏：键名命中敏感模式的字段被掩码，其余结构原样保留。 */

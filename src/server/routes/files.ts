@@ -18,6 +18,7 @@ import {
   listGitBranches,
   performGitCommit,
 } from '../../project/resolve.js'
+import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
@@ -294,7 +295,7 @@ Reply as JSON ONLY:
 
 If no files need ignoring, return an empty array for ignoreSuggestions.
 
-${summary.diff.slice(0, 8000)}`
+${headChars(summary.diff, 8000)}`
 
     let raw: string
     try {

@@ -1,5 +1,6 @@
 import { decryptSecret } from '../../core/secret.js'
 import type { WebSearchConfig } from '../../shared/types/config.js'
+import { headChars } from '../../shared/utils/string.js'
 import { createFetch } from './fetch.js'
 import { braveProvider } from './providers/brave.js'
 import { duckduckgoProvider } from './providers/duckduckgo.js'
@@ -48,7 +49,8 @@ export function resolveProvider(
 const SNIPPET_MAX = 240
 
 function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`
+  // headChars 内收切点：截断不产出孤立代理码元
+  return text.length <= max ? text : `${headChars(text, Math.max(0, max - 1))}…`
 }
 
 /** 将统一响应格式化为 LLM 友好的纯文本。 */

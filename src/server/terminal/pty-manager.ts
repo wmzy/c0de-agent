@@ -6,6 +6,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import { type IPty, spawn } from 'node-pty'
 import type { WebSocket } from 'ws'
+import { headChars } from '../../shared/utils/string.js'
 
 /** PTY 会话信息（返回给前端）。 */
 export interface PTYInfo {
@@ -153,10 +154,10 @@ const MAX_TITLE_LEN = 100
 const SCROLLBACK_MAX = 50_000
 
 /** 截断标题到 MAX_TITLE_LEN 内。省略号本身计入上限（此前 slice(100) + '…'
- *  产出 101 字符，违反上限契约）。导出便于单测。 */
+ *  产出 101 字符，违反上限契约）。切点经 headChars 内收，不拆代理对。 */
 export function truncateTitle(title: string): string {
   const clean = title.replace(/[\r\n]/g, ' ').trim()
-  return clean.length > MAX_TITLE_LEN ? `${clean.slice(0, MAX_TITLE_LEN - 1)}…` : clean
+  return clean.length > MAX_TITLE_LEN ? `${headChars(clean, MAX_TITLE_LEN - 1)}…` : clean
 }
 
 /** POSIX 单引号转义：仅安全字符（字母数字与常见路径/别名符号）原样，否则单引号包裹。 */

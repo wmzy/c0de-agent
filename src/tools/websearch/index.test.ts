@@ -71,6 +71,19 @@ describe('formatForLLM', () => {
     expect(out).not.toContain('x'.repeat(300))
   })
 
+  // 回归：snippet 截断按 UTF-16 码元硬切——切点落在代理对中间时产出孤立代理
+  // 码元，进入 LLM 上下文前经 UTF-8 编码损坏为 U+FFFD。
+  it('does not split surrogate pairs when truncating long snippets', () => {
+    const res: WebSearchResponse = {
+      provider: 'duckduckgo',
+      sources: [{ title: 'A', url: 'https://a.example', snippet: `${'y'.repeat(238)}😀zzz` }],
+    }
+    const out = formatForLLM(res)
+    // 切点内收：半个 emoji 既不进入输出，也不残留孤立代理码元
+    expect(out).not.toContain('😀')
+    expect(out).not.toContain('\uD83D')
+  })
+
   it('omits Sources section when no sources', () => {
     const out = formatForLLM({ provider: 'duckduckgo', sources: [] })
     expect(out).not.toContain('## Sources')

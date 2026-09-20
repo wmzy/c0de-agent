@@ -4,6 +4,7 @@ import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import { decryptSecret } from '../../core/secret.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
+import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
@@ -36,7 +37,7 @@ async function probeModels(baseURL: string, apiKey: string): Promise<TestResult>
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      return { ok: false, error: `HTTP ${res.status} ${text.slice(0, 200) || res.statusText}` }
+      return { ok: false, error: `HTTP ${res.status} ${headChars(text, 200) || res.statusText}` }
     }
     const json = (await res.json()) as { data?: { id?: string }[] }
     const models = Array.isArray(json.data)

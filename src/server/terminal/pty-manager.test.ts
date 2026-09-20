@@ -146,4 +146,11 @@ describe('truncateTitle', () => {
     expect(out.length).toBeLessThanOrEqual(100)
     expect(out.endsWith('…')).toBe(true)
   })
+
+  // 回归：截断点落在代理对中间时产出孤立代理码元，经序列化损坏为 U+FFFD。
+  it('截断不在代理对中间切开 emoji', () => {
+    // 98 x + 😀(2 码元) + zzz = 103 码元；截断点 99 恰好拆开代理对
+    const out = truncateTitle(`${'x'.repeat(98)}😀zzz`)
+    expect(out).toBe(`${'x'.repeat(98)}…`)
+  })
 })

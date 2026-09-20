@@ -5,6 +5,7 @@ import type { AgentState } from '../../shared/types/agent.js'
 import type { JSONSchema } from '../../shared/types/base.js'
 import type { Session } from '../../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
+import { headChars } from '../../shared/utils/string.js'
 import { validateInput } from '../../tools/validate.js'
 import { createAgent, runAgent } from '../agent.js'
 import type { LoopDeps } from '../loop.js'
@@ -44,7 +45,7 @@ export async function runSubAgent(
 
   const title =
     request.description?.trim() ||
-    `Sub-agent (${request.agentType}): ${request.prompt.slice(0, 60)}`
+    `Sub-agent (${request.agentType}): ${headChars(request.prompt, 60)}`
   const childId = generateId()
   const yielded: unknown[] = []
 

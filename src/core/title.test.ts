@@ -135,6 +135,24 @@ describe('generateSessionTitle', () => {
     expect(updated?.title.startsWith('AAAA')).toBe(true)
   })
 
+  // 回归：slice(0, 97) 按 UTF-16 码元硬切——截断点落在 emoji 代理对中间时
+  // 标题带孤立代理码元入库，渲染/序列化后损坏为 U+FFFD。
+  it('does not split surrogate pairs when truncating long titles', async () => {
+    // 96 A + 😀(2 码元) + CCC = 101 码元；截断点 97 恰好拆开代理对
+    const raw = `${'A'.repeat(96)}😀CCC`
+    const session = await createSession(db, DEFAULT_SESSION_TITLE)
+    await generateSessionTitle(
+      { db, llmRegistry: {} as Registry, config: makeConfig(), chatFn: fakeChat(raw) },
+      session.id,
+      'hi',
+      'openai',
+      'gpt-4o',
+    )
+    const updated = await getSession(db, session.id)
+    expect(updated?.title).toBe(`${'A'.repeat(96)}...`)
+    expect(updated?.title.length).toBeLessThanOrEqual(100)
+  })
+
   it('leaves the title untouched when the model returns empty', async () => {
     const session = await createSession(db, DEFAULT_SESSION_TITLE)
     await generateSessionTitle(
