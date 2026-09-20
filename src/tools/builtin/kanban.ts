@@ -7,6 +7,7 @@
 import type { JSONSchema } from '../../shared/types/base.js'
 import type { KanbanPriority } from '../../shared/types/kanban.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { headChars } from '../../shared/utils/string.js'
 
 // =============================================================================
 // Types
@@ -68,8 +69,9 @@ function formatBoardSummary(
       const sym = PRIORITY_SYMBOL[card.priority] ?? ''
       lines.push(`  ${sym} [${shortId}] ${card.title}`)
       if (card.description) {
+        // headChars 内收切点：截断不落在 emoji 代理对中间产出孤立码元。
         const preview =
-          card.description.length > 80 ? `${card.description.slice(0, 77)}…` : card.description
+          card.description.length > 80 ? `${headChars(card.description, 77)}…` : card.description
         lines.push(`      ${preview}`)
       }
     }
@@ -269,3 +271,4 @@ The board is shared across all sessions and agents in the same project — use i
 }
 
 export type { KanbanInput }
+export { formatBoardSummary }

@@ -1,9 +1,12 @@
+import { headChars } from '@shared/utils/string.js'
+
 /** 折叠态摘要的最大长度，超出以 … 截断。 */
 const MAX = 60
 
 function clip(s: string): string {
   const one = s.split('\n')[0]?.trim() ?? ''
-  return one.length > MAX ? `${one.slice(0, MAX)}…` : one
+  // headChars 内收切点：截断不落在 emoji 代理对中间产出孤立码元（渲染为 U+FFFD）。
+  return one.length > MAX ? `${headChars(one, MAX)}…` : one
 }
 
 /**

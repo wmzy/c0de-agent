@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, 'src/web'),
+      '@shared': path.resolve(import.meta.dirname, 'src/shared'),
     },
   },
   test: {

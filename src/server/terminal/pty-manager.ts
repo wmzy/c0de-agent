@@ -6,7 +6,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import { type IPty, spawn } from 'node-pty'
 import type { WebSocket } from 'ws'
-import { headChars } from '../../shared/utils/string.js'
+import { headChars, tailChars } from '../../shared/utils/string.js'
 
 /** PTY 会话信息（返回给前端）。 */
 export interface PTYInfo {
@@ -253,7 +253,9 @@ export class PTYManager {
     pty.onData((data) => {
       entry.scrollback += data
       if (entry.scrollback.length > SCROLLBACK_MAX) {
-        entry.scrollback = entry.scrollback.slice(-SCROLLBACK_MAX)
+        // tailChars 内收切点：环形缓冲修剪不落在代理对中间——否则回放给新挂载
+        // 终端的历史头部以 U+FFFD 损坏显示（slice(-N) 按 UTF-16 码元硬切）。
+        entry.scrollback = tailChars(entry.scrollback, SCROLLBACK_MAX)
       }
       for (const ws of entry.sockets) {
         if (ws.readyState === ws.OPEN) {

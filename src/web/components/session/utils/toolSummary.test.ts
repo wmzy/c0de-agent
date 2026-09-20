@@ -23,6 +23,17 @@ describe('toolSummary', () => {
     expect(out.length).toBe(63)
   })
 
+  // 回归：clip 的 slice(0, MAX) 按 UTF-16 码元硬切——截断点落在 emoji 代理对
+  // 中间时摘要带孤立代理码元，渲染为 U+FFFD 损坏显示。
+  it('bash 超长命令截断不拆开代理对', () => {
+    const LONE_SURROGATE_RE =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    // 59 x + 😀(2 码元) + y：截断点 60 恰好拆开代理对
+    const out = toolSummary('bash', { command: `${'x'.repeat(59)}😀y` })
+    expect(LONE_SURROGATE_RE.test(out)).toBe(false)
+    expect(out).toBe(`$ ${'x'.repeat(59)}…`)
+  })
+
   it('grep 取 pattern 并加引号', () => {
     expect(toolSummary('grep', { pattern: 'foo' })).toBe('"foo"')
   })
