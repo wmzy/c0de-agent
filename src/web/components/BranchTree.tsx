@@ -3,6 +3,7 @@ import { Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type { SessionTreeNode, SessionUsage } from '@/types/index.js'
+import { formatCost } from '@/utils/format.js'
 
 const node = css`
   padding: 1px 0;
@@ -120,7 +121,8 @@ const usageBadge = css`
 function UsageBadge({ usage }: { usage: SessionUsage }) {
   if (!usage || usage.calls === 0) return null
   const total = usage.inputTokens + usage.outputTokens + usage.cacheRead
-  const costText = `US$${usage.cost.toFixed(2)}`
+  // formatCost 十进制舍入：toFixed 二进制近似会把 1.005 显示成 US$1.00（少一分钱）。
+  const costText = `US${formatCost(usage.cost)}`
   const unknownText =
     usage.unknownCostCalls > 0 ? `（${usage.unknownCostCalls} 次价格未知按 $0 计）` : ''
   return (

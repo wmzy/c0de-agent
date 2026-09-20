@@ -4,10 +4,15 @@
 import { createRoutes, MemoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { Mock } from 'vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TopBar } from '@/components/TopBar.js'
 
 // ---- mocks ----
+vi.mock('@/services/usage.js', () => ({
+  usageAPI: { summary: vi.fn() },
+}))
+
 vi.mock('@/services/file.js', () => ({
   fileAPI: {
     gitStatus: vi.fn().mockResolvedValue({}),
@@ -546,5 +551,37 @@ describe('TopBar', () => {
     })
     // gitCommit 只被调用了一次（初始调用），没有第二次
     expect(fileAPI.gitCommit).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('TopBar — 月成本徽标', () => {
+  it('成本按十进制舍入展示（1.005 → $1.01，不显示 $1.00）', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockResolvedValue({
+      priceCatalogVersion: 'test',
+      totals: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cost: 1.005,
+        unknownCostCalls: 0,
+        calls: 1,
+      },
+      currentMonth: {
+        key: '2026-09',
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cost: 1.005,
+        unknownCostCalls: 0,
+        calls: 1,
+      },
+      byMonth: [],
+      byModel: [],
+    })
+
+    await renderAt('/')
+    const badge = await screen.findByTestId('month-cost-badge')
+    expect(badge.textContent).toBe('本月 $1.01')
   })
 })

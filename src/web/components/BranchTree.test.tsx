@@ -146,4 +146,13 @@ describe('BranchTree', () => {
     render(<BranchTree nodes={tree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
     expect(screen.queryByTestId('auto-badge-s1')).toBeNull()
   })
+
+  // 回归：估算成本展示直接 toFixed——二进制近似把 1.005 舍成 1.00（少一分钱）。
+  it('成本按十进制舍入展示（1.005 → US$1.01）', () => {
+    const node = treeWithUsage[0]
+    if (!node) throw new Error('fixture missing')
+    const centTree: SessionTreeNode[] = [{ ...node, usage: { ...node.usage, cost: 1.005 } }]
+    render(<BranchTree nodes={centTree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByTestId('usage-badge').getAttribute('title')).toContain('US$1.01')
+  })
 })

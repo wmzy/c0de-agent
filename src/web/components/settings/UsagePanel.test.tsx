@@ -171,4 +171,40 @@ describe('UsagePanel — token 预算护栏', () => {
     const warn = await screen.findByTestId('usage-unknown-cost-warning')
     expect(warn.textContent).not.toContain('token 预算兜底')
   })
+
+  // 回归：金额展示直接 toFixed——二进制近似把 1.005 舍成 1.00（少一分钱）。
+  it('成本金额按十进制舍入展示（1.005 → $1.01）', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    const summary = {
+      ...baseSummary(),
+      byModel: [
+        {
+          model: 'm1',
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheRead: 0,
+          cost: 1.005,
+          unknownCostCalls: 0,
+          calls: 1,
+        },
+      ],
+    }
+    ;(usageAPI.summary as Mock).mockResolvedValue(summary)
+
+    renderPanel({
+      budget: 0,
+      budgetAction: 'warn',
+      globalBudget: 0,
+      tokenBudget: 0,
+      globalTokenBudget: 0,
+      onBudgetChange: vi.fn(),
+      onBudgetActionChange: vi.fn(),
+      onGlobalBudgetChange: vi.fn(),
+      onTokenBudgetChange: vi.fn(),
+      onGlobalTokenBudgetChange: vi.fn(),
+      projectId: 'proj-1',
+    })
+
+    expect(await screen.findByText('$1.01')).toBeTruthy()
+  })
 })

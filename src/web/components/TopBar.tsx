@@ -7,6 +7,7 @@ import { ProjectIndicator } from '@/components/ProjectIndicator.js'
 import type { AppPaths } from '@/routes.js'
 import { configAPI } from '@/services/config.js'
 import { usageAPI } from '@/services/usage.js'
+import { formatCost } from '@/utils/format.js'
 import {
   monthTokenSum,
   resolveEffectiveBudget,
@@ -141,9 +142,9 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
   const overAny = overBudget || overTokenBudget
   const unknown = monthEntry?.unknownCostCalls ?? 0
   const tip =
-    `本月估算成本 $${cost.toFixed(2)}` +
+    `本月估算成本 ${formatCost(cost)}` +
     (effectiveBudget > 0
-      ? `（${projectId ? '项目' : '全局'}预算 $${effectiveBudget.toFixed(2)}${overBudget ? '，已超支' : ''}）`
+      ? `（${projectId ? '项目' : '全局'}预算 ${formatCost(effectiveBudget)}${overBudget ? '，已超支' : ''}）`
       : '') +
     (overTokenBudget
       ? `；token 用量 ${monthTokens.toLocaleString()} 已超 ${effectiveTokenBudget.toLocaleString()}`
@@ -151,7 +152,8 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
     (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
     '。点击前往设置查看用量与成本。'
   const badgeClass = `${costBadge}${overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`
-  const badgeText = `${overAny ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 $${cost.toFixed(2)}`
+  // formatCost 十进制舍入：toFixed 二进制近似会把 1.005 显示成 $1.00（少一分钱）。
+  const badgeText = `${overAny ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 ${formatCost(cost)}`
   return projectId ? (
     <TypedLink<AppPaths>
       to="/projects/:projectId/settings"

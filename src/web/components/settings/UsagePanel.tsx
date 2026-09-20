@@ -4,6 +4,7 @@ import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { UsageSummary } from '@/services/usage.js'
 import { usageAPI } from '@/services/usage.js'
+import { formatCost } from '@/utils/format.js'
 import {
   monthTokenSum,
   resolveEffectiveBudget,
@@ -40,7 +41,8 @@ const budgetWarn = css`
 
 const fmtTokens = (n: number): string => n.toLocaleString('en-US')
 
-const fmtCost = (n: number): string => `$${n.toFixed(2)}`
+// 与 formatCost 同源（十进制舍入）：toFixed 二进制近似会把 1.005 显示成 $1.00。
+const fmtCost = (n: number): string => formatCost(n)
 
 /** P1-4：本月口径由服务端下发（summary.currentMonth），客户端不再自行按时区计算。 */
 function currentMonthCost(summary: UsageSummary | undefined): number {
@@ -180,7 +182,7 @@ function UsagePanel({
       )}
       {projectId && (globalBudget ?? 0) > 0 && (
         <div className={hint}>
-          另有全局预算 ${(globalBudget ?? 0).toFixed(2)} 兜底（所有项目聚合）。
+          另有全局预算 {formatCost(globalBudget ?? 0)} 兜底（所有项目聚合）。
         </div>
       )}
       {effectiveBudget === 0 && effectiveTokenBudget === 0 && (
@@ -222,13 +224,13 @@ function UsagePanel({
       )}
       {overBudget && (
         <div className={budgetWarn} data-testid="usage-budget-warning">
-          ⚠ 本月成本 ${monthCost.toFixed(2)} 已超过{projectId ? '项目' : '全局'}预算 $
-          {effectiveBudget.toFixed(2)}
+          ⚠ 本月成本 {formatCost(monthCost)} 已超过{projectId ? '项目' : '全局'}预算{' '}
+          {formatCost(effectiveBudget)}
         </div>
       )}
       {!overBudget && nearBudget && effectiveBudget > 0 && (
         <div className={budgetWarn} data-testid="usage-budget-near">
-          ▲ 本月成本已达预算的 80%（${monthCost.toFixed(2)} / ${effectiveBudget.toFixed(2)}）
+          ▲ 本月成本已达预算的 80%（{formatCost(monthCost)} / {formatCost(effectiveBudget)}）
         </div>
       )}
       {overTokenBudget && (
