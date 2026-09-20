@@ -61,6 +61,25 @@ describe('editTool', () => {
     }
   })
 
+  // 回归：空 oldText 让 indexOf('') 恒返回 0、searchFrom 永不前进——matches
+  // 数组推到 2^32 溢出（RangeError: Invalid array length）前烧数秒 CPU，
+  // 且报错信息误导模型原样重试。修复后应快速返回指向「空 oldText」的错误。
+  it('rejects empty oldText with a clear error without churning', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'hello world\n')
+    const started = Date.now()
+    const result = await editTool.execute(
+      { path: 'f.ts', oldText: '', newText: 'x' },
+      ctx,
+    )
+    expect(Date.now() - started).toBeLessThan(1500)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('empty')
+    }
+    const content = await readFile(join(workDir, 'f.ts'), 'utf-8')
+    expect(content).toBe('hello world\n')
+  })
+
   it('returns error when oldText matches multiple times', async () => {
     await writeFile(join(workDir, 'f.ts'), 'dup\ndup\n')
     const result = await editTool.execute({ path: 'f.ts', oldText: 'dup', newText: 'unique' }, ctx)

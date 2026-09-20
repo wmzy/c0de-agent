@@ -85,6 +85,12 @@ export const editTool: ToolDef = {
       const normalizedContent = normalize(content)
       const normalizedOld = normalize(oldText)
 
+      // 空 oldText 会让 indexOf('') 恒命中同一位置、searchFrom 永不前进——
+      // matches 推到 2^32 溢出（RangeError）前烧数秒 CPU 且报错无法指导模型。
+      if (normalizedOld.length === 0) {
+        return { _tag: 'error', error: `edit: oldText must not be empty for "${path}"` }
+      }
+
       // Find all match positions
       const matches: number[] = []
       let searchFrom = 0
