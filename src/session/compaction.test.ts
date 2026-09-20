@@ -10,6 +10,8 @@ import {
   compactSession,
   extractHotFiles,
   findSafeCutPoint,
+  TOOL_OUTPUT_MAX_CHARS,
+  truncateToolOutput,
 } from './compaction.js'
 import { appendMessage, getEntries, getMessages } from './message.js'
 import { createSession } from './session.js'
@@ -235,6 +237,16 @@ describe('buildCompactionPrompt', () => {
     const prompt = buildCompactionPrompt(messages)
     expect(prompt).toContain('[truncated]')
     expect(prompt).not.toContain('Y'.repeat(2500))
+  })
+
+  // 回归（同型扩展）：'[truncated]' 标记本身未计入 2000 字符预算——head 1200 +
+  // 标记 11 + tail 800 = 2011，超出 TOOL_OUTPUT_MAX_CHARS。
+  it('truncateToolOutput budgets the marker inside TOOL_OUTPUT_MAX_CHARS', () => {
+    const out = truncateToolOutput(`HEAD-${'X'.repeat(5000)}-TAIL`)
+    expect(out).toContain('[truncated]')
+    expect(out).toContain('HEAD-')
+    expect(out).toContain('-TAIL')
+    expect(out.length).toBeLessThanOrEqual(TOOL_OUTPUT_MAX_CHARS)
   })
 
   it('uses incremental-update header when previousSummary is provided (P0-2)', () => {

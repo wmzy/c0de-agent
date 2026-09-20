@@ -49,13 +49,22 @@ export function truncateOutput(
     return { output: result, truncated: true, totalLines, totalChars }
   }
 
-  // Char-based truncation (keep proportional head/tail of chars)
-  const keepChars = opts.maxChars
-  const headChars = Math.floor(keepChars * 0.5)
+  // Char-based truncation (keep proportional head/tail of chars).
+  // 标记长度计入预算：此前 head+tail 吃满 maxChars 后追加标记，输出反而
+  // 比原文更长且突破上限（如 100_001 字符 → 100_029 字符）。
+  const markerFor = (omitted: number): string => `\n[... ${omitted} chars truncated ...]\n`
+  let marker = ''
+  let keepChars = opts.maxChars
+  for (;;) {
+    const omitted = totalChars - keepChars
+    const next = markerFor(omitted)
+    if (next === marker) break // 数字位数不再变化，收敛
+    marker = next
+    keepChars = Math.max(0, opts.maxChars - marker.length)
+  }
+  const headChars = Math.floor(keepChars / 2)
   const tailChars = keepChars - headChars
   const head = output.slice(0, headChars)
   const tail = output.slice(totalChars - tailChars)
-  const omitted = totalChars - keepChars
-  const marker = `\n[... ${omitted} chars truncated ...]\n`
   return { output: head + marker + tail, truncated: true, totalLines, totalChars }
 }

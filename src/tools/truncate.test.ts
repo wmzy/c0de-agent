@@ -44,6 +44,18 @@ describe('truncateOutput', () => {
     expect(result.output).toContain('truncated')
   })
 
+  // 回归：截断标记本身未计入预算——内容仅超 maxChars 1 字符时，head+tail 仍
+  // 吃满 maxChars，再加标记反而比原文更长（100_001 → 100_029），「截断」产出
+  // 更大的输出且突破上限。
+  it('never grows the output: marker is budgeted inside maxChars', () => {
+    const input = 'x'.repeat(100_001)
+    const result = truncateOutput(input)
+    expect(result.truncated).toBe(true)
+    expect(result.output.length).toBeLessThanOrEqual(input.length)
+    expect(result.output.length).toBeLessThanOrEqual(DEFAULT_TRUNCATE_OPTIONS.maxChars)
+    expect(result.output).toContain('truncated')
+  })
+
   it('does not truncate when under all limits', () => {
     const result = truncateOutput('short', {
       maxLines: 100,

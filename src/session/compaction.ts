@@ -58,14 +58,19 @@ function extractHotFiles(messages: Message[]): HotFile[] {
 }
 
 /** 工具输出在压缩 prompt 中保留的最大字符数（参考 opencode）。 */
-const TOOL_OUTPUT_MAX_CHARS = 2000
+export const TOOL_OUTPUT_MAX_CHARS = 2000
+
+/** 截断标记本身计入 TOOL_OUTPUT_MAX_CHARS 预算（此前 head+tail 吃满 2000 后
+ *  追加 11 字符标记，输出 2011 超出上限）。 */
+const TOOL_OUTPUT_MARKER = '[truncated]'
 
 /** 截断超长字符串：head 60% + "[truncated]" + tail 40%，而非硬切。 */
-function truncateToolOutput(s: string): string {
+export function truncateToolOutput(s: string): string {
   if (s.length <= TOOL_OUTPUT_MAX_CHARS) return s
-  const head = Math.floor(TOOL_OUTPUT_MAX_CHARS * 0.6)
-  const tail = TOOL_OUTPUT_MAX_CHARS - head
-  return `${s.slice(0, head)}[truncated]${s.slice(-tail)}`
+  const budget = TOOL_OUTPUT_MAX_CHARS - TOOL_OUTPUT_MARKER.length
+  const head = Math.floor(budget * 0.6)
+  const tail = budget - head
+  return `${s.slice(0, head)}${TOOL_OUTPUT_MARKER}${s.slice(-tail)}`
 }
 
 /** 序列化单个 content part：text/thinking 保持原样，tool 输出超长时截断。 */

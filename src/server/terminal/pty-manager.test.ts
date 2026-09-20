@@ -2,7 +2,7 @@
 
 import { userInfo } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { argvToCommand, detectShell, PTYManager } from './pty-manager.js'
+import { argvToCommand, detectShell, PTYManager, truncateTitle } from './pty-manager.js'
 
 describe('PTYManager', () => {
   let mgr: PTYManager
@@ -127,5 +127,23 @@ describe('argvToCommand（前台命令重放的安全转义）', () => {
 
   it('空 argv 返回空串', () => {
     expect(argvToCommand([])).toBe('')
+  })
+})
+
+describe('truncateTitle', () => {
+  it('短标题原样返回', () => {
+    expect(truncateTitle('hello')).toBe('hello')
+  })
+
+  it('移除换行与首尾空白', () => {
+    expect(truncateTitle('  a\nb  ')).toBe('a b')
+  })
+
+  // 回归：省略号本身未计入上限——slice(0, MAX_TITLE_LEN) + '…' 产出
+  // MAX_TITLE_LEN + 1 字符，违反「标题最多 MAX_TITLE_LEN 字符」的自述契约。
+  it('超长标题截断后不超过 MAX_TITLE_LEN（省略号计入预算）', () => {
+    const out = truncateTitle('x'.repeat(500))
+    expect(out.length).toBeLessThanOrEqual(100)
+    expect(out.endsWith('…')).toBe(true)
   })
 })

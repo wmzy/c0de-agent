@@ -152,9 +152,11 @@ const MAX_TITLE_LEN = 100
 /** scrollback 环形缓冲最大字节数（约 50KB）。 */
 const SCROLLBACK_MAX = 50_000
 
-function truncateTitle(title: string): string {
+/** 截断标题到 MAX_TITLE_LEN 内。省略号本身计入上限（此前 slice(100) + '…'
+ *  产出 101 字符，违反上限契约）。导出便于单测。 */
+export function truncateTitle(title: string): string {
   const clean = title.replace(/[\r\n]/g, ' ').trim()
-  return clean.length > MAX_TITLE_LEN ? `${clean.slice(0, MAX_TITLE_LEN)}…` : clean
+  return clean.length > MAX_TITLE_LEN ? `${clean.slice(0, MAX_TITLE_LEN - 1)}…` : clean
 }
 
 /** POSIX 单引号转义：仅安全字符（字母数字与常见路径/别名符号）原样，否则单引号包裹。 */
