@@ -82,7 +82,7 @@ export function parseTodoTags(text: string): ParsedTodoTag[] {
         break
       case 'append': {
         const phaseMatch = /phase="([^"]+)"/.exec(attrs)
-        const phaseSeq = phaseMatch ? Number.parseInt(phaseMatch[1] ?? '', 10) : Number.NaN
+        const phaseSeq = phaseMatch ? parseSeqNumber(phaseMatch[1] ?? '') : Number.NaN
         tags.push({ op: 'append', phaseSeq, items: parseItems(inner ?? '') })
         break
       }
@@ -109,14 +109,25 @@ export function parseTodoTags(text: string): ParsedTodoTag[] {
 
 /** Resolve a seq string ("1-2" or "1") to a phase and/or task.
  *  Returns undefined if out of bounds or unparseable. */
+
+/**
+ * 严格解析 seq 段：仅接受十进制非负整数整体。
+ * parseInt 会静默接受尾随垃圾/小数前缀/十六进制（'1.5'→1、'1x'→1、'0x2'→16），
+ * 畸形 seq 静默命中真实任务/阶段——统一先全串校验再转数值。
+ */
+function parseSeqNumber(s: string): number {
+  return /^\d+$/.test(s) ? Number(s) : Number.NaN
+}
+
 export function resolveSeq(
   phases: TodoPhase[],
   seq: string | undefined,
 ): { phase: TodoPhase; task?: TodoItem } | undefined {
   if (!seq) return undefined
-  const parts = seq.split('-').map((s) => Number.parseInt(s.trim(), 10))
+  const parts = seq.split('-').map(parseSeqNumber)
+  if (parts.some(Number.isNaN) || parts.length > 2) return undefined
   const phaseNum = parts[0]
-  if (phaseNum === undefined || Number.isNaN(phaseNum)) return undefined
+  if (phaseNum === undefined) return undefined
 
   const phaseIdx = phaseNum - 1
   if (phaseIdx < 0 || phaseIdx >= phases.length) return undefined
@@ -126,7 +137,7 @@ export function resolveSeq(
   if (parts.length === 1) return { phase }
 
   const taskNum = parts[1]
-  if (taskNum === undefined || Number.isNaN(taskNum)) return undefined
+  if (taskNum === undefined) return undefined
   const taskIdx = taskNum - 1
   if (taskIdx < 0 || taskIdx >= phase.tasks.length) return undefined
   const task = phase.tasks[taskIdx]

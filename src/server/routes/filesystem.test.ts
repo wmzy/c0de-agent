@@ -140,6 +140,19 @@ describe('filesystem route', () => {
     expect(body.items.length).toBeLessThanOrEqual(3)
   })
 
+  it('GET /search rejects garbage limit instead of honoring its digits', async () => {
+    // 4 个匹配目录；limit=2abc 的 parseInt 会折成 2 静默截断——垃圾参数应回落默认上限。
+    for (const name of ['zz1', 'zz2', 'zz3', 'zz4']) {
+      await mkdir(join(tempDir, 'project-a', name), { recursive: true })
+    }
+    const { app } = await setup()
+    const res = await app.request(
+      `/search?directory=${encodeURIComponent(tempDir)}&q=zz&limit=2abc`,
+    )
+    const body = (await res.json()) as { items: string[] }
+    expect(body.items.length).toBe(4)
+  })
+
   it('GET /search with empty query returns top-level directories', async () => {
     const { app } = await setup()
     const res = await app.request(`/search?directory=${encodeURIComponent(tempDir)}&q=`)

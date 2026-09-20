@@ -71,6 +71,15 @@ describe('parsePatch', () => {
   it('throws on malformed header', () => {
     expect(() => parsePatch('not a header\nDEL 1\n---\n')).toThrow()
   })
+
+  // 回归：Number('1.5') 通过 inBounds 后被 splice 静默截断、Number('0x10')=16、
+  // Number('1e2')=100——垃圾行号静默命中错误行。行号必须是十进制整数。
+  it('throws on non-integer line numbers', () => {
+    expect(() => parsePatch('[a.ts#abcd]\nSWAP 1.5-2\nx\n---\n')).toThrow()
+    expect(() => parsePatch('[a.ts#abcd]\nINS.PRE 1.5\nx\n---\n')).toThrow()
+    expect(() => parsePatch('[a.ts#abcd]\nSWAP 0x10\ny\n---\n')).toThrow()
+    expect(() => parsePatch('[a.ts#abcd]\nDEL 1e2\n---\n')).toThrow()
+  })
 })
 
 describe('applyPatch', () => {

@@ -108,6 +108,17 @@ describe('resolveSeq', () => {
   it('returns undefined for missing seq', () => {
     expect(resolveSeq(PHASES, undefined)).toBeUndefined()
   })
+
+  // 回归：parseInt 接受尾随垃圾/小数/十六进制（'1.5'→1、'1-1x'→1-1、'0x2'→16），
+  // 畸形 seq 静默命中真实任务/阶段——<todo:done seq="1.5"> 会悄悄完成整个阶段。
+  it('returns undefined for garbage seqs (trailing chars, floats, hex)', () => {
+    expect(resolveSeq(PHASES, '1.5')).toBeUndefined()
+    expect(resolveSeq(PHASES, '1-1x')).toBeUndefined()
+    expect(resolveSeq(PHASES, '1-2-3')).toBeUndefined()
+    expect(resolveSeq(PHASES, '0x2')).toBeUndefined()
+    expect(resolveSeq(PHASES, ' 2 x')).toBeUndefined()
+    expect(resolveSeq(PHASES, '1e2')).toBeUndefined()
+  })
 })
 
 // ── applyTodoTags ──
@@ -163,6 +174,23 @@ describe('applyTodoTags', () => {
   it('reports errors for invalid seq', () => {
     const { errors } = applyTodoTags(PHASES, '<todo:done seq="9-9" />')
     expect(errors.length).toBeGreaterThan(0)
+  })
+
+  // 回归：'1.5' 被 parseInt 折成 1——phase 级 done 静默完成整个第一阶段。
+  it('does not complete a phase for garbage phase-level seq', () => {
+    const { phases, errors } = applyTodoTags(PHASES, '<todo:done seq="1.5" />')
+    expect(errors.length).toBeGreaterThan(0)
+    // 阶段未被静默完成：in_progress/pending 状态原样保留
+    expect(phases[0]?.tasks[1]?.status).toBe('in_progress')
+    expect(phases[0]?.tasks[2]?.status).toBe('pending')
+  })
+
+  // 回归：append 的 phase="1x" 被 parseInt 折成 1——垃圾阶段号静默追加任务。
+  it('does not append to a phase for garbage phase attribute', () => {
+    const text = `<todo:append phase="1x"><todo:item>Extra task</todo:item></todo:append>`
+    const { phases, errors } = applyTodoTags(PHASES, text)
+    expect(errors.length).toBeGreaterThan(0)
+    expect(phases[0]?.tasks).toHaveLength(3)
   })
 
   it('detects view tag', () => {

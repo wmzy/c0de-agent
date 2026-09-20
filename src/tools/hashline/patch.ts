@@ -76,11 +76,11 @@ function parseOps(lines: string[]): PatchOp[] {
       i = skipToSeparator()
     } else if (head === 'INS.PRE') {
       const { content, next } = collectContent()
-      ops.push({ _tag: 'INS_PRE', line: Number(tokens[1]), content })
+      ops.push({ _tag: 'INS_PRE', line: parseLineNumber(tokens[1]), content })
       i = next
     } else if (head === 'INS.POST') {
       const { content, next } = collectContent()
-      ops.push({ _tag: 'INS_POST', line: Number(tokens[1]), content })
+      ops.push({ _tag: 'INS_POST', line: parseLineNumber(tokens[1]), content })
       i = next
     } else if (head === 'INS.HEAD') {
       const { content, next } = collectContent()
@@ -97,14 +97,26 @@ function parseOps(lines: string[]): PatchOp[] {
   return ops
 }
 
-/** 解析 `start` 或 `start-end`，返回 [start, end?]（1-indexed）。 */
+/**
+ * 解析 `start` 或 `start-end`，返回 [start, end?]（1-indexed 十进制整数）。
+ * 非十进制整数（小数/十六进制/科学计数/尾随垃圾）显式抛错：Number('1.5') 会
+ * 通过 inBounds 后被 splice 静默截断、Number('0x10')=16——垃圾行号静默命中错误行。
+ */
 function parseRange(spec: string | undefined): [number, number | undefined] {
   if (!spec) throw new Error('hashline: missing line range')
-  if (spec.includes('-')) {
-    const [a, b] = spec.split('-')
-    return [Number(a), Number(b)]
+  const parts = spec.split('-')
+  if (parts.length > 2 || parts.some((p) => !/^\d+$/.test(p))) {
+    throw new Error(`hashline: invalid line range "${spec}" (decimal integers expected)`)
   }
-  return [Number(spec), undefined]
+  return [Number(parts[0]), parts[1] !== undefined ? Number(parts[1]) : undefined]
+}
+
+/** 解析单行号（INS.PRE/POST 用），与 parseRange 同口径严格校验。 */
+function parseLineNumber(spec: string | undefined): number {
+  if (spec === undefined || !/^\d+$/.test(spec)) {
+    throw new Error(`hashline: invalid line number "${spec ?? ''}" (decimal integer expected)`)
+  }
+  return Number(spec)
 }
 
 /** 解析补丁文本为一个或多个 ParsedPatch（按 `[path#hash]` 头分块）。 */

@@ -106,7 +106,10 @@ function createFilesystemRoute(ctx: ServerContext): Hono {
   app.get('/search', async (c) => {
     const rawDir = c.req.query('directory') ?? ''
     const q = c.req.query('q') ?? ''
-    const limitRaw = Number.parseInt(c.req.query('limit') ?? '', 10)
+    // limit 仅接受十进制正整数整体：parseInt('2abc') 会折成 2 静默截断结果集。
+    // 非法/缺失回落默认 50（与 read/grep 的数值参数显式校验同口径）。
+    const limitParam = c.req.query('limit') ?? ''
+    const limitRaw = /^\d+$/.test(limitParam) ? Number(limitParam) : Number.NaN
     const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50
     const directory = expandPath(rawDir)
     const items = await searchDirectories(directory, q, limit)
