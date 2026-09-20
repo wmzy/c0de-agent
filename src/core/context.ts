@@ -1,4 +1,4 @@
-import { estimateTokens } from '../session/token.js'
+import { estimateMessageTokens } from '../session/token.js'
 import type { TokenBudget } from '../shared/types/agent.js'
 import type { Message } from '../shared/types/message.js'
 import type { CompactionConfig } from './config.js'
@@ -31,12 +31,13 @@ function createTokenBudget(
   }
 }
 
-/** 单条消息的原始 token 估算（不应用校准系数）。 */
+/** 单条消息的原始 token 估算（不应用校准系数）。
+ *  全 content 部分口径（text/thinking/steering/tool_call/tool_result）——
+ *  此前只统计 text/thinking，纯工具消息按 0 token 计、预算与压缩判定脱节；
+ *  与 compaction 的 messageTokens（estimateMessageTokens）同源同口径。 */
 function rawMessageTokens(m: Message): number {
   if (m.tokenCount > 0) return m.tokenCount
-  return estimateTokens(
-    m.content.map((p) => (p._tag === 'text' || p._tag === 'thinking' ? p.text : '')).join(''),
-  )
+  return estimateMessageTokens(m.content)
 }
 
 function estimateBudget(messages: Message[], factor = 1.0): number {

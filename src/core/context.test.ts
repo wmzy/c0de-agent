@@ -50,6 +50,34 @@ describe('estimateBudget', () => {
     const used = estimateBudget(msgs)
     expect(used).toBeGreaterThan(0)
   })
+
+  // 口径发散回归：预算此前只统计 text/thinking 部分——纯工具消息（read 大文件
+  // 的 tool_result、bash 长输出的 tool_call 参数）按 0 token 计，压缩判定与实际
+  // 占用系统性脱节；compaction 同函数却统计全部分，同一消息两处两个口径。
+  it('counts tool_call and tool_result content toward the budget', () => {
+    const toolMessage: Message = {
+      id: 'tool-msg',
+      sessionId: 's1',
+      role: 'tool',
+      content: [
+        {
+          _tag: 'tool_call',
+          id: 'c1',
+          tool: 'read',
+          input: { path: 'x'.repeat(300) },
+        },
+        {
+          _tag: 'tool_result',
+          id: 'c1',
+          tool: 'read',
+          output: { _tag: 'success', output: 'y'.repeat(400) },
+        },
+      ],
+      tokenCount: 0,
+      createdAt: Date.now(),
+    }
+    expect(estimateBudget([toolMessage])).toBeGreaterThan(0)
+  })
 })
 
 describe('fitToBudget', () => {
