@@ -75,6 +75,20 @@ describe('createFramer', () => {
     framer.feed(encodeMessage('{"a":1}') + encodeMessage('{"b":2}'))
     expect(got).toEqual(['{"a":1}', '{"b":2}'])
   })
+
+  // 复现：Content-Length 头被无条件信任——恶意/损坏适配器声明巨大 body 时
+  // `buffer.length < bodyStart + len` 恒成立，缓冲无限增长，后续合法帧被
+  // 永久吞进缓冲，永远无法解析。
+  it('drops a frame declaring an oversized Content-Length', () => {
+    const framer = createFramer()
+    const got: string[] = []
+    framer.onMessage((j) => got.push(j))
+    // 声明 2^62 字节 body（远超任何合法 DAP 消息）
+    framer.feed('Content-Length: 4611686018427387904\r\n\r\n')
+    // 后续合法帧必须仍可解析
+    framer.feed(encodeMessage('{"seq":2,"type":"response"}'))
+    expect(got).toEqual(['{"seq":2,"type":"response"}'])
+  })
 })
 
 describe('createDAPClient', () => {

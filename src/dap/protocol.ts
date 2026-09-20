@@ -44,11 +44,21 @@ type Framer = {
   onMessage: (handler: (json: string) => void) => void
 }
 
+/** 单帧 body 上限（字节）：Content-Length 是未受信输入——恶意/损坏适配器
+ *  声明巨大 body 时 `buffer.length < bodyStart + len` 恒成立，缓冲无限增长
+ *  且吞掉后续所有合法帧。超限声明视为协议错误，丢弃头部重新同步。 */
+const MAX_FRAME_BYTES = 64 * 1024 * 1024
+
 function createFramer(): Framer {
   let buffer = Buffer.alloc(0)
   const handlers: ((json: string) => void)[] = []
 
   function tryParse(): void {
+    // 缓冲硬上限：流中长时间无有效分帧头（垃圾字节流）时防无界增长。
+    // 保留尾部 4KB 作为重新同步窗口，其余丢弃。
+    if (buffer.length > MAX_FRAME_BYTES) {
+      buffer = buffer.subarray(buffer.length - 4096)
+    }
     // 找 header 结束分隔符 \r\n\r\n
     const sep = buffer.indexOf('\r\n\r\n')
     if (sep === -1) return
@@ -61,6 +71,12 @@ function createFramer(): Framer {
       return
     }
     const len = Number(m[1])
+    // 超限/异常声明：丢弃该头重试，绝不为未受信长度无界缓冲
+    if (!Number.isSafeInteger(len) || len < 0 || len > MAX_FRAME_BYTES) {
+      buffer = buffer.subarray(sep + 4)
+      if (buffer.length > 0) tryParse()
+      return
+    }
     const bodyStart = sep + 4
     if (buffer.length < bodyStart + len) return // body 未到齐
     const body = buffer.subarray(bodyStart, bodyStart + len).toString('utf8')

@@ -1,10 +1,17 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 import { safeResolve } from '../../shared/utils/path.js'
+import { headChars } from '../../shared/utils/string.js'
 import type { BashInput } from '../types.js'
 
 /** Default timeout: 120 seconds. */
 const DEFAULT_TIMEOUT = 120_000
+
+/** stdout/stderr 各自捕获上限（字符）：命令输出在此之上的部分被丢弃并计数。
+ *  截断发生在命令运行期而非 close 之后——executor 的 truncateOutput 只能在
+ *  close 后裁剪，救不了累积期内存膨胀（`yes`/`find /` 几秒即可输出数 GB）。
+ *  256KB 留足 executor 的 head+tail 截断预算（默认 maxChars 100k）。 */
+const MAX_OUTPUT_CHARS = 256 * 1024
 
 /** Kill an entire process tree (the child and all its descendants). */
 function killProcessTree(child: ChildProcess): void {
@@ -84,13 +91,33 @@ export const bashTool: ToolDef = {
 
       let stdout = ''
       let stderr = ''
+      let droppedChars = 0
       let timedOut = false
 
+      /** 追加捕获并执行字符上限：超限部分丢弃计数，绝不无界累积。
+       *  切点经 headChars 内收，不产出孤立代理码元。 */
+      const appendCapped = (target: 'stdout' | 'stderr', s: string): void => {
+        const current = target === 'stdout' ? stdout : stderr
+        if (current.length >= MAX_OUTPUT_CHARS) {
+          droppedChars += s.length
+          return
+        }
+        const next = current + s
+        if (next.length > MAX_OUTPUT_CHARS) {
+          droppedChars += next.length - MAX_OUTPUT_CHARS
+        }
+        if (target === 'stdout') {
+          stdout = headChars(next, MAX_OUTPUT_CHARS)
+        } else {
+          stderr = headChars(next, MAX_OUTPUT_CHARS)
+        }
+      }
+
       child.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
+        appendCapped('stdout', data.toString())
       })
       child.stderr?.on('data', (data: Buffer) => {
-        stderr += data.toString()
+        appendCapped('stderr', data.toString())
       })
 
       // Timeout handler
@@ -123,7 +150,9 @@ export const bashTool: ToolDef = {
         if (timedOut) {
           resolvePromise({
             _tag: 'error',
-            error: `Command timeout after ${timeout}ms\nPartial output:\n${stdout}${stderr}`,
+            error: `Command timeout after ${timeout}ms\nPartial output:\n${stdout}${stderr}${
+              droppedChars > 0 ? `\n[... ${droppedChars} chars of output dropped ...]` : ''
+            }`,
           })
           return
         }
@@ -133,15 +162,23 @@ export const bashTool: ToolDef = {
         if (code !== null && code !== 0) {
           resolvePromise({
             _tag: 'error',
-            error: `Command failed with exit code: ${code}\n${output}`,
+            error: `Command failed with exit code: ${code}\n${output}${
+              droppedChars > 0 ? `\n[... ${droppedChars} chars of output dropped ...]` : ''
+            }`,
           })
           return
         }
 
         resolvePromise({
           _tag: 'success',
-          output: output || '(no output)',
-          metadata: { exitCode: code ?? 0 },
+          output:
+            output +
+              (droppedChars > 0 ? `\n[... ${droppedChars} chars of output dropped ...]` : '') ||
+            '(no output)',
+          metadata: {
+            exitCode: code ?? 0,
+            ...(droppedChars > 0 ? { droppedOutputChars: droppedChars } : {}),
+          },
         })
       })
 

@@ -62,7 +62,10 @@ describe('bashTool', () => {
   })
 
   it('rejects an absolute cwd outside the working directory', async () => {
-    const outside = join(tmpdir(), `bash-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const outside = join(
+      tmpdir(),
+      `bash-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    )
     await mkdir(outside, { recursive: true })
     try {
       const result = await bashTool.execute({ command: 'pwd', cwd: outside }, ctx)
@@ -149,6 +152,20 @@ describe('bashTool', () => {
     expect(result._tag).toBe('success')
     if (result._tag === 'success' && result.metadata) {
       expect(result.metadata.exitCode).toBe(0)
+    }
+  })
+
+  // 复现：stdout/stderr 无限 += 累积——命令输出 200MB 时进程内存同步膨胀，
+  // 且 executor 的 truncateOutput 截断发生在 close 之后，救不了累积期 OOM。
+  it('caps captured output and reports dropped chars', async () => {
+    const result = await bashTool.execute(
+      { command: `node -e "process.stdout.write('x'.repeat(2000000))"`, timeout: 60_000 },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success' && result.metadata) {
+      expect(result.output.length).toBeLessThan(2_000_000)
+      expect(result.metadata.droppedOutputChars).toBeGreaterThan(0)
     }
   })
 

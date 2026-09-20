@@ -75,6 +75,28 @@ describe('createStdioTransport', () => {
     await new Promise((r) => setTimeout(r, 200))
     transport.close()
   })
+
+  // 复现：stdio 单行 buffer 无上限——服务器持续输出不换行（或单条消息超大）时
+  // `buffer += chunk` 无限增长直至 OOM。超长行必须被丢弃且不影响后续消息解析。
+  it('drops an overlong line instead of buffering unboundedly', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { child, stdout } = makeFakeChild()
+      const transport = createStdioTransport('node', ['x'], () => child)
+      const got: MCPIncoming[] = []
+      transport.onMessage((m) => got.push(m))
+
+      // 单个 data chunk 远超行上限且无换行：修复前 buffer 直接持有全部字节
+      stdout.emit('data', `${'x'.repeat(32 * 1024 * 1024 + 1)}`)
+      // 后续合法消息必须仍可解析
+      stdout.emit('data', '{"jsonrpc":"2.0","method":"after"}\n')
+      expect(got).toHaveLength(1)
+      expect(got[0]).toMatchObject({ jsonrpc: '2.0', method: 'after' })
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })
 
 function sseResponse(chunks: string[]): Response {

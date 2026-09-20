@@ -35,6 +35,11 @@ function errorResponse(
  * stdio 传输：spawn 子进程，stdout 按行解析 JSON（MCP stdio 规范：
  * 每行一条 JSON-RPC 消息，无 Content-Length 分帧）。跨 chunk / 粘包已处理。
  */
+
+/** 单条 stdio 消息行上限（字符）：服务器持续输出不换行或单条消息超大时，
+ *  `buffer += chunk` 会无限增长直至 OOM——超限整行丢弃并告警，防缓冲无界。 */
+const MAX_LINE_CHARS = 32 * 1024 * 1024
+
 function createStdioTransport(
   command: string,
   args: string[] = [],
@@ -51,6 +56,15 @@ function createStdioTransport(
   child.stdout.setEncoding('utf8')
   child.stdout.on('data', (chunk: string) => {
     buffer += chunk
+    // 超长行防护：无换行的持续输出或单条超限消息立即丢弃，防缓冲无界增长。
+    // 丢弃不改变「完整合法行仍可解析」的语义——超限行本身本就无法作为
+    // 合法 JSON-RPC 消息使用。
+    const nl = buffer.indexOf('\n')
+    if (buffer.length > MAX_LINE_CHARS && (nl === -1 || nl > MAX_LINE_CHARS)) {
+      const drop = nl === -1 ? buffer.length : nl + 1
+      console.warn(`[mcp:stdio] 丢弃超长输出 ${drop} 字符（单行超过 ${MAX_LINE_CHARS} 上限）`)
+      buffer = buffer.slice(drop)
+    }
     const consume = (): void => {
       const idx = buffer.indexOf('\n')
       if (idx < 0) return
