@@ -591,11 +591,11 @@ async function permanentlyDeleteSession(handle: DB, id: string): Promise<number>
   const remaining = new Set(ids)
   let deleted = 0
   while (remaining.size > 0) {
+    // 仍有子会话存活的父 id 集合（其子会话先删，避免自引用 FK 违反）。
+    // 此前此集合收集的是「父仍在 remaining 中的子 id」，leaves 因此取到
+    // 全是父会话——父先删，子行仍引用它，删除直接 FK 23503 报错。
     const hasChildParent = new Set(
-      Array.from(remaining).filter((rid) => {
-        const r = all.find((x) => x.id === rid)
-        return r?.parentId && remaining.has(r.parentId)
-      }),
+      all.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
     )
     const leaves = Array.from(remaining).filter((rid) => !hasChildParent.has(rid))
     if (leaves.length === 0) {

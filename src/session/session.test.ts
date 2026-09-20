@@ -15,6 +15,7 @@ import {
   getSession,
   listDeletedSessions,
   listSessions,
+  permanentlyDeleteSession,
   purgeDeletedSessions,
   purgeEmptySessions,
   purgeTemporarySessions,
@@ -548,5 +549,29 @@ describe('markDeadBackgroundJobs', () => {
       startedAt: Date.now(),
     })
     expect(await markDeadBackgroundJobs(handle)).toBe(0)
+  })
+})
+
+describe('permanentlyDeleteSession', () => {
+  let handle: DB
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  it('删除含分支后代的回收站会话（子先于父，自引用 FK 不违反）', async () => {
+    const root = await createSession(handle, 'root')
+    const child = await createSession(handle, 'branch', undefined, undefined, undefined, root.id)
+    await softDeleteSession(handle, root.id)
+    const deleted = await permanentlyDeleteSession(handle, root.id)
+    expect(deleted).toBe(2)
+    expect(await getSession(handle, root.id)).toBeNull()
+    expect(await getSession(handle, child.id)).toBeNull()
+  })
+
+  it('回收站会话无后代时直接删除', async () => {
+    const solo = await createSession(handle, 'solo')
+    await softDeleteSession(handle, solo.id)
+    expect(await permanentlyDeleteSession(handle, solo.id)).toBe(1)
+    expect(await getSession(handle, solo.id)).toBeNull()
   })
 })
