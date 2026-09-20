@@ -26,15 +26,37 @@ describe('file resolver', () => {
     if (res._tag === 'ok') expect(res.content).toBe('export const x = 1')
   })
 
-  it('reads a file by absolute file:// URL', async () => {
+  // file:// 曾完全绕过 cwd 沙箱：resolvePath 放行任意绝对路径与 ../，
+  // read 工具 permission=auto 下模型可无确认读取工作目录外文件（如 ~/.ssh）。
+  // 现与 read/grep/glob/bash 同口径：解析结果必须落在 cwd 内。
+  it('reads a file by absolute file:// URL when the path is inside cwd', async () => {
     const cwd = await tmp()
     const abs = join(cwd, 'sub', 'a.txt')
     await mkdir(join(cwd, 'sub'))
     await writeFile(abs, 'hello')
     const reg = createDefaultURLRegistry()
-    const res = await resolveURL(reg, `file://${abs}`, ctxAt('/other'))
+    const res = await resolveURL(reg, `file://${abs}`, ctxAt(cwd))
     expect(res._tag).toBe('ok')
     if (res._tag === 'ok') expect(res.content).toBe('hello')
+  })
+
+  it('rejects absolute file:// paths outside the working directory', async () => {
+    const cwd = await tmp()
+    const outside = await tmp()
+    await writeFile(join(outside, 'secret.txt'), 's3cret')
+    const reg = createDefaultURLRegistry()
+    const res = await resolveURL(reg, `file://${join(outside, 'secret.txt')}`, ctxAt(cwd))
+    expect(res._tag).toBe('error')
+  })
+
+  it('rejects ../ traversal outside the working directory', async () => {
+    const parent = await tmp()
+    const cwd = join(parent, 'work')
+    await mkdir(cwd, { recursive: true })
+    await writeFile(join(parent, 'secret.txt'), 's3cret')
+    const reg = createDefaultURLRegistry()
+    const res = await resolveURL(reg, 'file://../secret.txt', ctxAt(cwd))
+    expect(res._tag).toBe('error')
   })
 
   it('returns error when the file does not exist', async () => {
@@ -96,6 +118,34 @@ describe('skill resolver', () => {
     const res = await resolveURL(reg, 'skill://dup', ctxAt(cwd))
     expect(res._tag).toBe('ok')
     if (res._tag === 'ok') expect(res.content).toBe('PROJECT')
+  })
+
+  // 回归：name 未校验为单路径段——'../config' 可读出 .c0de/config.md，
+  // 绝对路径（resolvePath 遇到绝对段会重置前缀）可读出磁盘任意 .md 文件。
+  it('rejects ../ traversal in skill names', async () => {
+    const cwd = await tmp()
+    await mkdir(join(cwd, '.c0de'), { recursive: true })
+    await writeFile(join(cwd, '.c0de', 'config.md'), 'cfg')
+    const reg = createDefaultURLRegistry()
+    const res = await resolveURL(reg, 'skill://../config', ctxAt(cwd))
+    expect(res._tag).toBe('error')
+  })
+
+  it('rejects absolute paths in skill names', async () => {
+    const cwd = await tmp()
+    const elsewhere = await tmp()
+    await writeFile(join(elsewhere, 'loot.md'), 'loot')
+    const reg = createDefaultURLRegistry()
+    // 去掉 .md 后缀：旧实现 resolvePath 遇绝对段重置前缀，读到 elsewhere/loot.md
+    const res = await resolveURL(reg, `skill://${join(elsewhere, 'loot')}`, ctxAt(cwd))
+    expect(res._tag).toBe('error')
+  })
+
+  it('rejects dot segments in skill names', async () => {
+    const cwd = await tmp()
+    const reg = createDefaultURLRegistry()
+    expect((await resolveURL(reg, 'skill://..', ctxAt(cwd)))._tag).toBe('error')
+    expect((await resolveURL(reg, 'skill://.', ctxAt(cwd)))._tag).toBe('error')
   })
 })
 
