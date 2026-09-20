@@ -6,7 +6,7 @@ import type { MCPIncoming } from './types.js'
 
 /** 假子进程：EventEmitter + 可写 stdin + unref/kill。 */
 function makeFakeChild() {
-  const stdin = { destroyed: false, write: vi.fn() }
+  const stdin = Object.assign(new EventEmitter(), { destroyed: false, write: vi.fn() })
   const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() })
   const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() })
   let killed = false
@@ -59,6 +59,21 @@ describe('createStdioTransport', () => {
     const { child } = makeFakeChild()
     createStdioTransport('node', [], () => child)
     expect(child.unref).toHaveBeenCalled()
+  })
+
+  // 回归：服务器崩溃/提前 close(0) 关闭 stdin 后，send 写入会异步触发 EPIPE
+  // 'error' 事件。无监听器时 unhandled error 击穿整个宿主进程（CLI/serve 全挂）；
+  // 且 child.stdin.destroyed 守卫挡不住「子进程仍存活但 stdin 已关」的场景。
+  it('survives EPIPE when writing to a child whose stdin was closed', async () => {
+    const script =
+      'const fs=require("fs");fs.closeSync(0);process.stdout.write("READY\\n");setInterval(()=>{},1000)'
+    const transport = createStdioTransport(process.execPath, ['-e', script])
+    // 等子进程完成 closeSync(0)（真实子进程 + 真实 EPIPE）
+    await new Promise((r) => setTimeout(r, 300))
+    transport.send({ jsonrpc: '2.0', id: 1, method: 'ping' })
+    // 给 EPIPE 'error' 事件留出派发窗口：修复前 unhandled error 在此窗口内击穿
+    await new Promise((r) => setTimeout(r, 200))
+    transport.close()
   })
 })
 

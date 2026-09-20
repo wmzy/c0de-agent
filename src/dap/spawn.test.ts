@@ -36,4 +36,19 @@ describe('createDebugSpawn', () => {
     expect(transport).toBeTruthy()
     transport.close()
   })
+
+  // 回归：调试器进程崩溃/提前 close(0) 后，transport.write 会异步触发 EPIPE
+  // 'error' 事件；无监听器时 unhandled error 击穿宿主进程（与 MCP stdio 同型）。
+  it('survives EPIPE when writing to a debug adapter whose stdin was closed', async () => {
+    const script =
+      'const fs=require("fs");fs.closeSync(0);process.stdout.write("READY\\n");setInterval(()=>{},1000)'
+    const spawn = createDebugSpawn({ test: [process.execPath, ['-e', script]] })
+    const transport = spawn({ adapter: 'test', program: '/tmp/p' })
+    // 等子进程完成 closeSync(0)（真实子进程 + 真实 EPIPE）
+    await new Promise((r) => setTimeout(r, 300))
+    transport.write('initialize\n')
+    // 给 EPIPE 'error' 事件留出派发窗口：修复前 unhandled error 在此窗口内击穿
+    await new Promise((r) => setTimeout(r, 200))
+    transport.close()
+  })
 })

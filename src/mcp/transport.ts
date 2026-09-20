@@ -80,6 +80,11 @@ function createStdioTransport(
   child.on('error', (err: Error) => {
     console.warn(`[mcp] stdio 子进程错误：${err.message}`)
   })
+  // 服务器崩溃/提前 close(0) 时 stdin 管道写入会异步触发 EPIPE 'error'，
+  // 该事件发在 stdin socket 上而非 child 上——无监听器同样击穿宿主进程。
+  child.stdin.on('error', (err: Error) => {
+    console.warn(`[mcp] stdio 写入失败（服务器可能已退出）：${err.message}`)
+  })
   child.on('close', () => {
     for (const h of closeHandlers) h()
   })
