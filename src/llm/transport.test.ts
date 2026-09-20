@@ -72,6 +72,20 @@ describe('transport sseFraming', () => {
     expect(frames).toEqual(['{"a":1}', '{"b":2}'])
   })
 
+  it('parses CRLF-framed events (spec 允许 CRLF 行结束)', async () => {
+    const frames = await collect(
+      sseFraming(toStream(['data: {"a":1}\r\n\r\ndata: {"b":2}\r\n\r\n'])),
+    )
+    expect(frames).toEqual(['{"a":1}', '{"b":2}'])
+  })
+
+  it('parses CRLF frames split across chunk boundaries', async () => {
+    const frames = await collect(
+      sseFraming(toStream(['data: {"a":1}\r', '\n\r\ndata: {"b":2}\r\n\r\n'])),
+    )
+    expect(frames).toEqual(['{"a":1}', '{"b":2}'])
+  })
+
   it('handles split chunks', async () => {
     const frames = await collect(sseFraming(toStream(['data: {"a"', ':1}\n\n'])))
     expect(frames).toEqual(['{"a":1}'])

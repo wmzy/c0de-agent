@@ -166,4 +166,40 @@ describe('parseSSEStream', () => {
     )
     expect(events).toEqual(['{"x":1}', '{"x":2}'])
   })
+
+  it('emits CRLF-framed events (spec 允许 CRLF 行结束)', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"x":1}\r\n\r\n'))
+        controller.enqueue(encoder.encode('data: {"x":2}\r\n\r\n'))
+        controller.close()
+      },
+    })
+    const events: string[] = []
+    await parseSSEStream(
+      body,
+      (d) => events.push(d),
+      () => false,
+    )
+    expect(events).toEqual(['{"x":1}', '{"x":2}'])
+  })
+
+  it('emits CRLF events split across chunk boundaries', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"x":1}\r'))
+        controller.enqueue(encoder.encode('\n\r\n'))
+        controller.close()
+      },
+    })
+    const events: string[] = []
+    await parseSSEStream(
+      body,
+      (d) => events.push(d),
+      () => false,
+    )
+    expect(events).toEqual(['{"x":1}'])
+  })
 })

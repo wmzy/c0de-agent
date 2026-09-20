@@ -132,6 +132,9 @@ async function parseSSEStream(
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
+      // SSE 规范允许 CRLF 行结束——归一化为 LF 再按空行分事件，
+      // 否则 \r\n\r\n 分隔的事件滞留缓冲区永不派发。
+      buffer = buffer.replace(/\r\n/g, '\n')
       consume()
       if (shouldStop()) {
         await reader.cancel()

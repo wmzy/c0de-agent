@@ -18,6 +18,9 @@ const sseFraming = async function* (
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
+      // SSE 规范允许 CRLF 行结束（部分网关/代理改写行结束符）——归一化为 LF
+      // 再分帧，否则 \r\n\r\n 分隔的事件永远匹配不到 \n\n 而滞留缓冲区。
+      buffer = buffer.replace(/\r\n/g, '\n')
       let sepIndex = buffer.indexOf('\n\n')
       while (sepIndex !== -1) {
         const block = buffer.slice(0, sepIndex)

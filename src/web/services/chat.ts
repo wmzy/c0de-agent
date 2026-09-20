@@ -17,7 +17,9 @@ export function parseSSEFrame(frame: string): AgentEvent | null {
 /** 解析缓冲区，返回已完整的帧事件 + 剩余未完成文本。 */
 export function consumeSSEBuffer(buffer: string): { events: AgentEvent[]; rest: string } {
   const events: AgentEvent[] = []
-  let remaining = buffer
+  // SSE 规范允许 CRLF 行结束——归一化为 LF 再分帧，否则 \r\n\r\n 分隔的事件
+  // 永远匹配不到 \n\n，事件滞留 rest 直到流结束。
+  let remaining = buffer.replace(/\r\n/g, '\n')
   let sep = remaining.indexOf('\n\n')
   while (sep !== -1) {
     const frame = remaining.slice(0, sep)

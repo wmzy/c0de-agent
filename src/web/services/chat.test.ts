@@ -22,6 +22,24 @@ describe('parseSSEFrame', () => {
 })
 
 describe('consumeSSEBuffer', () => {
+  it('解析 CRLF 帧（spec 允许 CRLF 行结束）', () => {
+    const buf = 'data: {"_tag":"text_delta","text":"a"}\r\n\r\ndata: {"_tag":"done"}\r\n\r\n'
+    const { events, rest } = consumeSSEBuffer(buf)
+    expect(events).toHaveLength(2)
+    expect(events[0]).toEqual({ _tag: 'text_delta', text: 'a' })
+    expect(events[1]?._tag).toBe('done')
+    expect(rest).toBe('')
+  })
+
+  it('跨 chunk 的 CRLF 帧（\\r 与 \\n 分属两个 chunk）', () => {
+    const r1 = consumeSSEBuffer('data: {"_tag":"text_delta","te')
+    expect(r1.events).toHaveLength(0)
+    const r2 = consumeSSEBuffer(`${r1.rest}xt":"ok"}\r\n\r\n`)
+    expect(r2.events).toHaveLength(1)
+    expect(r2.events[0]).toEqual({ _tag: 'text_delta', text: 'ok' })
+    expect(r2.rest).toBe('')
+  })
+
   it('完整帧返回事件，清空 rest', () => {
     const buf = 'data: {"_tag":"done"}\n\n'
     const { events, rest } = consumeSSEBuffer(buf)
