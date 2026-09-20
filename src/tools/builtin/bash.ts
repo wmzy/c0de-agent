@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { resolve } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { safeResolve } from '../../shared/utils/path.js'
 import type { BashInput } from '../types.js'
 
 /** Default timeout: 120 seconds. */
@@ -50,7 +50,17 @@ export const bashTool: ToolDef = {
   permission: 'ask',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { command, cwd, timeout = DEFAULT_TIMEOUT, env } = input as BashInput
-    const workDir = cwd ? resolve(ctx.cwd, cwd) : ctx.cwd
+    // 与 read/write/edit/glob/grep 同口径：cwd 必须落在工作目录内。此前直接
+    // resolve(ctx.cwd, cwd) 放行绝对路径/../——bash 是任意命令执行面，越界即
+    // 在工作目录外执行（如读取 ~/.ssh），且用户偏好可将 bash 设为 auto。
+    let workDir = ctx.cwd
+    if (cwd) {
+      const resolved = safeResolve(ctx.cwd, cwd)
+      if (resolved === null) {
+        return { _tag: 'error', error: `cwd "${cwd}" escapes the working directory` }
+      }
+      workDir = resolved
+    }
 
     return new Promise<ToolResult>((resolvePromise) => {
       const childEnv = { ...process.env, ...env }

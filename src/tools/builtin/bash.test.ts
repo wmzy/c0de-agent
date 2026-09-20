@@ -49,6 +49,32 @@ describe('bashTool', () => {
     }
   })
 
+  // 回归：cwd 参数此前直接 resolve(ctx.cwd, cwd)，绝对路径或 ../ 可逃逸工作目录——
+  // 与 glob/grep 的 path 参数同型漏洞（f5d26a0 已修那两处，此处是漏网实例）。
+  // permission 为 ask，但用户偏好可把 bash 设成 auto（或批量确认时看漏 cwd），
+  // 逃逸后命令在工作目录外执行（如读取 ~/.ssh），与 read/write/edit 同口径收紧。
+  it('rejects a cwd that escapes the working directory via ..', async () => {
+    const result = await bashTool.execute({ command: 'pwd', cwd: join('..', 'escape') }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
+  it('rejects an absolute cwd outside the working directory', async () => {
+    const outside = join(tmpdir(), `bash-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    await mkdir(outside, { recursive: true })
+    try {
+      const result = await bashTool.execute({ command: 'pwd', cwd: outside }, ctx)
+      expect(result._tag).toBe('error')
+      if (result._tag === 'error') {
+        expect(result.error).toContain('escapes the working directory')
+      }
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
   it('returns error for non-zero exit code', async () => {
     const result = await bashTool.execute({ command: 'exit 1' }, ctx)
     expect(result._tag).toBe('error')
