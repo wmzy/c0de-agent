@@ -67,7 +67,11 @@ async function walkForFiles(dir: string, base: string): Promise<string[]> {
       const sub = await walkForFiles(join(dir, entry.name), base)
       results.push(...sub)
     } else {
-      const ext = entry.name.slice(entry.name.lastIndexOf('.'))
+      // 无扩展名（lastIndexOf 返回 -1）时 ext 须为 ''：此前 slice(-1) 取到名字
+      // 最后一个字符，ext === '' 分支成死代码，Dockerfile/Makefile/README 等
+      // 无扩展名文本文件被静默跳过。
+      const dot = entry.name.lastIndexOf('.')
+      const ext = dot === -1 ? '' : entry.name.slice(dot)
       if (TEXT_EXTENSIONS.has(ext) || ext === '') {
         results.push(join(dir, entry.name))
       }
