@@ -13,6 +13,7 @@
 import { and, eq, gte } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { appMeta, sessions, usageEvents } from '../db/schema.js'
+import { roundTo } from '../shared/round.js'
 import type { UsageConfig } from '../shared/types/config.js'
 
 /** segments 中单次调用的宽松形状（metadata JSON 反序列化后字段可能漂移）。 */
@@ -191,13 +192,18 @@ export async function budgetOverageParts(
 
   const parts: string[] = []
   // 实际超支轴中的最严格阻断动作：任一超支轴动作 === 'abort' 即整体 abort，否则 pause。
+  // 金额展示经 roundTo 十进制舍入（toFixed 二进制近似会把 1.005 显示成 1.00）。
   let action: 'pause' | 'abort' = 'pause'
   if (amountBlocks && globalBudgetUsd > 0 && global && global.cost > globalBudgetUsd) {
-    parts.push(`全局预算 $${globalBudgetUsd.toFixed(2)}：本月全部项目已 $${global.cost.toFixed(2)}`)
+    parts.push(
+      `全局预算 $${roundTo(globalBudgetUsd, 2).toFixed(2)}：本月全部项目已 $${roundTo(global.cost, 2).toFixed(2)}`,
+    )
     if (amountAction === 'abort') action = 'abort'
   }
   if (amountBlocks && projectBudgetUsd > 0 && project && project.cost > projectBudgetUsd) {
-    parts.push(`项目预算 $${projectBudgetUsd.toFixed(2)}：本项目已 $${project.cost.toFixed(2)}`)
+    parts.push(
+      `项目预算 $${roundTo(projectBudgetUsd, 2).toFixed(2)}：本项目已 $${roundTo(project.cost, 2).toFixed(2)}`,
+    )
     if (amountAction === 'abort') action = 'abort'
   }
   if (tokenBlocks && globalTokenBudget > 0 && global && global.tokens > globalTokenBudget) {

@@ -44,4 +44,12 @@ describe('formatCost', () => {
   it('零花费', () => expect(formatCost(0)).toBe('$0'))
   it('极小额保留 4 位小数', () => expect(formatCost(0.001)).toBe('$0.0010'))
   it('常规保留 2 位小数', () => expect(formatCost(1.234)).toBe('$1.23'))
+
+  // 二进制浮点舍入回归：toFixed 直接作用于二进制近似值时 half-up 舍入会
+  // 系统性下偏——1.005/0.015/2.675 均少一分钱（显示 $1.00/$0.01/$2.67）。
+  it('1.005 舍入为 $1.01 而非 $1.00', () => expect(formatCost(1.005)).toBe('$1.01'))
+  it('0.015 舍入为 $0.02 而非 $0.01', () => expect(formatCost(0.015)).toBe('$0.02'))
+  it('2.675 舍入为 $2.68 而非 $2.67', () => expect(formatCost(2.675)).toBe('$2.68'))
+  it('极小额同样按十进制舍入', () => expect(formatCost(0.0045)).toBe('$0.0045'))
+  it('大于阈值的边界不误入极小额分支', () => expect(formatCost(0.01)).toBe('$0.01'))
 })

@@ -1,4 +1,5 @@
 import type { CodeReference } from '@/types/index.js'
+import { roundTo } from '@shared/round.js'
 
 /** 解析输入文本中的代码引用 @[path:start-end] 或 @[msgId:n]。 */
 export function parseCodeReference(text: string): CodeReference | null {
@@ -37,9 +38,11 @@ export function formatLatency(ms: number): string {
   return `${(ms / 1000).toFixed(2)}s`
 }
 
-/** 把美元花费格式化为可读字符串；极小额保留 4 位小数以避免被四舍五入为 $0。 */
+/** 把美元花费格式化为可读字符串；极小额保留 4 位小数以避免被四舍五入为 $0。
+ *  舍入经 roundTo 十进制语义：toFixed 直接作用于二进制近似值会把 1.005 显示成
+ *  $1.00（少一分钱）。 */
 export function formatCost(cost: number): string {
   if (cost < 0.0001) return '$0'
-  if (cost < 0.01) return `$${cost.toFixed(4)}`
-  return `$${cost.toFixed(2)}`
+  if (cost < 0.01) return `$${roundTo(cost, 4).toFixed(4)}`
+  return `$${roundTo(cost, 2).toFixed(2)}`
 }

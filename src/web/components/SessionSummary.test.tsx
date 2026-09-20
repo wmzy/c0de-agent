@@ -159,6 +159,20 @@ describe('SessionSummary', () => {
     expect(text).toMatch(/助手消息\s*1/)
   })
 
+  // FP 舍入回归：1.005 直接 toFixed 会显示 US$1.00（少一分钱），roundTo 后为 US$1.01。
+  it('成本按十进制舍入展示', async () => {
+    const base = segments[0]
+    const call = base?.calls[0]
+    if (!base || !call) throw new Error('fixture missing')
+    const fpSegments: LLMSegment[] = [{ ...base, calls: [{ ...call, cost: 1.005 }] }]
+    mockAll(session, messages, fpSegments)
+    renderWithClient(<SessionSummary sessionId="s1" />)
+    fireEvent.click(screen.getByTestId('session-summary-toggle'))
+    await waitFor(() => {
+      expect(screen.getByTestId('session-summary-grid').textContent).toContain('US$1.01')
+    })
+  })
+
   it('缓存 token（读/写）展示读值与写 0', async () => {
     mockAll()
     renderWithClient(<SessionSummary sessionId="s1" />)
