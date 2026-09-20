@@ -59,6 +59,31 @@ describe('truncateOutput', () => {
     expect(result.output).toContain('truncated')
   })
 
+  // 回归：headLines 覆盖全部行时 omitted=0，但标记被无条件追加——
+  // 输出比原文更长（多一行 "[... 0 lines truncated ...]"）且行数突破 maxLines。
+  it('omits the marker when head already covers every line', () => {
+    const input = 'a\nb\nc\nd'
+    const result = truncateOutput(input, {
+      ...DEFAULT_TRUNCATE_OPTIONS,
+      maxLines: 3,
+      maxChars: 10_000,
+    })
+    expect(result.truncated).toBe(false)
+    expect(result.output).toBe(input)
+  })
+
+  // 回归：maxChars 连标记自身都放不下时（标记 ≈30 字符），marker 循环把
+  // keepChars 钳到 0 后仍输出完整标记——输出突破 maxChars 不变量。
+  it('keeps output within maxChars even when the marker alone exceeds the budget', () => {
+    const result = truncateOutput('abcdefghij', {
+      ...DEFAULT_TRUNCATE_OPTIONS,
+      maxLines: 10_000,
+      maxChars: 8,
+    })
+    expect(result.truncated).toBe(true)
+    expect(result.output.length).toBeLessThanOrEqual(8)
+  })
+
   it('does not truncate when under all limits', () => {
     const result = truncateOutput('short', {
       maxLines: 100,

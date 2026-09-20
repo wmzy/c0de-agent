@@ -48,6 +48,11 @@ export function truncateOutput(
       marker = next
       keepChars = Math.max(0, opts.maxChars - marker.length)
     }
+    // 上限连标记自身都放不下（maxChars 小于标记长度）：无标记硬截断，
+    // 保住「输出 ≤ maxChars」不变量（此前 marker 恒长于预算仍被输出）。
+    if (marker.length >= opts.maxChars) {
+      return headChars(text, opts.maxChars)
+    }
     const headLen = Math.floor(keepChars / 2)
     const tailLen = keepChars - headLen
     // 切点代理对安全：head/tail 各取至多 headLen/tailLen 字符，
@@ -62,6 +67,15 @@ export function truncateOutput(
     // tail 与 head 重叠（或 tailLines ≥ totalLines）→ 只保留 head
     const tail = tailStart > opts.headLines ? lines.slice(tailStart) : []
     const omitted = totalLines - head.length - tail.length
+    // head 已覆盖全部行（headLines ≥ totalLines）→ 无任何省略：
+    // 此前恒插 "[... 0 lines truncated ...]"，输出比原文多一行且行数突破
+    // maxLines。直接原样返回；字符超限时仍走字符兜底截断。
+    if (omitted === 0) {
+      if (needsCharTrunc) {
+        return { output: truncateByChars(output), truncated: true, totalLines, totalChars }
+      }
+      return { output, truncated: false, totalLines, totalChars }
+    }
     const marker = `[... ${omitted} lines truncated ...]`
     const result = [...head, marker, ...tail].join('\n')
     // 行截断后仍可能突破字符上限：head/tail 行自身巨大（minified 单行）或
