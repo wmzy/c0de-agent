@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 
 // Mock shiki 高亮：返回可识别的 HTML，隔离测试 marked 异步集成机制本身。
 // 核心回归点是 marked 的 async 处理，与 shiki 实现无关。
+// 与真实 Shiki 同语义：输出内容经 HTML 转义；lang='fail' 时抛错以走 fallback 路径。
 vi.mock('./highlight.js', () => ({
-  highlightCode: vi.fn(
-    async (code: string, lang: string) => `<pre data-mock-lang="${lang}">${code}</pre>`,
-  ),
+  highlightCode: vi.fn(async (code: string, lang: string) => {
+    if (lang === 'fail') throw new Error('highlight unavailable')
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    return `<pre data-mock-lang="${esc(lang)}">${esc(code)}</pre>`
+  }),
 }))
 
 // Mock 必须在 import 之前生效
@@ -49,5 +52,27 @@ describe('renderMarkdown', () => {
   it('renderMarkdownSync 同步渲染不含高亮但无 [object Promise]', () => {
     const html = renderMarkdownSync('```bash\nfind .\n```')
     expect(html).not.toContain('[object Promise]')
+  })
+
+  // 回归：自定义 code renderer 对 lang 与 fallback text 做裸插值——围栏语言
+  // 可构造 `x"><img src=x onerror=...>` 从 data-lang 属性越界注入元素，
+  // 经 Markdown 组件的 dangerouslySetInnerHTML 执行脚本（可窃取 localStorage token）。
+  // 默认 marked renderer 会转义，自定义后转义责任落到 renderer。
+  it('转义代码块语言属性，阻断属性越界注入', async () => {
+    const md = '```x"><img src=x onerror=alert(1)>\nbody\n```'
+    const html = await renderMarkdown(md)
+    expect(html).toContain('code-block')
+    // 无未转义元素注入（onerror 只允许以转义文本形式出现）
+    expect(html).not.toContain('<img')
+    expect(html).toContain('data-lang="x&quot;&gt;&lt;img')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  })
+
+  it('高亮失败 fallback 路径转义代码文本，阻断脚本注入', async () => {
+    const md = '```fail\n<script>alert(1)</script>\n```'
+    const html = await renderMarkdown(md)
+    expect(html).toContain('code-block')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
   })
 })
