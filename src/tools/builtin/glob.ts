@@ -12,6 +12,13 @@ const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', '
  * Supports: * (single segment), ** (across segments), ? (single char), {a,b} (alternation), [abc] (char class).
  */
 export function globToRegex(pattern: string): RegExp {
+  return new RegExp(`^${globFragment(pattern)}$`)
+}
+
+/** Convert a glob fragment (may appear inside brace alternation) to regex source.
+ *  Recursive so wildcards inside {a,b} stay wildcards instead of being escaped
+ *  as literals（此前 {*.spec.ts,*.test.ts} 恒不匹配任何文件）。 */
+function globFragment(pattern: string): string {
   let re = ''
   let i = 0
   while (i < pattern.length) {
@@ -35,7 +42,7 @@ export function globToRegex(pattern: string): RegExp {
         i++
       } else {
         const inner = pattern.slice(i + 1, end)
-        re += `(?:${inner.split(',').map(escapeRegex).join('|')})`
+        re += `(?:${inner.split(',').map(globFragment).join('|')})`
         i = end + 1
       }
     } else if (c === '[') {
@@ -55,11 +62,7 @@ export function globToRegex(pattern: string): RegExp {
       i++
     }
   }
-  return new RegExp(`^${re}$`)
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return re
 }
 
 /** Recursively walk a directory, skipping IGNORE_DIRS. Returns relative file paths. */

@@ -67,6 +67,23 @@ describe('globToRegex', () => {
     expect(re.test('a.ts')).toBe(true)
     expect(re.test('ab.ts')).toBe(false)
   })
+
+  // 回归：花括号分支此前经 escapeRegex 转义——分支内的通配符被当作字面量，
+  // `{*.spec.ts,*.test.ts}` 转成 ^(?:\*\.spec\.ts|\*\.test\.ts)$ 恒不匹配，
+  // 模型静默拿到「零测试文件」的错误结论。
+  it('treats wildcards inside brace alternatives as wildcards', () => {
+    const re = globToRegex('{*.spec.ts,*.test.ts}')
+    expect(re.test('foo.test.ts')).toBe(true)
+    expect(re.test('foo.spec.ts')).toBe(true)
+    expect(re.test('foo.ts')).toBe(false)
+  })
+
+  it('supports question mark inside brace alternatives', () => {
+    const re = globToRegex('file-{a?,b}')
+    expect(re.test('file-ab')).toBe(true)
+    expect(re.test('file-b')).toBe(true)
+    expect(re.test('file-abc')).toBe(false)
+  })
 })
 
 describe('globTool', () => {
