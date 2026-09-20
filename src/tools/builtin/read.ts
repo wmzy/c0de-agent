@@ -34,6 +34,16 @@ export const readTool: ToolDef = {
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const { path, offset, limit } = input as ReadInput
 
+    // offset 为 1-indexed 行号；offset < 1 或 limit < 0 会经 (offset ?? 1) - 1
+    // 产生负 slice 起点/终点，静默返回错位内容（如 offset=0 → 最后一行）。
+    // 显式报错让模型自纠，而非喂给它错误切片。
+    if (offset !== undefined && offset < 1) {
+      return { _tag: 'error', error: `read: offset must be >= 1 (1-indexed), got ${offset}` }
+    }
+    if (limit !== undefined && limit < 0) {
+      return { _tag: 'error', error: `read: limit must be >= 0, got ${limit}` }
+    }
+
     // 内部 URL scheme（spec §3.10）：skill://, agent://, pr:// 等。
     // 命中时走 resolver 拿到文本内容，再统一应用 offset/limit；目录列举对 URL 无意义。
     if (isURLPath(path)) {

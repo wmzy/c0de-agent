@@ -55,6 +55,29 @@ describe('readTool', () => {
     }
   })
 
+  // 回归：offset 为 1-indexed，(offset ?? 1) - 1 使 offset=0/负数产生负 slice
+  // 起点——offset=0 静默返回「最后一行」而非全文件/报错，模型读到错误内容后
+  // 会基于它继续推理；负数 offset/limit 同样切片错位。显式报错供模型自纠。
+  it('rejects offset < 1 instead of silently returning the wrong lines', async () => {
+    await writeFile(join(workDir, 'test.txt'), 'line1\nline2\nline3\nline4\nline5')
+    const zero = await readTool.execute({ path: 'test.txt', offset: 0 }, ctx)
+    expect(zero._tag).toBe('error')
+    if (zero._tag === 'error') {
+      expect(zero.error).toContain('offset')
+    }
+    const neg = await readTool.execute({ path: 'test.txt', offset: -1 }, ctx)
+    expect(neg._tag).toBe('error')
+  })
+
+  it('rejects a negative limit instead of silently mis-slicing', async () => {
+    await writeFile(join(workDir, 'test.txt'), 'line1\nline2\nline3\nline4\nline5')
+    const result = await readTool.execute({ path: 'test.txt', offset: 2, limit: -3 }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('limit')
+    }
+  })
+
   it('returns error for non-existent file', async () => {
     const result = await readTool.execute({ path: 'nope.txt' }, ctx)
     expect(result._tag).toBe('error')

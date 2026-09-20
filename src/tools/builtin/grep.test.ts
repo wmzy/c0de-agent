@@ -81,6 +81,20 @@ describe('grepTool', () => {
     }
   })
 
+  // 回归：maxResults <= 0 时「matches.length >= max」在首个匹配后立即成立，
+  // 返回 1 条且 truncated:true——既违反「最多 0 条」语义，又误导模型结果集已满。
+  // 与 read 的 offset/limit 同型：数值参数未校验 → 静默错误结果。
+  it('rejects maxResults < 1 instead of returning a bogus single match', async () => {
+    await writeFile(join(workDir, 'a.ts'), 'match\nmatch\nmatch\n')
+    const zero = await grepTool.execute({ pattern: 'match', maxResults: 0 }, ctx)
+    expect(zero._tag).toBe('error')
+    if (zero._tag === 'error') {
+      expect(zero.error).toContain('maxResults')
+    }
+    const neg = await grepTool.execute({ pattern: 'match', maxResults: -1 }, ctx)
+    expect(neg._tag).toBe('error')
+  })
+
   it('returns empty for no matches', async () => {
     await writeFile(join(workDir, 'a.ts'), 'nothing\n')
     const result = await grepTool.execute({ pattern: 'xyz123' }, ctx)
