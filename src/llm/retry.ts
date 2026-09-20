@@ -19,6 +19,15 @@ const errorHeaders = (error: unknown): Record<string, string> | undefined => {
 /** Cap a delay to the 32-bit safe ceiling. */
 const capDelay = (ms: number): number => Math.min(ms, RETRY_MAX_DELAY)
 
+/** 严格解析「正有限毫秒数」：Infinity（'1e999'）/NaN/负数/零一律拒绝。
+ *  parseFloat('1e999') = Infinity 能穿过 Number.isNaN 检查——capDelay(Infinity)
+ *  后单次重试延迟 2^31ms ≈ 24.8 天，且 RateLimit 的 policy maxDelay=Infinity
+ *  不拦截，agent run 实际挂死。 */
+const parsePositiveFinite = (s: string): number | null => {
+  const n = Number.parseFloat(s)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 /**
  * Compute the delay before the next retry attempt (ms).
  * Honors retry-after / retry-after-ms headers when present, else exponential backoff
@@ -26,24 +35,28 @@ const capDelay = (ms: number): number => Math.min(ms, RETRY_MAX_DELAY)
  */
 const delay = (attempt: number, error?: unknown, initialDelayMs = RETRY_INITIAL_DELAY): number => {
   const headers = errorHeaders(error)
+  // 无可用重试指示时统一 30s 上限退避。此前仅无 headers 路径 cap 30s——headers
+  // 存在但缺/坏 retry-after（如 500 错误携带其他头）时退避无上限，attempt=10
+  // 即膨胀到 2^9*2000 ≈ 17 分钟。
+  const backoff = (): number =>
+    capDelay(
+      Math.min(initialDelayMs * RETRY_BACKOFF_FACTOR ** (attempt - 1), RETRY_MAX_DELAY_NO_HEADERS),
+    )
   if (headers) {
     const retryAfterMs = headers['retry-after-ms']
     if (retryAfterMs !== undefined) {
-      const parsedMs = Number.parseFloat(retryAfterMs)
-      if (!Number.isNaN(parsedMs)) return capDelay(parsedMs)
+      const parsedMs = parsePositiveFinite(retryAfterMs)
+      if (parsedMs !== null) return capDelay(parsedMs)
     }
     const retryAfter = headers['retry-after']
     if (retryAfter !== undefined) {
-      const parsedSeconds = Number.parseFloat(retryAfter)
-      if (!Number.isNaN(parsedSeconds)) return capDelay(Math.ceil(parsedSeconds * 1000))
+      const parsedSeconds = parsePositiveFinite(retryAfter)
+      if (parsedSeconds !== null) return capDelay(Math.ceil(parsedSeconds * 1000))
       const parsed = Date.parse(retryAfter) - Date.now()
       if (!Number.isNaN(parsed) && parsed > 0) return capDelay(Math.ceil(parsed))
     }
-    return capDelay(initialDelayMs * RETRY_BACKOFF_FACTOR ** (attempt - 1))
   }
-  return capDelay(
-    Math.min(initialDelayMs * RETRY_BACKOFF_FACTOR ** (attempt - 1), RETRY_MAX_DELAY_NO_HEADERS),
-  )
+  return backoff()
 }
 
 /** A normalized, retryable error descriptor for the session layer. */

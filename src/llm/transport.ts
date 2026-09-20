@@ -185,13 +185,15 @@ const parseRetryAfterMs = (
   retryAfterMs?: string | null,
   retryAfter?: string | null,
 ): number | undefined => {
+  // 与 retry.ts delay() 同口径：仅正有限数（'1e999' → Infinity 必须拒绝，
+  // 否则塞进 reason 后重试层延迟 2^31ms ≈ 24.8 天挂死 agent run）。
   if (retryAfterMs !== null && retryAfterMs !== undefined) {
     const parsed = Number.parseFloat(retryAfterMs)
-    if (!Number.isNaN(parsed)) return Math.ceil(parsed)
+    if (Number.isFinite(parsed) && parsed > 0) return Math.ceil(parsed)
   }
   if (retryAfter !== null && retryAfter !== undefined) {
     const parsed = Number.parseFloat(retryAfter)
-    if (!Number.isNaN(parsed)) return Math.ceil(parsed * 1000)
+    if (Number.isFinite(parsed) && parsed > 0) return Math.ceil(parsed * 1000)
   }
   return undefined
 }

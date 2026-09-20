@@ -218,6 +218,25 @@ describe('transport streamHTTP', () => {
     })
   })
 
+  // 复现：'1e999' 经 parseFloat = Infinity，原样塞进 reason.retryAfterMs——
+  // 重试层 delay() capDelay(Infinity) 后单次延迟 2^31ms ≈ 24.8 天。
+  // 非法头应视为「无重试指示」，不携带 retryAfterMs。
+  it('drops non-finite retry-after-ms on 429', async () => {
+    await expect(
+      collect(
+        streamHTTP({
+          url: 'https://example.com',
+          body: {},
+          headers: {},
+          fetchImpl: makeFetch(429, 'slow', { 'retry-after-ms': '1e999' }),
+        }),
+      ),
+    ).rejects.toSatisfy((e: unknown) => {
+      if (!isLLMError(e)) return false
+      return e.reason._tag === 'RateLimit' && e.reason.retryAfterMs === undefined
+    })
+  })
+
   it('throws context-overflow InvalidRequest when body matches', async () => {
     await expect(
       collect(

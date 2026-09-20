@@ -65,6 +65,28 @@ describe('retry delay', () => {
     const past = new Date(Date.now() - 10_000).toUTCString()
     expect(delay(1, rateLimitError({ 'retry-after': past }))).toBe(2_000)
   })
+
+  // 复现：parseFloat('1e999') = Infinity，Number.isNaN 放行——capDelay(Infinity)
+  // 落到 2^31ms ≈ 24.8 天，单次重试就把 agent run 挂死（RateLimit policy
+  // maxDelay=Infinity 不拦截）。
+  it('rejects non-finite retry-after values instead of stalling ~24.8 days', () => {
+    expect(delay(1, rateLimitError({ 'retry-after-ms': '1e999' }))).toBe(2_000)
+    expect(delay(1, rateLimitError({ 'retry-after': '1e999' }))).toBe(2_000)
+  })
+
+  // 复现：负值/零值同样经 parseFloat 放行——负数延迟与「立即重试」均非
+  // 服务器可发出的合理指示，应落到退避。
+  it('rejects non-positive retry-after values', () => {
+    expect(delay(1, rateLimitError({ 'retry-after-ms': '-5' }))).toBe(2_000)
+    expect(delay(1, rateLimitError({ 'retry-after': '0' }))).toBe(2_000)
+  })
+
+  // 复现：headers 存在但无可用 retry-after（如 500 错误携带其他头）时走
+  // 无上限退避——attempt=10 → 2^9*2000=1,024,000ms，与无 headers 路径的
+  // 30s cap 不一致，同型错误反复触发时退避可膨胀到数小时。
+  it('caps backoff at 30s even when headers exist without retry-after', () => {
+    expect(delay(10, rateLimitError({ 'x-request-id': 'abc' }))).toBe(30_000)
+  })
 })
 
 describe('retry retryable', () => {
