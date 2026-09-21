@@ -262,6 +262,38 @@ describe('session CRUD', () => {
     expect(r.restoredAncestorCount).toBe(1)
     expect(r.crossedBatchAncestor).toBe(false)
   })
+
+  // 回归：祖先链遍历（while (parentId)）无环守卫——parentId 成环数据
+  // （a↔b 互指/自引用，热更新快照恢复或手改 DB 均可产生）会让循环在环上
+  // 无限打转，每圈一条 DB 查询，恢复请求永不返回（同型：orderSessionsByParent
+  // 的栈溢出、purgeDeletedSessions 的循环引用兜底均已加守卫，此面漏了）。
+  it('terminates on a parentId cycle instead of looping forever', async () => {
+    const a = await createSession(handle, 'A')
+    const b = await createSession(handle, 'B')
+    // 构造 a↔b 互指环并同时软删（绕过 softDeleteSession 的 BFS 级联，直接落环）
+    await handle.db.update(sessions).set({ parentId: b.id }).where(eq(sessions.id, a.id))
+    await handle.db.update(sessions).set({ parentId: a.id }).where(eq(sessions.id, b.id))
+    const now = new Date()
+    for (const id of [a.id, b.id]) {
+      await handle.db.update(sessions).set({ deletedAt: now }).where(eq(sessions.id, id))
+    }
+
+    const outcome = await Promise.race([
+      restoreSessionCore(handle, a.id).then(
+        (r) => ({ kind: 'restored' as const, r }),
+        // 修复前若在环上打转直至 DB 关闭，拒绝也按「未正常返回」计入
+        () => ({ kind: 'hung' as const }),
+      ),
+      new Promise<{ kind: 'hung' }>((resolve) => setTimeout(() => resolve({ kind: 'hung' }), 1200)),
+    ])
+    expect(outcome.kind).toBe('restored')
+    if (outcome.kind === 'restored') {
+      expect(outcome.r.restored).toBe(true)
+    }
+    // 环上两个会话都已还原（不再滞留在环上打转）
+    expect((await getSession(handle, a.id))?.deletedAt).toBeNull()
+    expect((await getSession(handle, b.id))?.deletedAt).toBeNull()
+  })
 })
 
 describe('purgeDeletedSessions — 两阶段清理（A3：到期先标记，宽限期后清除）', () => {

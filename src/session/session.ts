@@ -349,10 +349,17 @@ async function restoreSessionCore(
   // 祖先链（仅还原其中已软删除的节点）：为保证恢复节点在会话树可达，
   // 已删除的祖先无论批次均需一并还原。记录还原的祖先数量与是否跨越删除批次，
   // 供前端提示「为保持会话树完整，同时还原了 N 个父会话」。
+  // 环守卫：parentId 成环数据（a↔b 互指/自引用，快照恢复或手改 DB 均可产生）
+  // 会让 while 循环在环上无限打转（每圈一条 DB 查询，恢复请求永不返回）——
+  // 已访问节点再次出现即终止，与 orderSessionsByParent/purgeDeletedSessions
+  // 的同型守卫一致。
   let restoredAncestorCount = 0
   let crossedBatchAncestor = false
   let parentId = row.parentId
+  const visitedAncestors = new Set<string>([id])
   while (parentId) {
+    if (visitedAncestors.has(parentId)) break
+    visitedAncestors.add(parentId)
     const [parent] = await handle.db.select().from(sessions).where(eq(sessions.id, parentId))
     if (!parent) break
     if (parent.deletedAt && !ids.has(parent.id)) {
