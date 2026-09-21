@@ -444,6 +444,27 @@ describe('files route', () => {
     expect(paths.some((p) => p.includes('.c0de'))).toBe(true)
   })
 
+  // 回归：collectFiles 的守卫是 `maxDepth < 0`——maxDepth=0 的那层调用仍会
+  // 列举并推入条目，深度上限 N 实际收集到第 N+1 层（上限 8 时 d8 目录内的
+  // 文件位于第 9 层，仍被搜到）。守卫与「深度上限」契约差一层，深一层意味着
+  // 多一层整树 readdir。
+  it('GET /search 不再命中深度上限之外的深层文件', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'c0de-search-deep-'))
+    // d1/…/d8：8 层目录；beyond-cap.txt 位于相对 root 深度 9
+    const deep = Array.from({ length: 8 }, (_, i) => `d${i + 1}`).join('/')
+    mkdirSync(join(dir, deep), { recursive: true })
+    writeFileSync(join(dir, deep, 'beyond-cap.txt'), 'x')
+    const db = await createDB({ driver: 'pglite' })
+    dbHandle = db
+    await migrateDB(db)
+    const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
+    const app = createFilesRoute(ctx)
+    const res = await app.request('/search?q=beyond-cap')
+    expect(res.status).toBe(200)
+    const paths = ((await res.json()) as Array<{ path: string }>).map((r) => r.path)
+    expect(paths.some((p) => p.includes('beyond-cap'))).toBe(false)
+  })
+
   it('GET /git-status 返回状态映射（非 git 返回空对象）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-gitstatus-nogit-'))
     const db = await createDB({ driver: 'pglite' })

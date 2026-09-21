@@ -7,7 +7,7 @@ import type { DB } from '../../db/client.js'
 import { createDB } from '../../db/client.js'
 import { createRegistry } from '../../llm/registry.js'
 import { createServerContext } from '../context.js'
-import { createFilesystemRoute } from './filesystem.js'
+import { createFilesystemRoute, searchDirectories } from './filesystem.js'
 
 let dbHandle: DB | undefined
 let tempDir: string
@@ -161,5 +161,19 @@ describe('filesystem route', () => {
     expect(names).toContain('project-a')
     expect(names).toContain('project-b')
     expect(names.every((n) => !n.startsWith('.'))).toBe(true)
+  })
+})
+
+// 回归：walk 守卫是 `depth > maxDepth`——到达第 N 层的 walk 仍会处理其条目，
+// 把第 N+1 层目录推入结果（maxDepth=1 实测返回 ['a','a/b']）。守卫语义与
+// 「限深 N」契约差一层：深层目录多一层意味着每次多一层 readdir（目录自动补全
+// 在深层树上多遍历一整层，结果也越界）。修复后第 N 层是收集的最后一级。
+describe('searchDirectories 深度上限', () => {
+  it('maxDepth=N 只收集到第 N 层目录', async () => {
+    const root = join(tempDir, 'deep')
+    await mkdir(join(root, 'a/b/c'), { recursive: true })
+    expect((await searchDirectories(root, '', 50, 1)).sort()).toEqual(['a'])
+    expect((await searchDirectories(root, '', 50, 2)).sort()).toEqual(['a', 'a/b'])
+    expect((await searchDirectories(root, '', 50, 3)).sort()).toEqual(['a', 'a/b', 'a/b/c'])
   })
 })

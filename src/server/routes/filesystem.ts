@@ -57,7 +57,11 @@ async function searchDirectories(
   const results: string[] = []
 
   async function walk(dir: string, depth: number): Promise<void> {
-    if (results.length >= limit || depth > maxDepth) return
+    // depth 语义：walk(base, 0) 处理的是第 1 层条目。守卫必须挡住
+    // depth === maxDepth 的调用——`depth > maxDepth` 会放它进来多收集一层
+    // （maxDepth=1 实测返回 ['a','a/b']）。depth >= maxDepth 使收集层数恰为
+    // maxDepth：walk 只在 depth ∈ [0, maxDepth) 时推入条目。
+    if (results.length >= limit || depth >= maxDepth) return
     let entries: import('node:fs').Dirent[]
     try {
       entries = await readdir(dir, { withFileTypes: true })

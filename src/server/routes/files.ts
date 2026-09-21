@@ -67,7 +67,11 @@ async function collectFiles(
   maxDepth = 8,
   budget = SEARCH_MAX_RESULTS,
 ): Promise<SearchResult[]> {
-  if (maxDepth < 0 || budget <= 0) return []
+  // maxDepth 语义：能列举条目的调用层级。`maxDepth < 0` 会放 maxDepth=0 的
+  // 调用进来多收集一层（上限 8 时第 9 层的文件/目录仍被搜到）——守卫与
+  // 「深度上限」契约差一层。maxDepth <= 0 使收集层数恰为声明的上限：
+  // 首次调用 maxDepth=D 列举第 1 层，递归递减，第 D 层之后不再列举。
+  if (maxDepth <= 0 || budget <= 0) return []
   const results: SearchResult[] = []
   let entries: import('node:fs').Dirent[]
   try {
