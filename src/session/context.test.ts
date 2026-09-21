@@ -11,7 +11,7 @@ import {
   entriesToChatMessages,
   getSessionContext,
   injectSnapshots,
-  messageToChatMessage,
+  messageToChatMessages,
 } from './context.js'
 import { appendMessage, insertEntry } from './message.js'
 import { createSession } from './session.js'
@@ -51,7 +51,14 @@ async function setupDB(): Promise<DB> {
 
 const textContent = (text: string): MessageContent[] => [{ _tag: 'text', text }]
 
-describe('messageToChatMessage', () => {
+describe('messageToChatMessages', () => {
+  /** 单结果消息的展开结果恒为 1 条——取出并断言（TS 收窄）。 */
+  const single = (msgs: ChatMessage[]): ChatMessage => {
+    const m = msgs[0]
+    if (!m) throw new Error('expected exactly one message')
+    return m
+  }
+
   it('converts a text message to a ChatMessage', () => {
     const msg: Message = {
       id: 'm1',
@@ -61,7 +68,7 @@ describe('messageToChatMessage', () => {
       tokenCount: 1,
       createdAt: 0,
     }
-    const chat = messageToChatMessage(msg)
+    const chat = single(messageToChatMessages(msg))
     expect(chat.role).toBe('user')
     expect(typeof chat.content).toBe('string')
     expect(chat.content).toContain('hello')
@@ -79,7 +86,7 @@ describe('messageToChatMessage', () => {
       tokenCount: 1,
       createdAt: 0,
     }
-    const chat = messageToChatMessage(msg)
+    const chat = single(messageToChatMessages(msg))
     expect(chat.toolCalls).toBeDefined()
     expect(chat.toolCalls).toHaveLength(1)
     expect(chat.toolCalls?.[0]?.name).toBe('read')
@@ -101,7 +108,7 @@ describe('messageToChatMessage', () => {
       tokenCount: 1,
       createdAt: 0,
     }
-    const chat = messageToChatMessage(msg)
+    const chat = single(messageToChatMessages(msg))
     expect(chat.role).toBe('tool')
     expect(chat.toolCallId).toBe('c1')
   })
@@ -122,7 +129,7 @@ describe('messageToChatMessage', () => {
       tokenCount: 1,
       createdAt: 0,
     }
-    const chat = messageToChatMessage(msg)
+    const chat = single(messageToChatMessages(msg))
     expect(chat.toolCalls?.[0]?.arguments).toBe('{}')
   })
 
@@ -138,8 +145,31 @@ describe('messageToChatMessage', () => {
       tokenCount: 1,
       createdAt: 0,
     }
-    const chat = messageToChatMessage(msg)
+    const chat = single(messageToChatMessages(msg))
     expect(chat.content).toBe('{}')
+  })
+
+  // 回归：多结果 tool 消息此前只取首个 tool_result——其余结果的反馈永远到不了
+  // 模型（模型以为工具没跑完而盲目重试）。展开为每条 result 一条 tool 消息
+  // （OpenAI 协议一条消息一个 tool_call_id）。
+  it('expands a tool message with multiple tool_results into one message each', () => {
+    const msg: Message = {
+      id: 'm1',
+      sessionId: 's',
+      role: 'tool',
+      content: [
+        { _tag: 'tool_result', id: 'c1', tool: 'read', output: { _tag: 'success', output: 'a' } },
+        { _tag: 'tool_result', id: 'c2', tool: 'grep', output: { _tag: 'success', output: 'b' } },
+      ],
+      tokenCount: 1,
+      createdAt: 0,
+    }
+    const chats = messageToChatMessages(msg)
+    expect(chats).toHaveLength(2)
+    expect(chats[0]).toMatchObject({ role: 'tool', toolCallId: 'c1' })
+    expect(chats[0]?.content).toBe(JSON.stringify({ _tag: 'success', output: 'a' }))
+    expect(chats[1]).toMatchObject({ role: 'tool', toolCallId: 'c2' })
+    expect(chats[1]?.content).toBe(JSON.stringify({ _tag: 'success', output: 'b' }))
   })
 })
 
@@ -423,7 +453,7 @@ describe('getSessionContext', () => {
   })
 })
 
-describe('messageToChatMessage 多模态', () => {
+describe('messageToChatMessages 多模态', () => {
   const base = (content: Message['content']): Message => ({
     id: 'm1',
     sessionId: 's',
@@ -434,18 +464,21 @@ describe('messageToChatMessage 多模态', () => {
   })
 
   it('无 image 时返回纯字符串 content（原路径）', () => {
-    const chat = messageToChatMessage(base([{ _tag: 'text', text: 'hi' }]))
+    const chat = messageToChatMessages(base([{ _tag: 'text', text: 'hi' }]))[0] ?? {
+      role: 'user',
+      content: '',
+    }
     expect(typeof chat.content).toBe('string')
     expect(chat.content).toBe('hi')
   })
 
   it('含 image 时返回 ContentPart 数组', () => {
-    const chat = messageToChatMessage(
+    const chat = messageToChatMessages(
       base([
         { _tag: 'text', text: '看这张图' },
         { _tag: 'image', mediaType: 'image/png', data: 'BASE64' },
       ]),
-    )
+    )[0] ?? { role: 'user', content: '' }
     expect(Array.isArray(chat.content)).toBe(true)
     const parts = chat.content as Array<{ type: string; [k: string]: unknown }>
     expect(parts).toHaveLength(2)
@@ -454,7 +487,9 @@ describe('messageToChatMessage 多模态', () => {
   })
 
   it('仅 image 无 text 时数组只含 image part', () => {
-    const chat = messageToChatMessage(base([{ _tag: 'image', mediaType: 'image/png', data: 'X' }]))
+    const chat = messageToChatMessages(
+      base([{ _tag: 'image', mediaType: 'image/png', data: 'X' }]),
+    )[0] ?? { role: 'user', content: '' }
     const parts = chat.content as Array<{ type: string }>
     expect(parts).toHaveLength(1)
     expect(parts[0]?.type).toBe('image')

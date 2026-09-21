@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessions } from '../db/schema.js'
 import type { ChatMessage, ContentPart } from '../shared/types/llm.js'
-import type { Message } from '../shared/types/message.js'
+import type { Message, MessageContent } from '../shared/types/message.js'
 import { getEntries } from './message.js'
 import { getFileSnapshots, upsertFileSnapshot } from './snapshot.js'
 import type { FileSnapshot, SessionEntry } from './types.js'
@@ -80,8 +80,12 @@ function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
   return result
 }
 
-/** Convert a stored Message to a protocol-level ChatMessage for the LLM. */
-function messageToChatMessage(msg: Message): ChatMessage {
+/** Convert a stored Message to protocol-level ChatMessage(s) for the LLM.
+ *  多结果 tool 消息（同一条消息含多条 tool_result）展开为多条 tool 消息——
+ *  此前只取首个 result，其余结果的反馈永远到不了模型（模型会盲目重试
+ *  已完成/已失败的并行工具）。OpenAI 协议一条 tool 消息只能携带一个
+ *  tool_call_id，故展开是唯一正确映射。 */
+function messageToChatMessages(msg: Message): ChatMessage[] {
   const textParts = msg.content
     .filter((p) => p._tag === 'text' || p._tag === 'thinking')
     .map((p) => (p._tag === 'thinking' ? `<think>${p.text}</think>` : p.text))
@@ -98,6 +102,23 @@ function messageToChatMessage(msg: Message): ChatMessage {
       arguments: JSON.stringify(p.input ?? {}),
     }))
 
+  if (msg.role === 'tool') {
+    const toolResults = msg.content.filter(
+      (p): p is Extract<MessageContent, { _tag: 'tool_result' }> => p._tag === 'tool_result',
+    )
+    if (toolResults.length === 0) {
+      // 空 tool 消息：无 toolCallId，sanitizeToolPairs 会丢弃（同旧行为）
+      return [{ role: 'tool', content: textParts || '' }]
+    }
+    return toolResults.map((p) => ({
+      role: 'tool',
+      toolCallId: p.id,
+      // 缺 output 的 tool_result：JSON.stringify(undefined) 返回 undefined，
+      // content 字段缺失的 tool 消息在协议适配层行为未定义——保守序列化为空对象。
+      content: JSON.stringify(p.output === undefined ? {} : p.output),
+    }))
+  }
+
   const toolResultPart = msg.content.find((p) => p._tag === 'tool_result')
   const imageParts = msg.content.filter((p) => p._tag === 'image')
 
@@ -111,7 +132,7 @@ function messageToChatMessage(msg: Message): ChatMessage {
     }
     const multimodal: ChatMessage = { role: msg.role, content: parts }
     if (toolCalls.length > 0) multimodal.toolCalls = toolCalls
-    return multimodal
+    return [multimodal]
   }
 
   // 无图片：保持原纯字符串逻辑（零回归）
@@ -135,7 +156,7 @@ function messageToChatMessage(msg: Message): ChatMessage {
     chat.content = JSON.stringify(toolResultPart.output === undefined ? {} : toolResultPart.output)
   }
 
-  return chat
+  return [chat]
 }
 
 /** Convert all session entries (messages + special) to ChatMessage[] for the LLM. */
@@ -144,7 +165,7 @@ function entriesToChatMessages(entries: SessionEntry[], snapshots: FileSnapshot[
 
   for (const entry of entries) {
     if (!('_tag' in entry)) {
-      messages.push(messageToChatMessage(entry))
+      messages.push(...messageToChatMessages(entry))
       continue
     }
 
@@ -265,4 +286,4 @@ async function refreshStaleSnapshots(handle: DB, sessionId: string, cwd: string)
   }
 }
 
-export { entriesToChatMessages, getSessionContext, injectSnapshots, messageToChatMessage }
+export { entriesToChatMessages, getSessionContext, injectSnapshots, messageToChatMessages }

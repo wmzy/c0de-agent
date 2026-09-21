@@ -180,4 +180,70 @@ describe('mergeToolMessages', () => {
     expect(merged[0]?.content.some((p) => p._tag === 'tool_result' && p.id === 't1')).toBe(true)
     expect(merged[1]?.content.some((p) => p._tag === 'tool_result' && p.id === 't2')).toBe(true)
   })
+
+  // 回归：并行工具轮次的多条 tool_result 存于同一条 tool 消息时，merge 只
+  // find 首个 result——其余结果随整条消息 drop 静默丢失：时间线里对应调用
+  // 永远显示 running，结果内容人间蒸发。
+  it('合并同一条 tool 消息的全部 tool_result（此前只合并首个，其余静默丢失）', () => {
+    const assistant = msg('assistant', [
+      { _tag: 'tool_call', id: 'c1', tool: 'read', input: { path: 'a.ts' } },
+      { _tag: 'tool_call', id: 'c2', tool: 'grep', input: { pattern: 'x' } },
+    ])
+    const tool = msg('tool', [
+      {
+        _tag: 'tool_result',
+        id: 'c1',
+        tool: 'read',
+        output: { _tag: 'success', output: 'content-a' },
+      },
+      {
+        _tag: 'tool_result',
+        id: 'c2',
+        tool: 'grep',
+        output: { _tag: 'success', output: '2 hits' },
+      },
+    ])
+    const merged = mergeToolMessages([assistant, tool])
+    expect(merged).toHaveLength(1)
+    const content = merged[0]?.content ?? []
+    expect(content.filter((p) => p._tag === 'tool_result')).toHaveLength(2)
+    // 合并后经 normalizeParts：两张 completed 卡，无 running 卡
+    const blocks = normalizeParts(merged[0] as Message)
+    expect(blocks).toHaveLength(2)
+    expect(blocks.every((b) => b.type === 'tool' && b.status === 'completed')).toBe(true)
+  })
+
+  // 回归：首个 result 无对应 call 时，此前整条消息被跳过——后续本可合并的
+  // result 一并丢失。修复后逐一处理：无主的保留、有主的合并。
+  it('首个 tool_result 无主时不阻塞同消息其余结果的合并', () => {
+    const assistant = msg('assistant', [{ _tag: 'tool_call', id: 'c2', tool: 'grep', input: {} }])
+    const tool = msg('tool', [
+      {
+        _tag: 'tool_result',
+        id: 'c1',
+        tool: 'read',
+        output: { _tag: 'success', output: 'orphan' },
+      },
+      {
+        _tag: 'tool_result',
+        id: 'c2',
+        tool: 'grep',
+        output: { _tag: 'success', output: '2 hits' },
+      },
+    ])
+    const merged = mergeToolMessages([assistant, tool])
+    // assistant（合并了 c2）+ tool（保留孤儿 c1）
+    expect(merged).toHaveLength(2)
+    expect(merged[0]?.role).toBe('assistant')
+    expect(merged[0]?.content.some((p) => p._tag === 'tool_result' && p.id === 'c2')).toBe(true)
+    expect(merged[1]?.role).toBe('tool')
+    expect(merged[1]?.content).toEqual([
+      {
+        _tag: 'tool_result',
+        id: 'c1',
+        tool: 'read',
+        output: { _tag: 'success', output: 'orphan' },
+      },
+    ])
+  })
 })

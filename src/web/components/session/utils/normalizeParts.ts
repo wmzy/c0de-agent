@@ -108,18 +108,28 @@ export function mergeToolMessages(messages: Message[]): Message[] {
   for (let i = 0; i < out.length; i++) {
     const m = out[i]
     if (m?.role !== 'tool') continue
-    const found = m.content.find(
-      (p): p is Extract<MessageContent, { _tag: 'tool_result' }> => p._tag === 'tool_result',
-    )
-    if (!found) continue
-    const ai = callIndex.get(found.id)
-    if (ai === undefined) continue // 无对应 assistant tool_call：保留，由 normalizeParts 兜底渲染
-    const assistant = out[ai]
-    if (assistant === undefined) continue
-    // 仅当 assistant 还没含该 result 时并入，避免重复
-    const has = assistant.content.some((p) => p._tag === 'tool_result' && p.id === found.id)
-    if (!has) assistant.content.push(found)
-    drop.add(i)
+    // 逐条 tool_result 合并（此前 find 只取首个）：并行工具轮次的多条结果
+    // 存于同一条 tool 消息时，未合并的其余结果会随整条消息 drop 静默丢失；
+    // 首个 result 无对应 call 时也会跳过整条消息、连累后续可合并的结果。
+    const remaining: MessageContent[] = []
+    for (const p of m.content) {
+      if (p._tag !== 'tool_result') {
+        remaining.push(p)
+        continue
+      }
+      const ai = callIndex.get(p.id)
+      const assistant = ai === undefined ? undefined : out[ai]
+      if (!assistant) {
+        remaining.push(p) // 无对应 assistant tool_call：保留，由 normalizeParts 兜底渲染
+        continue
+      }
+      const has = assistant.content.some((q) => q._tag === 'tool_result' && q.id === p.id)
+      if (has) continue // assistant 已含该 result（实时 reducer 已并入）——丢弃重复
+      assistant.content.push(p)
+    }
+    if (remaining.length === m.content.length) continue // 无任何可合并项：原样保留
+    if (remaining.length === 0) drop.add(i)
+    else m.content = remaining
   }
   return out.filter((_, i) => !drop.has(i))
 }

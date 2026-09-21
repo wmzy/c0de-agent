@@ -19,7 +19,7 @@ export {
   entriesToChatMessages,
   getSessionContext,
   injectSnapshots,
-  messageToChatMessage,
+  messageToChatMessages,
 } from './context.js'
 export {
   appendMessage,
