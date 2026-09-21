@@ -52,7 +52,15 @@ type ToolResultPart = {
   providerMetadata?: ProviderMetadata
 }
 
-type ContentPart = TextPart | ReasoningPart | ToolCallPart | ToolResultPart
+type ImagePart = {
+  type: 'image'
+  mediaType: string
+  /** base64 编码（不含 `data:` 前缀）。 */
+  data: string
+  providerMetadata?: ProviderMetadata
+}
+
+type ContentPart = TextPart | ReasoningPart | ToolCallPart | ToolResultPart | ImagePart
 
 type MessageRole = 'system' | 'user' | 'assistant' | 'tool'
 
@@ -115,6 +123,7 @@ const requestUpdate = (req: InternalRequest, patch: Partial<InternalRequest>): I
 
 export type {
   ContentPart,
+  ImagePart,
   InternalRequest,
   Message,
   MessageRole,

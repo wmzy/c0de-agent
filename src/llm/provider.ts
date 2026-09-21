@@ -66,7 +66,10 @@ const toInternalMessage = (msg: ChatMessage): Message => {
   }
   const parts: ContentPart[] = (msg.content as ChatContentPart[]).map((p) => {
     if (p.type === 'text') return { type: 'text' as const, text: p.text }
-    return { type: 'text' as const, text: `[image: ${p.mediaType}]` }
+    // 图片数据必须送达 provider：此前降级为 `[image: <mediaType>]` 文本占位符，
+    // base64 静默丢弃——模型收到的只是一行文字，多模态能力在最后一公里失效
+    // （前端附件/持久化/token 估算全部就绪，唯独此处丢数据）。
+    return { type: 'image' as const, mediaType: p.mediaType, data: p.data }
   })
   // assistant messages may carry tool_calls
   if (msg.role === 'assistant' && msg.toolCalls !== undefined) {

@@ -65,6 +65,28 @@ describe('openai-compat bodyFrom', () => {
     expect(tool?.content).toBe('done')
   })
 
+  it('maps user image parts to image_url data URLs (base64 data must reach the provider)', () => {
+    // 回归：内部消息携带 image part 时，此前 bodyFrom 只映射 text part——
+    // 图片被静默丢弃，模型收到空 content 数组。占位符 `[image: ...]` 同理。
+    const imageMsg: Message = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'look' },
+        // schema 补齐前 image part 不在 ContentPart 联合内：结构断言线格式即可。
+        { type: 'image', mediaType: 'image/png', data: 'QUJD' },
+      ] as Message['content'],
+    }
+    const body = bodyFrom(request({ messages: [imageMsg] }))
+    const user = body.messages.find((m) => m.role === 'user')
+    expect(Array.isArray(user?.content)).toBe(true)
+    const parts = user?.content as Array<{ type: string; image_url?: { url: string } }>
+    expect(parts[0]).toEqual({ type: 'text', text: 'look' })
+    expect(parts[1]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'data:image/png;base64,QUJD' },
+    })
+  })
+
   it('applies generation options', () => {
     const body = bodyFrom(request({ generation: { maxTokens: 100, temperature: 0.5 } }))
     expect(body.max_tokens).toBe(100)

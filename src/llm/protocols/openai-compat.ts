@@ -57,6 +57,14 @@ const joinSystem = (request: InternalRequest): string =>
 
 const toOpenAIContent = (part: ContentPart): OpenAIContentPart => {
   if (part.type === 'text') return { type: 'text', text: part.text }
+  if (part.type === 'image') {
+    // OpenAI 多模态契约：dataURL 形式的 image_url。mediaType/data 来自用户
+    // 附件（data 为无前缀 base64）——此处拼出完整 dataURL 送达模型。
+    return {
+      type: 'image_url',
+      image_url: { url: `data:${part.mediaType};base64,${part.data}` },
+    }
+  }
   return { type: 'text', text: '' }
 }
 
@@ -84,7 +92,7 @@ const messageToOpenAI = (msg: Message): OpenAIMessage => {
   )
   const content: OpenAIContentPart[] | string =
     msg.role === 'user'
-      ? textParts.map(toOpenAIContent)
+      ? msg.content.filter((p) => p.type === 'text' || p.type === 'image').map(toOpenAIContent)
       : textParts.map((p) => (p.type === 'text' ? p.text : '')).join('')
   const message: OpenAIMessage = {
     role: msg.role as OpenAIChatRole,

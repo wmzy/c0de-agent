@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRequest } from '../shared/types/llm.js'
 import { bodyFrom } from './protocols/openai-compat.js'
-import { buildInternalRequest, chat, chatStream } from './provider.js'
+import { buildInternalRequest, chat, chatStream, toInternalMessage } from './provider.js'
 import { createRegistry, registerProvider } from './registry.js'
 
 const sseFetch = (body: string): typeof fetch =>
@@ -119,6 +119,38 @@ describe('provider chat (non-streaming)', () => {
     const ctx = setup(sse)
     const text = await chat(ctx, request(), { provider: 'mock', model: 'm1' })
     expect(text).toBe('foobar')
+  })
+})
+
+describe('toInternalMessage image preservation', () => {
+  // 回归：图片消息此前在 provider 边界被降级为 `[image: <mediaType>]` 文本
+  // 占位符——base64 数据静默丢弃，模型收到的只是一行文本，多模态能力形同虚设
+  // （前端附件、会话持久化、token 估算全部就绪，唯独最后一公里丢弃数据）。
+  it('preserves image parts with mediaType and base64 data', () => {
+    const msg: ChatMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: '看这张图' },
+        { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=' },
+      ],
+    }
+    const internal = toInternalMessage(msg)
+    expect(internal.content).toHaveLength(2)
+    expect(internal.content[1]).toEqual({
+      type: 'image',
+      mediaType: 'image/png',
+      data: 'iVBORw0KGgo=',
+    })
+  })
+
+  it('carries a pure-image message (no text part) through unchanged', () => {
+    const msg: ChatMessage = {
+      role: 'user',
+      content: [{ type: 'image', mediaType: 'image/jpeg', data: 'AA==' }],
+    }
+    const internal = toInternalMessage(msg)
+    expect(internal.content).toHaveLength(1)
+    expect(internal.content[0]).toEqual({ type: 'image', mediaType: 'image/jpeg', data: 'AA==' })
   })
 })
 
