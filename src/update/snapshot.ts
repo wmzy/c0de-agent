@@ -93,16 +93,20 @@ function toSerializedEntry(row: typeof sessionEntries.$inferSelect): SerializedE
   }
 }
 
-/** 按 parentId 拓扑序排列 sessions，使父会话先于子会话插入（满足自引用 FK）。 */
+/** 按 parentId 拓扑序排列 sessions，使父会话先于子会话插入（满足自引用 FK）。
+ *  环防护：当前节点先于「访问父级」标记 seen——parentId 成环（a↔b 互指、自引用）
+ *  时递归在环上遇到已标记节点即折返，环上节点各入序一次，正常节点拓扑序不变。
+ *  此前 seen 在访问父级之后才收录，环数据会把热更新快照击穿为 RangeError 栈溢出；
+ *  删除路径（purgeDeletedSessions）对同型环数据已有兜底，此处必须同样终止。 */
 function orderSessionsByParent(list: SerializedSession[]): SerializedSession[] {
   const byId = new Map(list.map((s) => [s.id, s]))
   const ordered: SerializedSession[] = []
   const seen = new Set<string>()
   const visit = (s: SerializedSession): void => {
     if (seen.has(s.id)) return
-    const parent = s.parentId ? byId.get(s.parentId) : undefined
-    if (parent && !seen.has(parent.id)) visit(parent)
     seen.add(s.id)
+    const parent = s.parentId ? byId.get(s.parentId) : undefined
+    if (parent) visit(parent)
     ordered.push(s)
   }
   for (const s of list) visit(s)

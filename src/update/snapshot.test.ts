@@ -60,6 +60,40 @@ describe('orderSessionsByParent', () => {
     const ordered = orderSessionsByParent([child, parent])
     expect(ordered.map((s) => s.id)).toEqual(['p', 'c'])
   })
+
+  // 回归：seen 在「访问父级之后」才收录当前节点——parentId 成环（a↔b 互指或
+  // 自引用）时 visit 在环上无限递归直至栈溢出（RangeError 击穿热更新快照）。
+  // 删除路径（purgeDeletedSessions）对同型环数据已有兜底，序列化路径必须同样
+  // 终止：环上节点各出现一次，正常节点拓扑序不受影响。
+  it('terminates on parentId cycles instead of overflowing the stack', () => {
+    const base = {
+      title: 'x',
+      projectId: null,
+      branchPoint: null,
+      metadata: {},
+      agentType: null,
+      worktreePath: null,
+      source: null,
+      deletedAt: null,
+      deletedBatchId: null,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const mk = (id: string, parentId: string | null) => ({ id, parentId, ...base })
+
+    // a↔b 互指环
+    const ordered = orderSessionsByParent([mk('a', 'b'), mk('b', 'a')])
+    expect(ordered.map((s) => s.id).sort()).toEqual(['a', 'b'])
+
+    // 自引用
+    const selfOrdered = orderSessionsByParent([mk('s', 's')])
+    expect(selfOrdered.map((s) => s.id)).toEqual(['s'])
+
+    // 正常父子序不受影响
+    const mixed = orderSessionsByParent([mk('c', 'p'), mk('p', null), mk('a', 'b'), mk('b', 'a')])
+    expect(mixed.slice(0, 2).map((s) => s.id)).toEqual(['p', 'c'])
+    expect(mixed.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'p'])
+  })
 })
 
 describe('serialize / restore round-trip', () => {
