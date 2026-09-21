@@ -22,6 +22,41 @@ import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shar
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
+// ── body 字段类型守卫 ──────────────────────────────────────────────
+// 畸形 JSON 此前直接 as 断言后进 store/DB：数字 title → .trim TypeError 500、
+// columns/labels 数组含 null/缺字段 → 读 null.id TypeError 500、labels 字符串
+// → 持久化毒化卡片（后续每轮前端 .map 崩溃）。
+
+const VALID_PRIORITIES = new Set(['high', 'medium', 'low'])
+
+function isValidColumnDef(v: unknown): v is KanbanColumnDef {
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    typeof (v as { id?: unknown }).id === 'string' &&
+    typeof (v as { name?: unknown }).name === 'string'
+  )
+}
+
+function isValidLabelDef(v: unknown): v is KanbanLabelDef {
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    typeof (v as { id?: unknown }).id === 'string' &&
+    typeof (v as { name?: unknown }).name === 'string' &&
+    typeof (v as { color?: unknown }).color === 'string'
+  )
+}
+
+function isValidStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === 'string')
+}
+
+/** 列/标签配置含重复 id：拖拽目标歧义、前端按 id 索引互踩——导入/更新前拒绝。 */
+function hasDuplicateIds(items: Array<{ id: string }>): boolean {
+  return new Set(items.map((x) => x.id)).size !== items.length
+}
+
 function createKanbanRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -172,6 +207,18 @@ function createKanbanRoute(ctx: ServerContext): Hono {
         '无效的看板导出 JSON：需要 version/columns/cards 字段',
       )
     }
+    // 条目形状校验：columns 数组含 null/缺 name 此前直接读 col.id 击穿 500，
+    // 缺字段列被持久化后前端渲染/拖拽静默出错。
+    if (!body.columns.every(isValidColumnDef)) {
+      return apiError(c, 400, 'INVALID_EXPORT', 'columns 条目必须是 { id, name } 对象')
+    }
+    if (Array.isArray(body.labels) && !body.labels.every(isValidLabelDef)) {
+      return apiError(c, 400, 'INVALID_EXPORT', 'labels 条目必须是 { id, name, color } 对象')
+    }
+    const columns = body.columns as KanbanColumnDef[]
+    if (hasDuplicateIds(columns)) {
+      return apiError(c, 400, 'INVALID_EXPORT', 'columns 包含重复的 id')
+    }
     // P3：导入体积上限——与会话导入（messages/archives 上限）同口径。
     // 无上限的数组会让 replaceBoard 的单事务逐条重建 OOM/长事务拖垮 PGLite。
     const MAX_IMPORT_COLUMNS = 100
@@ -201,7 +248,6 @@ function createKanbanRoute(ctx: ServerContext): Hono {
         `导入卡片数 ${body.cards.length} 超过上限 ${MAX_IMPORT_CARDS}`,
       )
     }
-    const columns = body.columns as KanbanColumnDef[]
     const labels = Array.isArray(body.labels) ? (body.labels as KanbanLabelDef[]) : []
     // 宽松校验卡片：只保留结构完整的条目（导入宁少勿坏，与会话导入一致）。
     const cards = (body.cards as Array<Record<string, unknown>>)
@@ -247,6 +293,24 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   app.patch('/:projectId', async (c) => {
     const projectId = c.req.param('projectId')
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    // 形状校验：columns 非数组/条目含 null 此前在 store .map 处击穿 500；
+    // 缺 name 的列/标签被持久化后前端渲染静默出错。
+    if (body.columns !== undefined) {
+      if (!Array.isArray(body.columns) || !body.columns.every(isValidColumnDef)) {
+        return apiError(c, 400, 'INVALID_COLUMNS', 'columns 必须是 { id, name } 对象数组')
+      }
+      if (hasDuplicateIds(body.columns as KanbanColumnDef[])) {
+        return apiError(c, 400, 'INVALID_COLUMNS', 'columns 包含重复的 id')
+      }
+    }
+    if (body.labels !== undefined) {
+      if (!Array.isArray(body.labels) || !body.labels.every(isValidLabelDef)) {
+        return apiError(c, 400, 'INVALID_LABELS', 'labels 必须是 { id, name, color } 对象数组')
+      }
+      if (hasDuplicateIds(body.labels as KanbanLabelDef[])) {
+        return apiError(c, 400, 'INVALID_LABELS', 'labels 包含重复的 id')
+      }
+    }
     const store = createKanbanStore(ctx.db, projectId)
     try {
       const board = await store.updateBoard({
@@ -266,8 +330,29 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   app.post('/:projectId/cards', async (c) => {
     const projectId = c.req.param('projectId')
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const title = (body.title as string)?.trim()
+    // 类型校验：数字 title 此前经 (as string).trim 击穿 500；labels 字符串/
+    // description 数字会被持久化成毒化卡片（jsonb 存非数组，前端 .map 崩溃）。
+    const title = typeof body.title === 'string' ? body.title.trim() : ''
     if (!title) return apiError(c, 400, 'INVALID_INPUT', 'title is required')
+    if (
+      body.description !== undefined &&
+      body.description !== null &&
+      typeof body.description !== 'string'
+    ) {
+      return apiError(c, 400, 'INVALID_INPUT', 'description must be a string or null')
+    }
+    if (body.columnId !== undefined && typeof body.columnId !== 'string') {
+      return apiError(c, 400, 'INVALID_INPUT', 'columnId must be a string')
+    }
+    if (
+      body.priority !== undefined &&
+      (typeof body.priority !== 'string' || !VALID_PRIORITIES.has(body.priority))
+    ) {
+      return apiError(c, 400, 'INVALID_PRIORITY', 'priority must be high/medium/low')
+    }
+    if (body.labels !== undefined && !isValidStringArray(body.labels)) {
+      return apiError(c, 400, 'INVALID_LABELS', 'labels must be an array of strings')
+    }
     const store = createKanbanStore(ctx.db, projectId)
     try {
       const card = await store.addCard({
@@ -294,6 +379,30 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     const projectId = c.req.param('projectId')
     const cardId = c.req.param('cardId')
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    // 类型校验：数字 title/description/labels 字符串此前被 as 断言后直接
+    // update 进 DB（text/jsonb 类型失配 500 或持久化毒化字段）。
+    if (body.title !== undefined && (typeof body.title !== 'string' || body.title.trim() === '')) {
+      return apiError(c, 400, 'INVALID_INPUT', 'title must be a non-empty string')
+    }
+    if (
+      body.description !== undefined &&
+      body.description !== null &&
+      typeof body.description !== 'string'
+    ) {
+      return apiError(c, 400, 'INVALID_INPUT', 'description must be a string or null')
+    }
+    if (
+      body.priority !== undefined &&
+      (typeof body.priority !== 'string' || !VALID_PRIORITIES.has(body.priority))
+    ) {
+      return apiError(c, 400, 'INVALID_PRIORITY', 'priority must be high/medium/low')
+    }
+    if (body.labels !== undefined && !isValidStringArray(body.labels)) {
+      return apiError(c, 400, 'INVALID_LABELS', 'labels must be an array of strings')
+    }
+    if (body.columnId !== undefined && typeof body.columnId !== 'string') {
+      return apiError(c, 400, 'INVALID_INPUT', 'columnId must be a string')
+    }
     const store = createKanbanStore(ctx.db, projectId)
 
     try {
