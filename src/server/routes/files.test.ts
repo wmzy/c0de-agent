@@ -175,6 +175,29 @@ describe('files route', () => {
     expect(await res.text()).toBe('Hello World')
   })
 
+  // 复现：/raw 后缀是媒体预览的协议标记，但「完整路径真实存在」时本应按
+  // 普通文件字面读取。此前后缀判定优先——名为 raw 的文件（data/raw、docs/raw
+  // 等数据工程常见路径）被误判为 raw 模式：去后缀父路径必为目录（raw 文件的
+  // 父路径），readFile 抛 EISDIR 恒 404，该文件经文件浏览器永远读不到。
+  it('GET /subdir/raw：真实存在的 raw 命名文件按普通文件读取', async () => {
+    const { app, dir } = await setupWithDir()
+    writeFileSync(join(dir, 'subdir', 'raw'), 'actual raw-named file')
+    const res = await app.request('/subdir/raw')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { path: string; content: string }
+    expect(body.path).toBe('subdir/raw')
+    expect(body.content).toBe('actual raw-named file')
+  })
+
+  it('GET /raw：根级 raw 命名文件可读取', async () => {
+    const { app, dir } = await setupWithDir()
+    writeFileSync(join(dir, 'raw'), 'root raw file')
+    const res = await app.request('/raw')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { path: string; content: string }
+    expect(body.content).toBe('root raw file')
+  })
+
   describe('P2 raw 内容类型与安全头', () => {
     it('html 不再以 text/html 同源直出（改 octet-stream）', async () => {
       const { app, dir } = await setupWithDir()

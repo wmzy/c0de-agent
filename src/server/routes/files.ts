@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Hono } from 'hono'
@@ -492,8 +493,6 @@ ${headChars(summary.diff, 8000)}`
   // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.get('/*', async (c) => {
     const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
-    const raw = path.endsWith('/raw')
-    const filePath = raw ? path.slice(0, -'/raw'.length) : path
     const projectId = c.req.query('projectId')
     let root = ctx.cwd
     if (projectId) {
@@ -503,6 +502,13 @@ ${headChars(summary.diff, 8000)}`
       }
       root = project.worktree
     }
+    // /raw 后缀是媒体预览的协议标记，但仅当「完整路径不存在」时才按 raw 模式
+    // 解释——真实存在的 .../raw 文件按普通文件字面读取。此前纯后缀判定优先，
+    // 名为 raw 的文件（data/raw 等）恒被误判为 raw 模式，去后缀父路径必为目录
+    // （readFile 抛 EISDIR → 404），该文件永远读不到。
+    const fullResolved = safeResolve(root, path)
+    const raw = path.endsWith('/raw') && !(fullResolved !== null && existsSync(fullResolved))
+    const filePath = raw ? path.slice(0, -'/raw'.length) : path
     const resolved = safeResolve(root, filePath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
