@@ -224,4 +224,25 @@ describe('parseSSEStream', () => {
     )
     expect(events).toEqual(['{"x":1}'])
   })
+
+  // 复现：流正常关闭但最后一个事件没有尾随空行（服务器发送最后一个 data:
+  // 行后直接关流，SSE 客户端规范允许）——此前 done 时 break 丢弃 buffer 残留，
+  // 最后一条 MCP 响应永久丢失，客户端等 response 直到超时。
+  it('emits a final event that has no trailing blank line (stream close flush)', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"x":1}\n\n'))
+        controller.enqueue(encoder.encode('data: {"x":2}'))
+        controller.close()
+      },
+    })
+    const events: string[] = []
+    await parseSSEStream(
+      body,
+      (d) => events.push(d),
+      () => false,
+    )
+    expect(events).toEqual(['{"x":1}', '{"x":2}'])
+  })
 })

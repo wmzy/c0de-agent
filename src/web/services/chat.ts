@@ -14,8 +14,14 @@ export function parseSSEFrame(frame: string): AgentEvent | null {
   }
 }
 
-/** 解析缓冲区，返回已完整的帧事件 + 剩余未完成文本。 */
-export function consumeSSEBuffer(buffer: string): { events: AgentEvent[]; rest: string } {
+/** 解析缓冲区，返回已完整的帧事件 + 剩余未完成文本。
+ *  flush=true（流结束时调用）：把无尾空行的最后一帧也作为事件解析——
+ *  服务器发完最后一个 data: 行直接关流时，该帧否则滞留 rest 被丢弃
+ *  （done 事件丢失 → 前端把正常结束误判为连接中断）。 */
+export function consumeSSEBuffer(
+  buffer: string,
+  flush = false,
+): { events: AgentEvent[]; rest: string } {
   const events: AgentEvent[] = []
   // SSE 规范允许 CRLF 行结束——归一化为 LF 再分帧，否则 \r\n\r\n 分隔的事件
   // 永远匹配不到 \n\n，事件滞留 rest 直到流结束。
@@ -27,6 +33,11 @@ export function consumeSSEBuffer(buffer: string): { events: AgentEvent[]; rest: 
     if (evt) events.push(evt)
     remaining = remaining.slice(sep + 2)
     sep = remaining.indexOf('\n\n')
+  }
+  if (flush && remaining.trim().length > 0) {
+    const evt = parseSSEFrame(remaining)
+    if (evt) events.push(evt)
+    remaining = ''
   }
   return { events, rest: remaining }
 }
@@ -103,7 +114,18 @@ async function sendChatMessage(
         controller.abort()
       }, 90_000)
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        // 流结束：flush decoder 内部缓冲 + 尾部残留帧。最后一个事件无尾空行
+        // 时（服务端发完直接关流）此前被丢弃——丢 done 事件会让前端把正常
+        // 结束误判为「连接中断」。
+        buffer += decoder.decode()
+        const { events } = consumeSSEBuffer(buffer, true)
+        for (const evt of events) {
+          if (evt._tag === 'done') doneReceived = true
+          onEvent(evt)
+        }
+        break
+      }
       buffer += decoder.decode(value, { stream: true })
       const { events, rest } = consumeSSEBuffer(buffer)
       buffer = rest

@@ -144,7 +144,21 @@ async function parseSSEStream(
     }
     for (;;) {
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        // 流正常关闭：flush decoder 内部缓冲 + 残留尾部事件。最后一个 data: 行
+        // 无尾随空行（服务器发完直接关流）时事件此前被静默丢弃——MCP 客户端
+        // 等最后一条响应直到超时。空行分帧 consume 无法覆盖该帧，须显式收尾。
+        buffer += decoder.decode()
+        buffer = buffer.replace(/\r\n/g, '\n')
+        if (buffer.trim().length > 0) {
+          for (const line of buffer.trim().split('\n')) {
+            if (!line.startsWith('data:')) continue
+            const data = line.slice(5).trimStart()
+            if (data.length > 0) onEvent(data)
+          }
+        }
+        break
+      }
       buffer += decoder.decode(value, { stream: true })
       // SSE 规范允许 CRLF 行结束——归一化为 LF 再按空行分事件，
       // 否则 \r\n\r\n 分隔的事件滞留缓冲区永不派发。
