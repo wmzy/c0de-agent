@@ -8,6 +8,17 @@ import type {
   GitStatusMap,
 } from '@/types/index.js'
 
+/**
+ * 把工作区相对路径编码进 URL path 段：逐段 encodeURIComponent，保留 `/` 分隔符。
+ * encodeURI 不编码 `?` 与 `#`——文件名含它们时 URL 会在该处截断为
+ * query/fragment，服务端 c.req.path 拿到被截断的路径，静默读写/删除**同名前缀
+ * 的另一个文件**（如删除 `a?b.txt` 会删掉 `a`）。逐段编码后服务端（Hono
+ * c.req.path 已解码）拿到完整原路径。
+ */
+export function encodeFilePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/')
+}
+
 const fileAPI = {
   list: (path: string, projectId?: string) =>
     get<FileEntry[]>(
@@ -15,11 +26,11 @@ const fileAPI = {
     ),
   read: (path: string, projectId?: string) =>
     get<FileContent>(
-      `/api/files/${encodeURI(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+      `/api/files/${encodeFilePath(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
   write: (path: string, content: string, projectId?: string) =>
     put<{ path: string; written: boolean }>(
-      `/api/files/${encodeURI(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+      `/api/files/${encodeFilePath(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
       { content },
     ),
   search: (query: string, projectId?: string) =>
@@ -28,7 +39,7 @@ const fileAPI = {
     ),
   delete: (path: string, projectId?: string) =>
     del<{ path: string; trashed: boolean }>(
-      `/api/files/${encodeURI(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+      `/api/files/${encodeFilePath(path)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
     ),
   gitStatus: (projectId?: string) =>
     get<GitStatusMap>(

@@ -8,7 +8,7 @@ import { Markdown } from '@/components/Markdown.js'
 import { useFileSelection } from '@/contexts/FileSelectionContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { getAuthToken } from '@/services/api.js'
-import { fileAPI } from '@/services/file.js'
+import { encodeFilePath, fileAPI } from '@/services/file.js'
 import { btnDanger } from '@/styles/tokens.js'
 
 const wrap = css`
@@ -186,7 +186,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     if (IMG_EXT.includes(ext)) {
       body = (
         <img
-          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
+          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
           alt={path}
           className={mediaImg}
         />
@@ -194,7 +194,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     } else if (ext === 'pdf') {
       body = (
         <embed
-          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
+          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
           type="application/pdf"
           className={embedFill}
           data-testid="pdf-preview"
@@ -204,7 +204,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       body = (
         <audio
           controls
-          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
+          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
           className={audioFull}
           data-testid="audio-preview"
         >
@@ -215,7 +215,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       body = (
         <video
           controls
-          src={`/api/files/${encodeURI(path)}/raw${mediaQuery}`}
+          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
           className={mediaImg}
           data-testid="video-preview"
         >

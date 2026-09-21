@@ -93,6 +93,21 @@ describe('FilePreview', () => {
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
   })
 
+  // 回归：encodeURI 不编码 ?/#，含它们的文件名会在 URL 中被解析为
+  // query/fragment，服务端拿到截断路径读错文件；逐段 encodeFilePath 后
+  // src 携带完整编码路径。
+  it('文件名含 ? 时 src 路径逐段编码（不被解析为 query）', async () => {
+    withClient(<FilePreview projectId="p1" path="dir/a?b.png" />)
+    const img = document.querySelector('img')
+    expect(img?.getAttribute('src')).toContain('/api/files/dir/a%3Fb.png/raw')
+  })
+
+  it('文件名含 # 时 src 路径逐段编码（不被解析为 fragment）', async () => {
+    withClient(<FilePreview projectId="p1" path="c#d.png" />)
+    const img = document.querySelector('img')
+    expect(img?.getAttribute('src')).toContain('/api/files/c%23d.png/raw')
+  })
+
   it('P1：认证 token 存在时媒体 src 附加 ?token=（媒体元素无法携带 Authorization 头）', async () => {
     vi.stubGlobal('localStorage', {
       getItem: (k: string) => (k === 'c0de-auth-token' ? 'device-tok-123' : null),
