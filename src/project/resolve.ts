@@ -71,10 +71,14 @@ export function getGitStatus(cwd: string): Record<string, GitStatusCode> | null 
     const xy = token.slice(0, 2)
     const code = classifyStatus(xy)
     const isRename = xy[0] === 'R' || xy[0] === 'C'
-    // 重命名/复制："XY oldpath\0newpath"，状态挂在 newpath
+    // 重命名/复制：porcelain v1 -z 输出 "XY newpath\0oldpath\0"——第一字段
+    // 携带新路径（XY 前缀后），第二字段为旧路径。状态必须挂在新路径上：
+    // 文件树按现行路径取状态，旧路径已不存在；此前把 tokens[i+1]（旧路径）
+    // 当新路径挂状态并跳过首字段——git mv 后新文件无任何状态标记，且 map 里
+    // 残留指向不存在路径的幽灵条目。
     if (isRename && i + 1 < tokens.length) {
-      const newPath = tokens[i + 1] ?? ''
-      map[normalizePath(newPath)] = code
+      const rest = token.slice(3) // 跳过 "XY "，得新路径
+      if (rest) map[normalizePath(rest)] = code
       i += 2
     } else {
       const rest = token.slice(3) // 跳过 "XY "

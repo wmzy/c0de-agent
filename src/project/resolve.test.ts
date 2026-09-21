@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { appendToGitignore, checkIgnored, getGitLastCommit, resolveProject } from './resolve.js'
+import {
+  appendToGitignore,
+  checkIgnored,
+  getGitLastCommit,
+  getGitStatus,
+  resolveProject,
+} from './resolve.js'
 
 const hasGit = (() => {
   try {
@@ -208,5 +214,48 @@ describe('getGitLastCommit', () => {
     execSync('git config user.email test@test.com', { cwd: repo })
     execSync('git config user.name Tester', { cwd: repo })
     expect(getGitLastCommit(repo)).toBeNull()
+  })
+})
+
+describe('getGitStatus', () => {
+  it.runIf(hasGit)('modified/untracked/staged 分类映射', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-gitstatus-basic-'))
+    execSync('git init -q', { cwd: repo })
+    execSync('git config user.email test@test.com', { cwd: repo })
+    execSync('git config user.name Tester', { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'v1')
+    execSync('git add . && git commit -q -m init', { cwd: repo })
+
+    // modified
+    writeFileSync(join(repo, 'a.txt'), 'v2')
+    // untracked
+    writeFileSync(join(repo, 'new.txt'), 'x')
+    // staged
+    writeFileSync(join(repo, 's.txt'), 'x')
+    execSync('git add s.txt', { cwd: repo })
+
+    const status = getGitStatus(repo)
+    expect(status?.['a.txt']).toBe('modified')
+    expect(status?.['new.txt']).toBe('untracked')
+    expect(status?.['s.txt']).toBe('staged')
+  })
+
+  // 回归：porcelain v1 -z 的重命名输出是 "XY newpath\0oldpath\0"——第一字段
+  // 携带新路径、第二字段为旧路径。此前把状态挂到 tokens[i+1]（旧路径）并
+  // 跳过新路径：git mv 后新文件在文件树中无任何状态标记，且 map 中出现
+  // 一个指向已不存在路径的幽灵条目。
+  it.runIf(hasGit)('rename attaches status to the NEW path, not the old path', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-gitstatus-rename-'))
+    execSync('git init -q', { cwd: repo })
+    execSync('git config user.email test@test.com', { cwd: repo })
+    execSync('git config user.name Tester', { cwd: repo })
+    writeFileSync(join(repo, 'old.txt'), 'a')
+    execSync('git add . && git commit -q -m init', { cwd: repo })
+    execSync('git mv old.txt new.txt', { cwd: repo })
+
+    const status = getGitStatus(repo)
+    expect(status?.['new.txt']).toBe('staged')
+    expect(status?.['old.txt']).toBeUndefined()
+    expect(Object.keys(status ?? {})).toEqual(['new.txt'])
   })
 })
