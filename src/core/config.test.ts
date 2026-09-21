@@ -227,6 +227,27 @@ describe('applyScopedPatch（scoped patch，null=删除）', () => {
     expect(next).toEqual({ a: 1 })
     expect(next).not.toBe(base)
   })
+
+  // 回归：JSON 数值文法允许 1e999（解析为 Infinity）——JSON.stringify 落盘为
+  // null，键被静默删除：设置超大预算（或超长更新间隔）变成「预算/护栏键关闭」，
+  // 且写入通道回显「已设置」。写入面必须显式拒绝非有限数值。
+  it('rejects non-finite numbers (JSON 1e999 → Infinity) anywhere in the patch', () => {
+    expect(() =>
+      applyScopedPatch({}, { usage: { monthlyBudgetUsd: Number.POSITIVE_INFINITY } }),
+    ).toThrow(/非有限/)
+    expect(() =>
+      applyScopedPatch({}, { update: { intervalMs: Number.NEGATIVE_INFINITY } }),
+    ).toThrow(/非有限/)
+    // 数组内同样拒绝（providers 等）
+    expect(() =>
+      applyScopedPatch({}, { providers: [{ costPer1kInput: Number.POSITIVE_INFINITY }] }),
+    ).toThrow()
+    // 合法数值与 null 删除语义不受影响
+    expect(applyScopedPatch({}, { usage: { monthlyBudgetUsd: 100 } })).toEqual({
+      usage: { monthlyBudgetUsd: 100 },
+    })
+    expect(applyScopedPatch({ a: 1 }, { a: null })).toEqual({})
+  })
 })
 
 describe('loadConfigScopes / mergeRaw / saveConfigScoped 作用域隔离', () => {

@@ -288,22 +288,28 @@ const configCommand: SlashCommand = {
           'security 是服务端全局参数，仅在全局作用域生效。请在全局配置（~/.c0de/config.json）中设置，或用 c0de config set --global 写入。',
       }
     }
-    const scopes = loadConfigScopes(ctx.cwd)
-    const value = coerce(parts.slice(1).join(' '))
-    const next = applyScopedPatch(scopes.project ?? {}, setPathPatch(key, value))
-    await saveConfigScoped('project', ctx.cwd, next)
-    // P1：/config 写入项目作用域是用户显式操作——已信任项目刷新风险指纹，
-    // 防「信任 → 改设置 → 再信任」自锁复检（与 /workflow create 同口径）。
     try {
-      const { getByDirectory, trustProject } = await import('../project/index.js')
-      const p = await getByDirectory(ctx.deps.db, ctx.cwd)
-      if (p?.trustedAt != null) await trustProject(ctx.deps.db, p.id)
-    } catch {
-      // 指纹刷新失败不阻塞配置写入结果（最坏回到 fail-closed 复检路径）
-    }
-    return {
-      _tag: 'success',
-      message: `${value === null ? '已取消设置' : '已设置'} ${key} (scope: project)`,
+      const scopes = loadConfigScopes(ctx.cwd)
+      const value = coerce(parts.slice(1).join(' '))
+      const next = applyScopedPatch(scopes.project ?? {}, setPathPatch(key, value))
+      await saveConfigScoped('project', ctx.cwd, next)
+      // P1：/config 写入项目作用域是用户显式操作——已信任项目刷新风险指纹，
+      // 防「信任 → 改设置 → 再信任」自锁复检（与 /workflow create 同口径）。
+      try {
+        const { getByDirectory, trustProject } = await import('../project/index.js')
+        const p = await getByDirectory(ctx.deps.db, ctx.cwd)
+        if (p?.trustedAt != null) await trustProject(ctx.deps.db, p.id)
+      } catch {
+        // 指纹刷新失败不阻塞配置写入结果（最坏回到 fail-closed 复检路径）
+      }
+      return {
+        _tag: 'success',
+        message: `${value === null ? '已取消设置' : '已设置'} ${key} (scope: project)`,
+      }
+    } catch (error) {
+      // 非有限数值（1e999 → Infinity）等写入面校验失败：作为命令错误反馈给
+      // 模型/用户，而非击穿 SSE 流显示「连接中断」。
+      return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
     }
   },
 }

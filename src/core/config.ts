@@ -200,6 +200,33 @@ function loadConfigScopes(projectDir?: string): {
 }
 
 /**
+ * 递归断言 patch 树中不含非有限数值。JSON 数值文法允许 1e999/1e309——
+ * JSON.parse 解析为 ±Infinity，JSON.stringify 落盘为 null：写入通道回显
+ * 「已设置」，实际键被静默删除（预算护栏等安全相关键尤其致命）。
+ * 三个写入入口（CLI config set、/config 斜杠、REST PATCH）共用本检查，
+ * 抛错由各入口转成面向用户/模型的明确错误。
+ */
+function assertFiniteNumbers(value: unknown, path: string): void {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new Error(`${path} 含非有限数值 ${value}（JSON 无法表示，拒绝写入）`)
+    }
+    return
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      assertFiniteNumbers(value[i], `${path}[${i}]`)
+    }
+    return
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      assertFiniteNumbers(v, `${path}.${k}`)
+    }
+  }
+}
+
+/**
  * 把 patch 应用到某个作用域的原始配置（scoped patch，null=删除）：
  * - 深合并：嵌套普通对象递归合并，数组整体替换（providers 等列表语义）；
  * - 值为 undefined 的键跳过；
@@ -211,6 +238,7 @@ function applyScopedPatch(
   base: Record<string, unknown> | undefined,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
+  assertFiniteNumbers(patch, 'config')
   const result: Record<string, unknown> = { ...(base ?? {}) }
   for (const [key, val] of Object.entries(patch)) {
     if (val === undefined) continue

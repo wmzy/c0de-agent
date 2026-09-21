@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runConfigCommand } from './config.js'
+import { coerce, runConfigCommand } from './config.js'
 
 const tmp = join(tmpdir(), `c0de-configcmd-test-${Date.now()}`)
 beforeEach(() => mkdirSync(tmp, { recursive: true }))
@@ -132,5 +132,28 @@ describe('config set', () => {
       unknown
     >
     expect(cfg.security).toBeUndefined()
+  })
+
+  // 回归：coerce('1e999') 经 JSON.parse 返回 Infinity——JSON.stringify 落盘为
+  // null，键被静默删除：设置超大预算变成「预算关闭」，且命令回显「已设置」。
+  it('coerce 拒绝非有限数值（1e999 → Infinity 落盘为 null）', () => {
+    expect(() => coerce('1e999')).toThrow(/非有限/)
+    expect(() => coerce('-1e999')).toThrow(/非有限/)
+  })
+
+  it('config set 非有限数值 → 报错且原配置不被改写', async () => {
+    seedConfig({ usage: { monthlyBudgetUsd: 5 } })
+    await expect(
+      runConfigCommand(
+        ctxWithMockRefresh({
+          options: {},
+          positionals: ['set', 'usage.monthlyBudgetUsd', '1e999'],
+        }),
+      ),
+    ).rejects.toThrow(/非有限/)
+    const cfg = JSON.parse(readFileSync(join(tmp, '.c0de', 'config.json'), 'utf-8')) as {
+      usage?: { monthlyBudgetUsd?: unknown }
+    }
+    expect(cfg.usage?.monthlyBudgetUsd).toBe(5)
   })
 })

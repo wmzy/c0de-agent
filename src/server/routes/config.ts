@@ -228,10 +228,22 @@ function createConfigRoute(ctx: ServerContext): Hono {
     const target = await resolveConfigDir(ctx, projectId)
     if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
     const scopes = loadConfigScopes(target.dir)
-    const nextScoped =
-      scope === 'global'
-        ? applyScopedPatch(scopes.global ?? {}, patch)
-        : applyScopedPatch(scopes.project ?? {}, patch)
+    // applyScopedPatch 拒绝非有限数值（JSON 1e999 → Infinity 落盘为 null、
+    // 键被静默删除）——转成 400 明示，而非 500 或不透因。
+    let nextScoped: Record<string, unknown>
+    try {
+      nextScoped =
+        scope === 'global'
+          ? applyScopedPatch(scopes.global ?? {}, patch)
+          : applyScopedPatch(scopes.project ?? {}, patch)
+    } catch (err) {
+      return apiError(
+        c,
+        400,
+        'INVALID_CONFIG_VALUE',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
 
     // P2-3：落盘失败必须反馈给前端（此前静默吞掉，UI 显示已保存但重启后丢失）。
     // 先落盘、成功后才更新内存配置与 registry，保证「已保存」反馈与磁盘状态一致。
