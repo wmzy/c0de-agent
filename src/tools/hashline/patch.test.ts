@@ -61,6 +61,20 @@ describe('parsePatch', () => {
     ])
   })
 
+  // 回归：补丁省略 `---`（块尾终止，解析器显式支持的路径）时，split('\n') 的
+  // 尾部空串被 collectContent 收进最后一个操作的内容——SWAP 多替换一行空行、
+  // INS.* 多插入一行空行，模型编辑的文件静默累积幽灵空行。
+  it('content at block end (no ---) does not gain a phantom trailing empty line', () => {
+    const patches = parsePatch('[f.ts#0000]\nSWAP 1-1\nX\n')
+    expect(patches[0]?.operations).toEqual([{ _tag: 'SWAP', start: 1, end: 1, content: 'X' }])
+  })
+
+  it('multi-block separated by blank lines (no ---) keeps content clean', () => {
+    const patches = parsePatch('[a.ts#0000]\nSWAP 1-1\nX\n\n[b.ts#1111]\nINS.TAIL\nY\n')
+    expect(patches[0]?.operations).toEqual([{ _tag: 'SWAP', start: 1, end: 1, content: 'X' }])
+    expect(patches[1]?.operations).toEqual([{ _tag: 'INS_TAIL', content: 'Y' }])
+  })
+
   it('parses multiple patch blocks', () => {
     const patches = parsePatch('[a.ts#1111]\nDEL 1\n---\n[b.ts#2222]\nDEL 2\n---\n')
     expect(patches).toHaveLength(2)
@@ -89,6 +103,33 @@ describe('applyPatch', () => {
     const patches = parsePatch(`[f.ts#${hash}]\nSWAP 2-2\nREPLACED\n---\n`)
     const result = applyPatch(file, firstPatch(patches))
     expect(result).toEqual({ _tag: 'success', content: 'line1\nREPLACED\nline3\n' })
+  })
+
+  // 回归：最后一个操作省略 `---`（模型常见——以文件尾作块尾）时，尾部空行
+  // 被收进 SWAP 内容：替换行后凭空多出一行空行。
+  it('SWAP without trailing --- does not insert a phantom blank line', () => {
+    const file = 'line1\nline2\nline3\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 2-2\nREPLACED\n`)
+    const result = applyPatch(file, firstPatch(patches))
+    expect(result).toEqual({ _tag: 'success', content: 'line1\nREPLACED\nline3\n' })
+  })
+
+  it('INS.TAIL without trailing --- does not append a phantom blank line', () => {
+    const file = 'mid\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nINS.TAIL\nTAIL\n`)
+    const result = applyPatch(file, firstPatch(patches))
+    expect(result).toEqual({ _tag: 'success', content: 'mid\nTAIL\n' })
+  })
+
+  // 内容里「合法结尾空行」仍须保留：`---` 前显式空行是替换内容的一部分。
+  it('explicit blank line before --- remains part of SWAP content', () => {
+    const file = 'a\nb\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 1-1\nX\n\n---\n`)
+    const result = applyPatch(file, firstPatch(patches))
+    expect(result).toEqual({ _tag: 'success', content: 'X\n\nb\n' })
   })
 
   it('returns hash_mismatch when hash differs', () => {

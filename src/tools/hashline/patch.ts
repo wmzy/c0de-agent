@@ -146,6 +146,12 @@ function parsePatch(input: string): ParsedPatch[] {
     }
     void endIdx
     const opsLines = block.slice(0, nextHead)
+    // 块尾终止（无 `---`，解析器支持的路径）时，split('\n') 的尾部空串——
+    // 补丁文本以换行结尾或块间空行分隔——会被 collectContent 收进最后一个
+    // 操作的内容：SWAP 多替换一行空行、INS.* 多插入一行空行，编辑产物静默
+    // 累积幽灵空行。剥离块尾恰好一个空行：内容里合法结尾空行由倒数第二个
+    // 空串表达（'A\n\n' → ['A','','']），不受影响。
+    if (opsLines.length > 0 && opsLines[opsLines.length - 1] === '') opsLines.pop()
     patches.push({ path, hash, operations: parseOps(opsLines) })
     i = i + 1 + nextHead
   }
