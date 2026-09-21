@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { Config } from '../shared/types/config.js'
 import {
   applyScopedPatch,
   collectConfigMigrationWarnings,
@@ -13,6 +14,7 @@ import {
   resolveGlobalConfigDir,
   saveConfigScoped,
 } from './config.js'
+import { getByPath, setPathPatch } from './config-path.js'
 
 const tmp = join(tmpdir(), `c0de-config-test-${Date.now()}`)
 
@@ -354,6 +356,74 @@ describe('collectConfigMigrationWarnings（P0-1 配置迁移告警）', () => {
     const p = collectConfigMigrationWarnings('project', { tools: { enabled: [] } })
     expect(g[0]).toContain('全局配置')
     expect(p[0]).toContain('项目配置')
+  })
+})
+
+// 回归：点路径与 JSON 配置键都可能携带原型链键（`__proto__`/`constructor`/
+// `prototype`）。它们不可能是合法配置键（KNOWN_CONFIG_KEYS 不含），但经普通赋值
+// 会改写原型链：setByPath 沿 `__proto__` 段继续下钻时拿到的是 Object.prototype，
+// 末段直接写进全局原型——进程内所有对象/数组凭空多出该属性（配置「已设置」，
+// JSON.stringify 落盘时又静默丢弃），且 /config 斜杠命令对点路径无顶层键校验
+// （模型即可触发）。JSON 文件里的自持 `__proto__` 键（手改/克隆仓库自带）经
+// 合并路径同样把结果对象的原型换掉：键不可枚举、不可序列化，读起来像「配置没写」。
+describe('原型链键（__proto__/constructor/prototype）不可作为配置键', () => {
+  it('setPathPatch 拒绝原型链段（此前直接写进 Object.prototype）', () => {
+    expect(() => setPathPatch('providers.__proto__.polluted', 'yes')).toThrow(/__proto__/)
+    expect(() => setPathPatch('__proto__.polluted', 'yes')).toThrow()
+    expect(() => setPathPatch('providers.constructor.prototype.polluted', 'yes')).toThrow()
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('getByPath 拒绝原型链段（此前 /config __proto__ 会打印 Object.prototype）', () => {
+    expect(() => getByPath({ a: 1 }, '__proto__')).toThrow(/__proto__/)
+    expect(() => getByPath({ a: { b: 1 } }, 'a.constructor')).toThrow()
+    // 普通点路径读写不受影响
+    expect(getByPath({ a: { b: 1 } }, 'a.b')).toBe(1)
+    expect(setPathPatch('a.b', 1)).toEqual({ a: { b: 1 } })
+  })
+
+  it('applyScopedPatch 跳过 JSON 自持 __proto__ 键（不改写结果原型、不污染全局）', () => {
+    const patch = JSON.parse('{"__proto__":{"polluted":true},"theme":"dark"}') as Record<
+      string,
+      unknown
+    >
+    const next = applyScopedPatch({}, patch)
+    expect(next).toEqual({ theme: 'dark' })
+    expect(Object.getPrototypeOf(next)).toBe(Object.prototype)
+    expect((next as Record<string, unknown>).polluted).toBeUndefined()
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('mergeRaw/mergeConfig 跳过配置文件中的 __proto__ 键', () => {
+    const raw = JSON.parse('{"__proto__":{"polluted":true},"theme":"dark"}') as Partial<Config>
+    expect(mergeRaw(raw)).toEqual({ theme: 'dark' })
+
+    const merged = mergeConfig(raw)
+    expect(merged.theme).toBe('dark')
+    expect((merged as unknown as Record<string, unknown>).polluted).toBeUndefined()
+    expect(Object.getPrototypeOf(merged)).toBe(Object.prototype)
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('loadConfig 读取含 __proto__ 键的配置文件：合并视图无该键、原型未被改写', async () => {
+    const uniq = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const dir = join(tmpdir(), `c0de-proto-proj-${uniq}`)
+    mkdirSync(join(dir, '.c0de'), { recursive: true })
+    writeFileSync(
+      join(dir, '.c0de', 'config.json'),
+      '{"__proto__":{"polluted":true},"theme":"dark"}',
+      'utf-8',
+    )
+    try {
+      const loaded = await loadConfig(dir)
+      expect(loaded.theme).toBe('dark')
+      expect((loaded as unknown as Record<string, unknown>).polluted).toBeUndefined()
+      expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype)
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

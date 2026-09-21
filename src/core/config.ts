@@ -12,6 +12,7 @@ import type {
   UpdateConfig,
   WebSearchConfig,
 } from '../shared/types/config.js'
+import { isPrototypeKey } from './config-path.js'
 import { encryptSecret, isEncryptedSecret } from './secret.js'
 
 const GLOBAL_CONFIG_DIR = '.c0de'
@@ -71,6 +72,9 @@ function mergeConfig(...configs: (Partial<Config> | undefined)[]): Config {
   for (const cfg of configs) {
     if (!cfg) continue
     for (const key of Object.keys(cfg) as (keyof Config)[]) {
+      // 自持的原型链键（配置文件里手写/克隆仓库自带的 `"__proto__"`）：赋值会改写
+      // 合并结果的原型而非写入键——合并视图凭空多出继承属性，且不可枚举/不可落盘。
+      if (isPrototypeKey(key)) continue
       const val = cfg[key]
       if (val === undefined) continue
       const current = result[key]
@@ -241,6 +245,9 @@ function applyScopedPatch(
   assertFiniteNumbers(patch, 'config')
   const result: Record<string, unknown> = { ...(base ?? {}) }
   for (const [key, val] of Object.entries(patch)) {
+    // 自持的原型链键（JSON.parse 的 `"__proto__"` 会建成自有键）经普通赋值改写
+    // result 的原型而非写入键：配置读起来像「没写」，键又被静默丢弃。跳过。
+    if (isPrototypeKey(key)) continue
     if (val === undefined) continue
     if (val === null) {
       delete result[key]
@@ -275,6 +282,7 @@ function mergeRaw(...cfgs: (Record<string, unknown> | undefined)[]): Record<stri
   for (const cfg of cfgs) {
     if (!cfg) continue
     for (const [key, val] of Object.entries(cfg)) {
+      if (isPrototypeKey(key)) continue
       if (val === undefined) continue
       const current = result[key]
       if (
@@ -322,6 +330,8 @@ async function saveConfigScoped(
 function redactSensitiveOnSave(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, val] of Object.entries(data)) {
+    // 原型链键不落盘（赋值会改写 out 的原型，键本身也不会被序列化）。
+    if (isPrototypeKey(key)) continue
     if (key === 'providers' && Array.isArray(val)) {
       out[key] = (val as unknown[]).map((p) => {
         if (p === null || typeof p !== 'object') return p
