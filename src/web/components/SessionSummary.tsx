@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
+import { roundTo } from '@shared/round.js'
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
-import { roundTo } from '@shared/round.js'
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'

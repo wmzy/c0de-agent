@@ -1,5 +1,5 @@
-import type { CodeReference } from '@/types/index.js'
 import { roundTo } from '@shared/round.js'
+import type { CodeReference } from '@/types/index.js'
 
 /** 解析输入文本中的代码引用 @[path:start-end] 或 @[msgId:n]。 */
 export function parseCodeReference(text: string): CodeReference | null {

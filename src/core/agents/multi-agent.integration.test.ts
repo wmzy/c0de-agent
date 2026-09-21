@@ -276,8 +276,7 @@ describe('multi-agent integration', () => {
       const yieldResults = msgs
         .flatMap((m) => m.content)
         .filter(
-          (p): p is Extract<MessageContent, { _tag: 'tool_result' }> =>
-            p._tag === 'tool_result',
+          (p): p is Extract<MessageContent, { _tag: 'tool_result' }> => p._tag === 'tool_result',
         )
         .filter((p) => p.tool === 'yield')
       const invalid = yieldResults.find(
