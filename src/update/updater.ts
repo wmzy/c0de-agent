@@ -55,6 +55,12 @@ type InstallMethod = { kind: 'npm' } | { kind: 'pnpm' } | { kind: 'unknown'; hin
 const DEFAULT_PACKAGE = 'c0de-agent'
 const DEFAULT_MANUAL_WAIT_TIMEOUT_MS = 10 * 60 * 1000
 
+/** writeSnapshot 经 mkdtemp 创建、归本模块所有的临时目录。
+ *  清理快照时只有这些目录允许整目录递归删除——调用方指定的 snapshotPath
+ *  只删文件本身，绝不删除其父目录（此前 rm(join(path,'..'), recursive) 对
+ *  任意调用方路径都会递归删除整个父目录，同目录下的无关文件一并蒸发）。 */
+const ownedSnapshotDirs = new Set<string>()
+
 /**
  * 识别当前进程的安装方式：
  * - 入口脚本 realpath 含 node_modules/.pnpm → pnpm
@@ -248,8 +254,15 @@ function buildSpawnArgv(snapshotPath: string, opts: HotUpdateOptions): string[] 
  * 独立成函数供 performHotUpdate（一体流程）与 performHandoff（分阶段流程）共用。
  */
 async function writeSnapshot(snapshot: SessionSnapshot, opts: HotUpdateOptions): Promise<string> {
-  const snapshotPath =
-    opts.snapshotPath ?? join(await mkdtemp(join(tmpdir(), 'c0de-update-')), 'snapshot.json')
+  if (opts.snapshotPath) {
+    await writeFile(opts.snapshotPath, JSON.stringify(snapshot), 'utf8')
+    return opts.snapshotPath
+  }
+  // 仅 mkdtemp 创建的目录归本模块所有（可整目录清理）；调用方指定的路径
+  // 所有权在调用方，清理时只能删文件本身，绝不触碰其所在目录。
+  const dir = await mkdtemp(join(tmpdir(), 'c0de-update-'))
+  ownedSnapshotDirs.add(dir)
+  const snapshotPath = join(dir, 'snapshot.json')
   await writeFile(snapshotPath, JSON.stringify(snapshot), 'utf8')
   return snapshotPath
 }
@@ -396,9 +409,16 @@ async function performInstall(opts: HotUpdateOptions = {}): Promise<InstallOnlyR
   return { _tag: 'success', installMethod: method.kind }
 }
 
-/** 清理快照临时目录（热更新完成或放弃后调用）。 */
+/** 清理快照：仅当路径位于 writeSnapshot 创建的自有临时目录时整目录删除；
+ *  否则（调用方指定的路径）只删除快照文件本身，绝不递归删除父目录。 */
 async function cleanupSnapshot(snapshotPath: string): Promise<void> {
-  await rm(join(snapshotPath, '..'), { recursive: true, force: true }).catch(() => {})
+  const dir = dirname(snapshotPath)
+  if (ownedSnapshotDirs.has(dir)) {
+    ownedSnapshotDirs.delete(dir)
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+    return
+  }
+  await rm(snapshotPath, { force: true }).catch(() => {})
 }
 
 export type { HotUpdateOptions, HotUpdateResult, InstallMethod, InstallOnlyResult, SpawnFn }

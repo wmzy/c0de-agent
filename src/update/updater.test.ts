@@ -1,8 +1,9 @@
-import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { performHotUpdate } from './updater.js'
+import { cleanupSnapshot, performHotUpdate } from './updater.js'
 
 const snapshot = { version: '0.1.0', sessions: [], entries: [], config: null, timestamp: 1 }
 
@@ -127,5 +128,49 @@ describe('performHotUpdate', () => {
       ['serve', '--resume-from', '/tmp/s.json'],
       expect.anything(),
     )
+  })
+})
+
+describe('cleanupSnapshot', () => {
+  it('调用方指定的快照路径：只删除快照文件，绝不递归删除其父目录', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'c0de-snap-parent-'))
+    try {
+      const sibling = join(dir, 'precious.txt')
+      await writeFile(sibling, 'keep me', 'utf8')
+      const snapshotPath = join(dir, 'snapshot.json')
+      await writeFile(snapshotPath, '{}', 'utf8')
+
+      await cleanupSnapshot(snapshotPath)
+
+      // 修复前：rm(join(path, '..'), { recursive, force }) 把整个父目录连带
+      // 同目录下的无关文件一起删除——调用方传入自有路径时是灾难性数据丢失。
+      expect(existsSync(dir)).toBe(true)
+      expect(existsSync(sibling)).toBe(true)
+      expect(existsSync(snapshotPath)).toBe(false)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('不存在的快照路径：静默无操作（不抛错）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'c0de-snap-missing-'))
+    try {
+      await cleanupSnapshot(join(dir, 'no-such-snapshot.json'))
+      expect(existsSync(dir)).toBe(true)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('writeSnapshot 自建的临时目录：整目录清理（快照落盘的 mkdtemp 目录归模块所有）', async () => {
+    const r = await performHotUpdate(snapshot, {
+      installFn: vi.fn().mockResolvedValue(undefined),
+      spawnNewInstanceFn: vi.fn().mockResolvedValue(undefined),
+    })
+    if (r._tag !== 'success') throw new Error(`expected success, got ${r._tag}`)
+    const dir = join(r.snapshotPath, '..')
+    expect(existsSync(dir)).toBe(true)
+    await cleanupSnapshot(r.snapshotPath)
+    expect(existsSync(dir)).toBe(false)
   })
 })
