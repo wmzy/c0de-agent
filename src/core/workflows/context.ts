@@ -103,8 +103,19 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
         const absPath = resolve(rootDir, filePath)
         const content = await readFile(absPath, 'utf-8')
         if (!range) return content
+        // 与内置 read 工具同口径：range 未经校验直接进 slice(start - 1, end) 时
+        // start=0 经 slice(-1, end) 静默返回文件最后一行（0 基/1 基错位的最坏
+        // 形态）、小数行号被 slice 静默截断错行、end < start 静默空串——非法
+        // range 显式抛错让工作流作者/模型自纠；end 超出行数收敛到末行（与
+        // slice 语义一致）。
+        const { start, end } = range
+        if (!Number.isInteger(start) || start < 1 || !Number.isInteger(end) || end < start) {
+          throw new Error(
+            `utils.read: invalid range { start: ${start}, end: ${end} } — start/end 必须是整数，start >= 1 且 end >= start`,
+          )
+        }
         const lines = content.split('\n')
-        return lines.slice(range.start - 1, range.end).join('\n')
+        return lines.slice(start - 1, end).join('\n')
       },
 
       splitByDirectory: async (dir: string, opts?: { depth?: number; ignore?: string[] }) => {

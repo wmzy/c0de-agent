@@ -269,6 +269,55 @@ describe('buildWorkflowContext', () => {
     expect(content).not.toContain('l5')
   })
 
+  // 回归：range 未经校验直接进 slice(start - 1, end)——start=0 时 slice(-1, end)
+  // 静默返回文件最后一行（0 基与 1 基口径错位的最坏形态），小数行号被 slice
+  // 静默截断错行。与内置 read 工具同口径：非法 range 显式抛错让工作流作者自纠。
+  it('utils.read range start=0 → 显式报错而非静默返回最后一行', async () => {
+    await writeFile(join(tmpDir, 'zero.txt'), 'l1\nl2\nl3\nl4\nl5')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    await expect(ctx.utils.read('zero.txt', { start: 0, end: 5 })).rejects.toThrow(/range/)
+  })
+
+  it('utils.read range 小数/负数行号 → 显式报错而非静默错行', async () => {
+    await writeFile(join(tmpDir, 'frac.txt'), 'l1\nl2\nl3')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    await expect(ctx.utils.read('frac.txt', { start: 1.5, end: 3 })).rejects.toThrow(/range/)
+    await expect(ctx.utils.read('frac.txt', { start: -2, end: 3 })).rejects.toThrow(/range/)
+  })
+
+  it('utils.read range end < start → 显式报错', async () => {
+    await writeFile(join(tmpDir, 'inv.txt'), 'l1\nl2\nl3')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    await expect(ctx.utils.read('inv.txt', { start: 3, end: 2 })).rejects.toThrow(/range/)
+  })
+
+  it('utils.read range end 超出文件末尾 → 收敛到末行（与 slice 语义一致）', async () => {
+    await writeFile(join(tmpDir, 'clamp.txt'), 'l1\nl2\nl3')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    const content = await ctx.utils.read('clamp.txt', { start: 2, end: 99 })
+    expect(content).toBe('l2\nl3')
+  })
+
   it('utils.splitByDirectory splits subdirectories', async () => {
     await mkdir(join(tmpDir, 'modA'), { recursive: true })
     await mkdir(join(tmpDir, 'modB'), { recursive: true })
