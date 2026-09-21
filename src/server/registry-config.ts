@@ -2,7 +2,7 @@
 // config.providers ↔ LLM registry 的构建/同步逻辑（P1-1 从 server.ts 拆出，
 // 供 chat 路由按项目配置构建注册表，避免 routes → server.ts 循环依赖）。
 
-import { decryptSecret } from '../core/secret.js'
+import { decryptSecretSafe } from '../core/secret.js'
 import {
   createRegistry,
   overrideToCapabilities,
@@ -26,12 +26,23 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
   // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
   const name = p.name || (p as { _tag?: string })._tag
   if (!name || !p.baseURL) return
+  // 机器绑定密文换机后不可解：跳过该 provider 并告警，而非上抛击穿
+  // serve 启动（bootstrapServerContext）/ 配置保存（syncRegistryFromConfig）/
+  // 项目级配置注册表——否则跨机同步的 config.json 让整个服务无法启动或请求 500。
+  // 明文与解密成功的密文走正常注册。
+  const apiKey = p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
+  if (p.apiKey && apiKey === undefined) {
+    console.warn(
+      `provider "${name}" 的 apiKey 无法在本机解密（配置来自其他机器或密文损坏），已跳过注册，请重新设置`,
+    )
+    return
+  }
   // baseURL 已含 /v1 时用 /chat/completions，避免 /v1/v1 双重前缀
   const path = p.baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/chat/completions' : undefined
   registerProvider(registry, {
     name,
     baseURL: p.baseURL,
-    apiKey: p.apiKey ? decryptSecret(p.apiKey) : p.apiKey,
+    apiKey: apiKey ?? p.apiKey ?? '',
     ...(path ? { path } : {}),
     // 传递用户配置的 per-model capabilities（contextWindow 等），
     // 否则 resolveRoute 回退到 DEFAULT_MODEL_CAPABILITIES，可能导致预算过小。

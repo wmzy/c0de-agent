@@ -53,3 +53,16 @@ export function decryptSecret(stored: string): string {
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8')
 }
+
+/** 解密存储值；失败（机器绑定密钥换机/密文损坏）返回 undefined 而非上抛。
+ *  机器绑定意味着密文不可跨机器解密——跨机同步配置（dotfiles/git）后 enc: 值
+ *  在本机必然 GCM 校验失败。消费方（registry 构建、websearch key 解析）据此
+ *  跳过该 provider/视为无 key 并提示重设，而不是让解密异常击穿启动/请求路径。 */
+export function decryptSecretSafe(stored: string): string | undefined {
+  if (!stored.startsWith(PREFIX)) return stored
+  try {
+    return decryptSecret(stored)
+  } catch {
+    return undefined
+  }
+}

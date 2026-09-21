@@ -1,6 +1,6 @@
 import { loadConfigScopes } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
-import { decryptSecret } from '../core/secret.js'
+import { decryptSecretSafe } from '../core/secret.js'
 import { discoverSkills } from '../core/skills.js'
 import { createDebugSpawn } from '../dap/index.js'
 import type { DB } from '../db/client.js'
@@ -71,12 +71,21 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
   // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
   const name = p.name || (p as { _tag?: string })._tag
   if (!name || !p.baseURL) return
+  // 机器绑定密文换机后不可解：跳过该 provider 并告警，而非上抛击穿
+  // CLI 启动（buildAgentDeps）——跨机同步的 config.json 不应让 c0de chat 崩溃。
+  const apiKey = p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
+  if (p.apiKey && apiKey === undefined) {
+    console.warn(
+      `provider "${name}" 的 apiKey 无法在本机解密（配置来自其他机器或密文损坏），已跳过注册，请重新设置`,
+    )
+    return
+  }
   // baseURL 已含 /v1 时用 /chat/completions，避免 /v1/v1 双重前缀
   const path = p.baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/chat/completions' : undefined
   registerProvider(registry, {
     name,
     baseURL: p.baseURL,
-    apiKey: p.apiKey ? decryptSecret(p.apiKey) : p.apiKey,
+    apiKey: apiKey ?? p.apiKey ?? '',
     ...(path ? { path } : {}),
     // 传递用户配置的 per-model capabilities（contextWindow 等），
     // 否则 resolveRoute 回退到 DEFAULT_MODEL_CAPABILITIES，可能导致预算过小。

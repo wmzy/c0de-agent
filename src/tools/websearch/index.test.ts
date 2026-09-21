@@ -235,4 +235,40 @@ describe('runWebSearch', () => {
       setFetchOverride(undefined)
     }
   })
+
+  it('auto：config key 无法解密（跨机同步密文）→ 视为无 key，降级 duckduckgo 兜底', async () => {
+    const f = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ AbstractText: 'ddg-answer', AbstractURL: 'https://x' }), {
+        status: 200,
+      }),
+    ) as unknown as typeof fetch
+    setFetchOverride(f)
+    const prevTavily = process.env.TAVILY_API_KEY
+    delete process.env.TAVILY_API_KEY
+    try {
+      const foreign = `enc:${Buffer.from(Array.from({ length: 48 }, (_, i) => i)).toString('base64')}`
+      const res = await runWebSearch(
+        { query: 'q' },
+        cfg('auto', { tavily: foreign }),
+        new AbortController().signal,
+      )
+      expect(res.provider).toBe('duckduckgo')
+      expect(res.answer).toBe('ddg-answer')
+      expect(f).toHaveBeenCalledTimes(1)
+    } finally {
+      setFetchOverride(undefined)
+      if (prevTavily !== undefined) process.env.TAVILY_API_KEY = prevTavily
+    }
+  })
+
+  it('显式 tavily + 无法解密的 config key → 明确「需要 API key」错误，而非解密异常', async () => {
+    const foreign = `enc:${Buffer.from(Array.from({ length: 48 }, (_, i) => i)).toString('base64')}`
+    await expect(
+      runWebSearch(
+        { query: 'q' },
+        cfg('tavily', { tavily: foreign }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/requires an API key/)
+  })
 })

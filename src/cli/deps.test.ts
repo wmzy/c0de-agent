@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { resolveRoute } from '../llm/index.js'
@@ -50,6 +50,23 @@ describe('buildLLMRegistry', () => {
   it('handles empty providers', () => {
     const reg = buildLLMRegistry({ ...config, providers: [] })
     expect(() => resolveRoute(reg, 'demo', 'x')).toThrow()
+  })
+
+  it('跨机不可解密的 enc: apiKey → 跳过 provider 并告警，而非启动崩溃', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const foreign = `enc:${Buffer.from(Array.from({ length: 48 }, (_, i) => i)).toString('base64')}`
+      const reg = buildLLMRegistry({
+        ...config,
+        providers: [
+          { name: 'demo', protocol: 'openai', apiKey: foreign, baseURL: 'https://demo/v1' },
+        ],
+      })
+      expect(() => resolveRoute(reg, 'demo', 'x')).toThrow()
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 

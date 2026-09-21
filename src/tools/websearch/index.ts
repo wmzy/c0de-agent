@@ -1,4 +1,4 @@
-import { decryptSecret } from '../../core/secret.js'
+import { decryptSecretSafe } from '../../core/secret.js'
 import type { WebSearchConfig } from '../../shared/types/config.js'
 import { headChars } from '../../shared/utils/string.js'
 import { createFetch } from './fetch.js'
@@ -15,9 +15,11 @@ const PROVIDERS: Record<WebSearchProviderId, WebSearchProvider> = {
 }
 
 /** 环境变量名 → config key 字段映射。环境变量优先于 config。
- *  config 值落盘时已加密（enc: 前缀），此处解密后使用（明文兼容透传）。 */
+ *  config 值落盘时已加密（enc: 前缀），此处解密后使用（明文兼容透传）。
+ *  跨机同步/损坏的密文解密失败 → 视为无 key（undefined）：auto 模式降级
+ *  duckduckgo，显式模式给出「需要 API key」的可操作错误——解密异常不击穿。 */
 function resolveKeys(config: WebSearchConfig): { tavily?: string; brave?: string } {
-  const decrypt = (v?: string) => (v ? decryptSecret(v) : v)
+  const decrypt = (v?: string) => (v ? decryptSecretSafe(v) : v)
   return {
     tavily: process.env.TAVILY_API_KEY ?? decrypt(config.tavilyApiKey),
     brave: process.env.BRAVE_API_KEY ?? decrypt(config.braveApiKey),
