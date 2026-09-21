@@ -1,4 +1,5 @@
 // src/server/permission/interactive.test.ts
+import { getEventListeners } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import type { ToolContext, ToolDef } from '../../shared/types/tool.js'
 import { createInteractivePermissionChecker } from './interactive.js'
@@ -410,6 +411,65 @@ describe('InteractivePermissionChecker', () => {
     expect(result._tag).toBe('deny')
     expect(checker.hasPending(id)).toBe(false)
     expect(checker.pendingCount()).toBe(0)
+  })
+})
+
+describe('InteractivePermissionChecker 的 abort 联动不泄漏监听器', () => {
+  // 回归：ask 权限每次都在 run 级 AbortSignal 上 addEventListener('abort')，
+  // 但确认/超时终结后从不 removeEventListener——同一次 run 里第 11 次权限确认
+  // 起 Node 打 MaxListenersExceededWarning，且每个监听器闭包（toolCallId + store）
+  // 随 signal 活到 run 结束（signal 属于整个 run，长会话累积）。
+  it('确认后 run 信号上不留 abort 监听器（多次权限请求不累积）', async () => {
+    const controller = new AbortController()
+    const runCtx: ToolContext = { ...ctx, abort: controller.signal }
+    const ids: string[] = []
+    const checker = makeChecker({
+      onPermissionRequired: (req) => {
+        ids.push(req.toolCallId)
+      },
+    })
+    const before = getEventListeners(controller.signal, 'abort').length
+
+    for (let i = 0; i < 3; i++) {
+      const checkPromise = checker.check(askTool, { i }, runCtx)
+      await vi.waitFor(() => expect(ids.length).toBe(i + 1))
+      expect(checker.confirm(ids[i] as string, true)).toBe(true)
+      await checkPromise
+    }
+
+    expect(getEventListeners(controller.signal, 'abort').length).toBe(before)
+  })
+
+  it('abort 联动仍然生效：pending 期间 abort → deny 且监听器清空', async () => {
+    const controller = new AbortController()
+    const runCtx: ToolContext = { ...ctx, abort: controller.signal }
+    const ids: string[] = []
+    const checker = makeChecker({
+      onPermissionRequired: (req) => {
+        ids.push(req.toolCallId)
+      },
+    })
+
+    const checkPromise = checker.check(askTool, {}, runCtx)
+    // 监听器在 onPermissionRequired 之后注册：等待它真正挂上再 abort
+    await vi.waitFor(() => expect(getEventListeners(controller.signal, 'abort').length).toBe(1))
+
+    controller.abort()
+    const result = await checkPromise
+    expect(result._tag).toBe('deny')
+    expect(checker.hasPending(ids[0] as string)).toBe(false)
+    expect(getEventListeners(controller.signal, 'abort').length).toBe(0)
+  })
+
+  it('已 abort 的信号：直接 deny，不注册监听器', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const runCtx: ToolContext = { ...ctx, abort: controller.signal }
+    const checker = makeChecker()
+
+    const result = await checker.check(askTool, {}, runCtx)
+    expect(result._tag).toBe('deny')
+    expect(getEventListeners(controller.signal, 'abort').length).toBe(0)
   })
 })
 

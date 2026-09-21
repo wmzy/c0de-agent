@@ -145,15 +145,16 @@ export async function runSubAgent(
   // 时标记为 undefined，子 agent 自跑其 loop 仍会按轮次独立检查预算。
   childState.budgetPauseTriggered = parent.budgetPauseTriggered
 
-  // abort 链接：父 abort 则子 abort
+  // abort 链接：父 abort 则子 abort。
+  // 监听器在子 run 结束时摘除（见 runBody 的 finally）：{ once: true } 只在真的
+  // 触发 abort 时自动摘除，正常完成的子 run（绝大多数）从不触发——父 run 级
+  // signal 上每派发一个子 agent 就留一个监听器，累积到 11 个即触发 Node 的
+  // MaxListenersExceededWarning，闭包也随 signal 活到父 run 结束。
+  const onParentAbort = (): void => childState.abortController.abort()
   if (parent.abortController.signal.aborted) {
     childState.abortController.abort()
   } else {
-    parent.abortController.signal.addEventListener(
-      'abort',
-      () => childState.abortController.abort(),
-      { once: true },
-    )
+    parent.abortController.signal.addEventListener('abort', onParentAbort, { once: true })
   }
 
   // P1：把子 run（同步 + 后台）注册进宿主 run 跟踪器（Web=agentManager）。
@@ -174,6 +175,9 @@ export async function runSubAgent(
     try {
       return await runChildBody(childState, childDeps, childSession, title, baseline, worktreePath)
     } finally {
+      // 子 run 结束即摘除父 signal 上的 abort 联动监听器（background 路径在此前
+      // 一直保留——子 run 仍在跑时父 abort 必须仍能级联，故只能在此摘除）。
+      parent.abortController.signal.removeEventListener('abort', onParentAbort)
       unregisterChild?.()
     }
   }

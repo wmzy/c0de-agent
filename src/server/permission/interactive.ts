@@ -101,19 +101,20 @@ function createInteractivePermissionChecker(
       // agent abort 联动：abort 时主动 deny 并清理 store 条目，
       // 避免 agent 已中止后 promise 仍悬空等待超时。store.resolve 是幂等终结，
       // 与超时/confirm 互斥——谁先到谁生效。
+      // 监听器必须在终结时注销：{ once: true } 只在「真的触发 abort」时自动摘除，
+      // 而确认/超时终结的请求（绝大多数）从不触发 abort——同一次 run 里累积到第 11
+      // 个监听器即触发 Node 的 MaxListenersExceededWarning，每个闭包还随 run 级
+      // signal 活到 run 结束（executor/bash 的同型监听都已在 finally 摘除）。
+      const onAbort = (): void => {
+        store.resolve(toolCallId, false)
+      }
       if (ctx.abort.aborted) {
         store.resolve(toolCallId, false)
       } else {
-        ctx.abort.addEventListener(
-          'abort',
-          () => {
-            store.resolve(toolCallId, false)
-          },
-          { once: true },
-        )
+        ctx.abort.addEventListener('abort', onAbort, { once: true })
       }
 
-      return promise
+      return promise.finally(() => ctx.abort.removeEventListener('abort', onAbort))
     },
     confirm(toolCallId, approved) {
       return store.resolve(toolCallId, approved)

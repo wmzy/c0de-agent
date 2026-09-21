@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDB } from '../db/client.js'
@@ -1801,6 +1802,34 @@ describe('runSubAgent background', () => {
       expect.objectContaining({ parentSessionId: session.id }),
     )
     expect(unregister).toHaveBeenCalled()
+  })
+
+  it('P2：父 run 信号上的 abort 联动监听器在子 run 结束后摘除（不随派发次数累积）', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockTextStream('child output'))
+    const signal = state.abortController.signal
+    const before = getEventListeners(signal, 'abort').length
+
+    // 后台子 run：派发后（仍在跑）父 abort 必须仍能级联 → 监听器在场
+    const running = await runSubAgent(deps, state, {
+      agentType: 'general',
+      prompt: 'p',
+      background: true,
+    })
+    expect(running._tag).toBe('running')
+    expect(getEventListeners(signal, 'abort').length).toBe(before + 1)
+
+    // 子 run 结束（完成/出错/中止任一）后摘除——此前每个子 agent 留一个监听器，
+    // 累积到 11 个即触发 Node 的 MaxListenersExceededWarning。
+    await vi.waitFor(() => expect(getEventListeners(signal, 'abort').length).toBe(before), {
+      timeout: 10_000,
+    })
+
+    // 同步子 run 同口径
+    const sync = await runSubAgent(deps, state, { agentType: 'general', prompt: 'p' })
+    expect(sync._tag).toBe('success')
+    expect(getEventListeners(signal, 'abort').length).toBe(before)
   })
 
   it('未知 agentType 返回 error', async () => {
