@@ -338,7 +338,16 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     const projectId = c.req.param('projectId')
     const cardId = c.req.param('cardId')
     const store = createKanbanStore(ctx.db, projectId)
-    await store.deleteCard(cardId)
+    try {
+      // 作用域内删除：卡片不属于本项目板（他板 id / 已不存在）→ 404，
+      // 不再对任意 id 回 ok:true（删除失败静默无反馈）。
+      await store.deleteCard(cardId)
+    } catch (err) {
+      if (err instanceof KanbanCardNotFoundError) {
+        return apiError(c, 404, 'CARD_NOT_FOUND', err.message)
+      }
+      throw err
+    }
     return c.json({ ok: true })
   })
 

@@ -166,6 +166,69 @@ describe('kanban export/import', () => {
   })
 })
 
+describe('kanban 项目作用域（变更操作不得越界）', () => {
+  /** 第二个项目（同库不同板）：store 以 projectId 构造，但变更操作按卡片 id 寻址——
+   *  REST 路径里的 projectId 必须真实约束作用域。 */
+  const OTHER_PROJECT = 'kanban-other-project'
+
+  async function setupTwoProjects() {
+    const { app, db } = await setup()
+    await db.db.insert(projects).values({ id: OTHER_PROJECT, worktree: '/tmp/kanban-other' })
+    return { app, db }
+  }
+
+  it('PATCH 用其他项目的卡片 id → 404，且原项目卡片未被改动', async () => {
+    const { app } = await setupTwoProjects()
+    const card = await seedCard(app)
+
+    const res = await app.request(`/${OTHER_PROJECT}/cards/${card.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'hijacked', columnId: 'inbox' }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('CARD_NOT_FOUND')
+
+    const boardRes = await app.request(`/${PROJECT_ID}`)
+    const board = (await boardRes.json()) as { cards: Array<{ id: string; title: string }> }
+    expect(board.cards).toHaveLength(1)
+    expect(board.cards[0]?.title).toBe('Card A')
+  })
+
+  it('DELETE 用其他项目的卡片 id → 404，卡片仍在该项目板上', async () => {
+    const { app } = await setupTwoProjects()
+    const card = await seedCard(app)
+
+    const res = await app.request(`/${OTHER_PROJECT}/cards/${card.id}`, { method: 'DELETE' })
+    expect(res.status).toBe(404)
+
+    const boardRes = await app.request(`/${PROJECT_ID}`)
+    const board = (await boardRes.json()) as { cards: Array<{ id: string }> }
+    expect(board.cards.map((c) => c.id)).toEqual([card.id])
+  })
+
+  it('DELETE 不存在的卡片 id → 404（此前恒 200 ok:true，删除失败无任何反馈）', async () => {
+    const { app } = await setupTwoProjects()
+    const res = await app.request(`/${PROJECT_ID}/cards/00000000-0000-0000-0000-000000000000`, {
+      method: 'DELETE',
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('CARD_NOT_FOUND')
+  })
+
+  it('同项目内 deleteCard 正常删除（作用域校验不误伤本板卡片）', async () => {
+    const { app } = await setupTwoProjects()
+    const card = await seedCard(app)
+    const res = await app.request(`/${PROJECT_ID}/cards/${card.id}`, { method: 'DELETE' })
+    expect(res.status).toBe(200)
+    const boardRes = await app.request(`/${PROJECT_ID}`)
+    const board = (await boardRes.json()) as { cards: unknown[] }
+    expect(board.cards).toHaveLength(0)
+  })
+})
+
 describe('kanban route guards', () => {
   it('GET 不存在项目的看板 → 404 PROJECT_NOT_FOUND（此前 FK violation 500）', async () => {
     const { app } = await setup()

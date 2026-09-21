@@ -162,6 +162,32 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     return (row?.columns ?? []) as KanbanColumnDef[]
   }
 
+  /** 本项目的活动板 id（不懒建）：变更操作的作用域基准。无板 = 本项目无卡片。 */
+  async function currentBoardId(): Promise<string | null> {
+    const [row] = await db
+      .select({ id: kanbanBoards.id })
+      .from(kanbanBoards)
+      .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+      .limit(1)
+    return row?.id ?? null
+  }
+
+  /** 取本板卡片；不属于本板（其他项目的卡片 id / 不存在）抛 KanbanCardNotFoundError。
+   *  store 以 projectId 构造，但 update/move/delete 按卡片 id 寻址——不校验作用域时
+   *  `PATCH /api/kanban/<项目B>/cards/<项目A 的卡片 id>` 会静默改写 A 的看板
+   *  （REST 路径里的 projectId 形同虚设），删除更会直接物理删除他板卡片。 */
+  async function cardInThisBoard(id: string): Promise<CardRow> {
+    const boardId = await currentBoardId()
+    if (!boardId) throw new KanbanCardNotFoundError(id)
+    const [row] = await db
+      .select()
+      .from(kanbanCards)
+      .where(and(eq(kanbanCards.id, id), eq(kanbanCards.boardId, boardId)))
+      .limit(1)
+    if (!row) throw new KanbanCardNotFoundError(id)
+    return row
+  }
+
   /** 校验列存在；不存在抛 KanbanColumnNotFoundError（消息含可用列清单）。 */
   function assertColumn(columns: KanbanColumnDef[], columnId: string, op: 'add' | 'move'): void {
     if (!columns.some((c) => c.id === columnId)) {
@@ -241,6 +267,8 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
 
     async updateCard(id, patch): Promise<KanbanCard> {
       assertPriority(patch.priority)
+      // 作用域校验：卡片必须属于本项目的板（他板卡片 id → 404 语义）。
+      const existing = await cardInThisBoard(id)
       const [row] = await db
         .update(kanbanCards)
         .set({
@@ -250,7 +278,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
           ...(patch.labels !== undefined && { labels: patch.labels }),
           updatedAt: new Date(),
         })
-        .where(eq(kanbanCards.id, id))
+        .where(and(eq(kanbanCards.id, id), eq(kanbanCards.boardId, existing.boardId)))
         .returning()
       if (!row) throw new KanbanCardNotFoundError(id)
       return rowToCard(row)
@@ -260,12 +288,8 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
       if (position !== undefined && !Number.isFinite(position)) {
         throw new KanbanInvalidPositionError(position)
       }
-      const [card] = await db
-        .select({ boardId: kanbanCards.boardId })
-        .from(kanbanCards)
-        .where(eq(kanbanCards.id, id))
-        .limit(1)
-      if (!card) throw new KanbanCardNotFoundError(id)
+      // 作用域校验（同时取回 boardId）：他板卡片 id 不得经本项目路径移动。
+      const card = await cardInThisBoard(id)
       // 悬空列校验：目标列必须存在于当前列配置，否则卡片静默不可见。
       const columns = await boardColumns(card.boardId)
       assertColumn(columns, columnId, 'move')
@@ -274,14 +298,23 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
       const [row] = await db
         .update(kanbanCards)
         .set({ columnId, position: newPos, updatedAt: new Date() })
-        .where(eq(kanbanCards.id, id))
+        .where(and(eq(kanbanCards.id, id), eq(kanbanCards.boardId, card.boardId)))
         .returning()
-      const moved = row as CardRow
-      return rowToCard(moved)
+      if (!row) throw new KanbanCardNotFoundError(id)
+      return rowToCard(row)
     },
 
     async deleteCard(id): Promise<void> {
-      await db.delete(kanbanCards).where(eq(kanbanCards.id, id))
+      // 作用域校验 + 删除影响行数校验：他板卡片 id 与不存在的 id 都必须报错——
+      // 此前无条件 `delete where id` 恒返回成功，REST 对任何 id 都回 ok:true，
+      // 删除失败（拼错 id / 卡片已被 agent 删除）静默无反馈。
+      const boardId = await currentBoardId()
+      if (!boardId) throw new KanbanCardNotFoundError(id)
+      const rows = await db
+        .delete(kanbanCards)
+        .where(and(eq(kanbanCards.id, id), eq(kanbanCards.boardId, boardId)))
+        .returning({ id: kanbanCards.id })
+      if (rows.length === 0) throw new KanbanCardNotFoundError(id)
     },
 
     async updateBoard(patch): Promise<KanbanBoard> {

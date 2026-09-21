@@ -8,6 +8,7 @@ import { DEFAULT_KANBAN_COLUMNS } from '../shared/types/kanban.js'
 import {
   createKanbanStore,
   getDeletedKanbanBoard,
+  KanbanCardNotFoundError,
   KanbanColumnInUseError,
   KanbanColumnNotFoundError,
   KanbanInvalidPositionError,
@@ -315,11 +316,25 @@ describe('deleteCard', () => {
     expect(board.cards).toHaveLength(0)
   })
 
-  it('is a no-op for an unknown id (does not throw)', async () => {
+  // 契约变更：删除未知 id 不再是静默 no-op——REST 曾对任何 id 回 ok:true，
+  // 拼错 id / 卡片已被 agent 删除时前端以为删掉了。改为抛 KanbanCardNotFoundError
+  // （路由映射 404），由调用方给出反馈。
+  it('throws KanbanCardNotFoundError for an unknown id (no silent success)', async () => {
     await seedProject('proj-1')
     const store = createKanbanStore(handle, 'proj-1')
 
-    await expect(store.deleteCard(MISSING_ID)).resolves.toBeUndefined()
+    await expect(store.deleteCard(MISSING_ID)).rejects.toBeInstanceOf(KanbanCardNotFoundError)
+  })
+
+  it('unknown id 抛错时不动任何卡片（不误删）', async () => {
+    await seedProject('proj-1')
+    const store = createKanbanStore(handle, 'proj-1')
+    const card = await store.addCard({ title: 'kept' })
+
+    await expect(store.deleteCard(MISSING_ID)).rejects.toBeInstanceOf(KanbanCardNotFoundError)
+
+    const board = await store.getBoard()
+    expect(board.cards.map((c) => c.id)).toEqual([card.id])
   })
 })
 
@@ -417,6 +432,45 @@ describe('project isolation', () => {
     expect(boardA.id).not.toBe(boardB.id)
     expect(boardA.cards.map((c) => c.title)).toEqual(['A-card'])
     expect(boardB.cards.map((c) => c.title)).toEqual(['B-card'])
+  })
+
+  // 回归：update/move/delete 此前只按卡片 id 寻址（无 boardId 约束）——store 虽以
+  // projectId 构造，REST `PATCH /api/kanban/<项目B>/cards/<项目A 的卡片 id>` 却会
+  // 改写 A 的看板（delete 直接物理删除他板卡片）。看板隔离必须在变更操作上成立，
+  // 不能只体现在 getBoard 的查询过滤上。
+  it('变更操作不得越界到他项目的卡片（update/move/delete）', async () => {
+    await seedProject('proj-a')
+    await seedProject('proj-b')
+    const storeA = createKanbanStore(handle, 'proj-a')
+    const storeB = createKanbanStore(handle, 'proj-b')
+    const cardA = await storeA.addCard({ title: 'A-card', columnId: 'todo' })
+    await storeB.addCard({ title: 'B-card', columnId: 'todo' })
+
+    await expect(storeB.updateCard(cardA.id, { title: 'hijacked' })).rejects.toBeInstanceOf(
+      KanbanCardNotFoundError,
+    )
+    await expect(storeB.moveCard(cardA.id, 'done')).rejects.toBeInstanceOf(KanbanCardNotFoundError)
+    await expect(storeB.deleteCard(cardA.id)).rejects.toBeInstanceOf(KanbanCardNotFoundError)
+
+    // A 的卡片原样保留：标题/列/position 都未被越界调用改动
+    const boardA = await storeA.getBoard()
+    expect(boardA.cards).toHaveLength(1)
+    expect(boardA.cards[0]?.title).toBe('A-card')
+    expect(boardA.cards[0]?.columnId).toBe('todo')
+    expect(boardA.cards[0]?.position).toBe(cardA.position)
+  })
+
+  it('本项目内 update/move/delete 正常（作用域校验不误伤本板卡片）', async () => {
+    await seedProject('proj-a')
+    const storeA = createKanbanStore(handle, 'proj-a')
+    const card = await storeA.addCard({ title: 'A-card', columnId: 'todo' })
+
+    await storeA.updateCard(card.id, { title: 'renamed' })
+    const moved = await storeA.moveCard(card.id, 'done')
+    expect(moved.columnId).toBe('done')
+    await storeA.deleteCard(card.id)
+
+    expect((await storeA.getBoard()).cards).toHaveLength(0)
   })
 })
 
