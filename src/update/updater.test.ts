@@ -1,9 +1,10 @@
+import { getEventListeners } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { cleanupSnapshot, performHotUpdate } from './updater.js'
+import { cleanupSnapshot, performHotUpdate, waitForProgramChange } from './updater.js'
 
 const snapshot = { version: '0.1.0', sessions: [], entries: [], config: null, timestamp: 1 }
 
@@ -172,5 +173,48 @@ describe('cleanupSnapshot', () => {
     expect(existsSync(dir)).toBe(true)
     await cleanupSnapshot(r.snapshotPath)
     expect(existsSync(dir)).toBe(false)
+  })
+})
+
+describe('waitForProgramChange', () => {
+  it('变更检测正常 resolve 后摘除 abort 监听器（同型：executor/bash 的终结清理口径）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'c0de-wait-'))
+    try {
+      const file = join(dir, 'entry.js')
+      await writeFile(file, 'v1', 'utf8')
+      const before = await stat(file)
+      const baseline = new Map([[file, { size: before.size, mtimeMs: before.mtimeMs }]])
+      const controller = new AbortController()
+
+      // 启动后改写文件 → changed() 命中 → resolve（正常终结路径，不触发 abort）
+      const waitPromise = waitForProgramChange(60_000, baseline, controller.signal, 10)
+      await new Promise((r) => setTimeout(r, 30))
+      await writeFile(file, 'v2-longer', 'utf8')
+      await waitPromise
+
+      // 修复前：{ once: true } 只在「真的触发 abort」时自动摘除——正常 resolve
+      // 的调用在信号上残留监听器，长生命周期信号复用场景下累积到第 11 个即
+      // 触发 Node MaxListenersExceededWarning，闭包也随信号长期滞留。
+      expect(getEventListeners(controller.signal, 'abort').length).toBe(0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('abort 触发时 reject 且监听器不残留（once 语义自身已清理）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'c0de-wait-abort-'))
+    try {
+      const file = join(dir, 'entry.js')
+      await writeFile(file, 'v1', 'utf8')
+      const before = await stat(file)
+      const baseline = new Map([[file, { size: before.size, mtimeMs: before.mtimeMs }]])
+      const controller = new AbortController()
+      const waitPromise = waitForProgramChange(60_000, baseline, controller.signal, 10)
+      controller.abort()
+      await expect(waitPromise).rejects.toThrow(/aborted/)
+      expect(getEventListeners(controller.signal, 'abort').length).toBe(0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

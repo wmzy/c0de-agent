@@ -163,9 +163,17 @@ function waitForProgramChange(
     let interval: ReturnType<typeof setInterval> | null = null
     const watchers: ReturnType<typeof watch>[] = []
 
+    // 监听器必须在终结处显式摘除：{ once: true } 只在「真的触发 abort」时
+    // 自动摘除——变更检测/超时终结的调用（绝大多数）从不触发 abort，残留
+    // 监听器在长生命周期信号复用场景下累积（第 11 个即触发 Node 的
+    // MaxListenersExceededWarning），闭包也随信号长期滞留（同型：executor/
+    // bash/permission checker 均已改为终结清理口径）。
+    const onAbort = (): void => finish(() => reject(new Error('waiting aborted')))
+
     const finish = (fn: () => void): void => {
       if (settled) return
       settled = true
+      signal?.removeEventListener('abort', onAbort)
       if (timer) clearTimeout(timer)
       if (interval) clearInterval(interval)
       for (const w of watchers) w.close()
@@ -186,7 +194,6 @@ function waitForProgramChange(
       return false
     }
 
-    const onAbort = (): void => finish(() => reject(new Error('waiting aborted')))
     signal?.addEventListener('abort', onAbort, { once: true })
 
     timer = setTimeout(() => finish(() => reject(new Error('等待程序文件变更超时'))), timeoutMs)
@@ -429,4 +436,5 @@ export {
   performHandoff,
   performHotUpdate,
   performInstall,
+  waitForProgramChange,
 }

@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
@@ -200,5 +201,26 @@ describe('runPrintMode', () => {
     await expect(runPrintMode(withModels, 'hi', deps)).rejects.toThrow(/demo-other/)
     await expect(runPrintMode(withModels, 'hi', deps)).rejects.toThrow(/demo-model-fast/)
     await expect(runPrintMode(withModels, 'hi', deps)).rejects.toThrow(/--model/)
+  })
+
+  // 回归：abort 桥接监听器 { once: true } 只在「真的触发 abort」时自动摘除——
+  // 正常完成的 run（绝大多数）从不触发 abort，闭包捕获整个 agent state，
+  // 经 ACP 的 currentAbort（持有上一个 controller）钉住到下一次请求才释放。
+  it('正常完成的 run 终结后摘除 abort 桥接监听器（不钉住 agent state）', async () => {
+    const chatStream = mockChatStream([{ _tag: 'text', text: 'ok' }, { _tag: 'done' }])
+    const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream })
+    const controller = new AbortController()
+    await runPrintMode(config, 'hi', deps, { abortSignal: controller.signal })
+    expect(getEventListeners(controller.signal, 'abort').length).toBe(0)
+  })
+
+  it('run 期间触发 abort → 抛「已中止」且监听器不残留', async () => {
+    const chatStream = mockChatStream([{ _tag: 'text', text: 'partial' }])
+    const deps = await buildAgentDeps(config, { db, cwd: process.cwd(), chatStream })
+    const controller = new AbortController()
+    const run = runPrintMode(config, 'hi', deps, { abortSignal: controller.signal })
+    controller.abort()
+    await expect(run).rejects.toThrow(/已中止/)
+    expect(getEventListeners(controller.signal, 'abort').length).toBe(0)
   })
 })

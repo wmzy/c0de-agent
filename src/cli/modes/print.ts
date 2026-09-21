@@ -142,38 +142,43 @@ async function runPrintMode(
 
   // P2-4：ACP abort 真中止——把外部信号桥接到该 run 的 abortController。
   // abortAgent 会使 loop 在 turn/流边界 unwind，runAgent 随即结束。
+  // 监听器必须在 run 终结处摘除：{ once: true } 只在「真的触发 abort」时
+  // 自动摘除——正常完成的 run（绝大多数）从不触发 abort，闭包捕获整个
+  // agent state，经 ACP 的 currentAbort（持有上一个 controller）钉住到
+  // 下一次请求才释放（同型：executor/bash/permission checker 口径）。
+  const onAbort = (): void => {
+    abortAgent(state)
+  }
   if (opts.abortSignal) {
     if (opts.abortSignal.aborted) {
       throw new Error('已中止')
     }
-    opts.abortSignal.addEventListener(
-      'abort',
-      () => {
-        abortAgent(state)
-      },
-      { once: true },
-    )
+    opts.abortSignal.addEventListener('abort', onAbort, { once: true })
   }
 
-  const events: AgentEvent[] = []
-  for await (const event of runAgent(state, [{ _tag: 'text', text: message }], deps)) {
-    events.push(event)
-    opts.onEvent?.(event)
-  }
+  try {
+    const events: AgentEvent[] = []
+    for await (const event of runAgent(state, [{ _tag: 'text', text: message }], deps)) {
+      events.push(event)
+      opts.onEvent?.(event)
+    }
 
-  // P2-4：中止后如实报错（ACP 客户端收到 error 响应，而非谎报 ok 的完成结果）。
-  if (opts.abortSignal?.aborted) {
-    throw new Error('已中止')
-  }
+    // P2-4：中止后如实报错（ACP 客户端收到 error 响应，而非谎报 ok 的完成结果）。
+    if (opts.abortSignal?.aborted) {
+      throw new Error('已中止')
+    }
 
-  // 终态错误（unexpected，含预算中止）必须反馈给用户而非静默返回半截文本——
-  // 抛出后 dispatch 打印 message 并以非零码退出（预算超支中止等硬性护栏由此可见）。
-  const terminal = events.find((e) => e._tag === 'error' && e.error._tag === 'unexpected')
-  if (terminal && terminal._tag === 'error' && terminal.error._tag === 'unexpected') {
-    throw new Error(terminal.error.message)
-  }
+    // 终态错误（unexpected，含预算中止）必须反馈给用户而非静默返回半截文本——
+    // 抛出后 dispatch 打印 message 并以非零码退出（预算超支中止等硬性护栏由此可见）。
+    const terminal = events.find((e) => e._tag === 'error' && e.error._tag === 'unexpected')
+    if (terminal && terminal._tag === 'error' && terminal.error._tag === 'unexpected') {
+      throw new Error(terminal.error.message)
+    }
 
-  return collectAssistantText(events)
+    return collectAssistantText(events)
+  } finally {
+    opts.abortSignal?.removeEventListener('abort', onAbort)
+  }
 }
 
 export type { PrintOptions }
