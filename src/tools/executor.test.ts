@@ -147,4 +147,45 @@ describe('executeTool', () => {
     const result = await executeTool(reg, 'echo', { msg: 'x' }, abortedCtx, autoAllowChecker)
     expect(result._tag).toBe('error')
   })
+
+  // 回归：ToolDef.timeout 声明但从未被执行——executeTool 直接 await 工具执行，
+  // websearch 声明 timeout:30_000 但后端 fetch 挂起时整个 agent run 无限期挂死
+  // （只有用户手动 abort 才能脱身）。声明必须兑现：超时中止并把派生 abort
+  // 信号传给工具，让底层 IO（fetch 等）随超时取消。
+  it('enforces the declared tool timeout and aborts the underlying execution', async () => {
+    let captured: AbortSignal | undefined
+    const slow: ToolDef = {
+      name: 'slow',
+      description: 'slow',
+      parameters: { type: 'object' },
+      permission: 'auto',
+      timeout: 50,
+      execute: async (_input, tctx) => {
+        captured = tctx.abort
+        return new Promise<ToolResult>((resolve) => {
+          // 模拟「挂起的 fetch」：仅当 abort 信号触发时才结束——不 abort 则永久挂起
+          tctx.abort.addEventListener('abort', () => resolve({ _tag: 'success', output: 'late' }))
+        })
+      },
+    }
+    const reg = createToolRegistry()
+    registerTool(reg, slow)
+
+    const result = await executeTool(reg, 'slow', {}, ctx, autoAllowChecker)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('timed out after 50ms')
+    }
+    expect(captured?.aborted).toBe(true)
+  })
+
+  it('does not disturb tools that finish within their declared timeout', async () => {
+    const fast = makeTool('fast', async () => ({ _tag: 'success', output: 'quick' }))
+    fast.timeout = 5_000
+    const reg = createToolRegistry()
+    registerTool(reg, fast)
+
+    const result = await executeTool(reg, 'fast', { msg: 'x' }, ctx, autoAllowChecker)
+    expect(result).toEqual({ _tag: 'success', output: 'quick' })
+  })
 })
