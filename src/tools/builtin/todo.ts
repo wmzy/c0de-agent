@@ -416,7 +416,9 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
       continue
     }
 
-    const taskMatch = /^[-*+]\s*\[(.?)\]\s+(.+?)\s*$/.exec(trimmed)
+    // 空内容任务（"- [ ] "）合法：(.+?) 会把它报成 unrecognized syntax 并
+    // 丢弃任务——round-trip 丢数据。
+    const taskMatch = /^[-*+]\s*\[(.?)\]\s*(.*?)\s*$/.exec(trimmed)
     if (taskMatch) {
       if (!currentPhase) {
         currentPhase = { name: 'Todos', tasks: [] }
@@ -437,7 +439,10 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
     errors.push(`Line ${lineNum + 1}: unrecognized syntax "${trimmed}"`)
   }
 
-  normalizeInProgressTask(phases)
+  // 解析必须保真（markdownToPhases(phasesToMarkdown(x)) === x 的 round-trip
+  // 契约）：normalizeInProgressTask 是 op 状态不变量（at most one
+  // in_progress），此前在解析收尾调用会把无 in_progress 的列表「自动提升
+  // 首条 pending」、多条 in_progress「降级除首条外」——导入的数据被静默改写。
   return { phases, errors }
 }
 

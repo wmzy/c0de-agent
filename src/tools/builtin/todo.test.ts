@@ -414,6 +414,57 @@ describe('phasesToMarkdown / markdownToPhases', () => {
   it('empty phases produce minimal markdown', () => {
     expect(phasesToMarkdown([])).toBe('# Todos\n')
   })
+
+  // 回归：markdownToPhases 此前在解析收尾调用 normalizeInProgressTask——
+  // 无 in_progress 的列表被「自动提升首条 pending」、多条 in_progress 被
+  // 「降级除首条外的全部」——解析把用户状态静默改写，round-trip 不保真。
+  it('round-trips an all-pending list without auto-promoting', () => {
+    const phases: TodoPhase[] = [
+      {
+        name: 'P1',
+        tasks: [
+          { content: 'a', status: 'pending' },
+          { content: 'b', status: 'pending' },
+        ],
+      },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
+  it('round-trips multiple in_progress tasks without demoting', () => {
+    const phases: TodoPhase[] = [
+      {
+        name: 'P1',
+        tasks: [
+          { content: 'a', status: 'in_progress' },
+          { content: 'b', status: 'in_progress' },
+        ],
+      },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
+  it('round-trips task content containing checkbox-like markers', () => {
+    const phases: TodoPhase[] = [
+      { name: 'P1', tasks: [{ content: 'task with [x] marker inside', status: 'pending' }] },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
+  // 回归：空内容任务此前渲染为 "- [ ] " 但解析端 \s+(.+?) 要求非空内容，
+  // 该行报 unrecognized syntax 且任务被丢弃——round-trip 丢任务。
+  it('round-trips an empty-content task', () => {
+    const phases: TodoPhase[] = [{ name: 'P1', tasks: [{ content: '', status: 'pending' }] }]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
 })
 
 // ── nextActionableTask ────────────────────────────────────
