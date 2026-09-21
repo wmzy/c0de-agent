@@ -527,6 +527,23 @@ describe('session route', () => {
     expect(res.status).toBe(400)
   })
 
+  it('POST /:id/shake/apply regionIds 非数组 → 400（而非 .filter TypeError 500）', async () => {
+    const { app } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'ShakeStr', projectId: TEST_PROJECT }),
+    })
+    const created = (await createRes.json()) as Session
+
+    const res = await app.request(`/${created.id}/shake/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regionIds: 'abc' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
   it('GET / filters by projectId', async () => {
     const { app, db } = await setup()
     const dir = mkdtempSync(join(tmpdir(), 'route2-'))

@@ -140,7 +140,10 @@ function createChatRoute(ctx: ServerContext): Hono {
   app.post('/', async (c) => {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const sessionId = body.sessionId as string | undefined
-    const message = body.message as string | undefined
+    // body 字段形状校验（P3 加固）：message 非字符串（number/object）会通过
+    // 「!message」检查后经 parseSlashInput 的 .trim() 击穿 TypeError 500——
+    // 按缺省处理落入下方空消息 400，而非 500。
+    const message = typeof body.message === 'string' ? body.message : undefined
     const images = body.images as Array<{ mediaType: string; data: string }> | undefined
 
     // P1-5：纯图片消息放行（Composer 允许只带图片不带文本），
@@ -149,7 +152,14 @@ function createChatRoute(ctx: ServerContext): Hono {
       return apiError(c, 400, 'BAD_REQUEST', '消息内容不能为空：请输入文字或附带图片后再发送')
     }
     // P0：图片大小/数量服务端限额（前端已限制，此为兜底——API 直调/旧客户端）。
-    if (images) {
+    // P3 加固：条目形状（对象 + string mediaType/data + image/ 前缀）显式 400——
+    // images 非数组 → for-of TypeError；[null] → 读 null.data TypeError；缺字段
+    // 条目此前静默持久化成毒化图片消息（jsonb 丢弃 undefined 字段），后续每轮
+    // 上下文重建都携带破损图片，provider 恒 400，会话无法继续。
+    if (images !== undefined) {
+      if (!Array.isArray(images)) {
+        return apiError(c, 400, 'INVALID_IMAGES', 'images 必须是数组')
+      }
       const MAX_IMAGE_COUNT = 6
       const MAX_IMAGE_BYTES = 8 * 1024 * 1024
       if (images.length > MAX_IMAGE_COUNT) {
@@ -161,24 +171,38 @@ function createChatRoute(ctx: ServerContext): Hono {
         )
       }
       for (const img of images) {
+        if (
+          img === null ||
+          typeof img !== 'object' ||
+          Array.isArray(img) ||
+          typeof img.mediaType !== 'string' ||
+          !img.mediaType.startsWith('image/') ||
+          typeof img.data !== 'string' ||
+          img.data.length === 0
+        ) {
+          return apiError(
+            c,
+            400,
+            'INVALID_IMAGE',
+            'images 每项必须是 { mediaType: "image/...", data: "<base64>" }',
+          )
+        }
         // P3：按解码字节校验（base64 字符串长度比真实字节约大 33%）；
         // 无法解码（非法 base64/含 dataURL 前缀等）时按字符串长度保守拦截。
-        if (typeof img.data === 'string') {
-          let bytes = img.data.length
-          try {
-            bytes = Buffer.from(img.data, 'base64').length
-          } catch {
-            // 解码失败保留字符串长度兜底
-          }
-          if (bytes > MAX_IMAGE_BYTES) {
-            const mb = (bytes / (1024 * 1024)).toFixed(1)
-            return apiError(
-              c,
-              400,
-              'IMAGE_TOO_LARGE',
-              `图片大小 ${mb}MB 超过上限 ${MAX_IMAGE_BYTES / (1024 * 1024)}MB`,
-            )
-          }
+        let bytes = img.data.length
+        try {
+          bytes = Buffer.from(img.data, 'base64').length
+        } catch {
+          // 解码失败保留字符串长度兜底
+        }
+        if (bytes > MAX_IMAGE_BYTES) {
+          const mb = (bytes / (1024 * 1024)).toFixed(1)
+          return apiError(
+            c,
+            400,
+            'IMAGE_TOO_LARGE',
+            `图片大小 ${mb}MB 超过上限 ${MAX_IMAGE_BYTES / (1024 * 1024)}MB`,
+          )
         }
       }
     }
@@ -825,6 +849,9 @@ function createChatRoute(ctx: ServerContext): Hono {
     const files = body.files as string[] | undefined
     if (files?.length) {
       for (const p of files) {
+        // 非字符串条目（number/object）进 safeResolve 会让 node:path resolve
+        // 抛 TypeError 击穿 500——按「读取失败静默跳过」同口径忽略。
+        if (typeof p !== 'string' || p.length === 0) continue
         const resolved = safeResolve(cwd, p)
         if (!resolved) continue
         try {

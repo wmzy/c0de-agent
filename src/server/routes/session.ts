@@ -703,6 +703,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
 
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    // regionIds 非数组（字符串等）会让后续 .filter 抛 TypeError 500——
+    // 显式 400（与 regionIds 不匹配同口径）。
+    if (body.regionIds !== undefined && !Array.isArray(body.regionIds)) {
+      return apiError(c, 400, 'INVALID_REGIONS', 'regionIds 必须是数组')
+    }
     const regionIds = (body.regionIds as string[] | undefined) ?? []
 
     const messages = await getMessages(ctx.db, id)

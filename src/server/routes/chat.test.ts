@@ -101,6 +101,83 @@ describe('chat route (SSE)', () => {
     expect(res.status).toBe(400)
   })
 
+  // 回归：body 字段类型未经校验——message 非字符串（number/object）通过
+  // 「!message」检查后经 parseSlashInput 的 .trim() 击穿 500；images 数组条目
+  // 非对象/缺字段会 TypeError 500，或把缺 mediaType/data 的「毒化」图片消息
+  // 持久化进会话（后续每轮上下文重建都携带破损图片，provider 恒 400）。
+  it('message 非字符串 → 400（而非 .trim TypeError 500）', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 42 }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('images 非数组 → 400（而非 for-of 非迭代 TypeError 500）', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi', images: {} }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('images 数组含 null 条目 → 400（而非读 null.data TypeError 500）', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi', images: [null] }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('images 条目缺 mediaType/data → 400 且不持久化毒化图片消息', async () => {
+    const { app, ctx, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi', images: [{}] }),
+    })
+    expect(res.status).toBe(400)
+    const entries = await getEntries(ctx.db, sessionId)
+    const imageParts = entries.flatMap((e) =>
+      'content' in e && Array.isArray(e.content)
+        ? e.content.filter((p) => p && typeof p === 'object' && p._tag === 'image')
+        : [],
+    )
+    expect(imageParts).toHaveLength(0)
+  })
+
+  it('images 条目 mediaType 非 image/ 前缀 → 400', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        message: 'hi',
+        images: [{ mediaType: 'text/html', data: 'aGVsbG8=' }],
+      }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('files 数组含非字符串条目 → 静默跳过（而非 path.resolve TypeError 500）', async () => {
+    const { app, sessionId } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi', files: [42] }),
+    })
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(parseSSEEvents(text).some((e) => e.event === 'done')).toBe(true)
+  })
+
   it('POST / nonexistent session returns 404', async () => {
     const { app } = await setup()
     const res = await app.request('/', {
