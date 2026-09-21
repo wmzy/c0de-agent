@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 import { safeResolve } from '../../shared/utils/path.js'
@@ -130,12 +130,22 @@ export const grepTool: ToolDef = {
       const files = await walkForFiles(basePath, basePath)
       const matches: GrepMatch[] = []
       const max = maxResults
+      // 读取失败（权限不可读/悬空符号链接/删除竞态）的文件数：单文件失败只
+      // 跳过该文件，绝不中断整个搜索（与 walkForFiles 对 readdir 失败的
+      // 容错同口径），但计数并显式回报——静默跳过会让模型误判「仓库里没有」。
+      let unreadableFiles = 0
 
       outer: for (const filePath of files) {
-        const stat = await readFile(filePath)
-        if (stat.length > MAX_FILE_SIZE) continue
-
-        const content = stat.toString('utf-8')
+        // 先 stat 再读：大小上限的语义是「跳过 >1MB 文件」，此前先 readFile
+        // 再查长度——整个大文件已被读进内存才丢弃（仓库里一个 GB 级文件即可
+        // 让 grep 读取数 GB），且超限且不可读的文件会因先读而 EACCES 失败。
+        const info = await stat(filePath).catch(() => null)
+        if (info === null || info.size > MAX_FILE_SIZE) continue
+        const content = await readFile(filePath, 'utf-8').catch(() => {
+          unreadableFiles += 1
+          return null
+        })
+        if (content === null) continue
         const lines = content.split('\n')
         const relPath = relative(basePath, filePath)
 
@@ -154,12 +164,18 @@ export const grepTool: ToolDef = {
         }
       }
 
-      const output = matches.map((m) => `${m.file}:${m.line}: ${m.text}`).join('\n')
+      const skippedNote =
+        unreadableFiles > 0 ? `\n[${unreadableFiles} unreadable file(s) skipped]` : ''
+      const output = matches.map((m) => `${m.file}:${m.line}: ${m.text}`).join('\n') + skippedNote
 
       return {
         _tag: 'success',
         output,
-        metadata: { count: matches.length, truncated: matches.length >= max },
+        metadata: {
+          count: matches.length,
+          truncated: matches.length >= max,
+          ...(unreadableFiles > 0 ? { unreadableFiles } : {}),
+        },
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

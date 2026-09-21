@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -184,6 +184,40 @@ describe('grepTool', () => {
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
       expect(result.error).toContain('escapes the working directory')
+    }
+  })
+
+  // 回归：单文件读取失败会中断整个搜索——悬空符号链接（仓库常见）或权限
+  // 不可读的文件让 readFile 抛错，冒泡后整个 grep 变成 error：一个好文件都
+  // 搜不到，模型误以为仓库里没有匹配。与 walkForFiles 对 readdir 失败的
+  // 容错（.catch(() => null) 跳过）同口径，单文件失败应只跳过该文件。
+  it('skips unreadable files instead of failing the whole search', async () => {
+    await writeFile(join(workDir, 'good.ts'), 'const needle = 1\n')
+    // 悬空符号链接：readFile 抛 ENOENT
+    await symlink(join(workDir, 'missing-target.ts'), join(workDir, 'dangling.ts'))
+
+    const result = await grepTool.execute({ pattern: 'needle' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toContain('good.ts')
+      expect(result.output).not.toContain('dangling.ts')
+    }
+  })
+
+  // 回归：文件大小上限在 readFile 之后才判定——声明语义是「跳过 >1MB 文件」，
+  // 实际先把整个文件读进内存再 skip（仓库里一个大文件就能让 grep 读取数 GB）。
+  // 可观测后果：超限且不可读的文件本应按大小跳过，却因先读而 EACCES 失败。
+  it('skips oversized files without reading them first', async () => {
+    await writeFile(join(workDir, 'good.ts'), 'const needle = 1\n')
+    const big = join(workDir, 'big.ts')
+    await writeFile(big, 'x'.repeat(1024 * 1024 + 1))
+    await chmod(big, 0o000) // 超限 + 不可读：修复前 readFile 先抛 EACCES
+
+    const result = await grepTool.execute({ pattern: 'needle' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toContain('good.ts')
+      expect(result.output).not.toContain('big.ts')
     }
   })
 })
