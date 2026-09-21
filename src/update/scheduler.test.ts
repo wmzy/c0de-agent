@@ -120,4 +120,18 @@ describe('createUpdateScheduler', () => {
     )
     s.stop()
   })
+
+  // 回归：intervalMs 超 32 位上限（2^31-1）时 Node 的 setInterval 会把间隔
+  // 钳到 1ms——config 里写一个大间隔本意是「少检查」，实际却以每毫秒一次的
+  // 频率狂刷 npm registry（initialDelay 同理被钳到 1ms 立即开刷）。
+  // 间隔应钳制到可表示上限：2 秒内只有 initialDelay 触发的一次检查。
+  it('clamps interval above the 32-bit ceiling instead of hammering every 1ms', async () => {
+    const checkFn = vi.fn().mockResolvedValue(result(false))
+    const s = createUpdateScheduler({ checkFn, intervalMs: 2 ** 31, initialDelayMs: 1_000 })
+    vi.useFakeTimers()
+    s.start()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(checkFn).toHaveBeenCalledTimes(1)
+    s.stop()
+  })
 })

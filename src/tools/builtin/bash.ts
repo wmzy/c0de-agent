@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import { MAX_TIMER_MS } from '../../shared/timer.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 import { safeResolve } from '../../shared/utils/path.js'
 import { headChars } from '../../shared/utils/string.js'
@@ -60,10 +61,12 @@ export const bashTool: ToolDef = {
     // setTimeout 把 0/负数/Infinity（1e999）/NaN 全部钳到 ~1ms——命令刚 spawn
     // 即被杀，模型收到「timeout after Infinityms」这类误导性错误，无法区分
     // 「自己传了非法值」与「命令真超时」。显式报错供自纠。
-    if (!Number.isInteger(timeout) || timeout < 1) {
+    // 同理，>2^31-1 的超大值（如 2^31）会被引擎钳到 1ms（TimeoutOverflowWarning）
+    // 而非「超长等待」——同样显式拒绝，上限即 Node timer 的 32 位安全上限。
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > MAX_TIMER_MS) {
       return {
         _tag: 'error',
-        error: `bash: timeout must be a positive integer (milliseconds), got ${timeout}`,
+        error: `bash: timeout must be a positive integer (milliseconds, max ${MAX_TIMER_MS}), got ${timeout}`,
       }
     }
     // 与 read/write/edit/glob/grep 同口径：cwd 必须落在工作目录内。此前直接

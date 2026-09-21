@@ -147,6 +147,18 @@ describe('bashTool', () => {
     }
   })
 
+  // 回归：超 32 位上限（2^31-1）的 timeout 是「合法正整数」但 Node 的
+  // setTimeout 会把 >2^31-1 的延迟钳到 1ms——sleep 命令刚 spawn 即被杀，
+  // 模型收到「Command timeout after 2147483648ms」的误导性错误，把
+  // 「自己传了超大值」误判成「命令真超时」。应显式报错供自纠。
+  it('rejects a timeout above the 32-bit timer ceiling instead of killing instantly', async () => {
+    const result = await bashTool.execute({ command: 'sleep 10', timeout: 2 ** 31 }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('timeout must be a positive integer')
+    }
+  })
+
   it('handles abort signal', async () => {
     const ac = new AbortController()
     const abortCtx: ToolContext = {

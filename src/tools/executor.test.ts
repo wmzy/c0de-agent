@@ -188,4 +188,24 @@ describe('executeTool', () => {
     const result = await executeTool(reg, 'fast', { msg: 'x' }, ctx, autoAllowChecker)
     expect(result).toEqual({ _tag: 'success', output: 'quick' })
   })
+
+  // 回归：插件声明的 timeout 超 32 位上限（2^31-1）时 Node 会把 setTimeout
+  // 延迟钳到 1ms——工具执行尚未开始就被「timed out after 2147488648ms」击毙，
+  // 每次调用恒定失败且错误信息谎报时长。声明应被钳制到可表示上限，快速完成
+  // 的工具照常成功。
+  it('clamps a declared timeout above the 32-bit ceiling instead of failing instantly', async () => {
+    const fast = makeTool(
+      'fast',
+      async () =>
+        new Promise<ToolResult>((resolve) =>
+          setTimeout(() => resolve({ _tag: 'success', output: 'quick' }), 30),
+        ),
+    )
+    fast.timeout = 2 ** 31 + 5000
+    const reg = createToolRegistry()
+    registerTool(reg, fast)
+
+    const result = await executeTool(reg, 'fast', { msg: 'x' }, ctx, autoAllowChecker)
+    expect(result).toEqual({ _tag: 'success', output: 'quick' })
+  })
 })

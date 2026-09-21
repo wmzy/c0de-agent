@@ -1,10 +1,12 @@
+import { MAX_TIMER_MS } from '../shared/timer.js'
 import type { LLMErrorReason, RetryPolicy } from './schema/errors.js'
 import { isLLMError, reasonRetryAfterMs, retryPolicy } from './schema/errors.js'
 
 const RETRY_INITIAL_DELAY = 2_000
 const RETRY_BACKOFF_FACTOR = 2
 const RETRY_MAX_DELAY_NO_HEADERS = 30_000
-const RETRY_MAX_DELAY = 2_147_483_647
+/** 32 位 timer 安全上限（> 此值 setTimeout 钳到 1ms）；与 shared MAX_TIMER_MS 单一来源。 */
+const RETRY_MAX_DELAY = MAX_TIMER_MS
 
 /** Extract response headers from an LLMError's http context (if any). */
 const errorHeaders = (error: unknown): Record<string, string> | undefined => {
