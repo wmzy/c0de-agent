@@ -12,7 +12,8 @@ vi.mock('./highlight.js', () => ({
 }))
 
 // Mock 必须在 import 之前生效
-const { renderMarkdown, renderMarkdownSync } = await import('@/utils/markdown.js')
+const { renderMarkdown, renderMarkdownSync, renderMarkdownCached, markdownCacheSize } =
+  await import('@/utils/markdown.js')
 
 describe('renderMarkdown', () => {
   it('代码块被正确高亮，绝不字符串化为 [object Promise]', async () => {
@@ -74,5 +75,28 @@ describe('renderMarkdown', () => {
     expect(html).toContain('code-block')
     expect(html).not.toContain('<script>')
     expect(html).toContain('&lt;script&gt;')
+  })
+})
+
+// 复现：Markdown 组件此前持有模块级无界 Map（mdCache）——流式渲染期间
+// AssistantTextBlock 的每个 text_delta 中间版本都以完整文本为 key 写入且
+// 永不驱逐：长会话数千条完整 HTML 常驻内存，只增不减。同型参照
+// highlight.ts 的 hlCache（200 上限 + 驱逐最旧）——此处收敛为同口径有界缓存。
+describe('renderMarkdownCached', () => {
+  it('相同内容命中缓存，不再重复高亮', async () => {
+    const { highlightCode } = await import('@/utils/highlight.js')
+    const mocked = vi.mocked(highlightCode)
+    mocked.mockClear()
+    const md = '```ts\nconst a = 1\n```'
+    await renderMarkdownCached(md)
+    await renderMarkdownCached(md)
+    expect(mocked).toHaveBeenCalledTimes(1)
+  })
+
+  it('缓存容量有界：插入超上限后驱逐最旧，size 不超过上限', async () => {
+    for (let i = 0; i < 250; i += 1) {
+      await renderMarkdownCached(`unique-${i}`)
+    }
+    expect(markdownCacheSize()).toBeLessThanOrEqual(200)
   })
 })

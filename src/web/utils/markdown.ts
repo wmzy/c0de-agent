@@ -62,3 +62,33 @@ configuredMarked.use({
 export async function renderMarkdown(content: string): Promise<string> {
   return (await configuredMarked.parse(content, { async: true })) as string
 }
+
+/** 有界渲染缓存上限（与 highlight.ts 的 hlCache 同口径）。 */
+const MARKDOWN_CACHE_MAX = 200
+
+const markdownCache = new Map<string, string>()
+
+/**
+ * 有界缓存的异步 Markdown 渲染。
+ *
+ * Markdown 组件此前持有一份模块级无界 Map——流式渲染期间 AssistantTextBlock
+ * 的每个 text_delta 中间版本都以完整文本为 key 写入且永不驱逐，长会话下
+ * 数千条完整 HTML 常驻内存只增不减。容量满时按 Map 插入序驱逐最旧条目
+ * （与 highlight.ts 的 hlCache 同策略）。
+ */
+export async function renderMarkdownCached(content: string): Promise<string> {
+  const hit = markdownCache.get(content)
+  if (hit !== undefined) return hit
+  const html = await renderMarkdown(content)
+  if (markdownCache.size >= MARKDOWN_CACHE_MAX) {
+    const oldest = markdownCache.keys().next().value
+    if (oldest !== undefined) markdownCache.delete(oldest)
+  }
+  markdownCache.set(content, html)
+  return html
+}
+
+/** 当前缓存条目数（测试与诊断用）。 */
+export function markdownCacheSize(): number {
+  return markdownCache.size
+}
