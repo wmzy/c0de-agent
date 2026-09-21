@@ -40,6 +40,20 @@ describe('bashTool', () => {
     }
   })
 
+  // 回归：stdout/stderr 按 chunk 逐个 Buffer.toString() 解码，跨 chunk 的多字节
+  // UTF-8 序列被拆碎为 U+FFFD——子进程把 '你'（0xE4 0xBD 0xA0）分两片写（中间
+  // 隔 100ms 保证父进程分两次读到），修复前输出 '��'。setEncoding('utf8') 让流内
+  // StringDecoder 缓冲未完成序列（MCP/DAP transport 同款），跨 chunk 输出保持完整。
+  it('decodes multibyte UTF-8 output split across chunks without corruption', async () => {
+    const script =
+      "const b=Buffer.from('你');process.stdout.write(b.subarray(0,1));setTimeout(()=>process.stdout.write(b.subarray(1)),100)"
+    const result = await bashTool.execute({ command: `node -e "${script}"` }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toBe('你')
+    }
+  })
+
   it('uses custom cwd', async () => {
     await mkdir(join(workDir, 'sub'), { recursive: true })
     const result = await bashTool.execute({ command: 'pwd', cwd: join(workDir, 'sub') }, ctx)

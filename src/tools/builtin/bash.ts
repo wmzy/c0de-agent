@@ -113,11 +113,16 @@ export const bashTool: ToolDef = {
         }
       }
 
-      child.stdout?.on('data', (data: Buffer) => {
-        appendCapped('stdout', data.toString())
+      // setEncoding('utf8') 让流内 StringDecoder 缓冲跨 chunk 的多字节序列：
+      // 此前按 chunk 逐个 Buffer.toString() 解码，UTF-8 序列被拆成两片时产出
+      // U+FFFD（如中文/emoji 输出静默损坏）。与 MCP/DAP transport 同口径。
+      child.stdout?.setEncoding('utf8')
+      child.stderr?.setEncoding('utf8')
+      child.stdout?.on('data', (data: string) => {
+        appendCapped('stdout', data)
       })
-      child.stderr?.on('data', (data: Buffer) => {
-        appendCapped('stderr', data.toString())
+      child.stderr?.on('data', (data: string) => {
+        appendCapped('stderr', data)
       })
 
       // Timeout handler
