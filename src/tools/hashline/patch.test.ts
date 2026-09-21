@@ -147,4 +147,59 @@ describe('applyPatch', () => {
       content: 'ONE\nl2\nl3\nFOUR\n',
     })
   })
+
+  // 回归：CRLF 文件按 \n 拆分后行 token 残留 \r——SWAP 替换整行（含其 \r），
+  // 替换行静默丢失 \r，与未触碰行混成 CRLF/LF 混合行尾。
+  it('preserves CRLF line endings on SWAP', () => {
+    const file = 'line1\r\nline2\r\nline3\r\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 2-2\nREPLACED\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'line1\r\nREPLACED\r\nline3\r\n',
+    })
+  })
+
+  // 回归：INS.PRE/POST 插入的行此前用 \n 连接——CRLF 文件中插入的行
+  // 与两侧行尾不一致。
+  it('uses CRLF for inserted lines in CRLF files', () => {
+    const file = 'a\r\nb\r\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nINS.POST 1\nX\nY\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'a\r\nX\r\nY\r\nb\r\n',
+    })
+  })
+
+  it('DEL on CRLF file keeps remaining line endings intact', () => {
+    const file = 'a\r\nb\r\nc\r\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nDEL 2\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'a\r\nc\r\n',
+    })
+  })
+
+  // 回归：无 \n 结尾的孤立 \r 是文件内容而非行尾——LF 判定下不得剥离。
+  it('keeps lone CR characters in LF files untouched', () => {
+    const file = 'a\nb\r'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 1-1\nX\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'X\nb\r',
+    })
+  })
+
+  it('preserves missing trailing newline on CRLF files', () => {
+    const file = 'a\r\nb\r\nc'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 2-2\nB\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'a\r\nB\r\nc',
+    })
+  })
 })

@@ -196,7 +196,13 @@ function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
   // 末尾换行保留策略：按 \n 拆分，末尾空串代表文件以换行结尾。
   const hadTrailingNewline = file.endsWith('\n')
   const src = hadTrailingNewline ? file.slice(0, -1) : file
-  const lines = src.split('\n')
+  // CRLF 行尾：行 token 剥离 \r 参与行算术，输出按检测到的行尾重建。
+  // 此前 split('\n') 后行内残留 \r——SWAP 替换整行（含其 \r）、INS 插入行
+  // 用 \n 连接，编辑/插入行静默丢失 \r，与未触碰行混成 CRLF/LF 混合行尾。
+  // 无 \n 的孤立 \r（LF 判定下）是文件内容而非行尾，保持原样。
+  const eol = src.includes('\r\n') ? '\r\n' : '\n'
+  const stripCR = (l: string): string => (l.endsWith('\r') ? l.slice(0, -1) : l)
+  const lines = src.split('\n').map((l) => (eol === '\r\n' ? stripCR(l) : l))
   const lineCount = lines.length
 
   // 先全部校验范围，任一越界即 line_not_found（保持原文件不变）
@@ -213,7 +219,12 @@ function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
   })
 
   for (const op of ordered) {
-    const contentLines = 'content' in op && op.content !== '' ? op.content.split('\n') : []
+    // 补丁内容行按文件行尾归一：模型若粘贴了 CRLF 内容，先剥 \r 再按 eol 重建，
+    // 与文件其余部分保持单一换行风格。
+    const contentLines =
+      'content' in op && op.content !== ''
+        ? op.content.split('\n').map((l) => (eol === '\r\n' ? stripCR(l) : l))
+        : []
     switch (op._tag) {
       case 'SWAP':
         lines.splice(op.start - 1, op.end - op.start + 1, ...contentLines)
@@ -236,8 +247,8 @@ function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
     }
   }
 
-  let result = lines.join('\n')
-  if (hadTrailingNewline) result += '\n'
+  let result = lines.join(eol)
+  if (hadTrailingNewline) result += eol
   return { _tag: 'success', content: result }
 }
 

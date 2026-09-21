@@ -80,7 +80,10 @@ export const editTool: ToolDef = {
       const content = await readFile(fullPath, 'utf-8')
 
       // Fuzzy whitespace matching: normalize whitespace runs
-      const normalize = (s: string): string => s.replace(/[ \t]+/g, ' ')
+      // CRLF 行尾一并折叠：\r 对模型不可见，模型生成的 oldText 恒用 \n——
+      // 不折叠则 \n 版 oldText 在 CRLF 文件上恒不匹配（「oldText not found」）。
+      // 折叠后的位置经 buildPositionMapping 映射回原文（\r 按「原文多余空白」跳过）。
+      const normalize = (s: string): string => s.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ')
 
       const normalizedContent = normalize(content)
       const normalizedOld = normalize(oldText)
@@ -122,7 +125,19 @@ export const editTool: ToolDef = {
       const origEnd =
         mapping.get(charCount + normalizedOld.length) ?? charCount + normalizedOld.length
 
-      const newContent = content.slice(0, origStart) + newText + content.slice(origEnd)
+      const newContent = (() => {
+        // 映射终点可能落在 CRLF 中间（region 吞入 \r，行尾 \n 留在区域外）：
+        // 把 \r 让回外部行尾，否则单行替换会产出「替换文本\n」丢失 \r 的混合行尾。
+        let end = origEnd
+        if (end < content.length && content[end - 1] === '\r' && content[end] === '\n') end--
+        const region = content.slice(origStart, end)
+        // 被替换区域含 CRLF → newText 的 \n 转回 \r\n（保持文件主导行尾）——
+        // 否则多行替换产出的区域与文件其余部分行尾混合，git diff 全行噪音。
+        const replacement = region.includes('\r\n')
+          ? newText.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+          : newText
+        return content.slice(0, origStart) + replacement + content.slice(end)
+      })()
       await writeFile(fullPath, newContent, 'utf-8')
       return {
         _tag: 'success',
@@ -163,8 +178,13 @@ function buildPositionMapping(original: string, normalized: string): Map<number,
     if (original[origIdx] === normalized[normIdx]) {
       origIdx++
       normIdx++
-    } else if (original[origIdx] === ' ' || original[origIdx] === '\t') {
-      // Original has whitespace that was collapsed
+    } else if (
+      original[origIdx] === ' ' ||
+      original[origIdx] === '\t' ||
+      // \r：CRLF 行尾在 normalize 中被折叠为 \n——映射时原文的 \r 是
+      // 「原文多余的空白」，仅前进原文指针（normIdx 停住等 \n 对齐）。
+      original[origIdx] === '\r'
+    ) {
       origIdx++
     } else {
       // Shouldn't happen with proper normalization

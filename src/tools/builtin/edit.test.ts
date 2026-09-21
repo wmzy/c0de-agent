@@ -67,10 +67,7 @@ describe('editTool', () => {
   it('rejects empty oldText with a clear error without churning', async () => {
     await writeFile(join(workDir, 'f.ts'), 'hello world\n')
     const started = Date.now()
-    const result = await editTool.execute(
-      { path: 'f.ts', oldText: '', newText: 'x' },
-      ctx,
-    )
+    const result = await editTool.execute({ path: 'f.ts', oldText: '', newText: 'x' }, ctx)
     expect(Date.now() - started).toBeLessThan(1500)
     expect(result._tag).toBe('error')
     if (result._tag === 'error') {
@@ -97,6 +94,36 @@ describe('editTool', () => {
       ctx,
     )
     expect(result._tag).toBe('success')
+  })
+
+  // 回归：CRLF 文件的 \r 对模型不可见——模型生成的 oldText 恒用 \n。
+  // normalize 只折叠 [ \t]，\r\n 原样保留：\n 版 oldText 在 CRLF 文件上
+  // indexOf 恒 -1，报「oldText not found」，任何 CRLF 文件都无法 diff 编辑。
+  it('matches CRLF files with LF oldText and preserves CRLF line endings', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'const a = 1;\r\nconst b = 2;\r\n', 'utf-8')
+    const result = await editTool.execute(
+      { path: 'f.ts', oldText: 'const a = 1;', newText: 'const a = 42;' },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    // 单行替换：被替换行不含换行，文件其余 CRLF 行尾原样保留
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('const a = 42;\r\nconst b = 2;\r\n')
+  })
+
+  // 回归：多行替换时被替换区域内的行尾必须跟随文件主导行尾（CRLF），
+  // 否则产出 CRLF/LF 混合行尾（git diff 全行噪音 + 换行风格损坏）。
+  it('keeps CRLF inside a multiline replaced region', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'line1\r\nline2\r\nline3\r\n', 'utf-8')
+    const result = await editTool.execute(
+      {
+        path: 'f.ts',
+        oldText: 'line1\nline2',
+        newText: 'alpha\nbeta',
+      },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('alpha\r\nbeta\r\nline3\r\n')
   })
 
   it('returns error for non-existent file', async () => {
