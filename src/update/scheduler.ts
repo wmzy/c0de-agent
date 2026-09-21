@@ -1,4 +1,4 @@
-import { MAX_TIMER_MS } from '../shared/timer.js'
+import { clampTimerDelay } from '../shared/timer.js'
 import type { UpdateCheckResult } from './version.js'
 import { getCurrentVersion } from './version.js'
 
@@ -39,12 +39,13 @@ const DEFAULT_INITIAL_DELAY_MS = 10_000
 
 function createUpdateScheduler(opts: UpdateSchedulerOptions): UpdateScheduler {
   // intervalMs/initialDelayMs 来自用户 config（server.ts 直传），未经校验：
-  // Node 会把 >2^31-1 的 setTimeout/setInterval 延迟钳到 1ms——config 里写
-  // 「超长间隔」本意是少检查，实际却以每毫秒一次的频率狂刷 npm registry。
-  // 钳到 32 位安全上限（≈24.8 天）即等价于「实践上不再检查」的声明意图。
-  const clampToTimerMax = (ms: number): number => Math.min(ms, MAX_TIMER_MS)
-  const intervalMs = clampToTimerMax(opts.intervalMs ?? DEFAULT_INTERVAL_MS)
-  const initialDelayMs = clampToTimerMax(opts.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS)
+  // 非有限或超 32 位上限的延迟会被 Node 钳到 1ms——config 里写「超长间隔」
+  // 本意是少检查，实际却以每毫秒一次的频率狂刷 npm registry；写 0/负数
+  // （「不检查」的常见写法）同样落到 1ms 轮询，比超限更糟。一律回落默认值
+  // （超上限钳到上限 ≈ 实践上不再检查，保持既有语义）；0 延迟对
+  // initialDelayMs 合法（立即首检），对周期间隔无意义（回落默认 1 小时）。
+  const intervalMs = clampTimerDelay(opts.intervalMs, DEFAULT_INTERVAL_MS, 1)
+  const initialDelayMs = clampTimerDelay(opts.initialDelayMs, DEFAULT_INITIAL_DELAY_MS, 0)
   // 直接引用全局 timer；vitest useFakeTimers() 会替换全局，start() 时读取即拿到 mock。
   let intervalId: ReturnType<typeof setInterval> | null = null
   let initialId: ReturnType<typeof setTimeout> | null = null

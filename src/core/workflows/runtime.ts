@@ -1,3 +1,4 @@
+import { clampTimerDelay, MAX_TIMER_MS } from '../../shared/timer.js'
 import type { AgentDependencies, AgentState, CommandResult } from '../types.js'
 import { buildWorkflowContext } from './context.js'
 import type { WorkflowRegistry } from './registry.js'
@@ -71,18 +72,19 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
   })
 
   const { timeout } = entry.meta
-  const hasTimeout = typeof timeout === 'number' && timeout > 0
-  const timeoutSeconds: number | undefined = hasTimeout ? (timeout as number) : undefined
+  // 声明的秒数转毫秒后须经 32 位上限钳制：超限（如 2^31 秒）会被 Node 钳到
+  // 1ms——工作流刚启动就被「超时」中止，且错误信息谎报原始时长；parent 的
+  // abort 级联还会被连带触发（同型：ToolDef.timeout 的钳制口径）。
+  const timeoutSpec =
+    typeof timeout === 'number' && timeout > 0
+      ? { seconds: timeout, ms: clampTimerDelay(timeout * 1000, MAX_TIMER_MS, 1) }
+      : null
 
   try {
     const execPromise = entry.execute(ctx)
-    const result =
-      timeoutSeconds !== undefined
-        ? await Promise.race([
-            execPromise,
-            createTimeoutPromise(timeoutSeconds * 1000, timeoutSeconds),
-          ])
-        : await execPromise
+    const result = timeoutSpec
+      ? await Promise.race([execPromise, createTimeoutPromise(timeoutSpec.ms, timeoutSpec.seconds)])
+      : await execPromise
     return {
       _tag: 'text',
       text: result.output ?? 'Workflow completed (no output).',
@@ -100,7 +102,7 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
       }
       return {
         _tag: 'error',
-        message: `Workflow "${name}" timed out after ${timeoutSeconds}s（执行已中止）`,
+        message: `Workflow "${name}" timed out after ${timeoutSpec?.seconds}s（执行已中止）`,
       }
     }
     return {

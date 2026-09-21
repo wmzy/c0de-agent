@@ -3,6 +3,7 @@ import { realpathSync, statSync, watch } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { clampTimerDelay } from '../shared/timer.js'
 import type { SessionSnapshot } from './snapshot.js'
 
 /** 热更新执行结果（spec §18）。 */
@@ -348,8 +349,10 @@ async function performHotUpdate(
       }
     }
     try {
+      // manualWaitTimeoutMs 是调用方（CLI/宿主）可传的公开选项：非法/超 32 位
+      // 上限的时长会被 Node 钳到 1ms——「等 10 分钟」变「立刻放弃等待」。
       await waitForProgramChange(
-        opts.manualWaitTimeoutMs ?? DEFAULT_MANUAL_WAIT_TIMEOUT_MS,
+        clampTimerDelay(opts.manualWaitTimeoutMs, DEFAULT_MANUAL_WAIT_TIMEOUT_MS, 1),
         baseline,
       )
     } catch (error) {

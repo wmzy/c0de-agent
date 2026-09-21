@@ -134,4 +134,39 @@ describe('createUpdateScheduler', () => {
     expect(checkFn).toHaveBeenCalledTimes(1)
     s.stop()
   })
+
+  // 回归（同型扩展）：上界已钳制，下界仍裸奔——intervalMs=0/负数/NaN 时
+  // setInterval 被 Node 钳到 1ms，比上界情形更糟：不是「少检查」而是每毫秒
+  // 狂刷 npm registry（config 里写 0 本意多半是「不检查」）。非法/非正间隔
+  // 必须回落默认间隔，而不是退化成 1ms 轮询。
+  it('falls back to the default interval for non-positive/NaN intervals instead of hammering every 1ms', async () => {
+    for (const intervalMs of [0, -5, Number.NaN]) {
+      const checkFn = vi.fn().mockResolvedValue(result(false))
+      const s = createUpdateScheduler({ checkFn, intervalMs, initialDelayMs: 1_000 })
+      vi.useFakeTimers()
+      s.start()
+      await vi.advanceTimersByTimeAsync(5_000)
+      // 5 秒内只应有 initialDelay 触发的一次检查（默认间隔 1 小时）
+      expect(checkFn, `intervalMs=${intervalMs}`).toHaveBeenCalledTimes(1)
+      s.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  // 回归（同型扩展）：initialDelayMs 为负/NaN 时 setTimeout 被钳到 1ms——
+  // 「延迟启动」变「立即开刷」。非法值回落默认 10s 延迟。
+  it('falls back to the default initial delay for negative/NaN values instead of firing after 1ms', async () => {
+    for (const initialDelayMs of [-5, Number.NaN]) {
+      const checkFn = vi.fn().mockResolvedValue(result(false))
+      const s = createUpdateScheduler({ checkFn, intervalMs: 60_000, initialDelayMs })
+      vi.useFakeTimers()
+      s.start()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(checkFn, `initialDelayMs=${initialDelayMs}`).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(10_000) // 默认 10s
+      expect(checkFn, `initialDelayMs=${initialDelayMs}`).toHaveBeenCalledTimes(1)
+      s.stop()
+      vi.useRealTimers()
+    }
+  })
 })

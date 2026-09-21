@@ -5,6 +5,7 @@
 // 这样即使 agent run 被覆盖、注销或 abort，pending 仍在 store 里，
 // confirm 仍能找到并 resolve。
 
+import { clampTimerDelay } from '../../shared/timer.js'
 import type { PermissionResult } from '../../tools/types.js'
 
 /** 默认 pending 超时时长：5 分钟（300_000ms）。
@@ -62,8 +63,13 @@ type PermissionStore = {
 }
 
 function createPermissionStore(opts: PermissionStoreOptions = {}): PermissionStore {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS
-  const expireGraceMs = opts.expireGraceMs ?? DEFAULT_PERMISSION_EXPIRE_GRACE_MS
+  // timeoutMs/expireGraceMs 来自用户 config（server.ts 直传，调用点只校验 > 0）：
+  // 超 32 位上限的值会被 Node 钳到 1ms——用户设「30 天」
+  // （2_592_000_000ms > 2^31-1）时权限请求注册即被「超时自动拒绝」，
+  // 根本没机会确认；宽限期同理退化成「提示后立刻拒绝」。非法/超限一律
+  // 回落默认（超限钳到上限），与 bash timeout / 更新检查间隔同口径。
+  const timeoutMs = clampTimerDelay(opts.timeoutMs, DEFAULT_PERMISSION_TIMEOUT_MS, 1)
+  const expireGraceMs = clampTimerDelay(opts.expireGraceMs, DEFAULT_PERMISSION_EXPIRE_GRACE_MS, 1)
   const pending = new Map<string, StoredPermission>()
 
   // 统一终结路径：clearTimeout → 删除条目 → resolve。

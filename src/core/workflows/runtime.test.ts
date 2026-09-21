@@ -194,4 +194,31 @@ describe('executeWorkflow', () => {
     expect(parent.abortController.signal.aborted).toBe(true)
     expect(parent.status).toEqual({ _tag: 'stopped', reason: 'aborted' })
   })
+
+  // 回归：meta.timeout 是工作流作者声明的秒数，转毫秒后直接进 setTimeout——
+  // 声明「超长超时」（如 2^31 秒）时超过 Node 32 位上限，被钳到 1ms：工作流
+  // 刚启动就被「超时」中止并谎报时长，且 parent abort 被连带触发（同型：
+  // bash timeout / 更新检查间隔的钳制修复）。超限时长应钳到可表示上限。
+  it('clamps a huge declared timeout instead of killing the workflow instantly', async () => {
+    const registry = createWorkflowRegistry()
+    const parent = makeMockParent()
+    const entry: WorkflowEntry = {
+      meta: { name: 'very-slow', description: 'long timeout', timeout: 2 ** 31 },
+      source: 'builtin',
+      execute: () => new Promise(() => {}), // 永不完成：只有错误的 1ms timer 才会结束
+    }
+    registry.register(entry)
+    const outcome = await Promise.race([
+      executeWorkflow({
+        registry,
+        name: 'very-slow',
+        args: '',
+        deps: makeMockDeps(),
+        parent,
+      }),
+      new Promise((resolve) => setTimeout(() => resolve('still-running'), 100)),
+    ])
+    expect(outcome).toBe('still-running')
+    expect(parent.abortController.signal.aborted).toBe(false)
+  })
 })

@@ -467,6 +467,56 @@ describe('PermissionStore 超时', () => {
     expect(DEFAULT_PERMISSION_TIMEOUT_MS).toBe(5 * 60 * 1000)
   })
 
+  // 回归：timeoutMs/expireGraceMs 来自 config（server.ts 直传），调用点只校验
+  // 「> 0」、无上界钳制——用户设「30 天」（2_592_000_000ms > 2^31-1）时 Node 把
+  // setTimeout 钳到 1ms：权限请求注册即被「超时自动拒绝」，用户根本没机会确认。
+  // 与 bash timeout / 更新检查间隔同型（超 32 位上限的 timer 时长必须钳制）。
+  it('clamps a huge timeoutMs to the 32-bit ceiling instead of denying instantly', () => {
+    vi.useFakeTimers()
+    try {
+      const store = createPermissionStore({ timeoutMs: 30 * 24 * 60 * 60 * 1000 })
+      const resolve = vi.fn()
+      store.register('big-t', {
+        request: { toolCallId: 'big-t', tool: 'x', input: {} },
+        resolve,
+      })
+      // 修复前：timer 被钳到 1ms，推进 10s 时早已 deny
+      vi.advanceTimersByTime(10_000)
+      expect(resolve).not.toHaveBeenCalled()
+      expect(store.has('big-t')).toBe(true)
+      store.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clamps a huge expireGraceMs instead of expiring right after the first timeout', () => {
+    vi.useFakeTimers()
+    try {
+      const store = createPermissionStore({
+        timeoutMs: 1000,
+        expireGraceMs: 30 * 24 * 60 * 60 * 1000,
+      })
+      const resolve = vi.fn()
+      const onTimeout = vi.fn()
+      store.register('big-g', {
+        request: { toolCallId: 'big-g', tool: 'x', input: {} },
+        resolve,
+        onTimeout,
+      })
+      vi.advanceTimersByTime(1000) // 首层超时：仅提示
+      expect(onTimeout).toHaveBeenCalledTimes(1)
+      expect(resolve).not.toHaveBeenCalled()
+      // 修复前：宽限 timer 被钳到 1ms，首层提示后立刻自动拒绝
+      vi.advanceTimersByTime(60_000)
+      expect(resolve).not.toHaveBeenCalled()
+      expect(store.has('big-g')).toBe(true)
+      store.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('dispose settle 所有 pending 为 deny 并清空', async () => {
     const store = createPermissionStore({ timeoutMs: 10_000 })
     const resolve1 = vi.fn()
