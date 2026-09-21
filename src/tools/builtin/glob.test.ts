@@ -55,6 +55,31 @@ describe('globToRegex', () => {
     expect(re.test('src/a.js')).toBe(false)
   })
 
+  // 回归：** 恒译 .*（任意字符）导致段边界失守——a/**/b 命中 a/xb、
+  // **/b 命中 foob、a**b 命中 a/x/b、**.ts 命中 x/a.ts。双星号只在
+  // 「完整段 + /」时才跨目录；非段对齐的双星塌缩为单星（bash 口径）。
+  it('** only crosses directories as a whole segment', () => {
+    const nested = globToRegex('a/**/b')
+    expect(nested.test('a/b')).toBe(true)
+    expect(nested.test('a/x/b')).toBe(true)
+    expect(nested.test('a/x/y/b')).toBe(true)
+    expect(nested.test('a/xb')).toBe(false)
+
+    const leading = globToRegex('**/b')
+    expect(leading.test('b')).toBe(true)
+    expect(leading.test('x/b')).toBe(true)
+    expect(leading.test('foob')).toBe(false)
+
+    const midToken = globToRegex('a**b')
+    expect(midToken.test('ab')).toBe(true)
+    expect(midToken.test('axb')).toBe(true)
+    expect(midToken.test('a/x/b')).toBe(false)
+
+    const noSep = globToRegex('**.ts')
+    expect(noSep.test('a.ts')).toBe(true)
+    expect(noSep.test('x/a.ts')).toBe(false)
+  })
+
   it('matches brace expansion', () => {
     const re = globToRegex('*.{ts,js}')
     expect(re.test('a.ts')).toBe(true)

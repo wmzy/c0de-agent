@@ -22,17 +22,36 @@ function escapeRegex(s: string): string {
 
 /** Convert a glob fragment (may appear inside brace alternation) to regex source.
  *  Recursive so wildcards inside {a,b} stay wildcards instead of being escaped
- *  as literals（此前 {*.spec.ts,*.test.ts} 恒不匹配任何文件）。 */
-function globFragment(pattern: string): string {
+ *  as literals（此前 {*.spec.ts,*.test.ts} 恒不匹配任何文件）。
+ *  segStartAt0：fragment 起始位置是否算「段起点」——顶层模式为真；花括号分支
+ *  按分支前一个字符是否为 / 传入（{/**,x} 中的 ** 才是完整段）。 */
+function globFragment(pattern: string, segStartAt0 = true): string {
   let re = ''
   let i = 0
   while (i < pattern.length) {
     const c = pattern[i] ?? ''
     if (c === '*') {
       if (pattern[i + 1] === '*') {
-        re += '.*'
-        i += 2
-        if (pattern[i] === '/') i++ // skip separator after **
+        const prev = pattern[i - 1]
+        const next = pattern[i + 2]
+        // 双星只在「完整段」（前后均无普通字符）时才有跨目录语义（bash globstar）。
+        const segStart = i === 0 ? segStartAt0 : prev === '/'
+        const segEnd = next === undefined || next === '/'
+        if (segStart && segEnd) {
+          if (next === '/') {
+            // **/ 整体表达「零或多个段」：恒译 .* 会把 a/**/b 译成 a/.*b，
+            // 命中 a/xb、**/b 命中 foob（段边界失守）。
+            re += '(?:.*/)?'
+            i += 3
+          } else {
+            re += '.*'
+            i += 2
+          }
+        } else {
+          // 非段对齐的双星（a**b、**.ts）塌缩为单星，不跨目录。
+          re += '[^/]*'
+          i += 2
+        }
       } else {
         re += '[^/]*'
         i++
@@ -53,7 +72,8 @@ function globFragment(pattern: string): string {
         if (alts.some((alt) => alt.length === 0)) {
           re += `\\{${escapeRegex(inner)}\\}`
         } else {
-          re += `(?:${alts.map(globFragment).join('|')})`
+          const fragStartSeg = i === 0 ? segStartAt0 : pattern[i - 1] === '/'
+          re += `(?:${alts.map((alt) => globFragment(alt, fragStartSeg)).join('|')})`
         }
         i = end + 1
       }
