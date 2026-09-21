@@ -92,7 +92,10 @@ function messageToChatMessage(msg: Message): ChatMessage {
     .map((p) => ({
       id: p.id,
       name: p.tool,
-      arguments: JSON.stringify(p.input),
+      // 缺 input 的 tool_call（import 透传的漂移分片）：JSON.stringify(undefined)
+      // 返回 undefined，arguments 字段缺失的调用在协议适配层行为未定义——
+      // 保守序列化为空对象。
+      arguments: JSON.stringify(p.input ?? {}),
     }))
 
   const toolResultPart = msg.content.find((p) => p._tag === 'tool_result')
@@ -114,7 +117,11 @@ function messageToChatMessage(msg: Message): ChatMessage {
   // 无图片：保持原纯字符串逻辑（零回归）
   const chat: ChatMessage = {
     role: msg.role,
-    content: textParts || (toolResultPart ? JSON.stringify(toolResultPart.output) : ''),
+    content:
+      textParts ||
+      (toolResultPart
+        ? JSON.stringify(toolResultPart.output === undefined ? {} : toolResultPart.output)
+        : ''),
   }
 
   if (toolCalls.length > 0) {
@@ -123,7 +130,9 @@ function messageToChatMessage(msg: Message): ChatMessage {
 
   if (toolResultPart && toolResultPart._tag === 'tool_result') {
     chat.toolCallId = toolResultPart.id
-    chat.content = JSON.stringify(toolResultPart.output)
+    // 缺 output 的 tool_result：JSON.stringify(undefined) 返回 undefined，
+    // content 字段缺失的 tool 消息在协议适配层行为未定义——保守序列化为空对象。
+    chat.content = JSON.stringify(toolResultPart.output === undefined ? {} : toolResultPart.output)
   }
 
   return chat

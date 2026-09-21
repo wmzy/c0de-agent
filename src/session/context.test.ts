@@ -105,6 +105,42 @@ describe('messageToChatMessage', () => {
     expect(chat.role).toBe('tool')
     expect(chat.toolCallId).toBe('c1')
   })
+
+  // 回归：import sanitizeContent 只校验 _tag——缺 input 的 tool_call / 缺 output
+  // 的 tool_result 会原样入库。JSON.stringify(undefined) 返回 undefined，此前
+  // arguments/content 字段为 undefined：协议适配层拿到缺字段的调用/结果，
+  // 序列化行为未定义。保守折成空对象。
+  it('serializes tool_call with missing input as empty arguments', () => {
+    const msg: Message = {
+      id: 'm1',
+      sessionId: 's',
+      role: 'assistant',
+      // 运行时漂移形状（import 透传缺 input 的分片）：类型层面 input 恒存在。
+      content: [
+        { _tag: 'tool_call', id: 'c1', tool: 'view', input: undefined },
+      ] as Message['content'],
+      tokenCount: 1,
+      createdAt: 0,
+    }
+    const chat = messageToChatMessage(msg)
+    expect(chat.toolCalls?.[0]?.arguments).toBe('{}')
+  })
+
+  it('serializes tool_result with missing output as empty object content', () => {
+    const msg: Message = {
+      id: 'm1',
+      sessionId: 's',
+      role: 'tool',
+      // 运行时漂移形状（import 透传缺 output 的分片）：类型层面 output 恒存在。
+      content: [
+        { _tag: 'tool_result', id: 'c1', tool: 'read', output: undefined },
+      ] as unknown as Message['content'],
+      tokenCount: 1,
+      createdAt: 0,
+    }
+    const chat = messageToChatMessage(msg)
+    expect(chat.content).toBe('{}')
+  })
 })
 
 describe('entriesToChatMessages', () => {

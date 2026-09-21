@@ -72,4 +72,27 @@ describe('estimateMessageTokens', () => {
   it('returns 0 for empty content', () => {
     expect(estimateMessageTokens([])).toBe(0)
   })
+
+  // 回归：import sanitizeContent 只校验 _tag 是字符串——缺 input 的 tool_call
+  // 或缺 output 的 tool_result 分片会原样入库。此后 rawMessageTokens 走
+  // estimateMessageTokens 时 JSON.stringify(undefined) 返回 undefined（非字符串），
+  // estimateTokens 对其读 .length 抛 TypeError——整轮 agent run 在预算拟合处
+  // 崩溃（导入的历史会话每次续聊都炸）。缺字段分片应保守按 0 token 计。
+  it('tolerates tool_call parts with missing input (no crash, zero tokens)', () => {
+    const content = [
+      // 运行时漂移数据（import sanitizeContent 只校验 _tag）：类型层面 input
+      // 恒存在，但实际入库行可能缺省——按运行时形状构造。
+      { _tag: 'tool_call', id: 't1', tool: 'view', input: undefined },
+    ] as unknown as MessageContent[]
+    expect(() => estimateMessageTokens(content)).not.toThrow()
+    expect(estimateMessageTokens(content)).toBe(0)
+  })
+
+  it('tolerates tool_result parts with missing output (no crash, zero tokens)', () => {
+    const content = [
+      { _tag: 'tool_result', id: 't1', tool: 'read', output: undefined },
+    ] as unknown as MessageContent[]
+    expect(() => estimateMessageTokens(content)).not.toThrow()
+    expect(estimateMessageTokens(content)).toBe(0)
+  })
 })

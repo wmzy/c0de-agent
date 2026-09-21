@@ -9,7 +9,10 @@ export { estimateTokens }
  *  数百倍（1MB 截图 ≈ 34 万「token」）。固定典型值保数量级正确。 */
 const IMAGE_PART_TOKEN_ESTIMATE = 1100
 
-/** Sum token estimates across all parts of a message's content array. */
+/** Sum token estimates across all parts of a message's content array.
+ *  缺字段分片（import sanitizeContent 只校验 _tag，input/output 可能缺省）保守按
+ *  0 token 计：JSON.stringify(undefined) 返回 undefined（非字符串），直接传入
+ *  estimateTokens 会抛 TypeError，把 agent run 整个击穿在预算拟合处。 */
 const estimateMessageTokens = (content: MessageContent[]): number => {
   let total = 0
   for (const part of content) {
@@ -20,10 +23,10 @@ const estimateMessageTokens = (content: MessageContent[]): number => {
         total += estimateTokens(part.text)
         break
       case 'tool_call':
-        total += estimateTokens(JSON.stringify(part.input))
+        total += part.input === undefined ? 0 : estimateTokens(JSON.stringify(part.input))
         break
       case 'tool_result':
-        total += estimateTokens(JSON.stringify(part.output))
+        total += part.output === undefined ? 0 : estimateTokens(JSON.stringify(part.output))
         break
       case 'image':
         // 图片轮次真实开销约千级 token——此前无 case 恒计 0，

@@ -46,9 +46,9 @@ function entryToSearchableText(entry: SessionEntry): string {
         case 'steering':
           return part.text
         case 'tool_call':
-          return `${part.tool}: ${JSON.stringify(part.input)}`
+          return `${part.tool}: ${JSON.stringify(part.input ?? {})}`
         case 'tool_result':
-          return JSON.stringify(part.output)
+          return JSON.stringify(part.output ?? {})
         default:
           return ''
       }
