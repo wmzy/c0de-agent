@@ -18,6 +18,7 @@ import { editTool } from '../tools/builtin/edit.js'
 import { createDefaultRegistry, createToolRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
 import { listTools } from '../tools/registry.js'
+import { pauseAgent } from './agent.js'
 import { BUILTIN_AGENTS, createAgentRegistry } from './agents/index.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
@@ -1419,6 +1420,118 @@ describe('agentLoop', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+// 暂停中的 run 只能靠「status 变更」唤醒 waitForResume，而 abort 路径不止一条：
+// agentManager.abort/abortAgent 会同时置 stopped，但父→子 abort 联动
+// （runSubAgent 的 onParentAbort）只 abort signal。暂停中的子 run 因此永久停在
+// waitForResume 的 100ms 空转里——run 槽位不释放、父 run 的工具批次永不返回
+// （会话随后 409 RUN_ACTIVE 锁死到进程重启）。
+describe('暂停中的 run 被 abort（signal-only 路径）', () => {
+  it('仅 abort signal（不改 status）→ 暂停等待退出，loop 收敛', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = makeMockDeps(db, () => mockTextStream('unused'))
+    const gen = agentLoop(state, deps)
+    // 进入暂停点：首轮顶部检测到 paused → yield status_change 后阻塞等待 resume
+    state.status = { _tag: 'paused', pauseReason: 'test pause' }
+    const first = await gen.next()
+    expect(first.value?._tag).toBe('status_change')
+
+    // 父 run abort 级联 / 热更新强杀：只 abort signal，不写 status
+    state.abortController.abort()
+
+    let pull = first
+    const outcome = await Promise.race([
+      (async () => {
+        let guard = 0
+        while (!pull.done && guard < 50) {
+          pull = await gen.next()
+          guard += 1
+        }
+        return pull.done ? 'done' : 'not-done'
+      })(),
+      new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 3000)),
+    ])
+    if (outcome !== 'done') {
+      // 失败兜底：解除挂起的等待，避免残留空转的 loop 拖住测试进程
+      state.status = { _tag: 'stopped', reason: 'aborted' }
+      await gen.next().catch(() => {})
+    }
+    expect(outcome).toBe('done')
+  })
+
+  it('父 run abort 级联到暂停中的子 run：子状态置 stopped 且 run 收敛', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+
+    // 子 run 首轮被 gate 挂住：等测试把它置 paused 后再放行（次轮才到达暂停点）
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let turn = 0
+    const deps = {
+      ...makeMockDeps(db, () => {
+        const n = turn++
+        async function* gen(): AsyncGenerator<StreamChunk> {
+          if (n === 0) {
+            await gate
+            yield { _tag: 'tool_call_start', id: 'tc1', name: 'read' } as const
+            yield {
+              _tag: 'tool_call_end',
+              id: 'tc1',
+              argumentsFinal: JSON.stringify({ path: 'package.json', limit: 1 }),
+            } as const
+            yield { _tag: 'done' } as const
+            return
+          }
+          yield { _tag: 'text', text: 'child done' } as const
+          yield { _tag: 'done' } as const
+        }
+        return gen()
+      }),
+      registerChildRun: (run: { state: AgentState }) => {
+        childState = run.state
+        return () => {}
+      },
+    }
+    let childState: AgentState | undefined
+
+    const run = runSubAgent(deps, state, { agentType: 'general', prompt: 'p' })
+    await vi.waitFor(() => expect(childState?.status._tag).toBe('running'))
+
+    // 权限确认超时（timeoutAction=pause）等路径会把父 run 与全部子 run 一并暂停
+    pauseAgent(childState as AgentState, 'permission timeout')
+    release()
+
+    // 子 run 落盘 paused 后才真正进入 waitForResume——以此确认它已停在暂停点
+    const childSessionId = (childState as AgentState).session.id
+    await vi.waitFor(
+      async () => {
+        const row = await db.db.query.sessions.findFirst({ where: eq(sessions.id, childSessionId) })
+        expect((row?.metadata as SessionMetadata | null)?.lastRun?.status).toBe('paused')
+      },
+      { timeout: 10_000 },
+    )
+
+    // 父 run abort：级联只带 abort signal（不改子 run 的 status）
+    state.abortController.abort()
+
+    const outcome = await Promise.race([
+      run.then(() => 'settled'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 3000)),
+    ])
+    if (outcome !== 'settled') {
+      // 失败兜底：唤醒子 run，避免残留空转的 loop 拖住测试进程
+      if (childState) childState.status = { _tag: 'stopped', reason: 'aborted' }
+      await run.catch(() => {})
+    }
+    expect(outcome).toBe('settled')
+    // abort 必须把暂停态清成 stopped：留着 paused 会让宿主/热更新影响面
+    // 把已中止的 run 当作「可恢复的暂停」展示。
+    expect(childState?.status._tag).toBe('stopped')
   })
 })
 

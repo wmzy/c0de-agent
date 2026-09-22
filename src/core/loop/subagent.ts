@@ -7,7 +7,7 @@ import type { Session } from '../../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
 import { headChars } from '../../shared/utils/string.js'
 import { validateInput } from '../../tools/validate.js'
-import { createAgent, runAgent } from '../agent.js'
+import { abortAgent, createAgent, runAgent } from '../agent.js'
 import type { LoopDeps } from '../loop.js'
 import type { RepoBaseline } from '../worktree.js'
 import {
@@ -146,13 +146,17 @@ export async function runSubAgent(
   childState.budgetPauseTriggered = parent.budgetPauseTriggered
 
   // abort 链接：父 abort 则子 abort。
+  // 必须走 abortAgent（= abort signal + 把 running/paused 清成 stopped）而非裸
+  // abortController.abort()：子 run 可能正停在暂停点（权限超时/预算暂停会级联暂停
+  // 子 run），signal-only 中止不清 status，子 loop 的暂停等待永远不返回——子 run
+  // 槽位泄漏、父 run 的工具批次（task 工具 await）永不返回。
   // 监听器在子 run 结束时摘除（见 runBody 的 finally）：{ once: true } 只在真的
   // 触发 abort 时自动摘除，正常完成的子 run（绝大多数）从不触发——父 run 级
   // signal 上每派发一个子 agent 就留一个监听器，累积到 11 个即触发 Node 的
   // MaxListenersExceededWarning，闭包也随 signal 活到父 run 结束。
-  const onParentAbort = (): void => childState.abortController.abort()
+  const onParentAbort = (): void => abortAgent(childState)
   if (parent.abortController.signal.aborted) {
-    childState.abortController.abort()
+    abortAgent(childState)
   } else {
     parent.abortController.signal.addEventListener('abort', onParentAbort, { once: true })
   }

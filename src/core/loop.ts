@@ -6,7 +6,7 @@ import { getMessages } from '../session/message.js'
 import { markBudgetPause, updateSessionLastRun } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import { budgetOverageParts } from '../session/usage.js'
-import type { AgentEvent, AgentState } from '../shared/types/agent.js'
+import type { AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
 import { calibrateEstimate, createTokenBudget, estimateBudget } from './context.js'
 import { runCompactionIfNeeded } from './loop/compaction.js'
@@ -102,8 +102,16 @@ function resolveEffectiveContextWindow(
   return estimated
 }
 
+/**
+ * 等待 resume（或 abort）。暂停态只由 status 表达，但 abort 路径不止一条：
+ * `abortAgent` 会同时置 stopped，而父→子 abort 联动等 signal-only 路径不会——
+ * 只查 status 会让暂停中的 run 在 100ms 空转里永久等待（run 槽位不释放、父 run
+ * 的工具批次永不返回、会话 409 RUN_ACTIVE 锁死）。故 signal 中止同样结束等待，
+ * 由调用方按「仍是 paused」判定为中止退出。
+ */
 async function waitForResume(state: AgentState): Promise<void> {
-  while (true) {
+  const signal = state.abortController.signal
+  while (!signal.aborted) {
     await sleep(100)
     if (state.status._tag !== 'paused') return
   }
@@ -136,7 +144,12 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
         startedAt: state.lastRunStartedAt ?? Date.now(),
       }).catch(() => {})
       await waitForResume(state)
-      if (state.status._tag === 'paused') return // 等待期间被 abort 等终结
+      // 等待期间被中止（abortAgent 置 stopped / signal-only 中止仍是 paused）
+      // 一律结束本 run：继续往下会把状态复位成 running 并再发一次 LLM 请求，
+      // 已中止的 run 复活成「运行中」。状态经显式断言重新读取——上方 if 的
+      // paused 收窄在 await 后仍生效，直接比较会被 TS 判为无交集。
+      const afterWait = state.status as AgentStatus
+      if (afterWait._tag !== 'running') return
     }
 
     // 预算护栏：金额 + token 双口径（token 兜底价格未知的自建网关/未登记模型），
@@ -182,7 +195,10 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
             // budgetPauseTriggered，避免同一超支原因二次暂停打断用户。
             await markBudgetPause(deps.db, state.session.id, reason).catch(() => {})
             await waitForResume(state)
-            if (state.status._tag === 'paused') return
+            // 同暂停点：等待期间被中止（stopped）或 signal-only 中止（仍 paused）
+            // 一律结束本 run，绝不把已中止的 run 复位成 running 再发 LLM 请求。
+            const afterBudgetWait = state.status as AgentStatus
+            if (afterBudgetWait._tag !== 'running') return
           } else {
             state.status = {
               _tag: 'stopped',
