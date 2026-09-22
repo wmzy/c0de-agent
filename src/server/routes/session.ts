@@ -212,6 +212,16 @@ function createSessionRoute(ctx: ServerContext): Hono {
         '创建会话必须指定项目：传 directory（自动解析）或 projectId',
       )
     }
+    // 显式 projectId 指向 sessions.projectId 外键：不存在的项目此前直接穿透
+    // createSession 的 insert，PG 侧 FK violation（23503）击穿 500 并回显 SQL
+    // 错误细节——先校验存在性，统一 404（与 kanban guardProject、import/rebind
+    // 的目标项目校验同口径）。directory 路径经 fromDirectory 自动 upsert，恒有效。
+    if (explicitProjectId) {
+      const project = await getProject(ctx.db, explicitProjectId)
+      if (!project) {
+        return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
+      }
+    }
     const session = await createSession(
       ctx.db,
       title,

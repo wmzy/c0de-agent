@@ -69,6 +69,18 @@ describe('session route', () => {
     expect(body.error?.code).toBe('PROJECT_REQUIRED')
   })
 
+  it('POST / with non-existent projectId → 404 PROJECT_NOT_FOUND（不得 FK violation 500）', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Orphan', projectId: 'no-such-project' }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('PROJECT_NOT_FOUND')
+  })
+
   it('POST / without title uses default', async () => {
     const { app } = await setup()
     const res = await app.request('/', {
