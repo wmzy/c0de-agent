@@ -145,21 +145,28 @@ export function CodeEditor({
     setSaveConflict(null)
   }, [])
 
-  // 记录上次路径：仅换文件时重置基线；主题切换重建沿用当前基线（不吞挂起的外部内容）。
+  // 记录上次路径：仅换文件时重置基线；主题切换重建沿用当前文档（不吞未保存编辑）。
   const prevPathRef = useRef(path)
   useEffect(() => {
     if (!hostRef.current) return
-    if (prevPathRef.current !== path) {
+    const pathChanged = prevPathRef.current !== path
+    if (pathChanged) {
       prevPathRef.current = path
       baseRef.current = lastInitialRef.current
       setPendingExternal(null)
       setSaveConflict(null)
     }
+    // 重建视图的 doc 取值：换文件 → 新文件基线；其余重建（主题切换）→ 当前文档。
+    // 此前一律用 baseRef（磁盘基线）：切换明/暗主题即把用户未保存的编辑静默回退
+    // 到磁盘内容，且 setDirty(false) 顺手解除关闭预览的丢弃确认。
+    const liveDoc = pathChanged ? undefined : viewRef.current?.state.doc.toString()
+    const doc = liveDoc ?? baseRef.current
+    const keepDirty = liveDoc !== undefined && dirtyRef.current
     const ext = path.split('.').pop()
     const lang = ext === 'ts' || ext === 'js' || ext === 'tsx' || ext === 'jsx' ? javascript() : []
     const view = new EditorView({
       state: EditorState.create({
-        doc: baseRef.current,
+        doc,
         extensions: [
           keymap.of(defaultKeymap),
           lineNumbers(),
@@ -175,8 +182,8 @@ export function CodeEditor({
       parent: hostRef.current,
     })
     viewRef.current = view
-    // 重建视图 = 换文件/重读内容，脏状态随之重置（避免上个文件的脏标记误伤新文件）
-    setDirty(false)
+    // 换文件时脏状态重置（避免上个文件的脏标记误伤新文件）；同文件重建保留原脏状态。
+    setDirty(keepDirty)
     return () => view.destroy()
   }, [path, resolved])
 
