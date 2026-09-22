@@ -7,6 +7,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
+import { parseTerminalControlMessage } from '@/components/terminal-control.js'
 import { trackCommandInput } from '@/components/terminal-input.js'
 
 interface TerminalProps {
@@ -233,21 +234,17 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
 
     // WS 数据 → xterm
     const processData = (data: string) => {
-      // 检查是否为 JSON 控制消息（exit/error）
-      if (data.startsWith('{') && data.includes('"type"')) {
-        try {
-          const msg = JSON.parse(data)
-          if (msg.type === 'exit') {
-            term.write(`\r\n\x1b[33m[Process exited with code ${msg.exitCode}]\x1b[0m\r\n`)
-            return
-          }
-          if (msg.type === 'error') {
-            term.write(`\r\n\x1b[31m[Error: ${msg.message}]\x1b[0m\r\n`)
-            return
-          }
-        } catch {
-          // 非 JSON，当作普通数据写入
-        }
+      // 控制帧判定严格限定服务端规范形状（terminal-control.ts）——此前
+      // `startsWith('{') && includes('"type"')` 的内容嗅探会把含 type 字段的
+      // 终端输出（curl/jq/程序自打印 JSON）整条吞掉，凭空显示假的退出/错误提示。
+      const control = parseTerminalControlMessage(data)
+      if (control?.type === 'exit') {
+        term.write(`\r\n\x1b[33m[Process exited with code ${control.exitCode}]\x1b[0m\r\n`)
+        return
+      }
+      if (control?.type === 'error') {
+        term.write(`\r\n\x1b[31m[Error: ${control.message}]\x1b[0m\r\n`)
+        return
       }
       term.write(data)
     }
