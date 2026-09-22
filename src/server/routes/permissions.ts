@@ -1,7 +1,9 @@
 import { eq } from 'drizzle-orm'
+import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { sessions } from '../../db/schema.js'
 import { getSession } from '../../session/session.js'
+import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -74,6 +76,25 @@ async function persistSessionMetadata(
 function createPermissionsRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
+  // 路径参数 sessionId 是 sessions.id（uuid 列）：非 UUID 直接 404。
+  // 此前未守卫：PUT /:sessionId 的 getSession 把非 UUID 直接送进 drizzle
+  // 参数化查询，PG 侧抛 22P02（invalid input syntax for type uuid），Hono 兜成
+  // 500 并把 SQL 错误细节回给客户端——与 session/kanban/todo 路由已修的
+  // 同型缺陷。「格式非法」与「会话不存在」同属资源不存在，统一 404。
+  // /:sessionId/pending 只读内存 permissionStore（不触 DB），不受守卫约束。
+  const guardSessionId = async (
+    c: Context,
+    next: () => Promise<void>,
+  ): Promise<Response | undefined> => {
+    if (!isUuid(c.req.param('sessionId') ?? '')) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
+    await next()
+  }
+  app.use('/:sessionId', guardSessionId)
+  app.use('/:sessionId/always-allow', guardSessionId)
+  app.use('/:sessionId/always-allow/*', guardSessionId)
+
   // GET / — 默认授权模式
   app.get('/', (c) => {
     return c.json({ mode: ctx.permissionMode })
@@ -106,6 +127,12 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // GET /:sessionId — 会话实际生效模式（覆盖优先，回退默认）+ 始终允许白名单
   app.get('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
+    // 与 PUT /:sessionId 同口径：不存在/回收站会话 404——返回全局默认模式
+    // 会冒充「该会话的模式」，调用方无法区分「无覆盖」与「会话不存在」。
+    const session = await getSession(ctx.db, sessionId)
+    if (!session || session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     await ensureSessionModeLoaded(ctx, sessionId)
     await ensureSessionAllowLoaded(ctx, sessionId)
     return c.json({
@@ -156,6 +183,12 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // POST /:sessionId/always-allow — 追加工具到会话白名单（幂等）
   app.post('/:sessionId/always-allow', async (c) => {
     const sessionId = c.req.param('sessionId')
+    // P3-11 同口径（此前只修了 PUT /:sessionId）：不存在的会话此前写入返回
+    // 200 且污染内存 Map——用户以为白名单已生效，实际会话已删除。
+    const session = await getSession(ctx.db, sessionId)
+    if (!session || session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     const body = (await c.req.json().catch(() => null)) as { tool?: unknown } | null
     const tool = body?.tool
     if (typeof tool !== 'string' || tool.length === 0) {
@@ -174,6 +207,10 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // DELETE /:sessionId/always-allow/:tool — 从会话白名单移除
   app.delete('/:sessionId/always-allow/:tool', async (c) => {
     const sessionId = c.req.param('sessionId')
+    const session = await getSession(ctx.db, sessionId)
+    if (!session || session.deletedAt) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
     const tool = c.req.param('tool')
     await ensureSessionAllowLoaded(ctx, sessionId)
     const list = (ctx.sessionAlwaysAllow.get(sessionId) ?? []).filter((t) => t !== tool)

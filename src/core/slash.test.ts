@@ -373,6 +373,22 @@ describe('builtin commands', () => {
     }
   })
 
+  it('/fork 非 UUID 会话 id → 干净的「目标会话不存在」错误（不得透出 PG 22P02 的 SQL 细节）', async () => {
+    const session = await createSession(db, 't')
+    const cmd = builtinCommands.find((c) => c.name === 'fork')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('garbage-id', {
+      cwd: '/',
+      config: DEFAULT_CONFIG,
+      deps,
+      sessionId: session.id,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toBe('目标会话不存在：garbage-id')
+    }
+  })
+
   it('/fork 默认当前会话最新消息分支', async () => {
     const session = await createSession(db, 't')
     const { appendMessage } = await import('../session/message.js')

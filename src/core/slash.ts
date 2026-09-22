@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import type { DB } from '../db/client.js'
 import { createSession, getSession } from '../session/session.js'
+import { isUuid } from '../shared/utils/string.js'
 import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../tools/index.js'
 
 import { createAgent } from './agent.js'
@@ -33,6 +34,10 @@ async function assertSameProjectSession(
   currentId: string | undefined,
   targetId: string,
 ): Promise<void> {
+  // 会话 id 是 uuid 列：非 UUID 经 getSession 的参数化查询在 PG 侧抛 22P02，
+  // 错误文本（含 SQL 细节）被透出为斜杠命令的错误消息——格式非法与「不存在」
+  // 同属资源不存在，统一为面向用户/模型的干净提示。
+  if (!isUuid(targetId)) throw new Error(`目标会话不存在：${targetId}`)
   const target = await getSession(db, targetId)
   if (!target) throw new Error(`目标会话不存在：${targetId}`)
   if (!currentId || currentId === targetId) return

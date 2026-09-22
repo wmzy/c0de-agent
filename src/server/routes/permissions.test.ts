@@ -79,6 +79,17 @@ describe('permissions route', () => {
     expect(ctx.sessionPermissionModes.has('00000000-0000-4000-8000-000000000000')).toBe(false)
   })
 
+  it('PUT /:sessionId 非 UUID 路径参数 → 404（不得击穿 PG 22P02 的 500）', async () => {
+    const { app, ctx } = await setup()
+    const res = await app.request('/not-a-uuid', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'auto' }),
+    })
+    expect(res.status).toBe(404)
+    expect(ctx.sessionPermissionModes.has('not-a-uuid')).toBe(false)
+  })
+
   it('PUT / 空 body 返回 400', async () => {
     const { app } = await setup()
     const res = await app.request('/', { method: 'PUT' })
@@ -155,13 +166,40 @@ describe('permissions route', () => {
   })
 
   it('POST /:sessionId/always-allow 空 tool 返回 400', async () => {
-    const { app } = await setup()
-    const res = await app.request('/whatever/always-allow', {
+    const { app, ctx } = await setup()
+    const [row] = await ctx.db.db
+      .insert(sessions)
+      .values({ title: 's' })
+      .returning({ id: sessions.id })
+    const res = await app.request(`/${row?.id ?? ''}/always-allow`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     })
     expect(res.status).toBe(400)
+  })
+
+  it('POST /:sessionId/always-allow 非 UUID → 404（不得击穿 PG 22P02 的 500）', async () => {
+    const { app, ctx } = await setup()
+    const res = await app.request('/not-a-uuid/always-allow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: 'bash' }),
+    })
+    expect(res.status).toBe(404)
+    expect(ctx.sessionAlwaysAllow.has('not-a-uuid')).toBe(false)
+  })
+
+  it('POST /:sessionId/always-allow 会话不存在 → 404（不得污染内存 Map 且谎报成功）', async () => {
+    const { app, ctx } = await setup()
+    const missing = '00000000-0000-4000-8000-000000000000'
+    const res = await app.request(`/${missing}/always-allow`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: 'bash' }),
+    })
+    expect(res.status).toBe(404)
+    expect(ctx.sessionAlwaysAllow.has(missing)).toBe(false)
   })
 
   it('GET /:sessionId/pending 返回会话挂起的权限请求（P1 重挂弹窗）', async () => {
