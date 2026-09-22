@@ -6,10 +6,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { AtFilePopover } from '@/composer/AtFilePopover.js'
 import { AttachmentBar } from '@/composer/AttachmentBar.js'
 import { ComposerEditor } from '@/composer/ComposerEditor.js'
+import { currentCursor } from '@/composer/editor-sync.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
 import { SlashPopover, SubcommandPopover } from '@/composer/SlashPopover.js'
-import type { ImagePart, Prompt } from '@/composer/types.js'
-import { promptToText } from '@/composer/types.js'
+import type { ImagePart } from '@/composer/types.js'
+import { atTokenRange, promptToText, replacePromptRange } from '@/composer/types.js'
 import { useComposer } from '@/composer/useComposer.js'
 import { WorkflowPopover } from '@/composer/WorkflowPopover.js'
 import { useFileReferenceSetter } from '@/contexts/ReferenceContext.js'
@@ -247,20 +248,26 @@ function Composer(props: ComposerProps) {
     .slice(0, 5)
   const atFiles = (fileSearch.data ?? []).filter((r) => r.type === 'file')
 
-  // 选中 @agent：替换 @query token 为 @name 文本
+  // 选中 @agent：把光标前的 @query token 原位替换为 @name 文本。
+  // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
+  // pill 被降级为纯文本（发送时 files 附件丢失）。改为 atTokenRange 定位 +
+  // replacePromptRange 原位替换，范围外 part 原样保留。
   const insertAgentToken = (name: string) => {
-    const text = promptToText(composer.promptRef.current)
-    const atIdx = text.lastIndexOf('@')
-    if (atIdx === -1) return
-    const before = text.slice(0, atIdx)
-    let tokenEnd = atIdx + 1
-    while (tokenEnd < text.length && !/\s/.test(text[tokenEnd] ?? '')) tokenEnd += 1
-    const after = text.slice(tokenEnd)
-    const newText = `${before}@${name} ${after}`
-    const newPrompt: Prompt = [{ type: 'text', content: newText, start: 0, end: newText.length }]
-    composer.setPromptExternal(newPrompt, true)
+    const prompt = composer.promptRef.current
+    const editor = composer.editorRef.current
+    if (!editor) return
+    const cursor = currentCursor(editor)
+    const range = atTokenRange(promptToText(prompt), cursor)
+    if (!range) return
+    const token = `@${name} `
+    composer.setPromptExternal(
+      replacePromptRange(prompt, range.start, range.end, [
+        { type: 'text', content: token, start: 0, end: token.length },
+      ]),
+      true,
+    )
     composer.setPopover(null)
-    composer.editorRef.current?.focus()
+    editor.focus()
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {

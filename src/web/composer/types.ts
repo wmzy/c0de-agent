@@ -119,6 +119,89 @@ function isPromptEmpty(prompt: Prompt): boolean {
   )
 }
 
+/** 单个 part 在 promptToText 平铺文本中贡献的长度（image 不计入）。 */
+function partFlatLength(part: ContentPart): number {
+  if (part.type === 'text' || part.type === 'file') return part.content.length
+  if (part.type === 'snippet' || part.type === 'terminal') return part.label.length
+  return 0
+}
+
+/** 定位光标前的 @token（'@' + 非空白字符）在平铺文本中的范围。
+ *  光标偏移与 promptToText 同坐标系（editor-dom 的 getCursorPosition 口径）。
+ *  无 token 返回 null。 */
+function atTokenRange(text: string, cursor: number): { start: number; end: number } | null {
+  const m = text.slice(0, cursor).match(/@(\S*)$/)
+  if (!m) return null
+  return { start: cursor - m[0].length, end: cursor }
+}
+
+/**
+ * 用 replacement 替换平铺文本 [start, end) 范围，保留范围外的全部既有 part。
+ * popover 插入（@文件/@agent）此前从 promptToText 平铺文本重建整个 prompt——
+ * 既有 file/snippet/terminal pill 被降级为纯文本：发送时 files 附件丢失、
+ * snippet/terminal 内容不再注入消息。范围落在 text part 内时切分该 part；
+ * 与 pill 重叠时保守保留 pill（不拆分，实践上 token 只出现在 text 中）。
+ */
+function replacePromptRange(
+  prompt: Prompt,
+  start: number,
+  end: number,
+  replacement: Prompt,
+): Prompt {
+  const out: ContentPart[] = []
+  let offset = 0
+  let inserted = false
+  const insertNow = () => {
+    if (!inserted) {
+      out.push(...replacement)
+      inserted = true
+    }
+  }
+  const pushText = (content: string) => {
+    if (content.length > 0) out.push({ type: 'text', content, start: 0, end: content.length })
+  }
+  for (const part of prompt) {
+    const len = partFlatLength(part)
+    const partStart = offset
+    const partEnd = offset + len
+    offset = partEnd
+    // 范围完全落在该 text part 内（含空范围的边界点）→ 在此定位插入。
+    if (part.type === 'text' && partStart <= start && end <= partEnd) {
+      const s = start - partStart
+      const e = end - partStart
+      pushText(part.content.slice(0, s))
+      insertNow()
+      pushText(part.content.slice(e))
+      continue
+    }
+    if (partStart >= end || partEnd <= start) {
+      // 空范围插入点（无任何 part 包含该点，落在 part 间隙）→ 插入其后邻 part 之前。
+      if (start === end && !inserted && partStart >= start) insertNow()
+      out.push(part)
+      continue
+    }
+    // 与范围重叠但非包含（跨 part 或落在 pill 上）：文本切掉重叠段，pill 保守保留。
+    if (part.type === 'text') {
+      const s = Math.max(0, start - partStart)
+      const e = Math.min(part.content.length, end - partStart)
+      pushText(part.content.slice(0, s))
+      insertNow()
+      pushText(part.content.slice(e))
+      continue
+    }
+    out.push(part)
+  }
+  insertNow() // 范围在所有 part 之后：追加
+  return out
+}
+
+/** 保留全部 text/file/snippet/terminal part 的深拷贝（image 走独立附件通道）。
+ *  append* 引用操作此前逐类挑选复制（file 版丢 snippet/terminal、snippet 版
+ *  丢 terminal），追加一个引用会静默吞掉其他类型的引用。 */
+function clonePromptParts(prompt: Prompt): Prompt {
+  return prompt.filter((p) => p.type !== 'image').map((p) => ({ ...p }) as ContentPart)
+}
+
 export type {
   ContentPart,
   FilePart,
@@ -130,10 +213,13 @@ export type {
   TextPart,
 }
 export {
+  atTokenRange,
+  clonePromptParts,
   DEFAULT_PROMPT,
   isPromptEmpty,
   promptLength,
   promptToMessageText,
   promptToText,
+  replacePromptRange,
   snippetLabel,
 }

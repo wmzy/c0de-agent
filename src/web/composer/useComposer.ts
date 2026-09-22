@@ -15,10 +15,13 @@ import {
 import { normalizePaste, pasteMode } from '@/composer/paste.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import {
+  atTokenRange,
+  clonePromptParts,
   DEFAULT_PROMPT,
   isPromptEmpty,
   promptToMessageText,
   promptToText,
+  replacePromptRange,
   snippetLabel,
 } from '@/composer/types.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
@@ -120,10 +123,13 @@ function useComposer({
 
   // 历史回溯导航状态
   const indexRef = useRef(-1)
-  const draftRef = useRef('')
+  // 进入历史前的草稿：保存 Prompt 结构而非平铺文本——draft 里若有
+  // file/snippet/terminal pill，↓ 退出历史时 textPrompt(平铺文本) 重建会把
+  // pill 降级为纯文本（发送时 files 附件丢失）。
+  const draftRef = useRef<Prompt | null>(null)
   const resetHistory = useCallback(() => {
     indexRef.current = -1
-    draftRef.current = ''
+    draftRef.current = null
   }, [])
 
   // 挂载后初始化空编辑器（插零宽空格防塌陷）
@@ -229,46 +235,32 @@ function useComposer({
     [setPromptExternal, subcommandCmd],
   )
 
-  // popover 选中插入文件 pill（替换 @query token）
+  // popover 选中插入文件 pill（替换 @query token）。
+  // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
+  // pill 被降级为纯文本（发送时 files 附件丢失）。改为定位光标前 @token
+  // 范围并用 replacePromptRange 原位替换，范围外 part 原样保留。
   const insertFile = useCallback(
     (path: string) => {
-      const text = promptToText(promptRef.current)
-      const atIdx = text.lastIndexOf('@')
-      if (atIdx === -1) return
-      const before = text.slice(0, atIdx)
-      // @token = '@' + 后续非空白字符
-      let tokenEnd = atIdx + 1
-      while (tokenEnd < text.length && !/\s/.test(text[tokenEnd] ?? '')) tokenEnd += 1
-      const after = text.slice(tokenEnd)
-
-      const newPrompt: Prompt = []
-      let pos = 0
-      const pushText = (content: string) => {
-        if (!content) return
-        newPrompt.push({ type: 'text', content, start: pos, end: pos + content.length })
-        pos += content.length
-      }
-      pushText(before)
-      newPrompt.push({ type: 'file', path, content: path, start: pos, end: pos + path.length })
-      pos += path.length
-      pushText(after)
-
-      setPromptExternal(newPrompt)
+      const prompt = promptRef.current
+      if (!editorRef.current) return
+      const cursor = currentCursor(editorRef.current)
+      const range = atTokenRange(promptToText(prompt), cursor)
+      if (!range) return
+      const pill: Prompt = [{ type: 'file', path, content: path, start: 0, end: path.length }]
+      setPromptExternal(replacePromptRange(prompt, range.start, range.end, pill), true)
       setPopover(null)
-      editorRef.current?.focus()
+      editorRef.current.focus()
     },
     [setPromptExternal],
   )
 
-  /** 外部引用（文件树 @ 按钮）：在 prompt 末尾追加 file pill，无需 @ token。 */
+  /** 外部引用（文件树 @ 按钮）：在 prompt 末尾追加 file pill，无需 @ token。
+   *  保留全部既有 pill 类型（此前逐类挑选复制，追加文件引用会吞掉
+   *  snippet/terminal pill）。 */
   const appendFileReference = useCallback(
     (path: string) => {
       const prompt = promptRef.current
-      const parts: Prompt = []
-      for (const part of prompt) {
-        if (part.type === 'text') parts.push({ ...part })
-        else if (part.type === 'file') parts.push({ ...part })
-      }
+      const parts = clonePromptParts(prompt)
       const text = promptToText(prompt)
       if (text.length > 0 && !text.endsWith(' ')) {
         parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
@@ -282,16 +274,11 @@ function useComposer({
   )
 
   /** 外部引用（预览面板选中文本）：在 prompt 末尾追加 snippet pill（显示位置标签），
-   * snippet 内容隐藏在 pill data 属性中，提交时由 promptToMessageText 展开为代码块。 */
+   *  snippet 内容隐藏在 pill data 属性中，提交时由 promptToMessageText 展开为代码块。 */
   const appendSnippetReference = useCallback(
     (path: string, lineStart: number, lineEnd: number, snippet: string) => {
       const prompt = promptRef.current
-      const parts: Prompt = []
-      for (const part of prompt) {
-        if (part.type === 'text') parts.push({ ...part })
-        else if (part.type === 'file') parts.push({ ...part })
-        else if (part.type === 'snippet') parts.push({ ...part })
-      }
+      const parts = clonePromptParts(prompt)
       const text = promptToText(prompt)
       const label = snippetLabel(path, lineStart, lineEnd)
       if (text.length > 0 && !text.endsWith(' ')) {
@@ -318,13 +305,7 @@ function useComposer({
   const appendTerminalReference = useCallback(
     (label: string, content: string) => {
       const prompt = promptRef.current
-      const parts: Prompt = []
-      for (const part of prompt) {
-        if (part.type === 'text') parts.push({ ...part })
-        else if (part.type === 'file') parts.push({ ...part })
-        else if (part.type === 'snippet') parts.push({ ...part })
-        else if (part.type === 'terminal') parts.push({ ...part })
-      }
+      const parts = clonePromptParts(prompt)
       const text = promptToText(prompt)
       if (text.length > 0 && !text.endsWith(' ')) {
         parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
@@ -337,11 +318,20 @@ function useComposer({
     [setPromptExternal],
   )
 
-  /** 外部填入纯文本（空状态示例卡片）：已有草稿时换行追加，并聚焦编辑器。 */
+  /** 外部填入纯文本（空状态示例卡片）：已有草稿时换行追加，并聚焦编辑器。
+   *  以 part 追加而非从平铺文本重建——既有 pill 不被降级为文本。 */
   const insertPromptText = useCallback(
     (text: string) => {
-      const current = promptToText(promptRef.current)
-      setPromptExternal(textPrompt(current.length > 0 ? `${current}\n${text}` : text), true)
+      const prompt = promptRef.current
+      const current = promptToText(prompt)
+      const parts = clonePromptParts(prompt)
+      parts.push({
+        type: 'text',
+        content: current.length > 0 ? `\n${text}` : text,
+        start: 0,
+        end: text.length,
+      })
+      setPromptExternal(parts, true)
       editorRef.current?.focus()
     },
     [setPromptExternal],
@@ -463,19 +453,19 @@ function useComposer({
         )
         if (canNav) {
           e.preventDefault()
-          if (indexRef.current === -1) draftRef.current = text
+          if (indexRef.current === -1) draftRef.current = promptRef.current
           const result = navigatePromptHistory({
             entries: loadHistory(),
             currentIndex: indexRef.current,
             direction: e.key === 'ArrowUp' ? 'up' : 'down',
-            draft: draftRef.current,
+            draft: promptToText(draftRef.current ?? DEFAULT_PROMPT),
           })
           if (result && 'entry' in result) {
             indexRef.current = result.index
             setPromptExternal(textPrompt(result.entry))
           } else if (result && 'reset' in result) {
             indexRef.current = -1
-            setPromptExternal(textPrompt(draftRef.current))
+            setPromptExternal(draftRef.current ?? DEFAULT_PROMPT)
           }
         }
       }
