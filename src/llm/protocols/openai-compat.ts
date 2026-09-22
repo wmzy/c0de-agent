@@ -196,12 +196,20 @@ type StepState = {
   tools: ToolStreamState
   /** Finish reason seen but not yet finalized (waiting for trailing usage chunk). */
   pendingFinish: FinishReason | null
+  /** 已终结标记：finalize 后所有后续 chunk 一律忽略。
+   *  此前终结后未设标记——finish_reason+usage 同 chunk 完成终结后，再收到
+   *  usage-only 尾 chunk（部分 provider 在 combined chunk 之后仍补发 usage 帧）
+   *  会再次走终结分支：lifecycle 已复位，重发 step-start/step-finish/finish
+   *  （下游拿到重复 done + 重复 usage）；携带非空 content 的尾 chunk 更会
+   *  产出「完成后幻影文本」，追加进已终结的轮次。 */
+  finalized: boolean
 }
 
 const initialStepState = (): StepState => ({
   lifecycle: lifecycleInitial(),
   tools: emptyTools(),
   pendingFinish: null,
+  finalized: false,
 })
 
 /** Map an OpenAI usage object to the internal Usage fields. */
@@ -233,11 +241,17 @@ const step = (
   state: StepState,
   chunk: OpenAIStreamChunk,
 ): { state: StepState; events: StreamEvent[]; done: boolean } => {
+  // 终结后的 chunk 一律忽略：终结是不可逆状态，后续帧（重复 usage、
+  // 迟到 delta）不得重发 finish 事件或把文本追加进已终结的轮次。
+  if (state.finalized) {
+    return { state, events: [], done: true }
+  }
   const events: StreamEvent[] = []
   let lifecycle = state.lifecycle
   let tools = state.tools
   let pendingFinish = state.pendingFinish
   let done = false
+  let finalized = false
 
   const choice = chunk.choices?.[0]
   if (choice !== undefined && choice.delta !== undefined) {
@@ -277,6 +291,7 @@ const step = (
       if (chunk.usage !== undefined) {
         lifecycle = finalize(lifecycle, events, pendingFinish, mapUsage(chunk.usage))
         done = true
+        finalized = true
         pendingFinish = null
       }
     }
@@ -285,10 +300,11 @@ const step = (
     const reason = pendingFinish ?? 'stop'
     lifecycle = finalize(lifecycle, events, reason, mapUsage(chunk.usage))
     done = true
+    finalized = true
     pendingFinish = null
   }
 
-  return { state: { lifecycle, tools, pendingFinish }, events, done }
+  return { state: { lifecycle, tools, pendingFinish, finalized }, events, done }
 }
 
 /** Finalize a stream that ended without a trailing usage chunk (no-op if already finished). */

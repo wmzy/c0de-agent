@@ -117,6 +117,32 @@ describe('openai-compat step', () => {
     expect(finish && 'usage' in finish && finish.usage?.totalTokens).toBe(7)
   })
 
+  // 回归：finalize 后 step 未置终结标记——finish_reason+usage 同 chunk 完成终结后，
+  // 再收到 usage-only 尾 chunk（部分 provider 在 combined chunk 之后仍补发
+  // usage 帧）会再次走 else-if 终结分支：lifecycle 已复位，重发 step-start/
+  // step-finish/finish（下游拿到重复 done + 重复 usage）；再收到携带非空 content
+  // 的尾 chunk 甚至会产出「完成后幻影文本」——文本追加进已终结的轮次。
+  // 终结后的所有 chunk 必须被忽略（done 保持 true）。
+  it('ignores chunks after finalization (no duplicate finish / phantom text)', () => {
+    let state = initialStepState()
+    const res1 = step(state, {
+      choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+    })
+    expect(res1.done).toBe(true)
+    state = res1.state
+
+    const res2 = step(state, {
+      usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+    })
+    expect(res2.events).toHaveLength(0)
+    expect(res2.done).toBe(true)
+
+    const res3 = step(res2.state, { choices: [{ delta: { content: 'trailing' } }] })
+    expect(res3.events).toHaveLength(0)
+    expect(res3.done).toBe(true)
+  })
+
   it('maps reasoning_content to reasoning deltas (DeepSeek)', () => {
     const res = step(initialStepState(), {
       choices: [{ delta: { reasoning_content: 'think' } }],
