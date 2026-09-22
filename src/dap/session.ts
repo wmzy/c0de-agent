@@ -113,6 +113,12 @@ type ManagedSession = {
   session: DAPSession
   client: DAPClient
   config: DAPConfig
+  /** 已设置断点（file → 该文件的完整断点集）。
+   *  DAP 的 setBreakpoints 是「替换该 source 的整个断点集」语义——一个 source 的
+   *  多个断点必须放进同一次请求。而 debug_breakpoint 是逐条调用的增量 API：
+   *  不在此累积的话，第二次调用同一文件会把第一次的断点从适配器里抹掉，两次
+   *  调用却都回 success（agent 以为两个断点都生效，实际只剩最后一个）。 */
+  breakpoints: Map<string, Breakpoint[]>
 }
 
 type DebugSessionManager = {
@@ -171,11 +177,16 @@ function createDebugSessionManager(): DebugSessionManager {
         client.dispose()
         throw e
       }
-      sessions.set(session.id, { session, client, config })
+      sessions.set(session.id, { session, client, config, breakpoints: new Map() })
       return { sessionId: session.id, threadId: lastThread }
     },
     setBreakpoint(sessionId, bp) {
-      return dapSetBreakpoints(require(sessionId).client, bp.file, [bp])
+      const managed = require(sessionId)
+      const existing = managed.breakpoints.get(bp.file) ?? []
+      // 同一行重复设置（典型是补/改条件）替换旧条目，其余保留——断点集内不产生重复。
+      const next = [...existing.filter((b) => b.line !== bp.line), bp]
+      managed.breakpoints.set(bp.file, next)
+      return dapSetBreakpoints(managed.client, bp.file, next)
     },
     continue(sessionId, threadId) {
       return dapContinue(require(sessionId).client, threadId)
