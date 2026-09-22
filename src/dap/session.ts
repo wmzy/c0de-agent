@@ -27,25 +27,68 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   })
 }
 
-async function dapInitialize(client: DAPClient, adapterID: string): Promise<unknown> {
-  return client.request('initialize', {
+/** initialize 响应里本客户端关心的能力位。 */
+type DAPInitializeBody = { supportsConfigurationDoneRequest?: boolean }
+
+async function dapInitialize(client: DAPClient, adapterID: string): Promise<DAPInitializeBody> {
+  return (await client.request('initialize', {
     clientID: 'c0de-agent',
     adapterID,
     linesStartAt1: true,
     columnsStartAt1: true,
     pathFormat: 'path',
-  })
+  })) as DAPInitializeBody
 }
 
-async function dapLaunch(client: DAPClient, config: DAPConfig): Promise<void> {
-  const cmd = config.request === 'attach' ? 'attach' : 'launch'
-  await client.request(cmd, {
+/**
+ * launch/attach 的参数。
+ *
+ * `type` 是适配器（尤其 js-debug）选择调试目标类型的字段：缺失时 js-debug 不创建
+ * 目标，launch 请求永不返回响应——start() 会一直等到 initialize 超时才报错，错误
+ * 文本还不指向根因。用 adapter id 作默认值（node→node、python→python…），
+ * launchArgs 可覆盖。
+ */
+function dapLaunchArguments(config: DAPConfig): Record<string, unknown> {
+  return {
+    type: config.adapter,
     program: config.program,
     args: config.args,
     cwd: config.cwd,
     stopOnEntry: false,
     ...config.launchArgs,
-  })
+  }
+}
+
+/**
+ * 发送 launch/attach 请求并返回「响应 promise」（不 await）。
+ * 必须能分两步：支持 configurationDone 的适配器（js-debug）在收到
+ * configurationDone 之前不返回 launch 响应——先 await launch 再发
+ * configurationDone 会互锁到超时。
+ */
+function dapLaunchRequest(client: DAPClient, config: DAPConfig): Promise<unknown> {
+  const cmd = config.request === 'attach' ? 'attach' : 'launch'
+  return client.request(cmd, dapLaunchArguments(config))
+}
+
+/**
+ * 声明 supportsConfigurationDoneRequest 的适配器在启动目标前等待
+ * configurationDone（DAP 规范：客户端完成「启动前配置」后发送）。本客户端没有
+ * 独立的配置阶段（断点是启动后经 debug_breakpoint 增量设置），故紧接 launch 发送：
+ * 不发送时 js-debug 永远不启动目标——程序不运行、断点不命中、launch 响应不返回。
+ * 失败不致命（部分适配器实现宽松或不需要），但记录以便排查。
+ */
+const DAP_CONFIGURATION_DONE_TIMEOUT_MS = 10_000
+
+async function dapConfigurationDone(client: DAPClient): Promise<void> {
+  try {
+    await withTimeout(
+      client.request('configurationDone', {}),
+      DAP_CONFIGURATION_DONE_TIMEOUT_MS,
+      'DAP configurationDone',
+    )
+  } catch (e) {
+    console.warn('[dap] configurationDone failed:', e instanceof Error ? e.message : String(e))
+  }
 }
 
 async function dapSetBreakpoints(
@@ -166,12 +209,19 @@ function createDebugSessionManager(): DebugSessionManager {
       })
 
       try {
-        await withTimeout(
+        const initBody = await withTimeout(
           dapInitialize(client, config.adapter),
           DAP_INIT_TIMEOUT_MS,
           'DAP initialize',
         )
-        await dapLaunch(client, config)
+        // launch 响应与 configurationDone 有先后依赖：支持 configurationDone 的
+        // 适配器要收到它才创建/启动目标并回响应。先发 launch，再补 configurationDone，
+        // 最后 await launch 响应（见 dapLaunchRequest / dapConfigurationDone 注释）。
+        const launchPromise = dapLaunchRequest(client, config)
+        if (initBody?.supportsConfigurationDoneRequest === true) {
+          await dapConfigurationDone(client)
+        }
+        await launchPromise
       } catch (e) {
         // 握手/launch 失败：dispose 关闭 transport（杀适配器子进程），不留悬挂会话。
         client.dispose()

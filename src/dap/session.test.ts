@@ -5,10 +5,30 @@ import type { DAPConfig } from './types.js'
 
 type RecordedRequest = { command: string; args?: unknown }
 
+type HarnessOptions = {
+  /** initialize 响应体（能力位）；默认 {}。 */
+  initBody?: Record<string, unknown>
+  /** true：launch/attach 响应在收到 configurationDone 之后才回（js-debug 行为）。 */
+  launchWaitsForConfigurationDone?: boolean
+}
+
 /** 记录每个请求的自动应答 transport（同 dap.test.ts 的 harness，附请求日志）。 */
-function recordingTransport(log: RecordedRequest[]): DAPTransport {
+function recordingTransport(log: RecordedRequest[], opts: HarnessOptions = {}): DAPTransport {
   const dataHandlers: Array<(chunk: string | Uint8Array) => void> = []
   const framer = createFramer()
+  const heldLaunch: Array<{ seq: number }> = []
+  const reply = (seq: number, body: unknown): void => {
+    const resp = encodeMessage(
+      JSON.stringify({
+        seq: 10_000 + seq,
+        type: 'response',
+        request_seq: seq,
+        success: true,
+        body,
+      }),
+    )
+    for (const h of dataHandlers) h(resp)
+  }
   framer.onMessage((json) => {
     const msg = JSON.parse(json) as {
       type: string
@@ -23,17 +43,23 @@ function recordingTransport(log: RecordedRequest[]): DAPTransport {
         ? { breakpoints: [{ verified: true }] }
         : msg.command === 'stackTrace'
           ? { stackFrames: [] }
-          : {}
-    const resp = encodeMessage(
-      JSON.stringify({
-        seq: 10_000 + msg.seq,
-        type: 'response',
-        request_seq: msg.seq,
-        success: true,
-        body,
-      }),
-    )
-    for (const h of dataHandlers) h(resp)
+          : msg.command === 'initialize'
+            ? (opts.initBody ?? {})
+            : {}
+    // js-debug 式互锁：launch 响应挂起，直到 configurationDone 到达才回。
+    if (
+      opts.launchWaitsForConfigurationDone &&
+      (msg.command === 'launch' || msg.command === 'attach')
+    ) {
+      heldLaunch.push({ seq: msg.seq })
+      return
+    }
+    if (msg.command === 'configurationDone' && heldLaunch.length > 0) {
+      reply(msg.seq, body)
+      for (const held of heldLaunch.splice(0)) reply(held.seq, {})
+      return
+    }
+    reply(msg.seq, body)
   })
   return {
     write: (chunk) => framer.feed(chunk),
@@ -116,5 +142,68 @@ describe('createDebugSessionManager — 断点累积', () => {
     const second = await manager.start(() => recordingTransport(log), CONFIG)
     await manager.setBreakpoint(second.sessionId, { file: 'a.js', line: 9 })
     expect(breakpointLines(log)).toEqual([9])
+  })
+})
+
+describe('createDebugSessionManager — 启动握手', () => {
+  // 复现 1：launch 参数缺 `type` 时 js-debug 不创建调试目标，launch 请求永不返回
+  // 响应（实测：initialize 后 launch 挂起 10s+ 无响应，目标不运行），start() 只能
+  // 等到 initialize 超时（120s）才报错，且错误文本不指向根因。
+  it('launch 参数带 type（适配器 id），launchArgs 可覆盖', async () => {
+    const log: RecordedRequest[] = []
+    const manager = createDebugSessionManager()
+    await manager.start(() => recordingTransport(log), {
+      adapter: 'node',
+      program: '/tmp/app.mjs',
+      cwd: '/tmp',
+      launchArgs: { stopOnEntry: true },
+    })
+    const launch = log.find((r) => r.command === 'launch')
+    expect(launch?.args).toMatchObject({
+      type: 'node',
+      program: '/tmp/app.mjs',
+      cwd: '/tmp',
+      stopOnEntry: true,
+    })
+  })
+
+  // 复现 2：适配器声明 supportsConfigurationDoneRequest（js-debug）时客户端必须
+  // 发 configurationDone，否则目标永不启动、断点永不命中。此前客户端从不发送。
+  it('适配器声明 supportsConfigurationDoneRequest 时补发 configurationDone', async () => {
+    const log: RecordedRequest[] = []
+    const manager = createDebugSessionManager()
+    await manager.start(
+      () => recordingTransport(log, { initBody: { supportsConfigurationDoneRequest: true } }),
+      CONFIG,
+    )
+    const commands = log.map((r) => r.command)
+    expect(commands).toContain('configurationDone')
+    // 顺序：initialize → launch → configurationDone（js-debug 要收到
+    // configurationDone 才回 launch 响应，先 await launch 会互锁）
+    expect(commands.indexOf('launch')).toBeLessThan(commands.indexOf('configurationDone'))
+  })
+
+  it('未声明该能力的适配器不发 configurationDone', async () => {
+    const log: RecordedRequest[] = []
+    const { manager, sessionId } = await startSession(log)
+    expect(log.map((r) => r.command)).not.toContain('configurationDone')
+    expect(manager.getSession(sessionId)?.state).toBe('running')
+  })
+
+  // js-debug 行为仿真：launch 响应挂起直到 configurationDone 到达。修复前
+  // start() 先 await launch（无人发 configurationDone）→ 死等到超时。
+  it('launch 响应依赖 configurationDone 时 start() 仍能完成', { timeout: 5000 }, async () => {
+    const log: RecordedRequest[] = []
+    const manager = createDebugSessionManager()
+    const { sessionId } = await manager.start(
+      () =>
+        recordingTransport(log, {
+          initBody: { supportsConfigurationDoneRequest: true },
+          launchWaitsForConfigurationDone: true,
+        }),
+      CONFIG,
+    )
+    expect(sessionId).toBeTruthy()
+    expect(log.map((r) => r.command)).toEqual(['initialize', 'launch', 'configurationDone'])
   })
 })
