@@ -159,6 +159,36 @@ describe('globToRegex', () => {
     expect(re.test('a.ts')).toBe(false)
     expect(re.test('.ts')).toBe(false)
   })
+
+  // 复现：花括号嵌套时外层只截到「第一个 }」——inner 被切成 'a,{b,c'，内层
+  // 分支降级为字面量，产出 `(?:a|\{b,c)}` 这种正则：b/c 静默零命中（模型据此
+  // 得出「文件不存在」），还会匹配字面量 "{b,c"。bash 的 {a,{b,c}} 是合法嵌套，
+  // globFragment 本就递归处理分支（分支内通配符不转义），嵌套必须同样成立。
+  it('supports nested brace alternation', () => {
+    const re = globToRegex('{a,{b,c}}')
+    expect(re.test('a')).toBe(true)
+    expect(re.test('b')).toBe(true)
+    expect(re.test('c')).toBe(true)
+    expect(re.test('{b,c')).toBe(false)
+    expect(re.test('d')).toBe(false)
+  })
+
+  it('supports nested braces with wildcards and paths', () => {
+    const re = globToRegex('**/*.{ts,{tsx,jsx}}')
+    expect(re.test('a.ts')).toBe(true)
+    expect(re.test('x/a.tsx')).toBe(true)
+    expect(re.test('x/a.jsx')).toBe(true)
+    expect(re.test('x/a.css')).toBe(false)
+    expect(re.test('x/a.ts}')).toBe(false)
+  })
+
+  it('keeps comma inside nested brace out of the outer alternatives', () => {
+    const re = globToRegex('{src,{test,spec}}/*.ts')
+    expect(re.test('src/a.ts')).toBe(true)
+    expect(re.test('test/a.ts')).toBe(true)
+    expect(re.test('spec/a.ts')).toBe(true)
+    expect(re.test('test/a.js')).toBe(false)
+  })
 })
 
 describe('globTool', () => {

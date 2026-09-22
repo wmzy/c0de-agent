@@ -20,6 +20,58 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/** 找到与 pattern[start]（'{'）配对的 '}'，计嵌套深度；未配对返回 -1。
+ *  此前用 indexOf('}') 只取第一个——{a,{b,c}} 被截到内层的 }，内层分支降级为
+ *  字面量，b/c 静默零命中。 */
+function findBraceEnd(pattern: string, start: number): number {
+  let depth = 0
+  for (let i = start; i < pattern.length; i++) {
+    const c = pattern[i]
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/** 按顶层逗号切分花括号内容：嵌套花括号与字符类内的逗号属于内层，不参与切分。
+ *  字符类按 []a] 口径跳过类首字面量 ]（与 globFragment 的类解析同源）。 */
+function splitBraceAlternatives(inner: string): string[] {
+  const alts: string[] = []
+  let depth = 0
+  let inClass = false
+  let current = ''
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i] ?? ''
+    if (inClass) {
+      if (c === ']') inClass = false
+      current += c
+      continue
+    }
+    if (c === '[') {
+      inClass = true
+      current += c
+      if (inner[i + 1] === ']') {
+        current += ']'
+        i++
+      }
+      continue
+    }
+    if (c === '{') depth++
+    else if (c === '}') depth--
+    if (c === ',' && depth === 0) {
+      alts.push(current)
+      current = ''
+      continue
+    }
+    current += c
+  }
+  alts.push(current)
+  return alts
+}
+
 /** Convert a glob fragment (may appear inside brace alternation) to regex source.
  *  Recursive so wildcards inside {a,b} stay wildcards instead of being escaped
  *  as literals（此前 {*.spec.ts,*.test.ts} 恒不匹配任何文件）。
@@ -60,13 +112,13 @@ function globFragment(pattern: string, segStartAt0 = true): string {
       re += '[^/]'
       i++
     } else if (c === '{') {
-      const end = pattern.indexOf('}', i)
+      const end = findBraceEnd(pattern, i)
       if (end === -1) {
         re += '\\{'
         i++
       } else {
         const inner = pattern.slice(i + 1, end)
-        const alts = inner.split(',')
+        const alts = splitBraceAlternatives(inner)
         // 空分支（{a,}）会生成空交替 (?:a|)——空串匹配一切，静默过匹配。
         // 含空分支整体降级为字面量（宁可零命中，不可命中一切）。
         if (alts.some((alt) => alt.length === 0)) {
