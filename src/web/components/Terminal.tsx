@@ -7,6 +7,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
+import { trackCommandInput } from '@/components/terminal-input.js'
 
 interface TerminalProps {
   /** WebSocket 连接（由 useTerminal hook 管理）。 */
@@ -273,29 +274,28 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
         wasAlternateRef.current = false
         currentInputRef.current = ''
       }
-      for (const char of data) {
-        if (char === '\r') {
-          if (hasOsc133Ref.current) {
-            // OSC 133 已在 prompt 开始时创建了 block → 更新 command 文本
-            const lastBlock = blocksRef.current[blocksRef.current.length - 1]
-            if (lastBlock) {
-              lastBlock.command = currentInputRef.current
-            }
-          } else {
-            // 无 OSC 133 → onData 自己创建 block（与原有逻辑一致）
-            const absRow = term.buffer.active.baseY + term.buffer.active.cursorY
-            blocksRef.current.push({
-              startRow: absRow,
-              command: currentInputRef.current,
-            })
-            // 修剪被 scrollback 裁掉的旧块
-            const maxRow = term.buffer.active.length
-            blocksRef.current = blocksRef.current.filter((b) => b.startRow <= maxRow)
+      // 输入跟踪经纯函数：DEL/退格删除光标前字符、方向键等转义序列整体跳过——
+      // 此前逐字符累积把 DEL 当可打印字符拼进命令、转义序列片段（↑ 的 "[A"）
+      // 混入命令文本，Add to Chat 的命令标签带控制垃圾且编辑后的命令失真。
+      const tracked = trackCommandInput(currentInputRef.current, data)
+      currentInputRef.current = tracked.text
+      for (const command of tracked.commands) {
+        if (hasOsc133Ref.current) {
+          // OSC 133 已在 prompt 开始时创建了 block → 更新 command 文本
+          const lastBlock = blocksRef.current[blocksRef.current.length - 1]
+          if (lastBlock) {
+            lastBlock.command = command
           }
-          currentInputRef.current = ''
-        } else if (char >= ' ') {
-          // 可打印字符累积到当前输入（跳过控制字符）
-          currentInputRef.current += char
+        } else {
+          // 无 OSC 133 → onData 自己创建 block（与原有逻辑一致）
+          const absRow = term.buffer.active.baseY + term.buffer.active.cursorY
+          blocksRef.current.push({
+            startRow: absRow,
+            command,
+          })
+          // 修剪被 scrollback 裁掉的旧块
+          const maxRow = term.buffer.active.length
+          blocksRef.current = blocksRef.current.filter((b) => b.startRow <= maxRow)
         }
       }
     }
