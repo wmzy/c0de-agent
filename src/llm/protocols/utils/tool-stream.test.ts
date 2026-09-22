@@ -25,17 +25,55 @@ describe('tool-stream appendOrStart', () => {
     expect(state[0]?.input).toBe('1}')
   })
 
-  it('drops delta when id or name is missing or empty', () => {
-    // 缺失 id/name：丢弃该 delta（不抛错、不创建 tool），state 不变。
-    // 部分兼容 provider 把 arguments 片段拆成多个 delta，每片 id/name 为空。
+  // 回归：身份字段（id/name）迟到的 provider——首个 delta 只带 index 与 arguments
+  // 片段，id/name 在后续 delta 才到达。此前无 id/name 的 delta 被整体丢弃：
+  // 领先的 arguments 片段静默蒸发，工具入参被截断/损坏（JSON 解析失败或语义漂移）。
+  // 正确语义：先缓冲片段（不发事件），身份到达后补发 tool-input-start +
+  // 已缓冲的 tool-input-delta，再追加当前片段——参数完整且事件顺序不变。
+  it('buffers argument fragments until id/name arrive, then flushes in order', () => {
+    // 首个 delta：id 有、name 缺失（身份未齐）→ 缓冲，不发任何事件
+    const first = appendOrStart(empty(), { index: 0, id: 'call-1', argumentsDelta: '{"a":' })
+    expect(first.events).toHaveLength(0)
+    expect(first.state[0]?.input).toBe('{"a":')
+    expect(first.state[0]?.started).toBe(false)
+
+    // 第二个 delta：name 到达 → 补发 start + 已缓冲片段 + 当前片段
+    const second = appendOrStart(first.state, {
+      index: 0,
+      id: 'call-1',
+      name: 'read_file',
+      argumentsDelta: '1}',
+    })
+    expect(second.events).toEqual([
+      { type: 'tool-input-start', id: 'call-1', name: 'read_file' },
+      { type: 'tool-input-delta', id: 'call-1', name: 'read_file', text: '{"a":' },
+      { type: 'tool-input-delta', id: 'call-1', name: 'read_file', text: '1}' },
+    ])
+    expect(second.state[0]?.input).toBe('{"a":1}')
+    expect(second.state[0]?.started).toBe(true)
+
+    const fin = finishAll(second.state)
+    expect(fin.tools).toEqual([{ id: 'call-1', name: 'read_file', input: { a: 1 } }])
+  })
+
+  it('keeps placeholder without events when identity never arrives', () => {
+    // 完全缺失/空 id 或 name：不抛错、不发事件；state 里是未开始的占位条目，
+    // finishAll 跳过（无法映射为工具调用，与旧的「整体丢弃」等价）。
     const missing = appendOrStart(empty(), { index: 0 })
     expect(missing.events).toHaveLength(0)
-    expect(missing.state).toEqual({})
+    expect(missing.state).toEqual({ 0: { id: '', name: '', input: '', started: false } })
 
-    // 空字符串 id/name：同样丢弃（不与 undefined 区分）
     const emptyId = appendOrStart(empty(), { index: 0, id: '', name: '' })
     expect(emptyId.events).toHaveLength(0)
-    expect(emptyId.state).toEqual({})
+    expect(emptyId.state[0]?.started).toBe(false)
+
+    // 只有 arguments 无身份的片段同样只缓冲不发射；finishAll 静默跳过
+    const frag = appendOrStart(empty(), { index: 0, argumentsDelta: '{"x":1}' })
+    expect(frag.events).toHaveLength(0)
+    expect(frag.state[0]?.input).toBe('{"x":1}')
+    const fin = finishAll(frag.state)
+    expect(fin.events).toHaveLength(0)
+    expect(fin.tools).toHaveLength(0)
   })
 
   it('does not emit delta for empty argument fragments', () => {
