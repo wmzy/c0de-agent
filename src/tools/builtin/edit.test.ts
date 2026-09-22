@@ -126,6 +126,29 @@ describe('editTool', () => {
     expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('alpha\r\nbeta\r\nline3\r\n')
   })
 
+  // 回归：行尾判定若只看**被替换区域**是否含 CRLF，则「单行区域 + 多行 newText」
+  // 漏判——区域本身不含换行（region.includes('\r\n') 为假），newText 的 \n 原样
+  // 写入 CRLF 文件，产出混合行尾（git diff 全行噪音 + 换行风格损坏）。
+  // 口径与 hashline 模式/grep/shake 一致：按文件主导行尾（content.includes('\r\n')）判定。
+  it('keeps file line endings when a single-line region is replaced by multiline text', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'line1\r\nline2\r\nline3\r\n', 'utf-8')
+    const result = await editTool.execute(
+      { path: 'f.ts', oldText: 'line2', newText: 'alpha\nbeta' },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    const after = await readFile(join(workDir, 'f.ts'), 'utf-8')
+    expect(after).toBe('line1\r\nalpha\r\nbeta\r\nline3\r\n')
+    expect(after).not.toMatch(/[^\r]\n/)
+  })
+
+  // LF 文件（主导行尾 \n）不受影响：单行区域替换为多行文本仍保持 LF。
+  it('keeps LF line endings for LF files', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'line1\nline2\nline3\n', 'utf-8')
+    await editTool.execute({ path: 'f.ts', oldText: 'line2', newText: 'alpha\nbeta' }, ctx)
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('line1\nalpha\nbeta\nline3\n')
+  })
+
   it('returns error for non-existent file', async () => {
     const result = await editTool.execute({ path: 'nope.ts', oldText: 'a', newText: 'b' }, ctx)
     expect(result._tag).toBe('error')

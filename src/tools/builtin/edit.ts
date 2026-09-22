@@ -130,10 +130,10 @@ export const editTool: ToolDef = {
         // 把 \r 让回外部行尾，否则单行替换会产出「替换文本\n」丢失 \r 的混合行尾。
         let end = origEnd
         if (end < content.length && content[end - 1] === '\r' && content[end] === '\n') end--
-        const region = content.slice(origStart, end)
-        // 被替换区域含 CRLF → newText 的 \n 转回 \r\n（保持文件主导行尾）——
-        // 否则多行替换产出的区域与文件其余部分行尾混合，git diff 全行噪音。
-        const replacement = region.includes('\r\n')
+        // 行尾口径按**文件主导行尾**判定（与 hashline 模式/grep/shake/workflows 同口径）。
+        // 只看被替换区域是否含 CRLF 会在「单行区域 + 多行 newText」漏判——区域本身
+        // 不含换行，newText 的 \n 原样写入 CRLF 文件，产出混合行尾（git diff 全行噪音）。
+        const replacement = content.includes('\r\n')
           ? newText.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
           : newText
         return content.slice(0, origStart) + replacement + content.slice(end)
