@@ -573,11 +573,53 @@ export function getLatestTodoPhasesFromMessages(
       const metadata = output.metadata as { phases?: unknown } | undefined
       const phases = metadata?.phases
       if (Array.isArray(phases)) {
-        return clonePhases(phases as TodoPhase[])
+        return sanitizeTodoPhases(phases)
       }
     }
   }
   return []
+}
+
+/**
+ * 收敛消息里 phases 数组的形状（未受信数据：会话导入的 sanitize 只校验
+ * tool_result 分片形状，不递归校验 metadata.phases——{name:1, tasks:'x'}、
+ * 缺字段、null 条目等畸形数据原样入库）。此前直接 clonePhases：
+ * phase.tasks.map 在非数组上抛 TypeError，GET/POST /api/sessions/:id/todo
+ * 击穿 500，todo 面板对该会话永久不可用。畸形条目整体丢弃（宁少勿坏，
+ * 与导入 sanitize 同口径）。
+ */
+function sanitizeTodoPhases(phases: unknown[]): TodoPhase[] {
+  const out: TodoPhase[] = []
+  for (const phase of phases) {
+    if (phase === null || typeof phase !== 'object') continue
+    const name = (phase as { name?: unknown }).name
+    const tasks = (phase as { tasks?: unknown }).tasks
+    if (typeof name !== 'string' || !Array.isArray(tasks)) continue
+    const cleanTasks: TodoItem[] = []
+    let wellFormed = true
+    for (const task of tasks) {
+      if (task === null || typeof task !== 'object') {
+        wellFormed = false
+        break
+      }
+      const content = (task as { content?: unknown }).content
+      const status = (task as { status?: unknown }).status
+      if (
+        typeof content !== 'string' ||
+        (status !== 'pending' &&
+          status !== 'in_progress' &&
+          status !== 'completed' &&
+          status !== 'abandoned')
+      ) {
+        wellFormed = false
+        break
+      }
+      cleanTasks.push({ content, status })
+    }
+    if (!wellFormed) continue
+    out.push({ name, tasks: cleanTasks })
+  }
+  return out
 }
 
 // =============================================================================

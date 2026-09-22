@@ -683,6 +683,38 @@ describe('getLatestTodoPhasesFromMessages', () => {
     const phases2 = getLatestTodoPhasesFromMessages(messages)
     expect(at(at(phases2, 0).tasks, 0).status).toBe('pending')
   })
+
+  // 回归：消息里的 phases 是未受信数据（会话导入的 sanitize 只校验 tool_result
+  // 形状，不递归校验 metadata.phases——{name:1, tasks:'garbage'} 等畸形条目
+  // 原样入库）。此前直接 clonePhases：phase.tasks.map 在非数组上抛 TypeError，
+  // GET/POST /api/sessions/:id/todo 击穿 500，todo 面板对该会话永久不可用。
+  it('drops malformed phase entries instead of throwing', () => {
+    const messages = [
+      {
+        role: 'tool',
+        content: [
+          {
+            _tag: 'tool_result',
+            tool: 'todo',
+            output: {
+              _tag: 'success',
+              metadata: {
+                phases: [
+                  { name: 'OK', tasks: [{ content: 'A', status: 'pending' }] },
+                  { name: 1, tasks: 'garbage' },
+                  { name: 'NoTasks' },
+                  { name: 'BadTask', tasks: [{ content: 'B' }] },
+                  null,
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ]
+    const phases = getLatestTodoPhasesFromMessages(messages)
+    expect(phases).toEqual([{ name: 'OK', tasks: [{ content: 'A', status: 'pending' }] }])
+  })
 })
 
 // ── clonePhases ───────────────────────────────────────────
