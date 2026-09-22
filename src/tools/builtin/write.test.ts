@@ -37,6 +37,21 @@ describe('writeTool', () => {
     expect(written).toBe('new')
   })
 
+  it('报告 UTF-8 字节数而非 UTF-16 码元数（非 ASCII 内容）', async () => {
+    // content.length 是 UTF-16 码元数：'你好，世界！' 6 个字符在 UTF-8 落盘为
+    // 18 字节——此前输出 "Wrote 6 bytes"，字节数被低估 3 倍，误导模型/用户
+    // 对落盘文件大小的判断。
+    const content = '你好，世界！'
+    const result = await writeTool.execute({ path: 'cn.txt', content }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toBe(`Wrote ${Buffer.byteLength(content, 'utf8')} bytes to cn.txt`)
+      expect(result.output).toContain('Wrote 18 bytes')
+    }
+    const written = await readFile(join(workDir, 'cn.txt'), 'utf-8')
+    expect(written).toBe(content)
+  })
+
   it('creates parent directories', async () => {
     const result = await writeTool.execute({ path: 'sub/dir/file.txt', content: 'nested' }, ctx)
     expect(result._tag).toBe('success')
