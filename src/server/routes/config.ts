@@ -18,7 +18,6 @@ import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
 import { getByDirectory, getProject, trustProject } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
-import type { ProviderConfig } from '../../shared/types/llm.js'
 import { apiError } from '../middleware/error.js'
 import { syncRegistryFromConfig } from '../server.js'
 import type { ServerContext } from '../types.js'
@@ -26,13 +25,17 @@ import type { ServerContext } from '../types.js'
 /** 检查每个 provider 的 apiKey 能否在本机解密（机器绑定密钥换机/容器重建后会失败）。 */
 function providerApiKeyWarnings(providers: Config['providers']): string[] {
   const warnings: string[] = []
-  for (const p of providers) {
-    if (!p.apiKey || !isEncryptedSecret(p.apiKey)) continue
+  for (const entry of providers) {
+    // 手改/旧版配置文件的畸形条目：跳过错报（registry 构建侧同口径跳过）。
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const p = entry as Record<string, unknown>
+    const apiKey = p.apiKey
+    if (typeof apiKey !== 'string' || apiKey.length === 0 || !isEncryptedSecret(apiKey)) continue
     try {
-      decryptSecret(p.apiKey)
+      decryptSecret(apiKey)
     } catch {
       warnings.push(
-        `provider "${p.name || ''}" 的 apiKey 无法在本机解密（配置来自其他机器），请重新设置`,
+        `provider "${(typeof p.name === 'string' ? p.name : '') || ''}" 的 apiKey 无法在本机解密（配置来自其他机器），请重新设置`,
       )
     }
   }
@@ -220,11 +223,17 @@ function createConfigRoute(ctx: ServerContext): Hono {
       }
     }
     // spec §24.2：provider apiKey 落盘前加密，明文不持久化。
-    // 已加密（enc: 前缀）或无 apiKey 的透传。
+    // 已加密（enc: 前缀）或无 apiKey 的透传。映射须对畸形条目空安全：
+    // [null] 此前在 p.apiKey 处 TypeError 击穿 500——畸形条目原样保留，
+    // 由下方 applyScopedPatch 的 providers 形状校验显式 400。
     if (Array.isArray(patch.providers)) {
-      patch.providers = (patch.providers as ProviderConfig[]).map((p) =>
-        p.apiKey && !isEncryptedSecret(p.apiKey) ? { ...p, apiKey: encryptSecret(p.apiKey) } : p,
-      )
+      patch.providers = (patch.providers as unknown[]).map((entry) => {
+        if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return entry
+        const p = entry as Record<string, unknown>
+        return typeof p.apiKey === 'string' && p.apiKey.length > 0 && !isEncryptedSecret(p.apiKey)
+          ? { ...p, apiKey: encryptSecret(p.apiKey) }
+          : entry
+      })
     }
     // 按作用域最小落盘：patch 只合并进指定作用域原始文件，
     // 不把合并结果（含默认值/另一作用域配置）整体序列化进文件。

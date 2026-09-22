@@ -104,6 +104,18 @@ describe('config route — apiKey 加密（spec §24.2）', () => {
     expect(ctx.config.providers[0]?.apiKey).toBeUndefined()
   })
 
+  it('PATCH providers 条目为 null → 400（不得在 apiKey 加密映射处 TypeError 500）', async () => {
+    const { app } = await setup({ providers: [] })
+    const res = await patchBody(app, { providers: [null] })
+    expect(res.status).toBe(400)
+  })
+
+  it('PATCH providers 条目为字符串 → 400（不得把毒化条目持久化进配置）', async () => {
+    const { app } = await setup({ providers: [] })
+    const res = await patchBody(app, { providers: ['oops'] })
+    expect(res.status).toBe(400)
+  })
+
   it('GET / 不脱敏 apiKey（config route 直接返回；脱敏在 provider route）', async () => {
     const { app } = await setup({
       providers: [{ name: 'demo', protocol: 'openai', apiKey: 'sk-x', baseURL: 'https://demo/v1' }],

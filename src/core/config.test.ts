@@ -250,6 +250,27 @@ describe('applyScopedPatch（scoped patch，null=删除）', () => {
     })
     expect(applyScopedPatch({ a: 1 }, { a: null })).toEqual({})
   })
+
+  it('providers 畸形条目显式拒绝（此前 REST 500 / 落盘毒化 / 启动击穿）', () => {
+    expect(() => applyScopedPatch({}, { providers: [null] })).toThrow(/providers\[0\]/)
+    expect(() => applyScopedPatch({}, { providers: ['oops'] })).toThrow(/providers\[0\]/)
+    expect(() => applyScopedPatch({}, { providers: [{}] })).toThrow(/providers\[0\].*name/)
+    expect(() => applyScopedPatch({}, { providers: [{ name: 'x', baseURL: 123 }] })).toThrow(
+      /baseURL/,
+    )
+    expect(() => applyScopedPatch({}, { providers: [{ name: 'x', apiKey: 123 }] })).toThrow(
+      /apiKey/,
+    )
+    // 合法条目（含 _tag 旧格式与空数组）原样通过
+    expect(applyScopedPatch({}, { providers: [{ name: 'demo', protocol: 'openai' }] })).toEqual({
+      providers: [{ name: 'demo', protocol: 'openai' }],
+    })
+    expect(applyScopedPatch({}, { providers: [{ _tag: 'legacy' }] })).toEqual({
+      providers: [{ _tag: 'legacy' }],
+    })
+    expect(applyScopedPatch({}, { providers: [] })).toEqual({ providers: [] })
+    expect(applyScopedPatch({ a: 1 }, { providers: null })).toEqual({ a: 1 })
+  })
 })
 
 describe('loadConfigScopes / mergeRaw / saveConfigScoped 作用域隔离', () => {

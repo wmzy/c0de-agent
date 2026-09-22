@@ -23,14 +23,19 @@ function buildRegistryFromConfig(config: Config): Registry {
 }
 
 function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void {
+  // 手改/旧版配置文件可能携带畸形条目（null/字符串等）：跳过而非击穿
+  // registry 重建（syncRegistryFromConfig 在配置保存后同步调用、bootstrapServerContext
+  // 在启动时构建——任一处抛错即保存接口 500 或服务无法启动）。
+  // 写入侧已在 applyScopedPatch 显式拒绝，此处是读取侧的自愈兜底。
+  if (p === null || typeof p !== 'object' || Array.isArray(p)) return
   // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
   const name = p.name || (p as { _tag?: string })._tag
-  if (!name || !p.baseURL) return
+  if (!name || typeof p.baseURL !== 'string' || !p.baseURL) return
   // 机器绑定密文换机后不可解：跳过该 provider 并告警，而非上抛击穿
   // serve 启动（bootstrapServerContext）/ 配置保存（syncRegistryFromConfig）/
   // 项目级配置注册表——否则跨机同步的 config.json 让整个服务无法启动或请求 500。
   // 明文与解密成功的密文走正常注册。
-  const apiKey = p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
+  const apiKey = typeof p.apiKey === 'string' && p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
   if (p.apiKey && apiKey === undefined) {
     console.warn(
       `provider "${name}" 的 apiKey 无法在本机解密（配置来自其他机器或密文损坏），已跳过注册，请重新设置`,

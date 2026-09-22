@@ -231,6 +231,43 @@ function assertFiniteNumbers(value: unknown, path: string): void {
 }
 
 /**
+ * 校验 providers 列表条目形状。providers 是配置写入的唯一「对象数组」字段，
+ * 三个写入入口（CLI config set、/config 斜杠、REST PATCH）都经 applyScopedPatch
+ * 汇聚——畸形条目此前被原样落盘/透传：
+ *  - null 条目：REST PATCH 的 apiKey 加密映射处 TypeError 500；已落盘的 null
+ *    随后让 registry 重建（启动/同步）读 p.name 抛 TypeError，服务无法启动。
+ *  - 字符串条目：静默持久化成毒化配置，registry 构建时被跳过——UI 显示已保存，
+ *    provider 永不可用。
+ *  - baseURL/apiKey 非字符串：registerProviderFromConfig 对 baseURL 调
+ *    .replace/.endsWith 抛 TypeError（同步 registry 或下次启动击穿）。
+ * 显式拒绝，错误含条目下标供调用方定位。name 兼容注册表读取侧的 _tag 回退
+ * （旧版 config.json 格式），但两者都缺则拒绝。
+ */
+function assertValidProviderList(value: unknown, path: string): void {
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} 必须是 provider 对象数组（${JSON.stringify(value)}）`)
+  }
+  for (let i = 0; i < value.length; i++) {
+    const p = value[i]
+    if (p === null || typeof p !== 'object' || Array.isArray(p)) {
+      throw new Error(`${path}[${i}] 必须是 provider 对象（收到 ${JSON.stringify(p)}）`)
+    }
+    const e = p as Record<string, unknown>
+    const name = typeof e.name === 'string' && e.name.length > 0 ? e.name : undefined
+    const tag = typeof e._tag === 'string' && e._tag.length > 0 ? e._tag : undefined
+    if (name === undefined && tag === undefined) {
+      throw new Error(`${path}[${i}] 缺少非空字符串 name（收到 ${JSON.stringify(p)}）`)
+    }
+    if (e.baseURL !== undefined && typeof e.baseURL !== 'string') {
+      throw new Error(`${path}[${i}].baseURL 必须是字符串（收到 ${JSON.stringify(e.baseURL)}）`)
+    }
+    if (e.apiKey !== undefined && typeof e.apiKey !== 'string') {
+      throw new Error(`${path}[${i}].apiKey 必须是字符串（收到 ${JSON.stringify(e.apiKey)}）`)
+    }
+  }
+}
+
+/**
  * 把 patch 应用到某个作用域的原始配置（scoped patch，null=删除）：
  * - 深合并：嵌套普通对象递归合并，数组整体替换（providers 等列表语义）；
  * - 值为 undefined 的键跳过；
@@ -252,6 +289,10 @@ function applyScopedPatch(
     if (val === null) {
       delete result[key]
       continue
+    }
+    // providers 条目形状校验（唯一对象数组字段；畸形条目落盘即毒化配置）。
+    if (key === 'providers') {
+      assertValidProviderList(val, 'config.providers')
     }
     const current = result[key]
     if (
