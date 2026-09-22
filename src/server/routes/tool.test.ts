@@ -86,4 +86,52 @@ describe('tool route', () => {
     expect(body.confirmed).toBe(true)
     expect(resolved).toBe(true)
   })
+
+  it('POST /confirm 畸形 JSON body → 400 而非 500', async () => {
+    const { app } = await setup()
+    const res = await app.request('/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not-json',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /confirm null body → 400 而非 500', async () => {
+    const { app } = await setup()
+    const res = await app.request('/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /confirm 非字符串 toolCallId → 400', async () => {
+    const { app } = await setup()
+    const res = await app.request('/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toolCallId: 42, approved: true }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /confirm 非布尔 approved 按拒绝处理（"false" 字符串不得放行）', async () => {
+    const { app, ctx } = await setup()
+    const resolutions: unknown[] = []
+    ctx.permissionStore.register('tc-str', {
+      request: { toolCallId: 'tc-str', tool: 'bash', input: { command: 'rm -rf /' } },
+      resolve: (r) => {
+        resolutions.push(r)
+      },
+    })
+    const res = await app.request('/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toolCallId: 'tc-str', approved: 'false' }),
+    })
+    expect(res.status).toBe(200)
+    expect(resolutions).toEqual([{ _tag: 'deny', reason: 'User denied permission' }])
+  })
 })

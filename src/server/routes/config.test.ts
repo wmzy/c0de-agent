@@ -227,4 +227,24 @@ describe('config route — 权限模式运行时同步（P1 修复）', () => {
     await patchBody(app, { defaultModel: 'gpt-5' })
     expect(ctx.permissionMode).toBe('default')
   })
+
+  it('PATCH 畸形 JSON body → 400 而非 500', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{broken-json',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('PATCH null body → 400 而非 500', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
 })

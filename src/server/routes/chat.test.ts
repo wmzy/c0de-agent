@@ -969,6 +969,45 @@ describe('chat route (control endpoints)', () => {
     const steeringQueue = (wfRun?.state as { steeringQueue: string[] } | undefined)?.steeringQueue
     expect(steeringQueue).toContain('改用 pnpm 安装')
   })
+
+  it.each(['/abort', '/pause', '/resume', '/steer'])(
+    'POST %s 畸形 JSON body → 400 而非 500',
+    async (path) => {
+      const { app } = await setup()
+      const res = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{broken-json',
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it.each(['/abort', '/pause', '/resume', '/steer'])(
+    'POST %s null body → 400 而非 500',
+    async (path) => {
+      const { app } = await setup()
+      const res = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'null',
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it.each(['/abort', '/pause', '/resume', '/steer'])(
+    'POST %s 缺 sessionId → 400 而非静默 false',
+    async (path) => {
+      const { app } = await setup()
+      const res = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(path === '/steer' ? { message: 'm' } : {}),
+      })
+      expect(res.status).toBe(400)
+    },
+  )
 })
 
 describe('POST / 多模态与文件上下文', () => {

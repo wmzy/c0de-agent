@@ -1234,7 +1234,18 @@ function createChatRoute(ctx: ServerContext): Hono {
       : undefined
 
   app.post('/abort', async (c) => {
-    const { sessionId } = await c.req.json()
+    // 畸形 JSON / 非对象 body / 缺 sessionId → 400（与其他写端点同口径）。
+    // 此前裸 destructure：畸形 JSON 击穿 Hono 500，null body 在解构处
+    // TypeError 500，缺 sessionId 静默回 { aborted: false }。
+    const body = (await c.req.json().catch(() => null)) as { sessionId?: unknown } | null
+    const sessionId =
+      body !== null &&
+      typeof body === 'object' &&
+      !Array.isArray(body) &&
+      typeof body.sessionId === 'string'
+        ? body.sessionId
+        : ''
+    if (!sessionId) return apiError(c, 400, 'BAD_REQUEST', 'sessionId is required')
     // 工作流运行期间发起会话无主 run：中止请求路由到实际的工作流 run。
     const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
     if (busyWorkflowId) {
@@ -1244,7 +1255,15 @@ function createChatRoute(ctx: ServerContext): Hono {
   })
 
   app.post('/pause', async (c) => {
-    const { sessionId } = await c.req.json()
+    const body = (await c.req.json().catch(() => null)) as { sessionId?: unknown } | null
+    const sessionId =
+      body !== null &&
+      typeof body === 'object' &&
+      !Array.isArray(body) &&
+      typeof body.sessionId === 'string'
+        ? body.sessionId
+        : ''
+    if (!sessionId) return apiError(c, 400, 'BAD_REQUEST', 'sessionId is required')
     // 级联子 run（P1：子 agent 现已注册，暂停主 run 必须一并暂停——
     // 否则后台子 agent 在用户认为「已暂停」时继续执行）。
     const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
@@ -1258,7 +1277,15 @@ function createChatRoute(ctx: ServerContext): Hono {
   })
 
   app.post('/resume', async (c) => {
-    const { sessionId } = await c.req.json()
+    const body = (await c.req.json().catch(() => null)) as { sessionId?: unknown } | null
+    const sessionId =
+      body !== null &&
+      typeof body === 'object' &&
+      !Array.isArray(body) &&
+      typeof body.sessionId === 'string'
+        ? body.sessionId
+        : ''
+    if (!sessionId) return apiError(c, 400, 'BAD_REQUEST', 'sessionId is required')
     // 权限超时暂停工作流后，发起会话展示「恢复」按钮——路由到工作流 run 真正恢复。
     // 级联恢复子 run：暂停时子 run 一并暂停，仅恢复主 run 会让父的工具批次
     // 永远等待已暂停的子 agent（死锁）。
@@ -1273,21 +1300,29 @@ function createChatRoute(ctx: ServerContext): Hono {
   })
 
   app.post('/steer', async (c) => {
-    const body = await c.req.json()
-    const starting = runStarting(c, body.sessionId)
+    const body = (await c.req.json().catch(() => null)) as {
+      sessionId?: unknown
+      message?: unknown
+    } | null
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return apiError(c, 400, 'BAD_REQUEST', '请求体必须是 JSON 对象')
+    }
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+    if (!sessionId) return apiError(c, 400, 'BAD_REQUEST', 'sessionId is required')
+    const starting = runStarting(c, sessionId)
     if (starting) return starting
     const message = typeof body.message === 'string' ? body.message.trim() : ''
     if (!message) return c.json({ steered: false })
     // P1 工作流路由：工作流运行期间 steer 目标为实际的 workflow run
     //（此前 steer 恒 false、指令静默丢失，用户以为已生效）。
-    const busyWorkflowId = ctx.workflowBusyBySession.get(body.sessionId)
-    const steered = ctx.agentManager.steer(busyWorkflowId ?? body.sessionId, message)
+    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
+    const steered = ctx.agentManager.steer(busyWorkflowId ?? sessionId, message)
     // P0 闭环：steering 持久化为会话条目——用户运行中输入追加指令曾是内存瞬态，
     // 刷新后彻底丢失；现在与消息同样入史（context 重建时作为 system 消息注入，
     // 时间线经 /messages 渲染为 user steering 块）。
     if (steered) {
       await insertEntry(ctx.db, {
-        sessionId: body.sessionId,
+        sessionId,
         tag: 'steering',
         content: { text: message },
       }).catch(() => {

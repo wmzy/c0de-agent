@@ -169,9 +169,13 @@ function createConfigRoute(ctx: ServerContext): Hono {
   // 仅当写入目标是服务启动目录项目时同步服务级内存配置与 LLM registry——
   // 其他项目的配置不污染服务级 provider 注册表（会话级按需解析）。
   app.patch('/', async (c) => {
-    const body = (await c.req.json()) as Record<string, unknown> & {
-      scope?: 'global' | 'project'
-      projectId?: string
+    // 畸形 JSON / 非对象 body → 400（此前裸 await c.req.json()：畸形 JSON
+    // 击穿 Hono 500，null body 在 body.scope 处 TypeError 500）。
+    const body = (await c.req.json().catch(() => null)) as
+      | (Record<string, unknown> & { scope?: 'global' | 'project'; projectId?: string })
+      | null
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return apiError(c, 400, 'BAD_REQUEST', '请求体必须是 JSON 对象')
     }
     const scope = body.scope === 'global' ? 'global' : 'project'
     const { scope: _omit, projectId, ...patch } = body

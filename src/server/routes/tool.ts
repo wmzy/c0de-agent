@@ -37,8 +37,22 @@ function createToolRoute(ctx: ServerContext): Hono {
 
   // 确认工具执行权限
   app.post('/confirm', async (c) => {
-    const body = await c.req.json()
-    const ok = ctx.permissionStore.resolve(body.toolCallId, body.approved)
+    // 畸形 JSON / 非对象 body → 400（与其他写端点同口径：.catch + 显式类型校验）。
+    // 此前裸 await c.req.json()：畸形 JSON 击穿 Hono 500，null body 在
+    // body.toolCallId 处 TypeError 500。
+    const body = (await c.req.json().catch(() => null)) as {
+      toolCallId?: unknown
+      approved?: unknown
+    } | null
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return apiError(c, 400, 'BAD_REQUEST', '请求体必须是 JSON 对象')
+    }
+    if (typeof body.toolCallId !== 'string' || body.toolCallId.length === 0) {
+      return apiError(c, 400, 'BAD_REQUEST', 'toolCallId is required')
+    }
+    // 仅显式 true 放行：非布尔（"false" 字符串等 truthy 垃圾）按拒绝处理——
+    // 绝不让客户端序列化缺陷把「拒绝」翻成「放行」。
+    const ok = ctx.permissionStore.resolve(body.toolCallId, body.approved === true)
     if (!ok) {
       return apiError(c, 404, 'NOT_FOUND', 'No pending permission for this tool call')
     }
