@@ -8,12 +8,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { eq, isNull } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
-import { projects, sessions } from '../db/schema.js'
+import { kanbanBoards, projects, sessions } from '../db/schema.js'
+import { createKanbanStore } from '../kanban/index.js'
 import type { Config } from '../shared/types/config.js'
 import { enforceProjectTrust, fromDirectory, listProjects, trustProject } from './project.js'
 import { resolveProject } from './resolve.js'
@@ -70,6 +71,77 @@ describe('fromDirectory', () => {
       const moved = await db.db.select().from(sessions).where(eq(sessions.id, sessionId))
       expect(moved).toHaveLength(1)
       expect(moved[0]?.projectId).toBe(canonical)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  it('合并漂移项目时看板随会话一起迁移（不产生不可达的孤儿看板）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fromdir-board-'))
+    try {
+      const db = await setup()
+      const canonical = resolveProject(dir).id
+      const driftProjectId = 'driftboard000000'
+      // 漂移项目（id 与 worktree 解析结果不一致）名下已有看板与卡片
+      await db.db.insert(projects).values({ id: driftProjectId, worktree: dir, name: 'dup' })
+      const store = createKanbanStore(db, driftProjectId)
+      const board = await store.getBoard()
+      const columnId = board.columns[0]?.id ?? 'todo'
+      await store.addCard({ title: 'keep me', columnId })
+
+      await fromDirectory(db, dir)
+
+      // 看板与卡片必须跟着会话迁到规范项目：否则删除漂移项目行后 FK set null
+      // 把它变成「projectId 为 null 且未软删」的孤儿——任何项目视图都查不到，
+      // 看板回收站也不列它（只列已软删），用户的卡片静默消失且无法恢复。
+      const migrated = await createKanbanStore(db, canonical).getBoard()
+      expect(migrated.cards.map((c) => c.title)).toEqual(['keep me'])
+      expect(migrated.id).toBe(board.id)
+      const orphans = await db.db
+        .select({ id: kanbanBoards.id })
+        .from(kanbanBoards)
+        .where(isNull(kanbanBoards.projectId))
+      expect(orphans).toHaveLength(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('规范项目已有活动看板时，漂移看板进回收站（可恢复）而非静默孤儿化', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fromdir-board2-'))
+    try {
+      const db = await setup()
+      const canonical = resolveProject(dir).id
+      // 规范项目先注册并建活动看板（uq_kanban_boards_project 唯一约束不允许两块并存）
+      await fromDirectory(db, dir)
+      const canonicalStore = createKanbanStore(db, canonical)
+      const canonicalBoard = await canonicalStore.getBoard()
+      await canonicalStore.addCard({
+        title: 'canonical card',
+        columnId: canonicalBoard.columns[0]?.id ?? 'todo',
+      })
+      // 漂移项目同样有看板与卡片
+      const driftProjectId = 'driftboard111111'
+      await db.db.insert(projects).values({ id: driftProjectId, worktree: dir, name: 'dup' })
+      const driftStore = createKanbanStore(db, driftProjectId)
+      const driftBoard = await driftStore.getBoard()
+      await driftStore.addCard({
+        title: 'drift card',
+        columnId: driftBoard.columns[0]?.id ?? 'todo',
+      })
+
+      await fromDirectory(db, dir)
+
+      // 规范项目的看板不受影响
+      const kept = await canonicalStore.getBoard()
+      expect(kept.cards.map((c) => c.title)).toEqual(['canonical card'])
+      // 漂移看板软删进回收站（deletedAt 记录 + 原项目名/目录），可经看板回收站恢复/合并
+      const [drift] = await db.db
+        .select()
+        .from(kanbanBoards)
+        .where(eq(kanbanBoards.id, driftBoard.id))
+      expect(drift?.deletedAt).not.toBeNull()
+      expect(drift?.deletedProjectName).toBe('dup')
+      expect(drift?.deletedProjectWorktree).toBe(dir)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

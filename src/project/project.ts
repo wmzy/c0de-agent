@@ -1,5 +1,5 @@
 import { basename } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { loadConfigScopes } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, projects, sessions } from '../db/schema.js'
@@ -80,8 +80,8 @@ export async function fromDirectory(handle: DB, directory: string): Promise<Proj
 }
 
 /**
- * 合并同 worktree 下 id ≠ canonicalId 的项目记录：迁移其会话到 canonicalId 后删除。
- * 清理因 id 漂移（remote 变更）产生的历史重复项目，使列表不再出现同名重复项，
+ * 合并同 worktree 下 id ≠ canonicalId 的项目记录：迁移其会话（与看板）到 canonicalId
+ * 后删除。清理因 id 漂移（remote 变更）产生的历史重复项目，使列表不再出现同名重复项，
  * 也让挂在漂移 id 上的会话重新归属规范项目。
  */
 async function mergeDuplicateProjects(
@@ -96,8 +96,58 @@ async function mergeDuplicateProjects(
       .update(sessions)
       .set({ projectId: canonicalId })
       .where(eq(sessions.projectId, dup.id))
+    await adoptKanbanBoard(handle, dup, canonicalId)
     await handle.db.delete(projects).where(eq(projects.id, dup.id))
   }
+}
+
+/**
+ * 把漂移项目的活动看板随会话一起迁到规范项目。看板（及其卡片）必须显式处理——
+ * 删除项目行后 FK `kanban_boards.project_id` 是 set null：留着不管会得到
+ * 「projectId 为 null 且 deletedAt 也为 null」的孤儿看板，任何项目视图都查不到它
+ * （createKanbanStore 按 projectId 查、看板回收站只列已软删），卡片静默消失且
+ * 无任何恢复入口——同口径缺陷在 relocateProject 与 DELETE /api/projects/:id 早已修掉，
+ * 只有本路径漏了。
+ *
+ * 规范项目已有活动看板时（uq_kanban_boards_project 唯一约束不允许两块并存）不覆盖
+ * 用户现有看板：把漂移看板软删进回收站并记录原项目名/目录，用户可在看板回收站里
+ * 用「合并恢复」把卡片并回现有看板（与项目删除路径同口径的可恢复语义）。
+ */
+async function adoptKanbanBoard(
+  handle: DB,
+  /** 漂移项目（原始 DB 行或 Project 均可，仅取 id/name/worktree）。 */
+  from: { id: string; name: string | null; worktree: string },
+  toProjectId: string,
+): Promise<void> {
+  const [board] = await handle.db
+    .select({ id: kanbanBoards.id })
+    .from(kanbanBoards)
+    .where(and(eq(kanbanBoards.projectId, from.id), isNull(kanbanBoards.deletedAt)))
+    .limit(1)
+  if (!board) return
+  const [existing] = await handle.db
+    .select({ id: kanbanBoards.id })
+    .from(kanbanBoards)
+    .where(and(eq(kanbanBoards.projectId, toProjectId), isNull(kanbanBoards.deletedAt)))
+    .limit(1)
+  if (!existing) {
+    await handle.db
+      .update(kanbanBoards)
+      .set({ projectId: toProjectId, updatedAt: new Date() })
+      .where(eq(kanbanBoards.id, board.id))
+    return
+  }
+  await handle.db
+    .update(kanbanBoards)
+    .set({
+      deletedAt: new Date(),
+      deletedProjectName: from.name ?? from.worktree,
+      deletedProjectWorktree: from.worktree,
+      // 恢复后重删须重新经历「到期 → 宽限」周期（与 softDeleteKanbanBoard 同口径）
+      purgePendingAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(kanbanBoards.id, board.id))
 }
 
 export async function listProjects(handle: DB): Promise<Project[]> {
