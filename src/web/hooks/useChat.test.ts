@@ -878,3 +878,107 @@ describe('useChat 文件视图失效（P1）', () => {
     expect(fileInvalidations).toHaveLength(0)
   })
 })
+
+// 回归（P1 后台附着）：附着轮询此前把「非 running」一律当作 run 结束——
+// run 进入 paused（权限确认超时/预算超支暂停）时走 finishAttach：附着态清空、
+// runPaused 从未置位。而「恢复」入口要求 runPaused && isStreaming、冷启动暂停
+// 横幅只在挂载时判定一次——该标签页于是既看不到恢复入口，发送新消息又撞
+// 409 RUN_ACTIVE（run 仍注册在服务端），会话在本页锁死到手动刷新为止。
+describe('useChat 附着轮询的暂停态（P1）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  function statusFetch(statuses: Array<Record<string, unknown>>): ReturnType<typeof vi.fn> {
+    let idx = 0
+    return vi.fn(async (url: string) => {
+      if (String(url).includes('/status')) {
+        const body = statuses[Math.min(idx, statuses.length - 1)]
+        idx++
+        return {
+          ok: true,
+          status: 200,
+          json: async () => body,
+          text: async () => JSON.stringify(body),
+        }
+      }
+      // 挂起权限查询等其余请求
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ pending: null }),
+        text: async () => JSON.stringify({ pending: null }),
+      }
+    })
+  }
+
+  it('附着期间 run 暂停 → 保留「恢复」入口（runPaused + isStreaming）并继续轮询到结束', async () => {
+    vi.useFakeTimers()
+    // 调用序：attach 首次查询 running → 轮询 tick1 paused → tick2 running（已恢复）
+    // → tick3 idle（run 结束）
+    vi.stubGlobal(
+      'fetch',
+      statusFetch([
+        { _tag: 'running' },
+        { _tag: 'paused', pauseReason: '预算超支：本月已达上限' },
+        { _tag: 'running' },
+        { _tag: 'idle' },
+      ]),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    expect(result.current.attachedRun).toBe(true)
+    expect(result.current.isStreaming).toBe(true)
+
+    // 首个轮询 tick（2s 后）读到 paused
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.runPaused).toBe(true)
+    expect(result.current.runPauseReason).toBe('预算超支：本月已达上限')
+    // 恢复入口可见的前提：isStreaming 保持 true（ChatSession 的暂停横幅条件）
+    expect(result.current.isStreaming).toBe(true)
+
+    // 暂停期间仍在轮询：下一 tick 看到 running（用户已恢复）→ 清暂停态
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.runPaused).toBe(false)
+    expect(result.current.isStreaming).toBe(true)
+
+    // run 结束 → 正常收尾
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachedRun).toBe(false)
+  })
+
+  it('卸载后停止附着轮询（不再发出 status 请求）', async () => {
+    vi.useFakeTimers()
+    const fetchMock = statusFetch([{ _tag: 'running' }])
+    vi.stubGlobal('fetch', fetchMock)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result, unmount } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    const callsBefore = fetchMock.mock.calls.filter(([u]) => String(u).includes('/status')).length
+    unmount()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    const callsAfter = fetchMock.mock.calls.filter(([u]) => String(u).includes('/status')).length
+    expect(callsAfter).toBe(callsBefore)
+  })
+})

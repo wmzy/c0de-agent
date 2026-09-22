@@ -115,7 +115,7 @@ const sessionAPI = {
       pending: { toolCallId: string; tool: string; input: unknown } | null
     }>(`/api/permissions/${encodeURIComponent(sessionId)}/pending`),
   branches: (id: string) => get<Session[]>(`/api/sessions/${id}/branches`),
-  status: (id: string) => get<{ _tag: string }>(`/api/sessions/${id}/status`),
+  status: (id: string) => get<{ _tag: string; pauseReason?: string }>(`/api/sessions/${id}/status`),
   open: (id: string) => post<{ ok: boolean }>(`/api/sessions/${id}/open`, {}),
   shakePreview: (id: string) =>
     post<{ regions: ShakeRegionView[] }>(`/api/sessions/${id}/shake/preview`, {}),

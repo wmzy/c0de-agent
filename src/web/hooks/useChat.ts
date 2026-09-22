@@ -63,6 +63,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     setState(INITIAL)
   }, [sessionId])
 
+  // 卸载时停止附着轮询：tick 链每轮自行续期，不清理的话组件卸载后仍会
+  // 持续请求 /status（暂停态下 run 可长期挂着，链无自然终止点）。
+  useEffect(() => stopPoll, [stopPoll])
+
   // 执行 SSE 流并归约事件；捕获 409 SEGMENT_BREAK_REQUIRED 时存入 pendingSegmentBreak。
   // SSE 流未收到 done 事件结束时标记 interrupted（服务重启等）；
   // 但若已收到 error 事件，说明是服务端正常错误（LLM 报错等），不标记中断。
@@ -439,7 +443,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
   }, [qc, sessionId, stopPoll])
 
-  /** P1：附着轮询——每 2s 查状态，run 结束即刷新收尾。代数守卫防重复轮询。 */
+  /** P1：附着轮询——每 2s 查状态，run 结束即刷新收尾。代数守卫防重复轮询。
+   *  paused 不是结束：run 仍注册在服务端（可 resume），只是没有进展——继续轮询
+   *  并映射为「暂停」态（runPaused + isStreaming），让「恢复」入口可见；从暂停
+   *  恢复后下一 tick 看到 running 即清暂停态。此前 paused 落进 finishAttach 的
+   *  结束分支：附着态清空、runPaused 从未置位——该标签页既无恢复入口，发送新
+   *  消息又撞 409 RUN_ACTIVE（run 仍占用），会话锁死到手动刷新为止。 */
   const pollAttachedRun = useCallback(() => {
     stopPoll()
     const token = ++pollGenRef.current
@@ -447,9 +456,19 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (token !== pollGenRef.current) return
       try {
         const st = await sessionAPI.status(sessionId)
-        if (st?._tag === 'running') {
-          if (token !== pollGenRef.current) return
-          pollTimerRef.current = setTimeout(() => void tick(), 2000)
+        if (token !== pollGenRef.current) return
+        if (st?._tag === 'running' || st?._tag === 'paused') {
+          const paused = st._tag === 'paused'
+          setState((s) => ({
+            ...s,
+            isStreaming: true,
+            // 暂停时改由暂停横幅（runPaused && isStreaming）承载状态与「恢复」，
+            // 不再显示「运行中…中止」的附着横幅。
+            attachedRun: !paused,
+            runPaused: paused,
+            runPauseReason: paused ? (st.pauseReason ?? null) : null,
+          }))
+          pollTimerRef.current = setTimeout(() => void tick(), paused ? 3000 : 2000)
         } else {
           finishAttach()
         }
