@@ -1106,6 +1106,70 @@ describe('session route', () => {
       const rows = await ctx.db.db.select().from(usageEvents)
       expect(rows).toHaveLength(0)
     })
+
+    it('畸形 content 分片（text 非字符串/tool 字段类型违规）不毒化会话——导入后 token 估算不崩溃', async () => {
+      const { app, ctx } = await setup()
+      const projectId = 'import-poison-part'
+      await ctx.db.db
+        .insert(projects)
+        .values({ id: projectId, worktree: '/tmp/import-poison-part' })
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: 1,
+          session: { title: 'Poison' },
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { _tag: 'text', text: 123 },
+                { _tag: 'text', text: 'ok' },
+                { _tag: 'tool_call', id: 'c1', tool: 'read', input: 'oops' },
+                { _tag: 'tool_result', id: 'c1', tool: 'read', output: 'oops' },
+              ],
+            },
+          ],
+          projectId,
+        }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { sessionId: string }
+      // 毒化分片此前原样入库：续聊时 createAgent → estimateBudget → estimateMessageTokens
+      // 在 estimateTokens(123) 处 TypeError，导入的会话每次对话都 500。
+      const { getMessages } = await import('../../session/message.js')
+      const { estimateMessageTokens } = await import('../../session/token.js')
+      const msgs = await getMessages(ctx.db, body.sessionId)
+      expect(msgs).toHaveLength(1)
+      expect(() => estimateMessageTokens(msgs[0]?.content ?? [])).not.toThrow()
+      // 结构合法分片保留，非法分片丢弃（宁少勿坏）
+      const texts = (msgs[0]?.content ?? [])
+        .filter((p) => p._tag === 'text')
+        .map((p) => (p._tag === 'text' ? p.text : ''))
+      expect(texts).toEqual(['ok'])
+    })
+
+    it('tokenCount/createdAt 非有限数值（JSON 1e999）→ 收敛而非击穿 500', async () => {
+      const { app, ctx } = await setup()
+      const projectId = 'import-nonfinite'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-nonfinite' })
+      // JSON.stringify 会把 JS 侧 Infinity 序列化成 null（攻击形状在测试构造处丢失）——
+      // 手工拼装载荷原文，复现 JSON.parse('1e999') === Infinity 的真实输入。
+      const raw = `{"version":1,"session":{"title":"NonFinite"},"projectId":"${projectId}","messages":[{"role":"user","content":[{"_tag":"text","text":"hi"}],"tokenCount":1e999,"createdAt":1e999}]}`
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { sessionId: string; messageCount: number }
+      expect(body.messageCount).toBe(1)
+      // tokenCount 收敛为 0（未知），createdAt 回退当前时间（非 Invalid Date）
+      const { getMessages } = await import('../../session/message.js')
+      const msgs = await getMessages(ctx.db, body.sessionId)
+      expect(msgs[0]?.tokenCount).toBe(0)
+      expect(Number.isFinite(msgs[0]?.createdAt)).toBe(true)
+    })
   })
 
   describe('搜索回收站（P3）', () => {

@@ -36,7 +36,11 @@ const VALID_ROLES: ReadonlySet<string> = new Set<MessageRole>([
 ])
 
 function toDate(value: number | string | undefined): Date {
-  if (typeof value === 'number') return new Date(value)
+  if (typeof value === 'number') {
+    // 非有限数值（JSON 1e999 → Infinity）会产出 Invalid Date，时间戳序列化
+    // 直接击穿插入事务（整单 500）。与字符串分支同口径：无法解析回退当前时间。
+    return Number.isFinite(value) ? new Date(value) : new Date()
+  }
   if (typeof value === 'string') {
     const d = new Date(value)
     if (!Number.isNaN(d.getTime())) return d
@@ -44,12 +48,52 @@ function toDate(value: number | string | undefined): Date {
   return new Date()
 }
 
+/**
+ * 按 MessageContent 判别字段的形状校验每个分片。
+ * 此前只校验 `_tag` 是字符串：`{_tag:'text', text:123}` 等类型违规分片原样入库，
+ * 后续续聊在 estimateTokens(123) 处 TypeError（历史会话每次对话都 500），
+ * 且 token/protocol 层被迫对缺字段形状逐个打补丁。导入是未受信 JSON 的唯一
+ * 入库入口——在此收敛：结构违规的分片整体丢弃（宁少勿坏）。
+ */
+function isWellFormedPart(p: Record<string, unknown>): boolean {
+  switch (p._tag) {
+    case 'text':
+    case 'thinking':
+    case 'steering':
+      return typeof p.text === 'string'
+    case 'tool_call':
+      return (
+        typeof p.id === 'string' &&
+        typeof p.tool === 'string' &&
+        (p.input === undefined ||
+          (typeof p.input === 'object' && p.input !== null && !Array.isArray(p.input)))
+      )
+    case 'tool_result':
+      return (
+        typeof p.id === 'string' &&
+        typeof p.tool === 'string' &&
+        typeof p.output === 'object' &&
+        p.output !== null &&
+        !Array.isArray(p.output)
+      )
+    case 'image':
+      return typeof p.mediaType === 'string' && typeof p.data === 'string'
+    default:
+      // 未知分片类型：丢弃（宁少勿坏）
+      return false
+  }
+}
+
 function sanitizeContent(content: unknown): MessageContent[] {
   if (Array.isArray(content)) {
     // 只保留结构完整的分片；其余丢弃（导入宁少勿坏）
     return content.filter(
       (p): p is MessageContent =>
-        p !== null && typeof p === 'object' && typeof (p as { _tag?: unknown })._tag === 'string',
+        p !== null &&
+        typeof p === 'object' &&
+        !Array.isArray(p) &&
+        typeof (p as { _tag?: unknown })._tag === 'string' &&
+        isWellFormedPart(p as Record<string, unknown>),
     )
   }
   if (typeof content === 'string' && content.length > 0) {
@@ -93,7 +137,10 @@ async function importSessionData(
         tag: 'message',
         role,
         content: sanitizeContent(m.content),
-        tokenCount: typeof m.tokenCount === 'number' ? m.tokenCount : 0,
+        // tokenCount 是 integer 列：非有限数值（JSON 1e999 → Infinity）会击穿
+        // 插入事务（整单 500）；非法值收敛为 0（未知）。
+        tokenCount:
+          typeof m.tokenCount === 'number' && Number.isFinite(m.tokenCount) ? m.tokenCount : 0,
         createdAt: toDate(m.createdAt),
       })
       messageCount += 1
@@ -111,7 +158,9 @@ async function importSessionData(
         originalEntries: Array.isArray(a.originalEntries) ? a.originalEntries : [],
         fileSnapshots: Array.isArray(a.fileSnapshots) ? a.fileSnapshots : [],
         summary: typeof a.summary === 'string' ? a.summary : '',
-        tokenCount: typeof a.tokenCount === 'number' ? a.tokenCount : null,
+        // integer 列：与消息 tokenCount 同口径拒绝非有限数值（JSON 1e999）。
+        tokenCount:
+          typeof a.tokenCount === 'number' && Number.isFinite(a.tokenCount) ? a.tokenCount : null,
         searchableText: typeof a.searchableText === 'string' ? a.searchableText : null,
         createdAt: toDate(a.createdAt),
       })
