@@ -159,6 +159,20 @@ describe('bashTool', () => {
     }
   })
 
+  // 复现：close 事件的 code 在「被信号杀死」时为 null（真实信号在第二个参数
+  // signal 里），此前只检查 `code !== null && code !== 0`——信号终止（OOM
+  // killer / cgroup 限额 / 外部 kill / 命令自杀）全部落进成功分支：工具回
+  // success 且 metadata.exitCode = code ?? 0 = 0，模型据此认为命令已正常跑完
+  //（如构建被 SIGKILL 后继续使用半成品产物），实际什么都没完成。
+  it('reports a signal-killed command as an error instead of success with exit code 0', async () => {
+    const result = await bashTool.execute({ command: 'echo partial; kill -9 $$' }, ctx)
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('SIGKILL')
+      expect(result.error).toContain('partial')
+    }
+  })
+
   it('handles abort signal', async () => {
     const ac = new AbortController()
     const abortCtx: ToolContext = {

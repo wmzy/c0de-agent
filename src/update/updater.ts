@@ -93,9 +93,16 @@ function defaultInstall(pkg: string, method: InstallMethod): Promise<void> {
     const args = method.kind === 'pnpm' ? ['add', '-g', pkg] : ['install', '-g', pkg]
     const child = spawn(cmd, args, { stdio: 'ignore' })
     child.on('error', reject)
-    child.on('exit', (code) => {
+    child.on('exit', (code, signal) => {
       if (code === 0) resolve()
-      else reject(new Error(`${cmd} ${args.join(' ')} exited with ${code}`))
+      // 信号终止时 code 为 null（真实信号在 signal）——直接插值 code 会报
+      // 「exited with null」，用户无法区分「包管理器自杀」与「内部错误」。
+      else
+        reject(
+          new Error(
+            `${cmd} ${args.join(' ')} ${signal !== null ? `killed by signal ${signal}` : `exited with ${code}`}`,
+          ),
+        )
     })
   })
 }

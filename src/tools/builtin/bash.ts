@@ -146,7 +146,7 @@ export const bashTool: ToolDef = {
       }
       ctx.abort.addEventListener('abort', onAbort, { once: true })
 
-      child.on('close', (code: number | null) => {
+      child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
         clearTimeout(timer)
         ctx.abort.removeEventListener('abort', onAbort)
 
@@ -166,6 +166,20 @@ export const bashTool: ToolDef = {
         }
 
         const output = stdout + (stderr ? `\n${stderr}` : '')
+
+        // 信号终止（code=null + signal 携带真实信号）：OOM killer / cgroup 限额 /
+        // 外部 kill / 命令自杀都走这里。此前只看 code——null 落进成功分支，工具
+        // 回 success 且 metadata.exitCode = code ?? 0 = 0，模型据此以为命令已跑完
+        //（如构建被 SIGKILL 后继续用半成品产物）。
+        if (signal !== null) {
+          resolvePromise({
+            _tag: 'error',
+            error: `Command killed by signal ${signal}\n${output}${
+              droppedChars > 0 ? `\n[... ${droppedChars} chars of output dropped ...]` : ''
+            }`,
+          })
+          return
+        }
 
         if (code !== null && code !== 0) {
           resolvePromise({
