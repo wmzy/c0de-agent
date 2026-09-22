@@ -12,6 +12,7 @@ import { markDeadBackgroundJobs } from './jobs.js'
 import { insertEntry } from './message.js'
 import {
   createSession,
+  emptyTrash,
   getSession,
   listDeletedSessions,
   listSessions,
@@ -19,6 +20,7 @@ import {
   purgeDeletedSessions,
   purgeEmptySessions,
   purgeTemporarySessions,
+  rebindSession,
   restoreSession,
   restoreSessionCore,
   softDeleteSession,
@@ -445,6 +447,108 @@ describe('purgeDeletedSessions — 两阶段清理（A3：到期先标记，宽�
     expect(r.leftBehindDescendantCount).toBe(1)
     expect((await getSession(handle, branchA.id))?.deletedAt).toBeNull()
     expect((await getSession(handle, branchB.id))?.deletedAt).not.toBeNull()
+  })
+
+  it('P1：物理清除的删除闭包含全部后代——跨项目/未到期的已删子行一并清除（不再撞自引用 FK）', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'purge-cross-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'purge-cross-b-'))
+    try {
+      const pa = await fromDirectory(handle, dirA)
+      const pb = await fromDirectory(handle, dirB)
+      const parent = await createSession(handle, 'Parent', pa.id)
+      const child = await createSession(handle, 'Child', pa.id, undefined, 'web', parent.id)
+      // 子会话改归属到另一项目（孤儿归属/恢复路径可达）——删除级联仍会把它一并
+      // 移入回收站（级联按 parentId，与项目归属无关）。
+      expect(await rebindSession(handle, child.id, pb)).toBe(true)
+      await softDeleteSession(handle, parent.id)
+      expect((await getSession(handle, child.id))?.deletedAt).not.toBeNull()
+      // 仅 parent 进入宽限期：child 未到期、不在本次清除集合内，但引用 parent。
+      // 只按「待清除集合」排序会先删 parent → FK 23503 → 整个清理失败（静默）。
+      await handle.db
+        .update(sessions)
+        .set({
+          deletedAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000),
+          metadata: { purgePendingAt: Date.now() - 10 * 24 * 60 * 60 * 1000 },
+        })
+        .where(eq(sessions.id, parent.id))
+      const r = await purgeDeletedSessions(handle)
+      expect(r.deleted).toBe(2)
+      expect(await getSession(handle, parent.id)).toBeNull()
+      expect(await getSession(handle, child.id)).toBeNull()
+    } finally {
+      rmSync(dirA, { recursive: true, force: true })
+      rmSync(dirB, { recursive: true, force: true })
+    }
+  })
+
+  it('P1：环数据（parentId 互指）不阻断清理——断开父指针后整体清除', async () => {
+    const a = await createSession(handle, 'CycleA')
+    const b = await createSession(handle, 'CycleB')
+    await handle.db.update(sessions).set({ parentId: b.id }).where(eq(sessions.id, a.id))
+    await handle.db.update(sessions).set({ parentId: a.id }).where(eq(sessions.id, b.id))
+    await softDeleteSession(handle, a.id)
+    // 未到期：仅验证不抛错、不误删
+    expect(await purgeDeletedSessions(handle)).toEqual({ marked: 0, deleted: 0 })
+    await handle.db
+      .update(sessions)
+      .set({ metadata: { purgePendingAt: Date.now() - 10 * 24 * 60 * 60 * 1000 } })
+      .where(eq(sessions.id, a.id))
+    // 环内两节点互为父/子，无拓扑序可解：先断开父指针再删（此前无叶可删时逐个
+    // delete 仍违反自引用 FK，清理整体抛错）。
+    const r2 = await purgeDeletedSessions(handle)
+    expect(r2.deleted).toBe(2)
+    expect(await getSession(handle, a.id)).toBeNull()
+    expect(await getSession(handle, b.id)).toBeNull()
+  })
+})
+
+describe('emptyTrash — 清空回收站（按项目/全库）', () => {
+  let handle: DB
+  beforeEach(async () => {
+    handle = await setupDB()
+  })
+
+  it('按项目清空：连带清除该项目之外的已删子行（跨项目引用不撞 FK）', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'trash-x-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'trash-y-'))
+    try {
+      const px = await fromDirectory(handle, dirA)
+      const py = await fromDirectory(handle, dirB)
+      const parent = await createSession(handle, 'Parent', px.id)
+      const child = await createSession(handle, 'Child', px.id, undefined, 'web', parent.id)
+      await rebindSession(handle, child.id, py)
+      await softDeleteSession(handle, parent.id)
+      // 子行在项目 Y 的回收站里：项目 X 的「清空回收站」此前只按 X 的条目排序，
+      // 先删 parent 即撞 FK 23503（REST 500），X 的回收站永远清不掉。
+      const deleted = await emptyTrash(handle, px.id)
+      expect(deleted).toBe(2)
+      expect(await getSession(handle, parent.id)).toBeNull()
+      expect(await getSession(handle, child.id)).toBeNull()
+    } finally {
+      rmSync(dirA, { recursive: true, force: true })
+      rmSync(dirB, { recursive: true, force: true })
+    }
+  })
+
+  it('全库清空：已删父的未删子行（数据异常）随子树一并清除，不撞 FK', async () => {
+    const parent = await createSession(handle, 'AnomalyParent')
+    const child = await createSession(
+      handle,
+      'AnomalyChild',
+      undefined,
+      undefined,
+      'web',
+      parent.id,
+    )
+    // 异常态：父已删、子仍活跃（删除级联与并发创建子会话的竞态可产生）。
+    // 防御口径与 permanentlyDeleteSession「含未软删除的 fork 后代」一致。
+    await softDeleteSession(handle, parent.id)
+    await handle.db.update(sessions).set({ deletedAt: null }).where(eq(sessions.id, child.id))
+    expect((await getSession(handle, child.id))?.deletedAt).toBeNull()
+    const deleted = await emptyTrash(handle)
+    expect(deleted).toBe(2)
+    expect(await getSession(handle, parent.id)).toBeNull()
+    expect(await getSession(handle, child.id)).toBeNull()
   })
 })
 

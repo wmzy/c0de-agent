@@ -413,14 +413,16 @@ export const TRASH_ABSOLUTE_MAX_MS = 365 * 24 * 60 * 60 * 1000
  */
 export const TRASH_PURGE_GRACE_MS = 7 * 24 * 60 * 60 * 1000
 
-/** 清除结果：marked = 本次新标记进入宽限期的条目数；deleted = 本次物理清除数。 */
+/** 清除结果：marked = 本次新标记进入宽限期的条目数；deleted = 本次物理清除行数
+ *  （含随父行一并清除的后代——跨项目/未到期的子行无法在父行删除后幸存）。 */
 export type TrashPurgeResult = { marked: number; deleted: number }
 
 /**
  * 回收站两阶段清理（启动时与每日定时调用）：
  * 阶段一：进入保留期截止（首次看到 + 60 天）或绝对上限（删除 + 365 天，无论是否
  *   被看到）且未标记 → 标记 purgePendingAt（进入宽限期，可恢复）。
- * 阶段二：purgePendingAt 早于宽限截止 → 物理清除（子会话先于父，自引用 FK 要求）。
+ * 阶段二：purgePendingAt 早于宽限截止 → 物理清除（子会话先于父，自引用 FK 要求；
+ *   删除闭包含全部后代，未到期的子行随父行一并清除）。
  * 恢复后重删、尚未重新看到的会话按「首次看到 + 60 天」计（绝对上限兜底仍生效）。
  */
 async function purgeDeletedSessions(
@@ -434,7 +436,6 @@ async function purgeDeletedSessions(
   const rows = await handle.db
     .select({
       id: sessions.id,
-      parentId: sessions.parentId,
       deletedAt: sessions.deletedAt,
       metadata: sessions.metadata,
     })
@@ -468,33 +469,13 @@ async function purgeDeletedSessions(
     const p = meta.purgePendingAt
     return typeof p === 'number' && p < graceCutoff
   })
-  let deleted = 0
-  if (pending.length > 0) {
-    // 拓扑序：无子会话的先删
-    const remaining = new Set(pending.map((r) => r.id))
-    while (remaining.size > 0) {
-      const hasChildParent = new Set(
-        pending.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
-      )
-      const leaves = pending
-        .filter((r) => remaining.has(r.id) && !hasChildParent.has(r.id))
-        .map((r) => r.id)
-      if (leaves.length === 0) {
-        // 循环引用兜底：强制按 id 逐个删除（自引用环数据异常场景）
-        for (const id of Array.from(remaining)) {
-          await handle.db.delete(sessions).where(eq(sessions.id, id))
-          remaining.delete(id)
-          deleted += 1
-        }
-        break
-      }
-      for (const id of leaves) {
-        await handle.db.delete(sessions).where(eq(sessions.id, id))
-        remaining.delete(id)
-        deleted += 1
-      }
-    }
-  }
+  if (pending.length === 0) return { marked, deleted: 0 }
+  // 删除闭包含全部后代（子先父后）——pending 集合外的子行（未到期条目、跨项目
+  // 归属、未软删的 fork 后代）同样引用被删父行，漏掉即撞 FK 23503 让清理整体失败。
+  const deleted = await deleteSessionSubtrees(
+    handle,
+    pending.map((r) => r.id),
+  )
   return { marked, deleted }
 }
 
@@ -571,6 +552,75 @@ async function purgeEmptySession(handle: DB, id: string): Promise<boolean> {
 }
 
 /**
+ * 物理删除会话子树：rootIds + 其**全部后代**（不论删除状态与项目归属），子先父后。
+ * 返回实际删除行数。
+ *
+ * 自引用 FK（sessions.parentId，无 onDelete 级联）要求任何引用待删行的子行先删，
+ * 且子行可能不在调用方给定的清除集合内：跨项目归属（子会话经 rebind 留在另一
+ * 项目）、未到期/未进入宽限期的回收站条目、乃至未软删除的 fork 后代（数据异常，
+ * 与 permanentlyDeleteSession 既有防御同口径）。只按「待清除集合」排序会在这些
+ * 子行上撞 FK 23503——emptyTrash(projectId) 直接 500（该项目回收站永远清不掉）、
+ * purgeDeletedSessions 整体抛错（启动/每日清理静默失败，回收站永不清理）。
+ * 故删除闭包必须扩展到全部后代，集合外无人引用集合内行时断开父指针亦安全。
+ *
+ * 环数据（parentId 互指/自引用）无拓扑序可解：无叶可删时先断开集合内父指针
+ * （仅集合内引用，集合外不可能引用集合内行），再整体删除。
+ */
+async function deleteSessionSubtrees(handle: DB, rootIds: string[]): Promise<number> {
+  if (rootIds.length === 0) return 0
+  const all = await handle.db
+    .select({ id: sessions.id, parentId: sessions.parentId })
+    .from(sessions)
+  const ids = new Set<string>()
+  let frontier: string[] = []
+  for (const id of rootIds) {
+    if (ids.has(id) || !all.some((r) => r.id === id)) continue
+    ids.add(id)
+    frontier.push(id)
+  }
+  while (frontier.length > 0) {
+    const next: string[] = []
+    for (const r of all) {
+      if (!r.parentId || ids.has(r.id) || !frontier.includes(r.parentId)) continue
+      ids.add(r.id)
+      next.push(r.id)
+    }
+    frontier = next
+  }
+
+  const remaining = new Set(ids)
+  let deleted = 0
+  while (remaining.size > 0) {
+    // 仍有子会话存活的父 id 集合（其子会话先删，避免自引用 FK 违反）。
+    const hasChildParent = new Set<string>()
+    for (const r of all) {
+      if (r.parentId && remaining.has(r.parentId) && remaining.has(r.id)) {
+        hasChildParent.add(r.parentId)
+      }
+    }
+    const leaves = Array.from(remaining).filter((rid) => !hasChildParent.has(rid))
+    if (leaves.length === 0) {
+      // 环兜底：集合内成环（a↔b / 自引用），无叶可删——断开父指针后整体删除。
+      const cycleIds = Array.from(remaining)
+      await handle.db.update(sessions).set({ parentId: null }).where(inArray(sessions.id, cycleIds))
+      const rows = await handle.db
+        .delete(sessions)
+        .where(inArray(sessions.id, cycleIds))
+        .returning({ id: sessions.id })
+      deleted += rows.length
+      break
+    }
+    const rows = await handle.db
+      .delete(sessions)
+      .where(inArray(sessions.id, leaves))
+      .returning({ id: sessions.id })
+    deleted += rows.length
+    for (const rid of leaves) remaining.delete(rid)
+  }
+  return deleted
+}
+
+/**
  * 彻底删除某个回收站会话及其全部后代（含未软删除的 fork 后代，防御数据异常）。
  * 子会话先于父会话删除（自引用 FK RESTRICT 要求）；entries/archives 经 FK cascade 清理。
  * 返回删除数量。会话不存在或不在回收站 → 返回 0。
@@ -581,83 +631,25 @@ async function permanentlyDeleteSession(handle: DB, id: string): Promise<number>
     .from(sessions)
     .where(eq(sessions.id, id))
   if (!row?.deletedAt) return 0
-  const all = await handle.db
-    .select({ id: sessions.id, parentId: sessions.parentId })
-    .from(sessions)
-  const ids = new Set<string>([id])
-  let frontier = [id]
-  while (frontier.length > 0) {
-    const children = all
-      .filter((r) => r.parentId && frontier.includes(r.parentId))
-      .map((r) => r.id)
-      .filter((cid) => !ids.has(cid))
-    for (const cid of children) ids.add(cid)
-    frontier = children
-  }
-  // 拓扑序：无子会话的先删（与 purgeDeletedSessions 同策略）
-  const remaining = new Set(ids)
-  let deleted = 0
-  while (remaining.size > 0) {
-    // 仍有子会话存活的父 id 集合（其子会话先删，避免自引用 FK 违反）。
-    // 此前此集合收集的是「父仍在 remaining 中的子 id」，leaves 因此取到
-    // 全是父会话——父先删，子行仍引用它，删除直接 FK 23503 报错。
-    const hasChildParent = new Set(
-      all.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
-    )
-    const leaves = Array.from(remaining).filter((rid) => !hasChildParent.has(rid))
-    if (leaves.length === 0) {
-      for (const rid of Array.from(remaining)) {
-        await handle.db.delete(sessions).where(eq(sessions.id, rid))
-        remaining.delete(rid)
-        deleted += 1
-      }
-      break
-    }
-    for (const rid of leaves) {
-      await handle.db.delete(sessions).where(eq(sessions.id, rid))
-      remaining.delete(rid)
-      deleted += 1
-    }
-  }
-  return deleted
+  return deleteSessionSubtrees(handle, [id])
 }
 
-/** 清空回收站：物理删除所有已软删除会话（子先于父）。返回删除数量。
- *  projectId 提供时仅清空该项目（P1-7）。 */
+/** 清空回收站：物理删除所有已软删除会话（子先于父，连同其全部后代）。
+ *  projectId 提供时仅以该项目条目为根（P1-7）——后代闭包仍含其他项目的子行
+ *  （它们引用被删父行，必须同批删除）。返回删除数量。 */
 async function emptyTrash(handle: DB, projectId?: string): Promise<number> {
   const rows = await handle.db
-    .select({ id: sessions.id, parentId: sessions.parentId })
+    .select({ id: sessions.id })
     .from(sessions)
     .where(
       projectId
         ? and(gt(sessions.deletedAt, new Date(0)), eq(sessions.projectId, projectId))
         : gt(sessions.deletedAt, new Date(0)),
     )
-  if (rows.length === 0) return 0
-  const remaining = new Set(rows.map((r) => r.id))
-  let deleted = 0
-  while (remaining.size > 0) {
-    const hasChildParent = new Set(
-      rows.filter((r) => r.parentId && remaining.has(r.parentId)).map((r) => r.parentId),
-    )
-    const leaves = rows
-      .filter((r) => remaining.has(r.id) && !hasChildParent.has(r.id))
-      .map((r) => r.id)
-    if (leaves.length === 0) {
-      for (const id of Array.from(remaining)) {
-        await handle.db.delete(sessions).where(eq(sessions.id, id))
-        remaining.delete(id)
-        deleted += 1
-      }
-      break
-    }
-    for (const id of leaves) {
-      await handle.db.delete(sessions).where(eq(sessions.id, id))
-      remaining.delete(id)
-      deleted += 1
-    }
-  }
-  return deleted
+  return deleteSessionSubtrees(
+    handle,
+    rows.map((r) => r.id),
+  )
 }
 
 /**
