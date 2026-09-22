@@ -29,6 +29,7 @@ import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 import { childRunBridge, startHeartbeat } from './chat.js'
 
 /**
@@ -138,8 +139,9 @@ function createWorkflowsRoute(ctx: ServerContext) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
     }
 
-    const body = await c.req.json().catch(() => ({}))
-    const { name, source, target, projectId, overwrite } = body as {
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { name, source, target, projectId, overwrite } = parsed.body as {
       name?: string
       source?: string
       target?: 'project' | 'user'
@@ -341,8 +343,9 @@ function createWorkflowsRoute(ctx: ServerContext) {
       return apiError(c, 404, 'NOT_FOUND', `Workflow "${name}" not found`)
     }
 
-    const body = await c.req.json().catch(() => ({}))
-    const args = (body as { args?: string }).args ?? ''
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const args = typeof parsed.body.args === 'string' ? parsed.body.args : ''
 
     // 会话级配置：按 agent cwd 解析项目作用域合并（与 chat 路由同口径）；
     // 项目配置含 providers 时构建/复用项目级 LLM 注册表。

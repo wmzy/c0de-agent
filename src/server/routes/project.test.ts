@@ -365,3 +365,60 @@ describe('project route', () => {
     }
   })
 })
+
+describe('project 写端点 body 形状校验', () => {
+  it.each(['null', '[]', '"text"', '{broken'])(
+    'POST /from-directory body=%s → 400',
+    async (raw) => {
+      const { app } = await setup()
+      const res = await app.request('/from-directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it('POST /from-directory 数字 directory → 400 而非 expandPath TypeError 500', async () => {
+    const { app } = await setup()
+    const res = await app.request('/from-directory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory: 123 }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('PATCH /:id null body → 400', async () => {
+    const { app } = await setup()
+    const created = await app.request('/from-directory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory: process.cwd() }),
+    })
+    const project = (await created.json()) as Project
+    const res = await app.request(`/${project.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /:id/relocate null body → 400', async () => {
+    const { app } = await setup()
+    const created = await app.request('/from-directory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory: process.cwd() }),
+    })
+    const project = (await created.json()) as Project
+    const res = await app.request(`/${project.id}/relocate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+})

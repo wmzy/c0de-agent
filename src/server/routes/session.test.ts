@@ -1357,3 +1357,59 @@ describe('session route', () => {
     })
   })
 })
+
+describe('session 写端点 body 形状校验', () => {
+  /** 建一个会话，供 /:id 端点用例复用。 */
+  async function withSession() {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: TEST_PROJECT }),
+    })
+    const session = (await res.json()) as Session
+    return { app, sessionId: session.id }
+  }
+
+  it.each(['null', '[]', '"text"', '42', '{broken'])(
+    'POST / body=%s → 400（此前 null body 在 body.title 处 500）',
+    async (raw) => {
+      const { app } = await setup()
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it('POST / 非字符串 title/directory → 按缺省处理而非 500', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: TEST_PROJECT, title: 42, directory: 7 }),
+    })
+    expect(res.status).toBe(201)
+    const session = (await res.json()) as Session
+    expect(session.title).toBe('New Session')
+    expect(session.projectId).toBe(TEST_PROJECT)
+  })
+
+  it.each([
+    ['patch', ''],
+    ['post', '/fork'],
+    ['post', '/restore'],
+    ['post', '/rebind'],
+    ['post', '/shake/apply'],
+  ])('%s /:id%s null body → 400', async (method, suffix) => {
+    const { app, sessionId } = await withSession()
+    const res = await app.request(`/${sessionId}${suffix}`, {
+      method: method.toUpperCase(),
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+})

@@ -159,3 +159,28 @@ describe('provider route', () => {
     expect(authHeader).not.toContain('enc:')
   })
 })
+
+describe('POST /test body 形状校验', () => {
+  it.each(['null', '[]', '"text"', '{broken'])(
+    'POST /test body=%s → 400（此前 null body 解构处 500）',
+    async (raw) => {
+      const { app } = await setup()
+      const res = await app.request('/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it('POST /test 数字 baseURL → 400 而非把数字当 URL 探测', async () => {
+    const { app } = await setup()
+    const res = await app.request('/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseURL: 123 }),
+    })
+    expect(res.status).toBe(400)
+  })
+})

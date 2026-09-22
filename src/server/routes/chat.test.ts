@@ -1576,3 +1576,30 @@ describe('/workflow run 专用斜杠通道', () => {
     }
   })
 })
+
+describe('POST / body 形状校验', () => {
+  it.each(['null', '[]', '"text"', '42', '{broken'])(
+    'POST / body=%s → 400（此前 null/标量 body 击穿 500）',
+    async (raw) => {
+      const { app } = await setup()
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe('BAD_REQUEST')
+    },
+  )
+
+  it('POST / 数字 sessionId → 400 而非 PG uuid 参数 500', async () => {
+    const { app } = await setup()
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: 123, message: 'hi' }),
+    })
+    expect(res.status).toBe(400)
+  })
+})

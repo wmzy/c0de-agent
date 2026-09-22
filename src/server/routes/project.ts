@@ -21,6 +21,7 @@ import { generateId } from '../../shared/index.js'
 import type { SessionMetadata } from '../../shared/types/message.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 import { expandPath } from './filesystem.js'
 
 type ProjectWithBranch = Project & { gitBranch: string | null; worktreeMissing: boolean }
@@ -45,8 +46,11 @@ function createProjectRoute(ctx: ServerContext): Hono {
 
   // 解析目录并创建/更新项目记录
   app.post('/from-directory', async (c) => {
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const directory = body.directory as string | undefined
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    // directory 必须是非空字符串：数字/对象此前经 as 断言进 expandPath 的
+    // startsWith 抛 TypeError → 500。
+    const directory = typeof parsed.body.directory === 'string' ? parsed.body.directory : ''
     if (!directory) return apiError(c, 400, 'BAD_REQUEST', 'directory is required')
     // 展开 ~ 前缀为 home 绝对路径（前端可能传 ~/... 形式）
     const project = await fromDirectory(ctx.db, expandPath(directory))
@@ -91,8 +95,9 @@ function createProjectRoute(ctx: ServerContext): Hono {
 
   // 更新项目名
   app.patch('/:id', async (c) => {
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const name = body.name as string | undefined
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const name = typeof parsed.body.name === 'string' ? parsed.body.name : ''
     if (!name) return apiError(c, 400, 'BAD_REQUEST', 'name is required')
     const project = await updateProjectName(ctx.db, c.req.param('id'), name)
     if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
@@ -112,8 +117,9 @@ function createProjectRoute(ctx: ServerContext): Hono {
   // 目标目录已注册为另一项目 → 409；有活跃 run → 拒绝（agent 工作目录悬空）。
   app.post('/:id/relocate', async (c) => {
     const id = c.req.param('id')
-    const body = (await c.req.json().catch(() => ({}))) as { directory?: unknown }
-    const directory = typeof body.directory === 'string' ? body.directory.trim() : ''
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const directory = typeof parsed.body.directory === 'string' ? parsed.body.directory.trim() : ''
     if (!directory) return apiError(c, 400, 'DIRECTORY_REQUIRED', 'directory is required')
     if (!existsSync(directory)) {
       return apiError(c, 400, 'DIRECTORY_MISSING', `目录不存在或不可访问：${directory}`)

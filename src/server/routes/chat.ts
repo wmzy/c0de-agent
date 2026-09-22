@@ -42,6 +42,7 @@ import { apiError } from '../middleware/error.js'
 import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
 
 /** 按 session.projectId / worktreePath 解析 agent 工作目录：
@@ -138,8 +139,12 @@ function createChatRoute(ctx: ServerContext): Hono {
 
   // POST / — SSE 流式聊天
   app.post('/', async (c) => {
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const sessionId = body.sessionId as string | undefined
+    // 畸形 JSON / null / 非对象 body → 400（此前 null body 在 body.sessionId 处
+    // TypeError 500；数字 sessionId 会一路进 PG 的 uuid 参数 → 22P02 500）。
+    const bodyParsed = await readJsonObject(c)
+    if (!bodyParsed.ok) return bodyParsed.response
+    const { body } = bodyParsed
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined
     // body 字段形状校验（P3 加固）：message 非字符串（number/object）会通过
     // 「!message」检查后经 parseSlashInput 的 .trim() 击穿 TypeError 500——
     // 按缺省处理落入下方空消息 400，而非 500。

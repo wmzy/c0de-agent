@@ -212,3 +212,48 @@ describe('kanban route body validation', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('kanban 写端点 body 形状校验（null/非对象 body）', () => {
+  it.each(['null', '[]', '"text"', '{broken'])(
+    'PATCH /:projectId body=%s → 400（此前 null body 在 body.columns 处 500）',
+    async (raw) => {
+      const { app } = await setup()
+      const res = await app.request(`${PROJECT_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it('POST /:projectId/cards null body → 400', async () => {
+    const { app } = await setup()
+    const res = await app.request(`${PROJECT_ID}/cards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('PATCH /:projectId/cards/:cardId null body → 400', async () => {
+    const { app } = await setup()
+    const res = await app.request(`${PROJECT_ID}/cards/00000000-0000-0000-0000-000000000000`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /deleted/:boardId/restore null body → 400', async () => {
+    const { app } = await setup()
+    const res = await app.request('deleted/00000000-0000-0000-0000-000000000000/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+})

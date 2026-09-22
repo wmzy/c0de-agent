@@ -953,3 +953,38 @@ describe('git-commit route', () => {
     expect(body.error.code).toBe('INVALID_LLM_MESSAGE')
   })
 })
+
+describe('files 写端点 body 形状校验', () => {
+  it.each(['null', '[]', '"text"', '{broken'])(
+    'POST /git-checkout body=%s → 400（此前 null body 在 body.branch 处 500）',
+    async (raw) => {
+      const { app } = await setupWithDir()
+      const res = await app.request('/git-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it('POST /git-branch-create 数字 name → 400 而非 spawnSync 参数 TypeError 500', async () => {
+    const { app } = await setupWithDir()
+    const res = await app.request('/git-branch-create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 123 }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /git-commit null body → 400', async () => {
+    const { app } = await setupWithDir()
+    const res = await app.request('/git-commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+})

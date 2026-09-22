@@ -16,6 +16,7 @@
 import { type Context, Hono } from 'hono'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 
 /** 尽力而为的请求来源：x-forwarded-for 首跳（反代场景），否则视为本地回环。仅展示/软限流。 */
 function requestSource(c: Context): string {
@@ -35,11 +36,15 @@ function createAuthRoute(ctx: ServerContext): Hono {
     if (!ctx.authManager) {
       return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
     }
-    const body = (await c.req.json().catch(() => ({}))) as { token?: string; deviceName?: string }
-    if (!body.token) {
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const body = parsed.body as { token?: unknown; deviceName?: unknown }
+    if (typeof body.token !== 'string' || !body.token) {
       return apiError(c, 400, 'BAD_REQUEST', 'token is required')
     }
-    const result = await ctx.authManager.registerFirstDevice(body.token, body.deviceName ?? '设备')
+    const deviceName =
+      typeof body.deviceName === 'string' && body.deviceName ? body.deviceName : '设备'
+    const result = await ctx.authManager.registerFirstDevice(body.token, deviceName)
     if (!result.ok) {
       // 区分失败原因给正确的恢复指引：链接过期 → 重启 serve 换新链接；
       // 已有设备 → 走配对审批；两者补救动作完全不同，不得混用同一文案。
@@ -66,7 +71,7 @@ function createAuthRoute(ctx: ServerContext): Hono {
       return apiError(c, 403, 'STATIC_TOKEN_MODE', '静态 token 模式不支持设备注册。')
     }
     // P1-3：回传注册成功的设备名，前端展示一次性确认（用户可核对注册的是否自己）。
-    return c.json({ deviceToken: result.deviceToken, deviceName: body.deviceName ?? '设备' })
+    return c.json({ deviceToken: result.deviceToken, deviceName })
   })
 
   // 新设备发起配对请求（公开）。
@@ -74,8 +79,13 @@ function createAuthRoute(ctx: ServerContext): Hono {
     if (!ctx.authManager) {
       return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
     }
-    const body = (await c.req.json().catch(() => ({}))) as { deviceName?: string }
-    const result = ctx.authManager.requestPairing(body.deviceName ?? '新设备', requestSource(c))
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const deviceName = parsed.body.deviceName
+    const result = ctx.authManager.requestPairing(
+      typeof deviceName === 'string' && deviceName ? deviceName : '新设备',
+      requestSource(c),
+    )
     if (!result) {
       return apiError(c, 429, 'PAIRING_LIMIT', '待审批的配对请求过多，请稍后再试')
     }
@@ -115,10 +125,13 @@ function createAuthRoute(ctx: ServerContext): Hono {
     if (!ctx.authManager) {
       return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
     }
-    const body = (await c.req.json().catch(() => ({}))) as { pairingId?: string; code?: string }
-    if (!body.pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
-    if (!body.code) return apiError(c, 400, 'BAD_REQUEST', 'code is required')
-    const result = ctx.authManager.approvePairing(body.pairingId, body.code)
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const pairingId = typeof parsed.body.pairingId === 'string' ? parsed.body.pairingId : ''
+    const code = typeof parsed.body.code === 'string' ? parsed.body.code : ''
+    if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
+    if (!code) return apiError(c, 400, 'BAD_REQUEST', 'code is required')
+    const result = ctx.authManager.approvePairing(pairingId, code)
     if (result === 'code_mismatch') {
       return apiError(
         c,
@@ -141,9 +154,11 @@ function createAuthRoute(ctx: ServerContext): Hono {
     if (!ctx.authManager) {
       return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
     }
-    const body = (await c.req.json().catch(() => ({}))) as { pairingId?: string }
-    if (!body.pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
-    const ok = ctx.authManager.denyPairing(body.pairingId)
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const pairingId = typeof parsed.body.pairingId === 'string' ? parsed.body.pairingId : ''
+    if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
+    const ok = ctx.authManager.denyPairing(pairingId)
     if (!ok) return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
     return c.json({ ok: true })
   })

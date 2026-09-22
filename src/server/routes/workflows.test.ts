@@ -842,3 +842,18 @@ export default async function workflow(ctx) {
     expect(second.status).toBe(200)
   })
 })
+
+describe('workflows 写端点 body 形状校验', () => {
+  it.each(['null', '[]', '"text"', '{broken'])(
+    'POST / body=%s → 400（此前 null body 在解构处 500）',
+    async (raw) => {
+      const { app } = await setup()
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+})

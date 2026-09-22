@@ -433,3 +433,18 @@ describe('POST /api/update/apply', () => {
     expect(ctx.agentManager.resume).toHaveBeenCalledWith('s2')
   })
 })
+
+describe('POST /apply body 形状校验', () => {
+  it.each(['null', '[]', '"text"', '{broken}'])(
+    'POST /apply body=%s → 400（此前 null body 在 body.rerunTerminalIds 处 500）',
+    async (raw) => {
+      const app = createUpdateRoute(makeCtx({ handoffPort: 9999 }))
+      const res = await app.request('/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+})

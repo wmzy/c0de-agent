@@ -11,6 +11,7 @@ import {
 import { apiError } from '../middleware/error.js'
 import { captureForegroundCommand } from '../terminal/pty-manager.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 
 /**
  * GET /api/update — 返回后台调度器缓存的版本检查结果（spec §18.1）。
@@ -127,7 +128,9 @@ function createUpdateRoute(ctx: ServerContext): Hono {
       )
     }
     // P3-7：用户勾选「更新后自动重启」的终端 id；命中者在快照中携带前台命令。
-    const body = (await c.req.json().catch(() => ({}))) as { rerunTerminalIds?: unknown }
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const body = parsed.body
     const rerunIds = new Set(
       Array.isArray(body.rerunTerminalIds)
         ? body.rerunTerminalIds.filter((x): x is string => typeof x === 'string')

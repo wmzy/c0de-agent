@@ -8,6 +8,7 @@ import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 
 /** 测试连接请求体。 */
 type TestBody = {
@@ -106,9 +107,12 @@ function createProviderRoute(ctx: ServerContext): Hono {
 
   // 连接测试：用请求体里的凭据探测 /models，不污染 registry
   app.post('/test', async (c) => {
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const { baseURL, apiKey } = body as TestBody
-    if (!baseURL) return apiError(c, 400, 'BAD_REQUEST', 'baseURL is required')
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { baseURL, apiKey } = parsed.body as TestBody
+    if (typeof baseURL !== 'string' || !baseURL) {
+      return apiError(c, 400, 'BAD_REQUEST', 'baseURL is required')
+    }
     // P3：仅允许 http/https——服务端按调用方提供的 URL 发起请求，非 http 协议
     // 不应由「测试连接」端点代理（本机 localhost/Ollama 等 http 服务不受影响）。
     const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(baseURL)?.[1]?.toLowerCase()

@@ -177,3 +177,34 @@ describe('terminal route', () => {
     expect(body.error?.code).toBe('INVALID_CWD')
   })
 })
+
+describe('terminal 写端点 body 形状校验', () => {
+  it.each(['null', '[]', '"text"', '{broken'])(
+    'POST / body=%s → 400（此前 null body 在 body.projectId 处 500）',
+    async (raw) => {
+      const { app } = setup()
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      })
+      expect(res.status).toBe(400)
+    },
+  )
+
+  it('PUT /:id null body → 400', async () => {
+    const { app } = setup()
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const info = (await created.json()) as { id: string }
+    const res = await app.request(`/${info.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'null',
+    })
+    expect(res.status).toBe(400)
+  })
+})

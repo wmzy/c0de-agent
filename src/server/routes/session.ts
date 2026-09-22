@@ -51,6 +51,7 @@ import { generateId } from '../../shared/index.js'
 import { apiError } from '../middleware/error.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 import { hasBusySession, resolveAgentCwd } from './chat.js'
 
 function createSessionRoute(ctx: ServerContext): Hono {
@@ -184,10 +185,15 @@ function createSessionRoute(ctx: ServerContext): Hono {
 
   // 创建会话
   app.post('/', async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    const title = (body.title as string) ?? 'New Session'
-    const directory = body.directory as string | undefined
-    const explicitProjectId = body.projectId as string | undefined
+    // 畸形 JSON / null / 非对象 body → 400（此前 null body 在 body.title 处 500）。
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
+    // 非字符串字段（数字 title/directory/projectId）此前经 as 断言进 fromDirectory/
+    // createSession：path.resolve 与 text 列参数对非字符串抛错 → 500。按缺省处理。
+    const title = typeof body.title === 'string' ? body.title : 'New Session'
+    const directory = typeof body.directory === 'string' ? body.directory : undefined
+    const explicitProjectId = typeof body.projectId === 'string' ? body.projectId : undefined
     let projectId: string | undefined
     if (directory) {
       const project = await fromDirectory(ctx.db, directory)
@@ -296,8 +302,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // P2-5：会话重命名（此前标题只能由 LLM 自动生成，用户无法修改）
   app.patch('/:id', async (c) => {
     const id = c.req.param('id')
-    const body = (await c.req.json().catch(() => ({}))) as { title?: unknown }
-    const title = typeof body.title === 'string' ? body.title.trim() : ''
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const title = typeof parsed.body.title === 'string' ? parsed.body.title.trim() : ''
     if (!title) return apiError(c, 400, 'BAD_REQUEST', 'title is required')
     if (title.length > 120) {
       return apiError(c, 400, 'BAD_REQUEST', 'title must be at most 120 characters')
@@ -332,8 +339,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (busy === 'starting') {
       return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
     }
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    let messageIndex = body.messageIndex as number | undefined
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const rawIndex = parsed.body.messageIndex
+    let messageIndex =
+      typeof rawIndex === 'number' && Number.isFinite(rawIndex) ? rawIndex : undefined
     if (messageIndex === undefined || !Number.isFinite(messageIndex)) {
       const messages = await getMessages(ctx.db, id)
       if (messages.length === 0) {
@@ -476,10 +486,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 显式跳过重建、直接归属到请求项目（用户在确认框中二选一）。
   app.post('/:id/restore', async (c) => {
     const id = c.req.param('id')
-    const body = (await c.req.json().catch(() => ({}))) as {
-      projectId?: unknown
-      restoreMode?: unknown
-    }
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
     const requestProjectId =
       typeof body.projectId === 'string' && body.projectId ? body.projectId : undefined
     const preferCurrentProject = body.restoreMode === 'current-project'
@@ -540,8 +549,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (busy === 'starting') {
       return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
     }
-    const body = (await c.req.json().catch(() => ({}))) as { projectId?: unknown }
-    const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const projectId =
+      typeof parsed.body.projectId === 'string' && parsed.body.projectId
+        ? parsed.body.projectId
+        : ''
     if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', 'projectId is required')
     const project = await getProject(ctx.db, projectId)
     if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
@@ -702,7 +715,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
     if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
 
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
     // regionIds 非数组（字符串等）会让后续 .filter 抛 TypeError 500——
     // 显式 400（与 regionIds 不匹配同口径）。
     if (body.regionIds !== undefined && !Array.isArray(body.regionIds)) {

@@ -21,6 +21,7 @@ import { fromDirectory, getProject } from '../../project/index.js'
 import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shared/types/kanban.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 
 // ── body 字段类型守卫 ──────────────────────────────────────────────
 // 畸形 JSON 此前直接 as 断言后进 store/DB：数字 title → .trim TypeError 500、
@@ -70,11 +71,9 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   // （目标无板时等价普通恢复）。此前 409 指引「删除目标看板」但产品无此能力，
   // 恢复是死胡同。
   app.post('/deleted/:boardId/restore', async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as {
-      projectId?: unknown
-      rebuild?: unknown
-      merge?: unknown
-    }
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const body = parsed.body
     const boardId = c.req.param('boardId')
     const merge = body.merge === true
 
@@ -292,7 +291,9 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   // PATCH /:projectId — update board columns/labels config
   app.patch('/:projectId', async (c) => {
     const projectId = c.req.param('projectId')
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const body = parsed.body
     // 形状校验：columns 非数组/条目含 null 此前在 store .map 处击穿 500；
     // 缺 name 的列/标签被持久化后前端渲染静默出错。
     if (body.columns !== undefined) {
@@ -329,7 +330,9 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   // POST /:projectId/cards — add a card
   app.post('/:projectId/cards', async (c) => {
     const projectId = c.req.param('projectId')
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const body = parsed.body
     // 类型校验：数字 title 此前经 (as string).trim 击穿 500；labels 字符串/
     // description 数字会被持久化成毒化卡片（jsonb 存非数组，前端 .map 崩溃）。
     const title = typeof body.title === 'string' ? body.title.trim() : ''
@@ -378,7 +381,9 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   app.patch('/:projectId/cards/:cardId', async (c) => {
     const projectId = c.req.param('projectId')
     const cardId = c.req.param('cardId')
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const body = parsed.body
     // 类型校验：数字 title/description/labels 字符串此前被 as 断言后直接
     // update 进 DB（text/jsonb 类型失配 500 或持久化毒化字段）。
     if (body.title !== undefined && (typeof body.title !== 'string' || body.title.trim() === '')) {

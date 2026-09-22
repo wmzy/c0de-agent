@@ -23,6 +23,7 @@ import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
 
 type FileEntry = {
@@ -233,9 +234,9 @@ function createFilesRoute(ctx: ServerContext): Hono {
     }
 
     // 可选 body：mode / message / suggestions
-    const body = await c.req
-      .json()
-      .catch(() => ({}) as { mode?: string; message?: string; suggestions?: string[] })
+    const parsedBody = await readJsonObject(c)
+    if (!parsedBody.ok) return parsedBody.response
+    const body = parsedBody.body as { mode?: string; message?: string; suggestions?: string[] }
 
     // --- mode: force — 跳过检查，用传入 message 直接提交 ---
     if (body.mode === 'force') {
@@ -398,8 +399,11 @@ ${headChars(summary.diff, 8000)}`
       }
       root = project.worktree
     }
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const branch = body.branch as string | undefined
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    // branch 必须是非空字符串：数字此前经 as 断言进 spawnSync 参数抛
+    // ERR_INVALID_ARG_TYPE → 500。
+    const branch = typeof parsed.body.branch === 'string' ? parsed.body.branch : ''
     if (!branch) return apiError(c, 400, 'BAD_REQUEST', 'branch is required')
     const result = checkoutGitBranch(root, branch)
     if ('error' in result) {
@@ -419,8 +423,9 @@ ${headChars(summary.diff, 8000)}`
       }
       root = project.worktree
     }
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
-    const name = body.name as string | undefined
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const name = typeof parsed.body.name === 'string' ? parsed.body.name : ''
     if (!name) return apiError(c, 400, 'BAD_REQUEST', 'name is required')
     const result = createGitBranch(root, name)
     if ('error' in result) {

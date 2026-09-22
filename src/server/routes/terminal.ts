@@ -6,6 +6,7 @@ import { Hono } from 'hono'
 import { getProject } from '../../project/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 
 /** 允许的 shell 白名单（P2-6：拒绝路径分隔符与任意二进制）。 */
 const ALLOWED_SHELLS = new Set(['bash', 'zsh', 'fish', 'sh'])
@@ -22,7 +23,10 @@ function createTerminalRoute(ctx: ServerContext): Hono {
 
   // 创建新 PTY 会话
   app.post('/', async (c) => {
-    const body = await c.req.json().catch(() => ({}))
+    // 畸形 JSON / null / 非对象 body → 400（此前 null body 在 body.projectId 处 500）。
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
     const projectId =
       typeof body.projectId === 'string' && body.projectId.length > 0 ? body.projectId : undefined
 
@@ -80,7 +84,9 @@ function createTerminalRoute(ctx: ServerContext): Hono {
     const info = mgr.get(id)
     if (!info) return apiError(c, 404, 'PTY_NOT_FOUND', 'Terminal not found')
 
-    const body = await c.req.json().catch(() => ({}))
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
 
     if (body.cols != null && body.rows != null) {
       const cols = Number(body.cols)
