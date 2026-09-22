@@ -94,6 +94,43 @@ describe('parsePatch', () => {
     expect(() => parsePatch('[a.ts#abcd]\nSWAP 0x10\ny\n---\n')).toThrow()
     expect(() => parsePatch('[a.ts#abcd]\nDEL 1e2\n---\n')).toThrow()
   })
+
+  // 回归：SWAP 内容里的 `[path#hash]` 形行被块头扫描误判为新块——内容被
+  // 拦腰截断、残余行被当作操作解析（unknown operation 抛错），以 --- 终止的
+  // 操作内任何行都是内容，不得参与块头判定。
+  it('SWAP content line looking like a block header stays content (--- terminated)', () => {
+    const patches = parsePatch('[f.ts#abcd]\nSWAP 1-1\n[a.md#1234]\nsecond line\n---\n')
+    expect(patches).toHaveLength(1)
+    expect(patches[0]?.operations).toEqual([
+      { _tag: 'SWAP', start: 1, end: 1, content: '[a.md#1234]\nsecond line' },
+    ])
+  })
+
+  it('INS.TAIL content containing a header-like line stays content (--- terminated)', () => {
+    const patches = parsePatch('[f.ts#abcd]\nINS.TAIL\n[x.ts#2222]\n---\n')
+    expect(patches[0]?.operations).toEqual([{ _tag: 'INS_TAIL', content: '[x.ts#2222]' }])
+  })
+
+  // 回归：省略 --- 的多操作补丁里，DEL 会把后续操作行当「要跳过的内容」整体
+  // 吞掉——INS.TAIL 静默不执行，文件只删不增，工具仍报成功。
+  it('DEL without --- does not swallow the following operation', () => {
+    const patches = parsePatch('[f.ts#0000]\nDEL 2\nINS.TAIL\nX\n')
+    expect(patches[0]?.operations).toEqual([
+      { _tag: 'DEL', start: 2, end: 2 },
+      { _tag: 'INS_TAIL', content: 'X' },
+    ])
+  })
+
+  // 回归：省略 --- 的多操作补丁里，SWAP 把后续操作行整段吸进替换内容，
+  // 原定操作静默变成「写入一条操作语法文本」。
+  it('SWAP without --- stops its content at the next operation line', () => {
+    const patches = parsePatch('[f.ts#0000]\nSWAP 1-1\nA\nDEL 3\nINS.HEAD\nH\n')
+    expect(patches[0]?.operations).toEqual([
+      { _tag: 'SWAP', start: 1, end: 1, content: 'A' },
+      { _tag: 'DEL', start: 3, end: 3 },
+      { _tag: 'INS_HEAD', content: 'H' },
+    ])
+  })
 })
 
 describe('applyPatch', () => {
@@ -156,6 +193,35 @@ describe('applyPatch', () => {
     const hash = computeHash(file)
     const patches = parsePatch(`[f.ts#${hash}]\nDEL 2\n---\n`)
     expect(applyPatch(file, firstPatch(patches))).toEqual({ _tag: 'success', content: 'a\nc\n' })
+  })
+
+  // 回归：SWAP 内容包含 [path#hash] 形行时，块被提前截断——内容行丢失且
+  // 后续行被当作操作解析（edit 工具报 unknown operation，合法编辑失败）。
+  it('SWAP applies header-like content lines verbatim', () => {
+    const file = 'old line\nkeep\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 1-1\n[a.md#1234]\nmore\n---\n`)
+    const result = applyPatch(file, firstPatch(patches))
+    expect(result).toEqual({ _tag: 'success', content: '[a.md#1234]\nmore\nkeep\n' })
+  })
+
+  // 回归：DEL 无 --- 时后续 INS.TAIL 被整体吞掉——删除生效、追加静默丢失，
+  // 工具仍报 success（模型以为两个操作都完成）。
+  it('DEL without --- still applies the following INS.TAIL', () => {
+    const file = 'a\nb\nc\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nDEL 2\nINS.TAIL\nX\n`)
+    const result = applyPatch(file, firstPatch(patches))
+    expect(result).toEqual({ _tag: 'success', content: 'a\nc\nX\n' })
+  })
+
+  // 回归：SWAP 无 --- 时后续操作行被整段吸进替换内容，操作静默变成文本。
+  it('SWAP without --- still applies the following operations', () => {
+    const file = 'l1\nl2\nl3\nl4\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 1-1\nA\nDEL 3\nINS.HEAD\nH\n`)
+    const result = applyPatch(file, firstPatch(patches))
+    expect(result).toEqual({ _tag: 'success', content: 'H\nA\nl2\nl4\n' })
   })
 
   it('applies INS.PRE / INS.POST', () => {

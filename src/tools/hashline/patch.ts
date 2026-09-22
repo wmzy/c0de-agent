@@ -34,35 +34,65 @@ function computeHash(content: string): string {
 
 const HEADER_RE = /^\[(.+?)#([0-9a-fA-F]+)\]\s*$/
 
-/** 解析一个 `[path#hash]` 块内的操作序列。lines 为该块头之后的行。 */
-function parseOps(lines: string[]): PatchOp[] {
+/** 解析一个 `[path#hash]` 块内的操作序列。lines 为该块头之后的全部剩余行。
+ *  返回 { ops, consumed }：consumed 是本次消费的行数（含块间分隔空行，
+ *  不含下一块头行）——parsePatch 据此推进。
+ *
+ *  结构感知：块头只在「操作位置」生效——以 `---` 显式终止的操作，其内容里的
+ *  任何行（含 [path#hash] 形行、操作语法形行）都是内容；`---` 缺失时以
+ *  下一个操作行/块头为隐式边界。 */
+function parseOps(lines: string[]): { ops: PatchOp[]; consumed: number } {
   const ops: PatchOp[] = []
   let i = 0
   while (i < lines.length) {
-    const line = lines[i]
-    if (!line || line.trim() === '') {
+    const line = lines[i] ?? ''
+    if (line.trim() === '' || line === '---') {
       i++
       continue
     }
+    if (HEADER_RE.test(line.trim())) break // 下一块头：操作位置生效
     const tokens = line.split(/\s+/)
     const head = tokens[0]
     if (!head) throw new Error('hashline: empty operation line')
 
-    // 收集到下一个分隔符 `---`（或块尾）的内容行
+    // 候选边界行之后是否先出现 `---`：是则该候选行是内容（显式终止符
+    // 优先于一切），否则该候选行就是边界。
+    const isContentLine = (at: number): boolean => {
+      for (let k = at + 1; k < lines.length; k++) {
+        const lk = lines[k] ?? ''
+        if (lk === '---') return true
+        if (isOpLine(lk) || HEADER_RE.test(lk.trim())) return false
+      }
+      return false
+    }
+
+    // 收集到显式 `---`、或（无 `---` 时）到下一个操作行/块头/文件尾的内容行。
     const collectContent = (): { content: string; next: number } => {
       const body: string[] = []
       let j = i + 1
-      while (j < lines.length && lines[j] !== '---') {
-        body.push(lines[j] ?? '')
+      while (j < lines.length) {
+        const l = lines[j] ?? ''
+        if (l === '---') return { content: body.join('\n'), next: j + 1 }
+        if ((isOpLine(l) || HEADER_RE.test(l.trim())) && !isContentLine(j)) break
+        body.push(l)
         j++
       }
-      return { content: body.join('\n'), next: j + 1 }
+      // 隐式终止（无 --- 的块）：块间分隔空行不是内容，剥离恰好一个
+      //（内容里合法结尾空行由倒数第二个空串表达，与既有口径一致）。
+      if (body.length > 0 && body[body.length - 1] === '') body.pop()
+      return { content: body.join('\n'), next: j }
     }
-    // 无内容体（DEL）也吃掉到 `---`
+    // DEL 无内容体：跳到显式 `---` 或下一个操作行/块头（无 --- 的多操作补丁
+    // 里，后续操作不得被当「要跳过的内容」吞掉）。
     const skipToSeparator = (): number => {
       let j = i + 1
-      while (j < lines.length && lines[j] !== '---') j++
-      return j + 1
+      while (j < lines.length) {
+        const l = lines[j] ?? ''
+        if (l === '---') return j + 1
+        if (isOpLine(l) || HEADER_RE.test(l.trim())) return j
+        j++
+      }
+      return j
     }
 
     if (head === 'SWAP') {
@@ -94,7 +124,15 @@ function parseOps(lines: string[]): PatchOp[] {
       throw new Error(`hashline: unknown operation "${head}"`)
     }
   }
-  return ops
+  return { ops, consumed: i }
+}
+
+/** 操作行的完整语法（用于内容边界判定；宽容行尾空白）。 */
+const OP_LINE_RE =
+  /^(?:SWAP|DEL)\s+\d+(?:-\d+)?\s*$|^INS\.(?:PRE|POST)\s+\d+\s*$|^INS\.(?:HEAD|TAIL)\s*$/
+
+function isOpLine(line: string): boolean {
+  return OP_LINE_RE.test(line)
 }
 
 /**
@@ -134,26 +172,12 @@ function parsePatch(input: string): ParsedPatch[] {
     if (!m) throw new Error(`hashline: malformed header "${line}"`)
     const path = m[1] ?? ''
     const hash = m[2] ?? ''
-    const block = lines.slice(i + 1)
-    const endIdx = block.indexOf('') // 块以空行或文件尾分隔（其实下一头才分隔）
-    // 操作持续到下一个头或文件尾：找到下一个 HEADER_RE 匹配行
-    let nextHead = block.length
-    for (let k = 0; k < block.length; k++) {
-      if (HEADER_RE.test((block[k] ?? '').trim())) {
-        nextHead = k
-        break
-      }
-    }
-    void endIdx
-    const opsLines = block.slice(0, nextHead)
-    // 块尾终止（无 `---`，解析器支持的路径）时，split('\n') 的尾部空串——
-    // 补丁文本以换行结尾或块间空行分隔——会被 collectContent 收进最后一个
-    // 操作的内容：SWAP 多替换一行空行、INS.* 多插入一行空行，编辑产物静默
-    // 累积幽灵空行。剥离块尾恰好一个空行：内容里合法结尾空行由倒数第二个
-    // 空串表达（'A\n\n' → ['A','','']），不受影响。
-    if (opsLines.length > 0 && opsLines[opsLines.length - 1] === '') opsLines.pop()
-    patches.push({ path, hash, operations: parseOps(opsLines) })
-    i = i + 1 + nextHead
+    // 结构感知解析：块头只会在「操作位置」终止上一个块——`---` 终止的操作
+    // 其内容里的 [path#hash] 形行是内容而非新块（此前恒按块头扫描，合法
+    // 内容被拦腰截断、残余行被当作操作解析报 unknown operation）。
+    const { ops, consumed } = parseOps(lines.slice(i + 1))
+    patches.push({ path, hash, operations: ops })
+    i = i + 1 + consumed
   }
   return patches
 }
