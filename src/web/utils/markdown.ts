@@ -15,6 +15,99 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+/** href/src 允许的 scheme 白名单。无 scheme（相对路径、锚点、查询串）一律放行；
+ *  其余（javascript:/vbscript:/data: 等）一律降级——白名单而非黑名单，
+ *  新出现的可执行 scheme 默认被拒。 */
+const SAFE_URL_SCHEMES = new Set([
+  'http',
+  'https',
+  'mailto',
+  'tel',
+  // 产品内部 URL scheme（read 工具 / resolver 解析，见 src/tools/resolver.ts）
+  'agent',
+  'artifact',
+  'history',
+  'issue',
+  'local',
+  'mcp',
+  'memory',
+  'omp',
+  'pr',
+  'skill',
+])
+
+/** 数值实体 → 字符；非法码点返回空串（判定用途，不抛错）。 */
+function fromCodePointOrEmpty(code: number): string {
+  if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return ''
+  try {
+    return String.fromCodePoint(code)
+  } catch {
+    return ''
+  }
+}
+
+/** 常见命名实体（scheme 混淆相关；&colon; 在属性里会被浏览器解码为 `:`）。 */
+const NAMED_ENTITIES: Record<string, string> = {
+  colon: ':',
+  tab: '\t',
+  newline: '\n',
+  sol: '/',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+}
+
+/** 解码 HTML 实体：href/src 落 DOM 时浏览器会先解码属性值——
+ *  `&#106;avascript:` / `java&#115;cript:` / `javascript&colon;` 与 `javascript:`
+ *  等价。判定前必须解码，否则白名单可被实体编码整体绕过。 */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-f]{1,6});?/gi, (_, hex: string) =>
+      fromCodePointOrEmpty(Number.parseInt(hex, 16)),
+    )
+    .replace(/&#(\d{1,7});?/g, (_, dec: string) => fromCodePointOrEmpty(Number(dec)))
+    .replace(/&([a-z]+);/gi, (whole, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? whole)
+}
+
+/** URL 是否可安全写入 href/src：无 scheme 放行，有 scheme 必须命中白名单。 */
+export function isSafeUrl(url: string): boolean {
+  // 浏览器解析 scheme 时忽略 ASCII 控制字符与空白（java\tscript: 同样执行）。
+  const probe = decodeEntities(url)
+    .replace(/[\p{Cc}\s]+/gu, '')
+    .toLowerCase()
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(probe)?.[1]
+  return scheme === undefined || SAFE_URL_SCHEMES.has(scheme)
+}
+
+/** 未受信内容的统一转义配置：原始 HTML 一律转义为文本。
+ *  marked 默认 renderer 对 html token 是原样输出（html({text}) => text）——
+ *  模型输出、文件内容（md 预览）、工具结果里的 `<img onerror>`/`<script>`
+ *  经 dangerouslySetInnerHTML 直接执行。两个 Marked 实例共用同一配置，
+ *  避免只加固其中一个入口。 */
+const untrustedHtmlRenderer = {
+  html(token: { text: string }): string {
+    return escapeHtml(token.text)
+  },
+}
+
+/** 渲染前的公共 token 净化（危险 URL 降级）。两个实例都必须挂。 */
+function sanitizeToken(token: Token): void {
+  if (token.type !== 'link' && token.type !== 'image') return
+  // marked 默认 renderer 的 link/image 只对 href 做 encodeURI（cleanUrl 自 v8
+  // 起已无 scheme 过滤），改写为 text 即不产生锚点、只留可读标签。
+  const href = (token as { href?: unknown }).href
+  if (typeof href === 'string' && !isSafeUrl(href)) {
+    token.type = 'text'
+  }
+}
+
+marked.use({
+  renderer: untrustedHtmlRenderer,
+  walkTokens: sanitizeToken,
+} as unknown as MarkedExtension)
+
 /** 同步渲染 Markdown（代码块不高亮，供首屏）。 */
 export function renderMarkdownSync(content: string): string {
   return marked.parse(content) as string
@@ -33,6 +126,7 @@ const configuredMarked = new Marked({ gfm: true, breaks: true })
 configuredMarked.use({
   async: true,
   async walkTokens(token: Token) {
+    sanitizeToken(token)
     if (token.type === 'code' && typeof token.text === 'string') {
       const lang = token.lang ?? 'text'
       try {
@@ -46,6 +140,7 @@ configuredMarked.use({
     }
   },
   renderer: {
+    ...untrustedHtmlRenderer,
     code(token: { _highlighted?: string; text: string; lang?: string }) {
       // lang 与 fallback text 均转义：未受信输入不得裸拼进 HTML 属性/元素内容。
       // _highlighted 来自 Shiki（自身转义），保持信任。

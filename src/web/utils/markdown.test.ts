@@ -78,6 +78,76 @@ describe('renderMarkdown', () => {
   })
 })
 
+// 回归：代码块 renderer 转义修复只覆盖了 code 分支。marked 默认 renderer 对
+// 原始 HTML token 是**原样输出**（html({text}) => text），对链接/图片的 href
+// 也只做 encodeURI（cleanUrl 早于 v8 就不再有 scheme 黑名单）——模型输出、
+// 文件内容（FilePreview 的 md 预览）、工具结果里出现的 `<img onerror>` 或
+// `[x](javascript:...)` 都会经 dangerouslySetInnerHTML 落 DOM 执行脚本
+// （可窃取 localStorage 中的设备 token）。未受信内容必须转义 + scheme 白名单。
+describe('未受信 HTML 与 URL 注入', () => {
+  it('块级原始 HTML 转义为文本，不产生可执行元素', async () => {
+    const html = await renderMarkdown(
+      '<img src=x onerror="alert(1)">\n\n<div onclick="alert(2)">b</div>',
+    )
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('<div onclick')
+    expect(html).toContain('&lt;img src=x onerror=')
+  })
+
+  it('行内原始 HTML（含 script 与 javascript: 锚点）转义为文本', async () => {
+    const html = await renderMarkdown(
+      'text <script>alert(1)</script> and <a href="javascript:alert(2)">x</a> end',
+    )
+    expect(html).not.toContain('<script>')
+    expect(html).not.toContain('javascript:alert(2)">x')
+    expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('markdown 链接的危险 scheme 降级为纯文本（含实体/大小写混淆）', async () => {
+    const dangerous = [
+      'javascript:alert(1)',
+      'JaVaScRiPt:alert(1)',
+      'java&#115;cript:alert(1)',
+      '&#106;avascript:alert(1)',
+      'javascript&#58;alert(1)',
+      'vbscript:msgbox(1)',
+      'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+    ]
+    for (const href of dangerous) {
+      const html = await renderMarkdown(`[click](${href})`)
+      expect(html, href).not.toContain('<a href')
+      expect(html, href).toContain('click')
+    }
+  })
+
+  it('图片的危险 scheme 降级为 alt 文本', async () => {
+    const html = await renderMarkdown('![alt](javascript:alert(1))')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('alt')
+  })
+
+  it('安全链接保持可点击（http/相对/锚点/内部 scheme）', async () => {
+    const safe: Array<[string, string]> = [
+      ['[a](https://example.com/x)', 'href="https://example.com/x"'],
+      ['[a](./rel.md)', 'href="./rel.md"'],
+      ['[a](#anchor)', 'href="#anchor"'],
+      ['[a](skill://foo)', 'href="skill://foo"'],
+      ['[a](mailto:x@y.z)', 'href="mailto:x@y.z"'],
+    ]
+    for (const [md, expectHref] of safe) {
+      const html = await renderMarkdown(md)
+      expect(html, md).toContain(expectHref)
+    }
+  })
+
+  it('renderMarkdownSync 同口径：原始 HTML 与危险 scheme 同样被拦截', () => {
+    const html = renderMarkdownSync('<img src=x onerror=alert(1)>\n\n[click](javascript:alert(1))')
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('<a href')
+    expect(html).toContain('&lt;img')
+  })
+})
+
 // 复现：Markdown 组件此前持有模块级无界 Map（mdCache）——流式渲染期间
 // AssistantTextBlock 的每个 text_delta 中间版本都以完整文本为 key 写入且
 // 永不驱逐：长会话数千条完整 HTML 常驻内存，只增不减。同型参照
