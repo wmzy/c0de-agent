@@ -79,10 +79,13 @@ export function useTerminal(projectId: string) {
   activeTabIdRef.current = activeTabId
   const activePaneIdRef = useRef(activePaneId)
   activePaneIdRef.current = activePaneId
-  const tabSplitsRef = useRef(tabSplits)
-  tabSplitsRef.current = tabSplits
 
-  /** 派生 tabs：按 tabId 分组。 */
+  /** 派生 tabs：按 tabId 分组。
+   *  tabSplits 必须进依赖：此前 memo 只依赖 sessions、经 tabSplitsRef 读取
+   *  分屏状态——setPaneSizes/setSplitDirection 触发的重渲染命中 memo 缓存，
+   *  UI（PaneSplitContainer 的 flexGrow / direction）永远拿不到新值：
+   *  拖拽分隔条/键盘调整/切换分屏方向全部无视觉反馈（直到某次 sessions 变化
+   *  才顺带刷新）。 */
   const tabs: TerminalTab[] = useMemo(() => {
     const map = new Map<string, TerminalSession[]>()
     for (const s of sessions) {
@@ -95,7 +98,7 @@ export function useTerminal(projectId: string) {
     }
     const result: TerminalTab[] = []
     for (const [tabId, panes] of map) {
-      const split = tabSplitsRef.current[tabId] ?? {
+      const split = tabSplits[tabId] ?? {
         direction: 'horizontal' as SplitDirection,
         sizes: [1],
       }
@@ -104,7 +107,7 @@ export function useTerminal(projectId: string) {
       result.push({ id: tabId, panes, split: { direction: split.direction, sizes } })
     }
     return result
-  }, [sessions])
+  }, [sessions, tabSplits])
 
   const updateSession = useCallback((id: string, patch: Partial<TerminalSession>) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)))

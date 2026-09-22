@@ -124,6 +124,52 @@ describe('useTerminal 项目隔离', () => {
   })
 })
 
+describe('分屏布局变更必须反映到 tabs（渲染输入）', () => {
+  it('setPaneSizes 后 tabs[].split.sizes 立即更新', async () => {
+    mockCreate
+      .mockResolvedValueOnce(fakeInfo('pty_1', 'projA'))
+      .mockResolvedValueOnce(fakeInfo('pty_2', 'projA'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    await act(async () => {
+      await result.current.createTerminal()
+    })
+    await act(async () => {
+      await result.current.splitTerminal()
+    })
+
+    const tabId = result.current.tabs[0]?.id
+    expect(tabId).toBeTruthy()
+    expect(result.current.tabs[0]?.panes).toHaveLength(2)
+
+    act(() => {
+      result.current.setPaneSizes(tabId as string, [3, 1])
+    })
+
+    const sizes = result.current.tabs[0]?.split.sizes ?? []
+    expect(sizes).toHaveLength(2)
+    expect((sizes[0] ?? 0) / (sizes[1] ?? 1)).toBeCloseTo(3, 6)
+  })
+
+  it('setSplitDirection 后 tabs[].split.direction 立即更新', async () => {
+    mockCreate.mockResolvedValueOnce(fakeInfo('pty_1', 'projA'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    await act(async () => {
+      await result.current.createTerminal()
+    })
+    const tabId = result.current.tabs[0]?.id as string
+
+    act(() => {
+      result.current.setSplitDirection(tabId, 'vertical')
+    })
+
+    expect(result.current.tabs[0]?.split.direction).toBe('vertical')
+  })
+})
+
 // 复现：reconcileSizes 是「持久化 sizes → 渲染 flexGrow」的唯一收敛点，但它只处理
 // 长度不一致与 sum <= 0，对非有限值/负值原样透传：NaN 的 sum 比较恒为 false，
 // 归一化产出 NaN；负值产出负 flexGrow。PaneSplitContainer 的 flexGrow: NaN /
