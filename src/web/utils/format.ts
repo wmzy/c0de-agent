@@ -1,4 +1,5 @@
 import { roundTo } from '@shared/round.js'
+import { isUuid } from '@shared/utils/string.js'
 import type { CodeReference } from '@/types/index.js'
 
 /** 解析输入文本中的代码引用 @[path:start-end] 或 @[msgId:n]。 */
@@ -16,10 +17,13 @@ export function parseCodeReference(text: string): CodeReference | null {
   const singleMatch = text.match(/^@\[([^:]+):(\d+)\]$/)
   if (singleMatch) {
     const [, id, idx] = singleMatch
-    if ((id ?? '').includes('.')) {
-      return { _tag: 'file', path: id ?? '', startLine: Number(idx), endLine: Number(idx) }
+    // 消息 id 是 UUID（generateId = randomUUID）；此前按「含不含点」判定
+    // 消息 vs 文件——无扩展名文件（README/Makefile/Dockerfile/src/foo）
+    // 的单行引用被误判为消息引用，点击跳转到消息标签而非文件定位。
+    if (isUuid(id ?? '')) {
+      return { _tag: 'message', messageId: id ?? '', blockIndex: Number(idx) }
     }
-    return { _tag: 'message', messageId: id ?? '', blockIndex: Number(idx) }
+    return { _tag: 'file', path: id ?? '', startLine: Number(idx), endLine: Number(idx) }
   }
   return null
 }

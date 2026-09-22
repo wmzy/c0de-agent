@@ -18,11 +18,27 @@ describe('parseCodeReference', () => {
       endLine: 12,
     })
   })
-  it('消息引用', () => {
-    expect(parseCodeReference('@[msg_abc:2]')).toEqual({
+  it('消息引用（UUID 形态 id）', () => {
+    expect(parseCodeReference('@[0cac382d-ab59-478e-835e-d888a6460a0e:2]')).toEqual({
       _tag: 'message',
-      messageId: 'msg_abc',
+      messageId: '0cac382d-ab59-478e-835e-d888a6460a0e',
       blockIndex: 2,
+    })
+  })
+  // 回归：无扩展名文件（README/Makefile/Dockerfile 等常见引用目标）此前按
+  // 「不含点」被误判为消息引用——点击不跳转文件、渲染成消息标签。
+  it('无扩展名文件路径的单行引用归类为文件', () => {
+    expect(parseCodeReference('@[README:3]')).toEqual({
+      _tag: 'file',
+      path: 'README',
+      startLine: 3,
+      endLine: 3,
+    })
+    expect(parseCodeReference('@[src/Makefile:1]')).toEqual({
+      _tag: 'file',
+      path: 'src/Makefile',
+      startLine: 1,
+      endLine: 1,
     })
   })
   it('非法返回 null', () => {
