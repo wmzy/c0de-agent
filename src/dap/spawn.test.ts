@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { ADAPTER_COMMANDS, createDebugSpawn, resolveAdapterCommand } from './spawn.js'
+import { createDebugSpawn, resolveAdapterCommand } from './spawn.js'
 
 describe('resolveAdapterCommand', () => {
   it('maps known adapter ids to their spawn commands', () => {
-    expect(resolveAdapterCommand('node')).toEqual(ADAPTER_COMMANDS.node)
-    expect(resolveAdapterCommand('python')[0]).toBe('python3')
-    expect(resolveAdapterCommand('go')[0]).toBe('dlv')
-    expect(resolveAdapterCommand('lldb')[0]).toBe('lldb-dap')
+    // node：显式断言包名与 --stdio 开关。此前映射到 npm 上不存在的
+    // @vscode/js-debug（js-debug 只以 VS Code 扩展 / GitHub release 分发）——
+    // npx 恒 404，node 调试起不来；改回不存在的包名会静默回归，故在此钉住。
+    expect(resolveAdapterCommand('node')).toEqual([
+      'npx',
+      ['-y', '@bloopai/js-debug-adapter-stdio', '--stdio'],
+    ])
+    expect(resolveAdapterCommand('python')).toEqual(['python3', ['-m', 'debugpy.adapter']])
+    expect(resolveAdapterCommand('go')).toEqual(['dlv', ['dap']])
+    expect(resolveAdapterCommand('lldb')).toEqual(['lldb-dap', []])
   })
 
   it('treats unknown adapter ids as executable names', () => {
