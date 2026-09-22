@@ -7,37 +7,28 @@ type DebugSpawn = (config: DAPConfig) => DAPTransport
 
 // ── 基于已建立 client 的原子操作（薄封装，对齐 DAP command） ──
 
-/** initialize 超时：适配器首启（如 npx 下载 js-debug）可慢，给足余量；
- *  超时关闭 transport 并抛错，避免 debug_start 永久挂住 agent run。 */
+/** initialize/launch 超时：适配器首启（如 npx 下载 js-debug）可慢，给足余量；
+ *  超时拒绝并关闭 transport，避免 debug_start 永久挂住 agent run。 */
 const DAP_INIT_TIMEOUT_MS = 120_000
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
-    promise.then(
-      (v) => {
-        clearTimeout(timer)
-        resolve(v)
-      },
-      (e) => {
-        clearTimeout(timer)
-        reject(e)
-      },
-    )
-  })
-}
+/** disconnect 超时：调试器可能已卡死，停止调试不应让工具再等满默认超时。 */
+const DAP_DISCONNECT_TIMEOUT_MS = 10_000
 
 /** initialize 响应里本客户端关心的能力位。 */
 type DAPInitializeBody = { supportsConfigurationDoneRequest?: boolean }
 
 async function dapInitialize(client: DAPClient, adapterID: string): Promise<DAPInitializeBody> {
-  return (await client.request('initialize', {
-    clientID: 'c0de-agent',
-    adapterID,
-    linesStartAt1: true,
-    columnsStartAt1: true,
-    pathFormat: 'path',
-  })) as DAPInitializeBody
+  return (await client.request(
+    'initialize',
+    {
+      clientID: 'c0de-agent',
+      adapterID,
+      linesStartAt1: true,
+      columnsStartAt1: true,
+      pathFormat: 'path',
+    },
+    DAP_INIT_TIMEOUT_MS,
+  )) as DAPInitializeBody
 }
 
 /**
@@ -63,11 +54,12 @@ function dapLaunchArguments(config: DAPConfig): Record<string, unknown> {
  * 发送 launch/attach 请求并返回「响应 promise」（不 await）。
  * 必须能分两步：支持 configurationDone 的适配器（js-debug）在收到
  * configurationDone 之前不返回 launch 响应——先 await launch 再发
- * configurationDone 会互锁到超时。
+ * configurationDone 会互锁到超时。超时与 initialize 同口径（120s）：目标启动慢
+ * 时不应永久挂住 start()。
  */
 function dapLaunchRequest(client: DAPClient, config: DAPConfig): Promise<unknown> {
   const cmd = config.request === 'attach' ? 'attach' : 'launch'
-  return client.request(cmd, dapLaunchArguments(config))
+  return client.request(cmd, dapLaunchArguments(config), DAP_INIT_TIMEOUT_MS)
 }
 
 /**
@@ -81,11 +73,7 @@ const DAP_CONFIGURATION_DONE_TIMEOUT_MS = 10_000
 
 async function dapConfigurationDone(client: DAPClient): Promise<void> {
   try {
-    await withTimeout(
-      client.request('configurationDone', {}),
-      DAP_CONFIGURATION_DONE_TIMEOUT_MS,
-      'DAP configurationDone',
-    )
+    await client.request('configurationDone', {}, DAP_CONFIGURATION_DONE_TIMEOUT_MS)
   } catch (e) {
     console.warn('[dap] configurationDone failed:', e instanceof Error ? e.message : String(e))
   }
@@ -209,11 +197,7 @@ function createDebugSessionManager(): DebugSessionManager {
       })
 
       try {
-        const initBody = await withTimeout(
-          dapInitialize(client, config.adapter),
-          DAP_INIT_TIMEOUT_MS,
-          'DAP initialize',
-        )
+        const initBody = await dapInitialize(client, config.adapter)
         // launch 响应与 configurationDone 有先后依赖：支持 configurationDone 的
         // 适配器要收到它才创建/启动目标并回响应。先发 launch，再补 configurationDone，
         // 最后 await launch 响应（见 dapLaunchRequest / dapConfigurationDone 注释）。
@@ -257,9 +241,9 @@ function createDebugSessionManager(): DebugSessionManager {
       const s = sessions.get(sessionId)
       if (!s) return
       s.session.state = 'stopped'
-      // disconnect 适配器可能已退出；吞错但记录，便于排查非正常退出。
+      // disconnect 适配器可能已退出/卡死；吞错但记录，便于排查非正常退出。
       try {
-        await s.client.request('disconnect', {})
+        await s.client.request('disconnect', {}, DAP_DISCONNECT_TIMEOUT_MS)
       } catch (e) {
         console.warn('[dap] disconnect failed:', e instanceof Error ? e.message : String(e))
       }

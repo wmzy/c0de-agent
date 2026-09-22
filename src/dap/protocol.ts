@@ -23,14 +23,20 @@ type DAPMessage = {
 
 /** DAP 客户端：发 request 等 response，收 event。 */
 type DAPClient = {
-  /** 发请求，等对应 seq 的 response；失败 response reject。 */
-  request: (command: string, args?: unknown) => Promise<unknown>
+  /** 发请求，等对应 seq 的 response；失败 response reject。
+   *  timeoutMs ≤ 0 表示不限时；缺省取 DEFAULT_REQUEST_TIMEOUT_MS。 */
+  request: (command: string, args?: unknown, timeoutMs?: number) => Promise<unknown>
   /** 发事件通知（不等响应）。 */
   notify: (command: string, args?: unknown) => void
   /** 订阅 event，返回取消订阅函数。 */
   on: (event: string, handler: (body: unknown) => void) => () => void
   dispose: () => void
 }
+
+/** 单请求默认超时：适配器进程存活但不响应（自身挂起、不支持的命令被静默忽略）时
+ *  拒绝而非永久挂起——debug_* 工具（ToolDef 无 timeout）与 start() 的 launch 都会
+ *  无限等待，整个 agent run 只能靠用户手动中止。与 MCP 客户端的单请求超时同型。 */
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
 
 /** 把一条 JSON 消息编码为 DAP 分帧字节（`Content-Length: N\r\n\r\n{json}`）。 */
 function encodeMessage(json: string): string {
@@ -102,10 +108,29 @@ function createFramer(): Framer {
 /** 创建 DAP 客户端。transport 由调用方提供（真实为适配器进程 stdio）。 */
 function createDAPClient(transport: DAPTransport): DAPClient {
   let seq = 0
-  const pending = new Map<number, { resolve: (b: unknown) => void; reject: (e: Error) => void }>()
+  const pending = new Map<
+    number,
+    {
+      resolve: (b: unknown) => void
+      reject: (e: Error) => void
+      timer?: ReturnType<typeof setTimeout>
+    }
+  >()
   const eventHandlers = new Map<string, Set<(body: unknown) => void>>()
   const framer = createFramer()
   let disposed = false
+
+  /** 终结一个 pending：清定时器 → 出表 → settle（幂等：超时/响应/关闭谁先到谁生效）。 */
+  const settle = (
+    id: number,
+    fn: (p: { resolve: (b: unknown) => void; reject: (e: Error) => void }) => void,
+  ): void => {
+    const p = pending.get(id)
+    if (!p) return
+    if (p.timer) clearTimeout(p.timer)
+    pending.delete(id)
+    fn(p)
+  }
 
   framer.onMessage((json) => {
     let msg: DAPMessage
@@ -115,14 +140,15 @@ function createDAPClient(transport: DAPTransport): DAPClient {
       return
     }
     if (msg.type === 'response') {
-      const p = pending.get(msg.request_seq ?? -1)
-      if (!p) return
-      pending.delete(msg.request_seq ?? -1)
-      if (msg.success === false) {
-        p.reject(new Error(msg.message || `DAP request ${msg.request_seq} failed`))
-      } else {
-        p.resolve(msg.body)
-      }
+      const requestSeq = msg.request_seq ?? -1
+      if (!pending.has(requestSeq)) return
+      settle(requestSeq, (p) => {
+        if (msg.success === false) {
+          p.reject(new Error(msg.message || `DAP request ${requestSeq} failed`))
+        } else {
+          p.resolve(msg.body)
+        }
+      })
     } else if (msg.type === 'event') {
       const handlers = eventHandlers.get(msg.event ?? '')
       if (handlers) for (const h of handlers) h(msg.body)
@@ -132,8 +158,9 @@ function createDAPClient(transport: DAPTransport): DAPClient {
   transport.onData((chunk) => framer.feed(chunk))
   transport.onClose(() => {
     disposed = true
-    for (const p of pending.values()) p.reject(new Error('DAP transport closed'))
-    pending.clear()
+    for (const id of Array.from(pending.keys())) {
+      settle(id, (p) => p.reject(new Error('DAP transport closed')))
+    }
   })
 
   function send(msg: DAPMessage): void {
@@ -141,12 +168,20 @@ function createDAPClient(transport: DAPTransport): DAPClient {
   }
 
   return {
-    request(command, args) {
+    request(command, args, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
       if (disposed) return Promise.reject(new Error('DAP client disposed'))
       seq += 1
       const cur = seq
       return new Promise((resolve, reject) => {
-        pending.set(cur, { resolve, reject })
+        const timer =
+          timeoutMs > 0
+            ? setTimeout(() => {
+                settle(cur, (p) =>
+                  p.reject(new Error(`DAP request "${command}" timed out after ${timeoutMs}ms`)),
+                )
+              }, timeoutMs)
+            : undefined
+        pending.set(cur, { resolve, reject, ...(timer ? { timer } : {}) })
         send({ seq: cur, type: 'request', command, arguments: args })
       })
     },
@@ -170,11 +205,12 @@ function createDAPClient(transport: DAPTransport): DAPClient {
       if (disposed) return
       disposed = true
       transport.close()
-      for (const p of pending.values()) p.reject(new Error('DAP client disposed'))
-      pending.clear()
+      for (const id of Array.from(pending.keys())) {
+        settle(id, (p) => p.reject(new Error('DAP client disposed')))
+      }
     },
   }
 }
 
 export type { DAPClient, DAPMessage, DAPTransport }
-export { createDAPClient, createFramer, encodeMessage }
+export { createDAPClient, createFramer, DEFAULT_REQUEST_TIMEOUT_MS, encodeMessage }

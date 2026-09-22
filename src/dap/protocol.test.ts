@@ -180,4 +180,42 @@ describe('createDAPClient', () => {
     client.dispose()
     await expect(client.request('continue', {})).rejects.toThrow('disposed')
   })
+
+  // 复现：request 只有「响应到达」与「transport 关闭」两条终结路径——适配器进程
+  // 存活但不响应（自身挂起/不支持的命令被忽略）时 promise 永不 settle：debug_*
+  // 工具（无 ToolDef.timeout）与 start() 的 launch 永久挂住整个 agent run，用户
+  // 只能手动中止。MCP 客户端同型已有单请求超时（DEFAULT_REQUEST_TIMEOUT_MS）。
+  it('适配器不响应时按超时拒绝（不再永久挂起）', { timeout: 3000 }, async () => {
+    const t = memTransport()
+    const client = createDAPClient(t)
+    await expect(client.request('stackTrace', { threadId: 1 }, 30)).rejects.toThrow(
+      /timed out after 30ms/,
+    )
+  })
+
+  it('超时前收到响应 → 正常 resolve（不误报超时）', async () => {
+    const t = memTransport()
+    const client = createDAPClient(t)
+    const p = client.request('evaluate', { expression: '1' }, 1000)
+    t.emit(
+      encodeMessage(
+        JSON.stringify({
+          seq: 3,
+          type: 'response',
+          request_seq: 1,
+          success: true,
+          body: { result: '1' },
+        }),
+      ),
+    )
+    await expect(p).resolves.toEqual({ result: '1' })
+    // 已 settle 的请求不再被后续超时/响应干扰：同一客户端继续可用
+    const p2 = client.request('continue', { threadId: 1 }, 1000)
+    t.emit(
+      encodeMessage(
+        JSON.stringify({ seq: 4, type: 'response', request_seq: 2, success: true, body: {} }),
+      ),
+    )
+    await expect(p2).resolves.toEqual({})
+  })
 })
