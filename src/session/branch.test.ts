@@ -194,6 +194,61 @@ describe('branching', () => {
     expect(tree[0]?.session.id).toBe(s1.id)
   })
 
+  // 回归：getTree 的递归构建无 visited 守卫，且 parentId 成环数据（a↔b 互指/
+  // 自引用，快照恢复会保留环——update/snapshot.test.ts 有专测、手改 DB 亦可
+  // 产生）的成员**永远不可从根到达**：根 = parentId 为 null 的行，环上每个
+  // 成员的父指针都在环内，不存在指向环外根的边。于是 build(null) 完全够不到
+  // 它们——不报错、不终止异常，会话从 /api/sessions/tree 里静默消失：列表
+  // 看不到、无法打开、无法删除，只剩 DB 里永久不可达的行。
+  // 契约：每个可见会话恰好出现一次（正常树结构不变，环成员作为根补挂）。
+  it('getTree keeps cyclic sessions (a↔b / self-loop) visible instead of dropping them', async () => {
+    const a = await createSession(handle, 'CycleA')
+    const b = await createSession(handle, 'CycleB')
+    const self = await createSession(handle, 'SelfLoop')
+    await handle.db.update(sessions).set({ parentId: b.id }).where(eq(sessions.id, a.id))
+    await handle.db.update(sessions).set({ parentId: a.id }).where(eq(sessions.id, b.id))
+    await handle.db.update(sessions).set({ parentId: self.id }).where(eq(sessions.id, self.id))
+
+    const tree = await getTree(handle)
+    const ids: string[] = []
+    const walk = (nodes: typeof tree): void => {
+      for (const n of nodes) {
+        ids.push(n.session.id)
+        walk(n.children)
+      }
+    }
+    walk(tree)
+    // 三个会话各出现一次（此前整树为空——全部静默消失）
+    expect(ids.slice().sort()).toEqual([a.id, b.id, self.id].sort())
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('getTree 正常链与环数据并存：链结构不变、环成员作为根补挂且不重复', async () => {
+    const root = await createSession(handle, 'Root')
+    const child = await createSession(handle, 'Child')
+    await handle.db.update(sessions).set({ parentId: root.id }).where(eq(sessions.id, child.id))
+    const a = await createSession(handle, 'CycleA')
+    const b = await createSession(handle, 'CycleB')
+    await handle.db.update(sessions).set({ parentId: b.id }).where(eq(sessions.id, a.id))
+    await handle.db.update(sessions).set({ parentId: a.id }).where(eq(sessions.id, b.id))
+
+    const tree = await getTree(handle)
+    // 正常链结构不受影响
+    const rootNode = tree.find((n) => n.session.id === root.id)
+    expect(rootNode?.children.map((c) => c.session.id)).toEqual([child.id])
+    // 环成员不再消失：以根形式出现，各出现一次
+    const ids: string[] = []
+    const walk = (nodes: typeof tree): void => {
+      for (const n of nodes) {
+        ids.push(n.session.id)
+        walk(n.children)
+      }
+    }
+    walk(tree)
+    expect(ids.slice().sort()).toEqual([root.id, child.id, a.id, b.id].sort())
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
   it('fork 复制分支点之前的归档，并重映射 archiveId 引用（归档面板不再为空）', async () => {
     const parent = await createSession(handle, 'Parent')
     await appendMessage(handle, parent.id, { role: 'user', content: textContent('old-0') })

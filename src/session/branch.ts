@@ -248,6 +248,14 @@ function sessionUsage(session: Session): SessionUsage {
  * 每层按 metadata.lastOpenedAt 降序（fallback updatedAt、createdAt）。
  * 排除软删除会话与临时 CLI 会话（print/workflow）；持久化 CLI 会话（--continue 续接）
  * 与 Web 会话同树可见（CLI/Web 同库不同视图 → 同库同视图）。
+ *
+ * 环防护 + 可见性兜底（P1）：parentId 成环数据（a↔b 互指/自引用，快照恢复会
+ * 保留环、手改 DB 亦可产生）的成员不可从任何根到达——根 = parentId 为 null，
+ * 环上成员父指针都在环内，不存在指向环外的边。朴素构建会让它们从会话树
+ * **静默消失**（列表看不到、无法打开、无法删除）。visited 保证每个会话恰好
+ * 出现一次（环在重复处断开），构建根后把未出现的成员按同一排序作为根补挂。
+ * 正常森林不受影响。与 restoreSessionCore 祖先链 / purgeDeletedSessions /
+ * recycleTree 的环守卫同口径。
  */
 async function getTree(handle: DB): Promise<SessionTreeNode[]> {
   const rows = await handle.db
@@ -255,8 +263,10 @@ async function getTree(handle: DB): Promise<SessionTreeNode[]> {
     .from(sessions)
     .where(and(isNull(sessions.deletedAt), webVisibleSessionCondition()))
   const byParent = new Map<string | null, Session[]>()
+  const all: Session[] = []
   for (const row of rows) {
     const session = rowToSession(row)
+    all.push(session)
     const list = byParent.get(session.parentId) ?? []
     list.push(session)
     byParent.set(session.parentId, list)
@@ -265,17 +275,34 @@ async function getTree(handle: DB): Promise<SessionTreeNode[]> {
   // 排序键：lastOpenedAt > updatedAt > createdAt（均为 epoch ms）
   const sortKey = (s: Session): number => s.metadata.lastOpenedAt ?? s.updatedAt ?? s.createdAt ?? 0
 
+  const visited = new Set<string>()
   const build = (parentId: string | null): SessionTreeNode[] =>
     (byParent.get(parentId) ?? [])
       .slice()
       .sort((a, b) => sortKey(b) - sortKey(a))
-      .map((session) => ({
-        session,
-        children: build(session.id),
-        usage: sessionUsage(session),
-      }))
+      .flatMap((session): SessionTreeNode[] => {
+        if (visited.has(session.id)) return []
+        visited.add(session.id)
+        return [
+          {
+            session,
+            children: build(session.id),
+            usage: sessionUsage(session),
+          },
+        ]
+      })
 
-  return build(null)
+  const roots = build(null)
+  // 环成员（不可从根到达）：作为根补挂，环在重复处断开、节点不丢失。
+  // 前一个孤儿根的子树可能已把后续成员纳入（a↔b 环），visited 复查去重。
+  for (const orphan of all
+    .filter((s) => !visited.has(s.id))
+    .sort((a, b) => sortKey(b) - sortKey(a))) {
+    if (visited.has(orphan.id)) continue
+    visited.add(orphan.id)
+    roots.push({ session: orphan, children: build(orphan.id), usage: sessionUsage(orphan) })
+  }
+  return roots
 }
 
 export { BranchPointOutOfRangeError, forkSession, getBranches, getTree }
