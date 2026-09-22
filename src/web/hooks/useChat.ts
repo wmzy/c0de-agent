@@ -25,6 +25,11 @@ import type { APIError } from '@/types/index.js'
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
+  // P1 后台附着：流式/权限超时态镜像——副作用（confirmTool 网络请求）必须
+  // 在状态更新器之外发起：更新器是纯函数，StrictMode/并发渲染重放会重复
+  // 执行，写进更新器会让同一拒绝请求发出两次。
+  const permissionTimeoutRef = useRef<ChatState['permissionTimeout']>(null)
+  permissionTimeoutRef.current = state.permissionTimeout
   // P1 后台附着：流式/附着态镜像 + 轮询代数与定时器。
   const streamingRef = useRef(false)
   const attachedRef = useRef(false)
@@ -406,15 +411,16 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     })
   }, [])
 
-  /** 超时后显式拒绝：resolve store 中的 pending 为 deny，run 继续执行。 */
+  /** 超时后显式拒绝：resolve store 中的 pending 为 deny，run 继续执行。
+   *  网络副作用在更新器之外（更新器必须是纯函数——StrictMode/并发渲染
+   *  重放会重复执行，此前 confirmTool 写在更新器里同一拒绝请求发两次）。 */
   const denyTimedOutPermission = useCallback(() => {
-    setState((s) => {
-      if (s.permissionTimeout) {
-        const { toolCallId } = s.permissionTimeout
-        agentAPI.confirmTool(toolCallId, false).catch(() => {})
-      }
-      return { ...s, permissionTimeout: null }
-    })
+    const timedOut = permissionTimeoutRef.current
+    if (timedOut) {
+      const { toolCallId } = timedOut
+      void agentAPI.confirmTool(toolCallId, false).catch(() => {})
+    }
+    setState((s) => ({ ...s, permissionTimeout: null }))
   }, [])
 
   /** P1：附着结束——停止轮询、复位附着态并刷新消息/调用详情。 */

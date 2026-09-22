@@ -3,7 +3,7 @@ import type { Message, MessageContent } from '@shared/types/message.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { createElement } from 'react'
+import { createElement, StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatState } from '@/hooks/chatState.js'
 import { reduceChatEvent } from '@/hooks/chatState.js'
@@ -379,6 +379,67 @@ describe('useChat confirm', () => {
     expect(result.current.error).toBe(
       '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
     )
+  })
+
+  // 回归：denyTimedOutPermission 把 confirmTool POST 写进 setState 更新器——
+  // 更新器必须是纯函数，StrictMode（main.tsx 已开启）会重复调用它，同一
+  // 拒绝请求被发出两次（服务端第二次必然 404，用户网络层收到多余请求）。
+  it('denyTimedOutPermission fires exactly one confirmTool request under StrictMode', async () => {
+    const sse =
+      'data: {"_tag":"permission_timeout","toolCallId":"tcTO","tool":"bash","input":{},"timeoutAction":"pause"}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ confirmed: true }),
+        text: async () => JSON.stringify({ confirmed: true }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        StrictMode,
+        null,
+        createElement(QueryClientProvider, { client: queryClient }, children),
+      )
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.permissionTimeout?.toolCallId).toBe('tcTO')
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+    })
+    expect(result.current.permissionTimeout).toBeNull()
+
+    const confirmCalls = fetchMock.mock.calls.filter(([url]) => url === '/api/tools/confirm')
+    expect(confirmCalls).toHaveLength(1)
   })
 })
 
