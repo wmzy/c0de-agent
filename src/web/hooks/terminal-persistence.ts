@@ -54,9 +54,15 @@ function savePersistedState(state: PersistedTerminalState, projectId: string): v
   }
 }
 
-/** 确保 sizes 数组长度与 pane 数量一致，且归一化为均值 1.0。
+/** 确保 sizes 数组长度与 pane 数量一致，且归一化为均值 1.0 的**有限正值**。
  *  归一化后每个 pane 的 flex-grow ≈ 1.0，浏览器会正确分配空间。
- *  不归一化时（如 [0.5]），单个 pane 的 flex-grow:0.5 只占 50% 而非 100%。 */
+ *  不归一化时（如 [0.5]），单个 pane 的 flex-grow:0.5 只占 50% 而非 100%。
+ *
+ *  非法项（非数字 / NaN / Infinity / ≤ 0，来源：localStorage 旧版本遗留、
+ *  手工编辑、JSON 落盘把 NaN 写成 null、容器 rect 为 0 时的 Infinity 增量）
+ *  必须先收敛为 1：flexGrow 为 NaN/0/负值是非法 CSS（声明被丢弃 → flex-grow
+ *  回落 0，配合 flexBasis: 0 使 pane 宽度塌成 0），而拖拽算式以 sizes 为输入，
+ *  NaN 会自我传播——分屏布局永久崩塌且拖不回来。 */
 function reconcileSizes(sizes: number[], count: number): number[] {
   let arr: number[]
   if (sizes.length === count) {
@@ -66,10 +72,10 @@ function reconcileSizes(sizes: number[], count: number): number[] {
   } else {
     arr = [...sizes, ...Array(count - sizes.length).fill(1)]
   }
-  // 归一化：使总和 = count（均值 1.0）
-  const sum = arr.reduce((a, b) => a + b, 0)
-  if (sum <= 0) return arr.map(() => 1)
-  return arr.map((s) => (s * count) / sum)
+  const safe = arr.map((s) => (typeof s === 'number' && Number.isFinite(s) && s > 0 ? s : 1))
+  // safe 全为有限正值 → 非空时 sum > 0，归一化不会产出 NaN。
+  const sum = safe.reduce((a, b) => a + b, 0)
+  return safe.map((s) => (s * count) / sum)
 }
 
 export type { PersistedTerminalState }
