@@ -149,6 +149,21 @@ describe('editTool', () => {
     expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('line1\nalpha\nbeta\nline3\n')
   })
 
+  // 回归：归一化只在文件为 CRLF 时生效——LF 文件 + CRLF newText（模型粘贴
+  // Windows 文本）时 \r\n 原样写入，与其余行混成 CRLF/LF 混合行尾
+  //（与 hashline 模式的单向剥离同型）。
+  it('normalizes CRLF newText into LF files', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'line1\nline2\nline3\n', 'utf-8')
+    const result = await editTool.execute(
+      { path: 'f.ts', oldText: 'line2', newText: 'alpha\r\nbeta' },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    const after = await readFile(join(workDir, 'f.ts'), 'utf-8')
+    expect(after).toBe('line1\nalpha\nbeta\nline3\n')
+    expect(after).not.toMatch(/\r\n/)
+  })
+
   it('returns error for non-existent file', async () => {
     const result = await editTool.execute({ path: 'nope.ts', oldText: 'a', newText: 'b' }, ctx)
     expect(result._tag).toBe('error')

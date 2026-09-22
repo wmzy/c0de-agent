@@ -133,9 +133,11 @@ export const editTool: ToolDef = {
         // 行尾口径按**文件主导行尾**判定（与 hashline 模式/grep/shake/workflows 同口径）。
         // 只看被替换区域是否含 CRLF 会在「单行区域 + 多行 newText」漏判——区域本身
         // 不含换行，newText 的 \n 原样写入 CRLF 文件，产出混合行尾（git diff 全行噪音）。
+        // LF 文件同理：newText 里的 \r\n（模型粘贴 Windows 文本）此前原样写入，
+        // 与其余行混成混合行尾——两个方向都要归一（与 hashline 的同型修复一致）。
         const replacement = content.includes('\r\n')
           ? newText.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
-          : newText
+          : newText.replace(/\r\n/g, '\n')
         return content.slice(0, origStart) + replacement + content.slice(end)
       })()
       await writeFile(fullPath, newContent, 'utf-8')

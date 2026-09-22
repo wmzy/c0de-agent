@@ -249,12 +249,12 @@ function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
   })
 
   for (const op of ordered) {
-    // 补丁内容行按文件行尾归一：模型若粘贴了 CRLF 内容，先剥 \r 再按 eol 重建，
-    // 与文件其余部分保持单一换行风格。
+    // 补丁内容行按文件行尾归一：模型粘贴 CRLF 内容时先剥行尾 \r 再按 eol 重建，
+    // 与文件其余部分保持单一换行风格。剥离对 LF 内容是无操作——此前只在
+    // eol===CRLF 时剥离，LF 文件 + CRLF 补丁内容的行残留 \r，与其余行混成
+    // CRLF/LF 混合行尾（与 edit diff 模式的单向归一化同型）。
     const contentLines =
-      'content' in op && op.content !== ''
-        ? op.content.split('\n').map((l) => (eol === '\r\n' ? stripCR(l) : l))
-        : []
+      'content' in op && op.content !== '' ? op.content.split('\n').map(stripCR) : []
     switch (op._tag) {
       case 'SWAP':
         lines.splice(op.start - 1, op.end - op.start + 1, ...contentLines)

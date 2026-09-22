@@ -289,6 +289,18 @@ describe('applyPatch', () => {
     })
   })
 
+  // 回归：内容行剥离 \r 只在文件为 CRLF 时生效——LF 文件 + CRLF 补丁内容
+  //（模型粘贴 Windows 文本）时插入/替换行残留 \r，与其余行混成 CRLF/LF 混合行尾。
+  it('normalizes CRLF patch content into LF files', () => {
+    const file = 'a\nb\nc\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 2-2\nX\r\nY\r\n---\nINS.TAIL\nZ\r\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'a\nX\nY\nc\nZ\n',
+    })
+  })
+
   // 回归：无 \n 结尾的孤立 \r 是文件内容而非行尾——LF 判定下不得剥离。
   it('keeps lone CR characters in LF files untouched', () => {
     const file = 'a\nb\r'
