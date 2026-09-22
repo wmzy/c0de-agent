@@ -1,5 +1,6 @@
 import * as ff from 'fetch-fun'
 import type { APIError } from '@/types/index.js'
+import { storageGet, storageRemove, storageSet } from '@/utils/storage.js'
 
 const API_BASE = ''
 
@@ -24,7 +25,7 @@ function bootstrapAuthToken(): void {
     // dev 注入的 bootstrap 仅在**尚无任何已存 token** 时作为候选——
     // 否则每次页面加载都用 bootstrap 覆盖有效设备 token，注册又因 devices>0 失败，
     // 陷入 401 → 配对死循环（P1-4 修复）。
-    const existing = localStorage.getItem(TOKEN_KEY)
+    const existing = storageGet(TOKEN_KEY)
     const rawToken = fromUrl ?? (existing ? null : (injected ?? ''))
     if (rawToken) {
       if (fromUrl) {
@@ -35,7 +36,7 @@ function bootstrapAuthToken(): void {
       }
       // 先同步存储原始 token（保证刷新后立即可用），再异步换发设备 token：
       // 注册成功 → 覆盖为设备 token（bootstrap 轮换后 API 只认设备 token）。
-      localStorage.setItem(TOKEN_KEY, rawToken)
+      storageSet(TOKEN_KEY, rawToken)
       // 换发设备 token（fire-and-forget；成功即覆盖持久化，失败保留原始 token 由 API 401 触发配对）
       if (typeof fetch !== 'function') return
       void fetch(`${API_BASE}/api/auth/register`, {
@@ -50,7 +51,7 @@ function bootstrapAuthToken(): void {
           if (!res.ok) throw new Error(String(res.status))
           const body = (await res.json()) as { deviceToken?: string; deviceName?: string }
           if (body.deviceToken) {
-            localStorage.setItem(TOKEN_KEY, body.deviceToken)
+            storageSet(TOKEN_KEY, body.deviceToken)
             // P1-3：记录注册成功的设备名，刷新后展示一次性确认，用户可核对
             // 首设备注册的确实是本浏览器（先到先得竞态的可见性补偿）。
             if (body.deviceName) {
@@ -80,20 +81,12 @@ bootstrapAuthToken()
 /** 清除本地 token（配对拒绝/登出后调用）。 */
 export function clearAuthToken(): void {
   if (typeof window === 'undefined') return
-  try {
-    localStorage.removeItem(TOKEN_KEY)
-  } catch {
-    // ignore
-  }
+  storageRemove(TOKEN_KEY)
 }
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null
-  try {
-    return localStorage.getItem(TOKEN_KEY)
-  } catch {
-    return null
-  }
+  return storageGet(TOKEN_KEY)
 }
 
 /** 通知 App 显示设备配对 UI（收到 401 时调用）。 */

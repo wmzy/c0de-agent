@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModelSelection } from '@/components/ModelSelector.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providerAPI } from '@/services/provider.js'
+import { storageGet, storageRemove, storageSet } from '@/utils/storage.js'
 
 const SELECTION_KEY = 'c0de-agent:modelSelection'
 const AGENT_KEY = 'c0de-agent:selectedAgent'
@@ -43,12 +44,14 @@ export function useComposerDefaults(projectId?: string) {
   const providers = providersData?.providers ?? []
   const [selection, setSelection] = useState<ModelSelection>(() => {
     // 从 localStorage 恢复上次选择（项目优先，旧全局键回退），避免刷新/重挂载后 model 回到默认值
-    try {
-      const saved = localStorage.getItem(selectionKey(projectId))
-      const fallback = saved ?? localStorage.getItem(SELECTION_KEY)
-      if (fallback) return JSON.parse(fallback) as ModelSelection
-    } catch {
-      // localStorage 不可用或 JSON 损坏，回退到默认值
+    const saved = storageGet(selectionKey(projectId))
+    const fallback = saved ?? storageGet(SELECTION_KEY)
+    if (fallback) {
+      try {
+        return JSON.parse(fallback) as ModelSelection
+      } catch {
+        // JSON 损坏，回退到默认值
+      }
     }
     return { provider: '', model: '' }
   })
@@ -58,11 +61,7 @@ export function useComposerDefaults(projectId?: string) {
   const setAndPersistSelection = useCallback(
     (v: ModelSelection) => {
       selectionTouchedRef.current = true
-      try {
-        localStorage.setItem(selectionKey(projectId), JSON.stringify(v))
-      } catch {
-        // 忽略写入失败
-      }
+      storageSet(selectionKey(projectId), JSON.stringify(v))
       setSelection(v)
     },
     [projectId],
@@ -71,11 +70,7 @@ export function useComposerDefaults(projectId?: string) {
   /** 程序化校正/默认填充：同样落盘，但不视为用户操作（后续校正仍可继续）。 */
   const applyCorrectedSelection = useCallback(
     (v: ModelSelection) => {
-      try {
-        localStorage.setItem(selectionKey(projectId), JSON.stringify(v))
-      } catch {
-        // 忽略写入失败
-      }
+      storageSet(selectionKey(projectId), JSON.stringify(v))
       setSelection(v)
     },
     [projectId],
@@ -84,9 +79,9 @@ export function useComposerDefaults(projectId?: string) {
   // 静默回滚为「全部启用」。安全相关状态的无提示回滚比偏好丢失更危险。
   // null = 未显式选择（后端默认集）；Set = 显式选择（含空集 = 全禁用）。
   const [enabledTools, setEnabledToolsState] = useState<Set<string> | null>(() => {
+    const raw = storageGet(toolsKey(projectId))
+    if (raw == null) return null
     try {
-      const raw = localStorage.getItem(toolsKey(projectId))
-      if (raw == null) return null
       const parsed = JSON.parse(raw) as unknown
       if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === 'string')) return null
       return new Set(parsed)
@@ -97,20 +92,17 @@ export function useComposerDefaults(projectId?: string) {
   const setEnabledTools = useCallback(
     (v: Set<string> | null) => {
       setEnabledToolsState(v)
-      try {
-        if (v === null) localStorage.removeItem(toolsKey(projectId))
-        else localStorage.setItem(toolsKey(projectId), JSON.stringify(Array.from(v)))
-      } catch {
-        // 存储不可用（隐私模式等）：本次会话内仍生效
-      }
+      // 存储不可用（隐私模式等）时降级：本次会话内仍生效
+      if (v === null) storageRemove(toolsKey(projectId))
+      else storageSet(toolsKey(projectId), JSON.stringify(Array.from(v)))
     },
     [projectId],
   )
   const [agentName, setAgentNameState] = useState<string>(
-    () => localStorage.getItem(agentKey(projectId)) ?? localStorage.getItem(AGENT_KEY) ?? 'default',
+    () => storageGet(agentKey(projectId)) ?? storageGet(AGENT_KEY) ?? 'default',
   )
   const setAgentName = (name: string) => {
-    localStorage.setItem(agentKey(projectId), name)
+    storageSet(agentKey(projectId), name)
     setAgentNameState(name)
   }
 
@@ -120,30 +112,32 @@ export function useComposerDefaults(projectId?: string) {
   // P1-2：重载后的选择来自持久化/默认值（非用户操作），允许后续默认值校正。
   useEffect(() => {
     selectionTouchedRef.current = false
-    try {
-      const saved = localStorage.getItem(selectionKey(projectId))
-      if (saved) setSelection(JSON.parse(saved) as ModelSelection)
-      else setSelection({ provider: '', model: '' })
-    } catch {
+    const saved = storageGet(selectionKey(projectId))
+    if (saved) {
+      try {
+        setSelection(JSON.parse(saved) as ModelSelection)
+      } catch {
+        setSelection({ provider: '', model: '' })
+      }
+    } else {
       setSelection({ provider: '', model: '' })
     }
-    try {
-      const rawTools = localStorage.getItem(toolsKey(projectId))
-      if (rawTools == null) setEnabledToolsState(null)
-      else {
+    const rawTools = storageGet(toolsKey(projectId))
+    if (rawTools == null) {
+      setEnabledToolsState(null)
+    } else {
+      try {
         const parsed = JSON.parse(rawTools) as unknown
         setEnabledToolsState(
           Array.isArray(parsed) && parsed.every((t) => typeof t === 'string')
             ? new Set(parsed)
             : null,
         )
+      } catch {
+        setEnabledToolsState(null)
       }
-    } catch {
-      setEnabledToolsState(null)
     }
-    setAgentNameState(
-      localStorage.getItem(agentKey(projectId)) ?? localStorage.getItem(AGENT_KEY) ?? 'default',
-    )
+    setAgentNameState(storageGet(agentKey(projectId)) ?? storageGet(AGENT_KEY) ?? 'default')
   }, [projectId])
 
   // P1-2：默认值校正（provider 与 model 都要校正，此前只校正 provider）：

@@ -1,6 +1,7 @@
 // src/web/hooks/terminal-persistence.ts
 // 终端面板状态的 localStorage 持久化与纯函数工具。
 // 从 useTerminal.ts 拆出：常量、key 派生、读写、sizes 归一化。
+import { storageGet, storageSet } from '@/utils/storage.js'
 
 const TERMINAL_HEIGHT_KEY = 'c0de-agent:terminalHeight'
 const DEFAULT_HEIGHT = 240
@@ -24,19 +25,19 @@ interface PersistedTerminalState {
 const MIN_PANE_FLEX = 0.15
 
 function loadHeight(): number {
-  const raw = localStorage.getItem(TERMINAL_HEIGHT_KEY)
+  const raw = storageGet(TERMINAL_HEIGHT_KEY)
   if (raw == null) return DEFAULT_HEIGHT
   const n = Number(raw)
   return Number.isFinite(n) ? Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, n)) : DEFAULT_HEIGHT
 }
 
 function loadOpen(projectId: string): boolean {
-  return localStorage.getItem(openKey(projectId)) === 'true'
+  return storageGet(openKey(projectId)) === 'true'
 }
 
 function loadPersistedState(projectId: string): PersistedTerminalState | null {
   try {
-    const raw = localStorage.getItem(sessionsKey(projectId))
+    const raw = storageGet(sessionsKey(projectId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as PersistedTerminalState
     if (!parsed?.sessions || !Array.isArray(parsed.sessions)) return null
@@ -47,11 +48,7 @@ function loadPersistedState(projectId: string): PersistedTerminalState | null {
 }
 
 function savePersistedState(state: PersistedTerminalState, projectId: string): void {
-  try {
-    localStorage.setItem(sessionsKey(projectId), JSON.stringify(state))
-  } catch {
-    // localStorage 满或不可用，忽略
-  }
+  storageSet(sessionsKey(projectId), JSON.stringify(state))
 }
 
 /** 确保 sizes 数组长度与 pane 数量一致，且归一化为均值 1.0 的**有限正值**。

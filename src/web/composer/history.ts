@@ -1,3 +1,5 @@
+import { storageGet, storageSet } from '@/utils/storage.js'
+
 const MAX_HISTORY = 100
 const HISTORY_KEY = 'composer-history.v1'
 
@@ -61,9 +63,9 @@ function prependHistoryEntry(entries: string[], text: string, max = MAX_HISTORY)
 
 /** 从 localStorage 读取历史。 */
 function loadHistory(): string[] {
+  const raw = storageGet(HISTORY_KEY)
+  if (!raw) return []
   try {
-    const raw = localStorage.getItem(HISTORY_KEY)
-    if (!raw) return []
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed : []
   } catch {
@@ -73,11 +75,7 @@ function loadHistory(): string[] {
 
 /** 持久化历史到 localStorage。 */
 function saveHistory(entries: string[]): void {
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY)))
-  } catch {
-    // 忽略 quota/隐私模式错误
-  }
+  storageSet(HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY)))
 }
 
 export {

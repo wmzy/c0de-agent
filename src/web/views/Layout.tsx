@@ -3,6 +3,7 @@ import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MobileNav } from '@/components/MobileNav.js'
 import { DESKTOP, MOBILE } from '@/styles/breakpoints.js'
+import { storageGet, storageSet } from '@/utils/storage.js'
 
 // 三栏宽度常量：左 sidebar / 右 panel 各自可拖拽，中间 main flex 填充剩余空间。
 const DEFAULT_SIDEBAR = 280
@@ -23,7 +24,7 @@ const clamp = (v: number, min: number, max: number): number => Math.min(max, Mat
 
 /** 从 localStorage 读取并钳制宽度；非法或缺省返回 fallback。 */
 function loadWidth(key: string, fallback: number, min: number, max: number): number {
-  const raw = localStorage.getItem(key)
+  const raw = storageGet(key)
   if (raw == null) return fallback
   const n = Number(raw)
   return Number.isFinite(n) ? clamp(n, min, max) : fallback
@@ -178,10 +179,10 @@ export function Layout({
   )
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_KEY, String(sidebarWidth))
+    storageSet(SIDEBAR_KEY, String(sidebarWidth))
   }, [sidebarWidth])
   useEffect(() => {
-    localStorage.setItem(PANEL_KEY, String(panelWidth))
+    storageSet(PANEL_KEY, String(panelWidth))
   }, [panelWidth])
 
   const sidebarResize = useColResize((delta) =>

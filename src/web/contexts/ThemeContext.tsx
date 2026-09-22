@@ -1,6 +1,7 @@
 import { darkTheme, lightTheme } from 'haze-ui/tokens'
 import type { ReactNode } from 'react'
 import { createContext, useContext, useEffect, useState } from 'react'
+import { storageGet, storageSet } from '@/utils/storage.js'
 
 type ThemeMode = 'light' | 'dark' | 'system'
 
@@ -19,7 +20,7 @@ function getSystemTheme(): 'light' | 'dark' {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<ThemeMode>(
-    () => (localStorage.getItem('c0de-theme') as ThemeMode | null) ?? 'system',
+    () => (storageGet('c0de-theme') as ThemeMode | null) ?? 'system',
   )
   const resolved = mode === 'system' ? getSystemTheme() : mode
 
@@ -27,7 +28,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement
     root.classList.toggle(darkTheme, resolved === 'dark')
     root.classList.toggle(lightTheme, resolved === 'light')
-    localStorage.setItem('c0de-theme', mode)
+    storageSet('c0de-theme', mode)
   }, [mode, resolved])
 
   useEffect(() => {

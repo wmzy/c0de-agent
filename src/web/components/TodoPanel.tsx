@@ -6,6 +6,7 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
 import { inputStyle } from '@/styles/tokens.js'
+import { storageGet, storageSet } from '@/utils/storage.js'
 
 // ── Status icons & colors ─────────────────────────────────
 
@@ -264,9 +265,7 @@ function activeTaskInfo(phases: TodoPhase[]) {
 export function TodoPanel({ sessionId, projectId }: { sessionId: string; projectId?: string }) {
   const queryClient = useQueryClient()
   const todoKey = ['todo', sessionId]
-  const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem('c0de-agent:todoCollapsed') === '1',
-  )
+  const [collapsed, setCollapsed] = useState(() => storageGet('c0de-agent:todoCollapsed') === '1')
   const [showAdd, setShowAdd] = useState(false)
   const [newTask, setNewTask] = useState('')
   const [newPhase, setNewPhase] = useState('')
@@ -354,7 +353,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const toggleCollapse = () => {
     const next = !collapsed
     setCollapsed(next)
-    localStorage.setItem('c0de-agent:todoCollapsed', next ? '1' : '0')
+    storageSet('c0de-agent:todoCollapsed', next ? '1' : '0')
   }
 
   const totalTasks = phases.reduce((sum, p) => sum + p.tasks.length, 0)

@@ -5,6 +5,7 @@ import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { authAPI } from '@/services/auth.js'
+import { storageSet } from '@/utils/storage.js'
 
 const overlay = css`
   position: fixed;
@@ -113,7 +114,7 @@ function PairingRequestFlow() {
         const s = await authAPI.pairingStatus(pairing.pairingId)
         if (cancelled) return
         if (s.status === 'approved') {
-          localStorage.setItem('c0de-auth-token', s.deviceToken)
+          storageSet('c0de-auth-token', s.deviceToken)
           setApproved(true)
           setTimeout(() => window.location.reload(), 600)
           return

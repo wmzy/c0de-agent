@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { updateAPI } from '@/services/update.js'
+import { storageGet, storageSet } from '@/utils/storage.js'
 
 const impactList = css`
   margin-top: 8px;
@@ -127,19 +128,12 @@ const POLL_INTERVAL = 5 * 60 * 1000 // 5 分钟轮询一次后台缓存
 const DISMISS_KEY = 'c0de-agent:updateDismissed'
 
 function loadDismissed(): string | null {
-  try {
-    return localStorage.getItem(DISMISS_KEY)
-  } catch {
-    return null
-  }
+  return storageGet(DISMISS_KEY)
 }
 
 function saveDismissed(version: string): void {
-  try {
-    localStorage.setItem(DISMISS_KEY, version)
-  } catch {
-    // 存储不可用（隐私模式等）时静默降级：仅本次组件实例内生效
-  }
+  // 存储不可用（隐私模式等）时静默降级：仅本次组件实例内生效
+  storageSet(DISMISS_KEY, version)
 }
 
 /**

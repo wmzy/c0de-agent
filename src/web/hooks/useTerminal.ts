@@ -14,6 +14,7 @@ import {
   TERMINAL_HEIGHT_KEY,
 } from '@/hooks/terminal-persistence.js'
 import { type TerminalInfo, terminalAPI, terminalWsUrl } from '@/services/terminal.js'
+import { storageSet } from '@/utils/storage.js'
 
 export interface TerminalSession extends TerminalInfo {
   /** WebSocket 连接（null = 未连接/已断开）。 */
@@ -311,17 +312,14 @@ export function useTerminal(projectId: string) {
     // 且回读最新值以支持连续切换。
     setOpen((prev) => !prev)
     const next = !openRef.current
-    try {
-      localStorage.setItem(openKey(projectIdRef.current), String(next))
-    } catch {
-      // localStorage 不可用（隐私模式/配额）：面板开关仅本次会话有效
-    }
+    // 存储不可用（隐私模式/配额）时降级：面板开关仅本次会话有效
+    storageSet(openKey(projectIdRef.current), String(next))
   }, [])
 
   const setHeightClamped = useCallback((h: number) => {
     const clamped = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h))
     setHeight(clamped)
-    localStorage.setItem(TERMINAL_HEIGHT_KEY, String(clamped))
+    storageSet(TERMINAL_HEIGHT_KEY, String(clamped))
   }, [])
   // ---- 恢复：projectId 变化时按项目重建终端结构 ----
   useEffect(() => {

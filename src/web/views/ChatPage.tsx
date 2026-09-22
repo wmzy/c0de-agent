@@ -13,6 +13,7 @@ import { FileReferenceProvider } from '@/contexts/ReferenceContext.js'
 import { useTerminal } from '@/hooks/useTerminal.js'
 import { navigateTo } from '@/navigateTo.js'
 import { projectAPI } from '@/services/project.js'
+import { storageGet, storageSet } from '@/utils/storage.js'
 import { ChatView } from '@/views/ChatView.js'
 import { FileBrowser } from '@/views/FileBrowser.js'
 import { FilePreview } from '@/views/FilePreview.js'
@@ -58,11 +59,11 @@ export function ChatPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [revealRange, setRevealRange] = useState<LineRange | null>(null)
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
-    () => (localStorage.getItem('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
+    () => (storageGet('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
   )
   const switchTab = (t: SidebarTab) => {
     setSidebarTab(t)
-    localStorage.setItem('c0de-agent:sidebarTab', t)
+    storageSet('c0de-agent:sidebarTab', t)
   }
 
   const fileCtx: FileSelection = {
