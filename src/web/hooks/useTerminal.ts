@@ -65,6 +65,9 @@ export function useTerminal(projectId: string) {
   const [activePaneId, setActivePaneId] = useState<string | null>(null)
   const [height, setHeight] = useState(loadHeight)
   const [open, setOpen] = useState(() => loadOpen(projectId))
+  /** open 镜像：toggleOpen 在状态更新器外读取当前值并落盘。 */
+  const openRef = useRef(open)
+  openRef.current = open
   /** 页面加载时恢复终端会话，恢复期间阻止自动创建。 */
   const [restoring, setRestoring] = useState(true)
 
@@ -304,11 +307,15 @@ export function useTerminal(projectId: string) {
   }, [])
 
   const toggleOpen = useCallback(() => {
-    setOpen((prev) => {
-      const next = !prev
+    // 持久化在更新器之外：状态更新器必须是纯函数（StrictMode/并发渲染会重放），
+    // 且回读最新值以支持连续切换。
+    setOpen((prev) => !prev)
+    const next = !openRef.current
+    try {
       localStorage.setItem(openKey(projectIdRef.current), String(next))
-      return next
-    })
+    } catch {
+      // localStorage 不可用（隐私模式/配额）：面板开关仅本次会话有效
+    }
   }, [])
 
   const setHeightClamped = useCallback((h: number) => {

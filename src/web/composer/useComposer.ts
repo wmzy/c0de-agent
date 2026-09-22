@@ -87,6 +87,11 @@ function useComposer({
   const composingRef = useRef(false)
   const [images, setImages] = useState<ImagePart[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
+  /** images 镜像：校验/读取必须在状态更新器之外进行（更新器必须是纯函数——
+   *  React 会在 StrictMode 与并发渲染重放中重复调用它，把校验、setImageError、
+   *  readImagePart 等副作用写进去会让同一张图被添加两次）。 */
+  const imagesRef = useRef<ImagePart[]>([])
+  imagesRef.current = images
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
   const [subcommandCmd, setSubcommandCmd] = useState<string | null>(null)
@@ -342,37 +347,52 @@ function useComposer({
     [setPromptExternal],
   )
 
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    // 图片粘贴优先
-    const items = e.clipboardData.items
-    for (const item of Array.from(items)) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const file = item.getAsFile()
-        if (!file) return
-        setImages((prev) => {
-          const err = validateImage(file, prev.length)
-          setImageError(err)
-          if (err) return prev
-          void readImagePart(file)
-            .then((part) => setImages((cur) => [...cur, part]))
-            .catch(() => setImageError('读取图片失败'))
-          return prev
-        })
+  /** 校验并读取图片后追加（拖拽/选择/粘贴共用）。
+   *  校验与读取都在 setImages 之外完成：更新器内做副作用会在 StrictMode /
+   *  并发渲染重放时执行两次（同一张图被添加两次、读取两次）。 */
+  const addImageFile = useCallback((file: File) => {
+    const err = validateImage(file, imagesRef.current.length)
+    setImageError(err)
+    if (err) return
+    void readImagePart(file)
+      .then((part) => setImages((cur) => [...cur, part]))
+      .catch(() => setImageError('读取图片失败'))
+  }, [])
+
+  // 添加图片（拖拽/选择）
+  const addImage = useCallback(
+    (file: File) => {
+      addImageFile(file)
+    },
+    [addImageFile],
+  )
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      // 图片粘贴优先
+      const items = e.clipboardData.items
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault()
+          const file = item.getAsFile()
+          if (!file) return
+          addImageFile(file)
+          return
+        }
+      }
+      // 文本粘贴
+      const text = e.clipboardData.getData('text/plain')
+      if (!text) return
+      e.preventDefault()
+      const normalized = normalizePaste(text)
+      if (pasteMode(text) === 'manual' && (text.length >= 8000 || text.split('\n').length >= 120)) {
+        setShowPasteConfirm({ text: normalized })
         return
       }
-    }
-    // 文本粘贴
-    const text = e.clipboardData.getData('text/plain')
-    if (!text) return
-    e.preventDefault()
-    const normalized = normalizePaste(text)
-    if (pasteMode(text) === 'manual' && (text.length >= 8000 || text.split('\n').length >= 120)) {
-      setShowPasteConfirm({ text: normalized })
-      return
-    }
-    document.execCommand('insertText', false, normalized)
-  }, [])
+      document.execCommand('insertText', false, normalized)
+    },
+    [addImageFile],
+  )
 
   const confirmPaste = useCallback(() => {
     if (showPasteConfirm) document.execCommand('insertText', false, showPasteConfirm.text)
@@ -380,19 +400,6 @@ function useComposer({
   }, [showPasteConfirm])
 
   const cancelPaste = useCallback(() => setShowPasteConfirm(null), [])
-
-  // 添加图片（拖拽/选择）
-  const addImage = useCallback((file: File) => {
-    setImages((prev) => {
-      const err = validateImage(file, prev.length)
-      setImageError(err)
-      if (err) return prev
-      void readImagePart(file)
-        .then((part) => setImages((cur) => [...cur, part]))
-        .catch(() => setImageError('读取图片失败'))
-      return prev
-    })
-  }, [])
 
   const removeImage = useCallback((idx: number) => {
     setImages((prev) => prev.filter((_, i) => i !== idx))
