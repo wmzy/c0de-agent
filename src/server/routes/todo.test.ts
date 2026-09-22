@@ -67,3 +67,21 @@ describe('todo route', () => {
     expect(body.phases).toEqual([])
   })
 })
+
+describe('todo 路径参数 sessionId 格式校验', () => {
+  it('GET /:sessionId 非 UUID → 404（此前 PG 22P02 击穿 500）', async () => {
+    const { app } = await setup()
+    const res = await app.request('/not-a-uuid')
+    expect(res.status).toBe(404)
+  })
+
+  it('POST /:sessionId 非 UUID → 404', async () => {
+    const { app } = await setup()
+    const res = await app.request('/not-a-uuid', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'view' }),
+    })
+    expect(res.status).toBe(404)
+  })
+})

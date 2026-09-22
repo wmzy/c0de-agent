@@ -257,3 +257,40 @@ describe('kanban 写端点 body 形状校验（null/非对象 body）', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('kanban 路径参数 id 格式校验', () => {
+  it('DELETE /deleted/:boardId 非 UUID → 404（此前 PG 22P02 击穿 500）', async () => {
+    const { app } = await setup()
+    const res = await app.request('deleted/not-a-uuid', { method: 'DELETE' })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('BOARD_NOT_FOUND')
+  })
+
+  it('POST /deleted/:boardId/restore 非 UUID → 404', async () => {
+    const { app } = await setup()
+    const res = await app.request(post('deleted/not-a-uuid/restore', { projectId: PROJECT_ID }))
+    expect(res.status).toBe(404)
+  })
+
+  it('PATCH /:projectId/cards/:cardId 非 UUID → 404（看板存在时此前 500）', async () => {
+    const { app } = await setup()
+    // 先建板（GET /:projectId 懒建），使 store 真正走到 uuid 列查询
+    await app.request(`${PROJECT_ID}`)
+    const res = await app.request(`${PROJECT_ID}/cards/not-a-uuid`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'x' }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('CARD_NOT_FOUND')
+  })
+
+  it('DELETE /:projectId/cards/:cardId 非 UUID → 404（看板存在时此前 500）', async () => {
+    const { app } = await setup()
+    await app.request(`${PROJECT_ID}`)
+    const res = await app.request(`${PROJECT_ID}/cards/not-a-uuid`, { method: 'DELETE' })
+    expect(res.status).toBe(404)
+  })
+})

@@ -2,9 +2,8 @@ import { and, desc, eq, ilike } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { compactionArchives } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
+import { isUuid } from '../shared/utils/string.js'
 import type { ArchiveRef, CompactionArchive, SessionEntry } from './types.js'
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function toEpochMs(value: Date | string | number): number {
   if (value instanceof Date) return value.getTime()
@@ -84,7 +83,7 @@ async function archiveOriginalEntries(
 /** Get an archive by id. Returns null for invalid or non-existent ids. */
 async function getArchive(handle: DB, id: string): Promise<CompactionArchive | null> {
   // PGLite rejects non-UUID strings at query time; validate first.
-  if (!UUID_RE.test(id)) return null
+  if (!isUuid(id)) return null
   const [row] = await handle.db
     .select()
     .from(compactionArchives)

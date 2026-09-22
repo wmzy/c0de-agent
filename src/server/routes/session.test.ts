@@ -1413,3 +1413,44 @@ describe('session 写端点 body 形状校验', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('session 路径参数 id 格式校验', () => {
+  const BAD_ID = 'not-a-uuid'
+
+  it.each([
+    ['get', '', ''],
+    ['get', '/messages', ''],
+    ['get', '/llm-details', ''],
+    ['get', '/status', ''],
+    ['get', '/branches', ''],
+    ['post', '/open', '{}'],
+    ['post', '/fork', '{}'],
+    ['post', '/restore', '{}'],
+    ['post', '/rebind', '{}'],
+    ['post', '/shake/preview', '{}'],
+    ['post', '/compact', '{}'],
+    ['patch', '', '{}'],
+    ['delete', '', ''],
+    ['delete', '/empty', ''],
+    ['delete', '/forever', ''],
+  ])(
+    '%s /:id%s 非 UUID → 404（此前 PG 22P02 击穿 500 并回显 SQL 错误）',
+    async (method, suffix, rawBody) => {
+      const { app } = await setup()
+      const res = await app.request(`/${BAD_ID}${suffix}`, {
+        method: method.toUpperCase(),
+        headers: { 'Content-Type': 'application/json' },
+        ...(rawBody ? { body: rawBody } : {}),
+      })
+      expect(res.status).toBe(404)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe('NOT_FOUND')
+    },
+  )
+
+  it('合法 UUID 但不存在 → 404（守卫不改变既有语义）', async () => {
+    const { app } = await setup()
+    const res = await app.request('/00000000-0000-0000-0000-000000000000/messages')
+    expect(res.status).toBe(404)
+  })
+})

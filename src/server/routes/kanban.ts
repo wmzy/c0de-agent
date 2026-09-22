@@ -3,7 +3,7 @@
 // P2-5：/deleted* 为看板回收站端点（必须注册在 /:projectId 之前避免被参数路由吞掉）。
 
 import { existsSync } from 'node:fs'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import {
   createKanbanStore,
   getDeletedKanbanBoard,
@@ -19,6 +19,7 @@ import {
 } from '../../kanban/index.js'
 import { fromDirectory, getProject } from '../../project/index.js'
 import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shared/types/kanban.js'
+import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
@@ -60,6 +61,22 @@ function hasDuplicateIds(items: Array<{ id: string }>): boolean {
 
 function createKanbanRoute(ctx: ServerContext): Hono {
   const app = new Hono()
+
+  // 看板 id 是 uuid 列：非 UUID 直接 404（同 guardProject 的理由——此前非 UUID
+  // 经 drizzle 查询在 PG 侧抛 22P02，Hono 兜成 500 且回显 SQL 错误细节）。
+  // 注册在 /deleted* 路由之前：Hono 按注册序分派，守卫必须先于具体处理器。
+  // '/deleted'（单段）不匹配本守卫模式，回收站列表/清空不受影响。
+  const guardBoardId = async (
+    c: Context,
+    next: () => Promise<void>,
+  ): Promise<Response | undefined> => {
+    if (!isUuid(c.req.param('boardId') ?? '')) {
+      return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+    }
+    await next()
+  }
+  app.use('/deleted/:boardId', guardBoardId)
+  app.use('/deleted/:boardId/*', guardBoardId)
 
   // GET /deleted — 回收站看板列表（项目删除软删除的看板，60 天保留期）。
   app.get('/deleted', async (c) => {
@@ -149,7 +166,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   // 此前不存在的项目会穿透到 getOrCreateBoardId 的 insert，FK violation 抛 500
   // 且错误信息回显 SQL——应为 404。
   const guardProject = async (
-    c: import('hono').Context,
+    c: Context,
     next: () => Promise<void>,
   ): Promise<Response | undefined> => {
     const project = await getProject(ctx.db, c.req.param('projectId') ?? '')
@@ -158,6 +175,14 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   }
   app.use('/:projectId', guardProject)
   app.use('/:projectId/*', guardProject)
+
+  // 卡片 id 同为用户可控路径参数（uuid 列）：非 UUID → 404 而非 PG 22P02 → 500。
+  app.use('/:projectId/cards/:cardId', async (c, next) => {
+    if (!isUuid(c.req.param('cardId') ?? '')) {
+      return apiError(c, 404, 'CARD_NOT_FOUND', '卡片不存在')
+    }
+    await next()
+  })
 
   // GET /:projectId — full board with cards
   app.get('/:projectId', async (c) => {

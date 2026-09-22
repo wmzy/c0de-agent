@@ -47,3 +47,13 @@ export function tailChars(text: string, n: number): string {
   if (n >= text.length) return text
   return text.slice(safeTailStart(text, text.length - n))
 }
+
+/** UUID（任意版本/大小写）格式判定。
+ *  用于「路径/参数里的 id 直接进 PG uuid 列」的入口预检：非 UUID 经 drizzle
+ *  参数化查询会在 PG 侧抛 22P02（invalid input syntax for type uuid），被 Hono
+ *  兜成 500 并把 SQL 错误细节回给客户端——入口显式判非法（404）即可避免。 */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value)
+}

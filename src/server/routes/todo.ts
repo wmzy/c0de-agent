@@ -5,6 +5,7 @@ import { getSession } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { MessageContent } from '../../shared/types/message.js'
 import type { TodoPhaseLike } from '../../shared/types/tool.js'
+import { isUuid } from '../../shared/utils/string.js'
 import {
   formatSummary,
   getLatestTodoPhasesFromMessages,
@@ -33,6 +34,16 @@ function makeTodoCtx(phases: TodoPhase[], abort: AbortSignal) {
 
 function createTodoRoute(ctx: ServerContext): Hono {
   const app = new Hono()
+
+  // 路径参数 sessionId 是 sessions.id（uuid 列）：非 UUID 直接 404。
+  // 此前非 UUID 经 drizzle 查询在 PG 侧抛 22P02（invalid input syntax for type
+  // uuid）→ Hono 500 且回显 SQL 错误细节；格式非法与「会话不存在」同属 404。
+  app.use('/:sessionId', async (c, next) => {
+    if (!isUuid(c.req.param('sessionId') ?? '')) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
+    await next()
+  })
 
   // GET /:sessionId — 获取当前 todo 状态
   app.get('/:sessionId', async (c) => {

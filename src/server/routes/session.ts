@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { createSummarizer, runCompaction } from '../../core/compact.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import { sessions } from '../../db/schema.js'
@@ -48,6 +48,7 @@ import {
 } from '../../session/shake.js'
 import { estimateMessageTokens } from '../../session/token.js'
 import { generateId } from '../../shared/index.js'
+import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
@@ -285,6 +286,24 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const count = await emptyTrash(ctx.db, projectId)
     return c.json({ ok: true, deleted: count })
   })
+
+  // 路径参数 id 是 sessions.id（uuid 列）：非 UUID 直接 404。
+  // 此前非 UUID 经 drizzle 参数化查询在 PG 侧抛 22P02（invalid input syntax for
+  // type uuid），Hono 兜成 500 且把 SQL 错误细节回给客户端；对调用方而言
+  // 「不存在的会话」与「格式非法的 id」同属资源不存在，统一 404。
+  // 必须注册在上方全部静态路径（/import、/tree、/search、/deleted*）之后：
+  // Hono 按注册序分派，静态路由先命中即返回，不会被本守卫拦截。
+  const guardSessionId = async (
+    c: Context,
+    next: () => Promise<void>,
+  ): Promise<Response | undefined> => {
+    if (!isUuid(c.req.param('id') ?? '')) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
+    await next()
+  }
+  app.use('/:id', guardSessionId)
+  app.use('/:id/*', guardSessionId)
 
   // 获取会话详情
   app.get('/:id', async (c) => {
