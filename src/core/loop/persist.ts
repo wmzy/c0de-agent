@@ -7,7 +7,7 @@ import type { LoopDeps } from '../loop.js'
 import { inferToolMode, recordToolMetrics } from '../metrics.js'
 import type { CollectedToolCall } from '../tool-exec.js'
 import { executeToolCalls } from '../tool-exec.js'
-import { runSubAgent } from './subagent.js'
+import { runSubAgent, runSubAgents } from './subagent.js'
 
 function toolResultToContent(
   toolCallId: string,
@@ -86,6 +86,10 @@ export async function* persistAssistantAndTools(
         ...(deps.urlRegistry ? { urlRegistry: deps.urlRegistry } : {}),
         ...(deps.debugSpawn ? { debugSpawn: deps.debugSpawn } : {}),
         runSubAgent: (req) => runSubAgent({ ...deps, _subagentEventSink: eventSink }, state, req),
+        // task 工具批量模式：宿主批量入口按 config.agents.subagentConcurrency 建并发池
+        // （与工作流 ctx.runSubagents 共用同一实现），子 agent 事件同走 eventSink。
+        runSubAgents: (reqs) =>
+          runSubAgents({ ...deps, _subagentEventSink: eventSink }, state, reqs),
         ...(deps._subagentYieldCollector ? { collectYield: deps._subagentYieldCollector } : {}),
         // todo 工具状态通过 dependency-reversal hook 注入：get/set 直接读写
         // state.todoPhases（in-memory），tool result 的 metadata.phases 充当

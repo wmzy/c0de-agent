@@ -29,7 +29,7 @@ import type { CollectedToolCall } from './tool-exec.js'
 import type { AgentDependencies } from './types.js'
 
 export { compactContext } from './loop/compaction.js'
-export { runSubAgent } from './loop/subagent.js'
+export { runSubAgent, runSubAgents } from './loop/subagent.js'
 
 type LoopDeps = AgentDependencies & {
   chatStream?: typeof llmChatStream

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SubAgentResult, ToolContext } from '../../shared/types/tool.js'
+import type { SubAgentRequest, SubAgentResult, ToolContext } from '../../shared/types/tool.js'
 import { taskTool } from './task.js'
 
 function ctxWith(runSubAgent?: ToolContext['runSubAgent']): ToolContext {
@@ -150,6 +150,86 @@ describe('taskTool subagent_type + batch', () => {
     expect(result._tag).toBe('success')
     if (result._tag === 'success') {
       expect(result.metadata).toMatchObject({ background: true, jobId: 'job-1' })
+    }
+  })
+})
+
+describe('taskTool 批量派发的并发契约', () => {
+  it('批量 tasks[] 走宿主批量入口（并发策略由宿主按 subagentConcurrency 实现）', async () => {
+    const runSubAgents = vi.fn(
+      async (requests: SubAgentRequest[]): Promise<SubAgentResult[]> =>
+        requests.map((r) => ({
+          _tag: 'success' as const,
+          output: `ok:${r.prompt}`,
+          sessionId: 'c',
+        })),
+    )
+    const result = await taskTool.execute(
+      {
+        subagent_type: 'coder',
+        context: 'refactor X',
+        tasks: [
+          { description: 'API 层', assignment: 'do A' },
+          { description: '测试层', assignment: 'do B' },
+          { description: '文档层', assignment: 'do C' },
+        ],
+      },
+      { ...ctxWith(), runSubAgents },
+    )
+    // 一次性交出全部请求：逐个 await 会把 N 个子 agent 的墙钟时间线性叠加
+    expect(runSubAgents).toHaveBeenCalledTimes(1)
+    expect(runSubAgents.mock.calls[0]?.[0]).toHaveLength(3)
+    expect(runSubAgents.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      agentType: 'coder',
+      prompt: 'do A',
+      description: 'API 层',
+      context: 'refactor X',
+    })
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toContain('ok:do A')
+      expect(result.output).toContain('ok:do C')
+    }
+  })
+
+  it('宿主未注入批量入口时回退逐个派发（单任务入口），结果按输入顺序聚合', async () => {
+    const runSubAgent = vi.fn(
+      async (req: SubAgentRequest): Promise<SubAgentResult> => ({
+        _tag: 'success',
+        output: `ok:${req.prompt}`,
+        sessionId: 'c',
+      }),
+    )
+    const result = await taskTool.execute(
+      {
+        subagent_type: 'coder',
+        context: 'ref',
+        tasks: [{ assignment: 'do A' }, { assignment: 'do B' }],
+      },
+      ctxWith(runSubAgent),
+    )
+    expect(runSubAgent).toHaveBeenCalledTimes(2)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output.indexOf('ok:do A')).toBeLessThan(result.output.indexOf('ok:do B'))
+    }
+  })
+
+  it('批量中某个子 agent 失败：报错但不吞掉已完成任务的结果', async () => {
+    const runSubAgents = vi.fn(
+      async (): Promise<SubAgentResult[]> => [
+        { _tag: 'success', output: 'done A', sessionId: 'c1' },
+        { _tag: 'error', error: 'boom' },
+      ],
+    )
+    const result = await taskTool.execute(
+      { subagent_type: 'coder', context: 'ref', tasks: [{ assignment: 'A' }, { assignment: 'B' }] },
+      { ...ctxWith(), runSubAgents },
+    )
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.error).toContain('boom')
+      expect(result.error).toContain('done A')
     }
   })
 })

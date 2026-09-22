@@ -54,6 +54,10 @@ type ToolContext = {
   /** Spawn a sub-agent and return its final text output (dependency-reversal hook
    *  for the `task` tool; avoids tools→core circular import). */
   runSubAgent?: (input: SubAgentRequest) => Promise<SubAgentResult>
+  /** 批量派发子 agent（task 工具的批量模式）。宿主负责并发池（按
+   *  config.agents.subagentConcurrency）与逐任务错误隔离，结果与入参顺序一一对应；
+   *  未注入时 task 工具回退逐个调用 runSubAgent（串行）。 */
+  runSubAgents?: (input: SubAgentRequest[]) => Promise<SubAgentResult[]>
   /** Spawn a debug adapter and return its stdio transport (dependency-reversal
    *  hook for the `debug_*` tools; host wires real child_process spawn). */
   debugSpawn?: (config: unknown) => DebugTransport

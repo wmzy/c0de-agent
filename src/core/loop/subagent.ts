@@ -8,6 +8,7 @@ import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js
 import { headChars } from '../../shared/utils/string.js'
 import { validateInput } from '../../tools/validate.js'
 import { abortAgent, createAgent, runAgent } from '../agent.js'
+import { mapWithConcurrencyLimit } from '../agents/parallel.js'
 import type { LoopDeps } from '../loop.js'
 import type { RepoBaseline } from '../worktree.js'
 import {
@@ -302,4 +303,61 @@ export async function runSubAgent(
   }
 
   return runBody()
+}
+/** 子 agent 并发上限的默认值与上限。
+ *  配置项 config.agents.subagentConcurrency 经 normalizeSubagentConcurrency 归一化；
+ *  上限 10 防配置面（手改/克隆仓库自带）把并发推到宿主无法承受（每个子 agent 都是
+ *  独立 session + LLM 调用 + DB 写）。 */
+const DEFAULT_SUBAGENT_CONCURRENCY = 3
+const MAX_SUBAGENT_CONCURRENCY = 10
+
+/** 归一化子 agent 并发上限：缺失/非有限/<1 回落默认 3，上限钳到 10。
+ *  与 ToolDef.timeout / clampTimerDelay 同口径——配置面的退化值不得让派发失控
+ *  （0 或负数会让并发池退化成「一个都不跑」）。 */
+export function normalizeSubagentConcurrency(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value < 1) {
+    return DEFAULT_SUBAGENT_CONCURRENCY
+  }
+  return Math.min(Math.trunc(value), MAX_SUBAGENT_CONCURRENCY)
+}
+
+/** 单任务派发函数（批量派发的注入点：工作流宿主自带 runner 时无需经 deps 组装）。 */
+type SubAgentRunner = (request: SubAgentRequest) => Promise<SubAgentResult>
+
+/**
+ * 批量派发子 agent（task 工具批量模式 / 工作流 ctx.runSubagents 共用）。
+ *
+ * - 并发上限取 config.agents.subagentConcurrency（默认 3）——此前 task 工具批量模式
+ *   逐个 await（墙钟时间线性叠加，与工具描述的 "Launch multiple agents concurrently"
+ *   相悖），工作流侧则硬编码 3（配置项形同虚设）。
+ * - 结果与入参顺序一一对应，绝不出现空洞：未启动的任务（abort）填 error 结果，
+ *   调用方无需再处理 undefined。
+ * - 单个任务失败隔离（抛错/error 结果都收敛为 error），不 fail-fast 终止兄弟任务。
+ * - abort（父 run 中止）取消尚未启动的任务。
+ */
+export async function runSubAgents(
+  deps: LoopDeps,
+  parent: AgentState,
+  requests: SubAgentRequest[],
+  runOne: SubAgentRunner = (request) => runSubAgent(deps, parent, request),
+): Promise<SubAgentResult[]> {
+  if (requests.length === 0) return []
+  const limit = normalizeSubagentConcurrency(deps.config.agents?.subagentConcurrency)
+  const { results } = await mapWithConcurrencyLimit(
+    requests,
+    limit,
+    async (request) => {
+      try {
+        return await runOne(request)
+      } catch (e) {
+        // 隔离单个任务的异常：不向上抛，避免 fail-fast 终止尚未启动的兄弟任务
+        return { _tag: 'error' as const, error: e instanceof Error ? e.message : String(e) }
+      }
+    },
+    parent.abortController.signal,
+  )
+  return results.map(
+    (result, i): SubAgentResult =>
+      result ?? { _tag: 'error', error: `sub-agent task ${i + 1} was not started (run aborted)` },
+  )
 }

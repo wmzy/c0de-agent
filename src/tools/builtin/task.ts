@@ -1,4 +1,10 @@
-import type { SubAgentRequest, TaskItem, ToolDef, ToolResult } from '../../shared/types/tool.js'
+import type {
+  SubAgentRequest,
+  SubAgentResult,
+  TaskItem,
+  ToolDef,
+  ToolResult,
+} from '../../shared/types/tool.js'
 
 /** 单任务输入。 */
 type SingleTaskInput = {
@@ -60,7 +66,11 @@ export const taskTool: ToolDef = {
   },
   permission: 'auto',
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
-    if (!ctx.runSubAgent) {
+    // 单任务入口（ctx.runSubAgent）与批量入口（ctx.runSubAgents）二选一即可工作：
+    // 批量入口存在时批量模式走宿主的并发池，否则回退逐个派发。
+    const runOne = ctx.runSubAgent
+    const runBatch = ctx.runSubAgents
+    if (!runOne && !runBatch) {
       return {
         _tag: 'error',
         error: 'task tool unavailable: no sub-agent runner is wired into this context',
@@ -72,27 +82,47 @@ export const taskTool: ToolDef = {
     // 批量模式
     if ('tasks' in inp && Array.isArray(inp.tasks) && inp.tasks.length > 0) {
       const agentType = inp.subagent_type ?? 'general'
-      const results: string[] = []
-      for (const item of inp.tasks) {
-        const req: SubAgentRequest = {
-          agentType,
-          prompt: item.assignment,
-          ...(item.description ? { description: item.description } : {}),
-          ...(item.role ? { role: item.role } : {}),
-          ...(inp.context ? { context: inp.context } : {}),
-        }
-        const res = await ctx.runSubAgent(req)
+      const requests: SubAgentRequest[] = inp.tasks.map((item) => ({
+        agentType,
+        prompt: item.assignment,
+        ...(item.description ? { description: item.description } : {}),
+        ...(item.role ? { role: item.role } : {}),
+        ...(inp.context ? { context: inp.context } : {}),
+      }))
+      // 并发派发：工具描述承诺 "Launch multiple agents concurrently"，宿主批量入口
+      // 按 config.agents.subagentConcurrency 建并发池。此前无论宿主是否提供批量能力
+      // 都逐个 await——N 个子 agent 的墙钟时间线性叠加，并发配置形同虚设。
+      // 宿主未注入批量入口时回退逐个派发（结果顺序不变，仅串行）。
+      const results: SubAgentResult[] = []
+      if (runBatch) {
+        results.push(...(await runBatch(requests)))
+      } else if (runOne) {
+        for (const req of requests) results.push(await runOne(req))
+      }
+      const label = (i: number): string => inp.tasks[i]?.description ?? inp.tasks[i]?.role ?? 'task'
+      const completed: string[] = []
+      const failures: string[] = []
+      results.forEach((res, i) => {
         if (res._tag === 'error') {
-          return { _tag: 'error', error: `Sub-agent failed: ${res.error}` }
+          failures.push(`[${label(i)}] ${res.error}`)
+          return
         }
-        const label = item.description ?? item.role ?? 'task'
         if (res._tag === 'running') {
-          results.push(`[${label}] background started (jobId: ${res.jobId})`)
-        } else {
-          results.push(`[${label}] ${res.output}`)
+          completed.push(`[${label(i)}] background started (jobId: ${res.jobId})`)
+          return
+        }
+        completed.push(`[${label(i)}] ${res.output}`)
+      })
+      if (failures.length > 0) {
+        // 失败不吞掉已完成任务的结果：模型据此只重派失败的子任务
+        return {
+          _tag: 'error',
+          error:
+            `Sub-agent failed: ${failures.join('; ')}` +
+            (completed.length > 0 ? `\n\nCompleted:\n${completed.join('\n\n')}` : ''),
         }
       }
-      return { _tag: 'success', output: results.join('\n\n') }
+      return { _tag: 'success', output: completed.join('\n\n') }
     }
 
     // 单任务模式
@@ -104,7 +134,14 @@ export const taskTool: ToolDef = {
       ...(single.model ? { model: single.model } : {}),
       ...(single.background ? { background: true } : {}),
     }
-    const result = await ctx.runSubAgent(req)
+    if (!runOne) {
+      return {
+        _tag: 'error',
+        error:
+          'task tool unavailable: single-task mode requires a sub-agent runner (ctx.runSubAgent)',
+      }
+    }
+    const result = await runOne(req)
     if (result._tag === 'error') {
       return { _tag: 'error', error: `Sub-agent failed: ${result.error}` }
     }

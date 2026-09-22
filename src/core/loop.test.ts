@@ -22,7 +22,7 @@ import { pauseAgent } from './agent.js'
 import { BUILTIN_AGENTS, createAgentRegistry } from './agents/index.js'
 import { DEFAULT_CONFIG } from './config.js'
 import type { LoopDeps } from './loop.js'
-import { agentLoop, compactContext, runSubAgent } from './loop.js'
+import { agentLoop, compactContext, runSubAgent, runSubAgents } from './loop.js'
 import { getToolMetrics, recordToolMetrics } from './metrics.js'
 
 function mockTextStream(text: string): AsyncGenerator<StreamChunk> {
@@ -1943,6 +1943,62 @@ describe('runSubAgent background', () => {
     const sync = await runSubAgent(deps, state, { agentType: 'general', prompt: 'p' })
     expect(sync._tag).toBe('success')
     expect(getEventListeners(signal, 'abort').length).toBe(before)
+  })
+
+  it('runSubAgents：并发上限取 config.agents.subagentConcurrency，结果有序且失败隔离', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const deps = {
+      ...makeMockDeps(db, () => mockTextStream('child')),
+      config: { ...DEFAULT_CONFIG, agents: { subagentConcurrency: 1 } },
+    }
+    const results = await runSubAgents(deps, state, [
+      { agentType: 'general', prompt: 'a' },
+      { agentType: 'nonexistent', prompt: 'b' },
+      { agentType: 'general', prompt: 'c' },
+    ])
+    // 结果与入参一一对应（无空洞），单个任务失败不终止兄弟任务
+    expect(results).toHaveLength(3)
+    expect(results[0]?._tag).toBe('success')
+    expect(results[1]?._tag).toBe('error')
+    expect(results[2]?._tag).toBe('success')
+
+    // 父 run 已中止：未启动的任务也必须以 error 结果占位（调用方无需处理 undefined）
+    const abortedState = makeState(session, messages)
+    abortedState.abortController.abort()
+    const abortedResults = await runSubAgents(deps, abortedState, [
+      { agentType: 'general', prompt: 'a' },
+      { agentType: 'general', prompt: 'b' },
+    ])
+    expect(abortedResults).toHaveLength(2)
+    expect(abortedResults.every((r) => r._tag === 'error')).toBe(true)
+  })
+
+  it('runSubAgents：并发上限 2 时两个子 run 重叠执行（此前批量派发串行）', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    let inFlight = 0
+    let maxInFlight = 0
+    const deps = {
+      ...makeMockDeps(db, () => {
+        async function* gen(): AsyncGenerator<StreamChunk> {
+          inFlight += 1
+          maxInFlight = Math.max(maxInFlight, inFlight)
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          inFlight -= 1
+          yield { _tag: 'text', text: 'child' } as const
+          yield { _tag: 'done' } as const
+        }
+        return gen()
+      }),
+      config: { ...DEFAULT_CONFIG, agents: { subagentConcurrency: 2 } },
+    }
+    const results = await runSubAgents(deps, state, [
+      { agentType: 'general', prompt: 'a' },
+      { agentType: 'general', prompt: 'b' },
+    ])
+    expect(results.every((r) => r._tag === 'success')).toBe(true)
+    expect(maxInFlight).toBe(2)
   })
 
   it('未知 agentType 返回 error', async () => {

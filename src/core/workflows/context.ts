@@ -59,32 +59,19 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
     },
 
     runSubagents: async (type, tasks, context) => {
-      const { mapWithConcurrencyLimit } = await import('../agents/parallel.js')
-      const concurrency = 3
-      const { results } = await mapWithConcurrencyLimit(
-        tasks,
-        concurrency,
-        async (task: { assignment: string; description?: string; role?: string }) => {
-          try {
-            const result = await doRunSubAgent({
-              agentType: type,
-              prompt: task.assignment,
-              description: task.description,
-              role: task.role,
-              context,
-            })
-            return mapResult(result)
-          } catch (e) {
-            // 隔离单个任务的异常：不向上抛，避免 mapWithConcurrencyLimit 的
-            // fail-fast 终止所有尚未启动的兄弟任务。按合约返回 per-task { ok: false }。
-            return {
-              ok: false,
-              error: e instanceof Error ? e.message : String(e),
-            } satisfies WorkflowAgentResult
-          }
-        },
-      )
-      return results.filter((r): r is WorkflowAgentResult => r !== undefined)
+      const { runSubAgents } = await import('../loop/subagent.js')
+      const requests: SubAgentRequest[] = tasks.map((task) => ({
+        agentType: type,
+        prompt: task.assignment,
+        ...(task.description ? { description: task.description } : {}),
+        ...(task.role ? { role: task.role } : {}),
+        ...(context ? { context } : {}),
+      }))
+      // 与 task 工具批量模式共用同一派发实现：并发上限取
+      // config.agents.subagentConcurrency（此前本模块硬编码 3，配置项形同虚设），
+      // 逐任务错误隔离与「结果顺序一致、无空洞」的契约同源。
+      const results = await runSubAgents(deps, parent, requests, doRunSubAgent)
+      return results.map(mapResult)
     },
 
     progress: onProgress,

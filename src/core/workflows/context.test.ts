@@ -15,13 +15,13 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
-function makeMockDeps(): AgentDependencies {
+function makeMockDeps(config: Record<string, unknown> = {}): AgentDependencies {
   return {
     db: {} as AgentDependencies['db'],
     llmRegistry: {} as AgentDependencies['llmRegistry'],
     toolRegistry: {} as AgentDependencies['toolRegistry'],
     permission: {} as AgentDependencies['permission'],
-    config: {} as AgentDependencies['config'],
+    config: config as AgentDependencies['config'],
     cwd: tmpDir,
     agentRegistry: {
       get: () => ({ name: 'test', description: '', systemPrompt: '', mode: 'subagent' }),
@@ -36,6 +36,7 @@ function makeMockParent(): AgentState {
     config: { provider: 'test', model: 'test', tools: [], plugins: [], agentName: 'default' },
     status: { _tag: 'idle' },
     tools: [],
+    abortController: new AbortController(),
   } as unknown as AgentState
 }
 
@@ -170,6 +171,50 @@ describe('buildWorkflowContext', () => {
     if (results[2]?.ok) {
       expect(results[2]?.output).toBe('result-3')
     }
+  })
+
+  it('runSubagents 并发度取 config.agents.subagentConcurrency（此前硬编码 3，配置项形同虚设）', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const runSubAgentFn = vi.fn(async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      inFlight -= 1
+      return { _tag: 'success' as const, output: 'ok', sessionId: 's' }
+    })
+
+    // 串行上限（1）：配置为 1 时绝不允许重叠
+    const serialCtx = buildWorkflowContext({
+      deps: makeMockDeps({ agents: { subagentConcurrency: 1 } }),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+      runSubAgentFn,
+    })
+    await serialCtx.runSubagents('coder', [
+      { assignment: 'a' },
+      { assignment: 'b' },
+      { assignment: 'c' },
+    ])
+    expect(maxInFlight).toBe(1)
+
+    // 提高上限（4）：三个任务全部并发
+    inFlight = 0
+    maxInFlight = 0
+    const parallelCtx = buildWorkflowContext({
+      deps: makeMockDeps({ agents: { subagentConcurrency: 4 } }),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+      runSubAgentFn,
+    })
+    await parallelCtx.runSubagents('coder', [
+      { assignment: 'a' },
+      { assignment: 'b' },
+      { assignment: 'c' },
+    ])
+    expect(maxInFlight).toBe(3)
   })
 
   it('progress callback fires', () => {
