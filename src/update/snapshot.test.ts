@@ -10,12 +10,7 @@ import {
   listSessions,
 } from '../session/index.js'
 import type { MessageContent } from '../shared/types/message.js'
-import {
-  orderSessionsByParent,
-  restoreSessions,
-  type SessionSnapshot,
-  serializeSessions,
-} from './snapshot.js'
+import { restoreSessions, type SessionSnapshot, serializeSessions } from './snapshot.js'
 
 async function setupDB(): Promise<DB> {
   const handle = await createDB({ driver: 'pglite' })
@@ -24,77 +19,6 @@ async function setupDB(): Promise<DB> {
 }
 
 const textContent = (text: string): MessageContent[] => [{ _tag: 'text', text }]
-
-describe('orderSessionsByParent', () => {
-  it('places parent before child regardless of input order', () => {
-    const child = {
-      id: 'c',
-      title: 'c',
-      parentId: 'p',
-      projectId: null,
-      branchPoint: 2,
-      metadata: {},
-      agentType: null,
-      worktreePath: null,
-      source: null,
-      deletedAt: null,
-      deletedBatchId: null,
-      createdAt: 1,
-      updatedAt: 1,
-    }
-    const parent = {
-      id: 'p',
-      title: 'p',
-      parentId: null,
-      projectId: null,
-      branchPoint: null,
-      metadata: {},
-      agentType: null,
-      worktreePath: null,
-      source: null,
-      deletedAt: null,
-      deletedBatchId: null,
-      createdAt: 1,
-      updatedAt: 1,
-    }
-    const ordered = orderSessionsByParent([child, parent])
-    expect(ordered.map((s) => s.id)).toEqual(['p', 'c'])
-  })
-
-  // 回归：seen 在「访问父级之后」才收录当前节点——parentId 成环（a↔b 互指或
-  // 自引用）时 visit 在环上无限递归直至栈溢出（RangeError 击穿热更新快照）。
-  // 删除路径（purgeDeletedSessions）对同型环数据已有兜底，序列化路径必须同样
-  // 终止：环上节点各出现一次，正常节点拓扑序不受影响。
-  it('terminates on parentId cycles instead of overflowing the stack', () => {
-    const base = {
-      title: 'x',
-      projectId: null,
-      branchPoint: null,
-      metadata: {},
-      agentType: null,
-      worktreePath: null,
-      source: null,
-      deletedAt: null,
-      deletedBatchId: null,
-      createdAt: 1,
-      updatedAt: 1,
-    }
-    const mk = (id: string, parentId: string | null) => ({ id, parentId, ...base })
-
-    // a↔b 互指环
-    const ordered = orderSessionsByParent([mk('a', 'b'), mk('b', 'a')])
-    expect(ordered.map((s) => s.id).sort()).toEqual(['a', 'b'])
-
-    // 自引用
-    const selfOrdered = orderSessionsByParent([mk('s', 's')])
-    expect(selfOrdered.map((s) => s.id)).toEqual(['s'])
-
-    // 正常父子序不受影响
-    const mixed = orderSessionsByParent([mk('c', 'p'), mk('p', null), mk('a', 'b'), mk('b', 'a')])
-    expect(mixed.slice(0, 2).map((s) => s.id)).toEqual(['p', 'c'])
-    expect(mixed.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'p'])
-  })
-})
 
 describe('serialize / restore round-trip', () => {
   let source: DB
@@ -155,6 +79,48 @@ describe('serialize / restore round-trip', () => {
     await restoreSessions(target, snapshot)
     await restoreSessions(target, snapshot) // 第二次不应重复
     expect(await listSessions(target)).toHaveLength(1)
+  })
+
+  // 回归：orderSessionsByParent 对 parentId 成环数据只保证「终止」，产出的顺序
+  // 却是子先于父——restoreSessions 按该顺序逐个插入时，自引用 FK（parent_id →
+  // sessions.id）对先插入的环上节点抛 23503，整个恢复击穿：热更新快照含环数据
+  // （a↔b 互指/自引用，删除路径已处理的同型数据）时 serve 启动即失败。恢复必须
+  // 两阶段（先全部插入、再回填 parentId），环上节点的父指针完整保留。
+  it('restores cyclic parentId snapshots (a↔b / self-loop) without FK violation', async () => {
+    const now = Date.now()
+    const mk = (id: string, parentId: string | null) => ({
+      id,
+      title: `s-${id}`,
+      parentId,
+      projectId: null,
+      branchPoint: null,
+      metadata: {},
+      agentType: null,
+      worktreePath: null,
+      source: 'web',
+      deletedAt: null,
+      deletedBatchId: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const a = 'aaaaaaaa-1111-4111-8111-111111111111'
+    const b = 'bbbbbbbb-2222-4222-8222-222222222222'
+    const self = 'cccccccc-3333-4333-8333-333333333333'
+    const snapshot: SessionSnapshot = {
+      version: '0.1.0',
+      sessions: [mk(a, b), mk(b, a), mk(self, self)],
+      entries: [],
+      config: null,
+      timestamp: now,
+    }
+
+    await restoreSessions(target, snapshot)
+
+    const restored = await listSessions(target)
+    expect(restored).toHaveLength(3)
+    expect(restored.find((s) => s.id === a)?.parentId).toBe(b)
+    expect(restored.find((s) => s.id === b)?.parentId).toBe(a)
+    expect(restored.find((s) => s.id === self)?.parentId).toBe(self)
   })
 
   it('P1：终端元信息随快照序列化（新实例据此原位重建 shell）', async () => {

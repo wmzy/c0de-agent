@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
 
@@ -93,26 +94,6 @@ function toSerializedEntry(row: typeof sessionEntries.$inferSelect): SerializedE
   }
 }
 
-/** 按 parentId 拓扑序排列 sessions，使父会话先于子会话插入（满足自引用 FK）。
- *  环防护：当前节点先于「访问父级」标记 seen——parentId 成环（a↔b 互指、自引用）
- *  时递归在环上遇到已标记节点即折返，环上节点各入序一次，正常节点拓扑序不变。
- *  此前 seen 在访问父级之后才收录，环数据会把热更新快照击穿为 RangeError 栈溢出；
- *  删除路径（purgeDeletedSessions）对同型环数据已有兜底，此处必须同样终止。 */
-function orderSessionsByParent(list: SerializedSession[]): SerializedSession[] {
-  const byId = new Map(list.map((s) => [s.id, s]))
-  const ordered: SerializedSession[] = []
-  const seen = new Set<string>()
-  const visit = (s: SerializedSession): void => {
-    if (seen.has(s.id)) return
-    seen.add(s.id)
-    const parent = s.parentId ? byId.get(s.parentId) : undefined
-    if (parent) visit(parent)
-    ordered.push(s)
-  }
-  for (const s of list) visit(s)
-  return ordered
-}
-
 /** 从 DB 导出所有会话与条目为可序列化快照。terminals 为活跃终端元信息（可选）。 */
 async function serializeSessions(
   handle: DB,
@@ -133,15 +114,27 @@ async function serializeSessions(
   }
 }
 
-/** 把快照导入 DB（保留原始 id 与时间戳；父会话先插入以满足 FK）。 */
+/**
+ * 把快照导入 DB（保留原始 id 与时间戳），两阶段插入：
+ *  1. 全部会话行以 parentId=NULL 插入——任何插入顺序都满足自引用 FK，
+ *     无需拓扑排序；
+ *  2. 回填各行的 parentId——此时全部行已存在，FK 恒可满足。
+ *
+ * 此前按拓扑序逐个插入（orderSessionsByParent 先父后子）：环防护只保证
+ * 「终止」——parentId 成环（a↔b 互指/自引用）时环上第一个被访问的节点先于
+ * 其父入序，插入它即撞自引用 FK 23503（其父行尚不存在），整个恢复抛错、
+ * serve 启动失败。两阶段插入对任意形状（环/自引用/正常森林）都成立，
+ * 环上节点父指针完整保留；悬空 parentId（快照外引用）在第二阶段撞 FK，
+ * 仍是「数据损坏显式失败」而非静默改写。
+ */
 async function restoreSessions(handle: DB, snapshot: SessionSnapshot): Promise<void> {
-  for (const s of orderSessionsByParent(snapshot.sessions)) {
+  for (const s of snapshot.sessions) {
     await handle.db
       .insert(sessions)
       .values({
         id: s.id,
         title: s.title,
-        parentId: s.parentId,
+        parentId: null,
         projectId: s.projectId,
         branchPoint: s.branchPoint,
         metadata: s.metadata as Record<string, unknown>,
@@ -154,6 +147,10 @@ async function restoreSessions(handle: DB, snapshot: SessionSnapshot): Promise<v
         updatedAt: new Date(s.updatedAt),
       })
       .onConflictDoNothing()
+  }
+  for (const s of snapshot.sessions) {
+    if (s.parentId === null) continue
+    await handle.db.update(sessions).set({ parentId: s.parentId }).where(eq(sessions.id, s.id))
   }
   for (const e of snapshot.entries) {
     await handle.db
@@ -173,4 +170,4 @@ async function restoreSessions(handle: DB, snapshot: SessionSnapshot): Promise<v
 }
 
 export type { SerializedEntry, SerializedSession, SerializedTerminal, SessionSnapshot }
-export { orderSessionsByParent, restoreSessions, serializeSessions }
+export { restoreSessions, serializeSessions }

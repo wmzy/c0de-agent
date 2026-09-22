@@ -5,7 +5,7 @@ export { confirmHandoff, createHandoffServer, requestHandoff } from './ipc.js'
 export type { UpdateScheduler, UpdateSchedulerOptions } from './scheduler.js'
 export { createUpdateScheduler } from './scheduler.js'
 export type { SerializedEntry, SerializedSession, SessionSnapshot } from './snapshot.js'
-export { orderSessionsByParent, restoreSessions, serializeSessions } from './snapshot.js'
+export { restoreSessions, serializeSessions } from './snapshot.js'
 export type {
   HotUpdateOptions,
   HotUpdateResult,
