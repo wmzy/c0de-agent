@@ -80,6 +80,12 @@ export function scanTextForBlockRanges(text: string): Array<{ start: number; end
   const ranges: Array<{ start: number; end: number }> = []
   let inFence = false
   let fenceStart = -1
+  // 开启围栏的 marker（字符 + 长度）。闭合必须同字符且长度 ≥ 开启长度
+  //（markdown 语义）；异种/更短围栏行是块内内容——此前任意围栏行都切换
+  // inFence：``` 块内的 ~~~ 行把 range 拦腰截断、真实闭合行被当成新围栏
+  // 开端、后续顶层 XML 块被误吞。
+  let fenceChar = ''
+  let fenceLen = 0
   const tagStack: string[] = []
   let xmlStart = -1
   // CRLF 归一化：\r\n 文件的每行末尾携带 \r——XML 正则的 $ 锚定在 \r 上恒失败
@@ -99,16 +105,24 @@ export function scanTextForBlockRanges(text: string): Array<{ start: number; end
     }
     const trimmedStart = line.trimStart()
 
-    const isFenceLine = trimmedStart.startsWith('```') || trimmedStart.startsWith('~~~')
-    if (isFenceLine) {
+    const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmedStart)
+    if (fenceMatch) {
+      const marker = fenceMatch[1] ?? ''
+      const markerChar = marker[0] ?? ''
+      const markerLen = marker.length
       if (!inFence) {
         inFence = true
         fenceStart = lineStart
-      } else {
+        fenceChar = markerChar
+        fenceLen = markerLen
+      } else if (markerChar === fenceChar && markerLen >= fenceLen) {
         inFence = false
         ranges.push({ start: fenceStart, end: lineEnd })
         fenceStart = -1
+        fenceChar = ''
+        fenceLen = 0
       }
+      // 围栏行（含块内异种/更短的围栏行）不参与 XML 检测
       lineStart = i + 1
       continue
     }

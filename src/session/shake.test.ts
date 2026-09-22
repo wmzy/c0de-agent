@@ -103,11 +103,43 @@ describe('scanTextForBlockRanges', () => {
     expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('<example>\r\nrow1\r\n</example>')
   })
 
-  it('CRLF 文本的围栏块 range 不含行尾 \r（替换后不产出混合行尾）', () => {
+  it('CRLF 文本的围栏块 range 不含行尾 \\r（替换后不产出混合行尾）', () => {
     const text = 'intro\r\n```ts\r\nconst a = 1;\r\n```\r\noutro'
     const ranges = scanTextForBlockRanges(text)
     expect(ranges).toHaveLength(1)
     expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('```ts\r\nconst a = 1;\r\n```')
+  })
+
+  it('围栏内异种围栏行不提前闭合（~~~ 不闭合 ``` 块）', () => {
+    // 围栏配对必须同字符：``` 块内的 ~~~ 行是内容，不是闭合围栏。
+    // 此前任意围栏行都切换 inFence——range 被拦腰截断、真实闭合行被当成
+    // 新围栏的开端、后续顶层 XML 块被误吞。
+    const text = '```js\nconst a = 1\n~~~\n```\n\n<result>\nok\n</result>'
+    const ranges = scanTextForBlockRanges(text)
+    expect(ranges).toHaveLength(2)
+    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('```js\nconst a = 1\n~~~\n```')
+    expect(text.slice(ranges[1]?.start, ranges[1]?.end)).toBe('<result>\nok\n</result>')
+  })
+
+  it('短于开启围栏的同字符行不闭合（```` 块内的 ``` 是内容）', () => {
+    const text = '````\ninner\n```\n````'
+    const ranges = scanTextForBlockRanges(text)
+    expect(ranges).toHaveLength(1)
+    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('````\ninner\n```\n````')
+  })
+
+  it('shake 替换围栏块不残留孤儿闭合围栏', () => {
+    // 异种围栏行提前闭合的产物：shake 后正文残留一行孤儿 ```，markdown 渲染
+    // 会把其后全部内容吞进未闭合代码块。块须超过 fenceMinTokens(50)。
+    const inner = 'const value = computeSomething(alpha, beta, gamma, delta, epsilon);\n'.repeat(5)
+    const text = `\`\`\`js\n${inner}~~~\n\`\`\`\nafter`
+    const msg = assistantMessage(text)
+    const regions = collectShakeRegions([msg], cfg())
+    const blockRegions = regions.filter((r) => r.kind === 'block')
+    expect(blockRegions).toHaveLength(1)
+    const shaken = applyShakeRegions([msg], blockRegions)
+    const part = shaken[0]?.content[0]
+    expect(part && part._tag === 'text' ? part.text : '').toBe('[shaken]\nafter')
   })
 })
 
