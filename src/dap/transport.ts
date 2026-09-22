@@ -28,6 +28,14 @@ function createProcessTransport(
   child.stdout.on('data', (chunk: string) => {
     for (const h of dataHandlers) h(chunk)
   })
+  // 不读取 stderr 会让管道写满卡死子进程：适配器（js-debug 等）向 stderr 输出
+  // 日志/崩溃栈，同步写满 64KB 管道缓冲后阻塞在 write(2) 上，stdout 的 DAP 帧
+  // 永远发不出来（握手/请求全部等不到响应）。消费并透传到宿主 stderr——与 MCP
+  // stdio 传输同口径，同时保住适配器的错误输出可供排查。
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (chunk: string) => {
+    process.stderr.write(`[dap] ${chunk}`)
+  })
   child.on('close', () => {
     for (const h of closeHandlers) h()
   })
