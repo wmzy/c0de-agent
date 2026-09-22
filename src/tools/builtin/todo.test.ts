@@ -460,8 +460,8 @@ describe('phasesToMarkdown / markdownToPhases', () => {
     expect(at(errors, 0)).toContain('unrecognized syntax')
   })
 
-  it('empty phases produce minimal markdown', () => {
-    expect(phasesToMarkdown([])).toBe('# Todos\n')
+  it('empty phases render to empty string (round-trip preserves [])', () => {
+    expect(phasesToMarkdown([])).toBe('')
   })
 
   // 回归：markdownToPhases 此前在解析收尾调用 normalizeInProgressTask——
@@ -513,6 +513,40 @@ describe('phasesToMarkdown / markdownToPhases', () => {
     const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
     expect(errors).toHaveLength(0)
     expect(parsed).toEqual(phases)
+  })
+
+  // 回归：任务内容含回车符时原样落 markdown——解析侧 split(/\r?\n/) 把裸
+  //  \r 拆成行边界，内容被截断为行首片段、残片报 unrecognized syntax
+  //  （round-trip 数据丢失）。\r 必须与 \n 同口径转义。
+  it('round-trips task content containing carriage returns', () => {
+    const phases: TodoPhase[] = [
+      { name: 'P1', tasks: [{ content: 'a\rb', status: 'pending' }] },
+      { name: 'CRLF', tasks: [{ content: 'line1\r\nline2', status: 'completed' }] },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
+  // 回归：空阶段名渲染为 "# "（heading 后无内容）——解析端 heading 正则要求
+  // 名称非空，"# " 行报 unrecognized syntax，阶段被改名 "Todos" 且其任务被
+  // 挪进该伪阶段（round-trip 保真契约破坏：静默改名 + 任务错位）。
+  it('round-trips a phase with an empty name', () => {
+    const phases: TodoPhase[] = [
+      { name: '', tasks: [{ content: 'x', status: 'pending' }] },
+      { name: 'P2', tasks: [{ content: 'y', status: 'completed' }] },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
+  // 回归：空列表渲染为 "# Todos\n"，解析回来变成含一个空 "Todos" 阶段的
+  // 列表——markdownToPhases(phasesToMarkdown(x)) === x 契约对 x=[] 不成立。
+  it('round-trips an empty phase list back to empty', () => {
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown([]))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual([])
   })
 })
 

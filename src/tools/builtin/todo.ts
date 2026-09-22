@@ -373,22 +373,27 @@ const STATUS_TO_MARKER: Record<TodoStatus, string> = {
   abandoned: '-',
 }
 
-/** 渲染转义：反斜杠先行、换行编码为字面 `\n`——任务内容/阶段名恒渲染为
- *  单行，内容里的换行无法在解析侧伪装成续行结构（- [x] / # 行首注入）。
+/** 渲染转义：反斜杠先行、换行编码为字面 `\n`、回车编码为字面 `\r`——
+ *  任务内容/阶段名恒渲染为单行，内容里的换行无法在解析侧伪装成续行结构
+ *  （- [x] / # 行首注入），裸 \r 也不会被 split(/\r?\n/) 拆成行边界
+ *  （此前内容含 \r 时渲染后拆行，内容被截断为行首片段）。
  *  与 unescapeMarkdownContent 严格互逆。 */
 function escapeMarkdownContent(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')
+  return value.replace(/\\/g, '\\\\').replace(/\r/g, '\\r').replace(/\n/g, '\\n')
 }
 
-/** 渲染转义的逆操作（单趟：`\n` → 换行，`\\` → 反斜杠，长匹配优先保证
- *  字面 "\\n" 还原为反斜杠+n 而非真换行）。 */
+/** 渲染转义的逆操作（单趟：`\n` → 换行，`\r` → 回车，`\\` → 反斜杠，长匹配
+ *  优先保证字面 "\\n"/"\\r" 还原为反斜杠+n/r 而非真换行/回车）。 */
 function unescapeMarkdownContent(value: string): string {
-  return value.replace(/\\n|\\\\/g, (m) => (m === '\\n' ? '\n' : '\\'))
+  return value.replace(/\\n|\\r|\\\\/g, (m) => (m === '\\n' ? '\n' : m === '\\r' ? '\r' : '\\'))
 }
 
 /** Render todo phases as a Markdown checklist suitable for editing/copying. */
 export function phasesToMarkdown(phases: TodoPhase[]): string {
-  if (phases.length === 0) return '# Todos\n'
+  // 空列表渲染为空串（而非 "# Todos" 占位）——markdownToPhases("# Todos\n")
+  // 会解析出含一个空 "Todos" 阶段的列表，round-trip 契约
+  // （markdownToPhases(phasesToMarkdown(x)) === x）对 x=[] 被静默破坏。
+  if (phases.length === 0) return ''
   const out: string[] = []
   for (const [i, phase] of phases.entries()) {
     if (i > 0) out.push('')
@@ -422,11 +427,14 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
     const trimmed = raw.trim()
     if (!trimmed) continue
 
-    const headingMatch = /^#{1,6}\s+(.+?)\s*$/.exec(trimmed)
+    // 空阶段名合法（模型可传 phase:'' 或用户手动清空标题）：heading 名称允许
+    // 为空——此前 (.+?) 要求非空，"# " 行报 unrecognized syntax、阶段被改名
+    // "Todos" 且其任务被挪进伪阶段（round-trip 静默改名 + 任务错位）。
+    const headingMatch = /^#{1,6}\s*(.*?)\s*$/.exec(trimmed)
     if (headingMatch) {
       // 名称从原始行取（保留前导/尾随空白，渲染方不 trim）；换行/反斜杠
       // 经渲染转义可逆还原。此前从 trimmed 分组取名称，尾随空白静默丢失。
-      const name = unescapeMarkdownContent(raw.replace(/^\s*#{1,6}\s+/, ''))
+      const name = unescapeMarkdownContent(raw.replace(/^\s*#{1,6}\s*/, ''))
       currentPhase = { name, tasks: [] }
       phases.push(currentPhase)
       continue
