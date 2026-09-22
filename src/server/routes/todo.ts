@@ -11,6 +11,7 @@ import {
   type TodoPhase,
   todoTool,
 } from '../../tools/builtin/todo.js'
+import { validateInput } from '../../tools/validate.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -60,6 +61,14 @@ function createTodoRoute(ctx: ServerContext): Hono {
     const session = await getSession(ctx.db, sessionId)
     if (!session) {
       return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    }
+
+    // 与工具执行管线同口径校验入参：本路由绕过 executor 直调 todoTool.execute，
+    // 此前畸形 body（list 非数组 → initPhases 对字符串 for-of 后 .map TypeError 500；
+    // items 含非字符串 → 毒化状态原样持久化）无任何校验。非法显式 400 让前端可操作。
+    const validation = validateInput(todoTool.parameters, body)
+    if (!validation.valid) {
+      return apiError(c, 400, 'INVALID_TODO_INPUT', `无效的 todo 操作参数：${validation.error}`)
     }
 
     // 恢复当前 phases
