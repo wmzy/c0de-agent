@@ -17,10 +17,13 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
   if (Object.keys(schema).length === 0) return null
 
   // anyOf: at least one must pass
+  // 命中不短路：JSON Schema 中 anyOf/oneOf 与 type/required/properties 等
+  // 兄弟关键字是**合取**关系——此前命中即 return null，兄弟校验整体失效
+  // （task 工具 schema 的 properties 类型检查形同虚设：prompt: 123、
+  // tasks 条目缺 assignment 均通过，静默派出 prompt=undefined 的子 agent）。
   if (schema.anyOf) {
     const passed = schema.anyOf.some((s) => validateNode(s, value, path) === null)
     if (!passed) return `${path || 'value'}: does not match anyOf schemas`
-    return null
   }
 
   // oneOf: exactly one must pass
@@ -28,7 +31,6 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
     const count = schema.oneOf.filter((s) => validateNode(s, value, path) === null).length
     if (count !== 1)
       return `${path || 'value'}: must match exactly one oneOf schema (matched ${count})`
-    return null
   }
 
   // enum

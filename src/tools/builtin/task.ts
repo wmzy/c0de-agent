@@ -57,11 +57,17 @@ export const taskTool: ToolDef = {
             role: { type: 'string', description: 'Specialist role for this sub-task.' },
             assignment: { type: 'string' },
           },
+          // 缺 assignment 的条目此前静默派出 prompt=undefined 的子 agent
+          // （headChars 抛 TypeError / 烧一轮内容为 "undefined" 的 LLM 调用）——
+          // 逐条目显式必填，错误信息可指导模型修正。
+          required: ['assignment'],
         },
         description: 'Parallel sub-tasks (batch mode).',
       },
     },
-    required: ['prompt'],
+    // 单任务（prompt）与批量（context+tasks）二选一。不能与顶层
+    // required:['prompt'] 并存：anyOf 与兄弟关键字是合取关系，顶层 required
+    // 会让批量形态恒校验失败。
     anyOf: [{ required: ['prompt'] }, { required: ['context', 'tasks'] }],
   },
   permission: 'auto',
@@ -79,15 +85,50 @@ export const taskTool: ToolDef = {
 
     const inp = input as TaskInput
 
+    // 运行时形状校验（schema 兜底之外的执行层防线——execute 可绕过 executor
+    // 校验被直接调用）。此前 tasks 条目缺 assignment / 空 tasks 数组会静默
+    // 落回单任务模式，把 prompt=undefined 派给子 agent（headChars 处 TypeError
+    // 或烧一轮内容为 "undefined" 的 LLM 调用），模型只拿到晦涩报错。
+    const tasksInput: unknown = 'tasks' in inp ? inp.tasks : undefined
+    if (tasksInput !== undefined && !Array.isArray(tasksInput)) {
+      return {
+        _tag: 'error',
+        error: 'task: tasks must be an array of { assignment, description?, role? }',
+      }
+    }
+    const batchTasks: TaskItem[] = Array.isArray(tasksInput) ? (tasksInput as TaskItem[]) : []
+    for (let i = 0; i < batchTasks.length; i++) {
+      const item = batchTasks[i] as { assignment?: unknown } | null | undefined
+      if (
+        item === null ||
+        typeof item !== 'object' ||
+        Array.isArray(item) ||
+        typeof item.assignment !== 'string' ||
+        item.assignment.trim().length === 0
+      ) {
+        return {
+          _tag: 'error',
+          error: `task: tasks[${i}] is missing a non-empty string "assignment" (the sub-agent prompt). Expected batch item shape: { assignment, description?, role? }`,
+        }
+      }
+    }
+
     // 批量模式
-    if ('tasks' in inp && Array.isArray(inp.tasks) && inp.tasks.length > 0) {
-      const agentType = inp.subagent_type ?? 'general'
-      const requests: SubAgentRequest[] = inp.tasks.map((item) => ({
+    if ('tasks' in inp && batchTasks.length > 0) {
+      const agentType =
+        typeof inp.subagent_type === 'string' && inp.subagent_type.length > 0
+          ? inp.subagent_type
+          : 'general'
+      const requests: SubAgentRequest[] = batchTasks.map((item) => ({
         agentType,
         prompt: item.assignment,
-        ...(item.description ? { description: item.description } : {}),
-        ...(item.role ? { role: item.role } : {}),
-        ...(inp.context ? { context: inp.context } : {}),
+        ...(typeof item.description === 'string' && item.description.length > 0
+          ? { description: item.description }
+          : {}),
+        ...(typeof item.role === 'string' && item.role.length > 0 ? { role: item.role } : {}),
+        ...(typeof inp.context === 'string' && inp.context.length > 0
+          ? { context: inp.context }
+          : {}),
       }))
       // 并发派发：工具描述承诺 "Launch multiple agents concurrently"，宿主批量入口
       // 按 config.agents.subagentConcurrency 建并发池。此前无论宿主是否提供批量能力
@@ -127,12 +168,29 @@ export const taskTool: ToolDef = {
 
     // 单任务模式
     const single = inp as SingleTaskInput
+    // 空 tasks 数组等形态会落进单任务分支：prompt 非非空字符串显式报错，
+    // 绝不把 undefined 派给子 agent。
+    if (typeof single.prompt !== 'string' || single.prompt.trim().length === 0) {
+      return {
+        _tag: 'error',
+        error:
+          'task: prompt must be a non-empty string (single mode) — for batch mode provide context + tasks[] where every item has a non-empty "assignment"',
+      }
+    }
+    const agentType =
+      typeof single.subagent_type === 'string' && single.subagent_type.length > 0
+        ? single.subagent_type
+        : 'general'
     const req: SubAgentRequest = {
-      agentType: single.subagent_type ?? 'general',
+      agentType,
       prompt: single.prompt,
-      ...(single.description ? { description: single.description } : {}),
-      ...(single.model ? { model: single.model } : {}),
-      ...(single.background ? { background: true } : {}),
+      ...(typeof single.description === 'string' && single.description.length > 0
+        ? { description: single.description }
+        : {}),
+      ...(typeof single.model === 'string' && single.model.length > 0
+        ? { model: single.model }
+        : {}),
+      ...(single.background === true ? { background: true } : {}),
     }
     if (!runOne) {
       return {

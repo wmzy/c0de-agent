@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SubAgentRequest, SubAgentResult, ToolContext } from '../../shared/types/tool.js'
+import { validateInput } from '../validate.js'
 import { taskTool } from './task.js'
 
 function ctxWith(runSubAgent?: ToolContext['runSubAgent']): ToolContext {
@@ -15,7 +16,13 @@ describe('taskTool', () => {
   it('has the correct tool definition', () => {
     expect(taskTool.name).toBe('task')
     expect(taskTool.permission).toBe('auto')
-    expect(taskTool.parameters.required).toContain('prompt')
+    // 单任务（prompt）与批量（context+tasks）二选一由 anyOf 表达：
+    // 顶层 required:['prompt'] 会让批量形态恒校验失败，不能并存。
+    expect(taskTool.parameters.anyOf).toEqual([
+      { required: ['prompt'] },
+      { required: ['context', 'tasks'] },
+    ])
+    expect(taskTool.parameters.required).toBeUndefined()
   })
 
   it('delegates to runSubAgent and returns its output on success', async () => {
@@ -231,5 +238,45 @@ describe('taskTool 批量派发的并发契约', () => {
       expect(result.error).toContain('boom')
       expect(result.error).toContain('done A')
     }
+  })
+})
+
+describe('taskTool 入参形状校验（不再静默派出 undefined prompt 子 agent）', () => {
+  it('schema 层拒绝缺 assignment 的批量条目（anyOf 不得短路兄弟校验）', () => {
+    const result = validateInput(taskTool.parameters, {
+      subagent_type: 'coder',
+      context: 'ctx',
+      tasks: [{ description: '没有 assignment 的条目' }],
+    })
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.error).toContain('assignment')
+  })
+
+  it('schema 层拒绝 prompt 非字符串（properties 类型检查生效）', () => {
+    const result = validateInput(taskTool.parameters, { prompt: 123 })
+    expect(result.valid).toBe(false)
+  })
+
+  it('execute 对缺 assignment 的批量条目显式报错且不派发', async () => {
+    const runSubAgents = vi.fn(
+      async (): Promise<SubAgentResult[]> => [{ _tag: 'success', output: 'ok', sessionId: 'c' }],
+    )
+    const result = await taskTool.execute(
+      { subagent_type: 'coder', context: 'ctx', tasks: [{ description: '漏了 assignment' }] },
+      { ...ctxWith(), runSubAgents },
+    )
+    expect(runSubAgents).not.toHaveBeenCalled()
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') expect(result.error).toContain('assignment')
+  })
+
+  it('空 tasks 数组不再落回单任务模式以 undefined prompt 派发', async () => {
+    const runSubAgent = vi.fn(
+      async (): Promise<SubAgentResult> => ({ _tag: 'success', output: 'ok', sessionId: 'c' }),
+    )
+    const result = await taskTool.execute({ context: 'ctx', tasks: [] }, ctxWith(runSubAgent))
+    expect(runSubAgent).not.toHaveBeenCalled()
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') expect(result.error).toMatch(/prompt/i)
   })
 })

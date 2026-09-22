@@ -93,6 +93,25 @@ describe('validateInput', () => {
     expect(validateInput(schema, true).valid).toBe(false)
   })
 
+  // 回归：anyOf/oneOf 与兄弟关键字在 JSON Schema 里是合取关系——此前
+  // anyOf 命中即 return null，type/properties/required 兄弟校验整体短路
+  // （task 工具 schema 的 properties 类型检查形同虚设：prompt: 123 恒通过，
+  // tasks 条目缺 assignment 恒通过，静默派出 prompt=undefined 的子 agent）。
+  it('anyOf 命中后仍继续校验 type/properties 兄弟关键字', () => {
+    const schema: JSONSchema = {
+      type: 'object',
+      properties: { prompt: { type: 'string' } },
+      anyOf: [{ required: ['prompt'] }, { required: ['context'] }],
+    }
+    expect(validateInput(schema, { prompt: 'ok' }).valid).toBe(true)
+    expect(validateInput(schema, { context: 'ok' }).valid).toBe(true)
+    // anyOf 分支命中（prompt 存在），但兄弟关键字 type=string 必须拒绝
+    expect(validateInput(schema, { prompt: 123 }).valid).toBe(false)
+    // 值非对象：{required} 分支对非对象空真，type=object 兄弟必须拒绝
+    expect(validateInput(schema, 'not-an-object').valid).toBe(false)
+    expect(validateInput(schema, null).valid).toBe(false)
+  })
+
   it('reports additionalProperties when false', () => {
     const schema: JSONSchema = {
       type: 'object',
