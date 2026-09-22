@@ -131,6 +131,22 @@ describe('parsePatch', () => {
       { _tag: 'INS_HEAD', content: 'H' },
     ])
   })
+
+  // 回归：`---` 只做全等比较——尾随空白（`--- `、`---\t`）/缩进（` --- `）变体
+  // 被收进替换内容（文件凭空多出 "--- " 一行），后续操作静默变成内容/被跳过，
+  // 工具仍报 success。空白变体与 `---` 视觉等价，必须是同一终止符。
+  it('treats whitespace-padded --- as a separator, not content', () => {
+    const patches = parsePatch('[f.ts#0000]\nSWAP 1-1\nX\n--- \nDEL 3\n')
+    expect(patches[0]?.operations).toEqual([
+      { _tag: 'SWAP', start: 1, end: 1, content: 'X' },
+      { _tag: 'DEL', start: 3, end: 3 },
+    ])
+    const indented = parsePatch('[f.ts#0000]\nSWAP 1-1\nX\n --- \nDEL 3\n')
+    expect(indented[0]?.operations).toEqual([
+      { _tag: 'SWAP', start: 1, end: 1, content: 'X' },
+      { _tag: 'DEL', start: 3, end: 3 },
+    ])
+  })
 })
 
 describe('applyPatch', () => {
@@ -222,6 +238,16 @@ describe('applyPatch', () => {
     const patches = parsePatch(`[f.ts#${hash}]\nSWAP 1-1\nA\nDEL 3\nINS.HEAD\nH\n`)
     const result = applyPatch(file, firstPatch(patches))
     expect(result).toEqual({ _tag: 'success', content: 'H\nA\nl2\nl4\n' })
+  })
+
+  // 回归：`--- ` 尾随空白不被识别为终止符——SWAP 把 `--- ` 与后续操作行
+  // 整段吸进替换内容，原定 DEL 静默变成「写入两行文本」，工具报 success。
+  it('applies ops separated by whitespace-padded ---', () => {
+    const file = 'a\nb\nc\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nSWAP 1-1\nX\n --- \nDEL 3\n`)
+    const result = applyPatch(file, firstPatch(patches))
+    expect(result).toEqual({ _tag: 'success', content: 'X\nb\n' })
   })
 
   it('applies INS.PRE / INS.POST', () => {

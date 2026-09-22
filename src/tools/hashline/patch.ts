@@ -46,7 +46,7 @@ function parseOps(lines: string[]): { ops: PatchOp[]; consumed: number } {
   let i = 0
   while (i < lines.length) {
     const line = lines[i] ?? ''
-    if (line.trim() === '' || line === '---') {
+    if (line.trim() === '' || isSeparator(line)) {
       i++
       continue
     }
@@ -60,7 +60,7 @@ function parseOps(lines: string[]): { ops: PatchOp[]; consumed: number } {
     const isContentLine = (at: number): boolean => {
       for (let k = at + 1; k < lines.length; k++) {
         const lk = lines[k] ?? ''
-        if (lk === '---') return true
+        if (isSeparator(lk)) return true
         if (isOpLine(lk) || HEADER_RE.test(lk.trim())) return false
       }
       return false
@@ -72,7 +72,7 @@ function parseOps(lines: string[]): { ops: PatchOp[]; consumed: number } {
       let j = i + 1
       while (j < lines.length) {
         const l = lines[j] ?? ''
-        if (l === '---') return { content: body.join('\n'), next: j + 1 }
+        if (isSeparator(l)) return { content: body.join('\n'), next: j + 1 }
         if ((isOpLine(l) || HEADER_RE.test(l.trim())) && !isContentLine(j)) break
         body.push(l)
         j++
@@ -88,7 +88,7 @@ function parseOps(lines: string[]): { ops: PatchOp[]; consumed: number } {
       let j = i + 1
       while (j < lines.length) {
         const l = lines[j] ?? ''
-        if (l === '---') return j + 1
+        if (isSeparator(l)) return j + 1
         if (isOpLine(l) || HEADER_RE.test(l.trim())) return j
         j++
       }
@@ -133,6 +133,17 @@ const OP_LINE_RE =
 
 function isOpLine(line: string): boolean {
   return OP_LINE_RE.test(line)
+}
+
+/**
+ * 显式操作终止符 `---`。编辑器/模型产物常带尾随空白（`--- `、`---\t`）或缩进
+ * （` --- `）——此前只做全等比较，空白变体被当内容行收进替换内容（文件凭空
+ * 多出 "--- " 一行）、后续操作静默变成文本/被跳过，工具仍报 success。
+ * 空白变体与 `---` 视觉等价，统一视为终止符（与「`---` 恒为终止符、不能做
+ * 内容」的既有口径一致）。CRLF 补丁文本的行尾 \r 也由 \s 覆盖。
+ */
+function isSeparator(line: string): boolean {
+  return /^\s*---\s*$/.test(line)
 }
 
 /**
