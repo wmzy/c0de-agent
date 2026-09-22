@@ -204,4 +204,21 @@ describe('applyTodoTags', () => {
     expect(hasView).toBe(false)
     expect(phases).toEqual(PHASES)
   })
+
+  // 回归：解析不做代码剥离——围栏代码块/行内代码里的 <todo:*> 标签被当作
+  // 控制指令真实应用。助手解释标签语法（围栏/反引号示例）会幽灵改写 todo 状态
+  //（done 掉任务、把 pending 自动升为 in_progress）。
+  it('ignores tags inside fenced code blocks', () => {
+    const text = 'The syntax is:\n```\n<todo:done seq="1-2" />\n```\n'
+    const { phases, errors } = applyTodoTags(PHASES, text)
+    expect(errors).toHaveLength(0)
+    expect(phases).toEqual(PHASES)
+  })
+
+  it('ignores tags inside inline code', () => {
+    const text = 'Use `<todo:done seq="1-2" />` like this'
+    const { phases, errors } = applyTodoTags(PHASES, text)
+    expect(errors).toHaveLength(0)
+    expect(phases).toEqual(PHASES)
+  })
 })

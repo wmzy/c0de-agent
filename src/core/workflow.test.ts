@@ -29,6 +29,21 @@ describe('containsWorkflow — keyword detection', () => {
     expect(containsWorkflow('check `workflowz.ts`')).toBe(false)
   })
 
+  // 回归：剥离只覆盖 ```...``` 非贪婪配对与单反引号——未闭合围栏、~~~ 围栏、
+  // 长反引号围栏、多反引号行内代码全部漏网：代码内容上的关键字误触发
+  // 工作流 steering 注入（用户粘贴含该词的字面量代码时被当作 fan-out 请求）。
+  it('ignores keyword inside unclosed fences and tilde/long fences', () => {
+    expect(containsWorkflow('```\nworkflowz\n')).toBe(false)
+    expect(containsWorkflow('```ts\nconst x = "workflowz"')).toBe(false)
+    expect(containsWorkflow('~~~\nworkflowz\n~~~')).toBe(false)
+    expect(containsWorkflow('````\nworkflowz\n````')).toBe(false)
+  })
+
+  it('ignores keyword inside multi-backtick inline code', () => {
+    expect(containsWorkflow('use ``workflowz`` keyword')).toBe(false)
+    expect(containsWorkflow('```workflowz```')).toBe(false)
+  })
+
   it('detects keyword in prose alongside code blocks', () => {
     expect(
       containsWorkflow('Here is some code:\n```ts\nconst x = 1\n```\n\nNow workflowz this.'),

@@ -9,6 +9,7 @@ import {
   type TodoItem,
   type TodoPhase,
 } from '../tools/builtin/todo.js'
+import { stripMarkdownCode } from './markdown.js'
 
 // =============================================================================
 // Types
@@ -65,10 +66,13 @@ function parseInitInner(inner: string): { name: string; items: string[] }[] {
   return phases
 }
 
-/** Parse all todo tags from text, preserving document order. */
+/** Parse all todo tags from text, preserving document order.
+ *  Prose 感知：先剥离围栏代码块与行内代码——助手解释标签语法时的
+ *  ```/`` 示例不得触发真实状态变更（幽灵 done/start）。与 workflowz
+ *  关键词检测共用 markdown.ts 的剥离。 */
 export function parseTodoTags(text: string): ParsedTodoTag[] {
   const tags: ParsedTodoTag[] = []
-  for (const m of text.matchAll(TAG_RE)) {
+  for (const m of stripMarkdownCode(text).matchAll(TAG_RE)) {
     const op = m[1] ?? ''
     const attrs = m[2] ?? ''
     const inner = m[3]
