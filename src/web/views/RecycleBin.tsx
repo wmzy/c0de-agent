@@ -13,6 +13,7 @@ import {
 import { kanbanAPI } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
+import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/recycleTree.js'
 
 const deletedRow = css`
   display: flex;
@@ -246,25 +247,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
 
   // P2 子树恢复：统计会话在回收站内的派生后代（任意深度），恢复确认时提示。
-  const byParent = new Map<string, Session[]>()
-  for (const d of deletedList) {
-    if (!d.parentId) continue
-    const list = byParent.get(d.parentId) ?? []
-    list.push(d)
-    byParent.set(d.parentId, list)
-  }
-  const countDescendants = (id: string): number => {
-    let n = 0
-    const stack = [...(byParent.get(id) ?? [])]
-    while (stack.length > 0) {
-      const cur = stack.pop()
-      if (!cur) continue
-      n += 1
-      stack.push(...(byParent.get(cur.id) ?? []))
-    }
-    return n
-  }
-
+  // 计数走 _shared/recycleTree 的环守卫实现（parentId 成环数据此前会让内联的
+  // 朴素栈遍历死循环——渲染期按行调用 → 页面冻结）；索引每渲染建一次，逐行只读。
+  const deletedIndex = buildDeletedTreeIndex(deletedList)
   /** 回收站内已删除的祖先链（按父→祖顺序）。恢复会连带还原它们——
    *  事前在确认框中列出，比事后提示更符合「操作前知情」。 */
   const deletedAncestorsOf = (s: Session): Session[] => {
@@ -356,7 +341,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             <div className={empty}>回收站无匹配会话</div>
           ) : null}
           {rows.map((s) => {
-            const descendants = countDescendants(s.id)
+            const descendants = countDeletedDescendants(deletedIndex, s.id)
             return (
               <div key={s.id} className={deletedRow}>
                 <span title={s.title}>{s.title}</span>
@@ -653,7 +638,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
         <DangerConfirmDialog
           open={true}
           title="彻底删除会话"
-          description={`将彻底删除「${removeTarget.title}」及其 ${countDescendants(removeTarget.id)} 个派生会话。`}
+          description={`将彻底删除「${removeTarget.title}」及其 ${countDeletedDescendants(deletedIndex, removeTarget.id)} 个派生会话。`}
           confirmWord={removeTarget.title}
           confirmLabel="彻底删除"
           onConfirm={() => {
