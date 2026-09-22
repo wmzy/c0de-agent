@@ -82,12 +82,21 @@ export function scanTextForBlockRanges(text: string): Array<{ start: number; end
   let fenceStart = -1
   const tagStack: string[] = []
   let xmlStart = -1
+  // CRLF 归一化：\r\n 文件的每行末尾携带 \r——XML 正则的 $ 锚定在 \r 上恒失败
+  // （顶层 XML 块永远不被识别），且 range 若含 \r，applyShakeRegions 替换后
+  // 该行变裸 \n，与其余 \r\n 行混排产出混合行尾。扫描行剥离 \r、range end
+  // 内收到 \r 之前，替换即无损。
+  const isCRLF = text.includes('\r\n')
 
   let lineStart = 0
   for (let i = 0; i <= text.length; i++) {
     if (i !== text.length && text[i] !== '\n') continue
-    const line = text.slice(lineStart, i)
-    const lineEnd = i
+    let line = text.slice(lineStart, i)
+    let lineEnd = i
+    if (isCRLF && line.endsWith('\r')) {
+      line = line.slice(0, -1)
+      lineEnd = i - 1
+    }
     const trimmedStart = line.trimStart()
 
     const isFenceLine = trimmedStart.startsWith('```') || trimmedStart.startsWith('~~~')

@@ -401,4 +401,18 @@ describe('buildWorkflowContext', () => {
     expect(results.length).toBeGreaterThanOrEqual(1)
     expect(results[0]?.text).toContain('hello')
   })
+
+  // 回归：CRLF 文件行尾 \r 使 ^...$ 锚定匹配恒失败（与内置 grep 工具同型）。
+  it('utils.grep CRLF 文件的 ^...$ 锚定匹配不因行尾 \\r 失败', async () => {
+    await writeFile(join(tmpDir, 'crlf.ts'), 'const hello = "world"\r\nconst foo = "bar"\r\n')
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    const results = await ctx.utils.grep('^const hello = "world"$')
+    expect(results).toHaveLength(1)
+    expect(results[0]?.line).toBe(1)
+  })
 })

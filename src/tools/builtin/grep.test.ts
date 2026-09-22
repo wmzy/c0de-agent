@@ -99,6 +99,18 @@ describe('grepTool', () => {
     }
   })
 
+  // 回归：CRLF 文件的每行经 split('\n') 仍携带尾 \r——`^...$` / `\w+$` 等
+  // 锚定到行尾的正则在 \r 上匹配失败，命中行静默归零、grep 报「无结果」。
+  it('CRLF 文件的 ^...$ 锚定匹配不因行尾 \\r 失败', async () => {
+    await writeFile(join(workDir, 'a.ts'), 'const foo = 1\r\nconst bar = 2\r\n')
+    const result = await grepTool.execute({ pattern: '^const foo = 1$' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toContain('a.ts:1: const foo = 1')
+      expect(result.output).not.toContain('a.ts:2')
+    }
+  })
+
   // 回归：maxResults <= 0 时「matches.length >= max」在首个匹配后立即成立，
   // 返回 1 条且 truncated:true——既违反「最多 0 条」语义，又误导模型结果集已满。
   // 与 read 的 offset/limit 同型：数值参数未校验 → 静默错误结果。

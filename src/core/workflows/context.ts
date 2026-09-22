@@ -193,8 +193,11 @@ async function grepRecursive(
         try {
           const content = await readFile(fullPath, 'utf-8')
           const lines = content.split('\n')
+          // CRLF 文件行尾 \r 使 ^...$ 锚定匹配恒失败（与内置 grep 工具同型）。
+          const crlf = content.includes('\r\n')
           for (let i = 0; i < lines.length; i++) {
-            const line = lines[i]
+            const raw = lines[i]
+            const line = crlf && raw?.endsWith('\r') ? raw.slice(0, -1) : raw
             if (line && regex.test(line)) {
               results.push({
                 path: relative(rootDir, fullPath),

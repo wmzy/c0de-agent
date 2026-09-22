@@ -148,9 +148,14 @@ export const grepTool: ToolDef = {
         if (content === null) continue
         const lines = content.split('\n')
         const relPath = relative(basePath, filePath)
+        // CRLF 文件每行经 split('\n') 仍携带尾 \r：^...$ / \w+$ 等锚定到行尾的
+        // 正则全部在 \r 上失败，命中行静默归零。按文件主导行尾归一化行尾再匹配
+        //（与 shake/hashline 同型；孤立 \r 即旧 Mac 行尾文件不触碰）。
+        const crlf = content.includes('\r\n')
 
         for (let i = 0; i < lines.length; i++) {
-          const line = lines[i] ?? ''
+          const raw = lines[i] ?? ''
+          const line = crlf && raw.endsWith('\r') ? raw.slice(0, -1) : raw
           const match = line.match(regex)
           if (match) {
             matches.push({

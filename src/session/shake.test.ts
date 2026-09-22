@@ -95,6 +95,20 @@ describe('scanTextForBlockRanges', () => {
   it('空文本返回空数组', () => {
     expect(scanTextForBlockRanges('')).toHaveLength(0)
   })
+
+  it('CRLF 文本的顶层 XML 块同样被识别（\r 不吞掉 $ 锚定）', () => {
+    const text = 'before\r\n<example>\r\nrow1\r\n</example>\r\nafter'
+    const ranges = scanTextForBlockRanges(text)
+    expect(ranges).toHaveLength(1)
+    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('<example>\r\nrow1\r\n</example>')
+  })
+
+  it('CRLF 文本的围栏块 range 不含行尾 \r（替换后不产出混合行尾）', () => {
+    const text = 'intro\r\n```ts\r\nconst a = 1;\r\n```\r\noutro'
+    const ranges = scanTextForBlockRanges(text)
+    expect(ranges).toHaveLength(1)
+    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe('```ts\r\nconst a = 1;\r\n```')
+  })
 })
 
 describe('collectShakeRegions — tool results', () => {
@@ -256,6 +270,37 @@ describe('applyShakeRegions', () => {
     expect(block._tag).toBe('text')
     if (block._tag === 'text') {
       expect(block.text).toBe('head\n[shaken]\nmiddle\n[shaken]\ntail')
+    }
+  })
+
+  it('CRLF 文本 block 被原位 splice 且行尾保持 \r\n（不产出混合行尾）', () => {
+    const text = 'head\r\n```ts\r\nconst a = 1;\r\nconst b = 2;\r\n```\r\ntail\r\n'
+    const msg = assistantMessage(text)
+    const ranges = scanTextForBlockRanges(text)
+    expect(ranges).toHaveLength(1)
+    const range = ranges[0]
+    if (!range) throw new Error('no block range')
+    const region = {
+      kind: 'block' as const,
+      id: 'r-crlf',
+      messageId: msg.id,
+      messageIndex: 0,
+      partIndex: 0,
+      start: range.start,
+      end: range.end,
+      tokens: 1,
+      originalText: text.slice(range.start, range.end),
+      label: 'assistant',
+    }
+
+    const result = applyShakeRegions([msg], [region])
+    const resultMsg = result[0]
+    if (!resultMsg) throw new Error('applyShakeRegions returned no message')
+    const block = resultMsg.content[0]
+    if (!block) throw new Error('result message has no content')
+    expect(block._tag).toBe('text')
+    if (block._tag === 'text') {
+      expect(block.text).toBe('head\r\n[shaken]\r\ntail\r\n')
     }
   })
 
