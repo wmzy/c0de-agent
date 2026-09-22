@@ -373,15 +373,28 @@ const STATUS_TO_MARKER: Record<TodoStatus, string> = {
   abandoned: '-',
 }
 
+/** 渲染转义：反斜杠先行、换行编码为字面 `\n`——任务内容/阶段名恒渲染为
+ *  单行，内容里的换行无法在解析侧伪装成续行结构（- [x] / # 行首注入）。
+ *  与 unescapeMarkdownContent 严格互逆。 */
+function escapeMarkdownContent(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')
+}
+
+/** 渲染转义的逆操作（单趟：`\n` → 换行，`\\` → 反斜杠，长匹配优先保证
+ *  字面 "\\n" 还原为反斜杠+n 而非真换行）。 */
+function unescapeMarkdownContent(value: string): string {
+  return value.replace(/\\n|\\\\/g, (m) => (m === '\\n' ? '\n' : '\\'))
+}
+
 /** Render todo phases as a Markdown checklist suitable for editing/copying. */
 export function phasesToMarkdown(phases: TodoPhase[]): string {
   if (phases.length === 0) return '# Todos\n'
   const out: string[] = []
   for (const [i, phase] of phases.entries()) {
     if (i > 0) out.push('')
-    out.push(`# ${phase.name}`)
+    out.push(`# ${escapeMarkdownContent(phase.name)}`)
     for (const task of phase.tasks) {
-      out.push(`- [${STATUS_TO_MARKER[task.status]}] ${task.content}`)
+      out.push(`- [${STATUS_TO_MARKER[task.status]}] ${escapeMarkdownContent(task.content)}`)
     }
   }
   return `${out.join('\n')}\n`
@@ -411,7 +424,10 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
 
     const headingMatch = /^#{1,6}\s+(.+?)\s*$/.exec(trimmed)
     if (headingMatch) {
-      currentPhase = { name: (headingMatch[1] ?? '').trim(), tasks: [] }
+      // 名称从原始行取（保留前导/尾随空白，渲染方不 trim）；换行/反斜杠
+      // 经渲染转义可逆还原。此前从 trimmed 分组取名称，尾随空白静默丢失。
+      const name = unescapeMarkdownContent(raw.replace(/^\s*#{1,6}\s+/, ''))
+      currentPhase = { name, tasks: [] }
       phases.push(currentPhase)
       continue
     }
@@ -432,7 +448,10 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
         )
         continue
       }
-      currentPhase.tasks.push({ content: (taskMatch[2] ?? '').trim(), status })
+      // 内容从原始行取：`\s?` 只吃标记与内容之间的单个分隔空格——前导
+      // 空白与尾随空白是内容的一部分，必须保真（trim 会静默改写）。
+      const contentRaw = /^[-*+]\s*\[(.?)\]\s?(.*)$/.exec(raw)?.[2] ?? ''
+      currentPhase.tasks.push({ content: unescapeMarkdownContent(contentRaw), status })
       continue
     }
 

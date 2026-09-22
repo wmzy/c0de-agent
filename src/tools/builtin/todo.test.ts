@@ -389,6 +389,55 @@ describe('phasesToMarkdown / markdownToPhases', () => {
     expect(md).toContain('- [-] dropped')
   })
 
+  // 回归：任务内容含换行时原样落 markdown——续行被报 unrecognized syntax 并
+  // 丢弃（静默数据丢失）；内容里 "- [x] …" 形行被解析成真实任务、"# …" 形行
+  // 被解析成新阶段（结构注入，凭空伪造任务/阶段）。内容必须转义成单行渲染。
+  it('round-trips multi-line and structural task content without loss or injection', () => {
+    const phases: TodoPhase[] = [
+      {
+        name: 'Impl',
+        tasks: [
+          { content: 'foo\nbar', status: 'pending' },
+          { content: 'write a\n- [x] fake done', status: 'in_progress' },
+          { content: 'notes\n# Fake Phase\n- [x] injected', status: 'pending' },
+        ],
+      },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
+  // 回归：前导/尾随空白此前被 trim 静默改写（' leading ' → 'leading'）。
+  it('preserves leading/trailing whitespace in task content', () => {
+    const phases: TodoPhase[] = [
+      {
+        name: 'P1',
+        tasks: [
+          { content: ' leading and trailing ', status: 'completed' },
+          { content: '   ', status: 'pending' },
+        ],
+      },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
+  // 回归：反斜杠与字面 \n 序列经转义必须可逆（转义先后顺序错误会把字面
+  // "\\n" 还原成真换行，或把内容里的反斜杠吃掉）。
+  it('round-trips backslashes and literal escape-like sequences', () => {
+    const phases: TodoPhase[] = [
+      {
+        name: 'P1',
+        tasks: [{ content: 'path \\node\\x and literal \\n here', status: 'pending' }],
+      },
+    ]
+    const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases))
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
   it('accepts > and ~ as alternate markers', () => {
     const md = '# P1\n- [>] active\n- [~] dropped\n'
     const { phases, errors } = markdownToPhases(md)
