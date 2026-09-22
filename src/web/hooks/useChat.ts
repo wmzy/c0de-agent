@@ -471,6 +471,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           pollTimerRef.current = setTimeout(() => void tick(), paused ? 3000 : 2000)
         } else {
           finishAttach()
+          // interrupted：run 已随服务重启消失（内存态丢失，resume 端点无效）——
+          // 与 paused 同属「非普通结束」：普通收尾之外还要置中断态，让
+          // 「上次对话被中断，重发上一条消息继续」入口可见（冷启动横幅只在
+          // 挂载时判定一次，附着期间发生的中断否则对该页永远不可见）。
+          if (st?._tag === 'interrupted') {
+            setState((s) => ({ ...s, interrupted: true }))
+          }
         }
       } catch {
         if (token !== pollGenRef.current) return
@@ -484,6 +491,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
    * P1：附着后台 run。本实例未发起流（挂起期间切换页面后回来 / 另一标签页启动）时：
    * 查状态确认 run 活跃 → 查询挂起权限并重挂确认弹窗（有则恢复阻塞的可操作路径）
    * → 进入附着态并轮询到 run 结束。本实例已在流式时 no-op。
+   *
+   * 入口判定与 pollAttachedRun 同口径：paused 也是活跃 run（权限确认挂起/预算
+   * 暂停，run 仍注册在服务端可 resume）——此前入口只认 running，冷启动挂载与
+   * 跨标签页广播对已暂停的 run 直接放弃：runPaused 从未置位（该页无「恢复」
+   * 入口）、挂起权限弹窗不重挂、run 结束广播也因 attachedRef 未置位被忽略；
+   * 发新消息撞 409 RUN_ACTIVE，会话锁死到手动刷新为止。
    */
   const attach = useCallback(async () => {
     // attachingRef 同步占位：attach 内有 await，StrictMode/依赖变化下的重入
@@ -492,14 +505,17 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     attachingRef.current = true
     try {
       const st = await sessionAPI.status(sessionId).catch(() => null)
-      if (st?._tag !== 'running') return
+      if (st?._tag !== 'running' && st?._tag !== 'paused') return
+      const paused = st._tag === 'paused'
       const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
       attachedRef.current = true
       streamingRef.current = true
       setState((s) => ({
         ...s,
         isStreaming: true,
-        attachedRun: true,
+        attachedRun: !paused,
+        runPaused: paused,
+        runPauseReason: paused ? (st.pauseReason ?? null) : null,
         error: null,
         ...(pend?.pending ? { pendingPermission: pend.pending, permissionTimeout: null } : {}),
       }))

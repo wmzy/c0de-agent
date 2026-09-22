@@ -890,7 +890,10 @@ describe('useChat 附着轮询的暂停态（P1）', () => {
     vi.restoreAllMocks()
   })
 
-  function statusFetch(statuses: Array<Record<string, unknown>>): ReturnType<typeof vi.fn> {
+  function statusFetch(
+    statuses: Array<Record<string, unknown>>,
+    pending: Record<string, unknown> | null = null,
+  ): ReturnType<typeof vi.fn> {
     let idx = 0
     return vi.fn(async (url: string) => {
       if (String(url).includes('/status')) {
@@ -907,11 +910,97 @@ describe('useChat 附着轮询的暂停态（P1）', () => {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ pending: null }),
-        text: async () => JSON.stringify({ pending: null }),
+        json: async () => ({ pending }),
+        text: async () => JSON.stringify({ pending }),
       }
     })
   }
+
+  // 回归：附着入口（冷启动挂载 / 跨标签页广播触发的 attach）此前只认 running——
+  // run 已 paused（权限确认挂起/预算超支）时直接放弃：runPaused 从未置位（无「恢复」
+  // 入口）、挂起权限弹窗不重挂、run 结束广播也被忽略（attachedRef 未置位）。
+  // 该页发新消息撞 409 RUN_ACTIVE，锁死到手动刷新。pollAttachedRun 已修 paused，
+  // 入口判定是同一修复漏掉的兄弟面。
+  it('attach 时 run 已 paused → 进入暂停态并重挂权限弹窗，恢复后继续轮询', async () => {
+    vi.useFakeTimers()
+    // 调用序：attach 首次查询 paused（挂起权限）→ tick1 running（已恢复）→ tick2 idle
+    vi.stubGlobal(
+      'fetch',
+      statusFetch(
+        [{ _tag: 'paused', pauseReason: '权限确认挂起' }, { _tag: 'running' }, { _tag: 'idle' }],
+        { toolCallId: 'tc-1', tool: 'write', input: { path: 'a.ts' } },
+      ),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    // 暂停态：恢复入口可见（runPaused && isStreaming），非「运行中」附着横幅
+    expect(result.current.isStreaming).toBe(true)
+    expect(result.current.runPaused).toBe(true)
+    expect(result.current.runPauseReason).toBe('权限确认挂起')
+    expect(result.current.attachedRun).toBe(false)
+    // 挂起权限弹窗重挂（用户确认后 run 才能继续）
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-1')
+
+    // 暂停期间仍在轮询：恢复后下一 tick 看到 running → 清暂停态、转运行中附着
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.runPaused).toBe(false)
+    expect(result.current.attachedRun).toBe(true)
+
+    // run 结束 → 正常收尾
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachedRun).toBe(false)
+  })
+
+  it('attach 时无活跃 run（idle）→ 不进入附着态', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', statusFetch([{ _tag: 'idle' }]))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachedRun).toBe(false)
+    expect(result.current.runPaused).toBe(false)
+  })
+
+  // 回归：附着轮询把 interrupted（服务重启，run 内存态已丢）也当普通结束——
+  // 附着态静默清空、无任何恢复提示；「上次对话被中断」横幅只在冷启动判定一次，
+  // 附着期间发生的中断对该页永远不可见。
+  it('附着期间 run 被服务重启中断 → 停止轮询并展示中断恢复入口', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', statusFetch([{ _tag: 'running' }, { _tag: 'interrupted' }]))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    expect(result.current.attachedRun).toBe(true)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachedRun).toBe(false)
+    expect(result.current.interrupted).toBe(true)
+  })
 
   it('附着期间 run 暂停 → 保留「恢复」入口（runPaused + isStreaming）并继续轮询到结束', async () => {
     vi.useFakeTimers()
