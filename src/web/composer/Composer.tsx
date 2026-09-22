@@ -9,8 +9,13 @@ import { ComposerEditor } from '@/composer/ComposerEditor.js'
 import { currentCursor } from '@/composer/editor-sync.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
 import { SlashPopover, SubcommandPopover } from '@/composer/SlashPopover.js'
-import type { ImagePart } from '@/composer/types.js'
-import { atTokenRange, promptToText, replacePromptRange } from '@/composer/types.js'
+import type { ComposerSendPayload } from '@/composer/types.js'
+import {
+  atTokenRange,
+  extractAgentMentions,
+  promptToText,
+  replacePromptRange,
+} from '@/composer/types.js'
 import { useComposer } from '@/composer/useComposer.js'
 import { WorkflowPopover } from '@/composer/WorkflowPopover.js'
 import { useFileReferenceSetter } from '@/contexts/ReferenceContext.js'
@@ -124,10 +129,7 @@ const popoverGroup = css`
   display: contents;
 `
 
-type SendPayload = {
-  text: string
-  files: string[]
-  images: ImagePart[]
+type SendPayload = ComposerSendPayload & {
   agents: string[]
 }
 
@@ -151,11 +153,14 @@ type ComposerProps = {
 }
 
 function Composer(props: ComposerProps) {
-  // 从文本提取 @agent mentions，仅保留非 primary（可调用的 subagent/all）
-  const handleSend = (payload: { text: string; files: string[]; images: ImagePart[] }) => {
+  // 从 Prompt 结构提取 @agent mentions（仅非 primary 可调用的 subagent）。
+  // 只扫描用户输入的文本 part 并剥离 markdown 代码（见 extractAgentMentions）——
+  // 此前对平铺消息文本整体正则：snippet/terminal 展开的代码块、用户手写的
+  // ``` 示例里出现 agent 名即被当成提及，服务端据此注入「用户要求派发 subagent」
+  // 指令，运行被误导去派发子 agent（隔离 worktree + 独立 session + 额外成本）。
+  const handleSend = (payload: ComposerSendPayload) => {
     const subagentNames = props.agents.filter((a) => a.mode !== 'primary').map((a) => a.name)
-    const mentions = payload.text.match(/@[\w-]+/g) ?? []
-    const agents = mentions.map((m) => m.slice(1)).filter((name) => subagentNames.includes(name))
+    const agents = extractAgentMentions(payload.prompt, subagentNames)
     props.onSend({ ...payload, agents })
   }
   const { data: commands = [] } = useCommands()

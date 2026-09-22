@@ -1,5 +1,7 @@
 /** Composer Prompt 数据结构（移植自 opencode，React 版）。 */
 
+import { stripMarkdownCode } from '@shared/utils/markdown-code.js'
+
 interface PartBase {
   /** 该 part 在纯文本流中的起始字符偏移（BR 算 1 字符 \n）。 */
   start: number
@@ -56,6 +58,16 @@ interface ImagePart {
 
 type ContentPart = TextPart | FilePart | SnippetPart | TerminalPart | ImagePart
 type Prompt = ContentPart[]
+
+/** 发送载荷（composer 层产出）：prompt 结构随行——@agent 提及提取需要区分
+ *  用户输入文本与 snippet/terminal 展开内容。agents 由 Composer 层按提及
+ *  提取结果补齐（见 Composer 的 SendPayload）。 */
+type ComposerSendPayload = {
+  text: string
+  files: string[]
+  images: ImagePart[]
+  prompt: Prompt
+}
 
 const DEFAULT_PROMPT: Prompt = [{ type: 'text', content: '', start: 0, end: 0 }]
 
@@ -202,7 +214,31 @@ function clonePromptParts(prompt: Prompt): Prompt {
   return prompt.filter((p) => p.type !== 'image').map((p) => ({ ...p }) as ContentPart)
 }
 
+/** 从 Prompt 提取 @agent 提及（仅保留真实可调用的 subagent 名，去重保序）。
+ *
+ * 只扫描用户输入的 **text part**：snippet/terminal pill 展开的是被引用的
+ * 代码/终端输出（promptToMessageText 会包成代码块），file part 是路径——
+ * 它们里面的 `@name` 不构成「用户点名派发」的意图。文本 part 内再剥离
+ * markdown 代码块/行内代码（prose 感知，与 workflowz 关键词、<todo:*> 标签
+ * 检测共用 shared/utils/markdown-code.ts）——用户手写的 ``` 示例里的 @name
+ * 同样不得触发。此前对平铺消息文本整体正则：引用片段/示例代码里的 agent 名
+ * 被当成提及，服务端据此注入「用户要求派发 subagent」指令，运行被误导去
+ * 派发子 agent（隔离 worktree + 独立 session + 额外成本）。 */
+function extractAgentMentions(prompt: Prompt, subagentNames: readonly string[]): string[] {
+  const names = new Set(subagentNames)
+  const out: string[] = []
+  for (const part of prompt) {
+    if (part.type !== 'text') continue
+    for (const m of stripMarkdownCode(part.content).matchAll(/@([\w-]+)/g)) {
+      const name = m[1] ?? ''
+      if (names.has(name) && !out.includes(name)) out.push(name)
+    }
+  }
+  return out
+}
+
 export type {
+  ComposerSendPayload,
   ContentPart,
   FilePart,
   ImagePart,
@@ -216,6 +252,7 @@ export {
   atTokenRange,
   clonePromptParts,
   DEFAULT_PROMPT,
+  extractAgentMentions,
   isPromptEmpty,
   promptLength,
   promptToMessageText,

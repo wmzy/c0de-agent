@@ -10,7 +10,7 @@
  *  - 批量模式：`{ subagent_type, context, tasks: [{ prompt, description? }] }`
  *  - 单任务模式：`{ subagent_type?, prompt, description? }`
  */
-import { stripMarkdownCode } from './markdown.js'
+import { stripMarkdownCode } from '../shared/utils/markdown-code.js'
 
 // 检测：小写关键词，两侧不得是 ASCII 词/路径字符（字母、数字、_、.、/、-）。
 // 用 [\w./-] 而非 \S 做边界，使 CJK 字符和中文标点也能当边界——
@@ -25,7 +25,7 @@ const WORKFLOW_WORD = /(?<![\w./-])workflowz(?![\w./-])/
  * （中文无词间空格）；但仍拒绝 workflowzed / reworkflowz / workflowz.test.ts
  * 等拉丁词续或路径内嵌形式。
  *
- * prose 检测：先剥离围栏代码块与行内代码再匹配（markdown.ts 的
+ * prose 检测：先剥离围栏代码块与行内代码再匹配（shared/utils/markdown-code.ts 的
  * stripMarkdownCode）——未闭合围栏、~~~ 围栏、长反引号围栏、多反引号
  * 行内代码都会漏过此前的手写剥离，代码内容上的字面量关键字误触发
  * 工作流通告注入。

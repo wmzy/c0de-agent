@@ -13,7 +13,7 @@ import {
   saveHistory,
 } from '@/composer/history.js'
 import { normalizePaste, pasteMode } from '@/composer/paste.js'
-import type { ImagePart, Prompt } from '@/composer/types.js'
+import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
 import {
   atTokenRange,
   clonePromptParts,
@@ -29,7 +29,7 @@ import type { CommandInfo } from '@/hooks/useCommands.js'
 type PopoverState = 'slash' | 'subcommand' | 'at' | 'workflow' | null
 
 type UseComposerOptions = {
-  onSend: (payload: { text: string; files: string[]; images: ImagePart[] }) => void
+  onSend: (payload: ComposerSendPayload) => void
   onAbort?: () => void
   /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。 */
   onSteer?: (message: string) => void
@@ -406,7 +406,9 @@ function useComposer({
     if (isPromptEmpty(prompt) && images.length === 0) return
     const text = promptToMessageText(prompt)
     const files = prompt.flatMap((p) => (p.type === 'file' ? [p.path] : []))
-    onSend({ text, files, images })
+    // prompt 结构随载荷传递：@agent 提及提取需要区分「用户输入文本」与
+    // snippet/terminal 展开内容（见 extractAgentMentions）。
+    onSend({ text, files, images, prompt })
     if (text.trim()) saveHistory(prependHistoryEntry(loadHistory(), text))
     setImages([])
     setImageError(null)

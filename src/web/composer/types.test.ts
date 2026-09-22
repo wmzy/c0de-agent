@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   atTokenRange,
   clonePromptParts,
+  extractAgentMentions,
   type Prompt,
   replacePromptRange,
 } from '@/composer/types.js'
@@ -115,5 +116,79 @@ describe('clonePromptParts', () => {
     const clone = clonePromptParts(prompt)
     ;(clone[0] as { content: string }).content = 'mutated'
     expect((prompt[0] as { content: string }).content).toBe('t')
+  })
+})
+
+// 回归：@agent 提及此前从 promptToMessageText 平铺消息文本整体正则提取——
+// ① snippet/terminal pill 展开的代码块、② 用户手写的 ``` 代码示例里出现
+// agent 名即被当成提及。服务端据此注入「[User requested subagent(s): …]」
+// 指令并把运行导向子 agent 派发（隔离 worktree + 独立 session + 额外成本），
+// 而用户只是引用了名字/贴了段代码。与 workflowz 关键词、<todo:*> 标签的
+// prose 感知（剥离 markdown 代码）同口径，此面漏了。
+describe('extractAgentMentions', () => {
+  const names = ['coder', 'researcher']
+
+  function text(content: string): Prompt {
+    return [{ type: 'text', content, start: 0, end: content.length }]
+  }
+
+  it('用户输入文本中的 @name 提取（去重保序，未知名忽略）', () => {
+    expect(
+      extractAgentMentions(text('请让 @coder 看一下，再让 @researcher 查一下'), names),
+    ).toEqual(['coder', 'researcher'])
+    expect(extractAgentMentions(text('@coder 和 @coder 一起'), names)).toEqual(['coder'])
+    expect(extractAgentMentions(text('@unknown 只是名字'), names)).toEqual([])
+  })
+
+  it('围栏代码块/行内代码里的 @name 不算提及（prose 感知）', () => {
+    expect(
+      extractAgentMentions(text('看看这段配置：\n```\n@coder = true\n```\n就这样'), names),
+    ).toEqual([])
+    expect(extractAgentMentions(text('文档里写的 `@coder` 是示例'), names)).toEqual([])
+    // 未闭合围栏吞掉余文（保守方向：宁可少触发）
+    expect(extractAgentMentions(text('```\n@coder 还没闭合'), names)).toEqual([])
+  })
+
+  it('snippet pill 展开的代码块不算提及（用户只贴了代码，没点名）', () => {
+    const prompt: Prompt = [
+      { type: 'text', content: '看这段 ', start: 0, end: 4 },
+      {
+        type: 'snippet',
+        path: 'a.ts',
+        lineStart: 1,
+        lineEnd: 2,
+        label: '📄 a.ts:1-2',
+        snippet: '// TODO(@coder): 修一下',
+        start: 4,
+        end: 15,
+      },
+    ]
+    expect(extractAgentMentions(prompt, names)).toEqual([])
+  })
+
+  it('terminal pill 展开的输出不算提及', () => {
+    const prompt: Prompt = [
+      { type: 'text', content: '日志：', start: 0, end: 3 },
+      {
+        type: 'terminal',
+        label: '🖥 npm test',
+        content: '$ npm test\nassign to @coder',
+        start: 3,
+        end: 11,
+      },
+    ]
+    expect(extractAgentMentions(prompt, names)).toEqual([])
+  })
+
+  it('文本提及与代码示例并存时只提取文本提及', () => {
+    const prompt: Prompt = [
+      {
+        type: 'text',
+        content: '请让 @coder 检查\n```\n@researcher\n```',
+        start: 0,
+        end: 30,
+      },
+    ]
+    expect(extractAgentMentions(prompt, names)).toEqual(['coder'])
   })
 })

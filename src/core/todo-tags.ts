@@ -2,6 +2,7 @@
 // Acts as a format-conversion layer on top of todo.ts's applyParams state machine.
 // Tags are NOT stripped from the text — they remain visible to the user.
 
+import { stripMarkdownCode } from '../shared/utils/markdown-code.js'
 import {
   applyParams,
   clonePhases,
@@ -9,7 +10,6 @@ import {
   type TodoItem,
   type TodoPhase,
 } from '../tools/builtin/todo.js'
-import { stripMarkdownCode } from './markdown.js'
 
 // =============================================================================
 // Types
