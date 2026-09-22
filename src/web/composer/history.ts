@@ -24,7 +24,12 @@ function canNavigateHistoryAtCursor(
 
 type HistoryNavResult = { entry: string; index: number } | { reset: true }
 
-/** 在历史中导航。currentIndex=-1 表示空闲态（未进入历史）。 */
+/**
+ * 在历史中导航。currentIndex=-1 表示空闲态（未进入历史）。
+ * 顺序口径与 prependHistoryEntry/saveHistory 一致：entries[0] = 最近一次提交
+ * （最新），索引越大越旧。↑ 向更旧方向、↓ 向更新方向；在最新条目再 ↓ 即
+ * 退出历史回到草稿（reset）。
+ */
 function navigatePromptHistory(input: {
   entries: string[]
   currentIndex: number
@@ -35,13 +40,14 @@ function navigatePromptHistory(input: {
   if (entries.length === 0) return null
 
   if (direction === 'up') {
-    const next = currentIndex === -1 ? entries.length - 1 : Math.max(0, currentIndex - 1)
+    // 空闲态 → 最新（index 0）；继续 ↑ → 更旧，封顶在最旧。
+    const next = currentIndex === -1 ? 0 : Math.min(entries.length - 1, currentIndex + 1)
     return { entry: entries[next] ?? '', index: next }
   }
-  // down
+  // down：向更新方向回退；已在最新（index 0）再 ↓ → 退出历史回到草稿。
   if (currentIndex === -1) return null
-  const next = currentIndex + 1
-  if (next >= entries.length) return { reset: true }
+  const next = currentIndex - 1
+  if (next < 0) return { reset: true }
   return { entry: entries[next] ?? '', index: next }
 }
 

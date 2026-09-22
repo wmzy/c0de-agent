@@ -55,16 +55,19 @@ describe('prependHistoryEntry', () => {
 })
 
 describe('navigatePromptHistory', () => {
-  const entries = ['first', 'second', 'third']
+  // 存储口径与 prependHistoryEntry 一致：entries[0] = 最近一次提交（最新），
+  // 索引越大越旧。此前导航按「[length-1]=最新」倒置：真实链路
+  // save(prepend)→load→navigate 无翻转，↑ 首次召回的是最旧命令。
+  const entries = ['third', 'second', 'first'] // 提交顺序：first → second → third
 
-  it('↑ 从空闲态进入历史，返回最新条目', () => {
+  it('↑ 从空闲态进入历史，返回最近提交的条目', () => {
     const r = navigatePromptHistory({ entries, currentIndex: -1, direction: 'up', draft: '' })
-    expect(r).toMatchObject({ entry: 'third', index: 2 })
+    expect(r).toMatchObject({ entry: 'third', index: 0 })
   })
 
-  it('↑ 持续向上遍历', () => {
+  it('↑ 持续向上遍历到更旧条目', () => {
     const r1 = navigatePromptHistory({ entries, currentIndex: -1, direction: 'up', draft: '' })
-    expect(r1).toMatchObject({ entry: 'third', index: 2 })
+    expect(r1).toMatchObject({ entry: 'third', index: 0 })
     const prevIndex = r1 && 'entry' in r1 ? r1.index : -1
     const prevEntry = r1 && 'entry' in r1 ? r1.entry : ''
     const r = navigatePromptHistory({
@@ -76,18 +79,34 @@ describe('navigatePromptHistory', () => {
     expect(r).toMatchObject({ entry: 'second', index: 1 })
   })
 
-  it('↑ 到顶不再上移', () => {
-    const r = navigatePromptHistory({ entries, currentIndex: 0, direction: 'up', draft: 'first' })
-    expect(r).toMatchObject({ entry: 'first', index: 0 })
+  it('↑ 到最旧不再上移', () => {
+    const r = navigatePromptHistory({ entries, currentIndex: 2, direction: 'up', draft: 'first' })
+    expect(r).toMatchObject({ entry: 'first', index: 2 })
   })
 
-  it('↓ 到底退出历史回到草稿', () => {
+  it('↓ 向更新方向回退', () => {
     const r = navigatePromptHistory({
       entries,
       currentIndex: 2,
       direction: 'down',
+      draft: 'first',
+    })
+    expect(r).toMatchObject({ entry: 'second', index: 1 })
+  })
+
+  it('↓ 到最新再按退出历史回到草稿', () => {
+    const r = navigatePromptHistory({
+      entries,
+      currentIndex: 0,
+      direction: 'down',
       draft: 'mydraft',
     })
     expect(r).toMatchObject({ reset: true })
+  })
+
+  it('↓ 空闲态不动作', () => {
+    expect(
+      navigatePromptHistory({ entries, currentIndex: -1, direction: 'down', draft: '' }),
+    ).toBeNull()
   })
 })
