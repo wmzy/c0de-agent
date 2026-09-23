@@ -58,7 +58,9 @@ function setCursorPosition(parent: HTMLElement, position: number): void {
       sel?.addRange(range)
       return
     }
-    // BR 节点处定位（落在 BR 之后）
+    // BR 节点处定位：remaining === nodeLen 落在 BR 之后，否则（=0）
+    // 落在 BR 之前——此前一律 setStartAfter，起始位置（编辑器首行为 BR
+    // 时偏移 0）被弹到 BR 之后。
     if (
       remaining <= nodeLen &&
       node.nodeType === Node.ELEMENT_NODE &&
@@ -66,10 +68,23 @@ function setCursorPosition(parent: HTMLElement, position: number): void {
     ) {
       const range = document.createRange()
       const sel = window.getSelection()
-      range.setStartAfter(node)
+      if (remaining === nodeLen) {
+        range.setStartAfter(node)
+      } else {
+        range.setStartBefore(node)
+      }
       range.collapse(true)
       sel?.removeAllRanges()
       sel?.addRange(range)
+      return
+    }
+    // 偏移落在嵌套元素（workflowz 高亮 span、粘贴带来的格式化 span 等）
+    // 内部：递归下钻到该元素继续定位。此前整段减掉元素长度后继续走兄弟
+    // 节点——元素内的偏移全部坠到编辑器末尾，光标恢复把光标从原位弹到
+    // 消息末尾（getTextLength 递归计数、set 方向也必须递归定位，双向口径
+    // 一致才保证往返）。
+    if (remaining <= nodeLen && node.nodeType === Node.ELEMENT_NODE) {
+      setCursorPosition(node as HTMLElement, remaining)
       return
     }
     remaining -= nodeLen

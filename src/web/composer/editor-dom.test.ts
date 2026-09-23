@@ -64,3 +64,44 @@ describe('零宽空格 (\u200B) 光标处理', () => {
     expect(getCursorPosition(el)).toBe(1)
   })
 })
+
+describe('嵌套元素内的光标定位', () => {
+  // 复现：setCursorPosition 只在节点本身是文本节点时定位，落在嵌套元素
+  // （workflowz 高亮 [data-wf] span、粘贴带来的格式化 span 等）内部的偏移
+  // 整段减掉该元素长度后继续走兄弟节点——位置坠到编辑器末尾。光标恢复
+  // （decorateWorkflowz / reconcile 的 save→restore）在含嵌套 span 的编辑器
+  // 里把光标从原位弹到消息末尾。
+  it('嵌套 span 内部偏移往返一致', () => {
+    const el = makeEditor('aa<span>bbb</span>cc')
+    // 偏移 4 = span 内第 2 个字符（'aa'=2，span 内 'b' 从 3 开始）
+    for (const pos of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      setCursorPosition(el, pos)
+      expect(getCursorPosition(el)).toBe(pos)
+    }
+  })
+
+  it('高亮 span（data-wf）内/后的偏移往返一致', () => {
+    const el = makeEditor('hello <span data-wf="1">workflowz</span> end')
+    for (const pos of [0, 6, 8, 12, 15, 18]) {
+      setCursorPosition(el, pos)
+      expect(getCursorPosition(el)).toBe(pos)
+    }
+  })
+
+  it('BR 与嵌套 span 混排的偏移往返一致', () => {
+    const el = makeEditor('<br><span>baaaa a</span>')
+    // BR=1，span 内容 7 字符 → 总长 8
+    for (const pos of [0, 1, 2, 4, 7, 8]) {
+      setCursorPosition(el, pos)
+      expect(getCursorPosition(el)).toBe(pos)
+    }
+  })
+
+  it('深层嵌套元素内偏移往返一致', () => {
+    const el = makeEditor('x<span>a<span>b<span>c</span>d</span>e</span>y')
+    for (const pos of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      setCursorPosition(el, pos)
+      expect(getCursorPosition(el)).toBe(pos)
+    }
+  })
+})
