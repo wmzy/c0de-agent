@@ -78,4 +78,29 @@ describe('AddProjectDialog', () => {
     fireEvent.click(screen.getByText('取消'))
     expect(onClose).toHaveBeenCalled()
   })
+
+  // 复现：DirectoryPicker 无条件消费 Escape/Enter，宿主在 onKeyDown 里写的
+  // 关闭/提交分支从不执行——Esc 关不掉弹窗、回车提交不了（只能用「取消」按钮
+  // 和「添加」按钮）。
+  it('Escape 关闭弹窗（宿主 onKeyDown 的未消费键透传）', () => {
+    const onClose = vi.fn()
+    renderWithClient(<AddProjectDialog onClose={onClose} />)
+    fireEvent.keyDown(screen.getByTestId('add-project-input'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('回车提交（宿主 onKeyDown 的未消费键透传）', async () => {
+    const onClose = vi.fn()
+    const mocked = vi.mocked(projectAPI.fromDirectory).mockResolvedValue({
+      id: 'p1',
+      name: 'demo',
+    } as never)
+    renderWithClient(<AddProjectDialog onClose={onClose} />)
+
+    fireEvent.change(screen.getByTestId('add-project-input'), { target: { value: '/tmp/demo' } })
+    fireEvent.keyDown(screen.getByTestId('add-project-input'), { key: 'Enter' })
+
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith('/tmp/demo'))
+    expect(onClose).toHaveBeenCalled()
+  })
 })

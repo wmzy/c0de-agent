@@ -1,7 +1,7 @@
 // DirectoryPicker 组件测试，对应 src/web/components/DirectoryPicker.tsx
 // 归并建议：DirectoryPicker 为核心选择器组件，独立测试其搜索/导航/选择交互。
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useState } from 'react'
+import { type KeyboardEvent as ReactKeyboardEvent, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 
@@ -30,9 +30,11 @@ afterEach(() => {
 function Controlled({
   initial = '',
   onChange,
+  onKeyDown,
 }: {
   initial?: string
   onChange?: (v: string) => void
+  onKeyDown?: (e: ReactKeyboardEvent) => void
 }) {
   const [v, setV] = useState(initial)
   return (
@@ -42,6 +44,7 @@ function Controlled({
         setV(next)
         onChange?.(next)
       }}
+      {...(onKeyDown ? { onKeyDown } : {})}
     />
   )
 }
@@ -191,5 +194,71 @@ describe('DirectoryPicker', () => {
 
     expect(browseCalls).toBe(browseBefore) // 未被当成「按输入导航」
     expect(screen.queryByTestId('suggestion-0')).toBeTruthy() // 未选择建议，列表仍在
+  })
+
+  // 复现：Escape/Enter 被无条件消费（Escape 分支恒 return、Enter 分支恒
+  // navigate + return），onKeyDown 契约的「未处理键透传」从不生效。宿主
+  // （AddProjectDialog/RelocateProjectDialog）在 onKeyDown 里写的 Escape 关闭
+  // 对话框 / Enter 提交表单是死代码——用户按 Esc 关不掉对话框、按回车提交不了。
+  it('未消费的 Escape 透传给宿主（建议列表未打开）', async () => {
+    const onKeyDown = vi.fn()
+    render(<DirectoryPicker value="" onChange={vi.fn()} onKeyDown={onKeyDown} />)
+    await waitFor(() => expect(filesystemAPI.home).toHaveBeenCalled())
+    const input = screen.getByTestId('directory-picker-input') as HTMLInputElement
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1)
+    expect(onKeyDown.mock.calls[0]?.[0]?.key).toBe('Escape')
+  })
+
+  it('建议列表打开时 Escape 只关建议、不透传（层级消费）', async () => {
+    vi.mocked(filesystemAPI.search).mockResolvedValue({ items: ['projects'] })
+    const onKeyDown = vi.fn()
+    render(<Controlled onKeyDown={onKeyDown} />)
+    await waitFor(() => expect(filesystemAPI.home).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByText('user')).toBeTruthy())
+    const input = screen.getByTestId('directory-picker-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'pro' } })
+    await waitFor(() => expect(screen.queryByTestId('suggestion-0')).toBeTruthy())
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(onKeyDown).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('suggestion-0')).toBeNull()
+  })
+
+  it('无建议可消费时 Enter 透传给宿主（表单提交）', async () => {
+    const onKeyDown = vi.fn()
+    render(<DirectoryPicker value="" onChange={vi.fn()} onKeyDown={onKeyDown} />)
+    await waitFor(() => expect(filesystemAPI.home).toHaveBeenCalled())
+    const input = screen.getByTestId('directory-picker-input') as HTMLInputElement
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1)
+    expect(onKeyDown.mock.calls[0]?.[0]?.key).toBe('Enter')
+  })
+
+  it('建议列表打开时 Enter 选建议、不透传', async () => {
+    vi.mocked(filesystemAPI.search).mockResolvedValue({ items: ['projects'] })
+    const onKeyDown = vi.fn()
+    let browseCalls = 0
+    vi.mocked(filesystemAPI.browse).mockImplementation(async (path: string) => {
+      browseCalls++
+      return { path, directories: [] }
+    })
+    render(<Controlled onKeyDown={onKeyDown} />)
+    await waitFor(() => expect(filesystemAPI.home).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByText('user')).toBeTruthy())
+    const input = screen.getByTestId('directory-picker-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'pro' } })
+    await waitFor(() => expect(screen.queryByTestId('suggestion-0')).toBeTruthy())
+    const browseBefore = browseCalls
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onKeyDown).not.toHaveBeenCalled()
+    await waitFor(() => expect(browseCalls).toBeGreaterThan(browseBefore)) // 导航到建议目录
   })
 })

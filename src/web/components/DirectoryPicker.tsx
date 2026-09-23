@@ -351,6 +351,10 @@ export function DirectoryPicker({
       return
     }
     if (e.key === 'Enter') {
+      // 有可消费的建议 → 选择该建议；否则透传给宿主（onKeyDown 契约的
+      // 「未处理键透传」——AddProjectDialog/RelocateProjectDialog 以 Enter 提交表单）。
+      // 此前无建议时恒 preventDefault + navigate 并 return：宿主的 Enter 分支是死代码，
+      // 输入完整路径后按回车不会提交。
       if (suggestionsOpen && currentItems.length > 0) {
         const s = currentItems[activeSuggestion] ?? currentItems[0]
         if (s) {
@@ -359,13 +363,18 @@ export function DirectoryPicker({
           return
         }
       }
-      // 无建议：尝试按输入导航
-      e.preventDefault()
-      void navigate(cleanPickerInput(value))
+      onKeyDown?.(e)
       return
     }
     if (e.key === 'Escape') {
-      setSuggestionsOpen(false)
+      // 建议列表打开 → 只关建议（层级消费，不透传）；未打开 → 透传给宿主
+      // （此前无条件 return：宿主写的 Escape 关闭对话框从不执行，用户按 Esc 关不掉弹窗）。
+      if (suggestionsOpen) {
+        e.preventDefault()
+        setSuggestionsOpen(false)
+        return
+      }
+      onKeyDown?.(e)
       return
     }
     onKeyDown?.(e)
