@@ -434,7 +434,10 @@ export function markdownToPhases(md: string): { phases: TodoPhase[]; errors: str
     if (headingMatch) {
       // 名称从原始行取（保留前导/尾随空白，渲染方不 trim）；换行/反斜杠
       // 经渲染转义可逆还原。此前从 trimmed 分组取名称，尾随空白静默丢失。
-      const name = unescapeMarkdownContent(raw.replace(/^\s*#{1,6}\s*/, ''))
+      // 渲染格式恒为 `# <name>`：只吃掉 `#` 后的**一个**分隔空白——`\s*` 会把
+      // 名字自身的前导空白一起吞掉（`#   Lead` 解析回 `Lead`），与尾随空白
+      // 同型的 round-trip 静默改写。
+      const name = unescapeMarkdownContent(raw.replace(/^\s*#{1,6}[ \t]?/, ''))
       currentPhase = { name, tasks: [] }
       phases.push(currentPhase)
       continue

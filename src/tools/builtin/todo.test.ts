@@ -541,6 +541,20 @@ describe('phasesToMarkdown / markdownToPhases', () => {
     expect(parsed).toEqual(phases)
   })
 
+  // 复现：阶段名从原始行提取时用 /^\s*#{1,6}\s*/ 剥前缀——`\s*` 连名字自身的
+  // **前导空白**一起吞掉（`#   Lead` 解析回 `Lead`），与尾随空白（已修）同型的
+  // round-trip 静默改写。渲染格式恒为 `# <name>`，解析端只应吃掉一个分隔空白。
+  it('round-trips a phase name with leading whitespace', () => {
+    const phases: TodoPhase[] = [
+      { name: '  Lead', tasks: [{ content: 'a', status: 'pending' }] },
+      { name: 'Tab\t', tasks: [{ content: 'b', status: 'completed' }] },
+    ]
+    const md = phasesToMarkdown(phases)
+    const { phases: parsed, errors } = markdownToPhases(md)
+    expect(errors).toHaveLength(0)
+    expect(parsed).toEqual(phases)
+  })
+
   // 回归：空列表渲染为 "# Todos\n"，解析回来变成含一个空 "Todos" 阶段的
   // 列表——markdownToPhases(phasesToMarkdown(x)) === x 契约对 x=[] 不成立。
   it('round-trips an empty phase list back to empty', () => {
