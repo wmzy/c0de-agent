@@ -129,6 +129,18 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
   }
 
   const removeProvider = (index: number) => {
+    // 测试结果按行下标索引（testResults[index]），行的身份也是下标：删除行后
+    // 后续行整体前移，结果必须同步前移——否则 A 的结果显示在 B 行、B 的显示在
+    // C 行（"✓ 连接成功，N 个模型" 指向错误的 provider）。
+    setTestResults((prev) => {
+      const next: typeof prev = {}
+      for (const [key, value] of Object.entries(prev)) {
+        const i = Number(key)
+        if (i === index) continue
+        next[i > index ? i - 1 : i] = value
+      }
+      return next
+    })
     onProvidersChange((prev) => prev.filter((_, i) => i !== index))
   }
 
