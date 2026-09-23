@@ -219,12 +219,19 @@ export function SessionList({
     enabled: searchDebounced.length > 1,
     staleTime: 10_000,
   })
+  // 树中已展示的全部会话 id（任意深度）。递归收集：只收顶层与直接子级会把
+  // 深层后代（fork 的 fork）漏掉——它们同样已在树里可见，却会被「消息内容
+  // 匹配」区再列一遍（同一会话出现两次）。与 findNode/countDescendants/
+  // searchTree 的递归口径一致。
   const visibleIds = useMemo(() => {
     const ids = new Set<string>()
-    for (const n of visibleTree) {
-      ids.add(n.session.id)
-      for (const c of n.children ?? []) ids.add(c.session.id)
+    const walk = (nodes: SessionTreeNode[]): void => {
+      for (const n of nodes) {
+        ids.add(n.session.id)
+        walk(n.children ?? [])
+      }
     }
+    walk(visibleTree)
     return ids
   }, [visibleTree])
   const extraMatches = useMemo(
