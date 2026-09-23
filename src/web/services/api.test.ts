@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { del, get, post } from '@/services/api.js'
+import { del, get, post, put } from '@/services/api.js'
 import { sendChatMessage } from '@/services/chat.js'
 
 /** 读请求头：fetch-fun 在 happy-dom 产出 Headers 实例、bun 产出普通对象，按名大小写不敏感读取。 */
@@ -101,6 +101,29 @@ describe('fetch-fun HTTP 层', () => {
     )
     await expect(post('/api/chat/abort', { sessionId: 's' })).rejects.toMatchObject({ status: 500 })
     expect(calls).toBe(1)
+  })
+
+  // 回归：withRetry 此前未声明方法白名单，取 fetch-fun 默认集
+  // （GET/HEAD/OPTIONS/TRACE/**PUT/DELETE**）——PUT/DELETE 写操作被重放，与
+  // 本层声明的「仅幂等 GET，写操作永不重放」契约相悖：删除类请求（文件移入
+  // 回收站、彻底删除会话/看板）首次已成功但响应丢失（超时/连接中断）时，重放
+  // 拿到 404 并报「删除失败」，用户以为没删掉。
+  it('PUT/DELETE 不重试（写操作永不重放，与 POST 同口径）', async () => {
+    for (const call of [
+      () => put('/api/files/a.ts', { content: 'x' }),
+      () => del('/api/sessions/x'),
+    ]) {
+      let calls = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async () => {
+          calls++
+          return new Response('{"error":{"message":"boom"}}', { status: 500 })
+        }),
+      )
+      await expect(call()).rejects.toMatchObject({ status: 500 })
+      expect(calls).toBe(1)
+    }
   })
 
   it('localStorage 有 token 时携带 Authorization 头', async () => {

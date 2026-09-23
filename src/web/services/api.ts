@@ -100,7 +100,10 @@ function emitAuthRequired(): void {
  * - timeout=每趟尝试预算（新信号），totalTimeout=整链预算；
  *   后端多为本机接口，但 provider 探测等会代理外部端点，预算放宽到 30s/120s。
  * - withAuth 每趟尝试重取 token（getAuthToken 每次请求时求值）；空凭据跳过报头。
- * - withRetry(2) 仅白名单幂等方法（GET），写操作永不重放。
+ * - withRetry(2) 仅重放幂等读（GET/HEAD）——方法白名单必须显式声明：fetch-fun
+ *   默认集为 GET/HEAD/OPTIONS/TRACE/**PUT/DELETE**，PUT/DELETE 在本层是写操作
+ *   （文件写入、删除文件/会话/看板），重放会把「首次已成功但响应丢失」的删除
+ *   变成 404 报错。POST/PUT/PATCH/DELETE 一律不重放。
  */
 const client = ff
   .create({ baseUrl: API_BASE })
@@ -112,7 +115,7 @@ const client = ff
     ff.use,
     ff.withAuth(() => getAuthToken() ?? '', 'Bearer'),
   )
-  .pipe(ff.use, ff.withRetry(2))
+  .pipe(ff.use, ff.withRetry(2, { methods: ['GET', 'HEAD'] }))
 
 // 请求函数只收 api 派生链：phantom symbol 无法自然构造，
 // auth/401/retry/timeout 不变量由约定升级为类型保证（painless http.ts 同款）。
