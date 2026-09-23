@@ -76,6 +76,52 @@ describe('routing runWithFallback', () => {
     expect(res.provider).toBe('b')
   })
 
+  it('skips an unregistered fallback target instead of aborting the chain', async () => {
+    // 回退目标可能不在 registry 中：config.providers 里仍在（buildFallbackChain
+    // 据此选中），但 registerProviderFromConfig 会跳过它——apiKey 跨机不可解、
+    // baseURL 缺失、条目畸形。此时该目标不可服务，应跳过并继续尝试后续回退目标；
+    // 此前 resolveRoute 在 try 之外抛 NoRoute，整条链被击穿（可用回退永不尝试，
+    // 原始错误也被 NoRoute 顶替）。
+    const calls: string[] = []
+    const res = await runWithFallback(
+      setup(),
+      {
+        primary: { provider: 'a', model: 'm1' },
+        fallbacks: [
+          { provider: 'ghost', model: 'm1' },
+          { provider: 'b', model: 'm1' },
+        ],
+        maxRetries: 0,
+        retryDelay: 0,
+        sleep: noSleep,
+      },
+      async (provider) => {
+        calls.push(provider)
+        if (provider === 'a') throw internalError()
+        return 'ok'
+      },
+    )
+    expect(calls).toEqual(['a', 'b'])
+    expect(res.provider).toBe('b')
+  })
+
+  it('fails fast with NoRoute when the primary route is unknown', async () => {
+    // 主路由未注册 = 配置错误：快速失败（不静默改用回退 provider）。
+    await expect(
+      runWithFallback(
+        setup(),
+        {
+          primary: { provider: 'ghost', model: 'm1' },
+          fallbacks: [{ provider: 'a', model: 'm1' }],
+          maxRetries: 0,
+          retryDelay: 0,
+          sleep: noSleep,
+        },
+        async () => 'ok',
+      ),
+    ).rejects.toSatisfy((e: unknown) => isLLMError(e) && e.reason._tag === 'NoRoute')
+  })
+
   it('falls over on auth errors and tries the next route', async () => {
     const calls: string[] = []
     await expect(

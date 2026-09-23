@@ -31,8 +31,18 @@ const runWithFallback = async <T>(
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i]
     if (target === undefined) continue
-    // Validate the route exists before attempting (fails fast with NoRoute).
-    resolveRoute(registry, target.provider, target.model)
+    try {
+      // Validate the route exists before attempting.
+      resolveRoute(registry, target.provider, target.model)
+    } catch (error) {
+      // 主路由未注册 = 配置错误 → 快速失败（不静默改用回退 provider）。
+      if (i === 0) throw error
+      // 回退目标未注册（provider 因 apiKey 跨机不可解/缺 baseURL/畸形条目被跳过
+      // 注册，但 config.providers 里仍在、buildFallbackChain 照样选中）只应跳过
+      // 该目标——此前整条链被 NoRoute 击穿：可用回退永不尝试，原始错误也被顶替。
+      lastError = error
+      continue
+    }
     try {
       const result = await withRetry(() => run(target.provider, target.model), {
         maxRetries: chain.maxRetries,

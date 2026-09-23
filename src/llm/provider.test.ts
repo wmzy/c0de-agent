@@ -105,6 +105,47 @@ describe('provider chatStream', () => {
     const done = chunks.find((c) => c._tag === 'done') as { finishReason?: string } | undefined
     expect(done?.finishReason).toBe('length')
   })
+  it('falls over past an unregistered fallback target instead of aborting', async () => {
+    // 与 routing.runWithFallback 同型：回退目标未注册（apiKey 跨机不可解等被
+    // 跳过注册）时应跳过它继续尝试后续目标，而非整条链被 NoRoute 击穿。
+    const sse =
+      'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n'
+    const registry = createRegistry()
+    registerProvider(registry, { name: 'a', baseURL: 'https://a', apiKey: 'k' })
+    registerProvider(registry, { name: 'b', baseURL: 'https://b', apiKey: 'k' })
+    const seen: string[] = []
+    const ctx = {
+      registry,
+      fetchImpl: (async (url: string) => {
+        seen.push(url)
+        if (url.includes('https://a')) return new Response('boom', { status: 500 })
+        return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+      }) as unknown as typeof fetch,
+    }
+    const chunks = []
+    for await (const c of chatStream(ctx, request(), {
+      provider: 'a',
+      model: 'm1',
+      fallback: {
+        primary: { provider: 'a', model: 'm1' },
+        fallbacks: [
+          { provider: 'ghost', model: 'm1' },
+          { provider: 'b', model: 'm1' },
+        ],
+        maxRetries: 0,
+        retryDelay: 0,
+        sleep: async () => {},
+      },
+    })) {
+      chunks.push(c)
+    }
+    const text = chunks
+      .filter((c) => c._tag === 'text')
+      .map((c) => (c as { text: string }).text)
+      .join('')
+    expect(text).toBe('ok')
+    expect(seen.some((u) => u.includes('https://b'))).toBe(true)
+  })
 })
 
 describe('provider chat (non-streaming)', () => {
