@@ -39,8 +39,12 @@ async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
 
   // 非回环监听警告：绑定 0.0.0.0/局域网 IP 时本机以外的主机均可访问，
   // 安全性完全依赖 token + allowedOrigins——默认行为已收紧为 127.0.0.1。
+  // 判定必须区分「127. 前缀」与「点分 IPv4 字面量」：host.startsWith('127.')
+  // 会把以 127. 开头的**域名**（127.example.com 等，可解析到任意公网地址）
+  // 误判为回环，非回环绑定的安全警告被静默跳过。仅四段点分十进制且首段为
+  // 127 的串（127.0.0.0/8 全域回环，RFC 1122）算回环。
   const isLoopback =
-    host === '127.0.0.1' || host === 'localhost' || host === '::1' || host.startsWith('127.')
+    host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host)
   if (!isLoopback) {
     console.warn(
       `[c0de] ⚠ 监听地址为 ${host}（非回环）：本机以外的主机均可访问此服务。\n` +

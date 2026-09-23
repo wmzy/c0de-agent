@@ -6,8 +6,11 @@ import { dirname, relative, resolve, sep } from 'node:path'
  * （如 `../etc/passwd`、绝对路径 `/etc/passwd`）。
  *
  * - `resolve(root, requestPath)` 解析后，若结果不在 root 子树内则返回 null。
- * - 判定逻辑：`relative(root, resolved)` 以 `..` 开头即越界；
+ * - 判定逻辑：`relative(root, resolved)` 为 `..` 或以 `..` 开头的**路径段**即越界；
  *   再用 `resolve(root, rel) === resolved` 兜底，防止相对段恰好名为 root 的边角情况。
+ *   越界判定必须按组件边界比较（`..` 整段 / `..<sep>` 前缀）——按字符串前缀
+ *   `rel.startsWith('..')` 会把以 `..` 开头的**合法文件名**（..foo、...、..bar/x）
+ *   一并拒绝：工作区内的真实文件/目录对工具与 /api/files 全部 403。
  * - symlink 防逃逸（P2-5）：root 与目标（或其最近已存在祖先）经 realpath 解析后，
  *   目标必须仍落在 root 实路径内；否则返回 null。
  *
@@ -16,7 +19,7 @@ import { dirname, relative, resolve, sep } from 'node:path'
 function safeResolve(root: string, requestPath: string): string | null {
   const resolved = resolve(root, requestPath)
   const rel = relative(root, resolved)
-  if (rel.startsWith('..') || resolve(root, rel) !== resolved) {
+  if (rel === '..' || rel.startsWith(`..${sep}`) || resolve(root, rel) !== resolved) {
     return null
   }
 

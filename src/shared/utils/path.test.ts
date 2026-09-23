@@ -39,6 +39,21 @@ describe('safeResolve', () => {
     expect(safeResolve(root, tmpdir())).toBeNull()
   })
 
+  // 回归：越界判定按「相对路径以 `..` 开头」的字符串前缀实现——以 `..` 开头的
+  // **合法文件名**（..foo、...、..bar/x）也被当成穿越拒绝：工具与 /api/files
+  // 对这类路径全部 403，工作区内真实存在的文件/目录无法读写。
+  it('accepts in-root names whose first segment merely starts with ..', () => {
+    mkdirSync(join(root, '..foo'), { recursive: true })
+    mkdirSync(join(root, '...'), { recursive: true })
+    expect(safeResolve(root, '..foo')).toBe(join(root, '..foo'))
+    expect(safeResolve(root, '..foo/bar.txt')).toBe(join(root, '..foo/bar.txt'))
+    expect(safeResolve(root, '...')).toBe(join(root, '...'))
+    expect(safeResolve(root, '.../x')).toBe(join(root, '.../x'))
+    // 真正的穿越仍然拒绝
+    expect(safeResolve(root, '..')).toBeNull()
+    expect(safeResolve(root, '../x')).toBeNull()
+  })
+
   it('rejects symlink escaping root', () => {
     const outside = mkdtempSync(join(tmpdir(), 'safe-path-out-'))
     try {
