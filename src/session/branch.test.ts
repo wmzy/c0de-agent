@@ -73,6 +73,26 @@ describe('branching', () => {
     expect(forkedMessages[1]?.content[0]).toMatchObject({ text: 'msg-1' })
   })
 
+  it('copies entry timestamps verbatim (no shared fork-time timestamp)', async () => {
+    // entryToRow 曾丢弃 createdAt：复制出的条目全部拿到事务 now()（同一毫秒），
+    // 分支会话内消息时间戳并列——顺序退化为物理行序，任何「删除+重插」
+    //（shake/压缩摘要）都会把消息挪到时间线末尾，且时间显示全部变成 fork 时刻。
+    const parent = await createSession(handle, 'Parent')
+    for (let i = 0; i < 4; i++) {
+      await appendMessage(handle, parent.id, { role: 'user', content: textContent(`msg-${i}`) })
+    }
+    const source = await getMessages(handle, parent.id)
+
+    const forked = await forkSession(handle, parent.id, 3)
+    const forkedMessages = await getMessages(handle, forked.id)
+
+    expect(forkedMessages.map((m) => m.createdAt)).toEqual(source.map((m) => m.createdAt))
+    expect(new Set(forkedMessages.map((m) => m.createdAt)).size).toBe(forkedMessages.length)
+    // 分支摘要条目（fork 时刻追加）必须排在全部复制条目之后。
+    const entries = await getEntries(handle, forked.id)
+    expect(entries[entries.length - 1]).toMatchObject({ _tag: 'branch_summary' })
+  })
+
   it('forked session includes a branch_summary entry', async () => {
     const parent = await createSession(handle, 'Parent')
     await appendMessage(handle, parent.id, { role: 'user', content: textContent('hi') })

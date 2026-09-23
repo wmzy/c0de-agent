@@ -4,6 +4,7 @@ import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
 import { sessionEntries } from '../db/schema.js'
+import { generateId } from '../shared/index.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
 import {
   buildCompactionPrompt,
@@ -13,7 +14,7 @@ import {
   TOOL_OUTPUT_MAX_CHARS,
   truncateToolOutput,
 } from './compaction.js'
-import { appendMessage, getEntries, getMessages } from './message.js'
+import { appendMessage, getEntries, getMessages, insertEntry } from './message.js'
 import { createSession } from './session.js'
 
 /** 孤立代理码元：高代理后不跟低代理，或低代理前不是高代理。 */
@@ -398,6 +399,29 @@ describe('compactSession', () => {
     await compactSession(handle, sessionId, async () => 'summary', { keepRecentTokens: 2 })
     const remaining = await getMessages(handle, sessionId)
     expect(remaining).toHaveLength(2)
+  })
+
+  it('places the compaction summary first even when timestamps tie', async () => {
+    // 会话内条目时间戳并列（fork 复制、跨机导入的历史数据）：摘要条目此前按
+    // 插入顺序落到末尾——时间线与 LLM 上下文里压缩摘要出现在保留消息之后，
+    // 压缩语义反转（模型先看到近期消息、再看「已压缩的历史」）。
+    const tied = new Date('2026-01-01T00:00:00.000Z')
+    for (let i = 0; i < 6; i++) {
+      await insertEntry(handle, {
+        id: generateId(),
+        sessionId,
+        tag: 'message',
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: textContent(`msg-${i}`),
+        tokenCount: 100,
+        createdAt: tied,
+      })
+    }
+    await compactSession(handle, sessionId, async () => 'compaction summary', {
+      keepRecentTokens: 250,
+    })
+    const entries = await getEntries(handle, sessionId)
+    expect(entries[0]).toMatchObject({ _tag: 'compaction' })
   })
 
   it('places the compaction summary before kept messages in chronological order', async () => {

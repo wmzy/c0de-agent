@@ -24,7 +24,8 @@ vi.mock('./message.js', async (importActual) => {
   }
 })
 
-import { appendMessage, getEntries, getMessages } from './message.js'
+import { generateId } from '../shared/index.js'
+import { appendMessage, getEntries, getMessages, insertEntry } from './message.js'
 import { createSession } from './session.js'
 import { squashRecent } from './squash.js'
 
@@ -112,6 +113,31 @@ describe('squashRecent', () => {
     const entries = await getEntries(handle, sessionId)
     const squash = entries.find((e) => '_tag' in e && e._tag === 'squash')
     expect(squash).toBeDefined()
+  })
+
+  it('places the squash summary before the kept tail even when timestamps tie', async () => {
+    // 与 compactSession 同型：并列时间戳（fork/导入历史）下摘要条目此前落到末尾，
+    // 时间线/上下文里摘要排在被保留的尾部消息之后。
+    const tied = new Date('2026-01-01T00:00:00.000Z')
+    for (let i = 0; i < 6; i++) {
+      await insertEntry(handle, {
+        id: generateId(),
+        sessionId,
+        tag: 'message',
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: textContent(`msg-${i}`),
+        tokenCount: 100,
+        createdAt: tied,
+      })
+    }
+    await squashRecent(handle, sessionId, 4, async () => 'squash summary')
+    const entries = await getEntries(handle, sessionId)
+    const summaryIndex = entries.findIndex((e) => '_tag' in e && e._tag === 'squash')
+    const firstTailIndex = entries.findIndex(
+      (e) => !('_tag' in e) && (e.content[0] as { text?: string }).text === 'msg-4',
+    )
+    expect(summaryIndex).toBeGreaterThanOrEqual(0)
+    expect(summaryIndex).toBeLessThan(firstTailIndex)
   })
 
   it('rolls back the whole rewrite when a write fails, leaving history intact', async () => {

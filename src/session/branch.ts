@@ -20,9 +20,12 @@ class BranchPointOutOfRangeError extends Error {
   }
 }
 
-/** 把 SessionEntry 还原为 sessionEntries 原始行（fork 复制用）。 */
+/** 把 SessionEntry 还原为 sessionEntries 原始行（fork 复制用）。
+ *  createdAt 原样保留：丢弃它会让复制出的条目全部拿到事务 now()（同一毫秒），
+ *  分支会话内时间戳并列——顺序退化为物理行序，时间线显示也全部变成 fork 时刻。 */
 function entryToRow(e: SessionEntry, sessionId: string): typeof sessionEntries.$inferInsert {
   const id = generateId()
+  const createdAt = new Date(e.createdAt)
   // Message 无 _tag（共享类型）；其余条目经 _tag 判别。
   if (!('_tag' in e)) {
     return {
@@ -32,6 +35,7 @@ function entryToRow(e: SessionEntry, sessionId: string): typeof sessionEntries.$
       role: e.role,
       content: e.content,
       tokenCount: e.tokenCount,
+      createdAt,
     }
   }
   switch (e._tag) {
@@ -46,6 +50,7 @@ function entryToRow(e: SessionEntry, sessionId: string): typeof sessionEntries.$
           archiveId: e.archiveId,
         },
         tokenCount: e.tokenCount,
+        createdAt,
       }
     case 'squash':
       return {
@@ -58,6 +63,7 @@ function entryToRow(e: SessionEntry, sessionId: string): typeof sessionEntries.$
           archiveId: e.archiveId,
         },
         tokenCount: e.tokenCount,
+        createdAt,
       }
     case 'branch_summary':
       return {
@@ -65,9 +71,10 @@ function entryToRow(e: SessionEntry, sessionId: string): typeof sessionEntries.$
         sessionId,
         tag: 'branch_summary',
         content: { summary: e.summary, sourceSessionId: e.sourceSessionId },
+        createdAt,
       }
     case 'steering':
-      return { id, sessionId, tag: 'steering', content: { text: e.content } }
+      return { id, sessionId, tag: 'steering', content: { text: e.content }, createdAt }
   }
 }
 

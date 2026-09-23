@@ -522,6 +522,72 @@ describe('session route', () => {
     expect(previewBody2.regions).toHaveLength(0)
   })
 
+  it('POST /:id/shake/apply keeps message order when timestamps tie', async () => {
+    // 会话内时间戳并列（fork 复制、跨机导入的历史数据）时，apply 此前走
+    // 「删除受影响条目 + 原时间戳重插」——重插的行落到物理末尾，被 shake 的
+    // 早期消息跳到时间线最后（顺序错乱，LLM 上下文里回复排到问题之前）。
+    const { app, db } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'ShakeOrder', projectId: TEST_PROJECT }),
+    })
+    const created = (await createRes.json()) as Session
+
+    const { getMessages, insertEntry } = await import('../../session/message.js')
+    const tied = new Date('2026-01-01T00:00:00.000Z')
+    await insertEntry(db, {
+      sessionId: created.id,
+      tag: 'message',
+      role: 'user',
+      content: [{ _tag: 'text', text: 'first' }],
+      tokenCount: 1,
+      createdAt: tied,
+    })
+    await insertEntry(db, {
+      sessionId: created.id,
+      tag: 'message',
+      role: 'tool',
+      content: [
+        {
+          _tag: 'tool_result',
+          id: 'call-1',
+          tool: 'bash',
+          output: { _tag: 'success', output: 'x'.repeat(5000) },
+        },
+      ],
+      tokenCount: 1,
+      createdAt: tied,
+    })
+    await insertEntry(db, {
+      sessionId: created.id,
+      tag: 'message',
+      role: 'assistant',
+      content: [{ _tag: 'text', text: 'last' }],
+      tokenCount: 1,
+      createdAt: tied,
+    })
+    const before = await getMessages(db, created.id)
+    expect(before).toHaveLength(3)
+
+    const previewRes = await app.request(`/${created.id}/shake/preview`, { method: 'POST' })
+    const previewBody = (await previewRes.json()) as { regions: Array<{ id: string }> }
+    const region = previewBody.regions[0]
+    if (!region) throw new Error('preview returned no regions')
+    const applyRes = await app.request(`/${created.id}/shake/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regionIds: [region.id] }),
+    })
+    expect(applyRes.status).toBe(200)
+
+    const after = await getMessages(db, created.id)
+    expect(after.map((m) => m.id)).toEqual(before.map((m) => m.id))
+    // 内容确实被替换（命中第二条消息的 tool_result），不是空操作
+    const shakenPart = after[1]?.content[0] as { output?: { output?: string } } | undefined
+    expect(shakenPart?.output?.output?.length ?? 0).toBeLessThan(5000)
+  })
+
   it('POST /:id/shake/apply regionIds 不匹配 → 400', async () => {
     const { app } = await setup()
     const createRes = await app.request('/', {
@@ -898,6 +964,33 @@ describe('session route', () => {
       const imported = await getSession(ctx.db, body.sessionId)
       expect(imported?.projectId).toBe(projectId)
       expect(imported?.title).toBe('Origin')
+    })
+
+    it('导入无时间戳的载荷：消息时间戳严格递增（保持数组顺序）', async () => {
+      // 载荷缺时间戳时 toDate 回退 now()：整批消息同毫秒 → 并列时间戳让会话内
+      // 顺序退化为物理行序（任何删除+重插都会打乱消息顺序）。
+      const { app, ctx } = await setup()
+      const projectId = 'import-ts-project'
+      await ctx.db.db.insert(projects).values({ id: projectId, worktree: '/tmp/import-ts' })
+      const messages = ['m0', 'm1', 'm2', 'm3'].map((text) => ({
+        role: 'user',
+        content: [{ _tag: 'text', text }],
+      }))
+
+      const res = await app.request('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: 1, session: { title: 'NoTs' }, messages, projectId }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { sessionId: string }
+
+      const { getMessages } = await import('../../session/message.js')
+      const imported = await getMessages(ctx.db, body.sessionId)
+      const timestamps = imported.map((m) => m.createdAt)
+      expect(timestamps).toHaveLength(4)
+      expect(new Set(timestamps).size).toBe(timestamps.length)
+      expect([...timestamps].sort((a, b) => a - b)).toEqual(timestamps)
     })
 
     it('无效载荷（缺 version/session/messages）→ 400', async () => {

@@ -3,7 +3,13 @@ import { generateId } from '../shared/index.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
 import { headChars, tailChars } from '../shared/utils/string.js'
 import { archiveOriginalEntries } from './archive.js'
-import { deleteEntriesByIds, getEntries, getMessages, insertEntry } from './message.js'
+import {
+  deleteEntriesByIds,
+  getEntries,
+  getMessages,
+  insertEntry,
+  summaryEntryTimestamp,
+} from './message.js'
 import { upsertFileSnapshot } from './snapshot.js'
 import { estimateMessageTokens, estimateTokens } from './token.js'
 import type { CompactionConfig, CompactionResult, HotFile, Summarizer } from './types.js'
@@ -287,9 +293,8 @@ async function compactSession(
         archiveId,
       },
       tokenCount: estimateTokens(summary),
-      // Position the summary at the first compacted message's timestamp so it
-      // sorts BEFORE the kept recent messages under createdAt-ascending order.
-      createdAt: compactMessages[0] ? new Date(compactMessages[0].createdAt) : new Date(),
+      // 定位在首个被压缩消息处（并列时间戳时再早 1ms），保证摘要排在保留尾部之前。
+      createdAt: summaryEntryTimestamp(compactMessages[0], keepMessages[0]),
     })
 
     return { archiveId, fileSnapshotIds }

@@ -2,7 +2,7 @@ import type { DB } from '../db/client.js'
 import { generateId } from '../shared/index.js'
 import { archiveOriginalEntries } from './archive.js'
 import { extractHotFiles } from './compaction.js'
-import { deleteEntriesByIds, getMessages, insertEntry } from './message.js'
+import { deleteEntriesByIds, getMessages, insertEntry, summaryEntryTimestamp } from './message.js'
 import { upsertFileSnapshot } from './snapshot.js'
 import { estimateTokens } from './token.js'
 import type { CompactionResult, SquashConfig, Summarizer } from './types.js'
@@ -113,9 +113,8 @@ ${history}`
         archiveId,
       },
       tokenCount: estimateTokens(summary),
-      // Position at the first squashed message's timestamp so it sorts between
-      // the prefix and the kept tail under createdAt-ascending order.
-      createdAt: toSquash[0] ? new Date(toSquash[0].createdAt) : new Date(),
+      // 定位在首个被压缩消息处（并列时间戳时再早 1ms），保证摘要排在保留尾部之前。
+      createdAt: summaryEntryTimestamp(toSquash[0], keepTail[0]),
     })
 
     return { archiveId, fileSnapshotIds }

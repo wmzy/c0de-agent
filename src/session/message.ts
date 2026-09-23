@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray } from 'drizzle-orm'
+import { and, asc, count, eq, inArray, max } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessionEntries } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
@@ -80,6 +80,32 @@ function rowToEntry(row: typeof sessionEntries.$inferSelect): SessionEntry {
   }
 }
 
+/** 会话内单调递增的条目时间戳（逻辑时钟）。
+ *
+ *  createdAt 是会话内唯一的顺序判定键（getMessages/getEntries/压缩摘要定位/
+ * 工具对相邻性都按它排序），因此必须**严格递增**——并列时间戳会让顺序退化成
+ * 物理行序，任何「删除+重插」都会把条目挪到时间线末尾。
+ * 会话内已有条目的时间戳可能晚于当前时刻（跨机导入、时钟偏移、快照恢复），
+ * 此时直接用 now() 会让新条目排到已有条目之前，故取 max(now, 会话内最大 + 1ms)。 */
+async function nextEntryTimestamp(handle: DB, sessionId: string): Promise<Date> {
+  const [row] = await handle.db
+    .select({ latest: max(sessionEntries.createdAt) })
+    .from(sessionEntries)
+    .where(eq(sessionEntries.sessionId, sessionId))
+  const latestMs = row?.latest ? toEpochMs(row.latest) : 0
+  return new Date(Math.max(Date.now(), latestMs + 1))
+}
+
+/** 摘要条目（compaction/squash）的时间戳：定位在首个被压缩消息处。
+ *  并列时间戳（fork 复制、跨机导入的历史数据）下必须再早 1ms——否则摘要落到
+ *  保留尾部之后，压缩语义反转（模型先看近期消息、再看「已压缩的历史」）。 */
+function summaryEntryTimestamp(firstCompacted?: Message, firstKept?: Message): Date {
+  if (!firstCompacted) return new Date()
+  const base = firstCompacted.createdAt
+  if (firstKept === undefined || firstKept.createdAt > base) return new Date(base)
+  return new Date(firstKept.createdAt - 1)
+}
+
 /** Append a message to a session. Returns the stored Message with generated id/timestamp. */
 async function appendMessage(handle: DB, sessionId: string, input: MessageInput): Promise<Message> {
   const tokenCount = input.tokenCount ?? estimateMessageTokens(input.content)
@@ -92,6 +118,7 @@ async function appendMessage(handle: DB, sessionId: string, input: MessageInput)
       role: input.role,
       content: input.content,
       tokenCount,
+      createdAt: await nextEntryTimestamp(handle, sessionId),
     })
     .returning()
   await touchSession(handle, sessionId)
@@ -179,14 +206,34 @@ async function deleteEntriesByIds(handle: DB, ids: string[]): Promise<void> {
   await handle.db.delete(sessionEntries).where(inArray(sessionEntries.id, ids))
 }
 
-/** Low-level: insert a raw entry row (for compaction/squash/branch_summary/steering). */
+/** Low-level: insert a raw entry row (for compaction/squash/branch_summary/steering).
+ *  未显式给 createdAt 时取会话内单调递增时间戳（追加语义：排在全部已有条目之后）。 */
 async function insertEntry(
   handle: DB,
   values: typeof sessionEntries.$inferInsert,
 ): Promise<typeof sessionEntries.$inferSelect> {
-  const [row] = await handle.db.insert(sessionEntries).values(values).returning()
+  const rowValues =
+    values.createdAt === undefined
+      ? { ...values, createdAt: await nextEntryTimestamp(handle, values.sessionId) }
+      : values
+  const [row] = await handle.db.insert(sessionEntries).values(rowValues).returning()
   if (!row) throw new Error('Failed to insert entry')
   return row
+}
+
+/** 就地改写条目内容（shake 替换区域用）。
+ *  刻意不走「删除 + 重插」：重插的行落到物理末尾，并列时间戳的会话里会把
+ *  被改写消息挪到时间线最后——内容替换不应改变条目位置。 */
+async function updateEntryContent(
+  handle: DB,
+  id: string,
+  content: MessageContent[],
+  tokenCount: number,
+): Promise<void> {
+  await handle.db
+    .update(sessionEntries)
+    .set({ content, tokenCount })
+    .where(eq(sessionEntries.id, id))
 }
 
 export {
@@ -198,4 +245,6 @@ export {
   getMessages,
   getSteeringAsMessages,
   insertEntry,
+  summaryEntryTimestamp,
+  updateEntryContent,
 }

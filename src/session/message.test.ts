@@ -2,8 +2,15 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
 import { createDB } from '../db/client.js'
 import { migrateDB } from '../db/migrate.js'
+import { generateId } from '../shared/index.js'
 import type { MessageContent } from '../shared/types/message.js'
-import { appendMessage, deleteMessagesAfter, getMessageCount, getMessages } from './message.js'
+import {
+  appendMessage,
+  deleteMessagesAfter,
+  getMessageCount,
+  getMessages,
+  insertEntry,
+} from './message.js'
 import { createSession } from './session.js'
 
 async function setupDB(): Promise<DB> {
@@ -61,6 +68,34 @@ describe('message operations', () => {
     expect(messages).toHaveLength(2)
     expect(messages[0]?.content[0]).toMatchObject({ text: 'first' })
     expect(messages[1]?.content[0]).toMatchObject({ text: 'second' })
+  })
+
+  it('appends with a strictly increasing timestamp inside the session', async () => {
+    // 会话内已有条目的时间戳可能晚于当前时刻（跨机导入、时钟偏移、快照恢复）：
+    // 后续 append 若直接用 DB now()，新消息会排到已有消息之前——时间线顺序错乱，
+    // LLM 上下文里「新问题」出现在「旧回复」之前。
+    const future = Date.now() + 60_000
+    await insertEntry(handle, {
+      id: generateId(),
+      sessionId,
+      tag: 'message',
+      role: 'user',
+      content: textContent('imported-later'),
+      tokenCount: 1,
+      createdAt: new Date(future),
+    })
+
+    const appended = await appendMessage(handle, sessionId, {
+      role: 'assistant',
+      content: textContent('new-reply'),
+    })
+
+    expect(appended.createdAt).toBeGreaterThan(future)
+    const messages = await getMessages(handle, sessionId)
+    expect(messages.map((m) => (m.content[0] as { text: string }).text)).toEqual([
+      'imported-later',
+      'new-reply',
+    ])
   })
 
   it('counts messages', async () => {

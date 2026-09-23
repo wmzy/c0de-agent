@@ -15,12 +15,7 @@ import {
   getTree,
 } from '../../session/branch.js'
 import { importSessionData } from '../../session/import.js'
-import {
-  deleteEntriesByIds,
-  getMessages,
-  getSteeringAsMessages,
-  insertEntry,
-} from '../../session/message.js'
+import { getMessages, getSteeringAsMessages, updateEntryContent } from '../../session/message.js'
 import {
   createSession,
   emptyTrash,
@@ -787,18 +782,12 @@ function createSessionRoute(ctx: ServerContext): Hono {
 
     const shakenMessages = applyShakeRegions(messages, selected)
 
-    await deleteEntriesByIds(ctx.db, affectedIds)
+    // 就地改写受影响条目（此前「删除 + 原时间戳重插」）：重插的行落到物理末尾，
+    // 时间戳并列的会话（fork 复制/跨机导入的历史数据）里被 shake 的早期消息会
+    // 跳到时间线最后——内容替换不应改变条目位置。
     for (const msg of shakenMessages) {
       if (!affectedIds.includes(msg.id)) continue
-      await insertEntry(ctx.db, {
-        id: msg.id,
-        sessionId: id,
-        tag: 'message',
-        role: msg.role,
-        content: msg.content,
-        tokenCount: estimateMessageTokens(msg.content),
-        createdAt: new Date(msg.createdAt),
-      })
+      await updateEntryContent(ctx.db, msg.id, msg.content, estimateMessageTokens(msg.content))
     }
 
     return c.json({ shaken: selected.length, archiveId })

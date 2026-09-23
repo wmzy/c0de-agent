@@ -128,9 +128,15 @@ async function importSessionData(
       await tx.update(sessions).set({ metadata: opts.metadata }).where(eq(sessions.id, session.id))
     }
     let messageCount = 0
+    let lastTs = 0
     for (const m of opts.messages) {
       const role = m.role
       if (typeof role !== 'string' || !VALID_ROLES.has(role)) continue
+      // 时间戳严格递增（保持数组顺序）：载荷缺时间戳时 toDate 回退 now()，
+      // 整批消息会落在同一毫秒——并列时间戳让会话内顺序退化为物理行序，
+      // 任何删除+重插都会打乱消息顺序。
+      const createdAt = new Date(Math.max(toDate(m.createdAt).getTime(), lastTs + 1))
+      lastTs = createdAt.getTime()
       await tx.insert(sessionEntries).values({
         id: generateId(),
         sessionId: session.id,
@@ -141,7 +147,7 @@ async function importSessionData(
         // 插入事务（整单 500）；非法值收敛为 0（未知）。
         tokenCount:
           typeof m.tokenCount === 'number' && Number.isFinite(m.tokenCount) ? m.tokenCount : 0,
-        createdAt: toDate(m.createdAt),
+        createdAt,
       })
       messageCount += 1
     }

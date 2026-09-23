@@ -29,6 +29,8 @@ export {
   getMessageCount,
   getMessages,
   insertEntry,
+  summaryEntryTimestamp,
+  updateEntryContent,
 } from './message.js'
 export {
   consumeBudgetPauseMarker,
