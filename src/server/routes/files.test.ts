@@ -157,6 +157,61 @@ describe('files route', () => {
     expect(res.status).toBe(404)
   })
 
+  describe('保留字文件名（URL 编码往返）', () => {
+    // 客户端 fileAPI 逐段 encodeURIComponent 后，服务端必须完整解码：Hono 的
+    // c.req.path 走 decodeURI，保留 reserved 字符（? # : @ & = + $ , ;）的转义，
+    // 含这些字符的文件名整条读写删链路失效（读取 404、写入落到幽灵文件）。
+    const enc = (p: string) => p.split('/').map(encodeURIComponent).join('/')
+
+    it('GET 读取 ? # % 命名的文件（非 404/非幽灵文件）', async () => {
+      const { app, dir } = await setupWithDir()
+      writeFileSync(join(dir, 'a?b.txt'), 'QUESTION')
+      writeFileSync(join(dir, 'a#b.txt'), 'HASH')
+      writeFileSync(join(dir, 'a%b.txt'), 'PERCENT')
+
+      for (const [name, content] of [
+        ['a?b.txt', 'QUESTION'],
+        ['a#b.txt', 'HASH'],
+        ['a%b.txt', 'PERCENT'],
+      ] as const) {
+        const res = await app.request(`/${enc(name)}`)
+        expect(res.status).toBe(200)
+        expect(((await res.json()) as { content: string }).content).toBe(content)
+      }
+    })
+
+    it('PUT 写回原文件而非新建转义名幽灵文件', async () => {
+      const { app, dir } = await setupWithDir()
+      writeFileSync(join(dir, 'a?b.txt'), 'OLD')
+
+      const res = await app.request(`/${enc('a?b.txt')}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'NEW' }),
+      })
+
+      expect(res.status).toBe(200)
+      expect(readFileSync(join(dir, 'a?b.txt'), 'utf-8')).toBe('NEW')
+      expect(existsSync(join(dir, 'a%3Fb.txt'))).toBe(false)
+    })
+
+    it('DELETE 删除原文件', async () => {
+      const { app, dir } = await setupWithDir()
+      writeFileSync(join(dir, 'a?b.txt'), 'QUESTION')
+
+      const res = await app.request(`/${enc('a?b.txt')}`, { method: 'DELETE' })
+
+      expect(res.status).toBe(200)
+      expect(existsSync(join(dir, 'a?b.txt'))).toBe(false)
+    })
+
+    it('非法转义序列 → 400（而非把 %zz 当字面文件名）', async () => {
+      const { app } = await setupWithDir()
+      const res = await app.request('/a%zzb.txt')
+      expect(res.status).toBe(400)
+    })
+  })
+
   it('GET /search?q=hello searches filenames', async () => {
     const { app } = await setupWithDir()
     const res = await app.request('/search?q=hello')

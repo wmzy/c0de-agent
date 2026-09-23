@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import trash from 'trash'
 import { createSummarizer } from '../../core/compact.js'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
@@ -174,6 +174,29 @@ function rejectCommitMessage(
 
 function createFilesRoute(ctx: ServerContext): Hono {
   const app = new Hono()
+
+  /**
+   * 从请求 URL 提取工作区相对文件路径（逐段 decodeURIComponent）。
+   *
+   * 不能直接用 Hono 的 `c.req.path`：它经 `decodeURI`，只解码非 reserved 转义，
+   * `? # : @ & = + $ , ;` 的转义被原样保留。客户端 encodeURIComponent 后
+   * `a%3Fb.txt` 在服务端永远对不上磁盘上的 `a?b.txt`——读取 404，写入/删除更会
+   * 落到另一个字面名为 `a%3Fb.txt` 的幽灵文件（界面报成功、用户改动丢失）。
+   * 基于原始 URL 逐段解码（而非整串解码）保证 `%2F` 不会拆出新的路径层级。
+   * 非法转义（`%zz` 等）返回 null，由调用方转 400。
+   */
+  const extractFilePath = (c: Context): string | null => {
+    try {
+      return new URL(c.req.url).pathname
+        .replace(/^\/api\/files\/?/, '')
+        .replace(/^\/+/, '')
+        .split('/')
+        .map((segment) => decodeURIComponent(segment))
+        .join('/')
+    } catch {
+      return null
+    }
+  }
 
   // git 状态：返回 path → 状态分类 的映射（非 git 返回空对象）
   app.get('/git-status', async (c) => {
@@ -501,7 +524,8 @@ ${headChars(summary.diff, 8000)}`
   // 读取文件
   // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.get('/*', async (c) => {
-    const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
+    const path = extractFilePath(c)
+    if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
     const projectId = c.req.query('projectId')
     let root = ctx.cwd
     if (projectId) {
@@ -552,7 +576,8 @@ ${headChars(summary.diff, 8000)}`
   // 写入文件
   // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.put('/*', async (c) => {
-    const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
+    const path = extractFilePath(c)
+    if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
     const projectId = c.req.query('projectId')
     let root = ctx.cwd
     if (projectId) {
@@ -588,7 +613,8 @@ ${headChars(summary.diff, 8000)}`
   // 删除文件/目录（移入系统回收站）
   // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.delete('/*', async (c) => {
-    const path = c.req.path.replace(/^\/api\/files\//, '').replace(/^\//, '')
+    const path = extractFilePath(c)
+    if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
     const projectId = c.req.query('projectId')
     let root = ctx.cwd
     if (projectId) {
