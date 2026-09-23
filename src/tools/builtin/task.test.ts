@@ -25,6 +25,22 @@ describe('taskTool', () => {
     expect(taskTool.parameters.required).toBeUndefined()
   })
 
+  // 复现：anyOf 分支 `{required:[...]}` 未声明 type，而校验器把结构关键字绑定在
+  // 同层 type 上 → 二选一守卫形同虚设：`{}`/`{subagent_type}`/`{context}` 全部
+  // 通过 schema 校验，缺 prompt 的调用只在 execute 的运行时兜底才报错。
+  it('schema 二选一守卫真的生效（缺 prompt/context 的入参被校验拒绝）', () => {
+    expect(validateInput(taskTool.parameters, {}).valid).toBe(false)
+    expect(validateInput(taskTool.parameters, { subagent_type: 'coder' }).valid).toBe(false)
+    expect(validateInput(taskTool.parameters, { context: 'shared' }).valid).toBe(false)
+    expect(validateInput(taskTool.parameters, { prompt: 'do it' }).valid).toBe(true)
+    expect(
+      validateInput(taskTool.parameters, {
+        context: 'shared',
+        tasks: [{ assignment: 'do A' }],
+      }).valid,
+    ).toBe(true)
+  })
+
   it('delegates to runSubAgent and returns its output on success', async () => {
     const runSubAgent = vi.fn(
       async (): Promise<SubAgentResult> => ({

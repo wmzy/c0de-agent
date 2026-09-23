@@ -149,3 +149,66 @@ describe('validateInput', () => {
     expect(validateInput({}, 'anything')).toEqual({ valid: true })
   })
 })
+
+// 复现：结构关键字（required/properties/items/additionalProperties）此前只在
+// 同一 schema 节点声明了 `type` 时才被校验——JSON Schema 语义里它们与 type 是
+// **独立**约束（`{required:['prompt']}` 对对象实例同样生效，不要求同层 type）。
+// task 工具的 anyOf 分支恰是 `{required:['prompt']}` / `{required:['context','tasks']}`
+// （无 type）：二选一守卫因此完全失效，`{}`、`{subagent_type:'coder'}` 一律通过，
+// 直到 execute 的运行时兜底才报错。
+describe('validateInput 结构关键字不依赖同层 type 声明', () => {
+  it('anyOf 分支的 required 生效（task 工具二选一守卫）', () => {
+    const schema: JSONSchema = {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string' },
+        context: { type: 'string' },
+        tasks: { type: 'array' },
+      },
+      anyOf: [{ required: ['prompt'] }, { required: ['context', 'tasks'] }],
+    }
+    expect(validateInput(schema, {}).valid).toBe(false)
+    expect(validateInput(schema, { subagent_type: 'coder' }).valid).toBe(false)
+    expect(validateInput(schema, { context: 'shared' }).valid).toBe(false)
+    expect(validateInput(schema, { tasks: [] }).valid).toBe(false)
+    expect(validateInput(schema, { prompt: 'do it' }).valid).toBe(true)
+    expect(validateInput(schema, { context: 'shared', tasks: [] }).valid).toBe(true)
+  })
+
+  it('裸 required 对对象实例生效，且不误伤非对象', () => {
+    expect(validateInput({ required: ['a'] }, {}).valid).toBe(false)
+    expect(validateInput({ required: ['a'] }, { a: 1 }).valid).toBe(true)
+    // required 只约束对象实例（JSON Schema 语义）：非对象原样通过
+    expect(validateInput({ required: ['a'] }, 'str').valid).toBe(true)
+    expect(validateInput({ required: ['a'] }, null).valid).toBe(true)
+  })
+
+  it('required 只认自有属性（原型链上的同名键不算存在）', () => {
+    // `'toString' in {}` 恒真——此前据此判定会把缺失字段当成已提供
+    expect(validateInput({ required: ['toString'] }, {}).valid).toBe(false)
+    expect(validateInput({ required: ['constructor'] }, {}).valid).toBe(false)
+    expect(validateInput({ required: ['toString'] }, { toString: 'x' }).valid).toBe(true)
+  })
+
+  it('裸 properties 校验属性类型', () => {
+    const schema: JSONSchema = { properties: { a: { type: 'string' } } }
+    expect(validateInput(schema, { a: 'ok' }).valid).toBe(true)
+    expect(validateInput(schema, { a: 1 }).valid).toBe(false)
+  })
+
+  it('裸 items 校验数组元素，且不误伤非数组', () => {
+    const schema: JSONSchema = { items: { type: 'string' } }
+    expect(validateInput(schema, ['a', 'b']).valid).toBe(true)
+    expect(validateInput(schema, [1]).valid).toBe(false)
+    expect(validateInput(schema, 'not-an-array').valid).toBe(true)
+  })
+
+  it('additionalProperties:false 无 type 声明时同样生效', () => {
+    const schema: JSONSchema = {
+      properties: { a: { type: 'string' } },
+      additionalProperties: false,
+    }
+    expect(validateInput(schema, { a: 'x' }).valid).toBe(true)
+    expect(validateInput(schema, { a: 'x', b: 1 }).valid).toBe(false)
+  })
+})

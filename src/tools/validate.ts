@@ -47,18 +47,24 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
   }
 
   // object validation
-  if (
-    schema.type === 'object' &&
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value)
-  ) {
+  // 结构关键字与 `type` 是**独立**约束：JSON Schema 语义下 required/properties/
+  // additionalProperties 只对「对象实例」生效、items 只对「数组实例」生效，均
+  // 不要求同一节点声明 type。task 工具的 anyOf 分支正是裸 `{required:['prompt']}`
+  // ——此前整个对象校验块以 `schema.type === 'object'` 为前提，这类分支被整体跳过
+  // （二选一守卫形同虚设：`{}`、`{subagent_type:'coder'}` 一律通过校验）。
+  const isObjectValue = typeof value === 'object' && value !== null && !Array.isArray(value)
+  const declaresObjectKeywords =
+    schema.required !== undefined ||
+    schema.properties !== undefined ||
+    schema.additionalProperties !== undefined
+  if (isObjectValue && declaresObjectKeywords) {
     const obj = value as Record<string, unknown>
 
-    // required fields
+    // required fields（只认自有属性：`'toString' in {}` 恒真，原型链上的同名键
+    // 不代表实例真的携带该字段）
     if (schema.required) {
       for (const field of schema.required) {
-        if (!(field in obj)) {
+        if (!Object.hasOwn(obj, field)) {
           return `${path ? `${path}.` : ''}${field}: missing required field`
         }
       }
@@ -67,16 +73,17 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
     // properties
     if (schema.properties) {
       for (const [key, propSchema] of Object.entries(schema.properties)) {
-        if (key in obj) {
+        if (Object.hasOwn(obj, key)) {
           const err = validateNode(propSchema, obj[key], path ? `${path}.${key}` : key)
           if (err) return err
         }
       }
     }
 
-    // additionalProperties
-    if (schema.additionalProperties === false && schema.properties) {
-      const knownKeys = new Set(Object.keys(schema.properties))
+    // additionalProperties: false → 只允许 properties 声明的键（未声明 properties
+    // 时任何键都是额外的，与 JSON Schema 一致）
+    if (schema.additionalProperties === false) {
+      const knownKeys = new Set(Object.keys(schema.properties ?? {}))
       for (const key of Object.keys(obj)) {
         if (!knownKeys.has(key)) {
           return `${path ? `${path}.` : ''}${key}: additional property not allowed`
@@ -85,16 +92,14 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
     }
   }
 
-  // array validation
-  if (schema.type === 'array' && Array.isArray(value)) {
-    if (schema.items) {
-      const itemSchema = Array.isArray(schema.items) ? schema.items : [schema.items]
-      for (let i = 0; i < value.length; i++) {
-        const s = itemSchema[i] ?? itemSchema[0]
-        if (s) {
-          const err = validateNode(s, value[i], `${path}[${i}]`)
-          if (err) return err
-        }
+  // array validation（items 只对数组实例生效，同样不要求同层 type: 'array'）
+  if (Array.isArray(value) && schema.items) {
+    const itemSchema = Array.isArray(schema.items) ? schema.items : [schema.items]
+    for (let i = 0; i < value.length; i++) {
+      const s = itemSchema[i] ?? itemSchema[0]
+      if (s) {
+        const err = validateNode(s, value[i], `${path}[${i}]`)
+        if (err) return err
       }
     }
   }
