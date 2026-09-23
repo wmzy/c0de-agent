@@ -1,12 +1,12 @@
 import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { loadConfigScopes, mergeConfig } from '../../core/config.js'
+import { buildRegistryFromConfig } from '../../core/provider-registry.js'
 import { decryptSecret } from '../../core/secret.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
 import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
-import { buildRegistryFromConfig } from '../registry-config.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 

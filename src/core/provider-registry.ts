@@ -1,8 +1,12 @@
-// src/server/registry-config.ts
-// config.providers ↔ LLM registry 的构建/同步逻辑（P1-1 从 server.ts 拆出，
-// 供 chat 路由按项目配置构建注册表，避免 routes → server.ts 循环依赖）。
+// config.providers ↔ LLM registry 的构建/同步逻辑（单一权威实现）。
+//
+// 此前 server/registry-config.ts 与 cli/deps.ts 各持一份 registerProviderFromConfig：
+// server 版带「畸形条目跳过」守卫（读取侧自愈兜底），CLI 版没有——手改/旧版
+// config.json 里的畸形条目（null 条目、baseURL 非字符串）在 CLI 路径上让
+// `p.name` / `p.baseURL.replace` 抛 TypeError，而 buildAgentDeps 无 try/catch：
+// c0de chat / print / acp 启动即崩溃（server 路径因守卫而幸免）。
+// 收敛到本模块：server 路由 / CLI deps 共用同一实现，杜绝再次漂移。
 
-import { decryptSecretSafe } from '../core/secret.js'
 import {
   createRegistry,
   overrideToCapabilities,
@@ -12,29 +16,23 @@ import {
 } from '../llm/registry.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
+import { decryptSecretSafe } from './secret.js'
 
-/** 把 config.providers 注册到新建的 LLM registry（修复此前空 registry 的遗漏）。 */
-function buildRegistryFromConfig(config: Config): Registry {
-  const registry = createRegistry()
-  for (const p of config.providers) {
-    registerProviderFromConfig(registry, p)
-  }
-  return registry
-}
-
+/** 注册单个 provider 配置条目（畸形/不可解条目静默跳过，绝不抛错）。
+ *
+ * 跳过而非击穿的理由：
+ *  - 手改/旧版配置文件可能携带畸形条目（null/字符串/数组等）：读取侧自愈兜底，
+ *    否则保存接口 500（syncRegistryFromConfig）或服务/CLI 无法启动。
+ *  - 机器绑定密文换机后不可解（enc: 前缀的 apiKey 跨机同步/容器重建）：跳过该
+ *    provider 并告警，而非上抛击穿启动/请求路径——密文本就不可跨机解密。
+ */
 function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void {
-  // 手改/旧版配置文件可能携带畸形条目（null/字符串等）：跳过而非击穿
-  // registry 重建（syncRegistryFromConfig 在配置保存后同步调用、bootstrapServerContext
-  // 在启动时构建——任一处抛错即保存接口 500 或服务无法启动）。
-  // 写入侧已在 applyScopedPatch 显式拒绝，此处是读取侧的自愈兜底。
+  // 写入侧（applyScopedPatch 的 assertValidProviderList）已显式拒绝畸形条目，
+  // 此处是读取侧的自愈兜底。
   if (p === null || typeof p !== 'object' || Array.isArray(p)) return
   // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
   const name = p.name || (p as { _tag?: string })._tag
   if (!name || typeof p.baseURL !== 'string' || !p.baseURL) return
-  // 机器绑定密文换机后不可解：跳过该 provider 并告警，而非上抛击穿
-  // serve 启动（bootstrapServerContext）/ 配置保存（syncRegistryFromConfig）/
-  // 项目级配置注册表——否则跨机同步的 config.json 让整个服务无法启动或请求 500。
-  // 明文与解密成功的密文走正常注册。
   const apiKey = typeof p.apiKey === 'string' && p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
   if (p.apiKey && apiKey === undefined) {
     console.warn(
@@ -53,6 +51,15 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
     // 否则 resolveRoute 回退到 DEFAULT_MODEL_CAPABILITIES，可能导致预算过小。
     ...(p.models ? { models: overrideToCapabilities(p.models) } : {}),
   })
+}
+
+/** 把 config.providers 注册到新建的 LLM registry（server 启动与 CLI deps 共用）。 */
+function buildRegistryFromConfig(config: Config): Registry {
+  const registry = createRegistry()
+  for (const p of config.providers) {
+    registerProviderFromConfig(registry, p)
+  }
+  return registry
 }
 
 /**

@@ -1,17 +1,14 @@
 import { loadConfigScopes } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
-import { decryptSecretSafe } from '../core/secret.js'
+import { buildRegistryFromConfig } from '../core/provider-registry.js'
 import { discoverSkills } from '../core/skills.js'
 import { createDebugSpawn } from '../dap/index.js'
 import type { DB } from '../db/client.js'
-import { createRegistry, overrideToCapabilities, registerProvider } from '../llm/index.js'
-import type { Registry } from '../llm/registry.js'
 import { collectScopedMCPServers, registerMCPServers } from '../mcp/index.js'
 import { initPlugins } from '../plugins/index.js'
 import { getByDirectory } from '../project/index.js'
 import { projectTrustCurrent } from '../project/trust.js'
 import type { Config } from '../shared/types/config.js'
-import type { ProviderConfig } from '../shared/types/llm.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
@@ -57,41 +54,6 @@ function createNonInteractiveChecker(allowTools?: string[]): PermissionChecker {
 
 /** 无白名单的非交互安全策略（保留导出兼容既有调用方）。 */
 const nonInteractiveSafeChecker: PermissionChecker = createNonInteractiveChecker()
-
-/** 把 config.providers 注册到新建的 LLM registry。 */
-function buildLLMRegistry(config: Config): Registry {
-  const registry = createRegistry()
-  for (const p of config.providers) {
-    registerProviderFromConfig(registry, p)
-  }
-  return registry
-}
-
-function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void {
-  // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
-  const name = p.name || (p as { _tag?: string })._tag
-  if (!name || !p.baseURL) return
-  // 机器绑定密文换机后不可解：跳过该 provider 并告警，而非上抛击穿
-  // CLI 启动（buildAgentDeps）——跨机同步的 config.json 不应让 c0de chat 崩溃。
-  const apiKey = p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
-  if (p.apiKey && apiKey === undefined) {
-    console.warn(
-      `provider "${name}" 的 apiKey 无法在本机解密（配置来自其他机器或密文损坏），已跳过注册，请重新设置`,
-    )
-    return
-  }
-  // baseURL 已含 /v1 时用 /chat/completions，避免 /v1/v1 双重前缀
-  const path = p.baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/chat/completions' : undefined
-  registerProvider(registry, {
-    name,
-    baseURL: p.baseURL,
-    apiKey: apiKey ?? p.apiKey ?? '',
-    ...(path ? { path } : {}),
-    // 传递用户配置的 per-model capabilities（contextWindow 等），
-    // 否则 resolveRoute 回退到 DEFAULT_MODEL_CAPABILITIES，可能导致预算过小。
-    ...(p.models ? { models: overrideToCapabilities(p.models) } : {}),
-  })
-}
 
 type BuildDepsOptions = {
   db: DB
@@ -142,7 +104,7 @@ async function resolveCwdProjectTrusted(db: DB, cwd: string): Promise<boolean> {
 
 /** 组装完整 LoopDeps（默认 safe 放行 + 默认工具注册表）。 */
 async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<LoopDeps> {
-  const llmRegistry = buildLLMRegistry(config)
+  const llmRegistry = buildRegistryFromConfig(config)
   const toolRegistry = createDefaultRegistry(config)
   // P0-2：项目插件仅在项目被显式信任后加载（c0de trust <dir>）；内存库
   // （--temp/锁冲突降级）不含项目记录 → 未信任，项目插件不加载。
@@ -193,7 +155,7 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
 export type { BuildDepsOptions, PermissionStrategy }
 export {
   buildAgentDeps,
-  buildLLMRegistry,
+  buildRegistryFromConfig,
   fullyAutoApproveChecker,
   nonInteractiveSafeChecker,
   resolveCwdProjectTrusted,

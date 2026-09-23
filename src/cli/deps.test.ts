@@ -5,7 +5,7 @@ import { resolveRoute } from '../llm/index.js'
 import type { Config } from '../shared/types/config.js'
 import {
   buildAgentDeps,
-  buildLLMRegistry,
+  buildRegistryFromConfig,
   fullyAutoApproveChecker,
   nonInteractiveSafeChecker,
 } from './deps.js'
@@ -40,15 +40,15 @@ const config: Config = {
   update: { enabled: false, intervalMs: 3_600_000, initialDelayMs: 10_000 },
 }
 
-describe('buildLLMRegistry', () => {
+describe('buildRegistryFromConfig', () => {
   it('registers providers from config', () => {
-    const reg = buildLLMRegistry(config)
+    const reg = buildRegistryFromConfig(config)
     const resolved = resolveRoute(reg, 'demo', 'demo-model')
     expect(resolved.route).toBeTruthy()
   })
 
   it('handles empty providers', () => {
-    const reg = buildLLMRegistry({ ...config, providers: [] })
+    const reg = buildRegistryFromConfig({ ...config, providers: [] })
     expect(() => resolveRoute(reg, 'demo', 'x')).toThrow()
   })
 
@@ -56,7 +56,7 @@ describe('buildLLMRegistry', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const foreign = `enc:${Buffer.from(Array.from({ length: 48 }, (_, i) => i)).toString('base64')}`
-      const reg = buildLLMRegistry({
+      const reg = buildRegistryFromConfig({
         ...config,
         providers: [
           { name: 'demo', protocol: 'openai', apiKey: foreign, baseURL: 'https://demo/v1' },
@@ -67,6 +67,26 @@ describe('buildLLMRegistry', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+
+  // 复现：config.json 手改/旧版/编辑器写入的畸形条目（null 条目、baseURL 非字符串）
+  // 在 CLI 侧无守卫——`p.name` 读 null 抛 TypeError、`p.baseURL.replace` 对数字抛
+  // TypeError，buildAgentDeps 直接调用本函数且无 try/catch：c0de chat / print / acp
+  // 启动即崩溃。server 侧同名实现有「畸形条目跳过」守卫（读取侧自愈兜底），
+  // 两处实现漂移——CLI 路径漏网。
+  it('畸形条目（null / baseURL 非字符串）跳过而非击穿启动（与 server 侧同口径）', () => {
+    expect(() =>
+      buildRegistryFromConfig({ ...config, providers: [null] } as unknown as Config),
+    ).not.toThrow()
+    expect(() =>
+      buildRegistryFromConfig({
+        ...config,
+        providers: [{ name: 'x', protocol: 'openai', apiKey: '', baseURL: 42 }],
+      } as unknown as Config),
+    ).not.toThrow()
+    // 合法条目仍照常注册（跳过畸形不得波及正常 provider）
+    const reg = buildRegistryFromConfig(config)
+    expect(resolveRoute(reg, 'demo', 'demo-model').route).toBeTruthy()
   })
 })
 
