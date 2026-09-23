@@ -29,8 +29,11 @@ async function mapWithConcurrencyLimit<T, R>(
       const idx = nextIndex++
       if (idx >= items.length) return
       const item = items[idx]
-      if (item === undefined) return
-      results[idx] = await fn(item, idx, workerSignal)
+      // 退化元素（稀疏数组空洞 / 显式 undefined）是合法入参：照常交给 fn，
+      // 由 fn 决定如何映射——此前遇 undefined 直接 return，该 worker 永久
+      // 退出，并发为 1 时其后全部任务静默跳过（results 留洞，上层把被跳过
+      // 的任务误报为「run aborted 未启动」）。
+      results[idx] = await fn(item as T, idx, workerSignal)
     }
   }
 
