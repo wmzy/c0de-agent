@@ -240,9 +240,9 @@ describe('validateInput 结构关键字不依赖同层 type 声明', () => {
     expect(
       validateInput(bashTool.parameters, { command: 'ls', env: { FOO: '1', BAR: 'x' } }).valid,
     ).toBe(true)
-    expect(
-      validateInput(bashTool.parameters, { command: 'ls', env: { FOO: 123 } }).valid,
-    ).toBe(false)
+    expect(validateInput(bashTool.parameters, { command: 'ls', env: { FOO: 123 } }).valid).toBe(
+      false,
+    )
     expect(
       validateInput(bashTool.parameters, { command: 'ls', env: { FOO: { a: 1 } } }).valid,
     ).toBe(false)

@@ -74,7 +74,7 @@ describe('runServeCommand', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
       warns.push(args.join(' '))
     })
-    const starter = async (opts: { host?: string }) => ({
+    const starter = async (opts: { host?: string; port?: number }) => ({
       port: opts.port ?? 7310,
       close: async () => {},
     })

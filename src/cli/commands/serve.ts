@@ -43,8 +43,7 @@ async function runServeCommand(ctx: ServeCommandContext): Promise<void> {
   // 会把以 127. 开头的**域名**（127.example.com 等，可解析到任意公网地址）
   // 误判为回环，非回环绑定的安全警告被静默跳过。仅四段点分十进制且首段为
   // 127 的串（127.0.0.0/8 全域回环，RFC 1122）算回环。
-  const isLoopback =
-    host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host)
+  const isLoopback = host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host)
   if (!isLoopback) {
     console.warn(
       `[c0de] ⚠ 监听地址为 ${host}（非回环）：本机以外的主机均可访问此服务。\n` +
