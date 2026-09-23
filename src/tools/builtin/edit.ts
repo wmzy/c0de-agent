@@ -126,6 +126,13 @@ export const editTool: ToolDef = {
         mapping.get(charCount + normalizedOld.length) ?? charCount + normalizedOld.length
 
       const newContent = (() => {
+        // 映射起点可能落在 CRLF 对中间：区域以 \n 开头时（normalize 把 \r\n 折成
+        // \n，映射把原文的 \r 当作「多余空白」跳过），前一行的 \r 留在区域外，
+        // 而 replacement 自带 \r\n → 拼成「\r\r\n」（孤立回车 + 原行尾被吃）；
+        // replacement 不含换行时 \r 更会留在行中（"line1\rX"）。与末尾守卫对称：
+        // 起点落在 CRLF 对中间时把 \r 纳入区域。
+        let start = origStart
+        if (start > 0 && content[start - 1] === '\r' && content[start] === '\n') start--
         // 映射终点可能落在 CRLF 中间（region 吞入 \r，行尾 \n 留在区域外）：
         // 把 \r 让回外部行尾，否则单行替换会产出「替换文本\n」丢失 \r 的混合行尾。
         let end = origEnd
@@ -138,7 +145,7 @@ export const editTool: ToolDef = {
         const replacement = content.includes('\r\n')
           ? newText.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
           : newText.replace(/\r\n/g, '\n')
-        return content.slice(0, origStart) + replacement + content.slice(end)
+        return content.slice(0, start) + replacement + content.slice(end)
       })()
       await writeFile(fullPath, newContent, 'utf-8')
       return {

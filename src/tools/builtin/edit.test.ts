@@ -164,6 +164,34 @@ describe('editTool', () => {
     expect(after).not.toMatch(/\r\n/)
   })
 
+  // 回归：匹配区域以换行开头时，映射起点落在 CRLF 对的 \n 上（normalize 把
+  // \r\n 折成 \n，映射按「\r 是原文多余空白」只前进原文指针）——区域外的
+  // 前一行 \r 留在原地，而 replacement 又自带 \r\n，拼成「\r\r\n」：文件凭空
+  // 多出孤立回车（行尾损坏 + git diff 全行噪音），且原行尾被吃掉。
+  // 与末尾守卫对称：起点落在 CRLF 对中间时把 \r 纳入区域。
+  it('does not leave a stray CR when the matched region starts at a line break', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'line1\r\nline2\r\nline3\r\n', 'utf-8')
+    const result = await editTool.execute(
+      { path: 'f.ts', oldText: '\nline2', newText: '\nLINE2' },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    const after = await readFile(join(workDir, 'f.ts'), 'utf-8')
+    expect(after).toBe('line1\r\nLINE2\r\nline3\r\n')
+    expect(after).not.toMatch(/\r\r/)
+  })
+
+  // 同型：区域起点落在换行上、替换文本不含换行时，残留 \r 同样污染行尾
+  //（"line1\r" + "X" → "line1\rX"）。
+  it('does not leave a stray CR when a line-break-anchored region shrinks to one line', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'line1\r\nline2\r\nline3\r\n', 'utf-8')
+    const result = await editTool.execute({ path: 'f.ts', oldText: '\nline2', newText: 'X' }, ctx)
+    expect(result._tag).toBe('success')
+    const after = await readFile(join(workDir, 'f.ts'), 'utf-8')
+    expect(after).toBe('line1X\r\nline3\r\n')
+    expect(after).not.toMatch(/\r[^\n]/)
+  })
+
   it('returns error for non-existent file', async () => {
     const result = await editTool.execute({ path: 'nope.ts', oldText: 'a', newText: 'b' }, ctx)
     expect(result._tag).toBe('error')
