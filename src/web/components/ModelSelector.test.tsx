@@ -225,4 +225,22 @@ describe('ModelSelector — 可搜索下拉', () => {
     expect(document.querySelector('[data-testid="model-hints"]')).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
   })
+
+  // 复现：输入框的 ↑↓/Enter/Escape 处理不看 IME 组合态。中文/日文输入法用回车
+  // 确认候选词（keydown 携带 isComposing=true）时，未拦截会把候选当最终输入：
+  // 回车直接确认高亮模型并回填输入框，方向键还会在候选未确认时移动高亮项。
+  it('IME 组合中的回车/方向键不选模型（中文输入法确认候选）', () => {
+    const { onChange } = renderSelector({ provider: 'sensenova', model: '' })
+    const input = modelInput()
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'Sense' } })
+    onChange.mockClear()
+
+    fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+
+    // 未回填选中模型、未上抛变更，输入框仍是用户正在组合的内容
+    expect(onChange).not.toHaveBeenCalled()
+    expect(input.value).toBe('Sense')
+  })
 })

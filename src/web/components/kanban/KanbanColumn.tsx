@@ -9,6 +9,7 @@ import type {
   KanbanLabelDef,
   KanbanPriority,
 } from '@/services/kanban.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 // ── Styles ─────────────────────────────────────────────────
 
@@ -300,6 +301,9 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
               value={draft}
               onChange={(v) => setDraft(v)}
               onKeyDown={(e) => {
+                // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
+                // 不判定会把未确认的候选当卡片标题提交（并清空输入框）。
+                if (isImeComposing(e)) return
                 if (e.key === 'Enter') submit()
                 if (e.key === 'Escape') {
                   setIsAdding(false)

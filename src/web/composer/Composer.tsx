@@ -24,6 +24,7 @@ import { useFileSearch } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
 import { workflowsAPI } from '@/services/workflows.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const wrap = css`
   position: relative;
@@ -276,6 +277,11 @@ function Composer(props: ComposerProps) {
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    // IME 组合中不拦截：回车确认候选词/ESC 取消候选/方向键选候选由输入法处理。
+    // popover 分支在 composer.handleKeyDown（内部查 composingRef）之前执行，
+    // 不判定就会把未确认的候选当最终输入：回车直接插入斜杠命令/子命令/工作流名
+    // 或选中 @ 候选，用户正在组合的内容被替换掉。
+    if (isImeComposing(e)) return
     if (composer.popover === 'workflow') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()

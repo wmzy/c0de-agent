@@ -13,6 +13,7 @@ import {
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { filesystemAPI } from '@/services/filesystem.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const container = css`
   position: relative;
@@ -336,6 +337,9 @@ export function DirectoryPicker({
   )
 
   const handleInputKey = (e: React.KeyboardEvent) => {
+    // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——不判定会把
+    // 未确认的候选当最终输入（回车选中建议或按半截输入导航）。
+    if (isImeComposing(e)) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       moveSuggestion(1)

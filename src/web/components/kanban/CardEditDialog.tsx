@@ -7,6 +7,7 @@ import { SyncedInput, SyncedTextarea } from '@/components/SyncedControls.js'
 import { generateId } from '@/hooks/id.js'
 import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const field = css`
   display: flex;
@@ -409,6 +410,9 @@ export function CardEditDialog({
             value={newLabelName}
             onChange={(v) => setNewLabelName(v)}
             onKeyDown={(e) => {
+              // IME 组合中不拦截：回车确认候选词由输入法处理——不判定会把未确认的
+              // 候选当最终输入（标签被提前添加）。
+              if (isImeComposing(e)) return
               if (e.key === 'Enter') addLabel()
             }}
           />

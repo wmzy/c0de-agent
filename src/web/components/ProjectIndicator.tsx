@@ -20,6 +20,7 @@ import { fileAPI } from '@/services/file.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { projectAPI } from '@/services/project.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const indicator = css`
   display: flex;
@@ -551,6 +552,9 @@ function NewBranchForm({
         value={name}
         onChange={(v) => setName(v)}
         onKeyDown={(e) => {
+          // IME 组合中不拦截：回车确认候选词由输入法处理——不判定会把未确认的
+          // 候选当最终输入（分支名被提前创建）。
+          if (isImeComposing(e)) return
           if (e.key === 'Enter') submit()
         }}
         data-testid="branch-new-input"

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type { SessionTreeNode, SessionUsage } from '@/types/index.js'
 import { formatCost } from '@/utils/format.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const node = css`
   padding: 1px 0;
@@ -278,6 +279,9 @@ function TreeNode({
               aria-label={`重命名会话 ${n.session.title}`}
               onBlur={() => void commitRename()}
               onKeyDown={(e) => {
+                // IME 组合中不拦截：ESC 取消候选词由输入法处理——不判定会把
+                // 取消候选当成「放弃重命名」，未确认的标题被丢弃。
+                if (isImeComposing(e)) return
                 if (e.key === 'Escape') {
                   setTitle(n.session.title)
                   setRenaming(false)

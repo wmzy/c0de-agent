@@ -5,6 +5,7 @@ import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providerAPI } from '@/services/provider.js'
 import { inputStyle } from '@/styles/tokens.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const field = css`
   display: flex;
@@ -281,6 +282,9 @@ export function ModelSelector({
               if (modelHints.length > 0) setHintsOpen(true)
             }}
             onKeyDown={(e) => {
+              // IME 组合中不拦截：回车确认候选词/方向键选候选由输入法处理——
+              // 不判定会在候选未确认时移动提示选中项或确认模型。
+              if (isImeComposing(e)) return
               if (modelHints.length === 0) return
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault()

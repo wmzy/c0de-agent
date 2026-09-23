@@ -151,7 +151,6 @@ describe('DirectoryPicker', () => {
     render(<Controlled />)
     await waitFor(() => expect(filesystemAPI.home).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByText('user')).toBeTruthy())
-
     const input = screen.getByTestId('directory-picker-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: 'x' } })
     await waitFor(() => expect(screen.queryByTestId('suggestion-0')).toBeTruthy())
@@ -166,5 +165,31 @@ describe('DirectoryPicker', () => {
     render(<DirectoryPicker value="/custom/path" onChange={vi.fn()} />)
     const input = screen.getByTestId('directory-picker-input') as HTMLInputElement
     expect(input.value).toBe('/custom/path')
+  })
+
+  // 复现：输入框的 Enter/Escape/方向键处理不看 IME 组合态。中文/日文输入法用
+  // 回车确认候选词时会派发 keydown（isComposing=true，keyCode 229）——未拦截即
+  // 把未确认的候选当成最终输入：目录名输入到一半（如「/home/zlt/项」）按回车
+  // 确认候选，却被当作「选择建议/按输入导航」处理，直接跳到错误目录。
+  it('IME 组合中的回车不选建议、不导航（中文输入法确认候选）', async () => {
+    vi.mocked(filesystemAPI.search).mockResolvedValue({ items: ['projects'] })
+    let browseCalls = 0
+    vi.mocked(filesystemAPI.browse).mockImplementation(async (path: string) => {
+      browseCalls++
+      return { path, directories: [] }
+    })
+    render(<Controlled />)
+    await waitFor(() => expect(filesystemAPI.home).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByText('user')).toBeTruthy())
+    const input = screen.getByTestId('directory-picker-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '项' } })
+    await waitFor(() => expect(screen.queryByTestId('suggestion-0')).toBeTruthy())
+    const browseBefore = browseCalls
+
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(browseCalls).toBe(browseBefore) // 未被当成「按输入导航」
+    expect(screen.queryByTestId('suggestion-0')).toBeTruthy() // 未选择建议，列表仍在
   })
 })

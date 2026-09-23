@@ -12,6 +12,7 @@ import {
   kanbanAPI,
 } from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const sectionTitle = css`
   font-size: 13px;
@@ -236,6 +237,9 @@ export function BoardConfigDialog({
             value={newColumnName}
             onChange={(v) => setNewColumnName(v)}
             onKeyDown={(e) => {
+              // IME 组合中不拦截：回车确认候选词由输入法处理——不判定会把未确认的
+              // 候选当最终输入（列被提前添加）。
+              if (isImeComposing(e)) return
               if (e.key === 'Enter') addColumn()
             }}
           />
@@ -283,6 +287,8 @@ export function BoardConfigDialog({
             value={newLabelName}
             onChange={(v) => setNewLabelName(v)}
             onKeyDown={(e) => {
+              // IME 组合中不拦截（同上）：候选未确认时不添加标签。
+              if (isImeComposing(e)) return
               if (e.key === 'Enter') addLabel()
             }}
           />

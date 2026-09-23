@@ -6,6 +6,7 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
 import { inputStyle } from '@/styles/tokens.js'
+import { isImeComposing } from '@/utils/ime.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
 // ── Status icons & colors ─────────────────────────────────
@@ -471,6 +472,9 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                 value={newTask}
                 onChange={(v) => setNewTask(v)}
                 onKeyDown={(e) => {
+                  // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
+                  // 不判定会把未确认的候选当任务内容提交（并关闭输入行）。
+                  if (isImeComposing(e)) return
                   if (e.key === 'Enter') handleAdd()
                   if (e.key === 'Escape') setShowAdd(false)
                 }}
@@ -482,6 +486,9 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                 value={newPhase}
                 onChange={(v) => setNewPhase(v)}
                 onKeyDown={(e) => {
+                  // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
+                  // 不判定会把未确认的候选当任务内容提交（并关闭输入行）。
+                  if (isImeComposing(e)) return
                   if (e.key === 'Enter') handleAdd()
                   if (e.key === 'Escape') setShowAdd(false)
                 }}
@@ -507,6 +514,8 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
             value={newTask}
             onChange={(v) => setNewTask(v)}
             onKeyDown={(e) => {
+              // IME 组合中不拦截（同上）：候选未确认时不提交任务。
+              if (isImeComposing(e)) return
               if (e.key === 'Enter') handleAdd()
               if (e.key === 'Escape') setShowAdd(false)
             }}
@@ -518,6 +527,8 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
             value={newPhase}
             onChange={(v) => setNewPhase(v)}
             onKeyDown={(e) => {
+              // IME 组合中不拦截（同上）：候选未确认时不提交任务。
+              if (isImeComposing(e)) return
               if (e.key === 'Enter') handleAdd()
               if (e.key === 'Escape') setShowAdd(false)
             }}
