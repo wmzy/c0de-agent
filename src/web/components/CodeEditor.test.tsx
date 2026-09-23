@@ -86,4 +86,31 @@ describe('CodeEditor 未保存编辑保持', () => {
     await waitFor(() => expect(liveView(container)?.state.doc.toString()).toBe('BBB'))
     expect(container.textContent).not.toContain('保存*')
   })
+
+  // 复现：视图重建 effect 读的是「已见 initial」镜像 ref（lastInitialRef），而该
+  // ref 由声明在**其后**的同步 effect 更新——同一 commit 内换文件时它仍是上一个
+  // 文件的内容：编辑器载入旧文件文档、脏标记被清（关闭确认失效），同步 effect 又
+  // 把新文件内容判成「编辑期间的外部变更」弹出误报横幅；此时保存会把旧文件内容
+  // 写进新文件。既有「切换文件」用例未覆盖：它 rerender 的树结构变化（少了
+  // ThemeToggle）导致 CodeEditor 被重挂载，掩盖了本缺陷。
+  it('带未保存编辑切换文件（同一实例）→ 载入新文件内容且不误报外部变更', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const tree = (path: string, initial: string) => (
+      <QueryClientProvider client={qc}>
+        <ThemeProvider>
+          <CodeEditor path={path} initial={initial} />
+        </ThemeProvider>
+      </QueryClientProvider>
+    )
+    const { container, rerender } = render(tree('a.ts', 'AAA'))
+    await waitFor(() => expect(liveView(container)?.state.doc.toString()).toBe('AAA'))
+    liveView(container)?.dispatch({ changes: { from: 0, insert: 'edited-' } })
+    await waitFor(() => expect(liveView(container)?.state.doc.toString()).toBe('edited-AAA'))
+
+    rerender(tree('b.ts', 'BBB'))
+
+    await waitFor(() => expect(liveView(container)?.state.doc.toString()).toBe('BBB'))
+    expect(container.querySelector('[data-testid="external-change-banner"]')).toBeNull()
+    expect(container.textContent).not.toContain('保存*')
+  })
 })

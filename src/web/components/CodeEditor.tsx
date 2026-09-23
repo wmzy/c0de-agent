@@ -119,6 +119,11 @@ export function CodeEditor({
   const baseRef = useRef(initial)
   const dirtyRef = useRef(false)
   dirtyRef.current = dirty
+  // 最新 initial 的**渲染期镜像**（与 dirtyRef/onDirtyChangeRef 同口径）：
+  // 重建 effect 里要读它，而 props 直接读会命中 useExhaustiveDependencies
+  // （effect 依赖有意不含 initial——外部内容变更由下方同步 effect 处理）。
+  const initialRef = useRef(initial)
+  initialRef.current = initial
   // 最新 initial 的已见标记：仅当父组件喂入新内容时才评估「应用 or 挂起」。
   const lastInitialRef = useRef(initial)
   /** 编辑器有未保存修改时到达的外部内容——挂起待用户决断，绝不静默重建覆盖。 */
@@ -152,7 +157,13 @@ export function CodeEditor({
     const pathChanged = prevPathRef.current !== path
     if (pathChanged) {
       prevPathRef.current = path
-      baseRef.current = lastInitialRef.current
+      // 换文件：基线取**本次渲染的 initial**（新文件内容，经渲染期镜像读）。不能读
+      // lastInitialRef——更新它的同步 effect 声明在本 effect 之后，同一 commit 内
+      // 仍是上一个文件的内容：编辑器会载入旧文件文档、脏标记被清（关闭确认失效），
+      // 同步 effect 再把新内容判成「编辑期间的外部变更」误报横幅，保存更会把旧文件
+      // 内容写进新文件。
+      baseRef.current = initialRef.current
+      lastInitialRef.current = initialRef.current
       setPendingExternal(null)
       setSaveConflict(null)
     }
