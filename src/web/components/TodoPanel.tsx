@@ -280,12 +280,15 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
 
   const phases: TodoPhase[] = data?.phases ?? []
 
-  // P2-14：todo 与看板打通——把未完成任务导出为项目看板卡片（todo 列）。
+  // P2-14：todo 与看板打通——把未完成任务导出为项目看板卡片。
+  // 不指定 columnId：列 id 由用户维护（BoardConfigDialog 可删除空列、导入可整板
+  // 替换列配置），硬编码 'todo' 在看板没有该列时被 store 的列校验拒绝（导出整体
+  // 失败）；省略时 store 落到板的首列——与 kanban 工具「不要猜列 id」的契约一致。
   const exportMutation = useMutation({
     mutationFn: async ({ pid, todos }: { pid: string; todos: string[] }) => {
       let count = 0
       for (const title of todos) {
-        await kanbanAPI.addCard(pid, { title, columnId: 'todo' })
+        await kanbanAPI.addCard(pid, { title })
         count += 1
       }
       return count
