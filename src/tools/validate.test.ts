@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { JSONSchema } from '../shared/types/base.js'
 import { bashTool } from './builtin/bash.js'
+import { todoTool } from './builtin/todo.js'
 import { validateInput } from './validate.js'
 
 describe('validateInput', () => {
@@ -246,5 +247,45 @@ describe('validateInput 结构关键字不依赖同层 type 声明', () => {
     expect(
       validateInput(bashTool.parameters, { command: 'ls', env: { FOO: { a: 1 } } }).valid,
     ).toBe(false)
+  })
+})
+
+describe('validateInput 数组基数约束（minItems/maxItems）', () => {
+  // 复现：todo 工具 schema 对「阶段任务列表」声明了 minItems:1（空阶段不得
+  // 创建），但校验器从未实现 minItems/maxItems——声明形同虚设：
+  // {op:'init', list:[{phase:'P', items:[]}]} 静默通过，空阶段被持久化进
+  // todo 面板。同类缺口对 MCP 服务器自带的 inputSchema（可声明任意关键字）
+  // 同样存在：约束静默放行、工具以畸形入参执行。
+  it('minItems 拒绝过短数组', () => {
+    const schema: JSONSchema = { type: 'array', items: { type: 'string' }, minItems: 1 }
+    expect(validateInput(schema, ['a']).valid).toBe(true)
+    expect(validateInput(schema, []).valid).toBe(false)
+  })
+
+  it('maxItems 拒绝过长数组', () => {
+    const schema: JSONSchema = { type: 'array', maxItems: 2 }
+    expect(validateInput(schema, [1, 2]).valid).toBe(true)
+    expect(validateInput(schema, [1, 2, 3]).valid).toBe(false)
+  })
+
+  it('minItems/maxItems 与 items 一样不要求同层 type 声明', () => {
+    const schema: JSONSchema = { items: { type: 'string' }, minItems: 1, maxItems: 2 }
+    expect(validateInput(schema, ['a']).valid).toBe(true)
+    expect(validateInput(schema, []).valid).toBe(false)
+    expect(validateInput(schema, ['a', 'b', 'c']).valid).toBe(false)
+    // 非数组实例不受影响（与结构关键字语义一致）
+    expect(validateInput(schema, 'not-an-array').valid).toBe(true)
+  })
+
+  it('todo 工具声明的 minItems 生效：init 的空阶段被拒绝', () => {
+    expect(
+      validateInput(todoTool.parameters, { op: 'init', list: [{ phase: 'P', items: ['a'] }] })
+        .valid,
+    ).toBe(true)
+    const empty = validateInput(todoTool.parameters, {
+      op: 'init',
+      list: [{ phase: 'P', items: [] }],
+    })
+    expect(empty.valid).toBe(false)
   })
 })

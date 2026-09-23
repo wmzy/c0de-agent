@@ -113,13 +113,34 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
   }
 
   // array validation（items 只对数组实例生效，同样不要求同层 type: 'array'）
-  if (Array.isArray(value) && schema.items) {
-    const itemSchema = Array.isArray(schema.items) ? schema.items : [schema.items]
-    for (let i = 0; i < value.length; i++) {
-      const s = itemSchema[i] ?? itemSchema[0]
-      if (s) {
-        const err = validateNode(s, value[i], `${path}[${i}]`)
-        if (err) return err
+  // minItems/maxItems：数组基数约束（同样只对数组实例生效，与同层 type 无关）。
+  // 此前从未实现——todo 工具 schema 声明的 minItems:1（空阶段不得创建）形同
+  // 虚设：{op:'init', list:[{phase:'P', items:[]}]} 静默通过并持久化空阶段；
+  // MCP 服务器自带的 inputSchema 声明的同类约束同样被静默放行。
+  if (
+    Array.isArray(value) &&
+    (schema.items !== undefined || schema.minItems !== undefined || schema.maxItems !== undefined)
+  ) {
+    if (schema.minItems !== undefined) {
+      const minItems = schema.minItems as unknown
+      if (typeof minItems === 'number' && value.length < minItems) {
+        return `${path || 'array'}: expected at least ${minItems} items, got ${value.length}`
+      }
+    }
+    if (schema.maxItems !== undefined) {
+      const maxItems = schema.maxItems as unknown
+      if (typeof maxItems === 'number' && value.length > maxItems) {
+        return `${path || 'array'}: expected at most ${maxItems} items, got ${value.length}`
+      }
+    }
+    if (schema.items !== undefined) {
+      const itemSchema = Array.isArray(schema.items) ? schema.items : [schema.items]
+      for (let i = 0; i < value.length; i++) {
+        const s = itemSchema[i] ?? itemSchema[0]
+        if (s) {
+          const err = validateNode(s, value[i], `${path}[${i}]`)
+          if (err) return err
+        }
       }
     }
   }
