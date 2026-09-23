@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { JSONSchema } from '../shared/types/base.js'
+import { bashTool } from './builtin/bash.js'
 import { validateInput } from './validate.js'
 
 describe('validateInput', () => {
@@ -210,5 +211,40 @@ describe('validateInput 结构关键字不依赖同层 type 声明', () => {
     }
     expect(validateInput(schema, { a: 'x' }).valid).toBe(true)
     expect(validateInput(schema, { a: 'x', b: 1 }).valid).toBe(false)
+  })
+
+  // 回归：additionalProperties 的**模式形式**（{type:'string'} 等）从不被校验——
+  // 模块头部声称支持 additionalProperties，实际只实现了 === false 分支。声明了
+  // additionalProperties:{type:'string'} 的 schema（bash 工具的 env 等）对未声明
+  // 键完全放行：env:{FOO:123} / env:{FOO:{a:1}} 通过校验后进 spawn，值被 Node
+  // 静默字符串化（对象变 "[object Object]"）——类型约束形同虚设。
+  it('additionalProperties 模式形式对未声明键生效（声明键不受影响）', () => {
+    const schema: JSONSchema = {
+      type: 'object',
+      properties: { fixed: { type: 'string' } },
+      additionalProperties: { type: 'string' },
+    }
+    // 声明键由自身 schema 校验（与 additionalProperties 无关）
+    expect(validateInput(schema, { fixed: 'x' }).valid).toBe(true)
+    // 未声明键必须命中 additionalProperties 模式
+    expect(validateInput(schema, { env: 'ok' }).valid).toBe(true)
+    expect(validateInput(schema, { env: 123 }).valid).toBe(false)
+    expect(validateInput(schema, { env: { a: 1 } }).valid).toBe(false)
+    expect(validateInput(schema, { env: null }).valid).toBe(false)
+  })
+
+  // bash 工具 env 的真实 schema：additionalProperties: {type:'string'}。
+  // 模型传 env:{FOO:123} 此前静默通过，spawn 时被 Node 字符串化。
+  it('bash 工具 env 值必须是字符串', () => {
+    expect(validateInput(bashTool.parameters, { command: 'ls' }).valid).toBe(true)
+    expect(
+      validateInput(bashTool.parameters, { command: 'ls', env: { FOO: '1', BAR: 'x' } }).valid,
+    ).toBe(true)
+    expect(
+      validateInput(bashTool.parameters, { command: 'ls', env: { FOO: 123 } }).valid,
+    ).toBe(false)
+    expect(
+      validateInput(bashTool.parameters, { command: 'ls', env: { FOO: { a: 1 } } }).valid,
+    ).toBe(false)
   })
 })

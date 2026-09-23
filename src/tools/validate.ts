@@ -80,13 +80,33 @@ function validateNode(schema: JSONSchema, value: unknown, path: string): string 
       }
     }
 
-    // additionalProperties: false → 只允许 properties 声明的键（未声明 properties
-    // 时任何键都是额外的，与 JSON Schema 一致）
-    if (schema.additionalProperties === false) {
+    // additionalProperties 两种形式（JSON Schema draft-07）：
+    //  - false：只允许 properties 声明的键（未声明 properties 时任何键都是额外的）；
+    //  - 模式（{type:'string'} 等）：每个**未被 properties 声明**的键按该模式校验
+    //    （声明键只受自身 schema 约束，不受 additionalProperties 影响）。
+    // 此前只实现 false 分支——声明 additionalProperties:{type:'string'} 的 schema
+    // （bash 工具的 env 等）对未声明键完全放行：env:{FOO:123} 通过校验后进
+    // spawn，值被 Node 静默字符串化（对象变 "[object Object]"）。
+    if (schema.additionalProperties !== undefined) {
       const knownKeys = new Set(Object.keys(schema.properties ?? {}))
-      for (const key of Object.keys(obj)) {
-        if (!knownKeys.has(key)) {
-          return `${path ? `${path}.` : ''}${key}: additional property not allowed`
+      if (schema.additionalProperties === false) {
+        for (const key of Object.keys(obj)) {
+          if (!knownKeys.has(key)) {
+            return `${path ? `${path}.` : ''}${key}: additional property not allowed`
+          }
+        }
+      } else if (
+        typeof schema.additionalProperties === 'object' &&
+        schema.additionalProperties !== null
+      ) {
+        for (const [key, value] of Object.entries(obj)) {
+          if (knownKeys.has(key)) continue
+          const err = validateNode(
+            schema.additionalProperties,
+            value,
+            path ? `${path}.${key}` : key,
+          )
+          if (err) return err
         }
       }
     }
