@@ -10,7 +10,7 @@ import {
   StrictMode,
 } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { saveHistory } from '@/composer/history.js'
+import { loadHistory, saveHistory } from '@/composer/history.js'
 import { useComposer } from '@/composer/useComposer.js'
 
 function strictWrapper({ children }: { children: ReactNode }) {
@@ -242,5 +242,30 @@ describe('useComposer pill 保留', () => {
     })
     const payload = c.onSend.mock.calls[0]?.[0] as { files: string[] }
     expect(payload.files).toEqual(['src/a.ts'])
+  })
+
+  // 复现：send 把 promptToMessageText（**提交给后端的展开形态**：snippet pill
+  // 展开成带行号的代码块、terminal pill 展开成 ```terminal 代码块）写进提示历史。
+  // 历史是 UI 便利功能（↑ 召回用户刚发的内容），存展开形态后：召回一条带引用的
+  // 消息会把整段代码块当纯文本灌回输入框（用户看到的输入被替换成几百行代码），
+  // 去重比较（prependHistoryEntry）也在展开形态上做。
+  it('提示历史存用户可见文本，不存 snippet/terminal 展开的代码块', () => {
+    const c = renderComposerWithEditor()
+    act(() => {
+      c.appendSnippetReference('src/b.ts', 1, 3, 'SNIPPET-BODY-CODE')
+      c.appendTerminalReference('🖥 cmd', 'TERMINAL-OUTPUT')
+    })
+    typeText(c, '看看这个')
+    act(() => {
+      c.send()
+    })
+    const entry = loadHistory()[0] ?? ''
+    expect(entry).toContain('看看这个')
+    // 用户可见标签在（pill 标签），展开内容不在
+    expect(entry).toContain('src/b.ts')
+    expect(entry).toContain('🖥 cmd')
+    expect(entry).not.toContain('SNIPPET-BODY-CODE')
+    expect(entry).not.toContain('TERMINAL-OUTPUT')
+    expect(entry).not.toContain('```')
   })
 })

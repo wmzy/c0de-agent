@@ -409,7 +409,12 @@ function useComposer({
     // prompt 结构随载荷传递：@agent 提及提取需要区分「用户输入文本」与
     // snippet/terminal 展开内容（见 extractAgentMentions）。
     onSend({ text, files, images, prompt })
-    if (text.trim()) saveHistory(prependHistoryEntry(loadHistory(), text))
+    // 提示历史存**用户可见文本**（promptToText：pill 贡献标签），不是提交给后端
+    // 的展开形态（promptToMessageText 会把 snippet/terminal pill 展开成代码块）——
+    // 否则 ↑ 召回一条带引用的消息会把整段代码块当纯文本灌回输入框，去重比较也在
+    // 展开形态上做（同一输入因引用内容不同被当成不同条目）。
+    const visible = promptToText(prompt)
+    if (visible.trim()) saveHistory(prependHistoryEntry(loadHistory(), visible))
     setImages([])
     setImageError(null)
     setPromptExternal(DEFAULT_PROMPT)
