@@ -338,6 +338,49 @@ describe('applyPatch', () => {
     })
   })
 
+  // 回归：同锚点操作按补丁顺序（稳定排序）应用——插入操作先于「消耗该锚点」的
+  // SWAP/DEL 执行时，插入内容被替换/删除操作吞掉：顶部插入的一行被 SWAP 1-1
+  // 当成第 1 行替换掉，而原第 1 行反而保留（两个操作都没有生效）。
+  it('同锚点的 INS.HEAD 与 SWAP 1-1：先替换后插入（插入内容不被吞掉）', () => {
+    const file = '1\n2\n3\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nINS.HEAD\nHEADER\n---\nSWAP 1-1\nONE\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'HEADER\nONE\n2\n3\n',
+    })
+  })
+
+  it('同锚点的 INS.PRE 与 SWAP：插入行落在替换后的行之前', () => {
+    const file = 'a\nb\nc\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nINS.PRE 2\nX\n---\nSWAP 2-2\nB\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: 'a\nX\nB\nc\n',
+    })
+  })
+
+  it('同锚点的 INS.PRE 与 DEL：插入行保留、被删行确实消失', () => {
+    const file = '1\n2\n3\n4\n5\n6\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nINS.PRE 3\nX\n---\nDEL 3-5\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: '1\n2\nX\n6\n',
+    })
+  })
+
+  it('同锚点的 INS.POST 与下一行 SWAP：插入行落在被替换行之前', () => {
+    const file = '1\n2\n3\n4\n5\n6\n'
+    const hash = computeHash(file)
+    const patches = parsePatch(`[f.ts#${hash}]\nINS.POST 4\nX\n---\nSWAP 5-5\nFIVE\n---\n`)
+    expect(applyPatch(file, firstPatch(patches))).toEqual({
+      _tag: 'success',
+      content: '1\n2\n3\n4\nX\nFIVE\n6\n',
+    })
+  })
+
   it('preserves missing trailing newline on CRLF files', () => {
     const file = 'a\r\nb\r\nc'
     const hash = computeHash(file)

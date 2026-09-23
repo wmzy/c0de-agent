@@ -212,6 +212,17 @@ function anchor(op: PatchOp, lineCount: number): number {
   }
 }
 
+/** 同锚点操作的次级排序键：**消耗锚点行的操作（SWAP/DEL）先于插入操作**。
+ *  锚点只保证「高行号先改、低行号不受影响」；锚点相同时（INS.HEAD 与 SWAP 1-1、
+ *  INS.PRE n 与 SWAP n / DEL n、INS.POST n 与 SWAP n+1 均锚在同一行）按补丁顺序
+ *  稳定排序会让插入先执行——插入内容占据该行下标，随后 SWAP/DEL 恰好吃掉它：
+ *  插入行消失、原行未被替换/删除（两个操作都没生效，工具仍报 success）。
+ *  先消耗后插入是唯一同时满足两侧语义的顺序：行被替换/删除后，插入内容落在
+ *  该行位置的「之前」，仍紧邻原本要插入的锚点。 */
+function applyRank(op: PatchOp): number {
+  return op._tag === 'SWAP' || op._tag === 'DEL' ? 0 : 1
+}
+
 /** 校验操作的行号范围是否落在 [1, lineCount]。 */
 function inBounds(op: PatchOp, lineCount: number): boolean {
   switch (op._tag) {
@@ -253,10 +264,12 @@ function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
     }
   }
 
-  // 按锚点降序应用：高行号先改，低行号锚点不受影响
+  // 按锚点降序应用：高行号先改，低行号锚点不受影响。
+  // 锚点相同（INS.HEAD / INS.PRE n / INS.POST n-1 与 SWAP·DEL 落在同一行）时
+  // 先应用消耗该行的 SWAP/DEL，再应用插入（见 applyRank：否则插入内容被吞掉）。
   const ordered = [...patch.operations].sort((a, b) => {
     const lineCountFinal = lineCount
-    return anchor(b, lineCountFinal) - anchor(a, lineCountFinal)
+    return anchor(b, lineCountFinal) - anchor(a, lineCountFinal) || applyRank(a) - applyRank(b)
   })
 
   for (const op of ordered) {
