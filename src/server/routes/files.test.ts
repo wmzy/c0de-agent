@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import {
   appendFileSync,
   existsSync,
@@ -1031,6 +1032,55 @@ describe('files 写端点 body 形状校验', () => {
       body: JSON.stringify({ name: 123 }),
     })
     expect(res.status).toBe(400)
+  })
+
+  // 复现：分支名直入 `git checkout <name>` 的位置参数——以 `-` 开头的名字被
+  // git 当作选项解释：`-B<branch>` 把该分支指针重置到当前 HEAD（该分支上的
+  // 提交从历史中消失），接口还回 200 成功。
+  it('POST /git-checkout 分支名以 - 开头 → 400，且不产生任何 git 副作用', async () => {
+    const { app, dir } = await setupWithDir()
+    execSync('git init -q -b main', { cwd: dir })
+    execSync('git config user.email t@t.c', { cwd: dir })
+    execSync('git config user.name T', { cwd: dir })
+    writeFileSync(join(dir, 'a.txt'), 'v1')
+    execSync('git add . && git commit -q -m init', { cwd: dir })
+    execSync('git checkout -q -b feature', { cwd: dir })
+    writeFileSync(join(dir, 'f.txt'), 'f')
+    execSync('git add . && git commit -q -m feature-commit', { cwd: dir })
+    execSync('git checkout -q main', { cwd: dir })
+    const featureBefore = execSync('git rev-parse feature', { cwd: dir }).toString().trim()
+
+    const res = await app.request('/git-checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch: '-Bfeature' }),
+    })
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('INVALID_BRANCH')
+    // 分支指针未被重置、HEAD 未切换
+    expect(execSync('git rev-parse feature', { cwd: dir }).toString().trim()).toBe(featureBefore)
+    expect(execSync('git rev-parse --abbrev-ref HEAD', { cwd: dir }).toString().trim()).toBe('main')
+  })
+
+  it('POST /git-branch-create 分支名以 - 开头 → 400（不透出 git stderr）', async () => {
+    const { app, dir } = await setupWithDir()
+    execSync('git init -q -b main', { cwd: dir })
+    execSync('git config user.email t@t.c', { cwd: dir })
+    execSync('git config user.name T', { cwd: dir })
+    writeFileSync(join(dir, 'a.txt'), 'v1')
+    execSync('git add . && git commit -q -m init', { cwd: dir })
+
+    const res = await app.request('/git-branch-create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '-Bmain' }),
+    })
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('INVALID_BRANCH')
   })
 
   it('POST /git-commit null body → 400', async () => {

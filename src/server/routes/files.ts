@@ -16,6 +16,7 @@ import {
   getGitDiffSummary,
   getGitLastCommit,
   getGitStatus,
+  isValidBranchName,
   listGitBranches,
   performGitCommit,
 } from '../../project/resolve.js'
@@ -428,6 +429,12 @@ ${headChars(summary.diff, 8000)}`
     // ERR_INVALID_ARG_TYPE → 500。
     const branch = typeof parsed.body.branch === 'string' ? parsed.body.branch : ''
     if (!branch) return apiError(c, 400, 'BAD_REQUEST', 'branch is required')
+    // 分支名合法性在入口显式 400：以 `-` 开头的名字会被 git 当作**选项**解释
+    //（`git checkout -B<name>` 静默重置分支指针、`--detach` 让 HEAD 脱离分支），
+    // 且这类输入属客户端错误而非服务端故障（resolve 层同样兜底拒绝）。
+    if (!isValidBranchName(branch)) {
+      return apiError(c, 400, 'INVALID_BRANCH', `非法分支名：${branch}`)
+    }
     const result = checkoutGitBranch(root, branch)
     if ('error' in result) {
       return apiError(c, 500, 'CHECKOUT_FAILED', result.error)
@@ -450,6 +457,11 @@ ${headChars(summary.diff, 8000)}`
     if (!parsed.ok) return parsed.response
     const name = typeof parsed.body.name === 'string' ? parsed.body.name : ''
     if (!name) return apiError(c, 400, 'BAD_REQUEST', 'name is required')
+    // 与 /git-checkout 同口径：非法分支名（含以 `-` 开头）显式 400，
+    // 不透出 git 的 stderr（那是输入非法而非 git 故障）。
+    if (!isValidBranchName(name)) {
+      return apiError(c, 400, 'INVALID_BRANCH', `非法分支名：${name}`)
+    }
     const result = createGitBranch(root, name)
     if ('error' in result) {
       return apiError(c, 500, 'BRANCH_CREATE_FAILED', result.error)

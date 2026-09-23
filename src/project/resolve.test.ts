@@ -6,8 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   appendToGitignore,
   checkIgnored,
+  checkoutGitBranch,
+  createGitBranch,
   getGitLastCommit,
   getGitStatus,
+  isValidBranchName,
   resolveProject,
 } from './resolve.js'
 
@@ -257,5 +260,118 @@ describe('getGitStatus', () => {
     expect(status?.['new.txt']).toBe('staged')
     expect(status?.['old.txt']).toBeUndefined()
     expect(Object.keys(status ?? {})).toEqual(['new.txt'])
+  })
+})
+
+describe('git 分支名参数注入', () => {
+  const head = (repo: string): string =>
+    execSync('git rev-parse --abbrev-ref HEAD', { cwd: repo }).toString().trim()
+  const rev = (repo: string, ref: string): string =>
+    execSync(`git rev-parse ${ref}`, { cwd: repo }).toString().trim()
+
+  function initRepo(): string {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-branch-'))
+    execSync('git init -q -b main', { cwd: repo })
+    execSync('git config user.email test@test.com', { cwd: repo })
+    execSync('git config user.name Tester', { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'v1')
+    execSync('git add . && git commit -q -m init', { cwd: repo })
+    return repo
+  }
+
+  // 复现：checkoutGitBranch 把分支名作为**位置参数**传给 git checkout——
+  // 以 `-` 开头的名字被 git 当作选项解析。`-Bfeature` 等价 `git checkout -B
+  // feature`：把已存在的 feature 分支指针重置到当前 HEAD（该分支上的提交
+  // 从分支历史中消失，只能靠 reflog 找回），且接口照常回成功。
+  it.runIf(hasGit)('拒绝以 - 开头的分支名（-B<name> 会静默重置分支指针）', () => {
+    const repo = initRepo()
+    execSync('git checkout -q -b feature', { cwd: repo })
+    writeFileSync(join(repo, 'f.txt'), 'f')
+    execSync('git add . && git commit -q -m feature-commit', { cwd: repo })
+    execSync('git checkout -q main', { cwd: repo })
+    const featureBefore = rev(repo, 'feature')
+    expect(featureBefore).not.toBe(rev(repo, 'main'))
+
+    const result = checkoutGitBranch(repo, '-Bfeature')
+
+    expect('error' in result).toBe(true)
+    // 分支指针未被重置、HEAD 未切换、无分支被创建
+    expect(rev(repo, 'feature')).toBe(featureBefore)
+    expect(head(repo)).toBe('main')
+  })
+
+  it.runIf(hasGit)('拒绝 --detach 等被当作选项的名字（HEAD 不得脱离分支）', () => {
+    const repo = initRepo()
+    const result = checkoutGitBranch(repo, '--detach')
+    expect('error' in result).toBe(true)
+    expect(head(repo)).toBe('main')
+  })
+
+  it.runIf(hasGit)('拒绝非法 ref 名（空格/../~/:/^/*/[/\\）并给出明确错误', () => {
+    const repo = initRepo()
+    for (const bad of ['a b', 'a..b', 'a~1', 'a^', 'a:b', 'a*', 'a[b', 'a\\b', '.hidden', 'a/']) {
+      const result = checkoutGitBranch(repo, bad)
+      expect('error' in result, `应拒绝 "${bad}"`).toBe(true)
+      expect((result as { error: string }).error).toContain('Invalid branch name')
+    }
+    // 未产生任何副作用：仍在 main、无新分支
+    expect(head(repo)).toBe('main')
+  })
+
+  it.runIf(hasGit)('合法分支名照常切换', () => {
+    const repo = initRepo()
+    execSync('git branch fix-123', { cwd: repo })
+    const result = checkoutGitBranch(repo, 'fix-123')
+    expect('error' in result).toBe(false)
+    expect(head(repo)).toBe('fix-123')
+  })
+
+  it.runIf(hasGit)('createGitBranch 同样拒绝以 - 开头的名字（不把 git stderr 当结果）', () => {
+    const repo = initRepo()
+    const result = createGitBranch(repo, '-Bmain')
+    expect('error' in result).toBe(true)
+    expect((result as { error: string }).error).toContain('Invalid branch name')
+    expect(head(repo)).toBe('main')
+    // 合法名照常创建并切换
+    const ok = createGitBranch(repo, 'feature-x')
+    expect('error' in ok).toBe(false)
+    expect(head(repo)).toBe('feature-x')
+  })
+
+  it('isValidBranchName：拒绝注入与非法 ref，接受常规分支名', () => {
+    for (const bad of [
+      '-Bmain',
+      '--detach',
+      '-f',
+      '',
+      ' ',
+      'a b',
+      'a..b',
+      'a~1',
+      'a^',
+      'a:b',
+      'a*',
+      'a[b',
+      'a\\b',
+      '.hidden',
+      'a/',
+      'a//b',
+      'a@{b',
+      '@',
+      'a.lock',
+      'a\nb',
+    ]) {
+      expect(isValidBranchName(bad), `应拒绝 ${JSON.stringify(bad)}`).toBe(false)
+    }
+    for (const good of [
+      'main',
+      'fix-123',
+      'feature/x',
+      'release/v1.2.3',
+      'user/foo_bar',
+      'v1.0.0-rc.1',
+    ]) {
+      expect(isValidBranchName(good), `应接受 ${good}`).toBe(true)
+    }
   })
 })

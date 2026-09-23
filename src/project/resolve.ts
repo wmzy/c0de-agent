@@ -298,12 +298,40 @@ export function listGitBranches(cwd: string): GitBranchInfo[] | null {
 }
 
 /**
+ * git 分支名合法性：拒绝「以 `-` 开头」（位置参数会被 git 当作**选项**解释——
+ * `git checkout -B<name>` 静默把该分支指针重置到当前 HEAD、`--detach` 让 HEAD
+ * 脱离分支，接口还照常回成功）与 git ref 规则禁用的字符/形状。
+ * 规则取 git-check-ref-format(1) 的常见子集：本产品的分支名来自 UI 分支列表，
+ * 不接受 revision 语法（HEAD~1 / @{-1}）。
+ */
+const INVALID_BRANCH_CHARS = /[\s~^:?*[\]\\]/
+/** 控制字符（C0/C1）：ref 名不允许，且会污染日志/UI（与 `\s` 不覆盖 NUL 等）。 */
+const BRANCH_CONTROL_CHARS = /\p{Cc}/u
+
+export function isValidBranchName(name: string): boolean {
+  if (!name || name.startsWith('-') || name === '@') return false
+  if (INVALID_BRANCH_CHARS.test(name) || BRANCH_CONTROL_CHARS.test(name)) return false
+  if (name.includes('..') || name.includes('@{') || name.includes('//')) return false
+  if (name.startsWith('/') || name.endsWith('/')) return false
+  if (name.endsWith('.') || name.endsWith('.lock')) return false
+  return name.split('/').every((segment) => segment.length > 0 && !segment.startsWith('.'))
+}
+
+/** 分支名非法时的统一错误（不回显 git stderr：那是「用户输入非法」而非「git 失败」）。 */
+function invalidBranchNameError(name: string): { error: string } {
+  return {
+    error: `Invalid branch name ${JSON.stringify(name)}: must be a valid git ref (no leading "-", no whitespace or ~^:?*[\\, no "..", no leading/trailing "/")`,
+  }
+}
+
+/**
  * 切换到指定分支（git checkout）。成功返回分支名，失败返回 error。
  */
 export function checkoutGitBranch(
   cwd: string,
   branch: string,
 ): { branch: string } | { error: string } {
+  if (!isValidBranchName(branch)) return invalidBranchNameError(branch)
   const result = spawnSync('git', ['checkout', branch], {
     cwd,
     encoding: 'utf-8',
@@ -321,6 +349,7 @@ export function checkoutGitBranch(
  * 创建并切换到新分支。成功返回分支名，失败返回 error。
  */
 export function createGitBranch(cwd: string, name: string): { branch: string } | { error: string } {
+  if (!isValidBranchName(name)) return invalidBranchNameError(name)
   const result = spawnSync('git', ['checkout', '-b', name], {
     cwd,
     encoding: 'utf-8',
