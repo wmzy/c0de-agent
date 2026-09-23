@@ -36,6 +36,13 @@ describe('parseTerminalControlMessage', () => {
       '{"type":"exit","exitCode":0}{"more":1}', // 拼接内容
       '[{"type":"exit","exitCode":0}]', // 数组
       '{"type":"exit","exitCode":null}', // null 退出码
+      // 键序变体：服务端控制帧由 JSON.stringify({type, ...}) 直出，type 恒为首键。
+      // JSON.stringify(parsed) === data 的「逐字符相等」层对键序变体**不生效**——
+      // JSON.stringify 保留解析出的键序，{"exitCode":0,"type":"exit"} 重序列化后
+      // 与原文逐字符相等，能穿过校验被吞成假退出提示（程序打印一条恰好长这样的
+      // JSON 输出即触发）。规范化判定必须钉住首键 = type。
+      '{"exitCode":0,"type":"exit"}',
+      '{"message":"boom","type":"error"}',
     ]
     for (const data of outputs) {
       expect(parseTerminalControlMessage(data), data).toBeNull()

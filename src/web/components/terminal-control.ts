@@ -20,11 +20,16 @@ export type TerminalControlMessage =
  * 把一条 WS 文本帧解析为服务端控制消息；非规范控制帧返回 null（调用方按
  * 终端输出原样写入）。
  *
- * 严格性来自两层：
+ * 严格性来自三层：
  *  1. `JSON.stringify(parsed) === data` —— 帧必须逐字符等于解析结果的重序列化
- *     （排除空白/换行/键序变体；服务端由 JSON.stringify 直接生成，必然相等）；
- *  2. 键集恰为规范字段且值类型精确（type + exitCode:number / message:string）。
- * 二者叠加后，普通输出要误判必须**逐字符**等于服务端控制帧字面量——协议层面
+ *     （排除空白/换行/尾随字符变体）；
+ *  2. 键集恰为规范字段、首键必须为 `type` 且值类型精确——服务端由
+ *     `JSON.stringify({ type, ... })` 直接生成，type 恒为首键。JSON.stringify
+ *     保留解析出的键序，第 1 层对键序变体**不生效**（{"exitCode":0,"type":"exit"}
+ *     重序列化后与原文逐字符相等）——不钉住首键的话，程序打印一条恰好长这样的
+ *     JSON 输出仍会被吞成假退出提示；
+ *  3. 仅接受 exit/error 两种规范判别联合。
+ * 叠加后，普通输出要误判必须**逐字符**等于服务端控制帧字面量——协议层面
  * 无法进一步区分（控制与数据共流），但已排除全部「含 type 字段的 JSON 输出」。
  */
 export function parseTerminalControlMessage(data: string): TerminalControlMessage | null {
@@ -39,7 +44,7 @@ export function parseTerminalControlMessage(data: string): TerminalControlMessag
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
   const obj = parsed as Record<string, unknown>
   const keys = Object.keys(obj)
-  if (keys.length !== 2) return null
+  if (keys.length !== 2 || keys[0] !== 'type') return null
   if (obj.type === 'exit' && typeof obj.exitCode === 'number') {
     return { type: 'exit', exitCode: obj.exitCode }
   }
