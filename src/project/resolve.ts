@@ -116,12 +116,18 @@ function git(args: string[], cwd: string): string {
  * 只检查当前展开目录的直接子项（通常 10-50 个），不递归进 node_modules 等。
  * 非 git 仓库或无忽略文件时返回空集。
  *
+ * 路径经 `--` 传入：它们是**位置参数**，以 `-` 开头的合法文件名（-v / --stdin
+ * 等）否则会被 git 当成 check-ignore 自己的选项——`-v` 变 verbose（输出
+ * `.gitignore:1:path` 形态的行，解析端无法匹配任何路径）、`--stdin` 改从标准
+ * 输入读路径（无输入 → 空集），该目录的忽略标记整体静默失效。与分支名注入
+ * （checkoutGitBranch 的 -B<name>）同类：用户可控值不得落进选项槽。
+ *
  * 注意：git check-ignore 在「无路径被忽略」或「非 git 仓库」时退出码为 1，
  * 这两种情况都返回空集。 */
 export function checkIgnored(cwd: string, paths: string[]): Set<string> {
   if (paths.length === 0) return new Set()
   try {
-    const result = spawnSync('git', ['check-ignore', ...paths], {
+    const result = spawnSync('git', ['check-ignore', '--', ...paths], {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -185,7 +191,10 @@ function firstRemoteUrl(cwd: string): string {
     .map((s) => s.trim())
     .filter(Boolean)[0]
   if (!first) return ''
-  return git(['remote', 'get-url', first], cwd)
+  // remote 名来自仓库自身的 .git/config（克隆的仓库可携带 `[remote "-x"]` 这类
+  // 以 `-` 开头的名字）：与 checkIgnored 同口径，位置参数先以 `--` 终止选项解析，
+  // 否则名字被当成 get-url 的选项（--push/--all）而取不到 URL。
+  return git(['remote', 'get-url', '--', first], cwd)
 }
 
 /**

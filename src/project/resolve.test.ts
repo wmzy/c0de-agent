@@ -133,9 +133,42 @@ describe('checkIgnored', () => {
     expect(checkIgnored(repo, [])).toEqual(new Set())
   })
 
+  // 回归：路径是 git 的**位置参数**——目录里存在以 `-` 开头的文件（-v / --stdin
+  // 等合法文件名）时，git check-ignore 会把它们当成自己的选项：`-v` 变 verbose
+  // （输出带 `.gitignore:1:` 前缀的行，解析端无法匹配任何路径）、`--stdin` 改从
+  // 标准输入读路径（管道关闭 → 空输出）。整个目录的忽略标记因此静默失效。
+  // 与已修复的分支名注入（checkoutGitBranch 的 -B<name>）同类：用户可控值落在
+  // 位置参数槽，必须先以 `--` 终止选项解析。
+  it.runIf(hasGit)('以 - 开头的文件名不劫持 git 选项，忽略标记仍正确', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-chkign-dash-'))
+    execSync('git init -q', { cwd: repo })
+    writeFileSync(join(repo, '.gitignore'), 'ignored.txt\n')
+    writeFileSync(join(repo, 'ignored.txt'), 'x')
+    writeFileSync(join(repo, '-v'), 'x')
+    writeFileSync(join(repo, '--stdin'), 'x')
+
+    const result = checkIgnored(repo, ['ignored.txt', '-v', '--stdin'])
+    expect(result.has('ignored.txt')).toBe(true)
+    expect(result.has('-v')).toBe(false)
+    expect(result.has('--stdin')).toBe(false)
+  })
+
   it('非 git 目录返回空集', () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-nongit-'))
     expect(checkIgnored(dir, ['any.txt'])).toEqual(new Set())
+  })
+})
+
+// 同类：remote 名来自仓库自身的 .git/config（克隆仓库可携带 `[remote "-x"]`），
+// 同样是位置参数——不先 `--` 终止选项解析时 `git remote get-url -x` 被当成
+// 未知开关（exit 129），回退路径取不到 URL、gitRemote 静默为 null。
+describe('git 位置参数选项劫持（remote 名）', () => {
+  it.runIf(hasGit)('以 - 开头的 remote 名仍能解析出 URL', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'c0de-dashremote-'))
+    execSync('git init -q', { cwd: repo })
+    execSync('git remote add -- -x https://example.com/x.git', { cwd: repo })
+
+    expect(resolveProject(repo).gitRemote).toBe('https://example.com/x.git')
   })
 })
 
