@@ -13,7 +13,7 @@ import { ModelSelector } from '@/components/ModelSelector.js'
 import { SegmentBreakDialog } from '@/components/SegmentBreakDialog.js'
 import { SessionSummary } from '@/components/SessionSummary.js'
 import { ShakeProvider } from '@/components/session/ShakeContext.js'
-import { mergeToolMessages } from '@/components/session/utils/normalizeParts.js'
+import { mergeSessionMessages } from '@/components/session/utils/normalizeParts.js'
 import { buildTimeline } from '@/components/session/utils/timeline.js'
 import { TodoPanel } from '@/components/TodoPanel.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
@@ -201,8 +201,11 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   // Message；normalizeParts 只在单条 Message 内按 id 配对，不合并会导致历史工具调用
   // 渲染成两张卡（一张永久 running、一张孤立 result）。这里跨消息把 tool_result 并回
   // 对应 assistant，使历史与实时形态统一。实时 chat.messages 已在 reducer 内配对，no-op。
+  // mergeSessionMessages 同时把「已持久化的乐观副本」丢弃：本轮消息落库后任何
+  // 历史重取（窗口聚焦 refetch、shake 应用、附着结束刷新）都会把同一轮以服务端
+  // id 再取回，直接拼接会让整轮对话重复渲染两份。
   const messages = useMemo(
-    () => mergeToolMessages([...(history ?? []), ...chat.messages]),
+    () => mergeSessionMessages(history ?? [], chat.messages),
     [history, chat.messages],
   )
 

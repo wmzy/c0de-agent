@@ -32,8 +32,9 @@ export function useRetryResume({
   const handleResume = async () => {
     onResumeStart()
     chat.clearInterrupted()
-    // 清空内存流式消息：中断前的乐观副本（user 消息/steering）与即将重载的
-    // DB 消息合并会重复渲染（同一类既有缺陷随 steering 持久化显性化）。
+    // 清空内存流式消息与运行态（中断标记/挂起弹窗）：随后从 DB 重载消息作为
+    // 唯一事实源（乐观副本与服务端副本的合并去重已由 mergeSessionMessages 负责，
+    // 此处清空是为了让中断前的半截内存态不参与 resume 判定）。
     chat.reset()
     const msgs = await sessionAPI.messages(sessionId)
     qc.setQueryData(['session', sessionId, 'messages'], msgs)

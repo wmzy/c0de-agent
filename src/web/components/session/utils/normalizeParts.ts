@@ -133,3 +133,81 @@ export function mergeToolMessages(messages: Message[]): Message[] {
   }
   return out.filter((_, i) => !drop.has(i))
 }
+
+/** 用户消息中服务端注入的 @agent 派发指令前缀（chat 路由在落库前写入文本）。 */
+const SUBAGENT_MENTION_PREFIX_RE = /^\[User requested subagent\(s\): [^\]]*\]\n\n/
+
+/**
+ * 消息身份签名：把「本地乐观副本」与「服务端持久化副本」配对用。
+ * 两侧 id 必然不同（客户端 generateId vs 服务端 appendMessage），只能按内容比对：
+ *  - text / steering：文本本身（空文本部分忽略——纯图片消息的服务端副本没有空
+ *    text part，客户端乐观副本有）；
+ *  - tool_call：调用 id（provider 生成、两侧一致，入参也一致故不入签名）；
+ *  - image：mediaType + 数据长度（完整 base64 比对在每帧渲染时太贵；同类型同
+ *    长度的不同图片才会误配，概率可忽略）；
+ *  - thinking：忽略（不落库，乐观副本独有）；
+ *  - tool_result：忽略（持久化侧是独立 tool 消息，由 mergeToolMessages 合并回
+ *    assistant；乐观侧已就地配对）。
+ * 用户文本先剥离服务端注入的 @agent 指令前缀（同一句输入两侧文本不同）。
+ */
+function messageSignature(message: Message): string {
+  const parts: string[] = []
+  for (const part of message.content) {
+    switch (part._tag) {
+      case 'text': {
+        const text =
+          message.role === 'user' ? part.text.replace(SUBAGENT_MENTION_PREFIX_RE, '') : part.text
+        if (text) parts.push(`t:${text}`)
+        break
+      }
+      case 'steering':
+        if (part.text) parts.push(`s:${part.text}`)
+        break
+      case 'tool_call':
+        parts.push(`c:${part.id}`)
+        break
+      case 'image':
+        parts.push(`i:${part.mediaType}:${part.data.length}`)
+        break
+      case 'thinking':
+      case 'tool_result':
+        break
+    }
+  }
+  return `${message.role}\u0000${parts.join('\u0001')}`
+}
+
+/**
+ * 合并「服务端历史」与「本地乐观消息」为渲染列表：服务端历史是唯一事实源，
+ * 乐观消息一旦在历史中已有持久化条目即丢弃本地副本。
+ *
+ * 乐观副本与服务端副本 id 不同（客户端 generateId vs 服务端 appendMessage），
+ * 直接拼接会在任何历史重取后重复渲染整轮对话：窗口聚焦
+ * （refetchOnWindowFocus）、shake 应用、附着结束刷新都会重取 /messages，而
+ * useChat 的乐观消息在页面存活期间一直保留——同一句用户输入与同一条回复
+ * 各出现两次（时间线上重复行、调用详情错配）。
+ *
+ * 配对按内容签名 + 计数（相同文本重复发送两次时按数量逐一消费，不吞掉尚未
+ * 落库的那条）；历史中没有对应条目的乐观消息原样保留——中断的 run 半截回复
+ * 不写库（loop 在轮次结束时才持久化 assistant），清空它会让用户已看到的
+ * 内容凭空消失。
+ */
+export function mergeSessionMessages(history: Message[], optimistic: Message[]): Message[] {
+  if (optimistic.length === 0) return mergeToolMessages(history)
+  const persisted = new Map<string, number>()
+  for (const m of history) {
+    const key = messageSignature(m)
+    persisted.set(key, (persisted.get(key) ?? 0) + 1)
+  }
+  const pending: Message[] = []
+  for (const m of optimistic) {
+    const key = messageSignature(m)
+    const left = persisted.get(key) ?? 0
+    if (left > 0) {
+      persisted.set(key, left - 1)
+      continue
+    }
+    pending.push(m)
+  }
+  return mergeToolMessages([...history, ...pending])
+}
