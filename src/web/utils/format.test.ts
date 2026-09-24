@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { formatCost, formatLatency, formatTokenCount, parseCodeReference } from '@/utils/format.js'
+import {
+  formatCost,
+  formatLatency,
+  formatTokenCount,
+  parseCodeReference,
+  parseFiniteNumber,
+} from '@/utils/format.js'
 
 describe('parseCodeReference', () => {
   it('文件引用单行', () => {
@@ -68,4 +74,28 @@ describe('formatCost', () => {
   it('2.675 舍入为 $2.68 而非 $2.67', () => expect(formatCost(2.675)).toBe('$2.68'))
   it('极小额同样按十进制舍入', () => expect(formatCost(0.0045)).toBe('$0.0045'))
   it('大于阈值的边界不误入极小额分支', () => expect(formatCost(0.01)).toBe('$0.01'))
+})
+
+describe('parseFiniteNumber', () => {
+  it('常规数字原样解析', () => {
+    expect(parseFiniteNumber('0.5', 1)).toBe(0.5)
+    expect(parseFiniteNumber('-3', 1)).toBe(-3)
+  })
+
+  // 空串沿用 Number('') 语义 = 0：预算字段的「0 = 不限制」依赖清空即清零。
+  it('空串按 0 解析', () => expect(parseFiniteNumber('', 7)).toBe(0))
+
+  // 复现：'1e999' 是合法的浮点字面量但超出双精度 → Infinity；写进配置草稿后
+  // JSON 序列化成 null，服务端按「取消该键」处理（预算护栏被静默删除）。
+  it('溢出字面量（1e999）回落到当前值而非 Infinity', () => {
+    expect(parseFiniteNumber('1e999', 0.8)).toBe(0.8)
+    expect(parseFiniteNumber('-1e999', 5)).toBe(5)
+  })
+
+  it('非数字文本回落到当前值', () => {
+    expect(parseFiniteNumber('abc', 3)).toBe(3)
+    expect(parseFiniteNumber('1,000', 3)).toBe(3)
+  })
+
+  it('NaN 字面量回落到当前值', () => expect(parseFiniteNumber('NaN', 2)).toBe(2))
 })

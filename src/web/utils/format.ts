@@ -50,3 +50,15 @@ export function formatCost(cost: number): string {
   if (cost < 0.01) return `$${roundTo(cost, 4).toFixed(4)}`
   return `$${roundTo(cost, 2).toFixed(2)}`
 }
+
+/** 数字输入框文本 → **有限**数值；空串/NaN/±Infinity（'1e999'）回落到 fallback。
+ *
+ *  `Number(v)` 会把 '1e999' 折成 Infinity 写进配置草稿：diff 出的 patch 里是
+ *  Infinity，而 JSON 无法表示它——序列化后变 null，服务端 applyScopedPatch 视 null
+ *  为「取消该键」，于是预算护栏/压缩阈值等键被静默删除（UI 仍回显「已保存」）。
+ *  NaN/±Infinity/非数字文本一律回落到调用方给的当前值（= 本次编辑不生效），绝不写
+ *  非有限数；空串沿用 Number('') 的 0（预算字段「0 = 不限制」依赖清空即清零）。 */
+export function parseFiniteNumber(value: string, fallback: number): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}

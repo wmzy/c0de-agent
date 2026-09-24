@@ -36,6 +36,7 @@ import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
+import { parseFiniteNumber } from '@/utils/format.js'
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -482,7 +483,11 @@ export function Settings() {
                 min={0}
                 max={1}
                 value={String(merged.toolMetrics.threshold)}
-                onChange={(v) => updateSection('toolMetrics', { threshold: Number(v) })}
+                onChange={(v) =>
+                  updateSection('toolMetrics', {
+                    threshold: parseFiniteNumber(v, merged.toolMetrics.threshold),
+                  })
+                }
               />
             </label>
             <label className={field}>
@@ -492,7 +497,11 @@ export function Settings() {
                 type="number"
                 min={0}
                 value={String(merged.toolMetrics.minSamples)}
-                onChange={(v) => updateSection('toolMetrics', { minSamples: Number(v) })}
+                onChange={(v) =>
+                  updateSection('toolMetrics', {
+                    minSamples: parseFiniteNumber(v, merged.toolMetrics.minSamples),
+                  })
+                }
               />
             </label>
           </div>
@@ -529,7 +538,11 @@ export function Settings() {
                 type="number"
                 min={1}
                 value={String(merged.agents.subagentConcurrency)}
-                onChange={(v) => updateSection('agents', { subagentConcurrency: Number(v) })}
+                onChange={(v) =>
+                  updateSection('agents', {
+                    subagentConcurrency: parseFiniteNumber(v, merged.agents.subagentConcurrency),
+                  })
+                }
               />
             </label>
           </div>

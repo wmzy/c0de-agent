@@ -4,7 +4,7 @@ import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { UsageSummary } from '@/services/usage.js'
 import { usageAPI } from '@/services/usage.js'
-import { formatCost } from '@/utils/format.js'
+import { formatCost, parseFiniteNumber } from '@/utils/format.js'
 import {
   monthTokenSum,
   resolveEffectiveBudget,
@@ -136,7 +136,7 @@ function UsagePanel({
             min={0}
             step="0.5"
             value={String(budget)}
-            onChange={(v) => onBudgetChange(Math.max(0, Number(v)))}
+            onChange={(v) => onBudgetChange(Math.max(0, parseFiniteNumber(v, budget)))}
           />
         </label>
       ) : (
@@ -148,7 +148,9 @@ function UsagePanel({
             min={0}
             step="0.5"
             value={String(globalBudget ?? 0)}
-            onChange={(v) => onGlobalBudgetChange?.(Math.max(0, Number(v)))}
+            onChange={(v) =>
+              onGlobalBudgetChange?.(Math.max(0, parseFiniteNumber(v, globalBudget ?? 0)))
+            }
             data-testid="usage-global-budget"
           />
         </label>
@@ -162,7 +164,9 @@ function UsagePanel({
             min={0}
             step="1000"
             value={String(tokenBudget ?? 0)}
-            onChange={(v) => onTokenBudgetChange?.(Math.max(0, Number(v)))}
+            onChange={(v) =>
+              onTokenBudgetChange?.(Math.max(0, parseFiniteNumber(v, tokenBudget ?? 0)))
+            }
             data-testid="usage-token-budget"
           />
         </label>
@@ -175,7 +179,9 @@ function UsagePanel({
             min={0}
             step="1000"
             value={String(globalTokenBudget ?? 0)}
-            onChange={(v) => onGlobalTokenBudgetChange?.(Math.max(0, Number(v)))}
+            onChange={(v) =>
+              onGlobalTokenBudgetChange?.(Math.max(0, parseFiniteNumber(v, globalTokenBudget ?? 0)))
+            }
             data-testid="usage-global-token-budget"
           />
         </label>

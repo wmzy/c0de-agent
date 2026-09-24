@@ -3,6 +3,7 @@ import type { ProviderConfig } from '@shared/types/llm.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { ProviderModelSelect } from '@/components/settings/ProviderModelSelect.js'
 import { checkRow, field, fieldInput, section, sectionTitle } from '@/components/settings/styles.js'
+import { parseFiniteNumber } from '@/utils/format.js'
 
 interface CompactionPanelProps {
   compaction: Config['compaction']
@@ -44,7 +45,9 @@ function CompactionPanel({
           min={0}
           max={1}
           value={String(compaction.threshold)}
-          onChange={(v) => onCompactionChange({ threshold: Number(v) })}
+          onChange={(v) =>
+            onCompactionChange({ threshold: parseFiniteNumber(v, compaction.threshold) })
+          }
         />
       </label>
       <label className={field}>
@@ -54,7 +57,9 @@ function CompactionPanel({
           type="number"
           min={0}
           value={String(compaction.reserveTokens)}
-          onChange={(v) => onCompactionChange({ reserveTokens: Number(v) })}
+          onChange={(v) =>
+            onCompactionChange({ reserveTokens: parseFiniteNumber(v, compaction.reserveTokens) })
+          }
         />
       </label>
       <label className={field}>
@@ -64,7 +69,11 @@ function CompactionPanel({
           type="number"
           min={0}
           value={String(compaction.keepRecentTokens)}
-          onChange={(v) => onCompactionChange({ keepRecentTokens: Number(v) })}
+          onChange={(v) =>
+            onCompactionChange({
+              keepRecentTokens: parseFiniteNumber(v, compaction.keepRecentTokens),
+            })
+          }
         />
       </label>
       <label className={checkRow}>

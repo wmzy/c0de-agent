@@ -11,6 +11,7 @@ import {
   sectionTitle,
 } from '@/components/settings/styles.js'
 import { inputStyle } from '@/styles/tokens.js'
+import { parseFiniteNumber } from '@/utils/format.js'
 
 const modelPanel = css`
   grid-column: 1 / -1;
@@ -271,11 +272,16 @@ function ProviderModelsPanel({
                       type="number"
                       className={modelCapInput}
                       value={String(override.contextWindow ?? '')}
-                      onChange={(v) =>
-                        onModelFieldChange(name, {
-                          contextWindow: v ? Number(v) : undefined,
-                        })
-                      }
+                      onChange={(v) => {
+                        // 空串 = 清除覆盖；非法数值（'1e999' → Infinity）不写入——
+                        // JSON 落盘为 null 会静默删除该键，用户以为设了超大窗口。
+                        if (!v) {
+                          onModelFieldChange(name, { contextWindow: undefined })
+                          return
+                        }
+                        const parsed = parseFiniteNumber(v, 0)
+                        if (parsed > 0) onModelFieldChange(name, { contextWindow: parsed })
+                      }}
                       placeholder="留空=默认"
                       min={1000}
                       data-testid={`model-ctx-${name}`}
@@ -287,11 +293,14 @@ function ProviderModelsPanel({
                       type="number"
                       className={modelCapInput}
                       value={String(override.maxOutput ?? '')}
-                      onChange={(v) =>
-                        onModelFieldChange(name, {
-                          maxOutput: v ? Number(v) : undefined,
-                        })
-                      }
+                      onChange={(v) => {
+                        if (!v) {
+                          onModelFieldChange(name, { maxOutput: undefined })
+                          return
+                        }
+                        const parsed = parseFiniteNumber(v, 0)
+                        if (parsed > 0) onModelFieldChange(name, { maxOutput: parsed })
+                      }}
                       placeholder="留空=默认"
                       min={256}
                       data-testid={`model-output-${name}`}

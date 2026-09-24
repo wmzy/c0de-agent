@@ -1276,6 +1276,30 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(notice).toContain('信任')
   })
 
+  // 复现：数字输入框把文本直接 `Number(v)`——'1e999' 折成 Infinity 进 draft，
+  // diff 出的 patch 里是 Infinity，JSON 序列化（fetch body）后变 null，服务端
+  // applyScopedPatch 视 null 为「取消该键」：月度预算被静默删除（护栏关闭），
+  // UI 却回显「已保存」。
+  it('预算输入非法数值（1e999）不会把 Infinity 写进 patch', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const input = screen.getByTestId('usage-global-token-budget')
+    fireEvent.change(input, { target: { value: '1e999' } })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+
+    const patch = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      usage?: { globalMonthlyTokenBudget?: unknown }
+    }
+    const value = patch.usage?.globalMonthlyTokenBudget
+    expect(value === undefined || Number.isFinite(value)).toBe(true)
+  })
+
   it('启用安全认证后显示 Token 输入框', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
