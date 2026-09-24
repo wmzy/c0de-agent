@@ -1260,6 +1260,22 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(screen.queryByTestId('mcp-row')).toBeNull()
   })
 
+  // 回归：MCP 已在 serve/CLI 两个宿主接入（registerMCPServers 注册其工具、项目作用域
+  // 受信任门禁），面板却仍写「未接入工具加载…不会向 AI 暴露任何工具」——用户据此刻意
+  // 不配置、或以为配了也无副作用（实际会连服务器并暴露工具）。提示必须与实现一致。
+  it('MCP 面板提示与实现一致（不谎称未接入）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const notice = screen.getByTestId('mcp-scope-notice').textContent ?? ''
+    expect(notice).not.toContain('未接入')
+    expect(notice).not.toContain('功能未生效')
+    expect(notice).toContain('信任')
+  })
+
   it('启用安全认证后显示 Token 输入框', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))

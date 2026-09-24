@@ -51,8 +51,10 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
   return (
     <div className={section}>
       <h2 className={sectionTitle}>MCP 服务器</h2>
-      <span className={mcpNotice} data-testid="mcp-unimplemented-notice">
-        MCP 服务器当前未接入工具加载：此处配置会被保存，但不会向 AI 暴露任何工具（功能未生效）。
+      <span className={mcpNotice} data-testid="mcp-scope-notice">
+        全局作用域的服务器始终连接；项目作用域（随 git clone 传播的任意命令执行面）仅在
+        项目被显式信任后连接。连接成功即向 AI 暴露其工具（权限 ask：每次调用需确认）；
+        连接失败只跳过该服务器并告警。
       </span>
       {mcpServers.map((server, index) => (
         // 受控表单列表用 index 作 key，避免输入 name 即重挂载失焦（同 providers 行）

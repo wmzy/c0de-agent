@@ -119,6 +119,59 @@ describe('discoverTools / disconnectMCPServer', () => {
     expect(call?.params).toEqual({ name: 'echo', arguments: { text: 'abc' } })
   })
 
+  // 复现：工具名 `mcp__<server>__<tool>` 由配置里的服务器名与远端工具名直接拼成，
+  // 两侧都未按 provider 的函数名文法（OpenAI/Anthropic 一致：^[a-zA-Z0-9_-]{1,64}$）
+  // 规范化。照抄 npm 包名当服务器名（`@modelcontextprotocol/server-filesystem`）或
+  // 远端工具名带点（`fs.read_file`）时，请求体的 tools[].function.name 非法——
+  // provider 400 拒绝**整个请求**：不是这台服务器的工具不可用，而是该工作区所有
+  // 对话都发不出去。
+  it('服务器名/工具名含非法字符时规范化为 provider 函数名，且仍以原始名调用远端工具', async () => {
+    const fake = scriptedTransport({
+      initialize: { protocolVersion: '2025-03-26', capabilities: {} },
+      'tools/list': {
+        tools: [
+          {
+            name: 'fs.read_file',
+            description: 'Read a file',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      },
+      'tools/call': { content: [{ type: 'text', text: 'ok' }], isError: false },
+    })
+    const session = await connectMCPServer(
+      { name: '@modelcontextprotocol/server-filesystem', transport: 'stdio', command: 'x' },
+      { transport: fake.transport },
+    )
+    const [def] = discoverTools(session)
+    expect(def?.name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+    const result = await def?.execute?.({}, {} as ToolContext)
+    expect(result).toEqual({ _tag: 'success', output: 'ok' })
+    // 调用必须带远端原始工具名（规范化只作用于暴露给模型的函数名）
+    expect(fake.sent.find((s) => s.method === 'tools/call')?.params).toEqual({
+      name: 'fs.read_file',
+      arguments: {},
+    })
+  })
+
+  it('超长服务器名/工具名截断后仍满足函数名文法且保持工具名可辨识', async () => {
+    const longTool = `very_${'long_'.repeat(20)}tool_name`
+    const fake = scriptedTransport({
+      initialize: { protocolVersion: '2025-03-26', capabilities: {} },
+      'tools/list': {
+        tools: [{ name: longTool, description: 'd', inputSchema: { type: 'object' } }],
+      },
+      'tools/call': { content: [{ type: 'text', text: 'ok' }], isError: false },
+    })
+    const session = await connectMCPServer(
+      { name: 's'.repeat(80), transport: 'stdio', command: 'x' },
+      { transport: fake.transport },
+    )
+    const [def] = discoverTools(session)
+    expect(def?.name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+    expect(def?.name.endsWith('tool_name')).toBe(true)
+  })
+
   it('maps isError results to error ToolResult', async () => {
     const fake = scriptedTransport({
       initialize: {},
