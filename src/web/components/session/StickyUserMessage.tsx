@@ -79,6 +79,12 @@ const nav = css`
  * - 占位容器恒定占位，杜绝 active 切换的抖动。
  * - active 选取规则：遍历 DOM 中所有 [data-role="user"]，取最后一个 top 已越过
  *   STICKY_H 阈值的；没有（首条用户消息顶部仍在阈值下方）则不显示浮层内容。
+ *
+ * 文本按消息 id（data-msg-id）查表，而不是用 DOM 下标索引 messages 数组：
+ * TimelineChat 用 useVirtualizer 窗口化渲染，DOM 里的用户消息只是数组的**子集**
+ * （窗口外的段组整体不渲染）——按下标取会显示会话最早的那几条消息，与浮层实际
+ * 滞留的元素不是同一条。上下箭头的可达范围同理以渲染子集为准（scrollToIndex 只能
+ * 滚动到已渲染的元素），故禁用态按渲染数判定。
  */
 export function StickyUserMessage({
   containerRef,
@@ -87,7 +93,10 @@ export function StickyUserMessage({
   containerRef: RefObject<HTMLDivElement | null>
   messages: StickyUser[]
 }) {
-  const [activeIdx, setActiveIdx] = useState(-1)
+  /** 活动项：渲染子集下标（滚动导航用）+ 消息 id（文本查表用）+ 渲染总数（禁用态）。 */
+  const [active, setActive] = useState<{ idx: number; id: string; renderedCount: number } | null>(
+    null,
+  )
 
   const userEls = useCallback((): HTMLElement[] => {
     const container = containerRef.current
@@ -103,7 +112,7 @@ export function StickyUserMessage({
       raf = 0
       const els = userEls()
       if (els.length === 0) {
-        setActiveIdx(-1)
+        setActive(null)
         return
       }
       const top = container.getBoundingClientRect().top
@@ -114,7 +123,8 @@ export function StickyUserMessage({
         if (el.getBoundingClientRect().top < top + STICKY_H + 1) idx = i
         else break
       }
-      setActiveIdx(idx)
+      const id = idx >= 0 ? (els[idx]?.dataset.msgId ?? '') : ''
+      setActive(id ? { idx, id, renderedCount: els.length } : null)
     }
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(update)
@@ -145,17 +155,17 @@ export function StickyUserMessage({
     [containerRef, userEls],
   )
 
-  const msg = activeIdx >= 0 ? messages[activeIdx] : undefined
+  const msg = active ? messages.find((m) => m.id === active.id) : undefined
 
   return (
     <div className={placeholder} data-testid="sticky-user-placeholder">
-      {msg && (
+      {msg && active && (
         <div className={bar} data-testid="sticky-user">
           <button
             type="button"
             className={nav}
-            onClick={() => scrollToIndex(activeIdx - 1)}
-            disabled={activeIdx <= 0}
+            onClick={() => scrollToIndex(active.idx - 1)}
+            disabled={active.idx <= 0}
             aria-label="上一条用户消息"
             data-testid="sticky-user-prev"
           >
@@ -164,7 +174,7 @@ export function StickyUserMessage({
           <button
             type="button"
             className={jump}
-            onClick={() => scrollToIndex(activeIdx)}
+            onClick={() => scrollToIndex(active.idx)}
             title={msg.text}
             data-testid="sticky-user-jump"
           >
@@ -173,8 +183,8 @@ export function StickyUserMessage({
           <button
             type="button"
             className={nav}
-            onClick={() => scrollToIndex(activeIdx + 1)}
-            disabled={activeIdx >= messages.length - 1}
+            onClick={() => scrollToIndex(active.idx + 1)}
+            disabled={active.idx >= active.renderedCount - 1}
             aria-label="下一条用户消息"
             data-testid="sticky-user-next"
           >

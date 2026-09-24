@@ -113,4 +113,39 @@ describe('CodeEditor 未保存编辑保持', () => {
     expect(container.querySelector('[data-testid="external-change-banner"]')).toBeNull()
     expect(container.textContent).not.toContain('保存*')
   })
+
+  // 复现：跳转定位用 `host.querySelectorAll('.cm-line')[start - 1]`——CodeMirror
+  // 只渲染视口内的行（其余行由 .cm-gap 占位），DOM 下标 ≠ 文档行号：目标行在首屏
+  // 之外时取不到元素，跳转静默不发生（点开「📄 file.ts:1200」引用后编辑器停在文首）。
+  it('跳转到首屏之外的行时滚动到该行（虚拟化下该行不在初始 DOM 中）', async () => {
+    const doc = Array.from({ length: 5000 }, (_, i) => `line ${i + 1}`).join('\n')
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <ThemeProvider>
+          <CodeEditor path="big.ts" initial={doc} highlightRange={{ start: 1200, end: 1200 }} />
+        </ThemeProvider>
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(liveView(container)).toBeTruthy())
+    const host = container.querySelector('.cm-editor')?.parentElement as HTMLElement
+    // 目标行 1200 远离文首：滚动位置必须落在该行附近（按行高估算 ≥ 数 px/行），
+    // 而非停在 scrollTop=0（未滚动）。
+    await waitFor(() => expect(host.scrollTop).toBeGreaterThan(1000))
+  })
+
+  it('跳转到文首附近的行时不产生大幅滚动', async () => {
+    const doc = Array.from({ length: 5000 }, (_, i) => `line ${i + 1}`).join('\n')
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <ThemeProvider>
+          <CodeEditor path="big.ts" initial={doc} highlightRange={{ start: 2, end: 2 }} />
+        </ThemeProvider>
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(liveView(container)).toBeTruthy())
+    const host = container.querySelector('.cm-editor')?.parentElement as HTMLElement
+    expect(host.scrollTop).toBeLessThan(1000)
+  })
 })

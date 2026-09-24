@@ -40,12 +40,15 @@ function mockRects(rectByMsgId: Record<string, number>, containerTop = 0) {
   })
 }
 
-function Harness({ messages }: { messages: StickyUser[] }) {
+/** rendered：只把这些 id 的消息挂进 DOM——模拟 TimelineChat 的虚拟化
+ *  （窗口外的段组整体不渲染，DOM 里的 [data-role="user"] 只是消息数组的子集）。 */
+function Harness({ messages, rendered }: { messages: StickyUser[]; rendered?: string[] }) {
   const ref = useRef<HTMLDivElement>(null)
+  const mounted = rendered ? messages.filter((m) => rendered.includes(m.id)) : messages
   return (
     <div ref={ref}>
       <StickyUserMessage containerRef={ref} messages={messages} />
-      {messages.map((m) => (
+      {mounted.map((m) => (
         <div data-role="user" data-msg-id={m.id} key={m.id}>
           {m.text}
         </div>
@@ -130,5 +133,49 @@ describe('StickyUserMessage', () => {
     fireEvent.click(screen.getByTestId('sticky-user-next'))
     // 目标 u2：top 100 - 0 - 36 = 64
     expect(scrollBy).toHaveBeenCalledWith({ top: 64, behavior: 'smooth' })
+  })
+
+  // 复现：activeIdx 是「DOM 中已渲染用户消息」的下标，却被当作 messages 全量数组的
+  // 下标使用。TimelineChat 用 useVirtualizer 窗口化渲染（overscan 4），滚到中段时
+  // 早期用户消息整体不在 DOM 里——浮层于是显示消息数组里第 0/1 条（会话最早的问题），
+  // 与它实际滞留的元素不是同一条。
+  it('虚拟化下 DOM 只渲染部分用户消息时，浮层显示滞留的那条而非数组首条', () => {
+    mockRects({ u3: -50, u4: 100 })
+    render(
+      <Harness
+        messages={[
+          { id: 'u1', text: '第一问' },
+          { id: 'u2', text: '第二问' },
+          { id: 'u3', text: '第三问' },
+          { id: 'u4', text: '第四问' },
+          { id: 'u5', text: '第五问' },
+        ]}
+        rendered={['u3', 'u4']}
+      />,
+    )
+    expect(screen.getByTestId('sticky-user-jump').textContent).toBe('第三问')
+    // 渲染子集内 u3 之前无元素 → 上一条禁用；之后有 u4 → 下一条可用
+    expect(screen.getByTestId('sticky-user-prev')).toBeDisabled()
+    expect(screen.getByTestId('sticky-user-next')).toBeEnabled()
+  })
+
+  // 复现：下一条的禁用判定用 messages.length（全量），而滚动目标取 DOM 子集下标——
+  // 全量长度远大于渲染数时按钮永远可用，点击后 scrollToIndex 找不到元素、静默无反应。
+  it('虚拟化下活动项已是渲染子集末条时，下一条禁用', () => {
+    mockRects({ u3: -50 })
+    render(
+      <Harness
+        messages={[
+          { id: 'u1', text: '第一问' },
+          { id: 'u2', text: '第二问' },
+          { id: 'u3', text: '第三问' },
+          { id: 'u4', text: '第四问' },
+          { id: 'u5', text: '第五问' },
+        ]}
+        rendered={['u3']}
+      />,
+    )
+    expect(screen.getByTestId('sticky-user-jump').textContent).toBe('第三问')
+    expect(screen.getByTestId('sticky-user-next')).toBeDisabled()
   })
 })

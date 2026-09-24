@@ -1,10 +1,12 @@
+import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 import { ReferenceContext } from '@/contexts/ReferenceContext.js'
 import { ThemeProvider } from '@/contexts/ThemeContext.js'
-import { FilePreview } from '@/views/FilePreview.js'
+import { computeLineRange, FilePreview } from '@/views/FilePreview.js'
 
 // mock CodeEditor：本文件聚焦 FilePreview 行为（脏关闭守卫等），
 // 通过 mock-dirty 按钮驱动 onDirtyChange，避免在 jsdom 中模拟 CodeMirror 输入。
@@ -318,5 +320,57 @@ describe('FilePreview', () => {
     })
     fireEvent.click(screen.getByTestId('quote-selection'))
     expect(insertSnippetReference).toHaveBeenCalledWith('notes.txt', 1, 1, 'hello world')
+  })
+
+  // 复现：引用行号此前取 `.cm-line` 在 DOM 中的下标——CodeMirror 只渲染视口内的行
+  // （其余行由 .cm-gap 占位），编辑器滚到文件中段时 DOM 里第一条渲染行已不是第 1 行，
+  // 下标即「可见区第几行」：选中第 915 行引用出的却是 1-2 行，LLM 与点击跳转都拿到
+  // 错误位置。（happy-dom 无布局，用 content 元素的可视矩形模拟「已滚动」。）
+  it('编辑器已滚动（DOM 只含视口内行）时，引用行号按文档行号计算', async () => {
+    const doc = Array.from({ length: 5000 }, (_, i) => `line ${i + 1}`).join('\n')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const origRect = Element.prototype.getBoundingClientRect
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      if (this.classList?.contains('cm-content')) {
+        return {
+          top: -5000,
+          bottom: 300,
+          left: 0,
+          right: 800,
+          width: 800,
+          height: 5300,
+          x: 0,
+          y: -5000,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      return origRect.call(this)
+    })
+    const view = new EditorView({ state: EditorState.create({ doc }), parent: host })
+    view.requestMeasure()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // 前置断言：渲染出的行只是文档子集（视口从中段开始，前置行整体缺失）——
+    // 否则本用例测不到「DOM 下标 ≠ 文档行号」。
+    const renderedTexts = Array.from(host.querySelectorAll('.cm-line')).map(
+      (el) => el.textContent ?? '',
+    )
+    expect(renderedTexts).toContain('line 915')
+    expect(renderedTexts).not.toContain('line 500')
+    expect(renderedTexts.length).toBeLessThan(200)
+
+    const target = Array.from(host.querySelectorAll('.cm-line')).find(
+      (el) => el.textContent === 'line 915',
+    )
+    expect(target).toBeTruthy()
+    const textNode = target?.firstChild as Text
+    const range = document.createRange()
+    range.setStart(textNode, 0)
+    range.setEnd(textNode, textNode.length)
+
+    expect(computeLineRange(host, range, doc, 'line 915')).toEqual({ start: 915, end: 915 })
+    view.destroy()
   })
 })

@@ -212,23 +212,23 @@ export function CodeEditor({
     else applyContent(initial)
   }, [initial, applyContent])
 
-  // highlightRange 变化时：dispatch 高亮副作用 + 滚动起始行至视口中央。
-  // 滚动 hostRef（实际溢出容器）而非 CodeMirror 的 cm-scroller——
-  // 本组件布局下 hostRef 才是 overflow:auto 的滚动容器，cm-scroller 撑满全高不滚动。
+  // highlightRange 变化时：dispatch 高亮副作用 + 把起始行滚动到视口中央。
+  // 目标位置取 CodeMirror 的高度表（文档坐标）而非 DOM：`.cm-line` 只覆盖视口内的
+  // 行，首屏之外的行没有对应元素——按 DOM 下标取行元素对长文件恒失败（点开
+  // 「📄 file.ts:1200」引用后编辑器停在文首，跳转静默不发生）。
+  // 滚动 hostRef（实际溢出容器）而非 cm-scroller——本组件布局下 hostRef 才是
+  // overflow:auto 的滚动容器，cm-scroller 撑满全高不滚动。
   useEffect(() => {
     const view = viewRef.current
-    if (view) {
-      view.dispatch({ effects: setHighlightRange.of(highlightRange ?? null) })
-    }
+    if (!view) return
+    view.dispatch({ effects: setHighlightRange.of(highlightRange ?? null) })
     if (!highlightRange) return
     const host = hostRef.current
     if (!host) return
-    const lines = host.querySelectorAll('.cm-line')
-    const line = lines[highlightRange.start - 1] as HTMLElement | undefined
-    if (!line) return
-    const hostRect = host.getBoundingClientRect()
-    const lineRect = line.getBoundingClientRect()
-    host.scrollTop += lineRect.top - hostRect.top - hostRect.height / 2 + lineRect.height / 2
+    const doc = view.state.doc
+    const lineNo = Math.max(1, Math.min(highlightRange.start, doc.lines))
+    const block = view.lineBlockAt(doc.line(lineNo).from)
+    host.scrollTop = Math.max(0, block.top - (host.clientHeight - block.height) / 2)
   }, [highlightRange])
 
   /** 保存：force=true 跳过冲突检查（用户在冲突框中选择「覆盖保存」）。 */

@@ -1,3 +1,4 @@
+import { EditorView } from '@codemirror/view'
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
@@ -113,27 +114,19 @@ function extOf(name: string): string {
 }
 
 /** 计算选区在文件中的行范围（1-indexed）。
- * 优先用 CodeMirror 的 .cm-line 元素精确计数；回退到全文查找选中文本首次出现位置后按换行计数。 */
-function computeLineRange(
+ * 优先用 CodeMirror 的文档坐标（posAtDOM → doc.lineAt）：`.cm-line` 只是**视口内**
+ * 渲染出的行（其余行由 .cm-gap 占位，见 CodeMirror 的 computeBlockGapDeco），
+ * DOM 下标 ≠ 文档行号——编辑器滚到文件中段时下标恒从 1 起算，选中第 915 行引用出的
+ * 却是 1-2 行（LLM 拿到错误位置、点击引用跳转到错误行）。
+ * 回退到全文查找选中文本首次出现位置后按换行计数（非 CM 渲染的内容）。 */
+export function computeLineRange(
   container: HTMLElement,
   range: Range,
   fullContent: string,
   selText: string,
 ): { start: number; end: number } {
-  const lines = container.querySelectorAll('.cm-line')
-  if (lines.length > 0) {
-    let startLine = -1
-    let endLine = -1
-    lines.forEach((line, i) => {
-      const n = i + 1
-      if (startLine === -1 && line.contains(range.startContainer)) startLine = n
-      if (line.contains(range.endContainer)) endLine = n
-    })
-    if (startLine !== -1 && endLine !== -1) {
-      if (endLine < startLine) [startLine, endLine] = [endLine, startLine]
-      return { start: startLine, end: endLine }
-    }
-  }
+  const precise = cmLineRange(container, range)
+  if (precise) return precise
   if (fullContent && selText) {
     const idx = fullContent.indexOf(selText)
     if (idx >= 0) {
@@ -143,6 +136,35 @@ function computeLineRange(
     }
   }
   return { start: 1, end: 1 }
+}
+
+/** 选区在 CodeMirror 文档坐标下的行范围；选区不在 CM 编辑器内时返回 null。 */
+function cmLineRange(container: HTMLElement, range: Range): { start: number; end: number } | null {
+  const lineElOf = (node: Node | undefined | null): HTMLElement | null => {
+    if (!node) return null
+    const el = node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node.parentElement
+    return el?.closest('.cm-line') ?? null
+  }
+  const startEl = lineElOf(range.startContainer)
+  if (!startEl || !container.contains(startEl)) return null
+  const view = EditorView.findFromDOM(startEl)
+  if (!view) return null
+  try {
+    const doc = view.state.doc
+    const startPos = view.posAtDOM(range.startContainer, range.startOffset)
+    // 选区终点不在同一编辑器内（跨出编辑器的选择）→ 退化为单行范围
+    const endEl = lineElOf(range.endContainer)
+    const endPos =
+      endEl && EditorView.findFromDOM(endEl) === view
+        ? view.posAtDOM(range.endContainer, range.endOffset)
+        : startPos
+    const a = doc.lineAt(startPos).number
+    const b = doc.lineAt(endPos).number
+    return a <= b ? { start: a, end: b } : { start: b, end: a }
+  } catch {
+    // 节点已脱离文档（渲染窗口变化等）：交回全文查找兜底
+    return null
+  }
 }
 
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
