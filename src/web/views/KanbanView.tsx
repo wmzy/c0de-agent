@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useRef, useState } from 'react'
 import { BoardConfigDialog } from '@/components/kanban/BoardConfigDialog.js'
 import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
+import { computeDropPosition } from '@/components/kanban/drop-position.js'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
 import { type KanbanCard, kanbanAPI } from '@/services/kanban.js'
 
@@ -72,9 +73,6 @@ const loading = css`
   color: var(--haze-color-text-secondary);
   font-size: 14px;
 `
-
-/** 与后端 kanban store 的 POSITION_GAP 一致（拖拽中点插入的半距）。 */
-const POSITION_GAP = 1000
 
 const errorText = css`
   display: flex;
@@ -141,9 +139,9 @@ export function KanbanView({ projectId }: KanbanViewProps) {
 
   /**
    * dragEnd: 根据释放位置计算目标 columnId 和 position。
-   * dnd-kit 的 over.id 可能是另一个卡片（插入其位置）或一个列（空白区）。
-   * P2-7：落在卡片上时取「前一张卡片与目标卡片的中点」作为 position——
-   * 此前直接复用 overCard.position 造成同列多卡同值、排序不稳定。
+   * dnd-kit 的 over.id 可能是另一个卡片（落到其槽位）或一个列（空白区）。
+   * 落位计算走 drop-position.ts 的纯函数——与拖拽预览（verticalListSortingStrategy）
+   * 同语义：落点顺序必须等于松手前用户看到的顺序。
    */
   const handleDragEnd = (e: DragEndEvent) => {
     const { active, over } = e
@@ -158,33 +156,16 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     const overCard = board.cards.find((c) => c.id === overId)
     const targetColumnId = overCard ? overCard.columnId : overId
 
-    // 计算插入位置：落在卡片上 → 中点插入（激活卡片原在目标卡片下方时插到其后，
-    // 否则插到其前）；落在列空白 → 追加末尾。
-    // 落点与当前位置等价（前驱就是自己）→ 无位移，跳过。
+    // 落在卡片上 → 按目标列卡片（position 升序）算落位；落在列空白 → position
+    // 省略，由服务端追加到列尾。
     let position: number | undefined
     if (overCard) {
       const columnCards = board.cards
         .filter((c) => c.columnId === overCard.columnId)
         .sort((a, b) => a.position - b.position)
-      const overIdx = columnCards.findIndex((c) => c.id === overCard.id)
-      const activeIdx = columnCards.findIndex((c) => c.id === activeCard.id)
-      if (overIdx === -1) {
-        position = overCard.position
-      } else if (activeIdx === -1 || activeIdx < overIdx) {
-        // 激活卡片不在该列或原在目标上方：插到目标之前
-        const prev = columnCards[overIdx - 1]
-        if (prev && prev.id === activeCard.id) return // 位置未变
-        position = prev
-          ? (prev.position + overCard.position) / 2
-          : overCard.position - POSITION_GAP / 2
-      } else {
-        // 激活卡片原在目标下方：插到目标之后
-        const next = columnCards[overIdx + 1]
-        if (next && next.id === activeCard.id) return // 位置未变
-        position = next
-          ? (next.position + overCard.position) / 2
-          : overCard.position + POSITION_GAP / 2
-      }
+      const dropPosition = computeDropPosition(columnCards, activeCard.id, overCard.id)
+      if (dropPosition === null) return // 落点与当前位置等价：无位移
+      position = dropPosition
     }
 
     moveMutation.mutate({ cardId: activeCard.id, columnId: targetColumnId, position })
