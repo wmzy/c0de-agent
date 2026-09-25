@@ -175,6 +175,17 @@ function formatHashlineError(
 /**
  * Build a mapping from normalized string positions to original string positions.
  * Used to map fuzzy match results back to the original content.
+ *
+ * normalize 的两条折叠规则各自需要**专门**的推进分支（此前只有一个「原文是空白
+ * 就只推进原文指针」的分支，掩盖了两条规则的区别）：
+ *  - `\r\n` → `\n`：原文的 \r 不产出任何 normalized 字符，只推进原文指针；
+ *  - `[ \t]+` → `' '`：原文整个空白 run 只产出**一个**空格，必须连同 normalized
+ *    侧的那个空格一起消费。
+ * 缺第二个分支时，run 首字符是空格（与 normalized 的空格相等，走对齐分支）、
+ * 其余空格走「只推进原文」分支，恰好正确；而 run 首字符是 tab 时首个不对齐处
+ * 落进「理论不可达」的兜底分支（两侧同时推进），此后整串错位一格——匹配区终点
+ * 落到目标之后，替换连紧随的换行与下一行首字符一起吃掉（静默源码损坏，工具
+ * 仍报 success）。
  */
 function buildPositionMapping(original: string, normalized: string): Map<number, number> {
   const map = new Map<number, number>()
@@ -183,23 +194,39 @@ function buildPositionMapping(original: string, normalized: string): Map<number,
 
   while (origIdx < original.length && normIdx < normalized.length) {
     map.set(normIdx, origIdx)
+    const origChar = original[origIdx]
+    const normChar = normalized[normIdx]
 
-    if (original[origIdx] === normalized[normIdx]) {
+    if (origChar === normChar) {
       origIdx++
       normIdx++
-    } else if (
-      original[origIdx] === ' ' ||
-      original[origIdx] === '\t' ||
-      // \r：CRLF 行尾在 normalize 中被折叠为 \n——映射时原文的 \r 是
-      // 「原文多余的空白」，仅前进原文指针（normIdx 停住等 \n 对齐）。
-      original[origIdx] === '\r'
-    ) {
-      origIdx++
-    } else {
-      // Shouldn't happen with proper normalization
-      origIdx++
-      normIdx++
+      continue
     }
+    // \r：CRLF 行尾在 normalize 中被折叠为 \n——映射时原文的 \r 是
+    // 「原文多余的空白」，仅前进原文指针（normIdx 停住等 \n 对齐）。
+    if (origChar === '\r') {
+      origIdx++
+      continue
+    }
+    // 空白 run 折叠为单个空格：吃掉整个 run，同时消费 normalized 侧的那个空格。
+    if (normChar === ' ' && (origChar === ' ' || origChar === '\t')) {
+      while (
+        origIdx < original.length &&
+        (original[origIdx] === ' ' || original[origIdx] === '\t')
+      ) {
+        origIdx++
+      }
+      normIdx++
+      continue
+    }
+    // run 的后续空白（normalized 侧无对应字符）：只推进原文指针。
+    if (origChar === ' ' || origChar === '\t') {
+      origIdx++
+      continue
+    }
+    // 理论上不可达（normalize 后两侧应逐字符对齐）：保守同步推进，绝不抛错。
+    origIdx++
+    normIdx++
   }
   // Map the end position
   map.set(normIdx, origIdx)

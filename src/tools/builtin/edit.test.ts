@@ -94,6 +94,32 @@ describe('editTool', () => {
       ctx,
     )
     expect(result._tag).toBe('success')
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('const x = 42\nconst y = 2\n')
+  })
+
+  // 回归：原文空白 run 的**首字符是 tab**（normalized 侧是单个空格）时，
+  // normalized→原文的位置映射在首个不对齐处走错分支并持续漂移——匹配区终点
+  // 落到目标之后，替换连紧随的换行与下一行首字符一起吃掉，工具仍报 success
+  // （静默源码损坏）。多空格 run 因首字符相等走对齐分支而侥幸正确，故此前
+  // 「fuzzy matches with different whitespace」用例未暴露该缺陷。
+  it('keeps surrounding lines when the file uses a tab and oldText uses a space', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'const a\t= 1\nconst b = 2\n')
+    const result = await editTool.execute(
+      { path: 'f.ts', oldText: 'const a = 1', newText: 'const a = 99' },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('const a = 99\nconst b = 2\n')
+  })
+
+  it('keeps following lines when a multiline fuzzy match contains a tab', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'x = 1\t;\ny = 2;\nz = 3;\n')
+    const result = await editTool.execute(
+      { path: 'f.ts', oldText: 'x = 1 ;\ny = 2;', newText: 'x = 1; y = 2;' },
+      ctx,
+    )
+    expect(result._tag).toBe('success')
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('x = 1; y = 2;\nz = 3;\n')
   })
 
   // 回归：CRLF 文件的 \r 对模型不可见——模型生成的 oldText 恒用 \n。
