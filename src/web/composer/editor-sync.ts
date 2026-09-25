@@ -1,5 +1,11 @@
 import { css } from '@linaria/core'
-import { getCursorPosition, setCursorPosition } from '@/composer/editor-dom.js'
+import {
+  blockBoundaryLength,
+  getCursorPosition,
+  isBlockElement,
+  isRedundantTrailingBr,
+  setCursorPosition,
+} from '@/composer/editor-dom.js'
 import type { Prompt, SnippetPart, TerminalPart } from '@/composer/types.js'
 import { DEFAULT_PROMPT } from '@/composer/types.js'
 
@@ -211,16 +217,23 @@ function parseFromDOM(editor: HTMLElement): Prompt {
       buffer += '\n'
       return
     }
+    // 块级元素（浏览器段落分隔）：其内容另起一行——Chrome 对多行文本执行
+    // execCommand('insertText') 的产物除首行外每行包一个 <div>，粘贴路径正是
+    // 这条。此前把换行加在块**之后**且仅限非末块：末块边界与「块跟在行内内容
+    // 之后」的边界全部丢失，多行粘贴被静默合并成一行（"l1<div>l2</div>" → "l1l2"）。
+    // 块内末位 <br> 不重复计换行（空行块 <div><br></div> 的行已由块边界表达）。
+    if (isBlockElement(el)) {
+      buffer += '\n'.repeat(blockBoundaryLength(el))
+      for (const child of Array.from(el.childNodes)) {
+        if (isRedundantTrailingBr(el, child)) continue
+        visit(child)
+      }
+      return
+    }
     for (const child of Array.from(el.childNodes)) visit(child)
   }
 
-  const children = Array.from(editor.childNodes)
-  children.forEach((child, index) => {
-    const isBlock =
-      child.nodeType === Node.ELEMENT_NODE && ['DIV', 'P'].includes((child as HTMLElement).tagName)
-    visit(child)
-    if (isBlock && index < children.length - 1) buffer += '\n'
-  })
+  for (const child of Array.from(editor.childNodes)) visit(child)
 
   flushText()
   if (parts.length === 0) return [...DEFAULT_PROMPT]

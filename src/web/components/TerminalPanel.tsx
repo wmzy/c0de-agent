@@ -4,6 +4,7 @@ import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PaneSplitContainer } from '@/components/PaneSplitContainer.js'
 import type { SplitDirection, UseTerminalReturn } from '@/hooks/useTerminal.js'
+import { lockBodyCursor, restoreBodyCursor } from '@/utils/drag-cursor.js'
 
 interface TerminalPanelProps {
   terminal: UseTerminalReturn
@@ -319,13 +320,8 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   // 拖拽时设置全局光标
   useEffect(() => {
     if (!dragging) return
-    const { cursor, userSelect } = document.body.style
-    document.body.style.cursor = 'row-resize'
-    document.body.style.userSelect = 'none'
-    return () => {
-      document.body.style.cursor = cursor
-      document.body.style.userSelect = userSelect
-    }
+    const snapshot = lockBodyCursor('row-resize')
+    return () => restoreBodyCursor(snapshot)
   }, [dragging])
 
   const handleNewTab = useCallback(() => {
@@ -394,6 +390,7 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
 
       const sizes = [...tab.split.sizes]
       const total = sizes.reduce((a, b) => a + b, 0) || 1
+      const snapshot = lockBodyCursor(direction === 'horizontal' ? 'col-resize' : 'row-resize')
 
       const onMove = (ev: PointerEvent) => {
         const delta = direction === 'horizontal' ? ev.clientX - e.clientX : ev.clientY - e.clientY
@@ -419,18 +416,13 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
       const onUp = () => {
         document.removeEventListener('pointermove', onMove)
         document.removeEventListener('pointerup', onUp)
-        const { cursor, userSelect } = document.body.style
-        document.body.style.cursor = ''
-        document.body.style.userSelect = ''
-        // 恢复原来的（无操作，因为上面已经清了）
-        document.body.style.cursor = cursor
-        document.body.style.userSelect = userSelect
+        // 恢复拖拽前的内联样式：此前读的是当前值（已是拖拽光标/user-select:none），
+        // 清空后又写回同一份值——全站光标永久停在 col-resize、文本选择永久禁用。
+        restoreBodyCursor(snapshot)
       }
 
       document.addEventListener('pointermove', onMove)
       document.addEventListener('pointerup', onUp)
-      document.body.style.cursor = direction === 'horizontal' ? 'col-resize' : 'row-resize'
-      document.body.style.userSelect = 'none'
     },
     [tabs, setPaneSizes, minPaneFlex],
   )

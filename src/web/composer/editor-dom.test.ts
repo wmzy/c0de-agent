@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { getCursorPosition, setCursorPosition } from '@/composer/editor-dom.js'
+import { getCursorPosition, getTextLength, setCursorPosition } from '@/composer/editor-dom.js'
+import { parseFromDOM } from '@/composer/editor-sync.js'
+import { promptToText } from '@/composer/types.js'
 
 afterEach(() => document.body.replaceChildren())
 
@@ -65,6 +67,49 @@ describe('零宽空格 (\u200B) 光标处理', () => {
   })
 })
 
+describe('块级行分隔的偏移口径', () => {
+  // 浏览器粘贴多行文本产生 <div> 行分隔（见 editor-sync.test.ts 的同名说明）。
+  // 偏移模型必须与 parseFromDOM 的文本流同口径——否则光标偏移与 prompt 偏移
+  // 错位（popover 的 @token 定位、replacePromptRange 替换范围全部偏移）。
+  it('含 <div> 行分隔的 DOM 上 setCursor→getCursor 往返一致', () => {
+    const el = makeEditor('aa<div>bb</div>')
+    // 文本流 "aa\nbb"（长度 5）：偏移 2 = 行尾，3 = 次行行首
+    for (const pos of [0, 1, 2, 3, 4, 5]) {
+      setCursorPosition(el, pos)
+      expect(getCursorPosition(el)).toBe(pos)
+    }
+  })
+
+  it('多行块 DOM 的往返一致（含空行块与块内 <br>）', () => {
+    const el = makeEditor('l1<div>l2</div><div><br></div><div>l4<br>l5</div>')
+    for (const pos of [0, 2, 3, 4, 5, 6, 7, 9, 10, 11]) {
+      setCursorPosition(el, pos)
+      expect(getCursorPosition(el)).toBe(pos)
+    }
+  })
+
+  it('偏移长度与 parseFromDOM 的文本流长度一致', () => {
+    const cases = [
+      'a',
+      'a<br>b',
+      'l1<div>l2</div>',
+      'l1<div>l2</div><div>l3</div>',
+      '<div>a</div><div>b</div>',
+      'p<div><br></div>',
+      'a<div><br></div><div>b</div>',
+      'a<div>l1<br>l2</div>',
+      'a<span>x</span><div>y</div>',
+      '<div>a<div>b</div></div>',
+      'a<div>b<br></div>',
+      '\u200B',
+    ]
+    for (const html of cases) {
+      const el = makeEditor(html)
+      expect(getTextLength(el), html).toBe(promptToText(parseFromDOM(el)).length)
+    }
+  })
+})
+
 describe('嵌套元素内的光标定位', () => {
   // 复现：setCursorPosition 只在节点本身是文本节点时定位，落在嵌套元素
   // （workflowz 高亮 [data-wf] span、粘贴带来的格式化 span 等）内部的偏移
@@ -102,6 +147,57 @@ describe('嵌套元素内的光标定位', () => {
     for (const pos of [0, 1, 2, 3, 4, 5, 6, 7]) {
       setCursorPosition(el, pos)
       expect(getCursorPosition(el)).toBe(pos)
+    }
+  })
+})
+
+describe('随机 DOM 的偏移往返（模糊测试）', () => {
+  /** 确定性 PRNG（xorshift32）：失败可复现，不依赖随机种子。 */
+  function makeRandom(seed: number): () => number {
+    let state = seed
+    return () => {
+      state ^= state << 13
+      state ^= state >>> 17
+      state ^= state << 5
+      return (state >>> 0) / 0x100000000
+    }
+  }
+
+  /** 随机生成一段 DOM：文本 / <br> / 块级行（<div>/<p>）/ 嵌套 span / 零宽空格。 */
+  function randomHtml(rnd: () => number, depth = 0): string {
+    let html = ''
+    const count = 1 + Math.floor(rnd() * 4)
+    for (let i = 0; i < count; i++) {
+      const pick = rnd()
+      if (pick < 0.4) {
+        html += ['a', 'bc', 'l1', 'x y', '\u200B', '中'][Math.floor(rnd() * 6)] ?? 'a'
+      } else if (pick < 0.6) {
+        html += '<br>'
+      } else if (pick < 0.8 || depth >= 2) {
+        const tag = rnd() < 0.7 ? 'div' : 'p'
+        html += `<${tag}>${randomHtml(rnd, depth + 1)}</${tag}>`
+      } else {
+        html += `<span>${randomHtml(rnd, depth + 1)}</span>`
+      }
+    }
+    return html
+  }
+
+  it('setCursor→getCursor 往返一致，且偏移长度与 prompt 文本流一致', () => {
+    const rnd = makeRandom(0x5eed)
+    for (let round = 0; round < 120; round++) {
+      const html = randomHtml(rnd)
+      const el = makeEditor(html)
+      const text = promptToText(parseFromDOM(el))
+      expect(getTextLength(el), html).toBe(text.length)
+      // 采样偏移（全量 + 边界）往返：光标偏移即 prompt 偏移
+      const offsets = new Set<number>([0, 1, 2, 3])
+      for (let p = 0; p <= text.length; p++) offsets.add(p)
+      for (const p of offsets) {
+        if (p > text.length) continue
+        setCursorPosition(el, p)
+        expect(getCursorPosition(el), `${html} @${p}`).toBe(p)
+      }
     }
   })
 })

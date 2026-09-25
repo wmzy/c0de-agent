@@ -3,6 +3,7 @@ import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MobileNav } from '@/components/MobileNav.js'
 import { DESKTOP, MOBILE } from '@/styles/breakpoints.js'
+import { lockBodyCursor, restoreBodyCursor } from '@/utils/drag-cursor.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
 // 三栏宽度常量：左 sidebar / 右 panel 各自可拖拽，中间 main flex 填充剩余空间。
@@ -195,13 +196,8 @@ export function Layout({
   const dragging = sidebarResize.dragging || panelResize.dragging
   useEffect(() => {
     if (!dragging) return
-    const { cursor, userSelect } = document.body.style
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    return () => {
-      document.body.style.cursor = cursor
-      document.body.style.userSelect = userSelect
-    }
+    const snapshot = lockBodyCursor('col-resize')
+    return () => restoreBodyCursor(snapshot)
   }, [dragging])
 
   return (

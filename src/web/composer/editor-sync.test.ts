@@ -84,6 +84,51 @@ describe('parseFromDOM', () => {
   })
 })
 
+describe('parseFromDOM：块级行分隔（浏览器粘贴产物）', () => {
+  // Chrome 对多行文本执行 `document.execCommand('insertText', false, 'l1\nl2')`
+  // 的产物是「首行留作文本节点 + 其余每行包一个 <div>」（Chromium 实测：
+  // 焦点在空编辑器时得到 l1<div>l2</div>，编辑器已有内容时得到 x l1<div>l2</div>）。
+  // 这正是 Composer 的小段多行粘贴路径（handlePaste → execCommand），块边界
+  // 必须算作换行——否则多行粘贴被静默合并成一行。
+  it('首行 + <div> 行：保留换行（不再合并成一行）', () => {
+    const el = makeEditor('l1<div>l2</div>')
+    expect(promptToText(parseFromDOM(el))).toBe('l1\nl2')
+  })
+
+  it('多行粘贴（每行一个 <div>）：全部换行保留', () => {
+    const el = makeEditor('l1<div>l2</div><div>l3</div>')
+    expect(promptToText(parseFromDOM(el))).toBe('l1\nl2\nl3')
+  })
+
+  it('行内内容 + <div> 行：行内内容的行边界同样保留', () => {
+    const el = makeEditor('head l1<div>l2</div>')
+    expect(promptToText(parseFromDOM(el))).toBe('head l1\nl2')
+  })
+
+  it('整块 <div>：首块不产生前导空行', () => {
+    const el = makeEditor('<div>a</div><div>b</div>')
+    expect(promptToText(parseFromDOM(el))).toBe('a\nb')
+  })
+
+  it('空行块 <div><br></div>：块边界表达该行，不额外多出一行', () => {
+    // 粘贴 "a\n\nb" 的产物；渲染为 3 行（a / 空 / b）
+    const el = makeEditor('a<div><br></div><div>b</div>')
+    expect(promptToText(parseFromDOM(el))).toBe('a\n\nb')
+    // 粘贴 "p\n" 的产物：p + 一个空行
+    expect(promptToText(parseFromDOM(makeEditor('p<div><br></div>')))).toBe('p\n')
+  })
+
+  it('块内 <br> 换行保留，块内末位 <br> 不重复计行', () => {
+    expect(promptToText(parseFromDOM(makeEditor('a<div>l1<br>l2</div>')))).toBe('a\nl1\nl2')
+    expect(promptToText(parseFromDOM(makeEditor('a<div>b<br></div>')))).toBe('a\nb')
+  })
+
+  it('块级边界与行内元素/嵌套块混排', () => {
+    expect(promptToText(parseFromDOM(makeEditor('a<span>x</span><div>y</div>')))).toBe('ax\ny')
+    expect(promptToText(parseFromDOM(makeEditor('<div>a<div>b</div></div>')))).toBe('a\nb')
+  })
+})
+
 describe('renderPrompt', () => {
   it('把 Prompt 渲染回 DOM（text + file pill）', () => {
     const el = makeEditor('')
