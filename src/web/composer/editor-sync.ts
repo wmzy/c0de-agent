@@ -230,7 +230,10 @@ function parseFromDOM(editor: HTMLElement): Prompt {
       }
       return
     }
-    for (const child of Array.from(el.childNodes)) visit(child)
+    // isBlockElement(el) 的谓词「node is HTMLElement」落在已是 HTMLElement 的
+    // el 上，false 分支被收窄成 never——此处只用 Node.childNodes，改走未收窄的
+    // node 别名（el === node，语义零变化）。
+    for (const child of Array.from(node.childNodes)) visit(child)
   }
 
   for (const child of Array.from(editor.childNodes)) visit(child)

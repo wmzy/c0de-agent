@@ -22,10 +22,27 @@ export const globalStyle = css`
     height: 100%;
   }
   :global(body) {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* CJK 后备栈显式声明：裸 sans-serif 在各平台的 CJK 回退不一致
+     * （Linux 常落到 bitmap/宋体系字体），固定 pingfang/雅黑/Noto 的顺序。 */
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+      'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+    /* reset 未定义 line-height，浏览器 normal 对 CJK 只有 ~1.2，界面文字拥挤 */
+    line-height: 1.5;
     background: var(--haze-color-bg);
     color: var(--haze-color-text);
     -webkit-font-smoothing: antialiased;
+  }
+  /* 等宽栈：裸 monospace 会落到 Courier/点阵字体，质量不可控 */
+  :global(code),
+  :global(pre),
+  :global(kbd),
+  :global(samp) {
+    font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas,
+      'Liberation Mono', 'Noto Sans Mono CJK SC', monospace;
+  }
+  /* 选区颜色随主题：默认蓝/深色下原生选区与 token 配色冲突 */
+  :global(::selection) {
+    background: color-mix(in srgb, var(--haze-color-primary) 24%, transparent);
   }
   :global(button) {
     cursor: pointer;

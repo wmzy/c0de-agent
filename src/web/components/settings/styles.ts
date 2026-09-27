@@ -26,6 +26,12 @@ const field = css`
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+
+  /* 标签文字不随控件宽度压缩（flex 子项默认 shrink:1，长 select 会把
+   * 「主题」这类标签挤成竖排断行） */
+  & > span:first-child {
+    flex-shrink: 0;
+  }
 `
 
 /** 字段内输入控件：弹性宽度、上限 320px。 */
