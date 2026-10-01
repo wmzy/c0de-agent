@@ -7,6 +7,7 @@ import { ProjectIndicator } from '@/components/ProjectIndicator.js'
 import type { AppPaths } from '@/routes.js'
 import { configAPI } from '@/services/config.js'
 import { usageAPI } from '@/services/usage.js'
+import { MOBILE } from '@/styles/breakpoints.js'
 import { formatCost } from '@/utils/format.js'
 import {
   monthTokenSum,
@@ -90,6 +91,14 @@ const costBadge = css`
   }
 `
 
+/** 窄屏隐藏「本月 」前缀仅留金额（顶栏横向空间让位给主导航）；
+ * 完整口径仍在 title 悬停提示与设置页。display:none 不进渲染树，文本契约不变。 */
+const costPrefix = css`
+  ${MOBILE} {
+    display: none;
+  }
+`
+
 const costNear = css`
   color: var(--haze-color-warning);
   border-color: color-mix(in srgb, var(--haze-color-warning) 55%, transparent);
@@ -153,7 +162,14 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
     '。点击前往设置查看用量与成本。'
   const badgeClass = `${costBadge}${overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`
   // formatCost 十进制舍入：toFixed 二进制近似会把 1.005 显示成 $1.00（少一分钱）。
-  const badgeText = `${overAny ? '⚠ ' : nearBudget ? '▲ ' : ''}本月 ${formatCost(cost)}`
+  const statusIcon = overAny ? '⚠ ' : nearBudget ? '▲ ' : ''
+  const badgeText = (
+    <>
+      {statusIcon}
+      <span className={costPrefix}>本月 </span>
+      {formatCost(cost)}
+    </>
+  )
   return projectId ? (
     <TypedLink<AppPaths>
       to="/projects/:projectId/settings"

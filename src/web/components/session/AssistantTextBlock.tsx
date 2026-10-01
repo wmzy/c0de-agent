@@ -25,6 +25,9 @@ const body = css`
 const collapsed = css`
   max-height: 400px;
   overflow: hidden;
+  /* 折叠边缘遮罩淡出（不硬截半行），mask 与本底颜色无关、明暗主题同样成立 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 3.2em), transparent);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 3.2em), transparent);
 `
 
 const btn = css`

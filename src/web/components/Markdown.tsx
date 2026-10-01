@@ -81,6 +81,16 @@ const prose = css`
     vertical-align: -0.08em;
   }
 
+  /* 长无断点 token（超长 URL/标识符）在正文、列表项、表格单元、引用内任意处断行，
+   * 实测缺该护栏时长链接会溢出正文栏遮挡相邻内容。overflow-wrap 可继承，
+   * 覆盖内部锚点；代码块不受影响（pre 自带横向滚动）。 */
+  & p,
+  & li,
+  & td,
+  & blockquote {
+    overflow-wrap: anywhere;
+  }
+
   /* 行内 code：胶囊底色与正文区分；pre 内的 code 由代码块样式接管 */
   & code {
     font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas,
@@ -92,6 +102,8 @@ const prose = css`
     border: 1px solid var(--haze-color-border);
     border-radius: 4px;
     padding: 0.1em 0.35em;
+    /* 长路径/标识符胶囊同样允许令牌内断行 */
+    overflow-wrap: anywhere;
   }
 
   /* 代码块：reset 清掉了 padding，代码此前紧贴容器边缘 */

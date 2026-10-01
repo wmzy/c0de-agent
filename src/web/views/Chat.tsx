@@ -294,8 +294,10 @@ const footerRight = css`
   margin-left: auto;
   flex-shrink: 0;
   ${MOBILE} {
-    /* 窄屏：授权开关与警示 pill 换行独占，pill 允许截断不撑破容器 */
+    /* 窄屏：授权开关与警示 pill 独占整行（flex-basis 强制换行，与 footerLeft 不再共享行宽），
+     * pill 允许截断不撑破容器 */
     flex-wrap: wrap;
+    flex-basis: 100%;
     margin-left: 0;
     max-width: 100%;
     min-width: 0;
@@ -612,29 +614,31 @@ export function Chat({
               ))}
             </div>
           )}
-          <label className={modeToggle}>
+          {/* 开关 label 即状态指示：auto 态标签升级为警示 pill（点击可关闭），
+              不再重复渲染「自动授权」label + 相邻警示条；checkbox 始终同一节点，
+              模式翻转不重建（测试与焦点都依赖节点稳定）。 */}
+          <label
+            className={permissionMode === 'auto' ? `${modeToggle} ${modeWarn}` : modeToggle}
+            data-testid={permissionMode === 'auto' ? 'permission-mode-warning' : undefined}
+            title={
+              permissionMode === 'auto'
+                ? sessionId
+                  ? '本会话自动授权已开启：所有工具（含 bash）免确认执行（会话级覆盖，重启后仍生效）'
+                  : '全局自动授权已开启：所有会话的所有工具（含 bash）免确认执行（写入全局配置，重启后仍生效）'
+                : undefined
+            }
+          >
             <input
               type="checkbox"
               checked={permissionMode === 'auto'}
               onChange={togglePermissionMode}
               data-testid="permission-mode-toggle"
             />
-            自动授权{sessionId ? '（本会话）' : '（全局）'}
+            {permissionMode === 'auto'
+              ? `⚠ 自动授权已开启${sessionId ? '（本会话）' : '（全局，已保存）'}`
+              : `自动授权${sessionId ? '（本会话）' : '（全局）'}`}
           </label>
-          {permissionMode === 'auto' ? (
-            <span
-              className={modeWarn}
-              data-testid="permission-mode-warning"
-              role="status"
-              title={
-                sessionId
-                  ? '本会话自动授权已开启：所有工具（含 bash）免确认执行（会话级覆盖，重启后仍生效）'
-                  : '全局自动授权已开启：所有会话的所有工具（含 bash）免确认执行（写入全局配置，重启后仍生效）'
-              }
-            >
-              ⚠ 自动授权已开启{sessionId ? '（本会话）' : '（全局，已保存）'}
-            </span>
-          ) : (
+          {permissionMode !== 'auto' && (
             <span
               className={modeHint}
               data-testid="permission-mode-hint"

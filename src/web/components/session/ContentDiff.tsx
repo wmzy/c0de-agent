@@ -15,6 +15,9 @@ const wrap = css`
 const collapsed = css`
   max-height: 200px;
   overflow: hidden;
+  /* 折叠边缘遮罩淡出，与 AssistantTextBlock 同口径 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 2.4em), transparent);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 2.4em), transparent);
 `
 
 const btn = css`
