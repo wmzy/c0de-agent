@@ -63,7 +63,7 @@ const sendBtn = css`
   }
   &:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 25%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
   }
   &:disabled {
     color: var(--haze-color-text-muted);
@@ -89,7 +89,7 @@ const appendBtn = css`
   &:focus-visible {
     outline: none;
     border-color: var(--haze-color-primary);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 25%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
   }
   &:disabled {
     color: var(--haze-color-text-muted);

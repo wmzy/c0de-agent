@@ -68,8 +68,9 @@ const delBtn = css`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  /* WCAG 2.5.8 触达目标下限 24px */
+  width: 24px;
+  height: 24px;
   min-height: auto;
   padding: 0;
   border: none;

@@ -99,6 +99,13 @@ const resizerStyle = css`
     &:hover {
       background: var(--haze-color-primary);
     }
+    /* 键盘聚焦：1px 线本身近乎隐形，UA auto 轮廓在暗色下解析为近黑——显式给
+     * primary 轮廓 + 线体高亮，Tab 到分隔条时可定位。 */
+    &:focus-visible {
+      outline: 2px solid var(--haze-color-primary);
+      outline-offset: 2px;
+      background: var(--haze-color-primary);
+    }
     &::before {
       content: '';
       position: absolute;

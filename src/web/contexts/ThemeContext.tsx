@@ -28,6 +28,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement
     root.classList.toggle(darkTheme, resolved === 'dark')
     root.classList.toggle(lightTheme, resolved === 'light')
+    // data-theme 供全局 CSS 做主题分支（shiki 双主题切换、light 态 token 覆写）——
+    // haze 主题类名不可在 linaria 模板里静态引用，以此属性为稳定钩子。
+    root.dataset.theme = resolved
     storageSet('c0de-theme', mode)
   }, [mode, resolved])
 
@@ -38,6 +41,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       const root = document.documentElement
       root.classList.toggle(darkTheme, mql.matches)
       root.classList.toggle(lightTheme, !mql.matches)
+      root.dataset.theme = mql.matches ? 'dark' : 'light'
     }
     mql.addEventListener('change', handler)
     return () => mql.removeEventListener('change', handler)

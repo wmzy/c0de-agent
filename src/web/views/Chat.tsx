@@ -142,7 +142,8 @@ const viewSwitch = css`
     border: none;
     background: transparent;
     color: var(--haze-color-text-secondary);
-    padding: 3px 12px;
+    /* WCAG 2.5.8 触达目标下限 24px（12px 字 ≈ lh15 + 上下 padding 各 5） */
+    padding: 5px 12px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 12px;

@@ -39,7 +39,8 @@ const brand = css`
   align-items: center;
   color: var(--haze-color-text);
   text-decoration: none;
-  min-height: auto;
+  /* WCAG 2.5.8 触达目标下限（顶栏由导航链接撑高，链接自身补齐 24px） */
+  min-height: 24px;
   flex-shrink: 0;
 `
 

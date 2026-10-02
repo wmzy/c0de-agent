@@ -31,7 +31,7 @@ const cliHint = css`
   padding: 8px 12px;
   border-top: 1px solid var(--haze-color-border);
   color: var(--haze-color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
 `
 
 const addBtn = css`

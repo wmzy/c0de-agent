@@ -80,7 +80,7 @@ export const globalStyle = css`
   :global(textarea${NATIVE}:focus) {
     outline: none;
     border-color: var(--haze-color-primary);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 25%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
   }
   :global(input${NATIVE}::placeholder),
   :global(textarea${NATIVE}::placeholder) {
@@ -143,7 +143,7 @@ export const globalStyle = css`
   /* 键盘可达性：Tab 聚焦时与输入控件同款焦点环（鼠标点击不触发） */
   :global(button${NATIVE}:focus-visible) {
     outline: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 25%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
     border-color: var(--haze-color-primary);
   }
   /*
@@ -155,5 +155,41 @@ export const globalStyle = css`
     color: var(--haze-color-text-muted);
     background: var(--haze-color-bg-muted);
     cursor: not-allowed;
+  }
+
+  /*
+   * Shiki 双主题切换：highlightCode 以 themes:{light,dark} 输出——内联样式固定
+   * light 值、--shiki-dark* 变量携带 dark 值，需消费方按主题换读变量。
+   * 主题判定锚点是 ThemeContext 写在 html 上的 data-theme（haze 主题类名不可
+   * 被本文件静态引用），!important 用于压过内联样式。缺这组规则时暗色主题下
+   * 代码块仍是亮色配色（深底黑字近乎不可读）。
+   */
+  :global(html[data-theme='dark'] .shiki),
+  :global(html[data-theme='dark'] .shiki span) {
+    color: var(--shiki-dark) !important;
+    background-color: var(--shiki-dark-bg) !important;
+    font-style: var(--shiki-dark-font-style) !important;
+    font-weight: var(--shiki-dark-font-weight) !important;
+    text-decoration: var(--shiki-dark-text-decoration) !important;
+  }
+
+  /*
+   * light 态 warning token 覆写：haze 默认 oklch(0.769 0.165 70.1) 在白底
+   * 对比度仅 2.1（AA 需 4.5），而该 token 被 15+ 处当正文色（警示条/pill/
+   * git 状态/预算告警）。输出色保持琥珀色相、只压低明度；暗色不动
+   * （dark 值 CR≈11）。实色用途（实心按钮底）随之变深反而更高对比。
+   */
+  :global(html[data-theme='light']) {
+    --haze-color-warning: oklch(0.55 0.12 55);
+  }
+
+  /*
+   * 锚点键盘焦点环：UA 的 outline:auto 在暗色主题解析为近黑色（跟随文字色），
+   * 深色底上不可见——导航链接/品牌/外链此前键盘聚焦无任何可见反馈。
+   */
+  :global(a:focus-visible) {
+    outline: 2px solid var(--haze-color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 `
