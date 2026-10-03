@@ -43,7 +43,11 @@ vi.mock('@xterm/xterm', () => ({
     }
   },
 }))
-vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit() {}
+  },
+}))
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }))
 
 afterEach(() => {
