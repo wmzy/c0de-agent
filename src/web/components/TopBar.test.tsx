@@ -155,6 +155,25 @@ describe('TopBar', () => {
     expect(screen.getByTestId('project-branch').textContent).toContain('develop')
   })
 
+  // 复现：触发器的边框/背景/padding/hover 曾挂在 <button> 内的 <span> 上，
+  // 按钮自身是 padding:0 的裸容器——实测分支触发器按钮 68x22、描边 0px none，
+  // 点击区小于视觉框，且 hover 高亮落在不可点的子元素上。
+  // 契约：视觉样式落在真实 button 上，内层只剩排版（纯样式断言交浏览器实测）。
+  it('项目/分支触发器的视觉框就是可点按钮本身', async () => {
+    state.projects = [{ id: 'p1', name: 'my-app', gitBranch: 'develop' }]
+    await renderAtProject('p1')
+
+    await waitFor(() => expect(screen.getByTestId('project-branch')).toBeTruthy())
+
+    for (const testid of ['project-dropdown-trigger', 'project-branch']) {
+      const inner = screen.getByTestId(testid)
+      // 触发器内容必须包在 button 里，而不是浮在一个无样式的 span 上
+      const triggerBtn = inner.closest('button') as HTMLElement | null
+      expect(triggerBtn).not.toBeNull()
+      expect(triggerBtn?.contains(inner)).toBe(true)
+    }
+  })
+
   it('无项目上下文时不渲染项目指示器', async () => {
     await renderAt('/')
     expect(screen.queryByTestId('project-indicator')).toBeNull()
