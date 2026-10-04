@@ -50,6 +50,28 @@ const settingsScroll = css`
   flex-direction: column;
 `
 
+/**
+ * 配置作用域工具条：标签 + 下拉单行排布。
+ *
+ * 标签禁止收缩（flex 子项默认 shrink:1）：下拉随选项文案自适应宽度，
+ * 会把相邻标签挤到「每行 1–2 字」竖排（实测 5 字「配置作用域」在
+ * 57px 宽的盒子里折成 2 行、36px 高）。与 settings/styles.field 同口径。
+ */
+const scopeBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--haze-color-border);
+  font-size: 12px;
+`
+
+const scopeLabel = css`
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--haze-color-text-secondary);
+`
+
 /** 离开确认弹窗正文。 */
 const dialogBody = css`
   color: var(--haze-color-text-secondary);
@@ -336,18 +358,10 @@ export function Settings() {
 
   return (
     <div className={settingsScroll} data-testid="settings">
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 16px',
-          borderBottom: '1px solid var(--haze-color-border)',
-          fontSize: 12,
-        }}
-      >
-        <span style={{ color: 'var(--haze-color-text-secondary)' }}>配置作用域</span>
+      <div className={scopeBar}>
+        <span className={scopeLabel}>配置作用域</span>
         <SyncedSelect
+          aria-label="配置作用域"
           value={scope}
           onValuesChange={(v) => {
             const next = v as 'global' | 'project'

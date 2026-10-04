@@ -1030,6 +1030,25 @@ describe('Settings — JSON 模式与导入导出', () => {
 })
 
 describe('Settings — 完整配置表单覆盖', () => {
+  // 复现：配置作用域工具条用内联 flex 布局，标签 span 未禁止收缩，
+  // 下拉随选项文案自适应后把它压到 57px，5 个汉字折成 2 行、盒子高 36px
+  // （行高 18px 的两倍），工具条被单行标签撑成两行。标签同时缺少
+  // 关联，select 无可访问名（axe critical select-name）。
+  // 折行修复的样式由浏览器实测把关（见 scopeBar/scopeLabel），
+  // jsdom 不求值 linaria 类，此处锁定可访问名契约。
+  it('配置作用域下拉可按标签文案定位', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // axe select-name：裸 <span> 文本不构成 label，select 无可访问名。
+    const select = screen.getByLabelText('配置作用域') as HTMLSelectElement
+    expect(select).toBe(screen.getByTestId('scope-select'))
+    expect(select).toHaveProperty('value', 'project')
+  })
+
   it('所有配置分区均渲染', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
