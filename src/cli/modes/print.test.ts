@@ -1,9 +1,9 @@
 import { getEventListeners } from 'node:events'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB, migrateDB } from '../../db/index.js'
 import { sessionEntries, sessions } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import type { ChatOptions, ProviderContext } from '../../llm/index.js'
 import { createSession, softDeleteSession } from '../../session/session.js'
 import type { AgentEvent } from '../../shared/types/agent.js'
@@ -13,12 +13,14 @@ import { buildAgentDeps } from '../deps.js'
 import { collectAssistantText, runPrintMode } from './print.js'
 
 let db: DB
-beforeEach(async () => {
-  db = await createDB({ driver: 'pglite' })
-  await migrateDB(db)
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
+  await db.close()
 })
 afterEach(async () => {
-  await db.close()
+  await resetTestDB(db)
 })
 
 const config: Config = {

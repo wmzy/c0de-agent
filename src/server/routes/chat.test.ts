@@ -4,13 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import type { SSEStreamingApi } from 'hono/streaming'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG } from '../../core/config.js'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
 import { sessions } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory, trustProject } from '../../project/project.js'
 import { appendMessage, getEntries } from '../../session/message.js'
@@ -40,16 +39,19 @@ function mockChatStream(): AsyncGenerator<StreamChunk> {
   })()
 }
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 async function setup(opts: { cwd?: string } = {}) {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   const session = await createSession(db, 'Test')
   const ctx = createServerContext({
     db,
@@ -506,9 +508,7 @@ describe('chat route (SSE)', () => {
   // Web 前端 ToolToggle 全选（不带 tools 字段）时，后端回退 config.tools.enabled 默认集。
   // 默认集为 ['*']（通配 = 全部注册工具）；显式空数组才是「无工具」（fail-closed）。
   it('POST / 不带 tools 时启用全部注册工具（默认 enabled:["*"]）', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const session = await createSession(db, 'Test')
     const ctx = createServerContext({
       db,
@@ -558,9 +558,7 @@ describe('chat route (SSE)', () => {
 
   it('POST / 绑定项目的会话保留项目绑定工具（kanban），与未绑定会话剔除对称', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-kanban-tool-'))
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const project = await fromDirectory(db, dir)
     // 未信任项目叠加全局权限风险（globalPermissionRiskItems）即触发 TRUST_REQUIRED
     // 门禁——先显式信任（真实 HOME 的全局配置可能含 auto 权限）。
@@ -590,9 +588,7 @@ describe('chat route (SSE)', () => {
   })
 
   it('POST / config.tools.disabled 工具不进入 LLM 工具集', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const session = await createSession(db, 'Test')
     const ctx = createServerContext({
       db,
@@ -621,9 +617,7 @@ describe('chat route (SSE)', () => {
   // 此前 catch 块只发 error 不发 done，依赖前端 gotError 回退——
   // 若 error 事件也因流关闭而丢失，前端会永远卡在 streaming 态。
   it('POST / chatStream 抛错时 SSE 流仍以 done 结束', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const session = await createSession(db, 'Test')
     const throwingStream = (): AsyncGenerator<StreamChunk> =>
       (async function* (): AsyncGenerator<StreamChunk> {
@@ -657,9 +651,7 @@ describe('chat route (SSE)', () => {
   it('resolveAgentCwd: returns worktree when session has project', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cwd-'))
     try {
-      const db = await createDB({ driver: 'pglite' })
-      dbHandle = db
-      await migrateDB(db)
+      const db = dbHandle
       const project = await fromDirectory(db, dir)
       const ctx = createServerContext({
         db,
@@ -674,8 +666,7 @@ describe('chat route (SSE)', () => {
   })
 
   it('resolveAgentCwd: falls back to ctx.cwd when no project', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
+    const db = dbHandle
     const ctx = createServerContext({
       db,
       llmRegistry: createRegistry(),
@@ -689,9 +680,7 @@ describe('chat route (SSE)', () => {
   it('resolveAgentCwd: 无项目但有 worktreePath → 用 worktreePath（项目删除后恢复的会话）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cwd-wt-'))
     try {
-      const db = await createDB({ driver: 'pglite' })
-      dbHandle = db
-      await migrateDB(db)
+      const db = dbHandle
       const ctx = createServerContext({
         db,
         llmRegistry: createRegistry(),
@@ -706,8 +695,7 @@ describe('chat route (SSE)', () => {
   })
 
   it('resolveAgentCwd: worktreePath 失效 → 抛 WORKTREE_MISSING 而非静默回退 serve cwd', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
+    const db = dbHandle
     const ctx = createServerContext({
       db,
       llmRegistry: createRegistry(),
@@ -780,9 +768,7 @@ describe('chat route (SSE)', () => {
   })
 
   it('config.slashCommands.enabled 过滤：未启用命令返回提示而非执行', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const session = await createSession(db, 'Test')
     const ctx = createServerContext({
       db,
@@ -1128,9 +1114,7 @@ describe('workflowz 关键词 steering 注入', () => {
   }
 
   async function setupWithCapture() {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const session = await createSession(db, 'Test')
     const captured: Array<{ role: string; content: unknown }> = []
     const ctx = createServerContext({
@@ -1281,9 +1265,7 @@ describe('P0-2 项目信任门禁', () => {
     }
     await mkdir(join(projDir, '.c0de'), { recursive: true })
     await writeFile(join(projDir, '.c0de', 'config.json'), JSON.stringify(projectConfig), 'utf-8')
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const project = await fromDirectory(db, projDir)
     const session = await createSession(db, 'TrustMe', project.id)
     const ctx = createServerContext({

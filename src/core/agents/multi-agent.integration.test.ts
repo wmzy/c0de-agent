@@ -6,9 +6,9 @@
  * 归并建议：多 agent 相关跨层集成场景归此文件；单 agent loop 行为见 core/loop.test.ts。
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import type { DB } from '../../db/client.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import type { Registry } from '../../llm/registry.js'
 import { listSessions } from '../../session/index.js'
 import { getMessages } from '../../session/message.js'
@@ -23,10 +23,15 @@ import { DEFAULT_CONFIG } from '../config.js'
 import type { LoopDeps } from '../loop.js'
 import { BUILTIN_AGENTS, createAgentRegistry } from './index.js'
 
-let dbHandle: Awaited<ReturnType<typeof createDB>> | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 /** mock chatStream 调用序列：父派发 task(researcher) → 子 yield → 父总结。 */
@@ -118,9 +123,7 @@ function mockSchemaValidatedStream(): (() => AsyncGenerator<StreamChunk>) | unde
 
 describe('multi-agent integration', () => {
   it('主 agent 派发 researcher 子 agent，子 agent yield 结构化结果回传父', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
 
     const agentRegistry = createAgentRegistry()
     for (const def of BUILTIN_AGENTS) agentRegistry.register(def)
@@ -179,9 +182,7 @@ describe('multi-agent integration', () => {
   })
 
   it('未注册 agentType 时 task 工具返回 error（e2e）', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
 
     const deps: LoopDeps = {
       db,
@@ -217,9 +218,7 @@ describe('multi-agent integration', () => {
   })
 
   it('outputSchema 校验拒绝非法 yield，子 agent 修正后重试成功', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
 
     const agentRegistry = createAgentRegistry()
     agentRegistry.register({

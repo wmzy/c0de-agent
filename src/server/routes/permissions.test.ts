@@ -1,20 +1,24 @@
 import { eq } from 'drizzle-orm'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
 import { sessions } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { createServerContext } from '../context.js'
 import { createPermissionsRoute } from './permissions.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
 let tmpHome: string | undefined
 const originalHome = process.env.HOME
 
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
   if (tmpHome) {
     const { rmSync } = await import('node:fs')
     rmSync(tmpHome, { recursive: true, force: true })
@@ -24,9 +28,7 @@ afterEach(async () => {
 })
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   // PUT / 持久化到 global 作用域（homedir()），用临时 HOME 隔离避免污染真实全局配置
   const { mkdtempSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')

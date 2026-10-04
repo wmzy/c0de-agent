@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { generateId } from '../shared/index.js'
 import type { MessageContent } from '../shared/types/message.js'
 import {
@@ -16,12 +15,22 @@ import { appendMessage } from './message.js'
 import { createSession } from './session.js'
 
 async function setupDB(): Promise<DB> {
-  const handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-  return handle
+  return dbHandle
 }
 
 const textContent = (text: string): MessageContent[] => [{ _tag: 'text', text }]
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
 
 describe('archives', () => {
   let handle: DB

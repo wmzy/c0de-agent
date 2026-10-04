@@ -1,15 +1,27 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { DB } from '../../db/client.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createDefaultRegistry } from '../../tools/index.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import { DEFAULT_CONFIG } from '../config.js'
 import type { AgentDependencies } from '../types.js'
 import { createAndPopulateRegistry } from './index.js'
 import { executeWorkflow } from './runtime.js'
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
 
 let tmpDir: string
 const originalHome = process.env.HOME
@@ -55,8 +67,7 @@ export default async function workflow(ctx) {
     expect(registry.has('security-audit')).toBe(true) // 内置也在
 
     // 构建 mock deps
-    const db = await createDB({ driver: 'pglite' })
-    await migrateDB(db)
+    const db = dbHandle
     const deps: AgentDependencies = {
       db,
       llmRegistry: {} as AgentDependencies['llmRegistry'],
@@ -88,8 +99,6 @@ export default async function workflow(ctx) {
     if (result._tag === 'text') {
       expect(result.text).toContain('echo:')
     }
-
-    await db.close()
   })
 
   it('builtin workflow meta is correct after population', async () => {

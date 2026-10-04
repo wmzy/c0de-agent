@@ -1,23 +1,25 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import type { Config } from '../../shared/types/config.js'
 import { createServerContext } from '../context.js'
 import { createProviderRoute } from './provider.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
   vi.restoreAllMocks()
 })
 
 async function setup(config?: Partial<Config>) {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   const ctx = createServerContext({ db, llmRegistry: createRegistry(), config: config as Config })
   const app = createProviderRoute(ctx)
   return { app, ctx }

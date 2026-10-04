@@ -2,11 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
 import { sessions } from '../db/schema.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { fromDirectory } from '../project/project.js'
 import { markDeadBackgroundJobs } from './jobs.js'
 import { insertEntry } from './message.js'
@@ -32,10 +31,20 @@ import {
 } from './session.js'
 
 async function setupDB(): Promise<DB> {
-  const handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-  return handle
+  return dbHandle
 }
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
 
 describe('session CRUD', () => {
   let handle: DB

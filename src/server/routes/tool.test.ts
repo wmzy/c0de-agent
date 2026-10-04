@@ -1,22 +1,24 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { createServerContext } from '../context.js'
 import type { APIErrorBody } from '../types.js'
 import { createToolRoute } from './tool.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   const ctx = createServerContext({ db, llmRegistry: createRegistry() })
   const app = createToolRoute(ctx)
   return { app, ctx }

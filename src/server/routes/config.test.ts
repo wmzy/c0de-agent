@@ -1,25 +1,29 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mergeConfig } from '../../core/config.js'
 import { decryptSecret, isEncryptedSecret } from '../../core/secret.js'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import type { Config } from '../../shared/types/config.js'
 import { createServerContext } from '../context.js'
 import { createConfigRoute } from './config.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
 let tmpCwd: string | undefined
 let tmpHome: string | undefined
 const originalHome = process.env.HOME
 
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
   if (tmpCwd) {
     rmSync(tmpCwd, { recursive: true, force: true })
     tmpCwd = undefined
@@ -33,9 +37,7 @@ afterEach(async () => {
 })
 
 async function setup(overrides?: Partial<Config>) {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   tmpCwd = mkdtempSync(join(tmpdir(), 'c0de-cfg-'))
   // 隔离全局作用域：避免读到真实 ~/.c0de/config.json 干扰断言
   tmpHome = mkdtempSync(join(tmpdir(), 'c0de-cfg-home-'))

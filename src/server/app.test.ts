@@ -2,10 +2,9 @@
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { createRegistry } from '../llm/registry.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import { createApp } from './app.js'
@@ -18,20 +17,23 @@ function mockChatStream(): AsyncGenerator<StreamChunk> {
   })()
 }
 
-let dbHandle: DB | undefined
+let dbHandle: DB
 let prevHome: string | undefined
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
   if (prevHome === undefined) delete process.env.HOME
   else process.env.HOME = prevHome
   prevHome = undefined
 })
 
 async function setupApp() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   const cwd = mkdtempSync(join(tmpdir(), 'c0de-app-'))
   // 隔离全局配置：HOME 指向空目录，避免用户 ~/.c0de/config.json 的 auto
   // 渗入项目信任门禁（否则完整聊天流程会因全局 auto + 未信任项目被 409 拦截）。

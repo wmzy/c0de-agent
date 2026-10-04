@@ -3,26 +3,28 @@
 // store/DB——title 数字 → .trim TypeError 500、columns/labels 数组含 null
 // 或缺字段 → 读 null.id TypeError 500、labels 字符串 → 持久化毒化卡片。
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
 import { projects } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createServerContext } from '../context.js'
 import { createKanbanRoute } from './kanban.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 const PROJECT_ID = 'kanban-validation-project'
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   await db.db.insert(projects).values({ id: PROJECT_ID, worktree: '/tmp/kanban-validation' })
   const ctx = createServerContext({ db, llmRegistry: {} as never })
   const app = createKanbanRoute(ctx)

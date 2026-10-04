@@ -1,14 +1,25 @@
-import { describe, expect, it } from 'vitest'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import type { DB } from '../db/client.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { appendMessage } from '../session/message.js'
 import { createSession } from '../session/session.js'
 import { runCompaction } from './compact.js'
 
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
+
 describe('runCompaction', () => {
   it('calls compactSession with the summarizer and returns result', async () => {
-    const db = await createDB({ driver: 'pglite' })
-    await migrateDB(db)
+    const db = dbHandle
     const session = await createSession(db, 'test')
     await appendMessage(db, session.id, {
       role: 'user',
@@ -34,6 +45,5 @@ describe('runCompaction', () => {
       expect(result.summary).toBe('Compacted summary')
       expect(result.archiveId).toBeTruthy()
     }
-    await db.close()
   })
 })

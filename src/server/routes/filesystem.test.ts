@@ -2,14 +2,14 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { createServerContext } from '../context.js'
 import { createFilesystemRoute, searchDirectories } from './filesystem.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
 let tempDir: string
 
 beforeEach(async () => {
@@ -20,16 +20,20 @@ beforeEach(async () => {
   await mkdir(join(tempDir, '.hidden'), { recursive: true })
 })
 
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
   await rm(tempDir, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
 
 async function setup(cwd?: string) {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
+  const db = dbHandle
   const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd })
   const app = createFilesystemRoute(ctx)
   return { app, ctx }

@@ -1,9 +1,8 @@
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
 import { sessionEntries, sessions } from '../db/schema.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import { generateId } from '../shared/index.js'
 import type { MessageContent } from '../shared/types/message.js'
@@ -31,12 +30,22 @@ vi.mock('./message.js', async (importActual) => {
 })
 
 async function setupDB(): Promise<DB> {
-  const handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-  return handle
+  return dbHandle
 }
 
 const textContent = (text: string): MessageContent[] => [{ _tag: 'text', text }]
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
 
 describe('branching', () => {
   let handle: DB
@@ -48,7 +57,6 @@ describe('branching', () => {
 
   afterEach(async () => {
     failFlag.failInsert = false
-    await handle.close()
   })
 
   it('forks a session copying messages up to the branch point', async () => {
@@ -435,10 +443,6 @@ describe('session lifecycle hooks', () => {
 
   beforeEach(async () => {
     handle = await setupDB()
-  })
-
-  afterEach(async () => {
-    await handle.close()
   })
 
   it('createSession broadcasts session:create when hooks are provided', async () => {

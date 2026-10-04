@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { createHookRunner } from '../plugins/hooks.js'
 import { getMessages } from '../session/message.js'
 import { createSession, getSession } from '../session/session.js'
@@ -46,12 +45,16 @@ let db: DB
 let session: Session
 
 beforeEach(async () => {
-  db = await createDB({ driver: 'pglite' })
-  await migrateDB(db)
   session = await createSession(db, 'test')
 })
-afterEach(async () => {
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
   await db.close()
+})
+afterEach(async () => {
+  await resetTestDB(db)
 })
 
 describe('createAgent', () => {

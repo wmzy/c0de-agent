@@ -1,9 +1,9 @@
 import { getEventListeners } from 'node:events'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DB } from '../db/client.js'
 import { projects, sessions, usageEvents } from '../db/schema.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import * as provider from '../llm/provider.js'
 import { createRegistry, registerProvider } from '../llm/registry.js'
 import { createHookRunner } from '../plugins/hooks.js'
@@ -228,21 +228,26 @@ function makeState(session: Session, messages: Message[]): AgentState {
   }
 }
 
-let db: Awaited<ReturnType<typeof createDB>>
+let db: DB
 let session: Session
+
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
+  await db.close()
+})
+afterEach(async () => {
+  await resetTestDB(db)
+})
 
 beforeEach(async () => {
   mockTurn = 0
-  db = await createDB({ driver: 'pglite' })
-  await migrateDB(db)
   session = await createSession(db, 'test')
   await appendMessage(db, session.id, {
     role: 'user',
     content: [{ _tag: 'text', text: 'Hello' }],
   })
-})
-afterEach(async () => {
-  await db.close()
 })
 
 describe('agentLoop', () => {

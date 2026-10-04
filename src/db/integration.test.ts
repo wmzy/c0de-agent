@@ -2,29 +2,34 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { desc, eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { fromDirectory, getProject, listProjects, updateProjectName } from '../project/project.js'
 import type { DB } from './client.js'
-import { createDB } from './client.js'
-import { migrateDB } from './migrate.js'
 import { compactionArchives, fileSnapshots, projects, sessionEntries, sessions } from './schema.js'
+import { createTestDB, resetTestDB } from './test-utils.js'
 
 // Each test gets a fresh in-memory database
 async function setupDB(): Promise<DB> {
-  const handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-  return handle
+  return dbHandle
 }
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
 
 describe('DB integration: sessions CRUD', () => {
   let handle: DB
 
   beforeEach(async () => {
     handle = await setupDB()
-  })
-
-  afterEach(async () => {
-    await handle.close()
   })
 
   it('inserts and queries a session', async () => {
@@ -95,10 +100,6 @@ describe('DB integration: session entries', () => {
 
   beforeEach(async () => {
     handle = await setupDB()
-  })
-
-  afterEach(async () => {
-    await handle.close()
   })
 
   it('inserts and queries entries by session', async () => {
@@ -176,10 +177,6 @@ describe('DB integration: file snapshots', () => {
     handle = await setupDB()
   })
 
-  afterEach(async () => {
-    await handle.close()
-  })
-
   it('inserts and queries file snapshots', async () => {
     const [session] = await handle.db.insert(sessions).values({ title: 'S1' }).returning()
 
@@ -245,10 +242,6 @@ describe('DB integration: compaction archives', () => {
     handle = await setupDB()
   })
 
-  afterEach(async () => {
-    await handle.close()
-  })
-
   it('inserts and queries compaction archives', async () => {
     const [session] = await handle.db.insert(sessions).values({ title: 'S1' }).returning()
 
@@ -280,10 +273,6 @@ describe('DB integration: projects', () => {
 
   beforeEach(async () => {
     handle = await setupDB()
-  })
-
-  afterEach(async () => {
-    await handle.close()
   })
 
   it('inserts and queries a project', async () => {

@@ -1,9 +1,8 @@
 import { eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
 import { sessionEntries } from '../db/schema.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { generateId } from '../shared/index.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
 import {
@@ -21,9 +20,7 @@ import { createSession } from './session.js'
 const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
 async function setupDB(): Promise<DB> {
-  const handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-  return handle
+  return dbHandle
 }
 
 const textContent = (text: string): MessageContent[] => [{ _tag: 'text', text }]
@@ -34,6 +31,18 @@ const mk = (role: 'user' | 'assistant', text: string): Message => ({
   content: textContent(text),
   tokenCount: 1,
   createdAt: 0,
+})
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
 })
 
 describe('findSafeCutPoint', () => {

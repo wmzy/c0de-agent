@@ -1,22 +1,27 @@
 // catalog 路由测试，对应 src/server/routes/catalog.ts
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { createServerContext } from '../context.js'
 import { clearCatalogCache, createCatalogRoute } from './catalog.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+  clearCatalogCache()
+  vi.restoreAllMocks()
+})
 
 beforeEach(() => {
   clearCatalogCache()
-})
-
-afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
-  clearCatalogCache()
-  vi.restoreAllMocks()
 })
 
 const mockCatalog = {
@@ -81,8 +86,7 @@ function mockFetchResponse(data: unknown) {
 }
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
+  const db = dbHandle
   const ctx = createServerContext({ db, llmRegistry: createRegistry() })
   const app = createCatalogRoute(ctx)
   return { app, ctx }

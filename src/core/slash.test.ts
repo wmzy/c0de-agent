@@ -1,11 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
 import { projects } from '../db/schema.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { createSession } from '../session/session.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
@@ -22,8 +21,6 @@ let db: DB
 let deps: AgentDependencies
 
 beforeEach(async () => {
-  db = await createDB({ driver: 'pglite' })
-  await migrateDB(db)
   deps = {
     db,
     llmRegistry: {} as AgentDependencies['llmRegistry'],
@@ -33,8 +30,14 @@ beforeEach(async () => {
     cwd: process.cwd(),
   } as AgentDependencies
 })
-afterEach(async () => {
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
   await db.close()
+})
+afterEach(async () => {
+  await resetTestDB(db)
 })
 
 describe('parseSlashInput', () => {

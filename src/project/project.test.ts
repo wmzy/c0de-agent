@@ -9,26 +9,28 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq, isNull } from 'drizzle-orm'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
 import { kanbanBoards, projects, sessions } from '../db/schema.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { createKanbanStore } from '../kanban/index.js'
 import type { Config } from '../shared/types/config.js'
 import { enforceProjectTrust, fromDirectory, listProjects, trustProject } from './project.js'
 import { resolveProject } from './resolve.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   return db
 }
 

@@ -1,26 +1,28 @@
 // todo REST 路由测试（UI 手动操作入口 POST /:sessionId）。
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
 import { projects } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { createSession } from '../../session/session.js'
 import { createServerContext } from '../context.js'
 import { createTodoRoute } from './todo.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 const TEST_PROJECT = 'todo-route-project'
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   await db.db.insert(projects).values({ id: TEST_PROJECT, worktree: '/tmp/todo-route' })
   const ctx = createServerContext({ db, llmRegistry: createRegistry() })
   const app = createTodoRoute(ctx)

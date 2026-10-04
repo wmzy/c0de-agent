@@ -1,13 +1,17 @@
 name: CI
 
 on:
+  # push 仅 main：非 main 分支的 push 已由 pull_request 事件覆盖
+  # （push 到 PR 分支会自动触发 PR run），保留 branches:"*" 会让
+  # 同一 commit 跑两次全量（push run + PR run）。
   push:
-    branches: "*"
+    branches: [main]
   pull_request:
     branches: "*"
 
 jobs:
-  build:
+  # 静态检查与构建：与 test 无依赖，并行执行以缩短关键路径。
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -39,14 +43,34 @@ jobs:
       - name: Typecheck (web)
         run: pnpm typecheck:web
 
+      - name: Build
+        run: pnpm build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       # 双 reporter：default 保留可读的控制台输出；github-actions 在失败时
       # 为每条失败用例标注对应源文件/行号（workflow run summary 的 annotations）。
       - name: Test
         id: test
         # 护栏：单个挂死的测试不应让 job 无限空转（曾因模糊测试
-        # 深度递归 bug 挂 46 分钟+）。正常全量约 5-6 分钟。
+        # 深度递归 bug 挂 46 分钟+）。
         timeout-minutes: 15
         run: pnpm test --reporter=default --reporter=github-actions
-
-      - name: Build
-        run: pnpm build

@@ -2,11 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
 import { projects, sessionEntries, sessions, usageEvents } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries } from '../../session/archive.js'
@@ -21,19 +20,22 @@ import { createServerContext } from '../context.js'
 import type { APIErrorBody } from '../types.js'
 import { createSessionRoute } from './session.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 /** 测试默认项目 id（POST / 强制 projectId 后各用例共用）。 */
 const TEST_PROJECT = 'session-test-project'
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   // POST / 现在强制 projectId（FK 指向 projects）——预置默认项目行供各用例使用。
   await db.db.insert(projects).values({ id: TEST_PROJECT, worktree: '/tmp/session-test' })
   const ctx = createServerContext({ db, llmRegistry: createRegistry() })

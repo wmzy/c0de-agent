@@ -3,10 +3,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { getByDirectory } from '../../project/project.js'
 import { runTrustCommand } from './trust.js'
 
@@ -14,17 +13,21 @@ let dir: string
 let projDir: string
 let db: DB
 
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
+  await db.close()
+})
+afterEach(async () => {
+  await resetTestDB(db)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'c0de-trustcmd-'))
   projDir = join(dir, 'proj')
   mkdirSync(join(projDir, '.c0de'), { recursive: true })
-  db = await createDB({ driver: 'pglite', dataDir: join(dir, 'data') })
-  await migrateDB(db)
-})
-
-afterEach(async () => {
-  await db.close()
-  rmSync(dir, { recursive: true, force: true })
 })
 
 function seedProjectConfig(content: Record<string, unknown>): void {

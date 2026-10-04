@@ -2,26 +2,28 @@
 // P0 审查修复：看板导出/导入端点测试（项目删除会永久级联删除看板，导出是唯一备份途径）。
 
 import { eq } from 'drizzle-orm'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
 import { projects } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createServerContext } from '../context.js'
 import { createKanbanRoute } from './kanban.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 const PROJECT_ID = 'kanban-io-project'
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   await db.db.insert(projects).values({ id: PROJECT_ID, worktree: '/tmp/kanban-io' })
   const ctx = createServerContext({ db, llmRegistry: {} as never })
   const app = createKanbanRoute(ctx)

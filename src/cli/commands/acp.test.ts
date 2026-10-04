@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB, migrateDB } from '../../db/index.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import type { ChatOptions, ProviderContext } from '../../llm/index.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ChatRequest, StreamChunk } from '../../shared/types/llm.js'
@@ -9,12 +9,14 @@ import type { ACPHandler } from '../modes/acp.js'
 import { createAcpHandlers } from './acp.js'
 
 let db: DB
-beforeEach(async () => {
-  db = await createDB({ driver: 'pglite' })
-  await migrateDB(db)
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
+  await db.close()
 })
 afterEach(async () => {
-  await db.close()
+  await resetTestDB(db)
 })
 
 const config: Config = {

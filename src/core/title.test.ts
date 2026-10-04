@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import type { Registry } from '../llm/registry.js'
 import { createSession, getSession } from '../session/session.js'
 import type { ChatRequest } from '../shared/types/llm.js'
@@ -47,13 +46,16 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 
 let db: DB
 
-beforeEach(async () => {
-  db = await createDB({ driver: 'pglite' })
-  await migrateDB(db)
-})
+beforeEach(async () => {})
 
-afterEach(async () => {
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
   await db.close()
+})
+afterEach(async () => {
+  await resetTestDB(db)
 })
 
 describe('isDefaultTitle', () => {

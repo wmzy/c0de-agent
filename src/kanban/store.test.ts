@@ -1,9 +1,8 @@
 import { eq, isNotNull } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
 import { kanbanBoards, kanbanCards, projects } from '../db/schema.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { DEFAULT_KANBAN_COLUMNS } from '../shared/types/kanban.js'
 import {
   createKanbanStore,
@@ -24,11 +23,7 @@ import {
 let handle: DB
 
 beforeEach(async () => {
-  handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-})
-afterEach(async () => {
-  await handle.close()
+  handle = dbHandle
 })
 
 /** Seed a project row so the kanban_boards.project_id FK is satisfied. */
@@ -39,6 +34,18 @@ async function seedProject(id: string): Promise<void> {
 // A valid-format uuid that does not exist; hits the "not found" code path
 // rather than triggering a Postgres uuid parse error.
 const MISSING_ID = '00000000-0000-0000-0000-000000000000'
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
 
 describe('createKanbanStore — initial board', () => {
   it('lazily creates a board with the default 5 columns, no labels, no cards', async () => {

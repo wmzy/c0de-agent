@@ -9,10 +9,9 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/project.js'
 import { createServerContext } from '../context.js'
@@ -35,10 +34,15 @@ vi.mock('../../core/compact.js', async (importOriginal) => {
 
 type FileEntry = { name: string; type: 'file' | 'directory'; ignored?: boolean }
 
-let dbHandle: DB | undefined
+let dbHandle: DB
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
 })
 
 async function setupWithDir() {
@@ -47,8 +51,7 @@ async function setupWithDir() {
   writeFileSync(join(dir, 'config.json'), '{"key":"value"}')
   mkdirSync(join(dir, 'subdir'))
   writeFileSync(join(dir, 'subdir', 'nested.ts'), 'export const x = 1')
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
+  const db = dbHandle
   const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
   const app = createFilesRoute(ctx)
   return { app, ctx, dir }
@@ -294,9 +297,7 @@ describe('files route', () => {
     const dirB = mkdtempSync(join(tmpdir(), 'c0de-proj-b-'))
     writeFileSync(join(dirA, 'only-in-a.txt'), 'a')
     writeFileSync(join(dirB, 'only-in-b.txt'), 'b')
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const projectA = await fromDirectory(db, dirA)
     const projectB = await fromDirectory(db, dirB)
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
@@ -325,9 +326,7 @@ describe('files route', () => {
 
   it('GET /search?projectId=不存在 返回 404', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-files-'))
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/search?q=x&projectId=nonexistent-id')
@@ -339,9 +338,7 @@ describe('files route', () => {
     const dirB = mkdtempSync(join(tmpdir(), 'c0de-list-b-'))
     writeFileSync(join(dirA, 'only-in-a.txt'), 'a')
     writeFileSync(join(dirB, 'only-in-b.txt'), 'b')
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const projectA = await fromDirectory(db, dirA)
     const projectB = await fromDirectory(db, dirB)
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
@@ -370,9 +367,7 @@ describe('files route', () => {
     const dirB = mkdtempSync(join(tmpdir(), 'c0de-read-b-'))
     writeFileSync(join(dirA, 'shared.txt'), 'from-a')
     writeFileSync(join(dirB, 'shared.txt'), 'from-b')
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const projectB = await fromDirectory(db, dirB)
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
     const app = createFilesRoute(ctx)
@@ -389,9 +384,7 @@ describe('files route', () => {
   it('PUT /file?projectId=... 写入对应项目 worktree（不污染 ctx.cwd）', async () => {
     const dirA = mkdtempSync(join(tmpdir(), 'c0de-put-a-'))
     const dirB = mkdtempSync(join(tmpdir(), 'c0de-put-b-'))
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const projectB = await fromDirectory(db, dirB)
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dirA })
     const app = createFilesRoute(ctx)
@@ -445,9 +438,7 @@ describe('files route', () => {
     mkdirSync(join(dir, '.git'), { recursive: true })
     writeFileSync(join(dir, '.env'), 'k=v')
     writeFileSync(join(dir, 'normal.txt'), 'x')
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/')
@@ -471,9 +462,7 @@ describe('files route', () => {
     writeFileSync(join(dir, 'app.ts'), 'app')
     execSync('git add -A && git commit -q -m init', { cwd: dir })
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/')
@@ -489,9 +478,7 @@ describe('files route', () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-search-c0de-'))
     mkdirSync(join(dir, '.c0de'), { recursive: true })
     writeFileSync(join(dir, '.c0de', 'config.json'), '{}')
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/search?q=config')
@@ -510,9 +497,7 @@ describe('files route', () => {
     const deep = Array.from({ length: 8 }, (_, i) => `d${i + 1}`).join('/')
     mkdirSync(join(dir, deep), { recursive: true })
     writeFileSync(join(dir, deep, 'beyond-cap.txt'), 'x')
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/search?q=beyond-cap')
@@ -523,9 +508,7 @@ describe('files route', () => {
 
   it('GET /git-status 返回状态映射（非 git 返回空对象）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-gitstatus-nogit-'))
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/git-status')
@@ -552,9 +535,7 @@ describe('files route', () => {
     writeFileSync(join(dir, 'staged.txt'), 's')
     execSync('git add staged.txt', { cwd: dir })
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/git-status')
@@ -579,9 +560,7 @@ describe('files route', () => {
     writeFileSync(join(dir, 'ignored2.txt'), 'x2')
     appendFileSync(join(dir, '.gitignore'), 'ignored2.txt\n')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
     const res = await app.request('/git-status')
@@ -602,9 +581,7 @@ describe('files route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     execSync('git checkout -q -b my-feature', { cwd: dir })
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -617,9 +594,7 @@ describe('files route', () => {
   it('GET /git-branch 非 git 仓库返回 branch null', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-nogit-branch-'))
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -638,9 +613,7 @@ describe('files route', () => {
     writeFileSync(join(dir, 'f.txt'), 'x')
     execSync('git add -A && git commit -q -m "feat: initial commit"', { cwd: dir })
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -654,9 +627,7 @@ describe('files route', () => {
   it('GET /git-last-commit 非 git 仓库返回 commit null', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-lastcommit-nogit-route-'))
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -677,9 +648,7 @@ describe('git-commit route', () => {
     writeFileSync(join(dir, 'file.txt'), 'content')
     execSync('git add -A && git commit -q -m init', { cwd: dir })
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -691,9 +660,7 @@ describe('git-commit route', () => {
 
   it('POST /git-commit 非 git 仓库返回 400 NO_CHANGES', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'c0de-commit-nogit-'))
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -715,9 +682,7 @@ describe('git-commit route', () => {
     writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
     writeFileSync(join(dir, 'base.txt'), 'modified')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -752,9 +717,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -785,9 +748,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -810,9 +771,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -840,9 +799,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -879,9 +836,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'f.txt'), 'changed')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -915,9 +870,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'f.txt'), 'changed')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -941,9 +894,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'f.txt'), 'changed')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -970,9 +921,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 
@@ -997,9 +946,7 @@ describe('git-commit route', () => {
     execSync('git add -A && git commit -q -m init', { cwd: dir })
     writeFileSync(join(dir, 'new-file.ts'), 'export const x = 1')
 
-    const db = await createDB({ driver: 'pglite' })
-    dbHandle = db
-    await migrateDB(db)
+    const db = dbHandle
     const ctx = createServerContext({ db, llmRegistry: createRegistry(), cwd: dir })
     const app = createFilesRoute(ctx)
 

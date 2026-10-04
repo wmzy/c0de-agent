@@ -2,12 +2,11 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { loadConfigScopes } from '../../core/config.js'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory, getProject, trustProject } from '../../project/project.js'
 import { projectTrustCurrent } from '../../project/trust.js'
@@ -15,7 +14,7 @@ import { createServerContext } from '../context.js'
 import type { ServerContext } from '../types.js'
 import { createWorkflowsRoute } from './workflows.js'
 
-let dbHandle: DB | undefined
+let dbHandle: DB
 let projectCwd: string
 const originalHome = process.env.HOME
 
@@ -26,9 +25,14 @@ beforeEach(async () => {
   process.env.HOME = tmpHome
 })
 
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
 afterEach(async () => {
-  await dbHandle?.close()
-  dbHandle = undefined
+  await resetTestDB(dbHandle)
   if (originalHome === undefined) {
     delete process.env.HOME
   } else {
@@ -38,9 +42,7 @@ afterEach(async () => {
 })
 
 async function setup() {
-  const db = await createDB({ driver: 'pglite' })
-  dbHandle = db
-  await migrateDB(db)
+  const db = dbHandle
   // 隔离 HOME：saveWorkflow 和全局发现都读取 homedir()
   const ctx = createServerContext({
     db,

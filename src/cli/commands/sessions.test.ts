@@ -4,11 +4,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { createDB } from '../../db/client.js'
-import { migrateDB } from '../../db/migrate.js'
 import { sessions } from '../../db/schema.js'
+import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { fromDirectory } from '../../project/project.js'
 import {
   createSession,
@@ -21,15 +20,19 @@ import { runSessionsCommand } from './sessions.js'
 let dir: string
 let db: DB
 
-beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'c0de-sesscmd-'))
-  db = await createDB({ driver: 'pglite', dataDir: dir })
-  await migrateDB(db)
+beforeAll(async () => {
+  db = await createTestDB()
+})
+afterAll(async () => {
+  await db.close()
+})
+afterEach(async () => {
+  await resetTestDB(db)
+  rmSync(dir, { recursive: true, force: true })
 })
 
-afterEach(async () => {
-  await db.close()
-  rmSync(dir, { recursive: true, force: true })
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'c0de-sesscmd-'))
 })
 
 describe('c0de sessions', () => {

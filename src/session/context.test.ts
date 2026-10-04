@@ -1,10 +1,9 @@
 import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import type { ChatMessage } from '../shared/types/llm.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
 import {
@@ -44,12 +43,22 @@ vi.mock('./snapshot.js', async (importActual) => {
 })
 
 async function setupDB(): Promise<DB> {
-  const handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-  return handle
+  return dbHandle
 }
 
 const textContent = (text: string): MessageContent[] => [{ _tag: 'text', text }]
+
+let dbHandle: DB
+
+beforeAll(async () => {
+  dbHandle = await createTestDB()
+})
+afterAll(async () => {
+  await dbHandle.close()
+})
+afterEach(async () => {
+  await resetTestDB(dbHandle)
+})
 
 describe('messageToChatMessages', () => {
   /** 单结果消息的展开结果恒为 1 条——取出并断言（TS 收窄）。 */
@@ -385,7 +394,6 @@ describe('getSessionContext', () => {
 
   afterEach(async () => {
     failFlag.failUpsert = false
-    await handle.close()
   })
 
   it('returns entries and snapshots', async () => {
