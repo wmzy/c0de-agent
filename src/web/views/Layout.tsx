@@ -1,25 +1,22 @@
 import { css } from '@linaria/core'
-import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Workbench } from 'haze-ui'
+import type { ReactNode } from 'react'
+import { useEffect } from 'react'
+import { useControl } from 'react-use-control'
 import { MobileNav } from '@/components/MobileNav.js'
-import { DESKTOP, MOBILE } from '@/styles/breakpoints.js'
-import { lockBodyCursor, restoreBodyCursor } from '@/utils/drag-cursor.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
-// 三栏宽度常量：左 sidebar / 右 panel 各自可拖拽，中间 main flex 填充剩余空间。
+// 侧栏宽度：Workbench 硬区间 160–480，产品下限保留 200。
 const DEFAULT_SIDEBAR = 280
 const MIN_SIDEBAR = 200
 const MAX_SIDEBAR = 480
+// 预览面板（auxiliaryBar）：Workbench 硬区间 180–480。
+// 此前上限 960——Workbench 约束为 480，默认宽度取满 480。
+const DEFAULT_PANEL = 480
 const MIN_PANEL = 240
-const MAX_PANEL = 960
+const MAX_PANEL = 480
 const SIDEBAR_KEY = 'c0de-agent:sidebarWidth'
 const PANEL_KEY = 'c0de-agent:panelWidth'
-
-/** 预览面板默认宽度：max(480px, min(45vw, 720px))。固定 360px 过窄——
- *  package.json 等长行文件会被折成细高窄列；随视口自适应，仍在可拖拽区间内。 */
-function defaultPanelWidth(): number {
-  return Math.round(Math.max(480, Math.min(window.innerWidth * 0.45, 720)))
-}
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
@@ -39,139 +36,27 @@ const layoutStyle = css`
   width: 100%;
 `
 
-const bodyStyle = css`
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  ${DESKTOP} {
-    flex-direction: row;
-  }
-`
-
-const sidebarStyle = css`
-  display: none;
-  width: 100%;
-  ${DESKTOP} {
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-  }
-`
-
-const mainStyle = css`
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-  ${MOBILE} {
-    padding-bottom: 56px;
-  }
-`
-
-const panelStyle = css`
-  display: none;
-  ${DESKTOP} {
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-    min-width: 0;
-    overflow: hidden;
-  }
-`
-
-// 分隔条：<hr> 语义即 separator，1px 视觉分隔线，::before 把可抓取热区扩展到 ±4px。
-// 拖拽中/悬停高亮用 --primary；active 态额外通过 inline style 强化。
-const resizerStyle = css`
-  display: none;
-  ${DESKTOP} {
-    display: block;
-    width: 1px;
-    border: 0;
-    margin: 0;
-    cursor: col-resize;
-    background: var(--haze-color-border);
-    flex-shrink: 0;
-    position: relative;
-    z-index: 5;
-    transition: background 0.12s ease;
-    &:hover {
-      background: var(--haze-color-primary);
-    }
-    /* 键盘聚焦：1px 线本身近乎隐形，UA auto 轮廓在暗色下解析为近黑——显式给
-     * primary 轮廓 + 线体高亮，Tab 到分隔条时可定位。 */
-    &:focus-visible {
-      outline: 2px solid var(--haze-color-primary);
-      outline-offset: 2px;
-      background: var(--haze-color-primary);
-    }
-    &::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: -4px;
-      right: -4px;
-    }
-  }
-`
-
-const resizerActive = css`
-  background: var(--haze-color-primary);
-`
-
 type LayoutProps = {
   header?: ReactNode
+  /** 侧栏列（桌面端停靠；移动端经 MobileNav「会话」标签以覆盖层滑出）。 */
   sidebar?: ReactNode
   main: ReactNode
+  /** 右侧辅助列（文件预览等）。 */
   panel?: ReactNode
-  /** 底部终端面板（可折叠/拖拽高度）。 */
+  /** 底部终端面板：高度/折叠由 TerminalPanel 自管理，不进 Workbench 的
+   *  panel 区——两套拖拽系统不能叠加在同一高度上。 */
   terminal?: ReactNode
 }
 
 /**
- * 水平拖拽调整列宽。dragging 为 true 时向 document 挂载 pointermove/up 监听，
- * 这样无论光标快速移出 1px 分隔条还是 setPointerCapture 在某些环境不可靠，
- * 都能稳定收到全部移动事件——比元素级 onPointerMove + 指针捕获更健壮。
- * applyDelta 用 ref 持有最新闭包，避免 effect 捕获旧值。
+ * 应用主布局骨架（haze-ui Workbench）：
+ * 侧栏 / 主区 / 辅助列三栏可拖拽（Workbench 内置 Resizable，
+ * 分隔条含键盘可达的 role=separator）；列宽经 useControl 双向同步，
+ * 拖拽提交即持久化到 localStorage。
+ *
+ * 移动端（<768px）：侧栏与辅助列变为滑出覆盖层（Escape 关闭、
+ * 焦点管理内置），底部导航（MobileNav）经 tabBar 槽渲染。
  */
-function useColResize(applyDelta: (delta: number) => void) {
-  const [dragging, setDragging] = useState(false)
-  const startX = useRef(0)
-  const applyRef = useRef(applyDelta)
-  applyRef.current = applyDelta
-
-  const onPointerDown = useCallback((e: ReactPointerEvent<HTMLElement>) => {
-    e.preventDefault()
-    startX.current = e.clientX
-    setDragging(true)
-  }, [])
-
-  useEffect(() => {
-    if (!dragging) return
-    const onMove = (e: PointerEvent) => {
-      const delta = e.clientX - startX.current
-      if (delta === 0) return
-      startX.current = e.clientX
-      applyRef.current(delta)
-    }
-    const onUp = () => setDragging(false)
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp)
-    // 拖拽中阻止 IFrames/其他元素抢占事件，并兼容部分浏览器丢失 pointerup 的边界
-    const onDragEnd = () => setDragging(false)
-    document.addEventListener('dragend', onDragEnd)
-    return () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-      document.removeEventListener('dragend', onDragEnd)
-    }
-  }, [dragging])
-
-  return { dragging, onPointerDown }
-}
-
 export function Layout({
   header: headerNode,
   sidebar: sidebarNode,
@@ -179,12 +64,18 @@ export function Layout({
   panel: panelNode,
   terminal: terminalNode,
 }: LayoutProps) {
-  const [sidebarWidth, setSidebarWidth] = useState(() =>
+  // 列宽 control：Workbench 拖拽经 control setter 回写这里，
+  // 变更即持久化；初始值从 localStorage 恢复。
+  // useControl 首参是 Control | 初始值（不接受惰性函数——
+  // 传函数会把 T 推断为 () => number，与 Control<number> 不兼容）。
+  const [sidebarWidth, , sidebarWidthControl] = useControl(
     loadWidth(SIDEBAR_KEY, DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
   )
-  const [panelWidth, setPanelWidth] = useState(() =>
-    loadWidth(PANEL_KEY, defaultPanelWidth(), MIN_PANEL, MAX_PANEL),
+  const [panelWidth, , panelWidthControl] = useControl(
+    loadWidth(PANEL_KEY, DEFAULT_PANEL, MIN_PANEL, MAX_PANEL),
   )
+  // 移动端侧栏覆盖层开闭（Workbench 内置滑出/遮罩/Esc/focus 管理）。
+  const [mobileSidebarOpen, setMobileSidebarOpen, mobileSidebarOpenControl] = useControl(false)
 
   useEffect(() => {
     storageSet(SIDEBAR_KEY, String(sidebarWidth))
@@ -193,72 +84,30 @@ export function Layout({
     storageSet(PANEL_KEY, String(panelWidth))
   }, [panelWidth])
 
-  const sidebarResize = useColResize((delta) =>
-    setSidebarWidth((w) => clamp(w + delta, MIN_SIDEBAR, MAX_SIDEBAR)),
-  )
-  const panelResize = useColResize((delta) =>
-    setPanelWidth((w) => clamp(w - delta, MIN_PANEL, MAX_PANEL)),
-  )
-
-  const dragging = sidebarResize.dragging || panelResize.dragging
-  useEffect(() => {
-    if (!dragging) return
-    const snapshot = lockBodyCursor('col-resize')
-    return () => restoreBodyCursor(snapshot)
-  }, [dragging])
-
   return (
     <div className={layoutStyle}>
       {headerNode && <>{headerNode}</>}
-      <div className={bodyStyle}>
-        {sidebarNode && (
-          <>
-            <aside
-              className={sidebarStyle}
-              data-testid="layout-sidebar"
-              style={{ width: sidebarWidth }}
-            >
-              {sidebarNode}
-            </aside>
-            <hr
-              className={`${resizerStyle} ${sidebarResize.dragging ? resizerActive : ''}`}
-              data-testid="resizer-sidebar"
-              aria-orientation="vertical"
-              aria-label="调整侧边栏宽度"
-              aria-valuenow={Math.round(sidebarWidth)}
-              aria-valuemin={MIN_SIDEBAR}
-              aria-valuemax={MAX_SIDEBAR}
-              tabIndex={0}
-              onPointerDown={sidebarResize.onPointerDown}
-              onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR)}
-            />
-          </>
-        )}
-        <main className={mainStyle}>{mainNode}</main>
-        {panelNode && (
-          <>
-            <hr
-              className={`${resizerStyle} ${panelResize.dragging ? resizerActive : ''}`}
-              data-testid="resizer-panel"
-              aria-orientation="vertical"
-              aria-label="调整预览面板宽度"
-              aria-valuenow={Math.round(panelWidth)}
-              aria-valuemin={MIN_PANEL}
-              aria-valuemax={MAX_PANEL}
-              tabIndex={0}
-              onPointerDown={panelResize.onPointerDown}
-              onDoubleClick={() => setPanelWidth(defaultPanelWidth())}
-            />
-            <aside className={panelStyle} data-testid="layout-panel" style={{ width: panelWidth }}>
-              {panelNode}
-            </aside>
-          </>
-        )}
-      </div>
+      <Workbench
+        // Workbench 根默认 height:100dvh；本布局是 appShell 内的 flex
+        // 子项（上方还有 TopBar 等），改为 flex 填充剩余高度。
+        style={{ height: 'auto', flex: '1 1 0%', minHeight: 0 }}
+        sidebar={sidebarNode}
+        sidebarWidth={sidebarWidthControl}
+        auxiliaryBar={panelNode}
+        auxiliaryBarWidth={panelWidthControl}
+        mobileSidebarOpen={mobileSidebarOpenControl}
+        tabBar={
+          <MobileNav
+            sidebar={sidebarNode}
+            sessionsOpen={mobileSidebarOpen}
+            onToggleSessions={() => setMobileSidebarOpen((open) => !open)}
+            onSessionsClosed={() => setMobileSidebarOpen(false)}
+          />
+        }
+      >
+        {mainNode}
+      </Workbench>
       {terminalNode}
-      {/* 移动端底部导航栏（spec §10.3）；桌面端由组件内部隐藏。
-          侧栏内容透传给 MobileNav，移动端「会话」标签以抽屉形式复用。 */}
-      <MobileNav sidebar={sidebarNode} />
     </div>
   )
 }
