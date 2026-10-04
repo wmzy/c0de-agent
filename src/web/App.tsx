@@ -59,7 +59,7 @@ export function App() {
                     <UpdateBanner />
                     <FirstDeviceNotice />
                     {authRequired && <PairingRequestFlow />}
-                    <PairingApproval onDone={() => {}} />
+                    <PairingApproval />
                     <View />
                   </div>
                 </ErrorBoundary>

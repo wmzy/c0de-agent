@@ -2,22 +2,36 @@
 //  - 新设备（无有效 token）：请求配对 → 显示 6 位配对码 → 轮询审批结果 → 获批后存 token 刷新。
 //  - 已授权设备：轮询待审批列表 → 弹窗展示配对码与设备名 → 批准/拒绝。
 import { css } from '@linaria/core'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { authAPI } from '@/services/auth.js'
 import { storageSet } from '@/utils/storage.js'
 
-const overlay = css`
+/** 层容器：撑满视口并居中内容。遮罩（button）与面板（div）为兄弟节点，
+ *  面板的点击天然不会落到遮罩上，无需 stopPropagation。 */
+const layer = css`
   position: fixed;
   inset: 0;
-  background: var(--haze-color-bg);
+  z-index: 2000;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
+`
+
+/** 遮罩：整屏铺满的「关闭」按钮（点遮罩 = 点关闭，与其余弹层一致）。
+ *  用真 button 而非 div+onClick：天生可聚焦、可回车/空格触发，无需 stopPropagation
+ *  技巧（面板作为兄弟节点而非子节点，天然不冒泡到遮罩）。 */
+const overlay = css`
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  background: var(--haze-color-bg);
+  cursor: pointer;
 `
 
 const card = css`
+  position: relative;
   width: min(420px, 92vw);
   padding: 28px 24px;
   border: 1px solid var(--haze-color-border);
@@ -185,12 +199,25 @@ function PairingRequestFlow() {
 
 /** 已授权设备：展示待审批配对并批准/拒绝。由 App 在收到配对列表后弹层。
  *  P2-9：批准需输入新设备屏幕显示的 6 位配对码——多请求并存时防看错行误批。 */
-export function PairingApproval({ onDone }: { onDone: () => void }) {
+export function PairingApproval() {
   const [items, setItems] = useState<
     { pairingId: string; deviceName: string; code: string; source: string }[]
   >([])
   const [error, setError] = useState<string | null>(null)
   const [codes, setCodes] = useState<Record<string, string>>({})
+  /**
+   * 用户点「关闭」时已隐藏的 pairingId 集合。此前关闭按钮无实现，叠加
+   * z-index:2000 全屏遮罩 → 整应用被永久遮挡，唯一出路是批准/拒绝别人的请求。
+   * 关闭改为「按请求逐条隐藏」：轮询不中断，新设备发起的新请求仍会重新弹窗，
+   * 不丢审批可见性。
+   */
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
+
+  /** 未被关闭的请求——为 0 时整块不渲染。 */
+  const visible = useMemo(
+    () => items.filter((p) => !dismissed.has(p.pairingId)),
+    [items, dismissed],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -213,8 +240,6 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
     }
   }, [])
 
-  if (items.length === 0 && !error) return null
-
   const approve = (id: string, code: string) => {
     authAPI
       .approvePairing(id, code)
@@ -228,6 +253,30 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
       })
   }
 
+  /**
+   * 关闭：把当前所有待审批请求逐条标记为已隐藏（不拒绝、不影响轮询）。
+   * 用 ref 持有最新闭包，使 Escape 监听只需绑定一次（不随 items 重建）。
+   */
+  const dismissAllRef = useRef<() => void>(() => {})
+  dismissAllRef.current = () => {
+    setDismissed((prev) => {
+      const next = new Set(prev)
+      for (const p of items) next.add(p.pairingId)
+      return next
+    })
+  }
+
+  // Esc 等价于「关闭」：模态必须可被键盘用户关掉（此前仅有关闭按钮，且无实现）。
+  // 必须置于下方 `if (visible.length === 0 && !error) return null` 之前——
+  // 条件 return 在 Hook 之后会让 Hook 数量随渲染变化（React 直接抛错）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') dismissAllRef.current()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
   const deny = (id: string) => {
     authAPI
       .denyPairing(id)
@@ -235,15 +284,25 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
       .catch(() => setError('操作失败，请重试'))
   }
 
+  // 所有 Hook 之后才可提前返回。
+  if (visible.length === 0 && !error) return null
+
   return (
-    <div className={overlay}>
-      <div className={card}>
+    <div className={layer}>
+      <button
+        type="button"
+        className={overlay}
+        aria-label="关闭设备配对审批"
+        onClick={() => dismissAllRef.current()}
+        data-testid="pairing-backdrop"
+      />
+      <div className={card} role="dialog" aria-modal="true" aria-label="设备配对审批">
         <div className={title}>设备配对审批</div>
         <div className={desc}>
           以下设备请求访问 c0de。请与对方核对设备信息后，<b>输入对方屏幕上显示的 6 位配对码</b>
           再批准。 设备名由请求方自报，仅作参考。
         </div>
-        {items.map((p) => (
+        {visible.map((p) => (
           <div
             key={p.pairingId}
             style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center' }}
@@ -290,7 +349,12 @@ export function PairingApproval({ onDone }: { onDone: () => void }) {
           </div>
         ))}
         {error && <div className={err}>{error}</div>}
-        <button type="button" className={btn} onClick={onDone}>
+        <button
+          type="button"
+          className={btn}
+          onClick={() => dismissAllRef.current()}
+          data-testid="pairing-dismiss"
+        >
           关闭
         </button>
       </div>
