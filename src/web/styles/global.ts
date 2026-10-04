@@ -16,6 +16,14 @@ export const globalStyle = css`
     margin: 0;
     padding: 0;
   }
+  /**
+   * 原生 <dialog> 靠 UA 默认样式表的 margin:auto 在 top layer 内水平+垂直居中；
+   * 上面的 \`* { margin: 0 }\` 通配把它抹成 0，导致所有弹层（删除项目、添加项目、
+   * 分段、提交审查等 8 个 Dialog 使用方）贴在视口左上角而非居中。显式还原。
+   */
+  :global(dialog:modal) {
+    margin: auto;
+  }
   :global(html),
   :global(body),
   :global(#root) {
