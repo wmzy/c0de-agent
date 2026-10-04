@@ -43,6 +43,9 @@ jobs:
       # 为每条失败用例标注对应源文件/行号（workflow run summary 的 annotations）。
       - name: Test
         id: test
+        # 护栏：单个挂死的测试不应让 job 无限空转（曾因模糊测试
+        # 深度递归 bug 挂 46 分钟+）。正常全量约 5-6 分钟。
+        timeout-minutes: 15
         run: pnpm test --reporter=default --reporter=github-actions
 
       - name: Build

@@ -169,11 +169,16 @@ describe('随机 DOM 的偏移往返（模糊测试）', () => {
     const count = 1 + Math.floor(rnd() * 4)
     for (let i = 0; i < count; i++) {
       const pick = rnd()
-      if (pick < 0.4) {
-        html += ['a', 'bc', 'l1', 'x y', '\u200B', '中'][Math.floor(rnd() * 6)] ?? 'a'
+      // depth>=2 是深度上限：只产叶子，不再递归。此前写成
+      // `pick < 0.8 || depth >= 2`——depth>=2 时所有非文本/br 分支
+      // 都走块级递归，分支过程超临界（平均后代 >1），DOM 指数膨胀
+      // （实测单轮达 8 万字符），每轮再对每个偏移做 O(DOM) 的
+      // set+get 往返，模糊测试整体挂死（CI 超 46 分钟不出结果）。
+      if (pick < 0.4 || depth >= 2) {
+        html += ['a', 'bc', 'l1', 'x y', '​', '中'][Math.floor(rnd() * 6)] ?? 'a'
       } else if (pick < 0.6) {
         html += '<br>'
-      } else if (pick < 0.8 || depth >= 2) {
+      } else if (pick < 0.8) {
         const tag = rnd() < 0.7 ? 'div' : 'p'
         html += `<${tag}>${randomHtml(rnd, depth + 1)}</${tag}>`
       } else {
