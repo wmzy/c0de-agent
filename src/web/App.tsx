@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { HistoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Button, LocaleProvider, ToastContainer, zhCN } from 'haze-ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ErrorBoundary } from '@/components/ErrorBoundary.js'
 import { PairingApproval, PairingRequestFlow } from '@/components/PairingView.js'
 import { TopBar } from '@/components/TopBar.js'
@@ -34,11 +34,29 @@ const routerBaseUrl = import.meta.env.BASE_URL.startsWith('/')
 export function App() {
   // P2-16：API 401 → 显示新设备配对流程；已授权设备轮询待审批配对。
   const [authRequired, setAuthRequired] = useState(false)
+  // 配对弹层被用户收起（Escape / 关闭按钮 / 点遮罩）。与 authRequired 分开：
+  // 收起只影响可见性，401 再来时仍会重新展示，用户不必刷新页面。
+  const [pairingDismissed, setPairingDismissed] = useState(false)
   useEffect(() => {
-    const onAuthRequired = () => setAuthRequired(true)
+    const onAuthRequired = () => {
+      setAuthRequired(true)
+      setPairingDismissed(false)
+    }
     window.addEventListener('c0de-auth-required', onAuthRequired)
     return () => window.removeEventListener('c0de-auth-required', onAuthRequired)
   }, [])
+
+  const dismissPairingRef = useRef<() => void>(() => {})
+  dismissPairingRef.current = () => setPairingDismissed(true)
+  // Esc 等价于「关闭」：模态必须能被键盘用户关掉（与 PairingApproval 同口径）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !authRequired || pairingDismissed) return
+      dismissPairingRef.current()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [authRequired, pairingDismissed])
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -58,7 +76,9 @@ export function App() {
                   <div className={appShell}>
                     <UpdateBanner />
                     <FirstDeviceNotice />
-                    {authRequired && <PairingRequestFlow />}
+                    {authRequired && !pairingDismissed && (
+                      <PairingRequestFlow onDismiss={() => setPairingDismissed(true)} />
+                    )}
                     <PairingApproval />
                     <View />
                   </div>

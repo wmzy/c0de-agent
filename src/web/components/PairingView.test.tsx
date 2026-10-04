@@ -5,12 +5,14 @@
 // 以下用例钉住三种关闭路径：关闭按钮、Escape、点击遮罩。
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PairingApproval } from '@/components/PairingView.js'
+import { PairingApproval, PairingRequestFlow } from '@/components/PairingView.js'
 import { authAPI } from '@/services/auth.js'
 
 vi.mock('@/services/auth.js', () => ({
   authAPI: {
     listPairings: vi.fn(),
+    requestPairing: vi.fn(),
+    pairingStatus: vi.fn(),
     approvePairing: vi.fn(),
     denyPairing: vi.fn(),
   },
@@ -31,6 +33,14 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(authAPI.listPairings).mockResolvedValue({ pairings: [PENDING] })
+  // 配对请求流挂载即发起 requestPairing；本组用例只关心呈现/关闭，
+  // 固定为「有已授权设备 + 长期 pending」，避免轮询分支干扰断言。
+  vi.mocked(authAPI.requestPairing).mockResolvedValue({
+    pairingId: 'p1',
+    code: '940440',
+    hasAuthorizedDevices: true,
+  })
+  vi.mocked(authAPI.pairingStatus).mockResolvedValue({ status: 'pending' })
 })
 
 /** 弹层出现（首轮轮询是异步的）。 */
@@ -118,5 +128,42 @@ describe('PairingApproval 关闭路径', () => {
     await renderAndWait()
     const dlg = screen.getByRole('dialog')
     expect(dlg.getAttribute('aria-modal')).toBe('true')
+  })
+})
+
+/**
+ * 配对请求流（新设备侧）此前直接把 card 作为 appShell 的子节点渲染——
+ * 没有 layer 包裹，卡片 position:static 落在 flex 列流首位，既不居中也没遮罩，
+ * 还把下方 Workbench 从 top=77 挤到 top=354（视口 1440×900 实测）。
+ * 以下用例钉住「居中弹层 + 可关闭」这两条用户可见契约。
+ */
+describe('PairingRequestFlow 呈现为居中弹层', () => {
+  it('包裹在 layer 中（遮罩与面板互为兄弟节点），具备 dialog 语义', () => {
+    render(<PairingRequestFlow onDismiss={vi.fn()} />)
+    const dlg = screen.getByRole('dialog')
+    expect(dlg.getAttribute('aria-modal')).toBe('true')
+    // 遮罩存在 → 视觉上与应用其余部分分离，居中由 layer 的 flex 负责
+    expect(screen.getByTestId('pairing-request-backdrop')).toBeTruthy()
+  })
+
+  it('遮罩的 aria-label 说明关闭动作，且遮罩是 button（天生可聚焦/回车触发）', () => {
+    render(<PairingRequestFlow onDismiss={vi.fn()} />)
+    const backdrop = screen.getByTestId('pairing-request-backdrop')
+    expect(backdrop.tagName).toBe('BUTTON')
+    expect(backdrop.getAttribute('aria-label')).toBe('关闭配对流程')
+  })
+
+  it('点「关闭」调用 onDismiss', () => {
+    const onDismiss = vi.fn()
+    render(<PairingRequestFlow onDismiss={onDismiss} />)
+    fireEvent.click(screen.getByTestId('pairing-request-dismiss'))
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+  })
+
+  it('点遮罩同样调用 onDismiss', () => {
+    const onDismiss = vi.fn()
+    render(<PairingRequestFlow onDismiss={onDismiss} />)
+    fireEvent.click(screen.getByTestId('pairing-request-backdrop'))
+    expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 })

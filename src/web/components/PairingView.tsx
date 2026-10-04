@@ -89,7 +89,7 @@ const err = css`
 `
 
 /** 新设备配对流程：请求配对码并轮询审批。 */
-function PairingRequestFlow() {
+function PairingRequestFlow({ onDismiss }: { onDismiss: () => void }) {
   const [pairing, setPairing] = useState<{
     pairingId: string
     code: string
@@ -152,47 +152,72 @@ function PairingRequestFlow() {
   }, [pairing])
 
   return (
-    <div className={card}>
-      <div className={title}>新设备配对</div>
-      <div className={desc}>
-        本设备尚未获得访问授权。请在下方生成配对码，然后在<b>已授权的设备</b>上打开 c0de，
-        在「设备配对」弹窗中核对与本页一致的配对码并批准。
-      </div>
-      {approved ? (
-        <div className={desc}>已批准，正在进入…</div>
-      ) : pairing && pairing.hasAuthorizedDevices === false ? (
-        <div data-testid="pairing-deadend">
-          <div className={desc}>
-            当前服务尚无任何<b>已授权设备</b>，配对请求不可能被批准。请在运行{' '}
-            <code>c0de serve</code> 的终端：1）重启服务（Ctrl+C 后重新运行）；2）打开启动日志中
-            打印的带 <code>?token=</code> 的链接完成首次设备注册。
-          </div>
-          <div className={desc}>
-            若唯一设备的浏览器数据已丢失，请先运行 <code>c0de auth reset</code> 清除设备记录，
-            再重启服务。
-          </div>
-          {error && <div className={err}>{error}</div>}
-          <button type="button" className={btn} onClick={start} data-testid="pairing-recheck">
-            重新检测
-          </button>
+    <div className={layer}>
+      <button
+        type="button"
+        className={overlay}
+        aria-label="关闭配对流程"
+        onClick={onDismiss}
+        data-testid="pairing-request-backdrop"
+      />
+      <div
+        className={card}
+        role="dialog"
+        aria-modal="true"
+        aria-label="新设备配对"
+        style={{ maxHeight: 'calc(100dvh - 48px)', overflowY: 'auto' }}
+      >
+        <div className={title}>新设备配对</div>
+        <div className={desc}>
+          本设备尚未获得访问授权。请在下方生成配对码，然后在<b>已授权的设备</b>上打开 c0de，
+          在「设备配对」弹窗中核对与本页一致的配对码并批准。
         </div>
-      ) : pairing ? (
-        <>
-          <div className={code} data-testid="pairing-code">
-            {pairing.code}
+        {approved ? (
+          <div className={desc}>已批准，正在进入…</div>
+        ) : pairing && pairing.hasAuthorizedDevices === false ? (
+          <div data-testid="pairing-deadend">
+            <div className={desc}>
+              当前服务尚无任何<b>已授权设备</b>，配对请求不可能被批准。请在运行{' '}
+              <code>c0de serve</code> 的终端：1）重启服务（Ctrl+C 后重新运行）；2）打开启动日志中
+              打印的带 <code>?token=</code> 的链接完成首次设备注册。
+            </div>
+            <div className={desc}>
+              若唯一设备的浏览器数据已丢失，请先运行 <code>c0de auth reset</code> 清除设备记录，
+              再重启服务。
+            </div>
+            {error && <div className={err}>{error}</div>}
+            <button type="button" className={btn} onClick={start} data-testid="pairing-recheck">
+              重新检测
+            </button>
           </div>
-          <div className={desc}>等待已授权设备审批（配对码 10 分钟内有效）…</div>
-          {error && <div className={err}>{error}</div>}
-        </>
-      ) : (
-        <>
-          <div className={desc}>点击下方按钮生成配对码。</div>
-          {error && <div className={err}>{error}</div>}
-          <button type="button" className={btn} onClick={start} data-testid="pairing-start">
-            生成配对码
-          </button>
-        </>
-      )}
+        ) : pairing ? (
+          <>
+            <div className={code} data-testid="pairing-code">
+              {pairing.code}
+            </div>
+            <div className={desc}>等待已授权设备审批（配对码 10 分钟内有效）…</div>
+            {error && <div className={err}>{error}</div>}
+          </>
+        ) : (
+          <>
+            <div className={desc}>点击下方按钮生成配对码。</div>
+            {error && <div className={err}>{error}</div>}
+            <button type="button" className={btn} onClick={start} data-testid="pairing-start">
+              生成配对码
+            </button>
+          </>
+        )}
+        {/* 未授权时页面本身已不可用，「关闭」只收起弹层，不清除 authRequired：
+            用户可继续查看说明与配对码，不会因误点丢失当前流程。 */}
+        <button
+          type="button"
+          className={btn}
+          onClick={onDismiss}
+          data-testid="pairing-request-dismiss"
+        >
+          关闭
+        </button>
+      </div>
     </div>
   )
 }
