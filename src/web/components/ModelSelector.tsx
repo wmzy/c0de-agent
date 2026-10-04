@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providerAPI } from '@/services/provider.js'
-import { inputStyle } from '@/styles/tokens.js'
+import { compactSelect, inputStyle } from '@/styles/tokens.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const field = css`
@@ -15,16 +15,7 @@ const field = css`
   color: var(--haze-color-text-secondary);
 `
 
-/** 基础控件增量样式。注意：wyw-in-js 不会把 `${control}` 的样式内联进派生类，
- * 派生类只生成增量；故每个控件需自包含 min-height，否则被全局 select/input{min-height:44px} 覆盖；
- * 边框/圆角/背景/文字色来自 inputStyle。 */
-const selectControl = css`
-  padding: 4px 28px 4px 8px;
-  min-height: 28px;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-`
+/** 基础控件增量样式见 tokens.compactSelect（含 width:auto 覆盖 haze 的 width:100%）。 */
 
 const input = css`
   padding: 4px 8px;
@@ -233,7 +224,7 @@ export function ModelSelector({
       <label className={field}>
         <span>Provider</span>
         <SyncedSelect
-          className={`${inputStyle} ${selectControl}`}
+          className={`${inputStyle} ${compactSelect}`}
           value={value.provider}
           onValuesChange={(v) => {
             onChange({ ...value, provider: v as string })

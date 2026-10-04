@@ -51,3 +51,26 @@ export const btnDanger = css`
     background: color-mix(in srgb, var(--haze-color-danger) 12%, var(--haze-color-bg-subtle));
   }
 `
+
+/**
+ * 行内紧凑下拉：宽度随内容自适应，而非撑满父容器。
+ *
+ * haze 的 `SelectCore__base` 带 `width: 100%`——在 flex 行里（composer 底栏、
+ * 表格工具条）它会吃掉全部剩余宽度，把同排的兄弟控件压到只剩下拉箭头的宽度。
+ * 实测 composer 底栏 779px 宽：agent 选择器独占 448px，Provider 被压到 45px，
+ * 「openai-compat」显示成一个字「o」。这里显式改回自适应。
+ *
+ * max-width 封顶：短名字自适应，长名字（自报 baseURL 前缀）到此为止并以省略号
+ * 截断，不会把同排的 Model 控件挤出可视范围。
+ */
+export const compactSelect = css`
+  width: auto;
+  min-width: 0;
+  max-width: 220px;
+  padding: 4px 28px 4px 8px;
+  min-height: 28px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+`

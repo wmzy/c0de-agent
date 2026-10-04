@@ -30,6 +30,11 @@ const filterInput = css`
   color: var(--haze-color-text);
   font-size: 12px;
   min-width: 0;
+  /* 自适应内容宽度：haze SelectCore 的 width:100% 会让每个筛选项撑满整行，
+   * 4 个控件竖着排满一屏（实测每个 1106px），工具条形同失效。见 tokens.compactSelect。 */
+  width: auto;
+  max-width: 240px;
+  text-overflow: ellipsis;
 
   &:focus {
     outline: none;
