@@ -29,15 +29,19 @@ const setupBanner = css`
   color: var(--haze-color-text);
 
   & > a {
-    color: var(--haze-color-primary);
+    /* --c0de-primary-on-tint 而非 --haze-color-primary：见 global.ts 的
+     * 定义——primary 蓝铺在本横幅自身的 warning 10% 淡底上时对比不足
+     * （light 态 4.24 < AA 4.5），该 token 只压 light 态明度，dark 态
+     * 仍沿用 primary 本身。 */
+    color: var(--c0de-primary-on-tint);
     text-decoration: none;
-    border: 1px solid var(--haze-color-primary);
+    border: 1px solid currentColor;
     border-radius: 6px;
     padding: 3px 12px;
     font-size: 12px;
     flex-shrink: 0;
     &:hover {
-      background: color-mix(in srgb, var(--haze-color-primary) 10%, transparent);
+      background: color-mix(in srgb, currentColor 10%, transparent);
     }
   }
 `

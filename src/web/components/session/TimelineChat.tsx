@@ -74,8 +74,12 @@ const jsonToggle = css`
   font-size: 11px;
   cursor: pointer;
   line-height: 18px;
-  /* 常态半隐降低噪音，悬停消息行或按钮时完整显现 */
-  opacity: 0.4;
+  /* 常态半隐降低噪音，悬停消息行或按钮时完整显现。
+   * 下限 0.78 而非 0.4：opacity 会把前景与背景一起向背景色插值，
+   * 0.4 时 #3a3a3a 的 --haze-color-text-secondary 在 #f8f8f8 底上只剩
+   * 2.45–2.49（axe 实测，AA 需 4.5），11px 小字本就难读，低透明度雪上加霜。
+   * 0.78 下约 5.5，保留「弱于正文」的降噪意图又不牺牲可读性。 */
+  opacity: 0.78;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 
   &:hover {

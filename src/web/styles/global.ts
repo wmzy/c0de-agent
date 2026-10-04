@@ -186,9 +186,36 @@ export const globalStyle = css`
    * 对比度仅 2.1（AA 需 4.5），而该 token 被 15+ 处当正文色（警示条/pill/
    * git 状态/预算告警）。输出色保持琥珀色相、只压低明度；暗色不动
    * （dark 值 CR≈11）。实色用途（实心按钮底）随之变深反而更高对比。
+   *
+   * 明度由 0.55 再降到 0.53：warning 常被铺在自身 10% 淡底上
+   * （color-mix(warning 10%)，实测合成底 #f6efe9 而非纯白），混合底
+   * 比白底更暗、对比更差——0.55 在该底上只有 4.42，在权限条 pill
+   * （warning 10% 底 + 边框）上更只有 4.15，均低于 AA 要求的 4.5。
+   * 0.53 在两种底上分别为 4.83 / 4.7，白底上 5.5。
    */
   :global(html[data-theme='light']) {
-    --haze-color-warning: oklch(0.55 0.12 55);
+    --haze-color-warning: oklch(0.53 0.12 55);
+  }
+
+  /*
+   * primary-on-tinted：primary 蓝被铺在「自身色相的淡底」上时用。
+   *
+   * --haze-color-primary 面向白/浅底设计（light 值 oklch(0.563 0.241 260.8)
+   * 在白底 4.83），但若把它放在 primary 10% / warning 10% 这类混合淡底上，
+   * 合成底比白底更暗、对比更差：SetupBanner 的「去设置」CTA 铺在
+   * warning 10% 底（#f6efe9）上时实测仅 4.24，低于 AA 要求的 4.5。
+   *
+   * 仅压低 light 态明度到 0.535（同色相同彩度，白底 5.47、淡底 4.81）；
+   * dark 态不动，沿用 --haze-color-primary 本身——暗色主题下 primary 是
+   * 亮蓝（#005cf5），本来就在深底上够亮，若沿用 light 的压暗值反而
+   * 掉到 2.86。token 只在需要「蓝字压在淡底上」处用，其余场景继续用
+   * --haze-color-primary。
+   */
+  :global(html[data-theme='light']) {
+    --c0de-primary-on-tint: oklch(0.535 0.241 260.8);
+  }
+  :global(html[data-theme='dark']) {
+    --c0de-primary-on-tint: var(--haze-color-primary);
   }
 
   /*
