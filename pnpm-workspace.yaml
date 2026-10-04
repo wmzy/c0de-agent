@@ -1,3 +1,9 @@
 allowBuilds:
   esbuild: true
   node-pty: true
+minimumReleaseAgeExclude:
+  - react-f0rm
+  - '@native-router/*'
+  - '@for-fun/event-emitter'
+  - react-use-control
+  - haze-ui

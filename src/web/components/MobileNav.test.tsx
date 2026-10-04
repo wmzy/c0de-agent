@@ -1,11 +1,11 @@
 // src/web/components/MobileNav.test.tsx
 // MobileNav 组件测试（spec §10.3 移动端底部导航）。
-// 该组件为独立的移动端导航功能，独立测试文件。
+// 「会话」标签控制 Workbench 移动端侧栏覆盖层（开闭状态由 Layout 持有）。
 
-import { createRoutes, MemoryRouter, View } from '@native-router/react'
+import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileNav } from '@/components/MobileNav.js'
 
 afterEach(() => cleanup())
@@ -73,9 +73,9 @@ describe('MobileNav', () => {
   })
 })
 
-describe('MobileNav 会话抽屉', () => {
+describe('MobileNav 会话覆盖层（Workbench）', () => {
   const sidebar = (
-    <div data-testid="drawer-sidebar">
+    <div data-testid="overlay-sidebar">
       <button type="button" data-testid="tab-sessions">
         💬会话
       </button>
@@ -85,52 +85,54 @@ describe('MobileNav 会话抽屉', () => {
     </div>
   )
 
-  it('点击会话标签打开抽屉，内嵌侧栏（会话+文件 tab），再次点击关闭', async () => {
-    await renderWith(<MobileNav sidebar={sidebar} />)
-    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+  it('点击会话标签调用 onToggleSessions（由 Layout 切换覆盖层）', async () => {
+    const onToggleSessions = vi.fn()
+    await renderWith(<MobileNav sidebar={sidebar} onToggleSessions={onToggleSessions} />)
     fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
-    expect(screen.getByTestId('mobile-drawer')).toBeTruthy()
-    expect(screen.getByTestId('drawer-sidebar')).toBeTruthy()
-    expect(screen.getByTestId('tab-sessions')).toBeTruthy()
-    expect(screen.getByTestId('tab-files')).toBeTruthy()
-    // 抽屉打开期间 sessions 标签高亮
+    expect(onToggleSessions).toHaveBeenCalledTimes(1)
+    // 再次点击 → 收起（切换语义）
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(onToggleSessions).toHaveBeenCalledTimes(2)
+  })
+
+  it('sessionsOpen 时会话标签高亮', async () => {
+    await renderWith(<MobileNav sidebar={sidebar} sessionsOpen />)
     expect(screen.getByTestId('mobile-nav-sessions').className).toContain('active')
-    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
-    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+    expect(screen.getByTestId('mobile-nav-chat').className).not.toContain('active')
   })
 
-  it('点击遮罩关闭抽屉', async () => {
-    await renderWith(<MobileNav sidebar={sidebar} />)
-    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
-    fireEvent.click(screen.getByTestId('mobile-drawer-mask'))
-    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+  it('路由变化时调用 onSessionsClosed 收起覆盖层', async () => {
+    const onSessionsClosed = vi.fn()
+    // 覆盖层内选择会话 = 声明式导航（命令式 navigate 在 MemoryRouter
+    // 测试环境下的视图提交有时序差异，TypedLink 与真实点击链接等价）
+    await renderWith(
+      <>
+        <MobileNav sidebar={sidebar} onSessionsClosed={onSessionsClosed} />
+        <TypedLink to="/settings" data-testid="goto-settings">
+          go
+        </TypedLink>
+      </>,
+    )
+    // 挂载时 effect 触发一次（幂等：初始即关闭态）
+    expect(onSessionsClosed).toHaveBeenCalledTimes(1)
+    // 导航 → 路由变化 → 再次收起
+    fireEvent.click(screen.getByTestId('goto-settings'))
+    await act(async () => {})
+    expect(onSessionsClosed).toHaveBeenCalledTimes(2)
   })
 
-  it('点击 ✕ 关闭抽屉', async () => {
-    await renderWith(<MobileNav sidebar={sidebar} />)
+  it('未传 sidebar 时点击会话标签无操作', async () => {
+    const onToggleSessions = vi.fn()
+    await renderWith(<MobileNav onToggleSessions={onToggleSessions} />)
     fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
-    fireEvent.click(screen.getByTestId('mobile-drawer-close'))
-    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
+    expect(onToggleSessions).not.toHaveBeenCalled()
   })
 
-  it('Esc 关闭抽屉', async () => {
-    await renderWith(<MobileNav sidebar={sidebar} />)
-    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
-    fireEvent.keyDown(document, { key: 'Escape' })
+  it('无覆盖层 DOM：抽屉相关节点已随 Workbench 重构移除', async () => {
+    await renderWith(<MobileNav sidebar={sidebar} sessionsOpen />)
+    // 覆盖层由 Workbench 渲染（Layout 持有 control），MobileNav 自身不再渲染抽屉
     expect(screen.queryByTestId('mobile-drawer')).toBeNull()
-  })
-
-  it('未传 sidebar 时点击会话标签不渲染抽屉', async () => {
-    await renderWith(<MobileNav />)
-    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
-    expect(screen.queryByTestId('mobile-drawer')).toBeNull()
-  })
-
-  it('抽屉打开时锁定背景滚动，关闭后恢复', async () => {
-    await renderWith(<MobileNav sidebar={sidebar} />)
-    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
-    expect(document.body.style.overflow).toBe('hidden')
-    fireEvent.click(screen.getByTestId('mobile-drawer-close'))
-    expect(document.body.style.overflow).toBe('')
+    expect(screen.queryByTestId('mobile-drawer-mask')).toBeNull()
+    expect(screen.queryByTestId('mobile-drawer-close')).toBeNull()
   })
 })

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FilePathLink } from '@/components/FilePathLink.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
@@ -27,8 +27,12 @@ describe('FilePathLink', () => {
     expect(openFile).toHaveBeenCalledWith('src/a.ts')
   })
 
-  it('有 title 属性提示', () => {
+  it('hover 展示预览提示（Tooltip）', async () => {
     withSelection(<FilePathLink path="src/a.ts" />)
-    expect(screen.getByText('src/a.ts').getAttribute('title')).toContain('src/a.ts')
+    // mouseenter 不冒泡：派发到 Tooltip 的 trigger 元素。
+    fireEvent.mouseEnter(
+      screen.getByText('src/a.ts').closest('[data-slot="trigger"]') as HTMLElement,
+    )
+    await waitFor(() => expect(screen.getByRole('tooltip').textContent).toContain('预览 src/a.ts'))
   })
 })

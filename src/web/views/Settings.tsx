@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useBlocker, useMatched } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button } from 'haze-ui'
+import { Button, ConfirmDialog } from 'haze-ui'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
@@ -94,6 +94,10 @@ export function Settings() {
 
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
   const [needsRestart, setNeedsRestart] = useState(false)
+
+  // P2-10：dirty 时切换作用域会丢弃草稿——ConfirmDialog 二次确认，
+  // 确认前暂存目标作用域（SyncedSelect 受控，选中项会弹回当前 scope）。
+  const [pendingScope, setPendingScope] = useState<'global' | 'project' | null>(null)
 
   // dirty 仅指「需手动保存的草稿」；外观面板即时生效、不进 draft，不影响此判定。
   const isDirty = draft !== null
@@ -348,11 +352,8 @@ export function Settings() {
           onValuesChange={(v) => {
             const next = v as 'global' | 'project'
             // P2-10：dirty 时切换作用域会把草稿整体落盘到新作用域——先确认，防止误写。
-            if (
-              next !== scope &&
-              draft !== null &&
-              !window.confirm('切换作用域将丢失未保存的更改。确定切换？')
-            ) {
+            if (next !== scope && draft !== null) {
+              setPendingScope(next)
               return
             }
             if (next !== scope) {
@@ -581,6 +582,28 @@ export function Settings() {
         onDiscard={discardChanges}
         onSave={handleSave}
       />
+
+      {/* P2-10：dirty 时切换作用域的二次确认（替代 window.confirm：
+       * 原生框无样式、阻塞事件循环，且文案无法强调「丢弃」后果。
+       * 条件渲染挂载：react-use-control 的 open 布尔值仅是初始值，
+       * prop 变化不同步内部状态——必须以挂载/卸载驱动显隐）。 */}
+      {pendingScope !== null && (
+        <ConfirmDialog
+          open
+          onClose={() => setPendingScope(null)}
+          onConfirm={() => {
+            setDraft(null)
+            setSaveFeedback({ kind: 'idle' })
+            setScope(pendingScope)
+            setPendingScope(null)
+          }}
+          title="切换配置作用域"
+          confirmText="切换并丢弃更改"
+          cancelText="取消"
+        >
+          当前有未保存的更改，切换作用域将丢弃这些更改。确定切换？
+        </ConfirmDialog>
+      )}
 
       {/* 安全类配置重启提示：token/authEnabled 由 authManager 启动时一次性读取 */}
       {needsRestart && (

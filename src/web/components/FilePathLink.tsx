@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { Tooltip } from 'haze-ui'
 import { useFileSelection } from '@/contexts/FileSelectionContext.js'
 
 const link = css`
@@ -19,14 +20,15 @@ const link = css`
 export function FilePathLink({ path }: { path: string }) {
   const { openFile } = useFileSelection()
   return (
-    <button
-      type="button"
-      className={link}
-      onClick={() => openFile(path)}
-      title={`预览 ${path}`}
-      data-testid="filepath-link"
-    >
-      {path}
-    </button>
+    <Tooltip content={`预览 ${path}`}>
+      <button
+        type="button"
+        className={link}
+        onClick={() => openFile(path)}
+        data-testid="filepath-link"
+      >
+        {path}
+      </button>
+    </Tooltip>
   )
 }
