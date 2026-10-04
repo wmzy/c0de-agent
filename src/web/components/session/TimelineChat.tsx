@@ -17,6 +17,7 @@ import {
   type SegmentGroup,
   type TimelineRow,
 } from '@/components/session/utils/timeline.js'
+import { TOUCH } from '@/styles/breakpoints.js'
 
 const virtualInner = css`
   position: relative;
@@ -32,7 +33,14 @@ const virtualItem = css`
 
 const rowWrap = css`
   position: relative;
-  padding: 2px 0;
+  /*
+   * 右侧留出 jsonToggle 的宽度：开关是 position:absolute; right:0 叠在行上，
+   * 行内不预留空间时正文会从它底下滑过去。实测 1440px 视口、含 user text 的
+   * 消息行：正文右边缘 x=1424，开关占 x=1388–1424，正好压住最后 36px——
+   * 长路径/长 URL 末段会被开关盖住，且开关会拦截这部分文本的选区。
+   * 留出等宽沟槽后两者不再重叠，开关仍保持右上角对齐。
+   */
+  padding: 2px 40px 2px 0;
   border-radius: 6px;
   transition: background-color 0.12s ease;
 
@@ -81,6 +89,13 @@ const jsonToggle = css`
    * 0.78 下约 5.5，保留「弱于正文」的降噪意图又不牺牲可读性。 */
   opacity: 0.78;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+
+  /* 触屏没有 hover：&:hover 永不触发，开关会永久停在 0.78 的半隐态，
+   * 且无任何视觉线索提示这里可点。触屏下直接给足不透明度，
+   * 降噪交给「不占行宽、不抢正文」本身（沟槽已预留，不压正文）。 */
+  ${TOUCH} {
+    opacity: 1;
+  }
 
   &:hover {
     opacity: 1;
