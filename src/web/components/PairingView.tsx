@@ -254,11 +254,19 @@ export function PairingApproval() {
   }
 
   /**
-   * 关闭：把当前所有待审批请求逐条标记为已隐藏（不拒绝、不影响轮询）。
+   * 关闭：把当前所有待审批请求逐条标记为已隐藏（不拒绝、不影响轮询），
+   * 并清掉错误。
+   *
+   * 清错误保证「关闭」是确定性的：只标记 dismissed 时，关闭后弹层不渲染，
+   * 但 error 仍留在 state 里，下一轮轮询失败又把它点亮，用户刚关掉的弹层
+   * 5 秒后自己弹回来。轮询本身不中断 —— 新设备发起的配对请求仍会重新弹窗，
+   * 不丢审批可见性。
+   *
    * 用 ref 持有最新闭包，使 Escape 监听只需绑定一次（不随 items 重建）。
    */
   const dismissAllRef = useRef<() => void>(() => {})
   dismissAllRef.current = () => {
+    setError(null)
     setDismissed((prev) => {
       const next = new Set(prev)
       for (const p of items) next.add(p.pairingId)
@@ -267,7 +275,7 @@ export function PairingApproval() {
   }
 
   // Esc 等价于「关闭」：模态必须可被键盘用户关掉（此前仅有关闭按钮，且无实现）。
-  // 必须置于下方 `if (visible.length === 0 && !error) return null` 之前——
+  // 必须置于下方 `if (visible.length === 0) return null` 之前——
   // 条件 return 在 Hook 之后会让 Hook 数量随渲染变化（React 直接抛错）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -285,7 +293,18 @@ export function PairingApproval() {
   }
 
   // 所有 Hook 之后才可提前返回。
-  if (visible.length === 0 && !error) return null
+  //
+  // 必须以 visible 为唯一门槛（此前是 `visible.length === 0 && !error`）：
+  // 审批弹层是 z-index:2000 的全屏遮罩，只有存在待审批请求时才该出现。
+  // 只要轮询失败（如 security.authEnabled=false 时 /api/auth/pairing 恒回
+  // 400 AUTH_DISABLED，每 5s 一次）就会点亮 error，弹层在没有任何待审批请求时
+  // 照常渲染；而此时 items 为空，「关闭」/Escape/点遮罩三条关闭路径都只是把
+  // 空 Set 标记为已隐藏 —— 状态无变化，React 跳过重渲染，遮罩无法移除，
+  // 整个应用被永久挡住。
+  //
+  // 改成只认 visible 后：无请求即不渲染，与错误无关；关闭也顺带清掉 error，
+  // 避免关闭后弹层再被下一次轮询失败点亮。
+  if (visible.length === 0) return null
 
   return (
     <div className={layer}>

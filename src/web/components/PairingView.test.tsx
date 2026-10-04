@@ -3,7 +3,7 @@
 // 核心回归：设备配对审批弹层此前「关闭」按钮无实现，叠加 z-index:2000
 // 全屏遮罩 → 整应用被永久遮挡（唯一出路是批准/拒绝别人的请求）。
 // 以下用例钉住三种关闭路径：关闭按钮、Escape、点击遮罩。
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PairingApproval } from '@/components/PairingView.js'
 import { authAPI } from '@/services/auth.js'
@@ -73,6 +73,45 @@ describe('PairingApproval 关闭路径', () => {
     vi.mocked(authAPI.listPairings).mockResolvedValue({ pairings: [] })
     render(<PairingApproval />)
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('轮询失败时不渲染弹层（无请求可审批，不该遮挡整个应用）', async () => {
+    // 认证关闭时 /api/auth/pairing 恒回 400：列表为空 + 轮询持续失败。
+    // 此前 error 会点亮弹层，而三条关闭路径都只把空集合标记为已隐藏，
+    // 状态无变化 → z-index:2000 全屏遮罩永久挡住应用。
+    vi.mocked(authAPI.listPairings).mockRejectedValue(
+      Object.assign(new Error('AUTH_DISABLED'), { status: 400 }),
+    )
+    render(<PairingApproval />)
+    await waitFor(() => {
+      expect(authAPI.listPairings).toHaveBeenCalled()
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('关闭后不因后续轮询失败被再次点亮', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let failNext = false
+      vi.mocked(authAPI.listPairings).mockImplementation(async () => {
+        if (failNext) {
+          throw Object.assign(new Error('AUTH_DISABLED'), { status: 400 })
+        }
+        return { pairings: [PENDING] }
+      })
+      await renderAndWait()
+      fireEvent.click(screen.getByTestId('pairing-dismiss'))
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      // 下一轮轮询失败：不该把用户刚关掉的弹层弹回来
+      failNext = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      expect(screen.queryByRole('dialog')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('弹层具备 dialog 语义（role + aria-modal）', async () => {
