@@ -26,8 +26,26 @@ import { workflowsAPI } from '@/services/workflows.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { isImeComposing } from '@/utils/ime.js'
 
+/**
+ * 底栏容器。
+ *
+ * sticky bottom:0 而非普通流内元素：.haze-Workbench__editor 是本页唯一滚动
+ * 容器（display:block，子元素按块级堆叠），聊天页的顶栏/消息流/权限条/输入框
+ * 全部平铺在它内部。输入区可增长到 max-height:200px，多行输入时 wrap 高度
+ * 会超过容器剩余空间——普通流下它被推到容器下沿之外，而容器此时已滚到底、
+ * 没有更多可滚高度，用户既看不到也点不到「发送」：
+ * 1440×900 实测输入区 190px 时「发送」按钮 top=962 / bottom=1001 全在视口
+ * （900）之外，elementFromPoint 命中的是 resize 把手；
+ * 375×667 更严重（main scrollHeight=1222 vs clientHeight=591）。
+ *
+ * 固定在容器底部后，输入区增长只压缩上方消息流的可视高度，发送按钮恒在
+ * 视口内可达；未溢出时 sticky 元素停在自然位置，布局与此前完全一致。
+ * z-index 高于消息流，避免长输入时压住最后一条消息。
+ */
 const wrap = css`
-  position: relative;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--haze-color-border);
