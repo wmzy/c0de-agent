@@ -1,6 +1,7 @@
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button } from 'haze-ui'
+import { Button, ConfirmDialog } from 'haze-ui'
+import { useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { CommaListInput } from '@/components/settings/CommaListInput.js'
 import {
@@ -38,62 +39,76 @@ function DevicesSection() {
   })
   const devices = data?.devices ?? []
 
+  // 撤销设备二审：确认前暂存目标（替代 window.confirm——原生框无法
+  // 强调「唯一设备撤销后需 c0de auth reset 重新注册」的恢复路径）。
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null)
+
   if (isLoading) return <p className={hint}>加载已授权设备…</p>
   if (isError) return <p className={hint}>获取已授权设备失败（认证可能未启用）</p>
   if (devices.length === 0) return <p className={hint}>暂无已授权设备</p>
 
   return (
-    <div data-testid="device-list">
-      {devices.map((d) => (
-        <div
-          key={d.id}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 13,
-            marginBottom: 6,
-          }}
-        >
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {d.name} <span style={{ opacity: 0.6, fontSize: 11 }}>{d.id.slice(0, 8)}…</span>
-          </span>
-          <span style={{ opacity: 0.6, fontSize: 11 }}>
-            {new Date(d.createdAt).toLocaleDateString()}
-          </span>
-          <Button
+    <>
+      <div data-testid="device-list">
+        {devices.map((d) => (
+          <div
+            key={d.id}
             style={{
-              border: '1px solid var(--haze-color-border)',
-              borderRadius: 6,
-              padding: '2px 8px',
-              fontSize: 12,
-              cursor: 'pointer',
-              color: 'var(--haze-color-danger)',
-              background: 'var(--haze-color-bg)',
-              minHeight: 'auto',
-              minWidth: 'auto',
-            }}
-            disabled={revoke.isPending}
-            variant="outline"
-            onClick={() => {
-              // 撤销立即生效（服务端热加载）；撤销后本页 token 可能立即失效
-              if (
-                !window.confirm(
-                  `撤销设备「${d.name}」？该设备将立即失去访问权限（已打开的对话流不受影响，` +
-                    '仅后续请求被拒绝）。' +
-                    '若撤销的是唯一设备，请用 c0de auth reset 重新注册首设备。',
-                )
-              ) {
-                return
-              }
-              revoke.mutate(d.id)
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 13,
+              marginBottom: 6,
             }}
           >
-            撤销
-          </Button>
-        </div>
-      ))}
-    </div>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {d.name} <span style={{ opacity: 0.6, fontSize: 11 }}>{d.id.slice(0, 8)}…</span>
+            </span>
+            <span style={{ opacity: 0.6, fontSize: 11 }}>
+              {new Date(d.createdAt).toLocaleDateString()}
+            </span>
+            <Button
+              style={{
+                border: '1px solid var(--haze-color-border)',
+                borderRadius: 6,
+                padding: '2px 8px',
+                fontSize: 12,
+                cursor: 'pointer',
+                color: 'var(--haze-color-danger)',
+                background: 'var(--haze-color-bg)',
+                minHeight: 'auto',
+                minWidth: 'auto',
+              }}
+              disabled={revoke.isPending}
+              variant="outline"
+              onClick={() => setRevokeTarget({ id: d.id, name: d.name })}
+            >
+              撤销
+            </Button>
+          </div>
+        ))}
+      </div>
+      {/* 条件渲染挂载：react-use-control 的 open 布尔值仅是初始值，
+       * prop 变化不同步内部状态——必须以挂载/卸载驱动显隐。 */}
+      {revokeTarget !== null && (
+        <ConfirmDialog
+          open
+          onClose={() => setRevokeTarget(null)}
+          onConfirm={() => {
+            // 撤销立即生效（服务端热加载）；撤销后本页 token 可能立即失效
+            if (revokeTarget) revoke.mutate(revokeTarget.id)
+            setRevokeTarget(null)
+          }}
+          title={`撤销设备「${revokeTarget.name}」`}
+          confirmText="撤销设备"
+          cancelText="取消"
+          variant="danger"
+        >
+          该设备将立即失去访问权限（已打开的对话流不受影响，仅后续请求被拒绝）。
+          若撤销的是唯一设备，请用 <code>c0de auth reset</code> 重新注册首设备。
+        </ConfirmDialog>
+      )}
+    </>
   )
 }
 
@@ -108,6 +123,8 @@ function SecurityPanel({
   // security 是服务端全局参数：项目作用域下禁用编辑（后端会拒绝项目作用域 security 写入），
   // 仅展示当前生效值（来自全局作用域合并视图）。
   const securityLocked = securityScope === 'project'
+  // 关闭认证二审（替代 window.confirm）：高风险操作，确认前暂存意图。
+  const [confirmDisableAuth, setConfirmDisableAuth] = useState(false)
   return (
     <>
       <div className={section}>
@@ -129,14 +146,7 @@ function SecurityPanel({
                 return
               }
               // 关闭认证是高风险操作（服务绑 0.0.0.0，所有 API 将无鉴权），fail-closed 确认。
-              if (
-                !window.confirm(
-                  '关闭认证将移除所有 API 鉴权，任何能访问该服务端口的进程/设备都能执行任意工具。确定关闭？',
-                )
-              ) {
-                return
-              }
-              onSecurityChange({ authEnabled: false })
+              setConfirmDisableAuth(true)
             }}
           />
           <span>启用 Bearer Token 认证</span>
@@ -256,6 +266,22 @@ function SecurityPanel({
           分钟仍未处理则自动拒绝。
         </p>
       </div>
+      {confirmDisableAuth && (
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmDisableAuth(false)}
+          onConfirm={() => {
+            onSecurityChange({ authEnabled: false })
+            setConfirmDisableAuth(false)
+          }}
+          title="关闭 Bearer Token 认证"
+          confirmText="关闭认证"
+          cancelText="取消"
+          variant="danger"
+        >
+          关闭认证将移除所有 API 鉴权，任何能访问该服务端口的进程/设备都能执行任意工具。确定关闭？
+        </ConfirmDialog>
+      )}
     </>
   )
 }

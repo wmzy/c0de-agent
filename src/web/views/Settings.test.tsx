@@ -1372,17 +1372,20 @@ describe('Settings — 完整配置表单覆盖', () => {
       ) as HTMLInputElement
     expect(authCheck.checked).toBe(true)
 
-    // 取消确认 → 不产生变更（happy-dom 无 window.confirm，用 stubGlobal）
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
+    // 取消勾选 → ConfirmDialog 二审；取消 → 变更不生效
     fireEvent.click(authCheck)
+    const authDialog = screen.getByRole('dialog')
+    expect(authDialog.textContent).toContain('关闭认证将移除所有 API 鉴权')
+    fireEvent.click(authDialog.querySelector('[data-slot="cancel-button"]') as HTMLElement)
     expect(authCheck.checked).toBe(true)
     expect(screen.getByTestId('settings-save')).toBeDisabled()
 
-    // 确认 → 允许关闭
-    ;(globalThis.confirm as Mock).mockReturnValue(true)
+    // 再次取消勾选 → 确认关闭
     fireEvent.click(authCheck)
+    fireEvent.click(
+      screen.getByRole('dialog').querySelector('[data-slot="confirm-button"]') as HTMLElement,
+    )
     expect(authCheck.checked).toBe(false)
-    vi.unstubAllGlobals()
 
     fireEvent.click(screen.getByTestId('settings-save'))
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())

@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { HistoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Button, LocaleProvider, zhCN } from 'haze-ui'
+import { Button, LocaleProvider, ToastContainer, zhCN } from 'haze-ui'
 import { useEffect, useState } from 'react'
 import { ErrorBoundary } from '@/components/ErrorBoundary.js'
 import { PairingApproval, PairingRequestFlow } from '@/components/PairingView.js'
@@ -45,21 +45,26 @@ export function App() {
       <ThemeProvider>
         <ConfigProvider>
           <LocaleProvider strings={zhCN}>
-            <HistoryRouter
-              routes={routes}
-              baseUrl={routerBaseUrl}
-              notFound={<Layout header={<TopBar />} main={<NotFound />} />}
-            >
-              <ErrorBoundary>
-                <div className={appShell}>
-                  <UpdateBanner />
-                  <FirstDeviceNotice />
-                  {authRequired && <PairingRequestFlow />}
-                  <PairingApproval onDone={() => {}} />
-                  <View />
-                </div>
-              </ErrorBoundary>
-            </HistoryRouter>
+            {/* ToastContainer：命令式 toast() 的渲染宿主（fixed 堆栈在子树之后），
+             *  须在 LocaleProvider 内以取到 zhCN 的 toast 文案。
+             *  maxCount 限制堆叠（高频触发点如复制按钮不会刷屏）。 */}
+            <ToastContainer maxCount={3}>
+              <HistoryRouter
+                routes={routes}
+                baseUrl={routerBaseUrl}
+                notFound={<Layout header={<TopBar />} main={<NotFound />} />}
+              >
+                <ErrorBoundary>
+                  <div className={appShell}>
+                    <UpdateBanner />
+                    <FirstDeviceNotice />
+                    {authRequired && <PairingRequestFlow />}
+                    <PairingApproval onDone={() => {}} />
+                    <View />
+                  </div>
+                </ErrorBoundary>
+              </HistoryRouter>
+            </ToastContainer>
           </LocaleProvider>
         </ConfigProvider>
       </ThemeProvider>

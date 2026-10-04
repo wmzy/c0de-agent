@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BranchTree } from '@/components/BranchTree.js'
 import type { SessionTreeNode } from '@/types/index.js'
@@ -148,11 +148,16 @@ describe('BranchTree', () => {
   })
 
   // 回归：估算成本展示直接 toFixed——二进制近似把 1.005 舍成 1.00（少一分钱）。
-  it('成本按十进制舍入展示（1.005 → US$1.01）', () => {
+  it('成本按十进制舍入展示（1.005 → US$1.01）', async () => {
     const node = treeWithUsage[0]
     if (!node) throw new Error('fixture missing')
     const centTree: SessionTreeNode[] = [{ ...node, usage: { ...node.usage, cost: 1.005 } }]
     render(<BranchTree nodes={centTree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
-    expect(screen.getByTestId('usage-badge').getAttribute('title')).toContain('US$1.01')
+    // Tooltip：hover 徽标后提示框出现（替代原生 title 属性；
+    // mouseenter 不冒泡，需派发到 Tooltip 的 trigger 元素）。
+    fireEvent.mouseEnter(
+      screen.getByTestId('usage-badge').closest('[data-slot="trigger"]') as HTMLElement,
+    )
+    await waitFor(() => expect(screen.getByRole('tooltip').textContent).toContain('US$1.01'))
   })
 })

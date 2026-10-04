@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { TypedLink, useMatched } from '@native-router/react'
 import { useQuery } from '@tanstack/react-query'
+import { Tooltip } from 'haze-ui'
 import { CommitButton } from '@/components/CommitButton.js'
 import { Logo } from '@/components/Logo.js'
 import { ProjectIndicator } from '@/components/ProjectIndicator.js'
@@ -172,24 +173,22 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
     </>
   )
   return projectId ? (
-    <TypedLink<AppPaths>
-      to="/projects/:projectId/settings"
-      params={{ projectId }}
-      className={badgeClass}
-      title={tip}
-      data-testid="month-cost-badge"
-    >
-      {badgeText}
-    </TypedLink>
+    <Tooltip content={tip}>
+      <TypedLink<AppPaths>
+        to="/projects/:projectId/settings"
+        params={{ projectId }}
+        className={badgeClass}
+        data-testid="month-cost-badge"
+      >
+        {badgeText}
+      </TypedLink>
+    </Tooltip>
   ) : (
-    <TypedLink<AppPaths>
-      to="/settings"
-      className={badgeClass}
-      title={tip}
-      data-testid="month-cost-badge"
-    >
-      {badgeText}
-    </TypedLink>
+    <Tooltip content={tip}>
+      <TypedLink<AppPaths> to="/settings" className={badgeClass} data-testid="month-cost-badge">
+        {badgeText}
+      </TypedLink>
+    </Tooltip>
   )
 }
 

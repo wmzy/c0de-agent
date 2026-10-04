@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useState } from 'react'
+import { toast } from 'haze-ui'
 
 const btn = css`
   font-size: 12px;
@@ -14,17 +14,16 @@ const btn = css`
   }
 `
 
+/** 复制按钮：剪贴板成功后以 toast 反馈（按钮体积小，原地翻字易被忽略）。 */
 export function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false)
   const onClick = () => {
     navigator.clipboard?.writeText(text).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      toast.success('已复制')
     })
   }
   return (
     <button type="button" className={btn} onClick={onClick} data-testid="copy-button">
-      {copied ? '已复制' : label}
+      {label}
     </button>
   )
 }

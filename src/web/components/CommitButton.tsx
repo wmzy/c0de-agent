@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Tooltip } from 'haze-ui'
 import { useState } from 'react'
 import { CommitReviewDialog } from '@/components/CommitReviewDialog.js'
 import { fileAPI } from '@/services/file.js'
@@ -153,17 +154,18 @@ export function CommitButton({ projectId }: { projectId: string }) {
 
   return (
     <>
-      <button
-        type="button"
-        className={btnClass}
-        onClick={() => commitMut.mutate(undefined)}
-        disabled={commitMut.isPending || !hasChanges}
-        title={title}
-        data-testid="git-commit-btn"
-        data-has-changes={hasChanges || undefined}
-      >
-        {label}
-      </button>
+      <Tooltip content={title}>
+        <button
+          type="button"
+          className={btnClass}
+          onClick={() => commitMut.mutate(undefined)}
+          disabled={commitMut.isPending || !hasChanges}
+          data-testid="git-commit-btn"
+          data-has-changes={hasChanges || undefined}
+        >
+          {label}
+        </button>
+      </Tooltip>
       {reviewState && (
         <CommitReviewDialog
           suggestions={reviewState.suggestions}
