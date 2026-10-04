@@ -13,13 +13,24 @@ const field = css`
   gap: 4px;
   font-size: 12px;
   color: var(--haze-color-text-secondary);
+  /* 极窄视口（<240px）放不下「标签 + 控件」时换行，避免整行撑出横向滚动
+   * （WCAG 1.4.10 Reflow）。标签不参与收缩折行。 */
+  flex-wrap: wrap;
+  min-width: 0;
+  & > span:first-child {
+    flex-shrink: 0;
+  }
 `
 
 /** 基础控件增量样式见 tokens.compactSelect（含 width:auto 覆盖 haze 的 width:100%）。 */
 
 const input = css`
   padding: 4px 8px;
-  min-width: 180px;
+  /* 窄屏（手机捏合放大后 CSS 视口可低至 ~200px）下可收缩：min-width 是可用的
+   * 舒适宽度下限，不是硬下限，否则「Model 标签 + 180px 输入 + 下拉按钮」
+   * 实测撑到 250px，产生横向滚动（WCAG 1.4.10 Reflow）。 */
+  min-width: 0;
+  width: 180px;
   min-height: 28px;
   font: inherit;
   font-size: 12px;
@@ -32,6 +43,9 @@ const modelWrap = css`
   display: inline-flex;
   align-items: center;
   gap: 0;
+  /* 允许收缩，配合 input 的 min-width:0 一起让位给窄视口 */
+  min-width: 0;
+  flex-shrink: 1;
 `
 
 const dropdownBtn = css`

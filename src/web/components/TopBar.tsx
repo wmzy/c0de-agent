@@ -20,8 +20,10 @@ const bar = css`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
-  padding: 0 12px;
+  /* 不换行：换行会让 390px 常规手机视口的顶栏无故增高到 76px。
+   * 极窄视口的溢出压力交给 nav 自身收缩+换行（见 nav），品牌区先吸收。 */
+  min-height: 44px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--haze-color-border);
   background: var(--haze-color-bg-subtle);
   flex-shrink: 0;
@@ -49,8 +51,22 @@ const nav = css`
   display: flex;
   align-items: center;
   gap: 4px;
-  /* 导航不压缩：窄屏溢出压力由左侧品牌区（项目名截断）吸收 */
+  /* 常规视口：导航不压缩、也不换行——换行会把 390px 手机视口的顶栏从
+   * 44px 顶到 80px（实测 nav 折成两行 67px），比窄视口的横向滚动更常见。
+   * 窄视口溢出压力由左侧品牌区（项目名省略号截断）吸收。 */
   flex-shrink: 0;
+  min-width: 0;
+
+  /* 极窄视口（<240px，实测 195px 时 nav 占 207px 顶出横向滚动）：
+   * 收窄各链接横向内边距，全部放回视口内，且无需换行——顶栏保持 44px。 */
+  @media (max-width: 239px) {
+    gap: 2px;
+
+    & > a {
+      padding: 6px 5px;
+      font-size: 12px;
+    }
+  }
 `
 
 const link = css`
