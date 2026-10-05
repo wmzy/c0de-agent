@@ -95,6 +95,33 @@ const loadingWrap = css`
   padding: 12px;
 `
 
+/** 读失败态：与 RecycleBin/KanbanView 的读失败三段式同口径（标题 + 后端 message + 重试）。 */
+const errorWrap = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 常含长路径，窄面板下必须能断行而不是撑出横向滚动 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  padding: 4px 12px;
+  font-size: 12px;
+`
+
 const hidden = css`
   display: none;
 `
@@ -247,6 +274,28 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     }
   } else if (q.isLoading) {
     body = <div className={loadingWrap}>加载中…</div>
+  } else if (q.isError) {
+    // 「读不到」必须与「真的为空」分开：useQuery 重试耗尽后 data 仍是 undefined，
+    // 此前 404/403/500/断网 全部落到下面的「无内容」——header 仍显示路径，看起来
+    // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
+    // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
+    const message =
+      (q.error as { message?: string } | null)?.message ??
+      (q.error instanceof Error ? q.error.message : null)
+    body = (
+      <div className={errorWrap} data-testid="file-preview-error" role="alert">
+        <span className={errorTitle}>文件读取失败</span>
+        <span className={errorDetail}>{message ?? '无法读取该文件内容。'}</span>
+        <button
+          type="button"
+          className={retryBtn}
+          onClick={() => void q.refetch()}
+          data-testid="file-preview-retry"
+        >
+          重试
+        </button>
+      </div>
+    )
   } else if (!q.data) {
     body = <div className={loadingWrap}>无内容</div>
   } else if (['md', 'markdown'].includes(ext)) {

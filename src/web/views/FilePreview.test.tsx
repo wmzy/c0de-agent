@@ -95,6 +95,53 @@ describe('FilePreview', () => {
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
   })
 
+  // 回归：读失败此前没有分支，useQuery 重试耗尽后落到「无内容」——header 仍显示
+  // 路径，用户会把 404/500/断网当成文件被清空。必须与真正的空文件区分开。
+  it('读取失败展示失败态与后端 message，而不是「无内容」', async () => {
+    const errBody = { error: { code: 'NOT_FOUND', message: '文件不存在：a.ts' } }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        json: async () => errBody,
+        text: async () => JSON.stringify(errBody),
+        clone: () => ({ json: async () => errBody }),
+      }),
+    )
+    withClient(<FilePreview projectId="p1" path="a.ts" />)
+    await waitFor(() => {
+      expect(screen.getByTestId('file-preview-error')).toBeTruthy()
+    })
+    expect(screen.queryByText('无内容')).toBeNull()
+    expect(screen.getByText('文件读取失败')).toBeTruthy()
+    expect(screen.getByText('文件不存在：a.ts')).toBeTruthy()
+    expect(screen.queryByText('[object Object]')).toBeNull()
+  })
+
+  it('失败态「重试」重新发起读取', async () => {
+    const errBody = { error: { code: 'INTERNAL', message: '磁盘读取失败' } }
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: async () => errBody,
+      text: async () => JSON.stringify(errBody),
+      clone: () => ({ json: async () => errBody }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+    withClient(<FilePreview projectId="p1" path="a.ts" />)
+    await waitFor(() => {
+      expect(screen.getByTestId('file-preview-retry')).toBeTruthy()
+    })
+    const callsBefore = fetchStub.mock.calls.length
+    fireEvent.click(screen.getByTestId('file-preview-retry'))
+    await waitFor(() => {
+      expect(fetchStub.mock.calls.length).toBeGreaterThan(callsBefore)
+    })
+  })
+
   // 回归：encodeURI 不编码 ?/#，含它们的文件名会在 URL 中被解析为
   // query/fragment，服务端拿到截断路径读错文件；逐段 encodeFilePath 后
   // src 携带完整编码路径。
