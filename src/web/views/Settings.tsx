@@ -43,6 +43,37 @@ const loadingWrap = css`
   padding: 24px;
 `
 
+/**
+ * 读失败态：标题 / 原因 / 动作三段式（与 KanbanView 同一套表达）。
+ *
+ * 设置页是配 AI 服务、token、权限的唯一入口，落到「永远加载中」等于
+ * 整个应用不可配置；因此这里必须把原因说清楚，并给一个不丢页面的重试。
+ */
+const loadError = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 24px;
+`
+
+const loadErrorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 14px;
+  font-weight: 600;
+`
+
+const loadErrorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 13px;
+  /* 后端 message 可能是长路径/长提示，窄屏下必须能断行 */
+  overflow-wrap: anywhere;
+`
+
+const loadErrorActions = css`
+  margin-top: 4px;
+`
+
 /** Settings 根滚动容器。 */
 const settingsScroll = css`
   overflow: auto;
@@ -93,7 +124,13 @@ export function Settings() {
   // 无上下文时保持旧行为（服务启动目录项目 + 全局作用域）。
   const { params } = useMatched()
   const projectId = params.projectId
-  const { data: resp, isLoading } = useQuery({
+  const {
+    data: resp,
+    isLoading,
+    isError,
+    error: configError,
+    refetch: refetchConfig,
+  } = useQuery({
     queryKey: ['config', projectId ?? 'server'],
     queryFn: () => configAPI.get(projectId),
   })
@@ -163,7 +200,44 @@ export function Settings() {
     },
   })
 
-  if (isLoading || !config) return <div className={loadingWrap}>加载中…</div>
+  if (isLoading) return <div className={loadingWrap}>加载中…</div>
+  // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
+  // 请求 500 时 isLoading 已为 false 而 config 恒为 null（resp 为 undefined），
+  // 于是设置页永久停在「加载中…」——实测注入 /api/config 500、retry:2 耗尽后
+  // 40s+ 无任何错误、无重试，用户会一直等一个永远不会到来的表单。
+  // 这比回收站/看板的「误报为空」更糟：它连一个错误的结论都不给。
+  if (isError) {
+    // APIError 是结构体 { status, message, code?, details? } 而非 Error 子类，
+    // `instanceof Error` 恒为 false，必须结构化取 message。
+    const message =
+      (configError as { message?: string } | null)?.message ??
+      (configError instanceof Error ? configError.message : null)
+    return (
+      <div className={loadError} data-testid="settings-load-error" role="alert">
+        <div className={loadErrorTitle}>设置加载失败</div>
+        <div className={loadErrorDetail}>{message ?? '无法读取配置文件。'}</div>
+        <div className={loadErrorActions}>
+          <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
+            重试
+          </Button>
+        </div>
+      </div>
+    )
+  }
+  // 请求成功但没有 config 体（契约破损）：给出可行动的说明，而不是「加载中…」。
+  if (!config) {
+    return (
+      <div className={loadError} data-testid="settings-load-error" role="alert">
+        <div className={loadErrorTitle}>设置加载失败</div>
+        <div className={loadErrorDetail}>服务返回了空的配置内容，请确认工作区配置后重试。</div>
+        <div className={loadErrorActions}>
+          <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
+            重试
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   const merged = { ...config, ...draft }
 

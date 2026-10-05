@@ -169,6 +169,91 @@ function renderSettingsGuarded() {
   )
 }
 
+describe('Settings — 读失败态', () => {
+  /**
+   * 回归：此前 `if (isLoading || !config) return <div>加载中…</div>`。
+   * 请求 500 时 isLoading 已转 false 而 config 恒为 null（resp 为 undefined），
+   * 两者并成一条 → 设置页永久停在「加载中…」，无错误、无重试。
+   * 实测注入 /api/config 500、retry:2 耗尽后 40s+ 仍是「加载中…」。
+   * 设置页是配 provider/token/权限的唯一入口，落到永远加载 = 整个应用不可配置。
+   */
+  it('配置读取失败时展示原因，而不是永远「加载中…」', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue({
+      status: 500,
+      message: '配置文件读取失败',
+    })
+    renderSettings()
+
+    const box = await screen.findByTestId('settings-load-error')
+    expect(box.textContent).toContain('设置加载失败')
+    expect(box.textContent).toContain('配置文件读取失败')
+    // 关键：失败后不得继续显示「加载中…」
+    expect(screen.queryByText('加载中…')).toBeNull()
+    expect(screen.getByTestId('settings-retry')).toBeInTheDocument()
+  })
+
+  it('APIError 走结构化 message 而非 [object Object]', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue({
+      status: 500,
+      code: 'DB_LOCKED',
+      message: '配置数据库被占用',
+    })
+    renderSettings()
+
+    const box = await screen.findByTestId('settings-load-error')
+    expect(box.textContent).toContain('配置数据库被占用')
+    expect(box.textContent).not.toContain('[object Object]')
+  })
+
+  it('网络异常（真正的 Error）也展示其 message', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue(new TypeError('Failed to fetch'))
+    renderSettings()
+
+    const box = await screen.findByTestId('settings-load-error')
+    expect(box.textContent).toContain('Failed to fetch')
+    expect(box.textContent).not.toContain('[object Object]')
+  })
+
+  it('请求成功但响应无 config 体时也不得停在「加载中…」', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({})
+    renderSettings()
+
+    await screen.findByTestId('settings-load-error')
+    expect(screen.queryByText('加载中…')).toBeNull()
+    expect(screen.getByTestId('settings-retry')).toBeInTheDocument()
+  })
+
+  it('点击重试重新拉取配置', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue({ status: 500, message: 'boom' })
+    renderSettings()
+
+    await screen.findByTestId('settings-load-error')
+    ;(configAPI.get as Mock).mockClear()
+    fireEvent.click(screen.getByTestId('settings-retry'))
+    expect(configAPI.get).toHaveBeenCalled()
+  })
+
+  it('重试成功后从失败态恢复到设置表单', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValueOnce({ status: 500, message: 'boom' })
+    renderSettings()
+    await screen.findByTestId('settings-load-error')
+
+    ;(configAPI.get as Mock).mockResolvedValueOnce(wrapConfig(mockConfig))
+    fireEvent.click(screen.getByTestId('settings-retry'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('settings-load-error')).toBeNull()
+    })
+    expect(await screen.findByText('ProviderA')).toBeInTheDocument()
+  })
+})
+
 describe('Settings — Provider 管理', () => {
   it('渲染时显示已加载 config 的 providers', async () => {
     const { configAPI } = await import('@/services/config.js')
