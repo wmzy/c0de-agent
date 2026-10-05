@@ -178,10 +178,14 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
     return () => clearTimeout(t)
   }, [search])
+  // 阈值 1 而非 2：单字符查询此前被静默丢弃，而下方 rows 分支仍按
+  // searchDebounced.length > 1 判断「是否在搜索」——两边同时为假时列出的是
+  // 未过滤的全部分页条目，搜索框里有字却看不到任何收敛。服务端对单字符
+  // 正常返回。
   const { data: searchResults } = useQuery({
     queryKey: ['sessions', 'search-deleted', projectId, searchDebounced],
     queryFn: () => sessionAPI.search(searchDebounced, projectId, true),
-    enabled: searchDebounced.length > 1,
+    enabled: searchDebounced.length >= 1,
   })
 
   const rebindMut = useMutation({
@@ -279,10 +283,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     if (sb) return 1
     return (b.deletedAt ?? 0) - (a.deletedAt ?? 0)
   })
-  const rows =
-    searchDebounced.length > 1
-      ? (searchResults?.results.map((r) => r.session) ?? [])
-      : sortedDeleted
+  // 「是否在搜索」与上面 query 的 enabled 必须是同一个口径：两边不一致时，
+  // 搜索框有字却会列出未过滤的全部分页条目。
+  const isSearching = searchDebounced.length >= 1
+  const rows = isSearching ? (searchResults?.results.map((r) => r.session) ?? []) : sortedDeleted
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
@@ -378,9 +382,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             onChange={(v) => setSearch(v)}
             data-testid="trash-search"
           />
-          {rows.length === 0 && searchDebounced.length > 1 ? (
-            <div className={empty}>回收站无匹配会话</div>
-          ) : null}
+          {rows.length === 0 && isSearching ? <div className={empty}>回收站无匹配会话</div> : null}
           {rows.map((s) => {
             const descendants = countDeletedDescendants(deletedIndex, s.id)
             return (

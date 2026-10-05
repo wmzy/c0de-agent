@@ -131,6 +131,34 @@ describe('SessionList 会话搜索', () => {
     })
     expect(screen.queryByTestId('content-match-grandchild-id')).toBeNull()
   })
+
+  /**
+   * 回归：单字符查询此前被静默丢弃。
+   *
+   * 缺陷：内容搜索 query 的 enabled 是 `searchDebounced.length > 1`，
+   * 而标题树 searchTree 对 1 个字照常过滤。于是「只命中消息内容、不命中
+   * 标题」的会话在输入 1 个字时直接变成「无匹配会话」——服务端其实查得到。
+   * 实测：搜「独」报无匹配，搜「独特」即命中。
+   *
+   * 断言打在「1 个字也必须真的发请求」上：这是丢结果与不丢结果的分界点，
+   * 比断言渲染出的行数更贴近根因。
+   */
+  it('单字符查询也会真正发起服务端搜索（不静默丢弃）', async () => {
+    renderList()
+    fireEvent.change(screen.getByTestId('session-search'), { target: { value: '独' } })
+
+    await waitFor(
+      () => {
+        expect(vi.mocked(sessionAPI.search)).toHaveBeenCalledWith('独', 'p1')
+      },
+      { timeout: 2000 },
+    )
+    // 命中结果须真的进列表，而不是「无匹配会话」
+    await waitFor(() => {
+      expect(screen.getByTestId('content-match-outside-id')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('无匹配会话')).toBeNull()
+  })
 })
 
 describe('RecycleBin 读失败态', () => {
@@ -208,5 +236,54 @@ describe('RecycleBin 读失败态', () => {
     renderTrash()
     fireEvent.click(screen.getByTestId('trash-retry'))
     expect(refetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * 回收站搜索：单字符查询不得被静默丢弃。
+ *
+ * 缺陷比会话列表更重一层：这里有**两处**独立的 `length > 1`——query 的
+ * enabled 与「是否在搜索」的 rows 分支。两处同时为假时，搜索框里有字，
+ * 列表却原样列出未过滤的全部分页条目，用户看不到任何收敛，只以为搜索没生效。
+ * 两处口径必须一致，故抽取 isSearching 复用。
+ */
+describe('RecycleBin 搜索', () => {
+  function renderTrashSearch() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={qc}>
+        <RecycleBin projectId="p1" />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('单字符查询发起服务端搜索，且列表只列命中项', async () => {
+    const hit = makeSession('hit-id', '命中标题')
+    hoisted.deleted = {
+      data: [makeSession('other-id', '别的会话'), hit],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    vi.mocked(sessionAPI.search).mockResolvedValue({
+      results: [{ session: hit, matchedBy: 'title' }],
+    })
+    renderTrashSearch()
+
+    fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '命' } })
+    await waitFor(
+      () => {
+        expect(vi.mocked(sessionAPI.search)).toHaveBeenCalledWith('命', 'p1', true)
+      },
+      { timeout: 2000 },
+    )
+    // 单字符也走「搜索中」的结果分支：未命中的条目不得混进来
+    await waitFor(() => {
+      expect(screen.getByText('命中标题')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('别的会话')).toBeNull()
   })
 })

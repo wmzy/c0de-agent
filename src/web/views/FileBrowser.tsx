@@ -251,7 +251,11 @@ export function FileBrowser({
     [treeRoot, showHidden],
   )
 
-  const isSearch = searchDebounced.length > 1
+  // 阈值是 1 而非 2：单字符查询此前被静默丢弃，搜索框里有字、结果却是未
+  // 过滤的整棵树，用户只会以为「这个文件搜不到」。实测输入「s」列出的是
+  // 项目根目录，输入「se」才真正进入搜索结果。服务端 /api/files/search
+  // 对单字符同样正常返回，真正的防抖开销由上面 300ms 承担。
+  const isSearch = searchDebounced.length >= 1
   const searchQ = useQuery({
     queryKey: ['files', 'search', searchDebounced, projectId],
     queryFn: () => fileAPI.search(searchDebounced, projectId),

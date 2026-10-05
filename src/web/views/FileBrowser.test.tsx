@@ -131,4 +131,30 @@ describe('FileBrowser 搜索结果语义', () => {
     expect(screen.getByTestId('search-mention-src/a.ts')).toBeInTheDocument()
     expect(screen.getByTestId('search-delete-src/a.ts')).toBeInTheDocument()
   })
+
+  /**
+   * 回归：单字符查询此前被静默丢弃。
+   *
+   * 缺陷：isSearch 门槛是 `searchDebounced.length > 1`。输入 1 个字时既不发
+   * 请求、也不进「搜索结果」分支，列出的仍是未过滤的整棵文件树——搜索框里
+   * 有字、结果却没有收敛，用户只会以为「这个文件搜不到」。实测输入「s」列
+   * 的是项目根目录，输入「se」才真正进入搜索结果。真正的防抖开销由 300ms
+   * 防抖承担，不需要靠丢弃首字符来省。
+   */
+  it('单字符查询也进入搜索结果分支（不再回落到整棵树）', async () => {
+    vi.mocked(fileAPI.search).mockResolvedValue([{ path: 'src/a.ts', type: 'file' }])
+    renderBrowser()
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 's' } })
+
+    await waitFor(
+      () => {
+        expect(vi.mocked(fileAPI.search)).toHaveBeenCalledWith('s', 'p1')
+      },
+      { timeout: 2000 },
+    )
+    // 进了搜索分支：结果列表在，且根目录树不在
+    expect(screen.getByRole('list', { name: '搜索结果' })).toBeInTheDocument()
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument()
+    expect(screen.queryByTestId('node-src')).toBeNull()
+  })
 })

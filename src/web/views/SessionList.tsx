@@ -213,10 +213,14 @@ export function SessionList({
   )
 
   // P2-6：标题未命中时再搜消息内容（标题树之外的补充结果）。
+  //
+  // 阈值 1 而非 2：单字符查询此前被静默丢弃，而标题树仍按 search 过滤，
+  // 于是「只命中消息内容」的会话在输入 1 个字时直接变成「无匹配会话」——
+  // 实测搜「独」报无匹配，搜「独特」即命中。服务端对单字符正常返回。
   const { data: contentMatches } = useQuery({
     queryKey: ['sessions', 'search', projectId, searchDebounced],
     queryFn: () => sessionAPI.search(searchDebounced, projectId),
-    enabled: searchDebounced.length > 1,
+    enabled: searchDebounced.length >= 1,
     staleTime: 10_000,
   })
   // 树中已展示的全部会话 id（任意深度）。递归收集：只收顶层与直接子级会把
