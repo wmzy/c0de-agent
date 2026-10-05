@@ -343,7 +343,7 @@ export function ChatSession({
   }
 
   // 中断恢复/出错重试：prompt 定位与重发编排收敛在 useRetryResume
-  const { handleResume, handleRetryLast } = useRetryResume({
+  const { handleResume, handleRetryLast, resendPending } = useRetryResume({
     sessionId,
     chat,
     qc,
@@ -383,6 +383,7 @@ export function ChatSession({
         onAbort={chat.abort}
         onConfirm={handleConfirm}
         onRetry={() => void handleRetryLast()}
+        retryPending={resendPending}
         onPause={agent.pause}
         onResume={() => {
           // 服务端暂停（权限超时兜底）：乐观清除标记，resume 端点真正恢复 run；
@@ -479,6 +480,7 @@ export function ChatSession({
                     <Button
                       variant="outline"
                       onClick={() => void handleResume()}
+                      disabled={resendPending}
                       title="重发上一条消息继续；中断前已执行的工具（bash/git 等）可能再次执行"
                     >
                       恢复对话

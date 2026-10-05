@@ -37,6 +37,8 @@ type ChatProps = {
   onConfirm: (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => void
   /** 运行出错后重试最后一条 user 消息（P2-1：与中断恢复对等的入口）。 */
   onRetry?: () => void
+  /** 重发（重试/恢复）在途：按钮禁用，避免在 await 窗口内重复提交。 */
+  retryPending?: boolean
   /** 暂停 agent loop（spec §19）；isStreaming 时可用。 */
   onPause?: () => void
   /** 恢复已暂停的 agent loop。 */
@@ -144,6 +146,13 @@ const ctlBtn = css`
   &:hover:not(:disabled) {
     color: var(--haze-color-text);
     background: color-mix(in srgb, var(--haze-color-text) 8%, transparent);
+  }
+
+  /* 在途禁用态（重发等待 /messages 往返等）：必须有可辨识的视觉差异，
+     否则按钮看起来仍可点，用户会反复点击并以为应用卡住 */
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   /* 面板开关态（终端）：与「恢复」等一次性动作按钮区分——它是常驻开关 */
@@ -447,6 +456,7 @@ export function Chat({
   onAbort,
   onConfirm,
   onRetry,
+  retryPending,
   onPause,
   onResume,
   onSteer,
@@ -558,6 +568,7 @@ export function Chat({
                 type="button"
                 className={ctlBtn}
                 onClick={onRetry}
+                disabled={retryPending}
                 data-testid="retry"
                 title="重发最后一条消息；失败前已执行的工具可能重复执行"
               >

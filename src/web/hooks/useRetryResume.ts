@@ -3,6 +3,7 @@
 // 从 ChatSession 拆出——恢复/重试共用同一套 prompt 定位与重发编排。
 import type { Message } from '@shared/types/message.js'
 import type { QueryClient } from '@tanstack/react-query'
+import { useCallback, useRef, useState } from 'react'
 import type { ChatActions, ChatState } from '@/hooks/chatState.js'
 import { sessionAPI } from '@/services/session.js'
 
@@ -29,38 +30,59 @@ export function useRetryResume({
   // P1-2：此前按「含 text part」向前找，纯图片消息（无 text）会被跳过，导致把
   // **更早的文本消息**重发给模型（旧指令重复执行）。现在定位最后一条 assistant
   // 之后、含任意内容（text 或 image）的 user 消息，图片经 images 参数一并重发。
-  const handleResume = async () => {
-    onResumeStart()
-    chat.clearInterrupted()
-    // 清空内存流式消息与运行态（中断标记/挂起弹窗）：随后从 DB 重载消息作为
-    // 唯一事实源（乐观副本与服务端副本的合并去重已由 mergeSessionMessages 负责，
-    // 此处清空是为了让中断前的半截内存态不参与 resume 判定）。
-    chat.reset()
-    const msgs = await sessionAPI.messages(sessionId)
-    qc.setQueryData(['session', sessionId, 'messages'], msgs)
-    let lastAssistantIdx = -1
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i]?.role === 'assistant') {
-        lastAssistantIdx = i
-        break
+  // 重发（重试/恢复）在途中：两者都先 await 两次网络往返（/messages、/sessions/:id）
+  // 才调用 chat.retry 置流式态，这段窗口里按钮仍可点——双提交会起第二条 SSE 流
+  // （服务端 409「该会话已有进行中的对话」，或工具重复执行）。ref 同步防重入，
+  // state 供按钮禁用/文案（异步 setState 来不及挡住同一 tick 的第二次点击）。
+  const resendRef = useRef(false)
+  const [resendPending, setResendPending] = useState(false)
+
+  const runResend = useCallback(async (run: () => Promise<void>) => {
+    if (resendRef.current) return
+    resendRef.current = true
+    setResendPending(true)
+    try {
+      await run()
+    } finally {
+      resendRef.current = false
+      setResendPending(false)
+    }
+  }, [])
+
+  const handleResume = () =>
+    runResend(async () => {
+      onResumeStart()
+      chat.clearInterrupted()
+      // 清空内存流式消息与运行态（中断标记/挂起弹窗）：随后从 DB 重载消息作为
+      // 唯一事实源（乐观副本与服务端副本的合并去重已由 mergeSessionMessages 负责，
+      // 此处清空是为了让中断前的半截内存态不参与 resume 判定）。
+      chat.reset()
+      const msgs = await sessionAPI.messages(sessionId)
+      qc.setQueryData(['session', sessionId, 'messages'], msgs)
+      let lastAssistantIdx = -1
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i]?.role === 'assistant') {
+          lastAssistantIdx = i
+          break
+        }
       }
-    }
-    const prompt = findLastPrompt(msgs, lastAssistantIdx)
-    if (prompt) {
-      await retryPrompt(prompt)
-      // M3：重发会触发服务端标记未完成轮次（写入 session.metadata）——
-      // 刷新 meta 使时间线立即置灰半截内容。
-      qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
-    }
-  }
+      const prompt = findLastPrompt(msgs, lastAssistantIdx)
+      if (prompt) {
+        await retryPrompt(prompt)
+        // M3：重发会触发服务端标记未完成轮次（写入 session.metadata）——
+        // 刷新 meta 使时间线立即置灰半截内容。
+        qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
+      }
+    })
 
   // 运行出错后的重试（P2-1）：与服务端错误（LLM 429/5xx 等）对等的中断恢复入口。
   // 复用同一套「定位最后一条 user prompt + 完整重发（含图片）」逻辑。
-  const handleRetryLast = async () => {
-    const msgs = await sessionAPI.messages(sessionId)
-    const prompt = findLastPrompt(msgs, -1)
-    if (prompt) await retryPrompt(prompt)
-  }
+  const handleRetryLast = () =>
+    runResend(async () => {
+      const msgs = await sessionAPI.messages(sessionId)
+      const prompt = findLastPrompt(msgs, -1)
+      if (prompt) await retryPrompt(prompt)
+    })
 
   /** 从重载消息中定位待重发的 user prompt（跳过仅含 steering 的空条目）。 */
   const findLastPrompt = (
@@ -98,5 +120,5 @@ export function useRetryResume({
     })
   }
 
-  return { handleResume, handleRetryLast }
+  return { handleResume, handleRetryLast, resendPending }
 }

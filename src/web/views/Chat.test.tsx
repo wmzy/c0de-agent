@@ -96,6 +96,15 @@ describe('Chat pause/resume/steer controls', () => {
     expect(screen.queryByTestId('retry')).toBeNull()
   })
 
+  it('重发在途（retryPending）时重试按钮禁用', () => {
+    const onRetry = vi.fn()
+    renderChat({ isStreaming: false, error: 'LLM 请求失败', onRetry, retryPending: true })
+    const btn = screen.getByTestId('retry') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    fireEvent.click(btn)
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
   it('流式态「追加指令」按钮注入 steering 文本，不走 onSend', () => {
     const h = renderChat()
     const editor = screen.getByTestId('composer-editor')
