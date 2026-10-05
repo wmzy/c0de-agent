@@ -8,7 +8,7 @@ import {
   section,
   sectionTitle,
 } from '@/components/settings/styles.js'
-import { parseFiniteNumber } from '@/utils/format.js'
+import { parseBoundedNumber } from '@/utils/format.js'
 
 interface FallbackPanelProps {
   fallback: Config['fallback']
@@ -42,7 +42,7 @@ function FallbackPanel({ fallback, onFallbackChange }: FallbackPanelProps) {
           min={0}
           value={String(fallback.maxRetries)}
           onChange={(v) =>
-            onFallbackChange({ maxRetries: parseFiniteNumber(v, fallback.maxRetries) })
+            onFallbackChange({ maxRetries: parseBoundedNumber(v, fallback.maxRetries, { min: 0 }) })
           }
         />
       </label>
@@ -54,7 +54,7 @@ function FallbackPanel({ fallback, onFallbackChange }: FallbackPanelProps) {
           min={0}
           value={String(fallback.retryDelay)}
           onChange={(v) =>
-            onFallbackChange({ retryDelay: parseFiniteNumber(v, fallback.retryDelay) })
+            onFallbackChange({ retryDelay: parseBoundedNumber(v, fallback.retryDelay, { min: 0 }) })
           }
         />
       </label>

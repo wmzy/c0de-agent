@@ -3,6 +3,7 @@ import {
   formatCost,
   formatLatency,
   formatTokenCount,
+  parseBoundedNumber,
   parseCodeReference,
   parseFiniteNumber,
 } from '@/utils/format.js'
@@ -98,4 +99,53 @@ describe('parseFiniteNumber', () => {
   })
 
   it('NaN 字面量回落到当前值', () => expect(parseFiniteNumber('NaN', 2)).toBe(2))
+})
+
+/**
+ * 越界钳制。
+ *
+ * 复现的数字输入框上声明了 min={0}，但 React 受控 input 不阻止键入——实测设置页
+ * 8 个带 min 的字段全部照收 -1 并原样写进配置。其中 fallback.maxRetries = -1
+ * 会让 withRetry 的 `attempt >= Math.min(-1, policy.maxRetries)` 首次失败即成立，
+ * 故障回退对全应用静默停摆，而设置页仍显示「已保存」。
+ */
+describe('parseBoundedNumber', () => {
+  it('区间内的值原样通过', () => {
+    expect(parseBoundedNumber('3', 0, { min: 0, max: 10 })).toBe(3)
+    expect(parseBoundedNumber('0', 5, { min: 0 })).toBe(0)
+  })
+
+  it('低于 min 时钳到 min 而非回落旧值', () => {
+    expect(parseBoundedNumber('-1', 3, { min: 0 })).toBe(0)
+    expect(parseBoundedNumber('-999', 3, { min: 0 })).toBe(0)
+    // 钳到边界而非恢复旧值：用户键入 -1 的意图是「不要负数」，
+    // 恢复成上次保存的旧值会让人以为输入没生效而反复重输。
+    expect(parseBoundedNumber('-1', 3, { min: 0 })).not.toBe(3)
+  })
+
+  it('高于 max 时钳到 max', () => {
+    expect(parseBoundedNumber('5', 0.8, { min: 0, max: 1 })).toBe(1)
+  })
+
+  it('min=1 的并发数把 0/负数钳到 1', () => {
+    expect(parseBoundedNumber('0', 3, { min: 1 })).toBe(1)
+    expect(parseBoundedNumber('-2', 3, { min: 1 })).toBe(1)
+  })
+
+  it('边界值本身不被改动（0 与 max 合法）', () => {
+    expect(parseBoundedNumber('0', 3, { min: 0, max: 1 })).toBe(0)
+    expect(parseBoundedNumber('1', 0, { min: 0, max: 1 })).toBe(1)
+  })
+
+  it('越界钳制不能把非有限数/非数字变成合法值（仍走回落）', () => {
+    expect(parseBoundedNumber('1e999', 0.8, { min: 0, max: 1 })).toBe(0.8)
+    expect(parseBoundedNumber('abc', 3, { min: 0 })).toBe(3)
+    // 空串沿用 Number('') = 0：预算字段「0 = 不限制」依赖清空即清零
+    expect(parseBoundedNumber('', 7, { min: 0 })).toBe(0)
+  })
+
+  it('不传边界时等价于 parseFiniteNumber', () => {
+    expect(parseBoundedNumber('2.5', 1)).toBe(2.5)
+    expect(parseBoundedNumber('abc', 1)).toBe(1)
+  })
 })

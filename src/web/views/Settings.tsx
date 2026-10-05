@@ -36,7 +36,7 @@ import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
-import { parseFiniteNumber } from '@/utils/format.js'
+import { parseBoundedNumber } from '@/utils/format.js'
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -614,7 +614,10 @@ export function Settings() {
                 value={String(merged.toolMetrics.threshold)}
                 onChange={(v) =>
                   updateSection('toolMetrics', {
-                    threshold: parseFiniteNumber(v, merged.toolMetrics.threshold),
+                    threshold: parseBoundedNumber(v, merged.toolMetrics.threshold, {
+                      min: 0,
+                      max: 1,
+                    }),
                   })
                 }
               />
@@ -628,7 +631,7 @@ export function Settings() {
                 value={String(merged.toolMetrics.minSamples)}
                 onChange={(v) =>
                   updateSection('toolMetrics', {
-                    minSamples: parseFiniteNumber(v, merged.toolMetrics.minSamples),
+                    minSamples: parseBoundedNumber(v, merged.toolMetrics.minSamples, { min: 0 }),
                   })
                 }
               />
@@ -671,7 +674,11 @@ export function Settings() {
                 value={String(merged.agents.subagentConcurrency)}
                 onChange={(v) =>
                   updateSection('agents', {
-                    subagentConcurrency: parseFiniteNumber(v, merged.agents.subagentConcurrency),
+                    subagentConcurrency: parseBoundedNumber(
+                      v,
+                      merged.agents.subagentConcurrency,
+                      { min: 1 },
+                    ),
                   })
                 }
               />

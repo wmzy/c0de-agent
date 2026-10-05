@@ -1886,3 +1886,119 @@ describe('Settings — 工作流管理面板', () => {
     expect(screen.getByTestId('workflow-trust-required').textContent).toContain('未信任')
   })
 })
+
+/**
+ * 分区导航（TOC）回归。
+ *
+ * 设置页是全应用最长的一页：GUI 模式 18 个 h2 分区、实测 scrollHeight 3369px
+ * （移动端 3898px），而页面原先没有任何分区内导航——找「用量与成本」「Web 搜索」
+ * 只能一路滚到底。?section= 深链只解决「从别处跳进来」，解决不了
+ * 「已经在这页、想换个分区」。
+ */
+describe('Settings — 分区导航', () => {
+  it('表单视图渲染分区目录，条目数与实际 h2 分区一致', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+    const chips = within(screen.getByTestId('settings-toc')).getAllByRole('button')
+    const headings = within(screen.getByTestId('settings-form')).getAllByRole('heading', {
+      level: 2,
+    })
+    // 目录是扫描 h2 得来的，两者必须逐条对应——多一条是死链，少一条是漏项
+    expect(chips).toHaveLength(headings.length)
+    expect(headings.length).toBeGreaterThan(10)
+    expect(chips.map((c) => c.textContent)).toEqual(headings.map((h) => h.textContent))
+  })
+
+  it('分区目录是导航语义，且每个条目都能定位到对应分区', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+    expect(screen.getByRole('navigation', { name: '设置分区导航' })).toBeTruthy()
+
+    const chips = within(screen.getByTestId('settings-toc')).getAllByRole('button')
+    for (const chip of chips) {
+      const id = chip.getAttribute('data-testid')?.replace('settings-toc-', '') ?? ''
+      // 点它得找得到落点，否则就是个点了没反应的死链
+      expect(document.getElementById(id)).not.toBeNull()
+    }
+  })
+
+  it('JSON 视图不渲染分区目录（整块是一个编辑器，没有分区可导）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('{ } JSON'))
+    await waitFor(() => expect(screen.queryByTestId('settings-toc')).toBeNull())
+  })
+})
+
+/**
+ * 数字字段的越界输入回归。
+ *
+ * 缺陷：数字输入框上写了 min={0}，但 React 受控 input 不阻止键入负数——
+ * parseFiniteNumber 只挡 NaN/±Infinity，不挡越界值，于是 -1 被原样写进配置。
+ * 实测 8 个带 min 的字段（最大重试次数/重试间隔/触发阈值/保留 Token/
+ * 近期保留 Token/成功率阈值/最小样本数/子 Agent 并发数）全部照收。
+ *
+ * 后果不是显示难看而是静默失效：maxRetries=-1 让 withRetry 的
+ * `attempt >= Math.min(-1, policy.maxRetries)` 首次失败即成立，故障回退对
+ * 全应用停摆，而设置页照样显示「已保存」。
+ *
+ * 断言打在「保存出去的配置值」上：只看输入框 DOM 会被 SyncedInput 的内部
+ * control 短暂持有旧值骗过去，必须走真实的保存链路。
+ */
+describe('Settings — 数字字段越界钳制', () => {
+  async function typeAndSave(labelText: string, raw: string) {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    const input = await screen.findByLabelText(labelText)
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, raw)
+    fireEvent.input(input)
+
+    await waitFor(() => expect(screen.getByTestId('settings-save')).not.toBeDisabled())
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const patch = vi.mocked(configAPI.update).mock.calls.at(-1)?.[0] as Record<string, unknown>
+    return patch
+  }
+
+  it('最大重试次数不接受负数（负值会静默关掉全应用故障回退）', async () => {
+    const patch = await typeAndSave('最大重试次数', '-1')
+    const fallback = (patch.fallback ?? {}) as { maxRetries?: number }
+    expect(fallback.maxRetries).toBe(0)
+  })
+
+  it('子 Agent 并发数下限为 1，0/负数被钳到 1', async () => {
+    const patch = await typeAndSave('子 Agent 并发数', '0')
+    const agents = (patch.agents ?? {}) as { subagentConcurrency?: number }
+    expect(agents.subagentConcurrency).toBe(1)
+  })
+
+  it('触发阈值上限为 1，超出被钳回 1', async () => {
+    const patch = await typeAndSave('触发阈值', '5')
+    const compaction = (patch.compaction ?? {}) as { threshold?: number }
+    expect(compaction.threshold).toBe(1)
+  })
+
+  it('合法值原样通过，不被钳制误伤', async () => {
+    const patch = await typeAndSave('最大重试次数', '5')
+    const fallback = (patch.fallback ?? {}) as { maxRetries?: number }
+    expect(fallback.maxRetries).toBe(5)
+  })
+})
