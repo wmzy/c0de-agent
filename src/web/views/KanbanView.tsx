@@ -3,10 +3,12 @@ import {
   DndContext,
   type DragEndEvent,
   type DragOverEvent,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useCallback, useRef, useState } from 'react'
@@ -243,7 +245,22 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const [ioError, setIoError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  // 指针拖拽 + 键盘拖拽两套传感器。
+  //
+  // 此前只注册 PointerSensor：卡片由 useSortable 渲染出 role="button"
+  // tabindex="0" aria-roledescription="sortable"（dnd-kit 的 attributes），
+  // 读屏会把它播报成可聚焦的按钮，但空格/方向键完全无效——键盘用户能聚焦
+  // 一张卡片却永远无法移动它，等于把拖拽功能整个排除在键盘之外。
+  // 实测：focus 卡片后按 Space，各列卡片顺序与 columnId 均无变化，
+  // 页面也没有任何拖拽操作提示。
+  //
+  // KeyboardSensor + sortableKeyboardCoordinates 是 dnd-kit 的标准组合：
+  // 空格/回车拾起，方向键移动，再次空格/回车放下，Esc 取消。落位仍走既有
+  // handleDragEnd（同一套 computeDropPosition），键盘与指针的落位语义一致。
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const {
     data: board,

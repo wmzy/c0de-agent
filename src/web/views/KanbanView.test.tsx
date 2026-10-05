@@ -11,9 +11,9 @@
  * 不是 Error 子类，instanceof 恒为 false。
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { kanbanAPI } from '@/services/kanban.js'
+import { type KanbanBoardWithCards, kanbanAPI } from '@/services/kanban.js'
 import { KanbanView } from '@/views/KanbanView.js'
 
 vi.mock('@/services/kanban.js', () => ({
@@ -207,5 +207,81 @@ describe('KanbanView 横向溢出与键盘可达', () => {
       Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth')
       Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
     }
+  })
+})
+
+/**
+ * 键盘拖拽回归。
+ *
+ * 缺陷：DndContext 只注册了 PointerSensor。卡片由 useSortable 渲染出
+ * role="button" tabindex="0" aria-roledescription="sortable"——读屏把它播报成
+ * 可聚焦按钮，但空格/方向键完全无效，键盘用户能聚焦卡片却永远移动不了。
+ * 实测：focus 卡片按 Space，各列卡片顺序与 columnId 均无变化。
+ *
+ * 断言打在「传感器是否激活」这个真实接线点上：KeyboardSensor 的 activator
+ * 是 onKeyDown（空格/回车），只断言卡片渲染出 role=button 捕获不到本回归。
+ */
+describe('KanbanView 键盘拖拽', () => {
+  const boardOf = (): KanbanBoardWithCards => ({
+    id: 'b1',
+    projectId: 'p1',
+    columns: [
+      { id: 'col1', name: '待办' },
+      { id: 'col2', name: '进行中' },
+    ],
+    labels: [],
+    cards: [
+      {
+        id: 'c1',
+        boardId: 'b1',
+        columnId: 'col1',
+        title: '卡片一',
+        description: null,
+        position: 0,
+        priority: 'medium',
+        labels: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'c2',
+        boardId: 'b1',
+        columnId: 'col1',
+        title: '卡片二',
+        description: null,
+        position: 1,
+        priority: 'medium',
+        labels: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  })
+
+  async function renderBoardWithCards() {
+    vi.mocked(kanbanAPI.get).mockResolvedValue(boardOf())
+    renderBoard()
+    await screen.findByTestId('kanban-view')
+    await screen.findByTestId('kanban-card-c1')
+  }
+
+  it('卡片可被键盘拾起并产生拖拽播报（此前空格完全无效）', async () => {
+    await renderBoardWithCards()
+
+    // dnd-kit 常驻渲染 live region（未开始拖拽时内容为空）。
+    // 修复前 DndContext 只注册 PointerSensor：卡片的 onKeyDown 上没有任何
+    // 键盘传感器监听，空格既不进入拖拽会话、播报也始终为空——
+    // 即「卡片宣称为可聚焦按钮，却对键盘毫无反应」。
+    const live = document.querySelector('[id^="DndLiveRegion"]') as HTMLElement
+    expect(live.textContent).toBe('')
+
+    fireEvent.keyDown(screen.getByTestId('kanban-card-c1'), { key: ' ', code: 'Space' })
+
+    await waitFor(() => {
+      expect(live.textContent).toMatch(/Draggable item/)
+    })
+    expect(live.textContent).toContain('c1')
   })
 })
