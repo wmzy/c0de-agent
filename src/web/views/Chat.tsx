@@ -339,9 +339,30 @@ const modeToggle = css`
   min-height: 32px;
 `
 
-/** 关闭态中性说明：次级文本色，无警示语义。 */
+/** 关闭态中性说明：次级文本色，无警示语义。
+ *
+ * 窄屏转 sr-only 视觉隐藏：文案「工具执行前逐个确认（全局默认）」在 390px 宽下
+ * 独占一整行，把底栏从 2 行撑到 3 行——实测 844px 视口下底栏高达 149px（占 18%），
+ * 消息流只剩 347px，欢迎区四张示例卡被压到滚三次才能读完，聊天区反而成了配角。
+ * 隐藏后底栏 149 → 113px，消息流 347 → 383px（+10%）。
+ *
+ * 不直接 display:none：这句是「未开启自动授权」的语义说明，触屏没有 hover
+ * title 提示，删掉后用户无法分辨当前是逐个确认还是已放行。sr-only 保留在无障碍树中，
+ * 读屏用户仍能听到；视觉信息与相邻的「自动授权」开关同义，属可安全折叠的冗余文案。 */
 const modeHint = css`
   color: var(--haze-color-text-secondary);
+  ${MOBILE} {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
 `
 
 /** 开启态警示 pill：描边淡底（--warning 前景 + 10% 底 + 45% 边框），短文案降噪，
