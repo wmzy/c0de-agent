@@ -12,7 +12,12 @@ import {
   prependHistoryEntry,
   saveHistory,
 } from '@/composer/history.js'
-import { normalizePaste, pasteMode } from '@/composer/paste.js'
+import {
+  LARGE_PASTE_BREAKS,
+  LARGE_PASTE_CHARS,
+  normalizePaste,
+  pasteMode,
+} from '@/composer/paste.js'
 import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
 import {
   atTokenRange,
@@ -98,7 +103,12 @@ function useComposer({
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
   const [subcommandCmd, setSubcommandCmd] = useState<string | null>(null)
-  const [showPasteConfirm, setShowPasteConfirm] = useState<{ text: string } | null>(null)
+  /** 大段粘贴待确认内容：chars/lines 为触发判定时的原始文本规模，供确认条展示。 */
+  const [showPasteConfirm, setShowPasteConfirm] = useState<{
+    text: string
+    chars: number
+    lines: number
+  } | null>(null)
   const [isEmpty, setIsEmpty] = useState(true)
 
   // commands 用 ref 避免每次列表变化都重建 handleInput callback
@@ -375,8 +385,16 @@ function useComposer({
       if (!text) return
       e.preventDefault()
       const normalized = normalizePaste(text)
-      if (pasteMode(text) === 'manual' && (text.length >= 8000 || text.split('\n').length >= 120)) {
-        setShowPasteConfirm({ text: normalized })
+      const chars = text.length
+      const lines = text.split('\n').length
+      if (
+        pasteMode(text) === 'manual' &&
+        (chars >= LARGE_PASTE_CHARS || lines >= LARGE_PASTE_BREAKS)
+      ) {
+        // 大段粘贴先确认再插入（确认条见 Composer）。注意 e.preventDefault 已吞掉
+        // 原生插入：此处只置状态而无人渲染确认 UI 时，用户按 Ctrl+V 后输入框
+        // 毫无反应、内容静默丢失。chars/lines 取自原始文本，与判定同源。
+        setShowPasteConfirm({ text: normalized, chars, lines })
         return
       }
       document.execCommand('insertText', false, normalized)
@@ -385,11 +403,19 @@ function useComposer({
   )
 
   const confirmPaste = useCallback(() => {
-    if (showPasteConfirm) document.execCommand('insertText', false, showPasteConfirm.text)
+    const pending = showPasteConfirm
     setShowPasteConfirm(null)
+    if (!pending) return
+    // 点击「插入」后焦点在按钮上，execCommand('insertText') 只作用于当前可编辑
+    // 焦点元素——不先交还焦点，整段文本会再次静默丢失。
+    editorRef.current?.focus()
+    document.execCommand('insertText', false, pending.text)
   }, [showPasteConfirm])
 
-  const cancelPaste = useCallback(() => setShowPasteConfirm(null), [])
+  const cancelPaste = useCallback(() => {
+    setShowPasteConfirm(null)
+    editorRef.current?.focus()
+  }, [])
 
   const removeImage = useCallback((idx: number) => {
     setImages((prev) => prev.filter((_, i) => i !== idx))

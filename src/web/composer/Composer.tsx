@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import fuzzysort from 'fuzzysort'
 import type { DragEvent, KeyboardEvent } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AtFilePopover } from '@/composer/AtFilePopover.js'
 import { AttachmentBar } from '@/composer/AttachmentBar.js'
 import { ComposerEditor } from '@/composer/ComposerEditor.js'
@@ -148,6 +148,61 @@ const popoverGroup = css`
   display: contents;
 `
 
+/** 大段粘贴确认条：与权限 dock 同为编辑器上方的决策条（贴顶分隔 + subtle 底）。 */
+const pasteBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
+  font-size: 13px;
+  color: var(--haze-color-text-secondary);
+`
+
+const pasteText = css`
+  flex: 1;
+  min-width: 0;
+`
+
+const pasteInsertBtn = css`
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--haze-color-primary);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  &:hover {
+    background: var(--haze-color-primary-hover);
+  }
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
+  }
+`
+
+const pasteCancelBtn = css`
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--haze-color-text);
+  font-size: 13px;
+  cursor: pointer;
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+  &:focus-visible {
+    outline: none;
+    border-color: var(--haze-color-primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
+  }
+`
+
 type SendPayload = ComposerSendPayload & {
   agents: string[]
 }
@@ -247,6 +302,13 @@ function Composer(props: ComposerProps) {
   const [workflowActive, setWorkflowActive] = useState(0)
   const [subcommandActive, setSubcommandActive] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const pasteInsertRef = useRef<HTMLButtonElement | null>(null)
+
+  // 大段粘贴确认条渲染在编辑器之前，正向 Tab 走不到它：出现时把焦点移到「插入」，
+  // 键盘/读屏用户不会被留在「粘贴毫无反应」的状态（两个按钮处理完都把焦点交还编辑器）。
+  useEffect(() => {
+    if (composer.showPasteConfirm) pasteInsertRef.current?.focus()
+  }, [composer.showPasteConfirm])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
   useEffect(() => {
@@ -396,6 +458,7 @@ function Composer(props: ComposerProps) {
   }
 
   const sendLabel = props.isStreaming ? '终止' : '发送'
+  const pasteConfirm = composer.showPasteConfirm
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: composer 拖放区，容器需捕获 drag/drop 事件
@@ -436,6 +499,36 @@ function Composer(props: ComposerProps) {
           data-testid="image-error"
         >
           {composer.imageError}
+        </div>
+      )}
+      {pasteConfirm && (
+        // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，确认条非表单分组，fieldset 不适用
+        <div
+          className={pasteBar}
+          role="group"
+          aria-label="大段粘贴确认"
+          data-testid="paste-confirm"
+        >
+          <span className={pasteText}>
+            粘贴内容较大（{pasteConfirm.chars} 字符 / {pasteConfirm.lines} 行），插入输入框？
+          </span>
+          <button
+            ref={pasteInsertRef}
+            type="button"
+            className={pasteInsertBtn}
+            onClick={composer.confirmPaste}
+            data-testid="paste-confirm-insert"
+          >
+            插入
+          </button>
+          <button
+            type="button"
+            className={pasteCancelBtn}
+            onClick={composer.cancelPaste}
+            data-testid="paste-confirm-cancel"
+          >
+            取消
+          </button>
         </div>
       )}
       <div className={editorRow}>
