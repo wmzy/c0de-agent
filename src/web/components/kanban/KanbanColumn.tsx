@@ -103,6 +103,17 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
     data: { columnId: c.columnId, type: 'card' },
   })
 
+  /*
+   * dnd-kit 的拖拽由 listeners.onPointerDown 激活（PointerSensor 的 activator）。
+   * 原实现先 `{...listeners}` 再写 `onPointerDown={e => e.stopPropagation()}`，
+   * 后者把前者的 onPointerDown 整个覆盖掉——激活器消失，PointerSensor 永不启动，
+   * 卡片拖不动（实测：按下并逐帧移动 25 步，卡片 transform 恒为空、坐标不变）。
+   *
+   * stopPropagation 本身仍要保留（避免指针事件冒泡出卡片），但必须先委托给
+   * dnd-kit 的原始 handler：拆出 onPointerDown 单独组合，其余 listeners 原样展开。
+   */
+  const { onPointerDown: activateDrag, ...restListeners } = listeners ?? {}
+
   const style = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     transition,
@@ -120,7 +131,7 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
       style={style}
       className={`${card} ${isDragging ? cardDragging : ''}`}
       {...attributes}
-      {...listeners}
+      {...restListeners}
       onClick={(e) => {
         // 只在非拖拽时触发点击
         if (!isDragging) {
@@ -128,7 +139,11 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
           onClick()
         }
       }}
-      onPointerDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => {
+        // 先交给 dnd-kit 启动拖拽，再阻断冒泡（顺序不能反：漏掉前者卡片就拖不动）
+        activateDrag?.(e)
+        e.stopPropagation()
+      }}
       data-testid={`kanban-card-${c.id}`}
     >
       <div className={cardHeader}>
