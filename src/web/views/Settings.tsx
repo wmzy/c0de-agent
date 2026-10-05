@@ -74,11 +74,26 @@ const loadErrorActions = css`
   margin-top: 4px;
 `
 
-/** Settings 根滚动容器。 */
+/**
+ * Settings 根容器：flex 列，按内容撑高并至少占满编辑区。
+ *
+ * 刻意不用 overflow:auto——它会把自己变成 sticky 的「最近滚动祖先」，而本容器
+ * 从不滚动（实测 scrollHeight === clientHeight === 3351，滚动发生在
+ * .haze-Workbench__editor）。零滚动范围的 scrollport 让 sticky 完全失效：
+ * 工具条（top:0）与吸底保存条（bottom:0）都钉在文档流原位，跟随整页一起滚走。
+ * 后果是保存条在 4002px 长的表单里只有最后 45px 能看见
+ * （scrollTop=0 时 top=3378；滚到底 top=855），改完配置看不到「保存」在哪，
+ * 也没有任何常驻入口。改为 overflow:visible 后，sticky 正确回落到 <main> 这个
+ * 真正的滚动容器，保存条恒钉在视口底部。
+ *
+ * min-height:100% 而非 height:100%：内容短于视口时靠 SaveBar 的 margin-top:auto
+ * 把保存条压到底部；内容变长时容器按内容撑开（height:100% + flex 子项默认
+ * shrink:1 会把表单控件压扁）。
+ */
 const settingsScroll = css`
-  overflow: auto;
   display: flex;
   flex-direction: column;
+  min-height: 100%;
 `
 
 /**
