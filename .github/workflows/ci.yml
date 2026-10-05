@@ -68,9 +68,23 @@ jobs:
 
       # 双 reporter：default 保留可读的控制台输出；github-actions 在失败时
       # 为每条失败用例标注对应源文件/行号（workflow run summary 的 annotations）。
+      #
+      # 优先只跑受影响测试（vitest 依赖图分析，实测改 1 个核心模块可追踪
+      # 到数十个下游测试文件）。以下情况回退全量：
+      # - base ref 缺失（push 事件无 base_ref、fork PR、浅克隆未含 base）
+      # - 无 src 改动（纯文档 PR、push 到 main 自身）
+      # 守卫必要：--changed 在无受影响文件时静默 exit 0（零测试假绿）。
       - name: Test
         id: test
-        # 护栏：单个挂死的测试不应让 job 无限空转（曾因模糊测试
-        # 深度递归 bug 挂 46 分钟+）。
         timeout-minutes: 15
-        run: pnpm test --reporter=default --reporter=github-actions
+        run: |
+          BASE_BRANCH="${{ github.base_ref || 'main' }}"
+          # 只拉 base 分支 tip（diff 仅需其 tree，无需共同历史）
+          git fetch --depth=1 origin "$BASE_BRANCH" >/dev/null 2>&1 || true
+          BASE="origin/$BASE_BRANCH"
+          if git rev-parse --verify "$BASE" >/dev/null 2>&1 \
+             && [ -n "$(git diff --name-only "$BASE" -- src)" ]; then
+            pnpm test --changed "$BASE" --reporter=default --reporter=github-actions
+          else
+            pnpm test --reporter=default --reporter=github-actions
+          fi
