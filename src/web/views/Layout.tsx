@@ -38,29 +38,22 @@ const layoutStyle = css`
 `
 
 /**
- * 移动端给 Workbench 编辑区让出底部导航的高度。
+ * 移动端给底部导航条让位。
  *
- * MobileNav 是 position:fixed 的 56px 高条，脱离文档流、不占位；而
- * .haze-Workbench__editor 是本页唯一滚动容器——聊天页的顶栏/消息流/权限条/
- * 输入框全部平铺在它内部。缺这层让位时，滚到底部的输入框正好落在导航条下面：
- * 375×667 实测输入框 top=792、导航 top=612，「发送」按钮被完全覆盖且点不到
- * （elementFromPoint 命中的是导航按钮），而滚动容器没有多余可滚高度，
- * 用户也无法再往下滚把它挪出来——手机上无法发起任何对话。
+ * MobileNav 是 position:fixed 的 56px 高条，脱离文档流、不占位。让位对象是
+ * 本布局列的整个内容盒（Workbench + 其下的终端面板），而不是只给
+ * .haze-Workbench__editor 加内边距——终端面板渲染在 Workbench 之外，只补
+ * 编辑区时它仍会伸到视口底部被导航条盖住。390×844 实测：xterm 屏幕
+ * 667–843，导航条 788–844，终端最后约 55px（当前提示行/输入行）被压在
+ * 导航条下——手机上既看不到自己敲了什么，也点不到最后几行。
  *
- * padding-bottom 追加在滚动盒末尾，内容即可滚到导航条上方而不被遮挡。
- * 桌面端导航为 display:none，媒体查询不生效。
+ * 编辑区原来靠自身 padding-bottom 让位：改成整列让位后它的可滚动内容高度
+ * 不变（原来那 56px 本就被导航条遮住、看不见），聊天页的输入框/发送按钮
+ * 行为与之前一致。桌面端导航为 display:none，媒体查询不生效。
  */
 const mobileNavGutter = css`
-  /*
-   * 选择器写成整句 :global(...)：写成「& :global(...)」时 linaria 会把后代选择器
-   * 提到 atomic 类之前，产出「.haze-Workbench__editor .mobileNavGutter_xxx」这种
-   * 方向相反的规则，落到永不匹配的链路上。整句 :global 由 atomic 规则正常包裹，
-   * 生成「.mobileNavGutter_xxx .haze-Workbench__editor」，方向正确。
-   */
   ${MOBILE} {
-    :global(.haze-Workbench__editor) {
-      padding-bottom: 56px;
-    }
+    padding-bottom: 56px;
   }
 `
 

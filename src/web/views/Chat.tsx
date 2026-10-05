@@ -61,6 +61,12 @@ type ChatProps = {
   agents?: AgentListItem[]
   /** 时间线为空时渲染在消息流中央的空状态（欢迎区/示例卡片），由 ChatView 注入。 */
   emptyState?: ReactNode
+  /**
+   * 终端面板开关（聊天页提供）。此前终端只有一个键盘入口 Ctrl+`——
+   * 鼠标/触屏用户看不到任何入口，也就无从发现有终端这回事；
+   * 提供时在顶栏渲染一个可与键盘快捷键对等的按钮。
+   */
+  terminalToggle?: { open: boolean; onToggle: () => void }
   /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
   permissionTimeout?: {
     toolCallId: string
@@ -138,6 +144,12 @@ const ctlBtn = css`
   &:hover:not(:disabled) {
     color: var(--haze-color-text);
     background: color-mix(in srgb, var(--haze-color-text) 8%, transparent);
+  }
+
+  /* 面板开关态（终端）：与「恢复」等一次性动作按钮区分——它是常驻开关 */
+  &[aria-pressed='true'] {
+    color: var(--haze-color-primary);
+    background: color-mix(in srgb, var(--haze-color-primary) 12%, transparent);
   }
 `
 
@@ -448,6 +460,7 @@ export function Chat({
   sessionId,
   agents = [],
   emptyState,
+  terminalToggle,
 }: ChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
@@ -571,6 +584,18 @@ export function Chat({
             data-testid="abort"
           >
             中止
+          </button>
+        ) : null}
+        {terminalToggle ? (
+          <button
+            type="button"
+            className={ctlBtn}
+            aria-pressed={terminalToggle.open}
+            onClick={terminalToggle.onToggle}
+            data-testid="toggle-terminal"
+            title="终端面板（Ctrl+`）"
+          >
+            终端
           </button>
         ) : null}
         <button

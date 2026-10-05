@@ -235,12 +235,15 @@ export function ChatSkeleton() {
 export function ChatView({
   projectId,
   sessionId,
+  terminalToggle,
 }: {
   projectId: string
   sessionId: string | null
+  /** 终端面板开关（ChatPage 注入）：顶栏「终端」入口，见 Chat.tsx 的 ChatProps。 */
+  terminalToggle?: { open: boolean; onToggle: () => void }
 }) {
-  if (!sessionId) return <DraftSession projectId={projectId} />
-  return <ChatSession projectId={projectId} sessionId={sessionId} />
+  if (!sessionId) return <DraftSession projectId={projectId} terminalToggle={terminalToggle} />
+  return <ChatSession projectId={projectId} sessionId={sessionId} terminalToggle={terminalToggle} />
 }
 
 /**
@@ -248,7 +251,13 @@ export function ChatView({
  * 把消息暂存到 pendingFirstMessage，再导航到新会话路由交由 ChatSession 发送，
  * 从而保证 SSE 流在拥有真实 sessionId 的组件实例中建立，不会被卸载中断。
  */
-function DraftSession({ projectId }: { projectId: string }) {
+function DraftSession({
+  projectId,
+  terminalToggle,
+}: {
+  projectId: string
+  terminalToggle?: { open: boolean; onToggle: () => void }
+}) {
   const router = useRouter()
   const qc = useQueryClient()
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
@@ -302,6 +311,7 @@ function DraftSession({ projectId }: { projectId: string }) {
       }}
       onConfirm={() => {}}
       emptyState={<ChatWelcome />}
+      terminalToggle={terminalToggle}
       modelBar={
         <>
           <AgentSelector

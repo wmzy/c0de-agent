@@ -126,7 +126,16 @@ const shakeExitBtn = css`
   }
 `
 
-export function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: string }) {
+export function ChatSession({
+  projectId,
+  sessionId,
+  terminalToggle,
+}: {
+  projectId: string
+  sessionId: string
+  /** 终端面板开关（ChatView 透传）：顶栏「终端」入口。 */
+  terminalToggle?: { open: boolean; onToggle: () => void }
+}) {
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const qc = useQueryClient()
@@ -385,6 +394,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         paused={agent.paused || chat.runPaused}
         supportsVision={supportsVision}
         emptyState={<ChatWelcome />}
+        terminalToggle={terminalToggle}
         modelBar={
           <>
             <AgentSelector

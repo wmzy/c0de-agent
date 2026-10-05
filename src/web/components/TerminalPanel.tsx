@@ -452,25 +452,30 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
 
   return (
     <>
-      <hr
-        className={resizeHandleStyle}
-        onPointerDown={onPointerDown}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowUp') {
-            e.preventDefault()
-            setHeight(height + 20)
-          } else if (e.key === 'ArrowDown') {
-            e.preventDefault()
-            setHeight(Math.max(40, height - 20))
-          }
-        }}
-        aria-orientation="horizontal"
-        aria-label="调整终端面板高度"
-        aria-valuemin={40}
-        aria-valuemax={800}
-        aria-valuenow={Math.round(height)}
-        tabIndex={0}
-      />
+      {/* 分隔条只在展开时存在：收起态下高度不可见，留着它等于给键盘用户一个
+          可聚焦、方向键也能动、却看不到任何效果的死控件（terminal 面板本体
+          display:none 后已移除可达性，这里同理）。 */}
+      {open && (
+        <hr
+          className={resizeHandleStyle}
+          onPointerDown={onPointerDown}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setHeight(height + 20)
+            } else if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setHeight(Math.max(40, height - 20))
+            }
+          }}
+          aria-orientation="horizontal"
+          aria-label="调整终端面板高度"
+          aria-valuemin={40}
+          aria-valuemax={800}
+          aria-valuenow={Math.round(height)}
+          tabIndex={0}
+        />
+      )}
       {/* 收起时整块 display:none：不再以 height:0 布局隐藏内容——那样工具栏仍会
           排布在视口之外（y900+）且可被 Tab 聚焦却不可达；none 同时移除几何与焦点。
           xterm 实例保持挂载（与非活动标签相同的隐藏方式），重新展开时重算 fit。 */}

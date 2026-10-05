@@ -124,7 +124,13 @@ export function ChatPage() {
               }
             />
           }
-          main={<ChatView projectId={projectId} sessionId={sessionId ?? null} />}
+          main={
+            <ChatView
+              projectId={projectId}
+              sessionId={sessionId ?? null}
+              terminalToggle={{ open: terminal.open, onToggle: terminal.toggleOpen }}
+            />
+          }
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
           terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} />}
         />
