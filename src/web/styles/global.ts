@@ -241,4 +241,34 @@ export const globalStyle = css`
     outline-offset: 2px;
     border-radius: 2px;
   }
+
+  /*
+   * 动效降级（WCAG 2.3.3 Animation from Interactions / 2.2.2）。
+   *
+   * 本应用此前全站零 prefers-reduced-motion 处理，四处动画照常无限循环：
+   * 提交按钮脉冲（CommitButton pulse 2s infinite）、骨架屏呼吸
+   * （ChatView skeletonPulse 1.5s infinite）、工作流节点脉冲
+   * （WorkflowGraph wf-pulse 1.2s infinite）、生成中进度点
+   * （Chat wfProgressPulse 1.4s infinite）。前庭功能障碍用户开启系统
+   * 「减少动态效果」后，这些循环仍持续播放——实测 emulated
+   * prefers-color-scheme/media=reduce 下 animation-iteration-count 仍为 infinite。
+   *
+   * 收敛成一条全局规则而非逐个组件加媒体查询：动画定义分散在 4 个文件，
+   * 漏一处就等于该处照旧播放；且 haze-ui 内部动画（tooltip 浮入等）本项目
+   * 同样无法逐个改写。全局归零一次覆盖全部来源，新加动画自动受约束。
+   *
+   * 只归零 animation/transition 的时长与位移，不隐藏元素、不改 layout——
+   * 骨架屏与进度点停在各自的静态终态（opacity 0.45 / 1、scale(1)），
+   * 「正在加载」这一信息本身仍然可见。跳过 scroll-behavior：设置页 TOC
+   * 分区跳转的平滑滚动是导航反馈而非装饰，且瞬时滚动会让人失去方位感。
+   */
+  @media (prefers-reduced-motion: reduce) {
+    :global(*),
+    :global(*::before),
+    :global(*::after) {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 `
