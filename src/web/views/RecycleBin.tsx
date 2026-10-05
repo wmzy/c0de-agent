@@ -123,7 +123,13 @@ function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null
  *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。
  *  P1-7：仅显示当前项目的删除会话；「清空」仅清空当前项目。 */
 export function RecycleBin({ projectId }: { projectId: string }) {
-  const { data: deleted, isLoading } = useDeletedSessions(projectId)
+  const {
+    data: deleted,
+    isLoading,
+    isError,
+    error: listError,
+    refetch,
+  } = useDeletedSessions(projectId)
   // F1：孤儿（projectId=null）已删会话——删除项目所产生，任何项目回收站视图都不可见，
   // 需在本回收站内单独分组暴露，否则 60 天后被静默物理清除。
   // A3：折叠态只拉计数；展开时才拉列表并显式标记「已看到」（启动倒计时），
@@ -213,6 +219,41 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const [showEmptyTrash, setShowEmptyTrash] = useState(false)
 
   if (isLoading) return <div className={empty}>加载中…</div>
+  // 列表拉取失败必须与「真的为空」区分开：此前只判 isLoading，
+  // 请求 500 时 deleted 为 undefined → deletedList 为空数组 → 落到
+  // 「回收站为空」空态。用户看到的是「空的」，实际是「拉不到」，
+  // 于是反复点刷新甚至以为会话被清空。实测注入 500 后等重试结束，
+  // 页面稳定显示「回收站为空」、无任何错误提示。
+  // 与 KanbanView 的「看板加载失败」保持同一套读失败表达，并给出重试入口。
+  if (isError) {
+    // APIError 是结构体（{ status, message, code?, details? }）而非 Error 子类，
+    // `instanceof Error` 恒为 false → 落进 String() → 渲染成「[object Object]」，
+    // 用户拿到零信息量的报错。实测注入 500 后错误条显示
+    // 「回收站加载失败：[object Object]」。改为结构化取 message（与
+    // RootRedirect 的读法一致：后端 message 是可操作的中文指引），
+    // 再对非 APIError（网络异常/超时等真正的 Error 实例）保留 instanceof 分支。
+    const message =
+      (listError as { message?: string } | null)?.message ??
+      (listError instanceof Error ? listError.message : null)
+    return (
+      <div>
+        <div className={errorBar} data-testid="trash-load-error">
+          回收站加载失败
+          {message ? `：${message}` : '，请稍后重试。'}
+        </div>
+        <div className={empty}>
+          <button
+            type="button"
+            className={restoreBtn}
+            onClick={() => refetch()}
+            data-testid="trash-retry"
+          >
+            重试
+          </button>
+        </div>
+      </div>
+    )
+  }
   // P1-1：恢复/归属结果 notice 必须独立于「回收站为空」分支——
   // 恢复最后一个会话时回收站变空，若直接返回空态，notice（如 CLI 会话恢复提示）
   // 永远不会展示，用户只能看到列表消失。A3：孤儿分组同样独立于空态渲染。

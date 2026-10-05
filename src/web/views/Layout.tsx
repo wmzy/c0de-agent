@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { useEffect } from 'react'
 import { useControl } from 'react-use-control'
 import { MobileNav } from '@/components/MobileNav.js'
+import { MOBILE } from '@/styles/breakpoints.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
 // 侧栏宽度：Workbench 硬区间 160–480，产品下限保留 200。
@@ -34,6 +35,33 @@ const layoutStyle = css`
   flex: 1;
   min-height: 0;
   width: 100%;
+`
+
+/**
+ * 移动端给 Workbench 编辑区让出底部导航的高度。
+ *
+ * MobileNav 是 position:fixed 的 56px 高条，脱离文档流、不占位；而
+ * .haze-Workbench__editor 是本页唯一滚动容器——聊天页的顶栏/消息流/权限条/
+ * 输入框全部平铺在它内部。缺这层让位时，滚到底部的输入框正好落在导航条下面：
+ * 375×667 实测输入框 top=792、导航 top=612，「发送」按钮被完全覆盖且点不到
+ * （elementFromPoint 命中的是导航按钮），而滚动容器没有多余可滚高度，
+ * 用户也无法再往下滚把它挪出来——手机上无法发起任何对话。
+ *
+ * padding-bottom 追加在滚动盒末尾，内容即可滚到导航条上方而不被遮挡。
+ * 桌面端导航为 display:none，媒体查询不生效。
+ */
+const mobileNavGutter = css`
+  /*
+   * 选择器写成整句 :global(...)：写成「& :global(...)」时 linaria 会把后代选择器
+   * 提到 atomic 类之前，产出「.haze-Workbench__editor .mobileNavGutter_xxx」这种
+   * 方向相反的规则，落到永不匹配的链路上。整句 :global 由 atomic 规则正常包裹，
+   * 生成「.mobileNavGutter_xxx .haze-Workbench__editor」，方向正确。
+   */
+  ${MOBILE} {
+    :global(.haze-Workbench__editor) {
+      padding-bottom: 56px;
+    }
+  }
 `
 
 type LayoutProps = {
@@ -85,7 +113,7 @@ export function Layout({
   }, [panelWidth])
 
   return (
-    <div className={layoutStyle}>
+    <div className={`${layoutStyle} ${mobileNavGutter}`}>
       {headerNode && <>{headerNode}</>}
       <Workbench
         // Workbench 根默认 height:100dvh；本布局是 appShell 内的 flex

@@ -136,8 +136,22 @@ export const globalStyle = css`
     padding: 0;
     accent-color: var(--haze-color-primary);
   }
-  /* 统一按钮基础：仅原生按钮（组件类按钮自持样式或走 haze Button） */
-  :global(button${NATIVE}) {
+  /*
+   * 统一按钮基础：仅原生按钮（组件类按钮自持样式或走 haze Button）。
+   *
+   * 整条规则必须包在 :where() 里——:where() 内部的选择器特异度为 0，
+   * 因此本规则只当「裸按钮的兜底底色」，任何组件自带的 linaria 类都能正常覆盖它。
+   * 此前直接写 button:not([class*="haze-"])，其特异度为 (0,1,1)，
+   * 高于任何单类 (0,1,0)：全站 11 个自绘按钮（segBtn/toolBtn/btn/dangerBtn/
+   * actionBtn/linkBtn/btnSm…）的 padding、background、border、color 全被压掉。
+   * 后果不是「样式不好看」而是语义丢失——
+   *   - dangerBtn 声明的 background: var(--haze-color-danger) 被中性底色覆盖，
+   *     「清空回收站」这类不可逆操作的确认按钮与「取消」渲染得完全一样；
+   *   - segBtnActive 的 primary 底色同样被覆盖，分段控件的选中项与未选中项
+   *     背景/文字色/字重全部一致，用户无法判断当前处于哪个视图。
+   * :not([class*="haze-"]) 仍用于排除 haze 自带样式的控件（Input/Select/Button）。
+   */
+  :global(:where(button${NATIVE})) {
     color: var(--haze-color-text);
     background: var(--haze-color-bg-subtle);
     border: 1px solid var(--haze-color-border);
@@ -145,11 +159,11 @@ export const globalStyle = css`
     padding: 8px 12px;
     transition: background 0.15s, border-color 0.15s;
   }
-  :global(button${NATIVE}:hover:not(:disabled):not([aria-disabled='true'])) {
+  :global(:where(button${NATIVE}):hover:not(:disabled):not([aria-disabled='true'])) {
     background: color-mix(in srgb, var(--haze-color-bg-subtle) 80%, var(--haze-color-text) 8%);
   }
   /* 键盘可达性：Tab 聚焦时与输入控件同款焦点环（鼠标点击不触发） */
-  :global(button${NATIVE}:focus-visible) {
+  :global(:where(button${NATIVE}):focus-visible) {
     outline: none;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
     border-color: var(--haze-color-primary);
@@ -158,8 +172,8 @@ export const globalStyle = css`
    * 禁用态全局语义：真实 disabled 与 aria-disabled 等同——文字降对比度、
    * 背景变浅、cursor:not-allowed，hover 已被上方 :not() 守卫排除。
    */
-  :global(button${NATIVE}:disabled),
-  :global(button${NATIVE}[aria-disabled='true']) {
+  :global(:where(button${NATIVE}):disabled),
+  :global(:where(button${NATIVE})[aria-disabled='true']) {
     color: var(--haze-color-text-muted);
     background: var(--haze-color-bg-muted);
     cursor: not-allowed;

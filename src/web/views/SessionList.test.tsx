@@ -9,15 +9,27 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sessionAPI } from '@/services/session.js'
 import type { SessionTreeNode } from '@/types/index.js'
+import { RecycleBin } from '@/views/RecycleBin.js'
 import { SessionList } from '@/views/SessionList.js'
 
-const hoisted = vi.hoisted(() => ({ tree: [] as unknown[] }))
+const hoisted = vi.hoisted(() => ({
+  tree: [] as unknown[],
+  /** 覆盖 useDeletedSessions 的返回值，用于驱动回收站的加载失败分支。 */
+  deleted: {
+    // 读失败时 react-query 的 data 确实为 undefined，这里必须允许。
+    data: [] as unknown[] | undefined,
+    isLoading: false,
+    isError: false,
+    error: null as unknown,
+    refetch: () => {},
+  },
+}))
 
 vi.mock('@/hooks/useSession.js', () => ({
   useSessionTree: () => ({ data: hoisted.tree, isLoading: false }),
   useDeleteSession: () => ({ mutate: vi.fn() }),
   useProjects: () => ({ data: [{ id: 'p1', name: 'proj', worktree: '/tmp/proj' }] }),
-  useDeletedSessions: () => ({ data: [], isLoading: false }),
+  useDeletedSessions: () => hoisted.deleted,
   useDeletedOrphansCount: () => ({ data: { count: 0 } }),
   useDeletedOrphans: () => ({ data: [] }),
   useRestoreSession: () => ({ mutate: vi.fn() }),
@@ -118,5 +130,83 @@ describe('SessionList 会话搜索', () => {
       expect(screen.getByTestId('content-match-outside-id')).toBeInTheDocument()
     })
     expect(screen.queryByTestId('content-match-grandchild-id')).toBeNull()
+  })
+})
+
+describe('RecycleBin 读失败态', () => {
+  /** 直接渲染 RecycleBin：SessionList 里它藏在「回收站」页签后，测不到失败分支。 */
+  function renderTrash() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={qc}>
+        <RecycleBin projectId="p1" />
+      </QueryClientProvider>,
+    )
+  }
+
+  /**
+   * 回归：`instanceof Error` 对 APIError 恒为 false。
+   * APIError 是结构体 { status, message, code?, details? }（services/api.ts 的
+   * toAPIError 返回），不是 Error 子类，因此原先的
+   * `listError instanceof Error ? listError.message : String(listError)`
+   * 会渲染成「[object Object]」——错误条存在但零信息量。
+   */
+  it('APIError 展示后端 message，而不是 [object Object]', () => {
+    hoisted.deleted = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { status: 500, code: 'DB_LOCKED', message: '数据库被占用，请稍后重试' },
+      refetch: () => {},
+    }
+    renderTrash()
+    const bar = screen.getByTestId('trash-load-error')
+    expect(bar.textContent).toContain('数据库被占用，请稍后重试')
+    expect(bar.textContent).not.toContain('[object Object]')
+  })
+
+  it('非 APIError（网络异常）仍展示 Error.message', () => {
+    hoisted.deleted = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new TypeError('Failed to fetch'),
+      refetch: () => {},
+    }
+    renderTrash()
+    const bar = screen.getByTestId('trash-load-error')
+    expect(bar.textContent).toContain('Failed to fetch')
+    expect(bar.textContent).not.toContain('[object Object]')
+  })
+
+  it('读失败不得伪装成「回收站为空」，且提供重试入口', () => {
+    hoisted.deleted = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { status: 500, message: 'boom' },
+      refetch: () => {},
+    }
+    renderTrash()
+    expect(screen.getByTestId('trash-load-error')).toBeInTheDocument()
+    // 关键：拉不到 ≠ 空的。空态必须缺席，否则用户以为会话已被清空。
+    expect(screen.queryByTestId('trash-empty')).toBeNull()
+    expect(screen.getByTestId('trash-retry')).toBeInTheDocument()
+  })
+
+  it('重试按钮回调 refetch', () => {
+    const refetch = vi.fn()
+    hoisted.deleted = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { status: 500, message: 'boom' },
+      refetch,
+    }
+    renderTrash()
+    fireEvent.click(screen.getByTestId('trash-retry'))
+    expect(refetch).toHaveBeenCalledTimes(1)
   })
 })
