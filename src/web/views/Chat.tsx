@@ -78,6 +78,29 @@ type ChatProps = {
 
 /* 顶栏合并行：视图切换 + 运行状态 + 流控按钮 + 原始 JSON 单行排布，
  * 替代原先 toolbar/viewBar 两层横条，为消息流腾出垂直空间。 */
+/**
+ * 聊天列根容器：占满 .haze-Workbench__editor 并建立纵向 flex 上下文。
+ *
+ * 此前 Chat 返回 Fragment，顶栏/消息流/权限条/输入框直接平铺在 Workbench 的
+ * <main> 里，而该 <main> 是 haze Workbench 提供的 display:block 容器——
+ * 块级布局下 stream 的 flex:1 完全失效（block 子项不吃剩余空间，只按内容高度
+ * 堆叠）。实测 1440×900：消息流仅 393px，而最后一行输入框 bottom=634，
+ * <main> 底边 896 —— 底部 234px 死区；内容一多 <main> 开始滚动，滚动时
+ * 顶栏被推出视口（top=-355），输入框与「发送」按钮一并滚出屏幕
+ * （scrollTop=400 时 view-bar top=-355 已不可见），而消息流本身又是独立滚动
+ * 容器，用户既无法把输入框滚回来，也无法用滚轮把消息读完。
+ *
+ * 建立 flex 列后：消息流 flex:1 吃掉全部剩余高度（393 → 627px），
+ * 顶栏与输入区恒在视口内，输入区增长只压缩消息流。
+ * min-height:0 是 flex 子项不撑破容器的必要条件（否则内容高度会顶开父级）。
+ */
+const column = css`
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+`
+
 const topBar = css`
   display: flex;
   align-items: center;
@@ -461,7 +484,7 @@ export function Chat({
   }
 
   return (
-    <>
+    <div className={column}>
       <div className={topBar} data-testid="view-bar">
         <section className={viewSwitch} aria-label="视图模式">
           <Button
@@ -677,6 +700,6 @@ export function Chat({
           pendingPermission && onConfirm(pendingPermission.toolCallId, false)
         }
       />
-    </>
+    </div>
   )
 }
