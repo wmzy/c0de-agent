@@ -372,6 +372,7 @@ export function PairingApproval() {
               inputMode="numeric"
               maxLength={6}
               placeholder="输入 6 位码"
+              aria-label={`输入配对码：${p.deviceName}`}
               value={codes[p.pairingId] ?? ''}
               onChange={(v) =>
                 setCodes((prev) => ({ ...prev, [p.pairingId]: v.replace(/\D/g, '') }))

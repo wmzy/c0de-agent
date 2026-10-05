@@ -144,6 +144,7 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
         className={searchInput}
         type="search"
         placeholder="搜索归档内容…"
+        aria-label="搜索归档内容"
         value={q}
         onChange={(v) => setQ(v)}
         data-testid="archive-search"

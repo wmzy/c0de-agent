@@ -69,6 +69,22 @@ describe('FileBrowser 基础渲染', () => {
     })
   })
 
+  /**
+   * 回归：搜索框只有 placeholder，没有可访问名称。
+   *
+   * placeholder 不是可访问名称——读屏与语音控制只念 placeholder，且输入框
+   * 一旦有值就不再朗读，搜索框会退化为无名称控件。会话搜索框
+   * （session-search）早已补上 aria-label，文件搜索框被漏掉了。
+   */
+  it('文件搜索框有可访问名称（不只靠 placeholder）', async () => {
+    renderBrowser()
+    const input = (await screen.findByTestId('file-search')) as HTMLElement
+    const name =
+      input.getAttribute('aria-label') ??
+      document.querySelector(`label[for="${input.getAttribute('id')}"]`)?.textContent
+    expect(name?.trim() ?? '').not.toBe('')
+  })
+
   it('加载后不再渲染 commit 按钮（已移至 TopBar）', async () => {
     renderBrowser()
     await waitFor(() => {

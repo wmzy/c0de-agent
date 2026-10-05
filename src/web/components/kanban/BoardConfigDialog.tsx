@@ -209,6 +209,9 @@ export function BoardConfigDialog({
             <SyncedInput
               className={rowInput}
               value={col.name}
+              /* 每行都是无名称输入框（无 placeholder、无 label[for]），读屏
+               * 逐个念「编辑框」分不清是哪一列。名称取该行当前列名。 */
+              aria-label={`列名：${col.name}`}
               onChange={(v) => updateColumnName(col.id, v)}
             />
             <span
@@ -234,6 +237,7 @@ export function BoardConfigDialog({
           <SyncedInput
             className={rowInput}
             placeholder="新列名…"
+            aria-label="新列名"
             value={newColumnName}
             onChange={(v) => setNewColumnName(v)}
             onKeyDown={(e) => {
@@ -258,11 +262,13 @@ export function BoardConfigDialog({
               type="color"
               className={colorSwatch}
               value={l.color}
+              aria-label={`标签颜色：${l.name}`}
               onChange={(v) => updateLabel(l.id, { color: v })}
             />
             <SyncedInput
               className={rowInput}
               value={l.name}
+              aria-label={`标签名：${l.name}`}
               onChange={(v) => updateLabel(l.id, { name: v })}
             />
             <Button
@@ -279,11 +285,13 @@ export function BoardConfigDialog({
             type="color"
             className={colorSwatch}
             value={newLabelColor}
+            aria-label="新标签颜色"
             onChange={(v) => setNewLabelColor(v)}
           />
           <SyncedInput
             className={rowInput}
             placeholder="新标签名…"
+            aria-label="新标签名"
             value={newLabelName}
             onChange={(v) => setNewLabelName(v)}
             onKeyDown={(e) => {

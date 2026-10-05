@@ -79,3 +79,30 @@ describe('TodoPanel 导出到看板', () => {
     expect(vi.mocked(kanbanAPI.addCard)).toHaveBeenCalledWith('p1', { title: '任务A' })
   })
 })
+
+/**
+ * 新增任务行的两个输入框必须有可访问名称。
+ *
+ * 缺陷：两个框都只写 placeholder，无可见 label 也无 aria-label。placeholder
+ * 不是可访问名称——读屏与语音控制只念 placeholder，且输入框一旦有值就再也不
+ * 朗读，两个并排的框在无值时都只被念成同一个词。todoAPI.exec 真要往里写
+ * 内容时，用户得靠猜。
+ */
+describe('TodoPanel 新增任务行的可访问名称', () => {
+  it('「任务描述」与「阶段」两个输入框都有非空可访问名称', async () => {
+    // 无任务时摘要栏点击直接打开新增行（totalTasks > 0 时它只切换折叠）
+    vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
+    renderPanel()
+    fireEvent.click(await screen.findByText('暂无任务，点击添加'))
+
+    const task = await screen.findByLabelText('任务描述')
+    const phase = screen.getByLabelText('阶段（可选）')
+    expect(task).toBeInTheDocument()
+    expect(phase).toBeInTheDocument()
+
+    // 名称非空：空串 aria-label 等于没有名称
+    for (const el of [task, phase]) {
+      expect((el as HTMLElement).getAttribute('aria-label')?.trim().length ?? 0).toBeGreaterThan(0)
+    }
+  })
+})

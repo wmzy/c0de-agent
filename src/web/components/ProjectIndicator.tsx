@@ -559,6 +559,7 @@ function NewBranchForm({
       <SyncedInput
         className={branchInput}
         placeholder="新分支名…"
+        aria-label="新分支名"
         value={name}
         onChange={(v) => setName(v)}
         onKeyDown={(e) => {

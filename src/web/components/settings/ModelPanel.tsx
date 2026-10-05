@@ -226,6 +226,10 @@ function ProviderModelsPanel({
           value={filter}
           onChange={(v) => setFilter(v)}
           placeholder="过滤模型…"
+          /* placeholder 不是可访问名称：读屏只念 placeholder，输入框一旦有值
+           * 就不再朗读——而它右侧紧邻「启用所有/禁用所有」两个按钮，无名称时
+           * 读屏用户只听到一个输入框，不知道在过滤什么。 */
+          aria-label="按名称过滤模型"
           data-testid="provider-model-filter"
         />
         <button
