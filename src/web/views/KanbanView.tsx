@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/core'
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type ChangeEvent, useRef, useState } from 'react'
+import { type ChangeEvent, useCallback, useRef, useState } from 'react'
 import { BoardConfigDialog } from '@/components/kanban/BoardConfigDialog.js'
 import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
 import { computeDropPosition } from '@/components/kanban/drop-position.js'
@@ -55,6 +55,24 @@ const configBtn = css`
   font-size: 12px;
 `
 
+/**
+ * 看板列横向滚动容器。
+ *
+ * `tabindex="0"` + role/aria-label 是键盘可达性的关键，不是可选装饰：
+ * 列宽固定 280px（KanbanColumn 的 width/min-width），5 列 + 4 个 12px 间距
+ * + 24px 内边距 = 1472px。窄于此的视口都会溢出——实测 1280px 溢出 192px、
+ * 1440px 溢出 20px、390px 手机上溢出 1082px。列数随用户「看板设置」增删，
+ * 溢出量还会随自定义列数继续放大。
+ *
+ * 原先容器不可聚焦，浏览器不会为它做滚动对齐：Tab 把焦点送进第 5 列的
+ * 「+ 新建卡片」按钮后，该按钮实测落在 right=1453（1280px 视口外 173px），
+ * 而 boardArea.scrollLeft 恒为 0——键盘用户聚焦了一个完全看不见的控件，
+ * 读屏用户听到「新建卡片」却不知它在屏幕外。聚焦容器使其成为滚动祖先，
+ * 浏览器默认的「聚焦即滚入视口」才能生效。
+ *
+ * 焦点环用 :focus-visible：鼠标点容器不显示描边，键盘 Tab 过去才显示。
+ * outline-offset: -2px 让描边画在容器内缘，不被 overflow 裁掉。
+ */
 const boardArea = css`
   display: flex;
   gap: 12px;
@@ -63,6 +81,28 @@ const boardArea = css`
   overflow-y: hidden;
   flex: 1;
   min-height: 0;
+  &:focus-visible {
+    outline: 2px solid var(--haze-color-primary);
+    outline-offset: -2px;
+  }
+`
+
+/**
+ * 溢出提示：仅在看板横向装不下时出现的一条说明。
+ *
+ * 5 列固定 280px 宽 = 1472px 底线，1280px 及以下视口必然溢出。原先除了
+ * 一条会自动隐没的系统滚动条外没有任何提示：手机（390px）上系统滚动条
+ * 通常整体隐藏，用户看到的是「已取消」列被齐腰切断，看不出右边还有内容，
+ * 也就不知道可以横滑。
+ *
+ * 用 JS 测量 scrollWidth > clientWidth 后才渲染——纯 CSS 表达不了
+ * 「内容溢出且我处在滚动起点」，这两者都只有实尺才知道。
+ */
+const scrollHint = css`
+  flex-shrink: 0;
+  padding: 6px 16px 0;
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
 `
 
 const loading = css`
@@ -126,6 +166,75 @@ type KanbanViewProps = {
   projectId: string
 }
 
+/**
+ * 观察横向溢出：内容宽度是否超过容器可见宽度。
+ *
+ * 返回回调 ref 而非 ref 对象：看板容器在 query 落地前并不存在（加载中/失败态
+ * 走的是提前 return 的另一棵树），useEffect([]) 在那之前就跑完，ref.current
+ * 为 null 且没有 deps 可等它重来。回调 ref 在节点挂载的那一刻接管，之后由
+ * 观察器接管后续变化。
+ *
+ * 两个触发源都会改变答案，缺一不可：
+ * - 容器宽度：窗口缩放。这不触发任何 React 重渲染，只有 ResizeObserver 拦得住。
+ * - 内容宽度：列的增删（query 数据到位、「看板设置」改列）。新增的子节点不会被
+ *   已有的 ResizeObserver 接管，用 MutationObserver 补上增删的观测。
+ *
+ * 回退到 1px 容差：亚像素的 flex 舍入会让 scrollWidth 比 clientWidth 大零点几，
+ * 那不是可滚动内容，不该弹提示。
+ */
+function useOverflowX() {
+  const [overflowing, setOverflowing] = useState(false)
+  const teardownRef = useRef<(() => void) | null>(null)
+
+  const ref = useCallback((el: HTMLElement | null) => {
+    teardownRef.current?.()
+    teardownRef.current = null
+    if (!el) return
+
+    const measure = () => setOverflowing(el.scrollWidth - el.clientWidth > 1)
+
+    const resizeObserver = new ResizeObserver(measure)
+    const watchChildren = () => {
+      for (const child of el.children) resizeObserver.observe(child)
+    }
+    watchChildren()
+    measure()
+
+    const mutationObserver = new MutationObserver(() => {
+      watchChildren()
+      measure()
+    })
+    mutationObserver.observe(el, { childList: true })
+
+    teardownRef.current = () => {
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
+    }
+  }, [])
+
+  return { ref, overflowing }
+}
+
+/**
+ * 焦点进入某列时把该列横向滚入视口。
+ *
+ * 依赖浏览器默认的「聚焦即滚入视口」在此不成立，已实测：即使容器带 tabIndex=0，
+ * 1280px 下 Tab 到第 5 列的「+ 新建卡片」后 boardArea.scrollLeft 仍为 0，
+ * 按钮落在 right=1453（视口外 173px）。容器同时声明 overflow-y:hidden，
+ * Chromium 的顺序焦点滚动只沿「在该轴可滚动」的祖先链上溯，x 轴可滚的祖先
+ * 仍要经过这个 y 轴被禁用的节点，行为不可依赖。自己算，不赌引擎。
+ *
+ * 用 scrollIntoView 的 block:'nearest' + inline:'nearest'：只做最小位移，
+ * 已经可见的列不会因为被聚焦而横向跳动。仅在焦点目标位于容器内部时处理，
+ * 避免外层页面的焦点事件也来搅动看板。
+ */
+function handleBoardFocus(e: React.FocusEvent<HTMLDivElement>) {
+  const board = e.currentTarget
+  const target = e.target
+  if (!(target instanceof HTMLElement) || !board.contains(target)) return
+  target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
 /** 看板主视图：加载 board、管理 DndContext 拖拽、卡片编辑/配置弹窗。 */
 export function KanbanView({ projectId }: KanbanViewProps) {
   const qc = useQueryClient()
@@ -146,6 +255,8 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     queryKey: ['kanban', projectId],
     queryFn: () => kanbanAPI.get(projectId),
   })
+
+  const { ref: boardRef, overflowing } = useOverflowX()
 
   // 卡片移动（乐观更新通过 invalidate 实现）
   const moveMutation = useMutation({
@@ -345,6 +456,11 @@ export function KanbanView({ projectId }: KanbanViewProps) {
           {ioError}
         </div>
       )}
+      {overflowing && (
+        <p className={scrollHint} data-testid="kanban-scroll-hint">
+          共 {board.columns.length} 列，可横向滚动查看后面的列
+        </p>
+      )}
 
       <DndContext
         sensors={sensors}
@@ -352,7 +468,14 @@ export function KanbanView({ projectId }: KanbanViewProps) {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className={boardArea}>
+        <section
+          className={boardArea}
+          ref={boardRef}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: 可滚动区域进 Tab 序是 WAI-ARIA scrollable-region 模式——屏幕阅读器用户靠 Tab 聚焦它再用方向键滚动，键盘用户靠它滚动到后续列（实测第 5 列在 1280px 视口外 173px）
+          tabIndex={0}
+          aria-label="看板列，可横向滚动"
+          onFocus={handleBoardFocus}
+        >
           {board.columns.map((col) => {
             const colCards = board.cards
               .filter((c) => c.columnId === col.id)
@@ -368,7 +491,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
               />
             )
           })}
-        </div>
+        </section>
       </DndContext>
 
       {editingCard && (
