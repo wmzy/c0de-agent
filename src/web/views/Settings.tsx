@@ -21,6 +21,8 @@ import {
   SettingsSaveBar,
   SettingsToolbar,
 } from '@/components/settings/SettingsChrome.js'
+import { SettingsToc } from '@/components/settings/SettingsToc.js'
+import { onTocReady, scrollSettingsSectionIntoView } from '@/components/settings/sectionScroll.js'
 import {
   checkRow,
   field,
@@ -222,22 +224,30 @@ export function Settings() {
   //
   // 必须挂在所有 early return（isLoading / isError）之前：Hooks 数量须跨渲染
   // 恒定，否则「重试成功后从失败态恢复」这类先失败再成功的路径直接崩。
-  // 滚动发生在 <main>（.haze-Workbench__editor），不是文档：容器本身不滚，
-  // 浏览器原生锚点跳转不会生效，须手动设置 scrollTop。
+  //
+  // 落点必须让开顶部两条 sticky（工具条 + 分区目录行）。原先写死
+  // `offsetTop - 16`，目录行出现后标题会停在两条 sticky 底下被完全遮住：
+  // 实测深链 ?section=section-5-上下文压缩 时标题落在 y=61，而目录行下沿在
+  // 141——「点了徽标/链接却什么都没变」。offsetTop 还相对各自 offsetParent
+  // （.haze-Workbench__workbench），与容器 scrollTop 并非同一坐标系。
+  // 口径统一到 scrollSettingsSectionIntoView，与点目录跳转完全一致。
+  //
+  // 还要再等目录行就绪：目录行是 SettingsToc 扫描完 h2 才渲染的，而本
+  // effect 与那次扫描同批跑，那时目录行尚未入 DOM，实测高度为 0，落点会
+  // 再少让 45px（标题又回到目录行底下）。订阅 onTocReady 后重算一次。
+  //
   // 配置未就绪时 UsagePanel 尚未挂载，getElementById 落空，本 effect 会在
   // resp 到达后由依赖重跑。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resp/viewMode 只作「面板已挂载」的触发信号，effect 内不读
   useEffect(() => {
     const anchor = searchParams.get('section')
     if (!anchor) return
-    const target = document.getElementById(anchor)
-    if (!target) return
-    const scroller = target.closest('main')
-    const top = target.offsetTop - 16
-    if (scroller) {
-      scroller.scrollTop = top
-    } else {
-      window.scrollTo({ top })
+    const jump = () => {
+      const target = document.getElementById(anchor)
+      if (target) scrollSettingsSectionIntoView(target)
     }
+    jump()
+    return onTocReady(jump)
   }, [searchParams, resp, viewMode])
 
   if (isLoading) return <div className={loadingWrap}>加载中…</div>
@@ -557,7 +567,8 @@ export function Settings() {
       {viewMode === 'json' ? (
         <JsonConfigEditor jsonText={jsonText} jsonError={jsonError} onChange={onJsonChange} />
       ) : (
-        <div>
+        <div data-testid="settings-form">
+          <SettingsToc />
           <AppearancePanel />
           <ProviderPanel providers={merged.providers} onProvidersChange={updateProviders} />
           <ModelPanel
@@ -674,11 +685,9 @@ export function Settings() {
                 value={String(merged.agents.subagentConcurrency)}
                 onChange={(v) =>
                   updateSection('agents', {
-                    subagentConcurrency: parseBoundedNumber(
-                      v,
-                      merged.agents.subagentConcurrency,
-                      { min: 1 },
-                    ),
+                    subagentConcurrency: parseBoundedNumber(v, merged.agents.subagentConcurrency, {
+                      min: 1,
+                    }),
                   })
                 }
               />

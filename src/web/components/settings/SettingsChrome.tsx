@@ -148,7 +148,7 @@ function SettingsToolbar({
   onExport,
 }: SettingsToolbarProps) {
   return (
-    <div className={toolbar}>
+    <div className={toolbar} data-testid="settings-toolbar">
       <h1 className={toolbarTitle}>⚙ 设置</h1>
       <div className={segGroup}>
         <button

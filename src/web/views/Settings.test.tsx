@@ -1940,6 +1940,124 @@ describe('Settings — 分区导航', () => {
     fireEvent.click(screen.getByText('{ } JSON'))
     await waitFor(() => expect(screen.queryByTestId('settings-toc')).toBeNull())
   })
+
+  // 落点被 sticky 完全遮住 = 「点了但什么都没变」：标题藏在两条栏底下，肉眼
+  // 只看到工具条、目录行和它们的下一个分区。
+  //
+  // 两条 sticky 是叠加的，各自让开一条都不够：
+  // 1. 原先写死 `offsetTop - 16` 只让开了工具条，标题停在目录行底下；
+  // 2. 改让两条后还要等目录行挂载——目录行由 SettingsToc 扫描完 h2 才
+  //    渲染，而深链 effect 与那次扫描同批跑，那一刻目录行尚未入 DOM，
+  //    实测高度为 0。
+  // 实测（1440px）两种漏法分别让「上下文压缩」标题落在 y=61 与 y=104，
+  // 目录行下沿在 141——都被完全遮住。
+  describe('深链与目录跳转落在 sticky 之下', () => {
+    /** 工具条实测高度（1440px 宽）。 */
+    const TOOLBAR_H = 51
+    /** 目录行实测高度。 */
+    const TOC_H = 45
+    /** 两条 sticky 的下沿。 */
+    const LINE = TOOLBAR_H + TOC_H
+    /** 「上下文压缩」h2 在容器内的文档纵坐标（实测 offsetTop 1122）。 */
+    const COMPACTION_TOP = 1122
+
+    /**
+     * happy-dom 无布局引擎，这里造出设置页真实的几何关系：
+     * 视口坐标 = 容器内文档坐标 - main.scrollTop。两条 sticky 固定贴顶。
+     *
+     * 只认「表单子树里 h2 的文档坐标」这一条规则——真实布局正是这样：h2 分散
+     * 在各面板组件内、嵌套深度各不相同，所以实现只能统一走视口坐标。
+     */
+    function stubLayout(main: HTMLElement) {
+      const base = { x: 0, left: 0, right: 1440, width: 1440, toJSON: () => ({}) }
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: Element,
+      ) {
+        const h = this.tagName === 'H2' ? this.textContent?.trim() : null
+        if (h === '上下文压缩') {
+          const top = COMPACTION_TOP - main.scrollTop
+          return { ...base, y: top, top, bottom: top + 22, height: 22 } as DOMRect
+        }
+        if (this === main) return { ...base, y: 0, top: 0, bottom: 856, height: 856 } as DOMRect
+        if (this.getAttribute('data-testid') === 'settings-toolbar')
+          return { ...base, y: 0, top: 0, bottom: TOOLBAR_H, height: TOOLBAR_H } as DOMRect
+        if (this.getAttribute('data-testid') === 'settings-toc')
+          return { ...base, y: TOOLBAR_H, top: TOOLBAR_H, bottom: LINE, height: TOC_H } as DOMRect
+        return { ...base, y: 0, top: 0, bottom: 0, height: 0 } as DOMRect
+      })
+    }
+
+    /** 在 <main> 滚动容器里挂载设置页（生产结构：内容在 main 内滚）。 */
+    function renderInScroller(entry: string) {
+      const main = document.createElement('main')
+      document.body.appendChild(main)
+      stubLayout(main)
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      render(
+        <MemoryRouter routes={settingsTestRoutes} initialEntries={[entry]}>
+          <QueryClientProvider client={qc}>
+            <View />
+          </QueryClientProvider>
+        </MemoryRouter>,
+        { container: main },
+      )
+      return main
+    }
+
+    it('?section= 深链把标题让到工具条+目录行下沿之外', async () => {
+      const { configAPI } = await import('@/services/config.js')
+      ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+      const main = renderInScroller('/settings?section=section-5-上下文压缩')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const heading = screen.getByRole('heading', { level: 2, name: '上下文压缩' })
+      await waitFor(() => expect(heading).toBeTruthy())
+
+      // 断言「没被遮住」这个用户可观测结果，而不是 scrollTop 的具体数值：
+      // 标题视口坐标须落在两条 sticky 下沿之下。
+      const top = COMPACTION_TOP - main.scrollTop
+      expect(
+        top,
+        `深链落点 y=${top} 须 ≥ sticky 下沿 ${LINE}，否则标题被完全遮住`,
+      ).toBeGreaterThanOrEqual(LINE)
+      vi.restoreAllMocks()
+    })
+
+    it('点击目录条与深链落到同一位置（落点口径不分叉）', async () => {
+      const { configAPI } = await import('@/services/config.js')
+      ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+      // 先取「上下文压缩」这一项的稳定 id
+      renderInScroller('/settings')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const chip = within(screen.getByTestId('settings-toc'))
+        .getAllByRole('button')
+        .find((b) => b.textContent === '上下文压缩')
+      expect(chip).toBeTruthy()
+      const id = chip?.getAttribute('data-testid')?.replace('settings-toc-', '')
+      cleanup()
+      vi.restoreAllMocks()
+
+      // 同一分区：深链进入
+      const byLink = renderInScroller(`/settings?section=${encodeURIComponent(id ?? '')}`)
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const linkScroll = byLink.scrollTop
+      cleanup()
+      vi.restoreAllMocks()
+
+      // 同一分区：点目录进入
+      const byClick = renderInScroller('/settings')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const same = within(screen.getByTestId('settings-toc'))
+        .getAllByRole('button')
+        .find((b) => b.getAttribute('data-testid') === `settings-toc-${id}`)
+      fireEvent.click(same as HTMLElement)
+      const clickScroll = byClick.scrollTop
+      vi.restoreAllMocks()
+
+      expect(linkScroll, '深链与点击目录应落在同一位置').toBe(clickScroll)
+    })
+  })
 })
 
 /**
