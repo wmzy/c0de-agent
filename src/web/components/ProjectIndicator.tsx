@@ -46,6 +46,14 @@ const indicatorInline = css`
   margin-left: 4px;
   /* 随品牌区收缩（配合 brandGroup min-width:0），项目名省略号截断 */
   min-width: 0;
+  /* haze 的 DropdownMenu 会在触发器与本容器之间插入 .haze-DropdownMenu__wrapper，
+   * 该 wrapper 未置 min-width:0，flex 子项的自动最小尺寸 = 内容宽度，于是它拒绝
+   * 收缩并把按钮整体顶出本容器（390px 实测 wrapper 154px vs 容器 125px，溢出 29px
+   * 压住右侧成本徽标，徽标 x=171 被盖住）。直接子级一律放开最小尺寸，逐层
+   * min-width:0 链才闭合，溢出止于 projectName 的省略号。 */
+  & > * {
+    min-width: 0;
+  }
 `
 
 /** 项目名 + 图标 + ▾ 的行内排布；按钮外观见 triggerReset（落在 button 上）。 */
@@ -130,6 +138,11 @@ const triggerReset = css`
   gap: 4px;
   /* 随容器收缩，项目名省略号截断 */
   min-width: 0;
+  /* haze 的 DropdownMenu__wrapper 是块级容器：块级容器不约束 inline-flex 子项的
+   * 宽度，按钮会按内容撑开而无视父级实际宽度（实测 wrapper 已收缩到 125px，按钮仍
+   * 154px 并压住右侧成本徽标 20px）。max-width 把按钮夹到父级宽度内，溢出改由
+   * 内层 projectName 的省略号承担。 */
+  max-width: 100%;
   transition: border-color 0.12s ease;
   &:hover {
     border-color: var(--haze-color-primary);
