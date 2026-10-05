@@ -190,11 +190,14 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
       {formatCost(cost)}
     </>
   )
+  // 深链到本面板：设置页 3300px+ 长，「用量与成本」在 y≈3000。
+  // 只跳设置页顶部会让用户落在「外观」，与 tooltip 承诺不符。
   return projectId ? (
     <Tooltip content={tip}>
       <TypedLink<AppPaths>
         to="/projects/:projectId/settings"
         params={{ projectId }}
+        search={{ section: 'usage' }}
         className={badgeClass}
         data-testid="month-cost-badge"
       >
@@ -203,7 +206,12 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
     </Tooltip>
   ) : (
     <Tooltip content={tip}>
-      <TypedLink<AppPaths> to="/settings" className={badgeClass} data-testid="month-cost-badge">
+      <TypedLink<AppPaths>
+        to="/settings"
+        search={{ section: 'usage' }}
+        className={badgeClass}
+        data-testid="month-cost-badge"
+      >
         {badgeText}
       </TypedLink>
     </Tooltip>

@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useBlocker, useMatched } from '@native-router/react'
+import { useBlocker, useMatched, useSearchParams } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, ConfirmDialog } from 'haze-ui'
@@ -138,6 +138,7 @@ export function Settings() {
   // P1-1：项目上下文来自路由（/projects/:projectId/settings）；
   // 无上下文时保持旧行为（服务启动目录项目 + 全局作用域）。
   const { params } = useMatched()
+  const [searchParams] = useSearchParams()
   const projectId = params.projectId
   const {
     data: resp,
@@ -214,6 +215,30 @@ export function Settings() {
       setSaveFeedback({ kind: 'err', msg })
     },
   })
+
+  // 深链定位：顶栏成本徽标承诺「点击前往用量与成本」，此前只跳到设置页顶部——
+  // 实测「用量与成本」在文档 y=3107 而滚动容器停在 0，用户看到的是「外观」，
+  // 与徽标 tooltip 的承诺不符。?section=<id> 落地后滚到该分区。
+  //
+  // 必须挂在所有 early return（isLoading / isError）之前：Hooks 数量须跨渲染
+  // 恒定，否则「重试成功后从失败态恢复」这类先失败再成功的路径直接崩。
+  // 滚动发生在 <main>（.haze-Workbench__editor），不是文档：容器本身不滚，
+  // 浏览器原生锚点跳转不会生效，须手动设置 scrollTop。
+  // 配置未就绪时 UsagePanel 尚未挂载，getElementById 落空，本 effect 会在
+  // resp 到达后由依赖重跑。
+  useEffect(() => {
+    const anchor = searchParams.get('section')
+    if (!anchor) return
+    const target = document.getElementById(anchor)
+    if (!target) return
+    const scroller = target.closest('main')
+    const top = target.offsetTop - 16
+    if (scroller) {
+      scroller.scrollTop = top
+    } else {
+      window.scrollTo({ top })
+    }
+  }, [searchParams, resp, viewMode])
 
   if (isLoading) return <div className={loadingWrap}>加载中…</div>
   // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
