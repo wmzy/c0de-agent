@@ -414,6 +414,9 @@ export function SessionList({
           className={searchInput}
           type="search"
           placeholder="搜索会话标题或消息内容…"
+          /* placeholder 不是可访问名称：读屏与语音控制只念 placeholder，
+           * 输入框一旦有值就不再朗读，搜索框会退化为无名称控件。 */
+          aria-label="搜索会话标题或消息内容"
           value={search}
           onChange={(v) => setSearch(v)}
           data-testid="session-search"

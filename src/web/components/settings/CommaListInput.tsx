@@ -23,6 +23,7 @@ function CommaListInput({
   placeholder,
   className,
   id,
+  ariaLabel,
   disabled,
 }: {
   value: string[]
@@ -30,6 +31,8 @@ function CommaListInput({
   placeholder?: string
   className?: string
   id?: string
+  /** 可访问名称：placeholder 不充当名称，读屏需要一个稳定的字段名。 */
+  ariaLabel?: string
   disabled?: boolean
 }) {
   const [text, setText] = useState(value.join(', '))
@@ -42,6 +45,7 @@ function CommaListInput({
   return (
     <SyncedInput
       id={id}
+      aria-label={ariaLabel}
       className={className}
       value={text}
       placeholder={placeholder}

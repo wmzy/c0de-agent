@@ -612,6 +612,7 @@ export function Settings() {
           <div className={section}>
             <h2 className={sectionTitle}>插件</h2>
             <CommaListInput
+              ariaLabel="已启用的插件名称"
               value={merged.plugins.enabled}
               onCommit={(items) => updateSection('plugins', { enabled: items })}
               placeholder="plugin-a, plugin-b"
@@ -621,6 +622,7 @@ export function Settings() {
           <div className={section}>
             <h2 className={sectionTitle}>斜杠命令</h2>
             <CommaListInput
+              ariaLabel="已启用的斜杠命令"
               value={merged.slashCommands.enabled}
               onCommit={(items) => updateSection('slashCommands', { enabled: items })}
               placeholder="/compact, /model, /clear"
