@@ -54,7 +54,20 @@ const tabsStyle = css`
   }
 `
 
-const tabStyle = css`
+/**
+ * 标签外壳：视觉上的「药丸」（背景/边框/圆角/hover/内边距都在这一层）。
+ *
+ * 之所以把样式从 role="tab" 元素本身挪到外层壳：关闭按钮此前是 role="tab"
+ * 的**后代**（axe nested-interactive serious，WCAG 4.1.2 名不副实）——
+ * tab 角色要求「选中即切换标签」，读屏会播报一个既非标签又非按钮的嵌套控件，
+ * 且 tab 内可聚焦后代让「标签只占一个 Tab 停靠点」的 tablist 约定失效：
+ * 实测键盘 Tab 到标签后下一停直接落到里面的「关闭终端标签」按钮上。
+ *
+ * 现在壳（role=presentation，只管视觉与点击）→ [role=tab 标签文本] +
+ * [关闭按钮] 平级。关闭按钮仍是壳的子元素，hover/点击行为与几何完全不变，
+ * 点击关闭钮 e.stopPropagation() 已在 handleCloseTab 里，不会误触发切标签。
+ */
+const tabWrapStyle = css`
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -72,6 +85,29 @@ const tabStyle = css`
     background: var(--haze-color-bg);
     color: var(--haze-color-text);
   }
+`
+
+/**
+ * 标签切换按钮：只装标签文本与分屏数徽标。
+ *
+ * 从 div 改成 button 后要显式清掉控件默认外观：全局 `:where(button)` 与
+ * haze 控件基线给裸按钮加了 padding:8px 12px / min-height:44px，36px 高的
+ * 标签栏里直接溢出（实测标签壳 46px vs 标签栏 36px，药丸被裁掉上下边缘）。
+ * 这里把 padding/min-height/边框底色全部归零，高度由外壳的 flex 决定；
+ * 背景与颜色继承外壳，hover 效果仍在外壳上。
+ */
+const tabStyle = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  min-height: auto;
 `
 
 const tabActiveStyle = css`
@@ -248,6 +284,9 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   // 避免在进程启动目录而非项目目录打开 shell）。
   // 仅在本轮「打开」周期内创建一次：用户主动关掉最后一个标签后不重建。
   const autoCreatedRef = useRef(false)
+  // 标签切换按钮的 DOM 引用：toolbar 内方向键切换活动标签时同步移动焦点，
+  // 否则读屏播报的位置与实际高亮的标签不一致。
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   // 切换项目时重置自动创建标记，允许新项目在面板打开时创建首个终端
   useEffect(() => {
     autoCreatedRef.current = false
@@ -480,42 +519,74 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
           排布在视口之外（y900+）且可被 Tab 聚焦却不可达；none 同时移除几何与焦点。
           xterm 实例保持挂载（与非活动标签相同的隐藏方式），重新展开时重算 fit。 */}
       <div className={panelStyle} style={open ? { height } : { display: 'none' }}>
-        {/* 标签栏 */}
+        {/* 标签栏：role="toolbar" 而非 "tablist"。
+            tablist 的必需子元素只有 tab（axe aria-required-children critical），
+            而每个终端标签是「切换按钮 + 关闭按钮」两个平级控件——tab 角色装不下
+            关闭钮（只能塞成后代 → nested-interactive），中间加壳又会违反
+            aria-required-children。toolbar 允许任意按钮混排，正是「一组切换按钮」
+            的正确语义；每个标签用 aria-pressed 表达「当前显示的是哪个」，
+            方向键在同一 toolbar 内切换焦点，键盘可达性与读屏播报都正确。 */}
         <div className={headerStyle}>
-          <div className={tabsStyle} role="tablist" aria-label="终端标签">
+          <div className={tabsStyle} role="toolbar" aria-label="终端标签">
             {tabs.map((tab) => (
               <div
                 key={tab.id}
-                className={`${tabStyle} ${tab.id === activeTabId ? tabActiveStyle : ''}`}
-                onClick={() => setActiveTabId(tab.id)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key !== 'ArrowLeft' &&
-                    e.key !== 'ArrowRight' &&
-                    e.key !== 'Home' &&
-                    e.key !== 'End'
-                  )
-                    return
-                  e.preventDefault()
-                  const idx = tabs.findIndex((t) => t.id === tab.id)
-                  let nextIdx: number
-                  if (e.key === 'Home') nextIdx = 0
-                  else if (e.key === 'End') nextIdx = tabs.length - 1
-                  else
-                    nextIdx = (idx + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-                  const next = tabs[nextIdx]
-                  if (next) setActiveTabId(next.id)
-                }}
-                role="tab"
-                aria-selected={tab.id === activeTabId}
-                tabIndex={tab.id === activeTabId ? 0 : -1}
+                role="presentation"
+                className={`${tabWrapStyle} ${tab.id === activeTabId ? tabActiveStyle : ''}`}
               >
-                <span>{shellLabel(tab.panes[0]?.shell ?? 'terminal')}</span>
-                {tab.panes.length > 1 && <span className={tabBadgeStyle}>{tab.panes.length}</span>}
+                <button
+                  ref={(el) => {
+                    if (el) tabRefs.current.set(tab.id, el)
+                    else tabRefs.current.delete(tab.id)
+                  }}
+                  className={tabStyle}
+                  onClick={() => setActiveTabId(tab.id)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key !== 'ArrowLeft' &&
+                      e.key !== 'ArrowRight' &&
+                      e.key !== 'Home' &&
+                      e.key !== 'End'
+                    )
+                      return
+                    e.preventDefault()
+                    const idx = tabs.findIndex((t) => t.id === tab.id)
+                    let nextIdx: number
+                    if (e.key === 'Home') nextIdx = 0
+                    else if (e.key === 'End') nextIdx = tabs.length - 1
+                    else
+                      nextIdx =
+                        (idx + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                    const next = tabs[nextIdx]
+                    if (next) {
+                      setActiveTabId(next.id)
+                      // toolbar 内方向键应同时移动焦点，否则读屏播报的位置与
+                      // 实际高亮的标签不一致。
+                      //
+                      // 必须延到下一帧：Terminal 的 visible 副作用在新标签变为可见
+                      // 后才 focus xterm（切回来时好让用户直接输入），同步 focus 会被
+                      // 它抢走——实测方向键切换后焦点恒落在 "Terminal input"，
+                      // 再按方向键就打到终端里去而不是继续切标签。
+                      const el = tabRefs.current.get(next.id)
+                      requestAnimationFrame(() => el?.focus())
+                    }
+                  }}
+                  aria-pressed={tab.id === activeTabId}
+                  aria-label={`终端标签 ${shellLabel(tab.panes[0]?.shell ?? 'terminal')}`}
+                  aria-controls={`term-panel-${tab.id}`}
+                  type="button"
+                >
+                  <span>{shellLabel(tab.panes[0]?.shell ?? 'terminal')}</span>
+                  {tab.panes.length > 1 && (
+                    <span className={tabBadgeStyle}>{tab.panes.length}</span>
+                  )}
+                </button>
+                {/* 关闭钮与切换按钮平级（不再是 role="tab" 的后代）：消除
+                    nested-interactive；标签本身仍只占一个 Tab 停靠点。 */}
                 <button
                   className={tabCloseStyle}
                   onClick={(e) => handleCloseTab(tab.id, e)}
-                  aria-label="关闭终端标签"
+                  aria-label={`关闭终端标签 ${shellLabel(tab.panes[0]?.shell ?? 'terminal')}`}
                   type="button"
                 >
                   ×
@@ -564,11 +635,14 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
           </button>
         </div>
         {/* 终端渲染区 — 所有标签同时挂载，非活动标签用 display:none 隐藏。
-            这样切换标签时 xterm 实例不会被销毁/重建，避免输入丢失和输出闪烁。 */}
+            这样切换标签时 xterm 实例不会被销毁/重建，避免输入丢失和输出闪烁。
+            每块带 id 与标签按钮的 aria-controls 对应；隐藏态 display:none 自动
+            退出无障碍树，读屏不会遍历到不可见的终端。 */}
         <div className={termAreaStyle}>
           {tabs.map((tab) => (
             <div
               key={tab.id}
+              id={`term-panel-${tab.id}`}
               style={{
                 display: tab.id === activeTabId ? 'flex' : 'none',
                 width: '100%',

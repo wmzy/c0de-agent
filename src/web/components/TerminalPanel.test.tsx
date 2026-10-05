@@ -111,6 +111,87 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
   }
 }
 
+/** 单 pane 双标签的终端状态桩（标签栏键盘导航用）。 */
+function makeMultiTabTerminal(): UseTerminalReturn {
+  const panes: TerminalSession[] = [
+    {
+      id: 'p1',
+      pid: 1,
+      title: 'a',
+      cols: 80,
+      rows: 24,
+      cwd: '/tmp',
+      shell: '/bin/zsh',
+      ws: null,
+      connecting: false,
+      tabId: 't1',
+    },
+    {
+      id: 'p2',
+      pid: 2,
+      title: 'b',
+      cols: 80,
+      rows: 24,
+      cwd: '/tmp',
+      shell: '/bin/bash',
+      ws: null,
+      connecting: false,
+      tabId: 't2',
+    },
+  ]
+  return {
+    ...makeTerminal(),
+    sessions: panes,
+    tabs: [
+      {
+        id: 't1',
+        panes: [panes[0] as TerminalSession],
+        split: { direction: 'horizontal', sizes: [1] },
+      },
+      {
+        id: 't2',
+        panes: [panes[1] as TerminalSession],
+        split: { direction: 'horizontal', sizes: [1] },
+      },
+    ],
+    activeTabId: 't1',
+    activePaneId: 'p1',
+  }
+}
+
+describe('TerminalPanel 标签栏的无障碍结构', () => {
+  // 回归：关闭按钮此前是 role="tab" 的**后代**（axe nested-interactive serious）——
+  // tab 角色要求「选中即切换标签」，却嵌了一个可聚焦按钮；读屏播报的控件名不副实，
+  // 且「一个标签 = 一个 Tab 停靠点」的 tablist 约定失效。
+  it('关闭按钮不是标签按钮的后代（无嵌套交互控件）', () => {
+    render(<TerminalPanel terminal={makeMultiTabTerminal()} />)
+    const tabBtn = screen.getByRole('button', { name: '终端标签 zsh' })
+    const closeBtn = screen.getByRole('button', { name: '关闭终端标签 zsh' })
+
+    expect(tabBtn.contains(closeBtn)).toBe(false)
+  })
+
+  // 回归：改用 toolbar 后必须仍能表达「当前显示哪个标签」，且方向键可切换。
+  // 若退回 role="tab" 而缺少 aria-pressed/aria-selected 语义，选中态会静默丢失。
+  it('标签用 aria-pressed 表达选中态，方向键在 toolbar 内切换活动标签', async () => {
+    const setActiveTabId = vi.fn()
+    render(<TerminalPanel terminal={{ ...makeMultiTabTerminal(), setActiveTabId }} />)
+    const [first, second] = screen.getAllByRole('button', { name: /^终端标签 / })
+
+    expect(first?.getAttribute('aria-pressed')).toBe('true')
+    expect(second?.getAttribute('aria-pressed')).toBe('false')
+
+    await fireEvent.keyDown(first as HTMLElement, { key: 'ArrowRight' })
+    expect(setActiveTabId).toHaveBeenCalledWith('t2')
+
+    await fireEvent.keyDown(first as HTMLElement, { key: 'End' })
+    expect(setActiveTabId).toHaveBeenCalledWith('t2')
+
+    await fireEvent.keyDown(first as HTMLElement, { key: 'Home' })
+    expect(setActiveTabId).toHaveBeenCalledWith('t1')
+  })
+})
+
 describe('TerminalPanel 分隔条拖拽的全局光标', () => {
   it('拖拽结束后复原 body 光标与文本选择（不残留 col-resize/user-select:none）', async () => {
     render(<TerminalPanel terminal={makeTerminal()} />)
