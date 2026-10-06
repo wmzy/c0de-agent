@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DB } from '../db/client.js'
-import { createDB } from '../db/client.js'
-import { migrateDB } from '../db/migrate.js'
+import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import {
   appendMessage,
   createSession,
@@ -12,11 +11,23 @@ import {
 import type { MessageContent } from '../shared/types/message.js'
 import { restoreSessions, type SessionSnapshot, serializeSessions } from './snapshot.js'
 
-async function setupDB(): Promise<DB> {
-  const handle = await createDB({ driver: 'pglite' })
-  await migrateDB(handle)
-  return handle
-}
+// 恢复目标端必须是独立空库：restoreSessions 全程 onConflictDoNothing，源/目标
+// 同库时恢复退化为 no-op，用例会空转通过。源端用共享实例；目标端维护本文件
+// 私有的第二个实例——每文件只启动一次，逐用例 TRUNCATE 重置。
+let sourceShared: DB | undefined
+let targetShared: DB | undefined
+
+beforeAll(async () => {
+  sourceShared = await createTestDB()
+})
+afterEach(async () => {
+  if (sourceShared) await resetTestDB(sourceShared)
+  if (targetShared) await resetTestDB(targetShared)
+})
+afterAll(async () => {
+  await sourceShared?.close()
+  await targetShared?.close()
+})
 
 const textContent = (text: string): MessageContent[] => [{ _tag: 'text', text }]
 
@@ -25,14 +36,11 @@ describe('serialize / restore round-trip', () => {
   let target: DB
 
   beforeEach(async () => {
-    source = await setupDB()
-    target = await setupDB()
-  })
-
-  afterEach(async () => {
-    // PGLite WASM 实例必须显式 release，否则多个测试会 OOM（见 db/client 注释）
-    await source?.close()
-    await target?.close()
+    source = sourceShared ?? (await createTestDB())
+    sourceShared ??= source
+    // 目标端懒启动：首个用例时才付第二个 PGlite 的启动成本
+    target = targetShared ?? (await createTestDB())
+    targetShared ??= target
   })
 
   it('round-trips sessions and messages across DBs', async () => {
