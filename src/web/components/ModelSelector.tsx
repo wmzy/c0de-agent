@@ -189,10 +189,28 @@ export function ModelSelector({
     setHighlight(-1)
   }, [])
 
-  const openHints = () => {
+  const openHints = (opts?: { focusInput?: boolean }) => {
     setHintsOpen(true)
     setQuery(null)
     setHighlight(-1)
+    // ▾ 按钮打开的列表归输入框管：焦点留在按钮上时 ↑↓/Enter/Esc 全部落空
+    // （这些键只挂在 combobox 的 onKeyDown 上），列表等于对键盘不可用。
+    if (opts?.focusInput) {
+      skipOpenRef.current = true
+      inputRef.current?.focus()
+      queueMicrotask(() => {
+        skipOpenRef.current = false
+      })
+    }
+  }
+
+  /** 收起列表：焦点仍在按钮上时留在原处，别把用户甩到别的控件上。 */
+  const toggleHintsFromButton = () => {
+    if (hintsOpen) {
+      closeHints()
+      return
+    }
+    openHints({ focusInput: true })
   }
 
   const pick = (m: string) => {
@@ -322,10 +340,11 @@ export function ModelSelector({
           <button
             type="button"
             className={`${inputStyle} ${dropdownBtn}`}
-            onClick={() => (hintsOpen ? closeHints() : openHints())}
-            aria-label="展开模型列表"
+            onClick={toggleHintsFromButton}
+            aria-label={hintsOpen ? '收起模型列表' : '展开模型列表'}
             aria-haspopup="listbox"
             aria-expanded={hintsOpen}
+            aria-controls={listId}
             data-testid="model-dropdown"
           >
             ▾

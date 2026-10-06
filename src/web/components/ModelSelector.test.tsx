@@ -244,3 +244,59 @@ describe('ModelSelector — 可搜索下拉', () => {
     expect(input.value).toBe('Sense')
   })
 })
+
+// 回归：▾ 按钮只调 openHints，焦点留在按钮上，而 ↑↓/Enter/Escape 只挂在
+// combobox 的 onKeyDown 上——键盘点开列表后这几个键全部落空，列表对键盘不可用。
+describe('ModelSelector — ▾ 按钮打开的列表', () => {
+  it('点开后焦点进入输入框，↑↓+Enter 可选中', () => {
+    const { onChange } = renderSelector({ provider: 'sensenova', model: '' })
+    const input = modelInput()
+    const dropdown = document.querySelector('[data-testid="model-dropdown"]') as HTMLElement
+    dropdown.focus()
+
+    fireEvent.click(dropdown)
+
+    expect(document.querySelector('[data-testid="model-hints"]')).not.toBeNull()
+    expect(document.activeElement).toBe(input)
+    expect(input.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onChange).toHaveBeenLastCalledWith({ provider: 'sensenova', model: 'SenseChat-Vision' })
+    expect(input.value).toBe('SenseChat-Vision')
+    expect(document.querySelector('[data-testid="model-hints"]')).toBeNull()
+  })
+
+  it('点开后 Escape 收起列表且不误选模型', () => {
+    const { onChange } = renderSelector({ provider: 'sensenova', model: '' })
+    const input = modelInput()
+    const dropdown = document.querySelector('[data-testid="model-dropdown"]') as HTMLElement
+
+    fireEvent.click(dropdown)
+    expect(document.querySelector('[data-testid="model-hints"]')).not.toBeNull()
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(document.querySelector('[data-testid="model-hints"]')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+    // 焦点回到输入框，可继续键入过滤
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('点开后不因焦点转入输入框而立即被 onFocus 重新弹出后又被跳过', () => {
+    renderSelector({ provider: 'sensenova', model: '' })
+    const dropdown = document.querySelector('[data-testid="model-dropdown"]') as HTMLElement
+
+    fireEvent.click(dropdown)
+    // 焦点转入输入框触发的 onFocus 必须被跳过，否则列表会被 skipOpenRef
+    // 的复位时序打乱：要么刚打开就收起，要么下一次聚焦打不开。
+    expect(document.querySelector('[data-testid="model-hints"]')).not.toBeNull()
+
+    // 标志已在微任务里复位：离开再聚焦输入框应照常自动展开
+    fireEvent.blur(document.activeElement as HTMLElement)
+    fireEvent.focus(modelInput())
+    expect(document.querySelector('[data-testid="model-hints"]')).not.toBeNull()
+  })
+})
