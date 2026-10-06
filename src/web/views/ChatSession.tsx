@@ -30,7 +30,7 @@ import { agentAPI } from '@/services/agent.js'
 import { providerAPI } from '@/services/provider.js'
 import { sessionAPI } from '@/services/session.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
-import { ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
+import { ChatHistoryError, ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
 
 const interruptBanner = css`
   display: flex;
@@ -140,7 +140,13 @@ export function ChatSession({
   const agent = useAgent(sessionId)
   const qc = useQueryClient()
   const router = useRouter()
-  const { data: history, isLoading } = useMessages(sessionId)
+  const {
+    data: history,
+    isLoading,
+    isError: historyFailed,
+    error: historyError,
+    refetch: refetchHistory,
+  } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
   // P2-3：会话归属校验——URL 与会话所属项目不一致时跳转到正确项目；
@@ -362,8 +368,12 @@ export function ChatSession({
   })
   const supportsVision = capabilitiesData?.supportsVision ?? true
 
-  if (isLoading && messages.length === 0) return <ChatSkeleton />
+  // 失败原因取服务端 message（APIError）或 Error.message，与侧栏会话树失败提示同口径。
+  const historyErrorMessage =
+    (historyError as { message?: string } | null)?.message ??
+    (historyError instanceof Error ? historyError.message : null)
 
+  if (isLoading && messages.length === 0) return <ChatSkeleton />
   return (
     <ShakeProvider value={shake.shakeContextValue}>
       <Chat
@@ -394,7 +404,18 @@ export function ChatSession({
         onSteer={chat.steer}
         paused={agent.paused || chat.runPaused}
         supportsVision={supportsVision}
-        emptyState={<ChatWelcome />}
+        emptyState={
+          // 历史拉取失败且无可展示内容：绝不能落进 ChatWelcome（那会谎称「这是新会话」，
+          // 用户会以为上下文丢了）。给出失败原因 + 重试，输入框保持可用。
+          historyFailed && messages.length === 0 ? (
+            <ChatHistoryError
+              message={historyErrorMessage ?? ''}
+              onRetry={() => void refetchHistory()}
+            />
+          ) : (
+            <ChatWelcome />
+          )
+        }
         terminalToggle={terminalToggle}
         modelBar={
           <>

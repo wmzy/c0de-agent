@@ -66,6 +66,58 @@ export function SetupBanner({ projectId }: { projectId?: string }) {
   )
 }
 
+const errorWrap = css`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 16px 32px;
+  margin-block: auto;
+  text-align: center;
+`
+
+const errorText = css`
+  margin: 0;
+  max-width: 560px;
+  font-size: 13px;
+  color: var(--haze-color-danger);
+`
+
+const errorRetry = css`
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
+/** 历史消息加载失败占位：必须与「空会话欢迎页」严格区分——失败若表现成欢迎页，
+ *  用户会以为对话被清空，甚至对着不存在的上下文继续发消息。输入框保持可用，
+ *  只在消息流位置给出失败原因与重试入口。 */
+export function ChatHistoryError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className={errorWrap} data-testid="chat-history-error" role="alert">
+      <p className={errorText}>历史消息加载失败{message ? `：${message}` : '，请稍后重试。'}</p>
+      <button
+        type="button"
+        className={errorRetry}
+        onClick={onRetry}
+        data-testid="chat-history-retry"
+      >
+        重试
+      </button>
+    </div>
+  )
+}
+
 const skeletonStream = css`
   flex: 1;
   display: flex;
