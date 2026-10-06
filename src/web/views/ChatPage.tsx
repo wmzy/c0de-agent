@@ -1,10 +1,11 @@
 import { useMatched, useRouter } from '@native-router/react'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { type SidebarTab, SidebarTabs } from '@/components/SidebarTabs.js'
 import { TerminalPanel } from '@/components/TerminalPanel.js'
 import { TopBar } from '@/components/TopBar.js'
 import {
+  type FileChangeGuard,
   type FileSelection,
   FileSelectionContext,
   type LineRange,
@@ -58,6 +59,13 @@ export function ChatPage() {
   }, [terminal])
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [revealRange, setRevealRange] = useState<LineRange | null>(null)
+  // 预览面板注册的「变更前否决」钩子（见 FileSelectionContext.registerGuard）。
+  // 用 ref 而非 state：openFile/closeFile 是同步决策，不能在等一次重渲染后才拿到它。
+  const guardRef = useRef<FileChangeGuard | null>(null)
+  // 稳定身份：FilePreview 按 [registerGuard] 注册/注销，内联函数会让它每次渲染都重注册
+  const registerGuard = useCallback((fn: FileChangeGuard | null) => {
+    guardRef.current = fn
+  }, [])
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
     () => (storageGet('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
   )
@@ -69,14 +77,19 @@ export function ChatPage() {
   const fileCtx: FileSelection = {
     selectedFile,
     openFile: (path: string, range?: LineRange) => {
+      // 先问预览面板的否决钩子：它有未保存的编辑时会拦下本次切换并弹确认，
+      // 否则旧编辑器随 query 换 key 卸载，缓冲区里的修改就被静默丢弃。
+      if (guardRef.current?.({ path, range }) === false) return
       setSelectedFile(path)
       setRevealRange(range ?? null)
     },
     closeFile: () => {
+      if (guardRef.current?.(null) === false) return
       setSelectedFile(null)
       setRevealRange(null)
     },
     revealRange,
+    registerGuard,
   }
 
   if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />

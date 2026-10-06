@@ -1,9 +1,9 @@
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { type FileChangeGuard, FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 import { ReferenceContext } from '@/contexts/ReferenceContext.js'
 import { ThemeProvider } from '@/contexts/ThemeContext.js'
 import { computeLineRange, FilePreview } from '@/views/FilePreview.js'
@@ -260,6 +260,98 @@ describe('FilePreview', () => {
     fireEvent.click(screen.getByLabelText('关闭预览'))
     fireEvent.click(screen.getByTestId('discard-confirm'))
     expect(closeFile).toHaveBeenCalledOnce()
+  })
+
+  // 切换预览目标的守卫：父组件（ChatPage）改选中态前先调用 FilePreview 注册的钩子，
+  // 返回 false 即拦下本次切换，由 FilePreview 弹确认；用户确认后再重放。
+  // 缺了这条路径，点文件树里的另一个文件就会把未保存的编辑连同撤销历史一起丢掉。
+  describe('未保存编辑时切换预览目标', () => {
+    function renderWithGuard(path: string) {
+      const closeFile = vi.fn()
+      const openFile = vi.fn()
+      const hooks: { guard: FileChangeGuard | null } = { guard: null }
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      render(
+        <QueryClientProvider client={qc}>
+          <FileSelectionContext.Provider
+            value={{
+              selectedFile: path,
+              openFile,
+              closeFile,
+              registerGuard: (fn) => {
+                hooks.guard = fn
+              },
+            }}
+          >
+            <FilePreview projectId="p1" path={path} />
+          </FileSelectionContext.Provider>
+        </QueryClientProvider>,
+      )
+      return { hooks, closeFile, openFile }
+    }
+
+    it('脏编辑时切换被拦下：弹确认、不切换；取消后编辑仍在', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks, openFile } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+      // 非脏态：放行，且不弹确认
+      expect(hooks.guard?.({ path: 'other.txt' })).toBe(true)
+      expect(screen.queryByTestId('discard-dialog')).toBeNull()
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      await act(async () => {
+        expect(hooks.guard?.({ path: 'other.txt' })).toBe(false)
+      })
+      expect(screen.getByTestId('discard-dialog')).toBeTruthy()
+      expect(screen.getByText('放弃未保存的修改？')).toBeTruthy()
+      expect(screen.getByText(/切换到「other.txt」/)).toBeTruthy()
+      expect(openFile).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByTestId('discard-cancel'))
+      expect(screen.queryByTestId('discard-dialog')).toBeNull()
+      expect(openFile).not.toHaveBeenCalled()
+      expect(screen.getByTestId('code-editor')).toBeTruthy()
+      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+    })
+
+    it('确认放弃后重放被拦下的切换', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks, openFile } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      await act(async () => {
+        hooks.guard?.({ path: 'other.txt' })
+      })
+      fireEvent.click(screen.getByTestId('discard-confirm'))
+      expect(openFile).toHaveBeenCalledWith('other.txt', undefined)
+    })
+
+    it('同一文件只换高亮范围（点 snippet pill）不弹确认', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      expect(hooks.guard?.({ path: 'notes.txt', range: { start: 3, end: 5 } })).toBe(true)
+      expect(screen.queryByTestId('discard-dialog')).toBeNull()
+    })
+
+    it('脏编辑时删除当前文件（关闭预览）也先确认', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks, closeFile } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      await act(async () => {
+        expect(hooks.guard?.(null)).toBe(false)
+      })
+      expect(screen.getByTestId('discard-dialog')).toBeTruthy()
+      expect(screen.getByText(/关闭预览将丢弃/)).toBeTruthy()
+
+      fireEvent.click(screen.getByTestId('discard-cancel'))
+      expect(closeFile).not.toHaveBeenCalled()
+    })
   })
 
   it('选中文本后点击引用按钮调用 insertSnippetReference', async () => {

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeEditor } from '@/components/CodeEditor.js'
 import { Dialog } from '@/components/Dialog.js'
 import { Markdown } from '@/components/Markdown.js'
-import { useFileSelection } from '@/contexts/FileSelectionContext.js'
+import { type LineRange, useFileSelection } from '@/contexts/FileSelectionContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { getAuthToken } from '@/services/api.js'
 import { encodeFilePath, fileAPI } from '@/services/file.js'
@@ -195,11 +195,19 @@ function cmLineRange(container: HTMLElement, range: Range): { start: number; end
 }
 
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
-  const { closeFile, revealRange } = useFileSelection()
+  const { closeFile, openFile, revealRange, registerGuard } = useFileSelection()
   const fileRef = useFileReference()
-  // 编辑器脏状态（CodeEditor 上报）：关闭预览前需确认丢弃
+  // 编辑器脏状态（CodeEditor 上报）：关闭预览 / 切换预览目标前都需确认丢弃。
+  // 切换是父组件发起（点文件树、点 tool 里的路径、点 snippet pill），所以还必须
+  // 把脏状态注册成否决钩子交给父组件——否则父组件换掉 path 后旧编辑器直接卸载，
+  // 未保存的修改连同撤销历史一起静默丢失。
   const [dirty, setDirty] = useState(false)
-  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const dirtyRef = useRef(false)
+  dirtyRef.current = dirty
+  // 待确认的丢弃目标：close（✕ 关闭）或 switch（父组件要切到另一个文件）
+  const [pendingDiscard, setPendingDiscard] = useState<
+    { kind: 'close' } | { kind: 'switch'; path: string; range?: LineRange } | null
+  >(null)
   // ref 持有最新 API，避免条件绑定 onMouseUp 导致首次操作失败
   const apiRef = useRef(fileRef)
   apiRef.current = fileRef
@@ -384,14 +392,42 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
 
   // 脏编辑态点 ✕ 先弹确认，确认后才丢弃修改并关闭；非脏态直接关闭
   const handleClose = useCallback(() => {
-    if (dirty) setConfirmDiscard(true)
+    if (dirty) setPendingDiscard({ kind: 'close' })
     else closeFile()
   }, [dirty, closeFile])
 
+  // 用 ref 读最新 path/openFile/closeFile，使否决钩子只需注册一次。
+  const pathRef = useRef(path)
+  pathRef.current = path
+  const openFileRef = useRef(openFile)
+  openFileRef.current = openFile
+
+  // 注册否决钩子：父组件要换预览目标（点文件树/点 tool 里的路径/点 snippet pill 都可能，
+  // 删除当前文件也会走 closeFile）时先问这里。脏则拦下并弹确认。
+  useEffect(() => {
+    registerGuard?.((next) => {
+      if (!dirtyRef.current) return true
+      // 同一文件只换高亮范围（点 snippet pill 定位行）：没有内容会被丢弃，直接放行
+      if (next && next.path === pathRef.current) return true
+      setPendingDiscard(
+        next ? { kind: 'switch', path: next.path, range: next.range } : { kind: 'close' },
+      )
+      return false
+    })
+    return () => registerGuard?.(null)
+  }, [registerGuard])
+
+  // 用户确认丢弃：先同步清掉脏标记，再重放被拦下的那次变更——否则重放时钩子又读到
+  // dirty=true，那次变更会被自己再拦一遍，确认键看起来毫无作用。
   const handleDiscard = useCallback(() => {
-    setConfirmDiscard(false)
-    closeFile()
-  }, [closeFile])
+    const pending = pendingDiscard
+    setPendingDiscard(null)
+    if (!pending) return
+    dirtyRef.current = false
+    setDirty(false)
+    if (pending.kind === 'close') closeFile()
+    else openFile(pending.path, pending.range)
+  }, [pendingDiscard, closeFile, openFile])
 
   return (
     <div className={wrap}>
@@ -427,8 +463,8 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         </button>
       </div>
       <Dialog
-        open={confirmDiscard}
-        onClose={() => setConfirmDiscard(false)}
+        open={pendingDiscard !== null}
+        onClose={() => setPendingDiscard(null)}
         title="放弃未保存的修改？"
         width="min(380px, 92vw)"
         testId="discard-dialog"
@@ -437,7 +473,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
             <Button
               data-testid="discard-cancel"
               variant="outline"
-              onClick={() => setConfirmDiscard(false)}
+              onClick={() => setPendingDiscard(null)}
             >
               取消
             </Button>
@@ -452,7 +488,11 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
           </div>
         }
       >
-        <div>「{path}」有未保存的修改，关闭预览将丢弃这些修改。</div>
+        <div>
+          {pendingDiscard?.kind === 'switch'
+            ? `「${path}」有未保存的修改，切换到「${pendingDiscard.path}」将丢弃这些修改。`
+            : `「${path}」有未保存的修改，关闭预览将丢弃这些修改。`}
+        </div>
       </Dialog>
     </div>
   )
