@@ -362,7 +362,24 @@ function Composer(props: ComposerProps) {
     // 不判定就会把未确认的候选当最终输入：回车直接插入斜杠命令/子命令/工作流名
     // 或选中 @ 候选，用户正在组合的内容被替换掉。
     if (isImeComposing(e)) return
-    if (composer.popover === 'workflow') {
+    // 浮层候选计数：与各 Popover 的实际渲染条件一致（空列表时它们 return null）。
+    // 浮层状态是「触发正则匹配」置上的，不保证有候选：@ 一个不存在的名字（@alice 帮我看下）、
+    // 未匹配的 /cmd 都会让 popover 挂着但一个菜单项都画不出来。此时继续拦截按键，
+    // Enter 就被一个看不见的菜单吞掉——消息永远发不出、零反馈（只有 Esc/鼠标能脱身）。
+    const popoverCandidates =
+      composer.popover === 'workflow'
+        ? filteredWorkflows.length
+        : composer.popover === 'slash'
+          ? filteredCommands.length
+          : composer.popover === 'subcommand'
+            ? filteredSubcommands.length
+            : composer.popover === 'at'
+              ? atSubagents.length + atFiles.length
+              : 0
+    // 没有候选 → 不拦截，按「无浮层」把按键交给 composer.handleKeyDown（Enter 即发送）。
+    const popoverDead = composer.popover !== null && popoverCandidates === 0
+    if (popoverDead) composer.setPopover(null)
+    if (!popoverDead && composer.popover === 'workflow') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setWorkflowActive((i) => Math.min(i + 1, filteredWorkflows.length - 1))
@@ -380,7 +397,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (composer.popover === 'slash') {
+    if (!popoverDead && composer.popover === 'slash') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSlashActive((i) => Math.min(i + 1, filteredCommands.length - 1))
@@ -398,7 +415,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (composer.popover === 'subcommand') {
+    if (!popoverDead && composer.popover === 'subcommand') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSubcommandActive((i) => Math.min(i + 1, filteredSubcommands.length - 1))
@@ -416,7 +433,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (composer.popover === 'at') {
+    if (!popoverDead && composer.popover === 'at') {
       const total = atSubagents.length + atFiles.length
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -440,7 +457,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    composer.handleKeyDown(e)
+    composer.handleKeyDown(e, popoverDead)
   }
 
   const handleDrop = (e: DragEvent) => {

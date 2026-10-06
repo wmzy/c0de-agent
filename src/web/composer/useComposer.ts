@@ -458,11 +458,16 @@ function useComposer({
   }, [readPrompt, onSteer, setPromptExternal, resetHistory])
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: React.KeyboardEvent, popoverSuppressed = false) => {
       // IME 组合中不拦截
       if (composingRef.current) return
+      // popoverSuppressed：调用方（Composer）已判定当前浮层没有任何候选、且不会渲染出
+      // 任何 UI。此时必须按「无浮层」处理按键——否则 popover 状态里挂着一个画不出来的
+      // 菜单，Enter 被它静默吞掉：用户输入 `@不对的名字 正文` 或未匹配的 `/cmd` 后回车，
+      // 消息永远发不出去，也没有任何反馈（只有 Esc 或鼠标能脱身）。
+      const popoverActive = !!popover && !popoverSuppressed
       // Enter 发送/追加（非 shift，popover 未激活）：流式态追加指令，否则发送
-      if (e.key === 'Enter' && !e.shiftKey && !popover) {
+      if (e.key === 'Enter' && !e.shiftKey && !popoverActive) {
         e.preventDefault()
         if (isStreaming) steer()
         else send()
@@ -474,7 +479,7 @@ function useComposer({
         return
       }
       // 历史回溯（popover 未激活时）
-      if (!popover && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && editorRef.current) {
+      if (!popoverActive && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && editorRef.current) {
         const text = promptToText(promptRef.current)
         const cursor = currentCursor(editorRef.current)
         const inHistory = indexRef.current !== -1

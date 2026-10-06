@@ -224,6 +224,64 @@ describe('slash 命令 popover 候选选择', () => {
   })
 })
 
+describe('composer 浮层无候选时不吞按键', () => {
+  // 复现 bug：浮层状态由「触发正则命中」置上，不保证有候选——未匹配的 /cmd（或命令
+  // 列表尚未加载完）会让 popover 挂着，而 SlashPopover 在候选为空时 return null，
+  // 一个菜单项都画不出来。旧代码仍无条件拦下 Enter/Tab，于是消息永远发不出去、
+  // 零反馈（只有 Esc 或鼠标能脱身）。修复后：无候选即按「无浮层」处理，Enter 正常发送。
+  it('未匹配的斜杠命令（浮层无候选、未渲染菜单）时 Enter 仍然发送', () => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({
+      commands: [{ name: 'help', description: 'List available slash commands' }],
+    })
+    const h = renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/nosuchcmd'
+    fireEvent.input(editor)
+    expect(screen.queryByTestId('slash-menu')).toBeNull()
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(h.onSend).toHaveBeenCalledOnce()
+    expect(h.onSend.mock.calls[0][0].text).toContain('/nosuchcmd')
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] })
+  })
+
+  it('斜杠命令列表尚未加载（候选为空）时 Enter 仍然发送', () => {
+    // 挂起的请求：commands 保持空数组，浮层没有候选
+    vi.mocked(commandsAPI.list).mockReturnValue(new Promise(() => {}))
+    const h = renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/h'
+    fireEvent.input(editor)
+    expect(screen.queryByTestId('slash-menu')).toBeNull()
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(h.onSend).toHaveBeenCalledOnce()
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] })
+  })
+
+  it('浮层有候选时 Enter 仍插入候选而不是发送', async () => {
+    // 与「无候选」对照：/c 有匹配项 → 必须仍然选中候选、不发送（锁住既有行为）
+    vi.mocked(commandsAPI.list).mockResolvedValue({
+      commands: [
+        { name: 'clear', description: 'Clear session messages' },
+        { name: 'config', description: 'View or set configuration' },
+      ],
+    })
+    const h = renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/c'
+    fireEvent.input(editor)
+    await screen.findByTestId('slash-menu')
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(h.onSend).not.toHaveBeenCalled()
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] })
+  })
+})
+
 describe('slash 子命令补全 popover', () => {
   const TEST_COMMANDS_WITH_SUBS = [
     { name: 'help', description: 'List available slash commands' },
