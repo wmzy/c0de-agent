@@ -127,7 +127,9 @@ vi.mock('@/services/commands.js', () => ({
 
 vi.mock('@/services/config.js', () => ({
   configAPI: {
-    get: vi.fn().mockResolvedValue({ config: { providers: [{ name: 'mock' }] }, warnings: [], scopes: {} }),
+    get: vi
+      .fn()
+      .mockResolvedValue({ config: { providers: [{ name: 'mock' }] }, warnings: [], scopes: {} }),
   },
 }))
 
