@@ -14,6 +14,14 @@ import { SessionList } from '@/views/SessionList.js'
 
 const hoisted = vi.hoisted(() => ({
   tree: [] as unknown[],
+  /** 会话树查询的完整返回值：驱动读失败分支与「重试」入口。 */
+  treeQuery: {
+    data: [] as unknown[] | undefined,
+    isLoading: false,
+    isError: false,
+    error: null as unknown,
+    refetch: () => {},
+  },
   /** 覆盖 useDeletedSessions 的返回值，用于驱动回收站的加载失败分支。 */
   deleted: {
     // 读失败时 react-query 的 data 确实为 undefined，这里必须允许。
@@ -26,7 +34,10 @@ const hoisted = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hooks/useSession.js', () => ({
-  useSessionTree: () => ({ data: hoisted.tree, isLoading: false }),
+  useSessionTree: () => {
+    if (hoisted.treeQuery.isError) return hoisted.treeQuery
+    return { ...hoisted.treeQuery, data: hoisted.tree }
+  },
   useDeleteSession: () => ({ mutate: vi.fn() }),
   useProjects: () => ({ data: [{ id: 'p1', name: 'proj', worktree: '/tmp/proj' }] }),
   useDeletedSessions: () => hoisted.deleted,
@@ -81,6 +92,13 @@ const OUTSIDE = makeSession('outside-id', 'outside-tree')
 
 beforeEach(() => {
   hoisted.tree = [node(ROOT, [node(CHILD, [node(GRANDCHILD)])])]
+  hoisted.treeQuery = {
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: () => {},
+  }
   vi.mocked(sessionAPI.search).mockResolvedValue({
     results: [
       { session: GRANDCHILD, matchedBy: 'content' },
@@ -236,6 +254,52 @@ describe('RecycleBin 读失败态', () => {
     renderTrash()
     fireEvent.click(screen.getByTestId('trash-retry'))
     expect(refetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('SessionList 读失败态', () => {
+  it('读失败不得伪装成「该项目下暂无会话」，且展示后端 message 与重试入口', () => {
+    hoisted.treeQuery = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { status: 500, code: 'DB_LOCKED', message: '数据库被占用，请稍后重试' },
+      refetch: () => {},
+    }
+    renderList()
+    const bar = screen.getByTestId('sessions-load-error')
+    expect(bar.textContent).toContain('数据库被占用，请稍后重试')
+    expect(bar.textContent).not.toContain('[object Object]')
+    // 关键：拉不到 ≠ 空的。空态必须缺席，否则用户以为会话已被清空。
+    expect(screen.queryByText('该项目下暂无会话')).toBeNull()
+    expect(screen.getByTestId('sessions-retry')).toBeInTheDocument()
+  })
+
+  it('重试按钮回调 refetch', () => {
+    const refetch = vi.fn()
+    hoisted.treeQuery = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { status: 500, message: 'boom' },
+      refetch,
+    }
+    renderList()
+    fireEvent.click(screen.getByTestId('sessions-retry'))
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('正常状态下仍展示会话树，不显示错误态', () => {
+    hoisted.treeQuery = {
+      data: undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    renderList()
+    expect(screen.queryByTestId('sessions-load-error')).toBeNull()
+    expect(screen.getByText(ROOT.title)).toBeInTheDocument()
   })
 })
 

@@ -242,7 +242,7 @@ describe('composer 浮层无候选时不吞按键', () => {
 
     fireEvent.keyDown(editor, { key: 'Enter' })
     expect(h.onSend).toHaveBeenCalledOnce()
-    expect(h.onSend.mock.calls[0][0].text).toContain('/nosuchcmd')
+    expect(h.onSend.mock.calls[0]?.[0]?.text).toContain('/nosuchcmd')
     vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] })
   })
 

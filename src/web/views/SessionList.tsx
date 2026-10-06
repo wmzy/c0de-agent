@@ -168,7 +168,20 @@ export function SessionList({
   /** 删除会话后回调（参数为被删 id），用于父级在删除当前会话时跳回草稿页。 */
   onDeleted?: (id: string) => void
 }) {
-  const { data: tree, isLoading } = useSessionTree()
+  const {
+    data: tree,
+    isLoading,
+    isError,
+    error: treeError,
+    refetch: refetchTree,
+  } = useSessionTree()
+  // APIError 是结构体 { status, message, code? }，不是 Error 子类：instanceof 恒为
+  // false → 落进 String() → 渲染成「[object Object]」，用户拿到零信息量的报错。
+  // 先结构化取 message（与 RecycleBin/FilePreview/Settings 同一读法），再对真正的
+  // Error 实例（网络异常/超时）兜底。
+  const treeErrorMessage =
+    (treeError as { message?: string } | null)?.message ??
+    (treeError instanceof Error ? treeError.message : null)
   const del = useDeleteSession()
   const qc = useQueryClient()
 
@@ -427,7 +440,33 @@ export function SessionList({
         />
       )}
       {isLoading && !showRecycle ? <div className={empty}>加载中…</div> : null}
-      {!showRecycle ? (
+      {isError && !showRecycle ? (
+        <div>
+          <div className={errorBar} data-testid="sessions-load-error" role="alert">
+            会话列表加载失败
+            {treeErrorMessage ? `：${treeErrorMessage}` : '，请稍后重试。'}
+          </div>
+          <div className={empty}>
+            <button
+              type="button"
+              onClick={() => void refetchTree()}
+              data-testid="sessions-retry"
+              style={{
+                background: 'none',
+                border: '1px solid var(--haze-color-border)',
+                borderRadius: '6px',
+                padding: '4px 12px',
+                color: 'inherit',
+                cursor: 'pointer',
+                font: 'inherit',
+              }}
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {!showRecycle && !isError ? (
         <>
           {!isLoading && visibleTree.length === 0 && extraMatches.length === 0 ? (
             <div className={empty}>{search ? '无匹配会话' : '该项目下暂无会话'}</div>
