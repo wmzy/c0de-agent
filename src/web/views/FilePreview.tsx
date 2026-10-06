@@ -1,5 +1,6 @@
 import { EditorView } from '@codemirror/view'
 import { css } from '@linaria/core'
+import { useBlocker } from '@native-router/react'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -194,6 +195,20 @@ function cmLineRange(container: HTMLElement, range: Range): { start: number; end
   }
 }
 
+/**
+ * 只匹配保留本面板的两个聊天路由（`/projects/:projectId[/sessions/:sessionId]`，
+ * 见 src/web/routes.tsx）——它们同属 ChatPage，路由参数变化不会卸载预览面板。
+ * 其余目标（/settings、/projects/:id/kanban|settings、切换到另一个项目、回首页）
+ * 都会卸载 ChatPage，编辑器连同未保存内容一起销毁。
+ * 查询串/哈希不参与匹配（谓词收到的是含 search/hash 的完整路径）。
+ */
+const CHAT_ROUTE = /^\/projects\/([^/]+)(?:\/sessions\/[^/]+)?\/?$/
+
+/** 路径所属的「聊天路由」项目 id；不是聊天路由时返回 null。 */
+function chatRouteProject(path: string): string | null {
+  return CHAT_ROUTE.exec(path.split(/[?#]/)[0] ?? '')?.[1] ?? null
+}
+
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
   const { closeFile, openFile, revealRange, registerGuard } = useFileSelection()
   const fileRef = useFileReference()
@@ -208,6 +223,31 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   const [pendingDiscard, setPendingDiscard] = useState<
     { kind: 'close' } | { kind: 'switch'; path: string; range?: LineRange } | null
   >(null)
+
+  // 未保存导航防护（与 Settings 同口径）。上面的 registerGuard 只覆盖「面板内换文件/
+  // 关闭」这条由父组件发起的通道；应用内导航（顶栏 设置/项目看板、项目切换、浏览器
+  // 后退）会把 ChatPage 整个卸载，CodeMirror 文档连同撤销历史一起消失，此前无任何提示。
+  // useBlocker 谓词是 allow-list（true = 放行），所以脏时默认 veto。
+  // 例外：同一项目的两个聊天路由之间切换不卸载 ChatPage，编辑器与未保存内容原样保留
+  // （实测会话页之间互切后保存键仍是「保存*」），拦下来只会白弹一次确认。
+  const blocker = useBlocker((to, from) => {
+    if (!dirtyRef.current) return true
+    const target = chatRouteProject(to)
+    return target !== null && target === chatRouteProject(from)
+  })
+
+  // 刷新/关闭标签页：useBlocker 只覆盖 SPA 内导航与后退/前进，浏览器原生通道走
+  // beforeunload。
+  useEffect(() => {
+    if (!dirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [dirty])
+
   // ref 持有最新 API，避免条件绑定 onMouseUp 导致首次操作失败
   const apiRef = useRef(fileRef)
   apiRef.current = fileRef
@@ -493,6 +533,33 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
             ? `「${path}」有未保存的修改，切换到「${pendingDiscard.path}」将丢弃这些修改。`
             : `「${path}」有未保存的修改，关闭预览将丢弃这些修改。`}
         </div>
+      </Dialog>
+      {/* 被 veto 的应用内导航：弹窗遮罩阻断交互，「留下」回到编辑，「离开」重放导航。
+       *  此前这条路径没有任何提示——点顶栏 设置/项目看板、切项目或按浏览器后退，
+       *  整个聊天页被卸载，未保存的文件修改静默消失。 */}
+      <Dialog
+        open={blocker.state != null}
+        onClose={() => blocker.reset()}
+        title="放弃未保存的修改？"
+        width="min(380px, 92vw)"
+        testId="preview-nav-discard-dialog"
+        footer={
+          <div className={discardActions}>
+            <Button data-testid="preview-nav-stay" variant="solid" onClick={() => blocker.reset()}>
+              留下
+            </Button>
+            <Button
+              data-testid="preview-nav-leave"
+              onClick={() => blocker.proceed()}
+              className={btnDanger}
+              variant="outline"
+            >
+              离开
+            </Button>
+          </div>
+        }
+      >
+        <div>{`「${path}」有未保存的修改，离开当前页面将丢弃这些修改。`}</div>
       </Dialog>
     </div>
   )
