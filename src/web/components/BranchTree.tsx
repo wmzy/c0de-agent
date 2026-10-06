@@ -3,6 +3,7 @@ import { Tooltip } from 'haze-ui'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { TOUCH } from '@/styles/breakpoints.js'
 import type { SessionTreeNode, SessionUsage } from '@/types/index.js'
 import { formatCost } from '@/utils/format.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -21,6 +22,14 @@ const rowWrap = css`
   &:hover,
   &:focus-within {
     background: var(--haze-color-bg-subtle);
+    & [data-rename-btn],
+    & [data-delete-btn] {
+      opacity: 1;
+    }
+  }
+  /* 触屏没有 hover：始终可见（此前删除按钮也只在 hover 显示，触屏上永远不可见） */
+  ${TOUCH} {
+    & [data-rename-btn],
     & [data-delete-btn] {
       opacity: 1;
     }
