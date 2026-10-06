@@ -296,6 +296,11 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', projectId] }),
   })
 
+  /** 快速新建：调用方的 Promise 失败即代表失败（保留草稿 + 就地提示）。
+   *  错误只在输入框旁边显示一次——顶部 ioError 条留给导入/导出，避免同一失败出现两遍。 */
+  const handleQuickAdd = (title: string, columnId: string) =>
+    addMutation.mutateAsync({ title, columnId }).then(() => undefined)
+
   // ── DnD handlers ────────────────────────────────────────
 
   /**
@@ -504,7 +509,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
                 cards={colCards}
                 labels={board.labels}
                 onCardClick={(c) => setEditingCard(c)}
-                onQuickAdd={(title) => addMutation.mutate({ title, columnId: col.id })}
+                onQuickAdd={(title) => handleQuickAdd(title, col.id)}
               />
             )
           })}

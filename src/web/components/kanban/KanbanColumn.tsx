@@ -264,12 +264,21 @@ const quickAddBtn = css`
   font-size: 12px;
 `
 
+/** 新建失败的就地反馈：错误条离该列的输入框最近，用户不必在整页里找。 */
+const quickAddError = css`
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+  word-break: break-word;
+`
+
 type ColumnProps = {
   column: { id: string; name: string }
   cards: KanbanCardType[]
   labels: KanbanLabelDef[]
   onCardClick: (card: KanbanCardType) => void
-  onQuickAdd: (title: string) => void
+  /** 新建卡片；失败时 reject（调用方保留草稿并就地显示原因）。 */
+  onQuickAdd: (title: string) => Promise<void>
 }
 
 /** 一个看板列：droppable + sortable context + 快速新建。 */
@@ -281,12 +290,31 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
 
   const [isAdding, setIsAdding] = useState(false)
   const [draft, setDraft] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
 
-  const submit = () => {
+  // 只在成功后清空草稿并收起输入框：此前无条件清空 + 关闭，请求失败时输入框
+  // 消失、没有新卡片、整页无提示，用户刚打的标题永久丢失（只能重打一遍），
+  // 而失败在界面上与「成功但卡片没出现」完全等价。失败时保留草稿与输入框，
+  // 就地给出后端的失败原因，改一下再按回车即可重试。
+  const submit = async () => {
     const t = draft.trim()
-    if (t) onQuickAdd(t)
-    setDraft('')
-    setIsAdding(false)
+    if (!t || pending) return
+    setPending(true)
+    setAddError(null)
+    try {
+      await onQuickAdd(t)
+      setDraft('')
+      setIsAdding(false)
+    } catch (err) {
+      // 后端 apiError 是结构体（非 Error 子类），必须结构化取 message，
+      // 否则渲染成 [object Object]。
+      const message =
+        (err as { message?: string } | null)?.message ?? (err instanceof Error ? err.message : null)
+      setAddError(message ?? '新建卡片失败，请重试')
+    } finally {
+      setPending(false)
+    }
   }
 
   return (
@@ -310,26 +338,43 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
             可拖入性由列容器本身（columnDropActive 悬停高亮）与「+ 新建卡片」行动点表达。 */}
 
         {isAdding ? (
-          <div className={quickAddRow}>
-            <SyncedInput
-              className={quickAddInput}
-              value={draft}
-              onChange={(v) => setDraft(v)}
-              onKeyDown={(e) => {
-                // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
-                // 不判定会把未确认的候选当卡片标题提交（并清空输入框）。
-                if (isImeComposing(e)) return
-                if (e.key === 'Enter') submit()
-                if (e.key === 'Escape') {
-                  setIsAdding(false)
-                  setDraft('')
-                }
-              }}
-              placeholder="卡片标题…"
-            />
-            <Button className={quickAddBtn} onClick={submit} variant="solid">
-              添加
-            </Button>
+          <div>
+            <div className={quickAddRow}>
+              <SyncedInput
+                className={quickAddInput}
+                value={draft}
+                onChange={(v) => {
+                  setDraft(v)
+                  // 用户已经在改标题 → 上一轮的失败提示不再适用
+                  if (addError) setAddError(null)
+                }}
+                onKeyDown={(e) => {
+                  // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
+                  // 不判定会把未确认的候选当卡片标题提交（并清空输入框）。
+                  if (isImeComposing(e)) return
+                  if (e.key === 'Enter') void submit()
+                  if (e.key === 'Escape') {
+                    setIsAdding(false)
+                    setDraft('')
+                    setAddError(null)
+                  }
+                }}
+                placeholder="卡片标题…"
+              />
+              <Button
+                className={quickAddBtn}
+                onClick={() => void submit()}
+                variant="solid"
+                disabled={pending}
+              >
+                {pending ? '添加中…' : '添加'}
+              </Button>
+            </div>
+            {addError && (
+              <div className={quickAddError} role="alert" data-testid={`quick-add-error-${col.id}`}>
+                {addError}
+              </div>
+            )}
           </div>
         ) : (
           <button type="button" className={addCardBtn} onClick={() => setIsAdding(true)}>

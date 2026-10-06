@@ -285,3 +285,88 @@ describe('KanbanView 键盘拖拽', () => {
     expect(live.textContent).toContain('c1')
   })
 })
+
+/**
+ * 快速新建失败态回归。
+ *
+ * 缺陷：addMutation 没有 onError、onQuickAdd 是 fire-and-forget，而
+ * KanbanColumn.submit 调完回调就无条件清空草稿并收起输入框。于是 POST 失败时
+ * 用户看到的是「输入框消失、没有新卡片、整页无任何提示」，刚打的标题也一起没了
+ * ——失败在界面上与「成功但卡片没出现」完全等价，而新建卡片是看板的主要用法。
+ */
+describe('KanbanView 快速新建失败态', () => {
+  const board = {
+    id: 'b1',
+    projectId: 'p1',
+    columns: [{ id: 'col1', name: '待办' }],
+    labels: [],
+    cards: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+
+  async function openQuickAdd() {
+    vi.mocked(kanbanAPI.get).mockResolvedValue(board)
+    renderBoard()
+    await screen.findByTestId('kanban-view')
+    fireEvent.click(screen.getByText('+ 新建卡片'))
+    const input = screen.getByPlaceholderText('卡片标题…')
+    fireEvent.change(input, { target: { value: '修复登录' } })
+    return input as HTMLInputElement
+  }
+
+  it('失败时就地给出后端原因，并保留标题供重试', async () => {
+    vi.mocked(kanbanAPI.addCard).mockRejectedValue({
+      status: 500,
+      code: 'DB_LOCKED',
+      message: '看板数据库被占用',
+    })
+    const input = await openQuickAdd()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const box = await screen.findByTestId('quick-add-error-col1')
+    expect(box.textContent).toContain('看板数据库被占用')
+    // APIError 是结构体而非 Error 子类：取 .message 才算取对
+    expect(box.textContent).not.toContain('[object Object]')
+    expect(kanbanAPI.addCard).toHaveBeenCalledWith('p1', {
+      title: '修复登录',
+      columnId: 'col1',
+    })
+    // 输入框仍在、标题还在——不必重打一遍
+    expect(screen.getByPlaceholderText('卡片标题…')).toBeInTheDocument()
+    expect(input.value).toBe('修复登录')
+  })
+
+  it('重新编辑标题时清掉上一轮的失败提示', async () => {
+    vi.mocked(kanbanAPI.addCard).mockRejectedValue({ status: 500, message: '看板数据库被占用' })
+    const input = await openQuickAdd()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await screen.findByTestId('quick-add-error-col1')
+
+    fireEvent.change(input, { target: { value: '修复登录 v2' } })
+
+    expect(screen.queryByTestId('quick-add-error-col1')).toBeNull()
+  })
+
+  it('成功后仍然清空并收起输入框（不改变既有成功路径）', async () => {
+    vi.mocked(kanbanAPI.addCard).mockResolvedValue({
+      id: 'c1',
+      boardId: 'b1',
+      title: '修复登录',
+      description: null,
+      columnId: 'col1',
+      priority: 'medium',
+      position: 0,
+      labels: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    const input = await openQuickAdd()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(screen.queryByPlaceholderText('卡片标题…')).toBeNull())
+    expect(screen.getByText('+ 新建卡片')).toBeInTheDocument()
+  })
+})
