@@ -78,6 +78,12 @@ export type ChatOpts = {
 export type ChatActions = {
   /** 发送消息；返回 false = 本轮未正常完成（供调用方做首条失败清理）。 */
   sendMessage: (content: string, opts?: ChatOpts) => Promise<boolean>
+  /**
+   * 最近一次 sendMessage 的失败原因；成功或未失败时为 null。
+   * 单独暴露是因为 chat 快照每次渲染重建——调用方在自己的 .then 里读 `chat.error`
+   * 只能拿到发送前那一帧的 null，无法把原因带到别的页面。
+   */
+  lastFailureReason: string | null
   abort: () => void
   /** 追加指令：注入运行中的 run 并乐观追加 steering 消息到时间线（P0 持久化）。 */
   steer: (message: string) => void

@@ -17,6 +17,7 @@ import {
   userMessageText,
 } from '@/components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '@/composer/Composer.js'
+import type { ImagePart, Prompt } from '@/composer/types.js'
 import type { AgentListItem } from '@/services/agent.js'
 import {
   broadcastModeChange,
@@ -37,7 +38,10 @@ type ChatProps = {
   usage: { input: number; output: number } | null
   error?: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
-  onSend: (payload: SendPayload) => void
+  /** 返回 false/Promise<false> 表示消息没送出去，输入框据此还原草稿。 */
+  onSend: (payload: SendPayload) => boolean | undefined | Promise<boolean | undefined>
+  /** 导航后把失败的消息灌回输入框（草稿页用于承接首条失败的消息）。 */
+  restoreDraft?: { prompt: Prompt; images: ImagePart[] } | null
   onAbort: () => void
   /** 确认/拒绝权限请求；alwaysAllow=true 时同时把该工具加入会话白名单。 */
   onConfirm: (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => void
@@ -492,6 +496,7 @@ export function Chat({
   onDenyTimedOutPermission,
   workflowProgress,
   onSend,
+  restoreDraft,
   onAbort,
   onConfirm,
   onRetry,
@@ -627,7 +632,7 @@ export function Chat({
   const handleSend = (payload: SendPayload) => {
     // 用户主动发送：无条件回到最新内容（此刻他就是想看到自己刚发出的消息）。
     scrollToBottom('smooth')
-    onSend(payload)
+    return onSend(payload)
   }
   const removeAlwaysAllow = (tool: string) => {
     if (!sessionId) return
@@ -869,6 +874,7 @@ export function Chat({
         projectId={projectId}
         agents={agents}
         onSend={handleSend}
+        restoreDraft={restoreDraft}
         onAbort={onAbort}
         onSteer={onSteer}
         isStreaming={isStreaming}

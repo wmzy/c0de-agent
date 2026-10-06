@@ -1,13 +1,14 @@
 import { css } from '@linaria/core'
 import { TypedLink, useRouter } from '@native-router/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { Logo } from '@/components/Logo.js'
 import { ModelSelector } from '@/components/ModelSelector.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { type FailedSend, failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
 import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
 import { navigateTo } from '@/navigateTo.js'
@@ -321,6 +322,15 @@ function DraftSession({
   })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 首条消息失败后 ChatSession 会清掉空会话并导航回本页；失败原因与刚打的消息
+  // 都随组件卸载消失，必须一起带回来，否则用户看到的只是一个干净的欢迎页。
+  const [restored, setRestored] = useState<FailedSend | null>(null)
+  useEffect(() => {
+    const carried = failedSendReason.take(projectId)
+    if (!carried) return
+    setError(carried.reason)
+    setRestored(carried)
+  }, [projectId])
 
   const handleSend = async (payload: SendPayload) => {
     setError(null)
@@ -336,15 +346,23 @@ function DraftSession({
     }
     try {
       const session = await sessionAPI.create({ projectId })
-      pendingFirstMessage.set(session.id, { text: payload.text, opts })
+      pendingFirstMessage.set(session.id, { text: payload.text, opts, prompt: payload.prompt })
       // 让侧边栏立即显示新会话
       qc.invalidateQueries({ queryKey: ['sessions'] })
       navigateTo(router, '/projects/:projectId/sessions/:sessionId', {
         params: { projectId, sessionId: session.id },
       })
-    } catch {
+      // 创建成功：消息由目标页的 ChatSession 发出，输入保持已清空（正常体感）。
+      return true
+    } catch (err) {
       setCreating(false)
-      setError('创建会话失败，请重试')
+      setError(
+        err instanceof Error
+          ? `创建会话失败：${err.message}`
+          : '创建会话失败，请确认服务仍在运行后重试',
+      )
+      // 消息根本没送出去（连会话都没建成），输入框据此把草稿与图片还回来。
+      return false
     }
   }
 
@@ -358,6 +376,9 @@ function DraftSession({
       error={error}
       pendingPermission={null}
       onSend={handleSend}
+      restoreDraft={
+        restored ? { prompt: restored.payload.prompt, images: restored.payload.images } : null
+      }
       onAbort={() => {
         /* 草稿阶段无可中止的后端请求 */
       }}

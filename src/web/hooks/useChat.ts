@@ -22,6 +22,12 @@ import { projectAPI } from '@/services/project.js'
 import { sessionAPI } from '@/services/session.js'
 import type { APIError } from '@/types/index.js'
 
+/**
+ * 连接中断的失败原因文案。两条 interrupted 路径（SSE 无 done 结束、fetch 本身失败）
+ * 共用——它们对用户是同一件事：消息没发出去，且不知道服务是否还活着。
+ */
+const INTERRUPTED_REASON = '与服务的连接中断，消息未发出。请确认服务仍在运行后重试'
+
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
@@ -41,6 +47,14 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // P0-2：信任确认待发内容（confirmTrust/cancelTrust 读取）
   const pendingTrustRef = useRef<PendingTrust | null>(null)
   const llmDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * 最近一次 sendMessage 的失败原因。
+   *
+   * chat 对象是每次渲染新建的快照，调用方在自己的 .then 里读 chat.error 只能拿到
+   * 发送**前**那一帧的 error（恒为 null）；要跨页面把原因带走（首条失败后清空会话
+   * 回到草稿页），必须在这里同步落一份。
+   */
+  const failureReasonRef = useRef<string | null>(null)
   const qc = useQueryClient()
 
   /** 停止附着轮询（幂等：递增代数使在途 tick 失效）。 */
@@ -76,6 +90,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       abortRef.current = new AbortController()
       // P1：标记流式态并广播 run 启动——同会话其他标签页据此附着显示运行态。
       streamingRef.current = true
+      // 新一轮开始：清掉上轮的失败原因
+      failureReasonRef.current = null
       broadcastRunState({ sessionId, active: true })
       // 追踪是否收到 error 事件（区分服务端正常错误与连接中断）
       let gotError = false
@@ -129,6 +145,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         )
         if (!result.done && !gotError) {
           // SSE 结束但未收到 done 也无 error → 连接中断（服务重启等）
+          failureReasonRef.current = INTERRUPTED_REASON
           setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
         } else if (!result.done && gotError) {
           // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断
@@ -143,6 +160,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             const msgs = [...s.messages]
             const last = msgs[msgs.length - 1]
             if (last && last.role === 'user') msgs.pop()
+            failureReasonRef.current = '该会话已有进行中的对话'
             return { ...s, messages: msgs, isStreaming: false, error: '该会话已有进行中的对话' }
           })
           return false
@@ -153,6 +171,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           e.code === 'MODEL_NOT_FOUND'
         ) {
           // P0-1/P2-4：provider/模型配置问题 → 撤回乐观 user 消息并给出服务端可操作提示
+          failureReasonRef.current = e.message
           setState((s) => {
             const msgs = [...s.messages]
             const last = msgs[msgs.length - 1]
@@ -171,6 +190,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             const msgs = [...s.messages]
             const last = msgs[msgs.length - 1]
             if (last && last.role === 'user') msgs.pop()
+            failureReasonRef.current = e.message
             return { ...s, messages: msgs, isStreaming: false, error: e.message }
           })
           return false
@@ -229,6 +249,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // 空白，横幅谎报「服务可能已重启」，乐观 user 消息留在时间线上，而
           // 「恢复对话」只是重发同一请求、必然再次失败，用户被困在错误的诊断里。
           // 与各 code 分支同口径：撤回乐观消息 + 透出后端文案（含重试入口）。
+          const reason = e.message || `请求失败（HTTP ${e.status}）`
+          failureReasonRef.current = reason
           setState((s) => {
             const msgs = [...s.messages]
             const last = msgs[msgs.length - 1]
@@ -237,11 +259,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               ...s,
               messages: msgs,
               isStreaming: false,
-              error: e.message || `请求失败（HTTP ${e.status}）`,
+              error: reason,
             }
           })
         } else {
           // 无 status：fetch 本身失败（服务不可达）或请求在途被打断 → 视为中断
+          failureReasonRef.current = INTERRUPTED_REASON
           setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
         }
         return false
@@ -584,6 +607,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
 
   return {
     ...state,
+    /** 最近一次 sendMessage 失败的原因（成功/未失败时为 null）。跨页面传递用。 */
+    lastFailureReason: failureReasonRef.current,
     sendMessage,
     abort,
     steer,

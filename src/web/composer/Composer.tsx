@@ -9,7 +9,7 @@ import { ComposerEditor } from '@/composer/ComposerEditor.js'
 import { currentCursor } from '@/composer/editor-sync.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
 import { SlashPopover, SubcommandPopover } from '@/composer/SlashPopover.js'
-import type { ComposerSendPayload } from '@/composer/types.js'
+import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
 import {
   atTokenRange,
   extractAgentMentions,
@@ -208,7 +208,14 @@ type SendPayload = ComposerSendPayload & {
 }
 
 type ComposerProps = {
-  onSend: (payload: SendPayload) => void
+  /** 发送。返回 false/Promise<false> 表示消息没送出去，输入框据此还原草稿。 */
+  onSend: (payload: SendPayload) => boolean | undefined | Promise<boolean | undefined>
+  /**
+   * 跨组件实例还原输入（导航回来时用）。传 null/不传则不动输入框。
+   * 单靠 useComposer 的失败还原不够：发送失败若伴随导航（首条消息失败后清空会话
+   * 回到草稿页），原输入框组件已卸载，还原必须落在新实例上。
+   */
+  restoreDraft?: { prompt: Prompt; images: ImagePart[] } | null
   onAbort?: () => void
   /** 流式态「追加指令」注入 steering 文本。 */
   onSteer?: (message: string) => void
@@ -235,7 +242,8 @@ function Composer(props: ComposerProps) {
   const handleSend = (payload: ComposerSendPayload) => {
     const subagentNames = props.agents.filter((a) => a.mode !== 'primary').map((a) => a.name)
     const agents = extractAgentMentions(payload.prompt, subagentNames)
-    props.onSend({ ...payload, agents })
+    // 原样回传发送结果：useComposer 据此在失败时把草稿与图片还回输入框。
+    return props.onSend({ ...payload, agents })
   }
   const { data: commands = [] } = useCommands()
   const composer = useComposer({
@@ -247,6 +255,20 @@ function Composer(props: ComposerProps) {
     commands,
   })
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
+
+  // 跨实例还原输入：发送失败伴随导航后（首条消息失败 → 清空会话 → 回草稿页）
+  // 草稿页是新的 Composer 实例，得由外部把内容灌回来。按 restoreDraft 的对象
+  // 身份去重——父组件每次渲染新建字面量会反复重置用户正在编辑的内容。
+  const restoredRef = useRef<unknown>(null)
+  useEffect(() => {
+    const draft = props.restoreDraft
+    if (!draft || draft.prompt.length === 0) return
+    if (restoredRef.current === draft) return
+    restoredRef.current = draft
+    composer.setPromptExternal(draft.prompt)
+    composer.setImages?.(draft.images)
+    composer.editorRef.current?.focus()
+  }, [props.restoreDraft, composer])
 
   // 工作流列表：传入 projectId 以发现项目级 .c0de/workflows/*.js。
   // queryKey 含 projectId 确保切换项目时重新拉取。

@@ -18,6 +18,8 @@ import { buildTimeline } from '@/components/session/utils/timeline.js'
 import { TodoPanel } from '@/components/TodoPanel.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
 import { TrustRequiredDialog } from '@/components/TrustRequiredDialog.js'
+import type { ImagePart, Prompt } from '@/composer/types.js'
+import { failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
 import { useAgent } from '@/hooks/useAgent.js'
 import { useChat } from '@/hooks/useChat.js'
@@ -181,6 +183,17 @@ export function ChatSession({
   })
   // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
   const consumed = useRef(false)
+  // 首条发送失败时暂存载荷，供 cleanupEmptySessionOnFailure 带去草稿页还原。
+  const lastFailedSend = useRef<{
+    text: string
+    prompt: Prompt
+    images: ImagePart[]
+    files: string[]
+  } | null>(null)
+  // chat 是每次渲染新建的 {...state, …} 快照；cleanupEmptySessionOnFailure 在
+  // .then 里读 chat.lastFailureReason 必须走 ref，否则拿到发送前那一帧（null）。
+  const chatRef = useRef(chat)
+  chatRef.current = chat
 
   // 冷启动中断/暂停检测：页面加载时检查 session status，若上次 run 未正常结束则显示恢复提示。
   // 同时记录打开时间，用于会话列表按最近打开排序。
@@ -261,6 +274,20 @@ export function ChatSession({
       setSelection({ provider: pending.opts.provider, model: pending.opts.model })
     }
     if (pending.opts.tools) setEnabledTools(new Set(pending.opts.tools))
+    // 这条消息经由 pendingFirstMessage 从草稿页转来（没走 handleSend），
+    // 失败时同样要能把「消息 + 原因」带回草稿页，这里补记一份载荷。
+    lastFailedSend.current = {
+      text: pending.text,
+      prompt: pending.prompt ?? [],
+      // ChatOpts.images 是裸 {mediaType,data}（服务端契约），ImagePart 多一个
+      // type 判别字段（composer 内部形态），还原前补上。
+      images: (pending.opts.images ?? []).map((img) => ({
+        type: 'image' as const,
+        mediaType: img.mediaType,
+        data: img.data,
+      })),
+      files: pending.opts.files ?? [],
+    }
     void chat.sendMessage(pending.text, pending.opts).then((ok) => {
       void cleanupEmptySessionOnFailure(ok, true)
     })
@@ -271,7 +298,10 @@ export function ChatSession({
     // 新一轮发送：清除上轮残留的暂停态（paused 仅在运行中有意义）。
     agent.resetPaused()
     const firstMessage = messages.length === 0
-    void chat
+    // 把 ok 回传给输入框：false 时输入框把草稿与图片还回来。用户消息只在 agent
+    // loop 真正跑起来时才落库（core/agent.ts），上述错误都发生在落库之前——
+    // 输入清空 + 乐观消息被撤回 = 用户刚打的字彻底消失，改好设置后回车也没得发。
+    return chat
       .sendMessage(payload.text, {
         provider: selection.provider,
         model: selection.model,
@@ -282,7 +312,9 @@ export function ChatSession({
         ...(payload.agents.length ? { agents: payload.agents } : {}),
       })
       .then((ok) => {
+        if (!ok && firstMessage) lastFailedSend.current = payload
         void cleanupEmptySessionOnFailure(ok, firstMessage)
+        return ok
       })
   }
 
@@ -291,7 +323,9 @@ export function ChatSession({
   }
 
   /** 首条消息发送失败（未配 provider/网络中断且无持久化消息）→ 删除空会话回草稿页，
-   *  避免每次失败尝试在会话树里留下空「New Session」堆积（P3 空会话治理）。 */
+   *  避免每次失败尝试在会话树里留下空「New Session」堆积（P3 空会话治理）。
+   *  导航会把 ChatSession 卸载、错误随之消失——失败原因必须跨组件传下去，
+   *  否则用户看到的是「什么都没发生」。 */
   const cleanupEmptySessionOnFailure = async (ok: boolean, firstMessage: boolean) => {
     if (ok || !firstMessage) return
     try {
@@ -302,6 +336,17 @@ export function ChatSession({
         await sessionAPI.purgeEmpty(sessionId)
         qc.invalidateQueries({ queryKey: ['sessions'] })
         qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+        // 会话没了，但「消息 + 失败原因」要带去草稿页：导航会卸载本组件，
+        // 输入框里的草稿和 useChat 的 error 一起消失，用户只会看到什么都没发生。
+        failedSendReason.set(projectId, {
+          reason: chatRef.current.lastFailureReason ?? '消息发送失败，请重试后再次发送',
+          payload: {
+            text: lastFailedSend.current?.text ?? '',
+            prompt: lastFailedSend.current?.prompt ?? [],
+            images: lastFailedSend.current?.images ?? [],
+            files: lastFailedSend.current?.files ?? [],
+          },
+        })
         navigateTo(router, '/projects/:projectId', { params: { projectId } })
       }
     } catch {

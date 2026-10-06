@@ -34,7 +34,16 @@ import type { CommandInfo } from '@/hooks/useCommands.js'
 type PopoverState = 'slash' | 'subcommand' | 'at' | 'workflow' | null
 
 type UseComposerOptions = {
-  onSend: (payload: ComposerSendPayload) => void
+  /**
+   * 发送回调。返回值可等待：本 hook 据此在**发送失败**时把草稿与图片原样还原到
+   * 输入框。此前 onSend 是同步 void、发送即清空，而失败结果（未配 provider、
+   * 网关 400、网络中断）只有调用方知道——用户输入的消息连同图片一起凭空消失，
+   * 且失败原因渲染在顶栏一行省略号里，触屏根本读不到。
+   *
+   * 返回值语义：Promise<boolean> / boolean，true/false 表示「消息是否真的送出去了」。
+   * 为 true 或返回 void（保持旧契约）时视为成功。
+   */
+  onSend: (payload: ComposerSendPayload) => boolean | undefined | Promise<boolean | undefined>
   onAbort?: () => void
   /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。 */
   onSteer?: (message: string) => void
@@ -434,17 +443,49 @@ function useComposer({
     const files = prompt.flatMap((p) => (p.type === 'file' ? [p.path] : []))
     // prompt 结构随载荷传递：@agent 提及提取需要区分「用户输入文本」与
     // snippet/terminal 展开内容（见 extractAgentMentions）。
-    onSend({ text, files, images, prompt })
+    const payload = { text, files, images, prompt }
+    // 发送失败要把用户输入原样还回去，先留住快照（send() 是同步的，回调返回的
+    // Promise 落地时 prompt/images 可能已被清空）。
+    const snapshot = { prompt: clonePromptParts(prompt), images }
     // 提示历史存**用户可见文本**（promptToText：pill 贡献标签），不是提交给后端
     // 的展开形态（promptToMessageText 会把 snippet/terminal pill 展开成代码块）——
     // 否则 ↑ 召回一条带引用的消息会把整段代码块当纯文本灌回输入框，去重比较也在
     // 展开形态上做（同一输入因引用内容不同被当成不同条目）。
     const visible = promptToText(prompt)
+    // 还原时要判断「头一条是否本次新加」：直接比 entries[0] === visible 会因
+    // prepend 存的是 trim 后的文本而误判（带尾随空格时删掉旧记录）。
+    const historyBefore = visible.trim() ? loadHistory() : null
+    const outcome = onSend(payload)
+    // 清空照旧立即发生（发送成功的体感不能等一轮请求）：失败走下面的还原分支。
     if (visible.trim()) saveHistory(prependHistoryEntry(loadHistory(), visible))
     setImages([])
     setImageError(null)
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
+    // 失败还原：onSend 返回 Promise<false>/false 时把文本、图片、提示历史条目
+    // 一并还回，用户改好设置后直接回车即可，不用凭记忆重打。
+    const restore = () => {
+      setPromptExternal(snapshot.prompt)
+      setImages(snapshot.images)
+      setImageError(null)
+      if (visible.trim()) {
+        const entries = loadHistory()
+        // 头一条相对发送前变了 = 本次新加的 → 撤掉；没变（去重命中旧记录）则保留
+        if (historyBefore && entries[0] !== historyBefore[0]) {
+          saveHistory(entries.slice(1))
+        }
+      }
+      editorRef.current?.focus()
+    }
+    if (outcome === false) {
+      restore()
+      return
+    }
+    if (outcome && typeof (outcome as Promise<boolean | undefined>).then === 'function') {
+      void (outcome as Promise<boolean | undefined>).then((ok) => {
+        if (ok === false) restore()
+      })
+    }
   }, [isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
 
   // 追加指令：流式态下注入 steering 文本（仅流式态可用，空文本 no-op）
@@ -516,6 +557,8 @@ function useComposer({
     composingRef,
     promptRef,
     setPromptExternal,
+    /** 外部还原草稿时批量写入图片附件（见 Composer 的 restoreDraft）。 */
+    setImages,
     images,
     imageError,
     popover,
