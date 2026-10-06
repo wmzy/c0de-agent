@@ -214,16 +214,35 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           setState((s) => ({ ...s, isStreaming: false, pendingSegmentBreak: pending }))
           return false
         }
-        // 网络错误（服务不可达）也视为中断
-        if (!abortRef.current.signal.aborted) {
-          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
-        } else {
+        if (abortRef.current.signal.aborted) {
           if (llmDetailTimerRef.current) {
             clearTimeout(llmDetailTimerRef.current)
             llmDetailTimerRef.current = null
           }
           qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
           setState((s) => ({ ...s, isStreaming: false }))
+        } else if (typeof e.status === 'number') {
+          // 服务端 HTTP 错误（带 status）：后端已经给出可操作文案，这不是「连接中断」。
+          // 上面各 code 分支只覆盖 8 种已知错误，其余——404 会话不存在或已删除、
+          // 409 RUN_STARTING、400 INVALID_AGENT / 图片校验失败、401 认证失效、
+          // 500 CWD_RESOLVE_FAILED——此前全部落入「网络错误视为中断」：顶栏错误位
+          // 空白，横幅谎报「服务可能已重启」，乐观 user 消息留在时间线上，而
+          // 「恢复对话」只是重发同一请求、必然再次失败，用户被困在错误的诊断里。
+          // 与各 code 分支同口径：撤回乐观消息 + 透出后端文案（含重试入口）。
+          setState((s) => {
+            const msgs = [...s.messages]
+            const last = msgs[msgs.length - 1]
+            if (last && last.role === 'user') msgs.pop()
+            return {
+              ...s,
+              messages: msgs,
+              isStreaming: false,
+              error: e.message || `请求失败（HTTP ${e.status}）`,
+            }
+          })
+        } else {
+          // 无 status：fetch 本身失败（服务不可达）或请求在途被打断 → 视为中断
+          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
         }
         return false
       } finally {
