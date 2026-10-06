@@ -39,8 +39,8 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
       onClose()
     },
     onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      // APIError 现在是真正的 Error（services/api.ts），常规写法即可拿到后端原因。
+      setError(err instanceof Error ? err.message : String(err))
     },
   })
 
