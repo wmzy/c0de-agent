@@ -6,6 +6,7 @@ import {
   EditIcon,
   GlobIcon,
   GrepIcon,
+  ImageIcon,
   ReadIcon,
   SparkleIcon,
   ToolIcon,
@@ -68,6 +69,11 @@ export function PartDecoration({ block }: { block: RenderBlock }) {
     case 'steering':
       iconName = 'user'
       icon = <UserIcon />
+      break
+    // 图片是用户发出的内容：与 user 文本同装饰，保持「谁说的」可辨
+    case 'image':
+      iconName = 'image'
+      icon = <ImageIcon />
       break
     case 'tool': {
       iconName = TOOL_ICONS[block.tool] ? block.tool : 'tool'

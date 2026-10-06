@@ -355,3 +355,27 @@ describe('mergeSessionMessages', () => {
     expect(merged.map((m) => m.id)).toEqual(['u1-db', 'u2-live'])
   })
 })
+
+// 回归：image part 此前被整个丢弃——纯图片消息渲染成空白行，
+// 图文消息只见文字且因签名不含图片导致同一条消息在时间线上重复出现两份。
+describe('normalizeParts 图片', () => {
+  const PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+  it('image part 映射为 image 块', () => {
+    const blocks = normalizeParts(
+      msg('user', [{ _tag: 'image', mediaType: 'image/png', data: PNG }]),
+    )
+    expect(blocks).toEqual([{ type: 'image', mediaType: 'image/png', data: PNG, partIndex: 0 }])
+  })
+
+  it('图文消息同时产出 text 块和 image 块', () => {
+    const blocks = normalizeParts(
+      msg('user', [
+        { _tag: 'text', text: '看图' },
+        { _tag: 'image', mediaType: 'image/png', data: PNG },
+      ]),
+    )
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'image'])
+  })
+})

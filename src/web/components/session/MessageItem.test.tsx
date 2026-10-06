@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-librar
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MessageItem } from '@/components/session/MessageItem.js'
 import { type ShakeModeValue, ShakeProvider } from '@/components/session/ShakeContext.js'
+import { normalizeParts } from '@/components/session/utils/normalizeParts.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 import type { ShakeRegionView } from '@/types/index.js'
 
@@ -231,5 +232,42 @@ describe('MessageItem', () => {
       sv,
     )
     expect(screen.getByTestId('reasoning').getAttribute('data-expanded')).toBe('true')
+  })
+})
+
+// 回归：normalizeParts 此前没有 image 分支，图片 part 被整个丢弃——
+// 纯图片消息渲染成一整行空白（滞留条显示「(空消息)」），图文消息只见文字。
+describe('MessageItem 图片渲染', () => {
+  const PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+  it('纯图片消息渲染出可见的图片元素（此前渲染出空白行）', () => {
+    render(
+      <MessageItem message={msg('user', [{ _tag: 'image', mediaType: 'image/png', data: PNG }])} />,
+    )
+    const img = screen.getByTestId('message-image')
+    expect(img).toBeInTheDocument()
+    expect(img.getAttribute('src')).toContain('data:image/png;base64,')
+    expect(img.getAttribute('alt')).toBeTruthy()
+  })
+
+  it('图文消息同时渲染文字和图片', () => {
+    render(
+      <MessageItem
+        message={msg('user', [
+          { _tag: 'text', text: '看图' },
+          { _tag: 'image', mediaType: 'image/png', data: PNG },
+        ])}
+      />,
+    )
+    expect(screen.getByText('看图')).toBeInTheDocument()
+    expect(screen.getByTestId('message-image')).toBeInTheDocument()
+  })
+
+  it('image part 产生 image 渲染块（normalizeParts 不丢弃）', () => {
+    const blocks = normalizeParts(
+      msg('user', [{ _tag: 'image', mediaType: 'image/png', data: PNG }]),
+    )
+    expect(blocks.some((b) => b.type === 'image')).toBe(true)
   })
 })

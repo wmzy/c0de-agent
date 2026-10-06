@@ -1,4 +1,4 @@
-import type { Message } from '@shared/types/message.js'
+import type { Message, MessageContent } from '@shared/types/message.js'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -256,11 +256,18 @@ export function useChat(sessionId: string): ChatState & ChatActions {
 
   const sendMessage = useCallback(
     async (content: string, opts?: ChatOpts): Promise<boolean> => {
+      // 乐观副本必须包含图片 part：签名比对靠 content，缺了图片就会与持久化
+      // 副本配不上对，历史重取后同一条消息在时间线上重复出现两份。
+      // 服务端按 body.images 落库为 image part（server/routes/chat.ts）。
+      const parts: MessageContent[] = [{ _tag: 'text', text: content }]
+      for (const img of opts?.images ?? []) {
+        parts.push({ _tag: 'image', mediaType: img.mediaType, data: img.data })
+      }
       const userMsg: Message = {
         id: generateId(),
         sessionId,
         role: 'user',
-        content: [{ _tag: 'text', text: content }],
+        content: parts,
         tokenCount: 0,
         createdAt: Date.now(),
       }
