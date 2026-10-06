@@ -2,6 +2,7 @@
 // 项目原有的复制按钮（haze CodeBlock 无 copy 能力）。
 import { css } from '@linaria/core'
 import { CodeBlock as HazeCodeBlock } from 'haze-ui'
+import { CopyButton } from '@/components/CopyButton.js'
 import { highlightCode } from '@/utils/highlight.js'
 
 const wrap = css`
@@ -14,19 +15,6 @@ const copyBtn = css`
   position: absolute;
   right: 8px;
   bottom: 8px;
-  min-height: auto;
-  min-width: auto;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--haze-color-text-secondary);
-  background: var(--haze-color-bg);
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  cursor: pointer;
-  &:hover {
-    color: var(--haze-color-text);
-    background: var(--haze-color-bg-subtle);
-  }
 `
 
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -35,13 +23,11 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
       <HazeCodeBlock language={lang ?? 'text'} highlight={highlightCode}>
         {code}
       </HazeCodeBlock>
-      <button
-        type="button"
-        className={copyBtn}
-        onClick={() => navigator.clipboard?.writeText(code)}
-      >
-        复制
-      </button>
+      {/* 复用 CopyButton：复制成功 toast 反馈，两条失败路径也都出声。
+       * 此前的裸 clipboard 调用在任何失败下都静默，点完像按钮坏了。 */}
+      <div className={copyBtn}>
+        <CopyButton text={code} />
+      </div>
     </div>
   )
 }
