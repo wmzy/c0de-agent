@@ -1,7 +1,13 @@
 import { css } from '@linaria/core'
 import { Button } from 'haze-ui'
-import type { ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+  TouchEvent as ReactTouchEvent,
+  WheelEvent as ReactWheelEvent,
+} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '@/components/StreamingIndicator.js'
 import { StickyUserMessage } from '@/components/session/StickyUserMessage.js'
 import { TimelineChat } from '@/components/session/TimelineChat.js'
@@ -231,6 +237,39 @@ const stream = css`
   gap: 4px;
   padding: 16px;
   overflow-y: auto;
+`
+
+/** 距底多少 px 内仍视为贴底：容忍小数像素与虚拟化测量误差，
+ *  避免「明明在底部却被判成上滚」而停止跟随。 */
+const BOTTOM_THRESHOLD = 32
+
+/** 触摸位移死区（px）：小于它视为抖动，不解除跟随。 */
+const TOUCH_SCROLL_SLOP = 6
+
+/** 「回到底部」：用户上滚后不再自动跟随（见下方滚动 effect），需要一个显式入口
+ *  回到最新内容。sticky 定位在滚动容器底缘——正常位置是内容末尾，上滚时吸在底部。 */
+const jumpBtn = css`
+  position: sticky;
+  bottom: 0;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 999px;
+  background: var(--haze-color-bg);
+  box-shadow: var(--haze-shadow-md);
+  color: var(--haze-color-text);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
 `
 
 /* P1-6：权限确认超时横幅（与 ChatSession 的中断横幅同款式） */
@@ -472,8 +511,40 @@ export function Chat({
   emptyState,
   terminalToggle,
 }: ChatProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
+  // 是否跟随最新内容：只在「用户主动上滚」时停止，回到底部/主动发送/切换会话时恢复。
+  // 判据必须是用户输入事件（滚轮/触摸/键盘/滚动条拖拽）：内容增减会改变可滚动高度，
+  // 浏览器随即钳制 scrollTop，用「距底距离」或「scrollTop 变小」判定会把钳制误当成
+  // 上滚，从而在流式输出中途永久停止跟随（实测 gap 一路涨到 1533px 不再回到底部）。
+  const followingRef = useRef(true)
+  const [following, setFollowing] = useState(true)
+  const touchYRef = useRef<number | null>(null)
+
+  const setFollowingState = useCallback((next: boolean) => {
+    followingRef.current = next
+    setFollowing((prev) => (prev === next ? prev : next))
+  }, [])
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const el = streamRef.current
+      if (!el) return
+      setFollowingState(true)
+      el.scrollTo({ top: el.scrollHeight, behavior })
+    },
+    [setFollowingState],
+  )
+
+  // 滚动事件只负责「重新跟上」（滚到底部即恢复跟随），不负责「解除」。
+  const handleStreamScroll = useCallback(() => {
+    const el = streamRef.current
+    if (!el) return
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD) {
+      setFollowingState(true)
+    }
+  }, [setFollowingState])
+
+  const stopFollowing = useCallback(() => setFollowingState(false), [setFollowingState])
   // 顶部滞留用户消息：滚动时钉住视口上方最近一条用户消息，支持点击跳转/上下导航。
   const stickyUserMessages = useMemo(
     () =>
@@ -488,11 +559,45 @@ export function Chat({
   // 视图模式：同一份时间线数据的三种并列展示。
   //   chat  — 美化卡片；table — 平铺表格；json — 全量原始 JSON（含隐藏空壳消息）。
   const [viewMode, setViewMode] = useState<'chat' | 'table' | 'json'>('chat')
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在时间线长度变化时滚动，避免内容更新触发抖动
+  // 切换会话/视图：内容整体替换，滚动位置不能沿用（否则停在上一个会话的半截）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 会话/视图切换是重定位的触发条件，不参与计算
+  useEffect(() => {
+    scrollToBottom('auto')
+  }, [sessionId, viewMode, scrollToBottom])
+  // 跟随内容增长。依赖 timeline 引用而非 length：流式增量（text_delta / tool_call）
+  // 就地追加到最后一条消息，行数不变——只看 length 会让长回复一个字都不跟随，
+  // 而新行落地时的无条件滚动又把上滚阅读的用户强行拽到底部。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: timeline 引用变化即内容增长（流式增量不改行数）
   useEffect(() => {
     if (viewMode === 'table') return
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [timeline.length, viewMode])
+    if (!followingRef.current) return
+    scrollToBottom('auto')
+  }, [timeline, viewMode, scrollToBottom])
+
+  /** 用户输入事件：只有这些才解除跟随（滚轮上滚 / 触摸下滑 / 翻页键 / 拖滚动条）。 */
+  const handleStreamWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
+    if (e.deltaY < 0) stopFollowing()
+  }
+  const handleStreamTouchStart = (e: ReactTouchEvent<HTMLDivElement>) => {
+    touchYRef.current = e.touches[0]?.clientY ?? null
+  }
+  const handleStreamTouchMove = (e: ReactTouchEvent<HTMLDivElement>) => {
+    const start = touchYRef.current
+    const y = e.touches[0]?.clientY
+    if (start === null || y === undefined) return
+    // 手指下滑（clientY 增大）= 内容向上翻 → 用户在看上文
+    if (y > start + TOUCH_SCROLL_SLOP) stopFollowing()
+  }
+  const handleStreamKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'PageUp' || e.key === 'ArrowUp' || e.key === 'Home') stopFollowing()
+  }
+  const handleStreamMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const el = streamRef.current
+    if (!el) return
+    // clientWidth 不含滚动条宽度：落点在其右侧即拖拽滚动条
+    const rect = el.getBoundingClientRect()
+    if (e.clientX >= rect.left + el.clientWidth) stopFollowing()
+  }
 
   // steering 由 Composer 直接驱动：流式态下「追加指令」按钮/Enter 注入运行中消息。
   // P1-5：权限模式按会话隔离（sessionId），跨标签页通过 BroadcastChannel 同步。
@@ -518,6 +623,11 @@ export function Chat({
       .setMode(next, sessionId)
       .then(() => broadcastModeChange({ sessionId: sessionId ?? null, mode: next }))
       .catch(() => setPermissionMode(permissionMode))
+  }
+  const handleSend = (payload: SendPayload) => {
+    // 用户主动发送：无条件回到最新内容（此刻他就是想看到自己刚发出的消息）。
+    scrollToBottom('smooth')
+    onSend(payload)
   }
   const removeAlwaysAllow = (tool: string) => {
     if (!sessionId) return
@@ -660,14 +770,34 @@ export function Chat({
       {viewMode === 'table' ? (
         <TableView rows={timeline} />
       ) : (
-        <div className={stream} data-testid="stream" ref={streamRef}>
+        // biome-ignore lint/a11y/noStaticElementInteractions: 消息流滚动容器需捕获滚轮/触摸/键盘以判断用户是否上滚阅读，语义角色由内部时间线提供
+        <div
+          className={stream}
+          data-testid="stream"
+          ref={streamRef}
+          onScroll={handleStreamScroll}
+          onWheel={handleStreamWheel}
+          onTouchStart={handleStreamTouchStart}
+          onTouchMove={handleStreamTouchMove}
+          onKeyDown={handleStreamKeyDown}
+          onMouseDown={handleStreamMouseDown}
+        >
           {viewMode === 'chat' && (
             <StickyUserMessage containerRef={streamRef} messages={stickyUserMessages} />
           )}
           {timeline.length === 0 && emptyState}
           <TimelineChat rows={timeline} showAllJson={viewMode === 'json'} />
           {isStreaming && <StreamingIndicator />}
-          <div ref={bottomRef} />
+          {!following ? (
+            <button
+              type="button"
+              className={jumpBtn}
+              onClick={() => scrollToBottom('smooth')}
+              data-testid="jump-to-bottom"
+            >
+              ↓ 回到底部
+            </button>
+          ) : null}
         </div>
       )}
       {bottomPanel}
@@ -738,7 +868,7 @@ export function Chat({
       <Composer
         projectId={projectId}
         agents={agents}
-        onSend={onSend}
+        onSend={handleSend}
         onAbort={onAbort}
         onSteer={onSteer}
         isStreaming={isStreaming}
