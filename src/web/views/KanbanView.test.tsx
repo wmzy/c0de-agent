@@ -151,16 +151,21 @@ describe('KanbanView 横向溢出与键盘可达', () => {
   })
 
   it('焦点来自容器外部时不劫持滚动（外层页面聚焦不该搅动看板）', async () => {
-    await renderWithColumns(5)
-    const board = document.querySelector('[aria-label="看板列，可横向滚动"]') as HTMLElement
-    const inside = board.querySelector('button') as HTMLElement
-    const scrollSpy = vi.spyOn(inside, 'scrollIntoView')
+    vi.mocked(kanbanAPI.get).mockResolvedValue(boardOf(5))
+    const { container } = renderBoard()
+    await screen.findByTestId('kanban-view')
 
-    // 焦点来自看板之外的控件：容器不该动任何一列
+    // 焦点来自看板之外的控件：不该对任何元素调 scrollIntoView。
+    // 该节点必须挂在 **React root 内、board 外**：挂在 body 上事件到不了 React 的
+    // 委托根（onFocus 收不到）；挂在 board 上则 e.target 就是 board 自己。
+    // handler 滚动的是 e.target，所以 spy 挂在外部按钮上——挂列内按钮时，
+    // 即便去掉 handler 里的 contains 守卫也测不出来（那时的调用对象不是它）。
     const outside = document.createElement('button')
     outside.textContent = '外部按钮'
-    document.body.appendChild(outside)
-    board.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    container.appendChild(outside)
+    const scrollSpy = vi.spyOn(outside, 'scrollIntoView')
+
+    outside.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
     expect(scrollSpy).not.toHaveBeenCalled()
     outside.remove()
   })

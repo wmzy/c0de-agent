@@ -3,6 +3,7 @@ import { EditorView } from '@codemirror/view'
 import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type FileChangeGuard,
@@ -405,15 +406,6 @@ describe('FilePreview', () => {
         设置
       </TypedLink>
     )
-    const TO_DRAFT = (
-      <TypedLink<AppPaths>
-        to="/projects/:projectId"
-        params={{ projectId: 'p1' }}
-        data-testid="to-draft"
-      >
-        新会话
-      </TypedLink>
-    )
     const TO_OTHER_PROJECT = (
       <TypedLink<AppPaths>
         to="/projects/:projectId"
@@ -503,26 +495,12 @@ describe('FilePreview', () => {
       await waitFor(() => expect(screen.getByTestId('settings-route')).toBeTruthy())
     })
 
-    it('同一项目的会话切换不弹确认（ChatPage 不卸载，编辑原样保留）', async () => {
-      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
-      renderPreview(
-        { selectedFile: 'notes.txt' },
-        <>
-          <FilePreview projectId="p1" path="notes.txt" />
-          {TO_DRAFT}
-        </>,
-        ENTRY_SESSION,
-      )
-      await screen.findByTestId('code-editor')
-      expect(screen.getByTestId('session-route')).toBeTruthy()
-
-      fireEvent.click(screen.getByTestId('mock-dirty'))
-      fireEvent.click(screen.getByTestId('to-draft'))
-
-      expect(screen.queryByTestId('preview-nav-discard-dialog')).toBeNull()
-      await waitFor(() => expect(screen.getByTestId('chat-route')).toBeTruthy())
-      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
-    })
+    // 曾经断言「会话页 → 草稿页（同项目）不弹确认」，理由是「ChatPage 不卸载」。
+    // 那是错的：routes.tsx 里草稿页与会话页是两条平级 path，RouteErrorBoundary 的
+    // key = `${index}:${route.path}` 随之变化 → ChatPage 整棵子树重建，预览面板
+    // 连同未保存内容一起销毁（真实路由下的回归见下方 describe）。此用例原先把
+    // FilePreview 挂在 <View/> 兄弟位置，面板不在被卸载的子树里，所以断言照过。
+    // 现在同一诉求（会话页之间互切不弹确认）由那个 describe 用真实形态覆盖。
 
     it('切到另一个项目会拦下（面板随项目重建，改动会丢）', async () => {
       vi.stubGlobal('fetch', fetchMock('line1\nline2'))
@@ -540,6 +518,124 @@ describe('FilePreview', () => {
       fireEvent.click(screen.getByTestId('to-other'))
 
       expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy()
+    })
+  })
+
+  /**
+   * 真实形态回归：面板是 ChatPage 内部 Layout 的 panel（ChatPage.tsx），不是
+   * <View/> 的兄弟节点。此前的用例都把 FilePreview 挂在 <View/> 旁边，于是即使
+   * 换页会重建整棵 ChatPage 子树（面板随之卸载），断言照样成立——「同一项目的
+   * 两个聊天路由之间切换不弹确认」正是这样把草稿页 ↔ 会话页也放过去了，而
+   * 那条路恰恰会卸载面板（两条 path 平级 → RouteErrorBoundary key 变化）。
+   *
+   * 下面把 FilePreview 放进真正挂载它的位置：ChatPage 在 routes.tsx 里是草稿页
+   * 与会话页**共用的同一个组件**，作为两条路由的 component 挂载。因此只有
+   * 「两条路由 path 相同」时 React 才复用这棵子树——实测 session s1 → s2 复用
+   * （组件状态保持），session → draft 重建（状态清零）。这不是 mock，是
+   * @native-router/react 的真实行为（路由级 key = `${index}:${route.path}`）。
+   */
+  describe('未保存编辑时换页（面板位于 ChatPage 子树内）', () => {
+    /** ChatPage 的等价物：预览面板与「打开文件」入口都在它的子树里。 */
+    function ChatPageShell() {
+      const [selectedFile, setSelectedFile] = useState<string | null>(null)
+      return (
+        <ThemeProvider>
+          <FileSelectionContext.Provider
+            value={{
+              selectedFile,
+              openFile: (path: string) => setSelectedFile(path),
+              closeFile: () => setSelectedFile(null),
+              registerGuard: undefined,
+            }}
+          >
+            <button
+              type="button"
+              data-testid="open-file"
+              onClick={() => setSelectedFile('notes.txt')}
+            >
+              打开文件
+            </button>
+            {selectedFile ? <FilePreview projectId="p1" path={selectedFile} /> : null}
+          </FileSelectionContext.Provider>
+        </ThemeProvider>
+      )
+    }
+
+    const chatPageRoutes = createRoutes({
+      children: [
+        { path: '/projects/:projectId', component: () => ChatPageShell },
+        { path: '/projects/:projectId/sessions/:sessionId', component: () => ChatPageShell },
+      ],
+    })
+
+    function ShellLinks() {
+      return (
+        <>
+          <TypedLink<AppPaths>
+            to="/projects/:projectId/sessions/:sessionId"
+            params={{ projectId: 'p1', sessionId: 's2' }}
+            data-testid="to-s2"
+          >
+            另一个会话
+          </TypedLink>
+          <TypedLink<AppPaths>
+            to="/projects/:projectId"
+            params={{ projectId: 'p1' }}
+            data-testid="to-draft"
+          >
+            新会话
+          </TypedLink>
+        </>
+      )
+    }
+
+    /** 经真实路由挂载 ChatPage 等价物，打开文件并标记为脏。 */
+    async function mountDirtyPanel(entry: string) {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      render(
+        <MemoryRouter routes={chatPageRoutes} initialEntries={[entry]}>
+          <QueryClientProvider
+            client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+          >
+            <ShellLinks />
+            <View />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      )
+      fireEvent.click(await screen.findByTestId('open-file'))
+      await screen.findByTestId('code-editor')
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+    }
+
+    it('同一项目的会话页 ↔ 会话页不弹确认（路由 path 不变，ChatPage 不重建）', async () => {
+      await mountDirtyPanel(ENTRY_SESSION)
+
+      fireEvent.click(screen.getByTestId('to-s2'))
+
+      expect(screen.queryByTestId('preview-nav-discard-dialog')).toBeNull()
+      await waitFor(() => expect(screen.getByTestId('code-editor')).toBeTruthy())
+      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+    })
+
+    it('会话页 → 草稿页必须拦下：ChatPage 随路由 path 变化重建，未保存内容会被销毁', async () => {
+      await mountDirtyPanel(ENTRY_SESSION)
+
+      fireEvent.click(screen.getByTestId('to-draft'))
+
+      await waitFor(() => expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy())
+      expect(screen.getByTestId('code-editor')).toBeTruthy()
+    })
+
+    it('确认放弃后才放行到草稿页', async () => {
+      await mountDirtyPanel(ENTRY_SESSION)
+
+      fireEvent.click(screen.getByTestId('to-draft'))
+      await waitFor(() => expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy())
+      fireEvent.click(screen.getByTestId('preview-nav-leave'))
+
+      // ChatPage 已按草稿路由重建：面板状态清零（回到未打开文件）
+      await waitFor(() => expect(screen.queryByTestId('code-editor')).toBeNull())
+      expect(screen.getByTestId('open-file')).toBeTruthy()
     })
   })
 

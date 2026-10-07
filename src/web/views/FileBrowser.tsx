@@ -361,8 +361,9 @@ export function FileBrowser({
         <SyncedInput
           className={searchInputFlex}
           placeholder="搜索文件…"
-          /* placeholder 不是可访问名称：读屏与语音控制只念 placeholder，
-           * 输入框一旦有值就不再朗读，搜索框会退化为无名称控件。 */
+          /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
+           * 为空时拿它兜底，但那是脆弱的名字来源），读屏/语音控制依赖稳定字段名，
+           * 且多个无 label 搜索框并列时无法区分。 */
           aria-label="搜索文件"
           value={query}
           onChange={(v) => setQuery(v)}

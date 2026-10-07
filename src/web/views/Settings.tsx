@@ -238,17 +238,27 @@ export function Settings() {
   //
   // 配置未就绪时 UsagePanel 尚未挂载，getElementById 落空，本 effect 会在
   // resp 到达后由依赖重跑。
+  //
+  // 依赖必须是**锚点字符串**而不是 searchParams 实例：useSearchParams 每次渲染
+  // 都 `new URLSearchParams(useSyncExternalStore(...))`（@native-router/react
+  // dist/use-search-params.js），对象身份逐渲染不同。把它放进依赖等于本 effect
+  // 每次渲染都重跑，而 jump → scrollSettingsSectionIntoView 无条件
+  // `scrollTop += delta`（sectionScroll.ts）：只要 URL 里留着 ?section=，用户滚到
+  // 别的分区一敲字（setDraft 逐字符重渲染，保存反馈定时器、config refetch 同理）
+  // 就被拽回锚点分区，输入框逐字跳出视口——「锚点之外的字段根本没法编辑」。
+  // 顶栏成本徽标正是带 ?section=usage 跳进来的（TopBar MonthCostBadge），URL
+  // 上的参数会留到用户离开该页为止。
+  const sectionAnchor = searchParams.get('section')
   // biome-ignore lint/correctness/useExhaustiveDependencies: resp/viewMode 只作「面板已挂载」的触发信号，effect 内不读
   useEffect(() => {
-    const anchor = searchParams.get('section')
-    if (!anchor) return
+    if (!sectionAnchor) return
     const jump = () => {
-      const target = document.getElementById(anchor)
+      const target = document.getElementById(sectionAnchor)
       if (target) scrollSettingsSectionIntoView(target)
     }
     jump()
     return onTocReady(jump)
-  }, [searchParams, resp, viewMode])
+  }, [sectionAnchor, resp, viewMode])
 
   if (isLoading) return <div className={loadingWrap}>加载中…</div>
   // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
@@ -257,8 +267,8 @@ export function Settings() {
   // 40s+ 无任何错误、无重试，用户会一直等一个永远不会到来的表单。
   // 这比回收站/看板的「误报为空」更糟：它连一个错误的结论都不给。
   if (isError) {
-    // APIError 是结构体 { status, message, code?, details? } 而非 Error 子类，
-    // `instanceof Error` 恒为 false，必须结构化取 message。
+    // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+    // 结构化取优先、instanceof 兜底。
     const message =
       (configError as { message?: string } | null)?.message ??
       (configError instanceof Error ? configError.message : null)

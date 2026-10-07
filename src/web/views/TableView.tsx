@@ -248,8 +248,9 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
         <SyncedInput
           className={filterInput}
           placeholder="搜索…"
-          /* placeholder 不是可访问名称：读屏只念 placeholder，输入框一旦有值
-           * 就不再朗读。与相邻的三个筛选下拉并列，读屏用户分不清这是搜什么。 */
+          /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
+           * 为空时拿它兜底，但那是脆弱的名字来源）。与相邻的三个筛选下拉并列，
+           * 读屏用户需要一个稳定字段名来区分这是搜什么。 */
           aria-label="搜索当前会话的消息与调用"
           value={q}
           onChange={(v) => setQ(v)}

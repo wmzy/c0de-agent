@@ -307,8 +307,8 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
       setDraft('')
       setIsAdding(false)
     } catch (err) {
-      // 后端 apiError 是结构体（非 Error 子类），必须结构化取 message，
-      // 否则渲染成 [object Object]。
+      // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+      // 结构化取优先、instanceof 兜底，不会渲染成 [object Object]。
       const message =
         (err as { message?: string } | null)?.message ?? (err instanceof Error ? err.message : null)
       setAddError(message ?? '新建卡片失败，请重试')
@@ -377,7 +377,16 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
             )}
           </div>
         ) : (
-          <button type="button" className={addCardBtn} onClick={() => setIsAdding(true)}>
+          <button
+            type="button"
+            className={addCardBtn}
+            // 重开时清掉上一轮的失败原因：请求在途时按 Esc 会收起输入框，但那条失败
+            // 结果稍后才落地，重新打开就会看到一条描述着已被放弃的标题的报错。
+            onClick={() => {
+              setAddError(null)
+              setIsAdding(true)
+            }}
+          >
             + 新建卡片
           </button>
         )}

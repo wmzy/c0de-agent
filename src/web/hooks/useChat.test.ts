@@ -876,6 +876,45 @@ describe('useChat 服务端错误分类', () => {
     expect(result.current.interrupted).toBe(true)
     expect(result.current.error).toBeNull()
   })
+
+  // retry（重试 / 恢复对话）不追加 user 消息。撤回逻辑此前按「最后一条是 user 就
+  // pop」执行，对重发同样生效——一次 404/500 的重发失败会把一条**已落库**的历史
+  // 消息从时间线上抹掉，而 messages 查询早于落库取过，不会自动补回，
+  // 「重试」按钮也再也救不回来。
+  it('重发失败不得撤掉不属于本次的已落库消息', async () => {
+    stubHttpError(404, 'NOT_FOUND', '会话不存在或已删除')
+    const { result } = renderChat()
+    // 先成功发一条（落库且留在时间线上）
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: async () => ({ done: true, value: undefined }),
+            cancel: async () => {},
+          }),
+        },
+        text: async () => '',
+      })),
+    )
+    await act(async () => {
+      await result.current.sendMessage('已落库的那条')
+    })
+    const persisted = result.current.messages.filter((m) => m.role === 'user')
+    expect(persisted).toHaveLength(1)
+
+    // 再走 retry（不追加消息）并让它失败
+    stubHttpError(404, 'NOT_FOUND', '会话不存在或已删除')
+    await act(async () => {
+      await result.current.retry('已落库的那条')
+    })
+
+    // 错误照常透出，但那条已落库的用户消息必须还在
+    expect(result.current.error).toBe('会话不存在或已删除')
+    expect(result.current.messages.filter((m) => m.role === 'user')).toHaveLength(1)
+  })
 })
 
 // 回归（P1 人机文件协作）：write/edit 工具结束 → 失效对应文件的预览/编辑器查询。

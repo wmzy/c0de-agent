@@ -51,6 +51,8 @@ export type PendingSegmentBreak = {
   activeSegment: { provider: string; model: string; tools: string[] }
   text: string
   opts: ChatOpts
+  /** 触发这次待确认的那条乐观 user 消息 id：用户取消时撤的是它，不是「最后一条」。 */
+  optimisticUserMessageId?: string
 }
 
 /** P0-2：项目信任确认待办——后端 409 TRUST_REQUIRED 拦截后设置；
@@ -61,6 +63,8 @@ export type PendingTrust = {
   items: Array<{ kind: string; detail: string }>
   text: string
   opts: ChatOpts
+  /** 同上：取消信任时撤的是触发它的那条乐观 user 消息。 */
+  optimisticUserMessageId?: string
 }
 
 export type ChatOpts = {
@@ -73,6 +77,13 @@ export type ChatOpts = {
   files?: string[]
   /** 用户确认开新段后重发时携带，跳过后端 409 预检。 */
   confirmSegmentBreak?: boolean
+  /**
+   * 本轮**由本组件乐观追加**的 user 消息 id（sendMessage 传入，重发/恢复路径为
+   * undefined）。撤回时只撤这一条，不按「最后一条是不是 user」猜——
+   * retry/confirmBreak/confirmTrust 都不追加消息，对它们误撤会把一条**已落库**的
+   * 历史消息从时间线上抹掉，直到重新拉取才回来。
+   */
+  optimisticUserMessageId?: string
 }
 
 export type ChatActions = {

@@ -2023,6 +2023,37 @@ describe('Settings — 分区导航', () => {
       vi.restoreAllMocks()
     })
 
+    // useSearchParams 每次渲染都 `new URLSearchParams(...)`（@native-router/react
+    // dist/use-search-params.js），深链 effect 若把那个对象放进依赖，就会逐渲染
+    // 重跑；jump → scrollSettingsSectionIntoView 无条件 `scrollTop += delta`，
+    // 于是只要 URL 里留着 ?section=，用户滚到别的分区一敲字就被拽回锚点分区，
+    // 输入框逐字跳出视口。依赖必须是稳定的锚点字符串。
+    it('URL 带 ?section= 时，编辑其它分区不会把页面拽回锚点', async () => {
+      const { configAPI } = await import('@/services/config.js')
+      ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+      const main = renderInScroller('/settings?section=section-5-上下文压缩')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      // 「上下文压缩」分区里的自动压缩开关：任何一次编辑都会 setDraft →
+      // Settings 重渲染，正是当年把用户拽回锚点的触发条件。
+      const toggle = await screen.findByRole('checkbox', { name: '启用自动压缩' })
+
+      // 用户滚去另一个分区（深链落点之后的文档坐标）
+      const awayFromAnchor = COMPACTION_TOP + 400
+      main.scrollTop = awayFromAnchor
+      expect(main.scrollTop).toBe(awayFromAnchor)
+
+      // 在那儿改一个字段——触发 Settings 重渲染
+      fireEvent.click(toggle)
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+      expect(
+        main.scrollTop,
+        `编辑后 scrollTop 变成 ${main.scrollTop}，用户被拽离正在编辑的位置`,
+      ).toBe(awayFromAnchor)
+      vi.restoreAllMocks()
+    })
+
     it('点击目录条与深链落到同一位置（落点口径不分叉）', async () => {
       const { configAPI } = await import('@/services/config.js')
       ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))

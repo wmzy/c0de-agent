@@ -2,7 +2,7 @@
 //  - 新设备（无有效 token）：请求配对 → 显示 6 位配对码 → 轮询审批结果 → 获批后存 token 刷新。
 //  - 已授权设备：轮询待审批列表 → 弹窗展示配对码与设备名 → 批准/拒绝。
 import { css } from '@linaria/core'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { authAPI } from '@/services/auth.js'
 import { storageSet } from '@/utils/storage.js'
@@ -30,6 +30,47 @@ const overlay = css`
   cursor: pointer;
 `
 
+/**
+ * aria-modal="true" 承诺「面板之外的内容对辅助技术与键盘都不存在」，于是必须真的
+ * 做到：打开时把焦点移进面板，并把 Tab 圈在面板内。
+ *
+ * 这两个弹层是普通 div，不是原生 <dialog>——showModal 带来的背景 inert 与焦点
+ * 归位都不生效，只挂一个 aria-modal 等于对读屏撒谎：焦点仍停在被遮住的背景上，
+ * 用户 Tab 会走进遮罩后面的界面。
+ */
+function useModalFocus(cardRef: RefObject<HTMLDivElement | null>, enabled: boolean) {
+  useEffect(() => {
+    const el = cardRef.current
+    if (!enabled || !el) return
+    // 打开即聚焦面板本身：读屏立刻播报 dialog 名与描述，键盘用户的下一次 Tab
+    // 从面板第一个控件开始，而不是从被遮住的背景开始。
+    el.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const focusables = el.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusables.length === 0) {
+        e.preventDefault()
+        return
+      }
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement
+      if (e.shiftKey && (active === first || active === el)) {
+        e.preventDefault()
+        last?.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first?.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [cardRef, enabled])
+}
+
+/** 面板：可接收焦点（tabindex=-1），供 useModalFocus 在打开时聚焦。 */
 const card = css`
   position: relative;
   width: min(420px, 92vw);
@@ -99,6 +140,8 @@ function PairingRequestFlow({ onDismiss }: { onDismiss: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [approved, setApproved] = useState(false)
   const started = useRef(false)
+  const cardRef = useRef<HTMLDivElement>(null)
+  useModalFocus(cardRef, true)
 
   const start = useCallback(() => {
     setError(null)
@@ -161,10 +204,12 @@ function PairingRequestFlow({ onDismiss }: { onDismiss: () => void }) {
         data-testid="pairing-request-backdrop"
       />
       <div
+        ref={cardRef}
         className={card}
         role="dialog"
         aria-modal="true"
         aria-label="新设备配对"
+        tabIndex={-1}
         style={{ maxHeight: 'calc(100dvh - 48px)', overflowY: 'auto' }}
       >
         <div className={title}>新设备配对</div>
@@ -243,6 +288,8 @@ export function PairingApproval() {
     () => items.filter((p) => !dismissed.has(p.pairingId)),
     [items, dismissed],
   )
+  const cardRef = useRef<HTMLDivElement>(null)
+  useModalFocus(cardRef, visible.length > 0)
 
   useEffect(() => {
     let cancelled = false
@@ -268,7 +315,17 @@ export function PairingApproval() {
   const approve = (id: string, code: string) => {
     authAPI
       .approvePairing(id, code)
-      .then(() => setItems((prev) => prev.filter((p) => p.pairingId !== id)))
+      .then(() => {
+        // 一并清掉该请求的已输入配对码：否则每处理一条就永久留一份 codes 记录，
+        // pairingId 用完也不会回收。
+        setCodes((prev) => {
+          if (!(id in prev)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        setItems((prev) => prev.filter((p) => p.pairingId !== id))
+      })
       .catch((e) => {
         setError(
           (e as { code?: string }).code === 'PAIRING_CODE_MISMATCH'
@@ -302,18 +359,31 @@ export function PairingApproval() {
   // Esc 等价于「关闭」：模态必须可被键盘用户关掉（此前仅有关闭按钮，且无实现）。
   // 必须置于下方 `if (visible.length === 0) return null` 之前——
   // 条件 return 在 Hook 之后会让 Hook 数量随渲染变化（React 直接抛错）。
+  //
+  // 绑定与否取决于 visible：弹层没渲染时按 Esc 不该触发这里的 state 更新
+  // （dismissAll 会 setError + setDismissed，逐次重建 Set，徒增一次重渲染）。
+  const visibleCount = visible.length
   useEffect(() => {
+    if (visibleCount === 0) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') dismissAllRef.current()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  }, [visibleCount])
 
   const deny = (id: string) => {
     authAPI
       .denyPairing(id)
-      .then(() => setItems((prev) => prev.filter((p) => p.pairingId !== id)))
+      .then(() => {
+        setCodes((prev) => {
+          if (!(id in prev)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        setItems((prev) => prev.filter((p) => p.pairingId !== id))
+      })
       .catch(() => setError('操作失败，请重试'))
   }
 
@@ -340,7 +410,14 @@ export function PairingApproval() {
         onClick={() => dismissAllRef.current()}
         data-testid="pairing-backdrop"
       />
-      <div className={card} role="dialog" aria-modal="true" aria-label="设备配对审批">
+      <div
+        ref={cardRef}
+        className={card}
+        role="dialog"
+        aria-modal="true"
+        aria-label="设备配对审批"
+        tabIndex={-1}
+      >
         <div className={title}>设备配对审批</div>
         <div className={desc}>
           以下设备请求访问 c0de。请与对方核对设备信息后，<b>输入对方屏幕上显示的 6 位配对码</b>

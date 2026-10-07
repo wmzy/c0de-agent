@@ -113,18 +113,31 @@ export function SettingsToc() {
 
   // 扫描：只取 GUI 表单子树里的 h2。JSON 视图没有分区（整块是一个编辑器），
   // 扫整个设置页会把别的分支的标题也算进来。
+  //
+  // 持续观察子树而不只扫一次：配置到达前 UsagePanel 等分区尚未挂载，只在 mount
+  // 扫一轮的话目录里会永远缺这几项（实测 18 个分区里少了最后几个）。MutationObserver
+  // 监听 h2 的增删，标题集合真的变了才重算，避免每次输入都产生新数组对象（那会让
+  // 下面三个依赖 items 的 effect 跟着重跑）。
   useEffect(() => {
     const root = document.querySelector('[data-testid="settings-form"]')
     if (!root) return
-    const headings = [...root.querySelectorAll('h2')].filter((h) => h.textContent?.trim())
-    setItems(
-      headings.map((h, i) => {
+    const scan = () => {
+      const headings = [...root.querySelectorAll('h2')].filter((h) => h.textContent?.trim())
+      const next = headings.map((h, i) => {
         const title = (h.textContent ?? '').trim()
         const id = sectionId(i, title)
         h.id ||= id
         return { id, title }
-      }),
-    )
+      })
+      setItems((prev) => {
+        if (prev.length === next.length && prev.every((p, i) => p.id === next[i]?.id)) return prev
+        return next
+      })
+    }
+    scan()
+    const mo = new MutationObserver(scan)
+    mo.observe(root, { childList: true, subtree: true })
+    return () => mo.disconnect()
   }, [])
 
   // 实测 sticky 偏移：工具条高度 + 目录行高度。两者都随内容变化（工具条会

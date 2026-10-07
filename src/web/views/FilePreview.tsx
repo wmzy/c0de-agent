@@ -196,17 +196,21 @@ function cmLineRange(container: HTMLElement, range: Range): { start: number; end
 }
 
 /**
- * 只匹配保留本面板的两个聊天路由（`/projects/:projectId[/sessions/:sessionId]`，
- * 见 src/web/routes.tsx）——它们同属 ChatPage，路由参数变化不会卸载预览面板。
- * 其余目标（/settings、/projects/:id/kanban|settings、切换到另一个项目、回首页）
- * 都会卸载 ChatPage，编辑器连同未保存内容一起销毁。
- * 查询串/哈希不参与匹配（谓词收到的是含 search/hash 的完整路径）。
+ * 聊天路由的**会话页**：`/projects/:projectId/sessions/:sessionId`（见
+ * src/web/routes.tsx）。只有这一种目标换页时不会卸载 ChatPage：路由 path 不变，
+ * React 在 `RouteErrorBoundary key={`${index}:${route.path}`}`（@native-router/react
+ * dist/resolve-view.tsx）上复用同一棵子树，面板与编辑器实例原样保留（实测会话页
+ * 之间互切后保存键仍是「保存*」）。
+ *
+ * 草稿页 `/projects/:projectId` 与会话页是 routes.tsx 里的两条**平级 path**，key
+ * 随之变化 → ChatPage 整棵子树卸载重建，预览面板（含 FileSelectionContext 里的
+ * 当前预览目标）一起消失。
  */
-const CHAT_ROUTE = /^\/projects\/([^/]+)(?:\/sessions\/[^/]+)?\/?$/
+const CHAT_SESSION_ROUTE = /^\/projects\/([^/]+)\/sessions\/[^/]+\/?$/
 
-/** 路径所属的「聊天路由」项目 id；不是聊天路由时返回 null。 */
-function chatRouteProject(path: string): string | null {
-  return CHAT_ROUTE.exec(path.split(/[?#]/)[0] ?? '')?.[1] ?? null
+/** 路径所属的会话页项目 id；不是会话页时返回 null。查询串/哈希不参与匹配。 */
+function chatSessionProject(path: string): string | null {
+  return CHAT_SESSION_ROUTE.exec(path.split(/[?#]/)[0] ?? '')?.[1] ?? null
 }
 
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
@@ -228,12 +232,15 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   // 关闭」这条由父组件发起的通道；应用内导航（顶栏 设置/项目看板、项目切换、浏览器
   // 后退）会把 ChatPage 整个卸载，CodeMirror 文档连同撤销历史一起消失，此前无任何提示。
   // useBlocker 谓词是 allow-list（true = 放行），所以脏时默认 veto。
-  // 例外：同一项目的两个聊天路由之间切换不卸载 ChatPage，编辑器与未保存内容原样保留
-  // （实测会话页之间互切后保存键仍是「保存*」），拦下来只会白弹一次确认。
+  // 唯一豁免：同一项目的**会话页 ↔ 会话页**（换 sessionId 只变参数，route.path
+  // 不变 → ChatPage 不重建，编辑器与未保存内容原样保留），拦下来只会白弹一次确认。
+  // 草稿页 ↔ 会话页不再豁免：两条 path 平级，key 变化让 ChatPage 连同本面板一起
+  // 卸载，「点新会话/另一个会话」会静默销毁未保存内容——正是本次要堵的洞。
+  // 其余目标（/settings、/projects/:id/kanban|settings、切换项目、回首页）同理 veto。
   const blocker = useBlocker((to, from) => {
     if (!dirtyRef.current) return true
-    const target = chatRouteProject(to)
-    return target !== null && target === chatRouteProject(from)
+    const target = chatSessionProject(to)
+    return target !== null && target === chatSessionProject(from)
   })
 
   // 刷新/关闭标签页：useBlocker 只覆盖 SPA 内导航与后退/前进，浏览器原生通道走
@@ -436,11 +443,9 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     else closeFile()
   }, [dirty, closeFile])
 
-  // 用 ref 读最新 path/openFile/closeFile，使否决钩子只需注册一次。
+  // 钩子只需注册一次，用 ref 读最新的 path 让闭包不过期（依赖里加 path 会反复重注册）。
   const pathRef = useRef(path)
   pathRef.current = path
-  const openFileRef = useRef(openFile)
-  openFileRef.current = openFile
 
   // 注册否决钩子：父组件要换预览目标（点文件树/点 tool 里的路径/点 snippet pill 都可能，
   // 删除当前文件也会走 closeFile）时先问这里。脏则拦下并弹确认。

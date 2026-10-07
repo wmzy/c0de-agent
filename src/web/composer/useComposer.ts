@@ -119,6 +119,11 @@ function useComposer({
     lines: number
   } | null>(null)
   const [isEmpty, setIsEmpty] = useState(true)
+  /**
+   * 发送世代号。每次 send/steer 自增；异步失败还原只在自己那一代仍是最新时回写，
+   * 否则会把后续发送刚清空/输入的框内容盖回去（见 send 里的 restore）。
+   */
+  const sendAttemptRef = useRef(0)
 
   // commands 用 ref 避免每次列表变化都重建 handleInput callback
   const commandsRef = useRef<CommandInfo[] | undefined>(commands)
@@ -456,6 +461,10 @@ function useComposer({
     // prepend 存的是 trim 后的文本而误判（带尾随空格时删掉旧记录）。
     const historyBefore = visible.trim() ? loadHistory() : null
     const outcome = onSend(payload)
+    // 本次发送的世代号：还原分支只认自己这一代。请求在途期间用户可能又发了一次
+    // （或又按了 steering），那时先落地的那次失败再回来还原，就会把后来那条的输入
+    // 一起盖掉、并按错误的假设去动提示历史。
+    const attempt = ++sendAttemptRef.current
     // 清空照旧立即发生（发送成功的体感不能等一轮请求）：失败走下面的还原分支。
     if (visible.trim()) saveHistory(prependHistoryEntry(loadHistory(), visible))
     setImages([])
@@ -465,13 +474,23 @@ function useComposer({
     // 失败还原：onSend 返回 Promise<false>/false 时把文本、图片、提示历史条目
     // 一并还回，用户改好设置后直接回车即可，不用凭记忆重打。
     const restore = () => {
-      setPromptExternal(snapshot.prompt)
+      // 已被更新的发送取代：本次失败不再回写。
+      if (sendAttemptRef.current !== attempt) return
+      // 输入框在请求在途期间仍可编辑（ComposerEditor 无只读路径），用户此刻新敲的
+      // 内容/新加的图片不属于这条失败消息——无条件覆盖会凭空吞掉它们。只在输入框
+      // 仍是发送后清空的状态时才回填。
+      const untouched = isPromptEmpty(readPrompt()) && imagesRef.current.length === 0
+      if (!untouched) return
+      // 光标停在文末：send() 清空时把光标放到 offset 0，沿用它会让还原后的第一
+      // 个字前面挂一个光标，用户接着敲的字都插到消息前面。
+      setPromptExternal(snapshot.prompt, true)
       setImages(snapshot.images)
       setImageError(null)
       if (visible.trim()) {
         const entries = loadHistory()
-        // 头一条相对发送前变了 = 本次新加的 → 撤掉；没变（去重命中旧记录）则保留
-        if (historyBefore && entries[0] !== historyBefore[0]) {
+        // 头一条相对发送前变了 = 本次新加的 → 撤掉；没变（去重命中旧记录）则保留。
+        // 期间若有别的发送插进来（entries[0] 已是别人的），不动历史——那不是本次的条目。
+        if (historyBefore && entries[0] !== historyBefore[0] && entries[0] === visible.trim()) {
           saveHistory(entries.slice(1))
         }
       }
@@ -494,6 +513,8 @@ function useComposer({
     if (isPromptEmpty(prompt)) return
     const text = promptToMessageText(prompt)
     onSteer?.(text)
+    // steering 同样把输入清空：它取代在途的那次发送，那次失败回来时不得回填。
+    sendAttemptRef.current += 1
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
   }, [readPrompt, onSteer, setPromptExternal, resetHistory])

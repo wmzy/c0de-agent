@@ -154,12 +154,23 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         return result.done
       } catch (err) {
         const e = err as unknown as APIError
+        // 撤回本轮**乐观追加**的那条 user 消息，且只撤这一条。
+        //
+        // 旧实现是「最后一条是 user 就 pop」——对 retry/confirmBreak/confirmTrust
+        // 同样生效，可它们从不追加消息：一次 404/409/500/401 的重发失败会把一条
+        // **已落库**的历史消息从时间线上抹掉（messages 查询早于落库取过，不会自动
+        // 补回），而「重试」按钮也再也救不回来。sendMessage 传入 optimisticUserMessageId
+        // 后，重发路径它是 undefined → 一条都不撤。
+        const withdraw = (msgs: Message[]): Message[] => {
+          const id = opts?.optimisticUserMessageId
+          if (!id) return msgs
+          const idx = msgs.findIndex((m) => m.id === id)
+          return idx >= 0 ? msgs.filter((_, i) => i !== idx) : msgs
+        }
         if (e.code === 'RUN_ACTIVE') {
           // 并发守卫：撤回乐观追加的 user 消息并提示（P0-4）。
           setState((s) => {
-            const msgs = [...s.messages]
-            const last = msgs[msgs.length - 1]
-            if (last && last.role === 'user') msgs.pop()
+            const msgs = withdraw(s.messages)
             failureReasonRef.current = '该会话已有进行中的对话'
             return { ...s, messages: msgs, isStreaming: false, error: '该会话已有进行中的对话' }
           })
@@ -173,9 +184,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // P0-1/P2-4：provider/模型配置问题 → 撤回乐观 user 消息并给出服务端可操作提示
           failureReasonRef.current = e.message
           setState((s) => {
-            const msgs = [...s.messages]
-            const last = msgs[msgs.length - 1]
-            if (last && last.role === 'user') msgs.pop()
+            const msgs = withdraw(s.messages)
             return {
               ...s,
               messages: msgs,
@@ -187,9 +196,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }
         if (e.code === 'WORKTREE_MISSING' || e.code === 'PROJECT_MISSING') {
           setState((s) => {
-            const msgs = [...s.messages]
-            const last = msgs[msgs.length - 1]
-            if (last && last.role === 'user') msgs.pop()
+            const msgs = withdraw(s.messages)
             failureReasonRef.current = e.message
             return { ...s, messages: msgs, isStreaming: false, error: e.message }
           })
@@ -216,6 +223,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               })),
             text: content,
             opts: opts ?? {},
+            ...(opts?.optimisticUserMessageId
+              ? { optimisticUserMessageId: opts.optimisticUserMessageId }
+              : {}),
           }
           pendingTrustRef.current = pending
           setState((s) => ({ ...s, isStreaming: false, pendingTrust: pending }))
@@ -229,6 +239,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             activeSegment: details?.activeSegment ?? { provider: '', model: '', tools: [] },
             text: content,
             opts: opts ?? {},
+            ...(opts?.optimisticUserMessageId
+              ? { optimisticUserMessageId: opts.optimisticUserMessageId }
+              : {}),
           }
           pendingRef.current = pending
           setState((s) => ({ ...s, isStreaming: false, pendingSegmentBreak: pending }))
@@ -252,9 +265,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           const reason = e.message || `请求失败（HTTP ${e.status}）`
           failureReasonRef.current = reason
           setState((s) => {
-            const msgs = [...s.messages]
-            const last = msgs[msgs.length - 1]
-            if (last && last.role === 'user') msgs.pop()
+            const msgs = withdraw(s.messages)
             return {
               ...s,
               messages: msgs,
@@ -296,7 +307,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       }
       // 追加到已有消息（保留历史/多轮），仅重置 usage/error/permission
       setState((s) => ({ ...INITIAL, messages: [...s.messages, userMsg], isStreaming: true }))
-      return doStream(content, opts)
+      // 把刚追加的 id 交给 doStream：失败时只撤回这一条（retry 等不追加消息的路径
+      // 不传 id，于是不会误删已落库的历史消息——见 doStream 里的 withdraw）。
+      return doStream(content, { ...opts, optimisticUserMessageId: userMsg.id })
     },
     [doStream, sessionId],
   )
@@ -316,18 +329,28 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }
       }
       setState((s) => ({ ...s, isStreaming: true, error: null, pendingSegmentBreak: null }))
-      await doStream(pending.text, { ...pending.opts, confirmSegmentBreak: true })
+      await doStream(pending.text, {
+        ...pending.opts,
+        confirmSegmentBreak: true,
+        // 乐观消息仍在时间线上（待确认路径保留它），失败时仍要能精确撤回这一条
+        ...(pending.optimisticUserMessageId
+          ? { optimisticUserMessageId: pending.optimisticUserMessageId }
+          : {}),
+      })
     },
     [doStream, sessionId],
   )
 
-  // 用户取消开新段：清除待发并移除乐观追加的 user 消息（selection/tools 还原由 ChatView 负责）。
+  // 用户取消开新段：清除待发并移除触发它的乐观 user 消息（selection/tools 还原由
+  // ChatView 负责）。撤的是 pending 里记下的 id，不是「最后一条」——同样是那个问题：
+  // 期间若又追加了新消息，按位置撤会撤错一条。
   const cancelBreak = useCallback(() => {
+    const pending = pendingRef.current
     pendingRef.current = null
     setState((s) => {
-      const msgs = [...s.messages]
-      const last = msgs[msgs.length - 1]
-      if (msgs.length > 0 && last && last.role === 'user') msgs.pop()
+      const id = pending?.optimisticUserMessageId
+      const idx = id ? s.messages.findIndex((m) => m.id === id) : -1
+      const msgs = idx >= 0 ? s.messages.filter((_, i) => i !== idx) : s.messages
       return { ...s, pendingSegmentBreak: null, isStreaming: false, messages: msgs }
     })
   }, [])
@@ -350,16 +373,22 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       return
     }
     setState((s) => ({ ...s, isStreaming: true, error: null, pendingTrust: null }))
-    await doStream(pending.text, pending.opts)
+    await doStream(pending.text, {
+      ...pending.opts,
+      ...(pending.optimisticUserMessageId
+        ? { optimisticUserMessageId: pending.optimisticUserMessageId }
+        : {}),
+    })
   }, [doStream])
 
-  // P0-2：用户取消信任——清除待发并移除乐观追加的 user 消息。
+  // P0-2：用户取消信任——清除待发并移除触发它的乐观 user 消息（同 cancelBreak，按 id 撤）。
   const cancelTrust = useCallback(() => {
+    const pending = pendingTrustRef.current
     pendingTrustRef.current = null
     setState((s) => {
-      const msgs = [...s.messages]
-      const last = msgs[msgs.length - 1]
-      if (msgs.length > 0 && last && last.role === 'user') msgs.pop()
+      const id = pending?.optimisticUserMessageId
+      const idx = id ? s.messages.findIndex((m) => m.id === id) : -1
+      const msgs = idx >= 0 ? s.messages.filter((_, i) => i !== idx) : s.messages
       return { ...s, pendingTrust: null, isStreaming: false, messages: msgs }
     })
   }, [])

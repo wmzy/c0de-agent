@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { TypedLink, useRouter } from '@native-router/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { Logo } from '@/components/Logo.js'
 import { ModelSelector } from '@/components/ModelSelector.js'
@@ -331,6 +331,15 @@ function DraftSession({
     setError(carried.reason)
     setRestored(carried)
   }, [projectId])
+  // 跨实例还原草稿的对象身份必须稳定：Composer 按对象身份去重，同一份载荷只灌一次。
+  // 直接在 JSX 里写 `{prompt, images}` 字面量的话每次渲染都是新对象，而本页渲染
+  // 非常频繁（发送置位 creating、模型/agent 切换、打开文件预览、['agents'] 在窗口
+  // 聚焦时 refetch），去重会一路落空——用户已经改好的文本被上一次失败的消息盖回去。
+  // 载荷内容不变时（失败发生在消费之后）保持 null，更不会重复还原。
+  const restoreDraft = useMemo(
+    () => (restored ? { prompt: restored.payload.prompt, images: restored.payload.images } : null),
+    [restored],
+  )
 
   const handleSend = async (payload: SendPayload) => {
     setError(null)
@@ -376,9 +385,7 @@ function DraftSession({
       error={error}
       pendingPermission={null}
       onSend={handleSend}
-      restoreDraft={
-        restored ? { prompt: restored.payload.prompt, images: restored.payload.images } : null
-      }
+      restoreDraft={restoreDraft}
       onAbort={() => {
         /* 草稿阶段无可中止的后端请求 */
       }}

@@ -230,12 +230,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 页面稳定显示「回收站为空」、无任何错误提示。
   // 与 KanbanView 的「看板加载失败」保持同一套读失败表达，并给出重试入口。
   if (isError) {
-    // APIError 是结构体（{ status, message, code?, details? }）而非 Error 子类，
-    // `instanceof Error` 恒为 false → 落进 String() → 渲染成「[object Object]」，
-    // 用户拿到零信息量的报错。实测注入 500 后错误条显示
-    // 「回收站加载失败：[object Object]」。改为结构化取 message（与
-    // RootRedirect 的读法一致：后端 message 是可操作的中文指引），
-    // 再对非 APIError（网络异常/超时等真正的 Error 实例）保留 instanceof 分支。
+    // APIError 现在是真正的 Error（services/api.ts 的 ApiErrorImpl），
+    // `err.message` 即后端文案；但错误也可能来自非本层抛出的路径，
+    // 结构化取 message 优先、instanceof 兜底，两种读法都不会退化。
     const message =
       (listError as { message?: string } | null)?.message ??
       (listError instanceof Error ? listError.message : null)
@@ -378,8 +375,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             className={searchInput}
             type="search"
             placeholder="搜索回收站标题或消息内容…"
-            /* placeholder 不是可访问名称：读屏与语音控制只念 placeholder，
-             * 输入框一旦有值就不再朗读，搜索框会退化为无名称控件。 */
+            /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
+             * 为空时拿它兜底，但那是脆弱的名字来源），读屏/语音控制依赖稳定字段名。 */
             aria-label="搜索回收站标题或消息内容"
             value={search}
             onChange={(v) => setSearch(v)}

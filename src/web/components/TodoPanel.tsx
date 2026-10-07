@@ -472,8 +472,8 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
               <SyncedInput
                 className={`${inputStyle} ${input}`}
                 placeholder="任务描述…"
-                /* 两个输入框并排且都没有可见 label：placeholder 不是可访问
-                 * 名称，读屏只念 placeholder，输入框一旦有值就不再朗读。 */
+                /* 两个输入框并排且都没有可见 label：显式 aria-label 而不是只靠
+                 * placeholder（它只是视觉提示，HTML-AAM 兜底的名字来源很脆弱）。 */
                 aria-label="任务描述"
                 value={newTask}
                 onChange={(v) => setNewTask(v)}

@@ -233,6 +233,17 @@ type ComposerProps = {
   agents: AgentListItem[]
 }
 
+/**
+ * 还原载荷的内容指纹：同一份失败消息只灌一次。
+ *
+ * 图片只取 mediaType + 长度——base64 全量拼进 key 会让每次渲染都重算一个几十
+ * KB 的字符串，而同一次失败→还原周期里图片 data 恒定，长度足够区分不同附件。
+ */
+function draftKey(draft: { prompt: Prompt; images: ImagePart[] }): string {
+  const images = draft.images.map((i) => `${i.mediaType}:${i.data.length}`).join(',')
+  return `${JSON.stringify(draft.prompt)}|${images}`
+}
+
 function Composer(props: ComposerProps) {
   // 从 Prompt 结构提取 @agent mentions（仅非 primary 可调用的 subagent）。
   // 只扫描用户输入的文本 part 并剥离 markdown 代码（见 extractAgentMentions）——
@@ -257,14 +268,19 @@ function Composer(props: ComposerProps) {
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
 
   // 跨实例还原输入：发送失败伴随导航后（首条消息失败 → 清空会话 → 回草稿页）
-  // 草稿页是新的 Composer 实例，得由外部把内容灌回来。按 restoreDraft 的对象
-  // 身份去重——父组件每次渲染新建字面量会反复重置用户正在编辑的内容。
-  const restoredRef = useRef<unknown>(null)
+  // 草稿页是新的 Composer 实例，得由外部把内容灌回来。
+  //
+  // 去重按**载荷内容**而不是对象身份：父组件很容易在 JSX 里每次渲染新建
+  // `{prompt, images}` 字面量（useComposer 的返回值也逐渲染新建），那时身份比较
+  // 永远不相等，用户已经改好的内容会被上一次失败的载荷反复盖回去。内容相同即视为
+  // 同一份载荷，且已还原过就不再灌第二次——父组件也会在消费后置 null。
+  const restoredKeyRef = useRef<string | null>(null)
   useEffect(() => {
     const draft = props.restoreDraft
     if (!draft || draft.prompt.length === 0) return
-    if (restoredRef.current === draft) return
-    restoredRef.current = draft
+    const key = draftKey(draft)
+    if (restoredKeyRef.current === key) return
+    restoredKeyRef.current = key
     composer.setPromptExternal(draft.prompt)
     composer.setImages?.(draft.images)
     composer.editorRef.current?.focus()

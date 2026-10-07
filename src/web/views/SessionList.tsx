@@ -175,10 +175,8 @@ export function SessionList({
     error: treeError,
     refetch: refetchTree,
   } = useSessionTree()
-  // APIError 是结构体 { status, message, code? }，不是 Error 子类：instanceof 恒为
-  // false → 落进 String() → 渲染成「[object Object]」，用户拿到零信息量的报错。
-  // 先结构化取 message（与 RecycleBin/FilePreview/Settings 同一读法），再对真正的
-  // Error 实例（网络异常/超时）兜底。
+  // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+  // 先结构化取、再 instanceof 兜底，两种读法对网络异常/超时也不会退化。
   const treeErrorMessage =
     (treeError as { message?: string } | null)?.message ??
     (treeError instanceof Error ? treeError.message : null)
@@ -431,8 +429,8 @@ export function SessionList({
           className={searchInput}
           type="search"
           placeholder="搜索会话标题或消息内容…"
-          /* placeholder 不是可访问名称：读屏与语音控制只念 placeholder，
-           * 输入框一旦有值就不再朗读，搜索框会退化为无名称控件。 */
+          /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
+           * 为空时拿它兜底，但那是脆弱的名字来源），读屏/语音控制依赖稳定字段名。 */
           aria-label="搜索会话标题或消息内容"
           value={search}
           onChange={(v) => setSearch(v)}

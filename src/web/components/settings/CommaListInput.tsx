@@ -31,7 +31,7 @@ function CommaListInput({
   placeholder?: string
   className?: string
   id?: string
-  /** 可访问名称：placeholder 不充当名称，读屏需要一个稳定的字段名。 */
+  /** 可访问名称：读屏需要一个稳定的字段名（placeholder 只是视觉提示）。 */
   ariaLabel?: string
   disabled?: boolean
 }) {
