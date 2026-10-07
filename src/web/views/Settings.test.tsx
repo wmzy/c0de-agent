@@ -1007,6 +1007,37 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(args.defaultModel).toBe('claude-3')
   })
 
+  // 回归：JSON 视图语法错误时 draft 仍停在「最后一次合法解析」上，而保存条只看
+  // isDirty（= draft !== null），与 jsonError 无关 —— 按钮照常可点，点下去落盘的是
+  // 错误发生前的旧草稿，保存条却回显「✓ 已保存」。屏幕上的改动静默消失，
+  // 刷新即丢，用户全程没有被告知「保存的不是你看到的内容」。
+  it('JSON 语法错误时保存被拦下：不提交旧草稿，并明示修复语法错误后才能保存', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+
+    // 先改一处合法值（draft 变脏、isDirty=true），再把文本改成非法 JSON
+    fireEvent.change(editor, {
+      target: { value: JSON.stringify({ ...mockConfig, defaultModel: 'claude-3' }, null, 2) },
+    })
+    fireEvent.change(editor, { target: { value: '{ invalid json' } })
+
+    const save = screen.getByTestId('settings-save') as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+
+    fireEvent.click(save)
+    // 旧草稿不得落盘
+    expect(configAPI.update).not.toHaveBeenCalled()
+    // 且要能看出为什么按不动：保存条挂上原因，而不是只留 JSON 视图内那条错误条
+    expect(screen.getByTestId('settings-save-blocked-hint').textContent).toContain('JSON')
+  })
+
   it('JSON 语法错误时显示错误条', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))

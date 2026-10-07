@@ -252,16 +252,33 @@ function RoleRoutingSection({ routing, onUpdate, onClear }: RoleRoutingSectionPr
 type SettingsSaveBarProps = {
   isDirty: boolean
   feedback: SaveFeedback
+  /** 草稿当前不可保存的原因（JSON 语法错误）；非空时禁用保存并就近显示原因。
+   *  isDirty 只回答「有没有改过」，不回答「现在这份内容能不能存」——
+   *  JSON 视图语法错误时 draft 停在最后一次合法解析上，两者在界面上长得一样。 */
+  blockedReason?: string | null
   onDiscard: () => void
   onSave: () => void
 }
 
-function SettingsSaveBar({ isDirty, feedback, onDiscard, onSave }: SettingsSaveBarProps) {
+function SettingsSaveBar({
+  isDirty,
+  feedback,
+  blockedReason,
+  onDiscard,
+  onSave,
+}: SettingsSaveBarProps) {
   return (
     <div className={`${saveBar} ${isDirty ? saveBarDirty : ''}`} data-testid="settings-save-bar">
       {isDirty && (
         <span className={dirtyHint} data-testid="settings-dirty-hint">
           ● 未保存更改
+        </span>
+      )}
+      {/* 拦截原因钉在保存条上（sticky 恒在视口底部）：JSON 视图的错误条在编辑器
+          旁、切走视图就没了，而按不动的按钮在页面最下方，两者必须同处一屏。 */}
+      {blockedReason && (
+        <span className={saveErr} data-testid="settings-save-blocked-hint">
+          {blockedReason}
         </span>
       )}
       {feedback.kind !== 'idle' && (
@@ -289,8 +306,14 @@ function SettingsSaveBar({ isDirty, feedback, onDiscard, onSave }: SettingsSaveB
       )}
       <Button
         onClick={onSave}
-        disabled={!isDirty || feedback.kind === 'saving'}
-        title={isDirty ? '保存配置' : '配置未变更或正在加载'}
+        disabled={!isDirty || feedback.kind === 'saving' || !!blockedReason}
+        title={
+          blockedReason
+            ? blockedReason
+            : isDirty
+              ? '保存配置'
+              : '配置未变更或正在加载'
+        }
         data-testid="settings-save"
         variant="solid"
       >

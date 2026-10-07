@@ -305,6 +305,13 @@ export function Settings() {
    *  只把变更合并进目标作用域文件——不再全量落盘（P1-2 作用域污染修复）。 */
   const handleSave = () => {
     if (!draft) return
+    // JSON 视图语法错误时 draft 停在最后一次合法解析上：直接保存会落盘一版
+    // 与编辑器内容不符的旧配置，并在保存条上回显「✓ 已保存」，屏幕上的改动
+    // 静默消失。按钮已禁用，这里再兜一层，避免键盘/程序化调用绕过。
+    if (jsonError) {
+      setSaveFeedback({ kind: 'err', msg: 'JSON 语法错误：已阻止保存，请先修复语法' })
+      return
+    }
     const patch = diffConfig(
       config as unknown as Record<string, unknown>,
       draft as unknown as Record<string, unknown>,
@@ -735,6 +742,7 @@ export function Settings() {
       <SettingsSaveBar
         isDirty={isDirty}
         feedback={saveFeedback}
+        blockedReason={jsonError ? 'JSON 语法错误：请先修复编辑器中标红的问题，当前内容无法保存' : null}
         onDiscard={discardChanges}
         onSave={handleSave}
       />
