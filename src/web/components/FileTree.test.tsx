@@ -359,6 +359,182 @@ describe('FileTree', () => {
     expect(topNode?.getAttribute('aria-selected')).toBe('false')
   })
 
+  it('嵌套 treeitem 归属于 role=group 容器', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      type: 'directory',
+      children: [
+        {
+          name: 'src',
+          path: 'src',
+          type: 'directory',
+          children: [{ name: 'b.ts', path: 'src/b.ts', type: 'file' }],
+        },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.', 'src'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        hideRoot
+      />,
+    )
+    // aria-level=2 的节点必须落在 group 内，否则读屏/AT 得到的是一棵
+    // 「所有子项平铺」的树，层级关系丢失。
+    const child = screen.getByTestId('node-src/b.ts').closest('[role="treeitem"]')
+    expect(child?.closest('[role="group"]')).toBeTruthy()
+  })
+
+  it('漫游 tabindex：整棵树只有一个可 Tab 进入的节点，方向键在节点间移动', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      type: 'directory',
+      children: [
+        { name: 'a.ts', path: 'a.ts', type: 'file' },
+        { name: 'b.ts', path: 'b.ts', type: 'file' },
+        { name: 'c.ts', path: 'c.ts', type: 'file' },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        hideRoot
+      />,
+    )
+    const treeitems = screen.getAllByRole('treeitem')
+    const paths = treeitems.map((el) => (el as HTMLElement).dataset.path)
+
+    // 此前所有 treeitem 一律 tabIndex=-1 且无方向键处理：容器声明了
+    // role=tree，键盘却完全进不去（Tab 只经过行内的展开/@/删除按钮）。
+    expect(treeitems.filter((el) => el.getAttribute('tabindex') === '0')).toHaveLength(1)
+    expect(treeitems.filter((el) => el.getAttribute('tabindex') === '0')[0]).toHaveAttribute(
+      'data-path',
+      'a.ts',
+    )
+
+    const current = () =>
+      screen
+        .getAllByRole('treeitem')
+        .find((el) => el.getAttribute('tabindex') === '0')
+        ?.getAttribute('data-path')
+
+    const first = treeitems[0]
+    first?.focus()
+    fireEvent.keyDown(first as HTMLElement, { key: 'ArrowDown' })
+    expect(current()).toBe(paths[1])
+    fireEvent.keyDown(first as HTMLElement, { key: 'ArrowDown' })
+    expect(current()).toBe(paths[2])
+    // 末尾不越界
+    fireEvent.keyDown(first as HTMLElement, { key: 'ArrowDown' })
+    expect(current()).toBe(paths[2])
+    fireEvent.keyDown(first as HTMLElement, { key: 'ArrowUp' })
+    expect(current()).toBe(paths[1])
+    fireEvent.keyDown(first as HTMLElement, { key: 'Home' })
+    expect(current()).toBe(paths[0])
+    fireEvent.keyDown(first as HTMLElement, { key: 'End' })
+    expect(current()).toBe(paths[2])
+  })
+
+  it('点击（或程序化聚焦）某个节点后，方向键从该节点继续而不是回到旧位置', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      type: 'directory',
+      children: [
+        { name: 'a.ts', path: 'a.ts', type: 'file' },
+        { name: 'b.ts', path: 'b.ts', type: 'file' },
+        { name: 'c.ts', path: 'c.ts', type: 'file' },
+      ],
+    }
+    render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        hideRoot
+      />,
+    )
+    const current = () =>
+      screen
+        .getAllByRole('treeitem')
+        .find((el) => el.getAttribute('tabindex') === '0')
+        ?.getAttribute('data-path')
+
+    // 初始漫游点在首项；用户直接点中间那一行（DOM 焦点进入该节点）
+    expect(current()).toBe('a.ts')
+    const middle = screen.getByTestId('node-b.ts').closest('[role="treeitem"]') as HTMLElement
+    fireEvent.focus(middle)
+    expect(current()).toBe('b.ts')
+
+    // 方向键必须从这个节点继续，否则会从 a.ts 跳到 c.ts，用户看到「跳了一格」
+    fireEvent.keyDown(middle, { key: 'ArrowDown' })
+    expect(current()).toBe('c.ts')
+    fireEvent.keyDown(middle, { key: 'ArrowUp' })
+    expect(current()).toBe('b.ts')
+  })
+
+  it('折叠目录后被折叠的子节点不再占用方向键停留位', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      type: 'directory',
+      children: [
+        { name: 'a.ts', path: 'a.ts', type: 'file' },
+        {
+          name: 'src',
+          type: 'directory',
+          path: 'src',
+          children: [{ name: 'b.ts', path: 'src/b.ts', type: 'file' }],
+        },
+      ],
+    }
+    const { rerender } = render(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        hideRoot
+      />,
+    )
+    const count = () => screen.getAllByRole('treeitem').length
+    expect(count()).toBe(2)
+
+    rerender(
+      <FileTree
+        root={fileTree}
+        expanded={new Set(['.', 'src'])}
+        selected={null}
+        loadingPaths={new Set()}
+        onToggle={vi.fn()}
+        onSelect={vi.fn()}
+        directoryClickMode="toggle"
+        hideRoot
+      />,
+    )
+    expect(count()).toBe(3)
+  })
+
   it('未传 label 时 tree 使用默认 aria-label「文件树」', () => {
     render(
       <FileTree
