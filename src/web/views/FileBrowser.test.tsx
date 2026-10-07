@@ -149,6 +149,57 @@ describe('FileBrowser 搜索结果语义', () => {
   })
 
   /**
+   * 回归：搜索结果里的目录行此前与文件行走同一条 onPick（打开预览）。
+   *
+   * 缺陷：读接口对目录执行 readFile 抛 EISDIR → 404，点文件夹必然得到
+   * 「文件读取失败 / File not found」，而同一路径在文件树里点却是展开语义。
+   * 现在目录行回到文件树并展开定位到该目录。
+   */
+  it('点搜索结果里的目录行回到文件树并展开定位，不打开预览', async () => {
+    const onPick = vi.fn()
+    vi.mocked(fileAPI.search).mockResolvedValue([
+      { path: 'src', type: 'directory' },
+      { path: 'src/cli', type: 'directory' },
+      { path: 'src/a.ts', type: 'file' },
+    ])
+    vi.mocked(fileAPI.list).mockImplementation(async (dir: string) =>
+      dir === '.'
+        ? ROOT_ENTRIES
+        : dir === 'src'
+          ? [
+              { name: 'a.ts', type: 'file' },
+              { name: 'cli', type: 'directory' },
+            ]
+          : dir === 'src/cli'
+            ? [{ name: 'index.ts', type: 'file' }]
+            : [],
+    )
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileBrowser projectId="p1" onPick={onPick} />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('node-src')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 'src' } })
+    await waitFor(() => expect(screen.getByTestId('file-src')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('file-src/cli'))
+
+    // 退出搜索，回到文件树，目标目录及其祖先都已展开、子项已加载
+    await waitFor(() => expect(screen.getByRole('tree', { name: '项目文件树' })).toBeTruthy())
+    expect(screen.queryByRole('list', { name: '搜索结果' })).toBeNull()
+    expect(screen.getByTestId('toggle-src')).toBeTruthy()
+    expect(screen.getByTestId('node-src/cli')).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('index.ts')).toBeTruthy())
+    // 目录不触发打开预览
+    expect(onPick).not.toHaveBeenCalled()
+    expect(vi.mocked(fileAPI.list)).toHaveBeenCalledWith('src/cli', 'p1')
+  })
+
+  /**
    * 回归：单字符查询此前被静默丢弃。
    *
    * 缺陷：isSearch 门槛是 `searchDebounced.length > 1`。输入 1 个字时既不发

@@ -218,6 +218,12 @@ function removeNode(root: TreeNode, path: string): TreeNode {
   }
 }
 
+/** 收集 path 的祖先目录路径（不含自身）：a/b/c → ['a','a/b']。 */
+function ancestorsOf(path: string): string[] {
+  const parts = path.split('/').filter(Boolean)
+  return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/'))
+}
+
 export function FileBrowser({
   projectId,
   onPick,
@@ -294,6 +300,28 @@ export function FileBrowser({
     }
   }, [projectId, projectName])
 
+  /** 懒加载某个目录的子项（失败保持 children=undefined，可重试）。 */
+  const loadChildren = useCallback(
+    async (dirPath: string) => {
+      setLoadingPaths((prev) => new Set(prev).add(dirPath))
+      try {
+        const entries = await fileAPI.list(dirPath, projectId)
+        setTreeRoot((prev) =>
+          prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
+        )
+      } catch {
+        /* 加载失败保留未展开态 */
+      } finally {
+        setLoadingPaths((prev) => {
+          const next = new Set(prev)
+          next.delete(dirPath)
+          return next
+        })
+      }
+    },
+    [projectId],
+  )
+
   const handleToggle = useCallback(
     async (dirPath: string) => {
       // 折叠已展开目录
@@ -307,26 +335,10 @@ export function FileBrowser({
       }
       // 首次展开：懒加载子目录
       const needLoad = treeRoot ? findNode(treeRoot, dirPath)?.children === undefined : false
-      if (needLoad) {
-        setLoadingPaths((prev) => new Set(prev).add(dirPath))
-        try {
-          const entries = await fileAPI.list(dirPath, projectId)
-          setTreeRoot((prev) =>
-            prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
-          )
-        } catch {
-          /* 加载失败保留未展开态 */
-        } finally {
-          setLoadingPaths((prev) => {
-            const next = new Set(prev)
-            next.delete(dirPath)
-            return next
-          })
-        }
-      }
+      if (needLoad) await loadChildren(dirPath)
       setExpanded((prev) => new Set(prev).add(dirPath))
     },
-    [expanded, treeRoot, projectId],
+    [expanded, treeRoot, loadChildren],
   )
 
   const handleSelect = useCallback(
@@ -354,6 +366,32 @@ export function FileBrowser({
   )
 
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
+
+  /**
+   * 搜索结果里点目录 → 回到文件树并展开定位到该目录。
+   *
+   * 此前目录行与文件行走同一条 onPick（打开预览），而读接口对目录执行
+   * readFile 抛 EISDIR → 404：搜索结果里点文件夹必然得到「文件读取失败 /
+   * File not found」，同一路径在树里点却是展开语义。
+   */
+  const handleReveal = useCallback(
+    async (dirPath: string) => {
+      setQuery('')
+      // 祖先按由浅到深加载：深层目录的 children 挂在尚未拉取的父节点下，
+      // 顺序反了 setChildren 找不到目标，展开后仍是空的。
+      const chain = ancestorsOf(dirPath)
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        for (const p of chain) next.add(p)
+        next.add(dirPath)
+        return next
+      })
+      for (const dir of [...chain, dirPath]) {
+        if (treeRoot && findNode(treeRoot, dir)?.children === undefined) await loadChildren(dir)
+      }
+    },
+    [treeRoot, loadChildren],
+  )
 
   return (
     <div className={panel}>
@@ -399,7 +437,9 @@ export function FileBrowser({
                     type="button"
                     className={resultRow}
                     data-testid={`file-${e.path}`}
-                    onClick={() => onPick(e.path)}
+                    title={e.type === 'directory' ? '在文件树中定位该目录' : undefined}
+                    aria-label={e.type === 'directory' ? `定位目录 ${e.path}` : undefined}
+                    onClick={() => (e.type === 'directory' ? handleReveal(e.path) : onPick(e.path))}
                   >
                     <span>{e.type === 'directory' ? '📁' : '📄'}</span>
                     <span>{e.path}</span>
