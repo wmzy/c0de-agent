@@ -17,6 +17,12 @@ const field = css`
    * （WCAG 1.4.10 Reflow）。标签不参与收缩折行。 */
   flex-wrap: wrap;
   min-width: 0;
+  /* 不被同排兄弟压缩到内容宽度以下：压缩会让控件掉到标签下一行（字段自己
+   * 折行，底栏因此从 1 行涨到 3 行），更糟的是 label 与相邻字段重叠——
+   * 实测底栏 636px 时 Provider 标签与 Model 标签重叠 3px，渲染成「ProvideModel」。
+   * 宽度真不够时由 footerLeft 整字段换行（flex-wrap），而不是字段内部错行。
+   * flex-wrap + min-width:0 保留：极窄视口（<240px）下仍能折行，不产生横向滚动。 */
+  flex-shrink: 0;
   & > span:first-child {
     flex-shrink: 0;
   }
@@ -45,6 +51,9 @@ const modelWrap = css`
   gap: 0;
   /* 允许收缩，配合 input 的 min-width:0 一起让位给窄视口 */
   min-width: 0;
+  /* 与 field 口径一致：宽度不足时整字段换行，而不是压缩到标签叠字。
+     压缩在此无害（input 自带 ellipsis），但压缩会让 field 内部折行、
+     底栏从 1 行涨到 3 行；交给 footerLeft 的 flex-wrap 换行更干净。 */
   flex-shrink: 1;
 `
 
@@ -117,6 +126,21 @@ const hintEmpty = css`
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+`
+
+/**
+ * Provider 下拉的宽度下限。
+ *
+ * compactSelect 自适应（width:auto + min-width:0）是必要的——haze 的 SelectCore
+ * 带 width:100%，在 flex 行里会吃掉全部剩余宽度、把同排兄弟压没。但完全自适应
+ * 意味着栏宽紧张时它会被压到只剩内边距的宽度：实测底栏 636px 时 Provider 只剩
+ * 38px，当前 provider 名一个字都显示不出来，用户无法确认这条会话在用哪个 provider。
+ *
+ * 90px 约能放下常见 provider 名（openai / anthropic / ollama）的主体部分，
+ * 更长仍按 compactSelect 的省略号截断，绝不撑破容器。
+ */
+const providerMinWidth = css`
+  min-width: 90px;
 `
 
 export type ModelSelection = { provider: string; model: string }
@@ -256,7 +280,7 @@ export function ModelSelector({
       <label className={field}>
         <span>Provider</span>
         <SyncedSelect
-          className={`${inputStyle} ${compactSelect}`}
+          className={`${inputStyle} ${compactSelect} ${providerMinWidth}`}
           value={value.provider}
           onValuesChange={(v) => {
             onChange({ ...value, provider: v as string })

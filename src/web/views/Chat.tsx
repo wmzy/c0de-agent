@@ -362,16 +362,21 @@ const footerLeft = css`
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  /* flex-basis 320px ≈ agent + Provider + Model 的舒适宽度。footerBar 本身
+     是 flex-wrap:wrap：底栏放不下「模型控件 + 授权区」时，footerRight 整体
+     换到下一行，而不是两者在同一行里互相挤压——挤压会把 Provider/Model
+     压到内容宽度以下，标签互相重叠（实测重叠 3px，读作「ProvideModel」），
+     Provider 下拉只剩 38px 无法辨认。
+     宽度够时（实测宽栏 1138px）仍是单行，行为与此前一致。 */
+  flex: 1 1 320px;
   min-width: 0;
-  ${MOBILE} {
-    /* 窄屏：Provider/Model 控件换行堆叠，避免 modelWrap 被 main 的
-     * overflow:hidden 裁剪导致模型输入不可达；控件自身不超出容器。 */
-    flex-wrap: wrap;
-    & select,
-    & input {
-      max-width: 100%;
-    }
+  /* 换行不按视口宽度判定，而是**始终**允许：底栏的可用宽度由会话列决定，
+   * 与视口宽度无关——1440px 视口下打开文件预览，会话列被压到 636px。
+   * 控件自身也不允许超出容器，避免被 main 的 overflow:hidden 裁掉。 */
+  flex-wrap: wrap;
+  & select,
+  & input {
+    max-width: 100%;
   }
 `
 
@@ -380,15 +385,20 @@ const footerRight = css`
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  /* 授权区保持内容宽度、不与模型控件争抢同一行：放不下时由 footerBar 的
+   * flex-wrap 把整块换到下一行（footerLeft 已是 flex:1 1 320px，会先占满
+   * 自己那一行）。此前 footerLeft 是 flex:1（basis 0）而本块 margin-left:auto
+   * 且 flex-shrink:0——实测窄栏下本块硬占 406px、把 footerLeft 挤到 198px，
+   * Provider/Model 被压到标签叠字。 */
   flex-shrink: 0;
+  min-width: 0;
+  flex-wrap: wrap;
   ${MOBILE} {
     /* 窄屏：授权开关与警示 pill 独占整行（flex-basis 强制换行，与 footerLeft 不再共享行宽），
      * pill 允许截断不撑破容器 */
-    flex-wrap: wrap;
     flex-basis: 100%;
     margin-left: 0;
     max-width: 100%;
-    min-width: 0;
   }
 `
 
