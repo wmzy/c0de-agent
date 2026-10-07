@@ -151,6 +151,37 @@ const topStatus = css`
   color: var(--haze-color-text-secondary);
 `
 
+/**
+ * 发送失败提示条：独占一行、可换行、role="alert"（读屏播报）。
+ *
+ * 此前错误挤在顶栏 status 槽里，单行 nowrap + ellipsis：1280 宽就已截断，
+ * 1024 宽实测 clientWidth 473 / scrollWidth 529（尾部 10% 被「…」吃掉），
+ * 而截断掉的部分恰恰是补救指令——「请检查拼写，或前往「设置 → Provider」
+ * 添加该服务」。悬停 title 是唯一全文入口，触屏无 title、无 hover，
+ * 读屏也读不到（span 无 role）。窄屏下顶栏还挤着视图切换/终端/原始 JSON，
+ * 整条提示被挤到只剩省略号，等于「发送失败」这件事的处置方式对多数用户不可见。
+ * 独占一行后错误全文始终完整可读，且 alert 角色让屏幕阅读器立即念出。
+ */
+const errorBanner = css`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--haze-color-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--haze-color-danger) 10%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--haze-color-danger);
+`
+
+/** 提示文案：不限行数（wrap），容器再窄也只增高不丢字。 */
+const errorBannerText = css`
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+`
+
 /* 流控按钮（暂停/恢复/中止）：ghost 化融入 secondary 底色横条；中止用 error 色警示 */
 const ctlBtn = css`
   border: none;
@@ -685,33 +716,12 @@ export function Chat({
           </Button>
         </section>
         <div className={topSpacer} />
-        {/* topStatus 单行截断仅是排布：错误全文经 title 悬停可达（usage 态无需） */}
-        {error || usage ? (
-          <>
-            <span
-              className={topStatus}
-              style={error ? { color: 'var(--haze-color-danger)' } : undefined}
-              title={error ?? undefined}
-            >
-              {error
-                ? error
-                : usage
-                  ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
-                  : ''}
-            </span>
-            {error && !isStreaming && !creating && onRetry ? (
-              <button
-                type="button"
-                className={ctlBtn}
-                onClick={onRetry}
-                disabled={retryPending}
-                data-testid="retry"
-                title="重发最后一条消息；失败前已执行的工具可能重复执行"
-              >
-                重试
-              </button>
-            ) : null}
-          </>
+        {/* usage 态（token 计数）留在顶栏：它是常驻计量、单行短文本，截断无信息损失。
+            error 态改由下方 errorBanner 独占一行承载（见 errorBanner 注释）。 */}
+        {!error && usage ? (
+          <span className={topStatus}>
+            {`${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`}
+          </span>
         ) : null}
         {isStreaming && !paused ? (
           <button onClick={onPause} type="button" className={ctlBtn} data-testid="pause">
@@ -756,6 +766,23 @@ export function Chat({
           原始 JSON
         </button>
       </div>
+      {error ? (
+        <div className={errorBanner} data-testid="send-error" role="alert">
+          <span className={errorBannerText}>{error}</span>
+          {!isStreaming && !creating && onRetry ? (
+            <button
+              type="button"
+              className={ctlBtn}
+              onClick={onRetry}
+              disabled={retryPending}
+              data-testid="retry"
+              title="重发最后一条消息；失败前已执行的工具可能重复执行"
+            >
+              重试
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {permissionTimeout ? (
         <div className={interruptBanner} data-testid="permission-timeout-banner">
           <span>

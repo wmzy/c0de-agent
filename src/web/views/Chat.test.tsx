@@ -82,6 +82,30 @@ describe('Chat pause/resume/steer controls', () => {
     expect(screen.queryByTestId('resume')).toBeNull()
   })
 
+  // 回归：发送失败曾挤在顶栏单行 status 槽里（nowrap + ellipsis），1280 宽起截断，
+  // 唯一全文入口是 hover title——触屏无 title、无 hover，读屏（span 无 role）也读不到。
+  // 被截掉的偏偏是补救指令（去设置 / 检查拼写），等于「发送失败」对多数用户不可处置。
+  it('发送失败全文完整可读，且以 alert 角色暴露给读屏', () => {
+    const reason = '未找到名为「」的 AI 服务。已配置：dead。请检查拼写，或前往「设置 → Provider」添加该服务。'
+    renderChat({ isStreaming: false, error: reason })
+    const banner = screen.getByTestId('send-error')
+    // 全文在可及名称/文本内容里，不靠 title 属性兜底
+    expect(banner.textContent).toContain('添加该服务')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.querySelector('span')?.textContent).toBe(reason)
+  })
+
+  it('发送失败时重试按钮与提示同处提示条（不再被挤在单行状态槽）', () => {
+    renderChat({ isStreaming: false, error: 'LLM 请求失败', onRetry: vi.fn() })
+    const banner = screen.getByTestId('send-error')
+    expect(banner.contains(screen.getByTestId('retry'))).toBe(true)
+  })
+
+  it('无错误时不渲染提示条', () => {
+    renderChat({ isStreaming: false })
+    expect(screen.queryByTestId('send-error')).toBeNull()
+  })
+
   it('运行出错且非流式时展示重试按钮并回调 onRetry', () => {
     const onRetry = vi.fn()
     renderChat({ isStreaming: false, error: 'LLM 请求失败', onRetry })
