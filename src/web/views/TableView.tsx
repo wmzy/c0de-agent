@@ -30,6 +30,11 @@ const filterInput = css`
   color: var(--haze-color-text);
   font-size: 12px;
   min-width: 0;
+  /* 自适应内容宽度：haze SelectCore 的 width:100% 会让每个筛选项撑满整行，
+   * 4 个控件竖着排满一屏（实测每个 1106px），工具条形同失效。见 tokens.compactSelect。 */
+  width: auto;
+  max-width: 240px;
+  text-overflow: ellipsis;
 
   &:focus {
     outline: none;
@@ -243,6 +248,10 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
         <SyncedInput
           className={filterInput}
           placeholder="搜索…"
+          /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
+           * 为空时拿它兜底，但那是脆弱的名字来源）。与相邻的三个筛选下拉并列，
+           * 读屏用户需要一个稳定字段名来区分这是搜什么。 */
+          aria-label="搜索当前会话的消息与调用"
           value={q}
           onChange={(v) => setQ(v)}
           data-testid="table-search"

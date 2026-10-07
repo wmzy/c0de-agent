@@ -332,6 +332,9 @@ export function CardEditDialog({
           className={titleInput}
           value={titleVal}
           onChange={(v) => setTitleVal(v)}
+          /* 这里的「标题/描述」是 span 而非 label[for]，读屏不会把它与控件
+           * 关联，控件本身也没有 placeholder——无名称输入框。 */
+          aria-label="标题"
           data-testid="card-title-input"
         />
       </div>
@@ -343,6 +346,7 @@ export function CardEditDialog({
           value={description}
           onChange={(v) => setDescription(v)}
           placeholder="添加详细描述…"
+          aria-label="描述"
           data-testid="card-desc-input"
         />
       </div>
@@ -407,6 +411,7 @@ export function CardEditDialog({
           <SyncedInput
             className={labelNameInput}
             placeholder="新标签名…"
+            aria-label="新标签名"
             value={newLabelName}
             onChange={(v) => setNewLabelName(v)}
             onKeyDown={(e) => {

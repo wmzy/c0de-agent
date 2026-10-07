@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { useEffect } from 'react'
 import { useControl } from 'react-use-control'
 import { MobileNav } from '@/components/MobileNav.js'
+import { MOBILE } from '@/styles/breakpoints.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
 // 侧栏宽度：Workbench 硬区间 160–480，产品下限保留 200。
@@ -34,6 +35,26 @@ const layoutStyle = css`
   flex: 1;
   min-height: 0;
   width: 100%;
+`
+
+/**
+ * 移动端给底部导航条让位。
+ *
+ * MobileNav 是 position:fixed 的 56px 高条，脱离文档流、不占位。让位对象是
+ * 本布局列的整个内容盒（Workbench + 其下的终端面板），而不是只给
+ * .haze-Workbench__editor 加内边距——终端面板渲染在 Workbench 之外，只补
+ * 编辑区时它仍会伸到视口底部被导航条盖住。390×844 实测：xterm 屏幕
+ * 667–843，导航条 788–844，终端最后约 55px（当前提示行/输入行）被压在
+ * 导航条下——手机上既看不到自己敲了什么，也点不到最后几行。
+ *
+ * 编辑区原来靠自身 padding-bottom 让位：改成整列让位后它的可滚动内容高度
+ * 不变（原来那 56px 本就被导航条遮住、看不见），聊天页的输入框/发送按钮
+ * 行为与之前一致。桌面端导航为 display:none，媒体查询不生效。
+ */
+const mobileNavGutter = css`
+  ${MOBILE} {
+    padding-bottom: 56px;
+  }
 `
 
 type LayoutProps = {
@@ -85,7 +106,7 @@ export function Layout({
   }, [panelWidth])
 
   return (
-    <div className={layoutStyle}>
+    <div className={`${layoutStyle} ${mobileNavGutter}`}>
       {headerNode && <>{headerNode}</>}
       <Workbench
         // Workbench 根默认 height:100dvh；本布局是 appShell 内的 flex

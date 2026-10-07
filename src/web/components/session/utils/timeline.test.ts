@@ -288,3 +288,34 @@ describe('userMessageText', () => {
     expect(userMessageText(m)).toBe('')
   })
 })
+
+// 回归：纯图片消息没有可读文本，滞留条此前显示「(空消息)」，
+// 用户看到的是一条看似空白的消息，无法确认自己发过什么。
+describe('userMessageText 图片', () => {
+  it('纯图片消息返回 (图片) 而非空串', () => {
+    const m: Message = {
+      id: '1',
+      sessionId: 's',
+      role: 'user',
+      content: [{ _tag: 'image', mediaType: 'image/png', data: 'AAAA' }],
+      tokenCount: 0,
+      createdAt: 1,
+    }
+    expect(userMessageText(m)).toBe('(图片)')
+  })
+
+  it('图文消息优先返回文字', () => {
+    const m: Message = {
+      id: '1',
+      sessionId: 's',
+      role: 'user',
+      content: [
+        { _tag: 'text', text: '看图' },
+        { _tag: 'image', mediaType: 'image/png', data: 'AAAA' },
+      ],
+      tokenCount: 0,
+      createdAt: 1,
+    }
+    expect(userMessageText(m)).toBe('看图')
+  })
+})

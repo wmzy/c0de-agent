@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import type { Message } from '@shared/types/message.js'
 import { memo, type ReactNode } from 'react'
 import { AssistantTextBlock } from '@/components/session/AssistantTextBlock.js'
+import { MessageImage } from '@/components/session/MessageImage.js'
 import { PartDecoration } from '@/components/session/PartDecoration.js'
 import { ReasoningBlock } from '@/components/session/ReasoningBlock.js'
 import { useShakeMode } from '@/components/session/ShakeContext.js'
@@ -206,6 +207,9 @@ export const MessageItem = memo(function MessageItem({
             break
           case 'steering':
             body = <UserTextBlock text={block.text} />
+            break
+          case 'image':
+            body = <MessageImage mediaType={block.mediaType} data={block.data} />
             break
           case 'tool':
             body = <ToolBlock block={block} forceExpand={forceExpand} />

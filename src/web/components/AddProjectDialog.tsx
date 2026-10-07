@@ -2,35 +2,10 @@ import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useState } from 'react'
+import { Dialog } from '@/components/Dialog.js'
 import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 import { projectAPI } from '@/services/project.js'
 import type { Project } from '@/types/index.js'
-
-const overlay = css`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-`
-
-const dialog = css`
-  background: var(--haze-color-bg);
-  border-radius: 8px;
-  padding: 20px;
-  width: min(480px, 92vw);
-  box-shadow: var(--haze-shadow-md);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`
-
-const title = css`
-  font-size: 16px;
-  font-weight: 600;
-`
 
 const hint = css`
   font-size: 12px;
@@ -40,12 +15,6 @@ const hint = css`
 const errorMsg = css`
   font-size: 12px;
   color: var(--haze-color-danger);
-`
-
-const actions = css`
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
 `
 
 type AddProjectDialogProps = {
@@ -70,8 +39,8 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
       onClose()
     },
     onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      // APIError 现在是真正的 Error（services/api.ts），常规写法即可拿到后端原因。
+      setError(err instanceof Error ? err.message : String(err))
     },
   })
 
@@ -84,23 +53,12 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
   }
 
   return (
-    <div className={overlay} role="presentation" data-testid="add-project-dialog">
-      <div className={dialog}>
-        <div className={title}>添加项目</div>
-        <DirectoryPicker
-          value={directory}
-          onChange={setDirectory}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
-            if (e.key === 'Escape') onClose()
-          }}
-          placeholder="/path/to/your/project"
-          testId="add-project-input"
-          autoFocus
-        />
-        <div className={hint}>输入目录名可递归搜索深层目录，或在文件树中浏览选择。</div>
-        {error ? <div className={errorMsg}>{error}</div> : null}
-        <div className={actions}>
+    <Dialog
+      onClose={onClose}
+      title="添加项目"
+      testId="add-project-dialog"
+      footer={
+        <>
           <Button onClick={onClose} variant="outline">
             取消
           </Button>
@@ -112,9 +70,22 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
           >
             {create.isPending ? '创建中…' : '添加'}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <DirectoryPicker
+        value={directory}
+        onChange={setDirectory}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submit()
+        }}
+        placeholder="/path/to/your/project"
+        testId="add-project-input"
+        autoFocus
+      />
+      <div className={hint}>输入目录名可递归搜索深层目录，或在文件树中浏览选择。</div>
+      {error ? <div className={errorMsg}>{error}</div> : null}
+    </Dialog>
   )
 }
 

@@ -16,6 +16,14 @@ export const globalStyle = css`
     margin: 0;
     padding: 0;
   }
+  /**
+   * 原生 <dialog> 靠 UA 默认样式表的 margin:auto 在 top layer 内水平+垂直居中；
+   * 上面的 \`* { margin: 0 }\` 通配把它抹成 0，导致所有弹层（删除项目、添加项目、
+   * 分段、提交审查等 8 个 Dialog 使用方）贴在视口左上角而非居中。显式还原。
+   */
+  :global(dialog:modal) {
+    margin: auto;
+  }
   :global(html),
   :global(body),
   :global(#root) {
@@ -128,8 +136,22 @@ export const globalStyle = css`
     padding: 0;
     accent-color: var(--haze-color-primary);
   }
-  /* 统一按钮基础：仅原生按钮（组件类按钮自持样式或走 haze Button） */
-  :global(button${NATIVE}) {
+  /*
+   * 统一按钮基础：仅原生按钮（组件类按钮自持样式或走 haze Button）。
+   *
+   * 整条规则必须包在 :where() 里——:where() 内部的选择器特异度为 0，
+   * 因此本规则只当「裸按钮的兜底底色」，任何组件自带的 linaria 类都能正常覆盖它。
+   * 此前直接写 button:not([class*="haze-"])，其特异度为 (0,1,1)，
+   * 高于任何单类 (0,1,0)：全站 11 个自绘按钮（segBtn/toolBtn/btn/dangerBtn/
+   * actionBtn/linkBtn/btnSm…）的 padding、background、border、color 全被压掉。
+   * 后果不是「样式不好看」而是语义丢失——
+   *   - dangerBtn 声明的 background: var(--haze-color-danger) 被中性底色覆盖，
+   *     「清空回收站」这类不可逆操作的确认按钮与「取消」渲染得完全一样；
+   *   - segBtnActive 的 primary 底色同样被覆盖，分段控件的选中项与未选中项
+   *     背景/文字色/字重全部一致，用户无法判断当前处于哪个视图。
+   * :not([class*="haze-"]) 仍用于排除 haze 自带样式的控件（Input/Select/Button）。
+   */
+  :global(:where(button${NATIVE})) {
     color: var(--haze-color-text);
     background: var(--haze-color-bg-subtle);
     border: 1px solid var(--haze-color-border);
@@ -137,11 +159,11 @@ export const globalStyle = css`
     padding: 8px 12px;
     transition: background 0.15s, border-color 0.15s;
   }
-  :global(button${NATIVE}:hover:not(:disabled):not([aria-disabled='true'])) {
+  :global(:where(button${NATIVE}):hover:not(:disabled):not([aria-disabled='true'])) {
     background: color-mix(in srgb, var(--haze-color-bg-subtle) 80%, var(--haze-color-text) 8%);
   }
   /* 键盘可达性：Tab 聚焦时与输入控件同款焦点环（鼠标点击不触发） */
-  :global(button${NATIVE}:focus-visible) {
+  :global(:where(button${NATIVE}):focus-visible) {
     outline: none;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
     border-color: var(--haze-color-primary);
@@ -150,8 +172,8 @@ export const globalStyle = css`
    * 禁用态全局语义：真实 disabled 与 aria-disabled 等同——文字降对比度、
    * 背景变浅、cursor:not-allowed，hover 已被上方 :not() 守卫排除。
    */
-  :global(button${NATIVE}:disabled),
-  :global(button${NATIVE}[aria-disabled='true']) {
+  :global(:where(button${NATIVE}):disabled),
+  :global(:where(button${NATIVE})[aria-disabled='true']) {
     color: var(--haze-color-text-muted);
     background: var(--haze-color-bg-muted);
     cursor: not-allowed;
@@ -178,9 +200,36 @@ export const globalStyle = css`
    * 对比度仅 2.1（AA 需 4.5），而该 token 被 15+ 处当正文色（警示条/pill/
    * git 状态/预算告警）。输出色保持琥珀色相、只压低明度；暗色不动
    * （dark 值 CR≈11）。实色用途（实心按钮底）随之变深反而更高对比。
+   *
+   * 明度由 0.55 再降到 0.53：warning 常被铺在自身 10% 淡底上
+   * （color-mix(warning 10%)，实测合成底 #f6efe9 而非纯白），混合底
+   * 比白底更暗、对比更差——0.55 在该底上只有 4.42，在权限条 pill
+   * （warning 10% 底 + 边框）上更只有 4.15，均低于 AA 要求的 4.5。
+   * 0.53 在两种底上分别为 4.83 / 4.7，白底上 5.5。
    */
   :global(html[data-theme='light']) {
-    --haze-color-warning: oklch(0.55 0.12 55);
+    --haze-color-warning: oklch(0.53 0.12 55);
+  }
+
+  /*
+   * primary-on-tinted：primary 蓝被铺在「自身色相的淡底」上时用。
+   *
+   * --haze-color-primary 面向白/浅底设计（light 值 oklch(0.563 0.241 260.8)
+   * 在白底 4.83），但若把它放在 primary 10% / warning 10% 这类混合淡底上，
+   * 合成底比白底更暗、对比更差：SetupBanner 的「去设置」CTA 铺在
+   * warning 10% 底（#f6efe9）上时实测仅 4.24，低于 AA 要求的 4.5。
+   *
+   * 仅压低 light 态明度到 0.535（同色相同彩度，白底 5.47、淡底 4.81）；
+   * dark 态不动，沿用 --haze-color-primary 本身——暗色主题下 primary 是
+   * 亮蓝（#005cf5），本来就在深底上够亮，若沿用 light 的压暗值反而
+   * 掉到 2.86。token 只在需要「蓝字压在淡底上」处用，其余场景继续用
+   * --haze-color-primary。
+   */
+  :global(html[data-theme='light']) {
+    --c0de-primary-on-tint: oklch(0.535 0.241 260.8);
+  }
+  :global(html[data-theme='dark']) {
+    --c0de-primary-on-tint: var(--haze-color-primary);
   }
 
   /*
@@ -191,5 +240,35 @@ export const globalStyle = css`
     outline: 2px solid var(--haze-color-primary);
     outline-offset: 2px;
     border-radius: 2px;
+  }
+
+  /*
+   * 动效降级（WCAG 2.3.3 Animation from Interactions / 2.2.2）。
+   *
+   * 本应用此前全站零 prefers-reduced-motion 处理，四处动画照常无限循环：
+   * 提交按钮脉冲（CommitButton pulse 2s infinite）、骨架屏呼吸
+   * （ChatView skeletonPulse 1.5s infinite）、工作流节点脉冲
+   * （WorkflowGraph wf-pulse 1.2s infinite）、生成中进度点
+   * （Chat wfProgressPulse 1.4s infinite）。前庭功能障碍用户开启系统
+   * 「减少动态效果」后，这些循环仍持续播放——实测 emulated
+   * prefers-color-scheme/media=reduce 下 animation-iteration-count 仍为 infinite。
+   *
+   * 收敛成一条全局规则而非逐个组件加媒体查询：动画定义分散在 4 个文件，
+   * 漏一处就等于该处照旧播放；且 haze-ui 内部动画（tooltip 浮入等）本项目
+   * 同样无法逐个改写。全局归零一次覆盖全部来源，新加动画自动受约束。
+   *
+   * 只归零 animation/transition 的时长与位移，不隐藏元素、不改 layout——
+   * 骨架屏与进度点停在各自的静态终态（opacity 0.45 / 1、scale(1)），
+   * 「正在加载」这一信息本身仍然可见。跳过 scroll-behavior：设置页 TOC
+   * 分区跳转的平滑滚动是导航反馈而非装饰，且瞬时滚动会让人失去方位感。
+   */
+  @media (prefers-reduced-motion: reduce) {
+    :global(*),
+    :global(*::before),
+    :global(*::after) {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 `

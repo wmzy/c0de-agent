@@ -804,6 +804,119 @@ describe('useChat 并发守卫（RUN_ACTIVE）', () => {
   })
 })
 
+// 回归：白名单外的服务端 HTTP 错误此前统统落进「网络错误视为中断」——顶栏错误位
+// 空白、横幅谎报服务重启、乐观 user 消息留在时间线上，而「恢复对话」只是重发同一
+// 请求、必然再次失败。这里钉死「服务端错误 → 透出后端文案 + 撤回乐观消息」，
+// 同时保住「真网络故障 → 中断」这一条。
+describe('useChat 服务端错误分类', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function renderChat() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    return renderHook(() => useChat('s1'), { wrapper })
+  }
+
+  function stubHttpError(status: number, code: string, message: string) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status,
+        json: async () => ({ error: { code, message } }),
+        text: async () => JSON.stringify({ error: { code, message } }),
+      })),
+    )
+  }
+
+  it('RUN_STARTING（409）透出后端文案、撤回乐观 user 消息、不标记中断', async () => {
+    stubHttpError(409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
+    const { result } = renderChat()
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.error).toBe('该会话的对话正在启动，请稍后重试')
+    expect(result.current.messages.some((m) => m.role === 'user')).toBe(false)
+    expect(result.current.interrupted).toBe(false)
+  })
+
+  it('404 会话已删除：给出后端的可恢复提示，而不是「服务可能已重启」', async () => {
+    stubHttpError(404, 'NOT_FOUND', '会话不存在或已删除（如需继续对话请先从回收站恢复）')
+    const { result } = renderChat()
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.error).toBe('会话不存在或已删除（如需继续对话请先从回收站恢复）')
+    expect(result.current.interrupted).toBe(false)
+  })
+
+  it('401 认证失效：透出带操作指引的文案（从 serve 输出的 URL 重新进入）', async () => {
+    stubHttpError(401, 'UNAUTHORIZED', '认证失败')
+    const { result } = renderChat()
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.error).toContain('认证失败')
+    expect(result.current.error).toContain('serve 输出的 URL')
+    expect(result.current.interrupted).toBe(false)
+  })
+
+  it('真网络故障（fetch reject，无 status）仍视为连接中断', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+    const { result } = renderChat()
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.interrupted).toBe(true)
+    expect(result.current.error).toBeNull()
+  })
+
+  // retry（重试 / 恢复对话）不追加 user 消息。撤回逻辑此前按「最后一条是 user 就
+  // pop」执行，对重发同样生效——一次 404/500 的重发失败会把一条**已落库**的历史
+  // 消息从时间线上抹掉，而 messages 查询早于落库取过，不会自动补回，
+  // 「重试」按钮也再也救不回来。
+  it('重发失败不得撤掉不属于本次的已落库消息', async () => {
+    stubHttpError(404, 'NOT_FOUND', '会话不存在或已删除')
+    const { result } = renderChat()
+    // 先成功发一条（落库且留在时间线上）
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: async () => ({ done: true, value: undefined }),
+            cancel: async () => {},
+          }),
+        },
+        text: async () => '',
+      })),
+    )
+    await act(async () => {
+      await result.current.sendMessage('已落库的那条')
+    })
+    const persisted = result.current.messages.filter((m) => m.role === 'user')
+    expect(persisted).toHaveLength(1)
+
+    // 再走 retry（不追加消息）并让它失败
+    stubHttpError(404, 'NOT_FOUND', '会话不存在或已删除')
+    await act(async () => {
+      await result.current.retry('已落库的那条')
+    })
+
+    // 错误照常透出，但那条已落库的用户消息必须还在
+    expect(result.current.error).toBe('会话不存在或已删除')
+    expect(result.current.messages.filter((m) => m.role === 'user')).toHaveLength(1)
+  })
+})
+
 // 回归（P1 人机文件协作）：write/edit 工具结束 → 失效对应文件的预览/编辑器查询。
 // 此前全库无任何 ['file'] invalidation——agent 改完文件后已打开的 FilePreview
 // 永远陈旧，用户对着旧内容保存还会盲写覆盖（冲突检测由 CodeEditor 兜底）。

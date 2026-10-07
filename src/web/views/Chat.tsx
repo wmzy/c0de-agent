@@ -1,7 +1,13 @@
 import { css } from '@linaria/core'
 import { Button } from 'haze-ui'
-import type { ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+  TouchEvent as ReactTouchEvent,
+  WheelEvent as ReactWheelEvent,
+} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '@/components/StreamingIndicator.js'
 import { StickyUserMessage } from '@/components/session/StickyUserMessage.js'
 import { TimelineChat } from '@/components/session/TimelineChat.js'
@@ -11,6 +17,7 @@ import {
   userMessageText,
 } from '@/components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '@/composer/Composer.js'
+import type { ImagePart, Prompt } from '@/composer/types.js'
 import type { AgentListItem } from '@/services/agent.js'
 import {
   broadcastModeChange,
@@ -31,12 +38,17 @@ type ChatProps = {
   usage: { input: number; output: number } | null
   error?: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
-  onSend: (payload: SendPayload) => void
+  /** 返回 false/Promise<false> 表示消息没送出去，输入框据此还原草稿。 */
+  onSend: (payload: SendPayload) => boolean | undefined | Promise<boolean | undefined>
+  /** 导航后把失败的消息灌回输入框（草稿页用于承接首条失败的消息）。 */
+  restoreDraft?: { prompt: Prompt; images: ImagePart[] } | null
   onAbort: () => void
   /** 确认/拒绝权限请求；alwaysAllow=true 时同时把该工具加入会话白名单。 */
   onConfirm: (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => void
   /** 运行出错后重试最后一条 user 消息（P2-1：与中断恢复对等的入口）。 */
   onRetry?: () => void
+  /** 重发（重试/恢复）在途：按钮禁用，避免在 await 窗口内重复提交。 */
+  retryPending?: boolean
   /** 暂停 agent loop（spec §19）；isStreaming 时可用。 */
   onPause?: () => void
   /** 恢复已暂停的 agent loop。 */
@@ -61,6 +73,12 @@ type ChatProps = {
   agents?: AgentListItem[]
   /** 时间线为空时渲染在消息流中央的空状态（欢迎区/示例卡片），由 ChatView 注入。 */
   emptyState?: ReactNode
+  /**
+   * 终端面板开关（聊天页提供）。此前终端只有一个键盘入口 Ctrl+`——
+   * 鼠标/触屏用户看不到任何入口，也就无从发现有终端这回事；
+   * 提供时在顶栏渲染一个可与键盘快捷键对等的按钮。
+   */
+  terminalToggle?: { open: boolean; onToggle: () => void }
   /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
   permissionTimeout?: {
     toolCallId: string
@@ -78,6 +96,29 @@ type ChatProps = {
 
 /* 顶栏合并行：视图切换 + 运行状态 + 流控按钮 + 原始 JSON 单行排布，
  * 替代原先 toolbar/viewBar 两层横条，为消息流腾出垂直空间。 */
+/**
+ * 聊天列根容器：占满 .haze-Workbench__editor 并建立纵向 flex 上下文。
+ *
+ * 此前 Chat 返回 Fragment，顶栏/消息流/权限条/输入框直接平铺在 Workbench 的
+ * <main> 里，而该 <main> 是 haze Workbench 提供的 display:block 容器——
+ * 块级布局下 stream 的 flex:1 完全失效（block 子项不吃剩余空间，只按内容高度
+ * 堆叠）。实测 1440×900：消息流仅 393px，而最后一行输入框 bottom=634，
+ * <main> 底边 896 —— 底部 234px 死区；内容一多 <main> 开始滚动，滚动时
+ * 顶栏被推出视口（top=-355），输入框与「发送」按钮一并滚出屏幕
+ * （scrollTop=400 时 view-bar top=-355 已不可见），而消息流本身又是独立滚动
+ * 容器，用户既无法把输入框滚回来，也无法用滚轮把消息读完。
+ *
+ * 建立 flex 列后：消息流 flex:1 吃掉全部剩余高度（393 → 627px），
+ * 顶栏与输入区恒在视口内，输入区增长只压缩消息流。
+ * min-height:0 是 flex 子项不撑破容器的必要条件（否则内容高度会顶开父级）。
+ */
+const column = css`
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+`
+
 const topBar = css`
   display: flex;
   align-items: center;
@@ -115,6 +156,19 @@ const ctlBtn = css`
   &:hover:not(:disabled) {
     color: var(--haze-color-text);
     background: color-mix(in srgb, var(--haze-color-text) 8%, transparent);
+  }
+
+  /* 在途禁用态（重发等待 /messages 往返等）：必须有可辨识的视觉差异，
+     否则按钮看起来仍可点，用户会反复点击并以为应用卡住 */
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* 面板开关态（终端）：与「恢复」等一次性动作按钮区分——它是常驻开关 */
+  &[aria-pressed='true'] {
+    color: var(--haze-color-primary);
+    background: color-mix(in srgb, var(--haze-color-primary) 12%, transparent);
   }
 `
 
@@ -187,6 +241,39 @@ const stream = css`
   gap: 4px;
   padding: 16px;
   overflow-y: auto;
+`
+
+/** 距底多少 px 内仍视为贴底：容忍小数像素与虚拟化测量误差，
+ *  避免「明明在底部却被判成上滚」而停止跟随。 */
+const BOTTOM_THRESHOLD = 32
+
+/** 触摸位移死区（px）：小于它视为抖动，不解除跟随。 */
+const TOUCH_SCROLL_SLOP = 6
+
+/** 「回到底部」：用户上滚后不再自动跟随（见下方滚动 effect），需要一个显式入口
+ *  回到最新内容。sticky 定位在滚动容器底缘——正常位置是内容末尾，上滚时吸在底部。 */
+const jumpBtn = css`
+  position: sticky;
+  bottom: 0;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 999px;
+  background: var(--haze-color-bg);
+  box-shadow: var(--haze-shadow-md);
+  color: var(--haze-color-text);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
 `
 
 /* P1-6：权限确认超时横幅（与 ChatSession 的中断横幅同款式） */
@@ -316,9 +403,30 @@ const modeToggle = css`
   min-height: 32px;
 `
 
-/** 关闭态中性说明：次级文本色，无警示语义。 */
+/** 关闭态中性说明：次级文本色，无警示语义。
+ *
+ * 窄屏转 sr-only 视觉隐藏：文案「工具执行前逐个确认（全局默认）」在 390px 宽下
+ * 独占一整行，把底栏从 2 行撑到 3 行——实测 844px 视口下底栏高达 149px（占 18%），
+ * 消息流只剩 347px，欢迎区四张示例卡被压到滚三次才能读完，聊天区反而成了配角。
+ * 隐藏后底栏 149 → 113px，消息流 347 → 383px（+10%）。
+ *
+ * 不直接 display:none：这句是「未开启自动授权」的语义说明，触屏没有 hover
+ * title 提示，删掉后用户无法分辨当前是逐个确认还是已放行。sr-only 保留在无障碍树中，
+ * 读屏用户仍能听到；视觉信息与相邻的「自动授权」开关同义，属可安全折叠的冗余文案。 */
 const modeHint = css`
   color: var(--haze-color-text-secondary);
+  ${MOBILE} {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
 `
 
 /** 开启态警示 pill：描边淡底（--warning 前景 + 10% 底 + 45% 边框），短文案降噪，
@@ -388,9 +496,11 @@ export function Chat({
   onDenyTimedOutPermission,
   workflowProgress,
   onSend,
+  restoreDraft,
   onAbort,
   onConfirm,
   onRetry,
+  retryPending,
   onPause,
   onResume,
   onSteer,
@@ -404,9 +514,42 @@ export function Chat({
   sessionId,
   agents = [],
   emptyState,
+  terminalToggle,
 }: ChatProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
+  // 是否跟随最新内容：只在「用户主动上滚」时停止，回到底部/主动发送/切换会话时恢复。
+  // 判据必须是用户输入事件（滚轮/触摸/键盘/滚动条拖拽）：内容增减会改变可滚动高度，
+  // 浏览器随即钳制 scrollTop，用「距底距离」或「scrollTop 变小」判定会把钳制误当成
+  // 上滚，从而在流式输出中途永久停止跟随（实测 gap 一路涨到 1533px 不再回到底部）。
+  const followingRef = useRef(true)
+  const [following, setFollowing] = useState(true)
+  const touchYRef = useRef<number | null>(null)
+
+  const setFollowingState = useCallback((next: boolean) => {
+    followingRef.current = next
+    setFollowing((prev) => (prev === next ? prev : next))
+  }, [])
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const el = streamRef.current
+      if (!el) return
+      setFollowingState(true)
+      el.scrollTo({ top: el.scrollHeight, behavior })
+    },
+    [setFollowingState],
+  )
+
+  // 滚动事件只负责「重新跟上」（滚到底部即恢复跟随），不负责「解除」。
+  const handleStreamScroll = useCallback(() => {
+    const el = streamRef.current
+    if (!el) return
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD) {
+      setFollowingState(true)
+    }
+  }, [setFollowingState])
+
+  const stopFollowing = useCallback(() => setFollowingState(false), [setFollowingState])
   // 顶部滞留用户消息：滚动时钉住视口上方最近一条用户消息，支持点击跳转/上下导航。
   const stickyUserMessages = useMemo(
     () =>
@@ -421,11 +564,45 @@ export function Chat({
   // 视图模式：同一份时间线数据的三种并列展示。
   //   chat  — 美化卡片；table — 平铺表格；json — 全量原始 JSON（含隐藏空壳消息）。
   const [viewMode, setViewMode] = useState<'chat' | 'table' | 'json'>('chat')
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在时间线长度变化时滚动，避免内容更新触发抖动
+  // 切换会话/视图：内容整体替换，滚动位置不能沿用（否则停在上一个会话的半截）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 会话/视图切换是重定位的触发条件，不参与计算
+  useEffect(() => {
+    scrollToBottom('auto')
+  }, [sessionId, viewMode, scrollToBottom])
+  // 跟随内容增长。依赖 timeline 引用而非 length：流式增量（text_delta / tool_call）
+  // 就地追加到最后一条消息，行数不变——只看 length 会让长回复一个字都不跟随，
+  // 而新行落地时的无条件滚动又把上滚阅读的用户强行拽到底部。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: timeline 引用变化即内容增长（流式增量不改行数）
   useEffect(() => {
     if (viewMode === 'table') return
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [timeline.length, viewMode])
+    if (!followingRef.current) return
+    scrollToBottom('auto')
+  }, [timeline, viewMode, scrollToBottom])
+
+  /** 用户输入事件：只有这些才解除跟随（滚轮上滚 / 触摸下滑 / 翻页键 / 拖滚动条）。 */
+  const handleStreamWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
+    if (e.deltaY < 0) stopFollowing()
+  }
+  const handleStreamTouchStart = (e: ReactTouchEvent<HTMLDivElement>) => {
+    touchYRef.current = e.touches[0]?.clientY ?? null
+  }
+  const handleStreamTouchMove = (e: ReactTouchEvent<HTMLDivElement>) => {
+    const start = touchYRef.current
+    const y = e.touches[0]?.clientY
+    if (start === null || y === undefined) return
+    // 手指下滑（clientY 增大）= 内容向上翻 → 用户在看上文
+    if (y > start + TOUCH_SCROLL_SLOP) stopFollowing()
+  }
+  const handleStreamKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'PageUp' || e.key === 'ArrowUp' || e.key === 'Home') stopFollowing()
+  }
+  const handleStreamMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const el = streamRef.current
+    if (!el) return
+    // clientWidth 不含滚动条宽度：落点在其右侧即拖拽滚动条
+    const rect = el.getBoundingClientRect()
+    if (e.clientX >= rect.left + el.clientWidth) stopFollowing()
+  }
 
   // steering 由 Composer 直接驱动：流式态下「追加指令」按钮/Enter 注入运行中消息。
   // P1-5：权限模式按会话隔离（sessionId），跨标签页通过 BroadcastChannel 同步。
@@ -452,6 +629,11 @@ export function Chat({
       .then(() => broadcastModeChange({ sessionId: sessionId ?? null, mode: next }))
       .catch(() => setPermissionMode(permissionMode))
   }
+  const handleSend = (payload: SendPayload) => {
+    // 用户主动发送：无条件回到最新内容（此刻他就是想看到自己刚发出的消息）。
+    scrollToBottom('smooth')
+    return onSend(payload)
+  }
   const removeAlwaysAllow = (tool: string) => {
     if (!sessionId) return
     permissionAPI
@@ -461,7 +643,7 @@ export function Chat({
   }
 
   return (
-    <>
+    <div className={column}>
       <div className={topBar} data-testid="view-bar">
         <section className={viewSwitch} aria-label="视图模式">
           <Button
@@ -501,6 +683,7 @@ export function Chat({
                 type="button"
                 className={ctlBtn}
                 onClick={onRetry}
+                disabled={retryPending}
                 data-testid="retry"
                 title="重发最后一条消息；失败前已执行的工具可能重复执行"
               >
@@ -527,6 +710,18 @@ export function Chat({
             data-testid="abort"
           >
             中止
+          </button>
+        ) : null}
+        {terminalToggle ? (
+          <button
+            type="button"
+            className={ctlBtn}
+            aria-pressed={terminalToggle.open}
+            onClick={terminalToggle.onToggle}
+            data-testid="toggle-terminal"
+            title="终端面板（Ctrl+`）"
+          >
+            终端
           </button>
         ) : null}
         <button
@@ -580,14 +775,34 @@ export function Chat({
       {viewMode === 'table' ? (
         <TableView rows={timeline} />
       ) : (
-        <div className={stream} data-testid="stream" ref={streamRef}>
+        // biome-ignore lint/a11y/noStaticElementInteractions: 消息流滚动容器需捕获滚轮/触摸/键盘以判断用户是否上滚阅读，语义角色由内部时间线提供
+        <div
+          className={stream}
+          data-testid="stream"
+          ref={streamRef}
+          onScroll={handleStreamScroll}
+          onWheel={handleStreamWheel}
+          onTouchStart={handleStreamTouchStart}
+          onTouchMove={handleStreamTouchMove}
+          onKeyDown={handleStreamKeyDown}
+          onMouseDown={handleStreamMouseDown}
+        >
           {viewMode === 'chat' && (
             <StickyUserMessage containerRef={streamRef} messages={stickyUserMessages} />
           )}
           {timeline.length === 0 && emptyState}
           <TimelineChat rows={timeline} showAllJson={viewMode === 'json'} />
           {isStreaming && <StreamingIndicator />}
-          <div ref={bottomRef} />
+          {!following ? (
+            <button
+              type="button"
+              className={jumpBtn}
+              onClick={() => scrollToBottom('smooth')}
+              data-testid="jump-to-bottom"
+            >
+              ↓ 回到底部
+            </button>
+          ) : null}
         </div>
       )}
       {bottomPanel}
@@ -658,7 +873,8 @@ export function Chat({
       <Composer
         projectId={projectId}
         agents={agents}
-        onSend={onSend}
+        onSend={handleSend}
+        restoreDraft={restoreDraft}
         onAbort={onAbort}
         onSteer={onSteer}
         isStreaming={isStreaming}
@@ -677,6 +893,6 @@ export function Chat({
           pendingPermission && onConfirm(pendingPermission.toolCallId, false)
         }
       />
-    </>
+    </div>
   )
 }

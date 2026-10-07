@@ -46,26 +46,23 @@ const indicatorInline = css`
   margin-left: 4px;
   /* 随品牌区收缩（配合 brandGroup min-width:0），项目名省略号截断 */
   min-width: 0;
+  /* haze 的 DropdownMenu 会在触发器与本容器之间插入 .haze-DropdownMenu__wrapper，
+   * 该 wrapper 未置 min-width:0，flex 子项的自动最小尺寸 = 内容宽度，于是它拒绝
+   * 收缩并把按钮整体顶出本容器（390px 实测 wrapper 154px vs 容器 125px，溢出 29px
+   * 压住右侧成本徽标，徽标 x=171 被盖住）。直接子级一律放开最小尺寸，逐层
+   * min-width:0 链才闭合，溢出止于 projectName 的省略号。 */
+  & > * {
+    min-width: 0;
+  }
 `
 
-/** 项目切换触发器：可见按钮可供性（边框/背景/hover），
- *  避免被当成纯文本状态标签；▾ 与项目名垂直居中对齐。 */
+/** 项目名 + 图标 + ▾ 的行内排布；按钮外观见 triggerReset（落在 button 上）。 */
 const triggerBtn = css`
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  /* 触发器随容器收缩，项目名省略号截断 */
   min-width: 0;
   overflow: hidden;
-  padding: 3px 8px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
-  transition: border-color 0.12s ease;
-  &:hover {
-    border-color: var(--haze-color-primary);
-  }
 `
 
 const projectIcon = css`
@@ -82,21 +79,14 @@ const projectName = css`
   min-width: 0;
 `
 
+/** 分支名：等宽字体 + 次级色；边框/背景/hover 见 triggerReset。 */
 const branchTag = css`
+  display: inline-flex;
+  align-items: center;
   font-family: ui-monospace, monospace;
   font-size: 12px;
   color: var(--haze-color-text-secondary);
-  background: var(--haze-color-bg);
-  /* 白底 pill 压在 --bg-secondary 顶栏上，无描边则边界几乎不可见 */
-  border: 1px solid var(--haze-color-border);
-  padding: 1px 6px;
-  border-radius: 3px;
   flex-shrink: 0;
-  transition: border-color 0.12s ease;
-  &:hover {
-    border-color: var(--haze-color-primary);
-    color: var(--haze-color-text);
-  }
 `
 
 const caret = css`
@@ -124,19 +114,39 @@ const mobileHide = css`
 
 // ---- 下拉菜单样式（haze DropdownMenu 组合件 + 项目自有的增量样式） ----
 
-/** 触发器按钮复位：haze Trigger 渲染 button，这里去掉按钮外观只留内联布局。 */
+/**
+ * 触发器按钮外观：haze Trigger 渲染 button，视觉样式（边框/背景/padding/
+ * hover）必须落在**按钮本身**。
+ *
+ * 此前把它们挂在按钮内的 <span> 上，button 自身是 `padding:0` 的裸容器：
+ * 分支触发器实测按钮 68x22、描边 0px none、padding 0px——边框只有 22px 高，
+ * 可点区与视觉框错位，且 hover 高亮（span 上的 :hover）落在不可点的子元素上。
+ * 按钮现在即视觉框，点击区与所见一致，hover 也命中真实可点元素。
+ */
 const triggerReset = css`
   appearance: none;
-  border: none;
-  background: none;
-  padding: 0;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  padding: 3px 8px;
   margin: 0;
   font: inherit;
-  color: inherit;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
+  /* 随容器收缩，项目名省略号截断 */
+  min-width: 0;
+  /* haze 的 DropdownMenu__wrapper 是块级容器：块级容器不约束 inline-flex 子项的
+   * 宽度，按钮会按内容撑开而无视父级实际宽度（实测 wrapper 已收缩到 125px，按钮仍
+   * 154px 并压住右侧成本徽标 20px）。max-width 把按钮夹到父级宽度内，溢出改由
+   * 内层 projectName 的省略号承担。 */
+  max-width: 100%;
+  transition: border-color 0.12s ease;
+  &:hover {
+    border-color: var(--haze-color-primary);
+  }
 `
 
 /** 面板增量：长列表限宽限高滚动（haze 面板自带 min-width/padding/边框/阴影）。 */
@@ -549,6 +559,7 @@ function NewBranchForm({
       <SyncedInput
         className={branchInput}
         placeholder="新分支名…"
+        aria-label="新分支名"
         value={name}
         onChange={(v) => setName(v)}
         onKeyDown={(e) => {

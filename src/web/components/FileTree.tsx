@@ -68,8 +68,25 @@ const selectedRow = css`
   font-weight: 600;
 `
 
-const toggle = css`
-  width: 16px;
+/**
+ * 折叠/展开位的共享骨架：目录行是按钮，文件行是 aria-hidden 的占位。
+ *
+ * 两者必须等宽——目录行多一个展开按钮、文件行没有，宽度不等就会让每层
+ * 缩进的文件名左右错开（实测修复前两者各写一条规则、各写一个 16px，
+ * 任何一次只改其一的提交都会造成错位）。放进同一条规则后宽度只有一处事实源。
+ *
+ * 宽度 24px 而非原来的 16px：16px 宽的行内控件是侧栏里最难命中的尺寸，
+ * 侧栏 280px / 行高 36px，每个目录都要瞄一条 16px 竖缝。WCAG 2.5.8
+ * （Target Size Minimum，AA）下限是 24×24 CSS px，16px 连下限都不到。
+ * 24px 仍是紧凑行高，目录树密度不变。
+ *
+ * min-height: 32px 覆盖全局按钮的 44px 最小高度：行高只有 36px，让位给
+ * 44px 会把每行撑成两倍高。宽度同理不走 44px——侧栏放不下，且名字本身
+ * 已经是可点的大热区，展开按钮只需够得着。
+ */
+const toggleBase = css`
+  width: 24px;
+  flex-shrink: 0;
   text-align: center;
   background: transparent;
   border: none;
@@ -77,21 +94,15 @@ const toggle = css`
   cursor: pointer;
   padding: 0;
   font-size: 10px;
-`
-
-const toggleBtn = css`
-  width: 16px;
-  text-align: center;
-  background: transparent;
-  border: none;
-  color: var(--haze-color-text-secondary);
-  cursor: pointer;
-  padding: 0;
-  font-size: 10px;
-  /* 覆盖全局按钮 44px 最小尺寸：保持行高紧凑，触屏热区仍达 32px 高 */
   min-height: 32px;
   min-width: auto;
 `
+
+/** 文件行的折叠位：只占位，不接受点击。 */
+const toggle = toggleBase
+
+/** 目录行的展开/折叠按钮。 */
+const toggleBtn = toggleBase
 
 const rowBtn = css`
   flex: 1;

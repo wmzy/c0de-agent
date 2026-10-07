@@ -117,7 +117,7 @@ function UsagePanel({
   const unassigned = summary?.unassigned
 
   return (
-    <div className={section} data-testid="usage-panel">
+    <div className={section} id="usage" data-testid="usage-panel">
       <h2 className={sectionTitle}>用量与成本</h2>
       <div className={hint}>
         统计本项目全部会话（含回收站内已删除会话）的 LLM 调用；成本按 provider 价目估算

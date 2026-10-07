@@ -17,6 +17,7 @@ import {
   type SegmentGroup,
   type TimelineRow,
 } from '@/components/session/utils/timeline.js'
+import { TOUCH } from '@/styles/breakpoints.js'
 
 const virtualInner = css`
   position: relative;
@@ -32,7 +33,14 @@ const virtualItem = css`
 
 const rowWrap = css`
   position: relative;
-  padding: 2px 0;
+  /*
+   * 右侧留出 jsonToggle 的宽度：开关是 position:absolute; right:0 叠在行上，
+   * 行内不预留空间时正文会从它底下滑过去。实测 1440px 视口、含 user text 的
+   * 消息行：正文右边缘 x=1424，开关占 x=1388–1424，正好压住最后 36px——
+   * 长路径/长 URL 末段会被开关盖住，且开关会拦截这部分文本的选区。
+   * 留出等宽沟槽后两者不再重叠，开关仍保持右上角对齐。
+   */
+  padding: 2px 40px 2px 0;
   border-radius: 6px;
   transition: background-color 0.12s ease;
 
@@ -74,9 +82,20 @@ const jsonToggle = css`
   font-size: 11px;
   cursor: pointer;
   line-height: 18px;
-  /* 常态半隐降低噪音，悬停消息行或按钮时完整显现 */
-  opacity: 0.4;
+  /* 常态半隐降低噪音，悬停消息行或按钮时完整显现。
+   * 下限 0.78 而非 0.4：opacity 会把前景与背景一起向背景色插值，
+   * 0.4 时 #3a3a3a 的 --haze-color-text-secondary 在 #f8f8f8 底上只剩
+   * 2.45–2.49（axe 实测，AA 需 4.5），11px 小字本就难读，低透明度雪上加霜。
+   * 0.78 下约 5.5，保留「弱于正文」的降噪意图又不牺牲可读性。 */
+  opacity: 0.78;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+
+  /* 触屏没有 hover：&:hover 永不触发，开关会永久停在 0.78 的半隐态，
+   * 且无任何视觉线索提示这里可点。触屏下直接给足不透明度，
+   * 降噪交给「不占行宽、不抢正文」本身（沟槽已预留，不压正文）。 */
+  ${TOUCH} {
+    opacity: 1;
+  }
 
   &:hover {
     opacity: 1;

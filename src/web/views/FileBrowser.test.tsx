@@ -69,6 +69,22 @@ describe('FileBrowser 基础渲染', () => {
     })
   })
 
+  /**
+   * 回归：搜索框只有 placeholder，没有可访问名称。
+   *
+   * placeholder 不是可访问名称——读屏与语音控制只念 placeholder，且输入框
+   * 一旦有值就不再朗读，搜索框会退化为无名称控件。会话搜索框
+   * （session-search）早已补上 aria-label，文件搜索框被漏掉了。
+   */
+  it('文件搜索框有可访问名称（不只靠 placeholder）', async () => {
+    renderBrowser()
+    const input = (await screen.findByTestId('file-search')) as HTMLElement
+    const name =
+      input.getAttribute('aria-label') ??
+      document.querySelector(`label[for="${input.getAttribute('id')}"]`)?.textContent
+    expect(name?.trim() ?? '').not.toBe('')
+  })
+
   it('加载后不再渲染 commit 按钮（已移至 TopBar）', async () => {
     renderBrowser()
     await waitFor(() => {
@@ -130,5 +146,31 @@ describe('FileBrowser 搜索结果语义', () => {
     // 结果行常驻渲染 @ 引用与删除按钮（可见性由 CSS 保证）
     expect(screen.getByTestId('search-mention-src/a.ts')).toBeInTheDocument()
     expect(screen.getByTestId('search-delete-src/a.ts')).toBeInTheDocument()
+  })
+
+  /**
+   * 回归：单字符查询此前被静默丢弃。
+   *
+   * 缺陷：isSearch 门槛是 `searchDebounced.length > 1`。输入 1 个字时既不发
+   * 请求、也不进「搜索结果」分支，列出的仍是未过滤的整棵文件树——搜索框里
+   * 有字、结果却没有收敛，用户只会以为「这个文件搜不到」。实测输入「s」列
+   * 的是项目根目录，输入「se」才真正进入搜索结果。真正的防抖开销由 300ms
+   * 防抖承担，不需要靠丢弃首字符来省。
+   */
+  it('单字符查询也进入搜索结果分支（不再回落到整棵树）', async () => {
+    vi.mocked(fileAPI.search).mockResolvedValue([{ path: 'src/a.ts', type: 'file' }])
+    renderBrowser()
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 's' } })
+
+    await waitFor(
+      () => {
+        expect(vi.mocked(fileAPI.search)).toHaveBeenCalledWith('s', 'p1')
+      },
+      { timeout: 2000 },
+    )
+    // 进了搜索分支：结果列表在，且根目录树不在
+    expect(screen.getByRole('list', { name: '搜索结果' })).toBeInTheDocument()
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument()
+    expect(screen.queryByTestId('node-src')).toBeNull()
   })
 })

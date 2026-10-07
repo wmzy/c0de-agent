@@ -18,6 +18,8 @@ import { buildTimeline } from '@/components/session/utils/timeline.js'
 import { TodoPanel } from '@/components/TodoPanel.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
 import { TrustRequiredDialog } from '@/components/TrustRequiredDialog.js'
+import type { ImagePart, Prompt } from '@/composer/types.js'
+import { failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
 import { useAgent } from '@/hooks/useAgent.js'
 import { useChat } from '@/hooks/useChat.js'
@@ -30,7 +32,7 @@ import { agentAPI } from '@/services/agent.js'
 import { providerAPI } from '@/services/provider.js'
 import { sessionAPI } from '@/services/session.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
-import { ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
+import { ChatHistoryError, ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
 
 const interruptBanner = css`
   display: flex;
@@ -126,12 +128,27 @@ const shakeExitBtn = css`
   }
 `
 
-export function ChatSession({ projectId, sessionId }: { projectId: string; sessionId: string }) {
+export function ChatSession({
+  projectId,
+  sessionId,
+  terminalToggle,
+}: {
+  projectId: string
+  sessionId: string
+  /** 终端面板开关（ChatView 透传）：顶栏「终端」入口。 */
+  terminalToggle?: { open: boolean; onToggle: () => void }
+}) {
   const chat = useChat(sessionId)
   const agent = useAgent(sessionId)
   const qc = useQueryClient()
   const router = useRouter()
-  const { data: history, isLoading } = useMessages(sessionId)
+  const {
+    data: history,
+    isLoading,
+    isError: historyFailed,
+    error: historyError,
+    refetch: refetchHistory,
+  } = useMessages(sessionId)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
   // P2-3：会话归属校验——URL 与会话所属项目不一致时跳转到正确项目；
@@ -166,6 +183,17 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   })
   // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
   const consumed = useRef(false)
+  // 首条发送失败时暂存载荷，供 cleanupEmptySessionOnFailure 带去草稿页还原。
+  const lastFailedSend = useRef<{
+    text: string
+    prompt: Prompt
+    images: ImagePart[]
+    files: string[]
+  } | null>(null)
+  // chat 是每次渲染新建的 {...state, …} 快照；cleanupEmptySessionOnFailure 在
+  // .then 里读 chat.lastFailureReason 必须走 ref，否则拿到发送前那一帧（null）。
+  const chatRef = useRef(chat)
+  chatRef.current = chat
 
   // 冷启动中断/暂停检测：页面加载时检查 session status，若上次 run 未正常结束则显示恢复提示。
   // 同时记录打开时间，用于会话列表按最近打开排序。
@@ -246,6 +274,20 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
       setSelection({ provider: pending.opts.provider, model: pending.opts.model })
     }
     if (pending.opts.tools) setEnabledTools(new Set(pending.opts.tools))
+    // 这条消息经由 pendingFirstMessage 从草稿页转来（没走 handleSend），
+    // 失败时同样要能把「消息 + 原因」带回草稿页，这里补记一份载荷。
+    lastFailedSend.current = {
+      text: pending.text,
+      prompt: pending.prompt ?? [],
+      // ChatOpts.images 是裸 {mediaType,data}（服务端契约），ImagePart 多一个
+      // type 判别字段（composer 内部形态），还原前补上。
+      images: (pending.opts.images ?? []).map((img) => ({
+        type: 'image' as const,
+        mediaType: img.mediaType,
+        data: img.data,
+      })),
+      files: pending.opts.files ?? [],
+    }
     void chat.sendMessage(pending.text, pending.opts).then((ok) => {
       void cleanupEmptySessionOnFailure(ok, true)
     })
@@ -256,7 +298,10 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
     // 新一轮发送：清除上轮残留的暂停态（paused 仅在运行中有意义）。
     agent.resetPaused()
     const firstMessage = messages.length === 0
-    void chat
+    // 把 ok 回传给输入框：false 时输入框把草稿与图片还回来。用户消息只在 agent
+    // loop 真正跑起来时才落库（core/agent.ts），上述错误都发生在落库之前——
+    // 输入清空 + 乐观消息被撤回 = 用户刚打的字彻底消失，改好设置后回车也没得发。
+    return chat
       .sendMessage(payload.text, {
         provider: selection.provider,
         model: selection.model,
@@ -267,7 +312,9 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         ...(payload.agents.length ? { agents: payload.agents } : {}),
       })
       .then((ok) => {
+        if (!ok && firstMessage) lastFailedSend.current = payload
         void cleanupEmptySessionOnFailure(ok, firstMessage)
+        return ok
       })
   }
 
@@ -276,7 +323,9 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   }
 
   /** 首条消息发送失败（未配 provider/网络中断且无持久化消息）→ 删除空会话回草稿页，
-   *  避免每次失败尝试在会话树里留下空「New Session」堆积（P3 空会话治理）。 */
+   *  避免每次失败尝试在会话树里留下空「New Session」堆积（P3 空会话治理）。
+   *  导航会把 ChatSession 卸载、错误随之消失——失败原因必须跨组件传下去，
+   *  否则用户看到的是「什么都没发生」。 */
   const cleanupEmptySessionOnFailure = async (ok: boolean, firstMessage: boolean) => {
     if (ok || !firstMessage) return
     try {
@@ -287,6 +336,17 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         await sessionAPI.purgeEmpty(sessionId)
         qc.invalidateQueries({ queryKey: ['sessions'] })
         qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+        // 会话没了，但「消息 + 失败原因」要带去草稿页：导航会卸载本组件，
+        // 输入框里的草稿和 useChat 的 error 一起消失，用户只会看到什么都没发生。
+        failedSendReason.set(projectId, {
+          reason: chatRef.current.lastFailureReason ?? '消息发送失败，请重试后再次发送',
+          payload: {
+            text: lastFailedSend.current?.text ?? '',
+            prompt: lastFailedSend.current?.prompt ?? [],
+            images: lastFailedSend.current?.images ?? [],
+            files: lastFailedSend.current?.files ?? [],
+          },
+        })
         navigateTo(router, '/projects/:projectId', { params: { projectId } })
       }
     } catch {
@@ -334,7 +394,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   }
 
   // 中断恢复/出错重试：prompt 定位与重发编排收敛在 useRetryResume
-  const { handleResume, handleRetryLast } = useRetryResume({
+  const { handleResume, handleRetryLast, resendPending } = useRetryResume({
     sessionId,
     chat,
     qc,
@@ -353,8 +413,12 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
   })
   const supportsVision = capabilitiesData?.supportsVision ?? true
 
-  if (isLoading && messages.length === 0) return <ChatSkeleton />
+  // 失败原因取服务端 message（APIError）或 Error.message，与侧栏会话树失败提示同口径。
+  const historyErrorMessage =
+    (historyError as { message?: string } | null)?.message ??
+    (historyError instanceof Error ? historyError.message : null)
 
+  if (isLoading && messages.length === 0) return <ChatSkeleton />
   return (
     <ShakeProvider value={shake.shakeContextValue}>
       <Chat
@@ -374,6 +438,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         onAbort={chat.abort}
         onConfirm={handleConfirm}
         onRetry={() => void handleRetryLast()}
+        retryPending={resendPending}
         onPause={agent.pause}
         onResume={() => {
           // 服务端暂停（权限超时兜底）：乐观清除标记，resume 端点真正恢复 run；
@@ -384,7 +449,19 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
         onSteer={chat.steer}
         paused={agent.paused || chat.runPaused}
         supportsVision={supportsVision}
-        emptyState={<ChatWelcome />}
+        emptyState={
+          // 历史拉取失败且无可展示内容：绝不能落进 ChatWelcome（那会谎称「这是新会话」，
+          // 用户会以为上下文丢了）。给出失败原因 + 重试，输入框保持可用。
+          historyFailed && messages.length === 0 ? (
+            <ChatHistoryError
+              message={historyErrorMessage ?? ''}
+              onRetry={() => void refetchHistory()}
+            />
+          ) : (
+            <ChatWelcome />
+          )
+        }
+        terminalToggle={terminalToggle}
         modelBar={
           <>
             <AgentSelector
@@ -469,6 +546,7 @@ export function ChatSession({ projectId, sessionId }: { projectId: string; sessi
                     <Button
                       variant="outline"
                       onClick={() => void handleResume()}
+                      disabled={resendPending}
                       title="重发上一条消息继续；中断前已执行的工具（bash/git 等）可能再次执行"
                     >
                       恢复对话

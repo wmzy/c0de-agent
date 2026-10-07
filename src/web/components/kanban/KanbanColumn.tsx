@@ -103,6 +103,17 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
     data: { columnId: c.columnId, type: 'card' },
   })
 
+  /*
+   * dnd-kit 的拖拽由 listeners.onPointerDown 激活（PointerSensor 的 activator）。
+   * 原实现先 `{...listeners}` 再写 `onPointerDown={e => e.stopPropagation()}`，
+   * 后者把前者的 onPointerDown 整个覆盖掉——激活器消失，PointerSensor 永不启动，
+   * 卡片拖不动（实测：按下并逐帧移动 25 步，卡片 transform 恒为空、坐标不变）。
+   *
+   * stopPropagation 本身仍要保留（避免指针事件冒泡出卡片），但必须先委托给
+   * dnd-kit 的原始 handler：拆出 onPointerDown 单独组合，其余 listeners 原样展开。
+   */
+  const { onPointerDown: activateDrag, ...restListeners } = listeners ?? {}
+
   const style = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     transition,
@@ -120,7 +131,7 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
       style={style}
       className={`${card} ${isDragging ? cardDragging : ''}`}
       {...attributes}
-      {...listeners}
+      {...restListeners}
       onClick={(e) => {
         // 只在非拖拽时触发点击
         if (!isDragging) {
@@ -128,7 +139,11 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
           onClick()
         }
       }}
-      onPointerDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => {
+        // 先交给 dnd-kit 启动拖拽，再阻断冒泡（顺序不能反：漏掉前者卡片就拖不动）
+        activateDrag?.(e)
+        e.stopPropagation()
+      }}
       data-testid={`kanban-card-${c.id}`}
     >
       <div className={cardHeader}>
@@ -249,12 +264,21 @@ const quickAddBtn = css`
   font-size: 12px;
 `
 
+/** 新建失败的就地反馈：错误条离该列的输入框最近，用户不必在整页里找。 */
+const quickAddError = css`
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+  word-break: break-word;
+`
+
 type ColumnProps = {
   column: { id: string; name: string }
   cards: KanbanCardType[]
   labels: KanbanLabelDef[]
   onCardClick: (card: KanbanCardType) => void
-  onQuickAdd: (title: string) => void
+  /** 新建卡片；失败时 reject（调用方保留草稿并就地显示原因）。 */
+  onQuickAdd: (title: string) => Promise<void>
 }
 
 /** 一个看板列：droppable + sortable context + 快速新建。 */
@@ -266,12 +290,31 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
 
   const [isAdding, setIsAdding] = useState(false)
   const [draft, setDraft] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
 
-  const submit = () => {
+  // 只在成功后清空草稿并收起输入框：此前无条件清空 + 关闭，请求失败时输入框
+  // 消失、没有新卡片、整页无提示，用户刚打的标题永久丢失（只能重打一遍），
+  // 而失败在界面上与「成功但卡片没出现」完全等价。失败时保留草稿与输入框，
+  // 就地给出后端的失败原因，改一下再按回车即可重试。
+  const submit = async () => {
     const t = draft.trim()
-    if (t) onQuickAdd(t)
-    setDraft('')
-    setIsAdding(false)
+    if (!t || pending) return
+    setPending(true)
+    setAddError(null)
+    try {
+      await onQuickAdd(t)
+      setDraft('')
+      setIsAdding(false)
+    } catch (err) {
+      // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+      // 结构化取优先、instanceof 兜底，不会渲染成 [object Object]。
+      const message =
+        (err as { message?: string } | null)?.message ?? (err instanceof Error ? err.message : null)
+      setAddError(message ?? '新建卡片失败，请重试')
+    } finally {
+      setPending(false)
+    }
   }
 
   return (
@@ -295,29 +338,55 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
             可拖入性由列容器本身（columnDropActive 悬停高亮）与「+ 新建卡片」行动点表达。 */}
 
         {isAdding ? (
-          <div className={quickAddRow}>
-            <SyncedInput
-              className={quickAddInput}
-              value={draft}
-              onChange={(v) => setDraft(v)}
-              onKeyDown={(e) => {
-                // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
-                // 不判定会把未确认的候选当卡片标题提交（并清空输入框）。
-                if (isImeComposing(e)) return
-                if (e.key === 'Enter') submit()
-                if (e.key === 'Escape') {
-                  setIsAdding(false)
-                  setDraft('')
-                }
-              }}
-              placeholder="卡片标题…"
-            />
-            <Button className={quickAddBtn} onClick={submit} variant="solid">
-              添加
-            </Button>
+          <div>
+            <div className={quickAddRow}>
+              <SyncedInput
+                className={quickAddInput}
+                value={draft}
+                onChange={(v) => {
+                  setDraft(v)
+                  // 用户已经在改标题 → 上一轮的失败提示不再适用
+                  if (addError) setAddError(null)
+                }}
+                onKeyDown={(e) => {
+                  // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
+                  // 不判定会把未确认的候选当卡片标题提交（并清空输入框）。
+                  if (isImeComposing(e)) return
+                  if (e.key === 'Enter') void submit()
+                  if (e.key === 'Escape') {
+                    setIsAdding(false)
+                    setDraft('')
+                    setAddError(null)
+                  }
+                }}
+                placeholder="卡片标题…"
+              />
+              <Button
+                className={quickAddBtn}
+                onClick={() => void submit()}
+                variant="solid"
+                disabled={pending}
+              >
+                {pending ? '添加中…' : '添加'}
+              </Button>
+            </div>
+            {addError && (
+              <div className={quickAddError} role="alert" data-testid={`quick-add-error-${col.id}`}>
+                {addError}
+              </div>
+            )}
           </div>
         ) : (
-          <button type="button" className={addCardBtn} onClick={() => setIsAdding(true)}>
+          <button
+            type="button"
+            className={addCardBtn}
+            // 重开时清掉上一轮的失败原因：请求在途时按 Esc 会收起输入框，但那条失败
+            // 结果稍后才落地，重新打开就会看到一条描述着已被放弃的标题的报错。
+            onClick={() => {
+              setAddError(null)
+              setIsAdding(true)
+            }}
+          >
             + 新建卡片
           </button>
         )}

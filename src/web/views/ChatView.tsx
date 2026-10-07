@@ -1,13 +1,14 @@
 import { css } from '@linaria/core'
 import { TypedLink, useRouter } from '@native-router/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { Logo } from '@/components/Logo.js'
 import { ModelSelector } from '@/components/ModelSelector.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { type FailedSend, failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
 import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
 import { navigateTo } from '@/navigateTo.js'
@@ -29,15 +30,19 @@ const setupBanner = css`
   color: var(--haze-color-text);
 
   & > a {
-    color: var(--haze-color-primary);
+    /* --c0de-primary-on-tint 而非 --haze-color-primary：见 global.ts 的
+     * 定义——primary 蓝铺在本横幅自身的 warning 10% 淡底上时对比不足
+     * （light 态 4.24 < AA 4.5），该 token 只压 light 态明度，dark 态
+     * 仍沿用 primary 本身。 */
+    color: var(--c0de-primary-on-tint);
     text-decoration: none;
-    border: 1px solid var(--haze-color-primary);
+    border: 1px solid currentColor;
     border-radius: 6px;
     padding: 3px 12px;
     font-size: 12px;
     flex-shrink: 0;
     &:hover {
-      background: color-mix(in srgb, var(--haze-color-primary) 10%, transparent);
+      background: color-mix(in srgb, currentColor 10%, transparent);
     }
   }
 `
@@ -58,6 +63,58 @@ export function SetupBanner({ projectId }: { projectId?: string }) {
       ) : (
         <TypedLink<AppPaths> to="/settings">去设置</TypedLink>
       )}
+    </div>
+  )
+}
+
+const errorWrap = css`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 16px 32px;
+  margin-block: auto;
+  text-align: center;
+`
+
+const errorText = css`
+  margin: 0;
+  max-width: 560px;
+  font-size: 13px;
+  color: var(--haze-color-danger);
+`
+
+const errorRetry = css`
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
+/** 历史消息加载失败占位：必须与「空会话欢迎页」严格区分——失败若表现成欢迎页，
+ *  用户会以为对话被清空，甚至对着不存在的上下文继续发消息。输入框保持可用，
+ *  只在消息流位置给出失败原因与重试入口。 */
+export function ChatHistoryError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className={errorWrap} data-testid="chat-history-error" role="alert">
+      <p className={errorText}>历史消息加载失败{message ? `：${message}` : '，请稍后重试。'}</p>
+      <button
+        type="button"
+        className={errorRetry}
+        onClick={onRetry}
+        data-testid="chat-history-retry"
+      >
+        重试
+      </button>
     </div>
   )
 }
@@ -231,12 +288,15 @@ export function ChatSkeleton() {
 export function ChatView({
   projectId,
   sessionId,
+  terminalToggle,
 }: {
   projectId: string
   sessionId: string | null
+  /** 终端面板开关（ChatPage 注入）：顶栏「终端」入口，见 Chat.tsx 的 ChatProps。 */
+  terminalToggle?: { open: boolean; onToggle: () => void }
 }) {
-  if (!sessionId) return <DraftSession projectId={projectId} />
-  return <ChatSession projectId={projectId} sessionId={sessionId} />
+  if (!sessionId) return <DraftSession projectId={projectId} terminalToggle={terminalToggle} />
+  return <ChatSession projectId={projectId} sessionId={sessionId} terminalToggle={terminalToggle} />
 }
 
 /**
@@ -244,7 +304,13 @@ export function ChatView({
  * 把消息暂存到 pendingFirstMessage，再导航到新会话路由交由 ChatSession 发送，
  * 从而保证 SSE 流在拥有真实 sessionId 的组件实例中建立，不会被卸载中断。
  */
-function DraftSession({ projectId }: { projectId: string }) {
+function DraftSession({
+  projectId,
+  terminalToggle,
+}: {
+  projectId: string
+  terminalToggle?: { open: boolean; onToggle: () => void }
+}) {
   const router = useRouter()
   const qc = useQueryClient()
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
@@ -256,6 +322,24 @@ function DraftSession({ projectId }: { projectId: string }) {
   })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 首条消息失败后 ChatSession 会清掉空会话并导航回本页；失败原因与刚打的消息
+  // 都随组件卸载消失，必须一起带回来，否则用户看到的只是一个干净的欢迎页。
+  const [restored, setRestored] = useState<FailedSend | null>(null)
+  useEffect(() => {
+    const carried = failedSendReason.take(projectId)
+    if (!carried) return
+    setError(carried.reason)
+    setRestored(carried)
+  }, [projectId])
+  // 跨实例还原草稿的对象身份必须稳定：Composer 按对象身份去重，同一份载荷只灌一次。
+  // 直接在 JSX 里写 `{prompt, images}` 字面量的话每次渲染都是新对象，而本页渲染
+  // 非常频繁（发送置位 creating、模型/agent 切换、打开文件预览、['agents'] 在窗口
+  // 聚焦时 refetch），去重会一路落空——用户已经改好的文本被上一次失败的消息盖回去。
+  // 载荷内容不变时（失败发生在消费之后）保持 null，更不会重复还原。
+  const restoreDraft = useMemo(
+    () => (restored ? { prompt: restored.payload.prompt, images: restored.payload.images } : null),
+    [restored],
+  )
 
   const handleSend = async (payload: SendPayload) => {
     setError(null)
@@ -271,15 +355,23 @@ function DraftSession({ projectId }: { projectId: string }) {
     }
     try {
       const session = await sessionAPI.create({ projectId })
-      pendingFirstMessage.set(session.id, { text: payload.text, opts })
+      pendingFirstMessage.set(session.id, { text: payload.text, opts, prompt: payload.prompt })
       // 让侧边栏立即显示新会话
       qc.invalidateQueries({ queryKey: ['sessions'] })
       navigateTo(router, '/projects/:projectId/sessions/:sessionId', {
         params: { projectId, sessionId: session.id },
       })
-    } catch {
+      // 创建成功：消息由目标页的 ChatSession 发出，输入保持已清空（正常体感）。
+      return true
+    } catch (err) {
       setCreating(false)
-      setError('创建会话失败，请重试')
+      setError(
+        err instanceof Error
+          ? `创建会话失败：${err.message}`
+          : '创建会话失败，请确认服务仍在运行后重试',
+      )
+      // 消息根本没送出去（连会话都没建成），输入框据此把草稿与图片还回来。
+      return false
     }
   }
 
@@ -293,11 +385,13 @@ function DraftSession({ projectId }: { projectId: string }) {
       error={error}
       pendingPermission={null}
       onSend={handleSend}
+      restoreDraft={restoreDraft}
       onAbort={() => {
         /* 草稿阶段无可中止的后端请求 */
       }}
       onConfirm={() => {}}
       emptyState={<ChatWelcome />}
+      terminalToggle={terminalToggle}
       modelBar={
         <>
           <AgentSelector

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providerAPI } from '@/services/provider.js'
-import { inputStyle } from '@/styles/tokens.js'
+import { compactSelect, inputStyle } from '@/styles/tokens.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const field = css`
@@ -13,22 +13,24 @@ const field = css`
   gap: 4px;
   font-size: 12px;
   color: var(--haze-color-text-secondary);
+  /* 极窄视口（<240px）放不下「标签 + 控件」时换行，避免整行撑出横向滚动
+   * （WCAG 1.4.10 Reflow）。标签不参与收缩折行。 */
+  flex-wrap: wrap;
+  min-width: 0;
+  & > span:first-child {
+    flex-shrink: 0;
+  }
 `
 
-/** 基础控件增量样式。注意：wyw-in-js 不会把 `${control}` 的样式内联进派生类，
- * 派生类只生成增量；故每个控件需自包含 min-height，否则被全局 select/input{min-height:44px} 覆盖；
- * 边框/圆角/背景/文字色来自 inputStyle。 */
-const selectControl = css`
-  padding: 4px 28px 4px 8px;
-  min-height: 28px;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-`
+/** 基础控件增量样式见 tokens.compactSelect（含 width:auto 覆盖 haze 的 width:100%）。 */
 
 const input = css`
   padding: 4px 8px;
-  min-width: 180px;
+  /* 窄屏（手机捏合放大后 CSS 视口可低至 ~200px）下可收缩：min-width 是可用的
+   * 舒适宽度下限，不是硬下限，否则「Model 标签 + 180px 输入 + 下拉按钮」
+   * 实测撑到 250px，产生横向滚动（WCAG 1.4.10 Reflow）。 */
+  min-width: 0;
+  width: 180px;
   min-height: 28px;
   font: inherit;
   font-size: 12px;
@@ -41,6 +43,9 @@ const modelWrap = css`
   display: inline-flex;
   align-items: center;
   gap: 0;
+  /* 允许收缩，配合 input 的 min-width:0 一起让位给窄视口 */
+  min-width: 0;
+  flex-shrink: 1;
 `
 
 const dropdownBtn = css`
@@ -184,10 +189,28 @@ export function ModelSelector({
     setHighlight(-1)
   }, [])
 
-  const openHints = () => {
+  const openHints = (opts?: { focusInput?: boolean }) => {
     setHintsOpen(true)
     setQuery(null)
     setHighlight(-1)
+    // ▾ 按钮打开的列表归输入框管：焦点留在按钮上时 ↑↓/Enter/Esc 全部落空
+    // （这些键只挂在 combobox 的 onKeyDown 上），列表等于对键盘不可用。
+    if (opts?.focusInput) {
+      skipOpenRef.current = true
+      inputRef.current?.focus()
+      queueMicrotask(() => {
+        skipOpenRef.current = false
+      })
+    }
+  }
+
+  /** 收起列表：焦点仍在按钮上时留在原处，别把用户甩到别的控件上。 */
+  const toggleHintsFromButton = () => {
+    if (hintsOpen) {
+      closeHints()
+      return
+    }
+    openHints({ focusInput: true })
   }
 
   const pick = (m: string) => {
@@ -233,7 +256,7 @@ export function ModelSelector({
       <label className={field}>
         <span>Provider</span>
         <SyncedSelect
-          className={`${inputStyle} ${selectControl}`}
+          className={`${inputStyle} ${compactSelect}`}
           value={value.provider}
           onValuesChange={(v) => {
             onChange({ ...value, provider: v as string })
@@ -317,10 +340,11 @@ export function ModelSelector({
           <button
             type="button"
             className={`${inputStyle} ${dropdownBtn}`}
-            onClick={() => (hintsOpen ? closeHints() : openHints())}
-            aria-label="展开模型列表"
+            onClick={toggleHintsFromButton}
+            aria-label={hintsOpen ? '收起模型列表' : '展开模型列表'}
             aria-haspopup="listbox"
             aria-expanded={hintsOpen}
+            aria-controls={listId}
             data-testid="model-dropdown"
           >
             ▾

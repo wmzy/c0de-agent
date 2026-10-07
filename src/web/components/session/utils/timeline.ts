@@ -138,9 +138,11 @@ export function isEmptyMessage(message: Message): boolean {
   return message.content.length === 0
 }
 
-/** 提取用户消息的可读文本（text + steering part 拼接），供顶部滞留浮层显示摘要。 */
+/** 提取用户消息的可读文本（text + steering part 拼接），供顶部滞留浮层显示摘要。
+ *  纯图片消息没有可读文本：显示「(图片)」而不是空串，避免浮层顶部出现一个空白
+ *  标签、用户分不清是有消息还是没滚动到内容。 */
 export function userMessageText(message: Message): string {
-  return message.content
+  const text = message.content
     .filter(
       (p): p is Extract<MessageContent, { _tag: 'text' | 'steering' }> =>
         p._tag === 'text' || p._tag === 'steering',
@@ -148,4 +150,6 @@ export function userMessageText(message: Message): string {
     .map((p) => p.text)
     .join('\n')
     .trim()
+  if (text) return text
+  return message.content.some((p) => p._tag === 'image') ? '(图片)' : ''
 }

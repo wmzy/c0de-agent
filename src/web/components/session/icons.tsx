@@ -101,3 +101,13 @@ export function ToolIcon(p: IconProps) {
     </svg>
   )
 }
+
+export function ImageIcon(p: IconProps) {
+  return (
+    <svg aria-hidden="true" {...base(p)}>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <circle cx="5.5" cy="6.5" r="1" />
+      <path d="M2.5 11l3.5-3.5 3 3L12 8.5l1.5 1.5" />
+    </svg>
+  )
+}

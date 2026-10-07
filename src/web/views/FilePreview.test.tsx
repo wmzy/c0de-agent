@@ -1,11 +1,18 @@
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import {
+  type FileChangeGuard,
+  type FileSelection,
+  FileSelectionContext,
+} from '@/contexts/FileSelectionContext.js'
 import { ReferenceContext } from '@/contexts/ReferenceContext.js'
 import { ThemeProvider } from '@/contexts/ThemeContext.js'
+import type { AppPaths } from '@/routes.js'
 import { computeLineRange, FilePreview } from '@/views/FilePreview.js'
 
 // mock CodeEditor：本文件聚焦 FilePreview 行为（脏关闭守卫等），
@@ -30,16 +37,80 @@ function fetchMock(content: string) {
   })
 }
 
-function withClient(ui: React.ReactNode, closeFile = () => {}) {
+/** 只有会卸载预览面板的导航才该被拦：同项目的两个聊天路由之间切换保留 ChatPage，
+ *  因此测试路由表把三者区分成不同探针，用于断言「导航真的提交了」。 */
+const previewTestRoutes = createRoutes({
+  children: [
+    { path: '/projects/:projectId', component: () => ChatRouteProbe },
+    { path: '/projects/:projectId/sessions/:sessionId', component: () => SessionRouteProbe },
+    { path: '/projects/:projectId/settings', component: () => SettingsRouteProbe },
+  ],
+})
+
+function ChatRouteProbe() {
+  return <div data-testid="chat-route" />
+}
+
+function SessionRouteProbe() {
+  return <div data-testid="session-route" />
+}
+
+function SettingsRouteProbe() {
+  return <div data-testid="settings-route" />
+}
+
+/** MemoryRouter 的初始条目：聊天路由（面板会被保留）与离开路由（会卸载面板）各一。 */
+const ENTRY_CHAT = '/projects/p1'
+const ENTRY_SESSION = '/projects/p1/sessions/s1'
+
+const baseSelection: FileSelection = {
+  selectedFile: null,
+  openFile: () => {},
+  closeFile: () => {},
+}
+
+/**
+ * FilePreview 现在用 useBlocker 做未保存导航防护，必须有 Router 上下文；
+ * QueryClient + FileSelectionContext 也一并收敛在这里，避免各用例重复样板。
+ */
+function PreviewProviders({
+  children,
+  selection,
+  entry = ENTRY_CHAT,
+}: {
+  children: React.ReactNode
+  selection?: Partial<FileSelection>
+  entry?: string
+}) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  render(
-    <QueryClientProvider client={qc}>
-      <FileSelectionContext.Provider value={{ selectedFile: null, openFile: () => {}, closeFile }}>
-        {ui}
-      </FileSelectionContext.Provider>
-    </QueryClientProvider>,
+  return (
+    <MemoryRouter routes={previewTestRoutes} initialEntries={[entry]}>
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider value={{ ...baseSelection, ...selection }}>
+          <View />
+          {children}
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>
+    </MemoryRouter>
+  )
+}
+
+function withClient(ui: React.ReactNode, closeFile = () => {}) {
+  render(<PreviewProviders selection={{ selectedFile: null, closeFile }}>{ui}</PreviewProviders>)
+}
+
+/** 带自定义选中态/初始路由的挂载入口。 */
+function renderPreview(
+  selection: Partial<FileSelection>,
+  node: React.ReactNode,
+  entry = ENTRY_CHAT,
+) {
+  return render(
+    <PreviewProviders selection={selection} entry={entry}>
+      {node}
+    </PreviewProviders>,
   )
 }
 
@@ -95,6 +166,53 @@ describe('FilePreview', () => {
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
   })
 
+  // 回归：读失败此前没有分支，useQuery 重试耗尽后落到「无内容」——header 仍显示
+  // 路径，用户会把 404/500/断网当成文件被清空。必须与真正的空文件区分开。
+  it('读取失败展示失败态与后端 message，而不是「无内容」', async () => {
+    const errBody = { error: { code: 'NOT_FOUND', message: '文件不存在：a.ts' } }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        json: async () => errBody,
+        text: async () => JSON.stringify(errBody),
+        clone: () => ({ json: async () => errBody }),
+      }),
+    )
+    withClient(<FilePreview projectId="p1" path="a.ts" />)
+    await waitFor(() => {
+      expect(screen.getByTestId('file-preview-error')).toBeTruthy()
+    })
+    expect(screen.queryByText('无内容')).toBeNull()
+    expect(screen.getByText('文件读取失败')).toBeTruthy()
+    expect(screen.getByText('文件不存在：a.ts')).toBeTruthy()
+    expect(screen.queryByText('[object Object]')).toBeNull()
+  })
+
+  it('失败态「重试」重新发起读取', async () => {
+    const errBody = { error: { code: 'INTERNAL', message: '磁盘读取失败' } }
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: async () => errBody,
+      text: async () => JSON.stringify(errBody),
+      clone: () => ({ json: async () => errBody }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+    withClient(<FilePreview projectId="p1" path="a.ts" />)
+    await waitFor(() => {
+      expect(screen.getByTestId('file-preview-retry')).toBeTruthy()
+    })
+    const callsBefore = fetchStub.mock.calls.length
+    fireEvent.click(screen.getByTestId('file-preview-retry'))
+    await waitFor(() => {
+      expect(fetchStub.mock.calls.length).toBeGreaterThan(callsBefore)
+    })
+  })
+
   // 回归：encodeURI 不编码 ?/#，含它们的文件名会在 URL 中被解析为
   // query/fragment，服务端拿到截断路径读错文件；逐段 encodeFilePath 后
   // src 携带完整编码路径。
@@ -123,16 +241,7 @@ describe('FilePreview', () => {
     expect(src).toContain('projectId=p1')
     expect(src).toContain(`token=${encodeURIComponent('device-tok-123')}`)
     // token 不应出现在非媒体（CodeEditor）路径的读取请求里
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
-      <QueryClientProvider client={qc}>
-        <FileSelectionContext.Provider
-          value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
-        >
-          <FilePreview projectId="p1" path="notes.txt" />
-        </FileSelectionContext.Provider>
-      </QueryClientProvider>,
-    )
+    renderPreview({ selectedFile: 'notes.txt' }, <FilePreview projectId="p1" path="notes.txt" />)
   })
 
   it('渲染 header 显示路径', async () => {
@@ -146,15 +255,9 @@ describe('FilePreview', () => {
   it('点击关闭按钮调用 closeFile', async () => {
     const closeFile = vi.fn()
     vi.stubGlobal('fetch', fetchMock('# Title'))
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
-      <QueryClientProvider client={qc}>
-        <FileSelectionContext.Provider
-          value={{ selectedFile: 'readme.md', openFile: () => {}, closeFile }}
-        >
-          <FilePreview projectId="p1" path="readme.md" />
-        </FileSelectionContext.Provider>
-      </QueryClientProvider>,
+    renderPreview(
+      { selectedFile: 'readme.md', closeFile },
+      <FilePreview projectId="p1" path="readme.md" />,
     )
     await waitFor(() => {
       expect(screen.getByLabelText('关闭预览')).toBeTruthy()
@@ -166,15 +269,9 @@ describe('FilePreview', () => {
   it('脏编辑点关闭弹出确认弹窗，取消后保留编辑内容', async () => {
     const closeFile = vi.fn()
     vi.stubGlobal('fetch', fetchMock('line1\nline2'))
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
-      <QueryClientProvider client={qc}>
-        <FileSelectionContext.Provider
-          value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile }}
-        >
-          <FilePreview projectId="p1" path="notes.txt" />
-        </FileSelectionContext.Provider>
-      </QueryClientProvider>,
+    renderPreview(
+      { selectedFile: 'notes.txt', closeFile },
+      <FilePreview projectId="p1" path="notes.txt" />,
     )
     await waitFor(() => {
       expect(screen.getByTestId('code-editor')).toBeTruthy()
@@ -196,15 +293,9 @@ describe('FilePreview', () => {
   it('确认放弃未保存修改后才关闭预览', async () => {
     const closeFile = vi.fn()
     vi.stubGlobal('fetch', fetchMock('line1\nline2'))
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
-      <QueryClientProvider client={qc}>
-        <FileSelectionContext.Provider
-          value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile }}
-        >
-          <FilePreview projectId="p1" path="notes.txt" />
-        </FileSelectionContext.Provider>
-      </QueryClientProvider>,
+    renderPreview(
+      { selectedFile: 'notes.txt', closeFile },
+      <FilePreview projectId="p1" path="notes.txt" />,
     )
     await waitFor(() => {
       expect(screen.getByTestId('code-editor')).toBeTruthy()
@@ -215,32 +306,359 @@ describe('FilePreview', () => {
     expect(closeFile).toHaveBeenCalledOnce()
   })
 
+  // 切换预览目标的守卫：父组件（ChatPage）改选中态前先调用 FilePreview 注册的钩子，
+  // 返回 false 即拦下本次切换，由 FilePreview 弹确认；用户确认后再重放。
+  // 缺了这条路径，点文件树里的另一个文件就会把未保存的编辑连同撤销历史一起丢掉。
+  describe('未保存编辑时切换预览目标', () => {
+    function renderWithGuard(path: string) {
+      const closeFile = vi.fn()
+      const openFile = vi.fn()
+      const hooks: { guard: FileChangeGuard | null } = { guard: null }
+      renderPreview(
+        {
+          selectedFile: path,
+          openFile,
+          closeFile,
+          registerGuard: (fn) => {
+            hooks.guard = fn
+          },
+        },
+        <FilePreview projectId="p1" path={path} />,
+      )
+      return { hooks, closeFile, openFile }
+    }
+
+    it('脏编辑时切换被拦下：弹确认、不切换；取消后编辑仍在', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks, openFile } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+      // 非脏态：放行，且不弹确认
+      expect(hooks.guard?.({ path: 'other.txt' })).toBe(true)
+      expect(screen.queryByTestId('discard-dialog')).toBeNull()
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      await act(async () => {
+        expect(hooks.guard?.({ path: 'other.txt' })).toBe(false)
+      })
+      expect(screen.getByTestId('discard-dialog')).toBeTruthy()
+      expect(screen.getByText('放弃未保存的修改？')).toBeTruthy()
+      expect(screen.getByText(/切换到「other.txt」/)).toBeTruthy()
+      expect(openFile).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByTestId('discard-cancel'))
+      expect(screen.queryByTestId('discard-dialog')).toBeNull()
+      expect(openFile).not.toHaveBeenCalled()
+      expect(screen.getByTestId('code-editor')).toBeTruthy()
+      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+    })
+
+    it('确认放弃后重放被拦下的切换', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks, openFile } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      await act(async () => {
+        hooks.guard?.({ path: 'other.txt' })
+      })
+      fireEvent.click(screen.getByTestId('discard-confirm'))
+      expect(openFile).toHaveBeenCalledWith('other.txt', undefined)
+    })
+
+    it('同一文件只换高亮范围（点 snippet pill）不弹确认', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      expect(hooks.guard?.({ path: 'notes.txt', range: { start: 3, end: 5 } })).toBe(true)
+      expect(screen.queryByTestId('discard-dialog')).toBeNull()
+    })
+
+    it('脏编辑时删除当前文件（关闭预览）也先确认', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      const { hooks, closeFile } = renderWithGuard('notes.txt')
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      await act(async () => {
+        expect(hooks.guard?.(null)).toBe(false)
+      })
+      expect(screen.getByTestId('discard-dialog')).toBeTruthy()
+      expect(screen.getByText(/关闭预览将丢弃/)).toBeTruthy()
+
+      fireEvent.click(screen.getByTestId('discard-cancel'))
+      expect(closeFile).not.toHaveBeenCalled()
+    })
+  })
+
+  // 未保存编辑的应用内导航防护：面板内换文件由 registerGuard 兜住，但点顶栏
+  // 设置/项目看板、切换项目、浏览器后退这些路径会卸载整个 ChatPage，CodeMirror
+  // 文档连同撤销历史一起消失——此前没有任何提示，用户只能重打一遍。
+  describe('未保存编辑时应用内导航', () => {
+    // TypedLink 是按 to 判别的联合，params 类型随路径收窄——常量各自固定一条路径。
+    const TO_SETTINGS = (
+      <TypedLink<AppPaths>
+        to="/projects/:projectId/settings"
+        params={{ projectId: 'p1' }}
+        data-testid="to-settings"
+      >
+        设置
+      </TypedLink>
+    )
+    const TO_OTHER_PROJECT = (
+      <TypedLink<AppPaths>
+        to="/projects/:projectId"
+        params={{ projectId: 'p2' }}
+        data-testid="to-other"
+      >
+        换项目
+      </TypedLink>
+    )
+
+    it('非脏态：导航直接放行，不弹确认', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      renderPreview(
+        { selectedFile: 'notes.txt' },
+        <>
+          <FilePreview projectId="p1" path="notes.txt" />
+          {TO_SETTINGS}
+        </>,
+      )
+      await screen.findByTestId('code-editor')
+      expect(screen.getByTestId('chat-route')).toBeTruthy()
+
+      fireEvent.click(screen.getByTestId('to-settings'))
+
+      expect(screen.queryByTestId('preview-nav-discard-dialog')).toBeNull()
+      await waitFor(() => expect(screen.getByTestId('settings-route')).toBeTruthy())
+    })
+
+    it('脏编辑时点「设置」：弹放弃确认，导航未提交', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      renderPreview(
+        { selectedFile: 'notes.txt' },
+        <>
+          <FilePreview projectId="p1" path="notes.txt" />
+          {TO_SETTINGS}
+        </>,
+      )
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      fireEvent.click(screen.getByTestId('to-settings'))
+
+      await waitFor(() => expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy())
+      expect(screen.getByText(/离开当前页面将丢弃这些修改/)).toBeTruthy()
+      expect(screen.queryByTestId('settings-route')).toBeNull()
+      expect(screen.getByTestId('chat-route')).toBeTruthy()
+    })
+
+    it('选择「留下」：弹窗关闭并留在原页', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      renderPreview(
+        { selectedFile: 'notes.txt' },
+        <>
+          <FilePreview projectId="p1" path="notes.txt" />
+          {TO_SETTINGS}
+        </>,
+      )
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      fireEvent.click(screen.getByTestId('to-settings'))
+      await waitFor(() => expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy())
+
+      fireEvent.click(screen.getByTestId('preview-nav-stay'))
+      expect(screen.queryByTestId('preview-nav-discard-dialog')).toBeNull()
+      expect(screen.queryByTestId('settings-route')).toBeNull()
+      expect(screen.getByTestId('chat-route')).toBeTruthy()
+      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+    })
+
+    it('选择「离开」：重放被拦下的导航', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      renderPreview(
+        { selectedFile: 'notes.txt' },
+        <>
+          <FilePreview projectId="p1" path="notes.txt" />
+          {TO_SETTINGS}
+        </>,
+      )
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      fireEvent.click(screen.getByTestId('to-settings'))
+      await waitFor(() => expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy())
+
+      fireEvent.click(screen.getByTestId('preview-nav-leave'))
+      await waitFor(() => expect(screen.getByTestId('settings-route')).toBeTruthy())
+    })
+
+    // 曾经断言「会话页 → 草稿页（同项目）不弹确认」，理由是「ChatPage 不卸载」。
+    // 那是错的：routes.tsx 里草稿页与会话页是两条平级 path，RouteErrorBoundary 的
+    // key = `${index}:${route.path}` 随之变化 → ChatPage 整棵子树重建，预览面板
+    // 连同未保存内容一起销毁（真实路由下的回归见下方 describe）。此用例原先把
+    // FilePreview 挂在 <View/> 兄弟位置，面板不在被卸载的子树里，所以断言照过。
+    // 现在同一诉求（会话页之间互切不弹确认）由那个 describe 用真实形态覆盖。
+
+    it('切到另一个项目会拦下（面板随项目重建，改动会丢）', async () => {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      renderPreview(
+        { selectedFile: 'notes.txt' },
+        <>
+          <FilePreview projectId="p1" path="notes.txt" />
+          {TO_OTHER_PROJECT}
+        </>,
+        ENTRY_SESSION,
+      )
+      await screen.findByTestId('code-editor')
+
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+      fireEvent.click(screen.getByTestId('to-other'))
+
+      expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy()
+    })
+  })
+
+  /**
+   * 真实形态回归：面板是 ChatPage 内部 Layout 的 panel（ChatPage.tsx），不是
+   * <View/> 的兄弟节点。此前的用例都把 FilePreview 挂在 <View/> 旁边，于是即使
+   * 换页会重建整棵 ChatPage 子树（面板随之卸载），断言照样成立——「同一项目的
+   * 两个聊天路由之间切换不弹确认」正是这样把草稿页 ↔ 会话页也放过去了，而
+   * 那条路恰恰会卸载面板（两条 path 平级 → RouteErrorBoundary key 变化）。
+   *
+   * 下面把 FilePreview 放进真正挂载它的位置：ChatPage 在 routes.tsx 里是草稿页
+   * 与会话页**共用的同一个组件**，作为两条路由的 component 挂载。因此只有
+   * 「两条路由 path 相同」时 React 才复用这棵子树——实测 session s1 → s2 复用
+   * （组件状态保持），session → draft 重建（状态清零）。这不是 mock，是
+   * @native-router/react 的真实行为（路由级 key = `${index}:${route.path}`）。
+   */
+  describe('未保存编辑时换页（面板位于 ChatPage 子树内）', () => {
+    /** ChatPage 的等价物：预览面板与「打开文件」入口都在它的子树里。 */
+    function ChatPageShell() {
+      const [selectedFile, setSelectedFile] = useState<string | null>(null)
+      return (
+        <ThemeProvider>
+          <FileSelectionContext.Provider
+            value={{
+              selectedFile,
+              openFile: (path: string) => setSelectedFile(path),
+              closeFile: () => setSelectedFile(null),
+              registerGuard: undefined,
+            }}
+          >
+            <button
+              type="button"
+              data-testid="open-file"
+              onClick={() => setSelectedFile('notes.txt')}
+            >
+              打开文件
+            </button>
+            {selectedFile ? <FilePreview projectId="p1" path={selectedFile} /> : null}
+          </FileSelectionContext.Provider>
+        </ThemeProvider>
+      )
+    }
+
+    const chatPageRoutes = createRoutes({
+      children: [
+        { path: '/projects/:projectId', component: () => ChatPageShell },
+        { path: '/projects/:projectId/sessions/:sessionId', component: () => ChatPageShell },
+      ],
+    })
+
+    function ShellLinks() {
+      return (
+        <>
+          <TypedLink<AppPaths>
+            to="/projects/:projectId/sessions/:sessionId"
+            params={{ projectId: 'p1', sessionId: 's2' }}
+            data-testid="to-s2"
+          >
+            另一个会话
+          </TypedLink>
+          <TypedLink<AppPaths>
+            to="/projects/:projectId"
+            params={{ projectId: 'p1' }}
+            data-testid="to-draft"
+          >
+            新会话
+          </TypedLink>
+        </>
+      )
+    }
+
+    /** 经真实路由挂载 ChatPage 等价物，打开文件并标记为脏。 */
+    async function mountDirtyPanel(entry: string) {
+      vi.stubGlobal('fetch', fetchMock('line1\nline2'))
+      render(
+        <MemoryRouter routes={chatPageRoutes} initialEntries={[entry]}>
+          <QueryClientProvider
+            client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+          >
+            <ShellLinks />
+            <View />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      )
+      fireEvent.click(await screen.findByTestId('open-file'))
+      await screen.findByTestId('code-editor')
+      fireEvent.click(screen.getByTestId('mock-dirty'))
+    }
+
+    it('同一项目的会话页 ↔ 会话页不弹确认（路由 path 不变，ChatPage 不重建）', async () => {
+      await mountDirtyPanel(ENTRY_SESSION)
+
+      fireEvent.click(screen.getByTestId('to-s2'))
+
+      expect(screen.queryByTestId('preview-nav-discard-dialog')).toBeNull()
+      await waitFor(() => expect(screen.getByTestId('code-editor')).toBeTruthy())
+      expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')
+    })
+
+    it('会话页 → 草稿页必须拦下：ChatPage 随路由 path 变化重建，未保存内容会被销毁', async () => {
+      await mountDirtyPanel(ENTRY_SESSION)
+
+      fireEvent.click(screen.getByTestId('to-draft'))
+
+      await waitFor(() => expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy())
+      expect(screen.getByTestId('code-editor')).toBeTruthy()
+    })
+
+    it('确认放弃后才放行到草稿页', async () => {
+      await mountDirtyPanel(ENTRY_SESSION)
+
+      fireEvent.click(screen.getByTestId('to-draft'))
+      await waitFor(() => expect(screen.getByTestId('preview-nav-discard-dialog')).toBeTruthy())
+      fireEvent.click(screen.getByTestId('preview-nav-leave'))
+
+      // ChatPage 已按草稿路由重建：面板状态清零（回到未打开文件）
+      await waitFor(() => expect(screen.queryByTestId('code-editor')).toBeNull())
+      expect(screen.getByTestId('open-file')).toBeTruthy()
+    })
+  })
+
   it('选中文本后点击引用按钮调用 insertSnippetReference', async () => {
     const insertSnippetReference = vi.fn()
     const insertFileReference = vi.fn()
     vi.stubGlobal('fetch', fetchMock('hello world\nsecond line'))
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
-      <QueryClientProvider client={qc}>
-        <ThemeProvider>
-          <ReferenceContext.Provider
-            value={{
-              api: {
-                insertFileReference,
-                insertSnippetReference,
-                insertTerminalReference: vi.fn(),
-              },
-              setApi: () => {},
-            }}
-          >
-            <FileSelectionContext.Provider
-              value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
-            >
-              <FilePreview projectId="p1" path="notes.txt" />
-            </FileSelectionContext.Provider>
-          </ReferenceContext.Provider>
-        </ThemeProvider>
-      </QueryClientProvider>,
+    renderPreview(
+      { selectedFile: 'notes.txt' },
+      <ThemeProvider>
+        <ReferenceContext.Provider
+          value={{
+            api: {
+              insertFileReference,
+              insertSnippetReference,
+              insertTerminalReference: vi.fn(),
+            },
+            setApi: () => {},
+          }}
+        >
+          <FilePreview projectId="p1" path="notes.txt" />
+        </ReferenceContext.Provider>
+      </ThemeProvider>,
     )
     // 等待内容渲染
     await waitFor(() => {
@@ -275,28 +693,22 @@ describe('FilePreview', () => {
     const insertSnippetReference = vi.fn()
     const insertFileReference = vi.fn()
     vi.stubGlobal('fetch', fetchMock('hello world\nsecond line'))
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
-      <QueryClientProvider client={qc}>
-        <ThemeProvider>
-          <ReferenceContext.Provider
-            value={{
-              api: {
-                insertFileReference,
-                insertSnippetReference,
-                insertTerminalReference: vi.fn(),
-              },
-              setApi: () => {},
-            }}
-          >
-            <FileSelectionContext.Provider
-              value={{ selectedFile: 'notes.txt', openFile: () => {}, closeFile: () => {} }}
-            >
-              <FilePreview projectId="p1" path="notes.txt" />
-            </FileSelectionContext.Provider>
-          </ReferenceContext.Provider>
-        </ThemeProvider>
-      </QueryClientProvider>,
+    renderPreview(
+      { selectedFile: 'notes.txt' },
+      <ThemeProvider>
+        <ReferenceContext.Provider
+          value={{
+            api: {
+              insertFileReference,
+              insertSnippetReference,
+              insertTerminalReference: vi.fn(),
+            },
+            setApi: () => {},
+          }}
+        >
+          <FilePreview projectId="p1" path="notes.txt" />
+        </ReferenceContext.Provider>
+      </ThemeProvider>,
     )
     await waitFor(() => {
       expect(screen.getByTestId('preview-path').textContent).toBe('notes.txt')

@@ -148,7 +148,7 @@ function SettingsToolbar({
   onExport,
 }: SettingsToolbarProps) {
   return (
-    <div className={toolbar}>
+    <div className={toolbar} data-testid="settings-toolbar">
       <h1 className={toolbarTitle}>⚙ 设置</h1>
       <div className={segGroup}>
         <button
@@ -225,11 +225,13 @@ function RoleRoutingSection({ routing, onUpdate, onClear }: RoleRoutingSectionPr
         <SyncedInput
           value={smol?.provider ?? ''}
           placeholder="provider"
+          aria-label="标题生成模型 smol 的 Provider"
           onChange={(v) => onUpdate('provider', v)}
         />
         <SyncedInput
           value={smol?.model ?? ''}
           placeholder="model"
+          aria-label="标题生成模型 smol 的 Model"
           onChange={(v) => onUpdate('model', v)}
         />
         {smol && (

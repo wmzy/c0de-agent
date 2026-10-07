@@ -1,3 +1,4 @@
+import type { Prompt } from '@/composer/types.js'
 import type { ChatOpts } from '@/hooks/chatState.js'
 
 /**
@@ -12,6 +13,11 @@ import type { ChatOpts } from '@/hooks/chatState.js'
 export type PendingFirstMessage = {
   text: string
   opts: ChatOpts
+  /**
+   * 结构化输入（含引用 pill 的 file/snippet/terminal 片段）。发送失败要把它原样
+   * 还回输入框，只留 text 会把 pill 降级成纯文本（引用丢失）。
+   */
+  prompt?: Prompt
 }
 
 const PENDING_KEY_PREFIX = 'c0de-agent:pendingFirst:'

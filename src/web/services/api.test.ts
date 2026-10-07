@@ -52,6 +52,46 @@ describe('fetch-fun HTTP 层', () => {
     })
   })
 
+  // 回归：APIError 此前是普通对象字面量，全仓 30+ 处
+  // `err instanceof Error ? err.message : String(err)` 恒走 else 分支——
+  // String({status,message}) 渲染成「[object Object]」，用户在添加项目、
+  // 永久删除会话、恢复归档等失败处看不到后端给出的原因。
+  it('抛出的错误是真正的 Error：instanceof 成立且 message 可直接取用', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({ error: { code: 'INTERNAL', message: '项目目录不可写：/etc/c0de' } }),
+            { status: 500, statusText: 'Internal Server Error' },
+          ),
+        ),
+    )
+    const err = await get('/api/projects/from-directory').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe('项目目录不可写：/etc/c0de')
+    // 常规消费写法（此前必得 "[object Object]"）
+    expect(String((err as Error).message)).not.toContain('[object Object]')
+    // 结构化读取不变：status/code 与 JSON 序列化行为保持原契约
+    expect(err).toMatchObject({ status: 500, code: 'INTERNAL' })
+    expect(JSON.parse(JSON.stringify(err))).toMatchObject({
+      message: '项目目录不可写：/etc/c0de',
+      status: 500,
+    })
+  })
+
+  // 回归：fetch 本身失败此前原样抛出，各视图直接渲染 e.message，
+  // 用户看到英文原文「Failed to fetch」，既没翻译也没说该做什么。
+  it('fetch 失败（非 HTTP）包装成中文 NETWORK 错误，不再抛 Failed to fetch', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    const err = await get('/api/health').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe('网络请求失败，请确认 c0de 服务仍在运行后重试')
+    expect((err as Error).message).not.toContain('Failed to fetch')
+    expect(err).toMatchObject({ status: 0, code: 'NETWORK' })
+  })
+
   it('401 时派发 c0de-auth-required 事件并抛出 APIError', async () => {
     const handler = vi.fn()
     window.addEventListener('c0de-auth-required', handler)

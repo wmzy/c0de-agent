@@ -37,6 +37,7 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
           stored={websearch.tavilyApiKey}
           onCommit={(v) => onWebSearchChange({ tavilyApiKey: v })}
           testId="websearch-tavily-key-input"
+          ariaLabel="Tavily API Key"
         />
       </div>
       <div className={field}>
@@ -46,6 +47,7 @@ function WebSearchPanel({ websearch, onWebSearchChange }: WebSearchPanelProps) {
           stored={websearch.braveApiKey}
           onCommit={(v) => onWebSearchChange({ braveApiKey: v })}
           testId="websearch-brave-key-input"
+          ariaLabel="Brave API Key"
         />
       </div>
     </div>

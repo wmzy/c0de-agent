@@ -3,13 +3,15 @@ import {
   DndContext,
   type DragEndEvent,
   type DragOverEvent,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type ChangeEvent, useRef, useState } from 'react'
+import { type ChangeEvent, useCallback, useRef, useState } from 'react'
 import { BoardConfigDialog } from '@/components/kanban/BoardConfigDialog.js'
 import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
 import { computeDropPosition } from '@/components/kanban/drop-position.js'
@@ -55,6 +57,24 @@ const configBtn = css`
   font-size: 12px;
 `
 
+/**
+ * 看板列横向滚动容器。
+ *
+ * `tabindex="0"` + role/aria-label 是键盘可达性的关键，不是可选装饰：
+ * 列宽固定 280px（KanbanColumn 的 width/min-width），5 列 + 4 个 12px 间距
+ * + 24px 内边距 = 1472px。窄于此的视口都会溢出——实测 1280px 溢出 192px、
+ * 1440px 溢出 20px、390px 手机上溢出 1082px。列数随用户「看板设置」增删，
+ * 溢出量还会随自定义列数继续放大。
+ *
+ * 原先容器不可聚焦，浏览器不会为它做滚动对齐：Tab 把焦点送进第 5 列的
+ * 「+ 新建卡片」按钮后，该按钮实测落在 right=1453（1280px 视口外 173px），
+ * 而 boardArea.scrollLeft 恒为 0——键盘用户聚焦了一个完全看不见的控件，
+ * 读屏用户听到「新建卡片」却不知它在屏幕外。聚焦容器使其成为滚动祖先，
+ * 浏览器默认的「聚焦即滚入视口」才能生效。
+ *
+ * 焦点环用 :focus-visible：鼠标点容器不显示描边，键盘 Tab 过去才显示。
+ * outline-offset: -2px 让描边画在容器内缘，不被 overflow 裁掉。
+ */
 const boardArea = css`
   display: flex;
   gap: 12px;
@@ -63,6 +83,28 @@ const boardArea = css`
   overflow-y: hidden;
   flex: 1;
   min-height: 0;
+  &:focus-visible {
+    outline: 2px solid var(--haze-color-primary);
+    outline-offset: -2px;
+  }
+`
+
+/**
+ * 溢出提示：仅在看板横向装不下时出现的一条说明。
+ *
+ * 5 列固定 280px 宽 = 1472px 底线，1280px 及以下视口必然溢出。原先除了
+ * 一条会自动隐没的系统滚动条外没有任何提示：手机（390px）上系统滚动条
+ * 通常整体隐藏，用户看到的是「已取消」列被齐腰切断，看不出右边还有内容，
+ * 也就不知道可以横滑。
+ *
+ * 用 JS 测量 scrollWidth > clientWidth 后才渲染——纯 CSS 表达不了
+ * 「内容溢出且我处在滚动起点」，这两者都只有实尺才知道。
+ */
+const scrollHint = css`
+  flex-shrink: 0;
+  padding: 6px 16px 0;
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
 `
 
 const loading = css`
@@ -74,17 +116,125 @@ const loading = css`
   font-size: 14px;
 `
 
-const errorText = css`
+/**
+ * 读失败态：标题 + 原因 + 自救入口三段式。
+ *
+ * 旧样式是一行 danger 色纯文本居中占满高度，连标题都塞在同一行里，
+ * 读不出「哪坏了 / 为什么 / 怎么办」。这里拆开成竖排并给原因单独一档
+ * 次级色：标题是语义（danger），原因是事实（text-secondary），
+ * 重试是动作。role=alert 让读屏在失败发生时立刻播报，而不是等用户
+ * 主动去浏览到这块区域。
+ */
+const errorState = css`
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   height: 100%;
+  padding: 16px;
+  text-align: center;
+`
+
+const errorTitle = css`
   color: var(--haze-color-danger);
   font-size: 14px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  max-width: 460px;
+  color: var(--haze-color-text-secondary);
+  font-size: 13px;
+  /* 后端 message 可能是长路径/长句子，窄屏下必须能断行而不是撑出横向滚动 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  margin-top: 4px;
+  padding: 6px 16px;
+  font-size: 13px;
+`
+
+/** 导入/导出的行内错误条（看板已加载时的局部失败，与整页读失败态区分）。 */
+const ioErrorBar = css`
+  padding: 6px 12px;
+  color: var(--haze-color-danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 `
 
 type KanbanViewProps = {
   projectId: string
+}
+
+/**
+ * 观察横向溢出：内容宽度是否超过容器可见宽度。
+ *
+ * 返回回调 ref 而非 ref 对象：看板容器在 query 落地前并不存在（加载中/失败态
+ * 走的是提前 return 的另一棵树），useEffect([]) 在那之前就跑完，ref.current
+ * 为 null 且没有 deps 可等它重来。回调 ref 在节点挂载的那一刻接管，之后由
+ * 观察器接管后续变化。
+ *
+ * 两个触发源都会改变答案，缺一不可：
+ * - 容器宽度：窗口缩放。这不触发任何 React 重渲染，只有 ResizeObserver 拦得住。
+ * - 内容宽度：列的增删（query 数据到位、「看板设置」改列）。新增的子节点不会被
+ *   已有的 ResizeObserver 接管，用 MutationObserver 补上增删的观测。
+ *
+ * 回退到 1px 容差：亚像素的 flex 舍入会让 scrollWidth 比 clientWidth 大零点几，
+ * 那不是可滚动内容，不该弹提示。
+ */
+function useOverflowX() {
+  const [overflowing, setOverflowing] = useState(false)
+  const teardownRef = useRef<(() => void) | null>(null)
+
+  const ref = useCallback((el: HTMLElement | null) => {
+    teardownRef.current?.()
+    teardownRef.current = null
+    if (!el) return
+
+    const measure = () => setOverflowing(el.scrollWidth - el.clientWidth > 1)
+
+    const resizeObserver = new ResizeObserver(measure)
+    const watchChildren = () => {
+      for (const child of el.children) resizeObserver.observe(child)
+    }
+    watchChildren()
+    measure()
+
+    const mutationObserver = new MutationObserver(() => {
+      watchChildren()
+      measure()
+    })
+    mutationObserver.observe(el, { childList: true })
+
+    teardownRef.current = () => {
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
+    }
+  }, [])
+
+  return { ref, overflowing }
+}
+
+/**
+ * 焦点进入某列时把该列横向滚入视口。
+ *
+ * 依赖浏览器默认的「聚焦即滚入视口」在此不成立，已实测：即使容器带 tabIndex=0，
+ * 1280px 下 Tab 到第 5 列的「+ 新建卡片」后 boardArea.scrollLeft 仍为 0，
+ * 按钮落在 right=1453（视口外 173px）。容器同时声明 overflow-y:hidden，
+ * Chromium 的顺序焦点滚动只沿「在该轴可滚动」的祖先链上溯，x 轴可滚的祖先
+ * 仍要经过这个 y 轴被禁用的节点，行为不可依赖。自己算，不赌引擎。
+ *
+ * 用 scrollIntoView 的 block:'nearest' + inline:'nearest'：只做最小位移，
+ * 已经可见的列不会因为被聚焦而横向跳动。仅在焦点目标位于容器内部时处理，
+ * 避免外层页面的焦点事件也来搅动看板。
+ */
+function handleBoardFocus(e: React.FocusEvent<HTMLDivElement>) {
+  const board = e.currentTarget
+  const target = e.target
+  if (!(target instanceof HTMLElement) || !board.contains(target)) return
+  target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
 
 /** 看板主视图：加载 board、管理 DndContext 拖拽、卡片编辑/配置弹窗。 */
@@ -95,16 +245,35 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const [ioError, setIoError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  // 指针拖拽 + 键盘拖拽两套传感器。
+  //
+  // 此前只注册 PointerSensor：卡片由 useSortable 渲染出 role="button"
+  // tabindex="0" aria-roledescription="sortable"（dnd-kit 的 attributes），
+  // 读屏会把它播报成可聚焦的按钮，但空格/方向键完全无效——键盘用户能聚焦
+  // 一张卡片却永远无法移动它，等于把拖拽功能整个排除在键盘之外。
+  // 实测：focus 卡片后按 Space，各列卡片顺序与 columnId 均无变化，
+  // 页面也没有任何拖拽操作提示。
+  //
+  // KeyboardSensor + sortableKeyboardCoordinates 是 dnd-kit 的标准组合：
+  // 空格/回车拾起，方向键移动，再次空格/回车放下，Esc 取消。落位仍走既有
+  // handleDragEnd（同一套 computeDropPosition），键盘与指针的落位语义一致。
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const {
     data: board,
     isLoading,
     isError,
+    error,
+    refetch,
   } = useQuery({
     queryKey: ['kanban', projectId],
     queryFn: () => kanbanAPI.get(projectId),
   })
+
+  const { ref: boardRef, overflowing } = useOverflowX()
 
   // 卡片移动（乐观更新通过 invalidate 实现）
   const moveMutation = useMutation({
@@ -126,6 +295,11 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       kanbanAPI.addCard(projectId, { title, columnId }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', projectId] }),
   })
+
+  /** 快速新建：调用方的 Promise 失败即代表失败（保留草稿 + 就地提示）。
+   *  错误只在输入框旁边显示一次——顶部 ioError 条留给导入/导出，避免同一失败出现两遍。 */
+  const handleQuickAdd = (title: string, columnId: string) =>
+    addMutation.mutateAsync({ title, columnId }).then(() => undefined)
 
   // ── DnD handlers ────────────────────────────────────────
 
@@ -226,10 +400,32 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     )
   }
 
+  // 读失败必须可自救。此前这里是一行纯文本「看板加载失败」：没有原因、
+  // 没有重试入口，用户只能手动刷新整个页面；更要命的是它和 RecycleBin
+  // 之前的空态一样，把「拉不到」说成了「没有」——而看板恰恰是用户手动
+  // 维护的数据源，误判成空会让人以为卡片丢了。
+  // 实测注入 /api/kanban 500、retry(2) 耗尽后：页面稳定停在
+  // 「看板加载失败」，全页仅 8 个按钮、无任何「重试」，error message 被丢弃。
+  // 与 RecycleBin 读失败态对齐：展示后端 message（APIError 是结构体而非
+  // Error 子类，必须结构化取 message，否则渲染成 [object Object]）+ 重试按钮。
   if (isError || !board) {
+    const message =
+      (error as { message?: string } | null)?.message ??
+      (error instanceof Error ? error.message : null)
     return (
       <div className={view}>
-        <div className={errorText}>看板加载失败</div>
+        <div className={errorState} data-testid="kanban-load-error" role="alert">
+          <span className={errorTitle}>看板加载失败</span>
+          <span className={errorDetail}>{message ?? '无法读取看板数据。'}</span>
+          <button
+            type="button"
+            className={retryBtn}
+            onClick={() => refetch()}
+            data-testid="kanban-retry"
+          >
+            重试
+          </button>
+        </div>
       </div>
     )
   }
@@ -278,13 +474,14 @@ export function KanbanView({ projectId }: KanbanViewProps) {
         </button>
       </div>
       {ioError && (
-        <div
-          className={errorText}
-          style={{ height: 'auto', padding: '4px 12px' }}
-          data-testid="kanban-io-error"
-        >
+        <div className={ioErrorBar} data-testid="kanban-io-error" role="alert">
           {ioError}
         </div>
+      )}
+      {overflowing && (
+        <p className={scrollHint} data-testid="kanban-scroll-hint">
+          共 {board.columns.length} 列，可横向滚动查看后面的列
+        </p>
       )}
 
       <DndContext
@@ -293,7 +490,14 @@ export function KanbanView({ projectId }: KanbanViewProps) {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className={boardArea}>
+        <section
+          className={boardArea}
+          ref={boardRef}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: 可滚动区域进 Tab 序是 WAI-ARIA scrollable-region 模式——屏幕阅读器用户靠 Tab 聚焦它再用方向键滚动，键盘用户靠它滚动到后续列（实测第 5 列在 1280px 视口外 173px）
+          tabIndex={0}
+          aria-label="看板列，可横向滚动"
+          onFocus={handleBoardFocus}
+        >
           {board.columns.map((col) => {
             const colCards = board.cards
               .filter((c) => c.columnId === col.id)
@@ -305,11 +509,11 @@ export function KanbanView({ projectId }: KanbanViewProps) {
                 cards={colCards}
                 labels={board.labels}
                 onCardClick={(c) => setEditingCard(c)}
-                onQuickAdd={(title) => addMutation.mutate({ title, columnId: col.id })}
+                onQuickAdd={(title) => handleQuickAdd(title, col.id)}
               />
             )
           })}
-        </div>
+        </section>
       </DndContext>
 
       {editingCard && (

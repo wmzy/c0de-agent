@@ -1,12 +1,13 @@
 import { EditorView } from '@codemirror/view'
 import { css } from '@linaria/core'
+import { useBlocker } from '@native-router/react'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeEditor } from '@/components/CodeEditor.js'
 import { Dialog } from '@/components/Dialog.js'
 import { Markdown } from '@/components/Markdown.js'
-import { useFileSelection } from '@/contexts/FileSelectionContext.js'
+import { type LineRange, useFileSelection } from '@/contexts/FileSelectionContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { getAuthToken } from '@/services/api.js'
 import { encodeFilePath, fileAPI } from '@/services/file.js'
@@ -95,6 +96,33 @@ const loadingWrap = css`
   padding: 12px;
 `
 
+/** 读失败态：与 RecycleBin/KanbanView 的读失败三段式同口径（标题 + 后端 message + 重试）。 */
+const errorWrap = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 常含长路径，窄面板下必须能断行而不是撑出横向滚动 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  padding: 4px 12px;
+  font-size: 12px;
+`
+
 const hidden = css`
   display: none;
 `
@@ -167,12 +195,66 @@ function cmLineRange(container: HTMLElement, range: Range): { start: number; end
   }
 }
 
+/**
+ * 聊天路由的**会话页**：`/projects/:projectId/sessions/:sessionId`（见
+ * src/web/routes.tsx）。只有这一种目标换页时不会卸载 ChatPage：路由 path 不变，
+ * React 在 `RouteErrorBoundary key={`${index}:${route.path}`}`（@native-router/react
+ * dist/resolve-view.tsx）上复用同一棵子树，面板与编辑器实例原样保留（实测会话页
+ * 之间互切后保存键仍是「保存*」）。
+ *
+ * 草稿页 `/projects/:projectId` 与会话页是 routes.tsx 里的两条**平级 path**，key
+ * 随之变化 → ChatPage 整棵子树卸载重建，预览面板（含 FileSelectionContext 里的
+ * 当前预览目标）一起消失。
+ */
+const CHAT_SESSION_ROUTE = /^\/projects\/([^/]+)\/sessions\/[^/]+\/?$/
+
+/** 路径所属的会话页项目 id；不是会话页时返回 null。查询串/哈希不参与匹配。 */
+function chatSessionProject(path: string): string | null {
+  return CHAT_SESSION_ROUTE.exec(path.split(/[?#]/)[0] ?? '')?.[1] ?? null
+}
+
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
-  const { closeFile, revealRange } = useFileSelection()
+  const { closeFile, openFile, revealRange, registerGuard } = useFileSelection()
   const fileRef = useFileReference()
-  // 编辑器脏状态（CodeEditor 上报）：关闭预览前需确认丢弃
+  // 编辑器脏状态（CodeEditor 上报）：关闭预览 / 切换预览目标前都需确认丢弃。
+  // 切换是父组件发起（点文件树、点 tool 里的路径、点 snippet pill），所以还必须
+  // 把脏状态注册成否决钩子交给父组件——否则父组件换掉 path 后旧编辑器直接卸载，
+  // 未保存的修改连同撤销历史一起静默丢失。
   const [dirty, setDirty] = useState(false)
-  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const dirtyRef = useRef(false)
+  dirtyRef.current = dirty
+  // 待确认的丢弃目标：close（✕ 关闭）或 switch（父组件要切到另一个文件）
+  const [pendingDiscard, setPendingDiscard] = useState<
+    { kind: 'close' } | { kind: 'switch'; path: string; range?: LineRange } | null
+  >(null)
+
+  // 未保存导航防护（与 Settings 同口径）。上面的 registerGuard 只覆盖「面板内换文件/
+  // 关闭」这条由父组件发起的通道；应用内导航（顶栏 设置/项目看板、项目切换、浏览器
+  // 后退）会把 ChatPage 整个卸载，CodeMirror 文档连同撤销历史一起消失，此前无任何提示。
+  // useBlocker 谓词是 allow-list（true = 放行），所以脏时默认 veto。
+  // 唯一豁免：同一项目的**会话页 ↔ 会话页**（换 sessionId 只变参数，route.path
+  // 不变 → ChatPage 不重建，编辑器与未保存内容原样保留），拦下来只会白弹一次确认。
+  // 草稿页 ↔ 会话页不再豁免：两条 path 平级，key 变化让 ChatPage 连同本面板一起
+  // 卸载，「点新会话/另一个会话」会静默销毁未保存内容——正是本次要堵的洞。
+  // 其余目标（/settings、/projects/:id/kanban|settings、切换项目、回首页）同理 veto。
+  const blocker = useBlocker((to, from) => {
+    if (!dirtyRef.current) return true
+    const target = chatSessionProject(to)
+    return target !== null && target === chatSessionProject(from)
+  })
+
+  // 刷新/关闭标签页：useBlocker 只覆盖 SPA 内导航与后退/前进，浏览器原生通道走
+  // beforeunload。
+  useEffect(() => {
+    if (!dirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [dirty])
+
   // ref 持有最新 API，避免条件绑定 onMouseUp 导致首次操作失败
   const apiRef = useRef(fileRef)
   apiRef.current = fileRef
@@ -247,6 +329,28 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     }
   } else if (q.isLoading) {
     body = <div className={loadingWrap}>加载中…</div>
+  } else if (q.isError) {
+    // 「读不到」必须与「真的为空」分开：useQuery 重试耗尽后 data 仍是 undefined，
+    // 此前 404/403/500/断网 全部落到下面的「无内容」——header 仍显示路径，看起来
+    // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
+    // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
+    const message =
+      (q.error as { message?: string } | null)?.message ??
+      (q.error instanceof Error ? q.error.message : null)
+    body = (
+      <div className={errorWrap} data-testid="file-preview-error" role="alert">
+        <span className={errorTitle}>文件读取失败</span>
+        <span className={errorDetail}>{message ?? '无法读取该文件内容。'}</span>
+        <button
+          type="button"
+          className={retryBtn}
+          onClick={() => void q.refetch()}
+          data-testid="file-preview-retry"
+        >
+          重试
+        </button>
+      </div>
+    )
   } else if (!q.data) {
     body = <div className={loadingWrap}>无内容</div>
   } else if (['md', 'markdown'].includes(ext)) {
@@ -335,14 +439,40 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
 
   // 脏编辑态点 ✕ 先弹确认，确认后才丢弃修改并关闭；非脏态直接关闭
   const handleClose = useCallback(() => {
-    if (dirty) setConfirmDiscard(true)
+    if (dirty) setPendingDiscard({ kind: 'close' })
     else closeFile()
   }, [dirty, closeFile])
 
+  // 钩子只需注册一次，用 ref 读最新的 path 让闭包不过期（依赖里加 path 会反复重注册）。
+  const pathRef = useRef(path)
+  pathRef.current = path
+
+  // 注册否决钩子：父组件要换预览目标（点文件树/点 tool 里的路径/点 snippet pill 都可能，
+  // 删除当前文件也会走 closeFile）时先问这里。脏则拦下并弹确认。
+  useEffect(() => {
+    registerGuard?.((next) => {
+      if (!dirtyRef.current) return true
+      // 同一文件只换高亮范围（点 snippet pill 定位行）：没有内容会被丢弃，直接放行
+      if (next && next.path === pathRef.current) return true
+      setPendingDiscard(
+        next ? { kind: 'switch', path: next.path, range: next.range } : { kind: 'close' },
+      )
+      return false
+    })
+    return () => registerGuard?.(null)
+  }, [registerGuard])
+
+  // 用户确认丢弃：先同步清掉脏标记，再重放被拦下的那次变更——否则重放时钩子又读到
+  // dirty=true，那次变更会被自己再拦一遍，确认键看起来毫无作用。
   const handleDiscard = useCallback(() => {
-    setConfirmDiscard(false)
-    closeFile()
-  }, [closeFile])
+    const pending = pendingDiscard
+    setPendingDiscard(null)
+    if (!pending) return
+    dirtyRef.current = false
+    setDirty(false)
+    if (pending.kind === 'close') closeFile()
+    else openFile(pending.path, pending.range)
+  }, [pendingDiscard, closeFile, openFile])
 
   return (
     <div className={wrap}>
@@ -378,8 +508,8 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         </button>
       </div>
       <Dialog
-        open={confirmDiscard}
-        onClose={() => setConfirmDiscard(false)}
+        open={pendingDiscard !== null}
+        onClose={() => setPendingDiscard(null)}
         title="放弃未保存的修改？"
         width="min(380px, 92vw)"
         testId="discard-dialog"
@@ -388,7 +518,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
             <Button
               data-testid="discard-cancel"
               variant="outline"
-              onClick={() => setConfirmDiscard(false)}
+              onClick={() => setPendingDiscard(null)}
             >
               取消
             </Button>
@@ -403,7 +533,38 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
           </div>
         }
       >
-        <div>「{path}」有未保存的修改，关闭预览将丢弃这些修改。</div>
+        <div>
+          {pendingDiscard?.kind === 'switch'
+            ? `「${path}」有未保存的修改，切换到「${pendingDiscard.path}」将丢弃这些修改。`
+            : `「${path}」有未保存的修改，关闭预览将丢弃这些修改。`}
+        </div>
+      </Dialog>
+      {/* 被 veto 的应用内导航：弹窗遮罩阻断交互，「留下」回到编辑，「离开」重放导航。
+       *  此前这条路径没有任何提示——点顶栏 设置/项目看板、切项目或按浏览器后退，
+       *  整个聊天页被卸载，未保存的文件修改静默消失。 */}
+      <Dialog
+        open={blocker.state != null}
+        onClose={() => blocker.reset()}
+        title="放弃未保存的修改？"
+        width="min(380px, 92vw)"
+        testId="preview-nav-discard-dialog"
+        footer={
+          <div className={discardActions}>
+            <Button data-testid="preview-nav-stay" variant="solid" onClick={() => blocker.reset()}>
+              留下
+            </Button>
+            <Button
+              data-testid="preview-nav-leave"
+              onClick={() => blocker.proceed()}
+              className={btnDanger}
+              variant="outline"
+            >
+              离开
+            </Button>
+          </div>
+        }
+      >
+        <div>{`「${path}」有未保存的修改，离开当前页面将丢弃这些修改。`}</div>
       </Dialog>
     </div>
   )

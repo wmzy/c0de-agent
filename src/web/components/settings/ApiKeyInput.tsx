@@ -36,6 +36,7 @@ function ApiKeyInput({
   stored,
   onCommit,
   testId = 'provider-apikey',
+  ariaLabel,
 }: {
   /** 关联外部 label（ProviderPanel 的「API Key」标签）。 */
   id?: string
@@ -43,6 +44,12 @@ function ApiKeyInput({
   onCommit: (value: string) => void
   /** 测试标识（多处复用本组件时需区分）。 */
   testId?: string
+  /**
+   * 可访问名称：调用方用 <span> 文本而非 <label htmlFor> 包裹时（WebSearchPanel
+   * 的 Tavily/Brave Key 两行），placeholder「API Key」不充当名称——两行读屏
+   * 完全同名，无法区分填的是哪个服务商的 key。
+   */
+  ariaLabel?: string
 }) {
   const isEnc = (stored ?? '').startsWith('enc:')
   const display = isEnc ? '' : (stored ?? '')
@@ -50,6 +57,7 @@ function ApiKeyInput({
     <span className={pwdField}>
       <SyncedInput
         id={id}
+        aria-label={ariaLabel}
         className={pwdInput}
         type="password"
         value={display}

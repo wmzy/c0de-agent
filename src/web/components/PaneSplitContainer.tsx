@@ -39,6 +39,23 @@ const paneActiveStyle = css`
   outline-offset: -1px;
 `
 
+/**
+ * 分屏 pane 头部样式。
+ *
+ * 背景与文字都**不跟主题走**：pane 头贴在终端本体的固定深色面（#0d1117，
+ * TerminalPanel/Terminal 的 xterm 主题亦为写死的深色）上——浅色主题下这里仍
+ * 是深色背景，而 --haze-color-text-secondary 在浅色主题解析为 oklch(0.409 0 0)
+ * 的深灰，落在深色面上只有 2.03:1（axe color-contrast serious）。
+ *
+ * 实测两主题（390/1440 复测一致）：
+ * - 浅色：oklch(0.409) 深灰 × #0d1117+3% 白 = 2.03:1（需 4.5:1）
+ * - 深色：oklch(0.757) × 深色面 = 9.3:1（达标，但两主题色值不同会让
+ *   同一个「zsh」标签在切主题时跳色——既不一致也不可预期）
+ *
+ * 统一取终端前景色系（与 xterm 默认前景 #c9d1d9 同一色族）：静态色值在两主题
+ * 下都是 9:1 以上，且切主题不跳色。关闭按钮同样在深色面上，按钮禁用态
+ * 透明度 0.35 后仍需 ≥4.5:1，故不给按钮单独降透明度。
+ */
 const paneHeaderStyle = css`
   display: flex;
   align-items: center;
@@ -48,7 +65,8 @@ const paneHeaderStyle = css`
   background: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 11px;
-  color: var(--haze-color-text-secondary);
+  /* 固定浅色：pane 头永远贴在终端的深色面上（见上方说明），不随主题切换 */
+  color: #c9d1d9;
   user-select: none;
   flex-shrink: 0;
 `
@@ -62,7 +80,7 @@ const paneCloseStyle = css`
   height: 16px;
   border: none;
   background: transparent;
-  color: var(--haze-color-text-secondary);
+  color: inherit;
   font-size: 12px;
   cursor: pointer;
   border-radius: 3px;
@@ -75,6 +93,11 @@ const paneCloseStyle = css`
   &:hover {
     background: var(--haze-color-danger);
     color: #fff;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #c9d1d9;
+    outline-offset: -2px;
   }
 `
 

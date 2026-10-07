@@ -168,7 +168,18 @@ export function SessionList({
   /** 删除会话后回调（参数为被删 id），用于父级在删除当前会话时跳回草稿页。 */
   onDeleted?: (id: string) => void
 }) {
-  const { data: tree, isLoading } = useSessionTree()
+  const {
+    data: tree,
+    isLoading,
+    isError,
+    error: treeError,
+    refetch: refetchTree,
+  } = useSessionTree()
+  // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+  // 先结构化取、再 instanceof 兜底，两种读法对网络异常/超时也不会退化。
+  const treeErrorMessage =
+    (treeError as { message?: string } | null)?.message ??
+    (treeError instanceof Error ? treeError.message : null)
   const del = useDeleteSession()
   const qc = useQueryClient()
 
@@ -213,10 +224,14 @@ export function SessionList({
   )
 
   // P2-6：标题未命中时再搜消息内容（标题树之外的补充结果）。
+  //
+  // 阈值 1 而非 2：单字符查询此前被静默丢弃，而标题树仍按 search 过滤，
+  // 于是「只命中消息内容」的会话在输入 1 个字时直接变成「无匹配会话」——
+  // 实测搜「独」报无匹配，搜「独特」即命中。服务端对单字符正常返回。
   const { data: contentMatches } = useQuery({
     queryKey: ['sessions', 'search', projectId, searchDebounced],
     queryFn: () => sessionAPI.search(searchDebounced, projectId),
-    enabled: searchDebounced.length > 1,
+    enabled: searchDebounced.length >= 1,
     staleTime: 10_000,
   })
   // 树中已展示的全部会话 id（任意深度）。递归收集：只收顶层与直接子级会把
@@ -414,13 +429,42 @@ export function SessionList({
           className={searchInput}
           type="search"
           placeholder="搜索会话标题或消息内容…"
+          /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
+           * 为空时拿它兜底，但那是脆弱的名字来源），读屏/语音控制依赖稳定字段名。 */
+          aria-label="搜索会话标题或消息内容"
           value={search}
           onChange={(v) => setSearch(v)}
           data-testid="session-search"
         />
       )}
       {isLoading && !showRecycle ? <div className={empty}>加载中…</div> : null}
-      {!showRecycle ? (
+      {isError && !showRecycle ? (
+        <div>
+          <div className={errorBar} data-testid="sessions-load-error" role="alert">
+            会话列表加载失败
+            {treeErrorMessage ? `：${treeErrorMessage}` : '，请稍后重试。'}
+          </div>
+          <div className={empty}>
+            <button
+              type="button"
+              onClick={() => void refetchTree()}
+              data-testid="sessions-retry"
+              style={{
+                background: 'none',
+                border: '1px solid var(--haze-color-border)',
+                borderRadius: '6px',
+                padding: '4px 12px',
+                color: 'inherit',
+                cursor: 'pointer',
+                font: 'inherit',
+              }}
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {!showRecycle && !isError ? (
         <>
           {!isLoading && visibleTree.length === 0 && extraMatches.length === 0 ? (
             <div className={empty}>{search ? '无匹配会话' : '该项目下暂无会话'}</div>

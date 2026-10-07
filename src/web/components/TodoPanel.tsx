@@ -472,6 +472,9 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
               <SyncedInput
                 className={`${inputStyle} ${input}`}
                 placeholder="任务描述…"
+                /* 两个输入框并排且都没有可见 label：显式 aria-label 而不是只靠
+                 * placeholder（它只是视觉提示，HTML-AAM 兜底的名字来源很脆弱）。 */
+                aria-label="任务描述"
                 value={newTask}
                 onChange={(v) => setNewTask(v)}
                 onKeyDown={(e) => {
@@ -485,6 +488,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
               <SyncedInput
                 className={`${inputStyle} ${input}`}
                 placeholder="阶段（可选）"
+                aria-label="阶段（可选）"
                 style={{ flex: '0 0 100px' }}
                 value={newPhase}
                 onChange={(v) => setNewPhase(v)}
@@ -514,6 +518,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
           <SyncedInput
             className={`${inputStyle} ${input}`}
             placeholder="任务描述…"
+            aria-label="任务描述"
             value={newTask}
             onChange={(v) => setNewTask(v)}
             onKeyDown={(e) => {
@@ -526,6 +531,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
           <SyncedInput
             className={`${inputStyle} ${input}`}
             placeholder="阶段（可选）"
+            aria-label="阶段（可选）"
             style={{ flex: '0 0 100px' }}
             value={newPhase}
             onChange={(v) => setNewPhase(v)}

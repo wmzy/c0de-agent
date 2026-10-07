@@ -123,7 +123,13 @@ function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null
  *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。
  *  P1-7：仅显示当前项目的删除会话；「清空」仅清空当前项目。 */
 export function RecycleBin({ projectId }: { projectId: string }) {
-  const { data: deleted, isLoading } = useDeletedSessions(projectId)
+  const {
+    data: deleted,
+    isLoading,
+    isError,
+    error: listError,
+    refetch,
+  } = useDeletedSessions(projectId)
   // F1：孤儿（projectId=null）已删会话——删除项目所产生，任何项目回收站视图都不可见，
   // 需在本回收站内单独分组暴露，否则 60 天后被静默物理清除。
   // A3：折叠态只拉计数；展开时才拉列表并显式标记「已看到」（启动倒计时），
@@ -172,10 +178,14 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
     return () => clearTimeout(t)
   }, [search])
+  // 阈值 1 而非 2：单字符查询此前被静默丢弃，而下方 rows 分支仍按
+  // searchDebounced.length > 1 判断「是否在搜索」——两边同时为假时列出的是
+  // 未过滤的全部分页条目，搜索框里有字却看不到任何收敛。服务端对单字符
+  // 正常返回。
   const { data: searchResults } = useQuery({
     queryKey: ['sessions', 'search-deleted', projectId, searchDebounced],
     queryFn: () => sessionAPI.search(searchDebounced, projectId, true),
-    enabled: searchDebounced.length > 1,
+    enabled: searchDebounced.length >= 1,
   })
 
   const rebindMut = useMutation({
@@ -213,6 +223,38 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const [showEmptyTrash, setShowEmptyTrash] = useState(false)
 
   if (isLoading) return <div className={empty}>加载中…</div>
+  // 列表拉取失败必须与「真的为空」区分开：此前只判 isLoading，
+  // 请求 500 时 deleted 为 undefined → deletedList 为空数组 → 落到
+  // 「回收站为空」空态。用户看到的是「空的」，实际是「拉不到」，
+  // 于是反复点刷新甚至以为会话被清空。实测注入 500 后等重试结束，
+  // 页面稳定显示「回收站为空」、无任何错误提示。
+  // 与 KanbanView 的「看板加载失败」保持同一套读失败表达，并给出重试入口。
+  if (isError) {
+    // APIError 现在是真正的 Error（services/api.ts 的 ApiErrorImpl），
+    // `err.message` 即后端文案；但错误也可能来自非本层抛出的路径，
+    // 结构化取 message 优先、instanceof 兜底，两种读法都不会退化。
+    const message =
+      (listError as { message?: string } | null)?.message ??
+      (listError instanceof Error ? listError.message : null)
+    return (
+      <div>
+        <div className={errorBar} data-testid="trash-load-error">
+          回收站加载失败
+          {message ? `：${message}` : '，请稍后重试。'}
+        </div>
+        <div className={empty}>
+          <button
+            type="button"
+            className={restoreBtn}
+            onClick={() => refetch()}
+            data-testid="trash-retry"
+          >
+            重试
+          </button>
+        </div>
+      </div>
+    )
+  }
   // P1-1：恢复/归属结果 notice 必须独立于「回收站为空」分支——
   // 恢复最后一个会话时回收站变空，若直接返回空态，notice（如 CLI 会话恢复提示）
   // 永远不会展示，用户只能看到列表消失。A3：孤儿分组同样独立于空态渲染。
@@ -238,10 +280,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     if (sb) return 1
     return (b.deletedAt ?? 0) - (a.deletedAt ?? 0)
   })
-  const rows =
-    searchDebounced.length > 1
-      ? (searchResults?.results.map((r) => r.session) ?? [])
-      : sortedDeleted
+  // 「是否在搜索」与上面 query 的 enabled 必须是同一个口径：两边不一致时，
+  // 搜索框有字却会列出未过滤的全部分页条目。
+  const isSearching = searchDebounced.length >= 1
+  const rows = isSearching ? (searchResults?.results.map((r) => r.session) ?? []) : sortedDeleted
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
@@ -333,13 +375,14 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             className={searchInput}
             type="search"
             placeholder="搜索回收站标题或消息内容…"
+            /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
+             * 为空时拿它兜底，但那是脆弱的名字来源），读屏/语音控制依赖稳定字段名。 */
+            aria-label="搜索回收站标题或消息内容"
             value={search}
             onChange={(v) => setSearch(v)}
             data-testid="trash-search"
           />
-          {rows.length === 0 && searchDebounced.length > 1 ? (
-            <div className={empty}>回收站无匹配会话</div>
-          ) : null}
+          {rows.length === 0 && isSearching ? <div className={empty}>回收站无匹配会话</div> : null}
           {rows.map((s) => {
             const descendants = countDeletedDescendants(deletedIndex, s.id)
             return (

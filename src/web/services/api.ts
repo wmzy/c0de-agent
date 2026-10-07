@@ -127,6 +127,48 @@ export type ApiClient = ff.Options & ff.Pipe & { readonly [apiBrand]: never }
 const api = client as unknown as ApiClient
 
 /**
+ * API 错误的运行时形态。
+ *
+ * APIError 是**类型**（types/index.ts 里的结构体），此前 toAPIError 直接返回普通
+ * 对象字面量，于是全仓 30+ 处 `err instanceof Error ? err.message : String(err)`
+ * 恒走 else 分支：String({status,message}) 是 "[object Object]"，用户看到的是
+ * 一串字面量而不是后端给出的原因（首次运行「添加项目/测试 Provider」失败即如此）。
+ * 零散改成 `(err as {message?}).message` 只会漏网——这里让错误成为真正的 Error，
+ * 一处修复全部调用点正确，且新增代码按常规写法即对。
+ *
+ * message/status/code/details 仍作为自有可枚举属性赋值（Error.message 自带的是
+ * 不可枚举的同名字段，必须显式覆盖），结构化读取 `(e as APIError).message`
+ * 与 JSON.stringify 的行为都不变。
+ */
+class ApiErrorImpl extends Error {
+  status: number
+  code?: string
+  details?: Record<string, unknown>
+
+  constructor(init: APIError) {
+    super(init.message)
+    this.name = 'APIError'
+    // Error 自带的 message 是**不可枚举**的，自有属性赋值不会改回可枚举——
+    // 直接 this.message = … 会让 JSON.stringify(err) 丢掉 message（改前是普通对象，
+    // message 可枚举）。错误对象会被跨窗口/序列化传递，必须保住原契约。
+    Object.defineProperty(this, 'message', {
+      value: init.message,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+    this.status = init.status
+    if (init.code !== undefined) this.code = init.code
+    if (init.details !== undefined) this.details = init.details
+  }
+}
+
+/** 构造一个既可结构化读取、又能被 instanceof Error 识别的 API 错误。 */
+function apiError(init: APIError): APIError {
+  return new ApiErrorImpl(init) as APIError
+}
+
+/**
  * HTTPError → APIError 契约（服务端 { error: { code, message, details? } }，
  * 兼容旧/裸 { message } 与无 JSON（fallback statusText））。
  * 错误体在重试耗尽的最终错误上解析一次。
@@ -146,13 +188,13 @@ async function toAPIError(e: ff.HTTPError): Promise<APIError> {
       | undefined
   )?.error
   const flat = body as { message?: string; code?: string } | undefined
-  return {
+  return apiError({
     status: e.status,
     message: errBody?.message ?? flat?.message ?? e.response.statusText,
     ...((errBody?.code ?? flat?.code) ? { code: (errBody?.code ?? flat?.code) as string } : {}),
     // P0-2：details 随错误下发（TRUST_REQUIRED 的风险项等），此前被静默丢弃。
     ...(errBody?.details ? { details: errBody.details } : {}),
-  }
+  })
 }
 
 async function request<T>(
@@ -171,7 +213,16 @@ async function request<T>(
       if (e.status === 401) emitAuthRequired()
       throw await toAPIError(e)
     }
-    throw e
+    // 非 HTTP 失败（fetch 本身失败：服务未启动/端口不通、请求被 abort、超时预算耗尽）
+    // 此前原样抛出，各视图直接渲染 e.message —— 用户看到的是英文原文
+    // 「Failed to fetch」/「The operation was aborted.」，既没翻译也没告诉用户该做什么。
+    // 统一包成 APIError（status 0）后，各处既有的错误三段式（标题/原因/重试）可直接复用。
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
+    throw apiError({
+      status: 0,
+      code: 'NETWORK',
+      message: '网络请求失败，请确认 c0de 服务仍在运行后重试',
+    })
   }
 }
 

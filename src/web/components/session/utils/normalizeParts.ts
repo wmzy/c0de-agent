@@ -7,6 +7,7 @@ export type RenderBlock =
   | { type: 'text'; role: MessageRole; text: string; partIndex: number }
   | { type: 'thinking'; text: string; partIndex: number }
   | { type: 'steering'; text: string; partIndex: number }
+  | { type: 'image'; mediaType: string; data: string; partIndex: number }
   | {
       type: 'tool'
       id: string
@@ -33,6 +34,16 @@ export function normalizeParts(message: Message): RenderBlock[] {
         break
       case 'steering':
         blocks.push({ type: 'steering', text: part.text, partIndex })
+        break
+      // 图片此前被整个丢掉：消息里只剩 image part 时渲染出一整行空白（滞留条显示
+      // 「(空消息)」），图文消息则只见文字——用户自己刚发出的图片在会话里没有痕迹。
+      case 'image':
+        blocks.push({
+          type: 'image',
+          mediaType: part.mediaType,
+          data: part.data,
+          partIndex,
+        })
         break
       case 'tool_call': {
         const tb: ToolBlock = {

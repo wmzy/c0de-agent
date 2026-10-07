@@ -269,3 +269,137 @@ describe('useComposer pill 保留', () => {
     expect(entry).not.toContain('```')
   })
 })
+
+// ── 发送失败还原 ──
+// 发送即清空是既定体感，但 onSend 落到 false（会话创建失败/流式首步失败）时，
+// 此前输入已被丢掉，用户只能凭记忆重打。此文件锁住「失败把草稿原样还回」：
+// 文本 + pill + 图片 + 提示历史条目，且成功路径不被误还原。
+
+describe('useComposer 发送失败还原', () => {
+  it('onSend 返回 Promise<false>：文本、file pill、图片与提示历史一并还原', async () => {
+    saveHistory([]) // 历史是 localStorage 持久态，先清干净再断言头一条
+    const c = renderComposerWithEditor()
+    typeText(c, '修一下')
+    act(() => {
+      c.appendFileReference('src/a.ts')
+    })
+    c.onSend.mockResolvedValueOnce(false)
+    act(() => {
+      c.send()
+    })
+    // 清空立即发生（编辑器空态保留 ZWSP 光标锚点，剥掉再比）
+    expect(c.editor.textContent?.replaceAll('\u200b', '').trim()).toBe('')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    // 失败后还原：文本与 pill 都回来
+    expect(c.editor.textContent).toContain('修一下')
+    expect(pillTypes(c)).toContain('file')
+    // 未发出的消息不进 ↑ 历史（草稿已回到输入框，历史只记真正发出的）
+    expect(loadHistory()).toEqual([])
+  })
+
+  it('onSend 同步返回 false：同样还原', () => {
+    const c = renderComposerWithEditor()
+    typeText(c, '同步失败')
+    c.onSend.mockReturnValueOnce(false)
+    act(() => {
+      c.send()
+    })
+    expect(c.editor.textContent).toContain('同步失败')
+    expect(pillTypes(c)).toEqual([])
+  })
+
+  it('onSend 成功（true/undefined）：清空保持，不触发还原', async () => {
+    const c = renderComposerWithEditor()
+    typeText(c, '成功路径')
+    c.onSend.mockResolvedValueOnce(true)
+    act(() => {
+      c.send()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(c.editor.textContent?.replaceAll('\u200b', '').trim()).toBe('')
+    expect(pillTypes(c)).toEqual([])
+  })
+
+  // 输入框在请求在途期间仍可编辑（ComposerEditor 没有只读路径），失败还原必须
+  // 认得「用户已经敲了新东西」，否则慢失败会凭空吞掉那段时间的输入。
+  it('在途期间用户又敲了字：失败还原不得覆盖新内容', async () => {
+    const c = renderComposerWithEditor()
+    typeText(c, '第一条')
+    let resolveSend: (v: boolean) => void = () => {}
+    c.onSend.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveSend = resolve
+      }),
+    )
+    act(() => {
+      c.send()
+    })
+    // 请求在途：用户接着输入
+    typeText(c, '接着写的')
+    await act(async () => {
+      resolveSend(false)
+      await Promise.resolve()
+    })
+    expect(c.editor.textContent).toContain('接着写的')
+    expect(c.editor.textContent).not.toContain('第一条')
+  })
+
+  it('在途期间又发了一次：第一条失败不再回填（否则盖掉第二次的输入）', async () => {
+    const c = renderComposerWithEditor()
+    typeText(c, '第一条')
+    let resolveFirst: (v: boolean) => void = () => {}
+    c.onSend.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveFirst = resolve
+      }),
+    )
+    act(() => {
+      c.send()
+    })
+    // 用户不等它，直接再发一条（第二次立即成功）
+    typeText(c, '第二条')
+    c.onSend.mockReturnValueOnce(true)
+    act(() => {
+      c.send()
+    })
+    await act(async () => {
+      resolveFirst(false)
+      await Promise.resolve()
+    })
+    expect(c.editor.textContent?.replaceAll('\u200b', '').trim()).toBe('')
+  })
+
+  // 期间若有别的发送插进来，entries[0] 已是别人的条目——按「头一条变了就撤」
+  // 会把那条真正发出去的消息从历史里删掉。
+  it('在途期间别的发送插队：不删除不属于本次的历史条目', async () => {
+    saveHistory([])
+    const c = renderComposerWithEditor()
+    typeText(c, '第一条')
+    let resolveFirst: (v: boolean) => void = () => {}
+    c.onSend.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveFirst = resolve
+      }),
+    )
+    act(() => {
+      c.send()
+    })
+    // 第二次发送成功，历史里现在压着「第二条」
+    typeText(c, '第二条')
+    c.onSend.mockReturnValueOnce(true)
+    act(() => {
+      c.send()
+    })
+    expect(loadHistory()[0]).toBe('第二条')
+    await act(async () => {
+      resolveFirst(false)
+      await Promise.resolve()
+    })
+    // 「第二条」确实发出去了，历史必须留着它
+    expect(loadHistory()[0]).toBe('第二条')
+  })
+})

@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useBlocker, useMatched } from '@native-router/react'
+import { useBlocker, useMatched, useSearchParams } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, ConfirmDialog } from 'haze-ui'
@@ -21,6 +21,8 @@ import {
   SettingsSaveBar,
   SettingsToolbar,
 } from '@/components/settings/SettingsChrome.js'
+import { SettingsToc } from '@/components/settings/SettingsToc.js'
+import { onTocReady, scrollSettingsSectionIntoView } from '@/components/settings/sectionScroll.js'
 import {
   checkRow,
   field,
@@ -36,18 +38,86 @@ import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
-import { parseFiniteNumber } from '@/utils/format.js'
+import { parseBoundedNumber } from '@/utils/format.js'
 
 /** 加载中占位。 */
 const loadingWrap = css`
   padding: 24px;
 `
 
-/** Settings 根滚动容器。 */
-const settingsScroll = css`
-  overflow: auto;
+/**
+ * 读失败态：标题 / 原因 / 动作三段式（与 KanbanView 同一套表达）。
+ *
+ * 设置页是配 AI 服务、token、权限的唯一入口，落到「永远加载中」等于
+ * 整个应用不可配置；因此这里必须把原因说清楚，并给一个不丢页面的重试。
+ */
+const loadError = css`
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 24px;
+`
+
+const loadErrorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 14px;
+  font-weight: 600;
+`
+
+const loadErrorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 13px;
+  /* 后端 message 可能是长路径/长提示，窄屏下必须能断行 */
+  overflow-wrap: anywhere;
+`
+
+const loadErrorActions = css`
+  margin-top: 4px;
+`
+
+/**
+ * Settings 根容器：flex 列，按内容撑高并至少占满编辑区。
+ *
+ * 刻意不用 overflow:auto——它会把自己变成 sticky 的「最近滚动祖先」，而本容器
+ * 从不滚动（实测 scrollHeight === clientHeight === 3351，滚动发生在
+ * .haze-Workbench__editor）。零滚动范围的 scrollport 让 sticky 完全失效：
+ * 工具条（top:0）与吸底保存条（bottom:0）都钉在文档流原位，跟随整页一起滚走。
+ * 后果是保存条在 4002px 长的表单里只有最后 45px 能看见
+ * （scrollTop=0 时 top=3378；滚到底 top=855），改完配置看不到「保存」在哪，
+ * 也没有任何常驻入口。改为 overflow:visible 后，sticky 正确回落到 <main> 这个
+ * 真正的滚动容器，保存条恒钉在视口底部。
+ *
+ * min-height:100% 而非 height:100%：内容短于视口时靠 SaveBar 的 margin-top:auto
+ * 把保存条压到底部；内容变长时容器按内容撑开（height:100% + flex 子项默认
+ * shrink:1 会把表单控件压扁）。
+ */
+const settingsScroll = css`
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+`
+
+/**
+ * 配置作用域工具条：标签 + 下拉单行排布。
+ *
+ * 标签禁止收缩（flex 子项默认 shrink:1）：下拉随选项文案自适应宽度，
+ * 会把相邻标签挤到「每行 1–2 字」竖排（实测 5 字「配置作用域」在
+ * 57px 宽的盒子里折成 2 行、36px 高）。与 settings/styles.field 同口径。
+ */
+const scopeBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--haze-color-border);
+  font-size: 12px;
+`
+
+const scopeLabel = css`
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--haze-color-text-secondary);
 `
 
 /** 离开确认弹窗正文。 */
@@ -70,8 +140,15 @@ export function Settings() {
   // P1-1：项目上下文来自路由（/projects/:projectId/settings）；
   // 无上下文时保持旧行为（服务启动目录项目 + 全局作用域）。
   const { params } = useMatched()
+  const [searchParams] = useSearchParams()
   const projectId = params.projectId
-  const { data: resp, isLoading } = useQuery({
+  const {
+    data: resp,
+    isLoading,
+    isError,
+    error: configError,
+    refetch: refetchConfig,
+  } = useQuery({
     queryKey: ['config', projectId ?? 'server'],
     queryFn: () => configAPI.get(projectId),
   })
@@ -141,7 +218,86 @@ export function Settings() {
     },
   })
 
-  if (isLoading || !config) return <div className={loadingWrap}>加载中…</div>
+  // 深链定位：顶栏成本徽标承诺「点击前往用量与成本」，此前只跳到设置页顶部——
+  // 实测「用量与成本」在文档 y=3107 而滚动容器停在 0，用户看到的是「外观」，
+  // 与徽标 tooltip 的承诺不符。?section=<id> 落地后滚到该分区。
+  //
+  // 必须挂在所有 early return（isLoading / isError）之前：Hooks 数量须跨渲染
+  // 恒定，否则「重试成功后从失败态恢复」这类先失败再成功的路径直接崩。
+  //
+  // 落点必须让开顶部两条 sticky（工具条 + 分区目录行）。原先写死
+  // `offsetTop - 16`，目录行出现后标题会停在两条 sticky 底下被完全遮住：
+  // 实测深链 ?section=section-5-上下文压缩 时标题落在 y=61，而目录行下沿在
+  // 141——「点了徽标/链接却什么都没变」。offsetTop 还相对各自 offsetParent
+  // （.haze-Workbench__workbench），与容器 scrollTop 并非同一坐标系。
+  // 口径统一到 scrollSettingsSectionIntoView，与点目录跳转完全一致。
+  //
+  // 还要再等目录行就绪：目录行是 SettingsToc 扫描完 h2 才渲染的，而本
+  // effect 与那次扫描同批跑，那时目录行尚未入 DOM，实测高度为 0，落点会
+  // 再少让 45px（标题又回到目录行底下）。订阅 onTocReady 后重算一次。
+  //
+  // 配置未就绪时 UsagePanel 尚未挂载，getElementById 落空，本 effect 会在
+  // resp 到达后由依赖重跑。
+  //
+  // 依赖必须是**锚点字符串**而不是 searchParams 实例：useSearchParams 每次渲染
+  // 都 `new URLSearchParams(useSyncExternalStore(...))`（@native-router/react
+  // dist/use-search-params.js），对象身份逐渲染不同。把它放进依赖等于本 effect
+  // 每次渲染都重跑，而 jump → scrollSettingsSectionIntoView 无条件
+  // `scrollTop += delta`（sectionScroll.ts）：只要 URL 里留着 ?section=，用户滚到
+  // 别的分区一敲字（setDraft 逐字符重渲染，保存反馈定时器、config refetch 同理）
+  // 就被拽回锚点分区，输入框逐字跳出视口——「锚点之外的字段根本没法编辑」。
+  // 顶栏成本徽标正是带 ?section=usage 跳进来的（TopBar MonthCostBadge），URL
+  // 上的参数会留到用户离开该页为止。
+  const sectionAnchor = searchParams.get('section')
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resp/viewMode 只作「面板已挂载」的触发信号，effect 内不读
+  useEffect(() => {
+    if (!sectionAnchor) return
+    const jump = () => {
+      const target = document.getElementById(sectionAnchor)
+      if (target) scrollSettingsSectionIntoView(target)
+    }
+    jump()
+    return onTocReady(jump)
+  }, [sectionAnchor, resp, viewMode])
+
+  if (isLoading) return <div className={loadingWrap}>加载中…</div>
+  // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
+  // 请求 500 时 isLoading 已为 false 而 config 恒为 null（resp 为 undefined），
+  // 于是设置页永久停在「加载中…」——实测注入 /api/config 500、retry:2 耗尽后
+  // 40s+ 无任何错误、无重试，用户会一直等一个永远不会到来的表单。
+  // 这比回收站/看板的「误报为空」更糟：它连一个错误的结论都不给。
+  if (isError) {
+    // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+    // 结构化取优先、instanceof 兜底。
+    const message =
+      (configError as { message?: string } | null)?.message ??
+      (configError instanceof Error ? configError.message : null)
+    return (
+      <div className={loadError} data-testid="settings-load-error" role="alert">
+        <div className={loadErrorTitle}>设置加载失败</div>
+        <div className={loadErrorDetail}>{message ?? '无法读取配置文件。'}</div>
+        <div className={loadErrorActions}>
+          <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
+            重试
+          </Button>
+        </div>
+      </div>
+    )
+  }
+  // 请求成功但没有 config 体（契约破损）：给出可行动的说明，而不是「加载中…」。
+  if (!config) {
+    return (
+      <div className={loadError} data-testid="settings-load-error" role="alert">
+        <div className={loadErrorTitle}>设置加载失败</div>
+        <div className={loadErrorDetail}>服务返回了空的配置内容，请确认工作区配置后重试。</div>
+        <div className={loadErrorActions}>
+          <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
+            重试
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   const merged = { ...config, ...draft }
 
@@ -336,18 +492,10 @@ export function Settings() {
 
   return (
     <div className={settingsScroll} data-testid="settings">
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 16px',
-          borderBottom: '1px solid var(--haze-color-border)',
-          fontSize: 12,
-        }}
-      >
-        <span style={{ color: 'var(--haze-color-text-secondary)' }}>配置作用域</span>
+      <div className={scopeBar}>
+        <span className={scopeLabel}>配置作用域</span>
         <SyncedSelect
+          aria-label="配置作用域"
           value={scope}
           onValuesChange={(v) => {
             const next = v as 'global' | 'project'
@@ -429,7 +577,8 @@ export function Settings() {
       {viewMode === 'json' ? (
         <JsonConfigEditor jsonText={jsonText} jsonError={jsonError} onChange={onJsonChange} />
       ) : (
-        <div>
+        <div data-testid="settings-form">
+          <SettingsToc />
           <AppearancePanel />
           <ProviderPanel providers={merged.providers} onProvidersChange={updateProviders} />
           <ModelPanel
@@ -486,7 +635,10 @@ export function Settings() {
                 value={String(merged.toolMetrics.threshold)}
                 onChange={(v) =>
                   updateSection('toolMetrics', {
-                    threshold: parseFiniteNumber(v, merged.toolMetrics.threshold),
+                    threshold: parseBoundedNumber(v, merged.toolMetrics.threshold, {
+                      min: 0,
+                      max: 1,
+                    }),
                   })
                 }
               />
@@ -500,7 +652,7 @@ export function Settings() {
                 value={String(merged.toolMetrics.minSamples)}
                 onChange={(v) =>
                   updateSection('toolMetrics', {
-                    minSamples: parseFiniteNumber(v, merged.toolMetrics.minSamples),
+                    minSamples: parseBoundedNumber(v, merged.toolMetrics.minSamples, { min: 0 }),
                   })
                 }
               />
@@ -509,6 +661,7 @@ export function Settings() {
           <div className={section}>
             <h2 className={sectionTitle}>插件</h2>
             <CommaListInput
+              ariaLabel="已启用的插件名称"
               value={merged.plugins.enabled}
               onCommit={(items) => updateSection('plugins', { enabled: items })}
               placeholder="plugin-a, plugin-b"
@@ -518,6 +671,7 @@ export function Settings() {
           <div className={section}>
             <h2 className={sectionTitle}>斜杠命令</h2>
             <CommaListInput
+              ariaLabel="已启用的斜杠命令"
               value={merged.slashCommands.enabled}
               onCommit={(items) => updateSection('slashCommands', { enabled: items })}
               placeholder="/compact, /model, /clear"
@@ -541,7 +695,9 @@ export function Settings() {
                 value={String(merged.agents.subagentConcurrency)}
                 onChange={(v) =>
                   updateSection('agents', {
-                    subagentConcurrency: parseFiniteNumber(v, merged.agents.subagentConcurrency),
+                    subagentConcurrency: parseBoundedNumber(v, merged.agents.subagentConcurrency, {
+                      min: 1,
+                    }),
                   })
                 }
               />

@@ -12,7 +12,12 @@ import {
   prependHistoryEntry,
   saveHistory,
 } from '@/composer/history.js'
-import { normalizePaste, pasteMode } from '@/composer/paste.js'
+import {
+  LARGE_PASTE_BREAKS,
+  LARGE_PASTE_CHARS,
+  normalizePaste,
+  pasteMode,
+} from '@/composer/paste.js'
 import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
 import {
   atTokenRange,
@@ -29,7 +34,16 @@ import type { CommandInfo } from '@/hooks/useCommands.js'
 type PopoverState = 'slash' | 'subcommand' | 'at' | 'workflow' | null
 
 type UseComposerOptions = {
-  onSend: (payload: ComposerSendPayload) => void
+  /**
+   * 发送回调。返回值可等待：本 hook 据此在**发送失败**时把草稿与图片原样还原到
+   * 输入框。此前 onSend 是同步 void、发送即清空，而失败结果（未配 provider、
+   * 网关 400、网络中断）只有调用方知道——用户输入的消息连同图片一起凭空消失，
+   * 且失败原因渲染在顶栏一行省略号里，触屏根本读不到。
+   *
+   * 返回值语义：Promise<boolean> / boolean，true/false 表示「消息是否真的送出去了」。
+   * 为 true 或返回 void（保持旧契约）时视为成功。
+   */
+  onSend: (payload: ComposerSendPayload) => boolean | undefined | Promise<boolean | undefined>
   onAbort?: () => void
   /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。 */
   onSteer?: (message: string) => void
@@ -98,8 +112,18 @@ function useComposer({
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
   const [subcommandCmd, setSubcommandCmd] = useState<string | null>(null)
-  const [showPasteConfirm, setShowPasteConfirm] = useState<{ text: string } | null>(null)
+  /** 大段粘贴待确认内容：chars/lines 为触发判定时的原始文本规模，供确认条展示。 */
+  const [showPasteConfirm, setShowPasteConfirm] = useState<{
+    text: string
+    chars: number
+    lines: number
+  } | null>(null)
   const [isEmpty, setIsEmpty] = useState(true)
+  /**
+   * 发送世代号。每次 send/steer 自增；异步失败还原只在自己那一代仍是最新时回写，
+   * 否则会把后续发送刚清空/输入的框内容盖回去（见 send 里的 restore）。
+   */
+  const sendAttemptRef = useRef(0)
 
   // commands 用 ref 避免每次列表变化都重建 handleInput callback
   const commandsRef = useRef<CommandInfo[] | undefined>(commands)
@@ -375,8 +399,16 @@ function useComposer({
       if (!text) return
       e.preventDefault()
       const normalized = normalizePaste(text)
-      if (pasteMode(text) === 'manual' && (text.length >= 8000 || text.split('\n').length >= 120)) {
-        setShowPasteConfirm({ text: normalized })
+      const chars = text.length
+      const lines = text.split('\n').length
+      if (
+        pasteMode(text) === 'manual' &&
+        (chars >= LARGE_PASTE_CHARS || lines >= LARGE_PASTE_BREAKS)
+      ) {
+        // 大段粘贴先确认再插入（确认条见 Composer）。注意 e.preventDefault 已吞掉
+        // 原生插入：此处只置状态而无人渲染确认 UI 时，用户按 Ctrl+V 后输入框
+        // 毫无反应、内容静默丢失。chars/lines 取自原始文本，与判定同源。
+        setShowPasteConfirm({ text: normalized, chars, lines })
         return
       }
       document.execCommand('insertText', false, normalized)
@@ -385,11 +417,19 @@ function useComposer({
   )
 
   const confirmPaste = useCallback(() => {
-    if (showPasteConfirm) document.execCommand('insertText', false, showPasteConfirm.text)
+    const pending = showPasteConfirm
     setShowPasteConfirm(null)
+    if (!pending) return
+    // 点击「插入」后焦点在按钮上，execCommand('insertText') 只作用于当前可编辑
+    // 焦点元素——不先交还焦点，整段文本会再次静默丢失。
+    editorRef.current?.focus()
+    document.execCommand('insertText', false, pending.text)
   }, [showPasteConfirm])
 
-  const cancelPaste = useCallback(() => setShowPasteConfirm(null), [])
+  const cancelPaste = useCallback(() => {
+    setShowPasteConfirm(null)
+    editorRef.current?.focus()
+  }, [])
 
   const removeImage = useCallback((idx: number) => {
     setImages((prev) => prev.filter((_, i) => i !== idx))
@@ -408,17 +448,63 @@ function useComposer({
     const files = prompt.flatMap((p) => (p.type === 'file' ? [p.path] : []))
     // prompt 结构随载荷传递：@agent 提及提取需要区分「用户输入文本」与
     // snippet/terminal 展开内容（见 extractAgentMentions）。
-    onSend({ text, files, images, prompt })
+    const payload = { text, files, images, prompt }
+    // 发送失败要把用户输入原样还回去，先留住快照（send() 是同步的，回调返回的
+    // Promise 落地时 prompt/images 可能已被清空）。
+    const snapshot = { prompt: clonePromptParts(prompt), images }
     // 提示历史存**用户可见文本**（promptToText：pill 贡献标签），不是提交给后端
     // 的展开形态（promptToMessageText 会把 snippet/terminal pill 展开成代码块）——
     // 否则 ↑ 召回一条带引用的消息会把整段代码块当纯文本灌回输入框，去重比较也在
     // 展开形态上做（同一输入因引用内容不同被当成不同条目）。
     const visible = promptToText(prompt)
+    // 还原时要判断「头一条是否本次新加」：直接比 entries[0] === visible 会因
+    // prepend 存的是 trim 后的文本而误判（带尾随空格时删掉旧记录）。
+    const historyBefore = visible.trim() ? loadHistory() : null
+    const outcome = onSend(payload)
+    // 本次发送的世代号：还原分支只认自己这一代。请求在途期间用户可能又发了一次
+    // （或又按了 steering），那时先落地的那次失败再回来还原，就会把后来那条的输入
+    // 一起盖掉、并按错误的假设去动提示历史。
+    const attempt = ++sendAttemptRef.current
+    // 清空照旧立即发生（发送成功的体感不能等一轮请求）：失败走下面的还原分支。
     if (visible.trim()) saveHistory(prependHistoryEntry(loadHistory(), visible))
     setImages([])
     setImageError(null)
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
+    // 失败还原：onSend 返回 Promise<false>/false 时把文本、图片、提示历史条目
+    // 一并还回，用户改好设置后直接回车即可，不用凭记忆重打。
+    const restore = () => {
+      // 已被更新的发送取代：本次失败不再回写。
+      if (sendAttemptRef.current !== attempt) return
+      // 输入框在请求在途期间仍可编辑（ComposerEditor 无只读路径），用户此刻新敲的
+      // 内容/新加的图片不属于这条失败消息——无条件覆盖会凭空吞掉它们。只在输入框
+      // 仍是发送后清空的状态时才回填。
+      const untouched = isPromptEmpty(readPrompt()) && imagesRef.current.length === 0
+      if (!untouched) return
+      // 光标停在文末：send() 清空时把光标放到 offset 0，沿用它会让还原后的第一
+      // 个字前面挂一个光标，用户接着敲的字都插到消息前面。
+      setPromptExternal(snapshot.prompt, true)
+      setImages(snapshot.images)
+      setImageError(null)
+      if (visible.trim()) {
+        const entries = loadHistory()
+        // 头一条相对发送前变了 = 本次新加的 → 撤掉；没变（去重命中旧记录）则保留。
+        // 期间若有别的发送插进来（entries[0] 已是别人的），不动历史——那不是本次的条目。
+        if (historyBefore && entries[0] !== historyBefore[0] && entries[0] === visible.trim()) {
+          saveHistory(entries.slice(1))
+        }
+      }
+      editorRef.current?.focus()
+    }
+    if (outcome === false) {
+      restore()
+      return
+    }
+    if (outcome && typeof (outcome as Promise<boolean | undefined>).then === 'function') {
+      void (outcome as Promise<boolean | undefined>).then((ok) => {
+        if (ok === false) restore()
+      })
+    }
   }, [isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
 
   // 追加指令：流式态下注入 steering 文本（仅流式态可用，空文本 no-op）
@@ -427,16 +513,23 @@ function useComposer({
     if (isPromptEmpty(prompt)) return
     const text = promptToMessageText(prompt)
     onSteer?.(text)
+    // steering 同样把输入清空：它取代在途的那次发送，那次失败回来时不得回填。
+    sendAttemptRef.current += 1
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
   }, [readPrompt, onSteer, setPromptExternal, resetHistory])
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: React.KeyboardEvent, popoverSuppressed = false) => {
       // IME 组合中不拦截
       if (composingRef.current) return
+      // popoverSuppressed：调用方（Composer）已判定当前浮层没有任何候选、且不会渲染出
+      // 任何 UI。此时必须按「无浮层」处理按键——否则 popover 状态里挂着一个画不出来的
+      // 菜单，Enter 被它静默吞掉：用户输入 `@不对的名字 正文` 或未匹配的 `/cmd` 后回车，
+      // 消息永远发不出去，也没有任何反馈（只有 Esc 或鼠标能脱身）。
+      const popoverActive = !!popover && !popoverSuppressed
       // Enter 发送/追加（非 shift，popover 未激活）：流式态追加指令，否则发送
-      if (e.key === 'Enter' && !e.shiftKey && !popover) {
+      if (e.key === 'Enter' && !e.shiftKey && !popoverActive) {
         e.preventDefault()
         if (isStreaming) steer()
         else send()
@@ -448,7 +541,7 @@ function useComposer({
         return
       }
       // 历史回溯（popover 未激活时）
-      if (!popover && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && editorRef.current) {
+      if (!popoverActive && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && editorRef.current) {
         const text = promptToText(promptRef.current)
         const cursor = currentCursor(editorRef.current)
         const inHistory = indexRef.current !== -1
@@ -485,6 +578,8 @@ function useComposer({
     composingRef,
     promptRef,
     setPromptExternal,
+    /** 外部还原草稿时批量写入图片附件（见 Composer 的 restoreDraft）。 */
+    setImages,
     images,
     imageError,
     popover,

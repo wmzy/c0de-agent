@@ -216,7 +216,10 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
           loading: false,
           result: {
             ok: false,
-            error: err instanceof Error ? err.message : '未知错误',
+            // APIError 现在是真正的 Error（services/api.ts）：此前走 else 分支，
+            // 空 baseURL、非 http(s) URL、401 过期 token 全都显示成「未知错误」，
+            // 恰好覆盖首次运行「添加 provider → 测试」这条最需要诊断的路径。
+            error: err instanceof Error ? err.message : String(err),
           },
         },
       }))

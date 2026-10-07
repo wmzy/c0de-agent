@@ -62,3 +62,33 @@ export function parseFiniteNumber(value: string, fallback: number): number {
   const n = Number(value)
   return Number.isFinite(n) ? n : fallback
 }
+
+/**
+ * 数字输入框文本 → **有限且落在 [min, max] 内**的数值。
+ *
+ * parseFiniteNumber 只挡非有限数，不挡越界值：数字输入框上写的 min/max 是给
+ * 浏览器原生校验与步进器用的，React 受控 input 并不阻止用户键入 -1——实测设置页
+ * 8 个声明了 min 的字段（最大重试次数/重试间隔/触发阈值/保留 Token/
+ * 近期保留 Token/成功率阈值/最小样本数/子 Agent 并发数）全部照收 -1 并原样
+ * 存进配置。
+ *
+ * 后果不是「显示难看」而是静默失效：fallback.maxRetries 存成 -1 后，
+ * withRetry 里 `attempt >= Math.min(-1, policy.maxRetries)` 首次失败即成立，
+ * 故障回退对全应用彻底停摆，而设置页仍显示「启用自动重试与回退」且提示
+ * 「已保存」——用户没有任何线索知道自己关掉了一项容错能力。
+ *
+ * 越界时钳到边界而非回落到旧值：用户键入 -1 的意图是「不要负数」，钳到
+ * min/0 既满足意图又比「恢复成上次保存的旧值」更可预期（后者会让人以为
+ * 输入没生效而反复重输）。
+ */
+export function parseBoundedNumber(
+  value: string,
+  fallback: number,
+  bounds: { min?: number; max?: number } = {},
+): number {
+  const n = parseFiniteNumber(value, fallback)
+  const { min, max } = bounds
+  if (min !== undefined && n < min) return min
+  if (max !== undefined && n > max) return max
+  return n
+}

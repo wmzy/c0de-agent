@@ -20,8 +20,10 @@ const bar = css`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
-  padding: 0 12px;
+  /* 不换行：换行会让 390px 常规手机视口的顶栏无故增高到 76px。
+   * 极窄视口的溢出压力交给 nav 自身收缩+换行（见 nav），品牌区先吸收。 */
+  min-height: 44px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--haze-color-border);
   background: var(--haze-color-bg-subtle);
   flex-shrink: 0;
@@ -49,8 +51,24 @@ const nav = css`
   display: flex;
   align-items: center;
   gap: 4px;
-  /* 导航不压缩：窄屏溢出压力由左侧品牌区（项目名截断）吸收 */
+  /* 常规视口：导航不压缩、也不换行——换行会把 390px 手机视口的顶栏从
+   * 44px 顶到 80px（实测 nav 折成两行 67px），比窄视口的横向滚动更常见。
+   * 窄视口溢出压力由左侧品牌区（项目名省略号截断）吸收。 */
   flex-shrink: 0;
+  min-width: 0;
+
+  /* 极窄视口（≤383px，即 <384px）：收窄各链接横向内边距，把宽度让给左侧项目名。
+   * 原阈值 239px 定得太晚——320px 视口实测 nav 仍占 207px，项目名被压到
+   * 7px 宽（只剩「h」+ 图标），项目身份信息实际丢失；360/375px 这类
+   * 常见机型同样只剩 4 个字。384px 起 nav 让位，390px 常规手机视口不受影响。 */
+  @media (max-width: 383px) {
+    gap: 2px;
+
+    & > a {
+      padding: 6px 5px;
+      font-size: 12px;
+    }
+  }
 `
 
 const link = css`
@@ -172,11 +190,14 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
       {formatCost(cost)}
     </>
   )
+  // 深链到本面板：设置页 3300px+ 长，「用量与成本」在 y≈3000。
+  // 只跳设置页顶部会让用户落在「外观」，与 tooltip 承诺不符。
   return projectId ? (
     <Tooltip content={tip}>
       <TypedLink<AppPaths>
         to="/projects/:projectId/settings"
         params={{ projectId }}
+        search={{ section: 'usage' }}
         className={badgeClass}
         data-testid="month-cost-badge"
       >
@@ -185,7 +206,12 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
     </Tooltip>
   ) : (
     <Tooltip content={tip}>
-      <TypedLink<AppPaths> to="/settings" className={badgeClass} data-testid="month-cost-badge">
+      <TypedLink<AppPaths>
+        to="/settings"
+        search={{ section: 'usage' }}
+        className={badgeClass}
+        data-testid="month-cost-badge"
+      >
         {badgeText}
       </TypedLink>
     </Tooltip>

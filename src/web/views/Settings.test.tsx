@@ -169,6 +169,91 @@ function renderSettingsGuarded() {
   )
 }
 
+describe('Settings — 读失败态', () => {
+  /**
+   * 回归：此前 `if (isLoading || !config) return <div>加载中…</div>`。
+   * 请求 500 时 isLoading 已转 false 而 config 恒为 null（resp 为 undefined），
+   * 两者并成一条 → 设置页永久停在「加载中…」，无错误、无重试。
+   * 实测注入 /api/config 500、retry:2 耗尽后 40s+ 仍是「加载中…」。
+   * 设置页是配 provider/token/权限的唯一入口，落到永远加载 = 整个应用不可配置。
+   */
+  it('配置读取失败时展示原因，而不是永远「加载中…」', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue({
+      status: 500,
+      message: '配置文件读取失败',
+    })
+    renderSettings()
+
+    const box = await screen.findByTestId('settings-load-error')
+    expect(box.textContent).toContain('设置加载失败')
+    expect(box.textContent).toContain('配置文件读取失败')
+    // 关键：失败后不得继续显示「加载中…」
+    expect(screen.queryByText('加载中…')).toBeNull()
+    expect(screen.getByTestId('settings-retry')).toBeInTheDocument()
+  })
+
+  it('APIError 走结构化 message 而非 [object Object]', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue({
+      status: 500,
+      code: 'DB_LOCKED',
+      message: '配置数据库被占用',
+    })
+    renderSettings()
+
+    const box = await screen.findByTestId('settings-load-error')
+    expect(box.textContent).toContain('配置数据库被占用')
+    expect(box.textContent).not.toContain('[object Object]')
+  })
+
+  it('网络异常（真正的 Error）也展示其 message', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue(new TypeError('Failed to fetch'))
+    renderSettings()
+
+    const box = await screen.findByTestId('settings-load-error')
+    expect(box.textContent).toContain('Failed to fetch')
+    expect(box.textContent).not.toContain('[object Object]')
+  })
+
+  it('请求成功但响应无 config 体时也不得停在「加载中…」', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({})
+    renderSettings()
+
+    await screen.findByTestId('settings-load-error')
+    expect(screen.queryByText('加载中…')).toBeNull()
+    expect(screen.getByTestId('settings-retry')).toBeInTheDocument()
+  })
+
+  it('点击重试重新拉取配置', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValue({ status: 500, message: 'boom' })
+    renderSettings()
+
+    await screen.findByTestId('settings-load-error')
+    ;(configAPI.get as Mock).mockClear()
+    fireEvent.click(screen.getByTestId('settings-retry'))
+    expect(configAPI.get).toHaveBeenCalled()
+  })
+
+  it('重试成功后从失败态恢复到设置表单', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockRejectedValueOnce({ status: 500, message: 'boom' })
+    renderSettings()
+    await screen.findByTestId('settings-load-error')
+
+    ;(configAPI.get as Mock).mockResolvedValueOnce(wrapConfig(mockConfig))
+    fireEvent.click(screen.getByTestId('settings-retry'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('settings-load-error')).toBeNull()
+    })
+    expect(await screen.findByText('ProviderA')).toBeInTheDocument()
+  })
+})
+
 describe('Settings — Provider 管理', () => {
   it('渲染时显示已加载 config 的 providers', async () => {
     const { configAPI } = await import('@/services/config.js')
@@ -1030,6 +1115,25 @@ describe('Settings — JSON 模式与导入导出', () => {
 })
 
 describe('Settings — 完整配置表单覆盖', () => {
+  // 复现：配置作用域工具条用内联 flex 布局，标签 span 未禁止收缩，
+  // 下拉随选项文案自适应后把它压到 57px，5 个汉字折成 2 行、盒子高 36px
+  // （行高 18px 的两倍），工具条被单行标签撑成两行。标签同时缺少
+  // 关联，select 无可访问名（axe critical select-name）。
+  // 折行修复的样式由浏览器实测把关（见 scopeBar/scopeLabel），
+  // jsdom 不求值 linaria 类，此处锁定可访问名契约。
+  it('配置作用域下拉可按标签文案定位', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // axe select-name：裸 <span> 文本不构成 label，select 无可访问名。
+    const select = screen.getByLabelText('配置作用域') as HTMLSelectElement
+    expect(select).toBe(screen.getByTestId('scope-select'))
+    expect(select).toHaveProperty('value', 'project')
+  })
+
   it('所有配置分区均渲染', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
@@ -1780,5 +1884,270 @@ describe('Settings — 工作流管理面板', () => {
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('workflow-trust-required')).toBeTruthy())
     expect(screen.getByTestId('workflow-trust-required').textContent).toContain('未信任')
+  })
+})
+
+/**
+ * 分区导航（TOC）回归。
+ *
+ * 设置页是全应用最长的一页：GUI 模式 18 个 h2 分区、实测 scrollHeight 3369px
+ * （移动端 3898px），而页面原先没有任何分区内导航——找「用量与成本」「Web 搜索」
+ * 只能一路滚到底。?section= 深链只解决「从别处跳进来」，解决不了
+ * 「已经在这页、想换个分区」。
+ */
+describe('Settings — 分区导航', () => {
+  it('表单视图渲染分区目录，条目数与实际 h2 分区一致', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+    const chips = within(screen.getByTestId('settings-toc')).getAllByRole('button')
+    const headings = within(screen.getByTestId('settings-form')).getAllByRole('heading', {
+      level: 2,
+    })
+    // 目录是扫描 h2 得来的，两者必须逐条对应——多一条是死链，少一条是漏项
+    expect(chips).toHaveLength(headings.length)
+    expect(headings.length).toBeGreaterThan(10)
+    expect(chips.map((c) => c.textContent)).toEqual(headings.map((h) => h.textContent))
+  })
+
+  it('分区目录是导航语义，且每个条目都能定位到对应分区', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+    expect(screen.getByRole('navigation', { name: '设置分区导航' })).toBeTruthy()
+
+    const chips = within(screen.getByTestId('settings-toc')).getAllByRole('button')
+    for (const chip of chips) {
+      const id = chip.getAttribute('data-testid')?.replace('settings-toc-', '') ?? ''
+      // 点它得找得到落点，否则就是个点了没反应的死链
+      expect(document.getElementById(id)).not.toBeNull()
+    }
+  })
+
+  it('JSON 视图不渲染分区目录（整块是一个编辑器，没有分区可导）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('{ } JSON'))
+    await waitFor(() => expect(screen.queryByTestId('settings-toc')).toBeNull())
+  })
+
+  // 落点被 sticky 完全遮住 = 「点了但什么都没变」：标题藏在两条栏底下，肉眼
+  // 只看到工具条、目录行和它们的下一个分区。
+  //
+  // 两条 sticky 是叠加的，各自让开一条都不够：
+  // 1. 原先写死 `offsetTop - 16` 只让开了工具条，标题停在目录行底下；
+  // 2. 改让两条后还要等目录行挂载——目录行由 SettingsToc 扫描完 h2 才
+  //    渲染，而深链 effect 与那次扫描同批跑，那一刻目录行尚未入 DOM，
+  //    实测高度为 0。
+  // 实测（1440px）两种漏法分别让「上下文压缩」标题落在 y=61 与 y=104，
+  // 目录行下沿在 141——都被完全遮住。
+  describe('深链与目录跳转落在 sticky 之下', () => {
+    /** 工具条实测高度（1440px 宽）。 */
+    const TOOLBAR_H = 51
+    /** 目录行实测高度。 */
+    const TOC_H = 45
+    /** 两条 sticky 的下沿。 */
+    const LINE = TOOLBAR_H + TOC_H
+    /** 「上下文压缩」h2 在容器内的文档纵坐标（实测 offsetTop 1122）。 */
+    const COMPACTION_TOP = 1122
+
+    /**
+     * happy-dom 无布局引擎，这里造出设置页真实的几何关系：
+     * 视口坐标 = 容器内文档坐标 - main.scrollTop。两条 sticky 固定贴顶。
+     *
+     * 只认「表单子树里 h2 的文档坐标」这一条规则——真实布局正是这样：h2 分散
+     * 在各面板组件内、嵌套深度各不相同，所以实现只能统一走视口坐标。
+     */
+    function stubLayout(main: HTMLElement) {
+      const base = { x: 0, left: 0, right: 1440, width: 1440, toJSON: () => ({}) }
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: Element,
+      ) {
+        const h = this.tagName === 'H2' ? this.textContent?.trim() : null
+        if (h === '上下文压缩') {
+          const top = COMPACTION_TOP - main.scrollTop
+          return { ...base, y: top, top, bottom: top + 22, height: 22 } as DOMRect
+        }
+        if (this === main) return { ...base, y: 0, top: 0, bottom: 856, height: 856 } as DOMRect
+        if (this.getAttribute('data-testid') === 'settings-toolbar')
+          return { ...base, y: 0, top: 0, bottom: TOOLBAR_H, height: TOOLBAR_H } as DOMRect
+        if (this.getAttribute('data-testid') === 'settings-toc')
+          return { ...base, y: TOOLBAR_H, top: TOOLBAR_H, bottom: LINE, height: TOC_H } as DOMRect
+        return { ...base, y: 0, top: 0, bottom: 0, height: 0 } as DOMRect
+      })
+    }
+
+    /** 在 <main> 滚动容器里挂载设置页（生产结构：内容在 main 内滚）。 */
+    function renderInScroller(entry: string) {
+      const main = document.createElement('main')
+      document.body.appendChild(main)
+      stubLayout(main)
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      render(
+        <MemoryRouter routes={settingsTestRoutes} initialEntries={[entry]}>
+          <QueryClientProvider client={qc}>
+            <View />
+          </QueryClientProvider>
+        </MemoryRouter>,
+        { container: main },
+      )
+      return main
+    }
+
+    it('?section= 深链把标题让到工具条+目录行下沿之外', async () => {
+      const { configAPI } = await import('@/services/config.js')
+      ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+      const main = renderInScroller('/settings?section=section-5-上下文压缩')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const heading = screen.getByRole('heading', { level: 2, name: '上下文压缩' })
+      await waitFor(() => expect(heading).toBeTruthy())
+
+      // 断言「没被遮住」这个用户可观测结果，而不是 scrollTop 的具体数值：
+      // 标题视口坐标须落在两条 sticky 下沿之下。
+      const top = COMPACTION_TOP - main.scrollTop
+      expect(
+        top,
+        `深链落点 y=${top} 须 ≥ sticky 下沿 ${LINE}，否则标题被完全遮住`,
+      ).toBeGreaterThanOrEqual(LINE)
+      vi.restoreAllMocks()
+    })
+
+    // useSearchParams 每次渲染都 `new URLSearchParams(...)`（@native-router/react
+    // dist/use-search-params.js），深链 effect 若把那个对象放进依赖，就会逐渲染
+    // 重跑；jump → scrollSettingsSectionIntoView 无条件 `scrollTop += delta`，
+    // 于是只要 URL 里留着 ?section=，用户滚到别的分区一敲字就被拽回锚点分区，
+    // 输入框逐字跳出视口。依赖必须是稳定的锚点字符串。
+    it('URL 带 ?section= 时，编辑其它分区不会把页面拽回锚点', async () => {
+      const { configAPI } = await import('@/services/config.js')
+      ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+      const main = renderInScroller('/settings?section=section-5-上下文压缩')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      // 「上下文压缩」分区里的自动压缩开关：任何一次编辑都会 setDraft →
+      // Settings 重渲染，正是当年把用户拽回锚点的触发条件。
+      const toggle = await screen.findByRole('checkbox', { name: '启用自动压缩' })
+
+      // 用户滚去另一个分区（深链落点之后的文档坐标）
+      const awayFromAnchor = COMPACTION_TOP + 400
+      main.scrollTop = awayFromAnchor
+      expect(main.scrollTop).toBe(awayFromAnchor)
+
+      // 在那儿改一个字段——触发 Settings 重渲染
+      fireEvent.click(toggle)
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+
+      expect(
+        main.scrollTop,
+        `编辑后 scrollTop 变成 ${main.scrollTop}，用户被拽离正在编辑的位置`,
+      ).toBe(awayFromAnchor)
+      vi.restoreAllMocks()
+    })
+
+    it('点击目录条与深链落到同一位置（落点口径不分叉）', async () => {
+      const { configAPI } = await import('@/services/config.js')
+      ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+      // 先取「上下文压缩」这一项的稳定 id
+      renderInScroller('/settings')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const chip = within(screen.getByTestId('settings-toc'))
+        .getAllByRole('button')
+        .find((b) => b.textContent === '上下文压缩')
+      expect(chip).toBeTruthy()
+      const id = chip?.getAttribute('data-testid')?.replace('settings-toc-', '')
+      cleanup()
+      vi.restoreAllMocks()
+
+      // 同一分区：深链进入
+      const byLink = renderInScroller(`/settings?section=${encodeURIComponent(id ?? '')}`)
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const linkScroll = byLink.scrollTop
+      cleanup()
+      vi.restoreAllMocks()
+
+      // 同一分区：点目录进入
+      const byClick = renderInScroller('/settings')
+      await waitFor(() => expect(screen.getByTestId('settings-toc')).toBeTruthy())
+      const same = within(screen.getByTestId('settings-toc'))
+        .getAllByRole('button')
+        .find((b) => b.getAttribute('data-testid') === `settings-toc-${id}`)
+      fireEvent.click(same as HTMLElement)
+      const clickScroll = byClick.scrollTop
+      vi.restoreAllMocks()
+
+      expect(linkScroll, '深链与点击目录应落在同一位置').toBe(clickScroll)
+    })
+  })
+})
+
+/**
+ * 数字字段的越界输入回归。
+ *
+ * 缺陷：数字输入框上写了 min={0}，但 React 受控 input 不阻止键入负数——
+ * parseFiniteNumber 只挡 NaN/±Infinity，不挡越界值，于是 -1 被原样写进配置。
+ * 实测 8 个带 min 的字段（最大重试次数/重试间隔/触发阈值/保留 Token/
+ * 近期保留 Token/成功率阈值/最小样本数/子 Agent 并发数）全部照收。
+ *
+ * 后果不是显示难看而是静默失效：maxRetries=-1 让 withRetry 的
+ * `attempt >= Math.min(-1, policy.maxRetries)` 首次失败即成立，故障回退对
+ * 全应用停摆，而设置页照样显示「已保存」。
+ *
+ * 断言打在「保存出去的配置值」上：只看输入框 DOM 会被 SyncedInput 的内部
+ * control 短暂持有旧值骗过去，必须走真实的保存链路。
+ */
+describe('Settings — 数字字段越界钳制', () => {
+  async function typeAndSave(labelText: string, raw: string) {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    const input = await screen.findByLabelText(labelText)
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, raw)
+    fireEvent.input(input)
+
+    await waitFor(() => expect(screen.getByTestId('settings-save')).not.toBeDisabled())
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const patch = vi.mocked(configAPI.update).mock.calls.at(-1)?.[0] as Record<string, unknown>
+    return patch
+  }
+
+  it('最大重试次数不接受负数（负值会静默关掉全应用故障回退）', async () => {
+    const patch = await typeAndSave('最大重试次数', '-1')
+    const fallback = (patch.fallback ?? {}) as { maxRetries?: number }
+    expect(fallback.maxRetries).toBe(0)
+  })
+
+  it('子 Agent 并发数下限为 1，0/负数被钳到 1', async () => {
+    const patch = await typeAndSave('子 Agent 并发数', '0')
+    const agents = (patch.agents ?? {}) as { subagentConcurrency?: number }
+    expect(agents.subagentConcurrency).toBe(1)
+  })
+
+  it('触发阈值上限为 1，超出被钳回 1', async () => {
+    const patch = await typeAndSave('触发阈值', '5')
+    const compaction = (patch.compaction ?? {}) as { threshold?: number }
+    expect(compaction.threshold).toBe(1)
+  })
+
+  it('合法值原样通过，不被钳制误伤', async () => {
+    const patch = await typeAndSave('最大重试次数', '5')
+    const fallback = (patch.fallback ?? {}) as { maxRetries?: number }
+    expect(fallback.maxRetries).toBe(5)
   })
 })

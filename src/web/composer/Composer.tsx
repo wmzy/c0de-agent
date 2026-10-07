@@ -2,14 +2,14 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import fuzzysort from 'fuzzysort'
 import type { DragEvent, KeyboardEvent } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AtFilePopover } from '@/composer/AtFilePopover.js'
 import { AttachmentBar } from '@/composer/AttachmentBar.js'
 import { ComposerEditor } from '@/composer/ComposerEditor.js'
 import { currentCursor } from '@/composer/editor-sync.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
 import { SlashPopover, SubcommandPopover } from '@/composer/SlashPopover.js'
-import type { ComposerSendPayload } from '@/composer/types.js'
+import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
 import {
   atTokenRange,
   extractAgentMentions,
@@ -26,8 +26,26 @@ import { workflowsAPI } from '@/services/workflows.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { isImeComposing } from '@/utils/ime.js'
 
+/**
+ * 底栏容器。
+ *
+ * sticky bottom:0 而非普通流内元素：.haze-Workbench__editor 是本页唯一滚动
+ * 容器（display:block，子元素按块级堆叠），聊天页的顶栏/消息流/权限条/输入框
+ * 全部平铺在它内部。输入区可增长到 max-height:200px，多行输入时 wrap 高度
+ * 会超过容器剩余空间——普通流下它被推到容器下沿之外，而容器此时已滚到底、
+ * 没有更多可滚高度，用户既看不到也点不到「发送」：
+ * 1440×900 实测输入区 190px 时「发送」按钮 top=962 / bottom=1001 全在视口
+ * （900）之外，elementFromPoint 命中的是 resize 把手；
+ * 375×667 更严重（main scrollHeight=1222 vs clientHeight=591）。
+ *
+ * 固定在容器底部后，输入区增长只压缩上方消息流的可视高度，发送按钮恒在
+ * 视口内可达；未溢出时 sticky 元素停在自然位置，布局与此前完全一致。
+ * z-index 高于消息流，避免长输入时压住最后一条消息。
+ */
 const wrap = css`
-  position: relative;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--haze-color-border);
@@ -130,12 +148,74 @@ const popoverGroup = css`
   display: contents;
 `
 
+/** 大段粘贴确认条：与权限 dock 同为编辑器上方的决策条（贴顶分隔 + subtle 底）。 */
+const pasteBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--haze-color-border);
+  background: var(--haze-color-bg-subtle);
+  font-size: 13px;
+  color: var(--haze-color-text-secondary);
+`
+
+const pasteText = css`
+  flex: 1;
+  min-width: 0;
+`
+
+const pasteInsertBtn = css`
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--haze-color-primary);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  &:hover {
+    background: var(--haze-color-primary-hover);
+  }
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
+  }
+`
+
+const pasteCancelBtn = css`
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--haze-color-text);
+  font-size: 13px;
+  cursor: pointer;
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+  &:focus-visible {
+    outline: none;
+    border-color: var(--haze-color-primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--haze-color-primary) 50%, transparent);
+  }
+`
+
 type SendPayload = ComposerSendPayload & {
   agents: string[]
 }
 
 type ComposerProps = {
-  onSend: (payload: SendPayload) => void
+  /** 发送。返回 false/Promise<false> 表示消息没送出去，输入框据此还原草稿。 */
+  onSend: (payload: SendPayload) => boolean | undefined | Promise<boolean | undefined>
+  /**
+   * 跨组件实例还原输入（导航回来时用）。传 null/不传则不动输入框。
+   * 单靠 useComposer 的失败还原不够：发送失败若伴随导航（首条消息失败后清空会话
+   * 回到草稿页），原输入框组件已卸载，还原必须落在新实例上。
+   */
+  restoreDraft?: { prompt: Prompt; images: ImagePart[] } | null
   onAbort?: () => void
   /** 流式态「追加指令」注入 steering 文本。 */
   onSteer?: (message: string) => void
@@ -153,6 +233,17 @@ type ComposerProps = {
   agents: AgentListItem[]
 }
 
+/**
+ * 还原载荷的内容指纹：同一份失败消息只灌一次。
+ *
+ * 图片只取 mediaType + 长度——base64 全量拼进 key 会让每次渲染都重算一个几十
+ * KB 的字符串，而同一次失败→还原周期里图片 data 恒定，长度足够区分不同附件。
+ */
+function draftKey(draft: { prompt: Prompt; images: ImagePart[] }): string {
+  const images = draft.images.map((i) => `${i.mediaType}:${i.data.length}`).join(',')
+  return `${JSON.stringify(draft.prompt)}|${images}`
+}
+
 function Composer(props: ComposerProps) {
   // 从 Prompt 结构提取 @agent mentions（仅非 primary 可调用的 subagent）。
   // 只扫描用户输入的文本 part 并剥离 markdown 代码（见 extractAgentMentions）——
@@ -162,7 +253,8 @@ function Composer(props: ComposerProps) {
   const handleSend = (payload: ComposerSendPayload) => {
     const subagentNames = props.agents.filter((a) => a.mode !== 'primary').map((a) => a.name)
     const agents = extractAgentMentions(payload.prompt, subagentNames)
-    props.onSend({ ...payload, agents })
+    // 原样回传发送结果：useComposer 据此在失败时把草稿与图片还回输入框。
+    return props.onSend({ ...payload, agents })
   }
   const { data: commands = [] } = useCommands()
   const composer = useComposer({
@@ -174,6 +266,25 @@ function Composer(props: ComposerProps) {
     commands,
   })
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
+
+  // 跨实例还原输入：发送失败伴随导航后（首条消息失败 → 清空会话 → 回草稿页）
+  // 草稿页是新的 Composer 实例，得由外部把内容灌回来。
+  //
+  // 去重按**载荷内容**而不是对象身份：父组件很容易在 JSX 里每次渲染新建
+  // `{prompt, images}` 字面量（useComposer 的返回值也逐渲染新建），那时身份比较
+  // 永远不相等，用户已经改好的内容会被上一次失败的载荷反复盖回去。内容相同即视为
+  // 同一份载荷，且已还原过就不再灌第二次——父组件也会在消费后置 null。
+  const restoredKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const draft = props.restoreDraft
+    if (!draft || draft.prompt.length === 0) return
+    const key = draftKey(draft)
+    if (restoredKeyRef.current === key) return
+    restoredKeyRef.current = key
+    composer.setPromptExternal(draft.prompt)
+    composer.setImages?.(draft.images)
+    composer.editorRef.current?.focus()
+  }, [props.restoreDraft, composer])
 
   // 工作流列表：传入 projectId 以发现项目级 .c0de/workflows/*.js。
   // queryKey 含 projectId 确保切换项目时重新拉取。
@@ -229,6 +340,13 @@ function Composer(props: ComposerProps) {
   const [workflowActive, setWorkflowActive] = useState(0)
   const [subcommandActive, setSubcommandActive] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const pasteInsertRef = useRef<HTMLButtonElement | null>(null)
+
+  // 大段粘贴确认条渲染在编辑器之前，正向 Tab 走不到它：出现时把焦点移到「插入」，
+  // 键盘/读屏用户不会被留在「粘贴毫无反应」的状态（两个按钮处理完都把焦点交还编辑器）。
+  useEffect(() => {
+    if (composer.showPasteConfirm) pasteInsertRef.current?.focus()
+  }, [composer.showPasteConfirm])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
   useEffect(() => {
@@ -282,7 +400,24 @@ function Composer(props: ComposerProps) {
     // 不判定就会把未确认的候选当最终输入：回车直接插入斜杠命令/子命令/工作流名
     // 或选中 @ 候选，用户正在组合的内容被替换掉。
     if (isImeComposing(e)) return
-    if (composer.popover === 'workflow') {
+    // 浮层候选计数：与各 Popover 的实际渲染条件一致（空列表时它们 return null）。
+    // 浮层状态是「触发正则匹配」置上的，不保证有候选：@ 一个不存在的名字（@alice 帮我看下）、
+    // 未匹配的 /cmd 都会让 popover 挂着但一个菜单项都画不出来。此时继续拦截按键，
+    // Enter 就被一个看不见的菜单吞掉——消息永远发不出、零反馈（只有 Esc/鼠标能脱身）。
+    const popoverCandidates =
+      composer.popover === 'workflow'
+        ? filteredWorkflows.length
+        : composer.popover === 'slash'
+          ? filteredCommands.length
+          : composer.popover === 'subcommand'
+            ? filteredSubcommands.length
+            : composer.popover === 'at'
+              ? atSubagents.length + atFiles.length
+              : 0
+    // 没有候选 → 不拦截，按「无浮层」把按键交给 composer.handleKeyDown（Enter 即发送）。
+    const popoverDead = composer.popover !== null && popoverCandidates === 0
+    if (popoverDead) composer.setPopover(null)
+    if (!popoverDead && composer.popover === 'workflow') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setWorkflowActive((i) => Math.min(i + 1, filteredWorkflows.length - 1))
@@ -300,7 +435,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (composer.popover === 'slash') {
+    if (!popoverDead && composer.popover === 'slash') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSlashActive((i) => Math.min(i + 1, filteredCommands.length - 1))
@@ -318,7 +453,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (composer.popover === 'subcommand') {
+    if (!popoverDead && composer.popover === 'subcommand') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSubcommandActive((i) => Math.min(i + 1, filteredSubcommands.length - 1))
@@ -336,7 +471,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (composer.popover === 'at') {
+    if (!popoverDead && composer.popover === 'at') {
       const total = atSubagents.length + atFiles.length
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -360,7 +495,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    composer.handleKeyDown(e)
+    composer.handleKeyDown(e, popoverDead)
   }
 
   const handleDrop = (e: DragEvent) => {
@@ -378,6 +513,7 @@ function Composer(props: ComposerProps) {
   }
 
   const sendLabel = props.isStreaming ? '终止' : '发送'
+  const pasteConfirm = composer.showPasteConfirm
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: composer 拖放区，容器需捕获 drag/drop 事件
@@ -418,6 +554,36 @@ function Composer(props: ComposerProps) {
           data-testid="image-error"
         >
           {composer.imageError}
+        </div>
+      )}
+      {pasteConfirm && (
+        // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，确认条非表单分组，fieldset 不适用
+        <div
+          className={pasteBar}
+          role="group"
+          aria-label="大段粘贴确认"
+          data-testid="paste-confirm"
+        >
+          <span className={pasteText}>
+            粘贴内容较大（{pasteConfirm.chars} 字符 / {pasteConfirm.lines} 行），插入输入框？
+          </span>
+          <button
+            ref={pasteInsertRef}
+            type="button"
+            className={pasteInsertBtn}
+            onClick={composer.confirmPaste}
+            data-testid="paste-confirm-insert"
+          >
+            插入
+          </button>
+          <button
+            type="button"
+            className={pasteCancelBtn}
+            onClick={composer.cancelPaste}
+            data-testid="paste-confirm-cancel"
+          >
+            取消
+          </button>
         </div>
       )}
       <div className={editorRow}>
