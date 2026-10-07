@@ -190,9 +190,14 @@ const gitDeleted = css`
   box-shadow: inset 2px 0 0 var(--haze-color-text-secondary);
   text-decoration: line-through;
 `
+// .gitignore 里的文件仍要能看清文件名——此前用 opacity:0.55 把整行（含文字）
+// 一起调暗，浅色主题实测降到 3.76:1（12.5px 正文要求 4.5:1，axe 报 serious
+// 级 color-contrast，用户在文件树里几乎读不出 .c0de/.env 这类条目）。
+// 改为「换颜色而非降透明度」：透明度会把文字一起压暗、且与背景叠加后无法
+// 保证对比度；这里只调文字色到 --haze-color-text-secondary 的实色值，
+// 浅色/深色两套主题各自的 token 都已满足 4.5:1。
 const gitIgnored = css`
   color: var(--haze-color-text-secondary);
-  opacity: 0.55;
 `
 
 /** git 状态 → 高亮类名。 */
