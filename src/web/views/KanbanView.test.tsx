@@ -375,3 +375,82 @@ describe('KanbanView 快速新建失败态', () => {
     expect(screen.getByText('+ 新建卡片')).toBeInTheDocument()
   })
 })
+
+/**
+ * 卡片编辑弹窗的优先级/标签选择态。
+ *
+ * 回归：优先级此前只有颜色差异表达当前档位（选中 #fff 实心、未选中 ghost），
+ * 三个按钮没有任何状态语义——读屏播报为「高 按钮 / 中 按钮 / 低 按钮」，
+ * 当前是哪一档完全丢失；标签 chip 同理（选中只改边框色）。
+ * 互斥档位与多选标签都必须用 aria-pressed 暴露逐项状态。
+ */
+describe('卡片编辑弹窗 选择态可被读屏获取', () => {
+  const boardWithCard: KanbanBoardWithCards = {
+    id: 'b1',
+    projectId: 'p1',
+    columns: [{ id: 'col1', name: '待办' }],
+    labels: [
+      { id: 'l1', name: '前端', color: '#4a9eff' },
+      { id: 'l2', name: '后端', color: '#e5484d' },
+    ],
+    cards: [
+      {
+        id: 'c1',
+        boardId: 'b1',
+        title: '修复登录',
+        description: null,
+        columnId: 'col1',
+        priority: 'medium',
+        position: 0,
+        labels: ['l1'],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+
+  async function openEditor() {
+    vi.mocked(kanbanAPI.get).mockResolvedValue(boardWithCard)
+    renderBoard()
+    await screen.findByTestId('kanban-card-c1')
+    fireEvent.click(screen.getByTestId('kanban-card-c1'))
+    return screen.findByRole('dialog', { name: '编辑卡片' })
+  }
+
+  it('优先级分组具名，且当前档位以 aria-pressed 表达', async () => {
+    await openEditor()
+
+    expect(screen.getByRole('group', { name: '优先级' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '中' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '高' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: '低' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('切换档位后 aria-pressed 跟着换档，且互斥（同一时刻仅一项为 true）', async () => {
+    await openEditor()
+
+    fireEvent.click(screen.getByRole('button', { name: '低' }))
+
+    expect(screen.getByRole('button', { name: '低' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '中' })).toHaveAttribute('aria-pressed', 'false')
+    const pressed = ['高', '中', '低'].filter(
+      (label) =>
+        screen.getByRole('button', { name: label }).getAttribute('aria-pressed') === 'true',
+    )
+    expect(pressed).toEqual(['低'])
+  })
+
+  it('标签 chip 逐个暴露选中态（多选，不是互斥单选）', async () => {
+    await openEditor()
+
+    expect(screen.getByRole('button', { name: '前端' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '后端' })).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(screen.getByRole('button', { name: '后端' }))
+
+    expect(screen.getByRole('button', { name: '后端' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '前端' })).toHaveAttribute('aria-pressed', 'true')
+  })
+})

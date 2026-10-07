@@ -15,11 +15,22 @@ const field = css`
   gap: 4px;
 `
 
+/** fieldset 的浏览器默认边框/内边距/最小宽度要抹掉，否则比 div 版多一圈框。
+ * legend 默认在边框上，正好靠上面的 display:block 归位到字段流的顶部。 */
+const fieldSet = css`
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+`
+
 const label = css`
   font-size: 12px;
   font-weight: 500;
   color: var(--haze-color-text-secondary);
   min-height: auto;
+  display: block;
+  padding: 0;
 `
 
 const titleInput = css`
@@ -351,14 +362,21 @@ export function CardEditDialog({
         />
       </div>
 
-      <div className={field}>
-        <span className={label}>优先级</span>
+      {/* 互斥的一组开关：aria-pressed 表达「当前是哪一档」，与项目内其它
+          切换组（终端标签、视图切换、回收站开关）口径一致。
+          此前三个按钮只有颜色差异（选中为 #fff 实心），读屏播报为
+          「高 按钮 / 中 按钮 / 低 按钮」三个无状态按钮——当前优先级
+          完全丢失。用 fieldset/legend 承载分组语义（等价于 role=group，
+          且读屏进入分组时会播报 legend）。 */}
+      <fieldset className={`${field} ${fieldSet}`}>
+        <legend className={label}>优先级</legend>
         <div className={priorityRow}>
           {(Object.keys(PRIORITY_COLORS) as KanbanPriority[]).map((p) => (
             <button
               key={p}
               type="button"
               className={priorityBtn}
+              aria-pressed={priority === p}
               data-variant={priority === p ? 'primary' : 'ghost'}
               onClick={() => setPriority(p)}
               style={{ color: priority === p ? '#fff' : PRIORITY_COLORS[p] }}
@@ -367,7 +385,7 @@ export function CardEditDialog({
             </button>
           ))}
         </div>
-      </div>
+      </fieldset>
 
       <div className={field}>
         <span className={label}>标签</span>
@@ -381,7 +399,14 @@ export function CardEditDialog({
                   className={`${labelChip} ${selected ? labelChipSelected : ''}`}
                   style={{ color: l.color }}
                 >
-                  <button type="button" className={labelChipMain} onClick={() => toggleLabel(l.id)}>
+                  {/* 选中态此前只有边框色变化（labelChipSelected），读屏无从分辨：
+                      多选标签必须用 aria-pressed 暴露逐个状态。 */}
+                  <button
+                    type="button"
+                    className={labelChipMain}
+                    aria-pressed={selected}
+                    onClick={() => toggleLabel(l.id)}
+                  >
                     <span className={labelDot} style={{ background: l.color }} />
                     {l.name}
                   </button>
