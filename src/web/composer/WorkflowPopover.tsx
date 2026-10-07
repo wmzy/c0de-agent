@@ -1,4 +1,6 @@
 import { css } from '@linaria/core'
+import { useRef } from 'react'
+import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 
 const popover = css`
@@ -86,9 +88,12 @@ type Props = {
 }
 
 function WorkflowPopover(props: Props) {
+  const listRef = useRef<HTMLDivElement>(null)
+  usePopoverScroll(listRef, props.activeIndex, props.workflows.length > 0)
   if (props.workflows.length === 0) return null
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="workflow-menu"

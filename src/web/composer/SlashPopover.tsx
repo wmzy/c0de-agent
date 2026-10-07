@@ -1,4 +1,6 @@
 import { css } from '@linaria/core'
+import { useRef } from 'react'
+import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
 import type { SubcommandDef } from '@/services/commands.js'
 
@@ -57,9 +59,12 @@ type SubcommandProps = {
 }
 
 function SlashPopover(props: Props) {
+  const listRef = useRef<HTMLDivElement>(null)
+  usePopoverScroll(listRef, props.activeIndex, props.commands.length > 0)
   if (props.commands.length === 0) return null
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="slash-menu"
@@ -83,9 +88,12 @@ function SlashPopover(props: Props) {
 }
 
 function SubcommandPopover(props: SubcommandProps) {
+  const listRef = useRef<HTMLDivElement>(null)
+  usePopoverScroll(listRef, props.activeIndex, props.subcommands.length > 0)
   if (props.subcommands.length === 0) return null
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="subcommand-menu"

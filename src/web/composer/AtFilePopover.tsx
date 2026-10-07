@@ -1,4 +1,6 @@
 import { css } from '@linaria/core'
+import { useRef } from 'react'
+import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { FileSearchResult } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
 
@@ -62,9 +64,14 @@ function AtFilePopover(props: Props) {
     .filter((a) => a.mode !== 'primary')
     .filter((a) => !props.query || a.name.includes(props.query))
     .slice(0, 5)
+  const listRef = useRef<HTMLDivElement>(null)
+  // agent 段与文件段共用一个键盘索引（文件索引偏移 subagents.length），
+  // 但 aria-selected 只有一个 true，hook 按语义取到的那一项始终是当前选中项。
+  usePopoverScroll(listRef, Math.max(props.activeAgentIndex, props.activeIndex), true)
   if (files.length === 0 && subagents.length === 0) return null
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="at-menu"
