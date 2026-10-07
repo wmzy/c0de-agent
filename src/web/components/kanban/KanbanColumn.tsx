@@ -2,7 +2,7 @@ import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { css } from '@linaria/core'
 import { Button } from 'haze-ui'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type {
   KanbanCard as KanbanCardType,
@@ -293,6 +293,21 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
   const [addError, setAddError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
 
+  /**
+   * a11y：避免 autoFocus，输入框挂载后程序化聚焦（同 BranchTree 重命名输入）。
+   *
+   * 此前不聚焦：点「+ 新建卡片」后输入框出现但焦点留在 body——用户必须再点一次
+   * 输入框才能打字，直接敲键全部落空（既没进输入框、也没有任何提示）；键盘用户
+   * 按 Enter 展开后，下一次 Tab 会从页面开头重走一遍才能回到这个刚打开的输入框。
+   *
+   * 用 useCallback 固定 fn 身份：内联箭头每次渲染都是新函数，React 会在每轮渲染
+   * 重新调用它（先传 null 再传元素），焦点被反复抢回输入框——「添加中…」期间想
+   * 点「添加」或切走都会被拽回来。
+   */
+  const focusQuickAddInput = useCallback((el: HTMLInputElement | null) => {
+    el?.focus()
+  }, [])
+
   // 只在成功后清空草稿并收起输入框：此前无条件清空 + 关闭，请求失败时输入框
   // 消失、没有新卡片、整页无提示，用户刚打的标题永久丢失（只能重打一遍），
   // 而失败在界面上与「成功但卡片没出现」完全等价。失败时保留草稿与输入框，
@@ -342,6 +357,7 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
             <div className={quickAddRow}>
               <SyncedInput
                 className={quickAddInput}
+                ref={focusQuickAddInput}
                 value={draft}
                 onChange={(v) => {
                   setDraft(v)
