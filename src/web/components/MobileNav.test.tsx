@@ -8,6 +8,14 @@ import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileNav } from '@/components/MobileNav.js'
 
+// navigateTo 是 fire-and-forget（内部吞掉 NavigationCancelledError），MemoryRouter
+// 下的点击无法从外部观察落点；mock 后直接断言导航目标。
+vi.mock('@/navigateTo.js', () => ({
+  navigateTo: vi.fn((_router: unknown, path: string) => {
+    navigations.push(path)
+  }),
+}))
+
 afterEach(() => cleanup())
 
 // 路由表持有器：组件经 module 级变量传入（各用例 props 不同），
@@ -21,12 +29,17 @@ function TestView() {
 const testRoutes = createRoutes({
   children: [
     { path: '/projects/:projectId', component: () => TestView },
+    { path: '/projects/:projectId/kanban', component: () => TestView },
     { path: '/settings', component: () => TestView },
   ],
 })
 
+/** 记录 MobileNav 触发的程序化导航目标。 */
+let navigations: string[] = []
+
 async function renderWith(ui: ReactNode, initial = '/projects/p1') {
   currentUi = ui
+  navigations = []
   const view = render(
     <MemoryRouter routes={testRoutes} initialEntries={[initial]}>
       <View />
@@ -70,6 +83,49 @@ describe('MobileNav', () => {
     await renderWith(<MobileNav />)
     fireEvent.click(screen.getByTestId('mobile-nav-chat'))
     expect(screen.getByTestId('mobile-nav-chat')).toBeTruthy()
+    expect(navigations).toEqual([])
+  })
+
+  /**
+   * 回归：看板路由下底部导航是死键。
+   *
+   * 缺陷：activeId 把一切非设置路由回退成 'chat'，于是看板页上「对话」被
+   * 高亮（谎报当前位置），而 onPick 的 chat 分支只在设置路由下导航——点它
+   * URL 不变、无任何提示；「会话」标签又因 KanbanPage 没传 sidebar 而空转。
+   * 底部导航成了移动端从看板回对话的唯一出口，却整排失效。
+   */
+  it('看板路由下不再谎报「对话」为当前页', async () => {
+    await renderWith(<MobileNav />, '/projects/p1/kanban')
+    expect(screen.getByTestId('mobile-nav-chat').className).not.toContain('active')
+    expect(screen.getByTestId('mobile-nav-sessions').className).not.toContain('active')
+    expect(screen.getByTestId('mobile-nav-settings').className).not.toContain('active')
+    expect(screen.getByTestId('mobile-nav-chat').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('看板路由下点「对话」导航回聊天页', async () => {
+    await renderWith(<MobileNav />, '/projects/p1/kanban')
+    fireEvent.click(screen.getByTestId('mobile-nav-chat'))
+    expect(navigations).toEqual(['/projects/:projectId'])
+  })
+
+  it('看板路由下点「会话」（无侧栏可开）导航回聊天页而不是空转', async () => {
+    const onToggleSessions = vi.fn()
+    await renderWith(<MobileNav onToggleSessions={onToggleSessions} />, '/projects/p1/kanban')
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(onToggleSessions).not.toHaveBeenCalled()
+    expect(navigations).toEqual(['/projects/:projectId'])
+  })
+
+  it('看板路由下「设置」仍导航到项目设置页', async () => {
+    await renderWith(<MobileNav />, '/projects/p1/kanban')
+    fireEvent.click(screen.getByTestId('mobile-nav-settings'))
+    expect(navigations).toEqual(['/projects/:projectId/settings'])
+  })
+
+  it('激活标签带 aria-current，读屏可判断当前位置', async () => {
+    await renderWith(<MobileNav />, '/projects/p1')
+    expect(screen.getByTestId('mobile-nav-chat').getAttribute('aria-current')).toBe('page')
+    expect(screen.getByTestId('mobile-nav-settings').getAttribute('aria-current')).toBeNull()
   })
 })
 
