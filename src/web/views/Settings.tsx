@@ -172,6 +172,11 @@ export function Settings() {
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
   const [needsRestart, setNeedsRestart] = useState(false)
 
+  // 挂在吸底保存条上（此前是文档最末端的独立条，3500px+ 的表单里永远看不见）。
+  const RESTART_NOTICE = needsRestart
+    ? '安全配置已保存但未生效：需重启 c0de serve，请在启动它的终端按 Ctrl+C 后重新运行。'
+    : null
+
   // P2-10：dirty 时切换作用域会丢弃草稿——ConfirmDialog 二次确认，
   // 确认前暂存目标作用域（SyncedSelect 受控，选中项会弹回当前 scope）。
   const [pendingScope, setPendingScope] = useState<'global' | 'project' | null>(null)
@@ -742,7 +747,10 @@ export function Settings() {
       <SettingsSaveBar
         isDirty={isDirty}
         feedback={saveFeedback}
-        blockedReason={jsonError ? 'JSON 语法错误：请先修复编辑器中标红的问题，当前内容无法保存' : null}
+        blockedReason={
+          jsonError ? 'JSON 语法错误：请先修复编辑器中标红的问题，当前内容无法保存' : null
+        }
+        restartNotice={RESTART_NOTICE}
         onDiscard={discardChanges}
         onSave={handleSave}
       />
@@ -767,23 +775,6 @@ export function Settings() {
         >
           当前有未保存的更改，切换作用域将丢弃这些更改。确定切换？
         </ConfirmDialog>
-      )}
-
-      {/* 安全类配置重启提示：token/authEnabled 由 authManager 启动时一次性读取 */}
-      {needsRestart && (
-        <div
-          style={{
-            padding: '8px 16px',
-            borderTop: '1px solid var(--haze-color-border)',
-            background: 'color-mix(in srgb, var(--haze-color-warning) 10%, transparent)',
-            color: 'var(--haze-color-warning)',
-            fontSize: 12,
-          }}
-          data-testid="settings-restart-hint"
-        >
-          安全配置已保存，但需重启 c0de serve 后生效：请在启动 c0de serve 的终端按 Ctrl+C
-          停止后，重新运行 c0de serve。
-        </div>
       )}
 
       {/* 未保存更改离开确认：弹窗遮罩阻断交互，「留下」恢复编辑，「离开」放行导航 */}

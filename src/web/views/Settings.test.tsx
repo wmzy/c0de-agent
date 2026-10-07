@@ -1558,6 +1558,39 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(screen.getByTestId('settings-restart-hint').textContent).toContain('重启')
   })
 
+  // 回归：needsRestart 提示排在 <SettingsSaveBar> 之后、DOM 最末端，而保存条是
+  // position:sticky;bottom:0 恒钉视口底部。GUI 表单实测高 3500px+，于是这条
+  // 「还没生效」的提示永远落在滚动区最末尾：用户点完保存，视口里只有「✓ 已保存」，
+  // 把「已保存」和「已加固」混为一谈。提示必须与保存状态同处一屏。
+  it('重启提示钉在吸底保存条上（与保存状态同屏），不随文档滚到最末尾', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({
+      config: mockConfig,
+      scopes: { global: null, project: null },
+      warnings: [],
+      needsRestart: true,
+    })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('Bearer Token 认证')) as HTMLElement
+    fireEvent.click(authCheck)
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(screen.getByTestId('settings-restart-hint')).toBeTruthy())
+
+    // 提示必须挂在保存条内部（sticky 区域内），而不是它的下一个兄弟节点
+    const bar = screen.getByTestId('settings-save-bar')
+    expect(bar.contains(screen.getByTestId('settings-restart-hint'))).toBe(true)
+    // 文案要说明「配置已存下但未生效」，否则与「✓ 已保存」并列仍会被读成已加固
+    expect(screen.getByTestId('settings-restart-hint').textContent).toContain('未生效')
+  })
+
   it('最小 patch：只保存变化字段，未变化的顶层键不出现在 payload', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))

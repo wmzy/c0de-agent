@@ -124,6 +124,15 @@ const dirtyHint = css`
   font-size: 13px;
 `
 
+/** 「已保存但需重启才生效」：常驻警示，可换行，避免与「✓ 已保存」同排时被挤没。 */
+const restartHint = css`
+  color: var(--haze-color-warning);
+  font-size: 12px;
+  line-height: 1.4;
+  min-width: 0;
+  overflow-wrap: anywhere;
+`
+
 type SaveFeedback =
   | { kind: 'idle' }
   | { kind: 'saving' }
@@ -256,6 +265,11 @@ type SettingsSaveBarProps = {
    *  isDirty 只回答「有没有改过」，不回答「现在这份内容能不能存」——
    *  JSON 视图语法错误时 draft 停在最后一次合法解析上，两者在界面上长得一样。 */
   blockedReason?: string | null
+  /** 「已存下但未生效」的常驻说明（安全类配置需重启 serve）。
+   *  必须与保存状态同处 sticky 条内：此前这条提示排在保存条之后、DOM 最末端，
+   *  表单高 3500px+ 时它永远在 2 屏之外，用户只看到「✓ 已保存」，把配置已落盘
+   *  读成已加固。 */
+  restartNotice?: string | null
   onDiscard: () => void
   onSave: () => void
 }
@@ -264,6 +278,7 @@ function SettingsSaveBar({
   isDirty,
   feedback,
   blockedReason,
+  restartNotice,
   onDiscard,
   onSave,
 }: SettingsSaveBarProps) {
@@ -293,6 +308,12 @@ function SettingsSaveBar({
           {feedback.kind === 'err' && `✗ 保存失败：${feedback.msg}`}
         </span>
       )}
+      {/* 「✓ 已保存」与「尚未生效」必须同屏出现，否则前者单独读起来像后者也完成了 */}
+      {restartNotice && (
+        <span className={restartHint} data-testid="settings-restart-hint">
+          {restartNotice}
+        </span>
+      )}
       <span className={saveBarSpacer} />
       {isDirty && (
         <Button
@@ -307,13 +328,7 @@ function SettingsSaveBar({
       <Button
         onClick={onSave}
         disabled={!isDirty || feedback.kind === 'saving' || !!blockedReason}
-        title={
-          blockedReason
-            ? blockedReason
-            : isDirty
-              ? '保存配置'
-              : '配置未变更或正在加载'
-        }
+        title={blockedReason ? blockedReason : isDirty ? '保存配置' : '配置未变更或正在加载'}
         data-testid="settings-save"
         variant="solid"
       >
