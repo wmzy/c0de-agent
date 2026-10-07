@@ -233,6 +233,21 @@ const branchInputError = css`
 `
 
 /**
+ * 分支切换失败提示（顶栏常驻，不是 toast）。
+ *
+ * 「以为切到了新分支、实际还在旧分支」会让后续 agent 的编辑与提交全部落到旧
+ * 分支——错得越久越难察觉，所以提示必须在下拉关闭后依然留在视野里，直到下一次
+ * 成功的切换为止；瞬时 toast 会在用户还没反应过来时消失。
+ */
+const branchError = css`
+  color: var(--haze-color-danger);
+  font-size: 11px;
+  max-width: 320px;
+  /* git 的失败原因是长句（"Your local changes would be overwritten…"），窄栏下断行 */
+  overflow-wrap: anywhere;
+`
+
+/**
  * 项目指示器：项目名 + git 分支均可点击下拉切换，各带"添加"按钮。
  * - 项目下拉：列出所有项目，点击导航到 `/projects/:id`，底部"添加项目"打开对话框。
  * - 分支下拉：列出本地分支，点击 checkout 切换，底部可输入新分支名创建并切换。
@@ -255,6 +270,8 @@ export function ProjectIndicator({
 
   const [showAddProject, setShowAddProject] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** 分支切换失败的原因（null=无失败）。渲染在下拉之外的顶栏，菜单关闭也看得见。 */
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
   // P2-6：删除项目（看板永久丢失）分级确认弹层；会话仅入回收站可恢复。
   const [showDelete, setShowDelete] = useState(false)
   // A1：目录失效时的「重新定位」弹窗（整体迁移会话与看板，替代删除）。
@@ -327,7 +344,20 @@ export function ProjectIndicator({
 
   const checkoutMut = useMutation({
     mutationFn: (branch: string) => fileAPI.gitCheckout(projectId, branch),
-    onSuccess: invalidateGitQueries,
+    onSuccess: () => {
+      setCheckoutError(null)
+      invalidateGitQueries()
+    },
+    // 切换失败必须说出口。git checkout 会被未提交改动/被占用 worktree 拒绝，
+    // 此前 menu 只写进 mutation state：菜单一关页面什么都不剩，用户以为已经在
+    // 新分支上，后续 agent 的编辑与提交全部落到旧分支（NewBranchForm 的错误有
+    // 渲染，说明这是漏写而非设计）。
+    onError: (e: unknown) => {
+      // APIError 既可能是 Error 子类也可能是普通结构体，两种取法都要兜住
+      setCheckoutError(
+        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e)),
+      )
+    },
   })
 
   const createBranchMut = useMutation({
@@ -482,6 +512,17 @@ export function ProjectIndicator({
               />
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* 渲染在下拉之外：菜单一关（点分支项即关闭）提示也必须留在视野里。 */}
+          {checkoutError ? (
+            <span
+              className={branchError}
+              role="alert"
+              data-testid="branch-checkout-error"
+              title={`分支切换失败，仍在 ${project.gitBranch}`}
+            >
+              {'\u26A0'} 未能切到该分支：{checkoutError}
+            </span>
+          ) : null}
         </span>
       ) : null}
 

@@ -604,3 +604,79 @@ describe('TopBar — 月成本徽标', () => {
     expect(badge.textContent).toBe('本月 $1.01')
   })
 })
+
+/**
+ * 回归：分支切换失败（git checkout 被未提交改动拒绝）时页面完全无提示。
+ *
+ * 缺陷：checkoutMut 此前没有 onError，错误只写进 mutation state。点分支项后
+ * 下拉立即关闭，页面什么都不剩——用户以为已切到目标分支，后续 agent 的编辑与
+ * 提交全部落到旧分支。对照：同菜单的新建分支 NewBranchForm 有 error 渲染，
+ * 说明这是漏写而非设计。
+ */
+describe('TopBar — 分支切换失败提示', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+  })
+
+  it('gitCheckout 失败时在顶栏显示原因，并说清「仍在原分支」', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
+      branches: [
+        { name: 'main', current: true, lastSubject: null },
+        { name: 'develop', current: false, lastSubject: null },
+      ],
+    })
+    ;(fileAPI.gitCheckout as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+      message: 'Your local changes would be overwritten by checkout',
+    })
+
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-item-develop'))
+
+    const err = await screen.findByTestId('branch-checkout-error')
+    expect(err.textContent).toContain('未能切到该分支')
+    expect(err.textContent).toContain('Your local changes would be overwritten')
+    // 分支标签仍显示原分支，且错误提示随它一起留在顶栏（不藏进已关闭的下拉）
+    expect(screen.getByTestId('project-branch').textContent).toContain('main')
+    expect(err.getAttribute('title')).toContain('main')
+  })
+
+  it('下一次切换成功后清除错误提示', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
+      branches: [
+        { name: 'main', current: true, lastSubject: null },
+        { name: 'develop', current: false, lastSubject: null },
+      ],
+    })
+    ;(fileAPI.gitCheckout as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce({ message: 'checkout failed' })
+      .mockResolvedValueOnce({ branch: 'develop' })
+
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByTestId('branch-dropdown-item-develop'))
+    await screen.findByTestId('branch-checkout-error')
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByTestId('branch-dropdown-item-develop'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('branch-checkout-error')).toBeNull()
+    })
+  })
+})
