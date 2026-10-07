@@ -3,11 +3,13 @@
 // 这里锁住三个行为：出现确认条且未插入、确认后插入规范化文本、取消后丢弃。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Composer } from '@/composer/Composer.js'
+import { draftStorageKey } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { storageGet } from '@/utils/storage.js'
 
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
@@ -136,5 +138,105 @@ describe('Composer 跨实例还原草稿', () => {
     view.rerender(<Harness />)
 
     expect(editor.textContent).toContain('我改的')
+  })
+})
+
+// 草稿此前只活在内存里：切会话时 ChatSession 先渲染 ChatSkeleton（Composer 整个
+// 卸载），刷新整页更是重建组件——未发送的长提示词静默消失，而提示历史只记已发送
+// 文本，接不住它。这里锁住「按作用域落盘 + 重挂载回填 + 成功后清除」。
+describe('Composer 草稿持久化', () => {
+  function DraftHarness({ scope }: { scope: string }) {
+    return (
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={vi.fn()}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            draftScope={scope}
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>
+    )
+  }
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('未发送的内容在重新挂载（切会话/刷新）后按作用域回填', () => {
+    const view = render(<DraftHarness scope="s:one" />)
+    fireEvent.input(screen.getByTestId('composer-editor'), {
+      target: { textContent: '未发送的草稿' },
+    })
+    expect(storageGet(draftStorageKey('s:one'))).toContain('未发送的草稿')
+
+    view.unmount()
+    render(<DraftHarness scope="s:one" />)
+    expect(screen.getByTestId('composer-editor').textContent).toContain('未发送的草稿')
+  })
+
+  it('不同作用域之间不串草稿：另一会话不显示上一会话未发送的内容', () => {
+    const view = render(<DraftHarness scope="s:one" />)
+    fireEvent.input(screen.getByTestId('composer-editor'), {
+      target: { textContent: '属于 one 的草稿' },
+    })
+    view.unmount()
+
+    render(<DraftHarness scope="s:two" />)
+    expect(screen.getByTestId('composer-editor').textContent).not.toContain('属于 one 的草稿')
+  })
+
+  it('发送成功后清除该作用域的草稿（回填不得复活已发出的消息）', () => {
+    const view = render(<DraftHarness scope="s:one" />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '这条要发出去' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(storageGet(draftStorageKey('s:one'))).toBeNull()
+
+    view.unmount()
+    render(<DraftHarness scope="s:one" />)
+    expect(screen.getByTestId('composer-editor').textContent).not.toContain('这条要发出去')
+  })
+
+  /** 粘贴图片（happy-dom 的 ClipboardEvent 不支持 init.clipboardData，手工装配）。 */
+  function pasteImage(el: HTMLElement, file: File) {
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { items: [{ type: file.type, getAsFile: () => file }], getData: () => '' },
+    })
+    fireEvent(el, event)
+  }
+
+  it('图片附件随草稿一起回填', async () => {
+    const view = render(<DraftHarness scope="s:img" />)
+    pasteImage(
+      screen.getByTestId('composer-editor'),
+      new File([new Uint8Array([1, 2, 3])], 'a.png', { type: 'image/png' }),
+    )
+    await waitFor(() => expect(screen.getByTestId('attachment-bar')).toBeTruthy())
+
+    view.unmount()
+    render(<DraftHarness scope="s:img" />)
+    await waitFor(() => expect(screen.getByTestId('attachment-bar')).toBeTruthy())
+  })
+
+  it('图片超出持久化预算时只存文本——大量附件不得把文本草稿一起挤掉', async () => {
+    const view = render(<DraftHarness scope="s:big" />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '文本要留住' } })
+    // base64 后约 1.1MB，超过 MAX_DRAFT_IMAGE_CHARS（512k 字符）
+    pasteImage(editor, new File([new Uint8Array(800_000)], 'big.png', { type: 'image/png' }))
+    await waitFor(() => expect(screen.getByTestId('attachment-bar')).toBeTruthy())
+
+    view.unmount()
+    render(<DraftHarness scope="s:big" />)
+    expect(screen.getByTestId('composer-editor').textContent).toContain('文本要留住')
+    expect(screen.queryByTestId('attachment-bar')).toBeNull()
   })
 })

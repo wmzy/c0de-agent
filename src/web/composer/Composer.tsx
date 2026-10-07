@@ -250,6 +250,11 @@ type ComposerProps = {
   projectId?: string
   /** 可用 agent 列表（@ mention 渲染与校验）。 */
   agents: AgentListItem[]
+  /**
+   * 草稿持久化作用域（`s:<sessionId>` / `p:<projectId>`）：输入内容按作用域落
+   * localStorage，切会话或刷新后回填。缺省不持久化。
+   */
+  draftScope?: string
 }
 
 /**
@@ -284,6 +289,7 @@ function Composer(props: ComposerProps) {
     busy: props.creating,
     hasHistory: props.hasHistory,
     commands,
+    draftScope: props.draftScope,
   })
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
 

@@ -923,6 +923,8 @@ export function Chat({
         agents={agents}
         onSend={handleSend}
         restoreDraft={restoreDraft}
+        // 草稿按会话隔离；草稿页（尚未建会话）按项目隔离——两者都是「用户以为还留着」的输入。
+        draftScope={sessionId ? `s:${sessionId}` : projectId ? `p:${projectId}` : undefined}
         onAbort={onAbort}
         onSteer={onSteer}
         isStreaming={isStreaming}

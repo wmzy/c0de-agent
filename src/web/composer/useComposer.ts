@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { loadDraft, saveDraft } from '@/composer/draft.js'
 import {
   currentCursor,
   decorateWorkflowz,
@@ -57,6 +58,12 @@ type UseComposerOptions = {
   hasHistory: boolean
   /** 可用 slash 命令列表（用于检测子命令补全）。 */
   commands?: CommandInfo[]
+  /**
+   * 草稿持久化作用域（`s:<sessionId>` / `p:<projectId>`）。给定后输入内容按作用域
+   * 落 localStorage：切会话（Composer 随 ChatSkeleton 卸载）或刷新页面后原样回填。
+   * 缺省不持久化（无归属的输入没有可回填的地方）。
+   */
+  draftScope?: string
 }
 
 /** 单张图片大小上限（8MB）：base64 进 PGLite + SSE 载荷 + provider 请求，超限拒绝而非
@@ -104,6 +111,7 @@ function useComposer({
   busy = false,
   hasHistory: _hasHistory,
   commands,
+  draftScope,
 }: UseComposerOptions) {
   const editorRef = useRef<HTMLDivElement>(null)
   const promptRef = useRef<Prompt>(DEFAULT_PROMPT)
@@ -175,6 +183,23 @@ function useComposer({
     return parseFromDOM(editorRef.current)
   }, [])
 
+  // 草稿持久化作用域镜像：persistDraft 的身份必须稳定（它进了 handleInput /
+  // setPromptExternal 的 useCallback 依赖链），不能直接闭包 draftScope。
+  const draftScopeRef = useRef(draftScope)
+  draftScopeRef.current = draftScope
+  /**
+   * 还原是否已完成。挂载时先读存储再允许回写——[images] 副作用在挂载首帧就会跑，
+   * 那时 imagesRef 还是初始的 []，抢先回写会用空图片覆盖刚读出来的草稿。
+   */
+  const draftRestoredRef = useRef(false)
+
+  /** 把当前输入与附件落盘（空草稿删除键）。无作用域/尚未还原时 no-op。 */
+  const persistDraft = useCallback(() => {
+    const scope = draftScopeRef.current
+    if (!scope || !draftRestoredRef.current) return
+    saveDraft(scope, promptRef.current, imagesRef.current)
+  }, [])
+
   const handleInput = useCallback(() => {
     if (!editorRef.current) return
     const prompt = parseFromDOM(editorRef.current)
@@ -213,23 +238,50 @@ function useComposer({
 
     // workflowz 关键词高亮装饰（纯视觉，不影响 parse/cursor 逻辑）
     decorateWorkflowz(editorRef.current)
-  }, [popover, resetHistory])
+    persistDraft()
+  }, [popover, resetHistory, persistDraft])
 
-  const setPromptExternal = useCallback((prompt: Prompt, cursorAtEnd = false) => {
-    if (!editorRef.current) return
-    mirrorRef.current.input = true
-    if (cursorAtEnd) {
-      const totalLen = promptToText(prompt).length
-      reconcile(editorRef.current, prompt, totalLen)
-    } else {
-      const cursor = currentCursor(editorRef.current)
-      reconcile(editorRef.current, prompt, prompt === DEFAULT_PROMPT ? 0 : cursor)
-    }
-    promptRef.current = prompt
-    setIsEmpty(isPromptEmpty(prompt))
-    // 外部设置 prompt 后也需装饰
-    if (editorRef.current) decorateWorkflowz(editorRef.current)
-  }, [])
+  const setPromptExternal = useCallback(
+    (prompt: Prompt, cursorAtEnd = false) => {
+      if (!editorRef.current) return
+      mirrorRef.current.input = true
+      if (cursorAtEnd) {
+        const totalLen = promptToText(prompt).length
+        reconcile(editorRef.current, prompt, totalLen)
+      } else {
+        const cursor = currentCursor(editorRef.current)
+        reconcile(editorRef.current, prompt, prompt === DEFAULT_PROMPT ? 0 : cursor)
+      }
+      promptRef.current = prompt
+      setIsEmpty(isPromptEmpty(prompt))
+      // 外部设置 prompt 后也需装饰
+      if (editorRef.current) decorateWorkflowz(editorRef.current)
+      // 外部写入同样落盘：发送成功后的清空（→ 键删除）、slash/@ 插入、失败还原都要反映到草稿。
+      persistDraft()
+    },
+    [persistDraft],
+  )
+
+  // 挂载 / 切换作用域：回填该作用域的草稿。无草稿时清空输入区——上一个会话的
+  // 文字不能留在下一个会话的输入框里（切会话时 ChatSession 会先渲染 ChatSkeleton，
+  // 本 hook 整体重建，草稿只能来自存储）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setImages 是 useState 的稳定 setter，列进依赖是为了让「还原哪些附件」显式可见
+  useEffect(() => {
+    draftRestoredRef.current = false
+    const stored = draftScope ? loadDraft(draftScope) : null
+    setPromptExternal(stored?.prompt ?? DEFAULT_PROMPT, true)
+    setImages(stored?.images ?? [])
+    setImageError(null)
+    resetHistory()
+    draftRestoredRef.current = true
+  }, [draftScope, setPromptExternal, setImages, resetHistory])
+
+  // 附件变化（添加/移除/还原）也要落盘：它们不经 handleInput/setPromptExternal。
+  // 声明在还原 effect 之后——挂载首帧必须先把存储读出来再允许回写。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: images 不在回调体里（persistDraft 经 imagesRef 读），但附件变化必须触发这次回写
+  useEffect(() => {
+    persistDraft()
+  }, [images, persistDraft])
 
   // popover 选中插入命令（替换整行 /xxx）
   const insertSlash = useCallback(
