@@ -7,7 +7,7 @@
 
 import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { type ModelSelection, ModelSelector } from '@/components/ModelSelector.js'
@@ -129,6 +129,38 @@ function modelInput() {
   if (!el) throw new Error('model-input 不存在')
   return el as HTMLInputElement
 }
+
+describe('ModelSelector — 未配置任何 Provider', () => {
+  // 回归：providers 为空时组件照常渲染，产出一个 options 为空、value 为空串的
+  // Provider 下拉，外加 Model 输入框预填 config.defaultModel——而 defaultModel /
+  // defaultProvider 来自 DEFAULT_CONFIG（openai / gpt-4o），与用户实际配置无关。
+  // 用户以为模型已选好，发送后才被后端拒，报错却是「未找到名为「」的 AI 服务」
+  //（那个空引号正是空下拉的值），前置条件完全无法从界面推断。
+  const emptyConfig: Config = {
+    ...baseConfig,
+    providers: [],
+    defaultProvider: 'openai',
+    defaultModel: 'gpt-4o',
+  }
+
+  it('不渲染 Provider/Model 控件，改为明示先去配置', async () => {
+    renderSelector({ provider: '', model: 'gpt-4o' }, emptyConfig)
+    // providers 走 react-query，判定「确实为空」要等这次请求落地
+    await screen.findByTestId('model-selector-empty')
+    expect(document.querySelector('[data-testid="provider-select"]')).toBeNull()
+    expect(document.querySelector('[data-testid="model-input"]')).toBeNull()
+    expect(document.querySelector('[data-testid="model-dropdown"]')).toBeNull()
+    expect(document.querySelector('[data-testid="model-selector-empty"]')?.textContent).toContain(
+      '设置 → Provider',
+    )
+  })
+
+  it('providers 尚未加载时不闪现「未配置」提示', () => {
+    vi.mocked(providerAPI.list).mockReturnValue(new Promise(() => {}) as never)
+    renderSelector({ provider: '', model: '' }, emptyConfig)
+    expect(document.querySelector('[data-testid="model-selector-empty"]')).toBeNull()
+  })
+})
 
 describe('ModelSelector — model 建议项', () => {
   it('仅展示当前 provider 启用的模型（enabled 省略/true 视为启用）', () => {
