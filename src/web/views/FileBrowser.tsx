@@ -116,6 +116,37 @@ const loading = css`
   font-size: 12px;
 `
 
+/**
+ * 加载失败态：标题 + 原因 + 重试三段式（与 KanbanView / FilePreview 的读失败态同
+ * 口径）。此前根目录列目录失败被 `.catch(() => {})` 吞掉，树恒为 null，面板永远
+ * 停在「加载中…」；搜索失败则落进空态，把「查不到」说成「不存在」。
+ */
+const errorState = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px 8px;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 可能是长路径/长句子，窄栏下必须能断行而不是撑出横向滚动 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  padding: 4px 12px;
+  font-size: 12px;
+`
+
 /** 搜索结果列表：原生 ul/li 语义（读屏从树切换到搜索时有明确上下文）。 */
 const resultList = css`
   display: flex;
@@ -240,6 +271,10 @@ export function FileBrowser({
   const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
+  /** 根目录列目录失败的原因（null=正常）。空串表示失败但没有 message。 */
+  const [rootError, setRootError] = useState<string | null>(null)
+  /** 根目录重试令牌：自增触发上面那个 effect 重跑。 */
+  const [rootReload, setRootReload] = useState(0)
   const [query, setQuery] = useState('')
   /** P3：搜索输入 300ms 防抖——服务端 /api/files/search 是全仓递归扫描，
    *  此前每击键触发一次全量 walk，大仓库明显卡顿。 */
@@ -278,11 +313,13 @@ export function FileBrowser({
   const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
 
   // 切换项目时重置树，加载新项目根目录
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rootReload 是重试令牌——重试按钮自增它来重跑这次加载，effect 体里不读它
   useEffect(() => {
     let cancelled = false
     setTreeRoot(null)
     setExpanded(new Set())
     setLoadingPaths(new Set())
+    setRootError(null)
     fileAPI
       .list('.', projectId)
       .then((entries) => {
@@ -294,11 +331,19 @@ export function FileBrowser({
           children: entriesToNodes(entries, '.'),
         })
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        // 失败必须落到可见错误态：此前 .catch(() => {}) 让 treeRoot 恒为 null，
+        // 面板永远停在「加载中…」，用户只能反复刷新整页（见下方 rootError 分支）。
+        if (cancelled) return
+        setRootError(
+          (err as { message?: string } | null)?.message ??
+            (err instanceof Error ? err.message : null),
+        )
+      })
     return () => {
       cancelled = true
     }
-  }, [projectId, projectName])
+  }, [projectId, projectName, rootReload])
 
   /** 懒加载某个目录的子项（失败保持 children=undefined，可重试）。 */
   const loadChildren = useCallback(
@@ -366,6 +411,10 @@ export function FileBrowser({
   )
 
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
+  // APIError 是结构体而非 Error 子类，必须结构化取 message（同 KanbanView/FilePreview 口径）。
+  const searchErrorMessage =
+    (searchQ.error as { message?: string } | null)?.message ??
+    (searchQ.error instanceof Error ? searchQ.error.message : null)
 
   /**
    * 搜索结果里点目录 → 回到文件树并展开定位到该目录。
@@ -427,6 +476,25 @@ export function FileBrowser({
         {isSearch ? (
           searchQ.isLoading ? (
             <div className={loading}>搜索中…</div>
+          ) : searchQ.isError ? (
+            // 「查不到」与「搜不了」必须分开：此前没有 error 分支，重试耗尽后
+            // data=undefined 直接落进下面的「无匹配文件」——用户据此判定文件不
+            // 存在，去重建同名文件或改错位置。APIError 是结构体而非 Error 子类，
+            // 必须结构化取 message，否则渲染成 [object Object]。
+            <div className={errorState} data-testid="file-search-error" role="alert">
+              <span className={errorTitle}>搜索失败</span>
+              <span className={errorDetail}>
+                {searchErrorMessage ?? '无法完成搜索，请稍后重试。'}
+              </span>
+              <button
+                type="button"
+                className={retryBtn}
+                data-testid="file-search-retry"
+                onClick={() => void refetchSearch()}
+              >
+                重试
+              </button>
+            </div>
           ) : searchEntries.length === 0 ? (
             <div className={empty}>无匹配文件</div>
           ) : (
@@ -470,6 +538,19 @@ export function FileBrowser({
               ))}
             </ul>
           )
+        ) : rootError !== null ? (
+          <div className={errorState} data-testid="file-tree-error" role="alert">
+            <span className={errorTitle}>文件加载失败</span>
+            <span className={errorDetail}>{rootError || '无法读取项目文件。'}</span>
+            <button
+              type="button"
+              className={retryBtn}
+              data-testid="file-tree-retry"
+              onClick={() => setRootReload((n) => n + 1)}
+            >
+              重试
+            </button>
+          </div>
         ) : !treeRoot ? (
           <div className={loading}>加载中…</div>
         ) : (

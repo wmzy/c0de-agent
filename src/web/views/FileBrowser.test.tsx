@@ -225,3 +225,61 @@ describe('FileBrowser 搜索结果语义', () => {
     expect(screen.queryByTestId('node-src')).toBeNull()
   })
 })
+
+/**
+ * 回归：文件面板把「拉不到/搜不了」渲染成「加载中…/无匹配文件」。
+ *
+ * 缺陷一：根目录列目录是裸 promise + `.catch(() => {})`，treeRoot 恒为 null，
+ * 面板永远停在「加载中…」，没有原因也没有重试入口——用户只能反复刷新整页。
+ * 缺陷二：搜索没有 isError 分支，重试耗尽后 data=undefined 直接落进空态，把
+ * 「查不到」说成「不存在」，用户会据此判定文件没有并去重建同名文件。
+ */
+describe('FileBrowser 读失败态', () => {
+  it('根目录列出失败时展示原因与重试，而不是永远「加载中…」', async () => {
+    vi.mocked(fileAPI.list).mockRejectedValueOnce({ message: '后端 500' })
+    renderBrowser()
+
+    const err = await screen.findByTestId('file-tree-error')
+    expect(err.textContent).toContain('文件加载失败')
+    expect(err.textContent).toContain('后端 500')
+    expect(screen.queryByText('加载中…')).toBeNull()
+  })
+
+  it('点重试后重新拉取根目录并渲染出文件树', async () => {
+    vi.mocked(fileAPI.list).mockRejectedValueOnce({ message: '后端 500' })
+    renderBrowser()
+    await screen.findByTestId('file-tree-error')
+
+    fireEvent.click(screen.getByTestId('file-tree-retry'))
+    await waitFor(() => {
+      expect(screen.getByTestId('node-src')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('file-tree-error')).toBeNull()
+  })
+
+  it('搜索失败展示原因与重试，而不是「无匹配文件」', async () => {
+    vi.mocked(fileAPI.search).mockRejectedValueOnce({ message: '扫描超时' })
+    renderBrowser()
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 'zzz' } })
+
+    const err = await screen.findByTestId('file-search-error', {}, { timeout: 2000 })
+    expect(err.textContent).toContain('搜索失败')
+    expect(err.textContent).toContain('扫描超时')
+    expect(screen.queryByText('无匹配文件')).toBeNull()
+  })
+
+  it('搜索重试成功后回到结果列表', async () => {
+    vi.mocked(fileAPI.search)
+      .mockRejectedValueOnce({ message: '扫描超时' })
+      .mockResolvedValue([{ path: 'src/a.ts', type: 'file' }])
+    renderBrowser()
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 'a' } })
+    await screen.findByTestId('file-search-error', {}, { timeout: 2000 })
+
+    fireEvent.click(screen.getByTestId('file-search-retry'))
+    await waitFor(() => {
+      expect(screen.getByText('src/a.ts')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('file-search-error')).toBeNull()
+  })
+})
