@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { horizontalWheelTarget } from '@/components/settings/sectionScroll.js'
 import type { AppPaths } from '@/routes.js'
 import { Settings } from '@/views/Settings.js'
 
@@ -2151,6 +2152,66 @@ describe('Settings — 分区导航', () => {
       vi.restoreAllMocks()
 
       expect(linkScroll, '深链与点击目录应落在同一位置').toBe(clickScroll)
+    })
+  })
+
+  /**
+   * 目录行的滚轮换算。
+   *
+   * 缺陷：目录行是 overflow-x:auto，但鼠标滚轮只有纵向分量。实测滚轮停在目录行
+   * 上时 scrollLeft 恒为 0、页面纵向滚了 300px——目录行在鼠标用户眼里不能滑。
+   * 1024px 下 18 个分区有 6 个（安全/自动授权/用量与成本/工作流/多 Agent/…）
+   * 因此够不到。
+   *
+   * 关键不是「能不能滚」，而是「什么时候必须把滚轮还回去」：滚到两端还继续拦截，
+   * 用户会在目录行上卡住——怎么滚页面都不动，比滑不动更糟。
+   */
+  describe('目录行滚轮横向滑动', () => {
+    const bar = { scrollLeft: 300, scrollWidth: 1467, clientWidth: 1024 }
+
+    const wheel = (deltaX: number, deltaY: number, deltaMode = 0) => ({
+      deltaX,
+      deltaY,
+      deltaMode,
+    })
+
+    it('纵向滚轮转成目录行横向滚动', () => {
+      expect(horizontalWheelTarget(bar, wheel(0, 120))).toBe(420)
+    })
+
+    it('已到最左且继续上滚时放行，让页面自己滚', () => {
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: 0 }, wheel(0, -120))).toBeNull()
+    })
+
+    it('已到最右且继续下滚时放行，不把用户卡在目录行上', () => {
+      const max = bar.scrollWidth - bar.clientWidth
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: max }, wheel(0, 120))).toBeNull()
+    })
+
+    it('没有横向溢出时一律不拦截', () => {
+      expect(
+        horizontalWheelTarget(
+          { scrollLeft: 0, scrollWidth: 1024, clientWidth: 1024 },
+          wheel(0, 120),
+        ),
+      ).toBeNull()
+    })
+
+    it('落点被钳在 [0, max] 内，不会滚出边界', () => {
+      const max = bar.scrollWidth - bar.clientWidth
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: max - 10 }, wheel(0, 500))).toBe(max)
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: 10 }, wheel(0, -500))).toBe(0)
+    })
+
+    it('触控板横向手势优先于纵向分量', () => {
+      expect(horizontalWheelTarget(bar, wheel(-200, 5))).toBe(100)
+    })
+
+    it('deltaMode 为行数时按行高折算（Firefox 报行数，当像素用会几乎不动）', () => {
+      // DOM_DELTA_LINE=1：5 行 → 80px
+      expect(horizontalWheelTarget(bar, wheel(0, 5, 1))).toBe(380)
+      // DOM_DELTA_PIXEL=0：5 就是 5px——同一手势差 16 倍，不折算等于滑不动
+      expect(horizontalWheelTarget(bar, wheel(0, 5, 0))).toBe(305)
     })
   })
 })
