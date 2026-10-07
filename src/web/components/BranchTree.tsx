@@ -25,6 +25,7 @@ const rowWrap = css`
     & [data-rename-btn],
     & [data-delete-btn] {
       opacity: 1;
+      pointer-events: auto;
     }
   }
   /* 触屏没有 hover：始终可见（此前删除按钮也只在 hover 显示，触屏上永远不可见） */
@@ -32,6 +33,7 @@ const rowWrap = css`
     & [data-rename-btn],
     & [data-delete-btn] {
       opacity: 1;
+      pointer-events: auto;
     }
   }
 `
@@ -89,6 +91,12 @@ const delBtn = css`
   color: var(--haze-color-text-secondary);
   cursor: pointer;
   opacity: 0;
+  /* 不可见时必须不可点。hover 才显形却仍占布局、并照常接收点击：
+   * 实测行宽 280px 里有 26px 是「看不见的删除按钮」，用户瞄准标题末尾
+   * 落下的一击会命中它，弹出一个浏览器原生 confirm（与全站自绘弹窗观感割裂，
+   * 且文案只说明「移入回收站」，用户没看见任何东西就面临误删会话）。
+   * 触屏与键盘聚焦走 rowWrap 的显形规则，二者都会同步解除此屏蔽。 */
+  pointer-events: none;
   transition:
     opacity 0.12s ease,
     color 0.12s ease;
@@ -304,6 +312,10 @@ function TreeNode({
               type="button"
               className={selectBtn}
               onClick={() => onSelect(n.session.id)}
+              // 截断的标题必须能读全文：侧栏实测把 425px 的标题压进 186px 的框，
+              // 没有 title 时两条不同的长标题在列表里长得一模一样，用户无法分辨
+              // 「Refactor composer keyboard handling」和另一条同名会话。
+              title={n.session.title}
               data-testid={`node-${n.session.id}`}
             >
               <span className={iconCls}>{n.children.length > 0 ? '📂' : '💬'}</span>

@@ -160,4 +160,15 @@ describe('BranchTree', () => {
     )
     await waitFor(() => expect(screen.getByRole('tooltip').textContent).toContain('US$1.01'))
   })
+
+  // 回归：侧栏实测把 425px 的长标题压进 186px 的框并省略号截断，父行没有 title
+  // 时两条不同的长标题在列表里显示为同一串前缀，用户无从分辨是哪条会话。
+  it('行按钮带完整 title，长标题截断后仍可读全文', () => {
+    const long = 'Long session title that should truncate gracefully in the narrow sidebar'
+    const node = treeWithUsage[0]
+    if (!node) throw new Error('fixture missing')
+    const longTree: SessionTreeNode[] = [{ ...node, session: { ...node.session, title: long } }]
+    render(<BranchTree nodes={longTree} activeId={null} onSelect={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByTestId('node-s1').getAttribute('title')).toBe(long)
+  })
 })
