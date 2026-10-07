@@ -131,6 +131,37 @@ describe('Chat pause/resume/steer controls', () => {
   })
 })
 
+describe('Chat 首条消息在途（creating）', () => {
+  // 回归：草稿页建会话期间曾借 isStreaming 表示「运行中」，输入区整块翻成运行态：
+  // 「追加指令」可用却无 onSteer（steer 清空输入框 → 用户接着敲的字静默消失），
+  // 主按钮翻成红色「终止」却无 onAbort（按了零反应）。
+  it('创建中不展示中止/暂停，也不展示重试', () => {
+    renderChat({ isStreaming: false, creating: true, error: 'x', onRetry: vi.fn() })
+    expect(screen.queryByTestId('abort')).toBeNull()
+    expect(screen.queryByTestId('pause')).toBeNull()
+    expect(screen.queryByTestId('retry')).toBeNull()
+  })
+
+  it('创建中发送键显示「创建中…」且禁用，追加指令同样禁用', () => {
+    renderChat({ isStreaming: false, creating: true })
+    const send = screen.getByTestId('send')
+    expect(send.textContent).toBe('创建中…')
+    expect(send).toBeDisabled()
+    expect(screen.getByTestId('append')).toBeDisabled()
+  })
+
+  it('创建中回车不会清空输入框（没有可执行的 steer 目标）', () => {
+    const h = renderChat({ isStreaming: false, creating: true, onSteer: undefined })
+    const editor = screen.getByTestId('composer-editor')
+    editor.textContent = '补充：只看 web 目录'
+    fireEvent.input(editor)
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(h.onSend).not.toHaveBeenCalled()
+    expect(h.onAbort).not.toHaveBeenCalled()
+    expect(editor.textContent).toBe('补充：只看 web 目录')
+  })
+})
+
 describe('Chat permission mode toggle', () => {
   it('默认渲染未勾选的自动授权开关，仅显示中性说明', () => {
     renderChat()

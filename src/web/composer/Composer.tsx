@@ -128,6 +128,19 @@ const stopBtn = css`
   flex-shrink: 0;
 `
 
+/** 首条消息在途：保留发送键的位置，按钮本身被禁用态接管。 */
+const creatingBtn = css`
+  align-self: flex-end;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: var(--haze-color-bg-muted);
+  color: var(--haze-color-text-muted);
+  cursor: not-allowed;
+  font-size: 14px;
+  flex-shrink: 0;
+`
+
 const dragOverlay = css`
   position: absolute;
   inset: 0;
@@ -220,6 +233,12 @@ type ComposerProps = {
   /** 流式态「追加指令」注入 steering 文本。 */
   onSteer?: (message: string) => void
   isStreaming: boolean
+  /**
+   * 首条消息在途（草稿页建会话窗口）：此时既没有 run 可中止也无法 steering，
+   * 输入区不得翻成运行态。steer 的清空与中止键的红色翻面都要求真实动作，
+   * 没有就把控件置为不可用。
+   */
+  creating?: boolean
   hasHistory: boolean
   supportsVision?: boolean
   permission?: { tool: string; input: unknown } | null
@@ -262,6 +281,7 @@ function Composer(props: ComposerProps) {
     onAbort: props.onAbort,
     onSteer: props.onSteer,
     isStreaming: props.isStreaming,
+    busy: props.creating,
     hasHistory: props.hasHistory,
     commands,
   })
@@ -512,7 +532,7 @@ function Composer(props: ComposerProps) {
     }
   }
 
-  const sendLabel = props.isStreaming ? '终止' : '发送'
+  const sendLabel = props.isStreaming ? '终止' : props.creating ? '创建中…' : '发送'
   const pasteConfirm = composer.showPasteConfirm
 
   return (
@@ -646,18 +666,21 @@ function Composer(props: ComposerProps) {
           className={appendBtn}
           onClick={composer.steer}
           type="button"
-          disabled={!props.isStreaming}
+          disabled={!props.isStreaming || props.creating}
           data-testid="append"
         >
           追加指令
         </button>
         <button
-          className={props.isStreaming ? stopBtn : sendBtn}
+          className={props.isStreaming ? stopBtn : props.creating ? creatingBtn : sendBtn}
           onClick={composer.send}
           type="button"
           aria-label={props.isStreaming ? '终止生成' : '发送消息'}
           data-testid="send"
-          disabled={!props.isStreaming && composer.isEmpty && composer.images.length === 0}
+          disabled={
+            props.creating ||
+            (!props.isStreaming && composer.isEmpty && composer.images.length === 0)
+          }
         >
           {sendLabel}
         </button>

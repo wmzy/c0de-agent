@@ -380,7 +380,8 @@ function DraftSession({
       projectId={projectId}
       agents={agentsData?.agents ?? []}
       timeline={[]}
-      isStreaming={creating}
+      isStreaming={false}
+      creating={creating}
       usage={null}
       error={error}
       pendingPermission={null}

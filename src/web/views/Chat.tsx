@@ -35,6 +35,16 @@ type ChatProps = {
   /** 统一时间线（消息 + LLM 调用 + 段标记），替代原 messages。 */
   timeline: TimelineRow[]
   isStreaming: boolean
+  /**
+   * 首条消息在途（草稿页正在建会话，尚未建立 run/SSE）。
+   *
+   * 与 isStreaming 必须分开：这段窗口里没有 run 可中止、也无法 steering，此前
+   * 借 isStreaming 表示会让输入区整块翻成运行态——「追加指令」可用而 onSteer
+   * 是空实现（steer 无条件清空输入框，用户接着敲的字静默消失），主按钮翻成红色
+   * 「终止」而 onAbort 是空函数（按了零反应）。真跑起来时按钮都得指向真实动作，
+   * 否则宁可让它们不可用。
+   */
+  creating?: boolean
   usage: { input: number; output: number } | null
   error?: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
@@ -498,6 +508,7 @@ const chipRemove = css`
 export function Chat({
   timeline,
   isStreaming,
+  creating = false,
   usage,
   error,
   pendingPermission,
@@ -688,7 +699,7 @@ export function Chat({
                   ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
                   : ''}
             </span>
-            {error && !isStreaming && onRetry ? (
+            {error && !isStreaming && !creating && onRetry ? (
               <button
                 type="button"
                 className={ctlBtn}
@@ -888,6 +899,7 @@ export function Chat({
         onAbort={onAbort}
         onSteer={onSteer}
         isStreaming={isStreaming}
+        creating={creating}
         hasHistory={timeline.length > 0}
         supportsVision={supportsVision}
         permission={

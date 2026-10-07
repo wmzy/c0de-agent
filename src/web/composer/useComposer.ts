@@ -48,6 +48,12 @@ type UseComposerOptions = {
   /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。 */
   onSteer?: (message: string) => void
   isStreaming: boolean
+  /**
+   * 输入区处于「忙」态：发送/追加都拿不到可执行的目标（草稿页建会话窗口——
+   * 既没有 run 可中止，也没有 steering 通道）。此时 send/steer 一律 no-op，
+   * 否则回车会再次走 onSend，多建一个空会话；按钮的禁用态由调用方负责。
+   */
+  busy?: boolean
   hasHistory: boolean
   /** 可用 slash 命令列表（用于检测子命令补全）。 */
   commands?: CommandInfo[]
@@ -95,6 +101,7 @@ function useComposer({
   onAbort,
   onSteer,
   isStreaming,
+  busy = false,
   hasHistory: _hasHistory,
   commands,
 }: UseComposerOptions) {
@@ -437,6 +444,10 @@ function useComposer({
   }, [])
 
   const send = useCallback(() => {
+    // 忙态（首条消息在建会话的窗口）：既没有 run 可中止，也没有第二次发送的
+    // 意义——回车再走一次 onSend 会多建一个空会话并丢掉当前输入。按钮已禁用，
+    // 这里挡住的是 Enter 键与直接调用。
+    if (busy) return
     // 流式态：发送键变终止键
     if (isStreaming) {
       onAbort?.()
@@ -505,19 +516,22 @@ function useComposer({
         if (ok === false) restore()
       })
     }
-  }, [isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
+  }, [busy, isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
 
   // 追加指令：流式态下注入 steering 文本（仅流式态可用，空文本 no-op）
   const steer = useCallback(() => {
+    // 没有注入回调就不清空：steer 的清空语义建立在「这条文字已经被送到在途的
+    // run 里」之上，调用方没接 onSteer 时清空等于把用户输入凭空丢掉。
+    if (busy || !onSteer) return
     const prompt = readPrompt()
     if (isPromptEmpty(prompt)) return
     const text = promptToMessageText(prompt)
-    onSteer?.(text)
+    onSteer(text)
     // steering 同样把输入清空：它取代在途的那次发送，那次失败回来时不得回填。
     sendAttemptRef.current += 1
     setPromptExternal(DEFAULT_PROMPT)
     resetHistory()
-  }, [readPrompt, onSteer, setPromptExternal, resetHistory])
+  }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent, popoverSuppressed = false) => {
