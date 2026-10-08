@@ -65,4 +65,28 @@ describe('DangerConfirmDialog', () => {
     fireEvent.click(screen.getByText('取消'))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  // 删除项目失败时弹层继续显示（不再先关闭自己），原因必须与用户正在做的
+  // 操作同框可见并被读屏播报——此前原因写在项目下拉里，下拉已关闭卸载。
+  it('失败原因在弹层内可见并带 role=alert', () => {
+    render(
+      <DangerConfirmDialog
+        open={true}
+        title="删除项目"
+        description="将删除项目。"
+        confirmWord="demo"
+        error="项目下有 1 个打开的终端，请先关闭终端后再删除项目"
+        onConfirm={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const alert = screen.getByTestId('danger-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('打开的终端')
+  })
+
+  it('未失败时不渲染错误条', () => {
+    renderDialog()
+    expect(screen.queryByTestId('danger-error')).toBeNull()
+  })
 })

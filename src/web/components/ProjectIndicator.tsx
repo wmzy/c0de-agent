@@ -304,7 +304,6 @@ export function ProjectIndicator({
       a.download = `kanban-${project.id}.json`
       a.click()
       URL.revokeObjectURL(url)
-      setShowDelete(false)
       deleteMut.mutate(project.id)
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : '看板导出失败，项目未删除')
@@ -404,12 +403,14 @@ export function ProjectIndicator({
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          {deleteError && (
+          {deleteError && !showDelete && (
             <span
-              style={{ padding: '4px 12px', fontSize: 11, color: 'var(--haze-color-danger)' }}
+              className={branchError}
+              role="alert"
               data-testid="project-delete-error"
+              title="删除项目失败，项目仍在"
             >
-              {deleteError}
+              {'⚠'} 删除项目失败：{deleteError}
             </span>
           )}
           <button
@@ -559,6 +560,7 @@ export function ProjectIndicator({
           confirmWord={project.name ?? '未命名项目'}
           confirmLabel="删除项目"
           busy={deleteMut.isPending}
+          error={deleteError}
           secondaryAction={{
             label: '导出看板并删除',
             onClick: () => void exportBoardAndDelete(),
@@ -566,7 +568,10 @@ export function ProjectIndicator({
             disabled: deleteMut.isPending,
           }}
           onConfirm={() => {
-            setShowDelete(false)
+            // 失败不关弹层：原因要留在用户正要做的操作旁边（role=alert 播报）。
+            // 此前这里先 setShowDelete(false)，失败原因又被写进项目下拉里，
+            // 下拉此时已关闭卸载——用户看到的是「点了删除，什么也没发生」。
+            // onSuccess 里 navigateTo 会带着整个页面离开，弹层自然不再显示。
             deleteMut.mutate(project.id)
           }}
           onClose={() => setShowDelete(false)}

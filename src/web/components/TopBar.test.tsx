@@ -24,6 +24,12 @@ vi.mock('@/services/file.js', () => ({
   },
 }))
 
+vi.mock('@/services/project.js', () => ({
+  projectAPI: {
+    remove: vi.fn(),
+  },
+}))
+
 // AddProjectDialog 依赖 projectAPI + DirectoryPicker（需文件列表 API），
 // 测试 TopBar 下拉交互时 mock 掉以隔离。
 vi.mock('./AddProjectDialog.js', () => ({
@@ -678,5 +684,38 @@ describe('TopBar — 分支切换失败提示', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('branch-checkout-error')).toBeNull()
     })
+  })
+})
+
+describe('TopBar — 删除项目失败提示', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+  })
+
+  // 回归：删除失败时原因被写进项目下拉里，而确认弹层在请求发出前就关掉了、
+  // 下拉也已关闭卸载——用户看到的是「点了删除，什么也没发生」，还可能反复点。
+  // 现在弹层留在原地，原因与操作同框（role=alert 播报）。
+  it('删除被 409 拒绝时弹层不关闭，原因为可见的 alert', async () => {
+    const { projectAPI } = await import('@/services/project.js')
+    ;(projectAPI.remove as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('项目下有 1 个打开的终端，请先关闭终端后再删除项目'),
+    )
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('project-dropdown-trigger'))
+    await waitFor(() => expect(screen.getByTestId('delete-project')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('delete-project'))
+
+    const input = await screen.findByTestId('danger-confirm-input')
+    fireEvent.change(input, { target: { value: 'proj' } })
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
+
+    const alert = await screen.findByTestId('danger-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('打开的终端')
+    // 弹层仍在（用户还站在删除这一步上，项目当然也还在）
+    expect(screen.getByTestId('danger-confirm-dialog')).toBeTruthy()
+    expect(screen.getByTestId('project-indicator')).toBeTruthy()
   })
 })

@@ -19,6 +19,19 @@ const dangerNote = css`
   color: var(--haze-color-danger);
 `
 
+/** 操作失败原因：留在弹层里，用户正在做的操作与失败原因必须同框可见。
+ *  此前删除项目的失败原因被写进项目下拉（关闭即卸载），用户零反馈。 */
+const errorBar = css`
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--haze-color-danger);
+  border-radius: 6px;
+  color: var(--haze-color-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+`
+
 const inputRow = css`
   display: flex;
   align-items: center;
@@ -75,6 +88,8 @@ type DangerConfirmDialogProps = {
   confirmWord: string
   confirmLabel?: string
   busy?: boolean
+  /** 操作失败原因（如后端 409）。渲染在弹层正文里，role=alert 播报。 */
+  error?: string | null
   /** M4：额外逃生动作（如「导出看板并删除」），渲染在取消与确认按钮之间。 */
   secondaryAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean }
   onConfirm: () => void
@@ -88,6 +103,7 @@ export function DangerConfirmDialog({
   confirmWord,
   confirmLabel = '确认删除',
   busy = false,
+  error = null,
   secondaryAction,
   onConfirm,
   onClose,
@@ -130,6 +146,11 @@ export function DangerConfirmDialog({
     >
       <div className={desc}>{description}</div>
       <div className={dangerNote}>此操作不可恢复。</div>
+      {error ? (
+        <div className={errorBar} role="alert" data-testid="danger-error">
+          {'⚠'} {error}
+        </div>
+      ) : null}
       <div className={inputRow}>
         <span>输入「{confirmWord}」以确认：</span>
         <SyncedInput
