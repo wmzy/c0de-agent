@@ -86,7 +86,8 @@ describe('Chat pause/resume/steer controls', () => {
   // 唯一全文入口是 hover title——触屏无 title、无 hover，读屏（span 无 role）也读不到。
   // 被截掉的偏偏是补救指令（去设置 / 检查拼写），等于「发送失败」对多数用户不可处置。
   it('发送失败全文完整可读，且以 alert 角色暴露给读屏', () => {
-    const reason = '未找到名为「」的 AI 服务。已配置：dead。请检查拼写，或前往「设置 → Provider」添加该服务。'
+    const reason =
+      '未找到名为「」的 AI 服务。已配置：dead。请检查拼写，或前往「设置 → Provider」添加该服务。'
     renderChat({ isStreaming: false, error: reason })
     const banner = screen.getByTestId('send-error')
     // 全文在可及名称/文本内容里，不靠 title 属性兜底
