@@ -454,3 +454,31 @@ describe('卡片编辑弹窗 选择态可被读屏获取', () => {
     expect(screen.getByRole('button', { name: '前端' })).toHaveAttribute('aria-pressed', 'true')
   })
 })
+
+/**
+ * 回归：看板页此前没有任何标题元素。
+ *
+ * 看板页不带侧栏（sidebar 只在会话页），所以工具条上的「📋 看板」就是全页
+ * 唯一的标题——但它当时是个 span。axe page-has-heading-one 在本页命中，
+ * 读屏用户没有页面级标题可听、H 键标题导航是空的。
+ */
+describe('看板页的一级标题', () => {
+  it('页面有且只有一个 h1，即看板标题', async () => {
+    const board: KanbanBoardWithCards = {
+      id: 'b1',
+      projectId: 'p1',
+      columns: [],
+      labels: [],
+      cards: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    vi.mocked(kanbanAPI.get).mockResolvedValue(board)
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByTestId('kanban-view')).toBeInTheDocument())
+    const h1s = screen.getAllByRole('heading', { level: 1 })
+    expect(h1s).toHaveLength(1)
+    expect(h1s[0]?.textContent).toContain('看板')
+  })
+})

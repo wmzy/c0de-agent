@@ -25,6 +25,17 @@ const header = css`
   border-bottom: 1px solid var(--haze-color-border);
 `
 
+/*
+ * 侧栏标题：升级为 h1（此前是 span，全应用零 h1）。继承浏览器 h1 的大号默认
+ * 样式会撑破这一行 32px 的工具条，因此显式回到原 span 的排版，只留语义。
+ */
+const headerTitle = css`
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+`
+
 /* P2-5：会话树底部 CLI 会话可见性说明（CLI/Web 同库不同视图的心智提示）。 */
 const cliHint = css`
   margin-top: auto;
@@ -386,9 +397,21 @@ export function SessionList({
   }
 
   return (
-    <div className={panel}>
+    /*
+     * 侧栏整体是一个 landmark（role=navigation + 可及名「会话」）：此前整块
+     * 侧栏只是一串无角色的 div，读屏用户没有任何地标可跳，只能逐控件线性浏览
+     * 几百个会话行；axe region 规则实测报 header/搜索框/CLI 说明三处
+     * 「不在任何 landmark 内」。
+     *
+     * 用 navigation 而非 complementary：这块的内容就是一组可点的会话链接
+     * （含搜索、回收站、新建），属导航而非补充信息。移动端它是 Workbench
+     * 滑出的覆盖层，同一块内容、同一语义。
+     */
+    <nav className={panel} aria-label="会话">
       <div className={header}>
-        <span>会话</span>
+        {/* 侧栏标题用 h1：全应用此前零 h1（axe page-has-heading-one 每页命中），
+         * 读屏用户没有「页面标题」这一级入口，H 键导航是空的。 */}
+        <h1 className={headerTitle}>会话</h1>
         <button
           type="button"
           className={recycleBtn}
@@ -579,6 +602,6 @@ export function SessionList({
           ）。导入到哪个项目？继续对话时工具将在目标项目的工作目录中执行。
         </Dialog>
       )}
-    </div>
+    </nav>
   )
 }

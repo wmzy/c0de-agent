@@ -191,6 +191,31 @@ describe('SessionList 会话搜索', () => {
 })
 
 /**
+ * 回归：侧栏整块内容此前不在任何 landmark 内。
+ *
+ * 侧栏此前只是一串无角色的 div（搜索框、标题、CLI 说明、回收站列表全都在
+ * landmark 之外），读屏用户没有地标可跳，只能逐控件线性浏览几百个会话行；
+ * axe region 规则在会话页报 header/搜索框/CLI 说明三处。这里约定：侧栏是
+ * 一个具名 navigation 地标，标题是该页唯一的一级标题。
+ */
+describe('SessionList 侧栏的地标与标题', () => {
+  it('侧栏是具名 navigation 地标，标题是 h1', async () => {
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('session-search')).toBeInTheDocument())
+
+    const landmark = screen.getByRole('navigation', { name: '会话' })
+    // 搜索框与 CLI 说明必须落在这个地标里，而不是散落在 landmark 之外
+    expect(landmark.contains(screen.getByTestId('session-search'))).toBe(true)
+    expect(landmark.contains(screen.getByTestId('cli-session-hint'))).toBe(true)
+
+    // 页面有且只有一个 h1，且就是侧栏标题
+    const h1s = screen.getAllByRole('heading', { level: 1 })
+    expect(h1s).toHaveLength(1)
+    expect(h1s[0]?.textContent).toBe('会话')
+  })
+})
+
+/**
  * 回归：切项目后侧栏仍按上一个项目的搜索词过滤。
  *
  * ChatPage 对 /projects/:projectId 与 /projects/:projectId/sessions/:sessionId

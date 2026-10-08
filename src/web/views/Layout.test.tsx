@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Layout } from '@/views/Layout.js'
+import { NotFound } from '@/views/NotFound.js'
 
 afterEach(cleanup)
 
@@ -146,5 +147,26 @@ describe('Layout 三栏拖拽 resize（Workbench）', () => {
     // jsdom 无媒体查询求值——DOM 层面 nav 节点存在即可。
     expect(screen.getByTestId('mobile-nav')).toBeTruthy()
     expect(screen.getByTestId('mobile-nav-sessions')).toBeTruthy()
+  })
+})
+
+/**
+ * 回归：404 视图此前是全应用唯一「一个标题元素都没有」的页面。
+ *
+ * ChatPage/KanbanPage 在缺 projectId 时、以及 HistoryRouter 未命中路由时都
+ * 渲染 NotFound；它没有侧栏也没有任何 h1/h2/h3，读屏用户进来后既听不到页面
+ * 标题（axe page-has-heading-one 命中），也没有「返回会话」之外的结构信息。
+ * 约定：错误码本身作为 h1。
+ */
+describe('404 视图的页面标题', () => {
+  it('错误码是页面唯一的一级标题', async () => {
+    await renderWith(<Layout main={<NotFound />} />)
+
+    const h1s = screen.getAllByRole('heading', { level: 1 })
+    expect(h1s).toHaveLength(1)
+    expect(h1s[0]?.textContent).toBe('404')
+    // 原有内容与出口不变
+    expect(screen.getByText('页面不存在，地址可能已失效')).toBeInTheDocument()
+    expect(screen.getByText('返回会话')).toBeInTheDocument()
   })
 })

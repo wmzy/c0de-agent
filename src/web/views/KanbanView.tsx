@@ -37,6 +37,8 @@ const header = css`
 const headerTitle = css`
   font-size: 15px;
   font-weight: 600;
+  /* h1 的浏览器默认 margin 会把这行工具条撑变形，收回与原 span 一致 */
+  margin: 0;
 `
 
 /** 看板定位说明：项目级 vs 会话内待办的边界（产品定位，P2）。 */
@@ -472,7 +474,9 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   return (
     <div className={view} data-testid="kanban-view">
       <div className={header}>
-        <span className={headerTitle}>📋 看板</span>
+        {/* 看板页没有侧栏（sidebar 仅在会话页），所以这里的标题就是全页唯一
+         *  的一级标题：此前是 span，axe page-has-heading-one 在本页命中。 */}
+        <h1 className={headerTitle}>📋 看板</h1>
         <span
           className={headerHint}
           title="项目级任务看板，与聊天页的 agent 待办（TodoPanel）相互独立：看板由你手动维护，也可让 agent 用 kanban 工具操作"
