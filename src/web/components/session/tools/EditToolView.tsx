@@ -1,14 +1,6 @@
-import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ContentDiff } from '@/components/session/ContentDiff.js'
-
-const err = css`
-  font-size: 13px;
-  color: var(--haze-color-danger);
-  background: var(--haze-color-danger-subtle);
-  padding: 6px 8px;
-  border-radius: 4px;
-`
+import { ToolError } from '@/components/session/tools/toolError.js'
 
 type EditInput = { path: string; oldText: string; newText: string }
 
@@ -23,12 +15,9 @@ export function EditToolView({
 }) {
   const oldText = input?.oldText ?? ''
   const newText = input?.newText ?? ''
-  if (status === 'error' && output?._tag === 'error') {
-    return (
-      <div className={err} data-testid="tool-error">
-        {output.error}
-      </div>
-    )
+  // 编辑失败时 diff 无意义（落盘与否未知），只给失败原因。
+  if (output?._tag === 'error' || status === 'error') {
+    return <ToolError output={output} status={status} />
   }
   return <ContentDiff oldText={oldText} newText={newText} />
 }

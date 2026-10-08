@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { ToolError } from '@/components/session/tools/toolError.js'
 
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
 
@@ -178,6 +179,7 @@ function Board({ phases }: { phases: TodoPhase[] }) {
 export function TodoToolView({
   input,
   output,
+  status,
 }: {
   input: unknown
   output?: ToolResult
@@ -185,6 +187,17 @@ export function TodoToolView({
 }) {
   const i = (input ?? {}) as TodoInput
   const op = i.op ?? 'view'
+
+  // 失败优先于「空」：此前 _tag==='error' 会一路落到 Board 的空渲染，
+  // 工具失败被显示成 "Todo list is empty."，用户看到的是一个与真实原因无关的结论。
+  if (output?._tag === 'error' || status === 'error') {
+    return (
+      <div>
+        <span className={opLabel}>{op}</span>
+        <ToolError output={output} status={status} />
+      </div>
+    )
+  }
 
   // Extract phases from output metadata
   let phases: TodoPhase[] = []
