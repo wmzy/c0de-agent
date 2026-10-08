@@ -73,7 +73,10 @@ const sendBtn = css`
   border-radius: 8px;
   border: none;
   background: var(--haze-color-primary);
-  color: #fff;
+  /* 实底上的前景色走 token：primary 的 dark 值是为深底上的蓝**字**调的，
+     当底色时白字仅 3.00:1（实测 axe color-contrast serious）——这是全应用
+     最主要的动作按钮，却恰好是最难读的那个。见 global.ts 的说明。 */
+  color: var(--c0de-primary-on-solid, #fff);
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
@@ -123,7 +126,8 @@ const stopBtn = css`
   border-radius: 8px;
   border: none;
   background: var(--haze-color-danger);
-  color: #fff;
+  /* 同 sendBtn：danger 的 dark 值当实底时白字只有 3.76:1。 */
+  color: var(--c0de-danger-on-solid, #fff);
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
@@ -185,7 +189,8 @@ const pasteInsertBtn = css`
   border: none;
   border-radius: 6px;
   background: var(--haze-color-primary);
-  color: #fff;
+  /* 同 sendBtn：primary 实底上的前景色必须走 token。 */
+  color: var(--c0de-primary-on-solid, #fff);
   font-size: 13px;
   cursor: pointer;
   &:hover {

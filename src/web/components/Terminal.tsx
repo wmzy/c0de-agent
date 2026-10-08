@@ -85,7 +85,7 @@ const addToChatBtnStyle = css`
 
   &:hover {
     background: var(--haze-color-primary, #4a9eff);
-    color: #fff;
+    color: var(--c0de-primary-on-solid, #fff);
   }
 `
 

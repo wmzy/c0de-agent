@@ -92,7 +92,7 @@ const paneCloseStyle = css`
 
   &:hover {
     background: var(--haze-color-danger);
-    color: #fff;
+    color: var(--c0de-danger-on-solid, #fff);
   }
 
   &:focus-visible {

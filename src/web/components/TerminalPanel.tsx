@@ -149,7 +149,7 @@ const tabCloseStyle = css`
 
   &:hover {
     background: var(--haze-color-danger);
-    color: #fff;
+    color: var(--c0de-danger-on-solid, #fff);
   }
 `
 
@@ -200,7 +200,7 @@ const closePanelBtnStyle = css`
 
   &:hover {
     background: var(--haze-color-danger);
-    color: #fff;
+    color: var(--c0de-danger-on-solid, #fff);
   }
 `
 

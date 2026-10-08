@@ -52,9 +52,16 @@ const segBtn = css`
   }
 `
 
+/*
+ * 选中项前景色走 token 而非写死 #fff：--haze-color-primary 的 dark 值
+ * （oklch(0.673 0.174 258.5)）是为深底上的蓝**字**调的，拿来当实底时
+ * 白字只有 3.00:1（实测 axe color-contrast serious）；light 值当实底时
+ * 白字 4.84 达标。两个主题承担的角色不同，前景色必须分别给。
+ * 见 global.ts 的 --c0de-primary-on-solid。
+ */
 const segBtnActive = css`
   background: var(--haze-color-primary);
-  color: #fff;
+  color: var(--c0de-primary-on-solid, #fff);
 `
 
 const toolBtn = css`

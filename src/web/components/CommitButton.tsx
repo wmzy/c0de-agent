@@ -32,22 +32,55 @@ const commitBtn = css`
 const commitBtnActive = css`
   background: var(--haze-color-primary);
   border-color: var(--haze-color-primary);
-  color: #fff;
+  /* 实底上的前景色走 token 而非 #fff：primary 的 dark 值是为深底上的蓝**字**
+     调的，当底色时白字仅 3.00:1（实测 axe color-contrast serious，12px
+     文字需 4.5）——这是项目页最常点的按钮，偏偏最看不清。 */
+  color: var(--c0de-primary-on-solid, #fff);
   font-weight: 600;
-  animation: pulse 2s ease-in-out infinite;
-  &:hover {
-    background: var(--haze-color-primary-hover);
-    border-color: var(--haze-color-primary-hover);
-    color: #fff;
-    opacity: 0.9;
+  /*
+   * 「有未提交变更」的呼吸提示改用 box-shadow 外扩光晕，不再整体降 opacity。
+   * 原来 0.85→1 的 opacity 脉动会把整块实底连同文字一起变淡：暗色主题下
+   * 合成底实测 3.75:1（满不透明时 4.87），恰好在呼吸谷底跌破 AA 4.5——
+   * 一个「吸引注意」的动画让按钮周期性变得不可读。box-shadow 画在按钮
+   * 外侧，不参与文字/底色的合成，视觉注意力效果保留，对比度不再波动。
+   */
+  animation: pulseRing 2s ease-in-out infinite;
+  /*
+   * 悬停态：换一档**同色系**的实底（--c0de-primary-hover-solid），不用
+   * --haze-color-primary-hover——后者对实底场景是反的（暗色下更暗，把前景
+   * 压到 4.07 / 3.58），也不必退回全局按钮的中性灰底（浅灰底 + 主色字
+   * 实测 2.07:1）。
+   *
+   * 选择器必须与 global.ts 的裸按钮悬停规则同特异度
+   * （:where(button):hover:not(:disabled):not([aria-disabled]) = 0,3,0）——
+   * 单写 :hover 只有 0,2,0，会被那条全局规则直接覆盖：实测鼠标一移入，
+   * 底色变成浅灰、文字变回主色，对比度 2.07。两条同特异度时按源序，本
+   * 组件晚于 global.ts 求值，故本规则生效。
+   *
+   * 也必须写在 animation 之后：同名 box-shadow 会被动画关键帧逐帧覆盖
+   * （animation 优先级高于普通声明），写在前会被吃掉。
+   */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--c0de-primary-hover-solid);
+    border-color: var(--c0de-primary-hover-solid);
+    color: var(--c0de-primary-on-solid, #fff);
+    animation: hoverRing 0.15s ease-out forwards;
   }
-  @keyframes pulse {
+  @keyframes pulseRing {
     0%,
     100% {
-      opacity: 1;
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--haze-color-primary) 45%, transparent);
     }
     50% {
-      opacity: 0.85;
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--haze-color-primary) 0%, transparent);
+    }
+  }
+  @keyframes hoverRing {
+    from {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--haze-color-primary) 45%, transparent);
+    }
+    to {
+      box-shadow: 0 0 0 6px color-mix(in srgb, var(--haze-color-primary) 25%, transparent);
     }
   }
 `
@@ -55,24 +88,26 @@ const commitBtnActive = css`
 const commitBtnSuccess = css`
   background: var(--haze-color-success);
   border-color: var(--haze-color-success);
-  color: #fff;
+  /* 同 commitBtnActive：success 的 dark 值是为深底上的绿字调的，当实底时
+     白字仅 2.28:1（实测），是本文件三态里最差的一处。 */
+  color: var(--c0de-success-on-solid, #fff);
   /* 反馈期间按钮已禁用（提交后无变更），重申语义色避免被全局禁用灰态覆盖 */
   &:disabled {
     background: var(--haze-color-success);
     border-color: var(--haze-color-success);
-    color: #fff;
+    color: var(--c0de-success-on-solid, #fff);
   }
 `
 
 const commitBtnError = css`
   background: var(--haze-color-danger);
   border-color: var(--haze-color-danger);
-  color: #fff;
+  color: var(--c0de-danger-on-solid, #fff);
   /* 反馈期间按钮可能禁用（无变更），重申语义色避免被全局禁用灰态覆盖 */
   &:disabled {
     background: var(--haze-color-danger);
     border-color: var(--haze-color-danger);
-    color: #fff;
+    color: var(--c0de-danger-on-solid, #fff);
   }
 `
 

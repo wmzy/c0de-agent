@@ -66,13 +66,20 @@ const btn = css`
   cursor: pointer;
 `
 
+/*
+ * 确认按钮：红实底 + 白字。--haze-color-danger 同样是按「当文字色用」调的，
+ * 当实底时白字在两个主题都不过线（实测 dark 3.76 / light 4.82，13px 文字
+ * 需 4.5）——暗色下这是全应用唯一的「不可恢复」确认入口，却最难读。
+ * 改用 --c0de-danger-on-solid：light 沿用白字（4.82 达标），dark 压到
+ * 足够深的近黑（见 global.ts）。
+ */
 const dangerBtn = css`
   padding: 4px 12px;
   font-size: 13px;
   border: 1px solid var(--haze-color-danger);
   border-radius: 6px;
   background: var(--haze-color-danger);
-  color: #fff;
+  color: var(--c0de-danger-on-solid, #fff);
   cursor: pointer;
   &:disabled {
     opacity: 0.5;

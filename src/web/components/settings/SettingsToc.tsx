@@ -55,7 +55,10 @@ const tocChip = css`
   /* 当前所在分区：primary 描边 + primary 文字 + 淡底，与未激活双重区分 */
   &[aria-current='true'] {
     border-color: var(--haze-color-primary);
-    color: var(--haze-color-primary);
+    /* 走 primary-on-tint：蓝字压在「自身色相的 8% 淡底」上时对比度比白底更低，
+       实测亮色主题 4.32:1（axe color-contrast serious，12px 文字需 4.5）。
+       该 token 已按主题调过：亮色压暗到 0.535（淡底上 4.56），暗色沿用原值。 */
+    color: var(--c0de-primary-on-tint, var(--haze-color-primary));
     background: color-mix(in srgb, var(--haze-color-primary) 8%, var(--haze-color-bg));
   }
 `

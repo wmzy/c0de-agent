@@ -43,9 +43,16 @@ export const btnSm = css`
   }
 `
 
-/** 危险操作按钮（配合 haze Button outline 变体：危险文字与边框、悬停淡红底）。 */
+/**
+ * 危险操作按钮（配合 haze Button outline 变体：危险文字与边框、悬停淡红底）。
+ *
+ * 文字色走 --c0de-danger-on-surface 而非 --haze-color-danger：后者在暗色
+ * 主题实测 4.43:1，差 AA 要求的 4.5 一点点。红字按钮是全应用最需要被看清
+ * 的控件（删除 provider / 工作流 / 卡片 / 看板），却偏偏最看不清。
+ * 该 token 按主题各自调过（见 global.ts），色相不变。
+ */
 export const btnDanger = css`
-  color: var(--haze-color-danger);
+  color: var(--c0de-danger-on-surface, var(--haze-color-danger));
   border-color: color-mix(in srgb, var(--haze-color-danger) 45%, var(--haze-color-border));
   &:hover:not(:disabled):not([aria-disabled='true']) {
     background: color-mix(in srgb, var(--haze-color-danger) 12%, var(--haze-color-bg-subtle));

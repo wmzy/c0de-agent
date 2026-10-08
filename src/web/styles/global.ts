@@ -224,12 +224,56 @@ export const globalStyle = css`
    * 亮蓝（#005cf5），本来就在深底上够亮，若沿用 light 的压暗值反而
    * 掉到 2.86。token 只在需要「蓝字压在淡底上」处用，其余场景继续用
    * --haze-color-primary。
+   *
+   * 实底色上的前景色（-on-solid）：primary/danger/success/warning 被当
+   * **背景**铺满一个按钮时，文字色必须由这组 token 决定，而不是各处写死
+   * color:#fff。haze 的语义色都是按「当文字色压在深底/白底上」调校的，
+   * 本仓却大量把它们当实底用，于是同一个 token 在两个主题下承担两种角色，
+   * 写死前景必然有一侧不达标。真实浏览器 axe-core 实测（修复前 → 修复后）：
+   *
+   *   primary   设置页分段选中态 / 提交按钮 / 发送 / 粘贴条
+   *             dark 3.00:1 → 4.87（前景 oklch(0.28 0 0)）；light 4.84 不变
+   *   　　　　　 悬停底色另走 --c0de-primary-hover-solid：
+   *             --haze-color-primary-hover 的「base 减明度」对实底是反的
+   *             （dark 4.07 / 3.58），改为暗色提亮（0.72 → 5.66）、
+   *             亮色压暗（0.53 → 5.56），方向随前景色定
+   *   danger    红字「删除」（tokens.btnDanger）dark 4.43 → 5.27
+   *             （-on-surface，只抬明度、色相不变）
+   *   　　　　　 实底确认（DangerConfirmDialog / 停止 / 提交失败）
+   *             dark 3.76 → 5.16；light 4.83 不变
+   *   success   提交成功态 dark 2.28 → 8.53；light 5.02 不变
+   *   warning   「仍然提交」（CommitReviewDialog）dark 1.67 → 11.63；light 5.50 不变
+   *
+   * 均只调明度、不动色相与彩度，实心按钮在两侧仍是同一个蓝/红/绿/琥珀。
    */
   :global(html[data-theme='light']) {
     --c0de-primary-on-tint: oklch(0.535 0.241 260.8);
+    /* danger 当文字色压在白/浅灰底上本就达标（4.55 / 4.5），沿用原值。 */
+    --c0de-danger-on-surface: var(--haze-color-danger);
+    --c0de-primary-on-solid: #fff;
+    /* 亮色下前景是白字，悬停往暗走。 */
+    --c0de-primary-hover-solid: oklch(0.53 0.241 260.8);
+    /* light 的 danger/success/warning 实底上白字分别为 4.83 / 5.02 / 5.50，达标。 */
+    --c0de-danger-on-solid: #fff;
+    --c0de-success-on-solid: #fff;
+    --c0de-warning-on-solid: #fff;
   }
   :global(html[data-theme='dark']) {
     --c0de-primary-on-tint: var(--haze-color-primary);
+    /*
+     * danger 当文字色压在 bg-subtle（≈#1e1e1e）上实测 4.43:1，差 AA 的 4.5
+     * 一点点——红字「删除」几乎读不出来，而这恰恰是最需要被看清的一类控件。
+     * 只抬明度到 0.68，三种底色分别为 5.96 / 5.31 / 4.57。
+     */
+    --c0de-danger-on-surface: oklch(0.68 0.208 25.3);
+    /*
+     * 暗色下实底是亮色系，前景一律取近黑；亮色下实底是深色系，前景取白。
+     */
+    --c0de-primary-on-solid: oklch(0.28 0 0);
+    --c0de-primary-hover-solid: oklch(0.72 0.174 258.5);
+    --c0de-danger-on-solid: oklch(0.16 0 0);
+    --c0de-success-on-solid: oklch(0.16 0 0);
+    --c0de-warning-on-solid: oklch(0.16 0 0);
   }
 
   /*
