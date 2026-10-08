@@ -6,6 +6,7 @@
 import type { Session } from '@shared/types/message.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sessionAPI } from '@/services/session.js'
 import type { SessionTreeNode } from '@/types/index.js'
@@ -176,6 +177,57 @@ describe('SessionList 会话搜索', () => {
       expect(screen.getByTestId('content-match-outside-id')).toBeInTheDocument()
     })
     expect(screen.queryByText('无匹配会话')).toBeNull()
+  })
+})
+
+/**
+ * 回归：切项目后侧栏仍按上一个项目的搜索词过滤。
+ *
+ * ChatPage 对 /projects/:projectId 与 /projects/:projectId/sessions/:sessionId
+ * 复用同一组件实例，param 变化不重新挂载 SessionList——search 与各种错误条
+ * 都跟着上一个项目过来了。用户刚用顶栏项目下拉切过去，新项目侧栏里却留着
+ * 旧查询、并被它过滤成「无匹配会话」，看着像这个项目的会话丢了。
+ */
+describe('SessionList 切项目', () => {
+  function Switchable() {
+    const [projectId, setProjectId] = useState('p1')
+    const qc = useMemo(
+      () =>
+        new QueryClient({
+          defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+        }),
+      [],
+    )
+    return (
+      <QueryClientProvider client={qc}>
+        <SessionList
+          projectId={projectId}
+          activeId={null}
+          onSelect={vi.fn()}
+          onNewSession={vi.fn()}
+        />
+        <button type="button" data-testid="switch-project" onClick={() => setProjectId('p2')}>
+          switch
+        </button>
+      </QueryClientProvider>
+    )
+  }
+
+  it('换项目后搜索词清空，新项目的会话按自己的标题全量展示', async () => {
+    const P2 = makeSession('p2-root', 'p2 会话', 'p2')
+    render(<Switchable />)
+    fireEvent.change(screen.getByTestId('session-search'), { target: { value: 'hit' } })
+    await waitFor(() => expect(screen.getByTestId('node-root-id')).toBeInTheDocument())
+
+    // 换项目（复用同一 SessionList 实例，只换 projectId）
+    hoisted.tree = [node(P2)]
+    fireEvent.click(screen.getByTestId('switch-project'))
+
+    // 搜索词被清空（不再是 p1 的查询），p2 的会话不再被旧查询过滤掉
+    await waitFor(() => {
+      expect((screen.getByTestId('session-search') as HTMLInputElement).value).toBe('')
+    })
+    expect(screen.getByTestId('node-p2-root')).toBeInTheDocument()
   })
 })
 

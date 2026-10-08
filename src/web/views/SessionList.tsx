@@ -209,6 +209,25 @@ export function SessionList({
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
     return () => clearTimeout(t)
   }, [search])
+
+  // 切项目时清空按项目作用域的 UI 状态。
+  // ChatPage 对 /projects/:projectId（与会话子路由）复用同一组件实例，param
+  // 变化不会重新挂载 SessionList：搜索词、错误条、回收站页签都跟着上一个项目
+  // 过来了——新项目列表继续按旧查询过滤（报「无匹配会话」，看着像会话丢了），
+  // 失败横幅也钉在新项目上方。
+  const firstProjectRef = useRef(projectId)
+  useEffect(() => {
+    if (firstProjectRef.current === projectId) return
+    firstProjectRef.current = projectId
+    setSearch('')
+    setSearchDebounced('')
+    setDeleteError(null)
+    setRenameError(null)
+    setImportError(null)
+    setImportNotice(null)
+    setShowRecycle(false)
+  }, [projectId])
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
