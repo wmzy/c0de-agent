@@ -4,7 +4,7 @@
 // document.body.style 上）。回归：pointerup 时读的是**当前**值（已是拖拽光标），
 // 清空后又把读到的值写回去——拖拽结束后全站光标永久停在 col-resize、文本选择
 // 永久禁用，直到刷新或另一次拖拽的清理把残留值当「原值」继续保留。
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalPanel } from '@/components/TerminalPanel.js'
 import type { TerminalSession, UseTerminalReturn } from '@/hooks/useTerminal.js'
@@ -164,7 +164,7 @@ describe('TerminalPanel 标签栏的无障碍结构', () => {
   // tab 角色要求「选中即切换标签」，却嵌了一个可聚焦按钮；读屏播报的控件名不副实，
   // 且「一个标签 = 一个 Tab 停靠点」的 tablist 约定失效。
   it('关闭按钮不是标签按钮的后代（无嵌套交互控件）', () => {
-    render(<TerminalPanel terminal={makeMultiTabTerminal()} />)
+    render(<TerminalPanel projectId="p1" terminal={makeMultiTabTerminal()} />)
     const tabBtn = screen.getByRole('button', { name: '终端标签 zsh' })
     const closeBtn = screen.getByRole('button', { name: '关闭终端标签 zsh' })
 
@@ -175,7 +175,9 @@ describe('TerminalPanel 标签栏的无障碍结构', () => {
   // 若退回 role="tab" 而缺少 aria-pressed/aria-selected 语义，选中态会静默丢失。
   it('标签用 aria-pressed 表达选中态，方向键在 toolbar 内切换活动标签', async () => {
     const setActiveTabId = vi.fn()
-    render(<TerminalPanel terminal={{ ...makeMultiTabTerminal(), setActiveTabId }} />)
+    render(
+      <TerminalPanel projectId="p1" terminal={{ ...makeMultiTabTerminal(), setActiveTabId }} />,
+    )
     const [first, second] = screen.getAllByRole('button', { name: /^终端标签 / })
 
     expect(first?.getAttribute('aria-pressed')).toBe('true')
@@ -194,7 +196,7 @@ describe('TerminalPanel 标签栏的无障碍结构', () => {
 
 describe('TerminalPanel 分隔条拖拽的全局光标', () => {
   it('拖拽结束后复原 body 光标与文本选择（不残留 col-resize/user-select:none）', async () => {
-    render(<TerminalPanel terminal={makeTerminal()} />)
+    render(<TerminalPanel projectId="p1" terminal={makeTerminal()} />)
     const divider = screen.getByLabelText('调整分屏大小')
 
     await fireEvent.pointerDown(divider, { clientX: 10, clientY: 10 })
@@ -209,7 +211,7 @@ describe('TerminalPanel 分隔条拖拽的全局光标', () => {
 
   it('拖拽前的既有内联样式被复原（不是被拖拽值覆盖）', async () => {
     document.body.style.cursor = 'wait'
-    render(<TerminalPanel terminal={makeTerminal('vertical')} />)
+    render(<TerminalPanel projectId="p1" terminal={makeTerminal('vertical')} />)
     const divider = screen.getByLabelText('调整分屏大小')
 
     await fireEvent.pointerDown(divider, { clientX: 10, clientY: 10 })
@@ -218,5 +220,53 @@ describe('TerminalPanel 分隔条拖拽的全局光标', () => {
     await fireEvent.pointerUp(document)
     expect(document.body.style.cursor).toBe('wait')
     expect(document.body.style.userSelect).toBe('')
+  })
+})
+
+describe('TerminalPanel 打开面板时自动创建首个终端', () => {
+  /** 面板已打开但一个标签都没有的状态（首次打开，或用户刚关掉最后一个标签）。 */
+  function emptyTerminal(createTerminal: UseTerminalReturn['createTerminal']): UseTerminalReturn {
+    return {
+      ...makeTerminal(),
+      sessions: [],
+      tabs: [],
+      activeTabId: null,
+      activePaneId: null,
+      createTerminal,
+    }
+  }
+
+  // 回归：重置自动创建标记的 effect 此前是空依赖（`[]`），只在挂载时跑一次，
+  // 而挂载时标记本就是 false——等于死代码。实测在项目 A 打开面板自动建过 shell
+  // 后切到项目 B，再打开面板只有空区（且写着「终端未连接」），同一个操作在 A
+  // 有 shell、在 B 没有；用户以为终端坏了。
+  it('切换项目后为新项目重新自动创建', async () => {
+    const createTerminal = vi.fn(async () => 'new-pane')
+    const terminal = emptyTerminal(createTerminal)
+    const { rerender } = render(<TerminalPanel terminal={terminal} cwd="/a" projectId="A" />)
+    await waitFor(() => expect(createTerminal).toHaveBeenCalledTimes(1))
+    expect(createTerminal).toHaveBeenLastCalledWith({ cwd: '/a' })
+
+    // 同一项目内不重复创建：用户主动关掉最后一个标签后不该被重建。
+    rerender(<TerminalPanel terminal={terminal} cwd="/a" projectId="A" />)
+    await waitFor(() => expect(createTerminal).toHaveBeenCalledTimes(1))
+
+    // 切到另一个项目：面板打开时同样要建首个终端（用新项目的 cwd）。
+    rerender(<TerminalPanel terminal={terminal} cwd="/b" projectId="B" />)
+    await waitFor(() => expect(createTerminal).toHaveBeenCalledTimes(2))
+    expect(createTerminal).toHaveBeenLastCalledWith({ cwd: '/b' })
+  })
+
+  // 切换项目的瞬间 cwd 还是空的（项目查询按 projectId 换 key，新项目数据未到），
+  // 此时建终端会落在上一个项目的目录里——必须等 cwd 就绪。
+  it('cwd 未就绪时不创建，就绪后补建', async () => {
+    const createTerminal = vi.fn(async () => 'new-pane')
+    const terminal = emptyTerminal(createTerminal)
+    const { rerender } = render(<TerminalPanel terminal={terminal} cwd={undefined} projectId="B" />)
+    expect(createTerminal).not.toHaveBeenCalled()
+
+    rerender(<TerminalPanel terminal={terminal} cwd="/b" projectId="B" />)
+    await waitFor(() => expect(createTerminal).toHaveBeenCalledTimes(1))
+    expect(createTerminal).toHaveBeenLastCalledWith({ cwd: '/b' })
   })
 })

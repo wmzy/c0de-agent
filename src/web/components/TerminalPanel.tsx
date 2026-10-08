@@ -10,6 +10,8 @@ interface TerminalPanelProps {
   terminal: UseTerminalReturn
   /** 新终端的默认工作目录（通常为项目 worktree）。未提供时使用服务端默认。 */
   cwd?: string
+  /** 当前项目 id：自动创建标记按项目重置（见下），切项目后面板打开时同样能建首个终端。 */
+  projectId: string
 }
 
 // 面板外层：flex-shrink 允许在视口高度不足时收缩（正常 900px 视口无赤字、不影响布局），
@@ -229,9 +231,28 @@ const connectingStyle = css`
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   height: 100%;
   color: var(--haze-color-text-secondary);
   font-size: 13px;
+`
+
+/** 空态里的「新建终端」：此前空区只有一句「终端未连接」。
+ *  没有终端时并没有东西在连接，用户也不知道该做什么——面板里必须有行动点。 */
+const emptyNewBtnStyle = css`
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--haze-color-text);
+  background: var(--haze-color-bg-subtle);
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
 `
 
 /** 从 shell 路径提取短名称用于标签显示。 */
@@ -249,7 +270,7 @@ function shellLabel(shell: string): string {
  * - 高度拖拽：上拉/下拉调整，记忆到 localStorage
  * - 隐藏时整块 display:none（仅显示拖拽条），避免隐藏控件排布到视口外仍可聚焦
  */
-export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
+export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) {
   const {
     sessions,
     tabs,
@@ -287,10 +308,18 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   // 标签切换按钮的 DOM 引用：toolbar 内方向键切换活动标签时同步移动焦点，
   // 否则读屏播报的位置与实际高亮的标签不一致。
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
-  // 切换项目时重置自动创建标记，允许新项目在面板打开时创建首个终端
-  useEffect(() => {
+  // 切换项目时重置自动创建标记，允许新项目在面板打开时创建首个终端。
+  // 必须在渲染期完成（effect 都在渲染之后跑）：写成一个 effect 会晚于下面的
+  // 自动创建 effect 生效，标记先被读到旧值、这次切换就白重置了。
+  // 此前这里是 `useEffect(() => { autoCreatedRef.current = false }, [])`——
+  // 空依赖只在挂载时跑一次，而挂载时它本就是 false，等于死代码：实测在项目 A
+  // 打开过终端面板（自动建过 shell）后切到项目 B，再打开面板只剩空区与
+  // 「终端未连接」，同一个操作在 A 有 shell、在 B 没有。
+  const autoCreatedProjectRef = useRef(projectId)
+  if (autoCreatedProjectRef.current !== projectId) {
+    autoCreatedProjectRef.current = projectId
     autoCreatedRef.current = false
-  }, [])
+  }
   useEffect(() => {
     if (!open || restoring) {
       return
@@ -663,7 +692,21 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
               />
             </div>
           ))}
-          {tabs.length === 0 && <div className={connectingStyle}>终端未连接</div>}
+          {tabs.length === 0 && (
+            <div className={connectingStyle}>
+              <span>尚无终端</span>
+              {cwd ? (
+                <button
+                  type="button"
+                  className={emptyNewBtnStyle}
+                  onClick={() => void createTerminal({ cwd })}
+                  title="在当前项目目录打开一个 shell"
+                >
+                  新建终端
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
     </>
