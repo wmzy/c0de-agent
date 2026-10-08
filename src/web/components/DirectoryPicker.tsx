@@ -215,9 +215,12 @@ export function DirectoryPicker({
     [start],
   )
 
-  // navigate：加载目录到文件树
+  // navigate：加载目录到文件树。
+  // silent：仅浏览不回填宿主值——用于首次自动导航到 start/home，此时用户尚未
+  // 做任何选择，回填会让宿主（如 AddProjectDialog）拿到一个从未被选中的 `~`，
+  // 其「value 非空即可提交」的判断随即成立：直接回车就把 $HOME 注册成项目。
   const navigate = useCallback(
-    async (path: string) => {
+    async (path: string, options?: { silent?: boolean }) => {
       const token = ++navigation.current
       setNavLoading(true)
       setNavError(false)
@@ -228,8 +231,7 @@ export function DirectoryPicker({
       rootRef.current = path
       setTreeRoot(null)
       setExpanded(new Set())
-      const display = displayPickerPath(path, path, homeRef.current)
-      onChange(display)
+      if (!options?.silent) onChange(displayPickerPath(path, path, homeRef.current))
       try {
         const r = await filesystemAPI.browse(path)
         if (!activeTreeNavigation(token, navigation.current)) return
@@ -245,11 +247,11 @@ export function DirectoryPicker({
     [onChange],
   )
 
-  // 首次自动导航到 start/home
+  // 首次自动导航到 start/home：只加载文件树，不回填宿主值（见 navigate 的 silent）
   useEffect(() => {
     const initial = start || home
     if (!initial || root) return
-    void navigate(initial)
+    void navigate(initial, { silent: true })
   }, [start, home, root, navigate])
 
   // 输入变化 → 防抖搜索

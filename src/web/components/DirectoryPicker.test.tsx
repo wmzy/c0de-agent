@@ -67,6 +67,26 @@ describe('DirectoryPicker', () => {
     })
   })
 
+  // 复现：首次自动导航到 home 也会 onChange('~')，把「当前浏览位置」当成
+  // 「用户的选中值」回填给宿主。没有任何选择的宿主（AddProjectDialog）因此
+  // value 非空、确认按钮即刻可用——打开弹窗什么都不选，回车即把 $HOME 注册成项目。
+  it('首次自动导航到 home 不回填宿主值（浏览 ≠ 选择）', async () => {
+    const onChange = vi.fn()
+    render(<DirectoryPicker value="" onChange={onChange} />)
+    await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/home/user'))
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('用户主动导航（~ 按钮）仍回填宿主值', async () => {
+    const onChange = vi.fn()
+    render(<DirectoryPicker value="" onChange={onChange} start="/tmp" />)
+    await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/tmp'))
+
+    fireEvent.click(screen.getByLabelText('home'))
+    // home 显示为 `~`（在 home 下的路径一律 tilde 化）
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('~'))
+  })
+
   it('纯名字输入触发递归搜索并显示建议', async () => {
     vi.mocked(filesystemAPI.search).mockResolvedValue({ items: ['projects/c0de-agent'] })
     render(<Controlled />)
