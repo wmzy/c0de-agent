@@ -27,6 +27,8 @@ vi.mock('@/services/file.js', () => ({
 vi.mock('@/services/project.js', () => ({
   projectAPI: {
     remove: vi.fn(),
+    // 顶栏「项目看板」入口在无路由 projectId 时用它解析当前项目。
+    current: vi.fn(),
   },
 }))
 
@@ -111,6 +113,25 @@ async function renderAtProject(projectId: string) {
   return renderAt(`/projects/${projectId}`)
 }
 
+/**
+ * 未命中路由时渲染 TopBar：生产里由 HistoryRouter 的 notFound 属性提交
+ * （App.tsx），TopBar 位于匹配链之外、useMatched 返回 undefined、routePath
+ * 为空串。notFound 属于 router 而非 View，放 HistoryRouter 上。
+ */
+async function renderNotFound(path: string) {
+  return await renderWithProvider(
+    <MemoryRouter routes={testRoutes} initialEntries={[path]} notFound={<TopBar />}>
+      <View />
+    </MemoryRouter>,
+  )
+}
+
+/** 当前被标为「当前页」的导航项文案（aria-current='page'）。 */
+function currentNavLabel(): string | null {
+  const el = document.querySelector('header nav a[aria-current="page"]')
+  return el ? el.textContent.trim() : null
+}
+
 describe('TopBar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -147,6 +168,73 @@ describe('TopBar', () => {
     await renderAtProject('abc123')
     const sessionsLink = screen.getByText('会话').closest('a')
     expect(sessionsLink?.getAttribute('href')).toBe('/projects/abc123')
+  })
+
+  /*
+   * 看板入口没有「回根路径」这条退路：RootRedirect 把 / 解析成项目的**会话**
+   * 页面，于是无路由 projectId 时（/settings 根路由、404 页）点「项目看板」
+   * 会落到会话列表——顶栏写着看板、落点是会话，中间没有任何提示。实测修复前
+   * 在 /settings 点它，URL 变成 /projects/<id>。改为解析「当前项目」后指向
+   * 真正的看板路由（与 RootRedirect 同一 queryKey，命中缓存不额外发请求）。
+   */
+  it('无项目上下文时看板入口解析当前项目，而不是退回会话首页', async () => {
+    const { projectAPI } = await import('@/services/project.js')
+    ;(projectAPI.current as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'abc123',
+      name: 'proj',
+    })
+
+    await renderAt('/settings')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('nav-kanban').getAttribute('href')).toBe('/projects/abc123/kanban')
+    })
+  })
+
+  it('当前项目解析不出来时看板入口退回根路径（与修复前一致）', async () => {
+    const { projectAPI } = await import('@/services/project.js')
+    ;(projectAPI.current as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('请在项目目录启动 c0de serve'),
+    )
+
+    await renderAt('/settings')
+
+    // 等查询落定：解析失败不得改变落点，更不能渲染成看板路由
+    await waitFor(() => {
+      expect(projectAPI.current).toHaveBeenCalled()
+    })
+    expect(screen.getByTestId('nav-kanban').getAttribute('href')).toBe('/')
+  })
+
+  /*
+   * 导航项的高亮此前只有 data-active + CSS 类，读屏拿不到「你在哪一页」。
+   * aria-current='page' 是这件事的标准表达（WCAG 3.2.3 的反向信息）。
+   */
+  it('当前导航项以 aria-current=page 暴露，且同一时刻只有一项', async () => {
+    await renderAt('/settings')
+    expect(currentNavLabel()).toBe('设置')
+
+    cleanup()
+
+    await renderAtProject('abc123')
+    expect(currentNavLabel()).toBe('会话')
+
+    cleanup()
+
+    await renderAt('/projects/abc123/kanban')
+    expect(currentNavLabel()).toBe('项目看板')
+
+    expect(document.querySelectorAll('header nav a[aria-current="page"]').length).toBe(1)
+  })
+
+  // 404 视图在匹配链之外渲染 TopBar：屏幕上没有会话页，却把「会话」标成
+  // 当前页会让视觉与读屏一起说「你在会话页」。
+  it('未命中路由时没有任何导航项被标成当前页', async () => {
+    await renderNotFound('/no-such-page')
+
+    expect(screen.getByTestId('nav-kanban')).toBeTruthy()
+    expect(currentNavLabel()).toBeNull()
+    expect(screen.getByText('会话').closest('a')?.getAttribute('data-active')).toBeNull()
   })
 
   // ---- ProjectIndicator（内嵌在 TopBar）----
