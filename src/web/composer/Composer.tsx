@@ -5,6 +5,7 @@ import type { DragEvent, KeyboardEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AtFilePopover } from '@/composer/AtFilePopover.js'
 import { AttachmentBar } from '@/composer/AttachmentBar.js'
+import { atMenuItems, atMenuSelection } from '@/composer/at-menu.js'
 import { ComposerEditor } from '@/composer/ComposerEditor.js'
 import { currentCursor } from '@/composer/editor-sync.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
@@ -391,12 +392,18 @@ function Composer(props: ComposerProps) {
     if (composer.popover === 'subcommand') setSubcommandActive(0)
   }, [composer.popover, composer.popoverQuery])
 
-  // @ mention 候选：subagent（非 primary）按 query 过滤
-  const atSubagents = props.agents
-    .filter((a) => a.mode !== 'primary')
-    .filter((a) => !composer.popoverQuery || a.name.includes(composer.popoverQuery))
-    .slice(0, 5)
-  const atFiles = (fileSearch.data ?? []).filter((r) => r.type === 'file')
+  // @ mention 候选：subagent（非 primary）按 query 过滤。
+  // 候选列表只在 at-menu.ts 算一次——键盘索引与浮层渲染共用同一份（见该文件注释）：
+  // 此前两边各算一份，键盘按完整搜索结果计数而只渲染前 20 项，↓ 按过第 20 项后
+  // 没有任何项高亮、Enter 却插入了第 21 个（用户从未看见的）文件。
+  const atMenu = atMenuItems({
+    agents: props.agents,
+    results: fileSearch.data ?? [],
+    query: composer.popoverQuery,
+  })
+  const atSubagents = atMenu.subagents
+  const atFiles = atMenu.files
+  const atTotal = atSubagents.length + atFiles.length
 
   // 选中 @agent：把光标前的 @query token 原位替换为 @name 文本。
   // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
@@ -438,7 +445,7 @@ function Composer(props: ComposerProps) {
           : composer.popover === 'subcommand'
             ? filteredSubcommands.length
             : composer.popover === 'at'
-              ? atSubagents.length + atFiles.length
+              ? atTotal
               : 0
     // 没有候选 → 不拦截，按「无浮层」把按键交给 composer.handleKeyDown（Enter 即发送）。
     const popoverDead = composer.popover !== null && popoverCandidates === 0
@@ -498,10 +505,9 @@ function Composer(props: ComposerProps) {
       }
     }
     if (!popoverDead && composer.popover === 'at') {
-      const total = atSubagents.length + atFiles.length
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setAtActive((i) => Math.min(i + 1, total - 1))
+        setAtActive((i) => Math.min(i + 1, atTotal - 1))
         return
       }
       if (e.key === 'ArrowUp') {
@@ -511,13 +517,9 @@ function Composer(props: ComposerProps) {
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        if (atActive < atSubagents.length) {
-          const a = atSubagents[atActive]
-          if (a) insertAgentToken(a.name)
-        } else {
-          const f = atFiles[atActive - atSubagents.length]
-          if (f) composer.insertFile(f.path)
-        }
+        const selected = atMenuSelection(atMenu, atActive)
+        if (selected?.kind === 'agent') insertAgentToken(selected.agent.name)
+        else if (selected?.kind === 'file') composer.insertFile(selected.file.path)
         return
       }
     }
@@ -648,12 +650,10 @@ function Composer(props: ComposerProps) {
           // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，fieldset 不适用于绝对定位浮层
           <div className={popoverGroup} role="group" aria-label="文件与提及">
             <AtFilePopover
-              results={fileSearch.data ?? []}
+              subagents={atSubagents}
+              files={atFiles}
               activeIndex={atActive}
               onSelect={(path) => composer.insertFile(path)}
-              agents={props.agents}
-              query={composer.popoverQuery}
-              activeAgentIndex={atActive}
               onAgentSelect={insertAgentToken}
             />
           </div>

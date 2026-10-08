@@ -44,30 +44,21 @@ const agentLabel = css`
 `
 
 type Props = {
-  results: FileSearchResult[]
+  /** @agent 段（已按 query 过滤并截断，由 at-menu.ts 统一算好）。 */
+  subagents: AgentListItem[]
+  /** @文件段（已截断，与键盘索引空间同源）。 */
+  files: FileSearchResult[]
+  /** 扁平键盘索引：下标落在 agent 段还是文件段由 subagents.length 决定。 */
   activeIndex: number
   onSelect: (path: string) => void
-  /** 可用 agent 列表（@ mention 渲染）。 */
-  agents: AgentListItem[]
-  /** 当前 @ 查询串（过滤 agent name）。 */
-  query: string
-  /** agent 项的键盘高亮索引。 */
-  activeAgentIndex: number
   /** 选中 agent 时回调（插入 @name 文本）。 */
   onAgentSelect: (name: string) => void
 }
 
 function AtFilePopover(props: Props) {
-  const files = props.results.filter((r) => r.type === 'file').slice(0, 20)
-  // @ mention 只显示非 primary（可调用的 subagent/all），按 query 过滤 name
-  const subagents = props.agents
-    .filter((a) => a.mode !== 'primary')
-    .filter((a) => !props.query || a.name.includes(props.query))
-    .slice(0, 5)
+  const { subagents, files, activeIndex } = props
   const listRef = useRef<HTMLDivElement>(null)
-  // agent 段与文件段共用一个键盘索引（文件索引偏移 subagents.length），
-  // 但 aria-selected 只有一个 true，hook 按语义取到的那一项始终是当前选中项。
-  usePopoverScroll(listRef, Math.max(props.activeAgentIndex, props.activeIndex), true)
+  usePopoverScroll(listRef, activeIndex, true)
   if (files.length === 0 && subagents.length === 0) return null
   return (
     <div
@@ -81,8 +72,8 @@ function AtFilePopover(props: Props) {
         <button
           key={a.name}
           role="option"
-          aria-selected={i === props.activeAgentIndex}
-          className={`${item} ${i === props.activeAgentIndex ? 'active' : ''}`}
+          aria-selected={i === activeIndex}
+          className={`${item} ${i === activeIndex ? 'active' : ''}`}
           onClick={() => props.onAgentSelect(a.name)}
           type="button"
         >
@@ -94,8 +85,8 @@ function AtFilePopover(props: Props) {
         <button
           key={f.path}
           role="option"
-          aria-selected={subagents.length + i === props.activeIndex}
-          className={`${item} ${subagents.length + i === props.activeIndex ? 'active' : ''}`}
+          aria-selected={subagents.length + i === activeIndex}
+          className={`${item} ${subagents.length + i === activeIndex ? 'active' : ''}`}
           onClick={() => props.onSelect(f.path)}
           type="button"
         >

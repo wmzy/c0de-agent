@@ -9,6 +9,7 @@ import { Composer } from '@/composer/Composer.js'
 import { draftStorageKey } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { fileAPI } from '@/services/file.js'
 import { storageGet } from '@/utils/storage.js'
 
 vi.mock('@/services/commands.js', () => ({
@@ -17,6 +18,12 @@ vi.mock('@/services/commands.js', () => ({
 
 vi.mock('@/services/workflows.js', () => ({
   workflowsAPI: { list: vi.fn().mockResolvedValue({ workflows: [] }) },
+}))
+
+// @ 文件候选来自 /api/files/search（不限条数）：真实仓库一次命中几百个是常态，
+// 而浮层只渲染前 20 个。mock 掉服务以驱动这条链路。
+vi.mock('@/services/file.js', () => ({
+  fileAPI: { search: vi.fn().mockResolvedValue([]) },
 }))
 
 const execCommand = vi.fn(() => true)
@@ -238,5 +245,83 @@ describe('Composer 草稿持久化', () => {
     render(<DraftHarness scope="s:big" />)
     expect(screen.getByTestId('composer-editor').textContent).toContain('文本要留住')
     expect(screen.queryByTestId('attachment-bar')).toBeNull()
+  })
+})
+
+// @ 提及浮层此前有两份候选：渲染只画前 20 个文件，键盘却按完整搜索结果计数
+// （/api/files/search 不限条数，真实仓库 `@a` 一命中几百个）。↓ 按过第 20 项后
+// 一个高亮都没有，Enter 仍按完整列表取第 21 项——把用户从未看见的文件静默插进
+// prompt 并吃掉 @query。索引空间必须与渲染列表同源。
+describe('Composer @ 提及浮层的键盘索引与渲染列表同源', () => {
+  const files = Array.from({ length: 30 }, (_, i) => ({ path: `src/f${i}.ts`, type: 'file' }))
+
+  async function openAtMenu() {
+    vi.mocked(fileAPI.search).mockResolvedValue(files as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={vi.fn()}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    const editor = screen.getByTestId('composer-editor')
+    // @ 浮层按光标位置触发：happy-dom 里 setSelectionRange 之类的元素级 API 会把
+    // offset 夹到 0（实测 Range.selectNodeContents+collapse(false) 得 offset 1），
+    // 只有把 range 起点指到文本节点上，光标偏移才如实反映在编辑器末尾。
+    editor.textContent = '@q'
+    const text = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 2)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+    return editor
+  }
+
+  it('↓ 走到列表末项后仍有高亮，Enter 插入的是被渲染出来的那一项', async () => {
+    const editor = await openAtMenu()
+    const menu = screen.getByTestId('at-menu')
+    expect(menu.querySelectorAll('[role="option"]')).toHaveLength(20)
+    const rendered = Array.from(menu.querySelectorAll('[role="option"]')).map((n) => n.textContent)
+
+    // 一路 ↓ 到超过 20 项：高亮必须停在最后一项，不能消失
+    for (let i = 0; i < 25; i++) {
+      fireEvent.keyDown(editor, { key: 'ArrowDown' })
+    }
+    const selected = menu.querySelectorAll('[aria-selected="true"]')
+    expect(selected).toHaveLength(1)
+    const highlighted = selected[0]?.textContent ?? ''
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    // 提交的就是高亮的那一项——不是「第 21 个用户没看见的文件」
+    expect(editor.textContent).toContain(highlighted as string)
+    expect(rendered).toContain(highlighted as string)
+    // 末项 = 第 20 个：绝不该出现第 21 个（它从未被渲染）
+    expect(editor.textContent).not.toContain('src/f20.ts')
+  })
+
+  it('高亮项随 ↓ 在已渲染的候选间移动（高亮空间 = 渲染列表）', async () => {
+    const editor = await openAtMenu()
+    const menu = screen.getByTestId('at-menu')
+    expect(menu.querySelector('[aria-selected="true"]')?.textContent).toBe('src/f0.ts')
+
+    fireEvent.keyDown(editor, { key: 'ArrowDown' })
+    fireEvent.keyDown(editor, { key: 'ArrowDown' })
+    expect(menu.querySelector('[aria-selected="true"]')?.textContent).toBe('src/f2.ts')
+
+    fireEvent.keyDown(editor, { key: 'ArrowUp' })
+    expect(menu.querySelector('[aria-selected="true"]')?.textContent).toBe('src/f1.ts')
   })
 })
