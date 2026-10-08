@@ -116,6 +116,11 @@ const empty = css`
   text-align: center;
 `
 
+/** 失败态里的重试按钮：与上方原因行留出间距。 */
+const retryBtn = css`
+  margin-top: 8px;
+`
+
 const hintLine = css`
   padding: 8px 12px;
   border-top: 1px solid var(--haze-color-border);
@@ -144,7 +149,13 @@ export function ToolToggle({
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  const { data: tools, isLoading } = useQuery({
+  const {
+    data: tools,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['tools', projectId ?? 'server'],
     queryFn: () => toolAPI.list(projectId),
     staleTime: 60_000,
@@ -152,6 +163,14 @@ export function ToolToggle({
 
   const names = (tools ?? []).map((t) => t.name)
   const total = names.length
+  // 读取失败必须与「确实没有工具」区分：失败时 total 为 0，若不特判，
+  // 徽标会落到「全部」（enabled===null）或 `${enabled.size}/0`（显式集合时
+  // 如「5/0」），菜单里则断言「暂无可用工具」——把「这次没拉到」说成
+  // 「工具没注册/被清空了」，且 staleTime 内不会自愈、也没有重试入口。
+  const failed = isError && total === 0
+  const errorMessage =
+    (error as { message?: string } | null)?.message ??
+    (error instanceof Error ? error.message : null)
   // enabled === null 视为全部启用
   const enabledCount = enabled === null ? total : enabled.size
   const isAllEnabled = enabled === null || (total > 0 && names.every((n) => enabled.has(n)))
@@ -179,6 +198,10 @@ export function ToolToggle({
 
   const badge = isLoading ? (
     <span className={badgeActive}>…</span>
+  ) : failed ? (
+    <span className={badgeNone} title="工具列表加载失败" data-testid="tool-badge-error">
+      ?
+    </span>
   ) : isAllEnabled ? (
     <span className={badgeActive}>全部</span>
   ) : isNoneEnabled ? (
@@ -204,7 +227,7 @@ export function ToolToggle({
       {open && (
         <div className={menu} role="menu" data-testid="tool-menu">
           <div className={header}>
-            <span>{`工具 ${enabledCount}/${total}`}</span>
+            <span>{failed ? '工具 —' : `工具 ${enabledCount}/${total}`}</span>
             <span className={headerBtns}>
               <button
                 type="button"
@@ -225,7 +248,19 @@ export function ToolToggle({
             </span>
           </div>
           <div className={list}>
-            {total === 0 ? (
+            {failed ? (
+              <div className={empty} role="alert" data-testid="tool-list-error">
+                <div>工具列表加载失败{errorMessage ? `：${errorMessage}` : '，请稍后重试。'}</div>
+                <button
+                  type="button"
+                  className={`${inputStyle} ${headerBtn} ${retryBtn}`}
+                  onClick={() => void refetch()}
+                  data-testid="tool-list-retry"
+                >
+                  重试
+                </button>
+              </div>
+            ) : total === 0 ? (
               <div className={empty}>{isLoading ? '加载中…' : '暂无可用工具'}</div>
             ) : (
               (tools ?? []).map((t) => (

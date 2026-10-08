@@ -171,4 +171,40 @@ describe('ToolToggle', () => {
     fireEvent.click(btn)
     expect(screen.queryByTestId('tool-menu')).toBeNull()
   })
+
+  it('工具列表读取失败：菜单给出原因与重试入口，不谎报「暂无可用工具」', async () => {
+    ;(toolAPI.list as Mock).mockRejectedValue(new Error('ECONNREFUSED'))
+    renderWithClient(<ToolToggle enabled={new Set(['read', 'bash'])} onChange={vi.fn()} />)
+    await waitFor(() => expect(screen.getByTestId('tool-badge-error')).toBeTruthy())
+    // 失败不是「全部启用」，也不能拿残留的显式集合去和 0 个工具算比值（旧实现的「2/0」）
+    expect(screen.getByTestId('tool-toggle').textContent).not.toContain('全部')
+    expect(screen.getByTestId('tool-toggle').textContent).not.toContain('2/0')
+    openMenu()
+    const error = screen.getByTestId('tool-list-error')
+    expect(error.getAttribute('role')).toBe('alert')
+    expect(error.textContent).toContain('工具列表加载失败')
+    expect(error.textContent).toContain('ECONNREFUSED')
+    expect(screen.queryByText('暂无可用工具')).toBeNull()
+    expect(screen.getByTestId('tool-list-retry')).toBeTruthy()
+  })
+
+  it('失败后点重试：成功则改显工具列表', async () => {
+    ;(toolAPI.list as Mock).mockRejectedValueOnce(new Error('boom'))
+    renderWithClient(<ToolToggle enabled={null} onChange={vi.fn()} />)
+    await waitFor(() => expect(screen.getByTestId('tool-badge-error')).toBeTruthy())
+    openMenu()
+    mockTools()
+    fireEvent.click(screen.getByTestId('tool-list-retry'))
+    await waitFor(() => expect(screen.getByTestId('tool-item-read')).toBeTruthy())
+    expect(screen.queryByTestId('tool-list-error')).toBeNull()
+  })
+
+  it('真的没有注册工具时仍是空态（与读取失败区分）', async () => {
+    mockTools([])
+    renderWithClient(<ToolToggle enabled={null} onChange={vi.fn()} />)
+    await waitFor(() => expect(toolAPI.list).toHaveBeenCalled())
+    openMenu()
+    expect(screen.getByText('暂无可用工具')).toBeTruthy()
+    expect(screen.queryByTestId('tool-list-error')).toBeNull()
+  })
 })
