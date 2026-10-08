@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
+import { TOUCH } from '@/styles/breakpoints.js'
 import { inputStyle } from '@/styles/tokens.js'
 import { isImeComposing } from '@/utils/ime.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
@@ -175,6 +176,11 @@ const taskActions = css`
   display: flex;
   gap: 2px;
   opacity: 0;
+  /* 隐藏态不吞点击：opacity:0 的按钮照样接收 pointer 事件，
+     触屏滑动阅读长任务时那一击会静默命中「放弃/删除」，任务被移除且无撤销。
+     与 BranchTree 会话行删除按钮同一口径：显形时才允许命中。
+     键盘不受影响——focus 与 pointer-events 无关，Tab 仍能进入。 */
+  pointer-events: none;
   transition: opacity 0.15s;
 
   button {
@@ -191,9 +197,30 @@ const taskActions = css`
   }
 `
 
+/*
+ * 行内操作按钮的显隐。
+ *
+ * 此前只有 `:hover` 一条：键盘 Tab 进入「放弃 / 删除」时按钮仍是 opacity:0，
+ * 屏幕上毫无变化——既看不到焦点落在哪（实测 containerOpacity=0、outline
+ * none），也分不清按 Enter 会放弃还是删除这条任务；触屏没有 hover，按钮对
+ * 手指等于不存在。按 BranchTree 的既有口径补齐三条触发源：hover、
+ * focus-within（键盘）、TOUCH（触屏）。
+ */
 const taskItemHover = css`
-  &:hover .${taskActions} {
+  &:hover .${taskActions},
+  &:focus-within .${taskActions} {
     opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* 触屏分支：TOUCH 必须写在顶层、括号内不能插 & —— 「TOUCH & .x {}」这种
+     写法会被 postcss-nested 解析成 media 内先悬空一个 &，产出 @media not all，
+     规则整条失效（实测编译结果如此）。与 BranchTree 同一写法。 */
+  ${TOUCH} {
+    & .${taskActions} {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 `
 
@@ -445,8 +472,12 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                       </button>
                       <div className={taskActions}>
                         {status !== 'abandoned' && (
+                          /* aria-label 不能省：accname 先取元素内容（"✕"），title
+                             只在无内容时兜底，读屏会把这个不可逆的操作播报成
+                             「✕ 按钮」。任务文本进可访问名，用户才知道动的是哪一条。 */
                           <Button
                             title="放弃"
+                            aria-label={`放弃任务：${task.content}`}
                             variant="outline"
                             onClick={() => dropTask(task.content)}
                           >
@@ -455,6 +486,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                         )}
                         <Button
                           title="删除"
+                          aria-label={`删除任务：${task.content}`}
                           variant="outline"
                           onClick={() => removeTask(task.content)}
                         >
