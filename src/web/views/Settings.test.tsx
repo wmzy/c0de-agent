@@ -1144,6 +1144,103 @@ describe('Settings — JSON 模式与导入导出', () => {
     await waitFor(() => expect(screen.getByTestId('settings-json-error')).toBeTruthy())
     expect(screen.getByTestId('settings-json-editor')).toBeTruthy()
   })
+
+  /**
+   * 回归：此前导入只做 JSON.parse 就把对象铺进表单（setDraft + 切 GUI）。
+   * - 类别不符的配置（`{"plugins":{"enabled":"demo"}}`）让面板拿到错误类型的值；
+   * - 缺字段的配置（`{"plugins":{}}`、`{"tools":{"disabled":["bash"]}}`）让
+   *   merged.plugins.enabled 变成 undefined → CommaListInput 的 value.join 抛错。
+   * 两条都会让整页被 ErrorBoundary 替换成「页面渲染出错」，未保存编辑丢失，
+   * 用户也看不出是导入的文件有问题。
+   */
+  it('导入类别不符的配置：留在 JSON 视图给原因，不铺进表单导致整页崩溃', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const mockFile = {
+      text: () => Promise.resolve('{"plugins":{"enabled":"demo"}}'),
+    } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [mockFile] } })
+
+    // 不切表单：留在 JSON 视图，且页面没有崩掉
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-json-error').textContent).toContain('配置结构错误'),
+    )
+    expect(screen.getByTestId('settings-json-editor')).toBeTruthy()
+    expect(screen.queryByTestId('provider-add')).toBeNull()
+    const errorBar = screen.getByTestId('settings-json-error')
+    expect(errorBar.textContent).toContain('plugins.enabled：应为数组，实际是字符串')
+    // 「表单」按钮禁用并说明原因（此前是静默无反应）
+    const guiBtn = screen.getByTestId('settings-mode-gui') as HTMLButtonElement
+    expect(guiBtn.disabled).toBe(true)
+    expect(guiBtn.title).toContain('plugins.enabled')
+  })
+
+  it('缺字段的配置导入后不再崩：缺失键按当前值补全，导入值生效', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 旧实现下这份文件会让表单里 tools.enabled / plugins.enabled 变成
+    // undefined → value.join 抛错 → 整页崩溃。
+    const mockFile = {
+      text: () => Promise.resolve('{"tools":{"disabled":["bash"]},"plugins":{}}'),
+    } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [mockFile] } })
+
+    // 切回表单且不再崩溃：enabled 由当前配置补全，disabled 用导入值
+    // （导入是异步的：以导入值出现为信号，不能等到「表单在不在」——表单本就在）
+    await waitFor(() =>
+      expect((screen.getByLabelText('已禁用') as HTMLInputElement).value).toBe('bash'),
+    )
+    expect(screen.getByTestId('provider-add')).toBeTruthy()
+    const enabled = screen.getByLabelText('已启用') as HTMLInputElement
+    expect(enabled.value).toBe('bash, read')
+  })
+
+  it('JSON 视图结构不符时保存被拦下：不落盘坏形状', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{"tools":"all"}' } })
+
+    expect(screen.getByTestId('settings-json-error').textContent).toContain('tools')
+    const save = screen.getByTestId('settings-save') as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    fireEvent.click(save)
+    expect(configAPI.update).not.toHaveBeenCalled()
+    expect(screen.getByTestId('settings-save-blocked-hint').textContent).toContain('配置结构错误')
+  })
+
+  it('JSON 视图内容形状合法时切回表单会按当前配置补全（表单不读 undefined）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{"tools":{"disabled":["read"]}}' } })
+
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    const enabled = screen.getByLabelText('已启用') as HTMLInputElement
+    expect(enabled.value).toBe('bash, read')
+    expect((screen.getByLabelText('已禁用') as HTMLInputElement).value).toBe('read')
+  })
 })
 
 describe('Settings — 完整配置表单覆盖', () => {

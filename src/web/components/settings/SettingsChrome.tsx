@@ -143,6 +143,9 @@ type SettingsToolbarProps = {
   viewMode: 'gui' | 'json'
   onSwitchGui: () => void
   onSwitchJson: () => void
+  /** 「表单」按钮不可用的原因（JSON 视图内容语法/结构有误）：非空时禁用并就近说明。
+   *  此前点击只是静默 return——原因写在编辑器下方与保存条上，按钮本身零反馈。 */
+  guiDisabledReason?: string | null
   fileInputRef: RefObject<HTMLInputElement | null>
   onImport: (e: React.ChangeEvent<HTMLInputElement>) => void
   onExport: () => void
@@ -152,6 +155,7 @@ function SettingsToolbar({
   viewMode,
   onSwitchGui,
   onSwitchJson,
+  guiDisabledReason,
   fileInputRef,
   onImport,
   onExport,
@@ -164,6 +168,8 @@ function SettingsToolbar({
           type="button"
           className={`${segBtn} ${viewMode === 'gui' ? segBtnActive : ''}`}
           onClick={onSwitchGui}
+          disabled={!!guiDisabledReason}
+          title={guiDisabledReason ?? '切换到表单视图'}
           data-testid="settings-mode-gui"
         >
           表单
