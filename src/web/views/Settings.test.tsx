@@ -1382,7 +1382,7 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(Object.keys(args.compaction)).toEqual(['compactionModel'])
   })
 
-  it('添加并删除 MCP 服务器', async () => {
+  it('删除 MCP 服务器需二次确认：取消保留、确认才移除', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
@@ -1392,8 +1392,23 @@ describe('Settings — 完整配置表单覆盖', () => {
     fireEvent.click(screen.getByTestId('mcp-add'))
     expect(screen.getAllByTestId('mcp-row')).toHaveLength(1)
 
+    // 回归：删除此前单击即生效，一行已填好的 command/args/url 直接消失。
+    // 点删除后必须先出现确认弹层，行仍在。
     fireEvent.click(screen.getByTestId('mcp-remove'))
-    expect(screen.queryByTestId('mcp-row')).toBeNull()
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('MCP 服务器')
+    expect(screen.getAllByTestId('mcp-row')).toHaveLength(1)
+
+    // 取消：行保留
+    fireEvent.click(within(dialog).getByText('取消'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getAllByTestId('mcp-row')).toHaveLength(1)
+
+    // 确认：行才移除
+    fireEvent.click(screen.getByTestId('mcp-remove'))
+    const dialog2 = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog2).getByText('删除'))
+    await waitFor(() => expect(screen.queryByTestId('mcp-row')).toBeNull())
   })
 
   // 回归：MCP 已在 serve/CLI 两个宿主接入（registerMCPServers 注册其工具、项目作用域

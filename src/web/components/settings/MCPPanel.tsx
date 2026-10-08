@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { MCPServerConfig } from '@shared/types/config.js'
-import { Button } from 'haze-ui'
+import { Button, ConfirmDialog } from 'haze-ui'
+import { useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { section, sectionTitle } from '@/components/settings/styles.js'
 import { btnDanger } from '@/styles/tokens.js'
@@ -32,6 +33,11 @@ interface MCPPanelProps {
 
 /** MCP 服务器配置：增删改，按 transport 切换 command/args 与 url 字段。 */
 function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
+  // 删除是唯一会整行丢弃已填内容的操作：command/args/url 一次点错就没了，
+  // 而本页其它破坏性操作（撤销设备、关闭认证、删除工作流）都有二审。
+  // 先暂存待删行下标，确认后再动草稿。
+  const [pendingRemove, setPendingRemove] = useState<number | null>(null)
+
   const addMcpServer = () => {
     onMcpServersChange((prev) => [...prev, { name: '', transport: 'stdio' }])
   }
@@ -45,6 +51,7 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
   }
 
   const removeMcpServer = (index: number) => {
+    setPendingRemove(null)
     onMcpServersChange((prev) => prev.filter((_, i) => i !== index))
   }
 
@@ -96,7 +103,7 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
           <Button
             className={btnDanger}
             variant="outline"
-            onClick={() => removeMcpServer(index)}
+            onClick={() => setPendingRemove(index)}
             data-testid="mcp-remove"
           >
             删除
@@ -106,6 +113,23 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
       <Button onClick={addMcpServer} data-testid="mcp-add" variant="outline">
         + 添加服务器
       </Button>
+      {/* 条件渲染挂载：react-use-control 的 open 布尔值仅是初始值，
+       * prop 变化不同步内部状态——必须以挂载/卸载驱动显隐（与 SecurityPanel 同款）。 */}
+      {pendingRemove !== null && mcpServers[pendingRemove] && (
+        <ConfirmDialog
+          open
+          onClose={() => setPendingRemove(null)}
+          onConfirm={() => removeMcpServer(pendingRemove)}
+          title={`删除 MCP 服务器「${mcpServers[pendingRemove].name || '未命名'}」`}
+          confirmText="删除"
+          cancelText="取消"
+          variant="danger"
+        >
+          将从配置中移除该服务器，其
+          {mcpServers[pendingRemove].transport === 'stdio' ? ' command 与参数' : '连接地址'}
+          不会自动备份。保存设置后该服务器不再向 AI 暴露工具。确定删除？
+        </ConfirmDialog>
+      )}
     </div>
   )
 }
