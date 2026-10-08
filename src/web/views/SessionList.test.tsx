@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { kanbanAPI } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import type { SessionTreeNode } from '@/types/index.js'
 import { RecycleBin } from '@/views/RecycleBin.js'
@@ -52,6 +53,15 @@ vi.mock('@/services/session.js', () => ({
     search: vi.fn(),
     rename: vi.fn(),
     importSession: vi.fn(),
+  },
+}))
+
+vi.mock('@/services/kanban.js', () => ({
+  kanbanAPI: {
+    deletedBoards: vi.fn().mockResolvedValue({ boards: [] }),
+    destroyDeletedBoard: vi.fn(),
+    restoreDeletedBoard: vi.fn(),
+    restoreDeletedBoardToOriginal: vi.fn(),
   },
 }))
 
@@ -401,5 +411,134 @@ describe('RecycleBin 搜索', () => {
       expect(screen.getByText('命中标题')).toBeInTheDocument()
     })
     expect(screen.queryByText('别的会话')).toBeNull()
+  })
+
+  /**
+   * 回归：搜索失败时只取 data → data 为 undefined → rows 为空数组 →
+   * 「回收站无匹配会话」。用户据此认定删掉的会话已被清除。
+   */
+  it('搜索失败：给出原因与重试入口，不谎报「无匹配会话」', async () => {
+    hoisted.deleted = {
+      data: [makeSession('old-id', '旧会话')],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    vi.mocked(sessionAPI.search).mockRejectedValue(
+      Object.assign(new Error('数据库被占用，请稍后重试'), { status: 500, code: 'DB_LOCKED' }),
+    )
+    renderTrashSearch()
+
+    fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '查不到的词' } })
+    await waitFor(() => expect(screen.getByTestId('trash-search-error')).toBeInTheDocument(), {
+      timeout: 2000,
+    })
+    const bar = screen.getByTestId('trash-search-error')
+    expect(bar.getAttribute('role')).toBe('alert')
+    expect(bar.textContent).toContain('回收站搜索失败')
+    expect(bar.textContent).toContain('数据库被占用，请稍后重试')
+    // 不得谎报「无匹配会话」
+    expect(screen.queryByText('回收站无匹配会话')).toBeNull()
+    // 重试入口存在
+    expect(screen.getByTestId('trash-search-retry')).toBeInTheDocument()
+  })
+
+  it('搜索重试后成功：改显命中项', async () => {
+    const hit = makeSession('hit-id', '命中标题')
+    hoisted.deleted = {
+      data: [makeSession('other-id', '别的会话'), hit],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    vi.mocked(sessionAPI.search).mockRejectedValueOnce(new Error('boom'))
+    renderTrashSearch()
+
+    fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '命' } })
+    await waitFor(() => expect(screen.getByTestId('trash-search-error')).toBeInTheDocument(), {
+      timeout: 2000,
+    })
+    vi.mocked(sessionAPI.search).mockResolvedValue({
+      results: [{ session: hit, matchedBy: 'title' }],
+    })
+    fireEvent.click(screen.getByTestId('trash-search-retry'))
+    await waitFor(() => {
+      expect(screen.getByText('命中标题')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('trash-search-error')).toBeNull()
+  })
+
+  it('真的没有匹配时才是「回收站无匹配会话」', async () => {
+    hoisted.deleted = {
+      data: [makeSession('old-id', '旧会话')],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    vi.mocked(sessionAPI.search).mockResolvedValue({ results: [] })
+    renderTrashSearch()
+
+    fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '不存在的词' } })
+    await waitFor(() => {
+      expect(screen.getByText('回收站无匹配会话')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('trash-search-error')).toBeNull()
+  })
+})
+
+/**
+ * 回收站未归属看板「彻底删除」失败反馈。
+ *
+ * 回归：destroyBoardMut 只有 onSuccess，接口失败时看板仍在列表、
+ * 屏幕上零文字——同一页面的恢复/彻底删除会话都写了错误条，只有这条漏了。
+ */
+describe('RecycleBin 未归属看板彻底删除', () => {
+  const boards = [{ id: 'board-1', projectName: '已删项目', projectId: 'p1', cardCount: 3 }]
+
+  function renderTrashBoards() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={qc}>
+        <RecycleBin projectId="p1" />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('彻底删除看板失败：错误条给出原因与操作名，不静默', async () => {
+    hoisted.deleted = {
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    // 未归属看板查询：让分组出现
+    vi.mocked(kanbanAPI.deletedBoards).mockResolvedValue({ boards } as never)
+    vi.mocked(kanbanAPI.destroyDeletedBoard).mockRejectedValue(
+      new Error('看板正在被使用，请稍后重试'),
+    )
+
+    renderTrashBoards()
+
+    // 等待未归属看板分组渲染
+    await waitFor(() => {
+      expect(screen.getByTestId('remove-orphan-kanban-board-1')).toBeInTheDocument()
+    })
+
+    // 确认框点确定
+    window.confirm = () => true
+    fireEvent.click(screen.getByTestId('remove-orphan-kanban-board-1'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('restore-error')).toBeInTheDocument()
+    })
+    const bar = screen.getByTestId('restore-error')
+    expect(bar.textContent).toContain('彻底删除看板失败')
+    expect(bar.textContent).toContain('看板正在被使用，请稍后重试')
   })
 })

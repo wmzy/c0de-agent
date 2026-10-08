@@ -15,6 +15,12 @@ import { sessionAPI } from '@/services/session.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
 import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/recycleTree.js'
 
+/** 失败原因取文案：APIError 现在是真正的 Error（message 即后端文案），
+ *  但错误也可能来自非本层抛出的路径，结构化取 message 优先、instanceof 兜底。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
 const deletedRow = css`
   display: flex;
   align-items: center;
@@ -169,6 +175,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   })
   const destroyBoardMut = useMutation({
     mutationFn: (boardId: string) => kanbanAPI.destroyDeletedBoard(boardId),
+    // 破坏性操作失败必须留原因：此前这条链只有 onSuccess，失败时看板仍在列表、
+    // 屏幕上零文字（同一页面的恢复/彻底删除会话都写了错误条），
+    // 用户只能反复点确认框，或以为按钮坏了。
+    onError: (e: unknown) => setError(`彻底删除看板失败：${messageOf(e)}`),
   })
 
   // P3：回收站搜索（此前删掉的会话只能逐行翻）——标题+消息内容，服务端搜索。
@@ -182,7 +192,17 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // searchDebounced.length > 1 判断「是否在搜索」——两边同时为假时列出的是
   // 未过滤的全部分页条目，搜索框里有字却看不到任何收敛。服务端对单字符
   // 正常返回。
-  const { data: searchResults } = useQuery({
+  // 三态齐全：查询只取 data 时，「还在查」与「查不了」都落进 rows 为空的分支，
+  // 界面给出「回收站无匹配会话」——把「拉不到」说成「没有」，用户会据此认定
+  // 删掉的会话已被清除。失败后（RQ 默认 retry: 2）这一句永久停在那里，且
+  // 该区域内没有任何重试入口。
+  const {
+    data: searchResults,
+    isLoading: searchLoading,
+    isError: searchError,
+    error: searchErrorObj,
+    refetch: refetchSearch,
+  } = useQuery({
     queryKey: ['sessions', 'search-deleted', projectId, searchDebounced],
     queryFn: () => sessionAPI.search(searchDebounced, projectId, true),
     enabled: searchDebounced.length >= 1,
@@ -197,7 +217,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
       setNotice(null)
       setOrphanId(null)
     },
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+    onError: (e: unknown) => setError(`归属到当前项目失败：${messageOf(e)}`),
   })
 
   const removeForever = useMutation({
@@ -205,7 +225,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
     },
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+    // 错误条前缀按操作给出：此前恢复/归属/彻底删除/清空四条链共用一个
+    // 「恢复失败：」，清空回收站失败会被写成「恢复失败」——与 SessionList
+    // 已修的「重命名失败写成删除失败」同类，用户照字面理解会被带偏。
+    onError: (e: unknown) => setError(`彻底删除失败：${messageOf(e)}`),
   })
 
   const emptyTrashMut = useMutation({
@@ -214,7 +237,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
       qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
       setNotice(null)
     },
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+    onError: (e: unknown) => setError(`清空回收站失败：${messageOf(e)}`),
   })
 
   // P2-6：永久操作（彻底删除/清空回收站）分级确认弹层；软删除保留轻确认。
@@ -284,6 +307,11 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 搜索框有字却会列出未过滤的全部分页条目。
   const isSearching = searchDebounced.length >= 1
   const rows = isSearching ? (searchResults?.results.map((r) => r.session) ?? []) : sortedDeleted
+  // 与文件列表失败态同口径取后端原因：APIError 现在是真正的 Error，
+  // 但错误也可能来自非本层抛出的路径，结构化取 message 优先。
+  const searchErrorMessage =
+    (searchErrorObj as { message?: string } | null)?.message ??
+    (searchErrorObj instanceof Error ? searchErrorObj.message : null)
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
@@ -320,8 +348,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   return (
     <div>
       {error && (
-        <div className={errorBar} data-testid="restore-error">
-          恢复失败：{error}
+        <div className={errorBar} role="alert" data-testid="restore-error">
+          {error}
         </div>
       )}
       {notice && (
@@ -382,7 +410,23 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             onChange={(v) => setSearch(v)}
             data-testid="trash-search"
           />
-          {rows.length === 0 && isSearching ? <div className={empty}>回收站无匹配会话</div> : null}
+          {searchError && isSearching ? (
+            <div className={errorBar} role="alert" data-testid="trash-search-error">
+              回收站搜索失败
+              {searchErrorMessage ? `：${searchErrorMessage}` : '，请稍后重试。'}{' '}
+              <button
+                type="button"
+                className={restoreBtn}
+                onClick={() => void refetchSearch()}
+                data-testid="trash-search-retry"
+              >
+                重试
+              </button>
+            </div>
+          ) : null}
+          {rows.length === 0 && isSearching && !searchError ? (
+            <div className={empty}>{searchLoading ? '搜索中…' : '回收站无匹配会话'}</div>
+          ) : null}
           {rows.map((s) => {
             const descendants = countDeletedDescendants(deletedIndex, s.id)
             return (
@@ -432,8 +476,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     restore.mutate(
                       { id: s.id, projectId },
                       {
-                        onError: (e: unknown) =>
-                          setError(e instanceof Error ? e.message : String(e)),
+                        onError: (e: unknown) => setError(`恢复失败：${messageOf(e)}`),
                         onSuccess: (d) => {
                           setError(null)
                           const ancestorNote =
@@ -522,8 +565,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     restore.mutate(
                       { id: s.id, projectId, restoreMode: 'current-project' },
                       {
-                        onError: (e: unknown) =>
-                          setError(e instanceof Error ? e.message : String(e)),
+                        onError: (e: unknown) => setError(`恢复失败：${messageOf(e)}`),
                         onSuccess: (d) => {
                           setError(null)
                           setNotice(
@@ -548,8 +590,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     restore.mutate(
                       { id: s.id },
                       {
-                        onError: (e: unknown) =>
-                          setError(e instanceof Error ? e.message : String(e)),
+                        onError: (e: unknown) => setError(`恢复失败：${messageOf(e)}`),
                         onSuccess: (d) => {
                           setError(null)
                           // P1-3：自动模式（原目录仍存在）重建项目时明示，
@@ -617,7 +658,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     { boardId: b.id, projectId },
                     {
                       onSuccess: () => setNotice(`看板「${b.projectName}」已合并到当前项目看板。`),
-                      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+                      onError: (e) => setError(`恢复看板失败：${messageOf(e)}`),
                     },
                   )
                 }
@@ -639,7 +680,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                             ? `看板「${b.projectName}」已恢复，并重新创建了原项目「${d.recreatedProject.name ?? '未命名项目'}」。`
                             : `看板「${b.projectName}」已恢复到原项目。`,
                         ),
-                      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+                      onError: (e) => setError(`恢复看板失败：${messageOf(e)}`),
                     })
                   }
                   disabled={restoreBoardToOriginalMut.isPending}
