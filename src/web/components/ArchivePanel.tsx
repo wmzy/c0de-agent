@@ -102,6 +102,47 @@ const hint = css`
   margin-top: 4px;
 `
 
+/**
+ * 归档读失败态。此前只有 isLoading 一个状态位：请求 500 时 data 为 undefined
+ * → archives 恒为 []，与「真的没有归档」落进同一分支。
+ */
+const errorState = css`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px;
+  text-align: center;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 可能是长路径/长句，窄弹层内必须断行 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  padding: 4px 14px;
+  font-size: 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
 const TYPE_LABEL: Record<CompactionArchive['archiveType'], string> = {
   compaction: '压缩',
   squash: '归并',
@@ -132,7 +173,7 @@ function entryToText(entry: ArchiveEntry): { role: string; text: string } {
 export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const [q, setQ] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['session', sessionId, 'archives', q],
     queryFn: () => sessionAPI.archives(sessionId, q || undefined),
   })
@@ -151,7 +192,28 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
       />
       <div className={list}>
         {isLoading ? <div className={empty}>加载中…</div> : null}
-        {!isLoading && archives.length === 0 ? (
+        {/* 拉不到 ≠ 没有：此前失败与空态合并成「暂无归档」，用户据此认定
+            /clear、Shake、压缩的历史内容丢了（实测注入 500，稳定显示这句）。
+            与 RecycleBin / KanbanView 同一套三段式：标题 + 后端原因 + 重试。 */}
+        {isError ? (
+          <div className={errorState} role="alert" data-testid="archive-load-error">
+            <span className={errorTitle}>归档加载失败</span>
+            <span className={errorDetail}>
+              {(error as { message?: string } | null)?.message ??
+                (error instanceof Error ? error.message : null) ??
+                '无法读取归档内容。'}
+            </span>
+            <button
+              type="button"
+              className={retryBtn}
+              onClick={() => refetch()}
+              data-testid="archive-retry"
+            >
+              重试
+            </button>
+          </div>
+        ) : null}
+        {!isLoading && !isError && archives.length === 0 ? (
           <div className={empty}>暂无归档（/clear、Shake、压缩产生的内容会保留在这里）</div>
         ) : null}
         {archives.map((a) => (
