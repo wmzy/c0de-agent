@@ -243,6 +243,22 @@ export const globalStyle = css`
   }
 
   /*
+   * div[role=button] 键盘焦点环：同上一条的原因，且更严重——这些元素是
+   * div 上挂 role/tabIndex，:where(button) 那条规则完全选不中，实测
+   * ToolBlock 折叠头在暗色主题下聚焦后 outline 解析为 rgb(16,16,16)，
+   * 压在 oklch(0.182 0 0)（≈ #020202）底上，对比度仅 1.09:1，等于没有焦点。
+   *
+   * 命中面：ToolBlock 折叠头、MessageItem 的 shake 块。二者都是 tabIndex=0
+   * 且响应 Enter/Space 的真交互元素，键盘用户必须能看见自己在哪。
+   * :focus-visible 而非 :focus——鼠标点击不显示焦点环，与 button/a 保持一致。
+   */
+  :global(:where([role='button']):focus-visible) {
+    outline: 2px solid var(--haze-color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /*
    * 动效降级（WCAG 2.3.3 Animation from Interactions / 2.2.2）。
    *
    * 本应用此前全站零 prefers-reduced-motion 处理，四处动画照常无限循环：
