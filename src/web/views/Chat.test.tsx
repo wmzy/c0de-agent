@@ -279,6 +279,31 @@ describe('slash 命令 popover 候选选择', () => {
     fireEvent.keyDown(editor, { key: 'Enter' })
     expect(editor.textContent).toContain(secondActive.replace('/', ''))
   })
+
+  // 回归：Tab 被当成「确认候选」。浮层打开时键盘用户既 Tab 不出去（焦点陷阱），
+  // 又会把候选静默插进正在写的消息（输入 `/c` 后按 Tab 变成 `/clear `）。Tab 应当
+  // 关闭浮层并把按键交给浏览器移动焦点；确认候选仍然走 Enter。
+  it('Tab 关闭浮层、不插入候选、按键不被吞（Shift+Tab 同理）', async () => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: TEST_COMMANDS })
+    renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/c'
+    fireEvent.input(editor)
+    await screen.findByTestId('slash-menu')
+
+    // 返回 true = 未 preventDefault → 浏览器仍会执行默认的焦点移动
+    expect(fireEvent.keyDown(editor, { key: 'Tab' })).toBe(true)
+    expect(editor.textContent).toBe('/c')
+    expect(screen.queryByTestId('slash-menu')).toBeNull()
+
+    editor.textContent = '/c'
+    fireEvent.input(editor)
+    await screen.findByTestId('slash-menu')
+
+    expect(fireEvent.keyDown(editor, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(editor.textContent).toBe('/c')
+  })
 })
 
 describe('composer 浮层无候选时不吞按键', () => {

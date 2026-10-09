@@ -473,6 +473,14 @@ function Composer(props: ComposerProps) {
     if (popoverDead) composer.setPopover(null)
     // 键盘导航只在真的有候选项时生效：0 候选取 min(i+1, -1) 会把 activeIndex 算成 -1。
     const popoverNavigable = composer.popover !== null && popoverCandidates > 0
+    // Tab 是「离开输入框」的键，不是「确认候选」：此前与 Enter 同处理，浮层打开时
+    // 键盘用户既无法用 Tab/Shift+Tab 离开输入框（焦点陷阱），又会把候选静默插进
+    // 正在写的消息里（`/hel` + Tab 变成 `/help `）。这里只关掉浮层、放行按键交给
+    // 浏览器移动焦点；确认候选仍然走 Enter。
+    if (e.key === 'Tab' && composer.popover !== null) {
+      composer.setPopover(null)
+      return
+    }
     if (popoverNavigable && composer.popover === 'workflow') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -484,7 +492,7 @@ function Composer(props: ComposerProps) {
         setWorkflowActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.key === 'Enter') {
         e.preventDefault()
         const wf = filteredWorkflows[workflowActive]
         if (wf) composer.insertWorkflow(wf.name)
@@ -502,7 +510,7 @@ function Composer(props: ComposerProps) {
         setSlashActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.key === 'Enter') {
         e.preventDefault()
         const cmd = filteredCommands[slashActive]
         if (cmd) composer.insertSlash(cmd.name)
@@ -520,7 +528,7 @@ function Composer(props: ComposerProps) {
         setSubcommandActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.key === 'Enter') {
         e.preventDefault()
         const sub = filteredSubcommands[subcommandActive]
         if (sub) composer.insertSubcommand(sub.name)
@@ -538,7 +546,7 @@ function Composer(props: ComposerProps) {
         setAtActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.key === 'Enter') {
         e.preventDefault()
         const selected = atMenuSelection(atMenu, atActive)
         if (selected?.kind === 'agent') insertAgentToken(selected.agent.name)
