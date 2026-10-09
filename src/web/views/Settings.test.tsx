@@ -2052,9 +2052,11 @@ describe('Settings — 工作流管理面板', () => {
     renderSettings()
     await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(1))
 
-    // 编辑模式：overwrite: true
+    // 编辑模式：overwrite: true（源码读取完成前「保存」禁用）
     fireEvent.click(screen.getByTestId('workflow-edit'))
-    await waitFor(() => expect(screen.getByTestId('workflow-source-editor')).toBeTruthy())
+    await waitFor(() =>
+      expect((screen.getByTestId('workflow-save') as HTMLButtonElement).disabled).toBe(false),
+    )
     fireEvent.click(screen.getByTestId('workflow-save'))
     await waitFor(() => expect(workflowsAPI.save).toHaveBeenCalled())
     const editPayload = (workflowsAPI.save as Mock).mock.calls.at(-1)?.[0] as {
@@ -2072,6 +2074,58 @@ describe('Settings — 工作流管理面板', () => {
       overwrite?: boolean
     }
     expect(createPayload.overwrite).toBeUndefined()
+  })
+
+  // 复现：openEdit 沿用上一次的 draftSource 就开窗，弹窗标题写「编辑：B」而编辑区
+  // 里还是 A 的源码，且「保存」不感知加载态——慢盘下点保存就用 A 覆盖 B（overwrite: true）。
+  it('编辑弹窗在源码加载完成前不展示上一个工作流的内容、也不可保存', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: WF_FIXTURES })
+    ;(workflowsAPI.save as Mock).mockResolvedValue({ ok: true })
+
+    // 第一次查看立即返回，源码进入 draft；第二次（编辑）挂起不返回
+    type Detail = { name: string; sourceCode: string }
+    let resolveSlow: ((v: Detail) => void) | undefined
+    ;(workflowsAPI.get as Mock).mockImplementation((name: string) =>
+      name === 'security-audit'
+        ? Promise.resolve({ ...WF_FIXTURES[0], sourceCode: 'const A = 1\n' })
+        : new Promise<Detail>((r) => {
+            resolveSlow = r
+          }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(2))
+
+    // 内置行只有「查看」；用 my-wf 走一遍加载完成 → 关闭，让 draft 里有内容
+    fireEvent.click(screen.getAllByTestId('workflow-view')[0] as HTMLElement)
+    await waitFor(() =>
+      expect((screen.getByTestId('workflow-source-editor') as HTMLTextAreaElement).value).toBe(
+        'const A = 1\n',
+      ),
+    )
+    fireEvent.click(screen.getByLabelText('关闭'))
+
+    // 第二次打开（挂起中）：编辑区必须为空、保存禁用
+    fireEvent.click(screen.getByTestId('workflow-edit'))
+    const editor = (await screen.findByTestId('workflow-source-editor')) as HTMLTextAreaElement
+    expect(editor.value).toBe('')
+    expect(screen.getByTestId('workflow-loading')).toBeTruthy()
+    expect((screen.getByTestId('workflow-save') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByTestId('workflow-save'))
+    expect(workflowsAPI.save).not.toHaveBeenCalled()
+
+    // 读取完成 → 源码出现、保存可用
+    resolveSlow?.({ name: 'my-wf', sourceCode: 'const B = 2\n' })
+    await waitFor(() =>
+      expect((screen.getByTestId('workflow-source-editor') as HTMLTextAreaElement).value).toBe(
+        'const B = 2\n',
+      ),
+    )
+    expect(screen.queryByTestId('workflow-loading')).toBeNull()
+    expect((screen.getByTestId('workflow-save') as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('未信任项目：list 返回 trustRequired 时展示隐藏提示', async () => {

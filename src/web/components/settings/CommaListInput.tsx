@@ -39,13 +39,15 @@ function CommaListInput({
   ariaLabel?: string
   disabled?: boolean
 }) {
-  const [text, setText] = useState(value.join(separator))
-  const joined = value.join(separator)
+  // 回填文本用 ', '（读起来是逗号列表）；空格分隔符本身就是空格。
+  const sep = separator === ' ' ? ' ' : ', '
+  const [text, setText] = useState(value.join(sep))
+  const joined = value.join(sep)
   // 外部 value 变化（加载/导入/保存后刷新）时同步缓冲；
   // 解析结果一致则保留用户正在编辑的文本（含尾随分隔符）。
   useEffect(() => {
-    setText((cur) => (splitList(cur, separator).join(separator) === joined ? cur : joined))
-  }, [joined, separator])
+    setText((cur) => (splitList(cur, separator).join(sep) === joined ? cur : joined))
+  }, [joined, sep, separator])
   return (
     <SyncedInput
       id={id}
