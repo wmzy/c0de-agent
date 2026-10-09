@@ -21,6 +21,11 @@ type FileTreeProps = {
   selected: string | null
   /** 正在加载子目录的节点路径集合。 */
   loadingPaths: Set<string>
+  /** 懒加载失败的原因（path → message）。命中的目录在树里就地展示失败态与重试，
+   *  而不是渲染成「（空）」——把「读不到」说成「没有」。 */
+  errorPaths?: Map<string, string>
+  /** 重试加载某个目录的子项（配合 errorPaths 的失败态）。 */
+  onRetryLoad?: (path: string) => void
   /** 展开/折叠目录（首次展开由父组件触发懒加载）。 */
   onToggle: (path: string) => void
   /** 激活节点：文件=打开；目录行为由 directoryClickMode 决定。 */
@@ -123,6 +128,36 @@ const hint = css`
   padding: 3px 8px 3px 24px;
   color: var(--haze-color-text-secondary);
   font-size: 12px;
+`
+
+/** 懒加载失败态：原因 + 重试。与（空）/加载中 同排缩进，用户点开哪个目录就在哪看到。 */
+const loadErrorRow = css`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 24px;
+  font-size: 12px;
+  color: var(--c0de-danger-on-surface, var(--haze-color-danger));
+`
+
+const loadErrorText = css`
+  /* 后端 message 常含长路径，窄侧栏下必须能断行而不是撑出横向滚动 */
+  overflow-wrap: anywhere;
+`
+
+const loadRetryBtn = css`
+  flex-shrink: 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 3px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  cursor: pointer;
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
 `
 
 const mentionBtn = css`
@@ -270,6 +305,8 @@ function FileTreeInner({
   expanded,
   selected,
   loadingPaths,
+  errorPaths,
+  onRetryLoad,
   onToggle,
   onSelect,
   directoryClickMode = 'select',
@@ -452,6 +489,8 @@ function FileTreeInner({
           selected={selected}
           focusedPath={effectiveFocusedPath}
           loadingPaths={loadingPaths}
+          errorPaths={errorPaths}
+          onRetryLoad={onRetryLoad}
           onToggle={onToggle}
           onSelect={onSelect}
           directoryClickMode={directoryClickMode}
@@ -513,6 +552,8 @@ type TreeNodeProps = {
   /** 漫游焦点所在路径：整棵树只有它是 tabIndex=0，其余为 -1。 */
   focusedPath: string | null
   loadingPaths: Set<string>
+  errorPaths?: Map<string, string>
+  onRetryLoad?: (path: string) => void
   onToggle: (path: string) => void
   onSelect: (path: string) => void
   directoryClickMode: 'select' | 'toggle'
@@ -528,6 +569,8 @@ const TreeNode = memo(function TreeNode({
   selected,
   focusedPath,
   loadingPaths,
+  errorPaths,
+  onRetryLoad,
   onToggle,
   onSelect,
   directoryClickMode,
@@ -538,6 +581,7 @@ const TreeNode = memo(function TreeNode({
   const isFile = node.type === 'file'
   const isExpanded = expanded.has(node.path)
   const isLoading = loadingPaths.has(node.path)
+  const loadError = errorPaths?.get(node.path)
   const isSelected = selected === node.path
   const isFocused = focusedPath === node.path
   const hasChildren = node.children !== undefined
@@ -630,6 +674,8 @@ const TreeNode = memo(function TreeNode({
                 selected={selected}
                 focusedPath={focusedPath}
                 loadingPaths={loadingPaths}
+                errorPaths={errorPaths}
+                onRetryLoad={onRetryLoad}
                 onToggle={onToggle}
                 onSelect={onSelect}
                 directoryClickMode={directoryClickMode}
@@ -640,6 +686,22 @@ const TreeNode = memo(function TreeNode({
             ))
           ) : isLoading ? (
             <div className={hint}>加载中…</div>
+          ) : loadError !== undefined ? (
+            // 读失败必须与「空目录」分开：此前懒加载失败被 catch 吞掉、目录仍被
+            // 标记为已展开，这里渲染的是「（空）」——把「读不到」说成了「没有」。
+            <div className={loadErrorRow} data-testid={`load-error-${node.path}`}>
+              <span className={loadErrorText}>{`加载失败：${loadError}`}</span>
+              {onRetryLoad && (
+                <button
+                  type="button"
+                  className={loadRetryBtn}
+                  data-testid={`load-retry-${node.path}`}
+                  onClick={() => onRetryLoad(node.path)}
+                >
+                  重试
+                </button>
+              )}
+            </div>
           ) : (
             <div className={hint}>（空）</div>
           )}

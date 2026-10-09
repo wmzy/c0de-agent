@@ -289,6 +289,10 @@ export function FileBrowser({
   const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
+  /** 懒加载子目录失败的原因（path → message）。失败不再静默：此前 catch 只留了
+   *  一句注释，目录随后仍被标记为已展开并在树里渲染「（空）」，用户据此认定
+   *  该目录是空的。 */
+  const [loadErrors, setLoadErrors] = useState<Map<string, string>>(new Map())
   /** 根目录列目录失败的原因（null=正常）。空串表示失败但没有 message。 */
   const [rootError, setRootError] = useState<string | null>(null)
   /** 根目录重试令牌：自增触发上面那个 effect 重跑。 */
@@ -337,6 +341,7 @@ export function FileBrowser({
     setTreeRoot(null)
     setExpanded(new Set())
     setLoadingPaths(new Set())
+    setLoadErrors(new Map())
     setRootError(null)
     fileAPI
       .list('.', projectId)
@@ -363,17 +368,32 @@ export function FileBrowser({
     }
   }, [projectId, projectName, rootReload])
 
-  /** 懒加载某个目录的子项（失败保持 children=undefined，可重试）。 */
+  /** 懒加载某个目录的子项（失败落到 loadErrors，可就地重试）。 */
   const loadChildren = useCallback(
     async (dirPath: string) => {
       setLoadingPaths((prev) => new Set(prev).add(dirPath))
+      setLoadErrors((prev) => {
+        if (!prev.has(dirPath)) return prev
+        const next = new Map(prev)
+        next.delete(dirPath)
+        return next
+      })
       try {
         const entries = await fileAPI.list(dirPath, projectId)
         setTreeRoot((prev) =>
           prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
         )
-      } catch {
-        /* 加载失败保留未展开态 */
+      } catch (err) {
+        // APIError 是结构体而非 Error 子类，必须结构化取 message
+        // （同上方 rootError / searchErrorMessage 口径）。
+        setLoadErrors((prev) =>
+          new Map(prev).set(
+            dirPath,
+            (err as { message?: string } | null)?.message ??
+              (err instanceof Error ? err.message : null) ??
+              '无法读取该目录',
+          ),
+        )
       } finally {
         setLoadingPaths((prev) => {
           const next = new Set(prev)
@@ -410,6 +430,14 @@ export function FileBrowser({
       onPick(path)
     },
     [onPick],
+  )
+
+  /** 目录加载失败后就地重试（树里的失败态按钮）。 */
+  const retryLoad = useCallback(
+    (path: string) => {
+      void loadChildren(path)
+    },
+    [loadChildren],
   )
 
   /** 待删除的路径（null=无确认弹层）。删除是「移入回收站」的可恢复操作，
@@ -608,6 +636,8 @@ export function FileBrowser({
             expanded={expanded}
             selected={null}
             loadingPaths={loadingPaths}
+            errorPaths={loadErrors}
+            onRetryLoad={retryLoad}
             onToggle={handleToggle}
             onSelect={handleSelect}
             directoryClickMode="toggle"

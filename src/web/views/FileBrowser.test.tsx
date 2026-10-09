@@ -285,6 +285,42 @@ describe('FileBrowser 读失败态', () => {
 })
 
 /**
+ * 懒加载目录失败此前被 `catch {}` 吞掉：目录仍被标记为已展开，树里渲染出
+ * 「（空）」——把「读不到」说成了「没有」，用户据此判定该目录是空的、不再重试。
+ */
+describe('FileBrowser 子目录加载失败', () => {
+  it('展开失败时给出原因与重试，而不是「（空）」', async () => {
+    vi.mocked(fileAPI.list)
+      .mockResolvedValueOnce(ROOT_ENTRIES)
+      .mockRejectedValueOnce({ message: 'EACCES: permission denied' })
+    renderBrowser()
+    await screen.findByTestId('node-src')
+    fireEvent.click(screen.getByTestId('toggle-src'))
+
+    const err = await screen.findByTestId('load-error-src')
+    expect(err.textContent).toContain('EACCES: permission denied')
+    expect(screen.queryByText('（空）')).toBeNull()
+  })
+
+  it('点重试重新拉取该目录，成功后就地渲染出子项', async () => {
+    vi.mocked(fileAPI.list)
+      .mockResolvedValueOnce(ROOT_ENTRIES)
+      .mockRejectedValueOnce({ message: 'EACCES: permission denied' })
+      .mockResolvedValueOnce([{ name: 'a.ts', type: 'file' }])
+    renderBrowser()
+    await screen.findByTestId('node-src')
+    fireEvent.click(screen.getByTestId('toggle-src'))
+    await screen.findByTestId('load-error-src')
+
+    fireEvent.click(screen.getByTestId('load-retry-src'))
+    await waitFor(() => {
+      expect(screen.getByTestId('node-src/a.ts')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('load-error-src')).toBeNull()
+  })
+})
+
+/**
  * 删除此前走 window.confirm + window.alert：原生框不可样式化；更糟的是失败
  * 时只弹「删除失败，请重试」，后端 404 的 message（"File not found"）被整句
  * 丢掉，用户只能对同一路径反复点删除。改为应用内确认层 + 原因留框内。
