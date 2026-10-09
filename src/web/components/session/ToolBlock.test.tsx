@@ -135,4 +135,36 @@ describe('ToolBlock', () => {
     render(<ToolBlock block={toolBlock({ status: 'paused' })} />)
     expect(screen.getByTestId('tool-status').getAttribute('data-status')).toBe('paused')
   })
+
+  // 失败原因与「等待权限确认」只存在于展开态：此前的自动收起把两者一起折叠了，
+  // 消息流里只剩一个 ✗ / 🔒 图标，用户既看不到原因、也不知道工具在等谁点确认。
+  it('error 默认展开，直接显示失败原因', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          status: 'error',
+          output: { _tag: 'error', error: '文件不存在: /tmp/nope.ts' },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('文件不存在: /tmp/nope.ts')
+  })
+
+  it('running → error 不自动收起', () => {
+    const { rerender } = render(<ToolBlock block={toolBlock({ status: 'running' })} />)
+    rerender(
+      <ToolBlock
+        block={toolBlock({ status: 'error', output: { _tag: 'error', error: '权限不足' } })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('权限不足')
+  })
+
+  it('paused 默认展开并说明在等权限确认', () => {
+    render(<ToolBlock block={toolBlock({ status: 'paused' })} />)
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-body')).toHaveTextContent('等待权限确认')
+  })
 })

@@ -92,14 +92,15 @@ export const ToolBlock = memo(function ToolBlock({
 }) {
   const { tool, input, output, status: st } = block
 
-  // 运行中默认展开，其余状态默认折叠
-  const [expanded, setExpanded] = useState(st === 'running')
+  // 只有成功态默认折叠：失败原因（toolError）与「等待权限确认」只存在于
+  // 展开态，折叠等于把用户唯一能看到的问题藏成一个 ✗/🔒 图标。
+  const [expanded, setExpanded] = useState(st !== 'completed')
   // 记录是否已自动收起过，避免覆盖用户后续的手动展开
   const [autoCollapsed, setAutoCollapsed] = useState(false)
 
   useEffect(() => {
-    // 从 running 转入终态时，自动收起一次
-    if (st !== 'running' && !autoCollapsed) {
+    // 从 running 转入成功态时，自动收起一次；error/paused 保持展开
+    if (st === 'completed' && !autoCollapsed) {
       setExpanded(false)
       setAutoCollapsed(true)
     }
