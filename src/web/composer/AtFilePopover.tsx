@@ -43,6 +43,13 @@ const agentLabel = css`
   margin-bottom: 2px;
 `
 
+/** 加载/空态提示行（非候选项，不参与键盘索引）。 */
+const hint = css`
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 type Props = {
   /** @agent 段（已按 query 过滤并截断，由 at-menu.ts 统一算好）。 */
   subagents: AgentListItem[]
@@ -50,6 +57,8 @@ type Props = {
   files: FileSearchResult[]
   /** 扁平键盘索引：下标落在 agent 段还是文件段由 subagents.length 决定。 */
   activeIndex: number
+  /** 文件搜索仍在进行中（结果未到）。 */
+  loading?: boolean
   onSelect: (path: string) => void
   /** 选中 agent 时回调（插入 @name 文本）。 */
   onAgentSelect: (name: string) => void
@@ -59,7 +68,16 @@ function AtFilePopover(props: Props) {
   const { subagents, files, activeIndex } = props
   const listRef = useRef<HTMLDivElement>(null)
   usePopoverScroll(listRef, activeIndex, true)
-  if (files.length === 0 && subagents.length === 0) return null
+  // 候选为空时区分「搜完了没有匹配」与「还在搜」：后者此前 return null——
+  // 浮层整个消失，用户看到的是「没有候选」，而搜索结果几十毫秒后才到。
+  if (files.length === 0 && subagents.length === 0) {
+    if (!props.loading) return null
+    return (
+      <div className={popover} role="status" data-testid="at-menu-loading">
+        <div className={hint}>搜索中…</div>
+      </div>
+    )
+  }
   return (
     <div
       ref={listRef}

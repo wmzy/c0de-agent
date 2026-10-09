@@ -325,3 +325,64 @@ describe('Composer @ 提及浮层的键盘索引与渲染列表同源', () => {
     expect(menu.querySelector('[aria-selected="true"]')?.textContent).toBe('src/f1.ts')
   })
 })
+
+// 搜索请求在途时候选计数为 0，此前与「搜完了没有匹配」共用一条 return null：
+// 浮层整个消失（用户以为没有匹配），且 popoverDead 判定生效后 Enter 退化成
+// 「发送字面量 @query 文本」。这里锁住两点：搜索中浮层给出「搜索中…」反馈，
+// 且此时按键不被一个出不来结果的菜单吞掉（Enter 仍然发送）。
+describe('Composer @ 浮层在文件搜索在途时的加载态', () => {
+  function renderWithSearch(search: () => Promise<never>) {
+    vi.mocked(fileAPI.search).mockImplementation(search)
+    const onSend = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return { editor: screen.getByTestId('composer-editor'), onSend }
+  }
+
+  it('搜索在途时浮层显示「搜索中」而不是消失', async () => {
+    const { editor } = renderWithSearch(() => new Promise(() => {}))
+    editor.textContent = '@q'
+    const text = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 2)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+
+    await waitFor(() => expect(screen.getByTestId('at-menu-loading')).toBeTruthy())
+    expect(screen.getByTestId('at-menu-loading').textContent).toContain('搜索中')
+  })
+
+  it('搜索在途时 Enter 不会被浮层吞掉（消息照常发出）', async () => {
+    const { editor, onSend } = renderWithSearch(() => new Promise(() => {}))
+    editor.textContent = '@q'
+    const text = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 2)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+    await waitFor(() => expect(screen.getByTestId('at-menu-loading')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    await waitFor(() => expect(onSend).toHaveBeenCalled())
+  })
+})

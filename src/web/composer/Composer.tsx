@@ -286,7 +286,8 @@ function Composer(props: ComposerProps) {
     // 原样回传发送结果：useComposer 据此在失败时把草稿与图片还回输入框。
     return props.onSend({ ...payload, agents })
   }
-  const { data: commands = [] } = useCommands()
+  const commandsQuery = useCommands()
+  const commands = commandsQuery.data ?? []
   const composer = useComposer({
     onSend: handleSend,
     onAbort: props.onAbort,
@@ -320,12 +321,13 @@ function Composer(props: ComposerProps) {
 
   // 工作流列表：传入 projectId 以发现项目级 .c0de/workflows/*.js。
   // queryKey 含 projectId 确保切换项目时重新拉取。
-  const { data: workflows = [] } = useQuery({
+  const workflowsQuery = useQuery({
     queryKey: ['workflows', props.projectId],
     queryFn: () => workflowsAPI.list(props.projectId),
     staleTime: Infinity,
     select: (data) => data.workflows,
   })
+  const workflows = workflowsQuery.data ?? []
 
   // slash 命令按 query 过滤——过滤必须与键盘导航/选择使用同一列表，
   // 否则 activeIndex 指向的项与 popover 展示的项不一致（选中错误命令）。
@@ -452,10 +454,26 @@ function Composer(props: ComposerProps) {
             : composer.popover === 'at'
               ? atTotal
               : 0
-    // 没有候选 → 不拦截，按「无浮层」把按键交给 composer.handleKeyDown（Enter 即发送）。
-    const popoverDead = composer.popover !== null && popoverCandidates === 0
+    // 加载中的候选源：候选计数为 0，但原因是「结果还没到」而不是「没有匹配」。
+    // 此时浮层保持打开显示「搜索中…」（见各 Popover 的 loading 分支），
+    // 但按键仍按「无浮层」处理——否则一个还没出结果的菜单会静默吞掉 Enter。
+    const popoverLoading =
+      composer.popover === 'workflow'
+        ? workflowsQuery.isLoading
+        : composer.popover === 'slash' || composer.popover === 'subcommand'
+          ? commandsQuery.isLoading
+          : composer.popover === 'at'
+            ? fileSearch.isLoading
+            : false
+    // 没有候选（无论是否在加载）→ 不拦截，按「无浮层」把按键交给 composer.handleKeyDown
+    // （Enter 即发送）。
+    const popoverSuppressed = composer.popover !== null && popoverCandidates === 0
+    // 只有「不在加载且没有候选」才真的关掉浮层；加载中保留浮层给出反馈。
+    const popoverDead = popoverSuppressed && !popoverLoading
     if (popoverDead) composer.setPopover(null)
-    if (!popoverDead && composer.popover === 'workflow') {
+    // 键盘导航只在真的有候选项时生效：0 候选取 min(i+1, -1) 会把 activeIndex 算成 -1。
+    const popoverNavigable = composer.popover !== null && popoverCandidates > 0
+    if (popoverNavigable && composer.popover === 'workflow') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setWorkflowActive((i) => Math.min(i + 1, filteredWorkflows.length - 1))
@@ -473,7 +491,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (!popoverDead && composer.popover === 'slash') {
+    if (popoverNavigable && composer.popover === 'slash') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSlashActive((i) => Math.min(i + 1, filteredCommands.length - 1))
@@ -491,7 +509,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (!popoverDead && composer.popover === 'subcommand') {
+    if (popoverNavigable && composer.popover === 'subcommand') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSubcommandActive((i) => Math.min(i + 1, filteredSubcommands.length - 1))
@@ -509,7 +527,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    if (!popoverDead && composer.popover === 'at') {
+    if (popoverNavigable && composer.popover === 'at') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setAtActive((i) => Math.min(i + 1, atTotal - 1))
@@ -528,7 +546,7 @@ function Composer(props: ComposerProps) {
         return
       }
     }
-    composer.handleKeyDown(e, popoverDead)
+    composer.handleKeyDown(e, popoverSuppressed)
   }
 
   const handleDrop = (e: DragEvent) => {
@@ -626,6 +644,7 @@ function Composer(props: ComposerProps) {
             <SlashPopover
               commands={filteredCommands}
               activeIndex={slashActive}
+              loading={commandsQuery.isLoading}
               onSelect={(name) => composer.insertSlash(name)}
             />
           </div>
@@ -636,6 +655,7 @@ function Composer(props: ComposerProps) {
             <SubcommandPopover
               subcommands={filteredSubcommands}
               activeIndex={subcommandActive}
+              loading={commandsQuery.isLoading}
               onSelect={(name) => composer.insertSubcommand(name)}
               parentCommand={composer.subcommandCmd}
             />
@@ -647,6 +667,7 @@ function Composer(props: ComposerProps) {
             <WorkflowPopover
               workflows={filteredWorkflows}
               activeIndex={workflowActive}
+              loading={workflowsQuery.isLoading}
               onSelect={(name) => composer.insertWorkflow(name)}
             />
           </div>
@@ -658,6 +679,7 @@ function Composer(props: ComposerProps) {
               subagents={atSubagents}
               files={atFiles}
               activeIndex={atActive}
+              loading={fileSearch.isLoading}
               onSelect={(path) => composer.insertFile(path)}
               onAgentSelect={insertAgentToken}
             />
