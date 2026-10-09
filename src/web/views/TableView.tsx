@@ -77,6 +77,14 @@ const table = css`
     &:hover {
       background: var(--haze-color-bg-subtle);
     }
+
+    /* 焦点环用 :focus-visible（与 global.ts / KanbanView 同一口径）：键盘 Tab
+     * 过去才显示，鼠标点击不显示。outline-offset:-1px 画在单元格分隔线内侧，
+     * 不会被相邻 td 的背景盖住。 */
+    &:focus-visible {
+      outline: 2px solid var(--haze-color-primary);
+      outline-offset: -1px;
+    }
   }
 `
 
@@ -316,9 +324,30 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
               const idx = rows.indexOf(row)
               const open = openIdx === idx
               const tool = rowToolName(row)
+              // 展开交互此前只挂在裸 <tr onClick> 上：没有 tabIndex、没有键盘处理，
+              // 键盘用户 Tab 走遍筛选条与计数后直接跳出表格（实测表格视图内 Tab
+              // 序列：筛选控件 → 计数 → Todo 面板，tbody 行一个都碰不到），
+              // 「查看原始 JSON」这条排障入口对键盘/读屏用户等于不存在。
+              // tabIndex 让行进入 Tab 序列，Enter/Space 与点击同效；行本身已是
+              // row 角色（ARIA 原生支持 aria-expanded），不额外加 role，
+              // 行的可访问名由各单元格文本自然拼出——aria-label 反而会盖掉
+              // 「摘要」列内容，读屏就听不到这一行到底写了什么。
+              const toggle = () => setOpenIdx(open ? null : idx)
               return (
                 <Fragment key={`g-${idx}`}>
-                  <tr onClick={() => setOpenIdx(open ? null : idx)} data-testid="table-row">
+                  <tr
+                    onClick={toggle}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        // 空格默认会滚动页面；行内是唯一动作，必须拦下
+                        e.preventDefault()
+                        toggle()
+                      }
+                    }}
+                    tabIndex={0}
+                    aria-expanded={open}
+                    data-testid="table-row"
+                  >
                     <td className={dim}>{idx}</td>
                     <td>
                       <span className={typeTag}>{typeLabel(row)}</span>
