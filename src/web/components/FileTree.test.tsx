@@ -590,4 +590,73 @@ describe('FileTree', () => {
     expect(screen.getAllByRole('treeitem').length).toBe(2)
     expect(document.activeElement).toBe(outside)
   })
+
+  // 漫游焦点所在的 treeitem 是个 div（不是 button），浏览器对 div 没有默认激活
+  // 行为：修复前 ↑↓ 把高亮移到某个文件、看起来「选中」了，按 Enter 却什么都
+  // 不发生——键盘用户必须再 Tab 若干次穿过该行的 展开/行名/@/🗑 按钮才能打开。
+  describe('Enter/空格激活漫游焦点所在的节点', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      type: 'directory',
+      children: [
+        { name: 'a.ts', path: 'a.ts', type: 'file' },
+        { name: 'd', path: 'd', type: 'directory', children: [] },
+        { name: 'z.ts', path: 'z.ts', type: 'file' },
+      ],
+    }
+
+    function renderTree() {
+      const onSelect = vi.fn()
+      const onToggle = vi.fn()
+      render(
+        <FileTree
+          root={fileTree}
+          expanded={new Set(['.', 'd'])}
+          selected={null}
+          loadingPaths={new Set()}
+          onToggle={onToggle}
+          onSelect={onSelect}
+          directoryClickMode="toggle"
+          hideRoot
+        />,
+      )
+      return { onSelect, onToggle }
+    }
+
+    function item(path: string): HTMLElement {
+      return screen
+        .getAllByRole('treeitem')
+        .find((el) => (el as HTMLElement).dataset.path === path) as HTMLElement
+    }
+
+    it('文件：Enter 与空格都等价于点击行名（打开文件）', () => {
+      const { onSelect } = renderTree()
+      // 用非默认漫游点（首项是 a.ts）：激活的必须是焦点所在节点，而不是树首
+      const file = item('z.ts')
+      fireEvent.focus(file)
+      fireEvent.keyDown(file, { key: 'Enter' })
+      expect(onSelect).toHaveBeenCalledWith('z.ts')
+      fireEvent.keyDown(file, { key: ' ' })
+      expect(onSelect).toHaveBeenCalledTimes(2)
+    })
+
+    it('目录：按 directoryClickMode=toggle 走展开/折叠', () => {
+      const { onSelect, onToggle } = renderTree()
+      const dir = item('d')
+      fireEvent.focus(dir)
+      fireEvent.keyDown(dir, { key: 'Enter' })
+      expect(onToggle).toHaveBeenCalledWith('d')
+      expect(onSelect).not.toHaveBeenCalled()
+    })
+
+    it('行内按钮上的 Enter 不再被容器激活一次（避免重复触发）', () => {
+      const { onSelect, onToggle } = renderTree()
+      // 行名按钮自身的 click 才是那次激活；容器再走一遍会让目录 toggle 两次 = 无反应
+      fireEvent.keyDown(screen.getByTestId('node-a.ts'), { key: 'Enter' })
+      fireEvent.keyDown(screen.getByTestId('toggle-d'), { key: ' ' })
+      expect(onSelect).not.toHaveBeenCalled()
+      expect(onToggle).not.toHaveBeenCalled()
+    })
+  })
 })

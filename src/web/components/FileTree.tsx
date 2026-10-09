@@ -387,9 +387,37 @@ function FileTreeInner({
           if (parentPath) setFocusedPath(parentPath)
           break
         }
+        case 'Enter':
+        case ' ': {
+          // 漫游焦点落在 treeitem 容器（div，不是 button）上，浏览器对 div 没有默认
+          // 激活行为：键盘用户 ↑↓ 移到某个文件、行高亮也跟着动了，按 Enter 却毫无反应，
+          // 必须再 Tab 若干次穿过该行的 展开/行名/@/🗑 按钮才能打开文件。这里让
+          // Enter/空格等价于点击行名按钮（文件=打开，目录按 directoryClickMode）。
+          //
+          // 事件来自行内按钮时直接放行：按钮的默认 click 已经激活过一次，再走这里会
+          // 重复（目录在 toggle 模式下两次切换 = 看起来按键无效）。
+          if ((e.target as HTMLElement).getAttribute?.('role') !== 'treeitem') return
+          if (!effectiveFocusedPath) return
+          const node = findNode(root, effectiveFocusedPath)
+          if (!node) return
+          e.preventDefault()
+          if (node.type === 'file' || directoryClickMode !== 'toggle')
+            onSelect(effectiveFocusedPath)
+          else onToggle(effectiveFocusedPath)
+          break
+        }
       }
     },
-    [visiblePaths, effectiveFocusedPath, expanded, onToggle, root, moveFocus],
+    [
+      visiblePaths,
+      effectiveFocusedPath,
+      expanded,
+      onToggle,
+      onSelect,
+      directoryClickMode,
+      root,
+      moveFocus,
+    ],
   )
 
   if (!root) return null
