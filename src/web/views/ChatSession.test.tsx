@@ -313,23 +313,24 @@ describe('ChatSession — 导出反馈闭环', () => {
       error: null,
       refetch,
     })
-    vi.stubGlobal('confirm', vi.fn(() => false))
     await renderSession()
 
     const btn = await screen.findByTestId('export-button')
     fireEvent.click(btn)
-    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(true))
-    fireEvent.click(btn)
+    const strip = await screen.findByTestId('export-strip-snapshots')
+    fireEvent.click(strip)
+    await waitFor(() => expect((strip as HTMLButtonElement).disabled).toBe(true))
+    fireEvent.click(strip)
     expect(sessionAPI.exportSession).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       rejectExport(new Error('数据库被占用'))
     })
 
-    const err = await screen.findByTestId('export-error')
+    const err = await screen.findByTestId('export-dialog-error')
     expect(err.getAttribute('role')).toBe('alert')
     expect(err.textContent).toContain('数据库被占用')
-    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    await waitFor(() => expect((strip as HTMLButtonElement).disabled).toBe(false))
   })
 
   it('导出失败后重试成功，错误条消失', async () => {
@@ -347,17 +348,67 @@ describe('ChatSession — 导出反馈闭环', () => {
       error: null,
       refetch,
     })
-    vi.stubGlobal('confirm', vi.fn(() => false))
     // happy-dom 没有下载实现：只关心失败条消失与第二次请求真的发出
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     await renderSession()
 
-    const btn = await screen.findByTestId('export-button')
-    fireEvent.click(btn)
-    await screen.findByTestId('export-error')
+    fireEvent.click(await screen.findByTestId('export-button'))
+    fireEvent.click(await screen.findByTestId('export-strip-snapshots'))
+    await screen.findByTestId('export-dialog-error')
 
-    fireEvent.click(btn)
-    await waitFor(() => expect(screen.queryByTestId('export-error')).toBeNull())
+    fireEvent.click(await screen.findByTestId('export-strip-snapshots'))
+    await waitFor(() => expect(screen.queryByTestId('export-dialog')).toBeNull())
     expect(sessionAPI.exportSession).toHaveBeenCalledTimes(2)
+  })
+
+  // 快照策略是隐私选择：原生 confirm 只能给「确定/取消」，而「确定」（含快照、
+  // 会泄露文件内容）正落在回车默认位——按回车就把文件正文打进了要分享的文件。
+  it('导出弹窗把快照策略做成两个具名按钮，默认项不含快照', async () => {
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    vi.mocked(sessionAPI.exportSession).mockResolvedValue({
+      version: 1,
+      session: { title: 's' },
+      messages: [],
+    } as unknown as Awaited<ReturnType<typeof sessionAPI.exportSession>>)
+    await renderSession()
+
+    fireEvent.click(await screen.findByTestId('export-button'))
+    // 分支数量查完前不允许盲选（避免决策完又弹第二个框）
+    await waitFor(() =>
+      expect((screen.getByTestId('export-strip-snapshots') as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    fireEvent.click(screen.getByTestId('export-include-snapshots'))
+    await waitFor(() =>
+      expect(sessionAPI.exportSession).toHaveBeenCalledWith('s1', { includeSnapshots: true }),
+    )
+  })
+
+  it('有派生分支时在同一个弹窗里说明，不再追弹第二个原生 confirm', async () => {
+    vi.mocked(sessionAPI.branches).mockResolvedValue([
+      { id: 'b1', projectId: 'p1', title: '子会话' },
+    ] as unknown as Awaited<ReturnType<typeof sessionAPI.branches>>)
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    await renderSession()
+
+    fireEvent.click(await screen.findByTestId('export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-dialog').textContent).toContain('1 个派生分支'),
+    )
+    expect(sessionAPI.exportSession).not.toHaveBeenCalled()
   })
 })

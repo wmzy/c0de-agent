@@ -9,6 +9,7 @@ import { Button } from 'haze-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { ArchivePanel } from '@/components/ArchivePanel.js'
+import { Dialog } from '@/components/Dialog.js'
 import { ModelSelector } from '@/components/ModelSelector.js'
 import { SegmentBreakDialog } from '@/components/SegmentBreakDialog.js'
 import { SessionSummary } from '@/components/SessionSummary.js'
@@ -128,15 +129,55 @@ const shakeExitBtn = css`
   }
 `
 
-/** 导出失败条：与工具条同宽的内联条，紧贴「导出」按钮下方。 */
-const exportErrorBar = css`
-  margin: 0 12px 4px;
-  padding: 4px 10px;
-  border: 1px solid color-mix(in srgb, var(--haze-color-danger) 50%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--haze-color-danger) 8%, transparent);
+const exportChoiceDesc = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+`
+
+const exportChoiceNote = css`
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--haze-color-text-secondary);
+`
+
+const exportChoiceError = css`
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--haze-color-danger);
+  border-radius: 6px;
   font-size: 12px;
   color: var(--haze-color-danger);
+`
+
+const exportChoiceBtn = css`
+  padding: 4px 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  font-size: 13px;
+  cursor: pointer;
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`
+
+/** 主操作是「剥离快照」——默认与回车都走安全的一侧。 */
+const exportChoicePrimary = css`
+  padding: 4px 12px;
+  border: 1px solid var(--haze-color-primary);
+  border-radius: 6px;
+  background: var(--haze-color-primary);
+  color: var(--haze-color-on-primary, #fff);
+  font-size: 13px;
+  cursor: pointer;
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 `
 
 export function ChatSession({
@@ -388,27 +429,31 @@ export function ChatSession({
   // 导出必须有闭环：进行中禁用按钮（否则连点两次 = 两个 confirm + 两次导出请求），
   // 失败把原因摊开。此前 catch 整段吞掉，用户点完看不到任何变化，会认定文件已经
   // 存好就关掉页面，备份静默失败。
+  //
+  // 快照策略用站内弹窗而不是原生 confirm：这是隐私选择，而原生框只有
+  // 「确定/取消」，且「确定」（含快照、会泄露文件内容）恰好落在回车的默认位、
+  // 推荐的「取消（剥离）」反而不该被当成取消操作。两个问题叠在一起，用户
+  // 肌肉记忆按回车就把文件内容打包进了要分享的导出文件。
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
-  const handleExport = async () => {
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  /** 分支数量（null=尚未查完，还在拉）。查完才让用户做选择，避免决策后又弹第二个框。 */
+  const [exportBranchCount, setExportBranchCount] = useState<number | null>(null)
+
+  const openExportDialog = async () => {
+    setExportError(null)
+    setExportBranchCount(null)
+    setExportDialogOpen(true)
+    const branches = await sessionAPI.branches(sessionId).catch(() => [])
+    setExportBranchCount(branches.length)
+  }
+
+  const runExport = async (includeSnapshots: boolean) => {
     if (exporting) return
     setExporting(true)
     setExportError(null)
     try {
-      // 先询问快照策略，再按需携带（隐私默认：剥离）。
-      const includeSnapshots = window.confirm(
-        '导出会话 JSON。\n\n归档中的「文件快照」包含被压缩进上下文的文件内容，分享导出文件时会泄露这些内容。\n\n点「确定」包含文件快照（仅本机备份/迁移需要）；点「取消」剥离文件快照（推荐，对话与统计不受影响）。',
-      )
-      const [data, branches] = await Promise.all([
-        sessionAPI.exportSession(sessionId, { includeSnapshots }),
-        sessionAPI.branches(sessionId).catch(() => []),
-      ])
-      if (branches.length > 0) {
-        const ok = window.confirm(
-          `该会话有 ${branches.length} 个派生分支。导出仅包含本会话的消息与归档，分支内容不会导出。\n确定继续导出本会话？`,
-        )
-        if (!ok) return
-      }
+      const data = await sessionAPI.exportSession(sessionId, { includeSnapshots })
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -417,6 +462,7 @@ export function ChatSession({
       a.download = `${title}.c0de-session.json`
       a.click()
       URL.revokeObjectURL(url)
+      setExportDialogOpen(false)
     } catch (err) {
       setExportError(
         err instanceof Error && err.message ? `导出失败：${err.message}` : '导出失败，请重试',
@@ -424,6 +470,12 @@ export function ChatSession({
     } finally {
       setExporting(false)
     }
+  }
+
+  const closeExportDialog = () => {
+    if (exporting) return
+    setExportDialogOpen(false)
+    setExportError(null)
   }
 
   // 中断恢复/出错重试：prompt 定位与重发编排收敛在 useRetryResume
@@ -727,7 +779,7 @@ export function ChatSession({
               <button
                 type="button"
                 className={shakeBtn}
-                onClick={() => void handleExport()}
+                onClick={() => void openExportDialog()}
                 disabled={exporting}
                 data-testid="export-button"
                 title="导出会话（消息 + 归档）为 JSON 文件"
@@ -736,14 +788,65 @@ export function ChatSession({
               </button>
               <SessionSummary sessionId={sessionId} />
             </div>
-            {exportError ? (
-              <div className={exportErrorBar} role="alert" data-testid="export-error">
-                {exportError}
-              </div>
-            ) : null}
           </>
         }
       />
+      {exportDialogOpen && (
+        <Dialog
+          open
+          onClose={closeExportDialog}
+          closeDisabled={exporting}
+          title="导出会话 JSON"
+          testId="export-dialog"
+          footer={
+            <>
+              <button
+                type="button"
+                className={exportChoiceBtn}
+                onClick={closeExportDialog}
+                disabled={exporting}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className={exportChoiceBtn}
+                data-testid="export-include-snapshots"
+                onClick={() => void runExport(true)}
+                disabled={exporting || exportBranchCount === null}
+              >
+                包含文件快照导出
+              </button>
+              <button
+                type="button"
+                className={exportChoicePrimary}
+                data-testid="export-strip-snapshots"
+                onClick={() => void runExport(false)}
+                disabled={exporting || exportBranchCount === null}
+              >
+                {exporting ? '导出中…' : '剥离快照导出（推荐）'}
+              </button>
+            </>
+          }
+        >
+          <div className={exportChoiceDesc}>
+            归档里的「文件快照」是被压缩进上下文的<strong>文件内容</strong>。剥离后对话、
+            统计、归档结构都不受影响，只是不带文件正文——分享导出文件时不会泄露这些内容。
+          </div>
+          <div className={exportChoiceNote}>
+            {exportBranchCount === null
+              ? '正在检查派生分支…'
+              : exportBranchCount > 0
+                ? `该会话有 ${exportBranchCount} 个派生分支：导出只含本会话的消息与归档，分支内容不在其中。`
+                : '导出内容：本会话的全部消息与归档。'}
+          </div>
+          {exportError ? (
+            <div className={exportChoiceError} role="alert" data-testid="export-dialog-error">
+              {'⚠'} {exportError}
+            </div>
+          ) : null}
+        </Dialog>
+      )}
       {chat.pendingSegmentBreak && (
         <SegmentBreakDialog
           activeSegment={chat.pendingSegmentBreak.activeSegment}
