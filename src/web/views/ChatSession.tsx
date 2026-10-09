@@ -128,6 +128,17 @@ const shakeExitBtn = css`
   }
 `
 
+/** 导出失败条：与工具条同宽的内联条，紧贴「导出」按钮下方。 */
+const exportErrorBar = css`
+  margin: 0 12px 4px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--haze-color-danger) 50%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--haze-color-danger) 8%, transparent);
+  font-size: 12px;
+  color: var(--haze-color-danger);
+`
+
 export function ChatSession({
   projectId,
   sessionId,
@@ -364,7 +375,16 @@ export function ChatSession({
   // P0 明示：导出仅含本会话消息与归档，fork 分支/子会话不在其中——有分支时
   // 导出前确认告知（此前用户以为完整备份，分支关系静默丢失）。
   // P2-6：归档 fileSnapshots 含文件内容，默认剥离；仅显式确认后随迁。
+  //
+  // 导出必须有闭环：进行中禁用按钮（否则连点两次 = 两个 confirm + 两次导出请求），
+  // 失败把原因摊开。此前 catch 整段吞掉，用户点完看不到任何变化，会认定文件已经
+  // 存好就关掉页面，备份静默失败。
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
   const handleExport = async () => {
+    if (exporting) return
+    setExporting(true)
+    setExportError(null)
     try {
       // 先询问快照策略，再按需携带（隐私默认：剥离）。
       const includeSnapshots = window.confirm(
@@ -383,13 +403,17 @@ export function ChatSession({
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      const title = (data.session.title || 'session').replace(/[^\w\u4e00-\u9fff-]+/g, '_')
+      const title = (data.session.title || 'session').replace(/[^\w一-鿿-]+/g, '_')
       a.href = url
       a.download = `${title}.c0de-session.json`
       a.click()
       URL.revokeObjectURL(url)
-    } catch {
-      // 导出失败静默：不阻塞主界面（可重试）
+    } catch (err) {
+      setExportError(
+        err instanceof Error && err.message ? `导出失败：${err.message}` : '导出失败，请重试',
+      )
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -695,13 +719,19 @@ export function ChatSession({
                 type="button"
                 className={shakeBtn}
                 onClick={() => void handleExport()}
+                disabled={exporting}
                 data-testid="export-button"
                 title="导出会话（消息 + 归档）为 JSON 文件"
               >
-                导出
+                {exporting ? '导出中…' : '导出'}
               </button>
               <SessionSummary sessionId={sessionId} />
             </div>
+            {exportError ? (
+              <div className={exportErrorBar} role="alert" data-testid="export-error">
+                {exportError}
+              </div>
+            ) : null}
           </>
         }
       />

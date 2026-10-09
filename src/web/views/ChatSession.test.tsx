@@ -11,6 +11,7 @@ import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConfigProvider } from '@/contexts/ConfigContext.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { sessionAPI } from '@/services/session.js'
 import { ChatSession } from '@/views/ChatSession.js'
 
 // ChatSession 用了 useRouter（navigateTo 走 imperative 导航），测试需包 MemoryRouter。
@@ -176,6 +177,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('ChatSession — 历史消息加载失败', () => {
@@ -225,5 +228,74 @@ describe('ChatSession — 历史消息加载失败', () => {
       expect(screen.getByTestId('chat-welcome')).toBeInTheDocument()
     })
     expect(screen.queryByTestId('chat-history-error')).toBeNull()
+  })
+})
+
+/**
+ * 导出是「备份」语义的动作：静默失败比报错更糟——用户以为文件已存好就关掉页面。
+ * 此前 catch 整段吞掉，且按钮无 pending 态，连点两次就是两个 confirm + 两次请求。
+ */
+describe('ChatSession — 导出反馈闭环', () => {
+  it('导出失败时显示原因，按钮恢复可点', async () => {
+    // 请求在飞期间按钮禁用：连点不再发出第二次导出请求
+    let rejectExport: (err: Error) => void = () => {}
+    vi.mocked(sessionAPI.exportSession).mockReturnValue(
+      new Promise((_, reject) => {
+        rejectExport = reject
+      }),
+    )
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    vi.stubGlobal('confirm', vi.fn(() => false))
+    await renderSession()
+
+    const btn = await screen.findByTestId('export-button')
+    fireEvent.click(btn)
+    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(true))
+    fireEvent.click(btn)
+    expect(sessionAPI.exportSession).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      rejectExport(new Error('数据库被占用'))
+    })
+
+    const err = await screen.findByTestId('export-error')
+    expect(err.getAttribute('role')).toBe('alert')
+    expect(err.textContent).toContain('数据库被占用')
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('导出失败后重试成功，错误条消失', async () => {
+    vi.mocked(sessionAPI.exportSession)
+      .mockRejectedValueOnce(new Error('网络中断'))
+      .mockResolvedValueOnce({
+        version: 1,
+        session: { title: 's' },
+        messages: [],
+      } as unknown as Awaited<ReturnType<typeof sessionAPI.exportSession>>)
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    vi.stubGlobal('confirm', vi.fn(() => false))
+    // happy-dom 没有下载实现：只关心失败条消失与第二次请求真的发出
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await renderSession()
+
+    const btn = await screen.findByTestId('export-button')
+    fireEvent.click(btn)
+    await screen.findByTestId('export-error')
+
+    fireEvent.click(btn)
+    await waitFor(() => expect(screen.queryByTestId('export-error')).toBeNull())
+    expect(sessionAPI.exportSession).toHaveBeenCalledTimes(2)
   })
 })
