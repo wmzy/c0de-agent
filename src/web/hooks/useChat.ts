@@ -7,6 +7,7 @@ import {
   type ChatOpts,
   type ChatState,
   INITIAL,
+  type LastFailure,
   type PendingSegmentBreak,
   type PendingTrust,
   RUN_CHANNEL,
@@ -48,13 +49,14 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const pendingTrustRef = useRef<PendingTrust | null>(null)
   const llmDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /**
-   * 最近一次 sendMessage 的失败原因。
+   * 最近一次 sendMessage 的结果：失败原因 + 是否需要用户决策。
    *
-   * chat 对象是每次渲染新建的快照，调用方在自己的 .then 里读 chat.error 只能拿到
-   * 发送**前**那一帧的 error（恒为 null）；要跨页面把原因带走（首条失败后清空会话
-   * 回到草稿页），必须在这里同步落一份。
+   * 以 **ref** 暴露给调用方（而不是普通字段）：chat 对象是每次渲染新建的快照，
+   * 调用方在自己的 .then 里读字段只能拿到发送**前**那一帧——失败路径的 setState
+   * 尚未重渲染，字段恒为旧值。跨页面把原因带走（首条失败后清空会话回草稿页）
+   * 与「这次失败是等待用户决策（信任/段边界）还是真的白费」都依赖这里的实时值。
    */
-  const failureReasonRef = useRef<string | null>(null)
+  const lastFailureRef = useRef<LastFailure>({ reason: null, gate: null })
   const qc = useQueryClient()
 
   /** 停止附着轮询（幂等：递增代数使在途 tick 失效）。 */
@@ -91,7 +93,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       // P1：标记流式态并广播 run 启动——同会话其他标签页据此附着显示运行态。
       streamingRef.current = true
       // 新一轮开始：清掉上轮的失败原因
-      failureReasonRef.current = null
+      lastFailureRef.current = { reason: null, gate: null }
       broadcastRunState({ sessionId, active: true })
       // 追踪是否收到 error 事件（区分服务端正常错误与连接中断）
       let gotError = false
@@ -145,7 +147,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         )
         if (!result.done && !gotError) {
           // SSE 结束但未收到 done 也无 error → 连接中断（服务重启等）
-          failureReasonRef.current = INTERRUPTED_REASON
+          lastFailureRef.current = { reason: INTERRUPTED_REASON, gate: null }
           setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
         } else if (!result.done && gotError) {
           // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断
@@ -171,7 +173,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // 并发守卫：撤回乐观追加的 user 消息并提示（P0-4）。
           setState((s) => {
             const msgs = withdraw(s.messages)
-            failureReasonRef.current = '该会话已有进行中的对话'
+            lastFailureRef.current = { reason: '该会话已有进行中的对话', gate: null }
             return { ...s, messages: msgs, isStreaming: false, error: '该会话已有进行中的对话' }
           })
           return false
@@ -182,7 +184,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           e.code === 'MODEL_NOT_FOUND'
         ) {
           // P0-1/P2-4：provider/模型配置问题 → 撤回乐观 user 消息并给出服务端可操作提示
-          failureReasonRef.current = e.message
+          lastFailureRef.current = { reason: e.message, gate: null }
           setState((s) => {
             const msgs = withdraw(s.messages)
             return {
@@ -197,7 +199,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         if (e.code === 'WORKTREE_MISSING' || e.code === 'PROJECT_MISSING') {
           setState((s) => {
             const msgs = withdraw(s.messages)
-            failureReasonRef.current = e.message
+            lastFailureRef.current = { reason: e.message, gate: null }
             return { ...s, messages: msgs, isStreaming: false, error: e.message }
           })
           return false
@@ -228,6 +230,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               : {}),
           }
           pendingTrustRef.current = pending
+          // 标记为「等待用户决策」：本次发送不是白费，调用方不得据此清会话
+          // （弹窗渲染在本组件里，清会话 + 导航会把弹窗连同原因一起卸载）。
+          lastFailureRef.current = { reason: e.message, gate: 'trust' }
           setState((s) => ({ ...s, isStreaming: false, pendingTrust: pending }))
           return false
         }
@@ -244,6 +249,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               : {}),
           }
           pendingRef.current = pending
+          // 同 TRUST_REQUIRED：等待用户确认开新段，不是发送白费。
+          lastFailureRef.current = { reason: e.message, gate: 'segmentBreak' }
           setState((s) => ({ ...s, isStreaming: false, pendingSegmentBreak: pending }))
           return false
         }
@@ -263,7 +270,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // 「恢复对话」只是重发同一请求、必然再次失败，用户被困在错误的诊断里。
           // 与各 code 分支同口径：撤回乐观消息 + 透出后端文案（含重试入口）。
           const reason = e.message || `请求失败（HTTP ${e.status}）`
-          failureReasonRef.current = reason
+          lastFailureRef.current = { reason, gate: null }
           setState((s) => {
             const msgs = withdraw(s.messages)
             return {
@@ -275,7 +282,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           })
         } else {
           // 无 status：fetch 本身失败（服务不可达）或请求在途被打断 → 视为中断
-          failureReasonRef.current = INTERRUPTED_REASON
+          lastFailureRef.current = { reason: INTERRUPTED_REASON, gate: null }
           setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
         }
         return false
@@ -637,7 +644,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   return {
     ...state,
     /** 最近一次 sendMessage 失败的原因（成功/未失败时为 null）。跨页面传递用。 */
-    lastFailureReason: failureReasonRef.current,
+    lastFailure: lastFailureRef,
     sendMessage,
     abort,
     steer,

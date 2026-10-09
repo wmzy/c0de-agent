@@ -11,6 +11,7 @@ import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConfigProvider } from '@/contexts/ConfigContext.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { failedSendReason } from '@/hooks/failedSendReason.js'
 import { sessionAPI } from '@/services/session.js'
 import { ChatSession } from '@/views/ChatSession.js'
 
@@ -42,6 +43,8 @@ const mockUseChatState = {
   runPaused: false,
   interrupted: false,
   pendingTrust: null,
+  // sendMessage 结果：由失败路径同步写入的 ref（值字段在 .then 里恒为旧值）。
+  lastFailure: { current: { reason: null as string | null, gate: null as null | 'trust' } },
   sendMessage: vi.fn().mockResolvedValue(true),
   abort: vi.fn(),
   confirm: vi.fn(),
@@ -60,7 +63,12 @@ const mockUseChatState = {
 vi.mock('@/hooks/useChat.js', () => ({ useChat: () => mockUseChatState }))
 
 vi.mock('@/hooks/useAgent.js', () => ({
-  useAgent: () => ({ pause: vi.fn(), resume: vi.fn(), paused: false }),
+  useAgent: () => ({
+    pause: vi.fn(),
+    resume: vi.fn(),
+    resetPaused: vi.fn(),
+    paused: false,
+  }),
 }))
 
 vi.mock('@/hooks/useShake.js', () => ({
@@ -232,9 +240,63 @@ describe('ChatSession — 历史消息加载失败', () => {
 })
 
 /**
- * 导出是「备份」语义的动作：静默失败比报错更糟——用户以为文件已存好就关掉页面。
- * 此前 catch 整段吞掉，且按钮无 pending 态，连点两次就是两个 confirm + 两次请求。
+ * 首条消息失败的「空会话治理」不能吞掉需要用户决策的失败。
+ * 未信任项目的 409 TRUST_REQUIRED / 段边界确认的弹窗都渲染在 ChatSession 内，
+ * 清空会话 + 导航回草稿页会把弹窗连同失败原因一起卸载：用户只看到一句没有任何
+ * 信息量的「消息发送失败，请重试后再次发送」，且每次重试必然复现（无法开始对话）。
  */
+describe('ChatSession — 首条消息失败的空会话治理', () => {
+  async function sendFirstMessage() {
+    const editor = screen.getByTestId('composer-editor')
+    editor.textContent = '第一条消息'
+    fireEvent.input(editor)
+    fireEvent.keyDown(editor, { key: 'Enter' })
+  }
+
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    vi.mocked(sessionAPI.messages).mockResolvedValue([])
+    mockUseChatState.sendMessage.mockResolvedValue(false)
+    mockUseChatState.lastFailure.current = { reason: null, gate: null }
+  })
+
+  it('失败等待用户决策（未信任项目）时不清空会话——弹窗必须留在原地', async () => {
+    mockUseChatState.lastFailure.current = {
+      reason: '项目「p1」的项目配置（.c0de/config.json）包含需要你确认的风险项',
+      gate: 'trust',
+    }
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
+
+    await sendFirstMessage()
+
+    await waitFor(() => expect(mockUseChatState.sendMessage).toHaveBeenCalled())
+    expect(sessionAPI.purgeEmpty).not.toHaveBeenCalled()
+  })
+
+  it('普通首条失败仍清空会话，并把服务端原因（而非兜底文案）带回草稿页', async () => {
+    mockUseChatState.lastFailure.current = {
+      reason: '未找到名为「prov-x」的 AI 服务。已配置：mock。',
+      gate: null,
+    }
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
+
+    await sendFirstMessage()
+
+    await waitFor(() => expect(sessionAPI.purgeEmpty).toHaveBeenCalled())
+    expect(failedSendReason.take('p1')?.reason).toBe(
+      '未找到名为「prov-x」的 AI 服务。已配置：mock。',
+    )
+  })
+})
+
 describe('ChatSession — 导出反馈闭环', () => {
   it('导出失败时显示原因，按钮恢复可点', async () => {
     // 请求在飞期间按钮禁用：连点不再发出第二次导出请求

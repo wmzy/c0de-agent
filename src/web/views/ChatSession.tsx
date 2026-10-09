@@ -201,8 +201,9 @@ export function ChatSession({
     images: ImagePart[]
     files: string[]
   } | null>(null)
-  // chat 是每次渲染新建的 {...state, …} 快照；cleanupEmptySessionOnFailure 在
-  // .then 里读 chat.lastFailureReason 必须走 ref，否则拿到发送前那一帧（null）。
+  // chat 是每次渲染新建的 {...state, …} 快照：cleanupEmptySessionOnFailure 在
+  // .then 里读 chat 的**值字段**只会拿到发送前那一帧，失败原因/门禁必须走 chat
+  // 暴露的 lastFailure ref（对象身份跨渲染稳定）。
   const chatRef = useRef(chat)
   chatRef.current = chat
 
@@ -339,6 +340,14 @@ export function ChatSession({
    *  否则用户看到的是「什么都没发生」。 */
   const cleanupEmptySessionOnFailure = async (ok: boolean, firstMessage: boolean) => {
     if (ok || !firstMessage) return
+    // 读 ref 而不是 chat 快照里的字段：失败路径的 setState 还没重渲染，快照里
+    // 只有发起发送那一帧的值（原来读 chatRef.current.lastFailureReason，恒为 null，
+    // 用户永远只看到兜底的「消息发送失败，请重试后再次发送」）。
+    const failure = chatRef.current.lastFailure.current
+    // 「等待用户决策」的失败（未信任项目的风险确认 / 段边界确认）不是发送白费：
+    // 弹窗就渲染在本组件里，清会话 + 导航回草稿页会把弹窗连同原因一起卸载——
+    // 用户只剩一句没有任何信息量的重试提示，且每次重试都必然复现（P0）。
+    if (failure.gate) return
     try {
       const msgs = await sessionAPI.messages(sessionId)
       if (msgs.length === 0) {
@@ -350,7 +359,7 @@ export function ChatSession({
         // 会话没了，但「消息 + 失败原因」要带去草稿页：导航会卸载本组件，
         // 输入框里的草稿和 useChat 的 error 一起消失，用户只会看到什么都没发生。
         failedSendReason.set(projectId, {
-          reason: chatRef.current.lastFailureReason ?? '消息发送失败，请重试后再次发送',
+          reason: failure.reason ?? '消息发送失败，请重试后再次发送',
           payload: {
             text: lastFailedSend.current?.text ?? '',
             prompt: lastFailedSend.current?.prompt ?? [],
