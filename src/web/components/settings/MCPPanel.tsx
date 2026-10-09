@@ -3,6 +3,7 @@ import type { MCPServerConfig } from '@shared/types/config.js'
 import { Button, ConfirmDialog } from 'haze-ui'
 import { useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
+import { CommaListInput } from '@/components/settings/CommaListInput.js'
 import { section, sectionTitle } from '@/components/settings/styles.js'
 import { btnDanger } from '@/styles/tokens.js'
 
@@ -87,9 +88,10 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
                 onChange={(v) => updateMcpServer(index, 'command', v)}
                 placeholder="command"
               />
-              <SyncedInput
-                value={(server.args ?? []).join(' ')}
-                onChange={(v) => updateMcpServer(index, 'args', v.split(/\s+/).filter(Boolean))}
+              <CommaListInput
+                value={server.args ?? []}
+                onCommit={(v) => updateMcpServer(index, 'args', v)}
+                separator=" "
                 placeholder="args（空格分隔）"
               />
             </>

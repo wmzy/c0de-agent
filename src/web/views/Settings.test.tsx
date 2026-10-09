@@ -1508,6 +1508,31 @@ describe('Settings — 完整配置表单覆盖', () => {
     await waitFor(() => expect(screen.queryByTestId('mcp-row')).toBeNull())
   })
 
+  // 复现：args 字段是 value={args.join(' ')} + onChange=v.split(/\s+/) 的裸受控组合，
+  // 每敲一个空格就被 parse→join 还原，尾随分隔符永远打不出来——第二个参数根本输不进去，
+  // 用户以为填的是 `npx -y`，保存下来是 `npx-y`。
+  it('MCP args 空格分隔：尾随空格保留，第二个参数能输进去', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('mcp-add'))
+    const args = screen.getByPlaceholderText('args（空格分隔）') as HTMLInputElement
+    fireEvent.change(args, { target: { value: 'npx ' } })
+    await waitFor(() => expect(args.value).toBe('npx '))
+
+    fireEvent.change(args, { target: { value: 'npx -y' } })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const patch = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      mcpServers: { args: string[] }[]
+    }
+    expect(patch.mcpServers[0]?.args).toEqual(['npx', '-y'])
+  })
+
   // 回归：MCP 已在 serve/CLI 两个宿主接入（registerMCPServers 注册其工具、项目作用域
   // 受信任门禁），面板却仍写「未接入工具加载…不会向 AI 暴露任何工具」——用户据此刻意
   // 不配置、或以为配了也无副作用（实际会连服务器并暴露工具）。提示必须与实现一致。
