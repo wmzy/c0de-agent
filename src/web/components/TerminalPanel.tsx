@@ -73,7 +73,9 @@ const tabWrapStyle = css`
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  /* 竖向内边距从 4px 收到 2px：命中区扩到 24px 的关闭钮后，药丸 = 2+24+2 = 28px
+   * （原 4+18+4 = 26px），标签栏仍是 36px 高，不会把药丸挤出可视区。 */
+  padding: 2px 8px;
   font-size: 12px;
   color: var(--haze-color-text-secondary);
   background: transparent;
@@ -133,17 +135,22 @@ const tabCloseStyle = css`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  /* 命中区 24×24（WCAG 2.5.8 目标尺寸最低值）：此前 16×16，与相邻的标签切换钮
+   * 中心距仅 23.3px（1440×900 实测），连「间距例外」都不满足——确实不达标。
+   * 更实际的问题是这颗 × 会直接杀掉该标签的全部 PTY：一个 16px、紧贴「切换
+   * 标签」的破坏性目标，触屏上几乎必然误触。24px 后与切换钮中心距 27.3px，
+   * 两条路径（目标尺寸 / 间距例外）同时满足，× 字形本身不变。 */
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
   color: var(--haze-color-text-secondary);
   font-size: 14px;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0;
   line-height: 1;
-  /* 覆盖全局 button 的 44px 触控最小尺寸，否则 16px 关闭钮被撑大溢出标签行 */
+  /* 覆盖全局 button 的 44px 触控最小尺寸，否则 24px 关闭钮被撑大溢出标签行 */
   min-height: auto;
   min-width: auto;
 
