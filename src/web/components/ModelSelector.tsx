@@ -199,16 +199,22 @@ export function ModelSelector({
 
   // 当前 provider 在 config 中预定义的模型名（作为输入建议）
   const configured = config?.providers ?? []
-  const current = configured.find((p) => p.name === value.provider)
-  // 仅提示启用的模型（enabled 省略/true 视为启用）
+  /** provider 在 config 中声明的「已启用模型」清单；未声明清单（自建网关等）返回
+   *  undefined——用于区分「清单里没有这个模型」与「此 provider 不限定模型」。 */
+  const declaredModelsFor = useCallback(
+    (name: string): string[] | undefined => {
+      const p = configured.find((x) => x.name === name)
+      if (!p?.models) return undefined
+      // 仅列出启用的模型（enabled 省略/true 视为启用）
+      return Object.entries(p.models)
+        .filter(([, v]) => v.enabled !== false)
+        .map(([m]) => m)
+    },
+    [configured],
+  )
   const modelHints = useMemo(
-    () =>
-      current?.models
-        ? Object.entries(current.models)
-            .filter(([, v]) => v.enabled !== false)
-            .map(([name]) => name)
-        : [],
-    [current],
+    () => declaredModelsFor(value.provider) ?? [],
+    [declaredModelsFor, value.provider],
   )
 
   const [hintsOpen, setHintsOpen] = useState(false)
@@ -318,7 +324,18 @@ export function ModelSelector({
               className={`${inputStyle} ${compactSelect} ${providerMinWidth}`}
               value={value.provider}
               onValuesChange={(v) => {
-                onChange({ ...value, provider: v as string })
+                const next = v as string
+                // 切换 provider 后旧模型名属于上一个 provider：新 provider 若声明了
+                // 模型清单且当前值不在其中，校正为清单首项。不校正会发出「不存在的
+                // provider+model 组合」——provider 下拉与 model 输入框都显示着值，
+                // 界面看不出问题，只有请求失败（服务端 MODEL_NOT_FOUND）。
+                // 未声明清单的 provider（自建网关）保持自由输入原值。
+                const declared = declaredModelsFor(next) ?? []
+                const model =
+                  declared.length > 0 && !declared.includes(value.model)
+                    ? (declared[0] ?? value.model)
+                    : value.model
+                onChange({ provider: next, model })
                 // 切换 provider 后旧列表不再适用，直接收起
                 closeHints()
               }}

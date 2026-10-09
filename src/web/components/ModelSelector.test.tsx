@@ -7,7 +7,7 @@
 
 import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { type ModelSelection, ModelSelector } from '@/components/ModelSelector.js'
@@ -181,6 +181,70 @@ describe('ModelSelector — model 建议项', () => {
     }
     renderSelector({ provider: 'plain', model: '' }, cfg)
     expect(document.querySelector('[data-testid="model-dropdown"]')).toBeNull()
+  })
+
+  // 回归：切换 provider 只换了 provider 名，model 原样带着走——发出去的是「不属于
+  // 新 provider 的模型名」。provider 下拉与 model 输入框都显示着值，界面看不出问题，
+  // 只有请求失败（服务端 MODEL_NOT_FOUND），且用户切一次就永久关掉了默认值校正通道。
+  it('切换 provider 时按新 provider 的模型清单校正 model', async () => {
+    const { onChange } = renderSelector({ provider: 'sensenova', model: 'SenseChat-5' })
+    const sel = (await screen.findByTestId('provider-select')) as HTMLSelectElement
+    // providers 走 react-query：选项就位前 change 到不存在的 value 会被浏览器折成空串
+    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toContain('openai'))
+
+    fireEvent.change(sel, { target: { value: 'openai' } })
+    expect(onChange).toHaveBeenLastCalledWith({ provider: 'openai', model: 'gpt-4o' })
+    expect(modelInput().value).toBe('gpt-4o')
+  })
+
+  it('切换 provider 时模型名仍在新清单内则保持原值', async () => {
+    const cfg: Config = {
+      ...baseConfig,
+      providers: [
+        {
+          name: 'pa',
+          protocol: 'openai-compat',
+          apiKey: 'k',
+          baseURL: '',
+          models: { shared: {}, onlyA: {} },
+        },
+        {
+          name: 'pb',
+          protocol: 'openai-compat',
+          apiKey: 'k',
+          baseURL: '',
+          models: { shared: {}, onlyB: {} },
+        },
+      ],
+    }
+    const { onChange } = renderSelector({ provider: 'pa', model: 'shared' }, cfg)
+    const sel = (await screen.findByTestId('provider-select')) as HTMLSelectElement
+    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toContain('pb'))
+
+    fireEvent.change(sel, { target: { value: 'pb' } })
+    expect(onChange).toHaveBeenLastCalledWith({ provider: 'pb', model: 'shared' })
+  })
+
+  it('切换到未声明模型清单的 provider（自建网关）时保留自由输入的模型名', async () => {
+    const cfg: Config = {
+      ...baseConfig,
+      providers: [
+        {
+          name: 'pa',
+          protocol: 'openai-compat',
+          apiKey: 'k',
+          baseURL: '',
+          models: { onlyA: {} },
+        },
+        { name: 'gateway', protocol: 'openai-compat', apiKey: 'k', baseURL: '' },
+      ],
+    }
+    const { onChange } = renderSelector({ provider: 'pa', model: 'onlyA' }, cfg)
+    const sel = (await screen.findByTestId('provider-select')) as HTMLSelectElement
+    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toContain('gateway'))
+
+    fireEvent.change(sel, { target: { value: 'gateway' } })
+    expect(onChange).toHaveBeenLastCalledWith({ provider: 'gateway', model: 'onlyA' })
   })
 
   // 回归：原生 <datalist> 在 input 有值时会按该值过滤选项。自定义列表
