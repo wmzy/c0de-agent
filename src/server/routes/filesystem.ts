@@ -2,6 +2,7 @@ import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { relative as relativePath, resolve as resolvePath } from 'node:path'
 import { Hono } from 'hono'
+import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
 /** 目录列表项。 */
@@ -16,14 +17,13 @@ type DirEntry = {
  *
  * 输入 path 为空时返回 home 目录列表。
  * `~` 开头自动展开为 home 目录。
+ *
+ * 读不到（无权访问 / 已被删除 / 不是目录）必须抛出：此前吞成 `[]`，
+ * 选择器无法区分「目录是空的」与「目录读不到」，把权限错误渲染成
+ * 「（空）」——用户据此认定「里面没有东西」，既不重试也不去修权限。
  */
 async function listDirectories(dirPath: string): Promise<DirEntry[]> {
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await readdir(dirPath, { withFileTypes: true })
-  } catch {
-    return []
-  }
+  const entries = await readdir(dirPath, { withFileTypes: true })
   const dirs = entries
     .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
     .map((e) => ({
@@ -102,8 +102,26 @@ function createFilesystemRoute(ctx: ServerContext): Hono {
     const target = expandPath(rawPath)
     // 校验：ctx 可用于将来做沙箱限制（当前允许浏览任意路径）
     void ctx
-    const dirs = await listDirectories(target)
-    return c.json({ path: target, directories: dirs })
+    try {
+      const dirs = await listDirectories(target)
+      return c.json({ path: target, directories: dirs })
+    } catch (err) {
+      // 读不到就说读不到：调用方（目录选择器）据此展示原因与重试，
+      // 而不是把失败当成空目录。
+      const errno = (err as NodeJS.ErrnoException | null)?.code
+      if (errno === 'ENOENT' || errno === 'ENOTDIR') {
+        return apiError(c, 404, 'PATH_NOT_FOUND', `目录不存在或已被删除：${target}`)
+      }
+      if (errno === 'EACCES' || errno === 'EPERM') {
+        return apiError(c, 403, 'PATH_FORBIDDEN', `没有权限读取该目录：${target}`)
+      }
+      return apiError(
+        c,
+        500,
+        'BROWSE_FAILED',
+        `读取目录失败：${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
   })
 
   // 递归搜索目录（用于项目路径自动补全——命中深层目录）
