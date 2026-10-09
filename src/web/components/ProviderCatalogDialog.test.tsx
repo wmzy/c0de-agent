@@ -263,4 +263,66 @@ describe('ProviderCatalogDialog', () => {
     const confirmBtn = screen.getByTestId('catalog-confirm') as HTMLButtonElement
     expect(confirmBtn.disabled).toBe(true)
   })
+
+  // 搜索是「看什么」、选择是「要什么」：输入一个不包含已选项的搜索词，
+  // 选中态此前被静默作废（确认键无声禁用、详情标题退化成裸 id、API/文档链接消失）。
+  it('搜索词过滤掉已选 provider 时，选择与确认按钮仍然有效', async () => {
+    vi.mocked(catalogAPI.listProviders).mockResolvedValue({
+      providers: [
+        { id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai', env: [], modelCount: 2 },
+        { id: 'anthropic', name: 'Anthropic', npm: '@ai-sdk/anthropic', env: [], modelCount: 3 },
+      ],
+    })
+    vi.mocked(catalogAPI.getProviderModels).mockResolvedValue({
+      provider: {
+        id: 'openai',
+        name: 'OpenAI',
+        npm: '@ai-sdk/openai',
+        env: [],
+        modelCount: 1,
+      },
+      models: [
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          attachment: false,
+          reasoning: false,
+          temperature: true,
+          toolCall: true,
+          context: 128000,
+          output: 16384,
+          costInput: 1,
+          costOutput: 2,
+        },
+      ],
+    })
+
+    renderWithClient(<ProviderCatalogDialog onClose={vi.fn()} onSelect={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText('OpenAI')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('catalog-provider-openai'))
+    await waitFor(() => expect(screen.getByText('GPT-4o')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('catalog-search'), { target: { value: 'anthro' } })
+
+    await waitFor(() => expect(screen.queryByTestId('catalog-provider-openai')).toBeNull())
+    // 选择没被搜索词作废：确认键仍可点、详情仍是 OpenAI（不是裸 id）
+    expect((screen.getByTestId('catalog-confirm') as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByTestId('catalog-confirm').textContent).toContain('选择此 Provider')
+    expect(screen.getByTestId('catalog-kept-selection').textContent).toContain('OpenAI')
+    expect(screen.getByText('GPT-4o')).toBeTruthy()
+  })
+
+  it('搜索无命中时给出「无匹配」而不是一片空白', async () => {
+    vi.mocked(catalogAPI.listProviders).mockResolvedValue({
+      providers: [{ id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai', env: [], modelCount: 1 }],
+    })
+
+    renderWithClient(<ProviderCatalogDialog onClose={vi.fn()} onSelect={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText('OpenAI')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('catalog-search'), { target: { value: 'zzz' } })
+
+    await waitFor(() => expect(screen.getByTestId('catalog-no-match')).toBeTruthy())
+    expect(screen.getByTestId('catalog-no-match').textContent).toContain('zzz')
+  })
 })
