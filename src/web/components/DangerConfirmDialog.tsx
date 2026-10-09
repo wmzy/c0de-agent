@@ -116,16 +116,38 @@ export function DangerConfirmDialog({
   onClose,
 }: DangerConfirmDialogProps) {
   const [typed, setTyped] = useState('')
+  // 每次打开（以及确认词变化）都从空输入重新开始：调用点常把本组件常驻挂载、
+  // 只切 open（WorkflowsPanel / UpdateBanner），typed 会跨关闭保留——用户第一次
+  // 认真输入过确认词、按 Esc 后悔，重开时输入框里还留着上一次的词，matched 在
+  // 第一帧就成立，红色确认键零确认即可按下，逐字确认这道门禁等于形同虚设。
+  //
+  // 渲染期归一（而非 effect）：effect 要等这一帧画完，重开的头一帧仍会显示
+  // 预填的词与已可点的确认键。
+  const [openedFor, setOpenedFor] = useState<{ open: boolean; word: string } | null>(null)
+  if (open && (openedFor?.open !== true || openedFor.word !== confirmWord)) {
+    setOpenedFor({ open: true, word: confirmWord })
+    setTyped('')
+  } else if (!open && openedFor !== null) {
+    setOpenedFor(null)
+  }
   const matched = typed === confirmWord
+  // 请求在飞时不给关闭的出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染
+  // 在这块面板里（role=alert），中途关掉它就等于把失败原因一起关掉——实测
+  // 删除项目时按 Esc，服务端随后 500，用户看到的是「点了删除，什么也没发生」。
+  const dismiss = () => {
+    if (busy) return
+    onClose()
+  }
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={dismiss}
+      closeDisabled={busy}
       title={title}
       testId="danger-confirm-dialog"
       footer={
         <>
-          <button type="button" className={btn} onClick={onClose}>
+          <button type="button" className={btn} onClick={dismiss} disabled={busy}>
             取消
           </button>
           {secondaryAction && (

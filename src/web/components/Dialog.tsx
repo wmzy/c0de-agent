@@ -14,6 +14,8 @@ export type DialogProps = {
   footer?: ReactNode
   width?: string
   testId?: string
+  /** 禁用关闭键。给「请求在飞、关闭会连带丢掉失败原因」的弹窗用。 */
+  closeDisabled?: boolean
 }
 
 /** 面板：全高列布局，内部滚动；外框圆角/阴影/边框由 haze 面板样式提供。 */
@@ -57,9 +59,14 @@ const closeButton = css`
   padding: 0;
   flex-shrink: 0;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: var(--haze-color-bg-subtle);
     color: var(--haze-color-text);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 `
 
@@ -101,6 +108,7 @@ export function Dialog({
   footer,
   width,
   testId,
+  closeDisabled = false,
 }: DialogProps) {
   const panelWrapRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -150,6 +158,30 @@ export function Dialog({
     }
   }, [open])
 
+  // closeDisabled 期间在面板上捕获阶段拦下「关闭意图」：haze 把 Esc（cancel）
+  // 与点背景（target === 面板）都接到自己的内部 open state 上，光把 onClose 换成
+  // 空操作只能挡住调用方的副作用，弹层自己照样进入 closed 态（面板内置
+  // display:flex 会盖掉 UA 的 dialog:not([open]) 规则，于是失败原因还在 DOM
+  // 里、面板却已经不再 modal）。React 的事件挂在根容器上、属于冒泡阶段，
+  // 挂在面板自身的捕获监听一定先跑。
+  useEffect(() => {
+    if (!open || !closeDisabled) return
+    const el = panelWrapRef.current?.querySelector('dialog')
+    if (!el) return
+    const block = (e: Event) => {
+      if (e.type === 'cancel' || e.target === el) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    el.addEventListener('cancel', block, true)
+    el.addEventListener('click', block, true)
+    return () => {
+      el.removeEventListener('cancel', block, true)
+      el.removeEventListener('click', block, true)
+    }
+  }, [open, closeDisabled])
+
   // 打开后把焦点交给内容区第一个控件。haze 的 useFocusScope 在自己的 passive
   // effect 里 focusFirst(面板)，而面板内第一个可聚焦节点是我们渲染在 children
   // 之前的 ✕ 关闭键（或 DirectoryPicker 的快捷目录行）——实测「添加项目」弹窗
@@ -181,7 +213,13 @@ export function Dialog({
     >
       <HazeDialog open onClose={onClose} title={title} classNames={{ root: panel, header }}>
         {title != null && (
-          <button type="button" className={closeButton} onClick={onClose} aria-label="关闭">
+          <button
+            type="button"
+            className={closeButton}
+            onClick={onClose}
+            aria-label="关闭"
+            disabled={closeDisabled}
+          >
             ✕
           </button>
         )}

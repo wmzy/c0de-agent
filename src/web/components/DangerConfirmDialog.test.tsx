@@ -89,4 +89,103 @@ describe('DangerConfirmDialog', () => {
     renderDialog()
     expect(screen.queryByTestId('danger-error')).toBeNull()
   })
+
+  /**
+   * 调用点常把本组件常驻挂载、只切 open（WorkflowsPanel 的 pendingDelete、
+   * UpdateBanner 的 confirmOpen），typed 因此跨关闭保留：用户认真输过一次确认
+   * 词、按 Esc 后悔，重开时输入框里还留着上一次的词，确认键第一帧即可按下——
+   * 逐字确认这道门禁第二次打开就失效了。
+   */
+  it('常驻挂载下重新打开时确认词被清空，确认键重新禁用', () => {
+    const { rerender } = render(
+      <DangerConfirmDialog
+        open={true}
+        title="删除工作流 demo"
+        description="工作流文件将被永久删除。"
+        confirmWord="demo"
+        onConfirm={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: 'demo' } })
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(false)
+
+    rerender(
+      <DangerConfirmDialog
+        open={false}
+        title="删除工作流 demo"
+        description="工作流文件将被永久删除。"
+        confirmWord="demo"
+        onConfirm={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    rerender(
+      <DangerConfirmDialog
+        open={true}
+        title="删除工作流 demo"
+        description="工作流文件将被永久删除。"
+        confirmWord="demo"
+        onConfirm={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    expect((screen.getByTestId('danger-confirm-input') as HTMLInputElement).value).toBe('')
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  /**
+   * 失败原因只渲染在这块面板里（role=alert）。请求在飞时按下 Esc / 点背景 /
+   * 取消把面板关掉，随后到达的失败就无处可报——浏览器实测：删除项目时按 Esc，
+   * 服务端 500 后整页没有任何提示，用户看到的是「点了删除，什么也没发生」。
+   */
+  it('busy 期间不响应 Esc、关闭键与取消，失败原因留在面板里', () => {
+    const onClose = vi.fn()
+    const { rerender } = render(
+      <DangerConfirmDialog
+        open={true}
+        title="删除项目"
+        description="将删除项目。"
+        confirmWord="demo"
+        busy={true}
+        onConfirm={() => {}}
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.keyDown(document.querySelector('dialog') as HTMLElement, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    fireEvent.click(screen.getByText('取消'))
+    expect(onClose).not.toHaveBeenCalled()
+
+    rerender(
+      <DangerConfirmDialog
+        open={true}
+        title="删除项目"
+        description="将删除项目。"
+        confirmWord="demo"
+        busy={true}
+        error="项目下有 1 个打开的终端"
+        onConfirm={() => {}}
+        onClose={onClose}
+      />,
+    )
+    expect(screen.getByTestId('danger-error').textContent).toContain('打开的终端')
+
+    rerender(
+      <DangerConfirmDialog
+        open={true}
+        title="删除项目"
+        description="将删除项目。"
+        confirmWord="demo"
+        busy={false}
+        error="项目下有 1 个打开的终端"
+        onConfirm={() => {}}
+        onClose={onClose}
+      />,
+    )
+    fireEvent.click(screen.getByText('取消'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
 })
