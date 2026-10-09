@@ -63,6 +63,19 @@ const status = css`
   color: var(--haze-color-text-secondary);
 `
 
+/** 读不到时的取值占位：与「真的是 0」在视觉上必须分得开。 */
+const unavailable = css`
+  color: var(--haze-color-text-secondary);
+  font-style: italic;
+`
+
+/** llm-details 读失败提示：说清哪些数字不可信，而不是让 0 冒充用量。 */
+const llmErrorLine = css`
+  grid-column: 1 / -1;
+  color: var(--haze-color-danger);
+  overflow-wrap: anywhere;
+`
+
 /** 千分位格式化（与 opencode 一致：1,000,000 / 302,253）。 */
 function formatNumber(n: number): string {
   return n.toLocaleString('en-US')
@@ -157,6 +170,18 @@ function StatRow({ label: lab, children }: { label: string; children: ReactNode 
   )
 }
 
+/** 读不到时的取值：斜体「读不到」，与真实的 0 在视觉上分得开。 */
+function Unavailable() {
+  return <span className={unavailable}>读不到</span>
+}
+
+/** 失败原因取文案：APIError 现在是真正的 Error，但历史形状仍兼容 message 字段。 */
+function llmMessage(error: unknown): string {
+  const direct = (error as { message?: unknown } | null)?.message
+  if (typeof direct === 'string' && direct) return direct
+  return error instanceof Error && error.message ? error.message : '无法读取本会话的 LLM 调用分段。'
+}
+
 /**
  * 会话级总结信息面板：聚合 session / messages / llm-details，展示与会话、
  * token 用量、成本、时间相关的统计，布局对齐 opencode 的统计面板。
@@ -169,7 +194,12 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
     staleTime: 10_000,
   })
   const { data: messages } = useMessages(sessionId)
-  const { data: segments, isLoading } = useQuery({
+  const {
+    data: segments,
+    isLoading,
+    isError: llmFailed,
+    error: llmError,
+  } = useQuery({
     queryKey: ['session', sessionId, 'llm-details'],
     queryFn: () => sessionAPI.llmDetails(sessionId),
     staleTime: 10_000,
@@ -199,25 +229,63 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
           ) : (
             <>
               <span className={sessionTitle}>{stats.title}</span>
+              {/* llm-details 读失败时，token/成本/模型全部由 segments 推导，
+                  segments 为 undefined → computeStats 拿 [] 累加出一整套精确的
+                  0 与 US$0.00。实测注入 500 后面板照常显示「总 token 0 /
+                  总成本 US$0.00」，用户会据此认为这个会话真的一次调用都没发生、
+                  花了 0 美元——比报错更糟的是它看起来完全可信。消息数与时间戳
+                  来自另两个查询，不受影响，照常显示。 */}
+              {llmFailed ? (
+                <span className={llmErrorLine} role="alert" data-testid="summary-llm-error">
+                  调用明细读取失败，下列用量与成本不可信（不是 0）：
+                  {llmMessage(llmError)}
+                </span>
+              ) : null}
               <StatRow label="消息数">{formatNumber(stats.messageCount)}</StatRow>
-              <StatRow label="提供商">{stats.provider ?? '—'}</StatRow>
-              <StatRow label="模型">{stats.model ?? '—'}</StatRow>
+              <StatRow label="提供商">
+                {llmFailed ? <Unavailable /> : stats.provider ? stats.provider : '—'}
+              </StatRow>
+              <StatRow label="模型">
+                {llmFailed ? <Unavailable /> : stats.model ? stats.model : '—'}
+              </StatRow>
               <StatRow label="上下文限制">
-                {stats.contextWindow ? formatNumber(stats.contextWindow) : '—'}
+                {llmFailed ? (
+                  <Unavailable />
+                ) : stats.contextWindow ? (
+                  formatNumber(stats.contextWindow)
+                ) : (
+                  '—'
+                )}
               </StatRow>
-              <StatRow label="总 token">{formatNumber(stats.totalTokens)}</StatRow>
+              <StatRow label="总 token">
+                {llmFailed ? <Unavailable /> : formatNumber(stats.totalTokens)}
+              </StatRow>
               <StatRow label="使用率">
-                {stats.usagePercent != null ? `${stats.usagePercent}%` : '—'}
+                {llmFailed ? (
+                  <Unavailable />
+                ) : stats.usagePercent != null ? (
+                  `${stats.usagePercent}%`
+                ) : (
+                  '—'
+                )}
               </StatRow>
-              <StatRow label="输入 token">{formatNumber(stats.inputTokens)}</StatRow>
-              <StatRow label="输出 token">{formatNumber(stats.outputTokens)}</StatRow>
+              <StatRow label="输入 token">
+                {llmFailed ? <Unavailable /> : formatNumber(stats.inputTokens)}
+              </StatRow>
+              <StatRow label="输出 token">
+                {llmFailed ? <Unavailable /> : formatNumber(stats.outputTokens)}
+              </StatRow>
               {/* 推理 token / 缓存写当前未在 provider 层采集，诚实显示 0 */}
-              <StatRow label="推理 token">0</StatRow>
-              <StatRow label="缓存 token（读/写）">{formatNumber(stats.cacheRead)} / 0</StatRow>
+              <StatRow label="推理 token">{llmFailed ? <Unavailable /> : 0}</StatRow>
+              <StatRow label="缓存 token（读/写）">
+                {llmFailed ? <Unavailable /> : `${formatNumber(stats.cacheRead)} / 0`}
+              </StatRow>
               <StatRow label="用户消息">{formatNumber(stats.userMessages)}</StatRow>
               <StatRow label="助手消息">{formatNumber(stats.assistantMessages)}</StatRow>
-              <StatRow label="总成本（估算）">{formatCostUSD(stats.cost)}</StatRow>
-              {stats.unknownCostCalls > 0 && (
+              <StatRow label="总成本（估算）">
+                {llmFailed ? <Unavailable /> : formatCostUSD(stats.cost)}
+              </StatRow>
+              {!llmFailed && stats.unknownCostCalls > 0 && (
                 <StatRow label="未估价调用">
                   {formatNumber(stats.unknownCostCalls)} 次（按 $0 计）
                 </StatRow>
