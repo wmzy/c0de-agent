@@ -140,7 +140,6 @@ type DirectoryPickerProps = {
   start?: string
   placeholder?: string
   testId?: string
-  autoFocus?: boolean
 }
 
 /** 目录选择器：输入搜索（递归 + 模糊）+ 文件树浏览 + 快捷导航。
@@ -152,7 +151,6 @@ export function DirectoryPicker({
   start,
   placeholder,
   testId,
-  autoFocus,
 }: DirectoryPickerProps) {
   const [home, setHome] = useState('')
   const [root, setRoot] = useState('')
@@ -194,11 +192,6 @@ export function DirectoryPicker({
       cancelled = true
     }
   }, [])
-
-  // autoFocus 由 ref 实现（避免 a11y noAutofocus）
-  useEffect(() => {
-    if (autoFocus) inputRef.current?.focus()
-  }, [autoFocus])
 
   // 搜索实例（getter 读最新 home/root，缓存复用）
   const search = useMemo(

@@ -81,6 +81,18 @@ const footerBar = css`
   border-top: 1px solid var(--haze-color-border);
 `
 
+/** 内容区里的可聚焦控件。刻意不含关闭键与 footer 按钮：初始焦点只落在
+ *  「用户来这里要填的东西」上，自动聚焦 footer 的第一颗按钮等于把焦点
+ *  递到「取消/删除」上。 */
+const FOCUSABLE_IN_CONTENT = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
 export function Dialog({
   open = true,
   onClose,
@@ -91,6 +103,7 @@ export function Dialog({
   testId,
 }: DialogProps) {
   const panelWrapRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
   // 面板节点自持一份：ref 在卸载的 mutation 阶段就被置空，那时
   // panelWrapRef.current 已是 null，判定「焦点是否还在面板上」会一律失败。
@@ -137,6 +150,23 @@ export function Dialog({
     }
   }, [open])
 
+  // 打开后把焦点交给内容区第一个控件。haze 的 useFocusScope 在自己的 passive
+  // effect 里 focusFirst(面板)，而面板内第一个可聚焦节点是我们渲染在 children
+  // 之前的 ✕ 关闭键（或 DirectoryPicker 的快捷目录行）——实测「添加项目」弹窗
+  // 焦点落在建议行、「删除项目」落在 <dialog> 自身，调用方的 autoFocus 一律失效：
+  // 键盘用户得先 Tab 两次才够得着输入框；在破坏性确认弹窗上条件反射的 Enter
+  // 更是先打在关闭键上，把确认直接取消掉。
+  //
+  // 本组件是 HazeDialog 的父级，effect 按子先父后执行，所以这里一定跑在
+  // haze 那次 focusFirst 之后，夺回焦点是确定顺序而非靠时序赌。
+  useEffect(() => {
+    if (!open) return
+    const first = contentRef.current?.querySelector<HTMLElement>(FOCUSABLE_IN_CONTENT)
+    // 内容区没有可聚焦控件（如纯文本说明弹窗）：不抢焦点，交给 haze 的行为。
+    if (!first) return
+    first.focus()
+  }, [open])
+
   // 与旧实现一致：关闭即卸载（调用点按条件挂载语义依赖）。
   if (!open) return null
   return (
@@ -156,7 +186,7 @@ export function Dialog({
           </button>
         )}
         {children != null && (
-          <div className={content} data-testid={testId}>
+          <div className={content} data-testid={testId} ref={contentRef}>
             {children}
           </div>
         )}

@@ -81,7 +81,6 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
         }}
         placeholder="/path/to/your/project"
         testId="add-project-input"
-        autoFocus
       />
       <div className={hint}>输入目录名可递归搜索深层目录，或在文件树中浏览选择。</div>
       {error ? <div className={errorMsg}>{error}</div> : null}

@@ -313,9 +313,17 @@ function FileTreeInner({
 
   // focusedPath 变化时把真实焦点移到对应节点。键盘用户 Tab 进入树后，
   // 焦点必须跟着漫游标记走，否则按方向键只改状态不改焦点，读屏不播报。
+  //
+  // 但只在焦点本来就在树里时才搬：漫游标记每次变化都无条件 focus()，会把
+  // 焦点从别处抢进树——实测「添加项目」弹窗打开后，home 目录异步加载完成、
+  // 漫游标记从 null 落到第一行的瞬间，焦点从路径输入框被拽到文件树第一行，
+  // 用户敲到一半的字符全丢。树外要进树，Tab 落在唯一 tabIndex=0 的节点上
+  // 即可，本来就不需要这个 effect 代劳。
   useEffect(() => {
     if (!effectiveFocusedPath) return
-    const el = treeRef.current?.querySelector<HTMLElement>(
+    const tree = treeRef.current
+    if (!tree?.contains(document.activeElement)) return
+    const el = tree.querySelector<HTMLElement>(
       `[role="treeitem"][data-path="${cssEscape(effectiveFocusedPath)}"]`,
     )
     if (el && el.getAttribute('data-focused') === 'true') el.focus()

@@ -548,4 +548,46 @@ describe('FileTree', () => {
     )
     expect(screen.getByRole('tree', { name: '文件树' })).toBeInTheDocument()
   })
+
+  /**
+   * 漫游标记变化时无条件 focus()，会把树外的焦点抢进来。实测「添加项目」弹窗：
+   * 焦点在路径输入框，home 目录异步加载完成、漫游标记落到第一行的那一帧，
+   * 焦点被拽到文件树，用户正在敲的字符全部落空。
+   */
+  it('树数据到达时不把焦点从树外的输入框抢进树', () => {
+    const fileTree: TreeNode = {
+      name: 'root',
+      path: '.',
+      type: 'directory',
+      children: [
+        { name: 'a.ts', path: 'a.ts', type: 'file' },
+        { name: 'b.ts', path: 'b.ts', type: 'file' },
+      ],
+    }
+    function Harness({ loaded }: { loaded: boolean }) {
+      return (
+        <>
+          <input data-testid="outside" />
+          <FileTree
+            root={loaded ? fileTree : null}
+            expanded={new Set(['.'])}
+            selected={null}
+            loadingPaths={new Set()}
+            onToggle={vi.fn()}
+            onSelect={vi.fn()}
+            directoryClickMode="toggle"
+            hideRoot
+          />
+        </>
+      )
+    }
+    const { rerender } = render(<Harness loaded={false} />)
+    const outside = screen.getByTestId('outside')
+    outside.focus()
+
+    rerender(<Harness loaded />)
+
+    expect(screen.getAllByRole('treeitem').length).toBe(2)
+    expect(document.activeElement).toBe(outside)
+  })
 })

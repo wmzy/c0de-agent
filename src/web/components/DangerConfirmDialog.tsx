@@ -164,7 +164,6 @@ export function DangerConfirmDialog({
           value={typed}
           onChange={(v) => setTyped(v)}
           placeholder={confirmWord}
-          autoFocus
           data-testid="danger-confirm-input"
         />
       </div>
