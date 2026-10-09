@@ -96,6 +96,48 @@ const body = css`
   padding: 2px 0 6px;
 `
 
+/**
+ * 待办读失败态。与 ArchivePanel / KanbanView 同一套三段式（原因 + 重试），
+ * 此前本面板只有 data 一个状态位：请求 500 时 data 为 undefined → phases 恒为 []
+ * → 与「这个会话确实没有待办」落进同一分支（实测注入 500，面板稳定显示
+ * 「暂无任务，点击添加」）。
+ */
+const errorState = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 12px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 可能是长句，窄面板内必须断行 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  padding: 3px 12px;
+  font-size: 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
 const phaseGroup = css`
   margin-bottom: 2px;
 `
@@ -300,10 +342,21 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const [error, setError] = useState('')
   const [exportResult, setExportResult] = useState<string | null>(null)
 
-  const { data } = useQuery({
+  const {
+    data,
+    isLoading,
+    isError,
+    error: queryError,
+    refetch,
+  } = useQuery({
     queryKey: todoKey,
     queryFn: () => todoAPI.get(sessionId),
   })
+
+  // 拉不到 ≠ 没有：data 缺失时 phases 恒为 []，读失败与「这个会话确实没有
+  // 待办」此前落进同一分支（实测注入 500，面板稳定显示「暂无任务，点击添加」，
+  // 「导出到看板」也回「没有可导出的未完成任务」）。
+  const loadFailed = isError
 
   const phases: TodoPhase[] = data?.phases ?? []
 
@@ -333,6 +386,12 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
 
   const handleExportToKanban = () => {
     if (!projectId) return
+    // 读失败时 phases 恒为 []，此前会落到下面「没有可导出的未完成任务」——
+    // 把「拉不到」说成「没有任务可导出」，与面板的假空态是同一处误导。
+    if (loadFailed) {
+      setError('待办读取失败，无法导出。请先重试读取。')
+      return
+    }
     const todos = phases
       .flatMap((p) => p.tasks)
       .filter((t) => t.status === 'pending' || t.status === 'in_progress')
@@ -395,12 +454,29 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   )
   const current = activeTaskInfo(phases)
 
+  // 摘要栏此前只看 totalTasks（来自 undefined?.phases ?? []，读失败恒为 0），
+  // 于是失败时显示「暂无任务，点击添加」，用户认定 agent 的待办凭空消失。
+  // 加载中/失败各说各的；失败时点摘要栏是重试，不是展开「新建」入口。
+  const statusText = isLoading
+    ? '加载中…'
+    : loadFailed
+      ? '读取失败，点此重试'
+      : totalTasks === 0
+        ? '暂无任务，点击添加'
+        : null
+
   return (
     <div className={wrapper} data-testid="todo-panel">
       <button
         type="button"
         className={summaryBar}
-        onClick={totalTasks > 0 ? toggleCollapse : () => setShowAdd((v) => !v)}
+        onClick={
+          loadFailed
+            ? () => void refetch()
+            : totalTasks > 0
+              ? toggleCollapse
+              : () => setShowAdd((v) => !v)
+        }
       >
         <span className={summaryIcon}>📋</span>
         <span className={summaryProgress}>任务</span>
@@ -424,9 +500,35 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
             </span>
           </>
         )}
-        {totalTasks === 0 && !showAdd && <span className={summaryCurrent}>暂无任务，点击添加</span>}
-        <span className={expandIcon}>{collapsed ? '▾' : '▴'}</span>
+        {statusText && !showAdd && (
+          <span
+            className={summaryCurrent}
+            style={loadFailed ? { color: 'var(--haze-color-danger)' } : undefined}
+          >
+            {statusText}
+          </span>
+        )}
+        <span className={expandIcon}>{loadFailed ? '↻' : collapsed ? '▾' : '▴'}</span>
       </button>
+
+      {!collapsed && loadFailed && (
+        <div className={errorState} role="alert" data-testid="todo-load-error">
+          <span className={errorTitle}>待办读取失败</span>
+          <span className={errorDetail}>
+            {(queryError as { message?: string } | null)?.message ??
+              (queryError instanceof Error ? queryError.message : null) ??
+              '无法读取本会话的待办。'}
+          </span>
+          <button
+            type="button"
+            className={retryBtn}
+            onClick={() => void refetch()}
+            data-testid="todo-retry"
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       {!collapsed && totalTasks > 0 && (
         <div className={body}>
