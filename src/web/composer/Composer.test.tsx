@@ -386,3 +386,73 @@ describe('Composer @ 浮层在文件搜索在途时的加载态', () => {
     await waitFor(() => expect(onSend).toHaveBeenCalled())
   })
 })
+
+/**
+ * 工具权限请求的到达是一个「需要用户介入」的状态变化（run 停在这一步等确认），
+ * 因此 dock 必须被当成 alertdialog：挂载即接管焦点、Esc 等价拒绝、关闭后焦点
+ * 回到输入框。此前是无 role 的普通 div——焦点留在输入框、读屏无播报、Esc 不通。
+ */
+describe('Composer 工具权限确认 dock 的到达/拒绝可达性', () => {
+  function renderWithPermission(onPermissionCancel: () => void, onPermissionConfirm = vi.fn()) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = (permission: { tool: string; input: unknown } | null) => (
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={vi.fn()}
+            isStreaming
+            hasHistory
+            agents={[]}
+            permission={permission}
+            permissionAllowAlways
+            onPermissionConfirm={onPermissionConfirm}
+            onPermissionCancel={onPermissionCancel}
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(view(null))
+    return {
+      editor: screen.getByTestId('composer-editor'),
+      onPermissionConfirm,
+      /** 复刻真实时序：焦点先落在输入框，权限请求随后到达。 */
+      requestPermission: () => rerender(view({ tool: 'bash', input: { command: 'rm -rf /' } })),
+      dock: () => screen.getByTestId('permission-dock'),
+    }
+  }
+
+  it('挂载即成为 alertdialog 并接管焦点（读屏播报标题与入参）', async () => {
+    const { editor, requestPermission, dock } = renderWithPermission(vi.fn())
+    editor.focus()
+    requestPermission()
+    await waitFor(() => expect(document.activeElement).toBe(dock()))
+    expect(dock().getAttribute('role')).toBe('alertdialog')
+    const labelId = dock().getAttribute('aria-labelledby') as string
+    expect(document.getElementById(labelId)?.textContent).toContain('bash')
+    expect(
+      document.getElementById(dock().getAttribute('aria-describedby') as string)?.textContent,
+    ).toContain('rm -rf /')
+  })
+
+  it('Esc 拒绝该次请求（键盘用户不必瞄准按钮）', async () => {
+    const onCancel = vi.fn()
+    const { editor, requestPermission, dock } = renderWithPermission(onCancel)
+    editor.focus()
+    requestPermission()
+    await waitFor(() => expect(document.activeElement).toBe(dock()))
+    fireEvent.keyDown(dock(), { key: 'Escape' })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('允许按钮仍走确认回调，不被 Esc 语义吞掉', async () => {
+    const onConfirm = vi.fn()
+    const { editor, requestPermission, dock } = renderWithPermission(vi.fn(), onConfirm)
+    editor.focus()
+    requestPermission()
+    await waitFor(() => expect(document.activeElement).toBe(dock()))
+    fireEvent.click(screen.getByText('允许'))
+    expect(onConfirm).toHaveBeenCalledWith(false)
+  })
+})
