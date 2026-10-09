@@ -283,3 +283,60 @@ describe('FileBrowser 读失败态', () => {
     expect(screen.queryByTestId('file-search-error')).toBeNull()
   })
 })
+
+/**
+ * 删除此前走 window.confirm + window.alert：原生框不可样式化；更糟的是失败
+ * 时只弹「删除失败，请重试」，后端 404 的 message（"File not found"）被整句
+ * 丢掉，用户只能对同一路径反复点删除。改为应用内确认层 + 原因留框内。
+ */
+describe('FileBrowser 删除确认', () => {
+  async function openDeleteConfirm() {
+    renderBrowser()
+    await screen.findByTestId('node-package.json')
+    fireEvent.click(screen.getByTestId('delete-package.json'))
+  }
+
+  it('点 🗑 先弹确认层，未确认前不发删除请求', async () => {
+    await openDeleteConfirm()
+
+    const dialog = screen.getByTestId('file-delete-dialog')
+    expect(dialog.textContent).toContain('package.json')
+    expect(dialog.textContent).toContain('回收站')
+    expect(fileAPI.delete).not.toHaveBeenCalled()
+  })
+
+  it('确认后才发删除请求，成功后节点从树里消失、确认层关闭', async () => {
+    await openDeleteConfirm()
+    fireEvent.click(screen.getByTestId('file-delete-confirm'))
+
+    await waitFor(() => {
+      expect(fileAPI.delete).toHaveBeenCalledWith('package.json', 'p1')
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('node-package.json')).toBeNull()
+    })
+    expect(screen.queryByTestId('file-delete-dialog')).toBeNull()
+  })
+
+  it('取消不发删除请求，节点仍在', async () => {
+    await openDeleteConfirm()
+    fireEvent.click(screen.getByTestId('file-delete-cancel'))
+
+    expect(fileAPI.delete).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('file-delete-dialog')).toBeNull()
+    expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
+  })
+
+  it('删除失败时把后端原因显示在确认层里（role=alert），节点不被移除', async () => {
+    vi.mocked(fileAPI.delete).mockRejectedValueOnce({ message: 'File not found' })
+    await openDeleteConfirm()
+    fireEvent.click(screen.getByTestId('file-delete-confirm'))
+
+    const err = await screen.findByTestId('file-delete-error')
+    expect(err.getAttribute('role')).toBe('alert')
+    expect(err.textContent).toContain('File not found')
+    // 原因与操作必须同框可见：失败不关弹层
+    expect(screen.getByTestId('file-delete-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
+  })
+})

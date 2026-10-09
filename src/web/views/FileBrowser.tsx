@@ -1,11 +1,13 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Dialog } from '@/components/Dialog.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
+import { btnDanger, btnSm } from '@/styles/tokens.js'
 import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
 
 const panel = css`
@@ -145,6 +147,22 @@ const errorDetail = css`
 const retryBtn = css`
   padding: 4px 12px;
   font-size: 12px;
+`
+
+/** 删除确认弹层的说明正文。路径可能很长，必须能断行。 */
+const confirmText = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+  overflow-wrap: anywhere;
+`
+
+/** 删除确认弹层里的失败原因框：标题 + 后端 message（与上方读失败态同口径）。 */
+const confirmError = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 `
 
 /** 搜索结果列表：原生 ul/li 语义（读屏从树切换到搜索时有明确上下文）。 */
@@ -394,21 +412,52 @@ export function FileBrowser({
     [onPick],
   )
 
-  const handleDelete = useCallback(
-    async (path: string) => {
-      if (!window.confirm(`确定删除「${path}」？文件将移入系统回收站，可从回收站恢复。`)) return
-      try {
-        await fileAPI.delete(path, projectId)
-        setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
-        onDelete?.(path)
-        if (isSearch) refetchSearch()
-        gitStatusQ.refetch()
-      } catch {
-        window.alert('删除失败，请重试')
-      }
-    },
-    [projectId, onDelete, isSearch, refetchSearch, gitStatusQ],
-  )
+  /** 待删除的路径（null=无确认弹层）。删除是「移入回收站」的可恢复操作，
+   *  用轻量确认而非 DangerConfirmDialog 的逐字确认。 */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  /** 删除失败原因（null=未失败）。渲染在确认弹层里，与用户正在做的操作同框可见。 */
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** 删除请求在飞：锁住确认键与所有关闭出口（关闭会把失败原因一起关掉）。 */
+  const [deleting, setDeleting] = useState(false)
+
+  const requestDelete = useCallback((path: string) => {
+    setDeleteError(null)
+    setPendingDelete(path)
+  }, [])
+
+  const closeDeleteDialog = useCallback(() => {
+    if (deleting) return
+    setPendingDelete(null)
+    setDeleteError(null)
+  }, [deleting])
+
+  const confirmDelete = useCallback(async () => {
+    const path = pendingDelete
+    if (!path) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await fileAPI.delete(path, projectId)
+      setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
+      onDelete?.(path)
+      if (isSearch) refetchSearch()
+      gitStatusQ.refetch()
+      setPendingDelete(null)
+    } catch (err) {
+      // 失败原因必须可见：此前是 window.alert('删除失败，请重试')，后端的
+      // 「File not found / EACCES / EPERM / ENOTEMPTY」等真实原因被整句丢掉，
+      // 用户只能对同一路径反复点删除。APIError 是结构体而非 Error 子类，
+      // 必须结构化取 message（同上方 rootError/searchErrorMessage 口径）。
+      setDeleteError(
+        (err as { message?: string } | null)?.message ??
+          (err instanceof Error ? err.message : null) ??
+          '删除失败，请重试。',
+      )
+    } finally {
+      setDeleting(false)
+    }
+  }, [pendingDelete, projectId, onDelete, isSearch, refetchSearch, gitStatusQ])
+
 
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
   // APIError 是结构体而非 Error 子类，必须结构化取 message（同 KanbanView/FilePreview 口径）。
@@ -530,7 +579,7 @@ export function FileBrowser({
                     data-search-delete
                     data-testid={`search-delete-${e.path}`}
                     aria-label={`删除 ${e.path}`}
-                    onClick={() => handleDelete(e.path)}
+                    onClick={() => requestDelete(e.path)}
                   >
                     🗑
                   </button>
@@ -563,13 +612,56 @@ export function FileBrowser({
             onSelect={handleSelect}
             directoryClickMode="toggle"
             onMention={fileRef?.insertFileReference}
-            onDelete={handleDelete}
+            onDelete={requestDelete}
             gitStatusMap={gitStatusMap}
             label="项目文件树"
             hideRoot
           />
         )}
       </div>
+      {/* 删除确认：原生 window.confirm 是阻塞式系统框（不可样式化、与主题割裂、
+          移动端还会被浏览器改写），且失败时只能弹 window.alert 一句「请重试」，
+          把后端的真实原因丢掉。改为应用内弹层，失败原因留在同框可见。 */}
+      <Dialog
+        open={pendingDelete !== null}
+        onClose={closeDeleteDialog}
+        closeDisabled={deleting}
+        title="删除文件"
+        testId="file-delete-dialog"
+        width="420px"
+        footer={
+          <>
+            <button
+              type="button"
+              className={btnSm}
+              data-testid="file-delete-cancel"
+              disabled={deleting}
+              onClick={closeDeleteDialog}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className={`${btnSm} ${btnDanger}`}
+              data-testid="file-delete-confirm"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? '删除中…' : '删除'}
+            </button>
+          </>
+        }
+      >
+        <p className={confirmText}>
+          {`确定删除「${pendingDelete ?? ''}」？文件将移入系统回收站，可从回收站恢复。`}
+        </p>
+        {deleteError ? (
+          <div className={confirmError} role="alert" data-testid="file-delete-error">
+            <span className={errorTitle}>删除失败</span>
+            <span className={errorDetail}>{deleteError}</span>
+          </div>
+        ) : null}
+      </Dialog>
     </div>
   )
 }
