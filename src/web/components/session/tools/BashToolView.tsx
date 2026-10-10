@@ -17,6 +17,10 @@ const out = css`
 
 const collapsed = css`
   max-height: 200px;
+  /* 只限高不裁剪，超长输出会照样画到盒子之外：折叠态看起来没折叠，
+     「展开」按钮被压在输出文字上，虚拟化行高（量的是这个盒子）也会
+     小于实际绘制高度、让输出盖住下一条消息。同 FallbackToolView。 */
+  overflow: hidden;
 `
 
 const btn = css`
