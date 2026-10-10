@@ -46,8 +46,10 @@ type UseComposerOptions = {
    */
   onSend: (payload: ComposerSendPayload) => boolean | undefined | Promise<boolean | undefined>
   onAbort?: () => void
-  /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。 */
-  onSteer?: (message: string) => void
+  /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。
+   *  返回值语义同 onSend：不返回值/true 视为已受理，false 或 Promise<false> 表示
+   *  没送出去（后端 {steered:false} 或请求失败），调用方据此保留输入。 */
+  onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   isStreaming: boolean
   /**
    * 输入区处于「忙」态：发送/追加都拿不到可执行的目标（草稿页建会话窗口——
@@ -595,11 +597,29 @@ function useComposer({
     const prompt = readPrompt()
     if (isPromptEmpty(prompt)) return
     const text = promptToMessageText(prompt)
-    onSteer(text)
     // steering 同样把输入清空：它取代在途的那次发送，那次失败回来时不得回填。
+    // 但「清空」的前提是这条指令真的被受理——POST /api/chat/steer 回
+    // {steered:false} 时指令既没进 run 队列也没落库（agent 从未收到，刷新后
+    // 乐观条目即消失）。此前无条件清空：用户敲的整段指令连气泡都没有，彻底丢失。
+    // 现在只有确认受理才清空，失败时输入原样留着，配合 error 行让用户改用发送。
     sendAttemptRef.current += 1
-    setPromptExternal(DEFAULT_PROMPT)
-    resetHistory()
+    const visible = promptToText(prompt)
+    const clear = () => {
+      // 输入框在请求在途期间仍可编辑：期间用户新敲的字不属于这条指令，不覆盖。
+      if (promptToText(readPrompt()) !== visible) return
+      setPromptExternal(DEFAULT_PROMPT)
+      resetHistory()
+    }
+    const outcome = onSteer(text)
+    if (outcome === false) return
+    if (outcome && typeof (outcome as Promise<boolean | undefined>).then === 'function') {
+      void (outcome as Promise<boolean | undefined>).then((ok) => {
+        if (ok !== false) clear()
+      })
+    } else {
+      // 旧契约：同步 void 回调视为受理，保持「发出即清空」的原有体感。
+      clear()
+    }
   }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory])
 
   const handleKeyDown = useCallback(

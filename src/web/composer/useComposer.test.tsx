@@ -447,3 +447,71 @@ describe('useComposer 发送失败还原', () => {
     expect(loadHistory()[0]).toBe('第二条')
   })
 })
+
+/**
+ * 追加指令（steer）的输入清空时机。
+ *
+ * 缺陷：steer 无条件清空输入框，但「追加指令」并不保证被送达——后端
+ * POST /api/chat/steer 在没有进行中的 run 时回 {steered:false}，指令既没注入
+ * run 也没落库。此前用户敲的整段指令随清空一起消失，屏幕上没有任何痕迹，
+ * 只能凭记忆重打（与「发送失败把输入还回去」的口径也自相矛盾）。
+ */
+describe('useComposer 追加指令的清空时机', () => {
+  function renderStreamingComposer(onSteer: (m: string) => undefined | Promise<boolean>) {
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    document.body.appendChild(editor)
+    const { result } = renderHook(
+      () =>
+        useComposer({
+          onSend: vi.fn(),
+          onAbort: vi.fn(),
+          onSteer,
+          isStreaming: true,
+          hasHistory: false,
+          commands: [],
+        }),
+      { wrapper: strictWrapper },
+    )
+    act(() => {
+      result.current.editorRef.current = editor
+    })
+    const type = (text: string) => {
+      act(() => {
+        editor.appendChild(document.createTextNode(text))
+        result.current.handleInput()
+      })
+    }
+    return { result, editor, type }
+  }
+
+  it('后端回 steered:false 时输入原样保留（指令没送出去，不能凭空清空）', async () => {
+    const { result, type } = renderStreamingComposer(() => Promise.resolve(false))
+    type('改用 pnpm 跑测试')
+
+    act(() => {
+      result.current.steer()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(promptToText(result.current.promptRef.current as never)).toContain('改用 pnpm')
+  })
+
+  it('确认受理后输入才清空（沿用「发出即清空」的体感）', async () => {
+    const { result, type } = renderStreamingComposer(() => Promise.resolve(true))
+    type('改用 pnpm 跑测试')
+
+    act(() => {
+      result.current.steer()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(promptToText(result.current.promptRef.current as never)).toBe('')
+  })
+})

@@ -63,8 +63,10 @@ type ChatProps = {
   onPause?: () => void
   /** 恢复已暂停的 agent loop。 */
   onResume?: () => void
-  /** 注入 steering 消息（spec §3.9），运行中可用。 */
-  onSteer?: (message: string) => void
+  /** 注入 steering 消息（spec §3.9），运行中可用。
+   *  返回 Promise<boolean>：false 表示这条指令没被受理（后端 {steered:false} 或
+   *  请求失败），输入区据此保留草稿并在错误行给出原因。 */
+  onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   /** agent 是否处于暂停态（控制 pause/resume 按钮切换）。 */
   paused?: boolean
   supportsVision?: boolean

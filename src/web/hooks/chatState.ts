@@ -106,8 +106,10 @@ export type ChatActions = {
    */
   lastFailure: RefObject<LastFailure>
   abort: () => void
-  /** 追加指令：注入运行中的 run 并乐观追加 steering 消息到时间线（P0 持久化）。 */
-  steer: (message: string) => void
+  /** 追加指令：注入运行中的 run 并乐观追加 steering 消息到时间线（P0 持久化）。
+   *  返回 Promise<boolean>：false 表示没被受理（后端 {steered:false}、请求失败或
+   *  run 已结束），调用方据此保留输入并展示原因——后端的 200 并不等于受理。 */
+  steer: (message: string) => Promise<boolean>
   /** 确认/拒绝权限请求：乐观关闭弹窗并通知后端。
    *  alwaysAllowTool 非空时先把该工具加入会话白名单。 */
   confirm: (toolCallId: string, approved: boolean, alwaysAllowTool?: string) => void

@@ -236,8 +236,9 @@ type ComposerProps = {
    */
   restoreDraft?: { prompt: Prompt; images: ImagePart[] } | null
   onAbort?: () => void
-  /** 流式态「追加指令」注入 steering 文本。 */
-  onSteer?: (message: string) => void
+  /** 流式态「追加指令」注入 steering 文本。返回值语义同 useComposer.onSteer：
+   *  false/Promise<false> 表示未被受理，输入不清空。 */
+  onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   isStreaming: boolean
   /**
    * 首条消息在途（草稿页建会话窗口）：此时既没有 run 可中止也无法 steering，

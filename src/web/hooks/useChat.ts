@@ -47,6 +47,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const pendingRef = useRef<PendingSegmentBreak | null>(null)
   // P0-2：信任确认待发内容（confirmTrust/cancelTrust 读取）
   const pendingTrustRef = useRef<PendingTrust | null>(null)
+  // 最近一次由 steer 写进 error 的原因：后续 steer 成功时据此精确撤回自己那条，
+  // 不误伤工具失败等其它来源的错误。
+  const steerFailureRef = useRef<string | null>(null)
   const llmDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /**
    * 最近一次 sendMessage 的结果：失败原因 + 是否需要用户决策。
@@ -412,28 +415,67 @@ export function useChat(sessionId: string): ChatState & ChatActions {
    *  （与 sendMessage 乐观追加同生命周期：P0 前指令发出后从视图消失、刷新后彻底丢失）。
    *  后端同时持久化 steering 条目；页面重载后 /messages 返回该条目、chat.messages 已
    *  重置，单行展示。运行中若 history 重取，乐观副本与持久化条目并存与乐观 user
-   *  消息属同一类既有行为，不新增风险。 */
+   *  消息属同一类既有行为，不新增风险。
+   *
+   *  返回 Promise<boolean>：这条指令是否真的被受理。POST /api/chat/steer 的 200
+   *  不等于受理——没有进行中的 run 时它回 {steered:false}，指令既没注入 run 也没
+   *  落库。此前这里从不读响应体、失败只 console，两种结局都糟：有乐观气泡
+   *  （刷新即消失、agent 从未收到），或调用方已清空输入框而屏幕上什么都没发生。
+   *  现在 false 时不追加乐观条目，并把原因摊给 error（Chat 的 errorBanner 以
+   *  role=alert 渲染独占一行），调用方据此保留输入。
+   */
   const steer = useCallback(
-    (message: string) => {
+    async (message: string): Promise<boolean> => {
       const text = message.trim()
-      if (!text || !streamingRef.current) return
-      agentAPI.steer(sessionId, text).catch(() => {
-        // 后端失败不阻塞 UI；条目未持久化时该指令仅本轮内存生效
+      if (!text) return false
+      const failSteer = (reason: string) => {
+        steerFailureRef.current = reason
+        setState((s) => ({ ...s, error: reason }))
+      }
+      if (!streamingRef.current) {
+        failSteer(
+          '追加指令未送达：本次对话已结束，没有可注入的运行。请直接发送为新消息（输入已保留）。',
+        )
+        return false
+      }
+      let steered = false
+      try {
+        const res = await agentAPI.steer(sessionId, text)
+        steered = res.steered
+      } catch (err) {
+        failSteer(`追加指令发送失败：${err instanceof Error ? err.message : String(err)}`)
+        return false
+      }
+      if (!steered) {
+        failSteer(
+          '追加指令未送达：后端没有进行中的运行（可能已在另一个标签页结束），输入已保留，请直接发送。',
+        )
+        return false
+      }
+      setState((s) => {
+        const next = {
+          ...s,
+          messages: [
+            ...s.messages,
+            {
+              id: generateId(),
+              sessionId,
+              role: 'user' as const,
+              content: [{ _tag: 'steering' as const, text }],
+              tokenCount: 0,
+              createdAt: Date.now(),
+            },
+          ],
+        }
+        // 只撤自己写的那一条：error 是单一字段，工具失败等其它来源的原因不该被
+        // 一次成功的追加指令顺手抹掉。
+        if (steerFailureRef.current && s.error === steerFailureRef.current) {
+          steerFailureRef.current = null
+          next.error = null
+        }
+        return next
       })
-      setState((s) => ({
-        ...s,
-        messages: [
-          ...s.messages,
-          {
-            id: generateId(),
-            sessionId,
-            role: 'user',
-            content: [{ _tag: 'steering', text }],
-            tokenCount: 0,
-            createdAt: Date.now(),
-          },
-        ],
-      }))
+      return true
     },
     [sessionId],
   )

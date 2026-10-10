@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatState } from '@/hooks/chatState.js'
 import { reduceChatEvent } from '@/hooks/chatState.js'
 import { useChat } from '@/hooks/useChat.js'
+import { agentAPI } from '@/services/agent.js'
 
 const base: ChatState = {
   messages: [],
@@ -1182,5 +1183,94 @@ describe('useChat 附着轮询的暂停态（P1）', () => {
     })
     const callsAfter = fetchMock.mock.calls.filter(([u]) => String(u).includes('/status')).length
     expect(callsAfter).toBe(callsBefore)
+  })
+})
+
+/**
+ * 追加指令（steer）的送达语义。
+ *
+ * 缺陷：POST /api/chat/steer 的 200 不等于受理——没有进行中的 run 时它回
+ * {steered:false}，指令既没注入 run 也没落库。此前 steer 从不读响应体、失败只
+ * console，却照样在时间线追加乐观 steering 条目：用户看到一条「已送达」的指令，
+ * 刷新后它消失，agent 从未收到；调用方还会据此清空输入框。两种结局都让用户
+ * 无从判断自己的指令到底发没发出去。
+ */
+describe('useChat steer 的送达语义', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  /** 附着到一个仍在运行的 run：走 attach() 拿到流式态（不自己开 SSE 流）。 */
+  async function renderStreaming() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const body = String(url).includes('/status') ? { _tag: 'running' } : { pending: null }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => body,
+          text: async () => JSON.stringify(body),
+        }
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    expect(result.current.isStreaming).toBe(true)
+    return result
+  }
+
+  it('后端回 steered:false 时不追加乐观条目，并给出原因', async () => {
+    const result = await renderStreaming()
+    vi.spyOn(agentAPI, 'steer').mockResolvedValue({ steered: false })
+
+    let delivered: boolean | undefined
+    await act(async () => {
+      delivered = await result.current.steer('改用 pnpm')
+    })
+
+    expect(delivered).toBe(false)
+    expect(
+      result.current.messages.some((m) => JSON.stringify(m.content).includes('改用 pnpm')),
+    ).toBe(false)
+    expect(result.current.error).toMatch(/追加指令未送达/)
+  })
+
+  it('受理成功后追加 steering 条目', async () => {
+    const result = await renderStreaming()
+    vi.spyOn(agentAPI, 'steer').mockResolvedValue({ steered: true })
+
+    let delivered: boolean | undefined
+    await act(async () => {
+      delivered = await result.current.steer('改用 pnpm')
+    })
+
+    expect(delivered).toBe(true)
+    expect(
+      result.current.messages.some((m) =>
+        m.content.some((p) => p._tag === 'steering' && p.text === '改用 pnpm'),
+      ),
+    ).toBe(true)
+  })
+
+  it('请求失败时透出原因且不谎报已送达', async () => {
+    const result = await renderStreaming()
+    vi.spyOn(agentAPI, 'steer').mockRejectedValue(new Error('连接已中断'))
+
+    let delivered: boolean | undefined
+    await act(async () => {
+      delivered = await result.current.steer('改用 pnpm')
+    })
+
+    expect(delivered).toBe(false)
+    expect(result.current.error).toContain('连接已中断')
+    expect(
+      result.current.messages.some((m) =>
+        m.content.some((p) => p._tag === 'steering' && p.text === '改用 pnpm'),
+      ),
+    ).toBe(false)
   })
 })
