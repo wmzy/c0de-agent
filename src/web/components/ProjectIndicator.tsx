@@ -507,7 +507,7 @@ export function ProjectIndicator({
               ))}
               <DropdownMenuSeparator />
               <NewBranchForm
-                onCreate={(name) => createBranchMut.mutate(name)}
+                onCreate={(name) => createBranchMut.mutateAsync(name)}
                 pending={createBranchMut.isPending}
                 error={createBranchMut.error ? String(createBranchMut.error.message) : null}
               />
@@ -587,17 +587,25 @@ function NewBranchForm({
   pending,
   error,
 }: {
-  onCreate: (name: string) => void
+  /** 创建分支；resolve 视为成功，reject 视为失败（父组件负责渲染原因）。 */
+  onCreate: (name: string) => Promise<unknown>
   pending: boolean
   error: string | null
 }) {
   const [name, setName] = useState('')
 
-  const submit = () => {
+  const submit = async () => {
     const trimmed = name.trim()
     if (!trimmed || pending) return
-    onCreate(trimmed)
-    setName('')
+    // 清空放在成功之后：创建失败（分支已存在 / 非法 ref / worktree 被占用）时
+    // 输入框必须还留着刚打的名字——此前无条件清空，用户只能照着错误文案把
+    // 名字重敲一遍（与 KanbanColumn 快速加卡片同口径，那里有同样的注释）。
+    try {
+      await onCreate(trimmed)
+      setName('')
+    } catch {
+      // 失败原因由父组件就地渲染在输入框下方（role=alert），输入保留待改。
+    }
   }
 
   return (
@@ -612,12 +620,18 @@ function NewBranchForm({
           // IME 组合中不拦截：回车确认候选词由输入法处理——不判定会把未确认的
           // 候选当最终输入（分支名被提前创建）。
           if (isImeComposing(e)) return
-          if (e.key === 'Enter') submit()
+          if (e.key === 'Enter') void submit()
         }}
         data-testid="branch-new-input"
         disabled={pending}
       />
-      {error ? <div className={branchInputError}>{error}</div> : null}
+      {/* role=alert：创建失败的原因必须被读屏播报——它出现在用户刚操作的输入框
+          下方，键盘用户看不到焦点外的新文案。 */}
+      {error ? (
+        <div className={branchInputError} role="alert" data-testid="branch-create-error">
+          {error}
+        </div>
+      ) : null}
     </div>
   )
 }

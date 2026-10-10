@@ -450,6 +450,39 @@ describe('TopBar', () => {
     await waitFor(() => {
       expect(fileAPI.gitBranchCreate).toHaveBeenCalledWith('p1', 'feature/x')
     })
+    // 成功后才清空：输入框复位，等待下一次输入。
+    await waitFor(() => {
+      expect((screen.getByTestId('branch-new-input') as HTMLInputElement).value).toBe('')
+    })
+  })
+
+  // 回归：submit 曾无条件 setName('')，创建失败（分支已存在 / 非法 ref /
+  // worktree 被占用）时输入框已被清空，用户只能照着错误文案把刚打的名字重敲一遍。
+  it('创建分支失败时保留输入的分支名并就地报出原因', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
+      branches: [{ name: 'main', current: true, lastSubject: null }],
+    })
+    const gitBranchCreate = fileAPI.gitBranchCreate as ReturnType<typeof vi.fn>
+    gitBranchCreate.mockRejectedValueOnce(new Error("branch 'feature/x' already exists"))
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-new-input')).toBeTruthy()
+    })
+
+    const input = screen.getByTestId('branch-new-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'feature/x' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const err = await screen.findByTestId('branch-create-error')
+    expect(err.textContent).toContain('already exists')
+    expect(err.getAttribute('role')).toBe('alert')
+    expect(input.value).toBe('feature/x')
+    // 允许改完再试一次。
+    expect(input.disabled).toBe(false)
   })
 
   // ---- CommitButton（内嵌在 TopBar via ProjectIndicator actions）----
