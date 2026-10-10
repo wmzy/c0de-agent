@@ -4,6 +4,7 @@ import type { DB } from '../../db/client.js'
 import { projects } from '../../db/schema.js'
 import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
+import { getMessages } from '../../session/message.js'
 import { createSession } from '../../session/session.js'
 import { createServerContext } from '../context.js'
 import { createTodoRoute } from './todo.js'
@@ -67,6 +68,33 @@ describe('todo route', () => {
     const getRes = await app.request(`/${sessionId}`)
     const body = (await getRes.json()) as { phases: unknown[] }
     expect(body.phases).toEqual([])
+  })
+
+  // 前端 normalizeParts 按 id 把 tool_call 与 tool_result 配成一块；两个 id 不一致时
+  // 时间线上会出现「永远停在运行中（⏳）」的 todo 块（并因拿不到 output 而谎报
+  // 「Todo list is empty.」）外加一张孤立的 result 卡。实测从看板/待办面板点「添加」
+  // 后必现。
+  it('UI 手动操作持久化的 tool_call 与 tool_result 共用同一 id', async () => {
+    const { app, db, sessionId } = await setup()
+    const res = await app.request(`/${sessionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'append', phase: 'Tasks', items: ['写文档'] }),
+    })
+    expect(res.status).toBe(200)
+
+    const parts = (await getMessages(db, sessionId)).flatMap((m) => m.content)
+    const call = parts.find(
+      (p): p is Extract<typeof p, { _tag: 'tool_call' }> =>
+        p._tag === 'tool_call' && 'tool' in p && p.tool === 'todo',
+    )
+    const result = parts.find(
+      (p): p is Extract<typeof p, { _tag: 'tool_result' }> =>
+        p._tag === 'tool_result' && 'tool' in p && p.tool === 'todo',
+    )
+    expect(call).toBeDefined()
+    expect(result).toBeDefined()
+    expect(result?.id).toBe(call?.id)
   })
 })
 
