@@ -411,4 +411,46 @@ describe('ChatSession — 导出反馈闭环', () => {
     )
     expect(sessionAPI.exportSession).not.toHaveBeenCalled()
   })
+
+  // 读不到分支数 ≠ 没有分支：此前 catch(() => []) 把失败吞成 0，弹窗改口宣称
+  // 「导出内容：本会话的全部消息与归档」，用户据此把导出件当成完整备份，
+  // 而派生分支的内容并不在其中（迁移/分享后静默丢失）。
+  it('派生分支数量读取失败：不谎报「内容完整」，给出原因与重试并放行导出', async () => {
+    vi.mocked(sessionAPI.branches).mockRejectedValue(new Error('连接超时'))
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    vi.mocked(sessionAPI.exportSession).mockResolvedValue({
+      version: 1,
+      session: { title: 's' },
+      messages: [],
+    } as unknown as Awaited<ReturnType<typeof sessionAPI.exportSession>>)
+    await renderSession()
+
+    fireEvent.click(await screen.findByTestId('export-button'))
+    const note = await screen.findByTestId('export-branch-note')
+    await waitFor(() => expect(note.textContent).toContain('无法确认派生分支数量'))
+    expect(note.textContent).toContain('连接超时')
+    expect(note.textContent).not.toContain('导出内容：本会话的全部消息与归档')
+
+    // 失败不再把用户永久挡在按钮外：能导出，只是不宣称完整
+    const strip = screen.getByTestId('export-strip-snapshots') as HTMLButtonElement
+    await waitFor(() => expect(strip.disabled).toBe(false))
+
+    // 重试成功后恢复「确实没有分支」的说明
+    vi.mocked(sessionAPI.branches).mockResolvedValue(
+      [] as unknown as Awaited<ReturnType<typeof sessionAPI.branches>>,
+    )
+    fireEvent.click(screen.getByTestId('export-branch-retry'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-branch-note').textContent).toContain(
+        '导出内容：本会话的全部消息与归档',
+      ),
+    )
+  })
 })

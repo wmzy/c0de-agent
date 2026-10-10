@@ -165,6 +165,17 @@ const exportChoiceBtn = css`
   }
 `
 
+/** 分支数量检查失败时的内联重试按钮：与说明文字同行，不占据 footer。 */
+const exportBranchRetry = css`
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--haze-color-primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+`
+
 /** 主操作是「剥离快照」——默认与回车都走安全的一侧。 */
 const exportChoicePrimary = css`
   padding: 4px 12px;
@@ -439,13 +450,25 @@ export function ChatSession({
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   /** 分支数量（null=尚未查完，还在拉）。查完才让用户做选择，避免决策后又弹第二个框。 */
   const [exportBranchCount, setExportBranchCount] = useState<number | null>(null)
+  /** 分支数量查询失败的说明（null=没失败）。失败与「确实没有分支」必须分开。 */
+  const [exportBranchFailed, setExportBranchFailed] = useState<string | null>(null)
 
   const openExportDialog = async () => {
     setExportError(null)
     setExportBranchCount(null)
+    setExportBranchFailed(null)
     setExportDialogOpen(true)
-    const branches = await sessionAPI.branches(sessionId).catch(() => [])
-    setExportBranchCount(branches.length)
+    try {
+      const branches = await sessionAPI.branches(sessionId)
+      setExportBranchCount(branches.length)
+    } catch (err) {
+      // 「读不到分支数」≠「没有分支」：此前 catch(() => []) 把失败吞成 0，弹窗于是
+      // 改口宣称「导出内容：本会话的全部消息与归档」，用户据此把导出件当成完整备份，
+      // 而真正的派生分支内容并不在其中（迁移/分享后静默丢失）。改为显式失败态：
+      // 说明无法确认影响面 + 内联重试，并放行导出——连不上时把用户永久挡在按钮外
+      // 比放行更糟，但绝不再宣称内容完整。
+      setExportBranchFailed(err instanceof Error ? err.message : '无法读取派生分支')
+    }
   }
 
   const runExport = async (includeSnapshots: boolean) => {
@@ -813,7 +836,7 @@ export function ChatSession({
                 className={exportChoiceBtn}
                 data-testid="export-include-snapshots"
                 onClick={() => void runExport(true)}
-                disabled={exporting || exportBranchCount === null}
+                disabled={exporting || (exportBranchCount === null && !exportBranchFailed)}
               >
                 包含文件快照导出
               </button>
@@ -822,7 +845,7 @@ export function ChatSession({
                 className={exportChoicePrimary}
                 data-testid="export-strip-snapshots"
                 onClick={() => void runExport(false)}
-                disabled={exporting || exportBranchCount === null}
+                disabled={exporting || (exportBranchCount === null && !exportBranchFailed)}
               >
                 {exporting ? '导出中…' : '剥离快照导出（推荐）'}
               </button>
@@ -833,12 +856,27 @@ export function ChatSession({
             归档里的「文件快照」是被压缩进上下文的<strong>文件内容</strong>。剥离后对话、
             统计、归档结构都不受影响，只是不带文件正文——分享导出文件时不会泄露这些内容。
           </div>
-          <div className={exportChoiceNote}>
-            {exportBranchCount === null
-              ? '正在检查派生分支…'
-              : exportBranchCount > 0
-                ? `该会话有 ${exportBranchCount} 个派生分支：导出只含本会话的消息与归档，分支内容不在其中。`
-                : '导出内容：本会话的全部消息与归档。'}
+          <div className={exportChoiceNote} data-testid="export-branch-note">
+            {exportBranchFailed ? (
+              <>
+                无法确认派生分支数量（{exportBranchFailed}）：导出只含本会话的消息与归档，
+                分支内容不在其中。
+                <button
+                  type="button"
+                  className={exportBranchRetry}
+                  data-testid="export-branch-retry"
+                  onClick={() => void openExportDialog()}
+                >
+                  重试检查
+                </button>
+              </>
+            ) : exportBranchCount === null ? (
+              '正在检查派生分支…'
+            ) : exportBranchCount > 0 ? (
+              `该会话有 ${exportBranchCount} 个派生分支：导出只含本会话的消息与归档，分支内容不在其中。`
+            ) : (
+              '导出内容：本会话的全部消息与归档。'
+            )}
           </div>
           {exportError ? (
             <div className={exportChoiceError} role="alert" data-testid="export-dialog-error">
