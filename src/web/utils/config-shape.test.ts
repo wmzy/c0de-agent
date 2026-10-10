@@ -4,7 +4,11 @@
  */
 import type { Config } from '@shared/types/config.js'
 import { describe, expect, it } from 'vitest'
-import { normalizeConfigForForm, validateConfigShape } from '@/utils/config-shape.js'
+import {
+  fillTemplateWithUnsets,
+  normalizeConfigForForm,
+  validateConfigShape,
+} from '@/utils/config-shape.js'
 
 const current = {
   providers: [
@@ -132,5 +136,54 @@ describe('normalizeConfigForForm', () => {
     expect(Array.isArray(result.config.tools.enabled)).toBe(true)
     expect(Array.isArray(result.config.plugins.enabled)).toBe(true)
     expect(Array.isArray(result.config.slashCommands.enabled)).toBe(true)
+  })
+})
+
+describe('fillTemplateWithUnsets', () => {
+  it('草稿里显式清除的键在模板里保持 undefined（JSON 往返不把删除补回来）', () => {
+    const base = { ...current, commitModel: { provider: 'A', model: 'm' } } as unknown as Config
+    const template = fillTemplateWithUnsets(base, { commitModel: undefined })
+    expect(template.commitModel).toBeUndefined()
+
+    // 端到端：JSON 里没有 commitModel（JSON.stringify 丢掉了 undefined 值），
+    // 切回表单时它必须仍是「未设置」而不是回落到已落盘值。
+    const result = normalizeConfigForForm(JSON.parse(JSON.stringify(template)), template)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.config.commitModel).toBeUndefined()
+  })
+
+  it('草稿里没有的键仍按当前配置补全（含嵌套层）', () => {
+    const template = fillTemplateWithUnsets(current, {
+      tools: { disabled: ['read'] },
+    } as Partial<Config>)
+    const result = normalizeConfigForForm(JSON.parse('{"tools":{"disabled":["read"]}}'), template)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.config.tools.enabled).toEqual(['bash', 'read'])
+    expect(result.config.plugins.enabled).toEqual(['demo'])
+  })
+
+  it('嵌套显式清除生效，同层其他键仍从当前配置取', () => {
+    const base = {
+      ...current,
+      roleRouting: { smol: { provider: 'A', model: 'm' } },
+    } as unknown as Config
+    const template = fillTemplateWithUnsets(base, {
+      roleRouting: { smol: undefined },
+    } as unknown as Partial<Config>)
+    expect(template.roleRouting.smol).toBeUndefined()
+
+    const result = normalizeConfigForForm(JSON.parse(JSON.stringify(template)), template)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.config.roleRouting.smol).toBeUndefined()
+    expect(result.config.fallback).toEqual(current.fallback)
+  })
+
+  it('不修改传入的已加载配置', () => {
+    const base = { ...current, tools: { enabled: ['bash'], disabled: [] } } as unknown as Config
+    fillTemplateWithUnsets(base, { tools: { disabled: ['read'] } } as Partial<Config>)
+    expect(base.tools).toEqual({ enabled: ['bash'], disabled: [] })
   })
 })

@@ -38,7 +38,11 @@ import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
-import { normalizeConfigForForm, validateConfigShape } from '@/utils/config-shape.js'
+import {
+  fillTemplateWithUnsets,
+  normalizeConfigForForm,
+  validateConfigShape,
+} from '@/utils/config-shape.js'
 import { parseBoundedNumber } from '@/utils/format.js'
 
 /** 加载中占位。 */
@@ -415,7 +419,13 @@ export function Settings() {
     setDraft((prev) => {
       const base = prev ?? config
       const routing = { ...(base.roleRouting ?? {}) }
-      delete routing.smol
+      // 显式置 undefined（而不是 delete 这个键）：JSON↔表单往返靠「显式清除」
+      // 与「文本里没写」区分意图（见 fillTemplateWithUnsets）。delete 之后该键从
+      // 草稿里彻底消失，切回表单时会被当成「补全模板里缺的键」按已落盘值补回来，
+      // 用户清除掉的 smol 自己回来了。与 GitPanel「取消勾选」同口径。
+      // （Config['roleRouting'] 的索引签名声明每个角色都是完整对象，不表示「键在但
+      //  被清除」；运行时 smol 缺席/为 undefined 都不渲染，消费方本就按可选处理。）
+      ;(routing as { smol?: { provider: string; model: string } }).smol = undefined
       return { ...base, roleRouting: routing }
     })
   }
@@ -448,11 +458,24 @@ export function Settings() {
 
   /** 切回 GUI：JSON 非法（语法或结构）时阻止（避免丢失未保存的编辑）。
    *  合法时把内容归一化成完整 Config——表单需要完整形状，直接下发原始对象
-   *  会让面板读到 undefined（CommaInput 的 value.join、数字字段的算术）。 */
+   *  会让面板读到 undefined（CommaInput 的 value.join、数字字段的算术）。
+   *
+   *  补全模板不能直接用已落盘的 config：用户在表单里取消勾选「一键提交使用独立
+   *  模型」（commitModel: undefined）后，JSON.stringify 会把值为 undefined 的键
+   *  整条丢掉，JSON 文本里既没有该键也没有 null。用 config 当模板补全，正好把这个
+   *  「用户刚做的删除」当成「文本里缺的键」按旧值补回来——复选框自己变回勾选，
+   *  草稿与 config 又逐键相同，保存 diff 出空 patch 直接回显「✓ 已保存」，磁盘上
+   *  什么都没变。故用 fillTemplateWithUnsets(config, draft)：草稿里显式清除的键
+   *  保持清除，其余缺失键仍按当前配置补全（表单不读 undefined）。
+   *  导入路径（见 importConfig）继续以 config 为模板：导入的是完整配置文件、没有
+   *  草稿可参照，「缺失键按当前值补全」在那里才是对的。 */
   const enterGuiMode = () => {
     if (viewMode !== 'json') return
     if (jsonError) return
-    const normalized = normalizeConfigForForm(JSON.parse(jsonText) as unknown, config)
+    const normalized = normalizeConfigForForm(
+      JSON.parse(jsonText) as unknown,
+      fillTemplateWithUnsets(config, draft ?? {}),
+    )
     if (!normalized.ok) {
       setJsonShapeError(normalized.message)
       return

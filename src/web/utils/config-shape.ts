@@ -99,6 +99,38 @@ function walk(raw: unknown, template: unknown, path: string, fill: boolean): Wal
   return { ok: true, value: raw }
 }
 
+/**
+ * 表单补全模板：已加载配置为底，叠加草稿里**显式清除**的键（值为 undefined）。
+ *
+ * 为什么不能直接用 config：GUI 里的删除（取消勾选「一键提交使用独立模型」→
+ * `commitModel: undefined`、清除标题生成模型 → `routing.smol: undefined`）在草稿里
+ * 是「值为 undefined 的自有键」，而 JSON.stringify 会把它们整条丢掉——往返一次
+ * JSON 视图后，用 config 当补全模板就正好把这个「用户刚做的删除」当成「文本里
+ * 缺的键」按已落盘值补回来：复选框自己变回勾选，草稿与 config 又逐键相同，保存
+ * diff 出空 patch 直接回显「✓ 已保存」，磁盘上什么都没变。
+ *
+ * 口径（与 walk 的补全语义配合）：
+ * - 草稿里有该键且值为 undefined → 显式清除，模板里保持 undefined，删除得以保留；
+ * - 草稿里没有该键 → 「文本没写」= 用当前已解析值兜底（walk 的既有口径），
+ *   从底对象取；嵌套层同样逐层叠加，所以只写了 `tools.disabled` 的 JSON 文本
+ *   切回表单时，`tools.enabled` 仍能按当前配置补全（不读 undefined）。
+ */
+function mergeTemplate(base: unknown, overlay: unknown): unknown {
+  if (overlay === undefined) return undefined
+  if (!isPlainObject(overlay) || !isPlainObject(base)) return overlay
+  const out: Record<string, unknown> = { ...base }
+  for (const key of Object.keys(overlay)) {
+    if (PROTO_KEYS.has(key)) continue
+    out[key] = mergeTemplate(base[key], overlay[key])
+  }
+  return out
+}
+
+/** 见 mergeTemplate：把「已加载配置 + 当前草稿的显式清除」做成表单补全模板。 */
+export function fillTemplateWithUnsets(base: Config, draft: Partial<Config>): Config {
+  return mergeTemplate(base, draft) as Config
+}
+
 /** 顶层未知键（服务端 PATCH 会以 UNKNOWN_CONFIG_KEYS 拒绝，此处提前指出）。 */
 function unknownTopLevelKeys(raw: Record<string, unknown>, current: Config): string[] {
   const known = new Set([...Object.keys(current), ...OPTIONAL_TOP_LEVEL_KEYS])

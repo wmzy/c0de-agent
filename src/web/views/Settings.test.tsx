@@ -1241,6 +1241,45 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(enabled.value).toBe('bash, read')
     expect((screen.getByLabelText('已禁用') as HTMLInputElement).value).toBe('read')
   })
+
+  /**
+   * 回归：表单里取消勾选「一键提交使用独立模型」（commitModel: undefined）后，
+   * JSON.stringify 会把值为 undefined 的键整条丢掉；切回表单时用已落盘 config
+   * 当补全模板，正好把这个「用户刚做的删除」当成「文本里缺的键」补回旧值——
+   * 复选框自己变回勾选，草稿与 config 又逐键相同，保存 diff 出空 patch 直接
+   * 回显「✓ 已保存」，磁盘上什么都没变（实测：点保存零 PATCH 请求）。
+   */
+  it('表单里的 unset 活过 JSON 往返：勾选态保持未勾选，保存落成 null', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const withCommitModel = {
+      ...mockConfig,
+      commitModel: { provider: 'ProviderA', model: 'gpt-4' },
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(withCommitModel))
+    ;(configAPI.update as Mock).mockResolvedValue(withCommitModel)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const cb = screen.getByLabelText(/一键提交使用独立模型/) as HTMLInputElement
+    expect(cb.checked).toBe(true)
+    fireEvent.click(cb)
+    expect(cb.checked).toBe(false)
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    expect(editor.value).not.toContain('commitModel')
+
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    expect((screen.getByLabelText(/一键提交使用独立模型/) as HTMLInputElement).checked).toBe(false)
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const patch = (configAPI.update as Mock).mock.calls[0]?.[0] as { commitModel?: unknown }
+    // diffConfig 的清除口径：null（JSON 不传 undefined）
+    expect(patch.commitModel).toBeNull()
+  })
 })
 
 describe('Settings — 完整配置表单覆盖', () => {
