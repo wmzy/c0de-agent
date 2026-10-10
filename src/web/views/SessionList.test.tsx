@@ -35,7 +35,15 @@ const hoisted = vi.hoisted(() => ({
   },
   /** 「未归属项目」分组的数据源：孤儿已删会话与其计数。 */
   orphans: { data: [] as Session[] },
-  orphanCount: { data: { count: 0 } },
+  /** 孤儿计数查询的完整返回值——驱动读失败分支与「重试」入口。 */
+  orphanCount: {
+    data: { count: 0 } as { count: number } | undefined,
+  } as {
+    data: { count: number } | undefined
+    isError?: boolean
+    error?: unknown
+    refetch?: () => void
+  },
 }))
 
 vi.mock('@/hooks/useSession.js', () => ({
@@ -107,7 +115,22 @@ const OUTSIDE = makeSession('outside-id', 'outside-tree')
 beforeEach(() => {
   hoisted.tree = [node(ROOT, [node(CHILD, [node(GRANDCHILD)])])]
   hoisted.orphans = { data: [] }
-  hoisted.orphanCount = { data: { count: 0 } }
+  // 主列表默认健康：读失败态由各用例自行设置。hoisted 是普通对象（非 mock），
+  // afterEach 的 clearAllMocks 不会还原它——不在这里重置，上一用例留下的
+  // isError:true 会漏进下一个用例，让它渲染成错误页。
+  hoisted.deleted = {
+    data: [],
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: () => {},
+  }
+  hoisted.orphanCount = {
+    data: { count: 0 },
+    isError: false,
+    error: null,
+    refetch: () => {},
+  }
   hoisted.treeQuery = {
     data: undefined,
     isLoading: false,
@@ -403,6 +426,49 @@ describe('RecycleBin 读失败态', () => {
     renderTrash()
     fireEvent.click(screen.getByTestId('trash-retry'))
     expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * 回归：孤儿（未归属项目）会话计数读失败被 `?? 0` 吃成「没有孤儿」。
+   *
+   * 缺陷：`(orphanCountData?.count ?? 0) > 0` 是整组的唯一渲染条件。计数请求
+   * 失败时 data 为 undefined → 表头、「展开」按钮与全部恢复/彻底删除入口整块
+   * 消失，页面零文字。孤儿是删除项目产生的，只有这个分组能看见与恢复，读不到
+   * 却当成没有，条目会按保留期被静默清除。对照：主列表同页已有 trash-load-error。
+   */
+  it('未归属项目会话计数读失败：给原因与重试，不把整组吃掉', () => {
+    const refetch = vi.fn()
+    hoisted.orphanCount = {
+      data: undefined,
+      isError: true,
+      error: { status: 500, message: '孤儿计数炸了' },
+      refetch,
+    }
+    renderTrash()
+    const bar = screen.getByTestId('orphan-count-error')
+    expect(bar.textContent).toContain('未归属项目会话读取失败')
+    expect(bar.textContent).toContain('孤儿计数炸了')
+    // 读不到 ≠ 没有：表头不能凭空缺席到让人以为「没有孤儿」
+    expect(screen.queryByTestId('orphan-trash-header')).toBeNull()
+    fireEvent.click(screen.getByTestId('orphan-count-retry'))
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * 回归：未归属看板列表读失败被 `?? []` 吃成「没有未归属看板」——合并到当前
+   * 项目 / 恢复并重建原项目 / 彻底删除三个入口随之静默消失。
+   */
+  it('未归属看板读失败：给原因与重试，不静默消失', async () => {
+    vi.mocked(kanbanAPI.deletedBoards).mockRejectedValueOnce(new Error('看板炸了'))
+    renderTrash()
+    await waitFor(() => {
+      expect(screen.getByTestId('orphan-kanban-error')).toBeInTheDocument()
+    })
+    const bar = screen.getByTestId('orphan-kanban-error')
+    expect(bar.textContent).toContain('未归属看板读取失败')
+    expect(bar.textContent).toContain('看板炸了')
+    expect(screen.queryByTestId('orphan-kanban-header')).toBeNull()
+    expect(screen.getByTestId('orphan-kanban-retry')).toBeInTheDocument()
   })
 })
 

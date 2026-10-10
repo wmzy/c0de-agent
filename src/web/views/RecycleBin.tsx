@@ -141,7 +141,12 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // A3：折叠态只拉计数；展开时才拉列表并显式标记「已看到」（启动倒计时），
   // 打开任意项目回收站不再连带启动无关孤儿条目的保留期。
   const [orphansOpen, setOrphansOpen] = useState(false)
-  const { data: orphanCountData } = useDeletedOrphansCount()
+  const {
+    data: orphanCountData,
+    isError: orphanCountError,
+    error: orphanCountErrorObj,
+    refetch: refetchOrphanCount,
+  } = useDeletedOrphansCount()
   const { data: orphans } = useDeletedOrphans(orphansOpen)
   const toggleOrphans = () => {
     const next = !orphansOpen
@@ -159,7 +164,15 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const [orphanId, setOrphanId] = useState<string | null>(null)
 
   // P2-5：未归属看板（项目删除软删除的看板，60 天保留期）——恢复/彻底删除入口。
-  const { data: deletedBoardsData } = useQuery({
+  // 读失败必须与「确实没有」区分：此前只取 data，`?? []` 让整个分组（连同恢复/
+  // 彻底删除按钮）静默消失，用户以为没有未归属看板，实际是「拉不到」，看板会按
+  // 保留期被静默清除（与主列表 trash-load-error 同口径：给原因 + 重试）。
+  const {
+    data: deletedBoardsData,
+    isError: deletedBoardsError,
+    error: deletedBoardsErrorObj,
+    refetch: refetchDeletedBoards,
+  } = useQuery({
     queryKey: ['kanban', 'deleted'],
     queryFn: () => kanbanAPI.deletedBoards().then((d) => d.boards),
   })
@@ -286,6 +299,14 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 永远不会展示，用户只能看到列表消失。A3：孤儿分组同样独立于空态渲染。
 
   const deletedList = deleted ?? []
+  // 与主列表同款的错误文案提取（APIError 现在是真正的 Error，取 message 优先、
+  // instanceof 兜底，两种读法都不会退化）。
+  const orphanCountErrText =
+    (orphanCountErrorObj as { message?: string } | null)?.message ??
+    (orphanCountErrorObj instanceof Error ? orphanCountErrorObj.message : null)
+  const deletedBoardsErrText =
+    (deletedBoardsErrorObj as { message?: string } | null)?.message ??
+    (deletedBoardsErrorObj instanceof Error ? deletedBoardsErrorObj.message : null)
   const deletedIds = new Set(deletedList.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
     s.parentId !== null && deletedIds.has(s.parentId)
@@ -548,6 +569,39 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             )
           })}
         </>
+      )}
+      {/* F1：孤儿（未归属项目）会话只有本分组能看见与恢复——计数读取失败时此前用
+          `?? 0` 把整组连同恢复入口一起吃掉，页面零文字，用户看到的是一个「没有
+          孤儿」的回收站，而这些会话会按保留期被静默清除。读不到必须说出来 + 重试。 */}
+      {orphanCountError && (
+        <div className={errorBar} role="alert" data-testid="orphan-count-error">
+          未归属项目会话读取失败
+          {orphanCountErrText ? `：${orphanCountErrText}` : '，请稍后重试。'}{' '}
+          <button
+            type="button"
+            className={restoreBtn}
+            onClick={() => void refetchOrphanCount()}
+            data-testid="orphan-count-retry"
+          >
+            重试
+          </button>
+        </div>
+      )}
+      {/* P2-5：未归属看板读取失败同口径——此前 `?? []` 让整组（连同合并/重建原项目/
+          彻底删除）静默消失，用户只会以为没有未归属看板。 */}
+      {deletedBoardsError && (
+        <div className={errorBar} role="alert" data-testid="orphan-kanban-error">
+          未归属看板读取失败
+          {deletedBoardsErrText ? `：${deletedBoardsErrText}` : '，请稍后重试。'}{' '}
+          <button
+            type="button"
+            className={restoreBtn}
+            onClick={() => void refetchDeletedBoards()}
+            data-testid="orphan-kanban-retry"
+          >
+            重试
+          </button>
+        </div>
       )}
       {(orphanCountData?.count ?? 0) > 0 && (
         <>
