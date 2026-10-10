@@ -225,12 +225,19 @@ export function CardEditDialog({
   const [newLabelName, setNewLabelName] = useState('')
   const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0] ?? '#ef4444')
 
+  // 已在看板配置里持久化的标签 id。本弹窗只负责「这张卡片带哪些标签」与
+  // 「新增标签」；标签定义的改名/删除属于看板设置（BoardConfigDialog）。
+  const persistedLabelIds = new Set(boardLabels.map((l) => l.id))
+
   const saveMutation = useMutation({
     mutationFn: async () => {
-      // 若标签有增删变化，先持久化到 board 配置
-      const boardIds = new Set(boardLabels.map((l) => l.id))
+      // 若标签有增删变化，先持久化到 board 配置。
+      // 只会「多」不会「少」：本弹窗不提供删除已持久化标签的入口（见下方标签
+      // 网格），因此 allLabels 恒为 boardLabels 的超集，updateBoard 触发的
+      // store 悬空引用清理不会删掉任何现有标签。
       const labelsChanged =
-        allLabels.length !== boardLabels.length || allLabels.some((l) => !boardIds.has(l.id))
+        allLabels.length !== boardLabels.length ||
+        allLabels.some((l) => !persistedLabelIds.has(l.id))
       if (labelsChanged) {
         await kanbanAPI.updateBoard(projectId, { labels: allLabels })
       }
@@ -286,6 +293,12 @@ export function CardEditDialog({
   }
 
   const removeLabel = (id: string) => {
+    // 已持久化的标签不在此处删除：updateBoard 的悬空引用清理会把该 labelId
+    // 从**整块看板所有卡片**上抹掉，而弹窗标题只有「编辑卡片」。实测在卡片甲
+    // 里点某个标签的「×」并保存，卡片乙身上同一个标签也一起消失（后端 board
+    // labels 也少了一条）——用户看不到任何跨卡片影响的提示。删除标签定义请走
+    // 看板设置；这里只允许撤销「刚添加、尚未保存」的标签。
+    if (persistedLabelIds.has(id)) return
     setAllLabels((prev) => prev.filter((l) => l.id !== id))
     setSelectedLabels((prev) => {
       const next = new Set(prev)
@@ -405,19 +418,26 @@ export function CardEditDialog({
                     type="button"
                     className={labelChipMain}
                     aria-pressed={selected}
+                    title={selected ? '点击从本卡片移除该标签' : '点击添加到本卡片'}
                     onClick={() => toggleLabel(l.id)}
                   >
                     <span className={labelDot} style={{ background: l.color }} />
                     {l.name}
                   </button>
-                  <button
-                    type="button"
-                    className={labelChipDel}
-                    onClick={() => removeLabel(l.id)}
-                    aria-label={`删除标签 ${l.name}`}
-                  >
-                    ×
-                  </button>
+                  {/* 「×」只用于撤销本次新增、尚未保存的标签。已持久化标签不渲染
+                      它：那个 × 过去会把标签从整块看板所有卡片上删掉（连同标签
+                      定义），而这里看起来只是在编辑一张卡片。 */}
+                  {!persistedLabelIds.has(l.id) && (
+                    <button
+                      type="button"
+                      className={labelChipDel}
+                      onClick={() => removeLabel(l.id)}
+                      aria-label={`移除新标签 ${l.name}（尚未保存）`}
+                      title="移除这个刚添加、尚未保存的标签"
+                    >
+                      ×
+                    </button>
+                  )}
                 </span>
               )
             })}
