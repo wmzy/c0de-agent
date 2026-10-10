@@ -27,6 +27,27 @@ import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
 
+/** 二进制嗅探：NUL 字节出现在文件开头 8 KiB 内，或整段不是合法 UTF-8。
+ *
+ *  读取接口此前一律 `readFile(resolved, 'utf-8')`——任何扩展名都按文本解码，
+ *  .zip/.woff2/.wasm/.db 之类解码成一片 U+FFFD 后照样进前端编辑器；用户敲一个字
+ *  点保存，PUT 就用文本把原文件 truncate 重写一遍，原字节不可恢复（实测 4096B 的
+ *  zip 被写成 7476B 的 U+FFFD 文本）。这里在字节层把「不是文本」说清楚，别让前端
+ *  拿乱码当可编辑内容。
+ *
+ *  判据与 git 的文本检测同族（NUL 快速通道 + UTF-8 合法性）。合法性必须按**整段**
+ *  判定：只看前 8 KiB 会在多字节字符被切断处误报成二进制。
+ */
+function looksBinary(buf: Buffer): boolean {
+  if (buf.subarray(0, 8192).includes(0)) return true
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(buf)
+    return false
+  } catch {
+    return true
+  }
+}
+
 type FileEntry = {
   name: string
   type: 'file' | 'directory'
@@ -578,7 +599,17 @@ ${headChars(summary.diff, 8000)}`
             : {}),
         })
       }
-      const content = await readFile(resolved, 'utf-8')
+      const buf = await readFile(resolved)
+      // 二进制不按文本返回：前端拿到的每一段乱码都可能原样写回磁盘。
+      if (looksBinary(buf)) {
+        return apiError(
+          c,
+          415,
+          'BINARY_FILE',
+          '这是二进制文件，不能以文本方式显示或编辑（需要查看请下载/用外部工具打开）',
+        )
+      }
+      const content = buf.toString('utf-8')
       return c.json({ path, content })
     } catch {
       return apiError(c, 404, 'NOT_FOUND', 'File not found')

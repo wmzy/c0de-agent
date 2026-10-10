@@ -381,6 +381,54 @@ describe('files route', () => {
     expect(((await resB.json()) as { content: string }).content).toBe('from-b')
   })
 
+  // 二进制不按文本返回。此前任何扩展名都 readFile(resolved, 'utf-8')，zip/font/db
+  // 解码成一屏 U+FFFD 后照样进前端可编辑的 CodeMirror：用户敲一个字点保存，PUT 就把
+  // 原文件 truncate 重写成文本，原字节不可恢复。服务端只有字节，能判的别让前端猜。
+  describe('二进制文件的文本读取', () => {
+    async function readFixture(name: string, bytes: Buffer | string) {
+      const dir = mkdtempSync(join(tmpdir(), 'c0de-bin-'))
+      writeFileSync(join(dir, name), bytes)
+      const ctx = createServerContext({
+        db: dbHandle,
+        llmRegistry: createRegistry(),
+        cwd: dir,
+      })
+      return createFilesRoute(ctx).request(`/${encodeURIComponent(name)}`)
+    }
+
+    it('含 NUL 字节的 zip 头：415 BINARY_FILE，不返回任何 content', async () => {
+      const res = await readFixture('blob.zip', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff]))
+      expect(res.status).toBe(415)
+      const body = (await res.json()) as {
+        error: { code: string; message: string }
+        content?: string
+      }
+      expect(body.error.code).toBe('BINARY_FILE')
+      expect(body.content).toBeUndefined()
+      expect(body.error.message).toContain('二进制')
+    })
+
+    it('无 NUL 但不是合法 UTF-8（latin-1 字节）：同样 415', async () => {
+      const res = await readFixture('legacy.dat', Buffer.from([0xc3, 0x28, 0xa0, 0xa1, 0xe9, 0xff]))
+      expect(res.status).toBe(415)
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe('BINARY_FILE')
+    })
+
+    it('中文文本正常按 utf-8 返回', async () => {
+      const res = await readFixture('notes.md', '# 标题\n正文：正常内容\n')
+      expect(res.status).toBe(200)
+      expect(((await res.json()) as { content: string }).content).toContain('正常内容')
+    })
+
+    // 多字节字符正好被 8 KiB 嗅探窗口切断：整段解码才不误报成二进制。
+    it('多字节字符跨过 8 KiB 嗅探边界时仍按文本返回', async () => {
+      const padding = 'a'.repeat(8190)
+      const res = await readFixture('long.txt', `${padding}中文尾巴`)
+      expect(res.status).toBe(200)
+      expect(((await res.json()) as { content: string }).content).toContain('中文尾巴')
+    })
+  })
+
   it('PUT /file?projectId=... 写入对应项目 worktree（不污染 ctx.cwd）', async () => {
     const dirA = mkdtempSync(join(tmpdir(), 'c0de-put-a-'))
     const dirB = mkdtempSync(join(tmpdir(), 'c0de-put-b-'))
