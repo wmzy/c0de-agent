@@ -66,6 +66,37 @@ const cardTitle = css`
   word-break: break-word;
 `
 
+/*
+ * 键盘拖拽把手。刻意不在 hover 时改 background：global.ts 的
+ * :where(button):hover:not(:disabled):not([aria-disabled='true']) 特异度是
+ * (0,3,0)，会盖掉这里 (0,2,0) 的 &:hover（同文件的 pane 关闭钮踩过这个坑）。
+ * 只改 color —— 全局规则不碰前景色，既保住语义色又不会掉进特异度陷阱。
+ */
+const cardDragHandle = css`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px -6px -4px 0;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--haze-color-text-secondary);
+  cursor: grab;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 4px;
+  touch-action: none;
+
+  &:hover {
+    color: var(--haze-color-text);
+  }
+  &:active {
+    cursor: grabbing;
+  }
+`
+
 const labelsRow = css`
   display: flex;
   flex-wrap: wrap;
@@ -98,21 +129,47 @@ type CardProps = {
 }
 
 function DraggableCard({ card: c, labels, onClick }: CardProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: c.id,
     data: { columnId: c.columnId, type: 'card' },
   })
 
   /*
-   * dnd-kit 的拖拽由 listeners.onPointerDown 激活（PointerSensor 的 activator）。
+   * dnd-kit 的拖拽由 listeners.onPointerDown 激活（PointerSensor 的激活器）。
    * 原实现先 `{...listeners}` 再写 `onPointerDown={e => e.stopPropagation()}`，
    * 后者把前者的 onPointerDown 整个覆盖掉——激活器消失，PointerSensor 永不启动，
    * 卡片拖不动（实测：按下并逐帧移动 25 步，卡片 transform 恒为空、坐标不变）。
    *
    * stopPropagation 本身仍要保留（避免指针事件冒泡出卡片），但必须先委托给
    * dnd-kit 的原始 handler：拆出 onPointerDown 单独组合，其余 listeners 原样展开。
+   *
+   * listeners 里还有 KeyboardSensor 的 onKeyDown，它只认 Space/Enter 起步
+   * （node_modules/@dnd-kit/core：keyboardCodes.start = [Space, Enter]，命中后
+   * event.preventDefault()）。两个传感器一起铺在卡片根节点时，卡片虽然带
+   * role="button" + tabIndex=0，键盘却完全打不开它：
+   *   1. 回车/空格的默认激活被 preventDefault 取消 → onClick 永不触发 →
+   *      改标题/描述/优先级/标签、删除卡片（唯一入口就在编辑弹窗里）整条路对
+   *      键盘与读屏用户不存在；
+   *   2. 更糟的是「按回车打开」的直觉动作会启动一次键盘拖拽，接着一个方向键
+   *      就把卡片搬到别的列，再按回车即落位写库——一次误操作改掉了看板数据。
+   * 现在把键盘激活器移到卡片内的专用把手（setActivatorNodeRef 让激活器只认
+   * 把手自身的目标），根节点恢复 role=button 的 Enter/Space 语义；指针拖拽仍
+   * 可从卡片任意处起手，键盘拖拽走把手，两条路径不再互相抢键。
    */
-  const { onPointerDown: activateDrag, ...restListeners } = listeners ?? {}
+  const {
+    onPointerDown: activateDrag,
+    onKeyDown: activateDragByKey,
+    ...restListeners
+  } = listeners ?? {}
+  const keyboardDraggable = Boolean(activateDragByKey)
 
   const style = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -124,7 +181,6 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
     .filter((l): l is KanbanLabelDef => !!l)
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: dnd-kit attributes provides keyboard handlers
     // biome-ignore lint/a11y/noStaticElementInteractions: dnd-kit draggable role is set via attributes spread
     <div
       ref={setNodeRef}
@@ -144,6 +200,21 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
         activateDrag?.(e)
         e.stopPropagation()
       }}
+      onKeyDown={(e) => {
+        // 拖拽进行中所有按键交给 dnd-kit（方向键移动、Enter/Space 落位、Esc 取消）。
+        // 不让行的话，「落位」那次回车会同时被当成「打开编辑」——既改数据又弹窗。
+        if (isDragging) {
+          activateDragByKey?.(e)
+          return
+        }
+        // 把手是卡片内唯一可聚焦控件，其按键归自己（拾起/放下），不再触发打开
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ' || e.code === 'Space') {
+          e.preventDefault()
+          e.stopPropagation()
+          onClick()
+        }
+      }}
       data-testid={`kanban-card-${c.id}`}
     >
       <div className={cardHeader}>
@@ -153,6 +224,19 @@ function DraggableCard({ card: c, labels, onClick }: CardProps) {
           title={`优先级: ${c.priority}`}
         />
         <span className={cardTitle}>{c.title}</span>
+        {keyboardDraggable && (
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            className={cardDragHandle}
+            onKeyDown={(e) => activateDragByKey?.(e)}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`移动卡片：${c.title}。回车或空格拾起，方向键移动，再按一次放下，Esc 取消`}
+            data-testid={`kanban-card-handle-${c.id}`}
+          >
+            <span aria-hidden="true">⠿</span>
+          </button>
+        )}
       </div>
       {cardLabels.length > 0 && (
         <div className={labelsRow}>

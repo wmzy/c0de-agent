@@ -6,7 +6,7 @@
  * 断言必须在 pointerdown 后检查 dnd-kit 确实收到激活事件——这正是坏掉的接线点，
  * 只断言卡片渲染通过无法捕获该回归。
  */
-import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
+import { DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
@@ -83,6 +83,105 @@ describe('KanbanColumn 拖拽', () => {
     // 让开这一拍，否则捕获阶段的 click 抑制器活到下一个用例，把那里第一次 click 吃掉
     // （下面「快速新建」用例点「+ 新建卡片」不展开）。
     await new Promise((resolve) => setTimeout(resolve, 60))
+  })
+})
+
+/** 与 KanbanView 相同的传感器配置：PointerSensor（5px 起步）+ KeyboardSensor。 */
+function KeyboardHarness({ children }: { children: React.ReactNode }) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  )
+  return (
+    <DndContext sensors={sensors} onDragStart={dragStartSpy} onDragEnd={dragEndSpy}>
+      {children}
+    </DndContext>
+  )
+}
+
+describe('KanbanColumn 卡片的键盘可达性', () => {
+  // 回归：两个传感器的 listeners 都铺在卡片根节点，KeyboardSensor 的激活器吃掉
+  // Enter/Space（keyboardCodes.start 命中后 preventDefault）并启动一次拖拽，
+  // 卡片自己的 onClick 永不触发。后果是键盘/读屏用户打不开卡片——改标题/描述/
+  // 优先级/标签、删除卡片（唯一入口就在编辑弹窗里）整条路不存在；而「按回车想
+  // 打开」的直觉动作反而把卡片抬起来，再按方向键就把看板数据搬到了别的列。
+  it('卡片上按回车打开编辑，且不会顺手启动一次拖拽', () => {
+    const onCardClick = vi.fn()
+    render(
+      <KeyboardHarness>
+        <KanbanColumn
+          column={column('todo', '待办')}
+          cards={[card('c1', '第一张卡', 'todo')]}
+          labels={[]}
+          onCardClick={onCardClick}
+          onQuickAdd={vi.fn()}
+        />
+      </KeyboardHarness>,
+    )
+
+    fireEvent.keyDown(screen.getByTestId('kanban-card-c1'), { key: 'Enter', code: 'Enter' })
+
+    expect(onCardClick).toHaveBeenCalledTimes(1)
+    expect(dragStartSpy).not.toHaveBeenCalled()
+  })
+
+  // 空格与回车是 role="button" 的标准激活键，卡片不是按钮就不该吃掉它们。
+  it('卡片上按空格同样打开编辑', () => {
+    const onCardClick = vi.fn()
+    render(
+      <KeyboardHarness>
+        <KanbanColumn
+          column={column('todo', '待办')}
+          cards={[card('c1', '第一张卡', 'todo')]}
+          labels={[]}
+          onCardClick={onCardClick}
+          onQuickAdd={vi.fn()}
+        />
+      </KeyboardHarness>,
+    )
+
+    fireEvent.keyDown(screen.getByTestId('kanban-card-c1'), { key: ' ', code: 'Space' })
+
+    expect(onCardClick).toHaveBeenCalledTimes(1)
+    expect(dragStartSpy).not.toHaveBeenCalled()
+  })
+
+  // 键盘拖拽没被顺手删掉：改由卡片内的专用把手承载，回车/空格拾起、方向键移动。
+  it('把手上的回车拾起卡片，且不打开编辑', () => {
+    const onCardClick = vi.fn()
+    render(
+      <KeyboardHarness>
+        <KanbanColumn
+          column={column('todo', '待办')}
+          cards={[card('c1', '第一张卡', 'todo')]}
+          labels={[]}
+          onCardClick={onCardClick}
+          onQuickAdd={vi.fn()}
+        />
+      </KeyboardHarness>,
+    )
+
+    fireEvent.keyDown(screen.getByTestId('kanban-card-handle-c1'), { key: 'Enter', code: 'Enter' })
+
+    expect(dragStartSpy).toHaveBeenCalled()
+    expect(onCardClick).not.toHaveBeenCalled()
+  })
+
+  // 反向回归：没注册 KeyboardSensor 时不渲染死把手（无监听件的装饰性控件）。
+  it('未注册键盘传感器时不渲染拖拽把手', () => {
+    render(
+      <Harness>
+        <KanbanColumn
+          column={column('todo', '待办')}
+          cards={[card('c1', '第一张卡', 'todo')]}
+          labels={[]}
+          onCardClick={vi.fn()}
+          onQuickAdd={vi.fn()}
+        />
+      </Harness>,
+    )
+
+    expect(screen.queryByTestId('kanban-card-handle-c1')).toBeNull()
   })
 })
 

@@ -225,6 +225,10 @@ describe('KanbanView 横向溢出与键盘可达', () => {
  *
  * 断言打在「传感器是否激活」这个真实接线点上：KeyboardSensor 的 activator
  * 是 onKeyDown（空格/回车），只断言卡片渲染出 role=button 捕获不到本回归。
+ *
+ * 后续修正：卡片自身带 role="button"，空格/回车必须回到按钮语义（打开编辑
+ * 弹窗，卡片改标题/删除的唯一入口），键盘拖拽改由卡片内的拖拽把手承载。
+ * 本例因此改为在把手上触发——若把手没接上激活器，这里同样会空播报。
  */
 describe('KanbanView 键盘拖拽', () => {
   const boardOf = (): KanbanBoardWithCards => ({
@@ -272,17 +276,17 @@ describe('KanbanView 键盘拖拽', () => {
     await screen.findByTestId('kanban-card-c1')
   }
 
-  it('卡片可被键盘拾起并产生拖拽播报（此前空格完全无效）', async () => {
+  it('拖拽把手可被键盘拾起并产生拖拽播报（此前空格完全无效）', async () => {
     await renderBoardWithCards()
 
     // dnd-kit 常驻渲染 live region（未开始拖拽时内容为空）。
-    // 修复前 DndContext 只注册 PointerSensor：卡片的 onKeyDown 上没有任何
+    // 修复前 DndContext 只注册 PointerSensor：把手的 onKeyDown 上没有任何
     // 键盘传感器监听，空格既不进入拖拽会话、播报也始终为空——
     // 即「卡片宣称为可聚焦按钮，却对键盘毫无反应」。
     const live = document.querySelector('[id^="DndLiveRegion"]') as HTMLElement
     expect(live.textContent).toBe('')
 
-    fireEvent.keyDown(screen.getByTestId('kanban-card-c1'), { key: ' ', code: 'Space' })
+    fireEvent.keyDown(screen.getByTestId('kanban-card-handle-c1'), { key: ' ', code: 'Space' })
 
     await waitFor(() => {
       expect(live.textContent).toMatch(/Draggable item/)
