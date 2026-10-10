@@ -241,8 +241,17 @@ function useComposer({
     persistDraft()
   }, [popover, resetHistory, persistDraft])
 
+  /**
+   * 外部写入编辑器。
+   *
+   * persist=false 只给提示历史回溯用：↑/↓ 换的是「当前看哪一条」，不是「草稿
+   * 变成了什么」。落盘会把召回的旧提示写成本会话的草稿，用户那份正在写的
+   * 草稿（含 @file/snippet pill 与图片）就此被顶掉——而原草稿只在 draftRef 内存
+   * 里，切会话或刷新即永久丢失。回溯期间不动存储，用户按下 ↓ 或直接编辑，
+   * handleInput/reset 的落盘自然写入真实内容。
+   */
   const setPromptExternal = useCallback(
-    (prompt: Prompt, cursorAtEnd = false) => {
+    (prompt: Prompt, cursorAtEnd = false, persist = true) => {
       if (!editorRef.current) return
       mirrorRef.current.input = true
       if (cursorAtEnd) {
@@ -257,7 +266,7 @@ function useComposer({
       // 外部设置 prompt 后也需装饰
       if (editorRef.current) decorateWorkflowz(editorRef.current)
       // 外部写入同样落盘：发送成功后的清空（→ 键删除）、slash/@ 插入、失败还原都要反映到草稿。
-      persistDraft()
+      if (persist) persistDraft()
     },
     [persistDraft],
   )
@@ -628,9 +637,11 @@ function useComposer({
           })
           if (result && 'entry' in result) {
             indexRef.current = result.index
-            setPromptExternal(textPrompt(result.entry))
+            setPromptExternal(textPrompt(result.entry), false, false)
           } else if (result && 'reset' in result) {
             indexRef.current = -1
+            // ↓ 退出历史：草稿回到输入框，此时它就是草稿——落盘（回溯期间存储里
+            // 一直是原草稿，这里写回同一份内容，语义上仍是「草稿未被顶掉」）。
             setPromptExternal(draftRef.current ?? DEFAULT_PROMPT)
           }
         }

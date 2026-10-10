@@ -10,6 +10,7 @@ import {
   StrictMode,
 } from 'react'
 import { describe, expect, it, vi } from 'vitest'
+import { loadDraft } from '@/composer/draft.js'
 import { loadHistory, saveHistory } from '@/composer/history.js'
 import { useComposer } from '@/composer/useComposer.js'
 
@@ -115,8 +116,9 @@ type PillInsertResult = {
   editor: HTMLDivElement
 }
 
-/** 带真实 contenteditable 编辑器的 composer：pill 渲染/解析与光标定位全链路。 */
-function renderComposerWithEditor(): PillInsertResult {
+/** 带真实 contenteditable 编辑器的 composer：pill 渲染/解析与光标定位全链路。
+ *  draftScope 传入时才落 localStorage（草稿持久化域），用于断言「什么该落盘」。 */
+function renderComposerWithEditor(draftScope?: string): PillInsertResult {
   const editor = document.createElement('div')
   editor.setAttribute('contenteditable', 'true')
   document.body.appendChild(editor)
@@ -130,6 +132,7 @@ function renderComposerWithEditor(): PillInsertResult {
         isStreaming: false,
         hasHistory: false,
         commands: [],
+        draftScope,
       }),
     { wrapper: strictWrapper },
   )
@@ -215,6 +218,47 @@ describe('useComposer pill 保留', () => {
     expect(c.onSend).toHaveBeenCalledTimes(1)
     const payload = c.onSend.mock.calls[0]?.[0] as { files: string[]; images: ImagePart[] }
     expect(payload.files).toEqual(['src/a.ts', 'src/c.ts'])
+  })
+
+  /**
+   * 回归：↑ 回溯把历史条目当草稿落盘，顶掉用户正在写的那份。
+   *
+   * 缺陷：历史导航走 setPromptExternal，而它无条件 persistDraft。实测（隔离
+   * dev server）：输入「我写了一半的草稿」→ 按 ↑ → localStorage 里
+   * composer-draft.v1:s:<sessionId> 变成「历史里的第一条提示」。原草稿只在
+   * draftRef 内存里，用户此时切会话/刷新即永久丢失——包括草稿里的 @file pill
+   * 与图片附件。回溯只是「看一条旧提示」，不该改写草稿。
+   */
+  it('↑ 回溯不把历史条目写成本会话草稿', () => {
+    const scope = 's:draft-scope-1'
+    const c = renderComposerWithEditor(scope)
+    act(() => {
+      c.appendFileReference('src/a.ts')
+      saveHistory(['历史里的第一条提示'])
+    })
+    typeText(c, '我写了一半的草稿')
+    expect(loadDraft(scope)?.prompt).toBeDefined()
+
+    act(() => {
+      c.handleKeyDown({ key: 'ArrowUp', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+    // 输入框显示的是召回的历史条目
+    expect(promptToText(c.promptRef.current as never)).toBe('历史里的第一条提示')
+    // 但草稿存储里仍是用户原来那份（含 file pill）
+    const stored = loadDraft(scope)
+    expect(stored).not.toBeNull()
+    expect(promptToText(stored?.prompt ?? [])).toContain('我写了一半的草稿')
+    expect(stored?.prompt.map((p) => p.type)).toContain('file')
+
+    // ↓ 退出历史：草稿原样回到输入框，且此时才落盘
+    act(() => {
+      c.handleKeyDown({
+        key: 'ArrowDown',
+        preventDefault: vi.fn(),
+      } as unknown as ReactKeyboardEvent)
+    })
+    expect(promptToText(c.promptRef.current as never)).toContain('我写了一半的草稿')
+    expect(promptToText(loadDraft(scope)?.prompt ?? [])).toContain('我写了一半的草稿')
   })
 
   it('历史回溯 ↑ 后 ↓ 退出，恢复带 pill 的草稿（不被降级为文本）', () => {
