@@ -712,3 +712,65 @@ describe('RecycleBin 彻底删除的影响面', () => {
     expect(screen.getByText(/及其 1 个派生会话/)).toBeInTheDocument()
   })
 })
+
+/**
+ * 回归：会话树里删除会话的确认框影响面必须按**未过滤**的完整树计算。
+ *
+ * 缺陷：handleDelete 用 findNode(visibleTree, id) 取节点，而 visibleTree 是
+ * 搜索过滤后的视图（searchTree 只保留命中路径），「未归属项目」的 CLI 根又
+ * 根本不进 visibleTree（filterTree 按根 projectId 过滤）。于是 countDescendants
+ * 把服务端的整棵子树级联软删（softDeleteSession → deleteSessionSubtrees）
+ * 少报成「0 个派生会话」——用户以为只删一条，实际连同全部分支一起进回收站。
+ */
+describe('SessionList 删除会话的影响面', () => {
+  const P_ROOT = makeSession('p-root', '父任务')
+  const F1 = { ...makeSession('f1', 'alpha 分支'), parentId: 'p-root' }
+  const F2 = { ...makeSession('f2', 'unique 分支'), parentId: 'p-root' }
+  const F3 = { ...makeSession('f3', 'gamma 分支'), parentId: 'p-root' }
+
+  /** window.confirm 打桩，返回消息文本；用例结束恢复原实现。 */
+  function stubConfirm(): { calls: string[]; restore: () => void } {
+    const calls: string[] = []
+    const orig = window.confirm
+    window.confirm = ((msg?: string) => {
+      calls.push(String(msg))
+      return false
+    }) as typeof window.confirm
+    return { calls, restore: () => (window.confirm = orig) }
+  }
+
+  it('搜索过滤时仍写出真实的派生后代数（此前按过滤后的树算成 0）', () => {
+    const confirm = stubConfirm()
+    try {
+      hoisted.tree = [node(P_ROOT, [node(F1), node(F2), node(F3)])]
+      renderList()
+      // 搜索只命中 f2 → 树里只剩「父任务 > unique 分支」这条路径
+      fireEvent.change(screen.getByTestId('session-search'), { target: { value: 'unique' } })
+      expect(screen.getByTestId('delete-p-root')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('delete-p-root'))
+      expect(confirm.calls).toHaveLength(1)
+      expect(confirm.calls[0]).toContain('其 3 个派生会话')
+    } finally {
+      confirm.restore()
+    }
+  })
+
+  it('未归属项目的 CLI 会话删除也写出派生后代数（此前恒为 0）', () => {
+    const confirm = stubConfirm()
+    try {
+      const cliRoot = { ...makeSession('cli-root', 'cli 父会话', null), source: 'cli' as const }
+      const cliChild = {
+        ...makeSession('cli-child', 'cli 子会话', null),
+        source: 'cli' as const,
+        parentId: 'cli-root',
+      }
+      hoisted.tree = [node(cliRoot, [node(cliChild)])]
+      renderList()
+      expect(screen.getByTestId('delete-cli-root')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('delete-cli-root'))
+      expect(confirm.calls[0]).toContain('其 1 个派生会话')
+    } finally {
+      confirm.restore()
+    }
+  })
+})

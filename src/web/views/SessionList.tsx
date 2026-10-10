@@ -308,7 +308,12 @@ export function SessionList({
   const handleDelete = (id: string) => {
     setDeleteError(null)
     // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
-    const node = findNode(visibleTree, id)
+    // 影响面必须取未过滤的完整树：visibleTree 是搜索过滤后的视图（非命中路径被裁掉、
+    // 未归属项目的 CLI 根根本不在其中），据此算子孙会把整棵子树的级联软删少报成
+    // 「0 个派生会话」——用户以为只删一条，实际连同分支一起进回收站。tree 含全部根
+    // （含 CLI 未归属），filterTree 只裁根、不动 children，故 findNode(tree, id) 命中
+    // 的就是同一个节点、同一批子孙。
+    const node = findNode(tree ?? [], id)
     const branches = node ? countDescendants(node) : 0
     const branchNote =
       branches > 0 ? `其 ${branches} 个派生会话（分支/子任务）将一并移入回收站。` : ''
