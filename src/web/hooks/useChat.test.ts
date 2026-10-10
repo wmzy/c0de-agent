@@ -543,6 +543,94 @@ describe('useChat segment break', () => {
     expect(JSON.parse(String(second?.[1]?.body)).confirmSegmentBreak).toBe(true)
   })
 
+  /** 先触发段边界（第一次 /api/chat 回 409），供 confirmBreak(true) 的用例复用。 */
+  function segmentBreakThenStreamFetch(compactResponse: () => unknown) {
+    let chatCall = 0
+    return vi.fn(async (url: string) => {
+      if (url === '/api/sessions/s1/compact') return compactResponse()
+      if (url === '/api/chat') {
+        chatCall++
+        if (chatCall === 1) {
+          const body = {
+            error: {
+              code: 'SEGMENT_BREAK_REQUIRED',
+              message: '切换',
+              details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
+            },
+          }
+          return {
+            ok: false,
+            status: 409,
+            json: async () => body,
+            text: async () => JSON.stringify(body),
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) },
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' }
+    })
+  }
+
+  /**
+   * 回归：HTTP 200 不代表压缩受理。
+   * 服务端在「消息过少 / 无内容可压缩」时回 {compacted:false, reason}（消息过少
+   * 的用例被 session.test.ts 钉死）。此前 compact 的返回值被整段丢弃，用户明确
+   * 点了「顺便压缩会话」却什么都没发生，且重发后同一段边界会再次弹层。
+   */
+  it('confirmBreak(true) 回 {compacted:false} → 透出「未压缩」而不是静默放行', async () => {
+    const fetchMock = segmentBreakThenStreamFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ compacted: false, reason: 'too_few_messages' }),
+      text: async () => JSON.stringify({ compacted: false, reason: 'too_few_messages' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi', { model: 'other' })
+    })
+    expect(result.current.pendingSegmentBreak).not.toBeNull()
+
+    await act(async () => {
+      await result.current.confirmBreak(true)
+    })
+    // 确实调用了压缩端点（不是直接开新段）
+    expect(fetchMock.mock.calls.some((c) => c[0] === '/api/sessions/s1/compact')).toBe(true)
+    // 未受理必须可见：文案点明「没压缩」与原因，不能静默当作成功
+    expect(result.current.error).toContain('未压缩')
+    expect(result.current.error).toContain('消息太少')
+  })
+
+  /**
+   * 回归：压缩请求本身失败此前只 console.error（Electron/浏览器控制台之外不可见）。
+   * 用户以为上下文已摘要，实际按未压缩内容继续开新段。
+   */
+  it('confirmBreak(true) 压缩请求失败 → 透出原因，而不只是 console', async () => {
+    const fetchMock = segmentBreakThenStreamFetch(() => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: { code: 'COMPACTION_FAILED', message: '压缩服务不可用' } }),
+      text: async () =>
+        JSON.stringify({ error: { code: 'COMPACTION_FAILED', message: '压缩服务不可用' } }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi', { model: 'other' })
+    })
+    await act(async () => {
+      await result.current.confirmBreak(true)
+    })
+    expect(result.current.error).toContain('会话压缩失败')
+    expect(result.current.error).toContain('压缩服务不可用')
+  })
+
   it('cancelBreak → 移除乐观 user 消息并清除待发', async () => {
     vi.stubGlobal(
       'fetch',

@@ -29,6 +29,13 @@ import type { APIError } from '@/types/index.js'
  */
 const INTERRUPTED_REASON = '与服务的连接中断，消息未发出。请确认服务仍在运行后重试'
 
+/** 服务端压缩「未受理」的 reason → 用户可读文案（见 core/session/compaction.ts）。
+ *  200 不代表受理：消息过少 / 无内容可压缩时服务端回 {compacted:false, reason}。 */
+const COMPACTION_SKIP_REASON: Record<string, string> = {
+  too_few_messages: '消息太少，无需压缩',
+  nothing_to_compact: '没有可压缩的内容',
+}
+
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
@@ -330,15 +337,29 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       const pending = pendingRef.current
       if (!pending) return
       pendingRef.current = null
+      // 用户显式选择了「顺便压缩会话」：这条路必须兑现或明确说没兑现。
+      // 此前 compact 的返回值被丢弃、catch 只 console.error——压缩没发生也照常重发，
+      // 旧上下文没被摘要、新段按未压缩上下文计费，且同一段边界会再次弹层，用户只
+      // 以为「压缩了但还是不行」而反复点（观感与「仅开新段」完全一致）。
+      let compactError: string | null = null
       if (withCompaction) {
         try {
-          await sessionAPI.compact(sessionId)
+          const result = await sessionAPI.compact(sessionId)
+          if (!result.compacted) {
+            const why = result.reason
+              ? (COMPACTION_SKIP_REASON[result.reason] ?? result.reason)
+              : '当前上下文无需压缩'
+            compactError = `会话未压缩：${why}，已按未压缩内容继续开新段`
+          }
         } catch (err) {
-          // 压缩失败不阻塞重发，记录错误便于排查
-          console.error('[会话压缩] 失败:', err)
+          compactError = `会话压缩失败：${
+            err instanceof Error ? err.message : String(err)
+          }，已按未压缩内容继续开新段`
         }
       }
-      setState((s) => ({ ...s, isStreaming: true, error: null, pendingSegmentBreak: null }))
+      // 压缩结论在重发之前落地：error:null 只用于清掉段确认弹层遗留，不能顺手
+      // 抹掉刚拿到的压缩失败原因（成功时仍清空，与原行为一致）。
+      setState((s) => ({ ...s, isStreaming: true, error: compactError, pendingSegmentBreak: null }))
       await doStream(pending.text, {
         ...pending.opts,
         confirmSegmentBreak: true,
