@@ -7,7 +7,10 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
-import { parseTerminalControlMessage } from '@/components/terminal-control.js'
+import {
+  parseTerminalControlMessage,
+  type TerminalControlMessage,
+} from '@/components/terminal-control.js'
 import { trackCommandInput } from '@/components/terminal-input.js'
 
 interface TerminalProps {
@@ -19,6 +22,11 @@ interface TerminalProps {
   onResize?: (cols: number, rows: number) => void
   /** 终端 Add to Chat 回调（选区或命令块引用）。 */
   onAddToChat?: (label: string, content: string) => void
+  /**
+   * 服务端控制帧回调（PTY 退出 / 挂载被拒）。终态只有在这里才能被识别——
+   * useTerminal 只做重连节奏，不解析输出流里的控制消息。
+   */
+  onControl?: (control: TerminalControlMessage) => void
 }
 
 /** 命令块：一个用户命令及其输出的行范围。 */
@@ -109,9 +117,9 @@ const blockHighlightStyle = css`
  * - 容器 resize → FitAddon.proposeDimensions → 通知后端 resize
  *
  * WS 生命周期由父组件（useTerminal）管理；本组件只负责数据桥接和渲染。
- * ws 为 null 时显示「正在连接…」占位。
+ * ws 为 null / 已退出时的状态提示由父级（TerminalPanel 的 pane 状态条）承担。
  */
-export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) {
+export function Terminal({ ws, visible, onResize, onAddToChat, onControl }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -240,10 +248,12 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
       const control = parseTerminalControlMessage(data)
       if (control?.type === 'exit') {
         term.write(`\r\n\x1b[33m[Process exited with code ${control.exitCode}]\x1b[0m\r\n`)
+        onControl?.(control)
         return
       }
       if (control?.type === 'error') {
         term.write(`\r\n\x1b[31m[Error: ${control.message}]\x1b[0m\r\n`)
+        onControl?.(control)
         return
       }
       term.write(data)
@@ -328,7 +338,7 @@ export function Terminal({ ws, visible, onResize, onAddToChat }: TerminalProps) 
       ws.removeEventListener('message', onMessage)
       disposable.dispose()
     }
-  }, [ws, doFit])
+  }, [ws, doFit, onControl])
 
   // 终端（重）连接或变为可见时自动获取焦点。
   // 切换项目回来后 WS 重连，新 xterm 实例默认无焦点 → 用户无法输入。

@@ -3,6 +3,7 @@
 import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PaneSplitContainer } from '@/components/PaneSplitContainer.js'
+import type { TerminalControlMessage } from '@/components/terminal-control.js'
 import type { SplitDirection, UseTerminalReturn } from '@/hooks/useTerminal.js'
 import { lockBodyCursor, restoreBodyCursor } from '@/utils/drag-cursor.js'
 
@@ -291,6 +292,7 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
     createTerminal,
     splitTerminal,
     connect,
+    markDead,
     closeTerminal,
     resize,
     getWebSocket,
@@ -349,13 +351,15 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
     }
   }, [open, activeTab, activePaneId, setActivePaneId])
 
-  // 活动 tab 内所有未连接的 pane 自动连接
+  // 活动 tab 内所有未连接的 pane 自动连接。dead 的 pane 跳过：PTY 已不存在，
+  // 重连永远不会成功（此前每轮 tabs 变化都会再试一次，服务端被无延迟地反复
+  // WS upgrade，pane 永远黑屏）；它改由 pane 状态条说明并提供新建入口。
   useEffect(() => {
     if (!activeTabId || !open) return
     const tab = tabs.find((t) => t.id === activeTabId)
     if (!tab) return
     for (const pane of tab.panes) {
-      if (!pane.ws && !pane.connecting) {
+      if (!pane.ws && !pane.connecting && !pane.dead) {
         connect(pane.id)
       }
     }
@@ -402,6 +406,21 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
   const handleNewTab = useCallback(() => {
     void createTerminal(cwd ? { cwd } : undefined)
   }, [createTerminal, cwd])
+
+  /**
+   * 终端控制帧 → 连接终态。PTY 退出 / 挂载被拒时 WS 随即关闭，不在此判停的话
+   * 自动重连会无延迟地一轮接一轮重试同一条必然失败的连接。
+   */
+  const handlePaneControl = useCallback(
+    (paneId: string, control: TerminalControlMessage) => {
+      if (control.type === 'exit') {
+        markDead(paneId, 'exited', control.exitCode)
+      } else {
+        markDead(paneId, 'unreachable')
+      }
+    },
+    [markDead],
+  )
 
   const handleSplit = useCallback(
     (direction: SplitDirection) => {
@@ -693,6 +712,8 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
                 onPaneResize={handlePaneResize}
                 onPaneClick={setActivePaneId}
                 onPaneClose={handleClosePane}
+                onNewTerminal={handleNewTab}
+                onPaneControl={handlePaneControl}
                 onDividerPointerDown={onDividerPointerDown}
                 onDividerKeyDown={onDividerKeyDown}
                 minPaneFlex={minPaneFlex}

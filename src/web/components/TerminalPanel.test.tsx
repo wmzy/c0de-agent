@@ -4,7 +4,7 @@
 // document.body.style 上）。回归：pointerup 时读的是**当前**值（已是拖拽光标），
 // 清空后又把读到的值写回去——拖拽结束后全站光标永久停在 col-resize、文本选择
 // 永久禁用，直到刷新或另一次拖拽的清理把残留值当「原值」继续保留。
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalPanel } from '@/components/TerminalPanel.js'
 import type { TerminalSession, UseTerminalReturn } from '@/hooks/useTerminal.js'
@@ -28,6 +28,7 @@ vi.mock('@xterm/xterm', () => ({
     loadAddon() {}
     open() {}
     write() {}
+    focus() {}
     dispose() {}
     getSelection() {
       return ''
@@ -97,6 +98,7 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
     createTerminal: async () => 'p3',
     splitTerminal: async () => undefined,
     connect: () => {},
+    markDead: () => {},
     disconnect: () => {},
     closeTerminal: async () => {},
     resize: async () => {},
@@ -268,5 +270,135 @@ describe('TerminalPanel 打开面板时自动创建首个终端', () => {
     rerender(<TerminalPanel terminal={terminal} cwd="/b" projectId="B" />)
     await waitFor(() => expect(createTerminal).toHaveBeenCalledTimes(1))
     expect(createTerminal).toHaveBeenLastCalledWith({ cwd: '/b' })
+  })
+})
+
+// pane 连接状态的可见性。
+//
+// 回归：PTY 已退出或服务端拒绝挂载后，pane 里只剩一屏静止的历史输出，光标停在
+// 原地，界面没有任何迹象说明它已经不能输入了——看上去就是一个还活着的终端。
+// 同时自动重连 effect 会对着必然失败的连接反复重试（见 useTerminal.test.ts）。
+describe('TerminalPanel pane 连接状态', () => {
+  /** 最小 WebSocket 桩：只实现 Terminal 桥接用到的事件订阅。 */
+  function makeFakeWs() {
+    const handlers: ((ev: MessageEvent) => void)[] = []
+    return {
+      onmessage: null as ((ev: MessageEvent) => void) | null,
+      readyState: 1,
+      addEventListener(type: string, fn: (ev: MessageEvent) => void) {
+        if (type === 'message') handlers.push(fn)
+      },
+      removeEventListener(_type: string, fn: (ev: MessageEvent) => void) {
+        const i = handlers.indexOf(fn)
+        if (i >= 0) handlers.splice(i, 1)
+      },
+      /** 模拟服务端推来一帧数据。 */
+      dispatch(data: string) {
+        for (const fn of [...handlers]) fn({ data } as MessageEvent)
+      },
+    }
+  }
+  /** 单 pane 状态桩，可指定该 pane 的连接状态。 */
+  function single(pane: Partial<TerminalSession>, overrides: Partial<UseTerminalReturn> = {}) {
+    const full: TerminalSession = {
+      id: 'p1',
+      pid: 1,
+      title: 'a',
+      cols: 80,
+      rows: 24,
+      cwd: '/tmp',
+      shell: '/bin/bash',
+      ws: null,
+      connecting: false,
+      tabId: 't1',
+      ...pane,
+    }
+    return {
+      ...makeTerminal(),
+      sessions: [full],
+      tabs: [{ id: 't1', panes: [full], split: { direction: 'horizontal' as const, sizes: [1] } }],
+      activeTabId: 't1',
+      activePaneId: 'p1',
+      ...overrides,
+    }
+  }
+
+  it('PTY 退出后状态条说明退出码，并给出「新建终端」出口', () => {
+    render(<TerminalPanel projectId="p1" terminal={single({ dead: 'exited', exitCode: 130 })} />)
+
+    const status = screen.getByTestId('terminal-pane-status')
+    expect(status.textContent).toContain('进程已退出')
+    expect(status.textContent).toContain('130')
+    expect(within(status).getByRole('button', { name: '新建终端' })).toBeTruthy()
+  })
+
+  it('连接被服务端拒绝时说明重连失败（不谎称仍在连接）', () => {
+    render(<TerminalPanel projectId="p1" terminal={single({ dead: 'unreachable' })} />)
+
+    expect(screen.getByTestId('terminal-pane-status').textContent).toContain('重连失败')
+  })
+
+  it('退避重连期间状态条说明正在连接，不显示成可用终端', () => {
+    render(<TerminalPanel projectId="p1" terminal={single({ connecting: true })} />)
+
+    expect(screen.getByTestId('terminal-pane-status').textContent).toContain('正在连接')
+  })
+
+  it('连接正常时不显示状态条', () => {
+    render(
+      <TerminalPanel projectId="p1" terminal={single({ connecting: true, ws: {} as WebSocket })} />,
+    )
+
+    expect(screen.queryByTestId('terminal-pane-status')).toBeNull()
+  })
+
+  it('已判终态的 pane 不再自动重连（PTY 已不存在，重连必然失败）', () => {
+    const connect = vi.fn()
+    render(<TerminalPanel projectId="p1" terminal={single({ dead: 'unreachable' }, { connect })} />)
+
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('可用的 pane 仍会自动连接', () => {
+    const connect = vi.fn()
+    render(<TerminalPanel projectId="p1" terminal={single({}, { connect })} />)
+
+    expect(connect).toHaveBeenCalledWith('p1')
+  })
+
+  it('退出控制帧把 pane 判为终态（PTY 已退出）', () => {
+    const markDead = vi.fn()
+    const ws = makeFakeWs()
+    render(
+      <TerminalPanel
+        projectId="p1"
+        terminal={single(
+          { connecting: false, ws: ws as unknown as WebSocket },
+          { markDead, getWebSocket: () => ws as unknown as WebSocket },
+        )}
+      />,
+    )
+
+    ws.dispatch('{"type":"exit","exitCode":0}')
+
+    expect(markDead).toHaveBeenCalledWith('p1', 'exited', 0)
+  })
+
+  it('挂载被拒（error 控制帧）把 pane 判为连接失效', () => {
+    const markDead = vi.fn()
+    const ws = makeFakeWs()
+    render(
+      <TerminalPanel
+        projectId="p1"
+        terminal={single(
+          { ws: ws as unknown as WebSocket },
+          { markDead, getWebSocket: () => ws as unknown as WebSocket },
+        )}
+      />,
+    )
+
+    ws.dispatch('{"type":"error","message":"Terminal not found"}')
+
+    expect(markDead).toHaveBeenCalledWith('p1', 'unreachable')
   })
 })
