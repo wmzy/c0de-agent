@@ -419,10 +419,10 @@ function Composer(props: ComposerProps) {
   const insertAgentToken = (name: string) => {
     const prompt = composer.promptRef.current
     const editor = composer.editorRef.current
-    if (!editor) return
+    if (!editor) return false
     const cursor = currentCursor(editor)
     const range = atTokenRange(promptToText(prompt), cursor)
-    if (!range) return
+    if (!range) return false
     const token = `@${name} `
     composer.setPromptExternal(
       replacePromptRange(prompt, range.start, range.end, [
@@ -432,6 +432,24 @@ function Composer(props: ComposerProps) {
     )
     composer.setPopover(null)
     editor.focus()
+    return true
+  }
+
+  /**
+   * 浮层候选插不进去时的收尾（Enter 专用）。
+   *
+   * 浮层是否打开只在「输入事件」里重算：键入 `@read` 出候选后，用 Home / 方向键 /
+   * 鼠标把光标移开，菜单不会失效。此时 Enter 分支仍然 preventDefault 并调
+   * insert*，而 insert* 找不到光标前的 @token 就静默 return——消息永远发不出去、
+   * 浮层不关、连按 Enter 也毫无反应，只有 Esc 或鼠标能脱身（实测复现）。
+   * 候选索引越界（搜索结果在浮层开着时变化）同理。
+   *
+   * 所以：插不进去就关掉这个已经无法响应的浮层，并把按键按「无浮层」交还给
+   * composer（Enter = 发送），与 popoverSuppressed 的既有处理同一条路径。
+   */
+  const fallThroughStalePopover = (e: KeyboardEvent) => {
+    composer.setPopover(null)
+    composer.handleKeyDown(e, true)
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -493,9 +511,12 @@ function Composer(props: ComposerProps) {
         return
       }
       if (e.key === 'Enter') {
-        e.preventDefault()
         const wf = filteredWorkflows[workflowActive]
-        if (wf) composer.insertWorkflow(wf.name)
+        if (wf && composer.insertWorkflow(wf.name)) {
+          e.preventDefault()
+          return
+        }
+        fallThroughStalePopover(e)
         return
       }
     }
@@ -511,9 +532,12 @@ function Composer(props: ComposerProps) {
         return
       }
       if (e.key === 'Enter') {
-        e.preventDefault()
         const cmd = filteredCommands[slashActive]
-        if (cmd) composer.insertSlash(cmd.name)
+        if (cmd && composer.insertSlash(cmd.name)) {
+          e.preventDefault()
+          return
+        }
+        fallThroughStalePopover(e)
         return
       }
     }
@@ -529,9 +553,12 @@ function Composer(props: ComposerProps) {
         return
       }
       if (e.key === 'Enter') {
-        e.preventDefault()
         const sub = filteredSubcommands[subcommandActive]
-        if (sub) composer.insertSubcommand(sub.name)
+        if (sub && composer.insertSubcommand(sub.name)) {
+          e.preventDefault()
+          return
+        }
+        fallThroughStalePopover(e)
         return
       }
     }
@@ -547,10 +574,18 @@ function Composer(props: ComposerProps) {
         return
       }
       if (e.key === 'Enter') {
-        e.preventDefault()
         const selected = atMenuSelection(atMenu, atActive)
-        if (selected?.kind === 'agent') insertAgentToken(selected.agent.name)
-        else if (selected?.kind === 'file') composer.insertFile(selected.file.path)
+        const inserted =
+          selected?.kind === 'agent'
+            ? insertAgentToken(selected.agent.name)
+            : selected?.kind === 'file'
+              ? composer.insertFile(selected.file.path)
+              : false
+        if (inserted) {
+          e.preventDefault()
+          return
+        }
+        fallThroughStalePopover(e)
         return
       }
     }

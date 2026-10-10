@@ -456,3 +456,81 @@ describe('Composer 工具权限确认 dock 的到达/拒绝可达性', () => {
     expect(onConfirm).toHaveBeenCalledWith(false)
   })
 })
+
+// 浮层是否打开只在「输入事件」里重算：键入 `@read` 出候选后，用 Home / 方向键 /
+// 鼠标点回文本中间，菜单不会失效。此前 Enter 分支无条件 preventDefault 再调
+// insert*，而 insert* 找不到光标前的 @token 就静默 return——消息永远发不出去、
+// 浮层不关、连按 Enter 也毫无反应（真实浏览器实测复现），只有 Esc/鼠标能脱身。
+// 契约：候选插不进去时把按键放行，回到「无浮层」语义（Enter = 发送）。
+describe('Composer 浮层候选插不进去时不再吞掉 Enter', () => {
+  function renderForAtMenu() {
+    vi.mocked(fileAPI.search).mockResolvedValue([{ path: 'src/f0.ts', type: 'file' }] as never)
+    const onSend = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return { editor: screen.getByTestId('composer-editor'), onSend }
+  }
+
+  /** 复刻「键入 @query 出候选」：happy-dom 的 selection API 会把光标夹到 0，
+   *  必须把 range 起点指到文本节点上，光标偏移才如实反映。 */
+  function typeAtQuery(editor: HTMLElement) {
+    editor.textContent = '@q'
+    const text = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 2)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  /** 把光标移到 @token 之前（浮层状态不会随之失效）。 */
+  function moveCursorToStart(editor: HTMLElement) {
+    const text = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+
+  it('光标离开 @token 后按 Enter：浮层关闭，消息照常发出（不再是静默无反应）', async () => {
+    const { editor, onSend } = renderForAtMenu()
+    typeAtQuery(editor)
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+
+    moveCursorToStart(editor)
+    fireEvent.keyDown(editor, { key: 'Enter' })
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('at-menu')).toBeNull()
+    // 发送的是用户写的字面文本——不是「什么都没发生」
+    expect(onSend.mock.calls[0]?.[0].text).toContain('@q')
+  })
+
+  it('光标仍在 @token 上时 Enter 仍然插入候选（正常路径不受影响）', async () => {
+    const { editor, onSend } = renderForAtMenu()
+    typeAtQuery(editor)
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    await waitFor(() => expect(editor.textContent).toContain('src/f0.ts'))
+    expect(onSend).not.toHaveBeenCalled()
+  })
+})

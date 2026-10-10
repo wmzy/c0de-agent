@@ -293,11 +293,15 @@ function useComposer({
   }, [images, persistDraft])
 
   // popover 选中插入命令（替换整行 /xxx）
+  // 返回值 = 是否真的写入了编辑器。调用方（Composer 的 Enter 分支）据此决定
+  // 能不能把这颗按键算作「确认候选」：插不进去时必须把按键放行，否则 Enter
+  // 被一个失效的浮层静默吞掉（消息发不出去、零反馈）。
   const insertSlash = useCallback(
     (name: string) => {
       setPromptExternal(textPrompt(`/${name} `), true)
       setPopover(null)
       editorRef.current?.focus()
+      return true
     },
     [setPromptExternal],
   )
@@ -311,6 +315,7 @@ function useComposer({
       setPromptExternal(textPrompt(`${prefix}${name} `), true)
       setPopover(null)
       editorRef.current?.focus()
+      return true
     },
     [setPromptExternal],
   )
@@ -318,11 +323,12 @@ function useComposer({
   // popover 选中插入子命令（替换整行为 /<cmd> <sub> ）
   const insertSubcommand = useCallback(
     (sub: string) => {
-      if (!subcommandCmd) return
+      if (!subcommandCmd) return false
       setPromptExternal(textPrompt(`/${subcommandCmd} ${sub} `), true)
       setPopover(null)
       setSubcommandCmd(null)
       editorRef.current?.focus()
+      return true
     },
     [setPromptExternal, subcommandCmd],
   )
@@ -331,17 +337,19 @@ function useComposer({
   // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
   // pill 被降级为纯文本（发送时 files 附件丢失）。改为定位光标前 @token
   // 范围并用 replacePromptRange 原位替换，范围外 part 原样保留。
+  // 光标前没有 @token（浮层开着时光标被移走）⇒ 无范围可替换，返回 false。
   const insertFile = useCallback(
     (path: string) => {
       const prompt = promptRef.current
-      if (!editorRef.current) return
+      if (!editorRef.current) return false
       const cursor = currentCursor(editorRef.current)
       const range = atTokenRange(promptToText(prompt), cursor)
-      if (!range) return
+      if (!range) return false
       const pill: Prompt = [{ type: 'file', path, content: path, start: 0, end: path.length }]
       setPromptExternal(replacePromptRange(prompt, range.start, range.end, pill), true)
       setPopover(null)
       editorRef.current.focus()
+      return true
     },
     [setPromptExternal],
   )
