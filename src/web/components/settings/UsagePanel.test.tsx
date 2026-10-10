@@ -208,3 +208,66 @@ describe('UsagePanel — token 预算护栏', () => {
     expect(await screen.findByText('$1.01')).toBeTruthy()
   })
 })
+
+/**
+ * 读不到 ≠ 没有。
+ *
+ * 回归：用量查询失败时 data 为 undefined，cost/token 全部回落 0，面板照常渲染
+ * 「本月 $0.00、无超支、空账本」——用户据此认为本月零花费、预算安全，实际上
+ * 什么都没读到。同 SessionSummary 的「读不到」口径：说明原因 + 重试，且统计表
+ * 整段不渲染。
+ */
+describe('UsagePanel — 读不到不等于 $0', () => {
+  const props = {
+    budget: 0,
+    budgetAction: 'warn' as const,
+    globalBudget: 0,
+    tokenBudget: 0,
+    globalTokenBudget: 0,
+    onBudgetChange: vi.fn(),
+    onBudgetActionChange: vi.fn(),
+    onGlobalBudgetChange: vi.fn(),
+    onTokenBudgetChange: vi.fn(),
+    onGlobalTokenBudgetChange: vi.fn(),
+    projectId: 'proj-1',
+  }
+
+  it('查询失败 → 报出后端原因 + 重试，且不渲染任何统计数字', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockRejectedValue(new Error('usage summary 500'))
+
+    renderPanel(props)
+
+    const box = await screen.findByTestId('usage-load-error')
+    expect(box.textContent).toContain('usage summary 500')
+    expect(screen.getByTestId('usage-retry')).toBeTruthy()
+    // 空账本（表头 + 零行）本身就是「本月一次调用都没发生」的读法
+    expect(screen.queryByText('月度')).toBeNull()
+    expect(screen.queryByText('模型')).toBeNull()
+    expect(screen.queryByTestId('usage-budget-warning')).toBeNull()
+  })
+
+  it('重试按钮重新发起查询', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockRejectedValue(new Error('boom'))
+    renderPanel(props)
+    await screen.findByTestId('usage-load-error')
+
+    ;(usageAPI.summary as Mock).mockResolvedValue(baseSummary())
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.click(screen.getByTestId('usage-retry'))
+
+    expect((usageAPI.summary as Mock).mock.calls.length).toBeGreaterThan(1)
+    await screen.findByText('月度')
+  })
+
+  it('加载中不谎报空账本', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockReturnValue(new Promise(() => {}))
+
+    renderPanel(props)
+
+    expect(await screen.findByTestId('usage-loading')).toBeTruthy()
+    expect(screen.queryByText('月度')).toBeNull()
+  })
+})

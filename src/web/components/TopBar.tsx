@@ -147,7 +147,7 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
   const globalBudget = configResp?.config?.usage?.globalMonthlyBudgetUsd ?? 0
   const tokenBudget = configResp?.config?.usage?.monthlyTokenBudget ?? 0
   const globalTokenBudget = configResp?.config?.usage?.globalMonthlyTokenBudget ?? 0
-  const { data: summary } = useQuery({
+  const { data: summary, isError: usageFailed } = useQuery({
     queryKey: ['usage', 'summary', projectId ?? 'all'],
     queryFn: () => usageAPI.summary(projectId),
     staleTime: 60_000,
@@ -171,20 +171,32 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
   const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
   const overAny = overBudget || overTokenBudget
   const unknown = monthEntry?.unknownCostCalls ?? 0
-  const tip =
-    `本月估算成本 ${formatCost(cost)}` +
-    (effectiveBudget > 0
-      ? `（${projectId ? '项目' : '全局'}预算 ${formatCost(effectiveBudget)}${overBudget ? '，已超支' : ''}）`
-      : '') +
-    (overTokenBudget
-      ? `；token 用量 ${monthTokens.toLocaleString()} 已超 ${effectiveTokenBudget.toLocaleString()}`
-      : '') +
-    (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
-    '。点击前往设置查看用量与成本。'
-  const badgeClass = `${costBadge}${overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`
+  // 读不到用量时绝不显示 $0.00：那是一个精确的、看起来可信的假数字，用户会
+  // 据此判断「本月没花钱 / 没超预算」。与 Settings 的用量面板同口径（那里也
+  // 渲染失败原因 + 重试），这里只给一个不可用标记 + 同样可点进设置。
+  const tip = usageFailed
+    ? '本月用量读取失败——不是 $0，这个数字不可信。点击前往设置查看用量与成本。'
+    : `本月估算成本 ${formatCost(cost)}` +
+      (effectiveBudget > 0
+        ? `（${projectId ? '项目' : '全局'}预算 ${formatCost(effectiveBudget)}${overBudget ? '，已超支' : ''}）`
+        : '') +
+      (overTokenBudget
+        ? `；token 用量 ${monthTokens.toLocaleString()} 已超 ${effectiveTokenBudget.toLocaleString()}`
+        : '') +
+      (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
+      '。点击前往设置查看用量与成本。'
+  const badgeClass = `${costBadge}${
+    usageFailed ? ` ${costOver}` : overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''
+  }`
   // formatCost 十进制舍入：toFixed 二进制近似会把 1.005 显示成 $1.00（少一分钱）。
-  const statusIcon = overAny ? '⚠ ' : nearBudget ? '▲ ' : ''
-  const badgeText = (
+  const statusIcon = overAny || usageFailed ? '⚠ ' : nearBudget ? '▲ ' : ''
+  const badgeText = usageFailed ? (
+    <>
+      {statusIcon}
+      <span className={costPrefix}>本月 </span>
+      用量不可用
+    </>
+  ) : (
     <>
       {statusIcon}
       <span className={costPrefix}>本月 </span>

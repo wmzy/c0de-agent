@@ -39,6 +39,51 @@ const budgetWarn = css`
   margin-top: 6px;
 `
 
+/**
+ * 读不到 ≠ 没有。用量查询失败时 data 为 undefined，成本/Token 全部回落成 0，
+ * 面板会照常渲染一整套「本月 $0.00、无超支、空账本」的精确数字——用户据此
+ * 判断预算安全，实际什么都没读到。与 ArchivePanel / SessionSummary 同口径：
+ * 标题 + 后端原因 + 重试，且统计表整段不渲染（不给不可信的数字）。
+ */
+const errorState = css`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--haze-color-danger) 45%, transparent);
+  border-radius: 8px;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 可能是长路径/长句，窄栏内必须断行 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  align-self: flex-start;
+  padding: 4px 14px;
+  font-size: 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  cursor: pointer;
+
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
 const fmtTokens = (n: number): string => n.toLocaleString('en-US')
 
 // 与 formatCost 同源（十进制舍入）：toFixed 二进制近似会把 1.005 显示成 $1.00。
@@ -85,7 +130,13 @@ function UsagePanel({
   onTokenBudgetActionChange?: (v: 'warn' | 'pause' | 'abort') => void
   projectId?: string
 }) {
-  const { data: summary } = useQuery({
+  const {
+    data: summary,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['usage', 'summary', projectId ?? 'all'],
     queryFn: () => usageAPI.summary(projectId),
     staleTime: 30_000,
@@ -269,64 +320,93 @@ function UsagePanel({
           )}
         </div>
       )}
-      {unknownMonth && unknownMonth.calls > 0 && (
-        <div className={hint}>
-          另有 {unknownMonth.calls} 次无时间戳调用（合计 {fmtCost(unknownMonth.cost)}
-          ）未计入本月预算比较。
-        </div>
-      )}
-      <div className={headRow}>
-        <span>月度</span>
-        <span>调用</span>
-        <span>Token</span>
-        <span>成本</span>
-      </div>
-      {(summary?.byMonth ?? []).map((m) => (
-        <div className={rowGrid} key={m.month}>
-          <span>{m.month === '未知' ? '（无时间戳）' : m.month}</span>
-          <span>{m.calls}</span>
-          <span>{fmtTokens(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
-          <span>{fmtCost(m.cost)}</span>
-        </div>
-      ))}
-      {!projectId && unassigned && unassigned.calls > 0 && (
-        <div className={rowGrid} data-testid="usage-unassigned">
-          <span title="未归属任何项目的调用（CLI 未绑定会话/孤儿会话），不计入任何项目预算">
-            ⚠ 未归属项目
+      {isError ? (
+        <div className={errorState} role="alert" data-testid="usage-load-error">
+          <span className={errorTitle}>用量读取失败</span>
+          <span className={errorDetail}>
+            {(error as { message?: string } | null)?.message ??
+              (error instanceof Error ? error.message : null) ??
+              '无法读取用量与成本。'}
           </span>
-          <span>{unassigned.calls}</span>
-          <span>
-            {fmtTokens(unassigned.inputTokens + unassigned.outputTokens + unassigned.cacheRead)}
-          </span>
-          <span>{fmtCost(unassigned.cost)}</span>
+          <span className={errorDetail}>下列统计不可信：读不到不等于 $0，本月可能已经有花费。</span>
+          <button
+            type="button"
+            className={retryBtn}
+            onClick={() => void refetch()}
+            disabled={isLoading}
+            data-testid="usage-retry"
+          >
+            重试
+          </button>
         </div>
-      )}
-      <div className={headRow} style={{ marginTop: 10 }}>
-        <span>模型</span>
-        <span>调用</span>
-        <span>Token</span>
-        <span>成本</span>
-      </div>
-      {(summary?.byModel ?? []).map((m) => (
-        <div className={rowGrid} key={m.model}>
-          <span title={m.model}>{m.model}</span>
-          <span>{m.calls}</span>
-          <span>{fmtTokens(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
-          <span>{fmtCost(m.cost)}</span>
+      ) : null}
+      {/* 统计表整段以「真的读到数据」为前提：失败时既不渲染表头也不渲染空行，
+          免得零行账本本身被读成「这个月一次调用都没发生」。 */}
+      {summary ? (
+        <>
+          {unknownMonth && unknownMonth.calls > 0 && (
+            <div className={hint}>
+              另有 {unknownMonth.calls} 次无时间戳调用（合计 {fmtCost(unknownMonth.cost)}
+              ）未计入本月预算比较。
+            </div>
+          )}
+          <div className={headRow}>
+            <span>月度</span>
+            <span>调用</span>
+            <span>Token</span>
+            <span>成本</span>
+          </div>
+          {summary.byMonth.map((m) => (
+            <div className={rowGrid} key={m.month}>
+              <span>{m.month === '未知' ? '（无时间戳）' : m.month}</span>
+              <span>{m.calls}</span>
+              <span>{fmtTokens(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
+              <span>{fmtCost(m.cost)}</span>
+            </div>
+          ))}
+          {!projectId && unassigned && unassigned.calls > 0 && (
+            <div className={rowGrid} data-testid="usage-unassigned">
+              <span title="未归属任何项目的调用（CLI 未绑定会话/孤儿会话），不计入任何项目预算">
+                ⚠ 未归属项目
+              </span>
+              <span>{unassigned.calls}</span>
+              <span>
+                {fmtTokens(unassigned.inputTokens + unassigned.outputTokens + unassigned.cacheRead)}
+              </span>
+              <span>{fmtCost(unassigned.cost)}</span>
+            </div>
+          )}
+          <div className={headRow} style={{ marginTop: 10 }}>
+            <span>模型</span>
+            <span>调用</span>
+            <span>Token</span>
+            <span>成本</span>
+          </div>
+          {summary.byModel.map((m) => (
+            <div className={rowGrid} key={m.model}>
+              <span title={m.model}>{m.model}</span>
+              <span>{m.calls}</span>
+              <span>{fmtTokens(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
+              <span>{fmtCost(m.cost)}</span>
+            </div>
+          ))}
+          <div className={rowGrid} style={{ fontWeight: 600 }}>
+            <span>累计</span>
+            <span>{summary.totals.calls}</span>
+            <span>
+              {fmtTokens(
+                summary.totals.inputTokens + summary.totals.outputTokens + summary.totals.cacheRead,
+              )}
+            </span>
+            <span>{fmtCost(summary.totals.cost)}</span>
+          </div>
+        </>
+      ) : null}
+      {!summary && !isError && isLoading ? (
+        <div className={hint} data-testid="usage-loading">
+          正在读取用量与成本…
         </div>
-      ))}
-      {summary && (
-        <div className={rowGrid} style={{ fontWeight: 600 }}>
-          <span>累计</span>
-          <span>{summary.totals.calls}</span>
-          <span>
-            {fmtTokens(
-              summary.totals.inputTokens + summary.totals.outputTokens + summary.totals.cacheRead,
-            )}
-          </span>
-          <span>{fmtCost(summary.totals.cost)}</span>
-        </div>
-      )}
+      ) : null}
     </div>
   )
 }

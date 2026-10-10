@@ -697,6 +697,21 @@ describe('TopBar — 月成本徽标', () => {
     const badge = await screen.findByTestId('month-cost-badge')
     expect(badge.textContent).toBe('本月 $1.01')
   })
+
+  // 回归：用量查询失败时 data 为 undefined，cost 回落 0，徽标照常渲染成
+  // 「本月 $0.00」——一个精确、可信、且完全错误的数字。用户会据此认为本月没
+  // 花钱、没超预算。读不到必须说读不到。
+  it('用量读取失败时徽标显示不可用，不谎报 $0.00', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockRejectedValue(new Error('usage summary 500'))
+
+    await renderAt('/')
+    const badge = await screen.findByTestId('month-cost-badge')
+    await waitFor(() => {
+      expect(badge.textContent).toContain('用量不可用')
+    })
+    expect(badge.textContent).not.toContain('$0')
+  })
 })
 
 /**
