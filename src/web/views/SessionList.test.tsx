@@ -188,6 +188,63 @@ describe('SessionList 会话搜索', () => {
     })
     expect(screen.queryByText('无匹配会话')).toBeNull()
   })
+
+  /**
+   * 回归：内容搜索缺三态，把「还在搜」「搜不了」都说成「无匹配会话」。
+   *
+   * 缺陷：query 只取 data。防抖 300ms + 请求在飞的那段时间里标题树已按
+   * search 过滤、内容匹配区还是空的，于是空态分支先闪一次「无匹配会话」
+   * 再翻成结果；请求失败（retry 2 次耗尽）后这一句永久停在那里，且搜索
+   * 区没有任何重试入口。实测：输入「检查」瞬间侧栏报「无匹配会话」，
+   * 约 1s 后才翻出「消息内容匹配」。
+   */
+  it('搜索在飞时报「搜索中…」，不谎报「无匹配会话」', async () => {
+    let resolve: (v: unknown) => void = () => {}
+    vi.mocked(sessionAPI.search).mockReturnValue(
+      new Promise((r) => {
+        resolve = r
+      }) as never,
+    )
+    renderList()
+    fireEvent.change(screen.getByTestId('session-search'), { target: { value: '检查' } })
+
+    // 防抖期间（请求还没发出去）就该是「搜索中…」
+    await waitFor(() => {
+      expect(screen.getByText('搜索中…')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('无匹配会话')).toBeNull()
+
+    // 请求落地后翻成结果，不再有「搜索中…」
+    resolve({ results: [{ session: OUTSIDE, matchedBy: 'content' }] })
+    await waitFor(() => {
+      expect(screen.getByTestId('content-match-outside-id')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('搜索中…')).toBeNull()
+  })
+
+  it('搜索失败：给出原因与重试入口，不谎报「无匹配会话」', async () => {
+    vi.mocked(sessionAPI.search).mockRejectedValue(new Error('数据库被占用，请稍后重试'))
+    renderList()
+    fireEvent.change(screen.getByTestId('session-search'), { target: { value: '检查' } })
+
+    const bar = await screen.findByTestId('session-search-error')
+    expect(bar.getAttribute('role')).toBe('alert')
+    expect(bar.textContent).toContain('会话搜索失败')
+    expect(bar.textContent).toContain('数据库被占用，请稍后重试')
+    expect(screen.queryByText('无匹配会话')).toBeNull()
+    expect(screen.getByTestId('session-search-retry')).toBeInTheDocument()
+  })
+
+  it('真的没有匹配时才是「无匹配会话」', async () => {
+    vi.mocked(sessionAPI.search).mockResolvedValue({ results: [] })
+    renderList()
+    fireEvent.change(screen.getByTestId('session-search'), { target: { value: '不存在的词' } })
+
+    await waitFor(() => {
+      expect(screen.getByText('无匹配会话')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('session-search-error')).toBeNull()
+  })
 })
 
 /**

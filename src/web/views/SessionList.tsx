@@ -258,12 +258,30 @@ export function SessionList({
   // 阈值 1 而非 2：单字符查询此前被静默丢弃，而标题树仍按 search 过滤，
   // 于是「只命中消息内容」的会话在输入 1 个字时直接变成「无匹配会话」——
   // 实测搜「独」报无匹配，搜「独特」即命中。服务端对单字符正常返回。
-  const { data: contentMatches } = useQuery({
+  //
+  // 三态齐全：只取 data 时「还在搜」与「搜不了」都落进 extraMatches 为空的
+  // 分支，界面在 300ms 防抖 + 请求期间先闪一次「无匹配会话」再翻成结果；
+  // 请求失败（RQ 默认 retry 2 次耗尽）后这一句永久停在那里，且搜索区没有任何
+  // 重试入口——与同页会话树失败态、RecycleBin 搜索失败态的既有口径一致。
+  const {
+    data: contentMatches,
+    isLoading: contentLoading,
+    isError: contentError,
+    error: contentErrorObj,
+    refetch: refetchContent,
+  } = useQuery({
     queryKey: ['sessions', 'search', projectId, searchDebounced],
     queryFn: () => sessionAPI.search(searchDebounced, projectId),
     enabled: searchDebounced.length >= 1,
     staleTime: 10_000,
   })
+  const contentErrorMessage =
+    (contentErrorObj as { message?: string } | null)?.message ??
+    (contentErrorObj instanceof Error ? contentErrorObj.message : null)
+  // 「正在搜索」的完整口径 = 防抖未落地 || 请求在飞（含重试）。防抖那 300ms
+  // 里标题树已按 search 过滤、结果区还是旧的，此前正是这段时间闪「无匹配会话」。
+  const searching = search.trim().length >= 1
+  const contentPending = searching && (search.trim() !== searchDebounced || contentLoading)
   // 树中已展示的全部会话 id（任意深度）。递归收集：只收顶层与直接子级会把
   // 深层后代（fork 的 fork）漏掉——它们同样已在树里可见，却会被「消息内容
   // 匹配」区再列一遍（同一会话出现两次）。与 findNode/countDescendants/
@@ -508,8 +526,23 @@ export function SessionList({
       ) : null}
       {!showRecycle && !isError ? (
         <>
-          {!isLoading && visibleTree.length === 0 && extraMatches.length === 0 ? (
-            <div className={empty}>{search ? '无匹配会话' : '该项目下暂无会话'}</div>
+          {contentError && searching ? (
+            <div className={errorBar} role="alert" data-testid="session-search-error">
+              会话搜索失败
+              {contentErrorMessage ? `：${contentErrorMessage}` : '，请稍后重试。'}{' '}
+              <button
+                type="button"
+                onClick={() => void refetchContent()}
+                data-testid="session-search-retry"
+              >
+                重试
+              </button>
+            </div>
+          ) : null}
+          {!isLoading && !contentError && visibleTree.length === 0 && extraMatches.length === 0 ? (
+            <div className={empty} aria-live="polite">
+              {searching ? (contentPending ? '搜索中…' : '无匹配会话') : '该项目下暂无会话'}
+            </div>
           ) : null}
           {visibleTree.length > 0 && (
             <BranchTree
