@@ -108,6 +108,10 @@ export const ToolBlock = memo(function ToolBlock({
 
   const toggle = () => setExpanded((v) => !v)
   const onHeaderKeyDown = (e: KeyboardEvent) => {
+    // header 里内嵌了 FilePathLink（真 <button>）等交互元素：事件从它们冒泡上来时
+    // 必须放行。否则 preventDefault 会吃掉按钮自身的 Enter/Space 激活——文件预览
+    // 链接键盘完全打不开，Enter 只把工具块折叠/展开。
+    if (e.target !== e.currentTarget) return
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       toggle()

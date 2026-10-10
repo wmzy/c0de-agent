@@ -125,6 +125,22 @@ describe('ToolBlock', () => {
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('false')
   })
 
+  it('header 内嵌文件路径链接按 Enter/Space 不被折叠逻辑吞掉', () => {
+    render(
+      <SelectionWrapper>
+        <ToolBlock block={toolBlock({ tool: 'read', input: { path: 'src/a.ts' } })} />
+      </SelectionWrapper>,
+    )
+    const link = screen.getByTestId('filepath-link')
+    const header = screen.getByTestId('tool-header')
+    expect(header.getAttribute('data-expanded')).toBe('false')
+    // fireEvent 返回 false 表示事件被 preventDefault——那会吃掉 <button> 自身的
+    // Enter/Space 激活，文件预览键盘打不开。同时折叠态必须保持不变。
+    expect(fireEvent.keyDown(link, { key: 'Enter' })).toBe(true)
+    expect(fireEvent.keyDown(link, { key: ' ' })).toBe(true)
+    expect(header.getAttribute('data-expanded')).toBe('false')
+  })
+
   it('未知工具用 FallbackToolView（展开后）', () => {
     render(<ToolBlock block={toolBlock({ tool: 'custom', input: { x: 1 } })} />)
     fireEvent.click(screen.getByTestId('tool-header'))
