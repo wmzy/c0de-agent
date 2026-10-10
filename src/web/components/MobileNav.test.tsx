@@ -30,6 +30,7 @@ const testRoutes = createRoutes({
   children: [
     { path: '/projects/:projectId', component: () => TestView },
     { path: '/projects/:projectId/kanban', component: () => TestView },
+    { path: '/projects/:projectId/settings', component: () => TestView },
     { path: '/settings', component: () => TestView },
   ],
 })
@@ -182,6 +183,27 @@ describe('MobileNav 会话覆盖层（Workbench）', () => {
     await renderWith(<MobileNav onToggleSessions={onToggleSessions} />)
     fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
     expect(onToggleSessions).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 回归：设置页的「会话」是死键。
+   *
+   * 缺陷：SettingsPage 不传 sidebar，「会话」标签开不了覆盖层，而 onPick 的
+   * 兜底只认 isKanbanRoute——看板页的死键修过，设置页漏修。实测移动端设置页
+   * 点底部「会话」URL 不变、无任何反应，用户以为应用卡住。
+   */
+  it('设置路由下点「会话」导航回聊天页而不是空转', async () => {
+    const onToggleSessions = vi.fn()
+    await renderWith(<MobileNav onToggleSessions={onToggleSessions} />, '/projects/p1/settings')
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(onToggleSessions).not.toHaveBeenCalled()
+    expect(navigations).toEqual(['/projects/:projectId'])
+  })
+
+  it('无 projectId 的全局 /settings 下点「会话」回根路由', async () => {
+    await renderWith(<MobileNav />, '/settings')
+    fireEvent.click(screen.getByTestId('mobile-nav-sessions'))
+    expect(navigations).toEqual(['/'])
   })
 
   it('无覆盖层 DOM：抽屉相关节点已随 Workbench 重构移除', async () => {

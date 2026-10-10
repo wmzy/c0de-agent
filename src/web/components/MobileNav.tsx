@@ -82,7 +82,8 @@ type MobileNavProps = {
  * 三个标签：对话 / 会话 / 设置。「会话」打开 Workbench 的移动端
  * 侧栏覆盖层（滑出 + 遮罩 + Esc 关闭 + 焦点管理均由 Workbench
  * 内置）；路由变化（如在覆盖层内选择会话）时自动收起。
- * 无侧栏内容的页面（如看板）点击「会话」无操作。
+ * 无侧栏内容的页面（看板、设置）点击「会话」回对话页——那里才有会话列表，
+ * 否则该标签在移动端就成了点不动的死键。
  */
 export function MobileNav({
   sidebar,
@@ -140,14 +141,17 @@ export function MobileNav({
       onSessionsClosed?.()
       return
     }
-    // sessions：有侧栏内容时开/合覆盖层；看板页没有 sidebar，开不了就
-    // 直接回对话页——否则该标签在看板上是彻底的死键。
+    // sessions：有侧栏内容时开/合覆盖层；没有 sidebar 的路由（看板、设置）
+    // 开不了覆盖层，就直接回对话页——那里才有会话列表。否则该标签在这些
+    // 页面上是彻底的死键：看板页已修，设置页漏了，同样点下去毫无反应。
     if (sidebar) {
       onToggleSessions?.()
       return
     }
-    if (isKanbanRoute && projectId) {
+    if ((isKanbanRoute || isSettingsRoute) && projectId) {
       navigateTo(router, '/projects/:projectId', { params: { projectId } })
+    } else if (isKanbanRoute || isSettingsRoute) {
+      navigateTo(router, '/')
     }
   }
 
