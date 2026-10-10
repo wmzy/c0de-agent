@@ -253,6 +253,32 @@ describe('taskTool 批量派发的并发契约', () => {
     if (result._tag === 'error') {
       expect(result.error).toContain('boom')
       expect(result.error).toContain('done A')
+      // 逐子任务终态：前端据此画工作流图。缺了它，失败会把成功的子任务也画成失败
+      // （实测 3 个里 2 成 1 败，图上 3 个全红），与上面这段「Completed」文本矛盾。
+      expect(result.metadata?.subtasks).toEqual([
+        { index: 0, status: 'completed' },
+        { index: 1, status: 'failed' },
+      ])
+    }
+  })
+
+  it('批量全部成功：metadata.subtasks 全为 completed', async () => {
+    const runSubAgents = vi.fn(
+      async (): Promise<SubAgentResult[]> => [
+        { _tag: 'success', output: 'a', sessionId: 'c1' },
+        { _tag: 'running', jobId: 'job-2', sessionId: 'c2' },
+      ],
+    )
+    const result = await taskTool.execute(
+      { subagent_type: 'coder', context: 'ref', tasks: [{ assignment: 'A' }, { assignment: 'B' }] },
+      { ...ctxWith(), runSubAgents },
+    )
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.metadata?.subtasks).toEqual([
+        { index: 0, status: 'completed' },
+        { index: 1, status: 'running' },
+      ])
     }
   })
 })

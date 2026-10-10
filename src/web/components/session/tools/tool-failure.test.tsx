@@ -7,6 +7,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
+import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
 
 afterEach(cleanup)
@@ -91,6 +92,53 @@ describe('KanbanToolView 失败结果', () => {
       />,
     )
     expect(screen.getByTestId('tool-error')).toHaveTextContent('board locked')
+  })
+})
+
+describe('TaskToolView 批量子 agent 状态', () => {
+  const batchInput = {
+    subagent_type: 'reviewer',
+    context: '审查三个文件',
+    tasks: [
+      { description: '审查 a.ts', assignment: '看 a' },
+      { description: '审查 b.ts', assignment: '看 b' },
+      { description: '审查 c.ts', assignment: '看 c' },
+    ],
+  }
+
+  // 缺陷：节点状态取父工具状态，批量里失败一个，成功的那几个也被画成「失败」——
+  // 与同一块里「Completed: …」的文本自相矛盾（实测 2 成 1 败，图上 3 个全红）。
+  it('部分失败时逐节点显示真实状态', () => {
+    render(
+      <TaskToolView
+        input={batchInput}
+        status="error"
+        output={{
+          _tag: 'error',
+          error: 'Sub-agent failed: [task] boom',
+          metadata: {
+            subtasks: [
+              { index: 0, status: 'completed' },
+              { index: 1, status: 'completed' },
+              { index: 2, status: 'failed' },
+            ],
+          },
+        }}
+      />,
+    )
+    // 用户可见的结论：3 个子任务里 2 个完成、只有 c 失败（此前 3 个全红）。
+    expect(screen.getAllByText(/· 已完成/)).toHaveLength(2)
+    expect(screen.getAllByText(/· 失败/)).toHaveLength(1)
+    // 失败的那个必须挂在正确的节点上（c.ts），不能错位。
+    expect(screen.getByTestId('workflow-graph').textContent).toContain('审查 c.ts✗ reviewer · 失败')
+    expect(screen.getByTestId('workflow-graph').textContent).toContain(
+      '审查 a.ts✓ reviewer · 已完成',
+    )
+  })
+
+  it('缺 metadata（旧历史消息）时回落到父工具状态', () => {
+    render(<TaskToolView input={batchInput} status="running" output={undefined} />)
+    expect(screen.getAllByText(/· 执行中/)).toHaveLength(3)
   })
 })
 

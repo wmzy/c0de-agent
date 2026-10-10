@@ -34,6 +34,9 @@ type TaskToolInput = {
   tasks?: Array<{ assignment?: string; description?: string; role?: string; prompt?: string }>
 }
 
+/** 批量模式下每个子任务的终态（由 task 工具写进 metadata.subtasks）。 */
+type SubtaskStatus = { index: number; status: 'completed' | 'failed' | 'running' }
+
 /**
  * task 工具自定义渲染：展示工作流图 + 输出。
  *
@@ -52,6 +55,18 @@ export function TaskToolView({
   const inp = (input ?? {}) as TaskToolInput
   const agentType = inp.subagent_type ?? 'general'
 
+  // 逐子任务状态（有则用之）。批量里失败一个不再把成功的也画成失败；
+  // 旧的历史消息没有 metadata，回落到父工具状态（保持原行为）。
+  const meta = (output as { metadata?: { subtasks?: SubtaskStatus[] } } | undefined)?.metadata
+  const byIndex = new Map<number, SubtaskStatus['status']>()
+  if (Array.isArray(meta?.subtasks)) {
+    for (const s of meta.subtasks) byIndex.set(s.index, s.status)
+  }
+  const nodeStatus = (i: number): WorkflowNode['status'] => {
+    const own = byIndex.get(i)
+    return own ? mapSubtaskStatus(own) : mapStatus(status)
+  }
+
   // 构建工作流节点
   const nodes: WorkflowNode[] = []
 
@@ -64,7 +79,7 @@ export function TaskToolView({
         id: `task-${i}`,
         agentType,
         label: task.description ?? task.role ?? `Task ${i + 1}`,
-        status: mapStatus(status),
+        status: nodeStatus(i),
       })
     }
   } else if (inp.prompt) {
@@ -73,7 +88,7 @@ export function TaskToolView({
       id: 'task-0',
       agentType,
       label: inp.description ?? inp.prompt.slice(0, 60),
-      status: mapStatus(status),
+      status: nodeStatus(0),
     })
   }
 
@@ -119,5 +134,17 @@ function mapStatus(toolStatus: string): WorkflowNode['status'] {
       return 'failed'
     default:
       return 'pending'
+  }
+}
+
+/** 子任务自身终态 → 工作流节点状态。 */
+function mapSubtaskStatus(subtask: SubtaskStatus['status']): WorkflowNode['status'] {
+  switch (subtask) {
+    case 'completed':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    case 'running':
+      return 'running'
   }
 }
