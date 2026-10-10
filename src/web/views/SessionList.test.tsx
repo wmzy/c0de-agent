@@ -33,6 +33,9 @@ const hoisted = vi.hoisted(() => ({
     error: null as unknown,
     refetch: () => {},
   },
+  /** 「未归属项目」分组的数据源：孤儿已删会话与其计数。 */
+  orphans: { data: [] as Session[] },
+  orphanCount: { data: { count: 0 } },
 }))
 
 vi.mock('@/hooks/useSession.js', () => ({
@@ -43,8 +46,8 @@ vi.mock('@/hooks/useSession.js', () => ({
   useDeleteSession: () => ({ mutate: vi.fn() }),
   useProjects: () => ({ data: [{ id: 'p1', name: 'proj', worktree: '/tmp/proj' }] }),
   useDeletedSessions: () => hoisted.deleted,
-  useDeletedOrphansCount: () => ({ data: { count: 0 } }),
-  useDeletedOrphans: () => ({ data: [] }),
+  useDeletedOrphansCount: () => hoisted.orphanCount,
+  useDeletedOrphans: () => hoisted.orphans,
   useRestoreSession: () => ({ mutate: vi.fn() }),
 }))
 
@@ -103,6 +106,8 @@ const OUTSIDE = makeSession('outside-id', 'outside-tree')
 
 beforeEach(() => {
   hoisted.tree = [node(ROOT, [node(CHILD, [node(GRANDCHILD)])])]
+  hoisted.orphans = { data: [] }
+  hoisted.orphanCount = { data: { count: 0 } }
   hoisted.treeQuery = {
     data: undefined,
     isLoading: false,
@@ -622,5 +627,88 @@ describe('RecycleBin 未归属看板彻底删除', () => {
     const bar = screen.getByTestId('restore-error')
     expect(bar.textContent).toContain('彻底删除看板失败')
     expect(bar.textContent).toContain('看板正在被使用，请稍后重试')
+  })
+})
+
+/**
+ * 回收站「彻底删除」的影响面计数。
+ *
+ * 缺陷：确认框一律用项目级 deletedList 建的索引算后代，而孤儿会话
+ * （projectId=null，来自「未归属项目」分组）根本不在 deletedList 里，计数恒为 0。
+ * 服务端 permanentlyDeleteSession 走 deleteSessionSubtrees(handle, [id])，
+ * 连同全部后代（含未软删的 fork 后代）一起物理清除。于是逐字确认框明确写着
+ * 「及其 0 个派生会话」，用户据此以为只删一条，实际整棵分支树不可恢复地没了。
+ * 删除项目会把该项目全部会话（含 fork 子会话）软删成孤儿分组，恰是后代最易
+ * 成树之处。
+ */
+describe('RecycleBin 彻底删除的影响面', () => {
+  const orphanRoot = makeSession('orphan-root', '孤儿根会话', null)
+  const orphanChild = {
+    ...makeSession('orphan-child', '孤儿子会话', null),
+    parentId: 'orphan-root',
+  }
+  const orphanGrandchild = {
+    ...makeSession('orphan-grandchild', '孤儿孙会话', null),
+    parentId: 'orphan-child',
+  }
+
+  function renderTrash() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={qc}>
+        <RecycleBin projectId="p1" />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('孤儿根会话的确认框写出派生后代数（此前恒为 0）', async () => {
+    hoisted.deleted = {
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphans = { data: [orphanRoot, orphanChild, orphanGrandchild] }
+    hoisted.orphanCount = { data: { count: 3 } }
+
+    renderTrash()
+    fireEvent.click(screen.getByTestId('orphan-trash-toggle'))
+    await waitFor(() => {
+      expect(screen.getByTestId('remove-orphan-orphan-root')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('remove-orphan-orphan-root'))
+
+    // 逐字确认框里必须写明真实影响面，而不是「及其 0 个派生会话」
+    expect(screen.getByText(/及其 2 个派生会话/)).toBeInTheDocument()
+  })
+
+  it('项目内会话的计数照旧（同一套索引，两种分组各自取数）', async () => {
+    const projectRoot = { ...makeSession('proj-root', '项目根会话'), deletedAt: 1 }
+    const projectChild = {
+      ...makeSession('proj-child', '项目子会话'),
+      parentId: 'proj-root',
+      deletedAt: 1,
+    }
+    hoisted.deleted = {
+      data: [projectRoot, projectChild],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphans = { data: [orphanRoot, orphanChild, orphanGrandchild] }
+    hoisted.orphanCount = { data: { count: 3 } }
+
+    renderTrash()
+    await waitFor(() => {
+      expect(screen.getByTestId('remove-forever-proj-root')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('remove-forever-proj-root'))
+
+    expect(screen.getByText(/及其 1 个派生会话/)).toBeInTheDocument()
   })
 })

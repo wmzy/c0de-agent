@@ -242,7 +242,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
 
   // P2-6：永久操作（彻底删除/清空回收站）分级确认弹层；软删除保留轻确认。
   // 状态必须声明在 early return 之前（hooks 规则：回收站空 → 非空的切换不得增减 hooks）。
-  const [removeTarget, setRemoveTarget] = useState<Session | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<{
+    session: Session
+    descendants: number
+  } | null>(null)
   const [showEmptyTrash, setShowEmptyTrash] = useState(false)
 
   if (isLoading) return <div className={empty}>加载中…</div>
@@ -320,6 +323,17 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 计数走 _shared/recycleTree 的环守卫实现（parentId 成环数据此前会让内联的
   // 朴素栈遍历死循环——渲染期按行调用 → 页面冻结）；索引每渲染建一次，逐行只读。
   const deletedIndex = buildDeletedTreeIndex(deletedList)
+  // 孤儿会话（projectId=null）不在 deletedList 里——它们只由 deleted?orphan=1
+  // 单独列出。此前确认框一律用项目级 deletedIndex 算后代，孤儿条目必然得 0，
+  // 于是在逐字确认框里明确写着「及其 0 个派生会话」，而服务端
+  // permanentlyDeleteSession 走的是 deleteSessionSubtrees(handle, [id])：
+  // 连同全部后代（含未软删的 fork 后代）一起物理清除，不可恢复。删除项目会
+  // 把该项目全部会话（含 fork 子会话）软删成「未归属项目」分组，恰恰是后代
+  // 最容易成树的地方，用户却据此以为只删一条。
+  const orphanIndex = buildDeletedTreeIndex(orphans ?? [])
+  /** 某条目的彻底删除影响面：按它所属的分组取索引，孤儿走 orphanIndex。 */
+  const purgeDescendantsOf = (s: Session): number =>
+    countDeletedDescendants(s.projectId ? deletedIndex : orphanIndex, s.id)
   /** 回收站内已删除的祖先链（按父→祖顺序）。恢复会连带还原它们——
    *  事前在确认框中列出，比事后提示更符合「操作前知情」。 */
   const deletedAncestorsOf = (s: Session): Session[] => {
@@ -338,7 +352,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   }
 
   const handleRemoveForever = (s: Session) => {
-    setRemoveTarget(s)
+    // 影响面在点开确认的那一刻定格：孤儿分组折叠后 orphans 变 undefined，
+    // 数字若跟着活数据走，会在逐字确认途中悄悄从「及其 2 个派生会话」退回 0。
+    setRemoveTarget({ session: s, descendants: purgeDescendantsOf(s) })
   }
 
   const handleEmptyTrash = () => {
@@ -722,11 +738,11 @@ export function RecycleBin({ projectId }: { projectId: string }) {
         <DangerConfirmDialog
           open={true}
           title="彻底删除会话"
-          description={`将彻底删除「${removeTarget.title}」及其 ${countDeletedDescendants(deletedIndex, removeTarget.id)} 个派生会话。`}
-          confirmWord={removeTarget.title}
+          description={`将彻底删除「${removeTarget.session.title}」及其 ${removeTarget.descendants} 个派生会话。`}
+          confirmWord={removeTarget.session.title}
           confirmLabel="彻底删除"
           onConfirm={() => {
-            const id = removeTarget.id
+            const id = removeTarget.session.id
             setRemoveTarget(null)
             removeForever.mutate(id)
           }}
