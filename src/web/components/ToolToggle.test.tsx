@@ -207,4 +207,21 @@ describe('ToolToggle', () => {
     expect(screen.getByText('暂无可用工具')).toBeTruthy()
     expect(screen.queryByTestId('tool-list-error')).toBeNull()
   })
+
+  it('Escape 关闭弹层：展开时焦点进入菜单，关闭后交还触发按钮', async () => {
+    mockTools()
+    renderWithClient(<ToolToggle enabled={null} onChange={vi.fn()} />)
+    await waitFor(() => expect(toolAPI.list).toHaveBeenCalled())
+    const trigger = screen.getByTestId('tool-toggle')
+    openMenu()
+    const menu = screen.getByTestId('tool-menu')
+    // 展开时焦点进入菜单（role=menu 的键盘约定）——此前停在触发按钮上，
+    // 键盘用户还得再 Tab 一次才能进入菜单。
+    expect(document.activeElement).toBe(menu)
+    // 此前只挂了 mousedown：Esc 无监听者，菜单关不掉。
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('tool-menu')).toBeNull()
+    // 关闭后焦点回到触发按钮，而不是随菜单卸载掉回 body。
+    expect(document.activeElement).toBe(trigger)
+  })
 })
