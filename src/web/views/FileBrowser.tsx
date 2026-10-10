@@ -486,7 +486,6 @@ export function FileBrowser({
     }
   }, [pendingDelete, projectId, onDelete, isSearch, refetchSearch, gitStatusQ])
 
-
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
   // APIError 是结构体而非 Error 子类，必须结构化取 message（同 KanbanView/FilePreview 口径）。
   const searchErrorMessage =
