@@ -7,7 +7,7 @@
  * 只断言卡片渲染通过无法捕获该回归。
  */
 import { DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
 import type { KanbanCard, KanbanColumnDef } from '@/services/kanban.js'
@@ -241,5 +241,73 @@ describe('KanbanColumn 快速新建的焦点', () => {
       </Harness>,
     )
     expect(document.activeElement).toBe(screen.getByText('添加'))
+  })
+})
+
+describe('KanbanColumn 快速新建的请求身份', () => {
+  // 回归（审查 #6）：请求在途时按 Esc 收起再重开，被放弃标题的失败结果稍后才
+  // 落地——重开时清 error 只救得了「落地在重开之前」，落地在其后的仍会砸到
+  // 新开的空输入框上，显示一条描述旧标题的报错。
+  it('在途请求失败落在重开之后：新输入框不显示被放弃标题的错误', async () => {
+    let rejectAdd: ((err: Error) => void) | undefined
+    const onQuickAdd = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectAdd = reject
+        }),
+    )
+    render(
+      <Harness>
+        <KanbanColumn
+          column={column('todo', '待办')}
+          cards={[]}
+          labels={[]}
+          onCardClick={vi.fn()}
+          onQuickAdd={onQuickAdd}
+        />
+      </Harness>,
+    )
+
+    fireEvent.click(screen.getByText('+ 新建卡片'))
+    const input = screen.getByPlaceholderText('卡片标题…')
+    fireEvent.change(input, { target: { value: '被放弃的标题' } })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+    expect(onQuickAdd).toHaveBeenCalledWith('被放弃的标题')
+
+    // Esc 收起（放弃这轮输入）→ 重开一个空输入框
+    fireEvent.keyDown(input, { key: 'Escape', code: 'Escape' })
+    fireEvent.click(screen.getByText('+ 新建卡片'))
+    const reopened = screen.getByPlaceholderText('卡片标题…') as HTMLInputElement
+    expect(reopened.value).toBe('')
+
+    // 旧请求此刻才失败：按钮从「添加中…」翻回「添加」说明它已落地（finally 已跑）
+    rejectAdd?.(new Error('后端拒绝：被放弃的标题'))
+    await waitFor(() => expect(screen.getByText('添加')).toBeTruthy())
+    expect(screen.queryByTestId('quick-add-error-todo')).toBeNull()
+  })
+
+  // 门控不许矫枉过正：当前输入框自己的请求失败仍要就地显示原因（保留草稿重试）。
+  it('当前输入框的请求失败仍就地显示原因', async () => {
+    const onQuickAdd = vi.fn().mockRejectedValue(new Error('标题与现有卡片重复'))
+    render(
+      <Harness>
+        <KanbanColumn
+          column={column('todo', '待办')}
+          cards={[]}
+          labels={[]}
+          onCardClick={vi.fn()}
+          onQuickAdd={onQuickAdd}
+        />
+      </Harness>,
+    )
+
+    fireEvent.click(screen.getByText('+ 新建卡片'))
+    const input = screen.getByPlaceholderText('卡片标题…')
+    fireEvent.change(input, { target: { value: '有效标题' } })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+
+    const box = await screen.findByTestId('quick-add-error-todo')
+    expect(box.textContent).toContain('标题与现有卡片重复')
+    expect((screen.getByPlaceholderText('卡片标题…') as HTMLInputElement).value).toBe('有效标题')
   })
 })

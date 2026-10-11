@@ -2,7 +2,7 @@ import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { css } from '@linaria/core'
 import { Button } from 'haze-ui'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type {
   KanbanCard as KanbanCardType,
@@ -376,6 +376,9 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
   const [draft, setDraft] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  /** 快速新建的请求身份：submit 自增、重开输入框自增。在途请求落地时身份
+   *  已变，说明它描述的是被放弃的那轮输入，成功/失败都不许再碰当前状态。 */
+  const addAttempt = useRef(0)
 
   /**
    * a11y：避免 autoFocus，输入框挂载后程序化聚焦（同 BranchTree 重命名输入）。
@@ -399,19 +402,27 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
   const submit = async () => {
     const t = draft.trim()
     if (!t || pending) return
+    const attempt = ++addAttempt.current
     setPending(true)
     setAddError(null)
     try {
       await onQuickAdd(t)
+      // 身份已变（用户 Esc 后重开了输入框）：这是被放弃标题的成功，收起输入框
+      // 会砸掉用户正在进行的下一次输入。
+      if (attempt !== addAttempt.current) return
       setDraft('')
       setIsAdding(false)
     } catch (err) {
+      // 同上：被放弃标题的失败不属于当前输入框，不显示。
+      if (attempt !== addAttempt.current) return
       // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
       // 结构化取优先、instanceof 兜底，不会渲染成 [object Object]。
       const message =
         (err as { message?: string } | null)?.message ?? (err instanceof Error ? err.message : null)
       setAddError(message ?? '新建卡片失败，请重试')
     } finally {
+      // pending 不判身份：submit 有 pending 早退，任意时刻至多一个在途请求，
+      // 它落地就必须复位按钮，否则重开后的「添加」永远卡在「添加中…」。
       setPending(false)
     }
   }
@@ -480,9 +491,12 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
           <button
             type="button"
             className={addCardBtn}
-            // 重开时清掉上一轮的失败原因：请求在途时按 Esc 会收起输入框，但那条失败
-            // 结果稍后才落地，重新打开就会看到一条描述着已被放弃的标题的报错。
+            // 重开即新一次输入：自增请求身份作废在途结果——请求在途时按 Esc 收起
+            // 输入框，失败/成功稍后才落地；只清 addError 救得了「落地在重开之前」，
+            // 落在其后的仍会砸到新开的空输入框上（显示被放弃标题的报错、或被旧
+            // 成功直接收起），所以身份必须在这里翻页。
             onClick={() => {
+              addAttempt.current++
               setAddError(null)
               setIsAdding(true)
             }}
