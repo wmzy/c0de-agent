@@ -500,6 +500,27 @@ describe('TopBar', () => {
     expect(btn.getAttribute('data-has-changes')).toBeNull()
   })
 
+  // 读不到 git status（5xx / 项目已删除 404）此前与「确实没有变更」共用同一条路径：
+  // 按钮禁用、title 写死「无变更」——有未提交改动的用户被告知没有变更，且唯一的
+  // 提交入口还是灰的，没有任何重试手段。契约：失败态可点且点了重试读取，不提交。
+  it('git-status 读取失败时不谎报「无变更」：按钮可点、点了重试而非提交', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('git boom'))
+
+    await renderAtProject('p1')
+    await waitFor(() => {
+      expect(screen.getByTestId('git-commit-btn').getAttribute('data-git-status-failed')).toBe(
+        'true',
+      )
+    })
+    const btn = screen.getByTestId('git-commit-btn') as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
+    // 未提交：点击是重试读取
+    fireEvent.click(btn)
+    await waitFor(() => expect(fileAPI.gitStatus).toHaveBeenCalledTimes(2))
+    expect(fileAPI.gitCommit).not.toHaveBeenCalled()
+  })
+
   it('有未提交变更时提交按钮高亮（data-has-changes）', async () => {
     const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({

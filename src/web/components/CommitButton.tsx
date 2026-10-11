@@ -128,6 +128,13 @@ export function CommitButton({ projectId }: { projectId: string }) {
 
   const hasChanges =
     !!gitStatusQ.data && Object.values(gitStatusQ.data).some((c) => c !== 'ignored')
+  // 读不到 git status（接口 5xx / 项目已删除 404）与「确实没有变更」是两回事：
+  // 此前两者共用 hasChanges=false，按钮被禁用且 title 写死「无变更」——用户明明有
+  // 未提交改动，看到的却是一句肯定没有变更的谎话，且唯一的提交入口还是灰的，
+  // 30s 轮询之外没有任何重试手段。本仓 TodoPanel/ArchivePanel/UsagePanel/
+  // FileBrowser 都已按「拉不到≠没有」修过同类，这里补齐：失败态下按钮可点、
+  // 点了重试读取，文案如实说明读不到。
+  const gitStatusFailed = gitStatusQ.isError && !gitStatusQ.data
 
   const [commitFeedback, setCommitFeedback] = useState<
     { kind: 'idle' } | { kind: 'ok'; message: string } | { kind: 'err'; msg: string }
@@ -184,6 +191,7 @@ export function CommitButton({ projectId }: { projectId: string }) {
   const title = (() => {
     if (commitFeedback.kind === 'ok') return commitFeedback.message
     if (commitFeedback.kind === 'err') return commitFeedback.msg
+    if (gitStatusFailed) return '无法读取 git 状态（点击重试）'
     return hasChanges ? 'AI 生成 commit message 并提交全部变更' : '无变更'
   })()
 
@@ -193,10 +201,15 @@ export function CommitButton({ projectId }: { projectId: string }) {
         <button
           type="button"
           className={btnClass}
-          onClick={() => commitMut.mutate(undefined)}
-          disabled={commitMut.isPending || !hasChanges}
+          // 失败态下点击是「重试读取」而非提交：没有 git 状态就无从判断要提交什么，
+          // 直接提交会把「读不到」当成「没有变更」的空提交送出去。
+          onClick={() =>
+            gitStatusFailed ? void gitStatusQ.refetch() : commitMut.mutate(undefined)
+          }
+          disabled={commitMut.isPending || (!hasChanges && !gitStatusFailed)}
           data-testid="git-commit-btn"
           data-has-changes={hasChanges || undefined}
+          data-git-status-failed={gitStatusFailed || undefined}
         >
           {label}
         </button>
