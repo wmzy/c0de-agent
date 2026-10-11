@@ -183,6 +183,12 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const [draftTarget, setDraftTarget] = useState<'project' | 'user'>('project')
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<WorkflowInfo | null>(null)
+  /**
+   * 删除失败原因单独一份：DangerConfirmDialog 是 <dialog> 模态，section 顶部那条
+   * 错误在遮罩之下看不见。此前删除失败只 setError，用户看到的是弹窗原地不动、
+   * 框内零提示——「点了删除，什么也没发生」。同 ProjectIndicator 的 deleteError。
+   */
+  const [removeError, setRemoveError] = useState<string | null>(null)
 
   // 新建模式没有远端源码要等；查看/编辑在源码到达前一律按加载中处理。
   const editorLoading = editor !== null && editor.mode !== 'create' && editor.loading === true
@@ -201,11 +207,13 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const removeMut = useMutation({
     mutationFn: ({ name, target }: { name: string; target: 'project' | 'user' }) =>
       workflowsAPI.remove(name, projectId, target),
+    onMutate: () => setRemoveError(null),
     onSuccess: () => {
       invalidate()
       setPendingDelete(null)
+      setRemoveError(null)
     },
-    onError: (e) => setError(errMessage(e)),
+    onError: (e) => setRemoveError(errMessage(e)),
   })
 
   const openCreate = () => {
@@ -333,7 +341,10 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
                 <button
                   type="button"
                   className={`${actionBtn} ${dangerAction}`}
-                  onClick={() => setPendingDelete(wf)}
+                  onClick={() => {
+                    setRemoveError(null)
+                    setPendingDelete(wf)
+                  }}
                   data-testid="workflow-delete"
                 >
                   删除
@@ -440,6 +451,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
         confirmWord={pendingDelete?.name ?? ''}
         confirmLabel="删除"
         busy={removeMut.isPending}
+        error={removeError}
         onConfirm={() => {
           if (pendingDelete) {
             removeMut.mutate({

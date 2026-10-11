@@ -2077,6 +2077,35 @@ describe('Settings — 工作流管理面板', () => {
     )
   })
 
+  // 删除失败的原因此前只写进 section 顶部的 workflow-panel-error，而删除确认是
+  // <dialog> 模态——那条错误在遮罩之下，用户看到的是「弹窗原地不动、框内零提示」。
+  // 契约：失败原因留在用户正在做的操作旁边（DangerConfirmDialog 的 error 槽）。
+  it('删除工作流失败：原因显示在确认弹窗内，弹窗不自己关掉', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: [WF_FIXTURES[1]] })
+    ;(workflowsAPI.remove as Mock).mockRejectedValue(new Error('工作流文件被占用'))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(1))
+    fireEvent.click(screen.getByTestId('workflow-delete'))
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: 'my-wf' } })
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('danger-error').textContent).toContain('工作流文件被占用'),
+    )
+    // 失败不是「成功」：弹窗仍在，用户可以改环境后重试或取消
+    expect(screen.getByTestId('danger-confirm-dialog')).toBeTruthy()
+
+    // 关掉再重开：上一条失败原因不残留（否则看起来像这次也会失败）
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByTestId('danger-confirm-dialog')).toBeNull())
+    fireEvent.click(screen.getByTestId('workflow-delete'))
+    expect(screen.queryByTestId('danger-error')).toBeNull()
+  })
+
   it('编辑工作流保存带 overwrite: true；新建不带 overwrite', async () => {
     const { configAPI } = await import('@/services/config.js')
     const { workflowsAPI } = await import('@/services/workflows.js')
