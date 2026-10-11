@@ -7,6 +7,11 @@ import { useCallback, useRef, useState } from 'react'
 import type { ChatActions, ChatState } from '@/hooks/chatState.js'
 import { sessionAPI } from '@/services/session.js'
 
+/** 失败原因取服务端 message（APIError）或 Error.message，与会话树/回收站失败提示同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
 export function useRetryResume({
   sessionId,
   chat,
@@ -37,12 +42,20 @@ export function useRetryResume({
   const resendRef = useRef(false)
   const [resendPending, setResendPending] = useState(false)
 
-  const runResend = useCallback(async (run: () => Promise<void>) => {
+  // 重发失败原因：唯一的恢复入口（中断横幅）正是在 handleResume 起点被清掉的，
+  // 请求失败时若不留原因，用户看到的是「点了恢复对话，什么都没发生」，
+  // 而且横幅已经消失、无法再点一次（此前 reject 直接穿透成 unhandled rejection）。
+  const [resendError, setResendError] = useState<string | null>(null)
+
+  const runResend = useCallback(async (label: string, run: () => Promise<void>) => {
     if (resendRef.current) return
     resendRef.current = true
     setResendPending(true)
+    setResendError(null)
     try {
       await run()
+    } catch (e) {
+      setResendError(`${label}失败：${messageOf(e)}`)
     } finally {
       resendRef.current = false
       setResendPending(false)
@@ -50,14 +63,18 @@ export function useRetryResume({
   }, [])
 
   const handleResume = () =>
-    runResend(async () => {
+    runResend('恢复对话', async () => {
+      // 先从 DB 重载消息，**成功之后**才消费恢复入口（onResumeStart/clearInterrupted/reset）：
+      // 会话已被删（404）、服务重启或断网时，重载这一步就失败。此前先清入口再发请求，
+      // 失败后中断横幅连同「恢复对话」按钮一起消失，用户既看不到原因也无法重试，
+      // 唯一的恢复路径被一次失败消费掉。
+      const msgs = await sessionAPI.messages(sessionId)
       onResumeStart()
       chat.clearInterrupted()
       // 清空内存流式消息与运行态（中断标记/挂起弹窗）：随后从 DB 重载消息作为
       // 唯一事实源（乐观副本与服务端副本的合并去重已由 mergeSessionMessages 负责，
       // 此处清空是为了让中断前的半截内存态不参与 resume 判定）。
       chat.reset()
-      const msgs = await sessionAPI.messages(sessionId)
       qc.setQueryData(['session', sessionId, 'messages'], msgs)
       let lastAssistantIdx = -1
       for (let i = msgs.length - 1; i >= 0; i--) {
@@ -67,21 +84,29 @@ export function useRetryResume({
         }
       }
       const prompt = findLastPrompt(msgs, lastAssistantIdx)
-      if (prompt) {
-        await retryPrompt(prompt)
-        // M3：重发会触发服务端标记未完成轮次（写入 session.metadata）——
-        // 刷新 meta 使时间线立即置灰半截内容。
-        qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
+      if (!prompt) {
+        // 中断前没有任何可重发的 user 消息：横幅已被消费掉，若不说明，用户看到的是
+        // 「点了恢复对话，对话停在原地」且再无入口可点。
+        setResendError('恢复对话失败：中断前没有可重发的用户消息，无法自动续接。')
+        return
       }
+      await retryPrompt(prompt)
+      // M3：重发会触发服务端标记未完成轮次（写入 session.metadata）——
+      // 刷新 meta 使时间线立即置灰半截内容。
+      qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
     })
 
   // 运行出错后的重试（P2-1）：与服务端错误（LLM 429/5xx 等）对等的中断恢复入口。
   // 复用同一套「定位最后一条 user prompt + 完整重发（含图片）」逻辑。
   const handleRetryLast = () =>
-    runResend(async () => {
+    runResend('重试', async () => {
       const msgs = await sessionAPI.messages(sessionId)
       const prompt = findLastPrompt(msgs, -1)
-      if (prompt) await retryPrompt(prompt)
+      if (!prompt) {
+        setResendError('重试失败：没有可重发的用户消息。')
+        return
+      }
+      await retryPrompt(prompt)
     })
 
   /** 从重载消息中定位待重发的 user prompt（跳过仅含 steering 的空条目）。 */
@@ -120,5 +145,11 @@ export function useRetryResume({
     })
   }
 
-  return { handleResume, handleRetryLast, resendPending }
+  return {
+    handleResume,
+    handleRetryLast,
+    resendPending,
+    resendError,
+    clearResendError: () => setResendError(null),
+  }
 }

@@ -124,3 +124,83 @@ describe('useRetryResume 重发防重入', () => {
     expect(chat.retry).toHaveBeenCalledTimes(1)
   })
 })
+
+// 恢复入口是会话被中断后唯一的续接手段。请求失败时若入口先被消费掉，用户既看不到
+// 原因也无法再点一次——此前 reject 直接穿透 `void handleResume()` 成为 unhandled
+// rejection，页面零反馈。
+describe('useRetryResume 失败反馈', () => {
+  it('重载消息失败时保留恢复入口，并给出失败原因', async () => {
+    vi.mocked(sessionAPI.messages).mockRejectedValue(
+      Object.assign(new Error('会话不存在'), { status: 404 }),
+    )
+
+    const { chat, view, onResumeStart } = setup()
+    await act(async () => {
+      await view.result.current.handleResume()
+    })
+
+    expect(view.result.current.resendError).toContain('恢复对话失败')
+    expect(view.result.current.resendError).toContain('会话不存在')
+    // 恢复入口未被消费：横幅与「恢复对话」按钮仍在，用户可以再试一次。
+    expect(onResumeStart).not.toHaveBeenCalled()
+    expect(chat.clearInterrupted).not.toHaveBeenCalled()
+    expect(chat.reset).not.toHaveBeenCalled()
+    expect(view.result.current.resendPending).toBe(false)
+  })
+
+  it('发流失败时给出原因（重载成功、发流请求被拒）', async () => {
+    vi.mocked(sessionAPI.messages).mockResolvedValue([userMessage] as never)
+    vi.mocked(sessionAPI.get).mockResolvedValue({ metadata: {} } as never)
+    const { chat, view } = setup()
+    vi.mocked(chat.retry).mockRejectedValueOnce(new Error('该会话已有进行中的对话'))
+
+    await act(async () => {
+      await view.result.current.handleResume()
+    })
+
+    expect(view.result.current.resendError).toContain('恢复对话失败')
+    expect(view.result.current.resendError).toContain('已有进行中的对话')
+  })
+
+  it('无可重发消息时不静默退出，恢复入口已被消费则必须说明原因', async () => {
+    vi.mocked(sessionAPI.messages).mockResolvedValue([] as never)
+
+    const { view } = setup()
+    await act(async () => {
+      await view.result.current.handleResume()
+    })
+
+    expect(view.result.current.resendError).toContain('没有可重发的用户消息')
+  })
+
+  it('重试失败同样有原因，且再次点击会清掉上一条错误', async () => {
+    vi.mocked(sessionAPI.messages).mockRejectedValueOnce(new Error('network down'))
+    const { view } = setup()
+
+    await act(async () => {
+      await view.result.current.handleRetryLast()
+    })
+    expect(view.result.current.resendError).toContain('重试失败')
+
+    vi.mocked(sessionAPI.messages).mockResolvedValue([userMessage] as never)
+    vi.mocked(sessionAPI.get).mockResolvedValue({ metadata: {} } as never)
+    await act(async () => {
+      await view.result.current.handleRetryLast()
+    })
+    expect(view.result.current.resendError).toBeNull()
+  })
+
+  it('可手动关闭错误提示', async () => {
+    vi.mocked(sessionAPI.messages).mockRejectedValue(new Error('boom'))
+    const { view } = setup()
+    await act(async () => {
+      await view.result.current.handleRetryLast()
+    })
+    expect(view.result.current.resendError).not.toBeNull()
+
+    act(() => {
+      view.result.current.clearResendError()
+    })
+    expect(view.result.current.resendError).toBeNull()
+  })
+})

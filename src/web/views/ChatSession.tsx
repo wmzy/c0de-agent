@@ -528,14 +528,15 @@ export function ChatSession({
   }
 
   // 中断恢复/出错重试：prompt 定位与重发编排收敛在 useRetryResume
-  const { handleResume, handleRetryLast, resendPending } = useRetryResume({
-    sessionId,
-    chat,
-    qc,
-    selection,
-    agentName,
-    onResumeStart: () => setColdStartInterrupted(false),
-  })
+  const { handleResume, handleRetryLast, resendPending, resendError, clearResendError } =
+    useRetryResume({
+      sessionId,
+      chat,
+      qc,
+      selection,
+      agentName,
+      onResumeStart: () => setColdStartInterrupted(false),
+    })
   // 视觉能力按选中模型查询（provider/model capabilities）：不支持视觉的模型隐藏图片入口，
   // 避免贴图后 provider 直接 400（P3 一致性）。
   const { data: capabilitiesData } = useQuery({
@@ -655,6 +656,14 @@ export function ChatSession({
                     归属到当前项目失败：{rebindError}
                   </span>
                 )}
+              </div>
+            )}
+            {resendError && (
+              <div className={interruptBanner} role="alert" data-testid="resend-error">
+                <span>{resendError}</span>
+                <Button variant="outline" onClick={clearResendError}>
+                  知道了
+                </Button>
               </div>
             )}
             {showInterruptBanner && !chat.isStreaming && (
