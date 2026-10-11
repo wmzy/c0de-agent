@@ -406,9 +406,15 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const execMutation = useMutation({
     mutationFn: ({ sessionId: sid, op }: { sessionId: string; op: TodoOp }) =>
       todoAPI.exec(sid, op),
-    onSuccess: (result: TodoOpResult) => {
+    onSuccess: (result: TodoOpResult, vars: { sessionId: string; op: TodoOp }) => {
       queryClient.setQueryData(todoKey, { phases: result.phases })
       setError('')
+      // 输入只在服务端真的受理后才清空：失败时用户刚打的任务文本必须留在
+      // 输入框里（错误行已经说明原因，重试即可，不必凭记忆重打）。
+      if (vars.op.op === 'append') {
+        setNewTask('')
+        setNewPhase('')
+      }
     },
     onError: (e: Error) => setError(e.message),
   })
@@ -432,12 +438,12 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const handleAdd = () => {
     if (!newTask.trim()) return
     const phaseName = newPhase.trim() || (phases[0]?.name ?? 'Tasks')
+    // 清空输入由 execMutation.onSuccess 统一负责（仅 append 操作），
+    // 失败时文本留在框里，不让用户重打一遍。
     execMutation.mutate({
       sessionId,
       op: { op: 'append', phase: phaseName, items: [newTask.trim()] },
     })
-    setNewTask('')
-    setNewPhase('')
   }
 
   const toggleCollapse = () => {

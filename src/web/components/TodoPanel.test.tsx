@@ -108,6 +108,52 @@ describe('TodoPanel 新增任务行的可访问名称', () => {
 })
 
 /**
+ * 新增任务：失败时不得把用户刚打的文本清掉。
+ *
+ * 缺陷：handleAdd 在 mutate 落地前就 setNewTask('')/setNewPhase('')。todoAPI.exec
+ * 失败时 onError 只留下一行原因，刚输入的任务描述已经从框里消失，用户只能凭
+ * 记忆重打一遍——与本仓其它输入入口（新建分支、追加指令）确立的「成功后才清空」
+ * 口径相反。
+ */
+describe('TodoPanel 新增任务失败时的输入', () => {
+  it('服务端拒绝时任务文本留在输入框里，原因也可见', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
+    vi.mocked(todoAPI.exec).mockRejectedValue(new Error('待办服务不可用'))
+    renderPanel()
+    fireEvent.click(await screen.findByText('暂无任务，点击添加'))
+
+    const input = (await screen.findByLabelText('任务描述')) as HTMLInputElement
+    fireEvent.change(input, { target: { value: '补一条回归测试' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+
+    expect(await screen.findByText(/待办服务不可用/)).toBeInTheDocument()
+    expect((screen.getByLabelText('任务描述') as HTMLInputElement).value).toBe('补一条回归测试')
+  })
+
+  it('服务端受理后才清空输入（成功路径回归）', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
+    vi.mocked(todoAPI.exec).mockResolvedValue({
+      phases: [{ name: 'Tasks', tasks: [{ content: '补一条回归测试', status: 'pending' }] }],
+      output: 'added',
+    })
+    renderPanel()
+    fireEvent.click(await screen.findByText('暂无任务，点击添加'))
+
+    const input = (await screen.findByLabelText('任务描述')) as HTMLInputElement
+    fireEvent.change(input, { target: { value: '补一条回归测试' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('任务描述') as HTMLInputElement).value).toBe('')
+    })
+    expect(vi.mocked(todoAPI.exec).mock.calls[0]?.[1]).toMatchObject({
+      op: 'append',
+      items: ['补一条回归测试'],
+    })
+  })
+})
+
+/**
  * 拉不到 ≠ 没有。
  *
  * 缺陷：本面板此前只解构 useQuery 的 data。请求 500 时 data 为 undefined，
