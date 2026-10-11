@@ -146,12 +146,28 @@ function rowRole(row: TimelineRow): string {
   return ''
 }
 
-/** 消息内出现的工具名（tool_call / tool_result）。 */
+/**
+ * 消息内出现的全部工具名（tool_call / tool_result，去重保序）。
+ *
+ * 此前只 `.find()` 首个工具 —— 一条 assistant 消息可以并行发起多个工具调用
+ * （normalizeParts 把每个 tool_call 都保留为独立 part），于是「角色/工具」列、
+ * 「工具筛选」下拉候选集与文本搜索都只认第一个工具：选第二个工具名筛选得到
+ * 「无匹配项」，用户据此判断「这个会话从没跑过 bash」，而展开行内原始 JSON
+ * 就能看到那次调用确实存在 —— 排障结论被 UI 直接带反。
+ */
+function rowToolNames(row: TimelineRow): string[] {
+  if (row.kind !== 'message') return []
+  const names: string[] = []
+  for (const p of row.message.content) {
+    if (p._tag !== 'tool_call' && p._tag !== 'tool_result') continue
+    if (!names.includes(p.tool)) names.push(p.tool)
+  }
+  return names
+}
+
+/** 首个工具名（摘要列展示用）。 */
 function rowToolName(row: TimelineRow): string {
-  if (row.kind !== 'message') return ''
-  const part = row.message.content.find((p) => p._tag === 'tool_call' || p._tag === 'tool_result')
-  if (!part) return ''
-  return part._tag === 'tool_call' ? part.tool : part.tool
+  return rowToolNames(row)[0] ?? ''
 }
 
 /** 调用所属段的 model（调用行展示）。 */
@@ -214,7 +230,7 @@ function rowJSON(row: TimelineRow): string {
 
 /** 筛选后的可搜索文本（小写）。 */
 function rowSearchText(row: TimelineRow): string {
-  const parts = [typeLabel(row), rowRole(row), rowToolName(row), rowModel(row), rowSummary(row)]
+  const parts = [typeLabel(row), rowRole(row), ...rowToolNames(row), rowModel(row), rowSummary(row)]
   return parts.join(' ').toLowerCase()
 }
 
@@ -229,12 +245,11 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
   const [toolFilter, setToolFilter] = useState('all')
   const [openIdx, setOpenIdx] = useState<number | null>(null)
 
-  // 工具名候选（来自所有消息的工具调用）
+  // 工具名候选（来自所有消息的全部工具调用，不只是每条消息的首个）
   const toolNames = useMemo(() => {
     const set = new Set<string>()
     for (const row of rows) {
-      const t = rowToolName(row)
-      if (t) set.add(t)
+      for (const t of rowToolNames(row)) set.add(t)
     }
     return [...set].sort()
   }, [rows])
@@ -244,7 +259,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
     return rows.filter((row) => {
       if (typeFilter !== 'all' && row.kind !== typeFilter) return false
       if (roleFilter !== 'all' && rowRole(row) !== roleFilter) return false
-      if (toolFilter !== 'all' && rowToolName(row) !== toolFilter) return false
+      if (toolFilter !== 'all' && !rowToolNames(row).includes(toolFilter)) return false
       if (ql && !rowSearchText(row).includes(ql)) return false
       return true
     })
@@ -293,6 +308,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
           value={toolFilter}
           onValuesChange={(v) => setToolFilter(v as string)}
           aria-label="工具筛选"
+          data-testid="table-filter-tool"
         >
           <option value="all">全部工具</option>
           {toolNames.map((t) => (
@@ -323,7 +339,9 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
             {filtered.map((row) => {
               const idx = rows.indexOf(row)
               const open = openIdx === idx
-              const tool = rowToolName(row)
+              // 全部工具名（不只首个）：列里逐个列出，否则并行的第二个工具
+              // 调用在这个视图里完全不可见
+              const tools = rowToolNames(row)
               // 展开交互此前只挂在裸 <tr onClick> 上：没有 tabIndex、没有键盘处理，
               // 键盘用户 Tab 走遍筛选条与计数后直接跳出表格（实测表格视图内 Tab
               // 序列：筛选控件 → 计数 → Todo 面板，tbody 行一个都碰不到），
@@ -352,7 +370,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
                     <td>
                       <span className={typeTag}>{typeLabel(row)}</span>
                     </td>
-                    <td>{tool || rowRole(row) || rowModel(row) || '—'}</td>
+                    <td>{tools.join(' ') || rowRole(row) || rowModel(row) || '—'}</td>
                     <td className={dim}>{rowTime(row)}</td>
                     <td>{rowTokens(row) || '—'}</td>
                     <td>{rowLatency(row) || '—'}</td>

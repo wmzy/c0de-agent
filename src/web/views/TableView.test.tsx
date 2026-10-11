@@ -16,6 +16,27 @@ function mkMessage(id: string, role: Message['role'], text: string, createdAt = 
   }
 }
 
+/** 一条 assistant 消息内并行发起多个工具调用（每个 tool_call 都是独立 part）。 */
+function mkToolMessage(id: string, tools: string[], ts = 1): TimelineRow {
+  return {
+    kind: 'message',
+    ts,
+    message: {
+      id,
+      sessionId: 's',
+      role: 'assistant',
+      content: tools.map((tool, i) => ({
+        _tag: 'tool_call' as const,
+        id: `${id}-t${i}`,
+        tool,
+        input: {},
+      })),
+      tokenCount: 0,
+      createdAt: 1,
+    },
+  }
+}
+
 const seg: LLMSegment = {
   id: 'seg',
   fingerprint: 'fp',
@@ -167,5 +188,42 @@ describe('TableView 行的键盘可达性', () => {
     const row = firstRow()
     fireEvent.keyDown(row, { key: 'ArrowDown' })
     expect(screen.queryByTestId('table-row-json')).toBeNull()
+  })
+})
+
+/**
+ * 一条 assistant 消息可以并行发起多个工具调用（每个 tool_call 都是独立 part）。
+ * 此前整张表只认每条消息的首个工具：列里看不到第二个工具、筛选下拉里没有它、
+ * 文本搜索也搜不到 —— 选中它得到「无匹配项」，用户据此认定该工具从没跑过。
+ */
+describe('TableView 一条消息内的多个工具调用', () => {
+  afterEach(() => cleanup())
+
+  const parallelRow = mkToolMessage('a1', ['read', 'grep', 'bash'])
+
+  it('工具筛选下拉列出并行调用的全部工具名', () => {
+    render(<TableView rows={[parallelRow]} />)
+    const options = Array.from(screen.getByLabelText('工具筛选').querySelectorAll('option')).map(
+      (o) => o.getAttribute('value'),
+    )
+    expect(options).toEqual(['all', 'bash', 'grep', 'read'])
+  })
+
+  it('按非首个工具名筛选仍能命中该行', () => {
+    render(<TableView rows={[parallelRow]} />)
+    fireEvent.change(screen.getByLabelText('工具筛选'), { target: { value: 'bash' } })
+    expect(screen.getAllByTestId('table-row')).toHaveLength(1)
+  })
+
+  it('文本搜索命中非首个工具名', () => {
+    render(<TableView rows={[parallelRow]} />)
+    fireEvent.change(screen.getByTestId('table-search'), { target: { value: 'grep' } })
+    expect(screen.getAllByTestId('table-row')).toHaveLength(1)
+  })
+
+  it('「角色/工具」列列出全部工具名', () => {
+    render(<TableView rows={[parallelRow]} />)
+    const cell = screen.getAllByTestId('table-row')[0]?.querySelectorAll('td')[2]
+    expect(cell?.textContent).toBe('read grep bash')
   })
 })
