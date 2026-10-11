@@ -91,7 +91,11 @@ const addToChatBtnStyle = css`
   white-space: nowrap;
   transition: background 0.12s;
 
-  &:hover {
+  /* 必须与 global.ts 的
+     :where(button):hover:not(:disabled):not([aria-disabled='true']) 同形状（0,3,0）：
+     单写 &:hover（0,2,0）会被全局中性底色压掉，只剩白字落在浅灰底上
+     （实测 ≈1.14:1）——悬停时这颗「添加到对话」的按钮文字读不出来。 */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--haze-color-primary, #4a9eff);
     color: var(--c0de-primary-on-solid, #fff);
   }

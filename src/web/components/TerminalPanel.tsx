@@ -155,7 +155,14 @@ const tabCloseStyle = css`
   min-height: auto;
   min-width: auto;
 
-  &:hover {
+  /* hover 必须与 global.ts 的
+     :where(button):hover:not(:disabled):not([aria-disabled='true']) 同形状：
+     :where() 只包住 button 本体，:hover 与两个 :not() 在其外，特异度 (0,3,0)
+     高于单类 (0,2,0)——写成 &:hover 会被全局中性底色压掉，只剩这里声明的
+     前景色落在浅灰底上。这颗 × 会直接杀掉该标签的全部 PTY，而鼠标移到它上面
+     的那一瞬间字形就消失（实测浅色主题 #fff on ≈rgb(227,228,230) = 1.14:1）。
+     同形状后按源序，本组件晚于 global.ts 求值，hover 底色才成立。 */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--haze-color-danger);
     color: var(--c0de-danger-on-solid, #fff);
   }
@@ -206,7 +213,9 @@ const closePanelBtnStyle = css`
   min-height: auto;
   min-width: auto;
 
-  &:hover {
+  /* 同 tabCloseStyle：必须写成与 global.ts 的 hover 规则同形状的选择器，
+     否则被全局中性底色压掉，只剩白字落在浅底上（约 1.1:1）。 */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--haze-color-danger);
     color: var(--c0de-danger-on-solid, #fff);
   }
