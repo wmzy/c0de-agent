@@ -1,14 +1,6 @@
-import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { FileCodeBlock } from '@/components/session/tools/FileCodeBlock.js'
-
-const err = css`
-  font-size: 13px;
-  color: var(--haze-color-danger);
-  background: var(--haze-color-danger-subtle);
-  padding: 6px 8px;
-  border-radius: 4px;
-`
+import { ToolError } from '@/components/session/tools/toolError.js'
 
 type ReadInput = { path: string; offset?: number; limit?: number }
 
@@ -21,12 +13,10 @@ export function ReadToolView({
   output?: ToolResult
   status: string
 }) {
-  if (status === 'error' && output?._tag === 'error') {
-    return (
-      <div className={err} data-testid="tool-error">
-        {output.error}
-      </div>
-    )
+  // 失败必须透出原因：读文件失败却渲染成一块空白，用户无从判断是路径错了还是权限问题。
+  // toolErrorText 兼顾 output._tag 与 status 兜底，缺失/结构异常的 output 也会给出说明。
+  if (output?._tag === 'error' || status === 'error') {
+    return <ToolError output={output} status={status} />
   }
   const path = input?.path ?? ''
   const content = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''

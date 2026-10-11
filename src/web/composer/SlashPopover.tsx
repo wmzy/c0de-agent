@@ -1,4 +1,6 @@
 import { css } from '@linaria/core'
+import { useRef } from 'react'
+import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
 import type { SubcommandDef } from '@/services/commands.js'
 
@@ -43,23 +45,46 @@ const cmdUsage = css`
   font-family: var(--haze-font-mono, monospace);
 `
 
+/** 加载/空态提示行（非候选项，不参与键盘索引）。 */
+const hint = css`
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 type Props = {
   commands: CommandInfo[]
   activeIndex: number
+  /** 命令列表仍在加载中（结果未到）。 */
+  loading?: boolean
   onSelect: (name: string) => void
 }
 
 type SubcommandProps = {
   subcommands: SubcommandDef[]
   activeIndex: number
+  /** 命令列表仍在加载中（结果未到）。 */
+  loading?: boolean
   onSelect: (name: string) => void
   parentCommand: string
 }
 
 function SlashPopover(props: Props) {
-  if (props.commands.length === 0) return null
+  const listRef = useRef<HTMLDivElement>(null)
+  usePopoverScroll(listRef, props.activeIndex, props.commands.length > 0)
+  // 空列表不等于「没有这个命令」：加载中此前同样 return null，浮层消失后用户
+  // 只能看到「没有任何命令匹配」。
+  if (props.commands.length === 0) {
+    if (!props.loading) return null
+    return (
+      <div className={popover} role="status" data-testid="slash-menu-loading">
+        <div className={hint}>命令加载中…</div>
+      </div>
+    )
+  }
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="slash-menu"
@@ -83,9 +108,19 @@ function SlashPopover(props: Props) {
 }
 
 function SubcommandPopover(props: SubcommandProps) {
-  if (props.subcommands.length === 0) return null
+  const listRef = useRef<HTMLDivElement>(null)
+  usePopoverScroll(listRef, props.activeIndex, props.subcommands.length > 0)
+  if (props.subcommands.length === 0) {
+    if (!props.loading) return null
+    return (
+      <div className={popover} role="status" data-testid="subcommand-menu-loading">
+        <div className={hint}>命令加载中…</div>
+      </div>
+    )
+  }
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="subcommand-menu"

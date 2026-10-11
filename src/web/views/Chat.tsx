@@ -35,6 +35,16 @@ type ChatProps = {
   /** 统一时间线（消息 + LLM 调用 + 段标记），替代原 messages。 */
   timeline: TimelineRow[]
   isStreaming: boolean
+  /**
+   * 首条消息在途（草稿页正在建会话，尚未建立 run/SSE）。
+   *
+   * 与 isStreaming 必须分开：这段窗口里没有 run 可中止、也无法 steering，此前
+   * 借 isStreaming 表示会让输入区整块翻成运行态——「追加指令」可用而 onSteer
+   * 是空实现（steer 无条件清空输入框，用户接着敲的字静默消失），主按钮翻成红色
+   * 「终止」而 onAbort 是空函数（按了零反应）。真跑起来时按钮都得指向真实动作，
+   * 否则宁可让它们不可用。
+   */
+  creating?: boolean
   usage: { input: number; output: number } | null
   error?: string | null
   pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
@@ -53,8 +63,10 @@ type ChatProps = {
   onPause?: () => void
   /** 恢复已暂停的 agent loop。 */
   onResume?: () => void
-  /** 注入 steering 消息（spec §3.9），运行中可用。 */
-  onSteer?: (message: string) => void
+  /** 注入 steering 消息（spec §3.9），运行中可用。
+   *  返回 Promise<boolean>：false 表示这条指令没被受理（后端 {steered:false} 或
+   *  请求失败），输入区据此保留草稿并在错误行给出原因。 */
+  onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   /** agent 是否处于暂停态（控制 pause/resume 按钮切换）。 */
   paused?: boolean
   supportsVision?: boolean
@@ -139,6 +151,37 @@ const topStatus = css`
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--haze-color-text-secondary);
+`
+
+/**
+ * 发送失败提示条：独占一行、可换行、role="alert"（读屏播报）。
+ *
+ * 此前错误挤在顶栏 status 槽里，单行 nowrap + ellipsis：1280 宽就已截断，
+ * 1024 宽实测 clientWidth 473 / scrollWidth 529（尾部 10% 被「…」吃掉），
+ * 而截断掉的部分恰恰是补救指令——「请检查拼写，或前往「设置 → Provider」
+ * 添加该服务」。悬停 title 是唯一全文入口，触屏无 title、无 hover，
+ * 读屏也读不到（span 无 role）。窄屏下顶栏还挤着视图切换/终端/原始 JSON，
+ * 整条提示被挤到只剩省略号，等于「发送失败」这件事的处置方式对多数用户不可见。
+ * 独占一行后错误全文始终完整可读，且 alert 角色让屏幕阅读器立即念出。
+ */
+const errorBanner = css`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--haze-color-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--haze-color-danger) 10%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--haze-color-danger);
+`
+
+/** 提示文案：不限行数（wrap），容器再窄也只增高不丢字。 */
+const errorBannerText = css`
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 `
 
 /* 流控按钮（暂停/恢复/中止）：ghost 化融入 secondary 底色横条；中止用 error 色警示 */
@@ -362,16 +405,21 @@ const footerLeft = css`
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  /* flex-basis 320px ≈ agent + Provider + Model 的舒适宽度。footerBar 本身
+     是 flex-wrap:wrap：底栏放不下「模型控件 + 授权区」时，footerRight 整体
+     换到下一行，而不是两者在同一行里互相挤压——挤压会把 Provider/Model
+     压到内容宽度以下，标签互相重叠（实测重叠 3px，读作「ProvideModel」），
+     Provider 下拉只剩 38px 无法辨认。
+     宽度够时（实测宽栏 1138px）仍是单行，行为与此前一致。 */
+  flex: 1 1 320px;
   min-width: 0;
-  ${MOBILE} {
-    /* 窄屏：Provider/Model 控件换行堆叠，避免 modelWrap 被 main 的
-     * overflow:hidden 裁剪导致模型输入不可达；控件自身不超出容器。 */
-    flex-wrap: wrap;
-    & select,
-    & input {
-      max-width: 100%;
-    }
+  /* 换行不按视口宽度判定，而是**始终**允许：底栏的可用宽度由会话列决定，
+   * 与视口宽度无关——1440px 视口下打开文件预览，会话列被压到 636px。
+   * 控件自身也不允许超出容器，避免被 main 的 overflow:hidden 裁掉。 */
+  flex-wrap: wrap;
+  & select,
+  & input {
+    max-width: 100%;
   }
 `
 
@@ -380,15 +428,20 @@ const footerRight = css`
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  /* 授权区保持内容宽度、不与模型控件争抢同一行：放不下时由 footerBar 的
+   * flex-wrap 把整块换到下一行（footerLeft 已是 flex:1 1 320px，会先占满
+   * 自己那一行）。此前 footerLeft 是 flex:1（basis 0）而本块 margin-left:auto
+   * 且 flex-shrink:0——实测窄栏下本块硬占 406px、把 footerLeft 挤到 198px，
+   * Provider/Model 被压到标签叠字。 */
   flex-shrink: 0;
+  min-width: 0;
+  flex-wrap: wrap;
   ${MOBILE} {
     /* 窄屏：授权开关与警示 pill 独占整行（flex-basis 强制换行，与 footerLeft 不再共享行宽），
      * pill 允许截断不撑破容器 */
-    flex-wrap: wrap;
     flex-basis: 100%;
     margin-left: 0;
     max-width: 100%;
-    min-width: 0;
   }
 `
 
@@ -488,6 +541,7 @@ const chipRemove = css`
 export function Chat({
   timeline,
   isStreaming,
+  creating = false,
   usage,
   error,
   pendingPermission,
@@ -664,33 +718,12 @@ export function Chat({
           </Button>
         </section>
         <div className={topSpacer} />
-        {/* topStatus 单行截断仅是排布：错误全文经 title 悬停可达（usage 态无需） */}
-        {error || usage ? (
-          <>
-            <span
-              className={topStatus}
-              style={error ? { color: 'var(--haze-color-danger)' } : undefined}
-              title={error ?? undefined}
-            >
-              {error
-                ? error
-                : usage
-                  ? `${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`
-                  : ''}
-            </span>
-            {error && !isStreaming && onRetry ? (
-              <button
-                type="button"
-                className={ctlBtn}
-                onClick={onRetry}
-                disabled={retryPending}
-                data-testid="retry"
-                title="重发最后一条消息；失败前已执行的工具可能重复执行"
-              >
-                重试
-              </button>
-            ) : null}
-          </>
+        {/* usage 态（token 计数）留在顶栏：它是常驻计量、单行短文本，截断无信息损失。
+            error 态改由下方 errorBanner 独占一行承载（见 errorBanner 注释）。 */}
+        {!error && usage ? (
+          <span className={topStatus}>
+            {`${formatTokenCount(usage.input)} → ${formatTokenCount(usage.output)} tokens`}
+          </span>
         ) : null}
         {isStreaming && !paused ? (
           <button onClick={onPause} type="button" className={ctlBtn} data-testid="pause">
@@ -735,6 +768,23 @@ export function Chat({
           原始 JSON
         </button>
       </div>
+      {error ? (
+        <div className={errorBanner} data-testid="send-error" role="alert">
+          <span className={errorBannerText}>{error}</span>
+          {!isStreaming && !creating && onRetry ? (
+            <button
+              type="button"
+              className={ctlBtn}
+              onClick={onRetry}
+              disabled={retryPending}
+              data-testid="retry"
+              title="重发最后一条消息；失败前已执行的工具可能重复执行"
+            >
+              重试
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {permissionTimeout ? (
         <div className={interruptBanner} data-testid="permission-timeout-banner">
           <span>
@@ -875,9 +925,12 @@ export function Chat({
         agents={agents}
         onSend={handleSend}
         restoreDraft={restoreDraft}
+        // 草稿按会话隔离；草稿页（尚未建会话）按项目隔离——两者都是「用户以为还留着」的输入。
+        draftScope={sessionId ? `s:${sessionId}` : projectId ? `p:${projectId}` : undefined}
         onAbort={onAbort}
         onSteer={onSteer}
         isStreaming={isStreaming}
+        creating={creating}
         hasHistory={timeline.length > 0}
         supportsVision={supportsVision}
         permission={

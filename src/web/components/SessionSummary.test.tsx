@@ -211,3 +211,64 @@ describe('SessionSummary', () => {
     expect(text).toMatch(/年/)
   })
 })
+
+/**
+ * 拉不到 ≠ 0。
+ *
+ * 缺陷：面板只解构 llm-details 的 data。请求 500 时 segments 为 undefined，
+ * computeStats 拿 [] 累加，照常渲染一整套精确的 0 与 US$0.00（实测注入 500，
+ * 「总 token 0 / 总成本（估算）US$0.00」原样出现）。用户据此认为这个会话
+ * 真的一次调用都没发生、花了 0 美元——比报错更糟的是它看起来完全可信。
+ * 消息数与时间戳来自另两个查询，不受影响。
+ */
+describe('SessionSummary 调用明细读失败态', () => {
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  async function openWithFailedLlm() {
+    ;(sessionAPI.get as Mock).mockResolvedValue(session)
+    ;(sessionAPI.messages as Mock).mockResolvedValue(messages)
+    ;(sessionAPI.llmDetails as Mock).mockRejectedValue(new Error('llm details 后端炸了'))
+    renderWithClient(<SessionSummary sessionId="s1" />)
+    fireEvent.click(screen.getByTestId('session-summary-toggle'))
+    const err = await screen.findByTestId('summary-llm-error')
+    await waitFor(() => {
+      expect(screen.getByTestId('session-summary-grid').textContent).toContain('测试会话')
+    })
+    return err
+  }
+
+  it('显示失败原因并说明这些数字不可信', async () => {
+    const err = await openWithFailedLlm()
+    expect(err).toHaveAttribute('role', 'alert')
+    expect(err.textContent).toContain('llm details 后端炸了')
+  })
+
+  it('不把读不到渲染成 0 token / US$0.00', async () => {
+    await openWithFailedLlm()
+    const text = screen.getByTestId('session-summary-grid').textContent ?? ''
+    // 这些字段全部由 segments 推导，读不到时必须是「读不到」而非 0
+    expect(text).toMatch(/总 token\s*读不到/)
+    expect(text).toMatch(/总成本（估算）\s*读不到/)
+    expect(text).toMatch(/输入 token\s*读不到/)
+    expect(text).toMatch(/模型\s*读不到/)
+    expect(text).not.toMatch(/总 token\s*0/)
+    expect(text).not.toContain('US$0.00')
+  })
+
+  it('来自其它查询的消息数与时间戳照常显示真实值', async () => {
+    await openWithFailedLlm()
+    const text = screen.getByTestId('session-summary-grid').textContent ?? ''
+    expect(text).toMatch(/消息数\s*3/)
+    expect(text).toMatch(/用户消息\s*2/)
+    expect(text).toMatch(/助手消息\s*1/)
+    expect(text).toMatch(/创建时间\s*\d{4}年/)
+  })
+
+  it('读失败时不显示「未估价调用」计数（那是从空数组算出的 0）', async () => {
+    await openWithFailedLlm()
+    expect(screen.getByTestId('session-summary-grid').textContent ?? '').not.toContain('未估价调用')
+  })
+})

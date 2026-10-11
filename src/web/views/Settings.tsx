@@ -38,6 +38,11 @@ import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
+import {
+  fillTemplateWithUnsets,
+  normalizeConfigForForm,
+  validateConfigShape,
+} from '@/utils/config-shape.js'
 import { parseBoundedNumber } from '@/utils/format.js'
 
 /** 加载中占位。 */
@@ -162,6 +167,9 @@ export function Settings() {
   const [viewMode, setViewMode] = useState<'gui' | 'json'>('gui')
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState<string | null>(null)
+  // JSON 视图内容的**结构**问题（语法合法、但与表单所需的 Config 形状不符）。
+  // 与语法错误分开存放：两者都禁止保存与切回表单，但原因文案不同。
+  const [jsonShapeError, setJsonShapeError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。
@@ -171,6 +179,11 @@ export function Settings() {
 
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
   const [needsRestart, setNeedsRestart] = useState(false)
+
+  // 挂在吸底保存条上（此前是文档最末端的独立条，3500px+ 的表单里永远看不见）。
+  const RESTART_NOTICE = needsRestart
+    ? '安全配置已保存但未生效：需重启 c0de serve，请在启动它的终端按 Ctrl+C 后重新运行。'
+    : null
 
   // P2-10：dirty 时切换作用域会丢弃草稿——ConfirmDialog 二次确认，
   // 确认前暂存目标作用域（SyncedSelect 受控，选中项会弹回当前 scope）。
@@ -205,7 +218,12 @@ export function Settings() {
       // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
       // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
       setDraft(null)
-      setNeedsRestart(resp?.needsRestart === true)
+      // needsRestart 是**本次 patch 各自**的信号（服务端只在本次写入 security/
+      // update/plugins 且作用域为 global/服务启动目录时返回 true）。覆盖式置位会
+      // 让「鉴权改动尚未生效」的唯一警告被下一次无关保存（如改默认模型，返回
+      // false）静默抹掉，用户据此认定配置已加固。故只升不降：重启后页面重载，
+      // state 自然复位。
+      setNeedsRestart((prev) => prev || resp?.needsRestart === true)
       setSaveFeedback({ kind: 'ok' })
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
     },
@@ -305,6 +323,20 @@ export function Settings() {
    *  只把变更合并进目标作用域文件——不再全量落盘（P1-2 作用域污染修复）。 */
   const handleSave = () => {
     if (!draft) return
+    // JSON 视图语法错误时 draft 停在最后一次合法解析上：直接保存会落盘一版
+    // 与编辑器内容不符的旧配置，并在保存条上回显「✓ 已保存」，屏幕上的改动
+    // 静默消失。结构错误（语法合法但形状不符）同样不能存：服务端会照抄落盘，
+    // 之后每次打开设置页都因同一份坏形状崩进 ErrorBoundary。
+    // 按钮已禁用，这里再兜一层，避免键盘/程序化调用绕过。
+    if (jsonError || jsonShapeError) {
+      setSaveFeedback({
+        kind: 'err',
+        msg: jsonError
+          ? 'JSON 语法错误：已阻止保存，请先修复语法'
+          : '配置结构错误：已阻止保存，请先修复结构（原因见编辑器下方）',
+      })
+      return
+    }
     const patch = diffConfig(
       config as unknown as Record<string, unknown>,
       draft as unknown as Record<string, unknown>,
@@ -392,7 +424,13 @@ export function Settings() {
     setDraft((prev) => {
       const base = prev ?? config
       const routing = { ...(base.roleRouting ?? {}) }
-      delete routing.smol
+      // 显式置 undefined（而不是 delete 这个键）：JSON↔表单往返靠「显式清除」
+      // 与「文本里没写」区分意图（见 fillTemplateWithUnsets）。delete 之后该键从
+      // 草稿里彻底消失，切回表单时会被当成「补全模板里缺的键」按已落盘值补回来，
+      // 用户清除掉的 smol 自己回来了。与 GitPanel「取消勾选」同口径。
+      // （Config['roleRouting'] 的索引签名声明每个角色都是完整对象，不表示「键在但
+      //  被清除」；运行时 smol 缺席/为 undefined 都不渲染，消费方本就按可选处理。）
+      ;(routing as { smol?: { provider: string; model: string } }).smol = undefined
       return { ...base, roleRouting: routing }
     })
   }
@@ -403,24 +441,53 @@ export function Settings() {
   const enterJsonMode = () => {
     setJsonText(JSON.stringify(merged, null, 2))
     setJsonError(null)
+    setJsonShapeError(null)
     setViewMode('json')
   }
 
-  /** JSON 文本变更：实时解析，合法则同步 draft，非法仅提示。 */
+  /** JSON 文本变更：实时解析，合法则同步 draft，非法仅提示（语法/结构分开报）。 */
   const onJsonChange = (text: string) => {
     setJsonText(text)
     try {
       const parsed = JSON.parse(text) as Partial<Config>
       setJsonError(null)
       setDraft(parsed)
+      // 结构校验与语法校验同时做：语法合法但形状不对（如 tools 写成字符串、
+      // plugins.enabled 缺失）的内容一旦铺进表单就是整页崩溃（面板按 Config
+      // 类型假定字段形状），也会把坏形状落盘成永久崩溃源。此处先拦下来。
+      setJsonShapeError(validateConfigShape(parsed, config))
     } catch (e) {
       setJsonError(e instanceof Error ? e.message : 'JSON 解析错误')
     }
   }
 
-  /** 切回 GUI：JSON 非法时阻止（避免丢失未保存的编辑）。 */
+  /** 切回 GUI：JSON 非法（语法或结构）时阻止（避免丢失未保存的编辑）。
+   *  合法时把内容归一化成完整 Config——表单需要完整形状，直接下发原始对象
+   *  会让面板读到 undefined（CommaInput 的 value.join、数字字段的算术）。
+   *
+   *  补全模板不能直接用已落盘的 config：用户在表单里取消勾选「一键提交使用独立
+   *  模型」（commitModel: undefined）后，JSON.stringify 会把值为 undefined 的键
+   *  整条丢掉，JSON 文本里既没有该键也没有 null。用 config 当模板补全，正好把这个
+   *  「用户刚做的删除」当成「文本里缺的键」按旧值补回来——复选框自己变回勾选，
+   *  草稿与 config 又逐键相同，保存 diff 出空 patch 直接回显「✓ 已保存」，磁盘上
+   *  什么都没变。故用 fillTemplateWithUnsets(config, draft)：草稿里显式清除的键
+   *  保持清除，其余缺失键仍按当前配置补全（表单不读 undefined）。
+   *  导入路径（见 importConfig）继续以 config 为模板：导入的是完整配置文件、没有
+   *  草稿可参照，「缺失键按当前值补全」在那里才是对的。 */
   const enterGuiMode = () => {
-    if (viewMode === 'json' && jsonError) return
+    if (viewMode !== 'json') return
+    if (jsonError) return
+    const normalized = normalizeConfigForForm(
+      JSON.parse(jsonText) as unknown,
+      fillTemplateWithUnsets(config, draft ?? {}),
+    )
+    if (!normalized.ok) {
+      setJsonShapeError(normalized.message)
+      return
+    }
+    setDraft(normalized.config)
+    setJsonText(JSON.stringify(normalized.config, null, 2))
+    setJsonShapeError(null)
     setViewMode('gui')
   }
 
@@ -450,13 +517,29 @@ export function Settings() {
     if (!file) return
     try {
       const text = await file.text()
-      const parsed = JSON.parse(text) as Partial<Config>
-      setDraft(parsed)
-      setJsonText(JSON.stringify(parsed, null, 2))
+      const parsed = JSON.parse(text) as unknown
+      // 形状校验与语法校验是两件事：此前只 JSON.parse 就把对象铺进表单，
+      // 一份语法合法但结构不对的配置（`{"plugins": {}}`、`{"tools":
+      // {"disabled": ["bash"]}}`）会让整页崩进 ErrorBoundary，未保存的编辑
+      // 一并丢失，用户也看不出是导入的文件有问题。这里按当前已解析配置的
+      // 形状校验并补全缺失字段（与服务端读取时的合并口径一致），不符则原地
+      // 报错、把原文留在 JSON 编辑器里供修正。
+      const normalized = normalizeConfigForForm(parsed, config)
+      if (!normalized.ok) {
+        setJsonShapeError(normalized.message)
+        setJsonError(null)
+        setViewMode('json')
+        setJsonText(text)
+        return
+      }
+      setDraft(normalized.config)
+      setJsonText(JSON.stringify(normalized.config, null, 2))
       setJsonError(null)
+      setJsonShapeError(null)
       setViewMode('gui')
     } catch (err) {
       setJsonError(`导入失败：${err instanceof Error ? err.message : '未知错误'}`)
+      setJsonShapeError(null)
       setViewMode('json')
       // 把读取到的原始文本放进编辑器方便定位问题
       try {
@@ -474,6 +557,7 @@ export function Settings() {
     if (viewMode === 'json') {
       setJsonText(JSON.stringify(config, null, 2))
       setJsonError(null)
+      setJsonShapeError(null)
     }
   }
 
@@ -486,6 +570,7 @@ export function Settings() {
     if (viewMode === 'json') {
       setJsonText(JSON.stringify(config, null, 2))
       setJsonError(null)
+      setJsonShapeError(null)
     }
     blocker.proceed()
   }
@@ -569,13 +654,24 @@ export function Settings() {
         viewMode={viewMode}
         onSwitchGui={enterGuiMode}
         onSwitchJson={enterJsonMode}
+        guiDisabledReason={
+          jsonError
+            ? 'JSON 语法错误：请先修复后再切回表单'
+            : jsonShapeError
+              ? `配置结构错误：${jsonShapeError}`
+              : null
+        }
         fileInputRef={fileInputRef}
         onImport={(e) => void onImportFile(e)}
         onExport={exportConfig}
       />
 
       {viewMode === 'json' ? (
-        <JsonConfigEditor jsonText={jsonText} jsonError={jsonError} onChange={onJsonChange} />
+        <JsonConfigEditor
+          jsonText={jsonText}
+          jsonError={jsonError ?? (jsonShapeError ? `配置结构错误：${jsonShapeError}` : null)}
+          onChange={onJsonChange}
+        />
       ) : (
         <div data-testid="settings-form">
           <SettingsToc />
@@ -735,6 +831,14 @@ export function Settings() {
       <SettingsSaveBar
         isDirty={isDirty}
         feedback={saveFeedback}
+        blockedReason={
+          jsonError
+            ? 'JSON 语法错误：请先修复编辑器中标红的问题，当前内容无法保存'
+            : jsonShapeError
+              ? `配置结构错误：${jsonShapeError}，当前内容无法保存`
+              : null
+        }
+        restartNotice={RESTART_NOTICE}
         onDiscard={discardChanges}
         onSave={handleSave}
       />
@@ -759,23 +863,6 @@ export function Settings() {
         >
           当前有未保存的更改，切换作用域将丢弃这些更改。确定切换？
         </ConfirmDialog>
-      )}
-
-      {/* 安全类配置重启提示：token/authEnabled 由 authManager 启动时一次性读取 */}
-      {needsRestart && (
-        <div
-          style={{
-            padding: '8px 16px',
-            borderTop: '1px solid var(--haze-color-border)',
-            background: 'color-mix(in srgb, var(--haze-color-warning) 10%, transparent)',
-            color: 'var(--haze-color-warning)',
-            fontSize: 12,
-          }}
-          data-testid="settings-restart-hint"
-        >
-          安全配置已保存，但需重启 c0de serve 后生效：请在启动 c0de serve 的终端按 Ctrl+C
-          停止后，重新运行 c0de serve。
-        </div>
       )}
 
       {/* 未保存更改离开确认：弹窗遮罩阻断交互，「留下」恢复编辑，「离开」放行导航 */}

@@ -67,6 +67,26 @@ describe('DirectoryPicker', () => {
     })
   })
 
+  // 复现：首次自动导航到 home 也会 onChange('~')，把「当前浏览位置」当成
+  // 「用户的选中值」回填给宿主。没有任何选择的宿主（AddProjectDialog）因此
+  // value 非空、确认按钮即刻可用——打开弹窗什么都不选，回车即把 $HOME 注册成项目。
+  it('首次自动导航到 home 不回填宿主值（浏览 ≠ 选择）', async () => {
+    const onChange = vi.fn()
+    render(<DirectoryPicker value="" onChange={onChange} />)
+    await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/home/user'))
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('用户主动导航（~ 按钮）仍回填宿主值', async () => {
+    const onChange = vi.fn()
+    render(<DirectoryPicker value="" onChange={onChange} start="/tmp" />)
+    await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/tmp'))
+
+    fireEvent.click(screen.getByLabelText('home'))
+    // home 显示为 `~`（在 home 下的路径一律 tilde 化）
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('~'))
+  })
+
   it('纯名字输入触发递归搜索并显示建议', async () => {
     vi.mocked(filesystemAPI.search).mockResolvedValue({ items: ['projects/c0de-agent'] })
     render(<Controlled />)
@@ -143,10 +163,75 @@ describe('DirectoryPicker', () => {
     await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/'))
   })
 
-  it('导航失败显示错误态', async () => {
-    vi.mocked(filesystemAPI.browse).mockRejectedValue(new Error('denied'))
+  // 回归：失败态此前只有一个「读取失败」字样（无原因、无自救入口）；
+  // 子目录加载失败更糟——被 catch 落成 children: []，渲染成「（空）」，
+  // 把「读不到」说成了「没有」。
+  it('导航失败展示后端原因并可重试', async () => {
+    vi.mocked(filesystemAPI.browse).mockRejectedValue(
+      Object.assign(new Error('没有权限读取该目录：/home/user'), {
+        message: '没有权限读取该目录：/home/user',
+      }),
+    )
     render(<DirectoryPicker value="" onChange={vi.fn()} />)
-    await waitFor(() => expect(screen.getByText('读取失败')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('directory-picker-error')).toBeTruthy())
+    expect(screen.getByTestId('directory-picker-error').textContent).toContain('没有权限读取该目录')
+    expect(screen.queryByText('读取失败')).toBeNull()
+
+    const callsBefore = vi.mocked(filesystemAPI.browse).mock.calls.length
+    vi.mocked(filesystemAPI.browse).mockResolvedValue({ path: '/home/user', directories: [] })
+    fireEvent.click(screen.getByTestId('directory-picker-retry'))
+    await waitFor(() =>
+      expect(vi.mocked(filesystemAPI.browse).mock.calls.length).toBeGreaterThan(callsBefore),
+    )
+    await waitFor(() => expect(screen.queryByTestId('directory-picker-error')).toBeNull())
+  })
+
+  // 回归（审查 #4）：重试失败的初始加载仍是「浏览 ≠ 选择」——重试按钮曾不带
+  // { silent: true }，导航成功即 onChange 回填宿主值，等于重新武装了首航 silent
+  // 修掉的问题（打开添加项目对话框 → 加载失败 → 重试 → 回车注册 $HOME）。
+  it('初始加载失败后重试成功：不回填宿主值（重试与首航同为 silent）', async () => {
+    vi.mocked(filesystemAPI.browse).mockRejectedValueOnce(new Error('暂时读不到'))
+    const onChange = vi.fn()
+    render(<DirectoryPicker value="" onChange={onChange} />)
+    await waitFor(() => expect(screen.getByTestId('directory-picker-error')).toBeTruthy())
+
+    // 后端恢复：重试后导航成功（错误态消失）
+    fireEvent.click(screen.getByTestId('directory-picker-retry'))
+    await waitFor(() => expect(screen.queryByTestId('directory-picker-error')).toBeNull())
+
+    // 全程无任何选择 → 宿主值不被回填
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('子目录加载失败展示原因与重试，而不是「（空）」', async () => {
+    vi.mocked(filesystemAPI.browse).mockResolvedValue({
+      path: '/home/user',
+      directories: [{ name: 'locked', path: '/home/user/locked' }],
+    })
+    render(<DirectoryPicker value="" onChange={vi.fn()} />)
+    await waitFor(() => expect(screen.getByTestId('toggle-/home/user')).toBeTruthy())
+    // 根展开后子目录才渲染（子节点懒渲染），再点子目录触发懒加载失败
+    fireEvent.click(screen.getByTestId('toggle-/home/user'))
+    await waitFor(() => expect(screen.getByTestId('toggle-/home/user/locked')).toBeTruthy())
+
+    vi.mocked(filesystemAPI.browse).mockRejectedValue(
+      Object.assign(new Error('x'), { message: '没有权限读取该目录：/home/user/locked' }),
+    )
+    fireEvent.click(screen.getByTestId('toggle-/home/user/locked'))
+    await waitFor(() =>
+      expect(screen.getByTestId('load-error-/home/user/locked').textContent).toContain(
+        '没有权限读取该目录',
+      ),
+    )
+    expect(screen.queryByText('（空）')).toBeNull()
+
+    vi.mocked(filesystemAPI.browse).mockResolvedValue({
+      path: '/home/user/locked',
+      directories: [{ name: 'inner', path: '/home/user/locked/inner' }],
+    })
+    fireEvent.click(screen.getByTestId('load-retry-/home/user/locked'))
+    await waitFor(() => expect(screen.queryByTestId('load-error-/home/user/locked')).toBeNull())
+    expect(screen.getByTestId('toggle-/home/user/locked/inner')).toBeTruthy()
   })
 
   it('ArrowDown/Up 移动建议索引', async () => {

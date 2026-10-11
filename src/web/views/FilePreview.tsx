@@ -123,6 +123,18 @@ const retryBtn = css`
   font-size: 12px;
 `
 
+/** 二进制只读态标题：不是错误（文件本身没问题），用中性色而非 danger。 */
+const binaryTitle = css`
+  color: var(--haze-color-text);
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const binaryLink = css`
+  color: var(--haze-color-primary);
+  font-size: 12px;
+`
+
 const hidden = css`
   display: none;
 `
@@ -330,27 +342,49 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   } else if (q.isLoading) {
     body = <div className={loadingWrap}>加载中…</div>
   } else if (q.isError) {
-    // 「读不到」必须与「真的为空」分开：useQuery 重试耗尽后 data 仍是 undefined，
-    // 此前 404/403/500/断网 全部落到下面的「无内容」——header 仍显示路径，看起来
-    // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
-    // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
-    const message =
-      (q.error as { message?: string } | null)?.message ??
-      (q.error instanceof Error ? q.error.message : null)
-    body = (
-      <div className={errorWrap} data-testid="file-preview-error" role="alert">
-        <span className={errorTitle}>文件读取失败</span>
-        <span className={errorDetail}>{message ?? '无法读取该文件内容。'}</span>
-        <button
-          type="button"
-          className={retryBtn}
-          onClick={() => void q.refetch()}
-          data-testid="file-preview-retry"
-        >
-          重试
-        </button>
-      </div>
-    )
+    // 「读不到」必须与「真的为空」分开：useQuery 重试耗尽后 data 仍是 undefined。
+    // 二进制又必须与「读不到」分开，且绝不能落进 CodeEditor：服务端此前把任何
+    // 扩展名按 utf-8 解码，.zip 之类解码成一屏 U+FFFD 后仍是「可编辑内容」，用户敲
+    // 一个字点保存就把原文件重写成乱码（实测 4096B → 7476B，原字节不可恢复）。
+    // 服务端在字节层拒绝（415 BINARY_FILE），这里给只读态 + 原始文件入口。
+    const err = q.error as { message?: string; code?: string } | null
+    if (err?.code === 'BINARY_FILE') {
+      body = (
+        <div className={errorWrap} data-testid="file-preview-binary">
+          <span className={binaryTitle}>这是二进制文件</span>
+          <span className={errorDetail}>{err.message ?? '不能以文本方式显示或编辑。'}</span>
+          <a
+            className={binaryLink}
+            href={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="file-preview-binary-link"
+          >
+            打开原始文件
+          </a>
+        </div>
+      )
+    } else {
+      // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
+      // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
+      const message =
+        (q.error as { message?: string } | null)?.message ??
+        (q.error instanceof Error ? q.error.message : null)
+      body = (
+        <div className={errorWrap} data-testid="file-preview-error" role="alert">
+          <span className={errorTitle}>文件读取失败</span>
+          <span className={errorDetail}>{message ?? '无法读取该文件内容。'}</span>
+          <button
+            type="button"
+            className={retryBtn}
+            onClick={() => void q.refetch()}
+            data-testid="file-preview-retry"
+          >
+            重试
+          </button>
+        </div>
+      )
+    }
   } else if (!q.data) {
     body = <div className={loadingWrap}>无内容</div>
   } else if (['md', 'markdown'].includes(ext)) {

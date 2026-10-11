@@ -9,6 +9,7 @@ import { Button } from 'haze-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { ArchivePanel } from '@/components/ArchivePanel.js'
+import { Dialog } from '@/components/Dialog.js'
 import { ModelSelector } from '@/components/ModelSelector.js'
 import { SegmentBreakDialog } from '@/components/SegmentBreakDialog.js'
 import { SessionSummary } from '@/components/SessionSummary.js'
@@ -18,6 +19,7 @@ import { buildTimeline } from '@/components/session/utils/timeline.js'
 import { TodoPanel } from '@/components/TodoPanel.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
 import { TrustRequiredDialog } from '@/components/TrustRequiredDialog.js'
+import { clearSessionDraft } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import { failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
@@ -128,6 +130,68 @@ const shakeExitBtn = css`
   }
 `
 
+const exportChoiceDesc = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+`
+
+const exportChoiceNote = css`
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--haze-color-text-secondary);
+`
+
+const exportChoiceError = css`
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--haze-color-danger);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+`
+
+const exportChoiceBtn = css`
+  padding: 4px 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  font-size: 13px;
+  cursor: pointer;
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`
+
+/** 分支数量检查失败时的内联重试按钮：与说明文字同行，不占据 footer。 */
+const exportBranchRetry = css`
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--haze-color-primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+`
+
+/** 主操作是「剥离快照」——默认与回车都走安全的一侧。 */
+const exportChoicePrimary = css`
+  padding: 4px 12px;
+  border: 1px solid var(--haze-color-primary);
+  border-radius: 6px;
+  background: var(--haze-color-primary);
+  color: var(--haze-color-on-primary, #fff);
+  font-size: 13px;
+  cursor: pointer;
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`
+
 export function ChatSession({
   projectId,
   sessionId,
@@ -190,8 +254,9 @@ export function ChatSession({
     images: ImagePart[]
     files: string[]
   } | null>(null)
-  // chat 是每次渲染新建的 {...state, …} 快照；cleanupEmptySessionOnFailure 在
-  // .then 里读 chat.lastFailureReason 必须走 ref，否则拿到发送前那一帧（null）。
+  // chat 是每次渲染新建的 {...state, …} 快照：cleanupEmptySessionOnFailure 在
+  // .then 里读 chat 的**值字段**只会拿到发送前那一帧，失败原因/门禁必须走 chat
+  // 暴露的 lastFailure ref（对象身份跨渲染稳定）。
   const chatRef = useRef(chat)
   chatRef.current = chat
 
@@ -319,7 +384,14 @@ export function ChatSession({
   }
 
   const handleConfirm = (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => {
-    chat.confirm(toolCallId, approved, alwaysAllow ? chat.pendingPermission?.tool : undefined)
+    // 把当前 pending 一并交进去：确认请求送达失败时（500/网络）弹窗要原样回来，
+    // 否则 dock 已被乐观关闭、run 却在服务端等着这个决定，页面上没有任何入口。
+    chat.confirm(
+      toolCallId,
+      approved,
+      alwaysAllow ? chat.pendingPermission?.tool : undefined,
+      chat.pendingPermission ?? undefined,
+    )
   }
 
   /** 首条消息发送失败（未配 provider/网络中断且无持久化消息）→ 删除空会话回草稿页，
@@ -328,18 +400,29 @@ export function ChatSession({
    *  否则用户看到的是「什么都没发生」。 */
   const cleanupEmptySessionOnFailure = async (ok: boolean, firstMessage: boolean) => {
     if (ok || !firstMessage) return
+    // 读 ref 而不是 chat 快照里的字段：失败路径的 setState 还没重渲染，快照里
+    // 只有发起发送那一帧的值（原来读 chatRef.current.lastFailureReason，恒为 null，
+    // 用户永远只看到兜底的「消息发送失败，请重试后再次发送」）。
+    const failure = chatRef.current.lastFailure.current
+    // 「等待用户决策」的失败（未信任项目的风险确认 / 段边界确认）不是发送白费：
+    // 弹窗就渲染在本组件里，清会话 + 导航回草稿页会把弹窗连同原因一起卸载——
+    // 用户只剩一句没有任何信息量的重试提示，且每次重试都必然复现（P0）。
+    if (failure.gate) return
     try {
       const msgs = await sessionAPI.messages(sessionId)
       if (msgs.length === 0) {
         // P3-9：物理删除而非软删除——空「New Session」壳进回收站会污染列表，
         // 且用户从未与之交互过，无回收价值（服务端二次校验非空即 409）。
         await sessionAPI.purgeEmpty(sessionId)
+        // 会话已物理删除：还原分支落回 s:<sessionId> 的失败快照草稿再也无人
+        // 读取（文本无上限、图片最多 ~512KB），随之清退，避免永久滞留 localStorage。
+        clearSessionDraft(sessionId)
         qc.invalidateQueries({ queryKey: ['sessions'] })
         qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
         // 会话没了，但「消息 + 失败原因」要带去草稿页：导航会卸载本组件，
         // 输入框里的草稿和 useChat 的 error 一起消失，用户只会看到什么都没发生。
         failedSendReason.set(projectId, {
-          reason: chatRef.current.lastFailureReason ?? '消息发送失败，请重试后再次发送',
+          reason: failure.reason ?? '消息发送失败，请重试后再次发送',
           payload: {
             text: lastFailedSend.current?.text ?? '',
             prompt: lastFailedSend.current?.prompt ?? [],
@@ -364,33 +447,69 @@ export function ChatSession({
   // P0 明示：导出仅含本会话消息与归档，fork 分支/子会话不在其中——有分支时
   // 导出前确认告知（此前用户以为完整备份，分支关系静默丢失）。
   // P2-6：归档 fileSnapshots 含文件内容，默认剥离；仅显式确认后随迁。
-  const handleExport = async () => {
+  //
+  // 导出必须有闭环：进行中禁用按钮（否则连点两次 = 两个 confirm + 两次导出请求），
+  // 失败把原因摊开。此前 catch 整段吞掉，用户点完看不到任何变化，会认定文件已经
+  // 存好就关掉页面，备份静默失败。
+  //
+  // 快照策略用站内弹窗而不是原生 confirm：这是隐私选择，而原生框只有
+  // 「确定/取消」，且「确定」（含快照、会泄露文件内容）恰好落在回车的默认位、
+  // 推荐的「取消（剥离）」反而不该被当成取消操作。两个问题叠在一起，用户
+  // 肌肉记忆按回车就把文件内容打包进了要分享的导出文件。
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  /** 分支数量（null=尚未查完，还在拉）。查完才让用户做选择，避免决策后又弹第二个框。 */
+  const [exportBranchCount, setExportBranchCount] = useState<number | null>(null)
+  /** 分支数量查询失败的说明（null=没失败）。失败与「确实没有分支」必须分开。 */
+  const [exportBranchFailed, setExportBranchFailed] = useState<string | null>(null)
+
+  const openExportDialog = async () => {
+    setExportError(null)
+    setExportBranchCount(null)
+    setExportBranchFailed(null)
+    setExportDialogOpen(true)
     try {
-      // 先询问快照策略，再按需携带（隐私默认：剥离）。
-      const includeSnapshots = window.confirm(
-        '导出会话 JSON。\n\n归档中的「文件快照」包含被压缩进上下文的文件内容，分享导出文件时会泄露这些内容。\n\n点「确定」包含文件快照（仅本机备份/迁移需要）；点「取消」剥离文件快照（推荐，对话与统计不受影响）。',
-      )
-      const [data, branches] = await Promise.all([
-        sessionAPI.exportSession(sessionId, { includeSnapshots }),
-        sessionAPI.branches(sessionId).catch(() => []),
-      ])
-      if (branches.length > 0) {
-        const ok = window.confirm(
-          `该会话有 ${branches.length} 个派生分支。导出仅包含本会话的消息与归档，分支内容不会导出。\n确定继续导出本会话？`,
-        )
-        if (!ok) return
-      }
+      const branches = await sessionAPI.branches(sessionId)
+      setExportBranchCount(branches.length)
+    } catch (err) {
+      // 「读不到分支数」≠「没有分支」：此前 catch(() => []) 把失败吞成 0，弹窗于是
+      // 改口宣称「导出内容：本会话的全部消息与归档」，用户据此把导出件当成完整备份，
+      // 而真正的派生分支内容并不在其中（迁移/分享后静默丢失）。改为显式失败态：
+      // 说明无法确认影响面 + 内联重试，并放行导出——连不上时把用户永久挡在按钮外
+      // 比放行更糟，但绝不再宣称内容完整。
+      setExportBranchFailed(err instanceof Error ? err.message : '无法读取派生分支')
+    }
+  }
+
+  const runExport = async (includeSnapshots: boolean) => {
+    if (exporting) return
+    setExporting(true)
+    setExportError(null)
+    try {
+      const data = await sessionAPI.exportSession(sessionId, { includeSnapshots })
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      const title = (data.session.title || 'session').replace(/[^\w\u4e00-\u9fff-]+/g, '_')
+      const title = (data.session.title || 'session').replace(/[^\w一-鿿-]+/g, '_')
       a.href = url
       a.download = `${title}.c0de-session.json`
       a.click()
       URL.revokeObjectURL(url)
-    } catch {
-      // 导出失败静默：不阻塞主界面（可重试）
+      setExportDialogOpen(false)
+    } catch (err) {
+      setExportError(
+        err instanceof Error && err.message ? `导出失败：${err.message}` : '导出失败，请重试',
+      )
+    } finally {
+      setExporting(false)
     }
+  }
+
+  const closeExportDialog = () => {
+    if (exporting) return
+    setExportDialogOpen(false)
+    setExportError(null)
   }
 
   // 中断恢复/出错重试：prompt 定位与重发编排收敛在 useRetryResume
@@ -694,17 +813,89 @@ export function ChatSession({
               <button
                 type="button"
                 className={shakeBtn}
-                onClick={() => void handleExport()}
+                onClick={() => void openExportDialog()}
+                disabled={exporting}
                 data-testid="export-button"
                 title="导出会话（消息 + 归档）为 JSON 文件"
               >
-                导出
+                {exporting ? '导出中…' : '导出'}
               </button>
               <SessionSummary sessionId={sessionId} />
             </div>
           </>
         }
       />
+      {exportDialogOpen && (
+        <Dialog
+          open
+          onClose={closeExportDialog}
+          closeDisabled={exporting}
+          title="导出会话 JSON"
+          testId="export-dialog"
+          footer={
+            <>
+              <button
+                type="button"
+                className={exportChoiceBtn}
+                onClick={closeExportDialog}
+                disabled={exporting}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className={exportChoiceBtn}
+                data-testid="export-include-snapshots"
+                onClick={() => void runExport(true)}
+                disabled={exporting || (exportBranchCount === null && !exportBranchFailed)}
+              >
+                包含文件快照导出
+              </button>
+              <button
+                type="button"
+                className={exportChoicePrimary}
+                data-testid="export-strip-snapshots"
+                onClick={() => void runExport(false)}
+                disabled={exporting || (exportBranchCount === null && !exportBranchFailed)}
+              >
+                {exporting ? '导出中…' : '剥离快照导出（推荐）'}
+              </button>
+            </>
+          }
+        >
+          <div className={exportChoiceDesc}>
+            归档里的「文件快照」是被压缩进上下文的<strong>文件内容</strong>。剥离后对话、
+            统计、归档结构都不受影响，只是不带文件正文——分享导出文件时不会泄露这些内容。
+          </div>
+          <div className={exportChoiceNote} data-testid="export-branch-note">
+            {exportBranchFailed ? (
+              <>
+                无法确认派生分支数量（{exportBranchFailed}）：导出只含本会话的消息与归档，
+                分支内容不在其中。
+                <button
+                  type="button"
+                  className={exportBranchRetry}
+                  data-testid="export-branch-retry"
+                  onClick={() => void openExportDialog()}
+                >
+                  重试检查
+                </button>
+              </>
+            ) : exportBranchCount === null ? (
+              '正在检查派生分支…'
+            ) : exportBranchCount > 0 ? (
+              `该会话有 ${exportBranchCount} 个派生分支：导出只含本会话的消息与归档，分支内容不在其中。`
+            ) : (
+              '导出内容：本会话的全部消息与归档。'
+            )}
+          </div>
+          {exportError ? (
+            <div className={exportChoiceError} role="alert" data-testid="export-dialog-error">
+              {'⚠'} {exportError}
+            </div>
+          ) : null}
+        </Dialog>
+      )}
       {chat.pendingSegmentBreak && (
         <SegmentBreakDialog
           activeSegment={chat.pendingSegmentBreak.activeSegment}

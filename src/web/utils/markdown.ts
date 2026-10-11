@@ -1,4 +1,4 @@
-import { Marked, type MarkedExtension, type Token } from 'marked'
+import { Marked, type MarkedExtension, Renderer, type Token, type Tokens } from 'marked'
 import { highlightCode } from '@/utils/highlight.js'
 
 const marked = new Marked({ gfm: true, breaks: true })
@@ -92,6 +92,25 @@ const untrustedHtmlRenderer = {
   },
 }
 
+/**
+ * 应用内渲染的链接一律在新标签页打开。
+ *
+ * 聊天回复、Markdown 预览里的外链此前是裸 `<a href>`：左键一点就把整个 SPA
+ * 导航走（页面卸载 ⇒ 会话状态、流式输出、终端与侧栏全部丢失，只能用浏览器
+ * 后退找回来）。同仓其它外链（ProviderPanel / ProviderCatalogDialog /
+ * FilePreview）都是 `target="_blank" rel="noreferrer"`，这里对齐。
+ *
+ * 实现委托 marked 默认 renderer——保留它自己的 cleanUrl 编码与行内解析
+ * （`[**粗**](url)` 里的粗体不能丢），只在结果开头补属性，不重写转义。
+ */
+const externalLinkRenderer = {
+  link(this: Renderer, token: Tokens.Link): string {
+    return Renderer.prototype.link
+      .call(this, token)
+      .replace(/^<a /, '<a target="_blank" rel="noreferrer" ')
+  },
+}
+
 /** 渲染前的公共 token 净化（危险 URL 降级）。两个实例都必须挂。 */
 function sanitizeToken(token: Token): void {
   if (token.type !== 'link' && token.type !== 'image') return
@@ -104,7 +123,7 @@ function sanitizeToken(token: Token): void {
 }
 
 marked.use({
-  renderer: untrustedHtmlRenderer,
+  renderer: { ...untrustedHtmlRenderer, ...externalLinkRenderer },
   walkTokens: sanitizeToken,
 } as unknown as MarkedExtension)
 
@@ -141,6 +160,7 @@ configuredMarked.use({
   },
   renderer: {
     ...untrustedHtmlRenderer,
+    ...externalLinkRenderer,
     code(token: { _highlighted?: string; text: string; lang?: string }) {
       // lang 与 fallback text 均转义：未受信输入不得裸拼进 HTML 属性/元素内容。
       // _highlighted 来自 Shiki（自身转义），保持信任。

@@ -158,9 +158,9 @@ function errMessage(e: unknown): string {
 }
 
 type EditorState =
-  | { mode: 'view'; name: string; readOnly: true }
+  | { mode: 'view'; name: string; readOnly: true; loading?: boolean }
   | { mode: 'create' }
-  | { mode: 'edit'; name: string; source: 'user' | 'project' }
+  | { mode: 'edit'; name: string; source: 'user' | 'project'; loading?: boolean }
 
 type WorkflowsPanelProps = {
   projectId?: string
@@ -183,6 +183,15 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const [draftTarget, setDraftTarget] = useState<'project' | 'user'>('project')
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<WorkflowInfo | null>(null)
+  /**
+   * 删除失败原因单独一份：DangerConfirmDialog 是 <dialog> 模态，section 顶部那条
+   * 错误在遮罩之下看不见。此前删除失败只 setError，用户看到的是弹窗原地不动、
+   * 框内零提示——「点了删除，什么也没发生」。同 ProjectIndicator 的 deleteError。
+   */
+  const [removeError, setRemoveError] = useState<string | null>(null)
+
+  // 新建模式没有远端源码要等；查看/编辑在源码到达前一律按加载中处理。
+  const editorLoading = editor !== null && editor.mode !== 'create' && editor.loading === true
 
   const invalidate = () => void qc.invalidateQueries({ queryKey })
 
@@ -198,11 +207,13 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const removeMut = useMutation({
     mutationFn: ({ name, target }: { name: string; target: 'project' | 'user' }) =>
       workflowsAPI.remove(name, projectId, target),
+    onMutate: () => setRemoveError(null),
     onSuccess: () => {
       invalidate()
       setPendingDelete(null)
+      setRemoveError(null)
     },
-    onError: (e) => setError(errMessage(e)),
+    onError: (e) => setRemoveError(errMessage(e)),
   })
 
   const openCreate = () => {
@@ -213,13 +224,19 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     setEditor({ mode: 'create' })
   }
 
+  // 源码要现读后端磁盘：弹窗必须先进入 loading 再取内容。
+  // 此前 openEdit/openView 沿用上一次的 draftSource 就开窗，「保存」不感知加载态，
+  // 慢盘/慢网下用户对着上一个工作流的源码点保存 → overwrite 覆盖当前文件。
   const openView = async (name: string) => {
     setError(null)
-    setEditor({ mode: 'view', name, readOnly: true })
+    setDraftName('')
+    setDraftSource('')
+    setEditor({ mode: 'view', name, readOnly: true, loading: true })
     try {
       const detail = await workflowsAPI.get(name, projectId)
       setDraftName(detail.name)
       setDraftSource(detail.sourceCode)
+      setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
       setError(errMessage(e))
       setEditor(null)
@@ -228,12 +245,20 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
 
   const openEdit = async (wf: WorkflowInfo) => {
     setError(null)
+    setDraftName('')
+    setDraftSource('')
     setDraftTarget(wf.source === 'user' ? 'user' : 'project')
-    setEditor({ mode: 'edit', name: wf.name, source: wf.source === 'user' ? 'user' : 'project' })
+    setEditor({
+      mode: 'edit',
+      name: wf.name,
+      source: wf.source === 'user' ? 'user' : 'project',
+      loading: true,
+    })
     try {
       const detail = await workflowsAPI.get(wf.name, projectId)
       setDraftName(detail.name)
       setDraftSource(detail.sourceCode)
+      setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
       setError(errMessage(e))
       setEditor(null)
@@ -242,6 +267,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
 
   const submitSave = () => {
     if (!editor) return
+    if (editorLoading) return
     const name = draftName.trim()
     if (!WORKFLOW_NAME_RE.test(name)) {
       setError(`名称 "${name}" 不合法：仅小写字母、数字、连字符（[a-z0-9-]+）`)
@@ -315,7 +341,10 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
                 <button
                   type="button"
                   className={`${actionBtn} ${dangerAction}`}
-                  onClick={() => setPendingDelete(wf)}
+                  onClick={() => {
+                    setRemoveError(null)
+                    setPendingDelete(wf)
+                  }}
                   data-testid="workflow-delete"
                 >
                   删除
@@ -358,11 +387,11 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
                   </Button>
                   <Button
                     onClick={submitSave}
-                    disabled={saveMut.isPending}
+                    disabled={saveMut.isPending || editorLoading}
                     data-testid="workflow-save"
                     variant="outline"
                   >
-                    {saveMut.isPending ? '保存中…' : '保存'}
+                    {editorLoading ? '加载中…' : saveMut.isPending ? '保存中…' : '保存'}
                   </Button>
                 </>
               )}
@@ -396,11 +425,17 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
           <SyncedTextarea
             className={editorArea}
             value={draftSource}
-            readOnly={editor.mode === 'view'}
+            readOnly={editor.mode === 'view' || editorLoading}
+            disabled={editorLoading}
             onChange={(v) => setDraftSource(v)}
             spellCheck={false}
             data-testid="workflow-source-editor"
           />
+          {editorLoading ? (
+            <div className={hint} data-testid="workflow-loading">
+              正在读取源码…（读取完成前不可保存）
+            </div>
+          ) : null}
           {error ? (
             <div className={errorText} data-testid="workflow-panel-error">
               {error}
@@ -416,6 +451,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
         confirmWord={pendingDelete?.name ?? ''}
         confirmLabel="删除"
         busy={removeMut.isPending}
+        error={removeError}
         onConfirm={() => {
           if (pendingDelete) {
             removeMut.mutate({

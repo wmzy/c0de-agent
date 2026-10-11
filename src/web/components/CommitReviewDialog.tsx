@@ -41,7 +41,9 @@ const btn = css`
 const primaryBtn = css`
   border-color: var(--haze-color-warning, var(--haze-color-border));
   background: var(--haze-color-warning, var(--haze-color-bg-subtle));
-  color: #fff;
+  /* 琥珀实底上的前景色走 token：warning 的 dark 值是琥珀**字**色，
+     当底色时白字仅 1.67:1（全应用最差的一处）。见 global.ts 的说明。 */
+  color: var(--c0de-warning-on-solid, #fff);
 `
 
 /**

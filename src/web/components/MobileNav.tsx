@@ -82,7 +82,8 @@ type MobileNavProps = {
  * 三个标签：对话 / 会话 / 设置。「会话」打开 Workbench 的移动端
  * 侧栏覆盖层（滑出 + 遮罩 + Esc 关闭 + 焦点管理均由 Workbench
  * 内置）；路由变化（如在覆盖层内选择会话）时自动收起。
- * 无侧栏内容的页面（如看板）点击「会话」无操作。
+ * 无侧栏内容的页面（看板、设置）点击「会话」回对话页——那里才有会话列表，
+ * 否则该标签在移动端就成了点不动的死键。
  */
 export function MobileNav({
   sidebar,
@@ -105,7 +106,17 @@ export function MobileNav({
 
   // 覆盖层打开时高亮 sessions 标签；否则按路由判定
   const isSettingsRoute = routePath === '/settings' || routePath === '/projects/:projectId/settings'
-  const activeId = sessionsOpen ? 'sessions' : isSettingsRoute ? 'settings' : 'chat'
+  // 看板是独立页面：既不是对话页也没有侧栏。此前一律回退成 'chat' 高亮，
+  // 点「对话」又只在设置路由下导航——在看板页上它既谎报当前位置，又是死键，
+  // 「会话」标签同样没有 sidebar 可开，用户只能去顶栏找出口。
+  const isKanbanRoute = routePath === '/projects/:projectId/kanban'
+  const activeId = sessionsOpen
+    ? 'sessions'
+    : isSettingsRoute
+      ? 'settings'
+      : isKanbanRoute
+        ? ''
+        : 'chat'
 
   const onPick = (t: Tab) => {
     if (t.kind === 'settings') {
@@ -118,8 +129,9 @@ export function MobileNav({
     }
     if (t.kind === 'chat') {
       // 设置页点「对话」应回到聊天页（此前仅收起覆盖层，无导航）。
+      // 看板页同理：那里既没有侧栏也没有会话，底部导航是回对话的主出口。
       // 未保存更改由 Settings 的 useBlocker 统一拦截（含程序化导航），此处直接跳。
-      if (isSettingsRoute) {
+      if (isSettingsRoute || isKanbanRoute) {
         if (projectId) {
           navigateTo(router, '/projects/:projectId', { params: { projectId } })
         } else {
@@ -129,8 +141,18 @@ export function MobileNav({
       onSessionsClosed?.()
       return
     }
-    // sessions：有侧栏内容时开/合覆盖层
-    if (sidebar) onToggleSessions?.()
+    // sessions：有侧栏内容时开/合覆盖层；没有 sidebar 的路由（看板、设置）
+    // 开不了覆盖层，就直接回对话页——那里才有会话列表。否则该标签在这些
+    // 页面上是彻底的死键：看板页已修，设置页漏了，同样点下去毫无反应。
+    if (sidebar) {
+      onToggleSessions?.()
+      return
+    }
+    if ((isKanbanRoute || isSettingsRoute) && projectId) {
+      navigateTo(router, '/projects/:projectId', { params: { projectId } })
+    } else if (isKanbanRoute || isSettingsRoute) {
+      navigateTo(router, '/')
+    }
   }
 
   return (
@@ -142,6 +164,8 @@ export function MobileNav({
             key={t.id}
             type="button"
             className={`${tab} ${active ? 'active' : ''}`}
+            /* 激活指示此前只靠主色+指示条，读屏无从判断当前位置 */
+            aria-current={active ? 'page' : undefined}
             data-testid={`mobile-nav-${t.id}`}
             onClick={() => onPick(t)}
           >

@@ -1,4 +1,6 @@
 import { css } from '@linaria/core'
+import { useRef } from 'react'
+import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 
 const popover = css`
@@ -43,6 +45,13 @@ const wfArgs = css`
   font-family: var(--haze-font-mono, monospace);
 `
 
+/** 加载/空态提示行（非候选项，不参与键盘索引）。 */
+const hint = css`
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 const sourceTag = css`
   font-size: 10px;
   padding: 1px 5px;
@@ -82,13 +91,26 @@ const overrideTag = css`
 type Props = {
   workflows: WorkflowInfo[]
   activeIndex: number
+  /** 工作流列表仍在加载中（结果未到）。 */
+  loading?: boolean
   onSelect: (name: string) => void
 }
 
 function WorkflowPopover(props: Props) {
-  if (props.workflows.length === 0) return null
+  const listRef = useRef<HTMLDivElement>(null)
+  usePopoverScroll(listRef, props.activeIndex, props.workflows.length > 0)
+  // 加载中与「确实没有工作流」此前都渲染成空——浮层消失，用户看不出区别。
+  if (props.workflows.length === 0) {
+    if (!props.loading) return null
+    return (
+      <div className={popover} role="status" data-testid="workflow-menu-loading">
+        <div className={hint}>工作流加载中…</div>
+      </div>
+    )
+  }
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="workflow-menu"

@@ -101,10 +101,15 @@ function createTodoRoute(ctx: ServerContext): Hono {
 
     // 如果操作成功且 phases 有变化，持久化为 tool 消息
     if (result._tag === 'success' && (body as { op?: string }).op !== 'view') {
+      // tool_call 与 tool_result 必须共用同一个 id：前端 normalizeParts 按 id 配对，
+      // 两个 generateId() 会让它们配不上——时间线上留下一个永远停在「运行中」
+      // （⏳ 永不结束）的 todo 块，正文还因拿不到 output 而谎报「Todo list is empty.」，
+      // 另加一张孤立的 result 卡。实测从「任务本会话待办」面板点「添加」后必现。
+      const toolMessageId = generateId()
       // 构造 tool_result 消息内容
       const toolResultContent: MessageContent = {
         _tag: 'tool_result',
-        id: generateId(),
+        id: toolMessageId,
         tool: 'todo',
         output: {
           _tag: 'success' as const,
@@ -114,7 +119,7 @@ function createTodoRoute(ctx: ServerContext): Hono {
       }
       const toolCallContent: MessageContent = {
         _tag: 'tool_call',
-        id: generateId(),
+        id: toolMessageId,
         tool: 'todo',
         input: body,
       }

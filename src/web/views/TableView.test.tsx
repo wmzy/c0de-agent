@@ -96,3 +96,76 @@ describe('TableView', () => {
     expect(screen.getByText('无匹配项')).toBeTruthy()
   })
 })
+
+/**
+ * 表格视图的行此前只挂在裸 <tr onClick> 上：没有 tabIndex、没有键盘处理。
+ * 键盘用户 Tab 走遍筛选条与计数后直接跳出表格（实测表格视图内 Tab 序列：
+ * 筛选控件 → 计数 → Todo 面板，tbody 行一个都碰不到），「查看原始 JSON」
+ * 这条排障入口对键盘与读屏用户等于不存在。
+ */
+describe('TableView 行的键盘可达性', () => {
+  afterEach(() => cleanup())
+
+  const rows: TimelineRow[] = [
+    { kind: 'message', message: mkMessage('u1', 'user', '第一行'), ts: 1 },
+    { kind: 'message', message: mkMessage('a1', 'assistant', '第二行'), ts: 2 },
+  ]
+
+  /** 首行：每个用例都要一个稳定的展开目标。 */
+  const firstRow = (): HTMLElement => screen.getAllByTestId('table-row')[0] as HTMLElement
+
+  it('每一行都进入 Tab 序列（tabIndex=0）', () => {
+    render(<TableView rows={rows} />)
+    const rowEls = screen.getAllByTestId('table-row')
+    expect(rowEls).toHaveLength(2)
+    for (const el of rowEls) {
+      expect(el.getAttribute('tabindex')).toBe('0')
+    }
+  })
+
+  it('Enter 展开原始 JSON，与点击同效', () => {
+    render(<TableView rows={rows} />)
+    expect(screen.queryByTestId('table-row-json')).toBeNull()
+
+    fireEvent.keyDown(firstRow(), { key: 'Enter' })
+
+    expect(screen.getByTestId('table-row-json')).toBeTruthy()
+  })
+
+  it('Space 也能展开，且不会顺带滚动页面', () => {
+    render(<TableView rows={rows} />)
+    const row = firstRow()
+    // 空格默认滚动；行内它是唯一动作，必须被 preventDefault 拦下
+    const handled = fireEvent.keyDown(row, { key: ' ' })
+    expect(handled).toBe(false)
+    expect(screen.getByTestId('table-row-json')).toBeTruthy()
+  })
+
+  it('aria-expanded 跟随展开状态（读屏能知道当前行是不是开着）', () => {
+    render(<TableView rows={rows} />)
+    const row = firstRow()
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+
+    // 再按一次收起
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('行的可访问名来自单元格文本，不被 aria-label 截断', () => {
+    render(<TableView rows={rows} />)
+    // 若加了 aria-label，「摘要」列内容对读屏就不可见了——第一行摘要必须可达
+    const row = firstRow()
+    expect(row.textContent).toContain('第一行')
+    expect(row.getAttribute('aria-label')).toBeNull()
+  })
+
+  it('非 Enter/Space 的按键不误触发展开', () => {
+    render(<TableView rows={rows} />)
+    const row = firstRow()
+    fireEvent.keyDown(row, { key: 'ArrowDown' })
+    expect(screen.queryByTestId('table-row-json')).toBeNull()
+  })
+})

@@ -42,6 +42,29 @@ const rowBtn = css`
   font-size: 12px;
 `
 
+/** 行内影响面元信息：这一行涉及多少张卡片。列与标签同口径。 */
+const rowMeta = css`
+  font-size: 11px;
+  color: var(--haze-color-text-secondary);
+  flex-shrink: 0;
+`
+
+/** 删除标签的影响面确认条：说明「保存后会发生什么」，再让用户确认。
+ *  与顶部错误框同一套配色，但不阻塞其它行——用户可继续改列/别的标签。 */
+const confirmBar = css`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+  border: 1px solid color-mix(in srgb, var(--haze-color-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--haze-color-danger) 8%, transparent);
+`
+
 const colorSwatch = css`
   width: 24px;
   height: 24px;
@@ -102,6 +125,8 @@ export function BoardConfigDialog({
   const [newLabelName, setNewLabelName] = useState('')
   const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0] ?? '#ef4444')
   const [error, setError] = useState<string | null>(null)
+  /** 正在二次确认删除的标签 id：删除标签会跨卡片生效，不能一次点击就落库。 */
+  const [confirmLabelId, setConfirmLabelId] = useState<string | null>(null)
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -214,11 +239,7 @@ export function BoardConfigDialog({
               aria-label={`列名：${col.name}`}
               onChange={(v) => updateColumnName(col.id, v)}
             />
-            <span
-              style={{ fontSize: 11, color: 'var(--haze-color-text-secondary)', flexShrink: 0 }}
-            >
-              {cards.filter((c) => c.columnId === col.id).length} 卡
-            </span>
+            <span className={rowMeta}>{cards.filter((c) => c.columnId === col.id).length} 卡</span>
             <Button
               className={`${btnDanger} ${rowBtn}`}
               variant="outline"
@@ -256,30 +277,80 @@ export function BoardConfigDialog({
       {/* 标签管理 */}
       <div>
         <div className={sectionTitle}>标签</div>
-        {labels.map((l) => (
-          <div key={l.id} className={row}>
-            <SyncedInput
-              type="color"
-              className={colorSwatch}
-              value={l.color}
-              aria-label={`标签颜色：${l.name}`}
-              onChange={(v) => updateLabel(l.id, { color: v })}
-            />
-            <SyncedInput
-              className={rowInput}
-              value={l.name}
-              aria-label={`标签名：${l.name}`}
-              onChange={(v) => updateLabel(l.id, { name: v })}
-            />
-            <Button
-              className={`${btnDanger} ${rowBtn}`}
-              variant="outline"
-              onClick={() => removeLabel(l.id)}
-            >
-              删除
-            </Button>
-          </div>
-        ))}
+        {labels.map((l) => {
+          // 影响面：保存时服务端会把不在新 labels 里的 labelId 从整块看板
+          // **所有**卡片上清掉（src/kanban/store.ts 的悬空引用清理）。卡片弹窗
+          // 因此干脆不提供删除入口（见 CardEditDialog），这里是唯一入口——
+          // 不显示「有几张卡在用」并二次确认，就是一次点击静默抹掉全板该标签。
+          const usage = cards.filter((c) => (c.labels ?? []).includes(l.id)).length
+          return (
+            <div key={l.id}>
+              <div className={row}>
+                <SyncedInput
+                  type="color"
+                  className={colorSwatch}
+                  value={l.color}
+                  aria-label={`标签颜色：${l.name}`}
+                  onChange={(v) => updateLabel(l.id, { color: v })}
+                />
+                <SyncedInput
+                  className={rowInput}
+                  value={l.name}
+                  aria-label={`标签名：${l.name}`}
+                  onChange={(v) => updateLabel(l.id, { name: v })}
+                />
+                <span className={rowMeta}>{usage > 0 ? `${usage} 卡在用` : '未使用'}</span>
+                <Button
+                  className={`${btnDanger} ${rowBtn}`}
+                  variant="outline"
+                  onClick={() => {
+                    setError(null)
+                    if (usage > 0) setConfirmLabelId(l.id)
+                    else removeLabel(l.id)
+                  }}
+                  title={
+                    usage > 0
+                      ? `该标签正被 ${usage} 张卡片使用，删除并保存后会被清除`
+                      : '删除该标签'
+                  }
+                  data-testid={`label-delete-${l.id}`}
+                >
+                  删除
+                </Button>
+              </div>
+              {confirmLabelId === l.id && (
+                <div
+                  className={confirmBar}
+                  role="alert"
+                  data-testid={`label-delete-confirm-${l.id}`}
+                >
+                  <span>
+                    「{l.name}」正被 {usage} 张卡片使用；保存后这些卡片上的该标签会被清除。
+                  </span>
+                  <Button
+                    className={rowBtn}
+                    variant="solid"
+                    onClick={() => {
+                      removeLabel(l.id)
+                      setConfirmLabelId(null)
+                    }}
+                    data-testid={`label-delete-confirm-ok-${l.id}`}
+                  >
+                    确认删除
+                  </Button>
+                  <Button
+                    className={rowBtn}
+                    variant="ghost"
+                    onClick={() => setConfirmLabelId(null)}
+                    data-testid={`label-delete-confirm-cancel-${l.id}`}
+                  >
+                    取消
+                  </Button>
+                </div>
+              )}
+            </div>
+          )
+        })}
         <div className={row}>
           <SyncedInput
             type="color"

@@ -243,8 +243,18 @@ export function CodeEditor({
           setSaveConflict({ disk: disk.content })
           return
         }
-      } catch {
-        // 磁盘读取失败：维持原行为直接写入
+      } catch (err) {
+        // 「读失败不阻断写入」的既有语义只针对文件暂不可读（被移入回收站等，
+        // 写入会重建文件）。二进制是另一类失败：服务端 read 对二进制返回
+        // 415 BINARY_FILE（字节层拒绝），此时 PUT 会把编辑器里的文本整体覆盖
+        // 上去，静默毁掉磁盘上的二进制内容（打开时还是文本、后来被换成二进制）
+        // ——必须中止保存并告知用户，绝不盲写。
+        const apiErr = err as { status?: number; code?: string }
+        if (apiErr?.code === 'BINARY_FILE' || apiErr?.status === 415) {
+          setWriteError('文件在磁盘上已是二进制内容，为避免损坏已拒绝覆盖写入')
+          return
+        }
+        // 其余磁盘读取失败：维持原行为直接写入
       }
     }
     try {

@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
-import { memo } from 'react'
+import type { KeyboardEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitStatusCode } from '@/types/index.js'
 
 /** 文件树节点。children 为 undefined 表示尚未加载子目录。type 缺省视为 directory（兼容目录选择器）。 */
@@ -20,6 +21,11 @@ type FileTreeProps = {
   selected: string | null
   /** 正在加载子目录的节点路径集合。 */
   loadingPaths: Set<string>
+  /** 懒加载失败的原因（path → message）。命中的目录在树里就地展示失败态与重试，
+   *  而不是渲染成「（空）」——把「读不到」说成「没有」。 */
+  errorPaths?: Map<string, string>
+  /** 重试加载某个目录的子项（配合 errorPaths 的失败态）。 */
+  onRetryLoad?: (path: string) => void
   /** 展开/折叠目录（首次展开由父组件触发懒加载）。 */
   onToggle: (path: string) => void
   /** 激活节点：文件=打开；目录行为由 directoryClickMode 决定。 */
@@ -124,6 +130,36 @@ const hint = css`
   font-size: 12px;
 `
 
+/** 懒加载失败态：原因 + 重试。与（空）/加载中 同排缩进，用户点开哪个目录就在哪看到。 */
+const loadErrorRow = css`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 24px;
+  font-size: 12px;
+  color: var(--c0de-danger-on-surface, var(--haze-color-danger));
+`
+
+const loadErrorText = css`
+  /* 后端 message 常含长路径，窄侧栏下必须能断行而不是撑出横向滚动 */
+  overflow-wrap: anywhere;
+`
+
+const loadRetryBtn = css`
+  flex-shrink: 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 3px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  cursor: pointer;
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
 const mentionBtn = css`
   margin-left: auto;
   /* 常驻低对比度（非 hover 也可发现/触屏可达），hover 增强到全亮 */
@@ -190,9 +226,14 @@ const gitDeleted = css`
   box-shadow: inset 2px 0 0 var(--haze-color-text-secondary);
   text-decoration: line-through;
 `
+// .gitignore 里的文件仍要能看清文件名——此前用 opacity:0.55 把整行（含文字）
+// 一起调暗，浅色主题实测降到 3.76:1（12.5px 正文要求 4.5:1，axe 报 serious
+// 级 color-contrast，用户在文件树里几乎读不出 .c0de/.env 这类条目）。
+// 改为「换颜色而非降透明度」：透明度会把文字一起压暗、且与背景叠加后无法
+// 保证对比度；这里只调文字色到 --haze-color-text-secondary 的实色值，
+// 浅色/深色两套主题各自的 token 都已满足 4.5:1。
 const gitIgnored = css`
   color: var(--haze-color-text-secondary);
-  opacity: 0.55;
 `
 
 /** git 状态 → 高亮类名。 */
@@ -251,11 +292,21 @@ function resolveGitStatus(
  * directoryClickMode='select' 时点目录名=选中（目录选择器用法）；
  * 'toggle' 时点目录名=展开/折叠（文件浏览器用法）。
  */
-export function FileTree({
+export function FileTree(props: FileTreeProps) {
+  // root 为 null 时整棵树不渲染。必须在任何 hook 之前返回——下面的
+  // useMemo/useEffect 无条件依赖 root 的非空版本。
+  if (!props.root) return null
+  return <FileTreeInner {...props} root={props.root} />
+}
+
+/** FileTree 的实现体；root 在此已保证非空。 */
+function FileTreeInner({
   root,
   expanded,
   selected,
   loadingPaths,
+  errorPaths,
+  onRetryLoad,
   onToggle,
   onSelect,
   directoryClickMode = 'select',
@@ -264,12 +315,171 @@ export function FileTree({
   gitStatusMap,
   label = '文件树',
   hideRoot,
-}: FileTreeProps) {
+}: FileTreeProps & { root: TreeNode }) {
+  const treeRef = useRef<HTMLDivElement>(null)
+  // 漫游 tabindex：整棵树只让一个节点可 Tab 进入，其余 tabindex=-1，由方向键在
+  // 节点间移动（ARIA tree 的标准键盘模型）。
+  //
+  // 此前所有 treeitem 一律 tabIndex={-1} 且没有任何方向键处理：容器声明了
+  // role="tree"（读屏会按可交互树播报），实际上键盘完全进不去——Tab 只会
+  // 逐个经过行内的展开/@/删除按钮，跳过文件名本身，↑↓ 无响应。
+  //
+  // 初始焦点优先给已选中的节点（用户刚操作完的文件就是最可能的下一步目标），
+  // 否则第一个可见节点。
+  const [focusedPath, setFocusedPath] = useState<string | null>(null)
+
+  // 当前渲染出的全部节点（DOM 顺序 = 视觉顺序 = 缩进顺序）。
+  // 方向键在「可见节点」上移动：折叠起来的子节点不在 DOM 里，自然被跳过。
+  const visiblePaths = useMemo(
+    () => collectVisiblePaths(root, expanded, hideRoot === true),
+    [root, expanded, hideRoot],
+  )
+
+  // focusedPath 指向的节点被折叠/删除后，顺延到它原来的位置而不是回退到树首。
+  //
+  // 归一化放在渲染期而不是 effect：懒加载展开目录会让 root 换成新对象引用
+  // （FileBrowser 的 setChildren 不可变重建），若用 effect 归一化，它会在
+  // 每次这类重建后把刚移动的焦点弹回旧位置——实测 ↑↓↓ 到 src/cli 后立刻
+  // 又回到 src。渲染期归一是纯派生值，不产生额外一轮提交，也就没有回弹。
+  const effectiveFocusedPath =
+    visiblePaths.length === 0
+      ? null
+      : focusedPath && visiblePaths.includes(focusedPath)
+        ? focusedPath
+        : ((selected && visiblePaths.includes(selected) ? selected : visiblePaths[0]) ?? null)
+
+  // focusedPath 变化时把真实焦点移到对应节点。键盘用户 Tab 进入树后，
+  // 焦点必须跟着漫游标记走，否则按方向键只改状态不改焦点，读屏不播报。
+  //
+  // 但只在焦点本来就在树里时才搬：漫游标记每次变化都无条件 focus()，会把
+  // 焦点从别处抢进树——实测「添加项目」弹窗打开后，home 目录异步加载完成、
+  // 漫游标记从 null 落到第一行的瞬间，焦点从路径输入框被拽到文件树第一行，
+  // 用户敲到一半的字符全丢。树外要进树，Tab 落在唯一 tabIndex=0 的节点上
+  // 即可，本来就不需要这个 effect 代劳。
+  useEffect(() => {
+    if (!effectiveFocusedPath) return
+    const tree = treeRef.current
+    if (!tree?.contains(document.activeElement)) return
+    const el = tree.querySelector<HTMLElement>(
+      `[role="treeitem"][data-path="${cssEscape(effectiveFocusedPath)}"]`,
+    )
+    if (el && el.getAttribute('data-focused') === 'true') el.focus()
+  }, [effectiveFocusedPath])
+
+  const moveFocus = useCallback(
+    (delta: number) => {
+      if (visiblePaths.length === 0) return
+      const idx = effectiveFocusedPath ? visiblePaths.indexOf(effectiveFocusedPath) : -1
+      const next = idx === -1 ? (delta > 0 ? 0 : visiblePaths.length - 1) : idx + delta
+      const target = visiblePaths[Math.max(0, Math.min(visiblePaths.length - 1, next))]
+      if (target) setFocusedPath(target)
+    },
+    [visiblePaths, effectiveFocusedPath],
+  )
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault()
+          moveFocus(1)
+          break
+        case 'ArrowUp':
+          e.preventDefault()
+          moveFocus(-1)
+          break
+        case 'Home':
+          e.preventDefault()
+          setFocusedPath(visiblePaths[0] ?? null)
+          break
+        case 'End':
+          e.preventDefault()
+          setFocusedPath(visiblePaths[visiblePaths.length - 1] ?? null)
+          break
+        case 'ArrowRight': {
+          // 目录：折叠时展开，已展开时进入第一个子节点；文件：不动。
+          if (!effectiveFocusedPath) return
+          const node = findNode(root, effectiveFocusedPath)
+          if (!node || node.type === 'file') return
+          e.preventDefault()
+          if (!expanded.has(effectiveFocusedPath)) {
+            onToggle(effectiveFocusedPath)
+          } else {
+            const firstChild = node.children?.[0]?.path
+            if (firstChild) setFocusedPath(firstChild)
+          }
+          break
+        }
+        case 'ArrowLeft': {
+          if (!effectiveFocusedPath) return
+          const node = findNode(root, effectiveFocusedPath)
+          if (!node) return
+          e.preventDefault()
+          // 目录自身已展开：先折叠；未展开或有子节点可见：跳到父节点。
+          if (node.type !== 'file' && expanded.has(effectiveFocusedPath)) {
+            onToggle(effectiveFocusedPath)
+            return
+          }
+          const parentPath = parentOf(effectiveFocusedPath)
+          if (parentPath) setFocusedPath(parentPath)
+          break
+        }
+        case 'Enter':
+        case ' ': {
+          // 漫游焦点落在 treeitem 容器（div，不是 button）上，浏览器对 div 没有默认
+          // 激活行为：键盘用户 ↑↓ 移到某个文件、行高亮也跟着动了，按 Enter 却毫无反应，
+          // 必须再 Tab 若干次穿过该行的 展开/行名/@/🗑 按钮才能打开文件。这里让
+          // Enter/空格等价于点击行名按钮（文件=打开，目录按 directoryClickMode）。
+          //
+          // 事件来自行内按钮时直接放行：按钮的默认 click 已经激活过一次，再走这里会
+          // 重复（目录在 toggle 模式下两次切换 = 看起来按键无效）。
+          if ((e.target as HTMLElement).getAttribute?.('role') !== 'treeitem') return
+          if (!effectiveFocusedPath) return
+          const node = findNode(root, effectiveFocusedPath)
+          if (!node) return
+          e.preventDefault()
+          if (node.type === 'file' || directoryClickMode !== 'toggle')
+            onSelect(effectiveFocusedPath)
+          else onToggle(effectiveFocusedPath)
+          break
+        }
+      }
+    },
+    [
+      visiblePaths,
+      effectiveFocusedPath,
+      expanded,
+      onToggle,
+      onSelect,
+      directoryClickMode,
+      root,
+      moveFocus,
+    ],
+  )
+
   if (!root) return null
   // hideRoot：跳过根节点本身，直接渲染其子项（子项 depth 从 0 起）。
   const topLevel = hideRoot && root.children ? root.children : [root]
   return (
-    <div className={tree} role="tree" aria-label={label} data-testid="file-tree">
+    <div
+      ref={treeRef}
+      className={tree}
+      role="tree"
+      aria-label={label}
+      data-testid="file-tree"
+      onKeyDown={handleKeyDown}
+      // DOM 焦点是漫游焦点的唯一事实源：把焦点交给某个节点（点击行、程序化
+      // focus、浏览器恢复焦点）就同步过去，否则方向键会从「上一次方向键停留的
+      // 位置」而不是用户眼前这个节点继续走。
+      //
+      // 只在真的换了节点时写状态：焦点同步 effect 自己也会 focus(effective
+      // path)，那一路的 focusin 必须短路，否则来回写状态形成回环。
+      onFocus={(e) => {
+        const item = (e.target as Element).closest?.('[role="treeitem"]') as HTMLElement | null
+        const path = item?.dataset.path
+        if (path && path !== effectiveFocusedPath) setFocusedPath(path)
+      }}
+    >
       {topLevel.map((node) => (
         <TreeNode
           key={node.path}
@@ -277,7 +487,10 @@ export function FileTree({
           depth={0}
           expanded={expanded}
           selected={selected}
+          focusedPath={effectiveFocusedPath}
           loadingPaths={loadingPaths}
+          errorPaths={errorPaths}
+          onRetryLoad={onRetryLoad}
           onToggle={onToggle}
           onSelect={onSelect}
           directoryClickMode={directoryClickMode}
@@ -290,12 +503,57 @@ export function FileTree({
   )
 }
 
+/** 按 DOM 顺序（= 视觉缩进顺序）收集当前可见的节点路径。折叠的子节点不在其中。 */
+function collectVisiblePaths(root: TreeNode, expanded: Set<string>, hideRoot: boolean): string[] {
+  const topLevel = hideRoot && root.children ? root.children : [root]
+  const out: string[] = []
+  const walk = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      out.push(n.path)
+      if (n.type !== 'file' && expanded.has(n.path) && n.children) walk(n.children)
+    }
+  }
+  walk(topLevel)
+  return out
+}
+
+/** 按路径找节点。 */
+function findNode(root: TreeNode, path: string): TreeNode | null {
+  if (root.path === path) return root
+  for (const c of root.children ?? []) {
+    const hit = findNode(c, path)
+    if (hit) return hit
+  }
+  return null
+}
+
+/** 父节点路径。顶层节点返回 null；根路径 '.' 的直接子节点也返回 null。 */
+function parentOf(path: string): string | null {
+  const i = path.lastIndexOf('/')
+  if (i <= 0) return null
+  return path.slice(0, i)
+}
+
+/**
+ * CSS.escape 在 happy-dom 下不保证存在，而路径里必然含 `.`、`/` 等选择器
+ * 元字符（`.c0de/config.json`），不过滤会直接让 querySelector 抛错。
+ */
+function cssEscape(value: string): string {
+  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(value)
+    : value.replace(/["\\]/g, '\\$&')
+}
+
 type TreeNodeProps = {
   node: TreeNode
   depth: number
   expanded: Set<string>
   selected: string | null
+  /** 漫游焦点所在路径：整棵树只有它是 tabIndex=0，其余为 -1。 */
+  focusedPath: string | null
   loadingPaths: Set<string>
+  errorPaths?: Map<string, string>
+  onRetryLoad?: (path: string) => void
   onToggle: (path: string) => void
   onSelect: (path: string) => void
   directoryClickMode: 'select' | 'toggle'
@@ -309,7 +567,10 @@ const TreeNode = memo(function TreeNode({
   depth,
   expanded,
   selected,
+  focusedPath,
   loadingPaths,
+  errorPaths,
+  onRetryLoad,
   onToggle,
   onSelect,
   directoryClickMode,
@@ -320,7 +581,9 @@ const TreeNode = memo(function TreeNode({
   const isFile = node.type === 'file'
   const isExpanded = expanded.has(node.path)
   const isLoading = loadingPaths.has(node.path)
+  const loadError = errorPaths?.get(node.path)
   const isSelected = selected === node.path
+  const isFocused = focusedPath === node.path
   const hasChildren = node.children !== undefined
   const gitCode = resolveGitStatus(node.path, isFile, gitStatusMap)
   return (
@@ -329,7 +592,9 @@ const TreeNode = memo(function TreeNode({
       aria-expanded={isFile ? undefined : isExpanded}
       aria-level={depth + 1}
       aria-selected={isSelected}
-      tabIndex={-1}
+      data-path={node.path}
+      data-focused={isFocused ? 'true' : undefined}
+      tabIndex={isFocused ? 0 : -1}
     >
       <div
         className={`${row} ${isSelected ? selectedRow : ''} ${gitCode ? gitClass(gitCode) : ''} ${node.ignored ? gitIgnored : ''}`}
@@ -397,7 +662,8 @@ const TreeNode = memo(function TreeNode({
         )}
       </div>
       {!isFile && isExpanded && (
-        <div className={childList}>
+        // biome-ignore lint/a11y/useSemanticElements: role="group" 是 ARIA tree 的层级容器（treeitem 靠它确定归属），fieldset 会变成表单分组
+        <div className={childList} role="group">
           {hasChildren && node.children && node.children.length > 0 ? (
             node.children.map((c) => (
               <TreeNode
@@ -406,7 +672,10 @@ const TreeNode = memo(function TreeNode({
                 depth={depth + 1}
                 expanded={expanded}
                 selected={selected}
+                focusedPath={focusedPath}
                 loadingPaths={loadingPaths}
+                errorPaths={errorPaths}
+                onRetryLoad={onRetryLoad}
                 onToggle={onToggle}
                 onSelect={onSelect}
                 directoryClickMode={directoryClickMode}
@@ -417,6 +686,22 @@ const TreeNode = memo(function TreeNode({
             ))
           ) : isLoading ? (
             <div className={hint}>加载中…</div>
+          ) : loadError !== undefined ? (
+            // 读失败必须与「空目录」分开：此前懒加载失败被 catch 吞掉、目录仍被
+            // 标记为已展开，这里渲染的是「（空）」——把「读不到」说成了「没有」。
+            <div className={loadErrorRow} data-testid={`load-error-${node.path}`}>
+              <span className={loadErrorText}>{`加载失败：${loadError}`}</span>
+              {onRetryLoad && (
+                <button
+                  type="button"
+                  className={loadRetryBtn}
+                  data-testid={`load-retry-${node.path}`}
+                  onClick={() => onRetryLoad(node.path)}
+                >
+                  重试
+                </button>
+              )}
+            </div>
           ) : (
             <div className={hint}>（空）</div>
           )}

@@ -145,7 +145,9 @@ export function ChatPage() {
             />
           }
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
-          terminal={<TerminalPanel terminal={terminal} cwd={project?.worktree} />}
+          terminal={
+            <TerminalPanel terminal={terminal} cwd={project?.worktree} projectId={projectId} />
+          }
         />
       </FileSelectionContext.Provider>
     </FileReferenceProvider>

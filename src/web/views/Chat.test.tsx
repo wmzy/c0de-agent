@@ -82,6 +82,31 @@ describe('Chat pause/resume/steer controls', () => {
     expect(screen.queryByTestId('resume')).toBeNull()
   })
 
+  // 回归：发送失败曾挤在顶栏单行 status 槽里（nowrap + ellipsis），1280 宽起截断，
+  // 唯一全文入口是 hover title——触屏无 title、无 hover，读屏（span 无 role）也读不到。
+  // 被截掉的偏偏是补救指令（去设置 / 检查拼写），等于「发送失败」对多数用户不可处置。
+  it('发送失败全文完整可读，且以 alert 角色暴露给读屏', () => {
+    const reason =
+      '未找到名为「」的 AI 服务。已配置：dead。请检查拼写，或前往「设置 → Provider」添加该服务。'
+    renderChat({ isStreaming: false, error: reason })
+    const banner = screen.getByTestId('send-error')
+    // 全文在可及名称/文本内容里，不靠 title 属性兜底
+    expect(banner.textContent).toContain('添加该服务')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.querySelector('span')?.textContent).toBe(reason)
+  })
+
+  it('发送失败时重试按钮与提示同处提示条（不再被挤在单行状态槽）', () => {
+    renderChat({ isStreaming: false, error: 'LLM 请求失败', onRetry: vi.fn() })
+    const banner = screen.getByTestId('send-error')
+    expect(banner.contains(screen.getByTestId('retry'))).toBe(true)
+  })
+
+  it('无错误时不渲染提示条', () => {
+    renderChat({ isStreaming: false })
+    expect(screen.queryByTestId('send-error')).toBeNull()
+  })
+
   it('运行出错且非流式时展示重试按钮并回调 onRetry', () => {
     const onRetry = vi.fn()
     renderChat({ isStreaming: false, error: 'LLM 请求失败', onRetry })
@@ -128,6 +153,37 @@ describe('Chat pause/resume/steer controls', () => {
     renderChat({ isStreaming: false })
     expect(screen.getByTestId('append')).toBeDisabled()
     expect(screen.getByTestId('send').textContent).toBe('发送')
+  })
+})
+
+describe('Chat 首条消息在途（creating）', () => {
+  // 回归：草稿页建会话期间曾借 isStreaming 表示「运行中」，输入区整块翻成运行态：
+  // 「追加指令」可用却无 onSteer（steer 清空输入框 → 用户接着敲的字静默消失），
+  // 主按钮翻成红色「终止」却无 onAbort（按了零反应）。
+  it('创建中不展示中止/暂停，也不展示重试', () => {
+    renderChat({ isStreaming: false, creating: true, error: 'x', onRetry: vi.fn() })
+    expect(screen.queryByTestId('abort')).toBeNull()
+    expect(screen.queryByTestId('pause')).toBeNull()
+    expect(screen.queryByTestId('retry')).toBeNull()
+  })
+
+  it('创建中发送键显示「创建中…」且禁用，追加指令同样禁用', () => {
+    renderChat({ isStreaming: false, creating: true })
+    const send = screen.getByTestId('send')
+    expect(send.textContent).toBe('创建中…')
+    expect(send).toBeDisabled()
+    expect(screen.getByTestId('append')).toBeDisabled()
+  })
+
+  it('创建中回车不会清空输入框（没有可执行的 steer 目标）', () => {
+    const h = renderChat({ isStreaming: false, creating: true, onSteer: undefined })
+    const editor = screen.getByTestId('composer-editor')
+    editor.textContent = '补充：只看 web 目录'
+    fireEvent.input(editor)
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(h.onSend).not.toHaveBeenCalled()
+    expect(h.onAbort).not.toHaveBeenCalled()
+    expect(editor.textContent).toBe('补充：只看 web 目录')
   })
 })
 
@@ -222,6 +278,31 @@ describe('slash 命令 popover 候选选择', () => {
 
     fireEvent.keyDown(editor, { key: 'Enter' })
     expect(editor.textContent).toContain(secondActive.replace('/', ''))
+  })
+
+  // 回归：Tab 被当成「确认候选」。浮层打开时键盘用户既 Tab 不出去（焦点陷阱），
+  // 又会把候选静默插进正在写的消息（输入 `/c` 后按 Tab 变成 `/clear `）。Tab 应当
+  // 关闭浮层并把按键交给浏览器移动焦点；确认候选仍然走 Enter。
+  it('Tab 关闭浮层、不插入候选、按键不被吞（Shift+Tab 同理）', async () => {
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: TEST_COMMANDS })
+    renderChat({ isStreaming: false })
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.textContent = '/c'
+    fireEvent.input(editor)
+    await screen.findByTestId('slash-menu')
+
+    // 返回 true = 未 preventDefault → 浏览器仍会执行默认的焦点移动
+    expect(fireEvent.keyDown(editor, { key: 'Tab' })).toBe(true)
+    expect(editor.textContent).toBe('/c')
+    expect(screen.queryByTestId('slash-menu')).toBeNull()
+
+    editor.textContent = '/c'
+    fireEvent.input(editor)
+    await screen.findByTestId('slash-menu')
+
+    expect(fireEvent.keyDown(editor, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(editor.textContent).toBe('/c')
   })
 })
 

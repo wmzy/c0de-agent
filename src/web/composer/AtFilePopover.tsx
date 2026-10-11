@@ -1,4 +1,6 @@
 import { css } from '@linaria/core'
+import { useRef } from 'react'
+import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { FileSearchResult } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
 
@@ -41,30 +43,44 @@ const agentLabel = css`
   margin-bottom: 2px;
 `
 
+/** 加载/空态提示行（非候选项，不参与键盘索引）。 */
+const hint = css`
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 type Props = {
-  results: FileSearchResult[]
+  /** @agent 段（已按 query 过滤并截断，由 at-menu.ts 统一算好）。 */
+  subagents: AgentListItem[]
+  /** @文件段（已截断，与键盘索引空间同源）。 */
+  files: FileSearchResult[]
+  /** 扁平键盘索引：下标落在 agent 段还是文件段由 subagents.length 决定。 */
   activeIndex: number
+  /** 文件搜索仍在进行中（结果未到）。 */
+  loading?: boolean
   onSelect: (path: string) => void
-  /** 可用 agent 列表（@ mention 渲染）。 */
-  agents: AgentListItem[]
-  /** 当前 @ 查询串（过滤 agent name）。 */
-  query: string
-  /** agent 项的键盘高亮索引。 */
-  activeAgentIndex: number
   /** 选中 agent 时回调（插入 @name 文本）。 */
   onAgentSelect: (name: string) => void
 }
 
 function AtFilePopover(props: Props) {
-  const files = props.results.filter((r) => r.type === 'file').slice(0, 20)
-  // @ mention 只显示非 primary（可调用的 subagent/all），按 query 过滤 name
-  const subagents = props.agents
-    .filter((a) => a.mode !== 'primary')
-    .filter((a) => !props.query || a.name.includes(props.query))
-    .slice(0, 5)
-  if (files.length === 0 && subagents.length === 0) return null
+  const { subagents, files, activeIndex } = props
+  const listRef = useRef<HTMLDivElement>(null)
+  usePopoverScroll(listRef, activeIndex, true)
+  // 候选为空时区分「搜完了没有匹配」与「还在搜」：后者此前 return null——
+  // 浮层整个消失，用户看到的是「没有候选」，而搜索结果几十毫秒后才到。
+  if (files.length === 0 && subagents.length === 0) {
+    if (!props.loading) return null
+    return (
+      <div className={popover} role="status" data-testid="at-menu-loading">
+        <div className={hint}>搜索中…</div>
+      </div>
+    )
+  }
   return (
     <div
+      ref={listRef}
       className={popover}
       role="listbox"
       data-testid="at-menu"
@@ -74,8 +90,8 @@ function AtFilePopover(props: Props) {
         <button
           key={a.name}
           role="option"
-          aria-selected={i === props.activeAgentIndex}
-          className={`${item} ${i === props.activeAgentIndex ? 'active' : ''}`}
+          aria-selected={i === activeIndex}
+          className={`${item} ${i === activeIndex ? 'active' : ''}`}
           onClick={() => props.onAgentSelect(a.name)}
           type="button"
         >
@@ -87,8 +103,8 @@ function AtFilePopover(props: Props) {
         <button
           key={f.path}
           role="option"
-          aria-selected={subagents.length + i === props.activeIndex}
-          className={`${item} ${subagents.length + i === props.activeIndex ? 'active' : ''}`}
+          aria-selected={subagents.length + i === activeIndex}
+          className={`${item} ${subagents.length + i === activeIndex ? 'active' : ''}`}
           onClick={() => props.onSelect(f.path)}
           type="button"
         >

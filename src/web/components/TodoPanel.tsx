@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
+import { TOUCH } from '@/styles/breakpoints.js'
 import { inputStyle } from '@/styles/tokens.js'
 import { isImeComposing } from '@/utils/ime.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
@@ -95,6 +96,48 @@ const body = css`
   padding: 2px 0 6px;
 `
 
+/**
+ * 待办读失败态。与 ArchivePanel / KanbanView 同一套三段式（原因 + 重试），
+ * 此前本面板只有 data 一个状态位：请求 500 时 data 为 undefined → phases 恒为 []
+ * → 与「这个会话确实没有待办」落进同一分支（实测注入 500，面板稳定显示
+ * 「暂无任务，点击添加」）。
+ */
+const errorState = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 12px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 可能是长句，窄面板内必须断行 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  padding: 3px 12px;
+  font-size: 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 6px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
 const phaseGroup = css`
   margin-bottom: 2px;
 `
@@ -175,6 +218,11 @@ const taskActions = css`
   display: flex;
   gap: 2px;
   opacity: 0;
+  /* 隐藏态不吞点击：opacity:0 的按钮照样接收 pointer 事件，
+     触屏滑动阅读长任务时那一击会静默命中「放弃/删除」，任务被移除且无撤销。
+     与 BranchTree 会话行删除按钮同一口径：显形时才允许命中。
+     键盘不受影响——focus 与 pointer-events 无关，Tab 仍能进入。 */
+  pointer-events: none;
   transition: opacity 0.15s;
 
   button {
@@ -191,9 +239,30 @@ const taskActions = css`
   }
 `
 
+/*
+ * 行内操作按钮的显隐。
+ *
+ * 此前只有 `:hover` 一条：键盘 Tab 进入「放弃 / 删除」时按钮仍是 opacity:0，
+ * 屏幕上毫无变化——既看不到焦点落在哪（实测 containerOpacity=0、outline
+ * none），也分不清按 Enter 会放弃还是删除这条任务；触屏没有 hover，按钮对
+ * 手指等于不存在。按 BranchTree 的既有口径补齐三条触发源：hover、
+ * focus-within（键盘）、TOUCH（触屏）。
+ */
 const taskItemHover = css`
-  &:hover .${taskActions} {
+  &:hover .${taskActions},
+  &:focus-within .${taskActions} {
     opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* 触屏分支：TOUCH 必须写在顶层、括号内不能插 & —— 「TOUCH & .x {}」这种
+     写法会被 postcss-nested 解析成 media 内先悬空一个 &，产出 @media not all，
+     规则整条失效（实测编译结果如此）。与 BranchTree 同一写法。 */
+  ${TOUCH} {
+    & .${taskActions} {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 `
 
@@ -273,10 +342,21 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const [error, setError] = useState('')
   const [exportResult, setExportResult] = useState<string | null>(null)
 
-  const { data } = useQuery({
+  const {
+    data,
+    isLoading,
+    isError,
+    error: queryError,
+    refetch,
+  } = useQuery({
     queryKey: todoKey,
     queryFn: () => todoAPI.get(sessionId),
   })
+
+  // 拉不到 ≠ 没有：data 缺失时 phases 恒为 []，读失败与「这个会话确实没有
+  // 待办」此前落进同一分支（实测注入 500，面板稳定显示「暂无任务，点击添加」，
+  // 「导出到看板」也回「没有可导出的未完成任务」）。
+  const loadFailed = isError
 
   const phases: TodoPhase[] = data?.phases ?? []
 
@@ -306,6 +386,12 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
 
   const handleExportToKanban = () => {
     if (!projectId) return
+    // 读失败时 phases 恒为 []，此前会落到下面「没有可导出的未完成任务」——
+    // 把「拉不到」说成「没有任务可导出」，与面板的假空态是同一处误导。
+    if (loadFailed) {
+      setError('待办读取失败，无法导出。请先重试读取。')
+      return
+    }
     const todos = phases
       .flatMap((p) => p.tasks)
       .filter((t) => t.status === 'pending' || t.status === 'in_progress')
@@ -320,9 +406,15 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const execMutation = useMutation({
     mutationFn: ({ sessionId: sid, op }: { sessionId: string; op: TodoOp }) =>
       todoAPI.exec(sid, op),
-    onSuccess: (result: TodoOpResult) => {
+    onSuccess: (result: TodoOpResult, vars: { sessionId: string; op: TodoOp }) => {
       queryClient.setQueryData(todoKey, { phases: result.phases })
       setError('')
+      // 输入只在服务端真的受理后才清空：失败时用户刚打的任务文本必须留在
+      // 输入框里（错误行已经说明原因，重试即可，不必凭记忆重打）。
+      if (vars.op.op === 'append') {
+        setNewTask('')
+        setNewPhase('')
+      }
     },
     onError: (e: Error) => setError(e.message),
   })
@@ -346,12 +438,12 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const handleAdd = () => {
     if (!newTask.trim()) return
     const phaseName = newPhase.trim() || (phases[0]?.name ?? 'Tasks')
+    // 清空输入由 execMutation.onSuccess 统一负责（仅 append 操作），
+    // 失败时文本留在框里，不让用户重打一遍。
     execMutation.mutate({
       sessionId,
       op: { op: 'append', phase: phaseName, items: [newTask.trim()] },
     })
-    setNewTask('')
-    setNewPhase('')
   }
 
   const toggleCollapse = () => {
@@ -368,12 +460,29 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   )
   const current = activeTaskInfo(phases)
 
+  // 摘要栏此前只看 totalTasks（来自 undefined?.phases ?? []，读失败恒为 0），
+  // 于是失败时显示「暂无任务，点击添加」，用户认定 agent 的待办凭空消失。
+  // 加载中/失败各说各的；失败时点摘要栏是重试，不是展开「新建」入口。
+  const statusText = isLoading
+    ? '加载中…'
+    : loadFailed
+      ? '读取失败，点此重试'
+      : totalTasks === 0
+        ? '暂无任务，点击添加'
+        : null
+
   return (
     <div className={wrapper} data-testid="todo-panel">
       <button
         type="button"
         className={summaryBar}
-        onClick={totalTasks > 0 ? toggleCollapse : () => setShowAdd((v) => !v)}
+        onClick={
+          loadFailed
+            ? () => void refetch()
+            : totalTasks > 0
+              ? toggleCollapse
+              : () => setShowAdd((v) => !v)
+        }
       >
         <span className={summaryIcon}>📋</span>
         <span className={summaryProgress}>任务</span>
@@ -397,9 +506,35 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
             </span>
           </>
         )}
-        {totalTasks === 0 && !showAdd && <span className={summaryCurrent}>暂无任务，点击添加</span>}
-        <span className={expandIcon}>{collapsed ? '▾' : '▴'}</span>
+        {statusText && !showAdd && (
+          <span
+            className={summaryCurrent}
+            style={loadFailed ? { color: 'var(--haze-color-danger)' } : undefined}
+          >
+            {statusText}
+          </span>
+        )}
+        <span className={expandIcon}>{loadFailed ? '↻' : collapsed ? '▾' : '▴'}</span>
       </button>
+
+      {!collapsed && loadFailed && (
+        <div className={errorState} role="alert" data-testid="todo-load-error">
+          <span className={errorTitle}>待办读取失败</span>
+          <span className={errorDetail}>
+            {(queryError as { message?: string } | null)?.message ??
+              (queryError instanceof Error ? queryError.message : null) ??
+              '无法读取本会话的待办。'}
+          </span>
+          <button
+            type="button"
+            className={retryBtn}
+            onClick={() => void refetch()}
+            data-testid="todo-retry"
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       {!collapsed && totalTasks > 0 && (
         <div className={body}>
@@ -445,8 +580,12 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                       </button>
                       <div className={taskActions}>
                         {status !== 'abandoned' && (
+                          /* aria-label 不能省：accname 先取元素内容（"✕"），title
+                             只在无内容时兜底，读屏会把这个不可逆的操作播报成
+                             「✕ 按钮」。任务文本进可访问名，用户才知道动的是哪一条。 */
                           <Button
                             title="放弃"
+                            aria-label={`放弃任务：${task.content}`}
                             variant="outline"
                             onClick={() => dropTask(task.content)}
                           >
@@ -455,6 +594,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                         )}
                         <Button
                           title="删除"
+                          aria-label={`删除任务：${task.content}`}
                           variant="outline"
                           onClick={() => removeTask(task.content)}
                         >

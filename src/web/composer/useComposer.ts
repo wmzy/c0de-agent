@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { loadDraft, saveDraft } from '@/composer/draft.js'
 import {
   currentCursor,
   decorateWorkflowz,
@@ -45,12 +46,26 @@ type UseComposerOptions = {
    */
   onSend: (payload: ComposerSendPayload) => boolean | undefined | Promise<boolean | undefined>
   onAbort?: () => void
-  /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。 */
-  onSteer?: (message: string) => void
+  /** 流式态下「追加指令」注入 steering 文本（spec §3.9）。
+   *  返回值语义同 onSend：不返回值/true 视为已受理，false 或 Promise<false> 表示
+   *  没送出去（后端 {steered:false} 或请求失败），调用方据此保留输入。 */
+  onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   isStreaming: boolean
+  /**
+   * 输入区处于「忙」态：发送/追加都拿不到可执行的目标（草稿页建会话窗口——
+   * 既没有 run 可中止，也没有 steering 通道）。此时 send/steer 一律 no-op，
+   * 否则回车会再次走 onSend，多建一个空会话；按钮的禁用态由调用方负责。
+   */
+  busy?: boolean
   hasHistory: boolean
   /** 可用 slash 命令列表（用于检测子命令补全）。 */
   commands?: CommandInfo[]
+  /**
+   * 草稿持久化作用域（`s:<sessionId>` / `p:<projectId>`）。给定后输入内容按作用域
+   * 落 localStorage：切会话（Composer 随 ChatSkeleton 卸载）或刷新页面后原样回填。
+   * 缺省不持久化（无归属的输入没有可回填的地方）。
+   */
+  draftScope?: string
 }
 
 /** 单张图片大小上限（8MB）：base64 进 PGLite + SSE 载荷 + provider 请求，超限拒绝而非
@@ -95,8 +110,10 @@ function useComposer({
   onAbort,
   onSteer,
   isStreaming,
+  busy = false,
   hasHistory: _hasHistory,
   commands,
+  draftScope,
 }: UseComposerOptions) {
   const editorRef = useRef<HTMLDivElement>(null)
   const promptRef = useRef<Prompt>(DEFAULT_PROMPT)
@@ -168,6 +185,23 @@ function useComposer({
     return parseFromDOM(editorRef.current)
   }, [])
 
+  // 草稿持久化作用域镜像：persistDraft 的身份必须稳定（它进了 handleInput /
+  // setPromptExternal 的 useCallback 依赖链），不能直接闭包 draftScope。
+  const draftScopeRef = useRef(draftScope)
+  draftScopeRef.current = draftScope
+  /**
+   * 还原是否已完成。挂载时先读存储再允许回写——[images] 副作用在挂载首帧就会跑，
+   * 那时 imagesRef 还是初始的 []，抢先回写会用空图片覆盖刚读出来的草稿。
+   */
+  const draftRestoredRef = useRef(false)
+
+  /** 把当前输入与附件落盘（空草稿删除键）。无作用域/尚未还原时 no-op。 */
+  const persistDraft = useCallback(() => {
+    const scope = draftScopeRef.current
+    if (!scope || !draftRestoredRef.current) return
+    saveDraft(scope, promptRef.current, imagesRef.current)
+  }, [])
+
   const handleInput = useCallback(() => {
     if (!editorRef.current) return
     const prompt = parseFromDOM(editorRef.current)
@@ -206,30 +240,70 @@ function useComposer({
 
     // workflowz 关键词高亮装饰（纯视觉，不影响 parse/cursor 逻辑）
     decorateWorkflowz(editorRef.current)
-  }, [popover, resetHistory])
+    persistDraft()
+  }, [popover, resetHistory, persistDraft])
 
-  const setPromptExternal = useCallback((prompt: Prompt, cursorAtEnd = false) => {
-    if (!editorRef.current) return
-    mirrorRef.current.input = true
-    if (cursorAtEnd) {
-      const totalLen = promptToText(prompt).length
-      reconcile(editorRef.current, prompt, totalLen)
-    } else {
-      const cursor = currentCursor(editorRef.current)
-      reconcile(editorRef.current, prompt, prompt === DEFAULT_PROMPT ? 0 : cursor)
-    }
-    promptRef.current = prompt
-    setIsEmpty(isPromptEmpty(prompt))
-    // 外部设置 prompt 后也需装饰
-    if (editorRef.current) decorateWorkflowz(editorRef.current)
-  }, [])
+  /**
+   * 外部写入编辑器。
+   *
+   * persist=false 只给提示历史回溯用：↑/↓ 换的是「当前看哪一条」，不是「草稿
+   * 变成了什么」。落盘会把召回的旧提示写成本会话的草稿，用户那份正在写的
+   * 草稿（含 @file/snippet pill 与图片）就此被顶掉——而原草稿只在 draftRef 内存
+   * 里，切会话或刷新即永久丢失。回溯期间不动存储，用户按下 ↓ 或直接编辑，
+   * handleInput/reset 的落盘自然写入真实内容。
+   */
+  const setPromptExternal = useCallback(
+    (prompt: Prompt, cursorAtEnd = false, persist = true) => {
+      if (!editorRef.current) return
+      mirrorRef.current.input = true
+      if (cursorAtEnd) {
+        const totalLen = promptToText(prompt).length
+        reconcile(editorRef.current, prompt, totalLen)
+      } else {
+        const cursor = currentCursor(editorRef.current)
+        reconcile(editorRef.current, prompt, prompt === DEFAULT_PROMPT ? 0 : cursor)
+      }
+      promptRef.current = prompt
+      setIsEmpty(isPromptEmpty(prompt))
+      // 外部设置 prompt 后也需装饰
+      if (editorRef.current) decorateWorkflowz(editorRef.current)
+      // 外部写入同样落盘：发送成功后的清空（→ 键删除）、slash/@ 插入、失败还原都要反映到草稿。
+      if (persist) persistDraft()
+    },
+    [persistDraft],
+  )
+
+  // 挂载 / 切换作用域：回填该作用域的草稿。无草稿时清空输入区——上一个会话的
+  // 文字不能留在下一个会话的输入框里（切会话时 ChatSession 会先渲染 ChatSkeleton，
+  // 本 hook 整体重建，草稿只能来自存储）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setImages 是 useState 的稳定 setter，列进依赖是为了让「还原哪些附件」显式可见
+  useEffect(() => {
+    draftRestoredRef.current = false
+    const stored = draftScope ? loadDraft(draftScope) : null
+    setPromptExternal(stored?.prompt ?? DEFAULT_PROMPT, true)
+    setImages(stored?.images ?? [])
+    setImageError(null)
+    resetHistory()
+    draftRestoredRef.current = true
+  }, [draftScope, setPromptExternal, setImages, resetHistory])
+
+  // 附件变化（添加/移除/还原）也要落盘：它们不经 handleInput/setPromptExternal。
+  // 声明在还原 effect 之后——挂载首帧必须先把存储读出来再允许回写。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: images 不在回调体里（persistDraft 经 imagesRef 读），但附件变化必须触发这次回写
+  useEffect(() => {
+    persistDraft()
+  }, [images, persistDraft])
 
   // popover 选中插入命令（替换整行 /xxx）
+  // 返回值 = 是否真的写入了编辑器。调用方（Composer 的 Enter 分支）据此决定
+  // 能不能把这颗按键算作「确认候选」：插不进去时必须把按键放行，否则 Enter
+  // 被一个失效的浮层静默吞掉（消息发不出去、零反馈）。
   const insertSlash = useCallback(
     (name: string) => {
       setPromptExternal(textPrompt(`/${name} `), true)
       setPopover(null)
       editorRef.current?.focus()
+      return true
     },
     [setPromptExternal],
   )
@@ -243,6 +317,7 @@ function useComposer({
       setPromptExternal(textPrompt(`${prefix}${name} `), true)
       setPopover(null)
       editorRef.current?.focus()
+      return true
     },
     [setPromptExternal],
   )
@@ -250,11 +325,12 @@ function useComposer({
   // popover 选中插入子命令（替换整行为 /<cmd> <sub> ）
   const insertSubcommand = useCallback(
     (sub: string) => {
-      if (!subcommandCmd) return
+      if (!subcommandCmd) return false
       setPromptExternal(textPrompt(`/${subcommandCmd} ${sub} `), true)
       setPopover(null)
       setSubcommandCmd(null)
       editorRef.current?.focus()
+      return true
     },
     [setPromptExternal, subcommandCmd],
   )
@@ -263,17 +339,19 @@ function useComposer({
   // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
   // pill 被降级为纯文本（发送时 files 附件丢失）。改为定位光标前 @token
   // 范围并用 replacePromptRange 原位替换，范围外 part 原样保留。
+  // 光标前没有 @token（浮层开着时光标被移走）⇒ 无范围可替换，返回 false。
   const insertFile = useCallback(
     (path: string) => {
       const prompt = promptRef.current
-      if (!editorRef.current) return
+      if (!editorRef.current) return false
       const cursor = currentCursor(editorRef.current)
       const range = atTokenRange(promptToText(prompt), cursor)
-      if (!range) return
+      if (!range) return false
       const pill: Prompt = [{ type: 'file', path, content: path, start: 0, end: path.length }]
       setPromptExternal(replacePromptRange(prompt, range.start, range.end, pill), true)
       setPopover(null)
       editorRef.current.focus()
+      return true
     },
     [setPromptExternal],
   )
@@ -381,6 +459,33 @@ function useComposer({
     [addImageFile],
   )
 
+  /**
+   * 文本入框的唯一通道：换行归一 + 大段确认 + 插入。
+   *
+   * 拖放与粘贴此前是两条割裂的实现——handleDrop 里裸调 execCommand，跳过大段
+   * 确认与换行归一。`takeFocus` 是拖放路径的显式声明：Chromium 实测会把焦点
+   * 交给插入目标，但那是实现细节而非契约；粘贴时事件目标本就是编辑器，显式
+   * 抢焦点无意义，故由调用方按路径声明。
+   */
+  const insertText = useCallback((raw: string, takeFocus: boolean) => {
+    if (!raw) return
+    const normalized = normalizePaste(raw)
+    const chars = raw.length
+    const lines = raw.split('\n').length
+    if (
+      pasteMode(raw) === 'manual' &&
+      (chars >= LARGE_PASTE_CHARS || lines >= LARGE_PASTE_BREAKS)
+    ) {
+      // 大段内容先确认再插入（确认条见 Composer）。调用方已 preventDefault 吞掉
+      // 原生插入：此处只置状态而无人渲染确认 UI 时，内容会静默丢失。
+      // chars/lines 取自原始文本，与判定同源。
+      setShowPasteConfirm({ text: normalized, chars, lines })
+      return
+    }
+    if (takeFocus) editorRef.current?.focus()
+    document.execCommand('insertText', false, normalized)
+  }, [])
+
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
       // 图片粘贴优先
@@ -394,26 +499,13 @@ function useComposer({
           return
         }
       }
-      // 文本粘贴
+      // 文本粘贴（焦点本就在编辑器里，无需抢焦点）
       const text = e.clipboardData.getData('text/plain')
       if (!text) return
       e.preventDefault()
-      const normalized = normalizePaste(text)
-      const chars = text.length
-      const lines = text.split('\n').length
-      if (
-        pasteMode(text) === 'manual' &&
-        (chars >= LARGE_PASTE_CHARS || lines >= LARGE_PASTE_BREAKS)
-      ) {
-        // 大段粘贴先确认再插入（确认条见 Composer）。注意 e.preventDefault 已吞掉
-        // 原生插入：此处只置状态而无人渲染确认 UI 时，用户按 Ctrl+V 后输入框
-        // 毫无反应、内容静默丢失。chars/lines 取自原始文本，与判定同源。
-        setShowPasteConfirm({ text: normalized, chars, lines })
-        return
-      }
-      document.execCommand('insertText', false, normalized)
+      insertText(text, false)
     },
-    [addImageFile],
+    [addImageFile, insertText],
   )
 
   const confirmPaste = useCallback(() => {
@@ -437,6 +529,10 @@ function useComposer({
   }, [])
 
   const send = useCallback(() => {
+    // 忙态（首条消息在建会话的窗口）：既没有 run 可中止，也没有第二次发送的
+    // 意义——回车再走一次 onSend 会多建一个空会话并丢掉当前输入。按钮已禁用，
+    // 这里挡住的是 Enter 键与直接调用。
+    if (busy) return
     // 流式态：发送键变终止键
     if (isStreaming) {
       onAbort?.()
@@ -505,19 +601,40 @@ function useComposer({
         if (ok === false) restore()
       })
     }
-  }, [isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
+  }, [busy, isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
 
   // 追加指令：流式态下注入 steering 文本（仅流式态可用，空文本 no-op）
   const steer = useCallback(() => {
+    // 没有注入回调就不清空：steer 的清空语义建立在「这条文字已经被送到在途的
+    // run 里」之上，调用方没接 onSteer 时清空等于把用户输入凭空丢掉。
+    if (busy || !onSteer) return
     const prompt = readPrompt()
     if (isPromptEmpty(prompt)) return
     const text = promptToMessageText(prompt)
-    onSteer?.(text)
     // steering 同样把输入清空：它取代在途的那次发送，那次失败回来时不得回填。
+    // 但「清空」的前提是这条指令真的被受理——POST /api/chat/steer 回
+    // {steered:false} 时指令既没进 run 队列也没落库（agent 从未收到，刷新后
+    // 乐观条目即消失）。此前无条件清空：用户敲的整段指令连气泡都没有，彻底丢失。
+    // 现在只有确认受理才清空，失败时输入原样留着，配合 error 行让用户改用发送。
     sendAttemptRef.current += 1
-    setPromptExternal(DEFAULT_PROMPT)
-    resetHistory()
-  }, [readPrompt, onSteer, setPromptExternal, resetHistory])
+    const visible = promptToText(prompt)
+    const clear = () => {
+      // 输入框在请求在途期间仍可编辑：期间用户新敲的字不属于这条指令，不覆盖。
+      if (promptToText(readPrompt()) !== visible) return
+      setPromptExternal(DEFAULT_PROMPT)
+      resetHistory()
+    }
+    const outcome = onSteer(text)
+    if (outcome === false) return
+    if (outcome && typeof (outcome as Promise<boolean | undefined>).then === 'function') {
+      void (outcome as Promise<boolean | undefined>).then((ok) => {
+        if (ok !== false) clear()
+      })
+    } else {
+      // 旧契约：同步 void 回调视为受理，保持「发出即清空」的原有体感。
+      clear()
+    }
+  }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent, popoverSuppressed = false) => {
@@ -562,9 +679,11 @@ function useComposer({
           })
           if (result && 'entry' in result) {
             indexRef.current = result.index
-            setPromptExternal(textPrompt(result.entry))
+            setPromptExternal(textPrompt(result.entry), false, false)
           } else if (result && 'reset' in result) {
             indexRef.current = -1
+            // ↓ 退出历史：草稿回到输入框，此时它就是草稿——落盘（回溯期间存储里
+            // 一直是原草稿，这里写回同一份内容，语义上仍是「草稿未被顶掉」）。
             setPromptExternal(draftRef.current ?? DEFAULT_PROMPT)
           }
         }
@@ -589,6 +708,8 @@ function useComposer({
     handleInput,
     handleKeyDown,
     handlePaste,
+    /** 拖放文本入框：焦点未必在编辑器，需抢焦点后再插入（见 insertText）。 */
+    insertText,
     confirmPaste,
     cancelPaste,
     addImage,

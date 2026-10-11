@@ -1,9 +1,25 @@
 import { EditorView } from '@codemirror/view'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CodeEditor } from '@/components/CodeEditor.js'
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext.js'
+import { fileAPI } from '@/services/file.js'
+
+// mock 文件服务：保存链路（冲突检查的 read 与 write）在此拦截；
+// 错误对象按 services/api.ts 的 ApiErrorImpl 契约构造（Error + status/code 自有属性）。
+vi.mock('@/services/file.js', () => ({
+  fileAPI: {
+    read: vi.fn(),
+    write: vi.fn(),
+  },
+}))
+
+/** 构造 fileAPI 抛出的 APIError 形态（message 可枚举 + status/code 自有属性）。 */
+function apiError(status: number, code: string, message: string): Error {
+  return Object.assign(new Error(message), { status, code })
+}
 
 /** 主题切换按钮：真实用户在设置页切换明/暗，CodeEditor 的 resolved 随之变化。 */
 function ThemeToggle() {
@@ -147,5 +163,52 @@ describe('CodeEditor 未保存编辑保持', () => {
     await waitFor(() => expect(liveView(container)).toBeTruthy())
     const host = container.querySelector('.cm-editor')?.parentElement as HTMLElement
     expect(host.scrollTop).toBeLessThan(1000)
+  })
+})
+
+describe('CodeEditor 保存冲突检查——磁盘内容已变二进制', () => {
+  // 复现：服务端对二进制文件 read 返回 415 BINARY_FILE（routes/files.ts 字节层拒绝），
+  // 而 CodeEditor.save() 的冲突检查把它当「磁盘读取失败」直接 PUT：文件打开时是
+  // 文本、磁盘上后来被换成二进制内容时，用户一点保存就把编辑器文本整体覆盖上去，
+  // 静默毁掉二进制文件（415 之前是 200 mojibake 读，内容不同尚能触发冲突弹窗兜底）。
+  it('read 抛 415/BINARY_FILE：中止保存、不发出写入、错误文案可见', async () => {
+    vi.mocked(fileAPI.read).mockRejectedValue(
+      apiError(415, 'BINARY_FILE', '这是二进制文件，不能以文本方式显示或编辑'),
+    )
+    vi.mocked(fileAPI.write).mockResolvedValue({ path: 'a.ts', written: true })
+    const { container } = renderEditor({ path: 'a.ts', initial: 'AAA' })
+    await waitFor(() => expect(liveView(container)).toBeTruthy())
+    liveView(container)?.dispatch({ changes: { from: 0, insert: 'edited-' } })
+    await waitFor(() => expect(container.textContent).toContain('保存*'))
+
+    await userEvent.click(
+      container.querySelector<HTMLElement>('[data-testid="save"]') as HTMLElement,
+    )
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="write-error-banner"]')).not.toBeNull(),
+    )
+    expect(container.textContent).toContain('文件在磁盘上已是二进制内容')
+    expect(fileAPI.write).not.toHaveBeenCalled()
+  })
+
+  // 对照：冲突检查的 catch 对「其它读失败」维持既有语义——直接写入（文件被移入
+  // 回收站等场景写入会重建文件），不弹错误。
+  it('其它读失败（文件不存在等）仍直接写入', async () => {
+    vi.mocked(fileAPI.read).mockRejectedValue(apiError(404, 'FILE_NOT_FOUND', '文件不存在'))
+    vi.mocked(fileAPI.write).mockResolvedValue({ path: 'a.ts', written: true })
+    const { container } = renderEditor({ path: 'a.ts', initial: 'AAA' })
+    await waitFor(() => expect(liveView(container)).toBeTruthy())
+    liveView(container)?.dispatch({ changes: { from: 0, insert: 'edited-' } })
+    await waitFor(() => expect(container.textContent).toContain('保存*'))
+
+    await userEvent.click(
+      container.querySelector<HTMLElement>('[data-testid="save"]') as HTMLElement,
+    )
+
+    await waitFor(() => expect(fileAPI.write).toHaveBeenCalledTimes(1))
+    expect(fileAPI.write).toHaveBeenCalledWith('a.ts', 'edited-AAA', undefined)
+    expect(container.querySelector('[data-testid="write-error-banner"]')).toBeNull()
+    expect(container.textContent).toContain('已保存')
   })
 })

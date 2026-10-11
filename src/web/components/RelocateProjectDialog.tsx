@@ -90,7 +90,6 @@ export function RelocateProjectDialog({
         }}
         placeholder="/new/path/to/project"
         testId="relocate-project-input"
-        autoFocus
       />
       <div className={hint}>
         项目目录已失效（被移动或重命名）。输入新目录路径后，会话与看板将整体迁移到新位置——无需删除项目，看板不会丢失。

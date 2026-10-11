@@ -72,6 +72,40 @@ export function notifyTocReady(): void {
   for (const fn of tocListeners) fn()
 }
 
+/** deltaMode=DOM_DELTA_LINE 时一「行」折算的像素数（Firefox 走这条路径）。 */
+const LINE_HEIGHT = 16
+
+/**
+ * 纵向滚轮 → 目录行横向滚动的落点换算。
+ *
+ * 横向溢出的目录行（overflow-x: auto）不吃纵向滚轮分量：实测滚轮停在目录行上时
+ * scrollLeft 恒为 0、页面纵向滚了 300px。目录行在鼠标用户眼里就是「不能滑」——
+ * 1024px 下 18 个分区有 6 个（安全/自动授权/用量与成本/工作流/多 Agent/…）
+ * 因此够不到，只能靠 shift+滚轮或触控板横向手势这类非常规操作。
+ *
+ * 返回 null 表示「不拦截，把滚轮还给页面」：滚到两端时必须还，否则用户在目录行上
+ * 会卡住——怎么滚页面都不动，比滑不动更糟。同样地，无处可滚（没有溢出）时一律不拦。
+ *
+ * deltaMode 需归一：Firefox 报的是「行数」（DOM_DELTA_LINE=1）而不是像素，
+ * 直接当像素用会让滚动慢到几乎不动。
+ */
+export function horizontalWheelTarget(
+  bar: { scrollLeft: number; scrollWidth: number; clientWidth: number },
+  e: { deltaX: number; deltaY: number; deltaMode?: number },
+): number | null {
+  const max = bar.scrollWidth - bar.clientWidth
+  if (max <= 1) return null
+  const scale = e.deltaMode === 1 ? LINE_HEIGHT : e.deltaMode === 2 ? bar.clientWidth : 1
+  const dx = e.deltaX * scale
+  const dy = e.deltaY * scale
+  // 触控板横向手势（deltaX）优先；普通鼠标只有纵向分量。
+  const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy
+  if (delta === 0) return null
+  if (delta < 0 && bar.scrollLeft <= 0) return null
+  if (delta > 0 && bar.scrollLeft >= max) return null
+  return Math.max(0, Math.min(max, bar.scrollLeft + delta))
+}
+
 /**
  * 把分区标题滚到两条 sticky 之下。
  *

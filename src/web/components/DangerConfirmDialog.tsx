@@ -19,6 +19,19 @@ const dangerNote = css`
   color: var(--haze-color-danger);
 `
 
+/** 操作失败原因：留在弹层里，用户正在做的操作与失败原因必须同框可见。
+ *  此前删除项目的失败原因被写进项目下拉（关闭即卸载），用户零反馈。 */
+const errorBar = css`
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--haze-color-danger);
+  border-radius: 6px;
+  color: var(--haze-color-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+`
+
 const inputRow = css`
   display: flex;
   align-items: center;
@@ -53,13 +66,20 @@ const btn = css`
   cursor: pointer;
 `
 
+/*
+ * 确认按钮：红实底 + 白字。--haze-color-danger 同样是按「当文字色用」调的，
+ * 当实底时白字在两个主题都不过线（实测 dark 3.76 / light 4.82，13px 文字
+ * 需 4.5）——暗色下这是全应用唯一的「不可恢复」确认入口，却最难读。
+ * 改用 --c0de-danger-on-solid：light 沿用白字（4.82 达标），dark 压到
+ * 足够深的近黑（见 global.ts）。
+ */
 const dangerBtn = css`
   padding: 4px 12px;
   font-size: 13px;
   border: 1px solid var(--haze-color-danger);
   border-radius: 6px;
   background: var(--haze-color-danger);
-  color: #fff;
+  color: var(--c0de-danger-on-solid, #fff);
   cursor: pointer;
   &:disabled {
     opacity: 0.5;
@@ -75,6 +95,8 @@ type DangerConfirmDialogProps = {
   confirmWord: string
   confirmLabel?: string
   busy?: boolean
+  /** 操作失败原因（如后端 409）。渲染在弹层正文里，role=alert 播报。 */
+  error?: string | null
   /** M4：额外逃生动作（如「导出看板并删除」），渲染在取消与确认按钮之间。 */
   secondaryAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean }
   onConfirm: () => void
@@ -88,21 +110,44 @@ export function DangerConfirmDialog({
   confirmWord,
   confirmLabel = '确认删除',
   busy = false,
+  error = null,
   secondaryAction,
   onConfirm,
   onClose,
 }: DangerConfirmDialogProps) {
   const [typed, setTyped] = useState('')
+  // 每次打开（以及确认词变化）都从空输入重新开始：调用点常把本组件常驻挂载、
+  // 只切 open（WorkflowsPanel / UpdateBanner），typed 会跨关闭保留——用户第一次
+  // 认真输入过确认词、按 Esc 后悔，重开时输入框里还留着上一次的词，matched 在
+  // 第一帧就成立，红色确认键零确认即可按下，逐字确认这道门禁等于形同虚设。
+  //
+  // 渲染期归一（而非 effect）：effect 要等这一帧画完，重开的头一帧仍会显示
+  // 预填的词与已可点的确认键。
+  const [openedFor, setOpenedFor] = useState<{ open: boolean; word: string } | null>(null)
+  if (open && (openedFor?.open !== true || openedFor.word !== confirmWord)) {
+    setOpenedFor({ open: true, word: confirmWord })
+    setTyped('')
+  } else if (!open && openedFor !== null) {
+    setOpenedFor(null)
+  }
   const matched = typed === confirmWord
+  // 请求在飞时不给关闭的出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染
+  // 在这块面板里（role=alert），中途关掉它就等于把失败原因一起关掉——实测
+  // 删除项目时按 Esc，服务端随后 500，用户看到的是「点了删除，什么也没发生」。
+  const dismiss = () => {
+    if (busy) return
+    onClose()
+  }
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={dismiss}
+      closeDisabled={busy}
       title={title}
       testId="danger-confirm-dialog"
       footer={
         <>
-          <button type="button" className={btn} onClick={onClose}>
+          <button type="button" className={btn} onClick={dismiss} disabled={busy}>
             取消
           </button>
           {secondaryAction && (
@@ -130,13 +175,17 @@ export function DangerConfirmDialog({
     >
       <div className={desc}>{description}</div>
       <div className={dangerNote}>此操作不可恢复。</div>
+      {error ? (
+        <div className={errorBar} role="alert" data-testid="danger-error">
+          {'⚠'} {error}
+        </div>
+      ) : null}
       <div className={inputRow}>
         <span>输入「{confirmWord}」以确认：</span>
         <SyncedInput
           value={typed}
           onChange={(v) => setTyped(v)}
           placeholder={confirmWord}
-          autoFocus
           data-testid="danger-confirm-input"
         />
       </div>

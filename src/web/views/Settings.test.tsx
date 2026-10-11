@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { horizontalWheelTarget } from '@/components/settings/sectionScroll.js'
 import type { AppPaths } from '@/routes.js'
 import { Settings } from '@/views/Settings.js'
 
@@ -1007,6 +1008,37 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(args.defaultModel).toBe('claude-3')
   })
 
+  // 回归：JSON 视图语法错误时 draft 仍停在「最后一次合法解析」上，而保存条只看
+  // isDirty（= draft !== null），与 jsonError 无关 —— 按钮照常可点，点下去落盘的是
+  // 错误发生前的旧草稿，保存条却回显「✓ 已保存」。屏幕上的改动静默消失，
+  // 刷新即丢，用户全程没有被告知「保存的不是你看到的内容」。
+  it('JSON 语法错误时保存被拦下：不提交旧草稿，并明示修复语法错误后才能保存', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+
+    // 先改一处合法值（draft 变脏、isDirty=true），再把文本改成非法 JSON
+    fireEvent.change(editor, {
+      target: { value: JSON.stringify({ ...mockConfig, defaultModel: 'claude-3' }, null, 2) },
+    })
+    fireEvent.change(editor, { target: { value: '{ invalid json' } })
+
+    const save = screen.getByTestId('settings-save') as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+
+    fireEvent.click(save)
+    // 旧草稿不得落盘
+    expect(configAPI.update).not.toHaveBeenCalled()
+    // 且要能看出为什么按不动：保存条挂上原因，而不是只留 JSON 视图内那条错误条
+    expect(screen.getByTestId('settings-save-blocked-hint').textContent).toContain('JSON')
+  })
+
   it('JSON 语法错误时显示错误条', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
@@ -1111,6 +1143,142 @@ describe('Settings — JSON 模式与导入导出', () => {
 
     await waitFor(() => expect(screen.getByTestId('settings-json-error')).toBeTruthy())
     expect(screen.getByTestId('settings-json-editor')).toBeTruthy()
+  })
+
+  /**
+   * 回归：此前导入只做 JSON.parse 就把对象铺进表单（setDraft + 切 GUI）。
+   * - 类别不符的配置（`{"plugins":{"enabled":"demo"}}`）让面板拿到错误类型的值；
+   * - 缺字段的配置（`{"plugins":{}}`、`{"tools":{"disabled":["bash"]}}`）让
+   *   merged.plugins.enabled 变成 undefined → CommaListInput 的 value.join 抛错。
+   * 两条都会让整页被 ErrorBoundary 替换成「页面渲染出错」，未保存编辑丢失，
+   * 用户也看不出是导入的文件有问题。
+   */
+  it('导入类别不符的配置：留在 JSON 视图给原因，不铺进表单导致整页崩溃', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const mockFile = {
+      text: () => Promise.resolve('{"plugins":{"enabled":"demo"}}'),
+    } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [mockFile] } })
+
+    // 不切表单：留在 JSON 视图，且页面没有崩掉
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-json-error').textContent).toContain('配置结构错误'),
+    )
+    expect(screen.getByTestId('settings-json-editor')).toBeTruthy()
+    expect(screen.queryByTestId('provider-add')).toBeNull()
+    const errorBar = screen.getByTestId('settings-json-error')
+    expect(errorBar.textContent).toContain('plugins.enabled：应为数组，实际是字符串')
+    // 「表单」按钮禁用并说明原因（此前是静默无反应）
+    const guiBtn = screen.getByTestId('settings-mode-gui') as HTMLButtonElement
+    expect(guiBtn.disabled).toBe(true)
+    expect(guiBtn.title).toContain('plugins.enabled')
+  })
+
+  it('缺字段的配置导入后不再崩：缺失键按当前值补全，导入值生效', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 旧实现下这份文件会让表单里 tools.enabled / plugins.enabled 变成
+    // undefined → value.join 抛错 → 整页崩溃。
+    const mockFile = {
+      text: () => Promise.resolve('{"tools":{"disabled":["bash"]},"plugins":{}}'),
+    } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [mockFile] } })
+
+    // 切回表单且不再崩溃：enabled 由当前配置补全，disabled 用导入值
+    // （导入是异步的：以导入值出现为信号，不能等到「表单在不在」——表单本就在）
+    await waitFor(() =>
+      expect((screen.getByLabelText('已禁用') as HTMLInputElement).value).toBe('bash'),
+    )
+    expect(screen.getByTestId('provider-add')).toBeTruthy()
+    const enabled = screen.getByLabelText('已启用') as HTMLInputElement
+    expect(enabled.value).toBe('bash, read')
+  })
+
+  it('JSON 视图结构不符时保存被拦下：不落盘坏形状', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{"tools":"all"}' } })
+
+    expect(screen.getByTestId('settings-json-error').textContent).toContain('tools')
+    const save = screen.getByTestId('settings-save') as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    fireEvent.click(save)
+    expect(configAPI.update).not.toHaveBeenCalled()
+    expect(screen.getByTestId('settings-save-blocked-hint').textContent).toContain('配置结构错误')
+  })
+
+  it('JSON 视图内容形状合法时切回表单会按当前配置补全（表单不读 undefined）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{"tools":{"disabled":["read"]}}' } })
+
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    const enabled = screen.getByLabelText('已启用') as HTMLInputElement
+    expect(enabled.value).toBe('bash, read')
+    expect((screen.getByLabelText('已禁用') as HTMLInputElement).value).toBe('read')
+  })
+
+  /**
+   * 回归：表单里取消勾选「一键提交使用独立模型」（commitModel: undefined）后，
+   * JSON.stringify 会把值为 undefined 的键整条丢掉；切回表单时用已落盘 config
+   * 当补全模板，正好把这个「用户刚做的删除」当成「文本里缺的键」补回旧值——
+   * 复选框自己变回勾选，草稿与 config 又逐键相同，保存 diff 出空 patch 直接
+   * 回显「✓ 已保存」，磁盘上什么都没变（实测：点保存零 PATCH 请求）。
+   */
+  it('表单里的 unset 活过 JSON 往返：勾选态保持未勾选，保存落成 null', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const withCommitModel = {
+      ...mockConfig,
+      commitModel: { provider: 'ProviderA', model: 'gpt-4' },
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(withCommitModel))
+    ;(configAPI.update as Mock).mockResolvedValue(withCommitModel)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    const cb = screen.getByLabelText(/一键提交使用独立模型/) as HTMLInputElement
+    expect(cb.checked).toBe(true)
+    fireEvent.click(cb)
+    expect(cb.checked).toBe(false)
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    expect(editor.value).not.toContain('commitModel')
+
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    expect((screen.getByLabelText(/一键提交使用独立模型/) as HTMLInputElement).checked).toBe(false)
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const patch = (configAPI.update as Mock).mock.calls[0]?.[0] as { commitModel?: unknown }
+    // diffConfig 的清除口径：null（JSON 不传 undefined）
+    expect(patch.commitModel).toBeNull()
   })
 })
 
@@ -1350,7 +1518,7 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(Object.keys(args.compaction)).toEqual(['compactionModel'])
   })
 
-  it('添加并删除 MCP 服务器', async () => {
+  it('删除 MCP 服务器需二次确认：取消保留、确认才移除', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
@@ -1360,8 +1528,48 @@ describe('Settings — 完整配置表单覆盖', () => {
     fireEvent.click(screen.getByTestId('mcp-add'))
     expect(screen.getAllByTestId('mcp-row')).toHaveLength(1)
 
+    // 回归：删除此前单击即生效，一行已填好的 command/args/url 直接消失。
+    // 点删除后必须先出现确认弹层，行仍在。
     fireEvent.click(screen.getByTestId('mcp-remove'))
-    expect(screen.queryByTestId('mcp-row')).toBeNull()
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('MCP 服务器')
+    expect(screen.getAllByTestId('mcp-row')).toHaveLength(1)
+
+    // 取消：行保留
+    fireEvent.click(within(dialog).getByText('取消'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getAllByTestId('mcp-row')).toHaveLength(1)
+
+    // 确认：行才移除
+    fireEvent.click(screen.getByTestId('mcp-remove'))
+    const dialog2 = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog2).getByText('删除'))
+    await waitFor(() => expect(screen.queryByTestId('mcp-row')).toBeNull())
+  })
+
+  // 复现：args 字段是 value={args.join(' ')} + onChange=v.split(/\s+/) 的裸受控组合，
+  // 每敲一个空格就被 parse→join 还原，尾随分隔符永远打不出来——第二个参数根本输不进去，
+  // 用户以为填的是 `npx -y`，保存下来是 `npx-y`。
+  it('MCP args 空格分隔：尾随空格保留，第二个参数能输进去', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({ ok: true })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('mcp-add'))
+    const args = screen.getByPlaceholderText('args（空格分隔）') as HTMLInputElement
+    fireEvent.change(args, { target: { value: 'npx ' } })
+    await waitFor(() => expect(args.value).toBe('npx '))
+
+    fireEvent.change(args, { target: { value: 'npx -y' } })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const patch = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      mcpServers: { args: string[] }[]
+    }
+    expect(patch.mcpServers[0]?.args).toEqual(['npx', '-y'])
   })
 
   // 回归：MCP 已在 serve/CLI 两个宿主接入（registerMCPServers 注册其工具、项目作用域
@@ -1525,6 +1733,80 @@ describe('Settings — 完整配置表单覆盖', () => {
     fireEvent.click(screen.getByTestId('settings-save'))
     await waitFor(() => expect(screen.getByTestId('settings-restart-hint')).toBeTruthy())
     expect(screen.getByTestId('settings-restart-hint').textContent).toContain('重启')
+  })
+
+  // 回归：needsRestart 提示排在 <SettingsSaveBar> 之后、DOM 最末端，而保存条是
+  // position:sticky;bottom:0 恒钉视口底部。GUI 表单实测高 3500px+，于是这条
+  // 「还没生效」的提示永远落在滚动区最末尾：用户点完保存，视口里只有「✓ 已保存」，
+  // 把「已保存」和「已加固」混为一谈。提示必须与保存状态同处一屏。
+  it('重启提示钉在吸底保存条上（与保存状态同屏），不随文档滚到最末尾', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue({
+      config: mockConfig,
+      scopes: { global: null, project: null },
+      warnings: [],
+      needsRestart: true,
+    })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('Bearer Token 认证')) as HTMLElement
+    fireEvent.click(authCheck)
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(screen.getByTestId('settings-restart-hint')).toBeTruthy())
+
+    // 提示必须挂在保存条内部（sticky 区域内），而不是它的下一个兄弟节点
+    const bar = screen.getByTestId('settings-save-bar')
+    expect(bar.contains(screen.getByTestId('settings-restart-hint'))).toBe(true)
+    // 文案要说明「配置已存下但未生效」，否则与「✓ 已保存」并列仍会被读成已加固
+    expect(screen.getByTestId('settings-restart-hint').textContent).toContain('未生效')
+  })
+
+  // 回归：needsRestart 是**每次 PATCH 各自**的信号（服务端只在本次写入
+  // security/update/plugins 且作用域为 global 时返回 true）。覆盖式置位让
+  // 「鉴权改动尚未生效」的唯一警告被下一次无关保存（改默认模型，返回 false）
+  // 抹掉——用户据此认定鉴权已加固。
+  it('后续无关保存不得抹掉已有的「需重启」提示', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    const update = configAPI.update as Mock
+    // 第一次：security 变更 → 需要重启；第二次：无关变更 → 服务端返回 false
+    update.mockResolvedValueOnce({
+      config: mockConfig,
+      scopes: { global: null, project: null },
+      warnings: [],
+      needsRestart: true,
+    })
+    update.mockResolvedValue({
+      config: mockConfig,
+      scopes: { global: null, project: null },
+      warnings: [],
+      needsRestart: false,
+    })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('Bearer Token 认证')) as HTMLElement
+    fireEvent.click(authCheck)
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(screen.getByTestId('settings-restart-hint')).toBeTruthy())
+
+    // 顺手改一个无关项再保存：重启提示必须还在
+    fireEvent.change(screen.getByTestId('default-model-select'), { target: { value: 'gpt-5' } })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+
+    expect(screen.getByTestId('settings-restart-hint')).toBeTruthy()
   })
 
   it('最小 patch：只保存变化字段，未变化的顶层键不出现在 payload', async () => {
@@ -1836,6 +2118,35 @@ describe('Settings — 工作流管理面板', () => {
     )
   })
 
+  // 删除失败的原因此前只写进 section 顶部的 workflow-panel-error，而删除确认是
+  // <dialog> 模态——那条错误在遮罩之下，用户看到的是「弹窗原地不动、框内零提示」。
+  // 契约：失败原因留在用户正在做的操作旁边（DangerConfirmDialog 的 error 槽）。
+  it('删除工作流失败：原因显示在确认弹窗内，弹窗不自己关掉', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: [WF_FIXTURES[1]] })
+    ;(workflowsAPI.remove as Mock).mockRejectedValue(new Error('工作流文件被占用'))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(1))
+    fireEvent.click(screen.getByTestId('workflow-delete'))
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: 'my-wf' } })
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('danger-error').textContent).toContain('工作流文件被占用'),
+    )
+    // 失败不是「成功」：弹窗仍在，用户可以改环境后重试或取消
+    expect(screen.getByTestId('danger-confirm-dialog')).toBeTruthy()
+
+    // 关掉再重开：上一条失败原因不残留（否则看起来像这次也会失败）
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByTestId('danger-confirm-dialog')).toBeNull())
+    fireEvent.click(screen.getByTestId('workflow-delete'))
+    expect(screen.queryByTestId('danger-error')).toBeNull()
+  })
+
   it('编辑工作流保存带 overwrite: true；新建不带 overwrite', async () => {
     const { configAPI } = await import('@/services/config.js')
     const { workflowsAPI } = await import('@/services/workflows.js')
@@ -1850,9 +2161,11 @@ describe('Settings — 工作流管理面板', () => {
     renderSettings()
     await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(1))
 
-    // 编辑模式：overwrite: true
+    // 编辑模式：overwrite: true（源码读取完成前「保存」禁用）
     fireEvent.click(screen.getByTestId('workflow-edit'))
-    await waitFor(() => expect(screen.getByTestId('workflow-source-editor')).toBeTruthy())
+    await waitFor(() =>
+      expect((screen.getByTestId('workflow-save') as HTMLButtonElement).disabled).toBe(false),
+    )
     fireEvent.click(screen.getByTestId('workflow-save'))
     await waitFor(() => expect(workflowsAPI.save).toHaveBeenCalled())
     const editPayload = (workflowsAPI.save as Mock).mock.calls.at(-1)?.[0] as {
@@ -1870,6 +2183,58 @@ describe('Settings — 工作流管理面板', () => {
       overwrite?: boolean
     }
     expect(createPayload.overwrite).toBeUndefined()
+  })
+
+  // 复现：openEdit 沿用上一次的 draftSource 就开窗，弹窗标题写「编辑：B」而编辑区
+  // 里还是 A 的源码，且「保存」不感知加载态——慢盘下点保存就用 A 覆盖 B（overwrite: true）。
+  it('编辑弹窗在源码加载完成前不展示上一个工作流的内容、也不可保存', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { workflowsAPI } = await import('@/services/workflows.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    ;(workflowsAPI.list as Mock).mockResolvedValue({ workflows: WF_FIXTURES })
+    ;(workflowsAPI.save as Mock).mockResolvedValue({ ok: true })
+
+    // 第一次查看立即返回，源码进入 draft；第二次（编辑）挂起不返回
+    type Detail = { name: string; sourceCode: string }
+    let resolveSlow: ((v: Detail) => void) | undefined
+    ;(workflowsAPI.get as Mock).mockImplementation((name: string) =>
+      name === 'security-audit'
+        ? Promise.resolve({ ...WF_FIXTURES[0], sourceCode: 'const A = 1\n' })
+        : new Promise<Detail>((r) => {
+            resolveSlow = r
+          }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('workflow-row')).toHaveLength(2))
+
+    // 内置行只有「查看」；用 my-wf 走一遍加载完成 → 关闭，让 draft 里有内容
+    fireEvent.click(screen.getAllByTestId('workflow-view')[0] as HTMLElement)
+    await waitFor(() =>
+      expect((screen.getByTestId('workflow-source-editor') as HTMLTextAreaElement).value).toBe(
+        'const A = 1\n',
+      ),
+    )
+    fireEvent.click(screen.getByLabelText('关闭'))
+
+    // 第二次打开（挂起中）：编辑区必须为空、保存禁用
+    fireEvent.click(screen.getByTestId('workflow-edit'))
+    const editor = (await screen.findByTestId('workflow-source-editor')) as HTMLTextAreaElement
+    expect(editor.value).toBe('')
+    expect(screen.getByTestId('workflow-loading')).toBeTruthy()
+    expect((screen.getByTestId('workflow-save') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByTestId('workflow-save'))
+    expect(workflowsAPI.save).not.toHaveBeenCalled()
+
+    // 读取完成 → 源码出现、保存可用
+    resolveSlow?.({ name: 'my-wf', sourceCode: 'const B = 2\n' })
+    await waitFor(() =>
+      expect((screen.getByTestId('workflow-source-editor') as HTMLTextAreaElement).value).toBe(
+        'const B = 2\n',
+      ),
+    )
+    expect(screen.queryByTestId('workflow-loading')).toBeNull()
+    expect((screen.getByTestId('workflow-save') as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('未信任项目：list 返回 trustRequired 时展示隐藏提示', async () => {
@@ -2087,6 +2452,66 @@ describe('Settings — 分区导航', () => {
       vi.restoreAllMocks()
 
       expect(linkScroll, '深链与点击目录应落在同一位置').toBe(clickScroll)
+    })
+  })
+
+  /**
+   * 目录行的滚轮换算。
+   *
+   * 缺陷：目录行是 overflow-x:auto，但鼠标滚轮只有纵向分量。实测滚轮停在目录行
+   * 上时 scrollLeft 恒为 0、页面纵向滚了 300px——目录行在鼠标用户眼里不能滑。
+   * 1024px 下 18 个分区有 6 个（安全/自动授权/用量与成本/工作流/多 Agent/…）
+   * 因此够不到。
+   *
+   * 关键不是「能不能滚」，而是「什么时候必须把滚轮还回去」：滚到两端还继续拦截，
+   * 用户会在目录行上卡住——怎么滚页面都不动，比滑不动更糟。
+   */
+  describe('目录行滚轮横向滑动', () => {
+    const bar = { scrollLeft: 300, scrollWidth: 1467, clientWidth: 1024 }
+
+    const wheel = (deltaX: number, deltaY: number, deltaMode = 0) => ({
+      deltaX,
+      deltaY,
+      deltaMode,
+    })
+
+    it('纵向滚轮转成目录行横向滚动', () => {
+      expect(horizontalWheelTarget(bar, wheel(0, 120))).toBe(420)
+    })
+
+    it('已到最左且继续上滚时放行，让页面自己滚', () => {
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: 0 }, wheel(0, -120))).toBeNull()
+    })
+
+    it('已到最右且继续下滚时放行，不把用户卡在目录行上', () => {
+      const max = bar.scrollWidth - bar.clientWidth
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: max }, wheel(0, 120))).toBeNull()
+    })
+
+    it('没有横向溢出时一律不拦截', () => {
+      expect(
+        horizontalWheelTarget(
+          { scrollLeft: 0, scrollWidth: 1024, clientWidth: 1024 },
+          wheel(0, 120),
+        ),
+      ).toBeNull()
+    })
+
+    it('落点被钳在 [0, max] 内，不会滚出边界', () => {
+      const max = bar.scrollWidth - bar.clientWidth
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: max - 10 }, wheel(0, 500))).toBe(max)
+      expect(horizontalWheelTarget({ ...bar, scrollLeft: 10 }, wheel(0, -500))).toBe(0)
+    })
+
+    it('触控板横向手势优先于纵向分量', () => {
+      expect(horizontalWheelTarget(bar, wheel(-200, 5))).toBe(100)
+    })
+
+    it('deltaMode 为行数时按行高折算（Firefox 报行数，当像素用会几乎不动）', () => {
+      // DOM_DELTA_LINE=1：5 行 → 80px
+      expect(horizontalWheelTarget(bar, wheel(0, 5, 1))).toBe(380)
+      // DOM_DELTA_PIXEL=0：5 就是 5px——同一手势差 16 倍，不折算等于滑不动
+      expect(horizontalWheelTarget(bar, wheel(0, 5, 0))).toBe(305)
     })
   })
 })

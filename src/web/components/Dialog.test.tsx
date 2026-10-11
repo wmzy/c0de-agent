@@ -116,3 +116,34 @@ describe('Dialog — 关闭后焦点归还', () => {
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '名称' }))
   })
 })
+
+describe('Dialog — 打开时的初始焦点', () => {
+  /**
+   * haze 的 useFocusScope 在挂载的 passive effect 里 focusFirst(面板)，面板内
+   * 第一个可聚焦节点是我们渲染在 children 之前的 ✕ 关闭键。实测「添加项目」
+   * 焦点落在文件树、「删除项目」落在 <dialog> 自身：调用方的 autoFocus 全被
+   * 覆盖，键盘用户要先 Tab 两次才够得着输入框，破坏性确认弹窗上条件反射的
+   * Enter 直接把确认关掉。初始焦点必须由本组件交给内容区的第一个控件。
+   */
+  it('打开后焦点落在内容区第一个控件，而不是关闭键', () => {
+    render(
+      <Dialog open onClose={vi.fn()} title="删除项目">
+        <p>将删除项目「ux3-demo」。</p>
+        <input aria-label="确认名称" />
+      </Dialog>,
+    )
+
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '确认名称' }))
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: '关闭' }))
+  })
+
+  it('内容区没有可聚焦控件时不抢焦点（交给 haze 的面板行为）', () => {
+    render(
+      <Dialog open onClose={vi.fn()} title="说明">
+        <p>只有说明文字。</p>
+      </Dialog>,
+    )
+
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: '关闭' }))
+  })
+})

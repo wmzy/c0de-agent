@@ -24,6 +24,14 @@ vi.mock('@/services/file.js', () => ({
   },
 }))
 
+vi.mock('@/services/project.js', () => ({
+  projectAPI: {
+    remove: vi.fn(),
+    // 顶栏「项目看板」入口在无路由 projectId 时用它解析当前项目。
+    current: vi.fn(),
+  },
+}))
+
 // AddProjectDialog 依赖 projectAPI + DirectoryPicker（需文件列表 API），
 // 测试 TopBar 下拉交互时 mock 掉以隔离。
 vi.mock('./AddProjectDialog.js', () => ({
@@ -105,6 +113,25 @@ async function renderAtProject(projectId: string) {
   return renderAt(`/projects/${projectId}`)
 }
 
+/**
+ * 未命中路由时渲染 TopBar：生产里由 HistoryRouter 的 notFound 属性提交
+ * （App.tsx），TopBar 位于匹配链之外、useMatched 返回 undefined、routePath
+ * 为空串。notFound 属于 router 而非 View，放 HistoryRouter 上。
+ */
+async function renderNotFound(path: string) {
+  return await renderWithProvider(
+    <MemoryRouter routes={testRoutes} initialEntries={[path]} notFound={<TopBar />}>
+      <View />
+    </MemoryRouter>,
+  )
+}
+
+/** 当前被标为「当前页」的导航项文案（aria-current='page'）。 */
+function currentNavLabel(): string | null {
+  const el = document.querySelector('header nav a[aria-current="page"]')
+  return el ? el.textContent.trim() : null
+}
+
 describe('TopBar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -141,6 +168,73 @@ describe('TopBar', () => {
     await renderAtProject('abc123')
     const sessionsLink = screen.getByText('会话').closest('a')
     expect(sessionsLink?.getAttribute('href')).toBe('/projects/abc123')
+  })
+
+  /*
+   * 看板入口没有「回根路径」这条退路：RootRedirect 把 / 解析成项目的**会话**
+   * 页面，于是无路由 projectId 时（/settings 根路由、404 页）点「项目看板」
+   * 会落到会话列表——顶栏写着看板、落点是会话，中间没有任何提示。实测修复前
+   * 在 /settings 点它，URL 变成 /projects/<id>。改为解析「当前项目」后指向
+   * 真正的看板路由（与 RootRedirect 同一 queryKey，命中缓存不额外发请求）。
+   */
+  it('无项目上下文时看板入口解析当前项目，而不是退回会话首页', async () => {
+    const { projectAPI } = await import('@/services/project.js')
+    ;(projectAPI.current as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'abc123',
+      name: 'proj',
+    })
+
+    await renderAt('/settings')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('nav-kanban').getAttribute('href')).toBe('/projects/abc123/kanban')
+    })
+  })
+
+  it('当前项目解析不出来时看板入口退回根路径（与修复前一致）', async () => {
+    const { projectAPI } = await import('@/services/project.js')
+    ;(projectAPI.current as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('请在项目目录启动 c0de serve'),
+    )
+
+    await renderAt('/settings')
+
+    // 等查询落定：解析失败不得改变落点，更不能渲染成看板路由
+    await waitFor(() => {
+      expect(projectAPI.current).toHaveBeenCalled()
+    })
+    expect(screen.getByTestId('nav-kanban').getAttribute('href')).toBe('/')
+  })
+
+  /*
+   * 导航项的高亮此前只有 data-active + CSS 类，读屏拿不到「你在哪一页」。
+   * aria-current='page' 是这件事的标准表达（WCAG 3.2.3 的反向信息）。
+   */
+  it('当前导航项以 aria-current=page 暴露，且同一时刻只有一项', async () => {
+    await renderAt('/settings')
+    expect(currentNavLabel()).toBe('设置')
+
+    cleanup()
+
+    await renderAtProject('abc123')
+    expect(currentNavLabel()).toBe('会话')
+
+    cleanup()
+
+    await renderAt('/projects/abc123/kanban')
+    expect(currentNavLabel()).toBe('项目看板')
+
+    expect(document.querySelectorAll('header nav a[aria-current="page"]').length).toBe(1)
+  })
+
+  // 404 视图在匹配链之外渲染 TopBar：屏幕上没有会话页，却把「会话」标成
+  // 当前页会让视觉与读屏一起说「你在会话页」。
+  it('未命中路由时没有任何导航项被标成当前页', async () => {
+    await renderNotFound('/no-such-page')
+
+    expect(screen.getByTestId('nav-kanban')).toBeTruthy()
+    expect(currentNavLabel()).toBeNull()
+    expect(screen.getByText('会话').closest('a')?.getAttribute('data-active')).toBeNull()
   })
 
   // ---- ProjectIndicator（内嵌在 TopBar）----
@@ -356,6 +450,39 @@ describe('TopBar', () => {
     await waitFor(() => {
       expect(fileAPI.gitBranchCreate).toHaveBeenCalledWith('p1', 'feature/x')
     })
+    // 成功后才清空：输入框复位，等待下一次输入。
+    await waitFor(() => {
+      expect((screen.getByTestId('branch-new-input') as HTMLInputElement).value).toBe('')
+    })
+  })
+
+  // 回归：submit 曾无条件 setName('')，创建失败（分支已存在 / 非法 ref /
+  // worktree 被占用）时输入框已被清空，用户只能照着错误文案把刚打的名字重敲一遍。
+  it('创建分支失败时保留输入的分支名并就地报出原因', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
+      branches: [{ name: 'main', current: true, lastSubject: null }],
+    })
+    const gitBranchCreate = fileAPI.gitBranchCreate as ReturnType<typeof vi.fn>
+    gitBranchCreate.mockRejectedValueOnce(new Error("branch 'feature/x' already exists"))
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-new-input')).toBeTruthy()
+    })
+
+    const input = screen.getByTestId('branch-new-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'feature/x' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const err = await screen.findByTestId('branch-create-error')
+    expect(err.textContent).toContain('already exists')
+    expect(err.getAttribute('role')).toBe('alert')
+    expect(input.value).toBe('feature/x')
+    // 允许改完再试一次。
+    expect(input.disabled).toBe(false)
   })
 
   // ---- CommitButton（内嵌在 TopBar via ProjectIndicator actions）----
@@ -371,6 +498,27 @@ describe('TopBar', () => {
     const btn = screen.getByTestId('git-commit-btn') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
     expect(btn.getAttribute('data-has-changes')).toBeNull()
+  })
+
+  // 读不到 git status（5xx / 项目已删除 404）此前与「确实没有变更」共用同一条路径：
+  // 按钮禁用、title 写死「无变更」——有未提交改动的用户被告知没有变更，且唯一的
+  // 提交入口还是灰的，没有任何重试手段。契约：失败态可点且点了重试读取，不提交。
+  it('git-status 读取失败时不谎报「无变更」：按钮可点、点了重试而非提交', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('git boom'))
+
+    await renderAtProject('p1')
+    await waitFor(() => {
+      expect(screen.getByTestId('git-commit-btn').getAttribute('data-git-status-failed')).toBe(
+        'true',
+      )
+    })
+    const btn = screen.getByTestId('git-commit-btn') as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
+    // 未提交：点击是重试读取
+    fireEvent.click(btn)
+    await waitFor(() => expect(fileAPI.gitStatus).toHaveBeenCalledTimes(2))
+    expect(fileAPI.gitCommit).not.toHaveBeenCalled()
   })
 
   it('有未提交变更时提交按钮高亮（data-has-changes）', async () => {
@@ -602,5 +750,129 @@ describe('TopBar — 月成本徽标', () => {
     await renderAt('/')
     const badge = await screen.findByTestId('month-cost-badge')
     expect(badge.textContent).toBe('本月 $1.01')
+  })
+
+  // 回归：用量查询失败时 data 为 undefined，cost 回落 0，徽标照常渲染成
+  // 「本月 $0.00」——一个精确、可信、且完全错误的数字。用户会据此认为本月没
+  // 花钱、没超预算。读不到必须说读不到。
+  it('用量读取失败时徽标显示不可用，不谎报 $0.00', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockRejectedValue(new Error('usage summary 500'))
+
+    await renderAt('/')
+    const badge = await screen.findByTestId('month-cost-badge')
+    await waitFor(() => {
+      expect(badge.textContent).toContain('用量不可用')
+    })
+    expect(badge.textContent).not.toContain('$0')
+  })
+})
+
+/**
+ * 回归：分支切换失败（git checkout 被未提交改动拒绝）时页面完全无提示。
+ *
+ * 缺陷：checkoutMut 此前没有 onError，错误只写进 mutation state。点分支项后
+ * 下拉立即关闭，页面什么都不剩——用户以为已切到目标分支，后续 agent 的编辑与
+ * 提交全部落到旧分支。对照：同菜单的新建分支 NewBranchForm 有 error 渲染，
+ * 说明这是漏写而非设计。
+ */
+describe('TopBar — 分支切换失败提示', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+  })
+
+  it('gitCheckout 失败时在顶栏显示原因，并说清「仍在原分支」', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
+      branches: [
+        { name: 'main', current: true, lastSubject: null },
+        { name: 'develop', current: false, lastSubject: null },
+      ],
+    })
+    ;(fileAPI.gitCheckout as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+      message: 'Your local changes would be overwritten by checkout',
+    })
+
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-item-develop'))
+
+    const err = await screen.findByTestId('branch-checkout-error')
+    expect(err.textContent).toContain('未能切到该分支')
+    expect(err.textContent).toContain('Your local changes would be overwritten')
+    // 分支标签仍显示原分支，且错误提示随它一起留在顶栏（不藏进已关闭的下拉）
+    expect(screen.getByTestId('project-branch').textContent).toContain('main')
+    expect(err.getAttribute('title')).toContain('main')
+  })
+
+  it('下一次切换成功后清除错误提示', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({
+      branches: [
+        { name: 'main', current: true, lastSubject: null },
+        { name: 'develop', current: false, lastSubject: null },
+      ],
+    })
+    ;(fileAPI.gitCheckout as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce({ message: 'checkout failed' })
+      .mockResolvedValueOnce({ branch: 'develop' })
+
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByTestId('branch-dropdown-item-develop'))
+    await screen.findByTestId('branch-checkout-error')
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByTestId('branch-dropdown-item-develop'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('branch-checkout-error')).toBeNull()
+    })
+  })
+})
+
+describe('TopBar — 删除项目失败提示', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+  })
+
+  // 回归：删除失败时原因被写进项目下拉里，而确认弹层在请求发出前就关掉了、
+  // 下拉也已关闭卸载——用户看到的是「点了删除，什么也没发生」，还可能反复点。
+  // 现在弹层留在原地，原因与操作同框（role=alert 播报）。
+  it('删除被 409 拒绝时弹层不关闭，原因为可见的 alert', async () => {
+    const { projectAPI } = await import('@/services/project.js')
+    ;(projectAPI.remove as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('项目下有 1 个打开的终端，请先关闭终端后再删除项目'),
+    )
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('project-dropdown-trigger'))
+    await waitFor(() => expect(screen.getByTestId('delete-project')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('delete-project'))
+
+    const input = await screen.findByTestId('danger-confirm-input')
+    fireEvent.change(input, { target: { value: 'proj' } })
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
+
+    const alert = await screen.findByTestId('danger-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('打开的终端')
+    // 弹层仍在（用户还站在删除这一步上，项目当然也还在）
+    expect(screen.getByTestId('danger-confirm-dialog')).toBeTruthy()
+    expect(screen.getByTestId('project-indicator')).toBeTruthy()
   })
 })

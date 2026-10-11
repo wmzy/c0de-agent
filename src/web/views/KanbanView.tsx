@@ -14,9 +14,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useCallback, useRef, useState } from 'react'
 import { BoardConfigDialog } from '@/components/kanban/BoardConfigDialog.js'
 import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
-import { computeDropPosition } from '@/components/kanban/drop-position.js'
+import { computeDropPosition, POSITION_GAP } from '@/components/kanban/drop-position.js'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
-import { type KanbanCard, kanbanAPI } from '@/services/kanban.js'
+import { type KanbanBoardWithCards, type KanbanCard, kanbanAPI } from '@/services/kanban.js'
 
 const view = css`
   display: flex;
@@ -37,6 +37,8 @@ const header = css`
 const headerTitle = css`
   font-size: 15px;
   font-weight: 600;
+  /* h1 的浏览器默认 margin 会把这行工具条撑变形，收回与原 span 一致 */
+  margin: 0;
 `
 
 /** 看板定位说明：项目级 vs 会话内待办的边界（产品定位，P2）。 */
@@ -275,7 +277,17 @@ export function KanbanView({ projectId }: KanbanViewProps) {
 
   const { ref: boardRef, overflowing } = useOverflowX()
 
-  // 卡片移动（乐观更新通过 invalidate 实现）
+  // 卡片移动：乐观落位 + 失败回滚。
+  //
+  // 原实现只有 mutationFn + onSuccess(invalidate)——注释写着「乐观更新通过
+  // invalidate 实现」，但 invalidate 只是重取：拖拽松手后卡片要等 PATCH 往返
+  // 完才落位，慢网下表现为「拖了没反应」；失败则彻底静默。
+  // 实测拦截 PATCH 返回 500：卡片弹回原列，全程无任何提示，用户以为拖拽失效
+  // 而反复重拖。看板是用户手动维护的真相来源，「看起来移动了但其实没动」比
+  // 明确报错更危险。
+  //
+  // 乐观值必须与后端 moveCard 同语义（store.ts：position 缺省 = 目标列
+  // max(position) + GAP，否则原样采用），否则松手瞬间的顺序与服务端最终态不一致。
   const moveMutation = useMutation({
     mutationFn: ({
       cardId,
@@ -286,7 +298,36 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       columnId: string
       position?: number
     }) => kanbanAPI.updateCard(projectId, cardId, { columnId, position }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', projectId] }),
+    onMutate: async ({ cardId, columnId, position }) => {
+      // 先取消在途重取：否则并发的 invalidate 结果会在乐观更新之后落地，把
+      // 本地改动直接覆盖回旧值。
+      await qc.cancelQueries({ queryKey: ['kanban', projectId] })
+      const previous = qc.getQueryData<KanbanBoardWithCards>(['kanban', projectId])
+      if (previous) {
+        const targetPositions = previous.cards
+          .filter((c) => c.columnId === columnId && c.id !== cardId)
+          .map((c) => c.position)
+        const nextPosition =
+          position ??
+          (targetPositions.length > 0 ? Math.max(...targetPositions) + POSITION_GAP : POSITION_GAP)
+        qc.setQueryData<KanbanBoardWithCards>(['kanban', projectId], {
+          ...previous,
+          cards: previous.cards.map((c) =>
+            c.id === cardId ? { ...c, columnId, position: nextPosition } : c,
+          ),
+        })
+      }
+      return { previous }
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        qc.setQueryData(['kanban', projectId], context.previous)
+      }
+      setIoError(
+        `移动卡片失败，卡片已回到原位置：${err instanceof Error ? err.message : String(err)}`,
+      )
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['kanban', projectId] }),
   })
 
   // 快速新建卡片
@@ -433,7 +474,9 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   return (
     <div className={view} data-testid="kanban-view">
       <div className={header}>
-        <span className={headerTitle}>📋 看板</span>
+        {/* 看板页没有侧栏（sidebar 仅在会话页），所以这里的标题就是全页唯一
+         *  的一级标题：此前是 span，axe page-has-heading-one 在本页命中。 */}
+        <h1 className={headerTitle}>📋 看板</h1>
         <span
           className={headerHint}
           title="项目级任务看板，与聊天页的 agent 待办（TodoPanel）相互独立：看板由你手动维护，也可让 agent 用 kanban 工具操作"

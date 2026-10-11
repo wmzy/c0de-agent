@@ -166,6 +166,33 @@ describe('FilePreview', () => {
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
   })
 
+  // 二进制此前按 utf-8 解码成一屏 U+FFFD 进 CodeEditor：用户敲一个字点保存就把
+  // 原文件重写成乱码（实测 4096B zip → 7476B U+FFFD 文本）。服务端在字节层拒绝后，
+  // 面板必须给只读态，而不是可编辑的编辑器。
+  it('二进制文件：只读态 + 原始文件入口，不渲染可编辑编辑器', async () => {
+    const errBody = {
+      error: { code: 'BINARY_FILE', message: '这是二进制文件，不能以文本方式显示或编辑' },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 415,
+        statusText: 'Unsupported Media Type',
+        json: async () => errBody,
+        text: async () => JSON.stringify(errBody),
+        clone: () => ({ json: async () => errBody }),
+      }),
+    )
+    withClient(<FilePreview projectId="p1" path="blob.zip" />)
+
+    await waitFor(() => expect(screen.getByTestId('file-preview-binary')).toBeTruthy())
+    expect(screen.queryByTestId('code-editor')).toBeNull()
+    expect(screen.queryByTestId('file-preview-error')).toBeNull()
+    const link = screen.getByTestId('file-preview-binary-link') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toContain('/api/files/blob.zip/raw')
+  })
+
   // 回归：读失败此前没有分支，useQuery 重试耗尽后落到「无内容」——header 仍显示
   // 路径，用户会把 404/500/断网当成文件被清空。必须与真正的空文件区分开。
   it('读取失败展示失败态与后端 message，而不是「无内容」', async () => {

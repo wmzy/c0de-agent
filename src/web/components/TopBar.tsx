@@ -7,6 +7,7 @@ import { Logo } from '@/components/Logo.js'
 import { ProjectIndicator } from '@/components/ProjectIndicator.js'
 import type { AppPaths } from '@/routes.js'
 import { configAPI } from '@/services/config.js'
+import { projectAPI } from '@/services/project.js'
 import { usageAPI } from '@/services/usage.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { formatCost } from '@/utils/format.js'
@@ -146,7 +147,7 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
   const globalBudget = configResp?.config?.usage?.globalMonthlyBudgetUsd ?? 0
   const tokenBudget = configResp?.config?.usage?.monthlyTokenBudget ?? 0
   const globalTokenBudget = configResp?.config?.usage?.globalMonthlyTokenBudget ?? 0
-  const { data: summary } = useQuery({
+  const { data: summary, isError: usageFailed } = useQuery({
     queryKey: ['usage', 'summary', projectId ?? 'all'],
     queryFn: () => usageAPI.summary(projectId),
     staleTime: 60_000,
@@ -170,20 +171,32 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
   const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
   const overAny = overBudget || overTokenBudget
   const unknown = monthEntry?.unknownCostCalls ?? 0
-  const tip =
-    `本月估算成本 ${formatCost(cost)}` +
-    (effectiveBudget > 0
-      ? `（${projectId ? '项目' : '全局'}预算 ${formatCost(effectiveBudget)}${overBudget ? '，已超支' : ''}）`
-      : '') +
-    (overTokenBudget
-      ? `；token 用量 ${monthTokens.toLocaleString()} 已超 ${effectiveTokenBudget.toLocaleString()}`
-      : '') +
-    (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
-    '。点击前往设置查看用量与成本。'
-  const badgeClass = `${costBadge}${overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''}`
+  // 读不到用量时绝不显示 $0.00：那是一个精确的、看起来可信的假数字，用户会
+  // 据此判断「本月没花钱 / 没超预算」。与 Settings 的用量面板同口径（那里也
+  // 渲染失败原因 + 重试），这里只给一个不可用标记 + 同样可点进设置。
+  const tip = usageFailed
+    ? '本月用量读取失败——不是 $0，这个数字不可信。点击前往设置查看用量与成本。'
+    : `本月估算成本 ${formatCost(cost)}` +
+      (effectiveBudget > 0
+        ? `（${projectId ? '项目' : '全局'}预算 ${formatCost(effectiveBudget)}${overBudget ? '，已超支' : ''}）`
+        : '') +
+      (overTokenBudget
+        ? `；token 用量 ${monthTokens.toLocaleString()} 已超 ${effectiveTokenBudget.toLocaleString()}`
+        : '') +
+      (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
+      '。点击前往设置查看用量与成本。'
+  const badgeClass = `${costBadge}${
+    usageFailed ? ` ${costOver}` : overAny ? ` ${costOver}` : nearBudget ? ` ${costNear}` : ''
+  }`
   // formatCost 十进制舍入：toFixed 二进制近似会把 1.005 显示成 $1.00（少一分钱）。
-  const statusIcon = overAny ? '⚠ ' : nearBudget ? '▲ ' : ''
-  const badgeText = (
+  const statusIcon = overAny || usageFailed ? '⚠ ' : nearBudget ? '▲ ' : ''
+  const badgeText = usageFailed ? (
+    <>
+      {statusIcon}
+      <span className={costPrefix}>本月 </span>
+      用量不可用
+    </>
+  ) : (
     <>
       {statusIcon}
       <span className={costPrefix}>本月 </span>
@@ -224,11 +237,42 @@ export function TopBar() {
   // 404 页仍需渲染 TopBar，故按缺省路径处理（无 projectId、无高亮）。
   const matchedCtx = useMatched()
   const routePath = matchedCtx?.matched[matchedCtx.matched.length - 1]?.route.path ?? ''
+  /** 路由参数里的项目 id（/settings 根路由与 404 页没有）。 */
   const projectId = matchedCtx?.params.projectId
   const isSettings = routePath === '/settings' || routePath === '/projects/:projectId/settings'
   const isKanban = routePath === '/projects/:projectId/kanban'
-  // 会话入口：项目上下文跳当前项目，否则回根路径（由 RootRedirect 解析当前项目）。
-  const sessionsActive = !isSettings && !isKanban
+  /*
+   * 会话入口：项目上下文跳当前项目，否则回根路径（由 RootRedirect 解析当前项目）。
+   *
+   * 「是当前页」只在真的落在会话视图时为真——这条同时决定高亮与 aria-current：
+   *   - routePath 空串：404 视图在匹配链之外渲染 TopBar，没有命中任何路由；
+   *   - 项目路由命中但没有 projectId：ChatPage/KanbanPage 此时渲染的是 NotFound。
+   * 两种情况下屏幕上是 404，把「会话」标成当前页会让视觉与读屏一起说
+   * 「你在会话页」。除这两种，行为与修复前一致。
+   */
+  const sessionsActive = routePath === '/' || (projectId !== undefined && !isSettings && !isKanban)
+
+  /**
+   * 「项目看板」入口的项目 id。
+   *
+   * 看板是**项目级**路由（/projects/:id/kanban），没有退路：无路由参数时若
+   * 沿用会话入口那套「指向 / 交给 RootRedirect」，点下去会被重定向到项目的
+   * **会话页**——顶栏写着「项目看板」，落地却是会话列表，没有任何提示。
+   * 实测在 /settings 上点「项目看板」→ URL 变成 /projects/<id>（会话页）。
+   *
+   * 这里按 RootRedirect 同一口径解析「当前项目」（共用 queryKey
+   * ['project','current'] 的缓存，从会话页跳设置页这类常见路径下命中缓存、
+   * 不产生额外请求）。解析不出来（无项目 / 接口失败）时退回 /，与修复前一致。
+   *
+   * 只用于看板入口：MonthCostBadge 与 ProjectIndicator 仍需按**路由**项目
+   * 口径工作（无项目上下文时成本徽标退化为全局口径是既定行为）。
+   */
+  const { data: currentProject } = useQuery({
+    queryKey: ['project', 'current'],
+    queryFn: projectAPI.current,
+    enabled: projectId === undefined,
+  })
+  const kanbanProjectId = projectId ?? currentProject?.id
 
   return (
     <header className={bar} data-testid="topbar">
@@ -254,6 +298,7 @@ export function TopBar() {
             params={{ projectId }}
             className={`${link} ${sessionsActive ? activeLink : ''}`}
             data-active={sessionsActive || undefined}
+            aria-current={sessionsActive ? 'page' : undefined}
           >
             会话
           </TypedLink>
@@ -262,16 +307,18 @@ export function TopBar() {
             to="/"
             className={`${link} ${sessionsActive ? activeLink : ''}`}
             data-active={sessionsActive || undefined}
+            aria-current={sessionsActive ? 'page' : undefined}
           >
             会话
           </TypedLink>
         )}
-        {projectId ? (
+        {kanbanProjectId ? (
           <TypedLink<AppPaths>
             to="/projects/:projectId/kanban"
-            params={{ projectId }}
+            params={{ projectId: kanbanProjectId }}
             className={`${link} ${isKanban ? activeLink : ''}`}
             data-active={isKanban || undefined}
+            aria-current={isKanban ? 'page' : undefined}
             data-testid="nav-kanban"
             title="项目级任务看板（与会话内的 agent 待办相互独立）"
           >
@@ -282,6 +329,7 @@ export function TopBar() {
             to="/"
             className={`${link} ${isKanban ? activeLink : ''}`}
             data-active={isKanban || undefined}
+            aria-current={isKanban ? 'page' : undefined}
             data-testid="nav-kanban"
             title="项目级任务看板（与会话内的 agent 待办相互独立）"
           >
@@ -294,6 +342,7 @@ export function TopBar() {
             params={{ projectId }}
             className={`${link} ${isSettings ? activeLink : ''}`}
             data-active={isSettings || undefined}
+            aria-current={isSettings ? 'page' : undefined}
           >
             设置
           </TypedLink>
@@ -302,6 +351,7 @@ export function TopBar() {
             to="/settings"
             className={`${link} ${isSettings ? activeLink : ''}`}
             data-active={isSettings || undefined}
+            aria-current={isSettings ? 'page' : undefined}
           >
             设置
           </TypedLink>

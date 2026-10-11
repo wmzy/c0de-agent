@@ -245,3 +245,195 @@ describe('终端分屏 sizes 归一化不变量', () => {
     }
   })
 })
+
+// 断线重连的终态判停。
+//
+// 回归：PTY 退出后 pty-manager 删除条目并关掉所有 socket，服务端对后续挂载一律回
+// 「Terminal not found」+ close(1008)；而前端 onclose 只是把 session 置回
+// {ws:null, connecting:false}——TerminalPanel 的自动重连 effect 依赖整个 tabs
+// 对象，sessions 每变一次它就重跑一次，于是「关掉 → 重连 → 被拒 → 关掉」无延迟
+// 成环：服务端被持续 WS upgrade，pane 永远黑屏且没有任何提示（PTY 明明已经
+// 不存在了，重连永远不会成功）。
+describe('终端断线后的重连节奏', () => {
+  class FakeSocket {
+    static readonly CONNECTING = 0
+    static readonly OPEN = 1
+    static readonly CLOSED = 3
+    static instances: FakeSocket[] = []
+    readyState = FakeSocket.CONNECTING
+    onopen: (() => void) | null = null
+    onclose: ((ev: { code: number }) => void) | null = null
+    onerror: (() => void) | null = null
+    onmessage: ((ev: MessageEvent) => void) | null = null
+    closedByCaller = 0
+    constructor() {
+      FakeSocket.instances.push(this)
+    }
+    close() {
+      this.closedByCaller += 1
+    }
+    /** 模拟握手成功。 */
+    open() {
+      this.readyState = FakeSocket.OPEN
+      this.onopen?.()
+    }
+    /** 模拟异常断开（浏览器在连接失败后必定补 close 事件，code 才是判据）。 */
+    drop(code = 1006) {
+      this.readyState = FakeSocket.CLOSED
+      this.onclose?.({ code })
+    }
+  }
+
+  const realWebSocket = globalThis.WebSocket
+  const last = () => FakeSocket.instances[FakeSocket.instances.length - 1] as FakeSocket
+
+  /** 建一个终端并连上（返回第一个 socket）。 */
+  async function connected() {
+    mockCreate.mockResolvedValue(fakeInfo('pty_1', 'projA'))
+    const hook = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    await act(async () => {
+      await hook.result.current.createTerminal({ cwd: '/tmp' })
+    })
+    await act(async () => {
+      hook.result.current.connect('pty_1')
+    })
+    await act(async () => {
+      last().open()
+    })
+    return hook
+  }
+
+  beforeEach(() => {
+    FakeSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeSocket)
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.stubGlobal('WebSocket', realWebSocket)
+  })
+
+  it('服务端拒绝挂载（Terminal not found / 1008）后判停，不再反复重连', async () => {
+    const { result } = await connected()
+    expect(FakeSocket.instances).toHaveLength(1)
+
+    await act(async () => {
+      last().drop(1008)
+    })
+
+    expect(result.current.sessions[0]?.dead).toBe('unreachable')
+    // 再怎么自动重连也不会有新 socket。
+    await act(async () => {
+      result.current.connect('pty_1')
+      vi.advanceTimersByTime(60_000)
+    })
+    expect(FakeSocket.instances).toHaveLength(1)
+  })
+
+  it('PTY 退出（markDead exited）后判停，退避中的重试被取消', async () => {
+    const { result } = await connected()
+
+    // 网络抖动：进入退避重连（重连计时器已排上）
+    await act(async () => {
+      last().drop()
+    })
+    await act(async () => {
+      result.current.markDead('pty_1', 'exited', 0)
+    })
+
+    expect(result.current.sessions[0]?.dead).toBe('exited')
+    expect(result.current.sessions[0]?.exitCode).toBe(0)
+    await act(async () => {
+      vi.advanceTimersByTime(60_000)
+    })
+    expect(FakeSocket.instances).toHaveLength(1)
+  })
+
+  it('退避窗口内不接受抢跑重连（自动重连 effect 每次渲染都会调用 connect）', async () => {
+    const { result } = await connected()
+
+    await act(async () => {
+      last().drop()
+    })
+    await act(async () => {
+      result.current.connect('pty_1')
+      result.current.connect('pty_1')
+    })
+
+    expect(FakeSocket.instances).toHaveLength(1)
+    // 退避到期后由定时器自己重连一次。
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(FakeSocket.instances).toHaveLength(2)
+  })
+
+  it('连上就断的抖动链路退避会逐级拉长，次数耗尽后判死（不会无限打服务端）', async () => {
+    const { result } = await connected()
+
+    // 每次都「刚连上就断」：退避不得被打回第一档，重连次数必须有上限。
+    for (let i = 0; i < 12; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(30_000)
+      })
+      const socket = FakeSocket.instances[FakeSocket.instances.length - 1]
+      if (!socket || result.current.sessions[0]?.dead) break
+      await act(async () => {
+        socket.open()
+        socket.drop()
+      })
+    }
+
+    expect(result.current.sessions[0]?.dead).toBe('unreachable')
+    expect(FakeSocket.instances.length).toBeLessThanOrEqual(1 + 6 + 1)
+    const count = FakeSocket.instances.length
+    await act(async () => {
+      vi.advanceTimersByTime(600_000)
+    })
+    expect(FakeSocket.instances).toHaveLength(count)
+  })
+
+  it('主动 disconnect 不触发重连（PTY 仍在，重连由打开面板时驱动）', async () => {
+    const { result } = await connected()
+
+    await act(async () => {
+      result.current.disconnect('pty_1')
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(60_000)
+    })
+
+    expect(FakeSocket.instances).toHaveLength(1)
+    expect(result.current.sessions[0]?.dead).toBeUndefined()
+  })
+
+  it('连稳过的连接断开后退避计数清零（下一次断线重新从第一档算）', async () => {
+    const { result } = await connected()
+
+    // 先抖动一次（退避拉到 500ms 档），重连成功并稳定运行 5 秒以上。
+    await act(async () => {
+      last().drop()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    await act(async () => {
+      last().open()
+    })
+    expect(result.current.sessions[0]?.ws).toBeTruthy()
+    await act(async () => {
+      vi.advanceTimersByTime(6_000)
+    })
+
+    // 稳定后的下一次断线：第一次重试回到 500ms 档（不是继续拉长）。
+    await act(async () => {
+      last().drop()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(FakeSocket.instances).toHaveLength(3)
+  })
+})

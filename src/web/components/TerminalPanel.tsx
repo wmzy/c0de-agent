@@ -3,6 +3,7 @@
 import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PaneSplitContainer } from '@/components/PaneSplitContainer.js'
+import type { TerminalControlMessage } from '@/components/terminal-control.js'
 import type { SplitDirection, UseTerminalReturn } from '@/hooks/useTerminal.js'
 import { lockBodyCursor, restoreBodyCursor } from '@/utils/drag-cursor.js'
 
@@ -10,6 +11,8 @@ interface TerminalPanelProps {
   terminal: UseTerminalReturn
   /** 新终端的默认工作目录（通常为项目 worktree）。未提供时使用服务端默认。 */
   cwd?: string
+  /** 当前项目 id：自动创建标记按项目重置（见下），切项目后面板打开时同样能建首个终端。 */
+  projectId: string
 }
 
 // 面板外层：flex-shrink 允许在视口高度不足时收缩（正常 900px 视口无赤字、不影响布局），
@@ -71,7 +74,9 @@ const tabWrapStyle = css`
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  /* 竖向内边距从 4px 收到 2px：命中区扩到 24px 的关闭钮后，药丸 = 2+24+2 = 28px
+   * （原 4+18+4 = 26px），标签栏仍是 36px 高，不会把药丸挤出可视区。 */
+  padding: 2px 8px;
   font-size: 12px;
   color: var(--haze-color-text-secondary);
   background: transparent;
@@ -131,23 +136,28 @@ const tabCloseStyle = css`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  /* 命中区 24×24（WCAG 2.5.8 目标尺寸最低值）：此前 16×16，与相邻的标签切换钮
+   * 中心距仅 23.3px（1440×900 实测），连「间距例外」都不满足——确实不达标。
+   * 更实际的问题是这颗 × 会直接杀掉该标签的全部 PTY：一个 16px、紧贴「切换
+   * 标签」的破坏性目标，触屏上几乎必然误触。24px 后与切换钮中心距 27.3px，
+   * 两条路径（目标尺寸 / 间距例外）同时满足，× 字形本身不变。 */
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
   color: var(--haze-color-text-secondary);
   font-size: 14px;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0;
   line-height: 1;
-  /* 覆盖全局 button 的 44px 触控最小尺寸，否则 16px 关闭钮被撑大溢出标签行 */
+  /* 覆盖全局 button 的 44px 触控最小尺寸，否则 24px 关闭钮被撑大溢出标签行 */
   min-height: auto;
   min-width: auto;
 
   &:hover {
     background: var(--haze-color-danger);
-    color: #fff;
+    color: var(--c0de-danger-on-solid, #fff);
   }
 `
 
@@ -198,7 +208,7 @@ const closePanelBtnStyle = css`
 
   &:hover {
     background: var(--haze-color-danger);
-    color: #fff;
+    color: var(--c0de-danger-on-solid, #fff);
   }
 `
 
@@ -229,9 +239,28 @@ const connectingStyle = css`
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   height: 100%;
   color: var(--haze-color-text-secondary);
   font-size: 13px;
+`
+
+/** 空态里的「新建终端」：此前空区只有一句「终端未连接」。
+ *  没有终端时并没有东西在连接，用户也不知道该做什么——面板里必须有行动点。 */
+const emptyNewBtnStyle = css`
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--haze-color-text);
+  background: var(--haze-color-bg-subtle);
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
 `
 
 /** 从 shell 路径提取短名称用于标签显示。 */
@@ -249,7 +278,7 @@ function shellLabel(shell: string): string {
  * - 高度拖拽：上拉/下拉调整，记忆到 localStorage
  * - 隐藏时整块 display:none（仅显示拖拽条），避免隐藏控件排布到视口外仍可聚焦
  */
-export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
+export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) {
   const {
     sessions,
     tabs,
@@ -263,6 +292,7 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
     createTerminal,
     splitTerminal,
     connect,
+    markDead,
     closeTerminal,
     resize,
     getWebSocket,
@@ -287,10 +317,18 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   // 标签切换按钮的 DOM 引用：toolbar 内方向键切换活动标签时同步移动焦点，
   // 否则读屏播报的位置与实际高亮的标签不一致。
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
-  // 切换项目时重置自动创建标记，允许新项目在面板打开时创建首个终端
-  useEffect(() => {
+  // 切换项目时重置自动创建标记，允许新项目在面板打开时创建首个终端。
+  // 必须在渲染期完成（effect 都在渲染之后跑）：写成一个 effect 会晚于下面的
+  // 自动创建 effect 生效，标记先被读到旧值、这次切换就白重置了。
+  // 此前这里是 `useEffect(() => { autoCreatedRef.current = false }, [])`——
+  // 空依赖只在挂载时跑一次，而挂载时它本就是 false，等于死代码：实测在项目 A
+  // 打开过终端面板（自动建过 shell）后切到项目 B，再打开面板只剩空区与
+  // 「终端未连接」，同一个操作在 A 有 shell、在 B 没有。
+  const autoCreatedProjectRef = useRef(projectId)
+  if (autoCreatedProjectRef.current !== projectId) {
+    autoCreatedProjectRef.current = projectId
     autoCreatedRef.current = false
-  }, [])
+  }
   useEffect(() => {
     if (!open || restoring) {
       return
@@ -313,13 +351,15 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
     }
   }, [open, activeTab, activePaneId, setActivePaneId])
 
-  // 活动 tab 内所有未连接的 pane 自动连接
+  // 活动 tab 内所有未连接的 pane 自动连接。dead 的 pane 跳过：PTY 已不存在，
+  // 重连永远不会成功（此前每轮 tabs 变化都会再试一次，服务端被无延迟地反复
+  // WS upgrade，pane 永远黑屏）；它改由 pane 状态条说明并提供新建入口。
   useEffect(() => {
     if (!activeTabId || !open) return
     const tab = tabs.find((t) => t.id === activeTabId)
     if (!tab) return
     for (const pane of tab.panes) {
-      if (!pane.ws && !pane.connecting) {
+      if (!pane.ws && !pane.connecting && !pane.dead) {
         connect(pane.id)
       }
     }
@@ -366,6 +406,21 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
   const handleNewTab = useCallback(() => {
     void createTerminal(cwd ? { cwd } : undefined)
   }, [createTerminal, cwd])
+
+  /**
+   * 终端控制帧 → 连接终态。PTY 退出 / 挂载被拒时 WS 随即关闭，不在此判停的话
+   * 自动重连会无延迟地一轮接一轮重试同一条必然失败的连接。
+   */
+  const handlePaneControl = useCallback(
+    (paneId: string, control: TerminalControlMessage) => {
+      if (control.type === 'exit') {
+        markDead(paneId, 'exited', control.exitCode)
+      } else {
+        markDead(paneId, 'unreachable')
+      }
+    },
+    [markDead],
+  )
 
   const handleSplit = useCallback(
     (direction: SplitDirection) => {
@@ -657,13 +712,32 @@ export function TerminalPanel({ terminal, cwd }: TerminalPanelProps) {
                 onPaneResize={handlePaneResize}
                 onPaneClick={setActivePaneId}
                 onPaneClose={handleClosePane}
+                onNewTerminal={handleNewTab}
+                onPaneControl={handlePaneControl}
                 onDividerPointerDown={onDividerPointerDown}
                 onDividerKeyDown={onDividerKeyDown}
                 minPaneFlex={minPaneFlex}
               />
             </div>
           ))}
-          {tabs.length === 0 && <div className={connectingStyle}>终端未连接</div>}
+          {tabs.length === 0 && (
+            <div className={connectingStyle}>
+              <span>尚无终端</span>
+              {cwd ? (
+                <button
+                  type="button"
+                  className={emptyNewBtnStyle}
+                  // 恢复轮次进行中禁用：此时建的会话会被恢复流的 setSessions(restored)
+                  // 整体回抹——前端丢引用、PTY 成后端孤儿。等恢复落地后再建。
+                  disabled={restoring}
+                  onClick={() => void createTerminal({ cwd })}
+                  title="在当前项目目录打开一个 shell"
+                >
+                  新建终端
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
     </>

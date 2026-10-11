@@ -233,6 +233,21 @@ const branchInputError = css`
 `
 
 /**
+ * 分支切换失败提示（顶栏常驻，不是 toast）。
+ *
+ * 「以为切到了新分支、实际还在旧分支」会让后续 agent 的编辑与提交全部落到旧
+ * 分支——错得越久越难察觉，所以提示必须在下拉关闭后依然留在视野里，直到下一次
+ * 成功的切换为止；瞬时 toast 会在用户还没反应过来时消失。
+ */
+const branchError = css`
+  color: var(--haze-color-danger);
+  font-size: 11px;
+  max-width: 320px;
+  /* git 的失败原因是长句（"Your local changes would be overwritten…"），窄栏下断行 */
+  overflow-wrap: anywhere;
+`
+
+/**
  * 项目指示器：项目名 + git 分支均可点击下拉切换，各带"添加"按钮。
  * - 项目下拉：列出所有项目，点击导航到 `/projects/:id`，底部"添加项目"打开对话框。
  * - 分支下拉：列出本地分支，点击 checkout 切换，底部可输入新分支名创建并切换。
@@ -255,6 +270,8 @@ export function ProjectIndicator({
 
   const [showAddProject, setShowAddProject] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** 分支切换失败的原因（null=无失败）。渲染在下拉之外的顶栏，菜单关闭也看得见。 */
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
   // P2-6：删除项目（看板永久丢失）分级确认弹层；会话仅入回收站可恢复。
   const [showDelete, setShowDelete] = useState(false)
   // A1：目录失效时的「重新定位」弹窗（整体迁移会话与看板，替代删除）。
@@ -287,7 +304,6 @@ export function ProjectIndicator({
       a.download = `kanban-${project.id}.json`
       a.click()
       URL.revokeObjectURL(url)
-      setShowDelete(false)
       deleteMut.mutate(project.id)
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : '看板导出失败，项目未删除')
@@ -327,7 +343,20 @@ export function ProjectIndicator({
 
   const checkoutMut = useMutation({
     mutationFn: (branch: string) => fileAPI.gitCheckout(projectId, branch),
-    onSuccess: invalidateGitQueries,
+    onSuccess: () => {
+      setCheckoutError(null)
+      invalidateGitQueries()
+    },
+    // 切换失败必须说出口。git checkout 会被未提交改动/被占用 worktree 拒绝，
+    // 此前 menu 只写进 mutation state：菜单一关页面什么都不剩，用户以为已经在
+    // 新分支上，后续 agent 的编辑与提交全部落到旧分支（NewBranchForm 的错误有
+    // 渲染，说明这是漏写而非设计）。
+    onError: (e: unknown) => {
+      // APIError 既可能是 Error 子类也可能是普通结构体，两种取法都要兜住
+      setCheckoutError(
+        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e)),
+      )
+    },
   })
 
   const createBranchMut = useMutation({
@@ -374,12 +403,14 @@ export function ProjectIndicator({
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          {deleteError && (
+          {deleteError && !showDelete && (
             <span
-              style={{ padding: '4px 12px', fontSize: 11, color: 'var(--haze-color-danger)' }}
+              className={branchError}
+              role="alert"
               data-testid="project-delete-error"
+              title="删除项目失败，项目仍在"
             >
-              {deleteError}
+              {'⚠'} 删除项目失败：{deleteError}
             </span>
           )}
           <button
@@ -476,12 +507,23 @@ export function ProjectIndicator({
               ))}
               <DropdownMenuSeparator />
               <NewBranchForm
-                onCreate={(name) => createBranchMut.mutate(name)}
+                onCreate={(name) => createBranchMut.mutateAsync(name)}
                 pending={createBranchMut.isPending}
                 error={createBranchMut.error ? String(createBranchMut.error.message) : null}
               />
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* 渲染在下拉之外：菜单一关（点分支项即关闭）提示也必须留在视野里。 */}
+          {checkoutError ? (
+            <span
+              className={branchError}
+              role="alert"
+              data-testid="branch-checkout-error"
+              title={`分支切换失败，仍在 ${project.gitBranch}`}
+            >
+              {'\u26A0'} 未能切到该分支：{checkoutError}
+            </span>
+          ) : null}
         </span>
       ) : null}
 
@@ -518,6 +560,7 @@ export function ProjectIndicator({
           confirmWord={project.name ?? '未命名项目'}
           confirmLabel="删除项目"
           busy={deleteMut.isPending}
+          error={deleteError}
           secondaryAction={{
             label: '导出看板并删除',
             onClick: () => void exportBoardAndDelete(),
@@ -525,7 +568,10 @@ export function ProjectIndicator({
             disabled: deleteMut.isPending,
           }}
           onConfirm={() => {
-            setShowDelete(false)
+            // 失败不关弹层：原因要留在用户正要做的操作旁边（role=alert 播报）。
+            // 此前这里先 setShowDelete(false)，失败原因又被写进项目下拉里，
+            // 下拉此时已关闭卸载——用户看到的是「点了删除，什么也没发生」。
+            // onSuccess 里 navigateTo 会带着整个页面离开，弹层自然不再显示。
             deleteMut.mutate(project.id)
           }}
           onClose={() => setShowDelete(false)}
@@ -541,17 +587,25 @@ function NewBranchForm({
   pending,
   error,
 }: {
-  onCreate: (name: string) => void
+  /** 创建分支；resolve 视为成功，reject 视为失败（父组件负责渲染原因）。 */
+  onCreate: (name: string) => Promise<unknown>
   pending: boolean
   error: string | null
 }) {
   const [name, setName] = useState('')
 
-  const submit = () => {
+  const submit = async () => {
     const trimmed = name.trim()
     if (!trimmed || pending) return
-    onCreate(trimmed)
-    setName('')
+    // 清空放在成功之后：创建失败（分支已存在 / 非法 ref / worktree 被占用）时
+    // 输入框必须还留着刚打的名字——此前无条件清空，用户只能照着错误文案把
+    // 名字重敲一遍（与 KanbanColumn 快速加卡片同口径，那里有同样的注释）。
+    try {
+      await onCreate(trimmed)
+      setName('')
+    } catch {
+      // 失败原因由父组件就地渲染在输入框下方（role=alert），输入保留待改。
+    }
   }
 
   return (
@@ -566,12 +620,18 @@ function NewBranchForm({
           // IME 组合中不拦截：回车确认候选词由输入法处理——不判定会把未确认的
           // 候选当最终输入（分支名被提前创建）。
           if (isImeComposing(e)) return
-          if (e.key === 'Enter') submit()
+          if (e.key === 'Enter') void submit()
         }}
         data-testid="branch-new-input"
         disabled={pending}
       />
-      {error ? <div className={branchInputError}>{error}</div> : null}
+      {/* role=alert：创建失败的原因必须被读屏播报——它出现在用户刚操作的输入框
+          下方，键盘用户看不到焦点外的新文案。 */}
+      {error ? (
+        <div className={branchInputError} role="alert" data-testid="branch-create-error">
+          {error}
+        </div>
+      ) : null}
     </div>
   )
 }

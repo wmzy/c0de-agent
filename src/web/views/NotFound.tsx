@@ -21,6 +21,8 @@ const code = css`
   line-height: 1;
   color: var(--haze-color-text);
   letter-spacing: 2px;
+  /* 升级为 h1 后收回浏览器默认 margin，保持原有居中排版 */
+  margin: 0;
 `
 
 const backLink = css`
@@ -40,7 +42,9 @@ const backLink = css`
 export function NotFound() {
   return (
     <div className={notFound}>
-      <div className={code}>404</div>
+      {/* 404 页没有侧栏也没有任何标题元素，是全应用唯一「一个标题都没有」的
+       *  页面；把错误码本身作为 h1，读屏用户一进来就知道这是错误页。 */}
+      <h1 className={code}>404</h1>
       <div>页面不存在，地址可能已失效</div>
       <TypedLink<AppPaths> to="/" className={backLink}>
         返回会话

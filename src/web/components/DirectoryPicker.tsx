@@ -121,6 +121,36 @@ const state = css`
   pointer-events: none;
 `
 
+/** 根目录读取失败：给出原因 + 重试（「读取失败」四个字既不说明原因也无法自救）。 */
+const errorState = css`
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--haze-color-danger, #e5484d);
+  font-size: 12px;
+  text-align: center;
+`
+
+const retryBtn = css`
+  min-height: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-text);
+  font-size: 12px;
+  cursor: pointer;
+  &:hover {
+    border-color: var(--haze-color-primary);
+    color: var(--haze-color-primary);
+  }
+`
+
 const selectionBar = css`
   overflow: hidden;
   flex-shrink: 0;
@@ -140,7 +170,6 @@ type DirectoryPickerProps = {
   start?: string
   placeholder?: string
   testId?: string
-  autoFocus?: boolean
 }
 
 /** 目录选择器：输入搜索（递归 + 模糊）+ 文件树浏览 + 快捷导航。
@@ -152,7 +181,6 @@ export function DirectoryPicker({
   start,
   placeholder,
   testId,
-  autoFocus,
 }: DirectoryPickerProps) {
   const [home, setHome] = useState('')
   const [root, setRoot] = useState('')
@@ -161,7 +189,11 @@ export function DirectoryPicker({
   const [selected, setSelected] = useState<string | null>(null)
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
   const [navLoading, setNavLoading] = useState(false)
-  const [navError, setNavError] = useState(false)
+  /** 根目录读取失败的原因（null=无失败）。此前只有 boolean，渲染成「读取失败」四个字。 */
+  const [navError, setNavError] = useState<string | null>(null)
+  /** 子目录懒加载失败原因（path → message）。与 FileBrowser 同口径：由树里
+   *  的失败态 + 重试承接，绝不落成 children: []（那正是「（空）」分支）。 */
+  const [loadErrors, setLoadErrors] = useState<Map<string, string>>(new Map())
   const [suggestionList, setSuggestionList] = useState<
     { query: string; items: Suggestion[] } | undefined
   >()
@@ -195,11 +227,6 @@ export function DirectoryPicker({
     }
   }, [])
 
-  // autoFocus 由 ref 实现（避免 a11y noAutofocus）
-  useEffect(() => {
-    if (autoFocus) inputRef.current?.focus()
-  }, [autoFocus])
-
   // 搜索实例（getter 读最新 home/root，缓存复用）
   const search = useMemo(
     () =>
@@ -215,12 +242,15 @@ export function DirectoryPicker({
     [start],
   )
 
-  // navigate：加载目录到文件树
+  // navigate：加载目录到文件树。
+  // silent：仅浏览不回填宿主值——用于首次自动导航到 start/home，此时用户尚未
+  // 做任何选择，回填会让宿主（如 AddProjectDialog）拿到一个从未被选中的 `~`，
+  // 其「value 非空即可提交」的判断随即成立：直接回车就把 $HOME 注册成项目。
   const navigate = useCallback(
-    async (path: string) => {
+    async (path: string, options?: { silent?: boolean }) => {
       const token = ++navigation.current
       setNavLoading(true)
-      setNavError(false)
+      setNavError(null)
       setSelected(null)
       setSuggestionsOpen(false)
       setActiveSuggestion(-1)
@@ -228,16 +258,16 @@ export function DirectoryPicker({
       rootRef.current = path
       setTreeRoot(null)
       setExpanded(new Set())
-      const display = displayPickerPath(path, path, homeRef.current)
-      onChange(display)
+      setLoadErrors(new Map())
+      if (!options?.silent) onChange(displayPickerPath(path, path, homeRef.current))
       try {
         const r = await filesystemAPI.browse(path)
         if (!activeTreeNavigation(token, navigation.current)) return
         const children: TreeNode[] = r.directories.map((d) => ({ name: d.name, path: d.path }))
         const baseName = path.replace(/\/+$/, '').split('/').filter(Boolean).pop() ?? path
         setTreeRoot({ name: baseName || '/', path, children })
-      } catch {
-        if (activeTreeNavigation(token, navigation.current)) setNavError(true)
+      } catch (err) {
+        if (activeTreeNavigation(token, navigation.current)) setNavError(pickerErrorMessage(err))
       } finally {
         if (activeTreeNavigation(token, navigation.current)) setNavLoading(false)
       }
@@ -245,11 +275,11 @@ export function DirectoryPicker({
     [onChange],
   )
 
-  // 首次自动导航到 start/home
+  // 首次自动导航到 start/home：只加载文件树，不回填宿主值（见 navigate 的 silent）
   useEffect(() => {
     const initial = start || home
     if (!initial || root) return
-    void navigate(initial)
+    void navigate(initial, { silent: true })
   }, [start, home, root, navigate])
 
   // 输入变化 → 防抖搜索
@@ -283,6 +313,32 @@ export function DirectoryPicker({
     [suggestionList, value],
   )
 
+  /** 懒加载某目录的子项：失败落到 loadErrors，由树里的失败态 + 重试承接。 */
+  const loadChildren = useCallback(async (dirPath: string) => {
+    setLoadingPaths((prev) => new Set(prev).add(dirPath))
+    setLoadErrors((prev) => {
+      if (!prev.has(dirPath)) return prev
+      const next = new Map(prev)
+      next.delete(dirPath)
+      return next
+    })
+    try {
+      const r = await filesystemAPI.browse(dirPath)
+      const children: TreeNode[] = r.directories.map((d) => ({ name: d.name, path: d.path }))
+      setTreeRoot((root) => (root ? setChildren(root, dirPath, children) : root))
+    } catch (err) {
+      // 失败不能落成 children: []——那正是 FileTree 的「（空）」分支，
+      // 把「读不到」说成「没有」。记录原因，就地展示并允许重试。
+      setLoadErrors((prev) => new Map(prev).set(dirPath, pickerErrorMessage(err)))
+    } finally {
+      setLoadingPaths((prev) => {
+        const next = new Set(prev)
+        next.delete(dirPath)
+        return next
+      })
+    }
+  }, [])
+
   const toggle = useCallback(
     async (path: string) => {
       setExpanded((prev) => {
@@ -294,23 +350,10 @@ export function DirectoryPicker({
       // 首次展开且未加载子目录 → 懒加载
       const node = findNode(treeRoot, path)
       if (node && node.children === undefined && !loadingPaths.has(path)) {
-        setLoadingPaths((prev) => new Set(prev).add(path))
-        try {
-          const r = await filesystemAPI.browse(path)
-          const children: TreeNode[] = r.directories.map((d) => ({ name: d.name, path: d.path }))
-          setTreeRoot((root) => (root ? setChildren(root, path, children) : root))
-        } catch {
-          setTreeRoot((root) => (root ? setChildren(root, path, []) : root))
-        } finally {
-          setLoadingPaths((prev) => {
-            const next = new Set(prev)
-            next.delete(path)
-            return next
-          })
-        }
+        await loadChildren(path)
       }
     },
-    [treeRoot, loadingPaths],
+    [treeRoot, loadingPaths, loadChildren],
   )
 
   const select = useCallback(
@@ -464,13 +507,29 @@ export function DirectoryPicker({
       </div>
       <div className={browser}>
         {navLoading ? <div className={state}>加载中…</div> : null}
-        {!navLoading && navError ? <div className={state}>读取失败</div> : null}
+        {!navLoading && navError ? (
+          <div className={errorState} data-testid="directory-picker-error">
+            <span>{navError}</span>
+            <button
+              type="button"
+              className={retryBtn}
+              data-testid="directory-picker-retry"
+              // 重试失败的初始加载与首航同类：用户仍未做任何选择，只浏览不回填
+              // 宿主值（否则等于重新武装「打开对话框即可回车注册 $HOME」）。
+              onClick={() => void navigate(root, { silent: true })}
+            >
+              重试
+            </button>
+          </div>
+        ) : null}
         {!navLoading && !navError && treeRoot ? (
           <FileTree
             root={treeRoot}
             expanded={expanded}
             selected={selected}
             loadingPaths={loadingPaths}
+            errorPaths={loadErrors}
+            onRetryLoad={(p) => void loadChildren(p)}
             onToggle={toggle}
             onSelect={select}
           />
@@ -481,6 +540,15 @@ export function DirectoryPicker({
       </div>
     </div>
   )
+}
+
+/** 读取失败的用户可见原因：APIError 是结构体而非 Error 子类，必须结构化取
+ *  message（同 FileBrowser rootError 口径），否则展示的是 "[object Object]"。 */
+function pickerErrorMessage(err: unknown): string {
+  const message = (err as { message?: string } | null)?.message
+  if (typeof message === 'string' && message.length > 0) return message
+  if (err instanceof Error && err.message.length > 0) return err.message
+  return '无法读取该目录'
 }
 
 /** 在树中按 path 查找节点。 */

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatState } from '@/hooks/chatState.js'
 import { reduceChatEvent } from '@/hooks/chatState.js'
 import { useChat } from '@/hooks/useChat.js'
+import { agentAPI } from '@/services/agent.js'
 
 const base: ChatState = {
   messages: [],
@@ -381,6 +382,68 @@ describe('useChat confirm', () => {
     )
   })
 
+  // 回归：confirmTool 500/网络失败（请求没送达）此前只 console.error——dock 已
+  // 乐观关闭、用户以为「已批准/已拒绝」，服务端却仍持有 pending 等这个决定，
+  // 页面上既没有原因也没有重新确认的入口。
+  it('confirmTool 500 → 说明未送达，并把权限弹窗还回去', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tc500","tool":"bash","input":{}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      // 确认端点 500：请求没送达，服务端 pending 仍在
+      return {
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: async () => ({ error: { code: 'INTERNAL', message: 'boom' } }),
+        text: async () => JSON.stringify({ error: { code: 'INTERNAL', message: 'boom' } }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    const pending = result.current.pendingPermission
+    expect(pending?.toolCallId).toBe('tc500')
+
+    await act(async () => {
+      result.current.confirm('tc500', true, undefined, pending ?? undefined)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 原因可见（此前整条失败路径零反馈）
+    expect(result.current.error).toContain('权限确认没有送达')
+    // 弹窗回来：用户可以再决定一次，服务端 pending 本来就没被消费
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc500')
+  })
+
   // 回归：denyTimedOutPermission 把 confirmTool POST 写进 setState 更新器——
   // 更新器必须是纯函数，StrictMode（main.tsx 已开启）会重复调用它，同一
   // 拒绝请求被发出两次（服务端第二次必然 404，用户网络层收到多余请求）。
@@ -540,6 +603,94 @@ describe('useChat segment break', () => {
     const second = fetchMock.mock.calls[1]
     expect(second?.[0]).toBe('/api/chat')
     expect(JSON.parse(String(second?.[1]?.body)).confirmSegmentBreak).toBe(true)
+  })
+
+  /** 先触发段边界（第一次 /api/chat 回 409），供 confirmBreak(true) 的用例复用。 */
+  function segmentBreakThenStreamFetch(compactResponse: () => unknown) {
+    let chatCall = 0
+    return vi.fn(async (url: string) => {
+      if (url === '/api/sessions/s1/compact') return compactResponse()
+      if (url === '/api/chat') {
+        chatCall++
+        if (chatCall === 1) {
+          const body = {
+            error: {
+              code: 'SEGMENT_BREAK_REQUIRED',
+              message: '切换',
+              details: { activeSegment: { provider: 'p', model: 'm', tools: [] } },
+            },
+          }
+          return {
+            ok: false,
+            status: 409,
+            json: async () => body,
+            text: async () => JSON.stringify(body),
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) },
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' }
+    })
+  }
+
+  /**
+   * 回归：HTTP 200 不代表压缩受理。
+   * 服务端在「消息过少 / 无内容可压缩」时回 {compacted:false, reason}（消息过少
+   * 的用例被 session.test.ts 钉死）。此前 compact 的返回值被整段丢弃，用户明确
+   * 点了「顺便压缩会话」却什么都没发生，且重发后同一段边界会再次弹层。
+   */
+  it('confirmBreak(true) 回 {compacted:false} → 透出「未压缩」而不是静默放行', async () => {
+    const fetchMock = segmentBreakThenStreamFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ compacted: false, reason: 'too_few_messages' }),
+      text: async () => JSON.stringify({ compacted: false, reason: 'too_few_messages' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi', { model: 'other' })
+    })
+    expect(result.current.pendingSegmentBreak).not.toBeNull()
+
+    await act(async () => {
+      await result.current.confirmBreak(true)
+    })
+    // 确实调用了压缩端点（不是直接开新段）
+    expect(fetchMock.mock.calls.some((c) => c[0] === '/api/sessions/s1/compact')).toBe(true)
+    // 未受理必须可见：文案点明「没压缩」与原因，不能静默当作成功
+    expect(result.current.error).toContain('未压缩')
+    expect(result.current.error).toContain('消息太少')
+  })
+
+  /**
+   * 回归：压缩请求本身失败此前只 console.error（Electron/浏览器控制台之外不可见）。
+   * 用户以为上下文已摘要，实际按未压缩内容继续开新段。
+   */
+  it('confirmBreak(true) 压缩请求失败 → 透出原因，而不只是 console', async () => {
+    const fetchMock = segmentBreakThenStreamFetch(() => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: { code: 'COMPACTION_FAILED', message: '压缩服务不可用' } }),
+      text: async () =>
+        JSON.stringify({ error: { code: 'COMPACTION_FAILED', message: '压缩服务不可用' } }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi', { model: 'other' })
+    })
+    await act(async () => {
+      await result.current.confirmBreak(true)
+    })
+    expect(result.current.error).toContain('会话压缩失败')
+    expect(result.current.error).toContain('压缩服务不可用')
   })
 
   it('cancelBreak → 移除乐观 user 消息并清除待发', async () => {
@@ -801,6 +952,56 @@ describe('useChat 并发守卫（RUN_ACTIVE）', () => {
     expect(result.current.error).toBe('该会话已有进行中的对话')
     // 不落入「网络错误视为中断」分支
     expect(result.current.interrupted).toBe(false)
+  })
+})
+
+// 回归（审查 #3）：RUN_ACTIVE 与 WORKTREE_MISSING/PROJECT_MISSING 分支此前把
+// lastFailureRef 写在 setState 更新器函数体内——更新器延迟到重渲染才执行，而
+// ChatSession 的 cleanupEmptySessionOnFailure 在 sendMessage 的 .then 微任务里读
+// chatRef.current.lastFailure.current，读点时机无保证，命中时草稿页横幅退化为兜底
+// 文案「消息发送失败，请重试后再次发送」。相邻分支（PROVIDER_NOT_FOUND 等）都在
+// setState 之前同步写 ref。这里在 sendMessage promise 兑现的微任务里（React
+// 重渲染之前）读 ref，钉住同样的写入时机。
+describe('useChat 失败原因的写入时机', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function renderChat() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    return renderHook(() => useChat('s1'), { wrapper })
+  }
+
+  function stubHttpError(status: number, code: string, message: string) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status,
+        json: async () => ({ error: { code, message } }),
+        text: async () => JSON.stringify({ error: { code, message } }),
+      })),
+    )
+  }
+
+  /** sendMessage promise 兑现即读 ref：这一拍在 React 重渲染（setState 更新器
+   *  执行）之前——正是 cleanupEmptySessionOnFailure 读 ref 的时机。 */
+  async function sendAndCaptureFailure(result: { current: ReturnType<typeof useChat> }) {
+    return result.current.sendMessage('hi').then(() => result.current.lastFailure.current)
+  }
+
+  it('RUN_ACTIVE：失败原因在 sendMessage 兑现时已写入 ref，不等重渲染', async () => {
+    stubHttpError(409, 'RUN_ACTIVE', '已有进行中的对话')
+    const { result } = renderChat()
+    const failureAtCatch = await act(async () => sendAndCaptureFailure(result))
+    expect(failureAtCatch?.reason).toBe('该会话已有进行中的对话')
+  })
+
+  it('WORKTREE_MISSING：失败原因在 sendMessage 兑现时已写入 ref，不等重渲染', async () => {
+    stubHttpError(409, 'WORKTREE_MISSING', '会话的工作目录不存在，请先恢复或重新绑定')
+    const { result } = renderChat()
+    const failureAtCatch = await act(async () => sendAndCaptureFailure(result))
+    expect(failureAtCatch?.reason).toBe('会话的工作目录不存在，请先恢复或重新绑定')
   })
 })
 
@@ -1182,5 +1383,94 @@ describe('useChat 附着轮询的暂停态（P1）', () => {
     })
     const callsAfter = fetchMock.mock.calls.filter(([u]) => String(u).includes('/status')).length
     expect(callsAfter).toBe(callsBefore)
+  })
+})
+
+/**
+ * 追加指令（steer）的送达语义。
+ *
+ * 缺陷：POST /api/chat/steer 的 200 不等于受理——没有进行中的 run 时它回
+ * {steered:false}，指令既没注入 run 也没落库。此前 steer 从不读响应体、失败只
+ * console，却照样在时间线追加乐观 steering 条目：用户看到一条「已送达」的指令，
+ * 刷新后它消失，agent 从未收到；调用方还会据此清空输入框。两种结局都让用户
+ * 无从判断自己的指令到底发没发出去。
+ */
+describe('useChat steer 的送达语义', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  /** 附着到一个仍在运行的 run：走 attach() 拿到流式态（不自己开 SSE 流）。 */
+  async function renderStreaming() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const body = String(url).includes('/status') ? { _tag: 'running' } : { pending: null }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => body,
+          text: async () => JSON.stringify(body),
+        }
+      }),
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    expect(result.current.isStreaming).toBe(true)
+    return result
+  }
+
+  it('后端回 steered:false 时不追加乐观条目，并给出原因', async () => {
+    const result = await renderStreaming()
+    vi.spyOn(agentAPI, 'steer').mockResolvedValue({ steered: false })
+
+    let delivered: boolean | undefined
+    await act(async () => {
+      delivered = await result.current.steer('改用 pnpm')
+    })
+
+    expect(delivered).toBe(false)
+    expect(
+      result.current.messages.some((m) => JSON.stringify(m.content).includes('改用 pnpm')),
+    ).toBe(false)
+    expect(result.current.error).toMatch(/追加指令未送达/)
+  })
+
+  it('受理成功后追加 steering 条目', async () => {
+    const result = await renderStreaming()
+    vi.spyOn(agentAPI, 'steer').mockResolvedValue({ steered: true })
+
+    let delivered: boolean | undefined
+    await act(async () => {
+      delivered = await result.current.steer('改用 pnpm')
+    })
+
+    expect(delivered).toBe(true)
+    expect(
+      result.current.messages.some((m) =>
+        m.content.some((p) => p._tag === 'steering' && p.text === '改用 pnpm'),
+      ),
+    ).toBe(true)
+  })
+
+  it('请求失败时透出原因且不谎报已送达', async () => {
+    const result = await renderStreaming()
+    vi.spyOn(agentAPI, 'steer').mockRejectedValue(new Error('连接已中断'))
+
+    let delivered: boolean | undefined
+    await act(async () => {
+      delivered = await result.current.steer('改用 pnpm')
+    })
+
+    expect(delivered).toBe(false)
+    expect(result.current.error).toContain('连接已中断')
+    expect(
+      result.current.messages.some((m) =>
+        m.content.some((p) => p._tag === 'steering' && p.text === '改用 pnpm'),
+      ),
+    ).toBe(false)
   })
 })

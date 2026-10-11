@@ -148,6 +148,13 @@ const catalogItemHead = css`
   margin-bottom: 8px;
 `
 
+/** 「选中项被搜索过滤掉但仍有效」的说明行。 */
+const keptSelection = css`
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 /** 根据 models.dev 的 npm 字段推断 protocol。 */
 function npmToProtocol(npm?: string): ProviderProtocol {
   if (!npm) return 'openai-compat'
@@ -217,7 +224,11 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
     )
   }, [providersData, query])
 
-  const selectedProvider = filtered.find((p) => p.id === selectedId) ?? null
+  // 选中项从**完整列表**解析，而不是从搜索过滤后的列表：否则输入一个不包含它的
+  // 搜索词就把选中态静默作废——底部「选择此 Provider」无声禁用、右侧详情标题从
+  // Provider 名退化成裸 id、API/文档链接整块消失，而右侧内容还停留在旧 Provider 的
+  // 模型列表上，用户只会以为是自己没选中。搜索是「看什么」，选择是「要什么」，两者独立。
+  const selectedProvider = providersData?.providers.find((p) => p.id === selectedId) ?? null
 
   const handleSelect = () => {
     if (!selectedProvider) return
@@ -254,10 +265,23 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
         placeholder="搜索 Provider 名称…"
         data-testid="catalog-search"
       />
+      {selectedProvider && !filtered.some((p) => p.id === selectedId) ? (
+        // 选中项被当前搜索词过滤掉时，列表里找不到它，但选择仍然有效——不说明的话
+        // 用户看到「确认」还是可点的会困惑「我到底选了什么」。
+        <div className={keptSelection} data-testid="catalog-kept-selection">
+          {`已选择「${selectedProvider.name}」，不受当前搜索影响`}
+        </div>
+      ) : null}
       <div className={catalogBody}>
         <div className={`${listContainer} ${listFixed}`}>
           {providersLoading ? (
             <div className={catalogHint}>加载中…</div>
+          ) : filtered.length === 0 ? (
+            // 搜索无命中此前是一片空白，与「加载中…」视觉上无从区分，用户得不到
+            // 「确实没有这个 Provider」的反馈。
+            <div className={catalogHint} data-testid="catalog-no-match">
+              {`没有匹配「${query.trim()}」的 Provider`}
+            </div>
           ) : (
             filtered.map((p) => (
               <button

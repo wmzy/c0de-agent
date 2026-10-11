@@ -4,6 +4,7 @@ import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { BranchTree } from '@/components/BranchTree.js'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { clearSessionDraft } from '@/composer/draft.js'
 import { useDeleteSession, useProjects, useSessionTree } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
@@ -23,6 +24,17 @@ const header = css`
   gap: 8px;
   padding: 12px;
   border-bottom: 1px solid var(--haze-color-border);
+`
+
+/*
+ * 侧栏标题：升级为 h1（此前是 span，全应用零 h1）。继承浏览器 h1 的大号默认
+ * 样式会撑破这一行 32px 的工具条，因此显式回到原 span 的排版，只留语义。
+ */
+const headerTitle = css`
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
 `
 
 /* P2-5：会话树底部 CLI 会话可见性说明（CLI/Web 同库不同视图的心智提示）。 */
@@ -209,6 +221,25 @@ export function SessionList({
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
     return () => clearTimeout(t)
   }, [search])
+
+  // 切项目时清空按项目作用域的 UI 状态。
+  // ChatPage 对 /projects/:projectId（与会话子路由）复用同一组件实例，param
+  // 变化不会重新挂载 SessionList：搜索词、错误条、回收站页签都跟着上一个项目
+  // 过来了——新项目列表继续按旧查询过滤（报「无匹配会话」，看着像会话丢了），
+  // 失败横幅也钉在新项目上方。
+  const firstProjectRef = useRef(projectId)
+  useEffect(() => {
+    if (firstProjectRef.current === projectId) return
+    firstProjectRef.current = projectId
+    setSearch('')
+    setSearchDebounced('')
+    setDeleteError(null)
+    setRenameError(null)
+    setImportError(null)
+    setImportNotice(null)
+    setShowRecycle(false)
+  }, [projectId])
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
@@ -228,12 +259,30 @@ export function SessionList({
   // 阈值 1 而非 2：单字符查询此前被静默丢弃，而标题树仍按 search 过滤，
   // 于是「只命中消息内容」的会话在输入 1 个字时直接变成「无匹配会话」——
   // 实测搜「独」报无匹配，搜「独特」即命中。服务端对单字符正常返回。
-  const { data: contentMatches } = useQuery({
+  //
+  // 三态齐全：只取 data 时「还在搜」与「搜不了」都落进 extraMatches 为空的
+  // 分支，界面在 300ms 防抖 + 请求期间先闪一次「无匹配会话」再翻成结果；
+  // 请求失败（RQ 默认 retry 2 次耗尽）后这一句永久停在那里，且搜索区没有任何
+  // 重试入口——与同页会话树失败态、RecycleBin 搜索失败态的既有口径一致。
+  const {
+    data: contentMatches,
+    isLoading: contentLoading,
+    isError: contentError,
+    error: contentErrorObj,
+    refetch: refetchContent,
+  } = useQuery({
     queryKey: ['sessions', 'search', projectId, searchDebounced],
     queryFn: () => sessionAPI.search(searchDebounced, projectId),
     enabled: searchDebounced.length >= 1,
     staleTime: 10_000,
   })
+  const contentErrorMessage =
+    (contentErrorObj as { message?: string } | null)?.message ??
+    (contentErrorObj instanceof Error ? contentErrorObj.message : null)
+  // 「正在搜索」的完整口径 = 防抖未落地 || 请求在飞（含重试）。防抖那 300ms
+  // 里标题树已按 search 过滤、结果区还是旧的，此前正是这段时间闪「无匹配会话」。
+  const searching = search.trim().length >= 1
+  const contentPending = searching && (search.trim() !== searchDebounced || contentLoading)
   // 树中已展示的全部会话 id（任意深度）。递归收集：只收顶层与直接子级会把
   // 深层后代（fork 的 fork）漏掉——它们同样已在树里可见，却会被「消息内容
   // 匹配」区再列一遍（同一会话出现两次）。与 findNode/countDescendants/
@@ -260,14 +309,24 @@ export function SessionList({
   const handleDelete = (id: string) => {
     setDeleteError(null)
     // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
-    const node = findNode(visibleTree, id)
+    // 影响面必须取未过滤的完整树：visibleTree 是搜索过滤后的视图（非命中路径被裁掉、
+    // 未归属项目的 CLI 根根本不在其中），据此算子孙会把整棵子树的级联软删少报成
+    // 「0 个派生会话」——用户以为只删一条，实际连同分支一起进回收站。tree 含全部根
+    // （含 CLI 未归属），filterTree 只裁根、不动 children，故 findNode(tree, id) 命中
+    // 的就是同一个节点、同一批子孙。
+    const node = findNode(tree ?? [], id)
     const branches = node ? countDescendants(node) : 0
     const branchNote =
       branches > 0 ? `其 ${branches} 个派生会话（分支/子任务）将一并移入回收站。` : ''
     if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，60 天内可恢复。`))
       return
     del.mutate(id, {
-      onSuccess: () => onDeleted?.(id),
+      onSuccess: () => {
+        // 会话没了：s:<id> 草稿键再也无人读取（文本无上限、图片最多 ~512KB），
+        // 删除成功即清退，避免永久滞留 localStorage。
+        clearSessionDraft(id)
+        onDeleted?.(id)
+      },
       onError: (e: unknown) => {
         setDeleteError(e instanceof Error ? e.message : String(e))
       },
@@ -367,9 +426,21 @@ export function SessionList({
   }
 
   return (
-    <div className={panel}>
+    /*
+     * 侧栏整体是一个 landmark（role=navigation + 可及名「会话」）：此前整块
+     * 侧栏只是一串无角色的 div，读屏用户没有任何地标可跳，只能逐控件线性浏览
+     * 几百个会话行；axe region 规则实测报 header/搜索框/CLI 说明三处
+     * 「不在任何 landmark 内」。
+     *
+     * 用 navigation 而非 complementary：这块的内容就是一组可点的会话链接
+     * （含搜索、回收站、新建），属导航而非补充信息。移动端它是 Workbench
+     * 滑出的覆盖层，同一块内容、同一语义。
+     */
+    <nav className={panel} aria-label="会话">
       <div className={header}>
-        <span>会话</span>
+        {/* 侧栏标题用 h1：全应用此前零 h1（axe page-has-heading-one 每页命中），
+         * 读屏用户没有「页面标题」这一级入口，H 键导航是空的。 */}
+        <h1 className={headerTitle}>会话</h1>
         <button
           type="button"
           className={recycleBtn}
@@ -466,8 +537,23 @@ export function SessionList({
       ) : null}
       {!showRecycle && !isError ? (
         <>
-          {!isLoading && visibleTree.length === 0 && extraMatches.length === 0 ? (
-            <div className={empty}>{search ? '无匹配会话' : '该项目下暂无会话'}</div>
+          {contentError && searching ? (
+            <div className={errorBar} role="alert" data-testid="session-search-error">
+              会话搜索失败
+              {contentErrorMessage ? `：${contentErrorMessage}` : '，请稍后重试。'}{' '}
+              <button
+                type="button"
+                onClick={() => void refetchContent()}
+                data-testid="session-search-retry"
+              >
+                重试
+              </button>
+            </div>
+          ) : null}
+          {!isLoading && !contentError && visibleTree.length === 0 && extraMatches.length === 0 ? (
+            <div className={empty} aria-live="polite">
+              {searching ? (contentPending ? '搜索中…' : '无匹配会话') : '该项目下暂无会话'}
+            </div>
           ) : null}
           {visibleTree.length > 0 && (
             <BranchTree
@@ -560,6 +646,6 @@ export function SessionList({
           ）。导入到哪个项目？继续对话时工具将在目标项目的工作目录中执行。
         </Dialog>
       )}
-    </div>
+    </nav>
   )
 }

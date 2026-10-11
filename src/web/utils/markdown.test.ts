@@ -140,6 +140,26 @@ describe('未受信 HTML 与 URL 注入', () => {
     }
   })
 
+  // 回归：渲染出的链接此前是裸 `<a href>`，左键点击把整个 SPA 导航走——会话、
+  // 流式输出与侧栏状态随页面卸载丢失（实测：点开回复里的外链后地址栏变成目标
+  // URL，只能靠浏览器后退回来）。应用内渲染的链接必须在新的标签页打开。
+  it('链接在新标签页打开，且不把 opener 交给目标页', async () => {
+    const html = await renderMarkdown('[示例站点](https://example.com/docs)')
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('rel="noreferrer"')
+    expect(html).toContain('href="https://example.com/docs"')
+  })
+
+  it('新标签页属性不影响安全的本地/内部链接，也不吃掉行内格式', async () => {
+    for (const md of ['[a](./rel.md)', '[a](#anchor)', '[a](omp://docs)']) {
+      expect(await renderMarkdown(md), md).toContain('target="_blank"')
+    }
+    expect(await renderMarkdown('[**粗** 与 `码`](https://example.com/x)')).toContain(
+      '<strong>粗</strong>',
+    )
+    expect(renderMarkdownSync('[a](https://example.com/x)')).toContain('target="_blank"')
+  })
+
   it('renderMarkdownSync 同口径：原始 HTML 与危险 scheme 同样被拦截', () => {
     const html = renderMarkdownSync('<img src=x onerror=alert(1)>\n\n[click](javascript:alert(1))')
     expect(html).not.toContain('<img')

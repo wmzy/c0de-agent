@@ -143,16 +143,24 @@ export const taskTool: ToolDef = {
       const label = (i: number): string => inp.tasks[i]?.description ?? inp.tasks[i]?.role ?? 'task'
       const completed: string[] = []
       const failures: string[] = []
+      // 逐子任务的终态：交给 UI 画工作流图。此前图里所有节点都套用父工具的
+      // 状态——批量里失败一个，成功的那几个也一起被画成「失败」，与下方
+      // 「Completed: …」的文本自相矛盾（实测 3 个里 2 成 1 败，图上 3 个全红）。
+      // 只带下标不带文案：节点标题仍由 UI 从输入派生，避免两处各写一套兜底文案。
+      const subtasks: Array<{ index: number; status: 'completed' | 'failed' | 'running' }> = []
       results.forEach((res, i) => {
         if (res._tag === 'error') {
           failures.push(`[${label(i)}] ${res.error}`)
+          subtasks.push({ index: i, status: 'failed' })
           return
         }
         if (res._tag === 'running') {
           completed.push(`[${label(i)}] background started (jobId: ${res.jobId})`)
+          subtasks.push({ index: i, status: 'running' })
           return
         }
         completed.push(`[${label(i)}] ${res.output}`)
+        subtasks.push({ index: i, status: 'completed' })
       })
       if (failures.length > 0) {
         // 失败不吞掉已完成任务的结果：模型据此只重派失败的子任务
@@ -161,9 +169,10 @@ export const taskTool: ToolDef = {
           error:
             `Sub-agent failed: ${failures.join('; ')}` +
             (completed.length > 0 ? `\n\nCompleted:\n${completed.join('\n\n')}` : ''),
+          metadata: { subtasks },
         }
       }
-      return { _tag: 'success', output: completed.join('\n\n') }
+      return { _tag: 'success', output: completed.join('\n\n'), metadata: { subtasks } }
     }
 
     // 单任务模式

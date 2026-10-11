@@ -5,6 +5,7 @@ import type { DragEvent, KeyboardEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AtFilePopover } from '@/composer/AtFilePopover.js'
 import { AttachmentBar } from '@/composer/AttachmentBar.js'
+import { atMenuItems, atMenuSelection } from '@/composer/at-menu.js'
 import { ComposerEditor } from '@/composer/ComposerEditor.js'
 import { currentCursor } from '@/composer/editor-sync.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
@@ -72,7 +73,10 @@ const sendBtn = css`
   border-radius: 8px;
   border: none;
   background: var(--haze-color-primary);
-  color: #fff;
+  /* 实底上的前景色走 token：primary 的 dark 值是为深底上的蓝**字**调的，
+     当底色时白字仅 3.00:1（实测 axe color-contrast serious）——这是全应用
+     最主要的动作按钮，却恰好是最难读的那个。见 global.ts 的说明。 */
+  color: var(--c0de-primary-on-solid, #fff);
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
@@ -122,8 +126,22 @@ const stopBtn = css`
   border-radius: 8px;
   border: none;
   background: var(--haze-color-danger);
-  color: #fff;
+  /* 同 sendBtn：danger 的 dark 值当实底时白字只有 3.76:1。 */
+  color: var(--c0de-danger-on-solid, #fff);
   cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+`
+
+/** 首条消息在途：保留发送键的位置，按钮本身被禁用态接管。 */
+const creatingBtn = css`
+  align-self: flex-end;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: var(--haze-color-bg-muted);
+  color: var(--haze-color-text-muted);
+  cursor: not-allowed;
   font-size: 14px;
   flex-shrink: 0;
 `
@@ -148,7 +166,7 @@ const popoverGroup = css`
   display: contents;
 `
 
-/** 大段粘贴确认条：与权限 dock 同为编辑器上方的决策条（贴顶分隔 + subtle 底）。 */
+/** 大段内容确认条（粘贴与拖放共用）：与权限 dock 同为编辑器上方的决策条（贴顶分隔 + subtle 底）。 */
 const pasteBar = css`
   display: flex;
   align-items: center;
@@ -171,7 +189,8 @@ const pasteInsertBtn = css`
   border: none;
   border-radius: 6px;
   background: var(--haze-color-primary);
-  color: #fff;
+  /* 同 sendBtn：primary 实底上的前景色必须走 token。 */
+  color: var(--c0de-primary-on-solid, #fff);
   font-size: 13px;
   cursor: pointer;
   &:hover {
@@ -217,9 +236,16 @@ type ComposerProps = {
    */
   restoreDraft?: { prompt: Prompt; images: ImagePart[] } | null
   onAbort?: () => void
-  /** 流式态「追加指令」注入 steering 文本。 */
-  onSteer?: (message: string) => void
+  /** 流式态「追加指令」注入 steering 文本。返回值语义同 useComposer.onSteer：
+   *  false/Promise<false> 表示未被受理，输入不清空。 */
+  onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   isStreaming: boolean
+  /**
+   * 首条消息在途（草稿页建会话窗口）：此时既没有 run 可中止也无法 steering，
+   * 输入区不得翻成运行态。steer 的清空与中止键的红色翻面都要求真实动作，
+   * 没有就把控件置为不可用。
+   */
+  creating?: boolean
   hasHistory: boolean
   supportsVision?: boolean
   permission?: { tool: string; input: unknown } | null
@@ -231,6 +257,11 @@ type ComposerProps = {
   projectId?: string
   /** 可用 agent 列表（@ mention 渲染与校验）。 */
   agents: AgentListItem[]
+  /**
+   * 草稿持久化作用域（`s:<sessionId>` / `p:<projectId>`）：输入内容按作用域落
+   * localStorage，切会话或刷新后回填。缺省不持久化。
+   */
+  draftScope?: string
 }
 
 /**
@@ -256,14 +287,17 @@ function Composer(props: ComposerProps) {
     // 原样回传发送结果：useComposer 据此在失败时把草稿与图片还回输入框。
     return props.onSend({ ...payload, agents })
   }
-  const { data: commands = [] } = useCommands()
+  const commandsQuery = useCommands()
+  const commands = commandsQuery.data ?? []
   const composer = useComposer({
     onSend: handleSend,
     onAbort: props.onAbort,
     onSteer: props.onSteer,
     isStreaming: props.isStreaming,
+    busy: props.creating,
     hasHistory: props.hasHistory,
     commands,
+    draftScope: props.draftScope,
   })
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
 
@@ -288,12 +322,13 @@ function Composer(props: ComposerProps) {
 
   // 工作流列表：传入 projectId 以发现项目级 .c0de/workflows/*.js。
   // queryKey 含 projectId 确保切换项目时重新拉取。
-  const { data: workflows = [] } = useQuery({
+  const workflowsQuery = useQuery({
     queryKey: ['workflows', props.projectId],
     queryFn: () => workflowsAPI.list(props.projectId),
     staleTime: Infinity,
     select: (data) => data.workflows,
   })
+  const workflows = workflowsQuery.data ?? []
 
   // slash 命令按 query 过滤——过滤必须与键盘导航/选择使用同一列表，
   // 否则 activeIndex 指向的项与 popover 展示的项不一致（选中错误命令）。
@@ -365,12 +400,18 @@ function Composer(props: ComposerProps) {
     if (composer.popover === 'subcommand') setSubcommandActive(0)
   }, [composer.popover, composer.popoverQuery])
 
-  // @ mention 候选：subagent（非 primary）按 query 过滤
-  const atSubagents = props.agents
-    .filter((a) => a.mode !== 'primary')
-    .filter((a) => !composer.popoverQuery || a.name.includes(composer.popoverQuery))
-    .slice(0, 5)
-  const atFiles = (fileSearch.data ?? []).filter((r) => r.type === 'file')
+  // @ mention 候选：subagent（非 primary）按 query 过滤。
+  // 候选列表只在 at-menu.ts 算一次——键盘索引与浮层渲染共用同一份（见该文件注释）：
+  // 此前两边各算一份，键盘按完整搜索结果计数而只渲染前 20 项，↓ 按过第 20 项后
+  // 没有任何项高亮、Enter 却插入了第 21 个（用户从未看见的）文件。
+  const atMenu = atMenuItems({
+    agents: props.agents,
+    results: fileSearch.data ?? [],
+    query: composer.popoverQuery,
+  })
+  const atSubagents = atMenu.subagents
+  const atFiles = atMenu.files
+  const atTotal = atSubagents.length + atFiles.length
 
   // 选中 @agent：把光标前的 @query token 原位替换为 @name 文本。
   // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
@@ -379,10 +420,10 @@ function Composer(props: ComposerProps) {
   const insertAgentToken = (name: string) => {
     const prompt = composer.promptRef.current
     const editor = composer.editorRef.current
-    if (!editor) return
+    if (!editor) return false
     const cursor = currentCursor(editor)
     const range = atTokenRange(promptToText(prompt), cursor)
-    if (!range) return
+    if (!range) return false
     const token = `@${name} `
     composer.setPromptExternal(
       replacePromptRange(prompt, range.start, range.end, [
@@ -392,6 +433,24 @@ function Composer(props: ComposerProps) {
     )
     composer.setPopover(null)
     editor.focus()
+    return true
+  }
+
+  /**
+   * 浮层候选插不进去时的收尾（Enter 专用）。
+   *
+   * 浮层是否打开只在「输入事件」里重算：键入 `@read` 出候选后，用 Home / 方向键 /
+   * 鼠标把光标移开，菜单不会失效。此时 Enter 分支仍然 preventDefault 并调
+   * insert*，而 insert* 找不到光标前的 @token 就静默 return——消息永远发不出去、
+   * 浮层不关、连按 Enter 也毫无反应，只有 Esc 或鼠标能脱身（实测复现）。
+   * 候选索引越界（搜索结果在浮层开着时变化）同理。
+   *
+   * 所以：插不进去就关掉这个已经无法响应的浮层，并把按键按「无浮层」交还给
+   * composer（Enter = 发送），与 popoverSuppressed 的既有处理同一条路径。
+   */
+  const fallThroughStalePopover = (e: KeyboardEvent) => {
+    composer.setPopover(null)
+    composer.handleKeyDown(e, true)
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -412,12 +471,36 @@ function Composer(props: ComposerProps) {
           : composer.popover === 'subcommand'
             ? filteredSubcommands.length
             : composer.popover === 'at'
-              ? atSubagents.length + atFiles.length
+              ? atTotal
               : 0
-    // 没有候选 → 不拦截，按「无浮层」把按键交给 composer.handleKeyDown（Enter 即发送）。
-    const popoverDead = composer.popover !== null && popoverCandidates === 0
+    // 加载中的候选源：候选计数为 0，但原因是「结果还没到」而不是「没有匹配」。
+    // 此时浮层保持打开显示「搜索中…」（见各 Popover 的 loading 分支），
+    // 但按键仍按「无浮层」处理——否则一个还没出结果的菜单会静默吞掉 Enter。
+    const popoverLoading =
+      composer.popover === 'workflow'
+        ? workflowsQuery.isLoading
+        : composer.popover === 'slash' || composer.popover === 'subcommand'
+          ? commandsQuery.isLoading
+          : composer.popover === 'at'
+            ? fileSearch.isLoading
+            : false
+    // 没有候选（无论是否在加载）→ 不拦截，按「无浮层」把按键交给 composer.handleKeyDown
+    // （Enter 即发送）。
+    const popoverSuppressed = composer.popover !== null && popoverCandidates === 0
+    // 只有「不在加载且没有候选」才真的关掉浮层；加载中保留浮层给出反馈。
+    const popoverDead = popoverSuppressed && !popoverLoading
     if (popoverDead) composer.setPopover(null)
-    if (!popoverDead && composer.popover === 'workflow') {
+    // 键盘导航只在真的有候选项时生效：0 候选取 min(i+1, -1) 会把 activeIndex 算成 -1。
+    const popoverNavigable = composer.popover !== null && popoverCandidates > 0
+    // Tab 是「离开输入框」的键，不是「确认候选」：此前与 Enter 同处理，浮层打开时
+    // 键盘用户既无法用 Tab/Shift+Tab 离开输入框（焦点陷阱），又会把候选静默插进
+    // 正在写的消息里（`/hel` + Tab 变成 `/help `）。这里只关掉浮层、放行按键交给
+    // 浏览器移动焦点；确认候选仍然走 Enter。
+    if (e.key === 'Tab' && composer.popover !== null) {
+      composer.setPopover(null)
+      return
+    }
+    if (popoverNavigable && composer.popover === 'workflow') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setWorkflowActive((i) => Math.min(i + 1, filteredWorkflows.length - 1))
@@ -428,14 +511,17 @@ function Composer(props: ComposerProps) {
         setWorkflowActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault()
+      if (e.key === 'Enter') {
         const wf = filteredWorkflows[workflowActive]
-        if (wf) composer.insertWorkflow(wf.name)
+        if (wf && composer.insertWorkflow(wf.name)) {
+          e.preventDefault()
+          return
+        }
+        fallThroughStalePopover(e)
         return
       }
     }
-    if (!popoverDead && composer.popover === 'slash') {
+    if (popoverNavigable && composer.popover === 'slash') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSlashActive((i) => Math.min(i + 1, filteredCommands.length - 1))
@@ -446,14 +532,17 @@ function Composer(props: ComposerProps) {
         setSlashActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault()
+      if (e.key === 'Enter') {
         const cmd = filteredCommands[slashActive]
-        if (cmd) composer.insertSlash(cmd.name)
+        if (cmd && composer.insertSlash(cmd.name)) {
+          e.preventDefault()
+          return
+        }
+        fallThroughStalePopover(e)
         return
       }
     }
-    if (!popoverDead && composer.popover === 'subcommand') {
+    if (popoverNavigable && composer.popover === 'subcommand') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSubcommandActive((i) => Math.min(i + 1, filteredSubcommands.length - 1))
@@ -464,18 +553,20 @@ function Composer(props: ComposerProps) {
         setSubcommandActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault()
+      if (e.key === 'Enter') {
         const sub = filteredSubcommands[subcommandActive]
-        if (sub) composer.insertSubcommand(sub.name)
+        if (sub && composer.insertSubcommand(sub.name)) {
+          e.preventDefault()
+          return
+        }
+        fallThroughStalePopover(e)
         return
       }
     }
-    if (!popoverDead && composer.popover === 'at') {
-      const total = atSubagents.length + atFiles.length
+    if (popoverNavigable && composer.popover === 'at') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setAtActive((i) => Math.min(i + 1, total - 1))
+        setAtActive((i) => Math.min(i + 1, atTotal - 1))
         return
       }
       if (e.key === 'ArrowUp') {
@@ -483,36 +574,42 @@ function Composer(props: ComposerProps) {
         setAtActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault()
-        if (atActive < atSubagents.length) {
-          const a = atSubagents[atActive]
-          if (a) insertAgentToken(a.name)
-        } else {
-          const f = atFiles[atActive - atSubagents.length]
-          if (f) composer.insertFile(f.path)
+      if (e.key === 'Enter') {
+        const selected = atMenuSelection(atMenu, atActive)
+        const inserted =
+          selected?.kind === 'agent'
+            ? insertAgentToken(selected.agent.name)
+            : selected?.kind === 'file'
+              ? composer.insertFile(selected.file.path)
+              : false
+        if (inserted) {
+          e.preventDefault()
+          return
         }
+        fallThroughStalePopover(e)
         return
       }
     }
-    composer.handleKeyDown(e, popoverDead)
+    composer.handleKeyDown(e, popoverSuppressed)
   }
 
   const handleDrop = (e: DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
     const dropped = Array.from(e.dataTransfer.files)
-    const hasImage = dropped.some((f) => f.type.startsWith('image/'))
     for (const f of dropped) {
       if (f.type.startsWith('image/')) composer.addImage(f)
     }
-    if (!hasImage) {
-      const text = e.dataTransfer.getData('text/plain')
-      if (text) document.execCommand('insertText', false, text)
-    }
+    // 文本与图片各自独立处理：一次拖放里同时带图片文件和文本（从别处拖来一段
+    // 文字、同时带上图片文件）时，此前 hasImage 为 true 会把文本整段丢弃——
+    // 图片进了附件栏，文字凭空消失，零反馈。
+    //
+    // 走 composer.insertText（与粘贴同一条通道）：换行归一与大段确认条都在。
+    // 拖一个 1MB 的 .log 进来此前直接灌满输入框，而同样内容 Ctrl+V 会先问一句。
+    composer.insertText(e.dataTransfer.getData('text/plain'), true)
   }
 
-  const sendLabel = props.isStreaming ? '终止' : '发送'
+  const sendLabel = props.isStreaming ? '终止' : props.creating ? '创建中…' : '发送'
   const pasteConfirm = composer.showPasteConfirm
 
   return (
@@ -561,11 +658,11 @@ function Composer(props: ComposerProps) {
         <div
           className={pasteBar}
           role="group"
-          aria-label="大段粘贴确认"
+          aria-label="大段内容确认"
           data-testid="paste-confirm"
         >
           <span className={pasteText}>
-            粘贴内容较大（{pasteConfirm.chars} 字符 / {pasteConfirm.lines} 行），插入输入框？
+            内容较大（{pasteConfirm.chars} 字符 / {pasteConfirm.lines} 行），插入输入框？
           </span>
           <button
             ref={pasteInsertRef}
@@ -593,6 +690,7 @@ function Composer(props: ComposerProps) {
             <SlashPopover
               commands={filteredCommands}
               activeIndex={slashActive}
+              loading={commandsQuery.isLoading}
               onSelect={(name) => composer.insertSlash(name)}
             />
           </div>
@@ -603,6 +701,7 @@ function Composer(props: ComposerProps) {
             <SubcommandPopover
               subcommands={filteredSubcommands}
               activeIndex={subcommandActive}
+              loading={commandsQuery.isLoading}
               onSelect={(name) => composer.insertSubcommand(name)}
               parentCommand={composer.subcommandCmd}
             />
@@ -614,6 +713,7 @@ function Composer(props: ComposerProps) {
             <WorkflowPopover
               workflows={filteredWorkflows}
               activeIndex={workflowActive}
+              loading={workflowsQuery.isLoading}
               onSelect={(name) => composer.insertWorkflow(name)}
             />
           </div>
@@ -622,12 +722,11 @@ function Composer(props: ComposerProps) {
           // biome-ignore lint/a11y/useSemanticElements: role="group" 仅承载可访问名称，fieldset 不适用于绝对定位浮层
           <div className={popoverGroup} role="group" aria-label="文件与提及">
             <AtFilePopover
-              results={fileSearch.data ?? []}
+              subagents={atSubagents}
+              files={atFiles}
               activeIndex={atActive}
+              loading={fileSearch.isLoading}
               onSelect={(path) => composer.insertFile(path)}
-              agents={props.agents}
-              query={composer.popoverQuery}
-              activeAgentIndex={atActive}
               onAgentSelect={insertAgentToken}
             />
           </div>
@@ -646,18 +745,21 @@ function Composer(props: ComposerProps) {
           className={appendBtn}
           onClick={composer.steer}
           type="button"
-          disabled={!props.isStreaming}
+          disabled={!props.isStreaming || props.creating}
           data-testid="append"
         >
           追加指令
         </button>
         <button
-          className={props.isStreaming ? stopBtn : sendBtn}
+          className={props.isStreaming ? stopBtn : props.creating ? creatingBtn : sendBtn}
           onClick={composer.send}
           type="button"
           aria-label={props.isStreaming ? '终止生成' : '发送消息'}
           data-testid="send"
-          disabled={!props.isStreaming && composer.isEmpty && composer.images.length === 0}
+          disabled={
+            props.creating ||
+            (!props.isStreaming && composer.isEmpty && composer.images.length === 0)
+          }
         >
           {sendLabel}
         </button>

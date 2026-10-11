@@ -10,6 +10,7 @@ import {
   StrictMode,
 } from 'react'
 import { describe, expect, it, vi } from 'vitest'
+import { loadDraft } from '@/composer/draft.js'
 import { loadHistory, saveHistory } from '@/composer/history.js'
 import { useComposer } from '@/composer/useComposer.js'
 
@@ -115,8 +116,9 @@ type PillInsertResult = {
   editor: HTMLDivElement
 }
 
-/** 带真实 contenteditable 编辑器的 composer：pill 渲染/解析与光标定位全链路。 */
-function renderComposerWithEditor(): PillInsertResult {
+/** 带真实 contenteditable 编辑器的 composer：pill 渲染/解析与光标定位全链路。
+ *  draftScope 传入时才落 localStorage（草稿持久化域），用于断言「什么该落盘」。 */
+function renderComposerWithEditor(draftScope?: string): PillInsertResult {
   const editor = document.createElement('div')
   editor.setAttribute('contenteditable', 'true')
   document.body.appendChild(editor)
@@ -130,6 +132,7 @@ function renderComposerWithEditor(): PillInsertResult {
         isStreaming: false,
         hasHistory: false,
         commands: [],
+        draftScope,
       }),
     { wrapper: strictWrapper },
   )
@@ -215,6 +218,47 @@ describe('useComposer pill 保留', () => {
     expect(c.onSend).toHaveBeenCalledTimes(1)
     const payload = c.onSend.mock.calls[0]?.[0] as { files: string[]; images: ImagePart[] }
     expect(payload.files).toEqual(['src/a.ts', 'src/c.ts'])
+  })
+
+  /**
+   * 回归：↑ 回溯把历史条目当草稿落盘，顶掉用户正在写的那份。
+   *
+   * 缺陷：历史导航走 setPromptExternal，而它无条件 persistDraft。实测（隔离
+   * dev server）：输入「我写了一半的草稿」→ 按 ↑ → localStorage 里
+   * composer-draft.v1:s:<sessionId> 变成「历史里的第一条提示」。原草稿只在
+   * draftRef 内存里，用户此时切会话/刷新即永久丢失——包括草稿里的 @file pill
+   * 与图片附件。回溯只是「看一条旧提示」，不该改写草稿。
+   */
+  it('↑ 回溯不把历史条目写成本会话草稿', () => {
+    const scope = 's:draft-scope-1'
+    const c = renderComposerWithEditor(scope)
+    act(() => {
+      c.appendFileReference('src/a.ts')
+      saveHistory(['历史里的第一条提示'])
+    })
+    typeText(c, '我写了一半的草稿')
+    expect(loadDraft(scope)?.prompt).toBeDefined()
+
+    act(() => {
+      c.handleKeyDown({ key: 'ArrowUp', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+    // 输入框显示的是召回的历史条目
+    expect(promptToText(c.promptRef.current as never)).toBe('历史里的第一条提示')
+    // 但草稿存储里仍是用户原来那份（含 file pill）
+    const stored = loadDraft(scope)
+    expect(stored).not.toBeNull()
+    expect(promptToText(stored?.prompt ?? [])).toContain('我写了一半的草稿')
+    expect(stored?.prompt.map((p) => p.type)).toContain('file')
+
+    // ↓ 退出历史：草稿原样回到输入框，且此时才落盘
+    act(() => {
+      c.handleKeyDown({
+        key: 'ArrowDown',
+        preventDefault: vi.fn(),
+      } as unknown as ReactKeyboardEvent)
+    })
+    expect(promptToText(c.promptRef.current as never)).toContain('我写了一半的草稿')
+    expect(promptToText(loadDraft(scope)?.prompt ?? [])).toContain('我写了一半的草稿')
   })
 
   it('历史回溯 ↑ 后 ↓ 退出，恢复带 pill 的草稿（不被降级为文本）', () => {
@@ -401,5 +445,73 @@ describe('useComposer 发送失败还原', () => {
     })
     // 「第二条」确实发出去了，历史必须留着它
     expect(loadHistory()[0]).toBe('第二条')
+  })
+})
+
+/**
+ * 追加指令（steer）的输入清空时机。
+ *
+ * 缺陷：steer 无条件清空输入框，但「追加指令」并不保证被送达——后端
+ * POST /api/chat/steer 在没有进行中的 run 时回 {steered:false}，指令既没注入
+ * run 也没落库。此前用户敲的整段指令随清空一起消失，屏幕上没有任何痕迹，
+ * 只能凭记忆重打（与「发送失败把输入还回去」的口径也自相矛盾）。
+ */
+describe('useComposer 追加指令的清空时机', () => {
+  function renderStreamingComposer(onSteer: (m: string) => undefined | Promise<boolean>) {
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    document.body.appendChild(editor)
+    const { result } = renderHook(
+      () =>
+        useComposer({
+          onSend: vi.fn(),
+          onAbort: vi.fn(),
+          onSteer,
+          isStreaming: true,
+          hasHistory: false,
+          commands: [],
+        }),
+      { wrapper: strictWrapper },
+    )
+    act(() => {
+      result.current.editorRef.current = editor
+    })
+    const type = (text: string) => {
+      act(() => {
+        editor.appendChild(document.createTextNode(text))
+        result.current.handleInput()
+      })
+    }
+    return { result, editor, type }
+  }
+
+  it('后端回 steered:false 时输入原样保留（指令没送出去，不能凭空清空）', async () => {
+    const { result, type } = renderStreamingComposer(() => Promise.resolve(false))
+    type('改用 pnpm 跑测试')
+
+    act(() => {
+      result.current.steer()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(promptToText(result.current.promptRef.current as never)).toContain('改用 pnpm')
+  })
+
+  it('确认受理后输入才清空（沿用「发出即清空」的体感）', async () => {
+    const { result, type } = renderStreamingComposer(() => Promise.resolve(true))
+    type('改用 pnpm 跑测试')
+
+    act(() => {
+      result.current.steer()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(promptToText(result.current.promptRef.current as never)).toBe('')
   })
 })

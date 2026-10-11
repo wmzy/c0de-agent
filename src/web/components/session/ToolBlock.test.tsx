@@ -125,6 +125,22 @@ describe('ToolBlock', () => {
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('false')
   })
 
+  it('header 内嵌文件路径链接按 Enter/Space 不被折叠逻辑吞掉', () => {
+    render(
+      <SelectionWrapper>
+        <ToolBlock block={toolBlock({ tool: 'read', input: { path: 'src/a.ts' } })} />
+      </SelectionWrapper>,
+    )
+    const link = screen.getByTestId('filepath-link')
+    const header = screen.getByTestId('tool-header')
+    expect(header.getAttribute('data-expanded')).toBe('false')
+    // fireEvent 返回 false 表示事件被 preventDefault——那会吃掉 <button> 自身的
+    // Enter/Space 激活，文件预览键盘打不开。同时折叠态必须保持不变。
+    expect(fireEvent.keyDown(link, { key: 'Enter' })).toBe(true)
+    expect(fireEvent.keyDown(link, { key: ' ' })).toBe(true)
+    expect(header.getAttribute('data-expanded')).toBe('false')
+  })
+
   it('未知工具用 FallbackToolView（展开后）', () => {
     render(<ToolBlock block={toolBlock({ tool: 'custom', input: { x: 1 } })} />)
     fireEvent.click(screen.getByTestId('tool-header'))
@@ -134,5 +150,37 @@ describe('ToolBlock', () => {
   it('paused 状态 header 存在且标记 paused', () => {
     render(<ToolBlock block={toolBlock({ status: 'paused' })} />)
     expect(screen.getByTestId('tool-status').getAttribute('data-status')).toBe('paused')
+  })
+
+  // 失败原因与「等待权限确认」只存在于展开态：此前的自动收起把两者一起折叠了，
+  // 消息流里只剩一个 ✗ / 🔒 图标，用户既看不到原因、也不知道工具在等谁点确认。
+  it('error 默认展开，直接显示失败原因', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          status: 'error',
+          output: { _tag: 'error', error: '文件不存在: /tmp/nope.ts' },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('文件不存在: /tmp/nope.ts')
+  })
+
+  it('running → error 不自动收起', () => {
+    const { rerender } = render(<ToolBlock block={toolBlock({ status: 'running' })} />)
+    rerender(
+      <ToolBlock
+        block={toolBlock({ status: 'error', output: { _tag: 'error', error: '权限不足' } })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('权限不足')
+  })
+
+  it('paused 默认展开并说明在等权限确认', () => {
+    render(<ToolBlock block={toolBlock({ status: 'paused' })} />)
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-body')).toHaveTextContent('等待权限确认')
   })
 })

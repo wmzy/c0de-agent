@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { ToolError } from '@/components/session/tools/toolError.js'
 
 type KanbanCard = {
   id: string
@@ -109,6 +110,7 @@ function BoardView({ board }: { board: KanbanBoard }) {
 export function KanbanToolView({
   input,
   output,
+  status,
 }: {
   input: unknown
   output?: ToolResult
@@ -116,6 +118,17 @@ export function KanbanToolView({
 }) {
   const i = (input ?? {}) as KanbanInput
   const op = i.op ?? 'view'
+
+  // 失败优先于「无看板」：move/add 失败时 metadata 里没有 board，此前整块渲染塌成
+  // 一行 op 名，用户既看不到失败原因，也看不出自己那张卡到底有没有移动成功。
+  if (output?._tag === 'error' || status === 'error') {
+    return (
+      <div>
+        <span className={opLabel}>kanban/{op}</span>
+        <ToolError output={output} status={status} />
+      </div>
+    )
+  }
 
   // Extract board from output metadata
   let board: KanbanBoard | null = null

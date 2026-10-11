@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AddProjectDialog } from '@/components/AddProjectDialog.js'
+import { filesystemAPI } from '@/services/filesystem.js'
 import { projectAPI } from '@/services/project.js'
 
 vi.mock('@/services/project.js', () => ({
@@ -38,6 +39,20 @@ describe('AddProjectDialog', () => {
   it('空目录时确认按钮禁用', () => {
     renderWithClient(<AddProjectDialog onClose={vi.fn()} />)
     expect(screen.getByTestId('add-project-confirm')).toBeTruthy()
+    expect((screen.getByTestId('add-project-confirm') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  // 复现：DirectoryPicker 首次自动导航到 home 时把 `~` 回填成宿主 value，
+  // 「添加」的启用条件（value 非空）随即成立——用户只打开弹窗、什么都没选，
+  // 回车/点击即把 $HOME 注册成项目。
+  it('未做任何选择时确认按钮保持禁用（home 自动导航不回填）', async () => {
+    vi.mocked(filesystemAPI.home).mockResolvedValue({ path: '/home/user' })
+    vi.mocked(filesystemAPI.browse).mockResolvedValue({ path: '/home/user', directories: [] })
+    renderWithClient(<AddProjectDialog onClose={vi.fn()} />)
+
+    await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/home/user'))
+    const input = screen.getByTestId('add-project-input') as HTMLInputElement
+    expect(input.value).toBe('')
     expect((screen.getByTestId('add-project-confirm') as HTMLButtonElement).disabled).toBe(true)
   })
 

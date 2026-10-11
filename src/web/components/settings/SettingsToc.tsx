@@ -16,6 +16,7 @@ import { css } from '@linaria/core'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   GAP,
+  horizontalWheelTarget,
   measureSettingsSticky,
   notifyTocReady,
   type SettingsSticky,
@@ -54,7 +55,10 @@ const tocChip = css`
   /* 当前所在分区：primary 描边 + primary 文字 + 淡底，与未激活双重区分 */
   &[aria-current='true'] {
     border-color: var(--haze-color-primary);
-    color: var(--haze-color-primary);
+    /* 走 primary-on-tint：蓝字压在「自身色相的 8% 淡底」上时对比度比白底更低，
+       实测亮色主题 4.32:1（axe color-contrast serious，12px 文字需 4.5）。
+       该 token 已按主题调过：亮色压暗到 0.535（淡底上 4.56），暗色沿用原值。 */
+    color: var(--c0de-primary-on-tint, var(--haze-color-primary));
     background: color-mix(in srgb, var(--haze-color-primary) 8%, var(--haze-color-bg));
   }
 `
@@ -223,6 +227,32 @@ export function SettingsToc() {
       bar.removeEventListener('scroll', measure)
       ro.disconnect()
     }
+  }, [items])
+
+  // 纵向滚轮驱动目录行横滚（换算见 horizontalWheelTarget：只在真能滚且未到
+  // 两端时拦截，到头把滚轮还给页面）。
+  //
+  // 用原生 addEventListener 而非 React onWheel：React 17+ 把 wheel 挂成
+  // passive 监听，事件回调里 preventDefault 不生效（浏览器直接忽略），
+  // 滚轮仍会连带把页面滚走。
+  //
+  // 依赖 items：目录行是扫描完 h2 才渲染的（items 为空时组件 return null），
+  // 首次挂载时 barRef.current 还是 null。若写成 [] 这个 effect 只跑一次、
+  // 当场早退，监听永远挂不上——实测 dispatchEvent 的 defaultPrevented 仍是
+  // false、scrollLeft 恒为 0。
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: items 仅作目录行挂载后的重挂触发
+  useEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    const onWheel = (e: WheelEvent) => {
+      const next = horizontalWheelTarget(bar, e)
+      if (next === null) return
+      e.preventDefault()
+      bar.scrollLeft = next
+    }
+    bar.addEventListener('wheel', onWheel, { passive: false })
+    return () => bar.removeEventListener('wheel', onWheel)
   }, [items])
 
   // 当前分区的 chip 必须可见：滚到底部时 scroll-spy 把 active 设成第 18 节，

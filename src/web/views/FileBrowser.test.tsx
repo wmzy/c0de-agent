@@ -149,6 +149,57 @@ describe('FileBrowser 搜索结果语义', () => {
   })
 
   /**
+   * 回归：搜索结果里的目录行此前与文件行走同一条 onPick（打开预览）。
+   *
+   * 缺陷：读接口对目录执行 readFile 抛 EISDIR → 404，点文件夹必然得到
+   * 「文件读取失败 / File not found」，而同一路径在文件树里点却是展开语义。
+   * 现在目录行回到文件树并展开定位到该目录。
+   */
+  it('点搜索结果里的目录行回到文件树并展开定位，不打开预览', async () => {
+    const onPick = vi.fn()
+    vi.mocked(fileAPI.search).mockResolvedValue([
+      { path: 'src', type: 'directory' },
+      { path: 'src/cli', type: 'directory' },
+      { path: 'src/a.ts', type: 'file' },
+    ])
+    vi.mocked(fileAPI.list).mockImplementation(async (dir: string) =>
+      dir === '.'
+        ? ROOT_ENTRIES
+        : dir === 'src'
+          ? [
+              { name: 'a.ts', type: 'file' },
+              { name: 'cli', type: 'directory' },
+            ]
+          : dir === 'src/cli'
+            ? [{ name: 'index.ts', type: 'file' }]
+            : [],
+    )
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileBrowser projectId="p1" onPick={onPick} />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('node-src')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 'src' } })
+    await waitFor(() => expect(screen.getByTestId('file-src')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('file-src/cli'))
+
+    // 退出搜索，回到文件树，目标目录及其祖先都已展开、子项已加载
+    await waitFor(() => expect(screen.getByRole('tree', { name: '项目文件树' })).toBeTruthy())
+    expect(screen.queryByRole('list', { name: '搜索结果' })).toBeNull()
+    expect(screen.getByTestId('toggle-src')).toBeTruthy()
+    expect(screen.getByTestId('node-src/cli')).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('index.ts')).toBeTruthy())
+    // 目录不触发打开预览
+    expect(onPick).not.toHaveBeenCalled()
+    expect(vi.mocked(fileAPI.list)).toHaveBeenCalledWith('src/cli', 'p1')
+  })
+
+  /**
    * 回归：单字符查询此前被静默丢弃。
    *
    * 缺陷：isSearch 门槛是 `searchDebounced.length > 1`。输入 1 个字时既不发
@@ -172,5 +223,156 @@ describe('FileBrowser 搜索结果语义', () => {
     expect(screen.getByRole('list', { name: '搜索结果' })).toBeInTheDocument()
     expect(screen.getByText('src/a.ts')).toBeInTheDocument()
     expect(screen.queryByTestId('node-src')).toBeNull()
+  })
+})
+
+/**
+ * 回归：文件面板把「拉不到/搜不了」渲染成「加载中…/无匹配文件」。
+ *
+ * 缺陷一：根目录列目录是裸 promise + `.catch(() => {})`，treeRoot 恒为 null，
+ * 面板永远停在「加载中…」，没有原因也没有重试入口——用户只能反复刷新整页。
+ * 缺陷二：搜索没有 isError 分支，重试耗尽后 data=undefined 直接落进空态，把
+ * 「查不到」说成「不存在」，用户会据此判定文件没有并去重建同名文件。
+ */
+describe('FileBrowser 读失败态', () => {
+  it('根目录列出失败时展示原因与重试，而不是永远「加载中…」', async () => {
+    vi.mocked(fileAPI.list).mockRejectedValueOnce({ message: '后端 500' })
+    renderBrowser()
+
+    const err = await screen.findByTestId('file-tree-error')
+    expect(err.textContent).toContain('文件加载失败')
+    expect(err.textContent).toContain('后端 500')
+    expect(screen.queryByText('加载中…')).toBeNull()
+  })
+
+  it('点重试后重新拉取根目录并渲染出文件树', async () => {
+    vi.mocked(fileAPI.list).mockRejectedValueOnce({ message: '后端 500' })
+    renderBrowser()
+    await screen.findByTestId('file-tree-error')
+
+    fireEvent.click(screen.getByTestId('file-tree-retry'))
+    await waitFor(() => {
+      expect(screen.getByTestId('node-src')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('file-tree-error')).toBeNull()
+  })
+
+  it('搜索失败展示原因与重试，而不是「无匹配文件」', async () => {
+    vi.mocked(fileAPI.search).mockRejectedValueOnce({ message: '扫描超时' })
+    renderBrowser()
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 'zzz' } })
+
+    const err = await screen.findByTestId('file-search-error', {}, { timeout: 2000 })
+    expect(err.textContent).toContain('搜索失败')
+    expect(err.textContent).toContain('扫描超时')
+    expect(screen.queryByText('无匹配文件')).toBeNull()
+  })
+
+  it('搜索重试成功后回到结果列表', async () => {
+    vi.mocked(fileAPI.search)
+      .mockRejectedValueOnce({ message: '扫描超时' })
+      .mockResolvedValue([{ path: 'src/a.ts', type: 'file' }])
+    renderBrowser()
+    fireEvent.change(screen.getByTestId('file-search'), { target: { value: 'a' } })
+    await screen.findByTestId('file-search-error', {}, { timeout: 2000 })
+
+    fireEvent.click(screen.getByTestId('file-search-retry'))
+    await waitFor(() => {
+      expect(screen.getByText('src/a.ts')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('file-search-error')).toBeNull()
+  })
+})
+
+/**
+ * 懒加载目录失败此前被 `catch {}` 吞掉：目录仍被标记为已展开，树里渲染出
+ * 「（空）」——把「读不到」说成了「没有」，用户据此判定该目录是空的、不再重试。
+ */
+describe('FileBrowser 子目录加载失败', () => {
+  it('展开失败时给出原因与重试，而不是「（空）」', async () => {
+    vi.mocked(fileAPI.list)
+      .mockResolvedValueOnce(ROOT_ENTRIES)
+      .mockRejectedValueOnce({ message: 'EACCES: permission denied' })
+    renderBrowser()
+    await screen.findByTestId('node-src')
+    fireEvent.click(screen.getByTestId('toggle-src'))
+
+    const err = await screen.findByTestId('load-error-src')
+    expect(err.textContent).toContain('EACCES: permission denied')
+    expect(screen.queryByText('（空）')).toBeNull()
+  })
+
+  it('点重试重新拉取该目录，成功后就地渲染出子项', async () => {
+    vi.mocked(fileAPI.list)
+      .mockResolvedValueOnce(ROOT_ENTRIES)
+      .mockRejectedValueOnce({ message: 'EACCES: permission denied' })
+      .mockResolvedValueOnce([{ name: 'a.ts', type: 'file' }])
+    renderBrowser()
+    await screen.findByTestId('node-src')
+    fireEvent.click(screen.getByTestId('toggle-src'))
+    await screen.findByTestId('load-error-src')
+
+    fireEvent.click(screen.getByTestId('load-retry-src'))
+    await waitFor(() => {
+      expect(screen.getByTestId('node-src/a.ts')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('load-error-src')).toBeNull()
+  })
+})
+
+/**
+ * 删除此前走 window.confirm + window.alert：原生框不可样式化；更糟的是失败
+ * 时只弹「删除失败，请重试」，后端 404 的 message（"File not found"）被整句
+ * 丢掉，用户只能对同一路径反复点删除。改为应用内确认层 + 原因留框内。
+ */
+describe('FileBrowser 删除确认', () => {
+  async function openDeleteConfirm() {
+    renderBrowser()
+    await screen.findByTestId('node-package.json')
+    fireEvent.click(screen.getByTestId('delete-package.json'))
+  }
+
+  it('点 🗑 先弹确认层，未确认前不发删除请求', async () => {
+    await openDeleteConfirm()
+
+    const dialog = screen.getByTestId('file-delete-dialog')
+    expect(dialog.textContent).toContain('package.json')
+    expect(dialog.textContent).toContain('回收站')
+    expect(fileAPI.delete).not.toHaveBeenCalled()
+  })
+
+  it('确认后才发删除请求，成功后节点从树里消失、确认层关闭', async () => {
+    await openDeleteConfirm()
+    fireEvent.click(screen.getByTestId('file-delete-confirm'))
+
+    await waitFor(() => {
+      expect(fileAPI.delete).toHaveBeenCalledWith('package.json', 'p1')
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('node-package.json')).toBeNull()
+    })
+    expect(screen.queryByTestId('file-delete-dialog')).toBeNull()
+  })
+
+  it('取消不发删除请求，节点仍在', async () => {
+    await openDeleteConfirm()
+    fireEvent.click(screen.getByTestId('file-delete-cancel'))
+
+    expect(fileAPI.delete).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('file-delete-dialog')).toBeNull()
+    expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
+  })
+
+  it('删除失败时把后端原因显示在确认层里（role=alert），节点不被移除', async () => {
+    vi.mocked(fileAPI.delete).mockRejectedValueOnce({ message: 'File not found' })
+    await openDeleteConfirm()
+    fireEvent.click(screen.getByTestId('file-delete-confirm'))
+
+    const err = await screen.findByTestId('file-delete-error')
+    expect(err.getAttribute('role')).toBe('alert')
+    expect(err.textContent).toContain('File not found')
+    // 原因与操作必须同框可见：失败不关弹层
+    expect(screen.getByTestId('file-delete-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
   })
 })

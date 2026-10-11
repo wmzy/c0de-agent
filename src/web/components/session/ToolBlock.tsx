@@ -92,14 +92,15 @@ export const ToolBlock = memo(function ToolBlock({
 }) {
   const { tool, input, output, status: st } = block
 
-  // 运行中默认展开，其余状态默认折叠
-  const [expanded, setExpanded] = useState(st === 'running')
+  // 只有成功态默认折叠：失败原因（toolError）与「等待权限确认」只存在于
+  // 展开态，折叠等于把用户唯一能看到的问题藏成一个 ✗/🔒 图标。
+  const [expanded, setExpanded] = useState(st !== 'completed')
   // 记录是否已自动收起过，避免覆盖用户后续的手动展开
   const [autoCollapsed, setAutoCollapsed] = useState(false)
 
   useEffect(() => {
-    // 从 running 转入终态时，自动收起一次
-    if (st !== 'running' && !autoCollapsed) {
+    // 从 running 转入成功态时，自动收起一次；error/paused 保持展开
+    if (st === 'completed' && !autoCollapsed) {
       setExpanded(false)
       setAutoCollapsed(true)
     }
@@ -107,6 +108,10 @@ export const ToolBlock = memo(function ToolBlock({
 
   const toggle = () => setExpanded((v) => !v)
   const onHeaderKeyDown = (e: KeyboardEvent) => {
+    // header 里内嵌了 FilePathLink（真 <button>）等交互元素：事件从它们冒泡上来时
+    // 必须放行。否则 preventDefault 会吃掉按钮自身的 Enter/Space 激活——文件预览
+    // 链接键盘完全打不开，Enter 只把工具块折叠/展开。
+    if (e.target !== e.currentTarget) return
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       toggle()

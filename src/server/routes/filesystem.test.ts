@@ -1,4 +1,6 @@
 // filesystem 路由测试，对应 src/server/routes/filesystem.ts
+
+import { chmodSync, mkdirSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -63,12 +65,32 @@ describe('filesystem route', () => {
     expect(body.directories.every((d) => !d.name.startsWith('.'))).toBe(true)
   })
 
-  it('GET /browse returns empty for non-existent path', async () => {
+  // 回归：读不到的路径此前被吞成 200 + directories: []，选择器无法区分
+  // 「目录是空的」与「目录不存在」，把失败渲染成「（空）」。
+  it('GET /browse 对不存在的路径报 404 而不是伪装成空目录', async () => {
     const { app } = await setup()
     const res = await app.request(`/browse?path=${encodeURIComponent(join(tempDir, 'nope'))}`)
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as { directories: { name: string }[] }
-    expect(body.directories).toEqual([])
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('PATH_NOT_FOUND')
+    expect(body.error.message).toContain('nope')
+  })
+
+  it('GET /browse 对无权限的路径报 403（错误原因透给调用方）', async () => {
+    const { app } = await setup()
+    const locked = join(tempDir, 'locked')
+    mkdirSync(locked)
+    chmodSync(locked, 0o000)
+    try {
+      const res = await app.request(`/browse?path=${encodeURIComponent(locked)}`)
+      // root 能读任何目录；非 root 下必须是 403 而不是空列表。
+      if (process.getuid?.() === 0) return
+      expect(res.status).toBe(403)
+      const body = (await res.json()) as { error: { code: string } }
+      expect(body.error.code).toBe('PATH_FORBIDDEN')
+    } finally {
+      chmodSync(locked, 0o755)
+    }
   })
 
   it('GET /browse expands ~ to home directory', async () => {

@@ -93,8 +93,14 @@ const btn = css`
   font-size: 12px;
   line-height: 1.2;
   cursor: pointer;
-  min-height: auto;
-  min-width: auto;
+  /* WCAG 2.5.8 触达目标 24×24 下限（与 BranchTree.delBtn / TopBar.brand 同口径）。
+   * 原先 3px 内边距把按钮压到实测 20px 高、36px 宽——「稍后」两个字的文字按钮
+   * 在触屏上是全应用最小的可点目标之一，点击「立即应用」却会中止进行中的对话与
+   * 终端进程，误触的代价高、目标又小。 */
+  min-height: 24px;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
   &:hover {
     opacity: 0.85;
   }
@@ -114,8 +120,10 @@ const linkBtn = css`
   line-height: 1.2;
   cursor: pointer;
   text-decoration: underline;
-  min-height: auto;
-  min-width: auto;
+  /* 同 btn：文字按钮的视觉高度比实心按钮更矮，触达下限同样补齐 */
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
   &:hover {
     color: var(--haze-color-text);
   }

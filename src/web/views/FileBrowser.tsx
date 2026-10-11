@@ -1,11 +1,13 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Dialog } from '@/components/Dialog.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
+import { btnDanger, btnSm } from '@/styles/tokens.js'
 import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
 
 const panel = css`
@@ -116,6 +118,53 @@ const loading = css`
   font-size: 12px;
 `
 
+/**
+ * 加载失败态：标题 + 原因 + 重试三段式（与 KanbanView / FilePreview 的读失败态同
+ * 口径）。此前根目录列目录失败被 `.catch(() => {})` 吞掉，树恒为 null，面板永远
+ * 停在「加载中…」；搜索失败则落进空态，把「查不到」说成「不存在」。
+ */
+const errorState = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px 8px;
+`
+
+const errorTitle = css`
+  color: var(--haze-color-danger);
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const errorDetail = css`
+  color: var(--haze-color-text-secondary);
+  font-size: 12px;
+  /* 后端 message 可能是长路径/长句子，窄栏下必须能断行而不是撑出横向滚动 */
+  overflow-wrap: anywhere;
+`
+
+const retryBtn = css`
+  padding: 4px 12px;
+  font-size: 12px;
+`
+
+/** 删除确认弹层的说明正文。路径可能很长，必须能断行。 */
+const confirmText = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+  overflow-wrap: anywhere;
+`
+
+/** 删除确认弹层里的失败原因框：标题 + 后端 message（与上方读失败态同口径）。 */
+const confirmError = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+`
+
 /** 搜索结果列表：原生 ul/li 语义（读屏从树切换到搜索时有明确上下文）。 */
 const resultList = css`
   display: flex;
@@ -218,6 +267,12 @@ function removeNode(root: TreeNode, path: string): TreeNode {
   }
 }
 
+/** 收集 path 的祖先目录路径（不含自身）：a/b/c → ['a','a/b']。 */
+function ancestorsOf(path: string): string[] {
+  const parts = path.split('/').filter(Boolean)
+  return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/'))
+}
+
 export function FileBrowser({
   projectId,
   onPick,
@@ -234,6 +289,14 @@ export function FileBrowser({
   const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
+  /** 懒加载子目录失败的原因（path → message）。失败不再静默：此前 catch 只留了
+   *  一句注释，目录随后仍被标记为已展开并在树里渲染「（空）」，用户据此认定
+   *  该目录是空的。 */
+  const [loadErrors, setLoadErrors] = useState<Map<string, string>>(new Map())
+  /** 根目录列目录失败的原因（null=正常）。空串表示失败但没有 message。 */
+  const [rootError, setRootError] = useState<string | null>(null)
+  /** 根目录重试令牌：自增触发上面那个 effect 重跑。 */
+  const [rootReload, setRootReload] = useState(0)
   const [query, setQuery] = useState('')
   /** P3：搜索输入 300ms 防抖——服务端 /api/files/search 是全仓递归扫描，
    *  此前每击键触发一次全量 walk，大仓库明显卡顿。 */
@@ -272,11 +335,14 @@ export function FileBrowser({
   const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
 
   // 切换项目时重置树，加载新项目根目录
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rootReload 是重试令牌——重试按钮自增它来重跑这次加载，effect 体里不读它
   useEffect(() => {
     let cancelled = false
     setTreeRoot(null)
     setExpanded(new Set())
     setLoadingPaths(new Set())
+    setLoadErrors(new Map())
+    setRootError(null)
     fileAPI
       .list('.', projectId)
       .then((entries) => {
@@ -288,11 +354,56 @@ export function FileBrowser({
           children: entriesToNodes(entries, '.'),
         })
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        // 失败必须落到可见错误态：此前 .catch(() => {}) 让 treeRoot 恒为 null，
+        // 面板永远停在「加载中…」，用户只能反复刷新整页（见下方 rootError 分支）。
+        if (cancelled) return
+        setRootError(
+          (err as { message?: string } | null)?.message ??
+            (err instanceof Error ? err.message : null),
+        )
+      })
     return () => {
       cancelled = true
     }
-  }, [projectId, projectName])
+  }, [projectId, projectName, rootReload])
+
+  /** 懒加载某个目录的子项（失败落到 loadErrors，可就地重试）。 */
+  const loadChildren = useCallback(
+    async (dirPath: string) => {
+      setLoadingPaths((prev) => new Set(prev).add(dirPath))
+      setLoadErrors((prev) => {
+        if (!prev.has(dirPath)) return prev
+        const next = new Map(prev)
+        next.delete(dirPath)
+        return next
+      })
+      try {
+        const entries = await fileAPI.list(dirPath, projectId)
+        setTreeRoot((prev) =>
+          prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
+        )
+      } catch (err) {
+        // APIError 是结构体而非 Error 子类，必须结构化取 message
+        // （同上方 rootError / searchErrorMessage 口径）。
+        setLoadErrors((prev) =>
+          new Map(prev).set(
+            dirPath,
+            (err as { message?: string } | null)?.message ??
+              (err instanceof Error ? err.message : null) ??
+              '无法读取该目录',
+          ),
+        )
+      } finally {
+        setLoadingPaths((prev) => {
+          const next = new Set(prev)
+          next.delete(dirPath)
+          return next
+        })
+      }
+    },
+    [projectId],
+  )
 
   const handleToggle = useCallback(
     async (dirPath: string) => {
@@ -307,26 +418,10 @@ export function FileBrowser({
       }
       // 首次展开：懒加载子目录
       const needLoad = treeRoot ? findNode(treeRoot, dirPath)?.children === undefined : false
-      if (needLoad) {
-        setLoadingPaths((prev) => new Set(prev).add(dirPath))
-        try {
-          const entries = await fileAPI.list(dirPath, projectId)
-          setTreeRoot((prev) =>
-            prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
-          )
-        } catch {
-          /* 加载失败保留未展开态 */
-        } finally {
-          setLoadingPaths((prev) => {
-            const next = new Set(prev)
-            next.delete(dirPath)
-            return next
-          })
-        }
-      }
+      if (needLoad) await loadChildren(dirPath)
       setExpanded((prev) => new Set(prev).add(dirPath))
     },
-    [expanded, treeRoot, projectId],
+    [expanded, treeRoot, loadChildren],
   )
 
   const handleSelect = useCallback(
@@ -337,23 +432,91 @@ export function FileBrowser({
     [onPick],
   )
 
-  const handleDelete = useCallback(
-    async (path: string) => {
-      if (!window.confirm(`确定删除「${path}」？文件将移入系统回收站，可从回收站恢复。`)) return
-      try {
-        await fileAPI.delete(path, projectId)
-        setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
-        onDelete?.(path)
-        if (isSearch) refetchSearch()
-        gitStatusQ.refetch()
-      } catch {
-        window.alert('删除失败，请重试')
-      }
+  /** 目录加载失败后就地重试（树里的失败态按钮）。 */
+  const retryLoad = useCallback(
+    (path: string) => {
+      void loadChildren(path)
     },
-    [projectId, onDelete, isSearch, refetchSearch, gitStatusQ],
+    [loadChildren],
   )
 
+  /** 待删除的路径（null=无确认弹层）。删除是「移入回收站」的可恢复操作，
+   *  用轻量确认而非 DangerConfirmDialog 的逐字确认。 */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  /** 删除失败原因（null=未失败）。渲染在确认弹层里，与用户正在做的操作同框可见。 */
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** 删除请求在飞：锁住确认键与所有关闭出口（关闭会把失败原因一起关掉）。 */
+  const [deleting, setDeleting] = useState(false)
+
+  const requestDelete = useCallback((path: string) => {
+    setDeleteError(null)
+    setPendingDelete(path)
+  }, [])
+
+  const closeDeleteDialog = useCallback(() => {
+    if (deleting) return
+    setPendingDelete(null)
+    setDeleteError(null)
+  }, [deleting])
+
+  const confirmDelete = useCallback(async () => {
+    const path = pendingDelete
+    if (!path) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await fileAPI.delete(path, projectId)
+      setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
+      onDelete?.(path)
+      if (isSearch) refetchSearch()
+      gitStatusQ.refetch()
+      setPendingDelete(null)
+    } catch (err) {
+      // 失败原因必须可见：此前是 window.alert('删除失败，请重试')，后端的
+      // 「File not found / EACCES / EPERM / ENOTEMPTY」等真实原因被整句丢掉，
+      // 用户只能对同一路径反复点删除。APIError 是结构体而非 Error 子类，
+      // 必须结构化取 message（同上方 rootError/searchErrorMessage 口径）。
+      setDeleteError(
+        (err as { message?: string } | null)?.message ??
+          (err instanceof Error ? err.message : null) ??
+          '删除失败，请重试。',
+      )
+    } finally {
+      setDeleting(false)
+    }
+  }, [pendingDelete, projectId, onDelete, isSearch, refetchSearch, gitStatusQ])
+
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
+  // APIError 是结构体而非 Error 子类，必须结构化取 message（同 KanbanView/FilePreview 口径）。
+  const searchErrorMessage =
+    (searchQ.error as { message?: string } | null)?.message ??
+    (searchQ.error instanceof Error ? searchQ.error.message : null)
+
+  /**
+   * 搜索结果里点目录 → 回到文件树并展开定位到该目录。
+   *
+   * 此前目录行与文件行走同一条 onPick（打开预览），而读接口对目录执行
+   * readFile 抛 EISDIR → 404：搜索结果里点文件夹必然得到「文件读取失败 /
+   * File not found」，同一路径在树里点却是展开语义。
+   */
+  const handleReveal = useCallback(
+    async (dirPath: string) => {
+      setQuery('')
+      // 祖先按由浅到深加载：深层目录的 children 挂在尚未拉取的父节点下，
+      // 顺序反了 setChildren 找不到目标，展开后仍是空的。
+      const chain = ancestorsOf(dirPath)
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        for (const p of chain) next.add(p)
+        next.add(dirPath)
+        return next
+      })
+      for (const dir of [...chain, dirPath]) {
+        if (treeRoot && findNode(treeRoot, dir)?.children === undefined) await loadChildren(dir)
+      }
+    },
+    [treeRoot, loadChildren],
+  )
 
   return (
     <div className={panel}>
@@ -389,6 +552,25 @@ export function FileBrowser({
         {isSearch ? (
           searchQ.isLoading ? (
             <div className={loading}>搜索中…</div>
+          ) : searchQ.isError ? (
+            // 「查不到」与「搜不了」必须分开：此前没有 error 分支，重试耗尽后
+            // data=undefined 直接落进下面的「无匹配文件」——用户据此判定文件不
+            // 存在，去重建同名文件或改错位置。APIError 是结构体而非 Error 子类，
+            // 必须结构化取 message，否则渲染成 [object Object]。
+            <div className={errorState} data-testid="file-search-error" role="alert">
+              <span className={errorTitle}>搜索失败</span>
+              <span className={errorDetail}>
+                {searchErrorMessage ?? '无法完成搜索，请稍后重试。'}
+              </span>
+              <button
+                type="button"
+                className={retryBtn}
+                data-testid="file-search-retry"
+                onClick={() => void refetchSearch()}
+              >
+                重试
+              </button>
+            </div>
           ) : searchEntries.length === 0 ? (
             <div className={empty}>无匹配文件</div>
           ) : (
@@ -399,7 +581,9 @@ export function FileBrowser({
                     type="button"
                     className={resultRow}
                     data-testid={`file-${e.path}`}
-                    onClick={() => onPick(e.path)}
+                    title={e.type === 'directory' ? '在文件树中定位该目录' : undefined}
+                    aria-label={e.type === 'directory' ? `定位目录 ${e.path}` : undefined}
+                    onClick={() => (e.type === 'directory' ? handleReveal(e.path) : onPick(e.path))}
                   >
                     <span>{e.type === 'directory' ? '📁' : '📄'}</span>
                     <span>{e.path}</span>
@@ -422,7 +606,7 @@ export function FileBrowser({
                     data-search-delete
                     data-testid={`search-delete-${e.path}`}
                     aria-label={`删除 ${e.path}`}
-                    onClick={() => handleDelete(e.path)}
+                    onClick={() => requestDelete(e.path)}
                   >
                     🗑
                   </button>
@@ -430,6 +614,19 @@ export function FileBrowser({
               ))}
             </ul>
           )
+        ) : rootError !== null ? (
+          <div className={errorState} data-testid="file-tree-error" role="alert">
+            <span className={errorTitle}>文件加载失败</span>
+            <span className={errorDetail}>{rootError || '无法读取项目文件。'}</span>
+            <button
+              type="button"
+              className={retryBtn}
+              data-testid="file-tree-retry"
+              onClick={() => setRootReload((n) => n + 1)}
+            >
+              重试
+            </button>
+          </div>
         ) : !treeRoot ? (
           <div className={loading}>加载中…</div>
         ) : (
@@ -438,17 +635,62 @@ export function FileBrowser({
             expanded={expanded}
             selected={null}
             loadingPaths={loadingPaths}
+            errorPaths={loadErrors}
+            onRetryLoad={retryLoad}
             onToggle={handleToggle}
             onSelect={handleSelect}
             directoryClickMode="toggle"
             onMention={fileRef?.insertFileReference}
-            onDelete={handleDelete}
+            onDelete={requestDelete}
             gitStatusMap={gitStatusMap}
             label="项目文件树"
             hideRoot
           />
         )}
       </div>
+      {/* 删除确认：原生 window.confirm 是阻塞式系统框（不可样式化、与主题割裂、
+          移动端还会被浏览器改写），且失败时只能弹 window.alert 一句「请重试」，
+          把后端的真实原因丢掉。改为应用内弹层，失败原因留在同框可见。 */}
+      <Dialog
+        open={pendingDelete !== null}
+        onClose={closeDeleteDialog}
+        closeDisabled={deleting}
+        title="删除文件"
+        testId="file-delete-dialog"
+        width="420px"
+        footer={
+          <>
+            <button
+              type="button"
+              className={btnSm}
+              data-testid="file-delete-cancel"
+              disabled={deleting}
+              onClick={closeDeleteDialog}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className={`${btnSm} ${btnDanger}`}
+              data-testid="file-delete-confirm"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? '删除中…' : '删除'}
+            </button>
+          </>
+        }
+      >
+        <p className={confirmText}>
+          {`确定删除「${pendingDelete ?? ''}」？文件将移入系统回收站，可从回收站恢复。`}
+        </p>
+        {deleteError ? (
+          <div className={confirmError} role="alert" data-testid="file-delete-error">
+            <span className={errorTitle}>删除失败</span>
+            <span className={errorDetail}>{deleteError}</span>
+          </div>
+        ) : null}
+      </Dialog>
     </div>
   )
 }

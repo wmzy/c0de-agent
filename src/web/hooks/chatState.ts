@@ -3,6 +3,7 @@
 // hook 只保留编排（SSE 消费、权限/信任/段确认的交互流）。
 import type { AgentError, AgentEvent } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
+import type { RefObject } from 'react'
 import { generateId } from '@/hooks/id.js'
 
 export type SubagentInfo = {
@@ -12,12 +13,15 @@ export type SubagentInfo = {
   status: 'running' | 'completed' | 'failed'
 }
 
+/** 等待用户决定的工具调用（确认失败时要把弹窗原样还回去，故独立成类型）。 */
+export type PendingPermission = { toolCallId: string; tool: string; input: unknown }
+
 export type ChatState = {
   messages: Message[]
   isStreaming: boolean
   usage: { input: number; output: number } | null
   error: string | null
-  pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
+  pendingPermission: PendingPermission | null
   /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
   permissionTimeout: {
     toolCallId: string
@@ -86,21 +90,39 @@ export type ChatOpts = {
   optimisticUserMessageId?: string
 }
 
+/** 需要用户决策的失败门禁：未信任项目的风险确认 / 段边界确认。 */
+export type SendGate = 'trust' | 'segmentBreak'
+
+/** 最近一次 sendMessage 的结果；gate 非空表示「等待用户决策」而非发送白费。 */
+export type LastFailure = { reason: string | null; gate: SendGate | null }
+
 export type ChatActions = {
   /** 发送消息；返回 false = 本轮未正常完成（供调用方做首条失败清理）。 */
   sendMessage: (content: string, opts?: ChatOpts) => Promise<boolean>
   /**
-   * 最近一次 sendMessage 的失败原因；成功或未失败时为 null。
-   * 单独暴露是因为 chat 快照每次渲染重建——调用方在自己的 .then 里读 `chat.error`
-   * 只能拿到发送前那一帧的 null，无法把原因带到别的页面。
+   * 最近一次 sendMessage 的结果（失败原因 + 是否需要用户决策）。
+   *
+   * 暴露的是 **ref 而不是值**：调用方在自己的 .then 里读取它，必须拿到本次结果，
+   * 而 chat 快照每次渲染重建——值字段在那里只会是发送前那一帧（失败路径的
+   * setState 尚未重渲染）。首条失败后把原因带回草稿页、以及「这次失败是等待
+   * 用户决策还是真的白费」都依赖这个实时值。
    */
-  lastFailureReason: string | null
+  lastFailure: RefObject<LastFailure>
   abort: () => void
-  /** 追加指令：注入运行中的 run 并乐观追加 steering 消息到时间线（P0 持久化）。 */
-  steer: (message: string) => void
+  /** 追加指令：注入运行中的 run 并乐观追加 steering 消息到时间线（P0 持久化）。
+   *  返回 Promise<boolean>：false 表示没被受理（后端 {steered:false}、请求失败或
+   *  run 已结束），调用方据此保留输入并展示原因——后端的 200 并不等于受理。 */
+  steer: (message: string) => Promise<boolean>
   /** 确认/拒绝权限请求：乐观关闭弹窗并通知后端。
-   *  alwaysAllowTool 非空时先把该工具加入会话白名单。 */
-  confirm: (toolCallId: string, approved: boolean, alwaysAllowTool?: string) => void
+   *  alwaysAllowTool 非空时先把该工具加入会话白名单。
+   *  pending 为调用方关闭弹窗前的待确认项：确认请求没送达（500/网络）时用它把
+   *  弹窗原样还回去，否则「以为已批准」而服务端仍在等这个决定。 */
+  confirm: (
+    toolCallId: string,
+    approved: boolean,
+    alwaysAllowTool?: string,
+    pending?: PendingPermission,
+  ) => void
   /** 用户确认开新段：withCompaction 时先压缩会话再重发。 */
   confirmBreak: (withCompaction: boolean) => Promise<void>
   /** 用户取消开新段：清除待发状态并移除乐观追加的 user 消息。 */
