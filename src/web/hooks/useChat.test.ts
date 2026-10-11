@@ -955,6 +955,56 @@ describe('useChat 并发守卫（RUN_ACTIVE）', () => {
   })
 })
 
+// 回归（审查 #3）：RUN_ACTIVE 与 WORKTREE_MISSING/PROJECT_MISSING 分支此前把
+// lastFailureRef 写在 setState 更新器函数体内——更新器延迟到重渲染才执行，而
+// ChatSession 的 cleanupEmptySessionOnFailure 在 sendMessage 的 .then 微任务里读
+// chatRef.current.lastFailure.current，读点时机无保证，命中时草稿页横幅退化为兜底
+// 文案「消息发送失败，请重试后再次发送」。相邻分支（PROVIDER_NOT_FOUND 等）都在
+// setState 之前同步写 ref。这里在 sendMessage promise 兑现的微任务里（React
+// 重渲染之前）读 ref，钉住同样的写入时机。
+describe('useChat 失败原因的写入时机', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function renderChat() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    return renderHook(() => useChat('s1'), { wrapper })
+  }
+
+  function stubHttpError(status: number, code: string, message: string) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status,
+        json: async () => ({ error: { code, message } }),
+        text: async () => JSON.stringify({ error: { code, message } }),
+      })),
+    )
+  }
+
+  /** sendMessage promise 兑现即读 ref：这一拍在 React 重渲染（setState 更新器
+   *  执行）之前——正是 cleanupEmptySessionOnFailure 读 ref 的时机。 */
+  async function sendAndCaptureFailure(result: { current: ReturnType<typeof useChat> }) {
+    return result.current.sendMessage('hi').then(() => result.current.lastFailure.current)
+  }
+
+  it('RUN_ACTIVE：失败原因在 sendMessage 兑现时已写入 ref，不等重渲染', async () => {
+    stubHttpError(409, 'RUN_ACTIVE', '已有进行中的对话')
+    const { result } = renderChat()
+    const failureAtCatch = await act(async () => sendAndCaptureFailure(result))
+    expect(failureAtCatch?.reason).toBe('该会话已有进行中的对话')
+  })
+
+  it('WORKTREE_MISSING：失败原因在 sendMessage 兑现时已写入 ref，不等重渲染', async () => {
+    stubHttpError(409, 'WORKTREE_MISSING', '会话的工作目录不存在，请先恢复或重新绑定')
+    const { result } = renderChat()
+    const failureAtCatch = await act(async () => sendAndCaptureFailure(result))
+    expect(failureAtCatch?.reason).toBe('会话的工作目录不存在，请先恢复或重新绑定')
+  })
+})
+
 // 回归：白名单外的服务端 HTTP 错误此前统统落进「网络错误视为中断」——顶栏错误位
 // 空白、横幅谎报服务重启、乐观 user 消息留在时间线上，而「恢复对话」只是重发同一
 // 请求、必然再次失败。这里钉死「服务端错误 → 透出后端文案 + 撤回乐观消息」，

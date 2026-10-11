@@ -182,9 +182,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }
         if (e.code === 'RUN_ACTIVE') {
           // 并发守卫：撤回乐观追加的 user 消息并提示（P0-4）。
+          // ref 必须在 setState 之外同步写：更新器函数延迟到重渲染才执行，而
+          // cleanupEmptySessionOnFailure 在 sendMessage 的 .then 微任务里读它，
+          // 写晚了草稿页横幅就退化为兜底文案（与相邻分支的写法一致）。
+          lastFailureRef.current = { reason: '该会话已有进行中的对话', gate: null }
           setState((s) => {
             const msgs = withdraw(s.messages)
-            lastFailureRef.current = { reason: '该会话已有进行中的对话', gate: null }
             return { ...s, messages: msgs, isStreaming: false, error: '该会话已有进行中的对话' }
           })
           return false
@@ -208,9 +211,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           return false
         }
         if (e.code === 'WORKTREE_MISSING' || e.code === 'PROJECT_MISSING') {
+          // 同上：ref 写在 setState 之外（更新器延迟执行，读点不保证在其后）。
+          lastFailureRef.current = { reason: e.message, gate: null }
           setState((s) => {
             const msgs = withdraw(s.messages)
-            lastFailureRef.current = { reason: e.message, gate: null }
             return { ...s, messages: msgs, isStreaming: false, error: e.message }
           })
           return false
