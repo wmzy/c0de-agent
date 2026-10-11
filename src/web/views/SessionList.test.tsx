@@ -514,6 +514,30 @@ describe('SessionList 读失败态', () => {
     expect(refetch).toHaveBeenCalledTimes(1)
   })
 
+  // 会话树读失败时不得把回收站渲染到「列表加载失败」横幅下方：回收站开关仍是
+  // 未按下的 aria-pressed="false"，面板内容却变成已删除会话行，且「清空回收站 /
+  // 彻底删除」这些破坏性按钮就在一个自称加载失败的面板里可点。刚删过会话的用户
+  // 会以为删除失败或会话复活。旧实现的分支是 `!showRecycle && !isError ? 树 : 回收站`。
+  it('读失败且未切到回收站时，不得把回收站渲染出来', () => {
+    hoisted.treeQuery = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { status: 500, message: 'boom' },
+      refetch: () => {},
+    }
+    renderList()
+
+    expect(screen.getByTestId('sessions-load-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('trash-empty')).toBeNull()
+    expect(screen.queryByText('清空回收站')).toBeNull()
+
+    // 控件校验：切到回收站后它才出现——证明上面的缺席是「分支没进」，不是回收站本就渲染不出。
+    fireEvent.click(screen.getByTestId('recycle-toggle'))
+    expect(screen.getByTestId('trash-empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('sessions-load-error')).toBeNull()
+  })
+
   it('正常状态下仍展示会话树，不显示错误态', () => {
     hoisted.treeQuery = {
       data: undefined,

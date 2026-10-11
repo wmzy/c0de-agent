@@ -535,7 +535,15 @@ export function SessionList({
           </div>
         </div>
       ) : null}
-      {!showRecycle && !isError ? (
+      {/* 三分支显式写开：此前是 `!showRecycle && !isError ? <树> : <RecycleBin/>`，
+       * 于是「会话树加载失败（isError）且未切到回收站」这一态落进 else，把整个
+       * 回收站渲染在「会话列表加载失败」横幅**下方**——回收站开关仍是未按下的
+       * aria-pressed="false"，面板却显示已删除会话行，且「清空回收站 / 彻底删除」
+       * 这些破坏性按钮就在一个自称「加载失败」的面板里可点。刚删过会话的用户会
+       * 以为删除失败/会话复活。 */}
+      {showRecycle ? (
+        <RecycleBin projectId={projectId} />
+      ) : !isError ? (
         <>
           {contentError && searching ? (
             <div className={errorBar} role="alert" data-testid="session-search-error">
@@ -602,9 +610,7 @@ export function SessionList({
             </div>
           )}
         </>
-      ) : (
-        <RecycleBin projectId={projectId} />
-      )}
+      ) : null}
       {importChoice && (
         <Dialog
           testId="import-target-dialog"
