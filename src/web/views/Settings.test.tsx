@@ -1768,6 +1768,47 @@ describe('Settings — 完整配置表单覆盖', () => {
     expect(screen.getByTestId('settings-restart-hint').textContent).toContain('未生效')
   })
 
+  // 回归：needsRestart 是**每次 PATCH 各自**的信号（服务端只在本次写入
+  // security/update/plugins 且作用域为 global 时返回 true）。覆盖式置位让
+  // 「鉴权改动尚未生效」的唯一警告被下一次无关保存（改默认模型，返回 false）
+  // 抹掉——用户据此认定鉴权已加固。
+  it('后续无关保存不得抹掉已有的「需重启」提示', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    const update = configAPI.update as Mock
+    // 第一次：security 变更 → 需要重启；第二次：无关变更 → 服务端返回 false
+    update.mockResolvedValueOnce({
+      config: mockConfig,
+      scopes: { global: null, project: null },
+      warnings: [],
+      needsRestart: true,
+    })
+    update.mockResolvedValue({
+      config: mockConfig,
+      scopes: { global: null, project: null },
+      warnings: [],
+      needsRestart: false,
+    })
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    const authCheck = screen
+      .getAllByRole('checkbox')
+      .find((cb) => cb.closest('label')?.textContent?.includes('Bearer Token 认证')) as HTMLElement
+    fireEvent.click(authCheck)
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(screen.getByTestId('settings-restart-hint')).toBeTruthy())
+
+    // 顺手改一个无关项再保存：重启提示必须还在
+    fireEvent.change(screen.getByTestId('default-model-select'), { target: { value: 'gpt-5' } })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+
+    expect(screen.getByTestId('settings-restart-hint')).toBeTruthy()
+  })
+
   it('最小 patch：只保存变化字段，未变化的顶层键不出现在 payload', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))

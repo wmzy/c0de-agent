@@ -218,7 +218,12 @@ export function Settings() {
       // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
       // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
       setDraft(null)
-      setNeedsRestart(resp?.needsRestart === true)
+      // needsRestart 是**本次 patch 各自**的信号（服务端只在本次写入 security/
+      // update/plugins 且作用域为 global/服务启动目录时返回 true）。覆盖式置位会
+      // 让「鉴权改动尚未生效」的唯一警告被下一次无关保存（如改默认模型，返回
+      // false）静默抹掉，用户据此认定配置已加固。故只升不降：重启后页面重载，
+      // state 自然复位。
+      setNeedsRestart((prev) => prev || resp?.needsRestart === true)
       setSaveFeedback({ kind: 'ok' })
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
     },
