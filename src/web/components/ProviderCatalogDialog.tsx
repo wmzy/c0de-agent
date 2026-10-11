@@ -8,6 +8,11 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import type { CatalogModel, CatalogProvider } from '@/services/catalog.js'
 import { catalogAPI } from '@/services/catalog.js'
 
+/** 失败原因取服务端 message（APIError）或 Error.message，与设置页其余面板同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
 const searchBar = css`
   width: 100%;
   padding: 8px 10px;
@@ -67,6 +72,16 @@ const modelCount = css`
   background: var(--haze-color-bg-subtle);
   padding: 2px 8px;
   border-radius: 10px;
+`
+
+const errorBox = css`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--haze-color-danger, #b3261e);
 `
 
 const actions = css`
@@ -203,15 +218,29 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  const { data: providersData, isLoading: providersLoading } = useQuery({
+  const {
+    data: providersData,
+    isLoading: providersLoading,
+    isError: providersError,
+    error: providersErr,
+    refetch: refetchProviders,
+  } = useQuery({
     queryKey: ['catalog', 'providers'],
     queryFn: () => catalogAPI.listProviders(),
+    retry: false,
   })
 
-  const { data: modelsData, isLoading: modelsLoading } = useQuery({
+  const {
+    data: modelsData,
+    isLoading: modelsLoading,
+    isError: modelsError,
+    error: modelsErr,
+    refetch: refetchModels,
+  } = useQuery({
     queryKey: ['catalog', 'providers', selectedId, 'models'],
     queryFn: () => catalogAPI.getProviderModels(selectedId ?? ''),
     enabled: !!selectedId,
+    retry: false,
   })
 
   const filtered = useMemo(() => {
@@ -232,6 +261,11 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
 
   const handleSelect = () => {
     if (!selectedProvider) return
+    // 模型清单读失败时不能按「零个模型」落盘：toProviderConfig 只在 models.length>0
+    // 时写 models 字段，于是会追加一个没有任何模型/capabilities/定价的 Provider——
+    // 用户以为「已按目录配置好」，实际这个 Provider 下什么都选不了、也无法补全。
+    // 失败必须挡住确认键并给出原因，而不是静默写进配置。
+    if (modelsError) return
     onSelect(toProviderConfig(selectedProvider, modelsData?.models ?? []))
     onClose()
   }
@@ -249,7 +283,7 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!selectedProvider}
+            disabled={!selectedProvider || modelsError}
             data-testid="catalog-confirm"
             variant="outline"
           >
@@ -276,6 +310,16 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
         <div className={`${listContainer} ${listFixed}`}>
           {providersLoading ? (
             <div className={catalogHint}>加载中…</div>
+          ) : providersError ? (
+            // 目录读失败此前渲染成 filtered.length===0 的「没有匹配「」的 Provider」——
+            // 把一次网络/500 失败说成「你搜的 Provider 不存在」，用户改搜索词、
+            // 重开弹窗都找不到原因。此处与设置页其余面板同口径：原因 + 重试。
+            <div className={errorBox} role="alert" data-testid="catalog-providers-error">
+              <div>{`Provider 目录加载失败：${messageOf(providersErr)}`}</div>
+              <Button variant="outline" onClick={() => void refetchProviders()}>
+                重试
+              </Button>
+            </div>
           ) : filtered.length === 0 ? (
             // 搜索无命中此前是一片空白，与「加载中…」视觉上无从区分，用户得不到
             // 「确实没有这个 Provider」的反馈。
@@ -309,6 +353,15 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
             <div className={catalogHint}>从左侧选择 Provider 查看可用模型</div>
           ) : modelsLoading ? (
             <div className={catalogHint}>加载模型列表…</div>
+          ) : modelsError ? (
+            // 模型清单读失败此前渲染成「Provider 头部照常显示 + 模型区一片空白」，
+            // 且底部「选择此 Provider」仍可点——点了就把零模型的 Provider 写进配置。
+            <div className={errorBox} role="alert" data-testid="catalog-models-error">
+              <div>{`模型列表加载失败：${messageOf(modelsErr)}`}</div>
+              <Button variant="outline" onClick={() => void refetchModels()}>
+                重试
+              </Button>
+            </div>
           ) : (
             <>
               <div className={catalogItemHead}>

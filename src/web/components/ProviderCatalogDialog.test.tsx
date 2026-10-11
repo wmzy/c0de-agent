@@ -325,4 +325,77 @@ describe('ProviderCatalogDialog', () => {
     await waitFor(() => expect(screen.getByTestId('catalog-no-match')).toBeTruthy())
     expect(screen.getByTestId('catalog-no-match').textContent).toContain('zzz')
   })
+
+  // 「从 models.dev 选择」是把目录内容**写进配置**的入口：一次读取失败若被渲染成
+  // 「没有匹配」，用户只会反复改搜索词；模型清单读失败若仍允许确认，则会写入一个
+  // 零模型的 Provider（toProviderConfig 仅在 models.length>0 时写 models 字段），
+  // 之后该 Provider 下什么都选不了、也无法补全。
+  it('目录读取失败时给出原因与重试，而不是「没有匹配」的 Provider', async () => {
+    vi.mocked(catalogAPI.listProviders).mockRejectedValue(new Error('models.dev 不可达'))
+
+    renderWithClient(<ProviderCatalogDialog onClose={vi.fn()} onSelect={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByTestId('catalog-providers-error')).toBeTruthy())
+    expect(screen.getByTestId('catalog-providers-error').textContent).toContain('models.dev 不可达')
+    expect(screen.queryByTestId('catalog-no-match')).toBeNull()
+  })
+
+  it('模型清单读取失败时挡住确认键，绝不写入零模型的 Provider', async () => {
+    vi.mocked(catalogAPI.listProviders).mockResolvedValue({
+      providers: [{ id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai', env: [], modelCount: 1 }],
+    })
+    vi.mocked(catalogAPI.getProviderModels).mockRejectedValue(new Error('模型清单 500'))
+    const onSelect = vi.fn()
+
+    renderWithClient(<ProviderCatalogDialog onClose={vi.fn()} onSelect={onSelect} />)
+    await waitFor(() => expect(screen.getByText('OpenAI')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('catalog-provider-openai'))
+
+    await waitFor(() => expect(screen.getByTestId('catalog-models-error')).toBeTruthy())
+    expect(screen.getByTestId('catalog-models-error').textContent).toContain('模型清单 500')
+    expect((screen.getByTestId('catalog-confirm') as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.click(screen.getByTestId('catalog-confirm'))
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('模型清单重试成功后恢复可选', async () => {
+    vi.mocked(catalogAPI.listProviders).mockResolvedValue({
+      providers: [{ id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai', env: [], modelCount: 1 }],
+    })
+    vi.mocked(catalogAPI.getProviderModels)
+      .mockRejectedValueOnce(new Error('模型清单 500'))
+      .mockResolvedValueOnce({
+        provider: {
+          id: 'openai',
+          name: 'OpenAI',
+          npm: '@ai-sdk/openai',
+          env: [],
+          modelCount: 1,
+        },
+        models: [
+          {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            reasoning: false,
+            toolCall: true,
+            attachment: true,
+            temperature: true,
+            context: 128000,
+            output: 16384,
+          },
+        ],
+      })
+
+    renderWithClient(<ProviderCatalogDialog onClose={vi.fn()} onSelect={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText('OpenAI')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('catalog-provider-openai'))
+    await waitFor(() => expect(screen.getByTestId('catalog-models-error')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => expect(screen.queryByTestId('catalog-models-error')).toBeNull())
+    expect(screen.getByText('GPT-4o')).toBeTruthy()
+    expect((screen.getByTestId('catalog-confirm') as HTMLButtonElement).disabled).toBe(false)
+  })
 })
