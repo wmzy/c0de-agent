@@ -459,6 +459,33 @@ function useComposer({
     [addImageFile],
   )
 
+  /**
+   * 文本入框的唯一通道：换行归一 + 大段确认 + 插入。
+   *
+   * 拖放与粘贴此前是两条割裂的实现——handleDrop 里裸调 execCommand，跳过大段
+   * 确认与换行归一。`takeFocus` 是拖放路径的显式声明：Chromium 实测会把焦点
+   * 交给插入目标，但那是实现细节而非契约；粘贴时事件目标本就是编辑器，显式
+   * 抢焦点无意义，故由调用方按路径声明。
+   */
+  const insertText = useCallback((raw: string, takeFocus: boolean) => {
+    if (!raw) return
+    const normalized = normalizePaste(raw)
+    const chars = raw.length
+    const lines = raw.split('\n').length
+    if (
+      pasteMode(raw) === 'manual' &&
+      (chars >= LARGE_PASTE_CHARS || lines >= LARGE_PASTE_BREAKS)
+    ) {
+      // 大段内容先确认再插入（确认条见 Composer）。调用方已 preventDefault 吞掉
+      // 原生插入：此处只置状态而无人渲染确认 UI 时，内容会静默丢失。
+      // chars/lines 取自原始文本，与判定同源。
+      setShowPasteConfirm({ text: normalized, chars, lines })
+      return
+    }
+    if (takeFocus) editorRef.current?.focus()
+    document.execCommand('insertText', false, normalized)
+  }, [])
+
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
       // 图片粘贴优先
@@ -472,26 +499,13 @@ function useComposer({
           return
         }
       }
-      // 文本粘贴
+      // 文本粘贴（焦点本就在编辑器里，无需抢焦点）
       const text = e.clipboardData.getData('text/plain')
       if (!text) return
       e.preventDefault()
-      const normalized = normalizePaste(text)
-      const chars = text.length
-      const lines = text.split('\n').length
-      if (
-        pasteMode(text) === 'manual' &&
-        (chars >= LARGE_PASTE_CHARS || lines >= LARGE_PASTE_BREAKS)
-      ) {
-        // 大段粘贴先确认再插入（确认条见 Composer）。注意 e.preventDefault 已吞掉
-        // 原生插入：此处只置状态而无人渲染确认 UI 时，用户按 Ctrl+V 后输入框
-        // 毫无反应、内容静默丢失。chars/lines 取自原始文本，与判定同源。
-        setShowPasteConfirm({ text: normalized, chars, lines })
-        return
-      }
-      document.execCommand('insertText', false, normalized)
+      insertText(text, false)
     },
-    [addImageFile],
+    [addImageFile, insertText],
   )
 
   const confirmPaste = useCallback(() => {
@@ -694,6 +708,8 @@ function useComposer({
     handleInput,
     handleKeyDown,
     handlePaste,
+    /** 拖放文本入框：焦点未必在编辑器，需抢焦点后再插入（见 insertText）。 */
+    insertText,
     confirmPaste,
     cancelPaste,
     addImage,

@@ -100,6 +100,57 @@ describe('Composer 大段粘贴', () => {
   })
 })
 
+/**
+ * 拖放文本此前是一条与粘贴割裂的旁路：裸 document.execCommand('insertText')，
+ * 不走 normalizePaste 与大段确认条——拖一个 1MB 的 .log 进来直接灌满输入框，
+ * 而同样内容 Ctrl+V 会先问一句；且同一批里带图片文件时文本被整段丢弃。
+ * 契约：拖放与粘贴共用一条插入通道（归一 + 大段确认），图片与文本互不吞。
+ */
+describe('Composer 拖放文本入框', () => {
+  /** happy-dom 的 DragEvent 不带 dataTransfer，直接构造原生事件注入。 */
+  function dropFiles(editor: HTMLElement, files: File[], text: string) {
+    const event = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', {
+      value: { files, getData: () => text },
+    })
+    fireEvent(editor.parentElement as HTMLElement, event)
+  }
+
+  it('拖放文本插入编辑器，焦点落在编辑器上（用户可继续直接打字）', () => {
+    const editor = renderComposer()
+    const elsewhere = document.createElement('button')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+
+    dropFiles(editor, [], 'dropped line')
+
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, 'dropped line')
+    expect(document.activeElement).toBe(editor)
+    elsewhere.remove()
+  })
+
+  it('拖放同样归一换行，并对大段内容弹确认条而非直接灌入', () => {
+    const editor = renderComposer()
+    dropFiles(editor, [], LARGE)
+
+    expect(execCommand).not.toHaveBeenCalled()
+    const bar = screen.getByTestId('paste-confirm')
+    expect(bar.textContent).toContain(`${LARGE.length} 字符`)
+    fireEvent.click(screen.getByTestId('paste-confirm-insert'))
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, `${'x'.repeat(9000)}\nsecond`)
+  })
+
+  it('同批既有图片又有文本时两者都处理，文本不被丢弃', async () => {
+    const editor = renderComposer()
+    const png = new File(['x'], 'a.png', { type: 'image/png' })
+    dropFiles(editor, [png], 'kept text')
+
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, 'kept text')
+    // 图片走异步读取，附件栏随之出现
+    await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('1 张'))
+  })
+})
+
 // 首条消息失败伴随导航（清空会话 → 回草稿页），原输入框组件已卸载，必须由
 // 外部把内容灌进新实例。此前按 restoreDraft 的**对象身份**去重，而父组件很容易
 // 在 JSX 里每次渲染新建 `{prompt, images}` 字面量——去重一路落空，用户改到一半

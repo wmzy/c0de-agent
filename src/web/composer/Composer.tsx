@@ -166,7 +166,7 @@ const popoverGroup = css`
   display: contents;
 `
 
-/** 大段粘贴确认条：与权限 dock 同为编辑器上方的决策条（贴顶分隔 + subtle 底）。 */
+/** 大段内容确认条（粘贴与拖放共用）：与权限 dock 同为编辑器上方的决策条（贴顶分隔 + subtle 底）。 */
 const pasteBar = css`
   display: flex;
   align-items: center;
@@ -597,14 +597,16 @@ function Composer(props: ComposerProps) {
     e.preventDefault()
     setIsDragging(false)
     const dropped = Array.from(e.dataTransfer.files)
-    const hasImage = dropped.some((f) => f.type.startsWith('image/'))
     for (const f of dropped) {
       if (f.type.startsWith('image/')) composer.addImage(f)
     }
-    if (!hasImage) {
-      const text = e.dataTransfer.getData('text/plain')
-      if (text) document.execCommand('insertText', false, text)
-    }
+    // 文本与图片各自独立处理：一次拖放里同时带图片文件和文本（从别处拖来一段
+    // 文字、同时带上图片文件）时，此前 hasImage 为 true 会把文本整段丢弃——
+    // 图片进了附件栏，文字凭空消失，零反馈。
+    //
+    // 走 composer.insertText（与粘贴同一条通道）：换行归一与大段确认条都在。
+    // 拖一个 1MB 的 .log 进来此前直接灌满输入框，而同样内容 Ctrl+V 会先问一句。
+    composer.insertText(e.dataTransfer.getData('text/plain'), true)
   }
 
   const sendLabel = props.isStreaming ? '终止' : props.creating ? '创建中…' : '发送'
@@ -656,11 +658,11 @@ function Composer(props: ComposerProps) {
         <div
           className={pasteBar}
           role="group"
-          aria-label="大段粘贴确认"
+          aria-label="大段内容确认"
           data-testid="paste-confirm"
         >
           <span className={pasteText}>
-            粘贴内容较大（{pasteConfirm.chars} 字符 / {pasteConfirm.lines} 行），插入输入框？
+            内容较大（{pasteConfirm.chars} 字符 / {pasteConfirm.lines} 行），插入输入框？
           </span>
           <button
             ref={pasteInsertRef}
