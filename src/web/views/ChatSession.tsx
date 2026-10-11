@@ -62,6 +62,10 @@ const interruptBanner = css`
   }
 `
 
+const bannerError = css`
+  color: var(--haze-color-danger);
+`
+
 const shakeBtn = css`
   display: inline-flex;
   align-items: center;
@@ -222,13 +226,24 @@ export function ChatSession({
     queryFn: () => sessionAPI.get(sessionId),
   })
   const [orphanNotice, setOrphanNotice] = useState(false)
+  // 归属失败原因。此前该 mutation 只有 onSuccess：POST /rebind 返回 500 /
+  // 项目已被删 / 服务重启时，按钮从 pending 恢复可点、横幅纹丝不动、页面零文字，
+  // 用户以为按钮坏了（同一动作在 RecycleBin 有 onError 文案）——孤儿会话唯一
+  // 的自救入口就此静默失效（该会话的工具全部无法执行）。
+  const [rebindError, setRebindError] = useState<string | null>(null)
   const rebindToCurrent = useMutation({
     mutationFn: () => sessionAPI.rebind(sessionId, projectId),
+    onMutate: () => setRebindError(null),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
       qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
       setOrphanNotice(false)
+      setRebindError(null)
     },
+    onError: (e: unknown) =>
+      setRebindError(
+        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e)),
+      ),
   })
   useEffect(() => {
     if (!sessionMeta) return
@@ -634,6 +649,11 @@ export function ChatSession({
                       归属到当前项目
                     </Button>
                   </>
+                )}
+                {rebindError && (
+                  <span className={bannerError} role="alert" data-testid="orphan-rebind-error">
+                    归属到当前项目失败：{rebindError}
+                  </span>
                 )}
               </div>
             )}

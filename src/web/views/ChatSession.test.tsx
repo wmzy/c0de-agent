@@ -325,6 +325,61 @@ describe('ChatSession — 首条消息失败的空会话治理', () => {
   })
 })
 
+describe('ChatSession — 孤儿会话归属', () => {
+  it('归属失败时给出后端原因，按钮恢复可点', async () => {
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: null,
+      metadata: {},
+    } as unknown as Awaited<ReturnType<typeof sessionAPI.get>>)
+    vi.mocked(sessionAPI.rebind).mockRejectedValue(new Error('项目已被删除'))
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    await renderSession()
+
+    const btn = await screen.findByRole('button', { name: '归属到当前项目' })
+    fireEvent.click(btn)
+
+    const err = await screen.findByTestId('orphan-rebind-error')
+    expect(err.getAttribute('role')).toBe('alert')
+    expect(err.textContent).toContain('项目已被删除')
+    // 失败不再把用户永久挡在按钮外：横幅留在原地，可以再试一次
+    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.getByTestId('orphan-session-banner')).toBeTruthy()
+  })
+
+  it('归属成功后退掉错误并收起横幅', async () => {
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: null,
+      metadata: {},
+    } as unknown as Awaited<ReturnType<typeof sessionAPI.get>>)
+    vi.mocked(sessionAPI.rebind)
+      .mockRejectedValueOnce(new Error('服务重启中'))
+      .mockResolvedValue(undefined as unknown as Awaited<ReturnType<typeof sessionAPI.rebind>>)
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    await renderSession()
+
+    const btn = await screen.findByRole('button', { name: '归属到当前项目' })
+    fireEvent.click(btn)
+    await screen.findByTestId('orphan-rebind-error')
+
+    fireEvent.click(btn)
+    await waitFor(() => expect(screen.queryByTestId('orphan-rebind-error')).toBeNull())
+  })
+})
+
 describe('ChatSession — 导出反馈闭环', () => {
   it('导出失败时显示原因，按钮恢复可点', async () => {
     // 请求在飞期间按钮禁用：连点不再发出第二次导出请求
