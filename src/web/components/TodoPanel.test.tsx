@@ -208,3 +208,63 @@ describe('TodoPanel 待办读失败态', () => {
     expect(screen.queryByTestId('todo-load-error')).toBeNull()
   })
 })
+
+/**
+ * 清单非空后「添加任务」入口必须仍然可达。
+ *
+ * 缺陷：setShowAdd(true) 唯一出现在摘要栏 onClick 的 `totalTasks === 0` 分支，
+ * 而 totalTasks > 0 时该按钮只切换折叠。agent 写入第一条待办后，组件里再无
+ * 任何地方能把 showAdd 置真——两个新增表单（正文内、空态下）都由它驱动，
+ * 于是用户永远打不开新增行，面板只剩「导出到看板」。
+ */
+describe('TodoPanel 已有任务后的新增入口', () => {
+  it('清单非空时点「＋ 添加任务」能打开新增行并提交', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({
+      phases: [{ name: '阶段', tasks: [{ content: '任务A', status: 'pending' }] }],
+    })
+    vi.mocked(todoAPI.exec).mockResolvedValue({
+      phases: [
+        {
+          name: '阶段',
+          tasks: [
+            { content: '任务A', status: 'pending' },
+            { content: '手动补一条', status: 'pending' },
+          ],
+        },
+      ],
+      output: 'added',
+    })
+    renderPanel()
+
+    await screen.findByText('任务A')
+    // 打开前没有任何新增输入框
+    expect(screen.queryByLabelText('任务描述')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('todo-add-task'))
+    const input = (await screen.findByLabelText('任务描述')) as HTMLInputElement
+    fireEvent.change(input, { target: { value: '手动补一条' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+
+    await waitFor(() => {
+      expect(vi.mocked(todoAPI.exec)).toHaveBeenCalledWith('s1', {
+        op: 'append',
+        phase: '阶段',
+        items: ['手动补一条'],
+      })
+    })
+  })
+
+  it('折叠状态下也能打开新增行', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({
+      phases: [{ name: '阶段', tasks: [{ content: '任务A', status: 'pending' }] }],
+    })
+    renderPanel()
+
+    await screen.findByText('任务A')
+    fireEvent.click(screen.getByText('本会话待办')) // 折叠
+    expect(screen.queryByLabelText('任务描述')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('todo-add-task'))
+    expect(await screen.findByLabelText('任务描述')).toBeInTheDocument()
+  })
+})

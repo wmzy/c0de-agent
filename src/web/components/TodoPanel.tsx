@@ -471,18 +471,20 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
         ? '暂无任务，点击添加'
         : null
 
+  /** 打开新增行。清单非空时也必须可达：此前 setShowAdd(true) 只挂在摘要栏
+   *  的 `totalTasks === 0` 分支上，agent 写入第一条任务后这个入口永久消失，
+   *  用户再也打不开新增表单（面板只剩「导出到看板」）。 */
+  const openAddForm = () => {
+    setCollapsed(false)
+    setShowAdd(true)
+  }
+
   return (
     <div className={wrapper} data-testid="todo-panel">
       <button
         type="button"
         className={summaryBar}
-        onClick={
-          loadFailed
-            ? () => void refetch()
-            : totalTasks > 0
-              ? toggleCollapse
-              : () => setShowAdd((v) => !v)
-        }
+        onClick={loadFailed ? () => void refetch() : totalTasks > 0 ? toggleCollapse : openAddForm}
       >
         <span className={summaryIcon}>📋</span>
         <span className={summaryProgress}>任务</span>
@@ -703,7 +705,19 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
           {exportResult}
         </div>
       )}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 12px 8px' }}>
+      <div
+        style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '4px 12px 8px' }}
+      >
+        {/* 唯一的常驻新增入口。清单非空时摘要栏只切换折叠，新增行曾无路可达 */}
+        <button
+          type="button"
+          className={`${inputStyle} ${addBtn}`}
+          onClick={openAddForm}
+          title="手动添加一条待办任务"
+          data-testid="todo-add-task"
+        >
+          ＋ 添加任务
+        </button>
         <button
           type="button"
           className={`${inputStyle} ${addBtn}`}
