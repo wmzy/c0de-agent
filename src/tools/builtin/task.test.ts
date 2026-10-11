@@ -266,6 +266,26 @@ describe('taskTool 批量派发的并发契约', () => {
     const runSubAgents = vi.fn(
       async (): Promise<SubAgentResult[]> => [
         { _tag: 'success', output: 'a', sessionId: 'c1' },
+        { _tag: 'success', output: 'b', sessionId: 'c2' },
+      ],
+    )
+    const result = await taskTool.execute(
+      { subagent_type: 'coder', context: 'ref', tasks: [{ assignment: 'A' }, { assignment: 'B' }] },
+      { ...ctxWith(), runSubAgents },
+    )
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.metadata?.subtasks).toEqual([
+        { index: 0, status: 'completed' },
+        { index: 1, status: 'completed' },
+      ])
+    }
+  })
+
+  it('批量含后台启动的子任务：running 如实映射为 running（不是 completed）', async () => {
+    const runSubAgents = vi.fn(
+      async (): Promise<SubAgentResult[]> => [
+        { _tag: 'success', output: 'a', sessionId: 'c1' },
         { _tag: 'running', jobId: 'job-2', sessionId: 'c2' },
       ],
     )
