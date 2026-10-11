@@ -2576,3 +2576,39 @@ describe('Settings — 数字字段越界钳制', () => {
     expect(fallback.maxRetries).toBe(5)
   })
 })
+
+/**
+ * 撤销设备失败必须可见。
+ *
+ * 缺陷：revoke mutation 只有 onSuccess，且 onConfirm 里 mutate 后立刻关弹窗。
+ * 请求失败时列表不变、页面零提示——而弹窗里刚承诺「该设备将立即失去访问权限」，
+ * 用户据此以为撤销成功，那台设备其实仍持有访问权。这是与语义相反的假成功
+ * （ProjectIndicator 删除失败 / WorkflowsPanel 删除失败都已给出原因行）。
+ */
+describe('Settings — 撤销设备失败', () => {
+  it('撤销失败时给出原因，且不谎称已撤销', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { authAPI } = await import('../services/auth.js')
+    // 设备列表只在启用认证后渲染（SecurityPanel 以 authEnabled 为前置条件）
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }),
+    )
+    ;(authAPI.listDevices as Mock).mockResolvedValue({
+      devices: [{ id: 'dev-1', name: '我的笔记本', createdAt: '2024-01-01T00:00:00.000Z' }],
+    })
+    ;(authAPI.revokeDevice as Mock).mockRejectedValue(new Error('认证服务不可用'))
+
+    renderSettings()
+
+    const revokeBtn = await screen.findByRole('button', { name: '撤销' })
+    fireEvent.click(revokeBtn)
+
+    fireEvent.click(await screen.findByRole('button', { name: '撤销设备' }))
+
+    const alert = await screen.findByTestId('device-revoke-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('认证服务不可用')
+    // 设备仍在列表里（列表未被乐观移除）
+    expect(screen.getByTestId('device-list').textContent).toContain('我的笔记本')
+  })
+})

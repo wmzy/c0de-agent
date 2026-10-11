@@ -33,9 +33,20 @@ function DevicesSection() {
     staleTime: 30_000,
     retry: false,
   })
+  // 撤销失败原因。此前 revoke 只有 onSuccess，且 onConfirm 里 mutate 后立刻
+  // 关弹窗：请求失败时列表不变、页面零提示——用户以为设备已撤销（弹窗里刚
+  // 承诺「立即失去访问权限」），而那台设备其实仍持有访问权，是与语义相反的
+  // 假成功。与 ProjectIndicator.deleteError / WorkflowsPanel.removeError 同口径。
+  const [revokeError, setRevokeError] = useState<string | null>(null)
   const revoke = useMutation({
     mutationFn: (id: string) => authAPI.revokeDevice(id),
+    onMutate: () => setRevokeError(null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'devices'] }),
+    onError: (e: unknown) => {
+      const message =
+        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : null)
+      setRevokeError(message || '撤销失败，设备仍可访问')
+    },
   })
   const devices = data?.devices ?? []
 
@@ -49,6 +60,11 @@ function DevicesSection() {
 
   return (
     <>
+      {revokeError && (
+        <p className={hint} role="alert" data-testid="device-revoke-error">
+          <span style={{ color: 'var(--haze-color-danger)' }}>撤销失败：{revokeError}</span>
+        </p>
+      )}
       <div data-testid="device-list">
         {devices.map((d) => (
           <div
