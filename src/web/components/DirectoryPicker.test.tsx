@@ -186,6 +186,23 @@ describe('DirectoryPicker', () => {
     await waitFor(() => expect(screen.queryByTestId('directory-picker-error')).toBeNull())
   })
 
+  // 回归（审查 #4）：重试失败的初始加载仍是「浏览 ≠ 选择」——重试按钮曾不带
+  // { silent: true }，导航成功即 onChange 回填宿主值，等于重新武装了首航 silent
+  // 修掉的问题（打开添加项目对话框 → 加载失败 → 重试 → 回车注册 $HOME）。
+  it('初始加载失败后重试成功：不回填宿主值（重试与首航同为 silent）', async () => {
+    vi.mocked(filesystemAPI.browse).mockRejectedValueOnce(new Error('暂时读不到'))
+    const onChange = vi.fn()
+    render(<DirectoryPicker value="" onChange={onChange} />)
+    await waitFor(() => expect(screen.getByTestId('directory-picker-error')).toBeTruthy())
+
+    // 后端恢复：重试后导航成功（错误态消失）
+    fireEvent.click(screen.getByTestId('directory-picker-retry'))
+    await waitFor(() => expect(screen.queryByTestId('directory-picker-error')).toBeNull())
+
+    // 全程无任何选择 → 宿主值不被回填
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('子目录加载失败展示原因与重试，而不是「（空）」', async () => {
     vi.mocked(filesystemAPI.browse).mockResolvedValue({
       path: '/home/user',

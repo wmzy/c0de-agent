@@ -514,7 +514,9 @@ export function DirectoryPicker({
               type="button"
               className={retryBtn}
               data-testid="directory-picker-retry"
-              onClick={() => void navigate(root)}
+              // 重试失败的初始加载与首航同类：用户仍未做任何选择，只浏览不回填
+              // 宿主值（否则等于重新武装「打开对话框即可回车注册 $HOME」）。
+              onClick={() => void navigate(root, { silent: true })}
             >
               重试
             </button>
