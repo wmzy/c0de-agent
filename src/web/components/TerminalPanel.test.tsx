@@ -273,6 +273,51 @@ describe('TerminalPanel 打开面板时自动创建首个终端', () => {
   })
 })
 
+// 回归（审查 #5）：projectId 切换后的恢复轮次里，恢复流最后 setSessions(restored)
+// 会整体回抹期间新建的会话——前端丢了引用，PTY 在后端成孤儿。空态「新建终端」
+// 必须与自动创建同样按 restoring 门控（见上方 effect 的 !open || restoring 早退）。
+describe('TerminalPanel 空态「新建终端」的恢复门控', () => {
+  /** 恢复进行中/已完成的空终端桩。 */
+  function emptyTerminal(
+    createTerminal: UseTerminalReturn['createTerminal'],
+    restoring: boolean,
+  ): UseTerminalReturn {
+    return {
+      ...makeTerminal(),
+      sessions: [],
+      tabs: [],
+      activeTabId: null,
+      activePaneId: null,
+      restoring,
+      createTerminal,
+    }
+  }
+
+  it('恢复进行中按钮禁用且点击不创建；恢复完成后（仍无终端）恢复可用', async () => {
+    const createTerminal = vi.fn(async () => 'new-pane')
+    const { rerender } = render(
+      <TerminalPanel terminal={emptyTerminal(createTerminal, true)} cwd="/a" projectId="A" />,
+    )
+
+    // 空态按钮（页头还有一个 aria-label 同名的「+」按钮，按文本只命中空态这个）
+    const btn = screen.getByText('新建终端').closest('button') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    fireEvent.click(btn)
+    expect(createTerminal).not.toHaveBeenCalled()
+
+    // 恢复落地（该项目确无终端）：按钮解除禁用，点击走正常创建
+    rerender(
+      <TerminalPanel terminal={emptyTerminal(createTerminal, false)} cwd="/a" projectId="A" />,
+    )
+    const btnAfter = screen.getByText('新建终端').closest('button') as HTMLButtonElement
+    expect(btnAfter.disabled).toBe(false)
+    const callsBefore = createTerminal.mock.calls.length
+    fireEvent.click(btnAfter)
+    expect(createTerminal.mock.calls.length).toBe(callsBefore + 1)
+    expect(createTerminal).toHaveBeenLastCalledWith({ cwd: '/a' })
+  })
+})
+
 // pane 连接状态的可见性。
 //
 // 回归：PTY 已退出或服务端拒绝挂载后，pane 里只剩一屏静止的历史输出，光标停在

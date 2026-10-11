@@ -727,6 +727,9 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
                 <button
                   type="button"
                   className={emptyNewBtnStyle}
+                  // 恢复轮次进行中禁用：此时建的会话会被恢复流的 setSessions(restored)
+                  // 整体回抹——前端丢引用、PTY 成后端孤儿。等恢复落地后再建。
+                  disabled={restoring}
                   onClick={() => void createTerminal({ cwd })}
                   title="在当前项目目录打开一个 shell"
                 >
