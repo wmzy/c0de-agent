@@ -24,6 +24,20 @@ const OPTIONAL_TOP_LEVEL_KEYS = ['commitModel']
 /** 原型链键：合并/赋值会改写原型而非写入键（服务端 mergeConfig 同口径跳过）。 */
 const PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
+/**
+ * 已知「对象数组」键及其元素的最小形状模板（类型契约见 @shared/types 的
+ * ProviderConfig / MCPServerConfig）。DEFAULT_CONFIG 里这些数组恒为 []，未配置
+ * 用户导入/JSON 编辑时模板数组为空、无从逐元素比对；但面板按类型假定元素形状
+ * （MCPPanel 读 server.name、CommaListInput 对 args 做 join），服务端 PATCH 又
+ * 只校验 providers 不校验 mcpServers——畸形元素一旦放行就会直达渲染层炸整页、
+ * 或毒化配置落盘。故模板数组为空时退回这里的内置模板校验元素形状；模板非空
+ * 时仍按首个现有元素比对（既有口径）。
+ */
+const OBJECT_ARRAY_ELEMENT_TEMPLATES: Record<string, Record<string, unknown>> = {
+  providers: { name: '', protocol: '', apiKey: '', baseURL: '', models: {} },
+  mcpServers: { name: '', transport: '', command: '', args: [], url: '' },
+}
+
 type Kind = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null' | 'undefined'
 
 const KIND_LABEL: Record<Kind, string> = {
@@ -56,9 +70,11 @@ type WalkResult = { ok: true; value: unknown } | { ok: false; message: string }
  * - `fill=true`：缺失/null 的键用 template 的值补全（表单需要一个完整 Config）。
  *   数组元素不补全——整体替换语义下，把上一个 provider 的 baseURL 填进另一个
  *   provider 会静默改错端点。
+ * - 数组整体替换：元素一律不允许 null/undefined（不是「清除该键」）；模板数组
+ *   为空时，已知对象数组键退回 OBJECT_ARRAY_ELEMENT_TEMPLATES 校验元素形状。
  * - 模板里没有的键（含可选键）：无从比对，原样接受。
  */
-function walk(raw: unknown, template: unknown, path: string, fill: boolean): WalkResult {
+function walk(raw: unknown, template: unknown, path: string, fill: boolean, key = ''): WalkResult {
   const tKind = kindOf(template)
   const rKind = kindOf(raw)
   // 模板缺失：当前配置里就没有这个字段，没有形状可校验。
@@ -76,9 +92,22 @@ function walk(raw: unknown, template: unknown, path: string, fill: boolean): Wal
   }
   if (tKind === 'array') {
     const rawArr = raw as unknown[]
-    const templateItem = (template as unknown[])[0]
+    // 模板数组为空：已知对象数组键退回内置元素模板（见其注释），其余数组
+    // 无从比对，维持放行。
+    let templateItem = (template as unknown[])[0]
+    if (templateItem === undefined) templateItem = OBJECT_ARRAY_ELEMENT_TEMPLATES[key]
     if (templateItem === undefined) return { ok: true, value: raw }
+    const expected = KIND_LABEL[kindOf(templateItem)]
     for (let i = 0; i < rawArr.length; i++) {
+      const itemKind = kindOf(rawArr[i])
+      // 数组是整体替换语义：元素为 null/undefined 不是「清除该键」，而且会
+      // 命中上面的 null 短路被放行（下游按对象取字段即炸），先在这里一律拦下。
+      if (itemKind === 'null' || itemKind === 'undefined') {
+        return {
+          ok: false,
+          message: `${path}[${i}]：应为${expected}，实际是${KIND_LABEL[itemKind]}`,
+        }
+      }
       const item = walk(rawArr[i], templateItem, `${path}[${i}]`, false)
       if (!item.ok) return item
     }
@@ -90,7 +119,7 @@ function walk(raw: unknown, template: unknown, path: string, fill: boolean): Wal
     const out: Record<string, unknown> = fill ? { ...tObj } : rObj
     for (const key of Object.keys(rObj)) {
       if (PROTO_KEYS.has(key)) continue
-      const child = walk(rObj[key], tObj[key], path ? `${path}.${key}` : key, fill)
+      const child = walk(rObj[key], tObj[key], path ? `${path}.${key}` : key, fill, key)
       if (!child.ok) return child
       if (fill) out[key] = child.value
     }

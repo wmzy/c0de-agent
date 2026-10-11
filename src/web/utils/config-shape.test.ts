@@ -61,6 +61,45 @@ describe('validateConfigShape', () => {
     )
   })
 
+  it('空模板的对象数组键也校验元素字段（DEFAULT_CONFIG 的 mcpServers 恒为 []）', () => {
+    expect(
+      validateConfigShape({ mcpServers: [{ name: 'x', transport: 'stdio', args: '-y' }] }, current),
+    ).toBe('mcpServers[0].args：应为数组，实际是字符串')
+  })
+
+  it('空模板的对象数组键拒绝 null 元素（数组整体替换，[null] 不是清除该键）', () => {
+    const unconfigured = { ...current, providers: [] }
+    expect(validateConfigShape({ providers: [null] }, unconfigured)).toBe(
+      'providers[0]：应为对象，实际是null',
+    )
+  })
+
+  it('空模板的对象数组键拒绝非对象元素', () => {
+    expect(validateConfigShape({ mcpServers: ['x'] }, current)).toBe(
+      'mcpServers[0]：应为对象，实际是字符串',
+    )
+  })
+
+  it('空模板下合法对象数组仍通过并可归一化', () => {
+    const raw = {
+      mcpServers: [{ name: 'docs', transport: 'stdio', command: 'npx', args: ['-y', 'docs'] }],
+    }
+    expect(validateConfigShape(raw, current)).toBeNull()
+    const result = normalizeConfigForForm(raw, current)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.config.mcpServers).toEqual(raw.mcpServers)
+  })
+
+  it('非空模板下 null 元素同样被拒（不再命中 null 短路）', () => {
+    expect(validateConfigShape({ providers: [null] }, current)).toBe(
+      'providers[0]：应为对象，实际是null',
+    )
+    expect(validateConfigShape({ tools: { enabled: [null] } }, current)).toBe(
+      'tools.enabled[0]：应为字符串，实际是null',
+    )
+  })
+
   it('缺失的嵌套键按当前值兜底，不算形状错误', () => {
     expect(validateConfigShape({ tools: { disabled: ['bash'] } }, current)).toBeNull()
   })
