@@ -69,6 +69,13 @@ type ChatProps = {
   onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   /** agent 是否处于暂停态（控制 pause/resume 按钮切换）。 */
   paused?: boolean
+  /**
+   * 暂停/恢复/中止等运行控制失败的原因。
+   *
+   * 与 error（发送失败）分开：控制端点失败不代表消息失败，且此前完全无反馈
+   * ——按钮照常翻转，用户以为对话已停而它仍在消耗 token。
+   */
+  controlError?: string | null
   supportsVision?: boolean
   modelBar?: ReactNode
   /** 底部工具栏右侧的工具开关（启用/禁用工具列表）。 */
@@ -559,6 +566,7 @@ export function Chat({
   onResume,
   onSteer,
   paused = false,
+  controlError = null,
   modelBar,
   toolToggle,
   topPanel,
@@ -768,6 +776,11 @@ export function Chat({
           原始 JSON
         </button>
       </div>
+      {controlError ? (
+        <div className={errorBanner} data-testid="control-error" role="alert">
+          <span className={errorBannerText}>{controlError}</span>
+        </div>
+      ) : null}
       {error ? (
         <div className={errorBanner} data-testid="send-error" role="alert">
           <span className={errorBannerText}>{error}</span>

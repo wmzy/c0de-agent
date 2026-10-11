@@ -102,6 +102,22 @@ describe('Chat pause/resume/steer controls', () => {
     expect(banner.contains(screen.getByTestId('retry'))).toBe(true)
   })
 
+  // 回归：暂停/恢复失败此前完全无反馈——按钮照常翻转，用户以为对话已停，
+  // 而 run 仍在消耗 token。控制失败要与发送失败分开、各自独占一条可读提示。
+  it('暂停/恢复失败的原因以 alert 角色独占一条提示呈现', () => {
+    renderChat({ controlError: '没有可暂停的运行——对话可能已经结束或尚未开始' })
+    const banner = screen.getByTestId('control-error')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.textContent).toContain('没有可暂停的运行')
+    // 与发送失败互不覆盖：没有发送失败时不得凭空造一条
+    expect(screen.queryByTestId('send-error')).toBeNull()
+  })
+
+  it('没有控制失败时不渲染该提示条', () => {
+    renderChat({ controlError: null })
+    expect(screen.queryByTestId('control-error')).toBeNull()
+  })
+
   it('无错误时不渲染提示条', () => {
     renderChat({ isStreaming: false })
     expect(screen.queryByTestId('send-error')).toBeNull()

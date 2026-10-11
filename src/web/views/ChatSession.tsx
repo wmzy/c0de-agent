@@ -567,6 +567,7 @@ export function ChatSession({
         }}
         onSteer={chat.steer}
         paused={agent.paused || chat.runPaused}
+        controlError={agent.error}
         supportsVision={supportsVision}
         emptyState={
           // 历史拉取失败且无可展示内容：绝不能落进 ChatWelcome（那会谎称「这是新会话」，

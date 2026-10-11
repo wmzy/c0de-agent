@@ -70,6 +70,8 @@ vi.mock('@/hooks/useAgent.js', () => ({
     resume: vi.fn(),
     resetPaused: vi.fn(),
     paused: false,
+    busy: false,
+    error: null,
   }),
 }))
 
