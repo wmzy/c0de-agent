@@ -13,12 +13,15 @@ export type SubagentInfo = {
   status: 'running' | 'completed' | 'failed'
 }
 
+/** 等待用户决定的工具调用（确认失败时要把弹窗原样还回去，故独立成类型）。 */
+export type PendingPermission = { toolCallId: string; tool: string; input: unknown }
+
 export type ChatState = {
   messages: Message[]
   isStreaming: boolean
   usage: { input: number; output: number } | null
   error: string | null
-  pendingPermission: { toolCallId: string; tool: string; input: unknown } | null
+  pendingPermission: PendingPermission | null
   /** P2-9：权限确认超时（保持 pending，前端重开弹窗；不再重发消息）。 */
   permissionTimeout: {
     toolCallId: string
@@ -111,8 +114,15 @@ export type ChatActions = {
    *  run 已结束），调用方据此保留输入并展示原因——后端的 200 并不等于受理。 */
   steer: (message: string) => Promise<boolean>
   /** 确认/拒绝权限请求：乐观关闭弹窗并通知后端。
-   *  alwaysAllowTool 非空时先把该工具加入会话白名单。 */
-  confirm: (toolCallId: string, approved: boolean, alwaysAllowTool?: string) => void
+   *  alwaysAllowTool 非空时先把该工具加入会话白名单。
+   *  pending 为调用方关闭弹窗前的待确认项：确认请求没送达（500/网络）时用它把
+   *  弹窗原样还回去，否则「以为已批准」而服务端仍在等这个决定。 */
+  confirm: (
+    toolCallId: string,
+    approved: boolean,
+    alwaysAllowTool?: string,
+    pending?: PendingPermission,
+  ) => void
   /** 用户确认开新段：withCompaction 时先压缩会话再重发。 */
   confirmBreak: (withCompaction: boolean) => Promise<void>
   /** 用户取消开新段：清除待发状态并移除乐观追加的 user 消息。 */

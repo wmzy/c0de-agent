@@ -8,6 +8,7 @@ import {
   type ChatState,
   INITIAL,
   type LastFailure,
+  type PendingPermission,
   type PendingSegmentBreak,
   type PendingTrust,
   RUN_CHANNEL,
@@ -506,7 +507,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // toolCallId 触发 404（"No pending permission"）。
   // alwaysAllowTool：用户勾选「本会话始终允许」时，先追加会话白名单再确认。
   const confirm = useCallback(
-    (toolCallId: string, approved: boolean, alwaysAllowTool?: string) => {
+    (
+      toolCallId: string,
+      approved: boolean,
+      alwaysAllowTool?: string,
+      // 调用方在清空 pending 前把它交进来：确认请求失败时要把弹窗原样还回去。
+      pending?: PendingPermission,
+    ) => {
       setState((s) => ({ ...s, pendingPermission: null }))
       const doConfirm = () =>
         agentAPI.confirmTool(toolCallId, approved).catch((err) => {
@@ -519,7 +526,15 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               error: '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
             }))
           } else {
-            console.error('[权限确认] 失败，工具调用可能已过期:', err)
+            // 请求没送达（500 / 网络中断），服务端 pending 仍在、工具还在等决定。
+            // 此前只有 console.error：弹窗已乐观关闭，用户以为「拒绝了」或
+            // 「已批准」，实际 run 卡在等待权限上，界面零反馈。把弹窗还回去并
+            // 说明原因，用户可以再决定一次（与 reopenPermission 同一口径）。
+            setState((s) => ({
+              ...s,
+              error: '权限确认没有送达，工具仍在等待你的决定。请重新确认。',
+              ...(pending ? { pendingPermission: pending } : {}),
+            }))
           }
         })
       if (approved && alwaysAllowTool) {

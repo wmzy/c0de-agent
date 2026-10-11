@@ -383,7 +383,14 @@ export function ChatSession({
   }
 
   const handleConfirm = (toolCallId: string, approved: boolean, alwaysAllow?: boolean) => {
-    chat.confirm(toolCallId, approved, alwaysAllow ? chat.pendingPermission?.tool : undefined)
+    // 把当前 pending 一并交进去：确认请求送达失败时（500/网络）弹窗要原样回来，
+    // 否则 dock 已被乐观关闭、run 却在服务端等着这个决定，页面上没有任何入口。
+    chat.confirm(
+      toolCallId,
+      approved,
+      alwaysAllow ? chat.pendingPermission?.tool : undefined,
+      chat.pendingPermission ?? undefined,
+    )
   }
 
   /** 首条消息发送失败（未配 provider/网络中断且无持久化消息）→ 删除空会话回草稿页，

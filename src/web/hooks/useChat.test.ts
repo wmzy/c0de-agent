@@ -382,6 +382,68 @@ describe('useChat confirm', () => {
     )
   })
 
+  // 回归：confirmTool 500/网络失败（请求没送达）此前只 console.error——dock 已
+  // 乐观关闭、用户以为「已批准/已拒绝」，服务端却仍持有 pending 等这个决定，
+  // 页面上既没有原因也没有重新确认的入口。
+  it('confirmTool 500 → 说明未送达，并把权限弹窗还回去', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tc500","tool":"bash","input":{}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      // 确认端点 500：请求没送达，服务端 pending 仍在
+      return {
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: async () => ({ error: { code: 'INTERNAL', message: 'boom' } }),
+        text: async () => JSON.stringify({ error: { code: 'INTERNAL', message: 'boom' } }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    const pending = result.current.pendingPermission
+    expect(pending?.toolCallId).toBe('tc500')
+
+    await act(async () => {
+      result.current.confirm('tc500', true, undefined, pending ?? undefined)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 原因可见（此前整条失败路径零反馈）
+    expect(result.current.error).toContain('权限确认没有送达')
+    // 弹窗回来：用户可以再决定一次，服务端 pending 本来就没被消费
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc500')
+  })
+
   // 回归：denyTimedOutPermission 把 confirmTool POST 写进 setState 更新器——
   // 更新器必须是纯函数，StrictMode（main.tsx 已开启）会重复调用它，同一
   // 拒绝请求被发出两次（服务端第二次必然 404，用户网络层收到多余请求）。
