@@ -87,5 +87,20 @@ function saveDraft(scope: string, prompt: Prompt, images: ImagePart[]): void {
   storageSet(key, JSON.stringify(payload))
 }
 
+/** 清退某会话的草稿：会话被删除（purgeEmpty / 侧栏删除）后调用。
+ *  发送失败的还原分支会把失败快照落回 s:<sessionId> 草稿键；会话本身没了，
+ *  这份草稿再也无人读取（文本无上限、图片最多 ~512KB），不清退就永久滞留
+ *  localStorage。 */
+function clearSessionDraft(sessionId: string): void {
+  storageRemove(draftStorageKey(`s:${sessionId}`))
+}
+
 export type { StoredDraft }
-export { DRAFT_KEY_PREFIX, draftStorageKey, loadDraft, MAX_DRAFT_IMAGE_CHARS, saveDraft }
+export {
+  clearSessionDraft,
+  DRAFT_KEY_PREFIX,
+  draftStorageKey,
+  loadDraft,
+  MAX_DRAFT_IMAGE_CHARS,
+  saveDraft,
+}

@@ -4,6 +4,7 @@ import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { BranchTree } from '@/components/BranchTree.js'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { clearSessionDraft } from '@/composer/draft.js'
 import { useDeleteSession, useProjects, useSessionTree } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
@@ -320,7 +321,12 @@ export function SessionList({
     if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，60 天内可恢复。`))
       return
     del.mutate(id, {
-      onSuccess: () => onDeleted?.(id),
+      onSuccess: () => {
+        // 会话没了：s:<id> 草稿键再也无人读取（文本无上限、图片最多 ~512KB），
+        // 删除成功即清退，避免永久滞留 localStorage。
+        clearSessionDraft(id)
+        onDeleted?.(id)
+      },
       onError: (e: unknown) => {
         setDeleteError(e instanceof Error ? e.message : String(e))
       },

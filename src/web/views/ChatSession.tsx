@@ -19,6 +19,7 @@ import { buildTimeline } from '@/components/session/utils/timeline.js'
 import { TodoPanel } from '@/components/TodoPanel.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
 import { TrustRequiredDialog } from '@/components/TrustRequiredDialog.js'
+import { clearSessionDraft } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import { failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
@@ -413,6 +414,9 @@ export function ChatSession({
         // P3-9：物理删除而非软删除——空「New Session」壳进回收站会污染列表，
         // 且用户从未与之交互过，无回收价值（服务端二次校验非空即 409）。
         await sessionAPI.purgeEmpty(sessionId)
+        // 会话已物理删除：还原分支落回 s:<sessionId> 的失败快照草稿再也无人
+        // 读取（文本无上限、图片最多 ~512KB），随之清退，避免永久滞留 localStorage。
+        clearSessionDraft(sessionId)
         qc.invalidateQueries({ queryKey: ['sessions'] })
         qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
         // 会话没了，但「消息 + 失败原因」要带去草稿页：导航会卸载本组件，

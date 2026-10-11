@@ -8,9 +8,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { draftStorageKey } from '@/composer/draft.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import type { SessionTreeNode } from '@/types/index.js'
+import { storageGet, storageSet } from '@/utils/storage.js'
 import { RecycleBin } from '@/views/RecycleBin.js'
 import { SessionList } from '@/views/SessionList.js'
 
@@ -35,6 +37,10 @@ const hoisted = vi.hoisted(() => ({
   },
   /** 「未归属项目」分组的数据源：孤儿已删会话与其计数。 */
   orphans: { data: [] as Session[] },
+  /** 删除会话 mutation 的 mutate：默认 no-op；用例可赋实现以驱动 onSuccess/onError。 */
+  deleteMutate: undefined as
+    | ((id: string, opts?: { onSuccess?: () => void; onError?: (e: unknown) => void }) => void)
+    | undefined,
   /** 孤儿计数查询的完整返回值——驱动读失败分支与「重试」入口。 */
   orphanCount: {
     data: { count: 0 } as { count: number } | undefined,
@@ -51,7 +57,10 @@ vi.mock('@/hooks/useSession.js', () => ({
     if (hoisted.treeQuery.isError) return hoisted.treeQuery
     return { ...hoisted.treeQuery, data: hoisted.tree }
   },
-  useDeleteSession: () => ({ mutate: vi.fn() }),
+  useDeleteSession: () => ({
+    mutate: (id: string, opts?: { onSuccess?: () => void; onError?: (e: unknown) => void }) =>
+      hoisted.deleteMutate?.(id, opts),
+  }),
   useProjects: () => ({ data: [{ id: 'p1', name: 'proj', worktree: '/tmp/proj' }] }),
   useDeletedSessions: () => hoisted.deleted,
   useDeletedOrphansCount: () => hoisted.orphanCount,
@@ -115,6 +124,7 @@ const OUTSIDE = makeSession('outside-id', 'outside-tree')
 beforeEach(() => {
   hoisted.tree = [node(ROOT, [node(CHILD, [node(GRANDCHILD)])])]
   hoisted.orphans = { data: [] }
+  hoisted.deleteMutate = undefined
   // 主列表默认健康：读失败态由各用例自行设置。hoisted 是普通对象（非 mock），
   // afterEach 的 clearAllMocks 不会还原它——不在这里重置，上一用例留下的
   // isError:true 会漏进下一个用例，让它渲染成错误页。
@@ -837,6 +847,43 @@ describe('SessionList 删除会话的影响面', () => {
       expect(confirm.calls[0]).toContain('其 1 个派生会话')
     } finally {
       confirm.restore()
+    }
+  })
+
+  // 回归（审查 #7）：侧栏删除会话成功后，s:<id> 草稿键不得滞留 localStorage
+  // （文本无上限、图片最多 ~512KB），否则被删会话的草稿永久堆积。
+  it('删除成功后清退该会话的草稿键，不动其他作用域', () => {
+    const origConfirm = window.confirm
+    window.confirm = () => true
+    try {
+      storageSet(
+        draftStorageKey('s:root-id'),
+        JSON.stringify({
+          prompt: [{ type: 'text', start: 0, end: 2, content: '未发送的草稿' }],
+          images: [],
+        }),
+      )
+      storageSet(
+        draftStorageKey('p:p1'),
+        JSON.stringify({
+          prompt: [{ type: 'text', start: 0, end: 4, content: '草稿页的项目草稿' }],
+          images: [],
+        }),
+      )
+      hoisted.deleteMutate = (id, opts) => {
+        expect(id).toBe('root-id')
+        opts?.onSuccess?.()
+      }
+      renderList()
+      fireEvent.click(screen.getByTestId('delete-root-id'))
+
+      expect(storageGet(draftStorageKey('s:root-id'))).toBeNull()
+      // 其他作用域（项目草稿页）不受影响
+      expect(storageGet(draftStorageKey('p:p1'))).not.toBeNull()
+    } finally {
+      window.confirm = origConfirm
+      localStorage.removeItem(draftStorageKey('s:root-id'))
+      localStorage.removeItem(draftStorageKey('p:p1'))
     }
   })
 })

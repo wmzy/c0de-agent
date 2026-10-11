@@ -9,10 +9,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { draftStorageKey } from '@/composer/draft.js'
 import { ConfigProvider } from '@/contexts/ConfigContext.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 import { failedSendReason } from '@/hooks/failedSendReason.js'
 import { sessionAPI } from '@/services/session.js'
+import { storageGet, storageSet } from '@/utils/storage.js'
 import { ChatSession } from '@/views/ChatSession.js'
 
 // ChatSession 用了 useRouter（navigateTo 走 imperative 导航），测试需包 MemoryRouter。
@@ -294,6 +296,30 @@ describe('ChatSession — 首条消息失败的空会话治理', () => {
     expect(failedSendReason.take('p1')?.reason).toBe(
       '未找到名为「prov-x」的 AI 服务。已配置：mock。',
     )
+  })
+
+  // 回归（审查 #7）：发送失败的还原分支把失败快照落回 composer-draft.v1:s:<sessionId>，
+  // 随后 purgeEmpty 物理删除会话——这份草稿再无人读取（文本无上限、图片最多
+  // ~512KB），不清退就永久滞留 localStorage。
+  it('首条失败清空会话后，会话草稿键随之清退（还原分支落回的快照不滞留）', async () => {
+    mockUseChatState.lastFailure.current = { reason: '与服务的连接中断，消息未发出。', gate: null }
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
+    // 预置一份「失败快照」草稿（还原分支也会写入同样内容，这里显式钉住起点）
+    storageSet(
+      draftStorageKey('s:s1'),
+      JSON.stringify({
+        prompt: [{ type: 'text', start: 0, end: 5, content: '第一条消息' }],
+        images: [],
+      }),
+    )
+
+    await sendFirstMessage()
+
+    await waitFor(() => expect(sessionAPI.purgeEmpty).toHaveBeenCalled())
+    await waitFor(() => {
+      expect(storageGet(draftStorageKey('s:s1'))).toBeNull()
+    })
   })
 })
 
