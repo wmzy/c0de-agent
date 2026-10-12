@@ -8,7 +8,7 @@ import { commandsAPI } from '@/services/commands.js'
 import { permissionAPI } from '@/services/permission.js'
 import { workflowsAPI } from '@/services/workflows.js'
 import { Chat } from '@/views/Chat.js'
-import { ChatWelcome, EXAMPLE_TASKS } from '@/views/ChatView.js'
+import { ChatHistoryError, ChatWelcome, EXAMPLE_TASKS } from '@/views/ChatView.js'
 
 // Composer 内部 useCommands 会请求 /api/commands；mock 掉避免真实网络调用。
 vi.mock('@/services/commands.js', () => ({
@@ -690,13 +690,60 @@ describe('workflow run 补全 popover', () => {
 })
 
 describe('Chat view modes', () => {
+  // 表格视图现在只在有行时保留（见下面的失败态用例），因此这里给一行真实时间线，
+  // 否则切到表格后渲染的是空态而非表格。
+  const oneRow = (text: string): TimelineRow[] => [
+    {
+      kind: 'message',
+      message: {
+        id: 'm1',
+        sessionId: 's',
+        role: 'assistant',
+        content: [{ _tag: 'text', text }],
+        tokenCount: 0,
+        createdAt: 1,
+      },
+      ts: 1,
+    },
+  ]
+
   it('默认聊天模式，可切换到表格', () => {
-    renderChat()
+    renderChat({ timeline: oneRow('hi') })
     expect(screen.getByTestId('view-chat').getAttribute('aria-pressed')).toBe('true')
     expect(screen.queryByTestId('table-view')).toBeNull()
     fireEvent.click(screen.getByTestId('view-table'))
     expect(screen.getByTestId('view-table').getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByTestId('table-view')).toBeTruthy()
+  })
+
+  // 回归：失败态（错误原因 + 重试）此前只挂在非表格分支上。注入 500 后实测：
+  // 聊天视图显示「历史消息加载失败：…」+ 重试，切到表格后整块消失，只剩筛选条、
+  // 0/0 与「无匹配项」——历史加载失败被读成「这个会话是空的」，而且没有任何
+  // 重试入口（表格视图是工具栏里的正常视图，不是调试视图）。
+  it('表格视图下时间线为空时仍渲染历史失败态与重试', () => {
+    const onRetry = vi.fn()
+    renderChat({
+      timeline: [],
+      emptyState: <ChatHistoryError message="数据库被占用" onRetry={onRetry} />,
+    })
+
+    fireEvent.click(screen.getByTestId('view-table'))
+    expect(screen.queryByTestId('table-view')).toBeNull()
+
+    const failure = screen.getByTestId('chat-history-error')
+    expect(failure.textContent).toContain('数据库被占用')
+    fireEvent.click(screen.getByTestId('chat-history-retry'))
+    expect(onRetry).toHaveBeenCalledOnce()
+  })
+
+  it('表格视图下有行时仍渲染表格（失败态不能顶掉正常内容）', () => {
+    renderChat({
+      timeline: oneRow('hi'),
+      emptyState: <ChatHistoryError message="x" onRetry={vi.fn()} />,
+    })
+    fireEvent.click(screen.getByTestId('view-table'))
+    expect(screen.getByTestId('table-view')).toBeTruthy()
+    expect(screen.queryByTestId('chat-history-error')).toBeNull()
   })
 
   it('聊天/表格/原始 JSON 三态互斥切换', () => {

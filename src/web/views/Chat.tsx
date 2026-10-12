@@ -902,7 +902,10 @@ export function Chat({
         </div>
       ) : null}
       {topPanel}
-      {viewMode === 'table' ? (
+      {/* 时间线为空时不留在表格视图：历史加载失败的错误+重试（以及空会话的欢迎区）
+          此前只挂在非表格分支上，表格视图下只剩筛选条 + 0/0 + 「无匹配项」——用户
+          据此认为这个会话是空的，既看不到失败原因，也没有重试入口（注入 500 后实测）。 */}
+      {viewMode === 'table' && timeline.length > 0 ? (
         <TableView rows={timeline} />
       ) : (
         // biome-ignore lint/a11y/noStaticElementInteractions: 消息流滚动容器需捕获滚轮/触摸/键盘以判断用户是否上滚阅读，语义角色由内部时间线提供
