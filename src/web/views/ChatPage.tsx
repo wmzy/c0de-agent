@@ -92,6 +92,25 @@ export function ChatPage() {
     registerGuard,
   }
 
+  /**
+   * 切项目时收起预览面板：selectedFile 是**相对路径**，而预览按最新的 projectId
+   * 重新读取，于是「我正在看 A 的 src/app.ts」会被静默换成 B 的同名文件
+   * （实测 /projects/A 打开 src/app.ts 后从顶栏切到 B：路径不变、内容变成 B 的）。
+   * 项目作用域的本地 state 必须自己重置——同 path 换 param 不会重挂载本组件
+   * （SessionList 的 firstProjectRef 是同一口径）。
+   *
+   * 直接清空、不再经 closeFile 的否决钩子：未保存编辑的去留已经在导航那一刻由
+   * FilePreview 的 useBlocker 问过一遍（用户按「离开」才走得到这里），再问一次
+   * 就是连续两次同样的确认。
+   */
+  const firstProjectRef = useRef(projectId)
+  useEffect(() => {
+    if (firstProjectRef.current === projectId) return
+    firstProjectRef.current = projectId
+    setSelectedFile(null)
+    setRevealRange(null)
+  }, [projectId])
+
   if (!projectId) return <Layout header={<TopBar />} main={<NotFound />} />
 
   return (
