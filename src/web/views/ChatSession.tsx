@@ -6,7 +6,7 @@ import { css } from '@linaria/core'
 import { useRouter } from '@native-router/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { ArchivePanel } from '@/components/ArchivePanel.js'
 import { Dialog } from '@/components/Dialog.js'
@@ -288,22 +288,37 @@ export function ChatSession({
   // 同时记录打开时间，用于会话列表按最近打开排序。
   const [coldStartInterrupted, setColdStartInterrupted] = useState(false)
   const [coldStartPaused, setColdStartPaused] = useState(false)
-  useEffect(() => {
+  // 检测失败必须说出来：此前两条链都是 .catch(() => {})，页面看起来完全正常，
+  // 但「连接已中断 / 已暂停」的恢复横幅与入口都不会出现——用户面对一个上次被强杀
+  // 打断的会话无从恢复，只能猜着重发，而重发会重复执行已跑过的工具（bash/git 等）。
+  // 同页的 llm-details 读失败已有「原因 + 重试」的同口径处理，这条必须一致。
+  const [coldStartError, setColdStartError] = useState<string | null>(null)
+  const checkSessionState = useCallback(() => {
     setColdStartInterrupted(false)
     setColdStartPaused(false)
+    setColdStartError(null)
     sessionAPI
       .status(sessionId)
       .then((s) => {
         if (s._tag === 'interrupted') setColdStartInterrupted(true)
         else if (s._tag === 'paused') setColdStartPaused(true)
       })
-      .catch(() => {})
-    // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）
+      .catch((err: unknown) => {
+        setColdStartError(
+          (err as { message?: string } | null)?.message ??
+            (err instanceof Error ? err.message : '状态检查失败'),
+        )
+      })
+    // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）。此链失败只影响会话列表排序、
+    // 不牵连任何恢复入口，故不弹告警（否则每次打开会话都滋扰）。
     sessionAPI
       .open(sessionId)
       .then(() => qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }))
       .catch(() => {})
   }, [sessionId, qc])
+  useEffect(() => {
+    checkSessionState()
+  }, [checkSessionState])
 
   // P1：附着后台 run——挂起期间切换页面后回来 / 刷新时，重挂权限弹窗并显示运行态，
   // 消除「权限弹窗挂起 + 导航离开 = 会话锁死无 UI 可恢复」的死角。
@@ -702,6 +717,17 @@ export function ChatSession({
                 <span>{resendError}</span>
                 <Button variant="outline" onClick={clearResendError}>
                   知道了
+                </Button>
+              </div>
+            )}
+            {coldStartError && !chat.isStreaming && (
+              <div className={interruptBanner} role="alert" data-testid="cold-start-error">
+                <span>
+                  无法确认该会话上次是否正常结束：{coldStartError}
+                  （若是被服务重启打断，恢复入口可能未显示，可重新检查）
+                </span>
+                <Button variant="outline" onClick={() => checkSessionState()}>
+                  重新检查
                 </Button>
               </div>
             )}

@@ -585,3 +585,43 @@ describe('ChatSession — 导出反馈闭环', () => {
     )
   })
 })
+
+/**
+ * 冷启动状态检查（sessionAPI.status）失败此前被 .catch(() => {}) 空吞：
+ * 页面看起来完全正常，但「连接已中断 / 已暂停」的恢复横幅与入口都不会出现——
+ * 用户面对一个上次被强杀打断的会话无从恢复，只能猜着重发，而重发会重复执行
+ * 已跑过的工具（bash/git 等）。失败必须说出来并可重新检查。
+ */
+describe('ChatSession — 冷启动状态检查失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+  })
+
+  it('检查失败时说明原因，不静默当作正常结束', async () => {
+    vi.mocked(sessionAPI.status).mockRejectedValueOnce({ message: '数据库被占用' })
+    await renderSession()
+
+    await waitFor(() => expect(screen.getByTestId('cold-start-error')).toBeInTheDocument())
+    expect(screen.getByTestId('cold-start-error').textContent).toContain('数据库被占用')
+    // 不把失败当 idle：中断恢复入口的缺失必须可见
+    expect(screen.queryByTestId('interrupt-banner')).toBeNull()
+  })
+
+  it('点击「重新检查」后拿到 interrupted 并显示恢复入口，告警消失', async () => {
+    vi.mocked(sessionAPI.status).mockRejectedValueOnce({ message: '数据库被占用' })
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('cold-start-error')).toBeInTheDocument())
+
+    vi.mocked(sessionAPI.status).mockResolvedValueOnce({ _tag: 'interrupted' })
+    fireEvent.click(screen.getByRole('button', { name: '重新检查' }))
+
+    await waitFor(() => expect(screen.getByTestId('interrupt-banner')).toBeInTheDocument())
+    expect(screen.queryByTestId('cold-start-error')).toBeNull()
+  })
+})
