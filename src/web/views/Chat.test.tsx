@@ -287,6 +287,52 @@ describe('Chat 权限条读取/移除失败', () => {
   })
 })
 
+/**
+ * 权限模式「切换」失败的静默回滚。
+ *
+ * 缺陷：togglePermissionMode 乐观翻转后 `.catch(() => setPermissionMode(旧值))`——
+ * 开关自己弹回去，零原因、零重试。用户看到的是「点不动」，反复点；真实情况是
+ * 服务端拒绝了这次写入（这正是安全相关的模式开关：以为已开自动授权的人会据此
+ * 少点几次确认，实际服务端仍逐个确认，反之亦然）。
+ */
+describe('Chat 权限模式切换失败', () => {
+  it('切换写入失败时回滚开关并说明原因、给重试', async () => {
+    vi.mocked(permissionAPI.setMode).mockRejectedValueOnce(new Error('权限模式写入被拒绝'))
+    renderChat()
+
+    fireEvent.click(screen.getByTestId('permission-mode-toggle'))
+    await waitFor(() => expect(screen.getByTestId('permission-mode-set-error')).toBeInTheDocument())
+
+    expect(screen.getByTestId('permission-mode-set-error').textContent).toContain(
+      '权限模式写入被拒绝',
+    )
+    // 开关已回滚到服务端真实模式（未勾选），警示 pill 不得残留
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+  })
+
+  it('重试重发目标模式，成功后错误行消失且开关停在目标模式', async () => {
+    vi.mocked(permissionAPI.setMode)
+      .mockRejectedValueOnce(new Error('网络中断'))
+      .mockResolvedValueOnce({ mode: 'auto' } as never)
+    renderChat()
+
+    fireEvent.click(screen.getByTestId('permission-mode-toggle'))
+    await waitFor(() => expect(screen.getByTestId('permission-mode-set-retry')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('permission-mode-set-retry'))
+
+    await waitFor(() => expect(screen.queryByTestId('permission-mode-set-error')).toBeNull())
+    expect(vi.mocked(permissionAPI.setMode).mock.calls).toEqual([
+      ['auto', undefined],
+      ['auto', undefined],
+    ])
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+  })
+})
+
 describe('slash 命令 popover 候选选择', () => {
   // 复现 bug：输入 /c 后 popover 过滤显示 [clear, config, compact]，
   // 但旧代码 Enter 用全列表索引选 commands[0]=help（错误）。修复后应选高亮项。

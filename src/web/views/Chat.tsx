@@ -696,6 +696,15 @@ export function Chat({
   const [permissionLoadError, setPermissionLoadError] = useState<string | null>(null)
   /** 移除白名单失败的原因：此前是空 catch —— 点 × 后界面纹丝不动、零反馈。 */
   const [alwaysAllowError, setAlwaysAllowError] = useState<string | null>(null)
+  /** 权限模式写入失败的原因。切换是乐观翻转 + 失败回滚，此前回滚零提示：开关
+   *  自己弹回去，用户看到的是「点不动」，既不知道原因、也不知道服务端仍是哪个
+   *  模式——而这正是安全相关的模式开关（以为已开自动授权的人会据此少点确认，
+   * 实际服务端仍逐个确认，反之亦然）。 */
+  const [permissionModeError, setPermissionModeError] = useState<string | null>(null)
+  /** 切换失败时用户想切到的模式：重试要重发的是这个意图，不是再次翻转。 */
+  const [permissionModeTarget, setPermissionModeTarget] = useState<PermissionMode | null>(null)
+  /** 写入进行中的模式（非 null 即 pending），用于禁用重试、避免重复提交。 */
+  const [permissionModeSaving, setPermissionModeSaving] = useState<PermissionMode | null>(null)
   const loadPermissionMode = useCallback(() => {
     permissionAPI
       .getMode(sessionId)
@@ -718,13 +727,28 @@ export function Chat({
     const unsubscribe = subscribeModeChange(sessionId ?? null, setPermissionMode)
     return unsubscribe
   }, [sessionId, loadPermissionMode])
-  const togglePermissionMode = () => {
-    const next: PermissionMode = permissionMode === 'auto' ? 'default' : 'auto'
+  const applyPermissionMode = (next: PermissionMode) => {
+    setPermissionModeError(null)
+    setPermissionModeTarget(null)
+    setPermissionModeSaving(next)
     setPermissionMode(next)
-    permissionAPI
+    return permissionAPI
       .setMode(next, sessionId)
-      .then(() => broadcastModeChange({ sessionId: sessionId ?? null, mode: next }))
-      .catch(() => setPermissionMode(permissionMode))
+      .then(() => {
+        setPermissionModeSaving(null)
+        broadcastModeChange({ sessionId: sessionId ?? null, mode: next })
+      })
+      .catch((e: unknown) => {
+        // 回滚：此前只有 setPermissionMode(permissionMode)，开关自己弹回去。
+        // 界面「按不动」而无任何说明，用户只会反复点，或以为模式已经切成功。
+        setPermissionModeSaving(null)
+        setPermissionMode(permissionMode)
+        setPermissionModeTarget(next)
+        setPermissionModeError(e instanceof Error ? e.message : String(e))
+      })
+  }
+  const togglePermissionMode = () => {
+    void applyPermissionMode(permissionMode === 'auto' ? 'default' : 'auto')
   }
   const handleSend = (payload: SendPayload) => {
     // 用户主动发送：无条件回到最新内容（此刻他就是想看到自己刚发出的消息）。
@@ -931,6 +955,24 @@ export function Chat({
               </button>
             </span>
           ) : null}
+          {/* 写入失败：开关已回滚到服务端真实模式，但必须说明这次切换没生效并给
+              重试——否则用户只看到开关弹回去，判定为「点不动」而反复点击。 */}
+          {permissionModeError ? (
+            <span className={modeError} role="alert" data-testid="permission-mode-set-error">
+              切换权限模式失败：{permissionModeError}
+              {permissionModeTarget ? (
+                <button
+                  type="button"
+                  className={modeErrorRetry}
+                  onClick={() => void applyPermissionMode(permissionModeTarget)}
+                  disabled={permissionModeSaving !== null}
+                  data-testid="permission-mode-set-retry"
+                >
+                  重试
+                </button>
+              ) : null}
+            </span>
+          ) : null}
           {alwaysAllow.length > 0 && (
             <div className={allowChips} data-testid="always-allow-chips">
               {alwaysAllow.map((tool) => (
@@ -972,6 +1014,7 @@ export function Chat({
               type="checkbox"
               checked={permissionMode === 'auto'}
               onChange={togglePermissionMode}
+              disabled={permissionModeSaving !== null}
               data-testid="permission-mode-toggle"
             />
             {permissionMode === 'auto'
