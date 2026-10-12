@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Tooltip } from 'haze-ui'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { CommitReviewDialog } from '@/components/CommitReviewDialog.js'
 import { fileAPI } from '@/services/file.js'
 import { btnSm } from '@/styles/tokens.js'
@@ -146,6 +146,11 @@ export function CommitButton({ projectId }: { projectId: string }) {
     suggestions: string[]
   } | null>(null)
 
+  // onError 里要判断「失败原因是不是只活在模态面板里」，但 useMutation 的回调
+  // 闭包拿到的是首次渲染的 reviewState。用 ref 镜像当前是否开着弹窗。
+  const reviewOpenRef = useRef(false)
+  reviewOpenRef.current = reviewState !== null
+
   const commitMut = useMutation({
     mutationFn: (body?: { mode?: string; message?: string; suggestions?: string[] }) =>
       fileAPI.gitCommit(projectId, body),
@@ -168,6 +173,9 @@ export function CommitButton({ projectId }: { projectId: string }) {
           ? String((err as { message: string }).message)
           : '提交失败'
       setCommitFeedback({ kind: 'err', msg })
+      // 弹窗开着时不自动清：失败原因只渲染在模态面板里，5 秒后自己消失等于
+      // 回到「点了没反应、什么也没说」。关掉弹窗（onCancel）时才复位。
+      if (reviewOpenRef.current) return
       setTimeout(() => setCommitFeedback((s) => (s.kind === 'err' ? { kind: 'idle' } : s)), 5000)
     },
   })
@@ -218,6 +226,11 @@ export function CommitButton({ projectId }: { projectId: string }) {
         <CommitReviewDialog
           suggestions={reviewState.suggestions}
           message={reviewState.message}
+          busy={commitMut.isPending}
+          // 提交失败的原因必须出现在模态框里：顶栏那行「提交失败」位于
+          // <dialog>::backdrop 之后，读屏也被 inert 挡住，用户在弹窗里看到的
+          // 只有「点了没反应」，按钮还能再点一次排第二次 commit。
+          error={commitFeedback.kind === 'err' ? commitFeedback.msg : null}
           onAppendIgnore={() =>
             commitMut.mutate({
               mode: 'append-ignore',
@@ -226,7 +239,10 @@ export function CommitButton({ projectId }: { projectId: string }) {
             })
           }
           onForce={() => commitMut.mutate({ mode: 'force', message: reviewState.message })}
-          onCancel={() => setReviewState(null)}
+          onCancel={() => {
+            setReviewState(null)
+            setCommitFeedback({ kind: 'idle' })
+          }}
         />
       )}
     </>

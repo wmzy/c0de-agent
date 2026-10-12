@@ -36,6 +36,11 @@ const btn = css`
   &:hover {
     background: var(--haze-color-bg);
   }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 `
 
 const primaryBtn = css`
@@ -46,6 +51,21 @@ const primaryBtn = css`
   color: var(--c0de-warning-on-solid, #fff);
 `
 
+const errorBar = css`
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--haze-color-danger);
+  border-radius: 6px;
+  background: var(--haze-color-danger-bg, transparent);
+  color: var(--haze-color-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+`
+
 /**
  * 提交前可疑文件确认弹框。LLM 检测到应忽略的文件后弹出，
  * 三选项：加入 .gitignore 再提交 / 仍然提交 / 取消。
@@ -53,19 +73,32 @@ const primaryBtn = css`
 export function CommitReviewDialog({
   suggestions,
   message: _message,
+  busy = false,
+  error = null,
   onAppendIgnore,
   onForce,
   onCancel,
 }: {
   suggestions: string[]
   message: string
+  /** 提交请求在飞：三颗按钮禁用，弹层不给关闭出口（防止重复 commit / 丢掉失败原因）。 */
+  busy?: boolean
+  /** 提交失败原因。渲染在弹层正文里（role=alert），因为顶栏那行反馈被模态遮住。 */
+  error?: string | null
   onAppendIgnore: () => void
   onForce: () => void
   onCancel: () => void
 }) {
+  // 请求在飞时不给关闭出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染在
+  // 这块面板里，中途关掉它就等于把失败原因一起关掉。
+  const dismiss = () => {
+    if (busy) return
+    onCancel()
+  }
   return (
     <Dialog
-      onClose={onCancel}
+      onClose={dismiss}
+      closeDisabled={busy}
       title="检测到可能需要忽略的文件"
       width="min(460px, 92vw)"
       testId="commit-review-dialog"
@@ -74,18 +107,26 @@ export function CommitReviewDialog({
           <button
             type="button"
             className={btn}
-            onClick={onCancel}
+            onClick={dismiss}
+            disabled={busy}
             data-testid="commit-review-cancel"
           >
             取消
           </button>
-          <button type="button" className={btn} onClick={onForce} data-testid="commit-review-force">
+          <button
+            type="button"
+            className={btn}
+            onClick={onForce}
+            disabled={busy}
+            data-testid="commit-review-force"
+          >
             仍然提交
           </button>
           <button
             type="button"
             className={`${btn} ${primaryBtn}`}
             onClick={onAppendIgnore}
+            disabled={busy}
             data-testid="commit-review-ignore"
           >
             加入 .gitignore 再提交
@@ -99,6 +140,11 @@ export function CommitReviewDialog({
           <div key={s}>{s}</div>
         ))}
       </div>
+      {error ? (
+        <div className={errorBar} role="alert" data-testid="commit-review-error">
+          {'⚠'} {error}
+        </div>
+      ) : null}
     </Dialog>
   )
 }
