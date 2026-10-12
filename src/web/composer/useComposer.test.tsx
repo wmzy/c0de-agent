@@ -12,7 +12,8 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import { loadDraft } from '@/composer/draft.js'
 import { loadHistory, saveHistory } from '@/composer/history.js'
-import { useComposer } from '@/composer/useComposer.js'
+import { type PopoverState, useComposer } from '@/composer/useComposer.js'
+import type { CommandInfo } from '@/hooks/useCommands.js'
 
 function strictWrapper({ children }: { children: ReactNode }) {
   return createElement(StrictMode, null, children)
@@ -110,15 +111,19 @@ type PillInsertResult = {
   appendTerminalReference: (label: string, content: string) => void
   handleInput: () => void
   handleKeyDown: (e: ReactKeyboardEvent) => void
+  /** 走**最新一次渲染**的 handler：Esc 的分支依赖当次渲染读到的 popover，
+   *  上面的 handleKeyDown 是首帧闭包，按键前若有状态变化会读到过期值。 */
+  pressKey: (e: ReactKeyboardEvent) => void
   send: () => void
   onSend: ReturnType<typeof vi.fn>
   setCursorEnd: () => void
   editor: HTMLDivElement
+  popover: () => PopoverState
 }
 
 /** 带真实 contenteditable 编辑器的 composer：pill 渲染/解析与光标定位全链路。
  *  draftScope 传入时才落 localStorage（草稿持久化域），用于断言「什么该落盘」。 */
-function renderComposerWithEditor(draftScope?: string): PillInsertResult {
+function renderComposerWithEditor(draftScope?: string, commands?: CommandInfo[]): PillInsertResult {
   const editor = document.createElement('div')
   editor.setAttribute('contenteditable', 'true')
   document.body.appendChild(editor)
@@ -131,7 +136,7 @@ function renderComposerWithEditor(draftScope?: string): PillInsertResult {
         onSteer: vi.fn(),
         isStreaming: false,
         hasHistory: false,
-        commands: [],
+        commands: commands ?? [],
         draftScope,
       }),
     { wrapper: strictWrapper },
@@ -155,10 +160,12 @@ function renderComposerWithEditor(draftScope?: string): PillInsertResult {
     appendTerminalReference: result.current.appendTerminalReference,
     handleInput: result.current.handleInput,
     handleKeyDown: result.current.handleKeyDown,
+    pressKey: (e) => result.current.handleKeyDown(e),
     send: result.current.send,
     onSend,
     setCursorEnd,
     editor,
+    popover: () => result.current.popover,
   }
 }
 
@@ -513,5 +520,64 @@ describe('useComposer 追加指令的清空时机', () => {
     })
 
     expect(promptToText(result.current.promptRef.current as never)).toBe('')
+  })
+})
+
+/**
+ * 回归：子命令补全浮层里 Esc 是死键。
+ *
+ * 「commands 就绪后重新检测」的 effect 只依赖 [commands, popover]，Esc 把 popover
+ * 置空后它立刻按同一段文本把浮层弹回来：用户按 Esc 想收起补全，菜单纹丝不动；
+ * 紧接着的回车被浮层拦截，编辑器内容被改写成第一个候选（实测 /workflow list）
+ * 而不是发送——正文就这么被静默改掉了。
+ */
+describe('useComposer 子命令补全浮层', () => {
+  const commands: CommandInfo[] = [
+    {
+      name: 'workflow',
+      description: '工作流',
+      subcommands: [
+        { name: 'list', description: 'list' },
+        { name: 'run', description: 'run' },
+      ],
+    },
+  ]
+
+  it('Esc 关掉后不被重检测弹回来', () => {
+    const c = renderComposerWithEditor(undefined, commands)
+    typeText(c, '/workflow ')
+    expect(c.popover()).toBe('subcommand')
+
+    act(() => {
+      c.pressKey({ key: 'Escape', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    expect(c.popover()).toBe(null)
+  })
+
+  it('关掉后继续打字会重新补全（Esc 只压住当前这段文本）', () => {
+    const c = renderComposerWithEditor(undefined, commands)
+    typeText(c, '/workflow ')
+    act(() => {
+      c.pressKey({ key: 'Escape', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    typeText(c, 'li')
+
+    expect(c.popover()).toBe('subcommand')
+  })
+
+  it('关掉后回车走发送，不再把输入改写成候选', () => {
+    const c = renderComposerWithEditor(undefined, commands)
+    typeText(c, '/workflow ')
+    act(() => {
+      c.pressKey({ key: 'Escape', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    act(() => {
+      c.pressKey({ key: 'Enter', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    expect(c.onSend).toHaveBeenCalled()
   })
 })

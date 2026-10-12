@@ -146,11 +146,22 @@ function useComposer({
   const commandsRef = useRef<CommandInfo[] | undefined>(commands)
   commandsRef.current = commands
 
+  /**
+   * Esc 显式关掉浮层时记下的文本签名。下方「commands 就绪后重新检测」的 effect
+   * 只依赖 [commands, popover]——Esc 把 popover 置空后它立刻重跑，按同一段文本
+   * 把刚关掉的浮层原样弹回来：Esc 成了死键，紧接的回车于是被浮层拦截，把用户
+   * 已经打好的正文改写成第一个候选而不是发送。文本一变即失效（handleInput 清），
+   * 用户继续打字本来就该重新补全。
+   */
+  const dismissedPopoverRef = useRef<string | null>(null)
+
   // commands 异步加载后，重新检测当前文本是否匹配子命令补全。
   // handleInput 在输入时触发，但此时 commands 可能尚未就绪。
   useEffect(() => {
     if (!commands?.length) return
     const text = promptToText(promptRef.current)
+    // 用户已对这段文本按过 Esc：不许再弹回来
+    if (dismissedPopoverRef.current === text) return
     const subMatch = text.match(/^\/(\S+)\s+(\S*)$/)
     if (!subMatch) return
     const cmd = commands.find((c) => c.name === subMatch[1])
@@ -211,6 +222,8 @@ function useComposer({
 
     const text = promptToText(prompt)
     const cursor = currentCursor(editorRef.current)
+    // 又敲了字 = 新的输入意图，此前那次 Esc 的「别弹回来」失效
+    dismissedPopoverRef.current = null
 
     // popover 触发检测（steer 模式不触发）
     const slashMatch = text.match(/^\/(\S*)$/)
@@ -653,6 +666,9 @@ function useComposer({
         return
       }
       if (e.key === 'Escape' && popover) {
+        // 记住被关掉的这段文本：重检测 effect（commands 就绪 / popover 状态变化）
+        // 不得把它原样弹回来——否则 Esc 是死键，回车接着把输入改写成候选
+        dismissedPopoverRef.current = promptToText(promptRef.current)
         setPopover(null)
         e.preventDefault()
         return
