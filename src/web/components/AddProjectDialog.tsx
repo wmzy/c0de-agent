@@ -48,18 +48,29 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
     // 去掉尾部斜杠后提交
     const dir = directory.trim().replace(/\/+$/, '')
     if (!dir) return
+    // 在飞时回车/再点确认会排第二次 mutate（重复建项目），一并挡掉。
+    if (create.isPending) return
     setError(null)
     create.mutate(dir)
   }
 
+  // 请求在飞时不给关闭的出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染
+  // 在这块面板里，中途关掉它就等于把失败原因一起关掉——实测目录建项目时按 Esc，
+  // 服务端随后 500，用户看到的是「点了添加，什么也没发生」，项目也没建出来。
+  const dismiss = () => {
+    if (create.isPending) return
+    onClose()
+  }
+
   return (
     <Dialog
-      onClose={onClose}
+      onClose={dismiss}
+      closeDisabled={create.isPending}
       title="添加项目"
       testId="add-project-dialog"
       footer={
         <>
-          <Button onClick={onClose} variant="outline">
+          <Button onClick={dismiss} disabled={create.isPending} variant="outline">
             取消
           </Button>
           <Button
@@ -83,7 +94,11 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
         testId="add-project-input"
       />
       <div className={hint}>输入目录名可递归搜索深层目录，或在文件树中浏览选择。</div>
-      {error ? <div className={errorMsg}>{error}</div> : null}
+      {error ? (
+        <div className={errorMsg} role="alert" data-testid="add-project-error">
+          {error}
+        </div>
+      ) : null}
     </Dialog>
   )
 }
