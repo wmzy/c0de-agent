@@ -62,6 +62,30 @@ const addBtn = css`
   }
 `
 
+/** 权限迁移确认弹窗正文与勾选行。 */
+const importPermDesc = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+`
+
+const importPermRow = css`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--haze-color-text);
+  cursor: pointer;
+`
+
+const importPermHint = css`
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 const recycleBtn = css`
   flex-shrink: 0;
   min-height: auto;
@@ -339,6 +363,23 @@ export function SessionList({
     original: Project
     importPermissions: boolean
   } | null>(null)
+  /**
+   * P0：导出文件带权限态（auto 模式 / alwaysAllow 白名单）时的确认弹窗。
+   *
+   * 此前用 window.confirm：「确定」= 随迁权限（工具此后免确认执行，危险侧）、
+   * 「取消」= 剥离（推荐侧），而原生框的默认键正是「确定」且回车直达——肌肉
+   * 记忆按一下回车就把 auto/白名单搬了进来。与已修的导出快照选择（bb056bf）
+   * 完全同型，那次改成了站内弹窗，导入这条路径漏了。
+   *
+   * 站内弹窗里危险动作是**未勾选的复选框**：初始焦点落在它上面，回车既不会
+   * 迁移权限、也不会把弹窗关掉。
+   */
+  const [permPrompt, setPermPrompt] = useState<{
+    data: unknown
+    original: Project | undefined
+    detail: string
+  } | null>(null)
+  const [migratePermissions, setMigratePermissions] = useState(false)
   const { data: projects } = useProjects()
 
   /** 执行导入：绑定目标项目后刷新树并跳转；notice 明示工具执行目录。 */
@@ -363,6 +404,22 @@ export function SessionList({
     } finally {
       setImporting(false)
     }
+  }
+
+  /**
+   * 权限确认之后的落点：导出文件的原项目在本机存在且非当前项目时先选导入目标，
+   * 否则直接导入到当前项目。
+   */
+  const continueImport = async (
+    data: unknown,
+    original: Project | undefined,
+    importPermissions: boolean,
+  ) => {
+    if (original && original.id !== projectId) {
+      setImportChoice({ data, original, importPermissions })
+      return
+    }
+    await doImport(data, projectId, importPermissions)
   }
 
   /** 检测导出文件的权限态（permissionMode=auto 或 alwaysAllow 非空）。 */
@@ -399,9 +456,9 @@ export function SessionList({
           (exportedWorktree && p.worktree === exportedWorktree),
       )
       // P0：权限态迁移需用户显式确认（默认剥离）。导出文件含 auto 模式或
-      // alwaysAllow 白名单时，导入前明示风险并让用户选择。
+      // alwaysAllow 白名单时，导入前明示风险并让用户选择（站内弹窗，危险动作为
+      // 未勾选的复选框——原生 confirm 的默认键是「确定」= 迁移）。
       const perms = detectExportPermissions(data)
-      let importPermissions = false
       if (perms.auto || perms.allowCount > 0) {
         const detail = [
           perms.auto ? '自动授权模式（auto）' : null,
@@ -409,17 +466,11 @@ export function SessionList({
         ]
           .filter(Boolean)
           .join('、')
-        importPermissions = window.confirm(
-          `该会话导出包含权限状态：${detail}。\n` +
-            `迁移后这些授权将在导入的会话中立即生效（工具免确认执行）。\n` +
-            `点「确定」随迁权限状态；点「取消」仅导入消息，权限使用默认设置（推荐）。`,
-        )
-      }
-      if (original && original.id !== projectId) {
-        setImportChoice({ data, original, importPermissions })
+        setMigratePermissions(false)
+        setPermPrompt({ data, original, detail })
         return
       }
-      await doImport(data, projectId, importPermissions)
+      await continueImport(data, original, false)
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err))
     }
@@ -611,6 +662,49 @@ export function SessionList({
           )}
         </>
       ) : null}
+      {permPrompt && (
+        <Dialog
+          testId="import-permissions-dialog"
+          onClose={() => setPermPrompt(null)}
+          title="导入会话：权限状态"
+          footer={
+            <>
+              <button type="button" className={addBtn} onClick={() => setPermPrompt(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className={addBtn}
+                data-testid="import-permissions-continue"
+                onClick={() => {
+                  const prompt = permPrompt
+                  setPermPrompt(null)
+                  void continueImport(prompt.data, prompt.original, migratePermissions)
+                }}
+              >
+                继续导入
+              </button>
+            </>
+          }
+        >
+          <div className={importPermDesc} data-testid="import-permissions-detail">
+            该会话导出包含权限状态：{permPrompt.detail}。这些授权一旦迁移，导入后在会话里立即生效——
+            相关工具不再向你确认。
+          </div>
+          <label className={importPermRow}>
+            <input
+              type="checkbox"
+              checked={migratePermissions}
+              onChange={(e) => setMigratePermissions(e.target.checked)}
+              data-testid="import-permissions-migrate"
+            />
+            随迁权限状态（导入后这些工具免确认执行）
+          </label>
+          <div className={importPermHint}>
+            默认不勾选：只导入消息，权限按目标项目的默认设置重新开始确认。
+          </div>
+        </Dialog>
+      )}
       {importChoice && (
         <Dialog
           testId="import-target-dialog"

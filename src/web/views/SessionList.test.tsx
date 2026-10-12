@@ -911,3 +911,92 @@ describe('SessionList 删除会话的影响面', () => {
     }
   })
 })
+
+/**
+ * 导入会话时权限态迁移此前走 window.confirm：原生框的默认键是「确定」=
+ * 随迁权限（auto 模式 / alwaysAllow 白名单，工具此后免确认执行），回车直达
+ * 危险侧，而「取消」才是推荐的安全侧。同仓的导出快照选择（bb056bf）早已改成
+ * 站内弹窗，这条路径漏了。
+ *
+ * 站内弹窗里危险动作是**默认未勾选**的复选框：初始焦点落在它上面，回车既不会
+ * 迁移权限，也不会把弹窗关掉（原生框的 Enter 恰好相反）。
+ */
+describe('SessionList 导入会话的权限态确认', () => {
+  /** 带权限态的导出文件：auto 模式 + 一个白名单工具。 */
+  const withPermissions = {
+    version: 1,
+    session: {
+      title: '带权限的会话',
+      metadata: { permissionMode: 'auto', alwaysAllow: ['bash'] },
+    },
+    messages: [],
+  }
+
+  function importFile(payload: unknown) {
+    const file = { text: () => Promise.resolve(JSON.stringify(payload)) } as unknown as File
+    const input = screen.getByTestId('session-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+  }
+
+  it('含权限态时改用站内弹窗，不再弹原生 confirm；未确认前不导入', async () => {
+    const confirmSpy = vi.fn(() => true)
+    const orig = window.confirm
+    window.confirm = confirmSpy as unknown as typeof window.confirm
+    try {
+      renderList()
+      importFile(withPermissions)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('import-permissions-dialog')).toBeInTheDocument(),
+      )
+      expect(confirmSpy).not.toHaveBeenCalled()
+      expect(vi.mocked(sessionAPI.importSession)).not.toHaveBeenCalled()
+      expect(screen.getByTestId('import-permissions-detail').textContent).toContain(
+        '自动授权模式（auto）',
+      )
+      // 危险动作默认关闭，且初始焦点就在这个复选框上（不是「随迁」按钮）
+      expect((screen.getByTestId('import-permissions-migrate') as HTMLInputElement).checked).toBe(
+        false,
+      )
+      expect(document.activeElement).toBe(screen.getByTestId('import-permissions-migrate'))
+    } finally {
+      window.confirm = orig
+    }
+  })
+
+  it('不勾选即继续导入 → 权限不随迁（默认安全侧）', async () => {
+    renderList()
+    importFile(withPermissions)
+    await waitFor(() => expect(screen.getByTestId('import-permissions-dialog')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('import-permissions-continue'))
+    await waitFor(() => expect(vi.mocked(sessionAPI.importSession)).toHaveBeenCalled())
+    expect(vi.mocked(sessionAPI.importSession).mock.calls[0]?.[2]).toEqual({
+      importPermissions: false,
+    })
+  })
+
+  it('显式勾选后继续导入 → 权限随迁', async () => {
+    renderList()
+    importFile(withPermissions)
+    await waitFor(() => expect(screen.getByTestId('import-permissions-dialog')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('import-permissions-migrate'))
+    fireEvent.click(screen.getByTestId('import-permissions-continue'))
+    await waitFor(() => expect(vi.mocked(sessionAPI.importSession)).toHaveBeenCalled())
+    expect(vi.mocked(sessionAPI.importSession).mock.calls[0]?.[2]).toEqual({
+      importPermissions: true,
+    })
+  })
+
+  it('不含权限态的导出文件直接导入，不打扰用户', async () => {
+    renderList()
+    importFile({ version: 1, session: { title: '干净会话', metadata: {} }, messages: [] })
+
+    await waitFor(() => expect(vi.mocked(sessionAPI.importSession)).toHaveBeenCalled())
+    expect(screen.queryByTestId('import-permissions-dialog')).toBeNull()
+    expect(vi.mocked(sessionAPI.importSession).mock.calls[0]?.[2]).toEqual({
+      importPermissions: false,
+    })
+  })
+})
