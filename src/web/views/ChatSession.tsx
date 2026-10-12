@@ -318,11 +318,25 @@ export function ChatSession({
   )
 
   // LLM 调用段：llm_detail 事件会 invalidate 此 query（见 useChat），实时刷新。
-  const { data: segments } = useQuery({
+  // 读失败必须说出来：此前只取 data，`segments ?? []` 让 buildTimeline 拿空段列表
+  // 渲染出「只有消息、没有调用/段标记」的时间线——那是把「拉不到」说成「这次没有
+  // 调用」，而且消失的正是排查「这轮到底调了什么模型/花多少钱」的唯一入口
+  // （表格/原始 JSON 视图消费的是同一条 timeline）。同一条 query 在 SessionSummary
+  // 里已有完整三段式处理，两处口径必须一致。
+  const {
+    data: segments,
+    isError: llmDetailsFailed,
+    error: llmDetailsError,
+    isFetching: llmDetailsFetching,
+    refetch: refetchLlmDetails,
+  } = useQuery({
     queryKey: ['session', sessionId, 'llm-details'],
     queryFn: () => sessionAPI.llmDetails(sessionId),
     staleTime: 10_000,
   })
+  const llmDetailsErrorMessage =
+    (llmDetailsError as { message?: string } | null)?.message ??
+    (llmDetailsError instanceof Error ? llmDetailsError.message : null)
 
   // 统一时间线：消息 + LLM 调用 + 段标记按时间交错融合。
   // M3：session.metadata 记录的未完成轮次区间传入，中断前的半截内容置灰展示。
@@ -620,6 +634,22 @@ export function ChatSession({
         topPanel={
           <>
             <SetupBanner projectId={projectId} />
+            {llmDetailsFailed ? (
+              <div className={interruptBanner} role="alert" data-testid="llm-details-error">
+                <span>
+                  调用明细读取失败，本时间线里的 LLM 调用与分段标记不可见（不是本次会话没有调用）：
+                  {llmDetailsErrorMessage || '未知原因'}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void refetchLlmDetails()}
+                  disabled={llmDetailsFetching}
+                  data-testid="llm-details-retry"
+                >
+                  重试
+                </Button>
+              </div>
+            ) : null}
             {orphanNotice && (
               <div className={interruptBanner} data-testid="orphan-session-banner">
                 {sessionMeta?.worktreePath ? (

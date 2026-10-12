@@ -244,6 +244,54 @@ describe('ChatSession — 历史消息加载失败', () => {
 })
 
 /**
+ * LLM 调用明细读取失败必须显式报错 + 可重试。
+ * 该 query 只取 data 时，buildTimeline 拿空段列表渲染出「只有消息、没有调用/段标记」
+ * 的时间线——把「拉不到」说成「这次会话没有调用」，且消失的正是表格/原始 JSON 视图
+ * 排障所依赖的调用与成本信息。
+ */
+describe('ChatSession — 调用明细（llm-details）读取失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+  })
+
+  it('失败时说明原因并给重试，不把「读不到」渲染成「没有调用」', async () => {
+    vi.mocked(sessionAPI.llmDetails).mockRejectedValue({ message: '调用明细表暂不可用' })
+    await renderSession()
+
+    await waitFor(() => expect(screen.getByTestId('llm-details-error')).toBeInTheDocument())
+    expect(screen.getByTestId('llm-details-error').textContent).toContain('调用明细表暂不可用')
+    expect(screen.getByTestId('llm-details-error').textContent).toContain('不是本次会话没有调用')
+    expect(screen.getByTestId('llm-details-retry')).toBeInTheDocument()
+  })
+
+  it('点击重试重新拉取调用明细', async () => {
+    vi.mocked(sessionAPI.llmDetails).mockRejectedValue({ message: '调用明细表暂不可用' })
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('llm-details-retry')).toBeInTheDocument())
+    expect(sessionAPI.llmDetails).toHaveBeenCalledTimes(1)
+
+    vi.mocked(sessionAPI.llmDetails).mockResolvedValue([])
+    fireEvent.click(screen.getByTestId('llm-details-retry'))
+
+    await waitFor(() => expect(sessionAPI.llmDetails).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('llm-details-error')).toBeNull())
+  })
+
+  it('读取成功时不渲染该失败行', async () => {
+    vi.mocked(sessionAPI.llmDetails).mockResolvedValue([])
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
+    expect(screen.queryByTestId('llm-details-error')).toBeNull()
+  })
+})
+
+/**
  * 首条消息失败的「空会话治理」不能吞掉需要用户决策的失败。
  * 未信任项目的 409 TRUST_REQUIRED / 段边界确认的弹窗都渲染在 ChatSession 内，
  * 清空会话 + 导航回草稿页会把弹窗连同失败原因一起卸载：用户只看到一句没有任何
