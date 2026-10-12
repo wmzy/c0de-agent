@@ -9,6 +9,7 @@ import { Composer } from '@/composer/Composer.js'
 import { draftStorageKey } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { commandsAPI } from '@/services/commands.js'
 import { fileAPI } from '@/services/file.js'
 import { storageGet } from '@/utils/storage.js'
 
@@ -435,6 +436,93 @@ describe('Composer @ 浮层在文件搜索在途时的加载态', () => {
 
     fireEvent.keyDown(editor, { key: 'Enter' })
     await waitFor(() => expect(onSend).toHaveBeenCalled())
+  })
+})
+
+/**
+ * 候选源读取失败：此前与「没有匹配」渲染完全一致（浮层消失/空列表），用户据此
+ * 以为文件/命令不存在，按 Enter 还把字面量 `@foo` / `/cmd` 当正文发出去。
+ */
+describe('Composer 浮层候选源读取失败时的错误态', () => {
+  function typeToken(editor: HTMLElement, text: string) {
+    editor.textContent = text
+    const node = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(node, text.length)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  function renderFailed() {
+    const onSend = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return { editor: screen.getByTestId('composer-editor'), onSend }
+  }
+
+  afterEach(() => {
+    vi.mocked(fileAPI.search).mockResolvedValue([] as never)
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] } as never)
+  })
+
+  it('文件搜索失败时浮层显示原因，而不是渲染成「没有匹配」', async () => {
+    vi.mocked(fileAPI.search).mockRejectedValue(new Error('搜索服务炸了'))
+    const { editor } = renderFailed()
+    typeToken(editor, '@rea')
+
+    await waitFor(() => expect(screen.getByTestId('at-menu-error')).toBeTruthy())
+    expect(screen.getByTestId('at-menu-error').textContent).toContain('搜索服务炸了')
+    // 不是空浮层、也不是「搜索中」——两者都会让用户以为没有匹配。
+    expect(screen.queryByTestId('at-menu')).toBeNull()
+    expect(screen.queryByTestId('at-menu-loading')).toBeNull()
+  })
+
+  it('失败态下 Enter 仍把消息发出去（不被浮层吞掉）', async () => {
+    vi.mocked(fileAPI.search).mockRejectedValue(new Error('boom'))
+    const { editor, onSend } = renderFailed()
+    typeToken(editor, '@rea')
+    await waitFor(() => expect(screen.getByTestId('at-menu-error')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    await waitFor(() => expect(onSend).toHaveBeenCalled())
+  })
+
+  it('点失败行的「重试」后候选恢复（用户不必重打一遍）', async () => {
+    vi.mocked(fileAPI.search)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue([{ path: 'src/a.ts', type: 'file' }] as never)
+    const { editor } = renderFailed()
+    typeToken(editor, '@a')
+    await waitFor(() => expect(screen.getByTestId('at-menu-error')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('重试'))
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+  })
+
+  it('斜杠命令列表读取失败时同样给出原因与重试', async () => {
+    vi.mocked(commandsAPI.list).mockRejectedValue(new Error('命令服务不可用'))
+    const { editor } = renderFailed()
+    typeToken(editor, '/')
+
+    await waitFor(() => expect(screen.getByTestId('slash-menu-error')).toBeTruthy())
+    expect(screen.getByTestId('slash-menu-error').textContent).toContain('命令服务不可用')
   })
 })
 

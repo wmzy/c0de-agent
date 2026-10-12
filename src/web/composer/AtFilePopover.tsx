@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useRef } from 'react'
+import { PopoverError } from '@/composer/PopoverError.js'
 import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { FileSearchResult } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
@@ -59,6 +60,10 @@ type Props = {
   activeIndex: number
   /** 文件搜索仍在进行中（结果未到）。 */
   loading?: boolean
+  /** 文件搜索失败的原因（已取 message）；非空即渲染失败行而不是空浮层。 */
+  error?: string | null
+  /** 失败行的重试入口。 */
+  onRetry?: () => void
   onSelect: (path: string) => void
   /** 选中 agent 时回调（插入 @name 文本）。 */
   onAgentSelect: (name: string) => void
@@ -71,6 +76,15 @@ function AtFilePopover(props: Props) {
   // 候选为空时区分「搜完了没有匹配」与「还在搜」：后者此前 return null——
   // 浮层整个消失，用户看到的是「没有候选」，而搜索结果几十毫秒后才到。
   if (files.length === 0 && subagents.length === 0) {
+    // 失败优先于「空」：把「搜不了」渲染成「没有匹配」会让用户按 Enter 把
+    // 字面量 `@foo` 当正文发出去（此前文件搜索 500 时浮层直接消失）。
+    if (props.error) {
+      return (
+        <div className={popover} data-testid="at-menu-error">
+          <PopoverError message={`文件搜索失败：${props.error}`} onRetry={props.onRetry} />
+        </div>
+      )
+    }
     if (!props.loading) return null
     return (
       <div className={popover} role="status" data-testid="at-menu-loading">

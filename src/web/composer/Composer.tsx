@@ -275,6 +275,11 @@ function draftKey(draft: { prompt: Prompt; images: ImagePart[] }): string {
   return `${JSON.stringify(draft.prompt)}|${images}`
 }
 
+/** 浮层失败行的原因文案（react-query 的 error 是 unknown）。 */
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 function Composer(props: ComposerProps) {
   // 从 Prompt 结构提取 @agent mentions（仅非 primary 可调用的 subagent）。
   // 只扫描用户输入的文本 part 并剥离 markdown 代码（见 extractAgentMentions）——
@@ -329,6 +334,23 @@ function Composer(props: ComposerProps) {
     select: (data) => data.workflows,
   })
   const workflows = workflowsQuery.data ?? []
+
+  // 浮层候选源读取失败的原因：渲染失败行 + 重试，而不是把「读不到」当成
+  // 「没有匹配」（用户会据此按 Enter 把字面量 @foo / /cmd 当正文发出去）。
+  const popoverError =
+    composer.popover === 'workflow'
+      ? workflowsQuery.isError
+        ? messageOf(workflowsQuery.error)
+        : null
+      : composer.popover === 'slash' || composer.popover === 'subcommand'
+        ? commandsQuery.isError
+          ? messageOf(commandsQuery.error)
+          : null
+        : composer.popover === 'at'
+          ? fileSearch.isError
+            ? messageOf(fileSearch.error)
+            : null
+          : null
 
   // slash 命令按 query 过滤——过滤必须与键盘导航/选择使用同一列表，
   // 否则 activeIndex 指向的项与 popover 展示的项不一致（选中错误命令）。
@@ -473,22 +495,23 @@ function Composer(props: ComposerProps) {
             : composer.popover === 'at'
               ? atTotal
               : 0
-    // 加载中的候选源：候选计数为 0，但原因是「结果还没到」而不是「没有匹配」。
-    // 此时浮层保持打开显示「搜索中…」（见各 Popover 的 loading 分支），
-    // 但按键仍按「无浮层」处理——否则一个还没出结果的菜单会静默吞掉 Enter。
-    const popoverLoading =
+    // 加载中/失败的候选源：候选计数为 0，但原因是「结果还没到」或「没搜成」
+    // 而不是「没有匹配」。此时浮层保持打开显示「搜索中…」/失败原因 + 重试
+    // （见各 Popover 的 loading/error 分支），但按键仍按「无浮层」处理——
+    // 否则一个出不来结果的菜单会静默吞掉 Enter。
+    const popoverBusy =
       composer.popover === 'workflow'
-        ? workflowsQuery.isLoading
+        ? workflowsQuery.isLoading || workflowsQuery.isError
         : composer.popover === 'slash' || composer.popover === 'subcommand'
-          ? commandsQuery.isLoading
+          ? commandsQuery.isLoading || commandsQuery.isError
           : composer.popover === 'at'
-            ? fileSearch.isLoading
+            ? fileSearch.isLoading || fileSearch.isError
             : false
     // 没有候选（无论是否在加载）→ 不拦截，按「无浮层」把按键交给 composer.handleKeyDown
     // （Enter 即发送）。
     const popoverSuppressed = composer.popover !== null && popoverCandidates === 0
-    // 只有「不在加载且没有候选」才真的关掉浮层；加载中保留浮层给出反馈。
-    const popoverDead = popoverSuppressed && !popoverLoading
+    // 只有「不在加载/失败且没有候选」才真的关掉浮层；加载/失败中保留浮层给出反馈。
+    const popoverDead = popoverSuppressed && !popoverBusy
     if (popoverDead) composer.setPopover(null)
     // 键盘导航只在真的有候选项时生效：0 候选取 min(i+1, -1) 会把 activeIndex 算成 -1。
     const popoverNavigable = composer.popover !== null && popoverCandidates > 0
@@ -691,6 +714,8 @@ function Composer(props: ComposerProps) {
               commands={filteredCommands}
               activeIndex={slashActive}
               loading={commandsQuery.isLoading}
+              error={popoverError}
+              onRetry={() => void commandsQuery.refetch()}
               onSelect={(name) => composer.insertSlash(name)}
             />
           </div>
@@ -702,6 +727,8 @@ function Composer(props: ComposerProps) {
               subcommands={filteredSubcommands}
               activeIndex={subcommandActive}
               loading={commandsQuery.isLoading}
+              error={popoverError}
+              onRetry={() => void commandsQuery.refetch()}
               onSelect={(name) => composer.insertSubcommand(name)}
               parentCommand={composer.subcommandCmd}
             />
@@ -714,6 +741,8 @@ function Composer(props: ComposerProps) {
               workflows={filteredWorkflows}
               activeIndex={workflowActive}
               loading={workflowsQuery.isLoading}
+              error={popoverError}
+              onRetry={() => void workflowsQuery.refetch()}
               onSelect={(name) => composer.insertWorkflow(name)}
             />
           </div>
@@ -726,6 +755,8 @@ function Composer(props: ComposerProps) {
               files={atFiles}
               activeIndex={atActive}
               loading={fileSearch.isLoading}
+              error={popoverError}
+              onRetry={() => void fileSearch.refetch()}
               onSelect={(path) => composer.insertFile(path)}
               onAgentSelect={insertAgentToken}
             />
