@@ -247,6 +247,11 @@ const branchError = css`
   overflow-wrap: anywhere;
 `
 
+/** 失败原因取服务端 message（APIError）或 Error.message，与设置页/回收站同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
 /**
  * 项目指示器：项目名 + git 分支均可点击下拉切换，各带"添加"按钮。
  * - 项目下拉：列出所有项目，点击导航到 `/projects/:id`，底部"添加项目"打开对话框。
@@ -263,7 +268,10 @@ export function ProjectIndicator({
   variant?: 'bar' | 'inline'
 }) {
   const cls = variant === 'inline' ? indicatorInline : indicator
-  const { data: projects } = useProjects()
+  // 列表读取失败与「还没读到」都不是「没有这个项目」：此前一律走下方兜底分支，
+  // 把读不到渲染成「默认工作区」这个自信的项目身份，并且因为兜底分支不渲染
+  // actions，顶栏唯一的提交入口跟着整块消失（GET /api/projects 一失败就发生）。
+  const { data: projects, isLoading, isError, error: projectsErr, refetch } = useProjects()
   const project = projects?.find((p) => p.id === projectId)
   const router = useRouter()
   const qc = useQueryClient()
@@ -365,10 +373,37 @@ export function ProjectIndicator({
   })
 
   if (!project) {
+    // 三种「没有 project」的原因必须分开渲染：还没读到 / 读失败 / 确实不在列表里。
+    // 统一渲染「默认工作区」会把读不到说成没有项目，且因为兜底分支不渲染 actions，
+    // 顶栏唯一的提交入口跟着整块消失。
+    const wrapper = variant === 'inline' ? `${actionsWrap} ${mobileHide}` : actionsWrap
     return (
       <div className={cls} data-testid="project-indicator">
         <span className={projectIcon}>{'\u{1F4C2}'}</span>
-        <span className={projectName}>默认工作区</span>
+        {isError ? (
+          <>
+            <span className={projectName} data-testid="project-name-failed">
+              项目信息读取失败
+            </span>
+            <span className={branchError} role="alert" data-testid="project-list-error">
+              {messageOf(projectsErr)}
+            </span>
+            <button
+              type="button"
+              className={footerBtn}
+              onClick={() => void refetch()}
+              data-testid="project-retry"
+              style={{ fontSize: 11, padding: '1px 6px' }}
+            >
+              重试
+            </button>
+          </>
+        ) : isLoading ? (
+          <span className={projectName}>读取中…</span>
+        ) : (
+          <span className={projectName}>默认工作区</span>
+        )}
+        {actions ? <span className={wrapper}>{actions}</span> : null}
       </div>
     )
   }
