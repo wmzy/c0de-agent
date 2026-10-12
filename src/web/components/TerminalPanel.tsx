@@ -278,6 +278,34 @@ const restoreFailTextStyle = css`
   font-size: 12px;
 `
 
+/** 新建/分屏失败条：贴在工具栏下方，已有关闭终端时也能看见（分屏失败就在这条路径上）。 */
+const createFailRowStyle = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+  background: color-mix(in srgb, var(--haze-color-danger) 10%, transparent);
+  border-top: 1px solid var(--haze-color-border);
+`
+
+const createFailDismissStyle = css`
+  margin-left: auto;
+  padding: 0 6px;
+  font: inherit;
+  line-height: 16px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-danger);
+  }
+`
+
 /** 从 shell 路径提取短名称用于标签显示。 */
 function shellLabel(shell: string): string {
   const base = shell.split('/').pop() ?? shell
@@ -304,6 +332,8 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
     restoring,
     restoreError,
     retryRestore,
+    createError,
+    clearCreateError,
     setActiveTabId,
     setActivePaneId,
     createTerminal,
@@ -711,6 +741,23 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
             ▾
           </button>
         </div>
+        {/* 新建/分屏失败：原因必须落在面板里。放在工具栏下、渲染区上，
+            已有终端时（分屏失败）同样可见——此前两者都只有一次静默的点击。 */}
+        {createError && (
+          <div className={createFailRowStyle} role="alert" data-testid="terminal-create-error">
+            <span>{createError}</span>
+            <button
+              type="button"
+              className={createFailDismissStyle}
+              onClick={clearCreateError}
+              data-testid="terminal-create-error-dismiss"
+              aria-label="关闭失败提示"
+              title="关闭"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {/* 终端渲染区 — 所有标签同时挂载，非活动标签用 display:none 隐藏。
             这样切换标签时 xterm 实例不会被销毁/重建，避免输入丢失和输出闪烁。
             每块带 id 与标签按钮的 aria-controls 对应；隐藏态 display:none 自动

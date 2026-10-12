@@ -482,3 +482,63 @@ describe('终端恢复失败不得抹掉磁盘上的布局', () => {
     expect(parsed.sessions).toHaveLength(2)
   })
 })
+
+/**
+ * 回归：新建终端 / 分屏失败此前完全静默。
+ *
+ * terminalAPI.create 的 rejection 直接甩给调用方，而 TerminalPanel 一律 `void`
+ * 掉返回值：PTY 建不出来时界面纹丝不动（顺带一条 unhandledrejection），用户只会
+ * 以为「+」和分屏按钮坏了。
+ */
+describe('useTerminal 新建/分屏失败', () => {
+  it('createTerminal 失败：留下原因、不抛异常、不建出会话', async () => {
+    mockCreate.mockRejectedValue(new Error('PTY 启动失败：no such shell'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    let returned: string | undefined = 'unset'
+    await act(async () => {
+      returned = await result.current.createTerminal({ cwd: '/tmp' })
+    })
+
+    expect(returned).toBeUndefined()
+    expect(result.current.sessions).toHaveLength(0)
+    expect(result.current.createError).toBe('新建终端失败：PTY 启动失败：no such shell')
+  })
+
+  it('splitTerminal 失败：同样给出原因，不改布局', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockCreate.mockRejectedValue(new Error('PTY 启动失败：too many processes'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    expect(result.current.sessions).toHaveLength(1)
+    const before = result.current.tabs[0]?.split.sizes
+
+    await act(async () => {
+      await result.current.splitTerminal({ direction: 'horizontal' })
+    })
+
+    expect(result.current.tabs[0]?.split.sizes).toEqual(before)
+    expect(result.current.createError).toBe('分屏失败：PTY 启动失败：too many processes')
+  })
+
+  it('重试成功清掉失败原因', async () => {
+    mockCreate.mockRejectedValueOnce(new Error('PTY 启动失败：boom'))
+    mockCreate.mockResolvedValueOnce(fakeInfo('pty_1', 'projA'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    await act(async () => {
+      await result.current.createTerminal({ cwd: '/tmp' })
+    })
+    expect(result.current.createError).toContain('boom')
+
+    await act(async () => {
+      await result.current.createTerminal({ cwd: '/tmp' })
+    })
+
+    expect(result.current.createError).toBeNull()
+    expect(result.current.sessions).toHaveLength(1)
+  })
+})

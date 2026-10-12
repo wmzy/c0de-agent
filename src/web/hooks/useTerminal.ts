@@ -35,6 +35,11 @@ export interface TerminalSession extends TerminalInfo {
 /** 分屏方向。 */
 export type SplitDirection = 'horizontal' | 'vertical'
 
+/** 失败原因取服务端 message（APIError）或 Error.message，与其它失败提示同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
 /** 断线重连策略：指数退避，次数耗尽后判死。 */
 const MAX_RETRY = 6
 const RETRY_BASE_MS = 500
@@ -102,6 +107,13 @@ export function useTerminal(projectId: string) {
    * 是两回事：此前 catch 空吞，面板显示「尚无终端」，看起来像布局已被清空。
    */
   const [restoreError, setRestoreError] = useState<string | null>(null)
+  /**
+   * 新建终端 / 分屏失败的原因。此前 terminalAPI.create 的 rejection 直接甩给调用方，
+   * 而调用方一律 `void` 掉：PTY 建不出来时界面纹丝不动——既没有原因，也没有可读的
+   * 失败痕迹（还顺带一条 unhandledrejection），用户只会以为「+」和分屏按钮坏了。
+   */
+  const [createError, setCreateError] = useState<string | null>(null)
+  const clearCreateError = useCallback(() => setCreateError(null), [])
   /** 恢复轮次的世代号：作废在飞的那轮（切项目 / 卸载 / 重试都会 +1）。 */
   const restoreGenRef = useRef(0)
   /**
@@ -190,7 +202,15 @@ export function useTerminal(projectId: string) {
   /** 创建新终端会话（作为新标签页）。建立 WebSocket 连接。 */
   const createTerminal = useCallback(
     async (opts?: { cwd?: string; cols?: number; rows?: number; title?: string }) => {
-      const info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+      // 新一次尝试先清掉上一次的失败提示：按钮本身就是重试入口。
+      setCreateError(null)
+      let info: TerminalInfo
+      try {
+        info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+      } catch (err) {
+        setCreateError(`新建终端失败：${messageOf(err)}`)
+        return undefined
+      }
       const tabId = info.id // 新终端独占一个标签
       const session: TerminalSession = {
         ...info,
@@ -216,7 +236,14 @@ export function useTerminal(projectId: string) {
     const tabPanes = sessionsRef.current.filter((s) => s.tabId === tabId)
     if (tabPanes.length === 0) return undefined
 
-    const info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+    setCreateError(null)
+    let info: TerminalInfo
+    try {
+      info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+    } catch (err) {
+      setCreateError(`分屏失败：${messageOf(err)}`)
+      return undefined
+    }
     const session: TerminalSession = {
       ...info,
       ws: null,
@@ -612,6 +639,8 @@ export function useTerminal(projectId: string) {
     restoring,
     restoreError,
     retryRestore,
+    createError,
+    clearCreateError,
     setActiveTabId,
     setActivePaneId,
     createTerminal,

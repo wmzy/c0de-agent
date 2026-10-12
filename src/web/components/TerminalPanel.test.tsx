@@ -95,6 +95,9 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
     restoring: false,
     restoreError: null,
     retryRestore: () => {},
+    // 新建/分屏失败提示（useTerminal 新增字段，面板据此渲染失败条）
+    createError: null,
+    clearCreateError: () => {},
     setActiveTabId: () => {},
     setActivePaneId: () => {},
     createTerminal: async () => 'p3',
@@ -447,5 +450,35 @@ describe('TerminalPanel pane 连接状态', () => {
     ws.dispatch('{"type":"error","message":"Terminal not found"}')
 
     expect(markDead).toHaveBeenCalledWith('p1', 'unreachable')
+  })
+})
+
+/**
+ * 回归：新建终端 / 分屏失败的原因必须落在面板里。
+ *
+ * 两个入口此前都只发起一次静默的请求（`void createTerminal`）：失败时界面纹丝
+ * 不动，面板里没有任何痕迹，用户只会以为按钮坏了。
+ */
+describe('TerminalPanel 新建/分屏失败提示', () => {
+  it('有终端时分屏失败也能看到原因，并可关闭', () => {
+    const clearCreateError = vi.fn()
+    const terminal: UseTerminalReturn = {
+      ...makeTerminal(),
+      createError: '分屏失败：PTY 启动失败：too many processes',
+      clearCreateError,
+    }
+    render(<TerminalPanel terminal={terminal} cwd="/a" projectId="A" />)
+
+    const alert = screen.getByTestId('terminal-create-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('分屏失败：PTY 启动失败：too many processes')
+
+    fireEvent.click(screen.getByTestId('terminal-create-error-dismiss'))
+    expect(clearCreateError).toHaveBeenCalled()
+  })
+
+  it('没有失败时不渲染失败条', () => {
+    render(<TerminalPanel terminal={makeTerminal()} cwd="/a" projectId="A" />)
+    expect(screen.queryByTestId('terminal-create-error')).toBeNull()
   })
 })
