@@ -437,3 +437,48 @@ describe('终端断线后的重连节奏', () => {
     expect(FakeSocket.instances).toHaveLength(3)
   })
 })
+
+// 复现：切项目/挂载恢复时 terminalAPI.list() 一旦失败（后端 500、DB 被占、网络
+// 抖动），catch 空吞 → finally setRestoring(false) → 持久化 effect 拿着被清空的
+// sessions=[] 回写 localStorage，把该项目还完好的终端布局永久覆盖掉；仍在后端
+// 存活的 PTY 从此没有任何入口。用户看到的是「尚无终端」这句谎话。
+describe('终端恢复失败不得抹掉磁盘上的布局', () => {
+  it('list 失败：如实报错，且不把空布局写回 localStorage', async () => {
+    seedLayout('projA', ['pty_A', 'pty_B'])
+    mockList.mockRejectedValueOnce(new Error('db is locked'))
+
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    await act(async () => {})
+
+    expect(result.current.restoreError).toBeTruthy()
+    const raw = localStorage.getItem('c0de-agent:terminalSessions:projA')
+    const parsed = JSON.parse(raw ?? '{}') as { sessions?: unknown[] }
+    expect(parsed.sessions).toHaveLength(2)
+  })
+
+  it('重试成功后布局恢复、错误清除，磁盘内容仍完整', async () => {
+    seedLayout('projA', ['pty_A', 'pty_B'])
+    mockList.mockRejectedValueOnce(new Error('db is locked'))
+
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    await act(async () => {})
+    expect(result.current.restoreError).toBeTruthy()
+
+    mockList.mockResolvedValueOnce({
+      terminals: [fakeInfo('pty_A', 'projA'), fakeInfo('pty_B', 'projA')],
+    })
+    await act(async () => {
+      result.current.retryRestore()
+    })
+    await act(async () => {})
+
+    expect(result.current.restoreError).toBeNull()
+    expect(result.current.sessions).toHaveLength(2)
+    const parsed = JSON.parse(
+      localStorage.getItem('c0de-agent:terminalSessions:projA') ?? '{}',
+    ) as { sessions?: unknown[] }
+    expect(parsed.sessions).toHaveLength(2)
+  })
+})

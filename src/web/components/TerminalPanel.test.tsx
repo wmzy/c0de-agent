@@ -93,6 +93,8 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
     height: 240,
     open: true,
     restoring: false,
+    restoreError: null,
+    retryRestore: () => {},
     setActiveTabId: () => {},
     setActivePaneId: () => {},
     createTerminal: async () => 'p3',

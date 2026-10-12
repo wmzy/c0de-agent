@@ -272,6 +272,12 @@ const emptyNewBtnStyle = css`
   }
 `
 
+/** 恢复失败的原因行：与 connectingStyle 的次要色区分开，明确是错误而非空态。 */
+const restoreFailTextStyle = css`
+  color: var(--haze-color-danger);
+  font-size: 12px;
+`
+
 /** 从 shell 路径提取短名称用于标签显示。 */
 function shellLabel(shell: string): string {
   const base = shell.split('/').pop() ?? shell
@@ -296,6 +302,8 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
     height,
     open,
     restoring,
+    restoreError,
+    retryRestore,
     setActiveTabId,
     setActivePaneId,
     createTerminal,
@@ -342,11 +350,16 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
     if (!open || restoring) {
       return
     }
+    // 恢复读取失败时不自动建 shell：磁盘上那份布局还没恢复，此时建出的终端既
+    // 掩盖了失败，也不会被持久化（本轮禁止回写），刷新即消失。
+    if (restoreError) {
+      return
+    }
     if (tabs.length === 0 && cwd && !autoCreatedRef.current) {
       autoCreatedRef.current = true
       void createTerminal({ cwd })
     }
-  }, [open, restoring, tabs.length, cwd, createTerminal])
+  }, [open, restoring, restoreError, tabs.length, cwd, createTerminal])
 
   // 活动标签打开时，自动选中第一个 pane
   useEffect(() => {
@@ -731,20 +744,41 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
           ))}
           {tabs.length === 0 && (
             <div className={connectingStyle}>
-              <span>尚无终端</span>
-              {cwd ? (
-                <button
-                  type="button"
-                  className={emptyNewBtnStyle}
-                  // 恢复轮次进行中禁用：此时建的会话会被恢复流的 setSessions(restored)
-                  // 整体回抹——前端丢引用、PTY 成后端孤儿。等恢复落地后再建。
-                  disabled={restoring}
-                  onClick={() => void createTerminal({ cwd })}
-                  title="在当前项目目录打开一个 shell"
-                >
-                  新建终端
-                </button>
-              ) : null}
+              {restoreError ? (
+                // 读不到 PTY 列表 ≠ 没有终端：此前这里只写「尚无终端」，
+                // 而磁盘上那份布局还在（未被覆盖），用户既看不出是失败、
+                // 也没有恢复入口，只能一直以为终端被清空了。
+                <>
+                  <span className={restoreFailTextStyle} role="alert">
+                    {restoreError}
+                  </span>
+                  <button
+                    type="button"
+                    className={emptyNewBtnStyle}
+                    onClick={retryRestore}
+                    data-testid="terminal-restore-retry"
+                  >
+                    重试
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>尚无终端</span>
+                  {cwd ? (
+                    <button
+                      type="button"
+                      className={emptyNewBtnStyle}
+                      // 恢复轮次进行中禁用：此时建的会话会被恢复流的 setSessions(restored)
+                      // 整体回抹——前端丢引用、PTY 成后端孤儿。等恢复落地后再建。
+                      disabled={restoring}
+                      onClick={() => void createTerminal({ cwd })}
+                      title="在当前项目目录打开一个 shell"
+                    >
+                      新建终端
+                    </button>
+                  ) : null}
+                </>
+              )}
             </div>
           )}
         </div>
