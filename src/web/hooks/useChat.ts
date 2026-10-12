@@ -248,7 +248,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // 标记为「等待用户决策」：本次发送不是白费，调用方不得据此清会话
           // （弹窗渲染在本组件里，清会话 + 导航会把弹窗连同原因一起卸载）。
           lastFailureRef.current = { reason: e.message, gate: 'trust' }
-          setState((s) => ({ ...s, isStreaming: false, pendingTrust: pending }))
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            pendingTrust: pending,
+            trustPending: false,
+            trustError: null,
+          }))
           return false
         }
         if (e.code === 'SEGMENT_BREAK_REQUIRED') {
@@ -396,19 +402,33 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     const pending = pendingTrustRef.current
     if (!pending) return
     pendingTrustRef.current = null
+    // 在飞期间弹窗内禁用按钮并禁止关闭：否则连点会重复发 trust 请求，或用户按 Esc
+    // 把弹窗连同失败原因一起卸载。
+    setState((s) => ({ ...s, trustPending: true, trustError: null }))
     try {
       await projectAPI.trust(pending.projectId)
     } catch (err) {
-      // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消
+      // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消。
+      // 原因写进 trustError（渲染在弹窗内部），同时保留 error 供会话区横幅兜底。
+      const message = `信任项目失败：${err instanceof Error ? err.message : String(err)}`
       pendingTrustRef.current = pending
       setState((s) => ({
         ...s,
         pendingTrust: pending,
-        error: `信任项目失败：${err instanceof Error ? err.message : String(err)}`,
+        trustPending: false,
+        trustError: message,
+        error: message,
       }))
       return
     }
-    setState((s) => ({ ...s, isStreaming: true, error: null, pendingTrust: null }))
+    setState((s) => ({
+      ...s,
+      isStreaming: true,
+      error: null,
+      trustPending: false,
+      trustError: null,
+      pendingTrust: null,
+    }))
     await doStream(pending.text, {
       ...pending.opts,
       ...(pending.optimisticUserMessageId
@@ -425,7 +445,14 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       const id = pending?.optimisticUserMessageId
       const idx = id ? s.messages.findIndex((m) => m.id === id) : -1
       const msgs = idx >= 0 ? s.messages.filter((_, i) => i !== idx) : s.messages
-      return { ...s, pendingTrust: null, isStreaming: false, messages: msgs }
+      return {
+        ...s,
+        pendingTrust: null,
+        trustPending: false,
+        trustError: null,
+        isStreaming: false,
+        messages: msgs,
+      }
     })
   }, [])
 

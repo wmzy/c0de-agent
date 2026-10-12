@@ -1004,6 +1004,8 @@ export function ChatSession({
         <TrustRequiredDialog
           projectName={chat.pendingTrust.projectName}
           items={chat.pendingTrust.items}
+          error={chat.trustError}
+          busy={chat.trustPending}
           onConfirm={() => void chat.confirmTrust()}
           onCancel={() => chat.cancelTrust()}
         />

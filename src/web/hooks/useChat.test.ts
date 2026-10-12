@@ -20,6 +20,8 @@ const base: ChatState = {
   subagents: [],
   pendingSegmentBreak: null,
   pendingTrust: null,
+  trustPending: false,
+  trustError: null,
   interrupted: false,
   attachedRun: false,
   compactionNotice: null,
@@ -847,6 +849,78 @@ describe('useChat segment break', () => {
     const resend = fetchMock.mock.calls[2]
     expect(resend?.[0]).toBe('/api/chat')
     expect(JSON.parse(String(resend?.[1]?.body)).message).toBe('hi')
+  })
+
+  // 回归：信任请求失败此前只把原因写进 state.error——它是记录在会话区的横幅，
+  // 而信任弹窗是 <dialog> 模态（::backdrop 遮住页面其余内容），用户看到的是
+  // 「点了信任并继续，弹窗纹丝不动」，既没有原因也无从判断按钮是否工作过。
+  // 现在原因必须落到 trustError（渲染在弹窗内部），并在在飞期间置 trustPending。
+  it('confirmTrust 失败 → 还原待办、原因进 trustError、busy 复位', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: { method?: string }) => {
+        if (url === '/api/chat') {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: {
+                code: 'TRUST_REQUIRED',
+                message: '需要信任',
+                details: {
+                  projectId: 'proj-1',
+                  projectName: 'Repo',
+                  items: [{ kind: 'permission-auto', detail: 'auto' }],
+                },
+              },
+            }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  code: 'TRUST_REQUIRED',
+                  message: '需要信任',
+                  details: {
+                    projectId: 'proj-1',
+                    projectName: 'Repo',
+                    items: [{ kind: 'permission-auto', detail: 'auto' }],
+                  },
+                },
+              }),
+          }
+        }
+        if (url === '/api/projects/proj-1/trust' && init?.method === 'POST') {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ error: { message: '信任写入失败' } }),
+            text: async () => JSON.stringify({ error: { message: '信任写入失败' } }),
+          }
+        }
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' }
+      }),
+    )
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.pendingTrust).not.toBeNull()
+
+    await act(async () => {
+      await result.current.confirmTrust()
+    })
+    // 待办还原（弹窗仍开着），失败原因在弹窗内部可见，busy 归位可重试
+    expect(result.current.pendingTrust).not.toBeNull()
+    expect(result.current.trustPending).toBe(false)
+    expect(result.current.trustError).toContain('信任项目失败')
+    expect(result.current.trustError).toContain('信任写入失败')
+
+    // 取消：清掉失败原因与待办（不残留旧原因到下一次信任）
+    act(() => {
+      result.current.cancelTrust()
+    })
+    expect(result.current.pendingTrust).toBeNull()
+    expect(result.current.trustError).toBeNull()
   })
 })
 

@@ -35,6 +35,12 @@ export type ChatState = {
   pendingSegmentBreak: PendingSegmentBreak | null
   /** P0-2：未信任项目的风险配置被 409 拦截，等待用户信任确认（或取消）。 */
   pendingTrust: PendingTrust | null
+  /** P0-2：信任请求在飞（弹窗内禁用「信任并继续」并禁止关闭，避免连点重复发请求
+   *  或把失败原因随弹窗一起关掉）。 */
+  trustPending: boolean
+  /** P0-2：上次信任请求失败的原因——必须渲染在信任弹窗**内部**：它是 <dialog>
+   *  模态，写在会话区的 error 横幅会被 ::backdrop 挡住，用户只看到「点了没反应」。 */
+  trustError: string | null
   /** SSE 流中断（服务重启等）：true 时显示恢复提示。 */
   interrupted: boolean
   /** P1：后台附着——本组件实例未发起 SSE 流，但检测到会话有活跃 run
@@ -158,6 +164,8 @@ export const INITIAL: ChatState = {
   subagents: [],
   pendingSegmentBreak: null,
   pendingTrust: null,
+  trustPending: false,
+  trustError: null,
   interrupted: false,
   attachedRun: false,
   compactionNotice: null,
