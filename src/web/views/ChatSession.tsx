@@ -123,6 +123,15 @@ const shakeToolbar = css`
   }
 `
 
+const shakeErrorLine = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 4px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+`
+
 const shakeExitBtn = css`
   border: none !important;
   background: transparent !important;
@@ -882,6 +891,25 @@ export function ChatSession({
               </button>
               <SessionSummary sessionId={sessionId} />
             </div>
+            {/* 预览/提交失败必须说出来：失败时界面与点击前完全一致（预览时按钮零反应、
+                提交时抖动模式照旧），用户只能判定为「功能坏了」并反复点。预览失败时
+                给重试入口；提交失败时 shakeMode 仍在、被选中的区域没被裁掉，「提交
+                Shake」按钮本身就是重试入口，不重复给。 */}
+            {shake.shakeError ? (
+              <div className={shakeErrorLine} role="alert" data-testid="shake-error">
+                <span>Shake 失败：{shake.shakeError}</span>
+                {shake.shakeMode ? null : (
+                  <button
+                    type="button"
+                    className={shakeBtn}
+                    onClick={() => void shake.handleShakeOpen()}
+                    data-testid="shake-retry"
+                  >
+                    重试
+                  </button>
+                )}
+              </div>
+            ) : null}
           </>
         }
       />
