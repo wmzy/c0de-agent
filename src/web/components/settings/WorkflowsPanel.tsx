@@ -116,6 +116,39 @@ const errorText = css`
   margin-top: 8px;
 `
 
+/**
+ * 列表读取失败块：与 UsagePanel 同口径（原因 + 重试）。读不到时用它替代整段
+ * 列表与空态，避免把一次 500 说成「你一个工作流都没有」。
+ */
+const listErrorBox = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--haze-color-danger);
+  border-radius: 6px;
+  color: var(--haze-color-danger);
+  font-size: 12px;
+`
+
+const retryBtn = css`
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  background: var(--haze-color-bg);
+  color: inherit;
+  font-size: 11px;
+  padding: 0 6px;
+  min-height: auto;
+  min-width: auto;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+`
+
 const WORKFLOW_NAME_RE = /^[a-z0-9-]+$/
 
 /** 新建工作流的起始模板（与 prompt-registry 的工作流格式提示同构）。 */
@@ -169,7 +202,13 @@ type WorkflowsPanelProps = {
 function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const qc = useQueryClient()
   const queryKey = ['workflows', projectId]
-  const { data } = useQuery({
+  const {
+    data,
+    isError: listError,
+    error: listErr,
+    isLoading: listLoading,
+    refetch: refetchList,
+  } = useQuery({
     queryKey,
     queryFn: () => workflowsAPI.list(projectId),
     staleTime: 30_000,
@@ -303,7 +342,25 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
           信任该项目后可在聊天中列出与运行。
         </div>
       ) : null}
-      {workflows.length === 0 ? (
+      {/* 列表读失败时整段列表与「暂无工作流」都不渲染：此前 useQuery 只取 data，
+          `data?.workflows ?? []` 把一次 500 / 断网说成「你还没有任何工作流」——
+          一个关于现状的**断言**，用户据此认定工作流真的不存在，转而去写新的；
+          同一次读取里的 trustRequired 提示也被一并吞掉。读不到就是读不到，必须
+          与「确实为空」区分开（与 UsagePanel 同口径）。 */}
+      {listError ? (
+        <div className={listErrorBox} role="alert" data-testid="workflow-list-error">
+          <span>{`工作流列表读取失败：${errMessage(listErr)}`}</span>
+          <button
+            type="button"
+            className={retryBtn}
+            onClick={() => void refetchList()}
+            disabled={listLoading}
+            data-testid="workflow-list-retry"
+          >
+            重试
+          </button>
+        </div>
+      ) : workflows.length === 0 ? (
         <div className={hint}>
           暂无工作流。新建一个工作流脚本后可在聊天中用 /workflow run 执行。
         </div>
