@@ -45,6 +45,9 @@ import {
 } from '@/utils/config-shape.js'
 import { parseBoundedNumber } from '@/utils/format.js'
 
+/** 全局配置作用域的写入路径（与作用域下拉文案同一口径）。 */
+const GLOBAL_CONFIG_PATH = '~/.c0de/config.json'
+
 /** 加载中占位。 */
 const loadingWrap = css`
   padding: 24px;
@@ -123,6 +126,16 @@ const scopeLabel = css`
   flex-shrink: 0;
   white-space: nowrap;
   color: var(--haze-color-text-secondary);
+`
+
+/** 「目标」写入路径标注：必须与当前作用域一致，故单独成类供 global/project 两分支共用。 */
+const scopeTarget = css`
+  flex-shrink: 0;
+  color: var(--haze-color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
 `
 
 /** 离开确认弹窗正文。 */
@@ -603,22 +616,21 @@ export function Settings() {
               ? '项目配置（当前查看项目 .c0de/config.json）'
               : '项目配置（当前目录 .c0de/config.json）'}
           </option>
-          <option value="global">全局配置（~/.c0de/config.json）</option>
+          <option value="global">全局配置（{GLOBAL_CONFIG_PATH}）</option>
         </SyncedSelect>
-        {projectId && resp?.projectDir && (
-          <span
-            style={{
-              color: 'var(--haze-color-text-secondary)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              maxWidth: '40%',
-            }}
-            title={resp.projectDir}
-          >
+        {/* 写入目标必须与当前作用域一致：此前无论选哪个作用域都渲染项目目录，
+            切到「全局配置（~/.c0de/config.json）」后仍标「目标：<项目目录>」，
+            而保存其实写进全局配置——用户据此以为改的是项目文件，把项目专属值
+            （路径、模型名）提升成全机默认，其他项目与 c0de chat 一起被改。 */}
+        {scope === 'global' ? (
+          <span className={scopeTarget} title={GLOBAL_CONFIG_PATH}>
+            目标：{GLOBAL_CONFIG_PATH}
+          </span>
+        ) : projectId && resp?.projectDir ? (
+          <span className={scopeTarget} title={resp.projectDir}>
             目标：{resp.projectDir}
           </span>
-        )}
+        ) : null}
       </div>
       {warnings.length > 0 && (
         <div

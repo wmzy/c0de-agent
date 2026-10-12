@@ -2612,3 +2612,45 @@ describe('Settings — 撤销设备失败', () => {
     expect(screen.getByTestId('device-list').textContent).toContain('我的笔记本')
   })
 })
+
+/**
+ * 回归：工具条右侧的「目标：…」是唯一显式声明「这次保存写到哪个文件」的提示。
+ * 此前它的渲染条件只判 projectId && resp.projectDir，与作用域无关——切到
+ * 「全局配置（~/.c0de/config.json）」后仍标「目标：<项目目录>」，而保存其实
+ * 写进全局配置：用户据此以为改的是项目文件，把项目专属值（路径、模型名）
+ * 提升成全机默认，其他项目与 c0de chat 一起被改。
+ */
+describe('Settings — 写入目标标注随作用域变化', () => {
+  function renderProjectSettings() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <MemoryRouter routes={settingsTestRoutes} initialEntries={['/projects/p1/settings']}>
+        <QueryClientProvider client={qc}>
+          <View />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+  }
+
+  it('项目作用域标注项目目录，切到全局后改写全局配置路径', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: mockConfig,
+      projectDir: '/x/y/proj',
+      scopes: { global: {}, project: {} },
+      warnings: [],
+    })
+
+    renderProjectSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 默认 project：目标指向项目目录
+    expect(screen.getByText('目标：/x/y/proj')).toBeTruthy()
+
+    // 切到 global：目标必须改成全局配置路径——不能继续指向项目目录，
+    // 否则用户以为在改项目文件，实际写进 ~/.c0de/config.json。
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    expect(screen.queryByText('目标：/x/y/proj')).toBeNull()
+    expect(screen.getByText('目标：~/.c0de/config.json')).toBeTruthy()
+  })
+})
