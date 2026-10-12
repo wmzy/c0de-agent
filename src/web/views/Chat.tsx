@@ -545,6 +545,26 @@ const chipRemove = css`
   }
 `
 
+/** 权限状态读取/写入失败行：把「读不到」与「确实是默认模式」区分开。 */
+const modeError = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--haze-color-danger, #e5484d);
+`
+
+const modeErrorRetry = css`
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  background: var(--haze-color-bg);
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 6px;
+  min-height: auto;
+  min-width: auto;
+`
+
 export function Chat({
   timeline,
   isStreaming,
@@ -672,17 +692,32 @@ export function Chat({
   // 草稿页（sessionId 缺省）= 全局运行时模式。标签与提示必须显式标注作用域。
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
   const [alwaysAllow, setAlwaysAllow] = useState<string[]>([])
-  useEffect(() => {
+  /** 权限状态读取失败的原因：不为空时底栏显示的开关/白名单不可信，必须说出来。 */
+  const [permissionLoadError, setPermissionLoadError] = useState<string | null>(null)
+  /** 移除白名单失败的原因：此前是空 catch —— 点 × 后界面纹丝不动、零反馈。 */
+  const [alwaysAllowError, setAlwaysAllowError] = useState<string | null>(null)
+  const loadPermissionMode = useCallback(() => {
     permissionAPI
       .getMode(sessionId)
       .then((res) => {
         setPermissionMode(res.mode)
         if (Array.isArray(res.alwaysAllow)) setAlwaysAllow(res.alwaysAllow)
+        setPermissionLoadError(null)
       })
-      .catch(() => {})
+      .catch((e: unknown) => {
+        // 此前是空 catch：state 停在初始值 'default' + []，底栏于是显示未勾选的
+        // 「自动授权（本会话）」并附「工具执行前逐个确认」，而服务端可能正处于
+        // auto 模式（或已放行 bash 白名单）——给出的是相反的安全结论，且
+        // alwaysAllow.length > 0 的 chips 行整块消失，唯一的白名单管理入口
+        // 一起没了。读不到就必须说读不到。
+        setPermissionLoadError(e instanceof Error ? e.message : String(e))
+      })
+  }, [sessionId])
+  useEffect(() => {
+    loadPermissionMode()
     const unsubscribe = subscribeModeChange(sessionId ?? null, setPermissionMode)
     return unsubscribe
-  }, [sessionId])
+  }, [sessionId, loadPermissionMode])
   const togglePermissionMode = () => {
     const next: PermissionMode = permissionMode === 'auto' ? 'default' : 'auto'
     setPermissionMode(next)
@@ -700,8 +735,16 @@ export function Chat({
     if (!sessionId) return
     permissionAPI
       .removeAlwaysAllow(tool, sessionId)
-      .then((res) => setAlwaysAllow(res.alwaysAllow))
-      .catch(() => {})
+      .then((res) => {
+        setAlwaysAllow(res.alwaysAllow)
+        setAlwaysAllowError(null)
+      })
+      .catch((e: unknown) => {
+        // 空 catch 的后果：用户点 chips 上的 × 后没有任何变化，反复点、以为
+        // 点不动；服务端白名单其实还在，该工具仍免确认执行。这是移除一项安全
+        // 授权的唯一入口。
+        setAlwaysAllowError(e instanceof Error ? e.message : String(e))
+      })
   }
 
   return (
@@ -875,6 +918,19 @@ export function Chat({
       >
         {modelBar && <div className={footerLeft}>{modelBar}</div>}
         <div className={footerRight}>
+          {permissionLoadError ? (
+            <span className={modeError} role="alert" data-testid="permission-mode-error">
+              权限状态读取失败：{permissionLoadError}
+              <button
+                type="button"
+                className={modeErrorRetry}
+                onClick={loadPermissionMode}
+                data-testid="permission-mode-retry"
+              >
+                重试
+              </button>
+            </span>
+          ) : null}
           {alwaysAllow.length > 0 && (
             <div className={allowChips} data-testid="always-allow-chips">
               {alwaysAllow.map((tool) => (
@@ -893,6 +949,11 @@ export function Chat({
               ))}
             </div>
           )}
+          {alwaysAllowError ? (
+            <span className={modeError} role="alert" data-testid="always-allow-error">
+              移出白名单失败：{alwaysAllowError}
+            </span>
+          ) : null}
           {/* 开关 label 即状态指示：auto 态标签升级为警示 pill（点击可关闭），
               不再重复渲染「自动授权」label + 相邻警示条；checkbox 始终同一节点，
               模式翻转不重建（测试与焦点都依赖节点稳定）。 */}
@@ -917,7 +978,9 @@ export function Chat({
               ? `⚠ 自动授权已开启${sessionId ? '（本会话）' : '（全局，已保存）'}`
               : `自动授权${sessionId ? '（本会话）' : '（全局）'}`}
           </label>
-          {permissionMode !== 'auto' && (
+          {/* 读取失败时不渲染「工具执行前逐个确认」：那是拿初始值当真实模式，
+              正好给出与事实相反的安全结论（服务端可能已处于 auto）。 */}
+          {permissionMode !== 'auto' && !permissionLoadError && (
             <span
               className={modeHint}
               data-testid="permission-mode-hint"

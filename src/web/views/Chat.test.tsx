@@ -24,6 +24,7 @@ vi.mock('@/services/permission.js', () => ({
   permissionAPI: {
     getMode: vi.fn().mockResolvedValue({ mode: 'default' }),
     setMode: vi.fn().mockResolvedValue({ mode: 'auto' }),
+    removeAlwaysAllow: vi.fn().mockResolvedValue({ alwaysAllow: [] }),
   },
   broadcastModeChange: vi.fn(),
   subscribeModeChange: vi.fn(() => () => {}),
@@ -230,6 +231,59 @@ describe('Chat permission mode toggle', () => {
     const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
     await waitFor(() => expect(toggle.checked).toBe(true))
     expect(screen.getByTestId('permission-mode-warning').textContent).toContain('自动授权已开启')
+  })
+})
+
+/**
+ * 权限条的静默失败。
+ *
+ * 缺陷：getMode 用空 catch（`.catch(() => {})`）——读失败时 state 停在初始值
+ * 'default' + []，底栏于是显示未勾选的「自动授权（本会话）」+「工具执行前逐个
+ * 确认」，而服务端可能正处在 auto 模式（或已放行 bash 白名单）：给出的是与事实
+ * 相反的安全结论；同时 alwaysAllow.length > 0 的 chips 行整块消失，唯一的白名单
+ * 管理入口一起没了，页面零提示。removeAlwaysAllow 同为空 catch——点 × 后界面
+ * 纹丝不动，用户以为点不动，而白名单其实还在、工具仍免确认执行。
+ */
+describe('Chat 权限条读取/移除失败', () => {
+  it('权限状态读不到时说出来，而不是谎报「工具执行前逐个确认」', async () => {
+    vi.mocked(permissionAPI.getMode).mockRejectedValueOnce(new Error('断路器打开'))
+    renderChat()
+
+    await waitFor(() => expect(screen.getByTestId('permission-mode-error')).toBeInTheDocument())
+    expect(screen.getByTestId('permission-mode-error').textContent).toContain('断路器打开')
+    // 中性说明不再出现：它拿初始值当真实模式，正好给出相反的安全结论
+    expect(screen.queryByTestId('permission-mode-hint')).toBeNull()
+  })
+
+  it('读取失败后点「重试」重新请求，成功即恢复真实状态', async () => {
+    vi.mocked(permissionAPI.getMode)
+      .mockRejectedValueOnce(new Error('网络中断'))
+      .mockResolvedValueOnce({ mode: 'auto', alwaysAllow: ['bash'] } as never)
+    renderChat()
+    await waitFor(() => expect(screen.getByTestId('permission-mode-error')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('permission-mode-retry'))
+
+    await waitFor(() => expect(screen.queryByTestId('permission-mode-error')).toBeNull())
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+    expect(screen.getByTestId('always-allow-chips').textContent).toContain('bash')
+  })
+
+  it('移除白名单失败时给出原因，chips 仍在（不再像死键）', async () => {
+    vi.mocked(permissionAPI.getMode).mockResolvedValueOnce({
+      mode: 'default',
+      alwaysAllow: ['bash'],
+    } as never)
+    vi.mocked(permissionAPI.removeAlwaysAllow).mockRejectedValueOnce(new Error('服务端拒绝'))
+    renderChat({ sessionId: 's1' })
+    await waitFor(() => expect(screen.getByTestId('always-allow-chips')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByLabelText('移除 bash 的始终允许'))
+
+    await waitFor(() => expect(screen.getByTestId('always-allow-error')).toBeInTheDocument())
+    expect(screen.getByTestId('always-allow-error').textContent).toContain('服务端拒绝')
+    expect(screen.getByTestId('always-allow-chips').textContent).toContain('bash')
   })
 })
 
