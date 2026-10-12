@@ -266,7 +266,11 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
     // 用户以为「已按目录配置好」，实际这个 Provider 下什么都选不了、也无法补全。
     // 失败必须挡住确认键并给出原因，而不是静默写进配置。
     if (modelsError) return
-    onSelect(toProviderConfig(selectedProvider, modelsData?.models ?? []))
+    // 同理，**加载中**也不能落盘：模型清单还在飞时 modelsData 尚未到达，`?? []`
+    // 会把它当成「零个模型」，落一个空 capabilities 的 Provider。失败态已挡，加载
+    // 这一窗口此前没挡——右手边还在显示「加载模型列表…」，点确认就写进配置。
+    if (modelsLoading || !modelsData) return
+    onSelect(toProviderConfig(selectedProvider, modelsData.models))
     onClose()
   }
 
@@ -283,7 +287,7 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!selectedProvider || modelsError}
+            disabled={!selectedProvider || modelsError || modelsLoading || !modelsData}
             data-testid="catalog-confirm"
             variant="outline"
           >

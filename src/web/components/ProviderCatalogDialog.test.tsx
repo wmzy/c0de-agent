@@ -359,6 +359,74 @@ describe('ProviderCatalogDialog', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
+  // 模型清单「读取中」这一窗口此前没挡：右手边还写着「加载模型列表…」，而底部
+  // 「选择此 Provider」已可点。modelsData 尚未到达时 `?? []` 被当成「零个模型」，
+  // 单击即落一个没有模型/capabilities/定价的 Provider（与失败态同一后果，只是
+  // 触发条件是「太快」而不是「出错」）。加载中必须与失败态一样挡住确认键。
+  it('模型清单加载中时挡住确认键，绝不写入零模型的 Provider', async () => {
+    vi.mocked(catalogAPI.listProviders).mockResolvedValue({
+      providers: [{ id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai', env: [], modelCount: 1 }],
+    })
+    // 手控的 pending promise：先吊住模型清单，确认那一刻仍在加载。
+    let releaseModels: (v: unknown) => void = () => {}
+    vi.mocked(catalogAPI.getProviderModels).mockReturnValue(
+      new Promise((resolve) => {
+        releaseModels = resolve
+      }) as never,
+    )
+    const onSelect = vi.fn()
+
+    renderWithClient(<ProviderCatalogDialog onClose={vi.fn()} onSelect={onSelect} />)
+    await waitFor(() => expect(screen.getByText('OpenAI')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('catalog-provider-openai'))
+
+    // 加载中：右侧显示「加载模型列表…」，确认键禁用
+    await waitFor(() => expect(screen.getByText('加载模型列表…')).toBeTruthy())
+    expect((screen.getByTestId('catalog-confirm') as HTMLButtonElement).disabled).toBe(true)
+
+    // 即便强点也不落盘（handleSelect 的双保险）
+    fireEvent.click(screen.getByTestId('catalog-confirm'))
+    expect(onSelect).not.toHaveBeenCalled()
+
+    // 模型清单到达后恢复可选，此时确认才带上真实的模型清单
+    releaseModels({
+      provider: {
+        id: 'openai',
+        name: 'OpenAI',
+        npm: '@ai-sdk/openai',
+        env: [],
+        modelCount: 1,
+      },
+      models: [
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          reasoning: false,
+          toolCall: true,
+          attachment: true,
+          temperature: true,
+          context: 128000,
+          output: 16384,
+        },
+      ],
+    })
+    await waitFor(() => expect(screen.getByText('GPT-4o')).toBeTruthy())
+    expect((screen.getByTestId('catalog-confirm') as HTMLButtonElement).disabled).toBe(false)
+
+    fireEvent.click(screen.getByTestId('catalog-confirm'))
+    await waitFor(() => expect(onSelect).toHaveBeenCalledTimes(1))
+    const selected = onSelect.mock.calls[0]?.[0] as ProviderConfig | undefined
+    expect(selected?.models).toEqual({
+      'gpt-4o': {
+        contextWindow: 128000,
+        maxOutput: 16384,
+        supportsTools: true,
+        supportsVision: true,
+        supportsThinking: false,
+      },
+    })
+  })
+
   it('模型清单重试成功后恢复可选', async () => {
     vi.mocked(catalogAPI.listProviders).mockResolvedValue({
       providers: [{ id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai', env: [], modelCount: 1 }],
