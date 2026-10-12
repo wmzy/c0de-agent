@@ -67,6 +67,24 @@ describe('DirectoryPicker', () => {
     })
   })
 
+  // 复现：home 读取失败此前被 `.catch(() => {})` 空吞 → home 恒为空 → 「首次自动
+  // 导航到 home」永不触发 → 浏览器区停在「无树、无错误、无重试」的空白框里；
+  // AddProjectDialog/RelocateProjectDialog 都不传 start，用户因此根本没法选目录
+  // 建/迁移项目（搜索的 base() 也回落成 '' → 输入目录名同样永远搜不到）。
+  it('home 读取失败给出原因与重试，重试成功后加载文件树', async () => {
+    vi.mocked(filesystemAPI.home).mockRejectedValueOnce({ message: 'home boom' })
+    vi.mocked(filesystemAPI.browse).mockResolvedValue({ path: '/home/user', directories: [] })
+    render(<DirectoryPicker value="" onChange={vi.fn()} />)
+
+    const errBox = await screen.findByTestId('directory-picker-error')
+    expect(errBox.textContent).toContain('home boom')
+    expect(screen.queryByTestId('directory-picker-retry')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('directory-picker-retry'))
+    await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/home/user'))
+    await waitFor(() => expect(screen.queryByTestId('directory-picker-error')).toBeNull())
+  })
+
   // 复现：首次自动导航到 home 也会 onChange('~')，把「当前浏览位置」当成
   // 「用户的选中值」回填给宿主。没有任何选择的宿主（AddProjectDialog）因此
   // value 非空、确认按钮即刻可用——打开弹窗什么都不选，回车即把 $HOME 注册成项目。
