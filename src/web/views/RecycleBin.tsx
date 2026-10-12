@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { Session } from '@shared/types/message.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import {
@@ -147,14 +147,28 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     error: orphanCountErrorObj,
     refetch: refetchOrphanCount,
   } = useDeletedOrphansCount()
-  const { data: orphans } = useDeletedOrphans(orphansOpen)
-  const toggleOrphans = () => {
-    const next = !orphansOpen
-    setOrphansOpen(next)
-    if (next) {
-      sessionAPI.touchOrphansSeen().catch(() => {})
+  const {
+    data: orphans,
+    isLoading: orphansLoading,
+    isError: orphansError,
+    error: orphansErrorObj,
+    refetch: refetchOrphans,
+  } = useDeletedOrphans(orphansOpen)
+  // A3：展开分组只负责展开。此前一展开就无条件 touchOrphansSeen——列表读失败
+  // 时用户一条都没看到，却已经把「已看到」写进服务端、启动了 60 天保留倒计时，
+  // 这些从未被展示的会话会按保留期被静默物理清除。
+  const toggleOrphans = () => setOrphansOpen((v) => !v)
+  // 只有列表真的拿到（成功）才标记「已看到」；失败时不启动倒计时，重试成功后补记。
+  const touchedOrphansSeen = useRef(false)
+  useEffect(() => {
+    if (!orphansOpen) {
+      touchedOrphansSeen.current = false
+      return
     }
-  }
+    if (touchedOrphansSeen.current || orphans === undefined) return
+    touchedOrphansSeen.current = true
+    sessionAPI.touchOrphansSeen().catch(() => {})
+  }, [orphansOpen, orphans])
   const restore = useRestoreSession()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -307,6 +321,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const deletedBoardsErrText =
     (deletedBoardsErrorObj as { message?: string } | null)?.message ??
     (deletedBoardsErrorObj instanceof Error ? deletedBoardsErrorObj.message : null)
+  const orphansErrText =
+    (orphansErrorObj as { message?: string } | null)?.message ??
+    (orphansErrorObj instanceof Error ? orphansErrorObj.message : null)
   const deletedIds = new Set(deletedList.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
     s.parentId !== null && deletedIds.has(s.parentId)
@@ -621,7 +638,27 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               条，来自已删除的项目；恢复时可重建原项目或归属到当前项目）
             </span>
           </div>
+          {orphansOpen && orphansError && (
+            <div className={errorBar} role="alert" data-testid="orphan-list-error">
+              未归属项目会话列表读取失败
+              {orphansErrText ? `：${orphansErrText}` : '，请稍后重试。'}{' '}
+              <button
+                type="button"
+                className={restoreBtn}
+                onClick={() => void refetchOrphans()}
+                data-testid="orphan-list-retry"
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {orphansOpen && !orphansError && orphansLoading && (
+            <div className={deletedRow} data-testid="orphan-list-loading">
+              加载中…
+            </div>
+          )}
           {orphansOpen &&
+            !orphansError &&
             (orphans ?? []).map((s) => (
               <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
                 <span title={s.worktreePath ?? s.title}>{s.title}</span>

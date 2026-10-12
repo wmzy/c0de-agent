@@ -36,7 +36,13 @@ const hoisted = vi.hoisted(() => ({
     refetch: () => {},
   },
   /** 「未归属项目」分组的数据源：孤儿已删会话与其计数。 */
-  orphans: { data: [] as Session[] },
+  orphans: { data: [] as Session[] } as {
+    data: Session[] | undefined
+    isLoading?: boolean
+    isError?: boolean
+    error?: unknown
+    refetch?: () => void
+  },
   /** 删除会话 mutation 的 mutate：默认 no-op；用例可赋实现以驱动 onSuccess/onError。 */
   deleteMutate: undefined as
     | ((id: string, opts?: { onSuccess?: () => void; onError?: (e: unknown) => void }) => void)
@@ -73,6 +79,7 @@ vi.mock('@/services/session.js', () => ({
     search: vi.fn(),
     rename: vi.fn(),
     importSession: vi.fn(),
+    touchOrphansSeen: vi.fn().mockResolvedValue({ ok: true, touched: 0 }),
   },
 }))
 
@@ -479,6 +486,41 @@ describe('RecycleBin 读失败态', () => {
     expect(bar.textContent).toContain('看板炸了')
     expect(screen.queryByTestId('orphan-kanban-header')).toBeNull()
     expect(screen.getByTestId('orphan-kanban-retry')).toBeInTheDocument()
+  })
+
+  /**
+   * 回归：孤儿列表读失败被 `orphans ?? []` 吃成空分组——表头写着「N 条」，展开
+   * 后一行都没有、零文字、零重试；更糟的是展开那一刻无条件 touchOrphansSeen，
+   * 把这些用户从未看到的条目在服务端标成「已看到」，启动 60 天保留倒计时。
+   */
+  it('未归属项目会话列表读失败：给原因与重试，且不启动保留倒计时', () => {
+    const refetch = vi.fn()
+    hoisted.orphanCount = { data: { count: 3 }, isError: false, error: null, refetch: vi.fn() }
+    hoisted.orphans = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { status: 500, message: '孤儿列表炸了' },
+      refetch,
+    }
+    renderTrash()
+    fireEvent.click(screen.getByTestId('orphan-trash-toggle'))
+    const bar = screen.getByTestId('orphan-list-error')
+    expect(bar.textContent).toContain('孤儿列表炸了')
+    expect(screen.queryByTestId('orphan-list-loading')).toBeNull()
+    fireEvent.click(screen.getByTestId('orphan-list-retry'))
+    expect(refetch).toHaveBeenCalledTimes(1)
+    // 列表没拿到就绝不能标记「已看到」（否则倒计时先于用户看到条目启动）
+    expect(vi.mocked(sessionAPI.touchOrphansSeen)).not.toHaveBeenCalled()
+  })
+
+  it('未归属项目会话列表拿到后标记「已看到」启动保留期', () => {
+    hoisted.orphanCount = { data: { count: 1 }, isError: false, error: null, refetch: vi.fn() }
+    hoisted.orphans = { data: [makeSession('orphan-1', '孤儿', null)] }
+    renderTrash()
+    fireEvent.click(screen.getByTestId('orphan-trash-toggle'))
+    expect(screen.getByTestId('orphan-orphan-1')).toBeInTheDocument()
+    expect(vi.mocked(sessionAPI.touchOrphansSeen)).toHaveBeenCalledTimes(1)
   })
 })
 
