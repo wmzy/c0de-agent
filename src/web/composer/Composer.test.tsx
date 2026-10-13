@@ -673,3 +673,74 @@ describe('Composer 浮层候选插不进去时不再吞掉 Enter', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 })
+
+// Tab 是「离开输入框」的键。子命令浮层打开时按 Tab 会走 Composer 的 Tab 分支把
+// 浮层关掉，但 useComposer 里有「commands 就绪 / popover 变化后按同一段文本重新
+// 检测」的 effect——裸 setPopover(null) 不记 dismissed，菜单在焦点移走的同一瞬间
+// 原样弹回来，Tab 成了死键；Esc 因为记了 dismissed 不会重现，用户学到的规则失效。
+describe('Composer Tab 关浮层后不会被重新检测弹回来', () => {
+  function typeText(editor: HTMLElement, text: string) {
+    editor.textContent = text
+    const node = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(node, text.length)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  function renderWithSubcommand() {
+    vi.mocked(commandsAPI.list).mockResolvedValue({
+      commands: [
+        {
+          name: 'git',
+          description: 'git 子命令',
+          subcommands: [
+            { name: 'status', description: '查看状态' },
+            { name: 'commit', description: '提交' },
+          ],
+        },
+      ],
+    } as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer onSend={vi.fn()} isStreaming={false} hasHistory={false} agents={[]} />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return screen.getByTestId('composer-editor')
+  }
+
+  it('Tab 关掉子命令浮层后它不再自己弹回来', async () => {
+    const editor = renderWithSubcommand()
+    typeText(editor, '/git ')
+    await waitFor(() => expect(screen.getByTestId('subcommand-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Tab' })
+
+    await waitFor(() => expect(screen.queryByTestId('subcommand-menu')).toBeNull())
+    // 再等一拍：重检测 effect 是在 popover 变 null 之后跑的，修复前它会在此把
+    // 同一个菜单弹回来（这条断言就是死键的钉子）
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByTestId('subcommand-menu')).toBeNull()
+  })
+
+  it('Esc 与 Tab 关掉的是同一个浮层（两条路径都不弹回）', async () => {
+    const editor = renderWithSubcommand()
+    typeText(editor, '/git ')
+    await waitFor(() => expect(screen.getByTestId('subcommand-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Escape' })
+    expect(screen.queryByTestId('subcommand-menu')).toBeNull()
+
+    // 用户继续把这段文本改成别的子命令查询——新的输入意图应重新获得补全
+    typeText(editor, '/git s')
+    await waitFor(() => expect(screen.getByTestId('subcommand-menu')).toBeTruthy())
+  })
+})

@@ -649,6 +649,18 @@ function useComposer({
     }
   }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory])
 
+  /**
+   * 用户显式关掉浮层的唯一入口（handleKeyDown 的 Esc 分支与 Composer 的 Tab 分支）。
+   * 必须连同 dismissedPopoverRef 一起写：popover 由 X 变 null 会让上方「commands
+   * 就绪后重新检测」的 effect 重跑，而它只认 dismissedPopoverRef——直接
+   * setPopover(null) 会让刚关掉的子命令浮层在同一瞬间原样弹回来（Tab 成死键，
+   * 焦点已经移走的用户看到菜单凭空重现）。
+   */
+  const dismissPopover = useCallback(() => {
+    dismissedPopoverRef.current = promptToText(promptRef.current)
+    setPopover(null)
+  }, [])
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent, popoverSuppressed = false) => {
       // IME 组合中不拦截
@@ -668,8 +680,7 @@ function useComposer({
       if (e.key === 'Escape' && popover) {
         // 记住被关掉的这段文本：重检测 effect（commands 就绪 / popover 状态变化）
         // 不得把它原样弹回来——否则 Esc 是死键，回车接着把输入改写成候选
-        dismissedPopoverRef.current = promptToText(promptRef.current)
-        setPopover(null)
+        dismissPopover()
         e.preventDefault()
         return
       }
@@ -705,7 +716,7 @@ function useComposer({
         }
       }
     },
-    [popover, send, steer, setPromptExternal, isStreaming],
+    [popover, send, steer, setPromptExternal, isStreaming, dismissPopover],
   )
 
   return {
@@ -741,6 +752,8 @@ function useComposer({
     send,
     steer,
     setPopover,
+    /** 显式关浮层（Esc / Tab 共用；见定义处的注释——漏记 dismissed 会立刻弹回）。 */
+    dismissPopover,
     isEmpty,
   }
 }

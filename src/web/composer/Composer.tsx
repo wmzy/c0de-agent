@@ -512,7 +512,7 @@ function Composer(props: ComposerProps) {
     const popoverSuppressed = composer.popover !== null && popoverCandidates === 0
     // 只有「不在加载/失败且没有候选」才真的关掉浮层；加载/失败中保留浮层给出反馈。
     const popoverDead = popoverSuppressed && !popoverBusy
-    if (popoverDead) composer.setPopover(null)
+    if (popoverDead) composer.dismissPopover()
     // 键盘导航只在真的有候选项时生效：0 候选取 min(i+1, -1) 会把 activeIndex 算成 -1。
     const popoverNavigable = composer.popover !== null && popoverCandidates > 0
     // Tab 是「离开输入框」的键，不是「确认候选」：此前与 Enter 同处理，浮层打开时
@@ -520,7 +520,10 @@ function Composer(props: ComposerProps) {
     // 正在写的消息里（`/hel` + Tab 变成 `/help `）。这里只关掉浮层、放行按键交给
     // 浏览器移动焦点；确认候选仍然走 Enter。
     if (e.key === 'Tab' && composer.popover !== null) {
-      composer.setPopover(null)
+      // 走 dismissPopover 而不是裸 setPopover(null)：popover 由 X 变 null 会触发
+      // useComposer 的「commands 就绪后重新检测」effect，它会把同一段文本的浮层
+      // 原样弹回来——裸关一次，菜单在焦点已经移走的瞬间凭空重现（Tab 成了死键）。
+      composer.dismissPopover()
       return
     }
     if (popoverNavigable && composer.popover === 'workflow') {
