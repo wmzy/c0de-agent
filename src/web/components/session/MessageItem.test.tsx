@@ -348,3 +348,40 @@ describe('MessageItem 图片渲染', () => {
     expect(blocks.some((b) => b.type === 'image')).toBe(true)
   })
 })
+
+// 裸 <img> 没有失败信号：图片解不出来时用户只看到浏览器的破图占位符，
+// 装饰列照画图片图标、文本照显示「(图片)」，看起来「我发过一张图」，
+// 却既没有原因也没有任何补救动作。
+describe('MessageItem 图片解码失败', () => {
+  it('解码失败时说明原因并给重试，而不是留一个破图占位符', () => {
+    render(
+      <MessageItem
+        message={msg('user', [{ _tag: 'image', mediaType: 'image/png', data: 'bm90LWFuLWltYWdl' }])}
+      />,
+    )
+    fireEvent.error(screen.getByTestId('message-image'))
+
+    const err = screen.getByTestId('message-image-error')
+    expect(err.textContent).toContain('图片无法显示')
+    expect(err.textContent).toContain('image/png')
+    expect(screen.getByTestId('message-image-retry')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-image')).toBeNull()
+  })
+
+  it('重试后重新渲染 <img>（重新解码），仍失败则再次给出原因', () => {
+    render(
+      <MessageItem
+        message={msg('user', [
+          { _tag: 'image', mediaType: 'image/webp', data: 'bm90LWFuLWltYWdl' },
+        ])}
+      />,
+    )
+    fireEvent.error(screen.getByTestId('message-image'))
+    fireEvent.click(screen.getByTestId('message-image-retry'))
+
+    const img = screen.getByTestId('message-image')
+    expect(img.getAttribute('src')).toBe('data:image/webp;base64,bm90LWFuLWltYWdl')
+    fireEvent.error(img)
+    expect(screen.getByTestId('message-image-error')).toBeInTheDocument()
+  })
+})
