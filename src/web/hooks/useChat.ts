@@ -571,8 +571,17 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (approved && alwaysAllowTool) {
         permissionAPI
           .setAlwaysAllow(alwaysAllowTool, sessionId)
-          .catch(() => {
-            console.error('[权限白名单] 追加失败:', alwaysAllowTool)
+          .catch((err) => {
+            // 白名单写入失败此前只 console.error：用户勾了「本会话始终允许」并点
+            // 「允许」，看到的是一次完全成功的授权，但白名单根本没写进去——
+            // 同一工具下次还会弹确认，白名单 chips 栏里也不会有它，用户只会以为
+            // 「勾选没生效」，于是每次重新勾选。工具本身仍按用户的选择执行（批准
+            // 与否与白名单是两个独立决定），但失败原因必须说出来。
+            const reason = err instanceof Error ? err.message : String(err)
+            setState((s) => ({
+              ...s,
+              error: `「本会话始终允许 ${alwaysAllowTool}」未保存：${reason}（该工具本次仍按你的选择执行，下次会再次询问）`,
+            }))
           })
           .finally(() => void doConfirm())
       } else {

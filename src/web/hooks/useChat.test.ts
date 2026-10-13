@@ -446,6 +446,141 @@ describe('useChat confirm', () => {
     expect(result.current.pendingPermission?.toolCallId).toBe('tc500')
   })
 
+  // 回归：勾选「本会话始终允许」时白名单写入失败此前只 console.error，随后仍
+  // 批准工具——用户看到的是一次完全成功的授权，但白名单没写进去，同一工具下次
+  // 还会弹确认。工具照旧执行，但失败原因必须说出来。
+  it('白名单写入失败时透出原因，工具仍按选择执行', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tcAL","tool":"bash","input":{}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      if (url === '/api/permissions/s1/always-allow') {
+        return {
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          json: async () => ({ error: { code: 'INTERNAL', message: '白名单存储不可用' } }),
+          text: async () =>
+            JSON.stringify({ error: { code: 'INTERNAL', message: '白名单存储不可用' } }),
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ confirmed: true }),
+        text: async () => JSON.stringify({ confirmed: true }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    const pending = result.current.pendingPermission
+    expect(pending?.toolCallId).toBe('tcAL')
+
+    await act(async () => {
+      result.current.confirm('tcAL', true, 'bash', pending ?? undefined)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 原因可见（此前整条失败路径零反馈）
+    expect(result.current.error).toContain('未保存')
+    expect(result.current.error).toContain('白名单存储不可用')
+    // 白名单失败不影响本次批准：工具确认请求照常发出
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/tools/confirm',
+        expect.objectContaining({ body: JSON.stringify({ toolCallId: 'tcAL', approved: true }) }),
+      ),
+    )
+  })
+
+  it('白名单写入成功时不写 error', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tcOK","tool":"bash","input":{}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ alwaysAllow: ['bash'], confirmed: true }),
+        text: async () => JSON.stringify({ alwaysAllow: ['bash'], confirmed: true }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    const pending = result.current.pendingPermission
+
+    await act(async () => {
+      result.current.confirm('tcOK', true, 'bash', pending ?? undefined)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.error).toBeNull()
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/tools/confirm',
+        expect.objectContaining({ body: JSON.stringify({ toolCallId: 'tcOK', approved: true }) }),
+      ),
+    )
+  })
+
   // 回归：denyTimedOutPermission 把 confirmTool POST 写进 setState 更新器——
   // 更新器必须是纯函数，StrictMode（main.tsx 已开启）会重复调用它，同一
   // 拒绝请求被发出两次（服务端第二次必然 404，用户网络层收到多余请求）。
