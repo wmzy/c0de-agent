@@ -51,6 +51,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const attachingRef = useRef(false)
   const pollGenRef = useRef(0)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 本页已给出决定（确认/拒绝）的权限请求 id：confirm 乐观清空弹窗后，服务端
+  // store 的消费有网络延迟，附着轮询的下一次复查会看到「仍在挂起」而把弹窗又弹
+  // 回来（用户以为按钮没生效）。同一 toolCallId 只消费一次，记下即可。
+  const decidedPermissionRef = useRef<Set<string>>(new Set())
   // 段切换确认待发内容（confirmBreak/cancelBreak 读取，避免闭包staleness）
   const pendingRef = useRef<PendingSegmentBreak | null>(null)
   // P0-2：信任确认待发内容（confirmTrust/cancelTrust 读取）
@@ -567,6 +571,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       pending?: PendingPermission,
     ) => {
       setState((s) => ({ ...s, pendingPermission: null }))
+      // 记下这次决定：附着轮询复查 /pending 时 store 可能还没删掉它（消费在路上），
+      // 否则弹窗会被重新弹回来。
+      decidedPermissionRef.current.add(toolCallId)
       const doConfirm = () =>
         agentAPI.confirmTool(toolCallId, approved).catch((err) => {
           const e = err as { status?: number }
@@ -695,6 +702,22 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
   }, [qc, sessionId, stopPoll])
 
+  /** 附着态同步挂起权限：以服务端 store 为准。附着页没有本次 run 的 SSE 流
+   *  （permission_required 只在发起流的标签页送得到），权限请求只能从
+   *  GET /:id/pending 读到——附着期新出现的请求因此必须靠轮询复查才能看见。
+   *  pending 为空即收起弹窗：本页/他页已给出决定，或服务端宽限超时自动拒绝，
+   *  否则用户对着一个已失效的请求点确认只会拿到 404。 */
+  const syncPendingPermission = useCallback((pending: PendingPermission | null) => {
+    setState((s) => {
+      if (pending) {
+        if (s.pendingPermission?.toolCallId === pending.toolCallId) return s
+        if (decidedPermissionRef.current.has(pending.toolCallId)) return s
+        return { ...s, pendingPermission: pending }
+      }
+      return s.pendingPermission ? { ...s, pendingPermission: null } : s
+    })
+  }, [])
+
   /** P1：附着轮询——每 2s 查状态，run 结束即刷新收尾。代数守卫防重复轮询。
    *  paused 不是结束：run 仍注册在服务端（可 resume），只是没有进展——继续轮询
    *  并映射为「暂停」态（runPaused + isStreaming），让「恢复」入口可见；从暂停
@@ -720,6 +743,11 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             runPaused: paused,
             runPauseReason: paused ? (st.pauseReason ?? null) : null,
           }))
+          // 附着期新出现的权限请求：本页没有 run 的 SSE 流，只能在这里复查
+          // （读内存 store，不触 DB）。失败静默——下一次 tick 会重试。
+          const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
+          if (token !== pollGenRef.current) return
+          if (pend) syncPendingPermission(pend.pending ?? null)
           pollTimerRef.current = setTimeout(() => void tick(), paused ? 3000 : 2000)
         } else {
           finishAttach()
@@ -737,7 +765,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       }
     }
     pollTimerRef.current = setTimeout(() => void tick(), 2000)
-  }, [finishAttach, sessionId, stopPoll])
+  }, [finishAttach, sessionId, stopPoll, syncPendingPermission])
 
   /**
    * P1：附着后台 run。本实例未发起流（挂起期间切换页面后回来 / 另一标签页启动）时：

@@ -1801,6 +1801,126 @@ describe('useChat 附着轮询的暂停态（P1）', () => {
 })
 
 /**
+ * 回归：附着页看不到运行期新出现的权限请求。
+ *
+ * 附着页没有本次 run 的 SSE 流（permission_required 事件只送得到发起流的标签页），
+ * 权限请求只能从 GET /:id/pending 读到。此前 attach() 只在进入附着态那一刻查一次
+ * ——查询之后才发起的工具权限请求，该页永远不弹确认弹窗：run 停在那里等一个用户
+ * 看不到的决定，直到服务端 5 分钟提示 / 25 分钟宽限超时自动拒绝；界面全程只有
+ * 「运行中…」，用户只会当成模型卡住。（另：那一刻的查询自身失败也被 .catch 吞掉，
+ * 同一条修复顺带覆盖。）
+ */
+describe('useChat 附着轮询复查挂起权限（P1）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  /** /status 与 /pending 按同一个调用序号取值：pendings[i] 是第 i 次 /status 之后
+   *  那次 /pending 的结果（attach 的那一对是 i = 0）。 */
+  function statusFetchSeq(
+    statuses: Array<Record<string, unknown>>,
+    pendings: Array<Record<string, unknown> | null>,
+  ): ReturnType<typeof vi.fn> {
+    let idx = 0
+    const json = (body: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    })
+    return vi.fn(async (url: string) => {
+      if (String(url).includes('/status')) {
+        const body = statuses[Math.min(idx, statuses.length - 1)]
+        idx++
+        return json(body)
+      }
+      return json({ pending: pendings[Math.min(idx - 1, pendings.length - 1)] ?? null })
+    })
+  }
+
+  async function renderAttached() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    expect(result.current.isStreaming).toBe(true)
+    return result
+  }
+
+  it('附着期间新出现的权限请求 → 轮询复查后弹出确认弹窗', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      statusFetchSeq(
+        [{ _tag: 'running' }],
+        [null, { toolCallId: 'tc-9', tool: 'bash', input: { cmd: 'ls' } }],
+      ),
+    )
+    const result = await renderAttached()
+    // attach 那一刻还没有挂起请求
+    expect(result.current.pendingPermission).toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+  })
+
+  it('本页确认后轮询不会把同一请求重新弹回来', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      statusFetchSeq(
+        [{ _tag: 'running' }],
+        [
+          { toolCallId: 'tc-9', tool: 'bash', input: {} },
+          { toolCallId: 'tc-9', tool: 'bash', input: {} },
+        ],
+      ),
+    )
+    vi.spyOn(agentAPI, 'confirmTool').mockResolvedValue({ confirmed: true })
+    const result = await renderAttached()
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+
+    await act(async () => {
+      result.current.confirm('tc-9', true)
+    })
+    expect(result.current.pendingPermission).toBeNull()
+
+    // store 的消费还在路上（仍是 tc-9）：复查不得把它重新弹回来
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission).toBeNull()
+  })
+
+  it('他页已给出决定（store 不再挂起）→ 轮询收起弹窗', async () => {
+    vi.useFakeTimers()
+    const pending = { toolCallId: 'tc-9', tool: 'bash', input: {} }
+    vi.stubGlobal('fetch', statusFetchSeq([{ _tag: 'running' }], [pending, pending, null]))
+    const result = await renderAttached()
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+
+    // tick1：store 仍有挂起 → 保留
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+
+    // tick2：store 已无挂起（他页确认/拒绝，或宽限超时自动拒绝）→ 收起弹窗，
+    // 否则用户对着一个已失效的请求点确认只会拿到 404。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission).toBeNull()
+  })
+})
+
+/**
  * 追加指令（steer）的送达语义。
  *
  * 缺陷：POST /api/chat/steer 的 200 不等于受理——没有进行中的 run 时它回
