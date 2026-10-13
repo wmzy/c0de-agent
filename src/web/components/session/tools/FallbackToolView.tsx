@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 
 const pre = css`
   margin: 0;
@@ -47,20 +48,20 @@ function flatten(obj: unknown, prefix = ''): Array<[string, unknown]> {
 export function FallbackToolView({
   input,
   output,
+  status,
 }: {
   tool: string
   input: unknown
   output?: ToolResult
+  status?: string
 }) {
   // _parseError/_raw 是后端专用的解析失败容错标记，绝不应作为参数渲染。
   const pairs = flatten(input ?? {}).filter(([k]) => k !== '_parseError' && k !== '_raw')
-  const resultText =
-    output?._tag === 'success' || output?._tag === 'truncated'
-      ? output.output
-      : output?._tag === 'error'
-        ? output.error
-        : ''
   const { ref, overflowing, expanded, toggle } = useOverflow(200)
+  // 失败必须走 ToolError：此前失败原因被塞进与成功输出同形的中性灰 <pre>，
+  // 且 error 为空白串时整块渲染成空白（与 Read/Write/Edit/Grep/Glob 同一口径）。
+  const errorText = toolErrorText(output, status)
+  const resultText = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
   const showToggle = overflowing && !expanded
   return (
     <div>
@@ -71,19 +72,23 @@ export function FallbackToolView({
             .join('\n')}
         </pre>
       )}
-      {resultText && (
-        <div>
-          <div ref={ref} className={showToggle ? collapsed : ''}>
-            <pre className={pre} data-testid="fallback-output">
-              {resultText}
-            </pre>
+      {errorText !== null ? (
+        <ToolError output={output} status={status} />
+      ) : (
+        resultText && (
+          <div>
+            <div ref={ref} className={showToggle ? collapsed : ''}>
+              <pre className={pre} data-testid="fallback-output">
+                {resultText}
+              </pre>
+            </div>
+            {overflowing && (
+              <button type="button" className={btn} onClick={toggle}>
+                {expanded ? '收起' : '展开'}
+              </button>
+            )}
           </div>
-          {overflowing && (
-            <button type="button" className={btn} onClick={toggle}>
-              {expanded ? '收起' : '展开'}
-            </button>
-          )}
-        </div>
+        )
       )}
     </div>
   )

@@ -186,7 +186,7 @@ function renderTool(
     case 'kanban':
       return <KanbanToolView input={input} output={output} status={status} />
     default:
-      return <FallbackToolView tool={tool} input={input} output={output} />
+      return <FallbackToolView tool={tool} input={input} output={output} status={status} />
   }
 }
 

@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 import { WorkflowGraph, type WorkflowNode } from '@/components/session/WorkflowGraph.js'
 
 const wrapper = css`
@@ -92,13 +93,10 @@ export function TaskToolView({
     })
   }
 
-  // 输出文本
-  const resultText =
-    output?._tag === 'success' || output?._tag === 'truncated'
-      ? output.output
-      : output?._tag === 'error'
-        ? output.error
-        : ''
+  // 输出文本：失败不再混进中性灰的 Output 区——否则「失败」与「成功输出」同形，
+  // 且 error 为空白串时整个工具体只剩工作流图、一个字的失败原因都没有。
+  const errorText = toolErrorText(output, status)
+  const resultText = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
 
   return (
     <div className={wrapper} data-testid="task-tool-view">
@@ -111,13 +109,17 @@ export function TaskToolView({
       {nodes.length > 0 && (
         <WorkflowGraph nodes={nodes} rootLabel={agentType} rootStatus={mapStatus(status)} />
       )}
-      {resultText && (
-        <div>
-          <div className={metaLabel}>Output</div>
-          <pre className={outputPre} data-testid="task-output">
-            {resultText}
-          </pre>
-        </div>
+      {errorText !== null ? (
+        <ToolError output={output} status={status} />
+      ) : (
+        resultText && (
+          <div>
+            <div className={metaLabel}>Output</div>
+            <pre className={outputPre} data-testid="task-output">
+              {resultText}
+            </pre>
+          </div>
+        )
       )}
     </div>
   )

@@ -6,6 +6,9 @@
 
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
+import { GlobToolView } from '@/components/session/tools/GlobToolView.js'
+import { GrepToolView } from '@/components/session/tools/GrepToolView.js'
 import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
 import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
@@ -168,5 +171,71 @@ describe('失败结果无文案兜底', () => {
   it('运行中（status=running）不误报失败', () => {
     render(<TodoToolView input={{ op: 'view' }} status="running" />)
     expect(screen.queryByTestId('tool-error')).toBeNull()
+  })
+})
+
+// Grep/Glob/Fallback/Task 此前各自手写失败分支，把错误文本塞进与成功输出同形的
+// 中性灰 <pre>（失败与命中视觉同形），且 error 为空白串时整块渲染成空白。
+describe('Grep/Glob/Fallback/Task 失败结果', () => {
+  it('GrepToolView 失败透出原因，不再渲染成命中样式', () => {
+    render(
+      <GrepToolView
+        input={{ pattern: 'foo' }}
+        status="error"
+        output={{ _tag: 'error', error: 'ripgrep not found' }}
+      />,
+    )
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('ripgrep not found')
+    expect(screen.queryByTestId('tool-output')).toBeNull()
+  })
+
+  it('GrepToolView 成功仍渲染输出', () => {
+    render(
+      <GrepToolView
+        input={{ pattern: 'foo' }}
+        status="completed"
+        output={{ _tag: 'success', output: 'a.ts:1:foo' }}
+      />,
+    )
+    expect(screen.queryByTestId('tool-error')).toBeNull()
+    expect(screen.getByTestId('tool-output')).toHaveTextContent('a.ts:1:foo')
+  })
+
+  it('GlobToolView 失败透出原因，空白 error 也给占位说明', () => {
+    render(
+      <GlobToolView
+        input={{ pattern: '*.ts' }}
+        status="error"
+        output={{ _tag: 'error', error: '   ' }}
+      />,
+    )
+    expect(screen.getByTestId('tool-error')).toHaveTextContent(/没有返回错误信息/)
+    expect(screen.queryByTestId('tool-output')).toBeNull()
+  })
+
+  it('FallbackToolView 失败透出原因，参数区仍保留', () => {
+    render(
+      <FallbackToolView
+        tool="custom"
+        input={{ real: 1 }}
+        status="error"
+        output={{ _tag: 'error', error: 'unsupported tool' }}
+      />,
+    )
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('unsupported tool')
+    expect(screen.getByTestId('fallback-args')).toHaveTextContent('real')
+    expect(screen.queryByTestId('fallback-output')).toBeNull()
+  })
+
+  it('TaskToolView 失败且 error 为空时不再只剩一张图', () => {
+    render(
+      <TaskToolView
+        input={{ prompt: 'do something', description: '子任务' }}
+        status="error"
+        output={{ _tag: 'error', error: '' }}
+      />,
+    )
+    expect(screen.getByTestId('tool-error')).toHaveTextContent(/没有返回错误信息/)
+    expect(screen.queryByTestId('task-output')).toBeNull()
   })
 })

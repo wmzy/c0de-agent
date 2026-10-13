@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 
 const pre = css`
   margin: 0;
@@ -34,18 +35,19 @@ type GlobInput = { pattern: string; path?: string }
 
 export function GlobToolView({
   output,
+  status,
 }: {
   input: GlobInput
   output?: ToolResult
   status: string
 }) {
-  const text =
-    output?._tag === 'success' || output?._tag === 'truncated'
-      ? output.output
-      : output?._tag === 'error'
-        ? output.error
-        : ''
+  // useOverflow 必须无条件调用（hooks 数量跨渲染恒定），短路判断放在其后。
   const { ref, overflowing, expanded, toggle } = useOverflow(200)
+  // 失败必须走 ToolError：此前失败原因被塞进与匹配结果同形的中性灰 <pre>，
+  // 且 error 为空串时整块渲染成空白（与 Read/Write/Edit 同一口径）。
+  const errorText = toolErrorText(output, status)
+  if (errorText !== null) return <ToolError output={output} status={status} />
+  const text = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
   const showToggle = overflowing && !expanded
   return (
     <div>
