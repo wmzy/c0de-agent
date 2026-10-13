@@ -130,6 +130,11 @@ export const ToolBlock = memo(function ToolBlock({
         className={`${header} ${compact ? headerCompact : ''}`}
         data-testid="tool-header"
         data-expanded={isExpanded}
+        // 折叠/展开状态必须进无障碍树：折叠头只有一个 ▸/▾ 字形，读屏读到的是
+        // 「read · src/a.ts，按钮」，完全不知道这块是开是关，只能逐个按 Enter 试。
+        // 同仓其它折叠头（LLMDetail / SessionSummary / CodeReference / 目录选择器）
+        // 都声明了 aria-expanded，唯独会话里最高频的这条漏了。
+        aria-expanded={isExpanded}
         onClick={toggle}
         onKeyDown={onHeaderKeyDown}
       >

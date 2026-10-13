@@ -160,6 +160,27 @@ describe('MessageItem', () => {
     expect(screen.queryByTestId('shake-inline-block')).toBeNull()
   })
 
+  // 选中态此前只落在 data-shake-selected 与样式上，读屏无从判断这块是否已加入
+  // shake 范围（div[role=button] 必须用 aria-pressed 表达按下态）。
+  it('shake 高亮块的 aria-pressed 反映选中态', () => {
+    const unselected = shakeValue({
+      regionsByMessage: new Map([['1', [blockRegion]]]),
+    })
+    const { unmount } = render(
+      <MessageItem message={msg('assistant', [{ _tag: 'text', text: 'hello' }])} />,
+      unselected,
+    )
+    expect(screen.getByTestId('shake-inline-block').getAttribute('aria-pressed')).toBe('false')
+    unmount()
+
+    const selected = shakeValue({
+      regionsByMessage: new Map([['1', [blockRegion]]]),
+      selected: new Set(['1:block:0:0']),
+    })
+    render(<MessageItem message={msg('assistant', [{ _tag: 'text', text: 'hello' }])} />, selected)
+    expect(screen.getByTestId('shake-inline-block').getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('点击 shake 高亮块调用 onToggle', () => {
     const onToggle = vi.fn()
     const sv = shakeValue({

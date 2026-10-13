@@ -241,6 +241,9 @@ export const MessageItem = memo(function MessageItem({
             key={blockKey}
             role="button"
             tabIndex={0}
+            // 选中态此前只落在 data 属性与样式上，读屏完全无从判断这块是否已加入
+            // shake 范围——aria-pressed 把它播报出来，与同仓其它切换组一致。
+            aria-pressed={allSelected}
             onClick={(e) => {
               // 内嵌交互元素（复制按钮/路径链接/工具折叠头）自身处理点击，不触发 shake
               // 选中切换。`[role="button"]` 必须算进来：ToolBlock 折叠头是 div+role

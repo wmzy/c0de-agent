@@ -64,6 +64,18 @@ describe('ToolBlock', () => {
     expect(screen.queryByTestId('tool-body')).toBeNull()
   })
 
+  // 折叠头的展开状态此前只落在 data-expanded 与 ▸/▾ 字形上，读屏无从判断
+  // 这块工具结果（时间线里最高频的折叠控件）是开是关。
+  it('折叠头的 aria-expanded 跟随展开状态翻转', () => {
+    render(<ToolBlock block={toolBlock({ status: 'completed' })} />)
+    const header = screen.getByTestId('tool-header')
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(header)
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(header)
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('running → completed 自动收起一次', () => {
     const { rerender } = render(<ToolBlock block={toolBlock({ status: 'running' })} />)
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
