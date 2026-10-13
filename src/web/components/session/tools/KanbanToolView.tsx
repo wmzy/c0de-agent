@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
+import { ToolTruncated } from '@/components/session/tools/toolTruncated.js'
 
 type KanbanCard = {
   id: string
@@ -126,6 +127,18 @@ export function KanbanToolView({
       <div>
         <span className={opLabel}>kanban/{op}</span>
         <ToolError output={output} status={status} />
+      </div>
+    )
+  }
+
+  // 「输出被截断」不是「没有看板」：超上限的结果以 _tag:'truncated' 返回且没有
+  // metadata，board 只能为 null，整块塌成一行 `kanban/view`——用户看不出看板还有
+  // 几千张卡（executor 只在 success 分支返回 metadata，见 src/tools/executor.ts）。
+  if (output?._tag === 'truncated') {
+    return (
+      <div>
+        <span className={opLabel}>kanban/{op}</span>
+        <ToolTruncated output={output} />
       </div>
     )
   }

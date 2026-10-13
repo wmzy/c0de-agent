@@ -66,6 +66,47 @@ describe('TodoToolView 失败结果', () => {
   })
 })
 
+// 「输出被截断」（_tag:'truncated'）此前也落在空态上：executor 对超上限的成功结果
+// 返回 truncated 且丢掉 metadata（src/tools/executor.ts），而这两个视图只在 success
+// 分支读 metadata——待办被说成 "Todo list is empty."、看板整块塌成一行 op 名，把
+// 「内容太大没随结果返回」讲成「什么都没有」。
+describe('Todo/Kanban 截断结果', () => {
+  it('todo 截断时说明截断并渲染文本，而不是显示待办为空', () => {
+    render(
+      <TodoToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{
+          _tag: 'truncated',
+          output: 'Remaining items (1):\n  - 1-1: 写文档 [pending] (阶段一)',
+          truncated: true,
+          totalLines: 4210,
+        }}
+      />,
+    )
+    expect(screen.queryByText(/Todo list is empty/i)).toBeNull()
+    expect(screen.getByTestId('tool-truncated')).toHaveTextContent('4210')
+    expect(screen.getByTestId('tool-truncated-text')).toHaveTextContent('写文档')
+  })
+
+  it('kanban 截断时说明截断并渲染文本，而不是只剩 op 名', () => {
+    render(
+      <KanbanToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{
+          _tag: 'truncated',
+          output: '## 待办 (2)\n  🔴 [card-1] 修 bug\n  ⚪ [card-2] 写文档',
+          truncated: true,
+          totalLines: 3890,
+        }}
+      />,
+    )
+    expect(screen.getByTestId('tool-truncated')).toHaveTextContent('3890')
+    expect(screen.getByTestId('tool-truncated-text')).toHaveTextContent('修 bug')
+  })
+})
+
 describe('KanbanToolView 失败结果', () => {
   it('move 失败时透出原因，且不渲染看板', () => {
     render(

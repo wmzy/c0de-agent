@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
+import { ToolTruncated } from '@/components/session/tools/toolTruncated.js'
 
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
 
@@ -195,6 +196,19 @@ export function TodoToolView({
       <div>
         <span className={opLabel}>{op}</span>
         <ToolError output={output} status={status} />
+      </div>
+    )
+  }
+
+  // 「输出被截断」不是「待办为空」：超上限的结果以 _tag:'truncated' 返回且没有
+  // metadata，phases 只能为空，Board 会把「内容没随结果返回」说成
+  // "Todo list is empty."——用户以为任务被删了（executor 只在 success 分支返回
+  // metadata，见 src/tools/executor.ts）。
+  if (output?._tag === 'truncated') {
+    return (
+      <div>
+        <span className={opLabel}>{op}</span>
+        <ToolTruncated output={output} />
       </div>
     )
   }
