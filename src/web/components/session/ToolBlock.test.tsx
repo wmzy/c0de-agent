@@ -190,6 +190,51 @@ describe('ToolBlock', () => {
     expect(screen.getByTestId('tool-error')).toHaveTextContent('权限不足')
   })
 
+  // 「伪失败」：todo/kanban 执行器让「用户输入有误」这类操作级失败仍返回 success，
+  // 原因以 `Errors: …` 行随 output 文本返回（口径见 tools/toolError.tsx）。
+  // 此前只按 status 判定折叠：这种结果 status 是 completed，于是默认折叠 + running→
+  // completed 自动收起，唯一说明「这次改动被丢弃」的文字被藏在一行「✓ todo」后面。
+  it('伪失败（completed + Errors: 行）默认展开，直接显示原因', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'todo',
+          input: { op: 'done', task: '不存在的任务' },
+          status: 'completed',
+          output: {
+            _tag: 'success',
+            output: 'Errors: Task "不存在的任务" not found. Remaining: 1.',
+            metadata: {
+              phases: [{ name: '阶段一', tasks: [{ content: '写文档', status: 'pending' }] }],
+            },
+          },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('not found')
+    // 折叠头不能再谎报成功：✓ 说「都做完了」，而这次操作整批被丢弃
+    expect(screen.getByTestId('tool-status').textContent).not.toBe('✓')
+  })
+
+  it('running → 伪失败 completed 不自动收起', () => {
+    const { rerender } = render(
+      <ToolBlock block={toolBlock({ tool: 'todo', input: { op: 'view' }, status: 'running' })} />,
+    )
+    rerender(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'todo',
+          input: { op: 'view' },
+          status: 'completed',
+          output: { _tag: 'success', output: 'Errors: 未找到任务 "x"' },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('未找到任务')
+  })
+
   it('paused 默认展开并说明在等权限确认', () => {
     render(<ToolBlock block={toolBlock({ status: 'paused' })} />)
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')

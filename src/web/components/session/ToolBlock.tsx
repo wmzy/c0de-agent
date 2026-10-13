@@ -10,6 +10,7 @@ import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
 import { ReadToolView } from '@/components/session/tools/ReadToolView.js'
 import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
+import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
 import { WriteToolView } from '@/components/session/tools/WriteToolView.js'
 import type { RenderBlock } from '@/components/session/utils/normalizeParts.js'
 import { toolSummary } from '@/components/session/utils/toolSummary.js'
@@ -92,19 +93,25 @@ export const ToolBlock = memo(function ToolBlock({
 }) {
   const { tool, input, output, status: st } = block
 
+  // 「伪失败」：todo/kanban 执行器把「用户输入有误」这类操作级失败仍写成 success，
+  // 原因以 `Errors: …` 行随 output 文本返回（口径见 tools/toolError.tsx 的
+  // toolInlineErrorText）。这种结果的 status 是 completed，只看 status 会把它当成功
+  // 处理——todo 整批改动被丢弃、看板卡片原地未动，用户默认看到的却是一行「✓ todo」
+  // 折叠头，唯一说明失败的文字藏在展开态后面（92b5647 补上了渲染，没补上可见性）。
+  const inlineError = toolInlineErrorText(output)
   // 只有成功态默认折叠：失败原因（toolError）与「等待权限确认」只存在于
   // 展开态，折叠等于把用户唯一能看到的问题藏成一个 ✗/🔒 图标。
-  const [expanded, setExpanded] = useState(st !== 'completed')
+  const [expanded, setExpanded] = useState(st !== 'completed' || inlineError !== null)
   // 记录是否已自动收起过，避免覆盖用户后续的手动展开
   const [autoCollapsed, setAutoCollapsed] = useState(false)
 
   useEffect(() => {
-    // 从 running 转入成功态时，自动收起一次；error/paused 保持展开
-    if (st === 'completed' && !autoCollapsed) {
+    // 从 running 转入成功态时，自动收起一次；error/paused/伪失败保持展开
+    if (st === 'completed' && inlineError === null && !autoCollapsed) {
       setExpanded(false)
       setAutoCollapsed(true)
     }
-  }, [st, autoCollapsed])
+  }, [st, autoCollapsed, inlineError])
 
   const toggle = () => setExpanded((v) => !v)
   const onHeaderKeyDown = (e: KeyboardEvent) => {
@@ -138,8 +145,13 @@ export const ToolBlock = memo(function ToolBlock({
         onClick={toggle}
         onKeyDown={onHeaderKeyDown}
       >
-        <span className={icon} data-testid="tool-status" data-status={st}>
-          {STATUS_ICON[st]}
+        <span
+          className={icon}
+          data-testid="tool-status"
+          data-status={st}
+          data-severity={inlineError !== null ? 'error' : undefined}
+        >
+          {inlineError !== null && st === 'completed' ? '⚠' : STATUS_ICON[st]}
         </span>
         <span className={summary} data-testid="tool-summary">
           {tool}
