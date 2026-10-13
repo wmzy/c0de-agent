@@ -56,6 +56,21 @@ export function ToolError({ output, status }: { output?: ToolResult; status?: st
 const INLINE_ERROR_LINE = /^Errors?:\s*/
 
 /**
+ * 真正使用「Errors: 行随 success 返回」这个契约的工具。
+ *
+ * 只有 todo（builtin/todo.ts 的 formatSummary）与看板（builtin/kanban.ts 的
+ * formatBoardSummary）这么写。这两个工具的视图只读 metadata、正常路径下从不
+ * 渲染 output 文本，所以这行是失败的**唯一**说明，必须被提升成状态与提示。
+ *
+ * 其余工具的 output 是它们自己的正文：bash 的 `Error: …`、日志文件里的一行
+ * `Error: …` 都是内容而不是「本次执行失败」。此前判定不看工具，于是任何成功
+ * 结果只要正文里出现 `Error:`/`Errors:` 行就被 ToolBlock 标成 ⚠ 并拒绝自动
+ * 收起——一条 exit 0 的 `pytest` 被说成失败，而视图里根本没有渲染这个原因，
+ * 用户只能对着一个没有解释的 ⚠ 排查一个没发生的问题。
+ */
+export const INLINE_ERROR_TOOLS: ReadonlySet<string> = new Set(['todo', 'kanban'])
+
+/**
  * 工具把操作级失败写进 success 结果的 output 文本时的统一口径。
  *
  * todo / kanban 执行器刻意让「用户输入有误」这类操作失败仍返回 success
@@ -65,8 +80,12 @@ const INLINE_ERROR_LINE = /^Errors?:\s*/
  * 用户看到的却与一次成功执行完全同形。
  *
  * 返回 null 表示「没有内嵌失败原因」，供调用方与正常渲染并存。
+ *
+ * 传入 `tool` 时按 INLINE_ERROR_TOOLS 收窄：非契约工具的 output 是正文本身，
+ * 其中的 `Error:` 行不代表这次执行失败。
  */
-export function toolInlineErrorText(output: ToolResult | undefined): string | null {
+export function toolInlineErrorText(output: ToolResult | undefined, tool?: string): string | null {
+  if (tool !== undefined && !INLINE_ERROR_TOOLS.has(tool)) return null
   if (output?._tag !== 'success' || typeof output.output !== 'string') return null
   const text = output.output
     .split('\n')
@@ -79,8 +98,8 @@ export function toolInlineErrorText(output: ToolResult | undefined): string | nu
 }
 
 /** 渲染 success 结果里内嵌的失败原因行；无内嵌原因返回 null。 */
-export function ToolInlineError({ output }: { output?: ToolResult }) {
-  const text = toolInlineErrorText(output)
+export function ToolInlineError({ output, tool }: { output?: ToolResult; tool: string }) {
+  const text = toolInlineErrorText(output, tool)
   if (text === null) return null
   return (
     <div className={err} data-testid="tool-inline-error">

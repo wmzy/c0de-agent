@@ -159,7 +159,7 @@ export function KanbanToolView({
   return (
     <div>
       <span className={opLabel}>kanban/{op}</span>
-      <ToolInlineError output={output} />
+      <ToolInlineError output={output} tool="kanban" />
       {detailText && <div className={detail}>{detailText}</div>}
       {board && <BoardView board={board} />}
     </div>

@@ -98,7 +98,11 @@ export const ToolBlock = memo(function ToolBlock({
   // toolInlineErrorText）。这种结果的 status 是 completed，只看 status 会把它当成功
   // 处理——todo 整批改动被丢弃、看板卡片原地未动，用户默认看到的却是一行「✓ todo」
   // 折叠头，唯一说明失败的文字藏在展开态后面（92b5647 补上了渲染，没补上可见性）。
-  const inlineError = toolInlineErrorText(output)
+  // 判定必须连工具名一起做（白名单见 toolError.tsx 的 INLINE_ERROR_TOOLS）：只有
+  // todo/看板真的用「Errors: 行随 success 返回」这个契约，而渲染内嵌原因的也只有
+  // 这两个视图。判定不带工具名时，一条 exit 0 的 bash（正文里有 `Error:` 行）会被
+  // 标成 ⚠ 并拒绝自动收起，却找不到任何一句解释——用户去排查一个没发生的问题。
+  const inlineError = toolInlineErrorText(output, tool)
   // 只有成功态默认折叠：失败原因（toolError）与「等待权限确认」只存在于
   // 展开态，折叠等于把用户唯一能看到的问题藏成一个 ✗/🔒 图标。
   const [expanded, setExpanded] = useState(st !== 'completed' || inlineError !== null)

@@ -235,6 +235,32 @@ describe('ToolBlock', () => {
     expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('未找到任务')
   })
 
+  // 「Errors:/Error: 行」只是 todo/看板的执行器契约（见 toolError.tsx 的
+  // INLINE_ERROR_TOOLS），而渲染内嵌原因的也只有这两个视图。此前判定不看工具名，
+  // 于是任何成功结果只要正文出现 `Error:` 行就被标成 ⚠ 且拒绝自动收起：一条
+  // exit 0、明明「12 passed」的 bash 被说成失败，展开后却找不到任何一句解释。
+  it('bash 成功但正文含 Error: 行仍按成功呈现，不谎报 ⚠', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'bash',
+          input: { command: 'pytest -q' },
+          status: 'completed',
+          output: {
+            _tag: 'success',
+            output: '12 passed in 3s\nError: connection refused (informational)\n',
+            metadata: { exitCode: 0 },
+          },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-status').textContent).toBe('✓')
+    expect(screen.getByTestId('tool-status').getAttribute('data-severity')).toBeNull()
+    expect(screen.queryByTestId('tool-inline-error')).toBeNull()
+    // 成功就该照常自动收起，不必让用户每次手动折叠这条噪声
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('false')
+  })
+
   it('paused 默认展开并说明在等权限确认', () => {
     render(<ToolBlock block={toolBlock({ status: 'paused' })} />)
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')

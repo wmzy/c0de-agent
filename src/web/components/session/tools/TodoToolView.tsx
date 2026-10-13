@@ -225,7 +225,7 @@ export function TodoToolView({
   return (
     <div>
       <span className={opLabel}>{op}</span>
-      <ToolInlineError output={output} />
+      <ToolInlineError output={output} tool="todo" />
       <Board phases={phases} />
     </div>
   )
