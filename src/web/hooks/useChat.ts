@@ -460,8 +460,29 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     abortRef.current?.abort()
     // 通知后端终止 agent，而不只是中断前端 SSE 读取。
     // 若仅 abort 前端 fetch，后端依赖 stream.onAbort 检测断开，可能有延迟或遗漏。
-    agentAPI.abort(sessionId).catch(() => {})
-    setState((s) => ({ ...s, isStreaming: false }))
+    //
+    // 200 不等于停下来了：aborted:false 表示后端没有可终止的 run；而请求本身失败
+    // （500 / 断网）时后端 agent 照样在跑、继续改文件烧 token。两者此前都被空吞，
+    // 界面却已翻成 isStreaming:false——用户看到「已停止」而 agent 无人看管地继续。
+    // 失败写 abortError（横幅带「重新终止」），与 error 分开：终止失败后
+    // isStreaming 已是 false，挂在 error 上会连带亮出「重试最后一条消息」。
+    setState((s) => ({ ...s, isStreaming: false, abortError: null }))
+    void agentAPI
+      .abort(sessionId)
+      .then((res) => {
+        if (res.aborted) return
+        setState((s) => ({
+          ...s,
+          abortError:
+            '终止没有送达：后端没有进行中的运行（可能已在其他标签页结束）。若界面仍显示运行中，请刷新确认。',
+        }))
+      })
+      .catch((err) => {
+        setState((s) => ({
+          ...s,
+          abortError: `终止请求失败：${err instanceof Error ? err.message : String(err)}。agent 可能仍在后台继续执行工具，请刷新确认后再继续。`,
+        }))
+      })
   }, [sessionId])
 
   /** 追加指令（steer）：注入运行中的 run，并乐观追加 user/steering 消息到时间线

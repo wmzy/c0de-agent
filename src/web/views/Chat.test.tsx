@@ -119,6 +119,29 @@ describe('Chat pause/resume/steer controls', () => {
     expect(screen.queryByTestId('control-error')).toBeNull()
   })
 
+  // 回归：「终止」失败此前被空吞——界面已翻成非运行态、没有任何原因，
+  // 而后端 agent 还在跑。终止失败后又无处可再发一次终止，提示必须自带出口。
+  it('终止失败的原因以 alert 角色独占一条提示，并自带「重新终止」', () => {
+    const h = renderChat({
+      isStreaming: false,
+      abortError: '终止请求失败：boom。agent 可能仍在后台继续执行工具，请刷新确认后再继续。',
+    })
+    const banner = screen.getByTestId('abort-error')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.textContent).toContain('终止请求失败')
+    const retry = screen.getByTestId('abort-retry')
+    expect(banner.contains(retry)).toBe(true)
+    fireEvent.click(retry)
+    expect(h.onAbort).toHaveBeenCalledOnce()
+    // 终止失败 ≠ 发送失败：不许顺手亮出「重试最后一条消息」
+    expect(screen.queryByTestId('send-error')).toBeNull()
+  })
+
+  it('终止成功时不渲染该提示条', () => {
+    renderChat({ isStreaming: false, abortError: null })
+    expect(screen.queryByTestId('abort-error')).toBeNull()
+  })
+
   it('无错误时不渲染提示条', () => {
     renderChat({ isStreaming: false })
     expect(screen.queryByTestId('send-error')).toBeNull()

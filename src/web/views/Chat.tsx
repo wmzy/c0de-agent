@@ -76,6 +76,13 @@ type ChatProps = {
    * ——按钮照常翻转，用户以为对话已停而它仍在消耗 token。
    */
   controlError?: string | null
+  /**
+   * 「终止」没送达的原因：POST /api/chat/abort 失败，或后端回 {aborted:false}。
+   *
+   * 与 controlError（暂停/恢复）分开：终止失败后 isStreaming 已是 false，
+   * 用户唯一的补救是再发一次终止——横幅自带「重新终止」，不让这条提示无出口。
+   */
+  abortError?: string | null
   supportsVision?: boolean
   modelBar?: ReactNode
   /** 底部工具栏右侧的工具开关（启用/禁用工具列表）。 */
@@ -587,6 +594,7 @@ export function Chat({
   onSteer,
   paused = false,
   controlError = null,
+  abortError = null,
   modelBar,
   toolToggle,
   topPanel,
@@ -846,6 +854,20 @@ export function Chat({
       {controlError ? (
         <div className={errorBanner} data-testid="control-error" role="alert">
           <span className={errorBannerText}>{controlError}</span>
+        </div>
+      ) : null}
+      {abortError ? (
+        <div className={errorBanner} data-testid="abort-error" role="alert">
+          <span className={errorBannerText}>{abortError}</span>
+          <button
+            type="button"
+            className={ctlBtn}
+            onClick={onAbort}
+            data-testid="abort-retry"
+            title="再次请求后端终止这次运行"
+          >
+            重新终止
+          </button>
         </div>
       ) : null}
       {error ? (

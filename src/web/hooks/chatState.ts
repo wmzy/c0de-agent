@@ -43,6 +43,10 @@ export type ChatState = {
   trustError: string | null
   /** SSE 流中断（服务重启等）：true 时显示恢复提示。 */
   interrupted: boolean
+  /** 「终止」没送达的原因：POST /api/chat/abort 失败或返回 {aborted:false}。
+   *  与 error 分开——终止失败后 isStreaming 已是 false，落在 error 上会连带亮出
+   *  「重试最后一条消息」（重发而非重停），提示与可做的下一步对不上。 */
+  abortError: string | null
   /** P1：后台附着——本组件实例未发起 SSE 流，但检测到会话有活跃 run
    *  （其他标签页启动 / 挂起期间切换页面后回来）。true 时显示运行态横幅。 */
   attachedRun: boolean
@@ -167,6 +171,7 @@ export const INITIAL: ChatState = {
   trustPending: false,
   trustError: null,
   interrupted: false,
+  abortError: null,
   attachedRun: false,
   compactionNotice: null,
   runPaused: false,

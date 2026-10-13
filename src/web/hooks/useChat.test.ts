@@ -23,6 +23,7 @@ const base: ChatState = {
   trustPending: false,
   trustError: null,
   interrupted: false,
+  abortError: null,
   attachedRun: false,
   compactionNotice: null,
   runPaused: false,
@@ -1231,6 +1232,107 @@ describe('useChat abort', () => {
         }),
       ),
     )
+    // 停下来了：没有待处理的失败原因
+    await waitFor(() => expect(result.current.abortError).toBeNull())
+  })
+
+  // 终止请求失败时后端 agent 仍在跑（继续改文件、烧 token），界面却已翻成「已停止」。
+  // 此前 agentAPI.abort(...).catch(() => {}) 把两种结局一并空吞。
+  const renderStreamingWithAbortResponse = async (abortResponse: {
+    status: number
+    body: unknown
+  }) => {
+    const chunk = new TextEncoder().encode('data: {"_tag":"text_delta","text":"hi"}\n\n')
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return new Promise<{ done: boolean; value: undefined }>(() => {})
+              },
+            }),
+          },
+        }
+      }
+      const text = JSON.stringify(abortResponse.body)
+      return {
+        ok: abortResponse.status < 400,
+        status: abortResponse.status,
+        json: async () => JSON.parse(text),
+        text: async () => text,
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    await act(async () => {
+      result.current.abort()
+    })
+    return { result, fetchMock }
+  }
+
+  it('终止请求 500 → abortError 给出原因，不静默', async () => {
+    const { result } = await renderStreamingWithAbortResponse({
+      status: 500,
+      body: { error: { message: 'boom' } },
+    })
+
+    expect(result.current.isStreaming).toBe(false)
+    await waitFor(() => expect(result.current.abortError).toContain('终止请求失败'))
+    // 关键：不是「看起来停了」，而是明说 agent 可能还在后台跑
+    expect(result.current.abortError).toContain('后台')
+  })
+
+  it('后端回 {aborted:false} → abortError 说明没有可终止的运行', async () => {
+    const { result } = await renderStreamingWithAbortResponse({
+      status: 200,
+      body: { aborted: false },
+    })
+
+    await waitFor(() => expect(result.current.abortError).toContain('终止没有送达'))
+  })
+
+  it('终止成功后 abortError 复位（重试成功不留旧原因）', async () => {
+    const { result } = await renderStreamingWithAbortResponse({
+      status: 500,
+      body: { error: { message: 'boom' } },
+    })
+    await waitFor(() => expect(result.current.abortError).toContain('终止请求失败'))
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const text = JSON.stringify({ aborted: true })
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ aborted: true }),
+          text: async () => text,
+        }
+      }),
+    )
+    await act(async () => {
+      result.current.abort()
+    })
+    await waitFor(() => expect(result.current.abortError).toBeNull())
   })
 })
 
