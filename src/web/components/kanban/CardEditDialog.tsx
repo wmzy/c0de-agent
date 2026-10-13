@@ -378,9 +378,20 @@ export function CardEditDialog({
     saveMutation.mutate()
   }
 
+  // 保存/删除在飞时不许关闭：失败原因（操作失败：…）只画在弹窗内部，Esc/✕/点背景/
+  // 「取消」一旦卸载弹窗，原因随之消失——用户看到「弹窗自己关了」只会读成已保存
+  // （卡片其实还是旧标题），删除路径同理（以为删了、其实没删）。与 BoardConfigDialog
+  // / CommitReviewDialog / AddProjectDialog 同一口径。
+  const busy = saveMutation.isPending || deleteMutation.isPending
+  const dismiss = () => {
+    if (busy) return
+    onClose()
+  }
+
   return (
     <Dialog
-      onClose={onClose}
+      onClose={dismiss}
+      closeDisabled={busy}
       title="编辑卡片"
       width="min(520px, 92vw)"
       testId="card-edit-overlay"
@@ -399,7 +410,8 @@ export function CardEditDialog({
           <div className={actionsRight}>
             <Button
               variant="ghost"
-              onClick={onClose}
+              onClick={dismiss}
+              disabled={busy}
               style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
             >
               取消
@@ -541,7 +553,7 @@ export function CardEditDialog({
       </div>
 
       {(saveMutation.isError || deleteMutation.isError) && (
-        <div style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
+        <div role="alert" style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
           操作失败：
           {(saveMutation.error as Error)?.message ?? (deleteMutation.error as Error)?.message}
         </div>
