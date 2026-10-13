@@ -147,6 +147,18 @@ export function BoardConfigDialog({
     },
   })
 
+  // 请求在飞时不给关闭的出口：Esc / 点背景 / ✕ / 取消都收敛到这里。失败原因
+  // 只渲染在这块面板里（含「该列中仍有 N 张卡片」这类守卫提示）——中途关掉它
+  // 就等于把原因一起关掉。而这次保存承载的是列改名、增删列、标签改名改色、删
+  // 标签：面板一关，用户只能理解成「保存成功」，实际服务端还没答，随后失败也
+  // 无处可报（实测同族的删除项目弹窗：按 Esc 后 500，整页没有任何提示，用户
+  // 看到的是「点了保存，什么也没发生」）。
+  const busy = saveMutation.isPending
+  const dismiss = () => {
+    if (busy) return
+    onClose()
+  }
+
   // 列操作
   const addColumn = () => {
     if (!newColumnName.trim()) return
@@ -186,14 +198,16 @@ export function BoardConfigDialog({
 
   return (
     <Dialog
-      onClose={onClose}
+      onClose={dismiss}
+      closeDisabled={busy}
       title="看板设置"
       width="min(560px, 92vw)"
       testId="board-config-overlay"
       footer={
         <div className={actions}>
           <Button
-            onClick={onClose}
+            onClick={dismiss}
+            disabled={busy}
             style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
             variant="ghost"
           >
@@ -202,7 +216,7 @@ export function BoardConfigDialog({
           <Button
             variant="solid"
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending}
+            disabled={busy}
             style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
           >
             保存
