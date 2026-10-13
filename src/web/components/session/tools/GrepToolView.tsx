@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { MatchSummary } from '@/components/session/tools/matchSummary.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 
 const pre = css`
@@ -51,6 +52,7 @@ export function GrepToolView({
   const showToggle = overflowing && !expanded
   return (
     <div>
+      <MatchSummary output={output} noun="匹配" />
       {text && (
         <div>
           <div ref={ref} className={showToggle ? collapsed : ''}>
