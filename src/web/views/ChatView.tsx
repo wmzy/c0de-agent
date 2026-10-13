@@ -11,6 +11,7 @@ import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { type FailedSend, failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
 import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
+import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
 import { agentAPI } from '@/services/agent.js'
@@ -315,6 +316,9 @@ function DraftSession({
   const qc = useQueryClient()
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
+  // 草稿页此前直接写死 supportsVision（恒 true），非视觉模型的图片入口在
+  // 首条消息就敞着——与 ChatSession 同一条能力查询，这里补齐。
+  const supportsVision = useSupportsVision(projectId, selection)
   const { data: agentsData } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),
@@ -412,7 +416,7 @@ function DraftSession({
         />
       }
       topPanel={<SetupBanner projectId={projectId} />}
-      supportsVision
+      supportsVision={supportsVision}
     />
   )
 }

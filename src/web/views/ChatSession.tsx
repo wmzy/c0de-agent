@@ -29,9 +29,9 @@ import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
 import { useRetryResume } from '@/hooks/useRetryResume.js'
 import { useMessages } from '@/hooks/useSession.js'
 import { useShake } from '@/hooks/useShake.js'
+import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import { agentAPI } from '@/services/agent.js'
-import { providerAPI } from '@/services/provider.js'
 import { sessionAPI } from '@/services/session.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
 import { ChatHistoryError, ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
@@ -575,16 +575,9 @@ export function ChatSession({
       agentName,
       onResumeStart: () => setColdStartInterrupted(false),
     })
-  // 视觉能力按选中模型查询（provider/model capabilities）：不支持视觉的模型隐藏图片入口，
-  // 避免贴图后 provider 直接 400（P3 一致性）。
-  const { data: capabilitiesData } = useQuery({
-    queryKey: ['capabilities', selection.provider, selection.model],
-    queryFn: () => providerAPI.capabilities(selection.provider, selection.model),
-    enabled: Boolean(selection.provider && selection.model),
-    staleTime: 60_000,
-    retry: false,
-  })
-  const supportsVision = capabilitiesData?.supportsVision ?? true
+  // 视觉能力按「项目作用域 + 选中模型」查询（provider/model capabilities）：
+  // 不支持视觉的模型隐藏图片入口，避免贴图后 provider 直接 400（P3 一致性）。
+  const supportsVision = useSupportsVision(projectId, selection)
 
   // 失败原因取服务端 message（APIError）或 Error.message，与侧栏会话树失败提示同口径。
   const historyErrorMessage =
