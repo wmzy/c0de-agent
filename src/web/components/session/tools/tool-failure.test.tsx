@@ -39,6 +39,30 @@ describe('TodoToolView 失败结果', () => {
     expect(screen.queryByTestId('tool-error')).toBeNull()
     expect(screen.getByText(/Todo list is empty/i)).toBeInTheDocument()
   })
+
+  // 回归：todo 执行器刻意让操作级失败仍返回 _tag:'success'（不污染工具指标、
+  // 让模型读得见原因好重试），失败原因以 `Errors: …` 行随 output 返回，且整批
+  // 改动被丢弃（metadata.phases 回到执行前）。视图此前只读 metadata、从不渲染
+  // output 文本，于是这次失败被渲染成一个 ✓ 完成的折叠行：用户看到
+  // 「todo · done ✓」与原封不动的任务列表，无从分辨操作到底有没有生效。
+  it('成功结果里内嵌的 Errors 行必须透出，而不是显示成一次成功的 done', () => {
+    render(
+      <TodoToolView
+        input={{ op: 'done', task: '不存在的任务' }}
+        status="completed"
+        output={{
+          _tag: 'success',
+          output: 'Errors: Task "不存在的任务" not found.\nRemaining: 1.',
+          metadata: {
+            phases: [{ name: '阶段一', tasks: [{ content: '写文档', status: 'pending' }] }],
+          },
+        }}
+      />,
+    )
+    expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('not found')
+    // 列表仍按执行后的真实状态渲染（这里没生效），但原因不再被吞
+    expect(screen.getByText('写文档')).toBeInTheDocument()
+  })
 })
 
 describe('KanbanToolView 失败结果', () => {
@@ -95,6 +119,53 @@ describe('KanbanToolView 失败结果', () => {
       />,
     )
     expect(screen.getByTestId('tool-error')).toHaveTextContent('board locked')
+  })
+
+  // 同 todo：kanban 执行器也把操作级失败写成 success + output 首行 `Errors: …`。
+  // 视图此前只读 metadata.board，于是「移动到不存在的列」渲染成一个 ✓ 完成的
+  // 行 + 一句「移动到: col-9」意图 + 原封不动的看板，看起来像移动成功了。
+  it('成功结果里内嵌的 Errors 行必须透出，而不是显示成一次成功的 move', () => {
+    render(
+      <KanbanToolView
+        input={{ op: 'move', id: 'card-1', columnId: 'col-9' }}
+        status="completed"
+        output={{
+          _tag: 'success',
+          output: 'Errors: column col-9 does not exist\n\n## 待办 (1)\nTotal: 1 card(s).',
+          metadata: {
+            board: {
+              columns: [{ id: 'todo', name: '待办' }],
+              cards: [
+                {
+                  id: 'card-1',
+                  title: '写文档',
+                  columnId: 'todo',
+                  priority: 'high',
+                  description: null,
+                },
+              ],
+            },
+          },
+        }}
+      />,
+    )
+    expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('column col-9 does not exist')
+  })
+
+  it('没有内嵌 Errors 行的正常成功结果不渲染失败块', () => {
+    render(
+      <KanbanToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{
+          _tag: 'success',
+          output: '## 待办 (0)\nTotal: 0 card(s).',
+          metadata: { board: { columns: [], cards: [] } },
+        }}
+      />,
+    )
+    expect(screen.queryByTestId('tool-inline-error')).toBeNull()
+    expect(screen.queryByTestId('tool-error')).toBeNull()
   })
 })
 

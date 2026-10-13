@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { ToolError } from '@/components/session/tools/toolError.js'
+import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
 
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
 
@@ -211,6 +211,7 @@ export function TodoToolView({
   return (
     <div>
       <span className={opLabel}>{op}</span>
+      <ToolInlineError output={output} />
       <Board phases={phases} />
     </div>
   )

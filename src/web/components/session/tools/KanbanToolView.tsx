@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { ToolError } from '@/components/session/tools/toolError.js'
+import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
 
 type KanbanCard = {
   id: string
@@ -146,6 +146,7 @@ export function KanbanToolView({
   return (
     <div>
       <span className={opLabel}>kanban/{op}</span>
+      <ToolInlineError output={output} />
       {detailText && <div className={detail}>{detailText}</div>}
       {board && <BoardView board={board} />}
     </div>

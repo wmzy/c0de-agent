@@ -44,3 +44,39 @@ export function ToolError({ output, status }: { output?: ToolResult; status?: st
     </div>
   )
 }
+
+const INLINE_ERROR_LINE = /^Errors?:\s*/
+
+/**
+ * 工具把操作级失败写进 success 结果的 output 文本时的统一口径。
+ *
+ * todo / kanban 执行器刻意让「用户输入有误」这类操作失败仍返回 success
+ * （不污染工具指标、让模型读得见原因好重试），失败原因以 `Errors: …` 行随
+ * output 一起返回。两个视图此前只读 metadata、从不渲染 output 文本，于是这次
+ * 失败被渲染成一个 ✓ 完成的折叠行：todo 侧整批改动被丢弃、看板侧卡片原地未动，
+ * 用户看到的却与一次成功执行完全同形。
+ *
+ * 返回 null 表示「没有内嵌失败原因」，供调用方与正常渲染并存。
+ */
+export function toolInlineErrorText(output: ToolResult | undefined): string | null {
+  if (output?._tag !== 'success' || typeof output.output !== 'string') return null
+  const text = output.output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => INLINE_ERROR_LINE.test(line))
+    .map((line) => line.replace(INLINE_ERROR_LINE, '').trim())
+    .filter(Boolean)
+    .join('\n')
+  return text || null
+}
+
+/** 渲染 success 结果里内嵌的失败原因行；无内嵌原因返回 null。 */
+export function ToolInlineError({ output }: { output?: ToolResult }) {
+  const text = toolInlineErrorText(output)
+  if (text === null) return null
+  return (
+    <div className={err} data-testid="tool-inline-error">
+      {text}
+    </div>
+  )
+}
