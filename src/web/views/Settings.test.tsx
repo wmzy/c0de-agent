@@ -2614,6 +2614,55 @@ describe('Settings — 撤销设备失败', () => {
 })
 
 /**
+ * 已授权设备列表读失败必须给出原因与重试。
+ *
+ * 缺陷：isError 分支只渲染一句灰字「获取已授权设备失败（认证可能未启用）」——
+ * 后端原因（500 / 超时 / 无权）被丢掉，没有任何重试入口，还把一次读取失败断言成
+ * 「认证可能未启用」（而认证明明开着：用户正站在「已授权设备」这一段里）。同一次
+ * 读取的设备列表与「撤销」入口一起静默失效。与 UsagePanel / WorkflowsPanel 的
+ * 「原因 + 重试」同口径。
+ */
+describe('Settings — 已授权设备读取失败', () => {
+  it('给出后端原因与重试入口，且不再猜「认证可能未启用」', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { authAPI } = await import('../services/auth.js')
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }),
+    )
+    ;(authAPI.listDevices as Mock).mockRejectedValue(new Error('devices boom'))
+
+    renderSettings()
+
+    const box = await screen.findByTestId('device-list-error')
+    expect(box.getAttribute('role')).toBe('alert')
+    expect(box.textContent).toContain('devices boom')
+    expect(screen.queryByText(/认证可能未启用/)).toBeNull()
+    expect(screen.getByTestId('device-list-retry')).toBeTruthy()
+  })
+
+  it('点重试重新拉取，成功后渲染设备列表', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { authAPI } = await import('../services/auth.js')
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }),
+    )
+    ;(authAPI.listDevices as Mock)
+      .mockRejectedValueOnce(new Error('devices boom'))
+      .mockResolvedValue({
+        devices: [{ id: 'dev-1', name: '我的笔记本', createdAt: '2024-01-01T00:00:00.000Z' }],
+      })
+
+    renderSettings()
+
+    fireEvent.click(await screen.findByTestId('device-list-retry'))
+
+    const list = await screen.findByTestId('device-list')
+    expect(list.textContent).toContain('我的笔记本')
+    expect(screen.queryByTestId('device-list-error')).toBeNull()
+  })
+})
+
+/**
  * 回归：工具条右侧的「目标：…」是唯一显式声明「这次保存写到哪个文件」的提示。
  * 此前它的渲染条件只判 projectId && resp.projectDir，与作用域无关——切到
  * 「全局配置（~/.c0de/config.json）」后仍标「目标：<项目目录>」，而保存其实
