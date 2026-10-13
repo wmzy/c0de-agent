@@ -6,6 +6,7 @@
 
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { BashToolView } from '@/components/session/tools/BashToolView.js'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
 import { GlobToolView } from '@/components/session/tools/GlobToolView.js'
 import { GrepToolView } from '@/components/session/tools/GrepToolView.js'
@@ -308,5 +309,59 @@ describe('Grep/Glob/Fallback/Task 失败结果', () => {
     )
     expect(screen.getByTestId('tool-error')).toHaveTextContent(/没有返回错误信息/)
     expect(screen.queryByTestId('task-output')).toBeNull()
+  })
+})
+
+// BashToolView 是全仓唯一没接 toolError 的工具视图：它把 _tag==='error' 的
+// output.error 塞进渲染成功 stdout 的那个中性灰 <pre data-testid="bash-output">。
+// 于是 `Command failed with exit code: 127` / `Command timeout after 30000ms` /
+// `Failed to spawn command: …` 与命令的正常输出完全同形，用户读不出这是失败原因；
+// error 为空白串时 outText===''，整块一个字都不渲染，ToolBlock 只剩一个 ✗ 字形。
+describe('BashToolView 失败结果', () => {
+  it('失败透出原因，不再与成功 stdout 同形', () => {
+    render(
+      <BashToolView
+        input={{ command: 'bad' }}
+        status="error"
+        output={{ _tag: 'error', error: 'Command failed with exit code: 127\nboom' }}
+      />,
+    )
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('127')
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('boom')
+    // 关键判据：失败不再落进 `bash-output`——修前这条断言取到的是灰 <pre>，与成功无差。
+    expect(screen.queryByTestId('bash-output')).toBeNull()
+    // 命令块保留，用户要看清是哪个命令挂了。
+    expect(screen.getByTestId('bash-command')).toBeInTheDocument()
+  })
+
+  it('error 为空串时仍给出占位说明，而不是整块空白', () => {
+    render(
+      <BashToolView
+        input={{ command: 'bad' }}
+        status="error"
+        output={{ _tag: 'error', error: '' }}
+      />,
+    )
+    expect(screen.getByTestId('tool-error')).toHaveTextContent(/没有返回错误信息/)
+    expect(screen.queryByTestId('bash-output')).toBeNull()
+  })
+
+  it('status=error 但 output 缺失时不再静默渲染为空', () => {
+    render(<BashToolView input={{ command: 'bad' }} status="error" />)
+    expect(screen.getByTestId('tool-error')).toHaveTextContent(/没有返回错误信息/)
+    expect(screen.queryByTestId('bash-output')).toBeNull()
+  })
+
+  it('成功仍走 bash-output，不渲染失败块', () => {
+    render(
+      <BashToolView
+        input={{ command: 'echo hi' }}
+        status="completed"
+        output={{ _tag: 'success', output: 'hi', metadata: { exitCode: 0 } }}
+      />,
+    )
+    expect(screen.getByTestId('bash-output')).toHaveTextContent('hi')
+    expect(screen.getByTestId('bash-exit')).toHaveTextContent('0')
+    expect(screen.queryByTestId('tool-error')).toBeNull()
   })
 })
