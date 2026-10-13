@@ -15,6 +15,14 @@ const err = css`
   border-radius: 4px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  /* 必须限高：失败恰恰是最长的那批文本。executor 只对 _tag:'success' 做
+     truncateOutput，error 原样透传；bash 又把整段 stdout+stderr（每路 256KB）
+     塞进 error 字符串——一次失败的构建/测试就是几十万字符的红色块。此前这里
+     没有上限，而同一条消息的成功输出是 400px + 滚动（见 BashToolView 的 out）：
+     实测同一份 300000 字符 payload，成功块渲染 400px，失败块渲染 48002px，
+     在 768px 视口里把整条时间线顶出去且无处可滚。 */
+  max-height: 400px;
+  overflow: auto;
 `
 
 const NO_DETAIL = '工具执行失败，但没有返回错误信息。'
