@@ -3,7 +3,7 @@
 // 从 ChatSession 拆出——恢复/重试共用同一套 prompt 定位与重发编排。
 import type { Message } from '@shared/types/message.js'
 import type { QueryClient } from '@tanstack/react-query'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatActions, ChatState } from '@/hooks/chatState.js'
 import { sessionAPI } from '@/services/session.js'
 
@@ -46,6 +46,15 @@ export function useRetryResume({
   // 请求失败时若不留原因，用户看到的是「点了恢复对话，什么都没发生」，
   // 而且横幅已经消失、无法再点一次（此前 reject 直接穿透成 unhandled rejection）。
   const [resendError, setResendError] = useState<string | null>(null)
+
+  // 会话级状态：ChatSession 在会话间被路由复用，useState 不会因 sessionId 变化重置。
+  // 不重置的话，上一条会话「恢复对话失败：…」的红条会原样挂在下一条会话顶上——那条
+  // 会话什么都没恢复过，用户以为它也失败了。在途的重发（resendRef/resendPending）不动：
+  // 它属于旧会话，重置反而会放进第二次同会话重发。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    setResendError(null)
+  }, [sessionId])
 
   const runResend = useCallback(async (label: string, run: () => Promise<void>) => {
     if (resendRef.current) return

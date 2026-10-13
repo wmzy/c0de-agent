@@ -269,6 +269,15 @@ export function ChatSession({
         (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e)),
       ),
   })
+  // 孤儿横幅与归属失败原因都是会话级状态，而 ChatSession 在会话之间被路由复用
+  // （route.path 不变，子树不重建）：打开一个未归属项目的会话后再点侧栏里的正常
+  // 会话，横幅原样留在顶上（文案还改成「无法执行工具」），而这条会话的工具一切正常；
+  // 唯一的按钮指向一条已经归属好的会话，点下去是一次无意义的重新归属。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    setOrphanNotice(false)
+    setRebindError(null)
+  }, [sessionId])
   useEffect(() => {
     if (!sessionMeta) return
     if (sessionMeta.projectId && sessionMeta.projectId !== projectId) {

@@ -87,6 +87,36 @@ describe('useShake 失败反馈', () => {
     expect(result.current.shakeSelected.has('r1')).toBe(true)
   })
 
+  // ChatSession 在会话之间被路由复用，useState 不会随 sessionId 重置。上一条会话
+  // 打开的 Shake（模式 + 区域 + 勾选）会整块跟到下一条会话：界面上写着「⚡ Shake 模式
+  // 已选 0/1」而这条会话一个高亮都没有，点「提交 Shake」还会把上一条的 region id
+  // POST 到这条会话的 /shake/apply（实测 400「消息已变化，请重新预览」并继续赖着）。
+  it('切换会话时清掉上一条会话的 Shake 状态', async () => {
+    vi.mocked(sessionAPI.shakePreview).mockResolvedValue({ regions: [region] })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) => useShake(sessionId, [], qc),
+      {
+        initialProps: { sessionId: 's1' },
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+        ),
+      },
+    )
+    await act(async () => {
+      await result.current.handleShakeOpen()
+    })
+    expect(result.current.shakeMode).toBe(true)
+    expect(result.current.shakeRegions).toHaveLength(1)
+
+    rerender({ sessionId: 's2' })
+
+    expect(result.current.shakeMode).toBe(false)
+    expect(result.current.shakeRegions).toHaveLength(0)
+    expect(result.current.shakeSelected.size).toBe(0)
+    expect(result.current.shakeError).toBeNull()
+  })
+
   it('退出 Shake 模式会清掉上一次的失败原因', async () => {
     vi.mocked(sessionAPI.shakePreview).mockRejectedValue(new Error('boom'))
     const { result } = setup()

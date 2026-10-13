@@ -4,7 +4,7 @@
  * （用户会以为上下文被清空，或对着不存在的上下文继续发消息）。
  */
 
-import { createRoutes, MemoryRouter, View } from '@native-router/react'
+import { createRoutes, MemoryRouter, TypedLink, useMatched, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
@@ -13,6 +13,7 @@ import { draftStorageKey } from '@/composer/draft.js'
 import { ConfigProvider } from '@/contexts/ConfigContext.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 import { failedSendReason } from '@/hooks/failedSendReason.js'
+import type { AppPaths } from '@/routes.js'
 import { sessionAPI } from '@/services/session.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 import { ChatSession } from '@/views/ChatSession.js'
@@ -162,9 +163,9 @@ vi.mock('@/services/permission.js', () => ({
 
 const refetch = vi.fn().mockResolvedValue({ data: [] })
 
-async function renderSession() {
+async function renderSession(ui: ReactNode = <ChatSession projectId="p1" sessionId="s1" />) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  currentUi = <ChatSession projectId="p1" sessionId="s1" />
+  currentUi = ui
   const view = render(
     <MemoryRouter routes={testRoutes} initialEntries={['/projects/p1/sessions/s1']}>
       <QueryClientProvider client={qc}>
@@ -399,6 +400,53 @@ describe('ChatSession — 孤儿会话归属', () => {
     // 失败不再把用户永久挡在按钮外：横幅留在原地，可以再试一次
     await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false))
     expect(screen.getByTestId('orphan-session-banner')).toBeTruthy()
+  })
+
+  // ChatSession 在 /projects/:p/sessions/:a → :b 之间被路由复用（@native-router 的
+  // 路由级 key = `index:path`，两条会话路由 path 相同 → 子树不重建），useState 只在
+  // 首次挂载初始化。于是打开一个未归属项目的会话后再点侧栏里的正常会话，孤儿横幅
+  // 原样留在顶上（文案还改成「无法执行工具」），而这条会话的工具一切正常；唯一的
+  // 按钮指向一条已经归属好的会话，点下去是一次无意义的重复归属。
+  it('从孤儿会话切到正常会话后，横幅不再跟过来', async () => {
+    vi.mocked(sessionAPI.get).mockImplementation(
+      async (id: string) =>
+        ({ id, projectId: id === 's1' ? null : 'p1', metadata: {} }) as Awaited<
+          ReturnType<typeof sessionAPI.get>
+        >,
+    )
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    // 会话来自路由参数（生产里是 ChatPage 把匹配到的参数传下来），切会话=换路由
+    function SessionFromRoute() {
+      const { params } = useMatched()
+      return (
+        <ChatSession projectId={params.projectId ?? 'p1'} sessionId={params.sessionId ?? 's1'} />
+      )
+    }
+    const ui = (
+      <>
+        <SessionFromRoute />
+        <TypedLink<AppPaths>
+          to="/projects/:projectId/sessions/:sessionId"
+          params={{ projectId: 'p1', sessionId: 's2' }}
+          data-testid="to-s2"
+        >
+          切会话
+        </TypedLink>
+      </>
+    )
+    await renderSession(ui)
+    await screen.findByTestId('orphan-session-banner')
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+
+    await waitFor(() => expect(sessionAPI.get).toHaveBeenCalledWith('s2'))
+    await waitFor(() => expect(screen.queryByTestId('orphan-session-banner')).toBeNull())
   })
 
   it('归属成功后退掉错误并收起横幅', async () => {

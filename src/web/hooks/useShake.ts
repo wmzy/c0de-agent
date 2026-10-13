@@ -4,7 +4,7 @@
 
 import type { QueryClient } from '@tanstack/react-query'
 import { useMutation } from '@tanstack/react-query'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ShakeModeValue } from '@/components/session/ShakeContext.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Message, ShakeRegionView } from '@/types/index.js'
@@ -68,6 +68,20 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
       return next
     })
   }, [])
+
+  // 会话级状态必须跟着会话走。ChatSession 在 /projects/:p/sessions/:a → :b 之间被
+  // 路由复用（route.path 不变，子树不重建），useState 只在首次挂载初始化一次：
+  // 上一条会话打开的 Shake 模式、区域、勾选整块跟到下一条会话。界面上是
+  // 「⚡ Shake 模式 · 已选 0/1」而这条会话一个高亮都没有，点「提交 Shake」还会把
+  // A 的 region id POST 到 B 的 /shake/apply（实测 400「消息已变化，请重新预览」，
+  // 工具栏继续赖着不走）——用户以为 Shake 是这条会话开着的。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    setShakeMode(false)
+    setShakeRegions([])
+    setShakeSelected(new Set())
+    setShakeError(null)
+  }, [sessionId])
 
   const regionsByMessage = useMemo(() => {
     // tool_result 在 DB 中是独立 role:'tool' 消息，前端 mergeToolMessages 合并进 assistant

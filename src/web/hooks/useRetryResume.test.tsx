@@ -190,6 +190,34 @@ describe('useRetryResume 失败反馈', () => {
     expect(view.result.current.resendError).toBeNull()
   })
 
+  // ChatSession 在会话之间被路由复用，useState 不随 sessionId 重置：上一条会话
+  // 「恢复对话失败：…」的红条会原样挂在下一条会话顶上，而那条会话什么都没恢复过。
+  it('切换会话时清掉上一条会话的失败原因', async () => {
+    const chat = fakeChat()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) =>
+        useRetryResume({
+          sessionId,
+          chat,
+          qc,
+          selection: { provider: 'openai', model: 'gpt-4o' },
+          agentName: 'primary',
+          onResumeStart: vi.fn(),
+        }),
+      { initialProps: { sessionId: 's1' } },
+    )
+    vi.mocked(sessionAPI.messages).mockRejectedValueOnce(new Error('network down'))
+    await act(async () => {
+      await result.current.handleRetryLast()
+    })
+    expect(result.current.resendError).toContain('network down')
+
+    rerender({ sessionId: 's2' })
+
+    expect(result.current.resendError).toBeNull()
+  })
+
   it('可手动关闭错误提示', async () => {
     vi.mocked(sessionAPI.messages).mockRejectedValue(new Error('boom'))
     const { view } = setup()
