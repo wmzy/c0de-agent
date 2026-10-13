@@ -230,10 +230,25 @@ export function ChatSession({
     useComposerDefaults(projectId)
   // P2-3：会话归属校验——URL 与会话所属项目不一致时跳转到正确项目；
   // 会话无归属（孤儿）时提供归属到当前项目的入口。
-  const { data: sessionMeta } = useQuery({
+  // 读失败必须说出来：这条 query 的 data 同时供三处消费——归属重定向、孤儿横幅
+  // （孤儿会话唯一的自救入口）、unfinishedRange（中断前半截轮次置灰）。此前只取
+  // data，retry 耗尽后三者一起静默失效：URL 与会话真实归属不一致时不再跳转，用户
+  // 在错误项目的上下文里发消息（工具按另一个项目的目录跑）；孤儿会话只留下一个
+  // 能打字、每条工具调用都失败的页面且零解释；被中断的半截输出不再置灰，被当成
+  // 正常结果读完。与 llm-details 同口径处理。
+  const {
+    data: sessionMeta,
+    isError: sessionMetaFailed,
+    error: sessionMetaError,
+    isFetching: sessionMetaFetching,
+    refetch: refetchSessionMeta,
+  } = useQuery({
     queryKey: ['session', sessionId, 'meta'],
     queryFn: () => sessionAPI.get(sessionId),
   })
+  const sessionMetaErrorMessage =
+    (sessionMetaError as { message?: string } | null)?.message ??
+    (sessionMetaError instanceof Error ? sessionMetaError.message : null)
   const [orphanNotice, setOrphanNotice] = useState(false)
   // 归属失败原因。此前该 mutation 只有 onSuccess：POST /rebind 返回 500 /
   // 项目已被删 / 服务重启时，按钮从 pending 恢复可点、横幅纹丝不动、页面零文字，
@@ -659,6 +674,22 @@ export function ChatSession({
         topPanel={
           <>
             <SetupBanner projectId={projectId} />
+            {sessionMetaFailed ? (
+              <div className={interruptBanner} role="alert" data-testid="session-meta-error">
+                <span>
+                  会话信息读取失败，无法校验会话归属、孤儿归属入口与中断状态：
+                  {sessionMetaErrorMessage || '未知原因'}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void refetchSessionMeta()}
+                  disabled={sessionMetaFetching}
+                  data-testid="session-meta-retry"
+                >
+                  重试
+                </Button>
+              </div>
+            ) : null}
             {llmDetailsFailed ? (
               <div className={interruptBanner} role="alert" data-testid="llm-details-error">
                 <span>

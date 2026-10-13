@@ -625,3 +625,62 @@ describe('ChatSession — 冷启动状态检查失败', () => {
     expect(screen.queryByTestId('cold-start-error')).toBeNull()
   })
 })
+
+/**
+ * 会话信息（GET /api/sessions/:id）读取失败必须显式报错 + 可重试。
+ * 这条 query 的 data 同时供三处消费：归属重定向（URL 项目与真实归属不一致时跳转）、
+ * 孤儿会话横幅（孤儿会话唯一的自救入口）、unfinishedRange（中断前半截轮次置灰）。
+ * 只取 data 时，retry 耗尽后三者一起静默失效：用户在错误项目的上下文里发消息、
+ * 孤儿会话只留下一个能打字但工具全失败的页面且零解释、被中断的半截输出不再置灰，
+ * 页面上没有任何一处 role="alert"。
+ */
+describe('ChatSession — 会话信息读取失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+  })
+
+  it('失败时说明原因并给重试，而不是静默失去归属校验与孤儿入口', async () => {
+    vi.mocked(sessionAPI.get).mockRejectedValue({ message: '会话表不可用' })
+    await renderSession()
+
+    await waitFor(() => expect(screen.getByTestId('session-meta-error')).toBeInTheDocument())
+    expect(screen.getByTestId('session-meta-error').textContent).toContain('会话表不可用')
+    expect(screen.getByTestId('session-meta-retry')).toBeInTheDocument()
+  })
+
+  it('点击重试重新拉取会话信息', async () => {
+    vi.mocked(sessionAPI.get).mockRejectedValue({ message: '会话表不可用' })
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('session-meta-retry')).toBeInTheDocument())
+    const callsBeforeRetry = vi.mocked(sessionAPI.get).mock.calls.length
+
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: 'p1',
+      metadata: {},
+    } as never)
+    fireEvent.click(screen.getByTestId('session-meta-retry'))
+
+    await waitFor(() =>
+      expect(vi.mocked(sessionAPI.get).mock.calls.length).toBeGreaterThan(callsBeforeRetry),
+    )
+    await waitFor(() => expect(screen.queryByTestId('session-meta-error')).toBeNull())
+  })
+
+  it('读取成功时不渲染该失败行', async () => {
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: 'p1',
+      metadata: {},
+    } as never)
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
+    expect(screen.queryByTestId('session-meta-error')).toBeNull()
+  })
+})
