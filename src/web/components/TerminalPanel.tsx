@@ -13,6 +13,19 @@ interface TerminalPanelProps {
   cwd?: string
   /** 当前项目 id：自动创建标记按项目重置（见下），切项目后面板打开时同样能建首个终端。 */
   projectId: string
+  /**
+   * cwd 拿不到时的失败原因（读取项目信息失败）与重试入口。
+   *
+   * cwd 为 undefined 有两种截然不同的来路：「项目信息还在加载」与「读取失败」，
+   * 此前共用同一种表现——面板不自动建首个终端、空态里的「新建终端」按钮随之消失
+   * （按 cwd 门控），只剩工具栏那个不显眼的 +。读失败时用户看到的是一个没有任何
+   * 说明的空面板：既不知道「项目目录没读到」，也没有重试入口。
+   *
+   * 刻意不禁用 + / 分屏：服务端在没拿到 cwd 时会按 projectId 回落到项目 worktree
+   * （src/server/routes/terminal.ts 的 P2-13），它们仍能建出正确目录的终端——那
+   * 正是失败时唯一可用的自救入口，堵掉它只会把「点一下就好」变成「无法操作」。
+   */
+  cwdLoadError?: { message: string; retry: () => void } | null
 }
 
 // 面板外层：flex-shrink 允许在视口高度不足时收缩（正常 900px 视口无赤字、不影响布局），
@@ -321,7 +334,7 @@ function shellLabel(shell: string): string {
  * - 高度拖拽：上拉/下拉调整，记忆到 localStorage
  * - 隐藏时整块 display:none（仅显示拖拽条），避免隐藏控件排布到视口外仍可聚焦
  */
-export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) {
+export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: TerminalPanelProps) {
   const {
     sessions,
     tabs,
@@ -741,6 +754,24 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
             ▾
           </button>
         </div>
+        {/* 项目信息读取失败：面板拿不到 cwd，于是既不自动建首个终端、空态里的
+            「新建终端」按钮也随之消失（按 cwd 门控），用户落在一个没有出口的空面板上。
+            原因与重试必须落在面板里——失败时唯一还能用的工具栏 + 仍然保留（服务端会按
+            projectId 落到项目 worktree），但「为什么这里空着」只有这里能回答。 */}
+        {cwdLoadError && (
+          <div className={createFailRowStyle} role="alert" data-testid="terminal-cwd-error">
+            <span>{`无法读取项目目录：${cwdLoadError.message}`}</span>
+            <button
+              type="button"
+              className={createFailDismissStyle}
+              onClick={cwdLoadError.retry}
+              data-testid="terminal-cwd-retry"
+              title="重试读取项目目录"
+            >
+              重试
+            </button>
+          </div>
+        )}
         {/* 新建/分屏失败：原因必须落在面板里。放在工具栏下、渲染区上，
             已有终端时（分屏失败）同样可见——此前两者都只有一次静默的点击。 */}
         {createError && (

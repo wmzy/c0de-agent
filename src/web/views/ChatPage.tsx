@@ -1,6 +1,6 @@
 import { useMatched, useRouter } from '@native-router/react'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type SidebarTab, SidebarTabs } from '@/components/SidebarTabs.js'
 import { TerminalPanel } from '@/components/TerminalPanel.js'
 import { TopBar } from '@/components/TopBar.js'
@@ -22,6 +22,11 @@ import { Layout } from '@/views/Layout.js'
 import { NotFound } from '@/views/NotFound.js'
 import { SessionList } from '@/views/SessionList.js'
 
+/** 失败原因取服务端 message（APIError）或 Error.message，与本仓其余提示同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
 /**
  * 项目会话页：项目 id 来自路由（顶级维度），会话 id 可选。
  * 选会话 / 新建会话均导航到项目作用域路径，保证 URL 完整表达上下文。
@@ -36,7 +41,17 @@ export function ChatPage() {
   const terminal = useTerminal(projectId ?? '')
 
   // 获取项目信息（worktree 用于终端默认目录）
-  const { data: project } = useQuery({
+  //
+  // 读取失败此前只表现为 project=undefined，与「还在加载」同形，页面上没有任何
+  // 区别：终端面板拿不到 cwd，于是不自动建首个终端、空态里的「新建终端」按钮随之
+  // 消失（按 cwd 门控），用户落在一个没有出口的空面板上，既不知道「项目目录没读到」
+  // 也没有重试入口。失败必须说出来，并把重试交到面板里。
+  const {
+    data: project,
+    isError: projectFailed,
+    error: projectError,
+    refetch: refetchProject,
+  } = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => {
       // enabled: !!projectId 保证仅当 projectId 为真值时执行
@@ -45,6 +60,13 @@ export function ChatPage() {
     },
     enabled: !!projectId,
   })
+  const cwdLoadError = useMemo(
+    () =>
+      projectFailed
+        ? { message: messageOf(projectError), retry: () => void refetchProject() }
+        : null,
+    [projectFailed, projectError, refetchProject],
+  )
 
   // Ctrl+` 切换终端面板显示/隐藏
   useEffect(() => {
@@ -165,7 +187,12 @@ export function ChatPage() {
           }
           panel={selectedFile ? <FilePreview projectId={projectId} path={selectedFile} /> : null}
           terminal={
-            <TerminalPanel terminal={terminal} cwd={project?.worktree} projectId={projectId} />
+            <TerminalPanel
+              terminal={terminal}
+              cwd={project?.worktree}
+              projectId={projectId}
+              cwdLoadError={cwdLoadError}
+            />
           }
         />
       </FileSelectionContext.Provider>

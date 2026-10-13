@@ -5,12 +5,30 @@ import { createRoutes, MemoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { projectAPI } from '@/services/project.js'
 import { ChatPage } from '@/views/ChatPage.js'
 
 // ---- mocks ----
 // 同级重组件与本用例要观察的契约无关，全部换成桩；Layout 用真件（预览面板的落点）。
 vi.mock('@/components/TopBar.js', () => ({ TopBar: () => null }))
-vi.mock('@/components/TerminalPanel.js', () => ({ TerminalPanel: () => null }))
+vi.mock('@/components/TerminalPanel.js', () => ({
+  TerminalPanel: ({ cwd, cwdLoadError }: { cwd?: string; cwdLoadError?: unknown }) => (
+    <div>
+      <span data-testid="terminal-cwd">{cwd ?? '(无)'}</span>
+      {cwdLoadError ? (
+        <button
+          type="button"
+          data-testid="terminal-cwd-retry"
+          onClick={() => {
+            ;(cwdLoadError as { retry: () => void }).retry()
+          }}
+        >
+          retry
+        </button>
+      ) : null}
+    </div>
+  ),
+}))
 vi.mock('@/views/ChatView.js', () => ({ ChatView: () => null }))
 vi.mock('@/views/SessionList.js', () => ({ SessionList: () => null }))
 vi.mock('@/views/FilePreview.js', () => ({
@@ -19,9 +37,32 @@ vi.mock('@/views/FilePreview.js', () => ({
 vi.mock('@/hooks/useTerminal.js', () => ({
   useTerminal: () => ({ open: false, toggleOpen: vi.fn() }),
 }))
+/** 完整的 Project 形状（新增字段时补齐，勿用字面量残缺对象冒充）。 */
+function makeProject(id = 'p1') {
+  return {
+    id,
+    name: `项目 ${id}`,
+    worktree: '/tmp/demo',
+    vcs: 'git' as const,
+    gitRemote: null,
+    gitBranch: 'main',
+    createdAt: 1,
+    updatedAt: 1,
+  }
+}
+
 vi.mock('@/services/project.js', () => ({
   projectAPI: {
-    get: vi.fn(async (id: string) => ({ id, name: `项目 ${id}`, worktree: '/tmp/demo' })),
+    get: vi.fn(async (id: string) => ({
+      id,
+      name: `项目 ${id}`,
+      worktree: '/tmp/demo',
+      vcs: 'git' as const,
+      gitRemote: null,
+      gitBranch: 'main',
+      createdAt: 1,
+      updatedAt: 1,
+    })),
   },
 }))
 
@@ -128,5 +169,30 @@ describe('ChatPage 切项目', () => {
     })
 
     expect(screen.getByTestId('preview').textContent).toBe('src/app.ts')
+  })
+})
+
+/**
+ * 回归：项目信息读取失败（GET /api/projects/:id 500）与「还在加载」同形——
+ * ChatPage 只解构 data，失败后 project 恒为 undefined，终端面板因此拿不到 cwd，
+ * 页面上没有任何区别：既没有原因，也没有重试，面板只剩一个既缺「新建终端」按钮
+ * 又什么都不说的「尚无终端」。
+ */
+describe('ChatPage 项目信息读取失败', () => {
+  it('把失败原因与重试交给终端面板，而不是让它默默退回无 cwd', async () => {
+    vi.mocked(projectAPI.get).mockRejectedValue(new Error('项目服务暂时不可用'))
+    await renderAt('/projects/p1/sessions/s1')
+
+    await waitFor(() => expect(screen.getByTestId('terminal-cwd-retry')).toBeInTheDocument())
+    expect(screen.getByTestId('terminal-cwd').textContent).toBe('(无)')
+
+    // 重试入口真的会重新发起读取；恢复正常后面板拿到项目 worktree
+    vi.mocked(projectAPI.get).mockResolvedValue({
+      ...makeProject(),
+      worktree: '/tmp/demo',
+    })
+    fireEvent.click(screen.getByTestId('terminal-cwd-retry'))
+    await waitFor(() => expect(screen.getByTestId('terminal-cwd').textContent).toBe('/tmp/demo'))
+    expect(screen.queryByTestId('terminal-cwd-retry')).toBeNull()
   })
 })
