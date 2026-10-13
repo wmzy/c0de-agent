@@ -543,6 +543,50 @@ describe('TopBar', () => {
     expect(input.disabled).toBe(false)
   })
 
+  // 回归：分支列表此前只取 data，`(data?.branches ?? []).map` 让「还在读」与
+  // 「读不了」都渲染成一份空菜单（只有分隔线 + 新分支输入框）。触发按钮上写着
+  // 当前分支名，用户据此认定仓库没有别的分支，而切分支的唯一入口就是这份菜单，
+  // 读失败后连重试都没有。契约：加载中/失败/真的为空三态分开说，失败给原因 + 重试。
+  it('分支列表读取失败：给出后端原因与重试，重试成功后列出分支', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    const gitBranches = fileAPI.gitBranches as ReturnType<typeof vi.fn>
+    gitBranches.mockRejectedValueOnce(new Error('git 仓库被另一个进程占用'))
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+
+    const err = await screen.findByTestId('branch-list-error')
+    expect(err.textContent).toContain('git 仓库被另一个进程占用')
+    expect(err.getAttribute('role')).toBe('alert')
+    // 失败时不得出现「没有分支」的状态断言，也不得出现可点的分支项
+    expect(screen.queryByTestId('branch-list-empty')).toBeNull()
+    expect(screen.queryByTestId('branch-dropdown-item-main')).toBeNull()
+
+    gitBranches.mockResolvedValueOnce({
+      branches: [
+        { name: 'main', current: true, lastSubject: null },
+        { name: 'develop', current: false, lastSubject: null },
+      ],
+    })
+    fireEvent.click(screen.getByTestId('branch-list-retry'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+    expect(screen.queryByTestId('branch-list-error')).toBeNull()
+  })
+
+  it('分支列表真的为空时才说「没有其它本地分支」', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({ branches: [] })
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+
+    expect(await screen.findByTestId('branch-list-empty')).toBeTruthy()
+    expect(screen.queryByTestId('branch-list-error')).toBeNull()
+  })
+
   // ---- CommitButton（内嵌在 TopBar via ProjectIndicator actions）----
 
   it('无变更时提交按钮 disabled 且不高亮', async () => {

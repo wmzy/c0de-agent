@@ -232,6 +232,23 @@ const branchInputError = css`
   color: var(--haze-color-danger);
 `
 
+/** 下拉里的状态行（加载中 / 真的为空）：不是菜单项，不能点。 */
+const menuStatus = css`
+  display: block;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
+/** 下拉里的失败行：原因必须来自后端 message，用户才知道该重试还是该修仓库。 */
+const menuStatusError = css`
+  display: block;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+  overflow-wrap: anywhere;
+`
+
 /**
  * 分支切换失败提示（顶栏常驻，不是 toast）。
  *
@@ -520,26 +537,57 @@ export function ProjectIndicator({
               </span>
             </DropdownMenuTrigger>
             <DropdownMenuContent className={menuPanel}>
-              {(branchesQ.data?.branches ?? []).map((b) => (
-                <DropdownMenuItem
-                  key={b.name}
-                  className={b.current ? menuItemActive : undefined}
-                  disabled={b.current || checkoutMut.isPending}
-                  onClick={() => {
-                    if (!b.current) checkoutMut.mutate(b.name)
-                  }}
+              {/* 三态齐全。此前只取 data，`(data?.branches ?? []).map` 让「还在读」
+                  与「读不了」都渲染成一份空菜单——只有分隔线和「新分支名」输入框。
+                  触发按钮上明明写着当前分支名，用户会据此认定这个仓库没有别的
+                  分支（而切分支的唯一入口就在这份菜单里），失败后也没有任何重试
+                  手段。与 RecycleBin/ArchivePanel/CommitButton 的
+                  「标题 + 后端原因 + 重试」同一口径。 */}
+              {branchesQ.isError ? (
+                <span className={menuStatusError} role="alert" data-testid="branch-list-error">
+                  {'⚠'} 分支列表加载失败：{messageOf(branchesQ.error)}
+                </span>
+              ) : branchesQ.isLoading ? (
+                <span className={menuStatus} data-testid="branch-list-loading">
+                  正在加载分支…
+                </span>
+              ) : (branchesQ.data?.branches ?? []).length === 0 ? (
+                <span className={menuStatus} data-testid="branch-list-empty">
+                  没有其它本地分支
+                </span>
+              ) : (
+                branchesQ.data?.branches.map((b) => (
+                  <DropdownMenuItem
+                    key={b.name}
+                    className={b.current ? menuItemActive : undefined}
+                    disabled={b.current || checkoutMut.isPending}
+                    onClick={() => {
+                      if (!b.current) checkoutMut.mutate(b.name)
+                    }}
+                  >
+                    <span className={itemWrap} data-testid={`branch-dropdown-item-${b.name}`}>
+                      <span className={menuItemCheck}>{b.current ? '✓' : ''}</span>
+                      <span className={menuItemSub}>{b.name}</span>
+                      {b.lastSubject ? (
+                        <span className={menuItemHint} title={b.lastSubject}>
+                          {b.lastSubject}
+                        </span>
+                      ) : null}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+              {branchesQ.isError ? (
+                <button
+                  type="button"
+                  className={footerBtn}
+                  onClick={() => void branchesQ.refetch()}
+                  disabled={branchesQ.isFetching}
+                  data-testid="branch-list-retry"
                 >
-                  <span className={itemWrap} data-testid={`branch-dropdown-item-${b.name}`}>
-                    <span className={menuItemCheck}>{b.current ? '\u2713' : ''}</span>
-                    <span className={menuItemSub}>{b.name}</span>
-                    {b.lastSubject ? (
-                      <span className={menuItemHint} title={b.lastSubject}>
-                        {b.lastSubject}
-                      </span>
-                    ) : null}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+                  {branchesQ.isFetching ? '重试中…' : '重试'}
+                </button>
+              ) : null}
               <DropdownMenuSeparator />
               <NewBranchForm
                 onCreate={(name) => createBranchMut.mutateAsync(name)}
