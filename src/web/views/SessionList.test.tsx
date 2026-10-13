@@ -738,7 +738,7 @@ describe('RecycleBin 未归属看板彻底删除', () => {
     )
   }
 
-  it('彻底删除看板失败：错误条给出原因与操作名，不静默', async () => {
+  it('彻底删除看板先逐字确认，失败原因不静默且不误用原生 confirm', async () => {
     hoisted.deleted = {
       data: [],
       isLoading: false,
@@ -759,10 +759,29 @@ describe('RecycleBin 未归属看板彻底删除', () => {
       expect(screen.getByTestId('remove-orphan-kanban-board-1')).toBeInTheDocument()
     })
 
-    // 确认框点确定
-    window.confirm = () => true
-    fireEvent.click(screen.getByTestId('remove-orphan-kanban-board-1'))
+    // 点「彻底删除」只打开站内逐字确认弹层，绝不触发原生 window.confirm
+    // （原生框默认键=确定，回车即毁板）。逐字确认前接口不得被调用、确认键禁用。
+    const confirmSpy = vi.fn(() => true)
+    const origConfirm = window.confirm
+    window.confirm = confirmSpy as unknown as typeof window.confirm
+    try {
+      fireEvent.click(screen.getByTestId('remove-orphan-kanban-board-1'))
+      const confirmBtn = (await screen.findByTestId('danger-confirm-btn')) as HTMLButtonElement
+      expect(confirmBtn.disabled).toBe(true)
+      expect(kanbanAPI.destroyDeletedBoard).not.toHaveBeenCalled()
+      expect(confirmSpy).not.toHaveBeenCalled()
 
+      // 输入看板所属项目名后确认键才可用
+      fireEvent.change(screen.getByTestId('danger-confirm-input'), {
+        target: { value: '已删项目' },
+      })
+      expect(confirmBtn.disabled).toBe(false)
+      fireEvent.click(confirmBtn)
+    } finally {
+      window.confirm = origConfirm
+    }
+
+    // 失败原因留在页面错误条里，不静默
     await waitFor(() => {
       expect(screen.getByTestId('restore-error')).toBeInTheDocument()
     })

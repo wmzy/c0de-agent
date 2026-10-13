@@ -10,7 +10,7 @@ import {
   useDeletedSessions,
   useRestoreSession,
 } from '@/hooks/useSession.js'
-import { kanbanAPI } from '@/services/kanban.js'
+import { type DeletedKanbanBoard, kanbanAPI } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
 import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/recycleTree.js'
@@ -273,6 +273,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     session: Session
     descendants: number
   } | null>(null)
+  // 未归属看板的「彻底删除」也是不可恢复操作，与会话的「彻底删除」同强度：
+  // 逐字确认而非原生 confirm（原生框默认键=确定，回车即毁板；且与相邻入口不一致）。
+  const [boardRemoveTarget, setBoardRemoveTarget] = useState<DeletedKanbanBoard | null>(null)
   const [showEmptyTrash, setShowEmptyTrash] = useState(false)
 
   if (isLoading) return <div className={empty}>加载中…</div>
@@ -801,20 +804,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 type="button"
                 className={restoreBtn}
                 style={{ color: 'var(--haze-color-danger)' }}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `彻底删除看板「${b.projectName}」（${b.cardCount} 张卡片）？此操作不可恢复。`,
-                    )
-                  ) {
-                    destroyBoardMut.mutate(b.id, {
-                      onSuccess: () => {
-                        qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] })
-                        setNotice(`看板「${b.projectName}」已彻底删除。`)
-                      },
-                    })
-                  }
-                }}
+                onClick={() => setBoardRemoveTarget(b)}
                 disabled={destroyBoardMut.isPending}
                 data-testid={`remove-orphan-kanban-${b.id}`}
                 title="彻底删除，不可恢复"
@@ -838,6 +828,26 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             removeForever.mutate(id)
           }}
           onClose={() => setRemoveTarget(null)}
+        />
+      )}
+      {boardRemoveTarget && (
+        <DangerConfirmDialog
+          open={true}
+          title="彻底删除看板"
+          description={`将彻底删除看板「${boardRemoveTarget.projectName}」及其 ${boardRemoveTarget.cardCount} 张卡片（来自已删除的项目，无法恢复）。`}
+          confirmWord={boardRemoveTarget.projectName}
+          confirmLabel="彻底删除"
+          onConfirm={() => {
+            const board = boardRemoveTarget
+            setBoardRemoveTarget(null)
+            destroyBoardMut.mutate(board.id, {
+              onSuccess: () => {
+                qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] })
+                setNotice(`看板「${board.projectName}」已彻底删除。`)
+              },
+            })
+          }}
+          onClose={() => setBoardRemoveTarget(null)}
         />
       )}
       {showEmptyTrash && (
