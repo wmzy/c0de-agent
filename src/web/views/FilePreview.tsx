@@ -123,6 +123,14 @@ const retryBtn = css`
   font-size: 12px;
 `
 
+/** 媒体失败态的「重试 + 在新标签页打开」按钮行。 */
+const mediaActions = css`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+`
+
 /** 二进制只读态标题：不是错误（文件本身没问题），用中性色而非 danger。 */
 const binaryTitle = css`
   color: var(--haze-color-text);
@@ -240,6 +248,14 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     { kind: 'close' } | { kind: 'switch'; path: string; range?: LineRange } | null
   >(null)
 
+  // 媒体预览（img/audio/video/pdf）走 /raw，浏览器拿不到字节时只会画一个破图/黑框，
+  // 与文本路径的「文件读取失败 + 原因 + 重试」三段式完全不一致——用户看到破图只会
+  // 以为「文件坏了」，不会想到是文件已被删除或访问令牌过期。用 onError 兜住：
+  // 失败时给出原因、重试入口与「在新标签页打开原始文件」的逃生口。
+  const [mediaFailed, setMediaFailed] = useState(false)
+  // 重试令牌：自增后作为 key 强制媒体元素重新挂载/加载（同一 URL 的失败结果会被缓存）。
+  const [mediaReloadKey, setMediaReloadKey] = useState(0)
+
   // 未保存导航防护（与 Settings 同口径）。上面的 registerGuard 只覆盖「面板内换文件/
   // 关闭」这条由父组件发起的通道；应用内导航（顶栏 设置/项目看板、项目切换、浏览器
   // 后退）会把 ChatPage 整个卸载，CodeMirror 文档连同撤销历史一起消失，此前无任何提示。
@@ -299,30 +315,81 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   // 渲染内容区（不含 header）
   let body: React.ReactNode
   if (isMedia) {
-    if (IMG_EXT.includes(ext)) {
+    // 媒体 URL 带上重试令牌：媒体元素同 URL 的失败结果会被浏览器缓存，key 变化
+    // 重挂载不够，必须让 URL 变化才会真正重新拉取。
+    const mediaSrc = `/api/files/${encodeFilePath(path)}/raw${mediaQuery}${
+      mediaQuery ? '&' : '?'
+    }_r=${mediaReloadKey}`
+    if (mediaFailed) {
+      // 与文本路径的失败三段式同口径（标题 + 说明 + 重试/逃生口）。
+      body = (
+        <div className={errorWrap} data-testid="file-preview-error" role="alert">
+          <span className={errorTitle}>预览加载失败</span>
+          <span className={errorDetail}>
+            无法加载该文件（可能已被删除、移动，或访问令牌已过期）。
+          </span>
+          <div className={mediaActions}>
+            <button
+              type="button"
+              className={retryBtn}
+              onClick={() => {
+                setMediaFailed(false)
+                setMediaReloadKey((k) => k + 1)
+              }}
+              data-testid="file-preview-retry"
+            >
+              重试
+            </button>
+            <a
+              className={binaryLink}
+              href={mediaSrc}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="file-preview-raw-link"
+            >
+              在新标签页打开原始文件
+            </a>
+          </div>
+        </div>
+      )
+    } else if (IMG_EXT.includes(ext)) {
       body = (
         <img
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+          key={mediaReloadKey}
+          src={mediaSrc}
           alt={path}
           className={mediaImg}
+          onError={() => setMediaFailed(true)}
         />
       )
     } else if (ext === 'pdf') {
+      // <embed> 不派发可捕获的 error 事件，改用 <object>（失败时渲染 fallback 内容）。
       body = (
-        <embed
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+        <object
+          key={mediaReloadKey}
+          data={mediaSrc}
           type="application/pdf"
           className={embedFill}
           data-testid="pdf-preview"
-        />
+          onError={() => setMediaFailed(true)}
+        >
+          <div className={errorWrap} data-testid="pdf-fallback">
+            <span className={errorTitle}>PDF 预览不可用</span>
+            <a className={binaryLink} href={mediaSrc} target="_blank" rel="noreferrer">
+              在新标签页打开原始文件
+            </a>
+          </div>
+        </object>
       )
     } else if (AUDIO_EXT.includes(ext)) {
       body = (
         <audio
+          key={mediaReloadKey}
           controls
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+          src={mediaSrc}
           className={audioFull}
           data-testid="audio-preview"
+          onError={() => setMediaFailed(true)}
         >
           <track kind="captions" />
         </audio>
@@ -330,10 +397,12 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     } else {
       body = (
         <video
+          key={mediaReloadKey}
           controls
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+          src={mediaSrc}
           className={mediaImg}
           data-testid="video-preview"
+          onError={() => setMediaFailed(true)}
         >
           <track kind="captions" />
         </video>
@@ -451,6 +520,14 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     const btn = quoteBtnRef.current
     if (btn) btn.style.display = 'none'
     selectedTextRef.current = ''
+  }, [path])
+
+  // 切换预览目标时清掉上一个文件的媒体失败态与重试令牌，否则新文件一进来就显示
+  // 「预览失败」，或带着上一轮的重试计数请求。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: path 变化即需复位本地态
+  useEffect(() => {
+    setMediaFailed(false)
+    setMediaReloadKey(0)
   }, [path])
 
   // selectionchange 监听：覆盖 onMouseUp 无法捕获的场景——

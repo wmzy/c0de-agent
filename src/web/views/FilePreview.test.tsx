@@ -166,6 +166,60 @@ describe('FilePreview', () => {
     expect(img?.getAttribute('src')).toContain('/api/files/a.png/raw')
   })
 
+  // 回归：媒体预览此前零失败态——文件被删/令牌过期时只剩浏览器的破图或黑框，
+  // 而同组件的文本路径早有「原因 + 重试」。用户无从判断是文件坏了还是权限问题。
+  it('图片加载失败展示失败态与重试入口，重试换 URL 重新拉取', async () => {
+    withClient(<FilePreview projectId="p1" path="a.png" />)
+    const img = document.querySelector('img')
+    expect(img).toBeTruthy()
+    fireEvent.error(img as HTMLImageElement)
+
+    const err = await screen.findByTestId('file-preview-error')
+    expect(err.textContent).toContain('预览加载失败')
+    const raw = screen.getByTestId('file-preview-raw-link') as HTMLAnchorElement
+    expect(raw.getAttribute('href')).toContain('/api/files/a.png/raw')
+    // 失败态下不再渲染破图元素
+    expect(document.querySelector('img')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('file-preview-retry'))
+    const img2 = await waitFor(() => {
+      const el = document.querySelector('img')
+      expect(el).toBeTruthy()
+      return el as HTMLImageElement
+    })
+    // 重试必须改变 URL（同 URL 的失败结果会被浏览器缓存，仅换 key 重挂载无效）
+    expect(img2.getAttribute('src')).toContain('_r=1')
+    expect(screen.queryByTestId('file-preview-error')).toBeNull()
+  })
+
+  it('切换预览目标时复位媒体失败态', async () => {
+    const { rerender } = renderPreview({}, <FilePreview projectId="p1" path="a.png" />)
+    fireEvent.error(document.querySelector('img') as HTMLImageElement)
+    expect(await screen.findByTestId('file-preview-error')).toBeTruthy()
+
+    rerender(
+      <PreviewProviders selection={{}} entry={ENTRY_CHAT}>
+        <FilePreview projectId="p1" path="b.png" />
+      </PreviewProviders>,
+    )
+    const img = await waitFor(() => {
+      const el = document.querySelector('img')
+      expect(el).toBeTruthy()
+      return el as HTMLImageElement
+    })
+    expect(img.getAttribute('src')).toContain('/api/files/b.png/raw')
+    expect(screen.queryByTestId('file-preview-error')).toBeNull()
+  })
+
+  it('PDF 用 <object>（失败时可回退），不再是拿不到 error 的 <embed>', async () => {
+    withClient(<FilePreview projectId="p1" path="doc.pdf" />)
+    const obj = document.querySelector('object')
+    expect(obj).toBeTruthy()
+    expect(obj?.getAttribute('data')).toContain('/api/files/doc.pdf/raw')
+    expect(document.querySelector('embed')).toBeNull()
+    expect(document.querySelector('[data-testid="pdf-fallback"]')).toBeTruthy()
+  })
+
   // 二进制此前按 utf-8 解码成一屏 U+FFFD 进 CodeEditor：用户敲一个字点保存就把
   // 原文件重写成乱码（实测 4096B zip → 7476B U+FFFD 文本）。服务端在字节层拒绝后，
   // 面板必须给只读态，而不是可编辑的编辑器。
