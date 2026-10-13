@@ -635,11 +635,114 @@ describe('useChat confirm', () => {
 
     await act(async () => {
       result.current.denyTimedOutPermission()
+      // 拒绝请求现在是异步读结果的，等 promise 链的 setState 落地
+      await new Promise((r) => setTimeout(r, 0))
     })
     expect(result.current.permissionTimeout).toBeNull()
 
     const confirmCalls = fetchMock.mock.calls.filter(([url]) => url === '/api/tools/confirm')
     expect(confirmCalls).toHaveLength(1)
+  })
+
+  /** 渲染一个已进入「权限确认超时」态的会话（SSE 只发一条 permission_timeout）。 */
+  async function renderTimedOut(toolCallId: string) {
+    const sse = `data: {"_tag":"permission_timeout","toolCallId":"${toolCallId}","tool":"bash","input":{},"timeoutAction":"pause"}\n\n`
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/chat') {
+          return {
+            ok: true,
+            status: 200,
+            body: {
+              getReader: () => ({
+                read: async () => {
+                  if (readIdx === 0) {
+                    readIdx++
+                    return { done: false, value: chunk }
+                  }
+                  return { done: true, value: undefined }
+                },
+              }),
+            },
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ confirmed: true }),
+          text: async () => JSON.stringify({ confirmed: true }),
+        }
+      }),
+    )
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.permissionTimeout?.toolCallId).toBe(toolCallId)
+    return result
+  }
+
+  // 回归：拒绝请求失败此前被 .catch(() => {}) 空吞、随后无条件清空 permissionTimeout——
+  // 500 / 网络中断时拒绝根本没送达（服务端 pending 仍在，25 分钟宽限期内 run 继续等），
+  // 而页面上唯一能再次进入该决策的超时横幅（「重新询问 / 拒绝并继续」）已经消失，
+  // 用户零反馈、以为工具已被拒绝。
+  it('denyTimedOutPermission 拒绝未送达（500）→ 保留超时横幅并说明原因', async () => {
+    const result = await renderTimedOut('tcD500')
+    vi.spyOn(agentAPI, 'confirmTool').mockRejectedValue(
+      Object.assign(new Error('Internal Server Error'), { status: 500 }),
+    )
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 横幅保留：两个入口（重新询问 / 拒绝并继续）仍在
+    expect(result.current.permissionTimeout).not.toBeNull()
+    expect(result.current.permissionTimeout?.toolCallId).toBe('tcD500')
+    // 说清「拒绝没生效 / 工具还在等」而不是谎报成功
+    expect(result.current.error).toContain('没有送达')
+    expect(result.current.error).toContain('仍在等待')
+  })
+
+  it('denyTimedOutPermission 拒绝送达 → 清空超时态且无错误提示', async () => {
+    const result = await renderTimedOut('tcDOK')
+    vi.spyOn(agentAPI, 'confirmTool').mockResolvedValue({ confirmed: true })
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.permissionTimeout).toBeNull()
+    expect(result.current.error).toBeNull()
+  })
+
+  // 404：pending 已被其他标签页消费 / run 已中止——工具不会执行，超时态该收起，
+  // 文案与 confirm() 同一口径。
+  it('denyTimedOutPermission 404（已被处理）→ 清空超时态并给出同一口径文案', async () => {
+    const result = await renderTimedOut('tcD404')
+    vi.spyOn(agentAPI, 'confirmTool').mockRejectedValue(
+      Object.assign(new Error('No pending permission'), { status: 404 }),
+    )
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.permissionTimeout).toBeNull()
+    expect(result.current.error).toBe(
+      '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
+    )
   })
 })
 

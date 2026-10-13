@@ -620,14 +620,42 @@ export function useChat(sessionId: string): ChatState & ChatActions {
 
   /** 超时后显式拒绝：resolve store 中的 pending 为 deny，run 继续执行。
    *  网络副作用在更新器之外（更新器必须是纯函数——StrictMode/并发渲染
-   *  重放会重复执行，此前 confirmTool 写在更新器里同一拒绝请求发两次）。 */
+   *  重放会重复执行，此前 confirmTool 写在更新器里同一拒绝请求发两次）。
+   *
+   *  此前请求失败被 .catch(() => {}) 空吞、超时态无条件清空：500 / 网络中断时
+   *  拒绝根本没送达，服务端 pending 仍在（store 的 5 分钟提示 + 25 分钟宽限双层
+   *  超时），run 继续等这个决定，而页面上唯一能再次进入该决策的入口——超时横幅
+   *  的「重新询问 / 拒绝并继续」——已经消失，用户零反馈、以为工具已被拒绝。
+   *  与 confirm() 同口径读响应结果：只有确认送达才收起横幅。 */
   const denyTimedOutPermission = useCallback(() => {
     const timedOut = permissionTimeoutRef.current
-    if (timedOut) {
-      const { toolCallId } = timedOut
-      void agentAPI.confirmTool(toolCallId, false).catch(() => {})
+    if (!timedOut) {
+      // 没有待处理的超时态（重复点击等）：无请求要发，直接清空。
+      setState((s) => ({ ...s, permissionTimeout: null }))
+      return
     }
-    setState((s) => ({ ...s, permissionTimeout: null }))
+    const { toolCallId } = timedOut
+    void agentAPI.confirmTool(toolCallId, false).then(
+      () => setState((s) => ({ ...s, permissionTimeout: null })),
+      (err) => {
+        const e = err as { status?: number }
+        if (e?.status === 404) {
+          // 已被处理（其他标签页确认/拒绝）或 run 已中止：工具不会执行，超时态可清。
+          setState((s) => ({
+            ...s,
+            permissionTimeout: null,
+            error: '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
+          }))
+        } else {
+          // 拒绝没送达：服务端 pending 仍在、工具还在等你的决定。保留超时态，
+          // 横幅的两个入口继续可用，用户可以再拒绝一次。
+          setState((s) => ({
+            ...s,
+            error: '权限拒绝没有送达，工具仍在等待你的决定。请重试。',
+          }))
+        }
+      },
+    )
   }, [])
 
   /** P1：附着结束——停止轮询、复位附着态并刷新消息/调用详情。 */
