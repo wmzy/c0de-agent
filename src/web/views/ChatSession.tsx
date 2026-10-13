@@ -264,7 +264,12 @@ export function ChatSession({
       setOrphanNotice(true)
     }
   }, [sessionMeta, projectId, sessionId, router])
-  const { data: agentsData } = useQuery({
+  const {
+    data: agentsData,
+    isError: agentsFailed,
+    error: agentsError,
+    refetch: refetchAgents,
+  } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),
     staleTime: 60_000,
@@ -636,6 +641,8 @@ export function ChatSession({
               value={agentName}
               onChange={setAgentName}
               agents={agentsData?.agents ?? []}
+              error={agentsFailed ? agentsError : null}
+              onRetry={() => void refetchAgents()}
             />
             <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
           </>

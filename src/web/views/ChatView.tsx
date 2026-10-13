@@ -319,7 +319,12 @@ function DraftSession({
   // 草稿页此前直接写死 supportsVision（恒 true），非视觉模型的图片入口在
   // 首条消息就敞着——与 ChatSession 同一条能力查询，这里补齐。
   const supportsVision = useSupportsVision(projectId, selection)
-  const { data: agentsData } = useQuery({
+  const {
+    data: agentsData,
+    isError: agentsFailed,
+    error: agentsError,
+    refetch: refetchAgents,
+  } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),
     staleTime: 60_000,
@@ -403,6 +408,8 @@ function DraftSession({
             value={agentName}
             onChange={setAgentName}
             agents={agentsData?.agents ?? []}
+            error={agentsFailed ? agentsError : null}
+            onRetry={() => void refetchAgents()}
           />
           <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
         </>
