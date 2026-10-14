@@ -221,6 +221,11 @@ export function SessionList({
 
   /** P2-5：重命名会话（成功后刷新会话树）。 */
   const handleRename = async (id: string, title: string): Promise<boolean> => {
+    // 起手清掉上一次的原因：失败条此前只在失败时写入、成功时不清，于是网络抖动
+    // 造成的一次失败会一直挂在侧栏顶部——用户改好网络再成功改名另一个会话，
+    // 「重命名失败：xxx」仍然亮着。要么以为改名功能坏了，要么怀疑刚才那次
+    // 「成功」其实没生效（列表里标题确实变了）。与 handleDelete 同口径。
+    setRenameError(null)
     try {
       await sessionAPI.rename(id, title)
       qc.invalidateQueries({ queryKey: ['sessions'] })

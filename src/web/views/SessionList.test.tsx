@@ -329,6 +329,43 @@ describe('SessionList 侧栏的地标与标题', () => {
 })
 
 /**
+ * 回归：一次重命名失败后，红条会永远挂在侧栏顶部。
+ *
+ * renameError 只在失败时写入，成功分支不清空、清空点只有切项目。于是网络抖动
+ * 造成的一次失败之后，用户改好网络再成功改名——红字仍在，他要么以为改名功能
+ * 一直坏着，要么怀疑刚才那次「成功」其实没生效（同页的删除失败条会在下一次
+ * 删除时自清，行为还不一致）。
+ */
+describe('SessionList 重命名失败原因', () => {
+  async function renameTo(newTitle: string): Promise<void> {
+    fireEvent.click(screen.getByTestId('rename-root-id'))
+    const form = await screen.findByTestId('rename-form-root-id')
+    fireEvent.change(screen.getByLabelText('重命名会话 hit-root'), { target: { value: newTitle } })
+    fireEvent.submit(form)
+  }
+
+  it('下一次重命名（无论成败）先清掉旧原因，不再常驻假失败', async () => {
+    vi.mocked(sessionAPI.rename)
+      .mockRejectedValueOnce(new Error('网络中断'))
+      .mockResolvedValueOnce({ ok: true, title: '改名成功' } as never)
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('node-root-id')).toBeInTheDocument())
+
+    await renameTo('第一次改名')
+    await waitFor(() => {
+      expect(screen.getByTestId('rename-error')).toHaveTextContent('重命名失败：网络中断')
+    })
+
+    // 网络恢复后再改一次名（这次成功）→ 旧的失败原因必须消失
+    await renameTo('第二次改名成功')
+    await waitFor(() => {
+      expect(screen.queryByTestId('rename-error')).toBeNull()
+    })
+    expect(sessionAPI.rename).toHaveBeenLastCalledWith('root-id', '第二次改名成功')
+  })
+})
+
+/**
  * 回归：切项目后侧栏仍按上一个项目的搜索词过滤。
  *
  * ChatPage 对 /projects/:projectId 与 /projects/:projectId/sessions/:sessionId
