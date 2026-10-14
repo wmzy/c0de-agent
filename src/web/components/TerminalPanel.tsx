@@ -347,6 +347,8 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
     retryRestore,
     createError,
     clearCreateError,
+    closeError,
+    clearCloseError,
     setActiveTabId,
     setActivePaneId,
     createTerminal,
@@ -501,22 +503,22 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
       e.stopPropagation()
       // 关闭标签内所有 pane
       const tabPanes = sessions.filter((s) => s.tabId === tabId)
-      for (const pane of tabPanes) {
-        void closeTerminal(pane.id)
-      }
-      // 关闭最后一个标签时同时收起面板
-      if (tabs.length === 1 && open) {
-        toggleOpen()
-      }
+      // 收起面板只在 pane 真的都关掉之后：kill 失败时 pane 还在（见 closeError），
+      // 收起面板等于把唯一能重试的控件藏起来，用户以为关掉了、实际 PTY 还在跑。
+      void Promise.all(tabPanes.map((pane) => closeTerminal(pane.id))).then((closed) => {
+        if (closed.every(Boolean) && tabs.length === 1 && open) {
+          toggleOpen()
+        }
+      })
     },
     [sessions, tabs.length, open, closeTerminal, toggleOpen],
   )
 
   const handleClosePane = useCallback(
-    (paneId: string) => {
-      void closeTerminal(paneId)
+    async (paneId: string) => {
+      const closed = await closeTerminal(paneId)
       // 关闭最后一个 pane（即最后一个标签的最后一个终端）时收起面板
-      if (sessions.length === 1 && open) {
+      if (closed && sessions.length === 1 && open) {
         toggleOpen()
       }
     },
@@ -782,6 +784,24 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
               className={createFailDismissStyle}
               onClick={clearCreateError}
               data-testid="terminal-create-error-dismiss"
+              aria-label="关闭失败提示"
+              title="关闭"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {/* 关闭终端失败：DELETE 失败时 pane 刻意留在界面上（PTY 还在后台跑，移除
+            pane 会让它没有任何入口）。原因必须落在面板里——否则用户看到的是「点了 ×
+            没反应」。pane 头上的 × 仍是重试入口。 */}
+        {closeError && (
+          <div className={createFailRowStyle} role="alert" data-testid="terminal-close-error">
+            <span>{closeError}</span>
+            <button
+              type="button"
+              className={createFailDismissStyle}
+              onClick={clearCloseError}
+              data-testid="terminal-close-error-dismiss"
               aria-label="关闭失败提示"
               title="关闭"
             >

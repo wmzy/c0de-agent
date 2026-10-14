@@ -114,6 +114,14 @@ export function useTerminal(projectId: string) {
    */
   const [createError, setCreateError] = useState<string | null>(null)
   const clearCreateError = useCallback(() => setCreateError(null), [])
+  /**
+   * 关闭终端失败的原因。DELETE /api/terminal/:id 失败时此前是空 catch + 无条件移除：
+   * pane 从界面与持久化布局里一起消失，而 PTY 进程其实还活着——runRestore 只恢复
+   * 「持久化布局 ∩ 后端存活 PTY」，于是这个终端从此没有任何入口，用户既回不去也
+   * 杀不掉它（只能重启后端或手动 kill）。失败必须保留 pane 并说明原因。
+   */
+  const [closeError, setCloseError] = useState<string | null>(null)
+  const clearCloseError = useCallback(() => setCloseError(null), [])
   /** 恢复轮次的世代号：作废在飞的那轮（切项目 / 卸载 / 重试都会 +1）。 */
   const restoreGenRef = useRef(0)
   /**
@@ -382,18 +390,33 @@ export function useTerminal(projectId: string) {
     [clearConn, closeSocket, updateSession],
   )
 
-  /** 关闭终端 pane（终止 PTY 进程 + 移除）。若为标签内最后一个 pane 则关闭整个标签。 */
+  /**
+   * 关闭终端 pane（终止 PTY 进程 + 移除）。若为标签内最后一个 pane 则关闭整个标签。
+   * 返回是否真的关掉了：kill 失败时 pane 必须留在界面上（见 closeError 的说明），
+   * 调用方据此决定「关掉最后一个 pane 就收起面板」这类后续动作。
+   */
   const closeTerminal = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const session = sessionsRef.current.find((s) => s.id === id)
-      clearConn(id)
-      closeSocket(session?.ws ?? null)
+      // 新一次尝试先清掉上一次的失败提示：pane 头上的 × 本身就是重试入口。
+      setCloseError(null)
 
       try {
         await terminalAPI.kill(id)
-      } catch {
-        // PTY 可能已退出
+      } catch (err) {
+        // 服务端对「PTY 已不存在」回 404 PTY_NOT_FOUND——这正是关闭想要的结果，
+        // 按成功处理继续移除。其余失败（500 / 后端重启 / 网络不通）说明 PTY 仍在
+        // 后台运行：此时照样移除 pane，就把这个终端从界面与持久化布局里一起抹掉，
+        // 它再没有任何入口（runRestore 只恢复「持久化布局 ∩ 后端存活 PTY」）。
+        // 保留 pane 与连接（下面才断开），让用户能看见原因并重试关闭。
+        if ((err as { status?: number } | null)?.status !== 404) {
+          setCloseError(`关闭终端失败：${messageOf(err)}，该终端仍在后台运行`)
+          return false
+        }
       }
+
+      clearConn(id)
+      closeSocket(session?.ws ?? null)
 
       const tabId = session?.tabId
       // 在 setSessions 之前计算 idx 和 remainingInTab，
@@ -439,6 +462,7 @@ export function useTerminal(projectId: string) {
           setActiveTabId(uniqueTabs.length > 0 ? (uniqueTabs[uniqueTabs.length - 1] ?? null) : null)
         }
       }
+      return true
     },
     [clearConn, closeSocket],
   )
@@ -641,6 +665,8 @@ export function useTerminal(projectId: string) {
     retryRestore,
     createError,
     clearCreateError,
+    closeError,
+    clearCloseError,
     setActiveTabId,
     setActivePaneId,
     createTerminal,

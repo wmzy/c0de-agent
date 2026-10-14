@@ -542,3 +542,78 @@ describe('useTerminal 新建/分屏失败', () => {
     expect(result.current.sessions).toHaveLength(1)
   })
 })
+
+/**
+ * 回归：关闭终端时 DELETE 失败被空吞，pane 照样被移除。
+ *
+ * 用户点 pane 上的 ×，此时 DELETE /api/terminal/:id 失败（后端刚重启 / 500 /
+ * 网络不通）。界面照样把这一格关掉，但 PTY 进程其实还活着；它的 id 同时从
+ * localStorage 布局里被删掉，而恢复只按「持久化布局 ∩ 后端存活 PTY」重建——
+ * 这个终端从此没有任何入口：回不去、也杀不掉，只能重启后端或手动 kill。全程零提示。
+ *
+ * 服务端对「PTY 已不存在」回 404 PTY_NOT_FOUND，那正是关闭想要的结果，按成功处理。
+ */
+describe('关闭终端失败不得把 pane 从布局里抹掉', () => {
+  it('kill 失败（后端 500）：保留 pane、给出原因，磁盘布局不被写坏', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockKill.mockRejectedValue({ status: 500, message: '服务不可达' })
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    expect(result.current.sessions).toHaveLength(1)
+
+    let closed = true
+    await act(async () => {
+      closed = await result.current.closeTerminal('pty_A')
+    })
+
+    expect(closed).toBe(false)
+    // pane 仍在：它是用户重试关闭的唯一入口
+    expect(result.current.sessions.map((s) => s.id)).toEqual(['pty_A'])
+    expect(result.current.closeError).toContain('服务不可达')
+    expect(result.current.closeError).toContain('仍在后台运行')
+    // 磁盘上的布局仍含该终端：刷新 / 切项目回来还能连上它
+    const persisted = JSON.parse(
+      localStorage.getItem('c0de-agent:terminalSessions:projA') ?? '{}',
+    ) as { sessions?: { id: string }[] }
+    expect(persisted.sessions?.map((s) => s.id)).toContain('pty_A')
+  })
+
+  it('PTY 已不存在（404）：按关闭成功处理，正常移除 pane 且不留失败原因', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockKill.mockRejectedValue({ status: 404, message: 'Terminal not found' })
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    let closed = false
+    await act(async () => {
+      closed = await result.current.closeTerminal('pty_A')
+    })
+
+    expect(closed).toBe(true)
+    expect(result.current.sessions).toHaveLength(0)
+    expect(result.current.closeError).toBeNull()
+  })
+
+  it('失败后重试成功：清掉原因并移除 pane', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockKill.mockRejectedValueOnce(new Error('boom'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    await act(async () => {
+      await result.current.closeTerminal('pty_A')
+    })
+    expect(result.current.closeError).toContain('boom')
+    expect(result.current.sessions).toHaveLength(1)
+
+    await act(async () => {
+      await result.current.closeTerminal('pty_A')
+    })
+
+    expect(result.current.closeError).toBeNull()
+    expect(result.current.sessions).toHaveLength(0)
+  })
+})

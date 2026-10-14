@@ -98,6 +98,9 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
     // 新建/分屏失败提示（useTerminal 新增字段，面板据此渲染失败条）
     createError: null,
     clearCreateError: () => {},
+    // 关闭终端失败提示（同样由 useTerminal 提供，pane 上的 × 是重试入口）
+    closeError: null,
+    clearCloseError: () => {},
     setActiveTabId: () => {},
     setActivePaneId: () => {},
     createTerminal: async () => 'p3',
@@ -105,7 +108,7 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
     connect: () => {},
     markDead: () => {},
     disconnect: () => {},
-    closeTerminal: async () => {},
+    closeTerminal: async () => true,
     resize: async () => {},
     getWebSocket: () => null,
     setSplitDirection: () => {},
@@ -510,5 +513,30 @@ describe('TerminalPanel 新建/分屏失败提示', () => {
   it('没有失败时不渲染失败条', () => {
     render(<TerminalPanel terminal={makeTerminal()} cwd="/a" projectId="A" />)
     expect(screen.queryByTestId('terminal-create-error')).toBeNull()
+    expect(screen.queryByTestId('terminal-close-error')).toBeNull()
+  })
+})
+
+/**
+ * 回归：关闭终端失败（DELETE 失败）此前被空吞——pane 从界面与布局里一起消失，
+ * 而 PTY 还在后台跑，从此没有任何入口。失败原因必须落在面板里，否则用户看到的是
+ * 「点了 × 没反应」。
+ */
+describe('TerminalPanel 关闭终端失败提示', () => {
+  it('kill 失败时在面板里说明原因，pane 仍在（× 就是重试入口）', () => {
+    const clearCloseError = vi.fn()
+    const terminal: UseTerminalReturn = {
+      ...makeTerminal(),
+      closeError: '关闭终端失败：服务不可达，该终端仍在后台运行',
+      clearCloseError,
+    }
+    render(<TerminalPanel terminal={terminal} cwd="/a" projectId="A" />)
+
+    const alert = screen.getByTestId('terminal-close-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('仍在后台运行')
+
+    fireEvent.click(screen.getByTestId('terminal-close-error-dismiss'))
+    expect(clearCloseError).toHaveBeenCalled()
   })
 })
