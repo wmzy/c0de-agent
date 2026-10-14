@@ -1205,6 +1205,58 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(enabled.value).toBe('bash, read')
   })
 
+  /**
+   * 回归：此前导入无条件 `setDraft(导入值)`。用户在表单里存在未保存更改时，
+   * 一次「⬆ 导入」选个文件就把整屏修改静默替换（保存条随即回到干净态，看不出
+   * 发生过什么），而本页影响面更小的动作（切作用域 / 离开页面 / 删 MCP 行）
+   * 都有二审——覆盖面最大的这次覆盖反而是唯一没有确认的。
+   */
+  it('有未保存更改时导入先确认：取消保留草稿，确认后才覆盖', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 制造未保存更改：JSON 视图的合法改动会写入草稿
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, {
+      target: { value: JSON.stringify({ ...mockConfig, defaultModel: 'draft-model' }) },
+    })
+    expect(screen.getByTestId('settings-save')).not.toBeDisabled()
+
+    const imported = { ...mockConfig, defaultModel: 'imported-model' }
+    const mockFile = {
+      text: () => Promise.resolve(JSON.stringify(imported)),
+    } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+
+    // 第一次：取消 → 草稿原样保留，没有被覆盖
+    fireEvent.change(input, { target: { files: [mockFile] } })
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    expect(screen.getByRole('dialog').textContent).toContain('未保存的更改')
+    fireEvent.click(
+      screen.getByRole('dialog').querySelector('[data-slot="cancel-button"]') as HTMLElement,
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect((screen.getByTestId('settings-json-editor') as HTMLTextAreaElement).value).toContain(
+      'draft-model',
+    )
+    expect(screen.getByTestId('settings-save')).not.toBeDisabled()
+
+    // 第二次：确认 → 导入值生效并切回表单
+    fireEvent.change(input, { target: { files: [mockFile] } })
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    fireEvent.click(
+      screen.getByRole('dialog').querySelector('[data-slot="confirm-button"]') as HTMLElement,
+    )
+    await waitFor(() => {
+      const sel = screen.getByTestId('default-model-select') as HTMLSelectElement
+      expect(sel.value).toBe('imported-model')
+    })
+  })
+
   it('JSON 视图结构不符时保存被拦下：不落盘坏形状', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))

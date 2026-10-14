@@ -202,6 +202,13 @@ export function Settings() {
   // 确认前暂存目标作用域（SyncedSelect 受控，选中项会弹回当前 scope）。
   const [pendingScope, setPendingScope] = useState<'global' | 'project' | null>(null)
 
+  // dirty 时导入配置会整块覆盖草稿——同样是二次确认，确认前暂存待导入的配置。
+  // 此前导入无条件 `setDraft(导入值)`：用户在表单里改了一屏字段、吸底条写着
+  // 「● 未保存更改」，点一次「⬆ 导入」选个文件，所有修改被静默替换（保存条随即
+  // 回到干净态，看不出发生过什么），而本页影响面更小的动作（切换作用域、离开页面、
+  // 删 MCP 行）都有二审——覆盖面最大的一次覆盖反而是唯一没有确认的。
+  const [pendingImport, setPendingImport] = useState<Partial<Config> | null>(null)
+
   // dirty 仅指「需手动保存的草稿」；外观面板即时生效、不进 draft，不影响此判定。
   const isDirty = draft !== null
   // 未保存导航防护（native-router useBlocker，模板口径）：覆盖全部离开通道——
@@ -524,6 +531,15 @@ export function Settings() {
     URL.revokeObjectURL(url)
   }
 
+  /** 应用导入结果：整份替换草稿并切回表单（形状已校验）。 */
+  const applyImport = (next: Partial<Config>) => {
+    setDraft(next)
+    setJsonText(JSON.stringify(next, null, 2))
+    setJsonError(null)
+    setJsonShapeError(null)
+    setViewMode('gui')
+  }
+
   /** 从文件导入配置。 */
   const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -545,11 +561,14 @@ export function Settings() {
         setJsonText(text)
         return
       }
-      setDraft(normalized.config)
-      setJsonText(JSON.stringify(normalized.config, null, 2))
-      setJsonError(null)
-      setJsonShapeError(null)
-      setViewMode('gui')
+      // 未保存的修改必须先经确认：导入是整份替换（且随后可一键落盘），
+      // 直接覆盖等于一次点击丢掉用户在表单/JSON 里打好的全部内容。
+      // 待导入配置暂存到弹窗，确认后才应用。
+      if (draft !== null) {
+        setPendingImport(normalized.config)
+        return
+      }
+      applyImport(normalized.config)
     } catch (err) {
       setJsonError(`导入失败：${err instanceof Error ? err.message : '未知错误'}`)
       setJsonShapeError(null)
@@ -560,8 +579,9 @@ export function Settings() {
       } catch {
         /* ignore */
       }
+    } finally {
+      e.target.value = '' // 允许重复导入同一文件（含被确认弹窗拦下的那次）
     }
-    e.target.value = '' // 允许重复导入同一文件
   }
 
   /** 放弃未保存的更改：草稿清空回退到已持久化配置（JSON 模式同步重置编辑器）。 */
@@ -874,6 +894,24 @@ export function Settings() {
           cancelText="取消"
         >
           当前有未保存的更改，切换作用域将丢弃这些更改。确定切换？
+        </ConfirmDialog>
+      )}
+
+      {/* 未保存更改时导入配置：同一口径的二次确认（挂载驱动显隐）。确认才
+       * 应用导入值；取消保持当前草稿原样，什么都没发生过。 */}
+      {pendingImport !== null && (
+        <ConfirmDialog
+          open
+          onClose={() => setPendingImport(null)}
+          onConfirm={() => {
+            applyImport(pendingImport)
+            setPendingImport(null)
+          }}
+          title="导入配置"
+          confirmText="导入并覆盖"
+          cancelText="取消"
+        >
+          当前有未保存的更改，导入将丢弃这些更改并用文件内容覆盖。确定导入？
         </ConfirmDialog>
       )}
 
