@@ -235,6 +235,12 @@ export function Settings() {
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
     onSuccess: (resp) => {
       qc.invalidateQueries({ queryKey: ['config'] })
+      // 斜杠命令列表由服务端按 config.slashCommands.enabled 过滤（GET /api/commands），
+      // 而 useCommands 的 queryKey ['commands'] 是 staleTime: Infinity——设置页改的
+      // 正是这个开关：不失效的话，本会话内禁用 /clear 后浮层照旧列出（点进去被
+      // 服务端回一句「未启用」，看着像命令坏了），启用 /compact 后浮层里永远不出现
+      // （只能整页刷新）。这里是唯一改配置的入口，失效在这里收口。
+      qc.invalidateQueries({ queryKey: ['commands'] })
       // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
       // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
       setDraft(null)

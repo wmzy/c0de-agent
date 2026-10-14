@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { horizontalWheelTarget } from '@/components/settings/sectionScroll.js'
+import { useCommands } from '@/hooks/useCommands.js'
 import type { AppPaths } from '@/routes.js'
 import { Settings } from '@/views/Settings.js'
 
@@ -97,6 +98,12 @@ vi.mock('@/services/workflows.js', () => ({
     get: vi.fn(),
     save: vi.fn(),
     remove: vi.fn(),
+  },
+}))
+
+vi.mock('@/services/commands.js', () => ({
+  commandsAPI: {
+    list: vi.fn(),
   },
 }))
 
@@ -2763,5 +2770,70 @@ describe('Settings — 写入目标标注随作用域变化', () => {
     fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
     expect(screen.queryByText('目标：/x/y/proj')).toBeNull()
     expect(screen.getByText('目标：~/.c0de/config.json')).toBeTruthy()
+  })
+})
+
+/**
+ * 斜杠命令开关与命令浮层同源。
+ *
+ * 缺陷：useCommands 的 queryKey ['commands'] 是 staleTime: Infinity，而服务端
+ * GET /api/commands 按 config.slashCommands.enabled 过滤（启用才返回）。设置页保存
+ * 只失效了 ['config'] 这一路缓存，于是本会话内的 / 浮层永不刷新：禁用一个命令后
+ * 浮层照旧列出它（点进去服务端回「未启用」，看着像命令坏了），启用一个命令后浮层
+ * 里永远不出现（功能不可达），唯一出路是整页刷新。
+ */
+describe('Settings — 保存后斜杠命令浮层数据同源刷新', () => {
+  function renderSettingsWithCommandsProbe() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <MemoryRouter routes={settingsTestRoutes} initialEntries={['/settings']}>
+        <QueryClientProvider client={qc}>
+          <View />
+          <CommandsProbe />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+  }
+
+  function CommandsProbe() {
+    const commands = useCommands()
+    return (
+      <div data-testid="commands-probe">{(commands.data ?? []).map((c) => c.name).join(',')}</div>
+    )
+  }
+
+  it('保存斜杠命令开关后浮层数据失效重取（不再需要整页刷新）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { commandsAPI } = await import('@/services/commands.js')
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, slashCommands: { enabled: ['/clear', '/model'] } }),
+    )
+    // 服务端语义：按「已启用的斜杠命令」过滤（这里用一份全量清单模拟 registry）
+    const registry = [
+      { name: 'clear', description: '清空会话' },
+      { name: 'model', description: '查看模型' },
+    ]
+    let enabled = ['/clear', '/model']
+    ;(configAPI.update as Mock).mockImplementation(async (patch: Partial<Config>) => {
+      const next = (patch as { slashCommands?: { enabled?: string[] } }).slashCommands?.enabled
+      if (next) enabled = next
+      return { ...mockConfig, config: undefined }
+    })
+    ;(commandsAPI.list as Mock).mockImplementation(async () => ({
+      commands: enabled.includes('*')
+        ? registry
+        : registry.filter((c) => enabled.includes(`/${c.name}`)),
+    }))
+
+    renderSettingsWithCommandsProbe()
+    await waitFor(() =>
+      expect(screen.getByTestId('commands-probe').textContent).toBe('clear,model'),
+    )
+
+    // 只留 /model 并保存
+    fireEvent.change(screen.getByLabelText('已启用的斜杠命令'), { target: { value: '/model' } })
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(screen.getByTestId('commands-probe').textContent).toBe('model'))
   })
 })
