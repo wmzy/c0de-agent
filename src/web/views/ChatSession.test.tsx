@@ -76,19 +76,18 @@ vi.mock('@/hooks/useAgent.js', () => ({
   }),
 }))
 
-vi.mock('@/hooks/useShake.js', () => ({
-  useShake: () => ({
-    shakeContextValue: {},
-    shakeMode: false,
-    handleShakeOpen: vi.fn(),
-    shakeToggle: vi.fn(),
-    shakeRegions: [],
-    shakeSelected: new Set<string>(),
-    exitShakeMode: vi.fn(),
-    shakePending: false,
-    shakeMutation: { isPending: false, mutate: vi.fn() },
-  }),
-}))
+const mockUseShake = {
+  shakeContextValue: {},
+  shakeMode: false,
+  handleShakeOpen: vi.fn(),
+  shakeToggle: vi.fn(),
+  shakeRegions: [] as unknown[],
+  shakeSelected: new Set<string>(),
+  exitShakeMode: vi.fn(),
+  shakePending: false,
+  shakeMutation: { isPending: false, mutate: vi.fn() },
+}
+vi.mock('@/hooks/useShake.js', () => ({ useShake: () => mockUseShake }))
 
 vi.mock('@/hooks/useRetryResume.js', () => ({
   useRetryResume: () => ({ handleResume: vi.fn(), handleRetryLast: vi.fn(), resendPending: false }),
@@ -730,5 +729,53 @@ describe('ChatSession — 会话信息读取失败', () => {
     await renderSession()
     await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
     expect(screen.queryByTestId('session-meta-error')).toBeNull()
+  })
+})
+
+/**
+ * Shake「提交」的在途锁。
+ *
+ * 缺陷：提交按钮的 disabled 只看「有没有选中区域」，请求在飞期间仍可点。跨事件
+ * 连点两次会发出两次 POST /shake/apply，而 apply 不幂等：第二次要么把已经压缩过的
+ * 正文再归档一次（用户勾选的范围与实际被裁的不一致），要么因消息已被第一次改写而
+ * 回 400「消息已变化，请重新预览」——红条挂在一次**已经成功**的 Shake 上。
+ */
+describe('ChatSession — Shake 提交在途锁', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    mockUseShake.shakeMode = true
+    mockUseShake.shakeRegions = [{ id: 'r1', tokens: 10 }]
+    mockUseShake.shakeSelected = new Set(['r1'])
+    mockUseShake.shakeMutation.isPending = false
+  })
+
+  afterEach(() => {
+    mockUseShake.shakeMode = false
+    mockUseShake.shakeRegions = []
+    mockUseShake.shakeSelected = new Set<string>()
+    mockUseShake.shakeMutation.isPending = false
+  })
+
+  it('请求在飞时提交按钮禁用，并显示在途态', async () => {
+    mockUseShake.shakeMutation.isPending = true
+    await renderSession()
+
+    const btn = await screen.findByTestId('shake-submit')
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
+    expect(btn.textContent).toContain('提交中')
+  })
+
+  it('未在途且已选区域时可提交（不能一律禁用）', async () => {
+    await renderSession()
+
+    const btn = await screen.findByTestId('shake-submit')
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    expect(btn.textContent).toContain('提交 Shake')
   })
 })
