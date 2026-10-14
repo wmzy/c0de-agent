@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
-import { Button } from 'haze-ui'
+import { Button, ConfirmDialog } from 'haze-ui'
 import { useState } from 'react'
 import { ProviderCatalogDialog } from '@/components/ProviderCatalogDialog.js'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
@@ -113,6 +113,16 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
     Record<number, { loading: boolean; result?: TestResult }>
   >({})
   const [catalogOpen, setCatalogOpen] = useState(false)
+  /**
+   * 待删除的 provider 下标（非 null = 删除确认弹窗打开中）。
+   *
+   * provider 行里是用户手打的 baseURL + API Key，删掉无法从任何地方取回。
+   * 此前点一次「删除」整行立刻从草稿消失，随后吸底保存条被点亮（● 未保存更改），
+   * 顺手一按「保存」就把这份 provider 从磁盘配置里永久抹掉。同页同族的
+   * 「删除 MCP 服务器」早就有 ConfirmDialog（760c450），provider 行是漏网：
+   * 真实浏览器实测单击后 provider-row 直接 0 行、0 个 dialog、保存条已亮。
+   */
+  const [pendingRemove, setPendingRemove] = useState<number | null>(null)
 
   const addProviderFromCatalog = (provider: ProviderConfig) => {
     onProvidersChange((prev) => [...prev, provider])
@@ -298,7 +308,7 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
             <Button
               className={btnDanger}
               variant="outline"
-              onClick={() => removeProvider(index)}
+              onClick={() => setPendingRemove(index)}
               data-testid="provider-remove"
             >
               删除
@@ -338,6 +348,28 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
           onClose={() => setCatalogOpen(false)}
           onSelect={addProviderFromCatalog}
         />
+      )}
+      {/* 条件渲染挂载：react-use-control 的 open 布尔值仅是初始值，prop 变化
+       * 不同步内部状态（与 SecurityPanel 同款）。标题带 provider 名称——同一页
+       * 常有若干行，只说「删除该 Provider」用户认不出删的是哪一行。
+       * onConfirm 必须自己清 pendingRemove：删除后列表前移，providers[pendingRemove]
+       * 仍指向**下一行**，弹窗会留着并显示成「删除 Provider「下一行的名字」」。 */}
+      {pendingRemove !== null && providers[pendingRemove] && (
+        <ConfirmDialog
+          open
+          onClose={() => setPendingRemove(null)}
+          onConfirm={() => {
+            removeProvider(pendingRemove)
+            setPendingRemove(null)
+          }}
+          title={`删除 Provider「${providers[pendingRemove].name || providers[pendingRemove].baseURL || '未命名'}」`}
+          confirmText="删除"
+          cancelText="取消"
+          variant="danger"
+        >
+          将从配置中移除该 Provider，其 baseURL 与 API Key 不会自动备份；保存设置后该 Provider
+          不再可用于对话，确定删除？
+        </ConfirmDialog>
       )}
     </div>
   )

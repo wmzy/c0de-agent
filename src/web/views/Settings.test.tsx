@@ -319,7 +319,9 @@ describe('Settings — Provider 管理', () => {
     })
   })
 
-  it('点击「删除」移除一行', async () => {
+  // 删除 provider 要先过确认框（行里是手打的 baseURL + API Key，删掉无处取回），
+  // 与同页 MCP 服务器删除同一口径——此前这里单击即删，保存条随即点亮。
+  it('点击「删除」经确认后才移除一行', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
@@ -331,9 +333,17 @@ describe('Settings — Provider 管理', () => {
 
     // 删除第一行
     fireEvent.click(screen.getAllByTestId('provider-remove')[0] as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('ProviderA')
+    // 确认前两行都还在
+    expect(screen.getAllByTestId('provider-row')).toHaveLength(2)
 
+    fireEvent.click(within(dialog).getByText('删除'))
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('provider-row')).toHaveLength(1)
+    })
     const rows = screen.getAllByTestId('provider-row')
-    expect(rows).toHaveLength(1)
     // 仅在剩余 provider-row 内检查 ProviderA 已被删除
     const remaining = within(rows[0] as HTMLElement)
     expect(remaining.queryByDisplayValue('ProviderA')).toBeNull()
