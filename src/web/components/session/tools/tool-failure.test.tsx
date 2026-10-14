@@ -194,6 +194,74 @@ describe('KanbanToolView 失败结果', () => {
     expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('column col-9 does not exist')
   })
 
+  // 回归：卡片引用的列已被删掉（历史脏数据）时，此前只按现有列过滤 → 这些卡片
+  // 一条都不画；全是幽灵卡时 <div className={boardStyle}> 里没有任何子节点——
+  // 连列头都没有的空白看板，用户会认定卡片被谁删了。执行器早已在 output 文本里
+  // 为模型列出「## 未归属列 (N)」（src/tools/builtin/kanban.ts），视图必须说同一件事。
+  it('引用已删除列的卡片必须渲染，而不是变成一块空白看板', () => {
+    render(
+      <KanbanToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{
+          _tag: 'success',
+          output: '## 未归属列 (1)\n  [ghost-1] "修 bug"\nTotal: 1 card(s).',
+          metadata: {
+            board: {
+              columns: [{ id: 'todo', name: '待办' }],
+              cards: [
+                {
+                  id: 'ghost-1',
+                  title: '修 bug',
+                  columnId: 'col-deleted',
+                  priority: 'high',
+                  description: null,
+                },
+              ],
+            },
+          },
+        }}
+      />,
+    )
+    // 列头文本被拆进多个节点，用规范化匹配
+    expect(screen.getByText((_, el) => el?.textContent === '未归属列 (1)')).toBeInTheDocument()
+    expect(screen.getByText('修 bug')).toBeInTheDocument()
+    // 有卡片（哪怕全是幽灵卡）就不能说「看板为空」
+    expect(screen.queryByText('看板为空')).toBeNull()
+  })
+
+  it('正常列与未归属列同时渲染', () => {
+    render(
+      <KanbanToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{
+          _tag: 'success',
+          output: '',
+          metadata: {
+            board: {
+              columns: [{ id: 'todo', name: '待办' }],
+              cards: [
+                { id: 'c1', title: '写文档', columnId: 'todo', priority: 'low', description: null },
+                {
+                  id: 'ghost-1',
+                  title: '修 bug',
+                  columnId: 'col-gone',
+                  priority: 'high',
+                  description: null,
+                },
+              ],
+            },
+          },
+        }}
+      />,
+    )
+    expect(screen.getByText((_, el) => el?.textContent === '待办 (1)')).toBeInTheDocument()
+    expect(screen.getByText('写文档')).toBeInTheDocument()
+    expect(screen.getByText((_, el) => el?.textContent === '未归属列 (1)')).toBeInTheDocument()
+    expect(screen.getByText('修 bug')).toBeInTheDocument()
+  })
+
   it('没有内嵌 Errors 行的正常成功结果不渲染失败块', () => {
     render(
       <KanbanToolView

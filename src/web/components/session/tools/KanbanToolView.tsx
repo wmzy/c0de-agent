@@ -85,6 +85,13 @@ function BoardView({ board }: { board: KanbanBoard }) {
   if (board.cards.length === 0) {
     return <div className={empty}>看板为空</div>
   }
+  // 卡片引用的列已不存在（历史脏数据：列被删/改名后残留）时，只按现有列过滤会让
+  // 这些卡片一条都不画：全是幽灵卡时整个看板渲染成一块空白 div（连列头都没有），
+  // 用户会认定卡片被谁删了。执行器早已为此在 output 文本里补「## 未归属列 (N)」
+  // 段落（src/tools/builtin/kanban.ts），视图必须说同一件事——模型看得见、人看不见
+  // 是最坏的一种「看板为空」。
+  const colIds = new Set(board.columns.map((c) => c.id))
+  const orphans = board.cards.filter((c) => !colIds.has(c.columnId))
   return (
     <div className={boardStyle}>
       {board.columns.map((col) => {
@@ -104,6 +111,18 @@ function BoardView({ board }: { board: KanbanBoard }) {
           </div>
         )
       })}
+      {orphans.length > 0 && (
+        <div>
+          <div className={colHeader}>未归属列 ({orphans.length})</div>
+          <div className={detail}>引用了已不存在的列，移动或删除前不显示在列内</div>
+          {orphans.map((card) => (
+            <div key={card.id} className={cardRow}>
+              <span>{PRIORITY_DOT[card.priority] ?? '⚪'}</span>
+              <span>{card.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
