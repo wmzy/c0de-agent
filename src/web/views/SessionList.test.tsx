@@ -291,6 +291,39 @@ describe('SessionList 会话搜索', () => {
     expect(screen.getByTestId('session-search-retry')).toBeInTheDocument()
   })
 
+  /**
+   * 回归：搜索时未绑定项目的 CLI 会话整组消失，还给出「无匹配会话」。
+   *
+   * 缺陷：unboundCliRoots 在 search.length > 0 时直接取 []。那组是 P1-2 专门为
+   * 「CLI 会话在 Web 可达」加的，而 CLI 会话的 cwd 不属于任何已注册项目 →
+   * 项目树按 projectId 过滤后没有它、内容搜索按 projectId 过滤也查不到它
+   * （/api/sessions/search），标题匹配是它唯一的入口。于是输入该会话标题里的
+   * 一个字，上一个按键还在屏幕上的那一行变成「无匹配会话」，用户再没有入口
+   * 找回它（只能清空搜索框）。
+   */
+  it('搜索命中未绑定项目的 CLI 会话时仍然列出它，不报「无匹配会话」', async () => {
+    vi.mocked(sessionAPI.search).mockResolvedValue({ results: [] })
+    const cliHit = {
+      ...makeSession('cli-hit', 'cli 迁移脚本', null),
+      source: 'cli' as const,
+    }
+    const cliOther = {
+      ...makeSession('cli-other', 'cli 无关会话', null),
+      source: 'cli' as const,
+    }
+    hoisted.tree = [node(ROOT), node(cliHit), node(cliOther)]
+    renderList()
+
+    fireEvent.change(screen.getByTestId('session-search'), { target: { value: '迁移' } })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('node-cli-hit')).toBeInTheDocument()
+    })
+    // 不命中的那一条仍然按搜索过滤掉
+    expect(screen.queryByTestId('node-cli-other')).toBeNull()
+    expect(screen.queryByText('无匹配会话')).toBeNull()
+  })
+
   it('真的没有匹配时才是「无匹配会话」', async () => {
     vi.mocked(sessionAPI.search).mockResolvedValue({ results: [] })
     renderList()

@@ -275,11 +275,17 @@ export function SessionList({
 
   // P1-2：未绑定项目的持久化 CLI 会话（cwd 不属于任何已注册项目时产生）。
   // 项目树按 projectId 过滤会漏掉它们——单独分组展示，保证 CLI 会话在 Web 可达。
+  //
+  // 搜索时按标题过滤这一组，而不是整组收起：整组收起会让「搜自己刚看到的 CLI 会话
+  // 标题」得到「无匹配会话」——同一个面板上一个按键之前那一行还在。消息内容搜索也
+  // 救不了它：/api/sessions/search 按 projectId 过滤，未归属会话根本不在结果里，
+  // 标题匹配是它唯一的入口。searchTree 对空查询原样返回，未搜索时行为不变。
   const unboundCliRoots = useMemo(
     () =>
-      search.length === 0
-        ? (tree ?? []).filter((n) => n.session.projectId == null && n.session.source === 'cli')
-        : [],
+      searchTree(
+        (tree ?? []).filter((n) => n.session.projectId == null && n.session.source === 'cli'),
+        search,
+      ),
     [tree, search],
   )
 
@@ -634,7 +640,11 @@ export function SessionList({
               </button>
             </div>
           ) : null}
-          {!isLoading && !contentError && visibleTree.length === 0 && extraMatches.length === 0 ? (
+          {!isLoading &&
+          !contentError &&
+          visibleTree.length === 0 &&
+          unboundCliRoots.length === 0 &&
+          extraMatches.length === 0 ? (
             <div className={empty} aria-live="polite">
               {searching ? (contentPending ? '搜索中…' : '无匹配会话') : '该项目下暂无会话'}
             </div>
