@@ -227,3 +227,107 @@ describe('TableView 一条消息内的多个工具调用', () => {
     expect(cell?.textContent).toBe('read grep bash')
   })
 })
+
+/**
+ * 搜索索引不能复用展示用的截断摘要。
+ *
+ * 缺陷：rowSearchText 直接用 rowSummary，而 rowSummary 只取首个 text part 的
+ * 前 120 字符。搜索框自报「搜索当前会话的消息与调用」，实际只索引这 120 字
+ * 与工具名：长回复后半段、第二个及以后的 text part、thinking / steering、
+ * 工具入参（命令 / 路径 / pattern）全部搜不到。用户据此得出相反结论
+ * 「agent 从没提过 X / 从没跑过这个命令」，与 8086032 修的「工具筛选只认
+ * 第一个」同族。
+ */
+describe('TableView 搜索索引覆盖整行内容', () => {
+  afterEach(() => cleanup())
+
+  const filler = 'x'.repeat(200)
+  const longReplyRow: TimelineRow = {
+    kind: 'message',
+    ts: 1,
+    message: {
+      id: 'm-long',
+      sessionId: 's',
+      role: 'assistant',
+      content: [{ _tag: 'text', text: `${filler} 关键结论是缓存失效重放` }],
+      tokenCount: 0,
+      createdAt: 1,
+    },
+  }
+
+  it('命中第 120 字符之后的正文（摘要列仍是截断的）', () => {
+    render(<TableView rows={[longReplyRow]} />)
+    fireEvent.change(screen.getByTestId('table-search'), { target: { value: '缓存失效重放' } })
+    expect(screen.getAllByTestId('table-row')).toHaveLength(1)
+    // 展示摘要仍按 120 字符截断，不因索引变全而变宽（摘要列是最后一个 td）
+    const cell = screen.getAllByTestId('table-row')[0]?.querySelectorAll('td')[7]
+    expect(cell?.textContent?.length).toBe(120)
+  })
+
+  it('命中第二个及以后的 text part 与 thinking 文本', () => {
+    const row: TimelineRow = {
+      kind: 'message',
+      ts: 1,
+      message: {
+        id: 'm-multi',
+        sessionId: 's',
+        role: 'assistant',
+        content: [
+          { _tag: 'text', text: '先说一句无关的话' },
+          { _tag: 'text', text: '第二段里有 migration_0042 这个词' },
+          { _tag: 'thinking', text: '心里在想 rollback_plan' },
+        ],
+        tokenCount: 0,
+        createdAt: 1,
+      },
+    }
+    render(<TableView rows={[row]} />)
+    for (const needle of ['migration_0042', 'rollback_plan']) {
+      fireEvent.change(screen.getByTestId('table-search'), { target: { value: needle } })
+      expect(screen.getAllByTestId('table-row')).toHaveLength(1)
+    }
+  })
+
+  it('命中工具入参里的命令与路径', () => {
+    const row: TimelineRow = {
+      kind: 'message',
+      ts: 1,
+      message: {
+        id: 'm-tool',
+        sessionId: 's',
+        role: 'assistant',
+        content: [
+          {
+            _tag: 'tool_call',
+            id: 'c1',
+            tool: 'bash',
+            input: { command: 'grep -rn zeta-marker src/server' },
+          },
+        ],
+        tokenCount: 0,
+        createdAt: 1,
+      },
+    }
+    render(<TableView rows={[row]} />)
+    fireEvent.change(screen.getByTestId('table-search'), { target: { value: 'zeta-marker' } })
+    expect(screen.getAllByTestId('table-row')).toHaveLength(1)
+  })
+
+  it('调用行可搜到 responseText 后半段（摘要列仍截断）', () => {
+    const row: TimelineRow = {
+      kind: 'call',
+      ts: 1,
+      segment: seg,
+      call: { ...call, responseText: `${filler} 回复尾部写着 delta_8891` },
+    }
+    render(<TableView rows={[row]} />)
+    fireEvent.change(screen.getByTestId('table-search'), { target: { value: 'delta_8891' } })
+    expect(screen.getAllByTestId('table-row')).toHaveLength(1)
+  })
+
+  it('搜不到时仍是无匹配项（索引扩大不放宽到全命中）', () => {
+    render(<TableView rows={[longReplyRow]} />)
+    fireEvent.change(screen.getByTestId('table-search'), { target: { value: '绝不存在的词' } })
+    expect(screen.queryAllByTestId('table-row')).toHaveLength(0)
+  })
+})

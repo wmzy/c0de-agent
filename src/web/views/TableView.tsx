@@ -228,9 +228,46 @@ function rowJSON(row: TimelineRow): string {
   }
 }
 
+/** 行内所有可搜索文本：消息的全部文本 part 全文（不限 120 字符）+ 工具入参。
+ *
+ * 此前 rowSearchText 复用 rowSummary，而 rowSummary 只取首个 text part 的
+ * 前 120 字符——agent 长回复的后半段、第二个及以后的 text part、thinking /
+ * steering 文本、工具入参（命令 / 路径 / pattern）全部不在索引里。用户搜一个
+ * 确实出现过的词得到「无匹配项 0/N」，据此判断「这个会话从没提过 X /
+ * 从没跑过这个命令」，与 8086032 已修的「工具筛选只认第一个」是同族。
+ *
+ * tool_result 的 output 不进索引：bash 一次失败的构建就是几十万字符，
+ * 逐键重建整张表的索引会随会话体积线性放大（这里每次按键都要重算）。要查
+ * 输出内容用「展开行的原始 JSON」，那才是它的用途。
+ */
+function rowFullText(row: TimelineRow): string {
+  switch (row.kind) {
+    case 'message': {
+      const chunks: string[] = []
+      for (const p of row.message.content) {
+        if (p._tag === 'text' || p._tag === 'thinking' || p._tag === 'steering') chunks.push(p.text)
+        // 入参通常是命令/路径/pattern 这类短文本，正是最常被搜的东西
+        else if (p._tag === 'tool_call') chunks.push(JSON.stringify(p.input ?? {}))
+      }
+      return chunks.join(' ')
+    }
+    case 'call':
+      return row.call.responseText
+    case 'segment':
+      return `${row.segment.trigger} ${row.segment.model} ${row.segment.provider}`
+  }
+}
+
 /** 筛选后的可搜索文本（小写）。 */
 function rowSearchText(row: TimelineRow): string {
-  const parts = [typeLabel(row), rowRole(row), ...rowToolNames(row), rowModel(row), rowSummary(row)]
+  const parts = [
+    typeLabel(row),
+    rowRole(row),
+    ...rowToolNames(row),
+    rowModel(row),
+    rowSummary(row),
+    rowFullText(row),
+  ]
   return parts.join(' ').toLowerCase()
 }
 
