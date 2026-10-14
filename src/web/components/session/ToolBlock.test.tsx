@@ -267,3 +267,46 @@ describe('ToolBlock', () => {
     expect(screen.getByTestId('tool-body')).toHaveTextContent('等待权限确认')
   })
 })
+
+/**
+ * 回归：工具状态此前只有 ⏳/✓/✗/🔒 字形与 data-status 属性。
+ *
+ * 字形多数读屏引擎读成「勾」「叉」或直接跳过，data-* 只是 DOM 属性、不进无障碍树，
+ * 于是「一次 pnpm test 失败」与「一次成功执行」读起来完全同形：读屏用户没有任何
+ * 信号去展开看失败原因，而失败原因正是这块唯一有价值的内容。0cbab63 补了
+ * aria-expanded（开还是关），这里补「成功还是失败」。
+ */
+describe('ToolBlock 状态进无障碍树', () => {
+  it('每种状态都有可读文案', () => {
+    const { rerender } = render(<ToolBlock block={toolBlock({ status: 'running' })} />)
+    expect(screen.getByRole('img', { name: '执行中' })).toBeInTheDocument()
+
+    rerender(<ToolBlock block={toolBlock({ status: 'completed' })} />)
+    expect(screen.getByRole('img', { name: '执行成功' })).toBeInTheDocument()
+
+    rerender(
+      <ToolBlock
+        block={toolBlock({ status: 'error', output: { _tag: 'error', error: '权限不足' } })}
+      />,
+    )
+    expect(screen.getByRole('img', { name: '执行失败' })).toBeInTheDocument()
+
+    rerender(<ToolBlock block={toolBlock({ status: 'paused' })} />)
+    expect(screen.getByRole('img', { name: '等待权限确认' })).toBeInTheDocument()
+  })
+
+  it('伪失败（completed + Errors: 行）读出「操作未生效」，不谎报执行成功', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'todo',
+          input: { op: 'done', task: '不存在的任务' },
+          status: 'completed',
+          output: { _tag: 'success', output: 'Errors: Task "不存在的任务" not found.' },
+        })}
+      />,
+    )
+    expect(screen.getByRole('img', { name: '操作未生效' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: '执行成功' })).toBeNull()
+  })
+})

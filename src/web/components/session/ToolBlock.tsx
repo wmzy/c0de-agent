@@ -24,6 +24,22 @@ const STATUS_ICON: Record<ToolRenderBlock['status'], string> = {
   paused: '🔒',
 }
 
+/**
+ * 状态的读屏文案。⏳/✓/✗/🔒 是纯字形（多数读屏引擎读成「勾」「叉」或直接跳过），
+ * data-status/data-severity 是 DOM 属性、不进无障碍树——于是「一次 pnpm test 失败」
+ * 与「一次成功执行」在读屏下完全同形，用户没有任何信号去展开看失败原因，而失败
+ * 原因正是这块唯一有价值的内容。0cbab63 补了 aria-expanded（开还是关），这里补
+ * 「成功还是失败」。
+ */
+const STATUS_LABEL: Record<ToolRenderBlock['status'], string> = {
+  running: '执行中',
+  completed: '执行成功',
+  error: '执行失败',
+  paused: '等待权限确认',
+}
+/** 伪失败（todo/kanban 把操作级失败随 success 返回）：成功态但操作没生效。 */
+const INLINE_ERROR_LABEL = '操作未生效'
+
 const wrap = css`
   display: flex;
   flex-direction: column;
@@ -132,6 +148,9 @@ export const ToolBlock = memo(function ToolBlock({
   // shake 模式强制展开（用户需看到完整内容判断是否 shake）
   const isExpanded = forceExpand || expanded
 
+  // 伪失败：status 是 completed，但操作级失败（见上方 inlineError 的说明）。
+  const inlineFailed = inlineError !== null && st === 'completed'
+
   return (
     <div className={wrap}>
       {/* biome-ignore lint/a11y/useSemanticElements: header 内嵌 FilePathLink(<button>)，HTML 禁止 button 嵌 button，必须用 div+role */}
@@ -154,8 +173,12 @@ export const ToolBlock = memo(function ToolBlock({
           data-testid="tool-status"
           data-status={st}
           data-severity={inlineError !== null ? 'error' : undefined}
+          // 状态必须进无障碍树（见 STATUS_LABEL 的说明）：role="img" + aria-label
+          // 让折叠头的可访问名带上状态，读屏播报「执行失败 bash · pnpm test」。
+          role="img"
+          aria-label={inlineFailed ? INLINE_ERROR_LABEL : STATUS_LABEL[st]}
         >
-          {inlineError !== null && st === 'completed' ? '⚠' : STATUS_ICON[st]}
+          {inlineFailed ? '⚠' : STATUS_ICON[st]}
         </span>
         <span className={summary} data-testid="tool-summary">
           {tool}
