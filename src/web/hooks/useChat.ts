@@ -14,6 +14,7 @@ import {
   RUN_CHANNEL,
   type RunStateMessage,
   reduceChatEvent,
+  sealInFlightTools,
   TAB_ID,
 } from '@/hooks/chatState.js'
 import { generateId } from '@/hooks/id.js'
@@ -163,10 +164,20 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         if (!result.done && !gotError) {
           // SSE 结束但未收到 done 也无 error → 连接中断（服务重启等）
           lastFailureRef.current = { reason: INTERRUPTED_REASON, gate: null }
-          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            interrupted: true,
+            messages: sealInFlightTools(s.messages),
+          }))
         } else if (!result.done && gotError) {
-          // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断
-          setState((s) => ({ ...s, isStreaming: false }))
+          // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断。
+          // 在途工具同样不会再收到结果：必须封口，否则卡片永远停在 ⏳ 执行中。
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            messages: sealInFlightTools(s.messages),
+          }))
         }
         return result.done
       } catch (err) {
@@ -285,7 +296,14 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             llmDetailTimerRef.current = null
           }
           qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
-          setState((s) => ({ ...s, isStreaming: false }))
+          // 用户按「终止」：服务端会落 aborted 的工具结果（下次重取即覆盖），但本地
+          // SSE 已被掐断、那份结果送不到——不封口的话工具卡停在 ⏳，而「终止」按钮
+          // 已经消失，界面自己说运行停了、又在同一块卡上说「执行中」。
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            messages: sealInFlightTools(s.messages),
+          }))
         } else if (typeof e.status === 'number') {
           // 服务端 HTTP 错误（带 status）：后端已经给出可操作文案，这不是「连接中断」。
           // 上面各 code 分支只覆盖 8 种已知错误，其余——404 会话不存在或已删除、
@@ -297,7 +315,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           const reason = e.message || `请求失败（HTTP ${e.status}）`
           lastFailureRef.current = { reason, gate: null }
           setState((s) => {
-            const msgs = withdraw(s.messages)
+            const msgs = sealInFlightTools(withdraw(s.messages))
             return {
               ...s,
               messages: msgs,
@@ -308,7 +326,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         } else {
           // 无 status：fetch 本身失败（服务不可达）或请求在途被打断 → 视为中断
           lastFailureRef.current = { reason: INTERRUPTED_REASON, gate: null }
-          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            interrupted: true,
+            messages: sealInFlightTools(s.messages),
+          }))
         }
         return false
       } finally {

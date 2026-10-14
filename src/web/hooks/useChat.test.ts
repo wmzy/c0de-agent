@@ -1334,6 +1334,77 @@ describe('useChat abort', () => {
     })
     await waitFor(() => expect(result.current.abortError).toBeNull())
   })
+
+  // 回归：终止后「终止」按钮消失（同屏已宣布运行停止），在途工具卡却永远停在
+  // ⏳「执行中」——服务端的 aborted 结果要等下一次重取消息才送达，中间这段空窗里
+  // 界面自相矛盾，用户不知道那次 bash/git 到底还在不在跑。
+  it('终止时在途工具被封口成失败，不留在 ⏳「执行中」', async () => {
+    const sse =
+      'data: {"_tag":"tool_call_start","id":"tc1","tool":"bash","input":{"command":"sleep 300"}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string, init?: { signal?: AbortSignal }) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                // 挂起直到 signal 被终止——真实 fetch 的 reader 在 abort 时抛错，
+                // 这里必须同样抛，否则 doStream 永远停在 try 里，收尾分支走不到。
+                return await new Promise<never>((_, reject) => {
+                  const signal = init?.signal
+                  if (!signal) return
+                  const fail = (): void => reject(new Error('Aborted'))
+                  if (signal.aborted) fail()
+                  else signal.addEventListener('abort', fail, { once: true })
+                })
+              },
+            }),
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ aborted: true }),
+        text: async () => JSON.stringify({ aborted: true }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    // 在途：已有 tool_call、没有 tool_result
+    await waitFor(() =>
+      expect(
+        result.current.messages.some((m) => m.content.some((p) => p._tag === 'tool_call')),
+      ).toBe(true),
+    )
+
+    await act(async () => {
+      result.current.abort()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    const parts = result.current.messages.flatMap((m) => m.content)
+    expect(parts.some((p) => p._tag === 'tool_call' && p.id === 'tc1')).toBe(true)
+    const settled = parts.find((p) => p._tag === 'tool_result' && p.id === 'tc1')
+    expect(settled).toBeDefined()
+    expect(settled && settled._tag === 'tool_result' ? settled.output._tag : null).toBe('error')
+  })
 })
 
 // 回归（P0-4）：RUN_ACTIVE 并发守卫——该错误若落入「网络错误视为中断」分支，

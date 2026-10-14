@@ -371,6 +371,55 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
   }
 }
 
+/** 收尾时为「已 start、未 end」的在途工具调用补的原因文案。 */
+export const SEALED_TOOL_REASON =
+  '本次运行已结束，未收到该工具的执行结果（工具可能未执行，或结果已丢失）'
+
+/**
+ * 流式收尾（用户终止 / 连接中断 / 服务端错误）时封口在途工具调用。
+ *
+ * tool_call 与 tool_result 是两条独立事件：模型发起调用后由服务端执行，结果另发
+ * tool_call_end。收尾路径此前只把 isStreaming 置 false，从不为「已 start、未 end」
+ * 的调用补结果——于是时间线上那张卡永远停在 ⏳「执行中」（读屏也念「执行中」），
+ * 而同一屏已经宣布这次运行停止（「终止」按钮消失 / 出现中断横幅），两处结论互相
+ * 矛盾，用户不知道那次 bash/git 到底还在不在跑，只能干等或重发。
+ *
+ * 服务端在终止时会把 aborted 的结果落库，下次重取消息自然覆盖本地的占位结果；
+ * 本函数补的就是「重取之前」这段空窗，让界面不再自相矛盾。已配对的调用不受影响
+ * （无变化时返回原数组引用，调用方无需额外判等）。
+ */
+export function sealInFlightTools(messages: Message[]): Message[] {
+  let changed = false
+  const next = messages.map((message) => {
+    if (message.role !== 'assistant') return message
+    const settled = new Set<string>()
+    for (const part of message.content) {
+      if (part._tag === 'tool_result') settled.add(part.id)
+    }
+    const pending = message.content.filter(
+      (part): part is Extract<MessageContent, { _tag: 'tool_call' }> =>
+        part._tag === 'tool_call' && !settled.has(part.id),
+    )
+    if (pending.length === 0) return message
+    changed = true
+    return {
+      ...message,
+      content: [
+        ...message.content,
+        ...pending.map(
+          (part): MessageContent => ({
+            _tag: 'tool_result',
+            id: part.id,
+            tool: '',
+            output: { _tag: 'error', error: SEALED_TOOL_REASON },
+          }),
+        ),
+      ],
+    }
+  })
+  return changed ? next : messages
+}
+
 function errorToMessage(err: AgentError): string {
   switch (err._tag) {
     case 'aborted':
