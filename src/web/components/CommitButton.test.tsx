@@ -103,4 +103,35 @@ describe('CommitButton', () => {
       expect(screen.getByTestId('commit-review-error').textContent).toContain('远端拒绝了 push'),
     )
   })
+
+  // 复现：不走审查弹窗的提交失败（pre-commit hook 拒绝、git user.email 未配置）
+  // 此前原因只写进 haze-ui Tooltip 的 content，未悬停时那个 role=tooltip 气泡是
+  // display:none 的空节点——真实浏览器实测：按钮上没有 aria-describedby/title，
+  // ariaSnapshot 只读出「提交失败」，5 秒后连 tooltip 文案一起被 setTimeout 复位。
+  // 触屏没有悬停、读屏不进气泡，用户拿到的只有四个字；即使鼠标用户也来不及读。
+  it('直接提交失败的原因常驻渲染在按钮旁，不再只活在 tooltip 里', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      vi.mocked(fileAPI.gitStatus).mockResolvedValue({ 'src/a.ts': 'modified' } as never)
+      vi.mocked(fileAPI.gitCommit).mockRejectedValue(
+        new Error('pre-commit hook 拒绝了这次提交：ESLint 在 src/a.ts:12 报了 3 个错误'),
+      )
+      renderWithClient(<CommitButton projectId="p1" />)
+
+      await waitFor(() =>
+        expect((screen.getByTestId('git-commit-btn') as HTMLButtonElement).disabled).toBe(false),
+      )
+      fireEvent.click(screen.getByTestId('git-commit-btn'))
+
+      const err = await waitFor(() => screen.getByTestId('commit-error'))
+      expect(err.getAttribute('role')).toBe('alert')
+      expect(err.textContent).toContain('pre-commit hook 拒绝了这次提交')
+
+      // 5 秒后原因必须还在（旧的 5s 复位定时器会让这里查无此节点）
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(screen.getByTestId('commit-error').textContent).toContain('pre-commit hook')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
