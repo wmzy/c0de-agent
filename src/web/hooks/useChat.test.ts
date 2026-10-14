@@ -2079,3 +2079,83 @@ describe('useChat steer 的送达语义', () => {
     ).toBe(false)
   })
 })
+
+/**
+ * 切换会话时在飞的流必须作废。
+ *
+ * 缺陷：ChatSession 在 /projects/:p/sessions/:a → :b 之间被路由复用（route.path
+ * 不变，子树不重建），sessionId 变化的 effect 只 stopPoll + setState(INITIAL)，
+ * **没有作废在飞的 SSE 流**——上一条会话的 onEvent 闭包继续 setState，把 A 的
+ * 正文/工具卡写进刚复位成 INITIAL 的 state，经 mergeSessionMessages 渲染成
+ * 「B 的时间线里出现 A 的回复」；B 顶部还挂着「运行中」，点「终止」也停不掉 A
+ * （abortRef 已被 B 的流覆盖）。也不能靠 abort fetch 解决：服务端把 SSE 断开
+ * 当作「用户终止」（stream.onAbort → agentManager.abort），会连带杀掉后台 run，
+ * 与「离开会话后 run 继续跑、回来 attach 重挂」的设计冲突。
+ */
+describe('useChat 切换会话作废在飞的流', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('切会话后旧会话的后续帧不再写进新会话', async () => {
+    const enc = new TextEncoder()
+    // 可控 SSE 流：测试显式喂帧，读到帧之后才继续读
+    let resolveRead: ((v: { done: boolean; value?: Uint8Array }) => void) | null = null
+    const read = () =>
+      new Promise<{ done: boolean; value?: Uint8Array }>((res) => (resolveRead = res))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return { ok: true, status: 200, body: { getReader: () => ({ read }) } }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+        text: async () => '{"ok":true}',
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useChat(id), {
+      initialProps: { id: 's1' },
+      wrapper,
+    })
+
+    // 会话 A 起流（不 await：reader 阻塞在下一帧）
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    /** 把一帧喂进流并等 React 消化。 */
+    const emit = async (event: unknown) => {
+      await waitFor(() => expect(resolveRead).not.toBeNull())
+      const res = resolveRead as ((v: { done: boolean; value?: Uint8Array }) => void) | null
+      resolveRead = null
+      await act(async () => {
+        res?.({ done: false, value: enc.encode(`data: ${JSON.stringify(event)}\n\n`) })
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    }
+
+    // A 自己收到帧：正常归约
+    await emit({ _tag: 'text_delta', text: 'A 的回复' })
+    expect(
+      result.current.messages.some((m) => JSON.stringify(m.content).includes('A 的回复')),
+    ).toBe(true)
+
+    // 切到会话 B：状态复位，A 的流仍在飞
+    await act(async () => {
+      rerender({ id: 's2' })
+    })
+    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.isStreaming).toBe(false)
+
+    // A 的后续帧到达：必须被丢弃（修复前这里会渲染出 A 的正文）
+    await emit({ _tag: 'text_delta', text: 'A 的后续' })
+    expect(result.current.messages).toHaveLength(0)
+    expect(JSON.stringify(result.current.messages)).not.toContain('A 的后续')
+  })
+})

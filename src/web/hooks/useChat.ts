@@ -41,6 +41,17 @@ const COMPACTION_SKIP_REASON: Record<string, string> = {
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
+  /**
+   * 会话世代号：切换会话时递增，在飞的流据此判定自己已过期。
+   *
+   * 切换会话不 abort fetch——服务端把 SSE 断开当作「用户终止」
+   * （src/server/routes/chat.ts 的 stream.onAbort → agentManager.abort），
+   * abort 会连带杀掉后台 run，与「离开页面后 run 继续跑、回来用 attach 重挂」
+   * 的设计冲突。所以旧流继续读，但它的 onEvent/setState 结果必须被丢弃：
+   * 否则旧会话的 text_delta/tool_call 会写进刚复位成 INITIAL 的 state，
+   * 经 mergeSessionMessages 渲染成**新会话时间线里上一条会话的回复**。
+   */
+  const genRef = useRef(0)
   // P1 后台附着：流式/权限超时态镜像——副作用（confirmTool 网络请求）必须
   // 在状态更新器之外发起：更新器是纯函数，StrictMode/并发渲染重放会重复
   // 执行，写进更新器会让同一拒绝请求发出两次。
@@ -88,6 +99,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // P1：同时停止附着轮询并复位镜像 ref——挂起/附着态随会话切换整体作废。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅依赖 sessionId 触发重置
   useEffect(() => {
+    // 先作废旧世代：在飞的流从此不再写 state（详见 genRef 注释）。
+    genRef.current += 1
     stopPoll()
     streamingRef.current = false
     attachedRef.current = false
@@ -105,6 +118,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // 返回 ok=false 表示本轮未正常完成（供调用方做首条消息失败清理等）。
   const doStream = useCallback(
     async (content: string, opts: ChatOpts | undefined): Promise<boolean> => {
+      // 本轮所属世代：期间切换会话（genRef 递增）后，本轮的 state 写入一律作废。
+      const gen = genRef.current
+      const isStale = () => genRef.current !== gen
       abortRef.current = new AbortController()
       // P1：标记流式态并广播 run 启动——同会话其他标签页据此附着显示运行态。
       streamingRef.current = true
@@ -139,7 +155,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
                 qc.invalidateQueries({ queryKey: ['file', p] })
               }
             }
-            setState((s) => reduceChatEvent(s, event))
+            // 切换会话后本轮的归约一律丢弃（缓存失效仍照做：那是给旧会话用的，
+            // 回到它会重取）。否则旧会话的正文/工具卡会渲染进新会话的时间线。
+            if (!isStale()) setState((s) => reduceChatEvent(s, event))
             // 收到调用详情通知时刷新调用详情面板，避免需手动刷新页面。
             // 高频 llm_detail 做 debounce（500ms），done/error 立即 flush。
             if (event._tag === 'llm_detail') {
@@ -161,6 +179,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           abortRef.current.signal,
           opts,
         )
+        if (isStale()) return false
         if (!result.done && !gotError) {
           // SSE 结束但未收到 done 也无 error → 连接中断（服务重启等）
           lastFailureRef.current = { reason: INTERRUPTED_REASON, gate: null }
@@ -182,6 +201,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         return result.done
       } catch (err) {
         const e = err as unknown as APIError
+        // 本轮已随会话切换作废：一条状态都不写——包括待发弹窗（pendingTrust/
+        // pendingSegmentBreak）与乐观消息撤回：后者作用在**新会话**的 state 上
+        // 会删错消息。返回 false 让调用方照旧把草稿还给用户（发送未必送达）。
+        if (isStale()) return false
         // 撤回本轮**乐观追加**的那条 user 消息，且只撤这一条。
         //
         // 旧实现是「最后一条是 user 就 pop」——对 retry/confirmBreak/confirmTrust
