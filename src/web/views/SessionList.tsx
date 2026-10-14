@@ -380,7 +380,10 @@ export function SessionList({
     detail: string
   } | null>(null)
   const [migratePermissions, setMigratePermissions] = useState(false)
-  const { data: projects } = useProjects()
+  const { data: projects, isError: projectsQueryFailed, error: projectsErr } = useProjects()
+  const projectsErrMessage =
+    (projectsErr as { message?: string } | null)?.message ??
+    (projectsErr instanceof Error ? projectsErr.message : null)
 
   /** 执行导入：绑定目标项目后刷新树并跳转；notice 明示工具执行目录。 */
   const doImport = async (data: unknown, targetId: string, importPermissions: boolean) => {
@@ -455,6 +458,21 @@ export function SessionList({
           (exportedProjectId && p.id === exportedProjectId) ||
           (exportedWorktree && p.worktree === exportedWorktree),
       )
+      /*
+       * 读不到项目列表 ≠ 原项目不在本机。导出文件带着原项目归属时，「原项目是否
+       * 就是当前项目」这件事只有列表能回答：列表读不到而继续导入，`original`
+       * 恒为 undefined → continueImport 直接跳过「选择导入目标」，会话静默绑到
+       * 当前项目，继续对话后 bash/git 全跑在错误 worktree 里（P1-2 那道门整个
+       * 不出现，页面零错误、零重试）。真实浏览器实测注入 500 后：导出自 projB 的
+       * 会话直接落到 projA，notice 里的执行目录还退化成一句「目标项目的目录」。
+       * 因此这里中止导入并把真实原因交给用户，而不是猜一个目标。
+       */
+      if ((exportedProjectId || exportedWorktree) && projectsQueryFailed && !projects) {
+        setImportError(
+          `无法读取项目列表（${projectsErrMessage ?? '未知原因'}），无法判断该会话导出自哪个项目，已中止导入；请稍后重试。`,
+        )
+        return
+      }
       // P0：权限态迁移需用户显式确认（默认剥离）。导出文件含 auto 模式或
       // alwaysAllow 白名单时，导入前明示风险并让用户选择（站内弹窗，危险动作为
       // 未勾选的复选框——原生 confirm 的默认键是「确定」= 迁移）。
@@ -537,7 +555,9 @@ export function SessionList({
         </div>
       )}
       {importError && (
-        <div className={errorBar} data-testid="import-error">
+        // role=alert：导入失败（含上面的「项目列表读不到 → 中止导入」）是这条路径
+        // 唯一的反馈，不播报等于对读屏用户静默。
+        <div className={errorBar} role="alert" data-testid="import-error">
           导入失败：{importError}
         </div>
       )}

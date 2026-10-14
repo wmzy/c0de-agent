@@ -18,6 +18,8 @@ import { SessionList } from '@/views/SessionList.js'
 
 const hoisted = vi.hoisted(() => ({
   tree: [] as unknown[],
+  /** 项目列表查询的返回值（可整体替换以模拟读取失败）。 */
+  projectsQuery: null as null | (() => { data?: unknown; isError?: boolean; error?: unknown }),
   /** 会话树查询的完整返回值：驱动读失败分支与「重试」入口。 */
   treeQuery: {
     data: [] as unknown[] | undefined,
@@ -67,7 +69,10 @@ vi.mock('@/hooks/useSession.js', () => ({
     mutate: (id: string, opts?: { onSuccess?: () => void; onError?: (e: unknown) => void }) =>
       hoisted.deleteMutate?.(id, opts),
   }),
-  useProjects: () => ({ data: [{ id: 'p1', name: 'proj', worktree: '/tmp/proj' }] }),
+  useProjects: () =>
+    hoisted.projectsQuery
+      ? hoisted.projectsQuery()
+      : { data: [{ id: 'p1', name: 'proj', worktree: '/tmp/proj' }] },
   useDeletedSessions: () => hoisted.deleted,
   useDeletedOrphansCount: () => hoisted.orphanCount,
   useDeletedOrphans: () => hoisted.orphans,
@@ -155,6 +160,7 @@ beforeEach(() => {
     error: null,
     refetch: () => {},
   }
+  hoisted.projectsQuery = null
   vi.mocked(sessionAPI.search).mockResolvedValue({
     results: [
       { session: GRANDCHILD, matchedBy: 'content' },
@@ -1059,5 +1065,62 @@ describe('SessionList 导入会话的权限态确认', () => {
     expect(vi.mocked(sessionAPI.importSession).mock.calls[0]?.[2]).toEqual({
       importPermissions: false,
     })
+  })
+})
+
+/**
+ * 导入的「选择目标项目」门禁（P1-2）依赖项目列表来判断导出会话的原归属。
+ * 列表读不到时 `(projects ?? [])` 恒为空 → original 恒 undefined →
+ * continueImport 直接把会话绑到当前项目，那道门整个不出现、零错误提示：
+ * 真实浏览器注入 500 后，导出自 projB 的会话静默落到 projA，
+ * 继续对话时 bash/git 全跑在 projA 的 worktree 里。
+ */
+describe('SessionList 导入时项目列表读不到', () => {
+  const fromOtherProject = {
+    version: 1,
+    session: { title: '来自 B 的会话', projectId: 'p2', worktreePath: '/tmp/projB' },
+    messages: [],
+  }
+
+  function importFile(payload: unknown) {
+    const file = { text: () => Promise.resolve(JSON.stringify(payload)) } as unknown as File
+    const input = screen.getByTestId('session-import-input') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+  }
+
+  beforeEach(() => {
+    vi.mocked(sessionAPI.importSession).mockResolvedValue({
+      sessionId: 'imported-s1',
+      flattened: false,
+      permissionsMigrated: false,
+    } as never)
+  })
+
+  it('中止导入并给出真实原因，不把会话静默绑到当前项目', async () => {
+    hoisted.projectsQuery = () => ({
+      data: undefined,
+      isError: true,
+      error: new Error('项目列表读取失败'),
+    })
+    renderList()
+    importFile(fromOtherProject)
+
+    await waitFor(() => expect(screen.getByTestId('import-error')).toBeInTheDocument())
+    expect(screen.getByTestId('import-error').textContent).toContain('项目列表读取失败')
+    expect(vi.mocked(sessionAPI.importSession)).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('import-target-dialog')).toBeNull()
+  })
+
+  it('导出文件不带原项目归属时照常导入（没有可匹配的目标，不该拦）', async () => {
+    hoisted.projectsQuery = () => ({
+      data: undefined,
+      isError: true,
+      error: new Error('项目列表读取失败'),
+    })
+    renderList()
+    importFile({ version: 1, session: { title: '匿名会话', metadata: {} }, messages: [] })
+
+    await waitFor(() => expect(vi.mocked(sessionAPI.importSession)).toHaveBeenCalled())
+    expect(screen.queryByTestId('import-error')).toBeNull()
   })
 })
