@@ -779,7 +779,7 @@ function Composer(props: ComposerProps) {
           className={appendBtn}
           onClick={composer.steer}
           type="button"
-          disabled={!props.isStreaming || props.creating}
+          disabled={!props.isStreaming || props.creating || composer.steerPending}
           data-testid="append"
         >
           追加指令

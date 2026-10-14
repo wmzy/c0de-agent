@@ -521,6 +521,41 @@ describe('useComposer 追加指令的清空时机', () => {
 
     expect(promptToText(result.current.promptRef.current as never)).toBe('')
   })
+
+  /**
+   * 缺陷：steer 只在请求落地后才清空输入框，在途期间输入框里还是那一段文字、
+   * 按钮也没置灰——再点一次（或连按两下 Enter）会读到同一段文本，把同一条指令
+   * 发第二遍（agent 侧注入两次、时间线两条一样的指令气泡）。
+   */
+  it('在途期间再点一次不会重复发送（按钮置灰 + ref 挡住同 tick 连击）', async () => {
+    let resolveSteer: (ok: boolean) => void = () => {}
+    const onSteer = vi.fn(
+      (_m: string) => new Promise<boolean>((resolve) => (resolveSteer = resolve)),
+    )
+    const { result, type } = renderStreamingComposer(onSteer)
+    type('改用 pnpm 跑测试')
+
+    act(() => {
+      result.current.steer()
+    })
+    expect(onSteer).toHaveBeenCalledTimes(1)
+
+    // 请求在途：第二次点击（跨事件）不得再发一条
+    act(() => {
+      result.current.steer()
+    })
+    expect(onSteer).toHaveBeenCalledTimes(1)
+    expect(result.current.steerPending).toBe(true)
+
+    await act(async () => {
+      resolveSteer(true)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // 落地后解锁（并沿用「受理即清空」）
+    expect(result.current.steerPending).toBe(false)
+    expect(promptToText(result.current.promptRef.current as never)).toBe('')
+  })
 })
 
 /**

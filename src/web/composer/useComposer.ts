@@ -137,6 +137,15 @@ function useComposer({
   } | null>(null)
   const [isEmpty, setIsEmpty] = useState(true)
   /**
+   * 「追加指令」在途标志。steer 只在请求落地后才清空输入框（见 steer 里的注释），
+   * 所以请求在途期间输入框里还是那一段文字、按钮也没置灰——再点一次（或连按两下
+   * Enter）会读到同一段文本，把同一条指令发第二遍：agent 侧 steeringQueue 注入两次、
+   * 时间线出现两条一模一样的指令气泡。与发送不同，这里没有「清空即去重」的兜底，
+   * 必须在途锁。ref 挡住重入（同一 tick 内的连击也要挡），state 让按钮置灰。
+   */
+  const steerPendingRef = useRef(false)
+  const [steerPending, setSteerPending] = useState(false)
+  /**
    * 发送世代号。每次 send/steer 自增；异步失败还原只在自己那一代仍是最新时回写，
    * 否则会把后续发送刚清空/输入的框内容盖回去（见 send 里的 restore）。
    */
@@ -621,6 +630,10 @@ function useComposer({
     // 没有注入回调就不清空：steer 的清空语义建立在「这条文字已经被送到在途的
     // run 里」之上，调用方没接 onSteer 时清空等于把用户输入凭空丢掉。
     if (busy || !onSteer) return
+    // 上一条追加指令还在途：输入框里仍是同一段文字（steer 成功后才清空），
+    // 再发一次就是同一条指令发两遍。按钮已按 steerPending 置灰，这里挡的是
+    // 同一 tick 内的连击与 Enter 键（React 还没把 disabled 写回 DOM）。
+    if (steerPendingRef.current) return
     const prompt = readPrompt()
     if (isPromptEmpty(prompt)) return
     const text = promptToMessageText(prompt)
@@ -637,15 +650,27 @@ function useComposer({
       setPromptExternal(DEFAULT_PROMPT)
       resetHistory()
     }
+    const done = () => {
+      steerPendingRef.current = false
+      setSteerPending(false)
+    }
+    steerPendingRef.current = true
+    setSteerPending(true)
     const outcome = onSteer(text)
-    if (outcome === false) return
+    if (outcome === false) {
+      done()
+      return
+    }
     if (outcome && typeof (outcome as Promise<boolean | undefined>).then === 'function') {
-      void (outcome as Promise<boolean | undefined>).then((ok) => {
-        if (ok !== false) clear()
-      })
+      void (outcome as Promise<boolean | undefined>)
+        .then((ok) => {
+          if (ok !== false) clear()
+        })
+        .finally(done)
     } else {
       // 旧契约：同步 void 回调视为受理，保持「发出即清空」的原有体感。
       clear()
+      done()
     }
   }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory])
 
@@ -751,6 +776,8 @@ function useComposer({
     insertPromptText,
     send,
     steer,
+    /** 「追加指令」在途（按钮据此置灰，见 steer 的在途锁）。 */
+    steerPending,
     setPopover,
     /** 显式关浮层（Esc / Tab 共用；见定义处的注释——漏记 dismissed 会立刻弹回）。 */
     dismissPopover,
