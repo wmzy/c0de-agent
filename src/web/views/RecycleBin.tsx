@@ -571,6 +571,11 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     )
                   }}
                   data-testid={`restore-${s.id}`}
+                  // 在途锁：恢复不是幂等的——服务端对「未处于已删除状态」的会话一律
+                  // 回 404「会话不存在或未删除」。慢网下连点两次会发出两次 POST，第二次
+                  // 必然撞上 404，页面于是在会话已经回到列表的同时挂着红色
+                  // 「恢复失败」——比不点更糟。同页其余 mutation 按钮都有这把锁。
+                  disabled={restore.isPending}
                 >
                   恢复
                 </button>
@@ -690,6 +695,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   }
                   data-testid={`restore-orphan-${s.id}`}
                   title="恢复并归属到当前项目（不重建原项目）"
+                  disabled={restore.isPending}
                 >
                   恢复到当前项目
                 </button>
@@ -726,6 +732,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   }
                   data-testid={`restore-orphan-recreate-${s.id}`}
                   title="恢复并在原目录重建项目（若目录仍存在）"
+                  disabled={restore.isPending}
                 >
                   恢复并重建原项目
                 </button>

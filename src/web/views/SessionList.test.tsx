@@ -37,6 +37,8 @@ const hoisted = vi.hoisted(() => ({
     error: null as unknown,
     refetch: () => {},
   },
+  /** 恢复 mutation：mutate 的调用次数与「在途」状态都由用例驱动（回收站按钮的在途锁）。 */
+  restoreMut: { mutate: vi.fn(), isPending: false },
   /** 「未归属项目」分组的数据源：孤儿已删会话与其计数。 */
   orphans: { data: [] as Session[] } as {
     data: Session[] | undefined
@@ -76,7 +78,7 @@ vi.mock('@/hooks/useSession.js', () => ({
   useDeletedSessions: () => hoisted.deleted,
   useDeletedOrphansCount: () => hoisted.orphanCount,
   useDeletedOrphans: () => hoisted.orphans,
-  useRestoreSession: () => ({ mutate: vi.fn() }),
+  useRestoreSession: () => hoisted.restoreMut,
 }))
 
 vi.mock('@/services/session.js', () => ({
@@ -137,6 +139,9 @@ beforeEach(() => {
   hoisted.tree = [node(ROOT, [node(CHILD, [node(GRANDCHILD)])])]
   hoisted.orphans = { data: [] }
   hoisted.deleteMutate = undefined
+  // mutate 的调用计数会被 afterEach 的 clearAllMocks 清掉，但 isPending 是普通
+  // 布尔字段（clearAllMocks 不碰它）——不清会让后续用例拿到一把永久上锁的恢复按钮。
+  hoisted.restoreMut.isPending = false
   // 主列表默认健康：读失败态由各用例自行设置。hoisted 是普通对象（非 mock），
   // afterEach 的 clearAllMocks 不会还原它——不在这里重置，上一用例留下的
   // isError:true 会漏进下一个用例，让它渲染成错误页。
@@ -721,6 +726,42 @@ describe('RecycleBin 搜索', () => {
       expect(screen.getByText('回收站无匹配会话')).toBeInTheDocument()
     })
     expect(screen.queryByTestId('trash-search-error')).toBeNull()
+  })
+
+  // 回归：恢复不是幂等的（服务端对「未处于已删除状态」的会话一律回 404
+  // 「会话不存在或未删除」）。慢网下连点两次会发出两次 POST，第二次必撞 404，
+  // 页面于是在会话已经回到列表的同时挂着红色「恢复失败」。
+  it('恢复在途禁用：连点两次只发一次请求', async () => {
+    hoisted.deleted = {
+      data: [makeSession('old-id', '旧会话')],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const ui = (
+      <QueryClientProvider client={qc}>
+        <RecycleBin projectId="p1" />
+      </QueryClientProvider>
+    )
+    const { rerender } = render(ui)
+    const btn = await screen.findByTestId('restore-old-id')
+
+    // 请求在途：把 isPending 置真后重渲染（真实实现由 react-query 触发）
+    hoisted.restoreMut.mutate.mockImplementation(() => {
+      hoisted.restoreMut.isPending = true
+    })
+    fireEvent.click(btn)
+    expect(hoisted.restoreMut.mutate).toHaveBeenCalledTimes(1)
+    rerender(ui)
+
+    await waitFor(() => expect(screen.getByTestId('restore-old-id')).toBeDisabled())
+    // 连点第二下：按钮已锁，不会再发第二次 POST
+    fireEvent.click(screen.getByTestId('restore-old-id'))
+    expect(hoisted.restoreMut.mutate).toHaveBeenCalledTimes(1)
   })
 })
 
