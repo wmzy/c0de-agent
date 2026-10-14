@@ -2085,18 +2085,66 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
   })
 })
 
-describe('Settings — 用量面板零预算引导', () => {
-  it('未设置任何预算时显示引导提示，设置全局预算后消失', async () => {
+describe('Settings — 用量面板预算字段与写入作用域一致', () => {
+  it('/settings 默认项目作用域下锁定全局预算字段，切到全局后可编辑并提交 global 作用域', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
-    await waitFor(() => expect(screen.getByTestId('usage-global-budget')).toBeTruthy())
+    // 回归：此前这里是可编辑的「全局月度预算」，而默认作用域是「项目」——
+    // 编辑后保存被服务端 400（GLOBAL_BUDGET_IN_PROJECT_SCOPE）拒绝，整次保存
+    // 连同其中其他改动一起失败。
+    const globalBudget = (await screen.findByTestId('usage-global-budget')) as HTMLInputElement
+    expect(globalBudget.disabled).toBe(true)
+    expect(screen.getByTestId('usage-scope-hint').textContent).toContain('全局')
     expect(screen.getByTestId('usage-no-budget-hint')).toBeTruthy()
 
-    fireEvent.change(screen.getByTestId('usage-global-budget'), { target: { value: '10' } })
+    // 正解路径：把作用域切到「全局配置」即可编辑——此时保存也必须按 global 提交。
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    await waitFor(() => expect(screen.queryByTestId('usage-scope-hint')).toBeNull())
+    const editable = screen.getByTestId('usage-global-budget') as HTMLInputElement
+    expect(editable.disabled).toBe(false)
+
+    fireEvent.change(editable, { target: { value: '10' } })
     await waitFor(() => expect(screen.queryByTestId('usage-no-budget-hint')).toBeNull())
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const [patchArg, scopeArg] = (configAPI.update as Mock).mock.calls[0] as [
+      { usage?: Record<string, number> },
+      string,
+    ]
+    expect(scopeArg).toBe('global')
+    expect(patchArg.usage).toEqual({ globalMonthlyBudgetUsd: 10 })
+  })
+
+  it('项目页切到全局作用域后，项目预算字段被锁定（否则会把本项目预算写进全局配置）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: mockConfig,
+      projectDir: '/x/y/proj',
+      scopes: { global: {}, project: {} },
+      warnings: [],
+    })
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <MemoryRouter routes={settingsTestRoutes} initialEntries={['/projects/p1/settings']}>
+        <QueryClientProvider client={qc}>
+          <View />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+
+    const projectBudget = (await screen.findByTestId('usage-project-budget')) as HTMLInputElement
+    expect(projectBudget.disabled).toBe(false)
+
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    await waitFor(() =>
+      expect((screen.getByTestId('usage-project-budget') as HTMLInputElement).disabled).toBe(true),
+    )
+    expect(screen.getByTestId('usage-scope-hint').textContent).toContain('项目')
   })
 })
 

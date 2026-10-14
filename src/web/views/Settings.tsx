@@ -862,6 +862,7 @@ export function Settings() {
             }
             onTokenBudgetActionChange={(v) => updateSection('usage', { tokenBudgetAction: v })}
             projectId={projectId}
+            scope={scope}
           />
         </div>
       )}
