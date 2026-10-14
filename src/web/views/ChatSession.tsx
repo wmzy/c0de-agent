@@ -1056,8 +1056,10 @@ export function ChatSession({
       {chat.pendingSegmentBreak && (
         <SegmentBreakDialog
           activeSegment={chat.pendingSegmentBreak.activeSegment}
-          onConfirm={() => void chat.confirmBreak(false)}
-          onCompact={() => void chat.confirmBreak(true)}
+          // 返回 Promise：弹窗按「这次选择是否落地」在途锁住三颗按钮与关闭通道
+          // （此前 void 丢掉 Promise，压缩在飞时点取消照样会把消息发出去）。
+          onConfirm={() => chat.confirmBreak(false)}
+          onCompact={() => chat.confirmBreak(true)}
           onCancel={() => {
             // 取消：还原 selection/enabledTools 到活跃段值，再清除待发状态
             const seg = chat.pendingSegmentBreak?.activeSegment
