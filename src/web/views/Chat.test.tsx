@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineRow } from '@/components/session/utils/timeline.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
@@ -307,6 +307,61 @@ describe('Chat 权限条读取/移除失败', () => {
     await waitFor(() => expect(screen.getByTestId('always-allow-error')).toBeInTheDocument())
     expect(screen.getByTestId('always-allow-error').textContent).toContain('服务端拒绝')
     expect(screen.getByTestId('always-allow-chips').textContent).toContain('bash')
+  })
+})
+
+/**
+ * 切会话时权限底栏必须跟着会话走。
+ *
+ * 缺陷：permissionMode / alwaysAllow / 各种失败原因是 Chat 的组件级 state，而
+ * Chat 与 ChatSession 都被路由复用（同 path 的两条路由共享子树，组件实例不重建）。
+ * loadPermissionMode 只发请求、只在响应里写 state，从不在 sessionId 变化时复位：
+ * 切到会话 B 后，在 B 的读取返回前底栏显示的是 A 的授权态；若 B 的读取失败则永久
+ * 停在 A 的值——页面上长期挂着一句与事实相反的安全结论（以为 B 的 bash 免确认，
+ * 实际逐个确认，或反之）。A 的迟到响应同样会覆盖掉 B 已读到的真实值。
+ */
+describe('Chat 权限底栏不沿用上一条会话的授权态', () => {
+  it('切到读取失败的会话：不留上一条会话的 auto 警示与白名单 chips', async () => {
+    vi.mocked(permissionAPI.getMode).mockResolvedValueOnce({
+      mode: 'auto',
+      alwaysAllow: ['bash'],
+    } as never)
+    const h = renderChat({ sessionId: 'A' })
+    await waitFor(() => expect(screen.getByTestId('permission-mode-warning')).toBeInTheDocument())
+    expect(screen.getByTestId('always-allow-chips').textContent).toContain('bash')
+
+    // 切到 B，且 B 的权限状态读取失败
+    vi.mocked(permissionAPI.getMode).mockRejectedValueOnce(new Error('断路器打开'))
+    h.rerender({ sessionId: 'B' })
+
+    await waitFor(() => expect(screen.getByTestId('permission-mode-error')).toBeInTheDocument())
+    expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+    expect(screen.queryByTestId('always-allow-chips')).toBeNull()
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+  })
+
+  it('上一条会话迟到的读取结果不写进新会话', async () => {
+    let resolveA: (v: unknown) => void = () => {}
+    vi.mocked(permissionAPI.getMode).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveA = resolve
+        }) as never,
+    )
+    const h = renderChat({ sessionId: 'A' })
+    // B 的读取（默认桩返回 default）先落地
+    h.rerender({ sessionId: 'B' })
+    await waitFor(() => expect(screen.getByTestId('permission-mode-hint')).toBeInTheDocument())
+
+    // A 的响应此刻才回来：不得把 A 的 auto + 白名单写进 B 的底栏
+    resolveA({ mode: 'auto', alwaysAllow: ['bash'] })
+    await act(async () => {})
+
+    expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+    expect(screen.queryByTestId('always-allow-chips')).toBeNull()
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
   })
 })
 
