@@ -150,6 +150,17 @@ function useComposer({
    * 否则会把后续发送刚清空/输入的框内容盖回去（见 send 里的 restore）。
    */
   const sendAttemptRef = useRef(0)
+  /**
+   * 草稿作用域世代号。切会话/切作用域时自增；在途请求落地时（发送失败的还原、
+   * 追加指令受理后的清空）必须先确认还在同一个作用域里。
+   *
+   * sendAttemptRef 挡不住跨会话这一路：它只认「又有一次发送」，而切会话不改它。
+   * 于是「在 A 发消息 → 请求还没回来就点开 B」时，A 那次失败回来仍会在 B 的输入框
+   * 里回填 A 的正文与图片，并且 persist=true 把它写成 B 的草稿（刷新后还在）——
+   * 同一段文字被记在两条会话头上。hook 实例并不随会话切换重建（目标会话的消息
+   * 已在 react-query 缓存里时不走 ChatSkeleton 早返回），所以这条路径是真实可达的。
+   */
+  const scopeGenRef = useRef(0)
 
   // commands 用 ref 避免每次列表变化都重建 handleInput callback
   const commandsRef = useRef<CommandInfo[] | undefined>(commands)
@@ -300,11 +311,20 @@ function useComposer({
   // 本 hook 整体重建，草稿只能来自存储）。
   // biome-ignore lint/correctness/useExhaustiveDependencies: setImages 是 useState 的稳定 setter，列进依赖是为了让「还原哪些附件」显式可见
   useEffect(() => {
+    // 作用域世代自增：在途请求落地时必须先确认还在同一个作用域（见 scopeGenRef）。
+    scopeGenRef.current += 1
     draftRestoredRef.current = false
     const stored = draftScope ? loadDraft(draftScope) : null
     setPromptExternal(stored?.prompt ?? DEFAULT_PROMPT, true)
     setImages(stored?.images ?? [])
     setImageError(null)
+    // 待定交互状态是从**上一个作用域**的文本推导出来的，跨作用域留着就会把那段
+    // 文本带进新会话：大段粘贴确认条的「插入」会把上一条会话粘贴的正文写进新会话
+    // 的输入框，补全浮层的候选也是按上一段文本算出来的（回车即把那条命令插进来）。
+    setShowPasteConfirm(null)
+    setPopover(null)
+    setPopoverQuery('')
+    setSubcommandCmd(null)
     resetHistory()
     draftRestoredRef.current = true
   }, [draftScope, setPromptExternal, setImages, resetHistory])
@@ -583,6 +603,9 @@ function useComposer({
     // （或又按了 steering），那时先落地的那次失败再回来还原，就会把后来那条的输入
     // 一起盖掉、并按错误的假设去动提示历史。
     const attempt = ++sendAttemptRef.current
+    // 本次发送所属的草稿作用域：切会话后 A 那次的失败不得回填到 B 的输入框（见 scopeGenRef）。
+    const scopeGen = scopeGenRef.current
+    const scopeAtSend = draftScopeRef.current
     // 清空照旧立即发生（发送成功的体感不能等一轮请求）：失败走下面的还原分支。
     if (visible.trim()) saveHistory(prependHistoryEntry(loadHistory(), visible))
     setImages([])
@@ -594,6 +617,16 @@ function useComposer({
     const restore = () => {
       // 已被更新的发送取代：本次失败不再回写。
       if (sendAttemptRef.current !== attempt) return
+      // 已经切到别的会话/作用域：这条失败属于上一个会话，回填会把它的正文与图片
+      // 写进当前会话，并（persist=true）落成当前会话的草稿。改为把失败快照落回
+      // **原会话**的草稿键（发送时刚被清掉的那份）：回到原会话时输入框里还是这段
+      // 文字——既不写进当前会话，也不把用户已经打好的输入丢掉。
+      if (scopeGenRef.current !== scopeGen) {
+        if (scopeAtSend && draftScopeRef.current !== scopeAtSend) {
+          saveDraft(scopeAtSend, snapshot.prompt, snapshot.images)
+        }
+        return
+      }
       // 输入框在请求在途期间仍可编辑（ComposerEditor 无只读路径），用户此刻新敲的
       // 内容/新加的图片不属于这条失败消息——无条件覆盖会凭空吞掉它们。只在输入框
       // 仍是发送后清空的状态时才回填。
@@ -643,8 +676,12 @@ function useComposer({
     // 乐观条目即消失）。此前无条件清空：用户敲的整段指令连气泡都没有，彻底丢失。
     // 现在只有确认受理才清空，失败时输入原样留着，配合 error 行让用户改用发送。
     sendAttemptRef.current += 1
+    // 本次指令所属的草稿作用域：切会话后它落地时不得去清空新会话的输入框
+    // （新会话的草稿恰好与这段指令同文时，clear 会把它删掉）。
+    const scopeGen = scopeGenRef.current
     const visible = promptToText(prompt)
     const clear = () => {
+      if (scopeGenRef.current !== scopeGen) return
       // 输入框在请求在途期间仍可编辑：期间用户新敲的字不属于这条指令，不覆盖。
       if (promptToText(readPrompt()) !== visible) return
       setPromptExternal(DEFAULT_PROMPT)

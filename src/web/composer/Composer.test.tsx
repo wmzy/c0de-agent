@@ -3,10 +3,10 @@
 // 这里锁住三个行为：出现确认条且未插入、确认后插入规范化文本、取消后丢弃。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Composer } from '@/composer/Composer.js'
-import { draftStorageKey } from '@/composer/draft.js'
+import { draftStorageKey, saveDraft } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 import { commandsAPI } from '@/services/commands.js'
@@ -742,5 +742,144 @@ describe('Composer Tab 关浮层后不会被重新检测弹回来', () => {
     // 用户继续把这段文本改成别的子命令查询——新的输入意图应重新获得补全
     typeText(editor, '/git s')
     await waitFor(() => expect(screen.getByTestId('subcommand-menu')).toBeTruthy())
+  })
+})
+
+/**
+ * 未定的交互状态不跨作用域（切会话 / 切草稿页项目）。
+ *
+ * 此前 send() 的失败还原只认「发送世代」（sendAttemptRef：又发了一次才作废），
+ * 而切会话不改它——hook 实例也不随会话切换重建（目标会话的消息已在 react-query
+ * 缓存里时不走 ChatSkeleton 早返回）。于是「在 A 发消息 → 请求还没回来就点开 B」
+ * 时，A 那次失败回来会在 B 的输入框里回填 A 的正文与图片，并（persist=true）
+ * 把它写成 B 的草稿（刷新后还在）：同一段文字被记在两条会话头上。同一根因还让
+ * 「大段粘贴确认条」整条留着——它的正文来自 A，点「插入」就灌进 B。
+ *
+ * 修法：草稿作用域世代号（scopeGenRef）。作用域一变，在途请求落地时一律作废。
+ */
+describe('Composer 未定的交互状态不跨作用域', () => {
+  function ScopeHarness({
+    scope,
+    onSend,
+    onSteer,
+  }: {
+    scope: string
+    onSend: () => boolean | undefined | Promise<boolean | undefined>
+    onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
+  }) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return (
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            onSteer={onSteer}
+            isStreaming={onSteer !== undefined}
+            hasHistory={false}
+            agents={[]}
+            draftScope={scope}
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>
+    )
+  }
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('A 的发送失败不回填进切过去之后的 B，而是落回 A 自己的草稿', async () => {
+    let settle: ((ok: boolean) => void) | undefined
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve
+        }),
+    )
+    const view = render(<ScopeHarness scope="s:one" onSend={onSend} />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '属于 A 的正文' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(editor.textContent).not.toContain('属于 A 的正文')
+
+    // 请求在途期间切到 B（同一实例，复刻「B 的消息已在缓存里，不走骨架页」）
+    view.rerender(<ScopeHarness scope="s:two" onSend={onSend} />)
+    settle?.(false)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // 不写进 B：正文与草稿都不能沾
+    expect(editor.textContent).not.toContain('属于 A 的正文')
+    expect(storageGet(draftStorageKey('s:two'))).toBeNull()
+    // 也不能丢：落回 A 自己的草稿，回去时输入框里还是这段文字
+    expect(storageGet(draftStorageKey('s:one'))).toContain('属于 A 的正文')
+    view.rerender(<ScopeHarness scope="s:one" onSend={onSend} />)
+    expect(editor.textContent).toContain('属于 A 的正文')
+  })
+
+  it('未切作用域时失败仍原样还回输入（守卫不得误伤这条既有承诺）', async () => {
+    let settle: ((ok: boolean) => void) | undefined
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve
+        }),
+    )
+    render(<ScopeHarness scope="s:one" onSend={onSend} />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '失败要还回来' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    settle?.(false)
+
+    await waitFor(() => expect(editor.textContent).toContain('失败要还回来'))
+    expect(storageGet(draftStorageKey('s:one'))).toContain('失败要还回来')
+  })
+
+  it('A 的大段粘贴确认条不跟到 B', () => {
+    const view = render(<ScopeHarness scope="s:one" onSend={vi.fn()} />)
+    const editor = screen.getByTestId('composer-editor')
+    pasteText(editor, LARGE)
+    expect(screen.getByTestId('paste-confirm')).toBeTruthy()
+
+    view.rerender(<ScopeHarness scope="s:two" onSend={vi.fn()} />)
+
+    // 确认条的正文来自 A；留着它，点「插入」就把 A 粘贴的内容写进 B 的输入框。
+    expect(screen.queryByTestId('paste-confirm')).toBeNull()
+  })
+
+  it('A 的追加指令落地时不清掉 B 的草稿（同文也不行）', async () => {
+    let settle: ((ok: boolean) => void) | undefined
+    const onSteer = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve
+        }),
+    )
+    // B 已有一份与 A 这段指令同文的草稿：清空判定比的是「输入框里还是不是那段文字」，
+    // 同文就会命中——跨作用域时必须先按世代作废。
+    saveDraft('s:two', [{ type: 'text', content: '同一段指令', start: 0, end: 5 }], [])
+
+    const view = render(<ScopeHarness scope="s:one" onSend={vi.fn()} onSteer={onSteer} />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '同一段指令' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(onSteer).toHaveBeenCalledTimes(1)
+
+    view.rerender(<ScopeHarness scope="s:two" onSend={vi.fn()} onSteer={onSteer} />)
+    expect(editor.textContent).toContain('同一段指令')
+
+    settle?.(true)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(editor.textContent).toContain('同一段指令')
+    expect(storageGet(draftStorageKey('s:two'))).toContain('同一段指令')
   })
 })
