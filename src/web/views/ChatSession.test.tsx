@@ -671,6 +671,53 @@ describe('ChatSession — 冷启动状态检查失败', () => {
     await waitFor(() => expect(screen.getByTestId('interrupt-banner')).toBeInTheDocument())
     expect(screen.queryByTestId('cold-start-error')).toBeNull()
   })
+
+  // 切会话后上一条会话在飞的状态检查必须作废：A 的 interrupted 迟到落地会给 B
+  // 凭空挂上「恢复对话」横幅，用户点它＝重发 B 的最后一条消息，中断前跑过的
+  // bash/git 再执行一遍（改文件/改环境），而结论与 B 的事实无关。
+  it('切会话后，上一条会话迟到的状态检查不写进新会话', async () => {
+    type StatusResult = Awaited<ReturnType<typeof sessionAPI.status>>
+    let resolveA: ((v: StatusResult) => void) | null = null
+    vi.mocked(sessionAPI.status).mockImplementation((id: string) =>
+      id === 's1'
+        ? new Promise<StatusResult>((resolve) => {
+            resolveA = resolve
+          })
+        : Promise.resolve({ _tag: 'idle' } as StatusResult),
+    )
+    function SessionFromRoute() {
+      const { params } = useMatched()
+      return (
+        <ChatSession projectId={params.projectId ?? 'p1'} sessionId={params.sessionId ?? 's1'} />
+      )
+    }
+    const ui = (
+      <>
+        <SessionFromRoute />
+        <TypedLink<AppPaths>
+          to="/projects/:projectId/sessions/:sessionId"
+          params={{ projectId: 'p1', sessionId: 's2' }}
+          data-testid="to-s2"
+        >
+          切会话
+        </TypedLink>
+      </>
+    )
+    await renderSession(ui)
+    await waitFor(() => expect(sessionAPI.status).toHaveBeenCalledWith('s1'))
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(sessionAPI.status).toHaveBeenCalledWith('s2'))
+
+    // A 的响应迟到落地：不得给 B 挂横幅
+    await act(async () => {
+      resolveA?.({ _tag: 'interrupted' })
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('interrupt-banner')).toBeNull()
+    expect(screen.queryByTestId('cold-start-error')).toBeNull()
+  })
 })
 
 /**

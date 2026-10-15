@@ -322,17 +322,33 @@ export function ChatSession({
   // 打断的会话无从恢复，只能猜着重发，而重发会重复执行已跑过的工具（bash/git 等）。
   // 同页的 llm-details 读失败已有「原因 + 重试」的同口径处理，这条必须一致。
   const [coldStartError, setColdStartError] = useState<string | null>(null)
+  /**
+   * 冷启动检查的会话世代号：切会话后作废上一条会话在飞的那次 status 读取。
+   *
+   * ChatSession 在 /projects/:p/sessions/:a → :b 之间被路由复用（两条路由 path
+   * 相同 → 子树不重建），而这三个 state 是**本会话**的冷启动结论。此前
+   * checkSessionState 只发请求、只在响应里写 state，且 :280 的 sessionId 复位
+   * effect 只复位 orphanNotice/rebindError —— 于是磁盘慢/DB 忙时切会话，A 的迟到
+   * 响应会给 B 凭空挂上「连接已中断 / 恢复对话」横幅：用户点「恢复对话」＝重发 B
+   * 的最后一条消息，中断前已跑过的 bash/git 会再执行一遍（会改文件、改环境的
+   * 真实风险），而结论本身与 B 的事实无关。读取失败同理（「无法确认上次是否正常
+   * 结束」）。与 Chat.tsx 的 permissionGenRef / useShake / useRetryResume 复位同口径。
+   */
+  const coldStartGenRef = useRef(0)
   const checkSessionState = useCallback(() => {
+    const gen = coldStartGenRef.current
     setColdStartInterrupted(false)
     setColdStartPaused(false)
     setColdStartError(null)
     sessionAPI
       .status(sessionId)
       .then((s) => {
+        if (coldStartGenRef.current !== gen) return
         if (s._tag === 'interrupted') setColdStartInterrupted(true)
         else if (s._tag === 'paused') setColdStartPaused(true)
       })
       .catch((err: unknown) => {
+        if (coldStartGenRef.current !== gen) return
         setColdStartError(
           (err as { message?: string } | null)?.message ??
             (err instanceof Error ? err.message : '状态检查失败'),
@@ -346,6 +362,8 @@ export function ChatSession({
       .catch(() => {})
   }, [sessionId, qc])
   useEffect(() => {
+    // 先作废上一条会话在飞的那次检查，再按新会话重新检查（迟到的响应不得写进新会话）。
+    coldStartGenRef.current += 1
     checkSessionState()
   }, [checkSessionState])
 
