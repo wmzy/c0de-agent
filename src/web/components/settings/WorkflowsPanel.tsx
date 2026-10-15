@@ -4,8 +4,8 @@
 
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button } from 'haze-ui'
-import { useState } from 'react'
+import { Button, ConfirmDialog } from 'haze-ui'
+import { useRef, useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput, SyncedSelect, SyncedTextarea } from '@/components/SyncedControls.js'
@@ -221,6 +221,26 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const [draftSource, setDraftSource] = useState('')
   const [draftTarget, setDraftTarget] = useState<'project' | 'user'>('project')
   const [error, setError] = useState<string | null>(null)
+  /** 关闭编辑器前是否要问一次（草稿与基线不一致时）。 */
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  /**
+   * 编辑器草稿的**基线**（打开时载入的内容）。草稿本身只有本地 state，
+   * 没有任何持久化：一次 Esc / ✕ / 取消就把它整段丢掉——而这里放的常是
+   * 用户从别处粘过来的整段工作流脚本。设置页的配置草稿有 useBlocker +
+   * beforeunload + ConfirmDialog 三层保护（见 Settings.tsx），工作流脚本却
+   * 一个都没有：关掉弹窗后连「未保存更改」的提示都不会亮（脚本从不进配置草稿）。
+   */
+  const baselineRef = useRef<{ name: string; source: string; target: 'project' | 'user' }>({
+    name: '',
+    source: '',
+    target: 'project',
+  })
+  /**
+   * 打开序次：查看/编辑要先 await 后端源码，慢盘下用户可能已经关掉再打开另一个
+   * 工作流——迟到的响应属于上一次打开，不能改写当前的草稿与基线（否则基线错位，
+   * 刚打开就显示「未保存的修改」，或把上一条的源码当成本条的内容）。
+   */
+  const openTokenRef = useRef(0)
   const [pendingDelete, setPendingDelete] = useState<WorkflowInfo | null>(null)
   /**
    * 删除失败原因单独一份：DangerConfirmDialog 是 <dialog> 模态，section 顶部那条
@@ -231,6 +251,14 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
 
   // 新建模式没有远端源码要等；查看/编辑在源码到达前一律按加载中处理。
   const editorLoading = editor !== null && editor.mode !== 'create' && editor.loading === true
+
+  /** 草稿是否已偏离打开时的内容（只读/加载中恒为 false）。 */
+  const editorDirty =
+    editor !== null &&
+    !editorLoading &&
+    (draftName !== baselineRef.current.name ||
+      draftSource !== baselineRef.current.source ||
+      draftTarget !== baselineRef.current.target)
 
   const invalidate = () => void qc.invalidateQueries({ queryKey })
 
@@ -259,7 +287,11 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     setError(null)
     setDraftName('')
     setDraftSource(NEW_WORKFLOW_TEMPLATE)
-    setDraftTarget(projectId ? 'project' : 'user')
+    const target: 'project' | 'user' = projectId ? 'project' : 'user'
+    setDraftTarget(target)
+    // 新建的基线就是这份模板：没动过的模板不触发「放弃修改」确认。
+    baselineRef.current = { name: '', source: NEW_WORKFLOW_TEMPLATE, target }
+    openTokenRef.current += 1
     setEditor({ mode: 'create' })
   }
 
@@ -270,13 +302,24 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     setError(null)
     setDraftName('')
     setDraftSource('')
+    baselineRef.current = { name: '', source: '', target: draftTarget }
+    openTokenRef.current += 1
+    const token = openTokenRef.current
     setEditor({ mode: 'view', name, readOnly: true, loading: true })
     try {
       const detail = await workflowsAPI.get(name, projectId)
+      // 迟到的响应（用户已关窗/改开另一条）：不写草稿也不写基线。
+      if (openTokenRef.current !== token) return
       setDraftName(detail.name)
       setDraftSource(detail.sourceCode)
+      baselineRef.current = {
+        name: detail.name,
+        source: detail.sourceCode,
+        target: baselineRef.current.target,
+      }
       setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
+      if (openTokenRef.current !== token) return
       setError(errMessage(e))
       setEditor(null)
     }
@@ -286,7 +329,11 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     setError(null)
     setDraftName('')
     setDraftSource('')
-    setDraftTarget(wf.source === 'user' ? 'user' : 'project')
+    const target: 'project' | 'user' = wf.source === 'user' ? 'user' : 'project'
+    setDraftTarget(target)
+    baselineRef.current = { name: '', source: '', target }
+    openTokenRef.current += 1
+    const token = openTokenRef.current
     setEditor({
       mode: 'edit',
       name: wf.name,
@@ -295,13 +342,32 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     })
     try {
       const detail = await workflowsAPI.get(wf.name, projectId)
+      if (openTokenRef.current !== token) return
       setDraftName(detail.name)
       setDraftSource(detail.sourceCode)
+      baselineRef.current = { name: detail.name, source: detail.sourceCode, target }
       setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
+      if (openTokenRef.current !== token) return
       setError(errMessage(e))
       setEditor(null)
     }
+  }
+
+  /**
+   * 关闭编辑器（Esc / ✕ / 取消 / 关闭共用）：草稿有改动时先问一次，保存中不给出口。
+   *
+   * 保存中锁住关闭与 SegmentBreakDialog 同口径：失败原因画在弹窗内部
+   * （role=alert），中途关掉它等于把失败原因一起关掉；而且保存成功后
+   * onSuccess 会 setEditor(null)，用户按 Esc「看着取消了」，文件却已经写下去了。
+   */
+  const requestCloseEditor = () => {
+    if (saveMut.isPending) return
+    if (editorDirty) {
+      setConfirmDiscard(true)
+      return
+    }
+    setEditor(null)
   }
 
   const submitSave = () => {
@@ -422,7 +488,10 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       {editor ? (
         <Dialog
           open
-          onClose={() => setEditor(null)}
+          onClose={requestCloseEditor}
+          // 保存中不给出口：失败原因画在弹窗内部，关掉它等于把原因一起关掉；
+          // 且保存成功后 onSuccess 会关窗——用户按 Esc「看着取消了」，文件已写下。
+          closeDisabled={saveMut.isPending}
           title={
             editor.mode === 'create'
               ? '新建工作流'
@@ -432,26 +501,41 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
           }
           testId="workflow-dialog"
           footer={
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              {editor.mode === 'view' ? (
-                <Button variant="outline" onClick={() => setEditor(null)}>
-                  关闭
-                </Button>
-              ) : (
-                <>
-                  <Button variant="outline" onClick={() => setEditor(null)}>
-                    取消
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
+              {/* 未保存状态写在按钮这一行：关窗会被拦下问一次，先说清楚为什么 */}
+              {editorDirty ? (
+                <span className={hint} data-testid="workflow-unsaved-hint">
+                  有未保存的修改
+                </span>
+              ) : null}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  justifyContent: 'flex-end',
+                  marginLeft: 'auto',
+                }}
+              >
+                {editor.mode === 'view' ? (
+                  <Button variant="outline" onClick={requestCloseEditor}>
+                    关闭
                   </Button>
-                  <Button
-                    onClick={submitSave}
-                    disabled={saveMut.isPending || editorLoading}
-                    data-testid="workflow-save"
-                    variant="outline"
-                  >
-                    {editorLoading ? '加载中…' : saveMut.isPending ? '保存中…' : '保存'}
-                  </Button>
-                </>
-              )}
+                ) : (
+                  <>
+                    <Button variant="outline" onClick={requestCloseEditor}>
+                      取消
+                    </Button>
+                    <Button
+                      onClick={submitSave}
+                      disabled={saveMut.isPending || editorLoading}
+                      data-testid="workflow-save"
+                      variant="outline"
+                    >
+                      {editorLoading ? '加载中…' : saveMut.isPending ? '保存中…' : '保存'}
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           }
         >
@@ -499,6 +583,28 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
             </div>
           ) : null}
         </Dialog>
+      ) : null}
+
+      {/* 放弃未保存的工作流脚本：一次 Esc / ✕ / 取消此前会静默丢掉整段手写脚本
+          （脚本只在本地 state 里，页面级的「未保存更改」提示也管不到它）。
+          与 MCPPanel/ProviderPanel 的行删除同款轻量确认：条件挂载驱动显隐
+          （react-use-control 的 open 只是初始值）。 */}
+      {confirmDiscard ? (
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmDiscard(false)}
+          onConfirm={() => {
+            setConfirmDiscard(false)
+            setEditor(null)
+          }}
+          title="放弃未保存的工作流？"
+          confirmText="放弃修改"
+          cancelText="继续编辑"
+          variant="danger"
+        >
+          {editor?.mode === 'create' ? '新建' : '编辑'}
+          的脚本尚未保存，关闭后这些修改无法恢复。
+        </ConfirmDialog>
       ) : null}
 
       <DangerConfirmDialog
