@@ -530,16 +530,15 @@ function useComposer({
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
-      // 图片粘贴优先
-      const items = e.clipboardData.items
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault()
-          const file = item.getAsFile()
-          if (!file) return
-          addImageFile(file)
-          return
-        }
+      // 图片与文本各自独立处理：同一批内容里既有图片又有文本时（从网页/文档里
+      // 复制一段图文混排），此前命中第一张图片就 return——图片进了附件栏，那段
+      // 文字凭空消失且零反馈。与 handleDrop 同口径：先收图片，再走文本通道。
+      for (const item of Array.from(e.clipboardData.items)) {
+        if (!item.type.startsWith('image/')) continue
+        const file = item.getAsFile()
+        if (!file) continue
+        e.preventDefault()
+        addImageFile(file)
       }
       // 文本粘贴（焦点本就在编辑器里，无需抢焦点）
       const text = e.clipboardData.getData('text/plain')

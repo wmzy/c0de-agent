@@ -152,6 +152,57 @@ describe('Composer 拖放文本入框', () => {
   })
 })
 
+/**
+ * 粘贴此前是拖放的漏网支路：命中第一张图片就 return，同一批里的文本整段丢失。
+ * 从网页/文档里复制一段图文混排后 Ctrl+V，只拿到图片、那段文字无声不见。
+ * 契约与拖放一致：图片与文本互不吞。
+ */
+describe('Composer 图文混排粘贴', () => {
+  /** happy-dom 的 ClipboardEvent 不支持 init.clipboardData，直接构造原生事件注入。 */
+  function pasteMixed(el: HTMLElement, items: unknown[], text: string) {
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { items, getData: () => text },
+    })
+    fireEvent(el, event)
+  }
+
+  it('同批既有图片又有文本时两者都处理，文本不被丢弃', async () => {
+    const editor = renderComposer()
+    const png = new File(['x'], 'a.png', { type: 'image/png' })
+    pasteMixed(editor, [{ type: 'image/png', getAsFile: () => png }], 'kept text')
+
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, 'kept text')
+    await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('1 张'))
+  })
+
+  it('同批两张图片全部收下，文本照旧插入', async () => {
+    const editor = renderComposer()
+    const a = new File(['a'], 'a.png', { type: 'image/png' })
+    const b = new File(['b'], 'b.png', { type: 'image/png' })
+    pasteMixed(
+      editor,
+      [
+        { type: 'image/png', getAsFile: () => a },
+        { type: 'image/png', getAsFile: () => b },
+      ],
+      'kept text',
+    )
+
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, 'kept text')
+    await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('2 张'))
+  })
+
+  it('纯图片粘贴（无文本）仍是只加附件，不往输入框插空文本', async () => {
+    const editor = renderComposer()
+    const png = new File(['x'], 'a.png', { type: 'image/png' })
+    pasteMixed(editor, [{ type: 'image/png', getAsFile: () => png }], '')
+
+    expect(execCommand).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('1 张'))
+  })
+})
+
 // 首条消息失败伴随导航（清空会话 → 回草稿页），原输入框组件已卸载，必须由
 // 外部把内容灌进新实例。此前按 restoreDraft 的**对象身份**去重，而父组件很容易
 // 在 JSX 里每次渲染新建 `{prompt, images}` 字面量——去重一路落空，用户改到一半
