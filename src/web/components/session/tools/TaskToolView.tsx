@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
+import { isRecord, str } from '@/components/session/tools/toolShape.js'
 import { WorkflowGraph, type WorkflowNode } from '@/components/session/WorkflowGraph.js'
 
 const wrapper = css`
@@ -54,14 +55,32 @@ export function TaskToolView({
   status: string
 }) {
   const inp = (input ?? {}) as TaskToolInput
-  const agentType = inp.subagent_type ?? 'general'
+  // tool_call.input 是模型参数的 JSON.parse 结果，**原样落库**（persist.ts 只过滤
+  // _parseError/_raw），没有形状校验：模型把 prompt 写成对象（常见的批量误用）时，
+  // 此前在 `inp.prompt.slice(0, 60)` 处抛 TypeError，`<pre>{inp.context}</pre>` 遇
+  // 对象则让 React 抛 `Objects are not valid as a React child`——两者都在**构建
+  // nodes 的阶段**抛出，根本走不到错误分支，而模型侧其实已经拿到一个干净的
+  // 「prompt 必须是字符串」错误在重试：用户看到的却是整个应用崩成「页面渲染
+  // 出错」（ErrorBoundary 裹的是整个应用壳）。字段逐个 typeof 守卫（与
+  // toolSummary.ts 同口径），读不出来就不画。
+  const agentType = str(inp.subagent_type) ?? 'general'
 
   // 逐子任务状态（有则用之）。批量里失败一个不再把成功的也画成失败；
   // 旧的历史消息没有 metadata，回落到父工具状态（保持原行为）。
-  const meta = (output as { metadata?: { subtasks?: SubtaskStatus[] } } | undefined)?.metadata
+  const meta = (output as { metadata?: { subtasks?: unknown } } | undefined)?.metadata
   const byIndex = new Map<number, SubtaskStatus['status']>()
   if (Array.isArray(meta?.subtasks)) {
-    for (const s of meta.subtasks) byIndex.set(s.index, s.status)
+    for (const s of meta.subtasks) {
+      // 同为原样落库的 metadata：index/status 类型漂移会让节点状态变成 undefined，
+      // 概览图上就多出一个既不在 pending 也不在完成的「幽灵节点」。
+      if (
+        isRecord(s) &&
+        typeof s.index === 'number' &&
+        (s.status === 'completed' || s.status === 'failed' || s.status === 'running')
+      ) {
+        byIndex.set(s.index, s.status)
+      }
+    }
   }
   const nodeStatus = (i: number): WorkflowNode['status'] => {
     const own = byIndex.get(i)
@@ -75,20 +94,20 @@ export function TaskToolView({
     // 批量模式
     for (let i = 0; i < inp.tasks.length; i++) {
       const task = inp.tasks[i]
-      if (!task) continue
+      if (!isRecord(task)) continue
       nodes.push({
         id: `task-${i}`,
         agentType,
-        label: task.description ?? task.role ?? `Task ${i + 1}`,
+        label: str(task.description) ?? str(task.role) ?? `Task ${i + 1}`,
         status: nodeStatus(i),
       })
     }
-  } else if (inp.prompt) {
+  } else if (str(inp.prompt)) {
     // 单任务模式
     nodes.push({
       id: 'task-0',
       agentType,
-      label: inp.description ?? inp.prompt.slice(0, 60),
+      label: str(inp.description) ?? (str(inp.prompt) as string).slice(0, 60),
       status: nodeStatus(0),
     })
   }
@@ -100,10 +119,10 @@ export function TaskToolView({
 
   return (
     <div className={wrapper} data-testid="task-tool-view">
-      {inp.context && (
+      {str(inp.context) && (
         <details>
           <summary className={metaLabel}>Shared Context</summary>
-          <pre className={outputPre}>{inp.context}</pre>
+          <pre className={outputPre}>{str(inp.context)}</pre>
         </details>
       )}
       {nodes.length > 0 && (

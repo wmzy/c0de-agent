@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
+import { ShapeNotice, wellFormedPhases } from '@/components/session/tools/toolShape.js'
 import { ToolTruncated } from '@/components/session/tools/toolTruncated.js'
 
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
@@ -129,10 +130,13 @@ const empty = css`
   font-style: italic;
 `
 
-/** Render the todo board (phases with tasks). */
-function Board({ phases }: { phases: TodoPhase[] }) {
+/** Render the todo board (phases with tasks).
+ *
+ *  unreadable：形状有丢弃且一条都没剩下——此时「待办为空」是谎报（真实情况是
+ *  读不出来），空态让位给 ShapeNotice。 */
+function Board({ phases, unreadable = false }: { phases: TodoPhase[]; unreadable?: boolean }) {
   if (phases.length === 0) {
-    return <div className={empty}>Todo list is empty.</div>
+    return unreadable ? null : <div className={empty}>Todo list is empty.</div>
   }
   return (
     <div className={board}>
@@ -214,19 +218,30 @@ export function TodoToolView({
   }
 
   // Extract phases from output metadata
+  //
+  // metadata 是原样落库的未受信 JSON（持久层只过滤 _parseError/_raw，导入层只校验
+  // 分片外形、不递归 metadata）：`{name:1, tasks:'garbage'}` 之类畸形条目原样入库，
+  // 此前直接 `meta.phases as TodoPhase[]` 后渲染，在 `phase.tasks.filter` 处抛错 →
+  // 整个应用（含侧栏/顶栏）被 ErrorBoundary 换成「页面渲染出错」，该会话再也无法
+  // 展开这条工具块。渲染前收敛（与 src/tools/builtin/todo.ts 的 sanitize 同口径）：
+  // 畸形条目丢弃并计数，丢掉的必须说出来，绝不把「读不出来」说成「待办为空」。
   let phases: TodoPhase[] = []
+  let dropped = 0
+  let malformed = false
   if (output?._tag === 'success') {
-    const meta = output.metadata as { phases?: TodoPhase[] } | undefined
-    if (meta?.phases && Array.isArray(meta.phases)) {
-      phases = meta.phases
-    }
+    const meta = output.metadata as { phases?: unknown } | undefined
+    const parsed = wellFormedPhases(meta?.phases)
+    phases = parsed.value
+    dropped = parsed.dropped
+    malformed = parsed.malformed
   }
 
   return (
     <div>
       <span className={opLabel}>{op}</span>
       <ToolInlineError output={output} tool="todo" />
-      <Board phases={phases} />
+      <Board phases={phases} unreadable={dropped > 0 || malformed} />
+      {(dropped > 0 || malformed) && <ShapeNotice dropped={dropped} />}
     </div>
   )
 }

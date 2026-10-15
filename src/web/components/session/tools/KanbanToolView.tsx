@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
+import { ShapeNotice, wellFormedBoard } from '@/components/session/tools/toolShape.js'
 import { ToolTruncated } from '@/components/session/tools/toolTruncated.js'
 
 type KanbanCard = {
@@ -80,10 +81,13 @@ const detail = css`
   margin-bottom: 4px;
 `
 
-/** Render the kanban board (columns with cards). */
-function BoardView({ board }: { board: KanbanBoard }) {
+/** Render the kanban board (columns with cards).
+ *
+ *  unreadable：形状有丢弃且一条卡片都没剩下——「看板为空」是谎报（真实情况是读不
+ *  出来），空态让位给 ShapeNotice。 */
+function BoardView({ board, unreadable = false }: { board: KanbanBoard; unreadable?: boolean }) {
   if (board.cards.length === 0) {
-    return <div className={empty}>看板为空</div>
+    return unreadable ? null : <div className={empty}>看板为空</div>
   }
   // 卡片引用的列已不存在（历史脏数据：列被删/改名后残留）时，只按现有列过滤会让
   // 这些卡片一条都不画：全是幽灵卡时整个看板渲染成一块空白 div（连列头都没有），
@@ -163,10 +167,23 @@ export function KanbanToolView({
   }
 
   // Extract board from output metadata
+  //
+  // 与 todo 同理：metadata 原样落库、未受信，此前 `as KanbanBoard` 之后直接
+  // `board.cards.length` / `board.columns.map`，一条 `{cards:[{title:{a:1}}]}` 就在
+  // 渲染期抛错 → 整个应用被 ErrorBoundary 换成「页面渲染出错」。渲染前收敛，
+  // 被丢弃的条目明确计数。
   let board: KanbanBoard | null = null
+  let dropped = 0
+  let malformed = false
   if (output?._tag === 'success') {
-    const meta = output.metadata as { board?: KanbanBoard; card?: KanbanCard } | undefined
-    if (meta?.board) board = meta.board
+    const meta = output.metadata as { board?: unknown } | undefined
+    // 压根没有 board（add/move 的成功结果）不是「看板为空」——保持 null 不画。
+    if (meta?.board !== undefined && meta?.board !== null) {
+      const parsed = wellFormedBoard(meta.board)
+      board = parsed.value
+      dropped = parsed.dropped
+      malformed = parsed.malformed
+    }
   }
 
   // Show op detail for add/move/delete
@@ -180,7 +197,8 @@ export function KanbanToolView({
       <span className={opLabel}>kanban/{op}</span>
       <ToolInlineError output={output} tool="kanban" />
       {detailText && <div className={detail}>{detailText}</div>}
-      {board && <BoardView board={board} />}
+      {board && <BoardView board={board} unreadable={dropped > 0 || malformed} />}
+      {board && (dropped > 0 || malformed) && <ShapeNotice dropped={dropped} />}
     </div>
   )
 }
