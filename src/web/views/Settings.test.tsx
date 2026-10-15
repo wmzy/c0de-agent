@@ -5,7 +5,7 @@
 import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { horizontalWheelTarget } from '@/components/settings/sectionScroll.js'
@@ -859,6 +859,45 @@ describe('Settings — Provider 管理', () => {
     await waitFor(() => {
       expect(screen.getByTestId('settings-save-status').textContent).toContain('已保存')
     })
+  })
+
+  // 回归：保存请求在飞期间（磁盘慢/配置大时可达数秒，表单此时没有在途禁写）
+  // 用户继续编辑，onSuccess 无条件 setDraft(null) 会把这批新编辑整块抹掉——
+  // 保存条回显「✓ 已保存」、脏标记消失，屏幕上刚打的字无声不见。
+  it('保存请求在飞期间的新编辑不会被成功回调清掉', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let resolveUpdate: (value: unknown) => void = () => {}
+    ;(configAPI.update as Mock).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve
+        }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('provider-add'))
+    fireEvent.change(screen.getAllByPlaceholderText('名称').at(-1) as HTMLElement, {
+      target: { value: 'P' },
+    })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+
+    // 请求仍在飞：用户接着把这一行改成 Q
+    fireEvent.change(screen.getAllByPlaceholderText('名称').at(-1) as HTMLElement, {
+      target: { value: 'Q' },
+    })
+
+    await act(async () => {
+      resolveUpdate(mockConfig)
+    })
+
+    // 修复前：草稿被清空 → 该行整个消失（Q 无处可寻），脏标记也没了
+    const names = screen.getAllByPlaceholderText('名称') as HTMLInputElement[]
+    expect(names.at(-1)?.value).toBe('Q')
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
   })
 
   // 可访问性：每个 Provider 表单控件须有显式关联的 label（label[for] ↔ control#id）

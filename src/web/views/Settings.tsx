@@ -184,6 +184,10 @@ export function Settings() {
   // 与语法错误分开存放：两者都禁止保存与切回表单，但原因文案不同。
   const [jsonShapeError, setJsonShapeError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  /** 本次提交出去的草稿对象（handleSave 时记下）。onSuccess 据此判断「保存期间
+   *  用户有没有继续编辑」——磁盘慢/配置大时 PATCH 可能飞数秒，期间用户照旧能改
+   *  字段（表单没有在途禁写），无条件 setDraft(null) 会把这段新编辑整块抹掉。 */
+  const submittedDraftRef = useRef<Partial<Config> | null>(null)
 
   // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。
   const [saveFeedback, setSaveFeedback] = useState<
@@ -243,7 +247,10 @@ export function Settings() {
       qc.invalidateQueries({ queryKey: ['commands'] })
       // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
       // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
-      setDraft(null)
+      // 但只清「本次提交出去的那份」：保存期间用户敲进去的新编辑必须留下——
+      // 否则它们连同脏标记一起消失，屏幕上刚打的字无声不见，用户以为已存进去。
+      // （此处按对象引用比较：任何一次 setDraft 都产生新对象。）
+      setDraft((prev) => (prev === submittedDraftRef.current ? null : prev))
       // needsRestart 是**本次 patch 各自**的信号（服务端只在本次写入 security/
       // update/plugins 且作用域为 global/服务启动目录时返回 true）。覆盖式置位会
       // 让「鉴权改动尚未生效」的唯一警告被下一次无关保存（如改默认模型，返回
@@ -401,6 +408,7 @@ export function Settings() {
         setScope('global')
       }
     }
+    submittedDraftRef.current = draft
     save.mutate({ patch: patch as Partial<Config>, scope: effectiveScope })
   }
 
