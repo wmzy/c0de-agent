@@ -125,6 +125,19 @@ function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null
   return `${expires.toLocaleDateString()} 进入宽限`
 }
 
+/**
+ * P2-2：本次恢复连带还原的祖先/后代是否**已一并归属**到恢复落定的项目。
+ *
+ * 不过来说这一句会变成假成功：从「未归属项目」分组恢复子会话时，祖先链被一并
+ * 还原但只有目标会话拿到归属，侧栏按根会话 projectId 过滤整棵树 —— 根无归属时
+ * 恢复成功的会话在列表里一条都不出现。服务端现在会把它们一并归属（adoptedCount），
+ * 提示必须跟上，否则用户看到「已恢复」却在侧栏找不到任何东西。
+ */
+function adoptedNote(restored: { adoptedCount?: number } | undefined): string {
+  const n = restored?.adoptedCount ?? 0
+  return n > 0 ? `；连带还原的 ${n} 个会话已一并归属` : ''
+}
+
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
  *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。
  *  P1-7：仅显示当前项目的删除会话；「清空」仅清空当前项目。 */
@@ -372,14 +385,19 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 把该项目全部会话（含 fork 子会话）软删成「未归属项目」分组，恰恰是后代
   // 最容易成树的地方，用户却据此以为只删一条。
   const orphanIndex = buildDeletedTreeIndex(orphans ?? [])
-  /** 某条目的彻底删除影响面：按它所属的分组取索引，孤儿走 orphanIndex。 */
-  const purgeDescendantsOf = (s: Session): number =>
+  /** 某条目在回收站内的已删除后代数：按它所属的分组取索引，孤儿走 orphanIndex。
+   *  两个用途共用（彻底删除的影响面 / 恢复会连带还原的派生会话数）——
+   *  对孤儿分组，删除项目时整批会话共享同一删除批次，两者数量一致。 */
+  const trashDescendantsOf = (s: Session): number =>
     countDeletedDescendants(s.projectId ? deletedIndex : orphanIndex, s.id)
   /** 回收站内已删除的祖先链（按父→祖顺序）。恢复会连带还原它们——
-   *  事前在确认框中列出，比事后提示更符合「操作前知情」。 */
+   *  事前在确认框中列出，比事后提示更符合「操作前知情」。
+   *  查找范围必须含「未归属项目」分组：删除项目留下的孤儿整批无归属，
+   *  从孤儿分组恢复子会话时父会话就在那一组里，只用项目级列表查会漏掉它们
+   *  （确认框对最该提示的场景反而一字不提）。 */
   const deletedAncestorsOf = (s: Session): Session[] => {
     const out: Session[] = []
-    const byId = new Map(deletedList.map((d) => [d.id, d]))
+    const byId = new Map([...deletedList, ...(orphans ?? [])].map((d) => [d.id, d]))
     let pid = s.parentId
     const seen = new Set<string>()
     while (pid && !seen.has(pid)) {
@@ -392,10 +410,33 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     return out
   }
 
+  /** 恢复前的知情确认（P2 子树恢复 + P2-2 祖先归属）：恢复会连带还原派生会话与
+   *  已删除的父会话（父会话同时决定恢复后的会话在侧栏是否可达，服务端会把它
+   *  一并归属到本次恢复的项目），操作前明示受影响对象。返回 false = 用户取消。
+   *
+   *  回收站的三个恢复入口共用同一份影响面计算：此前只有项目列表那一个按钮会
+   *  确认，孤儿分组的「恢复到当前项目 / 恢复并重建原项目」直接发请求——删除项目
+   *  留下的整批无归属会话恰恰是最容易带出父会话的场景（孤儿分组里就是一棵树），
+   *  提示却一个字都没有。 */
+  const confirmRestore = (s: Session, descendants: number): boolean => {
+    const ancestors = deletedAncestorsOf(s)
+    if (descendants <= 0 && ancestors.length === 0) return true
+    const parts = [`恢复「${s.title}」？`]
+    if (descendants > 0) parts.push(`其 ${descendants} 个派生会话将一并恢复。`)
+    if (ancestors.length > 0) {
+      parts.push(
+        `为保持会话树完整，已删除的父会话将一并恢复：${ancestors
+          .map((a) => `「${a.title}」`)
+          .join('、')}。`,
+      )
+    }
+    return window.confirm(parts.join('\n'))
+  }
+
   const handleRemoveForever = (s: Session) => {
     // 影响面在点开确认的那一刻定格：孤儿分组折叠后 orphans 变 undefined，
     // 数字若跟着活数据走，会在逐字确认途中悄悄从「及其 2 个派生会话」退回 0。
-    setRemoveTarget({ session: s, descendants: purgeDescendantsOf(s) })
+    setRemoveTarget({ session: s, descendants: trashDescendantsOf(s) })
   }
 
   const handleEmptyTrash = () => {
@@ -515,21 +556,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   onClick={() => {
                     // P2 子树恢复 + 事前祖先清单：恢复会连带还原派生会话与已删除的
                     // 父会话（保证会话树可达），确认框在操作前明示受影响对象。
-                    const ancestors = deletedAncestorsOf(s)
-                    if (descendants > 0 || ancestors.length > 0) {
-                      const parts = [`恢复「${s.title}」？`]
-                      if (descendants > 0) {
-                        parts.push(`其 ${descendants} 个派生会话将一并恢复。`)
-                      }
-                      if (ancestors.length > 0) {
-                        parts.push(
-                          `为保持会话树完整，已删除的父会话将一并恢复：${ancestors
-                            .map((a) => `「${a.title}」`)
-                            .join('、')}。`,
-                        )
-                      }
-                      if (!window.confirm(parts.join('\n'))) return
-                    }
+                    if (!confirmRestore(s, descendants)) return
                     restore.mutate(
                       { id: s.id, projectId },
                       {
@@ -552,7 +579,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                             setOrphanId(s.id)
                           } else if (d?.rebound) {
                             setNotice(
-                              `「${s.title}」已恢复并重新归属到项目${ancestorNote}${leftBehindNote}`,
+                              `「${s.title}」已恢复并重新归属到项目${ancestorNote}${adoptedNote(d)}${leftBehindNote}`,
                             )
                             setOrphanId(null)
                           } else if (s.source === 'cli') {
@@ -676,7 +703,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   className={restoreBtn}
-                  onClick={() =>
+                  onClick={() => {
+                    if (!confirmRestore(s, trashDescendantsOf(s))) return
                     restore.mutate(
                       { id: s.id, projectId, restoreMode: 'current-project' },
                       {
@@ -686,13 +714,13 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                           setNotice(
                             d?.orphaned
                               ? `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`
-                              : `「${s.title}」已恢复并归属到当前项目。`,
+                              : `「${s.title}」已恢复并归属到当前项目${adoptedNote(d)}。`,
                           )
                           setOrphanId(d?.orphaned ? s.id : null)
                         },
                       },
                     )
-                  }
+                  }}
                   data-testid={`restore-orphan-${s.id}`}
                   title="恢复并归属到当前项目（不重建原项目）"
                   disabled={restore.isPending}
@@ -702,7 +730,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   className={restoreBtn}
-                  onClick={() =>
+                  onClick={() => {
+                    if (!confirmRestore(s, trashDescendantsOf(s))) return
                     restore.mutate(
                       { id: s.id },
                       {
@@ -714,7 +743,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                           const recreated = d?.recreatedProject
                           if (recreated) {
                             setNotice(
-                              `「${s.title}」已恢复，并重新创建了原项目「${recreated.name ?? '未命名项目'}」——该项目此前已删除，现在从回收站恢复而重建。`,
+                              `「${s.title}」已恢复，并重新创建了原项目「${recreated.name ?? '未命名项目'}」——该项目此前已删除，现在从回收站恢复而重建${adoptedNote(d)}。`,
                             )
                             setOrphanId(null)
                           } else if (d?.orphaned) {
@@ -729,7 +758,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                         },
                       },
                     )
-                  }
+                  }}
                   data-testid={`restore-orphan-recreate-${s.id}`}
                   title="恢复并在原目录重建项目（若目录仍存在）"
                   disabled={restore.isPending}

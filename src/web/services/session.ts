@@ -43,6 +43,8 @@ const sessionAPI = {
       crossedBatchAncestor?: boolean
       /** A2：已删但未随本次恢复的后代数量（批次不同 → 滞留回收站需单独恢复）。 */
       leftBehindDescendantCount?: number
+      /** P2-2：连带还原且一并归属到本次恢复项目的会话数量（不含目标会话）。 */
+      adoptedCount?: number
     }>(`/api/sessions/${id}/restore`, {
       ...(projectId ? { projectId } : {}),
       ...(restoreMode ? { restoreMode } : {}),
