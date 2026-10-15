@@ -11,6 +11,7 @@
 
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { EditToolView } from '@/components/session/tools/EditToolView.js'
 import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
 import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
@@ -178,5 +179,85 @@ describe('TaskToolView 畸形 input', () => {
       />,
     )
     expect(screen.getByTestId('task-tool-view')).toBeInTheDocument()
+  })
+})
+
+describe('工具视图畸形 input（op / id / hunks）', () => {
+  it('todo 的 op 是对象时不崩，落回可读的默认 op', () => {
+    render(
+      <TodoToolView
+        input={{ op: { kind: 'add' } }}
+        status="completed"
+        output={{ _tag: 'success', output: '', metadata: { phases: [] } }}
+      />,
+    )
+    expect(screen.getByText('view')).toBeInTheDocument()
+  })
+
+  it('kanban 的 op 是对象、id 是数字时不崩（id 不再 .slice 出 TypeError）', () => {
+    render(
+      <KanbanToolView
+        input={{ op: { kind: 'delete' }, id: 12345 }}
+        status="completed"
+        output={{ _tag: 'success', output: 'ok' }}
+      />,
+    )
+    expect(screen.getByText('kanban/view')).toBeInTheDocument()
+  })
+
+  it('kanban 的 delete 明细只在 id 是字符串时渲染', () => {
+    render(
+      <KanbanToolView
+        input={{ op: 'delete', id: 'abcdef123456' }}
+        status="completed"
+        output={{ _tag: 'success', output: 'ok' }}
+      />,
+    )
+    expect(screen.getByText('删除: abcdef12')).toBeInTheDocument()
+  })
+
+  it('edit 的 metadata.hunks 形状漂移时不崩，退回工具结论文本', () => {
+    render(
+      <EditToolView
+        input={{ path: 'a.ts', patch: '@@ -1,1 +1,1 @@' }}
+        status="completed"
+        output={{
+          _tag: 'success',
+          output: '已应用 1 处改动',
+          metadata: { hunks: 'garbage' },
+        }}
+      />,
+    )
+    expect(screen.getByTestId('edit-hashline-output')).toHaveTextContent('已应用 1 处改动')
+  })
+
+  it('edit 的 hunks 里有畸形条目时丢弃该条，其余照常渲染 diff', () => {
+    render(
+      <EditToolView
+        input={{ path: 'a.ts', patch: '@@ -1,1 +1,1 @@' }}
+        status="completed"
+        output={{
+          _tag: 'success',
+          output: 'ok',
+          metadata: {
+            hunks: [{ _tag: 'replace', start: 1, end: 1, removed: ['old'], added: ['new'] }, null],
+          },
+        }}
+      />,
+    )
+    expect(screen.queryByTestId('edit-hashline-output')).toBeNull()
+    expect(screen.getByText('old')).toBeInTheDocument()
+    expect(screen.getByText('new')).toBeInTheDocument()
+  })
+
+  it('edit 的 input 不是对象时（模型把 arguments 写成字符串）不崩', () => {
+    render(
+      <EditToolView
+        input={'ls' as never}
+        status="completed"
+        output={{ _tag: 'success', output: 'ok' }}
+      />,
+    )
+    expect(screen.queryByTestId('tool-error')).toBeNull()
   })
 })

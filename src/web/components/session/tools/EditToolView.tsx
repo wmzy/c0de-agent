@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ContentDiff } from '@/components/session/ContentDiff.js'
 import { ToolError } from '@/components/session/tools/toolError.js'
+import { isRecord, str } from '@/components/session/tools/toolShape.js'
 
 type EditInput =
   | { path: string; oldText: string; newText: string }
@@ -9,6 +10,29 @@ type EditInput =
 
 /** edit 工具 hashline 模式随结果回传的行级变更（metadata.hunks，见 tools/hashline）。 */
 type PatchHunk = { _tag: string; start: number; end: number; removed: string[]; added: string[] }
+
+/**
+ * metadata.hunks → 可渲染的 hunk 列表（畸形 hunk 整条丢弃）。
+ *
+ * hunks 与被渲染的其它字段同源（持久层原样落库、导入层不递归 metadata）：
+ * `hunks:'xx'` 会在 `[...hunks].sort()` 之后于 `...h.removed` 处抛 TypeError，`[null]`
+ * 则在 `h.start` 处抛——渲染期抛错＝整个应用壳被 ErrorBoundary 换成「页面渲染出错」。
+ * 读不出来的 hunk 丢弃，宁可少画一块 diff 也不崩掉整页。
+ */
+function wellFormedHunks(raw: unknown): PatchHunk[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((h): h is PatchHunk => {
+    if (!isRecord(h)) return false
+    return (
+      typeof h.start === 'number' &&
+      typeof h.end === 'number' &&
+      Array.isArray(h.removed) &&
+      h.removed.every((l) => typeof l === 'string') &&
+      Array.isArray(h.added) &&
+      h.added.every((l) => typeof l === 'string')
+    )
+  })
+}
 
 const out = css`
   margin: 4px 0;
@@ -53,10 +77,12 @@ export function EditToolView({
   }
   // hashline 模式没有 oldText/newText：此前落到下面渲染 oldText='' / newText='' 的
   // 空 diff——一次真实落盘的编辑在时间线上是一块空白，用户据此以为没改成。
-  if (input && 'patch' in input) {
+  // `'patch' in input` 对非对象 input（模型把 arguments 写成 `"ls"` 这类）会抛
+  // TypeError，先收敛成对象再判定。
+  if (isRecord(input) && 'patch' in input) {
     const hunks =
       output?._tag === 'success'
-        ? ((output.metadata as { hunks?: PatchHunk[] } | undefined)?.hunks ?? [])
+        ? wellFormedHunks((output.metadata as { hunks?: unknown } | undefined)?.hunks)
         : []
     if (hunks.length > 0) {
       const diff = hunksToDiff(hunks)
@@ -73,5 +99,7 @@ export function EditToolView({
       </div>
     )
   }
-  return <ContentDiff oldText={input?.oldText ?? ''} newText={input?.newText ?? ''} />
+  // oldText/newText 同样是未受信 JSON：对象形状会被当 React child 渲染而抛错。
+  const rec: Record<string, unknown> = isRecord(input) ? input : {}
+  return <ContentDiff oldText={str(rec.oldText) ?? ''} newText={str(rec.newText) ?? ''} />
 }

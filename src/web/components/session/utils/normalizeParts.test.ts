@@ -379,3 +379,52 @@ describe('normalizeParts 图片', () => {
     expect(blocks.map((b) => b.type)).toEqual(['text', 'image'])
   })
 })
+
+describe('normalizeParts — 畸形 tool_result 在渲染边界收敛', () => {
+  function resultBlock(raw: unknown) {
+    return normalizeParts(
+      msg('assistant', [
+        { _tag: 'tool_call', id: 't1', tool: 'bash', input: {} },
+        { _tag: 'tool_result', id: 't1', tool: '', output: raw as never },
+      ]),
+    )[0] as { status: string; output?: { _tag: string; error?: string; metadata?: unknown } }
+  }
+
+  it('error 是对象时降级成明确的失败结果，而不是在 .trim() 处抛错', () => {
+    const b = resultBlock({ _tag: 'error', error: { code: 500 } })
+    expect(b.status).toBe('error')
+    expect(typeof b.output?.error).toBe('string')
+    expect(b.output?.error).toContain('无法识别')
+  })
+
+  it('success 的 output 不是字符串时同样降级（否则会被当 React child 渲染）', () => {
+    const b = resultBlock({ _tag: 'success', output: { text: 'x' } })
+    expect(b.status).toBe('error')
+    expect(typeof b.output?.error).toBe('string')
+  })
+
+  it('_tag 拼错时不再产出 undefined 状态（此前状态图标与正文全空）', () => {
+    const b = resultBlock({ _tag: 'weird', output: 'x' })
+    expect(b.status).toBe('error')
+    expect(typeof b.output?.error).toBe('string')
+  })
+
+  it('metadata 不是对象时丢掉，正常结果原样保留 metadata', () => {
+    expect(resultBlock({ _tag: 'success', output: 'ok', metadata: null }).output?.metadata).toBe(
+      undefined,
+    )
+    const withMeta = resultBlock({
+      _tag: 'success',
+      output: 'ok',
+      metadata: { count: 3 },
+    }).output?.metadata as { count?: number } | undefined
+    expect(withMeta?.count).toBe(3)
+  })
+
+  it('truncated 的行数缺失时不谎报 0 行', () => {
+    const b = resultBlock({ _tag: 'truncated', output: 'o', truncated: true }) as {
+      output?: { totalLines?: number }
+    }
+    expect(b.output?.totalLines).toBe(0)
+  })
+})

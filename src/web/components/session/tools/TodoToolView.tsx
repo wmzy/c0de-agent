@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
-import { ShapeNotice, wellFormedPhases } from '@/components/session/tools/toolShape.js'
+import { ShapeNotice, str, wellFormedPhases } from '@/components/session/tools/toolShape.js'
 import { ToolTruncated } from '@/components/session/tools/toolTruncated.js'
 
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
@@ -191,7 +191,10 @@ export function TodoToolView({
   status: string
 }) {
   const i = (input ?? {}) as TodoInput
-  const op = i.op ?? 'view'
+  // op 直接当 React child 渲染：`{op:{kind:'add'}}` 这类形状会在渲染期抛
+  // 「Objects are not valid as a React child」→ 整个应用壳被 ErrorBoundary 换掉
+  // （input 与 metadata 一样是原样落库的未受信 JSON）。
+  const op = str(i.op) ?? 'view'
 
   // 失败优先于「空」：此前 _tag==='error' 会一路落到 Board 的空渲染，
   // 工具失败被显示成 "Todo list is empty."，用户看到的是一个与真实原因无关的结论。

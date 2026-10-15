@@ -16,6 +16,7 @@
 // 丢掉的条目必须说出来，绝不把「读不出来」渲染成「空」。**
 
 import { css } from '@linaria/core'
+import type { ToolResult } from '@shared/types/tool.js'
 
 const notice = css`
   margin-top: 4px;
@@ -46,6 +47,61 @@ export function str(v: unknown): string | undefined {
 
 /** 收敛结果：可用条目 + 被丢弃的条目数 + 整体形状是否根本不是预期的容器。 */
 export type Sanitized<T> = { value: T; dropped: number; malformed: boolean }
+
+/** 结果整体读不出来时的替代文案：说「读不出来」，不说「失败」，更不说「空」。 */
+export const UNREADABLE_RESULT_TEXT = '工具结果格式无法识别（可能是历史数据损坏），无法显示详情。'
+
+/**
+ * 工具结果本身（不只是它的 metadata）的收敛：整份 result 只认 `_tag` 与随之而来的
+ * 字符串字段，读不出来就整体降级成一条明确的失败结果。
+ *
+ * 与 metadata 那道收敛（wellFormedPhases/wellFormedBoard）同源，但覆盖剩下的一层：
+ * `{_tag:'error', error:{code:500}}` 会在 toolError 的 `output.error.trim()` 处抛
+ * TypeError；`{_tag:'success', output:{…}}` 会被当 React child 渲染成
+ * `Objects are not valid as a React child`；`_tag` 拼错则一路落到
+ * `STATUS_ICON[undefined]` + 空正文。三者都发生在**渲染期**，而 ErrorBoundary 裹的
+ * 是整个应用壳（src/web/App.tsx）——一条脏结果换来「页面渲染出错」，会话再也打不开。
+ *
+ * 归一化发生在渲染边界（normalizeParts），持久化的事实不动；丢掉的信息由
+ * UNREADABLE_RESULT_TEXT 明说。
+ */
+export function sanitizeToolResult(raw: unknown): ToolResult {
+  const unreadable = (): ToolResult => ({ _tag: 'error', error: UNREADABLE_RESULT_TEXT })
+  if (!isRecord(raw)) return unreadable()
+  const metadata = isRecord(raw.metadata) ? raw.metadata : undefined
+  switch (raw._tag) {
+    case 'success': {
+      const output = str(raw.output)
+      if (output === undefined) return unreadable()
+      return metadata ? { _tag: 'success', output, metadata } : { _tag: 'success', output }
+    }
+    case 'truncated': {
+      const output = str(raw.output)
+      if (output === undefined) return unreadable()
+      // totalLines 缺失/非数字时给 0（未知）——toolTruncated 对 0 不再写「共 0 行」。
+      const totalLines =
+        typeof raw.totalLines === 'number' && Number.isFinite(raw.totalLines) ? raw.totalLines : 0
+      return {
+        _tag: 'truncated',
+        output,
+        truncated: raw.truncated === true,
+        totalLines,
+        ...(metadata ? { metadata } : {}),
+      }
+    }
+    case 'error': {
+      const error = str(raw.error)
+      if (error === undefined) return unreadable()
+      return metadata ? { _tag: 'error', error, metadata } : { _tag: 'error', error }
+    }
+    case 'permission_required': {
+      const reason = str(raw.reason)
+      return reason === undefined ? unreadable() : { _tag: 'permission_required', reason }
+    }
+    default:
+      return unreadable()
+  }
+}
 
 export type TodoPhaseLike = { name: string; tasks: { content: string; status: string }[] }
 

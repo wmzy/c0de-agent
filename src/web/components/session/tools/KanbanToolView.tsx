@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
-import { ShapeNotice, wellFormedBoard } from '@/components/session/tools/toolShape.js'
+import { ShapeNotice, str, wellFormedBoard } from '@/components/session/tools/toolShape.js'
 import { ToolTruncated } from '@/components/session/tools/toolTruncated.js'
 
 type KanbanCard = {
@@ -141,7 +141,9 @@ export function KanbanToolView({
   status: string
 }) {
   const i = (input ?? {}) as KanbanInput
-  const op = i.op ?? 'view'
+  // 与 todo 同口径：op 直接当 React child 渲染，id 直接 `.slice()`——两者都是
+  // 原样落库的未受信 JSON，对象形状会在渲染期抛错并把整个应用壳换成「页面渲染出错」。
+  const op = str(i.op) ?? 'view'
 
   // 失败优先于「无看板」：move/add 失败时 metadata 里没有 board，此前整块渲染塌成
   // 一行 op 名，用户既看不到失败原因，也看不出自己那张卡到底有没有移动成功。
@@ -187,10 +189,13 @@ export function KanbanToolView({
   }
 
   // Show op detail for add/move/delete
+  const title = str(i.title)
+  const columnId = str(i.columnId)
+  const cardId = str(i.id)
   let detailText = ''
-  if (op === 'add' && i.title) detailText = `新建: ${i.title}`
-  else if (op === 'move' && i.columnId) detailText = `移动到: ${i.columnId}`
-  else if (op === 'delete' && i.id) detailText = `删除: ${i.id.slice(0, 8)}`
+  if (op === 'add' && title) detailText = `新建: ${title}`
+  else if (op === 'move' && columnId) detailText = `移动到: ${columnId}`
+  else if (op === 'delete' && cardId) detailText = `删除: ${cardId.slice(0, 8)}`
 
   return (
     <div>

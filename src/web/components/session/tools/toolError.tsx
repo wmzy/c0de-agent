@@ -6,6 +6,7 @@
 
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { str } from '@/components/session/tools/toolShape.js'
 
 const err = css`
   font-size: 13px;
@@ -36,7 +37,11 @@ const NO_DETAIL = '工具执行失败，但没有返回错误信息。'
  */
 export function toolErrorText(output: ToolResult | undefined, status?: string): string | null {
   if (output?._tag === 'error') {
-    const text = output.error?.trim()
+    // error 应当是字符串，但它来自原样落库的 JSON（导入的畸形结果可写成对象）：
+    // 直接 `.trim()` 会抛 TypeError，而 ErrorBoundary 裹的是整个应用壳。
+    // 渲染边界（normalizeParts.sanitizeToolResult）已收敛一次，这里是失败路径自己的
+    // 兜底——「读不出原因」也必须说成一句能看懂的失败原因，不能崩，也不能当作成功。
+    const text = str(output.error)?.trim()
     return text || NO_DETAIL
   }
   return status === 'error' ? NO_DETAIL : null

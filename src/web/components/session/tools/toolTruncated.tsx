@@ -39,7 +39,7 @@ export function ToolTruncated({ output }: { output?: ToolResult }) {
   return (
     <div data-testid="tool-truncated">
       <div className={notice}>
-        输出超过上限已截断（共 {output.totalLines} 行）——完整内容未随结果返回，下方为截断后的文本。
+        {`输出超过上限已截断${output.totalLines > 0 ? `（共 ${output.totalLines} 行）` : ''}——完整内容未随结果返回，下方为截断后的文本。`}
       </div>
       <pre data-testid="tool-truncated-text" className={pre}>
         {output.output}
