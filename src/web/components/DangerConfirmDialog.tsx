@@ -134,27 +134,32 @@ export function DangerConfirmDialog({
   // 请求在飞时不给关闭的出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染
   // 在这块面板里（role=alert），中途关掉它就等于把失败原因一起关掉——实测
   // 删除项目时按 Esc，服务端随后 500，用户看到的是「点了删除，什么也没发生」。
+  //
+  // 次级动作（「导出看板并删除」）在飞时同样要锁：它落地后会接着执行确认动作本身
+  // （回调里的 deleteMut.mutate），期间按 Esc/取消只是看着取消了——导出返回后
+  // 项目与看板照样被永久删除。次级按钮自己的 disabled 挡不住弹层这扇门。
+  const locked = busy || secondaryAction?.busy === true
   const dismiss = () => {
-    if (busy) return
+    if (locked) return
     onClose()
   }
   return (
     <Dialog
       open={open}
       onClose={dismiss}
-      closeDisabled={busy}
+      closeDisabled={locked}
       title={title}
       testId="danger-confirm-dialog"
       footer={
         <>
-          <button type="button" className={btn} onClick={dismiss} disabled={busy}>
+          <button type="button" className={btn} onClick={dismiss} disabled={locked}>
             取消
           </button>
           {secondaryAction && (
             <button
               type="button"
               className={btn}
-              disabled={busy || secondaryAction.busy === true || secondaryAction.disabled === true}
+              disabled={locked || secondaryAction.disabled === true}
               onClick={secondaryAction.onClick}
               data-testid="danger-secondary-btn"
             >
@@ -164,11 +169,11 @@ export function DangerConfirmDialog({
           <button
             type="button"
             className={dangerBtn}
-            disabled={!matched || busy}
+            disabled={!matched || locked}
             onClick={onConfirm}
             data-testid="danger-confirm-btn"
           >
-            {busy ? '执行中…' : confirmLabel}
+            {locked ? '执行中…' : confirmLabel}
           </button>
         </>
       }
