@@ -131,6 +131,11 @@ export function CodeEditor({
   /** 保存冲突详情（磁盘内容 ≠ baseRef 时阻止盲写）。 */
   const [saveConflict, setSaveConflict] = useState<{ disk: string } | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
+  /** 保存请求在途：期间按钮禁用并显示「保存中…」。此前只有 disabled={!dirty}，
+   *  连点两下会并发两个 PUT（后到的覆盖先到的，且基线快照互相踩）。 */
+  const [saving, setSaving] = useState(false)
+  /** 在途保存的快照：响应回来时据此判断文档是否已被再次编辑。 */
+  const savingDocRef = useRef<string | null>(null)
 
   // ref 持有最新回调，避免回调身份变化触发重复通知
   const onDirtyChangeRef = useRef(onDirtyChange)
@@ -234,6 +239,20 @@ export function CodeEditor({
   /** 保存：force=true 跳过冲突检查（用户在冲突框中选择「覆盖保存」）。 */
   const save = async (force = false) => {
     const doc = viewRef.current?.state.doc.toString() ?? ''
+    // 在途锁：同一 tick 内的连点（以及按钮还没被 React 写回 disabled 时）只发一个 PUT。
+    if (savingDocRef.current !== null) return
+    savingDocRef.current = doc
+    setSaving(true)
+    try {
+      await saveImpl(doc, force)
+    } finally {
+      savingDocRef.current = null
+      setSaving(false)
+    }
+  }
+
+  /** 实际写入：冲突检查 → PUT → 落地基线。 */
+  const saveImpl = async (doc: string, force: boolean) => {
     if (!force) {
       // 冲突检测：磁盘当前内容 vs 打开时的基线。不一致 → 阻断盲写，交用户决断。
       // 读取失败（文件已被移入回收站等）不阻断——写入会重建文件。
@@ -259,8 +278,13 @@ export function CodeEditor({
     }
     try {
       await fileAPI.write(path, doc, projectId)
+      // 基线始终推进到「实际写出去的这份」——否则下次保存的冲突检查拿旧快照比对，
+      // 会把磁盘上自己刚写的内容误判成「外部修改」。
       baseRef.current = doc
-      setDirty(false)
+      // 脏标记只在文档仍等于请求快照时清除：请求在途期间用户敲的字从未落盘，
+      // 标成「已保存」会让关闭预览的丢弃确认一并失效（用户再也看不到这段字丢了）。
+      const unchanged = (viewRef.current?.state.doc.toString() ?? doc) === doc
+      if (unchanged) setDirty(false)
       setSaveConflict(null)
       setWriteError(null)
       // 同步查询缓存：避免缓存中的旧内容经 initial 回灌覆盖刚保存的文档
@@ -274,8 +298,13 @@ export function CodeEditor({
     <div className={editorWrap}>
       <div className={editorBar}>
         <span className={editorPath}>{path}</span>
-        <Button variant="outline" onClick={() => void save()} disabled={!dirty} data-testid="save">
-          {dirty ? '保存*' : '已保存'}
+        <Button
+          variant="outline"
+          onClick={() => void save()}
+          disabled={!dirty || saving}
+          data-testid="save"
+        >
+          {saving ? '保存中…' : dirty ? '保存*' : '已保存'}
         </Button>
       </div>
 
