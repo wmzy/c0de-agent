@@ -519,6 +519,14 @@ function Composer(props: ComposerProps) {
     // 键盘用户既无法用 Tab/Shift+Tab 离开输入框（焦点陷阱），又会把候选静默插进
     // 正在写的消息里（`/hel` + Tab 变成 `/help `）。这里只关掉浮层、放行按键交给
     // 浏览器移动焦点；确认候选仍然走 Enter。
+    // Shift+Enter 是「换行」，不是「确认候选」：四个浮层的 Enter 分支此前只判
+    // e.key === 'Enter' 且成功后 preventDefault()，于是浮层开着时按 Shift+Enter
+    // 得到的是「插入候选 + 不换行 + 已打的字被静默改写」——`/workflow run my` 会
+    // 变成 `/workflow run <补全第一条>`（可能是另一个工作流名），`@src` 变成某个
+    // 具体文件路径，`/hel` 变成 `/help `。与 useComposer 的发送分支口径对齐
+    // （那里是 `e.key === 'Enter' && !e.shiftKey`，Shift+Enter 留给换行）。
+    // Shift+Enter 落回下面的 composer.handleKeyDown：popoverActive 为真时不发送、
+    // 不 preventDefault，由浏览器在输入框里插入换行。
     if (e.key === 'Tab' && composer.popover !== null) {
       // 走 dismissPopover 而不是裸 setPopover(null)：popover 由 X 变 null 会触发
       // useComposer 的「commands 就绪后重新检测」effect，它会把同一段文本的浮层
@@ -537,7 +545,7 @@ function Composer(props: ComposerProps) {
         setWorkflowActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const wf = filteredWorkflows[workflowActive]
         if (wf && composer.insertWorkflow(wf.name)) {
           e.preventDefault()
@@ -558,7 +566,7 @@ function Composer(props: ComposerProps) {
         setSlashActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const cmd = filteredCommands[slashActive]
         if (cmd && composer.insertSlash(cmd.name)) {
           e.preventDefault()
@@ -579,7 +587,7 @@ function Composer(props: ComposerProps) {
         setSubcommandActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const sub = filteredSubcommands[subcommandActive]
         if (sub && composer.insertSubcommand(sub.name)) {
           e.preventDefault()
@@ -600,7 +608,7 @@ function Composer(props: ComposerProps) {
         setAtActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const selected = atMenuSelection(atMenu, atActive)
         const inserted =
           selected?.kind === 'agent'

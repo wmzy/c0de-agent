@@ -883,3 +883,93 @@ describe('Composer 未定的交互状态不跨作用域', () => {
     expect(storageGet(draftStorageKey('s:two'))).toContain('同一段指令')
   })
 })
+
+/**
+ * Shift+Enter 是「换行」，不是「确认候选」。
+ *
+ * 四个浮层的 Enter 分支此前只判 `e.key === 'Enter'`，命中候选后立刻 preventDefault
+ * 并插入——于是浮层开着时按 Shift+Enter 得到的是「插入候选 + 不换行 + 已打的字被
+ * 静默改写」：`/hel` 变成 `/help `，`@src` 变成某个具体文件路径。用户想要的换行
+ * 没有出现，反而丢了刚打的字（且浮层看起来「自己选中了第一条」）。口径与
+ * useComposer 的发送分支一致：Shift+Enter 留给换行，确认候选只认裸 Enter。
+ */
+describe('Composer 浮层打开时 Shift+Enter 不确认候选', () => {
+  function typeToken(editor: HTMLElement, text: string) {
+    editor.textContent = text
+    const node = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(node, text.length)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  function renderPopover() {
+    vi.mocked(fileAPI.search).mockResolvedValue([{ path: 'src/f0.ts', type: 'file' }] as never)
+    vi.mocked(commandsAPI.list).mockResolvedValue({
+      commands: [
+        { name: 'help', description: '帮助' },
+        { name: 'hello', description: '打招呼' },
+      ],
+    } as never)
+    const onSend = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return { editor: screen.getByTestId('composer-editor'), onSend }
+  }
+
+  afterEach(() => {
+    vi.mocked(fileAPI.search).mockResolvedValue([] as never)
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] } as never)
+  })
+
+  it('@ 浮层开着时 Shift+Enter 不改写已打的字、也不发送', async () => {
+    const { editor, onSend } = renderPopover()
+    typeToken(editor, '@src')
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter', shiftKey: true })
+
+    expect(editor.textContent).toBe('@src')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByTestId('at-menu')).toBeTruthy()
+  })
+
+  it('斜杠浮层开着时 Shift+Enter 不把 /hel 改写成 /help ', async () => {
+    const { editor, onSend } = renderPopover()
+    typeToken(editor, '/hel')
+    await waitFor(() => expect(screen.getByTestId('slash-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter', shiftKey: true })
+
+    expect(editor.textContent).toBe('/hel')
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('同一浮层里裸 Enter 仍然确认候选（Shift 只是不放行发送，不影响确认）', async () => {
+    const { editor, onSend } = renderPopover()
+    typeToken(editor, '@src')
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+
+    await waitFor(() => expect(editor.textContent).toContain('src/f0.ts'))
+    expect(onSend).not.toHaveBeenCalled()
+  })
+})
