@@ -351,6 +351,10 @@ function SecurityPanel({
           未显式设置时使用默认值：确认超时 5 分钟（超时仅提示，弹窗可重新确认）， 再过 25
           分钟仍未处理则自动拒绝。
         </p>
+        <p className={hint} data-testid="permission-timeout-restart-hint">
+          这两个值由服务启动时读取（只取全局作用域或服务启动目录的项目作用域）：保存后需重启 c0de
+          serve 才会生效——否则保存条上的「已保存」看着像已经放宽了，运行时仍按旧值拒绝。
+        </p>
       </div>
       {confirmDisableAuth && (
         <ConfirmDialog

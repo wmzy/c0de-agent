@@ -145,6 +145,35 @@ describe('config route — scoped patch 与保存反馈（P1-2/P2-3）', () => {
     expect(body.error?.code).toBe('SECURITY_IN_PROJECT_SCOPE')
   })
 
+  // 回归：permission.timeoutMs / expireGraceMs 是启动期参数（permissionStore 在
+  // server.ts/context.ts 一次性构造），PATCH 不重建它——此前 needsRestart 不含这两项，
+  // 用户改完「确认超时」看到「✓ 已保存」且没有任何重启提示，运行时仍按旧值自动拒绝。
+  it('PATCH permission.timeoutMs 返回 needsRestart: true', async () => {
+    const { app } = await setup()
+    const res = await patchBody(app, { scope: 'global', permission: { timeoutMs: 3_600_000 } })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { needsRestart?: boolean }
+    expect(body.needsRestart).toBe(true)
+  })
+
+  it('PATCH permission.expireGraceMs 返回 needsRestart: true', async () => {
+    const { app } = await setup()
+    const res = await patchBody(app, { scope: 'global', permission: { expireGraceMs: 60_000 } })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { needsRestart?: boolean }
+    expect(body.needsRestart).toBe(true)
+  })
+
+  // defaultMode 走运行时的 ctx.permissionMode 同步，保存即生效：不能一并标成
+  // 「需重启」，否则这条提示会变成用户不再相信的噪音。
+  it('PATCH permission.defaultMode 不打「需重启」标记（运行时即生效）', async () => {
+    const { app } = await setup()
+    const res = await patchBody(app, { scope: 'global', permission: { defaultMode: 'auto' } })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { needsRestart?: boolean }
+    expect(body.needsRestart).toBe(false)
+  })
+
   it('PATCH 非 security 变更 needsRestart 为 false', async () => {
     const { app } = await setup()
     const res = await patchBody(app, { defaultModel: 'gpt-5' })
