@@ -102,3 +102,100 @@ describe('useAgent 暂停/恢复', () => {
     expect(result.current.error).toBeNull()
   })
 })
+
+/**
+ * 会话级控制态必须随会话走。paused/busy/error 都描述「这一条会话的运行」，而本 hook
+ * 的实例在同 path 换 sessionId 时不会重建（ChatSession 自述），Chat 也不重建——
+ * 在 A 上暂停失败（或撞上 {paused:false}）后切到 B，A 的红条与 paused=true 会整块挂到
+ * B 上：B 的对话在跑，顶栏却写「恢复」，点下去只会拿到「没有可恢复的运行」。
+ */
+describe('useAgent 切会话复位', () => {
+  it('切会话后清掉上一条会话的失败原因与暂停态', async () => {
+    vi.mocked(agentAPI.pause).mockResolvedValue({ paused: true })
+    const { result, rerender } = renderHook(({ sid }) => useAgent(sid), {
+      initialProps: { sid: 's1' },
+    })
+
+    await act(async () => {
+      await result.current.pause()
+    })
+    expect(result.current.paused).toBe(true)
+
+    rerender({ sid: 's2' })
+
+    expect(result.current.paused).toBe(false)
+    expect(result.current.error).toBeNull()
+    expect(result.current.busy).toBe(false)
+  })
+
+  it('切会话后清掉上一条会话的红条', async () => {
+    vi.mocked(agentAPI.pause).mockRejectedValue(new Error('没有可暂停的运行'))
+    const { result, rerender } = renderHook(({ sid }) => useAgent(sid), {
+      initialProps: { sid: 's1' },
+    })
+
+    await act(async () => {
+      await result.current.pause()
+    })
+    expect(result.current.error).toBe('没有可暂停的运行')
+
+    rerender({ sid: 's2' })
+    expect(result.current.error).toBeNull()
+  })
+
+  it('在飞的暂停响应在切会话后不得写进新会话', async () => {
+    let resolvePause: (v: { paused: boolean }) => void = () => {}
+    vi.mocked(agentAPI.pause).mockReturnValue(
+      new Promise((r) => {
+        resolvePause = r
+      }),
+    )
+    const { result, rerender } = renderHook(({ sid }) => useAgent(sid), {
+      initialProps: { sid: 's1' },
+    })
+
+    let pending: Promise<void> | undefined
+    act(() => {
+      pending = result.current.pause()
+    })
+    expect(result.current.busy).toBe(true)
+
+    rerender({ sid: 's2' })
+
+    // A 的响应此刻才落地：B 上不得翻成暂停态，也不得继续占着 busy
+    await act(async () => {
+      resolvePause({ paused: true })
+      await pending
+    })
+
+    expect(result.current.paused).toBe(false)
+    expect(result.current.error).toBeNull()
+    expect(result.current.busy).toBe(false)
+  })
+
+  it('在飞的暂停失败在切会话后不得把红条挂到新会话', async () => {
+    let rejectPause: (e: unknown) => void = () => {}
+    vi.mocked(agentAPI.pause).mockReturnValue(
+      new Promise((_r, rej) => {
+        rejectPause = rej
+      }),
+    )
+    const { result, rerender } = renderHook(({ sid }) => useAgent(sid), {
+      initialProps: { sid: 's1' },
+    })
+
+    let pending: Promise<void> | undefined
+    act(() => {
+      pending = result.current.pause()
+    })
+
+    rerender({ sid: 's2' })
+    await act(async () => {
+      rejectPause(new Error('服务未启动'))
+      await pending
+    })
+
+    expect(result.current.error).toBeNull()
+    expect(result.current.busy).toBe(false)
+  })
+})
