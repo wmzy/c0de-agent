@@ -307,6 +307,13 @@ export function FileBrowser({
   }, [query])
   /** 显示隐藏目录（node_modules/构建产物等），默认降噪过滤。 */
   const [showHidden, setShowHidden] = useState(false)
+  /** 待删除的路径（null=无确认弹层）。删除是「移入回收站」的可恢复操作，
+   *  用轻量确认而非 DangerConfirmDialog 的逐字确认。 */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  /** 删除失败原因（null=未失败）。渲染在确认弹层里，与用户正在做的操作同框可见。 */
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** 删除请求在飞：锁住确认键与所有关闭出口（关闭会把失败原因一起关掉）。 */
+  const [deleting, setDeleting] = useState(false)
 
   /** 渲染用树：默认过滤忽略目录；memo 保持节点引用稳定，避免全树重渲染。 */
   const visibleRoot = useMemo(
@@ -343,6 +350,17 @@ export function FileBrowser({
     setLoadingPaths(new Set())
     setLoadErrors(new Map())
     setRootError(null)
+    // 搜索词只对上一个项目成立：不复位的话，切项目后面板仍停在「搜索结果」分支，
+    // 用上一个项目的词去搜新项目，命中不到就显示「无匹配文件」——用户据此判定
+    // 新项目里没有这个文件（侧栏会话搜索已按同一口径复位，文件面板此前漏了）。
+    setQuery('')
+    setSearchDebounced('')
+    // 删除确认弹层同样必须跟着项目走：confirmDelete 用的是**当前** projectId，
+    // 弹层里写的却是上一个项目里的路径。切项目（顶栏项目下拉、浏览器后退/前进，
+    // 都是同一 /projects/:projectId 子树复用）后确认一次，删掉的就是新项目里的
+    // 同路径文件；失败原因（deleteError）也只对上一条路径成立。
+    setPendingDelete(null)
+    setDeleteError(null)
     fileAPI
       .list('.', projectId)
       .then((entries) => {
@@ -439,14 +457,6 @@ export function FileBrowser({
     },
     [loadChildren],
   )
-
-  /** 待删除的路径（null=无确认弹层）。删除是「移入回收站」的可恢复操作，
-   *  用轻量确认而非 DangerConfirmDialog 的逐字确认。 */
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
-  /** 删除失败原因（null=未失败）。渲染在确认弹层里，与用户正在做的操作同框可见。 */
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-  /** 删除请求在飞：锁住确认键与所有关闭出口（关闭会把失败原因一起关掉）。 */
-  const [deleting, setDeleting] = useState(false)
 
   const requestDelete = useCallback((path: string) => {
     setDeleteError(null)
