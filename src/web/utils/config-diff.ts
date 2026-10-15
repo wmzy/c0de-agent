@@ -54,3 +54,56 @@ export function isPatchEmpty(patch: Record<string, unknown>): boolean {
   }
   return true
 }
+
+/** 参与「留空 = 不修改」判定的密钥字段（与 ApiKeyInput 的使用点一一对应）。 */
+const WEBSEARCH_SECRET_KEYS = ['tavilyApiKey', 'braveApiKey'] as const
+
+/**
+ * 保存前把草稿里「被清空的密钥字段」退回已保存的值，返回新草稿与被退回的字段数。
+ *
+ * 密钥输入框是密码框、且**不回显已加密的密文**（enc: 前缀留空显示，见 ApiKeyInput）：
+ * 框里本来就是空的，用户无法分辨「本来就没有」与「我刚把它删掉了」。而清空是逐字符
+ * 提交的（onChange → 草稿），于是「点进框里敲了几个字符、改主意又全删掉」会把空串
+ * 提交进草稿；保存后 `apiKey: ''` 覆盖掉 enc: 密文——密钥永久丢失，没有确认、没有
+ * 撤销，用户唯一的线索只是那个绿色徽章消失（服务端只对 length > 0 的明文加密，
+ * 空串原样落盘，见 src/server/routes/config.ts）。
+ *
+ * 口径：**留空 = 不修改**。密码框里没有「可见的内容」可删，清空不表达删除意图
+ * （要删就删整个 provider / 关掉该后端）。判定同时要求「同一行」：provider 按下标
+ * 对应，且名字相同——否则「删掉第一行再新增一行」会让新增行的空密钥继承上一行的密文。
+ */
+export function restoreClearedSecrets(
+  saved: Record<string, unknown>,
+  draft: Record<string, unknown>,
+): { draft: Record<string, unknown>; restored: number } {
+  let restored = 0
+  const next = { ...draft }
+
+  const draftSearch = draft.websearch
+  if (isPlainObject(draftSearch)) {
+    const savedSearch = isPlainObject(saved.websearch) ? saved.websearch : {}
+    const mergedSearch = { ...draftSearch }
+    for (const key of WEBSEARCH_SECRET_KEYS) {
+      const prev = savedSearch[key]
+      if (mergedSearch[key] === '' && typeof prev === 'string' && prev !== '') {
+        mergedSearch[key] = prev
+        restored++
+      }
+    }
+    next.websearch = mergedSearch
+  }
+
+  if (Array.isArray(draft.providers)) {
+    const savedProviders = Array.isArray(saved.providers) ? saved.providers : []
+    next.providers = draft.providers.map((provider, index) => {
+      if (!isPlainObject(provider) || provider.apiKey !== '') return provider
+      const prev = savedProviders[index]
+      if (!isPlainObject(prev) || prev.name !== provider.name) return provider
+      if (typeof prev.apiKey !== 'string' || prev.apiKey === '') return provider
+      restored++
+      return { ...provider, apiKey: prev.apiKey }
+    })
+  }
+
+  return { draft: next, restored }
+}

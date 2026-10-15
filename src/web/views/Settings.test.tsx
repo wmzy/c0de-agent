@@ -815,6 +815,37 @@ describe('Settings — Provider 管理', () => {
     expect(document.body.textContent ?? '').not.toContain('enc:898L9mF6CILM')
   })
 
+  // 回归：已加密时把输入框清空不是「清空密钥」。密钥框是密码框且不回显密文，用户
+  // 看不到「有内容」可删；逐字符提交的草稿会把 '' 交给保存，保存后 enc: 密文被
+  // 覆盖、密钥永久丢失（无确认、无撤销，只剩徽章消失这一条线索）。留空 = 不修改，
+  // 且必须当场说明。
+  it('已加密时把输入框清空：保存不产生任何改动，并说明密钥保留', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const encConfig = {
+      ...mockConfig,
+      providers: [
+        { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
+      ],
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(encConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(encConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(1))
+
+    const apiKeyInput = screen.getByTestId('provider-apikey') as HTMLInputElement
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-temporary' } })
+    fireEvent.change(apiKeyInput, { target: { value: '' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-status')).toHaveTextContent('未改动'),
+    )
+    expect(screen.getByTestId('settings-save-status')).toHaveTextContent('原有密钥保留')
+    // 草稿退回原密文 → diff 为空 → 不发 PATCH（更不会把 apiKey 写成空串）
+    expect(configAPI.update).not.toHaveBeenCalled()
+  })
+
   it('重新输入 apiKey 后保存提交明文（可被服务端加密）', async () => {
     const { configAPI } = await import('@/services/config.js')
     const encConfig = {
@@ -1041,6 +1072,39 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(editor).toBeTruthy()
     expect(editor.value).toContain('"defaultModel": "gpt-4"')
     expect(editor.value).toContain('ProviderA')
+  })
+
+  // 「留空 = 不修改」只属于表单：JSON 视图里 `"apiKey": ""` 是用户亲手写下的明确
+  // 值，必须照原样提交（否则 JSON 视图里清空密钥会变成静默不生效）。
+  it('JSON 视图把 apiKey 写成空串照常提交（表单的留空约定不越过 JSON 编辑）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const encConfig = {
+      ...mockConfig,
+      providers: [
+        { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
+      ],
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(encConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(encConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    const updated = {
+      ...encConfig,
+      providers: [{ ...encConfig.providers[0], apiKey: '' }],
+    }
+    fireEvent.change(editor, { target: { value: JSON.stringify(updated, null, 2) } })
+    expect(screen.queryByTestId('settings-json-error')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      providers: { apiKey: string }[]
+    }
+    expect(args.providers[0]?.apiKey).toBe('')
   })
 
   it('JSON 编辑合法时同步到 draft，保存提交新值', async () => {

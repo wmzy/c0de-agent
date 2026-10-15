@@ -1,7 +1,7 @@
 // diffConfig / isPatchEmpty 单测：Settings 保存只提交最小 patch（P1-2 作用域污染修复）。
 
 import { describe, expect, it } from 'vitest'
-import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
+import { diffConfig, isPatchEmpty, restoreClearedSecrets } from '@/utils/config-diff.js'
 
 describe('diffConfig', () => {
   it('无变化返回空 patch', () => {
@@ -53,5 +53,64 @@ describe('diffConfig', () => {
     expect(isPatchEmpty({ nested: {} })).toBe(true)
     expect(isPatchEmpty({ nested: { x: {} } })).toBe(true)
     expect(isPatchEmpty({ nested: { x: 1 } })).toBe(false)
+  })
+})
+
+describe('restoreClearedSecrets', () => {
+  it('provider 的 apiKey 被清空时退回已保存的密文，且 diff 为空', () => {
+    const saved = {
+      providers: [{ name: 'A', apiKey: 'enc:AAAA', baseURL: 'https://a/v1' }],
+    }
+    const draft = { providers: [{ name: 'A', apiKey: '', baseURL: 'https://a/v1' }] }
+    const { draft: next, restored } = restoreClearedSecrets(saved, draft)
+    expect(restored).toBe(1)
+    expect((next.providers as { apiKey: string }[])[0]?.apiKey).toBe('enc:AAAA')
+    expect(diffConfig(saved, next)).toEqual({})
+    // 原草稿不被就地改写
+    expect((draft.providers as { apiKey: string }[])[0]?.apiKey).toBe('')
+  })
+
+  it('非空的新密钥照常提交（不退回）', () => {
+    const saved = { providers: [{ name: 'A', apiKey: 'enc:AAAA' }] }
+    const draft = { providers: [{ name: 'A', apiKey: 'sk-new' }] }
+    const { draft: next, restored } = restoreClearedSecrets(saved, draft)
+    expect(restored).toBe(0)
+    expect((next.providers as { apiKey: string }[])[0]?.apiKey).toBe('sk-new')
+  })
+
+  it('同名行的下标已错位（删掉一行再新增）时不把上一行的密文塞给新行', () => {
+    const saved = {
+      providers: [
+        { name: 'A', apiKey: 'enc:AAAA' },
+        { name: 'B', apiKey: 'enc:BBBB' },
+      ],
+    }
+    const draft = {
+      providers: [
+        { name: 'B', apiKey: 'enc:BBBB' },
+        { name: 'New', apiKey: '' },
+      ],
+    }
+    const { draft: next, restored } = restoreClearedSecrets(saved, draft)
+    expect(restored).toBe(0)
+    expect((next.providers as { apiKey: string }[])[1]?.apiKey).toBe('')
+  })
+
+  it('websearch 的两个 key 同样按「留空 = 不修改」处理', () => {
+    const saved = { websearch: { provider: 'tavily', tavilyApiKey: 'enc:T', braveApiKey: 'enc:B' } }
+    const draft = { websearch: { provider: 'tavily', tavilyApiKey: '', braveApiKey: '' } }
+    const { draft: next, restored } = restoreClearedSecrets(saved, draft)
+    expect(restored).toBe(2)
+    expect(next.websearch).toEqual({
+      provider: 'tavily',
+      tavilyApiKey: 'enc:T',
+      braveApiKey: 'enc:B',
+    })
+  })
+
+  it('已保存值本就是空时不算「退回」（新填的空 key 保持空）', () => {
+    const saved = { providers: [{ name: 'A', apiKey: '' }] }
+    const draft = { providers: [{ name: 'A', apiKey: '' }] }
+    expect(restoreClearedSecrets(saved, draft).restored).toBe(0)
   })
 })

@@ -143,7 +143,8 @@ const restartHint = css`
 type SaveFeedback =
   | { kind: 'idle' }
   | { kind: 'saving' }
-  | { kind: 'ok' }
+  /** msg：保存确实发生了、但有件事必须一起说出来（如「被留空的密钥未改动」）。 */
+  | { kind: 'ok'; msg?: string }
   | { kind: 'err'; msg: string }
 
 type SettingsToolbarProps = {
@@ -317,7 +318,7 @@ function SettingsSaveBar({
           data-testid="settings-save-status"
         >
           {feedback.kind === 'saving' && '保存中…'}
-          {feedback.kind === 'ok' && '✓ 已保存'}
+          {feedback.kind === 'ok' && `✓ 已保存${feedback.msg ? `（${feedback.msg}）` : ''}`}
           {feedback.kind === 'err' && `✗ 保存失败：${feedback.msg}`}
         </span>
       )}

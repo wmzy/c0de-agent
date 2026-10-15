@@ -37,7 +37,7 @@ import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
-import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
+import { diffConfig, isPatchEmpty, restoreClearedSecrets } from '@/utils/config-diff.js'
 import {
   fillTemplateWithUnsets,
   normalizeConfigForForm,
@@ -47,6 +47,10 @@ import { parseBoundedNumber } from '@/utils/format.js'
 
 /** 全局配置作用域的写入路径（与作用域下拉文案同一口径）。 */
 const GLOBAL_CONFIG_PATH = '~/.c0de/config.json'
+
+/** 「被留空的密钥未改动」的可见说明（count = 本次保存里被留空的密钥字段数）。 */
+const KEPT_SECRETS_NOTE = (count: number) =>
+  `${count} 个被留空的 API Key 未改动，原有密钥保留；重新输入即可更换`
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -189,9 +193,13 @@ export function Settings() {
    *  字段（表单没有在途禁写），无条件 setDraft(null) 会把这段新编辑整块抹掉。 */
   const submittedDraftRef = useRef<Partial<Config> | null>(null)
 
-  // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。
+  // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。ok 可带一句必须同说的
+  // 说明（如「被留空的密钥未改动」）。
   const [saveFeedback, setSaveFeedback] = useState<
-    { kind: 'idle' } | { kind: 'saving' } | { kind: 'ok' } | { kind: 'err'; msg: string }
+    | { kind: 'idle' }
+    | { kind: 'saving' }
+    | { kind: 'ok'; msg?: string }
+    | { kind: 'err'; msg: string }
   >({ kind: 'idle' })
 
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
@@ -234,10 +242,13 @@ export function Settings() {
   }, [isDirty])
 
   const save = useMutation({
-    mutationFn: (payload: { patch: Partial<Config>; scope: 'global' | 'project' }) =>
-      configAPI.update(payload.patch, payload.scope, projectId),
+    mutationFn: (payload: {
+      patch: Partial<Config>
+      scope: 'global' | 'project'
+      restoredSecrets: number
+    }) => configAPI.update(payload.patch, payload.scope, projectId),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
-    onSuccess: (resp) => {
+    onSuccess: (resp, variables) => {
       qc.invalidateQueries({ queryKey: ['config'] })
       // 斜杠命令列表由服务端按 config.slashCommands.enabled 过滤（GET /api/commands），
       // 而 useCommands 的 queryKey ['commands'] 是 staleTime: Infinity——设置页改的
@@ -257,7 +268,13 @@ export function Settings() {
       // false）静默抹掉，用户据此认定配置已加固。故只升不降：重启后页面重载，
       // state 自然复位。
       setNeedsRestart((prev) => prev || resp?.needsRestart === true)
-      setSaveFeedback({ kind: 'ok' })
+      // 被留空的密钥没进 patch，用户看不到任何变化：必须在同一条反馈里说出来，
+      // 否则「我明明清空了」与「✓ 已保存」互相矛盾。
+      setSaveFeedback(
+        variables.restoredSecrets > 0
+          ? { kind: 'ok', msg: KEPT_SECRETS_NOTE(variables.restoredSecrets) }
+          : { kind: 'ok' },
+      )
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
     },
     onError: (err: unknown) => {
@@ -370,13 +387,31 @@ export function Settings() {
       })
       return
     }
+    // 密钥框留空 = 不修改：清空是逐字符提交进草稿的，保存后 `apiKey: ''` 会覆盖
+    // enc: 密文、密钥永久丢失（密码框不回显密文，用户看不到「有内容」可删）。
+    // 只对表单（gui）生效：JSON 视图里 `"apiKey": ""` 是用户亲手写下的明确值，
+    // 那里留空/置 null 也都是可表达的删除方式，不该被这条表单约定改写。
+    // 见 restoreClearedSecrets 的口径说明。
+    const restoredSecrets =
+      viewMode === 'gui'
+        ? restoreClearedSecrets(
+            config as unknown as Record<string, unknown>,
+            draft as unknown as Record<string, unknown>,
+          )
+        : { draft: draft as unknown as Record<string, unknown>, restored: 0 }
+    // 提交与 diff 都基于「退回密钥后的草稿」：被留空的密钥不产生任何改动。
+    const saveableDraft = restoredSecrets.draft as unknown as Partial<Config>
     const patch = diffConfig(
       config as unknown as Record<string, unknown>,
-      draft as unknown as Record<string, unknown>,
+      saveableDraft as unknown as Record<string, unknown>,
     )
     if (isPatchEmpty(patch)) {
       setDraft(null)
-      setSaveFeedback({ kind: 'ok' })
+      setSaveFeedback(
+        restoredSecrets.restored > 0
+          ? { kind: 'ok', msg: KEPT_SECRETS_NOTE(restoredSecrets.restored) }
+          : { kind: 'ok' },
+      )
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
       return
     }
@@ -408,8 +443,17 @@ export function Settings() {
         setScope('global')
       }
     }
-    submittedDraftRef.current = draft
-    save.mutate({ patch: patch as Partial<Config>, scope: effectiveScope })
+    // 提交出去的是「退回密钥后的草稿」：保存成功后草稿按它清空（见 save.onSuccess
+    // 的 prev === submittedDraftRef.current），否则被留空的密钥会让草稿永远脏着。
+    // 有密钥被留空时同时把草稿对齐成这一份——界面立刻回到「✓ 已加密」，与本次
+    // 实际落盘的内容一致。
+    if (restoredSecrets.restored > 0) setDraft(saveableDraft)
+    submittedDraftRef.current = saveableDraft
+    save.mutate({
+      patch: patch as Partial<Config>,
+      scope: effectiveScope,
+      restoredSecrets: restoredSecrets.restored,
+    })
   }
 
   /**
