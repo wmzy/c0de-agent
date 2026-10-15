@@ -69,6 +69,13 @@ const importPermDesc = css`
   color: var(--haze-color-text);
 `
 
+/** 删除确认弹窗正文：会话标题 + 影响面（派生会话数）+ 可恢复窗口。 */
+const deleteDesc = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+`
+
 const importPermRow = css`
   display: flex;
   align-items: flex-start;
@@ -239,6 +246,12 @@ export function SessionList({
   }
   const [showRecycle, setShowRecycle] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** 待确认删除的会话（站内弹窗）：标题 + 派生子孙数。 */
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string
+    title: string
+    branches: number
+  } | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [importNotice, setImportNotice] = useState<string | null>(null)
@@ -349,24 +362,35 @@ export function SessionList({
     // disabled 只拦点击，不拦同 tick 内的事件重入。
     if (del.isPending) return
     setDeleteError(null)
-    // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
     // 影响面必须取未过滤的完整树：visibleTree 是搜索过滤后的视图（非命中路径被裁掉、
     // 未归属项目的 CLI 根根本不在其中），据此算子孙会把整棵子树的级联软删少报成
     // 「0 个派生会话」——用户以为只删一条，实际连同分支一起进回收站。tree 含全部根
     // （含 CLI 未归属），filterTree 只裁根、不动 children，故 findNode(tree, id) 命中
     // 的就是同一个节点、同一批子孙。
     const node = findNode(tree ?? [], id)
-    const branches = node ? countDescendants(node) : 0
-    const branchNote =
-      branches > 0 ? `其 ${branches} 个派生会话（分支/子任务）将一并移入回收站。` : ''
-    if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，60 天内可恢复。`))
-      return
-    del.mutate(id, {
+    // 确认改用站内弹窗：原生 window.confirm 不可样式化、移动端被改写，且默认键落在
+    // 「确定」=删除上——影响面写在括号里也拦不住肌肉记忆按回车（同批的导入权限迁移、
+    // 看板覆盖导入、未归属看板彻底删除都已换成站内弹窗，唯独最常走的这条漏了）。
+    setPendingDelete({
+      id,
+      title: node?.session.title ?? '',
+      branches: node ? countDescendants(node) : 0,
+    })
+  }
+
+  /** 站内确认弹窗的「移入回收站」：失败原因留在弹窗里，用户可就地重试。 */
+  const confirmDelete = () => {
+    const target = pendingDelete
+    if (!target) return
+    // 在途锁（同 tick 连击，按钮 disabled 还没写回 DOM 时）
+    if (del.isPending) return
+    del.mutate(target.id, {
       onSuccess: () => {
         // 会话没了：s:<id> 草稿键再也无人读取（文本无上限、图片最多 ~512KB），
         // 删除成功即清退，避免永久滞留 localStorage。
-        clearSessionDraft(id)
-        onDeleted?.(id)
+        clearSessionDraft(target.id)
+        setPendingDelete(null)
+        onDeleted?.(target.id)
       },
       onError: (e: unknown) => {
         setDeleteError(e instanceof Error ? e.message : String(e))
@@ -561,11 +585,6 @@ export function SessionList({
           + 新建
         </button>
       </div>
-      {deleteError && (
-        <div className={errorBar} data-testid="delete-error">
-          删除失败：{deleteError}
-        </div>
-      )}
       {renameError && (
         <div className={errorBar} data-testid="rename-error">
           重命名失败：{renameError}
@@ -705,6 +724,54 @@ export function SessionList({
           )}
         </>
       ) : null}
+      {pendingDelete && (
+        <Dialog
+          testId="delete-session-dialog"
+          onClose={() => {
+            // 请求在飞时不给关闭出口：关掉弹窗会连同失败原因一起消失（与
+            // AddProjectDialog / DangerConfirmDialog 同口径）。
+            if (del.isPending) return
+            setPendingDelete(null)
+          }}
+          closeDisabled={del.isPending}
+          title="删除会话"
+          footer={
+            <>
+              <button
+                type="button"
+                className={addBtn}
+                disabled={del.isPending}
+                onClick={() => setPendingDelete(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className={addBtn}
+                data-testid="delete-session-confirm"
+                disabled={del.isPending}
+                onClick={confirmDelete}
+              >
+                {del.isPending ? '删除中…' : '移入回收站'}
+              </button>
+            </>
+          }
+        >
+          <div className={deleteDesc} data-testid="delete-session-detail">
+            「{pendingDelete.title || '未命名会话'}」及其全部消息将移入回收站，60 天内可恢复。
+            {pendingDelete.branches > 0 && (
+              <>
+                <br />其 {pendingDelete.branches} 个派生会话（分支/子任务）将一并移入回收站。
+              </>
+            )}
+          </div>
+          {deleteError && (
+            <div className={errorBar} role="alert" data-testid="delete-error">
+              删除失败：{deleteError}
+            </div>
+          )}
+        </Dialog>
+      )}
       {permPrompt && (
         <Dialog
           testId="import-permissions-dialog"

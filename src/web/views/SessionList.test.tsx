@@ -1010,7 +1010,7 @@ describe('SessionList 删除会话的影响面', () => {
   const F2 = { ...makeSession('f2', 'unique 分支'), parentId: 'p-root' }
   const F3 = { ...makeSession('f3', 'gamma 分支'), parentId: 'p-root' }
 
-  /** window.confirm 打桩，返回消息文本；用例结束恢复原实现。 */
+  /** window.confirm 打桩：删除确认已改为站内弹窗，任何路径都不该再碰原生框。 */
   function stubConfirm(): { calls: string[]; restore: () => void } {
     const calls: string[] = []
     const orig = window.confirm
@@ -1030,8 +1030,9 @@ describe('SessionList 删除会话的影响面', () => {
       fireEvent.change(screen.getByTestId('session-search'), { target: { value: 'unique' } })
       expect(screen.getByTestId('delete-p-root')).toBeInTheDocument()
       fireEvent.click(screen.getByTestId('delete-p-root'))
-      expect(confirm.calls).toHaveLength(1)
-      expect(confirm.calls[0]).toContain('其 3 个派生会话')
+      // 站内弹窗（不再有原生 confirm）
+      expect(confirm.calls).toHaveLength(0)
+      expect(screen.getByTestId('delete-session-detail').textContent).toContain('其 3 个派生会话')
     } finally {
       confirm.restore()
     }
@@ -1050,7 +1051,8 @@ describe('SessionList 删除会话的影响面', () => {
       renderList()
       expect(screen.getByTestId('delete-cli-root')).toBeInTheDocument()
       fireEvent.click(screen.getByTestId('delete-cli-root'))
-      expect(confirm.calls[0]).toContain('其 1 个派生会话')
+      expect(confirm.calls).toHaveLength(0)
+      expect(screen.getByTestId('delete-session-detail').textContent).toContain('其 1 个派生会话')
     } finally {
       confirm.restore()
     }
@@ -1061,46 +1063,41 @@ describe('SessionList 删除会话的影响面', () => {
   // 挂着一条常驻的「删除失败」红条，与事实正好相反。行内删除键在在途期间必须禁用，
   // handleDelete 还要再挡一次（disabled 只拦点击，不拦同 tick 的事件重入）。
   it('删除在途禁用：连点两次只发一次请求', () => {
-    const origConfirm = window.confirm
-    window.confirm = () => true
-    try {
-      const sent: string[] = []
-      hoisted.deleteMutate = (id) => {
-        sent.push(id)
-        // 真实实现里 react-query 在 mutate 后立即置 isPending
-        hoisted.deleteMut.isPending = true
-      }
-      const qc = new QueryClient({
-        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-      })
-      // 每次都造新的元素对象：复用同一 element 时 React 会跳过重渲染，
-      // 在途状态就读不到（restoreMut 那条用例能过是因为它的 pending 来自组件内 state）。
-      const ui = () => (
-        <QueryClientProvider client={qc}>
-          <SessionList projectId="p1" activeId={null} onSelect={vi.fn()} onNewSession={vi.fn()} />
-        </QueryClientProvider>
-      )
-      const { rerender } = render(ui())
-      fireEvent.click(screen.getByTestId('delete-root-id'))
-      expect(sent).toEqual(['root-id'])
-
-      // 在途：重渲染后删除键置灰，且再点一次不会发出第二个 DELETE
-      rerender(ui())
-      const btn = screen.getByTestId('delete-root-id')
-      expect(btn).toBeDisabled()
-      fireEvent.click(btn)
-      expect(sent).toEqual(['root-id'])
-      expect(screen.queryByTestId('delete-error')).toBeNull()
-    } finally {
-      window.confirm = origConfirm
+    const sent: string[] = []
+    hoisted.deleteMutate = (id) => {
+      sent.push(id)
+      // 真实实现里 react-query 在 mutate 后立即置 isPending
+      hoisted.deleteMut.isPending = true
     }
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    // 每次都造新的元素对象：复用同一 element 时 React 会跳过重渲染，
+    // 在途状态就读不到（restoreMut 那条用例能过是因为它的 pending 来自组件内 state）。
+    const ui = () => (
+      <QueryClientProvider client={qc}>
+        <SessionList projectId="p1" activeId={null} onSelect={vi.fn()} onNewSession={vi.fn()} />
+      </QueryClientProvider>
+    )
+    const { rerender } = render(ui())
+    // 行内删除键只打开站内确认弹窗，不发请求
+    fireEvent.click(screen.getByTestId('delete-root-id'))
+    expect(sent).toEqual([])
+    fireEvent.click(screen.getByTestId('delete-session-confirm'))
+    expect(sent).toEqual(['root-id'])
+
+    // 在途：重渲染后确认键置灰，且再点一次不会发出第二个 DELETE
+    rerender(ui())
+    const btn = screen.getByTestId('delete-session-confirm')
+    expect(btn).toBeDisabled()
+    fireEvent.click(btn)
+    expect(sent).toEqual(['root-id'])
+    expect(screen.queryByTestId('delete-error')).toBeNull()
   })
 
   // 回归（审查 #7）：侧栏删除会话成功后，s:<id> 草稿键不得滞留 localStorage
   // （文本无上限、图片最多 ~512KB），否则被删会话的草稿永久堆积。
   it('删除成功后清退该会话的草稿键，不动其他作用域', () => {
-    const origConfirm = window.confirm
-    window.confirm = () => true
     try {
       storageSet(
         draftStorageKey('s:root-id'),
@@ -1122,12 +1119,12 @@ describe('SessionList 删除会话的影响面', () => {
       }
       renderList()
       fireEvent.click(screen.getByTestId('delete-root-id'))
+      fireEvent.click(screen.getByTestId('delete-session-confirm'))
 
       expect(storageGet(draftStorageKey('s:root-id'))).toBeNull()
       // 其他作用域（项目草稿页）不受影响
       expect(storageGet(draftStorageKey('p:p1'))).not.toBeNull()
     } finally {
-      window.confirm = origConfirm
       localStorage.removeItem(draftStorageKey('s:root-id'))
       localStorage.removeItem(draftStorageKey('p:p1'))
     }
