@@ -2159,3 +2159,85 @@ describe('useChat 切换会话作废在飞的流', () => {
     expect(JSON.stringify(result.current.messages)).not.toContain('A 的后续')
   })
 })
+
+describe('useChat 在途响应的世代守卫', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // 复现：A 会话点「终止」→ POST /api/chat/abort 飞在路上 → 用户切到 B →
+  // 响应回来（500）时裸 setState 把 abortError 写进 B 的状态：B 页面凭空挂一条
+  // 「终止没有送达…agent 可能仍在后台继续执行工具」红条（带「重新终止」按钮），
+  // 而 A 的真实终止结果永久丢失。同族的 confirm / denyTimedOutPermission 同理。
+  it('终止请求在途时切会话：迟到的失败原因不写进新会话', async () => {
+    const chunk = new TextEncoder().encode('data: {"_tag":"text_delta","text":"hi"}\n\n')
+    let readIdx = 0
+    let resolveAbort: ((res: unknown) => void) | null = null
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/chat') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return new Promise<{ done: boolean; value: undefined }>(() => {})
+              },
+            }),
+          },
+        })
+      }
+      if (url === '/api/chat/abort') {
+        return new Promise((resolve) => {
+          resolveAbort = resolve
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => '{}',
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result, rerender } = renderHook(({ sid }: { sid: string }) => useChat(sid), {
+      wrapper,
+      initialProps: { sid: 's1' },
+    })
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    // 发起终止（不 await：请求悬在途中）
+    await act(async () => {
+      result.current.abort()
+    })
+    await waitFor(() => expect(resolveAbort).not.toBeNull())
+
+    // 切到另一条会话
+    rerender({ sid: 's2' })
+
+    // 迟到的 500 响应落地
+    await act(async () => {
+      resolveAbort?.({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: 'boom' } }),
+        text: async () => JSON.stringify({ error: { message: 'boom' } }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // 关键断言：新会话上没有任何属于上一条会话的失败原因
+    expect(result.current.abortError).toBeNull()
+  })
+})

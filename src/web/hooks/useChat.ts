@@ -517,9 +517,15 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     // 失败写 abortError（横幅带「重新终止」），与 error 分开：终止失败后
     // isStreaming 已是 false，挂在 error 上会连带亮出「重试最后一条消息」。
     setState((s) => ({ ...s, isStreaming: false, abortError: null }))
+    // 本次终止所属世代：请求飞在路上时用户切走会话（genRef 递增）后，响应里的
+    // abortError 属于**上一条**会话——写进新会话会在 B 页面上凭空挂一条
+    // 「终止没有送达」红条（连带「重新终止」按钮），而 A 的真实结果永久丢失。
+    // 请求本身仍用发起时的 sessionId，切回 A 时结果由 A 自己的 /status 反映。
+    const gen = genRef.current
     void agentAPI
       .abort(sessionId)
       .then((res) => {
+        if (genRef.current !== gen) return
         if (res.aborted) return
         setState((s) => ({
           ...s,
@@ -528,6 +534,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }))
       })
       .catch((err) => {
+        if (genRef.current !== gen) return
         setState((s) => ({
           ...s,
           abortError: `终止请求失败：${err instanceof Error ? err.message : String(err)}。agent 可能仍在后台继续执行工具，请刷新确认后再继续。`,
@@ -620,8 +627,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       // 记下这次决定：附着轮询复查 /pending 时 store 可能还没删掉它（消费在路上），
       // 否则弹窗会被重新弹回来。
       decidedPermissionRef.current.add(toolCallId)
+      // 本次决定所属世代：确认请求飞在路上时切走会话后，失败原因/弹窗还原都属于
+      // 上一条会话——写进新会话会凭空挂一条「权限确认没有送达」，甚至把上一条
+      // 会话的待确认弹窗弹在 B 上。
+      const gen = genRef.current
       const doConfirm = () =>
         agentAPI.confirmTool(toolCallId, approved).catch((err) => {
+          if (genRef.current !== gen) return
           const e = err as { status?: number }
           if (e?.status === 404) {
             // 已被处理（其他标签页确认/拒绝）或 run 已中止：明确提示，避免「以为已批准」。
@@ -646,6 +658,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         permissionAPI
           .setAlwaysAllow(alwaysAllowTool, sessionId)
           .catch((err) => {
+            if (genRef.current !== gen) return
             // 白名单写入失败此前只 console.error：用户勾了「本会话始终允许」并点
             // 「允许」，看到的是一次完全成功的授权，但白名单根本没写进去——
             // 同一工具下次还会弹确认，白名单 chips 栏里也不会有它，用户只会以为
@@ -709,9 +722,16 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       return
     }
     const { toolCallId } = timedOut
+    // 本次拒绝所属世代：请求在途时切走会话后，成功「收起横幅」或失败原因都不该
+    // 落到新会话上（新会话超时态由它自己的 /status 决定）。
+    const gen = genRef.current
     void agentAPI.confirmTool(toolCallId, false).then(
-      () => setState((s) => ({ ...s, permissionTimeout: null })),
+      () => {
+        if (genRef.current !== gen) return
+        setState((s) => ({ ...s, permissionTimeout: null }))
+      },
       (err) => {
+        if (genRef.current !== gen) return
         const e = err as { status?: number }
         if (e?.status === 404) {
           // 已被处理（其他标签页确认/拒绝）或 run 已中止：工具不会执行，超时态可清。
