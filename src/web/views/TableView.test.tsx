@@ -331,3 +331,63 @@ describe('TableView 搜索索引覆盖整行内容', () => {
     expect(screen.queryAllByTestId('table-row')).toHaveLength(0)
   })
 })
+
+/**
+ * 表格视图的筛选态必须随会话复位。
+ *
+ * TableView 挂在 Chat 里，而 Chat 被 @native-router 按 path 复用：切到**消息已被
+ * react-query 缓存**的会话时不走 ChatSkeleton 早返回，Chat（以及它里面的 TableView）
+ * 不重建 —— 上一条会话的搜索词、三个筛选、展开行整块留到新会话。
+ *   - 搜索词让新时间线一进来就是「3/812」；
+ *   - 工具筛选指向新会话不存在的工具 → 0/812 +「无匹配项」，用户据此认为这份
+ *     时间线是空的（与「画不出来≠没有了」同族）；
+ *   - 展开行记的是**上一条会话 rows 的下标**，在新 rows 上命中的是另一行，
+ *     凭空展开一条无关消息的原始 JSON。
+ */
+describe('TableView 视图态随会话复位', () => {
+  afterEach(() => cleanup())
+
+  // A：一行 assistant，带 bash 调用（让工具筛选里出现 bash）
+  const rowsA: TimelineRow[] = [mkToolMessage('a1', ['bash'])]
+  // B：两条纯文本消息，既没有 bash、也不含 A 的搜索词
+  const rowsB: TimelineRow[] = [
+    { kind: 'message', message: mkMessage('u1', 'user', '乙会话的第一条'), ts: 1 },
+    { kind: 'message', message: mkMessage('u2', 'assistant', '乙会话的回复'), ts: 2 },
+  ]
+
+  it('切会话后搜索词与展开行都不再沿用', () => {
+    const view = render(<TableView rows={rowsA} sessionId="s1" />)
+    // 用能命中 A 的词（A 只有一行、工具名 bash 进索引），避免「筛空后没有行可展开」
+    fireEvent.change(screen.getByTestId('table-search'), { target: { value: 'bash' } })
+    fireEvent.click(screen.getAllByTestId('table-row')[0] as HTMLElement)
+    expect(screen.getByTestId('table-row-json')).toBeTruthy()
+
+    view.rerender(<TableView rows={rowsB} sessionId="s2" />)
+
+    // 搜索框归位：新会话的时间线不再被上一条会话的词过滤
+    expect(screen.getByTestId('table-search')).toHaveProperty('value', '')
+    expect(screen.getAllByTestId('table-row')).toHaveLength(2)
+    // 展开行归位：既不能空着（索引越界）也不能展开到另一行上
+    expect(screen.queryByTestId('table-row-json')).toBeNull()
+  })
+
+  it('切到没有该工具的会话时不再整表「无匹配项」', () => {
+    const view = render(<TableView rows={rowsA} sessionId="s1" />)
+    fireEvent.change(screen.getByTestId('table-filter-tool'), { target: { value: 'bash' } })
+    expect(screen.getAllByTestId('table-row')).toHaveLength(1)
+
+    view.rerender(<TableView rows={rowsB} sessionId="s2" />)
+
+    expect(screen.getAllByTestId('table-row')).toHaveLength(2)
+    expect(screen.queryByText('无匹配项')).toBeNull()
+  })
+
+  it('同一会话内重新渲染不复位（复位只认会话切换）', () => {
+    const view = render(<TableView rows={rowsA} sessionId="s1" />)
+    fireEvent.change(screen.getByTestId('table-search'), { target: { value: '乙' } })
+
+    view.rerender(<TableView rows={rowsB} sessionId="s1" />)
+
+    expect(screen.getByTestId('table-search')).toHaveProperty('value', '乙')
+  })
+})

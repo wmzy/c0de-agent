@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import type { TimelineRow } from '@/components/session/utils/timeline.js'
 import { formatCost, formatLatency, formatTimestamp, formatTokenCount } from '@/utils/format.js'
@@ -275,12 +275,29 @@ function rowSearchText(row: TimelineRow): string {
  * 表格视图：时间线所有行平铺为表格，支持文本搜索 + 类型/角色/工具筛选，
  * 点击行展开原始 JSON。
  */
-export function TableView({ rows }: { rows: TimelineRow[] }) {
+export function TableView({ rows, sessionId }: { rows: TimelineRow[]; sessionId?: string }) {
   const [q, setQ] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | TimelineRow['kind']>('all')
   const [roleFilter, setRoleFilter] = useState('all')
   const [toolFilter, setToolFilter] = useState('all')
   const [openIdx, setOpenIdx] = useState<number | null>(null)
+
+  // 视图态（搜索词、三个筛选、展开行）随会话复位。TableView 挂在 Chat 里，而
+  // Chat 被 @native-router 按 path 复用（目标会话的消息已在 react-query 缓存里时
+  // 不走 ChatSkeleton 早返回 → 不重建），于是上一条会话的筛选整块留到新会话：
+  //   - 搜索词让新时间线一进来就是「3/812」的过滤结果；
+  //   - toolFilter 指向新会话根本不存在的工具 → 0/812 +「无匹配项」，用户据此
+  //     认为这份时间线是空的；
+  //   - openIdx 是**上一条会话 rows 的下标**，在新 rows 上命中的是另一行，
+  //     凭空展开一条无关消息的原始 JSON。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与筛选计算
+  useEffect(() => {
+    setQ('')
+    setTypeFilter('all')
+    setRoleFilter('all')
+    setToolFilter('all')
+    setOpenIdx(null)
+  }, [sessionId])
 
   // 工具名候选（来自所有消息的全部工具调用，不只是每条消息的首个）
   const toolNames = useMemo(() => {
