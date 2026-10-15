@@ -342,6 +342,12 @@ export function SessionList({
   )
 
   const handleDelete = (id: string) => {
+    // 在途锁：慢网/远端磁盘下 DELETE 可能飞数秒，期间会话行还在树上、删除键也
+    // 还可点。再点一次 = 第二个 DELETE，服务端此时已把它软删、回 404 NOT_FOUND，
+    // 界面于是挂上一条常驻的「删除失败」红条——而会话其实已经进了回收站，与
+    // 红条的说法正好相反。行内按钮另有 disabled 兜底，这里再挡一次：按钮
+    // disabled 只拦点击，不拦同 tick 内的事件重入。
+    if (del.isPending) return
     setDeleteError(null)
     // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
     // 影响面必须取未过滤的完整树：visibleTree 是搜索过滤后的视图（非命中路径被裁掉、
@@ -656,6 +662,7 @@ export function SessionList({
               onSelect={onSelect}
               onDelete={handleDelete}
               onRename={handleRename}
+              deleting={del.isPending}
             />
           )}
           {unboundCliRoots.length > 0 && (
@@ -667,6 +674,7 @@ export function SessionList({
                 onSelect={onSelect}
                 onDelete={handleDelete}
                 onRename={handleRename}
+                deleting={del.isPending}
               />
             </div>
           )}

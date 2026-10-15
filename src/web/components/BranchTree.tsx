@@ -103,6 +103,11 @@ const delBtn = css`
   &:hover {
     color: var(--haze-color-danger, #e5484d);
   }
+  /* 删除在途：仍可见（行内显形），但不可点——与 title「删除进行中…」同一口径 */
+  &:disabled {
+    color: var(--haze-color-text-tertiary, #999);
+    cursor: default;
+  }
 `
 
 const childList = css`
@@ -210,6 +215,7 @@ export function BranchTree({
   onSelect,
   onDelete,
   onRename,
+  deleting = false,
 }: {
   nodes: SessionTreeNode[]
   activeId: string | null
@@ -217,6 +223,10 @@ export function BranchTree({
   onDelete: (id: string) => void
   /** P2-5：重命名会话（返回 false 表示取消/失败，父级决定是否刷新）。 */
   onRename?: (id: string, current: string) => Promise<boolean>
+  /** 删除请求在飞：锁住所有行的删除键。没有这把锁时，慢网下再点一次会发出
+   *  第二个 DELETE——会话已经在回收站里，服务端回 404，界面却挂上一条常驻的
+   *  「删除失败」红条，与事实正好相反（与会话确实被删了）。 */
+  deleting?: boolean
 }) {
   return (
     <div data-testid="branch-tree">
@@ -229,6 +239,7 @@ export function BranchTree({
           onSelect={onSelect}
           onDelete={onDelete}
           onRename={onRename}
+          deleting={deleting}
         />
       ))}
     </div>
@@ -242,6 +253,7 @@ function TreeNode({
   onSelect,
   onDelete,
   onRename,
+  deleting,
 }: {
   node: SessionTreeNode
   activeId: string | null
@@ -249,6 +261,7 @@ function TreeNode({
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onRename?: (id: string, current: string) => Promise<boolean>
+  deleting: boolean
 }) {
   const isActive = n.session.id === activeId
   const [renaming, setRenaming] = useState(false)
@@ -347,12 +360,14 @@ function TreeNode({
               type="button"
               className={delBtn}
               data-delete-btn
+              disabled={deleting}
+              aria-label={`删除会话 ${n.session.title}`}
+              title={deleting ? '删除进行中…' : '删除会话'}
+              data-testid={`delete-${n.session.id}`}
               onClick={(e) => {
                 e.stopPropagation()
                 onDelete(n.session.id)
               }}
-              aria-label={`删除会话 ${n.session.title}`}
-              data-testid={`delete-${n.session.id}`}
             >
               <Trash2 size={14} />
             </button>
@@ -370,6 +385,7 @@ function TreeNode({
               onSelect={onSelect}
               onDelete={onDelete}
               onRename={onRename}
+              deleting={deleting}
             />
           ))}
         </div>

@@ -51,6 +51,8 @@ const hoisted = vi.hoisted(() => ({
   deleteMutate: undefined as
     | ((id: string, opts?: { onSuccess?: () => void; onError?: (e: unknown) => void }) => void)
     | undefined,
+  /** 删除在途标记：isPending 是普通布尔字段（mock 不认），用例自行置位/复位。 */
+  deleteMut: { isPending: false },
   /** 孤儿计数查询的完整返回值——驱动读失败分支与「重试」入口。 */
   orphanCount: {
     data: { count: 0 } as { count: number } | undefined,
@@ -70,6 +72,7 @@ vi.mock('@/hooks/useSession.js', () => ({
   useDeleteSession: () => ({
     mutate: (id: string, opts?: { onSuccess?: () => void; onError?: (e: unknown) => void }) =>
       hoisted.deleteMutate?.(id, opts),
+    isPending: hoisted.deleteMut.isPending,
   }),
   useProjects: () =>
     hoisted.projectsQuery
@@ -139,6 +142,7 @@ beforeEach(() => {
   hoisted.tree = [node(ROOT, [node(CHILD, [node(GRANDCHILD)])])]
   hoisted.orphans = { data: [] }
   hoisted.deleteMutate = undefined
+  hoisted.deleteMut.isPending = false
   // mutate 的调用计数会被 afterEach 的 clearAllMocks 清掉，但 isPending 是普通
   // 布尔字段（clearAllMocks 不碰它）——不清会让后续用例拿到一把永久上锁的恢复按钮。
   hoisted.restoreMut.isPending = false
@@ -1049,6 +1053,46 @@ describe('SessionList 删除会话的影响面', () => {
       expect(confirm.calls[0]).toContain('其 1 个派生会话')
     } finally {
       confirm.restore()
+    }
+  })
+
+  // 回归：删除不是幂等的（服务端对「已在回收站」的会话一律回 404 NOT_FOUND）。
+  // 慢网下连点两下会发出两次 DELETE，第二次必撞 404：会话已经进了回收站，页面却
+  // 挂着一条常驻的「删除失败」红条，与事实正好相反。行内删除键在在途期间必须禁用，
+  // handleDelete 还要再挡一次（disabled 只拦点击，不拦同 tick 的事件重入）。
+  it('删除在途禁用：连点两次只发一次请求', () => {
+    const origConfirm = window.confirm
+    window.confirm = () => true
+    try {
+      const sent: string[] = []
+      hoisted.deleteMutate = (id) => {
+        sent.push(id)
+        // 真实实现里 react-query 在 mutate 后立即置 isPending
+        hoisted.deleteMut.isPending = true
+      }
+      const qc = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      // 每次都造新的元素对象：复用同一 element 时 React 会跳过重渲染，
+      // 在途状态就读不到（restoreMut 那条用例能过是因为它的 pending 来自组件内 state）。
+      const ui = () => (
+        <QueryClientProvider client={qc}>
+          <SessionList projectId="p1" activeId={null} onSelect={vi.fn()} onNewSession={vi.fn()} />
+        </QueryClientProvider>
+      )
+      const { rerender } = render(ui())
+      fireEvent.click(screen.getByTestId('delete-root-id'))
+      expect(sent).toEqual(['root-id'])
+
+      // 在途：重渲染后删除键置灰，且再点一次不会发出第二个 DELETE
+      rerender(ui())
+      const btn = screen.getByTestId('delete-root-id')
+      expect(btn).toBeDisabled()
+      fireEvent.click(btn)
+      expect(sent).toEqual(['root-id'])
+      expect(screen.queryByTestId('delete-error')).toBeNull()
+    } finally {
+      window.confirm = origConfirm
     }
   })
 
