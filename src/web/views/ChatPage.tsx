@@ -5,6 +5,7 @@ import { type SidebarTab, SidebarTabs } from '@/components/SidebarTabs.js'
 import { TerminalPanel } from '@/components/TerminalPanel.js'
 import { TopBar } from '@/components/TopBar.js'
 import {
+  type DirtyProbe,
   type FileChangeGuard,
   type FileSelection,
   FileSelectionContext,
@@ -88,6 +89,13 @@ export function ChatPage() {
   const registerGuard = useCallback((fn: FileChangeGuard | null) => {
     guardRef.current = fn
   }, [])
+  // 预览面板注册的「当前是否有未保存修改」探针：给「会离开本页」的动作在动手之前
+  // 一个判据（草稿页发送首条消息要先跳会话页，而那次导航在脏时必被 veto）。
+  const dirtyProbeRef = useRef<DirtyProbe | null>(null)
+  const registerDirtyProbe = useCallback((fn: DirtyProbe | null) => {
+    dirtyProbeRef.current = fn
+  }, [])
+  const hasUnsavedEdits = useCallback(() => dirtyProbeRef.current?.() === true, [])
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
     () => (storageGet('c0de-agent:sidebarTab') as SidebarTab) ?? 'sessions',
   )
@@ -112,6 +120,8 @@ export function ChatPage() {
     },
     revealRange,
     registerGuard,
+    registerDirtyProbe,
+    hasUnsavedEdits,
   }
 
   /**

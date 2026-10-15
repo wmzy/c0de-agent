@@ -234,7 +234,7 @@ function chatSessionProject(path: string): string | null {
 }
 
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
-  const { closeFile, openFile, revealRange, registerGuard } = useFileSelection()
+  const { closeFile, openFile, revealRange, registerGuard, registerDirtyProbe } = useFileSelection()
   const fileRef = useFileReference()
   // 编辑器脏状态（CodeEditor 上报）：关闭预览 / 切换预览目标前都需确认丢弃。
   // 切换是父组件发起（点文件树、点 tool 里的路径、点 snippet pill），所以还必须
@@ -572,6 +572,14 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     })
     return () => registerGuard?.(null)
   }, [registerGuard])
+
+  // 同一份脏状态再注册成一个只读探针：给「会离开本页」的动作（草稿页发送首条消息
+  // 要先跳到会话页）在动手之前一个判据。那次导航在脏时必被上面的 useBlocker veto，
+  // 调用方若不先问就会建出会话、暂存首条消息、再被拦下——半截状态。
+  useEffect(() => {
+    registerDirtyProbe?.(() => dirtyRef.current)
+    return () => registerDirtyProbe?.(null)
+  }, [registerDirtyProbe])
 
   // 用户确认丢弃：先同步清掉脏标记，再重放被拦下的那次变更——否则重放时钩子又读到
   // dirty=true，那次变更会被自己再拦一遍，确认键看起来毫无作用。
