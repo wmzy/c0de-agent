@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 import { safeResolve } from '../../shared/utils/path.js'
-import { type ApplyResult, applyPatch, parsePatch } from '../hashline/index.js'
+import { type ApplyResult, applyPatch, type PatchHunk, parsePatch } from '../hashline/index.js'
 import type { EditInput } from '../types.js'
 
 /**
@@ -53,8 +53,12 @@ export const editTool: ToolDef = {
         }
 
         let current = await readFile(fullPath, 'utf-8')
+        // 行级变更随结果回传（metadata.hunks）：hashline 模式没有 oldText/newText，
+        // web 端 EditToolView 此前只能渲染 oldText='' / newText='' 的空 diff——一次
+        // 真实落盘的编辑在时间线上是一块空白，用户看不出改了什么。
+        const hunks: PatchHunk[] = []
         for (const p of patches) {
-          const r: ApplyResult = applyPatch(current, p)
+          const r: ApplyResult = applyPatch(current, p, (hunk) => hunks.push(hunk))
           if (r._tag !== 'success') {
             return { _tag: 'error', error: formatHashlineError(path, r) }
           }
@@ -64,6 +68,7 @@ export const editTool: ToolDef = {
         return {
           _tag: 'success',
           output: `Edited "${path}" via hashline patch (${patches.length} block(s))`,
+          metadata: { hunks },
         }
       }
 
