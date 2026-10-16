@@ -753,7 +753,7 @@ describe('RecycleBin 搜索', () => {
     expect(bar.textContent).toContain('回收站搜索失败')
     expect(bar.textContent).toContain('数据库被占用，请稍后重试')
     // 不得谎报「无匹配会话」
-    expect(screen.queryByText('回收站无匹配会话')).toBeNull()
+    expect(screen.queryByText(/没有匹配/)).toBeNull()
     // 重试入口存在
     expect(screen.getByTestId('trash-search-retry')).toBeInTheDocument()
   })
@@ -784,7 +784,7 @@ describe('RecycleBin 搜索', () => {
     expect(screen.queryByTestId('trash-search-error')).toBeNull()
   })
 
-  it('真的没有匹配时才是「回收站无匹配会话」', async () => {
+  it('真的没有匹配时才说「没有匹配」，且口径限定在本项目', async () => {
     hoisted.deleted = {
       data: [makeSession('old-id', '旧会话')],
       isLoading: false,
@@ -797,7 +797,7 @@ describe('RecycleBin 搜索', () => {
 
     fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '不存在的词' } })
     await waitFor(() => {
-      expect(screen.getByText('回收站无匹配会话')).toBeInTheDocument()
+      expect(screen.getByText(/本项目回收站内没有匹配「不存在的词」的会话/)).toBeInTheDocument()
     })
     expect(screen.queryByTestId('trash-search-error')).toBeNull()
   })
@@ -836,6 +836,140 @@ describe('RecycleBin 搜索', () => {
     // 连点第二下：按钮已锁，不会再发第二次 POST
     fireEvent.click(screen.getByTestId('restore-old-id'))
     expect(hoisted.restoreMut.mutate).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * 「回收站为空」与「搜不到」都必须覆盖整页的三组数据。
+ *
+ * 缺陷一：空态只判 deletedList.length === 0，于是删除一个项目后打开**另一个**
+ * 项目的回收站（孤儿出现的标准场景），屏幕上方写着「回收站为空」、紧下方列着
+ * 「未归属项目（N 条）」与恢复按钮——用户照空态结论离开，那些会话按保留期被
+ * 静默清除。
+ *
+ * 缺陷二：搜索框与「回收站无匹配会话」都包在 deletedList.length > 0 里，且
+ * 服务端搜索带 projectId、只覆盖本项目条目——项目条目为空时连搜索框都没有，
+ * 搜一条明摆在下方的孤儿标题得不到任何结果。
+ */
+describe('RecycleBin 未归属项目分组的空态与搜索口径', () => {
+  function renderTrash() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={qc}>
+        <RecycleBin projectId="p1" />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('本项目无条目但有未归属会话时不说「回收站为空」', () => {
+    hoisted.deleted = {
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphanCount = {
+      data: { count: 2 },
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    renderTrash()
+
+    expect(screen.queryByTestId('trash-empty')).toBeNull()
+    expect(screen.getByTestId('trash-project-empty')).toHaveTextContent('本项目回收站为空')
+    expect(screen.getByTestId('trash-project-empty')).toHaveTextContent('2 条会话在下方')
+    expect(screen.getByTestId('orphan-trash-header')).toBeInTheDocument()
+  })
+
+  it('三组数据都为空时才是「回收站为空」', () => {
+    renderTrash()
+    expect(screen.getByTestId('trash-empty')).toHaveTextContent('回收站为空')
+    expect(screen.queryByTestId('trash-project-empty')).toBeNull()
+  })
+
+  it('未归属计数读不到时不谎称回收站为空', () => {
+    hoisted.orphanCount = {
+      data: undefined,
+      isError: true,
+      error: new Error('孤儿计数后端炸了'),
+      refetch: () => {},
+    }
+    renderTrash()
+
+    expect(screen.queryByTestId('trash-empty')).toBeNull()
+    expect(screen.getByTestId('orphan-count-error')).toHaveTextContent('孤儿计数后端炸了')
+  })
+
+  it('本项目无条目时搜索框仍然在，并说清未归属分组不在搜索范围内', async () => {
+    hoisted.deleted = {
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphanCount = {
+      data: { count: 1 },
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    renderTrash()
+
+    expect(screen.getByTestId('trash-search')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '孤儿标题' } })
+    // 搜索词有 300ms 防抖
+    await waitFor(() => expect(screen.getByTestId('orphan-search-hint')).toBeInTheDocument(), {
+      timeout: 2000,
+    })
+    expect(screen.getByTestId('orphan-search-hint')).toHaveTextContent('未归属项目')
+  })
+
+  it('展开未归属分组后，搜索词在组内按标题过滤', async () => {
+    hoisted.deleted = {
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphanCount = {
+      data: { count: 2 },
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphans = {
+      data: [
+        makeSession('orph-1', '未归属会话甲', null),
+        makeSession('orph-2', '未归属会话乙', null),
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    vi.mocked(sessionAPI.search).mockResolvedValue({ results: [] })
+    renderTrash()
+
+    fireEvent.click(screen.getByTestId('orphan-trash-toggle'))
+    expect(screen.getByTestId('orphan-orph-1')).toBeInTheDocument()
+    expect(screen.getByTestId('orphan-orph-2')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '乙' } })
+    await waitFor(() => {
+      expect(screen.queryByTestId('orphan-orph-1')).toBeNull()
+    })
+    expect(screen.getByTestId('orphan-orph-2')).toBeInTheDocument()
+    // 命中为零时要说清是组内没有匹配，不复用项目列表的「无匹配会话」
+    fireEvent.change(screen.getByTestId('trash-search'), { target: { value: '不存在的词' } })
+    await waitFor(() => {
+      expect(screen.getByTestId('orphan-search-empty')).toHaveTextContent('不存在的词')
+    })
   })
 })
 

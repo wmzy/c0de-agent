@@ -364,6 +364,11 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 搜索框有字却会列出未过滤的全部分页条目。
   const isSearching = searchDebounced.length >= 1
   const rows = isSearching ? (searchResults?.results.map((r) => r.session) ?? []) : sortedDeleted
+  // 孤儿分组的本地筛选：上方搜索走服务端（带 projectId，只覆盖本项目），孤儿
+  // 条目只有展开后才有数据可比对标题。展开后按标题过滤，搜得动的才叫搜索。
+  const orphanRows = isSearching
+    ? (orphans ?? []).filter((s) => s.title.toLowerCase().includes(searchDebounced.toLowerCase()))
+    : (orphans ?? [])
   // 与文件列表失败态同口径取后端原因：APIError 现在是真正的 Error，
   // 但错误也可能来自非本层抛出的路径，结构化取 message 优先。
   const searchErrorMessage =
@@ -372,6 +377,23 @@ export function RecycleBin({ projectId }: { projectId: string }) {
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
+
+  // 「回收站为空」是对整页的断言，必须覆盖页面上另外两组数据。空态此前只看
+  // deletedList，于是删除一个项目后打开**另一个**项目的回收站（孤儿出现的标准
+  // 场景），屏幕上方写着「回收站为空」、紧下方列着「未归属项目（N 条）」及恢复
+  // 按钮——用户照空态结论离开，那些会话就按保留期被静默清除。
+  // 任一路读不到（计数/看板）时，「空」只是「不知道」，错误条已经说明了是哪一路
+  // 失败，空态不能替它下结论。
+  const orphanCount = orphanCountData?.count ?? 0
+  const trashEmpty =
+    deletedList.length === 0 &&
+    deletedBoards.length === 0 &&
+    orphanCount === 0 &&
+    !orphanCountError &&
+    !deletedBoardsError
+  // 搜索框必须与「回收站里有什么」同口径：孤儿会话（projectId=null）不在
+  // deletedList 里，此前项目条目为空时连搜索框都不渲染，孤儿标题无从搜起。
+  const showSearch = deletedList.length > 0 || orphanCount > 0 || deletedBoards.length > 0
 
   // P2 子树恢复：统计会话在回收站内的派生后代（任意深度），恢复确认时提示。
   // 计数走 _shared/recycleTree 的环守卫实现（parentId 成环数据此前会让内联的
@@ -475,28 +497,42 @@ export function RecycleBin({ projectId }: { projectId: string }) {
           </span>
         </div>
       )}
-      {deletedList.length === 0 && (
+      {trashEmpty && (
         <div className={empty} data-testid="trash-empty">
           回收站为空
         </div>
       )}
+      {/* 本项目为空 ≠ 整页为空：下面还有未归属项目分组时要说清，否则「回收站为
+          空」就成了一句关于整页的假话。 */}
+      {!trashEmpty && deletedList.length === 0 && (
+        <div className={empty} data-testid="trash-project-empty">
+          本项目回收站为空
+          {orphanCount > 0
+            ? `，未归属项目的 ${orphanCount} 条会话在下方`
+            : deletedBoards.length > 0
+              ? `，${deletedBoards.length} 个未归属看板在下方`
+              : ''}
+        </div>
+      )}
       {deletedList.length > 0 && (
+        <div className={deletedRow}>
+          <span className={trashHint}>
+            自首次打开回收站看到该分组起保留 {TRASH_RETENTION_DAYS} 天（分组内条目同时起算），
+            到期后宽限 {TRASH_PURGE_GRACE_DAYS} 天；从未查看的条目自删除起最长保留 365 天
+          </span>
+          <button
+            type="button"
+            className={restoreBtn}
+            onClick={handleEmptyTrash}
+            disabled={emptyTrashMut.isPending}
+            data-testid="empty-trash"
+          >
+            清空回收站
+          </button>
+        </div>
+      )}
+      {showSearch && (
         <>
-          <div className={deletedRow}>
-            <span className={trashHint}>
-              自首次打开回收站看到该分组起保留 {TRASH_RETENTION_DAYS} 天（分组内条目同时起算），
-              到期后宽限 {TRASH_PURGE_GRACE_DAYS} 天；从未查看的条目自删除起最长保留 365 天
-            </span>
-            <button
-              type="button"
-              className={restoreBtn}
-              onClick={handleEmptyTrash}
-              disabled={emptyTrashMut.isPending}
-              data-testid="empty-trash"
-            >
-              清空回收站
-            </button>
-          </div>
           <SyncedInput
             className={searchInput}
             type="search"
@@ -508,6 +544,15 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             onChange={(v) => setSearch(v)}
             data-testid="trash-search"
           />
+          {/* 服务端搜索带 projectId，只覆盖本项目的回收站条目；孤儿（projectId=null）
+              另由 /deleted/orphans 提供。分组折叠时必须说清它不在搜索范围内——否则
+              用户搜一条明摆在下方的会话标题，得到「回收站无匹配会话」。不自动展开：
+              展开即写「已看到」并启动 60 天保留倒计时，不能由一次搜索替用户决定。 */}
+          {isSearching && !orphansOpen && orphanCount > 0 && (
+            <div className={trashHint} data-testid="orphan-search-hint">
+              「未归属项目」分组不参与上方搜索（它们不属于当前项目）；展开该分组后可在组内按标题筛选。
+            </div>
+          )}
           {searchError && isSearching ? (
             <div className={errorBar} role="alert" data-testid="trash-search-error">
               回收站搜索失败
@@ -522,8 +567,12 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               </button>
             </div>
           ) : null}
+          {/* 口径要限定在「本项目」：孤儿分组在下方按标题单独过滤，说成整页的
+              「回收站无匹配会话」会与下方那条命中的孤儿行自相矛盾。 */}
           {rows.length === 0 && isSearching && !searchError ? (
-            <div className={empty}>{searchLoading ? '搜索中…' : '回收站无匹配会话'}</div>
+            <div className={empty}>
+              {searchLoading ? '搜索中…' : `本项目回收站内没有匹配「${searchDebounced}」的会话`}
+            </div>
           ) : null}
           {rows.map((s) => {
             const descendants = countDeletedDescendants(deletedIndex, s.id)
@@ -694,7 +743,16 @@ export function RecycleBin({ projectId }: { projectId: string }) {
           )}
           {orphansOpen &&
             !orphansError &&
-            (orphans ?? []).map((s) => (
+            !orphansLoading &&
+            isSearching &&
+            orphanRows.length === 0 && (
+              <div className={empty} data-testid="orphan-search-empty">
+                未归属项目分组内没有匹配「{searchDebounced}」的会话
+              </div>
+            )}
+          {orphansOpen &&
+            !orphansError &&
+            orphanRows.map((s) => (
               <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
                 <span title={s.worktreePath ?? s.title}>{s.title}</span>
                 <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
