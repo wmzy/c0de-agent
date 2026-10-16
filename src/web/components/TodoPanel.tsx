@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
@@ -341,6 +341,31 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const [newPhase, setNewPhase] = useState('')
   const [error, setError] = useState('')
   const [exportResult, setExportResult] = useState<string | null>(null)
+  /** 会话世代：sessionId 一变就自增，在途请求用它判断自己还属不属于当前面板。 */
+  const scopeGenRef = useRef(0)
+
+  // 面板是「会话级」的，但组件实例不随会话切换重建（ChatPage→ChatView→
+  // ChatSession 的路由 path 不变，只有 param 在换）。此前新任务输入框、失败红字、
+  // 「已导出 N 个任务到看板」全是裸 useState：会话 A 里敲了一半的「修 A 的私活」
+  // 跟着同一个输入框出现在会话 B，回车即 append 进 **B 的待办列表**（实测
+  // GET /api/todo/<B> 拿到那条任务、<A> 为空）；A 的失败原因与导出提示也原样挂在
+  // B 的面板上。同一时刻的 A 会话里还有别的按键/事件不断触发重渲染，动按钮复位
+  // 挡不住在途响应——只有按 sessionId 复位能收敛「这块面板现在属于哪条会话」。
+  //
+  // collapsed 是 localStorage 里的全局显示偏好、queryKey 也已按会话区分，与本面板
+  // 的会话内容无关，故不复位。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    scopeGenRef.current += 1
+    setShowAdd(false)
+    setNewTask('')
+    setNewPhase('')
+    setError('')
+    setExportResult(null)
+  }, [sessionId])
+
+  /** 本轮渲染所属的会话世代：在途请求回来时世代已变就说明用户换了会话。 */
+  const isCurrentScope = (gen: number) => scopeGenRef.current === gen
 
   const {
     data,
@@ -373,12 +398,21 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
       }
       return count
     },
-    onSuccess: (count) => {
+    // 导出的成果属于「按下导出键的那条会话」。在途期间用户切到别的会话时，成功
+    // 提示与失败红字若照写，就变成新会话面板上的「已导出 N 个任务到看板」/
+    // 「导出到看板失败：…」——一件没发生的事挂在别人的面板上。
+    onMutate: () => ({ gen: scopeGenRef.current }),
+    onSuccess: (count, _vars, ctx) => {
+      if (!ctx || !isCurrentScope(ctx.gen)) return
+      const gen = ctx.gen
       setExportResult(`已导出 ${count} 个任务到看板`)
       setError('')
-      setTimeout(() => setExportResult(null), 4000)
+      setTimeout(() => {
+        if (isCurrentScope(gen)) setExportResult(null)
+      }, 4000)
     },
-    onError: (e: Error) => {
+    onError: (e: Error, _vars, ctx) => {
+      if (!ctx || !isCurrentScope(ctx.gen)) return
       setExportResult(null)
       setError(`导出到看板失败：${e.message}`)
     },
@@ -406,8 +440,14 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const execMutation = useMutation({
     mutationFn: ({ sessionId: sid, op }: { sessionId: string; op: TodoOp }) =>
       todoAPI.exec(sid, op),
-    onSuccess: (result: TodoOpResult, vars: { sessionId: string; op: TodoOp }) => {
-      queryClient.setQueryData(todoKey, { phases: result.phases })
+    onMutate: () => ({ gen: scopeGenRef.current }),
+    onSuccess: (result: TodoOpResult, vars: { sessionId: string; op: TodoOp }, ctx) => {
+      // 回写必须按 vars.sessionId 重建 key：mutation 回调取的是**最近一次渲染**的
+      // 闭包，在途期间用户切到会话 B 时 todoKey 已经是 ['todo', B]，于是 A 的执行
+      // 结果会被写进 B 的缓存——B 的面板整块显示成 A 的待办（连「已完成」勾选都
+      // 按 A 的条目高亮）。
+      queryClient.setQueryData(['todo', vars.sessionId], { phases: result.phases })
+      if (!ctx || !isCurrentScope(ctx.gen)) return
       setError('')
       // 输入只在服务端真的受理后才清空：失败时用户刚打的任务文本必须留在
       // 输入框里（错误行已经说明原因，重试即可，不必凭记忆重打）。
@@ -416,7 +456,10 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
         setNewPhase('')
       }
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error, _vars, ctx) => {
+      if (!ctx || !isCurrentScope(ctx.gen)) return
+      setError(e.message)
+    },
   })
 
   const toggleTask = (taskContent: string, status: string) => {

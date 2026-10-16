@@ -3,11 +3,11 @@
  * 可被改名/删除或经导入替换）——目标列由看板 store 按板的首列决定。
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TodoPanel } from '@/components/TodoPanel.js'
 import { kanbanAPI } from '@/services/kanban.js'
-import { todoAPI } from '@/services/todo.js'
+import { type TodoOpResult, todoAPI } from '@/services/todo.js'
 
 vi.mock('@/services/todo.js', () => ({
   todoAPI: { get: vi.fn(), exec: vi.fn() },
@@ -266,5 +266,108 @@ describe('TodoPanel 已有任务后的新增入口', () => {
 
     fireEvent.click(screen.getByTestId('todo-add-task'))
     expect(await screen.findByLabelText('任务描述')).toBeInTheDocument()
+  })
+})
+
+/**
+ * 面板内容必须按会话收口。
+ *
+ * 缺陷：ChatPage→ChatView→ChatSession 的路由 path 不变、只有 sessionId 在换，
+ * 组件实例复用，于是本面板的裸 useState（新任务输入、失败红字、导出提示）跟着
+ * 上一条会话走：会话 A 里敲了一半的「修 A 的私活」原样出现在会话 B 的输入框里，
+ * 回车即 append 进 **B 的待办列表**（实测 GET /api/todo/<B> 拿到那条任务、
+ * <A> 为空）。此外 mutation 回调取的是最近一次渲染的闭包，在途期间切会话时
+ * `setQueryData(todoKey)` 会把 A 的执行结果写进 B 的缓存 key，B 的面板整块显示成
+ * A 的待办。
+ */
+describe('TodoPanel 会话级状态与缓存回写按会话收口', () => {
+  /** 同一 QueryClient 下换 sessionId 重渲染（等价于侧栏切会话）。 */
+  function renderFor(sessionId = 's1') {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const ui = (sid: string) => (
+      <QueryClientProvider client={qc}>
+        <TodoPanel sessionId={sid} projectId="p1" />
+      </QueryClientProvider>
+    )
+    const view = render(ui(sessionId))
+    return { qc, switchTo: (sid: string) => view.rerender(ui(sid)) }
+  }
+
+  it('切到另一条会话后，上一条会话没提交的新增文本不在新会话里', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
+    const { switchTo } = renderFor('s1')
+
+    fireEvent.click(await screen.findByTestId('todo-add-task'))
+    fireEvent.change(await screen.findByLabelText('任务描述'), { target: { value: 'A 的私活' } })
+
+    switchTo('s2')
+
+    // 新增行收起；重新打开时是空的——B 的面板里不该留着 A 的半句话
+    expect(screen.queryByLabelText('任务描述')).toBeNull()
+    fireEvent.click(await screen.findByTestId('todo-add-task'))
+    expect((await screen.findByLabelText('任务描述')) as HTMLInputElement).toHaveValue('')
+  })
+
+  it('在途 exec 的结果只写回原会话，不污染当前会话的待办', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
+    let settle: (v: TodoOpResult) => void = () => {}
+    vi.mocked(todoAPI.exec).mockImplementation(
+      () =>
+        new Promise<TodoOpResult>((res) => {
+          settle = res
+        }),
+    )
+    const { qc, switchTo } = renderFor('s1')
+
+    fireEvent.click(await screen.findByTestId('todo-add-task'))
+    fireEvent.change(await screen.findByLabelText('任务描述'), { target: { value: 'A 的任务' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+
+    // mutate 到真正发出请求隔着一个微任务：等请求确实在途再切会话。
+    await waitFor(() => expect(vi.mocked(todoAPI.exec).mock.calls.length).toBe(1))
+    switchTo('s2')
+    await act(async () => {
+      settle({
+        phases: [{ name: 'Tasks', tasks: [{ content: 'A 的任务', status: 'in_progress' }] }],
+        output: 'added',
+      })
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(qc.getQueryData(['todo', 's1'])).toMatchObject({
+        phases: [{ tasks: [{ content: 'A 的任务' }] }],
+      }),
+    )
+    expect(screen.getByTestId('todo-panel')).toHaveTextContent('暂无任务')
+    expect(qc.getQueryData(['todo', 's2'])).toEqual({ phases: [] })
+  })
+
+  it('在途失败的原因不写到别的会话面板上', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
+    let fail: (e: Error) => void = () => {}
+    vi.mocked(todoAPI.exec).mockImplementation(
+      () =>
+        new Promise<TodoOpResult>((_res, rej) => {
+          fail = rej
+        }),
+    )
+    const { switchTo } = renderFor('s1')
+
+    fireEvent.click(await screen.findByTestId('todo-add-task'))
+    fireEvent.change(await screen.findByLabelText('任务描述'), { target: { value: 'A 的任务' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+
+    await waitFor(() => expect(vi.mocked(todoAPI.exec).mock.calls.length).toBe(1))
+    switchTo('s2')
+    await act(async () => {
+      fail(new Error('待办服务不可用'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('todo-panel')).toHaveTextContent('暂无任务'))
+    expect(screen.queryByText(/待办服务不可用/)).toBeNull()
   })
 })
