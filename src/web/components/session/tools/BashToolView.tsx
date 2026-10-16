@@ -2,7 +2,9 @@ import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { CodeBlock } from '@/components/CodeBlock.js'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
+import { strArg } from '@/components/session/tools/toolShape.js'
 
 const out = css`
   margin: 4px 0 0;
@@ -56,13 +58,23 @@ export function BashToolView({
   output?: ToolResult
   status: string
 }) {
-  const command = input?.command ?? ''
   const { ref, overflowing, expanded, toggle } = useOverflow(200)
   const showToggle = overflowing && !expanded
 
+  // input 是原样落库的 JSON：模型把 command 写成对象/数组时（校验会把它转成一次
+  // 失败的工具结果，但 raw 入参已经进了持久化消息），CodeBlock 收到非字符串会在
+  // 渲染期抛错，ErrorBoundary 裹的是整个应用壳——这条会话从此打不开。命令读不
+  // 出来就退回兜底视图：既不用空串冒充「跑了一条空命令」，也不把失败原因吞掉。
+  // 位置在 useOverflow 之后：短路不能让 hook 数量随入参形状变化。
+  const command = strArg(input, 'command')
+  if (command.broken) {
+    return <FallbackToolView tool="bash" input={input} output={output} status={status} />
+  }
+  const commandText = command.value ?? ''
+
   const commandBlock = (
     <div data-testid="bash-command">
-      <CodeBlock code={command} lang="bash" />
+      <CodeBlock code={commandText} lang="bash" />
     </div>
   )
 

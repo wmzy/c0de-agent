@@ -11,10 +11,13 @@
 
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { BashToolView } from '@/components/session/tools/BashToolView.js'
 import { EditToolView } from '@/components/session/tools/EditToolView.js'
 import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
+import { ReadToolView } from '@/components/session/tools/ReadToolView.js'
 import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
+import { WriteToolView } from '@/components/session/tools/WriteToolView.js'
 
 afterEach(cleanup)
 
@@ -259,5 +262,65 @@ describe('工具视图畸形 input（op / id / hunks）', () => {
       />,
     )
     expect(screen.queryByTestId('tool-error')).toBeNull()
+  })
+})
+
+/**
+ * read/write/bash 三个视图的**入参**（此前只覆盖了 todo/kanban/task/edit 的
+ * metadata 侧）。
+ *
+ * 缺陷：这三个视图取字段时是 `input?.command ?? ''` / `input?.path ?? ''`，没有
+ * 任何 typeof 守卫，畸形入参会一路进到需要字符串的渲染点——FileCodeBlock 的
+ * `extToLang(path)` 里 `filename.split('.')` 抛 TypeError、`<pre>{content}</pre>`
+ * 与 CodeBlock 收到对象抛 `Objects are not valid as a React child`。两者都发生在
+ * 渲染期，而 ErrorBoundary 裹的是整个应用壳（src/web/App.tsx）：顶栏、侧栏、
+ * 会话页一起被换成「页面渲染出错」，这条会话再也无法展开、发不出消息。
+ *
+ * 实测可达：服务端 persist 只把「入参 JSON 解析失败」的调用挡在落库之外
+ * （persist.ts:66），JSON 合法但形状错的调用照样连同 raw 入参写进 assistant
+ * 消息并向前端发 tool_call_start；工具校验随后把它转成失败结果，而 Bash 视图的
+ * 失败分支仍会渲染命令块——于是「命令跑失败」与「会话打不开」是同一次调用的两
+ * 副面孔。
+ */
+describe('read/write/bash 畸形 input', () => {
+  it('bash 的 command 是对象时退回兜底视图，原始入参摊平可见', () => {
+    render(
+      <BashToolView
+        input={{ command: { argv: 'ls' } } as never}
+        status="error"
+        output={{ _tag: 'error', error: 'Command failed with exit code: 1' }}
+      />,
+    )
+    expect(screen.getByTestId('fallback-args')).toHaveTextContent('command.argv')
+    // 失败原因不能因为退回兜底就丢
+    expect(screen.getByTestId('tool-error')).toHaveTextContent('exit code: 1')
+  })
+
+  it('bash 的 input 整体不是对象时不崩', () => {
+    render(<BashToolView input={'ls -la' as never} status="running" />)
+    expect(screen.getByTestId('fallback-args')).toHaveTextContent('ls -la')
+  })
+
+  it('write 的 content 是对象时不冒充「写入内容为空」', () => {
+    render(
+      <WriteToolView
+        input={{ path: 'a.ts', content: { lines: ['x'] } } as never}
+        status="running"
+      />,
+    )
+    // 空 <pre> 会被读成「这次写入的内容是空的」——必须说清是原始入参读不出来
+    expect(screen.getByTestId('fallback-args')).toHaveTextContent('content.lines')
+  })
+
+  it('read 的 path 是对象时退回兜底视图并保留读到的正文', () => {
+    render(
+      <ReadToolView
+        input={{ path: { a: 1 } } as never}
+        output={{ _tag: 'success', output: 'file content' }}
+        status="completed"
+      />,
+    )
+    expect(screen.getByTestId('fallback-args')).toHaveTextContent('path.a')
+    expect(screen.getByTestId('fallback-output')).toHaveTextContent('file content')
   })
 })

@@ -45,6 +45,29 @@ export function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined
 }
 
+/**
+ * 工具**入参**里某个字段的收敛（入参与结果一样是原样落库的未受信 JSON）。
+ *
+ * `broken` = 「这里本来应该有值，但读不出来」：模型把 `bash` 的 command、`write`
+ * 的 path/content 写成对象或数组，或整个 input 根本不是对象（历史导入里
+ * input 是一段字符串）。这些值此前被 `input?.command ?? ''` 一路带到需要字符串的
+ * 渲染点——`extToLang(path)` 里的 `filename.split('.')` 抛 TypeError、
+ * `<pre>`/CodeBlock 收到对象抛 `Objects are not valid as a React child`，都在
+ * **渲染期**发生，而 ErrorBoundary 裹的是整个应用壳：顶栏、侧栏、会话页一起被
+ * 换成「页面渲染出错」，这条会话在刷新前完全打不开、也发不出消息。
+ *
+ * 调用方不得用 `value ?? ''` 把 broken 当成「没有内容」：空命令/空文件正文与
+ * 「读不出来」是两件事，前者会让用户以为工具跑了个空操作。broken 时应退回
+ * FallbackToolView（把原始入参摊平成 [path, value] 显示）。
+ */
+export function strArg(input: unknown, key: string): { value?: string; broken: boolean } {
+  if (!isRecord(input)) return { broken: input !== undefined && input !== null }
+  const v = input[key]
+  if (v === undefined || v === null) return { broken: false }
+  const value = str(v)
+  return value === undefined ? { broken: true } : { value, broken: false }
+}
+
 /** 收敛结果：可用条目 + 被丢弃的条目数 + 整体形状是否根本不是预期的容器。 */
 export type Sanitized<T> = { value: T; dropped: number; malformed: boolean }
 
