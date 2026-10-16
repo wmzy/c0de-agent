@@ -96,6 +96,18 @@ const loadingWrap = css`
   padding: 12px;
 `
 
+/**
+ * 读后端失败原因。APIError 是结构体（Object.assign 出来的字面量）而非 Error 子类，
+ * 结构化取 message 优先，再退回 Error.message——单独取任一侧都会在某些路径上丢原因。
+ */
+function readErrorMessage(err: unknown): string | null {
+  if (err && typeof err === 'object') {
+    const m = (err as { message?: unknown }).message
+    if (typeof m === 'string' && m) return m
+  }
+  return err instanceof Error ? err.message : null
+}
+
 /** 读失败态：与 RecycleBin/KanbanView 的读失败三段式同口径（标题 + 后端 message + 重试）。 */
 const errorWrap = css`
   display: flex;
@@ -121,6 +133,28 @@ const errorDetail = css`
 const retryBtn = css`
   padding: 4px 12px;
   font-size: 12px;
+`
+
+/**
+ * 「内容可能有更新，但重新读取失败」条：走廊式提示，不替换内容区（编辑器与其
+ * 未保存编辑必须留着）。用 warning 语义色而不是 danger——手上这份内容仍然有效。
+ */
+const refetchErrorBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--haze-color-text);
+  background: var(--haze-color-bg-subtle);
+  border-bottom: 1px solid var(--haze-color-border);
+  flex-shrink: 0;
+`
+
+const refetchErrorText = css`
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 `
 
 /** 媒体失败态的「重试 + 在新标签页打开」按钮行。 */
@@ -410,8 +444,13 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     }
   } else if (q.isLoading) {
     body = <div className={loadingWrap}>加载中…</div>
-  } else if (q.isError) {
+  } else if (q.isError && !q.data) {
     // 「读不到」必须与「真的为空」分开：useQuery 重试耗尽后 data 仍是 undefined。
+    // 判据必须写成 `isError && !data` 而不是只判 isError：同一 queryKey 的后台重取
+    // （保存后 invalidate、窗口聚焦、staleTime 到期）失败时 react-query **保留** data
+    // 并把 status 置成 error，只判 isError 会把已经拿到的内容换掉——编辑器被整块
+    // 卸载（连同未保存编辑与脏守卫一起丢），屏幕上还写着一句与事实相反的
+    // 「文件读取失败：<重取失败原因>」，而内容其实就在内存里。
     // 二进制又必须与「读不到」分开，且绝不能落进 CodeEditor：服务端此前把任何
     // 扩展名按 utf-8 解码，.zip 之类解码成一屏 U+FFFD 后仍是「可编辑内容」，用户敲
     // 一个字点保存就把原文件重写成乱码（实测 4096B → 7476B，原字节不可恢复）。
@@ -436,9 +475,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     } else {
       // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
       // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
-      const message =
-        (q.error as { message?: string } | null)?.message ??
-        (q.error instanceof Error ? q.error.message : null)
+      const message = readErrorMessage(q.error)
       body = (
         <div className={errorWrap} data-testid="file-preview-error" role="alert">
           <span className={errorTitle}>文件读取失败</span>
@@ -614,6 +651,22 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
           if (btn) btn.style.display = 'none'
         }}
       >
+        {q.data && q.isError && (
+          <div className={refetchErrorBar} role="alert" data-testid="file-preview-refetch-error">
+            <span className={refetchErrorText}>
+              内容可能有更新，但重新读取失败：{readErrorMessage(q.error) ?? '未知原因'}
+              。下面显示的仍是上次读取到的内容。
+            </span>
+            <button
+              type="button"
+              className={retryBtn}
+              onClick={() => void q.refetch()}
+              data-testid="file-preview-refetch-retry"
+            >
+              重新读取
+            </button>
+          </div>
+        )}
         {body}
         <button
           type="button"

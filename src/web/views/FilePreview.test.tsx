@@ -101,6 +101,27 @@ function withClient(ui: React.ReactNode, closeFile = () => {}) {
   render(<PreviewProviders selection={{ selectedFile: null, closeFile }}>{ui}</PreviewProviders>)
 }
 
+/**
+ * 要主动触发后台重取的用例用这个入口：QueryClient 由调用方持有，
+ * 以便 invalidateQueries 后观察「保留 data 的失败」这条路径。
+ */
+function renderWithClient(
+  client: QueryClient,
+  selection: Partial<FileSelection>,
+  node: React.ReactNode,
+) {
+  return render(
+    <MemoryRouter routes={previewTestRoutes} initialEntries={[ENTRY_CHAT]}>
+      <QueryClientProvider client={client}>
+        <FileSelectionContext.Provider value={{ ...baseSelection, ...selection }}>
+          <View />
+          {node}
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+}
+
 /** 带自定义选中态/初始路由的挂载入口。 */
 function renderPreview(
   selection: Partial<FileSelection>,
@@ -292,6 +313,65 @@ describe('FilePreview', () => {
     await waitFor(() => {
       expect(fetchStub.mock.calls.length).toBeGreaterThan(callsBefore)
     })
+  })
+
+  // 回归：同一 queryKey 的后台重取（保存后 invalidate / 窗口聚焦 / staleTime 到期）
+  // 失败时 react-query **保留 data** 并把 status 置成 error。此前分支只判 q.isError，
+  // 于是「内容明明已经在内存里」却被换成整屏「文件读取失败」：编辑器连同未保存编辑
+  // 与脏守卫一起消失，屏幕上那句失败原因还是重取失败的，与手上的内容无关。
+  it('已读到内容后后台重取失败：保留编辑器与未保存编辑，只给非破坏性提示', async () => {
+    const errBody = { error: { code: 'INTERNAL', message: '磁盘读取失败' } }
+    const okBody = { path: 'a.ts', content: 'const a = 1\n' }
+    let fail = false
+    const fetchStub = vi.fn().mockImplementation(async () =>
+      fail
+        ? new Response(JSON.stringify(errBody), {
+            status: 500,
+            statusText: 'Internal Server Error',
+          })
+        : new Response(JSON.stringify(okBody), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchStub)
+    const closeFile = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    renderWithClient(
+      qc,
+      { selectedFile: 'a.ts', closeFile },
+      <FilePreview projectId="p1" path="a.ts" />,
+    )
+    await waitFor(() => expect(screen.getByTestId('code-editor')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('mock-dirty'))
+
+    fail = true
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['file', 'a.ts', 'p1'] })
+    })
+    // 等这次后台重取真正反映到渲染上再断言（旧实现在这里换成「文件读取失败」整屏态）
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('file-preview-refetch-error') ??
+          screen.queryByTestId('file-preview-error'),
+      ).toBeTruthy()
+    })
+
+    // 内容还在：编辑器没被卸载，未保存编辑的脏守卫也仍然生效（✕ 依旧要确认）
+    expect(screen.getByTestId('code-editor')).toBeTruthy()
+    expect(screen.queryByTestId('file-preview-error')).toBeNull()
+    expect(screen.queryByText('文件读取失败')).toBeNull()
+    fireEvent.click(screen.getByLabelText('关闭预览'))
+    expect(screen.getByTestId('discard-dialog')).toBeTruthy()
+    expect(closeFile).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('discard-cancel'))
+
+    // 但重取失败必须说出来（含后端原因），并给重试入口
+    const bar = screen.getByTestId('file-preview-refetch-error')
+    expect(bar.textContent).toContain('磁盘读取失败')
+    fail = false
+    fireEvent.click(screen.getByTestId('file-preview-refetch-retry'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('file-preview-refetch-error')).toBeNull()
+    })
+    expect(screen.getByTestId('code-editor')).toBeTruthy()
   })
 
   // 回归：encodeURI 不编码 ?/#，含它们的文件名会在 URL 中被解析为
