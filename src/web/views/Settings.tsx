@@ -216,7 +216,7 @@ export function Settings() {
     : null
 
   // P2-10：dirty 时切换作用域会丢弃草稿——ConfirmDialog 二次确认，
-  // 确认前暂存目标作用域（SyncedSelect 受控，选中项会弹回当前 scope）。
+  // 确认前暂存目标作用域（下拉的 value 跟随它，取消时才回弹到当前 scope）。
   const [pendingScope, setPendingScope] = useState<'global' | 'project' | null>(null)
 
   // dirty 时导入配置会整块覆盖草稿——同样是二次确认，确认前暂存待导入的配置。
@@ -703,7 +703,12 @@ export function Settings() {
         <span className={scopeLabel}>配置作用域</span>
         <SyncedSelect
           aria-label="配置作用域"
-          value={scope}
+          // 待定作用域必须进渲染值：SyncedSelect 是 react-use-control 受控控件，
+          // 只在 value prop 变化时才把内部状态回灌。此前 value 恒为 scope，只写
+          // setPendingScope——被确认框「取消」掉的那次选择于是留在界面上，与真正生效的
+          // 作用域（以及旁边的「目标：」）正好相反：下拉写着「全局配置（~/.c0de/config.json）」，
+          // 保存却写进项目文件，用户据此以为改的是全机配置。
+          value={pendingScope ?? scope}
           onValuesChange={(v) => {
             const next = v as 'global' | 'project'
             // P2-10：dirty 时切换作用域会把草稿整体落盘到新作用域——先确认，防止误写。

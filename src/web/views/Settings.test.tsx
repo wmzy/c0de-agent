@@ -3136,6 +3136,44 @@ describe('Settings — 写入目标标注随作用域变化', () => {
     expect(screen.queryByText('目标：/x/y/proj')).toBeNull()
     expect(screen.getByText('目标：~/.c0de/config.json')).toBeTruthy()
   })
+
+  // 回归：dirty 时切换作用域会被二审拦住，点「取消」后下拉必须回弹到当前作用域。
+  // SyncedSelect 是 react-use-control 受控控件，只在 value prop 变化时回灌内部状态；
+  // 此前 value 恒为 scope，只写 setPendingScope——于是「取消」之后控件内部仍停在用户
+  // 刚选的那一项，而真正生效的作用域（与旁边的「目标：」）还是旧的：下拉写着
+  // 「全局配置（~/.c0de/config.json）」，保存却把草稿写进项目文件（实测保存时
+  // scope 参数为 project）。用户据此以为改的是全机配置。
+  it('dirty 时切换作用域点「取消」→ 下拉回弹，显示的作用域与真实写入目标一致', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: mockConfig,
+      projectDir: '/x/y/proj',
+      // global 侧已有 provider：避开首跑「保存到全局还是项目」引导（那是另一条流程）
+      scopes: { global: { providers: [{}] }, project: {} },
+      warnings: [],
+    })
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderProjectSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    expect((screen.getByTestId('scope-select') as HTMLSelectElement).value).toBe('project')
+
+    // 造脏（加一行 provider）后切换作用域 → 二审
+    fireEvent.click(screen.getByTestId('provider-add'))
+    await waitFor(() => expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy())
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    fireEvent.click(screen.getByText('取消'))
+
+    await waitFor(() =>
+      expect((screen.getByTestId('scope-select') as HTMLSelectElement).value).toBe('project'),
+    )
+    expect(screen.getByText('目标：/x/y/proj')).toBeTruthy()
+
+    // 随后保存必须按 project 提交——下拉显示的就是它
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    expect((configAPI.update as Mock).mock.calls[0]?.[1]).toBe('project')
+  })
 })
 
 /**
