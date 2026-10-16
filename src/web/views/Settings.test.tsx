@@ -728,6 +728,63 @@ describe('Settings — Provider 管理', () => {
     ).toBeChecked()
   })
 
+  it('过滤生效时批量启禁只作用于筛选出的模型，其余保持原状', async () => {
+    // 回归：两个批量键紧挨过滤框，却一直遍历整张表——筛出 2 个模型点「禁用所有」，
+    // 整 provider 一起被禁用，屏幕上唯一证据是计数器跳成 0 / 3。
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+
+    const panel = within(screen.getAllByTestId('provider-row')[0] as HTMLElement).getByTestId(
+      'provider-models',
+    ) as HTMLElement
+
+    fireEvent.change(within(panel).getByTestId('provider-model-filter'), {
+      target: { value: '4o' },
+    })
+
+    // 作用域写进可见文本，不只躺在 title 里
+    expect(within(panel).getByTestId('provider-models-scope-hint').textContent).toContain(
+      '筛选出的 2 个模型',
+    )
+
+    fireEvent.click(within(panel).getByTestId('provider-models-disable-all'))
+    expect(within(panel).getByText('1 / 3 已启用')).toBeTruthy()
+
+    // 清掉过滤后看全量：gpt-4 不在筛选结果里，必须保持启用
+    fireEvent.change(within(panel).getByTestId('provider-model-filter'), {
+      target: { value: '' },
+    })
+    expect(
+      within(panel).getByTestId('provider-model-toggle-gpt-4') as HTMLInputElement,
+    ).toBeChecked()
+    expect(
+      within(panel).getByTestId('provider-model-toggle-gpt-4o') as HTMLInputElement,
+    ).not.toBeChecked()
+  })
+
+  it('过滤到无匹配时批量键禁用，不会把整 provider 一次性改掉', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+
+    const panel = within(screen.getAllByTestId('provider-row')[0] as HTMLElement).getByTestId(
+      'provider-models',
+    ) as HTMLElement
+
+    fireEvent.change(within(panel).getByTestId('provider-model-filter'), {
+      target: { value: '不存在的模型' },
+    })
+
+    expect(within(panel).getByTestId('provider-models-enable-all')).toBeDisabled()
+    expect(within(panel).getByTestId('provider-models-disable-all')).toBeDisabled()
+    expect(within(panel).getByText('2 / 3 已启用')).toBeTruthy()
+  })
+
   it('编辑模型的上下文窗口/最大输出后随保存提交', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))

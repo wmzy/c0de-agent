@@ -178,10 +178,17 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
     })
   }
 
-  /** 全量启用/禁用该 provider 的所有模型。 */
-  const setAllModels = (providerIndex: number, enabled: boolean) => {
+  /** 启用/禁用该 provider 的一批模型。只改 modelNames 点名的那些——作用域由调用方
+   *  按当前筛选结果给出，批量键不得越过筛选去动用户没看见的行。 */
+  const setAllModels = (providerIndex: number, enabled: boolean, modelNames: string[]) => {
+    const targets = new Set(modelNames)
     updateModels(providerIndex, (models) =>
-      Object.fromEntries(Object.entries(models).map(([k, v]) => [k, { ...v, enabled }] as const)),
+      Object.fromEntries(
+        Object.entries(models).map(([k, v]) => [
+          k,
+          { ...v, enabled: targets.has(k) ? enabled : v.enabled },
+        ]),
+      ),
     )
   }
 
@@ -323,7 +330,7 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
             <ProviderModelsPanel
               models={provider.models ?? {}}
               onToggle={(name) => toggleModel(index, name)}
-              onSetAll={(enabled) => setAllModels(index, enabled)}
+              onSetAll={(enabled, modelNames) => setAllModels(index, enabled, modelNames)}
               onModelFieldChange={(name, patch) => updateModelField(index, name, patch)}
             />
           </div>
