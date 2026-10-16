@@ -564,15 +564,40 @@ export function ChatSession({
   /** 分支数量查询失败的说明（null=没失败）。失败与「确实没有分支」必须分开。 */
   const [exportBranchFailed, setExportBranchFailed] = useState<string | null>(null)
 
+  /**
+   * 归档面板与导出弹窗的这一组状态都是**会话级**的，而 ChatSession 在
+   * /projects/:p/sessions/:a → :b 之间被路由复用（两条路由 path 相同 → 子树不重建）：
+   * 在 A 点开导出弹窗（或归档面板）、再用侧栏切到 B，弹窗原样留在屏幕上——可弹窗里的
+   * 结论是 A 的（「该会话有 N 个派生分支：分支内容不在其中」/「无法确认派生分支数量」），
+   * 而导出按钮走的是当前 sessionId，真正导出的是 B。用户照 A 的结论判断 B 的备份是否
+   * 完整、要不要剥离快照；在飞时切走的导出还会让「导出中…」跟着 B 的会话。
+   * 与本文件 orphanNotice/rebindError、cold-start 三态同口径：切会话整体作废，
+   * 并用世代号作废在飞的分支数查询（迟到的 A 的结论不得写进 B 的弹窗）。
+   */
+  const exportGenRef = useRef(0)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    exportGenRef.current += 1
+    setShowArchives(false)
+    setExporting(false)
+    setExportError(null)
+    setExportDialogOpen(false)
+    setExportBranchCount(null)
+    setExportBranchFailed(null)
+  }, [sessionId])
+
   const openExportDialog = async () => {
+    const gen = exportGenRef.current
     setExportError(null)
     setExportBranchCount(null)
     setExportBranchFailed(null)
     setExportDialogOpen(true)
     try {
       const branches = await sessionAPI.branches(sessionId)
+      if (exportGenRef.current !== gen) return
       setExportBranchCount(branches.length)
     } catch (err) {
+      if (exportGenRef.current !== gen) return
       // 「读不到分支数」≠「没有分支」：此前 catch(() => []) 把失败吞成 0，弹窗于是
       // 改口宣称「导出内容：本会话的全部消息与归档」，用户据此把导出件当成完整备份，
       // 而真正的派生分支内容并不在其中（迁移/分享后静默丢失）。改为显式失败态：
@@ -584,6 +609,10 @@ export function ChatSession({
 
   const runExport = async (includeSnapshots: boolean) => {
     if (exporting) return
+    // 本次导出所属世代：导出在飞期间切走会话（A → B）时，结果与失败原因都属于 A，
+    // 不得落到 B 的界面上（B 的这组状态已被复位，写入会把「导出中…」/失败原因
+    // 挂到一条没在导出的会话上）。
+    const gen = exportGenRef.current
     setExporting(true)
     setExportError(null)
     try {
@@ -596,13 +625,14 @@ export function ChatSession({
       a.download = `${title}.c0de-session.json`
       a.click()
       URL.revokeObjectURL(url)
-      setExportDialogOpen(false)
+      if (exportGenRef.current === gen) setExportDialogOpen(false)
     } catch (err) {
+      if (exportGenRef.current !== gen) return
       setExportError(
         err instanceof Error && err.message ? `导出失败：${err.message}` : '导出失败，请重试',
       )
     } finally {
-      setExporting(false)
+      if (exportGenRef.current === gen) setExporting(false)
     }
   }
 

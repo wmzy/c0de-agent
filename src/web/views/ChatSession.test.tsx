@@ -636,6 +636,139 @@ describe('ChatSession — 导出反馈闭环', () => {
 })
 
 /**
+ * 归档面板与导出弹窗的这一组状态是**会话级**的，而 ChatSession 在
+ * sessions/:a → :b 之间被路由复用（path 相同 → 子树不重建）：在 A 打开导出弹窗
+ * （弹窗里的结论是 A 的：「该会话有 N 个派生分支…」）或归档面板，用侧栏切到 B
+ * 时弹窗原样留在屏幕上，而导出走的是当前 sessionId——用户照 A 的结论判断 B 的
+ * 备份是否完整、要不要剥离快照。切会话必须整体作废，迟到的分支数查询也不得写进
+ * 新会话（与本文件 orphanNotice/rebindError、cold-start 三态同口径）。
+ */
+describe('ChatSession — 导出弹窗与归档面板的会话作用域', () => {
+  /** 会话路由视图 + 一条指向 s2 的站内链接（@native-router 同 path 换参数不重建子树）。 */
+  function sessionSwitchingUi() {
+    function SessionFromRoute() {
+      const { params } = useMatched()
+      return (
+        <ChatSession projectId={params.projectId ?? 'p1'} sessionId={params.sessionId ?? 's1'} />
+      )
+    }
+    return (
+      <>
+        <SessionFromRoute />
+        <TypedLink<AppPaths>
+          to="/projects/:projectId/sessions/:sessionId"
+          params={{ projectId: 'p1', sessionId: 's2' }}
+          data-testid="to-s2"
+        >
+          切会话
+        </TypedLink>
+      </>
+    )
+  }
+
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    vi.mocked(sessionAPI.branches).mockResolvedValue([
+      { id: 'b1' },
+      { id: 'b2' },
+    ] as unknown as Awaited<ReturnType<typeof sessionAPI.branches>>)
+  })
+
+  it('切会话关掉导出弹窗：A 的分支结论不得留给 B', async () => {
+    await renderSession(sessionSwitchingUi())
+    fireEvent.click(await screen.findByTestId('export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-branch-note').textContent).toContain('2 个派生分支'),
+    )
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(screen.queryByTestId('export-dialog')).toBeNull())
+  })
+
+  it('切会话关掉归档面板', async () => {
+    await renderSession(sessionSwitchingUi())
+    fireEvent.click(await screen.findByTestId('archive-button'))
+    await screen.findByTestId('archive-panel')
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(screen.queryByTestId('archive-panel')).toBeNull())
+  })
+
+  it('上一条会话迟到的分支数不写进新会话', async () => {
+    type Branches = Awaited<ReturnType<typeof sessionAPI.branches>>
+    let resolveS1: ((v: Branches) => void) | null = null
+    vi.mocked(sessionAPI.branches).mockImplementation((id: string) =>
+      id === 's1'
+        ? new Promise<Branches>((resolve) => {
+            resolveS1 = resolve
+          })
+        : Promise.resolve([] as unknown as Branches),
+    )
+    await renderSession(sessionSwitchingUi())
+
+    // s1 的分支数查询挂在半路
+    fireEvent.click(await screen.findByTestId('export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-branch-note').textContent).toContain('正在检查派生分支'),
+    )
+
+    // 切到 s2 并重新打开弹窗：结论来自 s2（0 个分支）
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(screen.queryByTestId('export-dialog')).toBeNull())
+    fireEvent.click(await screen.findByTestId('export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-branch-note').textContent).toContain(
+        '导出内容：本会话的全部消息与归档',
+      ),
+    )
+
+    // A 的响应迟到落地：不得改写成「该会话有 2 个派生分支」
+    await act(async () => {
+      resolveS1?.([{ id: 'b1' }, { id: 'b2' }] as unknown as Branches)
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('export-branch-note').textContent).toContain(
+      '导出内容：本会话的全部消息与归档',
+    )
+  })
+
+  it('导出在飞时切会话：不把「导出中…」与失败原因落到新会话', async () => {
+    let rejectExport: (err: Error) => void = () => {}
+    vi.mocked(sessionAPI.exportSession).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectExport = reject
+      }),
+    )
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await renderSession(sessionSwitchingUi())
+
+    fireEvent.click(await screen.findByTestId('export-button'))
+    fireEvent.click(await screen.findByTestId('export-strip-snapshots'))
+    await waitFor(() =>
+      expect((screen.getByTestId('export-strip-snapshots') as HTMLButtonElement).textContent).toBe(
+        '导出中…',
+      ),
+    )
+
+    // 导出还没回来就切走：A 的失败原因不得落到 B 的界面上
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await act(async () => {
+      rejectExport(new Error('数据库被占用'))
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('export-dialog')).toBeNull()
+    expect(screen.queryByTestId('export-dialog-error')).toBeNull()
+  })
+})
+
+/**
  * 冷启动状态检查（sessionAPI.status）失败此前被 .catch(() => {}) 空吞：
  * 页面看起来完全正常，但「连接已中断 / 已暂停」的恢复横幅与入口都不会出现——
  * 用户面对一个上次被强杀打断的会话无从恢复，只能猜着重发，而重发会重复执行
