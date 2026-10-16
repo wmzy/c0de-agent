@@ -596,7 +596,15 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     async (message: string): Promise<boolean> => {
       const text = message.trim()
       if (!text) return false
+      // 本次指令所属世代：steer 此前是 useChat 里唯一没有世代守卫的写 state 路径
+      // （doStream / abort / confirm / denyTimedOutPermission 都有）。请求飞在路上时
+      // 用户切到 B ⇒ 迟到的乐观条目与失败原因都写进 B 的时间线：B 凭空多出一条
+      // 属于 A 的「用户刚刚说的指令」（sessionId 还是 A 的），失败时 B 顶上挂一条
+      // 与 B 无关的红条，而 A 的真实结果无人知晓。返回 false：不受理（composer 的
+      // clear 另有 scopeGenRef 把关，不会误清 B 的输入框）。
+      const gen = genRef.current
       const failSteer = (reason: string) => {
+        if (genRef.current !== gen) return
         steerFailureRef.current = reason
         setState((s) => ({ ...s, error: reason }))
       }
@@ -620,6 +628,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         )
         return false
       }
+      if (genRef.current !== gen) return false
       setState((s) => {
         const next = {
           ...s,

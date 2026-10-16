@@ -2406,4 +2406,116 @@ describe('useChat 在途响应的世代守卫', () => {
     // 关键断言：新会话上没有任何属于上一条会话的失败原因
     expect(result.current.abortError).toBeNull()
   })
+
+  // 复现：A 会话流式中点「追加指令」→ POST /api/chat/steer 飞在路上 → 用户切到 B →
+  // 响应回来时裸 setState 把乐观 steering 气泡追加进 B 的时间线：B 凭空多出一条属于
+  // A 的用户指令（sessionId 仍是 A 的），用户要么把 B 里那段输入重复发一遍，要么以为
+  // 自己已经指挥过了 agent。失败变体同理：B 顶上挂一条与它无关的红条。
+  // steer 曾是 useChat 里唯一没有世代守卫的写 state 路径（doStream / abort /
+  // confirm / denyTimedOutPermission 都有）。
+  //
+  // 形态与上面 abort 那条一致：把 steer 的响应挂起，rerender 换 sessionId（世代 +1），
+  // 再让响应落地，断言新会话上没有任何属于上一条会话的东西。
+  function renderStreamingChat() {
+    const chunk = new TextEncoder().encode('data: {"_tag":"text_delta","text":"hi"}\n\n')
+    let readIdx = 0
+    let settle: ((res: unknown) => void) | null = null
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/chat') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return new Promise<{ done: boolean; value: undefined }>(() => {})
+              },
+            }),
+          },
+        })
+      }
+      if (url === '/api/chat/steer') {
+        return new Promise((resolve) => {
+          settle = resolve
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => '{}',
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const rendered = renderHook(({ sid }: { sid: string }) => useChat(sid), {
+      wrapper,
+      initialProps: { sid: 's1' },
+    })
+    return { ...rendered, settle: () => settle }
+  }
+
+  it('追加指令在途时切会话：迟到的乐观条目不写进新会话', async () => {
+    const { result, rerender, settle } = renderStreamingChat()
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    let accepted: Promise<boolean> | null = null
+    await act(async () => {
+      accepted = result.current.steer('只对 A 说的指令')
+    })
+    await waitFor(() => expect(settle()).not.toBeNull())
+
+    rerender({ sid: 's2' })
+
+    await act(async () => {
+      settle()?.({
+        ok: true,
+        status: 200,
+        json: async () => ({ steered: true }),
+        text: async () => JSON.stringify({ steered: true }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.messages.some((m) => m.content.some((p) => p._tag === 'steering'))).toBe(
+      false,
+    )
+    // 未受理：调用方据此不清输入框（composer 侧另有 scopeGenRef 把关）
+    await expect(accepted).resolves.toBe(false)
+  })
+
+  it('追加指令在途时切会话：迟到的失败原因不写进新会话', async () => {
+    const { result, rerender, settle } = renderStreamingChat()
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    await act(async () => {
+      void result.current.steer('只对 A 说的指令')
+    })
+    await waitFor(() => expect(settle()).not.toBeNull())
+
+    rerender({ sid: 's2' })
+
+    await act(async () => {
+      settle()?.({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: 'boom' } }),
+        text: async () => JSON.stringify({ error: { message: 'boom' } }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.error).toBeNull()
+  })
 })
