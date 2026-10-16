@@ -220,6 +220,23 @@ export function TodoToolView({
     )
   }
 
+  // 「结果还没回来」不是「待办为空」：running 态（tool_result 尚未到达）此前一路落到
+  // Board 的空渲染——同一个工具块里「⏳ 执行中」的折叠头旁边写着 "Todo list is empty."，
+  // agent 每执行一次 todo 都是这个画面。用户据此认定待办被清空，重新规划、甚至重新
+  // 下发任务，而结果返回后列表又被真实阶段列表替换回。
+  // 与 KanbanToolView 在 board=null 时不画（不猜）同口径：没有结果就说还在执行，
+  // 绝不把「还没拿到」讲成一个关于内容的结论。折叠头已显示「执行中」，这里给同一句话。
+  if (output === undefined) {
+    return (
+      <div>
+        <span className={opLabel}>{op}</span>
+        <div className={empty} data-testid="todo-running">
+          执行中…待办内容随执行结果返回
+        </div>
+      </div>
+    )
+  }
+
   // Extract phases from output metadata
   //
   // metadata 是原样落库的未受信 JSON（持久层只过滤 _parseError/_raw，导入层只校验

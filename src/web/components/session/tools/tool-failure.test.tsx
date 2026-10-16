@@ -64,6 +64,17 @@ describe('TodoToolView 失败结果', () => {
     // 列表仍按执行后的真实状态渲染（这里没生效），但原因不再被吞
     expect(screen.getByText('写文档')).toBeInTheDocument()
   })
+
+  // 回归：running 态（tool_result 还没到）此前落进 Board 的空渲染——折叠头是
+  // 「⏳ 执行中」，展开正文却写着 "Todo list is empty."，agent 每跑一次 todo 都是
+  // 这个画面。用户据「待办为空」重新规划/重新下发任务，结果回来后列表又被真实阶段
+  // 替换回。「没有结果」与「结果说没有」必须分开（同 KanbanToolView 在 board=null
+  // 时不画的口径）。
+  it('执行中（结果未到达）时不谎报待办为空', () => {
+    render(<TodoToolView input={{ op: 'view' }} status="running" output={undefined} />)
+    expect(screen.queryByText(/Todo list is empty/i)).toBeNull()
+    expect(screen.getByTestId('todo-running')).toHaveTextContent('执行中')
+  })
 })
 
 // 「输出被截断」（_tag:'truncated'）此前也落在空态上：executor 对超上限的成功结果
