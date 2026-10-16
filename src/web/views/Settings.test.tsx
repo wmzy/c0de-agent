@@ -2116,6 +2116,47 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     expect(screen.getAllByTestId('provider-row')).toHaveLength(2)
   })
 
+  it('保存请求在途时「放弃更改」被锁死：草稿不被清空，期间的新编辑不丢', async () => {
+    // 回归：提交出去的是点击保存那一刻的草稿引用。请求在途时按「放弃更改」
+    // 会把草稿清空 → 在途请求照旧把内容落盘 → 吸底条随后显示「✓ 已保存」，
+    // 用户看着像回滚了，实际配置已改、期间新打的字还被他这句「放弃」吞掉。
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let release: (() => void) | null = null
+    ;(configAPI.update as Mock).mockReturnValue(
+      new Promise<void>((res) => {
+        release = () => res()
+      }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
+
+    fireEvent.click(dirtyTrigger()) // 制造未保存更改
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    // 在途：两个键都不可用
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-bar').textContent).toContain('保存中'),
+    )
+    expect(screen.getByTestId('settings-save')).toBeDisabled()
+    expect(screen.getByTestId('settings-discard')).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('settings-discard'))
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+
+    await act(async () => {
+      release?.()
+      await Promise.resolve()
+    })
+
+    // 落地后恢复可放弃
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-bar').textContent).toContain('已保存'),
+    )
+    expect((screen.getByTestId('settings-discard') as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('dirty 时点击离开设置页的站内链接弹确认，「留下」则留在设置页', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))

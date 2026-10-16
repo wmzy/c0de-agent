@@ -644,6 +644,10 @@ export function Settings() {
 
   /** 放弃未保存的更改：草稿清空回退到已持久化配置（JSON 模式同步重置编辑器）。 */
   const discardChanges = () => {
+    // 保存在途时拒绝：提交出去的是点击保存那一刻的草稿引用，此刻清空草稿既
+    // 撤不掉已经在途的请求，又会把这期间新打的字一起吞掉。按钮的 disabled 只
+    // 在 React 提交后生效，同一 tick 内的连点仍会落到这里，故在处理器里再挡一次。
+    if (save.isPending) return
     setDraft(null)
     if (viewMode === 'json') {
       setJsonText(JSON.stringify(config, null, 2))
