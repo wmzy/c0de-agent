@@ -174,6 +174,21 @@ describe('config route — scoped patch 与保存反馈（P1-2/P2-3）', () => {
     expect(body.needsRestart).toBe(false)
   })
 
+  // 回归：MCP 服务器与插件同口径——registerMCPServers 只在 server.ts 启动时按
+  // loadConfigScopes(cwd) 注册一次，PATCH 既不注册新服务器也不注销旧的。此前
+  // needsRestart 不含 mcpServers：用户加一台服务器、保存后看到「✓ 已保存」，
+  // AI 的工具列表里永远没有它（删掉的那台也照旧连着），页面也没有任何重启提示。
+  it('PATCH mcpServers 返回 needsRestart: true', async () => {
+    const { app } = await setup()
+    const res = await patchBody(app, {
+      scope: 'global',
+      mcpServers: [{ name: 'alpha', transport: 'stdio', command: 'node' }],
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { needsRestart?: boolean }
+    expect(body.needsRestart).toBe(true)
+  })
+
   it('PATCH 非 security 变更 needsRestart 为 false', async () => {
     const { app } = await setup()
     const res = await patchBody(app, { defaultModel: 'gpt-5' })

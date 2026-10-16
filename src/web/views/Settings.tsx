@@ -212,7 +212,7 @@ export function Settings() {
 
   // 挂在吸底保存条上（此前是文档最末端的独立条，3500px+ 的表单里永远看不见）。
   const RESTART_NOTICE = needsRestart
-    ? '配置已保存但未生效：需重启 c0de serve，请在启动它的终端按 Ctrl+C 后重新运行（安全 / 权限超时 / 更新 / 插件属启动期配置）。'
+    ? '配置已保存但未生效：需重启 c0de serve，请在启动它的终端按 Ctrl+C 后重新运行（安全 / 权限超时 / 更新 / 插件 / MCP 服务器属启动期配置）。'
     : null
 
   // P2-10：dirty 时切换作用域会丢弃草稿——ConfirmDialog 二次确认，

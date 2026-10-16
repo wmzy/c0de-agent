@@ -62,7 +62,8 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
       <span className={mcpNotice} data-testid="mcp-scope-notice">
         全局作用域的服务器始终连接；项目作用域（随 git clone 传播的任意命令执行面）仅在
         项目被显式信任后连接。连接成功即向 AI 暴露其工具（权限 ask：每次调用需确认）；
-        连接失败只跳过该服务器并告警。
+        连接失败只跳过该服务器并告警。注意：服务器只在 c0de serve 启动时注册一次，
+        此处增删改保存后需重启 c0de serve 才生效。
       </span>
       {mcpServers.map((server, index) => (
         // 受控表单列表用 index 作 key，避免输入 name 即重挂载失焦（同 providers 行）

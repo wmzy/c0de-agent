@@ -312,6 +312,11 @@ function createConfigRoute(ctx: ServerContext): Hono {
     //    用户把「确认超时」从 5 分钟改成 60 分钟、保存后回显「✓ 已保存」且没有任何
     //    重启提示，运行时仍按 5 分钟自动拒绝——改了等于没改，也没有线索能发现。
     //    （permission.defaultMode 不在其中：它走上面的运行时同步，立即生效。）
+    //  - mcpServers：registerMCPServers 只在 server.ts 启动时按 loadConfigScopes(ctx.cwd)
+    //    注册一次（PATCH 既不注册新服务器也不注销旧服务器）。此前这里没有这一项：
+    //    用户加一台服务器、保存后回显「✓ 已保存」，AI 的工具列表里永远没有它，
+    //    删掉/改掉的那台也照旧连着；只有「重启 c0de serve」能让配置生效，而页面
+    //    一个字都没提。与 plugins 同口径（同样是启动期一次性 init）。
     // 仅当写入影响运行中的服务级配置（服务启动目录项目或 global 作用域）时提示。
     const permissionPatch =
       typeof patch.permission === 'object' &&
@@ -327,6 +332,7 @@ function createConfigRoute(ctx: ServerContext): Hono {
       (patch.security !== undefined ||
         patch.update !== undefined ||
         patch.plugins !== undefined ||
+        patch.mcpServers !== undefined ||
         permissionNeedsRestart)
     return c.json({
       config: merged,
