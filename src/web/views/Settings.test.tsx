@@ -1549,6 +1549,54 @@ describe('Settings — JSON 模式与导入导出', () => {
     // diffConfig 的清除口径：null（JSON 不传 undefined）
     expect(patch.commitModel).toBeNull()
   })
+
+  /**
+   * 回归：JSON 视图里把某段写成 null（校验放行，语义同 diffConfig 的「删除该键」）
+   * 后切回表单，补全模板此前把这个 null 原样下发——归一化后 merged.compaction 为
+   * null，面板按 Config 假定形状（compaction.compactionModel）当场抛错，整页被
+   * ErrorBoundary 换成「页面渲染出错」，刚敲的草稿一起丢失。
+   */
+  it('JSON 里的 null 段切回表单不崩页：回落到当前值', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig({ ...mockConfig }))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{"compaction":null,"theme":"dark"}' } })
+    // null 段是合法的（清除该键），不该有结构错误挡住切回
+    expect(screen.queryByTestId('settings-json-error')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    // 表单仍完整可渲染，且该段按已加载配置回落（表单没有「未设置」这个可渲染值）
+    expect((screen.getByLabelText('保留 Token') as HTMLInputElement).value).toBe('1000')
+  })
+
+  /**
+   * 回归：commitModel 是可选键，当前配置没设过它时，JSON 里的 `"commitModel": null`
+   * 会原样进表单（模板里没有形状可校验）。复选框此前只判 !== undefined，勾着；
+   * 下面那个 provider/model 选择器又因为 null 是 falsy 不渲染——一个勾着却无从
+   * 选择的开关。
+   */
+  it('JSON 里的 "commitModel": null（当前配置未设置该键）在表单里显示为未勾选', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const base = { ...mockConfig }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(base))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: JSON.stringify({ ...base, commitModel: null }) } })
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    expect((screen.getByLabelText(/一键提交使用独立模型/) as HTMLInputElement).checked).toBe(false)
+  })
 })
 
 describe('Settings — 完整配置表单覆盖', () => {

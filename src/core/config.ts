@@ -67,32 +67,50 @@ const DEFAULT_CONFIG: Config = {
   theme: 'system',
 }
 
-function mergeConfig(...configs: (Partial<Config> | undefined)[]): Config {
-  const result: Config = structuredClone(DEFAULT_CONFIG)
-  for (const cfg of configs) {
-    if (!cfg) continue
-    for (const key of Object.keys(cfg) as (keyof Config)[]) {
-      // 自持的原型链键（配置文件里手写/克隆仓库自带的 `"__proto__"`）：赋值会改写
-      // 合并结果的原型而非写入键——合并视图凭空多出继承属性，且不可枚举/不可落盘。
-      if (isPrototypeKey(key)) continue
-      const val = cfg[key]
-      if (val === undefined) continue
-      const current = result[key]
-      if (
-        val !== null &&
-        typeof val === 'object' &&
-        !Array.isArray(val) &&
-        current !== null &&
-        typeof current === 'object' &&
-        !Array.isArray(current)
-      ) {
-        ;(result as Record<string, unknown>)[key] = { ...current, ...val }
-      } else {
-        ;(result as Record<string, unknown>)[key] = val
-      }
+/**
+ * 只合并「有值」的键：`null` 与 `undefined` 同义——此作用域没有覆盖该键，合并视图
+ * 回落到默认值/另一作用域。
+ *
+ * 为什么必须跳过 `null`（此前直接写入结果）：Config 各字段都没有合法的 null 值，
+ * `null` 只是「unset」标记（见 applyScopedPatch 的说明：写入入口一律把 null 当删除）。
+ * 手工编辑过的配置文件里留着一个 `"tools": null` 时，旧行为让它原样进合并视图，
+ * 于是 `config.tools.enabled` 变成 null，消费方 `null.includes(...)` 直接 TypeError：
+ * 服务端读配置的路径与设置页一起崩——设置页更惨，整页被 ErrorBoundary 换成
+ * 「页面渲染出错」，草稿一并丢失，而且每次打开都重演（文件还在）。
+ * 嵌套键同理（`"tools": {"enabled": null}`），故这里递归合并普通对象而不是
+ * `{...current, ...val}` 一层展开。
+ */
+function mergeDefined(target: Record<string, unknown>, patch: Record<string, unknown>): void {
+  for (const key of Object.keys(patch)) {
+    // 自持的原型链键（配置文件里手写/克隆仓库自带的 `"__proto__"`）：赋值会改写
+    // 合并结果的原型而非写入键——合并视图凭空多出继承属性，且不可枚举/不可落盘。
+    if (isPrototypeKey(key)) continue
+    const val = patch[key]
+    if (val === null || val === undefined) continue
+    const current = target[key]
+    if (typeof val === 'object' && !Array.isArray(val) && isPlainObjectValue(current)) {
+      // 嵌套层复制后合并：目标对象可能是调用方（如 loadConfigScopes 返回的
+      // scopes.global）持有的解析结果，就地改写会污染它。
+      const next = { ...(current as Record<string, unknown>) }
+      mergeDefined(next, val as Record<string, unknown>)
+      target[key] = next
+    } else {
+      target[key] = val
     }
   }
-  return result
+}
+
+function isPlainObjectValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function mergeConfig(...configs: (Partial<Config> | undefined)[]): Config {
+  const result = structuredClone(DEFAULT_CONFIG) as unknown as Record<string, unknown>
+  for (const cfg of configs) {
+    if (!cfg) continue
+    mergeDefined(result, cfg as Record<string, unknown>)
+  }
+  return result as unknown as Config
 }
 
 function readJsonIfExists(path: string): Partial<Config> | undefined {

@@ -4,7 +4,7 @@ import { ProviderModelSelect } from '@/components/settings/ProviderModelSelect.j
 import { checkRow, section, sectionTitle } from '@/components/settings/styles.js'
 
 interface GitPanelProps {
-  /** commitModel 配置（undefined 表示用默认模型）。 */
+  /** commitModel 配置（undefined / null 都表示用默认模型；null 是 JSON 视图的「清除该键」写法）。 */
   commitModel: Config['commitModel']
   /** 候选 provider 列表（用于 commit 模型的 provider 下拉）。 */
   providers: ProviderConfig[]
@@ -28,9 +28,12 @@ function GitPanel({
     <div className={section}>
       <h2 className={sectionTitle}>Git 提交</h2>
       <label className={checkRow}>
+        {/* null 与 undefined 同义（JSON 视图里 `"commitModel": null` = 清除该键）：只判
+            undefined 会让复选框在「已清除」的状态下显示勾选，而下面的 provider/model
+            选择器又因为是 falsy 不渲染——勾着却无从选择。 */}
         <input
           type="checkbox"
-          checked={cm !== undefined}
+          checked={cm !== undefined && cm !== null}
           onChange={(e) =>
             onCommitModelChange({
               commitModel: e.target.checked
