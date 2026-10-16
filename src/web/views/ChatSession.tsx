@@ -684,10 +684,14 @@ export function ChatSession({
         retryPending={resendPending}
         onPause={agent.pause}
         onResume={() => {
-          // 服务端暂停（权限超时兜底）：乐观清除标记，resume 端点真正恢复 run；
-          // status_change(running) 事件随后复核状态。
-          chat.clearRunPaused()
-          agent.resume()
+          // 只有 resume 真被受理才撤下暂停标记：它是「点一下」触发的网络往返，
+          // 而 run 在服务端确实停在暂停点。此前先乐观清除——请求失败（500 /
+          // 网络中断 / 占位期 409）时，服务端 run 永远不会自行继续，横幅与顶栏
+          // 的「恢复」却一起消失：界面宣称对话在跑、实际一动不动，新消息还会撞
+          // 409「该会话已有进行中的对话」，而恢复入口已经没了，只能刷新页面。
+          void agent.resume().then((resumed) => {
+            if (resumed) chat.clearRunPaused()
+          })
         }}
         onSteer={chat.steer}
         paused={agent.paused || chat.runPaused}
@@ -903,8 +907,10 @@ export function ChatSession({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    chat.clearRunPaused()
-                    agent.resume()
+                    // 同上：恢复未生效时横幅必须留着（它同时是唯一的恢复入口）。
+                    void agent.resume().then((resumed) => {
+                      if (resumed) chat.clearRunPaused()
+                    })
                   }}
                   title="恢复 run：从暂停点继续执行"
                 >
@@ -932,8 +938,10 @@ export function ChatSession({
                   onClick={() => {
                     // 活跃 run 仍注册在服务端（页面刷新场景），resume 端点可真正恢复；
                     // 服务重启导致的 paused 已由 status 端点转为 interrupted（走重发路径）。
-                    setColdStartPaused(false)
-                    agent.resume()
+                    // 失败时横幅留着：它说明 run 仍停在暂停点，也是唯一能恢复它的入口。
+                    void agent.resume().then((resumed) => {
+                      if (resumed) setColdStartPaused(false)
+                    })
                   }}
                 >
                   继续对话

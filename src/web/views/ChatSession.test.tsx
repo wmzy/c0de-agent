@@ -6,7 +6,7 @@
 
 import { createRoutes, MemoryRouter, TypedLink, useMatched, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { draftStorageKey } from '@/composer/draft.js'
@@ -45,6 +45,7 @@ const mockUseChatState = {
   attachedRun: false,
   attachError: null as string | null,
   runPaused: false,
+  runPauseReason: null as string | null,
   interrupted: false,
   pendingTrust: null,
   // sendMessage 结果：由失败路径同步写入的 ref（值字段在 .then 里恒为旧值）。
@@ -55,7 +56,12 @@ const mockUseChatState = {
   steer: vi.fn(),
   pause: vi.fn(),
   resume: vi.fn(),
-  clearRunPaused: vi.fn(),
+  // 撤下暂停标记在真实实现里是 reducer 动作（会连带清掉 runPauseReason）。
+  // 这里让 mock 真的改自己的状态，断言才能落在 DOM 上而不是「某个函数被调过」。
+  clearRunPaused: vi.fn(() => {
+    mockUseChatState.runPaused = false
+    mockUseChatState.runPauseReason = null
+  }),
   reopenPermission: vi.fn(),
   denyTimedOutPermission: vi.fn(),
   attach: vi.fn().mockResolvedValue(undefined),
@@ -67,10 +73,13 @@ const mockUseChatState = {
 }
 vi.mock('@/hooks/useChat.js', () => ({ useChat: () => mockUseChatState }))
 
+// useAgent 的 resume 由用例驱动返回值：ChatSession 的三个「恢复」入口据它决定
+// 要不要撤下暂停横幅，hoisted 出去才能在用例里改。
+const mockAgentResume = vi.hoisted(() => vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)))
 vi.mock('@/hooks/useAgent.js', () => ({
   useAgent: () => ({
     pause: vi.fn(),
-    resume: vi.fn(),
+    resume: mockAgentResume,
     resetPaused: vi.fn(),
     paused: false,
     busy: false,
@@ -1000,5 +1009,87 @@ describe('ChatSession — Shake 提交在途锁', () => {
     const btn = await screen.findByTestId('shake-submit')
     expect((btn as HTMLButtonElement).disabled).toBe(false)
     expect(btn.textContent).toContain('提交 Shake')
+  })
+})
+
+/**
+ * 「恢复」失败时暂停横幅必须留着。
+ *
+ * 缺陷：三个「恢复」入口都先乐观撤下暂停标记再发请求。resume 是一次网络往返，
+ * 失败（500 / 网络中断 / 占位期 409）时服务端 run 仍停在暂停点：横幅与顶栏的
+ * 「恢复」一起消失，界面宣称对话在跑却永远不会继续，新消息还会撞 409
+ * 「该会话已有进行中的对话」——唯一能把它救回来的入口已经没了，只能刷新页面。
+ */
+describe('ChatSession — 恢复失败时保留暂停横幅', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    mockUseChatState.runPaused = true
+    mockUseChatState.isStreaming = true
+    mockUseChatState.runPauseReason = '权限确认超时：该工具已被自动拒绝，对话已暂停。'
+  })
+
+  afterEach(() => {
+    mockUseChatState.runPaused = false
+    mockUseChatState.runPauseReason = null
+    mockUseChatState.isStreaming = false
+  })
+
+  it('resume 未生效时横幅与「恢复」按钮都留在屏幕上', async () => {
+    mockAgentResume.mockResolvedValue(false)
+    await renderSession()
+    await screen.findByTestId('run-paused-banner')
+
+    fireEvent.click(within(screen.getByTestId('run-paused-banner')).getByRole('button'))
+    await act(async () => {})
+    // 暂停标记是 mock 自己改的，重新渲染一次让组件读得到点击后的状态
+    cleanup()
+    await renderSession()
+
+    // 横幅与其中的「恢复」按钮都还在：这是 run 仍停在暂停点的唯一说明与唯一入口
+    expect(within(screen.getByTestId('run-paused-banner')).getByRole('button')).toBeInTheDocument()
+  })
+
+  /**
+   * 刷新后由 /status 发现 paused 的那条路径更没有退路：此时 isStreaming=false，
+   * 顶栏根本不渲染「恢复」按钮，横幅是唯一入口——撤掉它＝run 仍停在服务端暂停点，
+   * 而页面上再没有任何能把它继续的控件，只能刷新重来。
+   */
+  it('冷启动暂停横幅：resume 未生效时横幅与「继续对话」都留着', async () => {
+    vi.mocked(sessionAPI.status).mockResolvedValue({ _tag: 'paused' } as never)
+    mockAgentResume.mockResolvedValue(false)
+    mockUseChatState.runPaused = false
+    mockUseChatState.isStreaming = false
+    await renderSession()
+    await screen.findByTestId('paused-banner')
+
+    fireEvent.click(screen.getByRole('button', { name: '继续对话' }))
+    await act(async () => {})
+
+    // 暂停态来自组件内部 state，撤掉它本身就是一次 React 重渲：横幅是否还在
+    // 直接反映 resume 有没有被受理
+    expect(screen.getByTestId('paused-banner')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('paused-banner')).getByRole('button', { name: '继续对话' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('resume')).toBeNull()
+  })
+
+  it('resume 生效后撤下横幅（不能永远挂着）', async () => {
+    mockAgentResume.mockResolvedValue(true)
+    await renderSession()
+    await screen.findByTestId('run-paused-banner')
+
+    fireEvent.click(within(screen.getByTestId('run-paused-banner')).getByRole('button'))
+    await act(async () => {})
+    cleanup()
+    await renderSession()
+
+    expect(screen.queryByTestId('run-paused-banner')).toBeNull()
   })
 })

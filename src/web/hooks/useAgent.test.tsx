@@ -86,6 +86,33 @@ describe('useAgent 暂停/恢复', () => {
     expect(result.current.error).toContain('没有可恢复的运行')
   })
 
+  // 回归：resume() 的返回值是调用点（ChatSession 的三个「恢复」按钮）唯一的判据
+  // ——它据此决定要不要撤下暂停横幅。请求抛错或服务端回 {resumed:false} 时 run 仍
+  // 停在暂停点，撤掉横幅＝界面宣称「在跑」而实际不会继续，且唯一能恢复的入口
+  // 一起消失（只能刷新页面重来，新消息还会撞 409）。
+  it('resume() 把「是否真的恢复」回传给调用点（失败与未受理都回假）', async () => {
+    const { result } = renderHook(() => useAgent('s1'))
+    let ok: boolean | undefined
+
+    vi.mocked(agentAPI.resume).mockRejectedValue(new Error('服务未启动'))
+    await act(async () => {
+      ok = await result.current.resume()
+    })
+    expect(ok).toBeFalsy()
+
+    vi.mocked(agentAPI.resume).mockResolvedValue({ resumed: false })
+    await act(async () => {
+      ok = await result.current.resume()
+    })
+    expect(ok).toBeFalsy()
+
+    vi.mocked(agentAPI.resume).mockResolvedValue({ resumed: true })
+    await act(async () => {
+      ok = await result.current.resume()
+    })
+    expect(ok).toBe(true)
+  })
+
   it('下一次操作开始时清掉上一次的旧原因', async () => {
     vi.mocked(agentAPI.pause).mockRejectedValueOnce(new Error('服务未启动'))
     const { result } = renderHook(() => useAgent('s1'))

@@ -28,24 +28,28 @@ export function useAgent(sessionId: string) {
     setError(null)
   }, [sessionId])
 
-  const run = useCallback(async (fn: (isStale: () => boolean) => Promise<unknown>) => {
-    const gen = genRef.current
-    // 世代不同 = 这次操作属于上一条会话，它的一切落地（失败原因、暂停态、busy）
-    // 都不属于当前界面。
-    const isStale = () => genRef.current !== gen
-    setBusy(true)
-    setError(null)
-    try {
-      await fn(isStale)
-    } catch (e) {
-      if (isStale()) return
-      const message =
-        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : null)
-      setError(message || '操作失败，请重试')
-    } finally {
-      if (!isStale()) setBusy(false)
-    }
-  }, [])
+  const run = useCallback(
+    async <T>(fn: (isStale: () => boolean) => Promise<T>): Promise<T | undefined> => {
+      const gen = genRef.current
+      // 世代不同 = 这次操作属于上一条会话，它的一切落地（失败原因、暂停态、busy）
+      // 都不属于当前界面。
+      const isStale = () => genRef.current !== gen
+      setBusy(true)
+      setError(null)
+      try {
+        return await fn(isStale)
+      } catch (e) {
+        if (isStale()) return undefined
+        const message =
+          (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : null)
+        setError(message || '操作失败，请重试')
+        return undefined
+      } finally {
+        if (!isStale()) setBusy(false)
+      }
+    },
+    [],
+  )
 
   return {
     busy,
@@ -69,13 +73,16 @@ export function useAgent(sessionId: string) {
     resume: () =>
       run(async (isStale) => {
         const res = await agentAPI.resume(sessionId)
-        if (isStale()) return
+        if (isStale()) return false
         if (!res.resumed) {
           setPaused(true)
           setError('没有可恢复的运行——对话可能已经结束或尚未开始')
-          return
+          return false
         }
         setPaused(false)
+        // 调用点据此决定要不要撤下暂停横幅：失败时服务端 run 仍停在暂停点，
+        // 撤掉横幅＝界面宣称「在跑」而实际不会继续，且唯一能恢复的入口一起消失。
+        return true
       }),
     /** 新一轮发送前重置暂停态（见 ChatView.handleSend）。 */
     resetPaused: () => setPaused(false),
