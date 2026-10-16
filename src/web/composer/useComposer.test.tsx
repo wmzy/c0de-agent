@@ -88,6 +88,25 @@ describe('useComposer 图片添加', () => {
     expect(result.current.images).toHaveLength(6)
     expect(result.current.imageError).toContain('最多添加')
   })
+
+  /**
+   * 回归：一次拖放 / 一次粘贴里的多张图在同一次事件里连续校验，彼此之间不会
+   * 重渲染，渲染期赋值的 imagesRef 镜像始终是同一个旧值——N 张全部按「当前 0 张」
+   * 通过校验，6 张上限形同虚设，超限载荷照样进 PGLite / SSE / provider 请求，
+   * 且一句提示都没有。（此前用例逐张添加、每次 act 之间都 flush，恰好绕开了
+   * 这条路径。）
+   */
+  it('一次批量添加（拖放/粘贴多张）同样受 6 张上限约束', async () => {
+    const { result } = renderComposer()
+    act(() => {
+      for (let i = 0; i < 9; i++) {
+        result.current.addImage(imageFile(`batch${i}.png`))
+      }
+    })
+    await flushImageRead()
+    expect(result.current.images).toHaveLength(6)
+    expect(result.current.imageError).toContain('最多添加')
+  })
 })
 
 // ── pill 保留回归 ──

@@ -126,6 +126,9 @@ function useComposer({
    *  readImagePart 等副作用写进去会让同一张图被添加两次）。 */
   const imagesRef = useRef<ImagePart[]>([])
   imagesRef.current = images
+  /** 在途读取中的图片张数：见 addImageFile 的口径说明（数量上限必须按
+   *  「已入列 + 读取中」计，且名额在校验通过时就同步占住）。 */
+  const pendingImagesRef = useRef(0)
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
   const [subcommandCmd, setSubcommandCmd] = useState<string | null>(null)
@@ -313,6 +316,9 @@ function useComposer({
   useEffect(() => {
     // 作用域世代自增：在途请求落地时必须先确认还在同一个作用域（见 scopeGenRef）。
     scopeGenRef.current += 1
+    // 上一作用域在途的图片读取一律作废（落地时世代不符会被丢弃），名额计数随之
+    // 清零，否则这些作废的读取会在返回时把计数扣成负数、白白放行更多附件。
+    pendingImagesRef.current = 0
     draftRestoredRef.current = false
     const stored = draftScope ? loadDraft(draftScope) : null
     setPromptExternal(stored?.prompt ?? DEFAULT_PROMPT, true)
@@ -483,14 +489,37 @@ function useComposer({
 
   /** 校验并读取图片后追加（拖拽/选择/粘贴共用）。
    *  校验与读取都在 setImages 之外完成：更新器内做副作用会在 StrictMode /
-   *  并发渲染重放时执行两次（同一张图被添加两次、读取两次）。 */
+   *  并发渲染重放时执行两次（同一张图被添加两次、读取两次）。
+   *
+   *  张数按「已入列 + 在途读取中」计，且名额在**校验通过时**就同步占住：
+   *  一次拖放/粘贴里的多张图在同一次事件里连续校验，彼此之间不会重渲染，
+   *  渲染期赋值的 imagesRef 镜像始终是同一个旧值——校验全按同一张数过，
+   *  6 张上限因此形同虚设（拖 7 张进来，7 张全部入列，且一句提示都没有），
+   *  超限载荷照样进 PGLite / SSE / provider 请求。
+   *
+   *  读取落地时同样同步写镜像再 setState：pending 减 1 与 images 加 1 之间不留
+   *  计数空档，否则紧接着的那次添加会读到偏小的数、又放行一张。
+   *  作用域世代校验沿用本 hook 既有口径（见 scopeGenRef）：切换会话/项目后才回来
+   *  的图片属于上一个作用域，不能落进当前的附件栏。 */
   const addImageFile = useCallback((file: File) => {
-    const err = validateImage(file, imagesRef.current.length)
+    const inFlight = pendingImagesRef.current
+    const err = validateImage(file, imagesRef.current.length + inFlight)
     setImageError(err)
     if (err) return
+    pendingImagesRef.current = inFlight + 1
+    const gen = scopeGenRef.current
     void readImagePart(file)
-      .then((part) => setImages((cur) => [...cur, part]))
-      .catch(() => setImageError('读取图片失败'))
+      .then((part) => {
+        pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
+        if (gen !== scopeGenRef.current) return
+        const next = [...imagesRef.current, part]
+        imagesRef.current = next
+        setImages(next)
+      })
+      .catch(() => {
+        pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
+        setImageError('读取图片失败')
+      })
   }, [])
 
   // 添加图片（拖拽/选择）
