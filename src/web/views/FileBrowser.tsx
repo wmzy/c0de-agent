@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
@@ -341,10 +341,21 @@ export function FileBrowser({
   })
   const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
 
+  /**
+   * 树世代：切换项目时自增。在途的懒加载请求按世代校验后才允许落盘——否则上一个
+   * 项目的目录列表会并进新项目的树：dirPath 是项目内相对路径（'src'），两边同名
+   * 目录合并「恰好成功」、不报任何错，而 handleToggle 只在 children === undefined
+   * 时才加载，于是这份外来清单被永久缓存到刷新为止，点进去还是按新项目读同路径
+   * 文件——看到的是另一个仓库的内容。
+   */
+  const treeGenRef = useRef(0)
+
   // 切换项目时重置树，加载新项目根目录
   // biome-ignore lint/correctness/useExhaustiveDependencies: rootReload 是重试令牌——重试按钮自增它来重跑这次加载，effect 体里不读它
   useEffect(() => {
     let cancelled = false
+    // 世代号先自增：在途的懒加载请求返回时据此刻号认领自己的世代，一律丢弃。
+    treeGenRef.current += 1
     setTreeRoot(null)
     setExpanded(new Set())
     setLoadingPaths(new Set())
@@ -389,6 +400,7 @@ export function FileBrowser({
   /** 懒加载某个目录的子项（失败落到 loadErrors，可就地重试）。 */
   const loadChildren = useCallback(
     async (dirPath: string) => {
+      const gen = treeGenRef.current
       setLoadingPaths((prev) => new Set(prev).add(dirPath))
       setLoadErrors((prev) => {
         if (!prev.has(dirPath)) return prev
@@ -398,10 +410,13 @@ export function FileBrowser({
       })
       try {
         const entries = await fileAPI.list(dirPath, projectId)
+        // 世代已变（期间切换了项目）：这份列表属于上一个项目，丢弃。
+        if (gen !== treeGenRef.current) return
         setTreeRoot((prev) =>
           prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
         )
       } catch (err) {
+        if (gen !== treeGenRef.current) return
         // APIError 是结构体而非 Error 子类，必须结构化取 message
         // （同上方 rootError / searchErrorMessage 口径）。
         setLoadErrors((prev) =>
@@ -436,7 +451,12 @@ export function FileBrowser({
       }
       // 首次展开：懒加载子目录
       const needLoad = treeRoot ? findNode(treeRoot, dirPath)?.children === undefined : false
-      if (needLoad) await loadChildren(dirPath)
+      if (needLoad) {
+        const gen = treeGenRef.current
+        await loadChildren(dirPath)
+        // 等待期间切换了项目：展开态已在切换时复位，别把上一个项目的路径写回来。
+        if (gen !== treeGenRef.current) return
+      }
       setExpanded((prev) => new Set(prev).add(dirPath))
     },
     [expanded, treeRoot, loadChildren],

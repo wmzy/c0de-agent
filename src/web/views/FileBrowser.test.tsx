@@ -428,4 +428,39 @@ describe('FileBrowser 切项目复位', () => {
     expect(screen.queryByRole('list', { name: '搜索结果' })).toBeNull()
     expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
   })
+
+  /**
+   * 回归：懒加载目录的请求在切项目之后才回来。
+   *
+   * dirPath 是项目内相对路径（'src'），两个项目的同名目录合并「恰好成功」、不报
+   * 任何错；而 handleToggle 只在 children === undefined 时才加载，这份上一个项目的
+   * 清单于是被永久缓存到刷新为止：树里列的是另一个仓库的文件名，点进去又按新项目
+   * 读同路径文件——用户在一个项目里看着另一个项目的文件树。
+   */
+  it('切换项目后在途返回的目录列表不并进新项目的树', async () => {
+    let pendingSrc: { resolve: (entries: FileEntry[]) => void } | null = null
+    vi.mocked(fileAPI.list).mockImplementation((dir: string) => {
+      if (dir === '.') return Promise.resolve(ROOT_ENTRIES)
+      if (dir === 'src') {
+        return new Promise<FileEntry[]>((resolve) => {
+          pendingSrc = { resolve }
+        })
+      }
+      return Promise.resolve([])
+    })
+
+    const switchTo = renderSwitchable('p1')
+    await screen.findByTestId('node-src')
+    fireEvent.click(screen.getByTestId('node-src')) // 展开 src：请求发出，保持在途
+
+    switchTo('p2')
+    await waitFor(() => expect(fileAPI.list).toHaveBeenCalledWith('.', 'p2'))
+
+    pendingSrc?.resolve([{ name: 'only-in-p1.ts', type: 'file' }])
+
+    // 新项目的树里不得出现上一个项目的条目；src 仍是「未加载」，展开时会重新拉取
+    await waitFor(() => expect(screen.getByTestId('node-src')).toBeInTheDocument())
+    expect(screen.queryByTestId('node-src/only-in-p1.ts')).toBeNull()
+    expect(fileAPI.list).not.toHaveBeenCalledWith('src', 'p2')
+  })
 })
