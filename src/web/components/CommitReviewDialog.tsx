@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { CopyButton } from '@/components/CopyButton.js'
 import { Dialog } from '@/components/Dialog.js'
 
 const bodyText = css`
@@ -51,6 +52,40 @@ const primaryBtn = css`
   color: var(--c0de-warning-on-solid, #fff);
 `
 
+const sectionLabel = css`
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+  margin-bottom: 4px;
+`
+
+/** commit message 原样呈现（保留换行与缩进）：这是要被审阅的提交内容本身，
+ *  压成一行摘要等于把「审阅」降级成「扫一眼标签」。 */
+const messageBox = css`
+  background: var(--haze-color-bg-subtle);
+  border-radius: 4px;
+  border: 1px solid var(--haze-color-border);
+  padding: 8px 12px;
+  margin: 0;
+  font-family: var(--haze-font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--haze-color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 30vh;
+  overflow-y: auto;
+`
+
+const messageBoxWrap = css`
+  margin-bottom: 12px;
+`
+
+const messageActions = css`
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+`
+
 const errorBar = css`
   display: flex;
   gap: 6px;
@@ -72,7 +107,7 @@ const errorBar = css`
  */
 export function CommitReviewDialog({
   suggestions,
-  message: _message,
+  message,
   busy = false,
   error = null,
   onAppendIgnore,
@@ -80,6 +115,9 @@ export function CommitReviewDialog({
   onCancel,
 }: {
   suggestions: string[]
+  /** 这次提交将写入的 commit message。必须渲染在弹框里：三个按钮里有两个
+   *  会真的落库（force / append-ignore），用户却只能看到可疑文件清单——
+   * 提交历史里出现一条自己没审过的 message，事后无从发现。 */
   message: string
   /** 提交请求在飞：三颗按钮禁用，弹层不给关闭出口（防止重复 commit / 丢掉失败原因）。 */
   busy?: boolean
@@ -134,6 +172,24 @@ export function CommitReviewDialog({
         </div>
       }
     >
+      {/* 提交内容先于「可疑文件」呈现：这是一个审阅动作，用户要判的是
+          「这条 message 我认不认」，可疑文件清单只是佐证。message 为空
+          （服务端没给）时不画空框，只提示缺失。 */}
+      <div className={sectionLabel}>将要写入的 commit message</div>
+      {message ? (
+        <div className={messageBoxWrap}>
+          <pre className={messageBox} data-testid="commit-review-message">
+            {message}
+          </pre>
+          <div className={messageActions}>
+            <CopyButton text={message} label="复制 message" />
+          </div>
+        </div>
+      ) : (
+        <div className={bodyText} data-testid="commit-review-message-empty">
+          未生成 commit message（提交后会由 Git 生成一条默认信息）。
+        </div>
+      )}
       <div className={bodyText}>AI 检查变更内容后认为以下文件可能应该加入 .gitignore：</div>
       <div className={fileList}>
         {suggestions.map((s) => (

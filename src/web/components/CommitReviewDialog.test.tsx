@@ -19,6 +19,44 @@ describe('CommitReviewDialog', () => {
     expect(screen.getByText('dist/')).toBeInTheDocument()
   })
 
+  // 回归：message 此前被解构成 `_message` 丢弃，弹框只列可疑文件。三颗按钮里
+  // 有两颗（force / append-ignore）会真的落库，用户却在提交前读不到将要写入
+  // 的 message，提交历史里于是出现一条自己没审过的信息。
+  it('渲染将要写入的 commit message（保留换行）并排在可疑文件之前', () => {
+    render(
+      <CommitReviewDialog
+        suggestions={['.env']}
+        message={'fix(web): 让审查弹框能被审阅\n\n批量键不该越过筛选改整张表。'}
+        onAppendIgnore={vi.fn()}
+        onForce={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+    const box = screen.getByTestId('commit-review-message')
+    expect(box.textContent).toContain('fix(web): 让审查弹框能被审阅')
+    expect(box.textContent).toContain('批量键不该越过筛选改整张表。')
+
+    const dialog = screen.getByTestId('commit-review-dialog')
+    const order = Array.from(dialog.querySelectorAll('[data-testid]')).map((e) =>
+      e.getAttribute('data-testid'),
+    )
+    expect(order.indexOf('commit-review-message')).toBeLessThan(order.indexOf('copy-button'))
+  })
+
+  it('message 为空时说明缺失，不渲染空白框', () => {
+    render(
+      <CommitReviewDialog
+        suggestions={['.env']}
+        message=""
+        onAppendIgnore={vi.fn()}
+        onForce={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId('commit-review-message')).toBeNull()
+    expect(screen.getByTestId('commit-review-message-empty')).toBeTruthy()
+  })
+
   it('点击「加入 .gitignore 再提交」调用 onAppendIgnore', () => {
     const onAppendIgnore = vi.fn()
     render(
