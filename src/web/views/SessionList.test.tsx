@@ -451,6 +451,37 @@ describe('SessionList 切项目', () => {
     })
     expect(screen.getByTestId('node-p2-root')).toBeInTheDocument()
   })
+
+  /**
+   * 回归：切项目后删除确认弹窗原样留在屏幕上，而它冻结的是**上一个项目**的会话。
+   *
+   * 缺陷：弹窗类状态（pendingDelete / permPrompt / importChoice）不在项目切换
+   * 的复位清单里。在 p2 页面按「移入回收站」，删掉的是 p1 的会话，且当前页面
+   * 毫无变化——onDeleted 只在删的正是当前打开会话时才导航，于是用户只看到
+   * 「点了没反应」，损失要切回 p1 才看得见。同理跟着带过去的还有权限迁移确认框
+   * 里那枚「随迁权限状态（导入后这些工具免确认执行）」的勾选。
+   *
+   * 待删对象无法在切项目后重新推导（列表已经是新项目的了），所以只能整体复位
+   * ——与 ChatSession 切会话复位导出弹窗同口径。
+   */
+  it('换项目后删除确认弹窗一并关闭，不会把上一个项目的会话带走', async () => {
+    const sent: string[] = []
+    hoisted.deleteMutate = (id: string) => sent.push(id)
+    render(<Switchable />)
+    await waitFor(() => expect(screen.getByTestId('delete-root-id')).toBeInTheDocument())
+
+    // 在 p1 打开删除确认
+    fireEvent.click(screen.getByTestId('delete-root-id'))
+    expect(screen.getByTestId('delete-session-dialog')).toBeInTheDocument()
+
+    // 切到 p2（复用同一 SessionList 实例，只换 projectId）
+    hoisted.tree = [node(makeSession('p2-root', 'p2 会话', 'p2'))]
+    fireEvent.click(screen.getByTestId('switch-project'))
+
+    await waitFor(() => expect(screen.queryByTestId('delete-session-dialog')).toBeNull())
+    expect(screen.queryByTestId('delete-session-confirm')).toBeNull()
+    expect(sent).toEqual([])
+  })
 })
 
 describe('RecycleBin 读失败态', () => {

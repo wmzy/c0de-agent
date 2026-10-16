@@ -264,24 +264,6 @@ export function SessionList({
     return () => clearTimeout(t)
   }, [search])
 
-  // 切项目时清空按项目作用域的 UI 状态。
-  // ChatPage 对 /projects/:projectId（与会话子路由）复用同一组件实例，param
-  // 变化不会重新挂载 SessionList：搜索词、错误条、回收站页签都跟着上一个项目
-  // 过来了——新项目列表继续按旧查询过滤（报「无匹配会话」，看着像会话丢了），
-  // 失败横幅也钉在新项目上方。
-  const firstProjectRef = useRef(projectId)
-  useEffect(() => {
-    if (firstProjectRef.current === projectId) return
-    firstProjectRef.current = projectId
-    setSearch('')
-    setSearchDebounced('')
-    setDeleteError(null)
-    setRenameError(null)
-    setImportError(null)
-    setImportNotice(null)
-    setShowRecycle(false)
-  }, [projectId])
-
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
@@ -425,6 +407,38 @@ export function SessionList({
   const projectsErrMessage =
     (projectsErr as { message?: string } | null)?.message ??
     (projectsErr instanceof Error ? projectsErr.message : null)
+
+  // 切项目时清空按项目作用域的 UI 状态。
+  // ChatPage 对 /projects/:projectId（与会话子路由）复用同一组件实例，param
+  // 变化不会重新挂载 SessionList：搜索词、错误条、回收站页签都跟着上一个项目
+  // 过来了——新项目列表继续按旧查询过滤（报「无匹配会话」，看着像会话丢了），
+  // 失败横幅也钉在新项目上方。
+  //
+  // 弹窗类状态同样按项目收口，且后果比横幅更重：本文件的三个弹窗都把「要动哪个
+  // 对象」冻结在打开那一刻，切项目后没有任何一步会重新核对它属于哪个项目——
+  //  - 删除会话确认框：按「移入回收站」删掉的是**刚离开那个项目**的会话，而当前
+  //    页面毫无变化（onDeleted 只在删的是当前打开的会话时才导航），用户以为按钮
+  //    没反应，损失要切回去才看得见；
+  //  - 导入权限确认框：里面那个「随迁权限状态（导入后这些工具免确认执行）」复选框
+  //    的勾选是在上一个项目的语境里做出的决定，跟着带到新项目；
+  //  - 导入目标选择框：列出的是上一个项目的原项目与路径。
+  // 与 ChatSession 的切会话复位（导出弹窗/归档面板）同口径。
+  const firstProjectRef = useRef(projectId)
+  useEffect(() => {
+    if (firstProjectRef.current === projectId) return
+    firstProjectRef.current = projectId
+    setSearch('')
+    setSearchDebounced('')
+    setDeleteError(null)
+    setRenameError(null)
+    setImportError(null)
+    setImportNotice(null)
+    setShowRecycle(false)
+    setPendingDelete(null)
+    setPermPrompt(null)
+    setImportChoice(null)
+    setMigratePermissions(false)
+  }, [projectId])
 
   /** 执行导入：绑定目标项目后刷新树并跳转；notice 明示工具执行目录。 */
   const doImport = async (data: unknown, targetId: string, importPermissions: boolean) => {
