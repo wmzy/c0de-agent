@@ -66,6 +66,34 @@ describe('DangerConfirmDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  /**
+   * 空确认词 = 门禁失效。matched 是 typed === confirmWord，typed 初值就是空串，
+   * 于是弹层第一帧渲染出来的就是「输入「」以确认：」+ 已可点的红色按钮，
+   * 一次点击即永久删除。可达路径：标题为空的会话（POST /api/sessions 接受空
+   * title，CLI 建的会话就可能没有标题）在回收站里点「彻底删除」——真实浏览器实测
+   * description 为「将彻底删除「」及其 0 个派生会话」，确认键 disabled=false。
+   * 全空白的确认词（'   '）同理。
+   */
+  it('确认词为空时退回到按钮文案，确认键不会零确认可用', () => {
+    renderDialog({ confirmWord: '', confirmLabel: '彻底删除' })
+    const btn = screen.getByTestId('danger-confirm-btn') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(screen.getByText(/输入「彻底删除」以确认/)).toBeTruthy()
+
+    const input = screen.getByTestId('danger-confirm-input')
+    fireEvent.change(input, { target: { value: 'x' } })
+    expect(btn.disabled).toBe(true)
+    fireEvent.change(input, { target: { value: '彻底删除' } })
+    expect(btn.disabled).toBe(false)
+  })
+
+  it('确认词全为空白时同样退回按钮文案', () => {
+    renderDialog({ confirmWord: '   ', confirmLabel: '清空回收站' })
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: '   ' } })
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(true)
+  })
+
   // 删除项目失败时弹层继续显示（不再先关闭自己），原因必须与用户正在做的
   // 操作同框可见并被读屏播报——此前原因写在项目下拉里，下拉已关闭卸载。
   it('失败原因在弹层内可见并带 role=alert', () => {

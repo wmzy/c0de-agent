@@ -465,6 +465,13 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     setShowEmptyTrash(true)
   }
 
+  // 空标题会话（服务端允许空 title，CLI 建的会话就可能没有标题）此前在确认框里
+  // 渲染成「将彻底删除「」及其 …」，且确认词就是那个空串——门禁第一帧即可通关。
+  // 与 ProjectIndicator（项目名 ?? '未命名项目'）、BranchTree 的删除弹窗
+  // （标题 || '未命名会话'）同口径给出可读名字。
+  const purgeSessionTitle = removeTarget?.session.title || '未命名会话'
+  const purgeBoardName = boardRemoveTarget?.projectName || '未命名项目'
+
   return (
     <div>
       {error && (
@@ -913,8 +920,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
         <DangerConfirmDialog
           open={true}
           title="彻底删除会话"
-          description={`将彻底删除「${removeTarget.session.title}」及其 ${removeTarget.descendants} 个派生会话。`}
-          confirmWord={removeTarget.session.title}
+          description={`将彻底删除「${purgeSessionTitle}」及其 ${removeTarget.descendants} 个派生会话。`}
+          confirmWord={purgeSessionTitle}
           confirmLabel="彻底删除"
           onConfirm={() => {
             const id = removeTarget.session.id
@@ -928,8 +935,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
         <DangerConfirmDialog
           open={true}
           title="彻底删除看板"
-          description={`将彻底删除看板「${boardRemoveTarget.projectName}」及其 ${boardRemoveTarget.cardCount} 张卡片（来自已删除的项目，无法恢复）。`}
-          confirmWord={boardRemoveTarget.projectName}
+          description={`将彻底删除看板「${purgeBoardName}」及其 ${boardRemoveTarget.cardCount} 张卡片（来自已删除的项目，无法恢复）。`}
+          confirmWord={purgeBoardName}
           confirmLabel="彻底删除"
           onConfirm={() => {
             const board = boardRemoveTarget
