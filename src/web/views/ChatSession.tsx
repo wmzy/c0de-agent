@@ -790,6 +790,23 @@ export function ChatSession({
                 </Button>
               </div>
             )}
+            {/* 附着入口（本页没发起流、但服务端可能仍有 run 在跑）读状态连续失败：
+                界面此刻与「这条会话真的空闲」完全同形——没有运行横幅、没有终止键，
+                而服务端 run 可能仍在跑工具。用户在这个假空闲态下发消息只会撞
+                409「该会话已有进行中的对话」，一句与事实相反且**没有出口**的结论
+                （终止键不存在、恢复入口不存在）。所以必须说明「不知道」并给重试，
+                与上面 cold-start-error 同口径（两者是同一份 /status 的两个消费点）。 */}
+            {chat.attachError && !chat.isStreaming && (
+              <div className={interruptBanner} role="alert" data-testid="attach-error">
+                <span>
+                  无法确认该会话是否有进行中的对话：{chat.attachError}
+                  （若确实在运行，终止/恢复入口此刻不会显示，请重新检查后再操作）
+                </span>
+                <Button variant="outline" onClick={() => chat.retryAttach()}>
+                  重新检查
+                </Button>
+              </div>
+            )}
             {showInterruptBanner && !chat.isStreaming && (
               <div className={interruptBanner} data-testid="interrupt-banner">
                 {sessionMeta?.agentType === 'workflow' ? (

@@ -50,6 +50,12 @@ export type ChatState = {
   /** P1：后台附着——本组件实例未发起 SSE 流，但检测到会话有活跃 run
    *  （其他标签页启动 / 挂起期间切换页面后回来）。true 时显示运行态横幅。 */
   attachedRun: boolean
+  /** P1：附着入口读 GET /:id/status 连续失败的原因（null=没失败）。
+   *  与 error 分开：读失败时**不知道**有没有活跃 run，界面此刻与「真的空闲」完全
+   *  同形（没有运行横幅、没有终止键），用户发消息只会撞 409 RUN_ACTIVE——那是一条
+   *  与事实相反、且没有任何出口的结论。落在 error 上则会连带亮出「重试最后一条
+   *  消息」（重发），与「先确认 run 在不在」这个下一步对不上。 */
+  attachError: string | null
   /** 自动压缩发生后的提示（可关闭）。上下文被改写，用户应可知晓。 */
   compactionNotice: string | null
   /** 服务端暂停 run（权限确认超时兜底拒绝 / 成本预算超支后按配置暂停；
@@ -155,6 +161,8 @@ export type ChatActions = {
   clearCompactionNotice: () => void
   /** P1：附着后台 run——查询状态与挂起权限，重挂弹窗并轮询直到 run 结束。 */
   attach: () => Promise<void>
+  /** P1：附着入口读失败后的「重新检查」——复位重试计数并再跑一次 attach。 */
+  retryAttach: () => void
   reset: () => void
 }
 
@@ -173,6 +181,7 @@ export const INITIAL: ChatState = {
   interrupted: false,
   abortError: null,
   attachedRun: false,
+  attachError: null,
   compactionNotice: null,
   runPaused: false,
   runPauseReason: null,

@@ -38,6 +38,11 @@ const COMPACTION_SKIP_REASON: Record<string, string> = {
   nothing_to_compact: '没有可压缩的内容',
 }
 
+/** 附着入口读 GET /:id/status 失败时的自愈重试：3s 一次、最多 3 次，
+ *  之后才把原因摆到界面上（见 attach 的说明）。 */
+const ATTACH_MAX_ATTEMPTS = 3
+const ATTACH_RETRY_DELAY = 3000
+
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
@@ -63,6 +68,22 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const attachingRef = useRef(false)
   const pollGenRef = useRef(0)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * P1 附着入口的自愈重试（读 GET /:id/status 失败时）。
+   *
+   * attach 是「本页没发起流、但服务端确实有 run」的唯一入口，此前它把读失败
+   * `.catch(() => null)` 折叠成「没有 run」：一次 500 / 网络抖动就与真的空闲走同一条
+   * return，页面渲染成一个没有任何运行痕迹的会话，而服务端 run 仍在跑工具、改文件。
+   * 用户在这个假空闲态下发消息 → 409 RUN_ACTIVE「该会话已有进行中的对话」——一句与
+   * 事实相反、且没有任何出口的结论（没有终止键、没有恢复入口、attach 不会重试）。
+   * 与 pollAttachedRun 的读失败同款：先自愈重试，连续失败才把原因摆到界面上。
+   */
+  const attachGenRef = useRef(0)
+  const attachAttemptRef = useRef(0)
+  const attachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // attach 的自引用（重试要再调自己）：直接闭包引用自身在 TS 里是块级作用域前向引用，
+  // 走 ref 最省事，也顺带保证重试拿到的是最新一次渲染的闭包。
+  const attachRef = useRef<() => Promise<void>>(async () => {})
   // 本页已给出决定（确认/拒绝）的权限请求 id：confirm 乐观清空弹窗后，服务端
   // store 的消费有网络延迟，附着轮询的下一次复查会看到「仍在挂起」而把弹窗又弹
   // 回来（用户以为按钮没生效）。同一 toolCallId 只消费一次，记下即可。
@@ -95,6 +116,16 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     }
   }, [])
 
+  /** 停止附着入口的重试链（幂等：递增代数使在途定时器失效）。 */
+  const stopAttachRetry = useCallback(() => {
+    attachGenRef.current += 1
+    attachAttemptRef.current = 0
+    if (attachTimerRef.current) {
+      clearTimeout(attachTimerRef.current)
+      attachTimerRef.current = null
+    }
+  }, [])
+
   // 切换会话时重置本地流式状态；历史消息由调用方合并加载
   // P1：同时停止附着轮询并复位镜像 ref——挂起/附着态随会话切换整体作废。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅依赖 sessionId 触发重置
@@ -102,15 +133,21 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     // 先作废旧世代：在飞的流从此不再写 state（详见 genRef 注释）。
     genRef.current += 1
     stopPoll()
+    stopAttachRetry()
     streamingRef.current = false
     attachedRef.current = false
     attachingRef.current = false
     setState(INITIAL)
   }, [sessionId])
 
-  // 卸载时停止附着轮询：tick 链每轮自行续期，不清理的话组件卸载后仍会
+  // 卸载时停止附着轮询与重试链：tick 链每轮自行续期，不清理的话组件卸载后仍会
   // 持续请求 /status（暂停态下 run 可长期挂着，链无自然终止点）。
-  useEffect(() => stopPoll, [stopPoll])
+  useEffect(() => {
+    return () => {
+      stopPoll()
+      stopAttachRetry()
+    }
+  }, [stopPoll, stopAttachRetry])
 
   // 执行 SSE 流并归约事件；捕获 409 SEGMENT_BREAK_REQUIRED 时存入 pendingSegmentBreak。
   // SSE 流未收到 done 事件结束时标记 interrupted（服务重启等）；
@@ -761,6 +798,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       ...s,
       isStreaming: false,
       attachedRun: false,
+      // run 已结束＝状态重新是确定的：附着入口那次读失败的原因随之失效。
+      attachError: null,
       pendingPermission: null,
       permissionTimeout: null,
     }))
@@ -849,11 +888,42 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     // 若不拦截会并发多份查询与轮询。
     if (streamingRef.current || attachingRef.current) return
     attachingRef.current = true
+    const gen = attachGenRef.current
     try {
-      const st = await sessionAPI.status(sessionId).catch(() => null)
-      if (st?._tag !== 'running' && st?._tag !== 'paused') return
+      let st: Awaited<ReturnType<typeof sessionAPI.status>>
+      try {
+        st = await sessionAPI.status(sessionId)
+      } catch (err) {
+        if (gen !== attachGenRef.current) return
+        // 读失败 ≠ 没有活跃 run（见 attachAttemptRef 的说明）：先自愈重试，与
+        // pollAttachedRun 的读失败同款；连续失败才摆出原因，让用户知道此刻
+        // 「不知道有没有 run」而不是「没有 run」。
+        if (attachAttemptRef.current < ATTACH_MAX_ATTEMPTS) {
+          attachAttemptRef.current += 1
+          attachTimerRef.current = setTimeout(() => {
+            if (gen !== attachGenRef.current) return
+            void attachRef.current()
+          }, ATTACH_RETRY_DELAY)
+          return
+        }
+        setState((s) => ({
+          ...s,
+          attachError:
+            (err as { message?: string } | null)?.message ??
+            (err instanceof Error ? err.message : '状态检查失败'),
+        }))
+        return
+      }
+      if (gen !== attachGenRef.current) return
+      if (st?._tag !== 'running' && st?._tag !== 'paused') {
+        // 读到了「确实没有活跃 run」：这是确定的结论，任何旧的读失败原因都可以撤。
+        setState((s) => (s.attachError ? { ...s, attachError: null } : s))
+        return
+      }
       const paused = st._tag === 'paused'
       const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
+      if (gen !== attachGenRef.current) return
+      attachAttemptRef.current = 0
       attachedRef.current = true
       streamingRef.current = true
       setState((s) => ({
@@ -863,6 +933,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         runPaused: paused,
         runPauseReason: paused ? (st.pauseReason ?? null) : null,
         error: null,
+        attachError: null,
         ...(pend?.pending ? { pendingPermission: pend.pending, permissionTimeout: null } : {}),
       }))
       pollAttachedRun()
@@ -870,6 +941,17 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       attachingRef.current = false
     }
   }, [pollAttachedRun, sessionId])
+  attachRef.current = attach
+
+  /** P1：读失败后的「重新检查」——复位重试计数，让这次点击也能享受自愈重试。 */
+  const retryAttach = useCallback(() => {
+    attachAttemptRef.current = 0
+    if (attachTimerRef.current) {
+      clearTimeout(attachTimerRef.current)
+      attachTimerRef.current = null
+    }
+    void attach()
+  }, [attach])
 
   // P1：订阅同会话其他标签页的 run 状态广播——他页启动时附着，结束时刷新收尾。
   useEffect(() => {
@@ -921,6 +1003,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     clearRunPaused,
     clearCompactionNotice,
     attach,
+    retryAttach,
     reset,
   }
 }

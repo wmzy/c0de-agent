@@ -9,6 +9,7 @@ import type { ChatState } from '@/hooks/chatState.js'
 import { reduceChatEvent } from '@/hooks/chatState.js'
 import { useChat } from '@/hooks/useChat.js'
 import { agentAPI } from '@/services/agent.js'
+import { sessionAPI } from '@/services/session.js'
 
 const base: ChatState = {
   messages: [],
@@ -25,6 +26,7 @@ const base: ChatState = {
   interrupted: false,
   abortError: null,
   attachedRun: false,
+  attachError: null,
   compactionNotice: null,
   runPaused: false,
   runPauseReason: null,
@@ -1988,6 +1990,170 @@ describe('useChat 附着轮询复查挂起权限（P1）', () => {
       await vi.advanceTimersByTimeAsync(2100)
     })
     expect(result.current.pendingPermission).toBeNull()
+  })
+})
+
+/**
+ * 回归：附着入口读 GET /:id/status 失败必须与「没有活跃 run」分开。
+ *
+ * 此前 attach() 用 `.catch(() => null)` 折叠读失败，`st?._tag !== 'running'` 直接
+ * return——一次 500/网络抖动就与「真的空闲」走同一条出口：页面渲染成一个没有任何
+ * 运行痕迹的会话（无运行横幅、无终止键、不轮询），而服务端 run 可能仍在跑工具、改
+ * 文件。用户在这个假空闲态下发消息只会撞 409 RUN_ACTIVE「该会话已有进行中的对话」，
+ * 且**没有任何出口**（终止键不存在、恢复入口不存在、attach 不会重试）。
+ * 与 pollAttachedRun 的读失败同款：先自愈重试，连续失败才把原因摆出来。
+ */
+describe('useChat 附着入口读状态失败（P1）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  /** /status 的桩：由各用例给实现（不经过 fetch 层的重试，时序只由 attach 自己的重试链决定）。 */
+  function stubStatus(impl: (id: string) => Promise<unknown>) {
+    vi.spyOn(sessionAPI, 'status').mockImplementation(impl as never)
+    vi.spyOn(sessionAPI, 'pendingPermission').mockResolvedValue({ pending: null } as never)
+  }
+
+  function renderHookS1() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    return renderHook(() => useChat('s1'), { wrapper })
+  }
+
+  it('读失败一次后自愈重试并正常附着（不把读失败讲成「没有 run」）', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    stubStatus(async () => {
+      calls++
+      if (calls === 1) throw new Error('数据库被占用')
+      return { _tag: 'running' }
+    })
+    const { result } = renderHookS1()
+
+    await act(async () => {
+      await result.current.attach()
+    })
+    // 第一次读失败：还不能下结论，既不进入附着态、也不报警（还在自愈窗口内）
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachError ?? null).toBeNull()
+
+    // 3s 后重试读到 running → 运行态与终止入口出现
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.isStreaming).toBe(true)
+    expect(result.current.attachedRun).toBe(true)
+    expect(result.current.attachError).toBeNull()
+  })
+
+  it('连续读失败到上限 → attachError 给出原因，界面不再假装空闲', async () => {
+    vi.useFakeTimers()
+    stubStatus(async () => {
+      throw new Error('数据库被占用')
+    })
+    const { result } = renderHookS1()
+
+    await act(async () => {
+      await result.current.attach()
+    })
+    // 自愈窗口内先不打扰用户（首次失败 + 前 2 次重试都只静默重试）
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(result.current.attachError ?? null).toBeNull()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.attachError ?? null).toBeNull()
+
+    // 第 3 次重试仍失败 → 摆出原因：「不知道有没有 run」必须与「没有 run」可分辨
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.attachError).toBe('数据库被占用')
+    expect(result.current.isStreaming).toBe(false)
+  })
+
+  it('读到明确结论（idle）时清掉旧的 attachError', async () => {
+    vi.useFakeTimers()
+    let mode: 'fail' | 'idle' = 'fail'
+    stubStatus(async () => {
+      if (mode === 'fail') throw new Error('数据库被占用')
+      return { _tag: 'idle' }
+    })
+    const { result } = renderHookS1()
+    await act(async () => {
+      await result.current.attach()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000 * 4)
+    })
+    expect(result.current.attachError).toBe('数据库被占用')
+
+    // 服务恢复：明确的 idle 结论推翻「不知道」
+    mode = 'idle'
+    await act(async () => {
+      result.current.retryAttach()
+    })
+    expect(result.current.attachError).toBeNull()
+    expect(result.current.isStreaming).toBe(false)
+  })
+
+  it('「重新检查」复位重试计数：服务恢复后能再次自愈附着', async () => {
+    vi.useFakeTimers()
+    let failing = true
+    stubStatus(async () => {
+      if (failing) throw new Error('数据库被占用')
+      return { _tag: 'running' }
+    })
+    const { result } = renderHookS1()
+    await act(async () => {
+      await result.current.attach()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000 * 4)
+    })
+    expect(result.current.attachError).toBe('数据库被占用')
+
+    failing = false
+    await act(async () => {
+      result.current.retryAttach()
+    })
+    expect(result.current.isStreaming).toBe(true)
+    expect(result.current.attachedRun).toBe(true)
+    expect(result.current.attachError).toBeNull()
+  })
+
+  it('切会话作废在途的重试链：不把 A 的状态写进 B', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    stubStatus(async () => {
+      calls++
+      // s1 首次读失败（留下一条待重试的定时器），其余读到 running
+      if (calls === 1) throw new Error('数据库被占用')
+      return { _tag: 'running' }
+    })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useChat(id), {
+      wrapper,
+      initialProps: { id: 's1' },
+    })
+    await act(async () => {
+      await result.current.attach()
+    })
+
+    // 切到 s2：s1 的重试定时器必须作废，否则那次「running」会附着到 s2 的界面
+    rerender({ id: 's2' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachedRun).toBe(false)
   })
 })
 

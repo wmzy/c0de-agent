@@ -43,6 +43,7 @@ const mockUseChatState = {
   permissionTimeout: null,
   workflowProgress: null,
   attachedRun: false,
+  attachError: null as string | null,
   runPaused: false,
   interrupted: false,
   pendingTrust: null,
@@ -58,6 +59,7 @@ const mockUseChatState = {
   reopenPermission: vi.fn(),
   denyTimedOutPermission: vi.fn(),
   attach: vi.fn().mockResolvedValue(undefined),
+  retryAttach: vi.fn(),
   resetPaused: vi.fn(),
   trustAndRetry: vi.fn(),
   clearError: vi.fn(),
@@ -717,6 +719,47 @@ describe('ChatSession — 冷启动状态检查失败', () => {
 
     expect(screen.queryByTestId('interrupt-banner')).toBeNull()
     expect(screen.queryByTestId('cold-start-error')).toBeNull()
+  })
+})
+
+/**
+ * 附着入口（本页没发起流、但服务端可能仍有 run 在跑）读 GET /:id/status 连续失败：
+ * 界面此前与「这条会话真的空闲」完全同形——没有运行横幅、没有终止键，用户在这个
+ * 假空闲态下发消息只会撞 409「该会话已有进行中的对话」，且没有任何出口。
+ * 失败必须说出来并可重新检查（与上面冷启动那条链同口径：同一份 /status 的两个消费点）。
+ */
+describe('ChatSession — 附着入口读状态失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    mockUseChatState.attachError = null
+    mockUseChatState.isStreaming = false
+  })
+
+  it('给出原因与重新检查，而不是看起来空闲', async () => {
+    mockUseChatState.attachError = '数据库被占用'
+    await renderSession()
+
+    const banner = await screen.findByTestId('attach-error')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.textContent).toContain('数据库被占用')
+    expect(banner.textContent).toContain('进行中的对话')
+
+    fireEvent.click(screen.getByRole('button', { name: '重新检查' }))
+    expect(mockUseChatState.retryAttach).toHaveBeenCalled()
+  })
+
+  it('已经在流式时不再叠这条告警（结论已确定，运行态横幅优先）', async () => {
+    mockUseChatState.attachError = '数据库被占用'
+    mockUseChatState.isStreaming = true
+    await renderSession()
+
+    expect(screen.queryByTestId('attach-error')).toBeNull()
   })
 })
 
