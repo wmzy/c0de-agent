@@ -334,21 +334,28 @@ export function Settings() {
   }, [sectionAnchor, resp, viewMode])
 
   if (isLoading) return <div className={loadingWrap}>加载中…</div>
+  // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+  // 结构化取优先、instanceof 兜底。
+  const refetchErrorMessage =
+    (configError as { message?: string } | null)?.message ??
+    (configError instanceof Error ? configError.message : null)
   // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
   // 请求 500 时 isLoading 已为 false 而 config 恒为 null（resp 为 undefined），
   // 于是设置页永久停在「加载中…」——实测注入 /api/config 500、retry:2 耗尽后
   // 40s+ 无任何错误、无重试，用户会一直等一个永远不会到来的表单。
   // 这比回收站/看板的「误报为空」更糟：它连一个错误的结论都不给。
-  if (isError) {
-    // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
-    // 结构化取优先、instanceof 兜底。
-    const message =
-      (configError as { message?: string } | null)?.message ??
-      (configError instanceof Error ? configError.message : null)
+  //
+  // 但「失败」不等于「没有数据」：react-query 保留了上一次成功的数据，而后台重取
+  // （保存后的 invalidateQueries、refetchOnWindowFocus、staleTime 到期）失败同样会把
+  // status 打成 error。此前只看 isError，于是保存成功 → ✓ 已保存 → 紧接着那次失效
+  // 重取失败，整张表单（连同内存里完好的草稿）被替换成「设置加载失败」，界面自相
+  // 矛盾（刚说保存成功，又说来不了），用户以为自己的改动没了。只有**没有拿到过
+  // 数据**时才该整页报错；拿到过就保留表单，把重取失败降级成表单上方的横幅。
+  if (isError && !resp) {
     return (
       <div className={loadError} data-testid="settings-load-error" role="alert">
         <div className={loadErrorTitle}>设置加载失败</div>
-        <div className={loadErrorDetail}>{message ?? '无法读取配置文件。'}</div>
+        <div className={loadErrorDetail}>{refetchErrorMessage ?? '无法读取配置文件。'}</div>
         <div className={loadErrorActions}>
           <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
             重试
@@ -724,6 +731,37 @@ export function Settings() {
           </span>
         ) : null}
       </div>
+      {isError && (
+        // 拿到过数据、但后台重取失败：表单与草稿都还在，只是这份数据可能不是最新的。
+        // 用与 warnings 同族的横幅说清楚「谁失败了、你的改动还在」，而不是把整页换成
+        // 错误屏（见上面的 isError && !resp 说明）。
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 16px',
+            borderBottom: '1px solid var(--haze-color-border)',
+            background: 'color-mix(in srgb, var(--haze-color-danger) 10%, transparent)',
+            fontSize: 12,
+            color: 'var(--haze-color-text)',
+          }}
+          role="alert"
+          data-testid="config-refetch-error"
+        >
+          <span>
+            配置刷新失败：{refetchErrorMessage ?? '无法读取配置文件。'}
+            ——表单里仍是你的本地草稿，改动没有被丢弃。
+          </span>
+          <Button
+            variant="outline"
+            onClick={() => refetchConfig()}
+            data-testid="config-refetch-retry"
+          >
+            重试
+          </Button>
+        </div>
+      )}
       {warnings.length > 0 && (
         <div
           style={{

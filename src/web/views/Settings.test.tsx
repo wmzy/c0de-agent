@@ -235,6 +235,46 @@ describe('Settings — 读失败态', () => {
     expect(screen.getByTestId('settings-retry')).toBeInTheDocument()
   })
 
+  /**
+   * 「失败」≠「没有数据」。
+   *
+   * 缺陷：分支只看 isError。react-query 在**后台重取**失败时会把 status 打成 error
+   * 但保留上一次成功的数据，于是保存成功 → ✓ 已保存 → 紧接着那次
+   * invalidateQueries 重取失败，整张表单被替换成「设置加载失败」：界面自相矛盾
+   * （刚说保存成功，又说来不了），用户以为自己的改动没了（其实草稿完好，只是被
+   * 藏到错误屏后面）。真实浏览器实测：拦截保存后的 GET /api/config 返回 500 后，
+   * [data-testid="settings-form"] 消失、settings-load-error 出现。
+   *
+   * 修法：只有**从没拿到过数据**时才整页报错（isError && !resp），拿到过就把重取
+   * 失败降级成表单上方的横幅。
+   */
+  it('保存后的后台重取失败时保留表单（不整页报错）并给出横幅', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValueOnce(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 让 draft 变脏（保存成功后 invalidateQueries 会触发重取）
+    fireEvent.click(screen.getByTestId('provider-add'))
+    const nameInputs = screen.getAllByPlaceholderText('名称')
+    fireEvent.change(nameInputs[nameInputs.length - 1] as HTMLElement, {
+      target: { value: 'MyProvider' },
+    })
+
+    // 保存后的那次重取失败
+    ;(configAPI.get as Mock).mockRejectedValue({ status: 500, message: '配置服务暂时不可用' })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+
+    const banner = await screen.findByTestId('config-refetch-error')
+    expect(banner.textContent).toContain('配置服务暂时不可用')
+    // 关键：表单与草稿都还在，没有退化成整页错误屏
+    expect(screen.getByTestId('settings-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-load-error')).toBeNull()
+  })
+
   it('点击重试重新拉取配置', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockRejectedValue({ status: 500, message: 'boom' })
