@@ -659,12 +659,18 @@ export function Settings() {
     }
   }
 
-  /** 放弃未保存的更改：草稿清空回退到已持久化配置（JSON 模式同步重置编辑器）。 */
-  const discardChanges = () => {
-    // 保存在途时拒绝：提交出去的是点击保存那一刻的草稿引用，此刻清空草稿既
-    // 撤不掉已经在途的请求，又会把这期间新打的字一起吞掉。按钮的 disabled 只
-    // 在 React 提交后生效，同一 tick 内的连点仍会落到这里，故在处理器里再挡一次。
-    if (save.isPending) return
+  /**
+   * 丢弃草稿：draft 清空回退到已持久化配置，JSON 模式同步重置编辑器与错误条。
+   *
+   * 只清 draft 不清编辑器是实测过的缺陷：设置页的四个「丢弃」入口里，只有「放弃更改」
+   * 与「离开页面」重置了 JSON 编辑器，切换配置作用域的两条路径（直接切 / 确认切）漏了。
+   * 于是「切换并丢弃更改」确认后吸底条回到干净态，编辑器里却仍留着被丢弃的文本——
+   * 下一次按键就被 onJsonChange 当成新草稿同步回来，再点保存，这份**已声明丢弃**的
+   * 改动会写进**另一个作用域**的配置文件（实测：项目作用域改成 defaultModel m2 →
+   * 切全局并确认丢弃 → 按一个空格 → 保存 → 全局 config.json 落盘 {"defaultModel":"m2"}，
+   * 项目文件仍是 m）。
+   */
+  const discardDraft = () => {
     setDraft(null)
     if (viewMode === 'json') {
       setJsonText(JSON.stringify(config, null, 2))
@@ -673,17 +679,21 @@ export function Settings() {
     }
   }
 
+  /** 放弃未保存的更改（保存请求在途时拒绝，见下）。 */
+  const discardChanges = () => {
+    // 保存在途时拒绝：提交出去的是点击保存那一刻的草稿引用，此刻清空草稿既
+    // 撤不掉已经在途的请求，又会把这期间新打的字一起吞掉。按钮的 disabled 只
+    // 在 React 提交后生效，同一 tick 内的连点仍会落到这里，故在处理器里再挡一次。
+    if (save.isPending) return
+    discardDraft()
+  }
+
   /** 离开确认弹窗：「留下」= 关闭弹窗，留在设置页继续编辑。 */
   const stayOnSettings = () => blocker.reset()
 
   /** 离开确认弹窗：「离开」= 丢弃草稿并放行被 veto 的导航（proceed 重放）。 */
   const confirmLeave = () => {
-    setDraft(null)
-    if (viewMode === 'json') {
-      setJsonText(JSON.stringify(config, null, 2))
-      setJsonError(null)
-      setJsonShapeError(null)
-    }
+    discardDraft()
     blocker.proceed()
   }
 
@@ -702,7 +712,7 @@ export function Settings() {
               return
             }
             if (next !== scope) {
-              setDraft(null)
+              discardDraft()
               setSaveFeedback({ kind: 'idle' })
             }
             setScope(next)
@@ -995,7 +1005,7 @@ export function Settings() {
           open
           onClose={() => setPendingScope(null)}
           onConfirm={() => {
-            setDraft(null)
+            discardDraft()
             setSaveFeedback({ kind: 'idle' })
             setScope(pendingScope)
             setPendingScope(null)

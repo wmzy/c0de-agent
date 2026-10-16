@@ -1171,6 +1171,34 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(editor.value).toContain('ProviderA')
   })
 
+  // 回归：切换配置作用域承诺「切换并丢弃更改」，就必须连 JSON 编辑器一起回退。
+  // 只清 draft 不清编辑器时：确认丢弃后吸底条已回到干净态，编辑器里却仍留着被丢弃的
+  // 文本，下一次按键就被 onJsonChange 当成新草稿同步回来——再点保存，这份**已声明
+  // 丢弃**的改动会写进**另一个作用域**的配置文件（实测：项目作用域把 defaultModel
+  // 改成 m2 → 切全局并确认丢弃 → 按一个空格 → 保存 → 全局 config.json 落盘
+  // {"defaultModel":"m2"}，项目文件仍是 m）。
+  it('切换作用域丢弃草稿时 JSON 编辑器一起回退（不会把丢弃的改动带去另一个作用域）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const edited = JSON.stringify({ ...mockConfig, defaultModel: 'm2' }, null, 2)
+    fireEvent.change(screen.getByTestId('settings-json-editor'), { target: { value: edited } })
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+
+    // dirty 时切换作用域要二审：确认「切换并丢弃更改」
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    fireEvent.click(screen.getByText('切换并丢弃更改'))
+
+    await waitFor(() => expect(screen.queryByTestId('settings-dirty-hint')).toBeNull())
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    expect(editor.value).not.toContain('m2')
+    expect(editor.value).toContain('"defaultModel": "gpt-4"')
+  })
+
   // 「留空 = 不修改」只属于表单：JSON 视图里 `"apiKey": ""` 是用户亲手写下的明确
   // 值，必须照原样提交（否则 JSON 视图里清空密钥会变成静默不生效）。
   it('JSON 视图把 apiKey 写成空串照常提交（表单的留空约定不越过 JSON 编辑）', async () => {
