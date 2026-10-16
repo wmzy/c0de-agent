@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useEffect, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
 import { TOUCH } from '@/styles/breakpoints.js'
@@ -442,6 +443,19 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
       todoAPI.exec(sid, op),
     onMutate: () => ({ gen: scopeGenRef.current }),
     onSuccess: (result: TodoOpResult, vars: { sessionId: string; op: TodoOp }, ctx) => {
+      // todo 执行器刻意让操作级失败仍返回 200 + `_tag:'success'`，原因写进 output
+      // 的 `Errors: …` 行（tools/builtin/todo.ts「Always return success」）；
+      // 时间线侧靠 toolInlineErrorText 把它提升成 ⚠「操作未生效」，面板此前完全
+      // 忽略 result.output，于是最常见的失败——重复添加一条已存在的任务——把用户
+      // 刚敲的任务文本清空、列表纹丝不动、全屏没有一句原因（实测：输入框直接
+      // 变空，error 仍是 ''，用户只能凭记忆重打）。
+      const inlineError = toolInlineErrorText({ _tag: 'success', output: result.output }, 'todo')
+      if (inlineError) {
+        // 服务端没受理这次操作：既不回写缓存（result.phases 只是没变过的旧快照，
+        // 写下去会顺带盖掉 agent 并发推进的状态），也不清输入框。
+        if (ctx && isCurrentScope(ctx.gen)) setError(`操作未生效：${inlineError}`)
+        return
+      }
       // 回写必须按 vars.sessionId 重建 key：mutation 回调取的是**最近一次渲染**的
       // 闭包，在途期间用户切到会话 B 时 todoKey 已经是 ['todo', B]，于是 A 的执行
       // 结果会被写进 B 的缓存——B 的面板整块显示成 A 的待办（连「已完成」勾选都

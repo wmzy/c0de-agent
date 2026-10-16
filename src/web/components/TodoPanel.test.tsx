@@ -130,6 +130,30 @@ describe('TodoPanel 新增任务失败时的输入', () => {
     expect((screen.getByLabelText('任务描述') as HTMLInputElement).value).toBe('补一条回归测试')
   })
 
+  /**
+   * 操作级失败不走 HTTP 错误：todo 执行器刻意让「重复添加」「阶段不存在」
+   * 这类用户输入有误的操作仍返回 200 + `_tag:'success'`，原因写进 output 的
+   * `Errors: …` 行（时间线侧靠 toolInlineErrorText 提升成 ⚠「操作未生效」）。
+   * 面板此前整段丢弃 result.output，最常见的重复添加于是：输入框被清空、
+   * 列表纹丝不动、全屏一句原因都没有。
+   */
+  it('执行器以 200 + Errors 行拒绝时，输入留着、原因可见、列表不动', async () => {
+    vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
+    vi.mocked(todoAPI.exec).mockResolvedValue({
+      phases: [{ name: 'Tasks', tasks: [{ content: '补一条回归测试', status: 'in_progress' }] }],
+      output: 'Errors: Task "补一条回归测试" already exists\nOverall: 0/1 done, 1 open.',
+    })
+    renderPanel()
+    fireEvent.click(await screen.findByText('＋ 添加任务'))
+
+    const input = (await screen.findByLabelText('任务描述')) as HTMLInputElement
+    fireEvent.change(input, { target: { value: '补一条回归测试' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+
+    expect(await screen.findByText(/already exists/)).toBeInTheDocument()
+    expect((screen.getByLabelText('任务描述') as HTMLInputElement).value).toBe('补一条回归测试')
+  })
+
   it('服务端受理后才清空输入（成功路径回归）', async () => {
     vi.mocked(todoAPI.get).mockResolvedValue({ phases: [] })
     vi.mocked(todoAPI.exec).mockResolvedValue({
