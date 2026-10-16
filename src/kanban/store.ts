@@ -559,7 +559,7 @@ export async function restoreKanbanBoard(
 }
 
 export type MergeKanbanBoardResult =
-  | { ok: true; mergedColumns: number; mergedCards: number }
+  | { ok: true; mergedColumns: number; mergedCards: number; mergedLabels: number }
   | { ok: false; reason: 'BOARD_NOT_FOUND' }
 
 /**
@@ -579,14 +579,14 @@ export async function mergeKanbanBoard(
 ): Promise<MergeKanbanBoardResult> {
   return await handle.db.transaction(async (tx) => {
     const [src] = await tx
-      .select({ id: kanbanBoards.id, columns: kanbanBoards.columns })
+      .select({ id: kanbanBoards.id, columns: kanbanBoards.columns, labels: kanbanBoards.labels })
       .from(kanbanBoards)
       .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
       .limit(1)
     if (!src) return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
 
     const [target] = await tx
-      .select({ id: kanbanBoards.id, columns: kanbanBoards.columns })
+      .select({ id: kanbanBoards.id, columns: kanbanBoards.columns, labels: kanbanBoards.labels })
       .from(kanbanBoards)
       .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
       .limit(1)
@@ -606,7 +606,7 @@ export async function mergeKanbanBoard(
         .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
         .returning({ id: kanbanBoards.id })
       if (rows.length === 0) return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
-      return { ok: true, mergedColumns: 0, mergedCards: 0 } as const
+      return { ok: true, mergedColumns: 0, mergedCards: 0, mergedLabels: 0 } as const
     }
 
     // —— 合并路径 ——
@@ -614,10 +614,22 @@ export async function mergeKanbanBoard(
     const targetCols = (target.columns ?? []) as KanbanColumnDef[]
     const targetIds = new Set(targetCols.map((c) => c.id))
     const newCols = srcCols.filter((c) => !targetIds.has(c.id))
-    if (newCols.length > 0) {
+    // 标签定义必须与列同构地并入：源板随后被物理删除，它是这批 labelId 的**唯一**
+    // 持有者——只并卡片不并标签，卡片上的 labelId 就成了悬空引用（前端按 id 查不到
+    // 就静默不渲染，用户看到「卡片回来了、标签没了」），而且这份丢失会在下一次
+    // 保存看板设置时被 updateBoard 的悬空清理从卡片上真正抹掉，不可逆。
+    const srcLabels = (src.labels ?? []) as KanbanLabelDef[]
+    const targetLabels = (target.labels ?? []) as KanbanLabelDef[]
+    const targetLabelIds = new Set(targetLabels.map((l) => l.id))
+    const newLabels = srcLabels.filter((l) => !targetLabelIds.has(l.id))
+    if (newCols.length > 0 || newLabels.length > 0) {
       await tx
         .update(kanbanBoards)
-        .set({ columns: [...targetCols, ...newCols], updatedAt: new Date() })
+        .set({
+          ...(newCols.length > 0 && { columns: [...targetCols, ...newCols] }),
+          ...(newLabels.length > 0 && { labels: [...targetLabels, ...newLabels] }),
+          updatedAt: new Date(),
+        })
         .where(eq(kanbanBoards.id, target.id))
     }
 
@@ -656,7 +668,12 @@ export async function mergeKanbanBoard(
 
     // 源看板物理删除（卡片已迁移；卡片行经 FK cascade 连带清除）。
     await tx.delete(kanbanBoards).where(eq(kanbanBoards.id, boardId))
-    return { ok: true, mergedColumns: newCols.length, mergedCards } as const
+    return {
+      ok: true,
+      mergedColumns: newCols.length,
+      mergedCards,
+      mergedLabels: newLabels.length,
+    } as const
   })
 }
 

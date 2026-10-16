@@ -10,7 +10,7 @@ import {
   useDeletedSessions,
   useRestoreSession,
 } from '@/hooks/useSession.js'
-import { type DeletedKanbanBoard, kanbanAPI } from '@/services/kanban.js'
+import { type DeletedKanbanBoard, kanbanAPI, type MergedBoardCounts } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
 import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/recycleTree.js'
@@ -19,6 +19,23 @@ import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/
  *  但错误也可能来自非本层抛出的路径，结构化取 message 优先、instanceof 兜底。 */
 function messageOf(e: unknown): string {
   return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
+/**
+ * 合并恢复的结果说明：把这次真正并入的量写进提示。
+ *
+ * 此前提示只有一句「已合并到当前项目看板」，而服务端返回的计数被整个丢弃——用户
+ * 无从判断标签/列是否跟着过来了（尤其是「标签定义没并进来」的那类缺陷，界面上
+ * 表现为标签静默消失，提示却一字不提）。
+ */
+function mergeNotice(base: string, merged?: MergedBoardCounts): string {
+  if (!merged) return base
+  const parts = [
+    merged.mergedCards > 0 ? `${merged.mergedCards} 张卡片` : null,
+    merged.mergedColumns > 0 ? `${merged.mergedColumns} 个列` : null,
+    merged.mergedLabels > 0 ? `${merged.mergedLabels} 个标签` : null,
+  ].filter((x): x is string => x !== null)
+  return parts.length > 0 ? `${base}（新增 ${parts.join('、')}）` : base
 }
 
 const deletedRow = css`
@@ -868,7 +885,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   restoreBoardMut.mutate(
                     { boardId: b.id, projectId },
                     {
-                      onSuccess: () => setNotice(`看板「${b.projectName}」已合并到当前项目看板。`),
+                      onSuccess: (d) =>
+                        setNotice(
+                          mergeNotice(`看板「${b.projectName}」已合并到当前项目看板。`, d?.merged),
+                        ),
                       onError: (e) => setError(`恢复看板失败：${messageOf(e)}`),
                     },
                   )
@@ -887,9 +907,12 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     restoreBoardToOriginalMut.mutate(b.id, {
                       onSuccess: (d) =>
                         setNotice(
-                          d?.recreatedProject
-                            ? `看板「${b.projectName}」已恢复，并重新创建了原项目「${d.recreatedProject.name ?? '未命名项目'}」。`
-                            : `看板「${b.projectName}」已恢复到原项目。`,
+                          mergeNotice(
+                            d?.recreatedProject
+                              ? `看板「${b.projectName}」已恢复，并重新创建了原项目「${d.recreatedProject.name ?? '未命名项目'}」。`
+                              : `看板「${b.projectName}」已恢复到原项目。`,
+                            d?.merged,
+                          ),
                         ),
                       onError: (e) => setError(`恢复看板失败：${messageOf(e)}`),
                     })
