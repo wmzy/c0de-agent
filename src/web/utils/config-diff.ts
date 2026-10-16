@@ -59,6 +59,39 @@ export function isPatchEmpty(patch: Record<string, unknown>): boolean {
 const WEBSEARCH_SECRET_KEYS = ['tavilyApiKey', 'braveApiKey'] as const
 
 /**
+ * provider 行的客户端身份标记。
+ *
+ * 「留空 = 不修改」必须判到「同一行」：只有同一下标 + 同名才算同一行，否则
+ * 「删掉一行再新增」会让新行继承上一行的密文。可名字恰恰是用户最爱改的字段——
+ * 按下标配名的判据于是把「给 provider 改个名再保存」变成静默销毁密钥：改名行的
+ * apiKey 是空串，配不上原行 → diff 写出 `apiKey: ''` → 服务端只加密非空明文，
+ * 空串原样落盘覆盖密文，而界面回的是「✓ 已保存」，用户唯一的线索是那个绿色
+ * 「已加密」徽章消失。
+ *
+ * 标记解决的就是这件事：用 symbol 属性给**已加载配置里的行**挂一枚身份，
+ * 行随编辑被 `{…row}` 展开复制时标记跟着走（spread 复制自有可枚举 symbol），
+ * 于是改名后的行仍能认回原行。symbol 键对 Object.keys / JSON.stringify 不可见，
+ * 既不进 diff 也不进 PATCH body。
+ *
+ * 取值用 `Symbol.for('…@<下标>')` 而非新建 symbol：配置重新拉取（focus 重取、
+ * 保存后失效重取）会产生一批**新的行对象**，`Symbol.for` 按下标全局唯一，
+ * 保证重取前后同一位置拿到同一枚标记——否则「改了名的草稿行」在重取之后就再也
+ * 认不回原行，缺陷换个时机照样复现。
+ */
+export const PROVIDER_ROW_ID: unique symbol = Symbol('c0de.providerRowId')
+
+/** 给已加载配置里的 provider 行挂身份标记；已有标记的行不动（幂等）。 */
+export function tagProviderRowIds(rows: unknown): void {
+  if (!Array.isArray(rows)) return
+  rows.forEach((row, index) => {
+    if (!isPlainObject(row)) return
+    const tagged = row as Record<PropertyKey, unknown>
+    if (typeof tagged[PROVIDER_ROW_ID] === 'symbol') return
+    tagged[PROVIDER_ROW_ID] = Symbol.for(`c0de.providerRow@${index}`)
+  })
+}
+
+/**
  * 保存前把草稿里「被清空的密钥字段」退回已保存的值，返回新草稿与被退回的字段数。
  *
  * 密钥输入框是密码框、且**不回显已加密的密文**（enc: 前缀留空显示，见 ApiKeyInput）：
@@ -69,8 +102,10 @@ const WEBSEARCH_SECRET_KEYS = ['tavilyApiKey', 'braveApiKey'] as const
  * 空串原样落盘，见 src/server/routes/config.ts）。
  *
  * 口径：**留空 = 不修改**。密码框里没有「可见的内容」可删，清空不表达删除意图
- * （要删就删整个 provider / 关掉该后端）。判定同时要求「同一行」：provider 按下标
- * 对应，且名字相同——否则「删掉第一行再新增一行」会让新增行的空密钥继承上一行的密文。
+ * （要删就删整个 provider / 关掉该后端）。判定同时要求「同一行」：带 PROVIDER_ROW_ID
+ * 标记的行按身份配对（改名字、改 URL 都还是同一行）；没有标记的行（用户新加的、
+ * JSON 导入的）退回「同下标 + 同名」——否则「删掉第一行再新增一行」会让新增行的
+ * 空密钥继承上一行的密文。
  */
 export function restoreClearedSecrets(
   saved: Record<string, unknown>,
@@ -95,10 +130,31 @@ export function restoreClearedSecrets(
 
   if (Array.isArray(draft.providers)) {
     const savedProviders = Array.isArray(saved.providers) ? saved.providers : []
+    // 身份表：已加载配置里带标记的行（见 PROVIDER_ROW_ID）。
+    const savedByRowId = new Map<symbol, Record<string, unknown>>()
+    for (const row of savedProviders) {
+      if (!isPlainObject(row)) continue
+      const rowId = (row as Record<PropertyKey, unknown>)[PROVIDER_ROW_ID]
+      if (typeof rowId === 'symbol') savedByRowId.set(rowId, row)
+    }
     next.providers = draft.providers.map((provider, index) => {
       if (!isPlainObject(provider) || provider.apiKey !== '') return provider
-      const prev = savedProviders[index]
-      if (!isPlainObject(prev) || prev.name !== provider.name) return provider
+      const rowId = (provider as Record<PropertyKey, unknown>)[PROVIDER_ROW_ID]
+      const savedRow: unknown = savedProviders[index]
+      // 带标记的行按**身份**配对（改名/改 URL 都还是同一行）；没有标记的行只能
+      // 退回「同下标 + 同名」这条旧判据，且只对**同样没有标记**的已保存行生效：
+      // 已保存行一旦带了标记，从它展开出来的草稿行必然也带着标记——草稿行没标记
+      // 就说明它不是那一行（用户新加的、JSON 导入的），不能让「同名」把别人的
+      // 密文塞给它。
+      const prev =
+        typeof rowId === 'symbol'
+          ? savedByRowId.get(rowId)
+          : isPlainObject(savedRow) &&
+              typeof (savedRow as Record<PropertyKey, unknown>)[PROVIDER_ROW_ID] !== 'symbol' &&
+              savedRow.name === provider.name
+            ? savedRow
+            : undefined
+      if (!isPlainObject(prev)) return provider
       if (typeof prev.apiKey !== 'string' || prev.apiKey === '') return provider
       restored++
       return { ...provider, apiKey: prev.apiKey }

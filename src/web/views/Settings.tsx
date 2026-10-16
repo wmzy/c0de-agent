@@ -37,7 +37,12 @@ import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
-import { diffConfig, isPatchEmpty, restoreClearedSecrets } from '@/utils/config-diff.js'
+import {
+  diffConfig,
+  isPatchEmpty,
+  restoreClearedSecrets,
+  tagProviderRowIds,
+} from '@/utils/config-diff.js'
 import {
   fillTemplateWithUnsets,
   normalizeConfigForForm,
@@ -366,6 +371,11 @@ export function Settings() {
       </div>
     )
   }
+
+  // provider 行要能被「改名后仍认回原行」——见 config-diff 的 PROVIDER_ROW_ID：
+  // 标记必须在任何一次编辑之前挂到已加载配置的行上（编辑是 `{…row}` 展开，标记
+  // 只有先挂上才会跟着走）。symbol 键不进 diff / JSON，故这里挂标记不会影响保存内容。
+  tagProviderRowIds(config.providers)
 
   const merged = { ...config, ...draft }
 
