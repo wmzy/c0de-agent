@@ -106,9 +106,9 @@ describe('WorkflowsPanel 工作流编辑器不静默丢脚本', () => {
     // 选「继续编辑」→ 回到编辑器，脚本原样保留
     fireEvent.click(screen.getByText('继续编辑'))
     expect(screen.queryByText(/放弃未保存的工作流/)).toBeNull()
-    expect(
-      (screen.getByTestId('workflow-source-editor') as HTMLTextAreaElement).value,
-    ).toContain('手写脚本')
+    expect((screen.getByTestId('workflow-source-editor') as HTMLTextAreaElement).value).toContain(
+      '手写脚本',
+    )
 
     // 再点取消 → 确认「放弃修改」→ 编辑器关闭
     fireEvent.click(screen.getByText('取消'))
