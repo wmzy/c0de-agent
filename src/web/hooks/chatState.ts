@@ -188,13 +188,34 @@ export const INITIAL: ChatState = {
   workflowProgress: null,
 }
 
+/**
+ * 当前**未收口**的 assistant 消息下标；没有则返回 -1（调用方新开一条）。
+ *
+ * 一轮的收口标志是「已收到工具结果」：服务端按轮落库（core/loop/persist.ts 每轮把
+ * 该轮正文 + tool_call 写进一条 assistant 消息，工具结果另存 tool 消息），收到
+ * tool_result 即意味着这一轮已结束、后续正文/工具调用必然属于下一轮。
+ *
+ * 此前实时归约把整个 run（多轮）的正文与工具调用全堆进同一条 assistant 消息，
+ * 与服务端「一轮一条」的形态不一致：mergeSessionMessages 按内容签名逐条配对时对不上，
+ * 于是任何历史重取（窗口聚焦 refetchOnWindowFocus / shake 应用 / 附着结束刷新）都会把
+ * 整轮回复重复渲染一遍——实测一次「带工具的问答」在 refetch 后，每个正文块与工具卡
+ * 都在时间线上出现两次（历史各轮的副本 + 那份配不上的合并副本）。
+ */
+function openAssistantTurnIndex(messages: Message[]): number {
+  const idx = messages.length - 1
+  const last = messages[idx]
+  if (last?.role !== 'assistant') return -1
+  return last.content.some((p) => p._tag === 'tool_result') ? -1 : idx
+}
+
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
 export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState {
   switch (event._tag) {
     case 'text_delta': {
       const messages = [...state.messages]
-      const last = messages[messages.length - 1]
-      if (last && last.role === 'assistant') {
+      const idx = openAssistantTurnIndex(messages)
+      if (idx >= 0) {
+        const last = messages[idx] as Message
         const content = [...last.content]
         const lastPart = content[content.length - 1]
         if (lastPart && lastPart._tag === 'text') {
@@ -202,7 +223,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         } else {
           content.push({ _tag: 'text', text: event.text })
         }
-        messages[messages.length - 1] = { ...last, content }
+        messages[idx] = { ...last, content }
       } else {
         messages.push({
           id: generateId(),
@@ -217,8 +238,9 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     }
     case 'thinking': {
       const messages = [...state.messages]
-      const last = messages[messages.length - 1]
-      if (last && last.role === 'assistant') {
+      const idx = openAssistantTurnIndex(messages)
+      if (idx >= 0) {
+        const last = messages[idx] as Message
         const content = [...last.content]
         const lastPart = content[content.length - 1]
         if (lastPart && lastPart._tag === 'thinking') {
@@ -226,7 +248,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         } else {
           content.push({ _tag: 'thinking', text: event.text })
         }
-        messages[messages.length - 1] = { ...last, content }
+        messages[idx] = { ...last, content }
       } else {
         messages.push({
           id: generateId(),
@@ -241,15 +263,16 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     }
     case 'tool_call_start': {
       const messages = [...state.messages]
-      const last = messages[messages.length - 1]
+      const idx = openAssistantTurnIndex(messages)
       const part: MessageContent = {
         _tag: 'tool_call',
         id: event.id,
         tool: event.tool,
         input: event.input,
       }
-      if (last && last.role === 'assistant') {
-        messages[messages.length - 1] = { ...last, content: [...last.content, part] }
+      if (idx >= 0) {
+        const last = messages[idx] as Message
+        messages[idx] = { ...last, content: [...last.content, part] }
       } else {
         messages.push({
           id: generateId(),

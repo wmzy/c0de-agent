@@ -73,6 +73,51 @@ describe('reduceChatEvent', () => {
     expect(result && result._tag === 'tool_result' ? result.output._tag : null).toBe('success')
   })
 
+  // 服务端按轮落库（core/loop/persist.ts：每轮一条 assistant 消息 + 独立 tool 消息），
+  // 实时归约必须同形：收到工具结果＝该轮收口，后续正文/工具调用属于下一轮、要新开一条。
+  // 堆进同一条会让 mergeSessionMessages 的逐条内容签名配不上历史，任何历史重取
+  // （窗口聚焦 / shake / 附着结束）都把整轮回复重复渲染一份。
+  it('多轮：工具结果收口后正文新开一条 assistant 消息', () => {
+    const withUser: ChatState = {
+      ...base,
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's',
+          role: 'user',
+          content: [{ _tag: 'text', text: 'go' }],
+          tokenCount: 0,
+          createdAt: 0,
+        },
+      ],
+    }
+    let s = reduceChatEvent(withUser, { _tag: 'text_delta', text: '第一轮' })
+    // 同一轮的两个工具调用都归到这一条（收到结果前不拆）
+    s = reduceChatEvent(s, { _tag: 'tool_call_start', id: 't1', tool: 'read', input: {} })
+    s = reduceChatEvent(s, { _tag: 'tool_call_start', id: 't2', tool: 'glob', input: {} })
+    s = reduceChatEvent(s, {
+      _tag: 'tool_call_end',
+      id: 't1',
+      result: { _tag: 'success', output: 'ok' },
+    })
+    s = reduceChatEvent(s, {
+      _tag: 'tool_call_end',
+      id: 't2',
+      result: { _tag: 'success', output: 'ok' },
+    })
+    // 收口（已收到工具结果）后的正文属于下一轮 → 新开一条
+    s = reduceChatEvent(s, { _tag: 'text_delta', text: '第二轮' })
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant'])
+    expect(s.messages[1]?.content.map((p) => p._tag)).toEqual([
+      'text',
+      'tool_call',
+      'tool_call',
+      'tool_result',
+      'tool_result',
+    ])
+    expect(s.messages[2]?.content).toEqual([{ _tag: 'text', text: '第二轮' }])
+  })
+
   it('thinking 作为独立 part', () => {
     const s = reduceChatEvent(
       { ...base, messages: asst([{ _tag: 'text', text: 'hi' }]) },
