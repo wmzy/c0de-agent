@@ -79,7 +79,7 @@ describe('useShake 失败反馈', () => {
     })
 
     act(() => {
-      result.current.shakeMutation.mutate(['r1'])
+      result.current.shakeMutation.mutate({ sessionId: 's1', regionIds: ['r1'] })
     })
 
     await waitFor(() => expect(result.current.shakeError).toBe('会话已归档'))
@@ -127,6 +127,60 @@ describe('useShake 失败反馈', () => {
 
     act(() => {
       result.current.exitShakeMode()
+    })
+    expect(result.current.shakeError).toBeNull()
+  })
+
+  // 复位 effect 只在切换那一刻跑，管不住**在飞**的预览请求：实测在 A 点 Shake
+  // （预览被延迟 4s），窗口内切到 B，A 的响应落地后 B 的工具栏亮起「⚡ Shake 模式
+  // 已选 0/0」而 B 一条高亮都没有，点提交会把 A 的 region id POST 到 B。
+  it('预览在途时切会话：迟到的结果不写进新会话', async () => {
+    let resolvePreview: (v: { regions: ShakeRegionView[] }) => void = () => {}
+    vi.mocked(sessionAPI.shakePreview).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePreview = resolve
+      }),
+    )
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) => useShake(sessionId, [], qc),
+      {
+        initialProps: { sessionId: 's1' },
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+        ),
+      },
+    )
+
+    let opening: Promise<void> = Promise.resolve()
+    act(() => {
+      opening = result.current.handleShakeOpen()
+    })
+    // 请求还在途，用户切到另一条会话
+    rerender({ sessionId: 's2' })
+    await act(async () => {
+      resolvePreview({ regions: [region] })
+      await opening
+    })
+
+    expect(result.current.shakeMode).toBe(false)
+    expect(result.current.shakeRegions).toHaveLength(0)
+
+    // 迟到的**失败**同样不该挂到新会话上
+    let rejectPreview: (e: unknown) => void = () => {}
+    vi.mocked(sessionAPI.shakePreview).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectPreview = reject
+      }),
+    )
+    let opening2: Promise<void> = Promise.resolve()
+    act(() => {
+      opening2 = result.current.handleShakeOpen()
+    })
+    rerender({ sessionId: 's3' })
+    await act(async () => {
+      rejectPreview(new Error('数据库被占用'))
+      await opening2
     })
     expect(result.current.shakeError).toBeNull()
   })

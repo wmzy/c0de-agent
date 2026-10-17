@@ -983,7 +983,12 @@ export function ChatSession({
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => shake.shakeMutation.mutate([...shake.shakeSelected])}
+                    onClick={() =>
+                      shake.shakeMutation.mutate({
+                        sessionId,
+                        regionIds: [...shake.shakeSelected],
+                      })
+                    }
                     // 在途锁：apply 不是幂等的（同一批 region 第二次要么再归档一次、
                     // 要么因消息已改写回 400），连点会得到「两个都算数」的结局。
                     disabled={shake.shakeSelected.size === 0 || shake.shakeMutation.isPending}
