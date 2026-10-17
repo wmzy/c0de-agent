@@ -197,6 +197,25 @@ export function Settings() {
    *  用户有没有继续编辑」——磁盘慢/配置大时 PATCH 可能飞数秒，期间用户照旧能改
    *  字段（表单没有在途禁写），无条件 setDraft(null) 会把这段新编辑整块抹掉。 */
   const submittedDraftRef = useRef<Partial<Config> | null>(null)
+  /**
+   * 草稿世代：任何一次「丢弃/替换草稿」的动作都自增。异步回写必须持有**发起时**
+   * 的世代，落地时世代不符就整条丢弃。
+   *
+   * 此前只有 Provider 测试连接是这种异步写：探测成功把模型并进 draft.providers，
+   * 而 updateProviders 的 `base = prev ?? config` 在 draft 已被放弃（prev 变 null）
+   * 时会用 config 重新长出一份草稿。实测：点「测试连接」（探测请求在途）→ 立即
+   * 「放弃更改」→ 保存条的「● 未保存更改」确实消失、新增的 provider 行也回到 1 行；
+   * 3 秒后探测响应落地，页面又亮起「● 未保存更改」，并多出一个探测到的模型
+   * （provider-model-toggle-zzdetected）——用户明确丢弃的改动被复活，此时按保存
+   * 会把它写进当前作用域的配置（中途若切过作用域，就是写进另一个作用域）。
+   * 判据与 ChatSession 的 exportGenRef、useChat 的 genRef 同口径。
+   */
+  const draftEpochRef = useRef(0)
+
+  /** 丢弃/替换草稿：自增世代，让在途的异步回写失效。 */
+  const invalidateDraftWrites = () => {
+    draftEpochRef.current += 1
+  }
 
   // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。ok 可带一句必须同说的
   // 说明（如「被留空的密钥未改动」）。
@@ -266,7 +285,15 @@ export function Settings() {
       // 但只清「本次提交出去的那份」：保存期间用户敲进去的新编辑必须留下——
       // 否则它们连同脏标记一起消失，屏幕上刚打的字无声不见，用户以为已存进去。
       // （此处按对象引用比较：任何一次 setDraft 都产生新对象。）
-      setDraft((prev) => (prev === submittedDraftRef.current ? null : prev))
+      setDraft((prev) => {
+        if (prev === submittedDraftRef.current) {
+          // 草稿已被这次保存消费：让在途的异步回写（如测试连接的模型探测）失效，
+          // 否则「✓ 已保存」刚亮起，页面又跳回「● 未保存更改」。
+          invalidateDraftWrites()
+          return null
+        }
+        return prev
+      })
       // needsRestart 是**本次 patch 各自**的信号（服务端只在本次写入 security/
       // update/plugins 且作用域为 global/服务启动目录时返回 true）。覆盖式置位会
       // 让「鉴权改动尚未生效」的唯一警告被下一次无关保存（如改默认模型，返回
@@ -492,12 +519,19 @@ export function Settings() {
   const patchDraft = (patch: Partial<Config>) =>
     setDraft((prev) => ({ ...(prev ?? config), ...patch }))
 
-  /** 函数式更新 providers：在最新 draft.providers 上执行 updater（异步测试连接安全）。 */
-  const updateProviders = (updater: (providers: Config['providers']) => Config['providers']) =>
+  /** 函数式更新 providers：在最新 draft.providers 上执行 updater（异步测试连接安全）。
+   *  `epoch` 由调用方在**发起**异步请求时取自 getDraftEpoch；传了就说明这是异步
+   *  回写，世代不符（期间草稿被放弃/替换）时整条丢弃，不复活用户已放弃的改动。 */
+  const updateProviders = (
+    updater: (providers: Config['providers']) => Config['providers'],
+    epoch?: number,
+  ) => {
+    if (epoch !== undefined && epoch !== draftEpochRef.current) return
     setDraft((prev) => {
       const base = prev ?? config
       return { ...base, providers: updater(base.providers ?? []) }
     })
+  }
 
   /** 函数式更新 mcpServers：在最新 draft.mcpServers 上执行 updater。 */
   const updateMcpServers = (updater: (servers: Config['mcpServers']) => Config['mcpServers']) =>
@@ -608,6 +642,7 @@ export function Settings() {
 
   /** 应用导入结果：整份替换草稿并切回表单（形状已校验）。 */
   const applyImport = (next: Partial<Config>) => {
+    invalidateDraftWrites()
     setDraft(next)
     setJsonText(JSON.stringify(next, null, 2))
     setJsonError(null)
@@ -671,6 +706,7 @@ export function Settings() {
    * 项目文件仍是 m）。
    */
   const discardDraft = () => {
+    invalidateDraftWrites()
     setDraft(null)
     if (viewMode === 'json') {
       setJsonText(JSON.stringify(config, null, 2))
@@ -833,7 +869,11 @@ export function Settings() {
         <div data-testid="settings-form">
           <SettingsToc />
           <AppearancePanel />
-          <ProviderPanel providers={merged.providers} onProvidersChange={updateProviders} />
+          <ProviderPanel
+            providers={merged.providers}
+            onProvidersChange={updateProviders}
+            getDraftEpoch={() => draftEpochRef.current}
+          />
           <ModelPanel
             providers={merged.providers}
             defaultProvider={merged.defaultProvider}

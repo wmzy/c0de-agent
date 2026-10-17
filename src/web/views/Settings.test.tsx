@@ -366,6 +366,47 @@ describe('Settings — Provider 管理', () => {
     })
   })
 
+  // 探测连接是本页唯一的异步草稿写：点「测试」时请求在途，用户点「放弃更改」
+  // 把草稿丢干净（保存条的「● 未保存更改」消失、新增行回到原样），3 秒后探测
+  // 响应落地却用 `prev ?? config` 重新长出一份草稿——被明确丢弃的改动复活，
+  // 页面又亮起「● 未保存更改」，此时按保存就写进了配置。
+  it('测试连接在途时放弃更改：迟到的探测结果不复活草稿', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { providerAPI } = await import('@/services/provider.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let resolveTest: (v: { ok: boolean; models: string[] }) => void = () => {}
+    ;(providerAPI.test as Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveTest = resolve
+      }),
+    )
+
+    renderSettings()
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('provider-test')).toHaveLength(2)
+    })
+
+    // 先弄脏草稿（新增一行），再发起在途的探测，最后放弃
+    fireEvent.click(screen.getByTestId('provider-add'))
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+    fireEvent.click(screen.getAllByTestId('provider-test')[0] as HTMLElement)
+    fireEvent.click(screen.getByTestId('settings-discard'))
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+
+    await act(async () => {
+      resolveTest({ ok: true, models: ['gpt-4', 'zzdetected'] })
+      await Promise.resolve()
+    })
+
+    // 测试结果本身照常显示，但被丢弃的草稿不许复活
+    await waitFor(() => {
+      expect(screen.getByText('✓ 连接成功，2 个模型')).toBeTruthy()
+    })
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+    expect(screen.queryByTestId('provider-model-toggle-zzdetected')).toBeNull()
+  })
+
   // 删除 provider 要先过确认框（行里是手打的 baseURL + API Key，删掉无处取回），
   // 与同页 MCP 服务器删除同一口径——此前这里单击即删，保存条随即点亮。
   it('点击「删除」经确认后才移除一行', async () => {

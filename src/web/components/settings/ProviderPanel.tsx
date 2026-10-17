@@ -101,14 +101,20 @@ interface ProviderPanelProps {
    * 以函数式更新应用 provider 变更：Settings 在 setDraft 内对最新 draft.providers
    * 执行 updater，保证测试连接（异步）返回时不会因闭包持有旧 providers 而丢弃并发编辑。
    */
-  onProvidersChange: (updater: (providers: ProviderConfig[]) => ProviderConfig[]) => void
+  onProvidersChange: (
+    updater: (providers: ProviderConfig[]) => ProviderConfig[],
+    /** 发起异步请求时的草稿世代；传了则落地时世代不符则丢弃（防复活已放弃的草稿）。 */
+    epoch?: number,
+  ) => void
+  /** 取当前草稿世代（在发起异步请求时调用，作为 epoch 传给 onProvidersChange）。 */
+  getDraftEpoch?: () => number
 }
 
 /**
  * LLM Provider 管理面板：列表、手动添加 / 从 models.dev 选择、编辑字段、
  * 测试连接（探测模型并回写）、删除，以及每个 provider 的模型 override 子面板。
  */
-function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
+function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: ProviderPanelProps) {
   const [testResults, setTestResults] = useState<
     Record<number, { loading: boolean; result?: TestResult }>
   >({})
@@ -206,6 +212,11 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
 
   const testProvider = async (index: number, baseURL: string, apiKey: string) => {
     setTestResults((prev) => ({ ...prev, [index]: { loading: true } }))
+    // 发起时的草稿世代：探测期间用户可能点「放弃更改」或导入配置换了草稿，
+    // 那时把探测到的模型并进 draft 就是把**已声明丢弃**的改动复活（此前实测：
+    // 放弃后 3 秒保存条又亮起「● 未保存更改」并多出探测到的模型）。世代不符的
+    // 回写由 Settings 直接丢弃，测试结果本身照常显示。
+    const epoch = getDraftEpoch?.()
     try {
       const result = await providerAPI.test(baseURL, apiKey)
       setTestResults((prev) => ({ ...prev, [index]: { loading: false, result } }))
@@ -214,16 +225,18 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
       // 仅补全新检测到的模型。
       if (result.ok) {
         const detected = result.models
-        onProvidersChange((prev) =>
-          prev.map((p, i) => {
-            if (i !== index) return p
-            const existing = p.models ?? {}
-            const next = { ...existing }
-            for (const m of detected) {
-              if (!(m in next)) next[m] = {}
-            }
-            return { ...p, models: next }
-          }),
+        onProvidersChange(
+          (prev) =>
+            prev.map((p, i) => {
+              if (i !== index) return p
+              const existing = p.models ?? {}
+              const next = { ...existing }
+              for (const m of detected) {
+                if (!(m in next)) next[m] = {}
+              }
+              return { ...p, models: next }
+            }),
+          epoch,
         )
       }
     } catch (err) {
