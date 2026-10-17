@@ -438,12 +438,12 @@ describe('FileBrowser 切项目复位', () => {
    * 读同路径文件——用户在一个项目里看着另一个项目的文件树。
    */
   it('切换项目后在途返回的目录列表不并进新项目的树', async () => {
-    let pendingSrc: { resolve: (entries: FileEntry[]) => void } | null = null
+    let resolveSrc: ((entries: FileEntry[]) => void) | undefined
     vi.mocked(fileAPI.list).mockImplementation((dir: string) => {
       if (dir === '.') return Promise.resolve(ROOT_ENTRIES)
       if (dir === 'src') {
         return new Promise<FileEntry[]>((resolve) => {
-          pendingSrc = { resolve }
+          resolveSrc = resolve
         })
       }
       return Promise.resolve([])
@@ -456,7 +456,8 @@ describe('FileBrowser 切项目复位', () => {
     switchTo('p2')
     await waitFor(() => expect(fileAPI.list).toHaveBeenCalledWith('.', 'p2'))
 
-    pendingSrc?.resolve([{ name: 'only-in-p1.ts', type: 'file' }])
+    expect(resolveSrc).toBeDefined() // 展开 src 必须真的发出请求，否则「在途返回」不成立
+    resolveSrc?.([{ name: 'only-in-p1.ts', type: 'file' }])
 
     // 新项目的树里不得出现上一个项目的条目；src 仍是「未加载」，展开时会重新拉取
     await waitFor(() => expect(screen.getByTestId('node-src')).toBeInTheDocument())
