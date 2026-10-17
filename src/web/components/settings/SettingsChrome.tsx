@@ -143,7 +143,8 @@ const restartHint = css`
 type SaveFeedback =
   | { kind: 'idle' }
   | { kind: 'saving' }
-  | { kind: 'ok' }
+  /** msg：保存确实发生了、但有件事必须一起说出来（如「被留空的密钥未改动」）。 */
+  | { kind: 'ok'; msg?: string }
   | { kind: 'err'; msg: string }
 
 type SettingsToolbarProps = {
@@ -317,7 +318,7 @@ function SettingsSaveBar({
           data-testid="settings-save-status"
         >
           {feedback.kind === 'saving' && '保存中…'}
-          {feedback.kind === 'ok' && '✓ 已保存'}
+          {feedback.kind === 'ok' && `✓ 已保存${feedback.msg ? `（${feedback.msg}）` : ''}`}
           {feedback.kind === 'err' && `✗ 保存失败：${feedback.msg}`}
         </span>
       )}
@@ -331,11 +332,20 @@ function SettingsSaveBar({
       {isDirty && (
         <Button
           onClick={onDiscard}
+          /* 保存请求在途时锁死：草稿一旦在这段窗口里被清空，请求仍然会把
+           * 提交那一刻的内容落盘，随后吸底条显示「✓ 已保存」——用户按「放弃」
+           * 以为回滚了，其实配置已改、期间新打的字还被他自己这句「放弃」丢掉。
+           * 保存键本来就按 feedback.kind==='saving' 禁用，放弃键必须同口径。 */
+          disabled={feedback.kind === 'saving'}
           data-testid="settings-discard"
-          title="放弃当前未保存的修改，恢复到已保存配置"
+          title={
+            feedback.kind === 'saving'
+              ? '保存进行中：本次提交的草稿已在途，结束前无法放弃'
+              : '放弃当前未保存的修改，恢复到已保存配置'
+          }
           variant="outline"
         >
-          放弃更改
+          {feedback.kind === 'saving' ? '放弃更改（保存中）' : '放弃更改'}
         </Button>
       )}
       <Button

@@ -12,6 +12,7 @@ import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useCallback, useRef, useState } from 'react'
+import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { BoardConfigDialog } from '@/components/kanban/BoardConfigDialog.js'
 import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
 import { computeDropPosition, POSITION_GAP } from '@/components/kanban/drop-position.js'
@@ -245,6 +246,14 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const [editingCard, setEditingCard] = useState<KanbanCard | null>(null)
   const [showConfig, setShowConfig] = useState(false)
   const [ioError, setIoError] = useState<string | null>(null)
+  // 导入整板是不可撤销的覆盖（替换列 + 标签 + 全部卡片）。此前只用原生 window.confirm：
+  // 系统框默认键/回车落点正是「确定」=立即覆盖，肌肉记忆按回车就丢掉手工维护的卡片，
+  // 且它无法样式化、与主题割裂、无分级强度。改用站内 DangerConfirmDialog（逐字确认「覆盖」
+  // + 明示影响面），与 RecycleBin 的彻底删除、SessionList 的权限迁移同一强度。
+  // 解析后的载荷在此暂存，确认前绝不落盘。
+  const [pendingImport, setPendingImport] = useState<{ data: unknown; cardCount: number } | null>(
+    null,
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 指针拖拽 + 键盘拖拽两套传感器。
@@ -403,8 +412,8 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     }
   }
 
-  /** 导入整板：替换当前列+标签+卡片。fail-closed 确认（不可撤销），
-   *  明示「当前板将被覆盖」——防用户拿着旧备份导入后丢失新增卡片。 */
+  /** 导入整板：替换当前列+标签+卡片。解析后先暂存载荷，交由 DangerConfirmDialog
+   *  逐字确认（不可撤销），明示「当前板将被覆盖」——防用户拿着旧备份导入后丢失新增卡片。 */
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
@@ -414,20 +423,21 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       const data = JSON.parse(await file.text()) as unknown
       const cards = (data as { cards?: unknown }).cards
       const cardCount = Array.isArray(cards) ? cards.length : 0
-      const currentCount = board?.cards.length ?? 0
-      if (
-        !window.confirm(
-          `导入将替换当前看板的列、标签与全部卡片：现有 ${currentCount} 张卡片将被覆盖` +
-            `（导入 ${cardCount} 张卡片），且不可撤销。确定继续？`,
-        )
-      ) {
-        return
-      }
-      const result = await kanbanAPI.importBoard(projectId, data)
+      setPendingImport({ data, cardCount })
+    } catch (err) {
+      setIoError(err instanceof Error ? err.message : '导入失败')
+    }
+  }
+
+  /** 确认覆盖：DangerConfirmDialog 逐字确认后才执行，失败原因留在弹窗内。 */
+  const confirmImport = async () => {
+    const pending = pendingImport
+    if (!pending) return
+    setPendingImport(null)
+    setIoError(null)
+    try {
+      await kanbanAPI.importBoard(projectId, pending.data)
       await qc.invalidateQueries({ queryKey: ['kanban', projectId] })
-      setIoError(null)
-      // 静默成功即可：看板即时刷新可见
-      void result
     } catch (err) {
       setIoError(err instanceof Error ? err.message : '导入失败')
     }
@@ -580,6 +590,21 @@ export function KanbanView({ projectId }: KanbanViewProps) {
           labels={board.labels}
           cards={board.cards}
           onClose={() => setShowConfig(false)}
+        />
+      )}
+
+      {pendingImport && (
+        <DangerConfirmDialog
+          open
+          title="导入看板"
+          description={
+            `导入将替换当前看板的列、标签与全部卡片：现有 ${board.cards.length} 张卡片将被覆盖` +
+            `（导入 ${pendingImport.cardCount} 张卡片），且不可撤销。`
+          }
+          confirmWord="覆盖"
+          confirmLabel="覆盖导入"
+          onConfirm={() => void confirmImport()}
+          onClose={() => setPendingImport(null)}
         />
       )}
     </div>

@@ -23,6 +23,21 @@ type ApplyResult =
   | { _tag: 'hash_mismatch'; expected: string; actual: string }
   | { _tag: 'line_not_found'; operation: PatchOp }
 
+/**
+ * 单个操作在原文件里的行级变更：`removed` 是被替换/删除的原始行，`added` 是写入
+ * 的新行（纯插入时 removed 为空）。行号相对原文件。
+ *
+ * 供 edit 工具把变更随结果回传（web 端据此渲染真实 diff）；applyPatch 只在调用方
+ * 传入回调时记录，不进返回值——返回值契约不变。
+ */
+type PatchHunk = {
+  _tag: PatchOp['_tag']
+  start: number
+  end: number
+  removed: string[]
+  added: string[]
+}
+
 // ── computeHash ──────────────────────────────────────────
 
 /** 4 位 hex 内容哈希（sha256 取前 4 位）。与 session 快照哈希算法同源。 */
@@ -238,8 +253,13 @@ function inBounds(op: PatchOp, lineCount: number): boolean {
   }
 }
 
-/** 应用一个补丁到文件内容。先校验哈希，再按锚点降序应用操作。 */
-function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
+/** 应用一个补丁到文件内容。先校验哈希，再按锚点降序应用操作。
+ *  onHunk：可选，逐个操作上报行级变更（见 PatchHunk）。 */
+function applyPatch(
+  file: string,
+  patch: ParsedPatch,
+  onHunk?: (hunk: PatchHunk) => void,
+): ApplyResult {
   const actual = computeHash(file)
   if (actual !== patch.hash) {
     return { _tag: 'hash_mismatch', expected: patch.hash, actual }
@@ -279,23 +299,68 @@ function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
     // CRLF/LF 混合行尾（与 edit diff 模式的单向归一化同型）。
     const contentLines =
       'content' in op && op.content !== '' ? op.content.split('\n').map(stripCR) : []
+    // 行级变更记录：每个操作落盘前把「原文件受影响的行 / 写入的新行」交给调用方
+    // （回调按锚点降序触发，即应用顺序；调用方按行号升序拼 diff）。操作行号都相对
+    // 原文件，高锚点的先应用不会挪动本操作自己的区间，所以此处读到的仍是原始行。
     switch (op._tag) {
       case 'SWAP':
+        onHunk?.({
+          _tag: op._tag,
+          start: op.start,
+          end: op.end,
+          removed: lines.slice(op.start - 1, op.end),
+          added: contentLines,
+        })
         lines.splice(op.start - 1, op.end - op.start + 1, ...contentLines)
         break
       case 'DEL':
+        onHunk?.({
+          _tag: op._tag,
+          start: op.start,
+          end: op.end,
+          removed: lines.slice(op.start - 1, op.end),
+          added: [],
+        })
         lines.splice(op.start - 1, op.end - op.start + 1)
         break
       case 'INS_PRE':
+        onHunk?.({
+          _tag: op._tag,
+          start: op.line,
+          end: op.line,
+          removed: [],
+          added: contentLines,
+        })
         lines.splice(op.line - 1, 0, ...contentLines)
         break
       case 'INS_POST':
+        onHunk?.({
+          _tag: op._tag,
+          start: op.line,
+          end: op.line,
+          removed: [],
+          added: contentLines,
+        })
         lines.splice(op.line, 0, ...contentLines)
         break
       case 'INS_HEAD':
+        onHunk?.({
+          _tag: op._tag,
+          start: 1,
+          end: 1,
+          removed: [],
+          added: contentLines,
+        })
         lines.unshift(...contentLines)
         break
       case 'INS_TAIL':
+        onHunk?.({
+          _tag: op._tag,
+          start: lineCount,
+          end: lineCount,
+          removed: [],
+          added: contentLines,
+        })
         lines.push(...contentLines)
         break
     }
@@ -306,5 +371,5 @@ function applyPatch(file: string, patch: ParsedPatch): ApplyResult {
   return { _tag: 'success', content: result }
 }
 
-export type { ApplyResult, ParsedPatch, PatchOp }
+export type { ApplyResult, ParsedPatch, PatchHunk, PatchOp }
 export { applyPatch, computeHash, parsePatch }

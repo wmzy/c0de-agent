@@ -241,12 +241,30 @@ export const MessageItem = memo(function MessageItem({
             key={blockKey}
             role="button"
             tabIndex={0}
+            // 选中态此前只落在 data 属性与样式上，读屏完全无从判断这块是否已加入
+            // shake 范围——aria-pressed 把它播报出来，与同仓其它切换组一致。
+            aria-pressed={allSelected}
             onClick={(e) => {
-              // 内嵌交互元素（复制按钮/路径链接/工具折叠头）自身处理点击，不触发 shake 选中切换
-              if ((e.target as HTMLElement | null)?.closest('button, a')) return
+              // 内嵌交互元素（复制按钮/路径链接/工具折叠头）自身处理点击，不触发 shake
+              // 选中切换。`[role="button"]` 必须算进来：ToolBlock 折叠头是 div+role
+              // （HTML 禁止嵌套 button），只认 button/a 时点一下折叠头会顺手反选该
+              // shake 区域——用户以为只是展开工具块。
+              //
+              // 判据必须与 currentTarget 比对而不是「是否命中」：真实点击落在块内的
+              // 普通内容（正文 div）上时，closest 沿祖先链会命中包装层自身的
+              // role="button"，按「命中即返回」会把主交互（点块内任意空白处切换选中）
+              // 一并吃掉——happy-dom 用例传不到，只有真实浏览器点得出来。
+              const target = e.target as HTMLElement | null
+              const nested = target?.closest?.('button, a, [role="button"]')
+              if (nested && nested !== e.currentTarget) return
               toggleRegions()
             }}
             onKeyDown={(e) => {
+              // 与 ToolBlock 头部同款：块内真 <button>（复制/展开收起/思考过程/路径
+              // 链接/工具折叠头）冒泡上来的 Enter/Space 必须放行，否则 preventDefault
+              // 吃掉按钮自身激活——复制、展开、打开文件全部失灵，Enter 只换来一次
+              // 静默的 shake 选中切换。
+              if (e.target !== e.currentTarget) return
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
                 toggleRegions()

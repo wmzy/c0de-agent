@@ -93,6 +93,14 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
     height: 240,
     open: true,
     restoring: false,
+    restoreError: null,
+    retryRestore: () => {},
+    // 新建/分屏失败提示（useTerminal 新增字段，面板据此渲染失败条）
+    createError: null,
+    clearCreateError: () => {},
+    // 关闭终端失败提示（同样由 useTerminal 提供，pane 上的 × 是重试入口）
+    closeError: null,
+    clearCloseError: () => {},
     setActiveTabId: () => {},
     setActivePaneId: () => {},
     createTerminal: async () => 'p3',
@@ -100,7 +108,7 @@ function makeTerminal(direction: 'horizontal' | 'vertical' = 'horizontal'): UseT
     connect: () => {},
     markDead: () => {},
     disconnect: () => {},
-    closeTerminal: async () => {},
+    closeTerminal: async () => true,
     resize: async () => {},
     getWebSocket: () => null,
     setSplitDirection: () => {},
@@ -270,6 +278,36 @@ describe('TerminalPanel 打开面板时自动创建首个终端', () => {
     rerender(<TerminalPanel terminal={terminal} cwd="/b" projectId="B" />)
     await waitFor(() => expect(createTerminal).toHaveBeenCalledTimes(1))
     expect(createTerminal).toHaveBeenLastCalledWith({ cwd: '/b' })
+  })
+
+  // 回归：项目信息读取失败（GET /api/projects/:id 500）时 cwd 恒为 undefined，
+  // 与「还在加载」同形。面板于是不自动建首个终端、空态里的「新建终端」按钮也随之
+  // 消失（按 cwd 门控），用户落在一个没有出口的空面板上——页面上没有任何地方说明
+  // 「项目目录没读到」，也没有重试入口，只能刷新页面。
+  it('项目目录读失败时给出原因与重试；恢复后空态按钮照常可用', async () => {
+    const createTerminal = vi.fn(async () => 'new-pane')
+    const terminal = emptyTerminal(createTerminal)
+    const retry = vi.fn()
+    const { rerender } = render(
+      <TerminalPanel
+        terminal={terminal}
+        cwd={undefined}
+        projectId="p1"
+        cwdLoadError={{ message: '项目服务暂时不可用', retry }}
+      />,
+    )
+
+    // 面板里说得出「为什么这里空着」，并给出重试入口
+    const alert = screen.getByTestId('terminal-cwd-error')
+    expect(alert.textContent).toContain('项目服务暂时不可用')
+    fireEvent.click(screen.getByTestId('terminal-cwd-retry'))
+    expect(retry).toHaveBeenCalledTimes(1)
+
+    // 重试成功后 cwd 到位：提示消失，终端正常可建，且用的是项目目录
+    rerender(<TerminalPanel terminal={terminal} cwd="/repo" projectId="p1" cwdLoadError={null} />)
+    await waitFor(() => expect(screen.queryByTestId('terminal-cwd-error')).toBeNull())
+    fireEvent.click(screen.getByText('新建终端'))
+    expect(createTerminal).toHaveBeenLastCalledWith({ cwd: '/repo' })
   })
 })
 
@@ -445,5 +483,60 @@ describe('TerminalPanel pane 连接状态', () => {
     ws.dispatch('{"type":"error","message":"Terminal not found"}')
 
     expect(markDead).toHaveBeenCalledWith('p1', 'unreachable')
+  })
+})
+
+/**
+ * 回归：新建终端 / 分屏失败的原因必须落在面板里。
+ *
+ * 两个入口此前都只发起一次静默的请求（`void createTerminal`）：失败时界面纹丝
+ * 不动，面板里没有任何痕迹，用户只会以为按钮坏了。
+ */
+describe('TerminalPanel 新建/分屏失败提示', () => {
+  it('有终端时分屏失败也能看到原因，并可关闭', () => {
+    const clearCreateError = vi.fn()
+    const terminal: UseTerminalReturn = {
+      ...makeTerminal(),
+      createError: '分屏失败：PTY 启动失败：too many processes',
+      clearCreateError,
+    }
+    render(<TerminalPanel terminal={terminal} cwd="/a" projectId="A" />)
+
+    const alert = screen.getByTestId('terminal-create-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('分屏失败：PTY 启动失败：too many processes')
+
+    fireEvent.click(screen.getByTestId('terminal-create-error-dismiss'))
+    expect(clearCreateError).toHaveBeenCalled()
+  })
+
+  it('没有失败时不渲染失败条', () => {
+    render(<TerminalPanel terminal={makeTerminal()} cwd="/a" projectId="A" />)
+    expect(screen.queryByTestId('terminal-create-error')).toBeNull()
+    expect(screen.queryByTestId('terminal-close-error')).toBeNull()
+  })
+})
+
+/**
+ * 回归：关闭终端失败（DELETE 失败）此前被空吞——pane 从界面与布局里一起消失，
+ * 而 PTY 还在后台跑，从此没有任何入口。失败原因必须落在面板里，否则用户看到的是
+ * 「点了 × 没反应」。
+ */
+describe('TerminalPanel 关闭终端失败提示', () => {
+  it('kill 失败时在面板里说明原因，pane 仍在（× 就是重试入口）', () => {
+    const clearCloseError = vi.fn()
+    const terminal: UseTerminalReturn = {
+      ...makeTerminal(),
+      closeError: '关闭终端失败：服务不可达，该终端仍在后台运行',
+      clearCloseError,
+    }
+    render(<TerminalPanel terminal={terminal} cwd="/a" projectId="A" />)
+
+    const alert = screen.getByTestId('terminal-close-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('仍在后台运行')
+
+    fireEvent.click(screen.getByTestId('terminal-close-error-dismiss'))
+    expect(clearCloseError).toHaveBeenCalled()
   })
 })

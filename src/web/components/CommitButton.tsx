@@ -112,6 +112,27 @@ const commitBtnError = css`
 `
 
 /**
+ * 提交失败原因（顶栏常驻，不是 tooltip、也不是 toast）。
+ *
+ * 此前原因只写在 haze-ui 的 Tooltip 里，而那个气泡在未悬停时是
+ * display:none 的空节点（实测 reason 仅存在于 span[role=tooltip]，
+ * 按钮上没有 aria-describedby/title，ariaSnapshot 只读出「提交失败」）：
+ * 触屏没有悬停、读屏不进气泡——pre-commit hook 的原文一行都看不到。
+ * 更糟的是 5 秒后 setTimeout 把整个反馈复位成 idle，即使鼠标用户也来不及
+ * 读完 hook 报错。失败原因必须一直留在视野里，直到下一次提交动作为止
+ * （onMutate 会把反馈复位），与顶栏分支切换失败提示同一口径。
+ */
+const commitError = css`
+  color: var(--haze-color-danger);
+  font-size: 11px;
+  line-height: 1.35;
+  /* hook 报错是多行长句；顶栏不换行（见 TopBar 的 bar），限宽让文字折行，
+     宁可顶栏高一行，也不要把右侧导航挤出视口。 */
+  max-width: 240px;
+  overflow-wrap: anywhere;
+`
+
+/**
  * 一键提交按钮：有变更时高亮，点击调用便宜模型生成 commit message 并提交。
  * 放置在 TopBar 的 ProjectIndicator actions 槽。
  * git status 查询与 FileBrowser 共享同一 queryKey，React Query 自动去重缓存；
@@ -168,7 +189,9 @@ export function CommitButton({ projectId }: { projectId: string }) {
           ? String((err as { message: string }).message)
           : '提交失败'
       setCommitFeedback({ kind: 'err', msg })
-      setTimeout(() => setCommitFeedback((s) => (s.kind === 'err' ? { kind: 'idle' } : s)), 5000)
+      // 不再自动清：原因此前只活在 tooltip（display:none 的 role=tooltip 气泡）里，
+      // 触屏/读屏根本读不到，再叠一个 5s 定时器等于把唯一的信息彻底销毁。
+      // 复位交给下一次提交动作（onMutate）与关弹窗（onCancel）。
     },
   })
 
@@ -214,10 +237,24 @@ export function CommitButton({ projectId }: { projectId: string }) {
           {label}
         </button>
       </Tooltip>
+      {/*
+       * 失败原因常驻渲染在按钮旁。审查弹窗开着时原因由 CommitReviewDialog 承担
+       * （它在 <dialog> 内部，顶栏那行会被 ::backdrop 挡住也读不到），不重复渲染。
+       */}
+      {commitFeedback.kind === 'err' && !reviewState && (
+        <span className={commitError} role="alert" data-testid="commit-error">
+          {'⚠'} 提交失败：{commitFeedback.msg}
+        </span>
+      )}
       {reviewState && (
         <CommitReviewDialog
           suggestions={reviewState.suggestions}
           message={reviewState.message}
+          busy={commitMut.isPending}
+          // 提交失败的原因必须出现在模态框里：顶栏那行「提交失败」位于
+          // <dialog>::backdrop 之后，读屏也被 inert 挡住，用户在弹窗里看到的
+          // 只有「点了没反应」，按钮还能再点一次排第二次 commit。
+          error={commitFeedback.kind === 'err' ? commitFeedback.msg : null}
           onAppendIgnore={() =>
             commitMut.mutate({
               mode: 'append-ignore',
@@ -226,7 +263,10 @@ export function CommitButton({ projectId }: { projectId: string }) {
             })
           }
           onForce={() => commitMut.mutate({ mode: 'force', message: reviewState.message })}
-          onCancel={() => setReviewState(null)}
+          onCancel={() => {
+            setReviewState(null)
+            setCommitFeedback({ kind: 'idle' })
+          }}
         />
       )}
     </>

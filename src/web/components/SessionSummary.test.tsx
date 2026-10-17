@@ -272,3 +272,88 @@ describe('SessionSummary 调用明细读失败态', () => {
     expect(screen.getByTestId('session-summary-grid').textContent ?? '').not.toContain('未估价调用')
   })
 })
+
+/**
+ * 另两条查询（messages / session）的「拉不到 ≠ 0」。
+ *
+ * 缺陷：面板只对 llm-details 解构了 isError，另两条读了 data 就算完。
+ * 首载失败时 messages 为 undefined，computeStats 拿 [] 算出 messageCount /
+ * userMessages / assistantMessages 三个精确的 0；session 为 undefined 时标题
+ * 退化成「（未命名会话）」、创建时间/最后活动退化成「—」。用户打开「会话信息」
+ * 想确认这轮对话还在不在，看到的却是「0 条消息、没有名字」，据此认定内容已丢失。
+ */
+describe('SessionSummary 消息/会话元信息读失败态', () => {
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('消息列表读失败：三条消息计数都是「读不到」并给出原因，不显示 0', async () => {
+    ;(sessionAPI.get as Mock).mockResolvedValue(session)
+    ;(sessionAPI.messages as Mock).mockRejectedValue(new Error('messages 后端炸了'))
+    ;(sessionAPI.llmDetails as Mock).mockResolvedValue(segments)
+    renderWithClient(<SessionSummary sessionId="s1" />)
+    fireEvent.click(screen.getByTestId('session-summary-toggle'))
+
+    const err = await screen.findByTestId('summary-messages-error')
+    expect(err).toHaveAttribute('role', 'alert')
+    expect(err.textContent).toContain('messages 后端炸了')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-summary-grid').textContent).toContain('测试会话')
+    })
+    const text = screen.getByTestId('session-summary-grid').textContent ?? ''
+    expect(text).toMatch(/消息数\s*读不到/)
+    expect(text).toMatch(/用户消息\s*读不到/)
+    expect(text).toMatch(/助手消息\s*读不到/)
+    // 调用明细这次读到了，照常显示真实值
+    expect(text).toMatch(/总 token\s*1,230/)
+  })
+
+  it('会话元信息读失败：标题是「读不到」而不是「（未命名会话）」，时间同理', async () => {
+    ;(sessionAPI.get as Mock).mockRejectedValue(new Error('session 后端炸了'))
+    ;(sessionAPI.messages as Mock).mockResolvedValue(messages)
+    ;(sessionAPI.llmDetails as Mock).mockResolvedValue(segments)
+    renderWithClient(<SessionSummary sessionId="s1" />)
+    fireEvent.click(screen.getByTestId('session-summary-toggle'))
+
+    const err = await screen.findByTestId('summary-session-error')
+    expect(err).toHaveAttribute('role', 'alert')
+    expect(err.textContent).toContain('session 后端炸了')
+
+    const text = await waitFor(() => {
+      const t = screen.getByTestId('session-summary-grid').textContent ?? ''
+      expect(t).toContain('会话元信息读取失败')
+      return t
+    })
+    expect(text).not.toContain('（未命名会话）')
+    expect(text).toMatch(/创建时间\s*读不到/)
+    expect(text).toMatch(/最后活动\s*读不到/)
+    // 消息列表这次读到了，计数照常
+    expect(text).toMatch(/消息数\s*3/)
+  })
+
+  it('任一查询尚未落地都显示「加载中…」——不把还没到的数据渲染成 0', async () => {
+    ;(sessionAPI.get as Mock).mockResolvedValue(session)
+    // messages 永不 resolve（模拟慢查询）
+    ;(sessionAPI.messages as Mock).mockImplementation(() => new Promise(() => {}))
+    ;(sessionAPI.llmDetails as Mock).mockResolvedValue(segments)
+    // 自建 QueryClient：靠查询状态确认「另两条已落地」，而不是靠首次渲染的
+    // 短暂「加载中…」——否则本用例在旧实现下也会通过（那时初帧同样是加载中）。
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <SessionSummary sessionId="s1" />
+      </QueryClientProvider>,
+    )
+    fireEvent.click(screen.getByTestId('session-summary-toggle'))
+
+    await waitFor(() => {
+      expect(qc.getQueryState(['session', 's1', 'llm-details'])?.status).toBe('success')
+      expect(qc.getQueryState(['session', 's1'])?.status).toBe('success')
+    })
+    const text = screen.getByTestId('session-summary-grid').textContent ?? ''
+    expect(text).toContain('加载中…')
+    expect(text).not.toContain('消息数')
+  })
+})

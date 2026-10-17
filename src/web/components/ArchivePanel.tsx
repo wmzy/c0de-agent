@@ -214,7 +214,18 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
           </div>
         ) : null}
         {!isLoading && !isError && archives.length === 0 ? (
-          <div className={empty}>暂无归档（/clear、Shake、压缩产生的内容会保留在这里）</div>
+          // 「搜不到」与「没有归档」是两件事：搜索无命中时此前渲染的是空态那句
+          // 「暂无归档（/clear、Shake、压缩产生的内容会保留在这里）」——用户刚在
+          // 列表里看到两条归档，输入一个不存在的词就被告诉「暂无归档」，只会认定
+          // 历史内容已经被清了，进而去翻备份。与侧栏会话搜索 / 回收站搜索 /
+          // 文件面板同口径：有查询词时说的是「没有匹配」。
+          q.trim() ? (
+            <div className={empty} data-testid="archive-no-match">
+              {`没有匹配「${q.trim()}」的归档`}
+            </div>
+          ) : (
+            <div className={empty}>暂无归档（/clear、Shake、压缩产生的内容会保留在这里）</div>
+          )
         ) : null}
         {archives.map((a) => (
           <div key={a.id} className={item}>

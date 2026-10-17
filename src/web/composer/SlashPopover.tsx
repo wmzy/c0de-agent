@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useRef } from 'react'
+import { PopoverError } from '@/composer/PopoverError.js'
 import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
 import type { SubcommandDef } from '@/services/commands.js'
@@ -57,6 +58,10 @@ type Props = {
   activeIndex: number
   /** 命令列表仍在加载中（结果未到）。 */
   loading?: boolean
+  /** 命令列表读取失败的原因（已取 message）；非空即渲染失败行而不是空浮层。 */
+  error?: string | null
+  /** 失败行的重试入口。 */
+  onRetry?: () => void
   onSelect: (name: string) => void
 }
 
@@ -65,6 +70,10 @@ type SubcommandProps = {
   activeIndex: number
   /** 命令列表仍在加载中（结果未到）。 */
   loading?: boolean
+  /** 命令列表读取失败的原因（已取 message）；非空即渲染失败行而不是空浮层。 */
+  error?: string | null
+  /** 失败行的重试入口。 */
+  onRetry?: () => void
   onSelect: (name: string) => void
   parentCommand: string
 }
@@ -75,6 +84,15 @@ function SlashPopover(props: Props) {
   // 空列表不等于「没有这个命令」：加载中此前同样 return null，浮层消失后用户
   // 只能看到「没有任何命令匹配」。
   if (props.commands.length === 0) {
+    // 失败优先于「空/加载中」：命令列表读不到时此前浮层整个消失，
+    // 用户以为「没有这个命令」，Enter 还照样把字面量 /cmd 发出去。
+    if (props.error) {
+      return (
+        <div className={popover} data-testid="slash-menu-error">
+          <PopoverError message={`命令列表加载失败：${props.error}`} onRetry={props.onRetry} />
+        </div>
+      )
+    }
     if (!props.loading) return null
     return (
       <div className={popover} role="status" data-testid="slash-menu-loading">
@@ -111,6 +129,13 @@ function SubcommandPopover(props: SubcommandProps) {
   const listRef = useRef<HTMLDivElement>(null)
   usePopoverScroll(listRef, props.activeIndex, props.subcommands.length > 0)
   if (props.subcommands.length === 0) {
+    if (props.error) {
+      return (
+        <div className={popover} data-testid="subcommand-menu-error">
+          <PopoverError message={`命令列表加载失败：${props.error}`} onRetry={props.onRetry} />
+        </div>
+      )
+    }
     if (!props.loading) return null
     return (
       <div className={popover} role="status" data-testid="subcommand-menu-loading">

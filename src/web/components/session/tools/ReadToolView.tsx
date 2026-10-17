@@ -1,6 +1,8 @@
 import type { ToolResult } from '@shared/types/tool.js'
+import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
 import { FileCodeBlock } from '@/components/session/tools/FileCodeBlock.js'
 import { ToolError } from '@/components/session/tools/toolError.js'
+import { strArg } from '@/components/session/tools/toolShape.js'
 
 type ReadInput = { path: string; offset?: number; limit?: number }
 
@@ -18,7 +20,13 @@ export function ReadToolView({
   if (output?._tag === 'error' || status === 'error') {
     return <ToolError output={output} status={status} />
   }
-  const path = input?.path ?? ''
+  // input 是原样落库的 JSON：path 被写成对象时 extToLang 的 filename.split() 会在
+  // 渲染期抛错，把整个应用壳换成「页面渲染出错」。读不出来就退回兜底视图（原始
+  // 入参摊平显示），不用空 path 冒充「读的正是这个文件」。
+  const path = strArg(input, 'path')
+  if (path.broken) {
+    return <FallbackToolView tool="read" input={input} output={output} status={status} />
+  }
   const content = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
-  return <div>{content && <FileCodeBlock path={path} content={content} />}</div>
+  return <div>{content && <FileCodeBlock path={path.value ?? ''} content={content} />}</div>
 }

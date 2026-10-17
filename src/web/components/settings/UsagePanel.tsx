@@ -115,6 +115,7 @@ function UsagePanel({
   onGlobalTokenBudgetChange,
   onTokenBudgetActionChange,
   projectId,
+  scope,
 }: {
   budget: number
   budgetAction?: string
@@ -129,6 +130,29 @@ function UsagePanel({
   onGlobalTokenBudgetChange?: (v: number) => void
   onTokenBudgetActionChange?: (v: 'warn' | 'pause' | 'abort') => void
   projectId?: string
+  /**
+   * 设置页顶部的写入作用域（保存时随 PATCH 一起提交）。
+   *
+   * 本分区的每个控件都必须落在与**分区口径**一致的写入作用域里，否则必然出事：
+   * - 分区是全局口径（无路由 projectId：统计含所有项目 + 未归属调用），控件是
+   *   globalMonthlyBudgetUsd / globalMonthlyTokenBudget，而这两个键在项目作用域
+   *   会被服务端直接拒绝（400 GLOBAL_BUDGET_IN_PROJECT_SCOPE）——此前默认作用域
+   *   就是「项目」，于是在 /settings 上改一次全局预算 = 整次保存失败，连同这次
+   *   保存里其他无关改动一起丢；
+   * - 分区是项目口径（有 projectId），控件是 usage.monthlyBudgetUsd 等项目键，
+   *   而项目作用域之外（全局作用域）保存会把它们写进 ~/.c0de/config.json——
+   *   mergeConfig 对 usage 只浅合并一层，等于把这个项目的预算变成所有项目的预算。
+   *
+   * 作用域上的「字段去哪了」必须说清楚（同 SecurityPanel 的 security-scope-hint
+   * 口径：锁定 + 给出正解路径），因此锁定态渲染 data-testid="usage-scope-hint"。
+   *
+   * 只锁**预算数值**这两个字段：它们是唯一一组「同一含义、两个作用域各有专属键」
+   * 的配置（monthlyBudgetUsd ↔ globalMonthlyBudgetUsd），写错作用域要么被拒要么
+   * 变成别人的预算。超支动作（budgetAction/tokenBudgetAction）没有全局专属对应键，
+   * 它跟着当前作用域写是合法且有意义的（全局文件里的值就是各项目的默认动作），
+   * 因此不加锁。
+   */
+  scope: 'global' | 'project'
 }) {
   const {
     data: summary,
@@ -143,6 +167,11 @@ function UsagePanel({
   })
 
   const monthCost = currentMonthCost(summary)
+  // 分区口径由路由上下文决定（与上面的统计口径、下面的告警判定同一来源）：
+  // 有 projectId = 本项目口径；无 projectId = 全局口径。
+  const panelScope: 'global' | 'project' = projectId ? 'project' : 'global'
+  // 写入作用域必须与分区口径一致才能编辑（见 scope 的注释）。
+  const scopeLocked = scope !== panelScope
   // token 口径与预算暂停判定同源（input+output+cacheRead）。
   const monthTokens = monthTokenSum(summary?.currentMonth)
   // 项目视图：项目预算；全局视图：全局预算（P1-3 两者并存，任一超支即触发动作）。
@@ -187,7 +216,9 @@ function UsagePanel({
             min={0}
             step="0.5"
             value={String(budget)}
+            disabled={scopeLocked}
             onChange={(v) => onBudgetChange(Math.max(0, parseFiniteNumber(v, budget)))}
+            data-testid="usage-project-budget"
           />
         </label>
       ) : (
@@ -199,6 +230,7 @@ function UsagePanel({
             min={0}
             step="0.5"
             value={String(globalBudget ?? 0)}
+            disabled={scopeLocked}
             onChange={(v) =>
               onGlobalBudgetChange?.(Math.max(0, parseFiniteNumber(v, globalBudget ?? 0)))
             }
@@ -215,6 +247,7 @@ function UsagePanel({
             min={0}
             step="1000"
             value={String(tokenBudget ?? 0)}
+            disabled={scopeLocked}
             onChange={(v) =>
               onTokenBudgetChange?.(Math.max(0, parseFiniteNumber(v, tokenBudget ?? 0)))
             }
@@ -230,12 +263,20 @@ function UsagePanel({
             min={0}
             step="1000"
             value={String(globalTokenBudget ?? 0)}
+            disabled={scopeLocked}
             onChange={(v) =>
               onGlobalTokenBudgetChange?.(Math.max(0, parseFiniteNumber(v, globalTokenBudget ?? 0)))
             }
             data-testid="usage-global-token-budget"
           />
         </label>
+      )}
+      {scopeLocked && (
+        <div className={hint} data-testid="usage-scope-hint">
+          {panelScope === 'global'
+            ? '全局口径预算仅在「全局」作用域生效：请在顶部把作用域切到「全局配置」后再修改（项目作用域提交这些键会被服务端拒绝，整次保存都会失败）。'
+            : '项目预算写在项目配置里：请在顶部把作用域切到「项目配置」后再修改（写进全局配置会变成所有项目的预算）。'}
+        </div>
       )}
       {projectId && (globalBudget ?? 0) > 0 && (
         <div className={hint}>

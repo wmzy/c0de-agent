@@ -253,9 +253,30 @@ export function UpdateBanner() {
             {applying ? '应用中…' : '立即应用'}
           </button>
         )}
-        <button type="button" className={linkBtn} onClick={dismiss} data-testid="update-dismiss">
-          稍后
-        </button>
+        {applying ? (
+          // 在途锁：横幅是这次应用**唯一**的结果呈现面（失败原因 / 手动指引 /
+          // 成功后回头的「刷新页面」入口），而「稍后」会把它整条卸载并把版本号
+          // 写进 localStorage。在途点下去，用户既看不到这次应用成没成，也没有
+          // 任何入口回到「刷新页面」，页面就永久停在「新服务端 + 旧前端 JS」的
+          // 混版本状态（正是上面那条注释要避免的事）。与「立即应用」同口径：
+          // 在途期间不可交互，结果落地后再决定。
+          <button
+            type="button"
+            className={linkBtn}
+            disabled
+            title="热更新进行中，结果出来后才可稍后"
+            data-testid="update-dismiss"
+          >
+            稍后
+          </button>
+        ) : apply.isSuccess ? null : (
+          // 已应用：不再提供「稍后」——此刻已经没有「稍后」可言，唯一的后续动作
+          // 是刷新页面；留着它只会把刷新入口一起卸掉（dismissal 落 localStorage，
+          // 该版本号在重新打开页面时也不会再提示）。
+          <button type="button" className={linkBtn} onClick={dismiss} data-testid="update-dismiss">
+            稍后
+          </button>
+        )}
       </span>
       <DangerConfirmDialog
         open={confirmOpen}

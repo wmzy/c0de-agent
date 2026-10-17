@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import type { TimelineRow } from '@/components/session/utils/timeline.js'
 import { formatCost, formatLatency, formatTimestamp, formatTokenCount } from '@/utils/format.js'
@@ -146,12 +146,28 @@ function rowRole(row: TimelineRow): string {
   return ''
 }
 
-/** 消息内出现的工具名（tool_call / tool_result）。 */
+/**
+ * 消息内出现的全部工具名（tool_call / tool_result，去重保序）。
+ *
+ * 此前只 `.find()` 首个工具 —— 一条 assistant 消息可以并行发起多个工具调用
+ * （normalizeParts 把每个 tool_call 都保留为独立 part），于是「角色/工具」列、
+ * 「工具筛选」下拉候选集与文本搜索都只认第一个工具：选第二个工具名筛选得到
+ * 「无匹配项」，用户据此判断「这个会话从没跑过 bash」，而展开行内原始 JSON
+ * 就能看到那次调用确实存在 —— 排障结论被 UI 直接带反。
+ */
+function rowToolNames(row: TimelineRow): string[] {
+  if (row.kind !== 'message') return []
+  const names: string[] = []
+  for (const p of row.message.content) {
+    if (p._tag !== 'tool_call' && p._tag !== 'tool_result') continue
+    if (!names.includes(p.tool)) names.push(p.tool)
+  }
+  return names
+}
+
+/** 首个工具名（摘要列展示用）。 */
 function rowToolName(row: TimelineRow): string {
-  if (row.kind !== 'message') return ''
-  const part = row.message.content.find((p) => p._tag === 'tool_call' || p._tag === 'tool_result')
-  if (!part) return ''
-  return part._tag === 'tool_call' ? part.tool : part.tool
+  return rowToolNames(row)[0] ?? ''
 }
 
 /** 调用所属段的 model（调用行展示）。 */
@@ -212,9 +228,46 @@ function rowJSON(row: TimelineRow): string {
   }
 }
 
+/** 行内所有可搜索文本：消息的全部文本 part 全文（不限 120 字符）+ 工具入参。
+ *
+ * 此前 rowSearchText 复用 rowSummary，而 rowSummary 只取首个 text part 的
+ * 前 120 字符——agent 长回复的后半段、第二个及以后的 text part、thinking /
+ * steering 文本、工具入参（命令 / 路径 / pattern）全部不在索引里。用户搜一个
+ * 确实出现过的词得到「无匹配项 0/N」，据此判断「这个会话从没提过 X /
+ * 从没跑过这个命令」，与 8086032 已修的「工具筛选只认第一个」是同族。
+ *
+ * tool_result 的 output 不进索引：bash 一次失败的构建就是几十万字符，
+ * 逐键重建整张表的索引会随会话体积线性放大（这里每次按键都要重算）。要查
+ * 输出内容用「展开行的原始 JSON」，那才是它的用途。
+ */
+function rowFullText(row: TimelineRow): string {
+  switch (row.kind) {
+    case 'message': {
+      const chunks: string[] = []
+      for (const p of row.message.content) {
+        if (p._tag === 'text' || p._tag === 'thinking' || p._tag === 'steering') chunks.push(p.text)
+        // 入参通常是命令/路径/pattern 这类短文本，正是最常被搜的东西
+        else if (p._tag === 'tool_call') chunks.push(JSON.stringify(p.input ?? {}))
+      }
+      return chunks.join(' ')
+    }
+    case 'call':
+      return row.call.responseText
+    case 'segment':
+      return `${row.segment.trigger} ${row.segment.model} ${row.segment.provider}`
+  }
+}
+
 /** 筛选后的可搜索文本（小写）。 */
 function rowSearchText(row: TimelineRow): string {
-  const parts = [typeLabel(row), rowRole(row), rowToolName(row), rowModel(row), rowSummary(row)]
+  const parts = [
+    typeLabel(row),
+    rowRole(row),
+    ...rowToolNames(row),
+    rowModel(row),
+    rowSummary(row),
+    rowFullText(row),
+  ]
   return parts.join(' ').toLowerCase()
 }
 
@@ -222,19 +275,35 @@ function rowSearchText(row: TimelineRow): string {
  * 表格视图：时间线所有行平铺为表格，支持文本搜索 + 类型/角色/工具筛选，
  * 点击行展开原始 JSON。
  */
-export function TableView({ rows }: { rows: TimelineRow[] }) {
+export function TableView({ rows, sessionId }: { rows: TimelineRow[]; sessionId?: string }) {
   const [q, setQ] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | TimelineRow['kind']>('all')
   const [roleFilter, setRoleFilter] = useState('all')
   const [toolFilter, setToolFilter] = useState('all')
   const [openIdx, setOpenIdx] = useState<number | null>(null)
 
-  // 工具名候选（来自所有消息的工具调用）
+  // 视图态（搜索词、三个筛选、展开行）随会话复位。TableView 挂在 Chat 里，而
+  // Chat 被 @native-router 按 path 复用（目标会话的消息已在 react-query 缓存里时
+  // 不走 ChatSkeleton 早返回 → 不重建），于是上一条会话的筛选整块留到新会话：
+  //   - 搜索词让新时间线一进来就是「3/812」的过滤结果；
+  //   - toolFilter 指向新会话根本不存在的工具 → 0/812 +「无匹配项」，用户据此
+  //     认为这份时间线是空的；
+  //   - openIdx 是**上一条会话 rows 的下标**，在新 rows 上命中的是另一行，
+  //     凭空展开一条无关消息的原始 JSON。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与筛选计算
+  useEffect(() => {
+    setQ('')
+    setTypeFilter('all')
+    setRoleFilter('all')
+    setToolFilter('all')
+    setOpenIdx(null)
+  }, [sessionId])
+
+  // 工具名候选（来自所有消息的全部工具调用，不只是每条消息的首个）
   const toolNames = useMemo(() => {
     const set = new Set<string>()
     for (const row of rows) {
-      const t = rowToolName(row)
-      if (t) set.add(t)
+      for (const t of rowToolNames(row)) set.add(t)
     }
     return [...set].sort()
   }, [rows])
@@ -244,7 +313,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
     return rows.filter((row) => {
       if (typeFilter !== 'all' && row.kind !== typeFilter) return false
       if (roleFilter !== 'all' && rowRole(row) !== roleFilter) return false
-      if (toolFilter !== 'all' && rowToolName(row) !== toolFilter) return false
+      if (toolFilter !== 'all' && !rowToolNames(row).includes(toolFilter)) return false
       if (ql && !rowSearchText(row).includes(ql)) return false
       return true
     })
@@ -293,6 +362,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
           value={toolFilter}
           onValuesChange={(v) => setToolFilter(v as string)}
           aria-label="工具筛选"
+          data-testid="table-filter-tool"
         >
           <option value="all">全部工具</option>
           {toolNames.map((t) => (
@@ -323,7 +393,9 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
             {filtered.map((row) => {
               const idx = rows.indexOf(row)
               const open = openIdx === idx
-              const tool = rowToolName(row)
+              // 全部工具名（不只首个）：列里逐个列出，否则并行的第二个工具
+              // 调用在这个视图里完全不可见
+              const tools = rowToolNames(row)
               // 展开交互此前只挂在裸 <tr onClick> 上：没有 tabIndex、没有键盘处理，
               // 键盘用户 Tab 走遍筛选条与计数后直接跳出表格（实测表格视图内 Tab
               // 序列：筛选控件 → 计数 → Todo 面板，tbody 行一个都碰不到），
@@ -352,7 +424,7 @@ export function TableView({ rows }: { rows: TimelineRow[] }) {
                     <td>
                       <span className={typeTag}>{typeLabel(row)}</span>
                     </td>
-                    <td>{tool || rowRole(row) || rowModel(row) || '—'}</td>
+                    <td>{tools.join(' ') || rowRole(row) || rowModel(row) || '—'}</td>
                     <td className={dim}>{rowTime(row)}</td>
                     <td>{rowTokens(row) || '—'}</td>
                     <td>{rowLatency(row) || '—'}</td>

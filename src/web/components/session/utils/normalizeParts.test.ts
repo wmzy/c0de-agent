@@ -5,6 +5,8 @@ import {
   mergeToolMessages,
   normalizeParts,
 } from '@/components/session/utils/normalizeParts.js'
+import type { ChatState } from '@/hooks/chatState.js'
+import { INITIAL, reduceChatEvent } from '@/hooks/chatState.js'
 
 function msg(role: Message['role'], parts: MessageContent[]): Message {
   return { id: '1', sessionId: 's', role, content: parts, tokenCount: 0, createdAt: 1 }
@@ -343,6 +345,55 @@ describe('mergeSessionMessages', () => {
     expect(mergeSessionMessages(history, live)).toHaveLength(1)
   })
 
+  // 回归（多轮 run，真实形态由 reduceChatEvent 产出）：服务端每轮落库一条 assistant
+  // 消息，实时归约也按轮拆分后逐条配对成功——历史重取（窗口聚焦 refetchOnWindowFocus /
+  // shake 应用 / 附着结束刷新）不再把整轮回复重复渲染。实测缺陷：一次带工具的问答在
+  // refetch 后，每个正文块与工具卡都在时间线上出现两次（历史副本 + 配不上的合并副本）。
+  it('多轮 run 在历史重取后不重复渲染（实时按轮拆分后逐条配对）', () => {
+    let live: ChatState = {
+      ...INITIAL,
+      messages: [
+        {
+          id: 'u-live',
+          sessionId: 's',
+          role: 'user',
+          content: [{ _tag: 'text', text: 'go' }],
+          tokenCount: 0,
+          createdAt: 1001,
+        },
+      ],
+    }
+    live = reduceChatEvent(live, { _tag: 'text_delta', text: '第一轮' })
+    live = reduceChatEvent(live, { _tag: 'tool_call_start', id: 'tc1', tool: 'read', input: {} })
+    live = reduceChatEvent(live, {
+      _tag: 'tool_call_end',
+      id: 'tc1',
+      result: { _tag: 'success', output: 'ok' },
+    })
+    live = reduceChatEvent(live, { _tag: 'text_delta', text: '第二轮' })
+
+    const history = [
+      persisted('u-db', 'user', [{ _tag: 'text', text: 'go' }]),
+      persisted('a1-db', 'assistant', [
+        { _tag: 'text', text: '第一轮' },
+        { _tag: 'tool_call', id: 'tc1', tool: 'read', input: {} },
+      ]),
+      persisted('t-db', 'tool', [
+        { _tag: 'tool_result', id: 'tc1', tool: 'read', output: { _tag: 'success', output: 'ok' } },
+      ]),
+      persisted('a2-db', 'assistant', [{ _tag: 'text', text: '第二轮' }]),
+    ]
+
+    const merged = mergeSessionMessages(history, live.messages)
+    // 只剩服务端副本：同一段正文只出现一次
+    expect(merged.map((m) => m.id)).toEqual(['u-db', 'a1-db', 'a2-db'])
+    const texts = merged.flatMap((m) =>
+      m.content.flatMap((p) => (p._tag === 'text' ? [p.text] : [])),
+    )
+    expect(texts.filter((t) => t === '第一轮')).toHaveLength(1)
+    expect(texts.filter((t) => t === '第二轮')).toHaveLength(1)
+  })
+
   // 相同的重复输入（同一句话发两次）：历史只落库一条时不得把两条都吞掉。
   it('重复的相同输入按数量配对，不吞掉未持久化的那条', () => {
     const history = [persisted('u1-db', 'user', [{ _tag: 'text', text: 'go' }])]
@@ -377,5 +428,54 @@ describe('normalizeParts 图片', () => {
       ]),
     )
     expect(blocks.map((b) => b.type)).toEqual(['text', 'image'])
+  })
+})
+
+describe('normalizeParts — 畸形 tool_result 在渲染边界收敛', () => {
+  function resultBlock(raw: unknown) {
+    return normalizeParts(
+      msg('assistant', [
+        { _tag: 'tool_call', id: 't1', tool: 'bash', input: {} },
+        { _tag: 'tool_result', id: 't1', tool: '', output: raw as never },
+      ]),
+    )[0] as { status: string; output?: { _tag: string; error?: string; metadata?: unknown } }
+  }
+
+  it('error 是对象时降级成明确的失败结果，而不是在 .trim() 处抛错', () => {
+    const b = resultBlock({ _tag: 'error', error: { code: 500 } })
+    expect(b.status).toBe('error')
+    expect(typeof b.output?.error).toBe('string')
+    expect(b.output?.error).toContain('无法识别')
+  })
+
+  it('success 的 output 不是字符串时同样降级（否则会被当 React child 渲染）', () => {
+    const b = resultBlock({ _tag: 'success', output: { text: 'x' } })
+    expect(b.status).toBe('error')
+    expect(typeof b.output?.error).toBe('string')
+  })
+
+  it('_tag 拼错时不再产出 undefined 状态（此前状态图标与正文全空）', () => {
+    const b = resultBlock({ _tag: 'weird', output: 'x' })
+    expect(b.status).toBe('error')
+    expect(typeof b.output?.error).toBe('string')
+  })
+
+  it('metadata 不是对象时丢掉，正常结果原样保留 metadata', () => {
+    expect(resultBlock({ _tag: 'success', output: 'ok', metadata: null }).output?.metadata).toBe(
+      undefined,
+    )
+    const withMeta = resultBlock({
+      _tag: 'success',
+      output: 'ok',
+      metadata: { count: 3 },
+    }).output?.metadata as { count?: number } | undefined
+    expect(withMeta?.count).toBe(3)
+  })
+
+  it('truncated 的行数缺失时不谎报 0 行', () => {
+    const b = resultBlock({ _tag: 'truncated', output: 'o', truncated: true }) as {
+      output?: { totalLines?: number }
+    }
+    expect(b.output?.totalLines).toBe(0)
   })
 })

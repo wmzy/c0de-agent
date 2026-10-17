@@ -225,4 +225,33 @@ describe('fillTemplateWithUnsets', () => {
     fillTemplateWithUnsets(base, { tools: { disabled: ['read'] } } as Partial<Config>)
     expect(base.tools).toEqual({ enabled: ['bash'], disabled: [] })
   })
+
+  // JSON 视图里把某段写成 null（合法：validateConfigShape 放行，语义同 diffConfig 的
+  // 「删除该键」）后切回表单，模板不能把这个 null 原样下发——归一化后 merged.<段>
+  // 为 null，面板按 Config 假定形状当场抛错，整页崩进 ErrorBoundary，草稿一起丢。
+  it('草稿里的 null 段在模板里回落到当前值', () => {
+    const template = fillTemplateWithUnsets(current, {
+      compaction: null,
+    } as unknown as Partial<Config>)
+    expect(template.compaction).toEqual(current.compaction)
+  })
+
+  it('草稿里的 null 嵌套键同样回落到当前值', () => {
+    const template = fillTemplateWithUnsets(current, {
+      tools: { enabled: null },
+    } as unknown as Partial<Config>)
+    expect(template.tools.enabled).toEqual(current.tools.enabled)
+  })
+
+  it('端到端：JSON 文本里的 null 段切回表单后是可渲染的完整形状', () => {
+    const draft = { compaction: null, theme: 'dark' } as unknown as Partial<Config>
+    const result = normalizeConfigForForm(
+      JSON.parse('{"compaction":null,"theme":"dark"}'),
+      fillTemplateWithUnsets(current, draft),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.config.compaction).toEqual(current.compaction)
+    expect(result.config.theme).toBe('dark')
+  })
 })

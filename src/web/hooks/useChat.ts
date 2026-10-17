@@ -14,6 +14,7 @@ import {
   RUN_CHANNEL,
   type RunStateMessage,
   reduceChatEvent,
+  sealInFlightTools,
   TAB_ID,
 } from '@/hooks/chatState.js'
 import { generateId } from '@/hooks/id.js'
@@ -37,9 +38,25 @@ const COMPACTION_SKIP_REASON: Record<string, string> = {
   nothing_to_compact: '没有可压缩的内容',
 }
 
+/** 附着入口读 GET /:id/status 失败时的自愈重试：3s 一次、最多 3 次，
+ *  之后才把原因摆到界面上（见 attach 的说明）。 */
+const ATTACH_MAX_ATTEMPTS = 3
+const ATTACH_RETRY_DELAY = 3000
+
 export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
+  /**
+   * 会话世代号：切换会话时递增，在飞的流据此判定自己已过期。
+   *
+   * 切换会话不 abort fetch——服务端把 SSE 断开当作「用户终止」
+   * （src/server/routes/chat.ts 的 stream.onAbort → agentManager.abort），
+   * abort 会连带杀掉后台 run，与「离开页面后 run 继续跑、回来用 attach 重挂」
+   * 的设计冲突。所以旧流继续读，但它的 onEvent/setState 结果必须被丢弃：
+   * 否则旧会话的 text_delta/tool_call 会写进刚复位成 INITIAL 的 state，
+   * 经 mergeSessionMessages 渲染成**新会话时间线里上一条会话的回复**。
+   */
+  const genRef = useRef(0)
   // P1 后台附着：流式/权限超时态镜像——副作用（confirmTool 网络请求）必须
   // 在状态更新器之外发起：更新器是纯函数，StrictMode/并发渲染重放会重复
   // 执行，写进更新器会让同一拒绝请求发出两次。
@@ -51,6 +68,26 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const attachingRef = useRef(false)
   const pollGenRef = useRef(0)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * P1 附着入口的自愈重试（读 GET /:id/status 失败时）。
+   *
+   * attach 是「本页没发起流、但服务端确实有 run」的唯一入口，此前它把读失败
+   * `.catch(() => null)` 折叠成「没有 run」：一次 500 / 网络抖动就与真的空闲走同一条
+   * return，页面渲染成一个没有任何运行痕迹的会话，而服务端 run 仍在跑工具、改文件。
+   * 用户在这个假空闲态下发消息 → 409 RUN_ACTIVE「该会话已有进行中的对话」——一句与
+   * 事实相反、且没有任何出口的结论（没有终止键、没有恢复入口、attach 不会重试）。
+   * 与 pollAttachedRun 的读失败同款：先自愈重试，连续失败才把原因摆到界面上。
+   */
+  const attachGenRef = useRef(0)
+  const attachAttemptRef = useRef(0)
+  const attachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // attach 的自引用（重试要再调自己）：直接闭包引用自身在 TS 里是块级作用域前向引用，
+  // 走 ref 最省事，也顺带保证重试拿到的是最新一次渲染的闭包。
+  const attachRef = useRef<() => Promise<void>>(async () => {})
+  // 本页已给出决定（确认/拒绝）的权限请求 id：confirm 乐观清空弹窗后，服务端
+  // store 的消费有网络延迟，附着轮询的下一次复查会看到「仍在挂起」而把弹窗又弹
+  // 回来（用户以为按钮没生效）。同一 toolCallId 只消费一次，记下即可。
+  const decidedPermissionRef = useRef<Set<string>>(new Set())
   // 段切换确认待发内容（confirmBreak/cancelBreak 读取，避免闭包staleness）
   const pendingRef = useRef<PendingSegmentBreak | null>(null)
   // P0-2：信任确认待发内容（confirmTrust/cancelTrust 读取）
@@ -79,20 +116,38 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     }
   }, [])
 
+  /** 停止附着入口的重试链（幂等：递增代数使在途定时器失效）。 */
+  const stopAttachRetry = useCallback(() => {
+    attachGenRef.current += 1
+    attachAttemptRef.current = 0
+    if (attachTimerRef.current) {
+      clearTimeout(attachTimerRef.current)
+      attachTimerRef.current = null
+    }
+  }, [])
+
   // 切换会话时重置本地流式状态；历史消息由调用方合并加载
   // P1：同时停止附着轮询并复位镜像 ref——挂起/附着态随会话切换整体作废。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅依赖 sessionId 触发重置
   useEffect(() => {
+    // 先作废旧世代：在飞的流从此不再写 state（详见 genRef 注释）。
+    genRef.current += 1
     stopPoll()
+    stopAttachRetry()
     streamingRef.current = false
     attachedRef.current = false
     attachingRef.current = false
     setState(INITIAL)
   }, [sessionId])
 
-  // 卸载时停止附着轮询：tick 链每轮自行续期，不清理的话组件卸载后仍会
+  // 卸载时停止附着轮询与重试链：tick 链每轮自行续期，不清理的话组件卸载后仍会
   // 持续请求 /status（暂停态下 run 可长期挂着，链无自然终止点）。
-  useEffect(() => stopPoll, [stopPoll])
+  useEffect(() => {
+    return () => {
+      stopPoll()
+      stopAttachRetry()
+    }
+  }, [stopPoll, stopAttachRetry])
 
   // 执行 SSE 流并归约事件；捕获 409 SEGMENT_BREAK_REQUIRED 时存入 pendingSegmentBreak。
   // SSE 流未收到 done 事件结束时标记 interrupted（服务重启等）；
@@ -100,6 +155,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // 返回 ok=false 表示本轮未正常完成（供调用方做首条消息失败清理等）。
   const doStream = useCallback(
     async (content: string, opts: ChatOpts | undefined): Promise<boolean> => {
+      // 本轮所属世代：期间切换会话（genRef 递增）后，本轮的 state 写入一律作废。
+      const gen = genRef.current
+      const isStale = () => genRef.current !== gen
       abortRef.current = new AbortController()
       // P1：标记流式态并广播 run 启动——同会话其他标签页据此附着显示运行态。
       streamingRef.current = true
@@ -134,7 +192,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
                 qc.invalidateQueries({ queryKey: ['file', p] })
               }
             }
-            setState((s) => reduceChatEvent(s, event))
+            // 切换会话后本轮的归约一律丢弃（缓存失效仍照做：那是给旧会话用的，
+            // 回到它会重取）。否则旧会话的正文/工具卡会渲染进新会话的时间线。
+            if (!isStale()) setState((s) => reduceChatEvent(s, event))
             // 收到调用详情通知时刷新调用详情面板，避免需手动刷新页面。
             // 高频 llm_detail 做 debounce（500ms），done/error 立即 flush。
             if (event._tag === 'llm_detail') {
@@ -156,17 +216,32 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           abortRef.current.signal,
           opts,
         )
+        if (isStale()) return false
         if (!result.done && !gotError) {
           // SSE 结束但未收到 done 也无 error → 连接中断（服务重启等）
           lastFailureRef.current = { reason: INTERRUPTED_REASON, gate: null }
-          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            interrupted: true,
+            messages: sealInFlightTools(s.messages),
+          }))
         } else if (!result.done && gotError) {
-          // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断
-          setState((s) => ({ ...s, isStreaming: false }))
+          // 服务端正常错误（LLM 报错等），设 isStreaming=false 但不标记中断。
+          // 在途工具同样不会再收到结果：必须封口，否则卡片永远停在 ⏳ 执行中。
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            messages: sealInFlightTools(s.messages),
+          }))
         }
         return result.done
       } catch (err) {
         const e = err as unknown as APIError
+        // 本轮已随会话切换作废：一条状态都不写——包括待发弹窗（pendingTrust/
+        // pendingSegmentBreak）与乐观消息撤回：后者作用在**新会话**的 state 上
+        // 会删错消息。返回 false 让调用方照旧把草稿还给用户（发送未必送达）。
+        if (isStale()) return false
         // 撤回本轮**乐观追加**的那条 user 消息，且只撤这一条。
         //
         // 旧实现是「最后一条是 user 就 pop」——对 retry/confirmBreak/confirmTrust
@@ -248,7 +323,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // 标记为「等待用户决策」：本次发送不是白费，调用方不得据此清会话
           // （弹窗渲染在本组件里，清会话 + 导航会把弹窗连同原因一起卸载）。
           lastFailureRef.current = { reason: e.message, gate: 'trust' }
-          setState((s) => ({ ...s, isStreaming: false, pendingTrust: pending }))
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            pendingTrust: pending,
+            trustPending: false,
+            trustError: null,
+          }))
           return false
         }
         if (e.code === 'SEGMENT_BREAK_REQUIRED') {
@@ -275,7 +356,14 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             llmDetailTimerRef.current = null
           }
           qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
-          setState((s) => ({ ...s, isStreaming: false }))
+          // 用户按「终止」：服务端会落 aborted 的工具结果（下次重取即覆盖），但本地
+          // SSE 已被掐断、那份结果送不到——不封口的话工具卡停在 ⏳，而「终止」按钮
+          // 已经消失，界面自己说运行停了、又在同一块卡上说「执行中」。
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            messages: sealInFlightTools(s.messages),
+          }))
         } else if (typeof e.status === 'number') {
           // 服务端 HTTP 错误（带 status）：后端已经给出可操作文案，这不是「连接中断」。
           // 上面各 code 分支只覆盖 8 种已知错误，其余——404 会话不存在或已删除、
@@ -287,7 +375,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           const reason = e.message || `请求失败（HTTP ${e.status}）`
           lastFailureRef.current = { reason, gate: null }
           setState((s) => {
-            const msgs = withdraw(s.messages)
+            const msgs = sealInFlightTools(withdraw(s.messages))
             return {
               ...s,
               messages: msgs,
@@ -298,7 +386,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         } else {
           // 无 status：fetch 本身失败（服务不可达）或请求在途被打断 → 视为中断
           lastFailureRef.current = { reason: INTERRUPTED_REASON, gate: null }
-          setState((s) => ({ ...s, isStreaming: false, interrupted: true }))
+          setState((s) => ({
+            ...s,
+            isStreaming: false,
+            interrupted: true,
+            messages: sealInFlightTools(s.messages),
+          }))
         }
         return false
       } finally {
@@ -396,19 +489,33 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     const pending = pendingTrustRef.current
     if (!pending) return
     pendingTrustRef.current = null
+    // 在飞期间弹窗内禁用按钮并禁止关闭：否则连点会重复发 trust 请求，或用户按 Esc
+    // 把弹窗连同失败原因一起卸载。
+    setState((s) => ({ ...s, trustPending: true, trustError: null }))
     try {
       await projectAPI.trust(pending.projectId)
     } catch (err) {
-      // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消
+      // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消。
+      // 原因写进 trustError（渲染在弹窗内部），同时保留 error 供会话区横幅兜底。
+      const message = `信任项目失败：${err instanceof Error ? err.message : String(err)}`
       pendingTrustRef.current = pending
       setState((s) => ({
         ...s,
         pendingTrust: pending,
-        error: `信任项目失败：${err instanceof Error ? err.message : String(err)}`,
+        trustPending: false,
+        trustError: message,
+        error: message,
       }))
       return
     }
-    setState((s) => ({ ...s, isStreaming: true, error: null, pendingTrust: null }))
+    setState((s) => ({
+      ...s,
+      isStreaming: true,
+      error: null,
+      trustPending: false,
+      trustError: null,
+      pendingTrust: null,
+    }))
     await doStream(pending.text, {
       ...pending.opts,
       ...(pending.optimisticUserMessageId
@@ -425,7 +532,14 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       const id = pending?.optimisticUserMessageId
       const idx = id ? s.messages.findIndex((m) => m.id === id) : -1
       const msgs = idx >= 0 ? s.messages.filter((_, i) => i !== idx) : s.messages
-      return { ...s, pendingTrust: null, isStreaming: false, messages: msgs }
+      return {
+        ...s,
+        pendingTrust: null,
+        trustPending: false,
+        trustError: null,
+        isStreaming: false,
+        messages: msgs,
+      }
     })
   }, [])
 
@@ -433,8 +547,36 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     abortRef.current?.abort()
     // 通知后端终止 agent，而不只是中断前端 SSE 读取。
     // 若仅 abort 前端 fetch，后端依赖 stream.onAbort 检测断开，可能有延迟或遗漏。
-    agentAPI.abort(sessionId).catch(() => {})
-    setState((s) => ({ ...s, isStreaming: false }))
+    //
+    // 200 不等于停下来了：aborted:false 表示后端没有可终止的 run；而请求本身失败
+    // （500 / 断网）时后端 agent 照样在跑、继续改文件烧 token。两者此前都被空吞，
+    // 界面却已翻成 isStreaming:false——用户看到「已停止」而 agent 无人看管地继续。
+    // 失败写 abortError（横幅带「重新终止」），与 error 分开：终止失败后
+    // isStreaming 已是 false，挂在 error 上会连带亮出「重试最后一条消息」。
+    setState((s) => ({ ...s, isStreaming: false, abortError: null }))
+    // 本次终止所属世代：请求飞在路上时用户切走会话（genRef 递增）后，响应里的
+    // abortError 属于**上一条**会话——写进新会话会在 B 页面上凭空挂一条
+    // 「终止没有送达」红条（连带「重新终止」按钮），而 A 的真实结果永久丢失。
+    // 请求本身仍用发起时的 sessionId，切回 A 时结果由 A 自己的 /status 反映。
+    const gen = genRef.current
+    void agentAPI
+      .abort(sessionId)
+      .then((res) => {
+        if (genRef.current !== gen) return
+        if (res.aborted) return
+        setState((s) => ({
+          ...s,
+          abortError:
+            '终止没有送达：后端没有进行中的运行（可能已在其他标签页结束）。若界面仍显示运行中，请刷新确认。',
+        }))
+      })
+      .catch((err) => {
+        if (genRef.current !== gen) return
+        setState((s) => ({
+          ...s,
+          abortError: `终止请求失败：${err instanceof Error ? err.message : String(err)}。agent 可能仍在后台继续执行工具，请刷新确认后再继续。`,
+        }))
+      })
   }, [sessionId])
 
   /** 追加指令（steer）：注入运行中的 run，并乐观追加 user/steering 消息到时间线
@@ -454,7 +596,15 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     async (message: string): Promise<boolean> => {
       const text = message.trim()
       if (!text) return false
+      // 本次指令所属世代：steer 此前是 useChat 里唯一没有世代守卫的写 state 路径
+      // （doStream / abort / confirm / denyTimedOutPermission 都有）。请求飞在路上时
+      // 用户切到 B ⇒ 迟到的乐观条目与失败原因都写进 B 的时间线：B 凭空多出一条
+      // 属于 A 的「用户刚刚说的指令」（sessionId 还是 A 的），失败时 B 顶上挂一条
+      // 与 B 无关的红条，而 A 的真实结果无人知晓。返回 false：不受理（composer 的
+      // clear 另有 scopeGenRef 把关，不会误清 B 的输入框）。
+      const gen = genRef.current
       const failSteer = (reason: string) => {
+        if (genRef.current !== gen) return
         steerFailureRef.current = reason
         setState((s) => ({ ...s, error: reason }))
       }
@@ -478,6 +628,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         )
         return false
       }
+      if (genRef.current !== gen) return false
       setState((s) => {
         const next = {
           ...s,
@@ -519,8 +670,16 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       pending?: PendingPermission,
     ) => {
       setState((s) => ({ ...s, pendingPermission: null }))
+      // 记下这次决定：附着轮询复查 /pending 时 store 可能还没删掉它（消费在路上），
+      // 否则弹窗会被重新弹回来。
+      decidedPermissionRef.current.add(toolCallId)
+      // 本次决定所属世代：确认请求飞在路上时切走会话后，失败原因/弹窗还原都属于
+      // 上一条会话——写进新会话会凭空挂一条「权限确认没有送达」，甚至把上一条
+      // 会话的待确认弹窗弹在 B 上。
+      const gen = genRef.current
       const doConfirm = () =>
         agentAPI.confirmTool(toolCallId, approved).catch((err) => {
+          if (genRef.current !== gen) return
           const e = err as { status?: number }
           if (e?.status === 404) {
             // 已被处理（其他标签页确认/拒绝）或 run 已中止：明确提示，避免「以为已批准」。
@@ -544,8 +703,18 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (approved && alwaysAllowTool) {
         permissionAPI
           .setAlwaysAllow(alwaysAllowTool, sessionId)
-          .catch(() => {
-            console.error('[权限白名单] 追加失败:', alwaysAllowTool)
+          .catch((err) => {
+            if (genRef.current !== gen) return
+            // 白名单写入失败此前只 console.error：用户勾了「本会话始终允许」并点
+            // 「允许」，看到的是一次完全成功的授权，但白名单根本没写进去——
+            // 同一工具下次还会弹确认，白名单 chips 栏里也不会有它，用户只会以为
+            // 「勾选没生效」，于是每次重新勾选。工具本身仍按用户的选择执行（批准
+            // 与否与白名单是两个独立决定），但失败原因必须说出来。
+            const reason = err instanceof Error ? err.message : String(err)
+            setState((s) => ({
+              ...s,
+              error: `「本会话始终允许 ${alwaysAllowTool}」未保存：${reason}（该工具本次仍按你的选择执行，下次会再次询问）`,
+            }))
           })
           .finally(() => void doConfirm())
       } else {
@@ -584,14 +753,49 @@ export function useChat(sessionId: string): ChatState & ChatActions {
 
   /** 超时后显式拒绝：resolve store 中的 pending 为 deny，run 继续执行。
    *  网络副作用在更新器之外（更新器必须是纯函数——StrictMode/并发渲染
-   *  重放会重复执行，此前 confirmTool 写在更新器里同一拒绝请求发两次）。 */
+   *  重放会重复执行，此前 confirmTool 写在更新器里同一拒绝请求发两次）。
+   *
+   *  此前请求失败被 .catch(() => {}) 空吞、超时态无条件清空：500 / 网络中断时
+   *  拒绝根本没送达，服务端 pending 仍在（store 的 5 分钟提示 + 25 分钟宽限双层
+   *  超时），run 继续等这个决定，而页面上唯一能再次进入该决策的入口——超时横幅
+   *  的「重新询问 / 拒绝并继续」——已经消失，用户零反馈、以为工具已被拒绝。
+   *  与 confirm() 同口径读响应结果：只有确认送达才收起横幅。 */
   const denyTimedOutPermission = useCallback(() => {
     const timedOut = permissionTimeoutRef.current
-    if (timedOut) {
-      const { toolCallId } = timedOut
-      void agentAPI.confirmTool(toolCallId, false).catch(() => {})
+    if (!timedOut) {
+      // 没有待处理的超时态（重复点击等）：无请求要发，直接清空。
+      setState((s) => ({ ...s, permissionTimeout: null }))
+      return
     }
-    setState((s) => ({ ...s, permissionTimeout: null }))
+    const { toolCallId } = timedOut
+    // 本次拒绝所属世代：请求在途时切走会话后，成功「收起横幅」或失败原因都不该
+    // 落到新会话上（新会话超时态由它自己的 /status 决定）。
+    const gen = genRef.current
+    void agentAPI.confirmTool(toolCallId, false).then(
+      () => {
+        if (genRef.current !== gen) return
+        setState((s) => ({ ...s, permissionTimeout: null }))
+      },
+      (err) => {
+        if (genRef.current !== gen) return
+        const e = err as { status?: number }
+        if (e?.status === 404) {
+          // 已被处理（其他标签页确认/拒绝）或 run 已中止：工具不会执行，超时态可清。
+          setState((s) => ({
+            ...s,
+            permissionTimeout: null,
+            error: '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
+          }))
+        } else {
+          // 拒绝没送达：服务端 pending 仍在、工具还在等你的决定。保留超时态，
+          // 横幅的两个入口继续可用，用户可以再拒绝一次。
+          setState((s) => ({
+            ...s,
+            error: '权限拒绝没有送达，工具仍在等待你的决定。请重试。',
+          }))
+        }
+      },
+    )
   }, [])
 
   /** P1：附着结束——停止轮询、复位附着态并刷新消息/调用详情。 */
@@ -603,12 +807,30 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       ...s,
       isStreaming: false,
       attachedRun: false,
+      // run 已结束＝状态重新是确定的：附着入口那次读失败的原因随之失效。
+      attachError: null,
       pendingPermission: null,
       permissionTimeout: null,
     }))
     qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
     qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
   }, [qc, sessionId, stopPoll])
+
+  /** 附着态同步挂起权限：以服务端 store 为准。附着页没有本次 run 的 SSE 流
+   *  （permission_required 只在发起流的标签页送得到），权限请求只能从
+   *  GET /:id/pending 读到——附着期新出现的请求因此必须靠轮询复查才能看见。
+   *  pending 为空即收起弹窗：本页/他页已给出决定，或服务端宽限超时自动拒绝，
+   *  否则用户对着一个已失效的请求点确认只会拿到 404。 */
+  const syncPendingPermission = useCallback((pending: PendingPermission | null) => {
+    setState((s) => {
+      if (pending) {
+        if (s.pendingPermission?.toolCallId === pending.toolCallId) return s
+        if (decidedPermissionRef.current.has(pending.toolCallId)) return s
+        return { ...s, pendingPermission: pending }
+      }
+      return s.pendingPermission ? { ...s, pendingPermission: null } : s
+    })
+  }, [])
 
   /** P1：附着轮询——每 2s 查状态，run 结束即刷新收尾。代数守卫防重复轮询。
    *  paused 不是结束：run 仍注册在服务端（可 resume），只是没有进展——继续轮询
@@ -635,6 +857,11 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             runPaused: paused,
             runPauseReason: paused ? (st.pauseReason ?? null) : null,
           }))
+          // 附着期新出现的权限请求：本页没有 run 的 SSE 流，只能在这里复查
+          // （读内存 store，不触 DB）。失败静默——下一次 tick 会重试。
+          const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
+          if (token !== pollGenRef.current) return
+          if (pend) syncPendingPermission(pend.pending ?? null)
           pollTimerRef.current = setTimeout(() => void tick(), paused ? 3000 : 2000)
         } else {
           finishAttach()
@@ -652,7 +879,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       }
     }
     pollTimerRef.current = setTimeout(() => void tick(), 2000)
-  }, [finishAttach, sessionId, stopPoll])
+  }, [finishAttach, sessionId, stopPoll, syncPendingPermission])
 
   /**
    * P1：附着后台 run。本实例未发起流（挂起期间切换页面后回来 / 另一标签页启动）时：
@@ -670,11 +897,42 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     // 若不拦截会并发多份查询与轮询。
     if (streamingRef.current || attachingRef.current) return
     attachingRef.current = true
+    const gen = attachGenRef.current
     try {
-      const st = await sessionAPI.status(sessionId).catch(() => null)
-      if (st?._tag !== 'running' && st?._tag !== 'paused') return
+      let st: Awaited<ReturnType<typeof sessionAPI.status>>
+      try {
+        st = await sessionAPI.status(sessionId)
+      } catch (err) {
+        if (gen !== attachGenRef.current) return
+        // 读失败 ≠ 没有活跃 run（见 attachAttemptRef 的说明）：先自愈重试，与
+        // pollAttachedRun 的读失败同款；连续失败才摆出原因，让用户知道此刻
+        // 「不知道有没有 run」而不是「没有 run」。
+        if (attachAttemptRef.current < ATTACH_MAX_ATTEMPTS) {
+          attachAttemptRef.current += 1
+          attachTimerRef.current = setTimeout(() => {
+            if (gen !== attachGenRef.current) return
+            void attachRef.current()
+          }, ATTACH_RETRY_DELAY)
+          return
+        }
+        setState((s) => ({
+          ...s,
+          attachError:
+            (err as { message?: string } | null)?.message ??
+            (err instanceof Error ? err.message : '状态检查失败'),
+        }))
+        return
+      }
+      if (gen !== attachGenRef.current) return
+      if (st?._tag !== 'running' && st?._tag !== 'paused') {
+        // 读到了「确实没有活跃 run」：这是确定的结论，任何旧的读失败原因都可以撤。
+        setState((s) => (s.attachError ? { ...s, attachError: null } : s))
+        return
+      }
       const paused = st._tag === 'paused'
       const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
+      if (gen !== attachGenRef.current) return
+      attachAttemptRef.current = 0
       attachedRef.current = true
       streamingRef.current = true
       setState((s) => ({
@@ -684,6 +942,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         runPaused: paused,
         runPauseReason: paused ? (st.pauseReason ?? null) : null,
         error: null,
+        attachError: null,
         ...(pend?.pending ? { pendingPermission: pend.pending, permissionTimeout: null } : {}),
       }))
       pollAttachedRun()
@@ -691,6 +950,17 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       attachingRef.current = false
     }
   }, [pollAttachedRun, sessionId])
+  attachRef.current = attach
+
+  /** P1：读失败后的「重新检查」——复位重试计数，让这次点击也能享受自愈重试。 */
+  const retryAttach = useCallback(() => {
+    attachAttemptRef.current = 0
+    if (attachTimerRef.current) {
+      clearTimeout(attachTimerRef.current)
+      attachTimerRef.current = null
+    }
+    void attach()
+  }, [attach])
 
   // P1：订阅同会话其他标签页的 run 状态广播——他页启动时附着，结束时刷新收尾。
   useEffect(() => {
@@ -742,6 +1012,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     clearRunPaused,
     clearCompactionNotice,
     attach,
+    retryAttach,
     reset,
   }
 }

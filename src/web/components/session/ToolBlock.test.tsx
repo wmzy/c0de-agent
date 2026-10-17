@@ -64,6 +64,18 @@ describe('ToolBlock', () => {
     expect(screen.queryByTestId('tool-body')).toBeNull()
   })
 
+  // 折叠头的展开状态此前只落在 data-expanded 与 ▸/▾ 字形上，读屏无从判断
+  // 这块工具结果（时间线里最高频的折叠控件）是开是关。
+  it('折叠头的 aria-expanded 跟随展开状态翻转', () => {
+    render(<ToolBlock block={toolBlock({ status: 'completed' })} />)
+    const header = screen.getByTestId('tool-header')
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(header)
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(header)
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('running → completed 自动收起一次', () => {
     const { rerender } = render(<ToolBlock block={toolBlock({ status: 'running' })} />)
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
@@ -178,9 +190,123 @@ describe('ToolBlock', () => {
     expect(screen.getByTestId('tool-error')).toHaveTextContent('权限不足')
   })
 
+  // 「伪失败」：todo/kanban 执行器让「用户输入有误」这类操作级失败仍返回 success，
+  // 原因以 `Errors: …` 行随 output 文本返回（口径见 tools/toolError.tsx）。
+  // 此前只按 status 判定折叠：这种结果 status 是 completed，于是默认折叠 + running→
+  // completed 自动收起，唯一说明「这次改动被丢弃」的文字被藏在一行「✓ todo」后面。
+  it('伪失败（completed + Errors: 行）默认展开，直接显示原因', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'todo',
+          input: { op: 'done', task: '不存在的任务' },
+          status: 'completed',
+          output: {
+            _tag: 'success',
+            output: 'Errors: Task "不存在的任务" not found. Remaining: 1.',
+            metadata: {
+              phases: [{ name: '阶段一', tasks: [{ content: '写文档', status: 'pending' }] }],
+            },
+          },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('not found')
+    // 折叠头不能再谎报成功：✓ 说「都做完了」，而这次操作整批被丢弃
+    expect(screen.getByTestId('tool-status').textContent).not.toBe('✓')
+  })
+
+  it('running → 伪失败 completed 不自动收起', () => {
+    const { rerender } = render(
+      <ToolBlock block={toolBlock({ tool: 'todo', input: { op: 'view' }, status: 'running' })} />,
+    )
+    rerender(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'todo',
+          input: { op: 'view' },
+          status: 'completed',
+          output: { _tag: 'success', output: 'Errors: 未找到任务 "x"' },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
+    expect(screen.getByTestId('tool-inline-error')).toHaveTextContent('未找到任务')
+  })
+
+  // 「Errors:/Error: 行」只是 todo/看板的执行器契约（见 toolError.tsx 的
+  // INLINE_ERROR_TOOLS），而渲染内嵌原因的也只有这两个视图。此前判定不看工具名，
+  // 于是任何成功结果只要正文出现 `Error:` 行就被标成 ⚠ 且拒绝自动收起：一条
+  // exit 0、明明「12 passed」的 bash 被说成失败，展开后却找不到任何一句解释。
+  it('bash 成功但正文含 Error: 行仍按成功呈现，不谎报 ⚠', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'bash',
+          input: { command: 'pytest -q' },
+          status: 'completed',
+          output: {
+            _tag: 'success',
+            output: '12 passed in 3s\nError: connection refused (informational)\n',
+            metadata: { exitCode: 0 },
+          },
+        })}
+      />,
+    )
+    expect(screen.getByTestId('tool-status').textContent).toBe('✓')
+    expect(screen.getByTestId('tool-status').getAttribute('data-severity')).toBeNull()
+    expect(screen.queryByTestId('tool-inline-error')).toBeNull()
+    // 成功就该照常自动收起，不必让用户每次手动折叠这条噪声
+    expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('false')
+  })
+
   it('paused 默认展开并说明在等权限确认', () => {
     render(<ToolBlock block={toolBlock({ status: 'paused' })} />)
     expect(screen.getByTestId('tool-header').getAttribute('data-expanded')).toBe('true')
     expect(screen.getByTestId('tool-body')).toHaveTextContent('等待权限确认')
+  })
+})
+
+/**
+ * 回归：工具状态此前只有 ⏳/✓/✗/🔒 字形与 data-status 属性。
+ *
+ * 字形多数读屏引擎读成「勾」「叉」或直接跳过，data-* 只是 DOM 属性、不进无障碍树，
+ * 于是「一次 pnpm test 失败」与「一次成功执行」读起来完全同形：读屏用户没有任何
+ * 信号去展开看失败原因，而失败原因正是这块唯一有价值的内容。0cbab63 补了
+ * aria-expanded（开还是关），这里补「成功还是失败」。
+ */
+describe('ToolBlock 状态进无障碍树', () => {
+  it('每种状态都有可读文案', () => {
+    const { rerender } = render(<ToolBlock block={toolBlock({ status: 'running' })} />)
+    expect(screen.getByRole('img', { name: '执行中' })).toBeInTheDocument()
+
+    rerender(<ToolBlock block={toolBlock({ status: 'completed' })} />)
+    expect(screen.getByRole('img', { name: '执行成功' })).toBeInTheDocument()
+
+    rerender(
+      <ToolBlock
+        block={toolBlock({ status: 'error', output: { _tag: 'error', error: '权限不足' } })}
+      />,
+    )
+    expect(screen.getByRole('img', { name: '执行失败' })).toBeInTheDocument()
+
+    rerender(<ToolBlock block={toolBlock({ status: 'paused' })} />)
+    expect(screen.getByRole('img', { name: '等待权限确认' })).toBeInTheDocument()
+  })
+
+  it('伪失败（completed + Errors: 行）读出「操作未生效」，不谎报执行成功', () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          tool: 'todo',
+          input: { op: 'done', task: '不存在的任务' },
+          status: 'completed',
+          output: { _tag: 'success', output: 'Errors: Task "不存在的任务" not found.' },
+        })}
+      />,
+    )
+    expect(screen.getByRole('img', { name: '操作未生效' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: '执行成功' })).toBeNull()
   })
 })

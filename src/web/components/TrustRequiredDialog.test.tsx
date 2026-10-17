@@ -54,4 +54,38 @@ describe('TrustRequiredDialog', () => {
     fireEvent.click(screen.getByTestId('trust-required-cancel'))
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
+
+  // 回归：信任失败的原因此前只写在会话区横幅上，而本弹窗是 <dialog> 模态——
+  // 横幅被 ::backdrop 挡住，用户看到的是「点了信任并继续，弹窗纹丝不动」。
+  it('信任失败原因渲染在弹窗内部（role=alert）', () => {
+    render(
+      <TrustRequiredDialog
+        projectName="Repo"
+        items={[{ kind: 'permission-auto', detail: 'auto' }]}
+        error="信任项目失败：项目已被删除"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+    const alert = screen.getByTestId('trust-required-error')
+    expect(alert.textContent).toContain('信任项目失败：项目已被删除')
+    expect(alert.getAttribute('role')).toBe('alert')
+  })
+
+  it('在飞（busy）时禁用两枚按钮并提示「信任中…」', () => {
+    render(
+      <TrustRequiredDialog
+        projectName="Repo"
+        items={[{ kind: 'permission-auto', detail: 'auto' }]}
+        busy
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+    const confirm = screen.getByTestId('trust-required-confirm') as HTMLButtonElement
+    const cancel = screen.getByTestId('trust-required-cancel') as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+    expect(cancel.disabled).toBe(true)
+    expect(confirm.textContent).toContain('信任中')
+  })
 })

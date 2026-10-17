@@ -69,6 +69,20 @@ type ChatProps = {
   onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
   /** agent 是否处于暂停态（控制 pause/resume 按钮切换）。 */
   paused?: boolean
+  /**
+   * 暂停/恢复/中止等运行控制失败的原因。
+   *
+   * 与 error（发送失败）分开：控制端点失败不代表消息失败，且此前完全无反馈
+   * ——按钮照常翻转，用户以为对话已停而它仍在消耗 token。
+   */
+  controlError?: string | null
+  /**
+   * 「终止」没送达的原因：POST /api/chat/abort 失败，或后端回 {aborted:false}。
+   *
+   * 与 controlError（暂停/恢复）分开：终止失败后 isStreaming 已是 false，
+   * 用户唯一的补救是再发一次终止——横幅自带「重新终止」，不让这条提示无出口。
+   */
+  abortError?: string | null
   supportsVision?: boolean
   modelBar?: ReactNode
   /** 底部工具栏右侧的工具开关（启用/禁用工具列表）。 */
@@ -538,6 +552,26 @@ const chipRemove = css`
   }
 `
 
+/** 权限状态读取/写入失败行：把「读不到」与「确实是默认模式」区分开。 */
+const modeError = css`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--haze-color-danger, #e5484d);
+`
+
+const modeErrorRetry = css`
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  background: var(--haze-color-bg);
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 6px;
+  min-height: auto;
+  min-width: auto;
+`
+
 export function Chat({
   timeline,
   isStreaming,
@@ -559,6 +593,8 @@ export function Chat({
   onResume,
   onSteer,
   paused = false,
+  controlError = null,
+  abortError = null,
   modelBar,
   toolToggle,
   topPanel,
@@ -664,24 +700,94 @@ export function Chat({
   // 草稿页（sessionId 缺省）= 全局运行时模式。标签与提示必须显式标注作用域。
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
   const [alwaysAllow, setAlwaysAllow] = useState<string[]>([])
-  useEffect(() => {
+  /** 权限状态读取失败的原因：不为空时底栏显示的开关/白名单不可信，必须说出来。 */
+  const [permissionLoadError, setPermissionLoadError] = useState<string | null>(null)
+  /** 移除白名单失败的原因：此前是空 catch —— 点 × 后界面纹丝不动、零反馈。 */
+  const [alwaysAllowError, setAlwaysAllowError] = useState<string | null>(null)
+  /** 权限模式写入失败的原因。切换是乐观翻转 + 失败回滚，此前回滚零提示：开关
+   *  自己弹回去，用户看到的是「点不动」，既不知道原因、也不知道服务端仍是哪个
+   *  模式——而这正是安全相关的模式开关（以为已开自动授权的人会据此少点确认，
+   * 实际服务端仍逐个确认，反之亦然）。 */
+  const [permissionModeError, setPermissionModeError] = useState<string | null>(null)
+  /** 切换失败时用户想切到的模式：重试要重发的是这个意图，不是再次翻转。 */
+  const [permissionModeTarget, setPermissionModeTarget] = useState<PermissionMode | null>(null)
+  /** 写入进行中的模式（非 null 即 pending），用于禁用重试、避免重复提交。 */
+  const [permissionModeSaving, setPermissionModeSaving] = useState<PermissionMode | null>(null)
+  /**
+   * 会话世代号：切会话后作废在飞的那轮读写。
+   *
+   * Chat 与 ChatSession 都被路由复用（同 path 的两条路由共享子树，组件实例不重建），
+   * 而底栏这一组状态是「**本会话**的授权结论」——此前 loadPermissionMode 只发请求、
+   * 只在响应里写 state：切到会话 B 后，B 的读取返回前显示的是 A 的授权态；若 B 的
+   * 读取失败则永久停在 A 的值（页面上长期挂着一句与事实相反的安全结论：以为 B 的
+   * bash 免确认，实际逐个确认，或反之）。A 的迟到响应同样会覆盖掉 B 已读到的真实值。
+   */
+  const permissionGenRef = useRef(0)
+  const loadPermissionMode = useCallback(() => {
+    const gen = permissionGenRef.current
     permissionAPI
       .getMode(sessionId)
       .then((res) => {
+        if (permissionGenRef.current !== gen) return
         setPermissionMode(res.mode)
         if (Array.isArray(res.alwaysAllow)) setAlwaysAllow(res.alwaysAllow)
+        setPermissionLoadError(null)
       })
-      .catch(() => {})
-    const unsubscribe = subscribeModeChange(sessionId ?? null, setPermissionMode)
-    return unsubscribe
+      .catch((e: unknown) => {
+        if (permissionGenRef.current !== gen) return
+        // 此前是空 catch：state 停在初始值 'default' + []，底栏于是显示未勾选的
+        // 「自动授权（本会话）」并附「工具执行前逐个确认」，而服务端可能正处于
+        // auto 模式（或已放行 bash 白名单）——给出的是相反的安全结论，且
+        // alwaysAllow.length > 0 的 chips 行整块消失，唯一的白名单管理入口
+        // 一起没了。读不到就必须说读不到。
+        setPermissionLoadError(e instanceof Error ? e.message : String(e))
+      })
   }, [sessionId])
-  const togglePermissionMode = () => {
-    const next: PermissionMode = permissionMode === 'auto' ? 'default' : 'auto'
+  useEffect(() => {
+    // 切会话先复位：旧会话的 auto 警示 / 白名单 chips / 失败文案都不能跟过来。
+    // 与 ChatSession 顶部横幅族（interruptBanner / sessionMeta / orphan）以及
+    // useShake / useRetryResume 的 sessionId 复位同口径。
+    setPermissionMode('default')
+    setAlwaysAllow([])
+    setPermissionLoadError(null)
+    setAlwaysAllowError(null)
+    setPermissionModeError(null)
+    setPermissionModeTarget(null)
+    setPermissionModeSaving(null)
+    loadPermissionMode()
+    const unsubscribe = subscribeModeChange(sessionId ?? null, setPermissionMode)
+    return () => {
+      // 卸载或切会话：作废在飞的那轮读写（迟到的响应不得写进新会话）。
+      permissionGenRef.current++
+      unsubscribe()
+    }
+  }, [sessionId, loadPermissionMode])
+  const applyPermissionMode = (next: PermissionMode) => {
+    const gen = permissionGenRef.current
+    setPermissionModeError(null)
+    setPermissionModeTarget(null)
+    setPermissionModeSaving(next)
     setPermissionMode(next)
-    permissionAPI
+    return permissionAPI
       .setMode(next, sessionId)
-      .then(() => broadcastModeChange({ sessionId: sessionId ?? null, mode: next }))
-      .catch(() => setPermissionMode(permissionMode))
+      .then(() => {
+        if (permissionGenRef.current !== gen) return
+        setPermissionModeSaving(null)
+        broadcastModeChange({ sessionId: sessionId ?? null, mode: next })
+      })
+      .catch((e: unknown) => {
+        // 回滚：此前只有 setPermissionMode(permissionMode)，开关自己弹回去。
+        // 界面「按不动」而无任何说明，用户只会反复点，或以为模式已经切成功。
+        // 切会话后不得回滚/报错进新会话（那是把上一条会话的模式写进别人的底栏）。
+        if (permissionGenRef.current !== gen) return
+        setPermissionModeSaving(null)
+        setPermissionMode(permissionMode)
+        setPermissionModeTarget(next)
+        setPermissionModeError(e instanceof Error ? e.message : String(e))
+      })
+  }
+  const togglePermissionMode = () => {
+    void applyPermissionMode(permissionMode === 'auto' ? 'default' : 'auto')
   }
   const handleSend = (payload: SendPayload) => {
     // 用户主动发送：无条件回到最新内容（此刻他就是想看到自己刚发出的消息）。
@@ -690,10 +796,21 @@ export function Chat({
   }
   const removeAlwaysAllow = (tool: string) => {
     if (!sessionId) return
+    const gen = permissionGenRef.current
     permissionAPI
       .removeAlwaysAllow(tool, sessionId)
-      .then((res) => setAlwaysAllow(res.alwaysAllow))
-      .catch(() => {})
+      .then((res) => {
+        if (permissionGenRef.current !== gen) return
+        setAlwaysAllow(res.alwaysAllow)
+        setAlwaysAllowError(null)
+      })
+      .catch((e: unknown) => {
+        // 空 catch 的后果：用户点 chips 上的 × 后没有任何变化，反复点、以为
+        // 点不动；服务端白名单其实还在，该工具仍免确认执行。这是移除一项安全
+        // 授权的唯一入口。
+        if (permissionGenRef.current !== gen) return
+        setAlwaysAllowError(e instanceof Error ? e.message : String(e))
+      })
   }
 
   return (
@@ -768,6 +885,25 @@ export function Chat({
           原始 JSON
         </button>
       </div>
+      {controlError ? (
+        <div className={errorBanner} data-testid="control-error" role="alert">
+          <span className={errorBannerText}>{controlError}</span>
+        </div>
+      ) : null}
+      {abortError ? (
+        <div className={errorBanner} data-testid="abort-error" role="alert">
+          <span className={errorBannerText}>{abortError}</span>
+          <button
+            type="button"
+            className={ctlBtn}
+            onClick={onAbort}
+            data-testid="abort-retry"
+            title="再次请求后端终止这次运行"
+          >
+            重新终止
+          </button>
+        </div>
+      ) : null}
       {error ? (
         <div className={errorBanner} data-testid="send-error" role="alert">
           <span className={errorBannerText}>{error}</span>
@@ -822,8 +958,11 @@ export function Chat({
         </div>
       ) : null}
       {topPanel}
-      {viewMode === 'table' ? (
-        <TableView rows={timeline} />
+      {/* 时间线为空时不留在表格视图：历史加载失败的错误+重试（以及空会话的欢迎区）
+          此前只挂在非表格分支上，表格视图下只剩筛选条 + 0/0 + 「无匹配项」——用户
+          据此认为这个会话是空的，既看不到失败原因，也没有重试入口（注入 500 后实测）。 */}
+      {viewMode === 'table' && timeline.length > 0 ? (
+        <TableView rows={timeline} sessionId={sessionId} />
       ) : (
         // biome-ignore lint/a11y/noStaticElementInteractions: 消息流滚动容器需捕获滚轮/触摸/键盘以判断用户是否上滚阅读，语义角色由内部时间线提供
         <div
@@ -862,6 +1001,37 @@ export function Chat({
       >
         {modelBar && <div className={footerLeft}>{modelBar}</div>}
         <div className={footerRight}>
+          {permissionLoadError ? (
+            <span className={modeError} role="alert" data-testid="permission-mode-error">
+              权限状态读取失败：{permissionLoadError}
+              <button
+                type="button"
+                className={modeErrorRetry}
+                onClick={loadPermissionMode}
+                data-testid="permission-mode-retry"
+              >
+                重试
+              </button>
+            </span>
+          ) : null}
+          {/* 写入失败：开关已回滚到服务端真实模式，但必须说明这次切换没生效并给
+              重试——否则用户只看到开关弹回去，判定为「点不动」而反复点击。 */}
+          {permissionModeError ? (
+            <span className={modeError} role="alert" data-testid="permission-mode-set-error">
+              切换权限模式失败：{permissionModeError}
+              {permissionModeTarget ? (
+                <button
+                  type="button"
+                  className={modeErrorRetry}
+                  onClick={() => void applyPermissionMode(permissionModeTarget)}
+                  disabled={permissionModeSaving !== null}
+                  data-testid="permission-mode-set-retry"
+                >
+                  重试
+                </button>
+              ) : null}
+            </span>
+          ) : null}
           {alwaysAllow.length > 0 && (
             <div className={allowChips} data-testid="always-allow-chips">
               {alwaysAllow.map((tool) => (
@@ -880,6 +1050,11 @@ export function Chat({
               ))}
             </div>
           )}
+          {alwaysAllowError ? (
+            <span className={modeError} role="alert" data-testid="always-allow-error">
+              移出白名单失败：{alwaysAllowError}
+            </span>
+          ) : null}
           {/* 开关 label 即状态指示：auto 态标签升级为警示 pill（点击可关闭），
               不再重复渲染「自动授权」label + 相邻警示条；checkbox 始终同一节点，
               模式翻转不重建（测试与焦点都依赖节点稳定）。 */}
@@ -898,13 +1073,16 @@ export function Chat({
               type="checkbox"
               checked={permissionMode === 'auto'}
               onChange={togglePermissionMode}
+              disabled={permissionModeSaving !== null}
               data-testid="permission-mode-toggle"
             />
             {permissionMode === 'auto'
               ? `⚠ 自动授权已开启${sessionId ? '（本会话）' : '（全局，已保存）'}`
               : `自动授权${sessionId ? '（本会话）' : '（全局）'}`}
           </label>
-          {permissionMode !== 'auto' && (
+          {/* 读取失败时不渲染「工具执行前逐个确认」：那是拿初始值当真实模式，
+              正好给出与事实相反的安全结论（服务端可能已处于 auto）。 */}
+          {permissionMode !== 'auto' && !permissionLoadError && (
             <span
               className={modeHint}
               data-testid="permission-mode-hint"

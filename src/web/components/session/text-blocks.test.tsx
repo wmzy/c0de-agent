@@ -86,6 +86,17 @@ describe('ReasoningBlock', () => {
     expect(screen.getByTestId('reasoning').getAttribute('data-expanded')).toBe('true')
   })
 
+  // 折叠头只有一个 ▸/▾ 字形，读屏读不出状态：aria-expanded 必须随展开/收起翻转。
+  it('折叠头的 aria-expanded 跟随展开状态翻转', () => {
+    render(<ReasoningBlock text="thinking" />)
+    const toggle = screen.getByTestId('reasoning-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('折叠态展示最后一行预览', () => {
     render(<ReasoningBlock text={'第一行\n第二行\n正在思考'} />)
     expect(screen.getByTestId('reasoning-preview')).toHaveTextContent('正在思考')

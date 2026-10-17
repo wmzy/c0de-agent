@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { Session } from '@shared/types/message.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import {
@@ -10,7 +10,7 @@ import {
   useDeletedSessions,
   useRestoreSession,
 } from '@/hooks/useSession.js'
-import { kanbanAPI } from '@/services/kanban.js'
+import { type DeletedKanbanBoard, kanbanAPI, type MergedBoardCounts } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
 import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/recycleTree.js'
@@ -19,6 +19,23 @@ import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/
  *  但错误也可能来自非本层抛出的路径，结构化取 message 优先、instanceof 兜底。 */
 function messageOf(e: unknown): string {
   return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
+/**
+ * 合并恢复的结果说明：把这次真正并入的量写进提示。
+ *
+ * 此前提示只有一句「已合并到当前项目看板」，而服务端返回的计数被整个丢弃——用户
+ * 无从判断标签/列是否跟着过来了（尤其是「标签定义没并进来」的那类缺陷，界面上
+ * 表现为标签静默消失，提示却一字不提）。
+ */
+function mergeNotice(base: string, merged?: MergedBoardCounts): string {
+  if (!merged) return base
+  const parts = [
+    merged.mergedCards > 0 ? `${merged.mergedCards} 张卡片` : null,
+    merged.mergedColumns > 0 ? `${merged.mergedColumns} 个列` : null,
+    merged.mergedLabels > 0 ? `${merged.mergedLabels} 个标签` : null,
+  ].filter((x): x is string => x !== null)
+  return parts.length > 0 ? `${base}（新增 ${parts.join('、')}）` : base
 }
 
 const deletedRow = css`
@@ -125,6 +142,19 @@ function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null
   return `${expires.toLocaleDateString()} 进入宽限`
 }
 
+/**
+ * P2-2：本次恢复连带还原的祖先/后代是否**已一并归属**到恢复落定的项目。
+ *
+ * 不过来说这一句会变成假成功：从「未归属项目」分组恢复子会话时，祖先链被一并
+ * 还原但只有目标会话拿到归属，侧栏按根会话 projectId 过滤整棵树 —— 根无归属时
+ * 恢复成功的会话在列表里一条都不出现。服务端现在会把它们一并归属（adoptedCount），
+ * 提示必须跟上，否则用户看到「已恢复」却在侧栏找不到任何东西。
+ */
+function adoptedNote(restored: { adoptedCount?: number } | undefined): string {
+  const n = restored?.adoptedCount ?? 0
+  return n > 0 ? `；连带还原的 ${n} 个会话已一并归属` : ''
+}
+
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
  *  父会话也在回收站的行做标记（恢复时连带还原祖先链）。
  *  P1-7：仅显示当前项目的删除会话；「清空」仅清空当前项目。 */
@@ -147,14 +177,28 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     error: orphanCountErrorObj,
     refetch: refetchOrphanCount,
   } = useDeletedOrphansCount()
-  const { data: orphans } = useDeletedOrphans(orphansOpen)
-  const toggleOrphans = () => {
-    const next = !orphansOpen
-    setOrphansOpen(next)
-    if (next) {
-      sessionAPI.touchOrphansSeen().catch(() => {})
+  const {
+    data: orphans,
+    isLoading: orphansLoading,
+    isError: orphansError,
+    error: orphansErrorObj,
+    refetch: refetchOrphans,
+  } = useDeletedOrphans(orphansOpen)
+  // A3：展开分组只负责展开。此前一展开就无条件 touchOrphansSeen——列表读失败
+  // 时用户一条都没看到，却已经把「已看到」写进服务端、启动了 60 天保留倒计时，
+  // 这些从未被展示的会话会按保留期被静默物理清除。
+  const toggleOrphans = () => setOrphansOpen((v) => !v)
+  // 只有列表真的拿到（成功）才标记「已看到」；失败时不启动倒计时，重试成功后补记。
+  const touchedOrphansSeen = useRef(false)
+  useEffect(() => {
+    if (!orphansOpen) {
+      touchedOrphansSeen.current = false
+      return
     }
-  }
+    if (touchedOrphansSeen.current || orphans === undefined) return
+    touchedOrphansSeen.current = true
+    sessionAPI.touchOrphansSeen().catch(() => {})
+  }, [orphansOpen, orphans])
   const restore = useRestoreSession()
   const qc = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -259,6 +303,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     session: Session
     descendants: number
   } | null>(null)
+  // 未归属看板的「彻底删除」也是不可恢复操作，与会话的「彻底删除」同强度：
+  // 逐字确认而非原生 confirm（原生框默认键=确定，回车即毁板；且与相邻入口不一致）。
+  const [boardRemoveTarget, setBoardRemoveTarget] = useState<DeletedKanbanBoard | null>(null)
   const [showEmptyTrash, setShowEmptyTrash] = useState(false)
 
   if (isLoading) return <div className={empty}>加载中…</div>
@@ -307,6 +354,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const deletedBoardsErrText =
     (deletedBoardsErrorObj as { message?: string } | null)?.message ??
     (deletedBoardsErrorObj instanceof Error ? deletedBoardsErrorObj.message : null)
+  const orphansErrText =
+    (orphansErrorObj as { message?: string } | null)?.message ??
+    (orphansErrorObj instanceof Error ? orphansErrorObj.message : null)
   const deletedIds = new Set(deletedList.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
     s.parentId !== null && deletedIds.has(s.parentId)
@@ -331,6 +381,11 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 搜索框有字却会列出未过滤的全部分页条目。
   const isSearching = searchDebounced.length >= 1
   const rows = isSearching ? (searchResults?.results.map((r) => r.session) ?? []) : sortedDeleted
+  // 孤儿分组的本地筛选：上方搜索走服务端（带 projectId，只覆盖本项目），孤儿
+  // 条目只有展开后才有数据可比对标题。展开后按标题过滤，搜得动的才叫搜索。
+  const orphanRows = isSearching
+    ? (orphans ?? []).filter((s) => s.title.toLowerCase().includes(searchDebounced.toLowerCase()))
+    : (orphans ?? [])
   // 与文件列表失败态同口径取后端原因：APIError 现在是真正的 Error，
   // 但错误也可能来自非本层抛出的路径，结构化取 message 优先。
   const searchErrorMessage =
@@ -339,6 +394,23 @@ export function RecycleBin({ projectId }: { projectId: string }) {
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
+
+  // 「回收站为空」是对整页的断言，必须覆盖页面上另外两组数据。空态此前只看
+  // deletedList，于是删除一个项目后打开**另一个**项目的回收站（孤儿出现的标准
+  // 场景），屏幕上方写着「回收站为空」、紧下方列着「未归属项目（N 条）」及恢复
+  // 按钮——用户照空态结论离开，那些会话就按保留期被静默清除。
+  // 任一路读不到（计数/看板）时，「空」只是「不知道」，错误条已经说明了是哪一路
+  // 失败，空态不能替它下结论。
+  const orphanCount = orphanCountData?.count ?? 0
+  const trashEmpty =
+    deletedList.length === 0 &&
+    deletedBoards.length === 0 &&
+    orphanCount === 0 &&
+    !orphanCountError &&
+    !deletedBoardsError
+  // 搜索框必须与「回收站里有什么」同口径：孤儿会话（projectId=null）不在
+  // deletedList 里，此前项目条目为空时连搜索框都不渲染，孤儿标题无从搜起。
+  const showSearch = deletedList.length > 0 || orphanCount > 0 || deletedBoards.length > 0
 
   // P2 子树恢复：统计会话在回收站内的派生后代（任意深度），恢复确认时提示。
   // 计数走 _shared/recycleTree 的环守卫实现（parentId 成环数据此前会让内联的
@@ -352,14 +424,19 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 把该项目全部会话（含 fork 子会话）软删成「未归属项目」分组，恰恰是后代
   // 最容易成树的地方，用户却据此以为只删一条。
   const orphanIndex = buildDeletedTreeIndex(orphans ?? [])
-  /** 某条目的彻底删除影响面：按它所属的分组取索引，孤儿走 orphanIndex。 */
-  const purgeDescendantsOf = (s: Session): number =>
+  /** 某条目在回收站内的已删除后代数：按它所属的分组取索引，孤儿走 orphanIndex。
+   *  两个用途共用（彻底删除的影响面 / 恢复会连带还原的派生会话数）——
+   *  对孤儿分组，删除项目时整批会话共享同一删除批次，两者数量一致。 */
+  const trashDescendantsOf = (s: Session): number =>
     countDeletedDescendants(s.projectId ? deletedIndex : orphanIndex, s.id)
   /** 回收站内已删除的祖先链（按父→祖顺序）。恢复会连带还原它们——
-   *  事前在确认框中列出，比事后提示更符合「操作前知情」。 */
+   *  事前在确认框中列出，比事后提示更符合「操作前知情」。
+   *  查找范围必须含「未归属项目」分组：删除项目留下的孤儿整批无归属，
+   *  从孤儿分组恢复子会话时父会话就在那一组里，只用项目级列表查会漏掉它们
+   *  （确认框对最该提示的场景反而一字不提）。 */
   const deletedAncestorsOf = (s: Session): Session[] => {
     const out: Session[] = []
-    const byId = new Map(deletedList.map((d) => [d.id, d]))
+    const byId = new Map([...deletedList, ...(orphans ?? [])].map((d) => [d.id, d]))
     let pid = s.parentId
     const seen = new Set<string>()
     while (pid && !seen.has(pid)) {
@@ -372,15 +449,45 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     return out
   }
 
+  /** 恢复前的知情确认（P2 子树恢复 + P2-2 祖先归属）：恢复会连带还原派生会话与
+   *  已删除的父会话（父会话同时决定恢复后的会话在侧栏是否可达，服务端会把它
+   *  一并归属到本次恢复的项目），操作前明示受影响对象。返回 false = 用户取消。
+   *
+   *  回收站的三个恢复入口共用同一份影响面计算：此前只有项目列表那一个按钮会
+   *  确认，孤儿分组的「恢复到当前项目 / 恢复并重建原项目」直接发请求——删除项目
+   *  留下的整批无归属会话恰恰是最容易带出父会话的场景（孤儿分组里就是一棵树），
+   *  提示却一个字都没有。 */
+  const confirmRestore = (s: Session, descendants: number): boolean => {
+    const ancestors = deletedAncestorsOf(s)
+    if (descendants <= 0 && ancestors.length === 0) return true
+    const parts = [`恢复「${s.title}」？`]
+    if (descendants > 0) parts.push(`其 ${descendants} 个派生会话将一并恢复。`)
+    if (ancestors.length > 0) {
+      parts.push(
+        `为保持会话树完整，已删除的父会话将一并恢复：${ancestors
+          .map((a) => `「${a.title}」`)
+          .join('、')}。`,
+      )
+    }
+    return window.confirm(parts.join('\n'))
+  }
+
   const handleRemoveForever = (s: Session) => {
     // 影响面在点开确认的那一刻定格：孤儿分组折叠后 orphans 变 undefined，
     // 数字若跟着活数据走，会在逐字确认途中悄悄从「及其 2 个派生会话」退回 0。
-    setRemoveTarget({ session: s, descendants: purgeDescendantsOf(s) })
+    setRemoveTarget({ session: s, descendants: trashDescendantsOf(s) })
   }
 
   const handleEmptyTrash = () => {
     setShowEmptyTrash(true)
   }
+
+  // 空标题会话（服务端允许空 title，CLI 建的会话就可能没有标题）此前在确认框里
+  // 渲染成「将彻底删除「」及其 …」，且确认词就是那个空串——门禁第一帧即可通关。
+  // 与 ProjectIndicator（项目名 ?? '未命名项目'）、BranchTree 的删除弹窗
+  // （标题 || '未命名会话'）同口径给出可读名字。
+  const purgeSessionTitle = removeTarget?.session.title || '未命名会话'
+  const purgeBoardName = boardRemoveTarget?.projectName || '未命名项目'
 
   return (
     <div>
@@ -414,28 +521,42 @@ export function RecycleBin({ projectId }: { projectId: string }) {
           </span>
         </div>
       )}
-      {deletedList.length === 0 && (
+      {trashEmpty && (
         <div className={empty} data-testid="trash-empty">
           回收站为空
         </div>
       )}
+      {/* 本项目为空 ≠ 整页为空：下面还有未归属项目分组时要说清，否则「回收站为
+          空」就成了一句关于整页的假话。 */}
+      {!trashEmpty && deletedList.length === 0 && (
+        <div className={empty} data-testid="trash-project-empty">
+          本项目回收站为空
+          {orphanCount > 0
+            ? `，未归属项目的 ${orphanCount} 条会话在下方`
+            : deletedBoards.length > 0
+              ? `，${deletedBoards.length} 个未归属看板在下方`
+              : ''}
+        </div>
+      )}
       {deletedList.length > 0 && (
+        <div className={deletedRow}>
+          <span className={trashHint}>
+            自首次打开回收站看到该分组起保留 {TRASH_RETENTION_DAYS} 天（分组内条目同时起算），
+            到期后宽限 {TRASH_PURGE_GRACE_DAYS} 天；从未查看的条目自删除起最长保留 365 天
+          </span>
+          <button
+            type="button"
+            className={restoreBtn}
+            onClick={handleEmptyTrash}
+            disabled={emptyTrashMut.isPending}
+            data-testid="empty-trash"
+          >
+            清空回收站
+          </button>
+        </div>
+      )}
+      {showSearch && (
         <>
-          <div className={deletedRow}>
-            <span className={trashHint}>
-              自首次打开回收站看到该分组起保留 {TRASH_RETENTION_DAYS} 天（分组内条目同时起算），
-              到期后宽限 {TRASH_PURGE_GRACE_DAYS} 天；从未查看的条目自删除起最长保留 365 天
-            </span>
-            <button
-              type="button"
-              className={restoreBtn}
-              onClick={handleEmptyTrash}
-              disabled={emptyTrashMut.isPending}
-              data-testid="empty-trash"
-            >
-              清空回收站
-            </button>
-          </div>
           <SyncedInput
             className={searchInput}
             type="search"
@@ -447,6 +568,15 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             onChange={(v) => setSearch(v)}
             data-testid="trash-search"
           />
+          {/* 服务端搜索带 projectId，只覆盖本项目的回收站条目；孤儿（projectId=null）
+              另由 /deleted/orphans 提供。分组折叠时必须说清它不在搜索范围内——否则
+              用户搜一条明摆在下方的会话标题，得到「回收站无匹配会话」。不自动展开：
+              展开即写「已看到」并启动 60 天保留倒计时，不能由一次搜索替用户决定。 */}
+          {isSearching && !orphansOpen && orphanCount > 0 && (
+            <div className={trashHint} data-testid="orphan-search-hint">
+              「未归属项目」分组不参与上方搜索（它们不属于当前项目）；展开该分组后可在组内按标题筛选。
+            </div>
+          )}
           {searchError && isSearching ? (
             <div className={errorBar} role="alert" data-testid="trash-search-error">
               回收站搜索失败
@@ -461,8 +591,12 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               </button>
             </div>
           ) : null}
+          {/* 口径要限定在「本项目」：孤儿分组在下方按标题单独过滤，说成整页的
+              「回收站无匹配会话」会与下方那条命中的孤儿行自相矛盾。 */}
           {rows.length === 0 && isSearching && !searchError ? (
-            <div className={empty}>{searchLoading ? '搜索中…' : '回收站无匹配会话'}</div>
+            <div className={empty}>
+              {searchLoading ? '搜索中…' : `本项目回收站内没有匹配「${searchDebounced}」的会话`}
+            </div>
           ) : null}
           {rows.map((s) => {
             const descendants = countDeletedDescendants(deletedIndex, s.id)
@@ -495,21 +629,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   onClick={() => {
                     // P2 子树恢复 + 事前祖先清单：恢复会连带还原派生会话与已删除的
                     // 父会话（保证会话树可达），确认框在操作前明示受影响对象。
-                    const ancestors = deletedAncestorsOf(s)
-                    if (descendants > 0 || ancestors.length > 0) {
-                      const parts = [`恢复「${s.title}」？`]
-                      if (descendants > 0) {
-                        parts.push(`其 ${descendants} 个派生会话将一并恢复。`)
-                      }
-                      if (ancestors.length > 0) {
-                        parts.push(
-                          `为保持会话树完整，已删除的父会话将一并恢复：${ancestors
-                            .map((a) => `「${a.title}」`)
-                            .join('、')}。`,
-                        )
-                      }
-                      if (!window.confirm(parts.join('\n'))) return
-                    }
+                    if (!confirmRestore(s, descendants)) return
                     restore.mutate(
                       { id: s.id, projectId },
                       {
@@ -532,7 +652,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                             setOrphanId(s.id)
                           } else if (d?.rebound) {
                             setNotice(
-                              `「${s.title}」已恢复并重新归属到项目${ancestorNote}${leftBehindNote}`,
+                              `「${s.title}」已恢复并重新归属到项目${ancestorNote}${adoptedNote(d)}${leftBehindNote}`,
                             )
                             setOrphanId(null)
                           } else if (s.source === 'cli') {
@@ -551,6 +671,11 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     )
                   }}
                   data-testid={`restore-${s.id}`}
+                  // 在途锁：恢复不是幂等的——服务端对「未处于已删除状态」的会话一律
+                  // 回 404「会话不存在或未删除」。慢网下连点两次会发出两次 POST，第二次
+                  // 必然撞上 404，页面于是在会话已经回到列表的同时挂着红色
+                  // 「恢复失败」——比不点更糟。同页其余 mutation 按钮都有这把锁。
+                  disabled={restore.isPending}
                 >
                   恢复
                 </button>
@@ -621,8 +746,37 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               条，来自已删除的项目；恢复时可重建原项目或归属到当前项目）
             </span>
           </div>
+          {orphansOpen && orphansError && (
+            <div className={errorBar} role="alert" data-testid="orphan-list-error">
+              未归属项目会话列表读取失败
+              {orphansErrText ? `：${orphansErrText}` : '，请稍后重试。'}{' '}
+              <button
+                type="button"
+                className={restoreBtn}
+                onClick={() => void refetchOrphans()}
+                data-testid="orphan-list-retry"
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {orphansOpen && !orphansError && orphansLoading && (
+            <div className={deletedRow} data-testid="orphan-list-loading">
+              加载中…
+            </div>
+          )}
           {orphansOpen &&
-            (orphans ?? []).map((s) => (
+            !orphansError &&
+            !orphansLoading &&
+            isSearching &&
+            orphanRows.length === 0 && (
+              <div className={empty} data-testid="orphan-search-empty">
+                未归属项目分组内没有匹配「{searchDebounced}」的会话
+              </div>
+            )}
+          {orphansOpen &&
+            !orphansError &&
+            orphanRows.map((s) => (
               <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
                 <span title={s.worktreePath ?? s.title}>{s.title}</span>
                 <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
@@ -631,7 +785,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   className={restoreBtn}
-                  onClick={() =>
+                  onClick={() => {
+                    if (!confirmRestore(s, trashDescendantsOf(s))) return
                     restore.mutate(
                       { id: s.id, projectId, restoreMode: 'current-project' },
                       {
@@ -641,22 +796,24 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                           setNotice(
                             d?.orphaned
                               ? `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`
-                              : `「${s.title}」已恢复并归属到当前项目。`,
+                              : `「${s.title}」已恢复并归属到当前项目${adoptedNote(d)}。`,
                           )
                           setOrphanId(d?.orphaned ? s.id : null)
                         },
                       },
                     )
-                  }
+                  }}
                   data-testid={`restore-orphan-${s.id}`}
                   title="恢复并归属到当前项目（不重建原项目）"
+                  disabled={restore.isPending}
                 >
                   恢复到当前项目
                 </button>
                 <button
                   type="button"
                   className={restoreBtn}
-                  onClick={() =>
+                  onClick={() => {
+                    if (!confirmRestore(s, trashDescendantsOf(s))) return
                     restore.mutate(
                       { id: s.id },
                       {
@@ -668,7 +825,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                           const recreated = d?.recreatedProject
                           if (recreated) {
                             setNotice(
-                              `「${s.title}」已恢复，并重新创建了原项目「${recreated.name ?? '未命名项目'}」——该项目此前已删除，现在从回收站恢复而重建。`,
+                              `「${s.title}」已恢复，并重新创建了原项目「${recreated.name ?? '未命名项目'}」——该项目此前已删除，现在从回收站恢复而重建${adoptedNote(d)}。`,
                             )
                             setOrphanId(null)
                           } else if (d?.orphaned) {
@@ -683,9 +840,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                         },
                       },
                     )
-                  }
+                  }}
                   data-testid={`restore-orphan-recreate-${s.id}`}
                   title="恢复并在原目录重建项目（若目录仍存在）"
+                  disabled={restore.isPending}
                 >
                   恢复并重建原项目
                 </button>
@@ -727,7 +885,10 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                   restoreBoardMut.mutate(
                     { boardId: b.id, projectId },
                     {
-                      onSuccess: () => setNotice(`看板「${b.projectName}」已合并到当前项目看板。`),
+                      onSuccess: (d) =>
+                        setNotice(
+                          mergeNotice(`看板「${b.projectName}」已合并到当前项目看板。`, d?.merged),
+                        ),
                       onError: (e) => setError(`恢复看板失败：${messageOf(e)}`),
                     },
                   )
@@ -746,9 +907,12 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     restoreBoardToOriginalMut.mutate(b.id, {
                       onSuccess: (d) =>
                         setNotice(
-                          d?.recreatedProject
-                            ? `看板「${b.projectName}」已恢复，并重新创建了原项目「${d.recreatedProject.name ?? '未命名项目'}」。`
-                            : `看板「${b.projectName}」已恢复到原项目。`,
+                          mergeNotice(
+                            d?.recreatedProject
+                              ? `看板「${b.projectName}」已恢复，并重新创建了原项目「${d.recreatedProject.name ?? '未命名项目'}」。`
+                              : `看板「${b.projectName}」已恢复到原项目。`,
+                            d?.merged,
+                          ),
                         ),
                       onError: (e) => setError(`恢复看板失败：${messageOf(e)}`),
                     })
@@ -764,20 +928,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                 type="button"
                 className={restoreBtn}
                 style={{ color: 'var(--haze-color-danger)' }}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `彻底删除看板「${b.projectName}」（${b.cardCount} 张卡片）？此操作不可恢复。`,
-                    )
-                  ) {
-                    destroyBoardMut.mutate(b.id, {
-                      onSuccess: () => {
-                        qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] })
-                        setNotice(`看板「${b.projectName}」已彻底删除。`)
-                      },
-                    })
-                  }
-                }}
+                onClick={() => setBoardRemoveTarget(b)}
                 disabled={destroyBoardMut.isPending}
                 data-testid={`remove-orphan-kanban-${b.id}`}
                 title="彻底删除，不可恢复"
@@ -792,8 +943,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
         <DangerConfirmDialog
           open={true}
           title="彻底删除会话"
-          description={`将彻底删除「${removeTarget.session.title}」及其 ${removeTarget.descendants} 个派生会话。`}
-          confirmWord={removeTarget.session.title}
+          description={`将彻底删除「${purgeSessionTitle}」及其 ${removeTarget.descendants} 个派生会话。`}
+          confirmWord={purgeSessionTitle}
           confirmLabel="彻底删除"
           onConfirm={() => {
             const id = removeTarget.session.id
@@ -801,6 +952,26 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             removeForever.mutate(id)
           }}
           onClose={() => setRemoveTarget(null)}
+        />
+      )}
+      {boardRemoveTarget && (
+        <DangerConfirmDialog
+          open={true}
+          title="彻底删除看板"
+          description={`将彻底删除看板「${purgeBoardName}」及其 ${boardRemoveTarget.cardCount} 张卡片（来自已删除的项目，无法恢复）。`}
+          confirmWord={purgeBoardName}
+          confirmLabel="彻底删除"
+          onConfirm={() => {
+            const board = boardRemoveTarget
+            setBoardRemoveTarget(null)
+            destroyBoardMut.mutate(board.id, {
+              onSuccess: () => {
+                qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] })
+                setNotice(`看板「${board.projectName}」已彻底删除。`)
+              },
+            })
+          }}
+          onClose={() => setBoardRemoveTarget(null)}
         />
       )}
       {showEmptyTrash && (

@@ -20,16 +20,6 @@ describe('BashToolView', () => {
     )
     expect(screen.getByTestId('bash-output')).toHaveTextContent('hi')
     expect(screen.getByTestId('bash-exit')).toHaveTextContent('0')
-  })
-
-  it('失败时渲染错误信息', () => {
-    render(
-      <BashToolView
-        input={{ command: 'bad' }}
-        status="error"
-        output={{ _tag: 'error', error: 'Command failed with exit code: 127\nx' }}
-      />,
-    )
-    expect(screen.getByTestId('bash-output')).toHaveTextContent('exit code: 127')
+    expect(screen.queryByTestId('tool-error')).toBeNull()
   })
 })

@@ -1,3 +1,4 @@
+import { undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, waitFor } from '@testing-library/react'
@@ -82,6 +83,30 @@ describe('CodeEditor 未保存编辑保持', () => {
     expect(liveView(container)?.state.doc.toString()).toBe('USER-EDIT-disk-content')
     // 脏标记未被清除：保存按钮仍显示未保存态
     expect(container.textContent).toContain('保存*')
+  })
+
+  // 复现：主题切换走 new EditorView + destroy()，文档与脏标记靠 liveDoc/keepDirty
+  // 接力保住了，撤销历史与选区没有——切主题后 Ctrl+Z 是空操作，光标跳回文首，
+  // 紧接着敲的字插到文件开头。用户只是切了个配色，编辑现场就没了。
+  it('切换主题后撤销历史与光标位置仍在', async () => {
+    const { container } = renderEditor({ path: 'a.ts', initial: 'disk-content' })
+    await waitFor(() => expect(liveView(container)).toBeTruthy())
+
+    const view = liveView(container)
+    view?.dispatch({ changes: { from: 0, insert: 'EDIT-' } })
+    await waitFor(() => expect(liveView(container)?.state.doc.toString()).toBe('EDIT-disk-content'))
+    const end = view?.state.doc.length ?? 0
+    view?.dispatch({ selection: { anchor: end } })
+    expect(view?.state.selection.main.head).toBe(end)
+
+    container.querySelector<HTMLElement>('[data-testid="theme-toggle"]')?.click()
+    await waitFor(() => expect(document.documentElement.className).not.toBe(''))
+
+    // 选区/光标未被弹回文首
+    expect(liveView(container)?.state.selection.main.head).toBe(end)
+    // 撤销仍能回退这次编辑（重建视图后 undo 是空操作）
+    undo(liveView(container) as EditorView)
+    await waitFor(() => expect(liveView(container)?.state.doc.toString()).toBe('disk-content'))
   })
 
   it('切换文件（path 变化）仍以新文件内容重置编辑器与脏标记', async () => {
@@ -210,5 +235,46 @@ describe('CodeEditor 保存冲突检查——磁盘内容已变二进制', () =>
     expect(fileAPI.write).toHaveBeenCalledWith('a.ts', 'edited-AAA', undefined)
     expect(container.querySelector('[data-testid="write-error-banner"]')).toBeNull()
     expect(container.textContent).toContain('已保存')
+  })
+})
+
+describe('CodeEditor 保存请求在途', () => {
+  // 复现：save() 成功回调无条件 setDirty(false) + baseRef=请求发起时的 doc 快照，
+  // 而按钮只有 disabled={!dirty}、飞行期间仍可点。用户点「保存」后继续敲的字
+  // 会被这批响应标成「已保存」——关闭预览不再弹丢弃确认，新字随预览消失。
+  it('在途期间的新输入不被标成已保存，且重复点击不再发出第二个 PUT', async () => {
+    let resolveWrite: (() => void) | undefined
+    vi.mocked(fileAPI.read).mockResolvedValue({ path: 'a.ts', content: 'AAA' })
+    vi.mocked(fileAPI.write).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveWrite = () => resolve({ path: 'a.ts', written: true })
+        }),
+    )
+    const { container } = renderEditor({ path: 'a.ts', initial: 'AAA' })
+    await waitFor(() => expect(liveView(container)).toBeTruthy())
+
+    liveView(container)?.dispatch({ changes: { from: 0, insert: 'first-' } })
+    await waitFor(() => expect(container.textContent).toContain('保存*'))
+
+    const saveBtn = () =>
+      container.querySelector<HTMLElement>('[data-testid="save"]') as HTMLElement
+    await userEvent.click(saveBtn())
+
+    // 在途期间继续编辑（模拟慢磁盘/远端 worktree）
+    await waitFor(() => expect(fileAPI.write).toHaveBeenCalledTimes(1))
+    liveView(container)?.dispatch({ changes: { from: 0, insert: 'second-' } })
+
+    // 在途期间再次点击：不得发出第二个 PUT
+    await userEvent.click(saveBtn())
+    expect(fileAPI.write).toHaveBeenCalledTimes(1)
+
+    resolveWrite?.()
+    await waitFor(() => expect(saveBtn().textContent).not.toContain('保存中'))
+
+    // 关键断言：飞行期间敲的 second- 仍在文档里，且仍是脏的
+    expect(liveView(container)?.state.doc.toString()).toBe('second-first-AAA')
+    expect(container.textContent).toContain('保存*')
+    expect(saveBtn().hasAttribute('disabled')).toBe(false)
   })
 })

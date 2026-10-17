@@ -74,6 +74,7 @@ describe('UsagePanel — token 预算护栏', () => {
       onTokenBudgetChange: vi.fn(),
       onGlobalTokenBudgetChange: vi.fn(),
       projectId: 'proj-1',
+      scope: 'project',
     })
 
     expect(await screen.findByTestId('usage-token-budget-warning')).toBeTruthy()
@@ -96,6 +97,7 @@ describe('UsagePanel — token 预算护栏', () => {
       onTokenBudgetChange: vi.fn(),
       onGlobalTokenBudgetChange: vi.fn(),
       projectId: 'proj-1',
+      scope: 'project',
     })
 
     // 稍等一次 query 解析，再断言无告警节点。
@@ -119,6 +121,7 @@ describe('UsagePanel — token 预算护栏', () => {
       onTokenBudgetChange: vi.fn(),
       onGlobalTokenBudgetChange: vi.fn(),
       projectId: undefined,
+      scope: 'global',
     })
 
     expect(await screen.findByTestId('usage-global-token-budget')).toBeTruthy()
@@ -142,6 +145,7 @@ describe('UsagePanel — token 预算护栏', () => {
       onTokenBudgetChange: vi.fn(),
       onGlobalTokenBudgetChange: vi.fn(),
       projectId: 'proj-1',
+      scope: 'project',
     })
 
     const warn = await screen.findByTestId('usage-unknown-cost-warning')
@@ -166,6 +170,7 @@ describe('UsagePanel — token 预算护栏', () => {
       onTokenBudgetChange: vi.fn(),
       onGlobalTokenBudgetChange: vi.fn(),
       projectId: 'proj-1',
+      scope: 'project',
     })
 
     const warn = await screen.findByTestId('usage-unknown-cost-warning')
@@ -203,9 +208,86 @@ describe('UsagePanel — token 预算护栏', () => {
       onTokenBudgetChange: vi.fn(),
       onGlobalTokenBudgetChange: vi.fn(),
       projectId: 'proj-1',
+      scope: 'project',
     })
 
     expect(await screen.findByText('$1.01')).toBeTruthy()
+  })
+})
+
+/**
+ * 预算数值字段必须与**写入作用域**一致才能编辑。
+ *
+ * 路由 projectId 决定本分区口径（有 = 本项目；无 = 全局），作用域决定这次保存落到
+ * 哪个文件。此前两者完全不校验，于是必然出事——
+ * 1) /settings（无路由 projectId，作用域默认「项目」）渲染的是全局口径键
+ *    globalMonthlyBudgetUsd，保存按项目作用域提交 → 服务端 400
+ *    GLOBAL_BUDGET_IN_PROJECT_SCOPE，整次保存连同其中其他无关改动一起失败；
+ * 2) 项目页切到「全局」作用域后仍能编辑项目口径键，保存把项目预算写进全局配置——
+ *    mergeConfig 只浅合并一层 usage，此后每个项目都继承到这个值。
+ * 口径同 SecurityPanel：锁定时禁用并给出正解路径，而不是让保存炸。
+ */
+describe('UsagePanel — 预算字段锁定随写入作用域', () => {
+  const baseProps = {
+    budget: 0,
+    budgetAction: 'warn' as const,
+    globalBudget: 0,
+    tokenBudget: 0,
+    globalTokenBudget: 0,
+    onBudgetChange: vi.fn(),
+    onBudgetActionChange: vi.fn(),
+    onGlobalBudgetChange: vi.fn(),
+    onTokenBudgetChange: vi.fn(),
+    onGlobalTokenBudgetChange: vi.fn(),
+  }
+
+  it('全局口径分区 + 项目作用域 → 全局预算字段存在但锁定，并说明正解路径', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockResolvedValue(baseSummary())
+
+    renderPanel({ ...baseProps, projectId: undefined, scope: 'project' })
+
+    const field = (await screen.findByTestId('usage-global-budget')) as HTMLInputElement
+    expect(field.disabled).toBe(true)
+    expect((screen.getByTestId('usage-global-token-budget') as HTMLInputElement).disabled).toBe(
+      true,
+    )
+    expect(screen.getByTestId('usage-scope-hint').textContent).toContain('全局')
+  })
+
+  it('全局口径分区 + 全局作用域 → 可编辑、无锁定提示', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockResolvedValue(baseSummary())
+
+    renderPanel({ ...baseProps, projectId: undefined, scope: 'global' })
+
+    const field = (await screen.findByTestId('usage-global-budget')) as HTMLInputElement
+    expect(field.disabled).toBe(false)
+    expect(screen.queryByTestId('usage-scope-hint')).toBeNull()
+  })
+
+  it('项目口径分区 + 全局作用域 → 项目预算字段锁定（否则会把本项目预算写进全局配置）', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockResolvedValue(baseSummary())
+
+    renderPanel({ ...baseProps, projectId: 'proj-1', scope: 'global' })
+
+    const field = (await screen.findByTestId('usage-project-budget')) as HTMLInputElement
+    expect(field.disabled).toBe(true)
+    expect((screen.getByTestId('usage-token-budget') as HTMLInputElement).disabled).toBe(true)
+    expect(screen.queryByTestId('usage-global-budget')).toBeNull()
+    expect(screen.getByTestId('usage-scope-hint').textContent).toContain('项目')
+  })
+
+  it('项目口径分区 + 项目作用域 → 可编辑（默认路径不受影响）', async () => {
+    const { usageAPI } = await import('@/services/usage.js')
+    ;(usageAPI.summary as Mock).mockResolvedValue(baseSummary())
+
+    renderPanel({ ...baseProps, projectId: 'proj-1', scope: 'project' })
+
+    const field = (await screen.findByTestId('usage-project-budget')) as HTMLInputElement
+    expect(field.disabled).toBe(false)
+    expect(screen.queryByTestId('usage-scope-hint')).toBeNull()
   })
 })
 
@@ -230,6 +312,7 @@ describe('UsagePanel — 读不到不等于 $0', () => {
     onTokenBudgetChange: vi.fn(),
     onGlobalTokenBudgetChange: vi.fn(),
     projectId: 'proj-1',
+    scope: 'project' as const,
   }
 
   it('查询失败 → 报出后端原因 + 重试，且不渲染任何统计数字', async () => {

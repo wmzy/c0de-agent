@@ -64,6 +64,9 @@ export const ReasoningBlock = memo(function ReasoningBlock({
         type="button"
         className={header}
         data-testid="reasoning-toggle"
+        // 与 ToolBlock 折叠头同款：▸/▾ 字形不是状态播报，读屏需 aria-expanded
+        // 才能知道「思考过程」这块是展开还是收起。
+        aria-expanded={isExpanded}
         onClick={() => setExpanded((v) => !v)}
       >
         <span>{isExpanded ? '▾' : '▸'}</span>

@@ -57,13 +57,25 @@ vi.mock('./AddProjectDialog.js', () => ({
   ),
 }))
 
-// 可变项目数据：各用例按需覆盖 state.projects。
+// 可变项目数据：各用例按需覆盖 state.projects / state.isLoading / state.isError。
 const state = vi.hoisted(() => ({
-  projects: [{ id: 'p1', name: 'proj', gitBranch: 'main' as string | null }],
+  projects: [{ id: 'p1', name: 'proj', gitBranch: 'main' as string | null }] as
+    | Array<{ id: string; name: string; gitBranch: string | null }>
+    | undefined,
+  isLoading: false,
+  isError: false,
+  error: null as unknown,
+  refetch: vi.fn(),
 }))
 
 vi.mock('../hooks/useSession.js', () => ({
-  useProjects: () => ({ data: state.projects }),
+  useProjects: () => ({
+    data: state.projects,
+    isLoading: state.isLoading,
+    isError: state.isError,
+    error: state.error,
+    refetch: state.refetch,
+  }),
 }))
 
 afterEach(() => {
@@ -136,6 +148,9 @@ describe('TopBar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+    state.isLoading = false
+    state.isError = false
+    state.error = null
   })
 
   it('渲染品牌与导航入口', async () => {
@@ -271,6 +286,49 @@ describe('TopBar', () => {
   it('无项目上下文时不渲染项目指示器', async () => {
     await renderAt('/')
     expect(screen.queryByTestId('project-indicator')).toBeNull()
+  })
+
+  // 回归：项目列表读不到（GET /api/projects 5xx/网络失败）与「还没读到」此前都走
+  // 同一个兜底分支，把读不到渲染成「默认工作区」这个自信的项目身份；兜底分支又
+  // 不渲染 actions，顶栏唯一的提交入口跟着整块消失。契约：三种「拿不到项目」
+  // 的原因分开渲染，失败态给出原因与重试，提交入口始终在。
+  it('项目列表读取失败时显示原因与重试，且提交入口不消失', async () => {
+    state.projects = undefined
+    state.isError = true
+    state.error = new Error('数据库被占用')
+    await renderAtProject('p1')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-name-failed').textContent).toContain('项目信息读取失败')
+    })
+    expect(screen.queryByText('默认工作区')).toBeNull()
+    expect(screen.getByTestId('project-list-error').textContent).toContain('数据库被占用')
+    expect(screen.getByTestId('project-list-error').getAttribute('role')).toBe('alert')
+    expect(screen.getByTestId('git-commit-btn')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('project-retry'))
+    expect(state.refetch).toHaveBeenCalled()
+  })
+
+  it('项目列表仍在读取时不谎报「默认工作区」', async () => {
+    state.projects = undefined
+    state.isLoading = true
+    await renderAtProject('p1')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-indicator')).toBeTruthy()
+    })
+    expect(screen.queryByText('默认工作区')).toBeNull()
+    expect(screen.getByTestId('git-commit-btn')).toBeTruthy()
+  })
+
+  it('确实不在项目列表里时才显示「默认工作区」', async () => {
+    state.projects = []
+    await renderAtProject('p1')
+
+    await waitFor(() => {
+      expect(screen.getByText('默认工作区')).toBeTruthy()
+    })
   })
 
   it('hover 分支名 title 展示最后一次提交 message', async () => {
@@ -483,6 +541,50 @@ describe('TopBar', () => {
     expect(input.value).toBe('feature/x')
     // 允许改完再试一次。
     expect(input.disabled).toBe(false)
+  })
+
+  // 回归：分支列表此前只取 data，`(data?.branches ?? []).map` 让「还在读」与
+  // 「读不了」都渲染成一份空菜单（只有分隔线 + 新分支输入框）。触发按钮上写着
+  // 当前分支名，用户据此认定仓库没有别的分支，而切分支的唯一入口就是这份菜单，
+  // 读失败后连重试都没有。契约：加载中/失败/真的为空三态分开说，失败给原因 + 重试。
+  it('分支列表读取失败：给出后端原因与重试，重试成功后列出分支', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    const gitBranches = fileAPI.gitBranches as ReturnType<typeof vi.fn>
+    gitBranches.mockRejectedValueOnce(new Error('git 仓库被另一个进程占用'))
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+
+    const err = await screen.findByTestId('branch-list-error')
+    expect(err.textContent).toContain('git 仓库被另一个进程占用')
+    expect(err.getAttribute('role')).toBe('alert')
+    // 失败时不得出现「没有分支」的状态断言，也不得出现可点的分支项
+    expect(screen.queryByTestId('branch-list-empty')).toBeNull()
+    expect(screen.queryByTestId('branch-dropdown-item-main')).toBeNull()
+
+    gitBranches.mockResolvedValueOnce({
+      branches: [
+        { name: 'main', current: true, lastSubject: null },
+        { name: 'develop', current: false, lastSubject: null },
+      ],
+    })
+    fireEvent.click(screen.getByTestId('branch-list-retry'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('branch-dropdown-item-develop')).toBeTruthy()
+    })
+    expect(screen.queryByTestId('branch-list-error')).toBeNull()
+  })
+
+  it('分支列表真的为空时才说「没有其它本地分支」', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitBranches as ReturnType<typeof vi.fn>).mockResolvedValue({ branches: [] })
+
+    await renderAtProject('p1')
+    fireEvent.click(screen.getByTestId('branch-dropdown-trigger'))
+
+    expect(await screen.findByTestId('branch-list-empty')).toBeTruthy()
+    expect(screen.queryByTestId('branch-list-error')).toBeNull()
   })
 
   // ---- CommitButton（内嵌在 TopBar via ProjectIndicator actions）----
@@ -780,6 +882,9 @@ describe('TopBar — 分支切换失败提示', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+    state.isLoading = false
+    state.isError = false
+    state.error = null
   })
 
   it('gitCheckout 失败时在顶栏显示原因，并说清「仍在原分支」', async () => {
@@ -848,6 +953,9 @@ describe('TopBar — 删除项目失败提示', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     state.projects = [{ id: 'p1', name: 'proj', gitBranch: 'main' }]
+    state.isLoading = false
+    state.isError = false
+    state.error = null
   })
 
   // 回归：删除失败时原因被写进项目下拉里，而确认弹层在请求发出前就关掉了、

@@ -91,7 +91,11 @@ const paneCloseStyle = css`
   min-height: auto;
   min-width: auto;
 
-  &:hover {
+  /* 同 paneStatusActionStyle：hover 得与 global.ts 的
+     :where(button):hover:not(:disabled):not([aria-disabled='true']) 同形状（0,3,0），
+     否则被全局中性底色压掉，只剩固定浅色 #c9d1d9 落在浅灰底上（实测 1.36:1）——
+     鼠标移到这颗杀掉分屏 PTY 的 × 上时字形消失。 */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--haze-color-danger);
     color: var(--c0de-danger-on-solid, #fff);
   }

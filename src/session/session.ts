@@ -268,6 +268,38 @@ async function rebindSession(
 }
 
 /**
+ * 把「本次恢复连带还原、但恢复后仍无归属」的会话一并归属到指定项目。
+ *
+ * 为什么必须有这一步：项目删除时该项目下所有会话被 FK set null 变成孤儿
+ * （同时软删除进回收站），因此用户在回收站「未归属项目」分组里恢复的往往是
+ * **子会话**，祖先链（更早删除/同批次的根会话）会被 restoreSessionCore
+ * 连带还原——但只有目标会话拿到归属。而侧栏按**根会话**的 projectId 过滤整棵
+ * 树（SessionList.filterTree），根仍为 null 时：
+ *   - 恢复成功的会话在侧栏里一条都看不见（提示却说「已恢复并归属到当前项目」）；
+ *   - 被连带还原的祖先已不再是「已删除」会话，回收站的孤儿分组又只列已删会话，
+ *     于是它成了没有任何列表入口的孤儿行，永远不可达。
+ *
+ * 只对当前无归属的会话生效：已有归属的祖先属于别的项目（跨批次删除的祖先），
+ * 恢复后自然出现在它自己的项目视图里，不动它。返回真正被归属的会话 id。
+ */
+async function rebindUnboundSessions(
+  handle: DB,
+  ids: Iterable<string>,
+  project: { id: string; worktree: string },
+): Promise<string[]> {
+  const adopted: string[] = []
+  for (const sid of ids) {
+    const [row] = await handle.db
+      .select({ projectId: sessions.projectId })
+      .from(sessions)
+      .where(eq(sessions.id, sid))
+    if (!row || row.projectId) continue
+    if (await rebindSession(handle, sid, project)) adopted.push(sid)
+  }
+  return adopted
+}
+
+/**
  * 从回收站恢复会话：默认连带恢复其已软删除的祖先链——
  * 否则恢复的会话因父仍在回收站而游离于会话树之外（P2-1：UI 不可达）。
  * 祖先中未删除的（活跃）节点不需要也不应该被改动。
@@ -288,6 +320,15 @@ export type RestoreResult = {
    * 否则会被静默物理清除。
    */
   leftBehindDescendantCount: number
+  /**
+   * 本次恢复**实际**还原出的会话 id（目标 + 连带的后代子树 + 连带还原的祖先链）。
+   *
+   * 调用方需要它才能保证恢复后的可达性：删除项目时整批会话被 FK set null，
+   * 「未归属项目」分组里恢复其中一条子会话时，一起还原的祖先仍是孤儿——
+   * 侧栏按**根会话** projectId 过滤整棵树，根无归属则整棵子树在任何项目视图里
+   * 都不出现（见 rebindUnboundSessions）。
+   */
+  restoredIds: string[]
 }
 
 async function restoreSessionCore(
@@ -303,6 +344,7 @@ async function restoreSessionCore(
       restoredAncestorCount: 0,
       crossedBatchAncestor: false,
       leftBehindDescendantCount: 0,
+      restoredIds: [],
     }
   const targetBatch = row.deletedBatchId
   const ids = new Set<string>([id])
@@ -380,6 +422,7 @@ async function restoreSessionCore(
     restoredAncestorCount,
     crossedBatchAncestor,
     leftBehindDescendantCount,
+    restoredIds: [...ids],
   }
 }
 
@@ -1007,6 +1050,7 @@ export {
   purgeEmptySessions,
   purgeTemporarySessions,
   rebindSession,
+  rebindUnboundSessions,
   restoreSession,
   restoreSessionCore,
   searchSessions,

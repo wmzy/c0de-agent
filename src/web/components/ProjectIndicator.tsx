@@ -232,6 +232,23 @@ const branchInputError = css`
   color: var(--haze-color-danger);
 `
 
+/** 下拉里的状态行（加载中 / 真的为空）：不是菜单项，不能点。 */
+const menuStatus = css`
+  display: block;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
+/** 下拉里的失败行：原因必须来自后端 message，用户才知道该重试还是该修仓库。 */
+const menuStatusError = css`
+  display: block;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+  overflow-wrap: anywhere;
+`
+
 /**
  * 分支切换失败提示（顶栏常驻，不是 toast）。
  *
@@ -246,6 +263,11 @@ const branchError = css`
   /* git 的失败原因是长句（"Your local changes would be overwritten…"），窄栏下断行 */
   overflow-wrap: anywhere;
 `
+
+/** 失败原因取服务端 message（APIError）或 Error.message，与设置页/回收站同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
 
 /**
  * 项目指示器：项目名 + git 分支均可点击下拉切换，各带"添加"按钮。
@@ -263,7 +285,10 @@ export function ProjectIndicator({
   variant?: 'bar' | 'inline'
 }) {
   const cls = variant === 'inline' ? indicatorInline : indicator
-  const { data: projects } = useProjects()
+  // 列表读取失败与「还没读到」都不是「没有这个项目」：此前一律走下方兜底分支，
+  // 把读不到渲染成「默认工作区」这个自信的项目身份，并且因为兜底分支不渲染
+  // actions，顶栏唯一的提交入口跟着整块消失（GET /api/projects 一失败就发生）。
+  const { data: projects, isLoading, isError, error: projectsErr, refetch } = useProjects()
   const project = projects?.find((p) => p.id === projectId)
   const router = useRouter()
   const qc = useQueryClient()
@@ -365,10 +390,37 @@ export function ProjectIndicator({
   })
 
   if (!project) {
+    // 三种「没有 project」的原因必须分开渲染：还没读到 / 读失败 / 确实不在列表里。
+    // 统一渲染「默认工作区」会把读不到说成没有项目，且因为兜底分支不渲染 actions，
+    // 顶栏唯一的提交入口跟着整块消失。
+    const wrapper = variant === 'inline' ? `${actionsWrap} ${mobileHide}` : actionsWrap
     return (
       <div className={cls} data-testid="project-indicator">
         <span className={projectIcon}>{'\u{1F4C2}'}</span>
-        <span className={projectName}>默认工作区</span>
+        {isError ? (
+          <>
+            <span className={projectName} data-testid="project-name-failed">
+              项目信息读取失败
+            </span>
+            <span className={branchError} role="alert" data-testid="project-list-error">
+              {messageOf(projectsErr)}
+            </span>
+            <button
+              type="button"
+              className={footerBtn}
+              onClick={() => void refetch()}
+              data-testid="project-retry"
+              style={{ fontSize: 11, padding: '1px 6px' }}
+            >
+              重试
+            </button>
+          </>
+        ) : isLoading ? (
+          <span className={projectName}>读取中…</span>
+        ) : (
+          <span className={projectName}>默认工作区</span>
+        )}
+        {actions ? <span className={wrapper}>{actions}</span> : null}
       </div>
     )
   }
@@ -485,26 +537,57 @@ export function ProjectIndicator({
               </span>
             </DropdownMenuTrigger>
             <DropdownMenuContent className={menuPanel}>
-              {(branchesQ.data?.branches ?? []).map((b) => (
-                <DropdownMenuItem
-                  key={b.name}
-                  className={b.current ? menuItemActive : undefined}
-                  disabled={b.current || checkoutMut.isPending}
-                  onClick={() => {
-                    if (!b.current) checkoutMut.mutate(b.name)
-                  }}
+              {/* 三态齐全。此前只取 data，`(data?.branches ?? []).map` 让「还在读」
+                  与「读不了」都渲染成一份空菜单——只有分隔线和「新分支名」输入框。
+                  触发按钮上明明写着当前分支名，用户会据此认定这个仓库没有别的
+                  分支（而切分支的唯一入口就在这份菜单里），失败后也没有任何重试
+                  手段。与 RecycleBin/ArchivePanel/CommitButton 的
+                  「标题 + 后端原因 + 重试」同一口径。 */}
+              {branchesQ.isError ? (
+                <span className={menuStatusError} role="alert" data-testid="branch-list-error">
+                  {'⚠'} 分支列表加载失败：{messageOf(branchesQ.error)}
+                </span>
+              ) : branchesQ.isLoading ? (
+                <span className={menuStatus} data-testid="branch-list-loading">
+                  正在加载分支…
+                </span>
+              ) : (branchesQ.data?.branches ?? []).length === 0 ? (
+                <span className={menuStatus} data-testid="branch-list-empty">
+                  没有其它本地分支
+                </span>
+              ) : (
+                branchesQ.data?.branches.map((b) => (
+                  <DropdownMenuItem
+                    key={b.name}
+                    className={b.current ? menuItemActive : undefined}
+                    disabled={b.current || checkoutMut.isPending}
+                    onClick={() => {
+                      if (!b.current) checkoutMut.mutate(b.name)
+                    }}
+                  >
+                    <span className={itemWrap} data-testid={`branch-dropdown-item-${b.name}`}>
+                      <span className={menuItemCheck}>{b.current ? '✓' : ''}</span>
+                      <span className={menuItemSub}>{b.name}</span>
+                      {b.lastSubject ? (
+                        <span className={menuItemHint} title={b.lastSubject}>
+                          {b.lastSubject}
+                        </span>
+                      ) : null}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+              {branchesQ.isError ? (
+                <button
+                  type="button"
+                  className={footerBtn}
+                  onClick={() => void branchesQ.refetch()}
+                  disabled={branchesQ.isFetching}
+                  data-testid="branch-list-retry"
                 >
-                  <span className={itemWrap} data-testid={`branch-dropdown-item-${b.name}`}>
-                    <span className={menuItemCheck}>{b.current ? '\u2713' : ''}</span>
-                    <span className={menuItemSub}>{b.name}</span>
-                    {b.lastSubject ? (
-                      <span className={menuItemHint} title={b.lastSubject}>
-                        {b.lastSubject}
-                      </span>
-                    ) : null}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+                  {branchesQ.isFetching ? '重试中…' : '重试'}
+                </button>
+              ) : null}
               <DropdownMenuSeparator />
               <NewBranchForm
                 onCreate={(name) => createBranchMut.mutateAsync(name)}

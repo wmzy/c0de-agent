@@ -9,6 +9,7 @@ import type { ChatState } from '@/hooks/chatState.js'
 import { reduceChatEvent } from '@/hooks/chatState.js'
 import { useChat } from '@/hooks/useChat.js'
 import { agentAPI } from '@/services/agent.js'
+import { sessionAPI } from '@/services/session.js'
 
 const base: ChatState = {
   messages: [],
@@ -20,8 +21,12 @@ const base: ChatState = {
   subagents: [],
   pendingSegmentBreak: null,
   pendingTrust: null,
+  trustPending: false,
+  trustError: null,
   interrupted: false,
+  abortError: null,
   attachedRun: false,
+  attachError: null,
   compactionNotice: null,
   runPaused: false,
   runPauseReason: null,
@@ -66,6 +71,51 @@ describe('reduceChatEvent', () => {
     const parts = s.messages[0]?.content
     const result = parts?.find((p) => p._tag === 'tool_result')
     expect(result && result._tag === 'tool_result' ? result.output._tag : null).toBe('success')
+  })
+
+  // 服务端按轮落库（core/loop/persist.ts：每轮一条 assistant 消息 + 独立 tool 消息），
+  // 实时归约必须同形：收到工具结果＝该轮收口，后续正文/工具调用属于下一轮、要新开一条。
+  // 堆进同一条会让 mergeSessionMessages 的逐条内容签名配不上历史，任何历史重取
+  // （窗口聚焦 / shake / 附着结束）都把整轮回复重复渲染一份。
+  it('多轮：工具结果收口后正文新开一条 assistant 消息', () => {
+    const withUser: ChatState = {
+      ...base,
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's',
+          role: 'user',
+          content: [{ _tag: 'text', text: 'go' }],
+          tokenCount: 0,
+          createdAt: 0,
+        },
+      ],
+    }
+    let s = reduceChatEvent(withUser, { _tag: 'text_delta', text: '第一轮' })
+    // 同一轮的两个工具调用都归到这一条（收到结果前不拆）
+    s = reduceChatEvent(s, { _tag: 'tool_call_start', id: 't1', tool: 'read', input: {} })
+    s = reduceChatEvent(s, { _tag: 'tool_call_start', id: 't2', tool: 'glob', input: {} })
+    s = reduceChatEvent(s, {
+      _tag: 'tool_call_end',
+      id: 't1',
+      result: { _tag: 'success', output: 'ok' },
+    })
+    s = reduceChatEvent(s, {
+      _tag: 'tool_call_end',
+      id: 't2',
+      result: { _tag: 'success', output: 'ok' },
+    })
+    // 收口（已收到工具结果）后的正文属于下一轮 → 新开一条
+    s = reduceChatEvent(s, { _tag: 'text_delta', text: '第二轮' })
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant'])
+    expect(s.messages[1]?.content.map((p) => p._tag)).toEqual([
+      'text',
+      'tool_call',
+      'tool_call',
+      'tool_result',
+      'tool_result',
+    ])
+    expect(s.messages[2]?.content).toEqual([{ _tag: 'text', text: '第二轮' }])
   })
 
   it('thinking 作为独立 part', () => {
@@ -444,6 +494,141 @@ describe('useChat confirm', () => {
     expect(result.current.pendingPermission?.toolCallId).toBe('tc500')
   })
 
+  // 回归：勾选「本会话始终允许」时白名单写入失败此前只 console.error，随后仍
+  // 批准工具——用户看到的是一次完全成功的授权，但白名单没写进去，同一工具下次
+  // 还会弹确认。工具照旧执行，但失败原因必须说出来。
+  it('白名单写入失败时透出原因，工具仍按选择执行', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tcAL","tool":"bash","input":{}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      if (url === '/api/permissions/s1/always-allow') {
+        return {
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          json: async () => ({ error: { code: 'INTERNAL', message: '白名单存储不可用' } }),
+          text: async () =>
+            JSON.stringify({ error: { code: 'INTERNAL', message: '白名单存储不可用' } }),
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ confirmed: true }),
+        text: async () => JSON.stringify({ confirmed: true }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    const pending = result.current.pendingPermission
+    expect(pending?.toolCallId).toBe('tcAL')
+
+    await act(async () => {
+      result.current.confirm('tcAL', true, 'bash', pending ?? undefined)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 原因可见（此前整条失败路径零反馈）
+    expect(result.current.error).toContain('未保存')
+    expect(result.current.error).toContain('白名单存储不可用')
+    // 白名单失败不影响本次批准：工具确认请求照常发出
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/tools/confirm',
+        expect.objectContaining({ body: JSON.stringify({ toolCallId: 'tcAL', approved: true }) }),
+      ),
+    )
+  })
+
+  it('白名单写入成功时不写 error', async () => {
+    const sse =
+      'data: {"_tag":"permission_required","toolCallId":"tcOK","tool":"bash","input":{}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return { done: true, value: undefined }
+              },
+            }),
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ alwaysAllow: ['bash'], confirmed: true }),
+        text: async () => JSON.stringify({ alwaysAllow: ['bash'], confirmed: true }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    const pending = result.current.pendingPermission
+
+    await act(async () => {
+      result.current.confirm('tcOK', true, 'bash', pending ?? undefined)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.error).toBeNull()
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/tools/confirm',
+        expect.objectContaining({ body: JSON.stringify({ toolCallId: 'tcOK', approved: true }) }),
+      ),
+    )
+  })
+
   // 回归：denyTimedOutPermission 把 confirmTool POST 写进 setState 更新器——
   // 更新器必须是纯函数，StrictMode（main.tsx 已开启）会重复调用它，同一
   // 拒绝请求被发出两次（服务端第二次必然 404，用户网络层收到多余请求）。
@@ -498,11 +683,114 @@ describe('useChat confirm', () => {
 
     await act(async () => {
       result.current.denyTimedOutPermission()
+      // 拒绝请求现在是异步读结果的，等 promise 链的 setState 落地
+      await new Promise((r) => setTimeout(r, 0))
     })
     expect(result.current.permissionTimeout).toBeNull()
 
     const confirmCalls = fetchMock.mock.calls.filter(([url]) => url === '/api/tools/confirm')
     expect(confirmCalls).toHaveLength(1)
+  })
+
+  /** 渲染一个已进入「权限确认超时」态的会话（SSE 只发一条 permission_timeout）。 */
+  async function renderTimedOut(toolCallId: string) {
+    const sse = `data: {"_tag":"permission_timeout","toolCallId":"${toolCallId}","tool":"bash","input":{},"timeoutAction":"pause"}\n\n`
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/chat') {
+          return {
+            ok: true,
+            status: 200,
+            body: {
+              getReader: () => ({
+                read: async () => {
+                  if (readIdx === 0) {
+                    readIdx++
+                    return { done: false, value: chunk }
+                  }
+                  return { done: true, value: undefined }
+                },
+              }),
+            },
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ confirmed: true }),
+          text: async () => JSON.stringify({ confirmed: true }),
+        }
+      }),
+    )
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.permissionTimeout?.toolCallId).toBe(toolCallId)
+    return result
+  }
+
+  // 回归：拒绝请求失败此前被 .catch(() => {}) 空吞、随后无条件清空 permissionTimeout——
+  // 500 / 网络中断时拒绝根本没送达（服务端 pending 仍在，25 分钟宽限期内 run 继续等），
+  // 而页面上唯一能再次进入该决策的超时横幅（「重新询问 / 拒绝并继续」）已经消失，
+  // 用户零反馈、以为工具已被拒绝。
+  it('denyTimedOutPermission 拒绝未送达（500）→ 保留超时横幅并说明原因', async () => {
+    const result = await renderTimedOut('tcD500')
+    vi.spyOn(agentAPI, 'confirmTool').mockRejectedValue(
+      Object.assign(new Error('Internal Server Error'), { status: 500 }),
+    )
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 横幅保留：两个入口（重新询问 / 拒绝并继续）仍在
+    expect(result.current.permissionTimeout).not.toBeNull()
+    expect(result.current.permissionTimeout?.toolCallId).toBe('tcD500')
+    // 说清「拒绝没生效 / 工具还在等」而不是谎报成功
+    expect(result.current.error).toContain('没有送达')
+    expect(result.current.error).toContain('仍在等待')
+  })
+
+  it('denyTimedOutPermission 拒绝送达 → 清空超时态且无错误提示', async () => {
+    const result = await renderTimedOut('tcDOK')
+    vi.spyOn(agentAPI, 'confirmTool').mockResolvedValue({ confirmed: true })
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.permissionTimeout).toBeNull()
+    expect(result.current.error).toBeNull()
+  })
+
+  // 404：pending 已被其他标签页消费 / run 已中止——工具不会执行，超时态该收起，
+  // 文案与 confirm() 同一口径。
+  it('denyTimedOutPermission 404（已被处理）→ 清空超时态并给出同一口径文案', async () => {
+    const result = await renderTimedOut('tcD404')
+    vi.spyOn(agentAPI, 'confirmTool').mockRejectedValue(
+      Object.assign(new Error('No pending permission'), { status: 404 }),
+    )
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.permissionTimeout).toBeNull()
+    expect(result.current.error).toBe(
+      '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
+    )
   })
 })
 
@@ -848,6 +1136,78 @@ describe('useChat segment break', () => {
     expect(resend?.[0]).toBe('/api/chat')
     expect(JSON.parse(String(resend?.[1]?.body)).message).toBe('hi')
   })
+
+  // 回归：信任请求失败此前只把原因写进 state.error——它是记录在会话区的横幅，
+  // 而信任弹窗是 <dialog> 模态（::backdrop 遮住页面其余内容），用户看到的是
+  // 「点了信任并继续，弹窗纹丝不动」，既没有原因也无从判断按钮是否工作过。
+  // 现在原因必须落到 trustError（渲染在弹窗内部），并在在飞期间置 trustPending。
+  it('confirmTrust 失败 → 还原待办、原因进 trustError、busy 复位', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: { method?: string }) => {
+        if (url === '/api/chat') {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: {
+                code: 'TRUST_REQUIRED',
+                message: '需要信任',
+                details: {
+                  projectId: 'proj-1',
+                  projectName: 'Repo',
+                  items: [{ kind: 'permission-auto', detail: 'auto' }],
+                },
+              },
+            }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  code: 'TRUST_REQUIRED',
+                  message: '需要信任',
+                  details: {
+                    projectId: 'proj-1',
+                    projectName: 'Repo',
+                    items: [{ kind: 'permission-auto', detail: 'auto' }],
+                  },
+                },
+              }),
+          }
+        }
+        if (url === '/api/projects/proj-1/trust' && init?.method === 'POST') {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ error: { message: '信任写入失败' } }),
+            text: async () => JSON.stringify({ error: { message: '信任写入失败' } }),
+          }
+        }
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' }
+      }),
+    )
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper: makeWrapper() })
+    await act(async () => {
+      await result.current.sendMessage('hi')
+    })
+    expect(result.current.pendingTrust).not.toBeNull()
+
+    await act(async () => {
+      await result.current.confirmTrust()
+    })
+    // 待办还原（弹窗仍开着），失败原因在弹窗内部可见，busy 归位可重试
+    expect(result.current.pendingTrust).not.toBeNull()
+    expect(result.current.trustPending).toBe(false)
+    expect(result.current.trustError).toContain('信任项目失败')
+    expect(result.current.trustError).toContain('信任写入失败')
+
+    // 取消：清掉失败原因与待办（不残留旧原因到下一次信任）
+    act(() => {
+      result.current.cancelTrust()
+    })
+    expect(result.current.pendingTrust).toBeNull()
+    expect(result.current.trustError).toBeNull()
+  })
 })
 
 describe('useChat abort', () => {
@@ -919,6 +1279,178 @@ describe('useChat abort', () => {
         }),
       ),
     )
+    // 停下来了：没有待处理的失败原因
+    await waitFor(() => expect(result.current.abortError).toBeNull())
+  })
+
+  // 终止请求失败时后端 agent 仍在跑（继续改文件、烧 token），界面却已翻成「已停止」。
+  // 此前 agentAPI.abort(...).catch(() => {}) 把两种结局一并空吞。
+  const renderStreamingWithAbortResponse = async (abortResponse: {
+    status: number
+    body: unknown
+  }) => {
+    const chunk = new TextEncoder().encode('data: {"_tag":"text_delta","text":"hi"}\n\n')
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return new Promise<{ done: boolean; value: undefined }>(() => {})
+              },
+            }),
+          },
+        }
+      }
+      const text = JSON.stringify(abortResponse.body)
+      return {
+        ok: abortResponse.status < 400,
+        status: abortResponse.status,
+        json: async () => JSON.parse(text),
+        text: async () => text,
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    await act(async () => {
+      result.current.abort()
+    })
+    return { result, fetchMock }
+  }
+
+  it('终止请求 500 → abortError 给出原因，不静默', async () => {
+    const { result } = await renderStreamingWithAbortResponse({
+      status: 500,
+      body: { error: { message: 'boom' } },
+    })
+
+    expect(result.current.isStreaming).toBe(false)
+    await waitFor(() => expect(result.current.abortError).toContain('终止请求失败'))
+    // 关键：不是「看起来停了」，而是明说 agent 可能还在后台跑
+    expect(result.current.abortError).toContain('后台')
+  })
+
+  it('后端回 {aborted:false} → abortError 说明没有可终止的运行', async () => {
+    const { result } = await renderStreamingWithAbortResponse({
+      status: 200,
+      body: { aborted: false },
+    })
+
+    await waitFor(() => expect(result.current.abortError).toContain('终止没有送达'))
+  })
+
+  it('终止成功后 abortError 复位（重试成功不留旧原因）', async () => {
+    const { result } = await renderStreamingWithAbortResponse({
+      status: 500,
+      body: { error: { message: 'boom' } },
+    })
+    await waitFor(() => expect(result.current.abortError).toContain('终止请求失败'))
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const text = JSON.stringify({ aborted: true })
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ aborted: true }),
+          text: async () => text,
+        }
+      }),
+    )
+    await act(async () => {
+      result.current.abort()
+    })
+    await waitFor(() => expect(result.current.abortError).toBeNull())
+  })
+
+  // 回归：终止后「终止」按钮消失（同屏已宣布运行停止），在途工具卡却永远停在
+  // ⏳「执行中」——服务端的 aborted 结果要等下一次重取消息才送达，中间这段空窗里
+  // 界面自相矛盾，用户不知道那次 bash/git 到底还在不在跑。
+  it('终止时在途工具被封口成失败，不留在 ⏳「执行中」', async () => {
+    const sse =
+      'data: {"_tag":"tool_call_start","id":"tc1","tool":"bash","input":{"command":"sleep 300"}}\n\n'
+    const chunk = new TextEncoder().encode(sse)
+    let readIdx = 0
+    const fetchMock = vi.fn(async (url: string, init?: { signal?: AbortSignal }) => {
+      if (url === '/api/chat') {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                // 挂起直到 signal 被终止——真实 fetch 的 reader 在 abort 时抛错，
+                // 这里必须同样抛，否则 doStream 永远停在 try 里，收尾分支走不到。
+                return await new Promise<never>((_, reject) => {
+                  const signal = init?.signal
+                  if (!signal) return
+                  const fail = (): void => reject(new Error('Aborted'))
+                  if (signal.aborted) fail()
+                  else signal.addEventListener('abort', fail, { once: true })
+                })
+              },
+            }),
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ aborted: true }),
+        text: async () => JSON.stringify({ aborted: true }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    // 在途：已有 tool_call、没有 tool_result
+    await waitFor(() =>
+      expect(
+        result.current.messages.some((m) => m.content.some((p) => p._tag === 'tool_call')),
+      ).toBe(true),
+    )
+
+    await act(async () => {
+      result.current.abort()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    const parts = result.current.messages.flatMap((m) => m.content)
+    expect(parts.some((p) => p._tag === 'tool_call' && p.id === 'tc1')).toBe(true)
+    const settled = parts.find((p) => p._tag === 'tool_result' && p.id === 'tc1')
+    expect(settled).toBeDefined()
+    expect(settled && settled._tag === 'tool_result' ? settled.output._tag : null).toBe('error')
   })
 })
 
@@ -1387,6 +1919,290 @@ describe('useChat 附着轮询的暂停态（P1）', () => {
 })
 
 /**
+ * 回归：附着页看不到运行期新出现的权限请求。
+ *
+ * 附着页没有本次 run 的 SSE 流（permission_required 事件只送得到发起流的标签页），
+ * 权限请求只能从 GET /:id/pending 读到。此前 attach() 只在进入附着态那一刻查一次
+ * ——查询之后才发起的工具权限请求，该页永远不弹确认弹窗：run 停在那里等一个用户
+ * 看不到的决定，直到服务端 5 分钟提示 / 25 分钟宽限超时自动拒绝；界面全程只有
+ * 「运行中…」，用户只会当成模型卡住。（另：那一刻的查询自身失败也被 .catch 吞掉，
+ * 同一条修复顺带覆盖。）
+ */
+describe('useChat 附着轮询复查挂起权限（P1）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  /** /status 与 /pending 按同一个调用序号取值：pendings[i] 是第 i 次 /status 之后
+   *  那次 /pending 的结果（attach 的那一对是 i = 0）。 */
+  function statusFetchSeq(
+    statuses: Array<Record<string, unknown>>,
+    pendings: Array<Record<string, unknown> | null>,
+  ): ReturnType<typeof vi.fn> {
+    let idx = 0
+    const json = (body: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    })
+    return vi.fn(async (url: string) => {
+      if (String(url).includes('/status')) {
+        const body = statuses[Math.min(idx, statuses.length - 1)]
+        idx++
+        return json(body)
+      }
+      return json({ pending: pendings[Math.min(idx - 1, pendings.length - 1)] ?? null })
+    })
+  }
+
+  async function renderAttached() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useChat('s1'), { wrapper })
+    await act(async () => {
+      await result.current.attach()
+    })
+    expect(result.current.isStreaming).toBe(true)
+    return result
+  }
+
+  it('附着期间新出现的权限请求 → 轮询复查后弹出确认弹窗', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      statusFetchSeq(
+        [{ _tag: 'running' }],
+        [null, { toolCallId: 'tc-9', tool: 'bash', input: { cmd: 'ls' } }],
+      ),
+    )
+    const result = await renderAttached()
+    // attach 那一刻还没有挂起请求
+    expect(result.current.pendingPermission).toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+  })
+
+  it('本页确认后轮询不会把同一请求重新弹回来', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      statusFetchSeq(
+        [{ _tag: 'running' }],
+        [
+          { toolCallId: 'tc-9', tool: 'bash', input: {} },
+          { toolCallId: 'tc-9', tool: 'bash', input: {} },
+        ],
+      ),
+    )
+    vi.spyOn(agentAPI, 'confirmTool').mockResolvedValue({ confirmed: true })
+    const result = await renderAttached()
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+
+    await act(async () => {
+      result.current.confirm('tc-9', true)
+    })
+    expect(result.current.pendingPermission).toBeNull()
+
+    // store 的消费还在路上（仍是 tc-9）：复查不得把它重新弹回来
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission).toBeNull()
+  })
+
+  it('他页已给出决定（store 不再挂起）→ 轮询收起弹窗', async () => {
+    vi.useFakeTimers()
+    const pending = { toolCallId: 'tc-9', tool: 'bash', input: {} }
+    vi.stubGlobal('fetch', statusFetchSeq([{ _tag: 'running' }], [pending, pending, null]))
+    const result = await renderAttached()
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+
+    // tick1：store 仍有挂起 → 保留
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission?.toolCallId).toBe('tc-9')
+
+    // tick2：store 已无挂起（他页确认/拒绝，或宽限超时自动拒绝）→ 收起弹窗，
+    // 否则用户对着一个已失效的请求点确认只会拿到 404。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    expect(result.current.pendingPermission).toBeNull()
+  })
+})
+
+/**
+ * 回归：附着入口读 GET /:id/status 失败必须与「没有活跃 run」分开。
+ *
+ * 此前 attach() 用 `.catch(() => null)` 折叠读失败，`st?._tag !== 'running'` 直接
+ * return——一次 500/网络抖动就与「真的空闲」走同一条出口：页面渲染成一个没有任何
+ * 运行痕迹的会话（无运行横幅、无终止键、不轮询），而服务端 run 可能仍在跑工具、改
+ * 文件。用户在这个假空闲态下发消息只会撞 409 RUN_ACTIVE「该会话已有进行中的对话」，
+ * 且**没有任何出口**（终止键不存在、恢复入口不存在、attach 不会重试）。
+ * 与 pollAttachedRun 的读失败同款：先自愈重试，连续失败才把原因摆出来。
+ */
+describe('useChat 附着入口读状态失败（P1）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  /** /status 的桩：由各用例给实现（不经过 fetch 层的重试，时序只由 attach 自己的重试链决定）。 */
+  function stubStatus(impl: (id: string) => Promise<unknown>) {
+    vi.spyOn(sessionAPI, 'status').mockImplementation(impl as never)
+    vi.spyOn(sessionAPI, 'pendingPermission').mockResolvedValue({ pending: null } as never)
+  }
+
+  function renderHookS1() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    return renderHook(() => useChat('s1'), { wrapper })
+  }
+
+  it('读失败一次后自愈重试并正常附着（不把读失败讲成「没有 run」）', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    stubStatus(async () => {
+      calls++
+      if (calls === 1) throw new Error('数据库被占用')
+      return { _tag: 'running' }
+    })
+    const { result } = renderHookS1()
+
+    await act(async () => {
+      await result.current.attach()
+    })
+    // 第一次读失败：还不能下结论，既不进入附着态、也不报警（还在自愈窗口内）
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachError ?? null).toBeNull()
+
+    // 3s 后重试读到 running → 运行态与终止入口出现
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.isStreaming).toBe(true)
+    expect(result.current.attachedRun).toBe(true)
+    expect(result.current.attachError).toBeNull()
+  })
+
+  it('连续读失败到上限 → attachError 给出原因，界面不再假装空闲', async () => {
+    vi.useFakeTimers()
+    stubStatus(async () => {
+      throw new Error('数据库被占用')
+    })
+    const { result } = renderHookS1()
+
+    await act(async () => {
+      await result.current.attach()
+    })
+    // 自愈窗口内先不打扰用户（首次失败 + 前 2 次重试都只静默重试）
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(result.current.attachError ?? null).toBeNull()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.attachError ?? null).toBeNull()
+
+    // 第 3 次重试仍失败 → 摆出原因：「不知道有没有 run」必须与「没有 run」可分辨
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.attachError).toBe('数据库被占用')
+    expect(result.current.isStreaming).toBe(false)
+  })
+
+  it('读到明确结论（idle）时清掉旧的 attachError', async () => {
+    vi.useFakeTimers()
+    let mode: 'fail' | 'idle' = 'fail'
+    stubStatus(async () => {
+      if (mode === 'fail') throw new Error('数据库被占用')
+      return { _tag: 'idle' }
+    })
+    const { result } = renderHookS1()
+    await act(async () => {
+      await result.current.attach()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000 * 4)
+    })
+    expect(result.current.attachError).toBe('数据库被占用')
+
+    // 服务恢复：明确的 idle 结论推翻「不知道」
+    mode = 'idle'
+    await act(async () => {
+      result.current.retryAttach()
+    })
+    expect(result.current.attachError).toBeNull()
+    expect(result.current.isStreaming).toBe(false)
+  })
+
+  it('「重新检查」复位重试计数：服务恢复后能再次自愈附着', async () => {
+    vi.useFakeTimers()
+    let failing = true
+    stubStatus(async () => {
+      if (failing) throw new Error('数据库被占用')
+      return { _tag: 'running' }
+    })
+    const { result } = renderHookS1()
+    await act(async () => {
+      await result.current.attach()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000 * 4)
+    })
+    expect(result.current.attachError).toBe('数据库被占用')
+
+    failing = false
+    await act(async () => {
+      result.current.retryAttach()
+    })
+    expect(result.current.isStreaming).toBe(true)
+    expect(result.current.attachedRun).toBe(true)
+    expect(result.current.attachError).toBeNull()
+  })
+
+  it('切会话作废在途的重试链：不把 A 的状态写进 B', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    stubStatus(async () => {
+      calls++
+      // s1 首次读失败（留下一条待重试的定时器），其余读到 running
+      if (calls === 1) throw new Error('数据库被占用')
+      return { _tag: 'running' }
+    })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useChat(id), {
+      wrapper,
+      initialProps: { id: 's1' },
+    })
+    await act(async () => {
+      await result.current.attach()
+    })
+
+    // 切到 s2：s1 的重试定时器必须作废，否则那次「running」会附着到 s2 的界面
+    rerender({ id: 's2' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.attachedRun).toBe(false)
+  })
+})
+
+/**
  * 追加指令（steer）的送达语义。
  *
  * 缺陷：POST /api/chat/steer 的 200 不等于受理——没有进行中的 run 时它回
@@ -1472,5 +2288,279 @@ describe('useChat steer 的送达语义', () => {
         m.content.some((p) => p._tag === 'steering' && p.text === '改用 pnpm'),
       ),
     ).toBe(false)
+  })
+})
+
+/**
+ * 切换会话时在飞的流必须作废。
+ *
+ * 缺陷：ChatSession 在 /projects/:p/sessions/:a → :b 之间被路由复用（route.path
+ * 不变，子树不重建），sessionId 变化的 effect 只 stopPoll + setState(INITIAL)，
+ * **没有作废在飞的 SSE 流**——上一条会话的 onEvent 闭包继续 setState，把 A 的
+ * 正文/工具卡写进刚复位成 INITIAL 的 state，经 mergeSessionMessages 渲染成
+ * 「B 的时间线里出现 A 的回复」；B 顶部还挂着「运行中」，点「终止」也停不掉 A
+ * （abortRef 已被 B 的流覆盖）。也不能靠 abort fetch 解决：服务端把 SSE 断开
+ * 当作「用户终止」（stream.onAbort → agentManager.abort），会连带杀掉后台 run，
+ * 与「离开会话后 run 继续跑、回来 attach 重挂」的设计冲突。
+ */
+describe('useChat 切换会话作废在飞的流', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('切会话后旧会话的后续帧不再写进新会话', async () => {
+    const enc = new TextEncoder()
+    // 可控 SSE 流：测试显式喂帧，读到帧之后才继续读
+    let resolveRead: ((v: { done: boolean; value?: Uint8Array }) => void) | null = null
+    const read = () =>
+      new Promise<{ done: boolean; value?: Uint8Array }>((res) => (resolveRead = res))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/chat') {
+        return { ok: true, status: 200, body: { getReader: () => ({ read }) } }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+        text: async () => '{"ok":true}',
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useChat(id), {
+      initialProps: { id: 's1' },
+      wrapper,
+    })
+
+    // 会话 A 起流（不 await：reader 阻塞在下一帧）
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    /** 把一帧喂进流并等 React 消化。 */
+    const emit = async (event: unknown) => {
+      await waitFor(() => expect(resolveRead).not.toBeNull())
+      const res = resolveRead as ((v: { done: boolean; value?: Uint8Array }) => void) | null
+      resolveRead = null
+      await act(async () => {
+        res?.({ done: false, value: enc.encode(`data: ${JSON.stringify(event)}\n\n`) })
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    }
+
+    // A 自己收到帧：正常归约
+    await emit({ _tag: 'text_delta', text: 'A 的回复' })
+    expect(
+      result.current.messages.some((m) => JSON.stringify(m.content).includes('A 的回复')),
+    ).toBe(true)
+
+    // 切到会话 B：状态复位，A 的流仍在飞
+    await act(async () => {
+      rerender({ id: 's2' })
+    })
+    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.isStreaming).toBe(false)
+
+    // A 的后续帧到达：必须被丢弃（修复前这里会渲染出 A 的正文）
+    await emit({ _tag: 'text_delta', text: 'A 的后续' })
+    expect(result.current.messages).toHaveLength(0)
+    expect(JSON.stringify(result.current.messages)).not.toContain('A 的后续')
+  })
+})
+
+describe('useChat 在途响应的世代守卫', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // 复现：A 会话点「终止」→ POST /api/chat/abort 飞在路上 → 用户切到 B →
+  // 响应回来（500）时裸 setState 把 abortError 写进 B 的状态：B 页面凭空挂一条
+  // 「终止没有送达…agent 可能仍在后台继续执行工具」红条（带「重新终止」按钮），
+  // 而 A 的真实终止结果永久丢失。同族的 confirm / denyTimedOutPermission 同理。
+  it('终止请求在途时切会话：迟到的失败原因不写进新会话', async () => {
+    const chunk = new TextEncoder().encode('data: {"_tag":"text_delta","text":"hi"}\n\n')
+    let readIdx = 0
+    let resolveAbort: ((res: unknown) => void) | null = null
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/chat') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return new Promise<{ done: boolean; value: undefined }>(() => {})
+              },
+            }),
+          },
+        })
+      }
+      if (url === '/api/chat/abort') {
+        return new Promise((resolve) => {
+          resolveAbort = resolve
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => '{}',
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+
+    const { result, rerender } = renderHook(({ sid }: { sid: string }) => useChat(sid), {
+      wrapper,
+      initialProps: { sid: 's1' },
+    })
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    // 发起终止（不 await：请求悬在途中）
+    await act(async () => {
+      result.current.abort()
+    })
+    await waitFor(() => expect(resolveAbort).not.toBeNull())
+
+    // 切到另一条会话
+    rerender({ sid: 's2' })
+
+    // 迟到的 500 响应落地
+    await act(async () => {
+      resolveAbort?.({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: 'boom' } }),
+        text: async () => JSON.stringify({ error: { message: 'boom' } }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // 关键断言：新会话上没有任何属于上一条会话的失败原因
+    expect(result.current.abortError).toBeNull()
+  })
+
+  // 复现：A 会话流式中点「追加指令」→ POST /api/chat/steer 飞在路上 → 用户切到 B →
+  // 响应回来时裸 setState 把乐观 steering 气泡追加进 B 的时间线：B 凭空多出一条属于
+  // A 的用户指令（sessionId 仍是 A 的），用户要么把 B 里那段输入重复发一遍，要么以为
+  // 自己已经指挥过了 agent。失败变体同理：B 顶上挂一条与它无关的红条。
+  // steer 曾是 useChat 里唯一没有世代守卫的写 state 路径（doStream / abort /
+  // confirm / denyTimedOutPermission 都有）。
+  //
+  // 形态与上面 abort 那条一致：把 steer 的响应挂起，rerender 换 sessionId（世代 +1），
+  // 再让响应落地，断言新会话上没有任何属于上一条会话的东西。
+  function renderStreamingChat() {
+    const chunk = new TextEncoder().encode('data: {"_tag":"text_delta","text":"hi"}\n\n')
+    let readIdx = 0
+    let settle: ((res: unknown) => void) | null = null
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/chat') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readIdx === 0) {
+                  readIdx++
+                  return { done: false, value: chunk }
+                }
+                return new Promise<{ done: boolean; value: undefined }>(() => {})
+              },
+            }),
+          },
+        })
+      }
+      if (url === '/api/chat/steer') {
+        return new Promise((resolve) => {
+          settle = resolve
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => '{}',
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const rendered = renderHook(({ sid }: { sid: string }) => useChat(sid), {
+      wrapper,
+      initialProps: { sid: 's1' },
+    })
+    return { ...rendered, settle: () => settle }
+  }
+
+  it('追加指令在途时切会话：迟到的乐观条目不写进新会话', async () => {
+    const { result, rerender, settle } = renderStreamingChat()
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.isStreaming).toBe(true)
+
+    let accepted: Promise<boolean> | null = null
+    await act(async () => {
+      accepted = result.current.steer('只对 A 说的指令')
+    })
+    await waitFor(() => expect(settle()).not.toBeNull())
+
+    rerender({ sid: 's2' })
+
+    await act(async () => {
+      settle()?.({
+        ok: true,
+        status: 200,
+        json: async () => ({ steered: true }),
+        text: async () => JSON.stringify({ steered: true }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.messages.some((m) => m.content.some((p) => p._tag === 'steering'))).toBe(
+      false,
+    )
+    // 未受理：调用方据此不清输入框（composer 侧另有 scopeGenRef 把关）
+    await expect(accepted).resolves.toBe(false)
+  })
+
+  it('追加指令在途时切会话：迟到的失败原因不写进新会话', async () => {
+    const { result, rerender, settle } = renderStreamingChat()
+    await act(async () => {
+      void result.current.sendMessage('hi')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    await act(async () => {
+      void result.current.steer('只对 A 说的指令')
+    })
+    await waitFor(() => expect(settle()).not.toBeNull())
+
+    rerender({ sid: 's2' })
+
+    await act(async () => {
+      settle()?.({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: 'boom' } }),
+        text: async () => JSON.stringify({ error: { message: 'boom' } }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(result.current.error).toBeNull()
   })
 })

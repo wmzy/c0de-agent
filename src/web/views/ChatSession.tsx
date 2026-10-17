@@ -6,7 +6,7 @@ import { css } from '@linaria/core'
 import { useRouter } from '@native-router/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { ArchivePanel } from '@/components/ArchivePanel.js'
 import { Dialog } from '@/components/Dialog.js'
@@ -29,9 +29,9 @@ import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
 import { useRetryResume } from '@/hooks/useRetryResume.js'
 import { useMessages } from '@/hooks/useSession.js'
 import { useShake } from '@/hooks/useShake.js'
+import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import { agentAPI } from '@/services/agent.js'
-import { providerAPI } from '@/services/provider.js'
 import { sessionAPI } from '@/services/session.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
 import { ChatHistoryError, ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
@@ -60,6 +60,10 @@ const interruptBanner = css`
       color: var(--haze-color-primary);
     }
   }
+`
+
+const bannerError = css`
+  color: var(--haze-color-danger);
 `
 
 const shakeBtn = css`
@@ -117,6 +121,15 @@ const shakeToolbar = css`
       cursor: not-allowed;
     }
   }
+`
+
+const shakeErrorLine = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 4px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
 `
 
 const shakeExitBtn = css`
@@ -217,19 +230,54 @@ export function ChatSession({
     useComposerDefaults(projectId)
   // P2-3：会话归属校验——URL 与会话所属项目不一致时跳转到正确项目；
   // 会话无归属（孤儿）时提供归属到当前项目的入口。
-  const { data: sessionMeta } = useQuery({
+  // 读失败必须说出来：这条 query 的 data 同时供三处消费——归属重定向、孤儿横幅
+  // （孤儿会话唯一的自救入口）、unfinishedRange（中断前半截轮次置灰）。此前只取
+  // data，retry 耗尽后三者一起静默失效：URL 与会话真实归属不一致时不再跳转，用户
+  // 在错误项目的上下文里发消息（工具按另一个项目的目录跑）；孤儿会话只留下一个
+  // 能打字、每条工具调用都失败的页面且零解释；被中断的半截输出不再置灰，被当成
+  // 正常结果读完。与 llm-details 同口径处理。
+  const {
+    data: sessionMeta,
+    isError: sessionMetaFailed,
+    error: sessionMetaError,
+    isFetching: sessionMetaFetching,
+    refetch: refetchSessionMeta,
+  } = useQuery({
     queryKey: ['session', sessionId, 'meta'],
     queryFn: () => sessionAPI.get(sessionId),
   })
+  const sessionMetaErrorMessage =
+    (sessionMetaError as { message?: string } | null)?.message ??
+    (sessionMetaError instanceof Error ? sessionMetaError.message : null)
   const [orphanNotice, setOrphanNotice] = useState(false)
+  // 归属失败原因。此前该 mutation 只有 onSuccess：POST /rebind 返回 500 /
+  // 项目已被删 / 服务重启时，按钮从 pending 恢复可点、横幅纹丝不动、页面零文字，
+  // 用户以为按钮坏了（同一动作在 RecycleBin 有 onError 文案）——孤儿会话唯一
+  // 的自救入口就此静默失效（该会话的工具全部无法执行）。
+  const [rebindError, setRebindError] = useState<string | null>(null)
   const rebindToCurrent = useMutation({
     mutationFn: () => sessionAPI.rebind(sessionId, projectId),
+    onMutate: () => setRebindError(null),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
       qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
       setOrphanNotice(false)
+      setRebindError(null)
     },
+    onError: (e: unknown) =>
+      setRebindError(
+        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e)),
+      ),
   })
+  // 孤儿横幅与归属失败原因都是会话级状态，而 ChatSession 在会话之间被路由复用
+  // （route.path 不变，子树不重建）：打开一个未归属项目的会话后再点侧栏里的正常
+  // 会话，横幅原样留在顶上（文案还改成「无法执行工具」），而这条会话的工具一切正常；
+  // 唯一的按钮指向一条已经归属好的会话，点下去是一次无意义的重新归属。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    setOrphanNotice(false)
+    setRebindError(null)
+  }, [sessionId])
   useEffect(() => {
     if (!sessionMeta) return
     if (sessionMeta.projectId && sessionMeta.projectId !== projectId) {
@@ -240,7 +288,12 @@ export function ChatSession({
       setOrphanNotice(true)
     }
   }, [sessionMeta, projectId, sessionId, router])
-  const { data: agentsData } = useQuery({
+  const {
+    data: agentsData,
+    isError: agentsFailed,
+    error: agentsError,
+    refetch: refetchAgents,
+  } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),
     staleTime: 60_000,
@@ -264,22 +317,55 @@ export function ChatSession({
   // 同时记录打开时间，用于会话列表按最近打开排序。
   const [coldStartInterrupted, setColdStartInterrupted] = useState(false)
   const [coldStartPaused, setColdStartPaused] = useState(false)
-  useEffect(() => {
+  // 检测失败必须说出来：此前两条链都是 .catch(() => {})，页面看起来完全正常，
+  // 但「连接已中断 / 已暂停」的恢复横幅与入口都不会出现——用户面对一个上次被强杀
+  // 打断的会话无从恢复，只能猜着重发，而重发会重复执行已跑过的工具（bash/git 等）。
+  // 同页的 llm-details 读失败已有「原因 + 重试」的同口径处理，这条必须一致。
+  const [coldStartError, setColdStartError] = useState<string | null>(null)
+  /**
+   * 冷启动检查的会话世代号：切会话后作废上一条会话在飞的那次 status 读取。
+   *
+   * ChatSession 在 /projects/:p/sessions/:a → :b 之间被路由复用（两条路由 path
+   * 相同 → 子树不重建），而这三个 state 是**本会话**的冷启动结论。此前
+   * checkSessionState 只发请求、只在响应里写 state，且 :280 的 sessionId 复位
+   * effect 只复位 orphanNotice/rebindError —— 于是磁盘慢/DB 忙时切会话，A 的迟到
+   * 响应会给 B 凭空挂上「连接已中断 / 恢复对话」横幅：用户点「恢复对话」＝重发 B
+   * 的最后一条消息，中断前已跑过的 bash/git 会再执行一遍（会改文件、改环境的
+   * 真实风险），而结论本身与 B 的事实无关。读取失败同理（「无法确认上次是否正常
+   * 结束」）。与 Chat.tsx 的 permissionGenRef / useShake / useRetryResume 复位同口径。
+   */
+  const coldStartGenRef = useRef(0)
+  const checkSessionState = useCallback(() => {
+    const gen = coldStartGenRef.current
     setColdStartInterrupted(false)
     setColdStartPaused(false)
+    setColdStartError(null)
     sessionAPI
       .status(sessionId)
       .then((s) => {
+        if (coldStartGenRef.current !== gen) return
         if (s._tag === 'interrupted') setColdStartInterrupted(true)
         else if (s._tag === 'paused') setColdStartPaused(true)
       })
-      .catch(() => {})
-    // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）
+      .catch((err: unknown) => {
+        if (coldStartGenRef.current !== gen) return
+        setColdStartError(
+          (err as { message?: string } | null)?.message ??
+            (err instanceof Error ? err.message : '状态检查失败'),
+        )
+      })
+    // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）。此链失败只影响会话列表排序、
+    // 不牵连任何恢复入口，故不弹告警（否则每次打开会话都滋扰）。
     sessionAPI
       .open(sessionId)
       .then(() => qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }))
       .catch(() => {})
   }, [sessionId, qc])
+  useEffect(() => {
+    // 先作废上一条会话在飞的那次检查，再按新会话重新检查（迟到的响应不得写进新会话）。
+    coldStartGenRef.current += 1
+    checkSessionState()
+  }, [checkSessionState])
 
   // P1：附着后台 run——挂起期间切换页面后回来 / 刷新时，重挂权限弹窗并显示运行态，
   // 消除「权限弹窗挂起 + 导航离开 = 会话锁死无 UI 可恢复」的死角。
@@ -303,11 +389,25 @@ export function ChatSession({
   )
 
   // LLM 调用段：llm_detail 事件会 invalidate 此 query（见 useChat），实时刷新。
-  const { data: segments } = useQuery({
+  // 读失败必须说出来：此前只取 data，`segments ?? []` 让 buildTimeline 拿空段列表
+  // 渲染出「只有消息、没有调用/段标记」的时间线——那是把「拉不到」说成「这次没有
+  // 调用」，而且消失的正是排查「这轮到底调了什么模型/花多少钱」的唯一入口
+  // （表格/原始 JSON 视图消费的是同一条 timeline）。同一条 query 在 SessionSummary
+  // 里已有完整三段式处理，两处口径必须一致。
+  const {
+    data: segments,
+    isError: llmDetailsFailed,
+    error: llmDetailsError,
+    isFetching: llmDetailsFetching,
+    refetch: refetchLlmDetails,
+  } = useQuery({
     queryKey: ['session', sessionId, 'llm-details'],
     queryFn: () => sessionAPI.llmDetails(sessionId),
     staleTime: 10_000,
   })
+  const llmDetailsErrorMessage =
+    (llmDetailsError as { message?: string } | null)?.message ??
+    (llmDetailsError instanceof Error ? llmDetailsError.message : null)
 
   // 统一时间线：消息 + LLM 调用 + 段标记按时间交错融合。
   // M3：session.metadata 记录的未完成轮次区间传入，中断前的半截内容置灰展示。
@@ -464,15 +564,40 @@ export function ChatSession({
   /** 分支数量查询失败的说明（null=没失败）。失败与「确实没有分支」必须分开。 */
   const [exportBranchFailed, setExportBranchFailed] = useState<string | null>(null)
 
+  /**
+   * 归档面板与导出弹窗的这一组状态都是**会话级**的，而 ChatSession 在
+   * /projects/:p/sessions/:a → :b 之间被路由复用（两条路由 path 相同 → 子树不重建）：
+   * 在 A 点开导出弹窗（或归档面板）、再用侧栏切到 B，弹窗原样留在屏幕上——可弹窗里的
+   * 结论是 A 的（「该会话有 N 个派生分支：分支内容不在其中」/「无法确认派生分支数量」），
+   * 而导出按钮走的是当前 sessionId，真正导出的是 B。用户照 A 的结论判断 B 的备份是否
+   * 完整、要不要剥离快照；在飞时切走的导出还会让「导出中…」跟着 B 的会话。
+   * 与本文件 orphanNotice/rebindError、cold-start 三态同口径：切会话整体作废，
+   * 并用世代号作废在飞的分支数查询（迟到的 A 的结论不得写进 B 的弹窗）。
+   */
+  const exportGenRef = useRef(0)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    exportGenRef.current += 1
+    setShowArchives(false)
+    setExporting(false)
+    setExportError(null)
+    setExportDialogOpen(false)
+    setExportBranchCount(null)
+    setExportBranchFailed(null)
+  }, [sessionId])
+
   const openExportDialog = async () => {
+    const gen = exportGenRef.current
     setExportError(null)
     setExportBranchCount(null)
     setExportBranchFailed(null)
     setExportDialogOpen(true)
     try {
       const branches = await sessionAPI.branches(sessionId)
+      if (exportGenRef.current !== gen) return
       setExportBranchCount(branches.length)
     } catch (err) {
+      if (exportGenRef.current !== gen) return
       // 「读不到分支数」≠「没有分支」：此前 catch(() => []) 把失败吞成 0，弹窗于是
       // 改口宣称「导出内容：本会话的全部消息与归档」，用户据此把导出件当成完整备份，
       // 而真正的派生分支内容并不在其中（迁移/分享后静默丢失）。改为显式失败态：
@@ -484,6 +609,10 @@ export function ChatSession({
 
   const runExport = async (includeSnapshots: boolean) => {
     if (exporting) return
+    // 本次导出所属世代：导出在飞期间切走会话（A → B）时，结果与失败原因都属于 A，
+    // 不得落到 B 的界面上（B 的这组状态已被复位，写入会把「导出中…」/失败原因
+    // 挂到一条没在导出的会话上）。
+    const gen = exportGenRef.current
     setExporting(true)
     setExportError(null)
     try {
@@ -496,13 +625,14 @@ export function ChatSession({
       a.download = `${title}.c0de-session.json`
       a.click()
       URL.revokeObjectURL(url)
-      setExportDialogOpen(false)
+      if (exportGenRef.current === gen) setExportDialogOpen(false)
     } catch (err) {
+      if (exportGenRef.current !== gen) return
       setExportError(
         err instanceof Error && err.message ? `导出失败：${err.message}` : '导出失败，请重试',
       )
     } finally {
-      setExporting(false)
+      if (exportGenRef.current === gen) setExporting(false)
     }
   }
 
@@ -513,24 +643,18 @@ export function ChatSession({
   }
 
   // 中断恢复/出错重试：prompt 定位与重发编排收敛在 useRetryResume
-  const { handleResume, handleRetryLast, resendPending } = useRetryResume({
-    sessionId,
-    chat,
-    qc,
-    selection,
-    agentName,
-    onResumeStart: () => setColdStartInterrupted(false),
-  })
-  // 视觉能力按选中模型查询（provider/model capabilities）：不支持视觉的模型隐藏图片入口，
-  // 避免贴图后 provider 直接 400（P3 一致性）。
-  const { data: capabilitiesData } = useQuery({
-    queryKey: ['capabilities', selection.provider, selection.model],
-    queryFn: () => providerAPI.capabilities(selection.provider, selection.model),
-    enabled: Boolean(selection.provider && selection.model),
-    staleTime: 60_000,
-    retry: false,
-  })
-  const supportsVision = capabilitiesData?.supportsVision ?? true
+  const { handleResume, handleRetryLast, resendPending, resendError, clearResendError } =
+    useRetryResume({
+      sessionId,
+      chat,
+      qc,
+      selection,
+      agentName,
+      onResumeStart: () => setColdStartInterrupted(false),
+    })
+  // 视觉能力按「项目作用域 + 选中模型」查询（provider/model capabilities）：
+  // 不支持视觉的模型隐藏图片入口，避免贴图后 provider 直接 400（P3 一致性）。
+  const supportsVision = useSupportsVision(projectId, selection)
 
   // 失败原因取服务端 message（APIError）或 Error.message，与侧栏会话树失败提示同口径。
   const historyErrorMessage =
@@ -560,13 +684,19 @@ export function ChatSession({
         retryPending={resendPending}
         onPause={agent.pause}
         onResume={() => {
-          // 服务端暂停（权限超时兜底）：乐观清除标记，resume 端点真正恢复 run；
-          // status_change(running) 事件随后复核状态。
-          chat.clearRunPaused()
-          agent.resume()
+          // 只有 resume 真被受理才撤下暂停标记：它是「点一下」触发的网络往返，
+          // 而 run 在服务端确实停在暂停点。此前先乐观清除——请求失败（500 /
+          // 网络中断 / 占位期 409）时，服务端 run 永远不会自行继续，横幅与顶栏
+          // 的「恢复」却一起消失：界面宣称对话在跑、实际一动不动，新消息还会撞
+          // 409「该会话已有进行中的对话」，而恢复入口已经没了，只能刷新页面。
+          void agent.resume().then((resumed) => {
+            if (resumed) chat.clearRunPaused()
+          })
         }}
         onSteer={chat.steer}
         paused={agent.paused || chat.runPaused}
+        controlError={agent.error}
+        abortError={chat.abortError}
         supportsVision={supportsVision}
         emptyState={
           // 历史拉取失败且无可展示内容：绝不能落进 ChatWelcome（那会谎称「这是新会话」，
@@ -587,6 +717,8 @@ export function ChatSession({
               value={agentName}
               onChange={setAgentName}
               agents={agentsData?.agents ?? []}
+              error={agentsFailed ? agentsError : null}
+              onRetry={() => void refetchAgents()}
             />
             <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
           </>
@@ -603,6 +735,38 @@ export function ChatSession({
         topPanel={
           <>
             <SetupBanner projectId={projectId} />
+            {sessionMetaFailed ? (
+              <div className={interruptBanner} role="alert" data-testid="session-meta-error">
+                <span>
+                  会话信息读取失败，无法校验会话归属、孤儿归属入口与中断状态：
+                  {sessionMetaErrorMessage || '未知原因'}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void refetchSessionMeta()}
+                  disabled={sessionMetaFetching}
+                  data-testid="session-meta-retry"
+                >
+                  重试
+                </Button>
+              </div>
+            ) : null}
+            {llmDetailsFailed ? (
+              <div className={interruptBanner} role="alert" data-testid="llm-details-error">
+                <span>
+                  调用明细读取失败，本时间线里的 LLM 调用与分段标记不可见（不是本次会话没有调用）：
+                  {llmDetailsErrorMessage || '未知原因'}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void refetchLlmDetails()}
+                  disabled={llmDetailsFetching}
+                  data-testid="llm-details-retry"
+                >
+                  重试
+                </Button>
+              </div>
+            ) : null}
             {orphanNotice && (
               <div className={interruptBanner} data-testid="orphan-session-banner">
                 {sessionMeta?.worktreePath ? (
@@ -634,6 +798,47 @@ export function ChatSession({
                     </Button>
                   </>
                 )}
+                {rebindError && (
+                  <span className={bannerError} role="alert" data-testid="orphan-rebind-error">
+                    归属到当前项目失败：{rebindError}
+                  </span>
+                )}
+              </div>
+            )}
+            {resendError && (
+              <div className={interruptBanner} role="alert" data-testid="resend-error">
+                <span>{resendError}</span>
+                <Button variant="outline" onClick={clearResendError}>
+                  知道了
+                </Button>
+              </div>
+            )}
+            {coldStartError && !chat.isStreaming && (
+              <div className={interruptBanner} role="alert" data-testid="cold-start-error">
+                <span>
+                  无法确认该会话上次是否正常结束：{coldStartError}
+                  （若是被服务重启打断，恢复入口可能未显示，可重新检查）
+                </span>
+                <Button variant="outline" onClick={() => checkSessionState()}>
+                  重新检查
+                </Button>
+              </div>
+            )}
+            {/* 附着入口（本页没发起流、但服务端可能仍有 run 在跑）读状态连续失败：
+                界面此刻与「这条会话真的空闲」完全同形——没有运行横幅、没有终止键，
+                而服务端 run 可能仍在跑工具。用户在这个假空闲态下发消息只会撞
+                409「该会话已有进行中的对话」，一句与事实相反且**没有出口**的结论
+                （终止键不存在、恢复入口不存在）。所以必须说明「不知道」并给重试，
+                与上面 cold-start-error 同口径（两者是同一份 /status 的两个消费点）。 */}
+            {chat.attachError && !chat.isStreaming && (
+              <div className={interruptBanner} role="alert" data-testid="attach-error">
+                <span>
+                  无法确认该会话是否有进行中的对话：{chat.attachError}
+                  （若确实在运行，终止/恢复入口此刻不会显示，请重新检查后再操作）
+                </span>
+                <Button variant="outline" onClick={() => chat.retryAttach()}>
+                  重新检查
+                </Button>
               </div>
             )}
             {showInterruptBanner && !chat.isStreaming && (
@@ -702,8 +907,10 @@ export function ChatSession({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    chat.clearRunPaused()
-                    agent.resume()
+                    // 同上：恢复未生效时横幅必须留着（它同时是唯一的恢复入口）。
+                    void agent.resume().then((resumed) => {
+                      if (resumed) chat.clearRunPaused()
+                    })
                   }}
                   title="恢复 run：从暂停点继续执行"
                 >
@@ -731,8 +938,10 @@ export function ChatSession({
                   onClick={() => {
                     // 活跃 run 仍注册在服务端（页面刷新场景），resume 端点可真正恢复；
                     // 服务重启导致的 paused 已由 status 端点转为 interrupted（走重发路径）。
-                    setColdStartPaused(false)
-                    agent.resume()
+                    // 失败时横幅留着：它说明 run 仍停在暂停点，也是唯一能恢复它的入口。
+                    void agent.resume().then((resumed) => {
+                      if (resumed) setColdStartPaused(false)
+                    })
                   }}
                 >
                   继续对话
@@ -774,11 +983,18 @@ export function ChatSession({
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => shake.shakeMutation.mutate([...shake.shakeSelected])}
-                    disabled={shake.shakeSelected.size === 0}
+                    onClick={() =>
+                      shake.shakeMutation.mutate({
+                        sessionId,
+                        regionIds: [...shake.shakeSelected],
+                      })
+                    }
+                    // 在途锁：apply 不是幂等的（同一批 region 第二次要么再归档一次、
+                    // 要么因消息已改写回 400），连点会得到「两个都算数」的结局。
+                    disabled={shake.shakeSelected.size === 0 || shake.shakeMutation.isPending}
                     data-testid="shake-submit"
                   >
-                    提交 Shake
+                    {shake.shakeMutation.isPending ? '提交中…' : '提交 Shake'}
                   </Button>
                   <button
                     type="button"
@@ -822,6 +1038,25 @@ export function ChatSession({
               </button>
               <SessionSummary sessionId={sessionId} />
             </div>
+            {/* 预览/提交失败必须说出来：失败时界面与点击前完全一致（预览时按钮零反应、
+                提交时抖动模式照旧），用户只能判定为「功能坏了」并反复点。预览失败时
+                给重试入口；提交失败时 shakeMode 仍在、被选中的区域没被裁掉，「提交
+                Shake」按钮本身就是重试入口，不重复给。 */}
+            {shake.shakeError ? (
+              <div className={shakeErrorLine} role="alert" data-testid="shake-error">
+                <span>Shake 失败：{shake.shakeError}</span>
+                {shake.shakeMode ? null : (
+                  <button
+                    type="button"
+                    className={shakeBtn}
+                    onClick={() => void shake.handleShakeOpen()}
+                    data-testid="shake-retry"
+                  >
+                    重试
+                  </button>
+                )}
+              </div>
+            ) : null}
           </>
         }
       />
@@ -899,8 +1134,10 @@ export function ChatSession({
       {chat.pendingSegmentBreak && (
         <SegmentBreakDialog
           activeSegment={chat.pendingSegmentBreak.activeSegment}
-          onConfirm={() => void chat.confirmBreak(false)}
-          onCompact={() => void chat.confirmBreak(true)}
+          // 返回 Promise：弹窗按「这次选择是否落地」在途锁住三颗按钮与关闭通道
+          // （此前 void 丢掉 Promise，压缩在飞时点取消照样会把消息发出去）。
+          onConfirm={() => chat.confirmBreak(false)}
+          onCompact={() => chat.confirmBreak(true)}
           onCancel={() => {
             // 取消：还原 selection/enabledTools 到活跃段值，再清除待发状态
             const seg = chat.pendingSegmentBreak?.activeSegment
@@ -916,6 +1153,8 @@ export function ChatSession({
         <TrustRequiredDialog
           projectName={chat.pendingTrust.projectName}
           items={chat.pendingTrust.items}
+          error={chat.trustError}
+          busy={chat.trustPending}
           onConfirm={() => void chat.confirmTrust()}
           onCancel={() => chat.cancelTrust()}
         />

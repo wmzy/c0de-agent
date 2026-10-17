@@ -4,7 +4,7 @@
  * 若后续合并全局通知组件，可并入对应测试文件。
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UpdateBanner } from '@/components/UpdateBanner.js'
@@ -117,6 +117,43 @@ describe('UpdateBanner', () => {
     expect(dialog.textContent).toContain('修复登录 bug')
     expect(dialog.textContent).toContain('pnpm dev')
     expect(dialog.textContent).toContain('/repo')
+  })
+
+  // 回归：热更新在途时「稍后」必须不可用。横幅是这次应用唯一的结果呈现面
+  // （失败原因 / 手动指引 / 成功后回头的「刷新页面」入口），而「稍后」会把它整条
+  // 卸载并把版本号写进 localStorage——在途点下去，用户既看不到成没成，也没有任何
+  // 入口回到「刷新页面」，页面永久停在「新服务端 + 旧前端 JS」的混版本状态。
+  it('热更新在途时「稍后」不可用；应用成功后只剩刷新入口', async () => {
+    ;(updateAPI.status as Mock).mockResolvedValue({
+      hasUpdate: true,
+      currentVersion: '0.1.0',
+      latestVersion: '0.2.0',
+    })
+    let settleApply: ((v: unknown) => void) | null = null
+    ;(updateAPI.apply as Mock).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settleApply = resolve
+        }),
+    )
+    renderWithClient(<UpdateBanner />)
+    await waitFor(() => expect(screen.getByTestId('update-apply')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('update-apply'))
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: '0.2.0' } })
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
+    // 在途：横幅留着，但「稍后」不可点
+    await waitFor(() => expect(screen.getByTestId('update-apply').textContent).toBe('应用中…'))
+    expect(screen.getByTestId('update-banner')).toBeTruthy()
+    expect(screen.getByTestId('update-dismiss')).toBeDisabled()
+    expect(localStorage.getItem('c0de-agent:updateDismissed')).toBeNull()
+
+    await act(async () => {
+      settleApply?.({ ok: true, snapshotPath: '/tmp/s.json', latestVersion: '0.2.0' })
+    })
+    // 成功：只剩「刷新页面」，不再有会把它一起卸掉的「稍后」
+    await waitFor(() => expect(screen.getByTestId('update-reload')).toBeTruthy())
+    expect(screen.queryByTestId('update-dismiss')).toBeNull()
+    expect(localStorage.getItem('c0de-agent:updateDismissed')).toBeNull()
   })
 
   it('clicking 稍后 dismisses the banner for current latest version', async () => {

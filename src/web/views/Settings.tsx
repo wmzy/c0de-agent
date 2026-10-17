@@ -37,13 +37,25 @@ import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
-import { diffConfig, isPatchEmpty } from '@/utils/config-diff.js'
+import {
+  diffConfig,
+  isPatchEmpty,
+  restoreClearedSecrets,
+  tagProviderRowIds,
+} from '@/utils/config-diff.js'
 import {
   fillTemplateWithUnsets,
   normalizeConfigForForm,
   validateConfigShape,
 } from '@/utils/config-shape.js'
 import { parseBoundedNumber } from '@/utils/format.js'
+
+/** 全局配置作用域的写入路径（与作用域下拉文案同一口径）。 */
+const GLOBAL_CONFIG_PATH = '~/.c0de/config.json'
+
+/** 「被留空的密钥未改动」的可见说明（count = 本次保存里被留空的密钥字段数）。 */
+const KEPT_SECRETS_NOTE = (count: number) =>
+  `${count} 个被留空的 API Key 未改动，原有密钥保留；重新输入即可更换`
 
 /** 加载中占位。 */
 const loadingWrap = css`
@@ -125,6 +137,16 @@ const scopeLabel = css`
   color: var(--haze-color-text-secondary);
 `
 
+/** 「目标」写入路径标注：必须与当前作用域一致，故单独成类供 global/project 两分支共用。 */
+const scopeTarget = css`
+  flex-shrink: 0;
+  color: var(--haze-color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+`
+
 /** 离开确认弹窗正文。 */
 const dialogBody = css`
   color: var(--haze-color-text-secondary);
@@ -171,10 +193,37 @@ export function Settings() {
   // 与语法错误分开存放：两者都禁止保存与切回表单，但原因文案不同。
   const [jsonShapeError, setJsonShapeError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  /** 本次提交出去的草稿对象（handleSave 时记下）。onSuccess 据此判断「保存期间
+   *  用户有没有继续编辑」——磁盘慢/配置大时 PATCH 可能飞数秒，期间用户照旧能改
+   *  字段（表单没有在途禁写），无条件 setDraft(null) 会把这段新编辑整块抹掉。 */
+  const submittedDraftRef = useRef<Partial<Config> | null>(null)
+  /**
+   * 草稿世代：任何一次「丢弃/替换草稿」的动作都自增。异步回写必须持有**发起时**
+   * 的世代，落地时世代不符就整条丢弃。
+   *
+   * 此前只有 Provider 测试连接是这种异步写：探测成功把模型并进 draft.providers，
+   * 而 updateProviders 的 `base = prev ?? config` 在 draft 已被放弃（prev 变 null）
+   * 时会用 config 重新长出一份草稿。实测：点「测试连接」（探测请求在途）→ 立即
+   * 「放弃更改」→ 保存条的「● 未保存更改」确实消失、新增的 provider 行也回到 1 行；
+   * 3 秒后探测响应落地，页面又亮起「● 未保存更改」，并多出一个探测到的模型
+   * （provider-model-toggle-zzdetected）——用户明确丢弃的改动被复活，此时按保存
+   * 会把它写进当前作用域的配置（中途若切过作用域，就是写进另一个作用域）。
+   * 判据与 ChatSession 的 exportGenRef、useChat 的 genRef 同口径。
+   */
+  const draftEpochRef = useRef(0)
 
-  // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。
+  /** 丢弃/替换草稿：自增世代，让在途的异步回写失效。 */
+  const invalidateDraftWrites = () => {
+    draftEpochRef.current += 1
+  }
+
+  // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。ok 可带一句必须同说的
+  // 说明（如「被留空的密钥未改动」）。
   const [saveFeedback, setSaveFeedback] = useState<
-    { kind: 'idle' } | { kind: 'saving' } | { kind: 'ok' } | { kind: 'err'; msg: string }
+    | { kind: 'idle' }
+    | { kind: 'saving' }
+    | { kind: 'ok'; msg?: string }
+    | { kind: 'err'; msg: string }
   >({ kind: 'idle' })
 
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
@@ -182,12 +231,19 @@ export function Settings() {
 
   // 挂在吸底保存条上（此前是文档最末端的独立条，3500px+ 的表单里永远看不见）。
   const RESTART_NOTICE = needsRestart
-    ? '安全配置已保存但未生效：需重启 c0de serve，请在启动它的终端按 Ctrl+C 后重新运行。'
+    ? '配置已保存但未生效：需重启 c0de serve，请在启动它的终端按 Ctrl+C 后重新运行（安全 / 权限超时 / 更新 / 插件 / MCP 服务器属启动期配置）。'
     : null
 
   // P2-10：dirty 时切换作用域会丢弃草稿——ConfirmDialog 二次确认，
-  // 确认前暂存目标作用域（SyncedSelect 受控，选中项会弹回当前 scope）。
+  // 确认前暂存目标作用域（下拉的 value 跟随它，取消时才回弹到当前 scope）。
   const [pendingScope, setPendingScope] = useState<'global' | 'project' | null>(null)
+
+  // dirty 时导入配置会整块覆盖草稿——同样是二次确认，确认前暂存待导入的配置。
+  // 此前导入无条件 `setDraft(导入值)`：用户在表单里改了一屏字段、吸底条写着
+  // 「● 未保存更改」，点一次「⬆ 导入」选个文件，所有修改被静默替换（保存条随即
+  // 回到干净态，看不出发生过什么），而本页影响面更小的动作（切换作用域、离开页面、
+  // 删 MCP 行）都有二审——覆盖面最大的一次覆盖反而是唯一没有确认的。
+  const [pendingImport, setPendingImport] = useState<Partial<Config> | null>(null)
 
   // dirty 仅指「需手动保存的草稿」；外观面板即时生效、不进 draft，不影响此判定。
   const isDirty = draft !== null
@@ -210,21 +266,47 @@ export function Settings() {
   }, [isDirty])
 
   const save = useMutation({
-    mutationFn: (payload: { patch: Partial<Config>; scope: 'global' | 'project' }) =>
-      configAPI.update(payload.patch, payload.scope, projectId),
+    mutationFn: (payload: {
+      patch: Partial<Config>
+      scope: 'global' | 'project'
+      restoredSecrets: number
+    }) => configAPI.update(payload.patch, payload.scope, projectId),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
-    onSuccess: (resp) => {
+    onSuccess: (resp, variables) => {
       qc.invalidateQueries({ queryKey: ['config'] })
+      // 斜杠命令列表由服务端按 config.slashCommands.enabled 过滤（GET /api/commands），
+      // 而 useCommands 的 queryKey ['commands'] 是 staleTime: Infinity——设置页改的
+      // 正是这个开关：不失效的话，本会话内禁用 /clear 后浮层照旧列出（点进去被
+      // 服务端回一句「未启用」，看着像命令坏了），启用 /compact 后浮层里永远不出现
+      // （只能整页刷新）。这里是唯一改配置的入口，失效在这里收口。
+      qc.invalidateQueries({ queryKey: ['commands'] })
       // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
       // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
-      setDraft(null)
+      // 但只清「本次提交出去的那份」：保存期间用户敲进去的新编辑必须留下——
+      // 否则它们连同脏标记一起消失，屏幕上刚打的字无声不见，用户以为已存进去。
+      // （此处按对象引用比较：任何一次 setDraft 都产生新对象。）
+      setDraft((prev) => {
+        if (prev === submittedDraftRef.current) {
+          // 草稿已被这次保存消费：让在途的异步回写（如测试连接的模型探测）失效，
+          // 否则「✓ 已保存」刚亮起，页面又跳回「● 未保存更改」。
+          invalidateDraftWrites()
+          return null
+        }
+        return prev
+      })
       // needsRestart 是**本次 patch 各自**的信号（服务端只在本次写入 security/
       // update/plugins 且作用域为 global/服务启动目录时返回 true）。覆盖式置位会
       // 让「鉴权改动尚未生效」的唯一警告被下一次无关保存（如改默认模型，返回
       // false）静默抹掉，用户据此认定配置已加固。故只升不降：重启后页面重载，
       // state 自然复位。
       setNeedsRestart((prev) => prev || resp?.needsRestart === true)
-      setSaveFeedback({ kind: 'ok' })
+      // 被留空的密钥没进 patch，用户看不到任何变化：必须在同一条反馈里说出来，
+      // 否则「我明明清空了」与「✓ 已保存」互相矛盾。
+      setSaveFeedback(
+        variables.restoredSecrets > 0
+          ? { kind: 'ok', msg: KEPT_SECRETS_NOTE(variables.restoredSecrets) }
+          : { kind: 'ok' },
+      )
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
     },
     onError: (err: unknown) => {
@@ -279,21 +361,28 @@ export function Settings() {
   }, [sectionAnchor, resp, viewMode])
 
   if (isLoading) return <div className={loadingWrap}>加载中…</div>
+  // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
+  // 结构化取优先、instanceof 兜底。
+  const refetchErrorMessage =
+    (configError as { message?: string } | null)?.message ??
+    (configError instanceof Error ? configError.message : null)
   // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
   // 请求 500 时 isLoading 已为 false 而 config 恒为 null（resp 为 undefined），
   // 于是设置页永久停在「加载中…」——实测注入 /api/config 500、retry:2 耗尽后
   // 40s+ 无任何错误、无重试，用户会一直等一个永远不会到来的表单。
   // 这比回收站/看板的「误报为空」更糟：它连一个错误的结论都不给。
-  if (isError) {
-    // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
-    // 结构化取优先、instanceof 兜底。
-    const message =
-      (configError as { message?: string } | null)?.message ??
-      (configError instanceof Error ? configError.message : null)
+  //
+  // 但「失败」不等于「没有数据」：react-query 保留了上一次成功的数据，而后台重取
+  // （保存后的 invalidateQueries、refetchOnWindowFocus、staleTime 到期）失败同样会把
+  // status 打成 error。此前只看 isError，于是保存成功 → ✓ 已保存 → 紧接着那次失效
+  // 重取失败，整张表单（连同内存里完好的草稿）被替换成「设置加载失败」，界面自相
+  // 矛盾（刚说保存成功，又说来不了），用户以为自己的改动没了。只有**没有拿到过
+  // 数据**时才该整页报错；拿到过就保留表单，把重取失败降级成表单上方的横幅。
+  if (isError && !resp) {
     return (
       <div className={loadError} data-testid="settings-load-error" role="alert">
         <div className={loadErrorTitle}>设置加载失败</div>
-        <div className={loadErrorDetail}>{message ?? '无法读取配置文件。'}</div>
+        <div className={loadErrorDetail}>{refetchErrorMessage ?? '无法读取配置文件。'}</div>
         <div className={loadErrorActions}>
           <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
             重试
@@ -317,6 +406,11 @@ export function Settings() {
     )
   }
 
+  // provider 行要能被「改名后仍认回原行」——见 config-diff 的 PROVIDER_ROW_ID：
+  // 标记必须在任何一次编辑之前挂到已加载配置的行上（编辑是 `{…row}` 展开，标记
+  // 只有先挂上才会跟着走）。symbol 键不进 diff / JSON，故这里挂标记不会影响保存内容。
+  tagProviderRowIds(config.providers)
+
   const merged = { ...config, ...draft }
 
   /** 保存：diff 出相对加载时合并配置的变更（最小 patch，null=删除键），
@@ -337,13 +431,31 @@ export function Settings() {
       })
       return
     }
+    // 密钥框留空 = 不修改：清空是逐字符提交进草稿的，保存后 `apiKey: ''` 会覆盖
+    // enc: 密文、密钥永久丢失（密码框不回显密文，用户看不到「有内容」可删）。
+    // 只对表单（gui）生效：JSON 视图里 `"apiKey": ""` 是用户亲手写下的明确值，
+    // 那里留空/置 null 也都是可表达的删除方式，不该被这条表单约定改写。
+    // 见 restoreClearedSecrets 的口径说明。
+    const restoredSecrets =
+      viewMode === 'gui'
+        ? restoreClearedSecrets(
+            config as unknown as Record<string, unknown>,
+            draft as unknown as Record<string, unknown>,
+          )
+        : { draft: draft as unknown as Record<string, unknown>, restored: 0 }
+    // 提交与 diff 都基于「退回密钥后的草稿」：被留空的密钥不产生任何改动。
+    const saveableDraft = restoredSecrets.draft as unknown as Partial<Config>
     const patch = diffConfig(
       config as unknown as Record<string, unknown>,
-      draft as unknown as Record<string, unknown>,
+      saveableDraft as unknown as Record<string, unknown>,
     )
     if (isPatchEmpty(patch)) {
       setDraft(null)
-      setSaveFeedback({ kind: 'ok' })
+      setSaveFeedback(
+        restoredSecrets.restored > 0
+          ? { kind: 'ok', msg: KEPT_SECRETS_NOTE(restoredSecrets.restored) }
+          : { kind: 'ok' },
+      )
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
       return
     }
@@ -375,7 +487,17 @@ export function Settings() {
         setScope('global')
       }
     }
-    save.mutate({ patch: patch as Partial<Config>, scope: effectiveScope })
+    // 提交出去的是「退回密钥后的草稿」：保存成功后草稿按它清空（见 save.onSuccess
+    // 的 prev === submittedDraftRef.current），否则被留空的密钥会让草稿永远脏着。
+    // 有密钥被留空时同时把草稿对齐成这一份——界面立刻回到「✓ 已加密」，与本次
+    // 实际落盘的内容一致。
+    if (restoredSecrets.restored > 0) setDraft(saveableDraft)
+    submittedDraftRef.current = saveableDraft
+    save.mutate({
+      patch: patch as Partial<Config>,
+      scope: effectiveScope,
+      restoredSecrets: restoredSecrets.restored,
+    })
   }
 
   /**
@@ -397,12 +519,19 @@ export function Settings() {
   const patchDraft = (patch: Partial<Config>) =>
     setDraft((prev) => ({ ...(prev ?? config), ...patch }))
 
-  /** 函数式更新 providers：在最新 draft.providers 上执行 updater（异步测试连接安全）。 */
-  const updateProviders = (updater: (providers: Config['providers']) => Config['providers']) =>
+  /** 函数式更新 providers：在最新 draft.providers 上执行 updater（异步测试连接安全）。
+   *  `epoch` 由调用方在**发起**异步请求时取自 getDraftEpoch；传了就说明这是异步
+   *  回写，世代不符（期间草稿被放弃/替换）时整条丢弃，不复活用户已放弃的改动。 */
+  const updateProviders = (
+    updater: (providers: Config['providers']) => Config['providers'],
+    epoch?: number,
+  ) => {
+    if (epoch !== undefined && epoch !== draftEpochRef.current) return
     setDraft((prev) => {
       const base = prev ?? config
       return { ...base, providers: updater(base.providers ?? []) }
     })
+  }
 
   /** 函数式更新 mcpServers：在最新 draft.mcpServers 上执行 updater。 */
   const updateMcpServers = (updater: (servers: Config['mcpServers']) => Config['mcpServers']) =>
@@ -511,6 +640,16 @@ export function Settings() {
     URL.revokeObjectURL(url)
   }
 
+  /** 应用导入结果：整份替换草稿并切回表单（形状已校验）。 */
+  const applyImport = (next: Partial<Config>) => {
+    invalidateDraftWrites()
+    setDraft(next)
+    setJsonText(JSON.stringify(next, null, 2))
+    setJsonError(null)
+    setJsonShapeError(null)
+    setViewMode('gui')
+  }
+
   /** 从文件导入配置。 */
   const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -532,11 +671,14 @@ export function Settings() {
         setJsonText(text)
         return
       }
-      setDraft(normalized.config)
-      setJsonText(JSON.stringify(normalized.config, null, 2))
-      setJsonError(null)
-      setJsonShapeError(null)
-      setViewMode('gui')
+      // 未保存的修改必须先经确认：导入是整份替换（且随后可一键落盘），
+      // 直接覆盖等于一次点击丢掉用户在表单/JSON 里打好的全部内容。
+      // 待导入配置暂存到弹窗，确认后才应用。
+      if (draft !== null) {
+        setPendingImport(normalized.config)
+        return
+      }
+      applyImport(normalized.config)
     } catch (err) {
       setJsonError(`导入失败：${err instanceof Error ? err.message : '未知错误'}`)
       setJsonShapeError(null)
@@ -547,18 +689,39 @@ export function Settings() {
       } catch {
         /* ignore */
       }
+    } finally {
+      e.target.value = '' // 允许重复导入同一文件（含被确认弹窗拦下的那次）
     }
-    e.target.value = '' // 允许重复导入同一文件
   }
 
-  /** 放弃未保存的更改：草稿清空回退到已持久化配置（JSON 模式同步重置编辑器）。 */
-  const discardChanges = () => {
+  /**
+   * 丢弃草稿：draft 清空回退到已持久化配置，JSON 模式同步重置编辑器与错误条。
+   *
+   * 只清 draft 不清编辑器是实测过的缺陷：设置页的四个「丢弃」入口里，只有「放弃更改」
+   * 与「离开页面」重置了 JSON 编辑器，切换配置作用域的两条路径（直接切 / 确认切）漏了。
+   * 于是「切换并丢弃更改」确认后吸底条回到干净态，编辑器里却仍留着被丢弃的文本——
+   * 下一次按键就被 onJsonChange 当成新草稿同步回来，再点保存，这份**已声明丢弃**的
+   * 改动会写进**另一个作用域**的配置文件（实测：项目作用域改成 defaultModel m2 →
+   * 切全局并确认丢弃 → 按一个空格 → 保存 → 全局 config.json 落盘 {"defaultModel":"m2"}，
+   * 项目文件仍是 m）。
+   */
+  const discardDraft = () => {
+    invalidateDraftWrites()
     setDraft(null)
     if (viewMode === 'json') {
       setJsonText(JSON.stringify(config, null, 2))
       setJsonError(null)
       setJsonShapeError(null)
     }
+  }
+
+  /** 放弃未保存的更改（保存请求在途时拒绝，见下）。 */
+  const discardChanges = () => {
+    // 保存在途时拒绝：提交出去的是点击保存那一刻的草稿引用，此刻清空草稿既
+    // 撤不掉已经在途的请求，又会把这期间新打的字一起吞掉。按钮的 disabled 只
+    // 在 React 提交后生效，同一 tick 内的连点仍会落到这里，故在处理器里再挡一次。
+    if (save.isPending) return
+    discardDraft()
   }
 
   /** 离开确认弹窗：「留下」= 关闭弹窗，留在设置页继续编辑。 */
@@ -566,12 +729,7 @@ export function Settings() {
 
   /** 离开确认弹窗：「离开」= 丢弃草稿并放行被 veto 的导航（proceed 重放）。 */
   const confirmLeave = () => {
-    setDraft(null)
-    if (viewMode === 'json') {
-      setJsonText(JSON.stringify(config, null, 2))
-      setJsonError(null)
-      setJsonShapeError(null)
-    }
+    discardDraft()
     blocker.proceed()
   }
 
@@ -581,7 +739,12 @@ export function Settings() {
         <span className={scopeLabel}>配置作用域</span>
         <SyncedSelect
           aria-label="配置作用域"
-          value={scope}
+          // 待定作用域必须进渲染值：SyncedSelect 是 react-use-control 受控控件，
+          // 只在 value prop 变化时才把内部状态回灌。此前 value 恒为 scope，只写
+          // setPendingScope——被确认框「取消」掉的那次选择于是留在界面上，与真正生效的
+          // 作用域（以及旁边的「目标：」）正好相反：下拉写着「全局配置（~/.c0de/config.json）」，
+          // 保存却写进项目文件，用户据此以为改的是全机配置。
+          value={pendingScope ?? scope}
           onValuesChange={(v) => {
             const next = v as 'global' | 'project'
             // P2-10：dirty 时切换作用域会把草稿整体落盘到新作用域——先确认，防止误写。
@@ -590,7 +753,7 @@ export function Settings() {
               return
             }
             if (next !== scope) {
-              setDraft(null)
+              discardDraft()
               setSaveFeedback({ kind: 'idle' })
             }
             setScope(next)
@@ -603,23 +766,53 @@ export function Settings() {
               ? '项目配置（当前查看项目 .c0de/config.json）'
               : '项目配置（当前目录 .c0de/config.json）'}
           </option>
-          <option value="global">全局配置（~/.c0de/config.json）</option>
+          <option value="global">全局配置（{GLOBAL_CONFIG_PATH}）</option>
         </SyncedSelect>
-        {projectId && resp?.projectDir && (
-          <span
-            style={{
-              color: 'var(--haze-color-text-secondary)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              maxWidth: '40%',
-            }}
-            title={resp.projectDir}
-          >
+        {/* 写入目标必须与当前作用域一致：此前无论选哪个作用域都渲染项目目录，
+            切到「全局配置（~/.c0de/config.json）」后仍标「目标：<项目目录>」，
+            而保存其实写进全局配置——用户据此以为改的是项目文件，把项目专属值
+            （路径、模型名）提升成全机默认，其他项目与 c0de chat 一起被改。 */}
+        {scope === 'global' ? (
+          <span className={scopeTarget} title={GLOBAL_CONFIG_PATH}>
+            目标：{GLOBAL_CONFIG_PATH}
+          </span>
+        ) : projectId && resp?.projectDir ? (
+          <span className={scopeTarget} title={resp.projectDir}>
             目标：{resp.projectDir}
           </span>
-        )}
+        ) : null}
       </div>
+      {isError && (
+        // 拿到过数据、但后台重取失败：表单与草稿都还在，只是这份数据可能不是最新的。
+        // 用与 warnings 同族的横幅说清楚「谁失败了、你的改动还在」，而不是把整页换成
+        // 错误屏（见上面的 isError && !resp 说明）。
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 16px',
+            borderBottom: '1px solid var(--haze-color-border)',
+            background: 'color-mix(in srgb, var(--haze-color-danger) 10%, transparent)',
+            fontSize: 12,
+            color: 'var(--haze-color-text)',
+          }}
+          role="alert"
+          data-testid="config-refetch-error"
+        >
+          <span>
+            配置刷新失败：{refetchErrorMessage ?? '无法读取配置文件。'}
+            ——表单里仍是你的本地草稿，改动没有被丢弃。
+          </span>
+          <Button
+            variant="outline"
+            onClick={() => refetchConfig()}
+            data-testid="config-refetch-retry"
+          >
+            重试
+          </Button>
+        </div>
+      )}
       {warnings.length > 0 && (
         <div
           style={{
@@ -676,7 +869,11 @@ export function Settings() {
         <div data-testid="settings-form">
           <SettingsToc />
           <AppearancePanel />
-          <ProviderPanel providers={merged.providers} onProvidersChange={updateProviders} />
+          <ProviderPanel
+            providers={merged.providers}
+            onProvidersChange={updateProviders}
+            getDraftEpoch={() => draftEpochRef.current}
+          />
           <ModelPanel
             providers={merged.providers}
             defaultProvider={merged.defaultProvider}
@@ -824,6 +1021,7 @@ export function Settings() {
             }
             onTokenBudgetActionChange={(v) => updateSection('usage', { tokenBudgetAction: v })}
             projectId={projectId}
+            scope={scope}
           />
         </div>
       )}
@@ -852,7 +1050,7 @@ export function Settings() {
           open
           onClose={() => setPendingScope(null)}
           onConfirm={() => {
-            setDraft(null)
+            discardDraft()
             setSaveFeedback({ kind: 'idle' })
             setScope(pendingScope)
             setPendingScope(null)
@@ -862,6 +1060,24 @@ export function Settings() {
           cancelText="取消"
         >
           当前有未保存的更改，切换作用域将丢弃这些更改。确定切换？
+        </ConfirmDialog>
+      )}
+
+      {/* 未保存更改时导入配置：同一口径的二次确认（挂载驱动显隐）。确认才
+       * 应用导入值；取消保持当前草稿原样，什么都没发生过。 */}
+      {pendingImport !== null && (
+        <ConfirmDialog
+          open
+          onClose={() => setPendingImport(null)}
+          onConfirm={() => {
+            applyImport(pendingImport)
+            setPendingImport(null)
+          }}
+          title="导入配置"
+          confirmText="导入并覆盖"
+          cancelText="取消"
+        >
+          当前有未保存的更改，导入将丢弃这些更改并用文件内容覆盖。确定导入？
         </ConfirmDialog>
       )}
 

@@ -69,8 +69,8 @@ const unavailable = css`
   font-style: italic;
 `
 
-/** llm-details 读失败提示：说清哪些数字不可信，而不是让 0 冒充用量。 */
-const llmErrorLine = css`
+/** 读失败提示：说清哪些数字不可信，而不是让 0/退化值冒充现状。 */
+const errorLine = css`
   grid-column: 1 / -1;
   color: var(--haze-color-danger);
   overflow-wrap: anywhere;
@@ -176,10 +176,10 @@ function Unavailable() {
 }
 
 /** 失败原因取文案：APIError 现在是真正的 Error，但历史形状仍兼容 message 字段。 */
-function llmMessage(error: unknown): string {
+function failureMessage(error: unknown): string {
   const direct = (error as { message?: unknown } | null)?.message
   if (typeof direct === 'string' && direct) return direct
-  return error instanceof Error && error.message ? error.message : '无法读取本会话的 LLM 调用分段。'
+  return error instanceof Error && error.message ? error.message : '无法读取本会话的统计来源。'
 }
 
 /**
@@ -188,12 +188,22 @@ function llmMessage(error: unknown): string {
  */
 export function SessionSummary({ sessionId }: { sessionId: string }) {
   const [open, setOpen] = useState(false)
-  const { data: session } = useQuery({
+  const {
+    data: session,
+    isLoading: sessionLoading,
+    isError: sessionFailed,
+    error: sessionError,
+  } = useQuery({
     queryKey: ['session', sessionId],
     queryFn: () => sessionAPI.get(sessionId),
     staleTime: 10_000,
   })
-  const { data: messages } = useMessages(sessionId)
+  const {
+    data: messages,
+    isLoading: messagesLoading,
+    isError: messagesFailed,
+    error: messagesError,
+  } = useMessages(sessionId)
   const {
     data: segments,
     isLoading,
@@ -204,6 +214,16 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
     queryFn: () => sessionAPI.llmDetails(sessionId),
     staleTime: 10_000,
   })
+
+  // 「这次没读到」与「真的是 0」必须分开：**首载**失败或数据还没到时，
+  // computeStats 只能把 undefined 当空数组，于是消息数/用户消息/助手消息被算成
+  // 一组精确的 0、标题被算成「（未命名会话）」——用户打开「会话信息」想确认
+  // 这轮对话还在不在，看到的却是「0 条消息、没有名字」，据此认定内容已丢失。
+  // 口径与同面板的 llm-details 失败态一致（失败要说不信，不要报 0）。
+  // 已有数据时的后台重取失败不算「读不到」：那时展示的是上次读到的真实值
+  // （与 CommitButton/ToolToggle 的 `isError && !data` 同口径）。
+  const messagesUnreadable = messagesFailed && messages === undefined
+  const sessionUnreadable = sessionFailed && session === undefined
 
   const stats = useMemo(
     () => computeStats(session, messages, segments ?? []),
@@ -224,24 +244,45 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
       </button>
       {open && (
         <div className={grid} data-testid="session-summary-grid">
-          {isLoading ? (
+          {/* 三条查询任一尚未落地都还在「加载中」：早先只看 llm-details 的 isLoading，
+              另两条没到齐时就把 undefined 当空数组渲染成一组精确的 0。 */}
+          {isLoading || messagesLoading || sessionLoading ? (
             <span className={status}>加载中…</span>
           ) : (
             <>
-              <span className={sessionTitle}>{stats.title}</span>
+              <span className={sessionTitle}>
+                {sessionUnreadable ? <Unavailable /> : stats.title}
+              </span>
               {/* llm-details 读失败时，token/成本/模型全部由 segments 推导，
                   segments 为 undefined → computeStats 拿 [] 累加出一整套精确的
                   0 与 US$0.00。实测注入 500 后面板照常显示「总 token 0 /
                   总成本 US$0.00」，用户会据此认为这个会话真的一次调用都没发生、
-                  花了 0 美元——比报错更糟的是它看起来完全可信。消息数与时间戳
-                  来自另两个查询，不受影响，照常显示。 */}
+                  花了 0 美元——比报错更糟的是它看起来完全可信。 */}
               {llmFailed ? (
-                <span className={llmErrorLine} role="alert" data-testid="summary-llm-error">
+                <span className={errorLine} role="alert" data-testid="summary-llm-error">
                   调用明细读取失败，下列用量与成本不可信（不是 0）：
-                  {llmMessage(llmError)}
+                  {failureMessage(llmError)}
                 </span>
               ) : null}
-              <StatRow label="消息数">{formatNumber(stats.messageCount)}</StatRow>
+              {/* 消息列表读失败：消息数/用户消息/助手消息全部由它推导，
+                  undefined → 0 —— 用户会以为这轮对话的内容已经不在了。 */}
+              {messagesUnreadable ? (
+                <span className={errorLine} role="alert" data-testid="summary-messages-error">
+                  消息列表读取失败，下列消息数不可信（不是 0）：
+                  {failureMessage(messagesError)}
+                </span>
+              ) : null}
+              {/* 会话元信息读失败：标题会退化成「（未命名会话）」、时间退化成「—」，
+                  把「没读到」讲成「这条会话没有名字」。 */}
+              {sessionUnreadable ? (
+                <span className={errorLine} role="alert" data-testid="summary-session-error">
+                  会话元信息读取失败，标题与时间不可信：
+                  {failureMessage(sessionError)}
+                </span>
+              ) : null}
+              <StatRow label="消息数">
+                {messagesUnreadable ? <Unavailable /> : formatNumber(stats.messageCount)}
+              </StatRow>
               <StatRow label="提供商">
                 {llmFailed ? <Unavailable /> : stats.provider ? stats.provider : '—'}
               </StatRow>
@@ -280,8 +321,12 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
               <StatRow label="缓存 token（读/写）">
                 {llmFailed ? <Unavailable /> : `${formatNumber(stats.cacheRead)} / 0`}
               </StatRow>
-              <StatRow label="用户消息">{formatNumber(stats.userMessages)}</StatRow>
-              <StatRow label="助手消息">{formatNumber(stats.assistantMessages)}</StatRow>
+              <StatRow label="用户消息">
+                {messagesUnreadable ? <Unavailable /> : formatNumber(stats.userMessages)}
+              </StatRow>
+              <StatRow label="助手消息">
+                {messagesUnreadable ? <Unavailable /> : formatNumber(stats.assistantMessages)}
+              </StatRow>
               <StatRow label="总成本（估算）">
                 {llmFailed ? <Unavailable /> : formatCostUSD(stats.cost)}
               </StatRow>
@@ -291,10 +336,22 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
                 </StatRow>
               )}
               <StatRow label="创建时间">
-                {stats.createdAt ? formatDateTime(stats.createdAt) : '—'}
+                {sessionUnreadable ? (
+                  <Unavailable />
+                ) : stats.createdAt ? (
+                  formatDateTime(stats.createdAt)
+                ) : (
+                  '—'
+                )}
               </StatRow>
               <StatRow label="最后活动">
-                {stats.updatedAt ? formatDateTime(stats.updatedAt) : '—'}
+                {sessionUnreadable ? (
+                  <Unavailable />
+                ) : stats.updatedAt ? (
+                  formatDateTime(stats.updatedAt)
+                ) : (
+                  '—'
+                )}
               </StatRow>
               <span className={status} data-testid="summary-provenance">
                 成本按配置价目估算，可能与账单略有差异；token 为服务端上报用量。总成本为

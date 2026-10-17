@@ -60,6 +60,62 @@ const priorityBtn = css`
   border-radius: 4px;
 `
 
+/*
+ * 优先级选中态：语义色实底 + 对应的 -on-solid 前景色。
+ *
+ * 此前选中只由内联 `color:#fff` 表达：priorityBtn 只有尺寸，data-variant 全仓
+ * 没有任何选择器消费，底色来自 global.ts 的裸按钮兜底（--haze-color-bg-subtle，
+ * light ≈ oklch(0.979 0 0) #fbfbfb）。于是 light 主题下被选中的那一档是白字压
+ * 近白底（实测 1.06:1），「高/中/低」里恰好有一档看不见；且选中与未选中除这行
+ * 字色外没有任何视觉差异，aria-pressed 只对读屏有效——用户无法确认卡片当前是
+ * 哪个优先级。
+ *
+ * 前景色走 token 而非写死 #fff：语义色是按「当文字色」调校的，当实底时两侧主题
+ * 的前景要求相反（见 global.ts 的 --c0de-*-on-solid）。
+ *
+ * 每档都要带一条同形状的 hover：global.ts 的
+ * :where(button):hover:not(:disabled):not([aria-disabled='true']) 特异度是 (0,3,0)，
+ * 会盖掉裸类的 (0,1,0)——鼠标停在选中项上时实底被换成近白的半透明底（color-mix
+ * 百分比不足 100% 会留 12% 透明），白字照旧，选中档在悬停时再次不可读。
+ * 同形状写一遍即可：同特异度按源序，组件样式晚于 global.ts 求值。
+ */
+const prioritySelectedHigh = css`
+  background: var(--haze-color-danger);
+  border-color: var(--haze-color-danger);
+  color: var(--c0de-danger-on-solid, #fff);
+
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--haze-color-danger);
+    border-color: var(--haze-color-danger);
+    color: var(--c0de-danger-on-solid, #fff);
+  }
+`
+
+const prioritySelectedMedium = css`
+  background: var(--haze-color-warning, #eab308);
+  border-color: var(--haze-color-warning, #eab308);
+  color: var(--c0de-warning-on-solid, #fff);
+
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--haze-color-warning, #eab308);
+    border-color: var(--haze-color-warning, #eab308);
+    color: var(--c0de-warning-on-solid, #fff);
+  }
+`
+
+/** 「低」是中性灰实底：前景同样按底色明暗取 token（dark 近黑 / light 白字）。 */
+const prioritySelectedLow = css`
+  background: var(--haze-color-text-secondary);
+  border-color: var(--haze-color-text-secondary);
+  color: var(--c0de-primary-on-solid, #fff);
+
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--haze-color-text-secondary);
+    border-color: var(--haze-color-text-secondary);
+    color: var(--c0de-primary-on-solid, #fff);
+  }
+`
+
 const labelsGrid = css`
   display: flex;
   flex-wrap: wrap;
@@ -171,8 +227,11 @@ const actionsRight = css`
   gap: 8px;
 `
 
+/** 未选中态前景色：语义色当文字色用。danger 在 dark 主题下按原 token 只有
+ *  4.43:1（实测），差一点够不到 AA——走 global.ts 为「语义色压在 bg-subtle 上」
+ *  备好的 --c0de-danger-on-surface（dark 实测 5.31）。 */
 const PRIORITY_COLORS: Record<KanbanPriority, string> = {
-  high: 'var(--haze-color-danger)',
+  high: 'var(--c0de-danger-on-surface, var(--haze-color-danger))',
   medium: 'var(--haze-color-warning, #eab308)',
   low: 'var(--haze-color-text-secondary)',
 }
@@ -181,6 +240,13 @@ const PRIORITY_LABELS: Record<KanbanPriority, string> = {
   high: '高',
   medium: '中',
   low: '低',
+}
+
+/** 选中态样式：按档位取语义色实底（见 prioritySelected* 的注释）。 */
+const PRIORITY_SELECTED: Record<KanbanPriority, string> = {
+  high: prioritySelectedHigh,
+  medium: prioritySelectedMedium,
+  low: prioritySelectedLow,
 }
 
 const LABEL_COLORS = [
@@ -312,9 +378,20 @@ export function CardEditDialog({
     saveMutation.mutate()
   }
 
+  // 保存/删除在飞时不许关闭：失败原因（操作失败：…）只画在弹窗内部，Esc/✕/点背景/
+  // 「取消」一旦卸载弹窗，原因随之消失——用户看到「弹窗自己关了」只会读成已保存
+  // （卡片其实还是旧标题），删除路径同理（以为删了、其实没删）。与 BoardConfigDialog
+  // / CommitReviewDialog / AddProjectDialog 同一口径。
+  const busy = saveMutation.isPending || deleteMutation.isPending
+  const dismiss = () => {
+    if (busy) return
+    onClose()
+  }
+
   return (
     <Dialog
-      onClose={onClose}
+      onClose={dismiss}
+      closeDisabled={busy}
       title="编辑卡片"
       width="min(520px, 92vw)"
       testId="card-edit-overlay"
@@ -333,7 +410,8 @@ export function CardEditDialog({
           <div className={actionsRight}>
             <Button
               variant="ghost"
-              onClick={onClose}
+              onClick={dismiss}
+              disabled={busy}
               style={{ minHeight: 'auto', minWidth: 'auto', padding: '6px 12px', fontSize: 12 }}
             >
               取消
@@ -377,10 +455,10 @@ export function CardEditDialog({
 
       {/* 互斥的一组开关：aria-pressed 表达「当前是哪一档」，与项目内其它
           切换组（终端标签、视图切换、回收站开关）口径一致。
-          此前三个按钮只有颜色差异（选中为 #fff 实心），读屏播报为
-          「高 按钮 / 中 按钮 / 低 按钮」三个无状态按钮——当前优先级
-          完全丢失。用 fieldset/legend 承载分组语义（等价于 role=group，
-          且读屏进入分组时会播报 legend）。 */}
+          更早一步这里只有颜色差异（且选中是近白底上的白字，肉眼与对比度双双
+          失效），读屏播报为「高 按钮 / 中 按钮 / 低 按钮」三个无状态按钮——
+          当前优先级完全丢失。用 fieldset/legend 承载分组语义（等价于 role=group，
+          且读屏进入分组时会播报 legend）；视觉侧的选中态见 prioritySelected*。 */}
       <fieldset className={`${field} ${fieldSet}`}>
         <legend className={label}>优先级</legend>
         <div className={priorityRow}>
@@ -388,11 +466,13 @@ export function CardEditDialog({
             <button
               key={p}
               type="button"
-              className={priorityBtn}
+              className={`${priorityBtn} ${priority === p ? PRIORITY_SELECTED[p] : ''}`}
               aria-pressed={priority === p}
-              data-variant={priority === p ? 'primary' : 'ghost'}
               onClick={() => setPriority(p)}
-              style={{ color: priority === p ? '#fff' : PRIORITY_COLORS[p] }}
+              data-testid={`card-priority-${p}`}
+              // 选中时前景色由 PRIORITY_SELECTED 的实底类决定，行内色必须让位；
+              // 未选中时按档位语义色当文字色。
+              style={{ color: priority === p ? undefined : PRIORITY_COLORS[p] }}
             >
               {PRIORITY_LABELS[p]}
             </button>
@@ -473,7 +553,7 @@ export function CardEditDialog({
       </div>
 
       {(saveMutation.isError || deleteMutation.isError) && (
-        <div style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
+        <div role="alert" style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
           操作失败：
           {(saveMutation.error as Error)?.message ?? (deleteMutation.error as Error)?.message}
         </div>

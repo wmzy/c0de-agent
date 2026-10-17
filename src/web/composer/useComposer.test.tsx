@@ -12,7 +12,8 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import { loadDraft } from '@/composer/draft.js'
 import { loadHistory, saveHistory } from '@/composer/history.js'
-import { useComposer } from '@/composer/useComposer.js'
+import { type PopoverState, useComposer } from '@/composer/useComposer.js'
+import type { CommandInfo } from '@/hooks/useCommands.js'
 
 function strictWrapper({ children }: { children: ReactNode }) {
   return createElement(StrictMode, null, children)
@@ -87,6 +88,25 @@ describe('useComposer 图片添加', () => {
     expect(result.current.images).toHaveLength(6)
     expect(result.current.imageError).toContain('最多添加')
   })
+
+  /**
+   * 回归：一次拖放 / 一次粘贴里的多张图在同一次事件里连续校验，彼此之间不会
+   * 重渲染，渲染期赋值的 imagesRef 镜像始终是同一个旧值——N 张全部按「当前 0 张」
+   * 通过校验，6 张上限形同虚设，超限载荷照样进 PGLite / SSE / provider 请求，
+   * 且一句提示都没有。（此前用例逐张添加、每次 act 之间都 flush，恰好绕开了
+   * 这条路径。）
+   */
+  it('一次批量添加（拖放/粘贴多张）同样受 6 张上限约束', async () => {
+    const { result } = renderComposer()
+    act(() => {
+      for (let i = 0; i < 9; i++) {
+        result.current.addImage(imageFile(`batch${i}.png`))
+      }
+    })
+    await flushImageRead()
+    expect(result.current.images).toHaveLength(6)
+    expect(result.current.imageError).toContain('最多添加')
+  })
 })
 
 // ── pill 保留回归 ──
@@ -110,15 +130,19 @@ type PillInsertResult = {
   appendTerminalReference: (label: string, content: string) => void
   handleInput: () => void
   handleKeyDown: (e: ReactKeyboardEvent) => void
+  /** 走**最新一次渲染**的 handler：Esc 的分支依赖当次渲染读到的 popover，
+   *  上面的 handleKeyDown 是首帧闭包，按键前若有状态变化会读到过期值。 */
+  pressKey: (e: ReactKeyboardEvent) => void
   send: () => void
   onSend: ReturnType<typeof vi.fn>
   setCursorEnd: () => void
   editor: HTMLDivElement
+  popover: () => PopoverState
 }
 
 /** 带真实 contenteditable 编辑器的 composer：pill 渲染/解析与光标定位全链路。
  *  draftScope 传入时才落 localStorage（草稿持久化域），用于断言「什么该落盘」。 */
-function renderComposerWithEditor(draftScope?: string): PillInsertResult {
+function renderComposerWithEditor(draftScope?: string, commands?: CommandInfo[]): PillInsertResult {
   const editor = document.createElement('div')
   editor.setAttribute('contenteditable', 'true')
   document.body.appendChild(editor)
@@ -131,7 +155,7 @@ function renderComposerWithEditor(draftScope?: string): PillInsertResult {
         onSteer: vi.fn(),
         isStreaming: false,
         hasHistory: false,
-        commands: [],
+        commands: commands ?? [],
         draftScope,
       }),
     { wrapper: strictWrapper },
@@ -155,10 +179,12 @@ function renderComposerWithEditor(draftScope?: string): PillInsertResult {
     appendTerminalReference: result.current.appendTerminalReference,
     handleInput: result.current.handleInput,
     handleKeyDown: result.current.handleKeyDown,
+    pressKey: (e) => result.current.handleKeyDown(e),
     send: result.current.send,
     onSend,
     setCursorEnd,
     editor,
+    popover: () => result.current.popover,
   }
 }
 
@@ -513,5 +539,99 @@ describe('useComposer 追加指令的清空时机', () => {
     })
 
     expect(promptToText(result.current.promptRef.current as never)).toBe('')
+  })
+
+  /**
+   * 缺陷：steer 只在请求落地后才清空输入框，在途期间输入框里还是那一段文字、
+   * 按钮也没置灰——再点一次（或连按两下 Enter）会读到同一段文本，把同一条指令
+   * 发第二遍（agent 侧注入两次、时间线两条一样的指令气泡）。
+   */
+  it('在途期间再点一次不会重复发送（按钮置灰 + ref 挡住同 tick 连击）', async () => {
+    let resolveSteer: (ok: boolean) => void = () => {}
+    const onSteer = vi.fn(
+      (_m: string) => new Promise<boolean>((resolve) => (resolveSteer = resolve)),
+    )
+    const { result, type } = renderStreamingComposer(onSteer)
+    type('改用 pnpm 跑测试')
+
+    act(() => {
+      result.current.steer()
+    })
+    expect(onSteer).toHaveBeenCalledTimes(1)
+
+    // 请求在途：第二次点击（跨事件）不得再发一条
+    act(() => {
+      result.current.steer()
+    })
+    expect(onSteer).toHaveBeenCalledTimes(1)
+    expect(result.current.steerPending).toBe(true)
+
+    await act(async () => {
+      resolveSteer(true)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // 落地后解锁（并沿用「受理即清空」）
+    expect(result.current.steerPending).toBe(false)
+    expect(promptToText(result.current.promptRef.current as never)).toBe('')
+  })
+})
+
+/**
+ * 回归：子命令补全浮层里 Esc 是死键。
+ *
+ * 「commands 就绪后重新检测」的 effect 只依赖 [commands, popover]，Esc 把 popover
+ * 置空后它立刻按同一段文本把浮层弹回来：用户按 Esc 想收起补全，菜单纹丝不动；
+ * 紧接着的回车被浮层拦截，编辑器内容被改写成第一个候选（实测 /workflow list）
+ * 而不是发送——正文就这么被静默改掉了。
+ */
+describe('useComposer 子命令补全浮层', () => {
+  const commands: CommandInfo[] = [
+    {
+      name: 'workflow',
+      description: '工作流',
+      subcommands: [
+        { name: 'list', description: 'list' },
+        { name: 'run', description: 'run' },
+      ],
+    },
+  ]
+
+  it('Esc 关掉后不被重检测弹回来', () => {
+    const c = renderComposerWithEditor(undefined, commands)
+    typeText(c, '/workflow ')
+    expect(c.popover()).toBe('subcommand')
+
+    act(() => {
+      c.pressKey({ key: 'Escape', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    expect(c.popover()).toBe(null)
+  })
+
+  it('关掉后继续打字会重新补全（Esc 只压住当前这段文本）', () => {
+    const c = renderComposerWithEditor(undefined, commands)
+    typeText(c, '/workflow ')
+    act(() => {
+      c.pressKey({ key: 'Escape', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    typeText(c, 'li')
+
+    expect(c.popover()).toBe('subcommand')
+  })
+
+  it('关掉后回车走发送，不再把输入改写成候选', () => {
+    const c = renderComposerWithEditor(undefined, commands)
+    typeText(c, '/workflow ')
+    act(() => {
+      c.pressKey({ key: 'Escape', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    act(() => {
+      c.pressKey({ key: 'Enter', preventDefault: vi.fn() } as unknown as ReactKeyboardEvent)
+    })
+
+    expect(c.onSend).toHaveBeenCalled()
   })
 })

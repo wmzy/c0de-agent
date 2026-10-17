@@ -37,7 +37,7 @@ const BOARD_LABELS: KanbanLabelDef[] = [
   { id: 'lbl-ux', name: 'ux', color: '#3b82f6' },
 ]
 
-function renderDialog(initialLabels: string[] = ['lbl-bug']) {
+function renderDialog(initialLabels: string[] = ['lbl-bug'], onClose: () => void = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
@@ -49,7 +49,7 @@ function renderDialog(initialLabels: string[] = ['lbl-bug']) {
         initialPriority="medium"
         initialLabels={initialLabels}
         boardLabels={BOARD_LABELS}
-        onClose={() => {}}
+        onClose={onClose}
       />
     </QueryClientProvider>,
   )
@@ -105,5 +105,47 @@ describe('CardEditDialog 标签作用域', () => {
 
     fireEvent.click(screen.getByLabelText('移除新标签 docs（尚未保存）'))
     expect(screen.queryByRole('button', { name: 'docs' })).toBeNull()
+  })
+})
+
+/**
+ * 提交型弹窗的在飞关闭契约（Dialog 的 closeDisabled）。
+ *
+ * 缺陷：保存/删除请求在飞时按 Esc / 点 ✕ / 点「取消」都会卸载弹窗，而唯一的
+ * 失败原因（「操作失败：…」）画在弹窗内部——PATCH 失败（409 列冲突 / 500 / 断连）
+ * 时用户看到的是「弹窗自己关了」，读成已保存，卡片其实还是旧标题；删除路径同理，
+ * 以为删了其实没删。与 BoardConfigDialog / CommitReviewDialog 同一口径。
+ */
+describe('CardEditDialog 在飞期间不可关闭', () => {
+  it('保存在飞时「取消」不关弹窗（失败原因不会被连带丢掉）', async () => {
+    // 永不 resolve：把请求固定在「在飞」
+    vi.mocked(kanbanAPI.updateCard).mockImplementation(() => new Promise(() => {}))
+    const onClose = vi.fn()
+    renderDialog(['lbl-bug'], onClose)
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(kanbanAPI.updateCard).toHaveBeenCalledTimes(1))
+
+    const cancel = screen.getByRole('button', { name: '取消' }) as HTMLButtonElement
+    expect(cancel.disabled).toBe(true)
+    fireEvent.click(cancel)
+    expect(onClose).not.toHaveBeenCalled()
+    // 弹窗仍在：失败原因还有地方可画
+    expect(screen.getByTestId('card-edit-overlay')).toBeTruthy()
+  })
+
+  it('保存失败时原因留在弹窗内并以 role=alert 播报', async () => {
+    vi.mocked(kanbanAPI.updateCard).mockRejectedValue(new Error('卡片不存在'))
+    const onClose = vi.fn()
+    renderDialog(['lbl-bug'], onClose)
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+
+    expect(screen.getByRole('alert').textContent).toContain('卡片不存在')
+    expect(screen.getByTestId('card-edit-overlay')).toBeTruthy()
+    expect(onClose).not.toHaveBeenCalled()
+    // 失败后请求不再在飞 → 关闭键恢复可用
+    expect((screen.getByRole('button', { name: '取消' }) as HTMLButtonElement).disabled).toBe(false)
   })
 })

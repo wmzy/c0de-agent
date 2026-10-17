@@ -4,15 +4,16 @@
  * （用户会以为上下文被清空，或对着不存在的上下文继续发消息）。
  */
 
-import { createRoutes, MemoryRouter, View } from '@native-router/react'
+import { createRoutes, MemoryRouter, TypedLink, useMatched, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { draftStorageKey } from '@/composer/draft.js'
 import { ConfigProvider } from '@/contexts/ConfigContext.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
 import { failedSendReason } from '@/hooks/failedSendReason.js'
+import type { AppPaths } from '@/routes.js'
 import { sessionAPI } from '@/services/session.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 import { ChatSession } from '@/views/ChatSession.js'
@@ -42,7 +43,9 @@ const mockUseChatState = {
   permissionTimeout: null,
   workflowProgress: null,
   attachedRun: false,
+  attachError: null as string | null,
   runPaused: false,
+  runPauseReason: null as string | null,
   interrupted: false,
   pendingTrust: null,
   // sendMessage 结果：由失败路径同步写入的 ref（值字段在 .then 里恒为旧值）。
@@ -53,10 +56,16 @@ const mockUseChatState = {
   steer: vi.fn(),
   pause: vi.fn(),
   resume: vi.fn(),
-  clearRunPaused: vi.fn(),
+  // 撤下暂停标记在真实实现里是 reducer 动作（会连带清掉 runPauseReason）。
+  // 这里让 mock 真的改自己的状态，断言才能落在 DOM 上而不是「某个函数被调过」。
+  clearRunPaused: vi.fn(() => {
+    mockUseChatState.runPaused = false
+    mockUseChatState.runPauseReason = null
+  }),
   reopenPermission: vi.fn(),
   denyTimedOutPermission: vi.fn(),
   attach: vi.fn().mockResolvedValue(undefined),
+  retryAttach: vi.fn(),
   resetPaused: vi.fn(),
   trustAndRetry: vi.fn(),
   clearError: vi.fn(),
@@ -64,28 +73,32 @@ const mockUseChatState = {
 }
 vi.mock('@/hooks/useChat.js', () => ({ useChat: () => mockUseChatState }))
 
+// useAgent 的 resume 由用例驱动返回值：ChatSession 的三个「恢复」入口据它决定
+// 要不要撤下暂停横幅，hoisted 出去才能在用例里改。
+const mockAgentResume = vi.hoisted(() => vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)))
 vi.mock('@/hooks/useAgent.js', () => ({
   useAgent: () => ({
     pause: vi.fn(),
-    resume: vi.fn(),
+    resume: mockAgentResume,
     resetPaused: vi.fn(),
     paused: false,
+    busy: false,
+    error: null,
   }),
 }))
 
-vi.mock('@/hooks/useShake.js', () => ({
-  useShake: () => ({
-    shakeContextValue: {},
-    shakeMode: false,
-    handleShakeOpen: vi.fn(),
-    shakeToggle: vi.fn(),
-    shakeRegions: [],
-    shakeSelected: new Set<string>(),
-    exitShakeMode: vi.fn(),
-    shakePending: false,
-    shakeMutation: { isPending: false, mutate: vi.fn() },
-  }),
-}))
+const mockUseShake = {
+  shakeContextValue: {},
+  shakeMode: false,
+  handleShakeOpen: vi.fn(),
+  shakeToggle: vi.fn(),
+  shakeRegions: [] as unknown[],
+  shakeSelected: new Set<string>(),
+  exitShakeMode: vi.fn(),
+  shakePending: false,
+  shakeMutation: { isPending: false, mutate: vi.fn() },
+}
+vi.mock('@/hooks/useShake.js', () => ({ useShake: () => mockUseShake }))
 
 vi.mock('@/hooks/useRetryResume.js', () => ({
   useRetryResume: () => ({ handleResume: vi.fn(), handleRetryLast: vi.fn(), resendPending: false }),
@@ -160,9 +173,9 @@ vi.mock('@/services/permission.js', () => ({
 
 const refetch = vi.fn().mockResolvedValue({ data: [] })
 
-async function renderSession() {
+async function renderSession(ui: ReactNode = <ChatSession projectId="p1" sessionId="s1" />) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  currentUi = <ChatSession projectId="p1" sessionId="s1" />
+  currentUi = ui
   const view = render(
     <MemoryRouter routes={testRoutes} initialEntries={['/projects/p1/sessions/s1']}>
       <QueryClientProvider client={qc}>
@@ -238,6 +251,54 @@ describe('ChatSession — 历史消息加载失败', () => {
       expect(screen.getByTestId('chat-welcome')).toBeInTheDocument()
     })
     expect(screen.queryByTestId('chat-history-error')).toBeNull()
+  })
+})
+
+/**
+ * LLM 调用明细读取失败必须显式报错 + 可重试。
+ * 该 query 只取 data 时，buildTimeline 拿空段列表渲染出「只有消息、没有调用/段标记」
+ * 的时间线——把「拉不到」说成「这次会话没有调用」，且消失的正是表格/原始 JSON 视图
+ * 排障所依赖的调用与成本信息。
+ */
+describe('ChatSession — 调用明细（llm-details）读取失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+  })
+
+  it('失败时说明原因并给重试，不把「读不到」渲染成「没有调用」', async () => {
+    vi.mocked(sessionAPI.llmDetails).mockRejectedValue({ message: '调用明细表暂不可用' })
+    await renderSession()
+
+    await waitFor(() => expect(screen.getByTestId('llm-details-error')).toBeInTheDocument())
+    expect(screen.getByTestId('llm-details-error').textContent).toContain('调用明细表暂不可用')
+    expect(screen.getByTestId('llm-details-error').textContent).toContain('不是本次会话没有调用')
+    expect(screen.getByTestId('llm-details-retry')).toBeInTheDocument()
+  })
+
+  it('点击重试重新拉取调用明细', async () => {
+    vi.mocked(sessionAPI.llmDetails).mockRejectedValue({ message: '调用明细表暂不可用' })
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('llm-details-retry')).toBeInTheDocument())
+    expect(sessionAPI.llmDetails).toHaveBeenCalledTimes(1)
+
+    vi.mocked(sessionAPI.llmDetails).mockResolvedValue([])
+    fireEvent.click(screen.getByTestId('llm-details-retry'))
+
+    await waitFor(() => expect(sessionAPI.llmDetails).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('llm-details-error')).toBeNull())
+  })
+
+  it('读取成功时不渲染该失败行', async () => {
+    vi.mocked(sessionAPI.llmDetails).mockResolvedValue([])
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
+    expect(screen.queryByTestId('llm-details-error')).toBeNull()
   })
 })
 
@@ -320,6 +381,108 @@ describe('ChatSession — 首条消息失败的空会话治理', () => {
     await waitFor(() => {
       expect(storageGet(draftStorageKey('s:s1'))).toBeNull()
     })
+  })
+})
+
+describe('ChatSession — 孤儿会话归属', () => {
+  it('归属失败时给出后端原因，按钮恢复可点', async () => {
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: null,
+      metadata: {},
+    } as unknown as Awaited<ReturnType<typeof sessionAPI.get>>)
+    vi.mocked(sessionAPI.rebind).mockRejectedValue(new Error('项目已被删除'))
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    await renderSession()
+
+    const btn = await screen.findByRole('button', { name: '归属到当前项目' })
+    fireEvent.click(btn)
+
+    const err = await screen.findByTestId('orphan-rebind-error')
+    expect(err.getAttribute('role')).toBe('alert')
+    expect(err.textContent).toContain('项目已被删除')
+    // 失败不再把用户永久挡在按钮外：横幅留在原地，可以再试一次
+    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.getByTestId('orphan-session-banner')).toBeTruthy()
+  })
+
+  // ChatSession 在 /projects/:p/sessions/:a → :b 之间被路由复用（@native-router 的
+  // 路由级 key = `index:path`，两条会话路由 path 相同 → 子树不重建），useState 只在
+  // 首次挂载初始化。于是打开一个未归属项目的会话后再点侧栏里的正常会话，孤儿横幅
+  // 原样留在顶上（文案还改成「无法执行工具」），而这条会话的工具一切正常；唯一的
+  // 按钮指向一条已经归属好的会话，点下去是一次无意义的重复归属。
+  it('从孤儿会话切到正常会话后，横幅不再跟过来', async () => {
+    vi.mocked(sessionAPI.get).mockImplementation(
+      async (id: string) =>
+        ({ id, projectId: id === 's1' ? null : 'p1', metadata: {} }) as Awaited<
+          ReturnType<typeof sessionAPI.get>
+        >,
+    )
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    // 会话来自路由参数（生产里是 ChatPage 把匹配到的参数传下来），切会话=换路由
+    function SessionFromRoute() {
+      const { params } = useMatched()
+      return (
+        <ChatSession projectId={params.projectId ?? 'p1'} sessionId={params.sessionId ?? 's1'} />
+      )
+    }
+    const ui = (
+      <>
+        <SessionFromRoute />
+        <TypedLink<AppPaths>
+          to="/projects/:projectId/sessions/:sessionId"
+          params={{ projectId: 'p1', sessionId: 's2' }}
+          data-testid="to-s2"
+        >
+          切会话
+        </TypedLink>
+      </>
+    )
+    await renderSession(ui)
+    await screen.findByTestId('orphan-session-banner')
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+
+    await waitFor(() => expect(sessionAPI.get).toHaveBeenCalledWith('s2'))
+    await waitFor(() => expect(screen.queryByTestId('orphan-session-banner')).toBeNull())
+  })
+
+  it('归属成功后退掉错误并收起横幅', async () => {
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: null,
+      metadata: {},
+    } as unknown as Awaited<ReturnType<typeof sessionAPI.get>>)
+    vi.mocked(sessionAPI.rebind)
+      .mockRejectedValueOnce(new Error('服务重启中'))
+      .mockResolvedValue(undefined as unknown as Awaited<ReturnType<typeof sessionAPI.rebind>>)
+    mockUseMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    await renderSession()
+
+    const btn = await screen.findByRole('button', { name: '归属到当前项目' })
+    fireEvent.click(btn)
+    await screen.findByTestId('orphan-rebind-error')
+
+    fireEvent.click(btn)
+    await waitFor(() => expect(screen.queryByTestId('orphan-rebind-error')).toBeNull())
   })
 })
 
@@ -478,5 +641,455 @@ describe('ChatSession — 导出反馈闭环', () => {
         '导出内容：本会话的全部消息与归档',
       ),
     )
+  })
+})
+
+/**
+ * 归档面板与导出弹窗的这一组状态是**会话级**的，而 ChatSession 在
+ * sessions/:a → :b 之间被路由复用（path 相同 → 子树不重建）：在 A 打开导出弹窗
+ * （弹窗里的结论是 A 的：「该会话有 N 个派生分支…」）或归档面板，用侧栏切到 B
+ * 时弹窗原样留在屏幕上，而导出走的是当前 sessionId——用户照 A 的结论判断 B 的
+ * 备份是否完整、要不要剥离快照。切会话必须整体作废，迟到的分支数查询也不得写进
+ * 新会话（与本文件 orphanNotice/rebindError、cold-start 三态同口径）。
+ */
+describe('ChatSession — 导出弹窗与归档面板的会话作用域', () => {
+  /** 会话路由视图 + 一条指向 s2 的站内链接（@native-router 同 path 换参数不重建子树）。 */
+  function sessionSwitchingUi() {
+    function SessionFromRoute() {
+      const { params } = useMatched()
+      return (
+        <ChatSession projectId={params.projectId ?? 'p1'} sessionId={params.sessionId ?? 's1'} />
+      )
+    }
+    return (
+      <>
+        <SessionFromRoute />
+        <TypedLink<AppPaths>
+          to="/projects/:projectId/sessions/:sessionId"
+          params={{ projectId: 'p1', sessionId: 's2' }}
+          data-testid="to-s2"
+        >
+          切会话
+        </TypedLink>
+      </>
+    )
+  }
+
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    vi.mocked(sessionAPI.branches).mockResolvedValue([
+      { id: 'b1' },
+      { id: 'b2' },
+    ] as unknown as Awaited<ReturnType<typeof sessionAPI.branches>>)
+  })
+
+  it('切会话关掉导出弹窗：A 的分支结论不得留给 B', async () => {
+    await renderSession(sessionSwitchingUi())
+    fireEvent.click(await screen.findByTestId('export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-branch-note').textContent).toContain('2 个派生分支'),
+    )
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(screen.queryByTestId('export-dialog')).toBeNull())
+  })
+
+  it('切会话关掉归档面板', async () => {
+    await renderSession(sessionSwitchingUi())
+    fireEvent.click(await screen.findByTestId('archive-button'))
+    await screen.findByTestId('archive-panel')
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(screen.queryByTestId('archive-panel')).toBeNull())
+  })
+
+  it('上一条会话迟到的分支数不写进新会话', async () => {
+    type Branches = Awaited<ReturnType<typeof sessionAPI.branches>>
+    let resolveS1: ((v: Branches) => void) | null = null
+    vi.mocked(sessionAPI.branches).mockImplementation((id: string) =>
+      id === 's1'
+        ? new Promise<Branches>((resolve) => {
+            resolveS1 = resolve
+          })
+        : Promise.resolve([] as unknown as Branches),
+    )
+    await renderSession(sessionSwitchingUi())
+
+    // s1 的分支数查询挂在半路
+    fireEvent.click(await screen.findByTestId('export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-branch-note').textContent).toContain('正在检查派生分支'),
+    )
+
+    // 切到 s2 并重新打开弹窗：结论来自 s2（0 个分支）
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(screen.queryByTestId('export-dialog')).toBeNull())
+    fireEvent.click(await screen.findByTestId('export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('export-branch-note').textContent).toContain(
+        '导出内容：本会话的全部消息与归档',
+      ),
+    )
+
+    // A 的响应迟到落地：不得改写成「该会话有 2 个派生分支」
+    await act(async () => {
+      resolveS1?.([{ id: 'b1' }, { id: 'b2' }] as unknown as Branches)
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('export-branch-note').textContent).toContain(
+      '导出内容：本会话的全部消息与归档',
+    )
+  })
+
+  it('导出在飞时切会话：不把「导出中…」与失败原因落到新会话', async () => {
+    let rejectExport: (err: Error) => void = () => {}
+    vi.mocked(sessionAPI.exportSession).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectExport = reject
+      }),
+    )
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await renderSession(sessionSwitchingUi())
+
+    fireEvent.click(await screen.findByTestId('export-button'))
+    fireEvent.click(await screen.findByTestId('export-strip-snapshots'))
+    await waitFor(() =>
+      expect((screen.getByTestId('export-strip-snapshots') as HTMLButtonElement).textContent).toBe(
+        '导出中…',
+      ),
+    )
+
+    // 导出还没回来就切走：A 的失败原因不得落到 B 的界面上
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await act(async () => {
+      rejectExport(new Error('数据库被占用'))
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('export-dialog')).toBeNull()
+    expect(screen.queryByTestId('export-dialog-error')).toBeNull()
+  })
+})
+
+/**
+ * 冷启动状态检查（sessionAPI.status）失败此前被 .catch(() => {}) 空吞：
+ * 页面看起来完全正常，但「连接已中断 / 已暂停」的恢复横幅与入口都不会出现——
+ * 用户面对一个上次被强杀打断的会话无从恢复，只能猜着重发，而重发会重复执行
+ * 已跑过的工具（bash/git 等）。失败必须说出来并可重新检查。
+ */
+describe('ChatSession — 冷启动状态检查失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+  })
+
+  it('检查失败时说明原因，不静默当作正常结束', async () => {
+    vi.mocked(sessionAPI.status).mockRejectedValueOnce({ message: '数据库被占用' })
+    await renderSession()
+
+    await waitFor(() => expect(screen.getByTestId('cold-start-error')).toBeInTheDocument())
+    expect(screen.getByTestId('cold-start-error').textContent).toContain('数据库被占用')
+    // 不把失败当 idle：中断恢复入口的缺失必须可见
+    expect(screen.queryByTestId('interrupt-banner')).toBeNull()
+  })
+
+  it('点击「重新检查」后拿到 interrupted 并显示恢复入口，告警消失', async () => {
+    vi.mocked(sessionAPI.status).mockRejectedValueOnce({ message: '数据库被占用' })
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('cold-start-error')).toBeInTheDocument())
+
+    vi.mocked(sessionAPI.status).mockResolvedValueOnce({ _tag: 'interrupted' })
+    fireEvent.click(screen.getByRole('button', { name: '重新检查' }))
+
+    await waitFor(() => expect(screen.getByTestId('interrupt-banner')).toBeInTheDocument())
+    expect(screen.queryByTestId('cold-start-error')).toBeNull()
+  })
+
+  // 切会话后上一条会话在飞的状态检查必须作废：A 的 interrupted 迟到落地会给 B
+  // 凭空挂上「恢复对话」横幅，用户点它＝重发 B 的最后一条消息，中断前跑过的
+  // bash/git 再执行一遍（改文件/改环境），而结论与 B 的事实无关。
+  it('切会话后，上一条会话迟到的状态检查不写进新会话', async () => {
+    type StatusResult = Awaited<ReturnType<typeof sessionAPI.status>>
+    let resolveA: ((v: StatusResult) => void) | null = null
+    vi.mocked(sessionAPI.status).mockImplementation((id: string) =>
+      id === 's1'
+        ? new Promise<StatusResult>((resolve) => {
+            resolveA = resolve
+          })
+        : Promise.resolve({ _tag: 'idle' } as StatusResult),
+    )
+    function SessionFromRoute() {
+      const { params } = useMatched()
+      return (
+        <ChatSession projectId={params.projectId ?? 'p1'} sessionId={params.sessionId ?? 's1'} />
+      )
+    }
+    const ui = (
+      <>
+        <SessionFromRoute />
+        <TypedLink<AppPaths>
+          to="/projects/:projectId/sessions/:sessionId"
+          params={{ projectId: 'p1', sessionId: 's2' }}
+          data-testid="to-s2"
+        >
+          切会话
+        </TypedLink>
+      </>
+    )
+    await renderSession(ui)
+    await waitFor(() => expect(sessionAPI.status).toHaveBeenCalledWith('s1'))
+
+    fireEvent.click(screen.getByTestId('to-s2'))
+    await waitFor(() => expect(sessionAPI.status).toHaveBeenCalledWith('s2'))
+
+    // A 的响应迟到落地：不得给 B 挂横幅
+    await act(async () => {
+      resolveA?.({ _tag: 'interrupted' })
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('interrupt-banner')).toBeNull()
+    expect(screen.queryByTestId('cold-start-error')).toBeNull()
+  })
+})
+
+/**
+ * 附着入口（本页没发起流、但服务端可能仍有 run 在跑）读 GET /:id/status 连续失败：
+ * 界面此前与「这条会话真的空闲」完全同形——没有运行横幅、没有终止键，用户在这个
+ * 假空闲态下发消息只会撞 409「该会话已有进行中的对话」，且没有任何出口。
+ * 失败必须说出来并可重新检查（与上面冷启动那条链同口径：同一份 /status 的两个消费点）。
+ */
+describe('ChatSession — 附着入口读状态失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    mockUseChatState.attachError = null
+    mockUseChatState.isStreaming = false
+  })
+
+  it('给出原因与重新检查，而不是看起来空闲', async () => {
+    mockUseChatState.attachError = '数据库被占用'
+    await renderSession()
+
+    const banner = await screen.findByTestId('attach-error')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.textContent).toContain('数据库被占用')
+    expect(banner.textContent).toContain('进行中的对话')
+
+    fireEvent.click(screen.getByRole('button', { name: '重新检查' }))
+    expect(mockUseChatState.retryAttach).toHaveBeenCalled()
+  })
+
+  it('已经在流式时不再叠这条告警（结论已确定，运行态横幅优先）', async () => {
+    mockUseChatState.attachError = '数据库被占用'
+    mockUseChatState.isStreaming = true
+    await renderSession()
+
+    expect(screen.queryByTestId('attach-error')).toBeNull()
+  })
+})
+
+/**
+ * 会话信息（GET /api/sessions/:id）读取失败必须显式报错 + 可重试。
+ * 这条 query 的 data 同时供三处消费：归属重定向（URL 项目与真实归属不一致时跳转）、
+ * 孤儿会话横幅（孤儿会话唯一的自救入口）、unfinishedRange（中断前半截轮次置灰）。
+ * 只取 data 时，retry 耗尽后三者一起静默失效：用户在错误项目的上下文里发消息、
+ * 孤儿会话只留下一个能打字但工具全失败的页面且零解释、被中断的半截输出不再置灰，
+ * 页面上没有任何一处 role="alert"。
+ */
+describe('ChatSession — 会话信息读取失败', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+  })
+
+  it('失败时说明原因并给重试，而不是静默失去归属校验与孤儿入口', async () => {
+    vi.mocked(sessionAPI.get).mockRejectedValue({ message: '会话表不可用' })
+    await renderSession()
+
+    await waitFor(() => expect(screen.getByTestId('session-meta-error')).toBeInTheDocument())
+    expect(screen.getByTestId('session-meta-error').textContent).toContain('会话表不可用')
+    expect(screen.getByTestId('session-meta-retry')).toBeInTheDocument()
+  })
+
+  it('点击重试重新拉取会话信息', async () => {
+    vi.mocked(sessionAPI.get).mockRejectedValue({ message: '会话表不可用' })
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('session-meta-retry')).toBeInTheDocument())
+    const callsBeforeRetry = vi.mocked(sessionAPI.get).mock.calls.length
+
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: 'p1',
+      metadata: {},
+    } as never)
+    fireEvent.click(screen.getByTestId('session-meta-retry'))
+
+    await waitFor(() =>
+      expect(vi.mocked(sessionAPI.get).mock.calls.length).toBeGreaterThan(callsBeforeRetry),
+    )
+    await waitFor(() => expect(screen.queryByTestId('session-meta-error')).toBeNull())
+  })
+
+  it('读取成功时不渲染该失败行', async () => {
+    vi.mocked(sessionAPI.get).mockResolvedValue({
+      id: 's1',
+      projectId: 'p1',
+      metadata: {},
+    } as never)
+    await renderSession()
+    await waitFor(() => expect(screen.getByTestId('composer-editor')).toBeInTheDocument())
+    expect(screen.queryByTestId('session-meta-error')).toBeNull()
+  })
+})
+
+/**
+ * Shake「提交」的在途锁。
+ *
+ * 缺陷：提交按钮的 disabled 只看「有没有选中区域」，请求在飞期间仍可点。跨事件
+ * 连点两次会发出两次 POST /shake/apply，而 apply 不幂等：第二次要么把已经压缩过的
+ * 正文再归档一次（用户勾选的范围与实际被裁的不一致），要么因消息已被第一次改写而
+ * 回 400「消息已变化，请重新预览」——红条挂在一次**已经成功**的 Shake 上。
+ */
+describe('ChatSession — Shake 提交在途锁', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    mockUseShake.shakeMode = true
+    mockUseShake.shakeRegions = [{ id: 'r1', tokens: 10 }]
+    mockUseShake.shakeSelected = new Set(['r1'])
+    mockUseShake.shakeMutation.isPending = false
+  })
+
+  afterEach(() => {
+    mockUseShake.shakeMode = false
+    mockUseShake.shakeRegions = []
+    mockUseShake.shakeSelected = new Set<string>()
+    mockUseShake.shakeMutation.isPending = false
+  })
+
+  it('请求在飞时提交按钮禁用，并显示在途态', async () => {
+    mockUseShake.shakeMutation.isPending = true
+    await renderSession()
+
+    const btn = await screen.findByTestId('shake-submit')
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
+    expect(btn.textContent).toContain('提交中')
+  })
+
+  it('未在途且已选区域时可提交（不能一律禁用）', async () => {
+    await renderSession()
+
+    const btn = await screen.findByTestId('shake-submit')
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    expect(btn.textContent).toContain('提交 Shake')
+  })
+})
+
+/**
+ * 「恢复」失败时暂停横幅必须留着。
+ *
+ * 缺陷：三个「恢复」入口都先乐观撤下暂停标记再发请求。resume 是一次网络往返，
+ * 失败（500 / 网络中断 / 占位期 409）时服务端 run 仍停在暂停点：横幅与顶栏的
+ * 「恢复」一起消失，界面宣称对话在跑却永远不会继续，新消息还会撞 409
+ * 「该会话已有进行中的对话」——唯一能把它救回来的入口已经没了，只能刷新页面。
+ */
+describe('ChatSession — 恢复失败时保留暂停横幅', () => {
+  beforeEach(() => {
+    mockUseMessages.mockReturnValue({
+      data: [{ id: 'm1', role: 'user', content: [], createdAt: 1 }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch,
+    })
+    mockUseChatState.runPaused = true
+    mockUseChatState.isStreaming = true
+    mockUseChatState.runPauseReason = '权限确认超时：该工具已被自动拒绝，对话已暂停。'
+  })
+
+  afterEach(() => {
+    mockUseChatState.runPaused = false
+    mockUseChatState.runPauseReason = null
+    mockUseChatState.isStreaming = false
+  })
+
+  it('resume 未生效时横幅与「恢复」按钮都留在屏幕上', async () => {
+    mockAgentResume.mockResolvedValue(false)
+    await renderSession()
+    await screen.findByTestId('run-paused-banner')
+
+    fireEvent.click(within(screen.getByTestId('run-paused-banner')).getByRole('button'))
+    await act(async () => {})
+    // 暂停标记是 mock 自己改的，重新渲染一次让组件读得到点击后的状态
+    cleanup()
+    await renderSession()
+
+    // 横幅与其中的「恢复」按钮都还在：这是 run 仍停在暂停点的唯一说明与唯一入口
+    expect(within(screen.getByTestId('run-paused-banner')).getByRole('button')).toBeInTheDocument()
+  })
+
+  /**
+   * 刷新后由 /status 发现 paused 的那条路径更没有退路：此时 isStreaming=false，
+   * 顶栏根本不渲染「恢复」按钮，横幅是唯一入口——撤掉它＝run 仍停在服务端暂停点，
+   * 而页面上再没有任何能把它继续的控件，只能刷新重来。
+   */
+  it('冷启动暂停横幅：resume 未生效时横幅与「继续对话」都留着', async () => {
+    vi.mocked(sessionAPI.status).mockResolvedValue({ _tag: 'paused' } as never)
+    mockAgentResume.mockResolvedValue(false)
+    mockUseChatState.runPaused = false
+    mockUseChatState.isStreaming = false
+    await renderSession()
+    await screen.findByTestId('paused-banner')
+
+    fireEvent.click(screen.getByRole('button', { name: '继续对话' }))
+    await act(async () => {})
+
+    // 暂停态来自组件内部 state，撤掉它本身就是一次 React 重渲：横幅是否还在
+    // 直接反映 resume 有没有被受理
+    expect(screen.getByTestId('paused-banner')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('paused-banner')).getByRole('button', { name: '继续对话' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('resume')).toBeNull()
+  })
+
+  it('resume 生效后撤下横幅（不能永远挂着）', async () => {
+    mockAgentResume.mockResolvedValue(true)
+    await renderSession()
+    await screen.findByTestId('run-paused-banner')
+
+    fireEvent.click(within(screen.getByTestId('run-paused-banner')).getByRole('button'))
+    await act(async () => {})
+    cleanup()
+    await renderSession()
+
+    expect(screen.queryByTestId('run-paused-banner')).toBeNull()
   })
 })

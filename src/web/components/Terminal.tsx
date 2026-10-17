@@ -91,7 +91,11 @@ const addToChatBtnStyle = css`
   white-space: nowrap;
   transition: background 0.12s;
 
-  &:hover {
+  /* 必须与 global.ts 的
+     :where(button):hover:not(:disabled):not([aria-disabled='true']) 同形状（0,3,0）：
+     单写 &:hover（0,2,0）会被全局中性底色压掉，只剩白字落在浅灰底上
+     （实测 ≈1.14:1）——悬停时这颗「添加到对话」的按钮文字读不出来。 */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--haze-color-primary, #4a9eff);
     color: var(--c0de-primary-on-solid, #fff);
   }
@@ -125,6 +129,10 @@ export function Terminal({ ws, visible, onResize, onAddToChat, onControl }: Term
   const fitRef = useRef<FitAddon | null>(null)
   const onResizeRef = useRef(onResize)
   onResizeRef.current = onResize
+  /** 当前是否可见（fit 守卫用）。与 onResizeRef 同款：effect 依赖保持空数组，
+   *  避免每次父组件渲染都重建回调、连带重跑下面的 ws 桥接 effect。 */
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
 
   // 命令块追踪状态
   const blocksRef = useRef<CommandBlock[]>([])
@@ -147,6 +155,21 @@ export function Terminal({ ws, visible, onResize, onAddToChat, onControl }: Term
     const fit = fitRef.current
     const term = termRef.current
     if (!fit || !term) return
+    // 隐藏时一律不 fit（本文件顶部接口注释里就是这么写的，实现此前没有守卫）。
+    //
+    // 收起终端面板、切到别的标签页都会让本容器所在的子树 display:none，而
+    // ResizeObserver 在元素不再渲染时会带着 0x0 触发一次。FitAddon 量的是父元素的
+    // **计算样式**（height:100% 在未渲染子树里被解析成 100），于是算出一个个位数的
+    // cols/rows；doFit 紧接着把这份垃圾尺寸 PUT 给后端，**活着的 PTY 真的被
+    // resize 成 8x5**——隐藏期间那个进程打印的每一行都按那个宽度硬换行，
+    // 永久留在 scrollback 里（重新可见时 fit 会把 PTY 改回来，但已经错乱的输出
+    // 与重复的 prompt 重绘留在屏幕上）。
+    //
+    // 容器不可见时也拿不到尺寸：rect 为 0 同样跳过，等到 visible 副作用
+    // （visible 变 true 时的 rAF fit）或容器真正拿到尺寸后的 ResizeObserver 再算。
+    if (!visibleRef.current) return
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) return
     try {
       fit.fit()
       onResizeRef.current?.(term.cols, term.rows)

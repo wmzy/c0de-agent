@@ -40,6 +40,16 @@ export type KanbanBoardWithCards = KanbanBoard & {
   cards: KanbanCard[]
 }
 
+/**
+ * 合并恢复（回收站看板 → 现有看板）实际并入的量。标签与列、卡片同口径计数：
+ * 源板随后被物理删除，它的标签定义必须一并带过去，否则卡片上的 labelId 悬空。
+ */
+export type MergedBoardCounts = {
+  mergedColumns: number
+  mergedCards: number
+  mergedLabels: number
+}
+
 /** P2-5：回收站看板条目。 */
 export type DeletedKanbanBoard = {
   id: string
@@ -91,18 +101,18 @@ const kanbanAPI = {
   exportBoard: (projectId: string) => get<unknown>(`/api/kanban/${projectId}/export`),
   /** P2-5：回收站看板列表（项目删除软删除的看板）。 */
   deletedBoards: () => get<{ boards: DeletedKanbanBoard[] }>('/api/kanban/deleted'),
-  /** P1 修复：合并恢复回收站看板到指定项目——目标已有看板时缺失列与卡片
+  /** P1 修复：合并恢复回收站看板到指定项目——目标已有看板时缺失列、标签与卡片
    *  并入现有看板（目标无板时等价普通恢复），不再 409 死胡同。 */
   restoreDeletedBoard: (boardId: string, projectId: string) =>
-    post<{ ok: boolean; merged?: { mergedColumns: number; mergedCards: number } }>(
-      `/api/kanban/deleted/${boardId}/restore`,
-      { projectId, merge: true },
-    ),
+    post<{ ok: boolean; merged?: MergedBoardCounts }>(`/api/kanban/deleted/${boardId}/restore`, {
+      projectId,
+      merge: true,
+    }),
   /** P1 修复：重建原项目并合并恢复看板（目录仍存在时；原目录已有看板时同样合并）。 */
   restoreDeletedBoardToOriginal: (boardId: string) =>
     post<{
       ok: boolean
-      merged?: { mergedColumns: number; mergedCards: number }
+      merged?: MergedBoardCounts
       recreatedProject?: { id: string; name: string | null }
     }>(`/api/kanban/deleted/${boardId}/restore`, { rebuild: true, merge: true }),
   /** P2-5：彻底删除回收站看板（不可恢复）。 */

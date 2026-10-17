@@ -26,15 +26,34 @@ const removeBtn = css`
   position: absolute;
   top: 2px;
   right: 2px;
-  width: 18px;
-  height: 18px;
+  /* 命中区 24×24（WCAG 2.5.8）：此前 18×18，且没复位 global.ts 给裸按钮的
+     padding 8px 12px——内容区被挤成 0，12px 的 × 从圆形底里溢出来。 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.65);
   color: #fff;
   border: none;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
+
+  /*
+   * hover 必须与 global.ts 的规则同形状（:where(button):hover:not(:disabled)
+   * :not([aria-disabled])，特异度 0,3,0）：裸类的 &:hover 只有 0,2,0，会被那条
+   * 中性兜底压掉。兜底值 color-mix(bg-subtle 80%, text 8%) 的两段百分比只加到
+   * 88%，落成半透明近白底——鼠标恰停在这颗 × 上的那一刻，白字 × 彻底消失
+   * （实测 1.28:1）。同仓 TerminalPanel/PaneSplitContainer/Terminal 的破坏性
+   * 按钮已是这个口径，这里此前漏了。
+   */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--haze-color-danger);
+    color: var(--c0de-danger-on-solid, #fff);
+  }
 `
 
 const warning = css`

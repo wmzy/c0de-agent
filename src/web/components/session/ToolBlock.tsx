@@ -10,6 +10,7 @@ import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
 import { ReadToolView } from '@/components/session/tools/ReadToolView.js'
 import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
+import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
 import { WriteToolView } from '@/components/session/tools/WriteToolView.js'
 import type { RenderBlock } from '@/components/session/utils/normalizeParts.js'
 import { toolSummary } from '@/components/session/utils/toolSummary.js'
@@ -22,6 +23,22 @@ const STATUS_ICON: Record<ToolRenderBlock['status'], string> = {
   error: '✗',
   paused: '🔒',
 }
+
+/**
+ * 状态的读屏文案。⏳/✓/✗/🔒 是纯字形（多数读屏引擎读成「勾」「叉」或直接跳过），
+ * data-status/data-severity 是 DOM 属性、不进无障碍树——于是「一次 pnpm test 失败」
+ * 与「一次成功执行」在读屏下完全同形，用户没有任何信号去展开看失败原因，而失败
+ * 原因正是这块唯一有价值的内容。0cbab63 补了 aria-expanded（开还是关），这里补
+ * 「成功还是失败」。
+ */
+const STATUS_LABEL: Record<ToolRenderBlock['status'], string> = {
+  running: '执行中',
+  completed: '执行成功',
+  error: '执行失败',
+  paused: '等待权限确认',
+}
+/** 伪失败（todo/kanban 把操作级失败随 success 返回）：成功态但操作没生效。 */
+const INLINE_ERROR_LABEL = '操作未生效'
 
 const wrap = css`
   display: flex;
@@ -92,19 +109,29 @@ export const ToolBlock = memo(function ToolBlock({
 }) {
   const { tool, input, output, status: st } = block
 
+  // 「伪失败」：todo/kanban 执行器把「用户输入有误」这类操作级失败仍写成 success，
+  // 原因以 `Errors: …` 行随 output 文本返回（口径见 tools/toolError.tsx 的
+  // toolInlineErrorText）。这种结果的 status 是 completed，只看 status 会把它当成功
+  // 处理——todo 整批改动被丢弃、看板卡片原地未动，用户默认看到的却是一行「✓ todo」
+  // 折叠头，唯一说明失败的文字藏在展开态后面（92b5647 补上了渲染，没补上可见性）。
+  // 判定必须连工具名一起做（白名单见 toolError.tsx 的 INLINE_ERROR_TOOLS）：只有
+  // todo/看板真的用「Errors: 行随 success 返回」这个契约，而渲染内嵌原因的也只有
+  // 这两个视图。判定不带工具名时，一条 exit 0 的 bash（正文里有 `Error:` 行）会被
+  // 标成 ⚠ 并拒绝自动收起，却找不到任何一句解释——用户去排查一个没发生的问题。
+  const inlineError = toolInlineErrorText(output, tool)
   // 只有成功态默认折叠：失败原因（toolError）与「等待权限确认」只存在于
   // 展开态，折叠等于把用户唯一能看到的问题藏成一个 ✗/🔒 图标。
-  const [expanded, setExpanded] = useState(st !== 'completed')
+  const [expanded, setExpanded] = useState(st !== 'completed' || inlineError !== null)
   // 记录是否已自动收起过，避免覆盖用户后续的手动展开
   const [autoCollapsed, setAutoCollapsed] = useState(false)
 
   useEffect(() => {
-    // 从 running 转入成功态时，自动收起一次；error/paused 保持展开
-    if (st === 'completed' && !autoCollapsed) {
+    // 从 running 转入成功态时，自动收起一次；error/paused/伪失败保持展开
+    if (st === 'completed' && inlineError === null && !autoCollapsed) {
       setExpanded(false)
       setAutoCollapsed(true)
     }
-  }, [st, autoCollapsed])
+  }, [st, autoCollapsed, inlineError])
 
   const toggle = () => setExpanded((v) => !v)
   const onHeaderKeyDown = (e: KeyboardEvent) => {
@@ -121,6 +148,9 @@ export const ToolBlock = memo(function ToolBlock({
   // shake 模式强制展开（用户需看到完整内容判断是否 shake）
   const isExpanded = forceExpand || expanded
 
+  // 伪失败：status 是 completed，但操作级失败（见上方 inlineError 的说明）。
+  const inlineFailed = inlineError !== null && st === 'completed'
+
   return (
     <div className={wrap}>
       {/* biome-ignore lint/a11y/useSemanticElements: header 内嵌 FilePathLink(<button>)，HTML 禁止 button 嵌 button，必须用 div+role */}
@@ -130,11 +160,25 @@ export const ToolBlock = memo(function ToolBlock({
         className={`${header} ${compact ? headerCompact : ''}`}
         data-testid="tool-header"
         data-expanded={isExpanded}
+        // 折叠/展开状态必须进无障碍树：折叠头只有一个 ▸/▾ 字形，读屏读到的是
+        // 「read · src/a.ts，按钮」，完全不知道这块是开是关，只能逐个按 Enter 试。
+        // 同仓其它折叠头（LLMDetail / SessionSummary / CodeReference / 目录选择器）
+        // 都声明了 aria-expanded，唯独会话里最高频的这条漏了。
+        aria-expanded={isExpanded}
         onClick={toggle}
         onKeyDown={onHeaderKeyDown}
       >
-        <span className={icon} data-testid="tool-status" data-status={st}>
-          {STATUS_ICON[st]}
+        <span
+          className={icon}
+          data-testid="tool-status"
+          data-status={st}
+          data-severity={inlineError !== null ? 'error' : undefined}
+          // 状态必须进无障碍树（见 STATUS_LABEL 的说明）：role="img" + aria-label
+          // 让折叠头的可访问名带上状态，读屏播报「执行失败 bash · pnpm test」。
+          role="img"
+          aria-label={inlineFailed ? INLINE_ERROR_LABEL : STATUS_LABEL[st]}
+        >
+          {inlineFailed ? '⚠' : STATUS_ICON[st]}
         </span>
         <span className={summary} data-testid="tool-summary">
           {tool}
@@ -181,7 +225,7 @@ function renderTool(
     case 'kanban':
       return <KanbanToolView input={input} output={output} status={status} />
     default:
-      return <FallbackToolView tool={tool} input={input} output={output} />
+      return <FallbackToolView tool={tool} input={input} output={output} status={status} />
   }
 }
 

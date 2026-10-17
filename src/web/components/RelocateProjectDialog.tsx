@@ -57,18 +57,28 @@ export function RelocateProjectDialog({
   const submit = () => {
     const dir = directory.trim().replace(/\/+$/, '')
     if (!dir) return
+    // 在飞时回车/再点确认会排第二次 mutate（重复迁移），一并挡掉。
+    if (relocate.isPending) return
     setError(null)
     relocate.mutate(dir)
   }
 
+  // 请求在飞时不给关闭的出口（与 AddProjectDialog / DangerConfirmDialog 同口径）：
+  // 失败原因只渲染在这块面板里，中途关掉它就等于把失败原因一起关掉。
+  const dismiss = () => {
+    if (relocate.isPending) return
+    onClose()
+  }
+
   return (
     <Dialog
-      onClose={onClose}
+      onClose={dismiss}
+      closeDisabled={relocate.isPending}
       title="重新定位项目"
       testId="relocate-project-dialog"
       footer={
         <>
-          <Button onClick={onClose} variant="outline">
+          <Button onClick={dismiss} disabled={relocate.isPending} variant="outline">
             取消
           </Button>
           <Button
@@ -94,7 +104,11 @@ export function RelocateProjectDialog({
       <div className={hint}>
         项目目录已失效（被移动或重命名）。输入新目录路径后，会话与看板将整体迁移到新位置——无需删除项目，看板不会丢失。
       </div>
-      {error ? <div className={errorMsg}>{error}</div> : null}
+      {error ? (
+        <div className={errorMsg} role="alert" data-testid="relocate-project-error">
+          {error}
+        </div>
+      ) : null}
     </Dialog>
   )
 }

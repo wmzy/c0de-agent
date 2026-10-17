@@ -35,6 +35,11 @@ export interface TerminalSession extends TerminalInfo {
 /** 分屏方向。 */
 export type SplitDirection = 'horizontal' | 'vertical'
 
+/** 失败原因取服务端 message（APIError）或 Error.message，与其它失败提示同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
+
 /** 断线重连策略：指数退避，次数耗尽后判死。 */
 const MAX_RETRY = 6
 const RETRY_BASE_MS = 500
@@ -97,6 +102,34 @@ export function useTerminal(projectId: string) {
   openRef.current = open
   /** 页面加载时恢复终端会话，恢复期间阻止自动创建。 */
   const [restoring, setRestoring] = useState(true)
+  /**
+   * 恢复失败（terminalAPI.list 抛错）的原因。读不到 PTY 列表与「确实没有终端」
+   * 是两回事：此前 catch 空吞，面板显示「尚无终端」，看起来像布局已被清空。
+   */
+  const [restoreError, setRestoreError] = useState<string | null>(null)
+  /**
+   * 新建终端 / 分屏失败的原因。此前 terminalAPI.create 的 rejection 直接甩给调用方，
+   * 而调用方一律 `void` 掉：PTY 建不出来时界面纹丝不动——既没有原因，也没有可读的
+   * 失败痕迹（还顺带一条 unhandledrejection），用户只会以为「+」和分屏按钮坏了。
+   */
+  const [createError, setCreateError] = useState<string | null>(null)
+  const clearCreateError = useCallback(() => setCreateError(null), [])
+  /**
+   * 关闭终端失败的原因。DELETE /api/terminal/:id 失败时此前是空 catch + 无条件移除：
+   * pane 从界面与持久化布局里一起消失，而 PTY 进程其实还活着——runRestore 只恢复
+   * 「持久化布局 ∩ 后端存活 PTY」，于是这个终端从此没有任何入口，用户既回不去也
+   * 杀不掉它（只能重启后端或手动 kill）。失败必须保留 pane 并说明原因。
+   */
+  const [closeError, setCloseError] = useState<string | null>(null)
+  const clearCloseError = useCallback(() => setCloseError(null), [])
+  /** 恢复轮次的世代号：作废在飞的那轮（切项目 / 卸载 / 重试都会 +1）。 */
+  const restoreGenRef = useRef(0)
+  /**
+   * 本轮恢复是否因读取失败而中断。为真时持久化 effect 不得把空布局写回
+   * localStorage——那会用 sessions=[] 覆盖掉磁盘上那份还完好的布局，一次瞬时
+   * 故障就永久抹掉用户的终端分屏，而仍在后端存活的 PTY 从此没有任何入口。
+   */
+  const restoreBrokenRef = useRef(false)
 
   // ref 同步最新值供回调闭包使用
   const sessionsRef = useRef(sessions)
@@ -177,7 +210,15 @@ export function useTerminal(projectId: string) {
   /** 创建新终端会话（作为新标签页）。建立 WebSocket 连接。 */
   const createTerminal = useCallback(
     async (opts?: { cwd?: string; cols?: number; rows?: number; title?: string }) => {
-      const info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+      // 新一次尝试先清掉上一次的失败提示：按钮本身就是重试入口。
+      setCreateError(null)
+      let info: TerminalInfo
+      try {
+        info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+      } catch (err) {
+        setCreateError(`新建终端失败：${messageOf(err)}`)
+        return undefined
+      }
       const tabId = info.id // 新终端独占一个标签
       const session: TerminalSession = {
         ...info,
@@ -203,7 +244,14 @@ export function useTerminal(projectId: string) {
     const tabPanes = sessionsRef.current.filter((s) => s.tabId === tabId)
     if (tabPanes.length === 0) return undefined
 
-    const info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+    setCreateError(null)
+    let info: TerminalInfo
+    try {
+      info = await terminalAPI.create({ ...opts, projectId: projectIdRef.current })
+    } catch (err) {
+      setCreateError(`分屏失败：${messageOf(err)}`)
+      return undefined
+    }
     const session: TerminalSession = {
       ...info,
       ws: null,
@@ -342,18 +390,33 @@ export function useTerminal(projectId: string) {
     [clearConn, closeSocket, updateSession],
   )
 
-  /** 关闭终端 pane（终止 PTY 进程 + 移除）。若为标签内最后一个 pane 则关闭整个标签。 */
+  /**
+   * 关闭终端 pane（终止 PTY 进程 + 移除）。若为标签内最后一个 pane 则关闭整个标签。
+   * 返回是否真的关掉了：kill 失败时 pane 必须留在界面上（见 closeError 的说明），
+   * 调用方据此决定「关掉最后一个 pane 就收起面板」这类后续动作。
+   */
   const closeTerminal = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const session = sessionsRef.current.find((s) => s.id === id)
-      clearConn(id)
-      closeSocket(session?.ws ?? null)
+      // 新一次尝试先清掉上一次的失败提示：pane 头上的 × 本身就是重试入口。
+      setCloseError(null)
 
       try {
         await terminalAPI.kill(id)
-      } catch {
-        // PTY 可能已退出
+      } catch (err) {
+        // 服务端对「PTY 已不存在」回 404 PTY_NOT_FOUND——这正是关闭想要的结果，
+        // 按成功处理继续移除。其余失败（500 / 后端重启 / 网络不通）说明 PTY 仍在
+        // 后台运行：此时照样移除 pane，就把这个终端从界面与持久化布局里一起抹掉，
+        // 它再没有任何入口（runRestore 只恢复「持久化布局 ∩ 后端存活 PTY」）。
+        // 保留 pane 与连接（下面才断开），让用户能看见原因并重试关闭。
+        if ((err as { status?: number } | null)?.status !== 404) {
+          setCloseError(`关闭终端失败：${messageOf(err)}，该终端仍在后台运行`)
+          return false
+        }
       }
+
+      clearConn(id)
+      closeSocket(session?.ws ?? null)
 
       const tabId = session?.tabId
       // 在 setSessions 之前计算 idx 和 remainingInTab，
@@ -399,6 +462,7 @@ export function useTerminal(projectId: string) {
           setActiveTabId(uniqueTabs.length > 0 ? (uniqueTabs[uniqueTabs.length - 1] ?? null) : null)
         }
       }
+      return true
     },
     [clearConn, closeSocket],
   )
@@ -447,33 +511,39 @@ export function useTerminal(projectId: string) {
     setHeight(clamped)
     storageSet(TERMINAL_HEIGHT_KEY, String(clamped))
   }, [])
-  // ---- 恢复：projectId 变化时按项目重建终端结构 ----
-  useEffect(() => {
-    const pid = projectId
-    let cancelled = false
-    setRestoring(true)
-    // 断开当前所有 WebSocket（PTY 在后端保持存活，切回可重连）
-    for (const s of sessionsRef.current) {
-      clearConn(s.id)
-      closeSocket(s.ws)
-    }
-    // 清空当前项目状态
-    setSessions([])
-    setTabSplits({})
-    setActiveTabId(null)
-    setActivePaneId(null)
-    // 恢复该项目的面板开关状态（无记录默认关闭）
-    setOpen(loadOpen(pid))
+  /**
+   * 按项目重建终端结构。projectId 变化时自动跑一轮；恢复失败后由 retryRestore
+   * 再跑一轮（磁盘上那份布局仍在）。用世代号作废在飞的那轮，代替 effect 的
+   * cancelled 标志——重试是 effect 之外发起的第二次调用。
+   */
+  const runRestore = useCallback(
+    async (pid: string) => {
+      const gen = ++restoreGenRef.current
+      const stale = () => restoreGenRef.current !== gen
+      setRestoring(true)
+      setRestoreError(null)
+      restoreBrokenRef.current = false
+      // 断开当前所有 WebSocket（PTY 在后端保持存活，切回可重连）
+      for (const s of sessionsRef.current) {
+        clearConn(s.id)
+        closeSocket(s.ws)
+      }
+      // 清空当前项目状态
+      setSessions([])
+      setTabSplits({})
+      setActiveTabId(null)
+      setActivePaneId(null)
+      // 恢复该项目的面板开关状态（无记录默认关闭）
+      setOpen(loadOpen(pid))
 
-    void (async () => {
       const persisted = loadPersistedState(pid)
       if (!persisted?.sessions.length) {
-        if (!cancelled) setRestoring(false)
+        if (!stale()) setRestoring(false)
         return
       }
       try {
         const { terminals } = await terminalAPI.list()
-        if (cancelled) return
+        if (stale()) return
         // 后端 projectId 为权威：仅归属当前项目的存活 PTY
         const liveIds = new Set(terminals.filter((t) => t.projectId === pid).map((t) => t.id))
         const restored = persisted.sessions
@@ -490,7 +560,7 @@ export function useTerminal(projectId: string) {
           })
           .filter((s): s is TerminalSession => s !== null)
         if (restored.length === 0) {
-          if (!cancelled) setRestoring(false)
+          if (!stale()) setRestoring(false)
           return
         }
         // 重建 tabSplits，只保留仍有 pane 的 tab
@@ -519,20 +589,41 @@ export function useTerminal(projectId: string) {
             : (restored.find((s) => s.tabId === validTabId)?.id ?? null)
         setActiveTabId(validTabId)
         setActivePaneId(validPaneId)
-      } catch {
-        // 后端不可用，不恢复任何会话
+      } catch (err) {
+        // 后端不可用：不恢复任何会话，但要如实说明是「读不到」而非「没有终端」，
+        // 并且**不许**把空布局写回磁盘（见 restoreBrokenRef 的说明）。
+        if (stale()) return
+        restoreBrokenRef.current = true
+        setRestoreError(
+          err instanceof Error ? err.message : '终端列表读取失败，此前保存的终端布局未被清空',
+        )
       } finally {
-        if (!cancelled) setRestoring(false)
+        if (!stale()) setRestoring(false)
       }
-    })()
+    },
+    [clearConn, closeSocket],
+  )
+
+  // ---- 恢复：projectId 变化时按项目重建终端结构 ----
+  useEffect(() => {
+    void runRestore(projectId)
+    // 卸载或切项目时作废在飞的那轮（返回的 Promise 不能再写 state）。
     return () => {
-      cancelled = true
+      restoreGenRef.current++
     }
-  }, [projectId, clearConn, closeSocket])
+  }, [projectId, runRestore])
+
+  /** 恢复失败后的重试：重跑一轮恢复（磁盘上那份布局仍在）。 */
+  const retryRestore = useCallback(() => {
+    void runRestore(projectIdRef.current)
+  }, [runRestore])
 
   // ---- 持久化：sessions/tabSplits/active 变化时写入 localStorage ----
   useEffect(() => {
     if (restoring) return
+    // 本轮恢复读取失败：当前 sessions 是「清空后的空壳」而非用户的真实布局，
+    // 写回磁盘等于把还完好的那份布局永久覆盖掉。跳过，等重试成功再说。
+    if (restoreBrokenRef.current) return
     savePersistedState(
       {
         sessions: sessions.map((s) => ({ id: s.id, tabId: s.tabId })),
@@ -570,6 +661,12 @@ export function useTerminal(projectId: string) {
     height,
     open,
     restoring,
+    restoreError,
+    retryRestore,
+    createError,
+    clearCreateError,
+    closeError,
+    clearCloseError,
     setActiveTabId,
     setActivePaneId,
     createTerminal,
