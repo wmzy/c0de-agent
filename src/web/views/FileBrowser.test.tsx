@@ -5,7 +5,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fileAPI } from '@/services/file.js'
 import type { FileEntry } from '@/types/index.js'
@@ -389,13 +389,13 @@ describe('FileBrowser 删除确认', () => {
  * （侧栏会话搜索已按同一口径复位，文件面板此前漏了）。
  */
 describe('FileBrowser 切项目复位', () => {
-  function renderSwitchable(initialProjectId: string) {
+  function renderSwitchable(initialProjectId: string, onDelete?: (path: string) => void) {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     })
     const ui = (projectId: string) => (
       <QueryClientProvider client={qc}>
-        <FileBrowser projectId={projectId} onPick={vi.fn()} />
+        <FileBrowser projectId={projectId} onPick={vi.fn()} onDelete={onDelete} />
       </QueryClientProvider>
     )
     const view = render(ui(initialProjectId))
@@ -463,5 +463,100 @@ describe('FileBrowser 切项目复位', () => {
     await waitFor(() => expect(screen.getByTestId('node-src')).toBeInTheDocument())
     expect(screen.queryByTestId('node-src/only-in-p1.ts')).toBeNull()
     expect(fileAPI.list).not.toHaveBeenCalledWith('src', 'p2')
+  })
+
+  /**
+   * 回归：confirmDelete 在 await 成功后无条件落地 setTreeRoot(removeNode)/
+   * onDelete。删除请求在途时切项目（确认弹层虽随切换关闭，本函数已在途），而
+   * path 是项目内相对路径：removeNode 会把**新项目**树里的同路径节点一并抹掉，
+   * 并对新项目触发 onDelete——用户在 A 项目删文件，B 项目的同名文件从界面消失。
+   */
+  it('删除在途时切项目：成功后不动新项目的树、不对新项目触发 onDelete', async () => {
+    let resolveDelete: ((v: { path: string; trashed: boolean }) => void) | undefined
+    vi.mocked(fileAPI.delete).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDelete = resolve
+      }),
+    )
+    const onDelete = vi.fn()
+    const switchTo = renderSwitchable('p1', onDelete)
+
+    await screen.findByTestId('node-package.json')
+    fireEvent.click(screen.getByTestId('delete-package.json'))
+    fireEvent.click(screen.getByTestId('file-delete-confirm'))
+    await waitFor(() => expect(fileAPI.delete).toHaveBeenCalledWith('package.json', 'p1'))
+
+    // 删除在途时切到 p2：p2 也有自己的 package.json（根目录清单相同）
+    switchTo('p2')
+    await screen.findByTestId('node-package.json')
+
+    await act(async () => {
+      resolveDelete?.({ path: 'package.json', trashed: true })
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 新项目的同名文件不被抹掉，onDelete 也不落到新项目头上
+    expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 回归：reveal 循环持有的是**发起时**的 loadChildren 闭包（内部固定发起时的
+   * projectId），迭代之间隔着 await——切项目插进循环中间后，上一次 loadChildren
+   * 的清单因世代不符被丢弃（gen 是发起时捕获的），循环却继续调下一次
+   * loadChildren：它是切换**之后**才发起的，内部读到的是新世代、响应落地校验
+   * 通过，旧项目的目录清单写进新项目的树并被缓存（handleToggle 只在
+   * children === undefined 时加载，外来清单就此钉死到刷新为止）。
+   */
+  it('reveal 定位在途切项目：循环不得用旧闭包把旧项目的深层目录写进新项目的树', async () => {
+    let resolveP1Src: ((entries: FileEntry[]) => void) | undefined
+    vi.mocked(fileAPI.list).mockImplementation(async (dir: string, projectId?: string) => {
+      if (dir === '.') return ROOT_ENTRIES
+      if (dir === 'src' && projectId === 'p1') {
+        return new Promise<FileEntry[]>((resolve) => {
+          resolveP1Src = resolve
+        })
+      }
+      if (dir === 'src' && projectId === 'p2') {
+        return [
+          { name: 'nested', type: 'directory' },
+          { name: 'b.ts', type: 'file' },
+        ]
+      }
+      if (dir === 'src/nested' && projectId === 'p1')
+        return [{ name: 'only-in-p1.ts', type: 'file' }]
+      if (dir === 'src/nested' && projectId === 'p2')
+        return [{ name: 'only-in-p2.ts', type: 'file' }]
+      return []
+    })
+    vi.mocked(fileAPI.search).mockResolvedValue([{ path: 'src/nested', type: 'directory' }])
+
+    const switchTo = renderSwitchable('p1')
+    // 先等根目录就绪（reveal 依赖 treeRoot 判断哪些祖先未加载），再搜索并点目录结果
+    await screen.findByTestId('node-src')
+    fireEvent.change(await screen.findByTestId('file-search'), { target: { value: 'nest' } })
+    fireEvent.click(await screen.findByTestId('file-src/nested'))
+    // reveal 第一层：list('src','p1') 发出并保持在途
+    await waitFor(() => expect(resolveP1Src).toBeDefined())
+
+    // 在途切到 p2，并在新项目里展开 src（新项目的 src 子项即时返回，含 nested）
+    switchTo('p2')
+    await screen.findByTestId('node-src')
+    fireEvent.click(screen.getByTestId('node-src'))
+    await screen.findByTestId('node-src/nested')
+
+    // 旧项目 src 的响应现在才回来（世代不符，清单本身已被丢弃）
+    await act(async () => {
+      resolveP1Src?.([{ name: 'nested', type: 'directory' }])
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // 循环不得继续用旧闭包按 p1 拉深层目录——那是切项目后才发起的请求，
+    // 世代校验拦不住它，p1 的清单会写进 p2 的树并被缓存
+    expect(fileAPI.list).not.toHaveBeenCalledWith('src/nested', 'p1')
+    // p2 的 src/nested 仍是「未加载」：展开时按新项目拉取
+    fireEvent.click(screen.getByTestId('node-src/nested'))
+    await screen.findByTestId('node-src/nested/only-in-p2.ts')
+    expect(screen.queryByTestId('node-src/nested/only-in-p1.ts')).toBeNull()
   })
 })

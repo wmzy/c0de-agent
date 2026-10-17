@@ -288,6 +288,15 @@ describe('KanbanToolView 失败结果', () => {
     expect(screen.queryByTestId('tool-inline-error')).toBeNull()
     expect(screen.queryByTestId('tool-error')).toBeNull()
   })
+
+  // 回归：running 态（tool_result 还没到）此前整块只剩一行 `kanban/view` op 名——
+  // 折叠头是「⏳ 执行中」，展开正文却什么都没有。与 todo 同口径（上方 TodoToolView
+  // 的执行中用例）：没有结果就说还在执行，绝不把「还没拿到」讲成关于内容的结论。
+  it('执行中（结果未到达）时不只剩 op 名，说明看板随结果返回', () => {
+    render(<KanbanToolView input={{ op: 'view' }} status="running" output={undefined} />)
+    expect(screen.getByText('kanban/view')).toBeInTheDocument()
+    expect(screen.getByTestId('kanban-running')).toHaveTextContent('执行中')
+  })
 })
 
 describe('TaskToolView 批量子 agent 状态', () => {

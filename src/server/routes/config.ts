@@ -325,8 +325,14 @@ function createConfigRoute(ctx: ServerContext): Hono {
         ? (patch.permission as Record<string, unknown>)
         : null
     const permissionNeedsRestart =
-      permissionPatch !== null &&
-      ('timeoutMs' in permissionPatch || 'expireGraceMs' in permissionPatch)
+      // patch.permission === null 是整段删除（JSON 视图 "permission": null 的 unset
+      // 语义）：applyScopedPatch 删段后 timeoutMs/expireGraceMs 随段落消失回落默认值，
+      // 但运行中的 permissionStore 仍持启动值（超时定时器不重建）——与改
+      // timeoutMs 不重启不生效同害，却因 permissionPatch 先排除 null 而不触发提示。
+      // 与 security: null（patch.security !== undefined 命中）同口径计入。
+      patch.permission === null ||
+      (permissionPatch !== null &&
+        ('timeoutMs' in permissionPatch || 'expireGraceMs' in permissionPatch))
     const needsRestart =
       (isServerCwdProject || scope === 'global') &&
       (patch.security !== undefined ||

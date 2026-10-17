@@ -495,7 +495,15 @@ export function FileBrowser({
     setDeleting(true)
     setDeleteError(null)
     try {
+      // 发起前记下树世代：删除请求在途时可能切了项目（确认弹层虽随切换关闭，
+      // 本函数已在途）。path 是项目内相对路径，成功后无条件落地会把**新项目**
+      // 树里的同路径节点一并抹掉、并对新项目触发 onDelete——用户在 A 项目删
+      // 文件，B 项目的同名文件却从界面消失。
+      const gen = treeGenRef.current
       await fileAPI.delete(path, projectId)
+      // 世代已变（删除在途时切换了项目）：落盘发生在旧项目，树更新与回调只该
+      // 属于旧项目，对新项目一律不落地。
+      if (gen !== treeGenRef.current) return
       setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
       onDelete?.(path)
       if (isSearch) refetchSearch()
@@ -541,8 +549,21 @@ export function FileBrowser({
         next.add(dirPath)
         return next
       })
+      // reveal 循环持有的是**发起时**的 loadChildren 闭包（内部固定发起时的
+      // projectId），迭代之间又隔着 await，「切项目」正好插进循环中间：上一次
+      // loadChildren 的清单因世代不符被丢弃（它的 gen 是发起时捕获的），循环却
+      // 继续走到下一层目录——这一次 loadChildren 是切换**之后**才调用的，内部
+      // 读到的已是新世代、响应落地校验通过，旧 projectId 拉来的目录清单于是写进
+      // 新项目的树并被缓存（handleToggle 只在 children === undefined 时加载，
+      // 这份外来清单就此钉死到刷新为止）。故每次 await 后比对世代，不符即终止
+      // 整条 reveal 链。
       for (const dir of [...chain, dirPath]) {
-        if (treeRoot && findNode(treeRoot, dir)?.children === undefined) await loadChildren(dir)
+        if (treeRoot && findNode(treeRoot, dir)?.children === undefined) {
+          const gen = treeGenRef.current
+          await loadChildren(dir)
+          // 等待期间切换了项目：后续祖先/目标目录的加载属于上一个项目，不再继续。
+          if (gen !== treeGenRef.current) return
+        }
       }
     },
     [treeRoot, loadChildren],

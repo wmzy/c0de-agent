@@ -451,10 +451,28 @@ describe('终端恢复失败不得抹掉磁盘上的布局', () => {
     await act(async () => {})
     await act(async () => {})
 
-    expect(result.current.restoreError).toBeTruthy()
+    expect(result.current.restoreError).toBe('db is locked')
     const raw = localStorage.getItem('c0de-agent:terminalSessions:projA')
     const parsed = JSON.parse(raw ?? '{}') as { sessions?: unknown[] }
     expect(parsed.sessions).toHaveLength(2)
+  })
+
+  /**
+   * 失败原因走 messageOf：fetch 层抛的 APIError 形态是带 message 的普通对象
+   * （见 kill 用例的 { status: 500, message: … }），并非 Error 实例。恢复路径
+   * 此前的 `err instanceof Error ? err.message : 笼统文案` 会把它整个吞进
+   * 「终端列表读取失败…」——与 createError/closeError 的 messageOf 口径不一致，
+   * 服务端明明说了原因（500 的 message），用户看到的却是一句万能话。
+   */
+  it('list 失败抛 APIError 形态对象时，服务端 message 原样透出', async () => {
+    seedLayout('projA', ['pty_A'])
+    mockList.mockRejectedValueOnce({ status: 500, message: '终端服务不可达' })
+
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    await act(async () => {})
+
+    expect(result.current.restoreError).toBe('终端服务不可达')
   })
 
   it('重试成功后布局恢复、错误清除，磁盘内容仍完整', async () => {

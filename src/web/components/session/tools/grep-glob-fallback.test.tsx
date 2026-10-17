@@ -58,6 +58,22 @@ describe('GrepToolView', () => {
     expect(screen.queryByTestId('tool-match-truncated')).toBeNull()
     expect(screen.queryByTestId('tool-match-empty')).toBeNull()
   })
+
+  // 回归（matchSummary）：count 缺失/非数字（metadata 是原样落库的未受信 JSON）时，
+  // 旁白此前拼出「已截断：仅显示前  条匹配」的双空格残句。count 无效时不拼数目段。
+  it('截断但 count 缺失时不渲染双空格残句', () => {
+    render(
+      <GrepToolView
+        input={{ pattern: 'foo' }}
+        output={{ _tag: 'success', output: 'a.ts:1:foo', metadata: { truncated: true } }}
+        status="completed"
+      />,
+    )
+    const note = screen.getByTestId('tool-match-truncated')
+    expect(note).toHaveTextContent('已截断')
+    expect(note.textContent).not.toContain('仅显示前')
+    expect(note.textContent).not.toMatch(/ {2}/)
+  })
 })
 
 describe('GlobToolView', () => {
@@ -84,6 +100,25 @@ describe('GlobToolView', () => {
     )
     expect(screen.getByTestId('tool-match-empty')).toHaveTextContent('没有匹配')
     expect(screen.queryByTestId('tool-output')).toBeNull()
+  })
+
+  // 同 grep：count 非数字（脏 metadata）时不拼「前 N 条」段，不说数目也不留空占位。
+  it('截断但 count 非数字时不渲染双空格残句', () => {
+    render(
+      <GlobToolView
+        input={{ pattern: '*.ts' }}
+        output={{
+          _tag: 'success',
+          output: 'a.ts\nb.ts',
+          metadata: { truncated: true, count: '200' },
+        }}
+        status="completed"
+      />,
+    )
+    const note = screen.getByTestId('tool-match-truncated')
+    expect(note).toHaveTextContent('已截断')
+    expect(note.textContent).not.toContain('仅显示前')
+    expect(note.textContent).not.toMatch(/ {2}/)
   })
 })
 

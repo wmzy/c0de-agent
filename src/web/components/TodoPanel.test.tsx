@@ -126,7 +126,9 @@ describe('TodoPanel 新增任务失败时的输入', () => {
     fireEvent.change(input, { target: { value: '补一条回归测试' } })
     fireEvent.click(screen.getByRole('button', { name: '添加' }))
 
-    expect(await screen.findByText(/待办服务不可用/)).toBeInTheDocument()
+    // 失败红字要以 alert 角色读出来（口径同 todo-load-error）：新增/导出等所有
+    // setError 生产者都汇入这一行，漏了 role 屏幕阅读器只会静默滑过它。
+    expect(await screen.findByRole('alert')).toHaveTextContent('待办服务不可用')
     expect((screen.getByLabelText('任务描述') as HTMLInputElement).value).toBe('补一条回归测试')
   })
 

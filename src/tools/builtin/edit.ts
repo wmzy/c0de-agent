@@ -57,12 +57,24 @@ export const editTool: ToolDef = {
         // web 端 EditToolView 此前只能渲染 oldText='' / newText='' 的空 diff——一次
         // 真实落盘的编辑在时间线上是一块空白，用户看不出改了什么。
         const hunks: PatchHunk[] = []
+        // 多块补丁的行号补偿：applyPatch 回调报告的 hunk 行号相对**本块应用前的
+        // 文件**，第 2 块起是中间态坐标（例：块1 DEL 1-10 后，中间态第 50 行在
+        // 原文件是第 60 行）。而 web 端把全部 hunks 放进同一坐标系按 start 升序拼
+        // `@@ start-end @@` 标记——不补偿则标记指向错误行号。每块应用前记 delta
+        // （前面各块 removed-added 的累计和，即前面块造成的行数净减），回调里
+        // start/end += delta 把每块行号统一换算回原文件坐标。
+        let delta = 0
         for (const p of patches) {
-          const r: ApplyResult = applyPatch(current, p, (hunk) => hunks.push(hunk))
+          let blockDelta = 0
+          const r: ApplyResult = applyPatch(current, p, (hunk) => {
+            hunks.push({ ...hunk, start: hunk.start + delta, end: hunk.end + delta })
+            blockDelta += hunk.removed.length - hunk.added.length
+          })
           if (r._tag !== 'success') {
             return { _tag: 'error', error: formatHashlineError(path, r) }
           }
           current = r.content
+          delta += blockDelta
         }
         await writeFile(fullPath, current, 'utf-8')
         return {

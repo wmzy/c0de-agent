@@ -32,6 +32,33 @@ describe('EditToolView', () => {
     )
     expect(screen.getByTestId('tool-error')).toHaveTextContent('not found')
   })
+
+  // 回归：视图分支判定此前是 `'patch' in input`，执行器（edit.ts）是
+  // `'patch' in raw && typeof raw.patch === 'string'`——病态入参（非字符串 patch +
+  // oldText/newText）执行器按 diff 模式落盘，视图却被领进 hashline 分支不画 diff。
+  // 判定必须与执行器同口径。
+  it('patch 非字符串时按 diff 模式渲染（与执行器同判定），不进 hashline 分支', () => {
+    render(
+      <EditToolView
+        input={{ path: 'a.ts', patch: { junk: true }, oldText: 'old', newText: 'new' } as never}
+        status="completed"
+        output={{ _tag: 'success', output: 'Edited "a.ts": replaced 3 chars with 3 chars' }}
+      />,
+    )
+    expect(screen.getByTestId('diff')).toBeInTheDocument()
+    expect(screen.queryByTestId('edit-hashline-output')).toBeNull()
+    const rows = screen.getByTestId('diff').querySelectorAll('[data-slot="line"]')
+    const text = (r: Element) =>
+      r.querySelector('[data-slot="line-text"]')?.textContent ?? r.textContent
+    const removed = Array.from(rows)
+      .filter((r) => r.querySelector('[data-slot="sign"]')?.textContent?.startsWith('-'))
+      .map(text)
+    const added = Array.from(rows)
+      .filter((r) => r.querySelector('[data-slot="sign"]')?.textContent?.startsWith('+'))
+      .map(text)
+    expect(removed[0]).toContain('old')
+    expect(added[0]).toContain('new')
+  })
 })
 
 /**

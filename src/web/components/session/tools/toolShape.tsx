@@ -24,13 +24,17 @@ const notice = css`
   color: var(--haze-color-warning);
 `
 
-/** 有条目被丢弃（或整体形状读不出来）时的可见声明。 */
+/** 有条目被丢弃（或整体形状读不出来）时的可见声明。
+ *
+ *  消费方（Todo/Kanban 视图）从不渲染 output 文本——此前文案承诺「原始结果见
+ *  下方输出」，用户顺着指引往下一看什么都没有。指引必须只指向真实存在的内容：
+ *  明说「未随本视图展示」。 */
 export function ShapeNotice({ dropped }: { dropped: number }) {
   return (
     <div className={notice} data-testid="tool-shape-notice">
       {dropped > 0
-        ? `有 ${dropped} 项内容格式异常，已跳过（原始结果见下方输出）`
-        : '结果格式异常，无法解析（原始结果见下方输出）'}
+        ? `有 ${dropped} 项内容格式异常，已跳过（原始结果未随本视图展示）`
+        : '结果格式异常，无法解析（原始结果未随本视图展示）'}
     </div>
   )
 }
@@ -139,9 +143,14 @@ export type BoardLike = {
   }[]
 }
 
-/** tool_result.metadata.phases → 可渲染的阶段列表（畸形 phase/task 整条丢弃）。 */
+/** tool_result.metadata.phases → 可渲染的阶段列表（畸形 phase/task 整条丢弃）。
+ *
+ *  phases 缺失（undefined/null）同样按 malformed 处理：todo 执行器无条件写
+ *  metadata.phases（src/tools/builtin/todo.ts 的 success 返回），成功结果里没有
+ *  phases 只能是脏数据——此前返回合法空态会让 TodoToolView 渲染
+ *  "Todo list is empty."，把「读不出来」说成「待办为空」，正违反本文件的口径。
+ *  合法的空待办是执行器显式写出的 `phases: []`，仍走正常空态。 */
 export function wellFormedPhases(raw: unknown): Sanitized<TodoPhaseLike[]> {
-  if (raw === undefined || raw === null) return { value: [], dropped: 0, malformed: false }
   if (!Array.isArray(raw)) return { value: [], dropped: 0, malformed: true }
   let dropped = 0
   const phases: TodoPhaseLike[] = []

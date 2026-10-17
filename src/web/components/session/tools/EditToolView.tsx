@@ -77,9 +77,12 @@ export function EditToolView({
   }
   // hashline 模式没有 oldText/newText：此前落到下面渲染 oldText='' / newText='' 的
   // 空 diff——一次真实落盘的编辑在时间线上是一块空白，用户据此以为没改成。
+  // 判定必须与执行器同口径（edit.ts：`'patch' in raw && typeof raw.patch === 'string'`）：
+  // 只看 `'patch' in input` 会把「非字符串 patch + oldText/newText」的病态入参也领进
+  // hashline 分支——执行器实际按 diff 模式落盘了，时间线却不画 diff。
   // `'patch' in input` 对非对象 input（模型把 arguments 写成 `"ls"` 这类）会抛
   // TypeError，先收敛成对象再判定。
-  if (isRecord(input) && 'patch' in input) {
+  if (isRecord(input) && 'patch' in input && typeof input.patch === 'string') {
     const hunks =
       output?._tag === 'success'
         ? wellFormedHunks((output.metadata as { hunks?: unknown } | undefined)?.hunks)

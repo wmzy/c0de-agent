@@ -62,6 +62,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // 执行，写进更新器会让同一拒绝请求发出两次。
   const permissionTimeoutRef = useRef<ChatState['permissionTimeout']>(null)
   permissionTimeoutRef.current = state.permissionTimeout
+  // 超时横幅「拒绝并继续」的在途锁（同步 ref，渲染路径不可见）：双击的第二击在
+  // denyTimedOutPermission 入口直接 no-op——时序与理由见该函数内的注释。
+  const denyPendingRef = useRef(false)
   // P1 后台附着：流式/附着态镜像 + 轮询代数与定时器。
   const streamingRef = useRef(false)
   const attachedRef = useRef(false)
@@ -435,6 +438,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       const pending = pendingRef.current
       if (!pending) return
       pendingRef.current = null
+      // 本次确认所属世代：压缩可走 LLM 摘要、窗口以秒计，请求飞在路上时用户切到
+      // B（genRef 递增）后，迟到的 compactError/isStreaming 会写进 B 的状态，随后
+      // 的 doStream 又在调用时才捕获 genRef.current（新世代）、isStale() 恒 false
+      // ——A 的重发 SSE 会整段归约进 B 的时间线。与 steer/abort 同款：入口记世代，
+      // 每个 await 之后、写 state/doStream 之前比对，不一致即弃（B 的状态由切会话
+      // 时的 INITIAL 重置与它自己的请求决定）。
+      const gen = genRef.current
       // 用户显式选择了「顺便压缩会话」：这条路必须兑现或明确说没兑现。
       // 此前 compact 的返回值被丢弃、catch 只 console.error——压缩没发生也照常重发，
       // 旧上下文没被摘要、新段按未压缩上下文计费，且同一段边界会再次弹层，用户只
@@ -443,6 +453,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (withCompaction) {
         try {
           const result = await sessionAPI.compact(sessionId)
+          if (genRef.current !== gen) return
           if (!result.compacted) {
             const why = result.reason
               ? (COMPACTION_SKIP_REASON[result.reason] ?? result.reason)
@@ -450,6 +461,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             compactError = `会话未压缩：${why}，已按未压缩内容继续开新段`
           }
         } catch (err) {
+          if (genRef.current !== gen) return
           compactError = `会话压缩失败：${
             err instanceof Error ? err.message : String(err)
           }，已按未压缩内容继续开新段`
@@ -489,12 +501,20 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     const pending = pendingTrustRef.current
     if (!pending) return
     pendingTrustRef.current = null
+    // 本次确认所属世代：trust 请求飞在路上时用户切到 B（genRef 递增）后，迟到的
+    // 写入全部属于 A——失败分支把 A 的信任弹窗（pendingTrust/trustError/error）
+    // 原样弹在 B 上；成功分支随后的 doStream 又在调用时才捕获 genRef.current（新
+    // 世代）、isStale() 恒 false，A 的重发 SSE 会整段归约进 B 的时间线。与
+    // steer/abort 同款：入口记世代，每个 await 之后、写 state/doStream 之前比对，
+    // 不一致即弃。
+    const gen = genRef.current
     // 在飞期间弹窗内禁用按钮并禁止关闭：否则连点会重复发 trust 请求，或用户按 Esc
     // 把弹窗连同失败原因一起卸载。
     setState((s) => ({ ...s, trustPending: true, trustError: null }))
     try {
       await projectAPI.trust(pending.projectId)
     } catch (err) {
+      if (genRef.current !== gen) return
       // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消。
       // 原因写进 trustError（渲染在弹窗内部），同时保留 error 供会话区横幅兜底。
       const message = `信任项目失败：${err instanceof Error ? err.message : String(err)}`
@@ -508,6 +528,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       }))
       return
     }
+    if (genRef.current !== gen) return
     setState((s) => ({
       ...s,
       isStreaming: true,
@@ -761,6 +782,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
    *  的「重新询问 / 拒绝并继续」——已经消失，用户零反馈、以为工具已被拒绝。
    *  与 confirm() 同口径读响应结果：只有确认送达才收起横幅。 */
   const denyTimedOutPermission = useCallback(() => {
+    // 在途防重入（与 composer 的 steerPendingRef 同款同步 ref）：按钮没有暴露
+    // pending 给渲染（也就没有 disabled），双击的第二击到达时第一击的拒绝还在飞、
+    // permissionTimeout 尚未被清空——若照常发请求，服务端 pending 已被第一击消费
+    // → 404 → 走「已被处理/已中止」分支写出与事实相悖的 error 横幅（实际拒绝已
+    // 送达、run 正常继续）。第二击 no-op，第一击的结论落地后横幅自然收起/保留。
+    if (denyPendingRef.current) return
     const timedOut = permissionTimeoutRef.current
     if (!timedOut) {
       // 没有待处理的超时态（重复点击等）：无请求要发，直接清空。
@@ -771,31 +798,39 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     // 本次拒绝所属世代：请求在途时切走会话后，成功「收起横幅」或失败原因都不该
     // 落到新会话上（新会话超时态由它自己的 /status 决定）。
     const gen = genRef.current
-    void agentAPI.confirmTool(toolCallId, false).then(
-      () => {
-        if (genRef.current !== gen) return
-        setState((s) => ({ ...s, permissionTimeout: null }))
-      },
-      (err) => {
-        if (genRef.current !== gen) return
-        const e = err as { status?: number }
-        if (e?.status === 404) {
-          // 已被处理（其他标签页确认/拒绝）或 run 已中止：工具不会执行，超时态可清。
-          setState((s) => ({
-            ...s,
-            permissionTimeout: null,
-            error: '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
-          }))
-        } else {
-          // 拒绝没送达：服务端 pending 仍在、工具还在等你的决定。保留超时态，
-          // 横幅的两个入口继续可用，用户可以再拒绝一次。
-          setState((s) => ({
-            ...s,
-            error: '权限拒绝没有送达，工具仍在等待你的决定。请重试。',
-          }))
-        }
-      },
-    )
+    denyPendingRef.current = true
+    void agentAPI
+      .confirmTool(toolCallId, false)
+      .then(
+        () => {
+          if (genRef.current !== gen) return
+          setState((s) => ({ ...s, permissionTimeout: null }))
+        },
+        (err) => {
+          if (genRef.current !== gen) return
+          const e = err as { status?: number }
+          if (e?.status === 404) {
+            // 已被处理（其他标签页确认/拒绝）或 run 已中止：工具不会执行，超时态可清。
+            setState((s) => ({
+              ...s,
+              permissionTimeout: null,
+              error: '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
+            }))
+          } else {
+            // 拒绝没送达：服务端 pending 仍在、工具还在等你的决定。保留超时态，
+            // 横幅的两个入口继续可用，用户可以再拒绝一次。
+            setState((s) => ({
+              ...s,
+              error: '权限拒绝没有送达，工具仍在等待你的决定。请重试。',
+            }))
+          }
+        },
+      )
+      // 在途锁随请求结论归位：失败（非 404）时横幅保留、用户要能再拒一次；切会话
+      // （世代不符提前 return）也照样归位，不把锁死留给下一条会话。
+      .finally(() => {
+        denyPendingRef.current = false
+      })
   }, [])
 
   /** P1：附着结束——停止轮询、复位附着态并刷新消息/调用详情。 */

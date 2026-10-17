@@ -594,9 +594,7 @@ export function useTerminal(projectId: string) {
         // 并且**不许**把空布局写回磁盘（见 restoreBrokenRef 的说明）。
         if (stale()) return
         restoreBrokenRef.current = true
-        setRestoreError(
-          err instanceof Error ? err.message : '终端列表读取失败，此前保存的终端布局未被清空',
-        )
+        setRestoreError(messageOf(err))
       } finally {
         if (!stale()) setRestoring(false)
       }

@@ -553,6 +553,14 @@ function createSessionRoute(ctx: ServerContext): Hono {
           targetProject = project
         }
       }
+    } else if (session?.projectId) {
+      // 目标会话已有归属（典型：恢复到 P2 的子会话，连带还原的祖先仍无归属——
+      // 属已删的 P1 或本来就是孤儿）。此前 targetProject 恒为 null，
+      // rebindUnboundSessions 整个被跳过：祖先保持 projectId=null，侧栏按根会话
+      // projectId 过滤整棵树 ⇒ 恢复结果在目标所属项目里不可达，adoptedCount=0
+      // 也无任何提示。由 session.projectId 反查落定项目（FK 保证行存在，查不到
+      // 则维持旧行为不动）；已有归属的会话在 rebindUnboundSessions 内部天然跳过。
+      targetProject = await getProject(ctx.db, session.projectId)
     }
     // P2-2 可达性：恢复只给目标会话落了归属，而删除项目留下的孤儿是**整批**的
     // ——连带还原的祖先（以及同批次后代）仍是 projectId=null。侧栏按根会话

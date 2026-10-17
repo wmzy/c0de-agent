@@ -58,6 +58,9 @@ export function isPatchEmpty(patch: Record<string, unknown>): boolean {
 /** 参与「留空 = 不修改」判定的密钥字段（与 ApiKeyInput 的使用点一一对应）。 */
 const WEBSEARCH_SECRET_KEYS = ['tavilyApiKey', 'braveApiKey'] as const
 
+/** provider 下标漂移（另一客户端并发删行/重排）时阻断保存的提示，由 Settings 写进保存反馈。 */
+const PROVIDERS_DRIFTED_MESSAGE = 'provider 列表已被其他客户端修改，请刷新后重试'
+
 /**
  * provider 行的客户端身份标记。
  *
@@ -80,6 +83,20 @@ const WEBSEARCH_SECRET_KEYS = ['tavilyApiKey', 'braveApiKey'] as const
  */
 export const PROVIDER_ROW_ID: unique symbol = Symbol('c0de.providerRowId')
 
+/**
+ * provider 行的「来源行身份快照」：挂标记时一并记下该行的 name/baseURL。
+ *
+ * PROVIDER_ROW_ID 按下标全局唯一，这让「改名后仍认回原行」在配置重取后依然
+ * 成立——但也让身份在**下标漂移**时失真：另一客户端并发删行/重排后，Settings
+ * 的 refetchOnWindowFocus 重取回来的同一下标已是另一台 provider。草稿里清空
+ * 密钥的行按 symbol 仍能配上：外部是重排时恢复的是别家的 enc: 密文（静默
+ * 继承）；下标被删掉配不上时 apiKey:'' 原样进 patch，把磁盘上同一行的密文覆盖
+ * 成空串（不可逆密钥丢失）。快照与标记同款手法挂在行上、随 `{…row}` 展开跟着
+ * 草稿行走，restoreClearedSecrets 按 symbol 配对后再比对当前已保存行的
+ * name/baseURL 与快照——不一致即下标漂移，拒配并阻断保存。
+ */
+const PROVIDER_ROW_ORIGIN: unique symbol = Symbol('c0de.providerRowOrigin')
+
 /** 给已加载配置里的 provider 行挂身份标记；已有标记的行不动（幂等）。 */
 export function tagProviderRowIds(rows: unknown): void {
   if (!Array.isArray(rows)) return
@@ -88,6 +105,9 @@ export function tagProviderRowIds(rows: unknown): void {
     const tagged = row as Record<PropertyKey, unknown>
     if (typeof tagged[PROVIDER_ROW_ID] === 'symbol') return
     tagged[PROVIDER_ROW_ID] = Symbol.for(`c0de.providerRow@${index}`)
+    // 身份快照与标记同批挂上：草稿行经 {…row} 展开脱离 config 时一并带走，
+    // 供恢复密钥时校验「symbol 配上的那行还是不是当初这行」（见上）。
+    tagged[PROVIDER_ROW_ORIGIN] = { name: row.name, baseURL: row.baseURL }
   })
 }
 
@@ -106,12 +126,17 @@ export function tagProviderRowIds(rows: unknown): void {
  * 标记的行按身份配对（改名字、改 URL 都还是同一行）；没有标记的行（用户新加的、
  * JSON 导入的）退回「同下标 + 同名」——否则「删掉第一行再新增一行」会让新增行的
  * 空密钥继承上一行的密文。
+ *
+ * 漂移防护：带标记的行按 symbol 配对后还要过 PROVIDER_ROW_ORIGIN 快照校验；配不上
+ * 或快照不符（另一客户端并发删行/重排，见其说明）时返回 error，调用方必须阻断
+ * 保存——既不能还原别家的密文，也不能让空 key 覆盖磁盘密文。
  */
 export function restoreClearedSecrets(
   saved: Record<string, unknown>,
   draft: Record<string, unknown>,
-): { draft: Record<string, unknown>; restored: number } {
+): { draft: Record<string, unknown>; restored: number; error?: string } {
   let restored = 0
+  let drifted = false
   const next = { ...draft }
 
   const draftSearch = draft.websearch
@@ -154,11 +179,36 @@ export function restoreClearedSecrets(
               savedRow.name === provider.name
             ? savedRow
             : undefined
-      if (!isPlainObject(prev)) return provider
+      if (!isPlainObject(prev)) {
+        // 带标记的行连 symbol 都配不上：不是「这行本来就没有密钥」（那种情况在
+        // 下方 prev.apiKey 判空处返回），而是它在已保存列表里的下标连同身份一起
+        // 消失了——另一客户端删行让数组变短。此时密文退不回去，apiKey:'' 却会
+        // 原样进 patch，数组整体提交后把磁盘上同一行的 enc: 密文覆盖成空串。
+        // 标记为漂移，由下方 error 阻断整次保存。
+        if (typeof rowId === 'symbol') drifted = true
+        return provider
+      }
+      // 漂移校验：symbol 配上了 ≠ 还是同一行。Symbol.for 按下标全局唯一，另一
+      // 客户端删行/重排后重取，同一下标已是另一台 provider——此时还原密文是把
+      // 别家的 enc: 塞进这行（静默继承），不还原则空 key 覆盖磁盘密文；两种都
+      // 不可接受，按快照拒配并阻断整次保存（见 PROVIDER_ROW_ORIGIN）。
+      const origin = (provider as Record<PropertyKey, unknown>)[PROVIDER_ROW_ORIGIN]
+      if (
+        typeof rowId === 'symbol' &&
+        isPlainObject(origin) &&
+        (prev.name !== origin.name || prev.baseURL !== origin.baseURL)
+      ) {
+        drifted = true
+        return provider
+      }
       if (typeof prev.apiKey !== 'string' || prev.apiKey === '') return provider
       restored++
       return { ...provider, apiKey: prev.apiKey }
     })
+  }
+
+  if (drifted) {
+    return { draft: next, restored, error: PROVIDERS_DRIFTED_MESSAGE }
   }
 
   return { draft: next, restored }

@@ -752,7 +752,11 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
         </div>
       )}
 
-      {error && <div className={errorText}>{error}</div>}
+      {error && (
+        <div className={errorText} role="alert">
+          {error}
+        </div>
+      )}
       {exportResult && (
         <div
           className={errorText}

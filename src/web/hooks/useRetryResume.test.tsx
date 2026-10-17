@@ -232,3 +232,102 @@ describe('useRetryResume 失败反馈', () => {
     expect(view.result.current.resendError).toBeNull()
   })
 })
+
+// ChatSession 在会话间被路由复用，useRetryResume 实例连同共享 chat/qc 跨会话存活。
+// 重发要先 await /messages、/sessions/:id 才驱动 chat——窗口里切到 B 后 B 已被
+// reset，A 的续体必须整体放弃：reset/retry 会把 A 的状态与流写进 B 的时间线，
+// 迟到的失败也不能把红条挂到 B 顶上（B 什么都没发过）。
+describe('useRetryResume 切会话后的在途重发', () => {
+  function renderWithSessionId(initial: string) {
+    const chat = fakeChat()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const onResumeStart = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) =>
+        useRetryResume({
+          sessionId,
+          chat,
+          qc,
+          selection: { provider: 'openai', model: 'gpt-4o' },
+          agentName: 'primary',
+          onResumeStart,
+        }),
+      { initialProps: { sessionId: initial } },
+    )
+    return { chat, qc, onResumeStart, result, rerender }
+  }
+
+  it('恢复对话在 /messages 在途时切会话：不消费入口、不 reset、不写缓存、不重发', async () => {
+    let release!: (msgs: unknown) => void
+    vi.mocked(sessionAPI.messages).mockImplementation(
+      () => new Promise((resolve) => (release = resolve)) as never,
+    )
+    vi.mocked(sessionAPI.get).mockResolvedValue({ metadata: {} } as never)
+
+    const { chat, qc, onResumeStart, result, rerender } = renderWithSessionId('s1')
+    const setQueryData = vi.spyOn(qc, 'setQueryData')
+    let pending!: Promise<void>
+    act(() => {
+      pending = result.current.handleResume()
+    })
+    rerender({ sessionId: 's2' })
+    await act(async () => {
+      release([userMessage])
+      await pending
+    })
+
+    expect(onResumeStart).not.toHaveBeenCalled()
+    expect(chat.clearInterrupted).not.toHaveBeenCalled()
+    expect(chat.reset).not.toHaveBeenCalled()
+    expect(setQueryData).not.toHaveBeenCalled()
+    expect(chat.retry).not.toHaveBeenCalled()
+    expect(result.current.resendPending).toBe(false)
+  })
+
+  it('重试在 /sessions/:id 在途时切会话：不向新会话发流', async () => {
+    vi.mocked(sessionAPI.messages).mockResolvedValue([userMessage] as never)
+    let releaseGet!: (s: unknown) => void
+    vi.mocked(sessionAPI.get).mockImplementation(
+      () => new Promise((resolve) => (releaseGet = resolve)) as never,
+    )
+
+    const { chat, result, rerender } = renderWithSessionId('s1')
+    let pending!: Promise<void>
+    act(() => {
+      pending = result.current.handleRetryLast()
+    })
+    // 先让 /messages 的续体跑完（此时仍在 s1）：retryPrompt 发起 /sessions/:id 后挂起
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(sessionAPI.get).toHaveBeenCalledTimes(1)
+    rerender({ sessionId: 's2' })
+    await act(async () => {
+      releaseGet({ metadata: {} })
+      await pending
+    })
+
+    expect(chat.retry).not.toHaveBeenCalled()
+  })
+
+  it('失败在切会话后才落地：红条不挂到新会话', async () => {
+    let rejectMessages!: (e: Error) => void
+    vi.mocked(sessionAPI.messages).mockImplementation(
+      () => new Promise((_resolve, reject) => (rejectMessages = reject)) as never,
+    )
+
+    const { result, rerender } = renderWithSessionId('s1')
+    let pending!: Promise<void>
+    act(() => {
+      pending = result.current.handleRetryLast()
+    })
+    rerender({ sessionId: 's2' })
+    await act(async () => {
+      rejectMessages(new Error('network down'))
+      await pending
+    })
+
+    expect(result.current.resendError).toBeNull()
+    expect(result.current.resendPending).toBe(false)
+  })
+})

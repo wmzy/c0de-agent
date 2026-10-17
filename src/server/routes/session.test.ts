@@ -1493,6 +1493,47 @@ describe('session route', () => {
       expect(restoredRoot?.deletedAt).toBeNull()
     })
 
+    // 回归（#5）：目标会话**已有归属**（恢复到 P2 的子会话）而连带还原的祖先仍无
+    // 归属（属已删的 P1 或本来就是孤儿）时，此前 targetProject 只在「目标无归属」
+    // 分支赋值、恒为 null，rebindUnboundSessions 整个被跳过——祖先保持
+    // projectId=null，侧栏按根会话 projectId 过滤整棵树 ⇒ 恢复结果在目标所属项目
+    // 里不可达，adoptedCount=0 也无任何提示。
+    it('目标会话已有归属时，连带还原的无归属祖先也归属到目标项目', async () => {
+      const { app, ctx } = await setup()
+      // 祖先：无归属（与删除项目后的孤儿同形）
+      const root = await createSession(ctx.db, 'orphan-root')
+      // 目标：已有归属（TEST_PROJECT 充当 P2）
+      const child = await createSession(
+        ctx.db,
+        'bound-child',
+        TEST_PROJECT,
+        undefined,
+        undefined,
+        root.id,
+      )
+      // 整棵子树入回收站（连带还原的前提：祖先也已软删除）
+      await app.request(`/${root.id}`, { method: 'DELETE' })
+      expect(await listDeletedSessions(ctx.db)).toHaveLength(2)
+
+      // 目标已有归属：恢复不带 projectId，此前这条路径不触发连带归属
+      const res = await app.request(`/${child.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { rebound: boolean; adoptedCount: number }
+      // 目标本就有归属，无需 rebind/recreatedProject
+      expect(body.rebound).toBe(false)
+      // 祖先被一并归属到目标所属项目 —— 根无归属则整棵子树在侧栏不可见
+      expect(body.adoptedCount).toBe(1)
+      const restoredRoot = await getSession(ctx.db, root.id)
+      expect(restoredRoot?.projectId).toBe(TEST_PROJECT)
+      expect(restoredRoot?.deletedAt).toBeNull()
+      // 目标会话归属保持不变
+      expect((await getSession(ctx.db, child.id))?.projectId).toBe(TEST_PROJECT)
+    })
+
     it('连带还原的祖先已有归属时不被改写（跨项目祖先不计入 adoptedCount）', async () => {
       const { app, ctx } = await setup()
       const other = 'other-project'
