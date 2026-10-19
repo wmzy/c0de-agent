@@ -518,6 +518,10 @@ function useComposer({
       })
       .catch(() => {
         pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
+        // 与 then 分支同口径：读取失败同样可能落在切走之后——FileReader 挂起窗口里
+        // 切了会话，旧作用域的失败回落会把「读取图片失败」画到新会话的 composer
+        // 顶上，而那条会话一张图都没拖过。
+        if (gen !== scopeGenRef.current) return
         setImageError('读取图片失败')
       })
   }, [])
@@ -642,24 +646,12 @@ function useComposer({
     resetHistory()
     // 失败还原：onSend 返回 Promise<false>/false 时把文本、图片、提示历史条目
     // 一并还回，用户改好设置后直接回车即可，不用凭记忆重打。
-    const restore = () => {
-      // 已被更新的发送取代：本次失败不再回写。
-      if (sendAttemptRef.current !== attempt) return
-      // 已经切到别的会话/作用域：这条失败属于上一个会话，回填会把它的正文与图片
-      // 写进当前会话，并（persist=true）落成当前会话的草稿。改为把失败快照落回
-      // **原会话**的草稿键（发送时刚被清掉的那份）：回到原会话时输入框里还是这段
-      // 文字——既不写进当前会话，也不把用户已经打好的输入丢掉。
-      if (scopeGenRef.current !== scopeGen) {
-        if (scopeAtSend && draftScopeRef.current !== scopeAtSend) {
-          saveDraft(scopeAtSend, snapshot.prompt, snapshot.images)
-        }
-        return
-      }
-      // 输入框在请求在途期间仍可编辑（ComposerEditor 无只读路径），用户此刻新敲的
-      // 内容/新加的图片不属于这条失败消息——无条件覆盖会凭空吞掉它们。只在输入框
-      // 仍是发送后清空的状态时才回填。
+    // 就地回填只认「输入框仍是发送后清空的状态」：请求在途期间（ComposerEditor
+    // 无只读路径）用户此刻新敲的内容/新加的图片不属于这条失败消息，无条件覆盖会
+    // 凭空吞掉它们。返回是否真的回填了。
+    const restoreInPlace = (): boolean => {
       const untouched = isPromptEmpty(readPrompt()) && imagesRef.current.length === 0
-      if (!untouched) return
+      if (!untouched) return false
       // 光标停在文末：send() 清空时把光标放到 offset 0，沿用它会让还原后的第一
       // 个字前面挂一个光标，用户接着敲的字都插到消息前面。
       setPromptExternal(snapshot.prompt, true)
@@ -674,6 +666,30 @@ function useComposer({
         }
       }
       editorRef.current?.focus()
+      return true
+    }
+    const restore = () => {
+      // 已被更新的发送取代：本次失败不再回写。
+      if (sendAttemptRef.current !== attempt) return
+      // 已经切到别的会话/作用域：这条失败属于上一个会话，回填会把它的正文与图片
+      // 写进当前会话，并（persist=true）落成当前会话的草稿。改为把失败快照落回
+      // **原会话**的草稿键（发送时刚被清掉的那份）：回到原会话时输入框里还是这段
+      // 文字——既不写进当前会话，也不把用户已经打好的输入丢掉。
+      if (scopeGenRef.current !== scopeGen) {
+        if (scopeAtSend && draftScopeRef.current === scopeAtSend) {
+          // 切走又切回原作用域（A→B→A）：世代已变而当前正是发起会话，上面按
+          // 「作用域不同」落盘的分支不命中；而回到 A 时挂载 effect 已按「A 的
+          // 草稿被发送清空」回填了空输入框——两个分支都不触发的话，发送时清掉的
+          // A 输入既不回填也不落盘，就此消失。输入框仍是回填后的空态（未被用户
+          // 触碰）时就地还原；被碰过（已在 A 里写了新内容）则把失败快照落回 A
+          // 的草稿键，再切回 A 时仍可找回。
+          if (!restoreInPlace()) saveDraft(scopeAtSend, snapshot.prompt, snapshot.images)
+        } else if (scopeAtSend) {
+          saveDraft(scopeAtSend, snapshot.prompt, snapshot.images)
+        }
+        return
+      }
+      restoreInPlace()
     }
     if (outcome === false) {
       restore()

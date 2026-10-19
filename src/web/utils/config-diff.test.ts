@@ -180,4 +180,88 @@ describe('restoreClearedSecrets', () => {
     expect(restored).toBe(0)
     expect((next.providers as { apiKey: string }[])[1]?.apiKey).toBe('')
   })
+
+  /**
+   * 回归：PROVIDER_ROW_ID 的 symbol 按下标全局唯一——另一客户端并发删行/重排后
+   * Settings 重取（refetchOnWindowFocus），同一下标已是另一台 provider。草稿里
+   * 清空密钥的行按 symbol 仍配得上：重排时恢复的是别家的 enc: 密文（静默继
+   * 承）；下标被删掉配不上时 apiKey:'' 原样进 patch，数组整体提交后覆盖磁盘上
+   * 同一行的密文（不可逆密钥丢失）。修法：挂标记时记下 name/baseURL 快照，配对
+   * 后校验漂移，不符即拒配并返回 error 阻断保存。
+   */
+  it('外部重排 provider 行后：同下标已是别家 provider，不继承其密文并返回错误', () => {
+    const saved = {
+      providers: [
+        { name: 'A', apiKey: 'enc:AAAA', baseURL: 'https://a/v1' },
+        { name: 'B', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' },
+      ],
+    }
+    tagProviderRowIds(saved.providers)
+    // 用户清空了 B 的密钥：行带着 @1 标记与「B/https://b/v1」快照脱离 config
+    const draft = {
+      providers: [saved.providers[0], { ...(saved.providers[1] as object), apiKey: '' }],
+    }
+    // 外部把两行对调后重取：@1 下标现在挂着 A 的内容
+    const refetched = {
+      providers: [
+        { name: 'B', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' },
+        { name: 'A', apiKey: 'enc:AAAA', baseURL: 'https://a/v1' },
+      ],
+    }
+    tagProviderRowIds(refetched.providers)
+
+    const { draft: next, restored, error } = restoreClearedSecrets(refetched, draft)
+    expect(error).toBeTruthy()
+    expect(restored).toBe(0)
+    // 未把 A（别家）的密文塞进 B 的行
+    expect((next.providers as { apiKey: string }[])[1]?.apiKey).toBe('')
+  })
+
+  it('外部删除 provider 行后：清空密钥的行配不上，返回错误而不是放行空 key', () => {
+    const saved = {
+      providers: [
+        { name: 'A', apiKey: 'enc:AAAA', baseURL: 'https://a/v1' },
+        { name: 'B', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' },
+      ],
+    }
+    tagProviderRowIds(saved.providers)
+    const draft = {
+      providers: [saved.providers[0], { ...(saved.providers[1] as object), apiKey: '' }],
+    }
+    // 外部删掉 A：重取后只剩一行，@1 连同它的 symbol 一起消失
+    const refetched = { providers: [{ name: 'B', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' }] }
+    tagProviderRowIds(refetched.providers)
+
+    const { restored, error } = restoreClearedSecrets(refetched, draft)
+    // 若放行，B 的空 key 会随 providers 数组整体提交、覆盖磁盘上的 enc:BBBB
+    expect(error).toBeTruthy()
+    expect(restored).toBe(0)
+  })
+
+  it('重取后内容未变（无并发修改）时照常退回密文，不因快照校验误伤', () => {
+    const saved = {
+      providers: [
+        { name: 'A', apiKey: 'enc:AAAA', baseURL: 'https://a/v1' },
+        { name: 'B', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' },
+      ],
+    }
+    tagProviderRowIds(saved.providers)
+    const draft = {
+      providers: [saved.providers[0], { ...(saved.providers[1] as object), apiKey: '' }],
+    }
+    // 保存后失效重取/focus 重取产生新行对象（内容相同）：symbol 按下标复配、
+    // 快照一致——不算漂移，密钥照常退回
+    const refetched = {
+      providers: [
+        { name: 'A', apiKey: 'enc:AAAA', baseURL: 'https://a/v1' },
+        { name: 'B', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' },
+      ],
+    }
+    tagProviderRowIds(refetched.providers)
+
+    const { draft: next, restored, error } = restoreClearedSecrets(refetched, draft)
+    expect(error).toBeUndefined()
+    expect(restored).toBe(1)
+    expect((next.providers as { apiKey: string }[])[1]?.apiKey).toBe('enc:BBBB')
+  })
 })

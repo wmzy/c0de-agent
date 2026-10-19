@@ -164,6 +164,22 @@ describe('config route — scoped patch 与保存反馈（P1-2/P2-3）', () => {
     expect(body.needsRestart).toBe(true)
   })
 
+  // 回归：permission 整段置 null（JSON 视图一键还原默认）经 applyScopedPatch 删除
+  // 整段，timeoutMs/expireGraceMs 随段落消失回落默认值——但运行中的
+  // permissionStore 仍持启动值（超时定时器不重建），与改数值同害。此前
+  // permissionPatch 先排除 null，这段「改了等于没改」没有任何重启提示。
+  it('PATCH permission: null（整段删除）返回 needsRestart: true', async () => {
+    const { app } = await setup()
+    // 先落盘非默认超时，确保整段删除确实改变了生效口径
+    await patchBody(app, { scope: 'global', permission: { timeoutMs: 3_600_000 } })
+    const res = await patchBody(app, { scope: 'global', permission: null })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { needsRestart?: boolean; config: Config }
+    expect(body.needsRestart).toBe(true)
+    // 合并视图已回落默认超时（删除生效）
+    expect(body.config.permission.timeoutMs).not.toBe(3_600_000)
+  })
+
   // defaultMode 走运行时的 ctx.permissionMode 同步，保存即生效：不能一并标成
   // 「需重启」，否则这条提示会变成用户不再相信的噪音。
   it('PATCH permission.defaultMode 不打「需重启」标记（运行时即生效）', async () => {

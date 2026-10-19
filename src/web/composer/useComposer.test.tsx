@@ -635,3 +635,129 @@ describe('useComposer 子命令补全浮层', () => {
     expect(c.onSend).toHaveBeenCalled()
   })
 })
+
+// ── 跨作用域的在途结果 ──
+// Composer 的 hook 实例不随会话切换重建（目标会话的消息已在 react-query 缓存里时
+// 不走 ChatSkeleton 早返回）：图片读取/发送的在途结果落地时必须先对 scopeGenRef
+// 世代，旧作用域的结果不得写进新会话的界面，也不得把切回原会话后的输入弄丢。
+describe('useComposer 跨作用域的在途结果', () => {
+  /** 可随 draftScope 重渲染的 composer（带真实编辑器），用于模拟 A→B(→A) 切换。 */
+  function renderScopedComposer(initialScope: string) {
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    document.body.appendChild(editor)
+    const onSend = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ draftScope }: { draftScope: string }) =>
+        useComposer({
+          onSend,
+          onAbort: vi.fn(),
+          onSteer: vi.fn(),
+          isStreaming: false,
+          hasHistory: false,
+          commands: [],
+          draftScope,
+        }),
+      { wrapper: strictWrapper, initialProps: { draftScope: initialScope } },
+    )
+    act(() => {
+      result.current.editorRef.current = editor
+    })
+    const type = (text: string) => {
+      act(() => {
+        editor.appendChild(document.createTextNode(text))
+        result.current.handleInput()
+      })
+    }
+    return { result, rerender, editor, onSend, type }
+  }
+
+  // 回归：addImageFile 的 catch 分支此前无世代校验、直接 setImageError——FileReader
+  // 挂起窗口里切了会话，旧作用域的读取失败把「读取图片失败」画到新会话 composer
+  // 顶上，而那条会话一张图都没拖过。
+  it('旧作用域的图片读取失败不把错误行画到新会话', async () => {
+    /** 必败的 FileReader 替身：readAsDataURL 异步走 onerror。 */
+    class FailingFileReader {
+      onerror: (() => void) | null = null
+      onload: (() => void) | null = null
+      onabort: (() => void) | null = null
+      result: string | null = null
+      readAsDataURL() {
+        queueMicrotask(() => this.onerror?.())
+      }
+    }
+    vi.stubGlobal('FileReader', FailingFileReader)
+    try {
+      const { result, rerender } = renderScopedComposer('s:img-scope-a')
+      act(() => {
+        result.current.addImage(imageFile())
+      })
+      rerender({ draftScope: 's:img-scope-b' })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(result.current.imageError).toBeNull()
+      expect(result.current.images).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  // 回归（A→B→A）：失败落地时世代已变、但作用域已切回 A——此前「跨作用域落盘」
+  // 只看作用域不同，两个分支都不命中：回到 A 时挂载 effect 已按「A 草稿被发送
+  // 清空」回填了空输入框，发送时清掉的 A 输入既不回填也不落盘，就此丢失。
+  it('A→B→A 后失败落地：输入未被触碰时就地回填', async () => {
+    saveHistory([])
+    const { result, rerender, editor, onSend, type } = renderScopedComposer('s:back-a')
+    type('发给 A 的消息')
+    let resolveSend: ((v: boolean) => void) | undefined
+    onSend.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveSend = resolve
+      }),
+    )
+    act(() => {
+      result.current.send()
+    })
+    // 发送即清空
+    expect(editor.textContent?.replaceAll('\u200b', '').trim()).toBe('')
+    rerender({ draftScope: 's:back-b' })
+    rerender({ draftScope: 's:back-a' })
+    await act(async () => {
+      resolveSend?.(false)
+      await Promise.resolve()
+    })
+
+    expect(editor.textContent).toContain('发给 A 的消息')
+  })
+
+  it('A→B→A 后失败落地：回到 A 又写了新内容时不覆盖，快照落回 A 的草稿键', async () => {
+    saveHistory([])
+    const { result, rerender, editor, onSend, type } = renderScopedComposer('s:back-a2')
+    type('发给 A 的原始消息')
+    let resolveSend: ((v: boolean) => void) | undefined
+    onSend.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveSend = resolve
+      }),
+    )
+    act(() => {
+      result.current.send()
+    })
+    rerender({ draftScope: 's:back-b2' })
+    rerender({ draftScope: 's:back-a2' })
+    // 用户回到 A 后已经写了新内容：就地回填不得吞掉它
+    type('回到 A 敲的新内容')
+    await act(async () => {
+      resolveSend?.(false)
+      await Promise.resolve()
+    })
+
+    expect(editor.textContent).toContain('回到 A 敲的新内容')
+    expect(editor.textContent).not.toContain('发给 A 的原始消息')
+    // 失败快照落回 A 的草稿键：输入仍然找回得到
+    const stored = loadDraft('s:back-a2')
+    expect(stored).not.toBeNull()
+    expect(promptToText(stored?.prompt ?? [])).toContain('发给 A 的原始消息')
+  })
+})

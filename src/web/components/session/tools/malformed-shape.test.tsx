@@ -70,6 +70,50 @@ describe('TodoToolView 畸形 metadata', () => {
     expect(screen.queryByText(/Todo list is empty/i)).toBeNull()
     expect(screen.getByTestId('tool-shape-notice')).toHaveTextContent('无法解析')
   })
+
+  // 回归：todo 执行器无条件写 metadata.phases（src/tools/builtin/todo.ts 的 success
+  // 返回），成功结果里没有 phases 只能是脏数据——此前 wellFormedPhases 把
+  // undefined/null 当合法空态，渲染成 "Todo list is empty."，把「读不出来」说成
+  // 「待办为空」。合法的空待办是执行器显式写出的 phases: []（见上方空态用例）。
+  it('成功结果里压根没有 phases（脏数据）不谎报待办为空', () => {
+    render(
+      <TodoToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{ _tag: 'success', output: '' }}
+      />,
+    )
+    expect(screen.queryByText(/Todo list is empty/i)).toBeNull()
+    expect(screen.getByTestId('tool-shape-notice')).toHaveTextContent('无法解析')
+  })
+
+  it('phases 为 null 时同样不谎报待办为空', () => {
+    render(
+      <TodoToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{ _tag: 'success', output: '', metadata: { phases: null } }}
+      />,
+    )
+    expect(screen.queryByText(/Todo list is empty/i)).toBeNull()
+    expect(screen.getByTestId('tool-shape-notice')).toHaveTextContent('无法解析')
+  })
+
+  // 回归：ShapeNotice 文案此前承诺「原始结果见下方输出」，但消费方（Todo/Kanban
+  // 视图）从不渲染 output 文本——指引指向不存在的内容。文案必须只指向真实存在
+  // 的展示，说清「未随本视图展示」。
+  it('ShapeNotice 不再指引查看不存在的「下方输出」', () => {
+    render(
+      <TodoToolView
+        input={{ op: 'view' }}
+        status="completed"
+        output={{ _tag: 'success', output: '', metadata: { phases: 'garbage' } }}
+      />,
+    )
+    const notice = screen.getByTestId('tool-shape-notice')
+    expect(notice).toHaveTextContent('未随本视图展示')
+    expect(notice).not.toHaveTextContent('下方输出')
+  })
 })
 
 describe('KanbanToolView 畸形 metadata', () => {

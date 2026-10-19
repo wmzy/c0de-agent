@@ -168,6 +168,21 @@ export function KanbanToolView({
     )
   }
 
+  // 「结果还没回来」不是「没有看板」：running 态（tool_result 尚未到达）此前整块
+  // 只剩一行 `kanban/view` op 名——折叠头是「⏳ 执行中」，展开正文却什么都没有。
+  // 与 TodoToolView 的 output === undefined 分支同口径（f07795b 给 todo 补的执行中
+  // 说明）：没有结果就说还在执行，绝不把「还没拿到」讲成一个关于内容的结论。
+  if (output === undefined) {
+    return (
+      <div>
+        <span className={opLabel}>kanban/{op}</span>
+        <div className={empty} data-testid="kanban-running">
+          执行中…看板内容随执行结果返回
+        </div>
+      </div>
+    )
+  }
+
   // Extract board from output metadata
   //
   // 与 todo 同理：metadata 原样落库、未受信，此前 `as KanbanBoard` 之后直接

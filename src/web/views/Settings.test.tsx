@@ -407,6 +407,57 @@ describe('Settings — Provider 管理', () => {
     expect(screen.queryByTestId('provider-model-toggle-zzdetected')).toBeNull()
   })
 
+  // 回归：「无改动」保存清掉草稿时漏了作废在途异步回写——「测试连接」的探测
+  // 落地时 epoch 仍与 draftEpochRef.current 相等，updateProviders 用
+  // `prev ?? config` 重新长出一份草稿：刚因「无改动」清掉的「● 未保存更改」
+  // 又亮起来、探测到的模型也复活，再按一次保存就把它们写进配置（「放弃更改」
+  // 路径修过的复活缺陷，这条保存分支换个时机复发）。
+  it('无改动保存清掉草稿后：迟到的探测结果不复活草稿', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { providerAPI } = await import('@/services/provider.js')
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({
+        ...mockConfig,
+        providers: [
+          { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
+        ],
+      }),
+    )
+    let resolveTest: (v: { ok: boolean; models: string[] }) => void = () => {}
+    ;(providerAPI.test as Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveTest = resolve
+      }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-test')).toHaveLength(1))
+
+    // 探测在途；用户点进密钥框敲了几个字符又全删掉（留空 = 不修改）
+    fireEvent.click(screen.getAllByTestId('provider-test')[0] as HTMLElement)
+    const apiKeyInput = screen.getByTestId('provider-apikey') as HTMLInputElement
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-temporary' } })
+    fireEvent.change(apiKeyInput, { target: { value: '' } })
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+
+    // 保存：密文退回 → patch 为空 → 走「无改动」分支清草稿（不发 PATCH）
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-status')).toHaveTextContent('未改动'),
+    )
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+    expect(configAPI.update).not.toHaveBeenCalled()
+
+    // 迟到的探测落地：不得用 config 重新长出草稿
+    await act(async () => {
+      resolveTest({ ok: true, models: ['zzdetected'] })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByText('✓ 连接成功，1 个模型')).toBeTruthy())
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+    expect(screen.queryByTestId('provider-model-toggle-zzdetected')).toBeNull()
+  })
+
   // 删除 provider 要先过确认框（行里是手打的 baseURL + API Key，删掉无处取回），
   // 与同页 MCP 服务器删除同一口径——此前这里单击即删，保存条随即点亮。
   it('点击「删除」经确认后才移除一行', async () => {
@@ -981,6 +1032,56 @@ describe('Settings — Provider 管理', () => {
     )
     expect(screen.getByTestId('settings-save-status')).toHaveTextContent('原有密钥保留')
     // 草稿退回原密文 → diff 为空 → 不发 PATCH（更不会把 apiKey 写成空串）
+    expect(configAPI.update).not.toHaveBeenCalled()
+  })
+
+  // 回归：PROVIDER_ROW_ID 按下标配身份，另一客户端并发删行/重排后
+  // refetchOnWindowFocus 重取，同一下标已是另一台 provider——草稿里清空的密钥
+  // 要么配上别家的密文、要么以 apiKey:'' 进 patch 覆盖磁盘密文（不可逆丢失）。
+  // 漂移校验拦截后必须把原因写进保存反馈并阻断 PATCH。
+  it('外部并发改过 provider 行后保存：阻断 PATCH 并在保存条说明需刷新重试', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock)
+      .mockResolvedValueOnce(
+        wrapConfig({
+          ...mockConfig,
+          providers: [
+            { name: 'A', protocol: 'openai', apiKey: 'enc:AAAA', baseURL: 'https://a/v1' },
+            { name: 'B', protocol: 'openai', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' },
+          ],
+        }),
+      )
+      // 外部客户端删掉第一行后窗口聚焦重取（refetchOnWindowFocus）
+      .mockResolvedValueOnce(
+        wrapConfig({
+          ...mockConfig,
+          providers: [
+            { name: 'B', protocol: 'openai', apiKey: 'enc:BBBB', baseURL: 'https://b/v1' },
+          ],
+        }),
+      )
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+
+    // 清空 B（第二行）的密钥：行带着 @1 标记脱离 config
+    const apiKeyInputs = screen.getAllByTestId('provider-apikey')
+    fireEvent.change(apiKeyInputs[1] as HTMLInputElement, { target: { value: 'x' } })
+    fireEvent.change(apiKeyInputs[1] as HTMLInputElement, { target: { value: '' } })
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+
+    // 窗口聚焦触发重取：外部删掉了 A，B 的下标从 1 漂到 0，@1 配不上任何行
+    await act(async () => {
+      window.dispatchEvent(new Event('visibilitychange'))
+    })
+    await waitFor(() => expect(configAPI.get).toHaveBeenCalledTimes(2))
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-status').textContent).toContain('其他客户端'),
+    )
+    // 不发 PATCH：既不继承别家密文，也不提交空 key
     expect(configAPI.update).not.toHaveBeenCalled()
   })
 
@@ -2369,6 +2470,83 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
       expect(screen.getByTestId('settings-save-bar').textContent).toContain('已保存'),
     )
     expect((screen.getByTestId('settings-discard') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  // 回归：作用域切换确认框的入口没有保存在途闸（「放弃更改」按钮有 disabled +
+  // 处理器双闸，这条入口两者皆无）：保存在途时确认「切换并丢弃更改」，在途
+  // PATCH 照旧落盘（撤不掉），discardDraft 却把保存期间新打的字一起吞掉。入口
+  // 先挡——打不开确认框优于打开后静默无效。
+  it('保存在途时切换作用域：入口先挡——确认框不弹、作用域不变', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let release: (() => void) | null = null
+    ;(configAPI.update as Mock).mockReturnValue(
+      new Promise<void>((res) => {
+        release = () => res()
+      }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
+    fireEvent.click(dirtyTrigger()) // 制造未保存更改
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-bar').textContent).toContain('保存中'),
+    )
+
+    // 保存在途切作用域：被入口挡下，确认框不弹，草稿不动
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    expect(screen.queryByText('切换并丢弃更改')).toBeNull()
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+    // 下拉必须回弹到当前作用域：显示的作用域要与真正生效的一致
+    expect((screen.getByTestId('scope-select') as HTMLSelectElement).value).toBe('project')
+    expect(screen.queryByText('目标：~/.c0de/config.json')).toBeNull()
+
+    await act(async () => {
+      release?.()
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-bar').textContent).toContain('已保存'),
+    )
+
+    // 落地后入口放行：同样的切换操作现在能弹出确认框（不再被保存在途挡下）
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    expect(screen.getByText('切换并丢弃更改')).toBeTruthy()
+  })
+
+  it('确认框开着时保存转在途：二道闸同样挡住「切换并丢弃更改」', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let release: (() => void) | null = null
+    ;(configAPI.update as Mock).mockReturnValue(
+      new Promise<void>((res) => {
+        release = () => res()
+      }),
+    )
+    // release 刻意不被调用（保存保持 in-flight）；断言它已就位，防止闭包没执行导致
+    // 用例静默空跑（与在途 Promise 的 settle 惯用法同源）。
+    expect(release).toBeTypeOf('function')
+
+    renderSettings()
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
+    fireEvent.click(dirtyTrigger()) // 制造未保存更改
+    // dirty 切作用域 → 确认框
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    expect(screen.getByText('切换并丢弃更改')).toBeTruthy()
+
+    // 确认框开着时保存被键盘/程序化触发而在途（弹层挡不住这类调用）
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-bar').textContent).toContain('保存中'),
+    )
+
+    // 确认「切换并丢弃更改」被二道闸挡下：ConfirmDialog 点确认必经 onClose 收起，
+    // 但草稿不被清（脏标记仍在）、作用域不切（目标与下拉都停在项目）
+    fireEvent.click(screen.getByText('切换并丢弃更改'))
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+    expect((screen.getByTestId('scope-select') as HTMLSelectElement).value).toBe('project')
+    expect(screen.queryByText('目标：~/.c0de/config.json')).toBeNull()
   })
 
   it('dirty 时点击离开设置页的站内链接弹确认，「留下」则留在设置页', async () => {

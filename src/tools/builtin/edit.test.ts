@@ -324,4 +324,47 @@ describe('editTool hashline 成功回传行级变更', () => {
     expect(result._tag).toBe('error')
     expect((result as { metadata?: unknown }).metadata).toBeUndefined()
   })
+
+  // 回归：applyPatch 回调报告的 hunk 行号相对**本块应用前的文件**，多块补丁第 2
+  // 块起是中间态坐标；而 web 端 EditToolView 把全部 hunks 放进同一坐标系按 start
+  // 升序拼 `@@ start-end @@` 标记——不补偿则标记指向错误行号（块1 DEL 1-10 后，
+  // 中间态第 50 行在原文件是第 60 行）。edit 必须累计前面各块的 removed-added，
+  // 把每块行号换算回原文件坐标。
+  it('多块补丁的 hunks 行号统一为原文件坐标（前块删行，后块行号后移）', async () => {
+    const { computeHash } = await import('../hashline/index.js')
+    const content = 'l1\nl2\nl3\nl4\nl5\nl6\n'
+    await writeFile(join(workDir, 'f.ts'), content)
+    // 块2 的行号相对块1 应用后的中间态：删掉前两行后 SWAP 3-3，即原文件第 5 行
+    const mid = 'l3\nl4\nl5\nl6\n'
+    const patch =
+      `[f.ts#${computeHash(content)}]\nDEL 1-2\n---\n` +
+      `[f.ts#${computeHash(mid)}]\nSWAP 3-3\nL5\n---\n`
+    const result = await editTool.execute({ path: 'f.ts', patch }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag !== 'success') return
+    expect(result.metadata?.hunks).toEqual([
+      { _tag: 'DEL', start: 1, end: 2, removed: ['l1', 'l2'], added: [] },
+      { _tag: 'SWAP', start: 5, end: 5, removed: ['l5'], added: ['L5'] },
+    ])
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('l3\nl4\nL5\nl6\n')
+  })
+
+  it('多块补丁前块插行时同样补偿（后块行号前移）', async () => {
+    const { computeHash } = await import('../hashline/index.js')
+    const content = 'a\nb\nc\nd\n'
+    await writeFile(join(workDir, 'f.ts'), content)
+    // 块1 INS.HEAD 加两行后共 6 行；块2 SWAP 4-4（中间态）= 原文件第 2 行（b）
+    const mid = 'H1\nH2\na\nb\nc\nd\n'
+    const patch =
+      `[f.ts#${computeHash(content)}]\nINS.HEAD\nH1\nH2\n---\n` +
+      `[f.ts#${computeHash(mid)}]\nSWAP 4-4\nB2\n---\n`
+    const result = await editTool.execute({ path: 'f.ts', patch }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag !== 'success') return
+    expect(result.metadata?.hunks).toEqual([
+      { _tag: 'INS_HEAD', start: 1, end: 1, removed: [], added: ['H1', 'H2'] },
+      { _tag: 'SWAP', start: 2, end: 2, removed: ['b'], added: ['B2'] },
+    ])
+    expect(await readFile(join(workDir, 'f.ts'), 'utf-8')).toBe('H1\nH2\na\nB2\nc\nd\n')
+  })
 })

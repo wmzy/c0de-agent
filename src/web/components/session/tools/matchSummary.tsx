@@ -35,9 +35,13 @@ export function MatchSummary({ output, noun }: { output?: ToolResult; noun: stri
   if (meta === undefined) return null
   const count = typeof meta.count === 'number' ? meta.count : undefined
   if (meta.truncated === true) {
+    // count 缺失/非数字（metadata 是原样落库的未受信 JSON）时，`仅显示前 ${count ?? ''}
+    // 条` 会拼出「已截断：仅显示前  条」的双空格残句。count 有效才拼该段，缺失时
+    // 退回不带数目的说法——拿不到的数目不能靠空占位装作有。
+    const head = count !== undefined ? `仅显示前 ${count} 条${noun}` : `${noun}仅显示部分`
     return (
       <div className={note} data-testid="tool-match-truncated">
-        {`已截断：仅显示前 ${count ?? ''} 条${noun}，其余未随结果返回`}
+        {`已截断：${head}，其余未随结果返回`}
       </div>
     )
   }

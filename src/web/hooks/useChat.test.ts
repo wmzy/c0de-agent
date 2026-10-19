@@ -792,6 +792,36 @@ describe('useChat confirm', () => {
       '权限请求已被处理（可能在其他标签页确认/拒绝）或已中止，工具未执行',
     )
   })
+
+  // 回归：「拒绝并继续」此前没有在途锁（按钮不 disabled、也没有 pending 态可接），
+  // 双击的第二击到达时第一击的拒绝还在飞、服务端 pending 已被第一击消费 → 第二击
+  // 404 → 走「已被处理/已中止」分支写出与事实相悖的 error 横幅（实际拒绝已送达、
+  // run 正常继续）。现在第二击 no-op，只有第一击的结论落地。
+  it('denyTimedOutPermission 双击：在途第二击 no-op，只发一次拒绝请求', async () => {
+    const result = await renderTimedOut('tcDD')
+    let settleDeny: ((v: { confirmed: boolean }) => void) | undefined
+    vi.spyOn(agentAPI, 'confirmTool').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settleDeny = resolve
+        }),
+    )
+
+    await act(async () => {
+      result.current.denyTimedOutPermission()
+      // 第一击仍在飞时的第二击（同一帧内连点）
+      result.current.denyTimedOutPermission()
+    })
+    expect(agentAPI.confirmTool).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      settleDeny?.({ confirmed: true })
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    // 第一击的结论正常落地：横幅收起，没有「已被处理」的误导横幅
+    expect(result.current.permissionTimeout).toBeNull()
+    expect(result.current.error).toBeNull()
+  })
 })
 
 describe('useChat segment break', () => {
@@ -2562,5 +2592,188 @@ describe('useChat 在途响应的世代守卫', () => {
       await new Promise((r) => setTimeout(r, 50))
     })
     expect(result.current.error).toBeNull()
+  })
+
+  // 复现（confirmTrust/confirmBreak 与 steer/abort 同族）：A 会话在确认弹窗点
+  // 「信任并继续」/「顺便压缩开新段」→ trust/compact 请求飞在路上 → 用户切到 B →
+  // 响应落地时 await 之后不比对世代：失败分支把 A 的弹窗/失败原因原样写进 B；
+  // 成功分支的 doStream 在调用时才捕获 genRef.current（新世代）、isStale() 恒
+  // false——A 的重发 SSE 整段归约进 B 的时间线。压缩可走 LLM 摘要、窗口以秒计，
+  // 这个竞态不是理论值。
+  /** 首次 /api/chat 回 409（code 见参数）进入待确认态；gateUrl 的响应挂起、由测试
+   *  择机放行。返回放行函数与 /api/chat 调用计数（断言「迟到的重发没有发生」）。 */
+  function renderGatedConfirm(gateUrl: string, code: 'TRUST_REQUIRED' | 'SEGMENT_BREAK_REQUIRED') {
+    const details =
+      code === 'TRUST_REQUIRED'
+        ? {
+            projectId: 'proj-1',
+            projectName: 'Repo',
+            items: [{ kind: 'permission-auto', detail: 'auto' }],
+          }
+        : { activeSegment: { provider: 'p', model: 'm', tools: [] } }
+    let chatCall = 0
+    let settleGate: ((res: unknown) => void) | undefined
+    const fetchMock = vi.fn((url: string) => {
+      if (url === gateUrl) {
+        return new Promise((resolve) => {
+          settleGate = resolve
+        })
+      }
+      if (url === '/api/chat') {
+        chatCall++
+        if (chatCall === 1) {
+          const body = { error: { code, message: '需要确认', details } }
+          return Promise.resolve({
+            ok: false,
+            status: 409,
+            json: async () => body,
+            text: async () => JSON.stringify(body),
+          })
+        }
+        // 迟到的重发若被（错误地）发起会得到这个立即 done 的流；断言靠 chatCall 计数
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({ read: async () => ({ done: true, value: undefined }) }),
+          },
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => '{}',
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const rendered = renderHook(({ sid }: { sid: string }) => useChat(sid), {
+      wrapper,
+      initialProps: { sid: 's1' },
+    })
+    return { ...rendered, settle: () => settleGate, chatCalls: () => chatCall }
+  }
+
+  it('信任请求在途时切会话：迟到的失败弹窗不落新会话', async () => {
+    const h = renderGatedConfirm('/api/projects/proj-1/trust', 'TRUST_REQUIRED')
+    await act(async () => {
+      await h.result.current.sendMessage('hi')
+    })
+    expect(h.result.current.pendingTrust).not.toBeNull()
+
+    await act(async () => {
+      void h.result.current.confirmTrust()
+    })
+    await waitFor(() => expect(h.settle()).toBeDefined())
+
+    h.rerender({ sid: 's2' })
+
+    await act(async () => {
+      h.settle()?.({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: '信任写入失败' } }),
+        text: async () => JSON.stringify({ error: { message: '信任写入失败' } }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // B 上没有 A 的信任弹窗与失败原因（横幅/弹窗均由 B 自己的请求决定）
+    expect(h.result.current.pendingTrust).toBeNull()
+    expect(h.result.current.trustError).toBeNull()
+    expect(h.result.current.error).toBeNull()
+  })
+
+  it('信任请求在途时切会话：迟到的重发流不写进新会话', async () => {
+    const h = renderGatedConfirm('/api/projects/proj-1/trust', 'TRUST_REQUIRED')
+    await act(async () => {
+      await h.result.current.sendMessage('hi')
+    })
+    expect(h.result.current.pendingTrust).not.toBeNull()
+
+    await act(async () => {
+      void h.result.current.confirmTrust()
+    })
+    await waitFor(() => expect(h.settle()).toBeDefined())
+
+    h.rerender({ sid: 's2' })
+
+    await act(async () => {
+      h.settle()?.({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // B 不进入流式，A 的重发（第二次 /api/chat）也没有发生
+    expect(h.result.current.isStreaming).toBe(false)
+    expect(h.chatCalls()).toBe(1)
+    expect(h.result.current.messages).toHaveLength(0)
+  })
+
+  it('压缩请求在途时切会话：迟到的压缩失败与重发不落新会话', async () => {
+    const h = renderGatedConfirm('/api/sessions/s1/compact', 'SEGMENT_BREAK_REQUIRED')
+    await act(async () => {
+      await h.result.current.sendMessage('hi', { model: 'other' })
+    })
+    expect(h.result.current.pendingSegmentBreak).not.toBeNull()
+
+    await act(async () => {
+      void h.result.current.confirmBreak(true)
+    })
+    await waitFor(() => expect(h.settle()).toBeDefined())
+
+    h.rerender({ sid: 's2' })
+
+    await act(async () => {
+      h.settle()?.({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { code: 'COMPACTION_FAILED', message: '压缩服务不可用' } }),
+        text: async () =>
+          JSON.stringify({ error: { code: 'COMPACTION_FAILED', message: '压缩服务不可用' } }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // compactError 没写进 B，A 的重发也没有发生
+    expect(h.result.current.error).toBeNull()
+    expect(h.result.current.isStreaming).toBe(false)
+    expect(h.chatCalls()).toBe(1)
+  })
+
+  it('压缩请求在途时切会话：迟到的受理与重发不落新会话', async () => {
+    const h = renderGatedConfirm('/api/sessions/s1/compact', 'SEGMENT_BREAK_REQUIRED')
+    await act(async () => {
+      await h.result.current.sendMessage('hi', { model: 'other' })
+    })
+    expect(h.result.current.pendingSegmentBreak).not.toBeNull()
+
+    await act(async () => {
+      void h.result.current.confirmBreak(true)
+    })
+    await waitFor(() => expect(h.settle()).toBeDefined())
+
+    h.rerender({ sid: 's2' })
+
+    await act(async () => {
+      h.settle()?.({
+        ok: true,
+        status: 200,
+        json: async () => ({ compacted: true }),
+        text: async () => JSON.stringify({ compacted: true }),
+      })
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(h.result.current.isStreaming).toBe(false)
+    expect(h.chatCalls()).toBe(1)
+    expect(h.result.current.messages).toHaveLength(0)
   })
 })

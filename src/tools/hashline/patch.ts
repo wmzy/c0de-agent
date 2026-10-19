@@ -24,8 +24,10 @@ type ApplyResult =
   | { _tag: 'line_not_found'; operation: PatchOp }
 
 /**
- * 单个操作在原文件里的行级变更：`removed` 是被替换/删除的原始行，`added` 是写入
- * 的新行（纯插入时 removed 为空）。行号相对原文件。
+ * 单个操作在**本次 applyPatch 输入文件**里的行级变更：`removed` 是被替换/删除的
+ * 原始行，`added` 是写入的新行（纯插入时 removed 为空）。行号相对本块应用前的
+ * 文件——多块补丁逐块应用时第 2 块起就是中间态坐标，块间的累计补偿由 edit 工具
+ * 负责（见 edit.ts 的 delta），本模块不做跨块换算。
  *
  * 供 edit 工具把变更随结果回传（web 端据此渲染真实 diff）；applyPatch 只在调用方
  * 传入回调时记录，不进返回值——返回值契约不变。

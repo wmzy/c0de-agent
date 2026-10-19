@@ -238,6 +238,13 @@ export function Settings() {
   // 确认前暂存目标作用域（下拉的 value 跟随它，取消时才回弹到当前 scope）。
   const [pendingScope, setPendingScope] = useState<'global' | 'project' | null>(null)
 
+  // 作用域下拉的回弹令牌：保存在途时切作用域被入口挡下后，scope/pendingScope
+  // 都不变——SyncedSelect 只在 value prop 变化时回灌内部状态，不重挂载的话控件
+  // 会停在用户刚选的那项，界面显示与真正生效的作用域正好相反（下拉写着全局、
+  // 保存却写进项目文件，见下方 onValuesChange 的守卫与 :742 的同款说明）。自增
+  // 令牌作 key 强制重挂，控件按当前 value 重新播种。
+  const [scopeRevertTick, setScopeRevertTick] = useState(0)
+
   // dirty 时导入配置会整块覆盖草稿——同样是二次确认，确认前暂存待导入的配置。
   // 此前导入无条件 `setDraft(导入值)`：用户在表单里改了一屏字段、吸底条写着
   // 「● 未保存更改」，点一次「⬆ 导入」选个文件，所有修改被静默替换（保存条随即
@@ -436,13 +443,25 @@ export function Settings() {
     // 只对表单（gui）生效：JSON 视图里 `"apiKey": ""` 是用户亲手写下的明确值，
     // 那里留空/置 null 也都是可表达的删除方式，不该被这条表单约定改写。
     // 见 restoreClearedSecrets 的口径说明。
-    const restoredSecrets =
+    const restoredSecrets: {
+      draft: Record<string, unknown>
+      restored: number
+      error?: string
+    } =
       viewMode === 'gui'
         ? restoreClearedSecrets(
             config as unknown as Record<string, unknown>,
             draft as unknown as Record<string, unknown>,
           )
         : { draft: draft as unknown as Record<string, unknown>, restored: 0 }
+    // provider 列表已被其他客户端改过（并发删行/重排 + focus 重取后同一下标已是
+    // 另一台 provider），草稿里清空密钥的行按下标配对已失真：还原则继承别家的
+    // enc: 密文，不还原则 apiKey:'' 覆盖磁盘密文（不可逆丢失）。漂移在
+    // restoreClearedSecrets 里判定，这里收口——阻断保存并把原因写进保存反馈。
+    if (restoredSecrets.error) {
+      setSaveFeedback({ kind: 'err', msg: restoredSecrets.error })
+      return
+    }
     // 提交与 diff 都基于「退回密钥后的草稿」：被留空的密钥不产生任何改动。
     const saveableDraft = restoredSecrets.draft as unknown as Partial<Config>
     const patch = diffConfig(
@@ -450,6 +469,12 @@ export function Settings() {
       saveableDraft as unknown as Record<string, unknown>,
     )
     if (isPatchEmpty(patch)) {
+      // 清空草稿同属「丢弃草稿」，必须先作废在途的异步回写：否则「测试连接」的
+      // 探测落地时 epoch 仍等于 draftEpochRef.current，updateProviders 的
+      // `base = prev ?? config` 会用 config 重新长出一份草稿——刚因「无改动」
+      // 清掉的脏标记又亮起来、探测到的模型也复活，再按一次保存就把它们写进
+      // 配置（与「放弃更改」同款复活缺陷，那条路修过，这条保存分支漏了同款守卫）。
+      invalidateDraftWrites()
       setDraft(null)
       setSaveFeedback(
         restoredSecrets.restored > 0
@@ -738,6 +763,7 @@ export function Settings() {
       <div className={scopeBar}>
         <span className={scopeLabel}>配置作用域</span>
         <SyncedSelect
+          key={scopeRevertTick}
           aria-label="配置作用域"
           // 待定作用域必须进渲染值：SyncedSelect 是 react-use-control 受控控件，
           // 只在 value prop 变化时才把内部状态回灌。此前 value 恒为 scope，只写
@@ -747,6 +773,14 @@ export function Settings() {
           value={pendingScope ?? scope}
           onValuesChange={(v) => {
             const next = v as 'global' | 'project'
+            // 保存在途时整条入口先挡（与 discardChanges 同口径）：此刻确认切换，
+            // 在途 PATCH 照旧落盘（撤不掉），discardDraft 却会把保存期间新打的字
+            // 一起吞掉——「切换并丢弃更改」实际丢掉的是刚编辑的内容。打不开确认
+            // 框优于打开后静默无效；挡下后自增回弹令牌把下拉拽回当前作用域。
+            if (save.isPending) {
+              setScopeRevertTick((t) => t + 1)
+              return
+            }
             // P2-10：dirty 时切换作用域会把草稿整体落盘到新作用域——先确认，防止误写。
             if (next !== scope && draft !== null) {
               setPendingScope(next)
@@ -1050,6 +1084,10 @@ export function Settings() {
           open
           onClose={() => setPendingScope(null)}
           onConfirm={() => {
+            // 二道闸（与「放弃更改」处理器同款）：确认框开着时保存仍可能被键盘/
+            // 程序化触发而在途（弹层挡不住这类调用），此刻 discardDraft 同样会
+            // 吞掉保存期间的新编辑、在途 PATCH 也撤不掉——入口挡确认框之外再兜一层。
+            if (save.isPending) return
             discardDraft()
             setSaveFeedback({ kind: 'idle' })
             setScope(pendingScope)
