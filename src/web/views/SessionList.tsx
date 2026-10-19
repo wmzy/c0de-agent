@@ -62,6 +62,37 @@ const addBtn = css`
   }
 `
 
+/** 权限迁移确认弹窗正文与勾选行。 */
+const importPermDesc = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+`
+
+/** 删除确认弹窗正文：会话标题 + 影响面（派生会话数）+ 可恢复窗口。 */
+const deleteDesc = css`
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--haze-color-text);
+`
+
+const importPermRow = css`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--haze-color-text);
+  cursor: pointer;
+`
+
+const importPermHint = css`
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 const recycleBtn = css`
   flex-shrink: 0;
   min-height: auto;
@@ -197,6 +228,11 @@ export function SessionList({
 
   /** P2-5：重命名会话（成功后刷新会话树）。 */
   const handleRename = async (id: string, title: string): Promise<boolean> => {
+    // 起手清掉上一次的原因：失败条此前只在失败时写入、成功时不清，于是网络抖动
+    // 造成的一次失败会一直挂在侧栏顶部——用户改好网络再成功改名另一个会话，
+    // 「重命名失败：xxx」仍然亮着。要么以为改名功能坏了，要么怀疑刚才那次
+    // 「成功」其实没生效（列表里标题确实变了）。与 handleDelete 同口径。
+    setRenameError(null)
     try {
       await sessionAPI.rename(id, title)
       qc.invalidateQueries({ queryKey: ['sessions'] })
@@ -210,6 +246,12 @@ export function SessionList({
   }
   const [showRecycle, setShowRecycle] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  /** 待确认删除的会话（站内弹窗）：标题 + 派生子孙数。 */
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string
+    title: string
+    branches: number
+  } | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [importNotice, setImportNotice] = useState<string | null>(null)
@@ -222,35 +264,23 @@ export function SessionList({
     return () => clearTimeout(t)
   }, [search])
 
-  // 切项目时清空按项目作用域的 UI 状态。
-  // ChatPage 对 /projects/:projectId（与会话子路由）复用同一组件实例，param
-  // 变化不会重新挂载 SessionList：搜索词、错误条、回收站页签都跟着上一个项目
-  // 过来了——新项目列表继续按旧查询过滤（报「无匹配会话」，看着像会话丢了），
-  // 失败横幅也钉在新项目上方。
-  const firstProjectRef = useRef(projectId)
-  useEffect(() => {
-    if (firstProjectRef.current === projectId) return
-    firstProjectRef.current = projectId
-    setSearch('')
-    setSearchDebounced('')
-    setDeleteError(null)
-    setRenameError(null)
-    setImportError(null)
-    setImportNotice(null)
-    setShowRecycle(false)
-  }, [projectId])
-
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
 
   // P1-2：未绑定项目的持久化 CLI 会话（cwd 不属于任何已注册项目时产生）。
   // 项目树按 projectId 过滤会漏掉它们——单独分组展示，保证 CLI 会话在 Web 可达。
+  //
+  // 搜索时按标题过滤这一组，而不是整组收起：整组收起会让「搜自己刚看到的 CLI 会话
+  // 标题」得到「无匹配会话」——同一个面板上一个按键之前那一行还在。消息内容搜索也
+  // 救不了它：/api/sessions/search 按 projectId 过滤，未归属会话根本不在结果里，
+  // 标题匹配是它唯一的入口。searchTree 对空查询原样返回，未搜索时行为不变。
   const unboundCliRoots = useMemo(
     () =>
-      search.length === 0
-        ? (tree ?? []).filter((n) => n.session.projectId == null && n.session.source === 'cli')
-        : [],
+      searchTree(
+        (tree ?? []).filter((n) => n.session.projectId == null && n.session.source === 'cli'),
+        search,
+      ),
     [tree, search],
   )
 
@@ -307,25 +337,42 @@ export function SessionList({
   )
 
   const handleDelete = (id: string) => {
+    // 在途锁：慢网/远端磁盘下 DELETE 可能飞数秒，期间会话行还在树上、删除键也
+    // 还可点。再点一次 = 第二个 DELETE，服务端此时已把它软删、回 404 NOT_FOUND，
+    // 界面于是挂上一条常驻的「删除失败」红条——而会话其实已经进了回收站，与
+    // 红条的说法正好相反。行内按钮另有 disabled 兜底，这里再挡一次：按钮
+    // disabled 只拦点击，不拦同 tick 内的事件重入。
+    if (del.isPending) return
     setDeleteError(null)
-    // fail-closed：confirm 不可用时宁可阻止删除（不可恢复操作），与 FileBrowser 惯例一致
     // 影响面必须取未过滤的完整树：visibleTree 是搜索过滤后的视图（非命中路径被裁掉、
     // 未归属项目的 CLI 根根本不在其中），据此算子孙会把整棵子树的级联软删少报成
     // 「0 个派生会话」——用户以为只删一条，实际连同分支一起进回收站。tree 含全部根
     // （含 CLI 未归属），filterTree 只裁根、不动 children，故 findNode(tree, id) 命中
     // 的就是同一个节点、同一批子孙。
     const node = findNode(tree ?? [], id)
-    const branches = node ? countDescendants(node) : 0
-    const branchNote =
-      branches > 0 ? `其 ${branches} 个派生会话（分支/子任务）将一并移入回收站。` : ''
-    if (!window.confirm(`删除该会话及其全部消息？${branchNote}将移入回收站，60 天内可恢复。`))
-      return
-    del.mutate(id, {
+    // 确认改用站内弹窗：原生 window.confirm 不可样式化、移动端被改写，且默认键落在
+    // 「确定」=删除上——影响面写在括号里也拦不住肌肉记忆按回车（同批的导入权限迁移、
+    // 看板覆盖导入、未归属看板彻底删除都已换成站内弹窗，唯独最常走的这条漏了）。
+    setPendingDelete({
+      id,
+      title: node?.session.title ?? '',
+      branches: node ? countDescendants(node) : 0,
+    })
+  }
+
+  /** 站内确认弹窗的「移入回收站」：失败原因留在弹窗里，用户可就地重试。 */
+  const confirmDelete = () => {
+    const target = pendingDelete
+    if (!target) return
+    // 在途锁（同 tick 连击，按钮 disabled 还没写回 DOM 时）
+    if (del.isPending) return
+    del.mutate(target.id, {
       onSuccess: () => {
         // 会话没了：s:<id> 草稿键再也无人读取（文本无上限、图片最多 ~512KB），
         // 删除成功即清退，避免永久滞留 localStorage。
-        clearSessionDraft(id)
-        onDeleted?.(id)
+        clearSessionDraft(target.id)
+        setPendingDelete(null)
+        onDeleted?.(target.id)
       },
       onError: (e: unknown) => {
         setDeleteError(e instanceof Error ? e.message : String(e))
@@ -339,7 +386,59 @@ export function SessionList({
     original: Project
     importPermissions: boolean
   } | null>(null)
-  const { data: projects } = useProjects()
+  /**
+   * P0：导出文件带权限态（auto 模式 / alwaysAllow 白名单）时的确认弹窗。
+   *
+   * 此前用 window.confirm：「确定」= 随迁权限（工具此后免确认执行，危险侧）、
+   * 「取消」= 剥离（推荐侧），而原生框的默认键正是「确定」且回车直达——肌肉
+   * 记忆按一下回车就把 auto/白名单搬了进来。与已修的导出快照选择（bb056bf）
+   * 完全同型，那次改成了站内弹窗，导入这条路径漏了。
+   *
+   * 站内弹窗里危险动作是**未勾选的复选框**：初始焦点落在它上面，回车既不会
+   * 迁移权限、也不会把弹窗关掉。
+   */
+  const [permPrompt, setPermPrompt] = useState<{
+    data: unknown
+    original: Project | undefined
+    detail: string
+  } | null>(null)
+  const [migratePermissions, setMigratePermissions] = useState(false)
+  const { data: projects, isError: projectsQueryFailed, error: projectsErr } = useProjects()
+  const projectsErrMessage =
+    (projectsErr as { message?: string } | null)?.message ??
+    (projectsErr instanceof Error ? projectsErr.message : null)
+
+  // 切项目时清空按项目作用域的 UI 状态。
+  // ChatPage 对 /projects/:projectId（与会话子路由）复用同一组件实例，param
+  // 变化不会重新挂载 SessionList：搜索词、错误条、回收站页签都跟着上一个项目
+  // 过来了——新项目列表继续按旧查询过滤（报「无匹配会话」，看着像会话丢了），
+  // 失败横幅也钉在新项目上方。
+  //
+  // 弹窗类状态同样按项目收口，且后果比横幅更重：本文件的三个弹窗都把「要动哪个
+  // 对象」冻结在打开那一刻，切项目后没有任何一步会重新核对它属于哪个项目——
+  //  - 删除会话确认框：按「移入回收站」删掉的是**刚离开那个项目**的会话，而当前
+  //    页面毫无变化（onDeleted 只在删的是当前打开的会话时才导航），用户以为按钮
+  //    没反应，损失要切回去才看得见；
+  //  - 导入权限确认框：里面那个「随迁权限状态（导入后这些工具免确认执行）」复选框
+  //    的勾选是在上一个项目的语境里做出的决定，跟着带到新项目；
+  //  - 导入目标选择框：列出的是上一个项目的原项目与路径。
+  // 与 ChatSession 的切会话复位（导出弹窗/归档面板）同口径。
+  const firstProjectRef = useRef(projectId)
+  useEffect(() => {
+    if (firstProjectRef.current === projectId) return
+    firstProjectRef.current = projectId
+    setSearch('')
+    setSearchDebounced('')
+    setDeleteError(null)
+    setRenameError(null)
+    setImportError(null)
+    setImportNotice(null)
+    setShowRecycle(false)
+    setPendingDelete(null)
+    setPermPrompt(null)
+    setImportChoice(null)
+    setMigratePermissions(false)
+  }, [projectId])
 
   /** 执行导入：绑定目标项目后刷新树并跳转；notice 明示工具执行目录。 */
   const doImport = async (data: unknown, targetId: string, importPermissions: boolean) => {
@@ -363,6 +462,22 @@ export function SessionList({
     } finally {
       setImporting(false)
     }
+  }
+
+  /**
+   * 权限确认之后的落点：导出文件的原项目在本机存在且非当前项目时先选导入目标，
+   * 否则直接导入到当前项目。
+   */
+  const continueImport = async (
+    data: unknown,
+    original: Project | undefined,
+    importPermissions: boolean,
+  ) => {
+    if (original && original.id !== projectId) {
+      setImportChoice({ data, original, importPermissions })
+      return
+    }
+    await doImport(data, projectId, importPermissions)
   }
 
   /** 检测导出文件的权限态（permissionMode=auto 或 alwaysAllow 非空）。 */
@@ -398,10 +513,25 @@ export function SessionList({
           (exportedProjectId && p.id === exportedProjectId) ||
           (exportedWorktree && p.worktree === exportedWorktree),
       )
+      /*
+       * 读不到项目列表 ≠ 原项目不在本机。导出文件带着原项目归属时，「原项目是否
+       * 就是当前项目」这件事只有列表能回答：列表读不到而继续导入，`original`
+       * 恒为 undefined → continueImport 直接跳过「选择导入目标」，会话静默绑到
+       * 当前项目，继续对话后 bash/git 全跑在错误 worktree 里（P1-2 那道门整个
+       * 不出现，页面零错误、零重试）。真实浏览器实测注入 500 后：导出自 projB 的
+       * 会话直接落到 projA，notice 里的执行目录还退化成一句「目标项目的目录」。
+       * 因此这里中止导入并把真实原因交给用户，而不是猜一个目标。
+       */
+      if ((exportedProjectId || exportedWorktree) && projectsQueryFailed && !projects) {
+        setImportError(
+          `无法读取项目列表（${projectsErrMessage ?? '未知原因'}），无法判断该会话导出自哪个项目，已中止导入；请稍后重试。`,
+        )
+        return
+      }
       // P0：权限态迁移需用户显式确认（默认剥离）。导出文件含 auto 模式或
-      // alwaysAllow 白名单时，导入前明示风险并让用户选择。
+      // alwaysAllow 白名单时，导入前明示风险并让用户选择（站内弹窗，危险动作为
+      // 未勾选的复选框——原生 confirm 的默认键是「确定」= 迁移）。
       const perms = detectExportPermissions(data)
-      let importPermissions = false
       if (perms.auto || perms.allowCount > 0) {
         const detail = [
           perms.auto ? '自动授权模式（auto）' : null,
@@ -409,17 +539,11 @@ export function SessionList({
         ]
           .filter(Boolean)
           .join('、')
-        importPermissions = window.confirm(
-          `该会话导出包含权限状态：${detail}。\n` +
-            `迁移后这些授权将在导入的会话中立即生效（工具免确认执行）。\n` +
-            `点「确定」随迁权限状态；点「取消」仅导入消息，权限使用默认设置（推荐）。`,
-        )
-      }
-      if (original && original.id !== projectId) {
-        setImportChoice({ data, original, importPermissions })
+        setMigratePermissions(false)
+        setPermPrompt({ data, original, detail })
         return
       }
-      await doImport(data, projectId, importPermissions)
+      await continueImport(data, original, false)
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err))
     }
@@ -475,18 +599,15 @@ export function SessionList({
           + 新建
         </button>
       </div>
-      {deleteError && (
-        <div className={errorBar} data-testid="delete-error">
-          删除失败：{deleteError}
-        </div>
-      )}
       {renameError && (
         <div className={errorBar} data-testid="rename-error">
           重命名失败：{renameError}
         </div>
       )}
       {importError && (
-        <div className={errorBar} data-testid="import-error">
+        // role=alert：导入失败（含上面的「项目列表读不到 → 中止导入」）是这条路径
+        // 唯一的反馈，不播报等于对读屏用户静默。
+        <div className={errorBar} role="alert" data-testid="import-error">
           导入失败：{importError}
         </div>
       )}
@@ -535,7 +656,15 @@ export function SessionList({
           </div>
         </div>
       ) : null}
-      {!showRecycle && !isError ? (
+      {/* 三分支显式写开：此前是 `!showRecycle && !isError ? <树> : <RecycleBin/>`，
+       * 于是「会话树加载失败（isError）且未切到回收站」这一态落进 else，把整个
+       * 回收站渲染在「会话列表加载失败」横幅**下方**——回收站开关仍是未按下的
+       * aria-pressed="false"，面板却显示已删除会话行，且「清空回收站 / 彻底删除」
+       * 这些破坏性按钮就在一个自称「加载失败」的面板里可点。刚删过会话的用户会
+       * 以为删除失败/会话复活。 */}
+      {showRecycle ? (
+        <RecycleBin projectId={projectId} />
+      ) : !isError ? (
         <>
           {contentError && searching ? (
             <div className={errorBar} role="alert" data-testid="session-search-error">
@@ -550,7 +679,11 @@ export function SessionList({
               </button>
             </div>
           ) : null}
-          {!isLoading && !contentError && visibleTree.length === 0 && extraMatches.length === 0 ? (
+          {!isLoading &&
+          !contentError &&
+          visibleTree.length === 0 &&
+          unboundCliRoots.length === 0 &&
+          extraMatches.length === 0 ? (
             <div className={empty} aria-live="polite">
               {searching ? (contentPending ? '搜索中…' : '无匹配会话') : '该项目下暂无会话'}
             </div>
@@ -562,6 +695,7 @@ export function SessionList({
               onSelect={onSelect}
               onDelete={handleDelete}
               onRename={handleRename}
+              deleting={del.isPending}
             />
           )}
           {unboundCliRoots.length > 0 && (
@@ -573,6 +707,7 @@ export function SessionList({
                 onSelect={onSelect}
                 onDelete={handleDelete}
                 onRename={handleRename}
+                deleting={del.isPending}
               />
             </div>
           )}
@@ -602,8 +737,97 @@ export function SessionList({
             </div>
           )}
         </>
-      ) : (
-        <RecycleBin projectId={projectId} />
+      ) : null}
+      {pendingDelete && (
+        <Dialog
+          testId="delete-session-dialog"
+          onClose={() => {
+            // 请求在飞时不给关闭出口：关掉弹窗会连同失败原因一起消失（与
+            // AddProjectDialog / DangerConfirmDialog 同口径）。
+            if (del.isPending) return
+            setPendingDelete(null)
+          }}
+          closeDisabled={del.isPending}
+          title="删除会话"
+          footer={
+            <>
+              <button
+                type="button"
+                className={addBtn}
+                disabled={del.isPending}
+                onClick={() => setPendingDelete(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className={addBtn}
+                data-testid="delete-session-confirm"
+                disabled={del.isPending}
+                onClick={confirmDelete}
+              >
+                {del.isPending ? '删除中…' : '移入回收站'}
+              </button>
+            </>
+          }
+        >
+          <div className={deleteDesc} data-testid="delete-session-detail">
+            「{pendingDelete.title || '未命名会话'}」及其全部消息将移入回收站，60 天内可恢复。
+            {pendingDelete.branches > 0 && (
+              <>
+                <br />其 {pendingDelete.branches} 个派生会话（分支/子任务）将一并移入回收站。
+              </>
+            )}
+          </div>
+          {deleteError && (
+            <div className={errorBar} role="alert" data-testid="delete-error">
+              删除失败：{deleteError}
+            </div>
+          )}
+        </Dialog>
+      )}
+      {permPrompt && (
+        <Dialog
+          testId="import-permissions-dialog"
+          onClose={() => setPermPrompt(null)}
+          title="导入会话：权限状态"
+          footer={
+            <>
+              <button type="button" className={addBtn} onClick={() => setPermPrompt(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className={addBtn}
+                data-testid="import-permissions-continue"
+                onClick={() => {
+                  const prompt = permPrompt
+                  setPermPrompt(null)
+                  void continueImport(prompt.data, prompt.original, migratePermissions)
+                }}
+              >
+                继续导入
+              </button>
+            </>
+          }
+        >
+          <div className={importPermDesc} data-testid="import-permissions-detail">
+            该会话导出包含权限状态：{permPrompt.detail}。这些授权一旦迁移，导入后在会话里立即生效——
+            相关工具不再向你确认。
+          </div>
+          <label className={importPermRow}>
+            <input
+              type="checkbox"
+              checked={migratePermissions}
+              onChange={(e) => setMigratePermissions(e.target.checked)}
+              data-testid="import-permissions-migrate"
+            />
+            随迁权限状态（导入后这些工具免确认执行）
+          </label>
+          <div className={importPermHint}>
+            默认不勾选：只导入消息，权限按目标项目的默认设置重新开始确认。
+          </div>
+        </Dialog>
       )}
       {importChoice && (
         <Dialog

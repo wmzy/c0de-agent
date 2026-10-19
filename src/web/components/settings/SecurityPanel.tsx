@@ -1,3 +1,4 @@
+import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, ConfirmDialog } from 'haze-ui'
@@ -14,6 +15,36 @@ import {
 } from '@/components/settings/styles.js'
 import { authAPI } from '@/services/auth.js'
 
+/** 读失败提示框：与 WorkflowsPanel 的同类盒子同形（危险色描边 + 重试）。 */
+const listErrorBox = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--haze-color-danger);
+  border-radius: 6px;
+  color: var(--haze-color-danger);
+  font-size: 12px;
+`
+
+const retryBtn = css`
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  background: var(--haze-color-bg);
+  color: inherit;
+  font-size: 11px;
+  padding: 0 6px;
+  min-height: auto;
+  min-width: auto;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+`
+
 interface SecurityPanelProps {
   security: Config['security']
   permission: Config['permission']
@@ -24,18 +55,64 @@ interface SecurityPanelProps {
   securityScope?: 'global' | 'project'
 }
 
+/**
+ * 设备列表读失败：给出后端原因 + 重试。
+ * 与 WorkflowsPanel 的 listErrorBox / UsagePanel 的 errorState 同口径——读不到必须与
+ * 「确实没有设备」区分开：这一段的两个结论（列表、撤销入口）此刻都不可用。
+ */
+function DeviceListError({
+  error,
+  refetching,
+  onRetry,
+}: {
+  error: unknown
+  refetching: boolean
+  onRetry: () => void
+}) {
+  const message =
+    (error as { message?: string } | null)?.message ??
+    (error instanceof Error ? error.message : null) ??
+    '未知错误'
+  return (
+    <div className={listErrorBox} role="alert" data-testid="device-list-error">
+      <span>{`已授权设备读取失败：${message}`}</span>
+      <span>列表与「撤销」入口此刻不可用（看不到不等于没有设备）。</span>
+      <button
+        type="button"
+        className={retryBtn}
+        onClick={() => void onRetry()}
+        disabled={refetching}
+        data-testid="device-list-retry"
+      >
+        重试
+      </button>
+    </div>
+  )
+}
+
 /** 已授权设备管理（P2-16 配套）：列出/撤销设备。撤销唯一设备将退出本页面（token 失效）。 */
 function DevicesSection() {
   const qc = useQueryClient()
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error, isFetching, refetch } = useQuery({
     queryKey: ['auth', 'devices'],
     queryFn: () => authAPI.listDevices(),
     staleTime: 30_000,
     retry: false,
   })
+  // 撤销失败原因。此前 revoke 只有 onSuccess，且 onConfirm 里 mutate 后立刻
+  // 关弹窗：请求失败时列表不变、页面零提示——用户以为设备已撤销（弹窗里刚
+  // 承诺「立即失去访问权限」），而那台设备其实仍持有访问权，是与语义相反的
+  // 假成功。与 ProjectIndicator.deleteError / WorkflowsPanel.removeError 同口径。
+  const [revokeError, setRevokeError] = useState<string | null>(null)
   const revoke = useMutation({
     mutationFn: (id: string) => authAPI.revokeDevice(id),
+    onMutate: () => setRevokeError(null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'devices'] }),
+    onError: (e: unknown) => {
+      const message =
+        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : null)
+      setRevokeError(message || '撤销失败，设备仍可访问')
+    },
   })
   const devices = data?.devices ?? []
 
@@ -44,11 +121,20 @@ function DevicesSection() {
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null)
 
   if (isLoading) return <p className={hint}>加载已授权设备…</p>
-  if (isError) return <p className={hint}>获取已授权设备失败（认证可能未启用）</p>
+  // 读失败不能只说一句猜测：用户此刻正要做的是「撤销一台丢失的设备」，此前这里
+  // 只渲染「获取已授权设备失败（认证可能未启用）」——后端的真实原因（500/超时/无权）
+  // 被丢掉，没有任何重试入口，而且那句话还可能是不成立的断言（认证明明开着，用户
+  // 就站在「已授权设备」这一段里）。与 WorkflowsPanel / UsagePanel 同口径：原因 + 重试。
+  if (isError) return <DeviceListError error={error} refetching={isFetching} onRetry={refetch} />
   if (devices.length === 0) return <p className={hint}>暂无已授权设备</p>
 
   return (
     <>
+      {revokeError && (
+        <p className={hint} role="alert" data-testid="device-revoke-error">
+          <span style={{ color: 'var(--haze-color-danger)' }}>撤销失败：{revokeError}</span>
+        </p>
+      )}
       <div data-testid="device-list">
         {devices.map((d) => (
           <div
@@ -264,6 +350,10 @@ function SecurityPanel({
         <p className={hint}>
           未显式设置时使用默认值：确认超时 5 分钟（超时仅提示，弹窗可重新确认）， 再过 25
           分钟仍未处理则自动拒绝。
+        </p>
+        <p className={hint} data-testid="permission-timeout-restart-hint">
+          这两个值由服务启动时读取（只取全局作用域或服务启动目录的项目作用域）：保存后需重启 c0de
+          serve 才会生效——否则保存条上的「已保存」看着像已经放宽了，运行时仍按旧值拒绝。
         </p>
       </div>
       {confirmDisableAuth && (

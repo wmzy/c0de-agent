@@ -29,6 +29,7 @@ import {
   permanentlyDeleteSession,
   purgeEmptySession,
   rebindSession,
+  rebindUnboundSessions,
   restoreSessionCore,
   searchSessions,
   softDeleteSession,
@@ -522,6 +523,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
     let rebound = false
     let orphaned = false
     let recreatedProject: { id: string; name: string | null } | null = null
+    // 本次恢复落定的项目：连带还原的祖先/后代也要归属到它（见下方 adoptedCount）。
+    let targetProject: { id: string; worktree: string } | null = null
     if (session && !session.projectId) {
       const wt = session.worktreePath
       // P1-3：用户选择「归属到当前项目」时跳过自动重建（删除项目是用户意图，
@@ -532,6 +535,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
           await ctx.db.db.update(sessions).set({ projectId: project.id }).where(eq(sessions.id, id))
           rebound = true
           recreatedProject = { id: project.id, name: project.name }
+          targetProject = project
         } catch {
           orphaned = true
         }
@@ -546,9 +550,18 @@ function createSessionRoute(ctx: ServerContext): Hono {
           await rebindSession(ctx.db, id, project)
           orphaned = false
           rebound = true
+          targetProject = project
         }
       }
     }
+    // P2-2 可达性：恢复只给目标会话落了归属，而删除项目留下的孤儿是**整批**的
+    // ——连带还原的祖先（以及同批次后代）仍是 projectId=null。侧栏按根会话
+    // projectId 过滤整棵树，根无归属时恢复成功的会话在任何项目视图里都不出现
+    // （提示却说「已恢复并归属到当前项目」），被还原的祖先也再无任何列表入口。
+    // 目标会话拿到归属时，把本次还原出的、仍无归属的会话一并归属过去。
+    const adoptedCount = targetProject
+      ? (await rebindUnboundSessions(ctx.db, result.restoredIds, targetProject)).length
+      : 0
     return c.json({
       ok: true,
       rebound,
@@ -558,6 +571,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
       crossedBatchAncestor: result.crossedBatchAncestor,
       // A2：批次不同的已删后代滞留在回收站，显式告知数量供前端提示单独恢复。
       leftBehindDescendantCount: result.leftBehindDescendantCount,
+      // P2-2：连带还原且一并归属到本次恢复项目的会话数量（不含目标会话）。
+      adoptedCount,
     })
   })
 

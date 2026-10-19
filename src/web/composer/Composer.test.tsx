@@ -3,12 +3,13 @@
 // 这里锁住三个行为：出现确认条且未插入、确认后插入规范化文本、取消后丢弃。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Composer } from '@/composer/Composer.js'
-import { draftStorageKey } from '@/composer/draft.js'
+import { draftStorageKey, saveDraft } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
+import { commandsAPI } from '@/services/commands.js'
 import { fileAPI } from '@/services/file.js'
 import { storageGet } from '@/utils/storage.js'
 
@@ -147,6 +148,57 @@ describe('Composer 拖放文本入框', () => {
 
     expect(execCommand).toHaveBeenCalledWith('insertText', false, 'kept text')
     // 图片走异步读取，附件栏随之出现
+    await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('1 张'))
+  })
+})
+
+/**
+ * 粘贴此前是拖放的漏网支路：命中第一张图片就 return，同一批里的文本整段丢失。
+ * 从网页/文档里复制一段图文混排后 Ctrl+V，只拿到图片、那段文字无声不见。
+ * 契约与拖放一致：图片与文本互不吞。
+ */
+describe('Composer 图文混排粘贴', () => {
+  /** happy-dom 的 ClipboardEvent 不支持 init.clipboardData，直接构造原生事件注入。 */
+  function pasteMixed(el: HTMLElement, items: unknown[], text: string) {
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { items, getData: () => text },
+    })
+    fireEvent(el, event)
+  }
+
+  it('同批既有图片又有文本时两者都处理，文本不被丢弃', async () => {
+    const editor = renderComposer()
+    const png = new File(['x'], 'a.png', { type: 'image/png' })
+    pasteMixed(editor, [{ type: 'image/png', getAsFile: () => png }], 'kept text')
+
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, 'kept text')
+    await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('1 张'))
+  })
+
+  it('同批两张图片全部收下，文本照旧插入', async () => {
+    const editor = renderComposer()
+    const a = new File(['a'], 'a.png', { type: 'image/png' })
+    const b = new File(['b'], 'b.png', { type: 'image/png' })
+    pasteMixed(
+      editor,
+      [
+        { type: 'image/png', getAsFile: () => a },
+        { type: 'image/png', getAsFile: () => b },
+      ],
+      'kept text',
+    )
+
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, 'kept text')
+    await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('2 张'))
+  })
+
+  it('纯图片粘贴（无文本）仍是只加附件，不往输入框插空文本', async () => {
+    const editor = renderComposer()
+    const png = new File(['x'], 'a.png', { type: 'image/png' })
+    pasteMixed(editor, [{ type: 'image/png', getAsFile: () => png }], '')
+
+    expect(execCommand).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.getByTestId('attachment-bar').textContent).toContain('1 张'))
   })
 })
@@ -439,6 +491,93 @@ describe('Composer @ 浮层在文件搜索在途时的加载态', () => {
 })
 
 /**
+ * 候选源读取失败：此前与「没有匹配」渲染完全一致（浮层消失/空列表），用户据此
+ * 以为文件/命令不存在，按 Enter 还把字面量 `@foo` / `/cmd` 当正文发出去。
+ */
+describe('Composer 浮层候选源读取失败时的错误态', () => {
+  function typeToken(editor: HTMLElement, text: string) {
+    editor.textContent = text
+    const node = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(node, text.length)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  function renderFailed() {
+    const onSend = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return { editor: screen.getByTestId('composer-editor'), onSend }
+  }
+
+  afterEach(() => {
+    vi.mocked(fileAPI.search).mockResolvedValue([] as never)
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] } as never)
+  })
+
+  it('文件搜索失败时浮层显示原因，而不是渲染成「没有匹配」', async () => {
+    vi.mocked(fileAPI.search).mockRejectedValue(new Error('搜索服务炸了'))
+    const { editor } = renderFailed()
+    typeToken(editor, '@rea')
+
+    await waitFor(() => expect(screen.getByTestId('at-menu-error')).toBeTruthy())
+    expect(screen.getByTestId('at-menu-error').textContent).toContain('搜索服务炸了')
+    // 不是空浮层、也不是「搜索中」——两者都会让用户以为没有匹配。
+    expect(screen.queryByTestId('at-menu')).toBeNull()
+    expect(screen.queryByTestId('at-menu-loading')).toBeNull()
+  })
+
+  it('失败态下 Enter 仍把消息发出去（不被浮层吞掉）', async () => {
+    vi.mocked(fileAPI.search).mockRejectedValue(new Error('boom'))
+    const { editor, onSend } = renderFailed()
+    typeToken(editor, '@rea')
+    await waitFor(() => expect(screen.getByTestId('at-menu-error')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    await waitFor(() => expect(onSend).toHaveBeenCalled())
+  })
+
+  it('点失败行的「重试」后候选恢复（用户不必重打一遍）', async () => {
+    vi.mocked(fileAPI.search)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue([{ path: 'src/a.ts', type: 'file' }] as never)
+    const { editor } = renderFailed()
+    typeToken(editor, '@a')
+    await waitFor(() => expect(screen.getByTestId('at-menu-error')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('重试'))
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+  })
+
+  it('斜杠命令列表读取失败时同样给出原因与重试', async () => {
+    vi.mocked(commandsAPI.list).mockRejectedValue(new Error('命令服务不可用'))
+    const { editor } = renderFailed()
+    typeToken(editor, '/')
+
+    await waitFor(() => expect(screen.getByTestId('slash-menu-error')).toBeTruthy())
+    expect(screen.getByTestId('slash-menu-error').textContent).toContain('命令服务不可用')
+  })
+})
+
+/**
  * 工具权限请求的到达是一个「需要用户介入」的状态变化（run 停在这一步等确认），
  * 因此 dock 必须被当成 alertdialog：挂载即接管焦点、Esc 等价拒绝、关闭后焦点
  * 回到输入框。此前是无 role 的普通 div——焦点留在输入框、读屏无播报、Esc 不通。
@@ -581,6 +720,306 @@ describe('Composer 浮层候选插不进去时不再吞掉 Enter', () => {
     await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
 
     fireEvent.keyDown(editor, { key: 'Enter' })
+    await waitFor(() => expect(editor.textContent).toContain('src/f0.ts'))
+    expect(onSend).not.toHaveBeenCalled()
+  })
+})
+
+// Tab 是「离开输入框」的键。子命令浮层打开时按 Tab 会走 Composer 的 Tab 分支把
+// 浮层关掉，但 useComposer 里有「commands 就绪 / popover 变化后按同一段文本重新
+// 检测」的 effect——裸 setPopover(null) 不记 dismissed，菜单在焦点移走的同一瞬间
+// 原样弹回来，Tab 成了死键；Esc 因为记了 dismissed 不会重现，用户学到的规则失效。
+describe('Composer Tab 关浮层后不会被重新检测弹回来', () => {
+  function typeText(editor: HTMLElement, text: string) {
+    editor.textContent = text
+    const node = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(node, text.length)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  function renderWithSubcommand() {
+    vi.mocked(commandsAPI.list).mockResolvedValue({
+      commands: [
+        {
+          name: 'git',
+          description: 'git 子命令',
+          subcommands: [
+            { name: 'status', description: '查看状态' },
+            { name: 'commit', description: '提交' },
+          ],
+        },
+      ],
+    } as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer onSend={vi.fn()} isStreaming={false} hasHistory={false} agents={[]} />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return screen.getByTestId('composer-editor')
+  }
+
+  it('Tab 关掉子命令浮层后它不再自己弹回来', async () => {
+    const editor = renderWithSubcommand()
+    typeText(editor, '/git ')
+    await waitFor(() => expect(screen.getByTestId('subcommand-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Tab' })
+
+    await waitFor(() => expect(screen.queryByTestId('subcommand-menu')).toBeNull())
+    // 再等一拍：重检测 effect 是在 popover 变 null 之后跑的，修复前它会在此把
+    // 同一个菜单弹回来（这条断言就是死键的钉子）
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByTestId('subcommand-menu')).toBeNull()
+  })
+
+  it('Esc 与 Tab 关掉的是同一个浮层（两条路径都不弹回）', async () => {
+    const editor = renderWithSubcommand()
+    typeText(editor, '/git ')
+    await waitFor(() => expect(screen.getByTestId('subcommand-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Escape' })
+    expect(screen.queryByTestId('subcommand-menu')).toBeNull()
+
+    // 用户继续把这段文本改成别的子命令查询——新的输入意图应重新获得补全
+    typeText(editor, '/git s')
+    await waitFor(() => expect(screen.getByTestId('subcommand-menu')).toBeTruthy())
+  })
+})
+
+/**
+ * 未定的交互状态不跨作用域（切会话 / 切草稿页项目）。
+ *
+ * 此前 send() 的失败还原只认「发送世代」（sendAttemptRef：又发了一次才作废），
+ * 而切会话不改它——hook 实例也不随会话切换重建（目标会话的消息已在 react-query
+ * 缓存里时不走 ChatSkeleton 早返回）。于是「在 A 发消息 → 请求还没回来就点开 B」
+ * 时，A 那次失败回来会在 B 的输入框里回填 A 的正文与图片，并（persist=true）
+ * 把它写成 B 的草稿（刷新后还在）：同一段文字被记在两条会话头上。同一根因还让
+ * 「大段粘贴确认条」整条留着——它的正文来自 A，点「插入」就灌进 B。
+ *
+ * 修法：草稿作用域世代号（scopeGenRef）。作用域一变，在途请求落地时一律作废。
+ */
+describe('Composer 未定的交互状态不跨作用域', () => {
+  function ScopeHarness({
+    scope,
+    onSend,
+    onSteer,
+  }: {
+    scope: string
+    onSend: () => boolean | undefined | Promise<boolean | undefined>
+    onSteer?: (message: string) => boolean | undefined | Promise<boolean | undefined>
+  }) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return (
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            onSteer={onSteer}
+            isStreaming={onSteer !== undefined}
+            hasHistory={false}
+            agents={[]}
+            draftScope={scope}
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>
+    )
+  }
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('A 的发送失败不回填进切过去之后的 B，而是落回 A 自己的草稿', async () => {
+    let settle: ((ok: boolean) => void) | undefined
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve
+        }),
+    )
+    const view = render(<ScopeHarness scope="s:one" onSend={onSend} />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '属于 A 的正文' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(editor.textContent).not.toContain('属于 A 的正文')
+
+    // 请求在途期间切到 B（同一实例，复刻「B 的消息已在缓存里，不走骨架页」）
+    view.rerender(<ScopeHarness scope="s:two" onSend={onSend} />)
+    settle?.(false)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // 不写进 B：正文与草稿都不能沾
+    expect(editor.textContent).not.toContain('属于 A 的正文')
+    expect(storageGet(draftStorageKey('s:two'))).toBeNull()
+    // 也不能丢：落回 A 自己的草稿，回去时输入框里还是这段文字
+    expect(storageGet(draftStorageKey('s:one'))).toContain('属于 A 的正文')
+    view.rerender(<ScopeHarness scope="s:one" onSend={onSend} />)
+    expect(editor.textContent).toContain('属于 A 的正文')
+  })
+
+  it('未切作用域时失败仍原样还回输入（守卫不得误伤这条既有承诺）', async () => {
+    let settle: ((ok: boolean) => void) | undefined
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve
+        }),
+    )
+    render(<ScopeHarness scope="s:one" onSend={onSend} />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '失败要还回来' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    settle?.(false)
+
+    await waitFor(() => expect(editor.textContent).toContain('失败要还回来'))
+    expect(storageGet(draftStorageKey('s:one'))).toContain('失败要还回来')
+  })
+
+  it('A 的大段粘贴确认条不跟到 B', () => {
+    const view = render(<ScopeHarness scope="s:one" onSend={vi.fn()} />)
+    const editor = screen.getByTestId('composer-editor')
+    pasteText(editor, LARGE)
+    expect(screen.getByTestId('paste-confirm')).toBeTruthy()
+
+    view.rerender(<ScopeHarness scope="s:two" onSend={vi.fn()} />)
+
+    // 确认条的正文来自 A；留着它，点「插入」就把 A 粘贴的内容写进 B 的输入框。
+    expect(screen.queryByTestId('paste-confirm')).toBeNull()
+  })
+
+  it('A 的追加指令落地时不清掉 B 的草稿（同文也不行）', async () => {
+    let settle: ((ok: boolean) => void) | undefined
+    const onSteer = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve
+        }),
+    )
+    // B 已有一份与 A 这段指令同文的草稿：清空判定比的是「输入框里还是不是那段文字」，
+    // 同文就会命中——跨作用域时必须先按世代作废。
+    saveDraft('s:two', [{ type: 'text', content: '同一段指令', start: 0, end: 5 }], [])
+
+    const view = render(<ScopeHarness scope="s:one" onSend={vi.fn()} onSteer={onSteer} />)
+    const editor = screen.getByTestId('composer-editor')
+    fireEvent.input(editor, { target: { textContent: '同一段指令' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(onSteer).toHaveBeenCalledTimes(1)
+
+    view.rerender(<ScopeHarness scope="s:two" onSend={vi.fn()} onSteer={onSteer} />)
+    expect(editor.textContent).toContain('同一段指令')
+
+    settle?.(true)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(editor.textContent).toContain('同一段指令')
+    expect(storageGet(draftStorageKey('s:two'))).toContain('同一段指令')
+  })
+})
+
+/**
+ * Shift+Enter 是「换行」，不是「确认候选」。
+ *
+ * 四个浮层的 Enter 分支此前只判 `e.key === 'Enter'`，命中候选后立刻 preventDefault
+ * 并插入——于是浮层开着时按 Shift+Enter 得到的是「插入候选 + 不换行 + 已打的字被
+ * 静默改写」：`/hel` 变成 `/help `，`@src` 变成某个具体文件路径。用户想要的换行
+ * 没有出现，反而丢了刚打的字（且浮层看起来「自己选中了第一条」）。口径与
+ * useComposer 的发送分支一致：Shift+Enter 留给换行，确认候选只认裸 Enter。
+ */
+describe('Composer 浮层打开时 Shift+Enter 不确认候选', () => {
+  function typeToken(editor: HTMLElement, text: string) {
+    editor.textContent = text
+    const node = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(node, text.length)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  function renderPopover() {
+    vi.mocked(fileAPI.search).mockResolvedValue([{ path: 'src/f0.ts', type: 'file' }] as never)
+    vi.mocked(commandsAPI.list).mockResolvedValue({
+      commands: [
+        { name: 'help', description: '帮助' },
+        { name: 'hello', description: '打招呼' },
+      ],
+    } as never)
+    const onSend = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={onSend}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return { editor: screen.getByTestId('composer-editor'), onSend }
+  }
+
+  afterEach(() => {
+    vi.mocked(fileAPI.search).mockResolvedValue([] as never)
+    vi.mocked(commandsAPI.list).mockResolvedValue({ commands: [] } as never)
+  })
+
+  it('@ 浮层开着时 Shift+Enter 不改写已打的字、也不发送', async () => {
+    const { editor, onSend } = renderPopover()
+    typeToken(editor, '@src')
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter', shiftKey: true })
+
+    expect(editor.textContent).toBe('@src')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByTestId('at-menu')).toBeTruthy()
+  })
+
+  it('斜杠浮层开着时 Shift+Enter 不把 /hel 改写成 /help ', async () => {
+    const { editor, onSend } = renderPopover()
+    typeToken(editor, '/hel')
+    await waitFor(() => expect(screen.getByTestId('slash-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter', shiftKey: true })
+
+    expect(editor.textContent).toBe('/hel')
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('同一浮层里裸 Enter 仍然确认候选（Shift 只是不放行发送，不影响确认）', async () => {
+    const { editor, onSend } = renderPopover()
+    typeToken(editor, '@src')
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+
     await waitFor(() => expect(editor.textContent).toContain('src/f0.ts'))
     expect(onSend).not.toHaveBeenCalled()
   })

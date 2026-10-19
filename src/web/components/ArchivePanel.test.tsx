@@ -89,4 +89,22 @@ describe('ArchivePanel 读取失败', () => {
     })
     expect(screen.queryByTestId('archive-load-error')).toBeNull()
   })
+
+  // 回归：搜索无命中此前渲染的是空态那句「暂无归档（/clear、Shake、压缩产生的
+  // 内容会保留在这里）」。用户刚在列表里看到两条归档，输入一个不存在的词就被
+  // 告诉「暂无归档」，只会认定历史内容已被清掉。真实浏览器（隔离 dev server，
+  // 会话里导入两条 shake/clear 归档）实测：列表本来显示两条，输入 zzzz 后整块
+  // 换成了那句空态。同族口径在侧栏会话搜索 / 回收站搜索 / 文件面板都已修过。
+  it('搜索无命中时说「没有匹配」而不是「暂无归档」', async () => {
+    archives.mockResolvedValue({ archives: [] })
+    renderPanel()
+
+    await screen.findByText(/暂无归档/)
+    fireEvent.change(screen.getByTestId('archive-search'), { target: { value: 'zzzz' } })
+
+    const empty = await screen.findByTestId('archive-no-match')
+    expect(empty.textContent).toContain('没有匹配「zzzz」的归档')
+    // 「没有归档」是另一件事：搜索无命中时不得再出现
+    expect(screen.queryByText(/暂无归档/)).toBeNull()
+  })
 })

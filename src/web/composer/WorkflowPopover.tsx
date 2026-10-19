@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useRef } from 'react'
+import { PopoverError } from '@/composer/PopoverError.js'
 import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 
@@ -93,6 +94,10 @@ type Props = {
   activeIndex: number
   /** 工作流列表仍在加载中（结果未到）。 */
   loading?: boolean
+  /** 工作流列表读取失败的原因（已取 message）；非空即渲染失败行。 */
+  error?: string | null
+  /** 失败行的重试入口。 */
+  onRetry?: () => void
   onSelect: (name: string) => void
 }
 
@@ -101,6 +106,13 @@ function WorkflowPopover(props: Props) {
   usePopoverScroll(listRef, props.activeIndex, props.workflows.length > 0)
   // 加载中与「确实没有工作流」此前都渲染成空——浮层消失，用户看不出区别。
   if (props.workflows.length === 0) {
+    if (props.error) {
+      return (
+        <div className={popover} data-testid="workflow-menu-error">
+          <PopoverError message={`工作流列表加载失败：${props.error}`} onRetry={props.onRetry} />
+        </div>
+      )
+    }
     if (!props.loading) return null
     return (
       <div className={popover} role="status" data-testid="workflow-menu-loading">

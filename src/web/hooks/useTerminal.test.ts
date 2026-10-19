@@ -437,3 +437,183 @@ describe('终端断线后的重连节奏', () => {
     expect(FakeSocket.instances).toHaveLength(3)
   })
 })
+
+// 复现：切项目/挂载恢复时 terminalAPI.list() 一旦失败（后端 500、DB 被占、网络
+// 抖动），catch 空吞 → finally setRestoring(false) → 持久化 effect 拿着被清空的
+// sessions=[] 回写 localStorage，把该项目还完好的终端布局永久覆盖掉；仍在后端
+// 存活的 PTY 从此没有任何入口。用户看到的是「尚无终端」这句谎话。
+describe('终端恢复失败不得抹掉磁盘上的布局', () => {
+  it('list 失败：如实报错，且不把空布局写回 localStorage', async () => {
+    seedLayout('projA', ['pty_A', 'pty_B'])
+    mockList.mockRejectedValueOnce(new Error('db is locked'))
+
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    await act(async () => {})
+
+    expect(result.current.restoreError).toBeTruthy()
+    const raw = localStorage.getItem('c0de-agent:terminalSessions:projA')
+    const parsed = JSON.parse(raw ?? '{}') as { sessions?: unknown[] }
+    expect(parsed.sessions).toHaveLength(2)
+  })
+
+  it('重试成功后布局恢复、错误清除，磁盘内容仍完整', async () => {
+    seedLayout('projA', ['pty_A', 'pty_B'])
+    mockList.mockRejectedValueOnce(new Error('db is locked'))
+
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    await act(async () => {})
+    expect(result.current.restoreError).toBeTruthy()
+
+    mockList.mockResolvedValueOnce({
+      terminals: [fakeInfo('pty_A', 'projA'), fakeInfo('pty_B', 'projA')],
+    })
+    await act(async () => {
+      result.current.retryRestore()
+    })
+    await act(async () => {})
+
+    expect(result.current.restoreError).toBeNull()
+    expect(result.current.sessions).toHaveLength(2)
+    const parsed = JSON.parse(
+      localStorage.getItem('c0de-agent:terminalSessions:projA') ?? '{}',
+    ) as { sessions?: unknown[] }
+    expect(parsed.sessions).toHaveLength(2)
+  })
+})
+
+/**
+ * 回归：新建终端 / 分屏失败此前完全静默。
+ *
+ * terminalAPI.create 的 rejection 直接甩给调用方，而 TerminalPanel 一律 `void`
+ * 掉返回值：PTY 建不出来时界面纹丝不动（顺带一条 unhandledrejection），用户只会
+ * 以为「+」和分屏按钮坏了。
+ */
+describe('useTerminal 新建/分屏失败', () => {
+  it('createTerminal 失败：留下原因、不抛异常、不建出会话', async () => {
+    mockCreate.mockRejectedValue(new Error('PTY 启动失败：no such shell'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    let returned: string | undefined = 'unset'
+    await act(async () => {
+      returned = await result.current.createTerminal({ cwd: '/tmp' })
+    })
+
+    expect(returned).toBeUndefined()
+    expect(result.current.sessions).toHaveLength(0)
+    expect(result.current.createError).toBe('新建终端失败：PTY 启动失败：no such shell')
+  })
+
+  it('splitTerminal 失败：同样给出原因，不改布局', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockCreate.mockRejectedValue(new Error('PTY 启动失败：too many processes'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    expect(result.current.sessions).toHaveLength(1)
+    const before = result.current.tabs[0]?.split.sizes
+
+    await act(async () => {
+      await result.current.splitTerminal({ direction: 'horizontal' })
+    })
+
+    expect(result.current.tabs[0]?.split.sizes).toEqual(before)
+    expect(result.current.createError).toBe('分屏失败：PTY 启动失败：too many processes')
+  })
+
+  it('重试成功清掉失败原因', async () => {
+    mockCreate.mockRejectedValueOnce(new Error('PTY 启动失败：boom'))
+    mockCreate.mockResolvedValueOnce(fakeInfo('pty_1', 'projA'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    await act(async () => {
+      await result.current.createTerminal({ cwd: '/tmp' })
+    })
+    expect(result.current.createError).toContain('boom')
+
+    await act(async () => {
+      await result.current.createTerminal({ cwd: '/tmp' })
+    })
+
+    expect(result.current.createError).toBeNull()
+    expect(result.current.sessions).toHaveLength(1)
+  })
+})
+
+/**
+ * 回归：关闭终端时 DELETE 失败被空吞，pane 照样被移除。
+ *
+ * 用户点 pane 上的 ×，此时 DELETE /api/terminal/:id 失败（后端刚重启 / 500 /
+ * 网络不通）。界面照样把这一格关掉，但 PTY 进程其实还活着；它的 id 同时从
+ * localStorage 布局里被删掉，而恢复只按「持久化布局 ∩ 后端存活 PTY」重建——
+ * 这个终端从此没有任何入口：回不去、也杀不掉，只能重启后端或手动 kill。全程零提示。
+ *
+ * 服务端对「PTY 已不存在」回 404 PTY_NOT_FOUND，那正是关闭想要的结果，按成功处理。
+ */
+describe('关闭终端失败不得把 pane 从布局里抹掉', () => {
+  it('kill 失败（后端 500）：保留 pane、给出原因，磁盘布局不被写坏', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockKill.mockRejectedValue({ status: 500, message: '服务不可达' })
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+    expect(result.current.sessions).toHaveLength(1)
+
+    let closed = true
+    await act(async () => {
+      closed = await result.current.closeTerminal('pty_A')
+    })
+
+    expect(closed).toBe(false)
+    // pane 仍在：它是用户重试关闭的唯一入口
+    expect(result.current.sessions.map((s) => s.id)).toEqual(['pty_A'])
+    expect(result.current.closeError).toContain('服务不可达')
+    expect(result.current.closeError).toContain('仍在后台运行')
+    // 磁盘上的布局仍含该终端：刷新 / 切项目回来还能连上它
+    const persisted = JSON.parse(
+      localStorage.getItem('c0de-agent:terminalSessions:projA') ?? '{}',
+    ) as { sessions?: { id: string }[] }
+    expect(persisted.sessions?.map((s) => s.id)).toContain('pty_A')
+  })
+
+  it('PTY 已不存在（404）：按关闭成功处理，正常移除 pane 且不留失败原因', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockKill.mockRejectedValue({ status: 404, message: 'Terminal not found' })
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    let closed = false
+    await act(async () => {
+      closed = await result.current.closeTerminal('pty_A')
+    })
+
+    expect(closed).toBe(true)
+    expect(result.current.sessions).toHaveLength(0)
+    expect(result.current.closeError).toBeNull()
+  })
+
+  it('失败后重试成功：清掉原因并移除 pane', async () => {
+    mockList.mockResolvedValue({ terminals: [fakeInfo('pty_A', 'projA')] })
+    seedLayout('projA', ['pty_A'])
+    mockKill.mockRejectedValueOnce(new Error('boom'))
+    const { result } = renderHook(() => useTerminal('projA'))
+    await act(async () => {})
+
+    await act(async () => {
+      await result.current.closeTerminal('pty_A')
+    })
+    expect(result.current.closeError).toContain('boom')
+    expect(result.current.sessions).toHaveLength(1)
+
+    await act(async () => {
+      await result.current.closeTerminal('pty_A')
+    })
+
+    expect(result.current.closeError).toBeNull()
+    expect(result.current.sessions).toHaveLength(0)
+  })
+})

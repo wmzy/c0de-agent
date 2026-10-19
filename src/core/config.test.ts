@@ -79,6 +79,34 @@ describe('mergeConfig', () => {
     const merged = mergeConfig({ permission: { defaultMode: 'auto' } })
     expect(merged.permission.defaultMode).toBe('auto')
   })
+
+  // 手工编辑过的配置文件里留着 `"tools": null`（Config 没有合法的 null 值，null 只是
+  // applyScopedPatch 的「删除该键」标记）时，旧行为把 null 原样写进合并结果：
+  // `config.tools.enabled` 变成 null，消费方 null.includes 抛 TypeError——服务端读配置
+  // 与 Web 设置页一起崩（设置页整页 ErrorBoundary，每次打开都重演）。
+  it('null 段按「未设置」处理：回落默认值，不把 null 带进合并结果', () => {
+    const merged = mergeConfig({ tools: null } as unknown as Partial<Config>)
+    expect(merged.tools).toEqual(DEFAULT_CONFIG.tools)
+    expect(merged.tools.enabled).toEqual(['*'])
+  })
+
+  it('null 嵌套键同样按「未设置」处理（tools.enabled: null）', () => {
+    const merged = mergeConfig({ tools: { enabled: null } } as unknown as Partial<Config>)
+    expect(merged.tools.enabled).toEqual(['*'])
+  })
+
+  it('null 不覆盖另一作用域已设置的值', () => {
+    const merged = mergeConfig({ defaultModel: 'from-global' }, {
+      defaultModel: null,
+    } as unknown as Partial<Config>)
+    expect(merged.defaultModel).toBe('from-global')
+  })
+
+  it('合并嵌套对象不就地改写调用方传入的对象（loadConfigScopes 的 scopes 会被复用）', () => {
+    const global = { tools: { disabled: ['bash'] } } as unknown as Partial<Config>
+    mergeConfig(global, { tools: { enabled: ['read'] } } as unknown as Partial<Config>)
+    expect(global.tools).toEqual({ disabled: ['bash'] })
+  })
 })
 
 describe('saveConfigScoped / loadConfig', () => {

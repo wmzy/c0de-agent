@@ -5,10 +5,11 @@
 import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
 import type { Config } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { horizontalWheelTarget } from '@/components/settings/sectionScroll.js'
+import { useCommands } from '@/hooks/useCommands.js'
 import type { AppPaths } from '@/routes.js'
 import { Settings } from '@/views/Settings.js'
 
@@ -97,6 +98,12 @@ vi.mock('@/services/workflows.js', () => ({
     get: vi.fn(),
     save: vi.fn(),
     remove: vi.fn(),
+  },
+}))
+
+vi.mock('@/services/commands.js', () => ({
+  commandsAPI: {
+    list: vi.fn(),
   },
 }))
 
@@ -228,6 +235,46 @@ describe('Settings — 读失败态', () => {
     expect(screen.getByTestId('settings-retry')).toBeInTheDocument()
   })
 
+  /**
+   * 「失败」≠「没有数据」。
+   *
+   * 缺陷：分支只看 isError。react-query 在**后台重取**失败时会把 status 打成 error
+   * 但保留上一次成功的数据，于是保存成功 → ✓ 已保存 → 紧接着那次
+   * invalidateQueries 重取失败，整张表单被替换成「设置加载失败」：界面自相矛盾
+   * （刚说保存成功，又说来不了），用户以为自己的改动没了（其实草稿完好，只是被
+   * 藏到错误屏后面）。真实浏览器实测：拦截保存后的 GET /api/config 返回 500 后，
+   * [data-testid="settings-form"] 消失、settings-load-error 出现。
+   *
+   * 修法：只有**从没拿到过数据**时才整页报错（isError && !resp），拿到过就把重取
+   * 失败降级成表单上方的横幅。
+   */
+  it('保存后的后台重取失败时保留表单（不整页报错）并给出横幅', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValueOnce(wrapConfig(mockConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 让 draft 变脏（保存成功后 invalidateQueries 会触发重取）
+    fireEvent.click(screen.getByTestId('provider-add'))
+    const nameInputs = screen.getAllByPlaceholderText('名称')
+    fireEvent.change(nameInputs[nameInputs.length - 1] as HTMLElement, {
+      target: { value: 'MyProvider' },
+    })
+
+    // 保存后的那次重取失败
+    ;(configAPI.get as Mock).mockRejectedValue({ status: 500, message: '配置服务暂时不可用' })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+
+    const banner = await screen.findByTestId('config-refetch-error')
+    expect(banner.textContent).toContain('配置服务暂时不可用')
+    // 关键：表单与草稿都还在，没有退化成整页错误屏
+    expect(screen.getByTestId('settings-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-load-error')).toBeNull()
+  })
+
   it('点击重试重新拉取配置', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockRejectedValue({ status: 500, message: 'boom' })
@@ -319,7 +366,50 @@ describe('Settings — Provider 管理', () => {
     })
   })
 
-  it('点击「删除」移除一行', async () => {
+  // 探测连接是本页唯一的异步草稿写：点「测试」时请求在途，用户点「放弃更改」
+  // 把草稿丢干净（保存条的「● 未保存更改」消失、新增行回到原样），3 秒后探测
+  // 响应落地却用 `prev ?? config` 重新长出一份草稿——被明确丢弃的改动复活，
+  // 页面又亮起「● 未保存更改」，此时按保存就写进了配置。
+  it('测试连接在途时放弃更改：迟到的探测结果不复活草稿', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { providerAPI } = await import('@/services/provider.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let resolveTest: (v: { ok: boolean; models: string[] }) => void = () => {}
+    ;(providerAPI.test as Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveTest = resolve
+      }),
+    )
+
+    renderSettings()
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('provider-test')).toHaveLength(2)
+    })
+
+    // 先弄脏草稿（新增一行），再发起在途的探测，最后放弃
+    fireEvent.click(screen.getByTestId('provider-add'))
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+    fireEvent.click(screen.getAllByTestId('provider-test')[0] as HTMLElement)
+    fireEvent.click(screen.getByTestId('settings-discard'))
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+
+    await act(async () => {
+      resolveTest({ ok: true, models: ['gpt-4', 'zzdetected'] })
+      await Promise.resolve()
+    })
+
+    // 测试结果本身照常显示，但被丢弃的草稿不许复活
+    await waitFor(() => {
+      expect(screen.getByText('✓ 连接成功，2 个模型')).toBeTruthy()
+    })
+    expect(screen.queryByTestId('settings-dirty-hint')).toBeNull()
+    expect(screen.queryByTestId('provider-model-toggle-zzdetected')).toBeNull()
+  })
+
+  // 删除 provider 要先过确认框（行里是手打的 baseURL + API Key，删掉无处取回），
+  // 与同页 MCP 服务器删除同一口径——此前这里单击即删，保存条随即点亮。
+  it('点击「删除」经确认后才移除一行', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
 
@@ -331,9 +421,17 @@ describe('Settings — Provider 管理', () => {
 
     // 删除第一行
     fireEvent.click(screen.getAllByTestId('provider-remove')[0] as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('ProviderA')
+    // 确认前两行都还在
+    expect(screen.getAllByTestId('provider-row')).toHaveLength(2)
 
+    fireEvent.click(within(dialog).getByText('删除'))
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('provider-row')).toHaveLength(1)
+    })
     const rows = screen.getAllByTestId('provider-row')
-    expect(rows).toHaveLength(1)
     // 仅在剩余 provider-row 内检查 ProviderA 已被删除
     const remaining = within(rows[0] as HTMLElement)
     expect(remaining.queryByDisplayValue('ProviderA')).toBeNull()
@@ -711,6 +809,63 @@ describe('Settings — Provider 管理', () => {
     ).toBeChecked()
   })
 
+  it('过滤生效时批量启禁只作用于筛选出的模型，其余保持原状', async () => {
+    // 回归：两个批量键紧挨过滤框，却一直遍历整张表——筛出 2 个模型点「禁用所有」，
+    // 整 provider 一起被禁用，屏幕上唯一证据是计数器跳成 0 / 3。
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+
+    const panel = within(screen.getAllByTestId('provider-row')[0] as HTMLElement).getByTestId(
+      'provider-models',
+    ) as HTMLElement
+
+    fireEvent.change(within(panel).getByTestId('provider-model-filter'), {
+      target: { value: '4o' },
+    })
+
+    // 作用域写进可见文本，不只躺在 title 里
+    expect(within(panel).getByTestId('provider-models-scope-hint').textContent).toContain(
+      '筛选出的 2 个模型',
+    )
+
+    fireEvent.click(within(panel).getByTestId('provider-models-disable-all'))
+    expect(within(panel).getByText('1 / 3 已启用')).toBeTruthy()
+
+    // 清掉过滤后看全量：gpt-4 不在筛选结果里，必须保持启用
+    fireEvent.change(within(panel).getByTestId('provider-model-filter'), {
+      target: { value: '' },
+    })
+    expect(
+      within(panel).getByTestId('provider-model-toggle-gpt-4') as HTMLInputElement,
+    ).toBeChecked()
+    expect(
+      within(panel).getByTestId('provider-model-toggle-gpt-4o') as HTMLInputElement,
+    ).not.toBeChecked()
+  })
+
+  it('过滤到无匹配时批量键禁用，不会把整 provider 一次性改掉', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+
+    const panel = within(screen.getAllByTestId('provider-row')[0] as HTMLElement).getByTestId(
+      'provider-models',
+    ) as HTMLElement
+
+    fireEvent.change(within(panel).getByTestId('provider-model-filter'), {
+      target: { value: '不存在的模型' },
+    })
+
+    expect(within(panel).getByTestId('provider-models-enable-all')).toBeDisabled()
+    expect(within(panel).getByTestId('provider-models-disable-all')).toBeDisabled()
+    expect(within(panel).getByText('2 / 3 已启用')).toBeTruthy()
+  })
+
   it('编辑模型的上下文窗口/最大输出后随保存提交', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(configWithModels))
@@ -798,6 +953,37 @@ describe('Settings — Provider 管理', () => {
     expect(document.body.textContent ?? '').not.toContain('enc:898L9mF6CILM')
   })
 
+  // 回归：已加密时把输入框清空不是「清空密钥」。密钥框是密码框且不回显密文，用户
+  // 看不到「有内容」可删；逐字符提交的草稿会把 '' 交给保存，保存后 enc: 密文被
+  // 覆盖、密钥永久丢失（无确认、无撤销，只剩徽章消失这一条线索）。留空 = 不修改，
+  // 且必须当场说明。
+  it('已加密时把输入框清空：保存不产生任何改动，并说明密钥保留', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const encConfig = {
+      ...mockConfig,
+      providers: [
+        { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
+      ],
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(encConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(encConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(1))
+
+    const apiKeyInput = screen.getByTestId('provider-apikey') as HTMLInputElement
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-temporary' } })
+    fireEvent.change(apiKeyInput, { target: { value: '' } })
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-status')).toHaveTextContent('未改动'),
+    )
+    expect(screen.getByTestId('settings-save-status')).toHaveTextContent('原有密钥保留')
+    // 草稿退回原密文 → diff 为空 → 不发 PATCH（更不会把 apiKey 写成空串）
+    expect(configAPI.update).not.toHaveBeenCalled()
+  })
+
   it('重新输入 apiKey 后保存提交明文（可被服务端加密）', async () => {
     const { configAPI } = await import('@/services/config.js')
     const encConfig = {
@@ -842,6 +1028,45 @@ describe('Settings — Provider 管理', () => {
     await waitFor(() => {
       expect(screen.getByTestId('settings-save-status').textContent).toContain('已保存')
     })
+  })
+
+  // 回归：保存请求在飞期间（磁盘慢/配置大时可达数秒，表单此时没有在途禁写）
+  // 用户继续编辑，onSuccess 无条件 setDraft(null) 会把这批新编辑整块抹掉——
+  // 保存条回显「✓ 已保存」、脏标记消失，屏幕上刚打的字无声不见。
+  it('保存请求在飞期间的新编辑不会被成功回调清掉', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let resolveUpdate: (value: unknown) => void = () => {}
+    ;(configAPI.update as Mock).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve
+        }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('provider-add'))
+    fireEvent.change(screen.getAllByPlaceholderText('名称').at(-1) as HTMLElement, {
+      target: { value: 'P' },
+    })
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+
+    // 请求仍在飞：用户接着把这一行改成 Q
+    fireEvent.change(screen.getAllByPlaceholderText('名称').at(-1) as HTMLElement, {
+      target: { value: 'Q' },
+    })
+
+    await act(async () => {
+      resolveUpdate(mockConfig)
+    })
+
+    // 修复前：草稿被清空 → 该行整个消失（Q 无处可寻），脏标记也没了
+    const names = screen.getAllByPlaceholderText('名称') as HTMLInputElement[]
+    expect(names.at(-1)?.value).toBe('Q')
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
   })
 
   // 可访问性：每个 Provider 表单控件须有显式关联的 label（label[for] ↔ control#id）
@@ -985,6 +1210,67 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(editor).toBeTruthy()
     expect(editor.value).toContain('"defaultModel": "gpt-4"')
     expect(editor.value).toContain('ProviderA')
+  })
+
+  // 回归：切换配置作用域承诺「切换并丢弃更改」，就必须连 JSON 编辑器一起回退。
+  // 只清 draft 不清编辑器时：确认丢弃后吸底条已回到干净态，编辑器里却仍留着被丢弃的
+  // 文本，下一次按键就被 onJsonChange 当成新草稿同步回来——再点保存，这份**已声明
+  // 丢弃**的改动会写进**另一个作用域**的配置文件（实测：项目作用域把 defaultModel
+  // 改成 m2 → 切全局并确认丢弃 → 按一个空格 → 保存 → 全局 config.json 落盘
+  // {"defaultModel":"m2"}，项目文件仍是 m）。
+  it('切换作用域丢弃草稿时 JSON 编辑器一起回退（不会把丢弃的改动带去另一个作用域）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const edited = JSON.stringify({ ...mockConfig, defaultModel: 'm2' }, null, 2)
+    fireEvent.change(screen.getByTestId('settings-json-editor'), { target: { value: edited } })
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+
+    // dirty 时切换作用域要二审：确认「切换并丢弃更改」
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    fireEvent.click(screen.getByText('切换并丢弃更改'))
+
+    await waitFor(() => expect(screen.queryByTestId('settings-dirty-hint')).toBeNull())
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    expect(editor.value).not.toContain('m2')
+    expect(editor.value).toContain('"defaultModel": "gpt-4"')
+  })
+
+  // 「留空 = 不修改」只属于表单：JSON 视图里 `"apiKey": ""` 是用户亲手写下的明确
+  // 值，必须照原样提交（否则 JSON 视图里清空密钥会变成静默不生效）。
+  it('JSON 视图把 apiKey 写成空串照常提交（表单的留空约定不越过 JSON 编辑）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const encConfig = {
+      ...mockConfig,
+      providers: [
+        { name: 'Enc', protocol: 'openai', apiKey: 'enc:898L9mF6CILM', baseURL: 'https://a/v1' },
+      ],
+    }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(encConfig))
+    ;(configAPI.update as Mock).mockResolvedValue(encConfig)
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    const updated = {
+      ...encConfig,
+      providers: [{ ...encConfig.providers[0], apiKey: '' }],
+    }
+    fireEvent.change(editor, { target: { value: JSON.stringify(updated, null, 2) } })
+    expect(screen.queryByTestId('settings-json-error')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const args = (configAPI.update as Mock).mock.calls[0]?.[0] as {
+      providers: { apiKey: string }[]
+    }
+    expect(args.providers[0]?.apiKey).toBe('')
   })
 
   it('JSON 编辑合法时同步到 draft，保存提交新值', async () => {
@@ -1205,6 +1491,58 @@ describe('Settings — JSON 模式与导入导出', () => {
     expect(enabled.value).toBe('bash, read')
   })
 
+  /**
+   * 回归：此前导入无条件 `setDraft(导入值)`。用户在表单里存在未保存更改时，
+   * 一次「⬆ 导入」选个文件就把整屏修改静默替换（保存条随即回到干净态，看不出
+   * 发生过什么），而本页影响面更小的动作（切作用域 / 离开页面 / 删 MCP 行）
+   * 都有二审——覆盖面最大的这次覆盖反而是唯一没有确认的。
+   */
+  it('有未保存更改时导入先确认：取消保留草稿，确认后才覆盖', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 制造未保存更改：JSON 视图的合法改动会写入草稿
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, {
+      target: { value: JSON.stringify({ ...mockConfig, defaultModel: 'draft-model' }) },
+    })
+    expect(screen.getByTestId('settings-save')).not.toBeDisabled()
+
+    const imported = { ...mockConfig, defaultModel: 'imported-model' }
+    const mockFile = {
+      text: () => Promise.resolve(JSON.stringify(imported)),
+    } as unknown as File
+    const input = screen.getByTestId('settings-import-input') as HTMLInputElement
+
+    // 第一次：取消 → 草稿原样保留，没有被覆盖
+    fireEvent.change(input, { target: { files: [mockFile] } })
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    expect(screen.getByRole('dialog').textContent).toContain('未保存的更改')
+    fireEvent.click(
+      screen.getByRole('dialog').querySelector('[data-slot="cancel-button"]') as HTMLElement,
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect((screen.getByTestId('settings-json-editor') as HTMLTextAreaElement).value).toContain(
+      'draft-model',
+    )
+    expect(screen.getByTestId('settings-save')).not.toBeDisabled()
+
+    // 第二次：确认 → 导入值生效并切回表单
+    fireEvent.change(input, { target: { files: [mockFile] } })
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    fireEvent.click(
+      screen.getByRole('dialog').querySelector('[data-slot="confirm-button"]') as HTMLElement,
+    )
+    await waitFor(() => {
+      const sel = screen.getByTestId('default-model-select') as HTMLSelectElement
+      expect(sel.value).toBe('imported-model')
+    })
+  })
+
   it('JSON 视图结构不符时保存被拦下：不落盘坏形状', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
@@ -1279,6 +1617,54 @@ describe('Settings — JSON 模式与导入导出', () => {
     const patch = (configAPI.update as Mock).mock.calls[0]?.[0] as { commitModel?: unknown }
     // diffConfig 的清除口径：null（JSON 不传 undefined）
     expect(patch.commitModel).toBeNull()
+  })
+
+  /**
+   * 回归：JSON 视图里把某段写成 null（校验放行，语义同 diffConfig 的「删除该键」）
+   * 后切回表单，补全模板此前把这个 null 原样下发——归一化后 merged.compaction 为
+   * null，面板按 Config 假定形状（compaction.compactionModel）当场抛错，整页被
+   * ErrorBoundary 换成「页面渲染出错」，刚敲的草稿一起丢失。
+   */
+  it('JSON 里的 null 段切回表单不崩页：回落到当前值', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig({ ...mockConfig }))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '{"compaction":null,"theme":"dark"}' } })
+    // null 段是合法的（清除该键），不该有结构错误挡住切回
+    expect(screen.queryByTestId('settings-json-error')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    // 表单仍完整可渲染，且该段按已加载配置回落（表单没有「未设置」这个可渲染值）
+    expect((screen.getByLabelText('保留 Token') as HTMLInputElement).value).toBe('1000')
+  })
+
+  /**
+   * 回归：commitModel 是可选键，当前配置没设过它时，JSON 里的 `"commitModel": null`
+   * 会原样进表单（模板里没有形状可校验）。复选框此前只判 !== undefined，勾着；
+   * 下面那个 provider/model 选择器又因为 null 是 falsy 不渲染——一个勾着却无从
+   * 选择的开关。
+   */
+  it('JSON 里的 "commitModel": null（当前配置未设置该键）在表单里显示为未勾选', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const base = { ...mockConfig }
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(base))
+
+    renderSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    fireEvent.click(screen.getByTestId('settings-mode-json'))
+    const editor = screen.getByTestId('settings-json-editor') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: JSON.stringify({ ...base, commitModel: null }) } })
+    fireEvent.click(screen.getByTestId('settings-mode-gui'))
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    expect((screen.getByLabelText(/一键提交使用独立模型/) as HTMLInputElement).checked).toBe(false)
   })
 })
 
@@ -1944,6 +2330,47 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
     expect(screen.getAllByTestId('provider-row')).toHaveLength(2)
   })
 
+  it('保存请求在途时「放弃更改」被锁死：草稿不被清空，期间的新编辑不丢', async () => {
+    // 回归：提交出去的是点击保存那一刻的草稿引用。请求在途时按「放弃更改」
+    // 会把草稿清空 → 在途请求照旧把内容落盘 → 吸底条随后显示「✓ 已保存」，
+    // 用户看着像回滚了，实际配置已改、期间新打的字还被他这句「放弃」吞掉。
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
+    let release: (() => void) | null = null
+    ;(configAPI.update as Mock).mockReturnValue(
+      new Promise<void>((res) => {
+        release = () => res()
+      }),
+    )
+
+    renderSettings()
+    await waitFor(() => expect(dirtyTrigger()).toBeTruthy())
+
+    fireEvent.click(dirtyTrigger()) // 制造未保存更改
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    // 在途：两个键都不可用
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-bar').textContent).toContain('保存中'),
+    )
+    expect(screen.getByTestId('settings-save')).toBeDisabled()
+    expect(screen.getByTestId('settings-discard')).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('settings-discard'))
+    expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy()
+
+    await act(async () => {
+      release?.()
+      await Promise.resolve()
+    })
+
+    // 落地后恢复可放弃
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-save-bar').textContent).toContain('已保存'),
+    )
+    expect((screen.getByTestId('settings-discard') as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('dirty 时点击离开设置页的站内链接弹确认，「留下」则留在设置页', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
@@ -2016,18 +2443,66 @@ describe('Settings — 吸底保存条与未保存导航防护', () => {
   })
 })
 
-describe('Settings — 用量面板零预算引导', () => {
-  it('未设置任何预算时显示引导提示，设置全局预算后消失', async () => {
+describe('Settings — 用量面板预算字段与写入作用域一致', () => {
+  it('/settings 默认项目作用域下锁定全局预算字段，切到全局后可编辑并提交 global 作用域', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue(wrapConfig(mockConfig))
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
 
     renderSettings()
-    await waitFor(() => expect(screen.getByTestId('usage-global-budget')).toBeTruthy())
+    // 回归：此前这里是可编辑的「全局月度预算」，而默认作用域是「项目」——
+    // 编辑后保存被服务端 400（GLOBAL_BUDGET_IN_PROJECT_SCOPE）拒绝，整次保存
+    // 连同其中其他改动一起失败。
+    const globalBudget = (await screen.findByTestId('usage-global-budget')) as HTMLInputElement
+    expect(globalBudget.disabled).toBe(true)
+    expect(screen.getByTestId('usage-scope-hint').textContent).toContain('全局')
     expect(screen.getByTestId('usage-no-budget-hint')).toBeTruthy()
 
-    fireEvent.change(screen.getByTestId('usage-global-budget'), { target: { value: '10' } })
+    // 正解路径：把作用域切到「全局配置」即可编辑——此时保存也必须按 global 提交。
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    await waitFor(() => expect(screen.queryByTestId('usage-scope-hint')).toBeNull())
+    const editable = screen.getByTestId('usage-global-budget') as HTMLInputElement
+    expect(editable.disabled).toBe(false)
+
+    fireEvent.change(editable, { target: { value: '10' } })
     await waitFor(() => expect(screen.queryByTestId('usage-no-budget-hint')).toBeNull())
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    const [patchArg, scopeArg] = (configAPI.update as Mock).mock.calls[0] as [
+      { usage?: Record<string, number> },
+      string,
+    ]
+    expect(scopeArg).toBe('global')
+    expect(patchArg.usage).toEqual({ globalMonthlyBudgetUsd: 10 })
+  })
+
+  it('项目页切到全局作用域后，项目预算字段被锁定（否则会把本项目预算写进全局配置）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: mockConfig,
+      projectDir: '/x/y/proj',
+      scopes: { global: {}, project: {} },
+      warnings: [],
+    })
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <MemoryRouter routes={settingsTestRoutes} initialEntries={['/projects/p1/settings']}>
+        <QueryClientProvider client={qc}>
+          <View />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+
+    const projectBudget = (await screen.findByTestId('usage-project-budget')) as HTMLInputElement
+    expect(projectBudget.disabled).toBe(false)
+
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    await waitFor(() =>
+      expect((screen.getByTestId('usage-project-budget') as HTMLInputElement).disabled).toBe(true),
+    )
+    expect(screen.getByTestId('usage-scope-hint').textContent).toContain('项目')
   })
 })
 
@@ -2574,5 +3049,235 @@ describe('Settings — 数字字段越界钳制', () => {
     const patch = await typeAndSave('最大重试次数', '5')
     const fallback = (patch.fallback ?? {}) as { maxRetries?: number }
     expect(fallback.maxRetries).toBe(5)
+  })
+})
+
+/**
+ * 撤销设备失败必须可见。
+ *
+ * 缺陷：revoke mutation 只有 onSuccess，且 onConfirm 里 mutate 后立刻关弹窗。
+ * 请求失败时列表不变、页面零提示——而弹窗里刚承诺「该设备将立即失去访问权限」，
+ * 用户据此以为撤销成功，那台设备其实仍持有访问权。这是与语义相反的假成功
+ * （ProjectIndicator 删除失败 / WorkflowsPanel 删除失败都已给出原因行）。
+ */
+describe('Settings — 撤销设备失败', () => {
+  it('撤销失败时给出原因，且不谎称已撤销', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { authAPI } = await import('../services/auth.js')
+    // 设备列表只在启用认证后渲染（SecurityPanel 以 authEnabled 为前置条件）
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }),
+    )
+    ;(authAPI.listDevices as Mock).mockResolvedValue({
+      devices: [{ id: 'dev-1', name: '我的笔记本', createdAt: '2024-01-01T00:00:00.000Z' }],
+    })
+    ;(authAPI.revokeDevice as Mock).mockRejectedValue(new Error('认证服务不可用'))
+
+    renderSettings()
+
+    const revokeBtn = await screen.findByRole('button', { name: '撤销' })
+    fireEvent.click(revokeBtn)
+
+    fireEvent.click(await screen.findByRole('button', { name: '撤销设备' }))
+
+    const alert = await screen.findByTestId('device-revoke-error')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('认证服务不可用')
+    // 设备仍在列表里（列表未被乐观移除）
+    expect(screen.getByTestId('device-list').textContent).toContain('我的笔记本')
+  })
+})
+
+/**
+ * 已授权设备列表读失败必须给出原因与重试。
+ *
+ * 缺陷：isError 分支只渲染一句灰字「获取已授权设备失败（认证可能未启用）」——
+ * 后端原因（500 / 超时 / 无权）被丢掉，没有任何重试入口，还把一次读取失败断言成
+ * 「认证可能未启用」（而认证明明开着：用户正站在「已授权设备」这一段里）。同一次
+ * 读取的设备列表与「撤销」入口一起静默失效。与 UsagePanel / WorkflowsPanel 的
+ * 「原因 + 重试」同口径。
+ */
+describe('Settings — 已授权设备读取失败', () => {
+  it('给出后端原因与重试入口，且不再猜「认证可能未启用」', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { authAPI } = await import('../services/auth.js')
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }),
+    )
+    ;(authAPI.listDevices as Mock).mockRejectedValue(new Error('devices boom'))
+
+    renderSettings()
+
+    const box = await screen.findByTestId('device-list-error')
+    expect(box.getAttribute('role')).toBe('alert')
+    expect(box.textContent).toContain('devices boom')
+    expect(screen.queryByText(/认证可能未启用/)).toBeNull()
+    expect(screen.getByTestId('device-list-retry')).toBeTruthy()
+  })
+
+  it('点重试重新拉取，成功后渲染设备列表', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { authAPI } = await import('../services/auth.js')
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, security: { authEnabled: true, allowedOrigins: [] } }),
+    )
+    ;(authAPI.listDevices as Mock)
+      .mockRejectedValueOnce(new Error('devices boom'))
+      .mockResolvedValue({
+        devices: [{ id: 'dev-1', name: '我的笔记本', createdAt: '2024-01-01T00:00:00.000Z' }],
+      })
+
+    renderSettings()
+
+    fireEvent.click(await screen.findByTestId('device-list-retry'))
+
+    const list = await screen.findByTestId('device-list')
+    expect(list.textContent).toContain('我的笔记本')
+    expect(screen.queryByTestId('device-list-error')).toBeNull()
+  })
+})
+
+/**
+ * 回归：工具条右侧的「目标：…」是唯一显式声明「这次保存写到哪个文件」的提示。
+ * 此前它的渲染条件只判 projectId && resp.projectDir，与作用域无关——切到
+ * 「全局配置（~/.c0de/config.json）」后仍标「目标：<项目目录>」，而保存其实
+ * 写进全局配置：用户据此以为改的是项目文件，把项目专属值（路径、模型名）
+ * 提升成全机默认，其他项目与 c0de chat 一起被改。
+ */
+describe('Settings — 写入目标标注随作用域变化', () => {
+  function renderProjectSettings() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <MemoryRouter routes={settingsTestRoutes} initialEntries={['/projects/p1/settings']}>
+        <QueryClientProvider client={qc}>
+          <View />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+  }
+
+  it('项目作用域标注项目目录，切到全局后改写全局配置路径', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: mockConfig,
+      projectDir: '/x/y/proj',
+      scopes: { global: {}, project: {} },
+      warnings: [],
+    })
+
+    renderProjectSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+
+    // 默认 project：目标指向项目目录
+    expect(screen.getByText('目标：/x/y/proj')).toBeTruthy()
+
+    // 切到 global：目标必须改成全局配置路径——不能继续指向项目目录，
+    // 否则用户以为在改项目文件，实际写进 ~/.c0de/config.json。
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    expect(screen.queryByText('目标：/x/y/proj')).toBeNull()
+    expect(screen.getByText('目标：~/.c0de/config.json')).toBeTruthy()
+  })
+
+  // 回归：dirty 时切换作用域会被二审拦住，点「取消」后下拉必须回弹到当前作用域。
+  // SyncedSelect 是 react-use-control 受控控件，只在 value prop 变化时回灌内部状态；
+  // 此前 value 恒为 scope，只写 setPendingScope——于是「取消」之后控件内部仍停在用户
+  // 刚选的那一项，而真正生效的作用域（与旁边的「目标：」）还是旧的：下拉写着
+  // 「全局配置（~/.c0de/config.json）」，保存却把草稿写进项目文件（实测保存时
+  // scope 参数为 project）。用户据此以为改的是全机配置。
+  it('dirty 时切换作用域点「取消」→ 下拉回弹，显示的作用域与真实写入目标一致', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    ;(configAPI.get as Mock).mockResolvedValue({
+      config: mockConfig,
+      projectDir: '/x/y/proj',
+      // global 侧已有 provider：避开首跑「保存到全局还是项目」引导（那是另一条流程）
+      scopes: { global: { providers: [{}] }, project: {} },
+      warnings: [],
+    })
+    ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
+
+    renderProjectSettings()
+    await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
+    expect((screen.getByTestId('scope-select') as HTMLSelectElement).value).toBe('project')
+
+    // 造脏（加一行 provider）后切换作用域 → 二审
+    fireEvent.click(screen.getByTestId('provider-add'))
+    await waitFor(() => expect(screen.getByTestId('settings-dirty-hint')).toBeTruthy())
+    fireEvent.change(screen.getByTestId('scope-select'), { target: { value: 'global' } })
+    fireEvent.click(screen.getByText('取消'))
+
+    await waitFor(() =>
+      expect((screen.getByTestId('scope-select') as HTMLSelectElement).value).toBe('project'),
+    )
+    expect(screen.getByText('目标：/x/y/proj')).toBeTruthy()
+
+    // 随后保存必须按 project 提交——下拉显示的就是它
+    fireEvent.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
+    expect((configAPI.update as Mock).mock.calls[0]?.[1]).toBe('project')
+  })
+})
+
+/**
+ * 斜杠命令开关与命令浮层同源。
+ *
+ * 缺陷：useCommands 的 queryKey ['commands'] 是 staleTime: Infinity，而服务端
+ * GET /api/commands 按 config.slashCommands.enabled 过滤（启用才返回）。设置页保存
+ * 只失效了 ['config'] 这一路缓存，于是本会话内的 / 浮层永不刷新：禁用一个命令后
+ * 浮层照旧列出它（点进去服务端回「未启用」，看着像命令坏了），启用一个命令后浮层
+ * 里永远不出现（功能不可达），唯一出路是整页刷新。
+ */
+describe('Settings — 保存后斜杠命令浮层数据同源刷新', () => {
+  function renderSettingsWithCommandsProbe() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <MemoryRouter routes={settingsTestRoutes} initialEntries={['/settings']}>
+        <QueryClientProvider client={qc}>
+          <View />
+          <CommandsProbe />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+  }
+
+  function CommandsProbe() {
+    const commands = useCommands()
+    return (
+      <div data-testid="commands-probe">{(commands.data ?? []).map((c) => c.name).join(',')}</div>
+    )
+  }
+
+  it('保存斜杠命令开关后浮层数据失效重取（不再需要整页刷新）', async () => {
+    const { configAPI } = await import('@/services/config.js')
+    const { commandsAPI } = await import('@/services/commands.js')
+    ;(configAPI.get as Mock).mockResolvedValue(
+      wrapConfig({ ...mockConfig, slashCommands: { enabled: ['/clear', '/model'] } }),
+    )
+    // 服务端语义：按「已启用的斜杠命令」过滤（这里用一份全量清单模拟 registry）
+    const registry = [
+      { name: 'clear', description: '清空会话' },
+      { name: 'model', description: '查看模型' },
+    ]
+    let enabled = ['/clear', '/model']
+    ;(configAPI.update as Mock).mockImplementation(async (patch: Partial<Config>) => {
+      const next = (patch as { slashCommands?: { enabled?: string[] } }).slashCommands?.enabled
+      if (next) enabled = next
+      return { ...mockConfig, config: undefined }
+    })
+    ;(commandsAPI.list as Mock).mockImplementation(async () => ({
+      commands: enabled.includes('*')
+        ? registry
+        : registry.filter((c) => enabled.includes(`/${c.name}`)),
+    }))
+
+    renderSettingsWithCommandsProbe()
+    await waitFor(() =>
+      expect(screen.getByTestId('commands-probe').textContent).toBe('clear,model'),
+    )
+
+    // 只留 /model 并保存
+    fireEvent.change(screen.getByLabelText('已启用的斜杠命令'), { target: { value: '/model' } })
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    await waitFor(() => expect(screen.getByTestId('commands-probe').textContent).toBe('model'))
   })
 })

@@ -91,7 +91,8 @@ type DangerConfirmDialogProps = {
   open: boolean
   title: string
   description: ReactNode
-  /** 用户必须逐字输入该词才能启用确认按钮（通常为项目名/会话标题）。 */
+  /** 用户必须逐字输入该词才能启用确认按钮（通常为项目名/会话标题）。
+   *  空串/全空白时退回到按钮文案：空词会让门禁第一帧就通过（见下方注释）。 */
   confirmWord: string
   confirmLabel?: string
   busy?: boolean
@@ -116,6 +117,13 @@ export function DangerConfirmDialog({
   onClose,
 }: DangerConfirmDialogProps) {
   const [typed, setTyped] = useState('')
+  // 空确认词会让这道门禁形同虚设：matched 是 typed === confirmWord，而 typed 初值
+  // 就是空串，于是标题为空的会话（POST /api/sessions 允许空 title）在回收站里
+  // 「彻底删除」时，弹层第一帧渲染的就是「输入「」以确认：」+ 已可点的红色按钮，
+  // 一次点击即永久删除，逐字确认这层强度完全不存在。空项目名的看板同理。
+  // 兜底用按钮文案（「彻底删除」/「清空回收站」）：仍然是一句用户看得见、打得出的
+  // 词，门禁保持有效，而不是让调用点的一处空字段把不可恢复操作变成零确认。
+  const word = confirmWord.trim() || confirmLabel
   // 每次打开（以及确认词变化）都从空输入重新开始：调用点常把本组件常驻挂载、
   // 只切 open（WorkflowsPanel / UpdateBanner），typed 会跨关闭保留——用户第一次
   // 认真输入过确认词、按 Esc 后悔，重开时输入框里还留着上一次的词，matched 在
@@ -124,37 +132,42 @@ export function DangerConfirmDialog({
   // 渲染期归一（而非 effect）：effect 要等这一帧画完，重开的头一帧仍会显示
   // 预填的词与已可点的确认键。
   const [openedFor, setOpenedFor] = useState<{ open: boolean; word: string } | null>(null)
-  if (open && (openedFor?.open !== true || openedFor.word !== confirmWord)) {
-    setOpenedFor({ open: true, word: confirmWord })
+  if (open && (openedFor?.open !== true || openedFor.word !== word)) {
+    setOpenedFor({ open: true, word })
     setTyped('')
   } else if (!open && openedFor !== null) {
     setOpenedFor(null)
   }
-  const matched = typed === confirmWord
+  const matched = typed === word
   // 请求在飞时不给关闭的出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染
   // 在这块面板里（role=alert），中途关掉它就等于把失败原因一起关掉——实测
   // 删除项目时按 Esc，服务端随后 500，用户看到的是「点了删除，什么也没发生」。
+  //
+  // 次级动作（「导出看板并删除」）在飞时同样要锁：它落地后会接着执行确认动作本身
+  // （回调里的 deleteMut.mutate），期间按 Esc/取消只是看着取消了——导出返回后
+  // 项目与看板照样被永久删除。次级按钮自己的 disabled 挡不住弹层这扇门。
+  const locked = busy || secondaryAction?.busy === true
   const dismiss = () => {
-    if (busy) return
+    if (locked) return
     onClose()
   }
   return (
     <Dialog
       open={open}
       onClose={dismiss}
-      closeDisabled={busy}
+      closeDisabled={locked}
       title={title}
       testId="danger-confirm-dialog"
       footer={
         <>
-          <button type="button" className={btn} onClick={dismiss} disabled={busy}>
+          <button type="button" className={btn} onClick={dismiss} disabled={locked}>
             取消
           </button>
           {secondaryAction && (
             <button
               type="button"
               className={btn}
-              disabled={busy || secondaryAction.busy === true || secondaryAction.disabled === true}
+              disabled={locked || secondaryAction.disabled === true}
               onClick={secondaryAction.onClick}
               data-testid="danger-secondary-btn"
             >
@@ -164,11 +177,11 @@ export function DangerConfirmDialog({
           <button
             type="button"
             className={dangerBtn}
-            disabled={!matched || busy}
+            disabled={!matched || locked}
             onClick={onConfirm}
             data-testid="danger-confirm-btn"
           >
-            {busy ? '执行中…' : confirmLabel}
+            {locked ? '执行中…' : confirmLabel}
           </button>
         </>
       }
@@ -181,11 +194,11 @@ export function DangerConfirmDialog({
         </div>
       ) : null}
       <div className={inputRow}>
-        <span>输入「{confirmWord}」以确认：</span>
+        <span>输入「{word}」以确认：</span>
         <SyncedInput
           value={typed}
           onChange={(v) => setTyped(v)}
-          placeholder={confirmWord}
+          placeholder={word}
           data-testid="danger-confirm-input"
         />
       </div>

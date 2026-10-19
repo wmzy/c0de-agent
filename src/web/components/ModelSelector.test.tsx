@@ -88,7 +88,12 @@ function Harness({
   )
 }
 
-function renderSelector(value: ModelSelection, config: Config = baseConfig) {
+function renderSelector(
+  value: ModelSelection,
+  config: Config = baseConfig,
+  /** 让 providers 列表读取失败（GET /api/providers 500 的等价物）。 */
+  listFails = false,
+) {
   const onChange = vi.fn()
   vi.mocked(useConfig).mockReturnValue({
     config,
@@ -97,15 +102,19 @@ function renderSelector(value: ModelSelection, config: Config = baseConfig) {
     warnings: [],
     scopes: { global: null, project: null },
   })
-  vi.mocked(providerAPI.list).mockResolvedValue({
-    providers: config.providers.map((p) => ({
-      name: p.name,
-      protocol: p.protocol,
-      baseURL: p.baseURL ?? '',
-      hasKey: !!p.apiKey,
-    })),
-    defaultProvider: config.defaultProvider,
-  })
+  if (listFails) {
+    vi.mocked(providerAPI.list).mockRejectedValue(new Error('服务暂时不可用'))
+  } else {
+    vi.mocked(providerAPI.list).mockResolvedValue({
+      providers: config.providers.map((p) => ({
+        name: p.name,
+        protocol: p.protocol,
+        baseURL: p.baseURL ?? '',
+        hasKey: !!p.apiKey,
+      })),
+      defaultProvider: config.defaultProvider,
+    })
+  }
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const view = render(
     <QueryClientProvider client={qc}>
@@ -159,6 +168,35 @@ describe('ModelSelector — 未配置任何 Provider', () => {
     vi.mocked(providerAPI.list).mockReturnValue(new Promise(() => {}) as never)
     renderSelector({ provider: '', model: '' }, emptyConfig)
     expect(document.querySelector('[data-testid="model-selector-empty"]')).toBeNull()
+  })
+
+  // 回归：providers 列表读取失败时组件只解构 data，data 恒为 undefined，
+  // 于是落进「选择器」分支——一个只含兜底 option 的 Provider 下拉 + 预填
+  // config.defaultModel 的 Model 输入框，与健康界面完全同形：用户以为模型已选中，
+  // 发送后被后端以「未找到名为「」的 AI 服务」拒绝，页面上却没有任何原因与重试
+  // （staleTime 60s 且无 refetchInterval，唯一出路是手动刷新页面）。
+  // 「拉不到」必须与「没有」区分开。
+  it('providers 读取失败时给出原因与重试，而不是渲染一个看似已配置的选择器', async () => {
+    renderSelector({ provider: 'sensenova', model: 'SenseChat-5' }, baseConfig, true)
+    const alert = await screen.findByTestId('model-selector-load-error')
+    expect(alert.textContent).toContain('服务暂时不可用')
+    // 不得同时渲染「假已选中」的控件，也不得谎报「未配置」
+    expect(document.querySelector('[data-testid="provider-select"]')).toBeNull()
+    expect(document.querySelector('[data-testid="model-input"]')).toBeNull()
+    expect(document.querySelector('[data-testid="model-selector-empty"]')).toBeNull()
+    // 重试后恢复正常选择器
+    vi.mocked(providerAPI.list).mockResolvedValue({
+      providers: baseConfig.providers.map((p) => ({
+        name: p.name,
+        protocol: p.protocol,
+        baseURL: p.baseURL ?? '',
+        hasKey: !!p.apiKey,
+      })),
+      defaultProvider: baseConfig.defaultProvider,
+    })
+    fireEvent.click(screen.getByText('重试'))
+    await screen.findByTestId('model-dropdown')
+    expect(document.querySelector('[data-testid="model-selector-load-error"]')).toBeNull()
   })
 })
 

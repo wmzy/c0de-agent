@@ -1,6 +1,6 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
-import { Button } from 'haze-ui'
+import { Button, ConfirmDialog } from 'haze-ui'
 import { useState } from 'react'
 import { ProviderCatalogDialog } from '@/components/ProviderCatalogDialog.js'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
@@ -101,18 +101,34 @@ interface ProviderPanelProps {
    * 以函数式更新应用 provider 变更：Settings 在 setDraft 内对最新 draft.providers
    * 执行 updater，保证测试连接（异步）返回时不会因闭包持有旧 providers 而丢弃并发编辑。
    */
-  onProvidersChange: (updater: (providers: ProviderConfig[]) => ProviderConfig[]) => void
+  onProvidersChange: (
+    updater: (providers: ProviderConfig[]) => ProviderConfig[],
+    /** 发起异步请求时的草稿世代；传了则落地时世代不符则丢弃（防复活已放弃的草稿）。 */
+    epoch?: number,
+  ) => void
+  /** 取当前草稿世代（在发起异步请求时调用，作为 epoch 传给 onProvidersChange）。 */
+  getDraftEpoch?: () => number
 }
 
 /**
  * LLM Provider 管理面板：列表、手动添加 / 从 models.dev 选择、编辑字段、
  * 测试连接（探测模型并回写）、删除，以及每个 provider 的模型 override 子面板。
  */
-function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
+function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: ProviderPanelProps) {
   const [testResults, setTestResults] = useState<
     Record<number, { loading: boolean; result?: TestResult }>
   >({})
   const [catalogOpen, setCatalogOpen] = useState(false)
+  /**
+   * 待删除的 provider 下标（非 null = 删除确认弹窗打开中）。
+   *
+   * provider 行里是用户手打的 baseURL + API Key，删掉无法从任何地方取回。
+   * 此前点一次「删除」整行立刻从草稿消失，随后吸底保存条被点亮（● 未保存更改），
+   * 顺手一按「保存」就把这份 provider 从磁盘配置里永久抹掉。同页同族的
+   * 「删除 MCP 服务器」早就有 ConfirmDialog（760c450），provider 行是漏网：
+   * 真实浏览器实测单击后 provider-row 直接 0 行、0 个 dialog、保存条已亮。
+   */
+  const [pendingRemove, setPendingRemove] = useState<number | null>(null)
 
   const addProviderFromCatalog = (provider: ProviderConfig) => {
     onProvidersChange((prev) => [...prev, provider])
@@ -168,10 +184,17 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
     })
   }
 
-  /** 全量启用/禁用该 provider 的所有模型。 */
-  const setAllModels = (providerIndex: number, enabled: boolean) => {
+  /** 启用/禁用该 provider 的一批模型。只改 modelNames 点名的那些——作用域由调用方
+   *  按当前筛选结果给出，批量键不得越过筛选去动用户没看见的行。 */
+  const setAllModels = (providerIndex: number, enabled: boolean, modelNames: string[]) => {
+    const targets = new Set(modelNames)
     updateModels(providerIndex, (models) =>
-      Object.fromEntries(Object.entries(models).map(([k, v]) => [k, { ...v, enabled }] as const)),
+      Object.fromEntries(
+        Object.entries(models).map(([k, v]) => [
+          k,
+          { ...v, enabled: targets.has(k) ? enabled : v.enabled },
+        ]),
+      ),
     )
   }
 
@@ -189,6 +212,11 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
 
   const testProvider = async (index: number, baseURL: string, apiKey: string) => {
     setTestResults((prev) => ({ ...prev, [index]: { loading: true } }))
+    // 发起时的草稿世代：探测期间用户可能点「放弃更改」或导入配置换了草稿，
+    // 那时把探测到的模型并进 draft 就是把**已声明丢弃**的改动复活（此前实测：
+    // 放弃后 3 秒保存条又亮起「● 未保存更改」并多出探测到的模型）。世代不符的
+    // 回写由 Settings 直接丢弃，测试结果本身照常显示。
+    const epoch = getDraftEpoch?.()
     try {
       const result = await providerAPI.test(baseURL, apiKey)
       setTestResults((prev) => ({ ...prev, [index]: { loading: false, result } }))
@@ -197,16 +225,18 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
       // 仅补全新检测到的模型。
       if (result.ok) {
         const detected = result.models
-        onProvidersChange((prev) =>
-          prev.map((p, i) => {
-            if (i !== index) return p
-            const existing = p.models ?? {}
-            const next = { ...existing }
-            for (const m of detected) {
-              if (!(m in next)) next[m] = {}
-            }
-            return { ...p, models: next }
-          }),
+        onProvidersChange(
+          (prev) =>
+            prev.map((p, i) => {
+              if (i !== index) return p
+              const existing = p.models ?? {}
+              const next = { ...existing }
+              for (const m of detected) {
+                if (!(m in next)) next[m] = {}
+              }
+              return { ...p, models: next }
+            }),
+          epoch,
         )
       }
     } catch (err) {
@@ -298,7 +328,7 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
             <Button
               className={btnDanger}
               variant="outline"
-              onClick={() => removeProvider(index)}
+              onClick={() => setPendingRemove(index)}
               data-testid="provider-remove"
             >
               删除
@@ -313,7 +343,7 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
             <ProviderModelsPanel
               models={provider.models ?? {}}
               onToggle={(name) => toggleModel(index, name)}
-              onSetAll={(enabled) => setAllModels(index, enabled)}
+              onSetAll={(enabled, modelNames) => setAllModels(index, enabled, modelNames)}
               onModelFieldChange={(name, patch) => updateModelField(index, name, patch)}
             />
           </div>
@@ -338,6 +368,28 @@ function ProviderPanel({ providers, onProvidersChange }: ProviderPanelProps) {
           onClose={() => setCatalogOpen(false)}
           onSelect={addProviderFromCatalog}
         />
+      )}
+      {/* 条件渲染挂载：react-use-control 的 open 布尔值仅是初始值，prop 变化
+       * 不同步内部状态（与 SecurityPanel 同款）。标题带 provider 名称——同一页
+       * 常有若干行，只说「删除该 Provider」用户认不出删的是哪一行。
+       * onConfirm 必须自己清 pendingRemove：删除后列表前移，providers[pendingRemove]
+       * 仍指向**下一行**，弹窗会留着并显示成「删除 Provider「下一行的名字」」。 */}
+      {pendingRemove !== null && providers[pendingRemove] && (
+        <ConfirmDialog
+          open
+          onClose={() => setPendingRemove(null)}
+          onConfirm={() => {
+            removeProvider(pendingRemove)
+            setPendingRemove(null)
+          }}
+          title={`删除 Provider「${providers[pendingRemove].name || providers[pendingRemove].baseURL || '未命名'}」`}
+          confirmText="删除"
+          cancelText="取消"
+          variant="danger"
+        >
+          将从配置中移除该 Provider，其 baseURL 与 API Key 不会自动备份；保存设置后该 Provider
+          不再可用于对话，确定删除？
+        </ConfirmDialog>
       )}
     </div>
   )

@@ -550,6 +550,7 @@ describe('P2-5 kanban recycle bin', () => {
     if (!result.ok) throw new Error('unreachable')
     expect(result.mergedColumns).toBe(1)
     expect(result.mergedCards).toBe(2)
+    expect(result.mergedLabels).toBe(0)
 
     const board = await storeB.getBoard()
     // 目标列保留 + 自定义列追加
@@ -562,6 +563,50 @@ describe('P2-5 kanban recycle bin', () => {
     expect(new Set(todoPositions).size).toBe(todoPositions.length)
     // 源看板已从回收站移除（物理删除）
     expect(await listDeletedKanbanBoards(handle)).toHaveLength(0)
+  })
+
+  // 回归：源板的标签定义必须与列同构地并入。源板随后被物理删除，它是这批 labelId 的
+  // **唯一**持有者——此前只并卡片不并标签，卡片上的 labelId 于是悬空（前端按 id 查不到
+  // 就静默不渲染，用户看到「卡片回来了、标签没了」），并且这份丢失会在下一次保存看板
+  // 设置时被 updateBoard 的悬空清理从卡片上真正抹掉，不可逆。
+  it('merge 必须把源看板的标签定义一并并入（否则卡片标签悬空、保存一次即永久丢失）', async () => {
+    await seedProject('proj-a')
+    await seedProject('proj-b')
+    const storeA = createKanbanStore(handle, 'proj-a')
+    await storeA.updateBoard({
+      columns: [{ id: 'todo', name: '待办' }],
+      labels: [
+        { id: 'l-bug', name: 'bug', color: '#f00' },
+        { id: 'l-ux', name: 'ux', color: '#0f0' },
+      ],
+    })
+    await storeA.addCard({ title: 'labelled', columnId: 'todo', labels: ['l-bug'] })
+    await softDeleteKanbanBoard(handle, 'proj-a', 'A')
+    await handle.db.delete(projects).where(eq(projects.id, 'proj-a'))
+
+    const storeB = createKanbanStore(handle, 'proj-b')
+    // 目标板已有一个同 id 标签：不得重复追加，也不得覆盖目标板的定义
+    await storeB.updateBoard({ labels: [{ id: 'l-ux', name: '既有 ux', color: '#00f' }] })
+    const boardId = (await listDeletedKanbanBoards(handle))[0]?.id as string
+
+    const result = await mergeKanbanBoard(handle, boardId, 'proj-b')
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.mergedLabels).toBe(1)
+
+    const board = await storeB.getBoard()
+    expect(board.labels.map((l) => l.id).sort()).toEqual(['l-bug', 'l-ux'])
+    expect(board.labels.filter((l) => l.id === 'l-ux')).toEqual([
+      { id: 'l-ux', name: '既有 ux', color: '#00f' },
+    ])
+    // 悬空引用必须为零：卡片上的每个 labelId 都能在 board.labels 里找到
+    const labelIds = new Set(board.labels.map((l) => l.id))
+    for (const card of board.cards) {
+      for (const lid of card.labels) expect(labelIds.has(lid)).toBe(true)
+    }
+    // 真实路径复演：在看板设置里点一次保存（PATCH columns+labels）后标签仍在
+    await storeB.updateBoard({ columns: board.columns, labels: board.labels })
+    const after = await storeB.getBoard()
+    expect(after.cards.find((c) => c.title === 'labelled')?.labels).toEqual(['l-bug'])
   })
 
   it('merge into a project without board → 等价普通恢复', async () => {

@@ -191,6 +191,9 @@ export function DirectoryPicker({
   const [navLoading, setNavLoading] = useState(false)
   /** 根目录读取失败的原因（null=无失败）。此前只有 boolean，渲染成「读取失败」四个字。 */
   const [navError, setNavError] = useState<string | null>(null)
+  /** home 目录读取失败的原因。home 拉不到会让「首次自动导航」与名称搜索双双失效
+   *  （见 loadHome），必须与「没有目录」区分开。 */
+  const [homeError, setHomeError] = useState<string | null>(null)
   /** 子目录懒加载失败原因（path → message）。与 FileBrowser 同口径：由树里
    *  的失败态 + 重试承接，绝不落成 children: []（那正是「（空）」分支）。 */
   const [loadErrors, setLoadErrors] = useState<Map<string, string>>(new Map())
@@ -210,22 +213,24 @@ export function DirectoryPicker({
   homeRef.current = home
   rootRef.current = root
 
-  // 首次加载 home
-  useEffect(() => {
-    let cancelled = false
-    filesystemAPI
-      .home()
-      .then((r) => {
-        if (!cancelled) {
-          setHome(r.path)
-          homeRef.current = r.path
-        }
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
+  // 加载 home（首次 + 失败重试）。此前 `.catch(() => {})` 把失败吞掉后 home 恒为空：
+  // 「首次自动导航到 home」永不触发（AddProjectDialog/RelocateProjectDialog 都不传
+  // start）→ 浏览器区只剩一个无树、无错误、无重试的空白框；同时搜索的 base() 回落
+  // 成 '' → 输入目录名也永远搜不到。失败必须落成可见原因 + 可重试。
+  const loadHome = useCallback(async () => {
+    setHomeError(null)
+    try {
+      const r = await filesystemAPI.home()
+      setHome(r.path)
+      homeRef.current = r.path
+    } catch (err) {
+      setHomeError(pickerErrorMessage(err))
     }
   }, [])
+
+  useEffect(() => {
+    void loadHome()
+  }, [loadHome])
 
   // 搜索实例（getter 读最新 home/root，缓存复用）
   const search = useMemo(
@@ -266,6 +271,8 @@ export function DirectoryPicker({
         const children: TreeNode[] = r.directories.map((d) => ({ name: d.name, path: d.path }))
         const baseName = path.replace(/\/+$/, '').split('/').filter(Boolean).pop() ?? path
         setTreeRoot({ name: baseName || '/', path, children })
+        // 目录树拿到了：此前若有 home 读取失败，现在已经被用户手动导航绕过。
+        setHomeError(null)
       } catch (err) {
         if (activeTreeNavigation(token, navigation.current)) setNavError(pickerErrorMessage(err))
       } finally {
@@ -462,7 +469,7 @@ export function DirectoryPicker({
           <button
             type="button"
             className={actionBtn}
-            onClick={() => void navigate(home)}
+            onClick={() => void (home ? navigate(home) : loadHome())}
             aria-label="home"
           >
             ~
@@ -507,16 +514,19 @@ export function DirectoryPicker({
       </div>
       <div className={browser}>
         {navLoading ? <div className={state}>加载中…</div> : null}
-        {!navLoading && navError ? (
+        {!navLoading && (navError || (homeError && !treeRoot)) ? (
           <div className={errorState} data-testid="directory-picker-error">
-            <span>{navError}</span>
+            <span>{navError ?? homeError}</span>
             <button
               type="button"
               className={retryBtn}
               data-testid="directory-picker-retry"
-              // 重试失败的初始加载与首航同类：用户仍未做任何选择，只浏览不回填
-              // 宿主值（否则等于重新武装「打开对话框即可回车注册 $HOME」）。
-              onClick={() => void navigate(root, { silent: true })}
+              // home 拉失败时 root 仍为空，沿用原来的 navigate(root) 只会空转；
+              // 这种情况重试要先重新拉 home（随后的首次自动导航会接上）。
+              onClick={() => {
+                if (homeError) void loadHome()
+                else void navigate(root, { silent: true })
+              }}
             >
               重试
             </button>

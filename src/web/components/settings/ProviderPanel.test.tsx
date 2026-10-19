@@ -54,14 +54,48 @@ describe('ProviderPanel', () => {
       expect(within(rows[1] as HTMLElement).getByText(/连接成功/)).toBeTruthy()
     })
 
-    // 删除第 1 行（A）→ B 上移到下标 0、C 上移到下标 1
+    // 删除第 1 行（A）：先确认，才轮到 B 上移到下标 0、C 上移到下标 1
     fireEvent.click(screen.getAllByTestId('provider-remove')[0] as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('删除 Provider「a」')
+    fireEvent.click(within(dialog).getByText('删除'))
 
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
     const rows = screen.getAllByTestId('provider-row')
-    expect(rows).toHaveLength(2)
     // B（现第 1 行）保留自己的测试结果
     expect(within(rows[0] as HTMLElement).getByText(/连接成功/)).toBeTruthy()
     // C（现第 2 行）不得显示任何测试结果（此前显示 B 的结果——串位）
     expect(within(rows[1] as HTMLElement).queryByText(/连接成功/)).toBeNull()
+  })
+
+  // 复现：provider 行里是手打的 baseURL + API Key，点一次「删除」整行立刻从草稿
+  // 消失、零确认零影响面，随后吸底保存条被点亮，顺手一按「保存」就把密钥从磁盘
+  // 配置里永久抹掉。真实浏览器实测：单击后 provider-row 直接 0 行、0 个 dialog。
+  // 同页同族的 MCP 服务器删除早就有 ConfirmDialog，这里是漏网。
+  it('点「删除」先要确认：取消保留整行，确认才移除', async () => {
+    render(<Harness />)
+
+    fireEvent.click(screen.getAllByTestId('provider-remove')[0] as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    // 确认框要点名是哪一行（页面同时有多行 provider）
+    expect(dialog.textContent).toContain('删除 Provider「a」')
+
+    // 未确认前一行都不能少
+    expect(screen.getAllByTestId('provider-row')).toHaveLength(3)
+
+    fireEvent.click(within(dialog).getByText('取消'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getAllByTestId('provider-row')).toHaveLength(3)
+
+    fireEvent.click(screen.getAllByTestId('provider-remove')[0] as HTMLElement)
+    const dialog2 = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog2).getByText('删除'))
+
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+    // 弹窗必须随之关闭：删除后列表前移，若不清 pendingRemove，弹窗会留着并
+    // 显示成「删除 Provider「下一行的名字」」，再点一次就删掉第二家。
+    expect(screen.queryByRole('dialog')).toBeNull()
+    const remaining = screen.getAllByTestId('provider-row')[0] as HTMLElement
+    expect(within(remaining).getByDisplayValue('b')).toBeTruthy()
   })
 })

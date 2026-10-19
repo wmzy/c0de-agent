@@ -17,6 +17,47 @@ describe('GrepToolView', () => {
     )
     expect(screen.getByTestId('tool-output')).toHaveTextContent('a.ts:1:foo')
   })
+
+  // 命中数撞上 maxResults 时 executor 只把 truncated 放进 metadata（output 文本里
+  // 没有任何标记，见 src/tools/builtin/grep.ts）。视图此前只读 output 文本，于是
+  // 满 200 条和「全部命中」渲染得一模一样：用户据此告诉同事「全仓库就这 200 处」。
+  it('命中数被截断时必须说明，而不是把上限当全部', () => {
+    const lines = Array.from({ length: 200 }, (_, i) => `f.ts:${i + 1}: foo`).join('\n')
+    render(
+      <GrepToolView
+        input={{ pattern: 'foo' }}
+        output={{ _tag: 'success', output: lines, metadata: { count: 200, truncated: true } }}
+        status="completed"
+      />,
+    )
+    const note = screen.getByTestId('tool-match-truncated')
+    expect(note).toHaveTextContent('已截断')
+    expect(note).toHaveTextContent('200')
+  })
+
+  it('一个都没匹配到时说明「没有匹配」，而不是渲染成空白', () => {
+    render(
+      <GrepToolView
+        input={{ pattern: 'nope' }}
+        output={{ _tag: 'success', output: '', metadata: { count: 0, truncated: false } }}
+        status="completed"
+      />,
+    )
+    expect(screen.getByTestId('tool-match-empty')).toHaveTextContent('没有匹配')
+    expect(screen.queryByTestId('tool-output')).toBeNull()
+  })
+
+  it('未截断且有命中时不加旁白', () => {
+    render(
+      <GrepToolView
+        input={{ pattern: 'foo' }}
+        output={{ _tag: 'success', output: 'a.ts:1:foo', metadata: { count: 1, truncated: false } }}
+        status="completed"
+      />,
+    )
+    expect(screen.queryByTestId('tool-match-truncated')).toBeNull()
+    expect(screen.queryByTestId('tool-match-empty')).toBeNull()
+  })
 })
 
 describe('GlobToolView', () => {
@@ -31,6 +72,18 @@ describe('GlobToolView', () => {
       />,
     )
     expect(screen.getByTestId('tool-output')).toHaveTextContent('a.ts')
+  })
+
+  it('0 个文件匹配时说明「没有匹配」，而不是渲染成空白', () => {
+    render(
+      <GlobToolView
+        input={{ pattern: '*.rs' }}
+        output={{ _tag: 'success', output: '', metadata: { count: 0 } }}
+        status="completed"
+      />,
+    )
+    expect(screen.getByTestId('tool-match-empty')).toHaveTextContent('没有匹配')
+    expect(screen.queryByTestId('tool-output')).toBeNull()
   })
 })
 

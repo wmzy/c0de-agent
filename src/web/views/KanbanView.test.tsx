@@ -21,6 +21,7 @@ vi.mock('@/services/kanban.js', () => ({
     get: vi.fn(),
     addCard: vi.fn(),
     updateCard: vi.fn(),
+    importBoard: vi.fn(),
   },
 }))
 
@@ -484,5 +485,98 @@ describe('看板页的一级标题', () => {
     const h1s = screen.getAllByRole('heading', { level: 1 })
     expect(h1s).toHaveLength(1)
     expect(h1s[0]?.textContent).toContain('看板')
+  })
+})
+
+/**
+ * 回归：导入整板是不可撤销的覆盖（替换列 + 标签 + 全部卡片），此前只用原生
+ * window.confirm 挡一道——系统框默认键/回车落点正是「确定」=立即覆盖，肌肉
+ * 记忆按回车就丢掉手工维护的卡片。改用站内 DangerConfirmDialog（逐字确认）。
+ */
+describe('KanbanView 导入整板：不可撤销覆盖需逐字确认', () => {
+  const boardWithCards: KanbanBoardWithCards = {
+    id: 'b1',
+    projectId: 'p1',
+    columns: [{ id: 'col1', name: '待办' }],
+    labels: [],
+    cards: [
+      {
+        id: 'c1',
+        boardId: 'b1',
+        title: '现有卡片 1',
+        description: null,
+        columnId: 'col1',
+        priority: 'medium',
+        position: 0,
+        labels: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'c2',
+        boardId: 'b1',
+        title: '现有卡片 2',
+        description: null,
+        columnId: 'col1',
+        priority: 'medium',
+        position: 1,
+        labels: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+
+  const pickImportFile = async (payload: unknown) => {
+    const file = new File([JSON.stringify(payload)], 'backup.json', { type: 'application/json' })
+    fireEvent.change(screen.getByTestId('kanban-import-input'), { target: { files: [file] } })
+    return screen.findByTestId('danger-confirm-dialog')
+  }
+
+  async function renderWithBoard() {
+    vi.mocked(kanbanAPI.get).mockResolvedValue(boardWithCards)
+    renderBoard()
+    await screen.findByTestId('kanban-view')
+  }
+
+  it('选中文件先弹站内逐字确认，未确认前绝不导入', async () => {
+    await renderWithBoard()
+
+    const dialog = await pickImportFile({ cards: [{}, {}, {}] })
+
+    // 影响面写进弹窗：现有 2 张将被 3 张覆盖
+    expect(dialog.textContent).toContain('2 张卡片')
+    expect(dialog.textContent).toContain('3 张卡片')
+    expect(kanbanAPI.importBoard).not.toHaveBeenCalled()
+    // 逐字输入前确认键禁用——这是覆盖唯一门禁
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('逐字输入「覆盖」后才执行导入', async () => {
+    await renderWithBoard()
+    const payload = { cards: [{}, {}, {}] }
+    await pickImportFile(payload)
+
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: '覆盖' } })
+    const btn = screen.getByTestId('danger-confirm-btn') as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
+
+    vi.mocked(kanbanAPI.importBoard).mockResolvedValue({ ok: true, cardCount: 3 })
+    fireEvent.click(btn)
+
+    await waitFor(() => expect(kanbanAPI.importBoard).toHaveBeenCalledWith('p1', payload))
+  })
+
+  it('关闭确认弹窗不导入（放弃这次覆盖）', async () => {
+    await renderWithBoard()
+    await pickImportFile({ cards: [{}] })
+
+    // ✕ / Esc / 取消都走 Dialog 的 onClose
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    await waitFor(() => expect(screen.queryByTestId('danger-confirm-dialog')).toBeNull())
+    expect(kanbanAPI.importBoard).not.toHaveBeenCalled()
   })
 })

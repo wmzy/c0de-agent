@@ -32,6 +32,17 @@ const actions = css`
   justify-content: flex-end;
 `
 
+/** 信任失败原因：danger 前景 + 细底，画在弹窗内、按钮上方。 */
+const errorText = css`
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--haze-color-danger, #e5484d);
+  border-radius: 6px;
+  background: var(--haze-color-bg-subtle);
+  color: var(--haze-color-danger, #e5484d);
+  font-size: 12px;
+`
+
 const btn = css`
   padding: 6px 12px;
   border: 1px solid var(--haze-color-border);
@@ -66,17 +77,25 @@ export type TrustRiskItem = { kind: string; detail: string }
 export function TrustRequiredDialog({
   projectName,
   items,
+  error,
+  busy = false,
   onConfirm,
   onCancel,
 }: {
   projectName: string
   items: TrustRiskItem[]
+  /** 上次信任请求失败的原因。渲染在弹窗**内部**：本弹窗是 <dialog> 模态，
+   *  把原因写在会话区的横幅上会被 ::backdrop 遮住，用户只看到「点了没反应」。 */
+  error?: string | null
+  /** 信任请求在飞：禁用「信任并继续」并禁止关闭，避免连点重复发请求。 */
+  busy?: boolean
   onConfirm: () => void
   onCancel: () => void
 }) {
   return (
     <Dialog
       onClose={onCancel}
+      closeDisabled={busy}
       title="信任此项目？"
       width="min(480px, 92vw)"
       testId="trust-required-dialog"
@@ -86,6 +105,7 @@ export function TrustRequiredDialog({
             type="button"
             className={btn}
             onClick={onCancel}
+            disabled={busy}
             data-testid="trust-required-cancel"
           >
             取消
@@ -94,9 +114,10 @@ export function TrustRequiredDialog({
             type="button"
             className={primary}
             onClick={onConfirm}
+            disabled={busy}
             data-testid="trust-required-confirm"
           >
-            信任并继续
+            {busy ? '信任中…' : '信任并继续'}
           </button>
         </div>
       }
@@ -117,6 +138,11 @@ export function TrustRequiredDialog({
         信任后上述设置立即生效（项目插件需重启 serve 后加载），后续不再询问。
         请仅在确认该仓库来源可靠、且接受这些设置时信任。
       </div>
+      {error ? (
+        <div className={errorText} role="alert" data-testid="trust-required-error">
+          {error}
+        </div>
+      ) : null}
     </Dialog>
   )
 }

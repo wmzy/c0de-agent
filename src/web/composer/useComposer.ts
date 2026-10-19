@@ -126,6 +126,9 @@ function useComposer({
    *  readImagePart 等副作用写进去会让同一张图被添加两次）。 */
   const imagesRef = useRef<ImagePart[]>([])
   imagesRef.current = images
+  /** 在途读取中的图片张数：见 addImageFile 的口径说明（数量上限必须按
+   *  「已入列 + 读取中」计，且名额在校验通过时就同步占住）。 */
+  const pendingImagesRef = useRef(0)
   const [popover, setPopover] = useState<PopoverState>(null)
   const [popoverQuery, setPopoverQuery] = useState('')
   const [subcommandCmd, setSubcommandCmd] = useState<string | null>(null)
@@ -137,20 +140,51 @@ function useComposer({
   } | null>(null)
   const [isEmpty, setIsEmpty] = useState(true)
   /**
+   * 「追加指令」在途标志。steer 只在请求落地后才清空输入框（见 steer 里的注释），
+   * 所以请求在途期间输入框里还是那一段文字、按钮也没置灰——再点一次（或连按两下
+   * Enter）会读到同一段文本，把同一条指令发第二遍：agent 侧 steeringQueue 注入两次、
+   * 时间线出现两条一模一样的指令气泡。与发送不同，这里没有「清空即去重」的兜底，
+   * 必须在途锁。ref 挡住重入（同一 tick 内的连击也要挡），state 让按钮置灰。
+   */
+  const steerPendingRef = useRef(false)
+  const [steerPending, setSteerPending] = useState(false)
+  /**
    * 发送世代号。每次 send/steer 自增；异步失败还原只在自己那一代仍是最新时回写，
    * 否则会把后续发送刚清空/输入的框内容盖回去（见 send 里的 restore）。
    */
   const sendAttemptRef = useRef(0)
+  /**
+   * 草稿作用域世代号。切会话/切作用域时自增；在途请求落地时（发送失败的还原、
+   * 追加指令受理后的清空）必须先确认还在同一个作用域里。
+   *
+   * sendAttemptRef 挡不住跨会话这一路：它只认「又有一次发送」，而切会话不改它。
+   * 于是「在 A 发消息 → 请求还没回来就点开 B」时，A 那次失败回来仍会在 B 的输入框
+   * 里回填 A 的正文与图片，并且 persist=true 把它写成 B 的草稿（刷新后还在）——
+   * 同一段文字被记在两条会话头上。hook 实例并不随会话切换重建（目标会话的消息
+   * 已在 react-query 缓存里时不走 ChatSkeleton 早返回），所以这条路径是真实可达的。
+   */
+  const scopeGenRef = useRef(0)
 
   // commands 用 ref 避免每次列表变化都重建 handleInput callback
   const commandsRef = useRef<CommandInfo[] | undefined>(commands)
   commandsRef.current = commands
+
+  /**
+   * Esc 显式关掉浮层时记下的文本签名。下方「commands 就绪后重新检测」的 effect
+   * 只依赖 [commands, popover]——Esc 把 popover 置空后它立刻重跑，按同一段文本
+   * 把刚关掉的浮层原样弹回来：Esc 成了死键，紧接的回车于是被浮层拦截，把用户
+   * 已经打好的正文改写成第一个候选而不是发送。文本一变即失效（handleInput 清），
+   * 用户继续打字本来就该重新补全。
+   */
+  const dismissedPopoverRef = useRef<string | null>(null)
 
   // commands 异步加载后，重新检测当前文本是否匹配子命令补全。
   // handleInput 在输入时触发，但此时 commands 可能尚未就绪。
   useEffect(() => {
     if (!commands?.length) return
     const text = promptToText(promptRef.current)
+    // 用户已对这段文本按过 Esc：不许再弹回来
+    if (dismissedPopoverRef.current === text) return
     const subMatch = text.match(/^\/(\S+)\s+(\S*)$/)
     if (!subMatch) return
     const cmd = commands.find((c) => c.name === subMatch[1])
@@ -211,6 +245,8 @@ function useComposer({
 
     const text = promptToText(prompt)
     const cursor = currentCursor(editorRef.current)
+    // 又敲了字 = 新的输入意图，此前那次 Esc 的「别弹回来」失效
+    dismissedPopoverRef.current = null
 
     // popover 触发检测（steer 模式不触发）
     const slashMatch = text.match(/^\/(\S*)$/)
@@ -278,11 +314,23 @@ function useComposer({
   // 本 hook 整体重建，草稿只能来自存储）。
   // biome-ignore lint/correctness/useExhaustiveDependencies: setImages 是 useState 的稳定 setter，列进依赖是为了让「还原哪些附件」显式可见
   useEffect(() => {
+    // 作用域世代自增：在途请求落地时必须先确认还在同一个作用域（见 scopeGenRef）。
+    scopeGenRef.current += 1
+    // 上一作用域在途的图片读取一律作废（落地时世代不符会被丢弃），名额计数随之
+    // 清零，否则这些作废的读取会在返回时把计数扣成负数、白白放行更多附件。
+    pendingImagesRef.current = 0
     draftRestoredRef.current = false
     const stored = draftScope ? loadDraft(draftScope) : null
     setPromptExternal(stored?.prompt ?? DEFAULT_PROMPT, true)
     setImages(stored?.images ?? [])
     setImageError(null)
+    // 待定交互状态是从**上一个作用域**的文本推导出来的，跨作用域留着就会把那段
+    // 文本带进新会话：大段粘贴确认条的「插入」会把上一条会话粘贴的正文写进新会话
+    // 的输入框，补全浮层的候选也是按上一段文本算出来的（回车即把那条命令插进来）。
+    setShowPasteConfirm(null)
+    setPopover(null)
+    setPopoverQuery('')
+    setSubcommandCmd(null)
     resetHistory()
     draftRestoredRef.current = true
   }, [draftScope, setPromptExternal, setImages, resetHistory])
@@ -441,14 +489,37 @@ function useComposer({
 
   /** 校验并读取图片后追加（拖拽/选择/粘贴共用）。
    *  校验与读取都在 setImages 之外完成：更新器内做副作用会在 StrictMode /
-   *  并发渲染重放时执行两次（同一张图被添加两次、读取两次）。 */
+   *  并发渲染重放时执行两次（同一张图被添加两次、读取两次）。
+   *
+   *  张数按「已入列 + 在途读取中」计，且名额在**校验通过时**就同步占住：
+   *  一次拖放/粘贴里的多张图在同一次事件里连续校验，彼此之间不会重渲染，
+   *  渲染期赋值的 imagesRef 镜像始终是同一个旧值——校验全按同一张数过，
+   *  6 张上限因此形同虚设（拖 7 张进来，7 张全部入列，且一句提示都没有），
+   *  超限载荷照样进 PGLite / SSE / provider 请求。
+   *
+   *  读取落地时同样同步写镜像再 setState：pending 减 1 与 images 加 1 之间不留
+   *  计数空档，否则紧接着的那次添加会读到偏小的数、又放行一张。
+   *  作用域世代校验沿用本 hook 既有口径（见 scopeGenRef）：切换会话/项目后才回来
+   *  的图片属于上一个作用域，不能落进当前的附件栏。 */
   const addImageFile = useCallback((file: File) => {
-    const err = validateImage(file, imagesRef.current.length)
+    const inFlight = pendingImagesRef.current
+    const err = validateImage(file, imagesRef.current.length + inFlight)
     setImageError(err)
     if (err) return
+    pendingImagesRef.current = inFlight + 1
+    const gen = scopeGenRef.current
     void readImagePart(file)
-      .then((part) => setImages((cur) => [...cur, part]))
-      .catch(() => setImageError('读取图片失败'))
+      .then((part) => {
+        pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
+        if (gen !== scopeGenRef.current) return
+        const next = [...imagesRef.current, part]
+        imagesRef.current = next
+        setImages(next)
+      })
+      .catch(() => {
+        pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
+        setImageError('读取图片失败')
+      })
   }, [])
 
   // 添加图片（拖拽/选择）
@@ -488,16 +559,15 @@ function useComposer({
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
-      // 图片粘贴优先
-      const items = e.clipboardData.items
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault()
-          const file = item.getAsFile()
-          if (!file) return
-          addImageFile(file)
-          return
-        }
+      // 图片与文本各自独立处理：同一批内容里既有图片又有文本时（从网页/文档里
+      // 复制一段图文混排），此前命中第一张图片就 return——图片进了附件栏，那段
+      // 文字凭空消失且零反馈。与 handleDrop 同口径：先收图片，再走文本通道。
+      for (const item of Array.from(e.clipboardData.items)) {
+        if (!item.type.startsWith('image/')) continue
+        const file = item.getAsFile()
+        if (!file) continue
+        e.preventDefault()
+        addImageFile(file)
       }
       // 文本粘贴（焦点本就在编辑器里，无需抢焦点）
       const text = e.clipboardData.getData('text/plain')
@@ -561,6 +631,9 @@ function useComposer({
     // （或又按了 steering），那时先落地的那次失败再回来还原，就会把后来那条的输入
     // 一起盖掉、并按错误的假设去动提示历史。
     const attempt = ++sendAttemptRef.current
+    // 本次发送所属的草稿作用域：切会话后 A 那次的失败不得回填到 B 的输入框（见 scopeGenRef）。
+    const scopeGen = scopeGenRef.current
+    const scopeAtSend = draftScopeRef.current
     // 清空照旧立即发生（发送成功的体感不能等一轮请求）：失败走下面的还原分支。
     if (visible.trim()) saveHistory(prependHistoryEntry(loadHistory(), visible))
     setImages([])
@@ -572,6 +645,16 @@ function useComposer({
     const restore = () => {
       // 已被更新的发送取代：本次失败不再回写。
       if (sendAttemptRef.current !== attempt) return
+      // 已经切到别的会话/作用域：这条失败属于上一个会话，回填会把它的正文与图片
+      // 写进当前会话，并（persist=true）落成当前会话的草稿。改为把失败快照落回
+      // **原会话**的草稿键（发送时刚被清掉的那份）：回到原会话时输入框里还是这段
+      // 文字——既不写进当前会话，也不把用户已经打好的输入丢掉。
+      if (scopeGenRef.current !== scopeGen) {
+        if (scopeAtSend && draftScopeRef.current !== scopeAtSend) {
+          saveDraft(scopeAtSend, snapshot.prompt, snapshot.images)
+        }
+        return
+      }
       // 输入框在请求在途期间仍可编辑（ComposerEditor 无只读路径），用户此刻新敲的
       // 内容/新加的图片不属于这条失败消息——无条件覆盖会凭空吞掉它们。只在输入框
       // 仍是发送后清空的状态时才回填。
@@ -608,6 +691,10 @@ function useComposer({
     // 没有注入回调就不清空：steer 的清空语义建立在「这条文字已经被送到在途的
     // run 里」之上，调用方没接 onSteer 时清空等于把用户输入凭空丢掉。
     if (busy || !onSteer) return
+    // 上一条追加指令还在途：输入框里仍是同一段文字（steer 成功后才清空），
+    // 再发一次就是同一条指令发两遍。按钮已按 steerPending 置灰，这里挡的是
+    // 同一 tick 内的连击与 Enter 键（React 还没把 disabled 写回 DOM）。
+    if (steerPendingRef.current) return
     const prompt = readPrompt()
     if (isPromptEmpty(prompt)) return
     const text = promptToMessageText(prompt)
@@ -617,24 +704,52 @@ function useComposer({
     // 乐观条目即消失）。此前无条件清空：用户敲的整段指令连气泡都没有，彻底丢失。
     // 现在只有确认受理才清空，失败时输入原样留着，配合 error 行让用户改用发送。
     sendAttemptRef.current += 1
+    // 本次指令所属的草稿作用域：切会话后它落地时不得去清空新会话的输入框
+    // （新会话的草稿恰好与这段指令同文时，clear 会把它删掉）。
+    const scopeGen = scopeGenRef.current
     const visible = promptToText(prompt)
     const clear = () => {
+      if (scopeGenRef.current !== scopeGen) return
       // 输入框在请求在途期间仍可编辑：期间用户新敲的字不属于这条指令，不覆盖。
       if (promptToText(readPrompt()) !== visible) return
       setPromptExternal(DEFAULT_PROMPT)
       resetHistory()
     }
+    const done = () => {
+      steerPendingRef.current = false
+      setSteerPending(false)
+    }
+    steerPendingRef.current = true
+    setSteerPending(true)
     const outcome = onSteer(text)
-    if (outcome === false) return
+    if (outcome === false) {
+      done()
+      return
+    }
     if (outcome && typeof (outcome as Promise<boolean | undefined>).then === 'function') {
-      void (outcome as Promise<boolean | undefined>).then((ok) => {
-        if (ok !== false) clear()
-      })
+      void (outcome as Promise<boolean | undefined>)
+        .then((ok) => {
+          if (ok !== false) clear()
+        })
+        .finally(done)
     } else {
       // 旧契约：同步 void 回调视为受理，保持「发出即清空」的原有体感。
       clear()
+      done()
     }
   }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory])
+
+  /**
+   * 用户显式关掉浮层的唯一入口（handleKeyDown 的 Esc 分支与 Composer 的 Tab 分支）。
+   * 必须连同 dismissedPopoverRef 一起写：popover 由 X 变 null 会让上方「commands
+   * 就绪后重新检测」的 effect 重跑，而它只认 dismissedPopoverRef——直接
+   * setPopover(null) 会让刚关掉的子命令浮层在同一瞬间原样弹回来（Tab 成死键，
+   * 焦点已经移走的用户看到菜单凭空重现）。
+   */
+  const dismissPopover = useCallback(() => {
+    dismissedPopoverRef.current = promptToText(promptRef.current)
+    setPopover(null)
+  }, [])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent, popoverSuppressed = false) => {
@@ -653,7 +768,9 @@ function useComposer({
         return
       }
       if (e.key === 'Escape' && popover) {
-        setPopover(null)
+        // 记住被关掉的这段文本：重检测 effect（commands 就绪 / popover 状态变化）
+        // 不得把它原样弹回来——否则 Esc 是死键，回车接着把输入改写成候选
+        dismissPopover()
         e.preventDefault()
         return
       }
@@ -689,7 +806,7 @@ function useComposer({
         }
       }
     },
-    [popover, send, steer, setPromptExternal, isStreaming],
+    [popover, send, steer, setPromptExternal, isStreaming, dismissPopover],
   )
 
   return {
@@ -724,7 +841,11 @@ function useComposer({
     insertPromptText,
     send,
     steer,
+    /** 「追加指令」在途（按钮据此置灰，见 steer 的在途锁）。 */
+    steerPending,
     setPopover,
+    /** 显式关浮层（Esc / Tab 共用；见定义处的注释——漏记 dismissed 会立刻弹回）。 */
+    dismissPopover,
     isEmpty,
   }
 }

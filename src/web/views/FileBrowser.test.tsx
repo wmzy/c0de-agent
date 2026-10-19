@@ -376,3 +376,92 @@ describe('FileBrowser 删除确认', () => {
     expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
   })
 })
+
+/**
+ * 回归：文件面板的「项目作用域复位」只清了一半——删除确认弹层与搜索词都留在
+ * 上一个项目里。
+ *
+ * confirmDelete 用的是**当前** projectId，而弹层里写的是上一个项目的路径：切
+ * 项目（顶栏项目下拉、浏览器后退/前进，两条都是 /projects/:projectId 同 path
+ * 模板 → @native-router 复用子树，组件不重建）后点一次「删除」，删掉的是新项目
+ * 里的同路径文件。搜索词同理：不复位就一直停在「搜索结果」分支，用上一个项目的
+ * 词去搜新项目，命中不到就显示「无匹配文件」，用户据此判定新项目里没有这个文件
+ * （侧栏会话搜索已按同一口径复位，文件面板此前漏了）。
+ */
+describe('FileBrowser 切项目复位', () => {
+  function renderSwitchable(initialProjectId: string) {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const ui = (projectId: string) => (
+      <QueryClientProvider client={qc}>
+        <FileBrowser projectId={projectId} onPick={vi.fn()} />
+      </QueryClientProvider>
+    )
+    const view = render(ui(initialProjectId))
+    return (projectId: string) => view.rerender(ui(projectId))
+  }
+
+  it('切项目后删除确认弹层关闭——确认键不会再删到新项目里的同路径文件', async () => {
+    const switchTo = renderSwitchable('p1')
+    await screen.findByTestId('node-package.json')
+    fireEvent.click(screen.getByTestId('delete-package.json'))
+    expect(screen.getByTestId('file-delete-dialog')).toBeInTheDocument()
+
+    switchTo('p2')
+
+    await waitFor(() => expect(screen.queryByTestId('file-delete-dialog')).toBeNull())
+    expect(fileAPI.delete).not.toHaveBeenCalled()
+  })
+
+  it('切项目后搜索词复位——不再用上一个项目的词搜新项目', async () => {
+    vi.mocked(fileAPI.search).mockResolvedValue([{ path: 'src/a.ts', type: 'file' }])
+    const switchTo = renderSwitchable('p1')
+    fireEvent.change(await screen.findByTestId('file-search'), { target: { value: 'src' } })
+    await screen.findByTestId('file-src/a.ts')
+
+    switchTo('p2')
+
+    await waitFor(() => {
+      expect((screen.getByTestId('file-search') as HTMLInputElement).value).toBe('')
+    })
+    expect(screen.queryByRole('list', { name: '搜索结果' })).toBeNull()
+    expect(screen.getByTestId('node-package.json')).toBeInTheDocument()
+  })
+
+  /**
+   * 回归：懒加载目录的请求在切项目之后才回来。
+   *
+   * dirPath 是项目内相对路径（'src'），两个项目的同名目录合并「恰好成功」、不报
+   * 任何错；而 handleToggle 只在 children === undefined 时才加载，这份上一个项目的
+   * 清单于是被永久缓存到刷新为止：树里列的是另一个仓库的文件名，点进去又按新项目
+   * 读同路径文件——用户在一个项目里看着另一个项目的文件树。
+   */
+  it('切换项目后在途返回的目录列表不并进新项目的树', async () => {
+    let resolveSrc: ((entries: FileEntry[]) => void) | undefined
+    vi.mocked(fileAPI.list).mockImplementation((dir: string) => {
+      if (dir === '.') return Promise.resolve(ROOT_ENTRIES)
+      if (dir === 'src') {
+        return new Promise<FileEntry[]>((resolve) => {
+          resolveSrc = resolve
+        })
+      }
+      return Promise.resolve([])
+    })
+
+    const switchTo = renderSwitchable('p1')
+    await screen.findByTestId('node-src')
+    fireEvent.click(screen.getByTestId('node-src')) // 展开 src：请求发出，保持在途
+
+    switchTo('p2')
+    await waitFor(() => expect(fileAPI.list).toHaveBeenCalledWith('.', 'p2'))
+
+    expect(resolveSrc).toBeDefined() // 展开 src 必须真的发出请求，否则「在途返回」不成立
+    resolveSrc?.([{ name: 'only-in-p1.ts', type: 'file' }])
+
+    // 新项目的树里不得出现上一个项目的条目；src 仍是「未加载」，展开时会重新拉取
+    await waitFor(() => expect(screen.getByTestId('node-src')).toBeInTheDocument())
+    expect(screen.queryByTestId('node-src/only-in-p1.ts')).toBeNull()
+    expect(fileAPI.list).not.toHaveBeenCalledWith('src', 'p2')
+  })
+})

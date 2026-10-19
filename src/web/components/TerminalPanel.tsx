@@ -13,6 +13,19 @@ interface TerminalPanelProps {
   cwd?: string
   /** 当前项目 id：自动创建标记按项目重置（见下），切项目后面板打开时同样能建首个终端。 */
   projectId: string
+  /**
+   * cwd 拿不到时的失败原因（读取项目信息失败）与重试入口。
+   *
+   * cwd 为 undefined 有两种截然不同的来路：「项目信息还在加载」与「读取失败」，
+   * 此前共用同一种表现——面板不自动建首个终端、空态里的「新建终端」按钮随之消失
+   * （按 cwd 门控），只剩工具栏那个不显眼的 +。读失败时用户看到的是一个没有任何
+   * 说明的空面板：既不知道「项目目录没读到」，也没有重试入口。
+   *
+   * 刻意不禁用 + / 分屏：服务端在没拿到 cwd 时会按 projectId 回落到项目 worktree
+   * （src/server/routes/terminal.ts 的 P2-13），它们仍能建出正确目录的终端——那
+   * 正是失败时唯一可用的自救入口，堵掉它只会把「点一下就好」变成「无法操作」。
+   */
+  cwdLoadError?: { message: string; retry: () => void } | null
 }
 
 // 面板外层：flex-shrink 允许在视口高度不足时收缩（正常 900px 视口无赤字、不影响布局），
@@ -155,7 +168,14 @@ const tabCloseStyle = css`
   min-height: auto;
   min-width: auto;
 
-  &:hover {
+  /* hover 必须与 global.ts 的
+     :where(button):hover:not(:disabled):not([aria-disabled='true']) 同形状：
+     :where() 只包住 button 本体，:hover 与两个 :not() 在其外，特异度 (0,3,0)
+     高于单类 (0,2,0)——写成 &:hover 会被全局中性底色压掉，只剩这里声明的
+     前景色落在浅灰底上。这颗 × 会直接杀掉该标签的全部 PTY，而鼠标移到它上面
+     的那一瞬间字形就消失（实测浅色主题 #fff on ≈rgb(227,228,230) = 1.14:1）。
+     同形状后按源序，本组件晚于 global.ts 求值，hover 底色才成立。 */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--haze-color-danger);
     color: var(--c0de-danger-on-solid, #fff);
   }
@@ -206,7 +226,9 @@ const closePanelBtnStyle = css`
   min-height: auto;
   min-width: auto;
 
-  &:hover {
+  /* 同 tabCloseStyle：必须写成与 global.ts 的 hover 规则同形状的选择器，
+     否则被全局中性底色压掉，只剩白字落在浅底上（约 1.1:1）。 */
+  &:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--haze-color-danger);
     color: var(--c0de-danger-on-solid, #fff);
   }
@@ -263,6 +285,40 @@ const emptyNewBtnStyle = css`
   }
 `
 
+/** 恢复失败的原因行：与 connectingStyle 的次要色区分开，明确是错误而非空态。 */
+const restoreFailTextStyle = css`
+  color: var(--haze-color-danger);
+  font-size: 12px;
+`
+
+/** 新建/分屏失败条：贴在工具栏下方，已有关闭终端时也能看见（分屏失败就在这条路径上）。 */
+const createFailRowStyle = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--haze-color-danger);
+  background: color-mix(in srgb, var(--haze-color-danger) 10%, transparent);
+  border-top: 1px solid var(--haze-color-border);
+`
+
+const createFailDismissStyle = css`
+  margin-left: auto;
+  padding: 0 6px;
+  font: inherit;
+  line-height: 16px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--haze-color-danger);
+  }
+`
+
 /** 从 shell 路径提取短名称用于标签显示。 */
 function shellLabel(shell: string): string {
   const base = shell.split('/').pop() ?? shell
@@ -278,7 +334,7 @@ function shellLabel(shell: string): string {
  * - 高度拖拽：上拉/下拉调整，记忆到 localStorage
  * - 隐藏时整块 display:none（仅显示拖拽条），避免隐藏控件排布到视口外仍可聚焦
  */
-export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) {
+export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: TerminalPanelProps) {
   const {
     sessions,
     tabs,
@@ -287,6 +343,12 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
     height,
     open,
     restoring,
+    restoreError,
+    retryRestore,
+    createError,
+    clearCreateError,
+    closeError,
+    clearCloseError,
     setActiveTabId,
     setActivePaneId,
     createTerminal,
@@ -333,11 +395,16 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
     if (!open || restoring) {
       return
     }
+    // 恢复读取失败时不自动建 shell：磁盘上那份布局还没恢复，此时建出的终端既
+    // 掩盖了失败，也不会被持久化（本轮禁止回写），刷新即消失。
+    if (restoreError) {
+      return
+    }
     if (tabs.length === 0 && cwd && !autoCreatedRef.current) {
       autoCreatedRef.current = true
       void createTerminal({ cwd })
     }
-  }, [open, restoring, tabs.length, cwd, createTerminal])
+  }, [open, restoring, restoreError, tabs.length, cwd, createTerminal])
 
   // 活动标签打开时，自动选中第一个 pane
   useEffect(() => {
@@ -436,22 +503,22 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
       e.stopPropagation()
       // 关闭标签内所有 pane
       const tabPanes = sessions.filter((s) => s.tabId === tabId)
-      for (const pane of tabPanes) {
-        void closeTerminal(pane.id)
-      }
-      // 关闭最后一个标签时同时收起面板
-      if (tabs.length === 1 && open) {
-        toggleOpen()
-      }
+      // 收起面板只在 pane 真的都关掉之后：kill 失败时 pane 还在（见 closeError），
+      // 收起面板等于把唯一能重试的控件藏起来，用户以为关掉了、实际 PTY 还在跑。
+      void Promise.all(tabPanes.map((pane) => closeTerminal(pane.id))).then((closed) => {
+        if (closed.every(Boolean) && tabs.length === 1 && open) {
+          toggleOpen()
+        }
+      })
     },
     [sessions, tabs.length, open, closeTerminal, toggleOpen],
   )
 
   const handleClosePane = useCallback(
-    (paneId: string) => {
-      void closeTerminal(paneId)
+    async (paneId: string) => {
+      const closed = await closeTerminal(paneId)
       // 关闭最后一个 pane（即最后一个标签的最后一个终端）时收起面板
-      if (sessions.length === 1 && open) {
+      if (closed && sessions.length === 1 && open) {
         toggleOpen()
       }
     },
@@ -689,6 +756,59 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
             ▾
           </button>
         </div>
+        {/* 项目信息读取失败：面板拿不到 cwd，于是既不自动建首个终端、空态里的
+            「新建终端」按钮也随之消失（按 cwd 门控），用户落在一个没有出口的空面板上。
+            原因与重试必须落在面板里——失败时唯一还能用的工具栏 + 仍然保留（服务端会按
+            projectId 落到项目 worktree），但「为什么这里空着」只有这里能回答。 */}
+        {cwdLoadError && (
+          <div className={createFailRowStyle} role="alert" data-testid="terminal-cwd-error">
+            <span>{`无法读取项目目录：${cwdLoadError.message}`}</span>
+            <button
+              type="button"
+              className={createFailDismissStyle}
+              onClick={cwdLoadError.retry}
+              data-testid="terminal-cwd-retry"
+              title="重试读取项目目录"
+            >
+              重试
+            </button>
+          </div>
+        )}
+        {/* 新建/分屏失败：原因必须落在面板里。放在工具栏下、渲染区上，
+            已有终端时（分屏失败）同样可见——此前两者都只有一次静默的点击。 */}
+        {createError && (
+          <div className={createFailRowStyle} role="alert" data-testid="terminal-create-error">
+            <span>{createError}</span>
+            <button
+              type="button"
+              className={createFailDismissStyle}
+              onClick={clearCreateError}
+              data-testid="terminal-create-error-dismiss"
+              aria-label="关闭失败提示"
+              title="关闭"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {/* 关闭终端失败：DELETE 失败时 pane 刻意留在界面上（PTY 还在后台跑，移除
+            pane 会让它没有任何入口）。原因必须落在面板里——否则用户看到的是「点了 ×
+            没反应」。pane 头上的 × 仍是重试入口。 */}
+        {closeError && (
+          <div className={createFailRowStyle} role="alert" data-testid="terminal-close-error">
+            <span>{closeError}</span>
+            <button
+              type="button"
+              className={createFailDismissStyle}
+              onClick={clearCloseError}
+              data-testid="terminal-close-error-dismiss"
+              aria-label="关闭失败提示"
+              title="关闭"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {/* 终端渲染区 — 所有标签同时挂载，非活动标签用 display:none 隐藏。
             这样切换标签时 xterm 实例不会被销毁/重建，避免输入丢失和输出闪烁。
             每块带 id 与标签按钮的 aria-controls 对应；隐藏态 display:none 自动
@@ -722,20 +842,41 @@ export function TerminalPanel({ terminal, cwd, projectId }: TerminalPanelProps) 
           ))}
           {tabs.length === 0 && (
             <div className={connectingStyle}>
-              <span>尚无终端</span>
-              {cwd ? (
-                <button
-                  type="button"
-                  className={emptyNewBtnStyle}
-                  // 恢复轮次进行中禁用：此时建的会话会被恢复流的 setSessions(restored)
-                  // 整体回抹——前端丢引用、PTY 成后端孤儿。等恢复落地后再建。
-                  disabled={restoring}
-                  onClick={() => void createTerminal({ cwd })}
-                  title="在当前项目目录打开一个 shell"
-                >
-                  新建终端
-                </button>
-              ) : null}
+              {restoreError ? (
+                // 读不到 PTY 列表 ≠ 没有终端：此前这里只写「尚无终端」，
+                // 而磁盘上那份布局还在（未被覆盖），用户既看不出是失败、
+                // 也没有恢复入口，只能一直以为终端被清空了。
+                <>
+                  <span className={restoreFailTextStyle} role="alert">
+                    {restoreError}
+                  </span>
+                  <button
+                    type="button"
+                    className={emptyNewBtnStyle}
+                    onClick={retryRestore}
+                    data-testid="terminal-restore-retry"
+                  >
+                    重试
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>尚无终端</span>
+                  {cwd ? (
+                    <button
+                      type="button"
+                      className={emptyNewBtnStyle}
+                      // 恢复轮次进行中禁用：此时建的会话会被恢复流的 setSessions(restored)
+                      // 整体回抹——前端丢引用、PTY 成后端孤儿。等恢复落地后再建。
+                      disabled={restoring}
+                      onClick={() => void createTerminal({ cwd })}
+                      title="在当前项目目录打开一个 shell"
+                    >
+                      新建终端
+                    </button>
+                  ) : null}
+                </>
+              )}
             </div>
           )}
         </div>

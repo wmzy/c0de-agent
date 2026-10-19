@@ -201,6 +201,10 @@ export function TimelineChat({ rows, showAllJson }: { rows: TimelineRow[]; showA
                   onClick={() => toggle(key)}
                   data-testid={`row-json-${key}`}
                   aria-label={isJson ? '切换美化' : '切换 JSON'}
+                  // 视图开关：当前显示的是 JSON 还是美化态，只靠 { } / ✦ 字形区分，
+                  // 读屏两者都读不出来。aria-pressed 把「正在看原始 JSON」这件事
+                  // 播报出来，与同仓终端标签/看板优先级的切换组口径一致。
+                  aria-pressed={isJson}
                   title={isJson ? '切回美化视图' : '查看该消息原始 JSON'}
                 >
                   {isJson ? '✦' : '{ }'}

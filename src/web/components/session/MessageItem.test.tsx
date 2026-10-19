@@ -160,6 +160,27 @@ describe('MessageItem', () => {
     expect(screen.queryByTestId('shake-inline-block')).toBeNull()
   })
 
+  // 选中态此前只落在 data-shake-selected 与样式上，读屏无从判断这块是否已加入
+  // shake 范围（div[role=button] 必须用 aria-pressed 表达按下态）。
+  it('shake 高亮块的 aria-pressed 反映选中态', () => {
+    const unselected = shakeValue({
+      regionsByMessage: new Map([['1', [blockRegion]]]),
+    })
+    const { unmount } = render(
+      <MessageItem message={msg('assistant', [{ _tag: 'text', text: 'hello' }])} />,
+      unselected,
+    )
+    expect(screen.getByTestId('shake-inline-block').getAttribute('aria-pressed')).toBe('false')
+    unmount()
+
+    const selected = shakeValue({
+      regionsByMessage: new Map([['1', [blockRegion]]]),
+      selected: new Set(['1:block:0:0']),
+    })
+    render(<MessageItem message={msg('assistant', [{ _tag: 'text', text: 'hello' }])} />, selected)
+    expect(screen.getByTestId('shake-inline-block').getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('点击 shake 高亮块调用 onToggle', () => {
     const onToggle = vi.fn()
     const sv = shakeValue({
@@ -168,6 +189,62 @@ describe('MessageItem', () => {
     })
     render(<MessageItem message={msg('assistant', [{ _tag: 'text', text: 'hello' }])} />, sv)
     fireEvent.click(screen.getByTestId('shake-inline-block'))
+    expect(onToggle).toHaveBeenCalledWith('1:block:0:0')
+  })
+
+  // 回归：shake 高亮块是 div[role=button]，块内还嵌着真 <button>（复制/展开收起/
+  // 工具折叠头/路径链接）。keydown 不放行冒泡事件时 preventDefault 会吃掉按钮自身
+  // 的 Enter/Space 激活——复制、展开、打开文件全部失灵，Enter 只换来一次静默的
+  // shake 选中切换。与 ToolBlock 头部（ToolBlock.tsx 的 onHeaderKeyDown）同款判据。
+  it('块内嵌按钮冒泡的 Enter/Space 不触发 shake 切换', () => {
+    const onToggle = vi.fn()
+    const sv = shakeValue({
+      regionsByMessage: new Map([['1', [blockRegion]]]),
+      onToggle,
+    })
+    render(<MessageItem message={msg('assistant', [{ _tag: 'text', text: 'hello' }])} />, sv)
+    const copy = screen.getByTestId('copy-button')
+    fireEvent.keyDown(copy, { key: 'Enter' })
+    fireEvent.keyDown(copy, { key: ' ' })
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
+  it('点击块内工具折叠头不反选 shake 区域', () => {
+    const onToggle = vi.fn()
+    const sv = shakeValue({
+      regionsByMessage: new Map([['1', [toolRegion]]]),
+      onToggle,
+    })
+    render(
+      <MessageItem
+        message={msg('assistant', [
+          { _tag: 'tool_call', id: 'tc1', tool: 'bash', input: { command: 'ls' } },
+          {
+            _tag: 'tool_result',
+            id: 'tc1',
+            tool: 'bash',
+            output: { _tag: 'success', output: 'result' },
+          },
+        ])}
+      />,
+      sv,
+    )
+    fireEvent.click(screen.getByTestId('tool-header'))
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
+  // 回归：真实点击落在块内普通内容（正文 div）上时，closest 沿祖先链会命中包装层
+  // 自身的 role="button"——若判据写成「命中即返回」，点块内任意空白处都不再切换选中，
+  // 主交互失效（happy-dom 里 fireEvent.click(包装层) 的 target === currentTarget，
+  // 覆盖不到这条路径，只有真实浏览器点得出来）。
+  it('点击块内普通内容仍切换 shake 选中', () => {
+    const onToggle = vi.fn()
+    const sv = shakeValue({
+      regionsByMessage: new Map([['1', [blockRegion]]]),
+      onToggle,
+    })
+    render(<MessageItem message={msg('assistant', [{ _tag: 'text', text: 'hello' }])} />, sv)
+    fireEvent.click(screen.getByTestId('assistant-text'))
     expect(onToggle).toHaveBeenCalledWith('1:block:0:0')
   })
 
@@ -269,5 +346,42 @@ describe('MessageItem 图片渲染', () => {
       msg('user', [{ _tag: 'image', mediaType: 'image/png', data: PNG }]),
     )
     expect(blocks.some((b) => b.type === 'image')).toBe(true)
+  })
+})
+
+// 裸 <img> 没有失败信号：图片解不出来时用户只看到浏览器的破图占位符，
+// 装饰列照画图片图标、文本照显示「(图片)」，看起来「我发过一张图」，
+// 却既没有原因也没有任何补救动作。
+describe('MessageItem 图片解码失败', () => {
+  it('解码失败时说明原因并给重试，而不是留一个破图占位符', () => {
+    render(
+      <MessageItem
+        message={msg('user', [{ _tag: 'image', mediaType: 'image/png', data: 'bm90LWFuLWltYWdl' }])}
+      />,
+    )
+    fireEvent.error(screen.getByTestId('message-image'))
+
+    const err = screen.getByTestId('message-image-error')
+    expect(err.textContent).toContain('图片无法显示')
+    expect(err.textContent).toContain('image/png')
+    expect(screen.getByTestId('message-image-retry')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-image')).toBeNull()
+  })
+
+  it('重试后重新渲染 <img>（重新解码），仍失败则再次给出原因', () => {
+    render(
+      <MessageItem
+        message={msg('user', [
+          { _tag: 'image', mediaType: 'image/webp', data: 'bm90LWFuLWltYWdl' },
+        ])}
+      />,
+    )
+    fireEvent.error(screen.getByTestId('message-image'))
+    fireEvent.click(screen.getByTestId('message-image-retry'))
+
+    const img = screen.getByTestId('message-image')
+    expect(img.getAttribute('src')).toBe('data:image/webp;base64,bm90LWFuLWltYWdl')
+    fireEvent.error(img)
+    expect(screen.getByTestId('message-image-error')).toBeInTheDocument()
   })
 })

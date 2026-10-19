@@ -1,11 +1,17 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
+import { Button } from 'haze-ui'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providerAPI } from '@/services/provider.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
 import { isImeComposing } from '@/utils/ime.js'
+
+/** 失败原因取服务端 message（APIError）或 Error.message，与设置页其余面板同口径。 */
+function messageOf(e: unknown): string {
+  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
+}
 
 const field = css`
   display: flex;
@@ -168,6 +174,19 @@ const noProviderNotice = css`
   text-overflow: ellipsis;
 `
 
+/** Provider 列表读取失败时的整行占位（与 noProviderNotice 同形）。 */
+const loadErrorNotice = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--haze-color-danger, #b3261e);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`
+
 export type ModelSelection = { provider: string; model: string }
 
 /** 输入框上方的 Provider + Model 切换器。
@@ -187,7 +206,12 @@ export function ModelSelector({
   /** P1-1：按项目读取配置（模型建议/默认值来自该项目合并配置）。 */
   projectId?: string
 }) {
-  const { data } = useQuery({
+  const {
+    data,
+    isError: providersFailed,
+    error: providersError,
+    refetch: refetchProviders,
+  } = useQuery({
     queryKey: ['providers', projectId],
     queryFn: () => providerAPI.list(projectId),
     staleTime: 60_000,
@@ -308,160 +332,178 @@ export function ModelSelector({
 
   return (
     <>
-      {/* 未配置任何 Provider：providers 已加载且为空。此时没有可选项，
-          照常渲染下拉与模型输入只会给出「假已选中」的错觉（见 noProviderNotice）。
-          dataLoaded 用 data.data 是否到位区分「确实为空」与「还在加载」——
-          加载中先不闪这句，避免每次进页面都闪一下「未配置」。 */}
-      {providers.length === 0 && data ? (
-        <span className={noProviderNotice} data-testid="model-selector-empty">
-          未配置 AI 服务，先到「设置 → Provider」添加
+      {/* Provider 列表读取失败：此前只解构 data，失败后 data 恒为 undefined，
+          于是组件落到选择器分支——一个只含兜底 option（甚至空串）的 Provider
+          下拉 + 预填 config.defaultModel 的 Model 输入框，与「已配置好」的界面
+          完全同形。用户据此以为模型已选中，发送后被后端以「未找到名为「」的
+          AI 服务」拒绝，且页面上没有任何原因、没有重试（staleTime 60s 且无
+          refetchInterval，唯一出路是手动刷新）。失败优先于「未配置」：
+          「拉不到」不是「没有」。 */}
+      {providersFailed ? (
+        <span className={loadErrorNotice} role="alert" data-testid="model-selector-load-error">
+          {`AI 服务列表读取失败：${messageOf(providersError)}`}
+          <Button variant="outline" onClick={() => void refetchProviders()}>
+            重试
+          </Button>
         </span>
       ) : (
         <>
-          <label className={field}>
-            <span>Provider</span>
-            <SyncedSelect
-              className={`${inputStyle} ${compactSelect} ${providerMinWidth}`}
-              value={value.provider}
-              onValuesChange={(v) => {
-                const next = v as string
-                // 切换 provider 后旧模型名属于上一个 provider：新 provider 若声明了
-                // 模型清单且当前值不在其中，校正为清单首项。不校正会发出「不存在的
-                // provider+model 组合」——provider 下拉与 model 输入框都显示着值，
-                // 界面看不出问题，只有请求失败（服务端 MODEL_NOT_FOUND）。
-                // 未声明清单的 provider（自建网关）保持自由输入原值。
-                const declared = declaredModelsFor(next) ?? []
-                const model =
-                  declared.length > 0 && !declared.includes(value.model)
-                    ? (declared[0] ?? value.model)
-                    : value.model
-                onChange({ provider: next, model })
-                // 切换 provider 后旧列表不再适用，直接收起
-                closeHints()
-              }}
-              data-testid="provider-select"
-            >
-              {!hasMatch && value.provider ? (
-                <option value={value.provider}>{value.provider}</option>
-              ) : null}
-              {providers.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </SyncedSelect>
-          </label>
-          <div className={modelWrap} ref={wrapRef}>
-            <label className={field}>
-              <span>Model</span>
-              <SyncedInput
-                ref={inputRef}
-                className={`${inputStyle} ${input}`}
-                value={value.model}
-                placeholder="搜索或输入模型名"
-                role="combobox"
-                aria-expanded={hintsOpen}
-                aria-haspopup="listbox"
-                aria-controls={listId}
-                aria-autocomplete="list"
-                autoComplete="off"
-                spellCheck={false}
-                onFocus={() => {
-                  if (skipOpenRef.current) {
-                    skipOpenRef.current = false
-                    return
-                  }
-                  if (modelHints.length > 0) openHints()
-                }}
-                onChange={(v) => {
-                  // 始终回传原始输入，允许列表外的自定义模型名（不合规则不清空）
-                  onChange({ ...value, model: v })
-                  setQuery(v)
-                  setHighlight(-1)
-                  if (modelHints.length > 0) setHintsOpen(true)
-                }}
-                onKeyDown={(e) => {
-                  // IME 组合中不拦截：回车确认候选词/方向键选候选由输入法处理——
-                  // 不判定会在候选未确认时移动提示选中项或确认模型。
-                  if (isImeComposing(e)) return
-                  if (modelHints.length === 0) return
-                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                    e.preventDefault()
-                    if (!hintsOpen) {
-                      openHints()
-                      setHighlight(0)
-                      return
-                    }
-                    const dir = e.key === 'ArrowDown' ? 1 : -1
-                    setHighlight((h) => {
-                      if (h === -1) return dir === 1 ? 0 : visible.length - 1
-                      return Math.min(visible.length - 1, Math.max(-1, h + dir))
-                    })
-                  } else if (e.key === 'Enter') {
-                    if (hintsOpen && highlight >= 0 && visible[highlight]) {
-                      e.preventDefault()
-                      pick(visible[highlight])
-                    }
-                  } else if (e.key === 'Escape') {
-                    if (hintsOpen) {
-                      e.preventDefault()
-                      closeHints()
-                    }
-                  }
-                }}
-                data-testid="model-input"
-              />
-            </label>
-            {modelHints.length > 0 && (
-              <button
-                type="button"
-                className={`${inputStyle} ${dropdownBtn}`}
-                onClick={toggleHintsFromButton}
-                aria-label={hintsOpen ? '收起模型列表' : '展开模型列表'}
-                aria-haspopup="listbox"
-                aria-expanded={hintsOpen}
-                aria-controls={listId}
-                data-testid="model-dropdown"
-              >
-                ▾
-              </button>
-            )}
-            {hintsOpen && modelHints.length > 0 && (
-              <div
-                className={hintList}
-                role="listbox"
-                id={listId}
-                ref={listRef}
-                data-testid="model-hints"
-              >
-                {visible.length === 0 ? (
-                  <div className={hintEmpty} data-testid="model-hints-empty">
-                    无匹配模型，将使用输入值
+          {/* 未配置任何 Provider：providers 已加载且为空。此时没有可选项，
+          照常渲染下拉与模型输入只会给出「假已选中」的错觉（见 noProviderNotice）。
+          dataLoaded 用 data.data 是否到位区分「确实为空」与「还在加载」——
+          加载中先不闪这句，避免每次进页面都闪一下「未配置」。 */}
+          {providers.length === 0 && data ? (
+            <span className={noProviderNotice} data-testid="model-selector-empty">
+              未配置 AI 服务，先到「设置 → Provider」添加
+            </span>
+          ) : (
+            <>
+              <label className={field}>
+                <span>Provider</span>
+                <SyncedSelect
+                  className={`${inputStyle} ${compactSelect} ${providerMinWidth}`}
+                  value={value.provider}
+                  onValuesChange={(v) => {
+                    const next = v as string
+                    // 切换 provider 后旧模型名属于上一个 provider：新 provider 若声明了
+                    // 模型清单且当前值不在其中，校正为清单首项。不校正会发出「不存在的
+                    // provider+model 组合」——provider 下拉与 model 输入框都显示着值，
+                    // 界面看不出问题，只有请求失败（服务端 MODEL_NOT_FOUND）。
+                    // 未声明清单的 provider（自建网关）保持自由输入原值。
+                    const declared = declaredModelsFor(next) ?? []
+                    const model =
+                      declared.length > 0 && !declared.includes(value.model)
+                        ? (declared[0] ?? value.model)
+                        : value.model
+                    onChange({ provider: next, model })
+                    // 切换 provider 后旧列表不再适用，直接收起
+                    closeHints()
+                  }}
+                  data-testid="provider-select"
+                >
+                  {!hasMatch && value.provider ? (
+                    <option value={value.provider}>{value.provider}</option>
+                  ) : null}
+                  {providers.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </SyncedSelect>
+              </label>
+              <div className={modelWrap} ref={wrapRef}>
+                <label className={field}>
+                  <span>Model</span>
+                  <SyncedInput
+                    ref={inputRef}
+                    className={`${inputStyle} ${input}`}
+                    value={value.model}
+                    placeholder="搜索或输入模型名"
+                    role="combobox"
+                    aria-expanded={hintsOpen}
+                    aria-haspopup="listbox"
+                    aria-controls={listId}
+                    aria-autocomplete="list"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onFocus={() => {
+                      if (skipOpenRef.current) {
+                        skipOpenRef.current = false
+                        return
+                      }
+                      if (modelHints.length > 0) openHints()
+                    }}
+                    onChange={(v) => {
+                      // 始终回传原始输入，允许列表外的自定义模型名（不合规则不清空）
+                      onChange({ ...value, model: v })
+                      setQuery(v)
+                      setHighlight(-1)
+                      if (modelHints.length > 0) setHintsOpen(true)
+                    }}
+                    onKeyDown={(e) => {
+                      // IME 组合中不拦截：回车确认候选词/方向键选候选由输入法处理——
+                      // 不判定会在候选未确认时移动提示选中项或确认模型。
+                      if (isImeComposing(e)) return
+                      if (modelHints.length === 0) return
+                      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        if (!hintsOpen) {
+                          openHints()
+                          setHighlight(0)
+                          return
+                        }
+                        const dir = e.key === 'ArrowDown' ? 1 : -1
+                        setHighlight((h) => {
+                          if (h === -1) return dir === 1 ? 0 : visible.length - 1
+                          return Math.min(visible.length - 1, Math.max(-1, h + dir))
+                        })
+                      } else if (e.key === 'Enter') {
+                        if (hintsOpen && highlight >= 0 && visible[highlight]) {
+                          e.preventDefault()
+                          pick(visible[highlight])
+                        }
+                      } else if (e.key === 'Escape') {
+                        if (hintsOpen) {
+                          e.preventDefault()
+                          closeHints()
+                        }
+                      }
+                    }}
+                    data-testid="model-input"
+                  />
+                </label>
+                {modelHints.length > 0 && (
+                  <button
+                    type="button"
+                    className={`${inputStyle} ${dropdownBtn}`}
+                    onClick={toggleHintsFromButton}
+                    aria-label={hintsOpen ? '收起模型列表' : '展开模型列表'}
+                    aria-haspopup="listbox"
+                    aria-expanded={hintsOpen}
+                    aria-controls={listId}
+                    data-testid="model-dropdown"
+                  >
+                    ▾
+                  </button>
+                )}
+                {hintsOpen && modelHints.length > 0 && (
+                  <div
+                    className={hintList}
+                    role="listbox"
+                    id={listId}
+                    ref={listRef}
+                    data-testid="model-hints"
+                  >
+                    {visible.length === 0 ? (
+                      <div className={hintEmpty} data-testid="model-hints-empty">
+                        无匹配模型，将使用输入值
+                      </div>
+                    ) : (
+                      visible.map((m, i) => (
+                        <button
+                          key={m}
+                          type="button"
+                          role="option"
+                          aria-selected={m === value.model}
+                          data-idx={i}
+                          className={[
+                            hintItem,
+                            i === highlight ? hintItemHighlight : '',
+                            m === value.model ? hintItemActive : '',
+                          ].join(' ')}
+                          onMouseEnter={() => setHighlight(i)}
+                          onClick={() => pick(m)}
+                          data-testid="model-hint"
+                        >
+                          {m}
+                        </button>
+                      ))
+                    )}
                   </div>
-                ) : (
-                  visible.map((m, i) => (
-                    <button
-                      key={m}
-                      type="button"
-                      role="option"
-                      aria-selected={m === value.model}
-                      data-idx={i}
-                      className={[
-                        hintItem,
-                        i === highlight ? hintItemHighlight : '',
-                        m === value.model ? hintItemActive : '',
-                      ].join(' ')}
-                      onMouseEnter={() => setHighlight(i)}
-                      onClick={() => pick(m)}
-                      data-testid="model-hint"
-                    >
-                      {m}
-                    </button>
-                  ))
                 )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </>
       )}
     </>

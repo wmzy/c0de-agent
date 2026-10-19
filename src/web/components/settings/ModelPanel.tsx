@@ -100,6 +100,13 @@ const modelEmpty = css`
   padding: 4px;
 `
 
+/** 批量启禁的作用域说明（仅过滤生效时出现）：作用范围必须看得见，不能只写在 title 上。 */
+const modelScopeHint = css`
+  font-size: 11px;
+  color: var(--haze-color-text-secondary);
+  padding: 2px 0 4px;
+`
+
 interface ModelPanelProps {
   providers: ProviderConfig[]
   defaultProvider: string
@@ -193,7 +200,9 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
 interface ProviderModelsPanelProps {
   models: Record<string, ModelOverride>
   onToggle: (modelName: string) => void
-  onSetAll: (enabled: boolean) => void
+  /** 批量启禁。modelNames 是本次真正要改的模型名——过滤生效时只含筛选出的那些，
+   *  调用方不得自己再遍历整张表。 */
+  onSetAll: (enabled: boolean, modelNames: string[]) => void
   onModelFieldChange: (modelName: string, patch: Partial<ModelOverride>) => void
 }
 
@@ -217,6 +226,14 @@ function ProviderModelsPanel({
   const filteredModels = filterText
     ? modelEntries.filter(([name]) => name.toLowerCase().includes(filterText))
     : modelEntries
+  /* 批量键的作用域 = 当前可见（筛选）集合。两个按钮紧挨着过滤框，却一直遍历整张
+   * 表：用户筛出 1 个模型、点「禁用所有」，整 provider 的模型连同他没看见的那些
+   * 一起被禁用，而屏幕上唯一的证据是计数器从「N / M」跳成「0 / M」。
+   * 无过滤时 filteredModels === modelEntries，作用域自然退化为全部。 */
+  const batchTargets = filteredModels.map(([name]) => name)
+  const batchScope = filterText
+    ? `筛选出的 ${batchTargets.length} 个模型`
+    : `全部 ${totalCount} 个模型`
   if (totalCount === 0) return null
   return (
     <div className={modelPanel} data-testid="provider-models">
@@ -235,7 +252,10 @@ function ProviderModelsPanel({
         <button
           type="button"
           className={modelToolbarBtn}
-          onClick={() => onSetAll(true)}
+          onClick={() => onSetAll(true, batchTargets)}
+          disabled={batchTargets.length === 0}
+          aria-label={`启用${batchScope}`}
+          title={`启用${batchScope}`}
           data-testid="provider-models-enable-all"
         >
           启用所有
@@ -243,7 +263,10 @@ function ProviderModelsPanel({
         <button
           type="button"
           className={modelToolbarBtn}
-          onClick={() => onSetAll(false)}
+          onClick={() => onSetAll(false, batchTargets)}
+          disabled={batchTargets.length === 0}
+          aria-label={`禁用${batchScope}`}
+          title={`禁用${batchScope}`}
           data-testid="provider-models-disable-all"
         >
           禁用所有
@@ -252,6 +275,14 @@ function ProviderModelsPanel({
           {enabledCount} / {totalCount} 已启用
         </span>
       </div>
+      {filterText ? (
+        /* 作用域写进可见文本：只放在 title/aria-label 里的话，触屏与读屏用户都得
+         * 先猜按钮管多大范围（本仓已有「原因只活在 hover tooltip」的前车之鉴）。 */
+        <div className={modelScopeHint} data-testid="provider-models-scope-hint">
+          过滤生效中：批量启禁只作用于筛选出的 {batchTargets.length} 个模型
+          {batchTargets.length === 0 ? '（当前无匹配）' : ''}，其余模型保持原状。
+        </div>
+      ) : null}
       <div className={modelList}>
         {filteredModels.length === 0 ? (
           <div className={modelEmpty}>无匹配模型</div>

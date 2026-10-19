@@ -307,10 +307,33 @@ function createConfigRoute(ctx: ServerContext): Hono {
     //  - security：authManager/CORS 在启动时构建
     //  - update：调度器 interval 与 handoff server 在启动时构建
     //  - plugins：hookRunner/插件生命周期在启动时初始化
+    //  - permission.timeoutMs / expireGraceMs：permissionStore 在 server.ts / context.ts
+    //    启动时一次性构造（超时值直接进定时器），PATCH 不重建它。此前这里没有这一项：
+    //    用户把「确认超时」从 5 分钟改成 60 分钟、保存后回显「✓ 已保存」且没有任何
+    //    重启提示，运行时仍按 5 分钟自动拒绝——改了等于没改，也没有线索能发现。
+    //    （permission.defaultMode 不在其中：它走上面的运行时同步，立即生效。）
+    //  - mcpServers：registerMCPServers 只在 server.ts 启动时按 loadConfigScopes(ctx.cwd)
+    //    注册一次（PATCH 既不注册新服务器也不注销旧服务器）。此前这里没有这一项：
+    //    用户加一台服务器、保存后回显「✓ 已保存」，AI 的工具列表里永远没有它，
+    //    删掉/改掉的那台也照旧连着；只有「重启 c0de serve」能让配置生效，而页面
+    //    一个字都没提。与 plugins 同口径（同样是启动期一次性 init）。
     // 仅当写入影响运行中的服务级配置（服务启动目录项目或 global 作用域）时提示。
+    const permissionPatch =
+      typeof patch.permission === 'object' &&
+      patch.permission !== null &&
+      !Array.isArray(patch.permission)
+        ? (patch.permission as Record<string, unknown>)
+        : null
+    const permissionNeedsRestart =
+      permissionPatch !== null &&
+      ('timeoutMs' in permissionPatch || 'expireGraceMs' in permissionPatch)
     const needsRestart =
       (isServerCwdProject || scope === 'global') &&
-      (patch.security !== undefined || patch.update !== undefined || patch.plugins !== undefined)
+      (patch.security !== undefined ||
+        patch.update !== undefined ||
+        patch.plugins !== undefined ||
+        patch.mcpServers !== undefined ||
+        permissionNeedsRestart)
     return c.json({
       config: merged,
       scopes: {

@@ -35,11 +35,27 @@ export type ChatState = {
   pendingSegmentBreak: PendingSegmentBreak | null
   /** P0-2：未信任项目的风险配置被 409 拦截，等待用户信任确认（或取消）。 */
   pendingTrust: PendingTrust | null
+  /** P0-2：信任请求在飞（弹窗内禁用「信任并继续」并禁止关闭，避免连点重复发请求
+   *  或把失败原因随弹窗一起关掉）。 */
+  trustPending: boolean
+  /** P0-2：上次信任请求失败的原因——必须渲染在信任弹窗**内部**：它是 <dialog>
+   *  模态，写在会话区的 error 横幅会被 ::backdrop 挡住，用户只看到「点了没反应」。 */
+  trustError: string | null
   /** SSE 流中断（服务重启等）：true 时显示恢复提示。 */
   interrupted: boolean
+  /** 「终止」没送达的原因：POST /api/chat/abort 失败或返回 {aborted:false}。
+   *  与 error 分开——终止失败后 isStreaming 已是 false，落在 error 上会连带亮出
+   *  「重试最后一条消息」（重发而非重停），提示与可做的下一步对不上。 */
+  abortError: string | null
   /** P1：后台附着——本组件实例未发起 SSE 流，但检测到会话有活跃 run
    *  （其他标签页启动 / 挂起期间切换页面后回来）。true 时显示运行态横幅。 */
   attachedRun: boolean
+  /** P1：附着入口读 GET /:id/status 连续失败的原因（null=没失败）。
+   *  与 error 分开：读失败时**不知道**有没有活跃 run，界面此刻与「真的空闲」完全
+   *  同形（没有运行横幅、没有终止键），用户发消息只会撞 409 RUN_ACTIVE——那是一条
+   *  与事实相反、且没有任何出口的结论。落在 error 上则会连带亮出「重试最后一条
+   *  消息」（重发），与「先确认 run 在不在」这个下一步对不上。 */
+  attachError: string | null
   /** 自动压缩发生后的提示（可关闭）。上下文被改写，用户应可知晓。 */
   compactionNotice: string | null
   /** 服务端暂停 run（权限确认超时兜底拒绝 / 成本预算超支后按配置暂停；
@@ -145,6 +161,8 @@ export type ChatActions = {
   clearCompactionNotice: () => void
   /** P1：附着后台 run——查询状态与挂起权限，重挂弹窗并轮询直到 run 结束。 */
   attach: () => Promise<void>
+  /** P1：附着入口读失败后的「重新检查」——复位重试计数并再跑一次 attach。 */
+  retryAttach: () => void
   reset: () => void
 }
 
@@ -158,12 +176,36 @@ export const INITIAL: ChatState = {
   subagents: [],
   pendingSegmentBreak: null,
   pendingTrust: null,
+  trustPending: false,
+  trustError: null,
   interrupted: false,
+  abortError: null,
   attachedRun: false,
+  attachError: null,
   compactionNotice: null,
   runPaused: false,
   runPauseReason: null,
   workflowProgress: null,
+}
+
+/**
+ * 当前**未收口**的 assistant 消息下标；没有则返回 -1（调用方新开一条）。
+ *
+ * 一轮的收口标志是「已收到工具结果」：服务端按轮落库（core/loop/persist.ts 每轮把
+ * 该轮正文 + tool_call 写进一条 assistant 消息，工具结果另存 tool 消息），收到
+ * tool_result 即意味着这一轮已结束、后续正文/工具调用必然属于下一轮。
+ *
+ * 此前实时归约把整个 run（多轮）的正文与工具调用全堆进同一条 assistant 消息，
+ * 与服务端「一轮一条」的形态不一致：mergeSessionMessages 按内容签名逐条配对时对不上，
+ * 于是任何历史重取（窗口聚焦 refetchOnWindowFocus / shake 应用 / 附着结束刷新）都会把
+ * 整轮回复重复渲染一遍——实测一次「带工具的问答」在 refetch 后，每个正文块与工具卡
+ * 都在时间线上出现两次（历史各轮的副本 + 那份配不上的合并副本）。
+ */
+function openAssistantTurnIndex(messages: Message[]): number {
+  const idx = messages.length - 1
+  const last = messages[idx]
+  if (last?.role !== 'assistant') return -1
+  return last.content.some((p) => p._tag === 'tool_result') ? -1 : idx
 }
 
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
@@ -171,8 +213,9 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
   switch (event._tag) {
     case 'text_delta': {
       const messages = [...state.messages]
-      const last = messages[messages.length - 1]
-      if (last && last.role === 'assistant') {
+      const idx = openAssistantTurnIndex(messages)
+      if (idx >= 0) {
+        const last = messages[idx] as Message
         const content = [...last.content]
         const lastPart = content[content.length - 1]
         if (lastPart && lastPart._tag === 'text') {
@@ -180,7 +223,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         } else {
           content.push({ _tag: 'text', text: event.text })
         }
-        messages[messages.length - 1] = { ...last, content }
+        messages[idx] = { ...last, content }
       } else {
         messages.push({
           id: generateId(),
@@ -195,8 +238,9 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     }
     case 'thinking': {
       const messages = [...state.messages]
-      const last = messages[messages.length - 1]
-      if (last && last.role === 'assistant') {
+      const idx = openAssistantTurnIndex(messages)
+      if (idx >= 0) {
+        const last = messages[idx] as Message
         const content = [...last.content]
         const lastPart = content[content.length - 1]
         if (lastPart && lastPart._tag === 'thinking') {
@@ -204,7 +248,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         } else {
           content.push({ _tag: 'thinking', text: event.text })
         }
-        messages[messages.length - 1] = { ...last, content }
+        messages[idx] = { ...last, content }
       } else {
         messages.push({
           id: generateId(),
@@ -219,15 +263,16 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     }
     case 'tool_call_start': {
       const messages = [...state.messages]
-      const last = messages[messages.length - 1]
+      const idx = openAssistantTurnIndex(messages)
       const part: MessageContent = {
         _tag: 'tool_call',
         id: event.id,
         tool: event.tool,
         input: event.input,
       }
-      if (last && last.role === 'assistant') {
-        messages[messages.length - 1] = { ...last, content: [...last.content, part] }
+      if (idx >= 0) {
+        const last = messages[idx] as Message
+        messages[idx] = { ...last, content: [...last.content, part] }
       } else {
         messages.push({
           id: generateId(),
@@ -356,6 +401,55 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     default:
       return state
   }
+}
+
+/** 收尾时为「已 start、未 end」的在途工具调用补的原因文案。 */
+export const SEALED_TOOL_REASON =
+  '本次运行已结束，未收到该工具的执行结果（工具可能未执行，或结果已丢失）'
+
+/**
+ * 流式收尾（用户终止 / 连接中断 / 服务端错误）时封口在途工具调用。
+ *
+ * tool_call 与 tool_result 是两条独立事件：模型发起调用后由服务端执行，结果另发
+ * tool_call_end。收尾路径此前只把 isStreaming 置 false，从不为「已 start、未 end」
+ * 的调用补结果——于是时间线上那张卡永远停在 ⏳「执行中」（读屏也念「执行中」），
+ * 而同一屏已经宣布这次运行停止（「终止」按钮消失 / 出现中断横幅），两处结论互相
+ * 矛盾，用户不知道那次 bash/git 到底还在不在跑，只能干等或重发。
+ *
+ * 服务端在终止时会把 aborted 的结果落库，下次重取消息自然覆盖本地的占位结果；
+ * 本函数补的就是「重取之前」这段空窗，让界面不再自相矛盾。已配对的调用不受影响
+ * （无变化时返回原数组引用，调用方无需额外判等）。
+ */
+export function sealInFlightTools(messages: Message[]): Message[] {
+  let changed = false
+  const next = messages.map((message) => {
+    if (message.role !== 'assistant') return message
+    const settled = new Set<string>()
+    for (const part of message.content) {
+      if (part._tag === 'tool_result') settled.add(part.id)
+    }
+    const pending = message.content.filter(
+      (part): part is Extract<MessageContent, { _tag: 'tool_call' }> =>
+        part._tag === 'tool_call' && !settled.has(part.id),
+    )
+    if (pending.length === 0) return message
+    changed = true
+    return {
+      ...message,
+      content: [
+        ...message.content,
+        ...pending.map(
+          (part): MessageContent => ({
+            _tag: 'tool_result',
+            id: part.id,
+            tool: '',
+            output: { _tag: 'error', error: SEALED_TOOL_REASON },
+          }),
+        ),
+      ],
+    }
+  })
+  return changed ? next : messages
 }
 
 function errorToMessage(err: AgentError): string {

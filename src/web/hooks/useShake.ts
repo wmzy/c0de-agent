@@ -4,21 +4,54 @@
 
 import type { QueryClient } from '@tanstack/react-query'
 import { useMutation } from '@tanstack/react-query'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ShakeModeValue } from '@/components/session/ShakeContext.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Message, ShakeRegionView } from '@/types/index.js'
+
+/** 失败原因取服务端 message（APIError 是结构体）或 Error.message，与 ChatSession 同口径。 */
+function shakeFailureMessage(error: unknown, fallback: string): string {
+  const direct = (error as { message?: unknown } | null)?.message
+  if (typeof direct === 'string' && direct) return direct
+  return error instanceof Error && error.message ? error.message : fallback
+}
 
 export function useShake(sessionId: string, messages: Message[], qc: QueryClient) {
   // shake 内联模式状态
   const [shakeMode, setShakeMode] = useState(false)
   const [shakeRegions, setShakeRegions] = useState<ShakeRegionView[]>([])
   const [shakeSelected, setShakeSelected] = useState<Set<string>>(new Set())
+  /**
+   * Shake 失败原因。此前预览走空 catch、提交 mutation 没有 onError：请求失败时
+   * 界面与点击前完全一致（预览失败：按钮零反应；提交失败：抖动模式照旧、被选中的
+   * 区域没被裁掉），用户唯一的判断是「按钮/功能坏了」，只能反复点。
+   */
+  const [shakeError, setShakeError] = useState<string | null>(null)
+  /**
+   * 会话世代：ChatSession 在会话间被路由复用（route.path 不变 → 子树不重建），
+   * 而预览是 await 之后才写 state 的。复位 effect 只在切换那一刻跑，管不住**在飞**
+   * 的预览请求——实测：在 A 点 Shake（`POST /shake/preview` 被延迟 4s），窗口内点
+   * 侧栏切到 B，A 的响应落地后 B 的工具栏亮起「⚡ Shake 模式 · 已选 0/0 · 省 0t」，
+   * 而 B 一条高亮都没有；此时点「提交 Shake」会拿 A 的 region id POST 到
+   * `/sessions/<B>/shake/apply`（服务端 400「消息已变化，请重新预览」）。
+   * 判据：await 之后写 state 前先比世代（与 useChat 的 genRef、ChatSession 的
+   * exportGenRef/coldStartGenRef 同口径）。
+   */
+  const sessionIdRef = useRef(sessionId)
+  sessionIdRef.current = sessionId
   const shakeMutation = useMutation({
-    mutationFn: (regionIds: string[]) => sessionAPI.shakeApply(sessionId, regionIds),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
+    mutationFn: ({ sessionId: sid, regionIds }: { sessionId: string; regionIds: string[] }) =>
+      sessionAPI.shakeApply(sid, regionIds),
+    onSuccess: (_data, variables) => {
+      // 在途提交期间切了会话：结果与错误都不属于当前这条会话，不写它的界面。
+      if (sessionIdRef.current !== variables.sessionId) return
+      setShakeError(null)
+      qc.invalidateQueries({ queryKey: ['session', variables.sessionId, 'messages'] })
       exitShakeMode()
+    },
+    onError: (error: unknown, variables) => {
+      if (sessionIdRef.current !== variables.sessionId) return
+      setShakeError(shakeFailureMessage(error, '提交失败，被选中的区域没有裁掉。'))
     },
   })
 
@@ -26,18 +59,26 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
     setShakeMode(false)
     setShakeRegions([])
     setShakeSelected(new Set())
+    setShakeError(null)
   }
 
   const handleShakeOpen = async () => {
+    setShakeError(null)
+    const sid = sessionId
     try {
-      const result = await sessionAPI.shakePreview(sessionId)
+      const result = await sessionAPI.shakePreview(sid)
+      // 预览在途时切了会话：A 的区域/勾选绝不能摆到 B 的界面上（B 没有任何高亮，
+      // 工具栏却宣称 Shake 开着，提交还会把 A 的 region id 发到 B）。
+      if (sessionIdRef.current !== sid) return
       setShakeRegions(result.regions)
       setShakeSelected(
         new Set(result.regions.filter((r) => r.isAfterProtectWindow).map((r) => r.id)),
       )
       setShakeMode(true)
-    } catch {
-      // 静默失败，不阻塞用户
+    } catch (error) {
+      // 同理：A 预览失败的提示不该挂到 B 的工具栏下面。
+      if (sessionIdRef.current !== sid) return
+      setShakeError(shakeFailureMessage(error, '无法读取可裁剪的区域，Shake 未打开。'))
     }
   }
 
@@ -49,6 +90,20 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
       return next
     })
   }, [])
+
+  // 会话级状态必须跟着会话走。ChatSession 在 /projects/:p/sessions/:a → :b 之间被
+  // 路由复用（route.path 不变，子树不重建），useState 只在首次挂载初始化一次：
+  // 上一条会话打开的 Shake 模式、区域、勾选整块跟到下一条会话。界面上是
+  // 「⚡ Shake 模式 · 已选 0/1」而这条会话一个高亮都没有，点「提交 Shake」还会把
+  // A 的 region id POST 到 B 的 /shake/apply（实测 400「消息已变化，请重新预览」，
+  // 工具栏继续赖着不走）——用户以为 Shake 是这条会话开着的。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
+  useEffect(() => {
+    setShakeMode(false)
+    setShakeRegions([])
+    setShakeSelected(new Set())
+    setShakeError(null)
+  }, [sessionId])
 
   const regionsByMessage = useMemo(() => {
     // tool_result 在 DB 中是独立 role:'tool' 消息，前端 mergeToolMessages 合并进 assistant
@@ -93,6 +148,7 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
     shakeSelected,
     setShakeSelected,
     shakeMutation,
+    shakeError,
     exitShakeMode,
     handleShakeOpen,
     shakeContextValue,

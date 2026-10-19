@@ -85,6 +85,35 @@ describe('AddProjectDialog', () => {
       expect(screen.getByText('目录不存在')).toBeTruthy()
     })
     expect(onClose).not.toHaveBeenCalled()
+    // 失败原因只存在于这块面板里，必须被读屏播报出来。
+    expect(screen.getByRole('alert').textContent).toContain('目录不存在')
+  })
+
+  // 复现：请求在飞时按 Esc / 点取消 → 面板立即卸载，服务端随后 500，
+  // setError 写进已卸载的组件——项目没建出来，用户零反馈。
+  it('创建在飞时关不掉弹窗，失败原因不会随卸载消失', async () => {
+    const onClose = vi.fn()
+    let reject!: (e: unknown) => void
+    vi.mocked(projectAPI.fromDirectory).mockReturnValue(
+      new Promise((_res, rej) => {
+        reject = rej
+      }) as never,
+    )
+    renderWithClient(<AddProjectDialog onClose={onClose} />)
+
+    fireEvent.change(screen.getByTestId('add-project-input'), { target: { value: '/slow' } })
+    fireEvent.click(screen.getByTestId('add-project-confirm'))
+
+    await waitFor(() =>
+      expect((screen.getByTestId('add-project-confirm') as HTMLButtonElement).disabled).toBe(true),
+    )
+    // 取消键在在飞期间不可点，点了也不会关。
+    expect((screen.getByText('取消') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByText('取消'))
+    expect(onClose).not.toHaveBeenCalled()
+
+    reject(new Error('目录已被占用'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('目录已被占用'))
   })
 
   it('点取消关闭弹窗', () => {

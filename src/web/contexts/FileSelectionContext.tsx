@@ -12,6 +12,9 @@ export type FileTarget = { path: string; range?: LineRange } | null
  */
 export type FileChangeGuard = (next: FileTarget) => boolean
 
+/** 「当前是否存在未保存的文件修改」探针（由 FilePreview 注册）。 */
+export type DirtyProbe = () => boolean
+
 /** 文件选中状态：ChatPage 持有，通过 context 下发给 ToolView 和 panel。 */
 export type FileSelection = {
   /** 当前选中的文件路径；null 时 panel 不渲染。 */
@@ -31,6 +34,18 @@ export type FileSelection = {
    * 缓冲区只剩内存里那一份）。
    */
   registerGuard?: (fn: FileChangeGuard | null) => void
+  /**
+   * 注册「当前是否有未保存的文件修改」探针（同样由 FilePreview 提供）。
+   *
+   * registerGuard 只能拦住「面板内换文件/关闭」这条由本 context 发起的通道；
+   * 而 FilePreview 的 useBlocker 还会拦下**离开本页**的应用内导航。会离开本页的
+   * 动作据此在动手之前就能知道结果，而不是等导航被 veto 了才发现自己已经造成了
+   * 半截状态——例如草稿页发送首条消息必须先跳到会话页（两条 path 平级 → ChatPage
+   * 连同预览面板一起卸载，故刻意不豁免），脏时那次导航必被拦下。
+   */
+  registerDirtyProbe?: (fn: DirtyProbe | null) => void
+  /** 便捷读取：当前是否有未保存的文件修改（无预览面板时恒 false）。 */
+  hasUnsavedEdits?: () => boolean
 }
 
 export const FileSelectionContext = createContext<FileSelection | null>(null)

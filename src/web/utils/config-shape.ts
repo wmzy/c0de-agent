@@ -143,9 +143,15 @@ function walk(raw: unknown, template: unknown, path: string, fill: boolean, key 
  * - 草稿里没有该键 → 「文本没写」= 用当前已解析值兜底（walk 的既有口径），
  *   从底对象取；嵌套层同样逐层叠加，所以只写了 `tools.disabled` 的 JSON 文本
  *   切回表单时，`tools.enabled` 仍能按当前配置补全（不读 undefined）。
+ * - 草稿里有该键且值为 null → JSON 视图的「清除该键」写法，但表单没有「未设置」
+ *   这个可渲染值，**回落到已加载配置的当前值**（同 walk 的 fill 口径）。
+ *   此前 null 被原样写进模板，归一化后 `merged.<段> === null` —— 面板按 Config
+ *   假定形状（`compaction.compactionModel`、`tools.enabled.includes`）当场抛错，
+ *   整页被 ErrorBoundary 换成「页面渲染出错」，刚敲的草稿一起没了。
  */
 function mergeTemplate(base: unknown, overlay: unknown): unknown {
   if (overlay === undefined) return undefined
+  if (overlay === null) return base
   if (!isPlainObject(overlay) || !isPlainObject(base)) return overlay
   const out: Record<string, unknown> = { ...base }
   for (const key of Object.keys(overlay)) {

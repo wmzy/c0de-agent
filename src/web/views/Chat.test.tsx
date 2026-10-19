@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineRow } from '@/components/session/utils/timeline.js'
 import { FileSelectionContext } from '@/contexts/FileSelectionContext.js'
@@ -8,7 +8,7 @@ import { commandsAPI } from '@/services/commands.js'
 import { permissionAPI } from '@/services/permission.js'
 import { workflowsAPI } from '@/services/workflows.js'
 import { Chat } from '@/views/Chat.js'
-import { ChatWelcome, EXAMPLE_TASKS } from '@/views/ChatView.js'
+import { ChatHistoryError, ChatWelcome, EXAMPLE_TASKS } from '@/views/ChatView.js'
 
 // Composer 内部 useCommands 会请求 /api/commands；mock 掉避免真实网络调用。
 vi.mock('@/services/commands.js', () => ({
@@ -24,6 +24,7 @@ vi.mock('@/services/permission.js', () => ({
   permissionAPI: {
     getMode: vi.fn().mockResolvedValue({ mode: 'default' }),
     setMode: vi.fn().mockResolvedValue({ mode: 'auto' }),
+    removeAlwaysAllow: vi.fn().mockResolvedValue({ alwaysAllow: [] }),
   },
   broadcastModeChange: vi.fn(),
   subscribeModeChange: vi.fn(() => () => {}),
@@ -100,6 +101,45 @@ describe('Chat pause/resume/steer controls', () => {
     renderChat({ isStreaming: false, error: 'LLM 请求失败', onRetry: vi.fn() })
     const banner = screen.getByTestId('send-error')
     expect(banner.contains(screen.getByTestId('retry'))).toBe(true)
+  })
+
+  // 回归：暂停/恢复失败此前完全无反馈——按钮照常翻转，用户以为对话已停，
+  // 而 run 仍在消耗 token。控制失败要与发送失败分开、各自独占一条可读提示。
+  it('暂停/恢复失败的原因以 alert 角色独占一条提示呈现', () => {
+    renderChat({ controlError: '没有可暂停的运行——对话可能已经结束或尚未开始' })
+    const banner = screen.getByTestId('control-error')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.textContent).toContain('没有可暂停的运行')
+    // 与发送失败互不覆盖：没有发送失败时不得凭空造一条
+    expect(screen.queryByTestId('send-error')).toBeNull()
+  })
+
+  it('没有控制失败时不渲染该提示条', () => {
+    renderChat({ controlError: null })
+    expect(screen.queryByTestId('control-error')).toBeNull()
+  })
+
+  // 回归：「终止」失败此前被空吞——界面已翻成非运行态、没有任何原因，
+  // 而后端 agent 还在跑。终止失败后又无处可再发一次终止，提示必须自带出口。
+  it('终止失败的原因以 alert 角色独占一条提示，并自带「重新终止」', () => {
+    const h = renderChat({
+      isStreaming: false,
+      abortError: '终止请求失败：boom。agent 可能仍在后台继续执行工具，请刷新确认后再继续。',
+    })
+    const banner = screen.getByTestId('abort-error')
+    expect(banner.getAttribute('role')).toBe('alert')
+    expect(banner.textContent).toContain('终止请求失败')
+    const retry = screen.getByTestId('abort-retry')
+    expect(banner.contains(retry)).toBe(true)
+    fireEvent.click(retry)
+    expect(h.onAbort).toHaveBeenCalledOnce()
+    // 终止失败 ≠ 发送失败：不许顺手亮出「重试最后一条消息」
+    expect(screen.queryByTestId('send-error')).toBeNull()
+  })
+
+  it('终止成功时不渲染该提示条', () => {
+    renderChat({ isStreaming: false, abortError: null })
+    expect(screen.queryByTestId('abort-error')).toBeNull()
   })
 
   it('无错误时不渲染提示条', () => {
@@ -214,6 +254,160 @@ describe('Chat permission mode toggle', () => {
     const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
     await waitFor(() => expect(toggle.checked).toBe(true))
     expect(screen.getByTestId('permission-mode-warning').textContent).toContain('自动授权已开启')
+  })
+})
+
+/**
+ * 权限条的静默失败。
+ *
+ * 缺陷：getMode 用空 catch（`.catch(() => {})`）——读失败时 state 停在初始值
+ * 'default' + []，底栏于是显示未勾选的「自动授权（本会话）」+「工具执行前逐个
+ * 确认」，而服务端可能正处在 auto 模式（或已放行 bash 白名单）：给出的是与事实
+ * 相反的安全结论；同时 alwaysAllow.length > 0 的 chips 行整块消失，唯一的白名单
+ * 管理入口一起没了，页面零提示。removeAlwaysAllow 同为空 catch——点 × 后界面
+ * 纹丝不动，用户以为点不动，而白名单其实还在、工具仍免确认执行。
+ */
+describe('Chat 权限条读取/移除失败', () => {
+  it('权限状态读不到时说出来，而不是谎报「工具执行前逐个确认」', async () => {
+    vi.mocked(permissionAPI.getMode).mockRejectedValueOnce(new Error('断路器打开'))
+    renderChat()
+
+    await waitFor(() => expect(screen.getByTestId('permission-mode-error')).toBeInTheDocument())
+    expect(screen.getByTestId('permission-mode-error').textContent).toContain('断路器打开')
+    // 中性说明不再出现：它拿初始值当真实模式，正好给出相反的安全结论
+    expect(screen.queryByTestId('permission-mode-hint')).toBeNull()
+  })
+
+  it('读取失败后点「重试」重新请求，成功即恢复真实状态', async () => {
+    vi.mocked(permissionAPI.getMode)
+      .mockRejectedValueOnce(new Error('网络中断'))
+      .mockResolvedValueOnce({ mode: 'auto', alwaysAllow: ['bash'] } as never)
+    renderChat()
+    await waitFor(() => expect(screen.getByTestId('permission-mode-error')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('permission-mode-retry'))
+
+    await waitFor(() => expect(screen.queryByTestId('permission-mode-error')).toBeNull())
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+    expect(screen.getByTestId('always-allow-chips').textContent).toContain('bash')
+  })
+
+  it('移除白名单失败时给出原因，chips 仍在（不再像死键）', async () => {
+    vi.mocked(permissionAPI.getMode).mockResolvedValueOnce({
+      mode: 'default',
+      alwaysAllow: ['bash'],
+    } as never)
+    vi.mocked(permissionAPI.removeAlwaysAllow).mockRejectedValueOnce(new Error('服务端拒绝'))
+    renderChat({ sessionId: 's1' })
+    await waitFor(() => expect(screen.getByTestId('always-allow-chips')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByLabelText('移除 bash 的始终允许'))
+
+    await waitFor(() => expect(screen.getByTestId('always-allow-error')).toBeInTheDocument())
+    expect(screen.getByTestId('always-allow-error').textContent).toContain('服务端拒绝')
+    expect(screen.getByTestId('always-allow-chips').textContent).toContain('bash')
+  })
+})
+
+/**
+ * 切会话时权限底栏必须跟着会话走。
+ *
+ * 缺陷：permissionMode / alwaysAllow / 各种失败原因是 Chat 的组件级 state，而
+ * Chat 与 ChatSession 都被路由复用（同 path 的两条路由共享子树，组件实例不重建）。
+ * loadPermissionMode 只发请求、只在响应里写 state，从不在 sessionId 变化时复位：
+ * 切到会话 B 后，在 B 的读取返回前底栏显示的是 A 的授权态；若 B 的读取失败则永久
+ * 停在 A 的值——页面上长期挂着一句与事实相反的安全结论（以为 B 的 bash 免确认，
+ * 实际逐个确认，或反之）。A 的迟到响应同样会覆盖掉 B 已读到的真实值。
+ */
+describe('Chat 权限底栏不沿用上一条会话的授权态', () => {
+  it('切到读取失败的会话：不留上一条会话的 auto 警示与白名单 chips', async () => {
+    vi.mocked(permissionAPI.getMode).mockResolvedValueOnce({
+      mode: 'auto',
+      alwaysAllow: ['bash'],
+    } as never)
+    const h = renderChat({ sessionId: 'A' })
+    await waitFor(() => expect(screen.getByTestId('permission-mode-warning')).toBeInTheDocument())
+    expect(screen.getByTestId('always-allow-chips').textContent).toContain('bash')
+
+    // 切到 B，且 B 的权限状态读取失败
+    vi.mocked(permissionAPI.getMode).mockRejectedValueOnce(new Error('断路器打开'))
+    h.rerender({ sessionId: 'B' })
+
+    await waitFor(() => expect(screen.getByTestId('permission-mode-error')).toBeInTheDocument())
+    expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+    expect(screen.queryByTestId('always-allow-chips')).toBeNull()
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+  })
+
+  it('上一条会话迟到的读取结果不写进新会话', async () => {
+    let resolveA: (v: unknown) => void = () => {}
+    vi.mocked(permissionAPI.getMode).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveA = resolve
+        }) as never,
+    )
+    const h = renderChat({ sessionId: 'A' })
+    // B 的读取（默认桩返回 default）先落地
+    h.rerender({ sessionId: 'B' })
+    await waitFor(() => expect(screen.getByTestId('permission-mode-hint')).toBeInTheDocument())
+
+    // A 的响应此刻才回来：不得把 A 的 auto + 白名单写进 B 的底栏
+    resolveA({ mode: 'auto', alwaysAllow: ['bash'] })
+    await act(async () => {})
+
+    expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+    expect(screen.queryByTestId('always-allow-chips')).toBeNull()
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+  })
+})
+
+/**
+ * 权限模式「切换」失败的静默回滚。
+ *
+ * 缺陷：togglePermissionMode 乐观翻转后 `.catch(() => setPermissionMode(旧值))`——
+ * 开关自己弹回去，零原因、零重试。用户看到的是「点不动」，反复点；真实情况是
+ * 服务端拒绝了这次写入（这正是安全相关的模式开关：以为已开自动授权的人会据此
+ * 少点几次确认，实际服务端仍逐个确认，反之亦然）。
+ */
+describe('Chat 权限模式切换失败', () => {
+  it('切换写入失败时回滚开关并说明原因、给重试', async () => {
+    vi.mocked(permissionAPI.setMode).mockRejectedValueOnce(new Error('权限模式写入被拒绝'))
+    renderChat()
+
+    fireEvent.click(screen.getByTestId('permission-mode-toggle'))
+    await waitFor(() => expect(screen.getByTestId('permission-mode-set-error')).toBeInTheDocument())
+
+    expect(screen.getByTestId('permission-mode-set-error').textContent).toContain(
+      '权限模式写入被拒绝',
+    )
+    // 开关已回滚到服务端真实模式（未勾选），警示 pill 不得残留
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+  })
+
+  it('重试重发目标模式，成功后错误行消失且开关停在目标模式', async () => {
+    vi.mocked(permissionAPI.setMode)
+      .mockRejectedValueOnce(new Error('网络中断'))
+      .mockResolvedValueOnce({ mode: 'auto' } as never)
+    renderChat()
+
+    fireEvent.click(screen.getByTestId('permission-mode-toggle'))
+    await waitFor(() => expect(screen.getByTestId('permission-mode-set-retry')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('permission-mode-set-retry'))
+
+    await waitFor(() => expect(screen.queryByTestId('permission-mode-set-error')).toBeNull())
+    expect(vi.mocked(permissionAPI.setMode).mock.calls).toEqual([
+      ['auto', undefined],
+      ['auto', undefined],
+    ])
+    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
   })
 })
 
@@ -574,13 +768,60 @@ describe('workflow run 补全 popover', () => {
 })
 
 describe('Chat view modes', () => {
+  // 表格视图现在只在有行时保留（见下面的失败态用例），因此这里给一行真实时间线，
+  // 否则切到表格后渲染的是空态而非表格。
+  const oneRow = (text: string): TimelineRow[] => [
+    {
+      kind: 'message',
+      message: {
+        id: 'm1',
+        sessionId: 's',
+        role: 'assistant',
+        content: [{ _tag: 'text', text }],
+        tokenCount: 0,
+        createdAt: 1,
+      },
+      ts: 1,
+    },
+  ]
+
   it('默认聊天模式，可切换到表格', () => {
-    renderChat()
+    renderChat({ timeline: oneRow('hi') })
     expect(screen.getByTestId('view-chat').getAttribute('aria-pressed')).toBe('true')
     expect(screen.queryByTestId('table-view')).toBeNull()
     fireEvent.click(screen.getByTestId('view-table'))
     expect(screen.getByTestId('view-table').getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByTestId('table-view')).toBeTruthy()
+  })
+
+  // 回归：失败态（错误原因 + 重试）此前只挂在非表格分支上。注入 500 后实测：
+  // 聊天视图显示「历史消息加载失败：…」+ 重试，切到表格后整块消失，只剩筛选条、
+  // 0/0 与「无匹配项」——历史加载失败被读成「这个会话是空的」，而且没有任何
+  // 重试入口（表格视图是工具栏里的正常视图，不是调试视图）。
+  it('表格视图下时间线为空时仍渲染历史失败态与重试', () => {
+    const onRetry = vi.fn()
+    renderChat({
+      timeline: [],
+      emptyState: <ChatHistoryError message="数据库被占用" onRetry={onRetry} />,
+    })
+
+    fireEvent.click(screen.getByTestId('view-table'))
+    expect(screen.queryByTestId('table-view')).toBeNull()
+
+    const failure = screen.getByTestId('chat-history-error')
+    expect(failure.textContent).toContain('数据库被占用')
+    fireEvent.click(screen.getByTestId('chat-history-retry'))
+    expect(onRetry).toHaveBeenCalledOnce()
+  })
+
+  it('表格视图下有行时仍渲染表格（失败态不能顶掉正常内容）', () => {
+    renderChat({
+      timeline: oneRow('hi'),
+      emptyState: <ChatHistoryError message="x" onRetry={vi.fn()} />,
+    })
+    fireEvent.click(screen.getByTestId('view-table'))
+    expect(screen.getByTestId('table-view')).toBeTruthy()
+    expect(screen.queryByTestId('chat-history-error')).toBeNull()
   })
 
   it('聊天/表格/原始 JSON 三态互斥切换', () => {

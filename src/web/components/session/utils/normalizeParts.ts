@@ -1,6 +1,7 @@
 import type { MessageRole } from '@shared/types/base.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
 import type { ToolResult } from '@shared/types/tool.js'
+import { sanitizeToolResult } from '@/components/session/tools/toolShape.js'
 
 /** normalizeParts 产出的渲染块。 */
 export type RenderBlock =
@@ -58,12 +59,15 @@ export function normalizeParts(message: Message): RenderBlock[] {
         break
       }
       case 'tool_result': {
-        const status = resultStatus(part.output)
+        // 渲染前收敛整份结果（见 toolShape.sanitizeToolResult）：畸形 result 直接进
+        // 渲染层会抛错，而 ErrorBoundary 裹的是整个应用壳。
+        const output = sanitizeToolResult(part.output)
+        const status = resultStatus(output)
         const idx = toolIndex.get(part.id)
         if (idx !== undefined) {
           const tb = blocks[idx] as ToolBlock
           tb.status = status
-          tb.output = part.output
+          tb.output = output
           if (!tb.tool) tb.tool = part.tool || 'tool'
         } else {
           blocks.push({
@@ -72,7 +76,7 @@ export function normalizeParts(message: Message): RenderBlock[] {
             tool: part.tool || 'tool',
             input: null,
             status,
-            output: part.output,
+            output,
           })
         }
         break

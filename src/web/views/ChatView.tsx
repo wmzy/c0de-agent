@@ -7,10 +7,12 @@ import { Logo } from '@/components/Logo.js'
 import { ModelSelector } from '@/components/ModelSelector.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
+import { useFileSelection } from '@/contexts/FileSelectionContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { type FailedSend, failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
 import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
+import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
 import { agentAPI } from '@/services/agent.js'
@@ -313,9 +315,20 @@ function DraftSession({
 }) {
   const router = useRouter()
   const qc = useQueryClient()
+  // 预览面板是否有未保存修改（FilePreview 注册的探针，见 FileSelectionContext）。
+  // 首条消息必须先跳到会话页才能发出，而那次导航在脏时必被 useBlocker 拦下。
+  const hasUnsavedEdits = useFileSelection().hasUnsavedEdits ?? (() => false)
   const { selection, setSelection, enabledTools, setEnabledTools, agentName, setAgentName } =
     useComposerDefaults(projectId)
-  const { data: agentsData } = useQuery({
+  // 草稿页此前直接写死 supportsVision（恒 true），非视觉模型的图片入口在
+  // 首条消息就敞着——与 ChatSession 同一条能力查询，这里补齐。
+  const supportsVision = useSupportsVision(projectId, selection)
+  const {
+    data: agentsData,
+    isError: agentsFailed,
+    error: agentsError,
+    refetch: refetchAgents,
+  } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentAPI.listAgents(),
     staleTime: 60_000,
@@ -343,6 +356,19 @@ function DraftSession({
 
   const handleSend = async (payload: SendPayload) => {
     setError(null)
+    // 未保存的文件修改会拦下「草稿页 → 会话页」这次导航：两条 path 平级，ChatPage
+    // 连同预览面板一起卸载，FilePreview 的 useBlocker 因此**刻意**不豁免这对目标。
+    // 此前这里不先问就建会话 + 暂存首条消息 + fire-and-forget 导航，被 veto 后仍
+    // 返回 true —— 三个后果叠在一起：输入框已被清空且不回填（用户以为消息发出去了）、
+    // creating 永不复位（发送键常驻「创建中…」且 Enter 被 busy 挡，这个页面到刷新
+    // 都不能再发消息）、pendingFirstMessage 仍挂在那个空会话上（刷新或点开它时
+    // 「凭空」发出一条用户以为已经丢了的话）。动手前先问一次：脏就不建会话、不导航。
+    if (hasUnsavedEdits()) {
+      setError(
+        '消息没有发出：预览面板里有未保存的文件修改，离开当前页面会丢弃它们。请先保存或放弃这些修改，再发送。',
+      )
+      return false
+    }
     setCreating(true)
     const opts = {
       provider: selection.provider,
@@ -399,6 +425,8 @@ function DraftSession({
             value={agentName}
             onChange={setAgentName}
             agents={agentsData?.agents ?? []}
+            error={agentsFailed ? agentsError : null}
+            onRetry={() => void refetchAgents()}
           />
           <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
         </>
@@ -412,7 +440,7 @@ function DraftSession({
         />
       }
       topPanel={<SetupBanner projectId={projectId} />}
-      supportsVision
+      supportsVision={supportsVision}
     />
   )
 }

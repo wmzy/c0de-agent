@@ -66,6 +66,34 @@ describe('DangerConfirmDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  /**
+   * 空确认词 = 门禁失效。matched 是 typed === confirmWord，typed 初值就是空串，
+   * 于是弹层第一帧渲染出来的就是「输入「」以确认：」+ 已可点的红色按钮，
+   * 一次点击即永久删除。可达路径：标题为空的会话（POST /api/sessions 接受空
+   * title，CLI 建的会话就可能没有标题）在回收站里点「彻底删除」——真实浏览器实测
+   * description 为「将彻底删除「」及其 0 个派生会话」，确认键 disabled=false。
+   * 全空白的确认词（'   '）同理。
+   */
+  it('确认词为空时退回到按钮文案，确认键不会零确认可用', () => {
+    renderDialog({ confirmWord: '', confirmLabel: '彻底删除' })
+    const btn = screen.getByTestId('danger-confirm-btn') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(screen.getByText(/输入「彻底删除」以确认/)).toBeTruthy()
+
+    const input = screen.getByTestId('danger-confirm-input')
+    fireEvent.change(input, { target: { value: 'x' } })
+    expect(btn.disabled).toBe(true)
+    fireEvent.change(input, { target: { value: '彻底删除' } })
+    expect(btn.disabled).toBe(false)
+  })
+
+  it('确认词全为空白时同样退回按钮文案', () => {
+    renderDialog({ confirmWord: '   ', confirmLabel: '清空回收站' })
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: '   ' } })
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(true)
+  })
+
   // 删除项目失败时弹层继续显示（不再先关闭自己），原因必须与用户正在做的
   // 操作同框可见并被读屏播报——此前原因写在项目下拉里，下拉已关闭卸载。
   it('失败原因在弹层内可见并带 role=alert', () => {
@@ -187,5 +215,62 @@ describe('DangerConfirmDialog', () => {
     )
     fireEvent.click(screen.getByText('取消'))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * 次级动作（「导出看板并删除」）在飞时，弹层也必须锁住。它在落地后会接着执行
+   * 确认动作本身——期间按 Esc/取消只是看着取消了：导出返回后项目与看板照样被
+   * 永久删除，用户以为拦下了。次级按钮自己的 disabled 挡不住弹层这扇门。
+   */
+  it('次级动作在飞期间不响应 Esc、关闭键与取消，也不放行确认键', () => {
+    const onClose = vi.fn()
+    const onSecondary = vi.fn()
+    render(
+      <DangerConfirmDialog
+        open={true}
+        title="删除项目"
+        description="将删除项目。"
+        confirmWord="demo"
+        busy={false}
+        secondaryAction={{ label: '导出看板并删除', onClick: onSecondary, busy: true }}
+        onConfirm={() => {}}
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.keyDown(document.querySelector('dialog') as HTMLElement, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    fireEvent.click(screen.getByText('取消'))
+    expect(onClose).not.toHaveBeenCalled()
+
+    // 确认键同样锁住：导出在飞时再点一次删除会与导出后的删除并发
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: 'demo' } })
+    expect((screen.getByTestId('danger-confirm-btn') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId('danger-secondary-btn') as HTMLButtonElement).textContent).toBe(
+      '处理中…',
+    )
+  })
+
+  it('次级动作空闲时弹层可正常关闭并放行确认键', () => {
+    const onClose = vi.fn()
+    const onConfirm = vi.fn()
+    render(
+      <DangerConfirmDialog
+        open={true}
+        title="删除项目"
+        description="将删除项目。"
+        confirmWord="demo"
+        secondaryAction={{ label: '导出看板并删除', onClick: () => {}, busy: false }}
+        onConfirm={onConfirm}
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.click(screen.getByText('取消'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByTestId('danger-confirm-input'), { target: { value: 'demo' } })
+    fireEvent.click(screen.getByTestId('danger-confirm-btn'))
+    expect(onConfirm).toHaveBeenCalledTimes(1)
   })
 })

@@ -391,3 +391,54 @@ describe('applyPatch', () => {
     })
   })
 })
+
+/**
+ * 行级变更回调（PatchHunk）：edit 工具据此把变更回传给 UI —— hashline 模式没有
+ * oldText/newText，不回报变更的话时间线上只剩一块空 diff。行号相对**原文件**，
+ * 所以回调读到的 removed 必须是原始行（高锚点操作先应用，不影响低锚点区间的行）。
+ */
+describe('applyPatch 的 onHunk 行级变更', () => {
+  function collect(file: string, patchText: string) {
+    const patches = parsePatch(patchText)
+    const hunks: Parameters<NonNullable<Parameters<typeof applyPatch>[2]>>[0][] = []
+    const result = applyPatch(file, firstPatch(patches), (h) => hunks.push(h))
+    return { result, hunks }
+  }
+
+  it('SWAP 回报被替换的原始行与写入的新行', () => {
+    const file = 'line1\nline2\nline3\n'
+    const { result, hunks } = collect(
+      file,
+      `[f.ts#${computeHash(file)}]\nSWAP 2-2\nREPLACED\n---\n`,
+    )
+    expect(result).toEqual({ _tag: 'success', content: 'line1\nREPLACED\nline3\n' })
+    expect(hunks).toEqual([
+      { _tag: 'SWAP', start: 2, end: 2, removed: ['line2'], added: ['REPLACED'] },
+    ])
+  })
+
+  it('DEL 只回报被删的原始行', () => {
+    const file = 'a\nb\nc\n'
+    const { hunks } = collect(file, `[f.ts#${computeHash(file)}]\nDEL 2-2\n---\n`)
+    expect(hunks).toEqual([{ _tag: 'DEL', start: 2, end: 2, removed: ['b'], added: [] }])
+  })
+
+  it('纯插入只回报新增行，且多操作时每块的行号都相对原文件', () => {
+    const file = 'a\nb\nc\n'
+    const { hunks } = collect(
+      file,
+      `[f.ts#${computeHash(file)}]\nINS.TAIL\ntail\n---\nINS.PRE 2\nhead\n---\nSWAP 3-3\nC2\n---\n`,
+    )
+    // 回调按锚点降序（应用顺序）触发：INS.TAIL(4) → SWAP 3 → INS.PRE 2
+    expect(hunks).toEqual([
+      { _tag: 'INS_TAIL', start: 3, end: 3, removed: [], added: ['tail'] },
+      { _tag: 'SWAP', start: 3, end: 3, removed: ['c'], added: ['C2'] },
+      { _tag: 'INS_PRE', start: 2, end: 2, removed: [], added: ['head'] },
+    ])
+  })
+
+  it('哈希不匹配 / 越界：不回报任何变更', () => {
+    expect(collect('a\n', '[f.ts#ffff]\nSWAP 1-1\nx\n---\n').hunks).toEqual([])
+    expect(collect('a\n', `[f.ts#${computeHash('a\n')}]\nSWAP 9-9\nx\n---\n`).hunks).toEqual([])
+  })
+})

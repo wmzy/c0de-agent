@@ -1450,6 +1450,77 @@ describe('session route', () => {
       expect((await getSession(ctx.db, b.id))?.deletedAt).not.toBeNull()
     })
 
+    // P2-2：删除项目会让该项目**整批**会话变成 projectId=null 的孤儿（FK set null）。
+    // 在「未归属项目」分组里恢复其中一条子会话时，祖先链被连带还原，但此前只有
+    // 目标会话拿到归属——侧栏按根会话 projectId 过滤整棵树，根仍无归属 ⇒ 恢复成功
+    // 的会话在侧栏一条都不出现（提示却说「已恢复并归属到当前项目」），被连带还原的
+    // 祖先也再无任何列表入口（回收站只列已删除会话）。
+    it('孤儿会话恢复到当前项目时，连带还原的祖先一并归属（P2-2 可达性）', async () => {
+      const { app, ctx } = await setup()
+      const root = await createSession(ctx.db, 'orphan-root')
+      const child = await createSession(
+        ctx.db,
+        'orphan-child',
+        undefined,
+        undefined,
+        undefined,
+        root.id,
+      )
+      // 整棵子树入回收站（与删除项目同形：无归属 + 已软删除）
+      await app.request(`/${root.id}`, { method: 'DELETE' })
+      expect(await listDeletedSessions(ctx.db)).toHaveLength(2)
+
+      const res = await app.request(`/${child.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: TEST_PROJECT, restoreMode: 'current-project' }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        rebound: boolean
+        orphaned: boolean
+        adoptedCount: number
+      }
+      expect(body.rebound).toBe(true)
+      expect(body.orphaned).toBe(false)
+      // 连带还原的祖先也被归属 —— 少一个，整棵子树在侧栏就不可见
+      expect(body.adoptedCount).toBe(1)
+      const restoredChild = await getSession(ctx.db, child.id)
+      const restoredRoot = await getSession(ctx.db, root.id)
+      expect(restoredChild?.projectId).toBe(TEST_PROJECT)
+      expect(restoredChild?.deletedAt).toBeNull()
+      expect(restoredRoot?.projectId).toBe(TEST_PROJECT)
+      expect(restoredRoot?.deletedAt).toBeNull()
+    })
+
+    it('连带还原的祖先已有归属时不被改写（跨项目祖先不计入 adoptedCount）', async () => {
+      const { app, ctx } = await setup()
+      const other = 'other-project'
+      await ctx.db.db.insert(projects).values({ id: other, worktree: '/tmp/other-project' })
+      const parent = await createSession(ctx.db, 'bound-parent', TEST_PROJECT)
+      const child = await createSession(
+        ctx.db,
+        'orphan-child',
+        undefined,
+        undefined,
+        undefined,
+        parent.id,
+      )
+      await app.request(`/${child.id}`, { method: 'DELETE' })
+
+      const res = await app.request(`/${child.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: other, restoreMode: 'current-project' }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { adoptedCount: number }
+      expect(body.adoptedCount).toBe(0)
+      // 祖先属于别的项目：恢复后出现在它自己的项目视图里，归属保持不动
+      expect((await getSession(ctx.db, parent.id))?.projectId).toBe(TEST_PROJECT)
+      expect((await getSession(ctx.db, child.id))?.projectId).toBe(other)
+    })
+
     it('GET /deleted 列表会标记首次看到时间（trashSeenAt）', async () => {
       const { app, ctx } = await setup()
       const s = await createSession(ctx.db, 'SeenSoon')

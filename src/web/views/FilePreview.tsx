@@ -96,6 +96,18 @@ const loadingWrap = css`
   padding: 12px;
 `
 
+/**
+ * 读后端失败原因。APIError 是结构体（Object.assign 出来的字面量）而非 Error 子类，
+ * 结构化取 message 优先，再退回 Error.message——单独取任一侧都会在某些路径上丢原因。
+ */
+function readErrorMessage(err: unknown): string | null {
+  if (err && typeof err === 'object') {
+    const m = (err as { message?: unknown }).message
+    if (typeof m === 'string' && m) return m
+  }
+  return err instanceof Error ? err.message : null
+}
+
 /** 读失败态：与 RecycleBin/KanbanView 的读失败三段式同口径（标题 + 后端 message + 重试）。 */
 const errorWrap = css`
   display: flex;
@@ -121,6 +133,36 @@ const errorDetail = css`
 const retryBtn = css`
   padding: 4px 12px;
   font-size: 12px;
+`
+
+/**
+ * 「内容可能有更新，但重新读取失败」条：走廊式提示，不替换内容区（编辑器与其
+ * 未保存编辑必须留着）。用 warning 语义色而不是 danger——手上这份内容仍然有效。
+ */
+const refetchErrorBar = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--haze-color-text);
+  background: var(--haze-color-bg-subtle);
+  border-bottom: 1px solid var(--haze-color-border);
+  flex-shrink: 0;
+`
+
+const refetchErrorText = css`
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+`
+
+/** 媒体失败态的「重试 + 在新标签页打开」按钮行。 */
+const mediaActions = css`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 `
 
 /** 二进制只读态标题：不是错误（文件本身没问题），用中性色而非 danger。 */
@@ -226,7 +268,7 @@ function chatSessionProject(path: string): string | null {
 }
 
 export function FilePreview({ projectId, path }: { projectId: string; path: string }) {
-  const { closeFile, openFile, revealRange, registerGuard } = useFileSelection()
+  const { closeFile, openFile, revealRange, registerGuard, registerDirtyProbe } = useFileSelection()
   const fileRef = useFileReference()
   // 编辑器脏状态（CodeEditor 上报）：关闭预览 / 切换预览目标前都需确认丢弃。
   // 切换是父组件发起（点文件树、点 tool 里的路径、点 snippet pill），所以还必须
@@ -239,6 +281,14 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   const [pendingDiscard, setPendingDiscard] = useState<
     { kind: 'close' } | { kind: 'switch'; path: string; range?: LineRange } | null
   >(null)
+
+  // 媒体预览（img/audio/video/pdf）走 /raw，浏览器拿不到字节时只会画一个破图/黑框，
+  // 与文本路径的「文件读取失败 + 原因 + 重试」三段式完全不一致——用户看到破图只会
+  // 以为「文件坏了」，不会想到是文件已被删除或访问令牌过期。用 onError 兜住：
+  // 失败时给出原因、重试入口与「在新标签页打开原始文件」的逃生口。
+  const [mediaFailed, setMediaFailed] = useState(false)
+  // 重试令牌：自增后作为 key 强制媒体元素重新挂载/加载（同一 URL 的失败结果会被缓存）。
+  const [mediaReloadKey, setMediaReloadKey] = useState(0)
 
   // 未保存导航防护（与 Settings 同口径）。上面的 registerGuard 只覆盖「面板内换文件/
   // 关闭」这条由父组件发起的通道；应用内导航（顶栏 设置/项目看板、项目切换、浏览器
@@ -299,30 +349,81 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   // 渲染内容区（不含 header）
   let body: React.ReactNode
   if (isMedia) {
-    if (IMG_EXT.includes(ext)) {
+    // 媒体 URL 带上重试令牌：媒体元素同 URL 的失败结果会被浏览器缓存，key 变化
+    // 重挂载不够，必须让 URL 变化才会真正重新拉取。
+    const mediaSrc = `/api/files/${encodeFilePath(path)}/raw${mediaQuery}${
+      mediaQuery ? '&' : '?'
+    }_r=${mediaReloadKey}`
+    if (mediaFailed) {
+      // 与文本路径的失败三段式同口径（标题 + 说明 + 重试/逃生口）。
+      body = (
+        <div className={errorWrap} data-testid="file-preview-error" role="alert">
+          <span className={errorTitle}>预览加载失败</span>
+          <span className={errorDetail}>
+            无法加载该文件（可能已被删除、移动，或访问令牌已过期）。
+          </span>
+          <div className={mediaActions}>
+            <button
+              type="button"
+              className={retryBtn}
+              onClick={() => {
+                setMediaFailed(false)
+                setMediaReloadKey((k) => k + 1)
+              }}
+              data-testid="file-preview-retry"
+            >
+              重试
+            </button>
+            <a
+              className={binaryLink}
+              href={mediaSrc}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="file-preview-raw-link"
+            >
+              在新标签页打开原始文件
+            </a>
+          </div>
+        </div>
+      )
+    } else if (IMG_EXT.includes(ext)) {
       body = (
         <img
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+          key={mediaReloadKey}
+          src={mediaSrc}
           alt={path}
           className={mediaImg}
+          onError={() => setMediaFailed(true)}
         />
       )
     } else if (ext === 'pdf') {
+      // <embed> 不派发可捕获的 error 事件，改用 <object>（失败时渲染 fallback 内容）。
       body = (
-        <embed
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+        <object
+          key={mediaReloadKey}
+          data={mediaSrc}
           type="application/pdf"
           className={embedFill}
           data-testid="pdf-preview"
-        />
+          onError={() => setMediaFailed(true)}
+        >
+          <div className={errorWrap} data-testid="pdf-fallback">
+            <span className={errorTitle}>PDF 预览不可用</span>
+            <a className={binaryLink} href={mediaSrc} target="_blank" rel="noreferrer">
+              在新标签页打开原始文件
+            </a>
+          </div>
+        </object>
       )
     } else if (AUDIO_EXT.includes(ext)) {
       body = (
         <audio
+          key={mediaReloadKey}
           controls
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+          src={mediaSrc}
           className={audioFull}
           data-testid="audio-preview"
+          onError={() => setMediaFailed(true)}
         >
           <track kind="captions" />
         </audio>
@@ -330,10 +431,12 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     } else {
       body = (
         <video
+          key={mediaReloadKey}
           controls
-          src={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+          src={mediaSrc}
           className={mediaImg}
           data-testid="video-preview"
+          onError={() => setMediaFailed(true)}
         >
           <track kind="captions" />
         </video>
@@ -341,8 +444,13 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     }
   } else if (q.isLoading) {
     body = <div className={loadingWrap}>加载中…</div>
-  } else if (q.isError) {
+  } else if (q.isError && !q.data) {
     // 「读不到」必须与「真的为空」分开：useQuery 重试耗尽后 data 仍是 undefined。
+    // 判据必须写成 `isError && !data` 而不是只判 isError：同一 queryKey 的后台重取
+    // （保存后 invalidate、窗口聚焦、staleTime 到期）失败时 react-query **保留** data
+    // 并把 status 置成 error，只判 isError 会把已经拿到的内容换掉——编辑器被整块
+    // 卸载（连同未保存编辑与脏守卫一起丢），屏幕上还写着一句与事实相反的
+    // 「文件读取失败：<重取失败原因>」，而内容其实就在内存里。
     // 二进制又必须与「读不到」分开，且绝不能落进 CodeEditor：服务端此前把任何
     // 扩展名按 utf-8 解码，.zip 之类解码成一屏 U+FFFD 后仍是「可编辑内容」，用户敲
     // 一个字点保存就把原文件重写成乱码（实测 4096B → 7476B，原字节不可恢复）。
@@ -367,9 +475,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     } else {
       // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
       // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
-      const message =
-        (q.error as { message?: string } | null)?.message ??
-        (q.error instanceof Error ? q.error.message : null)
+      const message = readErrorMessage(q.error)
       body = (
         <div className={errorWrap} data-testid="file-preview-error" role="alert">
           <span className={errorTitle}>文件读取失败</span>
@@ -453,6 +559,14 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     selectedTextRef.current = ''
   }, [path])
 
+  // 切换预览目标时清掉上一个文件的媒体失败态与重试令牌，否则新文件一进来就显示
+  // 「预览失败」，或带着上一轮的重试计数请求。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: path 变化即需复位本地态
+  useEffect(() => {
+    setMediaFailed(false)
+    setMediaReloadKey(0)
+  }, [path])
+
   // selectionchange 监听：覆盖 onMouseUp 无法捕获的场景——
   // 键盘选择（Ctrl+A / Shift+方向键）、触摸长按选择，以及鼠标拖选长代码行时
   // mouseup 落在面板可见区域外。
@@ -496,6 +610,14 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     return () => registerGuard?.(null)
   }, [registerGuard])
 
+  // 同一份脏状态再注册成一个只读探针：给「会离开本页」的动作（草稿页发送首条消息
+  // 要先跳到会话页）在动手之前一个判据。那次导航在脏时必被上面的 useBlocker veto，
+  // 调用方若不先问就会建出会话、暂存首条消息、再被拦下——半截状态。
+  useEffect(() => {
+    registerDirtyProbe?.(() => dirtyRef.current)
+    return () => registerDirtyProbe?.(null)
+  }, [registerDirtyProbe])
+
   // 用户确认丢弃：先同步清掉脏标记，再重放被拦下的那次变更——否则重放时钩子又读到
   // dirty=true，那次变更会被自己再拦一遍，确认键看起来毫无作用。
   const handleDiscard = useCallback(() => {
@@ -529,6 +651,22 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
           if (btn) btn.style.display = 'none'
         }}
       >
+        {q.data && q.isError && (
+          <div className={refetchErrorBar} role="alert" data-testid="file-preview-refetch-error">
+            <span className={refetchErrorText}>
+              内容可能有更新，但重新读取失败：{readErrorMessage(q.error) ?? '未知原因'}
+              。下面显示的仍是上次读取到的内容。
+            </span>
+            <button
+              type="button"
+              className={retryBtn}
+              onClick={() => void q.refetch()}
+              data-testid="file-preview-refetch-retry"
+            >
+              重新读取
+            </button>
+          </div>
+        )}
         {body}
         <button
           type="button"

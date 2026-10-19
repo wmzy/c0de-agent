@@ -1,6 +1,6 @@
-import { defaultKeymap } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { javascript } from '@codemirror/lang-javascript'
-import { EditorState, StateEffect, StateField } from '@codemirror/state'
+import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { Decoration, type DecorationSet, EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { css } from '@linaria/core'
@@ -92,6 +92,9 @@ const conflictActions = css`
   margin-left: auto;
 `
 
+/** 主题扩展：亮色不需要额外扩展（跟随 haze 的 CSS 变量），暗色叠加 oneDark。 */
+const themeExt = (mode: 'light' | 'dark') => (mode === 'dark' ? oneDark : [])
+
 export function CodeEditor({
   path,
   initial,
@@ -131,6 +134,11 @@ export function CodeEditor({
   /** 保存冲突详情（磁盘内容 ≠ baseRef 时阻止盲写）。 */
   const [saveConflict, setSaveConflict] = useState<{ disk: string } | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
+  /** 保存请求在途：期间按钮禁用并显示「保存中…」。此前只有 disabled={!dirty}，
+   *  连点两下会并发两个 PUT（后到的覆盖先到的，且基线快照互相踩）。 */
+  const [saving, setSaving] = useState(false)
+  /** 在途保存的快照：响应回来时据此判断文档是否已被再次编辑。 */
+  const savingDocRef = useRef<string | null>(null)
 
   // ref 持有最新回调，避免回调身份变化触发重复通知
   const onDirtyChangeRef = useRef(onDirtyChange)
@@ -150,7 +158,21 @@ export function CodeEditor({
     setSaveConflict(null)
   }, [])
 
-  // 记录上次路径：仅换文件时重置基线；主题切换重建沿用当前文档（不吞未保存编辑）。
+  // 主题走 Compartment 重配置，**不重建视图**。
+  //
+  // 此前重建 effect 的依赖是 [path, resolved]，明/暗切换即 new EditorView +
+  // view.destroy()：文档与脏标记靠 liveDoc/keepDirty 手工接力保住了，但
+  // EditorState 里其余的一切都随旧视图一起没了——撤销历史（Ctrl+Z 变成空操作，
+  // 实测切主题后按 Ctrl+Z 文档纹丝不动）与选区/光标（实测从行尾跳回 offset 0，
+  // 紧接着敲的字插到文件开头）。用户在设置页切一次主题就丢掉这些，且无任何提示。
+  // mode='system' 时系统深浅色变化走同一条路径：编辑器开着、用户正在改文件，
+  // 傍晚系统切到暗色，未保存的编辑还在、光标却瞬移。
+  const themeCompartment = useRef(new Compartment())
+  // 主题在 effect 外读：重建 effect 只依赖 [path]，不因主题变化重跑。
+  const resolvedRef = useRef(resolved)
+  resolvedRef.current = resolved
+
+  // 记录上次路径：换文件时重置基线。
   const prevPathRef = useRef(path)
   useEffect(() => {
     if (!hostRef.current) return
@@ -167,22 +189,22 @@ export function CodeEditor({
       setPendingExternal(null)
       setSaveConflict(null)
     }
-    // 重建视图的 doc 取值：换文件 → 新文件基线；其余重建（主题切换）→ 当前文档。
-    // 此前一律用 baseRef（磁盘基线）：切换明/暗主题即把用户未保存的编辑静默回退
-    // 到磁盘内容，且 setDirty(false) 顺手解除关闭预览的丢弃确认。
-    const liveDoc = pathChanged ? undefined : viewRef.current?.state.doc.toString()
-    const doc = liveDoc ?? baseRef.current
-    const keepDirty = liveDoc !== undefined && dirtyRef.current
     const ext = path.split('.').pop()
     const lang = ext === 'ts' || ext === 'js' || ext === 'tsx' || ext === 'jsx' ? javascript() : []
     const view = new EditorView({
       state: EditorState.create({
-        doc,
+        doc: baseRef.current,
         extensions: [
-          keymap.of(defaultKeymap),
+          // Ctrl-Z / Ctrl-Y（Linux 上还有 Ctrl-Shift-Z）必须由 CodeMirror 自己接：
+          // defaultKeymap **不含** historyKeymap，此前这两个键根本没被编辑器绑走，
+          // 撤销实际落在 contenteditable 的浏览器原生撤销上——它只认同一份 DOM，
+          // 视图一被销毁（换文件、切主题）历史随之消失，而且改的是 DOM、不是
+          // EditorState（undoDepth 不变），保存写出去的内容与界面可能不一致。
+          keymap.of([...defaultKeymap, ...historyKeymap]),
+          history(),
           lineNumbers(),
           lang as never,
-          ...(resolved === 'dark' ? [oneDark] : []),
+          themeCompartment.current.of(themeExt(resolvedRef.current)),
           highlightField,
           highlightTheme,
           EditorView.updateListener.of((u) => {
@@ -193,10 +215,18 @@ export function CodeEditor({
       parent: hostRef.current,
     })
     viewRef.current = view
-    // 换文件时脏状态重置（避免上个文件的脏标记误伤新文件）；同文件重建保留原脏状态。
-    setDirty(keepDirty)
+    // 换文件时脏状态重置（避免上个文件的脏标记误伤新文件）。
+    setDirty(pathChanged ? false : dirtyRef.current)
     return () => view.destroy()
-  }, [path, resolved])
+  }, [path])
+
+  // 主题切换：reconfigure 同一个 EditorState —— 文档、撤销历史、选区、光标全部
+  // 原样保留，只有配色扩展被换掉。
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: themeCompartment.current.reconfigure(themeExt(resolved)),
+    })
+  }, [resolved])
 
   // 父组件喂入新服务端内容（React Query 失效刷新/换文件）：
   // - 干净状态 → 直接应用（编辑器跟随磁盘，原行为）；
@@ -234,6 +264,20 @@ export function CodeEditor({
   /** 保存：force=true 跳过冲突检查（用户在冲突框中选择「覆盖保存」）。 */
   const save = async (force = false) => {
     const doc = viewRef.current?.state.doc.toString() ?? ''
+    // 在途锁：同一 tick 内的连点（以及按钮还没被 React 写回 disabled 时）只发一个 PUT。
+    if (savingDocRef.current !== null) return
+    savingDocRef.current = doc
+    setSaving(true)
+    try {
+      await saveImpl(doc, force)
+    } finally {
+      savingDocRef.current = null
+      setSaving(false)
+    }
+  }
+
+  /** 实际写入：冲突检查 → PUT → 落地基线。 */
+  const saveImpl = async (doc: string, force: boolean) => {
     if (!force) {
       // 冲突检测：磁盘当前内容 vs 打开时的基线。不一致 → 阻断盲写，交用户决断。
       // 读取失败（文件已被移入回收站等）不阻断——写入会重建文件。
@@ -259,8 +303,13 @@ export function CodeEditor({
     }
     try {
       await fileAPI.write(path, doc, projectId)
+      // 基线始终推进到「实际写出去的这份」——否则下次保存的冲突检查拿旧快照比对，
+      // 会把磁盘上自己刚写的内容误判成「外部修改」。
       baseRef.current = doc
-      setDirty(false)
+      // 脏标记只在文档仍等于请求快照时清除：请求在途期间用户敲的字从未落盘，
+      // 标成「已保存」会让关闭预览的丢弃确认一并失效（用户再也看不到这段字丢了）。
+      const unchanged = (viewRef.current?.state.doc.toString() ?? doc) === doc
+      if (unchanged) setDirty(false)
       setSaveConflict(null)
       setWriteError(null)
       // 同步查询缓存：避免缓存中的旧内容经 initial 回灌覆盖刚保存的文档
@@ -274,8 +323,13 @@ export function CodeEditor({
     <div className={editorWrap}>
       <div className={editorBar}>
         <span className={editorPath}>{path}</span>
-        <Button variant="outline" onClick={() => void save()} disabled={!dirty} data-testid="save">
-          {dirty ? '保存*' : '已保存'}
+        <Button
+          variant="outline"
+          onClick={() => void save()}
+          disabled={!dirty || saving}
+          data-testid="save"
+        >
+          {saving ? '保存中…' : dirty ? '保存*' : '已保存'}
         </Button>
       </div>
 

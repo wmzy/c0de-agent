@@ -295,3 +295,33 @@ describe('editTool (hashline mode)', () => {
     expect(result._tag).toBe('error')
   })
 })
+
+/**
+ * hashline 成功必须把行级变更随结果回传（metadata.hunks）：web 端 EditToolView 只读
+ * oldText/newText，而 hashline 模式没有这两个字段——不回传就是一块空 diff，用户看不出
+ * 这次编辑到底改了什么。
+ */
+describe('editTool hashline 成功回传行级变更', () => {
+  it('success 结果带 metadata.hunks（被替换的原始行 + 新行）', async () => {
+    const { computeHash } = await import('../hashline/index.js')
+    const content = 'line1\nline2\nline3\n'
+    await writeFile(join(workDir, 'f.ts'), content)
+    const patch = `[f.ts#${computeHash(content)}]\nSWAP 2-2\nREPLACED\n---\n`
+    const result = await editTool.execute({ path: 'f.ts', patch }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag !== 'success') return
+    expect(result.metadata?.hunks).toEqual([
+      { _tag: 'SWAP', start: 2, end: 2, removed: ['line2'], added: ['REPLACED'] },
+    ])
+  })
+
+  it('哈希不匹配的失败结果不带 hunks', async () => {
+    await writeFile(join(workDir, 'f.ts'), 'current\n')
+    const result = await editTool.execute(
+      { path: 'f.ts', patch: '[f.ts#ffff]\nSWAP 1-1\nx\n---\n' },
+      ctx,
+    )
+    expect(result._tag).toBe('error')
+    expect((result as { metadata?: unknown }).metadata).toBeUndefined()
+  })
+})

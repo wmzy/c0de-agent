@@ -275,6 +275,11 @@ function draftKey(draft: { prompt: Prompt; images: ImagePart[] }): string {
   return `${JSON.stringify(draft.prompt)}|${images}`
 }
 
+/** 浮层失败行的原因文案（react-query 的 error 是 unknown）。 */
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 function Composer(props: ComposerProps) {
   // 从 Prompt 结构提取 @agent mentions（仅非 primary 可调用的 subagent）。
   // 只扫描用户输入的文本 part 并剥离 markdown 代码（见 extractAgentMentions）——
@@ -329,6 +334,23 @@ function Composer(props: ComposerProps) {
     select: (data) => data.workflows,
   })
   const workflows = workflowsQuery.data ?? []
+
+  // 浮层候选源读取失败的原因：渲染失败行 + 重试，而不是把「读不到」当成
+  // 「没有匹配」（用户会据此按 Enter 把字面量 @foo / /cmd 当正文发出去）。
+  const popoverError =
+    composer.popover === 'workflow'
+      ? workflowsQuery.isError
+        ? messageOf(workflowsQuery.error)
+        : null
+      : composer.popover === 'slash' || composer.popover === 'subcommand'
+        ? commandsQuery.isError
+          ? messageOf(commandsQuery.error)
+          : null
+        : composer.popover === 'at'
+          ? fileSearch.isError
+            ? messageOf(fileSearch.error)
+            : null
+          : null
 
   // slash 命令按 query 过滤——过滤必须与键盘导航/选择使用同一列表，
   // 否则 activeIndex 指向的项与 popover 展示的项不一致（选中错误命令）。
@@ -473,31 +495,43 @@ function Composer(props: ComposerProps) {
             : composer.popover === 'at'
               ? atTotal
               : 0
-    // 加载中的候选源：候选计数为 0，但原因是「结果还没到」而不是「没有匹配」。
-    // 此时浮层保持打开显示「搜索中…」（见各 Popover 的 loading 分支），
-    // 但按键仍按「无浮层」处理——否则一个还没出结果的菜单会静默吞掉 Enter。
-    const popoverLoading =
+    // 加载中/失败的候选源：候选计数为 0，但原因是「结果还没到」或「没搜成」
+    // 而不是「没有匹配」。此时浮层保持打开显示「搜索中…」/失败原因 + 重试
+    // （见各 Popover 的 loading/error 分支），但按键仍按「无浮层」处理——
+    // 否则一个出不来结果的菜单会静默吞掉 Enter。
+    const popoverBusy =
       composer.popover === 'workflow'
-        ? workflowsQuery.isLoading
+        ? workflowsQuery.isLoading || workflowsQuery.isError
         : composer.popover === 'slash' || composer.popover === 'subcommand'
-          ? commandsQuery.isLoading
+          ? commandsQuery.isLoading || commandsQuery.isError
           : composer.popover === 'at'
-            ? fileSearch.isLoading
+            ? fileSearch.isLoading || fileSearch.isError
             : false
     // 没有候选（无论是否在加载）→ 不拦截，按「无浮层」把按键交给 composer.handleKeyDown
     // （Enter 即发送）。
     const popoverSuppressed = composer.popover !== null && popoverCandidates === 0
-    // 只有「不在加载且没有候选」才真的关掉浮层；加载中保留浮层给出反馈。
-    const popoverDead = popoverSuppressed && !popoverLoading
-    if (popoverDead) composer.setPopover(null)
+    // 只有「不在加载/失败且没有候选」才真的关掉浮层；加载/失败中保留浮层给出反馈。
+    const popoverDead = popoverSuppressed && !popoverBusy
+    if (popoverDead) composer.dismissPopover()
     // 键盘导航只在真的有候选项时生效：0 候选取 min(i+1, -1) 会把 activeIndex 算成 -1。
     const popoverNavigable = composer.popover !== null && popoverCandidates > 0
     // Tab 是「离开输入框」的键，不是「确认候选」：此前与 Enter 同处理，浮层打开时
     // 键盘用户既无法用 Tab/Shift+Tab 离开输入框（焦点陷阱），又会把候选静默插进
     // 正在写的消息里（`/hel` + Tab 变成 `/help `）。这里只关掉浮层、放行按键交给
     // 浏览器移动焦点；确认候选仍然走 Enter。
+    // Shift+Enter 是「换行」，不是「确认候选」：四个浮层的 Enter 分支此前只判
+    // e.key === 'Enter' 且成功后 preventDefault()，于是浮层开着时按 Shift+Enter
+    // 得到的是「插入候选 + 不换行 + 已打的字被静默改写」——`/workflow run my` 会
+    // 变成 `/workflow run <补全第一条>`（可能是另一个工作流名），`@src` 变成某个
+    // 具体文件路径，`/hel` 变成 `/help `。与 useComposer 的发送分支口径对齐
+    // （那里是 `e.key === 'Enter' && !e.shiftKey`，Shift+Enter 留给换行）。
+    // Shift+Enter 落回下面的 composer.handleKeyDown：popoverActive 为真时不发送、
+    // 不 preventDefault，由浏览器在输入框里插入换行。
     if (e.key === 'Tab' && composer.popover !== null) {
-      composer.setPopover(null)
+      // 走 dismissPopover 而不是裸 setPopover(null)：popover 由 X 变 null 会触发
+      // useComposer 的「commands 就绪后重新检测」effect，它会把同一段文本的浮层
+      // 原样弹回来——裸关一次，菜单在焦点已经移走的瞬间凭空重现（Tab 成了死键）。
+      composer.dismissPopover()
       return
     }
     if (popoverNavigable && composer.popover === 'workflow') {
@@ -511,7 +545,7 @@ function Composer(props: ComposerProps) {
         setWorkflowActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const wf = filteredWorkflows[workflowActive]
         if (wf && composer.insertWorkflow(wf.name)) {
           e.preventDefault()
@@ -532,7 +566,7 @@ function Composer(props: ComposerProps) {
         setSlashActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const cmd = filteredCommands[slashActive]
         if (cmd && composer.insertSlash(cmd.name)) {
           e.preventDefault()
@@ -553,7 +587,7 @@ function Composer(props: ComposerProps) {
         setSubcommandActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const sub = filteredSubcommands[subcommandActive]
         if (sub && composer.insertSubcommand(sub.name)) {
           e.preventDefault()
@@ -574,7 +608,7 @@ function Composer(props: ComposerProps) {
         setAtActive((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const selected = atMenuSelection(atMenu, atActive)
         const inserted =
           selected?.kind === 'agent'
@@ -691,6 +725,8 @@ function Composer(props: ComposerProps) {
               commands={filteredCommands}
               activeIndex={slashActive}
               loading={commandsQuery.isLoading}
+              error={popoverError}
+              onRetry={() => void commandsQuery.refetch()}
               onSelect={(name) => composer.insertSlash(name)}
             />
           </div>
@@ -702,6 +738,8 @@ function Composer(props: ComposerProps) {
               subcommands={filteredSubcommands}
               activeIndex={subcommandActive}
               loading={commandsQuery.isLoading}
+              error={popoverError}
+              onRetry={() => void commandsQuery.refetch()}
               onSelect={(name) => composer.insertSubcommand(name)}
               parentCommand={composer.subcommandCmd}
             />
@@ -714,6 +752,8 @@ function Composer(props: ComposerProps) {
               workflows={filteredWorkflows}
               activeIndex={workflowActive}
               loading={workflowsQuery.isLoading}
+              error={popoverError}
+              onRetry={() => void workflowsQuery.refetch()}
               onSelect={(name) => composer.insertWorkflow(name)}
             />
           </div>
@@ -726,6 +766,8 @@ function Composer(props: ComposerProps) {
               files={atFiles}
               activeIndex={atActive}
               loading={fileSearch.isLoading}
+              error={popoverError}
+              onRetry={() => void fileSearch.refetch()}
               onSelect={(path) => composer.insertFile(path)}
               onAgentSelect={insertAgentToken}
             />
@@ -745,7 +787,7 @@ function Composer(props: ComposerProps) {
           className={appendBtn}
           onClick={composer.steer}
           type="button"
-          disabled={!props.isStreaming || props.creating}
+          disabled={!props.isStreaming || props.creating || composer.steerPending}
           data-testid="append"
         >
           追加指令

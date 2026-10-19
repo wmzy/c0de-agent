@@ -1,6 +1,8 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { MatchSummary } from '@/components/session/tools/matchSummary.js'
+import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 
 const pre = css`
   margin: 0;
@@ -34,21 +36,23 @@ type GrepInput = { pattern: string; path?: string }
 
 export function GrepToolView({
   output,
+  status,
 }: {
   input: GrepInput
   output?: ToolResult
   status: string
 }) {
-  const text =
-    output?._tag === 'success' || output?._tag === 'truncated'
-      ? output.output
-      : output?._tag === 'error'
-        ? output.error
-        : ''
+  // useOverflow 必须无条件调用（hooks 数量跨渲染恒定），短路判断放在其后。
   const { ref, overflowing, expanded, toggle } = useOverflow(200)
+  // 失败必须走 ToolError：此前失败原因被塞进与命中结果一模一样的中性灰 <pre>，
+  // 「grep 失败」和「grep 命中」视觉上完全同形；error 为空白串时整块渲染成空白。
+  const errorText = toolErrorText(output, status)
+  if (errorText !== null) return <ToolError output={output} status={status} />
+  const text = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
   const showToggle = overflowing && !expanded
   return (
     <div>
+      <MatchSummary output={output} noun="匹配" />
       {text && (
         <div>
           <div ref={ref} className={showToggle ? collapsed : ''}>

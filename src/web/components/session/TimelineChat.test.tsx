@@ -1,6 +1,6 @@
 import type { LLMCall, LLMSegment } from '@shared/types/agent.js'
 import type { Message } from '@shared/types/message.js'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineRow } from '@/components/session/utils/timeline.js'
 
@@ -116,5 +116,17 @@ describe('TimelineChat', () => {
     const rows: TimelineRow[] = [{ kind: 'message', message: mkMessage('e', null), ts: 1 }]
     render(<TimelineChat rows={rows} showAllJson={false} />)
     expect(screen.queryByTestId('pretty-msg-e')).toBeNull()
+  })
+
+  // 每行的 JSON 开关只靠 { } / ✦ 字形区分当前视图，读屏两者都读不出来。
+  it('行内 JSON 开关的 aria-pressed 跟随当前视图翻转', () => {
+    const rows: TimelineRow[] = [{ kind: 'message', message: mkMessage('m1', 'hi'), ts: 1 }]
+    render(<TimelineChat rows={rows} showAllJson={false} />)
+    const toggle = screen.getByTestId('row-json-m:m1')
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
   })
 })
