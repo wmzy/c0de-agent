@@ -6,11 +6,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatActions, ChatState } from '@/hooks/chatState.js'
 import { sessionAPI } from '@/services/session.js'
-
-/** 失败原因取服务端 message（APIError）或 Error.message，与会话树/回收站失败提示同口径。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
+import { messageOf } from '@/utils/errors.js'
 
 export function useRetryResume({
   sessionId,

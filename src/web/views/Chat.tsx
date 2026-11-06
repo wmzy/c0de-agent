@@ -27,6 +27,7 @@ import {
 } from '@/services/permission.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { formatTokenCount } from '@/utils/format.js'
+import { interruptBanner } from '@/views/_shared/bannerStyles.js'
 import { TableView } from '@/views/TableView.js'
 
 export type { SendPayload }
@@ -330,33 +331,6 @@ const jumpBtn = css`
   &:hover {
     border-color: var(--haze-color-primary);
     color: var(--haze-color-primary);
-  }
-`
-
-/* P1-6：权限确认超时横幅（与 ChatSession 的中断横幅同款式） */
-const interruptBanner = css`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--haze-color-border);
-  background: var(--haze-color-bg-subtle);
-  font-size: 13px;
-  color: var(--haze-color-text-secondary);
-
-  & > button {
-    border: 1px solid var(--haze-color-border);
-    border-radius: 6px;
-    padding: 3px 12px;
-    cursor: pointer;
-    font-size: 12px;
-    background: var(--haze-color-bg);
-    color: var(--haze-color-text);
-
-    &:first-of-type {
-      border-color: var(--haze-color-primary);
-      color: var(--haze-color-primary);
-    }
   }
 `
 

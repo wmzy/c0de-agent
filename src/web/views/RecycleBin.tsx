@@ -12,14 +12,9 @@ import {
 } from '@/hooks/useSession.js'
 import { type DeletedKanbanBoard, kanbanAPI, type MergedBoardCounts } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
+import { messageOf } from '@/utils/errors.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
 import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/recycleTree.js'
-
-/** 失败原因取文案：APIError 现在是真正的 Error（message 即后端文案），
- *  但错误也可能来自非本层抛出的路径，结构化取 message 优先、instanceof 兜底。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
 
 /**
  * 合并恢复的结果说明：把这次真正并入的量写进提示。

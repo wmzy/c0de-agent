@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { CodeBlock } from '@/components/CodeBlock.js'
 import { fileAPI } from '@/services/file.js'
+import { messageOf } from '@/utils/errors.js'
 import { parseCodeReference } from '@/utils/format.js'
 
 const chip = css`
@@ -37,11 +38,6 @@ const retryBtn = css`
   cursor: pointer;
   padding: 1px 6px;
 `
-
-/** 失败原因取服务端 message（APIError）或 Error.message，与设置页其余面板同口径。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
 
 /** 渲染代码引用 @[path:start-end]（spec §10.4）。点击展开查看文件对应行区间的代码。 */
 export function CodeReference({ token }: { token: string }) {

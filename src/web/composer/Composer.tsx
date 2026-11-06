@@ -25,6 +25,7 @@ import { useFileSearch } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
 import { workflowsAPI } from '@/services/workflows.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 /**
@@ -273,11 +274,6 @@ type ComposerProps = {
 function draftKey(draft: { prompt: Prompt; images: ImagePart[] }): string {
   const images = draft.images.map((i) => `${i.mediaType}:${i.data.length}`).join(',')
   return `${JSON.stringify(draft.prompt)}|${images}`
-}
-
-/** 浮层失败行的原因文案（react-query 的 error 是 unknown）。 */
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
 }
 
 function Composer(props: ComposerProps) {

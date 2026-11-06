@@ -8,9 +8,8 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BashToolView } from '@/components/session/tools/BashToolView.js'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
-import { GlobToolView } from '@/components/session/tools/GlobToolView.js'
-import { GrepToolView } from '@/components/session/tools/GrepToolView.js'
 import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
+import { PatternToolView } from '@/components/session/tools/PatternToolView.js'
 import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
 
@@ -377,10 +376,11 @@ describe('失败结果无文案兜底', () => {
 
 // Grep/Glob/Fallback/Task 此前各自手写失败分支，把错误文本塞进与成功输出同形的
 // 中性灰 <pre>（失败与命中视觉同形），且 error 为空白串时整块渲染成空白。
-describe('Grep/Glob/Fallback/Task 失败结果', () => {
-  it('GrepToolView 失败透出原因，不再渲染成命中样式', () => {
+describe('PatternToolView（grep/glob）/Fallback/Task 失败结果', () => {
+  it('grep 失败透出原因，不再渲染成命中样式', () => {
     render(
-      <GrepToolView
+      <PatternToolView
+        noun="匹配"
         input={{ pattern: 'foo' }}
         status="error"
         output={{ _tag: 'error', error: 'ripgrep not found' }}
@@ -390,9 +390,10 @@ describe('Grep/Glob/Fallback/Task 失败结果', () => {
     expect(screen.queryByTestId('tool-output')).toBeNull()
   })
 
-  it('GrepToolView 成功仍渲染输出', () => {
+  it('grep 成功仍渲染输出', () => {
     render(
-      <GrepToolView
+      <PatternToolView
+        noun="匹配"
         input={{ pattern: 'foo' }}
         status="completed"
         output={{ _tag: 'success', output: 'a.ts:1:foo' }}
@@ -402,9 +403,10 @@ describe('Grep/Glob/Fallback/Task 失败结果', () => {
     expect(screen.getByTestId('tool-output')).toHaveTextContent('a.ts:1:foo')
   })
 
-  it('GlobToolView 失败透出原因，空白 error 也给占位说明', () => {
+  it('glob 失败透出原因，空白 error 也给占位说明', () => {
     render(
-      <GlobToolView
+      <PatternToolView
+        noun="文件"
         input={{ pattern: '*.ts' }}
         status="error"
         output={{ _tag: 'error', error: '   ' }}

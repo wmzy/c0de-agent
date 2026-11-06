@@ -1,42 +1,10 @@
+import type {
+  CatalogModel,
+  CatalogProvider,
+  ProviderDetailResult,
+  SearchResult,
+} from '@shared/types/catalog.js'
 import { get, post } from '@/services/api.js'
-
-/** models.dev 目录中的 Provider 列表项。 */
-type CatalogProvider = {
-  id: string
-  name: string
-  npm?: string
-  api?: string
-  env: string[]
-  doc?: string
-  modelCount: number
-}
-
-/** models.dev 目录中的 Model 列表项。 */
-type CatalogModel = {
-  id: string
-  name: string
-  family?: string
-  reasoning: boolean
-  toolCall: boolean
-  attachment: boolean
-  temperature: boolean
-  context: number
-  output: number
-  costInput?: number
-  costOutput?: number
-}
-
-/** Provider + 模型列表响应。 */
-type ProviderDetailResult = {
-  provider: CatalogProvider
-  models: CatalogModel[]
-}
-
-/** 搜索结果。 */
-type SearchResult = {
-  providers: CatalogProvider[]
-  models: Array<CatalogProvider & { model: CatalogModel }>
-}
 
 const catalogAPI = {
   /** 列出所有 providers。 */

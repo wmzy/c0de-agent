@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
+import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { UsageSummary } from '@/services/usage.js'
 import { usageAPI } from '@/services/usage.js'
@@ -37,51 +38,6 @@ const budgetWarn = css`
   color: var(--haze-color-warning);
   font-size: 12px;
   margin-top: 6px;
-`
-
-/**
- * 读不到 ≠ 没有。用量查询失败时 data 为 undefined，成本/Token 全部回落成 0，
- * 面板会照常渲染一整套「本月 $0.00、无超支、空账本」的精确数字——用户据此
- * 判断预算安全，实际什么都没读到。与 ArchivePanel / SessionSummary 同口径：
- * 标题 + 后端原因 + 重试，且统计表整段不渲染（不给不可信的数字）。
- */
-const errorState = css`
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--haze-color-danger) 45%, transparent);
-  border-radius: 8px;
-`
-
-const errorTitle = css`
-  color: var(--haze-color-danger);
-  font-size: 13px;
-  font-weight: 600;
-`
-
-const errorDetail = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 12px;
-  /* 后端 message 可能是长路径/长句，窄栏内必须断行 */
-  overflow-wrap: anywhere;
-`
-
-const retryBtn = css`
-  align-self: flex-start;
-  padding: 4px 14px;
-  font-size: 12px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
-  cursor: pointer;
-
-  &:hover:not(:disabled):not([aria-disabled='true']) {
-    border-color: var(--haze-color-primary);
-    color: var(--haze-color-primary);
-  }
 `
 
 const fmtTokens = (n: number): string => n.toLocaleString('en-US')
@@ -361,25 +317,24 @@ function UsagePanel({
           )}
         </div>
       )}
+      {/* 读不到 ≠ 没有：失败时 data 为 undefined，成本/Token 全部回落成 0，面板会
+          照常渲染「本月 $0.00、无超支」的精确数字——用 ListErrorBox（stacked：
+          标题 + 后端原因 + 重试）与空态区分，且下面统计表整段不渲染。 */}
       {isError ? (
-        <div className={errorState} role="alert" data-testid="usage-load-error">
-          <span className={errorTitle}>用量读取失败</span>
-          <span className={errorDetail}>
-            {(error as { message?: string } | null)?.message ??
+        <ListErrorBox
+          variant="stacked"
+          title="用量读取失败"
+          lines={[
+            (error as { message?: string } | null)?.message ??
               (error instanceof Error ? error.message : null) ??
-              '无法读取用量与成本。'}
-          </span>
-          <span className={errorDetail}>下列统计不可信：读不到不等于 $0，本月可能已经有花费。</span>
-          <button
-            type="button"
-            className={retryBtn}
-            onClick={() => void refetch()}
-            disabled={isLoading}
-            data-testid="usage-retry"
-          >
-            重试
-          </button>
-        </div>
+              '无法读取用量与成本。',
+            '下列统计不可信：读不到不等于 $0，本月可能已经有花费。',
+          ]}
+          testId="usage-load-error"
+          onRetry={() => void refetch()}
+          retrying={isLoading}
+          retryTestId="usage-retry"
+        />
       ) : null}
       {/* 统计表整段以「真的读到数据」为前提：失败时既不渲染表头也不渲染空行，
           免得零行账本本身被读成「这个月一次调用都没发生」。 */}

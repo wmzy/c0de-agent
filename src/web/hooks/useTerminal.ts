@@ -14,6 +14,7 @@ import {
   TERMINAL_HEIGHT_KEY,
 } from '@/hooks/terminal-persistence.js'
 import { type TerminalInfo, terminalAPI, terminalWsUrl } from '@/services/terminal.js'
+import { messageOf } from '@/utils/errors.js'
 import { storageSet } from '@/utils/storage.js'
 
 export interface TerminalSession extends TerminalInfo {
@@ -34,11 +35,6 @@ export interface TerminalSession extends TerminalInfo {
 
 /** 分屏方向。 */
 export type SplitDirection = 'horizontal' | 'vertical'
-
-/** 失败原因取服务端 message（APIError）或 Error.message，与其它失败提示同口径。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
 
 /** 断线重连策略：指数退避，次数耗尽后判死。 */
 const MAX_RETRY = 6

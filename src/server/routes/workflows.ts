@@ -2,35 +2,21 @@ import { existsSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Hono } from 'hono'
-import { streamSSE } from 'hono/streaming'
-import { createAgent } from '../../core/agent.js'
 import { loadConfigScopes, mergeConfig, resolveGlobalConfigDir } from '../../core/config.js'
-import type { LoopDeps } from '../../core/loop.js'
 import { buildRegistryFromConfig } from '../../core/provider-registry.js'
-import { discoverSkills } from '../../core/skills.js'
-import {
-  discoverWorkflows,
-  executeWorkflow,
-  resolveWorkflow,
-  saveWorkflow,
-  workflowSessionTitle,
-} from '../../core/workflows/index.js'
+import { discoverWorkflows, resolveWorkflow, saveWorkflow } from '../../core/workflows/index.js'
 import { reloadRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
-import { createDebugSpawn } from '../../dap/index.js'
 import { getByDirectory, getProject, trustProject } from '../../project/project.js'
 import {
   enrichProjectRiskWithGlobal,
   projectTrustCurrent,
   projectTrustNeeded,
 } from '../../project/trust.js'
-import { createSession, updateSessionLastRun } from '../../session/session.js'
-import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 import { apiError } from '../middleware/error.js'
-import { createInteractivePermissionChecker } from '../permission/interactive.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
-import { childRunBridge, startHeartbeat } from './chat.js'
+import { createRestWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /**
  * 按名字查找运行中的工作流 run：遍历 busy 作用域占位（workflowBusyByScope 的
@@ -366,207 +352,27 @@ function createWorkflowsRoute(ctx: ServerContext) {
       }
     }
 
-    // 并发守卫（同步原子占位）：同一执行作用域（项目/目录）仅允许一个工作流运行。
-    // 此前 tryAcquire(session.id) 作用在刚创建的全新会话 id 上（永真）——双 POST、
-    // REST 与斜杠并行都能并发执行同一项目的工作流。
-    const scopeKey = projectId ? `project:${projectId}` : `dir:${ctx.cwd}`
-    if (ctx.workflowBusyByScope.has(scopeKey)) {
-      return apiError(
-        c,
-        409,
-        'RUN_ACTIVE',
-        '该项目/目录已有进行中的工作流执行，请等待完成或中止后重试',
-      )
-    }
-    ctx.workflowBusyByScope.set(scopeKey, '')
-
-    // 会话绑定 projectId + worktreePath：后续继续该会话时 agent 在正确的
-    // 项目目录执行（resolveAgentCwd 不再回退 serve cwd）。
-    let session: Awaited<ReturnType<typeof createSession>>
-    try {
-      session = await createSession(
-        ctx.db,
-        workflowSessionTitle(name),
-        project?.id ?? undefined,
-        'workflow',
-        undefined,
-        undefined,
-        project?.worktree ?? agentCwd,
-        // 中断恢复指引需要工作流名（重启后会话内无 user 消息可重发）。
-        { workflowName: name },
-        ctx.hookRunner,
-      )
-    } catch (e) {
-      ctx.workflowBusyByScope.delete(scopeKey)
-      throw e
-    }
-    ctx.workflowBusyByScope.set(scopeKey, session.id)
-    const releaseScopeBusy = () => {
-      if (ctx.workflowBusyByScope.get(scopeKey) === session.id) {
-        ctx.workflowBusyByScope.delete(scopeKey)
-      }
-    }
-
-    const permissionTimeoutAction =
-      sessionConfig.permission.timeoutAction === 'deny' ? ('deny' as const) : ('pause' as const)
-
-    // P2-5：runner 工具集传配置解析结果（与 chat 斜杠通道/CLI print 同口径），
-    // 作为子 agent 工具集交集基准——config.tools.enabled 的 fail-closed 语义
-    // 对工作流派发的子 agent 成立。runner 自身不进 agentLoop，无 LLM 影响。
-    const agentConfig = {
-      provider: sessionConfig.defaultProvider,
-      model: sessionConfig.defaultModel,
-      tools: resolveEnabledToolNames(ctx.toolRegistry, sessionConfig).filter(
-        (n) => Boolean(project?.id) || !PROJECT_BOUND_TOOLS.has(n),
-      ),
-      plugins: sessionConfig.plugins.enabled,
-      agentName: 'default',
-    }
-
-    // 并发占位：同步原子占位（与 chat 路由同语义），SSE 回调内 register 填充。
-    if (!ctx.agentManager.tryAcquire(session.id)) {
-      releaseScopeBusy()
-      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的工作流执行')
-    }
-    // 持久化 run 状态：运行中 → completed。服务崩溃时停留在 running，
-    // 重启后 /:id/status 据此识别为 interrupted（与斜杠通道同口径）。
-    const startedAtMs = Date.now()
-    await updateSessionLastRun(ctx.db, session.id, {
-      status: 'running',
-      startedAt: startedAtMs,
-    }).catch(() => {})
-    let handedOff = false
-    try {
-      const response = streamSSE(c, async (stream) => {
-        const stopHeartbeat = startHeartbeat(stream)
-        try {
-          // 交互式权限：与 chat 路由斜杠路径一致（permission_required → 全局
-          // store → /api/tools/confirm），写/执行工具不再静默不可用。
-          const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
-            getMode: () =>
-              ctx.sessionPermissionModes.get(session.id) ??
-              sessionDefaultMode ??
-              ctx.permissionMode,
-            alwaysAllow: () => ctx.sessionAlwaysAllow.get(session.id) ?? [],
-            // 子 agent 的 ask 请求统一归属到工作流会话（树中可见节点），
-            // 打开该会话即可重挂全部挂起弹窗。
-            reportSessionId: session.id,
-            onPermissionRequired: async (req) => {
-              await stream.writeSSE({
-                event: 'permission_required',
-                data: JSON.stringify({ _tag: 'permission_required', ...req }),
-              })
-            },
-            onPermissionTimeout: (req) => {
-              stream
-                .writeSSE({
-                  event: 'permission_timeout',
-                  data: JSON.stringify({
-                    _tag: 'permission_timeout',
-                    ...req,
-                    timeoutAction: permissionTimeoutAction,
-                  }),
-                })
-                .catch(() => {})
-            },
-            onPermissionExpired: (req) => {
-              if (permissionTimeoutAction === 'pause') {
-                // P1 级联暂停：与主 chat 通道同口径，子 agent 一并暂停。
-                ctx.agentManager.pause(session.id, PERMISSION_TIMEOUT_PAUSE_REASON)
-                for (const child of ctx.agentManager.children(session.id)) {
-                  ctx.agentManager.pause(child.sessionId, PERMISSION_TIMEOUT_PAUSE_REASON)
-                }
-              }
-              stream
-                .writeSSE({
-                  event: 'permission_expired',
-                  data: JSON.stringify({
-                    _tag: 'permission_expired',
-                    ...req,
-                    timeoutAction: permissionTimeoutAction,
-                  }),
-                })
-                .catch(() => {})
-            },
-          })
-
-          const deps = {
-            db: ctx.db,
-            llmRegistry: sessionRegistry,
-            toolRegistry: ctx.toolRegistry,
-            urlRegistry: ctx.urlRegistry,
-            hookRunner: ctx.hookRunner,
-            permission: permissionChecker,
-            config: sessionConfig,
-            cwd: agentCwd,
-            agentRegistry: ctx.agentRegistry,
-            registerChildRun: childRunBridge(ctx.agentManager),
-            // 技能发现（system prompt ## Loaded Skills 段数据源）。
-            skills: discoverSkills(agentCwd),
-            // DAP（spec §21）：与主 chat 通道同口径注入真实适配器 spawn。
-            debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
-            // 预算护栏：与 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
-            ...(sessionConfig.usage?.budgetAction === 'pause' ||
-            sessionConfig.usage?.budgetAction === 'abort' ||
-            sessionConfig.usage?.tokenBudgetAction === 'pause' ||
-            sessionConfig.usage?.tokenBudgetAction === 'abort'
-              ? { budgetPause: true }
-              : {}),
-          }
-
-          const parent = await createAgent(session, agentConfig, deps)
-          ctx.agentManager.register({ sessionId: session.id, state: parent, deps })
-          stream.onAbort(() => {
-            ctx.agentManager.abort(session.id)
-          })
-
-          const result = await executeWorkflow({
-            registry,
-            name,
-            entry,
-            args,
-            deps,
-            parent,
-            onProgress: async (message, detail) => {
-              await stream.writeSSE({
-                event: 'progress',
-                data: JSON.stringify({ message, detail }),
-              })
-            },
-          })
-
-          await stream.writeSSE({
-            event: 'result',
-            data: JSON.stringify(result),
-          })
-        } catch (e) {
-          await stream
-            .writeSSE({
-              event: 'error',
-              data: JSON.stringify({
-                _tag: 'error',
-                message: e instanceof Error ? e.message : String(e),
-              }),
-            })
-            .catch(() => {})
-        } finally {
-          stopHeartbeat()
-          ctx.agentManager.unregister(session.id)
-          void updateSessionLastRun(ctx.db, session.id, {
-            status: 'completed',
-            startedAt: startedAtMs,
-          }).catch(() => {})
-          releaseScopeBusy()
-        }
-      })
-      handedOff = true
-      return response
-    } finally {
-      if (!handedOff) {
-        ctx.agentManager.unregister(session.id)
-        releaseScopeBusy()
-      }
-    }
+    // 执行通道与斜杠 /workflow run 共享（workflow-run.ts 单点实现）：并发守卫
+    // （scope/tryAcquire）、会话生命周期、权限 checker（超时级联暂停）、deps 组装
+    // （skills/debugSpawn 注入一次）、abort 级联、预算门禁；线上协议（原生
+    // result/error 事件，无 done 收尾）由 REST emitter 提供。
+    // cwd 口径：REST 按 ?projectId 解析项目 worktree（缺省 serve cwd）；斜杠通道用
+    // 宿主会话 resolveAgentCwd——语义同为「工作流执行目录」，见 workflow-run.ts。
+    return runWorkflowChannel(ctx, {
+      c,
+      registry,
+      name,
+      entry,
+      args,
+      cwd: agentCwd,
+      projectId: project?.id ?? undefined,
+      sessionConfig,
+      sessionDefaultMode,
+      sessionRegistry,
+      tryAcquireBusyMessage: '该会话已有进行中的工作流执行',
+      permissionPauseReason: PERMISSION_TIMEOUT_PAUSE_REASON,
+      createEmitter: createRestWorkflowEmitter,
+    })
   })
 
   // DELETE /:name — 删除（仅非 builtin）。可选 ?projectId=xxx&target=project|user 删除指定层级。

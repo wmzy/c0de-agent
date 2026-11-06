@@ -15,6 +15,7 @@ import { FileReferenceProvider } from '@/contexts/ReferenceContext.js'
 import { useTerminal } from '@/hooks/useTerminal.js'
 import { navigateTo } from '@/navigateTo.js'
 import { projectAPI } from '@/services/project.js'
+import { messageOf } from '@/utils/errors.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 import { ChatView } from '@/views/ChatView.js'
 import { FileBrowser } from '@/views/FileBrowser.js'
@@ -22,11 +23,6 @@ import { FilePreview } from '@/views/FilePreview.js'
 import { Layout } from '@/views/Layout.js'
 import { NotFound } from '@/views/NotFound.js'
 import { SessionList } from '@/views/SessionList.js'
-
-/** 失败原因取服务端 message（APIError）或 Error.message，与本仓其余提示同口径。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
 
 /**
  * 项目会话页：项目 id 来自路由（顶级维度），会话 id 可选。

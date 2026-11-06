@@ -1,6 +1,15 @@
 import type { AgentEvent, LLMCall, LLMSegment, SegmentTrigger } from '@shared/types/agent.js'
 import type { Config } from '@shared/types/config.js'
 import type { Message, Session } from '@shared/types/message.js'
+// 会话条目/视图类型收敛到 shared（此前手抄副本已漂移：缺 compactionId/searchableText，
+// originalEntries 用自造宽松 ArchiveEntry）。删除 ArchiveEntry，改用真实 SessionEntry。
+import type {
+  CompactionArchive,
+  SessionEntry,
+  SessionTreeNode,
+  SessionUsage,
+  ShakeRegionView,
+} from '@shared/types/session-view.js'
 import type { ToolResult } from '@shared/types/tool.js'
 
 export type {
@@ -12,24 +21,6 @@ export type {
   SegmentTrigger,
   Session,
   ToolResult,
-}
-
-/** 会话级用量汇总（列表展示；后端 getTree 从 metadata.segments 聚合）。 */
-type SessionUsage = {
-  inputTokens: number
-  outputTokens: number
-  cacheRead: number
-  cost: number
-  /** 价格未知（cost=null）的调用数：成本按 $0 计入，提示可能低估。 */
-  unknownCostCalls: number
-  calls: number
-}
-
-/** 会话树节点（后端 GET /api/sessions/tree 返回）。 */
-type SessionTreeNode = {
-  session: Session
-  children: SessionTreeNode[]
-  usage: SessionUsage
 }
 
 /** 项目（GET /api/projects 返回，含实时 git 分支与 worktree 状态）。 */
@@ -97,48 +88,6 @@ type CommitResponse =
   | { committed: true; message: string; hash: string; fileCount: number }
   | { needsReview: true; message: string; suggestions: string[] }
 
-/** shake 区域视图（POST /sessions/:id/shake/preview 返回）。 */
-type ShakeRegionView = {
-  id: string
-  kind: 'toolResult' | 'block'
-  messageId: string
-  messageIndex: number
-  partIndex: number
-  tokens: number
-  label: string
-  preview: string
-  placeholder: string
-  isAfterProtectWindow: boolean
-  /** tool_result 的 tool_call_id（仅 toolResult 类别），跨消息合并后匹配渲染块。 */
-  toolCallId?: string
-}
-
-/** 归档条目（原始消息/压缩摘要/转向等，与后端 SessionEntry 同构）。 */
-type ArchiveEntry =
-  | { _tag: 'compaction' | 'squash' | 'branch_summary'; summary: string }
-  | { _tag: 'steering'; content: string }
-  | {
-      role: string
-      content: Array<{
-        _tag: string
-        text?: string
-        tool?: string
-        input?: unknown
-        output?: unknown
-      }>
-    }
-
-/** 会话归档行（GET /sessions/:id/archives 返回）。 */
-type CompactionArchive = {
-  id: string
-  sessionId: string
-  archiveType: 'compaction' | 'squash' | 'shake' | 'clear'
-  originalEntries: ArchiveEntry[]
-  summary: string
-  tokenCount: number
-  createdAt: number
-}
-
 /** 会话导出（GET /sessions/:id/export 返回）。 */
 type SessionExport = {
   version: 1
@@ -150,7 +99,6 @@ type SessionExport = {
 
 export type {
   APIError,
-  ArchiveEntry,
   CodeReference,
   CommitResponse,
   CompactionArchive,
@@ -160,6 +108,7 @@ export type {
   GitStatusCode,
   GitStatusMap,
   Project,
+  SessionEntry,
   SessionExport,
   SessionTreeNode,
   SessionUsage,

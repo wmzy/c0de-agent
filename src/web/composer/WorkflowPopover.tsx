@@ -1,38 +1,6 @@
 import { css } from '@linaria/core'
-import { useRef } from 'react'
-import { PopoverError } from '@/composer/PopoverError.js'
-import { usePopoverScroll } from '@/composer/usePopoverScroll.js'
+import { PopoverList, popoverItem } from '@/composer/PopoverList.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
-
-const popover = css`
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  background: var(--haze-color-bg);
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  box-shadow: var(--haze-shadow-md);
-  max-height: 240px;
-  overflow: auto;
-  z-index: 10;
-`
-
-const item = css`
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  text-align: left;
-  padding: 8px 12px;
-  cursor: pointer;
-  background: none;
-  border: none;
-  color: var(--haze-color-text);
-  &:hover,
-  &.active {
-    background: var(--haze-color-bg-subtle);
-  }
-`
 
 const wfDesc = css`
   font-size: 12px;
@@ -44,13 +12,6 @@ const wfArgs = css`
   color: var(--haze-color-text-secondary);
   opacity: 0.7;
   font-family: var(--haze-font-mono, monospace);
-`
-
-/** 加载/空态提示行（非候选项，不参与键盘索引）。 */
-const hint = css`
-  padding: 8px 12px;
-  font-size: 12px;
-  color: var(--haze-color-text-secondary);
 `
 
 const sourceTag = css`
@@ -102,38 +63,22 @@ type Props = {
 }
 
 function WorkflowPopover(props: Props) {
-  const listRef = useRef<HTMLDivElement>(null)
-  usePopoverScroll(listRef, props.activeIndex, props.workflows.length > 0)
-  // 加载中与「确实没有工作流」此前都渲染成空——浮层消失，用户看不出区别。
-  if (props.workflows.length === 0) {
-    if (props.error) {
-      return (
-        <div className={popover} data-testid="workflow-menu-error">
-          <PopoverError message={`工作流列表加载失败：${props.error}`} onRetry={props.onRetry} />
-        </div>
-      )
-    }
-    if (!props.loading) return null
-    return (
-      <div className={popover} role="status" data-testid="workflow-menu-loading">
-        <div className={hint}>工作流加载中…</div>
-      </div>
-    )
-  }
   return (
-    <div
-      ref={listRef}
-      className={popover}
-      role="listbox"
-      data-testid="workflow-menu"
-      onMouseDown={(e) => e.preventDefault()}
+    <PopoverList
+      itemCount={props.workflows.length}
+      activeIndex={props.activeIndex}
+      loading={props.loading}
+      error={props.error ? `工作流列表加载失败：${props.error}` : null}
+      onRetry={props.onRetry}
+      loadingHint="工作流加载中…"
+      testId="workflow-menu"
     >
       {props.workflows.map((wf, i) => (
         <button
           key={wf.name}
           role="option"
           aria-selected={i === props.activeIndex}
-          className={`${item} ${i === props.activeIndex ? 'active' : ''}`}
+          className={`${popoverItem} ${i === props.activeIndex ? 'active' : ''}`}
           onClick={() => props.onSelect(wf.name)}
           type="button"
         >
@@ -150,7 +95,7 @@ function WorkflowPopover(props: Props) {
           {wf.argsHint && <span className={wfArgs}>参数: {wf.argsHint}</span>}
         </button>
       ))}
-    </div>
+    </PopoverList>
   )
 }
 

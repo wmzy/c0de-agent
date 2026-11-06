@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI } from '@/services/session.js'
-import type { ArchiveEntry, CompactionArchive } from '@/types/index.js'
+import type { CompactionArchive, SessionEntry } from '@/types/index.js'
 
 const list = css`
   display: flex;
@@ -151,19 +151,30 @@ const TYPE_LABEL: Record<CompactionArchive['archiveType'], string> = {
 }
 
 /** 归档条目 → 可读文本（role + 内容摘要；工具调用/结果转 JSON 片段）。 */
-function entryToText(entry: ArchiveEntry): { role: string; text: string } {
-  if ('summary' in entry && '_tag' in entry) {
-    return { role: entry._tag, text: entry.summary }
-  }
+function entryToText(entry: SessionEntry): { role: string; text: string } {
   if ('_tag' in entry) {
-    return { role: 'steering', text: entry.content }
+    // compaction/squash/branch_summary 带 summary；steering 带 content。
+    if ('summary' in entry) return { role: entry._tag, text: entry.summary }
+    return { role: entry._tag, text: entry.content }
   }
-  const text = (entry.content ?? [])
+  // Message：content 是判别联合，按 _tag 收敛到各 part 的可读文本
+  //（tool_result 部分此前被宽松类型的 tool 分支吞掉，只显示 input，从不显示 output）。
+  const text = entry.content
     .map((part) => {
-      if (part.text !== undefined) return part.text
-      if (part.tool !== undefined) return `[${part.tool}] ${JSON.stringify(part.input ?? '')}`
-      if (part.output !== undefined) return JSON.stringify(part.output)
-      return ''
+      switch (part._tag) {
+        case 'text':
+        case 'thinking':
+        case 'steering':
+          return part.text
+        case 'tool_call':
+          return `[${part.tool}] ${JSON.stringify(part.input ?? '')}`
+        case 'tool_result':
+          return JSON.stringify(part.output)
+        case 'image':
+          return ''
+        default:
+          return ''
+      }
     })
     .join('\n')
   return { role: entry.role, text }
@@ -249,7 +260,7 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
             </div>
             {expanded === a.id && (
               <div>
-                {a.originalEntries.map((orig: ArchiveEntry, idx: number) => {
+                {a.originalEntries.map((orig, idx) => {
                   const { role: entryRole, text } = entryToText(orig)
                   return (
                     // biome-ignore lint/suspicious/noArrayIndexKey: 归档条目无稳定 id，a.id+idx 在列表内唯一

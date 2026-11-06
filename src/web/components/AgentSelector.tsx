@@ -3,10 +3,7 @@ import { Button } from 'haze-ui'
 import { SyncedSelect } from '@/components/SyncedControls.js'
 import type { AgentListItem } from '@/services/agent.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
-
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
+import { messageOf } from '@/utils/errors.js'
 
 /** agent 清单读取失败时的整行占位（与 ModelSelector 的 loadErrorNotice 同形）。 */
 const loadErrorNotice = css`

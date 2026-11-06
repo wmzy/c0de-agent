@@ -1,10 +1,10 @@
-import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, ConfirmDialog } from 'haze-ui'
 import { useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { CommaListInput } from '@/components/settings/CommaListInput.js'
+import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import {
   checkRow,
   field,
@@ -14,36 +14,6 @@ import {
   sectionTitle,
 } from '@/components/settings/styles.js'
 import { authAPI } from '@/services/auth.js'
-
-/** 读失败提示框：与 WorkflowsPanel 的同类盒子同形（危险色描边 + 重试）。 */
-const listErrorBox = css`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border: 1px solid var(--haze-color-danger);
-  border-radius: 6px;
-  color: var(--haze-color-danger);
-  font-size: 12px;
-`
-
-const retryBtn = css`
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: inherit;
-  font-size: 11px;
-  padding: 0 6px;
-  min-height: auto;
-  min-width: auto;
-  cursor: pointer;
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-`
 
 interface SecurityPanelProps {
   security: Config['security']
@@ -56,10 +26,10 @@ interface SecurityPanelProps {
 }
 
 /**
- * 设备列表读失败：给出后端原因 + 重试。
- * 与 WorkflowsPanel 的 listErrorBox / UsagePanel 的 errorState 同口径——读不到必须与
- * 「确实没有设备」区分开：这一段的两个结论（列表、撤销入口）此刻都不可用。
+ * 已授权设备管理（P2-16 配套）：列出/撤销设备。撤销唯一设备将退出本页面（token 失效）。
  */
+
+/** 设备列表读失败：给出后端原因 + 重试（ListErrorBox 同口径）。 */
 function DeviceListError({
   error,
   refetching,
@@ -74,23 +44,16 @@ function DeviceListError({
     (error instanceof Error ? error.message : null) ??
     '未知错误'
   return (
-    <div className={listErrorBox} role="alert" data-testid="device-list-error">
-      <span>{`已授权设备读取失败：${message}`}</span>
-      <span>列表与「撤销」入口此刻不可用（看不到不等于没有设备）。</span>
-      <button
-        type="button"
-        className={retryBtn}
-        onClick={() => void onRetry()}
-        disabled={refetching}
-        data-testid="device-list-retry"
-      >
-        重试
-      </button>
-    </div>
+    <ListErrorBox
+      title={`已授权设备读取失败：${message}`}
+      lines={['列表与「撤销」入口此刻不可用（看不到不等于没有设备）。']}
+      testId="device-list-error"
+      onRetry={() => void onRetry()}
+      retrying={refetching}
+      retryTestId="device-list-retry"
+    />
   )
 }
-
-/** 已授权设备管理（P2-16 配套）：列出/撤销设备。撤销唯一设备将退出本页面（token 失效）。 */
 function DevicesSection() {
   const qc = useQueryClient()
   const { data, isLoading, isError, error, isFetching, refetch } = useQuery({

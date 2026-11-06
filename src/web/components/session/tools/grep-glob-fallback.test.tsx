@@ -1,15 +1,15 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
-import { GlobToolView } from '@/components/session/tools/GlobToolView.js'
-import { GrepToolView } from '@/components/session/tools/GrepToolView.js'
+import { PatternToolView } from '@/components/session/tools/PatternToolView.js'
 
-describe('GrepToolView', () => {
+describe('PatternToolView（grep：noun=匹配）', () => {
   afterEach(cleanup)
 
   it('渲染输出', () => {
     render(
-      <GrepToolView
+      <PatternToolView
+        noun="匹配"
         input={{ pattern: 'foo' }}
         output={{ _tag: 'success', output: 'a.ts:1:foo' }}
         status="completed"
@@ -24,7 +24,8 @@ describe('GrepToolView', () => {
   it('命中数被截断时必须说明，而不是把上限当全部', () => {
     const lines = Array.from({ length: 200 }, (_, i) => `f.ts:${i + 1}: foo`).join('\n')
     render(
-      <GrepToolView
+      <PatternToolView
+        noun="匹配"
         input={{ pattern: 'foo' }}
         output={{ _tag: 'success', output: lines, metadata: { count: 200, truncated: true } }}
         status="completed"
@@ -37,7 +38,8 @@ describe('GrepToolView', () => {
 
   it('一个都没匹配到时说明「没有匹配」，而不是渲染成空白', () => {
     render(
-      <GrepToolView
+      <PatternToolView
+        noun="匹配"
         input={{ pattern: 'nope' }}
         output={{ _tag: 'success', output: '', metadata: { count: 0, truncated: false } }}
         status="completed"
@@ -49,7 +51,8 @@ describe('GrepToolView', () => {
 
   it('未截断且有命中时不加旁白', () => {
     render(
-      <GrepToolView
+      <PatternToolView
+        noun="匹配"
         input={{ pattern: 'foo' }}
         output={{ _tag: 'success', output: 'a.ts:1:foo', metadata: { count: 1, truncated: false } }}
         status="completed"
@@ -63,7 +66,8 @@ describe('GrepToolView', () => {
   // 旁白此前拼出「已截断：仅显示前  条匹配」的双空格残句。count 无效时不拼数目段。
   it('截断但 count 缺失时不渲染双空格残句', () => {
     render(
-      <GrepToolView
+      <PatternToolView
+        noun="匹配"
         input={{ pattern: 'foo' }}
         output={{ _tag: 'success', output: 'a.ts:1:foo', metadata: { truncated: true } }}
         status="completed"
@@ -76,12 +80,13 @@ describe('GrepToolView', () => {
   })
 })
 
-describe('GlobToolView', () => {
+describe('PatternToolView（glob：noun=文件）', () => {
   afterEach(cleanup)
 
   it('渲染文件列表', () => {
     render(
-      <GlobToolView
+      <PatternToolView
+        noun="文件"
         input={{ pattern: '*.ts' }}
         output={{ _tag: 'success', output: 'a.ts\nb.ts' }}
         status="completed"
@@ -92,7 +97,8 @@ describe('GlobToolView', () => {
 
   it('0 个文件匹配时说明「没有匹配」，而不是渲染成空白', () => {
     render(
-      <GlobToolView
+      <PatternToolView
+        noun="文件"
         input={{ pattern: '*.rs' }}
         output={{ _tag: 'success', output: '', metadata: { count: 0 } }}
         status="completed"
@@ -105,7 +111,8 @@ describe('GlobToolView', () => {
   // 同 grep：count 非数字（脏 metadata）时不拼「前 N 条」段，不说数目也不留空占位。
   it('截断但 count 非数字时不渲染双空格残句', () => {
     render(
-      <GlobToolView
+      <PatternToolView
+        noun="文件"
         input={{ pattern: '*.ts' }}
         output={{
           _tag: 'success',

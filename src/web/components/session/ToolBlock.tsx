@@ -4,9 +4,8 @@ import { FilePathLink } from '@/components/FilePathLink.js'
 import { BashToolView } from '@/components/session/tools/BashToolView.js'
 import { EditToolView } from '@/components/session/tools/EditToolView.js'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
-import { GlobToolView } from '@/components/session/tools/GlobToolView.js'
-import { GrepToolView } from '@/components/session/tools/GrepToolView.js'
 import { KanbanToolView } from '@/components/session/tools/KanbanToolView.js'
+import { PatternToolView } from '@/components/session/tools/PatternToolView.js'
 import { ReadToolView } from '@/components/session/tools/ReadToolView.js'
 import { TaskToolView } from '@/components/session/tools/TaskToolView.js'
 import { TodoToolView } from '@/components/session/tools/TodoToolView.js'
@@ -215,9 +214,23 @@ function renderTool(
     case 'bash':
       return <BashToolView input={(input ?? {}) as never} output={output} status={status} />
     case 'grep':
-      return <GrepToolView input={(input ?? {}) as never} output={output} status={status} />
+      return (
+        <PatternToolView
+          input={(input ?? {}) as never}
+          output={output}
+          status={status}
+          noun="匹配"
+        />
+      )
     case 'glob':
-      return <GlobToolView input={(input ?? {}) as never} output={output} status={status} />
+      return (
+        <PatternToolView
+          input={(input ?? {}) as never}
+          output={output}
+          status={status}
+          noun="文件"
+        />
+      )
     case 'task':
       return <TaskToolView input={input} output={output} status={status} />
     case 'todo':

@@ -7,17 +7,14 @@ import { useRouter } from '@native-router/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AgentSelector } from '@/components/AgentSelector.js'
 import { ArchivePanel } from '@/components/ArchivePanel.js'
 import { Dialog } from '@/components/Dialog.js'
-import { ModelSelector } from '@/components/ModelSelector.js'
 import { SegmentBreakDialog } from '@/components/SegmentBreakDialog.js'
 import { SessionSummary } from '@/components/SessionSummary.js'
 import { ShakeProvider } from '@/components/session/ShakeContext.js'
 import { mergeSessionMessages } from '@/components/session/utils/normalizeParts.js'
 import { buildTimeline } from '@/components/session/utils/timeline.js'
 import { TodoPanel } from '@/components/TodoPanel.js'
-import { ToolToggle } from '@/components/ToolToggle.js'
 import { TrustRequiredDialog } from '@/components/TrustRequiredDialog.js'
 import { clearSessionDraft } from '@/composer/draft.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
@@ -31,36 +28,11 @@ import { useMessages } from '@/hooks/useSession.js'
 import { useShake } from '@/hooks/useShake.js'
 import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
-import { agentAPI } from '@/services/agent.js'
 import { sessionAPI } from '@/services/session.js'
+import { interruptBanner } from '@/views/_shared/bannerStyles.js'
+import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
 import { ChatHistoryError, ChatSkeleton, ChatWelcome, SetupBanner } from '@/views/ChatView.js'
-
-const interruptBanner = css`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--haze-color-border);
-  background: var(--haze-color-bg-subtle);
-  font-size: 13px;
-  color: var(--haze-color-text-secondary);
-
-  & > button {
-    border: 1px solid var(--haze-color-border);
-    border-radius: 6px;
-    padding: 3px 12px;
-    cursor: pointer;
-    font-size: 12px;
-    background: var(--haze-color-bg);
-    color: var(--haze-color-text);
-
-    &:first-of-type {
-      border-color: var(--haze-color-primary);
-      color: var(--haze-color-primary);
-    }
-  }
-`
 
 const bannerError = css`
   color: var(--haze-color-danger);
@@ -288,16 +260,8 @@ export function ChatSession({
       setOrphanNotice(true)
     }
   }, [sessionMeta, projectId, sessionId, router])
-  const {
-    data: agentsData,
-    isError: agentsFailed,
-    error: agentsError,
-    refetch: refetchAgents,
-  } = useQuery({
-    queryKey: ['agents'],
-    queryFn: () => agentAPI.listAgents(),
-    staleTime: 60_000,
-  })
+  // agent 清单：与草稿页（DraftSession）共享 useAgents/useComposerBar（_shared/ComposerBar）。
+  const { data: agentsData } = useAgents()
   // 草稿页 pending 首条消息仅消费一次（ref 防 StrictMode 双调用）
   const consumed = useRef(false)
   // 首条发送失败时暂存载荷，供 cleanupEmptySessionOnFailure 带去草稿页还原。
@@ -655,6 +619,17 @@ export function ChatSession({
   // 视觉能力按「项目作用域 + 选中模型」查询（provider/model capabilities）：
   // 不支持视觉的模型隐藏图片入口，避免贴图后 provider 直接 400（P3 一致性）。
   const supportsVision = useSupportsVision(projectId, selection)
+  // 输入区三件套（agent/model 切换 + 工具开关）：运行中禁用工具开关（isStreaming）。
+  const composerBar = useComposerBar({
+    projectId,
+    agentName,
+    onAgentNameChange: setAgentName,
+    selection,
+    onSelectionChange: setSelection,
+    enabledTools,
+    onEnabledToolsChange: setEnabledTools,
+    disabled: chat.isStreaming,
+  })
 
   // 失败原因取服务端 message（APIError）或 Error.message，与侧栏会话树失败提示同口径。
   const historyErrorMessage =
@@ -711,26 +686,8 @@ export function ChatSession({
           )
         }
         terminalToggle={terminalToggle}
-        modelBar={
-          <>
-            <AgentSelector
-              value={agentName}
-              onChange={setAgentName}
-              agents={agentsData?.agents ?? []}
-              error={agentsFailed ? agentsError : null}
-              onRetry={() => void refetchAgents()}
-            />
-            <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
-          </>
-        }
-        toolToggle={
-          <ToolToggle
-            enabled={enabledTools}
-            onChange={setEnabledTools}
-            disabled={chat.isStreaming}
-            projectId={projectId}
-          />
-        }
+        modelBar={composerBar.modelBar}
+        toolToggle={composerBar.toolToggle}
         bottomPanel={<TodoPanel sessionId={sessionId} projectId={projectId} />}
         topPanel={
           <>

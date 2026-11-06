@@ -12,12 +12,18 @@ interface RepoBaseline {
   untracked: string[]
 }
 
+/** execFileSync 的 stdout maxBuffer 默认 1MB，大仓库的 diff/ls-files 输出可能
+ * 超出——超限即抛 ERR_CHILD_PROCESS_STDIO_MAXBUFFER，快照/恢复直接失败。
+ * 与 src/project/resolve.ts 的 GIT_MAX_BUFFER 同口径，统一 10MB。 */
+const GIT_MAX_BUFFER = 10 * 1024 * 1024 // 10MB
+
 /** 以数组参数执行 git（不经 shell，避免消息含特殊字符被解析）。返回 stdout。 */
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
+    maxBuffer: GIT_MAX_BUFFER,
   }).trim()
 }
 
@@ -28,6 +34,7 @@ function gitWithInput(cwd: string, args: string[], input: string): string {
     encoding: 'utf-8',
     input,
     stdio: ['pipe', 'pipe', 'pipe'],
+    maxBuffer: GIT_MAX_BUFFER,
   }).trim()
 }
 

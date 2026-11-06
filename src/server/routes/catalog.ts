@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Hono } from 'hono'
+import type { CatalogModel, CatalogProvider } from '../../shared/types/catalog.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -13,33 +14,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000
 /** 内存缓存。 */
 let memCache: { data: CatalogData; fetchedAt: number } | null = null
 
-/** models.dev Provider 结构（仅取需要的字段）。 */
-type CatalogProvider = {
-  id: string
-  name: string
-  npm?: string
-  api?: string
-  env: string[]
-  doc?: string
-  modelCount: number
-}
-
-/** models.dev Model 结构（精简）。 */
-type CatalogModel = {
-  id: string
-  name: string
-  family?: string
-  reasoning: boolean
-  toolCall: boolean
-  attachment: boolean
-  temperature: boolean
-  context: number
-  output: number
-  costInput?: number
-  costOutput?: number
-}
-
-/** 完整目录数据。 */
+/** models.dev 完整目录数据的内部结构（仅取需要的字段，键名为 models.dev 原始
+ *  snake_case；前端列表项形状见 shared/types/catalog.ts）。 */
 type CatalogData = Record<string, CatalogProviderInternal>
 
 type CatalogProviderInternal = {

@@ -20,6 +20,7 @@ import { fileAPI } from '@/services/file.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { projectAPI } from '@/services/project.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const indicator = css`
@@ -263,11 +264,6 @@ const branchError = css`
   /* git 的失败原因是长句（"Your local changes would be overwritten…"），窄栏下断行 */
   overflow-wrap: anywhere;
 `
-
-/** 失败原因取服务端 message（APIError）或 Error.message，与设置页/回收站同口径。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
 
 /**
  * 项目指示器：项目名 + git 分支均可点击下拉切换，各带"添加"按钮。

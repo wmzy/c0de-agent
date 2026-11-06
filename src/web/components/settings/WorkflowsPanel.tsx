@@ -9,6 +9,7 @@ import { useRef, useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput, SyncedSelect, SyncedTextarea } from '@/components/SyncedControls.js'
+import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 import { workflowsAPI } from '@/services/workflows.js'
@@ -114,39 +115,6 @@ const errorText = css`
   color: var(--haze-color-danger);
   font-size: 12px;
   margin-top: 8px;
-`
-
-/**
- * 列表读取失败块：与 UsagePanel 同口径（原因 + 重试）。读不到时用它替代整段
- * 列表与空态，避免把一次 500 说成「你一个工作流都没有」。
- */
-const listErrorBox = css`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border: 1px solid var(--haze-color-danger);
-  border-radius: 6px;
-  color: var(--haze-color-danger);
-  font-size: 12px;
-`
-
-const retryBtn = css`
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: inherit;
-  font-size: 11px;
-  padding: 0 6px;
-  min-height: auto;
-  min-width: auto;
-  cursor: pointer;
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
 `
 
 const WORKFLOW_NAME_RE = /^[a-z0-9-]+$/
@@ -414,18 +382,13 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
           同一次读取里的 trustRequired 提示也被一并吞掉。读不到就是读不到，必须
           与「确实为空」区分开（与 UsagePanel 同口径）。 */}
       {listError ? (
-        <div className={listErrorBox} role="alert" data-testid="workflow-list-error">
-          <span>{`工作流列表读取失败：${errMessage(listErr)}`}</span>
-          <button
-            type="button"
-            className={retryBtn}
-            onClick={() => void refetchList()}
-            disabled={listLoading}
-            data-testid="workflow-list-retry"
-          >
-            重试
-          </button>
-        </div>
+        <ListErrorBox
+          title={`工作流列表读取失败：${errMessage(listErr)}`}
+          testId="workflow-list-error"
+          onRetry={() => void refetchList()}
+          retrying={listLoading}
+          retryTestId="workflow-list-retry"
+        />
       ) : workflows.length === 0 ? (
         <div className={hint}>
           暂无工作流。新建一个工作流脚本后可在聊天中用 /workflow run 执行。

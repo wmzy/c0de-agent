@@ -15,9 +15,7 @@ import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import {
   createWorkflowRegistry,
   discoverWorkflows,
-  executeWorkflow,
   resolveWorkflow,
-  workflowSessionTitle,
 } from '../../core/workflows/index.js'
 import { createDebugSpawn } from '../../dap/index.js'
 import { resolveRoute } from '../../llm/registry.js'
@@ -26,7 +24,6 @@ import { enrichProjectRiskWithGlobal, projectTrustNeeded } from '../../project/t
 import { insertEntry } from '../../session/message.js'
 import {
   consumeBudgetPauseMarker,
-  createSession,
   getLLMSegments,
   getSession,
   markUnfinishedTurn,
@@ -44,6 +41,7 @@ import { createInteractivePermissionChecker } from '../permission/interactive.js
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
+import { createSlashWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /** 按 session.projectId / worktreePath 解析 agent 工作目录：
  *  - 有 projectId → 项目 worktree（缺失/目录失效时抛错，由上层转 409）。
@@ -382,225 +380,30 @@ function createChatRoute(ctx: ServerContext): Hono {
         })
       }
 
-      // 并发守卫（同步原子占位）：执行作用域 = 项目或目录。此前
-      // tryAcquire(workflowSession.id) 作用在刚创建的全新会话 id 上（永真），且主会话
-      // 在整段工作流期间不注册任何 run——双发 /workflow run、REST 与斜杠并行都能
-      // 并发执行。现在同一作用域仅允许一个工作流运行。
-      const scopeKey = session.projectId ? `project:${session.projectId}` : `dir:${cwd}`
-      if (ctx.workflowBusyByScope.has(scopeKey)) {
-        return apiError(
-          c,
-          409,
-          'RUN_ACTIVE',
-          '该项目/目录已有进行中的工作流执行，请等待完成或中止后重试',
-        )
-      }
-      ctx.workflowBusyByScope.set(scopeKey, '')
-
-      // 工作流运行会话：绑定当前会话项目 + worktree（与 REST 路由同口径），
-      // 标题带时间戳区分多次运行。
-      let workflowSession: Awaited<ReturnType<typeof createSession>>
-      try {
-        workflowSession = await createSession(
-          ctx.db,
-          workflowSessionTitle(name),
-          session.projectId ?? undefined,
-          'workflow',
-          undefined,
-          undefined,
-          cwd,
-          // 中断恢复指引需要工作流名（重启后会话内无 user 消息可重发）。
-          { workflowName: name },
-          ctx.hookRunner,
-        )
-      } catch (e) {
-        ctx.workflowBusyByScope.delete(scopeKey)
-        throw e
-      }
-      ctx.workflowBusyByScope.set(scopeKey, workflowSession.id)
-      // 发起会话在工作流运行期间视为占用：普通消息 409；控制端点据此路由到工作流 run。
-      ctx.workflowBusyBySession.set(sessionId, workflowSession.id)
-      const releaseWorkflowBusy = () => {
-        if (ctx.workflowBusyByScope.get(scopeKey) === workflowSession.id) {
-          ctx.workflowBusyByScope.delete(scopeKey)
-        }
-        if (ctx.workflowBusyBySession.get(sessionId) === workflowSession.id) {
-          ctx.workflowBusyBySession.delete(sessionId)
-        }
-      }
-      if (!ctx.agentManager.tryAcquire(workflowSession.id)) {
-        releaseWorkflowBusy()
-        return apiError(c, 409, 'RUN_ACTIVE', '该工作流会话已有进行中的执行')
-      }
-      // 持久化 run 状态：运行中 → completed。服务崩溃时停留在 running，
-      // 重启后 /:id/status 据此识别为 interrupted（此前工作流 run 不写 lastRun）。
-      const startedAtMs = Date.now()
-      await updateSessionLastRun(ctx.db, workflowSession.id, {
-        status: 'running',
-        startedAt: startedAtMs,
-      }).catch(() => {})
-      let handedOff = false
-      try {
-        const response = streamSSE(c, async (stream) => {
-          const stopHeartbeat = startHeartbeat(stream)
-          try {
-            const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
-              getMode: () =>
-                ctx.sessionPermissionModes.get(sessionId) ??
-                sessionDefaultMode ??
-                ctx.permissionMode,
-              alwaysAllow: () => ctx.sessionAlwaysAllow.get(sessionId) ?? [],
-              // 子 agent 的 ask 请求统一归属到用户所在的会话（而非各自子会话），
-              // 刷新/切换页面后按当前会话即可重挂挂起弹窗。
-              reportSessionId: sessionId,
-              onPermissionRequired: async (req) => {
-                await stream.writeSSE({
-                  event: 'permission_required',
-                  data: JSON.stringify({ _tag: 'permission_required', ...req }),
-                })
-              },
-              onPermissionTimeout: (req) => {
-                stream
-                  .writeSSE({
-                    event: 'permission_timeout',
-                    data: JSON.stringify({
-                      _tag: 'permission_timeout',
-                      ...req,
-                      timeoutAction: permissionTimeoutAction,
-                    }),
-                  })
-                  .catch(() => {})
-              },
-              onPermissionExpired: (req) => {
-                if (permissionTimeoutAction === 'pause') {
-                  // P1 级联暂停：与主 chat 通道 pauseSessionRun 同口径——
-                  // 仅暂停父 run 会让子 agent 在用户缺席时继续执行。
-                  ctx.agentManager.pause(workflowSession.id, PERMISSION_TIMEOUT_PAUSE_REASON)
-                  for (const child of ctx.agentManager.children(workflowSession.id)) {
-                    ctx.agentManager.pause(child.sessionId, PERMISSION_TIMEOUT_PAUSE_REASON)
-                  }
-                }
-                stream
-                  .writeSSE({
-                    event: 'permission_expired',
-                    data: JSON.stringify({
-                      _tag: 'permission_expired',
-                      ...req,
-                      timeoutAction: permissionTimeoutAction,
-                    }),
-                  })
-                  .catch(() => {})
-              },
-            })
-            const deps = {
-              db: ctx.db,
-              llmRegistry: sessionRegistry,
-              toolRegistry: ctx.toolRegistry,
-              urlRegistry: ctx.urlRegistry,
-              hookRunner: ctx.hookRunner,
-              permission: permissionChecker,
-              config: sessionConfig,
-              cwd,
-              agentRegistry: ctx.agentRegistry,
-              registerChildRun: childRunBridge(ctx.agentManager),
-              // 预算护栏：与主 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
-              ...(sessionConfig.usage?.budgetAction === 'pause' ||
-              sessionConfig.usage?.budgetAction === 'abort' ||
-              sessionConfig.usage?.tokenBudgetAction === 'pause' ||
-              sessionConfig.usage?.tokenBudgetAction === 'abort'
-                ? { budgetPause: true }
-                : {}),
-            }
-            // P2-5：runner 的工具集不再恒 []——传配置解析结果作为子 agent
-            // 工具集的交集基准（与主 chat/CLI print 同口径）。config.tools.enabled
-            // 的 fail-closed 语义对工作流派发的子 agent 成立（全禁 → 交集为空）。
-            // runner 自身不进 agentLoop，工具名单不产生任何 LLM 调用影响。
-            const agentConfig: AgentConfig = {
-              provider: sessionConfig.defaultProvider,
-              model: sessionConfig.defaultModel,
-              tools: resolveEnabledToolNames(ctx.toolRegistry, sessionConfig).filter(
-                (n) => Boolean(session.projectId) || !PROJECT_BOUND_TOOLS.has(n),
-              ),
-              plugins: sessionConfig.plugins.enabled,
-              agentName: 'default',
-            }
-            const parent = await createAgent(workflowSession, agentConfig, deps)
-            ctx.agentManager.register({ sessionId: workflowSession.id, state: parent, deps })
-            stream.onAbort(() => {
-              ctx.agentManager.abort(workflowSession.id)
-            })
-
-            const result = await executeWorkflow({
-              registry,
-              name,
-              entry,
-              args: wfArgs,
-              deps,
-              parent,
-              onProgress: async (progressMessage, detail) => {
-                await stream.writeSSE({
-                  event: 'progress',
-                  data: JSON.stringify({ _tag: 'progress', message: progressMessage, detail }),
-                })
-              },
-            })
-
-            if (result._tag === 'error') {
-              await stream.writeSSE({
-                event: 'error',
-                data: JSON.stringify({
-                  _tag: 'error',
-                  error: { _tag: 'unexpected', message: result.message },
-                }),
-              })
-            } else {
-              // executeWorkflow 只产出 text/error（success/compact 是斜杠命令泛型变体，不会到达）
-              const text =
-                result._tag === 'text'
-                  ? result.text
-                  : result._tag === 'success'
-                    ? result.message
-                    : ''
-              await stream.writeSSE({
-                event: 'text_delta',
-                data: JSON.stringify({ _tag: 'text_delta', text }),
-              })
-            }
-            await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
-          } catch (e) {
-            await stream
-              .writeSSE({
-                event: 'error',
-                data: JSON.stringify({
-                  _tag: 'error',
-                  error: {
-                    _tag: 'unexpected',
-                    message: e instanceof Error ? e.message : String(e),
-                  },
-                }),
-              })
-              .catch(() => {})
-            await stream
-              .writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
-              .catch(() => {})
-          } finally {
-            stopHeartbeat()
-            ctx.agentManager.unregister(workflowSession.id)
-            void updateSessionLastRun(ctx.db, workflowSession.id, {
-              status: 'completed',
-              startedAt: startedAtMs,
-            }).catch(() => {})
-            releaseWorkflowBusy()
-          }
-        })
-        handedOff = true
-        return response
-      } finally {
-        if (!handedOff) {
-          ctx.agentManager.unregister(workflowSession.id)
-          releaseWorkflowBusy()
-        }
-      }
+      // 执行通道与 REST POST /api/workflows/:name/run 共享（workflow-run.ts 单点
+      // 实现）：并发守卫（scope/tryAcquire）、会话生命周期、权限 checker（超时
+      // 级联暂停）、deps 组装（skills/debugSpawn 注入一次）、abort 级联、预算
+      // 门禁；线上协议（`_tag` 形状 + done 收尾）由斜杠 emitter 提供。
+      return runWorkflowChannel(ctx, {
+        c,
+        registry,
+        name,
+        entry,
+        args: wfArgs,
+        // cwd 口径：宿主会话经 resolveAgentCwd 解析（项目 worktree / 会话
+        // worktreePath / serve cwd）——REST 通道按 ?projectId → project.worktree
+        // 解析。语义同为「工作流执行目录」，仅来源不同，见 workflow-run.ts。
+        cwd,
+        projectId: session.projectId ?? undefined,
+        sessionConfig,
+        sessionDefaultMode,
+        sessionRegistry,
+        // 发起会话：工作流运行期间占用标记 + 权限归属/模式查询键（REST 无发起会话）。
+        hostSessionId: sessionId,
+        tryAcquireBusyMessage: '该工作流会话已有进行中的执行',
+        permissionPauseReason: PERMISSION_TIMEOUT_PAUSE_REASON,
+        createEmitter: createSlashWorkflowEmitter,
+      })
     }
 
     // P1-1：会话项目注册表——项目级配置含 providers 时，按该项目合并配置

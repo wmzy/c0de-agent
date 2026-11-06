@@ -6,12 +6,8 @@ import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providerAPI } from '@/services/provider.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
-
-/** 失败原因取服务端 message（APIError）或 Error.message，与设置页其余面板同口径。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
 
 const field = css`
   display: flex;

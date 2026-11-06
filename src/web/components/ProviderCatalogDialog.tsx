@@ -7,11 +7,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type { CatalogModel, CatalogProvider } from '@/services/catalog.js'
 import { catalogAPI } from '@/services/catalog.js'
-
-/** 失败原因取服务端 message（APIError）或 Error.message，与设置页其余面板同口径。 */
-function messageOf(e: unknown): string {
-  return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
-}
+import { messageOf } from '@/utils/errors.js'
 
 const searchBar = css`
   width: 100%;

@@ -1,11 +1,8 @@
 import { css } from '@linaria/core'
 import { TypedLink, useRouter } from '@native-router/react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { AgentSelector } from '@/components/AgentSelector.js'
 import { Logo } from '@/components/Logo.js'
-import { ModelSelector } from '@/components/ModelSelector.js'
-import { ToolToggle } from '@/components/ToolToggle.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { useFileSelection } from '@/contexts/FileSelectionContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
@@ -15,8 +12,8 @@ import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
 import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
-import { agentAPI } from '@/services/agent.js'
 import { sessionAPI } from '@/services/session.js'
+import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
 import { ChatSession } from '@/views/ChatSession.js'
 
@@ -323,17 +320,20 @@ function DraftSession({
   // 草稿页此前直接写死 supportsVision（恒 true），非视觉模型的图片入口在
   // 首条消息就敞着——与 ChatSession 同一条能力查询，这里补齐。
   const supportsVision = useSupportsVision(projectId, selection)
-  const {
-    data: agentsData,
-    isError: agentsFailed,
-    error: agentsError,
-    refetch: refetchAgents,
-  } = useQuery({
-    queryKey: ['agents'],
-    queryFn: () => agentAPI.listAgents(),
-    staleTime: 60_000,
-  })
+  // agent 清单：与会话页（ChatSession）共享 useAgents/useComposerBar（_shared/ComposerBar）。
+  const { data: agentsData } = useAgents()
   const [creating, setCreating] = useState(false)
+  // 输入区三件套（agent/model 切换 + 工具开关）：首条消息建会话在途时禁用工具开关。
+  const composerBar = useComposerBar({
+    projectId,
+    agentName,
+    onAgentNameChange: setAgentName,
+    selection,
+    onSelectionChange: setSelection,
+    enabledTools,
+    onEnabledToolsChange: setEnabledTools,
+    disabled: creating,
+  })
   const [error, setError] = useState<string | null>(null)
   // 首条消息失败后 ChatSession 会清掉空会话并导航回本页；失败原因与刚打的消息
   // 都随组件卸载消失，必须一起带回来，否则用户看到的只是一个干净的欢迎页。
@@ -419,26 +419,8 @@ function DraftSession({
       onConfirm={() => {}}
       emptyState={<ChatWelcome />}
       terminalToggle={terminalToggle}
-      modelBar={
-        <>
-          <AgentSelector
-            value={agentName}
-            onChange={setAgentName}
-            agents={agentsData?.agents ?? []}
-            error={agentsFailed ? agentsError : null}
-            onRetry={() => void refetchAgents()}
-          />
-          <ModelSelector value={selection} onChange={setSelection} projectId={projectId} />
-        </>
-      }
-      toolToggle={
-        <ToolToggle
-          enabled={enabledTools}
-          onChange={setEnabledTools}
-          disabled={creating}
-          projectId={projectId}
-        />
-      }
+      modelBar={composerBar.modelBar}
+      toolToggle={composerBar.toolToggle}
       topPanel={<SetupBanner projectId={projectId} />}
       supportsVision={supportsVision}
     />

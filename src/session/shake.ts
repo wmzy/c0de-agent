@@ -1,7 +1,11 @@
 import type { Message, MessageContent } from '../shared/types/message.js'
+// ShakeRegionView 已上移 shared/types/session-view.js（web 手抄副本漂移后收敛单源）。
+import type { ShakeRegionView } from '../shared/types/session-view.js'
 import type { ToolResult } from '../shared/types/tool.js'
 import { headChars } from '../shared/utils/string.js'
 import { estimateMessageTokens, estimateTokens } from './token.js'
+
+export type { ShakeRegionView }
 
 /** Rough token cost of a placeholder line; used only for the savings gate. */
 const PLACEHOLDER_TOKEN_ESTIMATE = 16
@@ -54,22 +58,6 @@ export type ShakeRegion =
       originalText: string
       label: string
     }
-
-/** API 返回给前端的区域视图。 */
-export type ShakeRegionView = {
-  id: string
-  kind: 'toolResult' | 'block'
-  messageId: string
-  messageIndex: number
-  partIndex: number
-  tokens: number
-  label: string
-  preview: string
-  placeholder: string
-  isAfterProtectWindow: boolean
-  /** tool_result 的 tool_call_id（仅 toolResult 类别），前端跨消息合并后匹配渲染块。 */
-  toolCallId?: string
-}
 
 /**
  * 定位 fenced 代码块和顶层 XML 元素 span。返回字符偏移 [start, end) 数组，
