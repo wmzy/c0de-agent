@@ -41,6 +41,30 @@ type RegistryPopulateOptions = {
   projectTrusted?: boolean
 }
 
+/** 三级发现填充循环（builtin → global → project-if-trusted），后注册覆盖同名。
+ *  createAndPopulateRegistry 与 reloadRegistry 共用；两个入口的差异仅在
+ *  「新建 registry」还是「清空既有 registry」。 */
+async function populateRegistry(
+  registry: WorkflowRegistry,
+  projectDir: string,
+  opts: RegistryPopulateOptions = {},
+): Promise<void> {
+  // 1. 内置（由源码字符串动态导入生成，show === run）
+  for (const wf of await createBuiltinWorkflows()) {
+    registry.register(wf)
+  }
+  // 2. 全局级（~/.c0de/workflows）
+  for (const wf of await discoverGlobalWorkflows()) {
+    registry.register(wf)
+  }
+  // 3. 项目级（.c0de/workflows）——未信任项目绝不 import（任意代码执行面）
+  if (opts.projectTrusted) {
+    for (const wf of await discoverWorkflows(projectDir)) {
+      registry.register(wf)
+    }
+  }
+}
+
 /**
  * 创建并填充工作流注册表（三级发现，后注册覆盖同名）：
  *  1. 注册内置工作流（builtin）
@@ -53,22 +77,7 @@ async function createAndPopulateRegistry(
   opts: RegistryPopulateOptions = {},
 ): Promise<WorkflowRegistry> {
   const registry = createWorkflowRegistry()
-  // 1. 内置（由源码字符串动态导入生成，show === run）
-  for (const wf of await createBuiltinWorkflows()) {
-    registry.register(wf)
-  }
-  // 2. 全局级（~/.c0de/workflows）
-  const globalWorkflows = await discoverGlobalWorkflows()
-  for (const wf of globalWorkflows) {
-    registry.register(wf)
-  }
-  // 3. 项目级（.c0de/workflows）——未信任项目绝不 import（任意代码执行面）
-  if (opts.projectTrusted) {
-    const projectWorkflows = await discoverWorkflows(projectDir)
-    for (const wf of projectWorkflows) {
-      registry.register(wf)
-    }
-  }
+  await populateRegistry(registry, projectDir, opts)
   return registry
 }
 
@@ -83,17 +92,7 @@ async function reloadRegistry(
   opts: RegistryPopulateOptions = {},
 ): Promise<void> {
   registry.clear()
-  for (const wf of await createBuiltinWorkflows()) {
-    registry.register(wf)
-  }
-  for (const wf of await discoverGlobalWorkflows()) {
-    registry.register(wf)
-  }
-  if (opts.projectTrusted) {
-    for (const wf of await discoverWorkflows(projectDir)) {
-      registry.register(wf)
-    }
-  }
+  await populateRegistry(registry, projectDir, opts)
 }
 
 export type { WorkflowRegistry }

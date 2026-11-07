@@ -14,9 +14,14 @@
 //   DELETE /api/auth/devices/:id     撤销设备（立即生效）
 
 import { type Context, Hono } from 'hono'
+import type { AuthManager } from '../auth-manager.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+
+/** 子 app 变量注入：中间件校验后把非空 authManager 放进 context，
+ *  handler 经 c.get 取得——免去每个 handler 重复的判空守卫。 */
+type AuthEnv = { Variables: { authManager: AuthManager } }
 
 /** 尽力而为的请求来源：x-forwarded-for 首跳（反代场景），否则视为本地回环。仅展示/软限流。 */
 function requestSource(c: Context): string {
@@ -28,14 +33,23 @@ function requestSource(c: Context): string {
   return 'local'
 }
 
-function createAuthRoute(ctx: ServerContext): Hono {
-  const app = new Hono()
+function createAuthRoute(ctx: ServerContext): Hono<AuthEnv> {
+  const app = new Hono<AuthEnv>()
 
-  // 首设备注册：凭 bootstrap token（URL ?token=）换发设备 token，bootstrap 随即轮换失效。
-  app.post('/register', async (c) => {
+  // 全组守卫：authManager 缺失（authEnabled=false / 静态 token 模式）时
+  // 统一 400 AUTH_DISABLED。挂在子 app 上、注册于所有路由之前——只作用于
+  // 本路由组，不影响同一父 app 挂载的其他路由。
+  app.use('*', async (c, next) => {
     if (!ctx.authManager) {
       return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
     }
+    c.set('authManager', ctx.authManager)
+    await next()
+  })
+
+  // 首设备注册：凭 bootstrap token（URL ?token=）换发设备 token，bootstrap 随即轮换失效。
+  app.post('/register', async (c) => {
+    const authManager = c.get('authManager')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const body = parsed.body as { token?: unknown; deviceName?: unknown }
@@ -44,7 +58,7 @@ function createAuthRoute(ctx: ServerContext): Hono {
     }
     const deviceName =
       typeof body.deviceName === 'string' && body.deviceName ? body.deviceName : '设备'
-    const result = await ctx.authManager.registerFirstDevice(body.token, deviceName)
+    const result = await authManager.registerFirstDevice(body.token, deviceName)
     if (!result.ok) {
       // 区分失败原因给正确的恢复指引：链接过期 → 重启 serve 换新链接；
       // 已有设备 → 走配对审批；两者补救动作完全不同，不得混用同一文案。
@@ -76,13 +90,11 @@ function createAuthRoute(ctx: ServerContext): Hono {
 
   // 新设备发起配对请求（公开）。
   app.post('/pairing/request', async (c) => {
-    if (!ctx.authManager) {
-      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
-    }
+    const authManager = c.get('authManager')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const deviceName = parsed.body.deviceName
-    const result = ctx.authManager.requestPairing(
+    const result = authManager.requestPairing(
       typeof deviceName === 'string' && deviceName ? deviceName : '新设备',
       requestSource(c),
     )
@@ -93,18 +105,16 @@ function createAuthRoute(ctx: ServerContext): Hono {
     // 恢复指引（重启 serve 重新生成 bootstrap 注册链接）而非干等审批。
     return c.json({
       ...result,
-      hasAuthorizedDevices: ctx.authManager.listDevices().length > 0,
+      hasAuthorizedDevices: authManager.listDevices().length > 0,
     })
   })
 
   // 新设备轮询配对审批结果（公开）。
   app.get('/pairing/status', (c) => {
-    if (!ctx.authManager) {
-      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
-    }
+    const authManager = c.get('authManager')
     const pairingId = c.req.query('pairingId') ?? ''
     if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
-    const status = ctx.authManager.pairingStatus(pairingId)
+    const status = authManager.pairingStatus(pairingId)
     if (status.status === 'not_found') {
       return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
     }
@@ -113,25 +123,20 @@ function createAuthRoute(ctx: ServerContext): Hono {
 
   // 列出待审批配对（需认证）。
   app.get('/pairing', (c) => {
-    if (!ctx.authManager) {
-      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
-    }
-    return c.json({ pairings: ctx.authManager.listPairings() })
+    return c.json({ pairings: c.get('authManager').listPairings() })
   })
 
   // 审批通过（需认证）。P2-9：必须携带审批方输入的 6 位配对码（新设备屏幕显示），
   // 服务端核对匹配才签发——防多请求并存时看错行误批给错设备。
   app.post('/pairing/approve', async (c) => {
-    if (!ctx.authManager) {
-      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
-    }
+    const authManager = c.get('authManager')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const pairingId = typeof parsed.body.pairingId === 'string' ? parsed.body.pairingId : ''
     const code = typeof parsed.body.code === 'string' ? parsed.body.code : ''
     if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
     if (!code) return apiError(c, 400, 'BAD_REQUEST', 'code is required')
-    const result = ctx.authManager.approvePairing(pairingId, code)
+    const result = authManager.approvePairing(pairingId, code)
     if (result === 'code_mismatch') {
       return apiError(
         c,
@@ -151,32 +156,25 @@ function createAuthRoute(ctx: ServerContext): Hono {
 
   // 拒绝配对（需认证）。
   app.post('/pairing/deny', async (c) => {
-    if (!ctx.authManager) {
-      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
-    }
+    const authManager = c.get('authManager')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const pairingId = typeof parsed.body.pairingId === 'string' ? parsed.body.pairingId : ''
     if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
-    const ok = ctx.authManager.denyPairing(pairingId)
+    const ok = authManager.denyPairing(pairingId)
     if (!ok) return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
     return c.json({ ok: true })
   })
 
   // 列出已授权设备（需认证；设置页「已授权设备」面板）。
   app.get('/devices', (c) => {
-    if (!ctx.authManager) {
-      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
-    }
-    return c.json({ devices: ctx.authManager.listDevices() })
+    return c.json({ devices: c.get('authManager').listDevices() })
   })
 
   // 撤销设备（需认证）。撤销唯一设备后如需重新注册首设备，请运行 c0de auth reset。
   app.delete('/devices/:id', async (c) => {
-    if (!ctx.authManager) {
-      return apiError(c, 400, 'AUTH_DISABLED', '认证未启用')
-    }
-    const ok = ctx.authManager.revokeDevice(c.req.param('id'))
+    const authManager = c.get('authManager')
+    const ok = authManager.revokeDevice(c.req.param('id'))
     if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Device not found')
     return c.json({ ok: true })
   })

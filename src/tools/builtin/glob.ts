@@ -1,11 +1,9 @@
-import { readdir } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { escapeRegex } from '../../shared/utils/string.js'
 import type { GlobInput } from '../types.js'
 import { resolveToolPath } from './paths.js'
-
-/** Directories always skipped during glob traversal. */
-const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', '.turbo'])
+import { IGNORE_DIRS, walkFiles } from './walk.js'
 
 /**
  * Convert a glob pattern to a RegExp.
@@ -13,11 +11,6 @@ const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', '
  */
 export function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${globFragment(pattern)}$`)
-}
-
-/** 把字面量文本转义为正则原文（用于降级路径：非法字符类/含空分支的花括号）。 */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /** 找到与 pattern[start]（'{'）配对的 '}'，计嵌套深度；未配对返回 -1。
@@ -186,17 +179,9 @@ function globFragment(pattern: string, segStartAt0 = true): string {
 /** Recursively walk a directory, skipping IGNORE_DIRS. Returns relative file paths. */
 async function walkDir(dir: string, base: string): Promise<string[]> {
   const results: string[] = []
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => null)
-  if (!entries) return []
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (IGNORE_DIRS.has(entry.name)) continue
-      const sub = await walkDir(join(dir, entry.name), base)
-      results.push(...sub)
-    } else {
-      results.push(relative(base, join(dir, entry.name)))
-    }
-  }
+  await walkFiles(dir, { skipDir: (name) => IGNORE_DIRS.has(name) }, (fullPath) => {
+    results.push(relative(base, fullPath))
+  })
   return results
 }
 

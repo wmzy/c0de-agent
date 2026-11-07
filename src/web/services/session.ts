@@ -1,6 +1,6 @@
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
-import { del, get, patch, post } from '@/services/api.js'
+import { del, get, patch, post, withProjectId } from '@/services/api.js'
 
 import type {
   CompactionArchive,
@@ -21,9 +21,7 @@ const sessionAPI = {
   /** P3-9：物理删除真空会话（无消息无子会话）——首条消息失败清理用；非空 409。 */
   purgeEmpty: (id: string) => del<{ ok: boolean }>(`/api/sessions/${id}/empty`),
   deleted: (projectId?: string) =>
-    get<Session[]>(
-      `/api/sessions/deleted${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
-    ),
+    get<Session[]>(withProjectId('/api/sessions/deleted', projectId)),
   /** 未归属任何项目的已删会话（删除项目后 FK set null 导致的孤儿，需专门视图暴露）。
    *  A3：列表查询不再自动标记「已看到」；标记由 touchOrphansSeen 在展开分组时显式触发。 */
   deletedOrphans: () => get<Session[]>('/api/sessions/deleted?orphan=1'),
@@ -61,9 +59,7 @@ const sessionAPI = {
     del<{ ok: boolean; deleted: number }>(`/api/sessions/${id}/forever`),
   /** 清空回收站（不可恢复）；projectId 提供时仅清空该项目。 */
   emptyTrash: (projectId?: string) =>
-    del<{ ok: boolean; deleted: number }>(
-      `/api/sessions/deleted${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
-    ),
+    del<{ ok: boolean; deleted: number }>(withProjectId('/api/sessions/deleted', projectId)),
   /** 会话归档列表（compaction/squash/shake/clear 原始内容）；q 为搜索词。 */
   archives: (id: string, q?: string) =>
     get<{ archives: CompactionArchive[] }>(
@@ -109,7 +105,7 @@ const sessionAPI = {
   /** 跨会话搜索（P2-6）：标题 + 消息内容。includeDeleted 搜索回收站（P3）。 */
   search: (q: string, projectId?: string, includeDeleted = false) =>
     get<{ results: Array<{ session: Session; matchedBy: 'title' | 'content' }> }>(
-      `/api/sessions/search?q=${encodeURIComponent(q)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}${includeDeleted ? '&includeDeleted=1' : ''}`,
+      `${withProjectId(`/api/sessions/search?q=${encodeURIComponent(q)}`, projectId)}${includeDeleted ? '&includeDeleted=1' : ''}`,
     ),
   /** 会话挂起的权限请求（P1：挂起期间切换页面/刷新后重挂确认弹窗）。 */
   pendingPermission: (sessionId: string) =>

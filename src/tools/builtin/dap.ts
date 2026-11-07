@@ -26,6 +26,15 @@ function fail(message: string): ToolResult {
   return { _tag: 'error', error: message }
 }
 
+/** debug_* execute 统一骨架：fn 成功 → ok(结果)；异常 → fail(`<label> failed: <msg>`)。 */
+const run = async (label: string, fn: () => Promise<unknown>): Promise<ToolResult> => {
+  try {
+    return ok(await fn())
+  } catch (error) {
+    return fail(`${label} failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 // debug_start — 启动调试会话（权限 ask：启动调试器是重操作）
 const debugStartTool: ToolDef = {
   name: 'debug_start',
@@ -55,13 +64,8 @@ const debugStartTool: ToolDef = {
       cwd: i.cwd,
       launchArgs: { stopOnEntry: i.stopOnEntry ?? false },
     }
-    try {
-      const spawn = ctx.debugSpawn as DebugSpawn
-      const result = await manager.start(spawn, config)
-      return ok(result)
-    } catch (error) {
-      return fail(`debug_start failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    const spawn = ctx.debugSpawn as DebugSpawn
+    return run('debug_start', () => manager.start(spawn, config))
   },
 }
 
@@ -88,14 +92,7 @@ const debugBreakpointTool: ToolDef = {
       condition?: string
     }
     const bp: Breakpoint = { file, line, ...(condition ? { condition } : {}) }
-    try {
-      const result = await manager.setBreakpoint(sessionId, bp)
-      return ok(result)
-    } catch (error) {
-      return fail(
-        `debug_breakpoint failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
+    return run('debug_breakpoint', () => manager.setBreakpoint(sessionId, bp))
   },
 }
 
@@ -111,13 +108,7 @@ const debugContinueTool: ToolDef = {
   permission: 'auto',
   execute: async (input: unknown): Promise<ToolResult> => {
     const { sessionId, threadId } = input as { sessionId: string; threadId: number }
-    try {
-      return ok(await manager.continue(sessionId, threadId))
-    } catch (error) {
-      return fail(
-        `debug_continue failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
+    return run('debug_continue', () => manager.continue(sessionId, threadId))
   },
 }
 
@@ -141,11 +132,7 @@ const debugStepTool: ToolDef = {
       threadId: number
       kind: 'over' | 'in' | 'out'
     }
-    try {
-      return ok(await manager.step(sessionId, threadId, kind))
-    } catch (error) {
-      return fail(`debug_step failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    return run('debug_step', () => manager.step(sessionId, threadId, kind))
   },
 }
 
@@ -161,12 +148,7 @@ const debugStackTool: ToolDef = {
   permission: 'auto',
   execute: async (input: unknown): Promise<ToolResult> => {
     const { sessionId, threadId } = input as { sessionId: string; threadId: number }
-    try {
-      const frames = await manager.stack(sessionId, threadId)
-      return ok(frames)
-    } catch (error) {
-      return fail(`debug_stack failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    return run('debug_stack', () => manager.stack(sessionId, threadId))
   },
 }
 
@@ -183,12 +165,7 @@ const debugVarsTool: ToolDef = {
   permission: 'auto',
   execute: async (input: unknown): Promise<ToolResult> => {
     const { sessionId, frameId } = input as { sessionId: string; frameId: number }
-    try {
-      const vars = await manager.variables(sessionId, frameId)
-      return ok(vars)
-    } catch (error) {
-      return fail(`debug_vars failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    return run('debug_vars', () => manager.variables(sessionId, frameId))
   },
 }
 
@@ -212,12 +189,7 @@ const debugEvalTool: ToolDef = {
       frameId: number
       expression: string
     }
-    try {
-      const result = await manager.evaluate(sessionId, frameId, expression)
-      return ok(result)
-    } catch (error) {
-      return fail(`debug_eval failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    return run('debug_eval', () => manager.evaluate(sessionId, frameId, expression))
   },
 }
 
@@ -233,12 +205,10 @@ const debugStopTool: ToolDef = {
   permission: 'auto',
   execute: async (input: unknown): Promise<ToolResult> => {
     const { sessionId } = input as { sessionId: string }
-    try {
+    return run('debug_stop', async () => {
       await manager.stop(sessionId)
-      return ok(`debug session ${sessionId} stopped`)
-    } catch (error) {
-      return fail(`debug_stop failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+      return `debug session ${sessionId} stopped`
+    })
   },
 }
 

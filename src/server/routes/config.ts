@@ -17,7 +17,7 @@ import {
 import { syncRegistryFromConfig } from '../../core/provider-registry.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
-import { getByDirectory, getProject, trustProject } from '../../project/index.js'
+import { getProject, refreshTrustedProjectFingerprint } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -277,8 +277,7 @@ function createConfigRoute(ctx: ServerContext): Hono {
     // trust-drift 复检，「信任 → 改设置 → 再信任」自锁循环。
     if (scope === 'project') {
       try {
-        const p = await getByDirectory(ctx.db, target.dir)
-        if (p?.trustedAt != null) await trustProject(ctx.db, p.id)
+        await refreshTrustedProjectFingerprint(ctx.db, target.dir)
       } catch {
         // 指纹刷新失败不阻塞配置保存（最坏回到 fail-closed 复检路径）
       }

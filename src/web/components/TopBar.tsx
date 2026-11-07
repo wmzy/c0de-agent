@@ -10,7 +10,7 @@ import { configAPI } from '@/services/config.js'
 import { projectAPI } from '@/services/project.js'
 import { usageAPI } from '@/services/usage.js'
 import { MOBILE } from '@/styles/breakpoints.js'
-import { formatCost } from '@/utils/format.js'
+import { formatCost, formatNumber } from '@/utils/format.js'
 import {
   monthTokenSum,
   resolveEffectiveBudget,
@@ -181,7 +181,7 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
         ? `（${projectId ? '项目' : '全局'}预算 ${formatCost(effectiveBudget)}${overBudget ? '，已超支' : ''}）`
         : '') +
       (overTokenBudget
-        ? `；token 用量 ${monthTokens.toLocaleString()} 已超 ${effectiveTokenBudget.toLocaleString()}`
+        ? `；token 用量 ${formatNumber(monthTokens)} 已超 ${formatNumber(effectiveTokenBudget)}`
         : '') +
       (unknown > 0 ? `；${unknown} 次调用价格未知按 $0 计` : '') +
       '。点击前往设置查看用量与成本。'

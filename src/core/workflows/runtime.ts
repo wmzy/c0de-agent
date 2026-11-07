@@ -93,13 +93,11 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
     if (e instanceof WorkflowTimeoutError) {
       // 超时必须真正终止执行，而不是只对用户报错——此前仅 race reject，
       // 工作流的子 agent 仍在后台继续调 LLM/改文件（继续计费且无中止手柄）。
-      // 与 abortAgent 同语义；内联实现避免 import 循环
+      // 复用 abortAgent 单点语义；动态 import 解 import 循环
       // （agent.ts → loop.ts → prompt-registry.ts → slash.ts → workflows/index.ts → 本文件）。
       // 父 abort 经 runSubAgent 的 abort 级联传递给全部子 agent。
-      parent.abortController.abort()
-      if (parent.status._tag === 'running' || parent.status._tag === 'paused') {
-        parent.status = { _tag: 'stopped', reason: 'aborted' }
-      }
+      const { abortAgent } = await import('../agent.js')
+      abortAgent(parent)
       return {
         _tag: 'error',
         message: `Workflow "${name}" timed out after ${timeoutSpec?.seconds}s（执行已中止）`,

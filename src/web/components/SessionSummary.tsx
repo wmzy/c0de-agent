@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react'
 import { useMessages } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
+import { formatNumber } from '@/utils/format.js'
 
 const wrap = css`
   border-bottom: 1px solid var(--haze-color-border);
@@ -76,11 +77,6 @@ const errorLine = css`
   color: var(--haze-color-danger);
   overflow-wrap: anywhere;
 `
-
-/** 千分位格式化（与 opencode 一致：1,000,000 / 302,253）。 */
-function formatNumber(n: number): string {
-  return n.toLocaleString('en-US')
-}
 
 /** 日期时间格式化（与样例一致：2026年6月25日 17:35）。 */
 function formatDateTime(ts: number): string {

@@ -5,7 +5,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
-import { DEFAULT_NUM_RESULTS, httpStatusError, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from '../types.js'
+import { assertOk, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from '../types.js'
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search'
 
@@ -91,11 +91,11 @@ async function callTavilySearch(
     ),
     signal: params.signal,
   })
-  if (!response.ok) {
-    const raw = await response.text().catch(() => response.statusText)
-    const msg = getErrorMessage(safeParse(raw)) ?? (raw.trim() || response.statusText)
-    throw httpStatusError(`Tavily API error (${response.status}): ${msg}`, response.status)
-  }
+  // Tavily 错误体是 JSON（{detail|error|message}），提取结构化消息，提取不到
+  // 回退原文/状态文本。
+  await assertOk(response, 'Tavily', (raw) => {
+    return getErrorMessage(safeParse(raw)) ?? (raw.trim() || response.statusText)
+  })
   return (await response.json()) as TavilySearchResponse
 }
 

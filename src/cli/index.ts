@@ -27,7 +27,7 @@ import { runServeCommand } from './commands/serve.js'
 import { runSessionsCommand } from './commands/sessions.js'
 import { runTrustCommand } from './commands/trust.js'
 import { runUpdateCommand } from './commands/update.js'
-import { buildAgentDeps, type PermissionStrategy } from './deps.js'
+import { buildAgentDeps, type PermissionStrategy, resolvePermission } from './deps.js'
 import { type CommandSpec, parseCommand } from './parser.js'
 
 const COMMANDS: CommandSpec[] = [
@@ -277,6 +277,8 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
     }
     case 'chat': {
       // --yes / -y 显式放行写操作；否则按 config.permission.defaultMode 决定（默认 safe）。
+      // --allow 在此解析一次（P1-1）：实际放行（buildAgentDeps）与入口横幅共用
+      // deps.resolvePermission 的同一决策树，chat 命令不再二次解析。
       const strategy = args.options.yes ? ('full-auto' as const) : undefined
       const allowTools = args.options.allow
         ? String(args.options.allow)
@@ -298,7 +300,13 @@ async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Prom
           ...(allowTemp ? { allowTemp } : {}),
           ...(budgetAction ? { budgetAction } : {}),
         },
-        (config, deps) => runChatCommand({ args, config, deps }),
+        (config, deps) =>
+          runChatCommand({
+            args,
+            config,
+            deps,
+            waterLevel: resolvePermission(config, strategy, allowTools).waterLevel,
+          }),
       )
       return
     }

@@ -1,4 +1,4 @@
-import { appendMessage } from '../../session/message.js'
+import { appendMessage, buildTaskNotification } from '../../session/message.js'
 import { createSession, updateSessionLastRun } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { AgentState } from '../../shared/types/agent.js'
@@ -273,9 +273,12 @@ export async function runSubAgent(
           startedAt: Date.now(),
         }).catch(() => {})
         const success = result._tag === 'success'
-        const output = success ? result.output : (result as { error: string }).error
-        const tag = success ? 'task_result' : 'task_error'
-        const synthetic = `<task id="${childSession.id}" state="${success ? 'completed' : 'failed'}">\n<${tag}>\n${output}\n</${tag}>\n</task>`
+        const synthetic = buildTaskNotification(
+          childSession.id,
+          success
+            ? { ok: true, output: result.output }
+            : { ok: false, error: (result as { error: string }).error },
+        )
         await appendMessage(deps.db, parent.session.id, {
           role: 'user',
           content: [{ _tag: 'text', text: synthetic }],

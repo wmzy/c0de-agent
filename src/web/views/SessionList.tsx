@@ -1,11 +1,12 @@
 import { css } from '@linaria/core'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { BranchTree } from '@/components/BranchTree.js'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { clearSessionDraft } from '@/composer/draft.js'
 import { useDeleteSession, useProjects, useSessionTree } from '@/hooks/useSession.js'
+import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
@@ -255,13 +256,19 @@ export function SessionList({
   const [importError, setImportError] = useState<string | null>(null)
   const [importNotice, setImportNotice] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
-  const [search, setSearch] = useState('')
-  // P2-6：跨会话内容搜索的防抖词（用户停止输入 300ms 后触发服务端查询）
-  const [searchDebounced, setSearchDebounced] = useState('')
-  useEffect(() => {
-    const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
-    return () => clearTimeout(t)
-  }, [search])
+  // P2-6：跨会话内容搜索（标题树之外的补充结果）——防抖、/api/sessions/search
+  // 查询与三态收敛在 useSessionContentSearch；search 原词同时驱动下方标题树过滤。
+  // 请求失败的重试入口与同页会话树失败态、RecycleBin 搜索失败态同一口径。
+  const {
+    search,
+    setSearch,
+    reset: resetContentSearch,
+    results: contentMatches,
+    pending: contentPending,
+    error: contentError,
+    errorMessage: contentErrorMessage,
+    refetch: refetchContent,
+  } = useSessionContentSearch(projectId)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -283,33 +290,9 @@ export function SessionList({
     [tree, search],
   )
 
-  // P2-6：标题未命中时再搜消息内容（标题树之外的补充结果）。
-  //
-  // 阈值 1 而非 2：单字符查询此前被静默丢弃，而标题树仍按 search 过滤，
-  // 于是「只命中消息内容」的会话在输入 1 个字时直接变成「无匹配会话」——
-  // 实测搜「独」报无匹配，搜「独特」即命中。服务端对单字符正常返回。
-  //
-  // 三态齐全：只取 data 时「还在搜」与「搜不了」都落进 extraMatches 为空的
-  // 分支，界面在 300ms 防抖 + 请求期间先闪一次「无匹配会话」再翻成结果；
-  // 请求失败（RQ 默认 retry 2 次耗尽）后这一句永久停在那里，且搜索区没有任何
-  // 重试入口——与同页会话树失败态、RecycleBin 搜索失败态的既有口径一致。
-  const {
-    data: contentMatches,
-    isLoading: contentLoading,
-    isError: contentError,
-    error: contentErrorObj,
-    refetch: refetchContent,
-  } = useQuery({
-    queryKey: ['sessions', 'search', projectId, searchDebounced],
-    queryFn: () => sessionAPI.search(searchDebounced, projectId),
-    enabled: searchDebounced.length >= 1,
-    staleTime: 10_000,
-  })
-  const contentErrorMessage = contentErrorObj ? messageOf(contentErrorObj) : null
-  // 「正在搜索」的完整口径 = 防抖未落地 || 请求在飞（含重试）。防抖那 300ms
-  // 里标题树已按 search 过滤、结果区还是旧的，此前正是这段时间闪「无匹配会话」。
+  // 标题树之外的「消息内容匹配」补充结果：只列树里看不到的会话（阈值/三态
+  // 口径见 useSessionContentSearch）。
   const searching = search.trim().length >= 1
-  const contentPending = searching && (search.trim() !== searchDebounced || contentLoading)
   // 树中已展示的全部会话 id（任意深度）。递归收集：只收顶层与直接子级会把
   // 深层后代（fork 的 fork）漏掉——它们同样已在树里可见，却会被「消息内容
   // 匹配」区再列一遍（同一会话出现两次）。与 findNode/countDescendants/
@@ -327,7 +310,7 @@ export function SessionList({
   }, [visibleTree])
   const extraMatches = useMemo(
     () =>
-      (contentMatches?.results ?? []).filter(
+      (contentMatches ?? []).filter(
         (r) => r.matchedBy === 'content' && !visibleIds.has(r.session.id),
       ),
     [contentMatches, visibleIds],
@@ -422,8 +405,7 @@ export function SessionList({
   useEffect(() => {
     if (firstProjectRef.current === projectId) return
     firstProjectRef.current = projectId
-    setSearch('')
-    setSearchDebounced('')
+    resetContentSearch()
     setDeleteError(null)
     setRenameError(null)
     setImportError(null)
@@ -433,7 +415,7 @@ export function SessionList({
     setPermPrompt(null)
     setImportChoice(null)
     setMigratePermissions(false)
-  }, [projectId])
+  }, [projectId, resetContentSearch])
 
   /** 执行导入：绑定目标项目后刷新树并跳转；notice 明示工具执行目录。 */
   const doImport = async (data: unknown, targetId: string, importPermissions: boolean) => {
@@ -665,11 +647,7 @@ export function SessionList({
             <div className={errorBar} role="alert" data-testid="session-search-error">
               会话搜索失败
               {contentErrorMessage ? `：${contentErrorMessage}` : '，请稍后重试。'}{' '}
-              <button
-                type="button"
-                onClick={() => void refetchContent()}
-                data-testid="session-search-retry"
-              >
+              <button type="button" onClick={refetchContent} data-testid="session-search-retry">
                 重试
               </button>
             </div>

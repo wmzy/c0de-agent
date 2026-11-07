@@ -1,4 +1,4 @@
-import { del, get, post } from '@/services/api.js'
+import { del, get, post, withProjectId } from '@/services/api.js'
 
 /** GET /api/workflows 返回的工作流条目。 */
 type WorkflowInfo = {
@@ -39,15 +39,9 @@ type WorkflowRemoveTarget = 'project' | 'user'
 
 const workflowsAPI = {
   list: (projectId?: string) =>
-    get<WorkflowListPayload>(
-      projectId ? `/api/workflows?projectId=${encodeURIComponent(projectId)}` : '/api/workflows',
-    ),
+    get<WorkflowListPayload>(withProjectId('/api/workflows', projectId)),
   get: (name: string, projectId?: string) =>
-    get<WorkflowDetail>(
-      `/api/workflows/${encodeURIComponent(name)}${
-        projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
-      }`,
-    ),
+    get<WorkflowDetail>(withProjectId(`/api/workflows/${encodeURIComponent(name)}`, projectId)),
   save: (payload: WorkflowSavePayload) =>
     post<{ ok: boolean; name: string; filePath: string }>('/api/workflows', payload),
   remove: (name: string, projectId: string | undefined, target: WorkflowRemoveTarget) =>

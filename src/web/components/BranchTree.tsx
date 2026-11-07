@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { TOUCH } from '@/styles/breakpoints.js'
 import type { SessionTreeNode, SessionUsage } from '@/types/index.js'
-import { formatCost } from '@/utils/format.js'
+import { formatCost, formatNumber } from '@/utils/format.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const node = css`
@@ -153,7 +153,7 @@ function UsageBadge({ usage }: { usage: SessionUsage }) {
   return (
     <Tooltip content={`本会话累计 token（输入+输出+缓存读）\n估算成本 ${costText}${unknownText}`}>
       <span className={usageBadge} data-testid="usage-badge">
-        {total.toLocaleString('en-US')} tok
+        {formatNumber(total)} tok
       </span>
     </Tooltip>
   )

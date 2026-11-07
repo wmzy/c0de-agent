@@ -1,7 +1,7 @@
 import { and, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessions } from '../db/schema.js'
-import { appendMessage } from './message.js'
+import { appendMessage, buildTaskNotification } from './message.js'
 import { updateSessionLastRun } from './session.js'
 
 /**
@@ -47,7 +47,10 @@ export async function markDeadBackgroundJobs(handle: DB): Promise<number> {
       startedAt: Date.now(),
     })
     if (row.parentId && !trashedParents.has(row.parentId)) {
-      const synthetic = `<task id="${row.id}" state="failed">\n<task_error>\n后台任务在服务重启前未完成，已标记为失败（可重新派发）\n</task_error>\n</task>`
+      const synthetic = buildTaskNotification(row.id, {
+        ok: false,
+        error: '后台任务在服务重启前未完成，已标记为失败（可重新派发）',
+      })
       await appendMessage(handle, row.parentId, {
         role: 'user',
         content: [{ _tag: 'text', text: synthetic }],

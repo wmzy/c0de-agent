@@ -52,6 +52,11 @@ async function* mockStream(
   yield { _tag: 'done' }
 }
 
+// ctx.waterLevel 由 dispatch 经 deps.resolvePermission 产出（与放行同源的
+// 权限水位横幅，P1-1）；测试配置无 -y/--allow 且 defaultMode=default → 安全档文案。
+const WATER_LEVEL =
+  '只读工具自动放行，写/执行工具将被拒绝（非交互）。加 -y 全量放行或 --allow <工具> 定向放行'
+
 describe('runChatCommand', () => {
   it('prints assistant text to stdout', async () => {
     const lines: string[] = []
@@ -60,6 +65,7 @@ describe('runChatCommand', () => {
       args: { options: {}, positionals: ['hello'] },
       config,
       deps,
+      waterLevel: WATER_LEVEL,
       stdout: (s: string) => lines.push(s),
       stderr: () => {},
     })
@@ -74,6 +80,7 @@ describe('runChatCommand', () => {
       args: { options: { format: 'json' }, positionals: ['hello'] },
       config,
       deps,
+      waterLevel: WATER_LEVEL,
       stdout: (s: string) => lines.push(s),
       stderr: (s: string) => errs.push(s),
     })
@@ -90,6 +97,7 @@ describe('runChatCommand', () => {
         args: { options: {}, positionals: [] },
         config,
         deps,
+        waterLevel: WATER_LEVEL,
         stdout: () => {},
         stderr: () => {},
       }),
@@ -105,6 +113,7 @@ describe('runChatCommand', () => {
         args: { options: {}, positionals: ['/help'] },
         config,
         deps,
+        waterLevel: WATER_LEVEL,
         stdout: (s: string) => lines.push(s),
         stderr: (s: string) => errs.push(s),
       })
@@ -122,6 +131,7 @@ describe('runChatCommand', () => {
         args: { options: {}, positionals: ['/config', 'defaultModel'] },
         config,
         deps,
+        waterLevel: WATER_LEVEL,
         stdout: (s: string) => lines.push(s),
       })
       expect(lines.join('')).toContain('demo-model')
@@ -135,6 +145,7 @@ describe('runChatCommand', () => {
         args: { options: {}, positionals: ['/clear'] },
         config,
         deps,
+        waterLevel: WATER_LEVEL,
         stdout: (s: string) => lines.push(s),
         stderr: (s: string) => errs.push(s),
       })
@@ -149,6 +160,7 @@ describe('runChatCommand', () => {
         args: { options: {}, positionals: ['/nope'] },
         config,
         deps,
+        waterLevel: WATER_LEVEL,
         stdout: (s: string) => lines.push(s),
       })
       expect(lines.join('')).toContain('answer')
@@ -175,6 +187,7 @@ describe('runChatCommand', () => {
           args: { options: {}, positionals: ['/workflow', 'list'] },
           config,
           deps,
+          waterLevel: WATER_LEVEL,
           stdout: (s: string) => lines.push(s),
           stderr: () => {},
         })

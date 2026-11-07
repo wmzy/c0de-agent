@@ -8,6 +8,9 @@ type ChatCommandContext = {
   args: CommandArgs
   config: Config
   deps: LoopDeps
+  /** 权限水位横幅文案（P1-1）：dispatch 经 deps.resolvePermission 的单一决策树
+   *  产出（与实际放行 checker 同源），本命令只负责打印。 */
+  waterLevel: string
   stdout?: (s: string) => void
   stderr?: (s: string) => void
 }
@@ -154,27 +157,8 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
 
   // P1-1：显式打印「权限水位」，消除 Web↔CLI 的静默授权差异——未经确认的写工具在
   // 非交互下会被拒绝（default）或全自动放行（auto/-y），用户须在入口即知情。
-  const yes = ctx.args.options.yes === true
-  const allowRaw = ctx.args.options.allow ? String(ctx.args.options.allow) : undefined
-  const allowList = allowRaw
-    ? allowRaw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : []
-  const defaultMode = ctx.config.permission?.defaultMode ?? 'default'
-  let waterLevel: string
-  if (yes) {
-    waterLevel = '全部工具自动放行（-y）'
-  } else if (defaultMode === 'auto') {
-    waterLevel = '全部工具自动放行（permission.defaultMode=auto）'
-  } else if (allowList.length > 0) {
-    waterLevel = `只读自动放行，写/执行工具定向放行：${allowList.join(', ')}（其余写工具将被拒绝）`
-  } else {
-    waterLevel =
-      '只读工具自动放行，写/执行工具将被拒绝（非交互）。加 -y 全量放行或 --allow <工具> 定向放行'
-  }
-  err(`[c0de] 权限水位：${waterLevel}\n`)
+  // 文案由 dispatch 侧 resolvePermission 的单一决策树产出（与实际放行同源）。
+  err(`[c0de] 权限水位：${ctx.waterLevel}\n`)
 
   const text = await runPrintMode(ctx.config, message, ctx.deps, {
     ...(model ? { model } : {}),

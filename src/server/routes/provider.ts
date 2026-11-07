@@ -127,7 +127,7 @@ function createProviderRoute(ctx: ServerContext): Hono {
     // 否则把 enc: 串当 Bearer token 发给上游必然 401，造成「保存了却测试失败」的误判。
     const secret = apiKey ? decryptSecret(apiKey) : ''
     const result = await probeModels(baseURL, secret)
-    return c.json(result, result.ok ? 200 : 200)
+    return c.json(result)
   })
 
   return app

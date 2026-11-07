@@ -1,10 +1,7 @@
 import type { DB } from '../db/client.js'
 import { generateId } from '../shared/index.js'
-import { archiveOriginalEntries } from './archive.js'
-import { extractHotFiles } from './compaction.js'
-import { deleteEntriesByIds, getMessages, insertEntry, summaryEntryTimestamp } from './message.js'
-import { upsertFileSnapshot } from './snapshot.js'
-import { estimateTokens } from './token.js'
+import { rewriteWithSummary } from './compaction.js'
+import { getMessages } from './message.js'
 import type { CompactionResult, SquashConfig, Summarizer } from './types.js'
 
 const DEFAULT_SQUASH_CONFIG: SquashConfig = {
@@ -71,53 +68,16 @@ ${history}`
 
   const squashEntryId = generateId()
 
-  // Atomic rewrite: archive originals → upsert snapshots → delete originals →
-  // insert summary. If any step throws, the whole transaction rolls back and
-  // the original message history is left intact. (Mirrors compactSession.)
-  const { archiveId, fileSnapshotIds } = await handle.db.transaction(async (tx) => {
-    const txHandle: DB = { db: tx, close: handle.close }
-
-    const archiveId = cfg.archiveOriginal
-      ? await archiveOriginalEntries(
-          txHandle,
-          sessionId,
-          toSquash,
-          'squash',
-          summary,
-          squashEntryId,
-        )
-      : generateId()
-
-    const fileSnapshotIds: string[] = []
-    if (cfg.preserveFileSnapshots) {
-      const hotFiles = extractHotFiles(toSquash)
-      for (const file of hotFiles) {
-        // 不传 mtimeMs：由 upsertFileSnapshot 从已有行透传，压缩后热文件不误判过期。
-        const id = await upsertFileSnapshot(txHandle, sessionId, file.path, file.content)
-        fileSnapshotIds.push(id)
-      }
-    }
-
-    await deleteEntriesByIds(
-      txHandle,
-      toSquash.map((m) => m.id),
-    )
-
-    await insertEntry(txHandle, {
-      id: squashEntryId,
-      sessionId,
-      tag: 'squash',
-      content: {
-        summary,
-        squashedEntryIds: toSquash.map((m) => m.id),
-        archiveId,
-      },
-      tokenCount: estimateTokens(summary),
-      // 定位在首个被压缩消息处（并列时间戳时再早 1ms），保证摘要排在保留尾部之前。
-      createdAt: summaryEntryTimestamp(toSquash[0], keepTail[0]),
-    })
-
-    return { archiveId, fileSnapshotIds }
+  // Atomic rewrite（共享事务体见 compactSession 的 rewriteWithSummary）：
+  // archive originals → upsert snapshots → delete originals → insert summary.
+  // 任一步抛错整体回滚，原始历史保持完整。archive/snapshot 开关经 cfg 传入。
+  const { archiveId, fileSnapshotIds } = await rewriteWithSummary(handle, sessionId, toSquash, {
+    entryId: squashEntryId,
+    summary,
+    tag: 'squash',
+    archiveOriginal: cfg.archiveOriginal,
+    preserveSnapshots: cfg.preserveFileSnapshots,
+    firstKept: keepTail[0],
   })
 
   return {

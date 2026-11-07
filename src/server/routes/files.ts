@@ -219,59 +219,49 @@ function createFilesRoute(ctx: ServerContext): Hono {
     }
   }
 
+  /** 解析本次请求的工作区根：query 带 projectId 时取对应项目 worktree
+   *  （项目不存在 → 404 Project not found），否则回退 ctx.cwd（向后兼容）。 */
+  const resolveWorkspaceRoot = async (
+    c: Context,
+  ): Promise<{ root: string } | { response: Response }> => {
+    const projectId = c.req.query('projectId')
+    if (!projectId) return { root: ctx.cwd }
+    const project = await getProject(ctx.db, projectId)
+    if (!project) {
+      return { response: apiError(c, 404, 'NOT_FOUND', 'Project not found') }
+    }
+    return { root: project.worktree }
+  }
+
   // git 状态：返回 path → 状态分类 的映射（非 git 返回空对象）
   app.get('/git-status', async (c) => {
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     return c.json(getGitStatus(root) ?? {})
   })
 
   // 当前分支名（非 git 仓库返回 null）
   app.get('/git-branch', async (c) => {
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     return c.json({ branch: getGitBranch(root) })
   })
 
   // 最后一次提交信息（供分支名 hover tooltip）。非 git 仓库或无提交返回 commit null。
   app.get('/git-last-commit', async (c) => {
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     return c.json({ commit: getGitLastCommit(root) })
   })
 
   // 一键提交：用 LLM 生成 commit message + 检查可疑文件，支持 force/append-ignore 模式
   app.post('/git-commit', async (c) => {
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     const summary = getGitDiffSummary(root)
     if (!summary) {
       return apiError(c, 400, 'NO_CHANGES', 'No changes to commit')
@@ -416,29 +406,17 @@ ${headChars(summary.diff, 8000)}`
 
   // 列出本地分支（非 git 仓库返回空数组）
   app.get('/git-branches', async (c) => {
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     return c.json({ branches: listGitBranches(root) ?? [] })
   })
 
   // 切换分支（git checkout）
   app.post('/git-checkout', async (c) => {
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     // branch 必须是非空字符串：数字此前经 as 断言进 spawnSync 参数抛
@@ -460,15 +438,9 @@ ${headChars(summary.diff, 8000)}`
 
   // 创建并切换到新分支（git checkout -b）
   app.post('/git-branch-create', async (c) => {
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const name = typeof parsed.body.name === 'string' ? parsed.body.name : ''
@@ -489,15 +461,9 @@ ${headChars(summary.diff, 8000)}`
   // projectId 指定时按对应项目 worktree 列出，否则回退 ctx.cwd（向后兼容）。
   app.get('/', async (c) => {
     const queryPath = c.req.query('path') ?? '.'
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     const resolved = safeResolve(root, queryPath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
@@ -534,15 +500,9 @@ ${headChars(summary.diff, 8000)}`
     if (!q) {
       return apiError(c, 400, 'BAD_REQUEST', 'Query parameter q is required')
     }
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     const all = await collectFiles(root, root)
     const lower = q.toLowerCase()
     const matched = all.filter((f) => f.path.toLowerCase().includes(lower))
@@ -554,15 +514,9 @@ ${headChars(summary.diff, 8000)}`
   app.get('/*', async (c) => {
     const path = extractFilePath(c)
     if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     // /raw 后缀是媒体预览的协议标记，但仅当「完整路径不存在」时才按 raw 模式
     // 解释——真实存在的 .../raw 文件按普通文件字面读取。此前纯后缀判定优先，
     // 名为 raw 的文件（data/raw 等）恒被误判为 raw 模式，去后缀父路径必为目录
@@ -616,15 +570,9 @@ ${headChars(summary.diff, 8000)}`
   app.put('/*', async (c) => {
     const path = extractFilePath(c)
     if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     const resolved = safeResolve(root, path)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
@@ -653,15 +601,9 @@ ${headChars(summary.diff, 8000)}`
   app.delete('/*', async (c) => {
     const path = extractFilePath(c)
     if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
-    const projectId = c.req.query('projectId')
-    let root = ctx.cwd
-    if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-      }
-      root = project.worktree
-    }
+    const workspace = await resolveWorkspaceRoot(c)
+    if ('response' in workspace) return workspace.response
+    const root = workspace.root
     const resolved = safeResolve(root, path)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')

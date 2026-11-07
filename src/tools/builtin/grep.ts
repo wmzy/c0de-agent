@@ -1,11 +1,10 @@
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { readFile, stat } from 'node:fs/promises'
+import { relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { escapeRegex } from '../../shared/utils/string.js'
 import type { GrepInput, GrepMatch } from '../types.js'
 import { resolveToolPath } from './paths.js'
-
-/** Directories always skipped during search. */
-const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', '.turbo'])
+import { IGNORE_DIRS, walkFiles } from './walk.js'
 
 /** File extensions treated as text (skip binary files). */
 const TEXT_EXTENSIONS = new Set([
@@ -69,14 +68,9 @@ export function buildGrepRegex(
   try {
     return new RegExp(pattern, flags)
   } catch (err) {
-    if (opts.literalFallback) return new RegExp(escapeRegexLiteral(pattern), flags)
+    if (opts.literalFallback) return new RegExp(escapeRegex(pattern), flags)
     throw err
   }
-}
-
-/** 正则元字符逐字符转义（非法模式的字面量回退）。 */
-function escapeRegexLiteral(pattern: string): string {
-  return pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /** 按内容拆行并做 CRLF 规范化：文件主导行尾为 \r\n 时剥离行尾 \r——否则
@@ -89,26 +83,18 @@ export function splitGrepLines(content: string): string[] {
 }
 
 /** Recursively walk a directory for text files. */
-async function walkForFiles(dir: string, base: string): Promise<string[]> {
+async function walkForFiles(dir: string): Promise<string[]> {
   const results: string[] = []
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => null)
-  if (!entries) return []
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (IGNORE_DIRS.has(entry.name)) continue
-      const sub = await walkForFiles(join(dir, entry.name), base)
-      results.push(...sub)
-    } else {
-      // 无扩展名（lastIndexOf 返回 -1）时 ext 须为 ''：此前 slice(-1) 取到名字
-      // 最后一个字符，ext === '' 分支成死代码，Dockerfile/Makefile/README 等
-      // 无扩展名文本文件被静默跳过。
-      const dot = entry.name.lastIndexOf('.')
-      const ext = dot === -1 ? '' : entry.name.slice(dot)
-      if (TEXT_EXTENSIONS.has(ext) || ext === '') {
-        results.push(join(dir, entry.name))
-      }
+  await walkFiles(dir, { skipDir: (name) => IGNORE_DIRS.has(name) }, (fullPath, name) => {
+    // 无扩展名（lastIndexOf 返回 -1）时 ext 须为 ''：此前 slice(-1) 取到名字
+    // 最后一个字符，ext === '' 分支成死代码，Dockerfile/Makefile/README 等
+    // 无扩展名文本文件被静默跳过。
+    const dot = name.lastIndexOf('.')
+    const ext = dot === -1 ? '' : name.slice(dot)
+    if (TEXT_EXTENSIONS.has(ext) || ext === '') {
+      results.push(fullPath)
     }
-  }
+  })
   return results
 }
 
@@ -157,7 +143,7 @@ export const grepTool: ToolDef = {
     }
 
     try {
-      const files = await walkForFiles(basePath, basePath)
+      const files = await walkForFiles(basePath)
       const matches: GrepMatch[] = []
       const max = maxResults
       // 读取失败（权限不可读/悬空符号链接/删除竞态）的文件数：单文件失败只

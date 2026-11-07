@@ -74,7 +74,7 @@ describe('estimateMessageTokens', () => {
   })
 
   // 回归：import sanitizeContent 只校验 _tag 是字符串——缺 input 的 tool_call
-  // 或缺 output 的 tool_result 分片会原样入库。此后 rawMessageTokens 走
+  // 或缺 output 的 tool_result 分片会原样入库。此后 messageTokens 走
   // estimateMessageTokens 时 JSON.stringify(undefined) 返回 undefined（非字符串），
   // estimateTokens 对其读 .length 抛 TypeError——整轮 agent run 在预算拟合处
   // 崩溃（导入的历史会话每次续聊都炸）。缺字段分片应保守按 0 token 计。

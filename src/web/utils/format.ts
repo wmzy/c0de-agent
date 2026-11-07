@@ -39,6 +39,13 @@ export function formatTokenCount(n: number): string {
   return `${(n / 1000).toFixed(1)}k`
 }
 
+/** 数字千分位（en-US 口径，与 opencode 一致：1,000,000 / 302,253）：token 数、
+ *  消息数、用量徽标等共用。不裸调 toLocaleString()——宿主 locale 会让同一个
+ *  数字在不同机器上格式漂移。 */
+export function formatNumber(n: number): string {
+  return n.toLocaleString('en-US')
+}
+
 export function formatTimestamp(ts: number): string {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }

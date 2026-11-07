@@ -100,6 +100,18 @@ function summaryEntryTimestamp(firstCompacted?: Message, firstKept?: Message): D
   return new Date(firstKept.createdAt - 1)
 }
 
+/** 后台任务完成/失败通知的合成消息文本（事实 wire 格式，消息渲染/解析按此消费）。
+ *  core/loop/subagent.ts 的后台任务完成通知与 session/jobs.ts 的死任务通知
+ *  共用本实现，保证两处 `<task …>` XML 信封字节级一致。 */
+function buildTaskNotification(
+  taskId: string,
+  result: { ok: true; output: string } | { ok: false; error: string },
+): string {
+  const tag = result.ok ? 'task_result' : 'task_error'
+  const payload = result.ok ? result.output : result.error
+  return `<task id="${taskId}" state="${result.ok ? 'completed' : 'failed'}">\n<${tag}>\n${payload}\n</${tag}>\n</task>`
+}
+
 /** Append a message to a session. Returns the stored Message with generated id/timestamp. */
 async function appendMessage(handle: DB, sessionId: string, input: MessageInput): Promise<Message> {
   const tokenCount = input.tokenCount ?? estimateMessageTokens(input.content)
@@ -232,6 +244,7 @@ async function updateEntryContent(
 
 export {
   appendMessage,
+  buildTaskNotification,
   deleteEntriesByIds,
   deleteMessagesAfter,
   getEntries,

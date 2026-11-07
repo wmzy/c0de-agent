@@ -94,8 +94,14 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     const boardId = c.req.param('boardId')
     const merge = body.merge === true
 
-    // 重建原项目：目录仍存在时重建项目记录并恢复到该目录（与会话存储同语义）。
+    // 解析恢复目标：rebuild 重建原项目（目录校验前置），否则要求 body.projectId
+    // 指向现有项目。两条路径只产出目标项目 id 与差异化文案，恢复/合并阶梯尾部共享。
+    let targetProjectId: string
+    let recreatedProject: { id: string; name: string | null } | undefined
+    let targetHasBoardMessage: string
+
     if (body.rebuild === true) {
+      // 重建原项目：目录仍存在时重建项目记录并恢复到该目录（与会话存储同语义）。
       const board = await getDeletedKanbanBoard(ctx.db, boardId)
       if (!board) return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
       if (!board.deletedProjectWorktree) {
@@ -115,42 +121,38 @@ function createKanbanRoute(ctx: ServerContext): Hono {
         )
       }
       const project = await fromDirectory(ctx.db, board.deletedProjectWorktree)
-      if (merge) {
-        const result = await mergeKanbanBoard(ctx.db, boardId, project.id)
-        if (result.ok) {
-          return c.json({
-            ok: true,
-            merged: result,
-            recreatedProject: { id: project.id, name: project.name },
-          })
-        }
-        return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
-      }
-      const result = await restoreKanbanBoard(ctx.db, boardId, project.id)
-      if (result.ok) {
-        return c.json({ ok: true, recreatedProject: { id: project.id, name: project.name } })
-      }
-      if (result.reason === 'TARGET_HAS_BOARD') {
-        return apiError(c, 409, 'TARGET_HAS_BOARD', '原项目已存在看板，无法覆盖')
-      }
-      return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+      targetProjectId = project.id
+      recreatedProject = { id: project.id, name: project.name }
+      targetHasBoardMessage = '原项目已存在看板，无法覆盖'
+    } else {
+      const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
+      if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', '恢复目标项目（projectId）必填')
+      // P2 修复：目标项目必须存在（与会话恢复口径一致）——此前不校验，
+      // 可恢复出挂在不存在项目下、任何视图都不可见的看板。
+      const target = await getProject(ctx.db, projectId)
+      if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '恢复目标项目不存在')
+      targetProjectId = projectId
+      targetHasBoardMessage = '目标项目已有看板，请先导出/删除目标看板后再恢复'
     }
 
-    const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : ''
-    if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', '恢复目标项目（projectId）必填')
-    // P2 修复：目标项目必须存在（与会话恢复口径一致）——此前不校验，
-    // 可恢复出挂在不存在项目下、任何视图都不可见的看板。
-    const target = await getProject(ctx.db, projectId)
-    if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '恢复目标项目不存在')
+    // 恢复/合并到目标项目（两分支共享；仅 rebuild 的响应多带 recreatedProject）。
     if (merge) {
-      const result = await mergeKanbanBoard(ctx.db, boardId, projectId)
-      if (result.ok) return c.json({ ok: true, merged: result })
+      const result = await mergeKanbanBoard(ctx.db, boardId, targetProjectId)
+      if (result.ok) {
+        return c.json({
+          ok: true,
+          merged: result,
+          ...(recreatedProject ? { recreatedProject } : {}),
+        })
+      }
       return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
     }
-    const result = await restoreKanbanBoard(ctx.db, boardId, projectId)
-    if (result.ok) return c.json({ ok: true })
+    const result = await restoreKanbanBoard(ctx.db, boardId, targetProjectId)
+    if (result.ok) {
+      return c.json({ ok: true, ...(recreatedProject ? { recreatedProject } : {}) })
+    }
     if (result.reason === 'TARGET_HAS_BOARD') {
-      return apiError(c, 409, 'TARGET_HAS_BOARD', '目标项目已有看板，请先导出/删除目标看板后再恢复')
+      return apiError(c, 409, 'TARGET_HAS_BOARD', targetHasBoardMessage)
     }
     return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
   })

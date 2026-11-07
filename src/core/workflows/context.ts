@@ -3,6 +3,7 @@ import { join, relative, resolve } from 'node:path'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
 import { globToRegex } from '../../tools/builtin/glob.js'
 import { buildGrepRegex, splitGrepLines } from '../../tools/builtin/grep.js'
+import { walkFiles } from '../../tools/builtin/walk.js'
 import type { AgentDependencies, AgentState } from '../types.js'
 import type { WorkflowAgentResult, WorkflowContext } from './types.js'
 
@@ -118,28 +119,18 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
 /** 递归遍历目录树：跳过点开头与 node_modules（可附加忽略名单），readdir 失败
  *  （权限/消失竞态）静默跳过该目录，每个文件回调 onFile（附文件名，供不含
  *  路径分隔符的 glob 模式按文件名匹配）。globRecursive/grepRecursive/
- *  splitByDir.collectFiles 三份 walk 骨架的单一实现。 */
+ *  splitByDir.collectFiles 三份 walk 骨架收敛为 walkFiles 的薄委托——点开头
+ *  条目（目录与文件）统一跳过，比 glob/grep 工具的固定 6 目录名单更严。 */
 async function walkTree(
   dir: string,
   opts: { ignore?: string[] },
   onFile: (fullPath: string, name: string) => Promise<void> | void,
 ): Promise<void> {
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return
-  }
-  for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-    if (opts.ignore?.includes(entry.name)) continue
-    const fullPath = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      await walkTree(fullPath, opts, onFile)
-    } else {
-      await onFile(fullPath, entry.name)
-    }
-  }
+  const skip = (name: string): boolean =>
+    name.startsWith('.') || name === 'node_modules' || (opts.ignore?.includes(name) ?? false)
+  await walkFiles(dir, { skipDir: skip }, (fullPath, name) =>
+    skip(name) ? undefined : onFile(fullPath, name),
+  )
 }
 
 /**

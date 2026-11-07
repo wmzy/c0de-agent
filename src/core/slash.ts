@@ -302,9 +302,8 @@ const configCommand: SlashCommand = {
       // P1：/config 写入项目作用域是用户显式操作——已信任项目刷新风险指纹，
       // 防「信任 → 改设置 → 再信任」自锁复检（与 /workflow create 同口径）。
       try {
-        const { getByDirectory, trustProject } = await import('../project/index.js')
-        const p = await getByDirectory(ctx.deps.db, ctx.cwd)
-        if (p?.trustedAt != null) await trustProject(ctx.deps.db, p.id)
+        const { refreshTrustedProjectFingerprint } = await import('../project/index.js')
+        await refreshTrustedProjectFingerprint(ctx.deps.db, ctx.cwd)
       } catch {
         // 指纹刷新失败不阻塞配置写入结果（最坏回到 fail-closed 复检路径）
       }
@@ -441,19 +440,8 @@ const workflowCommand: SlashCommand = {
       // 误判漂移而跳过，且「信任 → 新建 → 漂移复检」会把自己锁出门禁。
       let projectTrusted = false
       try {
-        const { getByDirectory, trustProject } = await import('../project/index.js')
-        const { projectTrustCurrent } = await import('../project/trust.js')
-        const { loadConfigScopes } = await import('./config.js')
-        const p = await getByDirectory(ctx.deps.db, ctx.cwd)
-        if (p?.trustedAt != null) await trustProject(ctx.deps.db, p.id)
-        projectTrusted =
-          p?.trustedAt != null &&
-          projectTrustCurrent(
-            loadConfigScopes(ctx.cwd).project,
-            p.trustedAt,
-            p.riskFingerprint,
-            ctx.cwd,
-          )
+        const { refreshTrustedProjectFingerprint } = await import('../project/index.js')
+        projectTrusted = await refreshTrustedProjectFingerprint(ctx.deps.db, ctx.cwd)
         if (ctx.workflowRegistry) {
           await reloadRegistry(ctx.workflowRegistry, ctx.cwd, { projectTrusted })
         }

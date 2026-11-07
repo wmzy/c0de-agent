@@ -1,5 +1,5 @@
 import { estimateTokens } from '../llm/token.js'
-import type { MessageContent } from '../shared/types/message.js'
+import type { Message, MessageContent } from '../shared/types/message.js'
 
 export { estimateTokens }
 
@@ -38,4 +38,15 @@ const estimateMessageTokens = (content: MessageContent[]): number => {
   return total
 }
 
-export { estimateMessageTokens }
+/** 单条消息的 token 计量（单源）：优先用落库的 tokenCount（真实计量，
+ *  仅正数生效），缺省/非正时按 content 全分片估算（estimateMessageTokens
+ *  全口径：text/thinking/steering/tool_call/tool_result/image）。
+ *  此前 core/context（rawMessageTokens）、compaction、shake 各持一份同型
+ *  私有实现，与权威实现同步漂移（image 分片恒计 0、纯工具消息按 0 token
+ *  计、预算与压缩判定脱节），收敛后全仓库口径单源。 */
+function messageTokens(m: Message): number {
+  if (m.tokenCount > 0) return m.tokenCount
+  return estimateMessageTokens(m.content)
+}
+
+export { estimateMessageTokens, messageTokens }

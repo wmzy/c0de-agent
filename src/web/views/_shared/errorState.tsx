@@ -1,7 +1,8 @@
 // 读失败三段式（标题 + 原因 + 重试）的共享样式与组件：FileBrowser / FilePreview /
-// KanbanView / ChatView / Settings / RootRedirect 曾各持一份逐字副本（容器样式 +
-// role=alert 的标题/原因 span + 重试按钮 JSX），收敛于此（与 bannerStyles.ts /
-// recycleStyles.ts 同款 _shared 约定）。重试按钮复用横幅族的 secondaryButton。
+// KanbanView / ChatView / Settings / RootRedirect / ArchivePanel / TodoPanel
+// 曾各持一份逐字副本（容器样式 + role=alert 的标题/原因 span + 重试按钮 JSX），
+// 收敛于此（与 bannerStyles.ts / recycleStyles.ts 同款 _shared 约定）。
+// 重试按钮复用横幅族的 secondaryButton。
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
 import { secondaryButton } from '@/views/_shared/bannerStyles.js'

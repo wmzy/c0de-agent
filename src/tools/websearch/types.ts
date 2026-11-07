@@ -66,6 +66,21 @@ function httpStatusError(message: string, status: number): Error & { status: num
   return err
 }
 
+/** 断言 fetch 响应为 2xx：非 2xx 时读响应体（读失败回退 statusText）并抛
+ *  `<label> API error (<status>): <body>` 形态、携带状态码的错误——brave/
+ *  duckduckgo/tavily 三个后端共用。extractMessage 供后端从响应体提取结构化
+ *  错误消息（Tavily 的 {detail|error|message}）。 */
+async function assertOk(
+  response: Response,
+  label: string,
+  extractMessage?: (raw: string) => string,
+): Promise<void> {
+  if (response.ok) return
+  const raw = await response.text().catch(() => response.statusText)
+  const msg = extractMessage ? extractMessage(raw) : raw
+  throw httpStatusError(`${label} API error (${response.status}): ${msg}`, response.status)
+}
+
 export type {
   Recency,
   WebSearchParams,
@@ -74,4 +89,11 @@ export type {
   WebSearchResponse,
   WebSearchSource,
 }
-export { clampNumResults, DEFAULT_NUM_RESULTS, httpStatusError, MAX_NUM_RESULTS, MIN_NUM_RESULTS }
+export {
+  assertOk,
+  clampNumResults,
+  DEFAULT_NUM_RESULTS,
+  httpStatusError,
+  MAX_NUM_RESULTS,
+  MIN_NUM_RESULTS,
+}

@@ -6,6 +6,7 @@ import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { findNode, setChildren } from '@/components/tree-utils.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
@@ -68,14 +69,15 @@ const resultRow = css`
   }
 `
 
-const searchMentionBtn = css`
+/** 搜索结果行的 ghost 动作钮（@引用 / 🗑删除）：两份 16 属性样式只差字号与
+ *  hover 色，收敛为基类 + 各自 2 行覆盖。 */
+const ghostAction = css`
   opacity: 0.65;
   background: transparent;
   border: none;
   border-radius: 3px;
   color: var(--haze-color-text-secondary);
   cursor: pointer;
-  font-size: 11px;
   padding: 0;
   min-height: 32px;
   min-width: 32px;
@@ -84,27 +86,19 @@ const searchMentionBtn = css`
   align-items: center;
   justify-content: center;
   transition: opacity 0.1s, color 0.1s;
+`
+
+const searchMentionBtn = css`
+  ${ghostAction}
+  font-size: 11px;
   &:hover {
     color: var(--haze-color-primary);
   }
 `
 
 const searchDeleteBtn = css`
-  opacity: 0.65;
-  background: transparent;
-  border: none;
-  border-radius: 3px;
-  color: var(--haze-color-text-secondary);
-  cursor: pointer;
+  ${ghostAction}
   font-size: 12px;
-  padding: 0;
-  min-height: 32px;
-  min-width: 32px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.1s, color 0.1s;
   &:hover {
     color: var(--haze-color-danger);
   }
@@ -265,13 +259,10 @@ export function FileBrowser({
   /** 根目录重试令牌：自增触发上面那个 effect 重跑。 */
   const [rootReload, setRootReload] = useState(0)
   const [query, setQuery] = useState('')
-  /** P3：搜索输入 300ms 防抖——服务端 /api/files/search 是全仓递归扫描，
-   *  此前每击键触发一次全量 walk，大仓库明显卡顿。 */
-  const [searchDebounced, setSearchDebounced] = useState('')
-  useEffect(() => {
-    const t = setTimeout(() => setSearchDebounced(query), 300)
-    return () => clearTimeout(t)
-  }, [query])
+  /** P3：搜索输入 300ms 防抖（useDebouncedValue）——服务端 /api/files/search
+   *  是全仓递归扫描，此前每击键触发一次全量 walk，大仓库明显卡顿。setter 保留
+   *  给下方切项目复位：旧词等满 300ms 才清的话，防抖窗口内会拿它查新项目。 */
+  const [searchDebounced, setSearchDebounced] = useDebouncedValue(query, 300)
   /** 显示隐藏目录（node_modules/构建产物等），默认降噪过滤。 */
   const [showHidden, setShowHidden] = useState(false)
   /** 待删除的路径（null=无确认弹层）。删除是「移入回收站」的可恢复操作，

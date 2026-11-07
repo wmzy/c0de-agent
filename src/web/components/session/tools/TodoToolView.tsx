@@ -1,28 +1,17 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { empty, OpToolShell } from '@/components/session/tools/OpToolShell.js'
+import {
+  STATUS_COLORS,
+  TASK_ICONS,
+  type TaskStatus,
+} from '@/components/session/tools/todoShared.js'
 import { ToolInlineError } from '@/components/session/tools/toolError.js'
 import {
   ShapeNotice,
   type TodoPhaseLike,
   wellFormedPhases,
 } from '@/components/session/tools/toolShape.js'
-
-type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
-
-const TASK_ICONS: Record<TaskStatus, string> = {
-  completed: '✓',
-  in_progress: '→',
-  abandoned: '✕',
-  pending: '○',
-}
-
-const STATUS_COLORS: Record<TaskStatus, string> = {
-  completed: 'var(--haze-color-success)',
-  in_progress: 'var(--haze-color-primary)',
-  abandoned: 'var(--haze-color-text-secondary)',
-  pending: 'var(--haze-color-text-secondary)',
-}
 
 const ROMAN_PAIRS: ReadonlyArray<readonly [number, string]> = [
   [1000, 'M'],

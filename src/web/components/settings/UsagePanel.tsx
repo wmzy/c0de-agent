@@ -6,7 +6,7 @@ import { field, fieldInput, hint, section, sectionTitle } from '@/components/set
 import type { UsageSummary } from '@/services/usage.js'
 import { usageAPI } from '@/services/usage.js'
 import { messageOf } from '@/utils/errors.js'
-import { formatCost, parseFiniteNumber } from '@/utils/format.js'
+import { formatCost, formatNumber, parseFiniteNumber } from '@/utils/format.js'
 import {
   monthTokenSum,
   resolveEffectiveBudget,
@@ -40,8 +40,6 @@ const budgetWarn = css`
   font-size: 12px;
   margin-top: 6px;
 `
-
-const fmtTokens = (n: number): string => n.toLocaleString('en-US')
 
 // 与 formatCost 同源（十进制舍入）：toFixed 二进制近似会把 1.005 显示成 $1.00。
 const fmtCost = (n: number): string => formatCost(n)
@@ -290,8 +288,8 @@ function UsagePanel({
       )}
       {overTokenBudget && (
         <div className={budgetWarn} data-testid="usage-token-budget-warning">
-          ⚠ 本月 token 用量 {fmtTokens(monthTokens)} 已超过{projectId ? '项目' : '全局'} token 预算{' '}
-          {fmtTokens(effectiveTokenBudget)}
+          ⚠ 本月 token 用量 {formatNumber(monthTokens)} 已超过{projectId ? '项目' : '全局'} token
+          预算 {formatNumber(effectiveTokenBudget)}
           {tokenAction === 'warn'
             ? '（当前 token 预算动作为「仅告警」，对话继续）'
             : tokenAction === 'abort'
@@ -355,7 +353,7 @@ function UsagePanel({
             <div className={rowGrid} key={m.month}>
               <span>{m.month === '未知' ? '（无时间戳）' : m.month}</span>
               <span>{m.calls}</span>
-              <span>{fmtTokens(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
+              <span>{formatNumber(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
               <span>{fmtCost(m.cost)}</span>
             </div>
           ))}
@@ -366,7 +364,9 @@ function UsagePanel({
               </span>
               <span>{unassigned.calls}</span>
               <span>
-                {fmtTokens(unassigned.inputTokens + unassigned.outputTokens + unassigned.cacheRead)}
+                {formatNumber(
+                  unassigned.inputTokens + unassigned.outputTokens + unassigned.cacheRead,
+                )}
               </span>
               <span>{fmtCost(unassigned.cost)}</span>
             </div>
@@ -381,7 +381,7 @@ function UsagePanel({
             <div className={rowGrid} key={m.model}>
               <span title={m.model}>{m.model}</span>
               <span>{m.calls}</span>
-              <span>{fmtTokens(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
+              <span>{formatNumber(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
               <span>{fmtCost(m.cost)}</span>
             </div>
           ))}
@@ -389,7 +389,7 @@ function UsagePanel({
             <span>累计</span>
             <span>{summary.totals.calls}</span>
             <span>
-              {fmtTokens(
+              {formatNumber(
                 summary.totals.inputTokens + summary.totals.outputTokens + summary.totals.cacheRead,
               )}
             </span>

@@ -53,6 +53,22 @@ function mcpResultToToolResult(result: unknown): ToolResult {
   return { _tag: 'success', output: text }
 }
 
+/** 经 session 发 tools/call（带超时）并把结果折回 ToolResult——adaptMCPTool 的
+ *  execute 与 index.callMCPTool（spec §6.2）共用的单一实现，防两处漂移
+ *  （此前 index 副本漏了 TOOL_CALL_TIMEOUT_MS）。 */
+async function callTool(session: MCPSession, name: string, args: unknown): Promise<ToolResult> {
+  try {
+    const result = await session.request(
+      'tools/call',
+      { name, arguments: args ?? {} },
+      TOOL_CALL_TIMEOUT_MS,
+    )
+    return mcpResultToToolResult(result)
+  } catch (error) {
+    return { _tag: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 /** 把一个 MCP 工具适配为内部 ToolDef（execute 闭包持有 session）。 */
 function adaptMCPTool(session: MCPSession, tool: MCPTool): ToolDef {
   return {
@@ -61,20 +77,9 @@ function adaptMCPTool(session: MCPSession, tool: MCPTool): ToolDef {
       tool.description?.trim() || `MCP tool \`${tool.name}\` from server \`${session.name}\`.`,
     parameters: tool.inputSchema,
     permission: 'ask',
-    execute: async (input: unknown): Promise<ToolResult> => {
-      try {
-        const result = await session.request(
-          'tools/call',
-          { name: tool.name, arguments: input ?? {} },
-          TOOL_CALL_TIMEOUT_MS,
-        )
-        return mcpResultToToolResult(result)
-      } catch (error) {
-        return { _tag: 'error', error: error instanceof Error ? error.message : String(error) }
-      }
-    },
+    execute: async (input: unknown): Promise<ToolResult> => callTool(session, tool.name, input),
   }
 }
 
 export type { MCPSession, MCPTool }
-export { adaptMCPTool, mcpResultToToolResult, TOOL_CALL_TIMEOUT_MS, toolName }
+export { adaptMCPTool, callTool, mcpResultToToolResult, TOOL_CALL_TIMEOUT_MS, toolName }

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import type { CatalogModel, CatalogProvider } from '../../shared/types/catalog.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -40,9 +40,13 @@ type CatalogModelInternal = {
   cost?: { input?: number; output?: number }
 }
 
+/** 磁盘缓存目录（writeDiskCache 建目录与此处取文件路径同源，避免两处漂移）。 */
+function getCacheDir(): string {
+  return join(process.cwd(), '.c0de', 'cache')
+}
+
 function getCachePath(): string {
-  const cacheDir = join(process.cwd(), '.c0de', 'cache')
-  return join(cacheDir, 'models-dev.json')
+  return join(getCacheDir(), 'models-dev.json')
 }
 
 /** 清除内存 + 磁盘缓存（主要用于测试）。 */
@@ -73,7 +77,7 @@ function readDiskCache(): { data: CatalogData; fetchedAt: number } | null {
 }
 
 function writeDiskCache(data: CatalogData, fetchedAt: number): void {
-  const cacheDir = join(process.cwd(), '.c0de', 'cache')
+  const cacheDir = getCacheDir()
   if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true })
   writeFileSync(getCachePath(), JSON.stringify({ data, fetchedAt }, null, 2), 'utf-8')
 }
@@ -151,6 +155,17 @@ function toModelItem(m: CatalogModelInternal): CatalogModel {
   }
 }
 
+/** 目录抓取失败的统一 502 响应（上游网络错误透传 message；动词区分：
+ *  列表/查询 fetch，强制刷新 refresh）。 */
+function catalogErrorResponse(c: Context, err: unknown, action: 'fetch' | 'refresh'): Response {
+  return apiError(
+    c,
+    502,
+    'CATALOG_FETCH_FAILED',
+    `Failed to ${action} models.dev catalog: ${err instanceof Error ? err.message : String(err)}`,
+  )
+}
+
 function createCatalogRoute(ctx: ServerContext): Hono {
   const app = new Hono()
   void ctx
@@ -164,12 +179,7 @@ function createCatalogRoute(ctx: ServerContext): Hono {
         .sort((a, b) => a.name.localeCompare(b.name))
       return c.json({ providers })
     } catch (err) {
-      return apiError(
-        c,
-        502,
-        'CATALOG_FETCH_FAILED',
-        `Failed to fetch models.dev catalog: ${err instanceof Error ? err.message : String(err)}`,
-      )
+      return catalogErrorResponse(c, err, 'fetch')
     }
   })
 
@@ -188,12 +198,7 @@ function createCatalogRoute(ctx: ServerContext): Hono {
         models,
       })
     } catch (err) {
-      return apiError(
-        c,
-        502,
-        'CATALOG_FETCH_FAILED',
-        `Failed to fetch models.dev catalog: ${err instanceof Error ? err.message : String(err)}`,
-      )
+      return catalogErrorResponse(c, err, 'fetch')
     }
   })
 
@@ -221,12 +226,7 @@ function createCatalogRoute(ctx: ServerContext): Hono {
       }
       return c.json({ providers, models })
     } catch (err) {
-      return apiError(
-        c,
-        502,
-        'CATALOG_FETCH_FAILED',
-        `Failed to fetch models.dev catalog: ${err instanceof Error ? err.message : String(err)}`,
-      )
+      return catalogErrorResponse(c, err, 'fetch')
     }
   })
 
@@ -236,12 +236,7 @@ function createCatalogRoute(ctx: ServerContext): Hono {
       await fetchCatalog(true)
       return c.json({ refreshed: true })
     } catch (err) {
-      return apiError(
-        c,
-        502,
-        'CATALOG_FETCH_FAILED',
-        `Failed to refresh models.dev catalog: ${err instanceof Error ? err.message : String(err)}`,
-      )
+      return catalogErrorResponse(c, err, 'refresh')
     }
   })
 

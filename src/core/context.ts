@@ -1,4 +1,4 @@
-import { estimateMessageTokens } from '../session/token.js'
+import { messageTokens } from '../session/token.js'
 import type { TokenBudget } from '../shared/types/agent.js'
 import type { Message } from '../shared/types/message.js'
 import type { CompactionConfig } from './config.js'
@@ -31,17 +31,9 @@ function createTokenBudget(
   }
 }
 
-/** 单条消息的原始 token 估算（不应用校准系数）。
- *  全 content 部分口径（text/thinking/steering/tool_call/tool_result）——
- *  此前只统计 text/thinking，纯工具消息按 0 token 计、预算与压缩判定脱节；
- *  与 compaction 的 messageTokens（estimateMessageTokens）同源同口径。 */
-function rawMessageTokens(m: Message): number {
-  if (m.tokenCount > 0) return m.tokenCount
-  return estimateMessageTokens(m.content)
-}
-
 function estimateBudget(messages: Message[], factor = 1.0): number {
-  const raw = messages.reduce((sum, m) => sum + rawMessageTokens(m), 0)
+  // 原始口径（不应用校准系数）逐条累加，系数在汇总后统一乘。
+  const raw = messages.reduce((sum, m) => sum + messageTokens(m), 0)
   return factor === 1.0 ? raw : Math.round(raw * factor)
 }
 
@@ -53,7 +45,7 @@ function fitToBudget(messages: Message[], budget: TokenBudget, factor = 1.0): Me
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
     if (!m) continue
-    const tc = rawMessageTokens(m) * factor
+    const tc = messageTokens(m) * factor
     if (recentTokens + tc > budget.keepRecent) break
     recentTokens += tc
     recentStart = i
@@ -68,7 +60,7 @@ function fitToBudget(messages: Message[], budget: TokenBudget, factor = 1.0): Me
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i]
     if (!m) continue
-    const tc = rawMessageTokens(m) * factor
+    const tc = messageTokens(m) * factor
     const mustKeep = i >= recentStart
     if (mustKeep || used + tc <= historyCap) {
       result.push(m)

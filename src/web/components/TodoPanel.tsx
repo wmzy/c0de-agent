@@ -3,6 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useEffect, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import {
+  STATUS_COLORS,
+  TASK_ICONS,
+  type TaskStatus,
+} from '@/components/session/tools/todoShared.js'
 import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { kanbanAPI } from '@/services/kanban.js'
@@ -12,24 +17,7 @@ import { inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
-
-// ── Status icons & colors ─────────────────────────────────
-
-type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
-
-const TASK_ICONS: Record<TaskStatus, string> = {
-  completed: '✓',
-  in_progress: '→',
-  abandoned: '✕',
-  pending: '○',
-}
-
-const STATUS_COLORS: Record<TaskStatus, string> = {
-  completed: 'var(--haze-color-success)',
-  in_progress: 'var(--haze-color-primary)',
-  abandoned: 'var(--haze-color-text-secondary)',
-  pending: 'var(--haze-color-text-secondary)',
-}
+import { LoadError } from '@/views/_shared/errorState.js'
 
 // ── Styles ────────────────────────────────────────────────
 
@@ -97,48 +85,6 @@ const body = css`
   max-height: 240px;
   overflow-y: auto;
   padding: 2px 0 6px;
-`
-
-/**
- * 待办读失败态。与 ArchivePanel / KanbanView 同一套三段式（原因 + 重试），
- * 此前本面板只有 data 一个状态位：请求 500 时 data 为 undefined → phases 恒为 []
- * → 与「这个会话确实没有待办」落进同一分支（实测注入 500，面板稳定显示
- * 「暂无任务，点击添加」）。
- */
-const errorState = css`
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 10px 12px;
-`
-
-const errorTitle = css`
-  color: var(--haze-color-danger);
-  font-size: 12px;
-  font-weight: 600;
-`
-
-const errorDetail = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 12px;
-  /* 后端 message 可能是长句，窄面板内必须断行 */
-  overflow-wrap: anywhere;
-`
-
-const retryBtn = css`
-  padding: 3px 12px;
-  font-size: 12px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--haze-color-primary);
-    color: var(--haze-color-primary);
-  }
 `
 
 const phaseGroup = css`
@@ -579,18 +525,16 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
       </button>
 
       {!collapsed && loadFailed && (
-        <div className={errorState} role="alert" data-testid="todo-load-error">
-          <span className={errorTitle}>待办读取失败</span>
-          <span className={errorDetail}>{messageOf(queryError) || '无法读取本会话的待办。'}</span>
-          <button
-            type="button"
-            className={retryBtn}
-            onClick={() => void refetch()}
-            data-testid="todo-retry"
-          >
-            重试
-          </button>
-        </div>
+        /* 待办读失败三段式（_shared/errorState 的 LoadError）：此前本面板只有
+         * data 一个状态位，请求 500 时与「确实没有待办」落进同一分支（实测注入
+         * 500，面板稳定显示「暂无任务，点击添加」）。 */
+        <LoadError
+          title="待办读取失败"
+          detail={messageOf(queryError) || '无法读取本会话的待办。'}
+          onRetry={() => void refetch()}
+          retryTestId="todo-retry"
+          testId="todo-load-error"
+        />
       )}
 
       {!collapsed && totalTasks > 0 && (

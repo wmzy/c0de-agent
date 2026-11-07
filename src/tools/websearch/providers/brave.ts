@@ -5,7 +5,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
-import { DEFAULT_NUM_RESULTS, httpStatusError } from '../types.js'
+import { assertOk, DEFAULT_NUM_RESULTS } from '../types.js'
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'
 
@@ -55,10 +55,7 @@ export const braveProvider: WebSearchProvider = {
       },
       signal: params.signal,
     })
-    if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText)
-      throw httpStatusError(`Brave API error (${response.status}): ${text}`, response.status)
-    }
+    await assertOk(response, 'Brave')
     const data = (await response.json()) as BraveSearchResponse
     const sources: WebSearchSource[] = []
     for (const r of data.web?.results ?? []) {

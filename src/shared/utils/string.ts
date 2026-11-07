@@ -48,6 +48,12 @@ export function tailChars(text: string, n: number): string {
   return text.slice(safeTailStart(text, text.length - n))
 }
 
+/** 正则元字符逐字符转义（转出可安全嵌入 RegExp 的字面量原文）。
+ *  glob（非法字符类/花括号降级）与 grep（非法模式的字面量回退）共用。 */
+export function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** UUID（任意版本/大小写）格式判定。
  *  用于「路径/参数里的 id 直接进 PG uuid 列」的入口预检：非 UUID 经 drizzle
  *  参数化查询会在 PG 侧抛 22P02（invalid input syntax for type uuid），被 Hono

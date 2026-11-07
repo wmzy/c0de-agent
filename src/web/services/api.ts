@@ -244,4 +244,12 @@ export function del<T = unknown>(url: string): Promise<T> {
   return request<T>(url, 'DELETE')
 }
 
+/** 把可选 projectId 拼进 URL query：路径已带 ? 用 & 接，否则开 ?；未提供时原样
+ *  返回。各 service 曾内联同一份 `${projectId ? \`?projectId=…\` : ''}`（含 `&` 接
+ *  与 if 表达式两种变体，约 16 处），URL 逐字符等价，收敛于此。 */
+export function withProjectId(path: string, projectId?: string): string {
+  if (!projectId) return path
+  return `${path}${path.includes('?') ? '&' : '?'}projectId=${encodeURIComponent(projectId)}`
+}
+
 export { API_BASE }

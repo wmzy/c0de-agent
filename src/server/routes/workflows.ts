@@ -7,10 +7,9 @@ import { discoverWorkflows, saveWorkflow } from '../../core/workflows/index.js'
 import { reloadRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
 import {
-  getByDirectory,
   getProject,
+  refreshTrustedProjectFingerprint,
   resolveCwdProjectTrusted,
-  trustProject,
 } from '../../project/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -177,8 +176,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // 必须先于 reloadRegistry：reload 的项目级发现按 projectTrustCurrent 判定，
     // 新文件未入指纹时会误判漂移而跳过（registry 里看不到刚创建的工作流）。
     try {
-      const p = await getByDirectory(ctx.db, saveDir)
-      if (p?.trustedAt != null) await trustProject(ctx.db, p.id)
+      await refreshTrustedProjectFingerprint(ctx.db, saveDir)
     } catch {
       // 指纹刷新失败不阻塞创建结果（最坏回到「需重新信任」的 fail-closed 路径）
     }
@@ -364,8 +362,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       // 不刷新会让已信任项目在下一次聊天时被误判「配置漂移」而重新门禁，
       // 与 create 路径的 trustProject 刷新对称（防「信任→删除→自锁复检」）。
       try {
-        const p = await getByDirectory(ctx.db, baseDir)
-        if (p?.trustedAt != null) await trustProject(ctx.db, p.id)
+        await refreshTrustedProjectFingerprint(ctx.db, baseDir)
       } catch {
         // 指纹刷新失败不阻塞删除结果（最坏回到 fail-closed 复检路径）
       }
@@ -441,7 +438,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     if (projectFilePath) {
       try {
         const project = await getProject(ctx.db, projectId ?? '')
-        if (project?.trustedAt != null) await trustProject(ctx.db, project.id)
+        if (project) await refreshTrustedProjectFingerprint(ctx.db, project.worktree)
       } catch {
         // 指纹刷新失败不阻塞删除结果
       }

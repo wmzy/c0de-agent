@@ -6,6 +6,7 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI } from '@/services/session.js'
 import type { CompactionArchive, SessionEntry } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
+import { LoadError } from '@/views/_shared/errorState.js'
 
 const list = css`
   display: flex;
@@ -103,47 +104,6 @@ const hint = css`
   margin-top: 4px;
 `
 
-/**
- * 归档读失败态。此前只有 isLoading 一个状态位：请求 500 时 data 为 undefined
- * → archives 恒为 []，与「真的没有归档」落进同一分支。
- */
-const errorState = css`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 20px 16px;
-  text-align: center;
-`
-
-const errorTitle = css`
-  color: var(--haze-color-danger);
-  font-size: 13px;
-  font-weight: 600;
-`
-
-const errorDetail = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 12px;
-  /* 后端 message 可能是长路径/长句，窄弹层内必须断行 */
-  overflow-wrap: anywhere;
-`
-
-const retryBtn = css`
-  padding: 4px 14px;
-  font-size: 12px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--haze-color-primary);
-    color: var(--haze-color-primary);
-  }
-`
-
 const TYPE_LABEL: Record<CompactionArchive['archiveType'], string> = {
   compaction: '压缩',
   squash: '归并',
@@ -208,18 +168,14 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
             /clear、Shake、压缩的历史内容丢了（实测注入 500，稳定显示这句）。
             与 RecycleBin / KanbanView 同一套三段式：标题 + 后端原因 + 重试。 */}
         {isError ? (
-          <div className={errorState} role="alert" data-testid="archive-load-error">
-            <span className={errorTitle}>归档加载失败</span>
-            <span className={errorDetail}>{messageOf(error) || '无法读取归档内容。'}</span>
-            <button
-              type="button"
-              className={retryBtn}
-              onClick={() => refetch()}
-              data-testid="archive-retry"
-            >
-              重试
-            </button>
-          </div>
+          <LoadError
+            center
+            title="归档加载失败"
+            detail={messageOf(error) || '无法读取归档内容。'}
+            onRetry={() => void refetch()}
+            retryTestId="archive-retry"
+            testId="archive-load-error"
+          />
         ) : null}
         {!isLoading && !isError && archives.length === 0 ? (
           // 「搜不到」与「没有归档」是两件事：搜索无命中时此前渲染的是空态那句

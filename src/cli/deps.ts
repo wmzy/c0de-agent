@@ -67,23 +67,45 @@ type BuildDepsOptions = {
   chatStream?: LoopDeps['chatStream']
 }
 
-/** 解析权限 checker：显式策略优先，否则回退到 config.permission.defaultMode。
+/** 权限解析结果：实际放行用的 checker + 入口横幅的「权限水位」描述（P1-1）。
+ *  同一决策树产出，横幅与放行不会各自漂移。 */
+type ResolvedPermission = {
+  checker: PermissionChecker
+  /** 用户可见的权限水位描述（chat 入口打印）。 */
+  waterLevel: string
+}
+
+/** 解析权限水位（显式策略优先，否则回退到 config.permission.defaultMode）。
  *  无 --allow 白名单时返回单例 nonInteractiveSafeChecker（保持对象同一性）；有白名单
  *  时按白名单新建 checker（--allow 只影响 ask 工具的定向放行）。 */
-function resolvePermissionChecker(
+function resolvePermission(
   config: Config,
   strategy?: PermissionStrategy,
   allowTools?: string[],
-): PermissionChecker {
-  if (strategy === 'full-auto') return fullyAutoApproveChecker
+): ResolvedPermission {
   const listed = allowTools !== undefined && allowTools.length > 0
-  if (strategy === 'safe')
-    return listed ? createNonInteractiveChecker(allowTools) : nonInteractiveSafeChecker
-  return config.permission.defaultMode === 'auto'
-    ? fullyAutoApproveChecker
-    : listed
-      ? createNonInteractiveChecker(allowTools)
-      : nonInteractiveSafeChecker
+  // 定向/默认安全两态共用的结果（--allow 只在 safe 语义下起作用）。
+  const targeted: ResolvedPermission = listed
+    ? {
+        checker: createNonInteractiveChecker(allowTools),
+        waterLevel: `只读自动放行，写/执行工具定向放行：${(allowTools ?? []).join(', ')}（其余写工具将被拒绝）`,
+      }
+    : {
+        checker: nonInteractiveSafeChecker,
+        waterLevel:
+          '只读工具自动放行，写/执行工具将被拒绝（非交互）。加 -y 全量放行或 --allow <工具> 定向放行',
+      }
+  if (strategy === 'full-auto') {
+    return { checker: fullyAutoApproveChecker, waterLevel: '全部工具自动放行（-y）' }
+  }
+  if (strategy === 'safe') return targeted
+  if (config.permission.defaultMode === 'auto') {
+    return {
+      checker: fullyAutoApproveChecker,
+      waterLevel: '全部工具自动放行（permission.defaultMode=auto）',
+    }
+  }
+  return targeted
 }
 
 /** 组装完整 LoopDeps（默认 safe 放行 + 默认工具注册表）。 */
@@ -115,7 +137,7 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
     toolRegistry,
     urlRegistry: createDefaultURLRegistry(),
     hookRunner,
-    permission: resolvePermissionChecker(resolvedConfig, opts.permissionStrategy, opts.allowTools),
+    permission: resolvePermission(resolvedConfig, opts.permissionStrategy, opts.allowTools).checker,
     config: resolvedConfig,
     cwd: opts.cwd,
     // 技能发现（system prompt ## Loaded Skills 段数据源）。
@@ -132,10 +154,11 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
   return deps
 }
 
-export type { BuildDepsOptions, PermissionStrategy }
+export type { BuildDepsOptions, PermissionStrategy, ResolvedPermission }
 export {
   buildAgentDeps,
   buildRegistryFromConfig,
   fullyAutoApproveChecker,
   nonInteractiveSafeChecker,
+  resolvePermission,
 }

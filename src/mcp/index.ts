@@ -10,7 +10,7 @@ import type { ToolDef, ToolResult } from '../shared/types/tool.js'
 import { registerTool } from '../tools/registry.js'
 import type { ToolRegistry } from '../tools/types.js'
 import { createMCPClient } from './client.js'
-import { adaptMCPTool, mcpResultToToolResult } from './tool-adapter.js'
+import { adaptMCPTool, callTool } from './tool-adapter.js'
 import { buildTransport, type MCPTransport } from './transport.js'
 import type { MCPSession, MCPTool } from './types.js'
 
@@ -68,14 +68,10 @@ function discoverTools(session: MCPSession): ToolDef[] {
   return session.tools.map((t) => adaptMCPTool(session, t))
 }
 
-/** 直接调用一个 MCP 工具（spec §6.2 callMCPTool）。 */
+/** 直接调用一个 MCP 工具（spec §6.2 callMCPTool）。委托 tool-adapter 的
+ *  callTool 单一实现（含 TOOL_CALL_TIMEOUT_MS 超时）。 */
 async function callMCPTool(session: MCPSession, name: string, args: unknown): Promise<ToolResult> {
-  try {
-    const result = await session.request('tools/call', { name, arguments: args ?? {} })
-    return mcpResultToToolResult(result)
-  } catch (error) {
-    return { _tag: 'error', error: error instanceof Error ? error.message : String(error) }
-  }
+  return callTool(session, name, args)
 }
 
 /** 断开连接（spec §6.2 disconnectMCPServer）。幂等。 */

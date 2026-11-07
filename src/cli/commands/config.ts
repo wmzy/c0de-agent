@@ -21,7 +21,7 @@ async function refreshTrustFingerprint(cwd: string): Promise<void> {
     const { acquireDevDbLock, releaseDevDbLock, resolveDbDir } = await import(
       '../../server/server.js'
     )
-    const { getByDirectory, trustProject } = await import('../../project/index.js')
+    const { refreshTrustedProjectFingerprint } = await import('../../project/index.js')
     const dataDir = resolveDbDir()
     mkdirSync(dataDir, { recursive: true })
     acquireDevDbLock(dataDir)
@@ -29,8 +29,7 @@ async function refreshTrustFingerprint(cwd: string): Promise<void> {
       const db = await createDB({ driver: 'pglite', dataDir })
       try {
         await migrateDB(db)
-        const p = await getByDirectory(db, cwd)
-        if (p?.trustedAt != null) await trustProject(db, p.id)
+        await refreshTrustedProjectFingerprint(db, cwd)
       } finally {
         await db.close()
       }

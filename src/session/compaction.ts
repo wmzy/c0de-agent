@@ -11,7 +11,7 @@ import {
   summaryEntryTimestamp,
 } from './message.js'
 import { upsertFileSnapshot } from './snapshot.js'
-import { estimateMessageTokens, estimateTokens } from './token.js'
+import { estimateTokens, messageTokens } from './token.js'
 import type { CompactionConfig, CompactionResult, HotFile, Summarizer } from './types.js'
 
 /**
@@ -155,16 +155,6 @@ ${history}`
 }
 
 /**
- * Token cost of a single message, honoring a stored tokenCount when present.
- * Mirrors core/context.ts rawMessageTokens without crossing the core→session
- * layer boundary (core already imports session, so session must not import core).
- */
-function messageTokens(m: Message): number {
-  if (m.tokenCount > 0) return m.tokenCount
-  return estimateMessageTokens(m.content)
-}
-
-/**
  * Find the start index of the token-budgeted keep window by reverse-walking
  * from the newest message. This is the session-layer analogue of
  * core/context.ts fitToBudget's keep-window logic: accumulate tokens from the
@@ -202,6 +192,75 @@ async function findPreviousSummary(handle: DB, sessionId: string): Promise<strin
     }
   }
   return undefined
+}
+
+/** rewriteWithSummary 的参数（compactSession/squashRecent 共享的原子改写事务）。 */
+type RewriteSummaryOptions = {
+  /** 摘要 entry 的 id（调用方生成，archive 记录引用它）。 */
+  entryId: string
+  /** LLM 生成的摘要文本。 */
+  summary: string
+  /** entry tag：决定 content 中被压缩 id 列表的字段名（originalEntryIds/squashedEntryIds）。 */
+  tag: 'compaction' | 'squash'
+  /** 是否归档原始消息；false 时仅生成占位 archiveId（squash 可关闭归档）。缺省 true。 */
+  archiveOriginal?: boolean
+  /** 是否保留热文件快照（compaction 由 preserveSnapshots!==false、squash 由
+   *  preserveFileSnapshots 控制，缺省 true）。 */
+  preserveSnapshots?: boolean
+  /** 首条保留消息——摘要时间戳锚点之二（压缩全部消息时缺省）。 */
+  firstKept?: Message
+}
+
+/** 原子改写事务（compactSession/squashRecent 共享）：
+ *  archive 原始消息 → upsert 热文件快照 → 删除原始消息 → 插入摘要 entry。
+ *  任一步抛错整个事务回滚，原始历史保持完整（原始消息只在摘要落库后才删除）。
+ *  摘要 entry 定位在首个被压缩消息处（并列时间戳时再早 1ms），保证摘要排在
+ *  保留尾部之前。 */
+async function rewriteWithSummary(
+  handle: DB,
+  sessionId: string,
+  messages: Message[],
+  opts: RewriteSummaryOptions,
+): Promise<{ archiveId: string; fileSnapshotIds: string[] }> {
+  const { entryId, summary, tag, firstKept } = opts
+  return handle.db.transaction(async (tx) => {
+    const txHandle: DB = { db: tx, close: handle.close }
+
+    const archiveId =
+      (opts.archiveOriginal ?? true)
+        ? await archiveOriginalEntries(txHandle, sessionId, messages, tag, summary, entryId)
+        : generateId()
+
+    const fileSnapshotIds: string[] = []
+    if (opts.preserveSnapshots !== false) {
+      const hotFiles = extractHotFiles(messages)
+      for (const file of hotFiles) {
+        // 不传 mtimeMs：由 upsertFileSnapshot 从已有行透传，压缩后热文件不误判过期。
+        const id = await upsertFileSnapshot(txHandle, sessionId, file.path, file.content)
+        fileSnapshotIds.push(id)
+      }
+    }
+
+    await deleteEntriesByIds(
+      txHandle,
+      messages.map((m) => m.id),
+    )
+
+    const originalIds = messages.map((m) => m.id)
+    await insertEntry(txHandle, {
+      id: entryId,
+      sessionId,
+      tag,
+      content:
+        tag === 'compaction'
+          ? { summary, originalEntryIds: originalIds, archiveId }
+          : { summary, squashedEntryIds: originalIds, archiveId },
+      tokenCount: estimateTokens(summary),
+      createdAt: summaryEntryTimestamp(messages[0], firstKept),
+    })
+
+    return { archiveId, fileSnapshotIds }
+  })
 }
 
 /**
@@ -253,52 +312,21 @@ async function compactSession(
 
   const compactionEntryId = generateId()
 
-  // Atomic rewrite: archive originals → upsert snapshots → delete originals →
-  // insert summary. If any step throws, the whole transaction rolls back and
-  // the original message history is left intact.
-  const { archiveId, fileSnapshotIds } = await handle.db.transaction(async (tx) => {
-    const txHandle: DB = { db: tx, close: handle.close }
-
-    const archiveId = await archiveOriginalEntries(
-      txHandle,
-      sessionId,
-      compactMessages,
-      'compaction',
+  // Atomic rewrite（共享事务体 rewriteWithSummary）：archive originals →
+  // upsert snapshots → delete originals → insert summary. If any step throws,
+  // the whole transaction rolls back and the original message history is left intact.
+  const { archiveId, fileSnapshotIds } = await rewriteWithSummary(
+    handle,
+    sessionId,
+    compactMessages,
+    {
+      entryId: compactionEntryId,
       summary,
-      compactionEntryId,
-    )
-
-    const fileSnapshotIds: string[] = []
-    if (config?.preserveSnapshots !== false) {
-      const hotFiles = extractHotFiles(compactMessages)
-      for (const file of hotFiles) {
-        // 不传 mtimeMs：由 upsertFileSnapshot 从已有行透传，压缩后热文件不误判过期。
-        const id = await upsertFileSnapshot(txHandle, sessionId, file.path, file.content)
-        fileSnapshotIds.push(id)
-      }
-    }
-
-    await deleteEntriesByIds(
-      txHandle,
-      compactMessages.map((m) => m.id),
-    )
-
-    await insertEntry(txHandle, {
-      id: compactionEntryId,
-      sessionId,
       tag: 'compaction',
-      content: {
-        summary,
-        originalEntryIds: compactMessages.map((m) => m.id),
-        archiveId,
-      },
-      tokenCount: estimateTokens(summary),
-      // 定位在首个被压缩消息处（并列时间戳时再早 1ms），保证摘要排在保留尾部之前。
-      createdAt: summaryEntryTimestamp(compactMessages[0], keepMessages[0]),
-    })
-
-    return { archiveId, fileSnapshotIds }
-  })
+      preserveSnapshots: config?.preserveSnapshots,
+      firstKept: keepMessages[0],
+    },
+  )
 
   return {
     compacted: true,
@@ -310,4 +338,10 @@ async function compactSession(
   }
 }
 
-export { buildCompactionPrompt, compactSession, extractHotFiles, findSafeCutPoint }
+export {
+  buildCompactionPrompt,
+  compactSession,
+  extractHotFiles,
+  findSafeCutPoint,
+  rewriteWithSummary,
+}

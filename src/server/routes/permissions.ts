@@ -17,56 +17,67 @@ import type { ServerContext } from '../types.js'
  *    持久化到 session.metadata.alwaysAllow，checker 经 getter 实时读取。
  */
 
-/** 懒加载会话级权限覆盖到内存 Map（幂等；查询失败静默回退默认语义）。 */
-async function ensureSessionModeLoaded(ctx: ServerContext, sessionId: string): Promise<void> {
+/** 读取会话 metadata 行（单一读取器）。行不存在与查询失败统一返回 null——
+ *  两类失败在调用方都走同一条回退路径（覆盖模式回退默认、白名单回退空表、
+ *  持久化跳过），无需区分。 */
+async function readSessionMetadata(
+  ctx: ServerContext,
+  sessionId: string,
+): Promise<{ metadata: unknown } | null> {
+  try {
+    const [row] = await ctx.db.db
+      .select({ metadata: sessions.metadata })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+    return row ?? null
+  } catch {
+    return null
+  }
+}
+
+/** 懒加载会话级权限覆盖到内存 Map（幂等；无有效覆盖则不写入，读取时回退默认）。
+ *  可传入已读取的 metadata 行避免重复查询（见 GET /:sessionId）。 */
+async function ensureSessionModeLoaded(
+  ctx: ServerContext,
+  sessionId: string,
+  metaRow?: { metadata: unknown } | null,
+): Promise<void> {
   if (ctx.sessionPermissionModes.has(sessionId)) return
-  try {
-    const [row] = await ctx.db.db
-      .select({ metadata: sessions.metadata })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId))
-    const mode = (row?.metadata as { permissionMode?: 'auto' | 'default' } | undefined)
-      ?.permissionMode
-    if (mode === 'auto' || mode === 'default') {
-      ctx.sessionPermissionModes.set(sessionId, mode)
-    }
-  } catch {
-    // 会话不存在/查询失败：回退默认模式
+  const row = metaRow !== undefined ? metaRow : await readSessionMetadata(ctx, sessionId)
+  const mode = (row?.metadata as { permissionMode?: 'auto' | 'default' } | undefined)
+    ?.permissionMode
+  if (mode === 'auto' || mode === 'default') {
+    ctx.sessionPermissionModes.set(sessionId, mode)
   }
 }
 
-/** 懒加载会话级始终允许白名单到内存 Map（幂等；失败回退空列表）。 */
-async function ensureSessionAllowLoaded(ctx: ServerContext, sessionId: string): Promise<void> {
+/** 懒加载会话级始终允许白名单到内存 Map（幂等；失败/无记录回退空列表）。 */
+async function ensureSessionAllowLoaded(
+  ctx: ServerContext,
+  sessionId: string,
+  metaRow?: { metadata: unknown } | null,
+): Promise<void> {
   if (ctx.sessionAlwaysAllow.has(sessionId)) return
-  try {
-    const [row] = await ctx.db.db
-      .select({ metadata: sessions.metadata })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId))
-    const list = (row?.metadata as { alwaysAllow?: unknown } | undefined)?.alwaysAllow
-    ctx.sessionAlwaysAllow.set(
-      sessionId,
-      Array.isArray(list) ? list.filter((t): t is string => typeof t === 'string') : [],
-    )
-  } catch {
-    ctx.sessionAlwaysAllow.set(sessionId, [])
-  }
+  const row = metaRow !== undefined ? metaRow : await readSessionMetadata(ctx, sessionId)
+  const list = (row?.metadata as { alwaysAllow?: unknown } | undefined)?.alwaysAllow
+  ctx.sessionAlwaysAllow.set(
+    sessionId,
+    Array.isArray(list) ? list.filter((t): t is string => typeof t === 'string') : [],
+  )
 }
 
-/** 持久化会话 metadata（失败不致命：内存态本次运行仍生效）。 */
+/** 持久化会话 metadata（read-modify-write，读取走共享 reader；失败不致命：
+ *  内存态本次运行仍生效）。 */
 async function persistSessionMetadata(
   ctx: ServerContext,
   sessionId: string,
   mutate: (meta: Record<string, unknown>) => void,
 ): Promise<void> {
+  const row = await readSessionMetadata(ctx, sessionId)
+  if (!row) return
+  const meta = { ...((row.metadata ?? {}) as Record<string, unknown>) }
+  mutate(meta)
   try {
-    const [row] = await ctx.db.db
-      .select({ metadata: sessions.metadata })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId))
-    if (!row) return
-    const meta = { ...((row.metadata ?? {}) as Record<string, unknown>) }
-    mutate(meta)
     await ctx.db.db.update(sessions).set({ metadata: meta }).where(eq(sessions.id, sessionId))
   } catch {
     // 持久化失败不致命
@@ -76,17 +87,29 @@ async function persistSessionMetadata(
 function createPermissionsRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
-  // 路径参数 sessionId 是 sessions.id（uuid 列）：非 UUID 直接 404。
-  // 此前未守卫：PUT /:sessionId 的 getSession 把非 UUID 直接送进 drizzle
+  // 路径参数 sessionId 的统一守卫：非 UUID 直接 404；UUID 但会话不存在/在
+  // 回收站（deletedAt）同样 404（DB 访问折进 middleware，与 kanban.ts 的
+  // guardProject 同型）。「格式非法」与「会话不存在」同属资源不存在，统一 404。
+  //
+  // 格式守卫此前缺失：PUT /:sessionId 的 getSession 把非 UUID 直接送进 drizzle
   // 参数化查询，PG 侧抛 22P02（invalid input syntax for type uuid），Hono 兜成
   // 500 并把 SQL 错误细节回给客户端——与 session/kanban/todo 路由已修的
-  // 同型缺陷。「格式非法」与「会话不存在」同属资源不存在，统一 404。
+  // 同型缺陷。
+  //
+  // 存在性守卫（P3-11）：不存在/回收站会话返回成功会谎报「已生效」——
+  // 设置 auto 覆盖、写入白名单均污染内存 Map 而无真实会话承载；返回全局
+  // 默认模式也会冒充「该会话的模式」，调用方无法区分「无覆盖」与「会话不存在」。
   // /:sessionId/pending 只读内存 permissionStore（不触 DB），不受守卫约束。
   const guardSessionId = async (
     c: Context,
     next: () => Promise<void>,
   ): Promise<Response | undefined> => {
-    if (!isUuid(c.req.param('sessionId') ?? '')) {
+    const sessionId = c.req.param('sessionId') ?? ''
+    if (!isUuid(sessionId)) {
+      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
+    }
+    const session = await getSession(ctx.db, sessionId)
+    if (!session || session.deletedAt) {
       return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
     }
     await next()
@@ -127,14 +150,10 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // GET /:sessionId — 会话实际生效模式（覆盖优先，回退默认）+ 始终允许白名单
   app.get('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
-    // 与 PUT /:sessionId 同口径：不存在/回收站会话 404——返回全局默认模式
-    // 会冒充「该会话的模式」，调用方无法区分「无覆盖」与「会话不存在」。
-    const session = await getSession(ctx.db, sessionId)
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
-    await ensureSessionModeLoaded(ctx, sessionId)
-    await ensureSessionAllowLoaded(ctx, sessionId)
+    // 一次读取同时喂 mode 与 alwaysAllow 两个懒加载（此前背靠背两次相同查询）
+    const metaRow = await readSessionMetadata(ctx, sessionId)
+    await ensureSessionModeLoaded(ctx, sessionId, metaRow)
+    await ensureSessionAllowLoaded(ctx, sessionId, metaRow)
     return c.json({
       mode: ctx.sessionPermissionModes.get(sessionId) ?? ctx.permissionMode,
       alwaysAllow: ctx.sessionAlwaysAllow.get(sessionId) ?? [],
@@ -144,12 +163,6 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // PUT /:sessionId — 设置会话级覆盖；不传 mode 则清除覆盖。P2：落库持久化。
   app.put('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
-    // P3-11 修复：校验会话存在——此前对不存在的 id 设置 auto 也返回成功，
-    // 用户以为已生效，重启后无任何痕迹。回收站会话同口径 404。
-    const session = await getSession(ctx.db, sessionId)
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
     const body = (await c.req.json().catch(() => null)) as { mode?: unknown } | null
     const mode = body?.mode
     if (mode !== undefined && mode !== 'default' && mode !== 'auto') {
@@ -183,12 +196,6 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // POST /:sessionId/always-allow — 追加工具到会话白名单（幂等）
   app.post('/:sessionId/always-allow', async (c) => {
     const sessionId = c.req.param('sessionId')
-    // P3-11 同口径（此前只修了 PUT /:sessionId）：不存在的会话此前写入返回
-    // 200 且污染内存 Map——用户以为白名单已生效，实际会话已删除。
-    const session = await getSession(ctx.db, sessionId)
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
     const body = (await c.req.json().catch(() => null)) as { tool?: unknown } | null
     const tool = body?.tool
     if (typeof tool !== 'string' || tool.length === 0) {
@@ -207,10 +214,6 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // DELETE /:sessionId/always-allow/:tool — 从会话白名单移除
   app.delete('/:sessionId/always-allow/:tool', async (c) => {
     const sessionId = c.req.param('sessionId')
-    const session = await getSession(ctx.db, sessionId)
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
     const tool = c.req.param('tool')
     await ensureSessionAllowLoaded(ctx, sessionId)
     const list = (ctx.sessionAlwaysAllow.get(sessionId) ?? []).filter((t) => t !== tool)

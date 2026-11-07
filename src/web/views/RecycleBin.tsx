@@ -10,6 +10,7 @@ import {
   useDeletedSessions,
   useRestoreSession,
 } from '@/hooks/useSession.js'
+import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
 import { type DeletedKanbanBoard, kanbanAPI, type MergedBoardCounts } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
@@ -234,31 +235,19 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   })
 
   // P3：回收站搜索（此前删掉的会话只能逐行翻）——标题+消息内容，服务端搜索。
-  const [search, setSearch] = useState('')
-  const [searchDebounced, setSearchDebounced] = useState('')
-  useEffect(() => {
-    const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
-    return () => clearTimeout(t)
-  }, [search])
-  // 阈值 1 而非 2：单字符查询此前被静默丢弃，而下方 rows 分支仍按
-  // searchDebounced.length > 1 判断「是否在搜索」——两边同时为假时列出的是
-  // 未过滤的全部分页条目，搜索框里有字却看不到任何收敛。服务端对单字符
-  // 正常返回。
-  // 三态齐全：查询只取 data 时，「还在查」与「查不了」都落进 rows 为空的分支，
-  // 界面给出「回收站无匹配会话」——把「拉不到」说成「没有」，用户会据此认定
-  // 删掉的会话已被清除。失败后（RQ 默认 retry: 2）这一句永久停在那里，且
-  // 该区域内没有任何重试入口。
+  // 防抖/查询/三态收敛在 useSessionContentSearch（includeDeleted 口径）；阈值与
+  // 「还在查 ≠ 没有」的口径见该 hook。isSearching 两处消费（enabled 与 rows
+  // 分支）必须同源，此前各写一份 length 判断曾漏掉单字符。
   const {
-    data: searchResults,
-    isLoading: searchLoading,
-    isError: searchError,
-    error: searchErrorObj,
+    search,
+    setSearch,
+    debounced: searchDebounced,
+    results: searchMatches,
+    pending: searchPending,
+    error: searchError,
+    errorMessage: searchErrorMessage,
     refetch: refetchSearch,
-  } = useQuery({
-    queryKey: ['sessions', 'search-deleted', projectId, searchDebounced],
-    queryFn: () => sessionAPI.search(searchDebounced, projectId, true),
-    enabled: searchDebounced.length >= 1,
-  })
+  } = useSessionContentSearch(projectId, { includeDeleted: true })
 
   const rebindMut = useMutation({
     mutationFn: (id: string) => sessionAPI.rebind(id, projectId),
@@ -366,14 +355,12 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 「是否在搜索」与上面 query 的 enabled 必须是同一个口径：两边不一致时，
   // 搜索框有字却会列出未过滤的全部分页条目。
   const isSearching = searchDebounced.length >= 1
-  const rows = isSearching ? (searchResults?.results.map((r) => r.session) ?? []) : sortedDeleted
+  const rows = isSearching ? (searchMatches?.map((r) => r.session) ?? []) : sortedDeleted
   // 孤儿分组的本地筛选：上方搜索走服务端（带 projectId，只覆盖本项目），孤儿
   // 条目只有展开后才有数据可比对标题。展开后按标题过滤，搜得动的才叫搜索。
   const orphanRows = isSearching
     ? (orphans ?? []).filter((s) => s.title.toLowerCase().includes(searchDebounced.toLowerCase()))
     : (orphans ?? [])
-  // 与文件列表失败态同口径取后端原因（统一走 messageOf）。
-  const searchErrorMessage = searchErrorObj ? messageOf(searchErrorObj) : null
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length
@@ -567,7 +554,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 className={restoreBtn}
-                onClick={() => void refetchSearch()}
+                onClick={refetchSearch}
                 data-testid="trash-search-retry"
               >
                 重试
@@ -578,7 +565,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               「回收站无匹配会话」会与下方那条命中的孤儿行自相矛盾。 */}
           {rows.length === 0 && isSearching && !searchError ? (
             <div className={empty}>
-              {searchLoading ? '搜索中…' : `本项目回收站内没有匹配「${searchDebounced}」的会话`}
+              {searchPending ? '搜索中…' : `本项目回收站内没有匹配「${searchDebounced}」的会话`}
             </div>
           ) : null}
           {rows.map((s) => {
