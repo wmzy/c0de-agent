@@ -4,8 +4,6 @@ import { dirname, join, relative } from 'node:path'
 import { type Context, Hono } from 'hono'
 import trash from 'trash'
 import { createSummarizer } from '../../core/compact.js'
-import { loadConfigScopes, mergeConfig } from '../../core/config.js'
-import { buildRegistryFromConfig } from '../../core/provider-registry.js'
 import { buildFallbackChain } from '../../llm/routing.js'
 import { getProject } from '../../project/project.js'
 import {
@@ -26,6 +24,7 @@ import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
+import { resolveSessionScope } from '../util/session-scope.js'
 
 /** 二进制嗅探：NUL 字节出现在文件开头 8 KiB 内，或整段不是合法 UTF-8。
  *
@@ -329,11 +328,12 @@ function createFilesRoute(ctx: ServerContext): Hono {
 
     // --- 默认模式：LLM 生成 message + 检查可疑文件 ---
     // P1-1：commitModel/defaultProvider 按项目配置解析（此前一律用服务启动目录配置）。
-    let projectConfig = ctx.config
-    if (root !== ctx.cwd) {
-      const projectScope = loadConfigScopes(root).project
-      if (projectScope) projectConfig = mergeConfig(ctx.config, projectScope)
-    }
+    // 项目级 provider 注册表（项目配置的 provider 才能路由）：无项目 id 不缓存，
+    // 每次现建（git-commit 是低频端点）。
+    const { config: projectConfig, registry: projectRegistry } = resolveSessionScope(ctx, {
+      cwd: root,
+      buildWithoutKey: true,
+    })
     const cm = projectConfig.commitModel
     const provider = cm?.provider ?? projectConfig.defaultProvider
     const model = cm?.model ?? projectConfig.defaultModel
@@ -350,13 +350,8 @@ ${headChars(summary.diff, 8000)}`
 
     let raw: string
     try {
-      // P1-1：项目级 provider 注册表（项目配置的 provider 才能路由）。
-      const registry =
-        root !== ctx.cwd && projectConfig.providers.length > 0
-          ? buildRegistryFromConfig(projectConfig)
-          : ctx.llmRegistry
       const fallback = buildFallbackChain(projectConfig, provider, model)
-      const summarizer = createSummarizer(registry, provider, model, {
+      const summarizer = createSummarizer(projectRegistry, provider, model, {
         maxTokens: 400,
         ...(fallback ? { fallback } : {}),
       })

@@ -6,6 +6,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 import { projectAPI } from '@/services/project.js'
 import type { Project } from '@/types/index.js'
+import { messageOf } from '@/utils/errors.js'
 
 const hint = css`
   font-size: 12px;
@@ -39,8 +40,9 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
       onClose()
     },
     onError: (err: unknown) => {
-      // APIError 现在是真正的 Error（services/api.ts），常规写法即可拿到后端原因。
-      setError(err instanceof Error ? err.message : String(err))
+      // APIError 是真正的 Error（services/api.ts）；取文案统一走 messageOf
+      // （结构化 message → Error.message → String 兜底）。
+      setError(messageOf(err))
     },
   })
 

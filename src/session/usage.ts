@@ -131,6 +131,22 @@ export type BudgetOverage = {
   warnings: string[]
 }
 
+/** 预算门禁是否启用（任一轴动作会阻断）：budgetPause 注入的单一判定口径。
+ *  此前「budgetAction/tokenBudgetAction ∈ {pause, abort}」四条件在 CLI 与 server
+ *  路由内联复制 6 份，与 budgetOverageParts 的 tokenAction ?? amountAction 回退
+ *  语义各自演化——统一从本函数取值，动作口径变化只改这一处。 */
+export function budgetGateEnabled(usage: UsageConfig | undefined): boolean {
+  if (!usage) return false
+  const amountAction = usage.budgetAction ?? 'warn'
+  const tokenAction = usage.tokenBudgetAction ?? amountAction
+  return (
+    amountAction === 'pause' ||
+    amountAction === 'abort' ||
+    tokenAction === 'pause' ||
+    tokenAction === 'abort'
+  )
+}
+
 /** 预算护栏判定：金额（USD）+ token 双口径，返回超支描述 + 阻断动作（空 parts =
  *  无需阻断——可能超支但动作仅 warn）。
  *  金额口径受 budgetAction 控制；token 口径受 tokenBudgetAction 控制（缺省回退

@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { findNode, setChildren } from '@/components/tree-utils.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
 import { btnDanger, btnSm } from '@/styles/tokens.js'
 import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
+import { messageOf } from '@/utils/errors.js'
 
 const panel = css`
   display: flex;
@@ -251,13 +253,6 @@ function entriesToNodes(entries: FileEntry[], parentPath: string): TreeNode[] {
   }))
 }
 
-/** 不可变更新：把 dirPath 节点的 children 设为 nodes。 */
-function setChildren(root: TreeNode, dirPath: string, nodes: TreeNode[]): TreeNode {
-  if (root.path === dirPath) return { ...root, children: nodes }
-  if (!root.children) return root
-  return { ...root, children: root.children.map((c) => setChildren(c, dirPath, nodes)) }
-}
-
 /** 不可变移除：从树中删除 path 节点。 */
 function removeNode(root: TreeNode, path: string): TreeNode {
   if (!root.children) return root
@@ -387,10 +382,7 @@ export function FileBrowser({
         // 失败必须落到可见错误态：此前 .catch(() => {}) 让 treeRoot 恒为 null，
         // 面板永远停在「加载中…」，用户只能反复刷新整页（见下方 rootError 分支）。
         if (cancelled) return
-        setRootError(
-          (err as { message?: string } | null)?.message ??
-            (err instanceof Error ? err.message : null),
-        )
+        setRootError(messageOf(err))
       })
     return () => {
       cancelled = true
@@ -417,16 +409,8 @@ export function FileBrowser({
         )
       } catch (err) {
         if (gen !== treeGenRef.current) return
-        // APIError 是结构体而非 Error 子类，必须结构化取 message
-        // （同上方 rootError / searchErrorMessage 口径）。
-        setLoadErrors((prev) =>
-          new Map(prev).set(
-            dirPath,
-            (err as { message?: string } | null)?.message ??
-              (err instanceof Error ? err.message : null) ??
-              '无法读取该目录',
-          ),
-        )
+        // APIError 是结构体而非 Error 子类，必须结构化取 message（messageOf 口径）。
+        setLoadErrors((prev) => new Map(prev).set(dirPath, messageOf(err) || '无法读取该目录'))
       } finally {
         setLoadingPaths((prev) => {
           const next = new Set(prev)
@@ -513,22 +497,14 @@ export function FileBrowser({
       // 失败原因必须可见：此前是 window.alert('删除失败，请重试')，后端的
       // 「File not found / EACCES / EPERM / ENOTEMPTY」等真实原因被整句丢掉，
       // 用户只能对同一路径反复点删除。APIError 是结构体而非 Error 子类，
-      // 必须结构化取 message（同上方 rootError/searchErrorMessage 口径）。
-      setDeleteError(
-        (err as { message?: string } | null)?.message ??
-          (err instanceof Error ? err.message : null) ??
-          '删除失败，请重试。',
-      )
+      // 必须结构化取 message（messageOf 口径）。
+      setDeleteError(messageOf(err) || '删除失败，请重试。')
     } finally {
       setDeleting(false)
     }
   }, [pendingDelete, projectId, onDelete, isSearch, refetchSearch, gitStatusQ])
 
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
-  // APIError 是结构体而非 Error 子类，必须结构化取 message（同 KanbanView/FilePreview 口径）。
-  const searchErrorMessage =
-    (searchQ.error as { message?: string } | null)?.message ??
-    (searchQ.error instanceof Error ? searchQ.error.message : null)
 
   /**
    * 搜索结果里点目录 → 回到文件树并展开定位到该目录。
@@ -611,7 +587,7 @@ export function FileBrowser({
             <div className={errorState} data-testid="file-search-error" role="alert">
               <span className={errorTitle}>搜索失败</span>
               <span className={errorDetail}>
-                {searchErrorMessage ?? '无法完成搜索，请稍后重试。'}
+                {messageOf(searchQ.error) || '无法完成搜索，请稍后重试。'}
               </span>
               <button
                 type="button"
@@ -744,16 +720,4 @@ export function FileBrowser({
       </Dialog>
     </div>
   )
-}
-
-/** 在树中按 path 查找节点。 */
-function findNode(node: TreeNode | null, path: string): TreeNode | null {
-  if (!node) return null
-  if (node.path === path) return node
-  if (!node.children) return null
-  for (const c of node.children) {
-    const found = findNode(c, path)
-    if (found) return found
-  }
-  return null
 }

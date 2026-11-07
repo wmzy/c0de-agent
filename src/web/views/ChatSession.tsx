@@ -29,6 +29,7 @@ import { useShake } from '@/hooks/useShake.js'
 import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import { sessionAPI } from '@/services/session.js'
+import { messageOf } from '@/utils/errors.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
 import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
@@ -218,9 +219,7 @@ export function ChatSession({
     queryKey: ['session', sessionId, 'meta'],
     queryFn: () => sessionAPI.get(sessionId),
   })
-  const sessionMetaErrorMessage =
-    (sessionMetaError as { message?: string } | null)?.message ??
-    (sessionMetaError instanceof Error ? sessionMetaError.message : null)
+  const sessionMetaErrorMessage = sessionMetaError ? messageOf(sessionMetaError) : null
   const [orphanNotice, setOrphanNotice] = useState(false)
   // 归属失败原因。此前该 mutation 只有 onSuccess：POST /rebind 返回 500 /
   // 项目已被删 / 服务重启时，按钮从 pending 恢复可点、横幅纹丝不动、页面零文字，
@@ -236,10 +235,7 @@ export function ChatSession({
       setOrphanNotice(false)
       setRebindError(null)
     },
-    onError: (e: unknown) =>
-      setRebindError(
-        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e)),
-      ),
+    onError: (e: unknown) => setRebindError(messageOf(e)),
   })
   // 孤儿横幅与归属失败原因都是会话级状态，而 ChatSession 在会话之间被路由复用
   // （route.path 不变，子树不重建）：打开一个未归属项目的会话后再点侧栏里的正常
@@ -313,10 +309,7 @@ export function ChatSession({
       })
       .catch((err: unknown) => {
         if (coldStartGenRef.current !== gen) return
-        setColdStartError(
-          (err as { message?: string } | null)?.message ??
-            (err instanceof Error ? err.message : '状态检查失败'),
-        )
+        setColdStartError(messageOf(err) || '状态检查失败')
       })
     // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）。此链失败只影响会话列表排序、
     // 不牵连任何恢复入口，故不弹告警（否则每次打开会话都滋扰）。
@@ -369,9 +362,7 @@ export function ChatSession({
     queryFn: () => sessionAPI.llmDetails(sessionId),
     staleTime: 10_000,
   })
-  const llmDetailsErrorMessage =
-    (llmDetailsError as { message?: string } | null)?.message ??
-    (llmDetailsError instanceof Error ? llmDetailsError.message : null)
+  const llmDetailsErrorMessage = llmDetailsError ? messageOf(llmDetailsError) : null
 
   // 统一时间线：消息 + LLM 调用 + 段标记按时间交错融合。
   // M3：session.metadata 记录的未完成轮次区间传入，中断前的半截内容置灰展示。
@@ -567,7 +558,7 @@ export function ChatSession({
       // 而真正的派生分支内容并不在其中（迁移/分享后静默丢失）。改为显式失败态：
       // 说明无法确认影响面 + 内联重试，并放行导出——连不上时把用户永久挡在按钮外
       // 比放行更糟，但绝不再宣称内容完整。
-      setExportBranchFailed(err instanceof Error ? err.message : '无法读取派生分支')
+      setExportBranchFailed(messageOf(err) || '无法读取派生分支')
     }
   }
 
@@ -592,9 +583,8 @@ export function ChatSession({
       if (exportGenRef.current === gen) setExportDialogOpen(false)
     } catch (err) {
       if (exportGenRef.current !== gen) return
-      setExportError(
-        err instanceof Error && err.message ? `导出失败：${err.message}` : '导出失败，请重试',
-      )
+      const reason = messageOf(err)
+      setExportError(reason ? `导出失败：${reason}` : '导出失败，请重试')
     } finally {
       if (exportGenRef.current === gen) setExporting(false)
     }
@@ -631,10 +621,8 @@ export function ChatSession({
     disabled: chat.isStreaming,
   })
 
-  // 失败原因取服务端 message（APIError）或 Error.message，与侧栏会话树失败提示同口径。
-  const historyErrorMessage =
-    (historyError as { message?: string } | null)?.message ??
-    (historyError instanceof Error ? historyError.message : null)
+  // 失败原因取文案统一走 messageOf，与侧栏会话树失败提示同口径。
+  const historyErrorMessage = historyError ? messageOf(historyError) : null
 
   if (isLoading && messages.length === 0) return <ChatSkeleton />
   return (

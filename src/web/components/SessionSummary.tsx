@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import { useMessages } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
+import { messageOf } from '@/utils/errors.js'
 
 const wrap = css`
   border-bottom: 1px solid var(--haze-color-border);
@@ -175,11 +176,9 @@ function Unavailable() {
   return <span className={unavailable}>读不到</span>
 }
 
-/** 失败原因取文案：APIError 现在是真正的 Error，但历史形状仍兼容 message 字段。 */
+/** 失败原因取文案：统一走 messageOf（结构化 message → Error.message → String 兜底）。 */
 function failureMessage(error: unknown): string {
-  const direct = (error as { message?: unknown } | null)?.message
-  if (typeof direct === 'string' && direct) return direct
-  return error instanceof Error && error.message ? error.message : '无法读取本会话的统计来源。'
+  return messageOf(error) || '无法读取本会话的统计来源。'
 }
 
 /**

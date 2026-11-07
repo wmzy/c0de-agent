@@ -1,4 +1,5 @@
 import type { ComposerSendPayload, ImagePart } from '@/composer/types.js'
+import { createSessionMirror } from '@/hooks/sessionMirror.js'
 
 /**
  * 发送失败后「消息 + 失败原因」的跨路由传递。
@@ -9,8 +10,8 @@ import type { ComposerSendPayload, ImagePart } from '@/composer/types.js'
  * 要修好必须把这两样都带过去。
  *
  * 用模块级 Map 按 projectId 暂存，草稿页挂载时消费一次即删（与 pendingFirstMessage
- * 同一套路，不把状态提到路由之上）。同 sessionStorage 镜像：清理会话到导航之间
- * 恰好刷新页面时，消息不至于丢失（图片体积大，存不下时静默降级为仅内存）。
+ * 同一套路，不把状态提到路由之上；「Map + sessionStorage 镜像」骨架见
+ * sessionMirror.ts，含配额不足时降级为仅内存的语义）。
  */
 export type FailedSend = {
   /** 后端给出的失败原因（已带中文兜底）。 */
@@ -19,43 +20,13 @@ export type FailedSend = {
   payload: Pick<ComposerSendPayload, 'text' | 'prompt' | 'images'> & { files: string[] }
 }
 
-const KEY_PREFIX = 'c0de-agent:failedSend:'
-
-const failed = new Map<string, FailedSend>()
-
-function loadFromStorage(projectId: string): FailedSend | null {
-  try {
-    const raw = sessionStorage.getItem(KEY_PREFIX + projectId)
-    return raw ? (JSON.parse(raw) as FailedSend) : null
-  } catch {
-    return null
-  }
-}
+const failedSend = createSessionMirror<FailedSend>('c0de-agent:failedSend:')
 
 export const failedSendReason = {
-  set: (projectId: string, value: FailedSend): void => {
-    failed.set(projectId, value)
-    try {
-      sessionStorage.setItem(KEY_PREFIX + projectId, JSON.stringify(value))
-    } catch {
-      // 配额不足（大图 base64 等）：仅本次内存传递
-    }
-  },
+  set: failedSend.set,
   /** 取走并清除（消费语义）。无记录返回 null。 */
-  take: (projectId: string): FailedSend | null => {
-    const value = failed.get(projectId) ?? loadFromStorage(projectId)
-    if (!value) return null
-    failedSendReason.delete(projectId)
-    return value
-  },
-  delete: (projectId: string): void => {
-    failed.delete(projectId)
-    try {
-      sessionStorage.removeItem(KEY_PREFIX + projectId)
-    } catch {
-      // 尽力删除；残留会在下次 take 时被消费一次
-    }
-  },
+  take: failedSend.take,
+  delete: failedSend.delete,
 }
 
 export type { ImagePart }

@@ -28,6 +28,12 @@ export function parseCodeReference(text: string): CodeReference | null {
   return null
 }
 
+/** 取文件名扩展名（最后一个 `.` 之后的小写片段；无 `.` 时是整个名字的小写）。
+ *  CodeReference 的代码块语言推断与 FilePreview 的媒体类型判定共用。 */
+export function extOf(name: string): string {
+  return name.split('.').pop()?.toLowerCase() ?? ''
+}
+
 export function formatTokenCount(n: number): string {
   if (n < 1000) return `${n}`
   return `${(n / 1000).toFixed(1)}k`

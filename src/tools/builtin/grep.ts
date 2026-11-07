@@ -1,8 +1,8 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
-import { safeResolve } from '../../shared/utils/path.js'
 import type { GrepInput, GrepMatch } from '../types.js'
+import { resolveToolPath } from './paths.js'
 
 /** Directories always skipped during search. */
 const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', '.turbo'])
@@ -55,6 +55,38 @@ const TEXT_EXTENSIONS = new Set([
 
 /** Maximum file size to search (skip files > 1MB). */
 const MAX_FILE_SIZE = 1024 * 1024
+
+/** 构造内容搜索正则（本工具与 workflows/context.ts 的 grepRecursive 共用——
+ *  正则构造与 CRLF 行尾归一化此前两处各持一份，语义各自演化）。
+ *  非法模式默认上抛（工具路径报错供模型自纠）；literalFallback=true 时回退为
+ *  逐字符转义的字面量匹配（utils.grep 的历史口径：工作流作者写错正则不至于
+ *  让整个 run 崩溃）。 */
+export function buildGrepRegex(
+  pattern: string,
+  opts: { caseSensitive?: boolean; literalFallback?: boolean } = {},
+): RegExp {
+  const flags = opts.caseSensitive === false ? 'i' : ''
+  try {
+    return new RegExp(pattern, flags)
+  } catch (err) {
+    if (opts.literalFallback) return new RegExp(escapeRegexLiteral(pattern), flags)
+    throw err
+  }
+}
+
+/** 正则元字符逐字符转义（非法模式的字面量回退）。 */
+function escapeRegexLiteral(pattern: string): string {
+  return pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** 按内容拆行并做 CRLF 规范化：文件主导行尾为 \r\n 时剥离行尾 \r——否则
+ *  ^...$ / \w+$ 等锚定到行尾的正则全部在 \r 上失败，命中行静默归零。孤立 \r
+ *  （旧 Mac 行尾）不触碰（与 shake/hashline 同型）。 */
+export function splitGrepLines(content: string): string[] {
+  const lines = content.split('\n')
+  if (!content.includes('\r\n')) return lines
+  return lines.map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line))
+}
 
 /** Recursively walk a directory for text files. */
 async function walkForFiles(dir: string, base: string): Promise<string[]> {
@@ -113,14 +145,12 @@ export const grepTool: ToolDef = {
     }
     // 与 read/write/edit 同口径：path 必须落在 cwd 内——permission 是 auto，
     // 若放行绝对路径/../，模型可在无确认下读取工作目录外文件内容（如 ~/.ssh）。
-    const basePath = path ? safeResolve(ctx.cwd, path) : ctx.cwd
-    if (basePath === null) {
-      return { _tag: 'error', error: `Path "${path}" escapes the working directory` }
-    }
+    const basePath = resolveToolPath(ctx, path)
+    if (typeof basePath !== 'string') return basePath
 
     let regex: RegExp
     try {
-      regex = new RegExp(pattern, caseSensitive ? '' : 'i')
+      regex = buildGrepRegex(pattern, { caseSensitive })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return { _tag: 'error', error: `Invalid regex pattern: ${message}` }
@@ -146,16 +176,11 @@ export const grepTool: ToolDef = {
           return null
         })
         if (content === null) continue
-        const lines = content.split('\n')
+        const lines = splitGrepLines(content)
         const relPath = relative(basePath, filePath)
-        // CRLF 文件每行经 split('\n') 仍携带尾 \r：^...$ / \w+$ 等锚定到行尾的
-        // 正则全部在 \r 上失败，命中行静默归零。按文件主导行尾归一化行尾再匹配
-        //（与 shake/hashline 同型；孤立 \r 即旧 Mac 行尾文件不触碰）。
-        const crlf = content.includes('\r\n')
 
         for (let i = 0; i < lines.length; i++) {
-          const raw = lines[i] ?? ''
-          const line = crlf && raw.endsWith('\r') ? raw.slice(0, -1) : raw
+          const line = lines[i] ?? ''
           const match = line.match(regex)
           if (match) {
             matches.push({

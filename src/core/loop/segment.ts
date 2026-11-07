@@ -1,5 +1,5 @@
 import { usageEvents } from '../../db/schema.js'
-import { saveLLMSegments, segmentFingerprint } from '../../session/session.js'
+import { saveLLMSegments, segmentFingerprint } from '../../session/segments.js'
 import { generateId } from '../../shared/index.js'
 import type { AgentState, LLMCall, LLMSegment, SegmentTrigger } from '../../shared/types/agent.js'
 import type { ChatTool, FinishReason } from '../../shared/types/llm.js'

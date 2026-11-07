@@ -1,7 +1,5 @@
 import type { Context } from 'hono'
 import { Hono } from 'hono'
-import { loadConfigScopes, mergeConfig } from '../../core/config.js'
-import { buildRegistryFromConfig } from '../../core/provider-registry.js'
 import { decryptSecret } from '../../core/secret.js'
 import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
@@ -9,6 +7,7 @@ import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { resolveSessionScope } from '../util/session-scope.js'
 
 /** 测试连接请求体。 */
 type TestBody = {
@@ -57,15 +56,20 @@ function createProviderRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
   /** P1-1：解析目标项目配置与注册表（?projectId= 提供时按该项目合并配置）。
-   *  项目配置从磁盘实时读取（配置体量小）；注册表优先用会话聊天路径缓存的。 */
+   *  项目配置从磁盘实时读取（配置体量小）；注册表按项目缓存复用（config PATCH
+   *  时失效）。基线 = mergeConfig(global, project)（baseline: 'disk'），与
+   *  ctx.config 不等价（后者含 serve 目录项目作用域与插件 config:resolve
+   *  产物）——设置页要的是落盘现状；缓存键在 session-scope 内加前缀隔离。 */
   const resolveForProject = async (c: Context) => {
     const projectId = c.req.query('projectId')
     if (!projectId) return { config: ctx.config, registry: ctx.llmRegistry }
     const project = await getProject(ctx.db, projectId)
     if (!project) return null
-    const scopes = loadConfigScopes(project.worktree)
-    const config = mergeConfig(scopes.global, scopes.project)
-    const registry = config.providers.length > 0 ? buildRegistryFromConfig(config) : ctx.llmRegistry
+    const { config, registry } = resolveSessionScope(ctx, {
+      cwd: project.worktree,
+      baseline: 'disk',
+      registryKey: projectId,
+    })
     return { config, registry }
   }
 

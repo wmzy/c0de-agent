@@ -1,5 +1,6 @@
 import type { Prompt } from '@/composer/types.js'
 import type { ChatOpts } from '@/hooks/chatState.js'
+import { createSessionMirror } from '@/hooks/sessionMirror.js'
 
 /**
  * 草稿页（sessionId===null）发送首条消息时，先创建会话再导航到新会话路由。
@@ -8,7 +9,7 @@ import type { ChatOpts } from '@/hooks/chatState.js'
  *
  * 同时镜像到 sessionStorage：会话创建成功后若恰在导航前刷新/关闭标签页，
  * 重开页面仍能消费该消息发送（P1：此前模块级内存导致「会话已建、消息丢失」）。
- * 存储配额不足（大图 base64 等）时静默降级为仅内存传递。
+ * 「Map + 镜像」骨架与降级语义统一在 sessionMirror.ts。
  */
 export type PendingFirstMessage = {
   text: string
@@ -20,40 +21,10 @@ export type PendingFirstMessage = {
   prompt?: Prompt
 }
 
-const PENDING_KEY_PREFIX = 'c0de-agent:pendingFirst:'
-
-const pending = new Map<string, PendingFirstMessage>()
-
-function loadFromStorage(sessionId: string): PendingFirstMessage | null {
-  try {
-    const raw = sessionStorage.getItem(PENDING_KEY_PREFIX + sessionId)
-    return raw ? (JSON.parse(raw) as PendingFirstMessage) : null
-  } catch {
-    return null
-  }
-}
+const pending = createSessionMirror<PendingFirstMessage>('c0de-agent:pendingFirst:')
 
 export const pendingFirstMessage = {
-  set: (sessionId: string, msg: PendingFirstMessage): void => {
-    pending.set(sessionId, msg)
-    try {
-      sessionStorage.setItem(PENDING_KEY_PREFIX + sessionId, JSON.stringify(msg))
-    } catch {
-      // 配额/隐私模式：仅本次内存传递
-    }
-  },
-  get: (sessionId: string): PendingFirstMessage | undefined => {
-    if (pending.has(sessionId)) return pending.get(sessionId)
-    const fromStorage = loadFromStorage(sessionId)
-    if (fromStorage) pending.set(sessionId, fromStorage)
-    return fromStorage ?? undefined
-  },
-  delete: (sessionId: string): void => {
-    pending.delete(sessionId)
-    try {
-      sessionStorage.removeItem(PENDING_KEY_PREFIX + sessionId)
-    } catch {
-      // 忽略：内存已删，残留项下次 get 仍会消费重发——为防重复发送，尽力删除
-    }
-  },
+  set: pending.set,
+  get: pending.get,
+  delete: pending.delete,
 }

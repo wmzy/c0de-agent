@@ -6,6 +6,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 import { projectAPI } from '@/services/project.js'
 import type { Project } from '@/types/index.js'
+import { messageOf } from '@/utils/errors.js'
 
 const hint = css`
   font-size: 12px;
@@ -49,8 +50,7 @@ export function RelocateProjectDialog({
       onClose()
     },
     onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      setError(messageOf(err))
     },
   })
 

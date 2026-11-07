@@ -13,12 +13,8 @@ import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory, trustProject } from '../../project/project.js'
 import { appendMessage, getEntries } from '../../session/message.js'
-import {
-  createSession,
-  getLLMSegments,
-  getSession,
-  listAllSessions,
-} from '../../session/session.js'
+import { getLLMSegments } from '../../session/segments.js'
+import { createSession, getSession, listAllSessions } from '../../session/session.js'
 import { getFileSnapshots } from '../../session/snapshot.js'
 import type { StreamChunk } from '../../shared/types/llm.js'
 import { createServerContext } from '../context.js'
@@ -1537,9 +1533,11 @@ describe('/workflow run 专用斜杠通道', () => {
   it('工作流运行期间对发起会话 abort/pause/resume → 路由到工作流 run', async () => {
     const { app, ctx, sessionId } = await setup()
     ctx.workflowBusyBySession.set(sessionId, 'wf-running')
+    // /pause //resume 走级联（主+子 run，防「已暂停」时后台子 agent 继续跑），
+    // /abort 保持单点（中止信号经 loop unwind 级联）——spy 各自对齐实际公共面。
     const abortSpy = vi.spyOn(ctx.agentManager, 'abort').mockReturnValue(true)
-    const pauseSpy = vi.spyOn(ctx.agentManager, 'pause').mockReturnValue(true)
-    const resumeSpy = vi.spyOn(ctx.agentManager, 'resume').mockReturnValue(true)
+    const pauseSpy = vi.spyOn(ctx.agentManager, 'pauseCascade').mockReturnValue(true)
+    const resumeSpy = vi.spyOn(ctx.agentManager, 'resumeCascade').mockReturnValue(true)
 
     for (const [path, key, spy] of [
       ['/abort', 'aborted', abortSpy],

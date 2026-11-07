@@ -306,7 +306,7 @@ export function ProjectIndicator({
       navigateTo(router, '/')
     },
     onError: (e: unknown) => {
-      setDeleteError(e instanceof Error ? e.message : String(e))
+      setDeleteError(messageOf(e))
     },
   })
 
@@ -327,7 +327,7 @@ export function ProjectIndicator({
       URL.revokeObjectURL(url)
       deleteMut.mutate(project.id)
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : '看板导出失败，项目未删除')
+      setDeleteError(messageOf(err) || '看板导出失败，项目未删除')
     } finally {
       setExportBusy(false)
     }
@@ -373,10 +373,8 @@ export function ProjectIndicator({
     // 新分支上，后续 agent 的编辑与提交全部落到旧分支（NewBranchForm 的错误有
     // 渲染，说明这是漏写而非设计）。
     onError: (e: unknown) => {
-      // APIError 既可能是 Error 子类也可能是普通结构体，两种取法都要兜住
-      setCheckoutError(
-        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e)),
-      )
+      // 取文案统一走 messageOf：结构化 message 与 Error.message 两侧都兜住
+      setCheckoutError(messageOf(e))
     },
   })
 
@@ -588,7 +586,7 @@ export function ProjectIndicator({
               <NewBranchForm
                 onCreate={(name) => createBranchMut.mutateAsync(name)}
                 pending={createBranchMut.isPending}
-                error={createBranchMut.error ? String(createBranchMut.error.message) : null}
+                error={createBranchMut.error ? messageOf(createBranchMut.error) : null}
               />
             </DropdownMenuContent>
           </DropdownMenu>

@@ -12,6 +12,7 @@ import {
   kanbanAPI,
 } from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const sectionTitle = css`
@@ -139,11 +140,7 @@ export function BoardConfigDialog({
       onClose()
     },
     onError: (e: unknown) => {
-      const msg =
-        e && typeof e === 'object' && 'message' in e
-          ? String((e as { message: string }).message)
-          : '保存失败'
-      setError(msg)
+      setError(messageOf(e) || '保存失败')
     },
   })
 
@@ -393,7 +390,7 @@ export function BoardConfigDialog({
 
       {saveMutation.isError && (
         <div style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
-          保存失败：{(saveMutation.error as Error)?.message}
+          保存失败：{messageOf(saveMutation.error)}
         </div>
       )}
     </Dialog>

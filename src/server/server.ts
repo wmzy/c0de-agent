@@ -20,7 +20,7 @@ import type { Hono } from 'hono'
 import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import { loadConfig, loadConfigScopes } from '../core/config.js'
-import { buildRegistryFromConfig, syncRegistryFromConfig } from '../core/provider-registry.js'
+import { buildRegistryFromConfig } from '../core/provider-registry.js'
 import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
@@ -36,7 +36,7 @@ import {
   purgeTemporarySessions,
   TRASH_PURGE_GRACE_MS,
   TRASH_RETENTION_MS,
-} from '../session/session.js'
+} from '../session/trash.js'
 import { backfillUsageEventsOnce } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
@@ -895,12 +895,9 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
 }
 
 export type { BootstrappedServer, RunningServer, StartServerOptions }
-// P1-1：buildRegistryFromConfig/syncRegistryFromConfig 实现移入 registry-config.ts，
-// 此处 re-export 保留 server.ts 历史导出兼容（测试/CLI 引用）。
 export {
   acquireDevDbLock,
   bootstrapServerContext,
-  buildRegistryFromConfig,
   buildServerContext,
   createDevDb,
   readServeInfo,
@@ -908,5 +905,4 @@ export {
   resolveAuthToken,
   resolveDbDir,
   startServer,
-  syncRegistryFromConfig,
 }

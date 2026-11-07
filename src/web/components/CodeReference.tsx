@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { CodeBlock } from '@/components/CodeBlock.js'
 import { fileAPI } from '@/services/file.js'
 import { messageOf } from '@/utils/errors.js'
-import { parseCodeReference } from '@/utils/format.js'
+import { extOf, parseCodeReference } from '@/utils/format.js'
 
 const chip = css`
   display: inline-flex;
@@ -113,9 +113,6 @@ export function CodeReference({ token }: { token: string }) {
   )
 }
 
-function extOf(p: string) {
-  return p.split('.').pop()?.toLowerCase() ?? ''
-}
 function sliceLines(src: string, start: number, end: number) {
   const lines = src.split('\n')
   return lines.slice(Math.max(0, start - 1), end).join('\n')

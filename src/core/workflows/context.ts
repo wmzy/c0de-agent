@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
 import { globToRegex } from '../../tools/builtin/glob.js'
+import { buildGrepRegex, splitGrepLines } from '../../tools/builtin/grep.js'
 import type { AgentDependencies, AgentState } from '../types.js'
 import type { WorkflowAgentResult, WorkflowContext } from './types.js'
 
@@ -114,6 +115,33 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
 
 // ── 工具函数 ──
 
+/** 递归遍历目录树：跳过点开头与 node_modules（可附加忽略名单），readdir 失败
+ *  （权限/消失竞态）静默跳过该目录，每个文件回调 onFile（附文件名，供不含
+ *  路径分隔符的 glob 模式按文件名匹配）。globRecursive/grepRecursive/
+ *  splitByDir.collectFiles 三份 walk 骨架的单一实现。 */
+async function walkTree(
+  dir: string,
+  opts: { ignore?: string[] },
+  onFile: (fullPath: string, name: string) => Promise<void> | void,
+): Promise<void> {
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+    if (opts.ignore?.includes(entry.name)) continue
+    const fullPath = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await walkTree(fullPath, opts, onFile)
+    } else {
+      await onFile(fullPath, entry.name)
+    }
+  }
+}
+
 /**
  * 递归 glob。模式含路径分隔符时按相对路径匹配（双星号跨目录，如「src 下任意层级的 .ts」）；
  * 不含分隔符时按文件名匹配（与旧行为兼容：星号 .ts 命中任意层级）。
@@ -125,82 +153,44 @@ async function globRecursive(rootDir: string, pattern: string): Promise<string[]
   const regex = globToRegex(pattern)
   const matchRel = pattern.includes('/')
 
-  async function walk(dir: string): Promise<void> {
-    let entries: import('node:fs').Dirent[]
-    try {
-      entries = await readdir(dir, { withFileTypes: true })
-    } catch {
-      return
+  await walkTree(rootDir, {}, (fullPath, name) => {
+    const rel = relative(rootDir, fullPath)
+    if (regex.test(matchRel ? rel : name)) {
+      results.push(rel)
     }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        await walk(fullPath)
-      } else {
-        const rel = relative(rootDir, fullPath)
-        if (regex.test(matchRel ? rel : entry.name)) {
-          results.push(rel)
-        }
-      }
-    }
-  }
-
-  await walk(rootDir)
+  })
   return results
 }
 
-/** 递归 grep（正则搜索文件内容）。 */
+/** 递归 grep（正则搜索文件内容）。正则构造与 CRLF 行尾归一化共用内置 grep 工具
+ *  的实现（buildGrepRegex/splitGrepLines）——非法模式回退字面量匹配是本函数的
+ *  历史口径（工作流作者写错正则不至于让整个 run 崩溃）。 */
 async function grepRecursive(
   baseDir: string,
   pattern: string,
   rootDir: string,
 ): Promise<Array<{ path: string; line: number; text: string }>> {
   const results: Array<{ path: string; line: number; text: string }> = []
-  let regex: RegExp
-  try {
-    regex = new RegExp(pattern)
-  } catch {
-    regex = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  }
+  const regex = buildGrepRegex(pattern, { literalFallback: true })
 
-  async function walk(dir: string): Promise<void> {
-    let entries: import('node:fs').Dirent[]
+  await walkTree(baseDir, {}, async (fullPath) => {
     try {
-      entries = await readdir(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        await walk(fullPath)
-      } else {
-        try {
-          const content = await readFile(fullPath, 'utf-8')
-          const lines = content.split('\n')
-          // CRLF 文件行尾 \r 使 ^...$ 锚定匹配恒失败（与内置 grep 工具同型）。
-          const crlf = content.includes('\r\n')
-          for (let i = 0; i < lines.length; i++) {
-            const raw = lines[i]
-            const line = crlf && raw?.endsWith('\r') ? raw.slice(0, -1) : raw
-            if (line && regex.test(line)) {
-              results.push({
-                path: relative(rootDir, fullPath),
-                line: i + 1,
-                text: line.trim(),
-              })
-            }
-          }
-        } catch {
-          // 二进制文件等，跳过
+      const content = await readFile(fullPath, 'utf-8')
+      const lines = splitGrepLines(content)
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? ''
+        if (line && regex.test(line)) {
+          results.push({
+            path: relative(rootDir, fullPath),
+            line: i + 1,
+            text: line.trim(),
+          })
         }
       }
+    } catch {
+      // 二进制文件等，跳过
     }
-  }
-
-  await walk(baseDir)
+  })
   return results
 }
 
@@ -218,22 +208,9 @@ async function splitByDir(
 
   async function collectFiles(dir: string): Promise<string[]> {
     const files: string[] = []
-    let entries: import('node:fs').Dirent[]
-    try {
-      entries = await readdir(dir, { withFileTypes: true })
-    } catch {
-      return files
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-      if (ignore.includes(entry.name)) continue
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        files.push(...(await collectFiles(fullPath)))
-      } else {
-        files.push(relative(rootDir, fullPath))
-      }
-    }
+    await walkTree(dir, { ignore }, (fullPath) => {
+      files.push(relative(rootDir, fullPath))
+    })
     return files
   }
 

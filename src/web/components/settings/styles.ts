@@ -102,4 +102,49 @@ const hintMb = css`
   margin-bottom: 8px;
 `
 
-export { checkRow, field, fieldInput, hint, hintMb, kvRow, mutedHint, section, sectionTitle }
+/** 设置页顶部状态横幅的公共底座（Settings 三条内联样式横幅抽源）：
+ *  内边距、底部分隔线、小号字；色调与排布由 settingsBanner* 变体叠加。 */
+const settingsBannerBase = `
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--haze-color-border);
+  font-size: 12px;
+`
+
+/** 横幅·危险色调（配置刷新失败）：失败文案 + 重试按钮水平排列。 */
+const settingsBannerDanger = css`
+  ${settingsBannerBase}
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--haze-color-danger) 10%, transparent);
+  color: var(--haze-color-text);
+`
+
+/** 横幅·警告色调（配置校验警告）：多条警告逐行堆叠，正文色保证可读。 */
+const settingsBannerWarning = css`
+  ${settingsBannerBase}
+  background: color-mix(in srgb, var(--haze-color-warning) 10%, transparent);
+  color: var(--haze-color-text);
+`
+
+/** 横幅·警告色调且文字用警告色（git 误提交密钥等单条强提示）。 */
+const settingsBannerWarningText = css`
+  ${settingsBannerBase}
+  background: color-mix(in srgb, var(--haze-color-warning) 10%, transparent);
+  color: var(--haze-color-warning);
+`
+
+export {
+  checkRow,
+  field,
+  fieldInput,
+  hint,
+  hintMb,
+  kvRow,
+  mutedHint,
+  section,
+  sectionTitle,
+  settingsBannerDanger,
+  settingsBannerWarning,
+  settingsBannerWarningText,
+}

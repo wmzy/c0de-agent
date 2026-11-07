@@ -1,8 +1,9 @@
 import { buildFallbackChain } from '../../llm/routing.js'
+import { compactSession } from '../../session/compaction.js'
 import { getMessages } from '../../session/message.js'
 import type { AgentEvent, AgentState } from '../../shared/types/agent.js'
 import type { Message } from '../../shared/types/message.js'
-import { createSummarizer, runCompaction } from '../compact.js'
+import { createSummarizer } from '../compact.js'
 import { estimateBudget, shouldCompact } from '../context.js'
 import type { LoopDeps } from '../loop.js'
 
@@ -10,7 +11,7 @@ import type { LoopDeps } from '../loop.js'
  * 执行会话压缩并刷新 token 预算。
  *
  * 自动压缩（agentLoop 阈值触发）与手动 /compact 共用此逻辑：复用
- * createSummarizer + runCompaction，压缩改写消息历史后标记下一段 trigger='compaction'。
+ * createSummarizer + compactSession（session 层），压缩改写消息历史后标记下一段 trigger='compaction'。
  *
  * 成功时 yield 一条 text_delta 通知：手动 /compact 透传给用户；自动压缩由调用方
  * 静默消费。失败时抛错，由调用方决定是否记录（自动压缩非致命，仅 console.warn）。
@@ -28,7 +29,7 @@ export async function* compactContext(
     signal: state.abortController.signal,
     ...(fallback ? { fallback } : {}),
   })
-  const result = await runCompaction(deps.db, state.session.id, summarizer, {
+  const result = await compactSession(deps.db, state.session.id, summarizer, {
     keepRecentTokens: deps.config.compaction.keepRecentTokens,
   })
   // 压缩改写了消息历史 → 标记下一轮强制开新段（段边界）

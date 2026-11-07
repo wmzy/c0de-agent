@@ -10,7 +10,7 @@ export {
   resumeAgent,
   runAgent,
 } from './agent.js'
-export { createSummarizer, runCompaction } from './compact.js'
+export { createSummarizer } from './compact.js'
 export type { CompactionConfig, Config, MCPServerConfig } from './config.js'
 export { DEFAULT_CONFIG, loadConfig, mergeConfig } from './config.js'
 export {

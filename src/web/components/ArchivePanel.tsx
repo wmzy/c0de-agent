@@ -5,6 +5,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI } from '@/services/session.js'
 import type { CompactionArchive, SessionEntry } from '@/types/index.js'
+import { messageOf } from '@/utils/errors.js'
 
 const list = css`
   display: flex;
@@ -209,11 +210,7 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
         {isError ? (
           <div className={errorState} role="alert" data-testid="archive-load-error">
             <span className={errorTitle}>归档加载失败</span>
-            <span className={errorDetail}>
-              {(error as { message?: string } | null)?.message ??
-                (error instanceof Error ? error.message : null) ??
-                '无法读取归档内容。'}
-            </span>
+            <span className={errorDetail}>{messageOf(error) || '无法读取归档内容。'}</span>
             <button
               type="button"
               className={retryBtn}

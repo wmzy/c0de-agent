@@ -5,15 +5,9 @@ import { generateId } from '../shared/index.js'
 import type { MessageRole } from '../shared/types/base.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
 import { touchSession } from './session.js'
+import { toEpochMs } from './time.js'
 import { estimateMessageTokens } from './token.js'
 import type { MessageInput, SessionEntry } from './types.js'
-
-/** Convert a Date-like DB value to epoch milliseconds. */
-function toEpochMs(value: Date | string | number): number {
-  if (value instanceof Date) return value.getTime()
-  if (typeof value === 'number') return value
-  return new Date(value).getTime()
-}
 
 /** Convert a message-tagged row to a Message. */
 function rowToMessage(row: typeof sessionEntries.$inferSelect): Message {

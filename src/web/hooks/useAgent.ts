@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { agentAPI } from '@/services/agent.js'
+import { messageOf } from '@/utils/errors.js'
 
 export function useAgent(sessionId: string) {
   const [busy, setBusy] = useState(false)
@@ -40,9 +41,7 @@ export function useAgent(sessionId: string) {
         return await fn(isStale)
       } catch (e) {
         if (isStale()) return undefined
-        const message =
-          (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : null)
-        setError(message || '操作失败，请重试')
+        setError(messageOf(e) || '操作失败，请重试')
         return undefined
       } finally {
         if (!isStale()) setBusy(false)

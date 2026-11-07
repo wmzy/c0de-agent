@@ -2,8 +2,7 @@ import { existsSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Hono } from 'hono'
-import { loadConfigScopes, mergeConfig, resolveGlobalConfigDir } from '../../core/config.js'
-import { buildRegistryFromConfig } from '../../core/provider-registry.js'
+import { loadConfigScopes, resolveGlobalConfigDir } from '../../core/config.js'
 import { discoverWorkflows, resolveWorkflow, saveWorkflow } from '../../core/workflows/index.js'
 import { reloadRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
@@ -16,6 +15,7 @@ import {
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { resolveSessionScope } from '../util/session-scope.js'
 import { createRestWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /**
@@ -335,22 +335,13 @@ function createWorkflowsRoute(ctx: ServerContext) {
 
     // 会话级配置：按 agent cwd 解析项目作用域合并（与 chat 路由同口径）；
     // 项目配置含 providers 时构建/复用项目级 LLM 注册表。
-    const sessionProjectScope =
-      agentCwd === ctx.cwd ? undefined : loadConfigScopes(agentCwd).project
-    const sessionConfig = sessionProjectScope
-      ? mergeConfig(ctx.config, sessionProjectScope)
-      : ctx.config
-    const sessionDefaultMode = sessionProjectScope?.permission?.defaultMode
-    let sessionRegistry = ctx.llmRegistry
-    if (sessionProjectScope && project) {
-      const cached = ctx.projectRegistries?.get(project.id)
-      if (cached) {
-        sessionRegistry = cached
-      } else if (sessionConfig.providers.length > 0) {
-        sessionRegistry = buildRegistryFromConfig(sessionConfig)
-        ctx.projectRegistries?.set(project.id, sessionRegistry)
-      }
-    }
+    const sessionScope = resolveSessionScope(ctx, {
+      cwd: agentCwd,
+      registryKey: project?.id,
+    })
+    const sessionConfig = sessionScope.config
+    const sessionDefaultMode = sessionScope.projectScope?.permission?.defaultMode
+    const sessionRegistry = sessionScope.registry
 
     // 执行通道与斜杠 /workflow run 共享（workflow-run.ts 单点实现）：并发守卫
     // （scope/tryAcquire）、会话生命周期、权限 checker（超时级联暂停）、deps 组装

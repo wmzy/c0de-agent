@@ -5,7 +5,7 @@
 import { css } from '@linaria/core'
 import { Fragment, useCallback } from 'react'
 import { Terminal } from '@/components/Terminal.js'
-import type { TerminalControlMessage } from '@/components/terminal-control.js'
+import { shellLabel, type TerminalControlMessage } from '@/components/terminal-control.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import type { SplitDirection, TerminalSession, UseTerminalReturn } from '@/hooks/useTerminal.js'
 
@@ -185,11 +185,6 @@ const dividerVStyle = css`
     background: var(--haze-color-primary);
   }
 `
-
-/** 从 shell 路径提取短名称用于标签显示。 */
-function shellLabel(shell: string): string {
-  return shell.split('/').pop() ?? shell
-}
 
 /**
  * pane 状态条文案（null = 不显示）。

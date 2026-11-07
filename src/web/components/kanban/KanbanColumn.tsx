@@ -9,6 +9,7 @@ import type {
   KanbanLabelDef,
   KanbanPriority,
 } from '@/services/kanban.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 // ── Styles ─────────────────────────────────────────────────
@@ -415,11 +416,8 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
     } catch (err) {
       // 同上：被放弃标题的失败不属于当前输入框，不显示。
       if (attempt !== addAttempt.current) return
-      // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
-      // 结构化取优先、instanceof 兜底，不会渲染成 [object Object]。
-      const message =
-        (err as { message?: string } | null)?.message ?? (err instanceof Error ? err.message : null)
-      setAddError(message ?? '新建卡片失败，请重试')
+      // 取文案统一走 messageOf（结构化 message 优先、Error.message 兜底）。
+      setAddError(messageOf(err) || '新建卡片失败，请重试')
     } finally {
       // pending 不判身份：submit 有 pending 早退，任意时刻至多一个在途请求，
       // 它落地就必须复位按钮，否则重开后的「添加」永远卡在「添加中…」。

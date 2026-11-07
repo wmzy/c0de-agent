@@ -13,6 +13,7 @@ import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 import { workflowsAPI } from '@/services/workflows.js'
+import { messageOf } from '@/utils/errors.js'
 
 const row = css`
   display: flex;
@@ -151,11 +152,9 @@ function sourceLabel(source: string): string {
   }
 }
 
+/** 失败原因取文案：统一走 messageOf（结构化 message → Error.message → String 兜底）。 */
 function errMessage(e: unknown): string {
-  if (e && typeof e === 'object' && 'message' in e) {
-    return String((e as { message: unknown }).message)
-  }
-  return '未知错误'
+  return messageOf(e) || '未知错误'
 }
 
 type EditorState =

@@ -3,6 +3,7 @@
 // 协议分帧与客户端逻辑纯逻辑可测。
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import { wrapChildProcess } from '../shared/utils/child-process.js'
 import type { JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, MCPIncoming } from './types.js'
 
 /** 底层传输抽象：发 JSON-RPC 消息、收服务端消息、关连接。 */
@@ -46,15 +47,22 @@ function createStdioTransport(
   spawnFn: SpawnFn = spawn,
 ): MCPTransport {
   const child = spawnFn(command, args)
+  // 子进程事件面（error/stdin EPIPE 告警、stderr 消费、close 分发、kill 语义）
+  // 见共享层 wrapChildProcess（与 DAP process transport 同骨架）。
   // 子进程不参与父进程事件循环存活：父退出 → stdin 管道关闭 → 合规 MCP
   // 服务器读到 EOF 自行退出。否则长驻的 MCP 服务器会让 CLI 进程无法结束。
-  child.unref()
+  const io = wrapChildProcess(child, {
+    childErrorLabel: '[mcp] stdio 子进程错误：',
+    stdinErrorLabel: '[mcp] stdio 写入失败（服务器可能已退出）：',
+    stderrLabel: '[mcp:stdio] ',
+    unref: true,
+  })
   const handlers: Array<(msg: MCPIncoming) => void> = []
-  const closeHandlers: Array<() => void> = []
   let buffer = ''
 
-  child.stdout.setEncoding('utf8')
-  child.stdout.on('data', (chunk: string) => {
+  // 分帧（MCP stdio 规范：每行一条 JSON-RPC 消息，无 Content-Length 分帧）。
+  // 跨 chunk / 粘包已处理。
+  io.onData((chunk: string) => {
     buffer += chunk
     // 超长行防护：无换行的持续输出或单条超限消息立即丢弃，防缓冲无界增长。
     // 丢弃不改变「完整合法行仍可解析」的语义——超限行本身本就无法作为
@@ -84,38 +92,19 @@ function createStdioTransport(
     }
     consume()
   })
-  // 不读取 stderr 会让管道写满卡死子进程——消费并透传到父进程 stderr。
-  child.stderr.setEncoding('utf8')
-  child.stderr.on('data', (chunk: string) => {
-    process.stderr.write(`[mcp:stdio] ${chunk}`)
-  })
-  // spawn 失败（ENOENT 等）：无监听器时 unhandled 'error' 会击穿父进程。
-  // 仅记录——随后的 'close' 事件走既有关闭路径 reject pending。
-  child.on('error', (err: Error) => {
-    console.warn(`[mcp] stdio 子进程错误：${err.message}`)
-  })
-  // 服务器崩溃/提前 close(0) 时 stdin 管道写入会异步触发 EPIPE 'error'，
-  // 该事件发在 stdin socket 上而非 child 上——无监听器同样击穿宿主进程。
-  child.stdin.on('error', (err: Error) => {
-    console.warn(`[mcp] stdio 写入失败（服务器可能已退出）：${err.message}`)
-  })
-  child.on('close', () => {
-    for (const h of closeHandlers) h()
-  })
 
   return {
     send(msg) {
-      if (child.stdin.destroyed) return
-      child.stdin.write(`${JSON.stringify(msg)}\n`)
+      io.write(`${JSON.stringify(msg)}\n`)
     },
     onMessage(handler) {
       handlers.push(handler)
     },
     onClose(handler) {
-      closeHandlers.push(handler)
+      io.onClose(handler)
     },
     close() {
-      if (!child.killed) child.kill()
+      io.close()
     },
   }
 }

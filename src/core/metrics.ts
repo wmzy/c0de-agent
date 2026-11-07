@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { toolMetrics } from '../db/schema.js'
+import { toEpochMs } from '../session/time.js'
 import type { ModelToolMetrics } from '../shared/types/tool.js'
 
 /** 非 edit 工具的占位模式（这些工具只有一种实现，无需选择）。 */
@@ -22,8 +23,7 @@ export function inferToolMode(tool: string, input: unknown): string {
 
 /** DB 行（Date 时间戳）→ 共享 ModelToolMetrics（number 时间戳）。 */
 function rowToMetrics(row: typeof toolMetrics.$inferSelect): ModelToolMetrics {
-  const lastUsed =
-    row.lastUsed instanceof Date ? row.lastUsed.getTime() : new Date(row.lastUsed).getTime()
+  const lastUsed = toEpochMs(row.lastUsed)
   return {
     model: row.model,
     tool: row.tool,

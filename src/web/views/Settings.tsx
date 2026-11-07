@@ -30,6 +30,9 @@ import {
   hint,
   section,
   sectionTitle,
+  settingsBannerDanger,
+  settingsBannerWarning,
+  settingsBannerWarningText,
 } from '@/components/settings/styles.js'
 import { ToolsPanel } from '@/components/settings/ToolsPanel.js'
 import { UsagePanel } from '@/components/settings/UsagePanel.js'
@@ -48,6 +51,7 @@ import {
   normalizeConfigForForm,
   validateConfigShape,
 } from '@/utils/config-shape.js'
+import { messageOf } from '@/utils/errors.js'
 import { parseBoundedNumber } from '@/utils/format.js'
 
 /** 全局配置作用域的写入路径（与作用域下拉文案同一口径）。 */
@@ -317,11 +321,7 @@ export function Settings() {
       setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
     },
     onError: (err: unknown) => {
-      const msg =
-        err && typeof err === 'object' && 'message' in err
-          ? String((err as { message: string }).message)
-          : '未知错误'
-      setSaveFeedback({ kind: 'err', msg })
+      setSaveFeedback({ kind: 'err', msg: messageOf(err) || '未知错误' })
     },
   })
 
@@ -369,10 +369,8 @@ export function Settings() {
 
   if (isLoading) return <div className={loadingWrap}>加载中…</div>
   // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
-  // 结构化取优先、instanceof 兜底。
-  const refetchErrorMessage =
-    (configError as { message?: string } | null)?.message ??
-    (configError instanceof Error ? configError.message : null)
+  // message 为空串时回落到通用文案（两处展示位共用同一兜底）。
+  const refetchErrorMessage = messageOf(configError) || '无法读取配置文件。'
   // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
   // 请求 500 时 isLoading 已为 false 而 config 恒为 null（resp 为 undefined），
   // 于是设置页永久停在「加载中…」——实测注入 /api/config 500、retry:2 耗尽后
@@ -389,7 +387,7 @@ export function Settings() {
     return (
       <div className={loadError} data-testid="settings-load-error" role="alert">
         <div className={loadErrorTitle}>设置加载失败</div>
-        <div className={loadErrorDetail}>{refetchErrorMessage ?? '无法读取配置文件。'}</div>
+        <div className={loadErrorDetail}>{refetchErrorMessage}</div>
         <div className={loadErrorActions}>
           <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
             重试
@@ -611,7 +609,7 @@ export function Settings() {
       // 类型假定字段形状），也会把坏形状落盘成永久崩溃源。此处先拦下来。
       setJsonShapeError(validateConfigShape(parsed, config))
     } catch (e) {
-      setJsonError(e instanceof Error ? e.message : 'JSON 解析错误')
+      setJsonError(messageOf(e) || 'JSON 解析错误')
     }
   }
 
@@ -705,7 +703,7 @@ export function Settings() {
       }
       applyImport(normalized.config)
     } catch (err) {
-      setJsonError(`导入失败：${err instanceof Error ? err.message : '未知错误'}`)
+      setJsonError(`导入失败：${messageOf(err) || '未知错误'}`)
       setJsonShapeError(null)
       setViewMode('json')
       // 把读取到的原始文本放进编辑器方便定位问题
@@ -820,22 +818,9 @@ export function Settings() {
         // 拿到过数据、但后台重取失败：表单与草稿都还在，只是这份数据可能不是最新的。
         // 用与 warnings 同族的横幅说清楚「谁失败了、你的改动还在」，而不是把整页换成
         // 错误屏（见上面的 isError && !resp 说明）。
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 16px',
-            borderBottom: '1px solid var(--haze-color-border)',
-            background: 'color-mix(in srgb, var(--haze-color-danger) 10%, transparent)',
-            fontSize: 12,
-            color: 'var(--haze-color-text)',
-          }}
-          role="alert"
-          data-testid="config-refetch-error"
-        >
+        <div className={settingsBannerDanger} role="alert" data-testid="config-refetch-error">
           <span>
-            配置刷新失败：{refetchErrorMessage ?? '无法读取配置文件。'}
+            配置刷新失败：{refetchErrorMessage}
             ——表单里仍是你的本地草稿，改动没有被丢弃。
           </span>
           <Button
@@ -848,32 +833,14 @@ export function Settings() {
         </div>
       )}
       {warnings.length > 0 && (
-        <div
-          style={{
-            padding: '10px 16px',
-            borderBottom: '1px solid var(--haze-color-border)',
-            background: 'color-mix(in srgb, var(--haze-color-warning) 10%, transparent)',
-            fontSize: 12,
-            color: 'var(--haze-color-text)',
-          }}
-          data-testid="config-warnings"
-        >
+        <div className={settingsBannerWarning} data-testid="config-warnings">
           {warnings.map((w) => (
             <div key={w}>{w}</div>
           ))}
         </div>
       )}
       {resp?.gitWarning && (
-        <div
-          style={{
-            padding: '10px 16px',
-            borderBottom: '1px solid var(--haze-color-border)',
-            background: 'color-mix(in srgb, var(--haze-color-warning) 10%, transparent)',
-            fontSize: 12,
-            color: 'var(--haze-color-warning)',
-          }}
-          data-testid="config-git-warning"
-        >
+        <div className={settingsBannerWarningText} data-testid="config-git-warning">
           {resp.gitWarning}
         </div>
       )}

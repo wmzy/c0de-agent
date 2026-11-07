@@ -24,6 +24,7 @@ import { permissionAPI } from '@/services/permission.js'
 import { projectAPI } from '@/services/project.js'
 import { sessionAPI } from '@/services/session.js'
 import type { APIError } from '@/types/index.js'
+import { messageOf } from '@/utils/errors.js'
 
 /**
  * 连接中断的失败原因文案。两条 interrupted 路径（SSE 无 done 结束、fetch 本身失败）
@@ -462,9 +463,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           }
         } catch (err) {
           if (genRef.current !== gen) return
-          compactError = `会话压缩失败：${
-            err instanceof Error ? err.message : String(err)
-          }，已按未压缩内容继续开新段`
+          compactError = `会话压缩失败：${messageOf(err)}，已按未压缩内容继续开新段`
         }
       }
       // 压缩结论在重发之前落地：error:null 只用于清掉段确认弹层遗留，不能顺手
@@ -517,7 +516,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (genRef.current !== gen) return
       // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消。
       // 原因写进 trustError（渲染在弹窗内部），同时保留 error 供会话区横幅兜底。
-      const message = `信任项目失败：${err instanceof Error ? err.message : String(err)}`
+      const message = `信任项目失败：${messageOf(err)}`
       pendingTrustRef.current = pending
       setState((s) => ({
         ...s,
@@ -595,7 +594,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         if (genRef.current !== gen) return
         setState((s) => ({
           ...s,
-          abortError: `终止请求失败：${err instanceof Error ? err.message : String(err)}。agent 可能仍在后台继续执行工具，请刷新确认后再继续。`,
+          abortError: `终止请求失败：${messageOf(err)}。agent 可能仍在后台继续执行工具，请刷新确认后再继续。`,
         }))
       })
   }, [sessionId])
@@ -640,7 +639,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         const res = await agentAPI.steer(sessionId, text)
         steered = res.steered
       } catch (err) {
-        failSteer(`追加指令发送失败：${err instanceof Error ? err.message : String(err)}`)
+        failSteer(`追加指令发送失败：${messageOf(err)}`)
         return false
       }
       if (!steered) {
@@ -731,7 +730,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             // 同一工具下次还会弹确认，白名单 chips 栏里也不会有它，用户只会以为
             // 「勾选没生效」，于是每次重新勾选。工具本身仍按用户的选择执行（批准
             // 与否与白名单是两个独立决定），但失败原因必须说出来。
-            const reason = err instanceof Error ? err.message : String(err)
+            const reason = messageOf(err)
             setState((s) => ({
               ...s,
               error: `「本会话始终允许 ${alwaysAllowTool}」未保存：${reason}（该工具本次仍按你的选择执行，下次会再次询问）`,
@@ -952,9 +951,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }
         setState((s) => ({
           ...s,
-          attachError:
-            (err as { message?: string } | null)?.message ??
-            (err instanceof Error ? err.message : '状态检查失败'),
+          attachError: messageOf(err) || '状态检查失败',
         }))
         return
       }

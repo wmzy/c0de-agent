@@ -11,8 +11,8 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { resolve as resolvePath } from 'node:path'
 import type { URLRegistry, URLResolver } from '../../shared/types/tool.js'
-import { safeResolve } from '../../shared/utils/path.js'
 import { createURLRegistry, registerURLResolver } from '../resolver.js'
+import { resolveToolPath } from './paths.js'
 
 /** 从 `scheme://rest` 中取出 rest（scheme 已校验过，直接切首个 `://`）。 */
 function stripScheme(url: string): string {
@@ -37,10 +37,8 @@ function createFileResolver(): URLResolver {
     resolve: async (url, ctx) => {
       const rest = stripScheme(url)
       // file:///abs → rest 形如 /abs（已含前导斜杠）；file://rel → rest 形如 rel。
-      const path = safeResolve(ctx.cwd, rest)
-      if (path === null) {
-        throw new Error(`file:// path "${rest}" escapes the working directory`)
-      }
+      const path = resolveToolPath(ctx, rest, { label: 'file:// path' })
+      if (typeof path !== 'string') throw new Error(path.error)
       return readOrFail(path)
     },
   }

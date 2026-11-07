@@ -8,6 +8,7 @@ import { collectScopedMCPServers, registerMCPServers } from '../mcp/index.js'
 import { initPlugins } from '../plugins/index.js'
 import { getByDirectory } from '../project/index.js'
 import { projectTrustCurrent } from '../project/trust.js'
+import { budgetGateEnabled } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
 import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
@@ -141,13 +142,9 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
     debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
     // P：预算护栏 CLI 变体——print/acp 无恢复 UI，超支中止 run（产出 error）而非
-    // 暂停永久挂起。金额与 token 任一动作='pause'/'abort' 即启用（每轮 LLM 请求前检查）。
-    ...(resolvedConfig.usage?.budgetAction === 'pause' ||
-    resolvedConfig.usage?.budgetAction === 'abort' ||
-    resolvedConfig.usage?.tokenBudgetAction === 'pause' ||
-    resolvedConfig.usage?.tokenBudgetAction === 'abort'
-      ? { budgetAbort: true }
-      : {}),
+    // 暂停永久挂起。启用判定与 Web 的 budgetPause 同口径（budgetGateEnabled：
+    // 金额/token 任一轴动作会阻断，每轮 LLM 请求前检查），仅注入字段不同。
+    ...(budgetGateEnabled(resolvedConfig.usage) ? { budgetAbort: true } : {}),
   }
   return deps
 }

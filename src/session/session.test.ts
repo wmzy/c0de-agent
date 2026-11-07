@@ -11,10 +11,15 @@ import { markDeadBackgroundJobs } from './jobs.js'
 import { insertEntry } from './message.js'
 import {
   createSession,
-  emptyTrash,
   getSession,
-  listDeletedSessions,
   listSessions,
+  touchSession,
+  updateSessionLastRun,
+  updateSessionTitle,
+} from './session.js'
+import {
+  emptyTrash,
+  listDeletedSessions,
   permanentlyDeleteSession,
   purgeDeletedSessions,
   purgeEmptySessions,
@@ -23,12 +28,9 @@ import {
   restoreSession,
   restoreSessionCore,
   softDeleteSession,
-  touchSession,
   touchTrashSeen,
-  updateSessionLastRun,
-  updateSessionTitle,
   upgradeTemporarySession,
-} from './session.js'
+} from './trash.js'
 
 async function setupDB(): Promise<DB> {
   return dbHandle

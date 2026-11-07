@@ -53,3 +53,9 @@ export function parseTerminalControlMessage(data: string): TerminalControlMessag
   }
   return null
 }
+
+/** 从 shell 路径提取短名称用于标签显示（/bin/zsh → zsh；无分隔符时原样返回）。
+ *  TerminalPanel 的标签栏与 PaneSplitContainer 的 pane 头共用同一口径。 */
+export function shellLabel(shell: string): string {
+  return shell.split('/').pop() ?? shell
+}

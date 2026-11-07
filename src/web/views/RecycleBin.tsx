@@ -311,12 +311,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 页面稳定显示「回收站为空」、无任何错误提示。
   // 与 KanbanView 的「看板加载失败」保持同一套读失败表达，并给出重试入口。
   if (isError) {
-    // APIError 现在是真正的 Error（services/api.ts 的 ApiErrorImpl），
-    // `err.message` 即后端文案；但错误也可能来自非本层抛出的路径，
-    // 结构化取 message 优先、instanceof 兜底，两种读法都不会退化。
-    const message =
-      (listError as { message?: string } | null)?.message ??
-      (listError instanceof Error ? listError.message : null)
+    // 取文案统一走 messageOf：结构化 message 优先、Error.message 兜底，
+    // 网络异常/超时也不会退化成 [object Object]。
+    const message = listError ? messageOf(listError) : null
     return (
       <div>
         <div className={errorBar} data-testid="trash-load-error">
@@ -341,17 +338,11 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 永远不会展示，用户只能看到列表消失。A3：孤儿分组同样独立于空态渲染。
 
   const deletedList = deleted ?? []
-  // 与主列表同款的错误文案提取（APIError 现在是真正的 Error，取 message 优先、
-  // instanceof 兜底，两种读法都不会退化）。
-  const orphanCountErrText =
-    (orphanCountErrorObj as { message?: string } | null)?.message ??
-    (orphanCountErrorObj instanceof Error ? orphanCountErrorObj.message : null)
-  const deletedBoardsErrText =
-    (deletedBoardsErrorObj as { message?: string } | null)?.message ??
-    (deletedBoardsErrorObj instanceof Error ? deletedBoardsErrorObj.message : null)
-  const orphansErrText =
-    (orphansErrorObj as { message?: string } | null)?.message ??
-    (orphansErrorObj instanceof Error ? orphansErrorObj.message : null)
+  // 与主列表同款的错误文案提取（统一走 messageOf：结构化 message 优先、
+  // Error.message 兜底，两种读法都不会退化）。
+  const orphanCountErrText = orphanCountErrorObj ? messageOf(orphanCountErrorObj) : null
+  const deletedBoardsErrText = deletedBoardsErrorObj ? messageOf(deletedBoardsErrorObj) : null
+  const orphansErrText = orphansErrorObj ? messageOf(orphansErrorObj) : null
   const deletedIds = new Set(deletedList.map((s) => s.id))
   const hasDeletedParent = (s: Session): boolean =>
     s.parentId !== null && deletedIds.has(s.parentId)
@@ -381,11 +372,8 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const orphanRows = isSearching
     ? (orphans ?? []).filter((s) => s.title.toLowerCase().includes(searchDebounced.toLowerCase()))
     : (orphans ?? [])
-  // 与文件列表失败态同口径取后端原因：APIError 现在是真正的 Error，
-  // 但错误也可能来自非本层抛出的路径，结构化取 message 优先。
-  const searchErrorMessage =
-    (searchErrorObj as { message?: string } | null)?.message ??
-    (searchErrorObj instanceof Error ? searchErrorObj.message : null)
+  // 与文件列表失败态同口径取后端原因（统一走 messageOf）。
+  const searchErrorMessage = searchErrorObj ? messageOf(searchErrorObj) : null
 
   // A3：已到期进入宽限期的条目计数（顶部警示，7 天内可恢复）。
   const pendingPurgeCount = deletedList.filter((s) => s.metadata.purgePendingAt).length

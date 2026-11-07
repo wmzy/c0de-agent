@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LLMSegment } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
-import { migrateLegacyDetails, segmentFingerprint } from './session.js'
+import { migrateLegacyDetails, segmentFingerprint } from './segments.js'
 
 const tools: ChatTool[] = [{ name: 'read', description: '读文件', parameters: { type: 'object' } }]
 

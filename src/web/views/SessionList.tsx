@@ -8,6 +8,7 @@ import { clearSessionDraft } from '@/composer/draft.js'
 import { useDeleteSession, useProjects, useSessionTree } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
+import { messageOf } from '@/utils/errors.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
 import { RecycleBin } from '@/views/RecycleBin.js'
 
@@ -218,11 +219,9 @@ export function SessionList({
     error: treeError,
     refetch: refetchTree,
   } = useSessionTree()
-  // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
-  // 先结构化取、再 instanceof 兜底，两种读法对网络异常/超时也不会退化。
-  const treeErrorMessage =
-    (treeError as { message?: string } | null)?.message ??
-    (treeError instanceof Error ? treeError.message : null)
+  // 取文案统一走 messageOf：结构化 message 优先、Error.message 兜底，
+  // 网络异常/超时也不会退化。
+  const treeErrorMessage = treeError ? messageOf(treeError) : null
   const del = useDeleteSession()
   const qc = useQueryClient()
 
@@ -240,7 +239,7 @@ export function SessionList({
       return true
     } catch (err) {
       // P3：重命名失败此前写入 deleteError，错误条误显示「删除失败」前缀。
-      setRenameError(err instanceof Error ? err.message : '重命名失败')
+      setRenameError(messageOf(err) || '重命名失败')
       return false
     }
   }
@@ -306,9 +305,7 @@ export function SessionList({
     enabled: searchDebounced.length >= 1,
     staleTime: 10_000,
   })
-  const contentErrorMessage =
-    (contentErrorObj as { message?: string } | null)?.message ??
-    (contentErrorObj instanceof Error ? contentErrorObj.message : null)
+  const contentErrorMessage = contentErrorObj ? messageOf(contentErrorObj) : null
   // 「正在搜索」的完整口径 = 防抖未落地 || 请求在飞（含重试）。防抖那 300ms
   // 里标题树已按 search 过滤、结果区还是旧的，此前正是这段时间闪「无匹配会话」。
   const searching = search.trim().length >= 1
@@ -375,7 +372,7 @@ export function SessionList({
         onDeleted?.(target.id)
       },
       onError: (e: unknown) => {
-        setDeleteError(e instanceof Error ? e.message : String(e))
+        setDeleteError(messageOf(e))
       },
     })
   }
@@ -404,9 +401,7 @@ export function SessionList({
   } | null>(null)
   const [migratePermissions, setMigratePermissions] = useState(false)
   const { data: projects, isError: projectsQueryFailed, error: projectsErr } = useProjects()
-  const projectsErrMessage =
-    (projectsErr as { message?: string } | null)?.message ??
-    (projectsErr instanceof Error ? projectsErr.message : null)
+  const projectsErrMessage = projectsErr ? messageOf(projectsErr) : null
 
   // 切项目时清空按项目作用域的 UI 状态。
   // ChatPage 对 /projects/:projectId（与会话子路由）复用同一组件实例，param
@@ -458,7 +453,7 @@ export function SessionList({
       setImportNotice(`已导入到项目「${target?.name ?? '未命名项目'}」：${notes.join(' ')}`)
       onSelect(result.sessionId)
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err))
+      setImportError(messageOf(err))
     } finally {
       setImporting(false)
     }
@@ -545,7 +540,7 @@ export function SessionList({
       }
       await continueImport(data, original, false)
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err))
+      setImportError(messageOf(err))
     }
   }
 

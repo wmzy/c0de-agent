@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { toolAPI } from '@/services/tool.js'
 import { cardStyle, inputStyle } from '@/styles/tokens.js'
+import { messageOf } from '@/utils/errors.js'
 
 const wrap = css`
   position: relative;
@@ -170,9 +171,8 @@ export function ToolToggle({
   // 如「5/0」），菜单里则断言「暂无可用工具」——把「这次没拉到」说成
   // 「工具没注册/被清空了」，且 staleTime 内不会自愈、也没有重试入口。
   const failed = isError && total === 0
-  const errorMessage =
-    (error as { message?: string } | null)?.message ??
-    (error instanceof Error ? error.message : null)
+  // 失败文案只在 failed 分支消费；error 为 null（未失败）时保持 null 不参与渲染。
+  const errorMessage = error ? messageOf(error) : null
   // enabled === null 视为全部启用
   const enabledCount = enabled === null ? total : enabled.size
   const isAllEnabled = enabled === null || (total > 0 && names.every((n) => enabled.has(n)))

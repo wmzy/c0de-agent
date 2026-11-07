@@ -16,7 +16,7 @@ import {
   updateProjectName,
 } from '../../project/index.js'
 import type { Project } from '../../project/project.js'
-import { clearTrashMarks } from '../../session/session.js'
+import { clearTrashMarks } from '../../session/trash.js'
 import { generateId } from '../../shared/index.js'
 import type { SessionMetadata } from '../../shared/types/message.js'
 import { apiError } from '../middleware/error.js'

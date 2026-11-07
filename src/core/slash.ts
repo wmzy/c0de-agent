@@ -129,7 +129,7 @@ const modelCommand: SlashCommand = {
     const model = async (): Promise<string | null> => {
       if (!ctx.sessionId) return null
       try {
-        const { getLLMSegments } = await import('../session/session.js')
+        const { getLLMSegments } = await import('../session/segments.js')
         const segs = await getLLMSegments(ctx.deps.db, ctx.sessionId)
         const last = segs[segs.length - 1]
         if (last) return `${last.model}（provider: ${last.provider}）`

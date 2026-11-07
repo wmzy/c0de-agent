@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { KeyboardEvent } from 'react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { findNode } from '@/components/tree-utils.js'
 import type { GitStatusCode } from '@/types/index.js'
 
 /** 文件树节点。children 为 undefined 表示尚未加载子目录。type 缺省视为 directory（兼容目录选择器）。 */
@@ -515,16 +516,6 @@ function collectVisiblePaths(root: TreeNode, expanded: Set<string>, hideRoot: bo
   }
   walk(topLevel)
   return out
-}
-
-/** 按路径找节点。 */
-function findNode(root: TreeNode, path: string): TreeNode | null {
-  if (root.path === path) return root
-  for (const c of root.children ?? []) {
-    const hit = findNode(c, path)
-    if (hit) return hit
-  }
-  return null
 }
 
 /** 父节点路径。顶层节点返回 null；根路径 '.' 的直接子节点也返回 null。 */

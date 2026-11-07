@@ -2,12 +2,11 @@ import { createHash } from 'node:crypto'
 import { and, desc, eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { fileSnapshots } from '../db/schema.js'
+import { toEpochMs } from './time.js'
 import { estimateTokens } from './token.js'
 import type { FileSnapshot } from './types.js'
 
 function rowToSnapshot(row: typeof fileSnapshots.$inferSelect): FileSnapshot {
-  const createdAt =
-    row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime()
   return {
     id: row.id,
     sessionId: row.sessionId,
@@ -16,7 +15,7 @@ function rowToSnapshot(row: typeof fileSnapshots.$inferSelect): FileSnapshot {
     contentHash: row.contentHash,
     tokenCount: row.tokenCount ?? 0,
     version: row.version ?? 1,
-    createdAt,
+    createdAt: toEpochMs(row.createdAt),
     ...(row.mtimeMs != null ? { mtimeMs: Number(row.mtimeMs) } : {}),
   }
 }
@@ -114,8 +113,7 @@ async function copyFileSnapshots(
   const latest = new Map<string, typeof fileSnapshots.$inferSelect>()
   for (const r of rows) {
     if (beforeMs !== undefined) {
-      const created =
-        r.createdAt instanceof Date ? r.createdAt.getTime() : new Date(r.createdAt).getTime()
+      const created = toEpochMs(r.createdAt)
       if (created > beforeMs) continue
     }
     const prev = latest.get(r.filePath)

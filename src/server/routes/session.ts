@@ -1,9 +1,7 @@
 import { existsSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
-import { createSummarizer, runCompaction } from '../../core/compact.js'
-import { loadConfigScopes, mergeConfig } from '../../core/config.js'
-import { buildRegistryFromConfig } from '../../core/provider-registry.js'
+import { createSummarizer } from '../../core/compact.js'
 import { sessions } from '../../db/schema.js'
 import { buildFallbackChain } from '../../llm/routing.js'
 import { fromDirectory } from '../../project/index.js'
@@ -15,26 +13,17 @@ import {
   getBranches,
   getTree,
 } from '../../session/branch.js'
+import { compactSession } from '../../session/compaction.js'
 import { importSessionData } from '../../session/import.js'
 import { getMessages, getSteeringAsMessages, updateEntryContent } from '../../session/message.js'
+import { getLLMSegments } from '../../session/segments.js'
 import {
   createSession,
-  emptyTrash,
-  getLLMSegments,
   getSession,
-  listDeletedSessions,
-  listOrphanDeletedSessions,
   listSessions,
   listSessionsByProject,
-  permanentlyDeleteSession,
-  purgeEmptySession,
-  rebindSession,
-  rebindUnboundSessions,
-  restoreSessionCore,
   searchSessions,
-  softDeleteSession,
   touchLastOpened,
-  touchTrashSeen,
   updateSessionTitle,
 } from '../../session/session.js'
 import {
@@ -44,12 +33,25 @@ import {
   toRegionViews,
 } from '../../session/shake.js'
 import { estimateMessageTokens } from '../../session/token.js'
+import {
+  emptyTrash,
+  listDeletedSessions,
+  listOrphanDeletedSessions,
+  permanentlyDeleteSession,
+  purgeEmptySession,
+  rebindSession,
+  rebindUnboundSessions,
+  restoreSessionCore,
+  softDeleteSession,
+  touchTrashSeen,
+} from '../../session/trash.js'
 import { generateId } from '../../shared/index.js'
 import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
-import { hasBusySession, resolveAgentCwd } from './chat.js'
+import { resolveSessionScope } from '../util/session-scope.js'
+import { getLiveSessionOr404, guardSessionNotBusy, resolveAgentCwd } from './chat.js'
 
 function createSessionRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -313,15 +315,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
 
   // 获取会话详情
   app.get('/:id', async (c) => {
-    try {
-      const session = await getSession(ctx.db, c.req.param('id'))
-      if (!session || session.deletedAt) {
-        return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-      }
-      return c.json(session)
-    } catch {
-      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    }
+    const live = await getLiveSessionOr404(ctx, c, c.req.param('id'), {
+      notFoundMessage: '会话不存在或已删除',
+    })
+    if (!live.ok) return live.response
+    return c.json(live.session)
   })
 
   // P2-5：会话重命名（此前标题只能由 LLM 自动生成，用户无法修改）
@@ -334,12 +332,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (title.length > 120) {
       return apiError(c, 400, 'BAD_REQUEST', 'title must be at most 120 characters')
     }
-    const session = await getSession(ctx.db, id)
-    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     // P3 口径统一：回收站会话不可改名（与 GET /:id、/messages 的 404 语义一致）。
-    if (session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
+    const live = await getLiveSessionOr404(ctx, c, id)
+    if (!live.ok) return live.response
     await updateSessionTitle(ctx.db, id, title)
     return c.json({ ok: true, title })
   })
@@ -349,21 +344,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const id = c.req.param('id')
     // P3：回收站会话不可分支——与 GET /:id、PATCH /:id 的 404 口径一致，
     // 否则 API 直调 fork 已删除会话即可复活其内容、绕过回收站语义。
-    const existing = await getSession(ctx.db, id)
-    if (!existing) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    if (existing.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
+    const existing = await getLiveSessionOr404(ctx, c, id)
+    if (!existing.ok) return existing.response
     // P3：fork 复制消息树，与正在写库的活跃 run 存在竞态——先拒绝。
-    // 守卫与斜杠 /fork 同口径（hasBusySession）：此前只查 get()，
-    // 漏 tryAcquire→register 占位窗口与工作流运行期。
-    const busy = hasBusySession(ctx, id)
-    if (busy === 'run' || busy === 'workflow') {
-      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再分支')
-    }
-    if (busy === 'starting') {
-      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
-    }
+    // 守卫与斜杠 /fork 同口径（guardSessionNotBusy → hasBusySession）：此前只查
+    // get()，漏 tryAcquire→register 占位窗口与工作流运行期。
+    const busy = guardSessionNotBusy(ctx, c, id, '分支')
+    if (busy) return busy
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const rawIndex = parsed.body.messageIndex
@@ -402,15 +389,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
     const busyWorkflowId = ctx.workflowBusyBySession.get(id)
     if (busyWorkflowId) {
-      ctx.agentManager.abort(busyWorkflowId)
-      for (const child of ctx.agentManager.children(busyWorkflowId)) {
-        ctx.agentManager.abort(child.sessionId)
-      }
+      ctx.agentManager.abortCascade(busyWorkflowId)
     }
-    ctx.agentManager.abort(id)
-    for (const child of ctx.agentManager.children(id)) {
-      ctx.agentManager.abort(child.sessionId)
-    }
+    ctx.agentManager.abortCascade(id)
     const ok = await softDeleteSession(ctx.db, id)
     if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     return c.body(null, 204)
@@ -442,13 +423,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 会话归档列表（compaction/squash/shake/clear 的原始内容）；?q= 搜索归档文本
   app.get('/:id/archives', async (c) => {
     const id = c.req.param('id')
-    let session: Awaited<ReturnType<typeof getSession>>
-    try {
-      session = await getSession(ctx.db, id)
-    } catch {
-      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    }
-    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    // 历史口径：归档查询不拒绝回收站会话（requireLive: false 显式声明）。
+    const live = await getLiveSessionOr404(ctx, c, id, { requireLive: false })
+    if (!live.ok) return live.response
     const q = c.req.query('q')
     const archives = await listArchives(ctx.db, id, q)
     return c.json({ archives })
@@ -457,18 +434,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 会话导出：元数据 + 消息 + 全部归档（JSON 下载，数据可迁移）
   app.get('/:id/export', async (c) => {
     const id = c.req.param('id')
-    let session: Awaited<ReturnType<typeof getSession>>
-    try {
-      session = await getSession(ctx.db, id)
-    } catch {
-      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    }
-    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     // P3 口径统一：回收站会话不可导出——与 GET /:id、PATCH /:id、/messages、
     // /llm-details 的 404 语义一致。回收站内容经「恢复」后即可导出。
-    if (session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
+    const live = await getLiveSessionOr404(ctx, c, id)
+    if (!live.ok) return live.response
+    const session = live.session
     const messages = await getMessages(ctx.db, id)
     const archives = await listArchives(ctx.db, id)
     // P2-6：归档的 fileSnapshots 含被压缩进上下文的文件内容——导出 JSON 常被
@@ -587,15 +557,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 会话归属变更（P1-2）：孤儿会话归属到指定项目，恢复后即可达。
   app.post('/:id/rebind', async (c) => {
     const id = c.req.param('id')
-    // P3 口径统一：归属变更与 fork/compact/shake 同用 hasBusySession 守卫——
+    // P3 口径统一：归属变更与 fork/compact/shake 同用 busy 守卫——
     // 活跃 run 的 cwd 在启动时解析，rebind 会改变后续轮次的工作目录语义。
-    const busy = hasBusySession(ctx, id)
-    if (busy === 'run' || busy === 'workflow') {
-      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再更改归属')
-    }
-    if (busy === 'starting') {
-      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
-    }
+    const busy = guardSessionNotBusy(ctx, c, id, '更改归属')
+    if (busy) return busy
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const projectId =
@@ -613,10 +578,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 获取消息列表（含 steering 条目：P0 追加指令持久化后需在时间线可见）
   app.get('/:id/messages', async (c) => {
     const id = c.req.param('id')
-    const session = await getSession(ctx.db, id)
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
+    const live = await getLiveSessionOr404(ctx, c, id, {
+      notFoundMessage: '会话不存在或已删除',
+    })
+    if (!live.ok) return live.response
     const [messages, steering] = await Promise.all([
       getMessages(ctx.db, id),
       getSteeringAsMessages(ctx.db, id),
@@ -630,11 +595,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.get('/:id/llm-details', async (c) => {
     const run = ctx.agentManager.get(c.req.param('id'))
     if (run) return c.json(run.state.segments)
-    const session = await getSession(ctx.db, c.req.param('id'))
     // P3 口径统一：回收站会话的持久化分段不再下发（会话本身已 404）。
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
+    const live = await getLiveSessionOr404(ctx, c, c.req.param('id'), {
+      notFoundMessage: '会话不存在或已删除',
+    })
+    if (!live.ok) return live.response
     const persisted = await getLLMSegments(ctx.db, c.req.param('id'))
     return c.json(persisted)
   })
@@ -643,36 +608,27 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // P1 多项目：keepRecentTokens 按会话项目配置解析（此前用启动目录配置）。
   app.post('/:id/compact', async (c) => {
     const id = c.req.param('id')
-    // P2-5 修复：守卫收敛 hasBusySession（与斜杠 /compact、REST fork 同口径）——
+    // P2-5 修复：守卫收敛 busy 守卫（与斜杠 /compact、REST fork 同口径）——
     // 此前只查 get()，漏 tryAcquire→register 占位窗口与工作流运行期两态。
-    const busy = hasBusySession(ctx, id)
-    if (busy === 'run' || busy === 'workflow') {
-      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再压缩')
-    }
-    if (busy === 'starting') {
-      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
-    }
-    let session: Awaited<ReturnType<typeof getSession>>
-    try {
-      session = await getSession(ctx.db, id)
-    } catch {
-      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    }
-    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    const busy = guardSessionNotBusy(ctx, c, id, '压缩')
+    if (busy) return busy
+    // 历史口径：压缩不拒绝回收站会话（requireLive: false 显式声明）。
+    const live = await getLiveSessionOr404(ctx, c, id, { requireLive: false })
+    if (!live.ok) return live.response
+    const session = live.session
+    // 会话级配置/注册表按会话 cwd 解析（cwd 解析失败不阻塞压缩：回退服务级
+    // 配置，压缩优于报错）。绑定项目的会话按 projectId 复用项目级注册表缓存。
     let sessionConfig = ctx.config
     let sessionRegistry = ctx.llmRegistry
     try {
       const sessionCwd = await resolveAgentCwd(ctx, session)
-      if (sessionCwd !== ctx.cwd) {
-        const projectScope = loadConfigScopes(sessionCwd).project
-        if (projectScope) {
-          sessionConfig = mergeConfig(ctx.config, projectScope)
-          // P1-1：压缩摘要同样需要项目级 provider 注册表。
-          if (sessionConfig.providers.length > 0) {
-            sessionRegistry = buildRegistryFromConfig(sessionConfig)
-          }
-        }
-      }
+      const resolved = resolveSessionScope(ctx, {
+        cwd: sessionCwd,
+        registryKey: session.projectId ?? undefined,
+        buildWithoutKey: true,
+      })
+      sessionConfig = resolved.config
+      sessionRegistry = resolved.registry
     } catch {
       // cwd 解析失败不阻塞压缩：回退服务级配置（压缩优于报错）
     }
@@ -685,7 +641,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
       const summarizer = createSummarizer(sessionRegistry, provider, model, {
         ...(fallback ? { fallback } : {}),
       })
-      const result = await runCompaction(ctx.db, id, summarizer, {
+      const result = await compactSession(ctx.db, id, summarizer, {
         keepRecentTokens: sessionConfig.compaction.keepRecentTokens,
       })
       return c.json(result)
@@ -726,13 +682,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // shake preview：返回可 shake 的区域列表
   app.post('/:id/shake/preview', async (c) => {
     const id = c.req.param('id')
-    let session: Awaited<ReturnType<typeof getSession>>
-    try {
-      session = await getSession(ctx.db, id)
-    } catch {
-      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    }
-    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    // 历史口径：shake 预览不拒绝回收站会话（requireLive: false 显式声明）。
+    const live = await getLiveSessionOr404(ctx, c, id, { requireLive: false })
+    if (!live.ok) return live.response
     const messages = await getMessages(ctx.db, id)
     // Manual shake: show ALL candidates (protectTokens=0, minSavings=0).
     // toRegionViews still marks isAfterProtectWindow using the real config.
@@ -745,22 +697,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // shake apply：归档原始内容 + 原位替换
   app.post('/:id/shake/apply', async (c) => {
     const id = c.req.param('id')
-    // P2-5 修复：守卫收敛 hasBusySession（与 compact/fork 同口径），
-    // 补 starting 占位与工作流运行期两态。
-    const busy = hasBusySession(ctx, id)
-    if (busy === 'run' || busy === 'workflow') {
-      return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再 Shake')
-    }
-    if (busy === 'starting') {
-      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
-    }
-    let session: Awaited<ReturnType<typeof getSession>>
-    try {
-      session = await getSession(ctx.db, id)
-    } catch {
-      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    }
-    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    // P2-5 修复：守卫收敛 busy 守卫（与 compact/fork 同口径），
+    // 补 starting 占位与工作流运行期两态。（verb 前导空格保留历史文案。）
+    const busy = guardSessionNotBusy(ctx, c, id, ' Shake')
+    if (busy) return busy
+    // 历史口径：shake 应用不拒绝回收站会话（requireLive: false 显式声明）。
+    const live = await getLiveSessionOr404(ctx, c, id, { requireLive: false })
+    if (!live.ok) return live.response
 
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
@@ -820,10 +763,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.post('/:id/open', async (c) => {
     const id = c.req.param('id')
     // P3 口径统一：不存在/回收站会话不再静默返回成功（与 GET /:id 404 一致）。
-    const session = await getSession(ctx.db, id)
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
+    const live = await getLiveSessionOr404(ctx, c, id, {
+      notFoundMessage: '会话不存在或已删除',
+    })
+    if (!live.ok) return live.response
     await touchLastOpened(ctx.db, id)
     return c.json({ ok: true })
   })

@@ -3,13 +3,8 @@ import type { DB } from '../db/client.js'
 import { compactionArchives } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import { isUuid } from '../shared/utils/string.js'
+import { toEpochMs } from './time.js'
 import type { ArchiveRef, CompactionArchive, SessionEntry } from './types.js'
-
-function toEpochMs(value: Date | string | number): number {
-  if (value instanceof Date) return value.getTime()
-  if (typeof value === 'number') return value
-  return new Date(value).getTime()
-}
 
 function rowToArchive(row: typeof compactionArchives.$inferSelect): CompactionArchive {
   return {

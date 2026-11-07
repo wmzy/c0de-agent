@@ -18,6 +18,7 @@ import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
 import { computeDropPosition, POSITION_GAP } from '@/components/kanban/drop-position.js'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
 import { type KanbanBoardWithCards, type KanbanCard, kanbanAPI } from '@/services/kanban.js'
+import { messageOf } from '@/utils/errors.js'
 
 const view = css`
   display: flex;
@@ -332,9 +333,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       if (context?.previous) {
         qc.setQueryData(['kanban', projectId], context.previous)
       }
-      setIoError(
-        `移动卡片失败，卡片已回到原位置：${err instanceof Error ? err.message : String(err)}`,
-      )
+      setIoError(`移动卡片失败，卡片已回到原位置：${messageOf(err)}`)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['kanban', projectId] }),
   })
@@ -408,7 +407,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       a.click()
       URL.revokeObjectURL(url)
     } catch (err) {
-      setIoError(err instanceof Error ? err.message : '导出失败')
+      setIoError(messageOf(err) || '导出失败')
     }
   }
 
@@ -425,7 +424,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       const cardCount = Array.isArray(cards) ? cards.length : 0
       setPendingImport({ data, cardCount })
     } catch (err) {
-      setIoError(err instanceof Error ? err.message : '导入失败')
+      setIoError(messageOf(err) || '导入失败')
     }
   }
 
@@ -439,7 +438,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       await kanbanAPI.importBoard(projectId, pending.data)
       await qc.invalidateQueries({ queryKey: ['kanban', projectId] })
     } catch (err) {
-      setIoError(err instanceof Error ? err.message : '导入失败')
+      setIoError(messageOf(err) || '导入失败')
     }
   }
 
@@ -460,9 +459,8 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   // 与 RecycleBin 读失败态对齐：展示后端 message（APIError 是结构体而非
   // Error 子类，必须结构化取 message，否则渲染成 [object Object]）+ 重试按钮。
   if (isError || !board) {
-    const message =
-      (error as { message?: string } | null)?.message ??
-      (error instanceof Error ? error.message : null)
+    // isError 为 false 而 board 缺失时 error 可为 null：保持 null 走「无法读取看板数据」。
+    const message = error ? messageOf(error) : null
     return (
       <div className={view}>
         <div className={errorState} data-testid="kanban-load-error" role="alert">

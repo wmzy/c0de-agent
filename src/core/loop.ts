@@ -6,7 +6,7 @@ import { getMessages } from '../session/message.js'
 import { markBudgetPause, updateSessionLastRun } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import { budgetOverageParts } from '../session/usage.js'
-import type { AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
+import type { AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
 import { calibrateEstimate, createTokenBudget, estimateBudget } from './context.js'
 import { runCompactionIfNeeded } from './loop/compaction.js'
@@ -117,6 +117,120 @@ async function waitForResume(state: AgentState): Promise<void> {
   }
 }
 
+/**
+ * 暂停点公共序列（用户暂停与预算超支暂停共用）：
+ * yield status_change(paused) → 持久化 lastRun（供热更新/重启后恢复）→
+ * 可选落盘暂停原因（P2-3 预算暂停标记）→ 阻塞等待 resume → 判定等待期间是否被中止。
+ * 返回 false=已被中止，调用方必须结束本 run——继续往下会把状态复位成 running
+ * 并再发一次 LLM 请求，已中止的 run 复活成「运行中」。
+ * 中止路径不止一条：abortAgent 会同时置 stopped，而父→子 abort 联动等
+ * signal-only 路径不会（见 waitForResume）——「仍是 paused」同样按中止退出。
+ */
+async function* pauseAndWait(
+  state: AgentState,
+  deps: LoopDeps,
+  opts: { markReason?: string } = {},
+): AsyncGenerator<AgentEvent, boolean> {
+  yield { _tag: 'status_change', status: state.status }
+  await updateSessionLastRun(deps.db, state.session.id, {
+    status: 'paused',
+    agentName: state.config.agentName,
+    provider: state.config.provider,
+    model: state.config.model,
+    startedAt: state.lastRunStartedAt ?? Date.now(),
+  }).catch(() => {})
+  if (opts.markReason !== undefined) {
+    // P2-3：暂停原因落盘——热更新/重启后 run 重建，消费此标记还原
+    // budgetPauseTriggered，避免同一超支原因二次暂停打断用户。
+    await markBudgetPause(deps.db, state.session.id, opts.markReason).catch(() => {})
+  }
+  await waitForResume(state)
+  // 本函数无先验收窄，state.status 即 AgentStatus（原调用点的 as 断言是
+  // 为绕开 if (paused) 收窄在 await 后仍生效导致的「无交集」比较错误）。
+  return state.status._tag === 'running'
+}
+
+/**
+ * 预算护栏（agentLoop 每轮 LLM 请求前的检查块）：
+ * 金额 + token 双口径（token 兜底价格未知的自建网关/未登记模型），每 run 至多
+ * 触发一次（budgetPauseTriggered），恢复后用户已知情继续。deps.budgetPause 由
+ * Web 路由按配置注入；deps.budgetAbort 由 CLI 组装注入（无恢复 UI，超支中止
+ * 而非暂停挂起）。
+ * 顶层 agent：超支 → 暂停（Web，可恢复）/ 中止（CLI，产出 error）。
+ * 子 agent：无恢复 UI，超支 → 提前中止自身（把超支作为错误回报父 agent，父
+ *   run 下一轮检查将暂停）——收紧子 agent 单轮内 fan-out 的超支粒度。
+ * 事件（error/status_change）经 yield 透传给 agentLoop 消费方；返回
+ * { stop: true } 表示调用方必须立即结束本 run（yield 顺序与原内联实现逐事件一致）。
+ */
+async function* budgetGuard(
+  state: AgentState,
+  deps: LoopDeps,
+): AsyncGenerator<AgentEvent, { stop: boolean }> {
+  if (!(deps.budgetPause === true || deps.budgetAbort === true) || state.budgetPauseTriggered) {
+    return { stop: false }
+  }
+  try {
+    const { parts, action, warnings } = await budgetOverageParts(
+      deps.db,
+      deps.config.usage,
+      state.session.projectId,
+    )
+    if (parts.length > 0) {
+      state.budgetPauseTriggered = true
+      const reason = `月度预算超支（${parts.join('；')}）${
+        warnings.length > 0 ? `；注意：${warnings.join('；')}` : ''
+      }`
+      if (deps._subagentDepth === undefined) {
+        // CLI（budgetAbort）恒中止；Web 按超支轴配置动作判定（abort > pause）。
+        if (deps.budgetAbort === true || action === 'abort') {
+          state.status = {
+            _tag: 'stopped',
+            reason: 'error',
+            error: { _tag: 'unexpected', message: reason },
+          }
+          yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
+          return { stop: true }
+        }
+        state.status = { _tag: 'paused', pauseReason: reason }
+        const resumed = yield* pauseAndWait(state, deps, { markReason: reason })
+        if (!resumed) return { stop: true }
+      } else {
+        state.status = {
+          _tag: 'stopped',
+          reason: 'error',
+          error: { _tag: 'unexpected', message: reason },
+        }
+        yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
+        return { stop: true }
+      }
+    } else if (warnings.length > 0 && !budgetWarnedStates.has(state)) {
+      // P2-2：未超支但金额口径不可靠（价格未知调用无 token 兜底）——每 run
+      // 记日志一次，不阻断。用户主动看日志即可发现「预算未真正兜底」。
+      budgetWarnedStates.add(state)
+      console.warn(`[usage] 预算金额口径低估告警：${warnings.join('；')}`)
+    }
+  } catch (err) {
+    // 账本查询失败：记录告警。'warn'/'pause' 路径 fail-open（可用性优先）；
+    // 'abort' 路径（用户显式要求硬封顶）保守 fail-closed——账本不可用即无法
+    // 保证「绝不超限」，宁可本轮中止并明示，而非静默放行继续烧钱。
+    console.error('[usage] 预算护栏账本查询失败：', err)
+    const abortSeverity =
+      deps.config.usage.budgetAction === 'abort' || deps.config.usage.tokenBudgetAction === 'abort'
+    if (abortSeverity) {
+      const reason =
+        '月度预算账本查询失败且预算动作为 abort（硬封顶）：无法确认是否超支，出于安全中止本轮'
+      state.status = {
+        _tag: 'stopped',
+        reason: 'error',
+        error: { _tag: 'unexpected', message: reason },
+      }
+      yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
+      return { stop: true }
+    }
+  }
+  return { stop: false }
+}
+
 export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenerator<AgentEvent> {
   const maxTurns = state.config.maxTurns ?? 50
   const streamFn = deps.chatStream ?? llmChatStream
@@ -133,108 +247,16 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
 
     if (state.status._tag === 'paused') {
       // 暂停点：上一轮原子操作（工具执行批次）已完成。
-      // 持久化 paused 状态供热更新/重启后恢复，随后阻塞等待 resume。
+      // 持久化 paused 状态供热更新/重启后恢复，随后阻塞等待 resume
+      // （共享序列见 pauseAndWait）。
       state.pauseYielded = false
-      yield { _tag: 'status_change', status: state.status }
-      await updateSessionLastRun(deps.db, state.session.id, {
-        status: 'paused',
-        agentName: state.config.agentName,
-        provider: state.config.provider,
-        model: state.config.model,
-        startedAt: state.lastRunStartedAt ?? Date.now(),
-      }).catch(() => {})
-      await waitForResume(state)
-      // 等待期间被中止（abortAgent 置 stopped / signal-only 中止仍是 paused）
-      // 一律结束本 run：继续往下会把状态复位成 running 并再发一次 LLM 请求，
-      // 已中止的 run 复活成「运行中」。状态经显式断言重新读取——上方 if 的
-      // paused 收窄在 await 后仍生效，直接比较会被 TS 判为无交集。
-      const afterWait = state.status as AgentStatus
-      if (afterWait._tag !== 'running') return
+      const resumed = yield* pauseAndWait(state, deps)
+      if (!resumed) return
     }
 
-    // 预算护栏：金额 + token 双口径（token 兜底价格未知的自建网关/未登记模型），
-    // 每轮 LLM 请求前检查。每 run 至多触发一次（budgetPauseTriggered），恢复后
-    // 用户已知情继续。deps.budgetPause 由 Web 路由按配置注入；deps.budgetAbort
-    // 由 CLI 组装注入（无恢复 UI，超支中止而非暂停挂起）。
-    // 顶层 agent：超支 → 暂停（Web，可恢复）/ 中止（CLI，产出 error）。
-    // 子 agent：无恢复 UI，超支 → 提前中止自身（把超支作为错误回报父 agent，父
-    //   run 下一轮检查将暂停）——收紧子 agent 单轮内 fan-out 的超支粒度。
-    if ((deps.budgetPause === true || deps.budgetAbort === true) && !state.budgetPauseTriggered) {
-      try {
-        const { parts, action, warnings } = await budgetOverageParts(
-          deps.db,
-          deps.config.usage,
-          state.session.projectId,
-        )
-        if (parts.length > 0) {
-          state.budgetPauseTriggered = true
-          const reason = `月度预算超支（${parts.join('；')}）${
-            warnings.length > 0 ? `；注意：${warnings.join('；')}` : ''
-          }`
-          if (deps._subagentDepth === undefined) {
-            // CLI（budgetAbort）恒中止；Web 按超支轴配置动作判定（abort > pause）。
-            if (deps.budgetAbort === true || action === 'abort') {
-              state.status = {
-                _tag: 'stopped',
-                reason: 'error',
-                error: { _tag: 'unexpected', message: reason },
-              }
-              yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
-              return
-            }
-            state.status = { _tag: 'paused', pauseReason: reason }
-            yield { _tag: 'status_change', status: state.status }
-            await updateSessionLastRun(deps.db, state.session.id, {
-              status: 'paused',
-              agentName: state.config.agentName,
-              provider: state.config.provider,
-              model: state.config.model,
-              startedAt: state.lastRunStartedAt ?? Date.now(),
-            }).catch(() => {})
-            // P2-3：暂停原因落盘——热更新/重启后 run 重建，消费此标记还原
-            // budgetPauseTriggered，避免同一超支原因二次暂停打断用户。
-            await markBudgetPause(deps.db, state.session.id, reason).catch(() => {})
-            await waitForResume(state)
-            // 同暂停点：等待期间被中止（stopped）或 signal-only 中止（仍 paused）
-            // 一律结束本 run，绝不把已中止的 run 复位成 running 再发 LLM 请求。
-            const afterBudgetWait = state.status as AgentStatus
-            if (afterBudgetWait._tag !== 'running') return
-          } else {
-            state.status = {
-              _tag: 'stopped',
-              reason: 'error',
-              error: { _tag: 'unexpected', message: reason },
-            }
-            yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
-            return
-          }
-        } else if (warnings.length > 0 && !budgetWarnedStates.has(state)) {
-          // P2-2：未超支但金额口径不可靠（价格未知调用无 token 兜底）——每 run
-          // 记日志一次，不阻断。用户主动看日志即可发现「预算未真正兜底」。
-          budgetWarnedStates.add(state)
-          console.warn(`[usage] 预算金额口径低估告警：${warnings.join('；')}`)
-        }
-      } catch (err) {
-        // 账本查询失败：记录告警。'warn'/'pause' 路径 fail-open（可用性优先）；
-        // 'abort' 路径（用户显式要求硬封顶）保守 fail-closed——账本不可用即无法
-        // 保证「绝不超限」，宁可本轮中止并明示，而非静默放行继续烧钱。
-        console.error('[usage] 预算护栏账本查询失败：', err)
-        const abortSeverity =
-          deps.config.usage.budgetAction === 'abort' ||
-          deps.config.usage.tokenBudgetAction === 'abort'
-        if (abortSeverity) {
-          const reason =
-            '月度预算账本查询失败且预算动作为 abort（硬封顶）：无法确认是否超支，出于安全中止本轮'
-          state.status = {
-            _tag: 'stopped',
-            reason: 'error',
-            error: { _tag: 'unexpected', message: reason },
-          }
-          yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
-          return
-        }
-      }
-    }
+    const guard = yield* budgetGuard(state, deps)
+    if (guard.stop) return
+
     state.status = { _tag: 'running', turnCount: turn }
 
     const steering = drainSteering(state)

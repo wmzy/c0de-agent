@@ -5,6 +5,7 @@ import { css } from '@linaria/core'
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { authAPI } from '@/services/auth.js'
+import { messageOf } from '@/utils/errors.js'
 import { storageSet } from '@/utils/storage.js'
 
 /** 层容器：撑满视口并居中内容。遮罩（button）与面板（div）为兄弟节点，
@@ -149,8 +150,7 @@ function PairingRequestFlow({ onDismiss }: { onDismiss: () => void }) {
       .requestPairing('新设备 (Browser)')
       .then(setPairing)
       .catch((e: unknown) => {
-        const msg = e instanceof Error ? e.message : String(e)
-        setError(`发起配对失败：${msg}`)
+        setError(`发起配对失败：${messageOf(e)}`)
       })
   }, [])
 

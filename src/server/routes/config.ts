@@ -14,13 +14,14 @@ import {
   projectSecurityKeys,
   saveConfigScoped,
 } from '../../core/config.js'
+import { syncRegistryFromConfig } from '../../core/provider-registry.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
 import { getByDirectory, getProject, trustProject } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
 import { apiError } from '../middleware/error.js'
-import { syncRegistryFromConfig } from '../server.js'
 import type { ServerContext } from '../types.js'
+import { invalidateProjectRegistries } from '../util/session-scope.js'
 
 /** 检查每个 provider 的 apiKey 能否在本机解密（机器绑定密钥换机/容器重建后会失败）。 */
 function providerApiKeyWarnings(providers: Config['providers']): string[] {
@@ -297,8 +298,10 @@ function createConfigRoute(ctx: ServerContext): Hono {
       // 项目级注册表基于全局作用域构建，global 变更后全部失效。
       ctx.projectRegistries?.clear()
     } else if (projectId) {
-      // 项目作用域写入：该项目的会话级注册表缓存失效。
-      ctx.projectRegistries?.delete(projectId)
+      // 项目作用域写入：该项目的会话级注册表缓存失效（含 provider 配置页的
+      // 'provider-config:' 前缀缓存键——前缀键按 projectId 成对失效，防两条
+      // 通道的缓存互相污染对方的失效语义）。
+      invalidateProjectRegistries(ctx, projectId)
     }
 
     const freshScopes = loadConfigScopes(target.dir)

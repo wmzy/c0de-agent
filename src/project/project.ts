@@ -3,6 +3,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { loadConfigScopes } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, projects, sessions } from '../db/schema.js'
+import { toEpochMs } from '../session/time.js'
 import type { Config } from '../shared/types/config.js'
 import { resolveProject } from './resolve.js'
 import { computeProjectRiskFingerprint, projectTrustNeeded } from './trust.js'
@@ -28,16 +29,9 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
     vcs: (row.vcs as 'git' | null) ?? null,
     name: row.name,
     gitRemote: row.gitRemote,
-    createdAt:
-      row.createdAt instanceof Date ? row.createdAt.getTime() : new Date(row.createdAt).getTime(),
-    updatedAt:
-      row.updatedAt instanceof Date ? row.updatedAt.getTime() : new Date(row.updatedAt).getTime(),
-    trustedAt:
-      row.trustedAt instanceof Date
-        ? row.trustedAt.getTime()
-        : row.trustedAt
-          ? new Date(row.trustedAt).getTime()
-          : null,
+    createdAt: toEpochMs(row.createdAt),
+    updatedAt: toEpochMs(row.updatedAt),
+    trustedAt: row.trustedAt ? toEpochMs(row.trustedAt) : null,
     riskFingerprint: row.riskFingerprint,
   }
 }

@@ -6,6 +6,7 @@ import { TopBar } from '@/components/TopBar.js'
 import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
 import { projectAPI } from '@/services/project.js'
+import { messageOf } from '@/utils/errors.js'
 import { Layout } from '@/views/Layout.js'
 
 const redirectMsg = css`
@@ -72,10 +73,9 @@ export function RootRedirect() {
   }
   if (isError || !project) {
     // APIError.message 是后端的中文可操作指引（如「请在项目目录启动 c0de serve」），
-    // 直接展示比通用文案更能引导用户走出死胡同。
-    const message =
-      (error as { message?: string } | null)?.message ??
-      '无法解析当前项目，请前往设置确认工作区配置。'
+    // 直接展示比通用文案更能引导用户走出死胡同。isError 为 false 而 project 缺失时
+    // error 可为 null，保持走通用文案。
+    const message = error ? messageOf(error) : '无法解析当前项目，请前往设置确认工作区配置。'
     return (
       <Layout
         header={<TopBar />}

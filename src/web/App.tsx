@@ -10,6 +10,7 @@ import { UpdateBanner } from '@/components/UpdateBanner.js'
 import { ConfigProvider } from '@/contexts/ConfigContext.js'
 import { ThemeProvider } from '@/contexts/ThemeContext.js'
 import { routes } from '@/routes.js'
+import { sessionGet, sessionRemove } from '@/utils/storage.js'
 import { Layout } from '@/views/Layout.js'
 import { NotFound } from '@/views/NotFound.js'
 
@@ -126,21 +127,11 @@ const deviceNotice = css`
 
 /** 展示首设备注册结果：用户可核对注册的确实是本浏览器（先到先得竞态的可见性补偿）。 */
 function FirstDeviceNotice() {
-  const [name, setName] = useState<string | null>(() => {
-    try {
-      return sessionStorage.getItem(FIRST_DEVICE_KEY)
-    } catch {
-      return null
-    }
-  })
+  const [name, setName] = useState<string | null>(() => sessionGet(FIRST_DEVICE_KEY))
   if (!name) return null
   const dismiss = () => {
     setName(null)
-    try {
-      sessionStorage.removeItem(FIRST_DEVICE_KEY)
-    } catch {
-      // ignore
-    }
+    sessionRemove(FIRST_DEVICE_KEY)
   }
   return (
     <div className={deviceNotice} data-testid="first-device-notice">

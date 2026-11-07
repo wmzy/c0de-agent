@@ -11,6 +11,7 @@ import type { TestResult } from '@/services/provider.js'
 import { providerAPI } from '@/services/provider.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { btnDanger } from '@/styles/tokens.js'
+import { messageOf } from '@/utils/errors.js'
 
 /*
  * Provider 行网格：桌面 6 列（名称/协议/URL/APIKey + 测试/删除），窄屏 2 列堆叠。
@@ -249,7 +250,7 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
             // APIError 现在是真正的 Error（services/api.ts）：此前走 else 分支，
             // 空 baseURL、非 http(s) URL、401 过期 token 全都显示成「未知错误」，
             // 恰好覆盖首次运行「添加 provider → 测试」这条最需要诊断的路径。
-            error: err instanceof Error ? err.message : String(err),
+            error: messageOf(err),
           },
         },
       }))

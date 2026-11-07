@@ -9,12 +9,8 @@ import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries } from '../../session/archive.js'
-import {
-  createSession,
-  getSession,
-  listDeletedSessions,
-  updateSessionLastRun,
-} from '../../session/session.js'
+import { createSession, getSession, updateSessionLastRun } from '../../session/session.js'
+import { listDeletedSessions } from '../../session/trash.js'
 import type { Session } from '../../shared/types/message.js'
 import { createServerContext } from '../context.js'
 import type { APIErrorBody } from '../types.js'

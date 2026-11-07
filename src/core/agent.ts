@@ -1,6 +1,6 @@
 import { resolveRoute } from '../llm/registry.js'
 import { appendMessage, getMessages } from '../session/message.js'
-import { getLLMSegments } from '../session/session.js'
+import { getLLMSegments } from '../session/segments.js'
 import { generateId } from '../shared/index.js'
 import type { AgentConfig, AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
 import type { MessageContent, Session } from '../shared/types/message.js'

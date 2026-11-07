@@ -39,6 +39,5 @@ describe('core barrel export', () => {
 
   it('exports compaction bridge', () => {
     expect(typeof core.createSummarizer).toBe('function')
-    expect(typeof core.runCompaction).toBe('function')
   })
 })

@@ -1,8 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
-import { safeResolve } from '../../shared/utils/path.js'
 import { type ApplyResult, applyPatch, type PatchHunk, parsePatch } from '../hashline/index.js'
 import type { EditInput } from '../types.js'
+import { resolveToolPath } from './paths.js'
 
 /**
  * edit tool: file editing in two modes (spec §16.4).
@@ -39,10 +39,8 @@ export const editTool: ToolDef = {
   execute: async (input: unknown, ctx): Promise<ToolResult> => {
     const raw = input as EditInput
     const path = raw.path
-    const fullPath = safeResolve(ctx.cwd, path)
-    if (fullPath === null) {
-      return { _tag: 'error', error: `Path "${path}" escapes the working directory` }
-    }
+    const fullPath = resolveToolPath(ctx, path)
+    if (typeof fullPath !== 'string') return fullPath
 
     try {
       // ── hashline 模式 ──────────────────────────────────

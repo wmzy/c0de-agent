@@ -3,7 +3,7 @@
 import { css } from '@linaria/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PaneSplitContainer } from '@/components/PaneSplitContainer.js'
-import type { TerminalControlMessage } from '@/components/terminal-control.js'
+import { shellLabel, type TerminalControlMessage } from '@/components/terminal-control.js'
 import type { SplitDirection, UseTerminalReturn } from '@/hooks/useTerminal.js'
 import { lockBodyCursor, restoreBodyCursor } from '@/utils/drag-cursor.js'
 
@@ -318,12 +318,6 @@ const createFailDismissStyle = css`
     border-color: var(--haze-color-danger);
   }
 `
-
-/** 从 shell 路径提取短名称用于标签显示。 */
-function shellLabel(shell: string): string {
-  const base = shell.split('/').pop() ?? shell
-  return base
-}
 
 /**
  * 终端面板：底部可拖拽调整高度的容器，支持多标签页和 VSCode 风格分屏。

@@ -12,6 +12,8 @@ import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { getAuthToken } from '@/services/api.js'
 import { encodeFilePath, fileAPI } from '@/services/file.js'
 import { btnDanger } from '@/styles/tokens.js'
+import { messageOf } from '@/utils/errors.js'
+import { extOf } from '@/utils/format.js'
 
 const wrap = css`
   height: 100%;
@@ -96,18 +98,6 @@ const loadingWrap = css`
   padding: 12px;
 `
 
-/**
- * 读后端失败原因。APIError 是结构体（Object.assign 出来的字面量）而非 Error 子类，
- * 结构化取 message 优先，再退回 Error.message——单独取任一侧都会在某些路径上丢原因。
- */
-function readErrorMessage(err: unknown): string | null {
-  if (err && typeof err === 'object') {
-    const m = (err as { message?: unknown }).message
-    if (typeof m === 'string' && m) return m
-  }
-  return err instanceof Error ? err.message : null
-}
-
 /** 读失败态：与 RecycleBin/KanbanView 的读失败三段式同口径（标题 + 后端 message + 重试）。 */
 const errorWrap = css`
   display: flex;
@@ -190,10 +180,6 @@ const discardActions = css`
 const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp']
 const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'm4a', 'flac']
 const VIDEO_EXT = ['mp4', 'webm', 'mov', 'mkv']
-
-function extOf(name: string): string {
-  return name.split('.').pop()?.toLowerCase() ?? ''
-}
 
 /** 计算选区在文件中的行范围（1-indexed）。
  * 优先用 CodeMirror 的文档坐标（posAtDOM → doc.lineAt）：`.cm-line` 只是**视口内**
@@ -460,7 +446,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       body = (
         <div className={errorWrap} data-testid="file-preview-binary">
           <span className={binaryTitle}>这是二进制文件</span>
-          <span className={errorDetail}>{err.message ?? '不能以文本方式显示或编辑。'}</span>
+          <span className={errorDetail}>{messageOf(err) || '不能以文本方式显示或编辑。'}</span>
           <a
             className={binaryLink}
             href={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
@@ -475,11 +461,10 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     } else {
       // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
       // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
-      const message = readErrorMessage(q.error)
       body = (
         <div className={errorWrap} data-testid="file-preview-error" role="alert">
           <span className={errorTitle}>文件读取失败</span>
-          <span className={errorDetail}>{message ?? '无法读取该文件内容。'}</span>
+          <span className={errorDetail}>{messageOf(q.error) || '无法读取该文件内容。'}</span>
           <button
             type="button"
             className={retryBtn}
@@ -654,7 +639,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         {q.data && q.isError && (
           <div className={refetchErrorBar} role="alert" data-testid="file-preview-refetch-error">
             <span className={refetchErrorText}>
-              内容可能有更新，但重新读取失败：{readErrorMessage(q.error) ?? '未知原因'}
+              内容可能有更新，但重新读取失败：{messageOf(q.error) || '未知原因'}
               。下面显示的仍是上次读取到的内容。
             </span>
             <button

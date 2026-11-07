@@ -15,6 +15,7 @@ import {
   releaseDevDbLock,
   resolveDbDir,
 } from '../server/server.js'
+import { budgetGateEnabled } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import { runAcpCommand } from './commands/acp.js'
 import { runAuthCommand } from './commands/auth.js'
@@ -170,11 +171,8 @@ async function withAgentDeps(
     const action = opts.budgetAction === 'abort' ? ('abort' as const) : ('warn' as const)
     config.usage = { ...config.usage, budgetAction: action, tokenBudgetAction: action }
   }
-  const budgetWillAbort =
-    config.usage?.budgetAction === 'pause' ||
-    config.usage?.budgetAction === 'abort' ||
-    config.usage?.tokenBudgetAction === 'pause' ||
-    config.usage?.tokenBudgetAction === 'abort'
+  // 预算「会中止」判定统一走 budgetGateEnabled（金额/token 任一轴动作会阻断）。
+  const budgetWillAbort = budgetGateEnabled(config.usage)
   const budgetConfigured =
     (config.usage?.monthlyBudgetUsd ?? 0) > 0 ||
     (config.usage?.globalMonthlyBudgetUsd ?? 0) > 0 ||

@@ -47,6 +47,16 @@ type AgentManager = {
   abort(sessionId: string): boolean
   pause(sessionId: string, reason?: string): boolean
   resume(sessionId: string): boolean
+  /** 中止某会话的主 run 及其全部子 agent run（删除会话/清理路径）。
+   *  返回主 run 是否存在并被中止（子 run 无条件尝试，与旧内联循环一致）。 */
+  abortCascade(sessionId: string): boolean
+  /** 暂停主 run 并级联其全部子 agent run（用户暂停/权限超时兜底）——仅暂停
+   *  主 run 会让子 agent 在用户认为「已暂停」时继续执行。reason 同时透传主与
+   *  子 run（状态栏区分暂停来源）。返回主 run 是否暂停成功。 */
+  pauseCascade(sessionId: string, reason?: string): boolean
+  /** 恢复主 run 并级联其全部子 agent run——暂停时子 run 一并暂停，仅恢复主
+   *  run 会让父的工具批次永远等待已暂停的子 agent（死锁）。 */
+  resumeCascade(sessionId: string): boolean
   /** 暂停全部活跃 run 并等待到达安全点；超时强制中止（热更新前调用）。
    *  返回 pausedIds：成功暂停的会话 id 列表——调用方在后续步骤（spawn 等）
    *  失败时必须对其逐个 resume 回滚，避免更新失败连带冻结用户对话。 */
@@ -54,8 +64,6 @@ type AgentManager = {
     timeoutMs?: number,
   ): Promise<{ paused: number; forcedAbort: number; pausedIds: string[] }>
   steer(sessionId: string, message: string): boolean
-  /** 查询某 session 的所有子 agent run（恢复/展示用）。 */
-  children(parentSessionId: string): ActiveRun[]
   /** 查询所有后台任务（jobId 非空的 run）。 */
   backgroundJobs(): ActiveRun[]
   /** 列出全部活跃 run（含子 agent）——热更新影响面展示用。
@@ -77,10 +85,19 @@ function slotRun(slot: RunSlot | undefined): ActiveRun | undefined {
   return slot?.kind === 'run' ? slot.run : undefined
 }
 
+/** 级联操作目标：主 run + 其全部直接子 agent run（按 parentSessionId 归集）。 */
+function cascadeTargets(runs: Map<string, RunSlot>, sessionId: string): ActiveRun[] {
+  const main = slotRun(runs.get(sessionId))
+  const children = Array.from(runs.values())
+    .map((slot) => slotRun(slot))
+    .filter((r): r is ActiveRun => r?.parentSessionId === sessionId)
+  return main ? [main, ...children] : children
+}
+
 function createAgentManager(): AgentManager {
   const runs = new Map<string, RunSlot>()
 
-  return {
+  const manager: AgentManager = {
     tryAcquire(sessionId) {
       if (runs.has(sessionId)) return false
       runs.set(sessionId, { kind: 'starting' })
@@ -123,6 +140,32 @@ function createAgentManager(): AgentManager {
       resumeAgent(run.state)
       return true
     },
+    abortCascade(sessionId) {
+      const targets = cascadeTargets(runs, sessionId)
+      let mainFound = false
+      for (const t of targets) {
+        // 委托公开 abort（而非内联 abortAgent）：级联与单点中止走同一路径，
+        // 对 spy/子类实现保持同一可观察契约。
+        if (manager.abort(t.sessionId) && t.sessionId === sessionId) mainFound = true
+      }
+      return mainFound
+    },
+    pauseCascade(sessionId, reason) {
+      const targets = cascadeTargets(runs, sessionId)
+      let mainFound = false
+      for (const t of targets) {
+        if (manager.pause(t.sessionId, reason) && t.sessionId === sessionId) mainFound = true
+      }
+      return mainFound
+    },
+    resumeCascade(sessionId) {
+      const targets = cascadeTargets(runs, sessionId)
+      let mainFound = false
+      for (const t of targets) {
+        if (manager.resume(t.sessionId) && t.sessionId === sessionId) mainFound = true
+      }
+      return mainFound
+    },
     /**
      * 请求暂停所有活跃 run，等待其到达安全暂停点（当前原子操作完成后）。
      * 超时后对仍未暂停的 run 强制 abort（热更新不能无限等待）。
@@ -163,11 +206,6 @@ function createAgentManager(): AgentManager {
       injectSteering(run.state, message)
       return true
     },
-    children(parentSessionId) {
-      return Array.from(runs.values())
-        .map((slot) => slotRun(slot))
-        .filter((r): r is ActiveRun => r?.parentSessionId === parentSessionId)
-    },
     backgroundJobs() {
       return Array.from(runs.values())
         .map((slot) => slotRun(slot))
@@ -195,6 +233,8 @@ function createAgentManager(): AgentManager {
       runs.clear()
     },
   }
+
+  return manager
 }
 
 export type { ActiveRun, AgentManager }

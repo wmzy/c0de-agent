@@ -59,7 +59,8 @@ function kindOf(value: unknown): Kind {
   return 'undefined'
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+/** 普通对象判定（不含数组/null）。config-diff 的递归 diff 同口径，单源共用。 */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 

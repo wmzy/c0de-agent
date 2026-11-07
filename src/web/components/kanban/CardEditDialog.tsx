@@ -7,6 +7,7 @@ import { SyncedInput, SyncedTextarea } from '@/components/SyncedControls.js'
 import { generateId } from '@/hooks/id.js'
 import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const field = css`
@@ -554,8 +555,7 @@ export function CardEditDialog({
 
       {(saveMutation.isError || deleteMutation.isError) && (
         <div role="alert" style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
-          操作失败：
-          {(saveMutation.error as Error)?.message ?? (deleteMutation.error as Error)?.message}
+          操作失败：{messageOf(saveMutation.error ?? deleteMutation.error)}
         </div>
       )}
     </Dialog>

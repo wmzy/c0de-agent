@@ -13,6 +13,7 @@ import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
 import { sessionAPI } from '@/services/session.js'
+import { messageOf } from '@/utils/errors.js'
 import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
 import { ChatSession } from '@/views/ChatSession.js'
@@ -391,11 +392,9 @@ function DraftSession({
       return true
     } catch (err) {
       setCreating(false)
-      setError(
-        err instanceof Error
-          ? `创建会话失败：${err.message}`
-          : '创建会话失败，请确认服务仍在运行后重试',
-      )
+      // 有原因（后端文案/异常 message）就带出来；实在没有才退回通用指引。
+      const reason = messageOf(err)
+      setError(reason ? `创建会话失败：${reason}` : '创建会话失败，请确认服务仍在运行后重试')
       // 消息根本没送出去（连会话都没建成），输入框据此把草稿与图片还回来。
       return false
     }

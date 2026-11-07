@@ -1,9 +1,9 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { MAX_TIMER_MS } from '../../shared/timer.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
-import { safeResolve } from '../../shared/utils/path.js'
 import { headChars } from '../../shared/utils/string.js'
 import type { BashInput } from '../types.js'
+import { resolveToolPath } from './paths.js'
 
 /** Default timeout: 120 seconds. */
 const DEFAULT_TIMEOUT = 120_000
@@ -69,17 +69,13 @@ export const bashTool: ToolDef = {
         error: `bash: timeout must be a positive integer (milliseconds, max ${MAX_TIMER_MS}), got ${timeout}`,
       }
     }
-    // 与 read/write/edit/glob/grep 同口径：cwd 必须落在工作目录内。此前直接
-    // resolve(ctx.cwd, cwd) 放行绝对路径/../——bash 是任意命令执行面，越界即
-    // 在工作目录外执行（如读取 ~/.ssh），且用户偏好可将 bash 设为 auto。
-    let workDir = ctx.cwd
-    if (cwd) {
-      const resolved = safeResolve(ctx.cwd, cwd)
-      if (resolved === null) {
-        return { _tag: 'error', error: `cwd "${cwd}" escapes the working directory` }
-      }
-      workDir = resolved
-    }
+    // 与 read/write/edit/glob/grep 同口径（resolveToolPath 共享实现）：cwd 必须
+    // 落在工作目录内。此前直接 resolve(ctx.cwd, cwd) 放行绝对路径/../——bash 是
+    // 任意命令执行面，越界即在工作目录外执行（如读取 ~/.ssh），且用户偏好可将
+    // bash 设为 auto。
+    const resolvedCwd = resolveToolPath(ctx, cwd, { label: 'cwd' })
+    if (typeof resolvedCwd !== 'string') return resolvedCwd
+    const workDir = resolvedCwd
 
     return new Promise<ToolResult>((resolvePromise) => {
       const childEnv = { ...process.env, ...env }

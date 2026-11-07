@@ -26,6 +26,7 @@ import {
   subscribeModeChange,
 } from '@/services/permission.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { messageOf } from '@/utils/errors.js'
 import { formatTokenCount } from '@/utils/format.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
 import { TableView } from '@/views/TableView.js'
@@ -714,7 +715,7 @@ export function Chat({
         // auto 模式（或已放行 bash 白名单）——给出的是相反的安全结论，且
         // alwaysAllow.length > 0 的 chips 行整块消失，唯一的白名单管理入口
         // 一起没了。读不到就必须说读不到。
-        setPermissionLoadError(e instanceof Error ? e.message : String(e))
+        setPermissionLoadError(messageOf(e))
       })
   }, [sessionId])
   useEffect(() => {
@@ -757,7 +758,7 @@ export function Chat({
         setPermissionModeSaving(null)
         setPermissionMode(permissionMode)
         setPermissionModeTarget(next)
-        setPermissionModeError(e instanceof Error ? e.message : String(e))
+        setPermissionModeError(messageOf(e))
       })
   }
   const togglePermissionMode = () => {
@@ -783,7 +784,7 @@ export function Chat({
         // 点不动；服务端白名单其实还在，该工具仍免确认执行。这是移除一项安全
         // 授权的唯一入口。
         if (permissionGenRef.current !== gen) return
-        setAlwaysAllowError(e instanceof Error ? e.message : String(e))
+        setAlwaysAllowError(messageOf(e))
       })
   }
 

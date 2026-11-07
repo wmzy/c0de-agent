@@ -8,12 +8,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ShakeModeValue } from '@/components/session/ShakeContext.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Message, ShakeRegionView } from '@/types/index.js'
+import { messageOf } from '@/utils/errors.js'
 
-/** 失败原因取服务端 message（APIError 是结构体）或 Error.message，与 ChatSession 同口径。 */
+/** 失败原因取文案：统一走 messageOf（结构化 message → Error.message → String 兜底）。 */
 function shakeFailureMessage(error: unknown, fallback: string): string {
-  const direct = (error as { message?: unknown } | null)?.message
-  if (typeof direct === 'string' && direct) return direct
-  return error instanceof Error && error.message ? error.message : fallback
+  return messageOf(error) || fallback
 }
 
 export function useShake(sessionId: string, messages: Message[], qc: QueryClient) {

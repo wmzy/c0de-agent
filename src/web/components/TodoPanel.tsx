@@ -8,6 +8,7 @@ import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
 import { TOUCH } from '@/styles/breakpoints.js'
 import { inputStyle } from '@/styles/tokens.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
@@ -415,7 +416,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
     onError: (e: Error, _vars, ctx) => {
       if (!ctx || !isCurrentScope(ctx.gen)) return
       setExportResult(null)
-      setError(`导出到看板失败：${e.message}`)
+      setError(`导出到看板失败：${messageOf(e)}`)
     },
   })
 
@@ -472,7 +473,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
     },
     onError: (e: Error, _vars, ctx) => {
       if (!ctx || !isCurrentScope(ctx.gen)) return
-      setError(e.message)
+      setError(messageOf(e))
     },
   })
 
@@ -579,11 +580,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
       {!collapsed && loadFailed && (
         <div className={errorState} role="alert" data-testid="todo-load-error">
           <span className={errorTitle}>待办读取失败</span>
-          <span className={errorDetail}>
-            {(queryError as { message?: string } | null)?.message ??
-              (queryError instanceof Error ? queryError.message : null) ??
-              '无法读取本会话的待办。'}
-          </span>
+          <span className={errorDetail}>{messageOf(queryError) || '无法读取本会话的待办。'}</span>
           <button
             type="button"
             className={retryBtn}

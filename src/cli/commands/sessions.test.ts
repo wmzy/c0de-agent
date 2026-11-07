@@ -9,12 +9,8 @@ import type { DB } from '../../db/client.js'
 import { sessions } from '../../db/schema.js'
 import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { fromDirectory } from '../../project/project.js'
-import {
-  createSession,
-  listAllSessions,
-  listDeletedSessions,
-  softDeleteSession,
-} from '../../session/session.js'
+import { createSession, listAllSessions } from '../../session/session.js'
+import { listDeletedSessions, softDeleteSession } from '../../session/trash.js'
 import { runSessionsCommand } from './sessions.js'
 
 let dir: string

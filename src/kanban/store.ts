@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, isNull, max, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, kanbanCards } from '../db/schema.js'
+import { toEpochMs } from '../session/time.js'
 import type {
   KanbanBoard,
   KanbanBoardWithCards,
@@ -457,11 +458,13 @@ export async function softDeleteKanbanBoard(
   return rows.length > 0
 }
 
-/** 行 + 卡片数 → 回收站条目（时间戳统一转 ms，兼容 Date/null/字符串）。 */
+/** 行 + 卡片数 → 回收站条目（时间戳统一转 ms，兼容 Date/null/字符串）。
+ *  本地保留 null→null 与非法值（NaN/Infinity）→null 的映射（回收站展示口径），
+ *  Date/字符串/数字的换算收敛到 toEpochMs 单一口径。 */
 function toDeletedBoard(b: BoardRow, cardCount: number): DeletedKanbanBoard {
   const toMs = (d: Date | string | number | null | undefined): number | null => {
     if (d == null) return null
-    const t = d instanceof Date ? d.getTime() : new Date(d).getTime()
+    const t = toEpochMs(d)
     return Number.isFinite(t) ? t : null
   }
   return {

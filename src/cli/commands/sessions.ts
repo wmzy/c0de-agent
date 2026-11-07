@@ -9,17 +9,16 @@
 
 import type { DB } from '../../db/client.js'
 import { fromDirectory } from '../../project/project.js'
+import { getSession, listAllSessions } from '../../session/session.js'
 import {
   emptyTrash,
-  getSession,
-  listAllSessions,
   listDeletedSessions,
   permanentlyDeleteSession,
   rebindSession,
   restoreSession,
   softDeleteSession,
   touchTrashSeen,
-} from '../../session/session.js'
+} from '../../session/trash.js'
 import type { CommandArgs } from '../parser.js'
 
 type SessionsCommandContext = {

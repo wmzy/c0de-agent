@@ -11,10 +11,14 @@ import type { WorkflowEntry } from '../../core/workflows/types.js'
 import { createDebugSpawn } from '../../dap/index.js'
 import type { Registry } from '../../llm/registry.js'
 import { createSession, updateSessionLastRun } from '../../session/session.js'
+import { budgetGateEnabled } from '../../session/usage.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 import { apiError } from '../middleware/error.js'
-import { createInteractivePermissionChecker } from '../permission/interactive.js'
+import {
+  createStreamPermissionChecker,
+  resolvePermissionTimeoutAction,
+} from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'
 import { childRunBridge, startHeartbeat } from './chat.js'
 
@@ -208,8 +212,7 @@ async function runWorkflowChannel(
   // 权限确认超时（双层超时兜底）后的动作：'pause'（默认）拒绝该工具并暂停 run，
   // 防 default 模式下 agent 在用户缺席时继续自主执行；'deny' 保持旧行为（run
   // 继续）。仅显式 'deny' 时选 deny，缺省/非法值一律 pause（安全默认）。
-  const permissionTimeoutAction =
-    opts.sessionConfig.permission.timeoutAction === 'deny' ? ('deny' as const) : ('pause' as const)
+  const permissionTimeoutAction = resolvePermissionTimeoutAction(opts.sessionConfig)
 
   // P2-5：runner 的工具集不再恒 []——传配置解析结果作为子 agent 工具集的交集
   // 基准（与主 chat/CLI print 同口径）。config.tools.enabled 的 fail-closed 语义
@@ -247,50 +250,14 @@ async function runWorkflowChannel(
         // 会话重挂挂起弹窗）；REST 通道 = 工作流会话自身（树中可见节点，打开该
         // 会话即可重挂全部挂起弹窗）。
         const permissionSessionId = opts.hostSessionId ?? workflowSession.id
-        const permissionChecker = createInteractivePermissionChecker(ctx.permissionStore, {
-          getMode: () =>
-            ctx.sessionPermissionModes.get(permissionSessionId) ??
-            opts.sessionDefaultMode ??
-            ctx.permissionMode,
-          alwaysAllow: () => ctx.sessionAlwaysAllow.get(permissionSessionId) ?? [],
-          reportSessionId: permissionSessionId,
-          onPermissionRequired: async (req) => {
-            await stream.writeSSE({
-              event: 'permission_required',
-              data: JSON.stringify({ _tag: 'permission_required', ...req }),
-            })
-          },
-          onPermissionTimeout: (req) => {
-            stream
-              .writeSSE({
-                event: 'permission_timeout',
-                data: JSON.stringify({
-                  _tag: 'permission_timeout',
-                  ...req,
-                  timeoutAction: permissionTimeoutAction,
-                }),
-              })
-              .catch(() => {})
-          },
-          onPermissionExpired: (req) => {
-            if (permissionTimeoutAction === 'pause') {
-              // P1 级联暂停：仅暂停父 run 会让子 agent 在用户缺席时继续执行。
-              ctx.agentManager.pause(workflowSession.id, opts.permissionPauseReason)
-              for (const child of ctx.agentManager.children(workflowSession.id)) {
-                ctx.agentManager.pause(child.sessionId, opts.permissionPauseReason)
-              }
-            }
-            stream
-              .writeSSE({
-                event: 'permission_expired',
-                data: JSON.stringify({
-                  _tag: 'permission_expired',
-                  ...req,
-                  timeoutAction: permissionTimeoutAction,
-                }),
-              })
-              .catch(() => {})
-          },
+        const permissionChecker = createStreamPermissionChecker(ctx, {
+          stream,
+          sessionId: permissionSessionId,
+          defaultMode: opts.sessionDefaultMode,
+          timeoutAction: permissionTimeoutAction,
+          // P1 级联暂停：仅暂停父 run 会让子 agent 在用户缺席时继续执行。
+          onPauseExpired: () =>
+            ctx.agentManager.pauseCascade(workflowSession.id, opts.permissionPauseReason),
         })
 
         // deps 单点组装：两通道此前各自复制，斜杠副本已漂移（缺 skills/debugSpawn）。
@@ -310,12 +277,7 @@ async function runWorkflowChannel(
           // DAP（spec §21）：与主 chat/CLI 通道同口径注入真实适配器 spawn。
           debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
           // 预算护栏：与主 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
-          ...(opts.sessionConfig.usage?.budgetAction === 'pause' ||
-          opts.sessionConfig.usage?.budgetAction === 'abort' ||
-          opts.sessionConfig.usage?.tokenBudgetAction === 'pause' ||
-          opts.sessionConfig.usage?.tokenBudgetAction === 'abort'
-            ? { budgetPause: true }
-            : {}),
+          ...(budgetGateEnabled(opts.sessionConfig.usage) ? { budgetPause: true } : {}),
         }
 
         const parent = await createAgent(workflowSession, agentConfig, deps)

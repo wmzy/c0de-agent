@@ -12,7 +12,9 @@ import {
 } from '@/components/directory-picker-domain.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { findNode, setChildren } from '@/components/tree-utils.js'
 import { filesystemAPI } from '@/services/filesystem.js'
+import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const container = css`
@@ -224,7 +226,7 @@ export function DirectoryPicker({
       setHome(r.path)
       homeRef.current = r.path
     } catch (err) {
-      setHomeError(pickerErrorMessage(err))
+      setHomeError(messageOf(err) || '无法读取该目录')
     }
   }, [])
 
@@ -274,7 +276,8 @@ export function DirectoryPicker({
         // 目录树拿到了：此前若有 home 读取失败，现在已经被用户手动导航绕过。
         setHomeError(null)
       } catch (err) {
-        if (activeTreeNavigation(token, navigation.current)) setNavError(pickerErrorMessage(err))
+        if (activeTreeNavigation(token, navigation.current))
+          setNavError(messageOf(err) || '无法读取该目录')
       } finally {
         if (activeTreeNavigation(token, navigation.current)) setNavLoading(false)
       }
@@ -336,7 +339,7 @@ export function DirectoryPicker({
     } catch (err) {
       // 失败不能落成 children: []——那正是 FileTree 的「（空）」分支，
       // 把「读不到」说成「没有」。记录原因，就地展示并允许重试。
-      setLoadErrors((prev) => new Map(prev).set(dirPath, pickerErrorMessage(err)))
+      setLoadErrors((prev) => new Map(prev).set(dirPath, messageOf(err) || '无法读取该目录'))
     } finally {
       setLoadingPaths((prev) => {
         const next = new Set(prev)
@@ -550,36 +553,6 @@ export function DirectoryPicker({
       </div>
     </div>
   )
-}
-
-/** 读取失败的用户可见原因：APIError 是结构体而非 Error 子类，必须结构化取
- *  message（同 FileBrowser rootError 口径），否则展示的是 "[object Object]"。 */
-function pickerErrorMessage(err: unknown): string {
-  const message = (err as { message?: string } | null)?.message
-  if (typeof message === 'string' && message.length > 0) return message
-  if (err instanceof Error && err.message.length > 0) return err.message
-  return '无法读取该目录'
-}
-
-/** 在树中按 path 查找节点。 */
-function findNode(node: TreeNode | null, path: string): TreeNode | null {
-  if (!node) return null
-  if (node.path === path) return node
-  if (node.children) {
-    for (const c of node.children) {
-      const found = findNode(c, path)
-      if (found) return found
-    }
-  }
-  return null
-}
-
-/** 不可变更新：设置 path 节点的 children。 */
-function setChildren(node: TreeNode, path: string, children: TreeNode[]): TreeNode {
-  if (node.path === path) return { ...node, children }
-  if (node.children)
-    return { ...node, children: node.children.map((c) => setChildren(c, path, children)) }
-  return node
 }
 
 export type { DirectoryPickerProps }

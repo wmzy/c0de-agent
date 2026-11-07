@@ -33,25 +33,18 @@ export {
   updateEntryContent,
 } from './message.js'
 export {
-  consumeBudgetPauseMarker,
-  createSession,
-  emptyTrash,
   getLLMSegments,
-  getSession,
-  listDeletedSessions,
-  listSessions,
-  markBudgetPause,
   migrateLegacyDetails,
-  permanentlyDeleteSession,
-  purgeDeletedSessions,
-  restoreSession,
-  restoreSessionCore,
   saveLLMSegments,
   segmentFingerprint,
-  softDeleteSession,
-  TRASH_RETENTION_MS,
+} from './segments.js'
+export {
+  consumeBudgetPauseMarker,
+  createSession,
+  getSession,
+  listSessions,
+  markBudgetPause,
   touchSession,
-  touchTrashSeen,
   updateSessionTitle,
 } from './session.js'
 export {
@@ -62,6 +55,17 @@ export {
 } from './snapshot.js'
 export { squashRecent } from './squash.js'
 export { estimateMessageTokens, estimateTokens } from './token.js'
+export {
+  emptyTrash,
+  listDeletedSessions,
+  permanentlyDeleteSession,
+  purgeDeletedSessions,
+  restoreSession,
+  restoreSessionCore,
+  softDeleteSession,
+  TRASH_RETENTION_MS,
+  touchTrashSeen,
+} from './trash.js'
 export type {
   ArchiveRef,
   BranchSummaryEntry,

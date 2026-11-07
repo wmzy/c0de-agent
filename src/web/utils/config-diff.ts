@@ -2,9 +2,7 @@
 // 服务端 PATCH /api/config 按作用域落盘（applyScopedPatch，null=删除键），
 // 因此 patch 只应包含真正变化的键，且删除用 null 显式表达（JSON 不传输 undefined）。
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
+import { isPlainObject } from '@/utils/config-shape.js'
 
 function shallowEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)

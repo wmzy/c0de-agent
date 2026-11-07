@@ -14,6 +14,7 @@ import {
   sectionTitle,
 } from '@/components/settings/styles.js'
 import { authAPI } from '@/services/auth.js'
+import { messageOf } from '@/utils/errors.js'
 
 interface SecurityPanelProps {
   security: Config['security']
@@ -39,10 +40,7 @@ function DeviceListError({
   refetching: boolean
   onRetry: () => void
 }) {
-  const message =
-    (error as { message?: string } | null)?.message ??
-    (error instanceof Error ? error.message : null) ??
-    '未知错误'
+  const message = messageOf(error) || '未知错误'
   return (
     <ListErrorBox
       title={`已授权设备读取失败：${message}`}
@@ -72,9 +70,7 @@ function DevicesSection() {
     onMutate: () => setRevokeError(null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'devices'] }),
     onError: (e: unknown) => {
-      const message =
-        (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : null)
-      setRevokeError(message || '撤销失败，设备仍可访问')
+      setRevokeError(messageOf(e) || '撤销失败，设备仍可访问')
     },
   })
   const devices = data?.devices ?? []
