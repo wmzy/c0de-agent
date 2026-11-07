@@ -17,6 +17,7 @@
 
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { isRecord, str } from '@/components/session/utils/shapes.js'
 
 const notice = css`
   margin-top: 4px;
@@ -39,15 +40,9 @@ export function ShapeNotice({ dropped }: { dropped: number }) {
   )
 }
 
-/** 非数组的普通对象（数组/null/原始值都排除）。 */
-export function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
-/** 只认真字符串：参与渲染的字段类型错就是读不出来（与 toolSummary.ts 同口径）。 */
-export function str(v: unknown): string | undefined {
-  return typeof v === 'string' ? v : undefined
-}
+// isRecord/str 下沉到 session/utils/shapes.ts（toolSummary 等纯逻辑共用同一实现），
+// 此处 re-export 保持 tools/ 下既有导入路径不断。
+export { isRecord, str } from '@/components/session/utils/shapes.js'
 
 /**
  * 工具**入参**里某个字段的收敛（入参与结果一样是原样落库的未受信 JSON）。

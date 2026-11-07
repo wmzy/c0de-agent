@@ -1,20 +1,14 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { ToolError, ToolInlineError } from '@/components/session/tools/toolError.js'
-import { ShapeNotice, str, wellFormedPhases } from '@/components/session/tools/toolShape.js'
-import { ToolTruncated } from '@/components/session/tools/toolTruncated.js'
+import { empty, OpToolShell } from '@/components/session/tools/OpToolShell.js'
+import { ToolInlineError } from '@/components/session/tools/toolError.js'
+import {
+  ShapeNotice,
+  type TodoPhaseLike,
+  wellFormedPhases,
+} from '@/components/session/tools/toolShape.js'
 
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
-
-type TodoTask = { content: string; status: string }
-type TodoPhase = { name: string; tasks: TodoTask[] }
-type TodoInput = {
-  op?: string
-  task?: string
-  phase?: string
-  items?: string[]
-  list?: { phase: string; items: string[] }[]
-}
 
 const TASK_ICONS: Record<TaskStatus, string> = {
   completed: '✓',
@@ -58,17 +52,6 @@ function roman(n: number): string {
   }
   return out
 }
-
-const opLabel = css`
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--haze-color-primary);
-  background: color-mix(in srgb, var(--haze-color-primary) 10%, transparent);
-  padding: 1px 6px;
-  border-radius: 3px;
-  margin-bottom: 6px;
-`
 
 const phaseHeader = css`
   font-size: 12px;
@@ -124,30 +107,24 @@ const board = css`
   margin-top: 4px;
 `
 
-const empty = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 13px;
-  font-style: italic;
-`
-
 /** Render the todo board (phases with tasks).
  *
  *  unreadable：形状有丢弃且一条都没剩下——此时「待办为空」是谎报（真实情况是
  *  读不出来），空态让位给 ShapeNotice。 */
-function Board({ phases, unreadable = false }: { phases: TodoPhase[]; unreadable?: boolean }) {
+function Board({ phases, unreadable = false }: { phases: TodoPhaseLike[]; unreadable?: boolean }) {
   if (phases.length === 0) {
     return unreadable ? null : <div className={empty}>Todo list is empty.</div>
   }
   return (
     <div className={board}>
-      {phases.map((phase) => {
+      {phases.map((phase, idx) => {
         const doneCount = phase.tasks.filter(
           (t) => t.status === 'completed' || t.status === 'abandoned',
         ).length
         return (
           <div key={phase.name}>
             <div className={phaseHeader}>
-              <span className={romanNum}>{roman(phases.indexOf(phase) + 1)}.</span>
+              <span className={romanNum}>{roman(idx + 1)}.</span>
               <span>{phase.name}</span>
               <span style={{ fontWeight: 400, opacity: 0.6 }}>
                 ({doneCount}/{phase.tasks.length})
@@ -190,78 +167,42 @@ export function TodoToolView({
   output?: ToolResult
   status: string
 }) {
-  const i = (input ?? {}) as TodoInput
-  // op 直接当 React child 渲染：`{op:{kind:'add'}}` 这类形状会在渲染期抛
-  // 「Objects are not valid as a React child」→ 整个应用壳被 ErrorBoundary 换掉
-  // （input 与 metadata 一样是原样落库的未受信 JSON）。
-  const op = str(i.op) ?? 'view'
-
-  // 失败优先于「空」：此前 _tag==='error' 会一路落到 Board 的空渲染，
-  // 工具失败被显示成 "Todo list is empty."，用户看到的是一个与真实原因无关的结论。
-  if (output?._tag === 'error' || status === 'error') {
-    return (
-      <div>
-        <span className={opLabel}>{op}</span>
-        <ToolError output={output} status={status} />
-      </div>
-    )
-  }
-
-  // 「输出被截断」不是「待办为空」：超上限的结果以 _tag:'truncated' 返回且没有
-  // metadata，phases 只能为空，Board 会把「内容没随结果返回」说成
-  // "Todo list is empty."——用户以为任务被删了（executor 只在 success 分支返回
-  // metadata，见 src/tools/executor.ts）。
-  if (output?._tag === 'truncated') {
-    return (
-      <div>
-        <span className={opLabel}>{op}</span>
-        <ToolTruncated output={output} />
-      </div>
-    )
-  }
-
-  // 「结果还没回来」不是「待办为空」：running 态（tool_result 尚未到达）此前一路落到
-  // Board 的空渲染——同一个工具块里「⏳ 执行中」的折叠头旁边写着 "Todo list is empty."，
-  // agent 每执行一次 todo 都是这个画面。用户据此认定待办被清空，重新规划、甚至重新
-  // 下发任务，而结果返回后列表又被真实阶段列表替换回。
-  // 与 KanbanToolView 在 board=null 时不画（不猜）同口径：没有结果就说还在执行，
-  // 绝不把「还没拿到」讲成一个关于内容的结论。折叠头已显示「执行中」，这里给同一句话。
-  if (output === undefined) {
-    return (
-      <div>
-        <span className={opLabel}>{op}</span>
-        <div className={empty} data-testid="todo-running">
-          执行中…待办内容随执行结果返回
-        </div>
-      </div>
-    )
-  }
-
-  // Extract phases from output metadata
-  //
-  // metadata 是原样落库的未受信 JSON（持久层只过滤 _parseError/_raw，导入层只校验
-  // 分片外形、不递归 metadata）：`{name:1, tasks:'garbage'}` 之类畸形条目原样入库，
-  // 此前直接 `meta.phases as TodoPhase[]` 后渲染，在 `phase.tasks.filter` 处抛错 →
-  // 整个应用（含侧栏/顶栏）被 ErrorBoundary 换成「页面渲染出错」，该会话再也无法
-  // 展开这条工具块。渲染前收敛（与 src/tools/builtin/todo.ts 的 sanitize 同口径）：
-  // 畸形条目丢弃并计数，丢掉的必须说出来，绝不把「读不出来」说成「待办为空」。
-  let phases: TodoPhase[] = []
-  let dropped = 0
-  let malformed = false
-  if (output?._tag === 'success') {
-    const meta = output.metadata as { phases?: unknown } | undefined
-    const parsed = wellFormedPhases(meta?.phases)
-    phases = parsed.value
-    dropped = parsed.dropped
-    malformed = parsed.malformed
-  }
-
   return (
-    <div>
-      <span className={opLabel}>{op}</span>
-      <ToolInlineError output={output} tool="todo" />
-      <Board phases={phases} unreadable={dropped > 0 || malformed} />
-      {(dropped > 0 || malformed) && <ShapeNotice dropped={dropped} />}
-    </div>
+    <OpToolShell
+      tool="todo"
+      input={input}
+      output={output}
+      status={status}
+      runningText="执行中…待办内容随执行结果返回"
+    >
+      {() => {
+        // Extract phases from output metadata
+        //
+        // metadata 是原样落库的未受信 JSON（持久层只过滤 _parseError/_raw，导入层只校验
+        // 分片外形、不递归 metadata）：`{name:1, tasks:'garbage'}` 之类畸形条目原样入库，
+        // 此前直接 `meta.phases as TodoPhase[]` 后渲染，在 `phase.tasks.filter` 处抛错 →
+        // 整个应用（含侧栏/顶栏）被 ErrorBoundary 换成「页面渲染出错」，该会话再也无法
+        // 展开这条工具块。渲染前收敛（与 src/tools/builtin/todo.ts 的 sanitize 同口径）：
+        // 畸形条目丢弃并计数，丢掉的必须说出来，绝不把「读不出来」说成「待办为空」。
+        let phases: TodoPhaseLike[] = []
+        let dropped = 0
+        let malformed = false
+        if (output?._tag === 'success') {
+          const meta = output.metadata as { phases?: unknown } | undefined
+          const parsed = wellFormedPhases(meta?.phases)
+          phases = parsed.value
+          dropped = parsed.dropped
+          malformed = parsed.malformed
+        }
+
+        return (
+          <>
+            <ToolInlineError output={output} tool="todo" />
+            <Board phases={phases} unreadable={dropped > 0 || malformed} />
+            {(dropped > 0 || malformed) && <ShapeNotice dropped={dropped} />}
+          </>
+        )
+      }}
+    </OpToolShell>
   )
 }

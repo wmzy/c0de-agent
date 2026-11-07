@@ -10,10 +10,8 @@ import { validateInput } from '../../tools/validate.js'
 import { abortAgent, createAgent, runAgent } from '../agent.js'
 import { mapWithConcurrencyLimit } from '../agents/parallel.js'
 import type { LoopDeps } from '../loop.js'
-import type { RepoBaseline } from '../worktree.js'
 import {
   applyPatchToParent,
-  captureBaseline,
   captureDeltaPatch,
   createWorktree,
   removeWorktree,
@@ -80,10 +78,8 @@ export async function runSubAgent(
 
   // 3. worktree 隔离（isolated agent）：失败回退共享 cwd
   let worktreePath: string | undefined
-  let baseline: RepoBaseline | undefined
   if (def.isolated) {
     try {
-      baseline = await captureBaseline(deps.cwd)
       worktreePath = await createWorktree(deps.cwd, `subagent-${childSession.id}`)
     } catch (e) {
       console.warn(
@@ -178,7 +174,7 @@ export async function runSubAgent(
   // 无论正常完成/出错/被中止，finally 中注销宿主注册，避免 run 槽位泄漏。
   const runBody = async (): Promise<SubAgentResult> => {
     try {
-      return await runChildBody(childState, childDeps, childSession, title, baseline, worktreePath)
+      return await runChildBody(childState, childDeps, childSession, title, worktreePath)
     } finally {
       // 子 run 结束即摘除父 signal 上的 abort 联动监听器（background 路径在此前
       // 一直保留——子 run 仍在跑时父 abort 必须仍能级联，故只能在此摘除）。
@@ -193,7 +189,6 @@ export async function runSubAgent(
     childDeps: LoopDeps,
     childSession: Session,
     title: string,
-    baseline: RepoBaseline | undefined,
     worktreePath: string | undefined,
   ): Promise<SubAgentResult> => {
     // 运行子 agent loop
@@ -220,10 +215,10 @@ export async function runSubAgent(
     }
 
     // 5. worktree 回传：仅成功时把 delta apply 回父仓库（spec §4.6）；无论成败都清理 worktree
-    if (baseline && worktreePath) {
+    if (worktreePath) {
       if (errMsg === null) {
         try {
-          const patch = await captureDeltaPatch(worktreePath, baseline)
+          const patch = await captureDeltaPatch(worktreePath)
           await applyPatchToParent(deps.cwd, patch, `agent(isolated): ${title}`)
         } catch (e) {
           console.warn(`[subagent] worktree apply failed: ${e instanceof Error ? e.message : e}`)

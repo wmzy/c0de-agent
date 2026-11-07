@@ -15,6 +15,7 @@ import type { AppPaths } from '@/routes.js'
 import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
+import { LoadError } from '@/views/_shared/errorState.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
 import { ChatSession } from '@/views/ChatSession.js'
 
@@ -67,37 +68,10 @@ export function SetupBanner({ projectId }: { projectId?: string }) {
   )
 }
 
-const errorWrap = css`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 24px 16px 32px;
+/** 历史失败块在消息流（flex 列）里垂直居中的定位补充，样式本体在
+ *  _shared/errorState 的居中变体。 */
+const historyErrorPos = css`
   margin-block: auto;
-  text-align: center;
-`
-
-const errorText = css`
-  margin: 0;
-  max-width: 560px;
-  font-size: 13px;
-  color: var(--haze-color-danger);
-`
-
-const errorRetry = css`
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  padding: 4px 12px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--haze-color-primary);
-    color: var(--haze-color-primary);
-  }
 `
 
 /** 历史消息加载失败占位：必须与「空会话欢迎页」严格区分——失败若表现成欢迎页，
@@ -105,17 +79,15 @@ const errorRetry = css`
  *  只在消息流位置给出失败原因与重试入口。 */
 export function ChatHistoryError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className={errorWrap} data-testid="chat-history-error" role="alert">
-      <p className={errorText}>历史消息加载失败{message ? `：${message}` : '，请稍后重试。'}</p>
-      <button
-        type="button"
-        className={errorRetry}
-        onClick={onRetry}
-        data-testid="chat-history-retry"
-      >
-        重试
-      </button>
-    </div>
+    <LoadError
+      center
+      className={historyErrorPos}
+      title="历史消息加载失败"
+      detail={message || '请稍后重试。'}
+      onRetry={onRetry}
+      retryTestId="chat-history-retry"
+      testId="chat-history-error"
+    />
   )
 }
 

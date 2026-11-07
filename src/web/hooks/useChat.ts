@@ -18,6 +18,7 @@ import {
   TAB_ID,
 } from '@/hooks/chatState.js'
 import { generateId } from '@/hooks/id.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { agentAPI } from '@/services/agent.js'
 import { sendChatMessage } from '@/services/chat.js'
 import { permissionAPI } from '@/services/permission.js'
@@ -48,7 +49,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const [state, setState] = useState<ChatState>(INITIAL)
   const abortRef = useRef<AbortController | null>(null)
   /**
-   * 会话世代号：切换会话时递增，在飞的流据此判定自己已过期。
+   * 会话世代守卫：切换会话时作废，在飞的流据此判定自己已过期。
    *
    * 切换会话不 abort fetch——服务端把 SSE 断开当作「用户终止」
    * （src/server/routes/chat.ts 的 stream.onAbort → agentManager.abort），
@@ -56,8 +57,11 @@ export function useChat(sessionId: string): ChatState & ChatActions {
    * 的设计冲突。所以旧流继续读，但它的 onEvent/setState 结果必须被丢弃：
    * 否则旧会话的 text_delta/tool_call 会写进刚复位成 INITIAL 的 state，
    * 经 mergeSessionMessages 渲染成**新会话时间线里上一条会话的回复**。
+   *
+   * 手动模式（useScopeGuard()）：递增点固定在下方 sessionId 复位 effect 里
+   * （流式态复位/停轮询的同一时刻），不在渲染期自动递增。
    */
-  const genRef = useRef(0)
+  const scopeGuard = useScopeGuard()
   // P1 后台附着：流式/权限超时态镜像——副作用（confirmTool 网络请求）必须
   // 在状态更新器之外发起：更新器是纯函数，StrictMode/并发渲染重放会重复
   // 执行，写进更新器会让同一拒绝请求发出两次。
@@ -134,8 +138,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // P1：同时停止附着轮询并复位镜像 ref——挂起/附着态随会话切换整体作废。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅依赖 sessionId 触发重置
   useEffect(() => {
-    // 先作废旧世代：在飞的流从此不再写 state（详见 genRef 注释）。
-    genRef.current += 1
+    // 先作废旧世代：在飞的流从此不再写 state（详见 scopeGuard 注释）。
+    scopeGuard.invalidate()
     stopPoll()
     stopAttachRetry()
     streamingRef.current = false
@@ -159,9 +163,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // 返回 ok=false 表示本轮未正常完成（供调用方做首条消息失败清理等）。
   const doStream = useCallback(
     async (content: string, opts: ChatOpts | undefined): Promise<boolean> => {
-      // 本轮所属世代：期间切换会话（genRef 递增）后，本轮的 state 写入一律作废。
-      const gen = genRef.current
-      const isStale = () => genRef.current !== gen
+      // 本轮所属世代：期间切换会话（scopeGuard 作废）后，本轮的 state 写入一律作废。
+      const gen = scopeGuard.token()
+      const isStale = () => scopeGuard.stale(gen)
       abortRef.current = new AbortController()
       // P1：标记流式态并广播 run 启动——同会话其他标签页据此附着显示运行态。
       streamingRef.current = true
@@ -404,7 +408,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         broadcastRunState({ sessionId, active: false })
       }
     },
-    [sessionId, qc],
+    [sessionId, qc, scopeGuard.token, scopeGuard.stale],
   )
 
   const sendMessage = useCallback(
@@ -440,12 +444,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (!pending) return
       pendingRef.current = null
       // 本次确认所属世代：压缩可走 LLM 摘要、窗口以秒计，请求飞在路上时用户切到
-      // B（genRef 递增）后，迟到的 compactError/isStreaming 会写进 B 的状态，随后
-      // 的 doStream 又在调用时才捕获 genRef.current（新世代）、isStale() 恒 false
+      // B（scopeGuard 作废）后，迟到的 compactError/isStreaming 会写进 B 的状态，随后
+      // 的 doStream 又在调用时才捕获新世代、isStale() 恒 false
       // ——A 的重发 SSE 会整段归约进 B 的时间线。与 steer/abort 同款：入口记世代，
       // 每个 await 之后、写 state/doStream 之前比对，不一致即弃（B 的状态由切会话
       // 时的 INITIAL 重置与它自己的请求决定）。
-      const gen = genRef.current
+      const gen = scopeGuard.token()
       // 用户显式选择了「顺便压缩会话」：这条路必须兑现或明确说没兑现。
       // 此前 compact 的返回值被丢弃、catch 只 console.error——压缩没发生也照常重发，
       // 旧上下文没被摘要、新段按未压缩上下文计费，且同一段边界会再次弹层，用户只
@@ -454,7 +458,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       if (withCompaction) {
         try {
           const result = await sessionAPI.compact(sessionId)
-          if (genRef.current !== gen) return
+          if (scopeGuard.stale(gen)) return
           if (!result.compacted) {
             const why = result.reason
               ? (COMPACTION_SKIP_REASON[result.reason] ?? result.reason)
@@ -462,7 +466,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             compactError = `会话未压缩：${why}，已按未压缩内容继续开新段`
           }
         } catch (err) {
-          if (genRef.current !== gen) return
+          if (scopeGuard.stale(gen)) return
           compactError = `会话压缩失败：${messageOf(err)}，已按未压缩内容继续开新段`
         }
       }
@@ -478,7 +482,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           : {}),
       })
     },
-    [doStream, sessionId],
+    [doStream, sessionId, scopeGuard.token, scopeGuard.stale],
   )
 
   // 用户取消开新段：清除待发并移除触发它的乐观 user 消息（selection/tools 还原由
@@ -500,20 +504,20 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     const pending = pendingTrustRef.current
     if (!pending) return
     pendingTrustRef.current = null
-    // 本次确认所属世代：trust 请求飞在路上时用户切到 B（genRef 递增）后，迟到的
+    // 本次确认所属世代：trust 请求飞在路上时用户切到 B（scopeGuard 作废）后，迟到的
     // 写入全部属于 A——失败分支把 A 的信任弹窗（pendingTrust/trustError/error）
-    // 原样弹在 B 上；成功分支随后的 doStream 又在调用时才捕获 genRef.current（新
-    // 世代）、isStale() 恒 false，A 的重发 SSE 会整段归约进 B 的时间线。与
+    // 原样弹在 B 上；成功分支随后的 doStream 又在调用时才捕获新世代、isStale() 恒
+    // false，A 的重发 SSE 会整段归约进 B 的时间线。与
     // steer/abort 同款：入口记世代，每个 await 之后、写 state/doStream 之前比对，
     // 不一致即弃。
-    const gen = genRef.current
+    const gen = scopeGuard.token()
     // 在飞期间弹窗内禁用按钮并禁止关闭：否则连点会重复发 trust 请求，或用户按 Esc
     // 把弹窗连同失败原因一起卸载。
     setState((s) => ({ ...s, trustPending: true, trustError: null }))
     try {
       await projectAPI.trust(pending.projectId)
     } catch (err) {
-      if (genRef.current !== gen) return
+      if (scopeGuard.stale(gen)) return
       // 信任失败（项目已删除等）：还原待办并提示，用户可重试或取消。
       // 原因写进 trustError（渲染在弹窗内部），同时保留 error 供会话区横幅兜底。
       const message = `信任项目失败：${messageOf(err)}`
@@ -527,7 +531,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       }))
       return
     }
-    if (genRef.current !== gen) return
+    if (scopeGuard.stale(gen)) return
     setState((s) => ({
       ...s,
       isStreaming: true,
@@ -542,7 +546,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         ? { optimisticUserMessageId: pending.optimisticUserMessageId }
         : {}),
     })
-  }, [doStream])
+  }, [doStream, scopeGuard.token, scopeGuard.stale])
 
   // P0-2：用户取消信任——清除待发并移除触发它的乐观 user 消息（同 cancelBreak，按 id 撤）。
   const cancelTrust = useCallback(() => {
@@ -574,15 +578,15 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     // 失败写 abortError（横幅带「重新终止」），与 error 分开：终止失败后
     // isStreaming 已是 false，挂在 error 上会连带亮出「重试最后一条消息」。
     setState((s) => ({ ...s, isStreaming: false, abortError: null }))
-    // 本次终止所属世代：请求飞在路上时用户切走会话（genRef 递增）后，响应里的
+    // 本次终止所属世代：请求飞在路上时用户切走会话（scopeGuard 作废）后，响应里的
     // abortError 属于**上一条**会话——写进新会话会在 B 页面上凭空挂一条
     // 「终止没有送达」红条（连带「重新终止」按钮），而 A 的真实结果永久丢失。
     // 请求本身仍用发起时的 sessionId，切回 A 时结果由 A 自己的 /status 反映。
-    const gen = genRef.current
+    const gen = scopeGuard.token()
     void agentAPI
       .abort(sessionId)
       .then((res) => {
-        if (genRef.current !== gen) return
+        if (scopeGuard.stale(gen)) return
         if (res.aborted) return
         setState((s) => ({
           ...s,
@@ -591,13 +595,13 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }))
       })
       .catch((err) => {
-        if (genRef.current !== gen) return
+        if (scopeGuard.stale(gen)) return
         setState((s) => ({
           ...s,
           abortError: `终止请求失败：${messageOf(err)}。agent 可能仍在后台继续执行工具，请刷新确认后再继续。`,
         }))
       })
-  }, [sessionId])
+  }, [sessionId, scopeGuard.token, scopeGuard.stale])
 
   /** 追加指令（steer）：注入运行中的 run，并乐观追加 user/steering 消息到时间线
    *  （与 sendMessage 乐观追加同生命周期：P0 前指令发出后从视图消失、刷新后彻底丢失）。
@@ -621,10 +625,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       // 用户切到 B ⇒ 迟到的乐观条目与失败原因都写进 B 的时间线：B 凭空多出一条
       // 属于 A 的「用户刚刚说的指令」（sessionId 还是 A 的），失败时 B 顶上挂一条
       // 与 B 无关的红条，而 A 的真实结果无人知晓。返回 false：不受理（composer 的
-      // clear 另有 scopeGenRef 把关，不会误清 B 的输入框）。
-      const gen = genRef.current
+      // clear 另有作用域守卫把关（useComposer 的 scopeGuard），不会误清 B 的输入框）。
+      const gen = scopeGuard.token()
       const failSteer = (reason: string) => {
-        if (genRef.current !== gen) return
+        if (scopeGuard.stale(gen)) return
         steerFailureRef.current = reason
         setState((s) => ({ ...s, error: reason }))
       }
@@ -648,7 +652,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         )
         return false
       }
-      if (genRef.current !== gen) return false
+      if (scopeGuard.stale(gen)) return false
       setState((s) => {
         const next = {
           ...s,
@@ -674,7 +678,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       })
       return true
     },
-    [sessionId],
+    [sessionId, scopeGuard.token, scopeGuard.stale],
   )
 
   // 权限确认：乐观清空 pending，弹窗立即关闭。后端 store 的 pending 一次消费即删除，
@@ -696,10 +700,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       // 本次决定所属世代：确认请求飞在路上时切走会话后，失败原因/弹窗还原都属于
       // 上一条会话——写进新会话会凭空挂一条「权限确认没有送达」，甚至把上一条
       // 会话的待确认弹窗弹在 B 上。
-      const gen = genRef.current
+      const gen = scopeGuard.token()
       const doConfirm = () =>
         agentAPI.confirmTool(toolCallId, approved).catch((err) => {
-          if (genRef.current !== gen) return
+          if (scopeGuard.stale(gen)) return
           const e = err as { status?: number }
           if (e?.status === 404) {
             // 已被处理（其他标签页确认/拒绝）或 run 已中止：明确提示，避免「以为已批准」。
@@ -724,7 +728,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         permissionAPI
           .setAlwaysAllow(alwaysAllowTool, sessionId)
           .catch((err) => {
-            if (genRef.current !== gen) return
+            if (scopeGuard.stale(gen)) return
             // 白名单写入失败此前只 console.error：用户勾了「本会话始终允许」并点
             // 「允许」，看到的是一次完全成功的授权，但白名单根本没写进去——
             // 同一工具下次还会弹确认，白名单 chips 栏里也不会有它，用户只会以为
@@ -741,7 +745,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         void doConfirm()
       }
     },
-    [sessionId],
+    [sessionId, scopeGuard.token, scopeGuard.stale],
   )
 
   // 重试中断的对话：不追加 user 消息（已在 DB 中），直接发起 SSE 流。
@@ -796,17 +800,17 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     const { toolCallId } = timedOut
     // 本次拒绝所属世代：请求在途时切走会话后，成功「收起横幅」或失败原因都不该
     // 落到新会话上（新会话超时态由它自己的 /status 决定）。
-    const gen = genRef.current
+    const gen = scopeGuard.token()
     denyPendingRef.current = true
     void agentAPI
       .confirmTool(toolCallId, false)
       .then(
         () => {
-          if (genRef.current !== gen) return
+          if (scopeGuard.stale(gen)) return
           setState((s) => ({ ...s, permissionTimeout: null }))
         },
         (err) => {
-          if (genRef.current !== gen) return
+          if (scopeGuard.stale(gen)) return
           const e = err as { status?: number }
           if (e?.status === 404) {
             // 已被处理（其他标签页确认/拒绝）或 run 已中止：工具不会执行，超时态可清。
@@ -830,7 +834,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       .finally(() => {
         denyPendingRef.current = false
       })
-  }, [])
+  }, [scopeGuard.token, scopeGuard.stale])
 
   /** P1：附着结束——停止轮询、复位附着态并刷新消息/调用详情。 */
   const finishAttach = useCallback(() => {

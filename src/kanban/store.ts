@@ -436,11 +436,14 @@ export type DeletedKanbanBoard = {
   deletedProjectWorktree: string | null
 }
 
-/** 把活动看板软删除进回收站（记录原项目名与工作目录）。项目行删除后 FK 将 projectId 置 null。 */
-export async function softDeleteKanbanBoard(
+/** 按板 id 软删除进回收站的行级实现（softDeleteKanbanBoard 与项目合并 adoptKanbanBoard 共用）。
+ *  projectName/worktree 传 null 时对应列不更新（保留上次删除周期的记录）；
+ *  恢复后重删的看板须重新经历「到期 → 宽限」周期，宽限标记不跨删除周期生效。
+ *  仅活动看板（deletedAt IS NULL）可删；返回是否实际删除。 */
+export async function softDeleteKanbanBoardById(
   handle: DB,
-  projectId: string,
-  projectName: string | null,
+  boardId: string,
+  projectName?: string | null,
   worktree?: string | null,
 ): Promise<boolean> {
   const rows = await handle.db
@@ -449,13 +452,30 @@ export async function softDeleteKanbanBoard(
       deletedAt: new Date(),
       deletedProjectName: projectName ?? undefined,
       deletedProjectWorktree: worktree ?? undefined,
-      // 恢复后重删的看板须重新经历「到期 → 宽限」周期，宽限标记不跨删除周期生效。
       purgePendingAt: null,
       updatedAt: new Date(),
     })
-    .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+    .where(and(eq(kanbanBoards.id, boardId), isNull(kanbanBoards.deletedAt)))
     .returning({ id: kanbanBoards.id })
   return rows.length > 0
+}
+
+/** 把项目的活动看板软删除进回收站（记录原项目名与工作目录）。项目行删除后 FK 将 projectId 置 null。 */
+export async function softDeleteKanbanBoard(
+  handle: DB,
+  projectId: string,
+  projectName: string | null,
+  worktree?: string | null,
+): Promise<boolean> {
+  const boards = await handle.db
+    .select({ id: kanbanBoards.id })
+    .from(kanbanBoards)
+    .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+  let deleted = false
+  for (const board of boards) {
+    if (await softDeleteKanbanBoardById(handle, board.id, projectName, worktree)) deleted = true
+  }
+  return deleted
 }
 
 /** 行 + 卡片数 → 回收站条目（时间戳统一转 ms，兼容 Date/null/字符串）。

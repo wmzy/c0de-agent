@@ -38,6 +38,7 @@ import { ToolsPanel } from '@/components/settings/ToolsPanel.js'
 import { UsagePanel } from '@/components/settings/UsagePanel.js'
 import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
 import {
@@ -53,6 +54,7 @@ import {
 } from '@/utils/config-shape.js'
 import { messageOf } from '@/utils/errors.js'
 import { parseBoundedNumber } from '@/utils/format.js'
+import { LoadError } from '@/views/_shared/errorState.js'
 
 /** 全局配置作用域的写入路径（与作用域下拉文案同一口径）。 */
 const GLOBAL_CONFIG_PATH = '~/.c0de/config.json'
@@ -64,37 +66,6 @@ const KEPT_SECRETS_NOTE = (count: number) =>
 /** 加载中占位。 */
 const loadingWrap = css`
   padding: 24px;
-`
-
-/**
- * 读失败态：标题 / 原因 / 动作三段式（与 KanbanView 同一套表达）。
- *
- * 设置页是配 AI 服务、token、权限的唯一入口，落到「永远加载中」等于
- * 整个应用不可配置；因此这里必须把原因说清楚，并给一个不丢页面的重试。
- */
-const loadError = css`
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 24px;
-`
-
-const loadErrorTitle = css`
-  color: var(--haze-color-danger);
-  font-size: 14px;
-  font-weight: 600;
-`
-
-const loadErrorDetail = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 13px;
-  /* 后端 message 可能是长路径/长提示，窄屏下必须能断行 */
-  overflow-wrap: anywhere;
-`
-
-const loadErrorActions = css`
-  margin-top: 4px;
 `
 
 /**
@@ -202,8 +173,8 @@ export function Settings() {
    *  字段（表单没有在途禁写），无条件 setDraft(null) 会把这段新编辑整块抹掉。 */
   const submittedDraftRef = useRef<Partial<Config> | null>(null)
   /**
-   * 草稿世代：任何一次「丢弃/替换草稿」的动作都自增。异步回写必须持有**发起时**
-   * 的世代，落地时世代不符就整条丢弃。
+   * 草稿世代守卫（useScopeGuard 手动模式）：任何一次「丢弃/替换草稿」的动作都
+   * 作废当前世代。异步回写必须持有**发起时**的世代，落地时世代不符就整条丢弃。
    *
    * 此前只有 Provider 测试连接是这种异步写：探测成功把模型并进 draft.providers，
    * 而 updateProviders 的 `base = prev ?? config` 在 draft 已被放弃（prev 变 null）
@@ -212,13 +183,13 @@ export function Settings() {
    * 3 秒后探测响应落地，页面又亮起「● 未保存更改」，并多出一个探测到的模型
    * （provider-model-toggle-zzdetected）——用户明确丢弃的改动被复活，此时按保存
    * 会把它写进当前作用域的配置（中途若切过作用域，就是写进另一个作用域）。
-   * 判据与 ChatSession 的 exportGenRef、useChat 的 genRef 同口径。
+   * 判据与 ChatSession 的 exportGuard、useChat 的 scopeGuard 同口径。
    */
-  const draftEpochRef = useRef(0)
+  const draftGuard = useScopeGuard()
 
-  /** 丢弃/替换草稿：自增世代，让在途的异步回写失效。 */
+  /** 丢弃/替换草稿：作废世代，让在途的异步回写失效。 */
   const invalidateDraftWrites = () => {
-    draftEpochRef.current += 1
+    draftGuard.invalidate()
   }
 
   // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。ok 可带一句必须同说的
@@ -385,29 +356,25 @@ export function Settings() {
   // 数据**时才该整页报错；拿到过就保留表单，把重取失败降级成表单上方的横幅。
   if (isError && !resp) {
     return (
-      <div className={loadError} data-testid="settings-load-error" role="alert">
-        <div className={loadErrorTitle}>设置加载失败</div>
-        <div className={loadErrorDetail}>{refetchErrorMessage}</div>
-        <div className={loadErrorActions}>
-          <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
-            重试
-          </Button>
-        </div>
-      </div>
+      <LoadError
+        title="设置加载失败"
+        detail={refetchErrorMessage}
+        onRetry={() => refetchConfig()}
+        retryTestId="settings-retry"
+        testId="settings-load-error"
+      />
     )
   }
   // 请求成功但没有 config 体（契约破损）：给出可行动的说明，而不是「加载中…」。
   if (!config) {
     return (
-      <div className={loadError} data-testid="settings-load-error" role="alert">
-        <div className={loadErrorTitle}>设置加载失败</div>
-        <div className={loadErrorDetail}>服务返回了空的配置内容，请确认工作区配置后重试。</div>
-        <div className={loadErrorActions}>
-          <Button variant="outline" onClick={() => refetchConfig()} data-testid="settings-retry">
-            重试
-          </Button>
-        </div>
-      </div>
+      <LoadError
+        title="设置加载失败"
+        detail="服务返回了空的配置内容，请确认工作区配置后重试。"
+        onRetry={() => refetchConfig()}
+        retryTestId="settings-retry"
+        testId="settings-load-error"
+      />
     )
   }
 
@@ -468,7 +435,7 @@ export function Settings() {
     )
     if (isPatchEmpty(patch)) {
       // 清空草稿同属「丢弃草稿」，必须先作废在途的异步回写：否则「测试连接」的
-      // 探测落地时 epoch 仍等于 draftEpochRef.current，updateProviders 的
+      // 探测落地时 epoch 仍是当前世代（未被 draftGuard 作废），updateProviders 的
       // `base = prev ?? config` 会用 config 重新长出一份草稿——刚因「无改动」
       // 清掉的脏标记又亮起来、探测到的模型也复活，再按一次保存就把它们写进
       // 配置（与「放弃更改」同款复活缺陷，那条路修过，这条保存分支漏了同款守卫）。
@@ -549,7 +516,7 @@ export function Settings() {
     updater: (providers: Config['providers']) => Config['providers'],
     epoch?: number,
   ) => {
-    if (epoch !== undefined && epoch !== draftEpochRef.current) return
+    if (epoch !== undefined && draftGuard.stale(epoch)) return
     setDraft((prev) => {
       const base = prev ?? config
       return { ...base, providers: updater(base.providers ?? []) }
@@ -873,7 +840,7 @@ export function Settings() {
           <ProviderPanel
             providers={merged.providers}
             onProvidersChange={updateProviders}
-            getDraftEpoch={() => draftEpochRef.current}
+            getDraftEpoch={() => draftGuard.token()}
           />
           <ModelPanel
             providers={merged.providers}

@@ -82,10 +82,10 @@ export function TaskToolView({
       }
     }
   }
-  const nodeStatus = (i: number): WorkflowNode['status'] => {
-    const own = byIndex.get(i)
-    return own ? mapSubtaskStatus(own) : mapStatus(status)
-  }
+  const nodeStatus = (i: number): WorkflowNode['status'] =>
+    // 子任务终态字面量本就是 WorkflowNodeStatus 成员（校验时已收窄），无需再映射；
+    // 没有自己的状态（旧历史消息无 metadata）才回落到父工具状态。
+    byIndex.get(i) ?? mapStatus(status)
 
   // 构建工作流节点
   const nodes: WorkflowNode[] = []
@@ -155,17 +155,5 @@ function mapStatus(toolStatus: string): WorkflowNode['status'] {
       return 'failed'
     default:
       return 'pending'
-  }
-}
-
-/** 子任务自身终态 → 工作流节点状态。 */
-function mapSubtaskStatus(subtask: SubtaskStatus['status']): WorkflowNode['status'] {
-  switch (subtask) {
-    case 'completed':
-      return 'completed'
-    case 'failed':
-      return 'failed'
-    case 'running':
-      return 'running'
   }
 }

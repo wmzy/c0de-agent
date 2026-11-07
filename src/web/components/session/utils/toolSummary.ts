@@ -1,4 +1,5 @@
 import { headChars } from '@shared/utils/string.js'
+import { str } from '@/components/session/utils/shapes.js'
 
 /** 折叠态摘要的最大长度，超出以 … 截断。 */
 const MAX = 60
@@ -12,6 +13,7 @@ function clip(s: string): string {
 /**
  * 生成工具调用折叠态的摘要文本（不含工具名前缀）。
  * 按工具类型提取最关键的一个参数，未命中则取首个标量值。
+ * 字段读取统一走 str()（toolShape.tsx 的同一实现）：类型错即读不出来，回落空串。
  */
 export function toolSummary(tool: string, input: unknown): string {
   const i = (input ?? {}) as Record<string, unknown>
@@ -19,39 +21,41 @@ export function toolSummary(tool: string, input: unknown): string {
     case 'read':
     case 'write':
     case 'edit':
-      return typeof i.path === 'string' ? i.path : ''
-    case 'bash':
-      return typeof i.command === 'string' ? `$ ${clip(i.command)}` : ''
-    case 'grep':
-      return typeof i.pattern === 'string' ? `"${i.pattern}"` : ''
+      return str(i.path) ?? ''
+    case 'bash': {
+      const command = str(i.command)
+      return command === undefined ? '' : `$ ${clip(command)}`
+    }
+    case 'grep': {
+      const pattern = str(i.pattern)
+      return pattern === undefined ? '' : `"${pattern}"`
+    }
     case 'glob':
-      return typeof i.pattern === 'string' ? i.pattern : ''
+      return str(i.pattern) ?? ''
     case 'task': {
       // 批量模式显示任务数，单任务模式显示 description/prompt 摘要
       if (Array.isArray(i.tasks) && i.tasks.length > 0) {
-        const type = typeof i.subagent_type === 'string' ? i.subagent_type : 'general'
+        const type = str(i.subagent_type) ?? 'general'
         return `${type} × ${i.tasks.length} agents`
       }
-      const type = typeof i.subagent_type === 'string' ? i.subagent_type : ''
-      const desc =
-        typeof i.description === 'string'
-          ? i.description
-          : typeof i.prompt === 'string'
-            ? clip(i.prompt)
-            : ''
+      const type = str(i.subagent_type) ?? ''
+      const prompt = str(i.prompt)
+      const desc = str(i.description) ?? (prompt === undefined ? '' : clip(prompt))
       return [type, desc].filter(Boolean).join(' · ')
     }
     case 'todo': {
-      const op = typeof i.op === 'string' ? i.op : 'view'
-      const task = typeof i.task === 'string' ? clip(i.task) : ''
-      const phase = typeof i.phase === 'string' ? i.phase : ''
-      const target = [phase, task].filter(Boolean).join(' · ')
+      const op = str(i.op) ?? 'view'
+      const task = str(i.task)
+      const phase = str(i.phase)
+      const target = [phase, task === undefined ? '' : clip(task)].filter(Boolean).join(' · ')
       return target || op
     }
     default: {
       // 取首个字符串标量值作为兜底摘要
-      const first = Object.values(i).find((v) => typeof v === 'string')
-      return first ? clip(first as string) : ''
+      const first = Object.values(i)
+        .map((v) => str(v))
+        .find((v) => v !== undefined)
+      return first === undefined ? '' : clip(first)
     }
   }
 }

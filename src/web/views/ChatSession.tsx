@@ -24,6 +24,7 @@ import { useAgent } from '@/hooks/useAgent.js'
 import { useChat } from '@/hooks/useChat.js'
 import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
 import { useRetryResume } from '@/hooks/useRetryResume.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { useMessages } from '@/hooks/useSession.js'
 import { useShake } from '@/hooks/useShake.js'
 import { useSupportsVision } from '@/hooks/useSupportsVision.js'
@@ -283,7 +284,7 @@ export function ChatSession({
   // 同页的 llm-details 读失败已有「原因 + 重试」的同口径处理，这条必须一致。
   const [coldStartError, setColdStartError] = useState<string | null>(null)
   /**
-   * 冷启动检查的会话世代号：切会话后作废上一条会话在飞的那次 status 读取。
+   * 冷启动检查的会话世代守卫（useScopeGuard 值模式：sessionId 变即作废）。
    *
    * ChatSession 在 /projects/:p/sessions/:a → :b 之间被路由复用（两条路由 path
    * 相同 → 子树不重建），而这三个 state 是**本会话**的冷启动结论。此前
@@ -292,23 +293,23 @@ export function ChatSession({
    * 响应会给 B 凭空挂上「连接已中断 / 恢复对话」横幅：用户点「恢复对话」＝重发 B
    * 的最后一条消息，中断前已跑过的 bash/git 会再执行一遍（会改文件、改环境的
    * 真实风险），而结论本身与 B 的事实无关。读取失败同理（「无法确认上次是否正常
-   * 结束」）。与 Chat.tsx 的 permissionGenRef / useShake / useRetryResume 复位同口径。
+   * 结束」）。与 Chat.tsx 的 permissionGuard / useShake / useRetryResume 复位同口径。
    */
-  const coldStartGenRef = useRef(0)
+  const coldStartGuard = useScopeGuard(sessionId)
   const checkSessionState = useCallback(() => {
-    const gen = coldStartGenRef.current
+    const gen = coldStartGuard.token()
     setColdStartInterrupted(false)
     setColdStartPaused(false)
     setColdStartError(null)
     sessionAPI
       .status(sessionId)
       .then((s) => {
-        if (coldStartGenRef.current !== gen) return
+        if (coldStartGuard.stale(gen)) return
         if (s._tag === 'interrupted') setColdStartInterrupted(true)
         else if (s._tag === 'paused') setColdStartPaused(true)
       })
       .catch((err: unknown) => {
-        if (coldStartGenRef.current !== gen) return
+        if (coldStartGuard.stale(gen)) return
         setColdStartError(messageOf(err) || '状态检查失败')
       })
     // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）。此链失败只影响会话列表排序、
@@ -317,10 +318,10 @@ export function ChatSession({
       .open(sessionId)
       .then(() => qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }))
       .catch(() => {})
-  }, [sessionId, qc])
+  }, [sessionId, qc, coldStartGuard.token, coldStartGuard.stale])
   useEffect(() => {
-    // 先作废上一条会话在飞的那次检查，再按新会话重新检查（迟到的响应不得写进新会话）。
-    coldStartGenRef.current += 1
+    // 按新会话重新检查（上一条会话在飞的那次检查已由 coldStartGuard 作废，
+    // 迟到的响应不得写进新会话）。
     checkSessionState()
   }, [checkSessionState])
 
@@ -527,12 +528,12 @@ export function ChatSession({
    * 而导出按钮走的是当前 sessionId，真正导出的是 B。用户照 A 的结论判断 B 的备份是否
    * 完整、要不要剥离快照；在飞时切走的导出还会让「导出中…」跟着 B 的会话。
    * 与本文件 orphanNotice/rebindError、cold-start 三态同口径：切会话整体作废，
-   * 并用世代号作废在飞的分支数查询（迟到的 A 的结论不得写进 B 的弹窗）。
+   * 并用世代守卫（useScopeGuard 值模式：sessionId 变即作废）作废在飞的分支数查询
+   * （迟到的 A 的结论不得写进 B 的弹窗）。
    */
-  const exportGenRef = useRef(0)
+  const exportGuard = useScopeGuard(sessionId)
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
   useEffect(() => {
-    exportGenRef.current += 1
     setShowArchives(false)
     setExporting(false)
     setExportError(null)
@@ -542,17 +543,17 @@ export function ChatSession({
   }, [sessionId])
 
   const openExportDialog = async () => {
-    const gen = exportGenRef.current
+    const gen = exportGuard.token()
     setExportError(null)
     setExportBranchCount(null)
     setExportBranchFailed(null)
     setExportDialogOpen(true)
     try {
       const branches = await sessionAPI.branches(sessionId)
-      if (exportGenRef.current !== gen) return
+      if (exportGuard.stale(gen)) return
       setExportBranchCount(branches.length)
     } catch (err) {
-      if (exportGenRef.current !== gen) return
+      if (exportGuard.stale(gen)) return
       // 「读不到分支数」≠「没有分支」：此前 catch(() => []) 把失败吞成 0，弹窗于是
       // 改口宣称「导出内容：本会话的全部消息与归档」，用户据此把导出件当成完整备份，
       // 而真正的派生分支内容并不在其中（迁移/分享后静默丢失）。改为显式失败态：
@@ -567,7 +568,7 @@ export function ChatSession({
     // 本次导出所属世代：导出在飞期间切走会话（A → B）时，结果与失败原因都属于 A，
     // 不得落到 B 的界面上（B 的这组状态已被复位，写入会把「导出中…」/失败原因
     // 挂到一条没在导出的会话上）。
-    const gen = exportGenRef.current
+    const gen = exportGuard.token()
     setExporting(true)
     setExportError(null)
     try {
@@ -580,13 +581,13 @@ export function ChatSession({
       a.download = `${title}.c0de-session.json`
       a.click()
       URL.revokeObjectURL(url)
-      if (exportGenRef.current === gen) setExportDialogOpen(false)
+      if (!exportGuard.stale(gen)) setExportDialogOpen(false)
     } catch (err) {
-      if (exportGenRef.current !== gen) return
+      if (exportGuard.stale(gen)) return
       const reason = messageOf(err)
       setExportError(reason ? `导出失败：${reason}` : '导出失败，请重试')
     } finally {
-      if (exportGenRef.current === gen) setExporting(false)
+      if (!exportGuard.stale(gen)) setExporting(false)
     }
   }
 

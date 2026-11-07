@@ -18,6 +18,7 @@ import {
 } from '@/components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '@/composer/Composer.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import type { AgentListItem } from '@/services/agent.js'
 import {
   broadcastModeChange,
@@ -689,27 +690,28 @@ export function Chat({
   /** 写入进行中的模式（非 null 即 pending），用于禁用重试、避免重复提交。 */
   const [permissionModeSaving, setPermissionModeSaving] = useState<PermissionMode | null>(null)
   /**
-   * 会话世代号：切会话后作废在飞的那轮读写。
+   * 会话世代守卫（useScopeGuard 手动模式）：切会话/卸载后作废在飞的那轮读写。
    *
    * Chat 与 ChatSession 都被路由复用（同 path 的两条路由共享子树，组件实例不重建），
    * 而底栏这一组状态是「**本会话**的授权结论」——此前 loadPermissionMode 只发请求、
    * 只在响应里写 state：切到会话 B 后，B 的读取返回前显示的是 A 的授权态；若 B 的
    * 读取失败则永久停在 A 的值（页面上长期挂着一句与事实相反的安全结论：以为 B 的
    * bash 免确认，实际逐个确认，或反之）。A 的迟到响应同样会覆盖掉 B 已读到的真实值。
+   * 手动模式：作废点固定在下方订阅 effect 的清理里（切会话与卸载都会走到）。
    */
-  const permissionGenRef = useRef(0)
+  const permissionGuard = useScopeGuard()
   const loadPermissionMode = useCallback(() => {
-    const gen = permissionGenRef.current
+    const gen = permissionGuard.token()
     permissionAPI
       .getMode(sessionId)
       .then((res) => {
-        if (permissionGenRef.current !== gen) return
+        if (permissionGuard.stale(gen)) return
         setPermissionMode(res.mode)
         if (Array.isArray(res.alwaysAllow)) setAlwaysAllow(res.alwaysAllow)
         setPermissionLoadError(null)
       })
       .catch((e: unknown) => {
-        if (permissionGenRef.current !== gen) return
+        if (permissionGuard.stale(gen)) return
         // 此前是空 catch：state 停在初始值 'default' + []，底栏于是显示未勾选的
         // 「自动授权（本会话）」并附「工具执行前逐个确认」，而服务端可能正处于
         // auto 模式（或已放行 bash 白名单）——给出的是相反的安全结论，且
@@ -717,7 +719,7 @@ export function Chat({
         // 一起没了。读不到就必须说读不到。
         setPermissionLoadError(messageOf(e))
       })
-  }, [sessionId])
+  }, [sessionId, permissionGuard.token, permissionGuard.stale])
   useEffect(() => {
     // 切会话先复位：旧会话的 auto 警示 / 白名单 chips / 失败文案都不能跟过来。
     // 与 ChatSession 顶部横幅族（interruptBanner / sessionMeta / orphan）以及
@@ -733,12 +735,12 @@ export function Chat({
     const unsubscribe = subscribeModeChange(sessionId ?? null, setPermissionMode)
     return () => {
       // 卸载或切会话：作废在飞的那轮读写（迟到的响应不得写进新会话）。
-      permissionGenRef.current++
+      permissionGuard.invalidate()
       unsubscribe()
     }
-  }, [sessionId, loadPermissionMode])
+  }, [sessionId, loadPermissionMode, permissionGuard.invalidate])
   const applyPermissionMode = (next: PermissionMode) => {
-    const gen = permissionGenRef.current
+    const gen = permissionGuard.token()
     setPermissionModeError(null)
     setPermissionModeTarget(null)
     setPermissionModeSaving(next)
@@ -746,7 +748,7 @@ export function Chat({
     return permissionAPI
       .setMode(next, sessionId)
       .then(() => {
-        if (permissionGenRef.current !== gen) return
+        if (permissionGuard.stale(gen)) return
         setPermissionModeSaving(null)
         broadcastModeChange({ sessionId: sessionId ?? null, mode: next })
       })
@@ -754,7 +756,7 @@ export function Chat({
         // 回滚：此前只有 setPermissionMode(permissionMode)，开关自己弹回去。
         // 界面「按不动」而无任何说明，用户只会反复点，或以为模式已经切成功。
         // 切会话后不得回滚/报错进新会话（那是把上一条会话的模式写进别人的底栏）。
-        if (permissionGenRef.current !== gen) return
+        if (permissionGuard.stale(gen)) return
         setPermissionModeSaving(null)
         setPermissionMode(permissionMode)
         setPermissionModeTarget(next)
@@ -771,11 +773,11 @@ export function Chat({
   }
   const removeAlwaysAllow = (tool: string) => {
     if (!sessionId) return
-    const gen = permissionGenRef.current
+    const gen = permissionGuard.token()
     permissionAPI
       .removeAlwaysAllow(tool, sessionId)
       .then((res) => {
-        if (permissionGenRef.current !== gen) return
+        if (permissionGuard.stale(gen)) return
         setAlwaysAllow(res.alwaysAllow)
         setAlwaysAllowError(null)
       })
@@ -783,7 +785,7 @@ export function Chat({
         // 空 catch 的后果：用户点 chips 上的 × 后没有任何变化，反复点、以为
         // 点不动；服务端白名单其实还在，该工具仍免确认执行。这是移除一项安全
         // 授权的唯一入口。
-        if (permissionGenRef.current !== gen) return
+        if (permissionGuard.stale(gen)) return
         setAlwaysAllowError(messageOf(e))
       })
   }

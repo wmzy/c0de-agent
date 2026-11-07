@@ -27,8 +27,7 @@ import { createDB, migrateDB } from '../db/index.js'
 import { purgeDeletedKanbanBoards } from '../kanban/index.js'
 import { collectScopedMCPServers, disconnectMCPServer, registerMCPServers } from '../mcp/index.js'
 import { initPlugins } from '../plugins/index.js'
-import { getByDirectory } from '../project/index.js'
-import { projectTrustCurrent } from '../project/trust.js'
+import { resolveCwdProjectTrusted } from '../project/index.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import {
   purgeDeletedSessions,
@@ -256,20 +255,7 @@ async function buildServerContext(
   // 未注册项目（首次 serve、尚无项目记录）视为未信任。
   // P0（代码面）：已信任但指纹漂移（git pull 改了插件代码/MCP 参数/风险键）→
   // 同样不加载——与聊天门禁同口径，杜绝「先重启、后门禁」窗口里执行漂移代码。
-  let projectTrusted = false
-  try {
-    const p = await getByDirectory(db, cwd)
-    if (p?.trustedAt != null) {
-      projectTrusted = projectTrustCurrent(
-        loadConfigScopes(cwd).project,
-        p.trustedAt,
-        p.riskFingerprint,
-        cwd,
-      )
-    }
-  } catch {
-    // 信任状态查询失败 → 保持未信任（宁可少加载插件）
-  }
+  const projectTrusted = await resolveCwdProjectTrusted(db, cwd)
   const {
     pluginRegistry,
     hookRunner,

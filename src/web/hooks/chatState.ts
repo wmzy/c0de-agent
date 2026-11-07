@@ -208,82 +208,66 @@ function openAssistantTurnIndex(messages: Message[]): number {
   return last.content.some((p) => p._tag === 'tool_result') ? -1 : idx
 }
 
+/**
+ * 在「当前未收口的 assistant 轮」（见 openAssistantTurnIndex）上应用 content 更新；
+ * 没有未收口轮则新开一条 assistant 消息。text_delta/thinking/tool_call_start 三个
+ * 事件的共同脚手架：开轮或新建 → 拼进当前轮。
+ */
+function openOrAppendPart(
+  state: ChatState,
+  append: (content: MessageContent[]) => MessageContent[],
+): ChatState {
+  const messages = [...state.messages]
+  const idx = openAssistantTurnIndex(messages)
+  if (idx >= 0) {
+    const last = messages[idx] as Message
+    messages[idx] = { ...last, content: append([...last.content]) }
+  } else {
+    messages.push({
+      id: generateId(),
+      sessionId: '',
+      role: 'assistant',
+      content: append([]),
+      tokenCount: 0,
+      createdAt: Date.now(),
+    })
+  }
+  return { ...state, messages }
+}
+
+/**
+ * 流式 text/thinking 增量的拼接规则：尾 part 同 tag 就地拼接（同一条消息里正文与
+ * 思考交替时各自续写），否则 push 新 part——不产生碎片 part。
+ */
+function appendDelta(
+  content: MessageContent[],
+  tag: 'text' | 'thinking',
+  text: string,
+): MessageContent[] {
+  const lastPart = content[content.length - 1]
+  if (lastPart && lastPart._tag === tag) {
+    content[content.length - 1] = { ...lastPart, text: lastPart.text + text }
+  } else {
+    content.push(tag === 'text' ? { _tag: 'text', text } : { _tag: 'thinking', text })
+  }
+  return content
+}
+
 /** 把 AgentEvent 归约到消息状态。纯函数，可单测。 */
 export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState {
   switch (event._tag) {
-    case 'text_delta': {
-      const messages = [...state.messages]
-      const idx = openAssistantTurnIndex(messages)
-      if (idx >= 0) {
-        const last = messages[idx] as Message
-        const content = [...last.content]
-        const lastPart = content[content.length - 1]
-        if (lastPart && lastPart._tag === 'text') {
-          content[content.length - 1] = { _tag: 'text', text: lastPart.text + event.text }
-        } else {
-          content.push({ _tag: 'text', text: event.text })
-        }
-        messages[idx] = { ...last, content }
-      } else {
-        messages.push({
-          id: generateId(),
-          sessionId: '',
-          role: 'assistant',
-          content: [{ _tag: 'text', text: event.text }],
-          tokenCount: 0,
-          createdAt: Date.now(),
-        })
-      }
-      return { ...state, messages }
-    }
-    case 'thinking': {
-      const messages = [...state.messages]
-      const idx = openAssistantTurnIndex(messages)
-      if (idx >= 0) {
-        const last = messages[idx] as Message
-        const content = [...last.content]
-        const lastPart = content[content.length - 1]
-        if (lastPart && lastPart._tag === 'thinking') {
-          content[content.length - 1] = { _tag: 'thinking', text: lastPart.text + event.text }
-        } else {
-          content.push({ _tag: 'thinking', text: event.text })
-        }
-        messages[idx] = { ...last, content }
-      } else {
-        messages.push({
-          id: generateId(),
-          sessionId: '',
-          role: 'assistant',
-          content: [{ _tag: 'thinking', text: event.text }],
-          tokenCount: 0,
-          createdAt: Date.now(),
-        })
-      }
-      return { ...state, messages }
-    }
+    case 'text_delta':
+      return openOrAppendPart(state, (content) => appendDelta(content, 'text', event.text))
+    case 'thinking':
+      return openOrAppendPart(state, (content) => appendDelta(content, 'thinking', event.text))
     case 'tool_call_start': {
-      const messages = [...state.messages]
-      const idx = openAssistantTurnIndex(messages)
       const part: MessageContent = {
         _tag: 'tool_call',
         id: event.id,
         tool: event.tool,
         input: event.input,
       }
-      if (idx >= 0) {
-        const last = messages[idx] as Message
-        messages[idx] = { ...last, content: [...last.content, part] }
-      } else {
-        messages.push({
-          id: generateId(),
-          sessionId: '',
-          role: 'assistant',
-          content: [part],
-          tokenCount: 0,
-          createdAt: Date.now(),
-        })
-      }
-      return { ...state, messages }
+      return openOrAppendPart(state, (content) => [...content, part])
     }
     case 'tool_call_end': {
       const messages = state.messages.map((m) => {

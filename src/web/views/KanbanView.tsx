@@ -19,6 +19,7 @@ import { computeDropPosition, POSITION_GAP } from '@/components/kanban/drop-posi
 import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
 import { type KanbanBoardWithCards, type KanbanCard, kanbanAPI } from '@/services/kanban.js'
 import { messageOf } from '@/utils/errors.js'
+import { LoadError } from '@/views/_shared/errorState.js'
 
 const view = css`
   display: flex;
@@ -121,43 +122,13 @@ const loading = css`
 `
 
 /**
- * 读失败态：标题 + 原因 + 自救入口三段式。
+ * 读失败态（标题 + 原因 + 重试三段式）收敛到 _shared/errorState 的 <LoadError>。
  *
  * 旧样式是一行 danger 色纯文本居中占满高度，连标题都塞在同一行里，
- * 读不出「哪坏了 / 为什么 / 怎么办」。这里拆开成竖排并给原因单独一档
- * 次级色：标题是语义（danger），原因是事实（text-secondary），
- * 重试是动作。role=alert 让读屏在失败发生时立刻播报，而不是等用户
- * 主动去浏览到这块区域。
+ * 读不出「哪坏了 / 为什么 / 怎么办」。errorFill 补充整块撑满（垂直居中）。
  */
-const errorState = css`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+const errorFill = css`
   height: 100%;
-  padding: 16px;
-  text-align: center;
-`
-
-const errorTitle = css`
-  color: var(--haze-color-danger);
-  font-size: 14px;
-  font-weight: 600;
-`
-
-const errorDetail = css`
-  max-width: 460px;
-  color: var(--haze-color-text-secondary);
-  font-size: 13px;
-  /* 后端 message 可能是长路径/长句子，窄屏下必须能断行而不是撑出横向滚动 */
-  overflow-wrap: anywhere;
-`
-
-const retryBtn = css`
-  margin-top: 4px;
-  padding: 6px 16px;
-  font-size: 13px;
 `
 
 /** 导入/导出的行内错误条（看板已加载时的局部失败，与整页读失败态区分）。 */
@@ -463,18 +434,15 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     const message = error ? messageOf(error) : null
     return (
       <div className={view}>
-        <div className={errorState} data-testid="kanban-load-error" role="alert">
-          <span className={errorTitle}>看板加载失败</span>
-          <span className={errorDetail}>{message ?? '无法读取看板数据。'}</span>
-          <button
-            type="button"
-            className={retryBtn}
-            onClick={() => refetch()}
-            data-testid="kanban-retry"
-          >
-            重试
-          </button>
-        </div>
+        <LoadError
+          center
+          className={errorFill}
+          title="看板加载失败"
+          detail={message ?? '无法读取看板数据。'}
+          onRetry={() => refetch()}
+          retryTestId="kanban-retry"
+          testId="kanban-load-error"
+        />
       </div>
     )
   }

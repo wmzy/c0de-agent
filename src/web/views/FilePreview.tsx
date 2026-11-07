@@ -14,6 +14,8 @@ import { encodeFilePath, fileAPI } from '@/services/file.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { extOf } from '@/utils/format.js'
+import { secondaryButton } from '@/views/_shared/bannerStyles.js'
+import { errorDetail, errorState, LoadError } from '@/views/_shared/errorState.js'
 
 const wrap = css`
   height: 100%;
@@ -96,33 +98,6 @@ const audioFull = css`
 
 const loadingWrap = css`
   padding: 12px;
-`
-
-/** 读失败态：与 RecycleBin/KanbanView 的读失败三段式同口径（标题 + 后端 message + 重试）。 */
-const errorWrap = css`
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 12px;
-`
-
-const errorTitle = css`
-  color: var(--haze-color-danger);
-  font-size: 13px;
-  font-weight: 600;
-`
-
-const errorDetail = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 12px;
-  /* 后端 message 常含长路径，窄面板下必须能断行而不是撑出横向滚动 */
-  overflow-wrap: anywhere;
-`
-
-const retryBtn = css`
-  padding: 4px 12px;
-  font-size: 12px;
 `
 
 /**
@@ -343,15 +318,15 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     if (mediaFailed) {
       // 与文本路径的失败三段式同口径（标题 + 说明 + 重试/逃生口）。
       body = (
-        <div className={errorWrap} data-testid="file-preview-error" role="alert">
-          <span className={errorTitle}>预览加载失败</span>
-          <span className={errorDetail}>
-            无法加载该文件（可能已被删除、移动，或访问令牌已过期）。
-          </span>
+        <LoadError
+          title="预览加载失败"
+          detail="无法加载该文件（可能已被删除、移动，或访问令牌已过期）。"
+          testId="file-preview-error"
+        >
           <div className={mediaActions}>
             <button
               type="button"
-              className={retryBtn}
+              className={secondaryButton}
               onClick={() => {
                 setMediaFailed(false)
                 setMediaReloadKey((k) => k + 1)
@@ -370,7 +345,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
               在新标签页打开原始文件
             </a>
           </div>
-        </div>
+        </LoadError>
       )
     } else if (IMG_EXT.includes(ext)) {
       body = (
@@ -393,12 +368,11 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
           data-testid="pdf-preview"
           onError={() => setMediaFailed(true)}
         >
-          <div className={errorWrap} data-testid="pdf-fallback">
-            <span className={errorTitle}>PDF 预览不可用</span>
+          <LoadError title="PDF 预览不可用" testId="pdf-fallback" alert={false}>
             <a className={binaryLink} href={mediaSrc} target="_blank" rel="noreferrer">
               在新标签页打开原始文件
             </a>
-          </div>
+          </LoadError>
         </object>
       )
     } else if (AUDIO_EXT.includes(ext)) {
@@ -444,7 +418,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
     const err = q.error as { message?: string; code?: string } | null
     if (err?.code === 'BINARY_FILE') {
       body = (
-        <div className={errorWrap} data-testid="file-preview-binary">
+        <div className={errorState} data-testid="file-preview-binary">
           <span className={binaryTitle}>这是二进制文件</span>
           <span className={errorDetail}>{messageOf(err) || '不能以文本方式显示或编辑。'}</span>
           <a
@@ -462,18 +436,13 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       // 就像文件被清空，用户会据此重写文件或放弃排查（与 RecycleBin/KanbanView 的
       // 读失败态同口径）。APIError 是结构体而非 Error 子类，必须结构化取 message。
       body = (
-        <div className={errorWrap} data-testid="file-preview-error" role="alert">
-          <span className={errorTitle}>文件读取失败</span>
-          <span className={errorDetail}>{messageOf(q.error) || '无法读取该文件内容。'}</span>
-          <button
-            type="button"
-            className={retryBtn}
-            onClick={() => void q.refetch()}
-            data-testid="file-preview-retry"
-          >
-            重试
-          </button>
-        </div>
+        <LoadError
+          title="文件读取失败"
+          detail={messageOf(q.error) || '无法读取该文件内容。'}
+          onRetry={() => void q.refetch()}
+          retryTestId="file-preview-retry"
+          testId="file-preview-error"
+        />
       )
     }
   } else if (!q.data) {
@@ -644,7 +613,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
             </span>
             <button
               type="button"
-              className={retryBtn}
+              className={secondaryButton}
               onClick={() => void q.refetch()}
               data-testid="file-preview-refetch-retry"
             >

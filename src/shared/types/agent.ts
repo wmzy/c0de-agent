@@ -221,8 +221,6 @@ type AgentState = {
   postCompactionMonitor?: { remaining: number; noTextStreak: number }
   /** 本次 run 开始时间戳（ms）。暂停持久化 lastRun 时回填 startedAt。 */
   lastRunStartedAt?: number
-  /** 暂停状态是否已 yield 给前端（loop 内用，防重复 status_change）。 */
-  pauseYielded?: boolean
 }
 
 export type {

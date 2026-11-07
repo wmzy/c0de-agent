@@ -7,6 +7,7 @@ import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
 import { projectAPI } from '@/services/project.js'
 import { messageOf } from '@/utils/errors.js'
+import { LoadError } from '@/views/_shared/errorState.js'
 import { Layout } from '@/views/Layout.js'
 
 const redirectMsg = css`
@@ -19,21 +20,9 @@ const redirectMsg = css`
   padding: 24px;
 `
 
-const errorState = css`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
+/** 读失败块撑满 Layout 主区（配合 _shared/errorState 居中变体垂直居中）。 */
+const errorFill = css`
   flex: 1;
-  color: var(--haze-color-text-secondary);
-  font-size: 14px;
-  padding: 24px;
-  text-align: center;
-`
-
-const errorIcon = css`
-  font-size: 32px;
 `
 
 const errorLink = css`
@@ -80,13 +69,11 @@ export function RootRedirect() {
       <Layout
         header={<TopBar />}
         main={
-          <div className={errorState}>
-            <span className={errorIcon}>⚠️</span>
-            <span>{message}</span>
+          <LoadError center alert={false} icon="⚠️" detail={message} className={errorFill}>
             <TypedLink<AppPaths> to="/settings" className={errorLink}>
               前往设置
             </TypedLink>
-          </div>
+          </LoadError>
         }
       />
     )

@@ -6,10 +6,12 @@ import { getMessages } from '../session/message.js'
 import { markBudgetPause, updateSessionLastRun } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import { budgetOverageParts } from '../session/usage.js'
-import type { AgentEvent, AgentState } from '../shared/types/agent.js'
+import type { AgentConfig, AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
+import type { Session } from '../shared/types/message.js'
+import { createAgent } from './agent.js'
 import { calibrateEstimate, createTokenBudget, estimateBudget } from './context.js'
-import { runCompactionIfNeeded } from './loop/compaction.js'
+import { compactContext, runCompactionIfNeeded } from './loop/compaction.js'
 import { persistAssistantAndTools } from './loop/persist.js'
 import { manageSegment } from './loop/segment.js'
 import {
@@ -166,6 +168,18 @@ async function* budgetGuard(
   state: AgentState,
   deps: LoopDeps,
 ): AsyncGenerator<AgentEvent, { stop: boolean }> {
+  // 「中止本轮」共用序列：置 stopped(error) → yield error → 通知调用方结束 run。
+  // 超支中止（CLI abort / Web abort 动作）、子 agent 超支中止、账本查询失败
+  // fail-closed 三处逐字相同，收敛于此。
+  const stopWithError = function* (reason: string): Generator<AgentEvent, { stop: boolean }> {
+    state.status = {
+      _tag: 'stopped',
+      reason: 'error',
+      error: { _tag: 'unexpected', message: reason },
+    }
+    yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
+    return { stop: true }
+  }
   if (!(deps.budgetPause === true || deps.budgetAbort === true) || state.budgetPauseTriggered) {
     return { stop: false }
   }
@@ -183,25 +197,13 @@ async function* budgetGuard(
       if (deps._subagentDepth === undefined) {
         // CLI（budgetAbort）恒中止；Web 按超支轴配置动作判定（abort > pause）。
         if (deps.budgetAbort === true || action === 'abort') {
-          state.status = {
-            _tag: 'stopped',
-            reason: 'error',
-            error: { _tag: 'unexpected', message: reason },
-          }
-          yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
-          return { stop: true }
+          return yield* stopWithError(reason)
         }
         state.status = { _tag: 'paused', pauseReason: reason }
         const resumed = yield* pauseAndWait(state, deps, { markReason: reason })
         if (!resumed) return { stop: true }
       } else {
-        state.status = {
-          _tag: 'stopped',
-          reason: 'error',
-          error: { _tag: 'unexpected', message: reason },
-        }
-        yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
-        return { stop: true }
+        return yield* stopWithError(reason)
       }
     } else if (warnings.length > 0 && !budgetWarnedStates.has(state)) {
       // P2-2：未超支但金额口径不可靠（价格未知调用无 token 兜底）——每 run
@@ -217,15 +219,9 @@ async function* budgetGuard(
     const abortSeverity =
       deps.config.usage.budgetAction === 'abort' || deps.config.usage.tokenBudgetAction === 'abort'
     if (abortSeverity) {
-      const reason =
-        '月度预算账本查询失败且预算动作为 abort（硬封顶）：无法确认是否超支，出于安全中止本轮'
-      state.status = {
-        _tag: 'stopped',
-        reason: 'error',
-        error: { _tag: 'unexpected', message: reason },
-      }
-      yield { _tag: 'error', error: { _tag: 'unexpected', message: reason } }
-      return { stop: true }
+      return yield* stopWithError(
+        '月度预算账本查询失败且预算动作为 abort（硬封顶）：无法确认是否超支，出于安全中止本轮',
+      )
     }
   }
   return { stop: false }
@@ -249,7 +245,6 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       // 暂停点：上一轮原子操作（工具执行批次）已完成。
       // 持久化 paused 状态供热更新/重启后恢复，随后阻塞等待 resume
       // （共享序列见 pauseAndWait）。
-      state.pauseYielded = false
       const resumed = yield* pauseAndWait(state, deps)
       if (!resumed) return
     }
@@ -267,19 +262,20 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     // steering 消息必须插入到最后一条 user 消息之前（而非末尾 push），
     // 使 notice 在相关 user 消息的同一 turn 生效。
     // 参考 oh-my-pi magic-keyword fix：末尾 system 消息会被模型忽略。
-    for (const s of steering) {
-      let lastUserIdx = -1
-      for (let i = chatMessages.length - 1; i >= 0; i--) {
-        if (chatMessages[i]?.role === 'user') {
-          lastUserIdx = i
-          break
-        }
+    // 所有 steering 的插入位置相同（最后一条 user 消息之前），扫描一次即可；
+    // 批量 splice 保持 steering 原有顺序。
+    let lastUserIdx = -1
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i]?.role === 'user') {
+        lastUserIdx = i
+        break
       }
-      if (lastUserIdx >= 0) {
-        chatMessages.splice(lastUserIdx, 0, { role: 'system', content: s })
-      } else {
-        chatMessages.push({ role: 'system', content: s })
-      }
+    }
+    const steeringMessages = steering.map((s) => ({ role: 'system' as const, content: s }))
+    if (lastUserIdx >= 0) {
+      chatMessages.splice(lastUserIdx, 0, ...steeringMessages)
+    } else {
+      chatMessages.push(...steeringMessages)
     }
 
     if (deps.hookRunner) {
@@ -544,4 +540,32 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     reason: 'error',
     error: { _tag: 'max_turns', maxTurns },
   }
+}
+
+/**
+ * 手动 /compact：组装一次性 agent 并执行 compactContext 流。
+ *
+ * Web 斜杠路由与 CLI chat 的 /compact 消费块共用（消费块迁移由后续波次完成）：
+ * createAgent 产出的 state 仅用于携带 provider/model/plugins 构建 summarizer，
+ * 不创建主 agent、不进入 LLM turn 循环（不把 /compact 当作 user 消息发给模型）。
+ * config 的取值口径由调用方决定（Web：body.provider/model ?? 会话默认；
+ * CLI：全局 defaultProvider/defaultModel；plugins 一律取 config.plugins.enabled）。
+ *
+ * 返回 compactContext 的事件 async iterable；事件渲染（SSE 透传 / 终端输出）
+ * 留在调用方。压缩失败时 compactContext 抛错，由调用方决定如何呈现。
+ */
+export async function* runManualCompact(
+  session: Session,
+  config: { provider: string; model: string; plugins: string[] },
+  deps: LoopDeps,
+): AsyncGenerator<AgentEvent> {
+  const agentConfig: AgentConfig = {
+    provider: config.provider,
+    model: config.model,
+    tools: [],
+    plugins: config.plugins,
+    agentName: 'default',
+  }
+  const state = await createAgent(session, agentConfig, deps)
+  yield* compactContext(state, deps)
 }

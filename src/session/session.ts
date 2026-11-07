@@ -4,7 +4,7 @@
  * 中断轮次标记）。回收站与删除生命周期见 trash.ts；LLM 段管理见 segments.ts。
  * updateSessionMetadata 是三个模块共享的 metadata 读-改-写入口，归属本模块。
  */
-import { and, eq, gt, ilike, isNull, ne, notInArray, or, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, gt, ilike, isNull, ne, notInArray, or, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
 import type { HookRunner } from '../plugins/types.js'
@@ -237,21 +237,9 @@ async function searchSessions(
     .from(sessions)
     .where(and(baseWhere, ilike(sessions.title, pattern)))
   const byContent = await handle.db
-    .selectDistinctOn([sessions.id], {
-      id: sessions.id,
-      title: sessions.title,
-      parentId: sessions.parentId,
-      projectId: sessions.projectId,
-      branchPoint: sessions.branchPoint,
-      metadata: sessions.metadata,
-      agentType: sessions.agentType,
-      worktreePath: sessions.worktreePath,
-      source: sessions.source,
-      deletedAt: sessions.deletedAt,
-      deletedBatchId: sessions.deletedBatchId,
-      createdAt: sessions.createdAt,
-      updatedAt: sessions.updatedAt,
-    })
+    // 直接选 sessions 全部列（而非手抄列清单）：schema 加列时此处自动跟随，
+    // 不会静默漏选导致 rowToSession 拿到 undefined。
+    .selectDistinctOn([sessions.id], { ...getTableColumns(sessions) })
     .from(sessionEntries)
     .innerJoin(sessions, eq(sessionEntries.sessionId, sessions.id))
     .where(

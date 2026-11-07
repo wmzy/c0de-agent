@@ -3,6 +3,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { loadConfigScopes } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, projects, sessions } from '../db/schema.js'
+import { softDeleteKanbanBoardById } from '../kanban/store.js'
 import { toEpochMs } from '../session/time.js'
 import type { Config } from '../shared/types/config.js'
 import { resolveProject } from './resolve.js'
@@ -131,17 +132,7 @@ async function adoptKanbanBoard(
       .where(eq(kanbanBoards.id, board.id))
     return
   }
-  await handle.db
-    .update(kanbanBoards)
-    .set({
-      deletedAt: new Date(),
-      deletedProjectName: from.name ?? from.worktree,
-      deletedProjectWorktree: from.worktree,
-      // 恢复后重删须重新经历「到期 → 宽限」周期（与 softDeleteKanbanBoard 同口径）
-      purgePendingAt: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(kanbanBoards.id, board.id))
+  await softDeleteKanbanBoardById(handle, board.id, from.name ?? from.worktree, from.worktree)
 }
 
 export async function listProjects(handle: DB): Promise<Project[]> {

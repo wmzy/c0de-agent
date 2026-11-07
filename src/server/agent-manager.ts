@@ -180,7 +180,9 @@ function createAgentManager(): AgentManager {
         .map((slot) => slotRun(slot))
         .filter((r): r is ActiveRun => r !== undefined && r.state.status._tag === 'running')
       for (const run of active) {
-        pauseAgent(run.state)
+        // 委托公开 pause（而非内联 pauseAgent）：热更新入口与单点/级联暂停走
+        // 同一路径，对 spy manager.pause 的实现保持同一可观察契约。
+        manager.pause(run.sessionId)
       }
       const deadline = Date.now() + timeoutMs
       while (Date.now() < deadline) {
@@ -191,7 +193,8 @@ function createAgentManager(): AgentManager {
       let forcedAbort = 0
       for (const run of active) {
         if (run.state.status._tag === 'running') {
-          abortAgent(run.state)
+          // 委托公开 abort（与上方 pause 同口径）：超时强中止也走单点路径。
+          manager.abort(run.sessionId)
           forcedAbort += 1
         }
       }
@@ -226,9 +229,12 @@ function createAgentManager(): AgentManager {
     dispose() {
       // dev 热重载重建前调用：中止所有活跃 run（loop 在 turn/流边界检测 signal
       // → unwind → 调用方 finally 持久化 + unregister），然后清空 Map。
+      // 委托公开 abort（而非内联 abortAgent）：与单点/级联中止同一路径，
+      // 对 spy manager.abort 的实现保持同一可观察契约（abort 不删 Map 条目，
+      // 迭代安全；清空由下方 runs.clear 统一完成）。
       for (const slot of runs.values()) {
         const run = slotRun(slot)
-        if (run) abortAgent(run.state)
+        if (run) manager.abort(run.sessionId)
       }
       runs.clear()
     },

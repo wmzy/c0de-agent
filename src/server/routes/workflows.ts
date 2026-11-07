@@ -2,20 +2,21 @@ import { existsSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Hono } from 'hono'
-import { loadConfigScopes, resolveGlobalConfigDir } from '../../core/config.js'
-import { discoverWorkflows, resolveWorkflow, saveWorkflow } from '../../core/workflows/index.js'
+import { resolveGlobalConfigDir } from '../../core/config.js'
+import { discoverWorkflows, saveWorkflow } from '../../core/workflows/index.js'
 import { reloadRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
-import { getByDirectory, getProject, trustProject } from '../../project/project.js'
 import {
-  enrichProjectRiskWithGlobal,
-  projectTrustCurrent,
-  projectTrustNeeded,
-} from '../../project/trust.js'
+  getByDirectory,
+  getProject,
+  resolveCwdProjectTrusted,
+  trustProject,
+} from '../../project/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { resolveSessionScope } from '../util/session-scope.js'
+import { projectTrustState, resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
 import { createRestWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /**
@@ -37,38 +38,6 @@ function findBusyWorkflowByName(ctx: ServerContext, name: string): string | null
 /** 权限确认超时兜底拒绝后暂停 run 的暂停原因（与 chat 路由同口径）。 */
 const PERMISSION_TIMEOUT_PAUSE_REASON =
   '权限确认超时：该工具已被自动拒绝，工作流已暂停。点击「恢复」后可直接要求 agent 重试该工具'
-
-/** 项目级工作流是仓库自带的任意代码执行面（dynamic import 即执行），发现前
- *  必须校验信任状态——与 .c0de/plugins 的加载门禁同口径（trustedAt + 指纹）。 */
-async function projectTrustState(ctx: ServerContext, projectId: string) {
-  const project = await getProject(ctx.db, projectId)
-  if (!project) return { project: null, trusted: false }
-  const trusted =
-    project.trustedAt != null &&
-    projectTrustCurrent(
-      loadConfigScopes(project.worktree).project,
-      project.trustedAt,
-      project.riskFingerprint,
-      project.worktree,
-    )
-  return { project, trusted }
-}
-
-/** serve 启动目录项目的信任状态（POST create 后热重载注册表时用）。 */
-async function serveCwdTrusted(ctx: ServerContext): Promise<boolean> {
-  try {
-    const p = await getByDirectory(ctx.db, ctx.cwd)
-    if (p?.trustedAt == null) return false
-    return projectTrustCurrent(
-      loadConfigScopes(ctx.cwd).project,
-      p.trustedAt,
-      p.riskFingerprint,
-      ctx.cwd,
-    )
-  } catch {
-    return false
-  }
-}
 
 /** 创建工作流 REST API 路由。 */
 function createWorkflowsRoute(ctx: ServerContext) {
@@ -167,7 +136,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
           )
         }
         saveDir = st.project.worktree
-      } else if (!(await serveCwdTrusted(ctx))) {
+      } else if (!(await resolveCwdProjectTrusted(ctx.db, ctx.cwd))) {
         return apiError(
           c,
           409,
@@ -216,7 +185,9 @@ function createWorkflowsRoute(ctx: ServerContext) {
 
     // 热重载注册表（清空 → 三级重新发现）；项目级发现按信任门禁（fail-closed），
     // 未信任 serve 目录项目时绝不 import 仓库中既有的工作流文件。
-    await reloadRegistry(registry, ctx.cwd, { projectTrusted: await serveCwdTrusted(ctx) })
+    await reloadRegistry(registry, ctx.cwd, {
+      projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
+    })
 
     const entry = registry.get(name)
     return c.json({
@@ -240,20 +211,11 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // 统一解析：项目级（已信任）> 用户 > 内置，与 GET / 列表口径一致。
     // 此前注册表优先——项目级同名工作流被用户级/内置遮蔽，列表显示项目版、
     // 查看/编辑打开的却是另一份。
-    const projectId = c.req.query('projectId')
-    let entry: WorkflowEntry | undefined
-    if (projectId) {
-      const { project, trusted } = await projectTrustState(ctx, projectId)
-      if (project && trusted) {
-        entry = await resolveWorkflow({
-          name,
-          registry,
-          projectDir: project.worktree,
-          projectTrusted: true,
-        })
-      }
-    }
-    entry ??= registry.get(name)
+    const { entry } = await resolveWorkflowEntry(ctx, {
+      name,
+      registry,
+      projectId: c.req.query('projectId'),
+    })
 
     if (!entry) {
       return apiError(c, 404, 'NOT_FOUND', `Workflow "${name}" not found`)
@@ -281,48 +243,21 @@ function createWorkflowsRoute(ctx: ServerContext) {
     if (!registry) {
       return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
     }
-    let entry = registry.get(name)
-
-    // 项目级解析 + 项目 worktree 作为 agent cwd
+    // 项目级解析 + 项目 worktree 作为 agent cwd；信任门禁先行：未信任（或信任后
+    // 漂移）项目在发现/执行前拦截——发现本身就会执行工作流模块顶层代码，必须与
+    // 聊天入口同一道闸（门禁与条目解析均为 trust-gate.ts 单点实现）。
     let agentCwd = ctx.cwd
-    let project: Awaited<ReturnType<typeof getProject>> = null
-    const projectId = c.req.query('projectId')
-    if (projectId) {
-      const st = await projectTrustState(ctx, projectId)
-      project = st.project
-      if (project) {
-        agentCwd = project.worktree
-        // 信任门禁先行：未信任（或信任后漂移）项目在发现/执行前拦截——发现本身
-        // 就会执行工作流模块顶层代码，必须与聊天入口同一道闸。
-        const scopes = loadConfigScopes(agentCwd)
-        const risks = projectTrustNeeded(
-          scopes.project,
-          scopes.global,
-          project.trustedAt,
-          project.riskFingerprint,
-          project.worktree,
-        )
-        if (risks.length > 0) {
-          const items = enrichProjectRiskWithGlobal(risks, scopes.global)
-          return apiError(
-            c,
-            409,
-            'TRUST_REQUIRED',
-            `项目「${project.name ?? project.worktree}」的项目配置（.c0de/config.json 或 .c0de/workflows）包含需要你确认的风险项`,
-            { projectId: project.id, projectName: project.name ?? project.worktree, items },
-          )
-        }
-        // 门禁通过后按「项目 > 用户 > 内置」解析——此前注册表优先，项目级
-        // 同名工作流被用户级条目遮蔽，运行的不是列表展示的那份。
-        if (st.trusted) {
-          entry = await resolveWorkflow({
-            name,
-            registry,
-            projectDir: project.worktree,
-            projectTrusted: true,
-          })
-        }
-      }
+    const { entry, project } = await resolveWorkflowEntry(ctx, {
+      name,
+      registry,
+      projectId: c.req.query('projectId'),
+    })
+    if (project) {
+      agentCwd = project.worktree
+      const gate = trustGateResponse(c, project, {
+        riskSurfaces: '.c0de/config.json 或 .c0de/workflows',
+      })
+      if (gate) return gate
     }
 
     if (!entry) {
@@ -438,7 +373,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       // registry 单名单位（后注册覆盖），仅 delete 无法恢复被覆盖掉的 user 条目。
       try {
         await reloadRegistry(registry, ctx.cwd, {
-          projectTrusted: await serveCwdTrusted(ctx),
+          projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
         })
       } catch {
         // 重载失败不阻塞删除结果（其他文件损坏等）；下次启动/创建时自然恢复
@@ -462,7 +397,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       // 永久消失（registry 单名单位），重建恢复完整层级。
       try {
         await reloadRegistry(registry, ctx.cwd, {
-          projectTrusted: await serveCwdTrusted(ctx),
+          projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
         })
       } catch {
         // 重载失败不阻塞删除结果
@@ -514,7 +449,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // 热重载：删除可能解除 user/builtin 同名条目的遮蔽，registry 单名单位必须重建。
     try {
       await reloadRegistry(registry, ctx.cwd, {
-        projectTrusted: await serveCwdTrusted(ctx),
+        projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
       })
     } catch {
       // 重载失败不阻塞删除结果

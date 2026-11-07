@@ -6,8 +6,7 @@ import { createDebugSpawn } from '../dap/index.js'
 import type { DB } from '../db/client.js'
 import { collectScopedMCPServers, registerMCPServers } from '../mcp/index.js'
 import { initPlugins } from '../plugins/index.js'
-import { getByDirectory } from '../project/index.js'
-import { projectTrustCurrent } from '../project/trust.js'
+import { resolveCwdProjectTrusted } from '../project/index.js'
 import { budgetGateEnabled } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
@@ -87,22 +86,6 @@ function resolvePermissionChecker(
       : nonInteractiveSafeChecker
 }
 
-/**
- * cwd 是否当前可信项目（trustedAt 非空且指纹未漂移）。与聊天门禁/插件加载同口径；
- * CLI 工作流注册表（内置+用户级+项目级）的构建也用它决定是否 import 项目级文件。
- */
-async function resolveCwdProjectTrusted(db: DB, cwd: string): Promise<boolean> {
-  try {
-    const p = await getByDirectory(db, cwd)
-    if (p?.trustedAt != null) {
-      return projectTrustCurrent(loadConfigScopes(cwd).project, p.trustedAt, p.riskFingerprint, cwd)
-    }
-  } catch {
-    // 查询失败 → 未信任
-  }
-  return false
-}
-
 /** 组装完整 LoopDeps（默认 safe 放行 + 默认工具注册表）。 */
 async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<LoopDeps> {
   const llmRegistry = buildRegistryFromConfig(config)
@@ -155,5 +138,4 @@ export {
   buildRegistryFromConfig,
   fullyAutoApproveChecker,
   nonInteractiveSafeChecker,
-  resolveCwdProjectTrusted,
 }

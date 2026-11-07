@@ -13,6 +13,7 @@ import {
   savePersistedState,
   TERMINAL_HEIGHT_KEY,
 } from '@/hooks/terminal-persistence.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { type TerminalInfo, terminalAPI, terminalWsUrl } from '@/services/terminal.js'
 import { messageOf } from '@/utils/errors.js'
 import { storageSet } from '@/utils/storage.js'
@@ -118,8 +119,9 @@ export function useTerminal(projectId: string) {
    */
   const [closeError, setCloseError] = useState<string | null>(null)
   const clearCloseError = useCallback(() => setCloseError(null), [])
-  /** 恢复轮次的世代号：作废在飞的那轮（切项目 / 卸载 / 重试都会 +1）。 */
-  const restoreGenRef = useRef(0)
+  /** 恢复轮次的世代守卫（useScopeGuard 手动模式）：作废在飞的那轮
+   *  （切项目 / 卸载 / 重试都会作废）。 */
+  const restoreGuard = useScopeGuard()
   /**
    * 本轮恢复是否因读取失败而中断。为真时持久化 effect 不得把空布局写回
    * localStorage——那会用 sessions=[] 覆盖掉磁盘上那份还完好的布局，一次瞬时
@@ -514,8 +516,10 @@ export function useTerminal(projectId: string) {
    */
   const runRestore = useCallback(
     async (pid: string) => {
-      const gen = ++restoreGenRef.current
-      const stale = () => restoreGenRef.current !== gen
+      // 每轮开始先作废上一轮（重试是 effect 之外发起的第二次调用），再刻本轮世代。
+      restoreGuard.invalidate()
+      const gen = restoreGuard.token()
+      const stale = () => restoreGuard.stale(gen)
       setRestoring(true)
       setRestoreError(null)
       restoreBrokenRef.current = false
@@ -595,7 +599,7 @@ export function useTerminal(projectId: string) {
         if (!stale()) setRestoring(false)
       }
     },
-    [clearConn, closeSocket],
+    [clearConn, closeSocket, restoreGuard.invalidate, restoreGuard.stale, restoreGuard.token],
   )
 
   // ---- 恢复：projectId 变化时按项目重建终端结构 ----
@@ -603,9 +607,9 @@ export function useTerminal(projectId: string) {
     void runRestore(projectId)
     // 卸载或切项目时作废在飞的那轮（返回的 Promise 不能再写 state）。
     return () => {
-      restoreGenRef.current++
+      restoreGuard.invalidate()
     }
-  }, [projectId, runRestore])
+  }, [projectId, runRestore, restoreGuard.invalidate])
 
   /** 恢复失败后的重试：重跑一轮恢复（磁盘上那份布局仍在）。 */
   const retryRestore = useCallback(() => {

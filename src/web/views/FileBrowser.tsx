@@ -1,16 +1,18 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { findNode, setChildren } from '@/components/tree-utils.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
 import { btnDanger, btnSm } from '@/styles/tokens.js'
 import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
+import { errorDetail, errorTitle, LoadError } from '@/views/_shared/errorState.js'
 
 const panel = css`
   display: flex;
@@ -120,37 +122,6 @@ const loading = css`
   font-size: 12px;
 `
 
-/**
- * 加载失败态：标题 + 原因 + 重试三段式（与 KanbanView / FilePreview 的读失败态同
- * 口径）。此前根目录列目录失败被 `.catch(() => {})` 吞掉，树恒为 null，面板永远
- * 停在「加载中…」；搜索失败则落进空态，把「查不到」说成「不存在」。
- */
-const errorState = css`
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 12px 8px;
-`
-
-const errorTitle = css`
-  color: var(--haze-color-danger);
-  font-size: 13px;
-  font-weight: 600;
-`
-
-const errorDetail = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 12px;
-  /* 后端 message 可能是长路径/长句子，窄栏下必须能断行而不是撑出横向滚动 */
-  overflow-wrap: anywhere;
-`
-
-const retryBtn = css`
-  padding: 4px 12px;
-  font-size: 12px;
-`
-
 /** 删除确认弹层的说明正文。路径可能很长，必须能断行。 */
 const confirmText = css`
   font-size: 13px;
@@ -159,7 +130,8 @@ const confirmText = css`
   overflow-wrap: anywhere;
 `
 
-/** 删除确认弹层里的失败原因框：标题 + 后端 message（与上方读失败态同口径）。 */
+/** 删除确认弹层里的失败原因框：复用 _shared/errorState 的标题/原因样式
+ *  （弹层有自己的内边距与更紧凑的间距，容器样式保持局部）。 */
 const confirmError = css`
   display: flex;
   flex-direction: column;
@@ -337,20 +309,25 @@ export function FileBrowser({
   const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
 
   /**
-   * 树世代：切换项目时自增。在途的懒加载请求按世代校验后才允许落盘——否则上一个
+   * 树世代守卫：切换项目/重试加载时作废。在途的懒加载请求按世代校验后才允许
+   * 落盘——否则上一个
    * 项目的目录列表会并进新项目的树：dirPath 是项目内相对路径（'src'），两边同名
    * 目录合并「恰好成功」、不报任何错，而 handleToggle 只在 children === undefined
    * 时才加载，于是这份外来清单被永久缓存到刷新为止，点进去还是按新项目读同路径
    * 文件——看到的是另一个仓库的内容。
+   *
+   * 手动模式（useScopeGuard()）：作废点固定在下方重置 effect 的开头——该 effect
+   * 的触发条件除 projectId 外还有 projectName 与 rootReload（重试令牌），这三者
+   * 任一变化都要作废在途请求，不能只按 projectId 值变自动递增。
    */
-  const treeGenRef = useRef(0)
+  const treeGuard = useScopeGuard()
 
   // 切换项目时重置树，加载新项目根目录
   // biome-ignore lint/correctness/useExhaustiveDependencies: rootReload 是重试令牌——重试按钮自增它来重跑这次加载，effect 体里不读它
   useEffect(() => {
     let cancelled = false
-    // 世代号先自增：在途的懒加载请求返回时据此刻号认领自己的世代，一律丢弃。
-    treeGenRef.current += 1
+    // 世代先作废：在途的懒加载请求返回时据此刻号认领自己的世代，一律丢弃。
+    treeGuard.invalidate()
     setTreeRoot(null)
     setExpanded(new Set())
     setLoadingPaths(new Set())
@@ -392,7 +369,7 @@ export function FileBrowser({
   /** 懒加载某个目录的子项（失败落到 loadErrors，可就地重试）。 */
   const loadChildren = useCallback(
     async (dirPath: string) => {
-      const gen = treeGenRef.current
+      const gen = treeGuard.token()
       setLoadingPaths((prev) => new Set(prev).add(dirPath))
       setLoadErrors((prev) => {
         if (!prev.has(dirPath)) return prev
@@ -403,12 +380,12 @@ export function FileBrowser({
       try {
         const entries = await fileAPI.list(dirPath, projectId)
         // 世代已变（期间切换了项目）：这份列表属于上一个项目，丢弃。
-        if (gen !== treeGenRef.current) return
+        if (treeGuard.stale(gen)) return
         setTreeRoot((prev) =>
           prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
         )
       } catch (err) {
-        if (gen !== treeGenRef.current) return
+        if (treeGuard.stale(gen)) return
         // APIError 是结构体而非 Error 子类，必须结构化取 message（messageOf 口径）。
         setLoadErrors((prev) => new Map(prev).set(dirPath, messageOf(err) || '无法读取该目录'))
       } finally {
@@ -419,7 +396,7 @@ export function FileBrowser({
         })
       }
     },
-    [projectId],
+    [projectId, treeGuard.token, treeGuard.stale],
   )
 
   const handleToggle = useCallback(
@@ -436,14 +413,14 @@ export function FileBrowser({
       // 首次展开：懒加载子目录
       const needLoad = treeRoot ? findNode(treeRoot, dirPath)?.children === undefined : false
       if (needLoad) {
-        const gen = treeGenRef.current
+        const gen = treeGuard.token()
         await loadChildren(dirPath)
         // 等待期间切换了项目：展开态已在切换时复位，别把上一个项目的路径写回来。
-        if (gen !== treeGenRef.current) return
+        if (treeGuard.stale(gen)) return
       }
       setExpanded((prev) => new Set(prev).add(dirPath))
     },
-    [expanded, treeRoot, loadChildren],
+    [expanded, treeRoot, loadChildren, treeGuard.token, treeGuard.stale],
   )
 
   const handleSelect = useCallback(
@@ -483,11 +460,11 @@ export function FileBrowser({
       // 本函数已在途）。path 是项目内相对路径，成功后无条件落地会把**新项目**
       // 树里的同路径节点一并抹掉、并对新项目触发 onDelete——用户在 A 项目删
       // 文件，B 项目的同名文件却从界面消失。
-      const gen = treeGenRef.current
+      const gen = treeGuard.token()
       await fileAPI.delete(path, projectId)
       // 世代已变（删除在途时切换了项目）：落盘发生在旧项目，树更新与回调只该
       // 属于旧项目，对新项目一律不落地。
-      if (gen !== treeGenRef.current) return
+      if (treeGuard.stale(gen)) return
       setTreeRoot((prev) => (prev ? removeNode(prev, path) : prev))
       onDelete?.(path)
       if (isSearch) refetchSearch()
@@ -502,7 +479,16 @@ export function FileBrowser({
     } finally {
       setDeleting(false)
     }
-  }, [pendingDelete, projectId, onDelete, isSearch, refetchSearch, gitStatusQ])
+  }, [
+    pendingDelete,
+    projectId,
+    onDelete,
+    isSearch,
+    refetchSearch,
+    gitStatusQ,
+    treeGuard.token,
+    treeGuard.stale,
+  ])
 
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
 
@@ -535,14 +521,14 @@ export function FileBrowser({
       // 整条 reveal 链。
       for (const dir of [...chain, dirPath]) {
         if (treeRoot && findNode(treeRoot, dir)?.children === undefined) {
-          const gen = treeGenRef.current
+          const gen = treeGuard.token()
           await loadChildren(dir)
           // 等待期间切换了项目：后续祖先/目标目录的加载属于上一个项目，不再继续。
-          if (gen !== treeGenRef.current) return
+          if (treeGuard.stale(gen)) return
         }
       }
     },
-    [treeRoot, loadChildren],
+    [treeRoot, loadChildren, treeGuard.token, treeGuard.stale],
   )
 
   return (
@@ -584,20 +570,13 @@ export function FileBrowser({
             // data=undefined 直接落进下面的「无匹配文件」——用户据此判定文件不
             // 存在，去重建同名文件或改错位置。APIError 是结构体而非 Error 子类，
             // 必须结构化取 message，否则渲染成 [object Object]。
-            <div className={errorState} data-testid="file-search-error" role="alert">
-              <span className={errorTitle}>搜索失败</span>
-              <span className={errorDetail}>
-                {messageOf(searchQ.error) || '无法完成搜索，请稍后重试。'}
-              </span>
-              <button
-                type="button"
-                className={retryBtn}
-                data-testid="file-search-retry"
-                onClick={() => void refetchSearch()}
-              >
-                重试
-              </button>
-            </div>
+            <LoadError
+              title="搜索失败"
+              detail={messageOf(searchQ.error) || '无法完成搜索，请稍后重试。'}
+              onRetry={() => void refetchSearch()}
+              retryTestId="file-search-retry"
+              testId="file-search-error"
+            />
           ) : searchEntries.length === 0 ? (
             <div className={empty}>无匹配文件</div>
           ) : (
@@ -642,18 +621,13 @@ export function FileBrowser({
             </ul>
           )
         ) : rootError !== null ? (
-          <div className={errorState} data-testid="file-tree-error" role="alert">
-            <span className={errorTitle}>文件加载失败</span>
-            <span className={errorDetail}>{rootError || '无法读取项目文件。'}</span>
-            <button
-              type="button"
-              className={retryBtn}
-              data-testid="file-tree-retry"
-              onClick={() => setRootReload((n) => n + 1)}
-            >
-              重试
-            </button>
-          </div>
+          <LoadError
+            title="文件加载失败"
+            detail={rootError || '无法读取项目文件。'}
+            onRetry={() => setRootReload((n) => n + 1)}
+            retryTestId="file-tree-retry"
+            testId="file-tree-error"
+          />
         ) : !treeRoot ? (
           <div className={loading}>加载中…</div>
         ) : (

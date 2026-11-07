@@ -1,9 +1,10 @@
 import { css } from '@linaria/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
 import { TOUCH } from '@/styles/breakpoints.js'
@@ -343,8 +344,9 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const [newPhase, setNewPhase] = useState('')
   const [error, setError] = useState('')
   const [exportResult, setExportResult] = useState<string | null>(null)
-  /** 会话世代：sessionId 一变就自增，在途请求用它判断自己还属不属于当前面板。 */
-  const scopeGenRef = useRef(0)
+  /** 会话世代守卫（useScopeGuard 值模式：sessionId 变即作废）：
+   *  在途请求用它判断自己还属不属于当前面板。 */
+  const scopeGuard = useScopeGuard(sessionId)
 
   // 面板是「会话级」的，但组件实例不随会话切换重建（ChatPage→ChatView→
   // ChatSession 的路由 path 不变，只有 param 在换）。此前新任务输入框、失败红字、
@@ -358,7 +360,6 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   // 的会话内容无关，故不复位。
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是复位的触发条件，不参与计算
   useEffect(() => {
-    scopeGenRef.current += 1
     setShowAdd(false)
     setNewTask('')
     setNewPhase('')
@@ -367,7 +368,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   }, [sessionId])
 
   /** 本轮渲染所属的会话世代：在途请求回来时世代已变就说明用户换了会话。 */
-  const isCurrentScope = (gen: number) => scopeGenRef.current === gen
+  const isCurrentScope = (gen: number) => !scopeGuard.stale(gen)
 
   const {
     data,
@@ -403,7 +404,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
     // 导出的成果属于「按下导出键的那条会话」。在途期间用户切到别的会话时，成功
     // 提示与失败红字若照写，就变成新会话面板上的「已导出 N 个任务到看板」/
     // 「导出到看板失败：…」——一件没发生的事挂在别人的面板上。
-    onMutate: () => ({ gen: scopeGenRef.current }),
+    onMutate: () => ({ gen: scopeGuard.token() }),
     onSuccess: (count, _vars, ctx) => {
       if (!ctx || !isCurrentScope(ctx.gen)) return
       const gen = ctx.gen
@@ -442,7 +443,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
   const execMutation = useMutation({
     mutationFn: ({ sessionId: sid, op }: { sessionId: string; op: TodoOp }) =>
       todoAPI.exec(sid, op),
-    onMutate: () => ({ gen: scopeGenRef.current }),
+    onMutate: () => ({ gen: scopeGuard.token() }),
     onSuccess: (result: TodoOpResult, vars: { sessionId: string; op: TodoOp }, ctx) => {
       // todo 执行器刻意让操作级失败仍返回 200 + `_tag:'success'`，原因写进 output
       // 的 `Errors: …` 行（tools/builtin/todo.ts「Always return success」）；

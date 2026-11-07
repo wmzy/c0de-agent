@@ -3,15 +3,6 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/** 单仓库 baseline 状态（简化版，不处理嵌套 repo）。 */
-interface RepoBaseline {
-  repoRoot: string
-  headCommit: string
-  staged: string
-  unstaged: string
-  untracked: string[]
-}
-
 /** execFileSync 的 stdout maxBuffer 默认 1MB，大仓库的 diff/ls-files 输出可能
  * 超出——超限即抛 ERR_CHILD_PROCESS_STDIO_MAXBUFFER，快照/恢复直接失败。
  * 与 src/project/resolve.ts 的 GIT_MAX_BUFFER 同口径，统一 10MB。 */
@@ -38,16 +29,6 @@ function gitWithInput(cwd: string, args: string[], input: string): string {
   }).trim()
 }
 
-/** 捕获仓库当前 baseline（HEAD + staged + unstaged + untracked）。 */
-async function captureBaseline(repoRoot: string): Promise<RepoBaseline> {
-  const headCommit = git(repoRoot, ['rev-parse', 'HEAD'])
-  const staged = git(repoRoot, ['diff', '--cached', '--binary'])
-  const unstaged = git(repoRoot, ['diff', '--binary'])
-  const untrackedRaw = git(repoRoot, ['ls-files', '--others', '--exclude-standard'])
-  const untracked = untrackedRaw.split('\n').filter(Boolean)
-  return { repoRoot, headCommit, staged, unstaged, untracked }
-}
-
 /** 创建隔离 worktree（detached HEAD），返回其路径（子 agent 的 cwd）。 */
 async function createWorktree(repoRoot: string, branchName: string): Promise<string> {
   const wtDir = await mkdtemp(join(tmpdir(), `c0de-wt-${branchName}-`))
@@ -55,9 +36,9 @@ async function createWorktree(repoRoot: string, branchName: string): Promise<str
   return wtDir
 }
 
-/** 计算 worktree 相对 baseline 的完整 diff。
+/** 计算 worktree 的完整 diff。
  *  暂存所有改动（含新文件）后 diff --cached vs HEAD = 含增/删/改的完整 delta。 */
-async function captureDeltaPatch(worktreeDir: string, _baseline?: RepoBaseline): Promise<string> {
+async function captureDeltaPatch(worktreeDir: string): Promise<string> {
   git(worktreeDir, ['add', '-A'])
   return git(worktreeDir, ['diff', '--cached', '--binary'])
 }
@@ -96,5 +77,4 @@ function removeWorktree(repoRoot: string, worktreeDir: string): void {
   }
 }
 
-export type { RepoBaseline }
-export { applyPatchToParent, captureBaseline, captureDeltaPatch, createWorktree, removeWorktree }
+export { applyPatchToParent, captureDeltaPatch, createWorktree, removeWorktree }

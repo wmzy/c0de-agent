@@ -3,24 +3,19 @@ import { readFile, stat } from 'node:fs/promises'
 import { type Context, Hono } from 'hono'
 import { type SSEStreamingApi, streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
-import { type Config, loadConfigScopes } from '../../core/config.js'
+import type { Config } from '../../core/config.js'
 import type { LoopDeps } from '../../core/loop.js'
-import { compactContext } from '../../core/loop.js'
+import { runManualCompact } from '../../core/loop.js'
+import { preflightRoute } from '../../core/provider-registry.js'
 import { discoverSkills } from '../../core/skills.js'
 import { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
 import type { RegisterChildRun } from '../../core/types.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
-import {
-  createWorkflowRegistry,
-  discoverWorkflows,
-  resolveWorkflow,
-} from '../../core/workflows/index.js'
+import { createWorkflowRegistry, discoverWorkflows } from '../../core/workflows/index.js'
 import { createDebugSpawn } from '../../dap/index.js'
 import type { Registry } from '../../llm/registry.js'
-import { resolveRoute } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
-import { enrichProjectRiskWithGlobal, projectTrustNeeded } from '../../project/trust.js'
 import { insertEntry } from '../../session/message.js'
 import { getLLMSegments } from '../../session/segments.js'
 import {
@@ -46,6 +41,7 @@ import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
 import { resolveSessionScope } from '../util/session-scope.js'
+import { resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
 import { createSlashWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /** getSession 的返回类型（含 null）；路由层守卫块的公共输入。 */
@@ -422,30 +418,10 @@ async function resolveChatProjectEnv(
   if (session.projectId) {
     const project = await getProject(ctx.db, session.projectId)
     if (project) {
-      const scopes = loadConfigScopes(cwd)
-      const risks = projectTrustNeeded(
-        scopes.project,
-        scopes.global,
-        project.trustedAt,
-        project.riskFingerprint,
-        project.worktree,
-      )
-      if (risks.length > 0) {
-        // 并入全局配置的权限风险上下文（不改变门禁触发条件）：用户做信任决策时
-        // 能看到完整生效的权限状态（如全局已 auto），避免「信任了项目却困惑于
-        // 权限为何仍自动放行」。
-        const items = enrichProjectRiskWithGlobal(risks, scopes.global)
-        return {
-          ok: false,
-          response: apiError(
-            c,
-            409,
-            'TRUST_REQUIRED',
-            `项目「${project.name ?? project.worktree}」的项目配置（.c0de/config.json）包含需要你确认的风险项`,
-            { projectId: project.id, projectName: project.name ?? project.worktree, items },
-          ),
-        }
-      }
+      // 信任门禁（trust-gate.ts 单点，与工作流入口同一实现）：需用户确认的
+      // 风险项 → 409 TRUST_REQUIRED，前端弹窗明示，用户显式信任后重发。
+      const response = trustGateResponse(c, project)
+      if (response) return { ok: false, response }
     }
   }
   return {
@@ -490,24 +466,15 @@ async function runWorkflowSlashChannel(
   }
   const wfArgs = parts.slice(2).join(' ')
   const registry = ctx.workflowRegistry ?? createWorkflowRegistry()
-  // 统一解析：项目级（已信任）> 用户 > 内置。仅在会话已绑定项目时发现
-  // 项目级工作流——聊天门禁已保证该项目可信且指纹未漂移；孤儿会话
-  // （无 projectId）不再按 cwd 无条件发现：其目录未注册、信任状态未知，
-  // 此前会在未信任仓库直接 dynamic import 其工作流代码。
-  let entry = ctx.workflowRegistry?.get(name)
-  if (projectId) {
-    entry =
-      (await resolveWorkflow({
-        name,
-        registry,
-        projectDir: cwd,
-        projectTrusted: true,
-      })) ?? entry
-  }
+  // 统一解析：项目级 > 用户 > 内置（resolveWorkflowEntry 单点，信任态按项目
+  // 记录实时复检，不再硬编码 projectTrusted:true 依赖外层聊天门禁）。
+  // 仅在会话已绑定项目时发现项目级——孤儿会话（无 projectId）的目录未注册、
+  // 信任状态未知，此前会在未信任仓库直接 dynamic import 其工作流代码。
+  const { entry, trusted } = await resolveWorkflowEntry(ctx, { name, registry, projectId })
   if (!entry) {
-    // 错误提示里列出可用工作流：仅在会话绑定项目（门禁已通过）时发现
-    // 项目级——与上方解析同口径，不因「拼错名字」在未信任目录执行仓库代码。
-    const discovered = projectId ? await discoverWorkflows(cwd) : []
+    // 错误提示里列出可用工作流：仅项目当前可信时发现项目级——与上方解析
+    // 同口径，不因「拼错名字」在未信任目录执行仓库代码。
+    const discovered = trusted ? await discoverWorkflows(cwd) : []
     const available = [
       ...registry.list().map((e) => e.meta.name),
       ...discovered.map((e) => e.meta.name),
@@ -604,16 +571,18 @@ async function dispatchSlashCommand(
     sessionId,
     // 消费渠道：/model 等命令按渠道给指引（Web 有底部模型选择器）。
     channel: 'web' as const,
-    // 内置斜杠命令（/clear、/fork、/config）仅需 db + config；
-    // 但 /workflow run 会走 executeWorkflow → buildWorkflowContext → runSubAgent，
-    // 该路径需要 agentRegistry 来派生子 agent，因此必须注入。
+    // 内置斜杠命令（/clear、/fork、/config、/workflow list|show|create|edit）
+    // 只需 db + config + 展示类依赖。注意这是**非完整 LoopDeps**（缺
+    // skills/debugSpawn 等），仅供列表/查询类命令消费；/workflow run 已在上方
+    // 提前分流到 runWorkflowSlashChannel（完整 deps 在 workflow-run.ts 单点
+    // 组装），不再经由 commandCtx.deps 执行 executeWorkflow。
     workflowRegistry: ctx.workflowRegistry,
     deps: {
       db: ctx.db,
       config: sessionConfig,
       cwd,
-      // P1 工作流权限：占位 checker 在 streamSSE 回调内被替换为交互式
-      // checker——/workflow run 的子 agent 才能对 ask 工具弹窗确认。
+      // 通用命令的权限 checker 占位：在 streamSSE 回调内被替换为交互式
+      // checker（见下）——不保留 autoAllowChecker 静默放行的入口。
       permission: autoAllowChecker,
       toolRegistry: ctx.toolRegistry,
       llmRegistry: sessionRegistry,
@@ -629,11 +598,12 @@ async function dispatchSlashCommand(
   return streamSSE(c, async (stream) => {
     const stopHeartbeat = startHeartbeat(stream)
     try {
-      // P1 工作流权限：子命令（尤其 /workflow run）的子 agent 继承此 checker。
-      // 此前用 autoAllowChecker：ask 工具返回 permission_required 结果但无
-      // 确认通道（confirm 是 no-op），写/执行工具在工作流里静默不可用。
-      // 现在与主 agent 一致：permission_required 经 SSE 弹窗，用户确认后
-      // 经 /api/tools/confirm 消费全局 store。
+      // 通用命令的执行 checker：与主 agent 一致——permission_required 经 SSE
+      // 弹窗，用户确认后经 /api/tools/confirm 消费全局 store。此前用
+      // autoAllowChecker：ask 工具返回 permission_required 结果但无确认通道
+      // （confirm 是 no-op），写/执行工具静默不可用（/workflow run 走通用通道
+      // 时期的问题；run 现已分流到 runWorkflowSlashChannel，此处保持同一
+      // 交互式口径）。
       const permissionChecker = createStreamPermissionChecker(ctx, {
         stream,
         sessionId,
@@ -648,21 +618,19 @@ async function dispatchSlashCommand(
       }
       const result = await cmd.execute(parsed.args, streamCommandCtx)
       if (result._tag === 'compact') {
-        // /compact：手动触发上下文压缩。复用 loop.compactContext（createSummarizer +
-        // compactSession），不创建主 agent、不进入 LLM turn 循环（不把 /compact 当作
-        // user 消息发给模型）。
+        // /compact：手动触发上下文压缩。agent 组装与 compactContext 流式执行
+        // 收敛在 loop.runManualCompact（createSummarizer + compactSession），
+        // 不创建主 agent、不进入 LLM turn 循环（不把 /compact 当作 user 消息
+        // 发给模型）。config 取值口径保留在调用方：body.provider/model ??
+        // 会话默认。
         const provider = (body.provider as string) ?? sessionConfig.defaultProvider
         const model = (body.model as string) ?? sessionConfig.defaultModel
-        const agentConfig: AgentConfig = {
-          provider,
-          model,
-          tools: [],
-          plugins: sessionConfig.plugins.enabled,
-          agentName: 'default',
-        }
-        const compactState = await createAgent(env.session, agentConfig, commandCtx.deps)
         try {
-          for await (const event of compactContext(compactState, commandCtx.deps)) {
+          for await (const event of runManualCompact(
+            env.session,
+            { provider, model, plugins: sessionConfig.plugins.enabled },
+            commandCtx.deps,
+          )) {
             await stream.writeSSE({
               event: event._tag,
               data: JSON.stringify(event),
@@ -781,13 +749,13 @@ async function buildUserContent(env: ChatRunEnv): Promise<ChatStageResult<Messag
   return { ok: true, value: userContent }
 }
 
-/** 阶段 6：provider/model 解析 + 首次运行引导预检。
+/** 阶段 6：provider/model 解析 + 首次运行引导预检（preflightRoute 单点实现，
+ *  与 CLI print 同口径；此处只保留 Web 端错误呈现——错误码/hint/details）。
  *  P1-1：默认 provider/model 按会话项目配置解析（此前用服务启动目录配置，
  *  其他项目的 defaultProvider 设置被静默忽略）。
  *  P0-1：provider 未配置/未注册时立即返回可操作错误，不让错误延迟到 SSE 流内
  *  以英文 NoRoute 冒出。前端据此引导用户去设置页。
- *  注：测试注入 ctx.chatStream 时跳过——测试 registry 空壳不代表生产未配置。
- *  P2-4：区分两种失败——完全没有配置 provider vs 配置了但名字不匹配。 */
+ *  注：测试注入 ctx.chatStream 时跳过——测试 registry 空壳不代表生产未配置。 */
 function resolveProviderForRun(
   env: ChatRunEnv,
 ): ChatStageResult<{ provider: string; model: string }> {
@@ -795,47 +763,37 @@ function resolveProviderForRun(
   const provider = (body.provider as string) ?? sessionConfig.defaultProvider
   const model = (body.model as string) ?? sessionConfig.defaultModel
   if (!ctx.chatStream) {
-    try {
-      resolveRoute(sessionRegistry, provider, model)
-    } catch {
-      const configured = sessionConfig.providers
-        .map((p) => p.name)
-        .filter(Boolean)
-        .join(', ')
-      const hasAny = sessionConfig.providers.length > 0
+    const pre = preflightRoute(sessionRegistry, sessionConfig.providers, provider, model)
+    if (!pre.ok) {
+      if (pre.reason === 'model-not-found') {
+        return {
+          ok: false,
+          response: apiError(
+            c,
+            400,
+            'MODEL_NOT_FOUND',
+            `provider「${provider}」没有名为「${model}」的模型。已配置模型：${pre.knownModels.join(', ')}`,
+            { provider, model, knownModels: pre.knownModels },
+          ),
+        }
+      }
+      // P2-4：区分两种失败——完全没有配置 provider vs 配置了但名字不匹配。
+      const configured = pre.configured.join(', ')
       return {
         ok: false,
         response: apiError(
           c,
           400,
-          hasAny ? 'PROVIDER_NOT_FOUND' : 'NO_PROVIDER_CONFIGURED',
-          hasAny
-            ? `未找到名为「${provider}」的 AI 服务。已配置：${configured}。` +
-                '请检查拼写，或前往「设置 → Provider」添加该服务。'
-            : `未配置可用的 AI 服务（provider: ${provider}）。请前往「设置 → Provider」添加 API 服务并测试连接`,
+          pre.reason === 'no-providers' ? 'NO_PROVIDER_CONFIGURED' : 'PROVIDER_NOT_FOUND',
+          pre.reason === 'no-providers'
+            ? `未配置可用的 AI 服务（provider: ${provider}）。请前往「设置 → Provider」添加 API 服务并测试连接`
+            : `未找到名为「${provider}」的 AI 服务。已配置：${configured}。` +
+                '请检查拼写，或前往「设置 → Provider」添加该服务。',
           {
             provider,
-            configuredProviders: sessionConfig.providers.map((p) => p.name).filter(Boolean),
+            configuredProviders: pre.configured,
             ...(configured ? { hint: `已配置：${configured}` } : {}),
           },
-        ),
-      }
-    }
-    // P2-4：provider 显式声明了模型清单但请求模型不在其中 → 大概率拼写错误。
-    // 未声明清单的 provider（自建网关等）接受任意模型名，不做校验。
-    const providerDef = sessionConfig.providers.find(
-      (p) => (p.name || (p as { _tag?: string })._tag) === provider,
-    )
-    const modelNames = providerDef?.models ? Object.keys(providerDef.models) : undefined
-    if (modelNames && modelNames.length > 0 && !modelNames.includes(model)) {
-      return {
-        ok: false,
-        response: apiError(
-          c,
-          400,
-          'MODEL_NOT_FOUND',
-          `provider「${provider}」没有名为「${model}」的模型。已配置模型：${modelNames.join(', ')}`,
-          { provider, model, knownModels: modelNames },
         ),
       }
     }
@@ -1211,7 +1169,10 @@ function createChatRoute(ctx: ServerContext): Hono {
     // 否则后台子 agent 在用户认为「已暂停」时继续执行）。
     const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
     const targetId = busyWorkflowId ?? sessionId
-    if (!busyWorkflowId && runStarting(c, sessionId)) return runStarting(c, sessionId)
+    if (!busyWorkflowId) {
+      const starting = runStarting(c, sessionId)
+      if (starting) return starting
+    }
     const paused = ctx.agentManager.pauseCascade(targetId)
     return c.json({ paused })
   })
@@ -1225,7 +1186,10 @@ function createChatRoute(ctx: ServerContext): Hono {
     // 永远等待已暂停的子 agent（死锁）。
     const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
     const targetId = busyWorkflowId ?? sessionId
-    if (!busyWorkflowId && runStarting(c, sessionId)) return runStarting(c, sessionId)
+    if (!busyWorkflowId) {
+      const starting = runStarting(c, sessionId)
+      if (starting) return starting
+    }
     const resumed = ctx.agentManager.resumeCascade(targetId)
     return c.json({ resumed })
   })

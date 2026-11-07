@@ -31,6 +31,7 @@ import {
   snippetLabel,
 } from '@/composer/types.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 
 type PopoverState = 'slash' | 'subcommand' | 'at' | 'workflow' | null
 
@@ -154,8 +155,9 @@ function useComposer({
    */
   const sendAttemptRef = useRef(0)
   /**
-   * 草稿作用域世代号。切会话/切作用域时自增；在途请求落地时（发送失败的还原、
-   * 追加指令受理后的清空）必须先确认还在同一个作用域里。
+   * 草稿作用域世代守卫（useScopeGuard 值模式：draftScope 变即作废，含
+   * 有值 ↔ undefined 的切换）。在途请求落地时（发送失败的还原、追加指令受理后的
+   * 清空）必须先确认还在同一个作用域里。
    *
    * sendAttemptRef 挡不住跨会话这一路：它只认「又有一次发送」，而切会话不改它。
    * 于是「在 A 发消息 → 请求还没回来就点开 B」时，A 那次失败回来仍会在 B 的输入框
@@ -163,7 +165,7 @@ function useComposer({
    * 同一段文字被记在两条会话头上。hook 实例并不随会话切换重建（目标会话的消息
    * 已在 react-query 缓存里时不走 ChatSkeleton 早返回），所以这条路径是真实可达的。
    */
-  const scopeGenRef = useRef(0)
+  const scopeGuard = useScopeGuard(draftScope)
 
   // commands 用 ref 避免每次列表变化都重建 handleInput callback
   const commandsRef = useRef<CommandInfo[] | undefined>(commands)
@@ -314,10 +316,9 @@ function useComposer({
   // 本 hook 整体重建，草稿只能来自存储）。
   // biome-ignore lint/correctness/useExhaustiveDependencies: setImages 是 useState 的稳定 setter，列进依赖是为了让「还原哪些附件」显式可见
   useEffect(() => {
-    // 作用域世代自增：在途请求落地时必须先确认还在同一个作用域（见 scopeGenRef）。
-    scopeGenRef.current += 1
-    // 上一作用域在途的图片读取一律作废（落地时世代不符会被丢弃），名额计数随之
-    // 清零，否则这些作废的读取会在返回时把计数扣成负数、白白放行更多附件。
+    // 作用域世代已在渲染期由 scopeGuard 作废（draftScope 一变）：上一作用域在途
+    // 的图片读取一律作废（落地时世代不符会被丢弃），名额计数随之清零，否则这些
+    // 作废的读取会在返回时把计数扣成负数、白白放行更多附件。
     pendingImagesRef.current = 0
     draftRestoredRef.current = false
     const stored = draftScope ? loadDraft(draftScope) : null
@@ -499,32 +500,35 @@ function useComposer({
    *
    *  读取落地时同样同步写镜像再 setState：pending 减 1 与 images 加 1 之间不留
    *  计数空档，否则紧接着的那次添加会读到偏小的数、又放行一张。
-   *  作用域世代校验沿用本 hook 既有口径（见 scopeGenRef）：切换会话/项目后才回来
+   *  作用域世代校验沿用本 hook 既有口径（见 scopeGuard）：切换会话/项目后才回来
    *  的图片属于上一个作用域，不能落进当前的附件栏。 */
-  const addImageFile = useCallback((file: File) => {
-    const inFlight = pendingImagesRef.current
-    const err = validateImage(file, imagesRef.current.length + inFlight)
-    setImageError(err)
-    if (err) return
-    pendingImagesRef.current = inFlight + 1
-    const gen = scopeGenRef.current
-    void readImagePart(file)
-      .then((part) => {
-        pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
-        if (gen !== scopeGenRef.current) return
-        const next = [...imagesRef.current, part]
-        imagesRef.current = next
-        setImages(next)
-      })
-      .catch(() => {
-        pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
-        // 与 then 分支同口径：读取失败同样可能落在切走之后——FileReader 挂起窗口里
-        // 切了会话，旧作用域的失败回落会把「读取图片失败」画到新会话的 composer
-        // 顶上，而那条会话一张图都没拖过。
-        if (gen !== scopeGenRef.current) return
-        setImageError('读取图片失败')
-      })
-  }, [])
+  const addImageFile = useCallback(
+    (file: File) => {
+      const inFlight = pendingImagesRef.current
+      const err = validateImage(file, imagesRef.current.length + inFlight)
+      setImageError(err)
+      if (err) return
+      pendingImagesRef.current = inFlight + 1
+      const gen = scopeGuard.token()
+      void readImagePart(file)
+        .then((part) => {
+          pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
+          if (scopeGuard.stale(gen)) return
+          const next = [...imagesRef.current, part]
+          imagesRef.current = next
+          setImages(next)
+        })
+        .catch(() => {
+          pendingImagesRef.current = Math.max(0, pendingImagesRef.current - 1)
+          // 与 then 分支同口径：读取失败同样可能落在切走之后——FileReader 挂起窗口里
+          // 切了会话，旧作用域的失败回落会把「读取图片失败」画到新会话的 composer
+          // 顶上，而那条会话一张图都没拖过。
+          if (scopeGuard.stale(gen)) return
+          setImageError('读取图片失败')
+        })
+    },
+    [scopeGuard],
+  )
 
   // 添加图片（拖拽/选择）
   const addImage = useCallback(
@@ -635,8 +639,8 @@ function useComposer({
     // （或又按了 steering），那时先落地的那次失败再回来还原，就会把后来那条的输入
     // 一起盖掉、并按错误的假设去动提示历史。
     const attempt = ++sendAttemptRef.current
-    // 本次发送所属的草稿作用域：切会话后 A 那次的失败不得回填到 B 的输入框（见 scopeGenRef）。
-    const scopeGen = scopeGenRef.current
+    // 本次发送所属的草稿作用域：切会话后 A 那次的失败不得回填到 B 的输入框（见 scopeGuard）。
+    const scopeGen = scopeGuard.token()
     const scopeAtSend = draftScopeRef.current
     // 清空照旧立即发生（发送成功的体感不能等一轮请求）：失败走下面的还原分支。
     if (visible.trim()) saveHistory(prependHistoryEntry(loadHistory(), visible))
@@ -675,7 +679,7 @@ function useComposer({
       // 写进当前会话，并（persist=true）落成当前会话的草稿。改为把失败快照落回
       // **原会话**的草稿键（发送时刚被清掉的那份）：回到原会话时输入框里还是这段
       // 文字——既不写进当前会话，也不把用户已经打好的输入丢掉。
-      if (scopeGenRef.current !== scopeGen) {
+      if (scopeGuard.stale(scopeGen)) {
         if (scopeAtSend && draftScopeRef.current === scopeAtSend) {
           // 切走又切回原作用域（A→B→A）：世代已变而当前正是发起会话，上面按
           // 「作用域不同」落盘的分支不命中；而回到 A 时挂载 effect 已按「A 的
@@ -700,7 +704,17 @@ function useComposer({
         if (ok === false) restore()
       })
     }
-  }, [busy, isStreaming, onAbort, onSend, readPrompt, images, setPromptExternal, resetHistory])
+  }, [
+    busy,
+    isStreaming,
+    onAbort,
+    onSend,
+    readPrompt,
+    images,
+    setPromptExternal,
+    resetHistory,
+    scopeGuard,
+  ])
 
   // 追加指令：流式态下注入 steering 文本（仅流式态可用，空文本 no-op）
   const steer = useCallback(() => {
@@ -722,10 +736,10 @@ function useComposer({
     sendAttemptRef.current += 1
     // 本次指令所属的草稿作用域：切会话后它落地时不得去清空新会话的输入框
     // （新会话的草稿恰好与这段指令同文时，clear 会把它删掉）。
-    const scopeGen = scopeGenRef.current
+    const scopeGen = scopeGuard.token()
     const visible = promptToText(prompt)
     const clear = () => {
-      if (scopeGenRef.current !== scopeGen) return
+      if (scopeGuard.stale(scopeGen)) return
       // 输入框在请求在途期间仍可编辑：期间用户新敲的字不属于这条指令，不覆盖。
       if (promptToText(readPrompt()) !== visible) return
       setPromptExternal(DEFAULT_PROMPT)
@@ -753,7 +767,7 @@ function useComposer({
       clear()
       done()
     }
-  }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory])
+  }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory, scopeGuard])
 
   /**
    * 用户显式关掉浮层的唯一入口（handleKeyDown 的 Esc 分支与 Composer 的 Tab 分支）。

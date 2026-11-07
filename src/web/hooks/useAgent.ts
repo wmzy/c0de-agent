@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { agentAPI } from '@/services/agent.js'
 import { messageOf } from '@/utils/errors.js'
 
@@ -13,17 +14,18 @@ export function useAgent(sessionId: string) {
   // 也无条件翻转 paused——按钮变成「恢复」而对话仍在消耗 token。
   const [error, setError] = useState<string | null>(null)
   /**
-   * 会话世代号。paused/busy/error 描述的都是「**这一条**会话的运行」，而本 hook 的
-   * 实例在同 path 换 sessionId 时不会重建（ChatSession 自述），Chat 也不重建——于是
-   * 在 A 上点「暂停」失败（或撞上 {paused:false}）后切到 B，A 的「⚠ 没有可暂停的运行」
-   * 红条与 paused=true 会整块挂到 B 上：B 的对话在跑，顶栏却写「恢复」，点下去只会拿到
-   * 「没有可恢复的运行」。切会话先作废世代并复位，迟到的响应不得写进新会话。
+   * 会话世代守卫（useScopeGuard 值模式：sessionId 变即作废）。paused/busy/error
+   * 描述的都是「**这一条**会话的运行」，而本 hook 的实例在同 path 换 sessionId 时
+   * 不会重建（ChatSession 自述），Chat 也不重建——于是在 A 上点「暂停」失败（或撞上
+   * {paused:false}）后切到 B，A 的「⚠ 没有可暂停的运行」红条与 paused=true 会整块
+   * 挂到 B 上：B 的对话在跑，顶栏却写「恢复」，点下去只会拿到「没有可恢复的运行」。
+   * 切会话先作废世代，迟到的响应不得写进新会话（busy/paused/error 的复位仍在下方
+   * sessionId effect 里）。
    */
-  const genRef = useRef(0)
+  const scopeGuard = useScopeGuard(sessionId)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 只是触发条件（切会话即复位），不参与本 effect 的计算
   useEffect(() => {
-    genRef.current += 1
     setBusy(false)
     setPaused(false)
     setError(null)
@@ -31,10 +33,10 @@ export function useAgent(sessionId: string) {
 
   const run = useCallback(
     async <T>(fn: (isStale: () => boolean) => Promise<T>): Promise<T | undefined> => {
-      const gen = genRef.current
+      const gen = scopeGuard.token()
       // 世代不同 = 这次操作属于上一条会话，它的一切落地（失败原因、暂停态、busy）
       // 都不属于当前界面。
-      const isStale = () => genRef.current !== gen
+      const isStale = () => scopeGuard.stale(gen)
       setBusy(true)
       setError(null)
       try {
@@ -46,8 +48,10 @@ export function useAgent(sessionId: string) {
       } finally {
         if (!isStale()) setBusy(false)
       }
+      // scopeGuard 的三个方法都是稳定引用（useMemo 固定），列进依赖只为满足
+      // useExhaustiveDependencies，不会引起重建。
     },
-    [],
+    [scopeGuard.token, scopeGuard.stale],
   )
 
   return {

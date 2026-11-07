@@ -39,8 +39,7 @@ async function runSlashCommand(
     return true
   }
 
-  const { compactContext } = await import('../../core/loop.js')
-  const { createAgent } = await import('../../core/agent.js')
+  const { runManualCompact } = await import('../../core/loop.js')
   const { getSession } = await import('../../session/session.js')
 
   // /workflow 命令注入三级注册表（内置 + 用户级 + 受信任的项目级）：
@@ -49,7 +48,7 @@ async function runSlashCommand(
   let workflowRegistry: import('../../core/workflows/registry.js').WorkflowRegistry | undefined
   if (parsed.name === 'workflow') {
     const { createAndPopulateRegistry } = await import('../../core/workflows/index.js')
-    const { resolveCwdProjectTrusted } = await import('../deps.js')
+    const { resolveCwdProjectTrusted } = await import('../../project/index.js')
     const projectTrusted = await resolveCwdProjectTrusted(ctx.deps.db, ctx.deps.cwd).catch(
       () => false,
     )
@@ -76,15 +75,17 @@ async function runSlashCommand(
     if (!session) {
       throw new Error(`session not found: ${continueId}`)
     }
-    const agentConfig = {
-      provider: ctx.config.defaultProvider,
-      model: ctx.config.defaultModel,
-      tools: [],
-      plugins: ctx.config.plugins.enabled,
-      agentName: 'default',
-    }
-    const state = await createAgent(session, agentConfig, ctx.deps)
-    for await (const event of compactContext(state, ctx.deps)) {
+    // agent 组装与压缩执行收敛在 loop.runManualCompact；config 取值口径保留
+    // CLI 侧：全局 defaultProvider/defaultModel。
+    for await (const event of runManualCompact(
+      session,
+      {
+        provider: ctx.config.defaultProvider,
+        model: ctx.config.defaultModel,
+        plugins: ctx.config.plugins.enabled,
+      },
+      ctx.deps,
+    )) {
       if (event._tag === 'text_delta') out(`${event.text}\n`)
     }
     return true

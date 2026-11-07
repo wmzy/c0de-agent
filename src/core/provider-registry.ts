@@ -13,6 +13,7 @@ import {
   type Registry,
   rebuildRegistry,
   registerProvider,
+  resolveRoute,
 } from '../llm/registry.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
@@ -76,4 +77,66 @@ function syncRegistryFromConfig(registry: Registry, config: Config): void {
   })
 }
 
-export { buildRegistryFromConfig, registerProviderFromConfig, syncRegistryFromConfig }
+/** provider/model 运行前预检结果（判别联合）：
+ *  - ok：路由可解析，且（provider 声明了模型清单时）请求模型在清单内；
+ *  - no-providers：配置完全没有 provider 条目 → 首跑引导添加；
+ *  - provider-not-found：路由解析失败但已有配置（大概率拼写错误）→ 列已配置名；
+ *  - model-not-found：provider 显式声明了模型清单但请求模型不在其中。
+ *   未声明清单的 provider（自建网关等）接受任意模型名，不做校验。 */
+type RoutePreflight =
+  | { ok: true }
+  | {
+      ok: false
+      reason: 'no-providers' | 'provider-not-found'
+      provider: string
+      /** 已配置 provider 名单（畸形/无名条目剔除），供错误文案与 details。 */
+      configured: string[]
+    }
+  | {
+      ok: false
+      reason: 'model-not-found'
+      provider: string
+      model: string
+      knownModels: string[]
+    }
+
+/** provider/model 运行前预检（server 聊天路由与 CLI print 共用的单点实现）。
+ *
+ * 此前两份内联实现已漂移：Web 版 provider 条目查找兼容 `_tag` 标识
+ * （name 缺失时回退，与 registerProviderFromConfig 注册口径一致），CLI 版
+ * 只比 name——同一份配置在两端判定不同。收敛后统一按注册口径查找。 */
+function preflightRoute(
+  registry: Registry,
+  providers: ProviderConfig[],
+  provider: string,
+  model: string,
+): RoutePreflight {
+  // 读取侧自愈兜底：手改/旧版配置可能携带畸形条目（null/非对象），剔除后再判
+  const entries = providers.filter((p): p is ProviderConfig => p != null && typeof p === 'object')
+  try {
+    resolveRoute(registry, provider, model)
+  } catch {
+    if (entries.length === 0) {
+      return { ok: false, reason: 'no-providers', provider, configured: [] }
+    }
+    return {
+      ok: false,
+      reason: 'provider-not-found',
+      provider,
+      configured: entries.map((p) => p.name).filter(Boolean),
+    }
+  }
+  const providerDef = entries.find((p) => (p.name || (p as { _tag?: string })._tag) === provider)
+  const modelNames = providerDef?.models ? Object.keys(providerDef.models) : undefined
+  if (modelNames && modelNames.length > 0 && !modelNames.includes(model)) {
+    return { ok: false, reason: 'model-not-found', provider, model, knownModels: modelNames }
+  }
+  return { ok: true }
+}
+
+export {
+  buildRegistryFromConfig,
+  preflightRoute,
+  registerProviderFromConfig,
+  syncRegistryFromConfig,
+}

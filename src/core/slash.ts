@@ -111,8 +111,9 @@ const compactCommand: SlashCommand = {
   name: 'compact',
   description: '手动触发上下文压缩',
   execute: async () => {
-    // 仅声明意图：真正的压缩由消费方（loop.compactContext / chat 路由）执行，
-    // 复用 createSummarizer + runCompaction，且不把 /compact 当作 user 消息发给 LLM。
+    // 仅声明意图：真正的压缩由消费方（loop 层 compactContext / chat 路由）执行，
+    // 复用 createSummarizer + compactSession（session 层压缩改写），且不把 /compact
+    // 当作 user 消息发给 LLM。
     return { _tag: 'compact' }
   },
 }
@@ -349,15 +350,9 @@ const workflowCommand: SlashCommand = {
     // 此前无条件发现：Web 未注册目录的会话/CLI 路径会在未信任仓库执行工作流代码。
     let projectWorkflows: Awaited<ReturnType<typeof discoverWorkflows>> = []
     try {
-      const { getByDirectory } = await import('../project/index.js')
-      const { projectTrustCurrent } = await import('../project/trust.js')
-      const { loadConfigScopes } = await import('./config.js')
-      const p = await getByDirectory(ctx.deps.db, ctx.cwd)
-      if (p?.trustedAt != null) {
-        const scopes = loadConfigScopes(ctx.cwd)
-        if (projectTrustCurrent(scopes.project, p.trustedAt, p.riskFingerprint, ctx.cwd)) {
-          projectWorkflows = await discoverWorkflows(ctx.cwd)
-        }
+      const { resolveCwdProjectTrusted } = await import('../project/index.js')
+      if (await resolveCwdProjectTrusted(ctx.deps.db, ctx.cwd)) {
+        projectWorkflows = await discoverWorkflows(ctx.cwd)
       }
     } catch {
       // 信任查询失败 → 不发现项目级（fail-closed）
