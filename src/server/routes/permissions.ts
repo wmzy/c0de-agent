@@ -2,10 +2,11 @@ import { eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { sessions } from '../../db/schema.js'
-import { getSession } from '../../session/session.js'
 import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
+import { getLiveSessionOr404 } from './chat.js'
 
 /** GET/PUT /api/permissions — 授权模式（default 逐个确认 / auto 自动放行 ask 工具）。
  *  - 根路径：全局默认模式（启动时取 config.permission.defaultMode；
@@ -100,6 +101,10 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // 设置 auto 覆盖、写入白名单均污染内存 Map 而无真实会话承载；返回全局
   // 默认模式也会冒充「该会话的模式」，调用方无法区分「无覆盖」与「会话不存在」。
   // /:sessionId/pending 只读内存 permissionStore（不触 DB），不受守卫约束。
+  //
+  // 完整口径（非 UUID / 不存在 / 已进回收站 → 404）收敛到 getLiveSessionOr404：
+  // 非 UUID 由其内部 try/catch 统一吸收（getSession 抛 22P02 → 404），deletedAt
+  // 判定即 requireLive 默认语义，与会话各写端点同源。
   const guardSessionId = async (
     c: Context,
     next: () => Promise<void>,
@@ -108,10 +113,11 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     if (!isUuid(sessionId)) {
       return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
     }
-    const session = await getSession(ctx.db, sessionId)
-    if (!session || session.deletedAt) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
+    const live = await getLiveSessionOr404(ctx, c, sessionId, {
+      notFoundMessage: '会话不存在或已删除',
+      deletedMessage: '会话不存在或已删除',
+    })
+    if (!live.ok) return live.response
     await next()
   }
   app.use('/:sessionId', guardSessionId)
@@ -126,8 +132,9 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // PUT / — 设置全局默认授权模式（P1-4：持久化到 global 作用域 config）。
   // 此前仅本次运行生效、重启静默回退，与同款控件在会话页的持久化语义相悖。
   app.put('/', async (c) => {
-    const body = (await c.req.json().catch(() => null)) as { mode?: unknown } | null
-    const mode = body?.mode
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const mode = parsed.body.mode
     if (mode !== 'default' && mode !== 'auto') {
       return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
     }
@@ -163,8 +170,9 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // PUT /:sessionId — 设置会话级覆盖；不传 mode 则清除覆盖。P2：落库持久化。
   app.put('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
-    const body = (await c.req.json().catch(() => null)) as { mode?: unknown } | null
-    const mode = body?.mode
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const mode = parsed.body.mode
     if (mode !== undefined && mode !== 'default' && mode !== 'auto') {
       return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
     }
@@ -196,8 +204,9 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
   // POST /:sessionId/always-allow — 追加工具到会话白名单（幂等）
   app.post('/:sessionId/always-allow', async (c) => {
     const sessionId = c.req.param('sessionId')
-    const body = (await c.req.json().catch(() => null)) as { tool?: unknown } | null
-    const tool = body?.tool
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const tool = parsed.body.tool
     if (typeof tool !== 'string' || tool.length === 0) {
       return apiError(c, 400, 'BAD_REQUEST', 'tool is required')
     }

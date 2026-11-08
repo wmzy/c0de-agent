@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { CollapsiblePre } from '@/components/session/tools/CollapsiblePre.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
+import { resultText } from '@/components/session/tools/toolShape.js'
 
 /** 入参区的灰底 <pre>（不折叠：入参摊平后通常只有几行，限高兜底防极端长参数）。 */
 const pre = css`
@@ -48,7 +49,7 @@ export function FallbackToolView({
   // 失败必须走 ToolError：此前失败原因被塞进与成功输出同形的中性灰 <pre>，
   // 且 error 为空白串时整块渲染成空白（与 Read/Write/Edit/Grep/Glob 同一口径）。
   const errorText = toolErrorText(output, status)
-  const resultText = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
+  const text = resultText(output)
   return (
     <div>
       {pairs.length > 0 && (
@@ -61,7 +62,7 @@ export function FallbackToolView({
       {errorText !== null ? (
         <ToolError output={output} status={status} />
       ) : (
-        resultText && <CollapsiblePre testId="fallback-output">{resultText}</CollapsiblePre>
+        text && <CollapsiblePre testId="fallback-output">{text}</CollapsiblePre>
       )}
     </div>
   )

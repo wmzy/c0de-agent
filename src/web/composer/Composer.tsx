@@ -17,6 +17,7 @@ import {
   promptToText,
   replacePromptRange,
 } from '@/composer/types.js'
+import type { PopoverState } from '@/composer/useComposer.js'
 import { useComposer } from '@/composer/useComposer.js'
 import { WorkflowPopover } from '@/composer/WorkflowPopover.js'
 import { useFileReferenceSetter } from '@/contexts/ReferenceContext.js'
@@ -223,6 +224,16 @@ const pasteCancelBtn = css`
   }
 `
 
+/** 浮层种类（非 null 的 popover 状态）。 */
+type PopoverKind = Exclude<PopoverState, null>
+
+/** 浮层候选按 name 模糊过滤（斜杠命令 / 工作流浮层共用）：空 query 原样返回列表，
+ * 保证键盘导航与浮层渲染始终用同一列表。 */
+function fuzzyFilter<T extends { name: string }>(list: T[], query: string): T[] {
+  if (!query) return list
+  return fuzzysort.go(query, list, { key: 'name' }).map((r) => r.obj)
+}
+
 type SendPayload = ComposerSendPayload & {
   agents: string[]
 }
@@ -350,18 +361,20 @@ function Composer(props: ComposerProps) {
 
   // slash 命令按 query 过滤——过滤必须与键盘导航/选择使用同一列表，
   // 否则 activeIndex 指向的项与 popover 展示的项不一致（选中错误命令）。
-  const filteredCommands = useMemo(() => {
-    if (!composer.popoverQuery) return commands
-    return fuzzysort.go(composer.popoverQuery, commands, { key: 'name' }).map((r) => r.obj)
-  }, [composer.popoverQuery, commands])
+  const filteredCommands = useMemo(
+    () => fuzzyFilter(commands, composer.popoverQuery),
+    [composer.popoverQuery, commands],
+  )
 
   // /workflow (run|show|create|edit) <name> 补全：按 name 过滤工作流列表
-  const filteredWorkflows = useMemo(() => {
-    if (!composer.popoverQuery) return workflows
-    return fuzzysort.go(composer.popoverQuery, workflows, { key: 'name' }).map((r) => r.obj)
-  }, [composer.popoverQuery, workflows])
+  const filteredWorkflows = useMemo(
+    () => fuzzyFilter(workflows, composer.popoverQuery),
+    [composer.popoverQuery, workflows],
+  )
 
-  // 子命令补全：从当前命令的 subcommands 按 query 过滤
+  // 子命令补全：从当前命令的 subcommands 按 query 过滤。
+  // 前缀匹配（startsWith）而非 fuzzysort 模糊匹配——子命令要求严格前缀语义，
+  // 不复用 fuzzyFilter。
   const filteredSubcommands = useMemo(() => {
     const cmd = commands.find((c) => c.name === composer.subcommandCmd)
     if (!cmd?.subcommands) return []
@@ -388,10 +401,14 @@ function Composer(props: ComposerProps) {
     setFileReferenceApi,
   ])
 
-  const [slashActive, setSlashActive] = useState(0)
-  const [atActive, setAtActive] = useState(0)
-  const [workflowActive, setWorkflowActive] = useState(0)
-  const [subcommandActive, setSubcommandActive] = useState(0)
+  // 四个浮层的键盘高亮项共用一份「kind → 下标」状态：各浮层互斥打开，
+  // 进入浮层 / query 变化时由下方 effect 把当前浮层的高亮重置到顶部。
+  const [activeByPopover, setActiveByPopover] = useState<Record<PopoverKind, number>>({
+    slash: 0,
+    at: 0,
+    workflow: 0,
+    subcommand: 0,
+  })
   const [isDragging, setIsDragging] = useState(false)
   const pasteInsertRef = useRef<HTMLButtonElement | null>(null)
 
@@ -401,21 +418,11 @@ function Composer(props: ComposerProps) {
     if (composer.showPasteConfirm) pasteInsertRef.current?.focus()
   }, [composer.showPasteConfirm])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
+  // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置当前浮层选中项到顶部
   useEffect(() => {
-    if (composer.popover === 'slash') setSlashActive(0)
-  }, [composer.popover, composer.popoverQuery])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
-  useEffect(() => {
-    if (composer.popover === 'at') setAtActive(0)
-  }, [composer.popover, composer.popoverQuery])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
-  useEffect(() => {
-    if (composer.popover === 'workflow') setWorkflowActive(0)
-  }, [composer.popover, composer.popoverQuery])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: query 变化时重置选中项到顶部
-  useEffect(() => {
-    if (composer.popover === 'subcommand') setSubcommandActive(0)
+    const kind = composer.popover
+    if (!kind) return
+    setActiveByPopover((m) => (m[kind] === 0 ? m : { ...m, [kind]: 0 }))
   }, [composer.popover, composer.popoverQuery])
 
   // @ mention 候选：subagent（非 primary）按 query 过滤。
@@ -469,6 +476,35 @@ function Composer(props: ComposerProps) {
   const fallThroughStalePopover = (e: KeyboardEvent) => {
     composer.setPopover(null)
     composer.handleKeyDown(e, true)
+  }
+
+  /** 浮层键盘导航（四个浮层共用）：↓/↑ 在 [0, len-1] 内移动当前浮层的高亮项。 */
+  const moveActive = (kind: PopoverKind, delta: 1 | -1, len: number) => {
+    setActiveByPopover((m) => ({
+      ...m,
+      [kind]: delta > 0 ? Math.min(m[kind] + 1, len - 1) : Math.max(m[kind] - 1, 0),
+    }))
+  }
+
+  /** Enter 选中当前浮层的高亮项；插入失败（项不存在或 insert* 放弃）返回 false。 */
+  const pickActive = (kind: PopoverKind): boolean => {
+    const i = activeByPopover[kind]
+    if (kind === 'workflow') {
+      const wf = filteredWorkflows[i]
+      return !!wf && composer.insertWorkflow(wf.name)
+    }
+    if (kind === 'slash') {
+      const cmd = filteredCommands[i]
+      return !!cmd && composer.insertSlash(cmd.name)
+    }
+    if (kind === 'subcommand') {
+      const sub = filteredSubcommands[i]
+      return !!sub && composer.insertSubcommand(sub.name)
+    }
+    const selected = atMenuSelection(atMenu, i)
+    if (selected?.kind === 'agent') return insertAgentToken(selected.agent.name)
+    if (selected?.kind === 'file') return composer.insertFile(selected.file.path)
+    return false
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -530,93 +566,25 @@ function Composer(props: ComposerProps) {
       composer.dismissPopover()
       return
     }
-    if (popoverNavigable && composer.popover === 'workflow') {
+    // 四个浮层共用同一套键盘导航（popoverCandidates 即当前浮层的候选数，与各
+    // 浮层渲染条件一致）：↓/↑ 移动高亮，Enter 选中高亮项；插入失败说明浮层已经
+    // 无法响应（光标被移开/候选越界），交给 fallThroughStalePopover 关浮层并按
+    // 「无浮层」处理按键。
+    if (popoverNavigable && composer.popover) {
+      const kind = composer.popover
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setWorkflowActive((i) => Math.min(i + 1, filteredWorkflows.length - 1))
+        moveActive(kind, 1, popoverCandidates)
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setWorkflowActive((i) => Math.max(i - 1, 0))
+        moveActive(kind, -1, popoverCandidates)
         return
       }
       if (e.key === 'Enter' && !e.shiftKey) {
-        const wf = filteredWorkflows[workflowActive]
-        if (wf && composer.insertWorkflow(wf.name)) {
-          e.preventDefault()
-          return
-        }
-        fallThroughStalePopover(e)
-        return
-      }
-    }
-    if (popoverNavigable && composer.popover === 'slash') {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSlashActive((i) => Math.min(i + 1, filteredCommands.length - 1))
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSlashActive((i) => Math.max(i - 1, 0))
-        return
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        const cmd = filteredCommands[slashActive]
-        if (cmd && composer.insertSlash(cmd.name)) {
-          e.preventDefault()
-          return
-        }
-        fallThroughStalePopover(e)
-        return
-      }
-    }
-    if (popoverNavigable && composer.popover === 'subcommand') {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSubcommandActive((i) => Math.min(i + 1, filteredSubcommands.length - 1))
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSubcommandActive((i) => Math.max(i - 1, 0))
-        return
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        const sub = filteredSubcommands[subcommandActive]
-        if (sub && composer.insertSubcommand(sub.name)) {
-          e.preventDefault()
-          return
-        }
-        fallThroughStalePopover(e)
-        return
-      }
-    }
-    if (popoverNavigable && composer.popover === 'at') {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setAtActive((i) => Math.min(i + 1, atTotal - 1))
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setAtActive((i) => Math.max(i - 1, 0))
-        return
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        const selected = atMenuSelection(atMenu, atActive)
-        const inserted =
-          selected?.kind === 'agent'
-            ? insertAgentToken(selected.agent.name)
-            : selected?.kind === 'file'
-              ? composer.insertFile(selected.file.path)
-              : false
-        if (inserted) {
-          e.preventDefault()
-          return
-        }
-        fallThroughStalePopover(e)
+        if (pickActive(kind)) e.preventDefault()
+        else fallThroughStalePopover(e)
         return
       }
     }
@@ -719,7 +687,7 @@ function Composer(props: ComposerProps) {
           <div className={popoverGroup} role="group" aria-label="斜杠命令">
             <SlashPopover
               commands={filteredCommands}
-              activeIndex={slashActive}
+              activeIndex={activeByPopover.slash}
               loading={commandsQuery.isLoading}
               error={popoverError}
               onRetry={() => void commandsQuery.refetch()}
@@ -732,7 +700,7 @@ function Composer(props: ComposerProps) {
           <div className={popoverGroup} role="group" aria-label="子命令">
             <SubcommandPopover
               subcommands={filteredSubcommands}
-              activeIndex={subcommandActive}
+              activeIndex={activeByPopover.subcommand}
               loading={commandsQuery.isLoading}
               error={popoverError}
               onRetry={() => void commandsQuery.refetch()}
@@ -746,7 +714,7 @@ function Composer(props: ComposerProps) {
           <div className={popoverGroup} role="group" aria-label="工作流">
             <WorkflowPopover
               workflows={filteredWorkflows}
-              activeIndex={workflowActive}
+              activeIndex={activeByPopover.workflow}
               loading={workflowsQuery.isLoading}
               error={popoverError}
               onRetry={() => void workflowsQuery.refetch()}
@@ -760,7 +728,7 @@ function Composer(props: ComposerProps) {
             <AtFilePopover
               subagents={atSubagents}
               files={atFiles}
-              activeIndex={atActive}
+              activeIndex={activeByPopover.at}
               loading={fileSearch.isLoading}
               error={popoverError}
               onRetry={() => void fileSearch.refetch()}

@@ -104,11 +104,12 @@ function createFilePill(path: string, label: string): HTMLSpanElement {
   span.setAttribute('data-type', 'file')
   span.setAttribute('data-path', path)
   span.setAttribute('contenteditable', 'false')
+  span.className = pillStyle
   span.textContent = label
   return span
 }
 
-/** pill 公共样式（file 与 snippet pill 共用），hover 时有底色提示可交互。 */
+/** pill 公共样式（file / snippet / terminal pill 共用），hover 时有底色提示可交互。 */
 const pillStyle = css`
   display: inline-block;
   padding: 1px 6px;

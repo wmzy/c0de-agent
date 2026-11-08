@@ -125,6 +125,15 @@ export function sanitizeToolResult(raw: unknown): ToolResult {
   }
 }
 
+/** `success`/`truncated` 两种终态都携带正常输出文本（truncated 只是超限截断，
+ *  正文仍在 output）；其余（error / permission_required / 结果未落地）没有可展示
+ *  的正文，取 fallback（默认 ''）。这个「取结果正文」的判定此前在 Read/Edit/
+ *  Pattern/Fallback/Task/Bash 六个工具视图里各持一份手写三元/if 链。 */
+export function resultText(output: ToolResult | undefined, fallback = ''): string {
+  if (output?._tag !== 'success' && output?._tag !== 'truncated') return fallback
+  return output.output
+}
+
 export type TodoPhaseLike = { name: string; tasks: { content: string; status: string }[] }
 
 export type BoardLike = {

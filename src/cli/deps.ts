@@ -1,16 +1,13 @@
-import { loadConfigScopes } from '../core/config.js'
+import { bootstrapRuntime } from '../core/bootstrap.js'
 import type { LoopDeps } from '../core/loop.js'
 import { buildRegistryFromConfig } from '../core/provider-registry.js'
 import { discoverSkills } from '../core/skills.js'
 import { createDebugSpawn } from '../dap/index.js'
 import type { DB } from '../db/client.js'
-import { collectScopedMCPServers, registerMCPServers } from '../mcp/index.js'
-import { initPlugins } from '../plugins/index.js'
-import { resolveCwdProjectTrusted } from '../project/index.js'
 import { budgetGateEnabled } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
-import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
+import { createDefaultURLRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
 import type { PermissionChecker, PermissionResult } from '../tools/types.js'
 
@@ -110,26 +107,13 @@ function resolvePermission(
 
 /** 组装完整 LoopDeps（默认 safe 放行 + 默认工具注册表）。 */
 async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<LoopDeps> {
-  const llmRegistry = buildRegistryFromConfig(config)
-  const toolRegistry = createDefaultRegistry(config)
-  // P0-2：项目插件仅在项目被显式信任后加载（c0de trust <dir>）；内存库
-  // （--temp/锁冲突降级）不含项目记录 → 未信任，项目插件不加载。
-  // P0（代码面）：已信任但指纹漂移（插件代码/MCP 参数/风险键变更）→ 不加载，
-  // 与聊天门禁同口径。
-  const projectTrusted = await resolveCwdProjectTrusted(opts.db, opts.cwd)
-  const { hookRunner, config: resolvedConfig } = await initPlugins({
-    cwd: opts.cwd,
-    config,
-    toolRegistry,
-    llmRegistry,
-    projectTrusted,
-  })
-  // MCP 客户端（spec §6）：全局作用域始终连接；项目作用域（随 git clone 传播的
-  // 任意命令执行面）仅项目已信任时连接——与插件加载同口径。stdio 子进程已
-  // unref：CLI 进程退出时 stdin 关闭，MCP 服务器自行退出。
-  await registerMCPServers(
-    toolRegistry,
-    collectScopedMCPServers(loadConfigScopes(opts.cwd), projectTrusted),
+  // 启动序列（registries → 信任门禁 → 插件 → MCP）单一实现在 core/bootstrap.ts。
+  // CLI 侧生命周期差异：MCP stdio 子进程已 unref——CLI 进程退出时 stdin 关闭，
+  // MCP 服务器自行退出，故不持有 mcpSessions 做关闭清理。
+  const { toolRegistry, llmRegistry, hookRunner, resolvedConfig } = await bootstrapRuntime(
+    opts.cwd,
+    opts.db,
+    { config },
   )
   const deps: LoopDeps = {
     db: opts.db,

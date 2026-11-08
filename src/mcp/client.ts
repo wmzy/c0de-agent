@@ -22,6 +22,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 function createMCPClient(transport: MCPTransport): MCPClient {
   let nextId = 1
   const pending = new Map<number, Pending>()
+  // dispose 后拒绝新请求/通知、不再向已关 transport 发送（语义同 DAP client）
+  let disposed = false
 
   const failAll = (message: string): void => {
     for (const p of pending.values()) {
@@ -48,11 +50,13 @@ function createMCPClient(transport: MCPTransport): MCPClient {
     }
   })
   transport.onClose(() => {
+    disposed = true
     failAll('MCP transport closed')
   })
 
   return {
     request(method, params, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+      if (disposed) return Promise.reject(new Error('MCP client disposed'))
       const id = nextId
       nextId += 1
       const msg: JSONRPCRequest = {
@@ -74,6 +78,7 @@ function createMCPClient(transport: MCPTransport): MCPClient {
       })
     },
     notify(method, params) {
+      if (disposed) return
       const msg: JSONRPCNotification = {
         jsonrpc: '2.0',
         method,
@@ -82,6 +87,8 @@ function createMCPClient(transport: MCPTransport): MCPClient {
       transport.send(msg)
     },
     close() {
+      if (disposed) return
+      disposed = true
       failAll('MCP client closed')
       transport.close()
     },

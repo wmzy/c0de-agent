@@ -219,13 +219,10 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   // POST /:projectId/import — 导入/替换整板（列+标签+卡片原子重建）。
   app.post('/:projectId/import', async (c) => {
     const projectId = c.req.param('projectId')
-    const body = (await c.req.json().catch(() => null)) as {
-      version?: unknown
-      columns?: unknown
-      labels?: unknown
-      cards?: unknown
-    } | null
-    if (body?.version !== 1 || !Array.isArray(body.columns) || !Array.isArray(body.cards)) {
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
+    if (body.version !== 1 || !Array.isArray(body.columns) || !Array.isArray(body.cards)) {
       return apiError(
         c,
         400,

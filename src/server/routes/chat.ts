@@ -41,6 +41,7 @@ import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
 import { resolveSessionScope } from '../util/session-scope.js'
+import { emitSseError } from '../util/sse.js'
 import { resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
 import { createSlashWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
@@ -637,25 +638,10 @@ async function dispatchSlashCommand(
             })
           }
         } catch (e) {
-          await stream.writeSSE({
-            event: 'error',
-            data: JSON.stringify({
-              _tag: 'error',
-              error: {
-                _tag: 'unexpected',
-                message: e instanceof Error ? e.message : String(e),
-              },
-            }),
-          })
+          await emitSseError(stream, e)
         }
       } else if (result._tag === 'error') {
-        await stream.writeSSE({
-          event: 'error',
-          data: JSON.stringify({
-            _tag: 'error',
-            error: { _tag: 'unexpected', message: result.message },
-          }),
-        })
+        await emitSseError(stream, result)
       } else {
         const text = result._tag === 'success' ? result.message : result.text
         await stream.writeSSE({
@@ -665,13 +651,7 @@ async function dispatchSlashCommand(
       }
       await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
     } catch (e) {
-      await stream.writeSSE({
-        event: 'error',
-        data: JSON.stringify({
-          _tag: 'error',
-          error: { _tag: 'unexpected', message: String(e) },
-        }),
-      })
+      await emitSseError(stream, e)
       await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
     } finally {
       stopHeartbeat()
@@ -1008,38 +988,12 @@ async function streamAgentRun(
             })
           }
         } catch (err) {
-          const message =
-            err instanceof Error
-              ? err.message
-              : typeof err === 'object' && err !== null && 'message' in err
-                ? String((err as { message: unknown }).message)
-                : String(err)
-          await stream.writeSSE({
-            event: 'error',
-            data: JSON.stringify({
-              _tag: 'error',
-              error: {
-                _tag: 'unexpected',
-                message,
-              },
-            }),
-          })
+          await emitSseError(stream, err)
         }
       } catch (err) {
         // 启动阶段（createAgent/updateSessionLastRun 等）失败：补发 error 事件。
         // 客户端已断开时 writeSSE 会 reject，吞掉以保证 finally 善后执行。
-        await stream
-          .writeSSE({
-            event: 'error',
-            data: JSON.stringify({
-              _tag: 'error',
-              error: {
-                _tag: 'unexpected',
-                message: err instanceof Error ? err.message : String(err),
-              },
-            }),
-          })
-          .catch(() => {})
+        await emitSseError(stream, err, { swallow: true })
       } finally {
         stopHeartbeat()
         // 先从 agentManager 释放（占位与活跃 run 均幂等）：必须最先执行，确保

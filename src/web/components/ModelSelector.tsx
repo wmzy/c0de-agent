@@ -4,6 +4,7 @@ import { Button } from 'haze-ui'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
+import { useDismiss } from '@/hooks/useDismiss.js'
 import { providerAPI } from '@/services/provider.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -300,24 +301,8 @@ export function ModelSelector({
     })
   }
 
-  // 点击外部 / Escape 关闭（同 DropdownMenu 模式）
-  useEffect(() => {
-    if (!hintsOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        closeHints()
-      }
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeHints()
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [hintsOpen, closeHints])
+  // 点击外部 / Escape 关闭（useDismiss 统一实现，同 DropdownMenu 模式）
+  useDismiss(wrapRef, { open: hintsOpen, onClose: closeHints })
 
   // 高亮项滚入可视区（jsdom 无 scrollIntoView，用可选调用兜底）
   useEffect(() => {

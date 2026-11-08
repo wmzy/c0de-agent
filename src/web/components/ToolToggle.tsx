@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { useDismiss } from '@/hooks/useDismiss.js'
 import { toolAPI } from '@/services/tool.js'
 import { cardStyle, inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -178,28 +179,9 @@ export function ToolToggle({
   const isAllEnabled = enabled === null || (total > 0 && names.every((n) => enabled.has(n)))
   const isNoneEnabled = enabled !== null && enabled.size === 0
 
-  // 点击组件外部 / Escape 关闭弹层。此前这里只挂了 mousedown：键盘用户 Tab 到
-  // 「工具」按 Enter 展开后，唯一的关闭路径是点击组件外部——Esc 无任何监听者，
-  // 菜单关不掉，只能逐个 Tab 走完菜单内全部控件才能离开（与 ModelSelector 的同一
-  // 浮层模式不一致，后者 mousedown + keydown Escape 都有）。Esc 关闭后把焦点交还
+  // 点击组件外部 / Escape 关闭弹层（useDismiss 统一实现）。Esc 关闭后把焦点交还
   // 触发按钮，避免焦点随菜单卸载掉回 body、下一次 Tab 从文档头重来。
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setOpen(false)
-      triggerRef.current?.focus()
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  useDismiss(ref, { open, onClose: () => setOpen(false), escapeFocusRef: triggerRef })
 
   // 展开时把焦点送入菜单（role="menu" 的键盘约定）：否则焦点停在触发按钮上，
   // 菜单虽开却不在键盘可达流里，Esc 也关不掉。

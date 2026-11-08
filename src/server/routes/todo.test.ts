@@ -1,7 +1,8 @@
 // todo REST 路由测试（UI 手动操作入口 POST /:sessionId）。
+import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { DB } from '../../db/client.js'
-import { projects } from '../../db/schema.js'
+import { projects, sessions } from '../../db/schema.js'
 import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { createRegistry } from '../../llm/registry.js'
 import { getMessages } from '../../session/message.js'
@@ -68,6 +69,27 @@ describe('todo route', () => {
     const getRes = await app.request(`/${sessionId}`)
     const body = (await getRes.json()) as { phases: unknown[] }
     expect(body.phases).toEqual([])
+  })
+
+  // 回收站会话此前只查 !session（不查 deletedAt）：仍可执行 todo 操作并
+  // appendMessage 持久化——写端点 requireLive 口径（getLiveSessionOr404）收敛。
+  it('POST 回收站会话 → 404，不执行 todo 操作也不持久化', async () => {
+    const { app, db, sessionId } = await setup()
+    await db.db.update(sessions).set({ deletedAt: new Date() }).where(eq(sessions.id, sessionId))
+    const res = await app.request(`/${sessionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'init', list: [{ phase: 'A', items: ['task x'] }] }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('NOT_FOUND')
+    // 未被持久化：GET 仍为空列表（消息无 todo 记录）
+    const getRes = await app.request(`/${sessionId}`)
+    const state = (await getRes.json()) as { phases: unknown[] }
+    expect(state.phases).toEqual([])
+    const parts = (await getMessages(db, sessionId)).flatMap((m) => m.content)
+    expect(parts.some((p) => p._tag === 'tool_result')).toBe(false)
   })
 
   // 前端 normalizeParts 按 id 把 tool_call 与 tool_result 配成一块；两个 id 不一致时

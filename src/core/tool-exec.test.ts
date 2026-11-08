@@ -53,6 +53,33 @@ describe('executeToolCalls', () => {
     const results = await executeToolCalls(registry, permission, makeCtx(), calls)
     expect(results[0]?.id).toBe('a')
   })
+
+  it('并行分支单调用抛错 → 该调用带自身 id 的 error result，其余调用不受影响', async () => {
+    // 权限检查器在 executor 的 try/catch 之外，check 抛错会沿并行分支拒绝——
+    // 回归：拒绝分支必须携带 tc.id（曾丢成 'unknown'，下游按 id 配对落库时静默丢失）
+    const throwingPermission: PermissionChecker = {
+      check: async (_tool, input) => {
+        if ((input as { path?: string }).path === 'TRIGGER') {
+          throw new Error('permission checker exploded')
+        }
+        return { _tag: 'allow' }
+      },
+      confirm: () => {},
+    }
+    const calls = [
+      { id: 'boom', tool: 'read', input: { path: 'TRIGGER' } },
+      { id: 'ok', tool: 'read', input: { path: 'package.json', limit: 1 } },
+    ]
+    const results = await executeToolCalls(registry, throwingPermission, makeCtx(), calls)
+    expect(results).toHaveLength(2)
+    expect(results[0]?.id).toBe('boom')
+    expect(results[0]?.result).toEqual({
+      _tag: 'error',
+      error: 'Error: permission checker exploded',
+    })
+    expect(results[1]?.id).toBe('ok')
+    expect(results[1]?.result._tag).toBe('success')
+  })
 })
 
 describe('partitionByConflict', () => {

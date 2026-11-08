@@ -261,11 +261,17 @@ function mcpCanonicalLines(raw: Partial<Config> | undefined): string[] {
   return lines
 }
 
-/** 项目插件目录内全部文件的内容 hash 行（相对路径 + sha256；按路径排序保证确定性）。
- *  目录不存在/不可读 → 空（指纹退化为配置口径；插件加载侧另有 fail-closed 门禁）。 */
-function pluginDirHashes(projectDir: string | undefined): string[] {
-  if (!projectDir) return []
-  const dir = join(projectDir, '.c0de', 'plugins')
+/** 目录内文件的内容 hash 行（`<prefix>:<rel>:<sha256>`；按路径排序保证确定性）。
+ *  目录不存在/不可读 → 空（指纹退化为配置口径；插件加载侧另有 fail-closed 门禁）；
+ *  单个文件读取失败跳过（不因无法 hash 而放行或误报）。recursive 时递归子目录
+ *  （插件口径），否则只哈希直接子文件（工作流口径，filter 再筛文件名）。
+ *  输出直接进入持久化的信任指纹——格式/过滤口径任何变化都会使既有信任失效
+ *  （用户被重新门禁），改动必须先对比新旧输出字节级一致。 */
+function hashDirContents(
+  dir: string,
+  prefix: string,
+  opts: { recursive?: boolean; filter?: (entry: string) => boolean } = {},
+): string[] {
   const lines: string[] = []
   const walk = (cur: string) => {
     let entries: string[] = []
@@ -276,15 +282,16 @@ function pluginDirHashes(projectDir: string | undefined): string[] {
       return
     }
     for (const entry of entries) {
+      if (opts.filter && !opts.filter(entry)) continue
       const full = join(cur, entry)
       try {
         if (statSync(full).isDirectory()) {
-          walk(full)
+          if (opts.recursive) walk(full)
           continue
         }
         const rel = relative(dir, full).split(sep).join('/')
         lines.push(
-          `plugin-file:${rel}:${createHash('sha256').update(readFileSync(full)).digest('hex')}`,
+          `${prefix}:${rel}:${createHash('sha256').update(readFileSync(full)).digest('hex')}`,
         )
       } catch {
         // 单个文件读取失败跳过（不因无法 hash 而放行或误报）
@@ -293,6 +300,13 @@ function pluginDirHashes(projectDir: string | undefined): string[] {
   }
   walk(dir)
   return lines
+}
+
+/** 项目插件目录（`.c0de/plugins`）全部文件的内容 hash 行（递归：插件可 import
+ *  同目录其它文件，内容面覆盖整个目录树）。 */
+function pluginDirHashes(projectDir: string | undefined): string[] {
+  if (!projectDir) return []
+  return hashDirContents(join(projectDir, '.c0de', 'plugins'), 'plugin-file', { recursive: true })
 }
 
 /** 项目工作流目录 `.c0de/workflows` 下的 `*.js` 文件名（排序；目录缺失 → 空）。
@@ -310,25 +324,14 @@ function workflowFileNames(projectDir: string): string[] {
   }
 }
 
-/** 项目工作流目录内全部文件的内容 hash 行（与 pluginDirHashes 同口径：
- *  相对路径 + sha256；目录不存在 → 空）。工作流文件内容漂移（同名改代码）
- *  与插件一样触发 trust-drift 复检，杜绝「信任后 git pull 换代码」绕过。 */
+/** 项目工作流目录内 `*.js` 文件的内容 hash 行（仅顶层文件，风险面以
+ *  workflowFileNames 为准）。工作流文件内容漂移（同名改代码）与插件一样
+ *  触发 trust-drift 复检，杜绝「信任后 git pull 换代码」绕过。 */
 function workflowDirHashes(projectDir: string | undefined): string[] {
   if (!projectDir) return []
-  const dir = join(projectDir, '.c0de', 'workflows')
-  const lines: string[] = []
-  for (const entry of workflowFileNames(projectDir)) {
-    try {
-      lines.push(
-        `workflow-file:${entry}:${createHash('sha256')
-          .update(readFileSync(join(dir, entry)))
-          .digest('hex')}`,
-      )
-    } catch {
-      // 单个文件读取失败跳过（不因无法 hash 而放行或误报）
-    }
-  }
-  return lines
+  return hashDirContents(join(projectDir, '.c0de', 'workflows'), 'workflow-file', {
+    filter: (f) => f.endsWith('.js'),
+  })
 }
 
 /**

@@ -4,7 +4,7 @@ import { CodeBlock } from '@/components/CodeBlock.js'
 import { CollapsiblePre } from '@/components/session/tools/CollapsiblePre.js'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
-import { strArg } from '@/components/session/tools/toolShape.js'
+import { resultText, strArg } from '@/components/session/tools/toolShape.js'
 
 /** bash 输出块与上方命令块的上间距（追加到 CollapsiblePre 的统一 pre 样式）。 */
 const outGap = css`
@@ -76,15 +76,13 @@ export function BashToolView({
     )
   }
 
-  // 成功：output.output + metadata.exitCode
-  let outText = ''
-  let exitCode: number | null = null
-  if (output?._tag === 'success') {
-    outText = output.output
-    exitCode = typeof output.metadata?.exitCode === 'number' ? output.metadata.exitCode : null
-  } else if (output?._tag === 'truncated') {
-    outText = output.output
-  }
+  // 成功：output.output + metadata.exitCode（正文判定走 resultText 统一口径，
+  // truncated 只是超限截断、正文照取；metadata 只有 success 才有）
+  const outText = resultText(output)
+  const exitCode =
+    output?._tag === 'success' && typeof output.metadata?.exitCode === 'number'
+      ? output.metadata.exitCode
+      : null
 
   return (
     <div>

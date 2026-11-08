@@ -83,6 +83,11 @@ class KanbanCardNotFoundError extends Error {
 
 // ── Row → API mappers ──────────────────────────────────────
 
+/** 本项目的活动看板判定（软删行不计）——懒建/读写/回收站恢复路径共用的单一 where 口径。 */
+export function activeBoardWhere(projectId: string) {
+  return and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt))
+}
+
 function rowToBoard(row: BoardRow): KanbanBoard {
   return {
     id: row.id,
@@ -131,7 +136,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     const [row] = await db
       .select({ id: kanbanBoards.id })
       .from(kanbanBoards)
-      .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+      .where(activeBoardWhere(projectId))
       .limit(1)
     // 正常路径行一定存在（insert + onConflictDoNothing 已保证）。防御性兜底：
     // 唯一 projectId 槽位被软删行占用等异常态下不再返回 undefined id
@@ -168,7 +173,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     const [row] = await db
       .select({ id: kanbanBoards.id })
       .from(kanbanBoards)
-      .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+      .where(activeBoardWhere(projectId))
       .limit(1)
     return row?.id ?? null
   }
@@ -214,7 +219,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
       const [boardRow] = await db
         .select()
         .from(kanbanBoards)
-        .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+        .where(activeBoardWhere(projectId))
         .limit(1)
       if (!boardRow) return null
       const cards = await db
@@ -365,7 +370,7 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
           ...(patch.labels !== undefined && { labels: patch.labels }),
           updatedAt: new Date(),
         })
-        .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+        .where(activeBoardWhere(projectId))
         .returning()
       const row = boardRow as BoardRow
       return rowToBoard(row)
@@ -470,7 +475,7 @@ export async function softDeleteKanbanBoard(
   const boards = await handle.db
     .select({ id: kanbanBoards.id })
     .from(kanbanBoards)
-    .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+    .where(activeBoardWhere(projectId))
   let deleted = false
   for (const board of boards) {
     if (await softDeleteKanbanBoardById(handle, board.id, projectName, worktree)) deleted = true
@@ -537,6 +542,25 @@ export async function getDeletedKanbanBoard(
   return toDeletedBoard(b, counts[0]?.n ?? 0)
 }
 
+/** 回收站看板重新激活（restore 与 merge 的无目标板路径共用）：软删行重新归属到
+ *  目标项目并清空回收站字段。仅回收站内（isNotNull(deletedAt)）的行可激活；
+ *  返回 false = 无匹配行（板已不在回收站）。 */
+async function reactivateBoard(tx: DB['db'], boardId: string, projectId: string): Promise<boolean> {
+  const rows = await tx
+    .update(kanbanBoards)
+    .set({
+      projectId,
+      deletedAt: null,
+      deletedProjectName: null,
+      deletedProjectWorktree: null,
+      purgePendingAt: null,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
+    .returning({ id: kanbanBoards.id })
+  return rows.length > 0
+}
+
 export type RestoreKanbanBoardResult =
   | { ok: true }
   | { ok: false; reason: 'BOARD_NOT_FOUND' | 'TARGET_HAS_BOARD' }
@@ -554,22 +578,12 @@ export async function restoreKanbanBoard(
       const [active] = await tx
         .select({ id: kanbanBoards.id })
         .from(kanbanBoards)
-        .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+        .where(activeBoardWhere(projectId))
         .limit(1)
       if (active) return { ok: false, reason: 'TARGET_HAS_BOARD' } as const
-      const rows = await tx
-        .update(kanbanBoards)
-        .set({
-          projectId,
-          deletedAt: null,
-          deletedProjectName: null,
-          deletedProjectWorktree: null,
-          purgePendingAt: null,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
-        .returning({ id: kanbanBoards.id })
-      if (rows.length === 0) return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
+      if (!(await reactivateBoard(tx, boardId, projectId))) {
+        return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
+      }
       return { ok: true } as const
     })
   } catch (err) {
@@ -611,24 +625,14 @@ export async function mergeKanbanBoard(
     const [target] = await tx
       .select({ id: kanbanBoards.id, columns: kanbanBoards.columns, labels: kanbanBoards.labels })
       .from(kanbanBoards)
-      .where(and(eq(kanbanBoards.projectId, projectId), isNull(kanbanBoards.deletedAt)))
+      .where(activeBoardWhere(projectId))
       .limit(1)
 
     // 目标无活动看板 → 重新归属（等价普通恢复，但保持 merge 调用幂等语义）。
     if (!target) {
-      const rows = await tx
-        .update(kanbanBoards)
-        .set({
-          projectId,
-          deletedAt: null,
-          deletedProjectName: null,
-          deletedProjectWorktree: null,
-          purgePendingAt: null,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(kanbanBoards.id, boardId), isNotNull(kanbanBoards.deletedAt)))
-        .returning({ id: kanbanBoards.id })
-      if (rows.length === 0) return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
+      if (!(await reactivateBoard(tx, boardId, projectId))) {
+        return { ok: false, reason: 'BOARD_NOT_FOUND' } as const
+      }
       return { ok: true, mergedColumns: 0, mergedCards: 0, mergedLabels: 0 } as const
     }
 

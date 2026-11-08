@@ -193,8 +193,12 @@ function rejectCommitMessage(
   return apiError(c, 400, 'BAD_REQUEST', 'commit message must be a single line')
 }
 
-function createFilesRoute(ctx: ServerContext): Hono {
-  const app = new Hono()
+/** 子 app 变量注入：中间件解析工作区根后放入 context，handler 经 c.get 取得
+ *  （auth.ts 同款模式）——免去每个 handler 重复的 resolveWorkspaceRoot 三行样板。 */
+type FilesEnv = { Variables: { workspaceRoot: string } }
+
+function createFilesRoute(ctx: ServerContext): Hono<FilesEnv> {
+  const app = new Hono<FilesEnv>()
 
   /**
    * 从请求 URL 提取工作区相对文件路径（逐段 decodeURIComponent）。
@@ -206,7 +210,7 @@ function createFilesRoute(ctx: ServerContext): Hono {
    * 基于原始 URL 逐段解码（而非整串解码）保证 `%2F` 不会拆出新的路径层级。
    * 非法转义（`%zz` 等）返回 null，由调用方转 400。
    */
-  const extractFilePath = (c: Context): string | null => {
+  const extractFilePath = (c: Context<FilesEnv>): string | null => {
     try {
       return new URL(c.req.url).pathname
         .replace(/^\/api\/files\/?/, '')
@@ -219,49 +223,61 @@ function createFilesRoute(ctx: ServerContext): Hono {
     }
   }
 
-  /** 解析本次请求的工作区根：query 带 projectId 时取对应项目 worktree
-   *  （项目不存在 → 404 Project not found），否则回退 ctx.cwd（向后兼容）。 */
-  const resolveWorkspaceRoot = async (
-    c: Context,
-  ): Promise<{ root: string } | { response: Response }> => {
+  /** 工作区根解析（全组中间件）：query 带 projectId 时取对应项目 worktree
+   *  （项目不存在 → 404 原样返回），否则回退 ctx.cwd（向后兼容）。
+   *  此前每个 handler 各持一份 resolveWorkspaceRoot + 'response' 分支样板。 */
+  app.use('*', async (c, next) => {
     const projectId = c.req.query('projectId')
-    if (!projectId) return { root: ctx.cwd }
+    if (!projectId) {
+      c.set('workspaceRoot', ctx.cwd)
+      await next()
+      return
+    }
     const project = await getProject(ctx.db, projectId)
     if (!project) {
-      return { response: apiError(c, 404, 'NOT_FOUND', 'Project not found') }
+      return apiError(c, 404, 'NOT_FOUND', 'Project not found')
     }
-    return { root: project.worktree }
+    c.set('workspaceRoot', project.worktree)
+    await next()
+  })
+
+  /** extractFilePath + safeResolve 的合并守卫：非法 URL 转义 → 400；解析结果
+   *  越出工作区 → 403。GET/PUT/DELETE /* 各持一份的三行样板收敛于此。 */
+  const resolveWorkspaceFile = (
+    c: Context<FilesEnv>,
+    path: string | null,
+  ): { path: string; resolved: string } | Response => {
+    if (path === null) {
+      return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
+    }
+    const resolved = safeResolve(c.get('workspaceRoot'), path)
+    if (!resolved) {
+      return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
+    }
+    return { path, resolved }
   }
 
   // git 状态：返回 path → 状态分类 的映射（非 git 返回空对象）
   app.get('/git-status', async (c) => {
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     return c.json(getGitStatus(root) ?? {})
   })
 
   // 当前分支名（非 git 仓库返回 null）
   app.get('/git-branch', async (c) => {
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     return c.json({ branch: getGitBranch(root) })
   })
 
   // 最后一次提交信息（供分支名 hover tooltip）。非 git 仓库或无提交返回 commit null。
   app.get('/git-last-commit', async (c) => {
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     return c.json({ commit: getGitLastCommit(root) })
   })
 
   // 一键提交：用 LLM 生成 commit message + 检查可疑文件，支持 force/append-ignore 模式
   app.post('/git-commit', async (c) => {
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     const summary = getGitDiffSummary(root)
     if (!summary) {
       return apiError(c, 400, 'NO_CHANGES', 'No changes to commit')
@@ -406,17 +422,13 @@ ${headChars(summary.diff, 8000)}`
 
   // 列出本地分支（非 git 仓库返回空数组）
   app.get('/git-branches', async (c) => {
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     return c.json({ branches: listGitBranches(root) ?? [] })
   })
 
   // 切换分支（git checkout）
   app.post('/git-checkout', async (c) => {
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     // branch 必须是非空字符串：数字此前经 as 断言进 spawnSync 参数抛
@@ -438,9 +450,7 @@ ${headChars(summary.diff, 8000)}`
 
   // 创建并切换到新分支（git checkout -b）
   app.post('/git-branch-create', async (c) => {
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const name = typeof parsed.body.name === 'string' ? parsed.body.name : ''
@@ -461,9 +471,7 @@ ${headChars(summary.diff, 8000)}`
   // projectId 指定时按对应项目 worktree 列出，否则回退 ctx.cwd（向后兼容）。
   app.get('/', async (c) => {
     const queryPath = c.req.query('path') ?? '.'
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     const resolved = safeResolve(root, queryPath)
     if (!resolved) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
@@ -500,9 +508,7 @@ ${headChars(summary.diff, 8000)}`
     if (!q) {
       return apiError(c, 400, 'BAD_REQUEST', 'Query parameter q is required')
     }
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const root = c.get('workspaceRoot')
     const all = await collectFiles(root, root)
     const lower = q.toLowerCase()
     const matched = all.filter((f) => f.path.toLowerCase().includes(lower))
@@ -512,25 +518,24 @@ ${headChars(summary.diff, 8000)}`
   // 读取文件
   // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.get('/*', async (c) => {
-    const path = extractFilePath(c)
-    if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
+    const file = resolveWorkspaceFile(c, extractFilePath(c))
+    if (file instanceof Response) return file
+    const { path, resolved } = file
     // /raw 后缀是媒体预览的协议标记，但仅当「完整路径不存在」时才按 raw 模式
     // 解释——真实存在的 .../raw 文件按普通文件字面读取。此前纯后缀判定优先，
     // 名为 raw 的文件（data/raw 等）恒被误判为 raw 模式，去后缀父路径必为目录
     // （readFile 抛 EISDIR → 404），该文件永远读不到。
-    const fullResolved = safeResolve(root, path)
-    const raw = path.endsWith('/raw') && !(fullResolved !== null && existsSync(fullResolved))
+    const raw = path.endsWith('/raw') && !existsSync(resolved)
     const filePath = raw ? path.slice(0, -'/raw'.length) : path
-    const resolved = safeResolve(root, filePath)
-    if (!resolved) {
+    // filePath 是 path 的父路径：helper 已证明 path 位于工作区内，父路径的
+    // safeResolve 不可能越界，判空仅为类型收窄。
+    const target = raw ? safeResolve(c.get('workspaceRoot'), filePath) : resolved
+    if (!target) {
       return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
     }
     try {
       if (raw) {
-        const buf = await readFile(resolved)
+        const buf = await readFile(target)
         // P2 加固：raw 同源直出，nosniff 防「工作区内 html/svg 被浏览器当
         // 活动文档执行」的同源 XSS 面；html 已改 octet-stream（见 contentTypeFor），
         // svg 保留 image/svg+xml 供 <img> 预览（img 上下文中不执行脚本），
@@ -548,7 +553,7 @@ ${headChars(summary.diff, 8000)}`
             : {}),
         })
       }
-      const buf = await readFile(resolved)
+      const buf = await readFile(target)
       // 二进制不按文本返回：前端拿到的每一段乱码都可能原样写回磁盘。
       if (looksBinary(buf)) {
         return apiError(
@@ -568,28 +573,24 @@ ${headChars(summary.diff, 8000)}`
   // 写入文件
   // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.put('/*', async (c) => {
-    const path = extractFilePath(c)
-    if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
-    const resolved = safeResolve(root, path)
-    if (!resolved) {
-      return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
-    }
+    const file = resolveWorkspaceFile(c, extractFilePath(c))
+    if (file instanceof Response) return file
+    const { path, resolved } = file
     // P3-14：content 必须是字符串（此前 undefined/非字符串 → writeFile 抛
     // 类型错误 → 500）；空串合法（清空文件）；超大写入给出明确错误而非 OOM。
-    const body = (await c.req.json().catch(() => null)) as { content?: unknown } | null
-    if (typeof body?.content !== 'string') {
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    if (typeof parsed.body.content !== 'string') {
       return apiError(c, 400, 'BAD_REQUEST', 'content must be a string')
     }
+    const content = parsed.body.content
     const MAX_WRITE_BYTES = 20 * 1024 * 1024
-    if (Buffer.byteLength(body.content, 'utf8') > MAX_WRITE_BYTES) {
+    if (Buffer.byteLength(content, 'utf8') > MAX_WRITE_BYTES) {
       return apiError(c, 400, 'FILE_TOO_LARGE', '文件超过 20MB 上限，请用本地工具处理')
     }
     try {
       await mkdir(dirname(resolved), { recursive: true })
-      await writeFile(resolved, body.content, 'utf-8')
+      await writeFile(resolved, content, 'utf-8')
       return c.json({ path, written: true })
     } catch (err) {
       return apiError(c, 500, 'WRITE_ERROR', `Failed to write file: ${String(err)}`)
@@ -599,15 +600,9 @@ ${headChars(summary.diff, 8000)}`
   // 删除文件/目录（移入系统回收站）
   // projectId 指定时按对应项目 worktree 解析，否则回退 ctx.cwd（向后兼容）。
   app.delete('/*', async (c) => {
-    const path = extractFilePath(c)
-    if (path === null) return apiError(c, 400, 'BAD_REQUEST', '非法的 URL 转义序列')
-    const workspace = await resolveWorkspaceRoot(c)
-    if ('response' in workspace) return workspace.response
-    const root = workspace.root
-    const resolved = safeResolve(root, path)
-    if (!resolved) {
-      return apiError(c, 403, 'FORBIDDEN', 'Path outside workspace')
-    }
+    const file = resolveWorkspaceFile(c, extractFilePath(c))
+    if (file instanceof Response) return file
+    const { path, resolved } = file
     try {
       await access(resolved)
     } catch {

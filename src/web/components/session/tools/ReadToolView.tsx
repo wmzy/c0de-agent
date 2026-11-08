@@ -2,7 +2,7 @@ import type { ToolResult } from '@shared/types/tool.js'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
 import { FileCodeBlock } from '@/components/session/tools/FileCodeBlock.js'
 import { ToolError } from '@/components/session/tools/toolError.js'
-import { strArg } from '@/components/session/tools/toolShape.js'
+import { resultText, strArg } from '@/components/session/tools/toolShape.js'
 
 type ReadInput = { path: string; offset?: number; limit?: number }
 
@@ -27,6 +27,6 @@ export function ReadToolView({
   if (path.broken) {
     return <FallbackToolView tool="read" input={input} output={output} status={status} />
   }
-  const content = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
+  const content = resultText(output)
   return <div>{content && <FileCodeBlock path={path.value ?? ''} content={content} />}</div>
 }

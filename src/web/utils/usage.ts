@@ -37,3 +37,48 @@ export function resolveEffectiveTokenBudget(
 ): number {
   return projectId ? (budgetTokens ?? 0) : (globalBudgetTokens ?? 0)
 }
+
+/** 预算派生状态集合：顶栏徽标（TopBar.MonthCostBadge）与用量面板（UsagePanel）
+ *  共用的组合口径——此前两处各自内联同构五行（含 `* 0.8` 的 80% 告警阈值），
+ *  组合逻辑没有共享，阈值一旦调整必然漂移。 */
+export type BudgetStatus = {
+  /** 有效月度金额预算（0 = 未设/不限制）。 */
+  effectiveBudget: number
+  /** 本月成本已超金额预算。 */
+  overBudget: boolean
+  /** 本月成本达到金额预算的 80%（未超支时的预警档）。 */
+  nearBudget: boolean
+  /** 有效月度 token 预算（0 = 未设）。 */
+  effectiveTokenBudget: number
+  /** 本月 token 用量已超 token 预算。 */
+  overTokenBudget: boolean
+}
+
+/** 组合 resolveEffectiveBudget / resolveEffectiveTokenBudget 与本月用量，产出
+ *  徽标与面板共用的预算派生状态（80% 告警阈值在此单点定义）。 */
+export function budgetStatus(args: {
+  projectId: string | undefined
+  /** 本月估算成本。 */
+  cost: number
+  /** 本月 token 用量（input+output+cacheRead，可用 monthTokenSum 求得）。 */
+  monthTokens: number
+  monthlyBudgetUsd: number | undefined
+  globalMonthlyBudgetUsd: number | undefined
+  monthlyTokenBudget: number | undefined
+  globalMonthlyTokenBudget: number | undefined
+}): BudgetStatus {
+  const effectiveBudget = resolveEffectiveBudget(
+    args.projectId,
+    args.monthlyBudgetUsd,
+    args.globalMonthlyBudgetUsd,
+  )
+  const overBudget = effectiveBudget > 0 && args.cost > effectiveBudget
+  const nearBudget = effectiveBudget > 0 && !overBudget && args.cost >= effectiveBudget * 0.8
+  const effectiveTokenBudget = resolveEffectiveTokenBudget(
+    args.projectId,
+    args.monthlyTokenBudget,
+    args.globalMonthlyTokenBudget,
+  )
+  const overTokenBudget = effectiveTokenBudget > 0 && args.monthTokens > effectiveTokenBudget
+  return { effectiveBudget, overBudget, nearBudget, effectiveTokenBudget, overTokenBudget }
+}

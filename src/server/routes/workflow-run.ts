@@ -20,6 +20,7 @@ import {
   resolvePermissionTimeoutAction,
 } from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'
+import { emitSseError } from '../util/sse.js'
 import { childRunBridge, startHeartbeat } from './chat.js'
 
 /**
@@ -54,13 +55,7 @@ function createSlashWorkflowEmitter(stream: SSEStreamingApi): WorkflowChannelEmi
     },
     result: async (result) => {
       if (result._tag === 'error') {
-        await stream.writeSSE({
-          event: 'error',
-          data: JSON.stringify({
-            _tag: 'error',
-            error: { _tag: 'unexpected', message: result.message },
-          }),
-        })
+        await emitSseError(stream, result)
       } else {
         // executeWorkflow 只产出 text/error（success/compact 是斜杠命令泛型变体，不会到达）
         const text =
@@ -73,15 +68,7 @@ function createSlashWorkflowEmitter(stream: SSEStreamingApi): WorkflowChannelEmi
       await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
     },
     error: async (e) => {
-      await stream
-        .writeSSE({
-          event: 'error',
-          data: JSON.stringify({
-            _tag: 'error',
-            error: { _tag: 'unexpected', message: e instanceof Error ? e.message : String(e) },
-          }),
-        })
-        .catch(() => {})
+      await emitSseError(stream, e, { swallow: true })
       await stream
         .writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
         .catch(() => {})
@@ -99,15 +86,7 @@ function createRestWorkflowEmitter(stream: SSEStreamingApi): WorkflowChannelEmit
       await stream.writeSSE({ event: 'result', data: JSON.stringify(result) })
     },
     error: async (e) => {
-      await stream
-        .writeSSE({
-          event: 'error',
-          data: JSON.stringify({
-            _tag: 'error',
-            message: e instanceof Error ? e.message : String(e),
-          }),
-        })
-        .catch(() => {})
+      await emitSseError(stream, e, { flat: true, swallow: true })
     },
   }
 }

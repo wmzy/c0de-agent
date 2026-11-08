@@ -13,6 +13,7 @@ import {
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { findNode, setChildren } from '@/components/tree-utils.js'
+import { useDismiss } from '@/hooks/useDismiss.js'
 import { filesystemAPI } from '@/services/filesystem.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -433,15 +434,12 @@ export function DirectoryPicker({
     onKeyDown?.(e)
   }
 
-  // 点击外部关闭建议
-  useEffect(() => {
-    function onDown(e: MouseEvent) {
-      if (pathAreaRef.current?.contains(e.target as Node)) return
-      setSuggestionsOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [])
+  // 点击外部 / Escape 关闭建议（useDismiss 统一实现，建议展开时才挂监听。
+  // 此前这份手写与 ToolToggle/ModelSelector 的同款漂移：空依赖常挂 mousedown
+  // ——建议未展开也在监听，且没有 Escape 路径。Escape 在输入框聚焦时先被
+  // handleInputKey 层级消费（preventDefault + 关建议），这里的 document 级
+  // 监听只补「焦点不在输入框上」的路径，幂等不冲突。）
+  useDismiss(pathAreaRef, { open: suggestionsOpen, onClose: () => setSuggestionsOpen(false) })
 
   return (
     <div

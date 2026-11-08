@@ -80,19 +80,22 @@ async function executeToolCalls(
   const results: ToolCallResult[] = []
 
   if (parallel.length > 0) {
-    const settled = await Promise.allSettled(
-      parallel.map(async (tc) => ({
-        id: tc.id,
-        result: await executeToolCall(registry, permission, ctx, tc.tool, tc.input, hookRunner),
-      })),
+    // 逐调用捕获异常：失败转为该 id 自己的 error result——id 始终与 tc.id 配对
+    // （下游 loop/persist 按 id 落库，丢成 'unknown' 会让 tool result 永不匹配、
+    // 静默丢库），且单调用失败不中断其余调用。
+    const parallelResults = await Promise.all(
+      parallel.map(async (tc): Promise<ToolCallResult> => {
+        try {
+          return {
+            id: tc.id,
+            result: await executeToolCall(registry, permission, ctx, tc.tool, tc.input, hookRunner),
+          }
+        } catch (err) {
+          return { id: tc.id, result: { _tag: 'error', error: String(err) } }
+        }
+      }),
     )
-    for (const s of settled) {
-      if (s.status === 'fulfilled') {
-        results.push(s.value)
-      } else {
-        results.push({ id: 'unknown', result: { _tag: 'error', error: String(s.reason) } })
-      }
-    }
+    results.push(...parallelResults)
   }
 
   for (const tc of serial) {

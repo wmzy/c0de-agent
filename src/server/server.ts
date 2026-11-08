@@ -19,15 +19,12 @@ import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
 import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
-import { loadConfig, loadConfigScopes } from '../core/config.js'
-import { buildRegistryFromConfig } from '../core/provider-registry.js'
+import { bootstrapRuntime } from '../core/bootstrap.js'
 import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { purgeDeletedKanbanBoards } from '../kanban/index.js'
-import { collectScopedMCPServers, disconnectMCPServer, registerMCPServers } from '../mcp/index.js'
-import { initPlugins } from '../plugins/index.js'
-import { resolveCwdProjectTrusted } from '../project/index.js'
+import { disconnectMCPServer } from '../mcp/index.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import {
   purgeDeletedSessions,
@@ -38,7 +35,7 @@ import {
 } from '../session/trash.js'
 import { backfillUsageEventsOnce } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
-import { createDefaultRegistry, createDefaultURLRegistry } from '../tools/index.js'
+import { createDefaultURLRegistry } from '../tools/index.js'
 import {
   checkForUpdate,
   confirmHandoff,
@@ -246,36 +243,19 @@ async function buildServerContext(
       : []
   }
 
-  const config = await loadConfig(cwd)
-  const toolRegistry = createDefaultRegistry(config)
-  const llmRegistry = buildRegistryFromConfig(config)
-  const urlRegistry = createDefaultURLRegistry()
-  // P0-2：项目插件只在项目被显式信任后加载（fail-closed）——克隆仓库自带的
-  // .c0de/plugins 不会在首次 serve 时静默执行；c0de trust / Web 信任后重启生效。
-  // 未注册项目（首次 serve、尚无项目记录）视为未信任。
-  // P0（代码面）：已信任但指纹漂移（git pull 改了插件代码/MCP 参数/风险键）→
-  // 同样不加载——与聊天门禁同口径，杜绝「先重启、后门禁」窗口里执行漂移代码。
-  const projectTrusted = await resolveCwdProjectTrusted(db, cwd)
+  // 启动序列（config → registries → 信任门禁 → 插件 → MCP）单一实现在
+  // core/bootstrap.ts（信任门禁口径的正本也在其 doc comment）。server 侧生命
+  // 周期差异：持有 pluginRegistry/mcpSessions，供热重载与关闭时断开。
   const {
-    pluginRegistry,
-    hookRunner,
-    config: resolvedConfig,
-  } = await initPlugins({
-    cwd,
-    config,
     toolRegistry,
     llmRegistry,
+    pluginRegistry,
+    hookRunner,
+    resolvedConfig,
+    mcpSessions,
     projectTrusted,
-  })
-
-  // MCP 客户端（spec §6）：把配置中的 MCP 服务器工具适配进 toolRegistry，对 agent
-  // 透明。全局作用域（用户本机显式配置）始终连接；项目作用域（随 git clone 传播的
-  // 任意命令执行面）仅在项目已信任时连接——与插件/工作流同口径。逐台隔离：单台
-  // 失败告警跳过，不拖垮启动。
-  const { sessions: mcpSessions } = await registerMCPServers(
-    toolRegistry,
-    collectScopedMCPServers(loadConfigScopes(cwd), projectTrusted),
-  )
+  } = await bootstrapRuntime(cwd, db)
+  const urlRegistry = createDefaultURLRegistry()
 
   // 工作流注册表：三级发现（builtin → global → project），eager 初始化。
   // 此前是惰性 getter 只注册 builtin，导致项目级 .c0de/workflows/*.js 永远不可见。

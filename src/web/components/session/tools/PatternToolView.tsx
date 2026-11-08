@@ -2,6 +2,7 @@ import type { ToolResult } from '@shared/types/tool.js'
 import { CollapsiblePre } from '@/components/session/tools/CollapsiblePre.js'
 import { MatchSummary } from '@/components/session/tools/matchSummary.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
+import { resultText } from '@/components/session/tools/toolShape.js'
 
 type PatternToolInput = { pattern: string; path?: string }
 
@@ -26,7 +27,7 @@ export function PatternToolView({
   // （与 Read/Write/Edit 同一口径）。
   const errorText = toolErrorText(output, status)
   if (errorText !== null) return <ToolError output={output} status={status} />
-  const text = output?._tag === 'success' || output?._tag === 'truncated' ? output.output : ''
+  const text = resultText(output)
   return (
     <div>
       <MatchSummary output={output} noun={noun} />

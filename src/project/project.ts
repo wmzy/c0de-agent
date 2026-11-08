@@ -1,9 +1,9 @@
 import { basename } from 'node:path'
-import { and, eq, isNull } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { loadConfigScopes } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, projects, sessions } from '../db/schema.js'
-import { softDeleteKanbanBoardById } from '../kanban/store.js'
+import { activeBoardWhere, softDeleteKanbanBoardById } from '../kanban/store.js'
 import { toEpochMs } from '../session/time.js'
 import type { Config } from '../shared/types/config.js'
 import { resolveProject } from './resolve.js'
@@ -117,13 +117,13 @@ async function adoptKanbanBoard(
   const [board] = await handle.db
     .select({ id: kanbanBoards.id })
     .from(kanbanBoards)
-    .where(and(eq(kanbanBoards.projectId, from.id), isNull(kanbanBoards.deletedAt)))
+    .where(activeBoardWhere(from.id))
     .limit(1)
   if (!board) return
   const [existing] = await handle.db
     .select({ id: kanbanBoards.id })
     .from(kanbanBoards)
-    .where(and(eq(kanbanBoards.projectId, toProjectId), isNull(kanbanBoards.deletedAt)))
+    .where(activeBoardWhere(toProjectId))
     .limit(1)
   if (!existing) {
     await handle.db

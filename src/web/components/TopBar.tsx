@@ -5,17 +5,13 @@ import { Tooltip } from 'haze-ui'
 import { CommitButton } from '@/components/CommitButton.js'
 import { Logo } from '@/components/Logo.js'
 import { ProjectIndicator } from '@/components/ProjectIndicator.js'
+import { configQueryOptions } from '@/contexts/ConfigContext.js'
 import type { AppPaths } from '@/routes.js'
-import { configAPI } from '@/services/config.js'
 import { projectAPI } from '@/services/project.js'
 import { usageAPI } from '@/services/usage.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { formatCost, formatNumber } from '@/utils/format.js'
-import {
-  monthTokenSum,
-  resolveEffectiveBudget,
-  resolveEffectiveTokenBudget,
-} from '@/utils/usage.js'
+import { budgetStatus, monthTokenSum } from '@/utils/usage.js'
 
 const bar = css`
   display: flex;
@@ -136,17 +132,11 @@ const costOver = css`
  *  汇总与预算均取项目合并配置 + 项目聚合成本，项目间互不干扰。
  *  无项目上下文时退化为全局口径（'/settings' 根路由）。 */
 function MonthCostBadge({ projectId }: { projectId?: string }) {
-  // 直接走共享 query 缓存（与 Settings 同一 queryKey，零额外请求），
-  // 避免 TopBar 依赖 ConfigProvider 的渲染层级。
-  const { data: configResp } = useQuery({
-    queryKey: ['config', projectId ?? 'server'],
-    queryFn: () => configAPI.get(projectId),
-    staleTime: 60_000,
-  })
-  const budget = configResp?.config?.usage?.monthlyBudgetUsd ?? 0
-  const globalBudget = configResp?.config?.usage?.globalMonthlyBudgetUsd ?? 0
-  const tokenBudget = configResp?.config?.usage?.monthlyTokenBudget ?? 0
-  const globalTokenBudget = configResp?.config?.usage?.globalMonthlyTokenBudget ?? 0
+  // 直接走共享 query 缓存（configQueryOptions：与 Settings、ConfigProvider 同一
+  // queryKey，零额外请求），避免 TopBar 依赖 ConfigProvider 的渲染层级。徽标自带
+  // 60s 节流；设置页编辑器（staleTime 0）挂载时由最严观察者裁决共享缓存重取。
+  const { data: configResp } = useQuery({ ...configQueryOptions(projectId), staleTime: 60_000 })
+  const usage = configResp?.config?.usage
   const { data: summary, isError: usageFailed } = useQuery({
     queryKey: ['usage', 'summary', projectId ?? 'all'],
     queryFn: () => usageAPI.summary(projectId),
@@ -157,18 +147,20 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
   // P1-3：无项目上下文时按全局预算比较（项目视图仍按项目预算）。
   const monthEntry = summary?.currentMonth
   const cost = monthEntry?.cost ?? 0
-  const effectiveBudget = resolveEffectiveBudget(projectId, budget, globalBudget)
-  const overBudget = effectiveBudget > 0 && cost > effectiveBudget
-  const nearBudget = effectiveBudget > 0 && !overBudget && cost >= effectiveBudget * 0.8
   // token 口径（input+output+cacheRead，与预算暂停判定同源）——价格未知的自建网关
   // cost 恒 $0，金额徽标显示 $0 时 token 超支仍应有告警。
   const monthTokens = monthTokenSum(monthEntry)
-  const effectiveTokenBudget = resolveEffectiveTokenBudget(
-    projectId,
-    tokenBudget,
-    globalTokenBudget,
-  )
-  const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
+  // 派生状态（预算二分 + 80% 告警阈值）与用量面板共用 budgetStatus 单一实现。
+  const { effectiveBudget, overBudget, nearBudget, effectiveTokenBudget, overTokenBudget } =
+    budgetStatus({
+      projectId,
+      cost,
+      monthTokens,
+      monthlyBudgetUsd: usage?.monthlyBudgetUsd,
+      globalMonthlyBudgetUsd: usage?.globalMonthlyBudgetUsd,
+      monthlyTokenBudget: usage?.monthlyTokenBudget,
+      globalMonthlyTokenBudget: usage?.globalMonthlyTokenBudget,
+    })
   const overAny = overBudget || overTokenBudget
   const unknown = monthEntry?.unknownCostCalls ?? 0
   // 读不到用量时绝不显示 $0.00：那是一个精确的、看起来可信的假数字，用户会

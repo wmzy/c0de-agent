@@ -130,16 +130,32 @@ describe('parseFromDOM：块级行分隔（浏览器粘贴产物）', () => {
 })
 
 describe('renderPrompt', () => {
-  it('把 Prompt 渲染回 DOM（text + file pill）', () => {
+  it('把 Prompt 渲染回 DOM（text + file/snippet pill）', () => {
     const el = makeEditor('')
     const prompt: Prompt = [
       { type: 'text', content: 'hi ', start: 0, end: 3 },
       { type: 'file', path: 'a.ts', content: 'A', start: 3, end: 4 },
+      {
+        type: 'snippet',
+        path: 'a.ts',
+        lineStart: 5,
+        lineEnd: 5,
+        label: '📄 a.ts:5',
+        snippet: 'const x = 1',
+        start: 4,
+        end: 13,
+      },
     ]
     renderPrompt(el, prompt)
     const pill = el.querySelector('[data-type="file"]')
     expect(pill).toBeTruthy()
     expect(pill?.getAttribute('data-path')).toBe('a.ts')
+    // file pill 与 snippet pill 共用 pillStyle——此前 createFilePill 漏设
+    // className，file pill 渲染出来没有任何 pill 样式（无底色/内边距/hover）。
+    const snippetPill = el.querySelector('[data-type="snippet"]')
+    expect(snippetPill).toBeTruthy()
+    expect(pill?.className).toBe(snippetPill?.className)
+    expect(pill?.className).not.toBe('')
   })
 
   it('DEFAULT_PROMPT 渲染为空', () => {

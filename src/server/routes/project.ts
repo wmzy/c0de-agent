@@ -5,6 +5,7 @@ import { parse } from 'node:path'
 import { and, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { kanbanBoards, projects, sessions } from '../../db/schema.js'
+import { activeBoardWhere } from '../../kanban/store.js'
 import {
   fromDirectory,
   getByDirectory,
@@ -252,7 +253,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
           purgePendingAt: null,
           updatedAt: now,
         })
-        .where(and(eq(kanbanBoards.projectId, id), isNull(kanbanBoards.deletedAt)))
+        .where(activeBoardWhere(id))
       await tx.delete(projects).where(eq(projects.id, id))
     })
     return c.json({ ok: true, deletedSessions })

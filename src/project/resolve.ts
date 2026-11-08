@@ -1,7 +1,8 @@
-import { spawnSync } from 'node:child_process'
+import type { SpawnSyncReturns } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { bestEffortGit, gitRaw, strictGitResult } from '../shared/git.js'
 
 export type ResolvedProject = {
   id: string
@@ -43,20 +44,10 @@ function classifyStatus(xy: string): GitStatusCode {
  * 取工作区 git status（porcelain v1, NUL 分隔），返回 path → 状态分类 的映射。
  * path 为相对 cwd 的 POSIX 路径；非 git 仓库或失败返回 null。
  */
-/** spawnSync 的 stdout/stderr maxBuffer 默认 1MB，大仓库可能超出。
- * 10MB 足以覆盖大量 untracked 文件场景（此前 50MB 是为 --ignored 的 PGLite 数万文件预留，
- * 去掉 --ignored 后不再需要）。 */
-const GIT_MAX_BUFFER = 10 * 1024 * 1024 // 10MB
-
 export function getGitStatus(cwd: string): Record<string, GitStatusCode> | null {
-  let result: import('node:child_process').SpawnSyncReturns<string>
+  let result: SpawnSyncReturns<string>
   try {
-    result = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      maxBuffer: GIT_MAX_BUFFER,
-    })
+    result = gitRaw(cwd, ['status', '--porcelain', '-z', '--untracked-files=all'])
   } catch {
     return null
   }
@@ -94,22 +85,6 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, '/')
 }
 
-/** 运行 git 命令，失败返回空字符串（不抛错）。 */
-function git(args: string[], cwd: string): string {
-  try {
-    const result = spawnSync('git', args, {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      maxBuffer: GIT_MAX_BUFFER,
-    })
-    if (result.status !== 0 || result.error) return ''
-    return (result.stdout ?? '').trim()
-  } catch {
-    return ''
-  }
-}
-
 /** 检查给定路径中哪些被 gitignore 规则覆盖。
  *
  * 用 git check-ignore 只查询传入的路径（不递归），返回被忽略路径的集合。
@@ -127,12 +102,7 @@ function git(args: string[], cwd: string): string {
 export function checkIgnored(cwd: string, paths: string[]): Set<string> {
   if (paths.length === 0) return new Set()
   try {
-    const result = spawnSync('git', ['check-ignore', '--', ...paths], {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      maxBuffer: GIT_MAX_BUFFER,
-    })
+    const result = gitRaw(cwd, ['check-ignore', '--', ...paths])
     if (result.status !== 0 || result.error) return new Set()
     const raw = result.stdout ?? ''
     return new Set(raw.split('\n').filter(Boolean).map(normalizePath))
@@ -185,7 +155,7 @@ function findGitRoot(directory: string): string | null {
 
 /** 取第一个 remote 的 URL（origin 无果时的回退）。 */
 function firstRemoteUrl(cwd: string): string {
-  const names = git(['remote'], cwd)
+  const names = bestEffortGit(cwd, ['remote'])
   const first = names
     .split('\n')
     .map((s) => s.trim())
@@ -194,14 +164,14 @@ function firstRemoteUrl(cwd: string): string {
   // remote 名来自仓库自身的 .git/config（克隆的仓库可携带 `[remote "-x"]` 这类
   // 以 `-` 开头的名字）：与 checkIgnored 同口径，位置参数先以 `--` 终止选项解析，
   // 否则名字被当成 get-url 的选项（--push/--all）而取不到 URL。
-  return git(['remote', 'get-url', '--', first], cwd)
+  return bestEffortGit(cwd, ['remote', 'get-url', '--', first])
 }
 
 /**
  * 取当前分支名（非 git 仓库返回 null）。
  */
 export function getGitBranch(cwd: string): string | null {
-  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)
+  const branch = bestEffortGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
   return branch || null
 }
 
@@ -218,7 +188,7 @@ export interface GitLastCommit {
  * 非 git 仓库或无提交（如全新仓库）返回 null。
  */
 export function getGitLastCommit(cwd: string): GitLastCommit | null {
-  const line = git(['log', '-1', '--format=%s%x1f%h%x1f%an%x1f%cr'], cwd)
+  const line = bestEffortGit(cwd, ['log', '-1', '--format=%s%x1f%h%x1f%an%x1f%cr'])
   if (!line) return null
   const [subject, hash, author, date] = line.split('\x1f')
   if (!subject) return null
@@ -236,8 +206,8 @@ export function getGitLastCommit(cwd: string): GitLastCommit | null {
  * 非 git 仓库或无变更返回 null。
  */
 export function getGitDiffSummary(cwd: string): { diff: string; fileCount: number } | null {
-  const diff = git(['diff', 'HEAD'], cwd)
-  const untracked = git(['ls-files', '--others', '--exclude-standard'], cwd)
+  const diff = bestEffortGit(cwd, ['diff', 'HEAD'])
+  const untracked = bestEffortGit(cwd, ['ls-files', '--others', '--exclude-standard'])
   const parts: string[] = []
   if (diff) parts.push(diff)
   if (untracked) {
@@ -263,18 +233,10 @@ export function performGitCommit(
   cwd: string,
   message: string,
 ): { hash: string } | { error: string } {
-  git(['add', '-A'], cwd)
-  const result = spawnSync('git', ['commit', '-m', message], {
-    cwd,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: GIT_MAX_BUFFER,
-  })
-  if (result.status !== 0) {
-    const stderr = (result.stderr ?? '').trim()
-    return { error: stderr || `git commit failed (exit ${result.status})` }
-  }
-  const hash = git(['rev-parse', '--short', 'HEAD'], cwd)
+  bestEffortGit(cwd, ['add', '-A'])
+  const result = gitRaw(cwd, ['commit', '-m', message], { stderr: true })
+  if (result.status !== 0) return strictGitResult(result, 'git commit')
+  const hash = bestEffortGit(cwd, ['rev-parse', '--short', 'HEAD'])
   return { hash: hash || 'unknown' }
 }
 
@@ -290,7 +252,10 @@ export interface GitBranchInfo {
  */
 export function listGitBranches(cwd: string): GitBranchInfo[] | null {
   // --format 自定义输出：每行 `current<TAB>refname<TAB>subject`
-  const raw = git(['branch', '--format=%(HEAD)%09%(refname:short)%09%(contents:subject)'], cwd)
+  const raw = bestEffortGit(cwd, [
+    'branch',
+    '--format=%(HEAD)%09%(refname:short)%09%(contents:subject)',
+  ])
   if (!raw) return null
   return raw
     .split('\n')
@@ -341,16 +306,8 @@ export function checkoutGitBranch(
   branch: string,
 ): { branch: string } | { error: string } {
   if (!isValidBranchName(branch)) return invalidBranchNameError(branch)
-  const result = spawnSync('git', ['checkout', branch], {
-    cwd,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: GIT_MAX_BUFFER,
-  })
-  if (result.status !== 0) {
-    const stderr = (result.stderr ?? '').trim()
-    return { error: stderr || `git checkout failed (exit ${result.status})` }
-  }
+  const result = gitRaw(cwd, ['checkout', branch], { stderr: true })
+  if (result.status !== 0) return strictGitResult(result, 'git checkout')
   return { branch }
 }
 
@@ -359,16 +316,8 @@ export function checkoutGitBranch(
  */
 export function createGitBranch(cwd: string, name: string): { branch: string } | { error: string } {
   if (!isValidBranchName(name)) return invalidBranchNameError(name)
-  const result = spawnSync('git', ['checkout', '-b', name], {
-    cwd,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: GIT_MAX_BUFFER,
-  })
-  if (result.status !== 0) {
-    const stderr = (result.stderr ?? '').trim()
-    return { error: stderr || `git checkout -b failed (exit ${result.status})` }
-  }
+  const result = gitRaw(cwd, ['checkout', '-b', name], { stderr: true })
+  if (result.status !== 0) return strictGitResult(result, 'git checkout -b')
   return { branch: name }
 }
 
@@ -381,8 +330,9 @@ export function resolveProject(directory: string): ResolvedProject {
   const gitRoot = findGitRoot(absolute)
 
   if (gitRoot) {
-    const remote = git(['remote', 'get-url', 'origin'], gitRoot) || firstRemoteUrl(gitRoot)
-    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], gitRoot) || null
+    const remote =
+      bestEffortGit(gitRoot, ['remote', 'get-url', 'origin']) || firstRemoteUrl(gitRoot)
+    const branch = bestEffortGit(gitRoot, ['rev-parse', '--abbrev-ref', 'HEAD']) || null
     // 身份恒用 worktree（本地路径稳定）；remote 是可变元数据，曾用 remote 作 id 会在
     // 「先无 remote 注册、后加 remote」时导致 id 漂移——同一目录分裂成两个项目，
     // 历史会话挂在旧 id 上从列表消失。remote 仅记录到 gitRemote 字段。

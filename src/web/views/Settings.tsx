@@ -18,6 +18,7 @@ import { ProviderPanel } from '@/components/settings/ProviderPanel.js'
 import { SecurityPanel } from '@/components/settings/SecurityPanel.js'
 import {
   RoleRoutingSection,
+  type SaveFeedback,
   SettingsSaveBar,
   SettingsToolbar,
 } from '@/components/settings/SettingsChrome.js'
@@ -38,6 +39,7 @@ import { ToolsPanel } from '@/components/settings/ToolsPanel.js'
 import { UsagePanel } from '@/components/settings/UsagePanel.js'
 import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
+import { configQueryOptions } from '@/contexts/ConfigContext.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
@@ -150,10 +152,7 @@ export function Settings() {
     isError,
     error: configError,
     refetch: refetchConfig,
-  } = useQuery({
-    queryKey: ['config', projectId ?? 'server'],
-    queryFn: () => configAPI.get(projectId),
-  })
+  } = useQuery(configQueryOptions(projectId))
   const config = resp?.config ?? null
   const warnings = resp?.warnings ?? []
   // P1-7：配置作用域（global 全局 / project 项目），保存时按此作用域落盘
@@ -193,13 +192,9 @@ export function Settings() {
   }
 
   // 保存反馈：idle/saving/ok/err，ok 在 2.5s 后自动清除。ok 可带一句必须同说的
-  // 说明（如「被留空的密钥未改动」）。
-  const [saveFeedback, setSaveFeedback] = useState<
-    | { kind: 'idle' }
-    | { kind: 'saving' }
-    | { kind: 'ok'; msg?: string }
-    | { kind: 'err'; msg: string }
-  >({ kind: 'idle' })
+  // 说明（如「被留空的密钥未改动」）。类型与 SettingsSaveBar 共用（SettingsChrome
+  // 导出的 SaveFeedback，此前此处内联重写同一 4 变体）。
+  const [saveFeedback, setSaveFeedback] = useState<SaveFeedback>({ kind: 'idle' })
 
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
   const [needsRestart, setNeedsRestart] = useState(false)

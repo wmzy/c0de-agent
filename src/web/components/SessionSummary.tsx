@@ -1,5 +1,4 @@
 import { css } from '@linaria/core'
-import { roundTo } from '@shared/round.js'
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
 import { useQuery } from '@tanstack/react-query'
@@ -8,7 +7,7 @@ import { useMemo, useState } from 'react'
 import { useMessages } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
-import { formatNumber } from '@/utils/format.js'
+import { formatCostUSD, formatNumber } from '@/utils/format.js'
 
 const wrap = css`
   border-bottom: 1px solid var(--haze-color-border);
@@ -87,12 +86,6 @@ function formatDateTime(ts: number): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-/** 美元成本格式化（与样例一致：US$0.00）。舍入经 roundTo 十进制语义，
- *  避免 toFixed 二进制近似把 1.005 显示成 US$1.00。 */
-function formatCostUSD(cost: number): string {
-  return `US$${roundTo(cost, 2).toFixed(2)}`
 }
 
 type Stats = {

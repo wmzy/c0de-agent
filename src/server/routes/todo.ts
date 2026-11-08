@@ -1,7 +1,6 @@
 // src/server/routes/todo.ts
 import { Hono } from 'hono'
 import { appendMessage, getMessages } from '../../session/message.js'
-import { getSession } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
 import type { MessageContent } from '../../shared/types/message.js'
 import type { TodoPhaseLike } from '../../shared/types/tool.js'
@@ -15,6 +14,8 @@ import {
 import { validateInput } from '../../tools/validate.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
+import { getLiveSessionOr404 } from './chat.js'
 
 /** 构造仅供 todo tool execute 使用的最小 ToolContext。 */
 function makeTodoCtx(phases: TodoPhase[], abort: AbortSignal) {
@@ -66,13 +67,15 @@ function createTodoRoute(ctx: ServerContext): Hono {
   // POST /:sessionId — 执行一个 todo 操作（UI 手动操作入口）
   app.post('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
-    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const body = parsed.body
 
-    // 校验 session 存在
-    const session = await getSession(ctx.db, sessionId)
-    if (!session) {
-      return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    }
+    // 校验 session 存在且未进回收站（写端点 requireLive 口径）：回收站会话
+    // 此前只查 !session，仍可执行 todo 操作并 appendMessage 持久化——
+    // 收敛到 getLiveSessionOr404 与其他会话写端点同源。
+    const live = await getLiveSessionOr404(ctx, c, sessionId)
+    if (!live.ok) return live.response
 
     // 与工具执行管线同口径校验入参：本路由绕过 executor 直调 todoTool.execute，
     // 此前畸形 body（list 非数组 → initPhases 对字符串 for-of 后 .map TypeError 500；
@@ -100,7 +103,7 @@ function createTodoRoute(ctx: ServerContext): Hono {
     const updatedPhases = todoCtx.todoState.get() as TodoPhase[]
 
     // 如果操作成功且 phases 有变化，持久化为 tool 消息
-    if (result._tag === 'success' && (body as { op?: string }).op !== 'view') {
+    if (result._tag === 'success' && body.op !== 'view') {
       // tool_call 与 tool_result 必须共用同一个 id：前端 normalizeParts 按 id 配对，
       // 两个 generateId() 会让它们配不上——时间线上留下一个永远停在「运行中」
       // （⏳ 永不结束）的 todo 块，正文还因拿不到 output 而谎报「Todo list is empty.」，

@@ -7,11 +7,7 @@ import type { UsageSummary } from '@/services/usage.js'
 import { usageAPI } from '@/services/usage.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatCost, formatNumber, parseFiniteNumber } from '@/utils/format.js'
-import {
-  monthTokenSum,
-  resolveEffectiveBudget,
-  resolveEffectiveTokenBudget,
-} from '@/utils/usage.js'
+import { budgetStatus, monthTokenSum } from '@/utils/usage.js'
 
 const rowGrid = css`
   display: grid;
@@ -129,17 +125,19 @@ function UsagePanel({
   const scopeLocked = scope !== panelScope
   // token 口径与预算暂停判定同源（input+output+cacheRead）。
   const monthTokens = monthTokenSum(summary?.currentMonth)
-  // 项目视图：项目预算；全局视图：全局预算（P1-3 两者并存，任一超支即触发动作）。
-  const effectiveBudget = resolveEffectiveBudget(projectId, budget, globalBudget)
-  const overBudget = effectiveBudget > 0 && monthCost > effectiveBudget
-  const nearBudget = effectiveBudget > 0 && !overBudget && monthCost >= effectiveBudget * 0.8
-  // token 预算：项目/全局同口径（价格独立护栏，兜底 cost=$0 的自建网关）。
-  const effectiveTokenBudget = resolveEffectiveTokenBudget(
-    projectId,
-    tokenBudget,
-    globalTokenBudget,
-  )
-  const overTokenBudget = effectiveTokenBudget > 0 && monthTokens > effectiveTokenBudget
+  // 预算派生状态与顶栏徽标共用 budgetStatus 单一实现：项目视图取项目预算、全局
+  // 视图取全局预算（P1-3 两者并存，任一超支即触发动作）；token 预算同口径
+  // （价格独立护栏，兜底 cost=$0 的自建网关），80% 告警阈值单点定义。
+  const { effectiveBudget, overBudget, nearBudget, effectiveTokenBudget, overTokenBudget } =
+    budgetStatus({
+      projectId,
+      cost: monthCost,
+      monthTokens,
+      monthlyBudgetUsd: budget,
+      globalMonthlyBudgetUsd: globalBudget,
+      monthlyTokenBudget: tokenBudget,
+      globalMonthlyTokenBudget: globalTokenBudget,
+    })
   // token 预算动作独立于金额预算（缺省回退 budgetAction），用于告警文案与选择器。
   const tokenAction = (() => {
     const v = (tokenBudgetAction ?? budgetAction) as string | undefined

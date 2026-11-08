@@ -5,6 +5,7 @@ import { resolveEnabledToolNames } from '../../tools/index.js'
 import { listTools } from '../../tools/registry.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { readJsonObject } from '../util/json-body.js'
 
 function createToolRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -37,16 +38,12 @@ function createToolRoute(ctx: ServerContext): Hono {
 
   // 确认工具执行权限
   app.post('/confirm', async (c) => {
-    // 畸形 JSON / 非对象 body → 400（与其他写端点同口径：.catch + 显式类型校验）。
+    // 畸形 JSON / null / 非对象 body → 400（readJsonObject 统一口径）。
     // 此前裸 await c.req.json()：畸形 JSON 击穿 Hono 500，null body 在
     // body.toolCallId 处 TypeError 500。
-    const body = (await c.req.json().catch(() => null)) as {
-      toolCallId?: unknown
-      approved?: unknown
-    } | null
-    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-      return apiError(c, 400, 'BAD_REQUEST', '请求体必须是 JSON 对象')
-    }
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
     if (typeof body.toolCallId !== 'string' || body.toolCallId.length === 0) {
       return apiError(c, 400, 'BAD_REQUEST', 'toolCallId is required')
     }

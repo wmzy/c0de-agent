@@ -64,6 +64,13 @@ export function formatCost(cost: number): string {
   return `$${roundTo(cost, 2).toFixed(2)}`
 }
 
+/** 样例口径的美元成本（US$ 前缀，会话统计等处使用）：复用 formatCost 的十进制
+ *  舍入与小额分支（<0.01 保留 4 位、<0.0001 归 $0），仅换前缀。此前消费方自造
+ *  「US$ + roundTo(2).toFixed(2)」丢小额分支，把 $0.004 显示成 US$0.00。 */
+export function formatCostUSD(cost: number): string {
+  return `US$${formatCost(cost).slice(1)}`
+}
+
 /** 数字输入框文本 → **有限**数值；空串/NaN/±Infinity（'1e999'）回落到 fallback。
  *
  *  `Number(v)` 会把 '1e999' 折成 Infinity 写进配置草稿：diff 出的 patch 里是

@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ContentDiff } from '@/components/session/ContentDiff.js'
 import { ToolError } from '@/components/session/tools/toolError.js'
-import { isRecord, str } from '@/components/session/tools/toolShape.js'
+import { isRecord, resultText, str } from '@/components/session/tools/toolShape.js'
 
 type EditInput =
   | { path: string; oldText: string; newText: string }
@@ -94,8 +94,7 @@ export function EditToolView({
     // 没有 hunks：运行中（结果未落地）或旧消息（改动前写入的历史记录，
     // metadata 里没有这层信息）。此时给出工具自己的结论文本——至少「改了哪个
     // 文件、几个块」是真的，不再是一块空白。
-    const text =
-      output?._tag === 'success' || output?._tag === 'truncated' ? output.output : '正在应用补丁…'
+    const text = resultText(output, '正在应用补丁…')
     return (
       <div className={out} data-testid="edit-hashline-output">
         {text}

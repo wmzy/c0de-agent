@@ -61,17 +61,10 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 绑定 projectId 后立即出现在对应项目视图。
   // P1-2：projectId 必填——无归属会话在任何项目视图都不可见，导入即孤儿。
   app.post('/import', async (c) => {
-    const body = (await c.req.json().catch(() => null)) as {
-      version?: unknown
-      session?: { title?: unknown; parentId?: unknown; metadata?: unknown } | null
-      messages?: unknown
-      archives?: unknown
-      projectId?: unknown
-      /** P0：显式请求迁移权限态（permissionMode/alwaysAllow）。默认不迁移——
-       *  导入他人导出的会话时静默继承「对 bash/write 自动放行」是安全隐患。 */
-      importPermissions?: unknown
-    } | null
-    if (body?.version !== 1 || !body?.session || !Array.isArray(body?.messages)) {
+    const parsed = await readJsonObject(c)
+    if (!parsed.ok) return parsed.response
+    const { body } = parsed
+    if (body.version !== 1 || !body.session || !Array.isArray(body.messages)) {
       return apiError(
         c,
         400,
@@ -79,6 +72,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
         '无效的会话导出 JSON：需要 version/session/messages 字段',
       )
     }
+    const srcSession = body.session as { title?: unknown; parentId?: unknown; metadata?: unknown }
     // P3：导入体积上限——导出文件可任意大，无上限的数组会让服务端
     // 逐条插入时 OOM/长事务。上限按合理会话规模取 20 倍余量。
     const MAX_IMPORT_MESSAGES = 20000
@@ -108,15 +102,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
       return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
     }
     const title =
-      typeof body.session.title === 'string' && body.session.title
-        ? body.session.title
-        : '导入的会话'
-    // P0：权限态仅当调用方显式确认（importPermissions=true）时随迁。
+      typeof srcSession.title === 'string' && srcSession.title ? srcSession.title : '导入的会话'
+    // P0：权限态仅当调用方显式确认（importPermissions=true，body 字段）时随迁。
     // 默认剥离——用户在导出会话中建立的授权信任不应跨机器静默生效。
     const importPermissions = body.importPermissions === true
     const metadata: Record<string, unknown> = {}
     if (importPermissions) {
-      const srcMeta = body.session.metadata
+      const srcMeta = srcSession.metadata
       if (srcMeta && typeof srcMeta === 'object' && !Array.isArray(srcMeta)) {
         const m = srcMeta as Record<string, unknown>
         if (m.permissionMode === 'auto' || m.permissionMode === 'default') {
@@ -146,7 +138,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
             : Number.NaN
       if (Number.isFinite(ts) && ts > maxMsgTs) maxMsgTs = ts
     }
-    const srcMetaAny = body.session?.metadata as { segments?: unknown } | undefined
+    const srcMetaAny = srcSession.metadata as { segments?: unknown } | undefined
     if (maxMsgTs > 0 && Array.isArray(srcMetaAny?.segments)) {
       metadata.segments = srcMetaAny.segments
         .filter(
@@ -169,7 +161,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
         }))
     }
     // P2：导出含分支树结构（parentId），导入为独立根会话——告知前端提示扁平化。
-    const flattened = typeof body.session.parentId === 'string' && body.session.parentId.length > 0
+    const flattened = typeof srcSession.parentId === 'string' && srcSession.parentId.length > 0
     const result = await importSessionData(ctx.db, {
       title,
       projectId,
