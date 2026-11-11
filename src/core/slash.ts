@@ -1,13 +1,13 @@
 import { resolve } from 'node:path'
 import type { DB } from '../db/client.js'
-import { createSession, getSession } from '../session/session.js'
+import { createSession, getSession, updateSessionLastRun } from '../session/session.js'
 import { isUuid } from '../shared/utils/string.js'
-import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../tools/index.js'
 
 import { createAgent } from './agent.js'
 import type { SlashCommand } from './types.js'
 import {
   BUILTIN_WORKFLOWS,
+  buildWorkflowAgentConfig,
   createWorkflowRegistry,
   discoverWorkflows,
   executeWorkflow,
@@ -514,17 +514,13 @@ const workflowCommand: SlashCommand = {
       }
 
       // P2-5：runner 工具集传配置解析结果（与 Web 斜杠/REST/CLI print 同口径），
-      // 作为子 agent 工具集交集基准——config.tools.enabled 的 fail-closed 语义
-      // 对工作流派发的子 agent 成立。runner 自身不进 agentLoop，无 LLM 影响。
-      const agentConfig = {
-        provider: ctx.config.defaultProvider,
-        model: ctx.config.defaultModel,
-        tools: resolveEnabledToolNames(ctx.deps.toolRegistry, ctx.config).filter(
-          (n) => Boolean(workflowProjectId) || !PROJECT_BOUND_TOOLS.has(n),
-        ),
-        plugins: ctx.config.plugins.enabled,
-        agentName: 'default',
-      }
+      // 作为子 agent 工具集交集基准——组装收敛在 buildWorkflowAgentConfig
+      // （core/workflows/agent.ts），与 runWorkflowChannel 共用。
+      const agentConfig = buildWorkflowAgentConfig(
+        ctx.config,
+        ctx.deps.toolRegistry,
+        workflowProjectId,
+      )
       const session = await createSession(
         ctx.deps.db,
         workflowSessionTitle(name),
@@ -536,16 +532,33 @@ const workflowCommand: SlashCommand = {
         undefined,
         ctx.deps.hookRunner,
       )
-      const parent = await createAgent(session, agentConfig, ctx.deps)
+      // run 状态持久化（与 REST 通道 workflow-run.ts 同口径）：running →
+      // completed；服务崩溃时停留在 running，重启后 /:id/status 据此识别为
+      // interrupted。写失败不阻塞执行（.catch 兜底）。本分支仅 CLI 通道可达
+      // （Web 斜杠 /workflow run 在 chat 路由提前分流到 runWorkflowSlashChannel，
+      // 该通道自行持久化），不会双写。
+      const startedAtMs = Date.now()
+      await updateSessionLastRun(ctx.deps.db, session.id, {
+        status: 'running',
+        startedAt: startedAtMs,
+      }).catch(() => {})
+      try {
+        const parent = await createAgent(session, agentConfig, ctx.deps)
 
-      return executeWorkflow({
-        registry,
-        name,
-        entry,
-        args: wfArgs,
-        deps: ctx.deps,
-        parent,
-      })
+        return await executeWorkflow({
+          registry,
+          name,
+          entry,
+          args: wfArgs,
+          deps: ctx.deps,
+          parent,
+        })
+      } finally {
+        await updateSessionLastRun(ctx.deps.db, session.id, {
+          status: 'completed',
+          startedAt: startedAtMs,
+        }).catch(() => {})
+      }
     }
 
     return {

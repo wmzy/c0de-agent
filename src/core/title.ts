@@ -98,22 +98,29 @@ function resolveTitleModel(
   return { provider: chatProvider, model: chatModel }
 }
 
+/** 取首个非空 trim 行；无则返回 null（cleanTitle 转空串、fallback 直接放弃）。 */
+function firstNonEmptyLine(text: string): string | null {
+  const line = text
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+  return line ?? null
+}
+
+/** 标题超长截断为 ≤TITLE_MAX_LENGTH（含尾部省略号）。
+ *  headChars 内收切点，避免截断点落在代理对中间产出孤立码元。 */
+function truncateTitle(line: string): string {
+  return line.length > TITLE_MAX_LENGTH ? `${headChars(line, TITLE_MAX_LENGTH - 3)}...` : line
+}
+
 /**
  * 清理模型原始输出为标题：剥除 <think> 标签（推理模型可能输出），取首个非空
  * trim 行，超长截断加省略号。参考 opencode 的标题清理逻辑。
  */
 function cleanTitle(raw: string): string {
   const noThink = raw.replace(/<think>[\s\S]*?<\/think>\s*/g, '')
-  const firstLine =
-    noThink
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.length > 0) ?? ''
-  if (firstLine.length > TITLE_MAX_LENGTH) {
-    // headChars 内收切点，避免截断点落在代理对中间产出孤立码元
-    return `${headChars(firstLine, TITLE_MAX_LENGTH - 3)}...`
-  }
-  return firstLine
+  const firstLine = firstNonEmptyLine(noThink)
+  return firstLine === null ? '' : truncateTitle(firstLine)
 }
 
 /** 会话标题是否仍是默认占位值。 */
@@ -167,22 +174,15 @@ async function generateSessionTitle(
   }
 }
 
-/** 从首条消息生成回退标题：取首个非空行，超长截断（与 cleanTitle 一致）。 */
+/** 从首条消息生成回退标题：取首个非空行，超长截断（与 cleanTitle 同一 helper）。 */
 async function fallbackTitleFromMessage(
   db: DB,
   sessionId: string,
   firstMessage: string,
 ): Promise<void> {
-  const firstLine = firstMessage
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l.length > 0)
-  if (!firstLine) return
-  const title =
-    firstLine.length > TITLE_MAX_LENGTH
-      ? `${headChars(firstLine, TITLE_MAX_LENGTH - 3)}...`
-      : firstLine
-  await updateSessionTitle(db, sessionId, title).catch(() => {})
+  const firstLine = firstNonEmptyLine(firstMessage)
+  if (firstLine === null) return
+  await updateSessionTitle(db, sessionId, truncateTitle(firstLine)).catch(() => {})
 }
 
 export { DEFAULT_SESSION_TITLE, generateSessionTitle, isDefaultTitle }

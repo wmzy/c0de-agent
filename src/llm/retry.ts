@@ -21,13 +21,37 @@ const errorHeaders = (error: unknown): Record<string, string> | undefined => {
 /** Cap a delay to the 32-bit safe ceiling. */
 const capDelay = (ms: number): number => Math.min(ms, RETRY_MAX_DELAY)
 
-/** 严格解析「正有限毫秒数」：Infinity（'1e999'）/NaN/负数/零一律拒绝。
- *  parseFloat('1e999') = Infinity 能穿过 Number.isNaN 检查——capDelay(Infinity)
- *  后单次重试延迟 2^31ms ≈ 24.8 天，且 RateLimit 的 policy maxDelay=Infinity
- *  不拦截，agent run 实际挂死。 */
+/** 严格解析「正有限数」。 */
 const parsePositiveFinite = (s: string): number | null => {
   const n = Number.parseFloat(s)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * 解析 retry-after-ms / retry-after 响应头为重试延迟毫秒数（未做上限钳制，
+ * 上限策略由调用方决定：delay() 钳到 32 位 timer 上限，transport 侧交给
+ * RateLimit policy.maxDelay）。
+ * 三形态：retry-after-ms 毫秒数、retry-after 秒数、retry-after HTTP-date
+ * （未来时刻）。仅接受正有限数——parseFloat('1e999') = Infinity 能穿过
+ * Number.isNaN 检查，capDelay(Infinity) 后单次重试延迟 2^31ms ≈ 24.8 天，
+ * 且 RateLimit 的 policy maxDelay=Infinity 不拦截，agent run 实际挂死。
+ * 无法解析返回 undefined（视为「无重试指示」）。
+ */
+const parseRetryAfterHeaders = (
+  retryAfterMs?: string | null,
+  retryAfter?: string | null,
+): number | undefined => {
+  if (retryAfterMs !== null && retryAfterMs !== undefined) {
+    const parsedMs = parsePositiveFinite(retryAfterMs)
+    if (parsedMs !== null) return Math.ceil(parsedMs)
+  }
+  if (retryAfter !== null && retryAfter !== undefined) {
+    const parsedSeconds = parsePositiveFinite(retryAfter)
+    if (parsedSeconds !== null) return Math.ceil(parsedSeconds * 1000)
+    const parsed = Date.parse(retryAfter) - Date.now()
+    if (!Number.isNaN(parsed) && parsed > 0) return Math.ceil(parsed)
+  }
+  return undefined
 }
 
 /**
@@ -45,18 +69,8 @@ const delay = (attempt: number, error?: unknown, initialDelayMs = RETRY_INITIAL_
       Math.min(initialDelayMs * RETRY_BACKOFF_FACTOR ** (attempt - 1), RETRY_MAX_DELAY_NO_HEADERS),
     )
   if (headers) {
-    const retryAfterMs = headers['retry-after-ms']
-    if (retryAfterMs !== undefined) {
-      const parsedMs = parsePositiveFinite(retryAfterMs)
-      if (parsedMs !== null) return capDelay(parsedMs)
-    }
-    const retryAfter = headers['retry-after']
-    if (retryAfter !== undefined) {
-      const parsedSeconds = parsePositiveFinite(retryAfter)
-      if (parsedSeconds !== null) return capDelay(Math.ceil(parsedSeconds * 1000))
-      const parsed = Date.parse(retryAfter) - Date.now()
-      if (!Number.isNaN(parsed) && parsed > 0) return capDelay(Math.ceil(parsed))
-    }
+    const parsed = parseRetryAfterHeaders(headers['retry-after-ms'], headers['retry-after'])
+    if (parsed !== undefined) return capDelay(parsed)
   }
   return backoff()
 }
@@ -125,6 +139,7 @@ const withRetry = async <T>(fn: () => Promise<T>, options: RetryOptions): Promis
 export type { Retryable, RetryOptions }
 export {
   delay,
+  parseRetryAfterHeaders,
   RETRY_INITIAL_DELAY,
   RETRY_MAX_DELAY,
   RETRY_MAX_DELAY_NO_HEADERS,

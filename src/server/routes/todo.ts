@@ -33,6 +33,19 @@ function makeTodoCtx(phases: TodoPhase[], abort: AbortSignal) {
   }
 }
 
+/** 恢复当前 todo phases：活跃 agent 直接读内存态，无活跃 agent 从历史消息
+ *  重建（GET 读取与 POST 手动操作共用同一恢复口径）。附带返回 run 句柄供
+ *  POST 写回内存态（GET 忽略）。 */
+async function loadPhases(
+  ctx: ServerContext,
+  sessionId: string,
+): Promise<{ phases: TodoPhase[]; run: ReturnType<ServerContext['agentManager']['get']> }> {
+  const run = ctx.agentManager.get(sessionId)
+  if (run) return { phases: run.state.todoPhases as TodoPhase[], run }
+  const messages = await getMessages(ctx.db, sessionId)
+  return { phases: getLatestTodoPhasesFromMessages(messages), run: undefined }
+}
+
 function createTodoRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -49,18 +62,7 @@ function createTodoRoute(ctx: ServerContext): Hono {
   // GET /:sessionId — 获取当前 todo 状态
   app.get('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
-    const run = ctx.agentManager.get(sessionId)
-    let phases: TodoPhase[]
-
-    if (run) {
-      // 活跃 agent：直接从内存状态读取
-      phases = run.state.todoPhases as TodoPhase[]
-    } else {
-      // 无活跃 agent：从历史消息恢复
-      const messages = await getMessages(ctx.db, sessionId)
-      phases = getLatestTodoPhasesFromMessages(messages)
-    }
-
+    const { phases } = await loadPhases(ctx, sessionId)
     return c.json({ phases })
   })
 
@@ -85,15 +87,8 @@ function createTodoRoute(ctx: ServerContext): Hono {
       return apiError(c, 400, 'INVALID_TODO_INPUT', `无效的 todo 操作参数：${validation.error}`)
     }
 
-    // 恢复当前 phases
-    const run = ctx.agentManager.get(sessionId)
-    let currentPhases: TodoPhase[]
-    if (run) {
-      currentPhases = run.state.todoPhases as TodoPhase[]
-    } else {
-      const messages = await getMessages(ctx.db, sessionId)
-      currentPhases = getLatestTodoPhasesFromMessages(messages)
-    }
+    // 恢复当前 phases（run 句柄留给成功后的内存态写回）
+    const { phases: currentPhases, run } = await loadPhases(ctx, sessionId)
 
     // 执行 todo 操作
     const todoCtx = makeTodoCtx(currentPhases, c.req.raw.signal)

@@ -18,7 +18,12 @@ import {
   restoreKanbanBoard,
 } from '../../kanban/index.js'
 import { fromDirectory, getProject } from '../../project/index.js'
-import type { KanbanColumnDef, KanbanLabelDef, KanbanPriority } from '../../shared/types/kanban.js'
+import {
+  KANBAN_PRIORITIES,
+  type KanbanColumnDef,
+  type KanbanLabelDef,
+  type KanbanPriority,
+} from '../../shared/types/kanban.js'
 import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -29,7 +34,9 @@ import { readJsonObject } from '../util/json-body.js'
 // columns/labels 数组含 null/缺字段 → 读 null.id TypeError 500、labels 字符串
 // → 持久化毒化卡片（后续每轮前端 .map 崩溃）。
 
-const VALID_PRIORITIES = new Set(['high', 'medium', 'low'])
+/** body.priority 合法值（REST 层输入无类型约束）——与 store 运行时校验、
+ *  tool schema enum 共用 shared 的 KANBAN_PRIORITIES 单一来源。 */
+const VALID_PRIORITIES = new Set<string>(KANBAN_PRIORITIES)
 
 function isValidColumnDef(v: unknown): v is KanbanColumnDef {
   return (

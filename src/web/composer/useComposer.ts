@@ -127,7 +127,7 @@ function useComposer({
    *  readImagePart 等副作用写进去会让同一张图被添加两次）。 */
   const imagesRef = useRef<ImagePart[]>([])
   imagesRef.current = images
-  /** 在途读取中的图片张数：见 addImageFile 的口径说明（数量上限必须按
+  /** 在途读取中的图片张数：见 addImage 的口径说明（数量上限必须按
    *  「已入列 + 读取中」计，且名额在校验通过时就同步占住）。 */
   const pendingImagesRef = useRef(0)
   const [popover, setPopover] = useState<PopoverState>(null)
@@ -405,18 +405,19 @@ function useComposer({
     [setPromptExternal],
   )
 
-  /** 外部引用（文件树 @ 按钮）：在 prompt 末尾追加 file pill，无需 @ token。
-   *  保留全部既有 pill 类型（此前逐类挑选复制，追加文件引用会吞掉
-   *  snippet/terminal pill）。 */
-  const appendFileReference = useCallback(
-    (path: string) => {
+  /** 三个 append*Reference 的共用骨架：在 prompt 末尾追加一个 pill。已有内容且
+   *  未以空格结尾时先补一个分隔空格，pill 后面再垫一个尾空格（后续追加/继续
+   *  输入不会与 pill 粘连），替换外部写入并聚焦编辑器。pill 构造（label 计算
+   *  等各自语义）留在各回调里。 */
+  const appendPill = useCallback(
+    (pill: Prompt[number]) => {
       const prompt = promptRef.current
       const parts = clonePromptParts(prompt)
       const text = promptToText(prompt)
       if (text.length > 0 && !text.endsWith(' ')) {
         parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
       }
-      parts.push({ type: 'file', path, content: path, start: 0, end: path.length })
+      parts.push(pill)
       parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
       setPromptExternal(parts, true)
       editorRef.current?.focus()
@@ -424,18 +425,22 @@ function useComposer({
     [setPromptExternal],
   )
 
+  /** 外部引用（文件树 @ 按钮）：在 prompt 末尾追加 file pill，无需 @ token。
+   *  保留全部既有 pill 类型（此前逐类挑选复制，追加文件引用会吞掉
+   *  snippet/terminal pill）。 */
+  const appendFileReference = useCallback(
+    (path: string) => {
+      appendPill({ type: 'file', path, content: path, start: 0, end: path.length })
+    },
+    [appendPill],
+  )
+
   /** 外部引用（预览面板选中文本）：在 prompt 末尾追加 snippet pill（显示位置标签），
    *  snippet 内容隐藏在 pill data 属性中，提交时由 promptToMessageText 展开为代码块。 */
   const appendSnippetReference = useCallback(
     (path: string, lineStart: number, lineEnd: number, snippet: string) => {
-      const prompt = promptRef.current
-      const parts = clonePromptParts(prompt)
-      const text = promptToText(prompt)
       const label = snippetLabel(path, lineStart, lineEnd)
-      if (text.length > 0 && !text.endsWith(' ')) {
-        parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
-      }
-      parts.push({
+      appendPill({
         type: 'snippet',
         path,
         lineStart,
@@ -445,28 +450,16 @@ function useComposer({
         start: 0,
         end: label.length,
       })
-      parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
-      setPromptExternal(parts, true)
-      editorRef.current?.focus()
     },
-    [setPromptExternal],
+    [appendPill],
   )
 
   /** 外部引用（终端 Add to Chat）：在 prompt 末尾追加 terminal pill。 */
   const appendTerminalReference = useCallback(
     (label: string, content: string) => {
-      const prompt = promptRef.current
-      const parts = clonePromptParts(prompt)
-      const text = promptToText(prompt)
-      if (text.length > 0 && !text.endsWith(' ')) {
-        parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
-      }
-      parts.push({ type: 'terminal', label, content, start: 0, end: label.length })
-      parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
-      setPromptExternal(parts, true)
-      editorRef.current?.focus()
+      appendPill({ type: 'terminal', label, content, start: 0, end: label.length })
     },
-    [setPromptExternal],
+    [appendPill],
   )
 
   /** 外部填入纯文本（空状态示例卡片）：已有草稿时换行追加，并聚焦编辑器。
@@ -502,7 +495,7 @@ function useComposer({
    *  计数空档，否则紧接着的那次添加会读到偏小的数、又放行一张。
    *  作用域世代校验沿用本 hook 既有口径（见 scopeGuard）：切换会话/项目后才回来
    *  的图片属于上一个作用域，不能落进当前的附件栏。 */
-  const addImageFile = useCallback(
+  const addImage = useCallback(
     (file: File) => {
       const inFlight = pendingImagesRef.current
       const err = validateImage(file, imagesRef.current.length + inFlight)
@@ -528,14 +521,6 @@ function useComposer({
         })
     },
     [scopeGuard],
-  )
-
-  // 添加图片（拖拽/选择）
-  const addImage = useCallback(
-    (file: File) => {
-      addImageFile(file)
-    },
-    [addImageFile],
   )
 
   /**
@@ -575,7 +560,7 @@ function useComposer({
         const file = item.getAsFile()
         if (!file) continue
         e.preventDefault()
-        addImageFile(file)
+        addImage(file)
       }
       // 文本粘贴（焦点本就在编辑器里，无需抢焦点）
       const text = e.clipboardData.getData('text/plain')
@@ -583,7 +568,7 @@ function useComposer({
       e.preventDefault()
       insertText(text, false)
     },
-    [addImageFile, insertText],
+    [addImage, insertText],
   )
 
   const confirmPaste = useCallback(() => {

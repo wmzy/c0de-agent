@@ -17,8 +17,12 @@ type KanbanLabelDef = {
   color: string
 }
 
+/** 卡片优先级枚举值——store 运行时校验、REST 层 body 校验、tool schema enum
+ *  三方共用的单一来源（此前各持字面量副本，无类型约束处已漂移）。 */
+const KANBAN_PRIORITIES = ['high', 'medium', 'low'] as const
+
 /** Card priority level. */
-type KanbanPriority = 'high' | 'medium' | 'low'
+type KanbanPriority = (typeof KANBAN_PRIORITIES)[number]
 
 /** A kanban card (task). */
 type KanbanCard = {
@@ -124,4 +128,4 @@ export type {
   KanbanStore,
 }
 
-export { DEFAULT_KANBAN_COLUMNS, KANBAN_LABEL_COLORS }
+export { DEFAULT_KANBAN_COLUMNS, KANBAN_LABEL_COLORS, KANBAN_PRIORITIES }

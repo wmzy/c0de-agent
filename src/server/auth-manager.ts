@@ -124,6 +124,41 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
+/**
+ * 读取设备注册表文件（devices.json 读写的单一实现，serve 的 loadDevices 与
+ * CLI `c0de auth` 共用）。逐字段防御：id/tokenHash 非字符串的畸形条目跳过；
+ * 文件缺失/整文件损坏 → 空表（认证侧 fail-closed：设备需重新配对/注册）。
+ * 旧 CLI 副本只查 Array.isArray 且损坏即 throw，两份容错相反，统一取 server 语义。
+ * 不去重：serve 侧装入 Map 时同 id 后写覆盖（原语义），CLI 列表原样展示。
+ */
+export function readDevicesFile(path: string): DeviceRecord[] {
+  try {
+    if (!existsSync(path)) return []
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as DevicesFile
+    const devices: DeviceRecord[] = []
+    for (const d of raw.devices ?? []) {
+      if (d && typeof d.id === 'string' && typeof d.tokenHash === 'string') {
+        devices.push(d)
+      }
+    }
+    return devices
+  } catch {
+    // 注册表损坏：视为空（设备需重新配对/注册）
+    return []
+  }
+}
+
+/**
+ * 写设备注册表文件（devices.json 写的单一实现）：确保父目录存在后以
+ * version:1 形状落盘。写失败如实上抛，由调用方决定策略（serve persist 吞错
+ * 保内存态，CLI revoke 直接反馈错误）。
+ */
+export function writeDevicesFile(path: string, devices: DeviceRecord[]): void {
+  mkdirSync(dirname(path), { recursive: true })
+  const file: DevicesFile = { version: 1, devices }
+  writeFileSync(path, JSON.stringify(file, null, 2), 'utf-8')
+}
+
 function safeEqual(a: string, b: string): boolean {
   const ba = Buffer.from(a)
   const bb = Buffer.from(b)
@@ -159,17 +194,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
 
   function loadDevices(): void {
     devices.clear()
-    try {
-      if (!existsSync(devicesPath)) return
-      const raw = JSON.parse(readFileSync(devicesPath, 'utf-8')) as DevicesFile
-      for (const d of raw.devices ?? []) {
-        if (d && typeof d.id === 'string' && typeof d.tokenHash === 'string') {
-          devices.set(d.id, d)
-        }
-      }
-    } catch {
-      // 注册表损坏：视为空（设备需重新配对/注册）
-    }
+    for (const d of readDevicesFile(devicesPath)) devices.set(d.id, d)
   }
 
   // 热重载：CLI `c0de auth revoke/reset` 或手工编辑 devices.json 后立即生效。
@@ -188,12 +213,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
 
   function persist(): void {
     try {
-      if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
-      const file: DevicesFile = {
-        version: 1,
-        devices: Array.from(devices.values()),
-      }
-      writeFileSync(devicesPath, JSON.stringify(file, null, 2), 'utf-8')
+      writeDevicesFile(devicesPath, Array.from(devices.values()))
     } catch {
       // 持久化失败不致命（内存态继续有效，重启后需重新注册）
     }

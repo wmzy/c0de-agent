@@ -13,6 +13,7 @@
 
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { outputPre } from '@/components/session/tools/CollapsiblePre.js'
 
 const notice = css`
   font-size: 12px;
@@ -21,14 +22,9 @@ const notice = css`
   margin-bottom: 4px;
 `
 
+/** 截断文本的灰底 <pre>：统一底版（CollapsiblePre.outputPre）+ 本块限高。 */
 const pre = css`
-  margin: 0;
-  padding: 8px;
-  background: var(--haze-color-bg-muted);
-  border-radius: 6px;
-  font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  ${outputPre};
   overflow: auto;
   max-height: 400px;
 `

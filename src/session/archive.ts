@@ -4,7 +4,7 @@ import { compactionArchives } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import { isUuid } from '../shared/utils/string.js'
 import { toEpochMs } from './time.js'
-import type { ArchiveRef, CompactionArchive, SessionEntry } from './types.js'
+import type { CompactionArchive, SessionEntry } from './types.js'
 
 function rowToArchive(row: typeof compactionArchives.$inferSelect): CompactionArchive {
   return {
@@ -86,12 +86,6 @@ async function getArchive(handle: DB, id: string): Promise<CompactionArchive | n
   return row ? rowToArchive(row) : null
 }
 
-/** Get the original entries stored in an archive. */
-async function getArchiveOriginalEntries(handle: DB, archiveId: string): Promise<SessionEntry[]> {
-  const archive = await getArchive(handle, archiveId)
-  return archive?.originalEntries ?? []
-}
-
 /** Escape LIKE/ILIKE metacharacters so the query is treated as a literal substring. */
 function escapeLikePattern(text: string): string {
   return text.replace(/[%_\\]/g, '\\$&')
@@ -134,52 +128,4 @@ async function listArchives(
   return rows.map(rowToArchive)
 }
 
-/** Parse a `@[archive:<id>]` or `@[squash:<n>]` reference from text. Returns null if none. */
-function parseArchiveReference(text: string): ArchiveRef | null {
-  const archiveId = text.match(/@\[archive:([^\]]+)\]/)?.[1]
-  if (archiveId) return { type: 'archive', id: archiveId }
-
-  const squashId = text.match(/@\[squash:(\d+|last)\]/)?.[1]
-  if (squashId) return { type: 'squash', id: squashId }
-
-  return null
-}
-
-/** Resolve an archive reference to displayable text. */
-async function resolveArchiveReference(
-  handle: DB,
-  sessionId: string,
-  ref: ArchiveRef,
-): Promise<string | null> {
-  if (ref.type === 'archive') {
-    const archive = await getArchive(handle, ref.id)
-    return archive ? `[Referenced Archive]\n${archive.summary}` : null
-  }
-
-  // squash reference: nth most recent squash archive
-  const archives = await handle.db
-    .select()
-    .from(compactionArchives)
-    .where(
-      and(
-        eq(compactionArchives.sessionId, sessionId),
-        eq(compactionArchives.archiveType, 'squash'),
-      ),
-    )
-    .orderBy(desc(compactionArchives.createdAt))
-
-  const index = ref.id === 'last' ? 0 : Number.parseInt(ref.id, 10) - 1
-  const row = archives[index]
-  if (!row) return null
-  return `[Referenced Squash #${index + 1}]\n${row.summary}`
-}
-
-export {
-  archiveOriginalEntries,
-  getArchive,
-  getArchiveOriginalEntries,
-  listArchives,
-  parseArchiveReference,
-  resolveArchiveReference,
-  searchArchives,
-}
+export { archiveOriginalEntries, getArchive, listArchives, searchArchives }

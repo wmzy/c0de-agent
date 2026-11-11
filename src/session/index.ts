@@ -1,13 +1,6 @@
 // Session layer: conversation persistence, branching, compaction, and context reconstruction.
 
-export {
-  archiveOriginalEntries,
-  getArchive,
-  getArchiveOriginalEntries,
-  parseArchiveReference,
-  resolveArchiveReference,
-  searchArchives,
-} from './archive.js'
+export { archiveOriginalEntries, getArchive, searchArchives } from './archive.js'
 export { forkSession, getBranches, getTree } from './branch.js'
 export {
   buildCompactionPrompt,
@@ -24,7 +17,6 @@ export {
 export {
   appendMessage,
   deleteEntriesByIds,
-  deleteMessagesAfter,
   getEntries,
   getMessageCount,
   getMessages,

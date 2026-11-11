@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { ModelOverride, ProviderConfig } from '@shared/types/llm.js'
 import { Button, ConfirmDialog } from 'haze-ui'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ProviderCatalogDialog } from '@/components/ProviderCatalogDialog.js'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { ApiKeyInput } from '@/components/settings/ApiKeyInput.js'
@@ -119,6 +119,16 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
   const [testResults, setTestResults] = useState<
     Record<number, { loading: boolean; result?: TestResult }>
   >({})
+  /**
+   * 本面板生命周期内已删除的 provider 行下标日志（按删除时点追加，保留顺序与重复）。
+   *
+   * 在飞测试结果不参与 removeProvider 的前移（它尚未落地、无从搬移）：发起时
+   * 捕获的下标在「删除更小下标行」后不再指向同一行，落地时按删除时序**重放**换算
+   * 成当前下标；被测行本身已删则结果作废（显示与模型回写一并跳过）。必须用有序
+   * 日志而非去重集合：同一个数字在多次删除中指向不同的行（删 0 后再删 0，第二次
+   * 删的是原第 1 行），只有按序重放才能对上「删除那一刻」的行身份。
+   */
+  const removedRowLogRef = useRef<number[]>([])
   const [catalogOpen, setCatalogOpen] = useState(false)
   /**
    * 待删除的 provider 下标（非 null = 删除确认弹窗打开中）。
@@ -146,6 +156,8 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
   }
 
   const removeProvider = (index: number) => {
+    // 在飞结果落地时凭 removedRowLogRef 按序重放换算下标（见其注释）。
+    removedRowLogRef.current.push(index)
     // 测试结果按行下标索引（testResults[index]），行的身份也是下标：删除行后
     // 后续行整体前移，结果必须同步前移——否则 A 的结果显示在 B 行、B 的显示在
     // C 行（"✓ 连接成功，N 个模型" 指向错误的 provider）。
@@ -159,6 +171,19 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
       return next
     })
     onProvidersChange((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  /** 把 testProvider **发起时**的行下标换算成当前行下标：按删除时序重放——每条
+   *  删除时「小于本行当前下标」则本行前移一位、「恰好等于」则被测行已删（返回
+   *  null，结果作废：显示与模型回写一并跳过，按旧下标回写会把模型并进**别的**
+   *  provider）。 */
+  const currentRowIndex = (startedAt: number): number | null => {
+    let landed = startedAt
+    for (const removed of removedRowLogRef.current) {
+      if (removed < landed) landed -= 1
+      else if (removed === landed) return null
+    }
+    return landed
   }
 
   const updateProvider = (index: number, field: keyof ProviderConfig, value: string) => {
@@ -220,8 +245,13 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
     const epoch = getDraftEpoch?.()
     try {
       const result = await providerAPI.test(baseURL, apiKey)
-      setTestResults((prev) => ({ ...prev, [index]: { loading: false, result } }))
-      // 测试成功时，把探测到的模型合并进 draft.providers[index].models，
+      // await 期间行集合可能已变：把发起时的下标换算成当前下标（更小下标行被删
+      // 则本行已前移）；被测行本身已删则结果作废。epoch 只拦模型回写——结果
+      // 显示不受「放弃更改」影响（既有语义），但拦行已删除这一种。
+      const landed = currentRowIndex(index)
+      if (landed === null) return
+      setTestResults((prev) => ({ ...prev, [landed]: { loading: false, result } }))
+      // 测试成功时，把探测到的模型合并进 draft.providers[landed].models，
       // 使保存后会话 ModelSelector 可选。保留 provider 已有的 ModelOverride，
       // 仅补全新检测到的模型。
       if (result.ok) {
@@ -229,7 +259,7 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
         onProvidersChange(
           (prev) =>
             prev.map((p, i) => {
-              if (i !== index) return p
+              if (i !== landed) return p
               const existing = p.models ?? {}
               const next = { ...existing }
               for (const m of detected) {
@@ -241,9 +271,11 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
         )
       }
     } catch (err) {
+      const landed = currentRowIndex(index)
+      if (landed === null) return
       setTestResults((prev) => ({
         ...prev,
-        [index]: {
+        [landed]: {
           loading: false,
           result: {
             ok: false,

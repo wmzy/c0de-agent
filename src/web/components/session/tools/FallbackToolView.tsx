@@ -1,17 +1,13 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
-import { CollapsiblePre } from '@/components/session/tools/CollapsiblePre.js'
+import { CollapsiblePre, outputPre } from '@/components/session/tools/CollapsiblePre.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 import { resultText } from '@/components/session/tools/toolShape.js'
 
-/** 入参区的灰底 <pre>（不折叠：入参摊平后通常只有几行，限高兜底防极端长参数）。 */
+/** 入参区的灰底 <pre>（不折叠：入参摊平后通常只有几行，限高兜底防极端长参数）。
+ *  底版与其它工具输出 pre 同一份（CollapsiblePre.outputPre）。 */
 const pre = css`
-  margin: 0;
-  padding: 8px;
-  background: var(--haze-color-bg-muted);
-  border-radius: 6px;
-  font-size: 13px;
-  white-space: pre-wrap;
+  ${outputPre};
   overflow: auto;
   max-height: 400px;
 `

@@ -3,13 +3,7 @@ import type { DB } from '../db/client.js'
 import { createTestDB, resetTestDB } from '../db/test-utils.js'
 import { generateId } from '../shared/index.js'
 import type { MessageContent } from '../shared/types/message.js'
-import {
-  appendMessage,
-  deleteMessagesAfter,
-  getMessageCount,
-  getMessages,
-  insertEntry,
-} from './message.js'
+import { appendMessage, getMessageCount, getMessages, insertEntry } from './message.js'
 import { createSession } from './session.js'
 
 async function setupDB(): Promise<DB> {
@@ -120,15 +114,5 @@ describe('message operations', () => {
     const page = await getMessages(handle, sessionId, { limit: 2, offset: 1 })
     expect(page).toHaveLength(2)
     expect(page[0]?.content[0]).toMatchObject({ text: 'msg-1' })
-  })
-
-  it('deletes messages after a given index', async () => {
-    for (let i = 0; i < 4; i++) {
-      await appendMessage(handle, sessionId, { role: 'user', content: textContent(`msg-${i}`) })
-    }
-    await deleteMessagesAfter(handle, sessionId, 1) // keep 0,1; delete 2,3
-    const remaining = await getMessages(handle, sessionId)
-    expect(remaining).toHaveLength(2)
-    expect(remaining[1]?.content[0]).toMatchObject({ text: 'msg-1' })
   })
 })

@@ -202,15 +202,11 @@ function createUpdateRoute(ctx: ServerContext): Hono {
     if (r._tag !== 'success') {
       // P0 回滚：spawn 失败（含程序文件未就绪等）→ 恢复被暂停的会话。
       // forcedAbort 的无法恢复（已中止），但这是超时兜底，属可接受损失。
+      // performHandoff 只产 success|spawn_failed（manual_install_required 仅
+      // performInstall/performHotUpdate 产，install 阶段已在前面上游处理）——
+      // 走到这里的非 success 一律按 spawn_failed 500。
       for (const id of pauseResult.pausedIds) {
         ctx.agentManager.resume(id)
-      }
-      if (r._tag === 'manual_install_required') {
-        return apiError(c, 409, 'MANUAL_UPDATE_REQUIRED', r.error, {
-          command: r.command,
-          snapshotPath: r.snapshotPath,
-          resumedSessions: pauseResult.pausedIds.length,
-        })
       }
       return apiError(c, 500, 'HOT_UPDATE_FAILED', `${r._tag}: ${r.error}`, {
         resumedSessions: pauseResult.pausedIds.length,

@@ -5,22 +5,11 @@
 // 打印的带 token URL 重新注册首台设备。
 // 运行中的 serve 通过 authManager 的 devices.json watcher 热加载 revoke/reset 变更。
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { readDevicesFile, writeDevicesFile } from '../../server/auth-manager.js'
 import { resolveDbDir } from '../../server/server.js'
 import type { CommandArgs } from '../parser.js'
-
-type DeviceRecord = {
-  id: string
-  name: string
-  tokenHash: string
-  createdAt: number
-}
-
-type DevicesFile = {
-  version: 1
-  devices: DeviceRecord[]
-}
 
 type AuthCommandContext = {
   args: CommandArgs
@@ -35,27 +24,14 @@ function authTokenPath(): string {
   return join(resolveDbDir(), 'auth-token')
 }
 
-function readDevices(): DeviceRecord[] {
-  try {
-    if (!existsSync(devicesPath())) return []
-    const raw = JSON.parse(readFileSync(devicesPath(), 'utf-8')) as DevicesFile
-    return Array.isArray(raw.devices) ? raw.devices : []
-  } catch {
-    throw new Error('auth: 无法读取设备注册表（devices.json 损坏？）')
-  }
-}
-
-function writeDevices(devices: DeviceRecord[]): void {
-  const file: DevicesFile = { version: 1, devices }
-  writeFileSync(devicesPath(), JSON.stringify(file, null, 2), 'utf-8')
-}
-
 async function runAuthCommand(ctx: AuthCommandContext): Promise<void> {
   const write = ctx.write ?? ((s: string) => process.stdout.write(s))
   const sub = ctx.args.positionals[0] ?? 'list'
 
   if (sub === 'list') {
-    const devices = readDevices()
+    // 读侧与 serve 共用 readDevicesFile（单一实现）：逐字段防御 + 损坏视为空
+    // （fail-closed，与认证侧一致——此前 CLI 副本损坏即 throw，容错相反）。
+    const devices = readDevicesFile(devicesPath())
     if (devices.length === 0) {
       write('无已授权设备。\n')
       return
@@ -69,10 +45,13 @@ async function runAuthCommand(ctx: AuthCommandContext): Promise<void> {
   if (sub === 'revoke') {
     const id = ctx.args.positionals[1]
     if (!id) throw new Error('auth revoke: a device id is required (use `c0de auth list`)')
-    const devices = readDevices()
+    const devices = readDevicesFile(devicesPath())
     const target = devices.find((d) => d.id === id)
     if (!target) throw new Error(`auth revoke: device not found: ${id}`)
-    writeDevices(devices.filter((d) => d.id !== id))
+    writeDevicesFile(
+      devicesPath(),
+      devices.filter((d) => d.id !== id),
+    )
     write(`已撤销设备 "${target.name}"（${id}）。运行中的 serve 将立即生效。\n`)
     return
   }
@@ -95,4 +74,4 @@ async function runAuthCommand(ctx: AuthCommandContext): Promise<void> {
 }
 
 export type { AuthCommandContext }
-export { devicesPath, readDevices, runAuthCommand, writeDevices }
+export { runAuthCommand }

@@ -178,24 +178,6 @@ async function getMessageCount(handle: DB, sessionId: string): Promise<number> {
   return result?.value ?? 0
 }
 
-/** Delete all messages after the given 0-based index (keeps 0..index inclusive). */
-async function deleteMessagesAfter(
-  handle: DB,
-  sessionId: string,
-  messageIndex: number,
-): Promise<void> {
-  const messages = await getMessages(handle, sessionId)
-  const toDelete = messages.slice(messageIndex + 1)
-  if (toDelete.length > 0) {
-    await handle.db.delete(sessionEntries).where(
-      inArray(
-        sessionEntries.id,
-        toDelete.map((m) => m.id),
-      ),
-    )
-  }
-}
-
 /** Low-level: get ALL entries (messages + special) in chronological order. */
 async function getEntries(handle: DB, sessionId: string): Promise<SessionEntry[]> {
   const rows = await handle.db
@@ -246,7 +228,6 @@ export {
   appendMessage,
   buildTaskNotification,
   deleteEntriesByIds,
-  deleteMessagesAfter,
   getEntries,
   getMessageCount,
   getMessages,

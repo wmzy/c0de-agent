@@ -5,15 +5,17 @@ import type { Config } from '../../core/config.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { discoverSkills } from '../../core/skills.js'
 import type { CommandResult } from '../../core/types.js'
-import { executeWorkflow, workflowSessionTitle } from '../../core/workflows/index.js'
+import {
+  buildWorkflowAgentConfig,
+  executeWorkflow,
+  workflowSessionTitle,
+} from '../../core/workflows/index.js'
 import type { WorkflowRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import { createDebugSpawn } from '../../dap/index.js'
 import type { Registry } from '../../llm/registry.js'
 import { createSession, updateSessionLastRun } from '../../session/session.js'
 import { budgetGateEnabled } from '../../session/usage.js'
-import type { AgentConfig } from '../../shared/types/agent.js'
-import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 import { apiError } from '../middleware/error.js'
 import {
   createStreamPermissionChecker,
@@ -194,18 +196,11 @@ async function runWorkflowChannel(
   const permissionTimeoutAction = resolvePermissionTimeoutAction(opts.sessionConfig)
 
   // P2-5：runner 的工具集不再恒 []——传配置解析结果作为子 agent 工具集的交集
-  // 基准（与主 chat/CLI print 同口径）。config.tools.enabled 的 fail-closed 语义
-  // 对工作流派发的子 agent 成立（全禁 → 交集为空）。runner 自身不进 agentLoop，
-  // 工具名单不产生任何 LLM 调用影响。无项目绑定时剔除项目专属工具。
-  const agentConfig: AgentConfig = {
-    provider: opts.sessionConfig.defaultProvider,
-    model: opts.sessionConfig.defaultModel,
-    tools: resolveEnabledToolNames(ctx.toolRegistry, opts.sessionConfig).filter(
-      (n) => Boolean(projectId) || !PROJECT_BOUND_TOOLS.has(n),
-    ),
-    plugins: opts.sessionConfig.plugins.enabled,
-    agentName: 'default',
-  }
+  // 基准（与主 chat/CLI print 同口径）。组装收敛在 buildWorkflowAgentConfig
+  // （core/workflows/agent.ts），与 CLI 斜杠通道共用；config.tools.enabled 的
+  // fail-closed 语义对工作流派发的子 agent 成立（全禁 → 交集为空）。runner
+  // 自身不进 agentLoop，工具名单不产生任何 LLM 调用影响。
+  const agentConfig = buildWorkflowAgentConfig(opts.sessionConfig, ctx.toolRegistry, projectId)
 
   // 并发占位：同步原子占位，SSE 回调内 register 填充。
   if (!ctx.agentManager.tryAcquire(workflowSession.id)) {

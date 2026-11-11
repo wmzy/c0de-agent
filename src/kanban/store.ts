@@ -11,7 +11,7 @@ import type {
   KanbanPriority,
   KanbanStore,
 } from '../shared/types/kanban.js'
-import { DEFAULT_KANBAN_COLUMNS } from '../shared/types/kanban.js'
+import { DEFAULT_KANBAN_COLUMNS, KANBAN_PRIORITIES } from '../shared/types/kanban.js'
 
 type BoardRow = typeof kanbanBoards.$inferSelect
 type CardRow = typeof kanbanCards.$inferSelect
@@ -21,8 +21,9 @@ const DEFAULT_COLUMN_ID = 'todo'
 /** Position increment — large gap avoids frequent re-indexing on reorder. */
 const POSITION_GAP = 1000
 
-/** 合法优先级枚举（运行时校验用——REST/tool 层输入未经 TS 约束）。 */
-const VALID_PRIORITIES = new Set<KanbanPriority>(['high', 'medium', 'low'])
+/** 合法优先级枚举（运行时校验用——REST/tool 层输入未经 TS 约束）。
+ *  字面量单一来源在 shared/types/kanban.ts 的 KANBAN_PRIORITIES。 */
+const VALID_PRIORITIES = new Set<KanbanPriority>(KANBAN_PRIORITIES)
 
 /** 列内仍有卡片时禁止删除该列（否则卡片静默不可见）。 */
 class KanbanColumnInUseError extends Error {
@@ -441,6 +442,18 @@ export type DeletedKanbanBoard = {
   deletedProjectWorktree: string | null
 }
 
+/** 软删除字段集（按 id 单板版与项目批量版共用，字段清单单点）：
+ *  projectName/worktree 传 null → undefined = 该列不更新（保留上次删除周期的记录）。 */
+function softDeleteBoardSet(projectName?: string | null, worktree?: string | null) {
+  return {
+    deletedAt: new Date(),
+    deletedProjectName: projectName ?? undefined,
+    deletedProjectWorktree: worktree ?? undefined,
+    purgePendingAt: null,
+    updatedAt: new Date(),
+  }
+}
+
 /** 按板 id 软删除进回收站的行级实现（softDeleteKanbanBoard 与项目合并 adoptKanbanBoard 共用）。
  *  projectName/worktree 传 null 时对应列不更新（保留上次删除周期的记录）；
  *  恢复后重删的看板须重新经历「到期 → 宽限」周期，宽限标记不跨删除周期生效。
@@ -453,16 +466,29 @@ export async function softDeleteKanbanBoardById(
 ): Promise<boolean> {
   const rows = await handle.db
     .update(kanbanBoards)
-    .set({
-      deletedAt: new Date(),
-      deletedProjectName: projectName ?? undefined,
-      deletedProjectWorktree: worktree ?? undefined,
-      purgePendingAt: null,
-      updatedAt: new Date(),
-    })
+    .set(softDeleteBoardSet(projectName, worktree))
     .where(and(eq(kanbanBoards.id, boardId), isNull(kanbanBoards.deletedAt)))
     .returning({ id: kanbanBoards.id })
   return rows.length > 0
+}
+
+/** 把项目的活动看板**批量**软删除进回收站（项目删除的看板腿）。
+ *  接受 drizzle 句柄（含事务 tx），供项目删除事务内复用；单条 UPDATE 命中
+ *  activeBoardWhere(projectId) 全部活动板（不逐板循环）。字段集与按 id 版
+ *  同源 softDeleteBoardSet——此前 project 路由内联同字段清单，已现漂移风险。
+ *  返回实际软删除的板数。 */
+export async function softDeleteKanbanBoardsByProject(
+  db: DB['db'],
+  projectId: string,
+  projectName: string | null,
+  worktree?: string | null,
+): Promise<number> {
+  const rows = await db
+    .update(kanbanBoards)
+    .set(softDeleteBoardSet(projectName, worktree))
+    .where(activeBoardWhere(projectId))
+    .returning({ id: kanbanBoards.id })
+  return rows.length
 }
 
 /** 把项目的活动看板软删除进回收站（记录原项目名与工作目录）。项目行删除后 FK 将 projectId 置 null。 */

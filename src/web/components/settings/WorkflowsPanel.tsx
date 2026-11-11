@@ -11,6 +11,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput, SyncedSelect, SyncedTextarea } from '@/components/SyncedControls.js'
 import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
+import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 import { workflowsAPI } from '@/services/workflows.js'
 import { messageOf } from '@/utils/errors.js'
@@ -194,8 +195,9 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
    * 编辑器草稿的**基线**（打开时载入的内容）。草稿本身只有本地 state，
    * 没有任何持久化：一次 Esc / ✕ / 取消就把它整段丢掉——而这里放的常是
    * 用户从别处粘过来的整段工作流脚本。设置页的配置草稿有 useBlocker +
-   * beforeunload + ConfirmDialog 三层保护（见 Settings.tsx），工作流脚本却
-   * 一个都没有：关掉弹窗后连「未保存更改」的提示都不会亮（脚本从不进配置草稿）。
+   * beforeunload + ConfirmDialog 三层保护（见 Settings.tsx）；工作流脚本
+   * 不进配置草稿，只有弹窗内的放弃确认（confirmDiscard）与刷新/关标签页的
+   * beforeunload（见下方 editorDirty 接线）兜底，站内导航离开仍是盲区。
    */
   const baselineRef = useRef<{ name: string; source: string; target: 'project' | 'user' }>({
     name: '',
@@ -226,6 +228,11 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     (draftName !== baselineRef.current.name ||
       draftSource !== baselineRef.current.source ||
       draftTarget !== baselineRef.current.target)
+
+  // 刷新/关标签页的丢失提示与配置草稿同口径：Settings 的 useBlocker 谓词只认
+  // 配置草稿（脚本从不进配置草稿），站内导航拦不住脚本编辑器——原生通道必须
+  // 在这里单独接线，否则脏稿状态下关页面零提示。
+  useBeforeUnloadGuard(editorDirty)
 
   const invalidate = () => void qc.invalidateQueries({ queryKey })
 

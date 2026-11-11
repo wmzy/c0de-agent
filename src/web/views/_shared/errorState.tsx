@@ -63,6 +63,19 @@ const errorIcon = css`
   font-size: 32px;
 `
 
+/** 整页轻提示（加载中/解析中）：flex 居中 + 次级色小字，撑满 Layout 主区。
+ *  RootRedirect 的「正在解析当前项目…」与 SettingsPage 的懒加载 fallback
+ *  曾各持一份逐字副本（同名 redirectMsg），收敛于此。 */
+export const centeredHint = css`
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--haze-color-text-secondary);
+  font-size: 14px;
+  padding: 24px;
+`
+
 export type LoadErrorProps = {
   /** 失败语义标题（「哪坏了」）。 */
   title?: ReactNode

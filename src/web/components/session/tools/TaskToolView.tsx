@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
+import { outputPre } from '@/components/session/tools/CollapsiblePre.js'
 import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 import { isRecord, resultText, str } from '@/components/session/tools/toolShape.js'
 import { WorkflowGraph, type WorkflowNode } from '@/components/session/WorkflowGraph.js'
@@ -15,14 +16,9 @@ const metaLabel = css`
   color: var(--haze-color-text-secondary);
 `
 
-const outputPre = css`
-  margin: 0;
-  padding: 8px;
-  background: var(--haze-color-bg-muted);
-  border-radius: 6px;
-  font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-word;
+/** task 输出/共享上下文的灰底 <pre>：统一底版（CollapsiblePre.outputPre）+ 本块限高。 */
+const pre = css`
+  ${outputPre};
   overflow: auto;
   max-height: 300px;
 `
@@ -122,7 +118,7 @@ export function TaskToolView({
       {str(inp.context) && (
         <details>
           <summary className={metaLabel}>Shared Context</summary>
-          <pre className={outputPre}>{str(inp.context)}</pre>
+          <pre className={pre}>{str(inp.context)}</pre>
         </details>
       )}
       {nodes.length > 0 && (
@@ -134,7 +130,7 @@ export function TaskToolView({
         text && (
           <div>
             <div className={metaLabel}>Output</div>
-            <pre className={outputPre} data-testid="task-output">
+            <pre className={pre} data-testid="task-output">
               {text}
             </pre>
           </div>

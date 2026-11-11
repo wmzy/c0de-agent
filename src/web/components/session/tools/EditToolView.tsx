@@ -1,7 +1,7 @@
 import { css } from '@linaria/core'
 import type { ToolResult } from '@shared/types/tool.js'
 import { ContentDiff } from '@/components/session/ContentDiff.js'
-import { ToolError } from '@/components/session/tools/toolError.js'
+import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 import { isRecord, resultText, str } from '@/components/session/tools/toolShape.js'
 
 type EditInput =
@@ -72,7 +72,8 @@ export function EditToolView({
   status: string
 }) {
   // 编辑失败时 diff 无意义（落盘与否未知），只给失败原因。
-  if (output?._tag === 'error' || status === 'error') {
+  // 判定与其它视图同口径走 toolErrorText（output._tag + status 兜底）。
+  if (toolErrorText(output, status) !== null) {
     return <ToolError output={output} status={status} />
   }
   // hashline 模式没有 oldText/newText：此前落到下面渲染 oldText='' / newText='' 的

@@ -146,4 +146,35 @@ describe('WorkflowsPanel 工作流编辑器不静默丢脚本', () => {
       'export default',
     )
   })
+
+  // 脚本不进设置页的配置草稿，Settings 的 beforeunload 守卫护不到它：
+  // 脏稿状态下刷新/关标签页必须由面板自己的守卫拦下，否则零提示丢整段脚本。
+  it('脏稿时刷新被 beforeunload 拦截，放弃草稿后解除', async () => {
+    vi.mocked(workflowsAPI.list).mockResolvedValue({ workflows: [] })
+    renderPanel('p1')
+
+    // 编辑器未打开（clean）：不拦
+    await waitFor(() => expect(screen.getByTestId('workflow-add')).toBeTruthy())
+    const clean = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(clean)
+    expect(clean.defaultPrevented).toBe(false)
+
+    // 敲入脚本（dirty）：拦下
+    fireEvent.click(screen.getByTestId('workflow-add'))
+    await waitFor(() => expect(screen.getByTestId('workflow-source-editor')).toBeTruthy())
+    fireEvent.change(screen.getByTestId('workflow-source-editor'), {
+      target: { value: 'export default async () => { /* 脏稿 */ }' },
+    })
+    const dirty = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(dirty)
+    expect(dirty.defaultPrevented).toBe(true)
+
+    // 放弃草稿关闭编辑器（clean）：解除
+    fireEvent.click(screen.getByText('取消'))
+    fireEvent.click(screen.getByText('放弃修改'))
+    await waitFor(() => expect(screen.queryByTestId('workflow-source-editor')).toBeNull())
+    const after = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(after)
+    expect(after.defaultPrevented).toBe(false)
+  })
 })

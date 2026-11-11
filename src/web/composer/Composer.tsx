@@ -342,22 +342,27 @@ function Composer(props: ComposerProps) {
   })
   const workflows = workflowsQuery.data ?? []
 
+  // 浮层 → 候选源 query 的单一判别树：workflow→工作流列表、slash/subcommand→命令、
+  // at→文件搜索。error/busy 两处（渲染失败行、按键的加载中判定）消费同一棵树，
+  // 新增浮层种类时只改这里。返回 null = 浮层关闭。
+  const activePopoverQuery = () => {
+    switch (composer.popover) {
+      case 'workflow':
+        return workflowsQuery
+      case 'slash':
+      case 'subcommand':
+        return commandsQuery
+      case 'at':
+        return fileSearch
+      default:
+        return null
+    }
+  }
+  const popoverSource = activePopoverQuery()
+
   // 浮层候选源读取失败的原因：渲染失败行 + 重试，而不是把「读不到」当成
   // 「没有匹配」（用户会据此按 Enter 把字面量 @foo / /cmd 当正文发出去）。
-  const popoverError =
-    composer.popover === 'workflow'
-      ? workflowsQuery.isError
-        ? messageOf(workflowsQuery.error)
-        : null
-      : composer.popover === 'slash' || composer.popover === 'subcommand'
-        ? commandsQuery.isError
-          ? messageOf(commandsQuery.error)
-          : null
-        : composer.popover === 'at'
-          ? fileSearch.isError
-            ? messageOf(fileSearch.error)
-            : null
-          : null
+  const popoverError = popoverSource?.isError ? messageOf(popoverSource.error) : null
 
   // slash 命令按 query 过滤——过滤必须与键盘导航/选择使用同一列表，
   // 否则 activeIndex 指向的项与 popover 展示的项不一致（选中错误命令）。
@@ -531,14 +536,8 @@ function Composer(props: ComposerProps) {
     // 而不是「没有匹配」。此时浮层保持打开显示「搜索中…」/失败原因 + 重试
     // （见各 Popover 的 loading/error 分支），但按键仍按「无浮层」处理——
     // 否则一个出不来结果的菜单会静默吞掉 Enter。
-    const popoverBusy =
-      composer.popover === 'workflow'
-        ? workflowsQuery.isLoading || workflowsQuery.isError
-        : composer.popover === 'slash' || composer.popover === 'subcommand'
-          ? commandsQuery.isLoading || commandsQuery.isError
-          : composer.popover === 'at'
-            ? fileSearch.isLoading || fileSearch.isError
-            : false
+    // 判别树与 popoverError 共用 activePopoverQuery。
+    const popoverBusy = popoverSource ? popoverSource.isLoading || popoverSource.isError : false
     // 没有候选（无论是否在加载）→ 不拦截，按「无浮层」把按键交给 composer.handleKeyDown
     // （Enter 即发送）。
     const popoverSuppressed = composer.popover !== null && popoverCandidates === 0

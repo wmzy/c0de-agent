@@ -1,4 +1,7 @@
 // catalog 路由测试，对应 src/server/routes/catalog.ts
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DB } from '../../db/client.js'
 import { createTestDB, resetTestDB } from '../../db/test-utils.js'
@@ -7,12 +10,21 @@ import { createServerContext } from '../context.js'
 import { clearCatalogCache, createCatalogRoute } from './catalog.js'
 
 let dbHandle: DB
+const prevConfigDir = process.env.C0DE_CONFIG_DIR
+let isolatedConfigDir = ''
 
 beforeAll(async () => {
   dbHandle = await createTestDB()
+  // 磁盘缓存随 getCacheDir 落在全局配置根（C0DE_CONFIG_DIR 可重定向）——
+  // 重定向到 tmp 目录，避免测试写穿到真实 ~/.c0de/cache（clobber 用户缓存）。
+  isolatedConfigDir = mkdtempSync(join(tmpdir(), 'catalog-cache-'))
+  process.env.C0DE_CONFIG_DIR = isolatedConfigDir
 })
 afterAll(async () => {
   await dbHandle.close()
+  rmSync(isolatedConfigDir, { recursive: true, force: true })
+  if (prevConfigDir === undefined) delete process.env.C0DE_CONFIG_DIR
+  else process.env.C0DE_CONFIG_DIR = prevConfigDir
 })
 afterEach(async () => {
   await resetTestDB(dbHandle)

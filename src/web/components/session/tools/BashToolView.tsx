@@ -24,6 +24,16 @@ const exitTag = css`
   margin-left: 4px;
 `
 
+/** exit 标签：失败分支（exit code 从 error 文本解析）与成功分支（metadata.exitCode）
+ *  共用同一渲染——exit code 是失败命令最可操作的信号（127 命令不存在、124 超时）。 */
+function ExitTag({ exitCode }: { exitCode: number }) {
+  return (
+    <span className={`${exitCode === 0 ? exitOk : exitErr} ${exitTag}`} data-testid="bash-exit">
+      exit {exitCode}
+    </span>
+  )
+}
+
 type BashInput = { command: string; cwd?: string; timeout?: number }
 
 export function BashToolView({
@@ -64,14 +74,7 @@ export function BashToolView({
       <div>
         {commandBlock}
         <ToolError output={output} status={status} />
-        {exitCode !== null && status !== 'running' && (
-          <span
-            className={`${exitCode === 0 ? exitOk : exitErr} ${exitTag}`}
-            data-testid="bash-exit"
-          >
-            exit {exitCode}
-          </span>
-        )}
+        {exitCode !== null && status !== 'running' && <ExitTag exitCode={exitCode} />}
       </div>
     )
   }
@@ -92,11 +95,7 @@ export function BashToolView({
           {outText}
         </CollapsiblePre>
       )}
-      {exitCode !== null && status !== 'running' && (
-        <span className={`${exitCode === 0 ? exitOk : exitErr} ${exitTag}`} data-testid="bash-exit">
-          exit {exitCode}
-        </span>
-      )}
+      {exitCode !== null && status !== 'running' && <ExitTag exitCode={exitCode} />}
     </div>
   )
 }

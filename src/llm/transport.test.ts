@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isLLMError } from './schema/errors.js'
-import { sseFraming, streamHTTP } from './transport.js'
+import { httpPost, sseFraming } from './transport.js'
 
 const toStream = (chunks: string[]): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder()
@@ -162,7 +162,7 @@ describe('transport sseFraming reader cleanup', () => {
   })
 })
 
-describe('transport streamHTTP', () => {
+describe('transport httpPost', () => {
   const makeFetch = (
     status: number,
     body: string,
@@ -174,28 +174,25 @@ describe('transport streamHTTP', () => {
         headers: { 'content-type': 'text/event-stream', ...headers },
       })) as unknown as typeof fetch
 
-  it('yields frames on a 200 response', async () => {
-    const frames = await collect(
-      streamHTTP({
-        url: 'https://example.com',
-        body: { q: 1 },
-        headers: {},
-        fetchImpl: makeFetch(200, 'data: {"ok":true}\n\n'),
-      }),
-    )
+  it('returns a framable stream on a 200 response', async () => {
+    const stream = await httpPost({
+      url: 'https://example.com',
+      body: { q: 1 },
+      headers: {},
+      fetchImpl: makeFetch(200, 'data: {"ok":true}\n\n'),
+    })
+    const frames = await collect(sseFraming(stream))
     expect(frames).toEqual(['{"ok":true}'])
   })
 
   it('throws Authentication on 401', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(401, 'bad key'),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(401, 'bad key'),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'Authentication'
@@ -204,14 +201,12 @@ describe('transport streamHTTP', () => {
 
   it('throws RateLimit on 429 and parses retry-after-ms', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(429, 'slow', { 'retry-after-ms': '500' }),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(429, 'slow', { 'retry-after-ms': '500' }),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'RateLimit' && e.reason.retryAfterMs === 500
@@ -223,14 +218,12 @@ describe('transport streamHTTP', () => {
   // 非法头应视为「无重试指示」，不携带 retryAfterMs。
   it('drops non-finite retry-after-ms on 429', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(429, 'slow', { 'retry-after-ms': '1e999' }),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(429, 'slow', { 'retry-after-ms': '1e999' }),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'RateLimit' && e.reason.retryAfterMs === undefined
@@ -239,14 +232,12 @@ describe('transport streamHTTP', () => {
 
   it('throws context-overflow InvalidRequest when body matches', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(400, "This model's maximum context length is 8192 tokens"),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(400, "This model's maximum context length is 8192 tokens"),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'InvalidRequest' && e.reason.classification === 'context-overflow'
@@ -255,14 +246,12 @@ describe('transport streamHTTP', () => {
 
   it('throws ProviderInternal on 5xx', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(503, 'overloaded'),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(503, 'overloaded'),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'ProviderInternal'
@@ -271,14 +260,12 @@ describe('transport streamHTTP', () => {
 
   it('throws QuotaExceeded on 402', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(402, 'billing quota exceeded'),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(402, 'billing quota exceeded'),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'QuotaExceeded'
@@ -287,14 +274,12 @@ describe('transport streamHTTP', () => {
 
   it('throws ContentPolicy when body mentions content filter', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(400, 'blocked by content filter'),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(400, 'blocked by content filter'),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'ContentPolicy'
@@ -303,14 +288,12 @@ describe('transport streamHTTP', () => {
 
   it('classifies bodyless 413 as context-overflow', async () => {
     await expect(
-      collect(
-        streamHTTP({
-          url: 'https://example.com',
-          body: {},
-          headers: {},
-          fetchImpl: makeFetch(413, ''),
-        }),
-      ),
+      httpPost({
+        url: 'https://example.com',
+        body: {},
+        headers: {},
+        fetchImpl: makeFetch(413, ''),
+      }),
     ).rejects.toSatisfy((e: unknown) => {
       if (!isLLMError(e)) return false
       return e.reason._tag === 'InvalidRequest' && e.reason.classification === 'context-overflow'

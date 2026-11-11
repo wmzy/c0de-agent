@@ -7,18 +7,8 @@ import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
 import { projectAPI } from '@/services/project.js'
 import { messageOf } from '@/utils/errors.js'
-import { LoadError } from '@/views/_shared/errorState.js'
+import { centeredHint, LoadError } from '@/views/_shared/errorState.js'
 import { Layout } from '@/views/Layout.js'
-
-const redirectMsg = css`
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  color: var(--haze-color-text-secondary);
-  font-size: 14px;
-  padding: 24px;
-`
 
 /** 读失败块撑满 Layout 主区（配合 _shared/errorState 居中变体垂直居中）。 */
 const errorFill = css`
@@ -57,7 +47,7 @@ export function RootRedirect() {
 
   if (isLoading) {
     return (
-      <Layout header={<TopBar />} main={<div className={redirectMsg}>正在解析当前项目…</div>} />
+      <Layout header={<TopBar />} main={<div className={centeredHint}>正在解析当前项目…</div>} />
     )
   }
   if (isError || !project) {

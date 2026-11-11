@@ -2,19 +2,12 @@
 
 // src/cli/index.ts — c0de CLI bin entry.
 
-import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from '../core/config.js'
 import type { LoopDeps } from '../core/loop.js'
-import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { enforceProjectTrust } from '../project/index.js'
-import {
-  acquireDevDbLock,
-  readServeInfo,
-  releaseDevDbLock,
-  resolveDbDir,
-} from '../server/server.js'
+import { readServeInfo } from '../server/server.js'
 import { budgetGateEnabled } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import { runAcpCommand } from './commands/acp.js'
@@ -28,6 +21,7 @@ import { runSessionsCommand } from './commands/sessions.js'
 import { runTrustCommand } from './commands/trust.js'
 import { runUpdateCommand } from './commands/update.js'
 import { buildAgentDeps, type PermissionStrategy, resolvePermission } from './deps.js'
+import { withPersistentDb } from './dev-db.js'
 import { type CommandSpec, parseCommand } from './parser.js'
 
 const COMMANDS: CommandSpec[] = [
@@ -113,16 +107,6 @@ type DispatchOverrides = {
   runServe?: () => Promise<void>
 }
 
-/** 判别持久库错误是否为「库被其它 c0de 进程占用」的锁冲突特征（读 server.ts 确认）：
- *  - acquireDevDbLock 对 live lock 抛出的 "Database is locked by another c0de process (PID …)"；
- *  - PGLite 单写者 WASM 崩溃 RuntimeError "Aborted()"（serve 未持锁但占用 dataDir 时的兜底特征）。
- *  其余错误（磁盘故障、迁移失败等）不属于锁冲突，不得误报 serve。 */
-function isDbLockConflict(err: unknown): boolean {
-  if (!(err instanceof Error)) return false
-  if (err.message.includes('Database is locked by another c0de process')) return true
-  return err.name === 'RuntimeError' && /abort/i.test(err.message)
-}
-
 /** P1-2：解析 --budget-action 覆盖值。CLI 无「恢复」UI，config 的 pause 在此等效 abort；
  *  接受 warn|abort（pause 兼容映射到 abort）。非法值抛错并提示可取值。 */
 function parseBudgetActionOption(value: string | undefined): 'warn' | 'abort' | undefined {
@@ -154,8 +138,11 @@ type AgentDepsOptions = {
 /** 封装 agent 依赖生命周期：加载配置 → 建库迁移 → 组装 deps → 使用后关库。
  *  chat / acp 两个命令复用同一套逻辑（此前在 dispatch 中各写一份）。
  *  数据库优先用全局 dataDir 持久库（会话可恢复，--continue 可用）；
- *  仅当错误是锁冲突特征（dataDir 被 serve 实例占用）时退化为内存库并 stderr 提示，
- *  其它持久库错误如实上抛（main 统一打印 + 非零退出）；
+ *  持久库生命周期（建目录/锁/建库迁移/关闭）收敛在 withPersistentDb
+ *  （dev-db.ts，与 config 命令的指纹刷新共用序列），此处只保留锁冲突的
+ *  调用方策略：仅当错误是锁冲突特征（dataDir 被 serve 实例占用）时按
+ *  requirePersistent/--continue/--temp 决定降级或报错，其它持久库错误
+ *  如实上抛（main 统一打印 + 非零退出）；
  *  带 --continue 时内存库不含历史会话，直接报错退出而非误导性的 session not found。 */
 async function withAgentDeps(
   cwd: string,
@@ -190,69 +177,62 @@ async function withAgentDeps(
         '如需仅告警不中止，加 `--budget-action warn`。\n',
     )
   }
-  const dataDir = resolveDbDir()
-  let db: DB
-  let holdLock = false
-  try {
-    mkdirSync(dataDir, { recursive: true })
-    acquireDevDbLock(dataDir)
-    holdLock = true
-    db = await createDB({ driver: 'pglite', dataDir })
-    await migrateDB(db)
-  } catch (err) {
-    if (holdLock) releaseDevDbLock(dataDir)
-    holdLock = false
-    if (!isDbLockConflict(err)) throw err
-    // serve 运行时引导：读取运行中实例的端口（serve-info.json），直接给出可点击的
-    // Web 地址，而不是让用户面对「单写者限制」无从下手。
-    const info = readServeInfo(dataDir)
-    const webUrl = info && info.port > 0 ? `http://localhost:${info.port}/` : '启动日志中打印的地址'
-    if (opts.requirePersistent) {
-      throw new Error(
-        `c0de serve 正在运行并占用会话库，CLI 会话管理暂不可用（单写者限制）。\n` +
-          `  1) 在浏览器打开 ${webUrl} 管理会话；\n` +
-          `  2) 或停止 serve（Ctrl+C）后重试本命令。`,
-      )
-    }
-    if (opts.continueSessionId) {
-      throw new Error(
-        `无法续聊会话 ${opts.continueSessionId}：持久库被 c0de serve 占用，内存模式无法续聊。\n` +
-          `请在浏览器打开 ${webUrl} 找到该会话继续对话；或停止 serve 后重试。`,
-      )
-    }
-    if (!opts.allowTemp) {
-      // P2 修复：锁冲突不再静默降级为不保存会话的内存模式（用户极易错过 stderr
-      // 提示导致对话丢失）。必须显式 --temp 确认放弃持久化。
-      throw new Error(
-        `c0de serve 正在运行并占用会话库，本次对话将无法保存。\n` +
-          `  1) 在浏览器打开 ${webUrl} 继续对话（推荐，会话自动保存）；\n` +
-          `  2) 或停止 serve 后重试（对话可持久化）；\n` +
-          `  3) 或加 --temp 显式接受临时模式（消息与工具调用不会保存）。`,
-      )
-    }
-    process.stderr.write(
-      '[c0de] ⚠ 临时模式：消息与工具调用不会保存。停止 serve 后重试可持久化，或直接使用浏览器界面。\n',
-    )
-    db = await createDB({ driver: 'pglite' })
-    await migrateDB(db)
-  }
-  try {
-    const deps = await buildAgentDeps(config, {
-      db,
-      cwd,
-      ...(opts.strategy ? { permissionStrategy: opts.strategy } : {}),
-      ...(opts.allowTools ? { allowTools: opts.allowTools } : {}),
-    })
-    // P0：agent 执行路径（chat/acp）在无 Web 确认弹窗下硬拦未信任项目的风险配置，
-    // 引导 c0de trust；trust/sessions 等非 agent 命令经 skipTrustGate 跳过。
-    if (opts.skipTrustGate !== true) {
-      await enforceProjectTrust(db, cwd)
-    }
-    await fn(config, deps)
-  } finally {
-    await db.close()
-    if (holdLock) releaseDevDbLock(dataDir)
-  }
+  await withPersistentDb(
+    async (db) => {
+      const deps = await buildAgentDeps(config, {
+        db,
+        cwd,
+        ...(opts.strategy ? { permissionStrategy: opts.strategy } : {}),
+        ...(opts.allowTools ? { allowTools: opts.allowTools } : {}),
+      })
+      // P0：agent 执行路径（chat/acp）在无 Web 确认弹窗下硬拦未信任项目的风险配置，
+      // 引导 c0de trust；trust/sessions 等非 agent 命令经 skipTrustGate 跳过。
+      if (opts.skipTrustGate !== true) {
+        await enforceProjectTrust(db, cwd)
+      }
+      await fn(config, deps)
+    },
+    {
+      onLockConflict: async (_err, dataDir) => {
+        // serve 运行时引导：读取运行中实例的端口（serve-info.json），直接给出可点击的
+        // Web 地址，而不是让用户面对「单写者限制」无从下手。
+        const info = readServeInfo(dataDir)
+        const webUrl =
+          info && info.port > 0 ? `http://localhost:${info.port}/` : '启动日志中打印的地址'
+        if (opts.requirePersistent) {
+          throw new Error(
+            `c0de serve 正在运行并占用会话库，CLI 会话管理暂不可用（单写者限制）。\n` +
+              `  1) 在浏览器打开 ${webUrl} 管理会话；\n` +
+              `  2) 或停止 serve（Ctrl+C）后重试本命令。`,
+          )
+        }
+        if (opts.continueSessionId) {
+          throw new Error(
+            `无法续聊会话 ${opts.continueSessionId}：持久库被 c0de serve 占用，内存模式无法续聊。\n` +
+              `请在浏览器打开 ${webUrl} 找到该会话继续对话；或停止 serve 后重试。`,
+          )
+        }
+        if (!opts.allowTemp) {
+          // P2 修复：锁冲突不再静默降级为不保存会话的内存模式（用户极易错过 stderr
+          // 提示导致对话丢失）。必须显式 --temp 确认放弃持久化。
+          throw new Error(
+            `c0de serve 正在运行并占用会话库，本次对话将无法保存。\n` +
+              `  1) 在浏览器打开 ${webUrl} 继续对话（推荐，会话自动保存）；\n` +
+              `  2) 或停止 serve 后重试（对话可持久化）；\n` +
+              `  3) 或加 --temp 显式接受临时模式（消息与工具调用不会保存）。`,
+          )
+        }
+        process.stderr.write(
+          '[c0de] ⚠ 临时模式：消息与工具调用不会保存。停止 serve 后重试可持久化，或直接使用浏览器界面。\n',
+        )
+        // 降级库（内存模式）：与主序列同一建库迁移口径，返回后由 withPersistentDb
+        // 统一执行 fn 并在 finally 关库（无锁可放）。
+        const tempDb = await createDB({ driver: 'pglite' })
+        await migrateDB(tempDb)
+        return tempDb
+      },
+    },
+  )
 }
 
 async function dispatch(argv: string[], overrides: DispatchOverrides = {}): Promise<void> {

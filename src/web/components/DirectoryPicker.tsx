@@ -15,6 +15,7 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import { findNode, setChildren } from '@/components/tree-utils.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { filesystemAPI } from '@/services/filesystem.js'
+import { comboboxKeyAction } from '@/utils/combobox-keys.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
@@ -391,20 +392,19 @@ export function DirectoryPicker({
   )
 
   const handleInputKey = (e: React.KeyboardEvent) => {
-    // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——不判定会把
-    // 未确认的候选当最终输入（回车选中建议或按半截输入导航）。
+    // IME 组合中不拦截也**不透传**：回车确认候选词/ESC 取消候选由输入法处理，
+    // 不判定会把未确认的候选当最终输入（回车选中建议或按半截输入导航）。
     if (isImeComposing(e)) return
-    if (e.key === 'ArrowDown') {
+    // 语义键判定单点在 comboboxKeyAction；非语义键透传给宿主。Enter 无高亮时
+    // 回落首项、Escape 只关建议不重置高亮，这些层级消费语义与 ModelSelector
+    // 各自演化（修过死键 bug），不得数平。
+    const action = comboboxKeyAction(e)
+    if (action === 'next' || action === 'prev') {
       e.preventDefault()
-      moveSuggestion(1)
+      moveSuggestion(action === 'next' ? 1 : -1)
       return
     }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      moveSuggestion(-1)
-      return
-    }
-    if (e.key === 'Enter') {
+    if (action === 'commit') {
       // 有可消费的建议 → 选择该建议；否则透传给宿主（onKeyDown 契约的
       // 「未处理键透传」——AddProjectDialog/RelocateProjectDialog 以 Enter 提交表单）。
       // 此前无建议时恒 preventDefault + navigate 并 return：宿主的 Enter 分支是死代码，
@@ -420,7 +420,7 @@ export function DirectoryPicker({
       onKeyDown?.(e)
       return
     }
-    if (e.key === 'Escape') {
+    if (action === 'dismiss') {
       // 建议列表打开 → 只关建议（层级消费，不透传）；未打开 → 透传给宿主
       // （此前无条件 return：宿主写的 Escape 关闭对话框从不执行，用户按 Esc 关不掉弹窗）。
       if (suggestionsOpen) {

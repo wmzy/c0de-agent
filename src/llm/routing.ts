@@ -14,6 +14,37 @@ type FallbackChain = {
 
 type RunFn<T> = (provider: string, model: string) => Promise<T>
 
+/** 回退链的执行顺序：主路由在前，回退目标按配置顺序。 */
+function chainTargets(chain: FallbackChain): { provider: string; model: string }[] {
+  return [chain.primary, ...chain.fallbacks]
+}
+
+/** 单个目标的路由守卫判定：serve = 可执行；skip = 记 lastError 跳过该目标。 */
+type RouteGuard = { kind: 'serve' } | { kind: 'skip'; error: unknown }
+
+/**
+ * 守卫回退链的单个目标（promise 版 runWithFallback 与 async-generator 版
+ * chatStream 共用；两者的重试/流式语义不同，只有这条守卫规则是同一份）。
+ * - 主路由未注册 = 配置错误 → 抛出快速失败（不静默改用回退 provider）。
+ * - 回退目标未注册（provider 因 apiKey 跨机不可解/缺 baseURL/畸形条目被跳过
+ *   注册，但 config.providers 里仍在、buildFallbackChain 照样选中）只应跳过
+ *   该目标——此前整条链被 NoRoute 击穿：可用回退永不尝试，原始错误也被顶替。
+ */
+function guardRouteTarget(
+  registry: Registry,
+  target: { provider: string; model: string },
+  isPrimary: boolean,
+): RouteGuard {
+  try {
+    // Validate the route exists before attempting.
+    resolveRoute(registry, target.provider, target.model)
+    return { kind: 'serve' }
+  } catch (error) {
+    if (isPrimary) throw error
+    return { kind: 'skip', error }
+  }
+}
+
 /**
  * Run `run` against the primary route first. If it throws a retryable error
  * that exhausts retries, try each fallback in order. Non-retryable errors
@@ -25,22 +56,15 @@ const runWithFallback = async <T>(
   chain: FallbackChain,
   run: RunFn<T>,
 ): Promise<{ result: T; provider: string; model: string }> => {
-  const targets = [chain.primary, ...chain.fallbacks]
+  const targets = chainTargets(chain)
   let lastError: unknown
 
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i]
     if (target === undefined) continue
-    try {
-      // Validate the route exists before attempting.
-      resolveRoute(registry, target.provider, target.model)
-    } catch (error) {
-      // 主路由未注册 = 配置错误 → 快速失败（不静默改用回退 provider）。
-      if (i === 0) throw error
-      // 回退目标未注册（provider 因 apiKey 跨机不可解/缺 baseURL/畸形条目被跳过
-      // 注册，但 config.providers 里仍在、buildFallbackChain 照样选中）只应跳过
-      // 该目标——此前整条链被 NoRoute 击穿：可用回退永不尝试，原始错误也被顶替。
-      lastError = error
+    const guard = guardRouteTarget(registry, target, i === 0)
+    if (guard.kind === 'skip') {
+      lastError = guard.error
       continue
     }
     try {
@@ -115,5 +139,5 @@ function buildFallbackChain(
   }
 }
 
-export type { FallbackChain }
-export { buildFallbackChain, runWithFallback, shouldFallOver }
+export type { FallbackChain, RouteGuard }
+export { buildFallbackChain, chainTargets, guardRouteTarget, runWithFallback, shouldFallOver }

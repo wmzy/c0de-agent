@@ -1,3 +1,4 @@
+export { buildWorkflowAgentConfig } from './agent.js'
 export { BUILTIN_WORKFLOWS, createBuiltinWorkflows } from './builtins.js'
 export { buildWorkflowContext } from './context.js'
 export type { SaveResult, SaveTarget } from './discovery.js'

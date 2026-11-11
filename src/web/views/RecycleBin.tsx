@@ -99,17 +99,21 @@ function daysLeft(baseline: number | null | undefined): number {
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)))
 }
 
+/** 宽限期文案：purgePendingAt（已到期的清除标记时刻）再加 7 天宽限得到「前可恢复」
+ *  截止日与剩余天数。会话与看板两个回收站的这段计算曾逐行重复，收敛于此。 */
+function gracePeriodLabel(purgePendingAt: number): string {
+  const deadline = purgePendingAt + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000
+  const left = Math.max(0, Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000)))
+  return `即将清除 · ${new Date(deadline).toLocaleDateString()} 前可恢复（剩 ${left} 天）`
+}
+
 /** 剩余天数 + 绝对到期日（F6 修复：保留期自「首次打开回收站看到该分组」
  *  （metadata.trashSeenAt，分组粒度）起算，与后端 purgeDeletedSessions 一致；尚未看到的
  *  会话不显示倒计时（保留期自查看时起算），不会被静默提前清除。
  *  A3：purgePendingAt 存在 = 已到期进入宽限期——显示「即将清除」，恢复可保留。 */
 function expiryLabel(s: Session): string {
   const pending = s.metadata.purgePendingAt
-  if (pending) {
-    const deadline = new Date(pending + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000)
-    const left = Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-    return `即将清除 · ${deadline.toLocaleDateString()} 前可恢复（剩 ${left} 天）`
-  }
+  if (pending) return gracePeriodLabel(pending)
   const seen = s.metadata.trashSeenAt
   if (!seen) {
     // 未查看：保留期自首次打开回收站起算；但删除后仍有 365 天绝对上限兜底，
@@ -128,12 +132,7 @@ function expiryLabel(s: Session): string {
 /** 看板回收站保留期自删除时刻起算（全局单一分组，无「首次查看」语义）；
  *  purgePendingAt 存在 = 已到期进入宽限期（7 天内可恢复，逾期物理清除）。 */
 function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null }): string {
-  if (b.purgePendingAt) {
-    const deadline = b.purgePendingAt + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000
-    const left = Math.max(0, Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000)))
-    const when = new Date(deadline).toLocaleDateString()
-    return `即将清除 · ${when} 前可恢复（剩 ${left} 天）`
-  }
+  if (b.purgePendingAt) return gracePeriodLabel(b.purgePendingAt)
   const expires = new Date(b.deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
   return `${expires.toLocaleDateString()} 进入宽限`
 }

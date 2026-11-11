@@ -672,7 +672,7 @@ describe('useComposer 跨作用域的在途结果', () => {
     return { result, rerender, editor, onSend, type }
   }
 
-  // 回归：addImageFile 的 catch 分支此前无世代校验、直接 setImageError——FileReader
+  // 回归：addImage（原 addImageFile）的 catch 分支此前无世代校验、直接 setImageError——FileReader
   // 挂起窗口里切了会话，旧作用域的读取失败把「读取图片失败」画到新会话 composer
   // 顶上，而那条会话一张图都没拖过。
   it('旧作用域的图片读取失败不把错误行画到新会话', async () => {

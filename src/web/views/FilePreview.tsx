@@ -9,6 +9,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { Markdown } from '@/components/Markdown.js'
 import { type LineRange, useFileSelection } from '@/contexts/FileSelectionContext.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import { getAuthToken } from '@/services/api.js'
 import { encodeFilePath, fileAPI } from '@/services/file.js'
 import { btnDanger } from '@/styles/tokens.js'
@@ -267,16 +268,8 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   })
 
   // 刷新/关闭标签页：useBlocker 只覆盖 SPA 内导航与后退/前进，浏览器原生通道走
-  // beforeunload。
-  useEffect(() => {
-    if (!dirty) return
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault()
-      e.returnValue = ''
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [dirty])
+  // beforeunload——通道说明见 useBeforeUnloadGuard。
+  useBeforeUnloadGuard(dirty)
 
   // ref 持有最新 API，避免条件绑定 onMouseUp 导致首次操作失败
   const apiRef = useRef(fileRef)

@@ -1,7 +1,7 @@
 import type { ToolResult } from '@shared/types/tool.js'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
 import { FileCodeBlock } from '@/components/session/tools/FileCodeBlock.js'
-import { ToolError } from '@/components/session/tools/toolError.js'
+import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 import { resultText, strArg } from '@/components/session/tools/toolShape.js'
 
 type ReadInput = { path: string; offset?: number; limit?: number }
@@ -16,8 +16,9 @@ export function ReadToolView({
   status: string
 }) {
   // 失败必须透出原因：读文件失败却渲染成一块空白，用户无从判断是路径错了还是权限问题。
-  // toolErrorText 兼顾 output._tag 与 status 兜底，缺失/结构异常的 output 也会给出说明。
-  if (output?._tag === 'error' || status === 'error') {
+  // 判定与 Bash/Fallback/Task 等视图同口径走 toolErrorText（output._tag + status 兜底），
+  // 缺失/结构异常的 output 也会给出说明。
+  if (toolErrorText(output, status) !== null) {
     return <ToolError output={output} status={status} />
   }
   // input 是原样落库的 JSON：path 被写成对象时 extToLang 的 filename.split() 会在

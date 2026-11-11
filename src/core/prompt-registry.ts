@@ -1,5 +1,6 @@
 import { builtinCommands } from './slash.js'
 import type { PromptBuildContext, PromptRegistry, PromptSection } from './types.js'
+import { WORKFLOW_SCRIPT_TEMPLATE } from './workflow.js'
 
 // ── Static section bodies (shared with the legacy buildSystemPrompt) ──
 
@@ -208,6 +209,9 @@ function builtinSections(): PromptSection[] {
       },
     },
     // 工作流脚本格式提示：让模型知道工作流脚本是 JS 格式，放在 .c0de/workflows/。
+    // js 骨架与 WORKFLOW_NOTICE（workflowz steering）同引 WORKFLOW_SCRIPT_TEMPLATE：
+    // 两份手抄副本曾各自漂移（此处 meta 缺 argsHint/timeout、ctx 示例不同），
+    // 两块同时进 system prompt 时模型按任一份生成都被判合法但产物形状不同。
     {
       id: 'workflow-format',
       content: '',
@@ -217,21 +221,7 @@ function builtinSections(): PromptSection[] {
           '## Dynamic Workflows',
           'When the user asks to create/save a workflow (e.g. "workflowz 创建工作流"), you MUST generate a **JavaScript** file (NOT bash/shell/python) with this structure:',
           '```js',
-          '// File: .c0de/workflows/<name>.js',
-          'export const meta = {',
-          "  name: '<name>',           // lowercase, kebab-case",
-          "  description: '<description>',",
-          "  phases: ['phase1', 'phase2'],",
-          '}',
-          '',
-          'export default async function workflow(ctx) {',
-          '  const { runSubagents, runSubagent, utils, progress, project, args } = ctx',
-          '  // runSubagents(type, tasks[]) → parallel fan-out',
-          '  // runSubagent(type, { assignment, description? }) → single dispatch',
-          '  // utils: { glob, grep, read, splitByDirectory }',
-          '  // progress(message, { phase? }) → SSE progress',
-          "  return { output: 'summary', data: {} }",
-          '}',
+          WORKFLOW_SCRIPT_TEMPLATE,
           '```',
           'Save to `<project>/.c0de/workflows/<name>.js`. Available subagent types: general, coder, researcher, reviewer.',
           'Run with `/workflow run <name>` or POST /api/workflows/:name/run. NEVER create bash/shell scripts for workflows.',

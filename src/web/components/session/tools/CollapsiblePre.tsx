@@ -2,8 +2,10 @@ import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
 
-/** 文本输出的统一灰底 <pre>：折行显示、长词可断（终端输出/匹配行是散文，不是代码）。 */
-const pre = css`
+/** 文本输出的统一灰底 <pre>：折行显示、长词可断（终端输出/匹配行是散文，不是代码）。
+ *  工具视图里不折叠的灰底 pre（截断说明/兜底入参/task 输出）都从这里组合底版，
+ *  只叠加各自的限高差异——限高数值是各消费点的产品选择，不在此统一。 */
+export const outputPre = css`
   margin: 0;
   padding: 8px;
   background: var(--haze-color-bg-muted);
@@ -64,7 +66,10 @@ export function CollapsiblePre({
         style={{ maxHeight: expanded ? expandedHeight : collapsedHeight }}
       >
         {typeof children === 'string' ? (
-          <pre data-testid={testId} className={preClassName ? `${pre} ${preClassName}` : pre}>
+          <pre
+            data-testid={testId}
+            className={preClassName ? `${outputPre} ${preClassName}` : outputPre}
+          >
             {children}
           </pre>
         ) : (

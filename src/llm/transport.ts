@@ -1,4 +1,5 @@
 import { isContextOverflow } from './provider-error.js'
+import { parseRetryAfterHeaders } from './retry.js'
 import { llmError } from './schema/errors.js'
 
 /**
@@ -99,17 +100,6 @@ const httpPost = async (options: StreamHTTPOptions): Promise<ReadableStream<Uint
   return response.body
 }
 
-/**
- * POST a JSON body and yield SSE data frames from the response.
- * Throws an LLMError on non-2xx responses, classifying context-overflow.
- */
-const streamHTTP = async function* (
-  options: StreamHTTPOptions,
-): AsyncGenerator<string, void, unknown> {
-  const body = await httpPost(options)
-  yield* sseFraming(body)
-}
-
 /** Map an HTTP failure status + body to an LLMError. */
 const classifyHttpError = (
   status: number,
@@ -131,7 +121,7 @@ const classifyHttpError = (
     })
   }
   if (status === 429) {
-    const retryAfterMs = parseRetryAfterMs(
+    const retryAfterMs = parseRetryAfterHeaders(
       headers.get('retry-after-ms'),
       headers.get('retry-after'),
     )
@@ -181,22 +171,5 @@ const classifyHttpError = (
   })
 }
 
-const parseRetryAfterMs = (
-  retryAfterMs?: string | null,
-  retryAfter?: string | null,
-): number | undefined => {
-  // 与 retry.ts delay() 同口径：仅正有限数（'1e999' → Infinity 必须拒绝，
-  // 否则塞进 reason 后重试层延迟 2^31ms ≈ 24.8 天挂死 agent run）。
-  if (retryAfterMs !== null && retryAfterMs !== undefined) {
-    const parsed = Number.parseFloat(retryAfterMs)
-    if (Number.isFinite(parsed) && parsed > 0) return Math.ceil(parsed)
-  }
-  if (retryAfter !== null && retryAfter !== undefined) {
-    const parsed = Number.parseFloat(retryAfter)
-    if (Number.isFinite(parsed) && parsed > 0) return Math.ceil(parsed * 1000)
-  }
-  return undefined
-}
-
 export type { StreamHTTPOptions }
-export { classifyHttpError, httpPost, sseFraming, streamHTTP }
+export { classifyHttpError, httpPost, sseFraming }

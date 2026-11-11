@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useMemo, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
+import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type { CatalogModel, CatalogProvider } from '@/services/catalog.js'
 import { catalogAPI } from '@/services/catalog.js'
@@ -70,15 +71,7 @@ const modelCount = css`
   border-radius: 10px;
 `
 
-const errorBox = css`
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 12px;
-  font-size: 12px;
-  color: var(--haze-color-danger, #b3261e);
-`
+/** 读取失败的整段占位收敛在 LoadErrorNotice（stacked 变体）。 */
 
 const actions = css`
   display: flex;
@@ -314,12 +307,12 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
             // 目录读失败此前渲染成 filtered.length===0 的「没有匹配「」的 Provider」——
             // 把一次网络/500 失败说成「你搜的 Provider 不存在」，用户改搜索词、
             // 重开弹窗都找不到原因。此处与设置页其余面板同口径：原因 + 重试。
-            <div className={errorBox} role="alert" data-testid="catalog-providers-error">
-              <div>{`Provider 目录加载失败：${messageOf(providersErr)}`}</div>
-              <Button variant="outline" onClick={() => void refetchProviders()}>
-                重试
-              </Button>
-            </div>
+            <LoadErrorNotice
+              message={`Provider 目录加载失败：${messageOf(providersErr)}`}
+              onRetry={() => void refetchProviders()}
+              stacked
+              testId="catalog-providers-error"
+            />
           ) : filtered.length === 0 ? (
             // 搜索无命中此前是一片空白，与「加载中…」视觉上无从区分，用户得不到
             // 「确实没有这个 Provider」的反馈。
@@ -356,12 +349,12 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
           ) : modelsError ? (
             // 模型清单读失败此前渲染成「Provider 头部照常显示 + 模型区一片空白」，
             // 且底部「选择此 Provider」仍可点——点了就把零模型的 Provider 写进配置。
-            <div className={errorBox} role="alert" data-testid="catalog-models-error">
-              <div>{`模型列表加载失败：${messageOf(modelsErr)}`}</div>
-              <Button variant="outline" onClick={() => void refetchModels()}>
-                重试
-              </Button>
-            </div>
+            <LoadErrorNotice
+              message={`模型列表加载失败：${messageOf(modelsErr)}`}
+              onRetry={() => void refetchModels()}
+              stacked
+              testId="catalog-models-error"
+            />
           ) : (
             <>
               <div className={catalogItemHead}>

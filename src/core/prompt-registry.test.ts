@@ -6,6 +6,7 @@ import {
   registerPromptSection,
 } from './prompt-registry.js'
 import type { AgentConfig, PromptBuildContext, PromptSection } from './types.js'
+import { WORKFLOW_NOTICE, WORKFLOW_SCRIPT_TEMPLATE } from './workflow.js'
 
 const config: AgentConfig = {
   provider: 'openai',
@@ -71,6 +72,17 @@ describe('createPromptRegistry / builtin sections', () => {
     expect(buildDynamicPrompt(reg, { ...ctx, agents: ['coder'] })).toContain('coder')
     // 无 agents 时不出现
     expect(buildDynamicPrompt(reg, ctx)).not.toContain('## Available Agents')
+  })
+
+  // 回归：常驻 workflow-format section 与 workflowz steering 通告（WORKFLOW_NOTICE）
+  // 会同时进 system prompt——js 骨架必须出自同一常量，两份手抄副本曾各自漂移
+  // （常驻版 meta 缺 argsHint/timeout、ctx 示例不同），模型按任一生成都被判合法。
+  it('workflow-format section 与 WORKFLOW_NOTICE 的 js 模板同源', () => {
+    const reg = createPromptRegistry()
+    const out = buildDynamicPrompt(reg, ctx)
+    const fenced = `\`\`\`js\n${WORKFLOW_SCRIPT_TEMPLATE}\n\`\`\``
+    expect(out).toContain(fenced)
+    expect(WORKFLOW_NOTICE).toContain(fenced)
   })
 })
 

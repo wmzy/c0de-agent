@@ -17,7 +17,7 @@ import type { Registry } from './registry.js'
 import { resolveRoute } from './registry.js'
 import { withRetry } from './retry.js'
 import type { FallbackChain } from './routing.js'
-import { shouldFallOver } from './routing.js'
+import { chainTargets, guardRouteTarget, shouldFallOver } from './routing.js'
 import type { StreamEvent } from './schema/events.js'
 import type { ContentPart, InternalRequest, Message, ToolDefinition } from './schema/messages.js'
 import { model as makeModel } from './schema/options.js'
@@ -220,21 +220,16 @@ const chatStream = async function* (
   options: ChatOptions,
 ): AsyncGenerator<StreamChunk, void, unknown> {
   const chain = resolveChain(options)
-  const targets = [chain.primary, ...chain.fallbacks]
+  const targets = chainTargets(chain)
   let started = false
   let lastError: unknown
 
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i]
     if (target === undefined) continue
-    try {
-      resolveRoute(ctx.registry, target.provider, target.model)
-    } catch (error) {
-      // 主路由未注册 = 配置错误 → 快速失败；回退目标未注册（provider 被跳过注册：
-      // apiKey 跨机不可解/缺 baseURL/畸形条目）只跳过该目标——此前整条链被
-      // NoRoute 击穿，可用回退永不尝试，原始错误也被顶替。
-      if (i === 0) throw error
-      lastError = error
+    const guard = guardRouteTarget(ctx.registry, target, i === 0)
+    if (guard.kind === 'skip') {
+      lastError = guard.error
       continue
     }
     try {

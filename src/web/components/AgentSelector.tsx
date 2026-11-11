@@ -1,22 +1,8 @@
-import { css } from '@linaria/core'
-import { Button } from 'haze-ui'
+import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { SyncedSelect } from '@/components/SyncedControls.js'
 import type { AgentListItem } from '@/services/agent.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
-
-/** agent 清单读取失败时的整行占位（与 ModelSelector 的 loadErrorNotice 同形）。 */
-const loadErrorNotice = css`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-  font-size: 12px;
-  color: var(--haze-color-danger, #b3261e);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-`
 
 /** Primary agent 切换器：下拉选择 default/plan 等 primary agent。
  *
@@ -40,14 +26,11 @@ export function AgentSelector({
 }) {
   if (error) {
     return (
-      <span className={loadErrorNotice} role="alert" data-testid="agent-selector-load-error">
-        {`agent 列表读取失败：${messageOf(error)}`}
-        {onRetry ? (
-          <Button variant="outline" onClick={onRetry}>
-            重试
-          </Button>
-        ) : null}
-      </span>
+      <LoadErrorNotice
+        message={`agent 列表读取失败：${messageOf(error)}`}
+        onRetry={onRetry}
+        testId="agent-selector-load-error"
+      />
     )
   }
   const primary = agents.filter((a) => a.mode !== 'subagent')

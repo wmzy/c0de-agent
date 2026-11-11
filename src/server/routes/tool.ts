@@ -1,11 +1,11 @@
 import { Hono } from 'hono'
-import { loadConfigScopes, mergeConfig } from '../../core/config.js'
 import { getProject } from '../../project/project.js'
 import { resolveEnabledToolNames } from '../../tools/index.js'
 import { listTools } from '../../tools/registry.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { resolveSessionScope } from '../util/session-scope.js'
 
 function createToolRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -20,8 +20,11 @@ function createToolRoute(ctx: ServerContext): Hono {
     if (projectId) {
       const project = await getProject(ctx.db, projectId)
       if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
-      const projectScope = loadConfigScopes(project.worktree).project
-      if (projectScope) config = mergeConfig(ctx.config, projectScope)
+      // 会话作用域解析收敛的第六处（chat/workflows/session/provider/files 之外）：
+      // 与旧内联等价——cwd === serve cwd 时基线 ctx.config 已含该目录项目作用域，
+      // mergeConfig 为覆盖式合并，重复合并同值幂等。不传 registryKey（本路由
+      // 不消费注册表，也不会触发副作用构建）。
+      config = resolveSessionScope(ctx, { cwd: project.worktree }).config
     }
     const enabledNames = resolveEnabledToolNames(ctx.toolRegistry, config)
     const enabledSet = new Set(enabledNames)

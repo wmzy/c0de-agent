@@ -4,8 +4,8 @@ import { homedir } from 'node:os'
 import { parse } from 'node:path'
 import { and, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { kanbanBoards, projects, sessions } from '../../db/schema.js'
-import { activeBoardWhere } from '../../kanban/store.js'
+import { projects, sessions } from '../../db/schema.js'
+import { softDeleteKanbanBoardsByProject } from '../../kanban/store.js'
 import {
   fromDirectory,
   getByDirectory,
@@ -241,19 +241,16 @@ function createProjectRoute(ctx: ServerContext): Hono {
           .where(eq(sessions.id, s.id))
         deletedSessions += 1
       }
-      // P2-5：看板不再永久级联销毁——标记软删除（记录原项目名），项目行删除后
-      // FK set null 使其进入回收站「未归属看板」分组，60 天后随清理任务物理清除；
-      // 恢复端点可重新归属到任意项目。
-      await tx
-        .update(kanbanBoards)
-        .set({
-          deletedAt: now,
-          deletedProjectName: project.name ?? project.worktree,
-          deletedProjectWorktree: project.worktree,
-          purgePendingAt: null,
-          updatedAt: now,
-        })
-        .where(activeBoardWhere(id))
+      // P2-5：看板不再永久级联销毁——批量软删除（记录原项目名与工作目录）进回收站，
+      // 项目行删除后 FK set null 使其进入回收站「未归属看板」分组，60 天后随清理
+      // 任务物理清除；恢复端点可重新归属到任意项目。字段集与 softDeleteKanbanBoardById
+      // 在 store 内单点同源（此前此处内联同字段清单，已现漂移风险）。
+      await softDeleteKanbanBoardsByProject(
+        tx,
+        id,
+        project.name ?? project.worktree,
+        project.worktree,
+      )
       await tx.delete(projects).where(eq(projects.id, id))
     })
     return c.json({ ok: true, deletedSessions })

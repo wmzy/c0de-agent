@@ -40,6 +40,7 @@ import { UsagePanel } from '@/components/settings/UsagePanel.js'
 import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { configQueryOptions } from '@/contexts/ConfigContext.js'
+import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { configAPI } from '@/services/config.js'
 import { btnDanger } from '@/styles/tokens.js'
@@ -231,16 +232,8 @@ export function Settings() {
   const blocker = useBlocker(() => !isDirty)
 
   // 刷新/关闭页面前提示（useBlocker 只覆盖 SPA 内导航与后退/前进，
-  // 浏览器关闭/刷新走原生 beforeunload 通道）。
-  useEffect(() => {
-    if (!isDirty) return
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault()
-      e.returnValue = ''
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [isDirty])
+  // 浏览器关闭/刷新走原生 beforeunload 通道——通道说明见 useBeforeUnloadGuard）。
+  useBeforeUnloadGuard(isDirty)
 
   const save = useMutation({
     mutationFn: (payload: {

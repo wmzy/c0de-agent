@@ -5,7 +5,7 @@
 // coordination via a shared kanban board.
 
 import type { JSONSchema } from '../../shared/types/base.js'
-import type { KanbanPriority } from '../../shared/types/kanban.js'
+import { KANBAN_PRIORITIES, type KanbanPriority } from '../../shared/types/kanban.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 import { headChars } from '../../shared/utils/string.js'
 
@@ -121,7 +121,8 @@ const kanbanParameters: JSONSchema = {
     },
     priority: {
       type: 'string',
-      enum: ['high', 'medium', 'low'],
+      // 枚举值与 store/REST 校验共用 KANBAN_PRIORITIES 单一来源（防三副本漂移）。
+      enum: [...KANBAN_PRIORITIES],
       description: 'Priority level (for add, update)',
     },
     labels: {

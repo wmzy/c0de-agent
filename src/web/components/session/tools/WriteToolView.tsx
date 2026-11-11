@@ -1,7 +1,7 @@
 import type { ToolResult } from '@shared/types/tool.js'
 import { FallbackToolView } from '@/components/session/tools/FallbackToolView.js'
 import { FileCodeBlock } from '@/components/session/tools/FileCodeBlock.js'
-import { ToolError } from '@/components/session/tools/toolError.js'
+import { ToolError, toolErrorText } from '@/components/session/tools/toolError.js'
 import { strArg } from '@/components/session/tools/toolShape.js'
 
 type WriteInput = { path: string; content: string }
@@ -16,7 +16,8 @@ export function WriteToolView({
   status: string
 }) {
   // 写入失败必须透出原因：写失败却渲染出「即将写入的内容」会让用户以为已落盘。
-  if (output?._tag === 'error' || status === 'error') {
+  // 判定与其它视图同口径走 toolErrorText（output._tag + status 兜底）。
+  if (toolErrorText(output, status) !== null) {
     return <ToolError output={output} status={status} />
   }
   // path/content 都是原样落库的 JSON：模型把 content 写成 {lines:[...]} 时，

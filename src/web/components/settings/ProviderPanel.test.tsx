@@ -68,6 +68,40 @@ describe('ProviderPanel', () => {
     expect(within(rows[1] as HTMLElement).queryByText(/连接成功/)).toBeNull()
   })
 
+  // 复现（第二波审查）：测试在飞时删除更小下标的行——removeProvider 只前移**已
+  // 落地**的 testResults 条目，在飞结果落地时仍按发起时的下标写入：删除 A 后 B、C
+  // 各前移一位，B 的「连接成功」却写进下标 1（现在是 C 的位置），B 行反而空白。
+  it('在飞测试期间删除更小下标的行，结果落地到前移后的正确行', async () => {
+    let resolveTest!: (r: { ok: true; models: string[] }) => void
+    vi.mocked(providerAPI.test).mockImplementation(
+      () =>
+        new Promise<{ ok: true; models: string[] }>((resolve) => {
+          resolveTest = resolve
+        }),
+    )
+    render(<Harness />)
+
+    // 测试第 2 行（B），在飞期间删除第 1 行（A）：B、C 各前移一位
+    fireEvent.click(screen.getAllByTestId('provider-test')[1] as HTMLElement)
+    fireEvent.click(screen.getAllByTestId('provider-remove')[0] as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByText('删除'))
+    await waitFor(() => expect(screen.getAllByTestId('provider-row')).toHaveLength(2))
+
+    // 在飞的 loading 标记随行前移：B（现第 1 行）按钮保持测试中
+    const shifted = screen.getAllByTestId('provider-row')
+    expect(within(shifted[0] as HTMLElement).getByText('测试中…')).toBeTruthy()
+
+    resolveTest({ ok: true, models: ['m1'] })
+    await waitFor(() => {
+      const rows = screen.getAllByTestId('provider-row')
+      // B（现第 1 行）显示自己的结果
+      expect(within(rows[0] as HTMLElement).getByText(/连接成功/)).toBeTruthy()
+      // C（现第 2 行）不得显示 B 的结果（修复前：结果显示在 C 行、B 行空白）
+      expect(within(rows[1] as HTMLElement).queryByText(/连接成功/)).toBeNull()
+    })
+  })
+
   // 复现：provider 行里是手打的 baseURL + API Key，点一次「删除」整行立刻从草稿
   // 消失、零确认零影响面，随后吸底保存条被点亮，顺手一按「保存」就把密钥从磁盘
   // 配置里永久抹掉。真实浏览器实测：单击后 provider-row 直接 0 行、0 个 dialog。

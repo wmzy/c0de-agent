@@ -10,34 +10,21 @@ import type { CommandArgs } from '../parser.js'
 
 /**
  * P1：config set 写入项目作用域后刷新信任指纹（serve 未运行时生效）。
- * config 命令无 agent deps 生命周期，此处独立打开持久库；serve 运行期间
- * 持久库被占用（单写者）——跳过刷新，配置已落盘，信任复检的 fail-closed
- * 路径兜底（下次聊天一次性确认，风险项即本次修改）。
+ * config 命令无 agent deps 生命周期，此处独立打开持久库；持久库序列
+ * （建目录/锁/建库迁移/关闭）与 withAgentDeps 共用 withPersistentDb
+ * （dev-db.ts）。
+ * catch 策略是本调用方有意的尽力而为：serve 运行期间持久库被占用（单写者）
+ * 或任何库错误——跳过刷新，不阻塞配置写入（配置已落盘），信任复检的
+ * fail-closed 路径兜底（下次聊天一次性确认，风险项即本次修改）；
+ * withAgentDeps 对同类错误如实上抛，那是它的调用方策略，两处有意不同。
  */
 async function refreshTrustFingerprint(cwd: string): Promise<void> {
   try {
-    const { mkdirSync } = await import('node:fs')
-    const { createDB, migrateDB } = await import('../../db/index.js')
-    const { acquireDevDbLock, releaseDevDbLock, resolveDbDir } = await import(
-      '../../server/server.js'
-    )
+    const { withPersistentDb } = await import('../dev-db.js')
     const { refreshTrustedProjectFingerprint } = await import('../../project/index.js')
-    const dataDir = resolveDbDir()
-    mkdirSync(dataDir, { recursive: true })
-    acquireDevDbLock(dataDir)
-    try {
-      const db = await createDB({ driver: 'pglite', dataDir })
-      try {
-        await migrateDB(db)
-        await refreshTrustedProjectFingerprint(db, cwd)
-      } finally {
-        await db.close()
-      }
-    } finally {
-      releaseDevDbLock(dataDir)
-    }
+    await withPersistentDb((db) => refreshTrustedProjectFingerprint(db, cwd))
   } catch {
-    // serve 锁冲突/库错误等：跳过刷新，不阻塞配置写入结果
+    // serve 锁冲突/库错误等：跳过刷新，不阻塞配置写入结果（见函数注释）
   }
 }
 

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Context, Hono } from 'hono'
+import { resolveGlobalConfigDir } from '../../core/config.js'
 import type { CatalogModel, CatalogProvider } from '../../shared/types/catalog.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -40,9 +41,12 @@ type CatalogModelInternal = {
   cost?: { input?: number; output?: number }
 }
 
-/** 磁盘缓存目录（writeDiskCache 建目录与此处取文件路径同源，避免两处漂移）。 */
+/** 磁盘缓存目录：全局配置根（~/.c0de，C0DE_CONFIG_DIR 可重定向）下的 cache
+ *  子目录——与 plugins loader 等配置面同口径；此前用 process.cwd()/.c0de/cache
+ *  会把缓存散落到任意启动目录（只读 cwd 下还会写失败）。
+ *  writeDiskCache 建目录与此处取文件路径同源，避免两处漂移。 */
 function getCacheDir(): string {
-  return join(process.cwd(), '.c0de', 'cache')
+  return join(resolveGlobalConfigDir(), 'cache')
 }
 
 function getCachePath(): string {
@@ -77,9 +81,15 @@ function readDiskCache(): { data: CatalogData; fetchedAt: number } | null {
 }
 
 function writeDiskCache(data: CatalogData, fetchedAt: number): void {
-  const cacheDir = getCacheDir()
-  if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true })
-  writeFileSync(getCachePath(), JSON.stringify({ data, fetchedAt }, null, 2), 'utf-8')
+  // 缓存是尽力而为：目录只读/权限不足等写入失败必须吞掉——此前裸抛会把
+  // 已成功的网络抓取整体打挂成 502（fetchCatalog 不 try/catch 此调用）。
+  try {
+    const cacheDir = getCacheDir()
+    if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true })
+    writeFileSync(getCachePath(), JSON.stringify({ data, fetchedAt }, null, 2), 'utf-8')
+  } catch {
+    // 忽略写缓存失败
+  }
 }
 
 /**

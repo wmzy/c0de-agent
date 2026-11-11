@@ -35,24 +35,12 @@ export function containsWorkflow(text: string): boolean {
 }
 
 /**
- * 工作流通知：注入为 steering system 消息，引导模型用 task 工具做批量 fan-out。
- *
- * 适配 c0de-agent 的 task 工具 schema（subagent_type + context + tasks[]）。
+ * 工作流脚本的 js 骨架模板（单一事实源）：WORKFLOW_NOTICE 的 <create-workflow>
+ * 与 prompt-registry 常驻 workflow-format section 同引此常量——此前两份手抄
+ * 副本各自漂移（常驻版 meta 缺 argsHint/timeout、ctx 示例不同），两块同时进
+ * system prompt 时模型按任一份生成都被判合法但产物形状不同。
  */
-export const WORKFLOW_NOTICE = `<workflow-notice>
-The user's message contains the **workflowz** keyword. This triggers the Dynamic Workflow system. You MUST first determine the user's intent:
-
-<intent-detection>
-- **Create/save a workflow** — the user says "workflowz 创建/建/save/make a workflow" — they want you to GENERATE a reusable JavaScript workflow script and save it. Jump to <create-workflow> below.
-- **Execute a workflow** — the user says "workflowz 扫描/审查/重构/测试..." — they want you to drive a deterministic multi-subagent fan-out using the \`task\` tool. Jump to <task-contract> below.
-- **Both** — "workflowz 创建一个扫描工作流" means create the workflow script first, then optionally run it.
-</intent-detection>
-
-<create-workflow>
-When the intent is to CREATE a workflow, you MUST generate a **JavaScript** file (NOT bash/shell/python) with this exact structure:
-
-\`\`\`js
-// File: .c0de/workflows/<name>.js
+export const WORKFLOW_SCRIPT_TEMPLATE = `// File: .c0de/workflows/<name>.js
 export const meta = {
   name: '<name>',           // lowercase, kebab-case, matches filename
   description: '<description>',
@@ -75,7 +63,27 @@ export default async function workflow(ctx) {
   // Phase 2: verify / cross-check results
   // Phase 3: return summary
   return { output: 'summary text', data: { ... } }
-}
+}`
+
+/**
+ * 工作流通知：注入为 steering system 消息，引导模型用 task 工具做批量 fan-out。
+ *
+ * 适配 c0de-agent 的 task 工具 schema（subagent_type + context + tasks[]）。
+ */
+export const WORKFLOW_NOTICE = `<workflow-notice>
+The user's message contains the **workflowz** keyword. This triggers the Dynamic Workflow system. You MUST first determine the user's intent:
+
+<intent-detection>
+- **Create/save a workflow** — the user says "workflowz 创建/建/save/make a workflow" — they want you to GENERATE a reusable JavaScript workflow script and save it. Jump to <create-workflow> below.
+- **Execute a workflow** — the user says "workflowz 扫描/审查/重构/测试..." — they want you to drive a deterministic multi-subagent fan-out using the \`task\` tool. Jump to <task-contract> below.
+- **Both** — "workflowz 创建一个扫描工作流" means create the workflow script first, then optionally run it.
+</intent-detection>
+
+<create-workflow>
+When the intent is to CREATE a workflow, you MUST generate a **JavaScript** file (NOT bash/shell/python) with this exact structure:
+
+\`\`\`js
+${WORKFLOW_SCRIPT_TEMPLATE}
 \`\`\`
 
 **Rules:**

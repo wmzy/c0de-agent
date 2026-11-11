@@ -1,12 +1,13 @@
 import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
-import { Button } from 'haze-ui'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { providerAPI } from '@/services/provider.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
+import { comboboxKeyAction } from '@/utils/combobox-keys.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
@@ -171,18 +172,7 @@ const noProviderNotice = css`
   text-overflow: ellipsis;
 `
 
-/** Provider 列表读取失败时的整行占位（与 noProviderNotice 同形）。 */
-const loadErrorNotice = css`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-  font-size: 12px;
-  color: var(--haze-color-danger, #b3261e);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-`
+/** 读取失败的整行占位收敛在 LoadErrorNotice（此前这里的 css 与 AgentSelector 逐字相同）。 */
 
 export type ModelSelection = { provider: string; model: string }
 
@@ -321,12 +311,11 @@ export function ModelSelector({
           refetchInterval，唯一出路是手动刷新）。失败优先于「未配置」：
           「拉不到」不是「没有」。 */}
       {providersFailed ? (
-        <span className={loadErrorNotice} role="alert" data-testid="model-selector-load-error">
-          {`AI 服务列表读取失败：${messageOf(providersError)}`}
-          <Button variant="outline" onClick={() => void refetchProviders()}>
-            重试
-          </Button>
-        </span>
+        <LoadErrorNotice
+          message={`AI 服务列表读取失败：${messageOf(providersError)}`}
+          onRetry={() => void refetchProviders()}
+          testId="model-selector-load-error"
+        />
       ) : (
         <>
           {/* 未配置任何 Provider：providers 已加载且为空。此时没有可选项，
@@ -405,25 +394,29 @@ export function ModelSelector({
                       // IME 组合中不拦截：回车确认候选词/方向键选候选由输入法处理——
                       // 不判定会在候选未确认时移动提示选中项或确认模型。
                       if (isImeComposing(e)) return
-                      if (modelHints.length === 0) return
-                      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                      // 语义键判定单点在 comboboxKeyAction；高亮移动是**夹取**式
+                      //（到顶/底停住，无高亮时 ↓ 落首项、↑ 落末项），与
+                      // DirectoryPicker 的循环式不同，属各自演化不得数平。
+                      const action = comboboxKeyAction(e)
+                      if (!action || modelHints.length === 0) return
+                      if (action === 'next' || action === 'prev') {
                         e.preventDefault()
                         if (!hintsOpen) {
                           openHints()
                           setHighlight(0)
                           return
                         }
-                        const dir = e.key === 'ArrowDown' ? 1 : -1
+                        const dir = action === 'next' ? 1 : -1
                         setHighlight((h) => {
                           if (h === -1) return dir === 1 ? 0 : visible.length - 1
                           return Math.min(visible.length - 1, Math.max(-1, h + dir))
                         })
-                      } else if (e.key === 'Enter') {
+                      } else if (action === 'commit') {
                         if (hintsOpen && highlight >= 0 && visible[highlight]) {
                           e.preventDefault()
                           pick(visible[highlight])
                         }
-                      } else if (e.key === 'Escape') {
+                      } else {
                         if (hintsOpen) {
                           e.preventDefault()
                           closeHints()
