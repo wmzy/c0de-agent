@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { PopoverList, popoverItem } from '@/composer/PopoverList.js'
+import { PopoverList, PopoverOption } from '@/composer/PopoverList.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 
 const wfDesc = css`
@@ -74,13 +74,10 @@ function WorkflowPopover(props: Props) {
       testId="workflow-menu"
     >
       {props.workflows.map((wf, i) => (
-        <button
+        <PopoverOption
           key={wf.name}
-          role="option"
-          aria-selected={i === props.activeIndex}
-          className={`${popoverItem} ${i === props.activeIndex ? 'active' : ''}`}
-          onClick={() => props.onSelect(wf.name)}
-          type="button"
+          active={i === props.activeIndex}
+          onSelect={() => props.onSelect(wf.name)}
         >
           <span className={nameRow}>
             <strong>{wf.name}</strong>
@@ -93,7 +90,7 @@ function WorkflowPopover(props: Props) {
           </span>
           {wf.description && <span className={wfDesc}>{wf.description}</span>}
           {wf.argsHint && <span className={wfArgs}>参数: {wf.argsHint}</span>}
-        </button>
+        </PopoverOption>
       ))}
     </PopoverList>
   )

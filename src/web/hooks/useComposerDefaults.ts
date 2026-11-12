@@ -22,6 +22,40 @@ function toolsKey(projectId?: string): string {
   return projectId ? `${TOOLS_KEY}:${projectId}` : TOOLS_KEY
 }
 
+/** 读取持久化的模型选择（项目键优先，旧全局键回退一次做迁移）；JSON 损坏/无记录
+ *  → 默认空选择。初始化与切项目重载共用同一读取口径——此前两份内联副本，
+ *  全局键回退只有初始化那份有，切项目路径静默少一次回退。 */
+function readSelection(projectId?: string): ModelSelection {
+  const saved = storageGet(selectionKey(projectId))
+  const fallback = saved ?? storageGet(SELECTION_KEY)
+  if (fallback) {
+    try {
+      return JSON.parse(fallback) as ModelSelection
+    } catch {
+      // JSON 损坏，回退到默认值
+    }
+  }
+  return { provider: '', model: '' }
+}
+
+/** 读取持久化的工具白名单；null = 未显式选择（缺记录/JSON 损坏/形状违规）。 */
+function readTools(projectId?: string): Set<string> | null {
+  const raw = storageGet(toolsKey(projectId))
+  if (raw == null) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === 'string')) return null
+    return new Set(parsed)
+  } catch {
+    return null
+  }
+}
+
+/** 读取持久化的 agent 名（项目键优先，旧全局键回退）。 */
+function readAgent(projectId?: string): string {
+  return storageGet(agentKey(projectId)) ?? storageGet(AGENT_KEY) ?? 'default'
+}
+
 /**
  * Composer 的默认 model 选择与启用工具白名单状态。
  * ChatSession（已有会话）与 DraftSession（草稿新会话）共用，避免重复实现默认值校正逻辑。
@@ -42,19 +76,7 @@ export function useComposerDefaults(projectId?: string) {
   })
 
   const providers = providersData?.providers ?? []
-  const [selection, setSelection] = useState<ModelSelection>(() => {
-    // 从 localStorage 恢复上次选择（项目优先，旧全局键回退），避免刷新/重挂载后 model 回到默认值
-    const saved = storageGet(selectionKey(projectId))
-    const fallback = saved ?? storageGet(SELECTION_KEY)
-    if (fallback) {
-      try {
-        return JSON.parse(fallback) as ModelSelection
-      } catch {
-        // JSON 损坏，回退到默认值
-      }
-    }
-    return { provider: '', model: '' }
-  })
+  const [selection, setSelection] = useState<ModelSelection>(() => readSelection(projectId))
   // 用户是否在本次项目会话中操作过模型选择（输入/点选/切换 provider）。
   // 校正逻辑只作用于「未操作过」的选择值（持久化恢复/默认填充），避免与自由输入互搏。
   const selectionTouchedRef = useRef(false)
@@ -78,17 +100,9 @@ export function useComposerDefaults(projectId?: string) {
   // P1-6：启用工具白名单按项目持久化——此前纯组件状态，切换会话/刷新
   // 静默回滚为「全部启用」。安全相关状态的无提示回滚比偏好丢失更危险。
   // null = 未显式选择（后端默认集）；Set = 显式选择（含空集 = 全禁用）。
-  const [enabledTools, setEnabledToolsState] = useState<Set<string> | null>(() => {
-    const raw = storageGet(toolsKey(projectId))
-    if (raw == null) return null
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === 'string')) return null
-      return new Set(parsed)
-    } catch {
-      return null
-    }
-  })
+  const [enabledTools, setEnabledToolsState] = useState<Set<string> | null>(() =>
+    readTools(projectId),
+  )
   const setEnabledTools = useCallback(
     (v: Set<string> | null) => {
       setEnabledToolsState(v)
@@ -98,9 +112,7 @@ export function useComposerDefaults(projectId?: string) {
     },
     [projectId],
   )
-  const [agentName, setAgentNameState] = useState<string>(
-    () => storageGet(agentKey(projectId)) ?? storageGet(AGENT_KEY) ?? 'default',
-  )
+  const [agentName, setAgentNameState] = useState<string>(() => readAgent(projectId))
   const setAgentName = (name: string) => {
     storageSet(agentKey(projectId), name)
     setAgentNameState(name)
@@ -112,32 +124,9 @@ export function useComposerDefaults(projectId?: string) {
   // P1-2：重载后的选择来自持久化/默认值（非用户操作），允许后续默认值校正。
   useEffect(() => {
     selectionTouchedRef.current = false
-    const saved = storageGet(selectionKey(projectId))
-    if (saved) {
-      try {
-        setSelection(JSON.parse(saved) as ModelSelection)
-      } catch {
-        setSelection({ provider: '', model: '' })
-      }
-    } else {
-      setSelection({ provider: '', model: '' })
-    }
-    const rawTools = storageGet(toolsKey(projectId))
-    if (rawTools == null) {
-      setEnabledToolsState(null)
-    } else {
-      try {
-        const parsed = JSON.parse(rawTools) as unknown
-        setEnabledToolsState(
-          Array.isArray(parsed) && parsed.every((t) => typeof t === 'string')
-            ? new Set(parsed)
-            : null,
-        )
-      } catch {
-        setEnabledToolsState(null)
-      }
-    }
-    setAgentNameState(storageGet(agentKey(projectId)) ?? storageGet(AGENT_KEY) ?? 'default')
+    setSelection(readSelection(projectId))
+    setEnabledToolsState(readTools(projectId))
+    setAgentNameState(readAgent(projectId))
   }, [projectId])
 
   // P1-2：默认值校正（provider 与 model 都要校正，此前只校正 provider）：

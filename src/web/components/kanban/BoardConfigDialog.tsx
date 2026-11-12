@@ -2,7 +2,13 @@ import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useState } from 'react'
-import { Dialog } from '@/components/Dialog.js'
+import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
+import { DialogInlineError } from '@/components/DialogInlineError.js'
+import {
+  colorSwatch,
+  createLabelDraft,
+  DEFAULT_LABEL_COLOR,
+} from '@/components/kanban/labelShared.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { generateId } from '@/hooks/id.js'
 import {
@@ -50,9 +56,18 @@ const rowMeta = css`
   flex-shrink: 0;
 `
 
+/** 危险色调（45% 边 + 8% 淡红底 + danger 文字）：本文件里「删标签影响面确认条」
+ *  与「顶部错误框」共用同一套配色，此前一份在 css、一份在内联 style 里各写一遍。 */
+const dangerTone = css`
+  color: var(--haze-color-danger);
+  border: 1px solid color-mix(in srgb, var(--haze-color-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--haze-color-danger) 8%, transparent);
+`
+
 /** 删除标签的影响面确认条：说明「保存后会发生什么」，再让用户确认。
- *  与顶部错误框同一套配色，但不阻塞其它行——用户可继续改列/别的标签。 */
+ *  与顶部错误框同一套配色（dangerTone），但不阻塞其它行——用户可继续改列/别的标签。 */
 const confirmBar = css`
+  ${dangerTone};
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -61,20 +76,15 @@ const confirmBar = css`
   padding: 6px 8px;
   border-radius: 6px;
   font-size: 12px;
-  color: var(--haze-color-danger);
-  border: 1px solid color-mix(in srgb, var(--haze-color-danger) 45%, transparent);
-  background: color-mix(in srgb, var(--haze-color-danger) 8%, transparent);
 `
 
-const colorSwatch = css`
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  border: 1px solid var(--haze-color-border);
-  cursor: pointer;
-  flex-shrink: 0;
-  padding: 0;
-  background: none;
+/** 顶部错误框：列删除守卫提示与保存失败原因都画在这里（与确认条同色调）。 */
+const errorBar = css`
+  ${dangerTone};
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
 `
 
 const addBtn = css`
@@ -90,17 +100,6 @@ const actions = css`
   justify-content: flex-end;
   gap: 8px;
 `
-
-const LABEL_COLORS = [
-  '#ef4444',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#06b6d4',
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-]
 
 type BoardConfigDialogProps = {
   projectId: string
@@ -124,7 +123,7 @@ export function BoardConfigDialog({
   const [labels, setLabels] = useState<KanbanLabelDef[]>(initLabels)
   const [newColumnName, setNewColumnName] = useState('')
   const [newLabelName, setNewLabelName] = useState('')
-  const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0] ?? '#ef4444')
+  const [newLabelColor, setNewLabelColor] = useState(DEFAULT_LABEL_COLOR)
   const [error, setError] = useState<string | null>(null)
   /** 正在二次确认删除的标签 id：删除标签会跨卡片生效，不能一次点击就落库。 */
   const [confirmLabelId, setConfirmLabelId] = useState<string | null>(null)
@@ -151,10 +150,7 @@ export function BoardConfigDialog({
   // 无处可报（实测同族的删除项目弹窗：按 Esc 后 500，整页没有任何提示，用户
   // 看到的是「点了保存，什么也没发生」）。
   const busy = saveMutation.isPending
-  const dismiss = () => {
-    if (busy) return
-    onClose()
-  }
+  const dismiss = useDialogDismiss(onClose, busy)
 
   // 列操作
   const addColumn = () => {
@@ -178,11 +174,9 @@ export function BoardConfigDialog({
 
   // 标签操作
   const addLabel = () => {
-    if (!newLabelName.trim()) return
-    setLabels((prev) => [
-      ...prev,
-      { id: generateId(), name: newLabelName.trim(), color: newLabelColor },
-    ])
+    const draft = createLabelDraft(newLabelName, newLabelColor)
+    if (!draft) return
+    setLabels((prev) => [...prev, draft])
     setNewLabelName('')
   }
   const updateLabel = (id: string, patch: Partial<KanbanLabelDef>) => {
@@ -222,18 +216,7 @@ export function BoardConfigDialog({
       }
     >
       {error && (
-        <div
-          style={{
-            color: 'var(--haze-color-danger)',
-            fontSize: 12,
-            marginBottom: 8,
-            padding: '6px 10px',
-            border: '1px solid color-mix(in srgb, var(--haze-color-danger) 45%, transparent)',
-            borderRadius: 6,
-            background: 'color-mix(in srgb, var(--haze-color-danger) 8%, transparent)',
-          }}
-          data-testid="board-config-error"
-        >
+        <div className={errorBar} data-testid="board-config-error">
           {error}
         </div>
       )}
@@ -389,9 +372,9 @@ export function BoardConfigDialog({
       </div>
 
       {saveMutation.isError && (
-        <div style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
+        <DialogInlineError testId="board-config-save-error">
           保存失败：{messageOf(saveMutation.error)}
-        </div>
+        </DialogInlineError>
       )}
     </Dialog>
   )

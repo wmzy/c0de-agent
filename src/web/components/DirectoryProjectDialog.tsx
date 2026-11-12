@@ -2,18 +2,14 @@ import { css } from '@linaria/core'
 import { type QueryKey, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useState } from 'react'
-import { Dialog } from '@/components/Dialog.js'
+import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
+import { DialogInlineError } from '@/components/DialogInlineError.js'
 import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 import { messageOf } from '@/utils/errors.js'
 
 const hintStyle = css`
   font-size: 12px;
   color: var(--haze-color-text-secondary);
-`
-
-const errorStyle = css`
-  font-size: 12px;
-  color: var(--haze-color-danger);
 `
 
 export type DirectoryProjectDialogProps<T> = {
@@ -86,10 +82,7 @@ export function DirectoryProjectDialog<T>({
   // 请求在飞时不给关闭的出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染
   // 在这块面板里，中途关掉它就等于把失败原因一起关掉——实测目录建项目时按 Esc，
   // 服务端随后 500，用户看到的是「点了添加，什么也没发生」，项目也没建出来。
-  const dismiss = () => {
-    if (run.isPending) return
-    onClose()
-  }
+  const dismiss = useDialogDismiss(onClose, run.isPending)
 
   return (
     <Dialog
@@ -123,11 +116,7 @@ export function DirectoryProjectDialog<T>({
         testId={`${testId}-input`}
       />
       <div className={hintStyle}>{hint}</div>
-      {error ? (
-        <div className={errorStyle} role="alert" data-testid={`${testId}-error`}>
-          {error}
-        </div>
-      ) : null}
+      {error ? <DialogInlineError testId={`${testId}-error`}>{error}</DialogInlineError> : null}
     </Dialog>
   )
 }

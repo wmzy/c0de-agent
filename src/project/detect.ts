@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ProjectInfo } from '../core/types.js'
+import { IGNORED_DIR_NAMES } from '../shared/utils/path.js'
 import { resolveProject } from './resolve.js'
 
 /** 框架推断映射：依赖名 → 框架名（按常见前端/后端框架）。 */
@@ -87,7 +88,9 @@ function inferLanguage(cwd: string): string {
         continue
       }
       if (st.isDirectory()) {
-        if (entry === 'node_modules' || entry === '.git' || entry === 'dist') continue
+        // 噪音目录不进语言统计（名单单一来源：shared/utils/path.ts 的
+        // IGNORED_DIR_NAMES，与 glob/grep 遍历、目录搜索同口径）。
+        if (IGNORED_DIR_NAMES.has(entry)) continue
         queue.push(full)
       } else if (st.isFile()) {
         const dot = entry.lastIndexOf('.')

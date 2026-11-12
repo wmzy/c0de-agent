@@ -4,6 +4,7 @@ import { compactionArchives, type sessionEntries, sessions } from '../db/schema.
 import type { HookRunner } from '../plugins/types.js'
 import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
+import { aggregateSegmentUsage } from '../shared/usage.js'
 import { getEntries, insertEntry } from './message.js'
 import { createSession, getSession, rowToSession, webVisibleSessionCondition } from './session.js'
 import { copyFileSnapshots } from './snapshot.js'
@@ -230,25 +231,10 @@ async function getBranches(handle: DB, sessionId: string): Promise<Session[]> {
   return rows.map(rowToSession)
 }
 
-/** 从会话 metadata.segments 聚合用量（零额外查询——段数据已在行内）。 */
+/** 从会话 metadata.segments 聚合用量（零额外查询——段数据已在行内；
+ *  聚合实现收敛到 shared/usage.ts，与 Web 会话信息面板同源）。 */
 function sessionUsage(session: Session): SessionUsage {
-  const calls = (session.metadata.segments ?? []).flatMap((s) => s.calls ?? [])
-  let inputTokens = 0
-  let outputTokens = 0
-  let cacheRead = 0
-  let cost = 0
-  let unknownCostCalls = 0
-  for (const c of calls) {
-    inputTokens += c.usage.input
-    outputTokens += c.usage.output
-    cacheRead += c.usage.cacheRead ?? 0
-    if (c.cost == null) {
-      unknownCostCalls += 1
-    } else {
-      cost += c.cost
-    }
-  }
-  return { inputTokens, outputTokens, cacheRead, cost, unknownCostCalls, calls: calls.length }
+  return aggregateSegmentUsage((session.metadata.segments ?? []) as LLMSegment[])
 }
 
 /** Build a full session tree from root sessions down.

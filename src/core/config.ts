@@ -12,7 +12,7 @@ import type {
   UpdateConfig,
   WebSearchConfig,
 } from '../shared/types/config.js'
-import { isPrototypeKey } from './config-path.js'
+import { coerce, isPrototypeKey, setPathPatch } from './config-path.js'
 import { encryptSecret, isEncryptedSecret } from './secret.js'
 
 const GLOBAL_CONFIG_DIR = '.c0de'
@@ -514,10 +514,64 @@ function warnUnknownConfigKeys(
   )
 }
 
+/** setConfigKey 的策略性失败码：各写入入口保留自己的用户文案，仅按码分派。 */
+type ConfigSetFailureCode = 'UNKNOWN_TOP_KEY' | 'SECURITY_PROJECT_SCOPE'
+
+type ConfigSetFailure = Error & { code: ConfigSetFailureCode; topKey: string }
+
+function configSetFailure(code: ConfigSetFailureCode, topKey: string): ConfigSetFailure {
+  const error = new Error(`config set rejected: ${code} (${topKey})`) as ConfigSetFailure
+  error.code = code
+  error.topKey = topKey
+  return error
+}
+
+/** 判定错误是否 setConfigKey 的策略性失败（供入口分派自己的文案）。 */
+function isConfigSetFailure(error: unknown): error is ConfigSetFailure {
+  if (!(error instanceof Error)) return false
+  const code = (error as Partial<ConfigSetFailure>).code
+  return code === 'UNKNOWN_TOP_KEY' || code === 'SECURITY_PROJECT_SCOPE'
+}
+
+/**
+ * 配置键写入的单一核心（CLI `config set` 与斜杠 `/config <key> <value>` 共用，
+ * 两入口此前各自拼装且斜杠侧缺顶层键校验——拼写错误的键被静默持久化）：
+ * loadConfigScopes → 顶层键校验（拒拼写错误/过时键）→ 项目作用域 security
+ * 拒绝 → coerce → applyScopedPatch 最小落盘 → saveConfigScoped。
+ *  - 策略性失败（上述两类校验）抛带 code 的 ConfigSetFailure，由各入口转成
+ *    自己的用户文案；写入面校验（coerce 非有限数值、providers 畸形条目等）
+ *    沿用普通 Error，message 由入口原样透传。
+ *  - 信任指纹刷新不在本函数：CLI（ctx.refreshTrust 注入口）与斜杠
+ *    （refreshTrustedProjectFingerprint try/catch）机制不同，各自在写入成功后调用。
+ * 返回 coerce 后的值（null = unset），供入口回显「已设置/已取消设置」。
+ */
+async function setConfigKey(
+  scope: 'global' | 'project',
+  projectDir: string | undefined,
+  key: string,
+  rawValue: string,
+): Promise<unknown> {
+  const topKey = key.split('.')[0] ?? ''
+  if (!KNOWN_CONFIG_KEYS.has(topKey)) throw configSetFailure('UNKNOWN_TOP_KEY', topKey)
+  // 作用域收敛：security 是服务端全局参数，项目作用域写入会被加载时剥离（不生效）。
+  // 与其写入一个永不生效的键，不如直接拒绝（与 Web PATCH /api/config 同语义）。
+  if (scope === 'project' && topKey === 'security') {
+    throw configSetFailure('SECURITY_PROJECT_SCOPE', topKey)
+  }
+  const scopes = loadConfigScopes(projectDir)
+  const scopeCfg = scope === 'global' ? scopes.global : scopes.project
+  const value = coerce(rawValue)
+  const next = applyScopedPatch(scopeCfg ?? {}, setPathPatch(key, value))
+  await saveConfigScoped(scope, projectDir, next)
+  return value
+}
+
 export type {
   AgentsConfig,
   CompactionConfig,
   Config,
+  ConfigSetFailure,
+  ConfigSetFailureCode,
   MCPServerConfig,
   PermissionConfig,
   SecurityConfig,
@@ -530,6 +584,7 @@ export {
   collectUnknownConfigKeys,
   DEFAULT_CONFIG,
   GLOBAL_ONLY_USAGE_KEYS,
+  isConfigSetFailure,
   KNOWN_CONFIG_KEYS,
   loadConfig,
   loadConfigScopes,
@@ -540,6 +595,7 @@ export {
   projectSecurityKeys,
   resolveGlobalConfigDir,
   saveConfigScoped,
+  setConfigKey,
   stripProjectServerKeys,
   warnUnknownConfigKeys,
 }

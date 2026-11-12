@@ -1,13 +1,29 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { projectAPI } from '@/services/project.js'
 import { sessionAPI } from '@/services/session.js'
 
-export function useSessionTree() {
-  return useQuery({ queryKey: ['sessions', 'tree'], queryFn: () => sessionAPI.tree() })
+/** 会话集合变化后的失效契约（单一来源）：['sessions'] + ['sessions','tree']，
+ *  触碰回收站（删除/恢复/归属孤儿）再加 ['sessions','deleted']。返回 Promise
+ *  供需要等失效完成再导航的调用方 await。此前 8 处调用点各手抄这两三行，
+ *  内联副本已漏过 tree 键（草稿页新建会话后侧栏树不显示新会话）——契约
+ *  散落必漏，收敛于此。只刷 tree（touch 排序）或只刷回收站列表的窄场景
+ *  不走本契约，各自保留原样。 */
+export function invalidateSessionLists(
+  qc: QueryClient,
+  opts: { deleted?: boolean } = {},
+): Promise<void> {
+  const jobs = [
+    qc.invalidateQueries({ queryKey: ['sessions'] }),
+    qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }),
+  ]
+  if (opts.deleted) {
+    jobs.push(qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] }))
+  }
+  return Promise.all(jobs).then(() => undefined)
 }
 
-export function useSessionList() {
-  return useQuery({ queryKey: ['sessions'], queryFn: () => sessionAPI.list() })
+export function useSessionTree() {
+  return useQuery({ queryKey: ['sessions', 'tree'], queryFn: () => sessionAPI.tree() })
 }
 
 export function useMessages(sessionId: string | null) {
@@ -24,8 +40,7 @@ export function useCreateSession() {
     mutationFn: (params?: { title?: string; directory?: string; projectId?: string }) =>
       sessionAPI.create(params),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      void invalidateSessionLists(qc)
     },
   })
 }
@@ -35,9 +50,7 @@ export function useDeleteSession() {
   return useMutation({
     mutationFn: (id: string) => sessionAPI.remove(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+      void invalidateSessionLists(qc, { deleted: true })
     },
   })
 }
@@ -83,21 +96,7 @@ export function useRestoreSession() {
       restoreMode?: 'auto' | 'current-project'
     }) => sessionAPI.restore(id, projectId, restoreMode),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
-    },
-  })
-}
-
-export function useForkSession() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, messageIndex }: { id: string; messageIndex: number }) =>
-      sessionAPI.fork(id, messageIndex),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      void invalidateSessionLists(qc, { deleted: true })
     },
   })
 }

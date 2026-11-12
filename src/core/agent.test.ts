@@ -9,15 +9,7 @@ import type { StreamChunk } from '../shared/types/llm.js'
 import type { Session } from '../shared/types/message.js'
 import { createDefaultRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
-import {
-  abortAgent,
-  createAgent,
-  getAgentStatus,
-  isAgentPaused,
-  pauseAgent,
-  resumeAgent,
-  runAgent,
-} from './agent.js'
+import { abortAgent, createAgent, pauseAgent, resumeAgent, runAgent } from './agent.js'
 import { DEFAULT_CONFIG } from './config.js'
 import { DEFAULT_SESSION_TITLE } from './title.js'
 import type { AgentDependencies } from './types.js'
@@ -140,7 +132,7 @@ describe('runAgent', () => {
     for await (const _ev of runAgent(agent, [{ _tag: 'text', text: 'hi' }], deps)) {
       // consume
     }
-    expect(getAgentStatus(agent)._tag).toBe('stopped')
+    expect(agent.status._tag).toBe('stopped')
   })
 
   it('幂等重发：末尾已有相同 user message 时跳过 append', async () => {
@@ -268,28 +260,6 @@ describe('control functions', () => {
     )
     pauseAgent(agent)
     expect(agent.status._tag).toBe('idle')
-  })
-
-  it('getAgentStatus returns current status', async () => {
-    const agent = await createAgent(
-      session,
-      { provider: 'p', model: 'm', tools: [], plugins: [] },
-      makeDeps(db, mockTextStream('x')),
-    )
-    expect(getAgentStatus(agent)).toBe(agent.status)
-  })
-
-  it('isAgentPaused 仅在 paused 时返回 true', async () => {
-    const agent = await createAgent(
-      session,
-      { provider: 'p', model: 'm', tools: [], plugins: [] },
-      makeDeps(db, mockTextStream('x')),
-    )
-    expect(isAgentPaused(agent)).toBe(false) // idle
-    agent.status = { _tag: 'running', turnCount: 0 }
-    expect(isAgentPaused(agent)).toBe(false)
-    agent.status = { _tag: 'paused', pauseReason: 'test' }
-    expect(isAgentPaused(agent)).toBe(true)
   })
 })
 

@@ -189,6 +189,26 @@ describe('parseSSEStream', () => {
     expect(events).toEqual(['{"x":1}', '{"x":2}'])
   })
 
+  // SSE 规范：一个事件块的多条 data: 行 join('\n') 为单条 payload——与 LLM
+  // 流式解析共用的分帧语义。此前逐行派发，把规范合法的多行 data 事件拆成
+  // 两条非法 JSON 分片（各自 JSON.parse 失败被丢弃）。
+  it('joins multi-line data fields of one event into a single payload', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"x":\ndata: 1}\n\n'))
+        controller.close()
+      },
+    })
+    const events: string[] = []
+    await parseSSEStream(
+      body,
+      (d) => events.push(d),
+      () => false,
+    )
+    expect(events).toEqual(['{"x":\n1}'])
+  })
+
   it('emits CRLF-framed events (spec 允许 CRLF 行结束)', async () => {
     const encoder = new TextEncoder()
     const body = new ReadableStream<Uint8Array>({

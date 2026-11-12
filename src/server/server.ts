@@ -35,6 +35,7 @@ import {
 } from '../session/trash.js'
 import { backfillUsageEventsOnce } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
+import { readJsonFileSafe, writeJsonFileSafe } from '../shared/utils/json-file.js'
 import { createDefaultURLRegistry } from '../tools/index.js'
 import {
   checkForUpdate,
@@ -440,12 +441,11 @@ const SERVE_INFO_FILE = 'serve-info.json'
  *  引导用户直接打开 Web 界面继续对话，而不是给出无从下手的报错。不落 token。 */
 function writeServeInfo(dataDir: string, port: number): void {
   try {
-    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
-    writeFileSync(
-      join(dataDir, SERVE_INFO_FILE),
-      JSON.stringify({ pid: process.pid, port, startedAt: Date.now() }),
-      'utf8',
-    )
+    writeJsonFileSafe(join(dataDir, SERVE_INFO_FILE), {
+      pid: process.pid,
+      port,
+      startedAt: Date.now(),
+    })
   } catch {
     /* best-effort：仅影响 CLI 引导文案，不影响服务本身 */
   }
@@ -456,8 +456,8 @@ function removeServeInfo(dataDir: string): void {
   try {
     const path = join(dataDir, SERVE_INFO_FILE)
     if (!existsSync(path)) return
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { pid?: unknown }
-    if (parsed.pid === process.pid) unlinkSync(path)
+    const parsed = readJsonFileSafe<{ pid?: unknown }>(path)
+    if (parsed?.pid === process.pid) unlinkSync(path)
   } catch {
     /* best-effort */
   }
@@ -465,17 +465,11 @@ function removeServeInfo(dataDir: string): void {
 
 /** 读取运行中 serve 的端口（CLI 锁冲突引导用）。文件缺失/损坏 → null。 */
 function readServeInfo(dataDir: string): { pid: number; port: number } | null {
-  try {
-    const path = join(dataDir, SERVE_INFO_FILE)
-    if (!existsSync(path)) return null
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { pid?: unknown; port?: unknown }
-    if (typeof parsed.pid === 'number' && typeof parsed.port === 'number') {
-      return { pid: parsed.pid, port: parsed.port }
-    }
-    return null
-  } catch {
-    return null
+  const parsed = readJsonFileSafe<{ pid?: unknown; port?: unknown }>(join(dataDir, SERVE_INFO_FILE))
+  if (typeof parsed?.pid === 'number' && typeof parsed.port === 'number') {
+    return { pid: parsed.pid, port: parsed.port }
   }
+  return null
 }
 
 /** dev 专用：创建 + migrate PGLite，跨热重载复用（单写者，只建一次）。 */

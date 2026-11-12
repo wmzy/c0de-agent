@@ -88,33 +88,54 @@ describe('skill resolver', () => {
     if (res._tag === 'ok') expect(res.content).toContain('TDD')
   })
 
-  it('falls back to the global ~/.c0de/skills/<name>.md', async () => {
+  it('falls back to the global config dir skills/<name>.md', async () => {
     const cwd = await tmp()
-    const home = await tmp()
-    await mkdir(join(home, '.c0de', 'skills'), { recursive: true })
-    await writeFile(join(home, '.c0de', 'skills', 'global.md'), '# Global skill')
-    const reg = createURLRegistryWithSkill({ homeDir: home })
+    const globalDir = await tmp()
+    await mkdir(join(globalDir, 'skills'), { recursive: true })
+    await writeFile(join(globalDir, 'skills', 'global.md'), '# Global skill')
+    const reg = createURLRegistryWithSkill({ globalConfigDir: globalDir })
     const res = await resolveURL(reg, 'skill://global', ctxAt(cwd))
     expect(res._tag).toBe('ok')
     if (res._tag === 'ok') expect(res.content).toContain('Global skill')
   })
 
+  // 回归：全局候选目录必须与技能发现（core/skills.ts）同走 resolveGlobalConfigDir
+  // ——此前硬编码 ~ 下 .c0de，设了 C0DE_CONFIG_DIR 时系统提示词宣传的技能
+  // skill:// 读不到。
+  it('honors C0DE_CONFIG_DIR for global skills (与 discoverSkills 同口径)', async () => {
+    const cwd = await tmp()
+    const globalDir = await tmp()
+    await mkdir(join(globalDir, 'skills'), { recursive: true })
+    await writeFile(join(globalDir, 'skills', 'envdir.md'), '# Env-dir skill')
+    const prev = process.env.C0DE_CONFIG_DIR
+    process.env.C0DE_CONFIG_DIR = globalDir
+    try {
+      const reg = createDefaultURLRegistry()
+      const res = await resolveURL(reg, 'skill://envdir', ctxAt(cwd))
+      expect(res._tag).toBe('ok')
+      if (res._tag === 'ok') expect(res.content).toContain('Env-dir skill')
+    } finally {
+      if (prev === undefined) delete process.env.C0DE_CONFIG_DIR
+      else process.env.C0DE_CONFIG_DIR = prev
+    }
+  })
+
   it('returns error when the skill is nowhere to be found', async () => {
     const cwd = await tmp()
-    const home = await tmp()
-    const reg = createURLRegistryWithSkill({ homeDir: home })
+    const globalDir = await tmp()
+    const reg = createURLRegistryWithSkill({ globalConfigDir: globalDir })
     const res = await resolveURL(reg, 'skill://nonexistent', ctxAt(cwd))
     expect(res._tag).toBe('error')
   })
 
   it('project skill takes precedence over global skill', async () => {
     const cwd = await tmp()
-    const home = await tmp()
+    const globalDir = await tmp()
     await mkdir(join(cwd, '.c0de', 'skills'), { recursive: true })
-    await mkdir(join(home, '.c0de', 'skills'), { recursive: true })
+    await mkdir(join(globalDir, 'skills'), { recursive: true })
     await writeFile(join(cwd, '.c0de', 'skills', 'dup.md'), 'PROJECT')
-    await writeFile(join(home, '.c0de', 'skills', 'dup.md'), 'GLOBAL')
-    const reg = createURLRegistryWithSkill({ homeDir: home })
+    await writeFile(join(globalDir, 'skills', 'dup.md'), 'GLOBAL')
+    const reg = createURLRegistryWithSkill({ globalConfigDir: globalDir })
     const res = await resolveURL(reg, 'skill://dup', ctxAt(cwd))
     expect(res._tag).toBe('ok')
     if (res._tag === 'ok') expect(res.content).toBe('PROJECT')
@@ -162,7 +183,7 @@ describe('createDefaultURLRegistry', () => {
   })
 })
 
-function createURLRegistryWithSkill(opts: { homeDir: string }) {
-  const reg = createDefaultURLRegistry({ homeDir: opts.homeDir })
+function createURLRegistryWithSkill(opts: { globalConfigDir: string }) {
+  const reg = createDefaultURLRegistry({ globalConfigDir: opts.globalConfigDir })
   return reg
 }

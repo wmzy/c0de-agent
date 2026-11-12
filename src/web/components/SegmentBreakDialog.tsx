@@ -1,41 +1,11 @@
-import { css } from '@linaria/core'
 import { useRef, useState } from 'react'
-import { Dialog } from '@/components/Dialog.js'
-
-const bodyText = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-`
-
-const actions = css`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-`
-
-const btn = css`
-  padding: 6px 12px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  background: var(--haze-color-bg-subtle);
-  color: var(--haze-color-text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-
-  &:hover {
-    background: var(--haze-color-bg);
-  }
-`
-
-const primary = css`
-  ${btn};
-  border-color: var(--haze-color-primary, var(--haze-color-border));
-  background: var(--haze-color-primary, var(--haze-color-bg-subtle));
-  color: var(--haze-color-bg, #fff);
-`
+import {
+  confirmActions,
+  confirmBodyText,
+  confirmBtn,
+  confirmPrimaryBtn,
+} from '@/components/confirmDialogStyles.js'
+import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
 
 /**
  * 段切换确认弹窗：切换 provider/model/tools 将开新上下文段，需用户确认。
@@ -85,19 +55,21 @@ export function SegmentBreakDialog({
     }
     void Promise.resolve(result).finally(done)
   }
+  // 在途锁的行为兜底：closeDisabled 与按钮 disabled 之外，「取消」点击同口径拒发。
+  const dismiss = useDialogDismiss(onCancel, busy)
   return (
     <Dialog
-      onClose={onCancel}
+      onClose={dismiss}
       closeDisabled={busy}
       title="切换模型或工具"
       width="min(420px, 92vw)"
       testId="segment-break-dialog"
       footer={
-        <div className={actions}>
+        <div className={confirmActions}>
           <button
             type="button"
-            className={btn}
-            onClick={onCancel}
+            className={confirmBtn}
+            onClick={dismiss}
             disabled={busy}
             data-testid="segment-break-cancel"
           >
@@ -105,7 +77,7 @@ export function SegmentBreakDialog({
           </button>
           <button
             type="button"
-            className={btn}
+            className={confirmBtn}
             onClick={() => run(onCompact, true)}
             disabled={busy}
             data-testid="segment-break-compact"
@@ -114,7 +86,7 @@ export function SegmentBreakDialog({
           </button>
           <button
             type="button"
-            className={primary}
+            className={confirmPrimaryBtn}
             onClick={() => run(onConfirm, false)}
             disabled={busy}
             data-testid="segment-break-confirm"
@@ -124,7 +96,7 @@ export function SegmentBreakDialog({
         </div>
       }
     >
-      <div className={bodyText}>
+      <div className={confirmBodyText}>
         当前对话使用 {activeSegment.provider}/{activeSegment.model}（{activeSegment.tools.length}{' '}
         个工具）。切换后，新消息将基于新的模型/工具继续；之前的对话内容会完整保留，
         但不再作为新回复的直接上下文基础——新段首轮需重新读取整个上下文， 可能产生额外的 token

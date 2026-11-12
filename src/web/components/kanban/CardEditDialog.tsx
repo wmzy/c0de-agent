@@ -2,9 +2,14 @@ import { css } from '@linaria/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useState } from 'react'
-import { Dialog } from '@/components/Dialog.js'
+import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
+import { DialogInlineError } from '@/components/DialogInlineError.js'
+import {
+  colorSwatch,
+  createLabelDraft,
+  DEFAULT_LABEL_COLOR,
+} from '@/components/kanban/labelShared.js'
 import { SyncedInput, SyncedTextarea } from '@/components/SyncedControls.js'
-import { generateId } from '@/hooks/id.js'
 import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -192,17 +197,6 @@ const labelCreateRow = css`
   margin-top: 6px;
 `
 
-const colorSwatch = css`
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  border: 1px solid var(--haze-color-border);
-  cursor: pointer;
-  flex-shrink: 0;
-  padding: 0;
-  background: none;
-`
-
 const labelNameInput = css`
   flex: 1;
   min-height: auto;
@@ -250,17 +244,6 @@ const PRIORITY_SELECTED: Record<KanbanPriority, string> = {
   low: prioritySelectedLow,
 }
 
-const LABEL_COLORS = [
-  '#ef4444',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#06b6d4',
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-]
-
 type CardEditDialogProps = {
   projectId: string
   cardId: string
@@ -290,7 +273,7 @@ export function CardEditDialog({
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set(initialLabels))
   const [allLabels, setAllLabels] = useState<KanbanLabelDef[]>(boardLabels)
   const [newLabelName, setNewLabelName] = useState('')
-  const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0] ?? '#ef4444')
+  const [newLabelColor, setNewLabelColor] = useState(DEFAULT_LABEL_COLOR)
 
   // 已在看板配置里持久化的标签 id。本弹窗只负责「这张卡片带哪些标签」与
   // 「新增标签」；标签定义的改名/删除属于看板设置（BoardConfigDialog）。
@@ -351,11 +334,11 @@ export function CardEditDialog({
   }
 
   const addLabel = () => {
-    const name = newLabelName.trim()
-    if (!name) return
-    const id = generateId()
-    setAllLabels((prev) => [...prev, { id, name, color: newLabelColor }])
-    setSelectedLabels((prev) => new Set(prev).add(id))
+    const draft = createLabelDraft(newLabelName, newLabelColor)
+    if (!draft) return
+    setAllLabels((prev) => [...prev, draft])
+    // 在卡片弹窗里创建标签的同时把它选上本卡片（本弹窗的原语义）
+    setSelectedLabels((prev) => new Set(prev).add(draft.id))
     setNewLabelName('')
   }
 
@@ -384,10 +367,7 @@ export function CardEditDialog({
   // （卡片其实还是旧标题），删除路径同理（以为删了、其实没删）。与 BoardConfigDialog
   // / CommitReviewDialog / AddProjectDialog 同一口径。
   const busy = saveMutation.isPending || deleteMutation.isPending
-  const dismiss = () => {
-    if (busy) return
-    onClose()
-  }
+  const dismiss = useDialogDismiss(onClose, busy)
 
   return (
     <Dialog
@@ -554,9 +534,9 @@ export function CardEditDialog({
       </div>
 
       {(saveMutation.isError || deleteMutation.isError) && (
-        <div role="alert" style={{ color: 'var(--haze-color-danger)', fontSize: 12 }}>
+        <DialogInlineError testId="card-edit-error">
           操作失败：{messageOf(saveMutation.error ?? deleteMutation.error)}
-        </div>
+        </DialogInlineError>
       )}
     </Dialog>
   )

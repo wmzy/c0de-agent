@@ -82,7 +82,12 @@ export function migrateLegacyDetails(meta: Record<string, unknown>): Record<stri
 
 /** 读取会话 metadata.segments（读取时顺带迁移旧 llmDetails）。 */
 export async function getLLMSegments(handle: DB, id: string): Promise<LLMSegment[]> {
-  const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
+  // 只取 metadata 列——本函数在每轮 loop 结束的段写入路径上高频执行，
+  // 不必拖整行（标题/parent/agentType 等）。
+  const [row] = await handle.db
+    .select({ metadata: sessions.metadata })
+    .from(sessions)
+    .where(eq(sessions.id, id))
   if (!row) return []
   const meta = migrateLegacyDetails((row.metadata ?? {}) as Record<string, unknown>)
   return (meta.segments as LLMSegment[] | undefined) ?? []

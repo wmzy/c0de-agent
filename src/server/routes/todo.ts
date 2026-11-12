@@ -4,7 +4,6 @@ import { appendMessage, getMessages } from '../../session/message.js'
 import { generateId } from '../../shared/index.js'
 import type { MessageContent } from '../../shared/types/message.js'
 import type { TodoPhaseLike } from '../../shared/types/tool.js'
-import { isUuid } from '../../shared/utils/string.js'
 import {
   formatSummary,
   getLatestTodoPhasesFromMessages,
@@ -13,6 +12,7 @@ import {
 } from '../../tools/builtin/todo.js'
 import { validateInput } from '../../tools/validate.js'
 import { apiError } from '../middleware/error.js'
+import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getLiveSessionOr404 } from './chat.js'
@@ -49,15 +49,9 @@ async function loadPhases(
 function createTodoRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
-  // 路径参数 sessionId 是 sessions.id（uuid 列）：非 UUID 直接 404。
-  // 此前非 UUID 经 drizzle 查询在 PG 侧抛 22P02（invalid input syntax for type
-  // uuid）→ Hono 500 且回显 SQL 错误细节；格式非法与「会话不存在」同属 404。
-  app.use('/:sessionId', async (c, next) => {
-    if (!isUuid(c.req.param('sessionId') ?? '')) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
-    await next()
-  })
+  // 路径参数 sessionId 是 sessions.id（uuid 列）：非 UUID 直接 404（守卫语义
+  // 收敛到 middleware/uuid-param.ts，此处只声明参数名与文案）。
+  app.use('/:sessionId', uuidParamGuard('sessionId', 'NOT_FOUND', '会话不存在或已删除'))
 
   // GET /:sessionId — 获取当前 todo 状态
   app.get('/:sessionId', async (c) => {

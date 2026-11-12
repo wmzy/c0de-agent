@@ -12,7 +12,9 @@ import {
 } from '@/components/directory-picker-domain.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
-import { findNode, setChildren } from '@/components/tree-utils.js'
+import { findNode } from '@/components/tree-utils.js'
+import { useDirectoryTree } from '@/components/useDirectoryTree.js'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { filesystemAPI } from '@/services/filesystem.js'
 import { comboboxKeyAction } from '@/utils/combobox-keys.js'
@@ -188,24 +190,37 @@ export function DirectoryPicker({
 }: DirectoryPickerProps) {
   const [home, setHome] = useState('')
   const [root, setRoot] = useState('')
-  const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<string | null>(null)
-  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
   const [navLoading, setNavLoading] = useState(false)
   /** 根目录读取失败的原因（null=无失败）。此前只有 boolean，渲染成「读取失败」四个字。 */
   const [navError, setNavError] = useState<string | null>(null)
   /** home 目录读取失败的原因。home 拉不到会让「首次自动导航」与名称搜索双双失效
-   *  （见 loadHome），必须与「没有目录」区分开。 */
+   * （见 loadHome），必须与「没有目录」区分开。 */
   const [homeError, setHomeError] = useState<string | null>(null)
-  /** 子目录懒加载失败原因（path → message）。与 FileBrowser 同口径：由树里
-   *  的失败态 + 重试承接，绝不落成 children: []（那正是「（空）」分支）。 */
-  const [loadErrors, setLoadErrors] = useState<Map<string, string>>(new Map())
   const [suggestionList, setSuggestionList] = useState<
     { query: string; items: Suggestion[] } | undefined
   >()
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(-1)
+
+  // 懒加载目录树状态机（treeRoot/expanded/loadingPaths/loadErrors + 守卫内建的
+  // loadChildren）收敛到 useDirectoryTree——与 FileBrowser 同一实现；此处目录
+  // id 是绝对路径，世代守卫在换根目录（navigate → invalidateTree）时作废在飞
+  // 懒加载，此前本地副本没有守卫：换根后在飞的子目录响应仍会写进新树。
+  const fetchChildren = useCallback(async (dirPath: string): Promise<TreeNode[]> => {
+    const r = await filesystemAPI.browse(dirPath)
+    return r.directories.map((d) => ({ name: d.name, path: d.path }))
+  }, [])
+  const {
+    treeRoot,
+    setTreeRoot,
+    expanded,
+    setExpanded,
+    loadingPaths,
+    loadErrors,
+    loadChildren,
+    invalidate: invalidateTree,
+  } = useDirectoryTree(fetchChildren)
 
   const homeRef = useRef('')
   const rootRef = useRef('')
@@ -265,9 +280,8 @@ export function DirectoryPicker({
       setActiveSuggestion(-1)
       setRoot(path)
       rootRef.current = path
-      setTreeRoot(null)
-      setExpanded(new Set())
-      setLoadErrors(new Map())
+      // 作废世代 + 清空树（含在飞懒加载）——见 useDirectoryTree 的守卫说明。
+      invalidateTree()
       if (!options?.silent) onChange(displayPickerPath(path, path, homeRef.current))
       try {
         const r = await filesystemAPI.browse(path)
@@ -284,7 +298,8 @@ export function DirectoryPicker({
         if (activeTreeNavigation(token, navigation.current)) setNavLoading(false)
       }
     },
-    [onChange],
+    // setTreeRoot 来自 useDirectoryTree（useState setter 直通，运行时稳定）。
+    [onChange, invalidateTree, setTreeRoot],
   )
 
   // 首次自动导航到 start/home：只加载文件树，不回填宿主值（见 navigate 的 silent）
@@ -294,9 +309,13 @@ export function DirectoryPicker({
     void navigate(initial, { silent: true })
   }, [start, home, root, navigate])
 
-  // 输入变化 → 防抖搜索
+  // 输入变化 → 防抖搜索（防抖收敛到 useDebouncedValue，与 FileBrowser/SessionList
+  // 同一实现；清空/与当前路径一致的立即收起分支也走防抖值——终端状态一致，
+  // 仅收起延迟至多一个防抖窗口）。
+  const typedInput = cleanPickerInput(value)
+  const [debouncedTyped] = useDebouncedValue(typedInput, 200)
   useEffect(() => {
-    const typed = cleanPickerInput(value)
+    const typed = debouncedTyped
     const current = displayPickerPath(rootRef.current, value, homeRef.current).replace(/\/+$/, '')
     if (!typed || typed === current) {
       setSuggestionList({ query: typed, items: [] })
@@ -304,7 +323,7 @@ export function DirectoryPicker({
       return
     }
     let cancelled = false
-    const timer = setTimeout(async () => {
+    void (async () => {
       const items = await search(typed)
       if (cancelled) return
       const mapped: Suggestion[] = items
@@ -313,43 +332,16 @@ export function DirectoryPicker({
       setSuggestionList({ query: typed, items: mapped })
       setSuggestionsOpen(true)
       setActiveSuggestion(-1)
-    }, 200)
+    })()
     return () => {
       cancelled = true
-      clearTimeout(timer)
     }
-  }, [value, search])
+  }, [debouncedTyped, value, search])
 
   const currentItems = useMemo(
     () => currentPickerSuggestions(suggestionList, cleanPickerInput(value)),
     [suggestionList, value],
   )
-
-  /** 懒加载某目录的子项：失败落到 loadErrors，由树里的失败态 + 重试承接。 */
-  const loadChildren = useCallback(async (dirPath: string) => {
-    setLoadingPaths((prev) => new Set(prev).add(dirPath))
-    setLoadErrors((prev) => {
-      if (!prev.has(dirPath)) return prev
-      const next = new Map(prev)
-      next.delete(dirPath)
-      return next
-    })
-    try {
-      const r = await filesystemAPI.browse(dirPath)
-      const children: TreeNode[] = r.directories.map((d) => ({ name: d.name, path: d.path }))
-      setTreeRoot((root) => (root ? setChildren(root, dirPath, children) : root))
-    } catch (err) {
-      // 失败不能落成 children: []——那正是 FileTree 的「（空）」分支，
-      // 把「读不到」说成「没有」。记录原因，就地展示并允许重试。
-      setLoadErrors((prev) => new Map(prev).set(dirPath, messageOf(err) || '无法读取该目录'))
-    } finally {
-      setLoadingPaths((prev) => {
-        const next = new Set(prev)
-        next.delete(dirPath)
-        return next
-      })
-    }
-  }, [])
 
   const toggle = useCallback(
     async (path: string) => {
@@ -365,7 +357,7 @@ export function DirectoryPicker({
         await loadChildren(path)
       }
     },
-    [treeRoot, loadingPaths, loadChildren],
+    [treeRoot, loadingPaths, loadChildren, setExpanded],
   )
 
   const select = useCallback(

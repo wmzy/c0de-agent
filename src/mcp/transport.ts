@@ -4,6 +4,7 @@
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { wrapChildProcess } from '../shared/utils/child-process.js'
+import { sseDataPayloads } from '../shared/utils/sse.js'
 import type { JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, MCPIncoming } from './types.js'
 
 /** 底层传输抽象：发 JSON-RPC 消息、收服务端消息、关连接。 */
@@ -109,54 +110,19 @@ function createStdioTransport(
   }
 }
 
-/** 从 ReadableStream 增量解析 SSE（`data:` 行 + 空行分事件），收到即回调。 */
+/** 从 ReadableStream 增量解析 SSE（`data:` 事件），收到即回调。
+ *  分帧本体见 shared/utils/sse.ts（与 LLM 流式响应共用）：一个事件块的
+ *  多条 `data:` 行按 SSE 规范 join('\n') 为单条 payload 派发——此前逐行
+ *  派发，会把规范合法的多行 data 事件拆成非法 JSON 分片。 */
 async function parseSSEStream(
   body: ReadableStream<Uint8Array>,
   onEvent: (data: string) => void,
   shouldStop: () => boolean,
 ): Promise<void> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
   try {
-    const consume = (): void => {
-      const idx = buffer.indexOf('\n\n')
-      if (idx < 0) return
-      const eventBlock = buffer.slice(0, idx)
-      buffer = buffer.slice(idx + 2)
-      for (const line of eventBlock.split('\n')) {
-        if (!line.startsWith('data:')) continue
-        const data = line.slice(5).trimStart()
-        if (data.length > 0) onEvent(data)
-      }
-      consume()
-    }
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) {
-        // 流正常关闭：flush decoder 内部缓冲 + 残留尾部事件。最后一个 data: 行
-        // 无尾随空行（服务器发完直接关流）时事件此前被静默丢弃——MCP 客户端
-        // 等最后一条响应直到超时。空行分帧 consume 无法覆盖该帧，须显式收尾。
-        buffer += decoder.decode()
-        buffer = buffer.replace(/\r\n/g, '\n')
-        if (buffer.trim().length > 0) {
-          for (const line of buffer.trim().split('\n')) {
-            if (!line.startsWith('data:')) continue
-            const data = line.slice(5).trimStart()
-            if (data.length > 0) onEvent(data)
-          }
-        }
-        break
-      }
-      buffer += decoder.decode(value, { stream: true })
-      // SSE 规范允许 CRLF 行结束——归一化为 LF 再按空行分事件，
-      // 否则 \r\n\r\n 分隔的事件滞留缓冲区永不派发。
-      buffer = buffer.replace(/\r\n/g, '\n')
-      consume()
-      if (shouldStop()) {
-        await reader.cancel()
-        break
-      }
+    for await (const data of sseDataPayloads(body)) {
+      onEvent(data)
+      if (shouldStop()) break
     }
   } catch {
     // 流被取消/连接被关闭：调用方已不需要继续读取

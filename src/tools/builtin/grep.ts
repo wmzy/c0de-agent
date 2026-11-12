@@ -1,10 +1,11 @@
 import { readFile, stat } from 'node:fs/promises'
 import { relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { IGNORED_DIR_NAMES } from '../../shared/utils/path.js'
 import { escapeRegex } from '../../shared/utils/string.js'
 import type { GrepInput, GrepMatch } from '../types.js'
 import { resolveToolPath } from './paths.js'
-import { IGNORE_DIRS, walkFiles } from './walk.js'
+import { walkFiles } from './walk.js'
 
 /** File extensions treated as text (skip binary files). */
 const TEXT_EXTENSIONS = new Set([
@@ -85,7 +86,7 @@ export function splitGrepLines(content: string): string[] {
 /** Recursively walk a directory for text files. */
 async function walkForFiles(dir: string): Promise<string[]> {
   const results: string[] = []
-  await walkFiles(dir, { skipDir: (name) => IGNORE_DIRS.has(name) }, (fullPath, name) => {
+  await walkFiles(dir, { skipDir: (name) => IGNORED_DIR_NAMES.has(name) }, (fullPath, name) => {
     // 无扩展名（lastIndexOf 返回 -1）时 ext 须为 ''：此前 slice(-1) 取到名字
     // 最后一个字符，ext === '' 分支成死代码，Dockerfile/Makefile/README 等
     // 无扩展名文本文件被静默跳过。

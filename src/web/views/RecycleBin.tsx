@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import {
+  invalidateSessionLists,
   useDeletedOrphans,
   useDeletedOrphansCount,
   useDeletedSessions,
@@ -251,9 +252,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const rebindMut = useMutation({
     mutationFn: (id: string) => sessionAPI.rebind(id, projectId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+      void invalidateSessionLists(qc, { deleted: true })
       setNotice(null)
       setOrphanId(null)
     },

@@ -8,6 +8,7 @@ import { Button, ConfirmDialog } from 'haze-ui'
 import { useRef, useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { Dialog } from '@/components/Dialog.js'
+import { DialogInlineError } from '@/components/DialogInlineError.js'
 import { SyncedInput, SyncedSelect, SyncedTextarea } from '@/components/SyncedControls.js'
 import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
@@ -111,12 +112,6 @@ const editorArea = css`
     outline: none;
     border-color: var(--haze-color-primary);
   }
-`
-
-const errorText = css`
-  color: var(--haze-color-danger);
-  font-size: 12px;
-  margin-top: 8px;
 `
 
 const WORKFLOW_NAME_RE = /^[a-z0-9-]+$/
@@ -372,9 +367,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     <div className={section}>
       <h2 className={sectionTitle}>工作流</h2>
       {error && !editor ? (
-        <div className={errorText} data-testid="workflow-panel-error">
-          {error}
-        </div>
+        <DialogInlineError testId="workflow-panel-error">{error}</DialogInlineError>
       ) : null}
       {trustRequired ? (
         <div className={hint} data-testid="workflow-trust-required">
@@ -547,9 +540,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
             </div>
           ) : null}
           {error ? (
-            <div className={errorText} data-testid="workflow-panel-error">
-              {error}
-            </div>
+            <DialogInlineError testId="workflow-panel-error">{error}</DialogInlineError>
           ) : null}
         </Dialog>
       ) : null}

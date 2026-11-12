@@ -2,7 +2,8 @@
  * 会话 CRUD 与轻量 metadata 更新：行的创建/读取/各口径列表/跨会话搜索，
  * 以及不涉及删除生命周期的 metadata 写入（标题、touch、lastRun、预算暂停标记、
  * 中断轮次标记）。回收站与删除生命周期见 trash.ts；LLM 段管理见 segments.ts。
- * updateSessionMetadata 是三个模块共享的 metadata 读-改-写入口，归属本模块。
+ * updateSessionMetadata 及其宽容变体（mutateSessionMetadata/readSessionMetadata）
+ * 是各模块共享的 metadata 读-改-写入口，归属本模块。
  */
 import { and, eq, getTableColumns, gt, ilike, isNull, ne, notInArray, or, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
@@ -58,6 +59,50 @@ async function updateSessionMetadata(
     })
     .where(eq(sessions.id, id))
   return true
+}
+
+/**
+ * 宽容版 metadata 读-改-写：读/写任一失败不向上抛（返回 false），供「持久化
+ * 失败不致命、内存态本次运行仍生效」的调用方（权限覆盖/白名单）使用。读改写
+ * 形状与 updateSessionMetadata 同源，仅错误处理口径不同——此前权限路由自持
+ * 一份 RMW 副本，已漂移出「吞写错/无类型/不返回结果」三个口径差。
+ */
+async function mutateSessionMetadata(
+  handle: DB,
+  id: string,
+  mutate: (meta: Record<string, unknown>) => void,
+): Promise<boolean> {
+  try {
+    return await updateSessionMetadata(handle, id, (meta) => {
+      const rec = meta as Record<string, unknown>
+      mutate(rec)
+      return rec as SessionMetadata
+    })
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 宽容读取会话 metadata 列：行不存在/读取失败 → null（调用方按「无记录」
+ * 处理）。与 updateSessionMetadata/mutateSessionMetadata 同一读写族，供
+ * 权限等「失败即视为无覆盖」的读取方使用。
+ */
+async function readSessionMetadata(handle: DB, id: string): Promise<{ metadata: unknown } | null> {
+  try {
+    const [row] = await handle.db
+      .select({ metadata: sessions.metadata })
+      .from(sessions)
+      .where(eq(sessions.id, id))
+    return row ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Escape LIKE/ILIKE metacharacters so the query is treated as a literal substring. */
+function escapeLikePattern(text: string): string {
+  return text.replace(/[%_\\]/g, '\\$&')
 }
 
 /** Create a new root session. */
@@ -222,7 +267,7 @@ async function searchSessions(
 ): Promise<Array<{ session: Session; matchedBy: 'title' | 'content' }>> {
   const needle = query.trim()
   if (!needle) return []
-  const pattern = `%${needle.replace(/[%_\\]/g, '\\$&')}%`
+  const pattern = `%${escapeLikePattern(needle)}%`
 
   const baseWhere = and(
     opts.includeDeleted ? gt(sessions.deletedAt, new Date(0)) : isNull(sessions.deletedAt),
@@ -318,12 +363,15 @@ async function markUnfinishedTurn(handle: DB, sessionId: string): Promise<void> 
 export {
   consumeBudgetPauseMarker,
   createSession,
+  escapeLikePattern,
   getSession,
   listAllSessions,
   listSessions,
   listSessionsByProject,
   markBudgetPause,
   markUnfinishedTurn,
+  mutateSessionMetadata,
+  readSessionMetadata,
   searchSessions,
   touchLastOpened,
   touchSession,

@@ -82,6 +82,7 @@ vi.mock('@/hooks/useSession.js', () => ({
   useDeletedOrphansCount: () => hoisted.orphanCount,
   useDeletedOrphans: () => hoisted.orphans,
   useRestoreSession: () => hoisted.restoreMut,
+  invalidateSessionLists: () => Promise.resolve(),
 }))
 
 vi.mock('@/services/session.js', () => ({

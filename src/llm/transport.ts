@@ -1,3 +1,4 @@
+import { sseDataPayloads } from '../shared/utils/sse.js'
 import { isContextOverflow } from './provider-error.js'
 import { parseRetryAfterHeaders } from './retry.js'
 import { llmError } from './schema/errors.js'
@@ -7,56 +8,16 @@ import { llmError } from './schema/errors.js'
  * Emits the decoded data string for each event block. Skips empty data and
  * the `[DONE]` sentinel. Works for both OpenAI (`data: {...}`) and Anthropic
  * (`event: {type}\ndata: {...}`) framing — only the `data:` lines are emitted.
+ *
+ * 分帧本体见 shared/utils/sse.ts（与 MCP streamable HTTP 的 SSE 解析共用）；
+ * 此处仅保留 LLM 侧过滤：`[DONE]` 哨兵（空 payload 已由分帧器跳过）。
  */
 const sseFraming = async function* (
   stream: ReadableStream<Uint8Array>,
 ): AsyncGenerator<string, void, unknown> {
-  const decoder = new TextDecoder()
-  const reader = stream.getReader()
-  let buffer = ''
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      // SSE 规范允许 CRLF 行结束（部分网关/代理改写行结束符）——归一化为 LF
-      // 再分帧，否则 \r\n\r\n 分隔的事件永远匹配不到 \n\n 而滞留缓冲区。
-      buffer = buffer.replace(/\r\n/g, '\n')
-      let sepIndex = buffer.indexOf('\n\n')
-      while (sepIndex !== -1) {
-        const block = buffer.slice(0, sepIndex)
-        buffer = buffer.slice(sepIndex + 2)
-        const data = extractData(block)
-        if (data !== null && data.length > 0 && data !== '[DONE]') {
-          yield data
-        }
-        sepIndex = buffer.indexOf('\n\n')
-      }
-    }
-    const tailData = extractData(buffer)
-    if (tailData !== null && tailData.length > 0 && tailData !== '[DONE]') {
-      yield tailData
-    }
-  } finally {
-    // Cancel the underlying transport and release the exclusive lock on every
-    // exit path (normal completion, thrown error, or early consumer break).
-    // cancel() rejects on an already-closed/errored stream — swallow that so it
-    // never masks the original error propagating through the generator.
-    await reader.cancel().catch(() => {})
+  for await (const data of sseDataPayloads(stream)) {
+    if (data !== '[DONE]') yield data
   }
-}
-
-/** Join all `data:` lines of an SSE block into one string. */
-const extractData = (block: string): string | null => {
-  const lines = block.split('\n')
-  const dataLines: string[] = []
-  for (const line of lines) {
-    if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trimStart())
-    }
-  }
-  if (dataLines.length === 0) return null
-  return dataLines.join('\n')
 }
 
 type StreamHTTPOptions = {

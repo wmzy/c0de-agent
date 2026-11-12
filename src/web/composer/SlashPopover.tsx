@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { PopoverList, popoverItem } from '@/composer/PopoverList.js'
+import { PopoverList, PopoverOption } from '@/composer/PopoverList.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
 import type { SubcommandDef } from '@/services/commands.js'
 
@@ -51,17 +51,14 @@ function SlashPopover(props: Props) {
       testId="slash-menu"
     >
       {props.commands.map((c, i) => (
-        <button
+        <PopoverOption
           key={c.name}
-          role="option"
-          aria-selected={i === props.activeIndex}
-          className={`${popoverItem} ${i === props.activeIndex ? 'active' : ''}`}
-          onClick={() => props.onSelect(c.name)}
-          type="button"
+          active={i === props.activeIndex}
+          onSelect={() => props.onSelect(c.name)}
         >
           <strong>/{c.name}</strong>
           {c.description && <span className={cmdDesc}>{c.description}</span>}
-        </button>
+        </PopoverOption>
       ))}
     </PopoverList>
   )
@@ -79,20 +76,17 @@ function SubcommandPopover(props: SubcommandProps) {
       testId="subcommand-menu"
     >
       {props.subcommands.map((c, i) => (
-        <button
+        <PopoverOption
           key={c.name}
-          role="option"
-          aria-selected={i === props.activeIndex}
-          className={`${popoverItem} ${i === props.activeIndex ? 'active' : ''}`}
-          onClick={() => props.onSelect(c.name)}
-          type="button"
+          active={i === props.activeIndex}
+          onSelect={() => props.onSelect(c.name)}
         >
           <strong>
             /{props.parentCommand} {c.name}
           </strong>
           {c.description && <span className={cmdDesc}>{c.description}</span>}
           {c.usage && <span className={cmdUsage}>{c.usage}</span>}
-        </button>
+        </PopoverOption>
       ))}
     </PopoverList>
   )

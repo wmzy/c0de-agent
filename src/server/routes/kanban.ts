@@ -24,8 +24,8 @@ import {
   type KanbanLabelDef,
   type KanbanPriority,
 } from '../../shared/types/kanban.js'
-import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
+import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 
@@ -73,15 +73,8 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   // 经 drizzle 查询在 PG 侧抛 22P02，Hono 兜成 500 且回显 SQL 错误细节）。
   // 注册在 /deleted* 路由之前：Hono 按注册序分派，守卫必须先于具体处理器。
   // '/deleted'（单段）不匹配本守卫模式，回收站列表/清空不受影响。
-  const guardBoardId = async (
-    c: Context,
-    next: () => Promise<void>,
-  ): Promise<Response | undefined> => {
-    if (!isUuid(c.req.param('boardId') ?? '')) {
-      return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
-    }
-    await next()
-  }
+  // 守卫语义收敛到 middleware/uuid-param.ts。
+  const guardBoardId = uuidParamGuard('boardId', 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
   app.use('/deleted/:boardId', guardBoardId)
   app.use('/deleted/:boardId/*', guardBoardId)
 
@@ -186,12 +179,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   app.use('/:projectId/*', guardProject)
 
   // 卡片 id 同为用户可控路径参数（uuid 列）：非 UUID → 404 而非 PG 22P02 → 500。
-  app.use('/:projectId/cards/:cardId', async (c, next) => {
-    if (!isUuid(c.req.param('cardId') ?? '')) {
-      return apiError(c, 404, 'CARD_NOT_FOUND', '卡片不存在')
-    }
-    await next()
-  })
+  app.use('/:projectId/cards/:cardId', uuidParamGuard('cardId', 'CARD_NOT_FOUND', '卡片不存在'))
 
   // GET /:projectId — full board with cards
   app.get('/:projectId', async (c) => {

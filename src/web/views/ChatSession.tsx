@@ -25,7 +25,7 @@ import { useChat } from '@/hooks/useChat.js'
 import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
 import { useRetryResume } from '@/hooks/useRetryResume.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
-import { useMessages } from '@/hooks/useSession.js'
+import { invalidateSessionLists, useMessages } from '@/hooks/useSession.js'
 import { useShake } from '@/hooks/useShake.js'
 import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
@@ -473,8 +473,7 @@ export function ChatSession({
         // 会话已物理删除：还原分支落回 s:<sessionId> 的失败快照草稿再也无人
         // 读取（文本无上限、图片最多 ~512KB），随之清退，避免永久滞留 localStorage。
         clearSessionDraft(sessionId)
-        qc.invalidateQueries({ queryKey: ['sessions'] })
-        qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+        void invalidateSessionLists(qc)
         // 会话没了，但「消息 + 失败原因」要带去草稿页：导航会卸载本组件，
         // 输入框里的草稿和 useChat 的 error 一起消失，用户只会看到什么都没发生。
         failedSendReason.set(projectId, {

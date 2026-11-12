@@ -2,13 +2,14 @@ import { css } from '@linaria/core'
 import { HistoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Button, LocaleProvider, ToastContainer, zhCN } from 'haze-ui'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ErrorBoundary } from '@/components/ErrorBoundary.js'
 import { PairingApproval, PairingRequestFlow } from '@/components/PairingView.js'
 import { TopBar } from '@/components/TopBar.js'
 import { UpdateBanner } from '@/components/UpdateBanner.js'
 import { ConfigProvider } from '@/contexts/ConfigContext.js'
 import { ThemeProvider } from '@/contexts/ThemeContext.js'
+import { useEscapeOnDocument } from '@/hooks/useEscapeOnDocument.js'
 import { routes } from '@/routes.js'
 import { sessionGet, sessionRemove } from '@/utils/storage.js'
 import { Layout } from '@/views/Layout.js'
@@ -47,17 +48,9 @@ export function App() {
     return () => window.removeEventListener('c0de-auth-required', onAuthRequired)
   }, [])
 
-  const dismissPairingRef = useRef<() => void>(() => {})
-  dismissPairingRef.current = () => setPairingDismissed(true)
-  // Esc 等价于「关闭」：模态必须能被键盘用户关掉（与 PairingApproval 同口径）。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !authRequired || pairingDismissed) return
-      dismissPairingRef.current()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [authRequired, pairingDismissed])
+  // Esc 等价于「关闭」：模态必须能被键盘用户关掉（与 PairingView 的审批弹层
+  // 经 useEscapeOnDocument 同一实现）。
+  useEscapeOnDocument(authRequired && !pairingDismissed, () => setPairingDismissed(true))
 
   return (
     <QueryClientProvider client={queryClient}>

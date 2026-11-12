@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
+import { aggregateSegmentUsage } from '@shared/usage.js'
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
@@ -108,7 +109,8 @@ type Stats = {
   updatedAt?: number
 }
 
-/** 聚合会话、消息、LLM 调用分段为总结统计（跨段跨 call 累加）。 */
+/** 聚合会话、消息、LLM 调用分段为总结统计（跨段跨 call 累加；
+ *  用量聚合收敛到 shared/usage.ts，与会话树/服务端同源）。 */
 function computeStats(
   session: Session | undefined,
   messages: Message[] | undefined,
@@ -117,13 +119,8 @@ function computeStats(
   const msgs = messages ?? []
   const userMessages = msgs.filter((m) => m.role === 'user').length
   const assistantMessages = msgs.filter((m) => m.role === 'assistant').length
-  const calls = segments.flatMap((s) => s.calls)
-  const inputTokens = calls.reduce((s, c) => s + c.usage.input, 0)
-  const outputTokens = calls.reduce((s, c) => s + c.usage.output, 0)
-  const cacheRead = calls.reduce((s, c) => s + (c.usage.cacheRead ?? 0), 0)
-  // H2：价格未知的调用 cost 为 null——按 $0 计入成本并单独计数提示。
-  const cost = calls.reduce((s, c) => s + (c.cost ?? 0), 0)
-  const unknownCostCalls = calls.reduce((s, c) => s + (c.cost == null ? 1 : 0), 0)
+  const { inputTokens, outputTokens, cacheRead, cost, unknownCostCalls } =
+    aggregateSegmentUsage(segments)
   // 总 token = 输入 + 输出 + 缓存读（推理/缓存写当前未采集，计 0）。
   const totalTokens = inputTokens + outputTokens + cacheRead
   const lastSeg = segments[segments.length - 1]

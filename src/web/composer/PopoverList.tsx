@@ -54,6 +54,35 @@ export const popoverItemBlock = css`
   }
 `
 
+/** 候选项按钮的单一封装（role=option + aria-selected + active 类 + 点击）。
+ *  此前 6 处渲染点各手抄同一段 button 咒语，aria-selected 与 active 类的配对
+ *  必须与 usePopoverScroll 的 activeIndex 契约逐份保持同步；activeIndex 的
+ *  判定留在调用方（@ 弹层的 agent+文件两段偏移等口径各不相同）。 */
+export function PopoverOption({
+  active,
+  onSelect,
+  block,
+  children,
+}: {
+  active: boolean
+  onSelect: () => void
+  /** 单行块状变体（默认为纵向堆叠变体）。 */
+  block?: boolean
+  children: ReactNode
+}) {
+  return (
+    <button
+      role="option"
+      aria-selected={active}
+      className={`${block ? popoverItemBlock : popoverItem} ${active ? 'active' : ''}`}
+      onClick={onSelect}
+      type="button"
+    >
+      {children}
+    </button>
+  )
+}
+
 /** 加载/空态提示行（非候选项，不参与键盘索引）。 */
 const hint = css`
   padding: 8px 12px;

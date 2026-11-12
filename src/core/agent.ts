@@ -2,7 +2,7 @@ import { resolveRoute } from '../llm/registry.js'
 import { appendMessage, getMessages } from '../session/message.js'
 import { getLLMSegments } from '../session/segments.js'
 import { generateId } from '../shared/index.js'
-import type { AgentConfig, AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
+import type { AgentConfig, AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { MessageContent, Session } from '../shared/types/message.js'
 import { getLatestTodoPhasesFromMessages } from '../tools/builtin/todo.js'
 import { listTools } from '../tools/registry.js'
@@ -153,13 +153,4 @@ function abortAgent(state: AgentState): void {
   }
 }
 
-function getAgentStatus(state: AgentState): AgentStatus {
-  return state.status
-}
-
-/** 判断 agent 是否处于暂停态（spec §19.2）。 */
-function isAgentPaused(state: AgentState): boolean {
-  return state.status._tag === 'paused'
-}
-
-export { abortAgent, createAgent, getAgentStatus, isAgentPaused, pauseAgent, resumeAgent, runAgent }
+export { abortAgent, createAgent, pauseAgent, resumeAgent, runAgent }

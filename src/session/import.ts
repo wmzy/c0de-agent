@@ -35,17 +35,26 @@ const VALID_ROLES: ReadonlySet<string> = new Set<MessageRole>([
   'tool',
 ])
 
-function toDate(value: number | string | undefined): Date {
+/** 解析导入载荷中的时间戳（number ms 或可解析字符串）→ epoch ms；
+ *  缺失/非有限数/不可解析字符串 → null。导入管线（消息时间与 calls 裁剪窗）
+ *  的单一时间戳口径——此前会话导入路由另持一份 inline 解析，边界语义已漂移。 */
+export function parseTimestampMs(value: number | string | undefined): number | null {
   if (typeof value === 'number') {
-    // 非有限数值（JSON 1e999 → Infinity）会产出 Invalid Date，时间戳序列化
-    // 直接击穿插入事务（整单 500）。与字符串分支同口径：无法解析回退当前时间。
-    return Number.isFinite(value) ? new Date(value) : new Date()
+    // 非有限数值（JSON 1e999 → Infinity）无法作为时间戳。
+    return Number.isFinite(value) ? value : null
   }
   if (typeof value === 'string') {
-    const d = new Date(value)
-    if (!Number.isNaN(d.getTime())) return d
+    const t = Date.parse(value)
+    return Number.isNaN(t) ? null : t
   }
-  return new Date()
+  return null
+}
+
+function toDate(value: number | string | undefined): Date {
+  const ms = parseTimestampMs(value)
+  // 无法解析回退当前时间：与「非有限数值回退」同口径（时间戳序列化不能击穿
+  // 插入事务——整单 500）。
+  return new Date(ms ?? Date.now())
 }
 
 /**

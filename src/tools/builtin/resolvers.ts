@@ -4,12 +4,13 @@
 // ../resolver.ts。这里实现具体 scheme 的内容来源：
 //   - file://  → 本地文件（相对 ctx.cwd 或 cwd 内绝对路径，safeResolve 沙箱约束）
 //   - skill:// → 技能文件（name 单路径段），项目 .c0de/skills/<name>(.md|/SKILL.md)
-//                优先于全局 ~/.c0de/skills/<name>(.md|/SKILL.md)
+//                优先于全局配置目录（resolveGlobalConfigDir：C0DE_CONFIG_DIR
+//                或 ~/.c0de）的 skills/<name>(.md|/SKILL.md)
 //
 // agent:// pr:// issue:// 依赖未实现的子 agent 输出与 GitHub 访问，暂不内置。
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { resolve as resolvePath } from 'node:path'
+import { resolveGlobalConfigDir } from '../../core/config.js'
 import type { URLRegistry, URLResolver } from '../../shared/types/tool.js'
 import { createURLRegistry, registerURLResolver } from '../resolver.js'
 import { resolveToolPath } from './paths.js'
@@ -60,9 +61,11 @@ async function firstExistingFile(candidates: string[]): Promise<string | null> {
 
 /** skill:// 解析器：技能文件候选路径（项目优先于全局）。
  *  name 必须是单个路径段：此前未校验，'../config' 可读出 .c0de/config.md，
- *  绝对路径经 resolvePath 前缀重置可读出磁盘任意 .md 文件。 */
-function createSkillResolver(opts?: { homeDir?: string }): URLResolver {
-  const home = opts?.homeDir ?? homedir()
+ *  绝对路径经 resolvePath 前缀重置可读出磁盘任意 .md 文件。
+ *  全局候选走 resolveGlobalConfigDir()（C0DE_CONFIG_DIR 优先，缺省 ~/.c0de），
+ *  与 core/skills.ts 的技能发现同口径——否则设了 C0DE_CONFIG_DIR 时系统提示
+ *  词宣传的技能 skill:// 读不到。opts.globalConfigDir 供测试注入。 */
+function createSkillResolver(opts?: { globalConfigDir?: string }): URLResolver {
   return {
     scheme: 'skill',
     resolve: async (url, ctx) => {
@@ -71,11 +74,12 @@ function createSkillResolver(opts?: { homeDir?: string }): URLResolver {
       if (name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
         throw new Error(`Invalid skill name "${name}": must be a single path segment (no /, ..)`)
       }
+      const globalDir = opts?.globalConfigDir ?? resolveGlobalConfigDir()
       const candidates = [
         resolvePath(ctx.cwd, '.c0de', 'skills', `${name}.md`),
         resolvePath(ctx.cwd, '.c0de', 'skills', name, 'SKILL.md'),
-        resolvePath(home, '.c0de', 'skills', `${name}.md`),
-        resolvePath(home, '.c0de', 'skills', name, 'SKILL.md'),
+        resolvePath(globalDir, 'skills', `${name}.md`),
+        resolvePath(globalDir, 'skills', name, 'SKILL.md'),
       ]
       const found = await firstExistingFile(candidates)
       if (!found) {
@@ -89,7 +93,7 @@ function createSkillResolver(opts?: { homeDir?: string }): URLResolver {
 }
 
 /** 内置 URL 解析器注册表：预装 file + skill。 */
-function createDefaultURLRegistry(opts?: { homeDir?: string }): URLRegistry {
+function createDefaultURLRegistry(opts?: { globalConfigDir?: string }): URLRegistry {
   const reg = createURLRegistry()
   registerURLResolver(reg, createFileResolver())
   registerURLResolver(reg, createSkillResolver(opts))

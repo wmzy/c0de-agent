@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
-import { type Context, Hono } from 'hono'
+import { Hono } from 'hono'
 import { createSummarizer } from '../../core/compact.js'
 import { sessions } from '../../db/schema.js'
 import { buildFallbackChain } from '../../llm/routing.js'
@@ -14,7 +14,7 @@ import {
   getTree,
 } from '../../session/branch.js'
 import { compactSession } from '../../session/compaction.js'
-import { importSessionData } from '../../session/import.js'
+import { importSessionData, parseTimestampMs } from '../../session/import.js'
 import { getMessages, getSteeringAsMessages, updateEntryContent } from '../../session/message.js'
 import { getLLMSegments } from '../../session/segments.js'
 import {
@@ -46,8 +46,8 @@ import {
   touchTrashSeen,
 } from '../../session/trash.js'
 import { generateId } from '../../shared/index.js'
-import { isUuid } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
+import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { resolveSessionScope } from '../util/session-scope.js'
@@ -130,13 +130,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
     let maxMsgTs = 0
     for (const m of importedMsgs) {
       const raw = m?.createdAt
-      const ts =
-        typeof raw === 'number' && Number.isFinite(raw) && raw > 0
-          ? raw
-          : typeof raw === 'string'
-            ? Date.parse(raw)
-            : Number.NaN
-      if (Number.isFinite(ts) && ts > maxMsgTs) maxMsgTs = ts
+      const ts = typeof raw === 'number' || typeof raw === 'string' ? parseTimestampMs(raw) : null
+      if (ts !== null && ts > 0 && ts > maxMsgTs) maxMsgTs = ts
     }
     const srcMetaAny = srcSession.metadata as { segments?: unknown } | undefined
     if (maxMsgTs > 0 && Array.isArray(srcMetaAny?.segments)) {
@@ -287,21 +282,11 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json({ ok: true, deleted: count })
   })
 
-  // 路径参数 id 是 sessions.id（uuid 列）：非 UUID 直接 404。
-  // 此前非 UUID 经 drizzle 参数化查询在 PG 侧抛 22P02（invalid input syntax for
-  // type uuid），Hono 兜成 500 且把 SQL 错误细节回给客户端；对调用方而言
-  // 「不存在的会话」与「格式非法的 id」同属资源不存在，统一 404。
-  // 必须注册在上方全部静态路径（/import、/tree、/search、/deleted*）之后：
-  // Hono 按注册序分派，静态路由先命中即返回，不会被本守卫拦截。
-  const guardSessionId = async (
-    c: Context,
-    next: () => Promise<void>,
-  ): Promise<Response | undefined> => {
-    if (!isUuid(c.req.param('id') ?? '')) {
-      return apiError(c, 404, 'NOT_FOUND', '会话不存在或已删除')
-    }
-    await next()
-  }
+  // 路径参数 id 是 sessions.id（uuid 列）：非 UUID 直接 404（守卫语义收敛到
+  // middleware/uuid-param.ts）。必须注册在上方全部静态路径（/import、/tree、
+  // /search、/deleted*）之后：Hono 按注册序分派，静态路由先命中即返回，
+  // 不会被本守卫拦截。
+  const guardSessionId = uuidParamGuard('id', 'NOT_FOUND', '会话不存在或已删除')
   app.use('/:id', guardSessionId)
   app.use('/:id/*', guardSessionId)
 

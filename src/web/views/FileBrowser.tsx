@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
-import { findNode, setChildren } from '@/components/tree-utils.js'
+import { findNode } from '@/components/tree-utils.js'
+import { useDirectoryTree } from '@/components/useDirectoryTree.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
-import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
 import { btnDanger, btnSm } from '@/styles/tokens.js'
@@ -247,13 +247,26 @@ export function FileBrowser({
   const projectName = projects?.find((p) => p.id === projectId)?.name ?? projectId
   const fileRef = useFileReference()
 
-  const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
-  /** 懒加载子目录失败的原因（path → message）。失败不再静默：此前 catch 只留了
-   *  一句注释，目录随后仍被标记为已展开并在树里渲染「（空）」，用户据此认定
-   *  该目录是空的。 */
-  const [loadErrors, setLoadErrors] = useState<Map<string, string>>(new Map())
+  /** 懒加载子目录的取数（项目内相对路径 → 节点）。projectId 进闭包：世代守卫
+   *  按发起时的闭包口径作废，切项目后旧清单不落盘（见 useDirectoryTree）。 */
+  const fetchDirChildren = useCallback(
+    async (dirPath: string): Promise<TreeNode[]> => {
+      const entries = await fileAPI.list(dirPath, projectId)
+      return entriesToNodes(entries, dirPath)
+    },
+    [projectId],
+  )
+  const {
+    treeRoot,
+    setTreeRoot,
+    expanded,
+    setExpanded,
+    loadingPaths,
+    loadErrors,
+    loadChildren,
+    invalidate: invalidateTree,
+    guard: treeGuard,
+  } = useDirectoryTree(fetchDirChildren)
   /** 根目录列目录失败的原因（null=正常）。空串表示失败但没有 message。 */
   const [rootError, setRootError] = useState<string | null>(null)
   /** 根目录重试令牌：自增触发上面那个 effect 重跑。 */
@@ -299,30 +312,18 @@ export function FileBrowser({
   })
   const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
 
-  /**
-   * 树世代守卫：切换项目/重试加载时作废。在途的懒加载请求按世代校验后才允许
-   * 落盘——否则上一个
-   * 项目的目录列表会并进新项目的树：dirPath 是项目内相对路径（'src'），两边同名
-   * 目录合并「恰好成功」、不报任何错，而 handleToggle 只在 children === undefined
-   * 时才加载，于是这份外来清单被永久缓存到刷新为止，点进去还是按新项目读同路径
-   * 文件——看到的是另一个仓库的内容。
-   *
-   * 手动模式（useScopeGuard()）：作废点固定在下方重置 effect 的开头——该 effect
-   * 的触发条件除 projectId 外还有 projectName 与 rootReload（重试令牌），这三者
-   * 任一变化都要作废在途请求，不能只按 projectId 值变自动递增。
-   */
-  const treeGuard = useScopeGuard()
-
-  // 切换项目时重置树，加载新项目根目录
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rootReload 是重试令牌——重试按钮自增它来重跑这次加载，effect 体里不读它
+  // 切换项目时重置树，加载新项目根目录。
+  // 世代守卫见 useDirectoryTree：作废点固定在本 effect 开头（invalidateTree）——
+  // 触发条件除 projectId 外还有 projectName 与 rootReload（重试令牌），三者任一
+  // 变化都要作废在途懒加载请求，不能只按 projectId 值变自动递增。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rootReload 是重试令牌（自增重跑加载，effect 体不读它）；invalidateTree 随 guard 实例稳定
   useEffect(() => {
     let cancelled = false
-    // 世代先作废：在途的懒加载请求返回时据此刻号认领自己的世代，一律丢弃。
-    treeGuard.invalidate()
-    setTreeRoot(null)
-    setExpanded(new Set())
-    setLoadingPaths(new Set())
-    setLoadErrors(new Map())
+    // 世代先作废 + 清空树状态：在途的懒加载请求返回时据此刻号认领自己的世代，
+    // 一律丢弃（否则上一个项目的目录列表并进新项目的树——dirPath 是项目内相对
+    // 路径，两边合并「恰好成功」，点进去按新项目读同路径文件，看到的是另一个
+    // 仓库的内容）。
+    invalidateTree()
     setRootError(null)
     // 搜索词只对上一个项目成立：不复位的话，切项目后面板仍停在「搜索结果」分支，
     // 用上一个项目的词去搜新项目，命中不到就显示「无匹配文件」——用户据此判定
@@ -355,40 +356,7 @@ export function FileBrowser({
     return () => {
       cancelled = true
     }
-  }, [projectId, projectName, rootReload])
-
-  /** 懒加载某个目录的子项（失败落到 loadErrors，可就地重试）。 */
-  const loadChildren = useCallback(
-    async (dirPath: string) => {
-      const gen = treeGuard.token()
-      setLoadingPaths((prev) => new Set(prev).add(dirPath))
-      setLoadErrors((prev) => {
-        if (!prev.has(dirPath)) return prev
-        const next = new Map(prev)
-        next.delete(dirPath)
-        return next
-      })
-      try {
-        const entries = await fileAPI.list(dirPath, projectId)
-        // 世代已变（期间切换了项目）：这份列表属于上一个项目，丢弃。
-        if (treeGuard.stale(gen)) return
-        setTreeRoot((prev) =>
-          prev ? setChildren(prev, dirPath, entriesToNodes(entries, dirPath)) : prev,
-        )
-      } catch (err) {
-        if (treeGuard.stale(gen)) return
-        // APIError 是结构体而非 Error 子类，必须结构化取 message（messageOf 口径）。
-        setLoadErrors((prev) => new Map(prev).set(dirPath, messageOf(err) || '无法读取该目录'))
-      } finally {
-        setLoadingPaths((prev) => {
-          const next = new Set(prev)
-          next.delete(dirPath)
-          return next
-        })
-      }
-    },
-    [projectId, treeGuard.token, treeGuard.stale],
-  )
+  }, [projectId, projectName, rootReload, invalidateTree])
 
   const handleToggle = useCallback(
     async (dirPath: string) => {
@@ -411,7 +379,7 @@ export function FileBrowser({
       }
       setExpanded((prev) => new Set(prev).add(dirPath))
     },
-    [expanded, treeRoot, loadChildren, treeGuard.token, treeGuard.stale],
+    [expanded, treeRoot, loadChildren, treeGuard.token, treeGuard.stale, setExpanded],
   )
 
   const handleSelect = useCallback(
@@ -479,6 +447,8 @@ export function FileBrowser({
     gitStatusQ,
     treeGuard.token,
     treeGuard.stale,
+    // setTreeRoot/setExpanded 来自 useDirectoryTree（useState setter 直通，稳定）。
+    setTreeRoot,
   ])
 
   const searchEntries: FileSearchResult[] = isSearch ? (searchQ.data ?? []) : []
@@ -519,7 +489,7 @@ export function FileBrowser({
         }
       }
     },
-    [treeRoot, loadChildren, treeGuard.token, treeGuard.stale],
+    [treeRoot, loadChildren, treeGuard.token, treeGuard.stale, setExpanded],
   )
 
   return (

@@ -15,9 +15,10 @@ function apiError(
   return c.json<APIErrorBody>({ error: { code, message, ...(details ? { details } : {}) } }, status)
 }
 
-/** Hono onError 处理器：捕获未处理异常，返回 500。 */
+/** Hono onError 处理器：捕获未处理异常，返回 500。Hono 保证传入 Error；
+ *  message 为空串时回退通用文案。 */
 function errorHandler(err: Error, c: Context): Response {
-  const message = err instanceof Error ? err.message : 'Internal server error'
+  const message = err.message || 'Internal server error'
   return c.json<APIErrorBody>({ error: { code: 'INTERNAL', message } }, 500)
 }
 

@@ -259,7 +259,7 @@ const configCommand: SlashCommand = {
   description: '查看或设置配置（支持点路径）',
   argsHint: '[key] [value]',
   execute: async (args, ctx) => {
-    const { getByPath, setPathPatch, coerce } = await import('./config-path.js')
+    const { getByPath } = await import('./config-path.js')
     // 展示前脱敏：apiKey/token 等敏感字段绝不原样出现在聊天里（P0 密钥暴露）。
     const { redactSecrets } = await import('./redact.js')
     if (!args) {
@@ -283,22 +283,11 @@ const configCommand: SlashCommand = {
         return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
       }
     }
-    // 点路径写值：与 CLI config set 同语义（project 作用域最小落盘，null=unset）
-    const { applyScopedPatch, loadConfigScopes, saveConfigScoped } = await import('./config.js')
-    // 作用域收敛：security 是服务端全局参数，项目作用域写入会被加载时剥离（不生效），
-    // 直接拒绝并给出正解路径（与 CLI config set --global / Web PATCH /api/config 同语义）。
-    if (key.split('.')[0] === 'security') {
-      return {
-        _tag: 'error',
-        message:
-          'security 是服务端全局参数，仅在全局作用域生效。请在全局配置（~/.c0de/config.json）中设置，或用 c0de config set --global 写入。',
-      }
-    }
+    // 点路径写值：与 CLI config set 同一写入核心（core/config.ts 的 setConfigKey：
+    // 顶层键校验 + 项目作用域 security 拒绝 + coerce + 最小落盘，null=unset）
+    const { isConfigSetFailure, KNOWN_CONFIG_KEYS, setConfigKey } = await import('./config.js')
     try {
-      const scopes = loadConfigScopes(ctx.cwd)
-      const value = coerce(parts.slice(1).join(' '))
-      const next = applyScopedPatch(scopes.project ?? {}, setPathPatch(key, value))
-      await saveConfigScoped('project', ctx.cwd, next)
+      const value = await setConfigKey('project', ctx.cwd, key, parts.slice(1).join(' '))
       // P1：/config 写入项目作用域是用户显式操作——已信任项目刷新风险指纹，
       // 防「信任 → 改设置 → 再信任」自锁复检（与 /workflow create 同口径）。
       try {
@@ -312,6 +301,23 @@ const configCommand: SlashCommand = {
         message: `${value === null ? '已取消设置' : '已设置'} ${key} (scope: project)`,
       }
     } catch (error) {
+      if (isConfigSetFailure(error)) {
+        // 作用域收敛：security 是服务端全局参数，项目作用域写入会被加载时剥离
+        // （不生效），直接拒绝并给出正解路径（与 CLI config set --global 同语义）。
+        if (error.code === 'SECURITY_PROJECT_SCOPE') {
+          return {
+            _tag: 'error',
+            message:
+              'security 是服务端全局参数，仅在全局作用域生效。请在全局配置（~/.c0de/config.json）中设置，或用 c0de config set --global 写入。',
+          }
+        }
+        // 顶层键校验：拒绝拼写错误/过时键（此前斜杠侧无此校验，typo 键被静默
+        // 持久化且永不生效）。
+        return {
+          _tag: 'error',
+          message: `未知的顶层配置键 "${error.topKey}"。有效键：${[...KNOWN_CONFIG_KEYS].join(', ')}`,
+        }
+      }
       // 非有限数值（1e999 → Infinity）等写入面校验失败：作为命令错误反馈给
       // 模型/用户，而非击穿 SSE 流显示「连接中断」。
       return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }

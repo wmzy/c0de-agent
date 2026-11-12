@@ -4,6 +4,7 @@
 import { css } from '@linaria/core'
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { useEscapeOnDocument } from '@/hooks/useEscapeOnDocument.js'
 import { authAPI } from '@/services/auth.js'
 import { messageOf } from '@/utils/errors.js'
 import { storageSet } from '@/utils/storage.js'
@@ -363,14 +364,7 @@ export function PairingApproval() {
   // 绑定与否取决于 visible：弹层没渲染时按 Esc 不该触发这里的 state 更新
   // （dismissAll 会 setError + setDismissed，逐次重建 Set，徒增一次重渲染）。
   const visibleCount = visible.length
-  useEffect(() => {
-    if (visibleCount === 0) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') dismissAllRef.current()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [visibleCount])
+  useEscapeOnDocument(visibleCount > 0, () => dismissAllRef.current())
 
   const deny = (id: string) => {
     authAPI

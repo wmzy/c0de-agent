@@ -254,6 +254,27 @@ describe('builtin commands', () => {
     await rm(projDir, { recursive: true, force: true })
   })
 
+  // 回归：斜杠侧写值此前缺顶层键校验（仅 CLI 有）——typo 键被静默持久化且
+  // 永不生效。写入核心收敛到 setConfigKey 后两入口同口径拒绝。
+  it('/config 写值拒绝未知顶层键（与 CLI config set 同口径）', async () => {
+    const projDir = await mkdtemp(join(tmpdir(), 'slash-unknown-key-'))
+    const cmd = builtinCommands.find((c) => c.name === 'config')
+    expect(cmd).toBeDefined()
+    const result = (await cmd?.execute('defaultModell gpt-5', {
+      cwd: projDir,
+      config: DEFAULT_CONFIG,
+      deps,
+    })) as CommandResult
+    expect(result._tag).toBe('error')
+    if (result._tag === 'error') {
+      expect(result.message).toContain('defaultModell')
+      expect(result.message).toContain('有效键')
+    }
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(join(projDir, '.c0de', 'config.json'))).toBe(false)
+    await rm(projDir, { recursive: true, force: true })
+  })
+
   it('/model 诚实指引到模型选择器', async () => {
     const cmd = builtinCommands.find((c) => c.name === 'model')
     expect(cmd).toBeDefined()

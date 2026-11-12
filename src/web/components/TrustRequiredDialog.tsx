@@ -1,11 +1,12 @@
 import { css } from '@linaria/core'
-import { Dialog } from '@/components/Dialog.js'
-
-const bodyText = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-`
+import {
+  confirmActions,
+  confirmBodyText,
+  confirmBtn,
+  confirmPrimaryBtn,
+} from '@/components/confirmDialogStyles.js'
+import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
+import { DialogInlineError } from '@/components/DialogInlineError.js'
 
 const riskList = css`
   margin: 10px 0 0;
@@ -23,46 +24,6 @@ const riskItem = css`
   display: flex;
   gap: 8px;
   align-items: baseline;
-`
-
-const actions = css`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-`
-
-/** 信任失败原因：danger 前景 + 细底，画在弹窗内、按钮上方。 */
-const errorText = css`
-  margin-top: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--haze-color-danger, #e5484d);
-  border-radius: 6px;
-  background: var(--haze-color-bg-subtle);
-  color: var(--haze-color-danger, #e5484d);
-  font-size: 12px;
-`
-
-const btn = css`
-  padding: 6px 12px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  background: var(--haze-color-bg-subtle);
-  color: var(--haze-color-text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-
-  &:hover {
-    background: var(--haze-color-bg);
-  }
-`
-
-const primary = css`
-  ${btn};
-  border-color: var(--haze-color-primary, var(--haze-color-border));
-  background: var(--haze-color-primary, var(--haze-color-bg-subtle));
-  color: var(--haze-color-bg, #fff);
 `
 
 export type TrustRiskItem = { kind: string; detail: string }
@@ -92,19 +53,22 @@ export function TrustRequiredDialog({
   onConfirm: () => void
   onCancel: () => void
 }) {
+  // busy 在飞时不给关闭出口（closeDisabled + 按钮 disabled 之外的行为兜底），
+  // 避免连点重复发请求。
+  const dismiss = useDialogDismiss(onCancel, busy)
   return (
     <Dialog
-      onClose={onCancel}
+      onClose={dismiss}
       closeDisabled={busy}
       title="信任此项目？"
       width="min(480px, 92vw)"
       testId="trust-required-dialog"
       footer={
-        <div className={actions}>
+        <div className={confirmActions}>
           <button
             type="button"
-            className={btn}
-            onClick={onCancel}
+            className={confirmBtn}
+            onClick={dismiss}
             disabled={busy}
             data-testid="trust-required-cancel"
           >
@@ -112,7 +76,7 @@ export function TrustRequiredDialog({
           </button>
           <button
             type="button"
-            className={primary}
+            className={confirmPrimaryBtn}
             onClick={onConfirm}
             disabled={busy}
             data-testid="trust-required-confirm"
@@ -122,7 +86,7 @@ export function TrustRequiredDialog({
         </div>
       }
     >
-      <div className={bodyText}>
+      <div className={confirmBodyText}>
         项目「{projectName}」的项目配置文件（<code>.c0de/config.json</code>）包含以下设置。
         这些设置来自项目仓库本身，可能随他人提交的代码一起进入你的机器：
       </div>
@@ -134,15 +98,11 @@ export function TrustRequiredDialog({
           </div>
         ))}
       </div>
-      <div className={bodyText}>
+      <div className={confirmBodyText}>
         信任后上述设置立即生效（项目插件需重启 serve 后加载），后续不再询问。
         请仅在确认该仓库来源可靠、且接受这些设置时信任。
       </div>
-      {error ? (
-        <div className={errorText} role="alert" data-testid="trust-required-error">
-          {error}
-        </div>
-      ) : null}
+      {error ? <DialogInlineError testId="trust-required-error">{error}</DialogInlineError> : null}
     </Dialog>
   )
 }

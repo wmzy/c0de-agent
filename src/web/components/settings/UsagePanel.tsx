@@ -37,9 +37,6 @@ const budgetWarn = css`
   margin-top: 6px;
 `
 
-// 与 formatCost 同源（十进制舍入）：toFixed 二进制近似会把 1.005 显示成 $1.00。
-const fmtCost = (n: number): string => formatCost(n)
-
 /** P1-4：本月口径由服务端下发（summary.currentMonth），客户端不再自行按时区计算。 */
 function currentMonthCost(summary: UsageSummary | undefined): number {
   return summary?.currentMonth?.cost ?? 0
@@ -337,7 +334,7 @@ function UsagePanel({
         <>
           {unknownMonth && unknownMonth.calls > 0 && (
             <div className={hint}>
-              另有 {unknownMonth.calls} 次无时间戳调用（合计 {fmtCost(unknownMonth.cost)}
+              另有 {unknownMonth.calls} 次无时间戳调用（合计 {formatCost(unknownMonth.cost)}
               ）未计入本月预算比较。
             </div>
           )}
@@ -352,7 +349,7 @@ function UsagePanel({
               <span>{m.month === '未知' ? '（无时间戳）' : m.month}</span>
               <span>{m.calls}</span>
               <span>{formatNumber(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
-              <span>{fmtCost(m.cost)}</span>
+              <span>{formatCost(m.cost)}</span>
             </div>
           ))}
           {!projectId && unassigned && unassigned.calls > 0 && (
@@ -366,7 +363,7 @@ function UsagePanel({
                   unassigned.inputTokens + unassigned.outputTokens + unassigned.cacheRead,
                 )}
               </span>
-              <span>{fmtCost(unassigned.cost)}</span>
+              <span>{formatCost(unassigned.cost)}</span>
             </div>
           )}
           <div className={headRow} style={{ marginTop: 10 }}>
@@ -380,7 +377,7 @@ function UsagePanel({
               <span title={m.model}>{m.model}</span>
               <span>{m.calls}</span>
               <span>{formatNumber(m.inputTokens + m.outputTokens + m.cacheRead)}</span>
-              <span>{fmtCost(m.cost)}</span>
+              <span>{formatCost(m.cost)}</span>
             </div>
           ))}
           <div className={rowGrid} style={{ fontWeight: 600 }}>
@@ -391,7 +388,7 @@ function UsagePanel({
                 summary.totals.inputTokens + summary.totals.outputTokens + summary.totals.cacheRead,
               )}
             </span>
-            <span>{fmtCost(summary.totals.cost)}</span>
+            <span>{formatCost(summary.totals.cost)}</span>
           </div>
         </>
       ) : null}

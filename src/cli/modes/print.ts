@@ -7,6 +7,7 @@ import { createSession, getSession } from '../../session/session.js'
 import { upgradeTemporarySession } from '../../session/trash.js'
 import type { AgentConfig, AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
+import { isUuid } from '../../shared/utils/string.js'
 import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 
 type PrintOptions = {
@@ -32,9 +33,8 @@ function collectAssistantText(events: AgentEvent[]): string {
 }
 
 /** sessions.id 为 uuid 列：非 uuid 的 --continue 输入会让 PG 直接抛原始
- *  "invalid input syntax for type uuid" SQL 错误。前置校验统一转译为
- *  「session not found」（与不存在的会话同语义），不泄漏 SQL 原文。 */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+ *  "invalid input syntax for type uuid" SQL 错误。前置校验（shared isUuid）
+ *  统一转译为「session not found」（与不存在的会话同语义），不泄漏 SQL 原文。 */
 
 /** Print 模式：临时会话（或 --continue 指定会话）→ agent → 收集文本 → 返回。 */
 async function runPrintMode(
@@ -45,7 +45,7 @@ async function runPrintMode(
 ): Promise<string> {
   let session: Awaited<ReturnType<typeof getSession>>
   if (opts.sessionId) {
-    if (!UUID_PATTERN.test(opts.sessionId)) throw new Error(`session not found: ${opts.sessionId}`)
+    if (!isUuid(opts.sessionId)) throw new Error(`session not found: ${opts.sessionId}`)
     const existing = await getSession(deps.db, opts.sessionId)
     if (!existing) throw new Error(`session not found: ${opts.sessionId}`)
     // M2：会话在回收站（Web 已删除）时拒绝续接——否则消息会写入一个 Web 树

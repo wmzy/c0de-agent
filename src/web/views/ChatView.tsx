@@ -1,6 +1,5 @@
 import { css } from '@linaria/core'
 import { TypedLink, useRouter } from '@native-router/react'
-import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { Logo } from '@/components/Logo.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
@@ -9,10 +8,10 @@ import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { type FailedSend, failedSendReason } from '@/hooks/failedSendReason.js'
 import { pendingFirstMessage } from '@/hooks/pendingFirstMessage.js'
 import { useComposerDefaults } from '@/hooks/useComposerDefaults.js'
+import { useCreateSession } from '@/hooks/useSession.js'
 import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
-import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
 import { LoadError } from '@/views/_shared/errorState.js'
@@ -284,7 +283,7 @@ function DraftSession({
   terminalToggle?: { open: boolean; onToggle: () => void }
 }) {
   const router = useRouter()
-  const qc = useQueryClient()
+  const createSession = useCreateSession()
   // 预览面板是否有未保存修改（FilePreview 注册的探针，见 FileSelectionContext）。
   // 首条消息必须先跳到会话页才能发出，而那次导航在脏时必被 useBlocker 拦下。
   const hasUnsavedEdits = useFileSelection().hasUnsavedEdits ?? (() => false)
@@ -353,10 +352,10 @@ function DraftSession({
       ...(payload.agents.length ? { agents: payload.agents } : {}),
     }
     try {
-      const session = await sessionAPI.create({ projectId })
+      // 经 useCreateSession 建会话：onSuccess 统一失效 ['sessions']+['sessions','tree']
+      // （侧边栏立即显示新会话）——此前此处内联只失效 ['sessions']，侧栏树不刷新。
+      const session = await createSession.mutateAsync({ projectId })
       pendingFirstMessage.set(session.id, { text: payload.text, opts, prompt: payload.prompt })
-      // 让侧边栏立即显示新会话
-      qc.invalidateQueries({ queryKey: ['sessions'] })
       navigateTo(router, '/projects/:projectId/sessions/:sessionId', {
         params: { projectId, sessionId: session.id },
       })

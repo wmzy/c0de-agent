@@ -2,6 +2,22 @@ import { existsSync, realpathSync } from 'node:fs'
 import { dirname, relative, resolve, sep } from 'node:path'
 
 /**
+ * 各处目录遍历统一跳过的目录名：依赖与构建产物噪音（单一来源，消费方：
+ * tools/builtin/walk 的 glob/grep 遍历、server/routes/filesystem 的目录搜索、
+ * project/detect 的语言推断）。点开头目录里只跳 .git——workflows 侧的
+ * walkTree 是「跳过全部点开头条目」的更严口径，勿混用。
+ */
+const IGNORED_DIR_NAMES: ReadonlySet<string> = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  '.next',
+  'build',
+  '.turbo',
+  '.cache',
+])
+
+/**
  * 安全路径解析：确保 requestPath 解析后落在 root 内，防止路径穿越
  * （如 `../etc/passwd`、绝对路径 `/etc/passwd`）。
  *
@@ -40,4 +56,4 @@ function safeResolve(root: string, requestPath: string): string | null {
   return resolved
 }
 
-export { safeResolve }
+export { IGNORED_DIR_NAMES, safeResolve }

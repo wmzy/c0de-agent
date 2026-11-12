@@ -491,22 +491,16 @@ export async function softDeleteKanbanBoardsByProject(
   return rows.length
 }
 
-/** 把项目的活动看板软删除进回收站（记录原项目名与工作目录）。项目行删除后 FK 将 projectId 置 null。 */
+/** 把项目的活动看板软删除进回收站（记录原项目名与工作目录）。项目行删除后 FK 将 projectId 置 null。
+ *  单条 UPDATE 批量命中（委托 softDeleteKanbanBoardsByProject），不再逐板循环——
+ *  循环版 1+N 查询且可能观察到删除中途的交错状态。 */
 export async function softDeleteKanbanBoard(
   handle: DB,
   projectId: string,
   projectName: string | null,
   worktree?: string | null,
 ): Promise<boolean> {
-  const boards = await handle.db
-    .select({ id: kanbanBoards.id })
-    .from(kanbanBoards)
-    .where(activeBoardWhere(projectId))
-  let deleted = false
-  for (const board of boards) {
-    if (await softDeleteKanbanBoardById(handle, board.id, projectName, worktree)) deleted = true
-  }
-  return deleted
+  return (await softDeleteKanbanBoardsByProject(handle.db, projectId, projectName, worktree)) > 0
 }
 
 /** 行 + 卡片数 → 回收站条目（时间戳统一转 ms，兼容 Date/null/字符串）。

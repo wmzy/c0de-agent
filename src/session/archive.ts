@@ -3,6 +3,7 @@ import type { DB } from '../db/client.js'
 import { compactionArchives } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
 import { isUuid } from '../shared/utils/string.js'
+import { escapeLikePattern } from './session.js'
 import { toEpochMs } from './time.js'
 import type { CompactionArchive, SessionEntry } from './types.js'
 
@@ -84,11 +85,6 @@ async function getArchive(handle: DB, id: string): Promise<CompactionArchive | n
     .from(compactionArchives)
     .where(eq(compactionArchives.id, id))
   return row ? rowToArchive(row) : null
-}
-
-/** Escape LIKE/ILIKE metacharacters so the query is treated as a literal substring. */
-function escapeLikePattern(text: string): string {
-  return text.replace(/[%_\\]/g, '\\$&')
 }
 
 /** Search archives by keyword (case-insensitive substring on searchable text). */

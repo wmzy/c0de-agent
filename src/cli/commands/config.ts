@@ -1,8 +1,10 @@
 import {
-  applyScopedPatch,
+  isConfigSetFailure,
+  KNOWN_CONFIG_KEYS,
   loadConfigScopes,
   mergeConfig,
-  saveConfigScoped,
+  setConfigKey,
+  warnUnknownConfigKeys,
 } from '../../core/config.js'
 import { coerce, getByPath, setPathPatch } from '../../core/config-path.js'
 import type { Config } from '../../shared/types/config.js'
@@ -43,7 +45,6 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
   // get 展示用合并视图（global ← project，含默认值），与 loadConfig 语义一致。
   const config: Config = mergeConfig(scopes.global, scopes.project)
   // 未知顶层键告警（loadConfig 只在 serve/chat 启动路径调用；config 命令走 loadConfigScopes）。
-  const { warnUnknownConfigKeys } = await import('../../core/config.js')
   warnUnknownConfigKeys('global', scopes.global)
   warnUnknownConfigKeys('project', scopes.project)
 
@@ -67,28 +68,30 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
     const rawArg = ctx.args.positionals[2]
     if (!key) throw new Error('config set: a key is required')
     if (rawArg === undefined) throw new Error('config set: a value is required')
-    // 顶层键校验：拒绝拼写错误/过时键，避免写入永不生效的配置（此前静默接受）。
-    const { KNOWN_CONFIG_KEYS } = await import('../../core/config.js')
-    const topKey = key.split('.')[0] ?? ''
-    if (!KNOWN_CONFIG_KEYS.has(topKey)) {
-      throw new Error(
-        `config set: 未知的顶层配置键 "${topKey}"。有效键：${[...KNOWN_CONFIG_KEYS].join(', ')}`,
-      )
-    }
     const scope = (ctx.args.options.global as boolean | undefined) ? 'global' : 'project'
-    // 作用域收敛：security 是服务端全局参数，项目作用域写入会被加载时剥离（不生效）。
-    // 与其写入一个永不生效的键，不如直接拒绝并给出正解路径（与 Web PATCH /api/config 同语义）。
-    if (scope === 'project' && topKey === 'security') {
-      throw new Error(
-        'config set: security 是服务端全局参数，仅在全局作用域生效。请加 --global 写入全局配置。',
-      )
+    // 写入核心见 core/config.ts 的 setConfigKey（与 /config 斜杠命令共用）：
+    // 顶层键校验 + 项目作用域 security 拒绝 + coerce + 最小 patch 落盘。
+    // 策略性失败按码转本命令文案；写入面校验（非有限数值等）原样上抛。
+    let value: unknown
+    try {
+      value = await setConfigKey(scope, ctx.cwd, key, rawArg)
+    } catch (error) {
+      if (isConfigSetFailure(error)) {
+        // 顶层键校验：拒绝拼写错误/过时键，避免写入永不生效的配置（此前静默接受）。
+        if (error.code === 'UNKNOWN_TOP_KEY') {
+          throw new Error(
+            `config set: 未知的顶层配置键 "${error.topKey}"。有效键：${[...KNOWN_CONFIG_KEYS].join(', ')}`,
+          )
+        }
+        // 作用域收敛：security 是服务端全局参数，项目作用域写入会被加载时剥离
+        // （不生效）。与其写入一个永不生效的键，不如直接拒绝并给出正解路径
+        // （与 Web PATCH /api/config 同语义）。
+        throw new Error(
+          'config set: security 是服务端全局参数，仅在全局作用域生效。请加 --global 写入全局配置。',
+        )
+      }
+      throw error
     }
-    // 只把 patch 合并进目标作用域的原始文件，不写入默认值与其他作用域的配置（P2-3）。
-    // 值为 null → 删除该键（作用域内取消覆盖，回落另一作用域/默认值）。
-    const scopeCfg = scope === 'global' ? scopes.global : scopes.project
-    const value = coerce(rawArg)
-    const next = applyScopedPatch(scopeCfg ?? {}, setPathPatch(key, value))
-    await saveConfigScoped(scope, ctx.cwd, next)
     // P1：项目作用域写入是用户显式操作——已信任项目刷新风险指纹（与 Web
     // PATCH /api/config、/config 斜杠命令同口径），防「信任 → 改配置 → 再信任」
     // 自锁复检循环。

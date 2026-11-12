@@ -125,11 +125,7 @@ function ModelPanel({ providers, defaultProvider, defaultModel, onChange }: Mode
   // defaultProvider 可能是 protocol 名或导入的陌生值，不在已配置列表时由 select 兜底显示。
   const defaultProviderCandidates = providerCandidates(providers)
   const defaultProviderEntry = defaultProviderCandidates.find((p) => p.name === defaultProvider)
-  const defaultModelCandidates = defaultProviderEntry
-    ? Object.entries(defaultProviderEntry.models ?? {})
-        .filter(([, v]) => v.enabled !== false)
-        .map(([name]) => name)
-    : []
+  const defaultModelCandidates = enabledModelsOf(defaultProviderCandidates, defaultProvider)
 
   // 切换默认 provider 时校正 model：新 provider 不含当前 model 则取首个启用模型。
   const changeDefaultProvider = (name: string) => {

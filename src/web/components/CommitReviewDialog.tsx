@@ -1,11 +1,15 @@
 import { css } from '@linaria/core'
 import { CopyButton } from '@/components/CopyButton.js'
-import { Dialog } from '@/components/Dialog.js'
+import { confirmActions, confirmBodyText, confirmBtn } from '@/components/confirmDialogStyles.js'
+import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
+import { DialogInlineError } from '@/components/DialogInlineError.js'
 
-const bodyText = css`
-  color: var(--haze-color-text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
+/** 本弹窗三颗按钮在 busy 时都会 disabled，需要显式的禁用视觉（共享基础按钮不带）。 */
+const btnDisabled = css`
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 `
 
 const fileList = css`
@@ -15,33 +19,6 @@ const fileList = css`
   font-family: var(--haze-font-mono, monospace);
   color: var(--haze-color-text-secondary);
   padding: 8px 12px;
-`
-
-const actions = css`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-`
-
-const btn = css`
-  padding: 6px 12px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 6px;
-  background: var(--haze-color-bg-subtle);
-  color: var(--haze-color-text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-
-  &:hover {
-    background: var(--haze-color-bg);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 `
 
 const primaryBtn = css`
@@ -86,21 +63,6 @@ const messageActions = css`
   padding-top: 2px;
 `
 
-const errorBar = css`
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  margin-top: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--haze-color-danger);
-  border-radius: 6px;
-  background: var(--haze-color-danger-bg, transparent);
-  color: var(--haze-color-danger);
-  font-size: 12px;
-  line-height: 1.5;
-  word-break: break-word;
-`
-
 /**
  * 提交前可疑文件确认弹框。LLM 检测到应忽略的文件后弹出，
  * 三选项：加入 .gitignore 再提交 / 仍然提交 / 取消。
@@ -129,10 +91,7 @@ export function CommitReviewDialog({
 }) {
   // 请求在飞时不给关闭出口：Esc / 点背景 / ✕ / 取消都走这里。失败原因只渲染在
   // 这块面板里，中途关掉它就等于把失败原因一起关掉。
-  const dismiss = () => {
-    if (busy) return
-    onCancel()
-  }
+  const dismiss = useDialogDismiss(onCancel, busy)
   return (
     <Dialog
       onClose={dismiss}
@@ -141,10 +100,10 @@ export function CommitReviewDialog({
       width="min(460px, 92vw)"
       testId="commit-review-dialog"
       footer={
-        <div className={actions}>
+        <div className={confirmActions}>
           <button
             type="button"
-            className={btn}
+            className={`${confirmBtn} ${btnDisabled}`}
             onClick={dismiss}
             disabled={busy}
             data-testid="commit-review-cancel"
@@ -153,7 +112,7 @@ export function CommitReviewDialog({
           </button>
           <button
             type="button"
-            className={btn}
+            className={`${confirmBtn} ${btnDisabled}`}
             onClick={onForce}
             disabled={busy}
             data-testid="commit-review-force"
@@ -162,7 +121,7 @@ export function CommitReviewDialog({
           </button>
           <button
             type="button"
-            className={`${btn} ${primaryBtn}`}
+            className={`${confirmBtn} ${btnDisabled} ${primaryBtn}`}
             onClick={onAppendIgnore}
             disabled={busy}
             data-testid="commit-review-ignore"
@@ -186,20 +145,20 @@ export function CommitReviewDialog({
           </div>
         </div>
       ) : (
-        <div className={bodyText} data-testid="commit-review-message-empty">
+        <div className={confirmBodyText} data-testid="commit-review-message-empty">
           未生成 commit message（提交后会由 Git 生成一条默认信息）。
         </div>
       )}
-      <div className={bodyText}>AI 检查变更内容后认为以下文件可能应该加入 .gitignore：</div>
+      <div className={confirmBodyText}>AI 检查变更内容后认为以下文件可能应该加入 .gitignore：</div>
       <div className={fileList}>
         {suggestions.map((s) => (
           <div key={s}>{s}</div>
         ))}
       </div>
       {error ? (
-        <div className={errorBar} role="alert" data-testid="commit-review-error">
+        <DialogInlineError testId="commit-review-error">
           {'⚠'} {error}
-        </div>
+        </DialogInlineError>
       ) : null}
     </Dialog>
   )

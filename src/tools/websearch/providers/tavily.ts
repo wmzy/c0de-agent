@@ -5,7 +5,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
-import { assertOk, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS, MIN_NUM_RESULTS } from '../types.js'
+import { assertOk, clampNumResults } from '../types.js'
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search'
 
@@ -27,17 +27,12 @@ interface TavilySearchResponse {
   request_id?: string | null
 }
 
-function clamp(n: number | undefined): number {
-  if (n === undefined || Number.isNaN(n)) return DEFAULT_NUM_RESULTS
-  return Math.min(MAX_NUM_RESULTS, Math.max(MIN_NUM_RESULTS, Math.trunc(n)))
-}
-
 /** 导出供测试：构造 Tavily 请求 body。始终用 general topic（避免技术查询窄化为新闻）。 */
 export function buildRequestBody(params: TavilySearchParams): Record<string, unknown> {
   const body: Record<string, unknown> = {
     query: params.query,
     search_depth: 'basic',
-    max_results: clamp(params.numResults),
+    max_results: clampNumResults(params.numResults),
     include_answer: 'advanced',
     include_raw_content: false,
   }
@@ -114,7 +109,7 @@ export const tavilyProvider: WebSearchProvider = {
     return {
       provider: 'tavily',
       answer: data.answer?.trim() || undefined,
-      sources: sources.slice(0, clamp(params.limit)),
+      sources: sources.slice(0, clampNumResults(params.limit)),
     }
   },
 }

@@ -1,3 +1,4 @@
+import { css } from '@linaria/core'
 import type { Config } from '@shared/types/config.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, ConfirmDialog } from 'haze-ui'
@@ -14,7 +15,29 @@ import {
   sectionTitle,
 } from '@/components/settings/styles.js'
 import { authAPI } from '@/services/auth.js'
+import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
+
+/** 设备行：名称占满剩余宽度，id 前缀与创建日期是次要元信息。 */
+const deviceRow = css`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 6px;
+`
+
+const deviceName = css`
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`
+
+const deviceMeta = css`
+  opacity: 0.6;
+  font-size: 11px;
+`
 
 interface SecurityPanelProps {
   security: Config['security']
@@ -96,34 +119,13 @@ function DevicesSection() {
       )}
       <div data-testid="device-list">
         {devices.map((d) => (
-          <div
-            key={d.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: 13,
-              marginBottom: 6,
-            }}
-          >
-            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {d.name} <span style={{ opacity: 0.6, fontSize: 11 }}>{d.id.slice(0, 8)}…</span>
+          <div key={d.id} className={deviceRow}>
+            <span className={deviceName}>
+              {d.name} <span className={deviceMeta}>{d.id.slice(0, 8)}…</span>
             </span>
-            <span style={{ opacity: 0.6, fontSize: 11 }}>
-              {new Date(d.createdAt).toLocaleDateString()}
-            </span>
+            <span className={deviceMeta}>{new Date(d.createdAt).toLocaleDateString()}</span>
             <Button
-              style={{
-                border: '1px solid var(--haze-color-border)',
-                borderRadius: 6,
-                padding: '2px 8px',
-                fontSize: 12,
-                cursor: 'pointer',
-                color: 'var(--haze-color-danger)',
-                background: 'var(--haze-color-bg)',
-                minHeight: 'auto',
-                minWidth: 'auto',
-              }}
+              className={btnDanger}
               disabled={revoke.isPending}
               variant="outline"
               onClick={() => setRevokeTarget({ id: d.id, name: d.name })}

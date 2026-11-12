@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { PopoverList, popoverItemBlock } from '@/composer/PopoverList.js'
+import { PopoverList, PopoverOption } from '@/composer/PopoverList.js'
 import type { FileSearchResult } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
 
@@ -43,29 +43,25 @@ function AtFilePopover(props: Props) {
       testId="at-menu"
     >
       {subagents.map((a, i) => (
-        <button
+        <PopoverOption
           key={a.name}
-          role="option"
-          aria-selected={i === activeIndex}
-          className={`${popoverItemBlock} ${i === activeIndex ? 'active' : ''}`}
-          onClick={() => props.onAgentSelect(a.name)}
-          type="button"
+          block
+          active={i === activeIndex}
+          onSelect={() => props.onAgentSelect(a.name)}
         >
           <span className={agentLabel}>@{a.name}</span>
           <span>{a.description}</span>
-        </button>
+        </PopoverOption>
       ))}
       {files.map((f, i) => (
-        <button
+        <PopoverOption
           key={f.path}
-          role="option"
-          aria-selected={subagents.length + i === activeIndex}
-          className={`${popoverItemBlock} ${subagents.length + i === activeIndex ? 'active' : ''}`}
-          onClick={() => props.onSelect(f.path)}
-          type="button"
+          block
+          active={subagents.length + i === activeIndex}
+          onSelect={() => props.onSelect(f.path)}
         >
           {f.path}
-        </button>
+        </PopoverOption>
       ))}
     </PopoverList>
   )

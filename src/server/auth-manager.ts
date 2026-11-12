@@ -20,6 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { readJsonFileSafe, writeJsonFileSafe } from '../shared/utils/json-file.js'
 
 const DEVICES_FILENAME = 'devices.json'
 
@@ -132,31 +133,26 @@ function hashToken(token: string): string {
  * 不去重：serve 侧装入 Map 时同 id 后写覆盖（原语义），CLI 列表原样展示。
  */
 export function readDevicesFile(path: string): DeviceRecord[] {
-  try {
-    if (!existsSync(path)) return []
-    const raw = JSON.parse(readFileSync(path, 'utf-8')) as DevicesFile
-    const devices: DeviceRecord[] = []
-    for (const d of raw.devices ?? []) {
-      if (d && typeof d.id === 'string' && typeof d.tokenHash === 'string') {
-        devices.push(d)
-      }
+  // 读侧形状（缺失/损坏 → null）收敛到 shared/utils/json-file.ts；逐字段防御
+  // 留在此处——这是设备注册表的领域校验。
+  const raw = readJsonFileSafe<DevicesFile>(path)
+  const devices: DeviceRecord[] = []
+  for (const d of raw?.devices ?? []) {
+    if (d && typeof d.id === 'string' && typeof d.tokenHash === 'string') {
+      devices.push(d)
     }
-    return devices
-  } catch {
-    // 注册表损坏：视为空（设备需重新配对/注册）
-    return []
   }
+  return devices
 }
 
 /**
  * 写设备注册表文件（devices.json 写的单一实现）：确保父目录存在后以
  * version:1 形状落盘。写失败如实上抛，由调用方决定策略（serve persist 吞错
- * 保内存态，CLI revoke 直接反馈错误）。
+ * 保内存态，CLI revoke 直接反馈错误）——mkdir/write 形状收敛到
+ * shared/utils/json-file.ts，吞错与否是调用方语义，不收敛。
  */
 export function writeDevicesFile(path: string, devices: DeviceRecord[]): void {
-  mkdirSync(dirname(path), { recursive: true })
-  const file: DevicesFile = { version: 1, devices }
-  writeFileSync(path, JSON.stringify(file, null, 2), 'utf-8')
+  writeJsonFileSafe(path, { version: 1, devices } satisfies DevicesFile, { pretty: true })
 }
 
 function safeEqual(a: string, b: string): boolean {

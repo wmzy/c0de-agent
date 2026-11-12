@@ -1,9 +1,10 @@
 import { relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { IGNORED_DIR_NAMES } from '../../shared/utils/path.js'
 import { escapeRegex } from '../../shared/utils/string.js'
 import type { GlobInput } from '../types.js'
 import { resolveToolPath } from './paths.js'
-import { IGNORE_DIRS, walkFiles } from './walk.js'
+import { walkFiles } from './walk.js'
 
 /**
  * Convert a glob pattern to a RegExp.
@@ -176,10 +177,10 @@ function globFragment(pattern: string, segStartAt0 = true): string {
   return re
 }
 
-/** Recursively walk a directory, skipping IGNORE_DIRS. Returns relative file paths. */
+/** Recursively walk a directory, skipping IGNORED_DIR_NAMES. Returns relative file paths. */
 async function walkDir(dir: string, base: string): Promise<string[]> {
   const results: string[] = []
-  await walkFiles(dir, { skipDir: (name) => IGNORE_DIRS.has(name) }, (fullPath) => {
+  await walkFiles(dir, { skipDir: (name) => IGNORED_DIR_NAMES.has(name) }, (fullPath) => {
     results.push(relative(base, fullPath))
   })
   return results

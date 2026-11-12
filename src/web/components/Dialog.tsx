@@ -4,7 +4,7 @@
 // 面板与内容布局（header/footer/滚动区）沿用项目 Linaria 类。
 import { css } from '@linaria/core'
 import { Dialog as HazeDialog } from 'haze-ui'
-import { type ReactNode, useEffect, useLayoutEffect, useRef } from 'react'
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 export type DialogProps = {
   open?: boolean
@@ -16,6 +16,20 @@ export type DialogProps = {
   testId?: string
   /** 禁用关闭键。给「请求在飞、关闭会连带丢掉失败原因」的弹窗用。 */
   closeDisabled?: boolean
+}
+
+/** 提交型弹窗统一的关闭守卫：请求在飞（busy）时 Esc / 点背景 / ✕ / 取消
+ *  都不给关闭出口——失败原因只画在弹窗内部，中途关掉它等于把原因一起关掉。
+ *  busy 回落（成功/失败落地）后照常关闭。调用方应把同一 busy 接到
+ *  closeDisabled 与关闭类按钮的 disabled 上（可见的禁用反馈），本守卫是
+ *  行为兜底。BoardConfigDialog / CardEditDialog / DangerConfirmDialog /
+ *  DirectoryProjectDialog / CommitReviewDialog / TrustRequiredDialog /
+ *  SegmentBreakDialog 共用。 */
+export function useDialogDismiss(onClose: () => void, busy: boolean): () => void {
+  return useCallback(() => {
+    if (busy) return
+    onClose()
+  }, [onClose, busy])
 }
 
 /** 面板：全高列布局，内部滚动；外框圆角/阴影/边框由 haze 面板样式提供。 */

@@ -5,7 +5,7 @@ import type {
   WebSearchResponse,
   WebSearchSource,
 } from '../types.js'
-import { assertOk, DEFAULT_NUM_RESULTS } from '../types.js'
+import { assertOk, clampNumResults } from '../types.js'
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'
 
@@ -41,7 +41,10 @@ export const braveProvider: WebSearchProvider = {
   search: async (params: WebSearchParams): Promise<WebSearchResponse> => {
     if (!params.apiKey) throw new Error('Brave requires an API key (BRAVE_API_KEY or config).')
     const fetchImpl = params.fetchImpl ?? fetch
-    const count = params.limit ?? DEFAULT_NUM_RESULTS
+    // 与 tavily/duckduckgo 同口径：结果数统一走 clampNumResults（[1,20]，
+    // undefined/NaN 回退默认）——此前 `limit ?? DEFAULT` 绕过钳制，上游传入
+    // 越界值会原样进 Brave API。
+    const count = clampNumResults(params.limit)
     const query = new URLSearchParams({ q: params.query, count: String(count) })
     const freshness = recencyToFreshness(params.recency)
     if (freshness) query.set('freshness', freshness)

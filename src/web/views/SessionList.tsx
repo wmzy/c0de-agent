@@ -5,7 +5,12 @@ import { BranchTree } from '@/components/BranchTree.js'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { clearSessionDraft } from '@/composer/draft.js'
-import { useDeleteSession, useProjects, useSessionTree } from '@/hooks/useSession.js'
+import {
+  invalidateSessionLists,
+  useDeleteSession,
+  useProjects,
+  useSessionTree,
+} from '@/hooks/useSession.js'
 import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
 import { sessionAPI } from '@/services/session.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
@@ -235,8 +240,7 @@ export function SessionList({
     setRenameError(null)
     try {
       await sessionAPI.rename(id, title)
-      qc.invalidateQueries({ queryKey: ['sessions'] })
-      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      void invalidateSessionLists(qc)
       return true
     } catch (err) {
       // P3：重命名失败此前写入 deleteError，错误条误显示「删除失败」前缀。
@@ -422,8 +426,7 @@ export function SessionList({
     setImporting(true)
     try {
       const result = await sessionAPI.importSession(data, targetId, { importPermissions })
-      await qc.invalidateQueries({ queryKey: ['sessions'] })
-      await qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      await invalidateSessionLists(qc)
       const target = projects?.find((p) => p.id === targetId)
       const notes: string[] = []
       if (result.flattened)

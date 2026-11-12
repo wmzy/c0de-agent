@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
+import { declaredModels } from '@/components/settings/shared.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { providerAPI } from '@/services/provider.js'
@@ -210,22 +211,12 @@ export function ModelSelector({
 
   // 当前 provider 在 config 中预定义的模型名（作为输入建议）
   const configured = config?.providers ?? []
-  /** provider 在 config 中声明的「已启用模型」清单；未声明清单（自建网关等）返回
-   *  undefined——用于区分「清单里没有这个模型」与「此 provider 不限定模型」。 */
-  const declaredModelsFor = useCallback(
-    (name: string): string[] | undefined => {
-      const p = configured.find((x) => x.name === name)
-      if (!p?.models) return undefined
-      // 仅列出启用的模型（enabled 省略/true 视为启用）
-      return Object.entries(p.models)
-        .filter(([, v]) => v.enabled !== false)
-        .map(([m]) => m)
-    },
-    [configured],
-  )
+  /** provider 在 config 中声明的「已启用模型」清单（settings/shared 的单一实现）：
+   *  未声明清单（自建网关等）返回 undefined——用于区分「清单里没有这个模型」
+   *  与「此 provider 不限定模型」。 */
   const modelHints = useMemo(
-    () => declaredModelsFor(value.provider) ?? [],
-    [declaredModelsFor, value.provider],
+    () => declaredModels(configured, value.provider) ?? [],
+    [configured, value.provider],
   )
 
   const [hintsOpen, setHintsOpen] = useState(false)
@@ -340,7 +331,7 @@ export function ModelSelector({
                     // provider+model 组合」——provider 下拉与 model 输入框都显示着值，
                     // 界面看不出问题，只有请求失败（服务端 MODEL_NOT_FOUND）。
                     // 未声明清单的 provider（自建网关）保持自由输入原值。
-                    const declared = declaredModelsFor(next) ?? []
+                    const declared = declaredModels(configured, next) ?? []
                     const model =
                       declared.length > 0 && !declared.includes(value.model)
                         ? (declared[0] ?? value.model)

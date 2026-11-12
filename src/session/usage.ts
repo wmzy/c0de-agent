@@ -41,6 +41,17 @@ export async function backfillUsageEvents(handle: DB): Promise<number> {
     .select({ id: sessions.id, projectId: sessions.projectId, metadata: sessions.metadata })
     .from(sessions)
 
+  // 先在内存收齐全部行再分批 INSERT（每批 onConflictDoNothing）——此前逐行
+  // 插入，全库回填 = 每条调用一个往返 + 隐式单语句事务，千级调用时显著拖慢
+  // 启动。计数口径不变：按每批实际插入行数累加。
+  const CHUNK_SIZE = 500
+  const values: Array<typeof usageEvents.$inferInsert> = []
+  const flush = async (): Promise<number> => {
+    if (values.length === 0) return 0
+    const chunk = values.splice(0, values.length)
+    const result = await handle.db.insert(usageEvents).values(chunk).onConflictDoNothing()
+    return result.rowCount ?? 0
+  }
   let added = 0
   for (const row of rows) {
     const meta = (row.metadata ?? {}) as { segments?: SegmentRecord[] }
@@ -50,29 +61,23 @@ export async function backfillUsageEvents(handle: DB): Promise<number> {
         if (typeof call.id !== 'string' || call.id.length === 0) continue
         const ts = typeof call.timestamp === 'number' && call.timestamp > 0 ? call.timestamp : 0
         if (ts === 0) continue
-        const input = typeof call.usage?.input === 'number' ? call.usage.input : 0
-        const output = typeof call.usage?.output === 'number' ? call.usage.output : 0
-        const cacheRead = typeof call.usage?.cacheRead === 'number' ? call.usage.cacheRead : 0
-        const cost = typeof call.cost === 'number' ? call.cost : null
-        const result = await handle.db
-          .insert(usageEvents)
-          .values({
-            callId: call.id,
-            sessionId: row.id,
-            projectId: row.projectId,
-            provider: seg.provider,
-            model: seg.model,
-            inputTokens: input,
-            outputTokens: output,
-            cacheRead,
-            cost,
-            timestamp: ts,
-          })
-          .onConflictDoNothing()
-        if (result.rowCount && result.rowCount > 0) added += result.rowCount
+        values.push({
+          callId: call.id,
+          sessionId: row.id,
+          projectId: row.projectId,
+          provider: seg.provider,
+          model: seg.model,
+          inputTokens: typeof call.usage?.input === 'number' ? call.usage.input : 0,
+          outputTokens: typeof call.usage?.output === 'number' ? call.usage.output : 0,
+          cacheRead: typeof call.usage?.cacheRead === 'number' ? call.usage.cacheRead : 0,
+          cost: typeof call.cost === 'number' ? call.cost : null,
+          timestamp: ts,
+        })
+        if (values.length >= CHUNK_SIZE) added += await flush()
       }
     }
   }
+  added += await flush()
   return added
 }
 

@@ -32,7 +32,10 @@ const testRoutes = createRoutes({
 
 // ChatSession 内有多条 useQuery/挂载副作用，全部 mock 掉，只驱动 messages 一条。
 const mockUseMessages = vi.fn()
-vi.mock('@/hooks/useSession.js', () => ({ useMessages: () => mockUseMessages() }))
+vi.mock('@/hooks/useSession.js', () => ({
+  useMessages: () => mockUseMessages(),
+  invalidateSessionLists: () => Promise.resolve(),
+}))
 
 const mockUseChatState = {
   messages: [],
