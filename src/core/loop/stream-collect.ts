@@ -1,7 +1,7 @@
 import type { chatStream as llmChatStream } from '../../llm/provider.js'
 import { isContextOverflowFailure } from '../../llm/provider-error.js'
 import { buildFallbackChain } from '../../llm/routing.js'
-import { isLLMError } from '../../llm/schema/errors.js'
+import { isLLMError, parseErrorMarker } from '../../llm/schema/errors.js'
 import type { AgentEvent, AgentState } from '../../shared/types/agent.js'
 import type { ChatRequest, FinishReason, StreamChunk } from '../../shared/types/llm.js'
 import type { LoopDeps } from '../loop.js'
@@ -43,16 +43,14 @@ export type StreamCollectResult = {
 }
 
 /** 解析 tool_call_end 的入参：JSON.parse + 容错标记。
- *  解析成功返回原值；失败返回 { _parseError, _raw } 容错标记（与协议层 finishAll 一致），
- *  供 isParseErrorInput 识别——这类入参只反馈给模型重试，绝不持久化或渲染。 */
+ *  解析成功返回原值；失败返回 { _parseError, _raw } 容错标记（llm/schema/errors
+ *  的 parseErrorMarker 单一实现，与协议层 finishAll 同源），供 isParseErrorInput
+ *  识别——这类入参只反馈给模型重试，绝不持久化或渲染。 */
 function parseToolCallArgs(finalArgs: string): unknown {
   try {
     return JSON.parse(finalArgs)
   } catch (e) {
-    return {
-      _parseError: e instanceof Error ? e.message : String(e),
-      _raw: finalArgs,
-    }
+    return parseErrorMarker(e, finalArgs)
   }
 }
 
@@ -99,6 +97,20 @@ export async function* collectStreamChunks(
     fatalError: false,
     ...over,
   })
+
+  /** 响应式溢出恢复（error chunk 与 throw 两条错误路径共用）：
+   *  仅当尚未开始输出（无 text、无 tool_call）且未重试过时，压缩历史并让调用方
+   *  `continue turnLoop` 重试本轮。成功恢复返回 finish 结果，不可恢复返回 null
+   *  （调用方继续走错误上报路径）。两条路径此前各持一份逐字相同的条件与恢复块，
+   *  收紧条件（如同时要求 thinking 为空）时漏改一处即行为分叉。 */
+  const tryOverflowRecovery = async (): Promise<StreamCollectResult | null> => {
+    if (recovered || text.length > 0 || toolCalls.size > 0) return null
+    recovered = true
+    if (await recoverFromOverflow(state, deps)) {
+      return finish({ overflowRecovered: true })
+    }
+    return null
+  }
 
   try {
     // config.fallback 接线：enabled 时按配置重试参数 + 声明同模型的其他 provider 回退。
@@ -177,12 +189,9 @@ export async function* collectStreamChunks(
           break
         case 'error': {
           // 响应式溢出恢复：仅当尚未开始输出且未重试过时，压缩历史并重试本轮
-          const isOverflow = chunk.error.classification === 'context-overflow'
-          if (isOverflow && !recovered && text.length === 0 && toolCalls.size === 0) {
-            recovered = true
-            if (await recoverFromOverflow(state, deps)) {
-              return finish({ overflowRecovered: true })
-            }
+          if (chunk.error.classification === 'context-overflow') {
+            const recoveredResult = await tryOverflowRecovery()
+            if (recoveredResult) return recoveredResult
           }
           yield {
             _tag: 'error',
@@ -199,12 +208,11 @@ export async function* collectStreamChunks(
     }
   } catch (err) {
     // 响应式溢出恢复：provider 抛出的 context-overflow 是生产环境的实际路径
-    // （httpPost 在非 2xx 时抛出已分类的 LLMError），与上方 error chunk 分支同理。
-    if (isContextOverflowFailure(err) && !recovered && text.length === 0 && toolCalls.size === 0) {
-      recovered = true
-      if (await recoverFromOverflow(state, deps)) {
-        return finish({ overflowRecovered: true })
-      }
+    // （httpPost 在非 2xx 时抛出已分类的 LLMError），与上方 error chunk 分支
+    // 共用 tryOverflowRecovery。
+    if (isContextOverflowFailure(err)) {
+      const recoveredResult = await tryOverflowRecovery()
+      if (recoveredResult) return recoveredResult
     }
     const message =
       err instanceof Error

@@ -22,7 +22,7 @@ import {
   resolvePermissionTimeoutAction,
 } from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'
-import { emitSseError } from '../util/sse.js'
+import { emitSseDone, emitSseError } from '../util/sse.js'
 import { childRunBridge, startHeartbeat } from './chat.js'
 
 /**
@@ -67,13 +67,11 @@ function createSlashWorkflowEmitter(stream: SSEStreamingApi): WorkflowChannelEmi
           data: JSON.stringify({ _tag: 'text_delta', text }),
         })
       }
-      await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+      await emitSseDone(stream)
     },
     error: async (e) => {
       await emitSseError(stream, e, { swallow: true })
-      await stream
-        .writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
-        .catch(() => {})
+      await emitSseDone(stream, { swallow: true })
     },
   }
 }

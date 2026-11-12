@@ -115,7 +115,12 @@ async function checkForUpdate(opts: CheckOptions = {}): Promise<UpdateCheckResul
   }
 
   try {
-    const res = await fetchImpl(`${registry}/${pkg}/latest`)
+    // 外呼必须带超时（同仓口径：websearch 30s / mcp 30s / dap 60s）——registry
+    // 半开时无信号 fetch 永久挂起，scheduler 的 runOnce 不 resolve（interval 触发
+    // 会叠加并发请求）、REST checkNow 挂死。
+    const res = await fetchImpl(`${registry}/${pkg}/latest`, {
+      signal: AbortSignal.timeout(30_000),
+    })
     if (!res.ok) {
       // 非 200（404/5xx/限流）→ 检查失败而非无更新
       result.checkError = true

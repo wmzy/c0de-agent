@@ -25,6 +25,7 @@ import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { purgeDeletedKanbanBoards } from '../kanban/index.js'
 import { disconnectMCPServer } from '../mcp/index.js'
+import { deactivateAll } from '../plugins/lifecycle.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import {
   purgeDeletedSessions,
@@ -246,7 +247,8 @@ async function buildServerContext(
 
   // 启动序列（config → registries → 信任门禁 → 插件 → MCP）单一实现在
   // core/bootstrap.ts（信任门禁口径的正本也在其 doc comment）。server 侧生命
-  // 周期差异：持有 pluginRegistry/mcpSessions，供热重载与关闭时断开。
+  // 周期差异：持有 pluginRegistry/mcpSessions，供关闭时断开（dispose 级联里
+  // deactivateAll / disconnectMCPServer）。
   const {
     toolRegistry,
     llmRegistry,
@@ -366,6 +368,13 @@ async function buildServerContext(
       // dev 重建前调用：中止活跃 run + settle pending permission +
       // 停 scheduler + 关 devices.json watcher + 断开 MCP 连接。
       // **不 close db**（调用方持有）。
+      // 插件 dispose 契约在此兑现（onDispose handler + plugin.dispose()）——
+      // 此前 deactivateAll 无任何调用方，插件的清理钩子在真实生命周期中从不执行。
+      try {
+        await deactivateAll(ctx.pluginRegistry)
+      } catch {
+        // 单个插件的 dispose 失败不阻断其余资源清理（deactivateAll 内部逐插件吞错）
+      }
       ctx.agentManager.dispose()
       ctx.permissionStore.dispose()
       ctx.updateScheduler.stop()

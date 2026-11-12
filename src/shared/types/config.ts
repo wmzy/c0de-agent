@@ -185,3 +185,9 @@ export type {
   UsageConfig,
   WebSearchConfig,
 }
+
+/** 合法但不进 DEFAULT_CONFIG 的可选顶层键（缺失=未配置）。单一来源：
+ *  core/config 的 KNOWN_CONFIG_KEYS（服务端未知键校验/告警）与 web 导入校验
+ *  （config-shape）共用——此前两份字面量仅靠注释宣称同集，服务端新增可选键时
+ *  web 会把合法配置判成「未知配置键」拒绝。 */
+export const OPTIONAL_TOP_LEVEL_KEYS: readonly string[] = ['commitModel']

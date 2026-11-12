@@ -85,4 +85,4 @@ async function discoverPlugins(
   return results
 }
 
-export { discoverPlugins, loadPlugin, validatePluginModule }
+export { discoverPlugins, loadPlugin, scanPluginDir, validatePluginModule }

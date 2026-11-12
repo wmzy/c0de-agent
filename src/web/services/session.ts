@@ -1,6 +1,6 @@
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
-import { del, get, patch, post, withProjectId } from '@/services/api.js'
+import { appendQuery, del, get, patch, post, withProjectId } from '@/services/api.js'
 
 import type {
   CompactionArchive,
@@ -76,11 +76,10 @@ const sessionAPI = {
     opts?: { includeSnapshots?: boolean; includePermissions?: boolean },
   ) =>
     get<SessionExport>(
-      `/api/sessions/${id}/export${opts?.includeSnapshots || opts?.includePermissions ? '?' : ''}${
-        opts?.includeSnapshots ? 'includeSnapshots=1' : ''
-      }${opts?.includeSnapshots && opts?.includePermissions ? '&' : ''}${
-        opts?.includePermissions ? 'includePermissions=1' : ''
-      }`,
+      appendQuery(`/api/sessions/${id}/export`, {
+        includeSnapshots: opts?.includeSnapshots ? '1' : undefined,
+        includePermissions: opts?.includePermissions ? '1' : undefined,
+      }),
     ),
   /** 会话导入（导出的逆操作；绑定 projectId 后出现在对应项目视图）。
    *  flattened=true 表示原会话的分支树结构被扁平化为独立根会话（P2）。
@@ -105,7 +104,11 @@ const sessionAPI = {
   /** 跨会话搜索（P2-6）：标题 + 消息内容。includeDeleted 搜索回收站（P3）。 */
   search: (q: string, projectId?: string, includeDeleted = false) =>
     get<{ results: Array<{ session: Session; matchedBy: 'title' | 'content' }> }>(
-      `${withProjectId(`/api/sessions/search?q=${encodeURIComponent(q)}`, projectId)}${includeDeleted ? '&includeDeleted=1' : ''}`,
+      appendQuery('/api/sessions/search', {
+        q,
+        projectId,
+        includeDeleted: includeDeleted ? '1' : undefined,
+      }),
     ),
   /** 会话挂起的权限请求（P1：挂起期间切换页面/刷新后重挂确认弹窗）。 */
   pendingPermission: (sessionId: string) =>

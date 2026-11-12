@@ -17,13 +17,7 @@ export {
 } from './lifecycle.js'
 export { discoverPlugins, loadPlugin, validatePluginModule } from './loader.js'
 export { createLogger } from './logger.js'
-export {
-  createPluginRegistry,
-  getPlugin,
-  listPlugins,
-  registerPlugin,
-  unregisterPlugin,
-} from './registry.js'
+export { createPluginRegistry, registerPlugin } from './registry.js'
 export type {
   HookHandler,
   HookMap,

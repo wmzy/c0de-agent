@@ -35,6 +35,10 @@ function createPluginContext(
           baseURL: provider.baseURL,
           apiKey: provider.apiKey,
         })
+      } else {
+        // 静默丢弃会让插件作者拼错字段名时 provider 无声消失（与 loader 的
+        // 「坏插件告警并跳过」口径一致）。
+        console.warn(`[plugin] registerProvider 跳过无 baseURL 的 provider "${provider.name}"`)
       }
     },
     on: hookRunner.on,
@@ -64,6 +68,9 @@ async function activatePlugin(
   } catch (err) {
     record.status = 'error'
     record.error = err instanceof Error ? err.message : String(err)
+    // 模块加载成功但 setup() 抛错时若不告警，插件静默失效且无任何提示——
+    // 与 loader 的 import 失败告警同前缀口径（initPlugins 不检查 status）。
+    console.warn(`[plugin] "${plugin.name}" setup() 失败：`, record.error)
   }
 }
 

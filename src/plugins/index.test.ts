@@ -49,7 +49,7 @@ describe('initPlugins', () => {
     expect(hookRunner).toBeTruthy()
     expect(typeof hookRunner.on).toBe('function')
 
-    const records = plugins.listPlugins(pluginRegistry)
+    const records = Array.from(pluginRegistry.plugins.values())
     expect(records.some((r) => r.plugin.name === 'tool-audit-log' && r.status === 'active')).toBe(
       true,
     )

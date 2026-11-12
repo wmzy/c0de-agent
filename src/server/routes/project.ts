@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { parse } from 'node:path'
 import { and, eq, isNull } from 'drizzle-orm'
+import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { projects, sessions } from '../../db/schema.js'
 import { softDeleteKanbanBoardsByProject } from '../../kanban/store.js'
@@ -44,6 +45,20 @@ function withBranch(project: Project): ProjectWithBranch {
 
 function createProjectRoute(ctx: ServerContext): Hono {
   const app = new Hono()
+
+  /** 「项目下打开终端 → 409」守卫（relocate 与 delete 共用，仅措辞不同）：
+   *  终端绑定项目 worktree，目录身份变化/注销后 shell 的 cwd 悬空——先关闭再操作。
+   *  返回 409 响应或 undefined（无冲突）。 */
+  const openTerminalsConflict = (c: Context, id: string, action: string) => {
+    const open = ctx.ptyManager.list().filter((t) => t.projectId === id)
+    if (open.length === 0) return undefined
+    return apiError(
+      c,
+      409,
+      'PROJECT_HAS_OPEN_TERMINALS',
+      `项目下有 ${open.length} 个打开的终端，请先关闭终端后再${action}`,
+    )
+  }
 
   // 解析目录并创建/更新项目记录
   app.post('/from-directory', async (c) => {
@@ -144,15 +159,8 @@ function createProjectRoute(ctx: ServerContext): Hono {
     }
     // P2-5：打开的终端守卫——终端绑定项目 worktree，重定位后 shell 仍留在旧目录，
     // cwd 身份悬空。与活跃 run 同语义：先关闭再操作。
-    const openTerminals = ctx.ptyManager.list().filter((t) => t.projectId === id)
-    if (openTerminals.length > 0) {
-      return apiError(
-        c,
-        409,
-        'PROJECT_HAS_OPEN_TERMINALS',
-        `项目下有 ${openTerminals.length} 个打开的终端，请先关闭终端后再重新定位`,
-      )
-    }
+    const terminalConflict = openTerminalsConflict(c, id, '重新定位')
+    if (terminalConflict) return terminalConflict
 
     try {
       const project = await relocateProject(ctx.db, id, directory)
@@ -201,15 +209,8 @@ function createProjectRoute(ctx: ServerContext): Hono {
 
     // P2-5：打开的终端守卫——项目删除后其 worktree 上的 PTY 仍继续运行，
     // cwd 指向已注销身份的目录。与活跃 run 同语义：先关闭再删除。
-    const openTerminals = ctx.ptyManager.list().filter((t) => t.projectId === id)
-    if (openTerminals.length > 0) {
-      return apiError(
-        c,
-        409,
-        'PROJECT_HAS_OPEN_TERMINALS',
-        `项目下有 ${openTerminals.length} 个打开的终端，请先关闭终端后再删除项目`,
-      )
-    }
+    const terminalConflict = openTerminalsConflict(c, id, '删除项目')
+    if (terminalConflict) return terminalConflict
 
     let deletedSessions = 0
     await ctx.db.db.transaction(async (tx) => {

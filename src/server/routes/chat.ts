@@ -41,7 +41,7 @@ import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
 import { resolveSessionScope } from '../util/session-scope.js'
-import { emitSseError } from '../util/sse.js'
+import { emitSseDone, emitSseError } from '../util/sse.js'
 import { resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
 import { createSlashWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
@@ -488,7 +488,7 @@ async function runWorkflowSlashChannel(
           text: `未知工作流："${name}"。可用：${available || '(无)'}`,
         }),
       })
-      await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+      await emitSseDone(stream)
     })
   }
 
@@ -548,7 +548,7 @@ async function dispatchSlashCommand(
           text: `斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）`,
         }),
       })
-      await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+      await emitSseDone(stream)
     })
   }
   // /workflow run 走专用通道（预算/URL 注册表/agentManager 生命周期与 REST 同口径）；
@@ -649,10 +649,10 @@ async function dispatchSlashCommand(
           data: JSON.stringify({ _tag: 'text_delta', text }),
         })
       }
-      await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+      await emitSseDone(stream)
     } catch (e) {
       await emitSseError(stream, e)
-      await stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+      await emitSseDone(stream)
     } finally {
       stopHeartbeat()
     }
@@ -1004,9 +1004,7 @@ async function streamAgentRun(
         // 正常完成路径已在循环中 yield done，doneSent=true 时跳过避免重复。
         // 客户端已断开时 writeSSE 会 reject，吞掉以保证后续 updateSessionLastRun 执行。
         if (!doneSent) {
-          await stream
-            .writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
-            .catch(() => {})
+          await emitSseDone(stream, { swallow: true })
         }
         // 无论正常完成、错误还是 abort，只要服务还活着就标记 completed。
         // 只有服务崩溃/重启才会留下 status='running' → 下次加载检测为 interrupted。

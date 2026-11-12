@@ -109,17 +109,24 @@ export async function runWebSearch(
   abort: AbortSignal,
 ): Promise<WebSearchResponse> {
   const keys = resolveKeys(config)
+  const limit = clampNumResults(input.numResults)
   const apiKeyFor = (provider: WebSearchProvider) =>
     provider.id === 'tavily' ? keys.tavily : provider.id === 'brave' ? keys.brave : undefined
-  const search = (provider: WebSearchProvider) =>
-    provider.search({
+  const search = async (provider: WebSearchProvider): Promise<WebSearchResponse> => {
+    const response = await provider.search({
       query: input.query,
-      limit: clampNumResults(input.numResults),
+      limit,
       recency: input.recency,
       signal: abort,
       apiKey: apiKeyFor(provider),
       fetchImpl: currentFetch(),
     })
+    // 响应侧统一裁剪：请求侧 clamp 的兑现程度因后端而异（tavily 响应侧再 slice、
+    // brave 只传 count 不裁响应、ddg 完全忽略 limit）——numResults=3 时后两者
+    // 仍可能返回十余条，在此补同一刀。
+    response.sources = response.sources.slice(0, limit)
+    return response
+  }
 
   if (config.provider === 'auto') {
     const chain = [tavilyProvider, braveProvider, duckduckgoProvider].filter((p) =>

@@ -1,6 +1,5 @@
 import type { AgentEvent } from '@shared/types/agent.js'
-import { getAuthToken } from '@/services/api.js'
-import type { APIError } from '@/types/index.js'
+import { apiError, getAuthToken, responseToAPIError } from '@/services/api.js'
 
 /** 从单个 SSE 帧文本提取 data 字段并解析为 AgentEvent。 */
 export function parseSSEFrame(frame: string): AgentEvent | null {
@@ -78,24 +77,19 @@ async function sendChatMessage(
   })
 
   if (!response.ok) {
-    // 后端 apiError 返回 { error: { code, message, details? } }；兼容裸 { message } 与无 JSON（fallback statusText）。
-    const body = await response.json().catch(() => ({ message: response.statusText }))
-    const errBody = (
-      body as { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
-    ).error
-    // 401：token 缺失/过期，附可操作指引（从 serve 输出的 URL 重新进入以携带新 token），
-    // 避免只显示裸 statusText。
-    const errMessage =
-      errBody?.message ?? (body as { message?: string }).message ?? response.statusText
-    throw {
-      status: response.status,
-      message:
-        response.status === 401
-          ? `${errMessage}（认证失败，请从 serve 输出的 URL 重新进入）`
-          : errMessage,
-      code: errBody?.code,
-      ...(errBody?.details ? { details: errBody.details } : {}),
-    } as APIError
+    // 错误构造收敛到 api.ts 的 responseToAPIError（与 fetch-fun 管道同一契约：
+    // Error 实例而非普通对象字面量——后者 `err instanceof Error` 恒走 else，
+    // UI 显示 [object Object]；且 401 时派发 c0de-auth-required 让配对 UI 接管，
+    // 与其余全部端点一致）。
+    const err = await responseToAPIError(response)
+    // 401：token 缺失/过期，附可操作指引（从 serve 输出的 URL 重新进入以携带新 token）。
+    if (response.status === 401) {
+      throw apiError({
+        ...err,
+        message: `${err.message}（认证失败，请从 serve 输出的 URL 重新进入）`,
+      })
+    }
+    throw err
   }
 
   const reader = response.body?.getReader()

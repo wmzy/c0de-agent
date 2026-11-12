@@ -1,6 +1,6 @@
 import * as ff from 'fetch-fun'
 import type { APIError } from '@/types/index.js'
-import { sessionSet, storageGet, storageRemove, storageSet } from '@/utils/storage.js'
+import { sessionSet, storageGet, storageSet } from '@/utils/storage.js'
 
 const API_BASE = ''
 
@@ -74,12 +74,6 @@ function bootstrapAuthToken(): void {
 }
 
 bootstrapAuthToken()
-
-/** 清除本地 token（配对拒绝/登出后调用）。 */
-export function clearAuthToken(): void {
-  if (typeof window === 'undefined') return
-  storageRemove(TOKEN_KEY)
-}
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null
@@ -160,8 +154,9 @@ class ApiErrorImpl extends Error {
   }
 }
 
-/** 构造一个既可结构化读取、又能被 instanceof Error 识别的 API 错误。 */
-function apiError(init: APIError): APIError {
+/** 构造一个既可结构化读取、又能被 instanceof Error 识别的 API 错误。
+ *  导出供流式通道（chat.ts）在 responseToAPIError 结果上做文案增强后重建。 */
+export function apiError(init: APIError): APIError {
   return new ApiErrorImpl(init) as APIError
 }
 
@@ -179,6 +174,13 @@ async function toAPIError(e: ff.HTTPError): Promise<APIError> {
       // 非 JSON 错误体：保持 undefined，message 落回 statusText
     }
   }
+  return apiErrorFromBody(e.status, body, e.response.statusText)
+}
+
+/** 错误体 → APIError 的字段解析（fetch-fun 管道与裸 fetch 通道共用）：
+ *  服务端 { error: { code, message, details? } }，兼容旧/裸 { message } 与
+ *  无 JSON（fallback statusText）。 */
+function apiErrorFromBody(status: number, body: unknown, fallbackMessage: string): APIError {
   const errBody = (
     body as
       | { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
@@ -186,12 +188,27 @@ async function toAPIError(e: ff.HTTPError): Promise<APIError> {
   )?.error
   const flat = body as { message?: string; code?: string } | undefined
   return apiError({
-    status: e.status,
-    message: errBody?.message ?? flat?.message ?? e.response.statusText,
+    status,
+    message: errBody?.message ?? flat?.message ?? fallbackMessage,
     ...((errBody?.code ?? flat?.code) ? { code: (errBody?.code ?? flat?.code) as string } : {}),
     // P0-2：details 随错误下发（TRUST_REQUIRED 的风险项等），此前被静默丢弃。
     ...(errBody?.details ? { details: errBody.details } : {}),
   })
+}
+
+/** 裸 fetch 通道（SSE 流式接口不走 fetch-fun 管道）的 Response → APIError：
+ *  与 request() 同一错误契约 + 同一 401 副作用（emitAuthRequired 通知配对 UI
+ *  接管）——此前 401 事件只在 fetch-fun 管道派发，chat 流式通道 token 失效时
+ *  不触发配对流程。 */
+export async function responseToAPIError(response: Response): Promise<APIError> {
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    body = undefined
+  }
+  if (response.status === 401) emitAuthRequired()
+  return apiErrorFromBody(response.status, body, response.statusText)
 }
 
 async function request<T>(
@@ -244,12 +261,28 @@ export function del<T = unknown>(url: string): Promise<T> {
   return request<T>(url, 'DELETE')
 }
 
-/** 把可选 projectId 拼进 URL query：路径已带 ? 用 & 接，否则开 ?；未提供时原样
- *  返回。各 service 曾内联同一份 `${projectId ? \`?projectId=…\` : ''}`（含 `&` 接
- *  与 if 表达式两种变体，约 16 处），URL 逐字符等价，收敛于此。 */
+/** 把非空 query 参数拼进 URL：路径已带 ? 用 & 接，否则开 ?；undefined/null/空串
+ *  跳过；值经 encodeURIComponent。各 service 手写三元拼接（含 `&`/`?` 两种接法）
+ *  的通用收敛，新增 flag 时不会再拼错分隔符。 */
+export function appendQuery(
+  path: string,
+  params: Record<string, string | undefined | null>,
+): string {
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue
+    parts.push(`${key}=${encodeURIComponent(value)}`)
+  }
+  if (parts.length === 0) return path
+  return `${path}${path.includes('?') ? '&' : '?'}${parts.join('&')}`
+}
+
+/** 把可选 projectId 拼进 URL query（appendQuery 的特例）。各 service 曾内联同一份
+ *  `${projectId ? \`?projectId=…\` : ''}`（含 `&` 接与 if 表达式两种变体，约 16 处），
+ *  URL 逐字符等价，收敛于此。 */
 export function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path
-  return `${path}${path.includes('?') ? '&' : '?'}projectId=${encodeURIComponent(projectId)}`
+  return appendQuery(path, { projectId })
 }
 
 export { API_BASE }

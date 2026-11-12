@@ -173,12 +173,12 @@ function toolResultText(output: ToolResult): string {
   return ''
 }
 
-/** 收集可 shake 的区域。纯函数，不修改输入。 */
-export function collectShakeRegions(messages: Message[], config: ShakeConfig): ShakeRegion[] {
+/** accumulatedAfter[i] = i 之后所有 message 的 token 总和。collectShakeRegions 与
+ *  toRegionViews 共用：两处的「保护窗口外」判定必须同源，否则任一侧口径变更
+ *  （如排除 steering token、换 messageTokens 口径）都会让 UI 标记「可 shake」的
+ *  区域与实际会 shake 的区域静默分叉（用户勾了不生效/反之）。 */
+function suffixTokenSums(messages: Message[]): number[] {
   const n = messages.length
-  if (n === 0) return []
-
-  // accumulatedAfter[i] = i 之后所有 message 的 token 总和
   const accumulatedAfter = new Array<number>(n)
   let acc = 0
   for (let i = n - 1; i >= 0; i--) {
@@ -186,6 +186,15 @@ export function collectShakeRegions(messages: Message[], config: ShakeConfig): S
     const m = messages[i]
     if (m) acc += messageTokens(m)
   }
+  return accumulatedAfter
+}
+
+/** 收集可 shake 的区域。纯函数，不修改输入。 */
+export function collectShakeRegions(messages: Message[], config: ShakeConfig): ShakeRegion[] {
+  const n = messages.length
+  if (n === 0) return []
+
+  const accumulatedAfter = suffixTokenSums(messages)
 
   const regions: ShakeRegion[] = []
 
@@ -329,14 +338,7 @@ export function toRegionViews(
   config: ShakeConfig,
   messages: Message[],
 ): ShakeRegionView[] {
-  const n = messages.length
-  const accumulatedAfter = new Array<number>(n)
-  let acc = 0
-  for (let i = n - 1; i >= 0; i--) {
-    accumulatedAfter[i] = acc
-    const m = messages[i]
-    if (m) acc += messageTokens(m)
-  }
+  const accumulatedAfter = suffixTokenSums(messages)
 
   return regions.map((region) => ({
     id: region.id,

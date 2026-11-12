@@ -16,10 +16,7 @@
 // 顶层未知键与 PATCH /api/config 同口径（collectUnknownConfigKeys）：拼写错误
 // 在服务端会被 400 拒绝，提前在导入时指出更省事。
 
-import type { Config } from '@shared/types/config.js'
-
-/** 当前已解析配置里没有、但属于合法顶层键的可选键（服务端 KNOWN_CONFIG_KEYS 同集）。 */
-const OPTIONAL_TOP_LEVEL_KEYS = ['commitModel']
+import { type Config, OPTIONAL_TOP_LEVEL_KEYS } from '@shared/types/config.js'
 
 /** 原型链键：合并/赋值会改写原型而非写入键（服务端 mergeConfig 同口径跳过）。 */
 const PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
@@ -202,5 +199,3 @@ export function normalizeConfigForForm(
   if (!result.ok) return { ok: false, message: result.message }
   return { ok: true, config: result.value as Config }
 }
-
-export { OPTIONAL_TOP_LEVEL_KEYS }

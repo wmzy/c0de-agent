@@ -49,6 +49,23 @@ const reasonMessage = (reason: LLMErrorReason): string => {
   }
 }
 
+/** tool 入参 JSON 解析失败时的容错标记构造（`{ _parseError, _raw }` 契约的单一
+ *  实现点，消费方：协议层 finishAll 与 loop 的 parseToolCallArgs——此前两份手写
+ *  已在消息提取上漂移）。识别方是 core/loop 的 isParseErrorInput；这类入参只
+ *  反馈给模型重试，绝不持久化或渲染。
+ *  parseToolInput 抛 llmError（普通对象，非 Error 实例），直接 String(e) 会退化成
+ *  "[object Object]"——按错误类型提取可读消息。 */
+function parseErrorMarker(e: unknown, raw: string): { _parseError: string; _raw: string } {
+  return {
+    _parseError: isLLMError(e)
+      ? reasonMessage(e.reason)
+      : e instanceof Error
+        ? e.message
+        : String(e),
+    _raw: raw,
+  }
+}
+
 /** Per-reason retry policy. `maxRetries` caps extra attempts; `maxDelay` caps each delay (ms). */
 type RetryPolicy = {
   maxRetries: number
@@ -140,6 +157,7 @@ export {
   isLLMError,
   isToolFailure,
   llmError,
+  parseErrorMarker,
   reasonMessage,
   reasonRetryAfterMs,
   reasonRetryable,

@@ -25,7 +25,8 @@ type ServerContext = {
   urlRegistry: URLRegistry
   /** 插件 hook runner；接入 agent loop 的 tool/provider/message hook。 */
   hookRunner: HookRunner
-  /** 插件注册表（builtin + 已加载外部插件）；供插件管理 API 查询。 */
+  /** 插件注册表（builtin + 已加载外部插件）；dispose 级联里 deactivateAll
+   *  兑现插件 dispose 契约（onDispose handler + plugin.dispose()）。 */
   pluginRegistry: PluginRegistry
   agentManager: AgentManager
   /** 全局权限确认 store（单例），独立于 agent run 生命周期。 */

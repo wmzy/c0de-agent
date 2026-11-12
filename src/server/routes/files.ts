@@ -19,6 +19,7 @@ import {
   listGitBranches,
   performGitCommit,
 } from '../../project/resolve.js'
+import { IGNORED_DIR_NAMES } from '../../shared/utils/path.js'
 import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -58,19 +59,15 @@ type SearchResult = {
   type: 'file' | 'directory'
 }
 
-/** 递归搜索时跳过的目录（体积大/为元数据噪音，避免递归进入）。
- *  P3：补齐常见构建/缓存产物目录——此前只跳 .git/node_modules，
- *  大仓库每击键全量 walk 时 dist/.cache 等目录拖垮延迟。 */
+/** 递归搜索时跳过的目录：以 shared IGNORED_DIR_NAMES 为基（glob/grep 遍历与
+ *  目录搜索同源），叠加文件搜索场景的额外构建/缓存产物（P3：大仓库每击键全量
+ *  walk 时这些目录拖垮延迟）。点开头目录策略与 filesystem.ts 的 searchDirectories
+ *  不同：文件搜索保留 .vscode/.github 等可被 @ 引用的点目录，目录搜索跳过全部
+ *  点开头目录——这是两个端点的产品口径差异，不是遗漏。 */
 const SEARCH_SKIP_DIRS = new Set([
-  '.git',
-  'node_modules',
-  'dist',
-  'build',
-  '.cache',
+  ...IGNORED_DIR_NAMES,
   'coverage',
-  '.next',
   '.nuxt',
-  '.turbo',
   '.parcel-cache',
   '.vite',
   'target',

@@ -1,4 +1,4 @@
-import { isLLMError, llmError, reasonMessage } from '../../schema/errors.js'
+import { llmError, parseErrorMarker } from '../../schema/errors.js'
 import type {
   StreamEvent,
   ToolCallEvent,
@@ -133,16 +133,10 @@ const finishAll = (state: ToolStreamState): FinishAllOutcome => {
     try {
       input = parseToolInput(tool.input)
     } catch (e) {
-      // parseToolInput 抛的是 llmError（普通对象，非 Error 实例），直接 String(e)
-      // 会退化成 "[object Object]"。按错误类型提取可读消息。
-      input = {
-        _parseError: isLLMError(e)
-          ? reasonMessage(e.reason)
-          : e instanceof Error
-            ? e.message
-            : String(e),
-        _raw: tool.input,
-      }
+      // 标记构造与 loop 侧 parseToolCallArgs 同源（llm/schema/errors 的
+      // parseErrorMarker：parseToolInput 抛 llmError 普通对象，需按类型提取消息，
+      // 直接 String(e) 会退化成 "[object Object]"）。
+      input = parseErrorMarker(e, tool.input)
     }
     tools.push({ id: tool.id, name: tool.name, input })
     const call: ToolCallEvent = { type: 'tool-call', id: tool.id, name: tool.name, input }

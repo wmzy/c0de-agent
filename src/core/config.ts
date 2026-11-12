@@ -12,6 +12,7 @@ import type {
   UpdateConfig,
   WebSearchConfig,
 } from '../shared/types/config.js'
+import { OPTIONAL_TOP_LEVEL_KEYS } from '../shared/types/config.js'
 import { coerce, isPrototypeKey, setPathPatch } from './config-path.js'
 import { encryptSecret, isEncryptedSecret } from './secret.js'
 
@@ -488,11 +489,12 @@ export function collectConfigMigrationWarnings(
   return out
 }
 
-/** Config 全部顶层键（DEFAULT_CONFIG + 可选键）。未知顶层键校验与告警共用。 */
+/** Config 全部顶层键（DEFAULT_CONFIG + 可选键）。未知顶层键校验与告警共用。
+ *  可选键清单单一来源：shared/types/config 的 OPTIONAL_TOP_LEVEL_KEYS（web 导入
+ *  校验同源）。 */
 const KNOWN_CONFIG_KEYS = new Set<string>([
   ...Object.keys(DEFAULT_CONFIG),
-  // 可选键不在 DEFAULT_CONFIG 中（缺失=未配置），但属于合法键。
-  'commitModel',
+  ...OPTIONAL_TOP_LEVEL_KEYS,
 ])
 
 /** 收集对象中不属于 Config 顶层键的未知键。 */

@@ -33,6 +33,22 @@ export function configQueryOptions(projectId?: string) {
   }
 }
 
+/** response → ConfigContextValue 的形状拼装（ConfigProvider 与 useConfig 共用）：
+ *  字段增减只改这一处——此前两处内联各自兜底，scopes 的默认对象已逐字重复两次。 */
+function toConfigContextValue(
+  resp: Awaited<ReturnType<typeof configAPI.get>> | undefined,
+  loading: boolean,
+  refresh: () => Promise<void>,
+): ConfigContextValue {
+  return {
+    config: resp?.config ?? null,
+    loading,
+    warnings: resp?.warnings ?? [],
+    scopes: resp?.scopes ?? { global: null, project: null },
+    refresh,
+  }
+}
+
 /**
  * 全局配置上下文（服务启动目录的合并配置）。
  *
@@ -48,15 +64,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, [refetch])
 
   return (
-    <ConfigContext.Provider
-      value={{
-        config: resp?.config ?? null,
-        loading,
-        warnings: resp?.warnings ?? [],
-        scopes: resp?.scopes ?? { global: null, project: null },
-        refresh,
-      }}
-    >
+    <ConfigContext.Provider value={toConfigContextValue(resp, loading, refresh)}>
       {children}
     </ConfigContext.Provider>
   )
@@ -81,12 +89,5 @@ export function useConfig(projectId?: string): ConfigContextValue {
 
   if (!projectId) return serverCtx
 
-  const resp = projectQuery.data
-  return {
-    config: resp?.config ?? null,
-    loading: projectQuery.isLoading,
-    warnings: resp?.warnings ?? [],
-    scopes: resp?.scopes ?? { global: null, project: null },
-    refresh,
-  }
+  return toConfigContextValue(projectQuery.data, projectQuery.isLoading, refresh)
 }

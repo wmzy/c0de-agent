@@ -38,3 +38,18 @@ export async function emitSseError(
   }
   await write
 }
+
+/** SSE done 收尾事件（chat/workflow-run 各通道的 `_tag:'done'` 字面量收敛）。
+ *  swallow 语义同 emitSseError：finally 善后路径（error 后补发 done）不能因
+ *  客户端断开的 writeSSE reject 被跳过。 */
+export async function emitSseDone(
+  stream: SSEStreamingApi,
+  opts: { swallow?: boolean } = {},
+): Promise<void> {
+  const write = stream.writeSSE({ event: 'done', data: JSON.stringify({ _tag: 'done' }) })
+  if (opts.swallow) {
+    await write.catch(() => {})
+    return
+  }
+  await write
+}

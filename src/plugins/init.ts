@@ -1,13 +1,12 @@
 // 插件系统初始化编排（spec §7）：创建 hookRunner + pluginRegistry，激活内置插件，
 // 发现并加载外部插件（.c0de/plugins + ~/.c0de/plugins）。供 server bootstrap 与
 // CLI buildAgentDeps 复用——两处启动路径此前都未接入，导致插件框架存在却永不加载。
-import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Config } from '../shared/types/config.js'
 import { registerBuiltinHooks } from './builtin.js'
 import { createHookRunner } from './hooks.js'
 import { activatePlugin } from './lifecycle.js'
-import { discoverPlugins } from './loader.js'
+import { discoverPlugins, scanPluginDir } from './loader.js'
 import { createPluginRegistry, registerPlugin } from './registry.js'
 import type { HookRunner, PluginRegistry, PluginServices } from './types.js'
 
@@ -56,7 +55,10 @@ async function initPlugins(opts: InitPluginsOptions): Promise<InitPluginsResult>
   const projectPluginsDir = join(opts.cwd, '.c0de', 'plugins')
   if (opts.projectTrusted !== true) {
     try {
-      if (existsSync(projectPluginsDir) && readdirSync(projectPluginsDir).length > 0) {
+      // 判定与发现同源（scanPluginDir 只认「子目录含 index.js」）：此前用
+      // readdirSync(dir).length 判非空，目录里只有散文件（README/.DS_Store）时
+      // 也会误报「已跳过加载插件」。
+      if (scanPluginDir(projectPluginsDir).length > 0) {
         console.warn(
           `[plugin] 项目插件目录 ${projectPluginsDir} 存在插件，但项目尚未被信任（或信任后风险配置/插件代码已变更）——已跳过加载。\n` +
             `  信任/重新确认方式：c0de trust（CLI），或在 Web 界面遇到信任确认时点击「信任项目」；信任后重启 serve 生效。`,

@@ -189,8 +189,8 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     return c.json(board)
   })
 
-  // GET /:projectId/export — 看板 JSON 导出（项目删除会永久级联删除看板，
-  // 会话有 60 天回收站而看板没有——导出是唯一的备份途径）。
+  // GET /:projectId/export — 看板 JSON 导出（项目删除会把看板软删除进 60 天回收站
+  // （/deleted 可恢复），导出是跨保留期的长期备份途径）。
   // peek 语义：纯读不懒建板——导出从未初始化看板的项目此前会凭空产生空板行。
   app.get('/:projectId/export', async (c) => {
     const projectId = c.req.param('projectId')

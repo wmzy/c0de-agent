@@ -1,4 +1,3 @@
-import { encodeMessage } from '../../dap/protocol.js'
 import { createDebugSessionManager, type DebugSpawn } from '../../dap/session.js'
 import type { Breakpoint, DAPConfig, DebugStartInput } from '../../dap/types.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
@@ -223,7 +222,6 @@ const dapTools: ToolDef[] = [
   debugStopTool,
 ]
 
-// re-export for tests/host wiring
 export {
   dapTools,
   debugBreakpointTool,
@@ -234,6 +232,4 @@ export {
   debugStepTool,
   debugStopTool,
   debugVarsTool,
-  encodeMessage,
-  manager,
 }

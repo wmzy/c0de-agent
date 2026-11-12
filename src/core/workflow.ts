@@ -7,8 +7,10 @@
  *     做确定性的多子 agent 工作流分解
  *
  * 复刻自 oh-my-pi 的 modes/workflow.ts，适配 c0de-agent 的 task 工具 schema：
- *  - 批量模式：`{ subagent_type, context, tasks: [{ prompt, description? }] }`
+ *  - 批量模式：`{ subagent_type, context, tasks: [{ assignment, role?, description? }] }`
  *  - 单任务模式：`{ subagent_type?, prompt, description? }`
+ *  （与 tools/builtin/task.ts 的 schema 及下方 WORKFLOW_NOTICE 的 <task-contract> 同口径：
+ *   批量条目必填 assignment，prompt 仅单任务模式合法。）
  */
 import { stripMarkdownCode } from '../shared/utils/markdown-code.js'
 
