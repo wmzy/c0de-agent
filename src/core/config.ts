@@ -440,6 +440,16 @@ async function loadConfig(projectDir?: string): Promise<Config> {
       )
     }
   }
+  // 同口径：usage 的全局口径预算键同样被剥离——security 有明示而 usage 静默
+  // 属口径不对称（用户在项目配置写的全局预算被无声忽略）。复用设置页告警的
+  // 同一 key 探测（读原始文件，strip 前），避免第二份过滤逻辑。
+  const rawUsageKeys = projectGlobalOnlyUsageKeys(projectDir)
+  if (rawUsageKeys.length > 0) {
+    console.warn(
+      `[config] 项目配置含全局口径预算键（${rawUsageKeys.join('、')}，服务端全局参数），已忽略——` +
+        `请在全局配置（${join(resolveGlobalConfigDir(), CONFIG_FILENAME)}）或 c0de config set --global 设置。`,
+    )
+  }
   warnUnknownConfigKeys('global', global)
   warnUnknownConfigKeys('project', project)
   for (const [scope, data] of [

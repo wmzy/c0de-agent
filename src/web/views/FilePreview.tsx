@@ -11,6 +11,7 @@ import { type LineRange, useFileSelection } from '@/contexts/FileSelectionContex
 import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import { getAuthToken } from '@/services/api.js'
+import { appendAuthQuery } from '@/services/authUrl.js'
 import { encodeFilePath, fileAPI } from '@/services/file.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -287,9 +288,11 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
 
   // P1 媒体预览：img/audio/video/embed 无法携带 Authorization 头，
   // 经 ?token= query 认证（服务端仅对 /api/files/*/raw 白名单路径接受）。
-  const projectQuery = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
+  // token/projectId 的 query 拼接与终端 WS URL 同一实现（appendAuthQuery 单源），
+  // 此前这里手判 ?/& 两遍（mediaQuery 一遍、再叠 _r= 重试令牌又一遍）。
   const token = getAuthToken()
-  const mediaQuery = `${projectQuery}${token ? `${projectQuery ? '&' : '?'}token=${encodeURIComponent(token)}` : ''}`
+  const rawPath = `/api/files/${encodeFilePath(path)}/raw`
+  const mediaQuery = appendAuthQuery(rawPath, token, projectId ? { projectId } : undefined)
 
   const q = useQuery({
     queryKey: ['file', path, projectId],
@@ -305,9 +308,10 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   if (isMedia) {
     // 媒体 URL 带上重试令牌：媒体元素同 URL 的失败结果会被浏览器缓存，key 变化
     // 重挂载不够，必须让 URL 变化才会真正重新拉取。
-    const mediaSrc = `/api/files/${encodeFilePath(path)}/raw${mediaQuery}${
-      mediaQuery ? '&' : '?'
-    }_r=${mediaReloadKey}`
+    const mediaSrc = appendAuthQuery(rawPath, token, {
+      ...(projectId ? { projectId } : {}),
+      _r: mediaReloadKey,
+    })
     if (mediaFailed) {
       // 与文本路径的失败三段式同口径（标题 + 说明 + 重试/逃生口）。
       body = (
@@ -416,7 +420,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
           <span className={errorDetail}>{messageOf(err) || '不能以文本方式显示或编辑。'}</span>
           <a
             className={binaryLink}
-            href={`/api/files/${encodeFilePath(path)}/raw${mediaQuery}`}
+            href={mediaQuery}
             target="_blank"
             rel="noreferrer"
             data-testid="file-preview-binary-link"

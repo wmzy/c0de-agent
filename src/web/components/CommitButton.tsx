@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Tooltip } from 'haze-ui'
 import { useState } from 'react'
 import { CommitReviewDialog } from '@/components/CommitReviewDialog.js'
+import { invalidateGitState } from '@/hooks/gitState.js'
 import { fileAPI } from '@/services/file.js'
 import { btnSm } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -181,7 +182,10 @@ export function CommitButton({ projectId }: { projectId: string }) {
       // 提交成功 → 关弹框（若有）、显示成功、刷新状态
       setReviewState(null)
       setCommitFeedback({ kind: 'ok', message: data.message })
-      queryClient.invalidateQueries({ queryKey: ['files', 'git-status', projectId] })
+      // 提交同样改变 last-commit（顶栏 hover 的「最后一次提交」）与分支清单
+      // （unborn branch 的首个提交让分支首次出现）——与切分支同口径失效全部
+      // git 查询，清单单源在 invalidateGitState（此前这里只失效 git-status）。
+      invalidateGitState(queryClient, projectId)
       setTimeout(() => setCommitFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 3000)
     },
     onError: (err: unknown) => {

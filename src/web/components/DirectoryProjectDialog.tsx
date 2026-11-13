@@ -6,6 +6,7 @@ import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
 import { DialogInlineError } from '@/components/DialogInlineError.js'
 import { DirectoryPicker } from '@/components/DirectoryPicker.js'
 import { messageOf } from '@/utils/errors.js'
+import { isImeComposing } from '@/utils/ime.js'
 
 const hintStyle = css`
   font-size: 12px;
@@ -110,6 +111,10 @@ export function DirectoryProjectDialog<T>({
         value={directory}
         onChange={setDirectory}
         onKeyDown={(e) => {
+          // IME 组合中的 Enter 是确认候选词，不是提交表单。DirectoryPicker 的
+          // handleInputKey 目前会在透传前拦截组合键，但宿主不得依赖子组件的
+          // 内部契约——与全仓输入 handler 同口径在消费点自判。
+          if (isImeComposing(e)) return
           if (e.key === 'Enter') submit()
         }}
         placeholder={placeholder}

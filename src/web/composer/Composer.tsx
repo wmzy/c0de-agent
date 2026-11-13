@@ -7,16 +7,10 @@ import { AtFilePopover } from '@/composer/AtFilePopover.js'
 import { AttachmentBar } from '@/composer/AttachmentBar.js'
 import { atMenuItems, atMenuSelection } from '@/composer/at-menu.js'
 import { ComposerEditor } from '@/composer/ComposerEditor.js'
-import { currentCursor } from '@/composer/editor-sync.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
 import { SlashPopover, SubcommandPopover } from '@/composer/SlashPopover.js'
 import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
-import {
-  atTokenRange,
-  extractAgentMentions,
-  promptToText,
-  replacePromptRange,
-} from '@/composer/types.js'
+import { extractAgentMentions } from '@/composer/types.js'
 import type { PopoverState } from '@/composer/useComposer.js'
 import { useComposer } from '@/composer/useComposer.js'
 import { WorkflowPopover } from '@/composer/WorkflowPopover.js'
@@ -443,29 +437,6 @@ function Composer(props: ComposerProps) {
   const atFiles = atMenu.files
   const atTotal = atSubagents.length + atFiles.length
 
-  // 选中 @agent：把光标前的 @query token 原位替换为 @name 文本。
-  // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
-  // pill 被降级为纯文本（发送时 files 附件丢失）。改为 atTokenRange 定位 +
-  // replacePromptRange 原位替换，范围外 part 原样保留。
-  const insertAgentToken = (name: string) => {
-    const prompt = composer.promptRef.current
-    const editor = composer.editorRef.current
-    if (!editor) return false
-    const cursor = currentCursor(editor)
-    const range = atTokenRange(promptToText(prompt), cursor)
-    if (!range) return false
-    const token = `@${name} `
-    composer.setPromptExternal(
-      replacePromptRange(prompt, range.start, range.end, [
-        { type: 'text', content: token, start: 0, end: token.length },
-      ]),
-      true,
-    )
-    composer.setPopover(null)
-    editor.focus()
-    return true
-  }
-
   /**
    * 浮层候选插不进去时的收尾（Enter 专用）。
    *
@@ -507,7 +478,7 @@ function Composer(props: ComposerProps) {
       return !!sub && composer.insertSubcommand(sub.name)
     }
     const selected = atMenuSelection(atMenu, i)
-    if (selected?.kind === 'agent') return insertAgentToken(selected.agent.name)
+    if (selected?.kind === 'agent') return composer.insertAgentToken(selected.agent.name)
     if (selected?.kind === 'file') return composer.insertFile(selected.file.path)
     return false
   }
@@ -732,7 +703,7 @@ function Composer(props: ComposerProps) {
               error={popoverError}
               onRetry={() => void fileSearch.refetch()}
               onSelect={(path) => composer.insertFile(path)}
-              onAgentSelect={insertAgentToken}
+              onAgentSelect={composer.insertAgentToken}
             />
           </div>
         )}

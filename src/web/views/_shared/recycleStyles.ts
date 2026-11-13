@@ -29,6 +29,25 @@ export const errorBar = css`
   border-bottom: 1px solid var(--haze-color-border);
 `
 
+/** 回收站行内动作按钮（恢复/彻底删除/清空/重试等）。原是 RecycleBin 的局部样式，
+ *  ErrorBar（_shared/ErrorBar.tsx）收敛错误条时把重试按钮也统一到它——单一按钮
+ *  样式源，随 errorBar 一并放进共享。 */
+export const restoreBtn = css`
+  flex-shrink: 0;
+  min-height: auto;
+  min-width: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--haze-color-border);
+  border-radius: 4px;
+  background: var(--haze-color-bg);
+  color: var(--haze-color-primary);
+  cursor: pointer;
+  &:hover {
+    border-color: var(--haze-color-primary);
+  }
+`
+
 export const noticeBar = css`
   padding: 6px 12px;
   font-size: 12px;

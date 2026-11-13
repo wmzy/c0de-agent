@@ -384,10 +384,40 @@ describe('Chat 权限模式切换失败', () => {
     expect(screen.getByTestId('permission-mode-set-error').textContent).toContain(
       '权限模式写入被拒绝',
     )
-    // 开关已回滚到服务端真实模式（未勾选），警示 pill 不得残留
-    const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
-    expect(toggle.checked).toBe(false)
+    // 开关已回滚到服务端真实模式（失败后重读 getMode，值在微任务后落地），
+    // 警示 pill 不得残留
+    await waitFor(() => {
+      const toggle = screen.getByTestId('permission-mode-toggle') as HTMLInputElement
+      expect(toggle.checked).toBe(false)
+    })
     expect(screen.queryByTestId('permission-mode-warning')).toBeNull()
+  })
+
+  /**
+   * 回归：切换失败的回滚此前写 `setPermissionMode(permissionMode)`（闭包快照）。
+   * 写入在飞期间其他标签页可能已把该会话切到 auto（本页经 subscribeModeChange
+   * 收到广播）；本页写入失败后拿旧快照回滚，会把别人的切换覆盖回 default——
+   * 底栏显示逐个确认、服务端实际自动授权，是相反的安全结论。回滚必须重读
+   * 服务端、以它的真实值为准。
+   */
+  it('切换失败回滚以服务端为准：他页已切 auto 时不得用闭包旧值盖回去', async () => {
+    vi.mocked(permissionAPI.setMode).mockRejectedValueOnce(new Error('写入被拒绝'))
+    // 首次读取（挂载）= default；失败后的回滚重读 = auto（他页已切换的真实值）
+    vi.mocked(permissionAPI.getMode)
+      .mockResolvedValueOnce({ mode: 'default' } as never)
+      .mockResolvedValueOnce({ mode: 'auto' } as never)
+
+    renderChat()
+    await waitFor(() => {
+      expect((screen.getByTestId('permission-mode-toggle') as HTMLInputElement).checked).toBe(false)
+    })
+
+    fireEvent.click(screen.getByTestId('permission-mode-toggle'))
+    await waitFor(() => expect(screen.getByTestId('permission-mode-set-error')).toBeInTheDocument())
+    // 回滚后开关停在服务端真实值 auto，而非闭包旧值 default
+    await waitFor(() => {
+      expect((screen.getByTestId('permission-mode-toggle') as HTMLInputElement).checked).toBe(true)
+    })
   })
 
   it('重试重发目标模式，成功后错误行消失且开关停在目标模式', async () => {

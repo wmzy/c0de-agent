@@ -5,7 +5,7 @@
  * 会话 CRUD 与常规 metadata 更新见 session.ts；LLM 段管理见 segments.ts。
  */
 import { and, eq, gt, inArray, isNull, lt, notExists, or, type SQL, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
+import { alias, type PgUpdateSetSource } from 'drizzle-orm/pg-core'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
 import { generateId } from '../shared/index.js'
@@ -102,28 +102,13 @@ async function softDeleteSession(handle: DB, id: string): Promise<boolean> {
   // 同一次删除级联共享同一批次号：恢复时仅还原同批次后代，避免把早先
   // 被用户单独删除的分支一并复活（删除/恢复级联的语义不对称缺陷）。
   const batchId = generateId()
-  // 批量化：无回收站标记的行共享一条 update（不覆写 metadata，等价于原样写回）；
-  // 有标记的行（trashSeenAt/purgePendingAt）metadata 互不相同，仍逐行清除。
-  const plainIds: string[] = []
-  const markedRows: Array<{ id: string; meta: SessionMetadata }> = []
-  for (const sid of ids) {
-    const raw = (metas.get(sid) ?? {}) as SessionMetadata
-    const cleaned = clearTrashMarks(raw)
-    if (cleaned === raw) plainIds.push(sid)
-    else markedRows.push({ id: sid, meta: cleaned })
-  }
-  if (plainIds.length > 0) {
-    await handle.db
-      .update(sessions)
-      .set({ deletedAt: now, deletedBatchId: batchId })
-      .where(inArray(sessions.id, plainIds))
-  }
-  for (const { id: sid, meta } of markedRows) {
-    await handle.db
-      .update(sessions)
-      .set({ deletedAt: now, deletedBatchId: batchId, metadata: meta })
-      .where(eq(sessions.id, sid))
-  }
+  // 批量写路径（plain 批量 / marked 逐行）与项目删除的会话腿共用
+  // softDeleteSessionRows，标记清理口径单点。
+  await softDeleteSessionRows(
+    handle.db,
+    [...ids].map((sid) => ({ id: sid, metadata: metas.get(sid) })),
+    { deletedAt: now, deletedBatchId: batchId },
+  )
   return true
 }
 
@@ -136,6 +121,53 @@ function clearTrashMarks(meta: SessionMetadata): SessionMetadata {
   if (typeof meta.trashSeenAt !== 'number' && typeof meta.purgePendingAt !== 'number') return meta
   const { trashSeenAt: _seen, purgePendingAt: _purge, ...rest } = meta
   return rest
+}
+
+/** 软删除 UPDATE 的公共列集：deletedAt/deletedBatchId 必填；调用方可附加
+ *  全行一致的列（含 SQL 列，如项目删除的 worktreePath 补集 coalesce）。 */
+type SessionSoftDeleteSet = PgUpdateSetSource<typeof sessions> & {
+  deletedAt: Date
+  deletedBatchId: string
+}
+
+/** 软删除行的共享写路径（softDeleteSession 的级联腿与项目删除的会话腿共用——
+ *  此前两处平行实现：项目路由在事务内逐行 UPDATE（N+1）且各自内联标记清理，
+ *  口径已现漂移风险）：
+ *  - 无回收站标记的行共享一条批量 UPDATE（不覆写 metadata，等价于原样写回）；
+ *  - 有标记的行（trashSeenAt/purgePendingAt 互异）仍逐行清除标记——A3 口径单点
+ *    （clearTrashMarks 只在此处进入写路径）。
+ *  接受 drizzle 句柄（含事务 tx，供项目删除事务内复用）。返回实际更新的行数。 */
+async function softDeleteSessionRows(
+  db: DB['db'],
+  rows: ReadonlyArray<{ id: string; metadata: unknown }>,
+  baseSet: SessionSoftDeleteSet,
+): Promise<number> {
+  const plainIds: string[] = []
+  const markedRows: Array<{ id: string; meta: SessionMetadata }> = []
+  for (const { id, metadata } of rows) {
+    const raw = (metadata ?? {}) as SessionMetadata
+    const cleaned = clearTrashMarks(raw)
+    if (cleaned === raw) plainIds.push(id)
+    else markedRows.push({ id, meta: cleaned })
+  }
+  let count = 0
+  if (plainIds.length > 0) {
+    const updated = await db
+      .update(sessions)
+      .set(baseSet)
+      .where(inArray(sessions.id, plainIds))
+      .returning({ id: sessions.id })
+    count += updated.length
+  }
+  for (const { id, meta } of markedRows) {
+    const updated = await db
+      .update(sessions)
+      .set({ ...baseSet, metadata: meta })
+      .where(eq(sessions.id, id))
+      .returning({ id: sessions.id })
+    count += updated.length
+  }
+  return count
 }
 
 /**
@@ -670,6 +702,7 @@ export {
   restoreSession,
   restoreSessionCore,
   softDeleteSession,
+  softDeleteSessionRows,
   touchTrashSeen,
   upgradeTemporarySession,
 }

@@ -680,6 +680,34 @@ describe('TopBar', () => {
     })
   })
 
+  // 回归：提交成功后此前只失效 git-status——顶栏 hover 分支名的「最后一次提交」
+  // （git-last-commit，已挂载 + 30s 轮询）停在提交前的旧值，用户刚提交完看到的
+  // 还是上一条。契约：提交与切分支同口径失效全部 git 查询（单源 invalidateGitState）。
+  it('提交成功后失效 git-last-commit（hover 提示不再停在提交前旧值）', async () => {
+    const { fileAPI } = await import('@/services/file.js')
+    ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      'foo.ts': 'modified',
+    })
+    ;(fileAPI.gitCommit as ReturnType<typeof vi.fn>).mockResolvedValue({
+      committed: true,
+      message: 'feat: update foo',
+      hash: 'abc123',
+      fileCount: 1,
+    })
+
+    await renderAtProject('p1')
+    // gitBranch='main' 使 git-last-commit 查询挂载，首次拉取完成
+    await waitFor(() => expect(fileAPI.gitLastCommit).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByTestId('git-commit-btn'))
+    await waitFor(() => {
+      expect(fileAPI.gitCommit).toHaveBeenCalledWith('p1', undefined)
+    })
+
+    // 提交失效 → 已挂载的 git-last-commit 立即重取（修复前它不在失效清单里）
+    await waitFor(() => expect(fileAPI.gitLastCommit).toHaveBeenCalledTimes(2))
+  })
+
   it('提交失败时显示错误状态', async () => {
     const { fileAPI } = await import('@/services/file.js')
     ;(fileAPI.gitStatus as ReturnType<typeof vi.fn>).mockResolvedValue({

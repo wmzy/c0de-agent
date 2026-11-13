@@ -17,8 +17,9 @@ import { fromDirectory } from '../../project/project.js'
 import { createServerContext } from '../context.js'
 import { createFilesRoute } from './files.js'
 
-// mock createSummarizer 以避免真实 LLM 调用；保留 runCompaction 等其他导出
-// 使用 vi.hoisted 以便 per-test 覆盖 LLM 返回值（不同测试需要不同的 JSON 响应）
+// mock createSummarizerWithFallback（git-commit 默认模式的摘要器构造入口）以避免
+// 真实 LLM 调用；保留其他导出。使用 vi.hoisted 以便 per-test 覆盖 LLM 返回值
+//（不同测试需要不同的 JSON 响应）
 const { mockLLMResponse } = vi.hoisted(() => ({
   mockLLMResponse: {
     value: '{"message":"feat: auto-generated commit message","ignoreSuggestions":[]}',
@@ -28,7 +29,7 @@ vi.mock('../../core/compact.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../core/compact.js')>()
   return {
     ...actual,
-    createSummarizer: () => async () => mockLLMResponse.value,
+    createSummarizerWithFallback: () => async () => mockLLMResponse.value,
   }
 })
 

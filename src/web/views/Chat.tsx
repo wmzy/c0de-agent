@@ -740,6 +740,9 @@ export function Chat({
     }
   }, [sessionId, loadPermissionMode, permissionGuard.invalidate])
   const applyPermissionMode = (next: PermissionMode) => {
+    // 新一次切换作废上一轮在飞的读写（含上一轮失败后的回滚读）：晚到的旧响应
+    // 不得覆盖这一次的结果（useScopeGuard 手动模式的「回调起点递增」口径）。
+    permissionGuard.invalidate()
     const gen = permissionGuard.token()
     setPermissionModeError(null)
     setPermissionModeTarget(null)
@@ -753,14 +756,28 @@ export function Chat({
         broadcastModeChange({ sessionId: sessionId ?? null, mode: next })
       })
       .catch((e: unknown) => {
-        // 回滚：此前只有 setPermissionMode(permissionMode)，开关自己弹回去。
+        // 回滚 + 说明：此前只有 setPermissionMode(permissionMode)，开关自己弹回去，
         // 界面「按不动」而无任何说明，用户只会反复点，或以为模式已经切成功。
         // 切会话后不得回滚/报错进新会话（那是把上一条会话的模式写进别人的底栏）。
         if (permissionGuard.stale(gen)) return
         setPermissionModeSaving(null)
-        setPermissionMode(permissionMode)
         setPermissionModeTarget(next)
         setPermissionModeError(messageOf(e))
+        // 回滚值以服务端为准：闭包里的 permissionMode 是发起时的快照，写入在飞
+        // 期间其他标签页可能已切换该会话的模式（本页经 subscribeModeChange 收到
+        // 广播），拿旧快照回滚会把别人的切换覆盖回去——底栏显示逐个确认、服务端
+        // 实际自动授权，是相反的安全结论。重读服务端回到真实值；连读都失败才
+        // 退回本地快照（stale 判定同为 permissionGuard 的世代口径）。
+        permissionAPI
+          .getMode(sessionId)
+          .then((res) => {
+            if (permissionGuard.stale(gen)) return
+            setPermissionMode(res.mode)
+          })
+          .catch(() => {
+            if (permissionGuard.stale(gen)) return
+            setPermissionMode(permissionMode)
+          })
       })
   }
   const togglePermissionMode = () => {

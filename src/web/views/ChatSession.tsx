@@ -450,6 +450,19 @@ export function ChatSession({
     )
   }
 
+  /** resume 真被受理才撤下暂停标记：resume 是「点一下」触发的网络往返，而 run
+   *  在服务端确实停在暂停点。此前先乐观清除——请求失败（500 / 网络中断 / 占位期
+   *  409）时，服务端 run 永远不会自行继续，横幅与顶栏的「恢复」却一起消失：界面
+   *  宣称对话在跑、实际一动不动，新消息还会撞 409「该会话已有进行中的对话」，
+   *  而恢复入口已经没了，只能刷新页面。三个入口（顶栏「恢复」/ run 暂停横幅 /
+   *  冷启动暂停横幅）曾各持一份逐字副本（连注释都三份），收敛于此；clear 传
+   *  各自要撤下的标记。 */
+  const resumeAndClear = (clear: () => void) => {
+    void agent.resume().then((resumed) => {
+      if (resumed) clear()
+    })
+  }
+
   /** 首条消息发送失败（未配 provider/网络中断且无持久化消息）→ 删除空会话回草稿页，
    *  避免每次失败尝试在会话树里留下空「New Session」堆积（P3 空会话治理）。
    *  导航会把 ChatSession 卸载、错误随之消失——失败原因必须跨组件传下去，
@@ -646,16 +659,7 @@ export function ChatSession({
         onRetry={() => void handleRetryLast()}
         retryPending={resendPending}
         onPause={agent.pause}
-        onResume={() => {
-          // 只有 resume 真被受理才撤下暂停标记：它是「点一下」触发的网络往返，
-          // 而 run 在服务端确实停在暂停点。此前先乐观清除——请求失败（500 /
-          // 网络中断 / 占位期 409）时，服务端 run 永远不会自行继续，横幅与顶栏
-          // 的「恢复」却一起消失：界面宣称对话在跑、实际一动不动，新消息还会撞
-          // 409「该会话已有进行中的对话」，而恢复入口已经没了，只能刷新页面。
-          void agent.resume().then((resumed) => {
-            if (resumed) chat.clearRunPaused()
-          })
-        }}
+        onResume={() => resumeAndClear(chat.clearRunPaused)}
         onSteer={chat.steer}
         paused={agent.paused || chat.runPaused}
         controlError={agent.error}
@@ -852,10 +856,9 @@ export function ChatSession({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    // 同上：恢复未生效时横幅必须留着（它同时是唯一的恢复入口）。
-                    void agent.resume().then((resumed) => {
-                      if (resumed) chat.clearRunPaused()
-                    })
+                    // 同上（resumeAndClear）：恢复未生效时横幅必须留着——
+                    // 它同时是唯一的恢复入口。
+                    resumeAndClear(chat.clearRunPaused)
                   }}
                   title="恢复 run：从暂停点继续执行"
                 >
@@ -884,9 +887,7 @@ export function ChatSession({
                     // 活跃 run 仍注册在服务端（页面刷新场景），resume 端点可真正恢复；
                     // 服务重启导致的 paused 已由 status 端点转为 interrupted（走重发路径）。
                     // 失败时横幅留着：它说明 run 仍停在暂停点，也是唯一能恢复它的入口。
-                    void agent.resume().then((resumed) => {
-                      if (resumed) setColdStartPaused(false)
-                    })
+                    resumeAndClear(() => setColdStartPaused(false))
                   }}
                 >
                   继续对话

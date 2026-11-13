@@ -15,7 +15,14 @@ import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
 import { type DeletedKanbanBoard, kanbanAPI, type MergedBoardCounts } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
-import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
+import { ErrorBar } from '@/views/_shared/ErrorBar.js'
+import {
+  empty,
+  errorBar,
+  noticeBar,
+  restoreBtn,
+  searchInput,
+} from '@/views/_shared/recycleStyles.js'
 import { buildDeletedTreeIndex, countDeletedDescendants } from '@/views/_shared/recycleTree.js'
 
 /**
@@ -56,21 +63,6 @@ const deletedRow = css`
     color: var(--haze-color-text-secondary);
     font-size: 11px;
     flex-shrink: 0;
-  }
-`
-const restoreBtn = css`
-  flex-shrink: 0;
-  min-height: auto;
-  min-width: auto;
-  padding: 2px 8px;
-  font-size: 12px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-primary);
-  cursor: pointer;
-  &:hover {
-    border-color: var(--haze-color-primary);
   }
 `
 const sourceBadge = css`
@@ -149,6 +141,89 @@ function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null
 function adoptedNote(restored: { adoptedCount?: number } | undefined): string {
   const n = restored?.adoptedCount ?? 0
   return n > 0 ? `；连带还原的 ${n} 个会话已一并归属` : ''
+}
+
+/** 连带还原的父会话计数（守卫收窄 d 后再取 crossedBatchAncestor 换措辞：
+ *  那次连带还原跨了删除批次）。 */
+function ancestorNote(d: RestoreResult | undefined): string {
+  const n = d?.restoredAncestorCount ?? 0
+  if (n <= 0 || !d) return ''
+  return `${d.crossedBatchAncestor ? '；同时连带还原了' : '；已连带还原'} ${n} 个父会话以保证会话树完整`
+}
+
+/** A2：批次不同的已删后代滞留在回收站，显式提示单独恢复。 */
+function leftBehindNote(d: RestoreResult | undefined): string {
+  const n = d?.leftBehindDescendantCount ?? 0
+  return n > 0 ? `；另有 ${n} 个分支未随本次恢复（删除批次不同），可在回收站单独恢复` : ''
+}
+
+/** POST /api/sessions/:id/restore 的返回（services/session.ts 的 sessionAPI.restore）。 */
+type RestoreResult = Awaited<ReturnType<typeof sessionAPI.restore>>
+
+/**
+ * 恢复成功提示的单一拼装：三个恢复入口（项目行 / 孤儿「恢复到当前项目」/ 孤儿
+ * 「恢复并重建原项目」）的 onSuccess 曾各持一份手写拼装，且孤儿两份把服务端对
+ * 三种模式**都会**返回的 restoredAncestorCount / leftBehindDescendantCount 计数
+ * 整个丢弃——「连带还原了 N 个父会话 / 另有 N 个分支滞留回收站」只在项目行
+ * 可见，而删除项目留下的孤儿分组恰恰最容易带出父会话（那是一整棵树）。
+ * 收敛于此：两个计数提示对三种模式统一生效，mode 只决定主句（恢复落到了
+ * 哪里）；orphaned 随 notice 一起返回，供调用方挂「归属到当前项目」入口。
+ */
+function restoreNotice(
+  s: Pick<Session, 'title' | 'source'>,
+  d: RestoreResult | undefined,
+  mode: 'project' | 'current-project' | 'recreate',
+): { notice: string | null; orphaned: boolean } {
+  /** 主句 + 计数尾注；无尾注时以句号收尾（保持各入口原有文案收口）。 */
+  const withCounts = (core: string): string => {
+    const tail = ancestorNote(d) + leftBehindNote(d)
+    return tail ? core + tail : `${core}。`
+  }
+  if (d?.orphaned) {
+    return {
+      notice: withCounts(`「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目`),
+      orphaned: true,
+    }
+  }
+  if (mode === 'recreate') {
+    // P1-3：自动模式（原目录仍存在）重建项目时明示，不再静默复活用户已删除的项目。
+    if (d?.recreatedProject) {
+      const name = d.recreatedProject.name ?? '未命名项目'
+      return {
+        notice: withCounts(
+          `「${s.title}」已恢复，并重新创建了原项目「${name}」——该项目此前已删除，现在从回收站恢复而重建${adoptedNote(d)}`,
+        ),
+        orphaned: false,
+      }
+    }
+    return {
+      notice: withCounts(`「${s.title}」已恢复并归属到原项目${adoptedNote(d)}`),
+      orphaned: false,
+    }
+  }
+  if (mode === 'current-project') {
+    return {
+      notice: withCounts(`「${s.title}」已恢复并归属到当前项目${adoptedNote(d)}`),
+      orphaned: false,
+    }
+  }
+  // 项目行（mode='project'）：按服务端结果的归属去向分主句。
+  if (d?.rebound) {
+    return {
+      notice: `「${s.title}」已恢复并重新归属到项目${ancestorNote(d)}${adoptedNote(d)}${leftBehindNote(d)}`,
+      orphaned: false,
+    }
+  }
+  if (s.source === 'cli') {
+    // CLI 会话恢复后与 Web 会话同树显示（带 CLI 徽标）；未绑定项目时在
+    // 「CLI 会话（未绑定项目）」分组。
+    return {
+      notice: `「${s.title}」已恢复。CLI 会话与 Web 会话同树显示（未绑定项目时在列表底部分组）。${ancestorNote(d)}${leftBehindNote(d)}`,
+      orphaned: false,
+    }
+  }
+  // 常规恢复无特殊去向：只有连带计数才值得一条提示，否则不打扰。
+  return { notice: (ancestorNote(d) + leftBehindNote(d)).slice(1) || null, orphaned: false }
 }
 
 /** 回收站列表：软删除会话 + 恢复/彻底删除按钮 + 清空回收站。
@@ -299,25 +374,17 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   // 与 KanbanView 的「看板加载失败」保持同一套读失败表达，并给出重试入口。
   if (isError) {
     // 取文案统一走 messageOf：结构化 message 优先、Error.message 兜底，
-    // 网络异常/超时也不会退化成 [object Object]。
-    const message = listError ? messageOf(listError) : null
+    // 网络异常/超时也不会退化成 [object Object]（ErrorBar 的「：原因」拼接同源）。
+    // 重试与整页失败同一条（ErrorBar）：此前按钮单独漂在条下方的空态 div 里，
+    // 且这一条漏了 role=alert——读屏不会在失败发生时主动播报。
     return (
-      <div>
-        <div className={errorBar} data-testid="trash-load-error">
-          回收站加载失败
-          {message ? `：${message}` : '，请稍后重试。'}
-        </div>
-        <div className={empty}>
-          <button
-            type="button"
-            className={restoreBtn}
-            onClick={() => refetch()}
-            data-testid="trash-retry"
-          >
-            重试
-          </button>
-        </div>
-      </div>
+      <ErrorBar
+        label="回收站加载失败"
+        message={listError ? messageOf(listError) : null}
+        onRetry={() => refetch()}
+        testId="trash-load-error"
+        retryTestId="trash-retry"
+      />
     )
   }
   // P1-1：恢复/归属结果 notice 必须独立于「回收站为空」分支——
@@ -546,18 +613,13 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             </div>
           )}
           {searchError && isSearching ? (
-            <div className={errorBar} role="alert" data-testid="trash-search-error">
-              回收站搜索失败
-              {searchErrorMessage ? `：${searchErrorMessage}` : '，请稍后重试。'}{' '}
-              <button
-                type="button"
-                className={restoreBtn}
-                onClick={refetchSearch}
-                data-testid="trash-search-retry"
-              >
-                重试
-              </button>
-            </div>
+            <ErrorBar
+              label="回收站搜索失败"
+              message={searchErrorMessage}
+              onRetry={refetchSearch}
+              testId="trash-search-error"
+              retryTestId="trash-search-retry"
+            />
           ) : null}
           {/* 口径要限定在「本项目」：孤儿分组在下方按标题单独过滤，说成整页的
               「回收站无匹配会话」会与下方那条命中的孤儿行自相矛盾。 */}
@@ -604,36 +666,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                         onError: (e: unknown) => setError(`恢复失败：${messageOf(e)}`),
                         onSuccess: (d) => {
                           setError(null)
-                          const ancestorNote =
-                            (d?.restoredAncestorCount ?? 0) > 0
-                              ? `${d.crossedBatchAncestor ? '；同时连带还原了' : '；已连带还原'} ${d.restoredAncestorCount} 个父会话以保证会话树完整`
-                              : ''
-                          // A2：批次不同的已删后代滞留在回收站，显式提示单独恢复
-                          const leftBehindNote =
-                            (d?.leftBehindDescendantCount ?? 0) > 0
-                              ? `；另有 ${d.leftBehindDescendantCount} 个分支未随本次恢复（删除批次不同），可在回收站单独恢复`
-                              : ''
-                          if (d?.orphaned) {
-                            setNotice(
-                              `「${s.title}」已恢复，但原项目目录已不存在，会话未归属任何项目${ancestorNote}${leftBehindNote}`,
-                            )
-                            setOrphanId(s.id)
-                          } else if (d?.rebound) {
-                            setNotice(
-                              `「${s.title}」已恢复并重新归属到项目${ancestorNote}${adoptedNote(d)}${leftBehindNote}`,
-                            )
-                            setOrphanId(null)
-                          } else if (s.source === 'cli') {
-                            // CLI 会话恢复后与 Web 会话同树显示（带 CLI 徽标）；
-                            // 未绑定项目时在「CLI 会话（未绑定项目）」分组。
-                            setNotice(
-                              `「${s.title}」已恢复。CLI 会话与 Web 会话同树显示（未绑定项目时在列表底部分组）。${ancestorNote}${leftBehindNote}`,
-                            )
-                            setOrphanId(null)
-                          } else {
-                            setNotice((ancestorNote + leftBehindNote).slice(1) || null)
-                            setOrphanId(null)
-                          }
+                          const restored = restoreNotice(s, d, 'project')
+                          setNotice(restored.notice)
+                          setOrphanId(restored.orphaned ? s.id : null)
                         },
                       },
                     )
@@ -667,34 +702,24 @@ export function RecycleBin({ projectId }: { projectId: string }) {
           `?? 0` 把整组连同恢复入口一起吃掉，页面零文字，用户看到的是一个「没有
           孤儿」的回收站，而这些会话会按保留期被静默清除。读不到必须说出来 + 重试。 */}
       {orphanCountError && (
-        <div className={errorBar} role="alert" data-testid="orphan-count-error">
-          未归属项目会话读取失败
-          {orphanCountErrText ? `：${orphanCountErrText}` : '，请稍后重试。'}{' '}
-          <button
-            type="button"
-            className={restoreBtn}
-            onClick={() => void refetchOrphanCount()}
-            data-testid="orphan-count-retry"
-          >
-            重试
-          </button>
-        </div>
+        <ErrorBar
+          label="未归属项目会话读取失败"
+          message={orphanCountErrText}
+          onRetry={() => void refetchOrphanCount()}
+          testId="orphan-count-error"
+          retryTestId="orphan-count-retry"
+        />
       )}
       {/* P2-5：未归属看板读取失败同口径——此前 `?? []` 让整组（连同合并/重建原项目/
           彻底删除）静默消失，用户只会以为没有未归属看板。 */}
       {deletedBoardsError && (
-        <div className={errorBar} role="alert" data-testid="orphan-kanban-error">
-          未归属看板读取失败
-          {deletedBoardsErrText ? `：${deletedBoardsErrText}` : '，请稍后重试。'}{' '}
-          <button
-            type="button"
-            className={restoreBtn}
-            onClick={() => void refetchDeletedBoards()}
-            data-testid="orphan-kanban-retry"
-          >
-            重试
-          </button>
-        </div>
+        <ErrorBar
+          label="未归属看板读取失败"
+          message={deletedBoardsErrText}
+          onRetry={() => void refetchDeletedBoards()}
+          testId="orphan-kanban-error"
+          retryTestId="orphan-kanban-retry"
+        />
       )}
       {(orphanCountData?.count ?? 0) > 0 && (
         <>
@@ -715,18 +740,13 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             </span>
           </div>
           {orphansOpen && orphansError && (
-            <div className={errorBar} role="alert" data-testid="orphan-list-error">
-              未归属项目会话列表读取失败
-              {orphansErrText ? `：${orphansErrText}` : '，请稍后重试。'}{' '}
-              <button
-                type="button"
-                className={restoreBtn}
-                onClick={() => void refetchOrphans()}
-                data-testid="orphan-list-retry"
-              >
-                重试
-              </button>
-            </div>
+            <ErrorBar
+              label="未归属项目会话列表读取失败"
+              message={orphansErrText}
+              onRetry={() => void refetchOrphans()}
+              testId="orphan-list-error"
+              retryTestId="orphan-list-retry"
+            />
           )}
           {orphansOpen && !orphansError && orphansLoading && (
             <div className={deletedRow} data-testid="orphan-list-loading">
@@ -761,12 +781,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                         onError: (e: unknown) => setError(`恢复失败：${messageOf(e)}`),
                         onSuccess: (d) => {
                           setError(null)
-                          setNotice(
-                            d?.orphaned
-                              ? `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`
-                              : `「${s.title}」已恢复并归属到当前项目${adoptedNote(d)}。`,
-                          )
-                          setOrphanId(d?.orphaned ? s.id : null)
+                          const restored = restoreNotice(s, d, 'current-project')
+                          setNotice(restored.notice)
+                          setOrphanId(restored.orphaned ? s.id : null)
                         },
                       },
                     )
@@ -788,23 +805,9 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                         onError: (e: unknown) => setError(`恢复失败：${messageOf(e)}`),
                         onSuccess: (d) => {
                           setError(null)
-                          // P1-3：自动模式（原目录仍存在）重建项目时明示，
-                          // 不再静默复活用户已删除的项目。
-                          const recreated = d?.recreatedProject
-                          if (recreated) {
-                            setNotice(
-                              `「${s.title}」已恢复，并重新创建了原项目「${recreated.name ?? '未命名项目'}」——该项目此前已删除，现在从回收站恢复而重建${adoptedNote(d)}。`,
-                            )
-                            setOrphanId(null)
-                          } else if (d?.orphaned) {
-                            setNotice(
-                              `「${s.title}」已恢复，但原项目目录已不存在，未归属任何项目。`,
-                            )
-                            setOrphanId(s.id)
-                          } else {
-                            setNotice(`「${s.title}」已恢复并归属到原项目。`)
-                            setOrphanId(null)
-                          }
+                          const restored = restoreNotice(s, d, 'recreate')
+                          setNotice(restored.notice)
+                          setOrphanId(restored.orphaned ? s.id : null)
                         },
                       },
                     )

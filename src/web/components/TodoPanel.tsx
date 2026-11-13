@@ -484,6 +484,53 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
     setShowAdd(true)
   }
 
+  /** 新增任务表单（任务描述 + 阶段 + 添加按钮）。此前这份 JSX 整块复制两份
+   *  （清单非空时渲染在正文末尾；空清单/折叠时渲染为独立块），两输入框的
+   *  Enter/Escape+IME handler 与按钮 disabled 条件各持相同实现——收敛为单份，
+   *  两个渲染点只保留各自的显示条件。 */
+  const addTaskForm = (
+    <div className={addForm}>
+      <SyncedInput
+        className={`${inputStyle} ${input}`}
+        placeholder="任务描述…"
+        /* 两个输入框并排且都没有可见 label：显式 aria-label 而不是只靠
+         * placeholder（它只是视觉提示，HTML-AAM 兜底的名字来源很脆弱）。 */
+        aria-label="任务描述"
+        value={newTask}
+        onChange={(v) => setNewTask(v)}
+        onKeyDown={(e) => {
+          // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
+          // 不判定会把未确认的候选当任务内容提交（并关闭输入行）。
+          if (isImeComposing(e)) return
+          if (e.key === 'Enter') handleAdd()
+          if (e.key === 'Escape') setShowAdd(false)
+        }}
+      />
+      <SyncedInput
+        className={`${inputStyle} ${input}`}
+        placeholder="阶段（可选）"
+        aria-label="阶段（可选）"
+        style={{ flex: '0 0 100px' }}
+        value={newPhase}
+        onChange={(v) => setNewPhase(v)}
+        onKeyDown={(e) => {
+          // IME 组合中不拦截（同上）：候选未确认时不提交任务。
+          if (isImeComposing(e)) return
+          if (e.key === 'Enter') handleAdd()
+          if (e.key === 'Escape') setShowAdd(false)
+        }}
+      />
+      <button
+        type="button"
+        className={`${inputStyle} ${addBtn} ${primaryBtn}`}
+        onClick={handleAdd}
+        disabled={!newTask.trim() || execMutation.isPending}
+      >
+        添加
+      </button>
+    </div>
+  )
+
   return (
     <div className={wrapper} data-testid="todo-panel">
       <button
@@ -608,91 +655,11 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
               </div>
             )
           })}
-          {showAdd && (
-            <div className={addForm}>
-              <SyncedInput
-                className={`${inputStyle} ${input}`}
-                placeholder="任务描述…"
-                /* 两个输入框并排且都没有可见 label：显式 aria-label 而不是只靠
-                 * placeholder（它只是视觉提示，HTML-AAM 兜底的名字来源很脆弱）。 */
-                aria-label="任务描述"
-                value={newTask}
-                onChange={(v) => setNewTask(v)}
-                onKeyDown={(e) => {
-                  // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
-                  // 不判定会把未确认的候选当任务内容提交（并关闭输入行）。
-                  if (isImeComposing(e)) return
-                  if (e.key === 'Enter') handleAdd()
-                  if (e.key === 'Escape') setShowAdd(false)
-                }}
-              />
-              <SyncedInput
-                className={`${inputStyle} ${input}`}
-                placeholder="阶段（可选）"
-                aria-label="阶段（可选）"
-                style={{ flex: '0 0 100px' }}
-                value={newPhase}
-                onChange={(v) => setNewPhase(v)}
-                onKeyDown={(e) => {
-                  // IME 组合中不拦截：回车确认候选词/ESC 取消候选由输入法处理——
-                  // 不判定会把未确认的候选当任务内容提交（并关闭输入行）。
-                  if (isImeComposing(e)) return
-                  if (e.key === 'Enter') handleAdd()
-                  if (e.key === 'Escape') setShowAdd(false)
-                }}
-              />
-              <button
-                type="button"
-                className={`${inputStyle} ${addBtn} ${primaryBtn}`}
-                onClick={handleAdd}
-                disabled={!newTask.trim() || execMutation.isPending}
-              >
-                添加
-              </button>
-            </div>
-          )}
+          {showAdd && addTaskForm}
         </div>
       )}
 
-      {showAdd && (collapsed || totalTasks === 0) && (
-        <div className={addForm}>
-          <SyncedInput
-            className={`${inputStyle} ${input}`}
-            placeholder="任务描述…"
-            aria-label="任务描述"
-            value={newTask}
-            onChange={(v) => setNewTask(v)}
-            onKeyDown={(e) => {
-              // IME 组合中不拦截（同上）：候选未确认时不提交任务。
-              if (isImeComposing(e)) return
-              if (e.key === 'Enter') handleAdd()
-              if (e.key === 'Escape') setShowAdd(false)
-            }}
-          />
-          <SyncedInput
-            className={`${inputStyle} ${input}`}
-            placeholder="阶段（可选）"
-            aria-label="阶段（可选）"
-            style={{ flex: '0 0 100px' }}
-            value={newPhase}
-            onChange={(v) => setNewPhase(v)}
-            onKeyDown={(e) => {
-              // IME 组合中不拦截（同上）：候选未确认时不提交任务。
-              if (isImeComposing(e)) return
-              if (e.key === 'Enter') handleAdd()
-              if (e.key === 'Escape') setShowAdd(false)
-            }}
-          />
-          <button
-            type="button"
-            className={`${inputStyle} ${addBtn} ${primaryBtn}`}
-            onClick={handleAdd}
-            disabled={!newTask.trim() || execMutation.isPending}
-          >
-            添加
-          </button>
-        </div>
-      )}
+      {showAdd && (collapsed || totalTasks === 0) && addTaskForm}
 
       {error && (
         <div className={errorText} role="alert">

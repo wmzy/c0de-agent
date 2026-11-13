@@ -4,16 +4,13 @@ import { type Context, Hono } from 'hono'
 import { type SSEStreamingApi, streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { Config } from '../../core/config.js'
-import type { LoopDeps } from '../../core/loop.js'
 import { runManualCompact } from '../../core/loop.js'
 import { preflightRoute } from '../../core/provider-registry.js'
-import { discoverSkills } from '../../core/skills.js'
 import { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
 import type { RegisterChildRun } from '../../core/types.js'
 import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { createWorkflowRegistry, discoverWorkflows } from '../../core/workflows/index.js'
-import { createDebugSpawn } from '../../dap/index.js'
 import type { Registry } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
 import { insertEntry } from '../../session/message.js'
@@ -43,7 +40,7 @@ import { safeResolve } from '../util/safe-path.js'
 import { resolveSessionScope } from '../util/session-scope.js'
 import { emitSseDone, emitSseError } from '../util/sse.js'
 import { resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
-import { createSlashWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
+import { buildLoopDeps, createSlashWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /** getSession 的返回类型（含 null）；路由层守卫块的公共输入。 */
 type ChatSession = Awaited<ReturnType<typeof getSession>>
@@ -171,6 +168,20 @@ export function guardSessionNotBusy(
     return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
   }
   return undefined
+}
+
+/** 「会话启动占位」409 守卫（单点）：tryAcquire 后、register 前的会话尚无
+ *  run state 可供操作（chat 控制端点 abort/pause/resume/steer、session.ts
+ *  DELETE /:id 删除）——返回明确 409 而非静默 false 或写入已删会话。此前
+ *  chat 控制端点闭包内联与 session.ts DELETE 各持一份逐字相同的错误码/文案。 */
+export function guardSessionNotStarting(
+  ctx: ServerContext,
+  c: Context,
+  sessionId: string,
+): Response | undefined {
+  return ctx.agentManager.isStarting(sessionId)
+    ? apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
+    : undefined
 }
 
 /** getLiveSessionOr404 的判别结果：ok=false 时 response 为可直接 return 的 404。 */
@@ -456,10 +467,12 @@ async function runWorkflowSlashChannel(
   },
 ): Promise<Response> {
   const { c, sessionId, projectId, cwd, sessionConfig } = opts
-  // 并发守卫：主 run 活跃时不允许同会话发起工作流（权限弹窗/预算/终端混淆）。
-  if (ctx.agentManager.get(sessionId) || ctx.agentManager.isStarting(sessionId)) {
-    return apiError(c, 409, 'RUN_ACTIVE', '该会话已有进行中的对话，请等待完成或中止后再运行工作流')
-  }
+  // 并发守卫：与其它变更型操作同口径（guardSessionNotBusy 三腿判定）——主 run
+  // 活跃/工作流运行期 → RUN_ACTIVE，启动占位 → RUN_STARTING。此前内联两腿
+  // 判定：漏「工作流运行期同会话再发 /workflow run」（并发工作流穿透 scope
+  // 守卫之外直接执行，权限弹窗/预算混淆），且 starting 误报 RUN_ACTIVE。
+  const busy = guardSessionNotBusy(ctx, c, sessionId, '运行工作流')
+  if (busy) return busy
   const parts = opts.workflowArgs.split(/\s+/).filter(Boolean)
   const name = parts[1]
   if (!name) {
@@ -903,29 +916,15 @@ async function streamAgentRun(
 
         // cwd 已在斜杠拦截前解析，此处直接复用
 
-        // 构建 agent 依赖（注入测试用 chatStream）
-        const deps: LoopDeps = {
-          db: ctx.db,
-          llmRegistry: sessionRegistry,
-          toolRegistry: ctx.toolRegistry,
-          urlRegistry: ctx.urlRegistry,
-          hookRunner: ctx.hookRunner,
-          permission: permissionChecker,
-          config: sessionConfig,
-          agentRegistry: ctx.agentRegistry,
-          registerChildRun: childRunBridge(ctx.agentManager),
+        // 构建 agent 依赖（单点组装：buildLoopDeps，见 workflow-run.ts；此处
+        // 经 ctx.chatStream 注入测试用流函数）
+        const deps = buildLoopDeps(ctx, {
           cwd,
-          // 技能发现（system prompt ## Loaded Skills 段数据源）。
-          skills: discoverSkills(cwd),
-          // DAP（spec §21）：Web 宿主注入真实适配器 spawn（与 CLI 同口径）。
-          debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
-          // P3 成本护栏：会话项目配置任一轴动作为 'pause'/'abort' 时启用预算检查。
-          // 具体 pause/abort 由 budgetOverageParts 按超支轴配置动作判定（abort >
-          // pause），此处仅注入「启用」门禁——修 P1 双轴动作坍缩（此前 pause 分支
-          // 优先，金额=abort+token=pause 等混合配置被静默降级为暂停）。
-          ...(budgetGateEnabled(sessionConfig.usage) ? { budgetPause: true } : {}),
-          ...(ctx.chatStream ? { chatStream: ctx.chatStream } : {}),
-        }
+          llmRegistry: sessionRegistry,
+          config: sessionConfig,
+          permission: permissionChecker,
+          chatStream: ctx.chatStream,
+        })
 
         const agentConfig: AgentConfig = {
           provider,
@@ -1032,6 +1031,23 @@ async function streamAgentRun(
   }
 }
 
+/** 控制端点（/abort /pause /resume /steer）目标解析单点：发起会话在工作流
+ *  运行期（workflowBusyBySession）无主 run——操作路由到实际的工作流 run；
+ *  非工作流态下启动占位期无 state 可操作 → 409 RUN_STARTING。此前 /pause
+ *  /resume 逐字重复「工作流路由 + targetId + 条件 starting 守卫」骨架，
+ *  /abort /steer 各持变体，先后口径易漂移；级联/中止动作本身留在各端点。 */
+function resolveControlTarget(
+  ctx: ServerContext,
+  c: Context,
+  sessionId: string,
+): { ok: true; targetId: string } | { ok: false; response: Response } {
+  const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
+  if (busyWorkflowId) return { ok: true, targetId: busyWorkflowId }
+  const starting = guardSessionNotStarting(ctx, c, sessionId)
+  if (starting) return { ok: false, response: starting }
+  return { ok: true, targetId: sessionId }
+}
+
 function createChatRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -1092,57 +1108,40 @@ function createChatRoute(ctx: ServerContext): Hono {
 
   // 控制端点
   // P0-4：占位中的会话（tryAcquire 后、register 前）run 尚无 state 可供
-  // abort/pause/resume/steer 操作——返回明确 409 而非静默 false 或崩溃。
-  const runStarting = (c: Context, sessionId: string): Response | undefined =>
-    ctx.agentManager.isStarting(sessionId)
-      ? apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
-      : undefined
-
+  // abort/pause/resume/steer 操作——返回明确 409 而非静默 false 或崩溃
+  //（守卫单点：guardSessionNotStarting / resolveControlTarget）。
   app.post('/abort', async (c) => {
     // 畸形 JSON / 非对象 body / 缺 sessionId → 400（与其他写端点同口径）。
     // 此前裸 destructure：畸形 JSON 击穿 Hono 500，null body 在解构处
-    // TypeError 500，缺 sessionId 静默回 { aborted: false }。
+    // TypeError 500，缺 sessionId 静默返回 { aborted: false }。
     const parsed = await readSessionIdBody(c)
     if (!parsed.ok) return parsed.response
-    const { sessionId } = parsed
     // 工作流运行期间发起会话无主 run：中止请求路由到实际的工作流 run。
-    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
-    if (busyWorkflowId) {
-      return c.json({ aborted: ctx.agentManager.abort(busyWorkflowId) })
-    }
-    return runStarting(c, sessionId) ?? c.json({ aborted: ctx.agentManager.abort(sessionId) })
+    const target = resolveControlTarget(ctx, c, parsed.sessionId)
+    if (!target.ok) return target.response
+    return c.json({ aborted: ctx.agentManager.abort(target.targetId) })
   })
 
   app.post('/pause', async (c) => {
     const parsed = await readSessionIdBody(c)
     if (!parsed.ok) return parsed.response
-    const { sessionId } = parsed
+    const target = resolveControlTarget(ctx, c, parsed.sessionId)
+    if (!target.ok) return target.response
     // 级联子 run（P1：子 agent 现已注册，暂停主 run 必须一并暂停——
     // 否则后台子 agent 在用户认为「已暂停」时继续执行）。
-    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
-    const targetId = busyWorkflowId ?? sessionId
-    if (!busyWorkflowId) {
-      const starting = runStarting(c, sessionId)
-      if (starting) return starting
-    }
-    const paused = ctx.agentManager.pauseCascade(targetId)
+    const paused = ctx.agentManager.pauseCascade(target.targetId)
     return c.json({ paused })
   })
 
   app.post('/resume', async (c) => {
     const parsed = await readSessionIdBody(c)
     if (!parsed.ok) return parsed.response
-    const { sessionId } = parsed
-    // 权限超时暂停工作流后，发起会话展示「恢复」按钮——路由到工作流 run 真正恢复。
-    // 级联恢复子 run：暂停时子 run 一并暂停，仅恢复主 run 会让父的工具批次
-    // 永远等待已暂停的子 agent（死锁）。
-    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
-    const targetId = busyWorkflowId ?? sessionId
-    if (!busyWorkflowId) {
-      const starting = runStarting(c, sessionId)
-      if (starting) return starting
-    }
-    const resumed = ctx.agentManager.resumeCascade(targetId)
+    const target = resolveControlTarget(ctx, c, parsed.sessionId)
+    if (!target.ok) return target.response
+    // 权限超时暂停工作流后，发起会话展示「恢复」按钮——目标解析已路由到
+    // 工作流 run。级联恢复子 run：暂停时子 run 一并暂停，仅恢复主 run 会让
+    // 父的工具批次永远等待已暂停的子 agent（死锁）。
+    const resumed = ctx.agentManager.resumeCascade(target.targetId)
     return c.json({ resumed })
   })
 
@@ -1150,14 +1149,13 @@ function createChatRoute(ctx: ServerContext): Hono {
     const parsed = await readSessionIdBody(c)
     if (!parsed.ok) return parsed.response
     const { sessionId, body } = parsed
-    const starting = runStarting(c, sessionId)
-    if (starting) return starting
+    const target = resolveControlTarget(ctx, c, sessionId)
+    if (!target.ok) return target.response
     const message = typeof body.message === 'string' ? body.message.trim() : ''
     if (!message) return c.json({ steered: false })
-    // P1 工作流路由：工作流运行期间 steer 目标为实际的 workflow run
-    //（此前 steer 恒 false、指令静默丢失，用户以为已生效）。
-    const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
-    const steered = ctx.agentManager.steer(busyWorkflowId ?? sessionId, message)
+    // P1 工作流路由：目标解析（resolveControlTarget）已路由到实际 workflow run
+    //（此前恒 false、指令静默丢失，用户以为已生效）。
+    const steered = ctx.agentManager.steer(target.targetId, message)
     // P0 闭环：steering 持久化为会话条目——用户运行中输入追加指令曾是内存瞬态，
     // 刷新后彻底丢失；现在与消息同样入史（context 重建时作为 system 消息注入，
     // 时间线经 /messages 渲染为 user steering 块）。

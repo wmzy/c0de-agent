@@ -1530,6 +1530,47 @@ describe('/workflow run 专用斜杠通道', () => {
     expect(body.error.code).toBe('RUN_ACTIVE')
   })
 
+  it('工作流运行期间同会话再发 /workflow run → chat 层 409 RUN_ACTIVE（并发工作流拦截）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    ctx.workflowRegistry?.register(TRIVIAL_WF)
+    // 该会话已有进行中的工作流：此前斜杠通道内联守卫只查 agentManager 两腿，
+    // 漏 workflowBusyBySession——第二次 /workflow run 穿透到 scope 守卫之外
+    // 直接并发执行（同会话权限弹窗/预算混淆）。
+    ctx.workflowBusyBySession.set(sessionId, 'wf-running')
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/workflow run slash-wf' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+
+    // 守卫先于 createSession：不残留空工作流会话行
+    const all = await listAllSessions(dbHandle as DB)
+    expect(all.filter((s) => s.agentType === 'workflow')).toHaveLength(0)
+  })
+
+  it('启动占位期（tryAcquire 后）发 /workflow run → 409 RUN_STARTING（与变更型操作同口径）', async () => {
+    const { app, ctx, sessionId } = await setup()
+    ctx.workflowRegistry?.register(TRIVIAL_WF)
+    // 模拟 POST 已通过并发守卫、SSE 回调尚未 register 的窗口
+    expect(ctx.agentManager.tryAcquire(sessionId)).toBe(true)
+
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: '/workflow run slash-wf' }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string } }
+    // 此前内联守卫把 starting 误报为 RUN_ACTIVE；收敛 guardSessionNotBusy 后
+    // 与其它变更型操作同口径（RUN_STARTING）。
+    expect(body.error.code).toBe('RUN_STARTING')
+    ctx.agentManager.unregister(sessionId)
+  })
+
   it('工作流运行期间对发起会话 abort/pause/resume → 路由到工作流 run', async () => {
     const { app, ctx, sessionId } = await setup()
     ctx.workflowBusyBySession.set(sessionId, 'wf-running')

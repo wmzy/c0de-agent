@@ -3,8 +3,7 @@ import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { type Context, Hono } from 'hono'
 import trash from 'trash'
-import { createSummarizer } from '../../core/compact.js'
-import { buildFallbackChain } from '../../llm/routing.js'
+import { createSummarizerWithFallback } from '../../core/compact.js'
 import { getProject } from '../../project/project.js'
 import {
   appendToGitignore,
@@ -353,11 +352,15 @@ ${headChars(summary.diff, 8000)}`
 
     let raw: string
     try {
-      const fallback = buildFallbackChain(projectConfig, provider, model)
-      const summarizer = createSummarizer(projectRegistry, provider, model, {
-        maxTokens: 400,
-        ...(fallback ? { fallback } : {}),
-      })
+      // createSummarizer + buildFallbackChain 组合收敛在 createSummarizerWithFallback
+      //（与 session.ts POST /:id/compact 同一份构造骨架；此处额外限 maxTokens）。
+      const summarizer = createSummarizerWithFallback(
+        projectRegistry,
+        projectConfig,
+        provider,
+        model,
+        { maxTokens: 400 },
+      )
       raw = (await summarizer(prompt)).trim()
     } catch (err) {
       return apiError(c, 502, 'LLM_ERROR', `Failed to generate commit message: ${String(err)}`)

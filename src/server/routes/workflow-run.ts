@@ -126,6 +126,48 @@ interface RunWorkflowChannelOptions {
   createEmitter: (stream: SSEStreamingApi) => WorkflowChannelEmitter
 }
 
+/**
+ * LoopDeps 完整字段清单单点组装：主 chat 通道（chat.ts streamAgentRun）与本
+ * 工作流通道此前两份手写，斜杠副本曾漂移（缺 skills/debugSpawn）。差异全部
+ * 显式参数化：执行目录、会话级注册表/配置、权限 checker；chatStream 仅主
+ * chat 通道注入（ctx.chatStream 测试替身，工作流通道用生产默认）。chat.ts
+ * dispatchSlashCommand 的 commandCtx.deps 是有意为之的**非完整** LoopDeps
+ * （列表/查询类命令消费），不经此组装。
+ */
+export function buildLoopDeps(
+  ctx: ServerContext,
+  opts: {
+    cwd: string
+    llmRegistry: Registry
+    config: Config
+    permission: LoopDeps['permission']
+    chatStream?: LoopDeps['chatStream']
+  },
+): LoopDeps {
+  return {
+    db: ctx.db,
+    llmRegistry: opts.llmRegistry,
+    toolRegistry: ctx.toolRegistry,
+    urlRegistry: ctx.urlRegistry,
+    hookRunner: ctx.hookRunner,
+    permission: opts.permission,
+    config: opts.config,
+    agentRegistry: ctx.agentRegistry,
+    registerChildRun: childRunBridge(ctx.agentManager),
+    cwd: opts.cwd,
+    // 技能发现（system prompt ## Loaded Skills 段数据源）。
+    skills: discoverSkills(opts.cwd),
+    // DAP（spec §21）：Web 宿主注入真实适配器 spawn（与 CLI 同口径）。
+    debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
+    // P3 成本护栏：会话项目配置任一轴动作为 'pause'/'abort' 时启用预算检查。
+    // 具体 pause/abort 由 budgetOverageParts 按超支轴配置动作判定（abort >
+    // pause），此处仅注入「启用」门禁——修 P1 双轴动作坍缩（此前 pause 分支
+    // 优先，金额=abort+token=pause 等混合配置被静默降级为暂停）。
+    ...(budgetGateEnabled(opts.config.usage) ? { budgetPause: true } : {}),
+    ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
+  }
+}
+
 /** 执行工作流并返回 SSE 响应（见模块注释；调用方保留各自的外壳与文案）。 */
 async function runWorkflowChannel(
   ctx: ServerContext,
@@ -232,25 +274,13 @@ async function runWorkflowChannel(
             ctx.agentManager.pauseCascade(workflowSession.id, opts.permissionPauseReason),
         })
 
-        // deps 单点组装：两通道此前各自复制，斜杠副本已漂移（缺 skills/debugSpawn）。
-        const deps = {
-          db: ctx.db,
-          llmRegistry: opts.sessionRegistry,
-          toolRegistry: ctx.toolRegistry,
-          urlRegistry: ctx.urlRegistry,
-          hookRunner: ctx.hookRunner,
-          permission: permissionChecker,
-          config: opts.sessionConfig,
+        // deps 组装收敛在 buildLoopDeps（与主 chat 通道共用同一份字段清单）。
+        const deps = buildLoopDeps(ctx, {
           cwd,
-          agentRegistry: ctx.agentRegistry,
-          registerChildRun: childRunBridge(ctx.agentManager),
-          // 技能发现（system prompt ## Loaded Skills 段数据源）。
-          skills: discoverSkills(cwd),
-          // DAP（spec §21）：与主 chat/CLI 通道同口径注入真实适配器 spawn。
-          debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
-          // 预算护栏：与主 chat 路由同口径（金额/token 任一轴 pause/abort 即启用）。
-          ...(budgetGateEnabled(opts.sessionConfig.usage) ? { budgetPause: true } : {}),
-        }
+          llmRegistry: opts.sessionRegistry,
+          config: opts.sessionConfig,
+          permission: permissionChecker,
+        })
 
         const parent = await createAgent(workflowSession, agentConfig, deps)
         ctx.agentManager.register({ sessionId: workflowSession.id, state: parent, deps })

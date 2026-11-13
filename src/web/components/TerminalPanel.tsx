@@ -320,6 +320,30 @@ const createFailDismissStyle = css`
 `
 
 /**
+ * 分隔条尺寸调整的单一实现（此前拖拽 onMove 与键盘 onDividerKeyDown 两份手写，
+ * 边界保护与最小 pane 约束各持一份已现漂移风险）。对 sizes 中相邻两 pane
+ * （leftIdx / leftIdx+1）施加 deltaFraction（与 sizes 同单位，左增右减）；
+ * 索引越界或任一侧低于 minFlex 时返回 null，调用方放弃本次调整。
+ */
+function resizePair(
+  sizes: number[],
+  leftIdx: number,
+  deltaFraction: number,
+  minFlex: number,
+): number[] | null {
+  const left = sizes[leftIdx]
+  const right = sizes[leftIdx + 1]
+  if (left === undefined || right === undefined) return null
+  const newLeft = left + deltaFraction
+  const newRight = right - deltaFraction
+  if (newLeft < minFlex || newRight < minFlex) return null
+  const newSizes = [...sizes]
+  newSizes[leftIdx] = newLeft
+  newSizes[leftIdx + 1] = newRight
+  return newSizes
+}
+
+/**
  * 终端面板：底部可拖拽调整高度的容器，支持多标签页和 VSCode 风格分屏。
  *
  * - 标签栏：切换 / 新建(+) / 关闭(×)
@@ -550,22 +574,8 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
       const onMove = (ev: PointerEvent) => {
         const delta = direction === 'horizontal' ? ev.clientX - e.clientX : ev.clientY - e.clientY
         const deltaFraction = (delta / totalSize) * total
-
-        const left = sizes[leftIdx]
-        const right = sizes[leftIdx + 1]
-        // 边界保护：索引越界时放弃本次调整
-        if (left === undefined || right === undefined) return
-        const newLeft = left + deltaFraction
-        const newRight = right - deltaFraction
-
-        // 最小 pane 约束
-        const minFlex = minPaneFlex * total
-        if (newLeft < minFlex || newRight < minFlex) return
-
-        const newSizes = [...sizes]
-        newSizes[leftIdx] = newLeft
-        newSizes[leftIdx + 1] = newRight
-        setPaneSizes(tabId, newSizes)
+        const newSizes = resizePair(sizes, leftIdx, deltaFraction, minPaneFlex * total)
+        if (newSizes) setPaneSizes(tabId, newSizes)
       }
 
       const onUp = () => {
@@ -589,18 +599,8 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
       if (!tab) return
       const sizes = [...tab.split.sizes]
       const total = sizes.reduce((a, b) => a + b, 0) || 1
-      const left = sizes[leftIdx]
-      const right = sizes[leftIdx + 1]
-      if (left === undefined || right === undefined) return
-      const deltaFraction = delta * total
-      const newLeft = left + deltaFraction
-      const newRight = right - deltaFraction
-      const minFlex = minPaneFlex * total
-      if (newLeft < minFlex || newRight < minFlex) return
-      const newSizes = [...sizes]
-      newSizes[leftIdx] = newLeft
-      newSizes[leftIdx + 1] = newRight
-      setPaneSizes(tabId, newSizes)
+      const newSizes = resizePair(sizes, leftIdx, delta * total, minPaneFlex * total)
+      if (newSizes) setPaneSizes(tabId, newSizes)
     },
     [tabs, setPaneSizes, minPaneFlex],
   )

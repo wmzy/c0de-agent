@@ -58,9 +58,21 @@ vi.mock('@/services/config.js', () => ({
   },
 }))
 
-/** 把裸 Config（测试夹具的松散字面量）包装成 GET/PATCH /api/config 的响应结构。 */
-function wrapConfig(config: unknown): { config: Partial<Config> } {
-  return { config: config as Partial<Config> }
+/** 把裸 Config（测试夹具的松散字面量）包装成 GET/PATCH /api/config 的响应结构。
+ *  scopes 的 global 侧带一个 provider：普通保存用例不经过首跑作用域引导
+ *  （那是下方三条专用用例覆盖的流程）；此前 wrapConfig 不带 scopes，首跑
+ *  引导靠 happy-dom 的 window.confirm 恒返 false 静默落项目作用域——引导
+ *  改为站内弹层后保存会被挂起，这些用例必须显式避开引导。 */
+function wrapConfig(config: unknown): {
+  config: Partial<Config>
+  scopes: { global: { providers: unknown[] }; project: Record<string, never> }
+  warnings: []
+} {
+  return {
+    config: config as Partial<Config>,
+    scopes: { global: { providers: [{}] }, project: {} },
+    warnings: [],
+  }
 }
 
 vi.mock('@/services/provider.js', () => ({
@@ -546,8 +558,9 @@ describe('Settings — Provider 管理', () => {
   })
 
   // P1-1：首跑作用域引导——全局与当前项目都还没有 provider、且本次保存引入了
-  // provider 时，弹一次「全局 or 项目」确认；确认后写入全局作用域（所有项目与
-  // CLI 可见），作用域选择器同步。
+  // provider 时，弹一次「全局 or 项目」确认（站内 ConfirmDialog，替代原生
+  // confirm——原生框回车默认落在「确定」=全局）；确认后写入全局作用域（所有
+  // 项目与 CLI 可见），作用域选择器同步。
   it('首跑保存 provider：确认 → 写入全局作用域', async () => {
     const { configAPI } = await import('@/services/config.js')
     ;(configAPI.get as Mock).mockResolvedValue({
@@ -556,7 +569,6 @@ describe('Settings — Provider 管理', () => {
       warnings: [],
     })
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -568,11 +580,13 @@ describe('Settings — Provider 管理', () => {
     })
     fireEvent.click(screen.getByTestId('settings-save'))
 
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(dialog.querySelector('[data-slot="confirm-button"]') as HTMLElement)
+
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
     const [, scopeArg] = (configAPI.update as Mock).mock.calls[0] ?? []
     expect(scopeArg).toBe('global')
     expect(screen.getByTestId('scope-select')).toHaveProperty('value', 'global')
-    vi.unstubAllGlobals()
   })
 
   it('首跑保存 provider：取消 → 保持项目作用域', async () => {
@@ -583,7 +597,6 @@ describe('Settings — Provider 管理', () => {
       warnings: [],
     })
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -595,10 +608,13 @@ describe('Settings — Provider 管理', () => {
     })
     fireEvent.click(screen.getByTestId('settings-save'))
 
+    // 「仅保存到当前项目」：保存继续，只是作用域不同（与原生 confirm 的取消语义一致）
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(dialog.querySelector('[data-slot="cancel-button"]') as HTMLElement)
+
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
     const [, scopeArg] = (configAPI.update as Mock).mock.calls[0] ?? []
     expect(scopeArg).toBe('project')
-    vi.unstubAllGlobals()
   })
 
   it('全局已有 provider 时不弹确认（用户已做出作用域选择）', async () => {
@@ -609,8 +625,6 @@ describe('Settings — Provider 管理', () => {
       warnings: [],
     })
     ;(configAPI.update as Mock).mockResolvedValue(mockConfig)
-    const confirmSpy = vi.fn().mockReturnValue(true)
-    vi.stubGlobal('confirm', confirmSpy)
 
     renderSettings()
     await waitFor(() => expect(screen.getByTestId('provider-add')).toBeTruthy())
@@ -623,10 +637,10 @@ describe('Settings — Provider 管理', () => {
     fireEvent.click(screen.getByTestId('settings-save'))
 
     await waitFor(() => expect(configAPI.update).toHaveBeenCalled())
-    expect(confirmSpy).not.toHaveBeenCalled()
+    // 不再碰原生 confirm；站内弹层也不出现（用户此前已做出作用域选择）
+    expect(screen.queryByRole('dialog')).toBeNull()
     const [, scopeArg] = (configAPI.update as Mock).mock.calls[0] ?? []
     expect(scopeArg).toBe('project')
-    vi.unstubAllGlobals()
   })
 
   it('测试成功后将检测到的模型写入 provider.models，保存时一并提交', async () => {

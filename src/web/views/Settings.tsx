@@ -223,6 +223,16 @@ export function Settings() {
   // 删 MCP 行）都有二审——覆盖面最大的一次覆盖反而是唯一没有确认的。
   const [pendingImport, setPendingImport] = useState<Partial<Config> | null>(null)
 
+  // P1-1 首跑作用域引导：全局与当前项目都还没有 provider、且本次保存引入了
+  // provider 时，暂存这次保存的载荷交给下方 ConfirmDialog 选择作用域。此前用
+  // window.confirm——回车默认落在「确定」=全局作用域，且原生框无样式、阻塞
+  // 事件循环，与 pendingScope / pendingImport 的站内弹层口径相悖。
+  const [pendingFirstRunScope, setPendingFirstRunScope] = useState<{
+    patch: Partial<Config>
+    saveableDraft: Partial<Config>
+    restoredCount: number
+  } | null>(null)
+
   // dirty 仅指「需手动保存的草稿」；外观面板即时生效、不进 draft，不影响此判定。
   const isDirty = draft !== null
   // 未保存导航防护（native-router useBlocker，模板口径）：覆盖全部离开通道——
@@ -441,7 +451,8 @@ export function Settings() {
     // provider 时，用户大概率以为在配置「本机 AI 服务」——默认落项目作用域会让
     // 配置在其他项目与 CLI（c0de chat）不可见。给一次「全局 or 项目」选择；
     // 项目作用域已有 provider（= 用户此前已选择过）时不再打扰。
-    let effectiveScope: 'global' | 'project' = scope
+    // 保存挂起，选择结果见 pendingFirstRunScope 的 ConfirmDialog（载荷按这一刻
+    // 的草稿定格：patch 与密钥回退草稿都已算好，重走一遍会算出不同结果）。
     const globalProviders = Array.isArray(resp?.scopes?.global?.providers)
       ? (resp.scopes.global.providers as unknown[])
       : []
@@ -452,30 +463,33 @@ export function Settings() {
       scope === 'project' &&
       (patch as Record<string, unknown>).providers !== undefined &&
       globalProviders.length === 0 &&
-      projectProviders.length === 0 &&
-      typeof window.confirm === 'function'
+      projectProviders.length === 0
     ) {
-      const useGlobal = window.confirm(
-        '本机全局配置中还没有任何 AI 服务。\n\n' +
-          '「确定」= 保存到全局配置（~/.c0de/config.json），所有项目与 c0de chat 均可直接使用（推荐）；\n' +
-          '「取消」= 仅保存到当前项目配置（.c0de/config.json），其他项目与 CLI 不可见。',
-      )
-      if (useGlobal) {
-        effectiveScope = 'global'
-        setScope('global')
-      }
+      setPendingFirstRunScope({
+        patch: patch as Partial<Config>,
+        saveableDraft,
+        restoredCount: restoredSecrets.restored,
+      })
+      return
     }
+    commitSave(patch as Partial<Config>, saveableDraft, scope, restoredSecrets.restored)
+  }
+
+  /** handleSave 的提交尾段：直接保存与首跑作用域引导（pendingFirstRunScope 弹层
+   *  确认后）共用同一份落盘逻辑，避免两处各拼 save.mutate 漂移。 */
+  const commitSave = (
+    patch: Partial<Config>,
+    saveableDraft: Partial<Config>,
+    scopeToSave: 'global' | 'project',
+    restoredCount: number,
+  ) => {
     // 提交出去的是「退回密钥后的草稿」：保存成功后草稿按它清空（见 save.onSuccess
     // 的 prev === submittedDraftRef.current），否则被留空的密钥会让草稿永远脏着。
     // 有密钥被留空时同时把草稿对齐成这一份——界面立刻回到「✓ 已加密」，与本次
     // 实际落盘的内容一致。
-    if (restoredSecrets.restored > 0) setDraft(saveableDraft)
+    if (restoredCount > 0) setDraft(saveableDraft)
     submittedDraftRef.current = saveableDraft
-    save.mutate({
-      patch: patch as Partial<Config>,
-      scope: effectiveScope,
-      restoredSecrets: restoredSecrets.restored,
-    })
+    save.mutate({ patch, scope: scopeToSave, restoredSecrets: restoredCount })
   }
 
   /**
@@ -1038,6 +1052,43 @@ export function Settings() {
           cancelText="取消"
         >
           当前有未保存的更改，导入将丢弃这些更改并用文件内容覆盖。确定导入？
+        </ConfirmDialog>
+      )}
+
+      {/* P1-1 首跑作用域引导（替代 window.confirm，挂载驱动显隐，与 pendingScope/
+          pendingImport 同款）。注意 haze ConfirmDialog 的确认/取消按钮在 onClose
+          **之前**还会各自触发 onConfirm/onCancel——落盘只放后两者里，onClose 仅
+          负责卸载，否则确认一次会提交两次。「取消」= 仅保存到当前项目（两种选择
+          都继续保存，只有作用域不同，与原生 confirm 的「取消」语义一致）；Esc/
+          遮罩关闭 = 不保存，用户可再点保存重弹。 */}
+      {pendingFirstRunScope !== null && (
+        <ConfirmDialog
+          open
+          onClose={() => setPendingFirstRunScope(null)}
+          onCancel={() => {
+            commitSave(
+              pendingFirstRunScope.patch,
+              pendingFirstRunScope.saveableDraft,
+              'project',
+              pendingFirstRunScope.restoredCount,
+            )
+          }}
+          onConfirm={() => {
+            setScope('global')
+            commitSave(
+              pendingFirstRunScope.patch,
+              pendingFirstRunScope.saveableDraft,
+              'global',
+              pendingFirstRunScope.restoredCount,
+            )
+          }}
+          title="首次配置 AI 服务"
+          confirmText="保存到全局（推荐）"
+          cancelText="仅保存到当前项目"
+        >
+          本机全局配置中还没有任何 AI 服务。保存到全局（~/.c0de/config.json）后， 所有项目与 c0de
+          chat 均可直接使用（推荐）；仅保存到当前项目 （.c0de/config.json）时，其他项目与 CLI
+          不可见。
         </ConfirmDialog>
       )}
 

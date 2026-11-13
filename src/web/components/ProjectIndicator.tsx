@@ -14,6 +14,7 @@ import { AddProjectDialog } from '@/components/AddProjectDialog.js'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { RelocateProjectDialog } from '@/components/RelocateProjectDialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { invalidateGitState } from '@/hooks/gitState.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { navigateTo } from '@/navigateTo.js'
 import { fileAPI } from '@/services/file.js'
@@ -353,14 +354,10 @@ export function ProjectIndicator({
     enabled: branchesOpen,
   })
 
-  // 切换分支后刷新所有 git 相关查询 + projects（withBranch 读实时分支）
-  const invalidateGitQueries = () => {
-    qc.invalidateQueries({ queryKey: ['projects'] })
-    qc.invalidateQueries({ queryKey: ['files', 'git-status', projectId] })
-    qc.invalidateQueries({ queryKey: ['files', 'git-branch', projectId] })
-    qc.invalidateQueries({ queryKey: ['files', 'git-last-commit', projectId] })
-    qc.invalidateQueries({ queryKey: ['files', 'git-branches', projectId] })
-  }
+  // 切换分支后刷新所有 git 相关查询 + projects（withBranch 读实时分支）。
+  // 失效清单单源在 invalidateGitState：此前这里与 CommitButton 提交后各持一份
+  // 手写且已漂移（提交后只失效 git-status，last-commit/branches 停在旧值）。
+  const invalidateGitQueries = () => invalidateGitState(qc, projectId)
 
   const checkoutMut = useMutation({
     mutationFn: (branch: string) => fileAPI.gitCheckout(projectId, branch),

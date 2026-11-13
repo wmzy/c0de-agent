@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, max, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, isNull, lt, max, type SQL, sql } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { kanbanBoards, kanbanCards } from '../db/schema.js'
 import { toEpochMs } from '../session/time.js'
@@ -179,6 +179,22 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     return row?.id ?? null
   }
 
+  /** 查板行 + 查卡片（orderBy columnId,position）+ 映射 API 形状的单一读路径——
+   *  此前 peekBoard/getBoard/replaceBoard 三处各自内联同构查询，排序与映射已现漂移风险。
+   *  boardWhere 定位板行（limit 1）；板行不存在返回 null。 */
+  async function fetchBoardWithCards(
+    boardWhere: SQL | undefined,
+  ): Promise<KanbanBoardWithCards | null> {
+    const [boardRow] = await db.select().from(kanbanBoards).where(boardWhere).limit(1)
+    if (!boardRow) return null
+    const cards = await db
+      .select()
+      .from(kanbanCards)
+      .where(eq(kanbanCards.boardId, boardRow.id))
+      .orderBy(asc(kanbanCards.columnId), asc(kanbanCards.position))
+    return { ...rowToBoard(boardRow), cards: cards.map(rowToCard) }
+  }
+
   /** 取本板卡片；不属于本板（其他项目的卡片 id / 不存在）抛 KanbanCardNotFoundError。
    *  store 以 projectId 构造，但 update/move/delete 按卡片 id 寻址——不校验作用域时
    *  `PATCH /api/kanban/<项目B>/cards/<项目A 的卡片 id>` 会静默改写 A 的看板
@@ -217,34 +233,16 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
     /** 只读获取板（不创建）：导出等纯读路径用——此前导出经 getBoard 懒建板，
      *  「导出」一个从未打开过看板的项目会凭空产生空板行。无板返回 null。 */
     async peekBoard(): Promise<KanbanBoardWithCards | null> {
-      const [boardRow] = await db
-        .select()
-        .from(kanbanBoards)
-        .where(activeBoardWhere(projectId))
-        .limit(1)
-      if (!boardRow) return null
-      const cards = await db
-        .select()
-        .from(kanbanCards)
-        .where(eq(kanbanCards.boardId, boardRow.id))
-        .orderBy(asc(kanbanCards.columnId), asc(kanbanCards.position))
-      return { ...rowToBoard(boardRow), cards: cards.map(rowToCard) }
+      return fetchBoardWithCards(activeBoardWhere(projectId))
     },
 
     async getBoard(): Promise<KanbanBoardWithCards> {
       const boardId = await getOrCreateBoardId()
-      const [boardRow] = await db
-        .select()
-        .from(kanbanBoards)
-        .where(eq(kanbanBoards.id, boardId))
-        .limit(1)
-      const board = boardRow as BoardRow
-      const cards = await db
-        .select()
-        .from(kanbanCards)
-        .where(eq(kanbanCards.boardId, boardId))
-        .orderBy(asc(kanbanCards.columnId), asc(kanbanCards.position))
-      return { ...rowToBoard(board), cards: cards.map(rowToCard) }
+      const board = await fetchBoardWithCards(eq(kanbanBoards.id, boardId))
+      // getOrCreateBoardId 刚建/刚取的板行必然存在；兜底与旧版 rowToBoard(undefined)
+      // 同为抛错路径（不可达防御）。
+      if (!board) throw new Error(`kanban board ${boardId} vanished after ensure`)
+      return board
     },
 
     async addCard(input): Promise<KanbanCard> {
@@ -401,18 +399,10 @@ function createKanbanStore(handle: DB, projectId: string): KanbanStore {
           )
         }
       })
-      const boardRow = await db
-        .select()
-        .from(kanbanBoards)
-        .where(eq(kanbanBoards.id, boardId))
-        .limit(1)
-      const board = boardRow[0] as BoardRow
-      const cards = await db
-        .select()
-        .from(kanbanCards)
-        .where(eq(kanbanCards.boardId, boardId))
-        .orderBy(asc(kanbanCards.columnId), asc(kanbanCards.position))
-      return { ...rowToBoard(board), cards: cards.map(rowToCard) }
+      const board = await fetchBoardWithCards(eq(kanbanBoards.id, boardId))
+      // 事务刚重建的板行必然存在；兜底与旧版 rowToBoard(undefined) 同为抛错路径。
+      if (!board) throw new Error(`kanban board ${boardId} vanished after replace`)
+      return board
     },
   }
 }
@@ -750,27 +740,31 @@ export async function purgeDeletedKanbanBoards(
 ): Promise<KanbanTrashPurgeResult> {
   const retentionCutoff = new Date(Date.now() - retentionMs)
   const graceCutoff = new Date(Date.now() - graceMs)
+  // 阶段二的候选清单（阶段一已下推进 SQL，不再需要 deletedAt 投影）。
   const rows = await handle.db
     .select({
       id: kanbanBoards.id,
-      deletedAt: kanbanBoards.deletedAt,
       purgePendingAt: kanbanBoards.purgePendingAt,
     })
     .from(kanbanBoards)
     .where(isNotNull(kanbanBoards.deletedAt))
 
   // —— 阶段一：到期标记（先宽限，不直接清除）——
-  let marked = 0
-  for (const r of rows) {
-    if (!r.deletedAt) continue
-    if (r.purgePendingAt) continue
-    if (r.deletedAt.getTime() >= retentionCutoff.getTime()) continue
-    await handle.db
-      .update(kanbanBoards)
-      .set({ purgePendingAt: new Date(), updatedAt: new Date() })
-      .where(eq(kanbanBoards.id, r.id))
-    marked += 1
-  }
+  // 被标记条件全是普通列（deletedAt < retentionCutoff 且 purgePendingAt IS NULL），
+  // 可在 SQL 内精确表达——单条批量 UPDATE ... RETURNING 取计数（与阶段二的
+  // inArray 批量同风格），取代逐行 UPDATE 循环。marked 计数语义不变。
+  const markedRows = await handle.db
+    .update(kanbanBoards)
+    .set({ purgePendingAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        isNotNull(kanbanBoards.deletedAt),
+        lt(kanbanBoards.deletedAt, retentionCutoff),
+        isNull(kanbanBoards.purgePendingAt),
+      ),
+    )
+    .returning({ id: kanbanBoards.id })
+  const marked = markedRows.length
 
   // —— 阶段二：宽限期满物理清除 ——
   const pendingIds = rows

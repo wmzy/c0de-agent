@@ -276,7 +276,12 @@ export function SessionList({
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const visibleTree = tree ? searchTree(filterTree(tree, projectId), search) : []
+  // 与相邻 unboundCliRoots 同口径 memo：filterTree + searchTree 是两趟全树递归，
+  // 裸算会在每次渲染重复执行（此前仅这一行没包 useMemo）。
+  const visibleTree = useMemo(
+    () => (tree ? searchTree(filterTree(tree, projectId), search) : []),
+    [tree, projectId, search],
+  )
 
   // P1-2：未绑定项目的持久化 CLI 会话（cwd 不属于任何已注册项目时产生）。
   // 项目树按 projectId 过滤会漏掉它们——单独分组展示，保证 CLI 会话在 Web 可达。

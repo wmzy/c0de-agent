@@ -1006,6 +1006,79 @@ describe('RecycleBin 未归属项目分组的空态与搜索口径', () => {
 })
 
 /**
+ * 回收站三个恢复入口的结果提示。
+ *
+ * 回归：三份 onSuccess 拼装曾各自手写，孤儿分组两份把服务端对三种模式都返回的
+ * restoredAncestorCount / leftBehindDescendantCount 计数整个丢弃——从「未归属
+ * 项目」分组恢复子会话时父会话就在同一批删除里（连带还原最常发生的场景），
+ * 提示却只有一句「已恢复并归属到当前项目」，用户无从得知侧栏里多出来的会话
+ * 从哪来、还剩几条没恢复。
+ */
+describe('RecycleBin 恢复结果提示', () => {
+  function renderTrash() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={qc}>
+        <RecycleBin projectId="p1" />
+      </QueryClientProvider>,
+    )
+  }
+
+  beforeEach(() => {
+    hoisted.deleted = {
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphanCount = {
+      data: { count: 1 },
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+    hoisted.orphans = {
+      data: [makeSession('orphan-1', '孤儿会话', null)],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: () => {},
+    }
+  })
+
+  it('孤儿「恢复到当前项目」连带还原父会话时，提示写明计数与归属', () => {
+    // Once：clearAllMocks 不清实现，用 Once 避免泄漏进后续用例的 mutate 调用
+    hoisted.restoreMut.mutate.mockImplementationOnce(
+      (_v: unknown, opts?: { onSuccess?: (d: unknown) => void }) => {
+        opts?.onSuccess?.({ ok: true, restoredAncestorCount: 1, adoptedCount: 2 })
+      },
+    )
+    renderTrash()
+    fireEvent.click(screen.getByTestId('orphan-trash-toggle'))
+    fireEvent.click(screen.getByTestId('restore-orphan-orphan-1'))
+    const notice = screen.getByTestId('restore-notice')
+    // 修复前：孤儿入口的拼装丢弃计数——只有「已恢复并归属到当前项目」一句
+    expect(notice.textContent).toContain('已连带还原 1 个父会话')
+    expect(notice.textContent).toContain('连带还原的 2 个会话已一并归属')
+  })
+
+  it('孤儿「恢复并重建原项目」有滞留分支时，提示写明可单独恢复', () => {
+    hoisted.restoreMut.mutate.mockImplementationOnce(
+      (_v: unknown, opts?: { onSuccess?: (d: unknown) => void }) => {
+        opts?.onSuccess?.({ ok: true, leftBehindDescendantCount: 2 })
+      },
+    )
+    renderTrash()
+    fireEvent.click(screen.getByTestId('orphan-trash-toggle'))
+    fireEvent.click(screen.getByTestId('restore-orphan-recreate-orphan-1'))
+    expect(screen.getByTestId('restore-notice').textContent).toContain('另有 2 个分支未随本次恢复')
+  })
+})
+
+/**
  * 回收站未归属看板「彻底删除」失败反馈。
  *
  * 回归：destroyBoardMut 只有 onSuccess，接口失败时看板仍在列表、

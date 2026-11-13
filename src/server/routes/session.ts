@@ -1,9 +1,8 @@
 import { existsSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { createSummarizer } from '../../core/compact.js'
+import { createSummarizerWithFallback } from '../../core/compact.js'
 import { sessions } from '../../db/schema.js'
-import { buildFallbackChain } from '../../llm/routing.js'
 import { fromDirectory } from '../../project/index.js'
 import { getProject } from '../../project/project.js'
 import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
@@ -51,7 +50,12 @@ import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { resolveSessionScope } from '../util/session-scope.js'
-import { getLiveSessionOr404, guardSessionNotBusy, resolveAgentCwd } from './chat.js'
+import {
+  getLiveSessionOr404,
+  guardSessionNotBusy,
+  guardSessionNotStarting,
+  resolveAgentCwd,
+} from './chat.js'
 
 function createSessionRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -361,9 +365,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const id = c.req.param('id')
     // starting 占位无法 abort（尚无 run）——删除会让随后 register 的 run 写入
     // 已软删除会话。与控制端点同口径：占位期 409，稍后重试。
-    if (ctx.agentManager.isStarting(id)) {
-      return apiError(c, 409, 'RUN_STARTING', '该会话的对话正在启动，请稍后重试')
-    }
+    const starting = guardSessionNotStarting(ctx, c, id)
+    if (starting) return starting
     const busyWorkflowId = ctx.workflowBusyBySession.get(id)
     if (busyWorkflowId) {
       ctx.agentManager.abortCascade(busyWorkflowId)
@@ -614,10 +617,14 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const provider = lastSeg?.provider ?? sessionConfig.defaultProvider
     const model = lastSeg?.model ?? sessionConfig.defaultModel
     try {
-      const fallback = buildFallbackChain(sessionConfig, provider, model)
-      const summarizer = createSummarizer(sessionRegistry, provider, model, {
-        ...(fallback ? { fallback } : {}),
-      })
+      // createSummarizer + buildFallbackChain 组合收敛在 createSummarizerWithFallback
+      //（与 files.ts git-commit 默认模式同一份构造骨架）。
+      const summarizer = createSummarizerWithFallback(
+        sessionRegistry,
+        sessionConfig,
+        provider,
+        model,
+      )
       const result = await compactSession(ctx.db, id, summarizer, {
         keepRecentTokens: sessionConfig.compaction.keepRecentTokens,
       })

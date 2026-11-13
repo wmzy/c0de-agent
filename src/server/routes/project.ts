@@ -2,7 +2,7 @@
 import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { parse } from 'node:path'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { projects, sessions } from '../../db/schema.js'
@@ -18,9 +18,8 @@ import {
   updateProjectName,
 } from '../../project/index.js'
 import type { Project } from '../../project/project.js'
-import { clearTrashMarks } from '../../session/trash.js'
+import { softDeleteSessionRows } from '../../session/trash.js'
 import { generateId } from '../../shared/index.js'
-import type { SessionMetadata } from '../../shared/types/message.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
@@ -212,8 +211,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
     const terminalConflict = openTerminalsConflict(c, id, '删除项目')
     if (terminalConflict) return terminalConflict
 
-    let deletedSessions = 0
-    await ctx.db.db.transaction(async (tx) => {
+    const deletedSessions = await ctx.db.db.transaction(async (tx) => {
       // 该项目下所有未删除会话：记录 worktreePath（若尚无）并软删除进回收站。
       // A2：删除项目是一次用户操作——全部会话共享同一 deletedBatchId，
       // 恢复任一会话时其 fork 子树一并还原（与 softDeleteSession 语义对齐），
@@ -223,25 +221,18 @@ function createProjectRoute(ctx: ServerContext): Hono {
       const bound = await tx
         .select({
           id: sessions.id,
-          worktreePath: sessions.worktreePath,
           metadata: sessions.metadata,
         })
         .from(sessions)
         .where(and(eq(sessions.projectId, id), isNull(sessions.deletedAt)))
-      for (const s of bound) {
-        // A3：软删除清除回收站倒计时/宽限期标记（恢复后重删须重新看到才起算）。
-        const metadata = clearTrashMarks((s.metadata ?? {}) as SessionMetadata)
-        await tx
-          .update(sessions)
-          .set({
-            worktreePath: s.worktreePath ?? project.worktree,
-            deletedAt: now,
-            deletedBatchId: batchId,
-            metadata,
-          })
-          .where(eq(sessions.id, s.id))
-        deletedSessions += 1
-      }
+      // 软删除写路径与 softDeleteSession 级联同源（softDeleteSessionRows）：批量
+      // UPDATE 消除事务内 N+1，A3 标记清理口径单点。worktreePath 补集（无记录 →
+      // 项目 worktree）用 SQL coalesce 按行求值，plain 桶仍共享同一条批量 UPDATE。
+      const softDeletedSessions = await softDeleteSessionRows(tx, bound, {
+        deletedAt: now,
+        deletedBatchId: batchId,
+        worktreePath: sql`coalesce(${sessions.worktreePath}, ${project.worktree})`,
+      })
       // P2-5：看板不再永久级联销毁——批量软删除（记录原项目名与工作目录）进回收站，
       // 项目行删除后 FK set null 使其进入回收站「未归属看板」分组，60 天后随清理
       // 任务物理清除；恢复端点可重新归属到任意项目。字段集与 softDeleteKanbanBoardById
@@ -253,6 +244,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
         project.worktree,
       )
       await tx.delete(projects).where(eq(projects.id, id))
+      return softDeletedSessions
     })
     return c.json({ ok: true, deletedSessions })
   })

@@ -1,6 +1,7 @@
 // src/web/services/terminal.ts
 
 import { API_BASE, del, get, getAuthToken, post, put } from '@/services/api.js'
+import { appendAuthQuery } from '@/services/authUrl.js'
 
 export interface TerminalInfo {
   id: string
@@ -34,8 +35,8 @@ const terminalAPI = {
 export function terminalWsUrl(id: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const base = `${proto}//${window.location.host}${API_BASE}/api/terminal/${id}/ws`
-  const token = getAuthToken()
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base
+  // token query 的拼接与 FilePreview 媒体 URL 同一实现（appendAuthQuery 单源）
+  return appendAuthQuery(base, getAuthToken())
 }
 
 export { terminalAPI }

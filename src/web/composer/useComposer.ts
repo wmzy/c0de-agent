@@ -75,6 +75,21 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 /** 图片数量上限。 */
 const MAX_IMAGE_COUNT = 6
 
+/** `/<cmd> <subprefix>` 子命令补全触发检测（handleInput 输入时与 commands 异步
+ *  就绪后的重检测 effect 共用）：cmd 必须声明了 subcommands 才接管。正则与接管
+ *  条件此前两处手写（effect 一份、handleInput 一份），任一侧改动即与另一侧
+ *  漂移（浮层行为随触发路径不同而不同）——收敛为单一纯函数。 */
+function detectSubcommand(
+  text: string,
+  commands: readonly CommandInfo[] | undefined,
+): { cmd: string; query: string } | null {
+  const m = text.match(/^\/(\S+)\s+(\S*)$/)
+  if (!m) return null
+  const cmd = commands?.find((c) => c.name === m[1])
+  if (!cmd?.subcommands?.length) return null
+  return { cmd: m[1] ?? '', query: m[2] ?? '' }
+}
+
 /** 校验待添加图片；违规返回错误信息（null=通过）。 */
 function validateImage(file: File, currentCount: number): string | null {
   if (currentCount >= MAX_IMAGE_COUNT) {
@@ -187,15 +202,13 @@ function useComposer({
     const text = promptToText(promptRef.current)
     // 用户已对这段文本按过 Esc：不许再弹回来
     if (dismissedPopoverRef.current === text) return
-    const subMatch = text.match(/^\/(\S+)\s+(\S*)$/)
-    if (!subMatch) return
-    const cmd = commands.find((c) => c.name === subMatch[1])
-    if (!cmd?.subcommands?.length) return
     // 仅在当前未处于 subcommand/workflow popover 时接管
     if (popover === 'subcommand' || popover === 'workflow') return
+    const detected = detectSubcommand(text, commands)
+    if (!detected) return
     setPopover('subcommand')
-    setPopoverQuery(subMatch[2] ?? '')
-    setSubcommandCmd(subMatch[1] ?? '')
+    setPopoverQuery(detected.query)
+    setSubcommandCmd(detected.cmd)
   }, [commands, popover])
 
   // 历史回溯导航状态
@@ -255,16 +268,15 @@ function useComposer({
     const atMatch = text.substring(0, cursor).match(/@(\S*)$/)
     // /workflow (run|show|create|edit) <name> — 补全工作流名称
     const workflowMatch = text.match(/^\/workflow\s+(run|show|create|edit)\s+(\S*)$/)
-    // /<cmd> <subprefix> — 子命令补全（cmd 必须声明了 subcommands）
-    const subMatch = text.match(/^\/(\S+)\s+(\S*)$/)
-    const subCmd = subMatch ? commandsRef.current?.find((c) => c.name === subMatch[1]) : undefined
+    // /<cmd> <subprefix> — 子命令补全（检测与接管条件见 detectSubcommand 单一实现）
+    const detected = detectSubcommand(text, commandsRef.current)
     if (workflowMatch) {
       setPopover('workflow')
       setPopoverQuery(workflowMatch[2] ?? '')
-    } else if (subMatch && subCmd?.subcommands?.length) {
+    } else if (detected) {
       setPopover('subcommand')
-      setPopoverQuery(subMatch[2] ?? '')
-      setSubcommandCmd(subMatch[1] ?? '')
+      setPopoverQuery(detected.query)
+      setSubcommandCmd(detected.cmd)
     } else if (slashMatch) {
       setPopover('slash')
       setPopoverQuery(slashMatch[1] ?? '')
@@ -384,25 +396,44 @@ function useComposer({
     [setPromptExternal, subcommandCmd],
   )
 
-  // popover 选中插入文件 pill（替换 @query token）。
-  // 此前从 promptToText 平铺文本重建整个 prompt——既有 file/snippet/terminal
-  // pill 被降级为纯文本（发送时 files 附件丢失）。改为定位光标前 @token
-  // 范围并用 replacePromptRange 原位替换，范围外 part 原样保留。
-  // 光标前没有 @token（浮层开着时光标被移走）⇒ 无范围可替换，返回 false。
-  const insertFile = useCallback(
-    (path: string) => {
+  /** 光标前 @token 的原位替换骨架（insertFile / insertAgentToken 共用）：定位
+   *  atTokenRange → 光标前没有 @token（浮层开着时光标被移走）⇒ 无范围可替换，
+   *  返回 false → 否则 replacePromptRange 原位替换 + 关浮层 + 聚焦。pill/text
+   *  token 的构造（各自语义）留在各回调。
+   *  原位替换的动机：此前从 promptToText 平铺文本重建整个 prompt——既有
+   *  file/snippet/terminal pill 被降级为纯文本（发送时 files 附件丢失）。 */
+  const replaceAtToken = useCallback(
+    (part: Prompt[number]): boolean => {
       const prompt = promptRef.current
       if (!editorRef.current) return false
       const cursor = currentCursor(editorRef.current)
       const range = atTokenRange(promptToText(prompt), cursor)
       if (!range) return false
-      const pill: Prompt = [{ type: 'file', path, content: path, start: 0, end: path.length }]
-      setPromptExternal(replacePromptRange(prompt, range.start, range.end, pill), true)
+      setPromptExternal(replacePromptRange(prompt, range.start, range.end, [part]), true)
       setPopover(null)
       editorRef.current.focus()
       return true
     },
     [setPromptExternal],
+  )
+
+  // popover 选中插入文件 pill（替换 @query token，骨架见 replaceAtToken）。
+  const insertFile = useCallback(
+    (path: string) =>
+      replaceAtToken({ type: 'file', path, content: path, start: 0, end: path.length }),
+    [replaceAtToken],
+  )
+
+  // 选中 @agent：把光标前的 @query token 原位替换为 `@name ` 文本（骨架见
+  // replaceAtToken）。此前这份骨架留在 Composer 组件层手写，与 hook 层的
+  // insertFile 平行——hook 的 insert* 家族统一演进（如补 dismissedPopover
+  // 口径）时组件层这份必漏，收敛进 hook 与家族并列。
+  const insertAgentToken = useCallback(
+    (name: string) => {
+      const token = `@${name} `
+      return replaceAtToken({ type: 'text', content: token, start: 0, end: token.length })
+    },
+    [replaceAtToken],
   )
 
   /** 三个 append*Reference 的共用骨架：在 prompt 末尾追加一个 pill。已有内容且
@@ -850,6 +881,7 @@ function useComposer({
     insertSubcommand,
     insertWorkflow,
     insertFile,
+    insertAgentToken,
     appendFileReference,
     appendSnippetReference,
     appendTerminalReference,
