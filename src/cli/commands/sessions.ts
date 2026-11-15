@@ -20,6 +20,7 @@ import {
   touchTrashSeen,
 } from '../../session/trash.js'
 import type { CommandArgs } from '../parser.js'
+import { resolveWrite } from './io.js'
 
 type SessionsCommandContext = {
   args: CommandArgs
@@ -28,7 +29,7 @@ type SessionsCommandContext = {
 }
 
 async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
-  const write = ctx.write ?? ((s: string) => process.stdout.write(s))
+  const write = resolveWrite(ctx)
   const sub = ctx.args.positionals[0] ?? 'list'
 
   if (sub === 'list') {

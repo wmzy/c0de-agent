@@ -25,6 +25,7 @@ import { permissionAPI } from '@/services/permission.js'
 import { projectAPI } from '@/services/project.js'
 import { sessionAPI } from '@/services/session.js'
 import type { APIError } from '@/types/index.js'
+import { subscribeChannel } from '@/utils/broadcast.js'
 import { messageOf } from '@/utils/errors.js'
 
 /**
@@ -999,11 +1000,10 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   }, [attach])
 
   // P1：订阅同会话其他标签页的 run 状态广播——他页启动时附着，结束时刷新收尾。
+  // 频道骨架（SSR 守卫/onmessage/关闭）在 subscribeChannel；本页过滤语义
+  // （忽略自播 + 会话匹配）留在这里。
   useEffect(() => {
-    if (typeof BroadcastChannel === 'undefined') return
-    const ch = new BroadcastChannel(RUN_CHANNEL)
-    ch.onmessage = (ev: MessageEvent<RunStateMessage>) => {
-      const msg = ev.data
+    return subscribeChannel<RunStateMessage>(RUN_CHANNEL, (msg) => {
       // 忽略本页广播（BroadcastChannel 同页多频道对象会互投）。
       if (!msg || msg.from === TAB_ID || msg.sessionId !== sessionId) return
       if (msg.active) {
@@ -1011,8 +1011,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       } else if (attachedRef.current) {
         finishAttach()
       }
-    }
-    return () => ch.close()
+    })
   }, [sessionId, attach, finishAttach])
 
   const clearInterrupted = useCallback(() => {

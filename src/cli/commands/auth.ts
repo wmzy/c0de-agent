@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { readDevicesFile, writeDevicesFile } from '../../server/auth-manager.js'
 import { resolveDbDir } from '../../server/server.js'
 import type { CommandArgs } from '../parser.js'
+import { resolveWrite } from './io.js'
 
 type AuthCommandContext = {
   args: CommandArgs
@@ -25,7 +26,7 @@ function authTokenPath(): string {
 }
 
 async function runAuthCommand(ctx: AuthCommandContext): Promise<void> {
-  const write = ctx.write ?? ((s: string) => process.stdout.write(s))
+  const write = resolveWrite(ctx)
   const sub = ctx.args.positionals[0] ?? 'list'
 
   if (sub === 'list') {

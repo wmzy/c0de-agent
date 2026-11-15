@@ -9,7 +9,7 @@
 //   - 显式配置 security.token 时为静态模式：不轮换、不配对（CI/脚本场景）。
 //   - authEnabled=false 时不启用。
 
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   existsSync,
   type FSWatcher,
@@ -20,6 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { timingSafeEqualString } from '../shared/utils/constant-time.js'
 import { readJsonFileSafe, writeJsonFileSafe } from '../shared/utils/json-file.js'
 
 const DEVICES_FILENAME = 'devices.json'
@@ -155,13 +156,6 @@ export function writeDevicesFile(path: string, devices: DeviceRecord[]): void {
   writeJsonFileSafe(path, { version: 1, devices } satisfies DevicesFile, { pretty: true })
 }
 
-function safeEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a)
-  const bb = Buffer.from(b)
-  if (ba.length !== bb.length) return false
-  return timingSafeEqual(ba, bb)
-}
-
 export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   const { dataDir, staticToken, tokenFilePath, now = Date.now } = opts
   const pairingTtlMs = opts.pairingTtlMs ?? 10 * 60 * 1000
@@ -230,14 +224,14 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   function verifyDeviceToken(token: string): boolean {
     const h = hashToken(token)
     for (const d of devices.values()) {
-      if (safeEqual(d.tokenHash, h)) return true
+      if (timingSafeEqualString(d.tokenHash, h)) return true
     }
     return false
   }
 
   function verifyBootstrap(token: string | undefined): boolean {
     if (!token || !bootstrap) return false
-    return safeEqual(token, bootstrap)
+    return timingSafeEqualString(token, bootstrap)
   }
 
   /** bootstrap 自生成（token 文件 mtime）起的存活时长；静态模式或无法读取返回 null。 */
@@ -266,7 +260,7 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
 
     verify(token) {
       if (!token) return false
-      if (staticToken && staticToken.length > 0) return safeEqual(token, staticToken)
+      if (staticToken && staticToken.length > 0) return timingSafeEqualString(token, staticToken)
       return verifyDeviceToken(token)
     },
 

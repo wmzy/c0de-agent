@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { memo, useState } from 'react'
+import { Collapsible } from '@/components/Collapsible.js'
 import { Markdown } from '@/components/Markdown.js'
 
 const wrap = css`
@@ -60,28 +61,27 @@ export const ReasoningBlock = memo(function ReasoningBlock({
   const previewLine = isExpanded ? '' : lastNonEmptyLine(text)
   return (
     <div className={wrap} data-testid="reasoning" data-expanded={isExpanded}>
-      <button
-        type="button"
-        className={header}
-        data-testid="reasoning-toggle"
-        // 与 ToolBlock 折叠头同款：▸/▾ 字形不是状态播报，读屏需 aria-expanded
-        // 才能知道「思考过程」这块是展开还是收起。
-        aria-expanded={isExpanded}
-        onClick={() => setExpanded((v) => !v)}
+      {/* 展开骨架收敛在 Collapsible（受控：forceExpand 时点击不改显示态）；
+          头部额外带末行预览，作为 header 传入。 */}
+      <Collapsible
+        open={isExpanded}
+        onOpenChange={setExpanded}
+        headerClassName={header}
+        testId="reasoning-toggle"
+        bodyClassName={body}
+        header={
+          <>
+            <span className={title}>思考过程</span>
+            {previewLine && (
+              <span className={preview} data-testid="reasoning-preview">
+                {previewLine}
+              </span>
+            )}
+          </>
+        }
       >
-        <span>{isExpanded ? '▾' : '▸'}</span>
-        <span className={title}>思考过程</span>
-        {previewLine && (
-          <span className={preview} data-testid="reasoning-preview">
-            {previewLine}
-          </span>
-        )}
-      </button>
-      {isExpanded && (
-        <div className={body}>
-          <Markdown content={text} />
-        </div>
-      )}
+        <Markdown content={text} />
+      </Collapsible>
     </div>
   )
 })

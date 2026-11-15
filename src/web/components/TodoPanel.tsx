@@ -537,6 +537,11 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
         type="button"
         className={summaryBar}
         onClick={loadFailed ? () => void refetch() : totalTasks > 0 ? toggleCollapse : openAddForm}
+        // 摘要栏是三态按钮（读失败=重试 / 有任务=折叠切换 / 空清单=打开新增行），
+        // 特化过深不迁 Collapsible 原语；aria-expanded 只在「真的是折叠切换」时
+        // 播报，另外两态下它既非真也非假——不声明（折叠头家族口径见
+        // components/Collapsible.tsx）。
+        aria-expanded={!loadFailed && totalTasks > 0 ? !collapsed : undefined}
       >
         <span className={summaryIcon}>📋</span>
         <span className={summaryProgress}>任务</span>
@@ -568,7 +573,12 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
             {statusText}
           </span>
         )}
-        <span className={expandIcon}>{loadFailed ? '↻' : collapsed ? '▾' : '▴'}</span>
+        {/* 字形是装饰：↻/▴/▾ 与折叠头家族的 ▸/▾ 语义不同（↻ 是重试提示、
+            ▴ 表「点击收起」而非当前状态），不共用 CollapseArrow 字形，但遵循
+            同一 a11y 口径——不进无障碍树，状态由上方 aria-expanded 播报。 */}
+        <span className={expandIcon} aria-hidden="true">
+          {loadFailed ? '↻' : collapsed ? '▾' : '▴'}
+        </span>
       </button>
 
       {!collapsed && loadFailed && (

@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { ChatTool } from '@shared/types/llm.js'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { Collapsible } from '@/components/Collapsible.js'
 import { formatCost, formatLatency, formatTokenCount } from '@/utils/format.js'
 
 const card = css`
@@ -102,10 +102,12 @@ function ToolSchemaView({ tool }: { tool: ChatTool }) {
 }
 
 /**
- * 可折叠区块：默认折叠，点击切换。内容常驻 DOM，折叠态用 data-collapsed 隐藏
- * （textContent 仍可读），与 opencode web 的「摘要 + 展开原始内容」展示模式一致。
+ * LLMDetail 的折叠区：样式组合（section 间距 + 头/体样式类）留在本文件，展开骨架
+ * （按钮 + aria-expanded + 箭头 + 折叠隐藏）收敛在共享 Collapsible。keepMounted：
+ * 内容常驻 DOM，折叠态用 data-collapsed 隐藏（textContent 仍可读），与 opencode web
+ * 的「摘要 + 展开原始内容」展示模式一致。
  */
-function Collapsible({
+function Section({
   title,
   testId,
   children,
@@ -114,22 +116,17 @@ function Collapsible({
   testId?: string
   children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
   return (
     <div className={section}>
-      <button
-        type="button"
-        className={sectionHead}
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        data-testid={testId}
+      <Collapsible
+        header={<span>{title}</span>}
+        headerClassName={sectionHead}
+        bodyClassName={sectionBody}
+        keepMounted
+        testId={testId}
       >
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
-        <span>{title}</span>
-      </button>
-      <div className={sectionBody} data-collapsed={!open || undefined}>
         {children}
-      </div>
+      </Collapsible>
     </div>
   )
 }
@@ -153,16 +150,16 @@ export function SegmentFooter({ segment }: { segment: LLMSegment }) {
         </span>
         <span className={dim}>· {segment.calls.length} 次调用</span>
       </div>
-      <Collapsible title="System Prompt">
+      <Section title="System Prompt">
         <pre className={pre}>{segment.systemPrompt}</pre>
-      </Collapsible>
-      <Collapsible title={`Tools (${segment.tools.length})`} testId="tools-summary">
+      </Section>
+      <Section title={`Tools (${segment.tools.length})`} testId="tools-summary">
         {segment.tools.length === 0 ? (
           <span className={dim}>（无工具）</span>
         ) : (
           segment.tools.map((tool) => <ToolSchemaView key={tool.name} tool={tool} />)
         )}
-      </Collapsible>
+      </Section>
     </div>
   )
 }

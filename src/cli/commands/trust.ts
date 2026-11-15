@@ -12,6 +12,7 @@ import type { DB } from '../../db/client.js'
 import { fromDirectory, trustProject } from '../../project/project.js'
 import { enrichProjectRiskWithGlobal, summarizeProjectRisk } from '../../project/trust.js'
 import type { CommandArgs } from '../parser.js'
+import { resolveWrite } from './io.js'
 
 type TrustCommandContext = {
   args: CommandArgs
@@ -21,7 +22,7 @@ type TrustCommandContext = {
 }
 
 async function runTrustCommand(ctx: TrustCommandContext): Promise<void> {
-  const write = ctx.write ?? ((s: string) => process.stdout.write(s))
+  const write = resolveWrite(ctx)
   const dir = ctx.args.positionals[0] ?? ctx.cwd
   const yes = ctx.args.options.yes === true
 

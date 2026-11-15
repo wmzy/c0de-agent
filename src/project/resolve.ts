@@ -132,8 +132,9 @@ export function appendToGitignore(cwd: string, patterns: string[]): void {
   writeFileSync(gitignorePath, `${existing}${prefix}${toAppend.join('\n')}\n`)
 }
 
-/** 从 directory 向上查找 .git，返回仓库根；非 git 返回 null。 */
-function findGitRoot(directory: string): string | null {
+/** 从 directory 向上查找 .git，返回仓库根；非 git 返回 null。
+ *  「向上探测 .git」的全仓单一实现（server/routes/config.ts 的密钥警告共用）。 */
+export function findGitRoot(directory: string): string | null {
   let current = resolve(directory)
   // 防御性上限，避免无限向上
   for (let i = 0; i < 64; i++) {

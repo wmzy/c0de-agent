@@ -1,6 +1,7 @@
 import { applyScopedPatch, loadConfigScopes, mergeConfig } from '../../core/config.js'
 import type { Plugin } from '../../plugins/types.js'
 import type { CommandArgs } from '../parser.js'
+import { resolveWrite } from './io.js'
 
 type PluginCommandContext = {
   args: CommandArgs
@@ -10,7 +11,7 @@ type PluginCommandContext = {
 }
 
 async function runPluginCommand(ctx: PluginCommandContext): Promise<void> {
-  const write = ctx.write ?? process.stdout.write.bind(process.stdout)
+  const write = resolveWrite(ctx)
   const discover = ctx.discover ?? (async () => [])
   const sub = ctx.args.positionals[0]
 

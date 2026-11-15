@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import type {
@@ -13,6 +13,7 @@ import type {
   WebSearchConfig,
 } from '../shared/types/config.js'
 import { OPTIONAL_TOP_LEVEL_KEYS } from '../shared/types/config.js'
+import { readJsonFileSafe } from '../shared/utils/json-file.js'
 import { coerce, isPrototypeKey, setPathPatch } from './config-path.js'
 import { encryptSecret, isEncryptedSecret } from './secret.js'
 
@@ -115,12 +116,7 @@ function mergeConfig(...configs: (Partial<Config> | undefined)[]): Config {
 }
 
 function readJsonIfExists(path: string): Partial<Config> | undefined {
-  if (!existsSync(path)) return undefined
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8')) as Partial<Config>
-  } catch {
-    return undefined
-  }
+  return readJsonFileSafe<Partial<Config>>(path) ?? undefined
 }
 
 /**

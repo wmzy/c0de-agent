@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { Hono } from 'hono'
 import {
   applyScopedPatch,
@@ -17,7 +15,7 @@ import {
 import { syncRegistryFromConfig } from '../../core/provider-registry.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
-import { getProject, refreshTrustedProjectFingerprint } from '../../project/index.js'
+import { findGitRoot, getProject, refreshTrustedProjectFingerprint } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
@@ -44,21 +42,15 @@ function providerApiKeyWarnings(providers: Config['providers']): string[] {
   return warnings
 }
 
-/** 项目级配置含密钥且位于 git 仓库内时提示 .gitignore（防误提交）。 */
+/** 项目级配置含密钥且位于 git 仓库内时提示 .gitignore（防误提交）。
+ *  仓库根探测委托 project/resolve.ts 的 findGitRoot 单源。 */
 function projectConfigGitWarning(project: Partial<Config> | undefined, cwd: string): string | null {
   if (!project || !containsSecrets(project)) return null
-  let dir = cwd
-  while (true) {
-    if (existsSync(join(dir, '.git'))) {
-      return (
-        '项目级配置（.c0de/config.json）含 API Key/Token 且位于 git 仓库内，' +
-        '建议将 .c0de/ 加入 .gitignore，防止密钥被误提交。'
-      )
-    }
-    const parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
+  if (!findGitRoot(cwd)) return null
+  return (
+    '项目级配置（.c0de/config.json）含 API Key/Token 且位于 git 仓库内，' +
+    '建议将 .c0de/ 加入 .gitignore，防止密钥被误提交。'
+  )
 }
 
 /**

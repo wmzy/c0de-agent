@@ -1,6 +1,6 @@
 import { createRoutes, MemoryRouter, View } from '@native-router/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AssistantTextBlock } from '@/components/session/AssistantTextBlock.js'
 
@@ -85,9 +85,9 @@ describe('CodeReference', () => {
     expect(errorBox.textContent).toContain('文件不存在：src/a.ts')
     expect(errorBox.getAttribute('role')).toBe('alert')
 
-    // 重试入口真的再发一次请求
+    // 重试入口（LoadErrorNotice 的共享「重试」按钮）真的再发一次请求
     const before = fetchMock.mock.calls.length
-    fireEvent.click(screen.getByTestId('code-ref-retry'))
+    fireEvent.click(within(errorBox).getByRole('button', { name: '重试' }))
     await waitFor(() => {
       expect(fetchMock.mock.calls.length).toBeGreaterThan(before)
     })

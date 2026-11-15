@@ -4,7 +4,8 @@ import type { Message, Session } from '@shared/types/message.js'
 import { aggregateSegmentUsage } from '@shared/usage.js'
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
+import { Collapsible } from '@/components/Collapsible.js'
 import { useMessages } from '@/hooks/useSession.js'
 import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
@@ -172,7 +173,6 @@ function failureMessage(error: unknown): string {
  * token 用量、成本、时间相关的统计，布局对齐 opencode 的统计面板。
  */
 export function SessionSummary({ sessionId }: { sessionId: string }) {
-  const [open, setOpen] = useState(false)
   const {
     data: session,
     isLoading: sessionLoading,
@@ -217,136 +217,132 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
 
   return (
     <div className={wrap} data-testid="session-summary">
-      <button
-        className={toggle}
-        onClick={() => setOpen((v) => !v)}
-        type="button"
-        data-testid="session-summary-toggle"
-        aria-expanded={open}
+      {/* 展开骨架（按钮 + 箭头 + aria-expanded + 条件渲染）收敛在 Collapsible，
+          非受控即可：本组件只在渲染里消费展开态。 */}
+      <Collapsible
+        header={<span>会话信息</span>}
+        headerClassName={toggle}
+        testId="session-summary-toggle"
+        bodyClassName={grid}
+        bodyTestId="session-summary-grid"
       >
-        <span>{open ? '▾' : '▸'}</span>
-        <span>会话信息</span>
-      </button>
-      {open && (
-        <div className={grid} data-testid="session-summary-grid">
-          {/* 三条查询任一尚未落地都还在「加载中」：早先只看 llm-details 的 isLoading，
+        {/* 三条查询任一尚未落地都还在「加载中」：早先只看 llm-details 的 isLoading，
               另两条没到齐时就把 undefined 当空数组渲染成一组精确的 0。 */}
-          {isLoading || messagesLoading || sessionLoading ? (
-            <span className={status}>加载中…</span>
-          ) : (
-            <>
-              <span className={sessionTitle}>
-                {sessionUnreadable ? <Unavailable /> : stats.title}
-              </span>
-              {/* llm-details 读失败时，token/成本/模型全部由 segments 推导，
+        {isLoading || messagesLoading || sessionLoading ? (
+          <span className={status}>加载中…</span>
+        ) : (
+          <>
+            <span className={sessionTitle}>
+              {sessionUnreadable ? <Unavailable /> : stats.title}
+            </span>
+            {/* llm-details 读失败时，token/成本/模型全部由 segments 推导，
                   segments 为 undefined → computeStats 拿 [] 累加出一整套精确的
                   0 与 US$0.00。实测注入 500 后面板照常显示「总 token 0 /
                   总成本 US$0.00」，用户会据此认为这个会话真的一次调用都没发生、
                   花了 0 美元——比报错更糟的是它看起来完全可信。 */}
-              {llmFailed ? (
-                <span className={errorLine} role="alert" data-testid="summary-llm-error">
-                  调用明细读取失败，下列用量与成本不可信（不是 0）：
-                  {failureMessage(llmError)}
-                </span>
-              ) : null}
-              {/* 消息列表读失败：消息数/用户消息/助手消息全部由它推导，
-                  undefined → 0 —— 用户会以为这轮对话的内容已经不在了。 */}
-              {messagesUnreadable ? (
-                <span className={errorLine} role="alert" data-testid="summary-messages-error">
-                  消息列表读取失败，下列消息数不可信（不是 0）：
-                  {failureMessage(messagesError)}
-                </span>
-              ) : null}
-              {/* 会话元信息读失败：标题会退化成「（未命名会话）」、时间退化成「—」，
-                  把「没读到」讲成「这条会话没有名字」。 */}
-              {sessionUnreadable ? (
-                <span className={errorLine} role="alert" data-testid="summary-session-error">
-                  会话元信息读取失败，标题与时间不可信：
-                  {failureMessage(sessionError)}
-                </span>
-              ) : null}
-              <StatRow label="消息数">
-                {messagesUnreadable ? <Unavailable /> : formatNumber(stats.messageCount)}
-              </StatRow>
-              <StatRow label="提供商">
-                {llmFailed ? <Unavailable /> : stats.provider ? stats.provider : '—'}
-              </StatRow>
-              <StatRow label="模型">
-                {llmFailed ? <Unavailable /> : stats.model ? stats.model : '—'}
-              </StatRow>
-              <StatRow label="上下文限制">
-                {llmFailed ? (
-                  <Unavailable />
-                ) : stats.contextWindow ? (
-                  formatNumber(stats.contextWindow)
-                ) : (
-                  '—'
-                )}
-              </StatRow>
-              <StatRow label="总 token">
-                {llmFailed ? <Unavailable /> : formatNumber(stats.totalTokens)}
-              </StatRow>
-              <StatRow label="使用率">
-                {llmFailed ? (
-                  <Unavailable />
-                ) : stats.usagePercent != null ? (
-                  `${stats.usagePercent}%`
-                ) : (
-                  '—'
-                )}
-              </StatRow>
-              <StatRow label="输入 token">
-                {llmFailed ? <Unavailable /> : formatNumber(stats.inputTokens)}
-              </StatRow>
-              <StatRow label="输出 token">
-                {llmFailed ? <Unavailable /> : formatNumber(stats.outputTokens)}
-              </StatRow>
-              {/* 推理 token / 缓存写当前未在 provider 层采集，诚实显示 0 */}
-              <StatRow label="推理 token">{llmFailed ? <Unavailable /> : 0}</StatRow>
-              <StatRow label="缓存 token（读/写）">
-                {llmFailed ? <Unavailable /> : `${formatNumber(stats.cacheRead)} / 0`}
-              </StatRow>
-              <StatRow label="用户消息">
-                {messagesUnreadable ? <Unavailable /> : formatNumber(stats.userMessages)}
-              </StatRow>
-              <StatRow label="助手消息">
-                {messagesUnreadable ? <Unavailable /> : formatNumber(stats.assistantMessages)}
-              </StatRow>
-              <StatRow label="总成本（估算）">
-                {llmFailed ? <Unavailable /> : formatCostUSD(stats.cost)}
-              </StatRow>
-              {!llmFailed && stats.unknownCostCalls > 0 && (
-                <StatRow label="未估价调用">
-                  {formatNumber(stats.unknownCostCalls)} 次（按 $0 计）
-                </StatRow>
-              )}
-              <StatRow label="创建时间">
-                {sessionUnreadable ? (
-                  <Unavailable />
-                ) : stats.createdAt ? (
-                  formatDateTime(stats.createdAt)
-                ) : (
-                  '—'
-                )}
-              </StatRow>
-              <StatRow label="最后活动">
-                {sessionUnreadable ? (
-                  <Unavailable />
-                ) : stats.updatedAt ? (
-                  formatDateTime(stats.updatedAt)
-                ) : (
-                  '—'
-                )}
-              </StatRow>
-              <span className={status} data-testid="summary-provenance">
-                成本按配置价目估算，可能与账单略有差异；token 为服务端上报用量。总成本为
-                「累计展示值」，可能含分支继承、跨机器导入的历史调用；计入预算护栏的「本机实际
-                发生」用量见设置 →「用量与成本」面板。
+            {llmFailed ? (
+              <span className={errorLine} role="alert" data-testid="summary-llm-error">
+                调用明细读取失败，下列用量与成本不可信（不是 0）：
+                {failureMessage(llmError)}
               </span>
-            </>
-          )}
-        </div>
-      )}
+            ) : null}
+            {/* 消息列表读失败：消息数/用户消息/助手消息全部由它推导，
+                  undefined → 0 —— 用户会以为这轮对话的内容已经不在了。 */}
+            {messagesUnreadable ? (
+              <span className={errorLine} role="alert" data-testid="summary-messages-error">
+                消息列表读取失败，下列消息数不可信（不是 0）：
+                {failureMessage(messagesError)}
+              </span>
+            ) : null}
+            {/* 会话元信息读失败：标题会退化成「（未命名会话）」、时间退化成「—」，
+                  把「没读到」讲成「这条会话没有名字」。 */}
+            {sessionUnreadable ? (
+              <span className={errorLine} role="alert" data-testid="summary-session-error">
+                会话元信息读取失败，标题与时间不可信：
+                {failureMessage(sessionError)}
+              </span>
+            ) : null}
+            <StatRow label="消息数">
+              {messagesUnreadable ? <Unavailable /> : formatNumber(stats.messageCount)}
+            </StatRow>
+            <StatRow label="提供商">
+              {llmFailed ? <Unavailable /> : stats.provider ? stats.provider : '—'}
+            </StatRow>
+            <StatRow label="模型">
+              {llmFailed ? <Unavailable /> : stats.model ? stats.model : '—'}
+            </StatRow>
+            <StatRow label="上下文限制">
+              {llmFailed ? (
+                <Unavailable />
+              ) : stats.contextWindow ? (
+                formatNumber(stats.contextWindow)
+              ) : (
+                '—'
+              )}
+            </StatRow>
+            <StatRow label="总 token">
+              {llmFailed ? <Unavailable /> : formatNumber(stats.totalTokens)}
+            </StatRow>
+            <StatRow label="使用率">
+              {llmFailed ? (
+                <Unavailable />
+              ) : stats.usagePercent != null ? (
+                `${stats.usagePercent}%`
+              ) : (
+                '—'
+              )}
+            </StatRow>
+            <StatRow label="输入 token">
+              {llmFailed ? <Unavailable /> : formatNumber(stats.inputTokens)}
+            </StatRow>
+            <StatRow label="输出 token">
+              {llmFailed ? <Unavailable /> : formatNumber(stats.outputTokens)}
+            </StatRow>
+            {/* 推理 token / 缓存写当前未在 provider 层采集，诚实显示 0 */}
+            <StatRow label="推理 token">{llmFailed ? <Unavailable /> : 0}</StatRow>
+            <StatRow label="缓存 token（读/写）">
+              {llmFailed ? <Unavailable /> : `${formatNumber(stats.cacheRead)} / 0`}
+            </StatRow>
+            <StatRow label="用户消息">
+              {messagesUnreadable ? <Unavailable /> : formatNumber(stats.userMessages)}
+            </StatRow>
+            <StatRow label="助手消息">
+              {messagesUnreadable ? <Unavailable /> : formatNumber(stats.assistantMessages)}
+            </StatRow>
+            <StatRow label="总成本（估算）">
+              {llmFailed ? <Unavailable /> : formatCostUSD(stats.cost)}
+            </StatRow>
+            {!llmFailed && stats.unknownCostCalls > 0 && (
+              <StatRow label="未估价调用">
+                {formatNumber(stats.unknownCostCalls)} 次（按 $0 计）
+              </StatRow>
+            )}
+            <StatRow label="创建时间">
+              {sessionUnreadable ? (
+                <Unavailable />
+              ) : stats.createdAt ? (
+                formatDateTime(stats.createdAt)
+              ) : (
+                '—'
+              )}
+            </StatRow>
+            <StatRow label="最后活动">
+              {sessionUnreadable ? (
+                <Unavailable />
+              ) : stats.updatedAt ? (
+                formatDateTime(stats.updatedAt)
+              ) : (
+                '—'
+              )}
+            </StatRow>
+            <span className={status} data-testid="summary-provenance">
+              成本按配置价目估算，可能与账单略有差异；token 为服务端上报用量。总成本为
+              「累计展示值」，可能含分支继承、跨机器导入的历史调用；计入预算护栏的「本机实际
+              发生」用量见设置 →「用量与成本」面板。
+            </span>
+          </>
+        )}
+      </Collapsible>
     </div>
   )
 }

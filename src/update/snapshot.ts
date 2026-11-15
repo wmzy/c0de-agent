@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
+import { toEpochMs } from '../session/time.js'
 
 /** 序列化后的会话行（Date → epoch ms，纯 JSON 安全）。 */
 type SerializedSession = {
@@ -57,12 +58,6 @@ type SessionSnapshot = {
 
 const CURRENT_SNAPSHOT_VERSION = '0.1.0'
 
-function toDateMs(v: unknown): number {
-  if (v instanceof Date) return v.getTime()
-  if (typeof v === 'string' || typeof v === 'number') return new Date(v).getTime()
-  return Date.now()
-}
-
 function toSerializedSession(row: typeof sessions.$inferSelect): SerializedSession {
   return {
     id: row.id,
@@ -74,10 +69,10 @@ function toSerializedSession(row: typeof sessions.$inferSelect): SerializedSessi
     agentType: row.agentType,
     worktreePath: row.worktreePath,
     source: row.source,
-    deletedAt: row.deletedAt ? toDateMs(row.deletedAt) : null,
+    deletedAt: row.deletedAt ? toEpochMs(row.deletedAt) : null,
     deletedBatchId: row.deletedBatchId ?? null,
-    createdAt: toDateMs(row.createdAt),
-    updatedAt: toDateMs(row.updatedAt),
+    createdAt: toEpochMs(row.createdAt),
+    updatedAt: toEpochMs(row.updatedAt),
   }
 }
 
@@ -90,7 +85,7 @@ function toSerializedEntry(row: typeof sessionEntries.$inferSelect): SerializedE
     content: row.content,
     toolName: row.toolName,
     tokenCount: row.tokenCount ?? 0,
-    createdAt: toDateMs(row.createdAt),
+    createdAt: toEpochMs(row.createdAt),
   }
 }
 

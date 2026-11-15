@@ -32,11 +32,18 @@ const ADAPTER_COMMANDS: Record<string, [string, string[]]> = {
   lldb: ['lldb-dap', []],
 }
 
+/** 查适配器映射；未知 id 回退「id 本身当命令、无参数」——两个消费点
+ *  （resolveAdapterCommand 与 createDebugSpawn）此前各写一份回退字面量。 */
+function lookupCommand(
+  map: Record<string, [string, string[]]>,
+  adapter: string,
+): [string, string[]] {
+  return map[adapter] ?? [adapter, []]
+}
+
 /** 解析适配器 id → spawn 命令（导出供测试）。 */
 function resolveAdapterCommand(adapter: string): [string, string[]] {
-  const known = ADAPTER_COMMANDS[adapter]
-  if (known) return known
-  return [adapter, []]
+  return lookupCommand(ADAPTER_COMMANDS, adapter)
 }
 
 /**
@@ -45,8 +52,7 @@ function resolveAdapterCommand(adapter: string): [string, string[]] {
  */
 function createDebugSpawn(overrides?: Record<string, [string, string[]]>): DebugSpawn {
   return (config: DAPConfig): DAPTransport => {
-    const map = overrides ?? ADAPTER_COMMANDS
-    const [command, args] = map[config.adapter] ?? [config.adapter, []]
+    const [command, args] = lookupCommand(overrides ?? ADAPTER_COMMANDS, config.adapter)
     const { transport } = createProcessTransport(command, args)
     return transport
   }

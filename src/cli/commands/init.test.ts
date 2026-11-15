@@ -14,7 +14,7 @@ describe('runInitCommand', () => {
     await runInitCommand({
       args: { options: {}, positionals: [] },
       cwd: tmp,
-      log: (s) => messages.push(s),
+      write: (s) => messages.push(s),
     })
     const path = join(tmp, '.c0de', 'config.json')
     expect(existsSync(path)).toBe(true)
@@ -25,18 +25,18 @@ describe('runInitCommand', () => {
   })
 
   it('errors when config exists without --force', async () => {
-    await runInitCommand({ args: { options: {}, positionals: [] }, cwd: tmp, log: () => {} })
+    await runInitCommand({ args: { options: {}, positionals: [] }, cwd: tmp, write: () => {} })
     await expect(
-      runInitCommand({ args: { options: {}, positionals: [] }, cwd: tmp, log: () => {} }),
+      runInitCommand({ args: { options: {}, positionals: [] }, cwd: tmp, write: () => {} }),
     ).rejects.toThrow(/exists/i)
   })
 
   it('overwrites with --force', async () => {
-    await runInitCommand({ args: { options: {}, positionals: [] }, cwd: tmp, log: () => {} })
+    await runInitCommand({ args: { options: {}, positionals: [] }, cwd: tmp, write: () => {} })
     await runInitCommand({
       args: { options: { force: true }, positionals: [] },
       cwd: tmp,
-      log: () => {},
+      write: () => {},
     })
     const path = join(tmp, '.c0de', 'config.json')
     expect(existsSync(path)).toBe(true)

@@ -5,6 +5,7 @@ import type { AgentError, AgentEvent } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
 import type { RefObject } from 'react'
 import { generateId } from '@/hooks/id.js'
+import { broadcastOnChannel } from '@/utils/broadcast.js'
 
 export type SubagentInfo = {
   childId: string
@@ -463,12 +464,7 @@ export const TAB_ID =
 export type RunStateMessage = { from: string; sessionId: string; active: boolean }
 
 export function broadcastRunState(msg: Omit<RunStateMessage, 'from'>): void {
-  if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return
-  try {
-    const ch = new BroadcastChannel(RUN_CHANNEL)
-    ch.postMessage({ ...msg, from: TAB_ID })
-    ch.close()
-  } catch {
-    // BroadcastChannel 不可用：忽略（无跨标签页同步）
-  }
+  // 频道骨架（SSR 守卫/try/catch/用后即关）在 broadcastOnChannel；
+  // from: TAB_ID 注入是本频道的语义（订阅侧据此忽略本页广播），留在调用方。
+  broadcastOnChannel(RUN_CHANNEL, { ...msg, from: TAB_ID })
 }

@@ -1,6 +1,7 @@
 // src/web/hooks/terminal-persistence.ts
 // 终端面板状态的 localStorage 持久化与纯函数工具。
 // 从 useTerminal.ts 拆出：常量、key 派生、读写、sizes 归一化。
+import { loadClampedNumber } from '@/utils/format.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
 const TERMINAL_HEIGHT_KEY = 'c0de-agent:terminalHeight'
@@ -24,11 +25,14 @@ interface PersistedTerminalState {
 /** pane 最小 flex 比例（防止被拖到 0）。 */
 const MIN_PANE_FLEX = 0.15
 
+/** 恢复持久化的面板高度并钳制到 [MIN_HEIGHT, MAX_HEIGHT]（骨架在
+ *  loadClampedNumber，与 Layout 的列宽恢复同一实现）。 */
 function loadHeight(): number {
-  const raw = storageGet(TERMINAL_HEIGHT_KEY)
-  if (raw == null) return DEFAULT_HEIGHT
-  const n = Number(raw)
-  return Number.isFinite(n) ? Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, n)) : DEFAULT_HEIGHT
+  return loadClampedNumber(TERMINAL_HEIGHT_KEY, {
+    min: MIN_HEIGHT,
+    max: MAX_HEIGHT,
+    fallback: DEFAULT_HEIGHT,
+  })
 }
 
 function loadOpen(projectId: string): boolean {

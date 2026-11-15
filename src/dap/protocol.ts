@@ -1,6 +1,8 @@
 // DAP 协议层（spec §21）：JSON-RPC over Content-Length 分帧。
 // 零外部依赖；transport 抽象分离 IO，协议层（编码/分帧/seq 配对）纯逻辑可测。
 
+import { createPendingRequests } from '../shared/jsonrpc-pending.js'
+
 /** DAP 传输抽象：包装适配器进程的 stdin/stdout。真实实现见 transport.ts。 */
 type DAPTransport = {
   write: (chunk: string | Uint8Array) => void
@@ -108,29 +110,12 @@ function createFramer(): Framer {
 /** 创建 DAP 客户端。transport 由调用方提供（真实为适配器进程 stdio）。 */
 function createDAPClient(transport: DAPTransport): DAPClient {
   let seq = 0
-  const pending = new Map<
-    number,
-    {
-      resolve: (b: unknown) => void
-      reject: (e: Error) => void
-      timer?: ReturnType<typeof setTimeout>
-    }
-  >()
+  // pending 骨架（幂等 settle / 超时 reject / failAll）收敛于 shared 单一实现
+  //（与 MCP client 同源），本文件只保留 seq 计数与 DAP 响应/事件语义。
+  const requests = createPendingRequests('DAP')
   const eventHandlers = new Map<string, Set<(body: unknown) => void>>()
   const framer = createFramer()
   let disposed = false
-
-  /** 终结一个 pending：清定时器 → 出表 → settle（幂等：超时/响应/关闭谁先到谁生效）。 */
-  const settle = (
-    id: number,
-    fn: (p: { resolve: (b: unknown) => void; reject: (e: Error) => void }) => void,
-  ): void => {
-    const p = pending.get(id)
-    if (!p) return
-    if (p.timer) clearTimeout(p.timer)
-    pending.delete(id)
-    fn(p)
-  }
 
   framer.onMessage((json) => {
     let msg: DAPMessage
@@ -141,8 +126,7 @@ function createDAPClient(transport: DAPTransport): DAPClient {
     }
     if (msg.type === 'response') {
       const requestSeq = msg.request_seq ?? -1
-      if (!pending.has(requestSeq)) return
-      settle(requestSeq, (p) => {
+      requests.settle(requestSeq, (p) => {
         if (msg.success === false) {
           p.reject(new Error(msg.message || `DAP request ${requestSeq} failed`))
         } else {
@@ -158,9 +142,7 @@ function createDAPClient(transport: DAPTransport): DAPClient {
   transport.onData((chunk) => framer.feed(chunk))
   transport.onClose(() => {
     disposed = true
-    for (const id of Array.from(pending.keys())) {
-      settle(id, (p) => p.reject(new Error('DAP transport closed')))
-    }
+    requests.failAll('DAP transport closed')
   })
 
   function send(msg: DAPMessage): void {
@@ -173,15 +155,7 @@ function createDAPClient(transport: DAPTransport): DAPClient {
       seq += 1
       const cur = seq
       return new Promise((resolve, reject) => {
-        const timer =
-          timeoutMs > 0
-            ? setTimeout(() => {
-                settle(cur, (p) =>
-                  p.reject(new Error(`DAP request "${command}" timed out after ${timeoutMs}ms`)),
-                )
-              }, timeoutMs)
-            : undefined
-        pending.set(cur, { resolve, reject, ...(timer ? { timer } : {}) })
+        requests.add(cur, { resolve, reject }, { timeoutMs, name: command })
         send({ seq: cur, type: 'request', command, arguments: args })
       })
     },
@@ -205,9 +179,7 @@ function createDAPClient(transport: DAPTransport): DAPClient {
       if (disposed) return
       disposed = true
       transport.close()
-      for (const id of Array.from(pending.keys())) {
-        settle(id, (p) => p.reject(new Error('DAP client disposed')))
-      }
+      requests.failAll('DAP client disposed')
     },
   }
 }

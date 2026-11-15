@@ -8,6 +8,7 @@ import {
   serializeSessions,
 } from '../../update/index.js'
 import type { CommandArgs } from '../parser.js'
+import { resolveOutLine } from './io.js'
 
 type UpdateCommandContext = {
   args: CommandArgs
@@ -29,7 +30,7 @@ type UpdateCommandContext = {
  *   活跃会话迁移需要注入 db（server 内触发时提供；独立 CLI 无活跃会话）。
  */
 async function runUpdateCommand(ctx: UpdateCommandContext): Promise<void> {
-  const out = ctx.out ?? ((s: string) => process.stdout.write(`${s}\n`))
+  const out = resolveOutLine(ctx)
   const check = ctx.checkFn ?? checkForUpdate
 
   const result = await check()

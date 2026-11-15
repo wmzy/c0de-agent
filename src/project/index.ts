@@ -50,7 +50,7 @@ async function refreshTrustedProjectFingerprint(db: DB, dir: string): Promise<bo
 
 export type { Project } from './project.js'
 export type { ResolvedProject } from './resolve.js'
-export { resolveProject } from './resolve.js'
+export { findGitRoot, resolveProject } from './resolve.js'
 export {
   enforceProjectTrust,
   fromDirectory,

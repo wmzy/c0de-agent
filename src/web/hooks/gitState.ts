@@ -11,7 +11,6 @@ import type { QueryClient } from '@tanstack/react-query'
 export function invalidateGitState(qc: QueryClient, projectId: string): void {
   qc.invalidateQueries({ queryKey: ['projects'] })
   qc.invalidateQueries({ queryKey: ['files', 'git-status', projectId] })
-  qc.invalidateQueries({ queryKey: ['files', 'git-branch', projectId] })
   qc.invalidateQueries({ queryKey: ['files', 'git-last-commit', projectId] })
   qc.invalidateQueries({ queryKey: ['files', 'git-branches', projectId] })
 }

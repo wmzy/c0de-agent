@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { type KeyboardEvent, memo, type ReactNode, useEffect, useState } from 'react'
+import { CollapseArrow } from '@/components/Collapsible.js'
 import { FilePathLink } from '@/components/FilePathLink.js'
 import { BashToolView } from '@/components/session/tools/BashToolView.js'
 import { EditToolView } from '@/components/session/tools/EditToolView.js'
@@ -183,7 +184,11 @@ export const ToolBlock = memo(function ToolBlock({
           {tool}
           {renderHeaderSummary(tool, input)}
         </span>
-        <span className={arrow}>{isExpanded ? '▾' : '▸'}</span>
+        {/* 本折叠头特化过深，不迁 Collapsible 原语：header 是 div[role=button]
+            （内嵌 FilePathLink 真 button，HTML 禁 button 嵌套）、箭头在尾部、且带
+            键盘处理与自动收起——只共享箭头子元素与 a11y 口径（字形 aria-hidden，
+            状态由上方 aria-expanded 播报）。 */}
+        <CollapseArrow open={isExpanded} className={arrow} />
       </div>
       {isExpanded && st === 'paused' ? (
         <div className={`${body} ${permissionPending}`} data-testid="tool-body">

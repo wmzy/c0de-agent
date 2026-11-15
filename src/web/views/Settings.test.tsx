@@ -3,11 +3,12 @@
  */
 
 import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
-import type { Config } from '@shared/types/config.js'
+import type { Config, MCPServerConfig } from '@shared/types/config.js'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MCPPanel } from '@/components/settings/MCPPanel.js'
 import { horizontalWheelTarget } from '@/components/settings/sectionScroll.js'
 import { useCommands } from '@/hooks/useCommands.js'
 import type { AppPaths } from '@/routes.js'
@@ -2396,6 +2397,61 @@ describe('Settings — 完整配置表单覆盖', () => {
       tools: { enabled: string[] }
     }
     expect(args.tools.enabled).toEqual(['read', 'write', 'edit'])
+  })
+})
+
+describe('MCPPanel 待删行按对象身份匹配', () => {
+  // 直接渲染面板（纯 props 组件）：本组用例需要精确控制 mcpServers 数组在确认
+  // 弹窗打开期间被外部替换/重排，走整页 Settings 无法注入这种 draft 变化。
+  // 回归：pendingRemove 此前存下标——确认弹窗打开期间列表可变（draft 被 JSON
+  // 编辑器/配置重载整段替换或重排），下标会指到别的行：弹窗标题说删 B、
+  // 实际删掉 A。
+  const serverA: MCPServerConfig = { name: 'A', transport: 'stdio' }
+  const serverB: MCPServerConfig = { name: 'B', transport: 'stdio' }
+
+  it('弹窗打开期间行序重排后，确认删的仍是点击时的那行', async () => {
+    const onMcpServersChange = vi.fn()
+    const { rerender } = render(
+      <MCPPanel mcpServers={[serverA, serverB]} onMcpServersChange={onMcpServersChange} />,
+    )
+
+    // 点第二行（B）的删除：弹窗标题指向 B
+    fireEvent.click(screen.getAllByTestId('mcp-remove')[1] as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('「B」')
+
+    // 弹窗打开期间外部把 draft 重排（同一组行对象、顺序对调）
+    rerender(<MCPPanel mcpServers={[serverB, serverA]} onMcpServersChange={onMcpServersChange} />)
+
+    // 确认：updater 删的是 B（点击时的行），不是重排后占在下标 1 的 A
+    const dialogAfterReorder = await screen.findByRole('dialog')
+    fireEvent.click(within(dialogAfterReorder).getByText('删除'))
+    expect(onMcpServersChange).toHaveBeenCalledTimes(1)
+    const updater = onMcpServersChange.mock.calls[0]?.[0] as (
+      prev: MCPServerConfig[],
+    ) => MCPServerConfig[]
+    expect(updater([serverB, serverA])).toEqual([serverA])
+  })
+
+  it('弹窗打开期间行对象被整段替换后，弹窗消失且不删任何行', async () => {
+    const onMcpServersChange = vi.fn()
+    const { rerender } = render(
+      <MCPPanel mcpServers={[serverA, serverB]} onMcpServersChange={onMcpServersChange} />,
+    )
+    fireEvent.click(screen.getAllByTestId('mcp-remove')[1] as HTMLElement)
+    await screen.findByRole('dialog')
+
+    // draft 被整段替换：同名行是全新对象，点击时引用的行已不存在
+    rerender(
+      <MCPPanel
+        mcpServers={[{ ...serverA }, { ...serverB }]}
+        onMcpServersChange={onMcpServersChange}
+      />,
+    )
+
+    // 弹窗随之卸载（无从确认），也不会按过期身份删错行
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(onMcpServersChange).not.toHaveBeenCalled()
   })
 })
 

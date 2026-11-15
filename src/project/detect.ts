@@ -1,6 +1,7 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ProjectInfo } from '../core/types.js'
+import { readJsonFileSafe } from '../shared/utils/json-file.js'
 import { IGNORED_DIR_NAMES } from '../shared/utils/path.js'
 import { resolveProject } from './resolve.js'
 
@@ -38,15 +39,9 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   '.swift': 'Swift',
 }
 
-/** 安全读 package.json，失败返回 null。 */
+/** 安全读 package.json，失败返回 null（读侧形状收敛到 shared/utils/json-file.ts）。 */
 function readPackageJson(cwd: string): Record<string, unknown> | null {
-  const pkgPath = join(cwd, 'package.json')
-  if (!existsSync(pkgPath)) return null
-  try {
-    return JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>
-  } catch {
-    return null
-  }
+  return readJsonFileSafe<Record<string, unknown>>(join(cwd, 'package.json'))
 }
 
 /** 从 package.json 的 deps 推断主框架。 */

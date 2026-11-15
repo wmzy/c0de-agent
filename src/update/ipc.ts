@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { timingSafeEqualString } from '../shared/utils/constant-time.js'
 
 /**
  * 端口接管 IPC（spec §18.3）：新实例检测到端口被旧实例占用时，通过 HTTP
@@ -47,16 +47,6 @@ type HandoffOptions = {
 type HandoffError = Error & { kind: 'connect' | 'http'; status?: number }
 
 /**
- * 恒时比较 Authorization 头与期望值：字符串直接比较可被时序攻击逐字符探测。
- * 长度不等直接 false——timingSafeEqual 要求等长 buffer，先比较长度本身
- * 不泄露内容信息。
- */
-function authHeaderMatches(actual: string | undefined, expected: string): boolean {
-  if (typeof actual !== 'string' || actual.length !== expected.length) return false
-  return timingSafeEqual(Buffer.from(actual), Buffer.from(expected))
-}
-
-/**
  * 旧实例启动时创建 handoff 端点。收到 POST /handoff 即触发 onHandoff
  * （关闭主服务与资源），响应 200；exitAfterResponse 时随后退出进程。
  */
@@ -72,7 +62,7 @@ function createHandoffServer(
         const authorized = opts.verify
           ? opts.verify(req.headers.authorization?.replace(/^Bearer\s+/i, ''))
           : expected.length > 0
-            ? authHeaderMatches(req.headers.authorization, expected)
+            ? timingSafeEqualString(req.headers.authorization, expected)
             : true
         if (!authorized) {
           res.writeHead(401, { 'content-type': 'application/json' })

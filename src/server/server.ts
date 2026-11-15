@@ -52,7 +52,7 @@ import {
 import type { HandoffError } from '../update/ipc.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
-import { createAuthManager } from './auth-manager.js'
+import { createAuthManager, readDevicesFile } from './auth-manager.js'
 import { isAllowedOrigin } from './middleware/cors.js'
 import { createPermissionStore } from './permission/store.js'
 import { PTYManager } from './terminal/pty-manager.js'
@@ -160,16 +160,11 @@ function resolveAuthToken(config: Config, dataDir: string): string | undefined {
   return generated
 }
 
-/** dataDir 下是否存在已授权设备（devices.json 非空）。 */
+/** dataDir 下是否存在已授权设备（devices.json 非空）。
+ *  读取委托 auth-manager 的 readDevicesFile 单源：逐字段防御后计数，
+ *  与认证路径对同一磁盘状态得出一致结论（畸形条目不算已注册设备）。 */
 function hasRegisteredDevices(dataDir: string): boolean {
-  try {
-    const path = join(dataDir, 'devices.json')
-    if (!existsSync(path)) return false
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { devices?: unknown[] }
-    return Array.isArray(parsed.devices) && parsed.devices.length > 0
-  } catch {
-    return false
-  }
+  return readDevicesFile(join(dataDir, 'devices.json')).length > 0
 }
 
 /** 只读 dataDir 下已存在的 auth-token（新实例 handoff 握手用；不生成）。 */

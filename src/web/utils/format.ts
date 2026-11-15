@@ -1,6 +1,7 @@
 import { roundTo } from '@shared/round.js'
 import { isUuid } from '@shared/utils/string.js'
 import type { CodeReference } from '@/types/index.js'
+import { storageGet } from '@/utils/storage.js'
 
 /** 解析输入文本中的代码引用 @[path:start-end] 或 @[msgId:n]。 */
 export function parseCodeReference(text: string): CodeReference | null {
@@ -111,4 +112,19 @@ export function parseBoundedNumber(
   if (min !== undefined && n < min) return min
   if (max !== undefined && n > max) return max
   return n
+}
+
+/** 从 localStorage 读数字并钳制到 [min, max]；缺失/非数字/非有限（NaN/±Infinity）
+ *  一律回落 fallback。此前 Layout.loadWidth 与 terminal-persistence.loadHeight
+ *  各持一份同构实现（storageGet → Number → isFinite ? clamp : fallback），收敛于
+ *  此。与 parseBoundedNumber 同区放置：两者同为「数值 + 钳制」，只是输入源不同
+ *  （输入框文本 vs 持久化存储），且钳制语义一致——越界钳到边界而非回落。 */
+export function loadClampedNumber(
+  key: string,
+  opts: { min: number; max: number; fallback: number },
+): number {
+  const raw = storageGet(key)
+  if (raw == null) return opts.fallback
+  const n = Number(raw)
+  return Number.isFinite(n) ? Math.min(opts.max, Math.max(opts.min, n)) : opts.fallback
 }

@@ -36,6 +36,18 @@ const stackedNotice = css`
   color: var(--haze-color-danger, #b3261e);
 `
 
+/** 次级行内变体（CodeReference）：嵌入消息正文流的展开区，失败不抢 danger 红；
+ * 且失败原因（路径写错/文件已删/服务端读不动）可能较长，不允许 nowrap 截断——
+ * 「为什么失败」正是这里唯一有价值的信息。 */
+const secondaryNotice = css`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--haze-color-text-secondary);
+`
+
 type LoadErrorNoticeProps = {
   /** 已拼好前缀的完整文案（如「AI 服务列表读取失败：…」）。 */
   message: string
@@ -43,31 +55,41 @@ type LoadErrorNoticeProps = {
   onRetry?: () => void
   /** 堆叠变体（列表容器内整段失败）；默认行内。 */
   stacked?: boolean
+  /** 行内变体的色调：danger（默认，控件占位的警示红）或 secondary（嵌入正文流
+   * 的次级提示）；只影响行内变体，堆叠变体始终 danger。 */
+  tone?: 'danger' | 'secondary'
   /** 占位 testid（调用点既有断言依赖）。 */
   testId: string
 }
 
-function LoadErrorNotice({ message, onRetry, stacked = false, testId }: LoadErrorNoticeProps) {
+function LoadErrorNotice({
+  message,
+  onRetry,
+  stacked = false,
+  tone = 'danger',
+  testId,
+}: LoadErrorNoticeProps) {
+  const retry = onRetry ? (
+    <Button variant="outline" onClick={onRetry}>
+      重试
+    </Button>
+  ) : null
   if (stacked) {
     return (
       <div className={stackedNotice} role="alert" data-testid={testId}>
         <div>{message}</div>
-        {onRetry ? (
-          <Button variant="outline" onClick={onRetry}>
-            重试
-          </Button>
-        ) : null}
+        {retry}
       </div>
     )
   }
   return (
-    <span className={inlineNotice} role="alert" data-testid={testId}>
+    <span
+      className={tone === 'secondary' ? secondaryNotice : inlineNotice}
+      role="alert"
+      data-testid={testId}
+    >
       {message}
-      {onRetry ? (
-        <Button variant="outline" onClick={onRetry}>
-          重试
-        </Button>
-      ) : null}
+      {retry}
     </span>
   )
 }

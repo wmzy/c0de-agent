@@ -36,8 +36,11 @@ interface MCPPanelProps {
 function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
   // 删除是唯一会整行丢弃已填内容的操作：command/args/url 一次点错就没了，
   // 而本页其它破坏性操作（撤销设备、关闭认证、删除工作流）都有二审。
-  // 先暂存待删行下标，确认后再动草稿。
-  const [pendingRemove, setPendingRemove] = useState<number | null>(null)
+  // 先暂存待删行，确认后再动草稿。待删行必须存**行对象引用**而非下标：
+  // 确认弹窗打开期间列表仍可变（「+添加服务器」可点、draft 可被 JSON 编辑器/
+  // 配置重载整段替换或重排），下标会指到别的行（删错行 + 弹窗标题错名）；
+  // 而 name 是可编辑字段且可空/重名，也不能当行身份。
+  const [pendingRemove, setPendingRemove] = useState<MCPServerConfig | null>(null)
 
   const addMcpServer = () => {
     onMcpServersChange((prev) => [...prev, { name: '', transport: 'stdio' }])
@@ -51,9 +54,9 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
     onMcpServersChange((prev) => prev.map((s, i) => (i === index ? { ...s, [field]: value } : s)))
   }
 
-  const removeMcpServer = (index: number) => {
+  const removeMcpServer = (server: MCPServerConfig) => {
     setPendingRemove(null)
-    onMcpServersChange((prev) => prev.filter((_, i) => i !== index))
+    onMcpServersChange((prev) => prev.filter((s) => s !== server))
   }
 
   return (
@@ -106,7 +109,7 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
           <Button
             className={btnDanger}
             variant="outline"
-            onClick={() => setPendingRemove(index)}
+            onClick={() => setPendingRemove(server)}
             data-testid="mcp-remove"
           >
             删除
@@ -117,19 +120,21 @@ function MCPPanel({ mcpServers, onMcpServersChange }: MCPPanelProps) {
         + 添加服务器
       </Button>
       {/* 条件渲染挂载：react-use-control 的 open 布尔值仅是初始值，
-       * prop 变化不同步内部状态——必须以挂载/卸载驱动显隐（与 SecurityPanel 同款）。 */}
-      {pendingRemove !== null && mcpServers[pendingRemove] && (
+       * prop 变化不同步内部状态——必须以挂载/卸载驱动显隐（与 SecurityPanel 同款）。
+       * includes 守卫：draft 被整段替换后引用的行对象已不存在，弹窗随之消失，
+       * 而不是按过期的行身份继续删。 */}
+      {pendingRemove !== null && mcpServers.includes(pendingRemove) && (
         <ConfirmDialog
           open
           onClose={() => setPendingRemove(null)}
           onConfirm={() => removeMcpServer(pendingRemove)}
-          title={`删除 MCP 服务器「${mcpServers[pendingRemove].name || '未命名'}」`}
+          title={`删除 MCP 服务器「${pendingRemove.name || '未命名'}」`}
           confirmText="删除"
           cancelText="取消"
           variant="danger"
         >
           将从配置中移除该服务器，其
-          {mcpServers[pendingRemove].transport === 'stdio' ? ' command 与参数' : '连接地址'}
+          {pendingRemove.transport === 'stdio' ? ' command 与参数' : '连接地址'}
           不会自动备份。保存设置后该服务器不再向 AI 暴露工具。确定删除？
         </ConfirmDialog>
       )}

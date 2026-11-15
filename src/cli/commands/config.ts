@@ -9,6 +9,7 @@ import {
 import { coerce, getByPath, setPathPatch } from '../../core/config-path.js'
 import type { Config } from '../../shared/types/config.js'
 import type { CommandArgs } from '../parser.js'
+import { resolveWrite } from './io.js'
 
 /**
  * P1：config set 写入项目作用域后刷新信任指纹（serve 未运行时生效）。
@@ -39,7 +40,7 @@ type ConfigCommandContext = {
 }
 
 async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
-  const write = ctx.write ?? process.stdout.write.bind(process.stdout)
+  const write = resolveWrite(ctx)
   const sub = ctx.args.positionals[0]
   const scopes = loadConfigScopes(ctx.cwd)
   // get 展示用合并视图（global ← project，含默认值），与 loadConfig 语义一致。

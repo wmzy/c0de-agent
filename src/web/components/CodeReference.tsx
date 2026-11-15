@@ -3,6 +3,8 @@ import { useMatched } from '@native-router/react'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { CodeBlock } from '@/components/CodeBlock.js'
+import { Collapsible } from '@/components/Collapsible.js'
+import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { fileAPI } from '@/services/file.js'
 import { messageOf } from '@/utils/errors.js'
 import { extOf, parseCodeReference } from '@/utils/format.js'
@@ -27,16 +29,6 @@ const expanded = css`
 const err = css`
   color: var(--haze-color-text-secondary);
   font-size: 12px;
-`
-const retryBtn = css`
-  margin-left: 6px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: none;
-  color: var(--haze-color-primary);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 1px 6px;
 `
 
 /** 渲染代码引用 @[path:start-end]（spec §10.4）。点击展开查看文件对应行区间的代码。 */
@@ -74,41 +66,36 @@ export function CodeReference({ token }: { token: string }) {
 
   return (
     <div>
-      <button
-        type="button"
-        className={chip}
-        data-testid="code-ref-toggle"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
+      {/* 展开骨架收敛在 Collapsible（受控：open 同时控制 useQuery 的 enabled，
+          只有点开后才发读文件请求）；失败占位收敛在 LoadErrorNotice（secondary
+          色调，不再自持第三套「原因 + 重试」样式）。 */}
+      <Collapsible
+        open={open}
+        onOpenChange={setOpen}
+        header={label}
+        headerClassName={chip}
+        testId="code-ref-toggle"
+        bodyClassName={expanded}
+        bodyTestId="code-ref-body"
       >
-        {open ? '▾' : '▸'} {label}
-      </button>
-      {open && (
-        <div className={expanded} data-testid="code-ref-body">
-          {q.isLoading && <span className={err}>加载中…</span>}
-          {/* 失败必须说清原因并留重试入口：此前只有一句固定的「读取失败」，
-              用户无从判断是路径写错、文件已删还是服务端读不动，只能重开整页。 */}
-          {q.error ? (
-            <span className={err} role="alert" data-testid="code-ref-error">
-              读取失败：{messageOf(q.error)}
-              <button
-                type="button"
-                className={retryBtn}
-                onClick={() => void q.refetch()}
-                data-testid="code-ref-retry"
-              >
-                重试
-              </button>
-            </span>
-          ) : null}
-          {q.data && (
-            <CodeBlock
-              code={sliceLines(q.data.content, ref.startLine, ref.endLine)}
-              lang={extOf(ref.path)}
-            />
-          )}
-        </div>
-      )}
+        {q.isLoading && <span className={err}>加载中…</span>}
+        {/* 失败必须说清原因并留重试入口：此前只有一句固定的「读取失败」，
+            用户无从判断是路径写错、文件已删还是服务端读不动，只能重开整页。 */}
+        {q.error ? (
+          <LoadErrorNotice
+            message={`读取失败：${messageOf(q.error)}`}
+            onRetry={() => void q.refetch()}
+            tone="secondary"
+            testId="code-ref-error"
+          />
+        ) : null}
+        {q.data && (
+          <CodeBlock
+            code={sliceLines(q.data.content, ref.startLine, ref.endLine)}
+            lang={extOf(ref.path)}
+          />
+        )}
+      </Collapsible>
     </div>
   )
 }

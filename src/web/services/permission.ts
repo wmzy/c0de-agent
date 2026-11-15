@@ -1,4 +1,5 @@
 import { del, get, post, put } from '@/services/api.js'
+import { broadcastOnChannel, subscribeChannel } from '@/utils/broadcast.js'
 
 /** 授权模式：'default' 逐个确认，'auto' 自动放行 ask 工具（YOLO）。 */
 type PermissionMode = 'default' | 'auto'
@@ -39,14 +40,7 @@ const MODE_CHANNEL = 'c0de-permission-mode'
 type ModeChangeMessage = { sessionId: string | null; mode: PermissionMode }
 
 function broadcastModeChange(msg: ModeChangeMessage): void {
-  if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return
-  try {
-    const ch = new BroadcastChannel(MODE_CHANNEL)
-    ch.postMessage(msg)
-    ch.close()
-  } catch {
-    // BroadcastChannel 不可用：忽略（无跨标签页同步）
-  }
+  broadcastOnChannel(MODE_CHANNEL, msg)
 }
 
 /** 订阅其他标签页的模式变更。返回取消订阅函数。 */
@@ -54,13 +48,11 @@ function subscribeModeChange(
   sessionId: string | null,
   handler: (mode: PermissionMode) => void,
 ): () => void {
-  if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return () => {}
-  const ch = new BroadcastChannel(MODE_CHANNEL)
-  ch.onmessage = (ev: MessageEvent<ModeChangeMessage>) => {
-    const msg = ev.data
+  // 频道骨架（SSR 守卫/onmessage/关闭）在 subscribeChannel；按会话过滤是本频道
+  // 的语义（mode 频道广播所有会话的变更，非本会话的不动），留在调用方。
+  return subscribeChannel<ModeChangeMessage>(MODE_CHANNEL, (msg) => {
     if (msg && msg.sessionId === sessionId) handler(msg.mode)
-  }
-  return () => ch.close()
+  })
 }
 
 export type { ModeChangeMessage, PermissionMode, SessionPermissionState }

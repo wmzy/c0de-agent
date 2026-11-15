@@ -65,15 +65,6 @@ function createAcpHandlers(
   }
 }
 
-/** 写一行 ACP event 到给定 writer（命令层用于接 stdout）。 */
-function writeAcpEvent(
-  writer: (line: string) => void,
-  method: string,
-  params: Record<string, unknown>,
-): void {
-  writer(formatACPEvent(method, params))
-}
-
 type AcpCommandContext = {
   config: Config
   deps: LoopDeps
@@ -101,4 +92,4 @@ async function runAcpCommand(ctx: AcpCommandContext): Promise<void> {
 }
 
 export type { AcpCommandContext, AcpHandlersOptions }
-export { createAcpHandlers, runAcpCommand, writeAcpEvent }
+export { createAcpHandlers, runAcpCommand }

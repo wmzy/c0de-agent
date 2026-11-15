@@ -3,6 +3,7 @@ import {
   formatCost,
   formatLatency,
   formatTokenCount,
+  loadClampedNumber,
   parseBoundedNumber,
   parseCodeReference,
   parseFiniteNumber,
@@ -147,5 +148,36 @@ describe('parseBoundedNumber', () => {
   it('不传边界时等价于 parseFiniteNumber', () => {
     expect(parseBoundedNumber('2.5', 1)).toBe(2.5)
     expect(parseBoundedNumber('abc', 1)).toBe(1)
+  })
+})
+
+// localStorage 读数字 + 钳制（Layout 列宽 / 终端面板高度恢复的共享骨架）。
+describe('loadClampedNumber', () => {
+  const KEY = 'test:clamped'
+  const OPTS = { min: 100, max: 800, fallback: 240 }
+
+  it('缺失键回落 fallback', () => {
+    localStorage.removeItem(KEY)
+    expect(loadClampedNumber(KEY, OPTS)).toBe(240)
+  })
+
+  it('区间内的值原样通过', () => {
+    localStorage.setItem(KEY, '320')
+    expect(loadClampedNumber(KEY, OPTS)).toBe(320)
+  })
+
+  it('越界钳到边界而非回落', () => {
+    localStorage.setItem(KEY, '50')
+    expect(loadClampedNumber(KEY, OPTS)).toBe(100)
+    localStorage.setItem(KEY, '9999')
+    expect(loadClampedNumber(KEY, OPTS)).toBe(800)
+  })
+
+  // localStorage 只存字符串，旧版本遗留/手工编辑可写入任意文本。
+  it('非数字/非有限文本回落 fallback', () => {
+    localStorage.setItem(KEY, 'abc')
+    expect(loadClampedNumber(KEY, OPTS)).toBe(240)
+    localStorage.setItem(KEY, '1e999')
+    expect(loadClampedNumber(KEY, OPTS)).toBe(240)
   })
 })

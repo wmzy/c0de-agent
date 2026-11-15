@@ -5,7 +5,8 @@ import { useEffect } from 'react'
 import { useControl } from 'react-use-control'
 import { MobileNav } from '@/components/MobileNav.js'
 import { MOBILE } from '@/styles/breakpoints.js'
-import { storageGet, storageSet } from '@/utils/storage.js'
+import { loadClampedNumber } from '@/utils/format.js'
+import { storageSet } from '@/utils/storage.js'
 
 // 侧栏宽度：Workbench 硬区间 160–480，产品下限保留 200。
 const DEFAULT_SIDEBAR = 280
@@ -18,16 +19,6 @@ const MIN_PANEL = 240
 const MAX_PANEL = 480
 const SIDEBAR_KEY = 'c0de-agent:sidebarWidth'
 const PANEL_KEY = 'c0de-agent:panelWidth'
-
-const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
-
-/** 从 localStorage 读取并钳制宽度；非法或缺省返回 fallback。 */
-function loadWidth(key: string, fallback: number, min: number, max: number): number {
-  const raw = storageGet(key)
-  if (raw == null) return fallback
-  const n = Number(raw)
-  return Number.isFinite(n) ? clamp(n, min, max) : fallback
-}
 
 const layoutStyle = css`
   display: flex;
@@ -90,10 +81,18 @@ export function Layout({
   // useControl 首参是 Control | 初始值（不接受惰性函数——
   // 传函数会把 T 推断为 () => number，与 Control<number> 不兼容）。
   const [sidebarWidth, , sidebarWidthControl] = useControl(
-    loadWidth(SIDEBAR_KEY, DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
+    loadClampedNumber(SIDEBAR_KEY, {
+      min: MIN_SIDEBAR,
+      max: MAX_SIDEBAR,
+      fallback: DEFAULT_SIDEBAR,
+    }),
   )
   const [panelWidth, , panelWidthControl] = useControl(
-    loadWidth(PANEL_KEY, DEFAULT_PANEL, MIN_PANEL, MAX_PANEL),
+    loadClampedNumber(PANEL_KEY, {
+      min: MIN_PANEL,
+      max: MAX_PANEL,
+      fallback: DEFAULT_PANEL,
+    }),
   )
   // 移动端侧栏覆盖层开闭（Workbench 内置滑出/遮罩/Esc/focus 管理）。
   const [mobileSidebarOpen, setMobileSidebarOpen, mobileSidebarOpenControl] = useControl(false)

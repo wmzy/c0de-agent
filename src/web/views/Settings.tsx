@@ -197,6 +197,17 @@ export function Settings() {
   // 导出的 SaveFeedback，此前此处内联重写同一 4 变体）。
   const [saveFeedback, setSaveFeedback] = useState<SaveFeedback>({ kind: 'idle' })
 
+  // 保存成功反馈的单一入口（PATCH 落盘的 onSuccess 与「无改动」早退两条路径此前
+  // 逐字两份）：被留空的密钥没进 patch，用户看不到任何变化，必须在同一条反馈里
+  // 说出来，否则「我明明清空了」与「✓ 已保存」互相矛盾；2500ms 后仅在仍是 ok 时
+  // 复位（err / 新一轮 saving 不得被迟到的定时器抹掉）。
+  const flashSaveOk = (restored: number) => {
+    setSaveFeedback(
+      restored > 0 ? { kind: 'ok', msg: KEPT_SECRETS_NOTE(restored) } : { kind: 'ok' },
+    )
+    setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
+  }
+
   // P1-7：安全类配置（token/authEnabled）需重启 serve 后生效，服务端在 PATCH 响应中标记。
   const [needsRestart, setNeedsRestart] = useState(false)
 
@@ -280,14 +291,7 @@ export function Settings() {
       // false）静默抹掉，用户据此认定配置已加固。故只升不降：重启后页面重载，
       // state 自然复位。
       setNeedsRestart((prev) => prev || resp?.needsRestart === true)
-      // 被留空的密钥没进 patch，用户看不到任何变化：必须在同一条反馈里说出来，
-      // 否则「我明明清空了」与「✓ 已保存」互相矛盾。
-      setSaveFeedback(
-        variables.restoredSecrets > 0
-          ? { kind: 'ok', msg: KEPT_SECRETS_NOTE(variables.restoredSecrets) }
-          : { kind: 'ok' },
-      )
-      setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
+      flashSaveOk(variables.restoredSecrets)
     },
     onError: (err: unknown) => {
       setSaveFeedback({ kind: 'err', msg: messageOf(err) || '未知错误' })
@@ -439,12 +443,7 @@ export function Settings() {
       // 配置（与「放弃更改」同款复活缺陷，那条路修过，这条保存分支漏了同款守卫）。
       invalidateDraftWrites()
       setDraft(null)
-      setSaveFeedback(
-        restoredSecrets.restored > 0
-          ? { kind: 'ok', msg: KEPT_SECRETS_NOTE(restoredSecrets.restored) }
-          : { kind: 'ok' },
-      )
-      setTimeout(() => setSaveFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 2500)
+      flashSaveOk(restoredSecrets.restored)
       return
     }
     // P1-1 首跑作用域引导：全局与当前项目都还没有 provider、且本次保存引入了
