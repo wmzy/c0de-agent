@@ -34,6 +34,7 @@ import {
   sessionAPI,
   sessionMetaKey,
   sessionMetaQueryOptions,
+  sessionTreeKey,
 } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
@@ -233,7 +234,7 @@ export function ChatSession({
     mutationFn: () => sessionAPI.rebind(sessionId, projectId),
     onMutate: () => setRebindError(null),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
+      qc.invalidateQueries({ queryKey: sessionTreeKey() })
       qc.invalidateQueries({ queryKey: sessionMetaKey(sessionId) })
       setOrphanNotice(false)
       setRebindError(null)
@@ -318,7 +319,7 @@ export function ChatSession({
     // 不牵连任何恢复入口，故不弹告警（否则每次打开会话都滋扰）。
     sessionAPI
       .open(sessionId)
-      .then(() => qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }))
+      .then(() => qc.invalidateQueries({ queryKey: sessionTreeKey() }))
       .catch(() => {})
   }, [sessionId, qc, coldStartGuard.token, coldStartGuard.stale])
   useEffect(() => {

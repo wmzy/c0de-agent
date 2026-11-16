@@ -40,6 +40,8 @@ vi.mock('@/services/project.js', () => {
   return {
     projectAPI,
     currentProjectKey: () => ['project', 'current'],
+    // 键 helper 与真实模块同形（gitState 失效清单用）
+    projectsKey: () => ['projects'],
     currentProjectQueryOptions: () => ({
       queryKey: ['project', 'current'],
       queryFn: () => projectAPI.current(),

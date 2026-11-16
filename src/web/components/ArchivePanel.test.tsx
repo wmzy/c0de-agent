@@ -16,6 +16,8 @@ vi.mock('@/services/session.js', () => ({
   sessionAPI: {
     archives: vi.fn(),
   },
+  // 键 helper 与真实模块同形（查询键用）
+  sessionArchivesKey: (sessionId: string, q: string) => ['session', sessionId, 'archives', q],
 }))
 
 const { sessionAPI } = await import('@/services/session.js')

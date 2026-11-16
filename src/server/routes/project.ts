@@ -10,7 +10,6 @@ import { softDeleteKanbanBoardsByProject } from '../../kanban/store.js'
 import {
   fromDirectory,
   getByDirectory,
-  getProject,
   listProjects,
   relocateProject,
   resolveProject,
@@ -23,6 +22,7 @@ import { generateId } from '../../shared/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 import { expandPath } from './filesystem.js'
 
 type ProjectWithBranch = Project & { gitBranch: string | null; worktreeMissing: boolean }
@@ -103,9 +103,9 @@ function createProjectRoute(ctx: ServerContext): Hono {
 
   // 按 id 获取项目
   app.get('/:id', async (c) => {
-    const project = await getProject(ctx.db, c.req.param('id'))
-    if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-    return c.json(withBranch(project))
+    const target = await getProjectOr404(ctx.db, c, c.req.param('id'))
+    if (!target.ok) return target.response
+    return c.json(withBranch(target.project))
   })
 
   // 更新项目名
@@ -115,7 +115,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
     const name = typeof parsed.body.name === 'string' ? parsed.body.name : ''
     if (!name) return apiError(c, 400, 'BAD_REQUEST', 'name is required')
     const project = await updateProjectName(ctx.db, c.req.param('id'), name)
-    if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
     return c.json(withBranch(project))
   })
 
@@ -123,7 +123,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
   // 信任是一次性动作（trustedAt 落盘）；此后聊天入口不再拦截本项目。
   app.post('/:id/trust', async (c) => {
     const project = await trustProject(ctx.db, c.req.param('id'))
-    if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
     return c.json({ ok: true, project: withBranch(project) })
   })
 
@@ -182,8 +182,9 @@ function createProjectRoute(ctx: ServerContext): Hono {
   // 有活跃 run 绑定该项目时拒绝删除，避免 agent 工作目录悬空。
   app.delete('/:id', async (c) => {
     const id = c.req.param('id')
-    const project = await getProject(ctx.db, id)
-    if (!project) return apiError(c, 404, 'NOT_FOUND', 'Project not found')
+    const target = await getProjectOr404(ctx.db, c, id)
+    if (!target.ok) return target.response
+    const project = target.project
 
     // 活跃 run 守卫：该项目下任一进行中（含占位 isStarting）的会话 → 拒绝。
     // P1 修复：原实现先查 agentManager.children(projectId)——children 按

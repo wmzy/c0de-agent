@@ -97,11 +97,9 @@ async function fetchCatalog(force = false): Promise<{ data: CatalogData; fetched
     return disk
   }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 15_000)
   try {
     const res = await fetch(MODELS_DEV_URL, {
-      signal: controller.signal,
+      signal: AbortSignal.timeout(15_000),
       headers: { Accept: 'application/json' },
     })
     if (!res.ok) {
@@ -119,8 +117,6 @@ async function fetchCatalog(force = false): Promise<{ data: CatalogData; fetched
       return disk
     }
     throw err
-  } finally {
-    clearTimeout(timer)
   }
 }
 

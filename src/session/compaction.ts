@@ -81,8 +81,10 @@ export function truncateToolOutput(s: string): string {
   return `${headChars(s, head)}${TOOL_OUTPUT_MARKER}${tailChars(s, tail)}`
 }
 
-/** 序列化单个 content part：text/thinking 保持原样，tool 输出超长时截断。 */
-function serializePart(p: MessageContent): string {
+/** 序列化单个 content part：text/thinking 保持原样，tool 输出超长时截断。
+ *  两个消费方：compaction 压缩 prompt 与 squash 摘要 prompt（均经
+ *  truncateToolOutput 防超大 tool_output 撑爆 prompt）。 */
+export function serializePart(p: MessageContent): string {
   if (p._tag === 'text' || p._tag === 'thinking') return p.text
   if (p._tag === 'tool_call') {
     const input = truncateToolOutput(JSON.stringify(p.input))

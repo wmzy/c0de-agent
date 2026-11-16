@@ -1,3 +1,4 @@
+import type { Context } from 'hono'
 import { Hono } from 'hono'
 import {
   applyScopedPatch,
@@ -15,11 +16,12 @@ import {
 import { syncRegistryFromConfig } from '../../core/provider-registry.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
-import { findGitRoot, getProject, refreshTrustedProjectFingerprint } from '../../project/index.js'
+import { findGitRoot, refreshTrustedProjectFingerprint } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 import { invalidateProjectRegistries } from '../util/session-scope.js'
 
 /** 检查每个 provider 的 apiKey 能否在本机解密（机器绑定密钥换机/容器重建后会失败）。 */
@@ -60,12 +62,13 @@ function projectConfigGitWarning(project: Partial<Config> | undefined, cwd: stri
  */
 async function resolveConfigDir(
   ctx: ServerContext,
+  c: Context,
   projectId: string | undefined,
-): Promise<{ dir: string; isProjectScoped: boolean } | null> {
+): Promise<{ dir: string; isProjectScoped: boolean } | Response> {
   if (projectId) {
-    const project = await getProject(ctx.db, projectId)
-    if (!project) return null
-    return { dir: project.worktree, isProjectScoped: true }
+    const target = await getProjectOr404(ctx.db, c, projectId)
+    if (!target.ok) return target.response
+    return { dir: target.project.worktree, isProjectScoped: true }
   }
   return { dir: ctx.cwd, isProjectScoped: false }
 }
@@ -78,8 +81,8 @@ function createConfigRoute(ctx: ServerContext): Hono {
   // 复用服务内存合并配置 ctx.config）。
   app.get('/', async (c) => {
     const projectId = c.req.query('projectId')
-    const target = await resolveConfigDir(ctx, projectId)
-    if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    const target = await resolveConfigDir(ctx, c, projectId)
+    if (target instanceof Response) return target
     const scopes = loadConfigScopes(target.dir)
     const config = projectId ? mergeConfig(scopes.global, scopes.project) : ctx.config
     // 未知顶层键告警并入 warnings：用户在设置页即可看到拼写错误/过时键，不必看终端日志。
@@ -232,8 +235,8 @@ function createConfigRoute(ctx: ServerContext): Hono {
     // 按作用域最小落盘：patch 只合并进指定作用域原始文件，
     // 不把合并结果（含默认值/另一作用域配置）整体序列化进文件。
     // null 值 = 删除该作用域中的键（回落到另一作用域/默认值）。
-    const target = await resolveConfigDir(ctx, projectId)
-    if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    const target = await resolveConfigDir(ctx, c, projectId)
+    if (target instanceof Response) return target
     const scopes = loadConfigScopes(target.dir)
     // applyScopedPatch 拒绝非有限数值（JSON 1e999 → Infinity 落盘为 null、
     // 键被静默删除）——转成 400 明示，而非 500 或不透因。

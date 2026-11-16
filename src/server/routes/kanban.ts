@@ -17,7 +17,7 @@ import {
   permanentlyDeleteKanbanBoard,
   restoreKanbanBoard,
 } from '../../kanban/index.js'
-import { fromDirectory, getProject } from '../../project/index.js'
+import { fromDirectory } from '../../project/index.js'
 import {
   KANBAN_PRIORITIES,
   type KanbanColumnDef,
@@ -28,6 +28,7 @@ import { apiError } from '../middleware/error.js'
 import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 
 // ── body 字段类型守卫 ──────────────────────────────────────────────
 // 畸形 JSON 此前直接 as 断言后进 store/DB：数字 title → .trim TypeError 500、
@@ -129,8 +130,8 @@ function createKanbanRoute(ctx: ServerContext): Hono {
       if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', '恢复目标项目（projectId）必填')
       // P2 修复：目标项目必须存在（与会话恢复口径一致）——此前不校验，
       // 可恢复出挂在不存在项目下、任何视图都不可见的看板。
-      const target = await getProject(ctx.db, projectId)
-      if (!target) return apiError(c, 404, 'PROJECT_NOT_FOUND', '恢复目标项目不存在')
+      const target = await getProjectOr404(ctx.db, c, projectId, '恢复目标项目不存在')
+      if (!target.ok) return target.response
       targetProjectId = projectId
       targetHasBoardMessage = '目标项目已有看板，请先导出/删除目标看板后再恢复'
     }
@@ -171,8 +172,8 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     c: Context,
     next: () => Promise<void>,
   ): Promise<Response | undefined> => {
-    const project = await getProject(ctx.db, c.req.param('projectId') ?? '')
-    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    const target = await getProjectOr404(ctx.db, c, c.req.param('projectId') ?? '')
+    if (!target.ok) return target.response
     await next()
   }
   app.use('/:projectId', guardProject)

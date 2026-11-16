@@ -7,7 +7,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ShakeModeValue } from '@/components/session/ShakeContext.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
-import { sessionAPI } from '@/services/session.js'
+import { sessionAPI, sessionMessagesKey } from '@/services/session.js'
 import type { Message, ShakeRegionView } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
 
@@ -48,7 +48,7 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
       // 在途提交期间切了会话：结果与错误都不属于当前这条会话，不写它的界面。
       if (!ctx || scopeGuard.stale(ctx.scope)) return
       setShakeError(null)
-      qc.invalidateQueries({ queryKey: ['session', variables.sessionId, 'messages'] })
+      qc.invalidateQueries({ queryKey: sessionMessagesKey(variables.sessionId) })
       exitShakeMode()
     },
     onError: (error: unknown, _variables, ctx) => {

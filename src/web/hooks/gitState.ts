@@ -5,6 +5,7 @@
 // 下面的查询选项与 invalidateGitState 互为镜像：键只在此处定义，改一处即全链路一致。
 import type { QueryClient } from '@tanstack/react-query'
 import { fileAPI } from '@/services/file.js'
+import { projectsKey } from '@/services/project.js'
 
 export function gitStatusKey(projectId: string) {
   return ['files', 'git-status', projectId] as const
@@ -48,7 +49,7 @@ export function gitBranchesQueryOptions(projectId: string) {
  * projects 也在清单内：项目列表的 withBranch 读实时分支，切分支后必须重取。
  */
 export function invalidateGitState(qc: QueryClient, projectId: string): void {
-  qc.invalidateQueries({ queryKey: ['projects'] })
+  qc.invalidateQueries({ queryKey: projectsKey() })
   qc.invalidateQueries({ queryKey: gitStatusKey(projectId) })
   qc.invalidateQueries({ queryKey: gitLastCommitKey(projectId) })
   qc.invalidateQueries({ queryKey: gitBranchesKey(projectId) })

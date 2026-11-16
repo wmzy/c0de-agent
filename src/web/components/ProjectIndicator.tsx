@@ -23,7 +23,7 @@ import { useProjects } from '@/hooks/useSession.js'
 import { navigateTo } from '@/navigateTo.js'
 import { fileAPI } from '@/services/file.js'
 import { kanbanAPI } from '@/services/kanban.js'
-import { projectAPI } from '@/services/project.js'
+import { projectAPI, projectsKey } from '@/services/project.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -306,7 +306,7 @@ export function ProjectIndicator({
   const deleteMut = useMutation({
     mutationFn: (id: string) => projectAPI.remove(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['projects'] })
+      qc.invalidateQueries({ queryKey: projectsKey() })
       // 删除的是当前项目 → 回根路径重新解析
       navigateTo(router, '/')
     },

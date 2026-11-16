@@ -21,9 +21,11 @@ import { generateId } from '@/hooks/id.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { agentAPI } from '@/services/agent.js'
 import { sendChatMessage } from '@/services/chat.js'
+import { filePathPrefix } from '@/services/file.js'
 import { permissionAPI } from '@/services/permission.js'
 import { projectAPI } from '@/services/project.js'
-import { llmDetailsKey, sessionAPI } from '@/services/session.js'
+import { llmDetailsKey, sessionAPI, sessionMessagesKey } from '@/services/session.js'
+import { todoKey } from '@/services/todo.js'
 import type { APIError } from '@/types/index.js'
 import { subscribeChannel } from '@/utils/broadcast.js'
 import { messageOf } from '@/utils/errors.js'
@@ -71,11 +73,11 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   // 超时横幅「拒绝并继续」的在途锁（同步 ref，渲染路径不可见）：双击的第二击在
   // denyTimedOutPermission 入口直接 no-op——时序与理由见该函数内的注释。
   const denyPendingRef = useRef(false)
-  // P1 后台附着：流式/附着态镜像 + 轮询代数与定时器。
+  // P1 后台附着：流式/附着态镜像 + 轮询世代守卫与定时器。
   const streamingRef = useRef(false)
   const attachedRef = useRef(false)
   const attachingRef = useRef(false)
-  const pollGenRef = useRef(0)
+  const pollGuard = useScopeGuard()
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /**
    * P1 附着入口的自愈重试（读 GET /:id/status 失败时）。
@@ -87,7 +89,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
    * 事实相反、且没有任何出口的结论（没有终止键、没有恢复入口、attach 不会重试）。
    * 与 pollAttachedRun 的读失败同款：先自愈重试，连续失败才把原因摆到界面上。
    */
-  const attachGenRef = useRef(0)
+  const attachGuard = useScopeGuard()
   const attachAttemptRef = useRef(0)
   const attachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // attach 的自引用（重试要再调自己）：直接闭包引用自身在 TS 里是块级作用域前向引用，
@@ -116,24 +118,24 @@ export function useChat(sessionId: string): ChatState & ChatActions {
   const lastFailureRef = useRef<LastFailure>({ reason: null, gate: null })
   const qc = useQueryClient()
 
-  /** 停止附着轮询（幂等：递增代数使在途 tick 失效）。 */
+  /** 停止附着轮询（幂等：作废世代使在途 tick 失效）。 */
   const stopPoll = useCallback(() => {
-    pollGenRef.current += 1
+    pollGuard.invalidate()
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
     }
-  }, [])
+  }, [pollGuard.invalidate])
 
-  /** 停止附着入口的重试链（幂等：递增代数使在途定时器失效）。 */
+  /** 停止附着入口的重试链（幂等：作废世代使在途定时器失效）。 */
   const stopAttachRetry = useCallback(() => {
-    attachGenRef.current += 1
+    attachGuard.invalidate()
     attachAttemptRef.current = 0
     if (attachTimerRef.current) {
       clearTimeout(attachTimerRef.current)
       attachTimerRef.current = null
     }
-  }, [])
+  }, [attachGuard.invalidate])
 
   // 切换会话时重置本地流式状态；历史消息由调用方合并加载
   // P1：同时停止附着轮询并复位镜像 ref——挂起/附着态随会话切换整体作废。
@@ -197,8 +199,8 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               const p = mutatingPaths.get(event.id)
               if (p !== undefined) {
                 mutatingPaths.delete(event.id)
-                // 前缀失效：['file', path] 命中所有 projectId 变体的查询键
-                qc.invalidateQueries({ queryKey: ['file', p] })
+                // 前缀失效：filePathPrefix 与 fileKey 同源，命中所有 projectId 变体
+                qc.invalidateQueries({ queryKey: filePathPrefix(p) })
               }
             }
             // 切换会话后本轮的归约一律丢弃（缓存失效仍照做：那是给旧会话用的，
@@ -213,7 +215,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
               }, 500)
             } else if (event._tag === 'todo_update') {
               // Tag-based todo 操作成功，刷新 TodoPanel（React Query 重新拉取）
-              qc.invalidateQueries({ queryKey: ['todo', sessionId] })
+              qc.invalidateQueries({ queryKey: todoKey(sessionId) })
             } else if (event._tag === 'done' || event._tag === 'error') {
               if (llmDetailTimerRef.current) {
                 clearTimeout(llmDetailTimerRef.current)
@@ -851,7 +853,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       pendingPermission: null,
       permissionTimeout: null,
     }))
-    qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
+    qc.invalidateQueries({ queryKey: sessionMessagesKey(sessionId) })
     qc.invalidateQueries({ queryKey: llmDetailsKey(sessionId) })
   }, [qc, sessionId, stopPoll])
 
@@ -879,12 +881,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
    *  消息又撞 409 RUN_ACTIVE（run 仍占用），会话锁死到手动刷新为止。 */
   const pollAttachedRun = useCallback(() => {
     stopPoll()
-    const token = ++pollGenRef.current
+    const token = pollGuard.token()
     const tick = async () => {
-      if (token !== pollGenRef.current) return
+      if (pollGuard.stale(token)) return
       try {
         const st = await sessionAPI.status(sessionId)
-        if (token !== pollGenRef.current) return
+        if (pollGuard.stale(token)) return
         if (st?._tag === 'running' || st?._tag === 'paused') {
           const paused = st._tag === 'paused'
           setState((s) => ({
@@ -899,7 +901,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           // 附着期新出现的权限请求：本页没有 run 的 SSE 流，只能在这里复查
           // （读内存 store，不触 DB）。失败静默——下一次 tick 会重试。
           const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
-          if (token !== pollGenRef.current) return
+          if (pollGuard.stale(token)) return
           if (pend) syncPendingPermission(pend.pending ?? null)
           pollTimerRef.current = setTimeout(() => void tick(), paused ? 3000 : 2000)
         } else {
@@ -913,12 +915,12 @@ export function useChat(sessionId: string): ChatState & ChatActions {
           }
         }
       } catch {
-        if (token !== pollGenRef.current) return
+        if (pollGuard.stale(token)) return
         pollTimerRef.current = setTimeout(() => void tick(), 3000)
       }
     }
     pollTimerRef.current = setTimeout(() => void tick(), 2000)
-  }, [finishAttach, sessionId, stopPoll, syncPendingPermission])
+  }, [finishAttach, sessionId, stopPoll, syncPendingPermission, pollGuard.stale, pollGuard.token])
 
   /**
    * P1：附着后台 run。本实例未发起流（挂起期间切换页面后回来 / 另一标签页启动）时：
@@ -936,20 +938,20 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     // 若不拦截会并发多份查询与轮询。
     if (streamingRef.current || attachingRef.current) return
     attachingRef.current = true
-    const gen = attachGenRef.current
+    const gen = attachGuard.token()
     try {
       let st: Awaited<ReturnType<typeof sessionAPI.status>>
       try {
         st = await sessionAPI.status(sessionId)
       } catch (err) {
-        if (gen !== attachGenRef.current) return
+        if (attachGuard.stale(gen)) return
         // 读失败 ≠ 没有活跃 run（见 attachAttemptRef 的说明）：先自愈重试，与
         // pollAttachedRun 的读失败同款；连续失败才摆出原因，让用户知道此刻
         // 「不知道有没有 run」而不是「没有 run」。
         if (attachAttemptRef.current < ATTACH_MAX_ATTEMPTS) {
           attachAttemptRef.current += 1
           attachTimerRef.current = setTimeout(() => {
-            if (gen !== attachGenRef.current) return
+            if (attachGuard.stale(gen)) return
             void attachRef.current()
           }, ATTACH_RETRY_DELAY)
           return
@@ -960,7 +962,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }))
         return
       }
-      if (gen !== attachGenRef.current) return
+      if (attachGuard.stale(gen)) return
       if (st?._tag !== 'running' && st?._tag !== 'paused') {
         // 读到了「确实没有活跃 run」：这是确定的结论，任何旧的读失败原因都可以撤。
         setState((s) => (s.attachError ? { ...s, attachError: null } : s))
@@ -968,7 +970,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       }
       const paused = st._tag === 'paused'
       const pend = await sessionAPI.pendingPermission(sessionId).catch(() => null)
-      if (gen !== attachGenRef.current) return
+      if (attachGuard.stale(gen)) return
       attachAttemptRef.current = 0
       attachedRef.current = true
       streamingRef.current = true
@@ -986,7 +988,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
     } finally {
       attachingRef.current = false
     }
-  }, [pollAttachedRun, sessionId])
+  }, [pollAttachedRun, sessionId, attachGuard.token, attachGuard.stale])
   attachRef.current = attach
 
   /** P1：读失败后的「重新检查」——复位重试计数，让这次点击也能享受自愈重试。 */

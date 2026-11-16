@@ -62,3 +62,23 @@ const fileAPI = {
 }
 
 export { fileAPI }
+
+/** 文件内容查询键（FilePreview/CodeReference 查询、CodeEditor 保存后失效统一走
+ *  这里——此前 3 处手抄，靠「同一 queryKey」口头约定保持一致）。 */
+export function fileKey(path: string, projectId?: string) {
+  return ['file', path, projectId] as const
+}
+
+/** 文件内容查询选项：只统一键 + queryFn；enabled（媒体走 URL 不查询）留给观察者。 */
+export function fileQueryOptions(path: string, projectId?: string) {
+  return {
+    queryKey: fileKey(path, projectId),
+    queryFn: () => fileAPI.read(path, projectId),
+  }
+}
+
+/** 按路径前缀失效（结构化前缀匹配命中所有 projectId 变体）——useChat 文件被
+ *  工具改动后的批量失效用，与 fileKey 同源保证形状一致。 */
+export function filePathPrefix(path: string) {
+  return ['file', path] as const
+}

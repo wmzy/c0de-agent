@@ -1,8 +1,6 @@
 import { existsSync } from 'node:fs'
-import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createSummarizerWithFallback } from '../../core/compact.js'
-import { sessions } from '../../db/schema.js'
 import { fromDirectory } from '../../project/index.js'
 import { getProject } from '../../project/project.js'
 import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
@@ -49,6 +47,7 @@ import { apiError } from '../middleware/error.js'
 import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 import { resolveSessionScope } from '../util/session-scope.js'
 import {
   getLiveSessionOr404,
@@ -101,10 +100,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (!projectId) {
       return apiError(c, 400, 'PROJECT_REQUIRED', '导入会话必须指定目标项目（projectId）')
     }
-    const project = await getProject(ctx.db, projectId)
-    if (!project) {
-      return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
-    }
+    const target = await getProjectOr404(ctx.db, c, projectId, '目标项目不存在')
+    if (!target.ok) return target.response
     const title =
       typeof srcSession.title === 'string' && srcSession.title ? srcSession.title : '导入的会话'
     // P0：权限态仅当调用方显式确认（importPermissions=true，body 字段）时随迁。
@@ -206,10 +203,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
     // 错误细节——先校验存在性，统一 404（与 kanban guardProject、import/rebind
     // 的目标项目校验同口径）。directory 路径经 fromDirectory 自动 upsert，恒有效。
     if (explicitProjectId) {
-      const project = await getProject(ctx.db, explicitProjectId)
-      if (!project) {
-        return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
-      }
+      const target = await getProjectOr404(ctx.db, c, explicitProjectId, '目标项目不存在')
+      if (!target.ok) return target.response
     }
     const session = await createSession(
       ctx.db,
@@ -482,7 +477,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
       if (!preferCurrentProject && wt && existsSync(wt)) {
         try {
           const project = await fromDirectory(ctx.db, wt)
-          await ctx.db.db.update(sessions).set({ projectId: project.id }).where(eq(sessions.id, id))
+          // rebindSession 正本同时写 projectId+worktreePath（此处两者值相同：
+          // project 来自 fromDirectory(wt)，wt 即 session.worktreePath）。
+          await rebindSession(ctx.db, id, project)
           rebound = true
           recreatedProject = { id: project.id, name: project.name }
           targetProject = project
@@ -548,8 +545,9 @@ function createSessionRoute(ctx: ServerContext): Hono {
         ? parsed.body.projectId
         : ''
     if (!projectId) return apiError(c, 400, 'PROJECT_REQUIRED', 'projectId is required')
-    const project = await getProject(ctx.db, projectId)
-    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '目标项目不存在')
+    const target = await getProjectOr404(ctx.db, c, projectId, '目标项目不存在')
+    if (!target.ok) return target.response
+    const project = target.project
     const ok = await rebindSession(ctx.db, id, project)
     if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
     return c.json({ ok: true, projectId: project.id })

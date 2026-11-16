@@ -2,11 +2,11 @@ import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { decryptSecret } from '../../core/secret.js'
 import { resolveRoute } from '../../llm/registry.js'
-import { getProject } from '../../project/project.js'
 import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 import { resolveSessionScope } from '../util/session-scope.js'
 
 /** 测试连接请求体。 */
@@ -24,8 +24,6 @@ type TestResult = { ok: true; models: string[] } | { ok: false; error: string }
 async function probeModels(baseURL: string, apiKey: string): Promise<TestResult> {
   const base = baseURL.replace(/\/+$/, '')
   const url = `${base}/models`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
   try {
     const res = await fetch(url, {
       method: 'GET',
@@ -33,7 +31,7 @@ async function probeModels(baseURL: string, apiKey: string): Promise<TestResult>
         Accept: 'application/json',
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       },
-      signal: controller.signal,
+      signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -47,8 +45,6 @@ async function probeModels(baseURL: string, apiKey: string): Promise<TestResult>
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, error: msg }
-  } finally {
-    clearTimeout(timer)
   }
 }
 
@@ -63,10 +59,10 @@ function createProviderRoute(ctx: ServerContext): Hono {
   const resolveForProject = async (c: Context) => {
     const projectId = c.req.query('projectId')
     if (!projectId) return { config: ctx.config, registry: ctx.llmRegistry }
-    const project = await getProject(ctx.db, projectId)
-    if (!project) return null
+    const target = await getProjectOr404(ctx.db, c, projectId)
+    if (!target.ok) return target.response
     const { config, registry } = resolveSessionScope(ctx, {
-      cwd: project.worktree,
+      cwd: target.project.worktree,
       baseline: 'disk',
       registryKey: projectId,
     })
@@ -76,7 +72,7 @@ function createProviderRoute(ctx: ServerContext): Hono {
   // 列出已配置 providers（apiKey 脱敏，不含明文）
   app.get('/', async (c) => {
     const resolved = await resolveForProject(c)
-    if (!resolved) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    if (resolved instanceof Response) return resolved
     const providers = resolved.config.providers.map((p) => ({
       name: p.name || (p as { _tag?: string })._tag || '',
       protocol: p.protocol,
@@ -94,7 +90,7 @@ function createProviderRoute(ctx: ServerContext): Hono {
       return apiError(c, 400, 'BAD_REQUEST', 'provider and model are required')
     }
     const project = await resolveForProject(c)
-    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    if (project instanceof Response) return project
     try {
       const route = resolveRoute(project.registry, provider, model)
       return c.json({

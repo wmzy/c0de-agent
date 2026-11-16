@@ -154,3 +154,32 @@ export function llmDetailsQueryOptions(sessionId: string) {
     queryFn: () => sessionAPI.llmDetails(sessionId),
   }
 }
+
+/** 会话消息查询键（useSession.useMessages 正本；useChat/useShake/useRetryResume
+ *  的失效与回写统一走这里——此前 4 处手抄字面量，键形状变更时会静默失联）。 */
+export function sessionMessagesKey(sessionId: string) {
+  return ['session', sessionId, 'messages'] as const
+}
+
+/** 会话消息查询选项：只统一键 + queryFn；enabled（空会话不取）留给观察者。 */
+export function sessionMessagesQueryOptions(sessionId: string) {
+  return {
+    queryKey: sessionMessagesKey(sessionId),
+    queryFn: () => sessionAPI.messages(sessionId),
+  }
+}
+
+/** 会话归档列表查询键（ArchivePanel，q 为搜索词；挂在 ['session', id] 前缀树下）。 */
+export function sessionArchivesKey(sessionId: string, q: string) {
+  return ['session', sessionId, 'archives', q] as const
+}
+
+/** 会话树查询键（useSessionTree 正本；树刷新失效点统一走这里）。 */
+export function sessionTreeKey() {
+  return ['sessions', 'tree'] as const
+}
+
+/** 已删除会话列表查询键（回收站；invalidateSessionLists({deleted:true}) 触达）。 */
+export function deletedSessionsKey() {
+  return ['sessions', 'deleted'] as const
+}

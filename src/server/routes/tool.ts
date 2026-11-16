@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
-import { getProject } from '../../project/project.js'
 import { resolveEnabledToolNames } from '../../tools/index.js'
 import { listTools } from '../../tools/registry.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 import { resolveSessionScope } from '../util/session-scope.js'
 
 function createToolRoute(ctx: ServerContext): Hono {
@@ -18,8 +18,9 @@ function createToolRoute(ctx: ServerContext): Hono {
     let config = ctx.config
     const projectId = c.req.query('projectId')
     if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+      const target = await getProjectOr404(ctx.db, c, projectId)
+      if (!target.ok) return target.response
+      const project = target.project
       // 会话作用域解析收敛的第六处（chat/workflows/session/provider/files 之外）：
       // 与旧内联等价——cwd === serve cwd 时基线 ctx.config 已含该目录项目作用域，
       // mergeConfig 为覆盖式合并，重复合并同值幂等。不传 registryKey（本路由

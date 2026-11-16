@@ -17,7 +17,12 @@ import { BoardConfigDialog } from '@/components/kanban/BoardConfigDialog.js'
 import { CardEditDialog } from '@/components/kanban/CardEditDialog.js'
 import { computeDropPosition, POSITION_GAP } from '@/components/kanban/drop-position.js'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn.js'
-import { type KanbanBoardWithCards, type KanbanCard, kanbanAPI } from '@/services/kanban.js'
+import {
+  type KanbanBoardWithCards,
+  type KanbanCard,
+  kanbanAPI,
+  kanbanKey,
+} from '@/services/kanban.js'
 import { messageOf } from '@/utils/errors.js'
 import { LoadError } from '@/views/_shared/errorState.js'
 
@@ -252,7 +257,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     error,
     refetch,
   } = useQuery({
-    queryKey: ['kanban', projectId],
+    queryKey: kanbanKey(projectId),
     queryFn: () => kanbanAPI.get(projectId),
   })
 
@@ -282,8 +287,8 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     onMutate: async ({ cardId, columnId, position }) => {
       // 先取消在途重取：否则并发的 invalidate 结果会在乐观更新之后落地，把
       // 本地改动直接覆盖回旧值。
-      await qc.cancelQueries({ queryKey: ['kanban', projectId] })
-      const previous = qc.getQueryData<KanbanBoardWithCards>(['kanban', projectId])
+      await qc.cancelQueries({ queryKey: kanbanKey(projectId) })
+      const previous = qc.getQueryData<KanbanBoardWithCards>(kanbanKey(projectId))
       if (previous) {
         const targetPositions = previous.cards
           .filter((c) => c.columnId === columnId && c.id !== cardId)
@@ -291,7 +296,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
         const nextPosition =
           position ??
           (targetPositions.length > 0 ? Math.max(...targetPositions) + POSITION_GAP : POSITION_GAP)
-        qc.setQueryData<KanbanBoardWithCards>(['kanban', projectId], {
+        qc.setQueryData<KanbanBoardWithCards>(kanbanKey(projectId), {
           ...previous,
           cards: previous.cards.map((c) =>
             c.id === cardId ? { ...c, columnId, position: nextPosition } : c,
@@ -302,18 +307,18 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     },
     onError: (err, _vars, context) => {
       if (context?.previous) {
-        qc.setQueryData(['kanban', projectId], context.previous)
+        qc.setQueryData(kanbanKey(projectId), context.previous)
       }
       setIoError(`移动卡片失败，卡片已回到原位置：${messageOf(err)}`)
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['kanban', projectId] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: kanbanKey(projectId) }),
   })
 
   // 快速新建卡片
   const addMutation = useMutation({
     mutationFn: ({ title, columnId }: { title: string; columnId: string }) =>
       kanbanAPI.addCard(projectId, { title, columnId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', projectId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: kanbanKey(projectId) }),
   })
 
   /** 快速新建：调用方的 Promise 失败即代表失败（保留草稿 + 就地提示）。
@@ -407,7 +412,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     setIoError(null)
     try {
       await kanbanAPI.importBoard(projectId, pending.data)
-      await qc.invalidateQueries({ queryKey: ['kanban', projectId] })
+      await qc.invalidateQueries({ queryKey: kanbanKey(projectId) })
     } catch (err) {
       setIoError(messageOf(err) || '导入失败')
     }

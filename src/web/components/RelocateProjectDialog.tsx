@@ -1,5 +1,7 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { DirectoryProjectDialog } from '@/components/DirectoryProjectDialog.js'
-import { currentProjectKey, projectAPI } from '@/services/project.js'
+import { invalidateSessionLists } from '@/hooks/useSession.js'
+import { currentProjectKey, projectAPI, projectsKey } from '@/services/project.js'
 import type { Project } from '@/types/index.js'
 
 type RelocateProjectDialogProps = {
@@ -19,6 +21,7 @@ export function RelocateProjectDialog({
   onClose,
   onRelocated,
 }: RelocateProjectDialogProps) {
+  const qc = useQueryClient()
   return (
     <DirectoryProjectDialog
       title="重新定位项目"
@@ -29,13 +32,16 @@ export function RelocateProjectDialog({
       confirmLabel="重新定位"
       mutationFn={(dir) => projectAPI.relocate(project.id, dir)}
       invalidations={[
-        // 会话与看板随目录身份整体迁移，会话列表缓存一并失效
-        ['projects'],
+        // 刷新项目列表 + 当前项目指示器
+        projectsKey(),
         currentProjectKey(),
-        ['sessions'],
-        ['sessions', 'tree'],
       ]}
-      onSuccess={(res) => onRelocated?.(res.project)}
+      onSuccess={(res) => {
+        // 会话与看板随目录身份整体迁移，会话列表缓存一并失效
+        // （['sessions'] + ['sessions','tree'] 的失效契约单源，见 useSession.js）
+        void invalidateSessionLists(qc)
+        onRelocated?.(res.project)
+      }}
       onClose={onClose}
     />
   )

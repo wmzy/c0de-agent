@@ -12,7 +12,7 @@ import { useFileReference } from '@/contexts/ReferenceContext.js'
 import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import { getAuthToken } from '@/services/api.js'
 import { appendAuthQuery } from '@/services/authUrl.js'
-import { encodeFilePath, fileAPI } from '@/services/file.js'
+import { encodeFilePath, fileQueryOptions } from '@/services/file.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { extOf } from '@/utils/format.js'
@@ -295,8 +295,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
   const mediaQuery = appendAuthQuery(rawPath, token, projectId ? { projectId } : undefined)
 
   const q = useQuery({
-    queryKey: ['file', path, projectId],
-    queryFn: () => fileAPI.read(path, projectId),
+    ...fileQueryOptions(path, projectId),
     enabled: !isMedia,
   })
   // 全文内容 ref（供选区行号回退计算），渲染时同步

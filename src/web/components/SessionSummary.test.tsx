@@ -28,6 +28,8 @@ vi.mock('@/services/session.js', () => {
       queryKey: ['session', id, 'llm-details'],
       queryFn: () => sessionAPI.llmDetails(id),
     }),
+    // 键 helper 与真实模块同形（真 useSession.useMessages 在图内，渲染时要调）
+    sessionMessagesKey: (id: string) => ['session', id, 'messages'],
   }
 })
 

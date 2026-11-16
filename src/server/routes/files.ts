@@ -4,7 +4,6 @@ import { dirname, join, relative } from 'node:path'
 import { type Context, Hono } from 'hono'
 import trash from 'trash'
 import { createSummarizerWithFallback } from '../../core/compact.js'
-import { getProject } from '../../project/project.js'
 import {
   appendToGitignore,
   checkIgnored,
@@ -23,6 +22,7 @@ import { headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 import { safeResolve } from '../util/safe-path.js'
 import { resolveSessionScope } from '../util/session-scope.js'
 
@@ -229,11 +229,9 @@ function createFilesRoute(ctx: ServerContext): Hono<FilesEnv> {
       await next()
       return
     }
-    const project = await getProject(ctx.db, projectId)
-    if (!project) {
-      return apiError(c, 404, 'NOT_FOUND', 'Project not found')
-    }
-    c.set('workspaceRoot', project.worktree)
+    const target = await getProjectOr404(ctx.db, c, projectId)
+    if (!target.ok) return target.response
+    c.set('workspaceRoot', target.project.worktree)
     await next()
   })
 

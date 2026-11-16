@@ -1,6 +1,11 @@
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { projectAPI } from '@/services/project.js'
-import { sessionAPI } from '@/services/session.js'
+import { projectAPI, projectsKey } from '@/services/project.js'
+import {
+  deletedSessionsKey,
+  sessionAPI,
+  sessionMessagesKey,
+  sessionTreeKey,
+} from '@/services/session.js'
 
 /** 会话集合变化后的失效契约（单一来源）：['sessions'] + ['sessions','tree']，
  *  触碰回收站（删除/恢复/归属孤儿）再加 ['sessions','deleted']。返回 Promise
@@ -14,21 +19,22 @@ export function invalidateSessionLists(
 ): Promise<void> {
   const jobs = [
     qc.invalidateQueries({ queryKey: ['sessions'] }),
-    qc.invalidateQueries({ queryKey: ['sessions', 'tree'] }),
+    qc.invalidateQueries({ queryKey: sessionTreeKey() }),
   ]
   if (opts.deleted) {
-    jobs.push(qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] }))
+    jobs.push(qc.invalidateQueries({ queryKey: deletedSessionsKey() }))
   }
   return Promise.all(jobs).then(() => undefined)
 }
 
 export function useSessionTree() {
-  return useQuery({ queryKey: ['sessions', 'tree'], queryFn: () => sessionAPI.tree() })
+  return useQuery({ queryKey: sessionTreeKey(), queryFn: () => sessionAPI.tree() })
 }
 
 export function useMessages(sessionId: string | null) {
   return useQuery({
-    queryKey: ['session', sessionId, 'messages'],
+    // 空 id 的键与 queryFn 同口径收敛为 ''（enabled 已挡住取数，键不承载 null）
+    queryKey: sessionMessagesKey(sessionId ?? ''),
     queryFn: () => sessionAPI.messages(sessionId ?? ''),
     enabled: !!sessionId,
   })
@@ -103,5 +109,5 @@ export function useRestoreSession() {
 
 /** 项目列表（用于会话列表的项目切换过滤）。 */
 export function useProjects() {
-  return useQuery({ queryKey: ['projects'], queryFn: () => projectAPI.list(), staleTime: 30_000 })
+  return useQuery({ queryKey: projectsKey(), queryFn: () => projectAPI.list(), staleTime: 30_000 })
 }

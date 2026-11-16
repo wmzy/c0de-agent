@@ -229,13 +229,13 @@ export async function budgetOverageParts(
   }
   if (tokenBlocks && globalTokenBudget > 0 && global && global.tokens > globalTokenBudget) {
     parts.push(
-      `全局 token 预算 ${globalTokenBudget.toLocaleString()}：本月已 ${global.tokens.toLocaleString()} tokens`,
+      `全局 token 预算 ${globalTokenBudget.toLocaleString('en-US')}：本月已 ${global.tokens.toLocaleString('en-US')} tokens`,
     )
     if (tokenAction === 'abort') action = 'abort'
   }
   if (tokenBlocks && projectTokenBudget > 0 && project && project.tokens > projectTokenBudget) {
     parts.push(
-      `项目 token 预算 ${projectTokenBudget.toLocaleString()}：本项目已 ${project.tokens.toLocaleString()} tokens`,
+      `项目 token 预算 ${projectTokenBudget.toLocaleString('en-US')}：本项目已 ${project.tokens.toLocaleString('en-US')} tokens`,
     )
     if (tokenAction === 'abort') action = 'abort'
   }

@@ -16,6 +16,7 @@ vi.mock('@/services/project.js', () => ({
   },
   // 键 helper 与真实模块同形（失效清单用）
   currentProjectKey: () => ['project', 'current'],
+  projectsKey: () => ['projects'],
 }))
 
 // DirectoryPicker 依赖 filesystem service，mock 掉避免测试中发起网络请求

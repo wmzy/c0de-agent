@@ -11,6 +11,8 @@ import { type TodoOpResult, todoAPI } from '@/services/todo.js'
 
 vi.mock('@/services/todo.js', () => ({
   todoAPI: { get: vi.fn(), exec: vi.fn() },
+  // 键 helper 与真实模块同形（查询与回写用）
+  todoKey: (sessionId: string) => ['todo', sessionId],
 }))
 
 vi.mock('@/services/kanban.js', () => ({

@@ -10,7 +10,12 @@ import {
   DEFAULT_LABEL_COLOR,
 } from '@/components/kanban/labelShared.js'
 import { SyncedInput, SyncedTextarea } from '@/components/SyncedControls.js'
-import { type KanbanLabelDef, type KanbanPriority, kanbanAPI } from '@/services/kanban.js'
+import {
+  type KanbanLabelDef,
+  type KanbanPriority,
+  kanbanAPI,
+  kanbanKey,
+} from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -299,7 +304,7 @@ export function CardEditDialog({
       })
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kanban', projectId] })
+      qc.invalidateQueries({ queryKey: kanbanKey(projectId) })
       onClose()
     },
   })
@@ -307,7 +312,7 @@ export function CardEditDialog({
   const deleteMutation = useMutation({
     mutationFn: () => kanbanAPI.deleteCard(projectId, cardId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kanban', projectId] })
+      qc.invalidateQueries({ queryKey: kanbanKey(projectId) })
       onClose()
     },
   })

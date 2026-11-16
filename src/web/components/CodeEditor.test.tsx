@@ -15,6 +15,8 @@ vi.mock('@/services/file.js', () => ({
     read: vi.fn(),
     write: vi.fn(),
   },
+  // 键 helper 与真实模块同形（失效路径断言用不到，但 import 必须可解析）
+  fileKey: (path: string, projectId?: string) => ['file', path, projectId],
 }))
 
 /** 构造 fileAPI 抛出的 APIError 形态（message 可枚举 + status/code 自有属性）。 */

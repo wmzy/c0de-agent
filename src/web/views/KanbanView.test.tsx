@@ -23,6 +23,8 @@ vi.mock('@/services/kanban.js', () => ({
     updateCard: vi.fn(),
     importBoard: vi.fn(),
   },
+  // 键 helper 与真实模块同形（失效路径断言用不到，但 import 必须可解析）
+  kanbanKey: (projectId: string) => ['kanban', projectId],
 }))
 
 afterEach(() => {

@@ -6,7 +6,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatActions, ChatState } from '@/hooks/chatState.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
-import { sessionAPI, sessionMetaKey } from '@/services/session.js'
+import { sessionAPI, sessionMessagesKey, sessionMetaKey } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 
 export function useRetryResume({
@@ -105,7 +105,7 @@ export function useRetryResume({
       // 唯一事实源（乐观副本与服务端副本的合并去重已由 mergeSessionMessages 负责，
       // 此处清空是为了让中断前的半截内存态不参与 resume 判定）。
       chat.reset()
-      qc.setQueryData(['session', sessionId, 'messages'], msgs)
+      qc.setQueryData(sessionMessagesKey(sessionId), msgs)
       let lastAssistantIdx = -1
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i]?.role === 'assistant') {

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
-import { sessionAPI } from '@/services/session.js'
+import { sessionAPI, sessionArchivesKey } from '@/services/session.js'
 import type { CompactionArchive, SessionEntry } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatDateTime } from '@/utils/format.js'
@@ -147,7 +147,7 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
   const [q, setQ] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['session', sessionId, 'archives', q],
+    queryKey: sessionArchivesKey(sessionId, q),
     queryFn: () => sessionAPI.archives(sessionId, q || undefined),
   })
   const archives = data?.archives ?? []

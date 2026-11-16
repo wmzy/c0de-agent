@@ -11,7 +11,13 @@ import {
 import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { kanbanAPI } from '@/services/kanban.js'
-import { type TodoOp, type TodoOpResult, type TodoPhase, todoAPI } from '@/services/todo.js'
+import {
+  type TodoOp,
+  type TodoOpResult,
+  type TodoPhase,
+  todoAPI,
+  todoKey,
+} from '@/services/todo.js'
 import { TOUCH } from '@/styles/breakpoints.js'
 import { inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -283,7 +289,6 @@ function activeTaskInfo(phases: TodoPhase[]) {
 
 export function TodoPanel({ sessionId, projectId }: { sessionId: string; projectId?: string }) {
   const queryClient = useQueryClient()
-  const todoKey = ['todo', sessionId]
   const [collapsed, setCollapsed] = useState(() => storageGet('c0de-agent:todoCollapsed') === '1')
   const [showAdd, setShowAdd] = useState(false)
   const [newTask, setNewTask] = useState('')
@@ -323,7 +328,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
     error: queryError,
     refetch,
   } = useQuery({
-    queryKey: todoKey,
+    queryKey: todoKey(sessionId),
     queryFn: () => todoAPI.get(sessionId),
   })
 
@@ -405,10 +410,10 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
         return
       }
       // 回写必须按 vars.sessionId 重建 key：mutation 回调取的是**最近一次渲染**的
-      // 闭包，在途期间用户切到会话 B 时 todoKey 已经是 ['todo', B]，于是 A 的执行
+      // 闭包，在途期间用户切到会话 B 时查询键已经是 ['todo', B]，于是 A 的执行
       // 结果会被写进 B 的缓存——B 的面板整块显示成 A 的待办（连「已完成」勾选都
       // 按 A 的条目高亮）。
-      queryClient.setQueryData(['todo', vars.sessionId], { phases: result.phases })
+      queryClient.setQueryData(todoKey(vars.sessionId), { phases: result.phases })
       if (!ctx || !isCurrentScope(ctx.gen)) return
       setError('')
       // 输入只在服务端真的受理后才清空：失败时用户刚打的任务文本必须留在

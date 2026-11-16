@@ -12,8 +12,14 @@ import {
   useRestoreSession,
 } from '@/hooks/useSession.js'
 import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
-import { type DeletedKanbanBoard, kanbanAPI, type MergedBoardCounts } from '@/services/kanban.js'
-import { sessionAPI } from '@/services/session.js'
+import {
+  type DeletedKanbanBoard,
+  deletedKanbanKey,
+  kanbanAPI,
+  kanbanKey,
+  type MergedBoardCounts,
+} from '@/services/kanban.js'
+import { deletedSessionsKey, sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatDate, formatDateTime } from '@/utils/format.js'
 import { ErrorBar } from '@/views/_shared/ErrorBar.js'
@@ -287,18 +293,26 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     error: deletedBoardsErrorObj,
     refetch: refetchDeletedBoards,
   } = useQuery({
-    queryKey: ['kanban', 'deleted'],
+    queryKey: deletedKanbanKey(),
     queryFn: () => kanbanAPI.deletedBoards().then((d) => d.boards),
   })
   const deletedBoards = deletedBoardsData ?? []
   const restoreBoardMut = useMutation({
     mutationFn: (v: { boardId: string; projectId: string }) =>
       kanbanAPI.restoreDeletedBoard(v.boardId, v.projectId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] }),
+    // 恢复的看板会合并进 v.projectId 的现有看板，除回收站列表外必须一并失效目标
+    // 项目的看板缓存——此前只失效 deleted 键，目标项目缓存仍是旧数据，全靠路由
+    // 重挂载兜底刷新。
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: deletedKanbanKey() })
+      qc.invalidateQueries({ queryKey: kanbanKey(v.projectId) })
+    },
   })
   const restoreBoardToOriginalMut = useMutation({
     mutationFn: (boardId: string) => kanbanAPI.restoreDeletedBoardToOriginal(boardId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] }),
+    // 恢复到原项目时客户端不知道原项目 id（由服务端重建/定位），只能失效根前缀
+    // ['kanban']：结构化前缀命中所有项目键 + deleted 键。
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban'] }),
   })
   const destroyBoardMut = useMutation({
     mutationFn: (boardId: string) => kanbanAPI.destroyDeletedBoard(boardId),
@@ -336,7 +350,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const removeForever = useMutation({
     mutationFn: (id: string) => sessionAPI.removeForever(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+      qc.invalidateQueries({ queryKey: deletedSessionsKey() })
     },
     // 错误条前缀按操作给出：此前恢复/归属/彻底删除/清空四条链共用一个
     // 「恢复失败：」，清空回收站失败会被写成「恢复失败」——与 SessionList
@@ -347,7 +361,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
   const emptyTrashMut = useMutation({
     mutationFn: () => sessionAPI.emptyTrash(projectId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions', 'deleted'] })
+      qc.invalidateQueries({ queryKey: deletedSessionsKey() })
       setNotice(null)
     },
     onError: (e: unknown) => setError(`清空回收站失败：${messageOf(e)}`),
@@ -932,7 +946,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             setBoardRemoveTarget(null)
             destroyBoardMut.mutate(board.id, {
               onSuccess: () => {
-                qc.invalidateQueries({ queryKey: ['kanban', 'deleted'] })
+                qc.invalidateQueries({ queryKey: deletedKanbanKey() })
                 setNotice(`看板「${board.projectName}」已彻底删除。`)
               },
             })

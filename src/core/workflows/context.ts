@@ -213,7 +213,11 @@ async function splitByDir(
       return []
     }
     return entries.filter(
-      (e) => e.isDirectory() && !e.name.startsWith('.') && !ignore.includes(e.name),
+      (e) =>
+        e.isDirectory() &&
+        !e.name.startsWith('.') &&
+        e.name !== 'node_modules' &&
+        !ignore.includes(e.name),
     )
   }
 

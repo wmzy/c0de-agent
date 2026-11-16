@@ -36,3 +36,9 @@ const todoAPI = {
 }
 
 export { todoAPI }
+
+/** todo 状态查询键（TodoPanel 查询与乐观回写、useChat 失效统一走这里——
+ *  此前跨 hooks/components 3 处手抄 ['todo', sessionId]）。 */
+export function todoKey(sessionId: string) {
+  return ['todo', sessionId] as const
+}

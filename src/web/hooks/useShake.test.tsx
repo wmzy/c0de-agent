@@ -11,6 +11,8 @@ import type { ShakeRegionView } from '@/types/index.js'
 
 vi.mock('@/services/session.js', () => ({
   sessionAPI: { shakePreview: vi.fn(), shakeApply: vi.fn() },
+  // 键 helper 与真实模块同形（成功路径的失效回写用）
+  sessionMessagesKey: (id: string) => ['session', id, 'messages'],
 }))
 
 const region: ShakeRegionView = {

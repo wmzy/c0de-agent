@@ -16,6 +16,7 @@ import {
   type KanbanColumnDef,
   type KanbanLabelDef,
   kanbanAPI,
+  kanbanKey,
 } from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -135,7 +136,7 @@ export function BoardConfigDialog({
         labels,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kanban', projectId] })
+      qc.invalidateQueries({ queryKey: kanbanKey(projectId) })
       onClose()
     },
     onError: (e: unknown) => {

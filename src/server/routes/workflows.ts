@@ -14,6 +14,7 @@ import {
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
+import { getProjectOr404 } from '../util/project-guard.js'
 import { resolveSessionScope } from '../util/session-scope.js'
 import { projectTrustState, resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
 import { createRestWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
@@ -124,7 +125,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       if (projectId) {
         const st = await projectTrustState(ctx, projectId)
         if (!st.project) {
-          return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
+          return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
         }
         if (!st.trusted) {
           return apiError(
@@ -338,11 +339,9 @@ function createWorkflowsRoute(ctx: ServerContext) {
     if (target === 'project') {
       let baseDir = ctx.cwd
       if (projectId) {
-        const project = await getProject(ctx.db, projectId)
-        if (!project) {
-          return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
-        }
-        baseDir = project.worktree
+        const found = await getProjectOr404(ctx.db, c, projectId)
+        if (!found.ok) return found.response
+        baseDir = found.project.worktree
       }
       const filePath = join(baseDir, '.c0de', 'workflows', `${name}.js`)
       if (!existsSync(filePath)) {
@@ -406,11 +405,9 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // 项目级删除目标：按 worktree 拼路径，不做 discovery（避免执行仓库代码）。
     let projectFilePath: string | null = null
     if (projectId) {
-      const project = await getProject(ctx.db, projectId)
-      if (!project) {
-        return apiError(c, 404, 'NOT_FOUND', `Project "${projectId}" not found`)
-      }
-      const candidate = join(project.worktree, '.c0de', 'workflows', `${name}.js`)
+      const found = await getProjectOr404(ctx.db, c, projectId)
+      if (!found.ok) return found.response
+      const candidate = join(found.project.worktree, '.c0de', 'workflows', `${name}.js`)
       if (existsSync(candidate)) projectFilePath = candidate
     }
 

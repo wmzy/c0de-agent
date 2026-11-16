@@ -38,3 +38,9 @@ export function currentProjectQueryOptions() {
     queryFn: () => projectAPI.current(),
   }
 }
+
+/** 项目列表查询键（useSession.useProjects 正本；gitState/项目增删迁移后的失效
+ *  统一走这里——此前 5 处手抄 ['projects']）。 */
+export function projectsKey() {
+  return ['projects'] as const
+}

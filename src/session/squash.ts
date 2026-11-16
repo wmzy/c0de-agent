@@ -1,6 +1,6 @@
 import type { DB } from '../db/client.js'
 import { generateId } from '../shared/index.js'
-import { rewriteWithSummary } from './compaction.js'
+import { rewriteWithSummary, serializePart } from './compaction.js'
 import { getMessages } from './message.js'
 import type { CompactionResult, SquashConfig, Summarizer } from './types.js'
 
@@ -38,11 +38,10 @@ async function squashRecent(
     return { compacted: false, reason: 'nothing_to_compact' }
   }
 
+  // 序列化复用 compaction.serializePart：tool_call/tool_result 经
+  // truncateToolOutput 截断，超大 tool_output 不再原样 JSON.stringify 进 prompt。
   const history = toSquash
-    .map(
-      (m) =>
-        `[${m.role}] ${m.content.map((p) => (p._tag === 'text' ? p.text : JSON.stringify(p))).join(' ')}`,
-    )
+    .map((m) => `[${m.role}] ${m.content.map((p) => serializePart(p)).join(' ')}`)
     .join('\n')
 
   const prompt = `将以下最近的交互压缩为简洁摘要，保留关键决策和上下文，丢弃冗余细节。

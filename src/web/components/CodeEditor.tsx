@@ -9,7 +9,7 @@ import { Button } from 'haze-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LineRange } from '@/contexts/FileSelectionContext.js'
 import { useTheme } from '@/contexts/ThemeContext.js'
-import { fileAPI } from '@/services/file.js'
+import { fileAPI, fileKey } from '@/services/file.js'
 import { messageOf } from '@/utils/errors.js'
 
 /** 设置当前高亮行范围的副作用；null 清除高亮。 */
@@ -314,7 +314,7 @@ export function CodeEditor({
       setSaveConflict(null)
       setWriteError(null)
       // 同步查询缓存：避免缓存中的旧内容经 initial 回灌覆盖刚保存的文档
-      qc.invalidateQueries({ queryKey: ['file', path, projectId] })
+      qc.invalidateQueries({ queryKey: fileKey(path, projectId) })
     } catch (err) {
       setWriteError(messageOf(err))
     }

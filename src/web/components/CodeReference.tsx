@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { CodeBlock } from '@/components/CodeBlock.js'
 import { Collapsible } from '@/components/Collapsible.js'
 import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
-import { fileAPI } from '@/services/file.js'
+import { fileQueryOptions } from '@/services/file.js'
 import { messageOf } from '@/utils/errors.js'
 import { extOf, parseCodeReference } from '@/utils/format.js'
 
@@ -46,8 +46,7 @@ export function CodeReference({ token }: { token: string }) {
   // 非 file 引用时用占位 key 且禁用，不会发出请求。
   const filePath = ref?._tag === 'file' ? ref.path : '__no_file__'
   const q = useQuery({
-    queryKey: ['file', filePath, projectId],
-    queryFn: () => fileAPI.read(filePath, projectId),
+    ...fileQueryOptions(filePath, projectId),
     enabled: open && ref?._tag === 'file',
   })
 

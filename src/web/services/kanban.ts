@@ -123,3 +123,14 @@ const kanbanAPI = {
 }
 
 export { kanbanAPI }
+
+/** 项目看板查询键（KanbanView 查询与乐观更新、看板/卡片弹窗失效统一走这里——
+ *  此后跨 3 文件 10+ 处手抄 ['kanban', projectId]）。 */
+export function kanbanKey(projectId: string) {
+  return ['kanban', projectId] as const
+}
+
+/** 已删除看板列表查询键（回收站）。 */
+export function deletedKanbanKey() {
+  return ['kanban', 'deleted'] as const
+}
