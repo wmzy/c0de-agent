@@ -17,9 +17,16 @@ vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
 }))
 
-vi.mock('@/services/workflows.js', () => ({
-  workflowsAPI: { list: vi.fn().mockResolvedValue({ workflows: [] }) },
-}))
+vi.mock('@/services/workflows.js', () => {
+  const workflowsAPI = { list: vi.fn().mockResolvedValue({ workflows: [] }) }
+  return {
+    workflowsAPI,
+    workflowsQueryOptions: (projectId?: string) => ({
+      queryKey: ['workflows', projectId],
+      queryFn: () => workflowsAPI.list(projectId),
+    }),
+  }
+})
 
 // @ 文件候选来自 /api/files/search（不限条数）：真实仓库一次命中几百个是常态，
 // 而浮层只渲染前 20 个。mock 掉服务以驱动这条链路。

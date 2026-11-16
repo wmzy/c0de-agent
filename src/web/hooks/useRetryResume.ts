@@ -6,7 +6,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatActions, ChatState } from '@/hooks/chatState.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
-import { sessionAPI } from '@/services/session.js'
+import { sessionAPI, sessionMetaKey } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 
 export function useRetryResume({
@@ -124,7 +124,7 @@ export function useRetryResume({
       if (isStale()) return
       // M3：重发会触发服务端标记未完成轮次（写入 session.metadata）——
       // 刷新 meta 使时间线立即置灰半截内容。
-      qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
+      qc.invalidateQueries({ queryKey: sessionMetaKey(sessionId) })
     })
 
   // 运行出错后的重试（P2-1）：与服务端错误（LLM 429/5xx 等）对等的中断恢复入口。

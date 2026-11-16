@@ -1,5 +1,27 @@
+import { type AddressInfo, createServer as createNetServer, type Socket } from 'node:net'
 import { describe, expect, it, vi } from 'vitest'
 import { confirmHandoff, createHandoffServer, requestHandoff } from './ipc.js'
+
+/** 模拟 handler 挂死的旧实例：TCP 接受连接但永不响应。close() 时主动
+ *  destroy 持有的连接（undici keep-alive socket 会阻止 close 回调）。 */
+function startHungServer(): Promise<{ port: number; close: () => void }> {
+  const sockets = new Set<Socket>()
+  const server = createNetServer((sock) => {
+    sockets.add(sock)
+    sock.on('close', () => sockets.delete(sock))
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        port: (server.address() as AddressInfo).port,
+        close: () => {
+          for (const sock of sockets) sock.destroy()
+          server.close()
+        },
+      })
+    })
+  })
+}
 
 describe('handoff IPC', () => {
   it('new instance requests handoff, old instance handler invoked', async () => {
@@ -174,6 +196,29 @@ describe('handoff IPC', () => {
       expect(onConfirm).not.toHaveBeenCalled()
     } finally {
       await server.close()
+    }
+  })
+
+  it('旧实例接了连接不回包（handler 挂死）时 requestHandoff 超时而非永久阻塞', async () => {
+    // 模拟 handler 挂死：TCP 接受连接但永不响应。超时归 kind='http'
+    // （端口仍被挂死旧实例占用，绑端口必撞 EADDRINUSE，不能走
+    // kind='connect' 的「直接试绑端口」兜底）。
+    const hung = await startHungServer()
+    try {
+      await expect(requestHandoff(hung.port, '127.0.0.1', undefined, 100)).rejects.toMatchObject({
+        kind: 'http',
+      })
+    } finally {
+      hung.close()
+    }
+  })
+
+  it('confirmHandoff 对挂死旧实例同样限时静默（不永久阻塞）', async () => {
+    const hung = await startHungServer()
+    try {
+      await expect(confirmHandoff(hung.port, '127.0.0.1', undefined, 100)).resolves.toBeUndefined()
+    } finally {
+      hung.close()
     }
   })
 })

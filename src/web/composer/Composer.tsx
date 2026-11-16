@@ -18,7 +18,7 @@ import { useFileReferenceSetter } from '@/contexts/ReferenceContext.js'
 import { useCommands } from '@/hooks/useCommands.js'
 import { useFileSearch } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
-import { workflowsAPI } from '@/services/workflows.js'
+import { workflowsQueryOptions } from '@/services/workflows.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -327,10 +327,10 @@ function Composer(props: ComposerProps) {
   }, [props.restoreDraft, composer])
 
   // 工作流列表：传入 projectId 以发现项目级 .c0de/workflows/*.js。
-  // queryKey 含 projectId 确保切换项目时重新拉取。
+  // queryKey 含 projectId 确保切换项目时重新拉取；键与 WorkflowsPanel 共享
+  // （workflowsQueryOptions 单源），staleTime Infinity 是本观察者的策略。
   const workflowsQuery = useQuery({
-    queryKey: ['workflows', props.projectId],
-    queryFn: () => workflowsAPI.list(props.projectId),
+    ...workflowsQueryOptions(props.projectId),
     staleTime: Infinity,
     select: (data) => data.workflows,
   })

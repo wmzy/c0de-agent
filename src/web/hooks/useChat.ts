@@ -23,7 +23,7 @@ import { agentAPI } from '@/services/agent.js'
 import { sendChatMessage } from '@/services/chat.js'
 import { permissionAPI } from '@/services/permission.js'
 import { projectAPI } from '@/services/project.js'
-import { sessionAPI } from '@/services/session.js'
+import { llmDetailsKey, sessionAPI } from '@/services/session.js'
 import type { APIError } from '@/types/index.js'
 import { subscribeChannel } from '@/utils/broadcast.js'
 import { messageOf } from '@/utils/errors.js'
@@ -209,7 +209,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             if (event._tag === 'llm_detail') {
               if (llmDetailTimerRef.current) clearTimeout(llmDetailTimerRef.current)
               llmDetailTimerRef.current = setTimeout(() => {
-                qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
+                qc.invalidateQueries({ queryKey: llmDetailsKey(sessionId) })
               }, 500)
             } else if (event._tag === 'todo_update') {
               // Tag-based todo 操作成功，刷新 TodoPanel（React Query 重新拉取）
@@ -219,7 +219,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
                 clearTimeout(llmDetailTimerRef.current)
                 llmDetailTimerRef.current = null
               }
-              qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
+              qc.invalidateQueries({ queryKey: llmDetailsKey(sessionId) })
             }
           },
           abortRef.current.signal,
@@ -364,7 +364,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
             clearTimeout(llmDetailTimerRef.current)
             llmDetailTimerRef.current = null
           }
-          qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
+          qc.invalidateQueries({ queryKey: llmDetailsKey(sessionId) })
           // 用户按「终止」：服务端会落 aborted 的工具结果（下次重取即覆盖），但本地
           // SSE 已被掐断、那份结果送不到——不封口的话工具卡停在 ⏳，而「终止」按钮
           // 已经消失，界面自己说运行停了、又在同一块卡上说「执行中」。
@@ -852,7 +852,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
       permissionTimeout: null,
     }))
     qc.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] })
-    qc.invalidateQueries({ queryKey: ['session', sessionId, 'llm-details'] })
+    qc.invalidateQueries({ queryKey: llmDetailsKey(sessionId) })
   }, [qc, sessionId, stopPoll])
 
   /** 附着态同步挂起权限：以服务端 store 为准。附着页没有本次 run 的 SSE 流

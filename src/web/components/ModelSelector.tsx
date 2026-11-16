@@ -6,7 +6,7 @@ import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { declaredModels } from '@/components/settings/shared.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
-import { providerAPI } from '@/services/provider.js'
+import { providersQueryOptions } from '@/services/provider.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
 import { comboboxKeyAction } from '@/utils/combobox-keys.js'
 import { messageOf } from '@/utils/errors.js'
@@ -200,8 +200,7 @@ export function ModelSelector({
     error: providersError,
     refetch: refetchProviders,
   } = useQuery({
-    queryKey: ['providers', projectId],
-    queryFn: () => providerAPI.list(projectId),
+    ...providersQueryOptions(projectId),
     staleTime: 60_000,
   })
   const { config } = useConfig(projectId)

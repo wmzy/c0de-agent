@@ -55,3 +55,17 @@ const workflowsAPI = {
 
 export type { WorkflowDetail, WorkflowInfo, WorkflowListPayload, WorkflowSavePayload }
 export { workflowsAPI }
+
+/** 工作流列表查询键（Composer 补全与 WorkflowsPanel 管理/失效共享缓存）。 */
+export function workflowsKey(projectId?: string) {
+  return ['workflows', projectId] as const
+}
+
+/** 工作流列表查询选项：只统一键 + queryFn；staleTime 差异（Composer Infinity /
+ *  WorkflowsPanel 30s）是故意的 per-observer 策略，留给调用点。 */
+export function workflowsQueryOptions(projectId?: string) {
+  return {
+    queryKey: workflowsKey(projectId),
+    queryFn: () => workflowsAPI.list(projectId),
+  }
+}

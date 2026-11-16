@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Tooltip } from 'haze-ui'
 import { useState } from 'react'
 import { CommitReviewDialog } from '@/components/CommitReviewDialog.js'
-import { invalidateGitState } from '@/hooks/gitState.js'
+import { gitStatusQueryOptions, invalidateGitState } from '@/hooks/gitState.js'
 import { fileAPI } from '@/services/file.js'
 import { btnSm } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -143,11 +143,7 @@ const commitError = css`
 export function CommitButton({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient()
 
-  const gitStatusQ = useQuery({
-    queryKey: ['files', 'git-status', projectId],
-    queryFn: () => fileAPI.gitStatus(projectId),
-    refetchInterval: 30_000,
-  })
+  const gitStatusQ = useQuery(gitStatusQueryOptions(projectId))
 
   const hasChanges =
     !!gitStatusQ.data && Object.values(gitStatusQ.data).some((c) => c !== 'ignored')

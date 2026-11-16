@@ -22,7 +22,7 @@ import {
   resolvePermissionTimeoutAction,
 } from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'
-import { emitSseDone, emitSseError } from '../util/sse.js'
+import { commandResultText, emitSseDone, emitSseError, emitSseText } from '../util/sse.js'
 import { childRunBridge, startHeartbeat } from './chat.js'
 
 /**
@@ -58,16 +58,11 @@ function createSlashWorkflowEmitter(stream: SSEStreamingApi): WorkflowChannelEmi
     result: async (result) => {
       if (result._tag === 'error') {
         await emitSseError(stream, result)
+        await emitSseDone(stream)
       } else {
         // executeWorkflow 只产出 text/error（success/compact 是斜杠命令泛型变体，不会到达）
-        const text =
-          result._tag === 'text' ? result.text : result._tag === 'success' ? result.message : ''
-        await stream.writeSSE({
-          event: 'text_delta',
-          data: JSON.stringify({ _tag: 'text_delta', text }),
-        })
+        await emitSseText(stream, commandResultText(result))
       }
-      await emitSseDone(stream)
     },
     error: async (e) => {
       await emitSseError(stream, e, { swallow: true })

@@ -4,7 +4,7 @@ import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { UsageSummary } from '@/services/usage.js'
-import { usageAPI } from '@/services/usage.js'
+import { usageSummaryQueryOptions } from '@/services/usage.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatCost, formatNumber, parseFiniteNumber } from '@/utils/format.js'
 import { budgetStatus, monthTokenSum } from '@/utils/usage.js'
@@ -109,8 +109,7 @@ function UsagePanel({
     error,
     refetch,
   } = useQuery({
-    queryKey: ['usage', 'summary', projectId ?? 'all'],
-    queryFn: () => usageAPI.summary(projectId),
+    ...usageSummaryQueryOptions(projectId),
     staleTime: 30_000,
   })
 

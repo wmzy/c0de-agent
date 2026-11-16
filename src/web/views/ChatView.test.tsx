@@ -36,9 +36,16 @@ const draftRoutes = createRoutes({
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
 }))
-vi.mock('@/services/workflows.js', () => ({
-  workflowsAPI: { list: vi.fn().mockResolvedValue({ workflows: [] }) },
-}))
+vi.mock('@/services/workflows.js', () => {
+  const workflowsAPI = { list: vi.fn().mockResolvedValue({ workflows: [] }) }
+  return {
+    workflowsAPI,
+    workflowsQueryOptions: (projectId?: string) => ({
+      queryKey: ['workflows', projectId],
+      queryFn: () => workflowsAPI.list(projectId),
+    }),
+  }
+})
 vi.mock('@/services/permission.js', () => ({
   permissionAPI: {
     getMode: vi.fn().mockResolvedValue({ mode: 'default' }),

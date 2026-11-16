@@ -6,6 +6,7 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI } from '@/services/session.js'
 import type { CompactionArchive, SessionEntry } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
+import { formatDateTime } from '@/utils/format.js'
 import { LoadError } from '@/views/_shared/errorState.js'
 
 const list = css`
@@ -199,8 +200,7 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
                 {a.summary}
               </span>
               <span className={meta} title="归档时估算的 token 数（启发式，非精确计费值）">
-                {new Date(a.createdAt).toLocaleString()} · {a.originalEntries.length} 条 · ~
-                {a.tokenCount}t
+                {formatDateTime(a.createdAt)} · {a.originalEntries.length} 条 · ~{a.tokenCount}t
               </span>
               <button
                 type="button"

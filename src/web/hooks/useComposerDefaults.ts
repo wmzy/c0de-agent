@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModelSelection } from '@/components/ModelSelector.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
-import { providerAPI } from '@/services/provider.js'
+import { providersQueryOptions } from '@/services/provider.js'
 import { storageGet, storageRemove, storageSet } from '@/utils/storage.js'
 
 const SELECTION_KEY = 'c0de-agent:modelSelection'
@@ -70,8 +70,7 @@ export function useComposerDefaults(projectId?: string) {
   // P1-1：按项目读取配置——defaultModel/默认 provider 来自该项目合并配置。
   const { config } = useConfig(projectId)
   const { data: providersData } = useQuery({
-    queryKey: ['providers', projectId],
-    queryFn: () => providerAPI.list(projectId),
+    ...providersQueryOptions(projectId),
     staleTime: 60_000,
   })
 

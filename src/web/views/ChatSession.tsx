@@ -29,7 +29,12 @@ import { invalidateSessionLists, useMessages } from '@/hooks/useSession.js'
 import { useShake } from '@/hooks/useShake.js'
 import { useSupportsVision } from '@/hooks/useSupportsVision.js'
 import { navigateTo } from '@/navigateTo.js'
-import { sessionAPI } from '@/services/session.js'
+import {
+  llmDetailsQueryOptions,
+  sessionAPI,
+  sessionMetaKey,
+  sessionMetaQueryOptions,
+} from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
 import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
@@ -216,10 +221,7 @@ export function ChatSession({
     error: sessionMetaError,
     isFetching: sessionMetaFetching,
     refetch: refetchSessionMeta,
-  } = useQuery({
-    queryKey: ['session', sessionId, 'meta'],
-    queryFn: () => sessionAPI.get(sessionId),
-  })
+  } = useQuery(sessionMetaQueryOptions(sessionId))
   const sessionMetaErrorMessage = sessionMetaError ? messageOf(sessionMetaError) : null
   const [orphanNotice, setOrphanNotice] = useState(false)
   // 归属失败原因。此前该 mutation 只有 onSuccess：POST /rebind 返回 500 /
@@ -232,7 +234,7 @@ export function ChatSession({
     onMutate: () => setRebindError(null),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sessions', 'tree'] })
-      qc.invalidateQueries({ queryKey: ['session', sessionId, 'meta'] })
+      qc.invalidateQueries({ queryKey: sessionMetaKey(sessionId) })
       setOrphanNotice(false)
       setRebindError(null)
     },
@@ -359,8 +361,7 @@ export function ChatSession({
     isFetching: llmDetailsFetching,
     refetch: refetchLlmDetails,
   } = useQuery({
-    queryKey: ['session', sessionId, 'llm-details'],
-    queryFn: () => sessionAPI.llmDetails(sessionId),
+    ...llmDetailsQueryOptions(sessionId),
     staleTime: 10_000,
   })
   const llmDetailsErrorMessage = llmDetailsError ? messageOf(llmDetailsError) : null

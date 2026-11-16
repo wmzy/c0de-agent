@@ -105,14 +105,22 @@ vi.mock('../contexts/ThemeContext.js', () => ({
 }))
 
 // 工作流管理面板依赖 workflows service，mock 掉避免测试中发起网络请求
-vi.mock('@/services/workflows.js', () => ({
-  workflowsAPI: {
+vi.mock('@/services/workflows.js', () => {
+  const workflowsAPI = {
     list: vi.fn().mockResolvedValue({ workflows: [] }),
     get: vi.fn(),
     save: vi.fn(),
     remove: vi.fn(),
-  },
-}))
+  }
+  return {
+    workflowsAPI,
+    workflowsKey: (projectId?: string) => ['workflows', projectId],
+    workflowsQueryOptions: (projectId?: string) => ({
+      queryKey: ['workflows', projectId],
+      queryFn: () => workflowsAPI.list(projectId),
+    }),
+  }
+})
 
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: {

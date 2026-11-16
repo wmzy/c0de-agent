@@ -78,9 +78,10 @@ describe('DirectoryPicker', () => {
 
     const errBox = await screen.findByTestId('directory-picker-error')
     expect(errBox.textContent).toContain('home boom')
-    expect(screen.queryByTestId('directory-picker-retry')).toBeTruthy()
+    // 重试钮收敛在 LoadErrorNotice（stacked 变体），无自有 testid，按角色取
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
 
-    fireEvent.click(screen.getByTestId('directory-picker-retry'))
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
     await waitFor(() => expect(filesystemAPI.browse).toHaveBeenCalledWith('/home/user'))
     await waitFor(() => expect(screen.queryByTestId('directory-picker-error')).toBeNull())
   })
@@ -197,7 +198,7 @@ describe('DirectoryPicker', () => {
 
     const callsBefore = vi.mocked(filesystemAPI.browse).mock.calls.length
     vi.mocked(filesystemAPI.browse).mockResolvedValue({ path: '/home/user', directories: [] })
-    fireEvent.click(screen.getByTestId('directory-picker-retry'))
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
     await waitFor(() =>
       expect(vi.mocked(filesystemAPI.browse).mock.calls.length).toBeGreaterThan(callsBefore),
     )
@@ -214,7 +215,7 @@ describe('DirectoryPicker', () => {
     await waitFor(() => expect(screen.getByTestId('directory-picker-error')).toBeTruthy())
 
     // 后端恢复：重试后导航成功（错误态消失）
-    fireEvent.click(screen.getByTestId('directory-picker-retry'))
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
     await waitFor(() => expect(screen.queryByTestId('directory-picker-error')).toBeNull())
 
     // 全程无任何选择 → 宿主值不被回填

@@ -7,9 +7,9 @@ import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { Collapsible } from '@/components/Collapsible.js'
 import { useMessages } from '@/hooks/useSession.js'
-import { sessionAPI } from '@/services/session.js'
+import { llmDetailsQueryOptions, sessionMetaQueryOptions } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
-import { formatCostUSD, formatNumber } from '@/utils/format.js'
+import { formatCostUSD, formatDateTime, formatNumber } from '@/utils/format.js'
 
 const wrap = css`
   border-bottom: 1px solid var(--haze-color-border);
@@ -78,17 +78,6 @@ const errorLine = css`
   color: var(--haze-color-danger);
   overflow-wrap: anywhere;
 `
-
-/** 日期时间格式化（与样例一致：2026年6月25日 17:35）。 */
-function formatDateTime(ts: number): string {
-  return new Date(ts).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
 
 type Stats = {
   title: string
@@ -179,8 +168,7 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
     isError: sessionFailed,
     error: sessionError,
   } = useQuery({
-    queryKey: ['session', sessionId],
-    queryFn: () => sessionAPI.get(sessionId),
+    ...sessionMetaQueryOptions(sessionId),
     staleTime: 10_000,
   })
   const {
@@ -195,8 +183,7 @@ export function SessionSummary({ sessionId }: { sessionId: string }) {
     isError: llmFailed,
     error: llmError,
   } = useQuery({
-    queryKey: ['session', sessionId, 'llm-details'],
-    queryFn: () => sessionAPI.llmDetails(sessionId),
+    ...llmDetailsQueryOptions(sessionId),
     staleTime: 10_000,
   })
 

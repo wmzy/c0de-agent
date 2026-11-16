@@ -7,6 +7,7 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import { findNode } from '@/components/tree-utils.js'
 import { useDirectoryTree } from '@/components/useDirectoryTree.js'
 import { useFileReference } from '@/contexts/ReferenceContext.js'
+import { gitStatusQueryOptions } from '@/hooks/gitState.js'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
@@ -298,18 +299,15 @@ export function FileBrowser({
   // 对单字符同样正常返回，真正的防抖开销由上面 300ms 承担。
   const isSearch = searchDebounced.length >= 1
   const searchQ = useQuery({
-    queryKey: ['files', 'search', searchDebounced, projectId],
+    queryKey: ['files', 'search', searchDebounced, projectId ?? ''],
     queryFn: () => fileAPI.search(searchDebounced, projectId),
     enabled: isSearch,
   })
   const refetchSearch = searchQ.refetch
 
-  // git 状态：项目打开时拉取，30s 自动刷新（文件树高亮用）
-  const gitStatusQ = useQuery({
-    queryKey: ['files', 'git-status', projectId],
-    queryFn: () => fileAPI.gitStatus(projectId),
-    refetchInterval: 30_000,
-  })
+  // git 状态：项目打开时拉取，30s 自动刷新（文件树高亮用；轮询口径烘进
+  // gitStatusQueryOptions，与 CommitButton/ProjectIndicator 同源）
+  const gitStatusQ = useQuery(gitStatusQueryOptions(projectId))
   const gitStatusMap: GitStatusMap | undefined = gitStatusQ.data
 
   // 切换项目时重置树，加载新项目根目录。

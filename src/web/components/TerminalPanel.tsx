@@ -343,6 +343,56 @@ function resizePair(
   return newSizes
 }
 
+/** 分隔条拖拽的发起参数。sizes 是按下时刻的 pane 尺寸快照：拖拽期间每次 onMove
+ *  都从同一份快照叠加 delta——若读「已被本拖拽改写过的当前值」会越拖越快。 */
+interface DividerDrag {
+  tabId: string
+  leftIdx: number
+  direction: SplitDirection
+  /** 按下时刻的指针位置（client 坐标），onMove 的 delta 相对它计算。 */
+  startX: number
+  startY: number
+  /** 分隔条所在容器的像素宽/高，像素位移 → flex 比例换算用。 */
+  totalSize: number
+  sizes: number[]
+}
+
+/**
+ * 指针拖拽会话：面板高度与分屏分隔条两套拖拽共用的骨架——按下只把发起参数
+ * 存进 state，document 的 pointermove/pointerup 监听与全局光标锁都挂在依赖该
+ * state 的 effect 上，结束/卸载由 effect cleanup 摘除与恢复。
+ *
+ * 此前分隔条拖拽在事件处理器里直接 addEventListener、只在 onUp 移除（光标锁
+ * 同样只在 onUp 恢复）：拖拽中组件卸载（终端关闭、路由切换）时监听器永久
+ * 泄漏、全站光标停在 col/row-resize 且 user-select 永久禁用；高度拖拽的
+ * effect 骨架（挂/摘监听 + 光标锁独立 cleanup）才是正本，收敛于此。
+ * onMove/cursor 经 ref 取最新闭包，session 只作 effect 依赖——React 18 严格
+ * 模式 effect 双挂载时 cleanup 先摘旧监听再重挂，幂等。
+ */
+function usePointerDragSession<S>(opts: {
+  /** 拖拽期间锁定的全局光标（lockBodyCursor 的入参）。 */
+  cursor: (session: S) => string
+  onMove: (e: PointerEvent, session: S) => void
+}) {
+  const optsRef = useRef(opts)
+  optsRef.current = opts
+  const [session, setSession] = useState<S | null>(null)
+  useEffect(() => {
+    if (session === null) return
+    const onMove = (e: PointerEvent) => optsRef.current.onMove(e, session)
+    const onUp = () => setSession(null)
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onUp)
+    const snapshot = lockBodyCursor(optsRef.current.cursor(session))
+    return () => {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      restoreBodyCursor(snapshot)
+    }
+  }, [session])
+  return setSession
+}
+
 /**
  * 终端面板：底部可拖拽调整高度的容器，支持多标签页和 VSCode 风格分屏。
  *
@@ -383,10 +433,12 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
     minPaneFlex,
   } = terminal
 
-  const draggingRef = useRef(false)
-  const startYRef = useRef(0)
-  const startHeightRef = useRef(0)
-  const [dragging, setDragging] = useState(false)
+  // 拖拽调整面板高度：按下只记起点与当时高度，监听挂/摘与光标锁由
+  // usePointerDragSession 的 effect 驱动（见其注释）。
+  const beginHeightDrag = usePointerDragSession<{ startY: number; startHeight: number }>({
+    cursor: () => 'row-resize',
+    onMove: (e, s) => setHeight(s.startHeight + (s.startY - e.clientY)),
+  })
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
 
@@ -454,39 +506,10 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
       e.preventDefault()
-      draggingRef.current = true
-      startYRef.current = e.clientY
-      startHeightRef.current = height
-      setDragging(true)
+      beginHeightDrag({ startY: e.clientY, startHeight: height })
     },
-    [height],
+    [beginHeightDrag, height],
   )
-
-  useEffect(() => {
-    if (!dragging) return
-    const onMove = (e: PointerEvent) => {
-      if (!draggingRef.current) return
-      const delta = startYRef.current - e.clientY
-      setHeight(startHeightRef.current + delta)
-    }
-    const onUp = () => {
-      draggingRef.current = false
-      setDragging(false)
-    }
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp)
-    return () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-    }
-  }, [dragging, setHeight])
-
-  // 拖拽时设置全局光标
-  useEffect(() => {
-    if (!dragging) return
-    const snapshot = lockBodyCursor('row-resize')
-    return () => restoreBodyCursor(snapshot)
-  }, [dragging])
 
   const handleNewTab = useCallback(() => {
     void createTerminal(cwd ? { cwd } : undefined)
@@ -550,7 +573,18 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
     [resize],
   )
 
-  // 分隔条拖拽
+  // 分隔条拖拽：与高度拖拽同款骨架（usePointerDragSession），按下只记参数。
+  const beginDividerDrag = usePointerDragSession<DividerDrag>({
+    cursor: (s) => (s.direction === 'horizontal' ? 'col-resize' : 'row-resize'),
+    onMove: (ev, s) => {
+      const total = s.sizes.reduce((a, b) => a + b, 0) || 1
+      const delta = s.direction === 'horizontal' ? ev.clientX - s.startX : ev.clientY - s.startY
+      const deltaFraction = (delta / s.totalSize) * total
+      const newSizes = resizePair(s.sizes, s.leftIdx, deltaFraction, minPaneFlex * total)
+      if (newSizes) setPaneSizes(s.tabId, newSizes)
+    },
+  })
+
   const onDividerPointerDown = useCallback(
     (
       e: React.PointerEvent<HTMLElement>,
@@ -567,29 +601,17 @@ export function TerminalPanel({ terminal, cwd, projectId, cwdLoadError }: Termin
       const tab = tabs.find((t) => t.id === tabId)
       if (!tab) return
 
-      const sizes = [...tab.split.sizes]
-      const total = sizes.reduce((a, b) => a + b, 0) || 1
-      const snapshot = lockBodyCursor(direction === 'horizontal' ? 'col-resize' : 'row-resize')
-
-      const onMove = (ev: PointerEvent) => {
-        const delta = direction === 'horizontal' ? ev.clientX - e.clientX : ev.clientY - e.clientY
-        const deltaFraction = (delta / totalSize) * total
-        const newSizes = resizePair(sizes, leftIdx, deltaFraction, minPaneFlex * total)
-        if (newSizes) setPaneSizes(tabId, newSizes)
-      }
-
-      const onUp = () => {
-        document.removeEventListener('pointermove', onMove)
-        document.removeEventListener('pointerup', onUp)
-        // 恢复拖拽前的内联样式：此前读的是当前值（已是拖拽光标/user-select:none），
-        // 清空后又写回同一份值——全站光标永久停在 col-resize、文本选择永久禁用。
-        restoreBodyCursor(snapshot)
-      }
-
-      document.addEventListener('pointermove', onMove)
-      document.addEventListener('pointerup', onUp)
+      beginDividerDrag({
+        tabId,
+        leftIdx,
+        direction,
+        startX: e.clientX,
+        startY: e.clientY,
+        totalSize,
+        sizes: [...tab.split.sizes],
+      })
     },
-    [tabs, setPaneSizes, minPaneFlex],
+    [tabs, beginDividerDrag],
   )
 
   // 分隔条键盘调整：ArrowLeft/Up 缩小左/上 pane，ArrowRight/Down 放大（±5% 总宽）

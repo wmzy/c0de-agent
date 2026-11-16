@@ -11,6 +11,7 @@ import {
   pickerRoot,
 } from '@/components/directory-picker-domain.js'
 import { FileTree, type TreeNode } from '@/components/FileTree.js'
+import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { findNode } from '@/components/tree-utils.js'
 import { useDirectoryTree } from '@/components/useDirectoryTree.js'
@@ -127,34 +128,14 @@ const state = css`
   pointer-events: none;
 `
 
-/** 根目录读取失败：给出原因 + 重试（「读取失败」四个字既不说明原因也无法自救）。 */
-const errorState = css`
+/** 错误态的绝对定位容器：只负责把占位钉在浏览区中央（铺满 + 居中）；配色、
+ *  排版与重试钮收敛在 LoadErrorNotice（紧凑占位正本）的 stacked 变体——此前
+ *  这里自持的「原因 + 重试」结构与其同构，是第四套错误框。 */
+const errorOverlay = css`
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px;
-  color: var(--haze-color-danger, #e5484d);
-  font-size: 12px;
-  text-align: center;
-`
-
-const retryBtn = css`
-  min-height: auto;
-  padding: 2px 10px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
-  font-size: 12px;
-  cursor: pointer;
-  &:hover {
-    border-color: var(--haze-color-primary);
-    color: var(--haze-color-primary);
-  }
+  display: grid;
+  place-items: center;
 `
 
 const selectionBar = css`
@@ -508,21 +489,20 @@ export function DirectoryPicker({
       <div className={browser}>
         {navLoading ? <div className={state}>加载中…</div> : null}
         {!navLoading && (navError || (homeError && !treeRoot)) ? (
-          <div className={errorState} data-testid="directory-picker-error">
-            <span>{navError ?? homeError}</span>
-            <button
-              type="button"
-              className={retryBtn}
-              data-testid="directory-picker-retry"
-              // home 拉失败时 root 仍为空，沿用原来的 navigate(root) 只会空转；
-              // 这种情况重试要先重新拉 home（随后的首次自动导航会接上）。
-              onClick={() => {
+          // 根目录读取失败：给出原因 + 重试（「读取失败」四个字既不说明原因也
+          // 无法自救），占位本体收敛在 LoadErrorNotice 的 stacked 变体。
+          <div className={errorOverlay} data-testid="directory-picker-error">
+            <LoadErrorNotice
+              message={navError ?? homeError ?? ''}
+              stacked
+              onRetry={() => {
+                // home 拉失败时 root 仍为空，沿用原来的 navigate(root) 只会空转；
+                // 这种情况重试要先重新拉 home（随后的首次自动导航会接上）。
                 if (homeError) void loadHome()
                 else void navigate(root, { silent: true })
               }}
-            >
-              重试
-            </button>
+              testId="directory-picker-error-notice"
+            />
           </div>
         ) : null}
         {!navLoading && !navError && treeRoot ? (

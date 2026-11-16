@@ -55,6 +55,10 @@ type InstallMethod = { kind: 'npm' } | { kind: 'pnpm' } | { kind: 'unknown'; hin
 const DEFAULT_PACKAGE = 'c0de-agent'
 const DEFAULT_MANUAL_WAIT_TIMEOUT_MS = 10 * 60 * 1000
 
+/** 安装命令超时：npm/pnpm 网络停滞（registry 半开）时 spawn 永不 exit，
+ *  install 阶段会无限挂住——到时 kill 子进程并以超时错误 reject。 */
+const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
+
 /** writeSnapshot 经 mkdtemp 创建、归本模块所有的临时目录。
  *  清理快照时只有这些目录允许整目录递归删除——调用方指定的 snapshotPath
  *  只删文件本身，绝不删除其父目录（此前 rm(join(path,'..'), recursive) 对
@@ -92,8 +96,23 @@ function defaultInstall(pkg: string, method: InstallMethod): Promise<void> {
     const cmd = method.kind === 'pnpm' ? 'pnpm' : 'npm'
     const args = method.kind === 'pnpm' ? ['add', '-g', pkg] : ['install', '-g', pkg]
     const child = spawn(cmd, args, { stdio: 'ignore' })
-    child.on('error', reject)
+    // 网络停滞时 spawn 永不 exit：到时 kill 子进程并以超时错误 reject
+    // （promise 已 settle，随后 exit/error 腿的 reject 是 no-op）。
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(
+        new Error(
+          `${cmd} ${args.join(' ')} 超过 ${INSTALL_TIMEOUT_MS / 60000} 分钟未完成，已终止（网络停滞？）`,
+        ),
+      )
+    }, INSTALL_TIMEOUT_MS)
+    const settle = () => clearTimeout(timer)
+    child.on('error', (err) => {
+      settle()
+      reject(err)
+    })
     child.on('exit', (code, signal) => {
+      settle()
       if (code === 0) resolve()
       // 信号终止时 code 为 null（真实信号在 signal）——直接插值 code 会报
       // 「exited with null」，用户无法区分「包管理器自杀」与「内部错误」。

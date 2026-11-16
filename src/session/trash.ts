@@ -12,17 +12,17 @@ import { generateId } from '../shared/index.js'
 import type { Session, SessionMetadata } from '../shared/types/message.js'
 import { rowToSession, updateSessionMetadata } from './session.js'
 
+/** 软删除谓词（deletedAt > epoch）：schema 以 new Date(0) 为「未删除」哨兵，
+ *  回收站各查询（列表/孤儿/标记/恢复遍历/清理/清空）共用此单点，防口径漂移。 */
+const softDeleted = () => gt(sessions.deletedAt, new Date(0))
+
 /** List soft-deleted sessions (回收站)；projectId 提供时仅列出归属该项目的会话
  *  （P1-7：回收站此前全库共享，项目 A 的界面能清空项目 B 的删除会话）。 */
 async function listDeletedSessions(handle: DB, projectId?: string): Promise<Session[]> {
   const rows = await handle.db
     .select()
     .from(sessions)
-    .where(
-      projectId
-        ? and(gt(sessions.deletedAt, new Date(0)), eq(sessions.projectId, projectId))
-        : gt(sessions.deletedAt, new Date(0)),
-    )
+    .where(projectId ? and(softDeleted(), eq(sessions.projectId, projectId)) : softDeleted())
   return rows.map(rowToSession)
 }
 
@@ -32,7 +32,7 @@ async function listOrphanDeletedSessions(handle: DB): Promise<Session[]> {
   const rows = await handle.db
     .select()
     .from(sessions)
-    .where(and(gt(sessions.deletedAt, new Date(0)), isNull(sessions.projectId)))
+    .where(and(softDeleted(), isNull(sessions.projectId)))
   return rows.map(rowToSession)
 }
 
@@ -51,12 +51,15 @@ async function touchTrashSeen(
   handle: DB,
   scope: { projectId?: string; orphan?: boolean } = {},
 ): Promise<number> {
-  const where = scope.orphan
-    ? and(gt(sessions.deletedAt, new Date(0)), isNull(sessions.projectId))
-    : scope.projectId
-      ? and(gt(sessions.deletedAt, new Date(0)), eq(sessions.projectId, scope.projectId))
-      : gt(sessions.deletedAt, new Date(0))
-  const rows = await handle.db.select({ id: sessions.id }).from(sessions).where(where)
+  // 三种 scope（孤儿/项目/全部）共享软删除谓词，按 scope 追加归属条件单点组装
+  // （orphan 优先级最高，与列表函数的孤儿视图对齐）。
+  const conds: SQL[] = [softDeleted()]
+  if (scope.orphan) conds.push(isNull(sessions.projectId))
+  else if (scope.projectId) conds.push(eq(sessions.projectId, scope.projectId))
+  const rows = await handle.db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(and(...conds))
   const now = Date.now()
   let touched = 0
   for (const row of rows) {
@@ -285,7 +288,7 @@ async function restoreSessionCore(
           deletedBatchId: sessions.deletedBatchId,
         })
         .from(sessions)
-        .where(and(gt(sessions.deletedAt, new Date(0)), inArray(sessions.parentId, frontier)))
+        .where(and(softDeleted(), inArray(sessions.parentId, frontier)))
       frontier = []
       for (const ch of children) {
         if (descendants.has(ch.id)) continue
@@ -413,7 +416,7 @@ async function purgeDeletedSessions(
       metadata: sessions.metadata,
     })
     .from(sessions)
-    .where(gt(sessions.deletedAt, new Date(0)))
+    .where(softDeleted())
 
   // —— 阶段一：到期标记（先宽限，不直接清除）——
   let marked = 0
@@ -628,11 +631,7 @@ async function emptyTrash(handle: DB, projectId?: string): Promise<number> {
   const rows = await handle.db
     .select({ id: sessions.id })
     .from(sessions)
-    .where(
-      projectId
-        ? and(gt(sessions.deletedAt, new Date(0)), eq(sessions.projectId, projectId))
-        : gt(sessions.deletedAt, new Date(0)),
-    )
+    .where(projectId ? and(softDeleted(), eq(sessions.projectId, projectId)) : softDeleted())
   return deleteSessionSubtrees(
     handle,
     rows.map((r) => r.id),

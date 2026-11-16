@@ -9,9 +9,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TopBar } from '@/components/TopBar.js'
 
 // ---- mocks ----
-vi.mock('@/services/usage.js', () => ({
-  usageAPI: { summary: vi.fn() },
-}))
+vi.mock('@/services/usage.js', () => {
+  const usageAPI = { summary: vi.fn() }
+  return {
+    usageAPI,
+    usageSummaryQueryOptions: (projectId?: string) => ({
+      queryKey: ['usage', 'summary', projectId ?? 'all'],
+      queryFn: () => usageAPI.summary(projectId),
+    }),
+  }
+})
 
 vi.mock('@/services/file.js', () => ({
   fileAPI: {
@@ -24,13 +31,21 @@ vi.mock('@/services/file.js', () => ({
   },
 }))
 
-vi.mock('@/services/project.js', () => ({
-  projectAPI: {
+vi.mock('@/services/project.js', () => {
+  const projectAPI = {
     remove: vi.fn(),
     // 顶栏「项目看板」入口在无路由 projectId 时用它解析当前项目。
     current: vi.fn(),
-  },
-}))
+  }
+  return {
+    projectAPI,
+    currentProjectKey: () => ['project', 'current'],
+    currentProjectQueryOptions: () => ({
+      queryKey: ['project', 'current'],
+      queryFn: () => projectAPI.current(),
+    }),
+  }
+})
 
 // AddProjectDialog 依赖 projectAPI + DirectoryPicker（需文件列表 API），
 // 测试 TopBar 下拉交互时 mock 掉以隔离。

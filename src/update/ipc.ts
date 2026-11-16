@@ -43,8 +43,14 @@ type HandoffOptions = {
  *   调用方应直接尝试绑端口；
  * - kind='http'：收到 HTTP 响应但非 2xx（status 为状态码）——如 401 token
  *   不匹配、500 onHandoff 失败，旧实例存在但拒绝/未能让渡。
+ *   超时也归此类（无 status）：连接已建立但旧实例不回包，端口仍被其占用。
  */
 type HandoffError = Error & { kind: 'connect' | 'http'; status?: number }
+
+/** handoff 外呼超时（对照 version.ts 的 30s 口径）：旧实例 handler 挂死
+ *  （接了连接不回包）时 fetch 永不 resolve，新实例 serve --restore 启动
+ *  会永久阻塞，必须限时。 */
+const HANDOFF_FETCH_TIMEOUT_MS = 10_000
 
 /**
  * 旧实例启动时创建 handoff 端点。收到 POST /handoff 即触发 onHandoff
@@ -121,14 +127,32 @@ function createHandoffServer(
 }
 
 /** 新实例请求旧实例让出端口（graceful shutdown）。失败抛可区分的 HandoffError。 */
-async function requestHandoff(port: number, host = '127.0.0.1', token?: string): Promise<void> {
+async function requestHandoff(
+  port: number,
+  host = '127.0.0.1',
+  token?: string,
+  timeoutMs = HANDOFF_FETCH_TIMEOUT_MS,
+): Promise<void> {
   let res: Response
+  const signal = AbortSignal.timeout(timeoutMs)
   try {
     res = await fetch(`http://${host}:${port}/handoff`, {
       method: 'POST',
+      signal,
       ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
     })
   } catch (err) {
+    // 超时归 kind='http' 而非 'connect'：connect 的语义是「无 handoff 端点，
+    // 调用方直接试绑端口」；而超时说明连接已建立但旧实例不回包（handler 挂死，
+    // 端口仍被其占用，绑端口必撞 EADDRINUSE）——归 http 让错误如实上抛，
+    // 不落入「直接绑端口」的兜底分支。
+    if (signal.aborted) {
+      const error = new Error(
+        `handoff timeout: ${host}:${port} 在 ${timeoutMs / 1000}s 内未响应（旧实例可能已挂死，请手动结束后重试）`,
+      ) as HandoffError
+      error.kind = 'http'
+      throw error
+    }
     // 连接层失败（ECONNREFUSED 等）：旧实例无 handoff 端点。抛 kind='connect'
     // 让调用方（requestHandoffWithRetry）区分处理——直接尝试绑端口。
     const error = new Error(
@@ -151,10 +175,17 @@ async function requestHandoff(port: number, host = '127.0.0.1', token?: string):
  * 旧实例收到才退出进程。连接失败/旧实例已退出时静默——确认是尽力而为，
  * 超时兜底由旧实例的复活窗口负责（端口占用状态是最终裁判）。
  */
-async function confirmHandoff(port: number, host = '127.0.0.1', token?: string): Promise<void> {
+async function confirmHandoff(
+  port: number,
+  host = '127.0.0.1',
+  token?: string,
+  timeoutMs = HANDOFF_FETCH_TIMEOUT_MS,
+): Promise<void> {
   try {
     await fetch(`http://${host}:${port}/handoff-confirm`, {
       method: 'POST',
+      // 超时兜底：旧实例 confirm handler 挂死时不永久等待（catch 已静默）。
+      signal: AbortSignal.timeout(timeoutMs),
       ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
     })
   } catch {

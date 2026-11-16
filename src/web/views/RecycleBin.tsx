@@ -15,6 +15,7 @@ import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
 import { type DeletedKanbanBoard, kanbanAPI, type MergedBoardCounts } from '@/services/kanban.js'
 import { sessionAPI } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
+import { formatDate, formatDateTime } from '@/utils/format.js'
 import { ErrorBar } from '@/views/_shared/ErrorBar.js'
 import {
   empty,
@@ -97,7 +98,7 @@ function daysLeft(baseline: number | null | undefined): number {
 function gracePeriodLabel(purgePendingAt: number): string {
   const deadline = purgePendingAt + TRASH_PURGE_GRACE_DAYS * 24 * 60 * 60 * 1000
   const left = Math.max(0, Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000)))
-  return `即将清除 · ${new Date(deadline).toLocaleDateString()} 前可恢复（剩 ${left} 天）`
+  return `即将清除 · ${formatDate(deadline)} 前可恢复（剩 ${left} 天）`
 }
 
 /** 剩余天数 + 绝对到期日（F6 修复：保留期自「首次打开回收站看到该分组」
@@ -111,23 +112,21 @@ function expiryLabel(s: Session): string {
   if (!seen) {
     // 未查看：保留期自首次打开回收站起算；但删除后仍有 365 天绝对上限兜底，
     // 给出绝对清除日避免「不打开就永不清理」的误读。
-    const absCap = s.deletedAt
-      ? new Date(s.deletedAt + TRASH_ABSOLUTE_MAX_DAYS * 24 * 60 * 60 * 1000)
-      : null
-    return absCap
-      ? `待查看 · 首次打开后保留 ${TRASH_RETENTION_DAYS} 天（最长 ${absCap.toLocaleDateString()} 自动清除）`
+    const absCap = s.deletedAt ? s.deletedAt + TRASH_ABSOLUTE_MAX_DAYS * 24 * 60 * 60 * 1000 : null
+    return absCap != null
+      ? `待查看 · 首次打开后保留 ${TRASH_RETENTION_DAYS} 天（最长 ${formatDate(absCap)} 自动清除）`
       : `待查看 · 首次打开后保留 ${TRASH_RETENTION_DAYS} 天`
   }
-  const expires = new Date(seen + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
-  return `剩 ${daysLeft(seen)} 天 · ${expires.toLocaleDateString()} 清除`
+  const expires = seen + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  return `剩 ${daysLeft(seen)} 天 · ${formatDate(expires)} 清除`
 }
 
 /** 看板回收站保留期自删除时刻起算（全局单一分组，无「首次查看」语义）；
  *  purgePendingAt 存在 = 已到期进入宽限期（7 天内可恢复，逾期物理清除）。 */
 function kanbanExpiryLabel(b: { deletedAt: number; purgePendingAt: number | null }): string {
   if (b.purgePendingAt) return gracePeriodLabel(b.purgePendingAt)
-  const expires = new Date(b.deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
-  return `${expires.toLocaleDateString()} 进入宽限`
+  const expires = b.deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  return `${formatDate(expires)} 进入宽限`
 }
 
 /**
@@ -641,9 +640,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
                     父会话已删除（恢复时一并还原）
                   </span>
                 )}
-                <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-                  {expiryLabel(s)}
-                </span>
+                <span title={s.deletedAt ? formatDateTime(s.deletedAt) : ''}>{expiryLabel(s)}</span>
                 {s.source === 'cli' && (
                   <span
                     className={sourceBadge}
@@ -767,9 +764,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
             orphanRows.map((s) => (
               <div key={s.id} className={deletedRow} data-testid={`orphan-${s.id}`}>
                 <span title={s.worktreePath ?? s.title}>{s.title}</span>
-                <span title={s.deletedAt ? new Date(s.deletedAt).toLocaleString() : ''}>
-                  {expiryLabel(s)}
-                </span>
+                <span title={s.deletedAt ? formatDateTime(s.deletedAt) : ''}>{expiryLabel(s)}</span>
                 <button
                   type="button"
                   className={restoreBtn}
@@ -848,7 +843,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
               <span title={`看板来自「${b.projectName}」`}>
                 📋 {b.projectName}（{b.cardCount} 张卡片）
               </span>
-              <span title={new Date(b.deletedAt).toLocaleString()}>{kanbanExpiryLabel(b)}</span>
+              <span title={formatDateTime(b.deletedAt)}>{kanbanExpiryLabel(b)}</span>
               <button
                 type="button"
                 className={restoreBtn}

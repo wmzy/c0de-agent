@@ -1,5 +1,5 @@
 import { DirectoryProjectDialog } from '@/components/DirectoryProjectDialog.js'
-import { projectAPI } from '@/services/project.js'
+import { currentProjectKey, projectAPI } from '@/services/project.js'
 import type { Project } from '@/types/index.js'
 
 type RelocateProjectDialogProps = {
@@ -31,7 +31,7 @@ export function RelocateProjectDialog({
       invalidations={[
         // 会话与看板随目录身份整体迁移，会话列表缓存一并失效
         ['projects'],
-        ['project', 'current'],
+        currentProjectKey(),
         ['sessions'],
         ['sessions', 'tree'],
       ]}

@@ -11,9 +11,16 @@ import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UsagePanel } from '@/components/settings/UsagePanel.js'
 
-vi.mock('@/services/usage.js', () => ({
-  usageAPI: { summary: vi.fn() },
-}))
+vi.mock('@/services/usage.js', () => {
+  const usageAPI = { summary: vi.fn() }
+  return {
+    usageAPI,
+    usageSummaryQueryOptions: (projectId?: string) => ({
+      queryKey: ['usage', 'summary', projectId ?? 'all'],
+      queryFn: () => usageAPI.summary(projectId),
+    }),
+  }
+})
 
 function renderPanel(props: Parameters<typeof UsagePanel>[0]): void {
   const qc = new QueryClient({

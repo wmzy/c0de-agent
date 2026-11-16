@@ -14,7 +14,11 @@ import { AddProjectDialog } from '@/components/AddProjectDialog.js'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { RelocateProjectDialog } from '@/components/RelocateProjectDialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
-import { invalidateGitState } from '@/hooks/gitState.js'
+import {
+  gitBranchesQueryOptions,
+  gitLastCommitQueryOptions,
+  invalidateGitState,
+} from '@/hooks/gitState.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { navigateTo } from '@/navigateTo.js'
 import { fileAPI } from '@/services/file.js'
@@ -336,9 +340,7 @@ export function ProjectIndicator({
 
   // hover 分支名展示最后一次提交信息
   const gitLastCommitQ = useQuery({
-    queryKey: ['files', 'git-last-commit', projectId],
-    queryFn: () => fileAPI.gitLastCommit(projectId),
-    refetchInterval: 30_000,
+    ...gitLastCommitQueryOptions(projectId),
     enabled: !!project?.gitBranch,
   })
   const lastCommit = gitLastCommitQ.data?.commit ?? null
@@ -349,8 +351,7 @@ export function ProjectIndicator({
   // 分支列表（下拉打开时按需加载）
   const [branchesOpen, setBranchesOpen, branchesOpenCtrl] = useControl(false)
   const branchesQ = useQuery({
-    queryKey: ['files', 'git-branches', projectId],
-    queryFn: () => fileAPI.gitBranches(projectId),
+    ...gitBranchesQueryOptions(projectId),
     enabled: branchesOpen,
   })
 

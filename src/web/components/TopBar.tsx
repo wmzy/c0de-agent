@@ -7,8 +7,8 @@ import { Logo } from '@/components/Logo.js'
 import { ProjectIndicator } from '@/components/ProjectIndicator.js'
 import { configQueryOptions } from '@/contexts/ConfigContext.js'
 import type { AppPaths } from '@/routes.js'
-import { projectAPI } from '@/services/project.js'
-import { usageAPI } from '@/services/usage.js'
+import { currentProjectQueryOptions } from '@/services/project.js'
+import { usageSummaryQueryOptions } from '@/services/usage.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { formatCost, formatNumber } from '@/utils/format.js'
 import { budgetStatus, monthTokenSum } from '@/utils/usage.js'
@@ -138,8 +138,7 @@ function MonthCostBadge({ projectId }: { projectId?: string }) {
   const { data: configResp } = useQuery({ ...configQueryOptions(projectId), staleTime: 60_000 })
   const usage = configResp?.config?.usage
   const { data: summary, isError: usageFailed } = useQuery({
-    queryKey: ['usage', 'summary', projectId ?? 'all'],
-    queryFn: () => usageAPI.summary(projectId),
+    ...usageSummaryQueryOptions(projectId),
     staleTime: 60_000,
     refetchInterval: 120_000,
   })
@@ -260,8 +259,7 @@ export function TopBar() {
    * 口径工作（无项目上下文时成本徽标退化为全局口径是既定行为）。
    */
   const { data: currentProject } = useQuery({
-    queryKey: ['project', 'current'],
-    queryFn: projectAPI.current,
+    ...currentProjectQueryOptions(),
     enabled: projectId === undefined,
   })
   const kanbanProjectId = projectId ?? currentProject?.id

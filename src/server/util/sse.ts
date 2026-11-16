@@ -1,4 +1,5 @@
 import type { SSEStreamingApi } from 'hono/streaming'
+import type { CommandResult } from '../../core/types.js'
 
 /** SSE error 事件的文案提取：Error.message 优先；非 Error 但带 message 属性的
  *  对象（agentLoop 抛出的失败对象、CommandResult 的 error 变体）取其 message；
@@ -52,4 +53,19 @@ export async function emitSseDone(
     return
   }
   await write
+}
+
+/** CommandResult 终态的展示文本提取（chat 通用命令腿与 workflow-run 斜杠
+ *  emitter 此前各持一份同构三元：success→message、text→text）。error/compact
+ *  变体不产出文本（返回空串），由调用方各自分流到 error/compact 处理。 */
+export function commandResultText(result: CommandResult): string {
+  return result._tag === 'success' ? result.message : result._tag === 'text' ? result.text : ''
+}
+
+/** SSE text_delta 事件 + done 收尾（chat/workflow-run 各通道 `text_delta`
+ *  字面量块的单一实现）：写 {_tag:'text_delta', text} 后跟 done 事件，
+ *  与聊天线协议的「文本消息以 done 收尾」同构。 */
+export async function emitSseText(stream: SSEStreamingApi, text: string): Promise<void> {
+  await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ _tag: 'text_delta', text }) })
+  await emitSseDone(stream)
 }

@@ -125,3 +125,32 @@ const sessionAPI = {
 }
 
 export { sessionAPI }
+
+/** 会话 meta 查询键。此前 SessionSummary 用裸键 ['session', id]、ChatSession 用
+ *  'meta' 子键而 queryFn 同源，全仓失效点只打 'meta'/'llm-details' 子键——前缀
+ *  匹配不覆盖裸键，SessionSummary 的缓存永不刷新。查询与失效统一走这里的 helper。 */
+export function sessionMetaKey(sessionId: string) {
+  return ['session', sessionId, 'meta'] as const
+}
+
+/** 会话 meta（sessionAPI.get）查询选项：只统一键 + queryFn，staleTime 留给
+ *  各观察者（SessionSummary 10s 节流、ChatSession 即取即用）。 */
+export function sessionMetaQueryOptions(sessionId: string) {
+  return {
+    queryKey: sessionMetaKey(sessionId),
+    queryFn: () => sessionAPI.get(sessionId),
+  }
+}
+
+/** LLM 调用分段查询键（useChat 按 SSE 事件失效；SessionSummary/ChatSession 消费）。 */
+export function llmDetailsKey(sessionId: string) {
+  return ['session', sessionId, 'llm-details'] as const
+}
+
+/** LLM 调用分段查询选项：只统一键 + queryFn，staleTime 留给各观察者。 */
+export function llmDetailsQueryOptions(sessionId: string) {
+  return {
+    queryKey: llmDetailsKey(sessionId),
+    queryFn: () => sessionAPI.llmDetails(sessionId),
+  }
+}

@@ -44,3 +44,12 @@ const providerAPI = {
 
 export type { ModelCapabilitiesInfo, ProviderListItem, ProviderListResponse, TestResult }
 export { providerAPI }
+
+/** providers 列表查询选项：键 + queryFn 单源（ModelSelector 与 useComposerDefaults
+ *  共享缓存）；staleTime 留给各观察者。 */
+export function providersQueryOptions(projectId?: string) {
+  return {
+    queryKey: ['providers', projectId] as const,
+    queryFn: () => providerAPI.list(projectId),
+  }
+}

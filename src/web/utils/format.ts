@@ -51,6 +51,30 @@ export function formatTimestamp(ts: number): string {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+/** 日期时间（zh-CN 长格式，样例 2026年6月25日 17:35）：归档时间、消息完成时间、
+ *  回收站删除时刻等共用。与 formatNumber 的「不裸调 toLocaleString()」口径同源
+ *  （见上方注释）——宿主 locale 会让同一时间戳在不同机器上格式漂移，此前各调用
+ *  点裸调 toLocaleString() / toLocaleDateString() 正是此病。 */
+export function formatDateTime(ts: number): string {
+  return new Date(ts).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/** 日期（zh-CN 长格式，样例 2026年6月25日）：回收站到期日、设备授权日等共用。
+ *  与 formatDateTime 同口径：钉死 locale，不裸调 toLocaleDateString()。 */
+export function formatDate(ts: number): string {
+  return new Date(ts).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
 export function formatLatency(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`
   return `${(ms / 1000).toFixed(2)}s`

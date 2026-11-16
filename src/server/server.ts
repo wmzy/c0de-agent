@@ -496,6 +496,22 @@ async function createDevDb(cwd: string): Promise<DB> {
   return db
 }
 
+/** 回收站两阶段清理结果的单点日志（会话/看板共用同一模板——此前两段 then 块
+ *  逐字同构且看板腿丢失「保留期 N 天」后缀，收敛后模板不再漂移）。
+ *  仅在有到期/清除动作时输出，与 fire-and-forget 的「结果落日志可查」口径配套。 */
+function logPurgeResult(kind: '会话' | '看板', r: { marked: number; deleted: number }): void {
+  if (r.marked > 0) {
+    console.log(
+      `[server] 回收站清理：${r.marked} 个${kind}已到期，进入 ${TRASH_PURGE_GRACE_MS / (24 * 60 * 60 * 1000)} 天宽限期（期间可恢复）`,
+    )
+  }
+  if (r.deleted > 0) {
+    console.log(
+      `[server] 回收站清理：已物理清除 ${r.deleted} 个超过宽限期的${kind}（保留期 ${TRASH_RETENTION_MS / (24 * 60 * 60 * 1000)} 天）`,
+    )
+  }
+}
+
 /** 初始化 DB + 配置 + 注册表，返回 ServerContext + 清理函数（dev 与独立后端共用）。 */
 async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<BootstrappedServer> {
   const cwd = opts.cwd ?? process.cwd()
@@ -536,33 +552,19 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
   // fire-and-forget：清理失败不阻塞服务启动；结果落日志可查。
   const runTrashPurge = () => {
     void purgeDeletedSessions(db)
-      .then(({ marked, deleted }) => {
-        if (marked > 0) {
-          console.log(
-            `[server] 回收站清理：${marked} 个会话已到期，进入 ${TRASH_PURGE_GRACE_MS / (24 * 60 * 60 * 1000)} 天宽限期（期间可恢复）`,
-          )
-        }
-        if (deleted > 0) {
-          console.log(
-            `[server] 回收站清理：已物理清除 ${deleted} 个超过宽限期的会话（保留期 ${TRASH_RETENTION_MS / (24 * 60 * 60 * 1000)} 天）`,
-          )
-        }
+      .then((r) => logPurgeResult('会话', r))
+      // 清理失败不阻塞启动，但必须落日志（与上方 backfill 同口径）——静默吞错
+      // 会让「回收站越积越多」无从排查。
+      .catch((err: unknown) => {
+        console.warn(`[server] 回收站清理失败：${err instanceof Error ? err.message : String(err)}`)
       })
-      .catch(() => {})
     // P2-5：回收站看板两阶段清理（与会话回收站同策略：到期先标记宽限，期满再物理清除，
     // 杜绝「到期即静默清空」）。
     void purgeDeletedKanbanBoards(db, TRASH_RETENTION_MS, TRASH_PURGE_GRACE_MS)
-      .then(({ marked, deleted }) => {
-        if (marked > 0) {
-          console.log(
-            `[server] 回收站清理：${marked} 个看板已到期，进入 ${TRASH_PURGE_GRACE_MS / (24 * 60 * 60 * 1000)} 天宽限期（期间可恢复）`,
-          )
-        }
-        if (deleted > 0) {
-          console.log(`[server] 回收站清理：已物理清除 ${deleted} 个超过宽限期的看板`)
-        }
+      .then((r) => logPurgeResult('看板', r))
+      .catch((err: unknown) => {
+        console.warn(`[server] 回收站清理失败：${err instanceof Error ? err.message : String(err)}`)
       })
-      .catch(() => {})
   }
   runTrashPurge()
   const purgeTimer = setInterval(

@@ -4,7 +4,7 @@ import { CodeReference } from '@/components/CodeReference.js'
 import { CopyButton } from '@/components/CopyButton.js'
 import { Markdown } from '@/components/Markdown.js'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
-import { formatLatency } from '@/utils/format.js'
+import { formatDateTime, formatLatency } from '@/utils/format.js'
 
 const wrap = css`
   display: flex;
@@ -95,7 +95,7 @@ export const AssistantTextBlock = memo(function AssistantTextBlock({
         <CopyButton text={text} />
         {(completedAt || latency != null) && (
           <span className={footer} data-testid="assistant-time">
-            {completedAt && new Date(completedAt).toLocaleString()}
+            {completedAt && formatDateTime(completedAt)}
             {completedAt && latency != null && ' · '}
             {latency != null && formatLatency(latency)}
           </span>

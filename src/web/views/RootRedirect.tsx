@@ -5,7 +5,7 @@ import { useEffect } from 'react'
 import { TopBar } from '@/components/TopBar.js'
 import { navigateTo } from '@/navigateTo.js'
 import type { AppPaths } from '@/routes.js'
-import { projectAPI } from '@/services/project.js'
+import { currentProjectQueryOptions } from '@/services/project.js'
 import { messageOf } from '@/utils/errors.js'
 import { centeredHint, LoadError } from '@/views/_shared/errorState.js'
 import { Layout } from '@/views/Layout.js'
@@ -30,15 +30,7 @@ const errorLink = css`
  */
 export function RootRedirect() {
   const router = useRouter()
-  const {
-    data: project,
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
-    queryKey: ['project', 'current'],
-    queryFn: projectAPI.current,
-  })
+  const { data: project, isLoading, isError, error } = useQuery(currentProjectQueryOptions())
 
   // 解析成功 → 命令式跳转项目路由（fire-and-forget，取代/取消由 navigateTo 吞掉）
   useEffect(() => {

@@ -18,14 +18,25 @@ export const MAX_TIMER_MS = 2_147_483_647
  *  - 下界：0/负数（如「不检查」的配置写法）同样落到 1ms 轮询，比上界情形更糟。
  *
  * @param ms           外部提供的时长；undefined 视为未设置
- * @param fallback     非法值（非有限或 < minInclusive）的回落值
+ * @param fallback     非法值（非有限或 < minInclusive）的回落值；传 null 表示
+ *                    「非法值=显式无值」（如工具超时声明的退化值=无超时）
  * @param minInclusive 合法下界（一次性延迟可为 0=立即；间隔类传 1）
  */
 export function clampTimerDelay(
   ms: number | undefined,
   fallback: number,
+  minInclusive?: number,
+): number
+export function clampTimerDelay(
+  ms: number | undefined,
+  fallback: number | null,
+  minInclusive?: number,
+): number | null
+export function clampTimerDelay(
+  ms: number | undefined,
+  fallback: number | null,
   minInclusive = 0,
-): number {
+): number | null {
   if (ms === undefined || !Number.isFinite(ms) || ms < minInclusive) return fallback
   return Math.min(ms, MAX_TIMER_MS)
 }

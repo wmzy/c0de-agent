@@ -1,5 +1,5 @@
 import { DirectoryProjectDialog } from '@/components/DirectoryProjectDialog.js'
-import { projectAPI } from '@/services/project.js'
+import { currentProjectKey, projectAPI } from '@/services/project.js'
 import type { Project } from '@/types/index.js'
 
 type AddProjectDialogProps = {
@@ -22,7 +22,7 @@ export function AddProjectDialog({ onClose, onCreated }: AddProjectDialogProps) 
       invalidations={[
         // 刷新项目列表 + 当前项目指示器
         ['projects'],
-        ['project', 'current'],
+        currentProjectKey(),
       ]}
       onSuccess={(project) => onCreated?.(project)}
       onClose={onClose}

@@ -14,7 +14,7 @@ import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
-import { workflowsAPI } from '@/services/workflows.js'
+import { workflowsAPI, workflowsKey, workflowsQueryOptions } from '@/services/workflows.js'
 import { messageOf } from '@/utils/errors.js'
 
 const row = css`
@@ -164,7 +164,6 @@ type WorkflowsPanelProps = {
 
 function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   const qc = useQueryClient()
-  const queryKey = ['workflows', projectId]
   const {
     data,
     isError: listError,
@@ -172,8 +171,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     isLoading: listLoading,
     refetch: refetchList,
   } = useQuery({
-    queryKey,
-    queryFn: () => workflowsAPI.list(projectId),
+    ...workflowsQueryOptions(projectId),
     staleTime: 30_000,
   })
   const workflows = data?.workflows ?? []
@@ -229,7 +227,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
   // 在这里单独接线，否则脏稿状态下关页面零提示。
   useBeforeUnloadGuard(editorDirty)
 
-  const invalidate = () => void qc.invalidateQueries({ queryKey })
+  const invalidate = () => void qc.invalidateQueries({ queryKey: workflowsKey(projectId) })
 
   const saveMut = useMutation({
     mutationFn: workflowsAPI.save,

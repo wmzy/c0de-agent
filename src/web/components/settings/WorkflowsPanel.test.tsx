@@ -16,14 +16,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
 import { workflowsAPI } from '@/services/workflows.js'
 
-vi.mock('@/services/workflows.js', () => ({
-  workflowsAPI: {
+vi.mock('@/services/workflows.js', () => {
+  const workflowsAPI = {
     list: vi.fn(),
     get: vi.fn(),
     save: vi.fn(),
     remove: vi.fn(),
-  },
-}))
+  }
+  // 键/查询选项 helper 与真实模块同形：键结构一致、queryFn 走被 mock 的 workflowsAPI
+  return {
+    workflowsAPI,
+    workflowsKey: (projectId?: string) => ['workflows', projectId],
+    workflowsQueryOptions: (projectId?: string) => ({
+      queryKey: ['workflows', projectId],
+      queryFn: () => workflowsAPI.list(projectId),
+    }),
+  }
+})
 
 afterEach(() => {
   cleanup()

@@ -1,5 +1,6 @@
 // src/plugins/hooks.ts
 
+import { clampTimerDelay } from '../shared/timer.js'
 import { createLogger } from './logger.js'
 import type { HookMap, HookRunner, HookRunnerOptions, Logger } from './types.js'
 
@@ -11,6 +12,13 @@ type Registration = {
   priority: number
 }
 
+/**
+ * 给单个 hook handler 的执行加超时。
+ *
+ * 既定语义：超时只停止等待（reject 本包装 promise），不中止 handler 本体——
+ * hook API 无取消通道，handler promise 会继续在后台执行直至自然结束，晚到的
+ * resolve/reject 落到已 settle 的包装 promise 上被静默忽略。
+ */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Hook handler timed out after ${ms}ms`)), ms)
@@ -32,7 +40,9 @@ function sortByPriority(regs: Registration[]): Registration[] {
 }
 
 function createHookRunner(opts?: HookRunnerOptions): HookRunner {
-  const timeout = opts?.timeout ?? 5000
+  // 归一化 hook 超时：退化值（缺失/非有限/非正）回落默认 5s，超 32 位上限
+  // 钳到上限——否则引擎把 >2^31-1 的延迟钳到 1ms，全部 handler 瞬间假超时。
+  const timeout = clampTimerDelay(opts?.timeout, 5000, 1)
   const logger: Logger = opts?.logger ?? createLogger('hooks')
   const handlers = new Map<string, Registration[]>()
 

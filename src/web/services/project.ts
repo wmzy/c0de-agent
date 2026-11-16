@@ -25,3 +25,16 @@ const projectAPI = {
 }
 
 export { projectAPI }
+
+/** 「当前项目」查询键（TopBar 看板入口 / RootRedirect 解析 / 添加与迁移项目后失效）。 */
+export function currentProjectKey() {
+  return ['project', 'current'] as const
+}
+
+/** 「当前项目」查询选项：只统一键 + queryFn；enabled/staleTime 留给各观察者。 */
+export function currentProjectQueryOptions() {
+  return {
+    queryKey: currentProjectKey(),
+    queryFn: () => projectAPI.current(),
+  }
+}

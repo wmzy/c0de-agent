@@ -48,9 +48,16 @@ const config: Config = {
   theme: 'light',
 }
 
-vi.mock('@/services/provider.js', () => ({
-  providerAPI: { list: vi.fn() },
-}))
+vi.mock('@/services/provider.js', () => {
+  const providerAPI = { list: vi.fn() }
+  return {
+    providerAPI,
+    providersQueryOptions: (projectId?: string) => ({
+      queryKey: ['providers', projectId],
+      queryFn: () => providerAPI.list(projectId),
+    }),
+  }
+})
 
 vi.mock('@/contexts/ConfigContext.js', () => ({
   useConfig: vi.fn(),

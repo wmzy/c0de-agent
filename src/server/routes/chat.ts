@@ -38,7 +38,7 @@ import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { safeResolve } from '../util/safe-path.js'
 import { resolveSessionScope } from '../util/session-scope.js'
-import { emitSseDone, emitSseError } from '../util/sse.js'
+import { commandResultText, emitSseDone, emitSseError, emitSseText } from '../util/sse.js'
 import { resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
 import { buildLoopDeps, createSlashWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
@@ -494,14 +494,7 @@ async function runWorkflowSlashChannel(
       ...discovered.map((e) => e.meta.name),
     ].join(', ')
     return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'text_delta',
-        data: JSON.stringify({
-          _tag: 'text_delta',
-          text: `未知工作流："${name}"。可用：${available || '(无)'}`,
-        }),
-      })
-      await emitSseDone(stream)
+      await emitSseText(stream, `未知工作流："${name}"。可用：${available || '(无)'}`)
     })
   }
 
@@ -554,14 +547,7 @@ async function dispatchSlashCommand(
   // enabled 为空 = 全部禁用（fail-closed）；含 ['*'] = 全部启用；名称兼容带/不带前缀斜杠。
   if (!isSlashCommandEnabled(sessionConfig.slashCommands?.enabled, parsed.name)) {
     return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'text_delta',
-        data: JSON.stringify({
-          _tag: 'text_delta',
-          text: `斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）`,
-        }),
-      })
-      await emitSseDone(stream)
+      await emitSseText(stream, `斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）`)
     })
   }
   // /workflow run 走专用通道（预算/URL 注册表/agentManager 生命周期与 REST 同口径）；
@@ -653,16 +639,14 @@ async function dispatchSlashCommand(
         } catch (e) {
           await emitSseError(stream, e)
         }
+        await emitSseDone(stream)
       } else if (result._tag === 'error') {
         await emitSseError(stream, result)
+        await emitSseDone(stream)
       } else {
-        const text = result._tag === 'success' ? result.message : result.text
-        await stream.writeSSE({
-          event: 'text_delta',
-          data: JSON.stringify({ _tag: 'text_delta', text }),
-        })
+        // success/text 终态：文本提取与 text_delta+done 收尾均收敛在 sse.ts 单点。
+        await emitSseText(stream, commandResultText(result))
       }
-      await emitSseDone(stream)
     } catch (e) {
       await emitSseError(stream, e)
       await emitSseDone(stream)

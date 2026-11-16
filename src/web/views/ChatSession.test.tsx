@@ -118,8 +118,8 @@ vi.mock('@/hooks/useComposerDefaults.js', () => ({
   }),
 }))
 
-vi.mock('@/services/session.js', () => ({
-  sessionAPI: {
+vi.mock('@/services/session.js', () => {
+  const sessionAPI = {
     get: vi.fn().mockResolvedValue({ id: 's1', projectId: 'p1', metadata: {} }),
     messages: vi.fn(),
     search: vi.fn(),
@@ -137,16 +137,43 @@ vi.mock('@/services/session.js', () => ({
     open: vi.fn().mockResolvedValue(undefined),
     todo: vi.fn().mockResolvedValue([]),
     llmSummary: vi.fn().mockResolvedValue([]),
-  },
-}))
+  }
+  // 键/查询选项 helper 与真实模块同形：键结构一致、queryFn 走被 mock 的 sessionAPI
+  return {
+    sessionAPI,
+    sessionMetaKey: (id: string) => ['session', id, 'meta'],
+    llmDetailsKey: (id: string) => ['session', id, 'llm-details'],
+    sessionMetaQueryOptions: (id: string) => ({
+      queryKey: ['session', id, 'meta'],
+      queryFn: () => sessionAPI.get(id),
+    }),
+    llmDetailsQueryOptions: (id: string) => ({
+      queryKey: ['session', id, 'llm-details'],
+      queryFn: () => sessionAPI.llmDetails(id),
+    }),
+  }
+})
 
 vi.mock('@/services/agent.js', () => ({
   agentAPI: { listAgents: vi.fn().mockResolvedValue({ agents: [] }) },
 }))
 
-vi.mock('@/services/provider.js', () => ({
-  providerAPI: { capabilities: vi.fn().mockResolvedValue({ supportsVision: true }) },
-}))
+vi.mock('@/services/provider.js', () => {
+  const providerAPI = {
+    capabilities: vi.fn().mockResolvedValue({ supportsVision: true }),
+    // ModelSelector 的 providers 查询走 providersQueryOptions → list（空结果即可）
+    list: vi.fn().mockResolvedValue({ providers: [], defaultProvider: '' }),
+  }
+  return {
+    providerAPI,
+    // ComposerBar 会挂载 ModelSelector：查询选项 helper 与真实模块同形，
+    // queryFn 走被 mock 的 providerAPI
+    providersQueryOptions: (projectId?: string) => ({
+      queryKey: ['providers', projectId],
+      queryFn: () => providerAPI.list(projectId),
+    }),
+  }
+})
 
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
@@ -160,9 +187,16 @@ vi.mock('@/services/config.js', () => ({
   },
 }))
 
-vi.mock('@/services/workflows.js', () => ({
-  workflowsAPI: { list: vi.fn().mockResolvedValue({ workflows: [] }) },
-}))
+vi.mock('@/services/workflows.js', () => {
+  const workflowsAPI = { list: vi.fn().mockResolvedValue({ workflows: [] }) }
+  return {
+    workflowsAPI,
+    workflowsQueryOptions: (projectId?: string) => ({
+      queryKey: ['workflows', projectId],
+      queryFn: () => workflowsAPI.list(projectId),
+    }),
+  }
+})
 
 vi.mock('@/services/permission.js', () => ({
   permissionAPI: {

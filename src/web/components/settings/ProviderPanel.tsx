@@ -131,15 +131,20 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
   const removedRowLogRef = useRef<number[]>([])
   const [catalogOpen, setCatalogOpen] = useState(false)
   /**
-   * 待删除的 provider 下标（非 null = 删除确认弹窗打开中）。
+   * 待删除的 provider 行（非 null = 删除确认弹窗打开中）。
    *
    * provider 行里是用户手打的 baseURL + API Key，删掉无法从任何地方取回。
    * 此前点一次「删除」整行立刻从草稿消失，随后吸底保存条被点亮（● 未保存更改），
    * 顺手一按「保存」就把这份 provider 从磁盘配置里永久抹掉。同页同族的
    * 「删除 MCP 服务器」早就有 ConfirmDialog（760c450），provider 行是漏网：
    * 真实浏览器实测单击后 provider-row 直接 0 行、0 个 dialog、保存条已亮。
+   *
+   * 待删行存**行对象引用**而非下标（同 MCPPanel 的口径）：确认弹窗打开期间
+   * 列表仍可变（手动添加 / models.dev 选择可点、draft 可被「放弃更改」整段
+   * 替换或重排），下标会指到别的行（删错行 + 弹窗标题错名）；而 name 是可
+   * 编辑字段且可空/重名，也不能当行身份。
    */
-  const [pendingRemove, setPendingRemove] = useState<number | null>(null)
+  const [pendingRemove, setPendingRemove] = useState<ProviderConfig | null>(null)
 
   const addProviderFromCatalog = (provider: ProviderConfig) => {
     onProvidersChange((prev) => [...prev, provider])
@@ -155,7 +160,12 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
     onProvidersChange((prev) => [...prev, newProvider])
   }
 
-  const removeProvider = (index: number) => {
+  const removeProvider = (provider: ProviderConfig) => {
+    // 确认时按引用在最新行集合里定位下标（includes 守卫之外再兜一层）；测试
+    // 结果与在飞重放都按下标记账，见 removedRowLogRef 注释。
+    const index = providers.indexOf(provider)
+    if (index === -1) return
+    setPendingRemove(null)
     // 在飞结果落地时凭 removedRowLogRef 按序重放换算下标（见其注释）。
     removedRowLogRef.current.push(index)
     // 测试结果按行下标索引（testResults[index]），行的身份也是下标：删除行后
@@ -170,7 +180,7 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
       }
       return next
     })
-    onProvidersChange((prev) => prev.filter((_, i) => i !== index))
+    onProvidersChange((prev) => prev.filter((p) => p !== provider))
   }
 
   /** 把 testProvider **发起时**的行下标换算成当前行下标：按删除时序重放——每条
@@ -361,7 +371,7 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
             <Button
               className={btnDanger}
               variant="outline"
-              onClick={() => setPendingRemove(index)}
+              onClick={() => setPendingRemove(provider)}
               data-testid="provider-remove"
             >
               删除
@@ -404,18 +414,15 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
       )}
       {/* 条件渲染挂载：react-use-control 的 open 布尔值仅是初始值，prop 变化
        * 不同步内部状态（与 SecurityPanel 同款）。标题带 provider 名称——同一页
-       * 常有若干行，只说「删除该 Provider」用户认不出删的是哪一行。
-       * onConfirm 必须自己清 pendingRemove：删除后列表前移，providers[pendingRemove]
-       * 仍指向**下一行**，弹窗会留着并显示成「删除 Provider「下一行的名字」」。 */}
-      {pendingRemove !== null && providers[pendingRemove] && (
+       * 常有若干行，只说「删除该 Provider」用户认不出删的是哪一行。includes
+       * 守卫：draft 被整段替换后引用的行对象已不存在，弹窗随之消失，而不是按
+       * 过期的行身份继续删；removeProvider 确认后也先清 pendingRemove。 */}
+      {pendingRemove !== null && providers.includes(pendingRemove) && (
         <ConfirmDialog
           open
           onClose={() => setPendingRemove(null)}
-          onConfirm={() => {
-            removeProvider(pendingRemove)
-            setPendingRemove(null)
-          }}
-          title={`删除 Provider「${providers[pendingRemove].name || providers[pendingRemove].baseURL || '未命名'}」`}
+          onConfirm={() => removeProvider(pendingRemove)}
+          title={`删除 Provider「${pendingRemove.name || pendingRemove.baseURL || '未命名'}」`}
           confirmText="删除"
           cancelText="取消"
           variant="danger"

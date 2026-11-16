@@ -17,6 +17,7 @@ import {
 import { authAPI } from '@/services/auth.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
+import { formatDate } from '@/utils/format.js'
 
 /** 设备行：名称占满剩余宽度，id 前缀与创建日期是次要元信息。 */
 const deviceRow = css`
@@ -123,7 +124,7 @@ function DevicesSection() {
             <span className={deviceName}>
               {d.name} <span className={deviceMeta}>{d.id.slice(0, 8)}…</span>
             </span>
-            <span className={deviceMeta}>{new Date(d.createdAt).toLocaleDateString()}</span>
+            <span className={deviceMeta}>{formatDate(d.createdAt)}</span>
             <Button
               className={btnDanger}
               disabled={revoke.isPending}

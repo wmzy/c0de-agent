@@ -1,5 +1,5 @@
 import { css } from '@linaria/core'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const swipe = css`
   position: relative;
@@ -17,6 +17,15 @@ export function TouchListItem({ onDelete, onLongPress, children }: Props) {
   const startX = useRef(0)
   const [dx, setDx] = useState(0)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 卸载清理：长按等待期内行被移除（列表刷新、路由切换）时 touchend 不会再
+  // 落到已卸载的元素上，600ms 后的 onLongPress 仍会触发——对着已消失行的回调。
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+    },
+    [],
+  )
 
   return (
     <div
@@ -37,6 +46,12 @@ export function TouchListItem({ onDelete, onLongPress, children }: Props) {
       onTouchEnd={() => {
         if (timer.current) clearTimeout(timer.current)
         if (dx < -80) onDelete?.()
+        setDx(0)
+      }}
+      // 取消（系统手势接管、来电打断等）不是用户松手：只做与 onTouchEnd 相同的
+      // 复位腿（清 timer、dx 归零），不走删除判定。
+      onTouchCancel={() => {
+        if (timer.current) clearTimeout(timer.current)
         setDx(0)
       }}
       data-testid="touch-item"

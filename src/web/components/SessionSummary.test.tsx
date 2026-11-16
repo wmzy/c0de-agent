@@ -11,13 +11,25 @@ import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionSummary } from '@/components/SessionSummary.js'
 
-vi.mock('@/services/session.js', () => ({
-  sessionAPI: {
+vi.mock('@/services/session.js', () => {
+  const sessionAPI = {
     get: vi.fn(),
     messages: vi.fn(),
     llmDetails: vi.fn(),
-  },
-}))
+  }
+  // 查询选项 helper 与真实模块同形：键结构一致、queryFn 走被 mock 的 sessionAPI
+  return {
+    sessionAPI,
+    sessionMetaQueryOptions: (id: string) => ({
+      queryKey: ['session', id, 'meta'],
+      queryFn: () => sessionAPI.get(id),
+    }),
+    llmDetailsQueryOptions: (id: string) => ({
+      queryKey: ['session', id, 'llm-details'],
+      queryFn: () => sessionAPI.llmDetails(id),
+    }),
+  }
+})
 
 const { sessionAPI } = await import('@/services/session.js')
 
@@ -350,7 +362,7 @@ describe('SessionSummary 消息/会话元信息读失败态', () => {
 
     await waitFor(() => {
       expect(qc.getQueryState(['session', 's1', 'llm-details'])?.status).toBe('success')
-      expect(qc.getQueryState(['session', 's1'])?.status).toBe('success')
+      expect(qc.getQueryState(['session', 's1', 'meta'])?.status).toBe('success')
     })
     const text = screen.getByTestId('session-summary-grid').textContent ?? ''
     expect(text).toContain('加载中…')
