@@ -25,7 +25,6 @@ import {
   purgeEmptySessions,
   purgeTemporarySessions,
   rebindSession,
-  restoreSession,
   restoreSessionCore,
   softDeleteSession,
   touchTrashSeen,
@@ -133,7 +132,7 @@ describe('session CRUD', () => {
   it('restores a soft-deleted session', async () => {
     const created = await createSession(handle, 'Revive')
     await softDeleteSession(handle, created.id)
-    const ok = await restoreSession(handle, created.id)
+    const ok = (await restoreSessionCore(handle, created.id)).restored
     expect(ok).toBe(true)
     expect(await listSessions(handle)).toHaveLength(1)
     expect(await listDeletedSessions(handle)).toHaveLength(0)
@@ -148,7 +147,7 @@ describe('session CRUD', () => {
     expect(await listDeletedSessions(handle)).toHaveLength(2)
 
     // 恢复子会话 → 祖先链一并还原
-    const ok = await restoreSession(handle, child.id)
+    const ok = (await restoreSessionCore(handle, child.id)).restored
     expect(ok).toBe(true)
     expect(await listDeletedSessions(handle)).toHaveLength(0)
     const restoredParent = await getSession(handle, parent.id)
@@ -163,7 +162,7 @@ describe('session CRUD', () => {
     await softDeleteSession(handle, root.id)
     expect(await listDeletedSessions(handle)).toHaveLength(3)
 
-    const ok = await restoreSession(handle, root.id)
+    const ok = (await restoreSessionCore(handle, root.id)).restored
     expect(ok).toBe(true)
     expect(await listDeletedSessions(handle)).toHaveLength(0)
     expect((await getSession(handle, branch.id))?.deletedAt).toBeNull()
@@ -181,7 +180,7 @@ describe('session CRUD', () => {
     expect(await listDeletedSessions(handle)).toHaveLength(3)
 
     // 恢复 root → 只还原 root + A；早先单独删除的 B 仍留在回收站
-    const ok = await restoreSession(handle, root.id)
+    const ok = (await restoreSessionCore(handle, root.id)).restored
     expect(ok).toBe(true)
     expect((await getSession(handle, root.id))?.deletedAt).toBeNull()
     expect((await getSession(handle, branchA.id))?.deletedAt).toBeNull()
@@ -196,7 +195,7 @@ describe('session CRUD', () => {
     expect(await listDeletedSessions(handle)).toHaveLength(3)
 
     // 恢复 A → A + root 还原；兄弟 B 留在回收站
-    const ok = await restoreSession(handle, branchA.id)
+    const ok = (await restoreSessionCore(handle, branchA.id)).restored
     expect(ok).toBe(true)
     expect((await getSession(handle, root.id))?.deletedAt).toBeNull()
     expect((await getSession(handle, branchA.id))?.deletedAt).toBeNull()
@@ -208,7 +207,7 @@ describe('session CRUD', () => {
     const branch = await createSession(handle, 'Branch', undefined, undefined, undefined, root.id)
     await softDeleteSession(handle, root.id)
 
-    const ok = await restoreSession(handle, root.id, { includeDescendants: false })
+    const ok = (await restoreSessionCore(handle, root.id, { includeDescendants: false })).restored
     expect(ok).toBe(true)
     expect((await getSession(handle, root.id))?.deletedAt).toBeNull()
     expect((await getSession(handle, branch.id))?.deletedAt).not.toBeNull()
@@ -404,7 +403,7 @@ describe('purgeDeletedSessions — 两阶段清理（A3：到期先标记，宽�
       .update(sessions)
       .set({ metadata: { trashSeenAt: prevSeen } })
       .where(eq(sessions.id, s.id))
-    await restoreSession(handle, s.id)
+    await restoreSessionCore(handle, s.id)
     await softDeleteSession(handle, s.id)
     // A3：软删除清除 trashSeenAt → 重删会话未被重新看到，不进宽限期
     expect((await getSession(handle, s.id))?.metadata.trashSeenAt).toBeUndefined()

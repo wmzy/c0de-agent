@@ -7,10 +7,7 @@ import { resolveGlobalConfigDir } from '../../core/config.js'
 import { discoverWorkflows, saveWorkflow } from '../../core/workflows/index.js'
 import { reloadRegistry, type WorkflowRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
-import {
-  refreshTrustedProjectFingerprint,
-  resolveCwdProjectTrusted,
-} from '../../project/index.js'
+import { refreshTrustedProjectFingerprint, resolveCwdProjectTrusted } from '../../project/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'

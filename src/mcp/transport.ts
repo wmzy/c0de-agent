@@ -5,6 +5,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { wrapChildProcess } from '../shared/utils/child-process.js'
 import { sseDataPayloads } from '../shared/utils/sse.js'
+import { errorMessage } from '../shared/utils/string.js'
 import type { JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, MCPIncoming } from './types.js'
 
 /** 底层传输抽象：发 JSON-RPC 消息、收服务端消息、关连接。 */

@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import type { DB } from '../db/client.js'
 import { createSession, getSession, updateSessionLastRun } from '../session/session.js'
-import { isUuid } from '../shared/utils/string.js'
+import { errorMessage, isUuid } from '../shared/utils/string.js'
 
 import { createAgent } from './agent.js'
 import type { SlashCommand } from './types.js'
@@ -172,7 +172,7 @@ const clearCommand: SlashCommand = {
     try {
       await assertSameProjectSession(ctx.deps.db, ctx.sessionId, sessionId)
     } catch (error) {
-      return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
+      return { _tag: 'error', message: errorMessage(error) }
     }
     if (!yes) {
       return {
@@ -230,7 +230,7 @@ const forkCommand: SlashCommand = {
     try {
       await assertSameProjectSession(ctx.deps.db, ctx.sessionId, sessionId)
     } catch (error) {
-      return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
+      return { _tag: 'error', message: errorMessage(error) }
     }
     // 未指定 index → 默认最新一条消息处分支（与 web fork API 语义一致，不再是 index 0）
     if (messageIndex === undefined) {
@@ -248,7 +248,7 @@ const forkCommand: SlashCommand = {
     } catch (error) {
       return {
         _tag: 'error',
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
       }
     }
   },
@@ -280,7 +280,7 @@ const configCommand: SlashCommand = {
           text: `${key}: ${JSON.stringify(value)}（合并视图：global + project 作用域）`,
         }
       } catch (error) {
-        return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
+        return { _tag: 'error', message: errorMessage(error) }
       }
     }
     // 点路径写值：与 CLI config set 同一写入核心（core/config.ts 的 setConfigKey：
@@ -320,7 +320,7 @@ const configCommand: SlashCommand = {
       }
       // 非有限数值（1e999 → Infinity）等写入面校验失败：作为命令错误反馈给
       // 模型/用户，而非击穿 SSE 流显示「连接中断」。
-      return { _tag: 'error', message: error instanceof Error ? error.message : String(error) }
+      return { _tag: 'error', message: errorMessage(error) }
     }
   },
 }
