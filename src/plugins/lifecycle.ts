@@ -3,6 +3,7 @@
 import type { Registry as LLMRegistry } from '../llm/registry.js'
 import { registerProvider as registerLLMProvider } from '../llm/registry.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { registerTool } from '../tools/registry.js'
 import type { ToolRegistry } from '../tools/types.js'
 import { createLogger } from './logger.js'
@@ -67,7 +68,7 @@ async function activatePlugin(
     record.error = undefined
   } catch (err) {
     record.status = 'error'
-    record.error = err instanceof Error ? err.message : String(err)
+    record.error = errorMessage(err)
     // 模块加载成功但 setup() 抛错时若不告警，插件静默失效且无任何提示——
     // 与 loader 的 import 失败告警同前缀口径（initPlugins 不检查 status）。
     console.warn(`[plugin] "${plugin.name}" setup() 失败：`, record.error)

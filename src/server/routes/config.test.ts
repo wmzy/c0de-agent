@@ -322,3 +322,20 @@ describe('config route — 权限模式运行时同步（P1 修复）', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('config route — config:resolve 链随磁盘重建重跑', () => {
+  it('PATCH 后插件注入的运行时键不丢（与启动 resolvedConfig 同口径）', async () => {
+    const { app, ctx } = await setup()
+    // 模拟插件 config:resolve 注入运行时键（启动语义：链在磁盘合并之后，插件最终生效）
+    ctx.hookRunner.on('config:resolve', (data) => {
+      const { config } = data as { config: Config }
+      return { config: { ...config, defaultModel: 'plugin-injected' } }
+    })
+    const res = await patchBody(app, { permission: { defaultMode: 'auto' } })
+    expect(res.status).toBe(200)
+    // 此前裸 mergeConfig 重建 ctx.config 会静默丢弃插件注入键（直至重启）
+    expect(ctx.config.defaultModel).toBe('plugin-injected')
+    // 常规写后同步不受影响
+    expect(ctx.permissionMode).toBe('auto')
+  })
+})

@@ -13,13 +13,15 @@ import {
   projectSecurityKeys,
   saveConfigScoped,
 } from '../../core/config.js'
-import { isValidProviderEntry, syncRegistryFromConfig } from '../../core/provider-registry.js'
+import { isValidProviderEntry } from '../../core/provider-registry.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
 import { findGitRoot, refreshTrustedProjectFingerprint } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
+import { rebuildServerConfig } from '../util/config-sync.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getProjectOr404 } from '../util/project-guard.js'
 import { invalidateProjectRegistries } from '../util/session-scope.js'
@@ -247,12 +249,7 @@ function createConfigRoute(ctx: ServerContext): Hono {
           ? applyScopedPatch(scopes.global ?? {}, patch)
           : applyScopedPatch(scopes.project ?? {}, patch)
     } catch (err) {
-      return apiError(
-        c,
-        400,
-        'INVALID_CONFIG_VALUE',
-        err instanceof Error ? err.message : String(err),
-      )
+      return apiError(c, 400, 'INVALID_CONFIG_VALUE', errorMessage(err))
     }
 
     // P2-3：落盘失败必须反馈给前端（此前静默吞掉，UI 显示已保存但重启后丢失）。
@@ -260,12 +257,7 @@ function createConfigRoute(ctx: ServerContext): Hono {
     try {
       await saveConfigScoped(scope, target.dir, nextScoped)
     } catch (err) {
-      return apiError(
-        c,
-        500,
-        'CONFIG_SAVE_FAILED',
-        `配置保存失败：${err instanceof Error ? err.message : String(err)}`,
-      )
+      return apiError(c, 500, 'CONFIG_SAVE_FAILED', `配置保存失败：${errorMessage(err)}`)
     }
 
     // P1：项目作用域写入是用户经产品入口的显式操作——已信任项目刷新风险指纹
@@ -281,17 +273,11 @@ function createConfigRoute(ctx: ServerContext): Hono {
 
     const isServerCwdProject = target.dir === ctx.cwd
     if (isServerCwdProject || scope === 'global') {
-      // global 作用域写入影响所有项目（含服务级 provider 注册表），
-      // 按服务启动目录作用域重建 ctx.config 并同步 registry。
-      const serverScopes = loadConfigScopes(ctx.cwd)
-      ctx.config = mergeConfig(serverScopes.global, serverScopes.project)
-      syncRegistryFromConfig(ctx.llmRegistry, ctx.config)
-      // P1 修复：权限默认模式运行时同步——设置页保存后立即生效，
-      // 与草稿页底栏开关（PUT /api/permissions，既持久化又即时生效）语义一致。
-      // 此前仅落盘、ctx.permissionMode 仍为启动值，UI 显示已保存但弹窗照旧。
-      ctx.permissionMode = ctx.config.permission.defaultMode
-      // 项目级注册表基于全局作用域构建，global 变更后全部失效。
-      ctx.projectRegistries?.clear()
+      // global 作用域写入影响所有项目（含服务级 provider 注册表），按服务启动
+      // 目录作用域重建 ctx.config 并同步运行时派生态（registry/permissionMode/
+      // 项目注册表缓存，含与启动同口径的 config:resolve 链重跑）——单点在
+      // util/config-sync.ts，与 permissions PUT 的写后同步共用。
+      await rebuildServerConfig(ctx)
     } else if (projectId) {
       // 项目作用域写入：该项目的会话级注册表缓存失效（含 provider 配置页的
       // 'provider-config:' 前缀缓存键——前缀键按 projectId 成对失效，防两条

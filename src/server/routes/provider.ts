@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { decryptSecret } from '../../core/secret.js'
 import { resolveRoute } from '../../llm/registry.js'
-import { headChars } from '../../shared/utils/string.js'
+import { errorMessage, headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
@@ -43,7 +43,7 @@ async function probeModels(baseURL: string, apiKey: string): Promise<TestResult>
       : []
     return { ok: true, models }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = errorMessage(err)
     return { ok: false, error: msg }
   }
 }

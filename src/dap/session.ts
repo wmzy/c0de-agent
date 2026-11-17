@@ -1,4 +1,5 @@
 import { generateId } from '../shared/index.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { createDAPClient, type DAPClient, type DAPTransport } from './protocol.js'
 import type { Breakpoint, DAPConfig, DAPSession, StackFrame, Variable } from './types.js'
 
@@ -75,7 +76,7 @@ async function dapConfigurationDone(client: DAPClient): Promise<void> {
   try {
     await client.request('configurationDone', {}, DAP_CONFIGURATION_DONE_TIMEOUT_MS)
   } catch (e) {
-    console.warn('[dap] configurationDone failed:', e instanceof Error ? e.message : String(e))
+    console.warn('[dap] configurationDone failed:', errorMessage(e))
   }
 }
 
@@ -245,7 +246,7 @@ function createDebugSessionManager(): DebugSessionManager {
       try {
         await s.client.request('disconnect', {}, DAP_DISCONNECT_TIMEOUT_MS)
       } catch (e) {
-        console.warn('[dap] disconnect failed:', e instanceof Error ? e.message : String(e))
+        console.warn('[dap] disconnect failed:', errorMessage(e))
       }
       s.client.dispose()
       sessions.delete(sessionId)

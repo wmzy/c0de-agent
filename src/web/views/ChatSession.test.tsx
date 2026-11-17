@@ -170,9 +170,19 @@ vi.mock('@/services/session.js', () => {
   }
 })
 
-vi.mock('@/services/agent.js', () => ({
-  agentAPI: { listAgents: vi.fn().mockResolvedValue({ agents: [] }) },
-}))
+vi.mock('@/services/agent.js', () => {
+  const agentAPI = { listAgents: vi.fn().mockResolvedValue({ agents: [] }) }
+  return {
+    agentAPI,
+    // ComposerBar 挂 useAgents：查询选项 helper 与真实模块同形，queryFn 走被 mock 的 agentAPI
+    agentsQueryOptions: () => ({
+      queryKey: ['agents'],
+      queryFn: () => agentAPI.listAgents(),
+    }),
+    // 键 helper 同形（import 必须可解析）
+    agentsKey: () => ['agents'],
+  }
+})
 
 vi.mock('@/services/provider.js', () => {
   const providerAPI = {

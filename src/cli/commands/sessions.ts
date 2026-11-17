@@ -20,6 +20,7 @@ import {
   softDeleteSession,
   touchTrashSeen,
 } from '../../session/trash.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import type { CommandArgs } from '../parser.js'
 import { resolveWrite } from './io.js'
 
@@ -98,7 +99,7 @@ async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
       } catch (error) {
         targetUnowned = true
         lines.push(
-          `已恢复会话 ${id}（警告：项目归属失败——${error instanceof Error ? error.message : String(error)}，会话可能不可见）。\n`,
+          `已恢复会话 ${id}（警告：项目归属失败——${errorMessage(error)}，会话可能不可见）。\n`,
         )
       }
     } else if (session?.projectId) {

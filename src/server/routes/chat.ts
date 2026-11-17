@@ -26,6 +26,7 @@ import { upgradeTemporarySession } from '../../session/trash.js'
 import { budgetGateEnabled } from '../../session/usage.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import type { MessageContent } from '../../shared/types/message.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 import { autoAllowChecker } from '../../tools/permission.js'
 import type { AgentManager } from '../agent-manager.js'
@@ -1055,7 +1056,7 @@ function createChatRoute(ctx: ServerContext): Hono {
       if (err instanceof AgentCwdError) {
         return apiError(c, 409, err.kind, err.message.replace(`${err.kind}: `, ''))
       }
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorMessage(err)
       return apiError(c, 500, 'CWD_RESOLVE_FAILED', msg)
     }
 

@@ -16,6 +16,7 @@ import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getLiveSessionOr404 } from './chat.js'
+import { SESSION_NOT_FOUND_MESSAGE } from './session.js'
 
 /** 构造仅供 todo tool execute 使用的最小 ToolContext。 */
 function makeTodoCtx(phases: TodoPhase[], abort: AbortSignal) {
@@ -50,8 +51,9 @@ function createTodoRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
   // 路径参数 sessionId 是 sessions.id（uuid 列）：非 UUID 直接 404（守卫语义
-  // 收敛到 middleware/uuid-param.ts，此处只声明参数名与文案）。
-  app.use('/:sessionId', uuidParamGuard('sessionId', 'NOT_FOUND', '会话不存在或已删除'))
+  // 收敛到 middleware/uuid-param.ts，此处只声明参数名与文案——文案用 session
+  // 路由的 SESSION_NOT_FOUND_MESSAGE，会话资源 404 全仓同一口径）。
+  app.use('/:sessionId', uuidParamGuard('sessionId', 'NOT_FOUND', SESSION_NOT_FOUND_MESSAGE))
 
   // GET /:sessionId — 获取当前 todo 状态
   app.get('/:sessionId', async (c) => {

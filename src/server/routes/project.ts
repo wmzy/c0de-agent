@@ -19,11 +19,13 @@ import {
 import type { Project } from '../../project/project.js'
 import { softDeleteSessionRows } from '../../session/trash.js'
 import { generateId } from '../../shared/index.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getProjectOr404, projectNotFoundResponse } from '../util/project-guard.js'
 import { expandPath } from './filesystem.js'
+import { projectDisplayName } from './trust-gate.js'
 
 type ProjectWithBranch = Project & { gitBranch: string | null; worktreeMissing: boolean }
 
@@ -178,7 +180,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
       const project = await relocateProject(ctx.db, id, directory)
       return c.json({ ok: true, project: withBranch(project) })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorMessage(err)
       if (msg === 'PROJECT_NOT_FOUND') return projectNotFoundResponse(c)
       if (msg.startsWith('TARGET_OCCUPIED')) {
         return apiError(c, 409, 'TARGET_OCCUPIED', msg.replace('TARGET_OCCUPIED: ', ''))
@@ -242,12 +244,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
       // 项目行删除后 FK set null 使其进入回收站「未归属看板」分组，60 天后随清理
       // 任务物理清除；恢复端点可重新归属到任意项目。字段集与 softDeleteKanbanBoardById
       // 在 store 内单点同源（此前此处内联同字段清单，已现漂移风险）。
-      await softDeleteKanbanBoardsByProject(
-        tx,
-        id,
-        project.name ?? project.worktree,
-        project.worktree,
-      )
+      await softDeleteKanbanBoardsByProject(tx, id, projectDisplayName(project), project.worktree)
       await tx.delete(projects).where(eq(projects.id, id))
       return softDeletedSessions
     })

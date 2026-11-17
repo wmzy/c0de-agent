@@ -9,6 +9,7 @@ import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { readDevicesFile, writeDevicesFile } from '../../server/auth-manager.js'
 import { resolveDbDir } from '../../server/server.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import type { CommandArgs } from '../parser.js'
 import { resolveWrite } from './io.js'
 
@@ -64,7 +65,7 @@ async function runAuthCommand(ctx: AuthCommandContext): Promise<void> {
       rmSync(devicesPath(), { force: true })
       rmSync(authTokenPath(), { force: true })
     } catch (err) {
-      throw new Error(`auth reset: ${err instanceof Error ? err.message : String(err)}`)
+      throw new Error(`auth reset: ${errorMessage(err)}`)
     }
     write('已清除全部已授权设备与认证 token。\n')
     write('恢复步骤：重启 c0de serve，然后打开启动日志中打印的带 ?token= 的 URL 注册首台设备。\n')

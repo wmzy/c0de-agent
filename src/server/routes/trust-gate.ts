@@ -39,6 +39,12 @@ async function projectTrustState(
   return { project, trusted }
 }
 
+/** 项目在门禁/告警文案中的展示名（重定向信任、工作流创建等多处共用；
+ *  手抄 `name ?? worktree` 曾在两路由间漂移）。 */
+export function projectDisplayName(project: Pick<Project, 'name' | 'worktree'>): string {
+  return project.name ?? project.worktree
+}
+
 /** 信任门禁：projectTrustNeeded 评估出需用户确认的风险项时返回 409
  *  TRUST_REQUIRED Response（前端弹窗明示风险，用户显式信任后重发）；
  *  放行返回 undefined。信任非永久：trustedAt 落盘时附带风险指纹，其后仓库
@@ -63,12 +69,13 @@ function trustGateResponse(
   // 能看到完整生效的权限状态（如全局已 auto），避免「信任了项目却困惑于
   // 权限为何仍自动放行」。
   const items = enrichProjectRiskWithGlobal(risks, scopes.global)
+  const displayName = projectDisplayName(project)
   return apiError(
     c,
     409,
     'TRUST_REQUIRED',
-    `项目「${project.name ?? project.worktree}」的项目配置（${opts?.riskSurfaces ?? '.c0de/config.json'}）包含需要你确认的风险项`,
-    { projectId: project.id, projectName: project.name ?? project.worktree, items },
+    `项目「${displayName}」的项目配置（${opts?.riskSurfaces ?? '.c0de/config.json'}）包含需要你确认的风险项`,
+    { projectId: project.id, projectName: displayName, items },
   )
 }
 

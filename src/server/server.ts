@@ -37,6 +37,7 @@ import {
 import { backfillUsageEventsOnce } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import { readJsonFileSafe, writeJsonFileSafe } from '../shared/utils/json-file.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { createDefaultURLRegistry } from '../tools/index.js'
 import {
   checkForUpdate,
@@ -294,15 +295,11 @@ async function buildServerContext(
         try {
           ptyManager.write(t.id, `${t.command}\n`)
         } catch (err) {
-          console.warn(
-            `[server] 终端命令重跑失败（${t.id}）：${err instanceof Error ? err.message : String(err)}`,
-          )
+          console.warn(`[server] 终端命令重跑失败（${t.id}）：${errorMessage(err)}`)
         }
       }
     } catch (err) {
-      console.warn(
-        `[server] 终端恢复失败（${t.id}）：${err instanceof Error ? err.message : String(err)}`,
-      )
+      console.warn(`[server] 终端恢复失败（${t.id}）：${errorMessage(err)}`)
     }
   }
 
@@ -542,7 +539,7 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
       if (added > 0) console.log(`[server] 成本账本补齐：新增 ${added} 条历史调用记录`)
     })
     .catch((err: unknown) => {
-      console.warn(`[server] 成本账本补齐失败：${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[server] 成本账本补齐失败：${errorMessage(err)}`)
     })
 
   // P2-4 + A3：回收站两阶段清理——启动时清一次 + 每 24h 清一次。
@@ -554,14 +551,14 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
       // 清理失败不阻塞启动，但必须落日志（与上方 backfill 同口径）——静默吞错
       // 会让「回收站越积越多」无从排查。
       .catch((err: unknown) => {
-        console.warn(`[server] 回收站清理失败：${err instanceof Error ? err.message : String(err)}`)
+        console.warn(`[server] 回收站清理失败：${errorMessage(err)}`)
       })
     // P2-5：回收站看板两阶段清理（与会话回收站同策略：到期先标记宽限，期满再物理清除，
     // 杜绝「到期即静默清空」）。
     void purgeDeletedKanbanBoards(db, TRASH_RETENTION_MS, TRASH_PURGE_GRACE_MS)
       .then((r) => logPurgeResult('看板', r))
       .catch((err: unknown) => {
-        console.warn(`[server] 回收站清理失败：${err instanceof Error ? err.message : String(err)}`)
+        console.warn(`[server] 回收站清理失败：${errorMessage(err)}`)
       })
   }
   runTrashPurge()

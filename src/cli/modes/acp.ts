@@ -1,3 +1,5 @@
+import { errorMessage } from '../../shared/utils/string.js'
+
 type ACPRequest = {
   id: number | string | null
   method: string
@@ -64,7 +66,7 @@ async function runAcpLoop(opts: AcpLoopOptions): Promise<void> {
     }
     const fail = (err: unknown): void => {
       if (req.id !== null) {
-        writer(formatACPError(req.id, -32603, err instanceof Error ? err.message : String(err)))
+        writer(formatACPError(req.id, -32603, errorMessage(err)))
       }
     }
     if (req.method === 'chat') {

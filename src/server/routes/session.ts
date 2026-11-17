@@ -43,6 +43,7 @@ import {
   touchTrashSeen,
 } from '../../session/trash.js'
 import { generateId } from '../../shared/index.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { uuidParamGuard } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
@@ -59,8 +60,8 @@ import {
 /** 会话资源本体 404 的中文口径文案：uuid 参数守卫与 GET/messages/llm-details
  *  等端点共用；DELETE 的 softDeleteSession、fork 的「源会话不存在」形态与
  *  rebind 失败分支此前各自手抄英文 'Session not found'，属同资源双口径漂移，
- *  已对齐到同一常量。 */
-const SESSION_NOT_FOUND_MESSAGE = '会话不存在或已删除'
+ * 已对齐到同一常量。todo/permissions 路由守卫会话资源 404 时引用同一导出。 */
+export const SESSION_NOT_FOUND_MESSAGE = '会话不存在或已删除'
 
 function createSessionRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -356,7 +357,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
       // 只有「源会话不存在」形态（forkSession 的 Session not found）映射 404；
       // 其余（事务失败、创建后校验等内部错误）如实 500——此前一律折叠成 404
       // 会吞掉 DB 故障，误导排查方向。
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       if (message.startsWith('Session not found')) {
         return apiError(c, 404, 'NOT_FOUND', SESSION_NOT_FOUND_MESSAGE)
       }

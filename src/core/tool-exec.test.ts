@@ -75,7 +75,7 @@ describe('executeToolCalls', () => {
     expect(results[0]?.id).toBe('boom')
     expect(results[0]?.result).toEqual({
       _tag: 'error',
-      error: 'Error: permission checker exploded',
+      error: 'permission checker exploded',
     })
     expect(results[1]?.id).toBe('ok')
     expect(results[1]?.result._tag).toBe('success')

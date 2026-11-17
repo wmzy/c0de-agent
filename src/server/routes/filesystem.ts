@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { relative as relativePath, resolve as resolvePath } from 'node:path'
 import { Hono } from 'hono'
 import { IGNORED_DIR_NAMES } from '../../shared/utils/path.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -115,12 +116,7 @@ function createFilesystemRoute(ctx: ServerContext): Hono {
       if (errno === 'EACCES' || errno === 'EPERM') {
         return apiError(c, 403, 'PATH_FORBIDDEN', `没有权限读取该目录：${target}`)
       }
-      return apiError(
-        c,
-        500,
-        'BROWSE_FAILED',
-        `读取目录失败：${err instanceof Error ? err.message : String(err)}`,
-      )
+      return apiError(c, 500, 'BROWSE_FAILED', `读取目录失败：${errorMessage(err)}`)
     }
   })
 

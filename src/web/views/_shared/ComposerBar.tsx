@@ -11,14 +11,13 @@ import type { ReactNode } from 'react'
 import { AgentSelector } from '@/components/AgentSelector.js'
 import { type ModelSelection, ModelSelector } from '@/components/ModelSelector.js'
 import { ToolToggle } from '@/components/ToolToggle.js'
-import { agentAPI } from '@/services/agent.js'
+import { agentsQueryOptions } from '@/services/agent.js'
 
 /** agent 清单查询：两页共用（页面级 Chat 的 agents prop 与 useComposerBar 内部
  *  各订阅一次；同一 queryKey 由 react-query 去重，不会重复请求）。 */
 export function useAgents() {
   return useQuery({
-    queryKey: ['agents'],
-    queryFn: () => agentAPI.listAgents(),
+    ...agentsQueryOptions(),
     staleTime: 60_000,
   })
 }

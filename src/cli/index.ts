@@ -10,6 +10,7 @@ import { enforceProjectTrust } from '../project/index.js'
 import { readServeInfo } from '../server/server.js'
 import { budgetGateEnabled } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { runAcpCommand } from './commands/acp.js'
 import { runAuthCommand } from './commands/auth.js'
 import { runChatCommand } from './commands/chat.js'
@@ -351,7 +352,7 @@ async function main(): Promise<void> {
   try {
     await dispatch(argv)
   } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
+    process.stderr.write(`${errorMessage(err)}\n`)
     process.exit(1)
   }
 }

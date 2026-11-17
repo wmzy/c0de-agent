@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { clampTimerDelay } from '../shared/timer.js'
+import { errorMessage } from '../shared/utils/string.js'
 import type { SessionSnapshot } from './snapshot.js'
 
 /** 热更新执行结果（spec §18）。 */
@@ -313,7 +314,7 @@ async function spawnAfterInstall(
   } catch (error) {
     return {
       _tag: 'spawn_failed',
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
       snapshotPath,
     }
   }
@@ -377,7 +378,7 @@ async function performHotUpdate(
       // 用户可用 c0de update --apply 重试或手动安装后重启。
       return {
         _tag: 'install_failed',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
         snapshotPath,
       }
     }
@@ -404,7 +405,7 @@ async function performHotUpdate(
     } catch (error) {
       return {
         _tag: 'manual_install_required',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
         snapshotPath,
         command: manualInstallCommand(pkg),
       }
@@ -436,7 +437,7 @@ async function performInstall(opts: HotUpdateOptions = {}): Promise<InstallOnlyR
   } catch (error) {
     return {
       _tag: 'install_failed',
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     }
   }
   return { _tag: 'success', installMethod: method.kind }

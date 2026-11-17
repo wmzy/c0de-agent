@@ -1,5 +1,6 @@
 import type { HookRunner } from '../plugins/types.js'
 import type { ToolContext, ToolResult } from '../shared/types/tool.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { executeTool } from '../tools/executor.js'
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
 
@@ -91,7 +92,7 @@ async function executeToolCalls(
             result: await executeToolCall(registry, permission, ctx, tc.tool, tc.input, hookRunner),
           }
         } catch (err) {
-          return { id: tc.id, result: { _tag: 'error', error: String(err) } }
+          return { id: tc.id, result: { _tag: 'error', error: errorMessage(err) } }
         }
       }),
     )

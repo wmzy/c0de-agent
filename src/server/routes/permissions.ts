@@ -2,11 +2,14 @@ import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { applyScopedPatch, loadConfigScopes, saveConfigScoped } from '../../core/config.js'
 import { mutateSessionMetadata, readSessionMetadata } from '../../session/session.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { uuidParamOr404 } from '../middleware/uuid-param.js'
 import type { ServerContext } from '../types.js'
+import { rebuildServerConfig } from '../util/config-sync.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getLiveSessionOr404 } from './chat.js'
+import { SESSION_NOT_FOUND_MESSAGE } from './session.js'
 
 /** GET/PUT /api/permissions — 授权模式（default 逐个确认 / auto 自动放行 ask 工具）。
  *  - 根路径：全局默认模式（启动时取 config.permission.defaultMode；
@@ -79,11 +82,11 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     next: () => Promise<void>,
   ): Promise<Response | undefined> => {
     const sessionId = c.req.param('sessionId') ?? ''
-    const bad = uuidParamOr404(c, 'sessionId', 'NOT_FOUND', '会话不存在或已删除')
+    const bad = uuidParamOr404(c, 'sessionId', 'NOT_FOUND', SESSION_NOT_FOUND_MESSAGE)
     if (bad) return bad
     const live = await getLiveSessionOr404(ctx, c, sessionId, {
-      notFoundMessage: '会话不存在或已删除',
-      deletedMessage: '会话不存在或已删除',
+      notFoundMessage: SESSION_NOT_FOUND_MESSAGE,
+      deletedMessage: SESSION_NOT_FOUND_MESSAGE,
     })
     if (!live.ok) return live.response
     await next()
@@ -113,12 +116,14 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
         permission: { defaultMode: mode },
       })
       await saveConfigScoped('global', ctx.cwd, next)
+      // 写后同步与 config PATCH 同口径（util/config-sync.ts 单点）：重建
+      // ctx.config（含 config:resolve 链重跑）等运行时派生态，消除两写入通道
+      // 的内存态漂移；失败走 catch 的运行时降级语义，不重建。
+      await rebuildServerConfig(ctx)
     } catch (err) {
       // 持久化失败不致命：本次运行仍生效（与 /:sessionId 覆盖的降级语义一致），
       // 响应不报错；但静默吞掉会让落盘故障（磁盘满/权限）无迹可寻，补告警留线索。
-      console.warn(
-        `[permissions] 全局默认模式持久化失败（本次运行仍生效）：${err instanceof Error ? err.message : String(err)}`,
-      )
+      console.warn(`[permissions] 全局默认模式持久化失败（本次运行仍生效）：${errorMessage(err)}`)
     }
     return c.json({ mode: ctx.permissionMode })
   })

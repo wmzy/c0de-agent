@@ -4,6 +4,7 @@ import { type Context, Hono } from 'hono'
 import { resolveGlobalConfigDir } from '../../core/config.js'
 import type { CatalogModel, CatalogProvider } from '../../shared/types/catalog.js'
 import { readJsonFileSafe, writeJsonFileSafe } from '../../shared/utils/json-file.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 
@@ -157,7 +158,7 @@ function catalogErrorResponse(c: Context, err: unknown, action: 'fetch' | 'refre
     c,
     502,
     'CATALOG_FETCH_FAILED',
-    `Failed to ${action} models.dev catalog: ${err instanceof Error ? err.message : String(err)}`,
+    `Failed to ${action} models.dev catalog: ${errorMessage(err)}`,
   )
 }
 

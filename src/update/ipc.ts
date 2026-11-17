@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { timingSafeEqualString } from '../shared/utils/constant-time.js'
+import { errorMessage } from '../shared/utils/string.js'
 
 /**
  * 端口接管 IPC（spec §18.3）：新实例检测到端口被旧实例占用时，通过 HTTP
@@ -155,9 +156,7 @@ async function requestHandoff(
     }
     // 连接层失败（ECONNREFUSED 等）：旧实例无 handoff 端点。抛 kind='connect'
     // 让调用方（requestHandoffWithRetry）区分处理——直接尝试绑端口。
-    const error = new Error(
-      `handoff connect failed: ${err instanceof Error ? err.message : String(err)}`,
-    ) as HandoffError
+    const error = new Error(`handoff connect failed: ${errorMessage(err)}`) as HandoffError
     error.kind = 'connect'
     throw error
   }

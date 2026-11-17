@@ -13,7 +13,12 @@ import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getProjectOr404, projectNotFoundResponse } from '../util/project-guard.js'
 import { resolveSessionScope } from '../util/session-scope.js'
-import { projectTrustState, resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
+import {
+  projectDisplayName,
+  projectTrustState,
+  resolveWorkflowEntry,
+  trustGateResponse,
+} from './trust-gate.js'
 import { createRestWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /**
@@ -187,7 +192,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
             c,
             409,
             'TRUST_REQUIRED',
-            `项目「${st.project.name ?? st.project.worktree}」未信任（或信任后配置漂移），请先信任项目再创建工作流`,
+            `项目「${projectDisplayName(st.project)}」未信任（或信任后配置漂移），请先信任项目再创建工作流`,
           )
         }
         saveDir = st.project.worktree

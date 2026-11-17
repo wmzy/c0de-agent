@@ -21,3 +21,16 @@ const agentAPI = {
 
 export type { AgentListItem }
 export { agentAPI }
+
+/** agent 清单查询键（useAgents 正本；agent 增删后的失效统一走这里）。 */
+export function agentsKey() {
+  return ['agents'] as const
+}
+
+/** agent 清单查询选项：只统一键 + queryFn；staleTime 留给各观察者。 */
+export function agentsQueryOptions() {
+  return {
+    queryKey: agentsKey(),
+    queryFn: () => agentAPI.listAgents(),
+  }
+}
