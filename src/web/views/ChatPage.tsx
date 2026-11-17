@@ -14,7 +14,7 @@ import {
 import { FileReferenceProvider } from '@/contexts/ReferenceContext.js'
 import { useTerminal } from '@/hooks/useTerminal.js'
 import { navigateTo } from '@/navigateTo.js'
-import { projectAPI } from '@/services/project.js'
+import { projectAPI, projectKey } from '@/services/project.js'
 import { messageOf } from '@/utils/errors.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 import { ChatView } from '@/views/ChatView.js'
@@ -49,7 +49,8 @@ export function ChatPage() {
     error: projectError,
     refetch: refetchProject,
   } = useQuery({
-    queryKey: ['project', projectId],
+    // ?? ''：hook 必须无条件调用，键要稳定 string（enabled 守卫真查询）。
+    queryKey: projectKey(projectId ?? ''),
     queryFn: () => {
       // enabled: !!projectId 保证仅当 projectId 为真值时执行
       if (!projectId) throw new Error('projectId is required')

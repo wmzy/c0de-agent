@@ -186,7 +186,11 @@ async function runWorkflowChannel(
       '该项目/目录已有进行中的工作流执行，请等待完成或中止后重试',
     )
   }
-  ctx.workflowBusyByScope.set(scopeKey, '')
+  // 占位值携带工作流名（'starting:<name>'）：createSession 落库前的同步窗口内，
+  // DELETE /:name 的运行守卫（findBusyWorkflowByName）据此解析名字同样判 busy。
+  // 此前占位为 ''——守卫跳过空串，窗口内文件被 unlink 后 run 照常执行。
+  // 会话创建成功后覆写为真实会话 id。
+  ctx.workflowBusyByScope.set(scopeKey, `starting:${name}`)
 
   // 工作流运行会话：绑定项目 + 执行目录（与两通道此前同口径），标题带时间戳
   // 区分多次运行。中断恢复指引需要工作流名（重启后会话内无 user 消息可重发）。

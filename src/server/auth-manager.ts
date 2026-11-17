@@ -157,6 +157,19 @@ export function writeDevicesFile(path: string, devices: DeviceRecord[]): void {
   writeJsonFileSafe(path, { version: 1, devices } satisfies DevicesFile, { pretty: true })
 }
 
+/** 读取 token 文件（auth-token）内容：缺失/空白/读失败 → undefined。
+ *  bootstrap 加载与 serve handoff 握手共用——此前 server.ts 与本文件各持一份
+ *  逐字同形实现（existsSync + readFileSync + trim + 空判），收敛单源防漂移。 */
+export function readTokenFile(path: string): string | undefined {
+  try {
+    if (!existsSync(path)) return undefined
+    const t = readFileSync(path, 'utf-8').trim()
+    return t.length > 0 ? t : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function createAuthManager(opts: AuthManagerOptions): AuthManager {
   const { dataDir, staticToken, tokenFilePath, now = Date.now } = opts
   const pairingTtlMs = opts.pairingTtlMs ?? 10 * 60 * 1000
@@ -166,22 +179,12 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
 
   // ── 状态加载 ──
   let bootstrap: string | undefined =
-    staticToken && staticToken.length > 0 ? staticToken : readBootstrapToken(tokenPath)
+    staticToken && staticToken.length > 0 ? staticToken : readTokenFile(tokenPath)
 
   const devices = new Map<string, DeviceRecord>()
   loadDevices()
 
   const pending = new Map<string, PendingPairing>()
-
-  function readBootstrapToken(path: string): string | undefined {
-    try {
-      if (!existsSync(path)) return undefined
-      const t = readFileSync(path, 'utf-8').trim()
-      return t.length > 0 ? t : undefined
-    } catch {
-      return undefined
-    }
-  }
 
   function loadDevices(): void {
     devices.clear()

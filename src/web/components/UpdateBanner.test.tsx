@@ -14,6 +14,8 @@ vi.mock('@/services/update.js', () => ({
     status: vi.fn(),
     apply: vi.fn(),
   },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  updateStatusKey: () => ['update-status'],
 }))
 
 const { updateAPI } = await import('@/services/update.js')

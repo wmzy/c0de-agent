@@ -4,6 +4,7 @@
 // 权限 ask：MCP 服务器是外部任意代码执行面（与插件同级），默认需确认。
 
 import type { ToolDef, ToolResult } from '../shared/types/tool.js'
+import { errorMessage } from '../shared/utils/string.js'
 import type { MCPCallResult, MCPSession, MCPTool } from './types.js'
 
 /** 工具调用超时：外部服务器执行可慢，给足余量。 */
@@ -65,7 +66,7 @@ async function callTool(session: MCPSession, name: string, args: unknown): Promi
     )
     return mcpResultToToolResult(result)
   } catch (error) {
-    return { _tag: 'error', error: error instanceof Error ? error.message : String(error) }
+    return { _tag: 'error', error: errorMessage(error) }
   }
 }
 

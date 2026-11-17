@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { errorMessage } from '../../shared/utils/string.js'
 import { resolveGlobalConfigDir } from '../config.js'
 import type { WorkflowEntry, WorkflowMeta, WorkflowModule, WorkflowSource } from './types.js'
 
@@ -52,7 +53,7 @@ async function discoverFromDir(dirPath: string, source: WorkflowSource): Promise
         execute: mod.default,
       })
     } catch (e) {
-      console.warn(`[workflow] failed to load ${file}: ${e instanceof Error ? e.message : e}`)
+      console.warn(`[workflow] failed to load ${file}: ${errorMessage(e)}`)
     }
   }
 
@@ -124,7 +125,7 @@ async function saveWorkflow(
     await unlink(filePath)
     return {
       ok: false,
-      error: `Failed to load workflow: ${e instanceof Error ? e.message : String(e)}`,
+      error: `Failed to load workflow: ${errorMessage(e)}`,
     }
   }
 }

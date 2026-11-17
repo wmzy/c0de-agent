@@ -168,6 +168,55 @@ describe('createHttpTransport', () => {
     await vi.waitFor(() => expect(got).toHaveLength(1))
     expect(got[0]).toMatchObject({ id: 5, error: { message: 'ECONNREFUSED' } })
   })
+
+  // P2 回归：SSE 流中途 error（连接被掐断）且未收到匹配响应时，pending 请求
+  // 此前一直挂到调用侧超时（初始化 30s/工具 120s）——必须补发 errorResponse
+  // 让调用方立即失败，而不是等超时。
+  it('emits an error response when the SSE stream errors before any response', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // 直接掐断流——按 streams 规范，error() 连已入队未读的 chunk 一并丢弃，
+        // 调用方视角即「连接建立后立刻断开、永远等不到响应」
+        controller.error(new Error('connection reset'))
+      },
+    })
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    )
+    const transport = createHttpTransport('http://x/mcp', { sse: true, fetchFn })
+    const got: MCPIncoming[] = []
+    transport.onMessage((m) => got.push(m))
+    transport.send({ jsonrpc: '2.0', id: 9, method: 'tools/call' })
+    await vi.waitFor(() => expect(got).toHaveLength(1))
+    expect(got[0]).toMatchObject({
+      id: 9,
+      error: { code: -32000, message: 'MCP stream ended before response' },
+    })
+  })
+
+  // close() 主动触发的 abort 不是错误：流随后中断（abort → 读取抛错）时
+  // 不得补发 errorResponse（closed 守卫），否则正常关闭会误报失败。
+  it('does not emit an error response when close() aborts the stream', async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller
+      },
+    })
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    )
+    const transport = createHttpTransport('http://x/mcp', { sse: true, fetchFn })
+    const got: MCPIncoming[] = []
+    transport.onMessage((m) => got.push(m))
+    transport.send({ jsonrpc: '2.0', id: 11, method: 'ping' })
+    transport.close()
+    streamController?.error(new Error('aborted'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(got).toHaveLength(0)
+  })
 })
 
 describe('parseSSEStream', () => {
@@ -225,6 +274,52 @@ describe('parseSSEStream', () => {
       () => false,
     )
     expect(events).toEqual(['{"x":1}', '{"x":2}'])
+  })
+
+  // 返回值契约：正常耗尽/shouldStop 中断 → false（非异常结束）；读取抛错 → true。
+  // http transport 据此（结合 receivedResponse）判定是否补发 errorResponse。
+  it('reports whether it ended abnormally', async () => {
+    const encoder = new TextEncoder()
+    const ok = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"x":1}\n\n'))
+        controller.close()
+      },
+    })
+    await expect(
+      parseSSEStream(
+        ok,
+        () => {},
+        () => false,
+      ),
+    ).resolves.toBe(false)
+
+    const stopped = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"x":1}\n\n'))
+        controller.close()
+      },
+    })
+    await expect(
+      parseSSEStream(
+        stopped,
+        () => {},
+        () => true,
+      ),
+    ).resolves.toBe(false)
+
+    const broken = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('reset'))
+      },
+    })
+    await expect(
+      parseSSEStream(
+        broken,
+        () => {},
+        () => false,
+      ),
+    ).resolves.toBe(true)
   })
 
   it('emits CRLF events split across chunk boundaries', async () => {

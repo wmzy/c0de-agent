@@ -52,7 +52,6 @@ export {
   listDeletedSessions,
   permanentlyDeleteSession,
   purgeDeletedSessions,
-  restoreSession,
   restoreSessionCore,
   softDeleteSession,
   TRASH_RETENTION_MS,

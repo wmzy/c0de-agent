@@ -93,7 +93,7 @@ ${WORKFLOW_SCRIPT_TEMPLATE}
 2. Save to \`<project_root>/.c0de/workflows/<name>.js\` — use the \`write\` tool.
 3. Use \`ctx.runSubagents(type, tasks[])\` for parallel dispatch, \`ctx.runSubagent(type, params)\` for single dispatch.
 4. Available subagent types: \`general\`, \`coder\`, \`researcher\`, \`reviewer\`.
-5. Use \`ctx.utils\` for file ops: \`glob(pattern)\`, \`grep(pattern, path?)\`, \`read(path, range?)\`, \`splitByDirectory(dir, {depth, ignore})\`.
+5. Use \`ctx.utils\` for file ops: \`glob(pattern)\`, \`grep(pattern, path?)\`, \`read(path, range?)\`, \`splitByDirectory(dir, {depth, ignore})\`; for subagent output use \`ctx.utils.parseJsonArray(results, key)\` / \`parseJsonObjects(results)\` (tolerant JSON extraction) instead of hand-rolled try/catch.
 6. Use \`ctx.progress(message, { phase })\` to report progress.
 7. Parse subagent output with \`JSON.parse(r.output)\` — subagents return text.
 8. Return \`{ output: 'summary', data: {...} }\` as the final result.

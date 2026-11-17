@@ -11,6 +11,7 @@ import { gitStatusQueryOptions } from '@/hooks/gitState.js'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
+import { filesSearchKey } from '@/services/filesystem.js'
 import { btnDanger, btnSm } from '@/styles/tokens.js'
 import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
@@ -302,7 +303,7 @@ export function FileBrowser({
   // 对单字符同样正常返回，真正的防抖开销由上面 300ms 承担。
   const isSearch = searchDebounced.length >= 1
   const searchQ = useQuery({
-    queryKey: ['files', 'search', searchDebounced, projectId ?? ''],
+    queryKey: filesSearchKey(searchDebounced, projectId),
     queryFn: () => fileAPI.search(searchDebounced, projectId),
     enabled: isSearch,
   })

@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
-import { updateAPI } from '@/services/update.js'
+import { updateAPI, updateStatusKey } from '@/services/update.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
@@ -166,7 +166,7 @@ export function UpdateBanner() {
   // P3-7：用户勾选「更新后自动重启」的终端 id（仅对检测到前台命令的终端展示）。
   const [rerunIds, setRerunIds] = useState<Set<string>>(new Set())
   const { data } = useQuery({
-    queryKey: ['update-status'],
+    queryKey: updateStatusKey(),
     queryFn: updateAPI.status,
     refetchInterval: POLL_INTERVAL,
     // 错误静默：版本检查失败不影响主界面。

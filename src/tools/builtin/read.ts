@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { isURLPath, resolveURL } from '../resolver.js'
 import type { ReadInput } from '../types.js'
 import { resolveToolPath } from './paths.js'
@@ -84,7 +85,7 @@ export const readTool: ToolDef = {
       const content = await readFile(fullPath, 'utf-8')
       return { _tag: 'success', output: applyRange(content, offset, limit) }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       return { _tag: 'error', error: `Failed to read "${path}": ${message}` }
     }
   },

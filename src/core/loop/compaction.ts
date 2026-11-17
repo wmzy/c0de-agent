@@ -1,9 +1,9 @@
-import { buildFallbackChain } from '../../llm/routing.js'
 import { compactSession } from '../../session/compaction.js'
 import { getMessages } from '../../session/message.js'
 import type { AgentEvent, AgentState } from '../../shared/types/agent.js'
 import type { Message } from '../../shared/types/message.js'
-import { createSummarizer } from '../compact.js'
+import { errorMessage } from '../../shared/utils/string.js'
+import { createSummarizerWithFallback } from '../compact.js'
 import { estimateBudget, shouldCompact } from '../context.js'
 import type { LoopDeps } from '../loop.js'
 
@@ -21,13 +21,13 @@ export async function* compactContext(
   deps: LoopDeps,
 ): AsyncGenerator<AgentEvent> {
   // summarizer 优先用 compactionModel 覆盖，否则回退当前会话 provider/model。
+  // 回退链接线收敛到 createSummarizerWithFallback 单点（此前此处自持一份
+  // buildFallbackChain + 条件展开骨架，与 core/compact 的单点并存即漂移）。
   const cm = state.compactionModel
   const provider = cm ? cm.provider : state.config.provider
   const model = cm ? cm.model : state.config.model
-  const fallback = buildFallbackChain(deps.config, provider, model)
-  const summarizer = createSummarizer(deps.llmRegistry, provider, model, {
+  const summarizer = createSummarizerWithFallback(deps.llmRegistry, deps.config, provider, model, {
     signal: state.abortController.signal,
-    ...(fallback ? { fallback } : {}),
   })
   const result = await compactSession(deps.db, state.session.id, summarizer, {
     keepRecentTokens: deps.config.compaction.keepRecentTokens,
@@ -84,10 +84,7 @@ export async function recoverFromOverflow(state: AgentState, deps: LoopDeps): Pr
     state.messages = await getMessages(deps.db, state.session.id)
     return true
   } catch (e) {
-    console.warn(
-      '[overflow-recovery] compaction failed:',
-      e instanceof Error ? e.message : String(e),
-    )
+    console.warn('[overflow-recovery] compaction failed:', errorMessage(e))
     return false
   }
 }
@@ -135,7 +132,7 @@ export async function* runCompactionIfNeeded(
         }
       }
     } catch (e) {
-      console.warn('[compaction] failed:', e instanceof Error ? e.message : String(e))
+      console.warn('[compaction] failed:', errorMessage(e))
     }
   }
 
@@ -165,7 +162,7 @@ export async function* runCompactionIfNeeded(
       // 压缩改写了消息历史 → 刷新内存视图，供下一轮上下文重建使用
       state.messages = await getMessages(deps.db, state.session.id)
     } catch (e) {
-      console.warn('[mid-turn-compaction] failed:', e instanceof Error ? e.message : String(e))
+      console.warn('[mid-turn-compaction] failed:', errorMessage(e))
     }
   }
 }

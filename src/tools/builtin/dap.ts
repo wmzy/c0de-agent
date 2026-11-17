@@ -1,6 +1,7 @@
 import { createDebugSessionManager, type DebugSpawn } from '../../dap/session.js'
 import type { Breakpoint, DAPConfig, DebugStartInput } from '../../dap/types.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { errorMessage } from '../../shared/utils/string.js'
 
 /**
  * debug_* 工具（spec §21）：暴露调试器能力给 agent。
@@ -30,7 +31,7 @@ const run = async (label: string, fn: () => Promise<unknown>): Promise<ToolResul
   try {
     return ok(await fn())
   } catch (error) {
-    return fail(`${label} failed: ${error instanceof Error ? error.message : String(error)}`)
+    return fail(`${label} failed: ${errorMessage(error)}`)
   }
 }
 

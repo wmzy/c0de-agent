@@ -13,10 +13,10 @@
 import type { DB } from '../db/client.js'
 import { chat as defaultChat } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
-import { buildFallbackChain } from '../llm/routing.js'
+import { fallbackChatOptions } from '../llm/routing.js'
 import { updateSessionTitle } from '../session/session.js'
 import type { ChatMessage, ChatRequest } from '../shared/types/llm.js'
-import { truncateHead } from '../shared/utils/string.js'
+import { errorMessage, truncateHead } from '../shared/utils/string.js'
 import type { Config } from './config.js'
 
 /** 会话默认占位标题；仍是该值时才有资格自动生成。 */
@@ -157,18 +157,17 @@ async function generateSessionTitle(
       stream: true,
       system: TITLE_PROMPT,
     }
-    const fallback = buildFallbackChain(config, provider, model)
     const text = await chatFn({ registry: llmRegistry }, request, {
       provider,
       model,
-      ...(fallback ? { fallback } : {}),
+      ...fallbackChatOptions(config, provider, model),
     })
     const title = cleanTitle(text)
     if (title.length === 0) return
     await updateSessionTitle(db, sessionId, title)
   } catch (e) {
     // 标题生成是尽力而为的辅助功能：失败不阻塞主对话流，但记录以便排查。
-    console.warn('[title] generateSessionTitle failed:', e instanceof Error ? e.message : String(e))
+    console.warn('[title] generateSessionTitle failed:', errorMessage(e))
     // P2-12：失败时回退到首条消息摘要，避免列表出现大量同名 "New Session"。
     await fallbackTitleFromMessage(db, sessionId, firstMessage)
   }

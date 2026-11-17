@@ -226,6 +226,25 @@ describe('workflows route — DELETE /:name', () => {
     expect(body.error.code).toBe('NOT_FOUND')
   })
 
+  it('P1：占位期（starting 同步占位）的运行同样阻断 DELETE → 409 RUN_ACTIVE', async () => {
+    const { app, ctx } = await setup()
+    // 模拟 runWorkflowChannel 的同步占位窗口：createSession 落库前 scope 值为
+    // 'starting:<name>'（此前 '' 占位被 findBusyWorkflowByName 跳过——窗口内
+    // 文件被 unlink 后 run 照常执行，用户以为已删）。
+    ctx.workflowBusyByScope.set(`dir:${projectCwd}`, 'starting:busy-wf')
+    const res = await app.request('/busy-wf', { method: 'DELETE' })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('RUN_ACTIVE')
+    // 占位期尚无会话 id：文案展示「启动中」而非「会话 xxx」
+    expect(body.error.message).toContain('启动中')
+
+    // 占位按名字比对：其他名字的占位不误伤本工作流（此处无文件/条目 → 404）
+    ctx.workflowBusyByScope.set(`dir:${projectCwd}`, 'starting:other-wf')
+    const other = await app.request('/busy-wf', { method: 'DELETE' })
+    expect(other.status).toBe(404)
+  })
+
   it('deletes a project-level workflow and returns ok', async () => {
     const { app, ctx } = await setup()
     const fakeEntry: WorkflowEntry = {

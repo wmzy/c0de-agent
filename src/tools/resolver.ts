@@ -4,6 +4,7 @@ import type {
   URLResolveContext,
   URLResolver,
 } from '../shared/types/tool.js'
+import { errorMessage } from '../shared/utils/string.js'
 
 /** Create an empty URL resolver registry. */
 function createURLRegistry(): URLRegistry {
@@ -53,7 +54,7 @@ async function resolveURL(
     const content = await resolver.resolve(url, ctx)
     return { _tag: 'ok', content }
   } catch (e) {
-    return { _tag: 'error', error: e instanceof Error ? e.message : String(e) }
+    return { _tag: 'error', error: errorMessage(e) }
   }
 }
 

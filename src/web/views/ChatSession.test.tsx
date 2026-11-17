@@ -188,6 +188,13 @@ vi.mock('@/services/provider.js', () => {
       queryKey: ['providers', projectId],
       queryFn: () => providerAPI.list(projectId),
     }),
+    // ChatSession 挂 useSupportsVision：键 helper 同形（import 必须可解析）
+    capabilitiesKey: (projectId: string | undefined, provider: string, model: string) => [
+      'capabilities',
+      projectId,
+      provider,
+      model,
+    ],
   }
 })
 

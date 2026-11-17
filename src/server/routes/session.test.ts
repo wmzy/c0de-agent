@@ -282,6 +282,79 @@ describe('session route', () => {
     expect(body.error.message).toContain('99')
   })
 
+  it('fork 内部错误（DB 故障）→ 500 FORK_FAILED，不再折叠成 404 吞故障', async () => {
+    const { app, ctx } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Original', projectId: TEST_PROJECT }),
+    })
+    const created = (await createRes.json()) as Session
+    await ctx.db.db.insert(sessionEntries).values({
+      sessionId: created.id,
+      tag: 'message',
+      role: 'user',
+      content: [{ _tag: 'text', text: 'msg1' }],
+    })
+    // 模拟 forkSession 内部多表事务失败（DB 故障）：此前 catch 一律折叠 404
+    // 'Session not found'，故障被吞且误导排查方向。
+    const txSpy = vi.spyOn(ctx.db.db, 'transaction').mockRejectedValue(new Error('db is corrupt'))
+    const res = await app.request(`/${created.id}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageIndex: 0 }),
+    })
+    txSpy.mockRestore()
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as APIErrorBody
+    expect(body.error.code).toBe('FORK_FAILED')
+    expect(body.error.message).toContain('db is corrupt')
+  })
+
+  it('fork catch 仅「Session not found」形态映射 404 正典中文文案', async () => {
+    const { app, ctx } = await setup()
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Original', projectId: TEST_PROJECT }),
+    })
+    const created = (await createRes.json()) as Session
+    await ctx.db.db.insert(sessionEntries).values({
+      sessionId: created.id,
+      tag: 'message',
+      role: 'user',
+      content: [{ _tag: 'text', text: 'msg1' }],
+    })
+    // 模拟守卫通过后源会话消失的竞态（forkSession 抛 Session not found 形态）：
+    // 该形态是客户端 404 语义，文案对齐 SESSION_NOT_FOUND_MESSAGE 正典口径。
+    const txSpy = vi
+      .spyOn(ctx.db.db, 'transaction')
+      .mockRejectedValue(new Error(`Session not found: ${created.id}`))
+    const res = await app.request(`/${created.id}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageIndex: 0 }),
+    })
+    txSpy.mockRestore()
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as APIErrorBody
+    expect(body.error.code).toBe('NOT_FOUND')
+    expect(body.error.message).toBe('会话不存在或已删除')
+  })
+
+  it('rebind 目标会话不存在 → 404 正典文案（与 DELETE/GET 同一口径）', async () => {
+    const { app } = await setup()
+    const res = await app.request('/00000000-0000-0000-0000-000000000000/rebind', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: TEST_PROJECT }),
+    })
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as APIErrorBody
+    expect(body.error.code).toBe('NOT_FOUND')
+    expect(body.error.message).toBe('会话不存在或已删除')
+  })
+
   it('GET /tree returns session tree', async () => {
     const { app } = await setup()
     await app.request('/', {

@@ -42,6 +42,25 @@ function withBranch(project: Project): ProjectWithBranch {
   return { ...project, gitBranch: resolveProject(project.worktree).gitBranch, worktreeMissing }
 }
 
+/** 活跃 run 守卫（relocate 与 delete 共用）：返回该项目下进行中（含 starting
+ *  占位态）的会话 id 列表，空数组即无冲突。
+ *  P1 修复注记：曾按 agentManager.children(projectId) 过滤——children 按
+ *  parentSessionId（子 agent 归属）过滤，项目 id 恒不命中属死代码；且只查
+ *  get() 会漏 tryAcquire 后的 starting 占位态，窗口内删除/重定位会让 run 继续
+ *  向已软删除会话写消息。现统一按项目会话逐个查 get()+isStarting()。 */
+async function activeSessionIdsForProject(
+  ctx: ServerContext,
+  projectId: string,
+): Promise<string[]> {
+  const rows = await ctx.db.db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(eq(sessions.projectId, projectId))
+  return rows
+    .filter((r) => ctx.agentManager.get(r.id) !== undefined || ctx.agentManager.isStarting(r.id))
+    .map((r) => r.id)
+}
+
 function createProjectRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -141,19 +160,13 @@ function createProjectRoute(ctx: ServerContext): Hono {
     }
 
     // 活跃 run 守卫（与 DELETE 同语义；含 starting 占位态）
-    const rows = await ctx.db.db
-      .select({ id: sessions.id })
-      .from(sessions)
-      .where(eq(sessions.projectId, id))
-    const activeCount = rows.filter(
-      (r) => ctx.agentManager.get(r.id) !== undefined || ctx.agentManager.isStarting(r.id),
-    ).length
-    if (activeCount > 0) {
+    const active = await activeSessionIdsForProject(ctx, id)
+    if (active.length > 0) {
       return apiError(
         c,
         409,
         'PROJECT_HAS_ACTIVE_SESSIONS',
-        `项目下有 ${activeCount} 个进行中的对话，请先中止后再重新定位`,
+        `项目下有 ${active.length} 个进行中的对话，请先中止后再重新定位`,
       )
     }
     // P2-5：打开的终端守卫——终端绑定项目 worktree，重定位后 shell 仍留在旧目录，
@@ -187,17 +200,8 @@ function createProjectRoute(ctx: ServerContext): Hono {
     const project = target.project
 
     // 活跃 run 守卫：该项目下任一进行中（含占位 isStarting）的会话 → 拒绝。
-    // P1 修复：原实现先查 agentManager.children(projectId)——children 按
-    // parentSessionId（子 agent 归属）过滤，项目 id 恒不命中属死代码；且回退
-    // 检查只用 get() 漏掉 tryAcquire 后的 starting 占位态，窗口内删除会让 run
-    // 继续向已软删除会话写消息。现在直接按项目会话查 get()+isStarting()。
-    const rows = await ctx.db.db
-      .select({ id: sessions.id, projectId: sessions.projectId })
-      .from(sessions)
-      .where(and(eq(sessions.projectId, id)))
-    const active = rows.filter(
-      (r) => ctx.agentManager.get(r.id) !== undefined || ctx.agentManager.isStarting(r.id),
-    )
+    // 判定单源 activeSessionIdsForProject（与 relocate 共用，历史注记见彼处）。
+    const active = await activeSessionIdsForProject(ctx, id)
     if (active.length > 0) {
       return apiError(
         c,

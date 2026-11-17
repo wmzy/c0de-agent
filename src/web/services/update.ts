@@ -38,3 +38,8 @@ const updateAPI = {
 
 export type { ApplyResult, UpdateStatus }
 export { updateAPI }
+
+/** 更新状态查询键（UpdateBanner 轮询正本）。全局单例查询，无参数。 */
+export function updateStatusKey() {
+  return ['update-status'] as const
+}

@@ -1,5 +1,6 @@
 import type { Context } from 'hono'
 import { Hono } from 'hono'
+import { applyScopedPatch, loadConfigScopes, saveConfigScoped } from '../../core/config.js'
 import { mutateSessionMetadata, readSessionMetadata } from '../../session/session.js'
 import { apiError } from '../middleware/error.js'
 import { uuidParamOr404 } from '../middleware/uuid-param.js'
@@ -107,16 +108,17 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     }
     ctx.permissionMode = mode
     try {
-      const { applyScopedPatch, loadConfigScopes, saveConfigScoped } = await import(
-        '../../core/config.js'
-      )
       const scopes = loadConfigScopes(ctx.cwd)
       const next = applyScopedPatch(scopes.global ?? {}, {
         permission: { defaultMode: mode },
       })
       await saveConfigScoped('global', ctx.cwd, next)
-    } catch {
-      // 持久化失败不致命：本次运行仍生效（与 /:sessionId 覆盖的降级语义一致）
+    } catch (err) {
+      // 持久化失败不致命：本次运行仍生效（与 /:sessionId 覆盖的降级语义一致），
+      // 响应不报错；但静默吞掉会让落盘故障（磁盘满/权限）无迹可寻，补告警留线索。
+      console.warn(
+        `[permissions] 全局默认模式持久化失败（本次运行仍生效）：${err instanceof Error ? err.message : String(err)}`,
+      )
     }
     return c.json({ mode: ctx.permissionMode })
   })

@@ -359,14 +359,6 @@ async function restoreSessionCore(
   }
 }
 
-async function restoreSession(
-  handle: DB,
-  id: string,
-  opts: { includeDescendants?: boolean } = {},
-): Promise<boolean> {
-  return (await restoreSessionCore(handle, id, opts)).restored
-}
-
 /**
  * P2-4：回收站保留期 60 天（原 30 天），自「用户首次在回收站看到该条目」
  * （metadata.trashSeenAt）起算，而非删除时间（墙钟）——否则用户删除后长期不开服务、
@@ -698,7 +690,6 @@ export {
   purgeTemporarySessions,
   rebindSession,
   rebindUnboundSessions,
-  restoreSession,
   restoreSessionCore,
   softDeleteSession,
   softDeleteSessionRows,

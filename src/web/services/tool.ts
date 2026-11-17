@@ -8,3 +8,9 @@ const toolAPI = {
 }
 
 export { toolAPI }
+
+/** 可用工具列表查询键（ToolToggle 正本）。projectId 缺省时是服务端启动
+ *  配置的合并结果，用 'server' 占位段区分，避免 undefined 与显式项目共享缓存。 */
+export function toolsKey(projectId?: string) {
+  return ['tools', projectId ?? 'server'] as const
+}

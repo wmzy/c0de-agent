@@ -13,7 +13,7 @@ import {
   projectSecurityKeys,
   saveConfigScoped,
 } from '../../core/config.js'
-import { syncRegistryFromConfig } from '../../core/provider-registry.js'
+import { isValidProviderEntry, syncRegistryFromConfig } from '../../core/provider-registry.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
 import { findGitRoot, refreshTrustedProjectFingerprint } from '../../project/index.js'
@@ -28,16 +28,16 @@ import { invalidateProjectRegistries } from '../util/session-scope.js'
 function providerApiKeyWarnings(providers: Config['providers']): string[] {
   const warnings: string[] = []
   for (const entry of providers) {
-    // 手改/旧版配置文件的畸形条目：跳过错报（registry 构建侧同口径跳过）。
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
-    const p = entry as Record<string, unknown>
-    const apiKey = p.apiKey
+    // 手改/旧版配置文件的畸形条目：跳过错报（判定与 registry 构建侧同一单源
+    // isValidProviderEntry——含 baseURL 非空字符串校验）。
+    if (!isValidProviderEntry(entry)) continue
+    const apiKey = entry.apiKey
     if (typeof apiKey !== 'string' || apiKey.length === 0 || !isEncryptedSecret(apiKey)) continue
     try {
       decryptSecret(apiKey)
     } catch {
       warnings.push(
-        `provider "${(typeof p.name === 'string' ? p.name : '') || ''}" 的 apiKey 无法在本机解密（配置来自其他机器），请重新设置`,
+        `provider "${(typeof entry.name === 'string' ? entry.name : '') || ''}" 的 apiKey 无法在本机解密（配置来自其他机器），请重新设置`,
       )
     }
   }

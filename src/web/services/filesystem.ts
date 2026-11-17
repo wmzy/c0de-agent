@@ -32,3 +32,10 @@ const filesystemAPI = {
 
 export type { BrowseResult, DirectoryEntry, SearchResult }
 export { filesystemAPI }
+
+/** 文件名搜索查询键（useFileSearch 与 FileBrowser 搜索框共享缓存；queryFn 是
+ *  file.ts 的 fileAPI.search）。挂 'files' 复数前缀树——与 hooks/gitState.ts 的
+ *  git-* 键同根；和 file.ts 的 fileKey（'file' 单数前缀，文件内容键）不同树，勿混。 */
+export function filesSearchKey(query: string, projectId?: string) {
+  return ['files', 'search', query, projectId ?? ''] as const
+}

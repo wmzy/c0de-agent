@@ -18,6 +18,13 @@ import { providerAPI } from '@/services/provider.js'
 
 vi.mock('@/services/provider.js', () => ({
   providerAPI: { capabilities: vi.fn() },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  capabilitiesKey: (projectId: string | undefined, provider: string, model: string) => [
+    'capabilities',
+    projectId,
+    provider,
+    model,
+  ],
 }))
 
 function makeWrapper() {

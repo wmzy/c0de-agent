@@ -2,7 +2,7 @@ import { css } from '@linaria/core'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useDismiss } from '@/hooks/useDismiss.js'
-import { toolAPI } from '@/services/tool.js'
+import { toolAPI, toolsKey } from '@/services/tool.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import { cardStyle, inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
@@ -159,7 +159,7 @@ export function ToolToggle({
     error,
     refetch,
   } = useQuery({
-    queryKey: ['tools', projectId ?? 'server'],
+    queryKey: toolsKey(projectId),
     queryFn: () => toolAPI.list(projectId),
     staleTime: 60_000,
   })

@@ -52,7 +52,7 @@ import {
 import type { HandoffError } from '../update/ipc.js'
 import { createAgentManager } from './agent-manager.js'
 import { createApp } from './app.js'
-import { createAuthManager, readDevicesFile } from './auth-manager.js'
+import { createAuthManager, readDevicesFile, readTokenFile } from './auth-manager.js'
 import { isAllowedOrigin } from './middleware/cors.js'
 import { createPermissionStore } from './permission/store.js'
 import { PTYManager } from './terminal/pty-manager.js'
@@ -167,21 +167,12 @@ function hasRegisteredDevices(dataDir: string): boolean {
   return readDevicesFile(join(dataDir, 'devices.json')).length > 0
 }
 
-/** 只读 dataDir 下已存在的 auth-token（新实例 handoff 握手用；不生成）。 */
-function readAuthTokenFile(dataDir: string): string | undefined {
-  try {
-    const t = readFileSync(join(dataDir, 'auth-token'), 'utf-8').trim()
-    return t || undefined
-  } catch {
-    return undefined
-  }
-}
-
 /** handoff 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，
- *  否则读 auth-token 文件。仅握手读取，语义窄于 resolveAuthToken（不含其
- *  配置解析/bootstrap 生成等多分支逻辑——握手只消费既有凭据，绝不生成）。 */
+ *  否则读 auth-token 文件（读取单源 auth-manager 的 readTokenFile，与 bootstrap
+ *  加载同实现）。仅握手读取，语义窄于 resolveAuthToken（不含其配置解析/
+ *  bootstrap 生成等多分支逻辑——握手只消费既有凭据，绝不生成）。 */
 function handoffHandshakeToken(): string | undefined {
-  return process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+  return process.env.C0DE_AUTH_TOKEN ?? readTokenFile(join(resolveDbDir(), 'auth-token'))
 }
 
 /** 一次性迁移：<cwd>/.c0de/pglite → 全局路径。仅当目标不存在时执行。

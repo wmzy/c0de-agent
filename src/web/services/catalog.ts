@@ -21,3 +21,14 @@ const catalogAPI = {
 
 export type { CatalogModel, CatalogProvider, ProviderDetailResult, SearchResult }
 export { catalogAPI }
+
+/** catalog provider 列表查询键（ProviderCatalogDialog 左栏正本）。 */
+export function catalogProvidersKey() {
+  return ['catalog', 'providers'] as const
+}
+
+/** 指定 provider 的模型列表查询键——挂在 catalogProvidersKey 前缀树下，
+ *  失效 ['catalog','providers'] 会连带刷新模型详情。 */
+export function catalogProviderModelsKey(id: string) {
+  return ['catalog', 'providers', id, 'models'] as const
+}

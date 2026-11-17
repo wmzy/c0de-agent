@@ -13,6 +13,8 @@ import type { ToolListItem } from '@/types/index.js'
 
 vi.mock('@/services/tool.js', () => ({
   toolAPI: { list: vi.fn() },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  toolsKey: (projectId?: string) => ['tools', projectId ?? 'server'],
 }))
 
 const { toolAPI } = await import('@/services/tool.js')

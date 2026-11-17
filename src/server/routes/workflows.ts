@@ -5,10 +5,9 @@ import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { resolveGlobalConfigDir } from '../../core/config.js'
 import { discoverWorkflows, saveWorkflow } from '../../core/workflows/index.js'
-import { reloadRegistry } from '../../core/workflows/registry.js'
+import { reloadRegistry, type WorkflowRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry, WorkflowSource } from '../../core/workflows/types.js'
 import {
-  getProject,
   refreshTrustedProjectFingerprint,
   resolveCwdProjectTrusted,
 } from '../../project/index.js'
@@ -21,19 +20,71 @@ import { projectTrustState, resolveWorkflowEntry, trustGateResponse } from './tr
 import { createRestWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
 
 /**
- * 按名字查找运行中的工作流 run：遍历 busy 作用域占位（workflowBusyByScope 的
- * 值为工作流会话 id），从活跃 run 的会话 metadata.workflowName 匹配（斜杠与
- * REST 两条执行通道创建会话时均落盘该键）。返回工作流会话 id；无匹配返回 null。
+ * 按名字查找运行中的工作流 run：遍历 busy 作用域占位（workflowBusyByScope 的值
+ * 为工作流会话 id 或 'starting:<name>' 同步占位），会话 id 从活跃 run 的会话
+ * metadata.workflowName 匹配（斜杠与 REST 两条执行通道创建会话时均落盘该键），
+ * 占位值按前缀解析名字比对。占位期同样占用：DELETE /:name 守卫此前跳过 ''
+ * 占位——createSession 落库窗口内文件被 unlink 后 run 照常执行（用户以为已删）。
+ * 返回 busy 值（会话 id 或占位串）；无匹配返回 null。
  */
 function findBusyWorkflowByName(ctx: ServerContext, name: string): string | null {
-  for (const wfSessionId of ctx.workflowBusyByScope.values()) {
-    if (!wfSessionId) continue // 同步占位空串（run 会话尚未创建）
-    const run = ctx.agentManager.get(wfSessionId)
+  for (const busy of ctx.workflowBusyByScope.values()) {
+    if (busy.startsWith('starting:')) {
+      if (busy.slice('starting:'.length) === name) return busy
+      continue
+    }
+    const run = ctx.agentManager.get(busy)
     if (!run) continue
     const meta = run.state.session.metadata as { workflowName?: unknown }
-    if (meta?.workflowName === name) return wfSessionId
+    if (meta?.workflowName === name) return busy
   }
   return null
+}
+
+/** 热重载注册表（信任门禁同口径）：项目级发现按 projectTrusted 判定
+ *  （fail-closed），未信任 serve 目录项目时绝不 import 仓库中既有的工作流
+ *  文件。创建与三个删除分支的四处调用点此前逐字同形，收敛单点。 */
+async function reloadRegistryTrusted(
+  ctx: ServerContext,
+  registry: WorkflowRegistry,
+): Promise<void> {
+  await reloadRegistry(registry, ctx.cwd, {
+    projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
+  })
+}
+
+/** 解析项目级工作流文件目标（target=project 与无 target 兼容分支共用）：
+ *  projectId 无效 → 返回 404 Response；否则返回 { baseDir, filePath, exists }。
+ *  文件缺失不在此处判定 404——兼容分支需回退注册表条目删除，由调用方分支。 */
+async function resolveProjectWorkflowFile(
+  ctx: ServerContext,
+  c: Context,
+  name: string,
+  projectId: string | undefined,
+): Promise<{ baseDir: string; filePath: string; exists: boolean } | Response> {
+  let baseDir = ctx.cwd
+  if (projectId) {
+    const found = await getProjectOr404(ctx.db, c, projectId)
+    if (!found.ok) return found.response
+    baseDir = found.project.worktree
+  }
+  const filePath = join(baseDir, '.c0de', 'workflows', `${name}.js`)
+  return { baseDir, filePath, exists: existsSync(filePath) }
+}
+
+/** 删除项目级工作流文件后刷新信任指纹（target=project 与兼容分支共用）：
+ *  workflowDirHashes 随文件集变化，不刷新会让已信任项目被误判「配置漂移」而
+ *  重新门禁（与 create 路径对称，防「信任→删除→自锁复检」）。失败不阻塞
+ *  删除结果——最坏回到 fail-closed 复检路径。 */
+async function refreshFingerprintAfterWorkflowDelete(
+  ctx: ServerContext,
+  baseDir: string,
+): Promise<void> {
+  try {
+    await refreshTrustedProjectFingerprint(ctx.db, baseDir)
+  } catch {
+    // 指纹刷新失败不阻塞删除结果（最坏回到 fail-closed 复检路径）
+  }
 }
 
 /** 权限确认超时兜底拒绝后暂停 run 的暂停原因（与 chat 路由同口径）。 */
@@ -191,9 +242,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
 
     // 热重载注册表（清空 → 三级重新发现）；项目级发现按信任门禁（fail-closed），
     // 未信任 serve 目录项目时绝不 import 仓库中既有的工作流文件。
-    await reloadRegistry(registry, ctx.cwd, {
-      projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
-    })
+    await reloadRegistryTrusted(ctx, registry)
 
     const entry = registry.get(name)
     return c.json({
@@ -333,51 +382,42 @@ function createWorkflowsRoute(ctx: ServerContext) {
     // 同名不同层级的运行会构成假阳性阻断，但安全侧（稍后重删）。
     const busyRun = findBusyWorkflowByName(ctx, name)
     if (busyRun) {
+      // 占位期（starting）尚无会话 id——文案展示「启动中」而非「会话 xxx」
+      const runLabel = busyRun.startsWith('starting:') ? '启动中' : `会话 ${busyRun}`
       return apiError(
         c,
         409,
         'RUN_ACTIVE',
-        `工作流 "${name}" 正在运行（会话 ${busyRun}），请先中止该运行再删除`,
+        `工作流 "${name}" 正在运行（${runLabel}），请先中止该运行再删除`,
       )
     }
 
     // 项目级删除：?projectId 指定项目 worktree；缺省 serve cwd（全局设置视图下
     // 的启动目录项目工作流）。文件缺失 → 404，绝不回退删除其他层级。
     if (target === 'project') {
-      let baseDir = ctx.cwd
-      if (projectId) {
-        const found = await getProjectOr404(ctx.db, c, projectId)
-        if (!found.ok) return found.response
-        baseDir = found.project.worktree
-      }
-      const filePath = join(baseDir, '.c0de', 'workflows', `${name}.js`)
-      if (!existsSync(filePath)) {
+      const resolved = await resolveProjectWorkflowFile(ctx, c, name, projectId)
+      if (resolved instanceof Response) return resolved
+      if (!resolved.exists) {
         return apiError(
           c,
           404,
           'NOT_FOUND',
-          `项目级工作流 "${name}" 不存在（${join(baseDir, '.c0de', 'workflows')}）`,
+          `项目级工作流 "${name}" 不存在（${join(resolved.baseDir, '.c0de', 'workflows')}）`,
         )
       }
       try {
-        await unlink(filePath)
+        await unlink(resolved.filePath)
       } catch {
         return apiError(c, 500, 'DELETE_FAILED', `Failed to delete workflow file for "${name}"`)
       }
       // P1 修复：删除文件同样改变信任指纹（workflowDirHashes 随文件集变化）——
       // 不刷新会让已信任项目在下一次聊天时被误判「配置漂移」而重新门禁，
       // 与 create 路径的 trustProject 刷新对称（防「信任→删除→自锁复检」）。
-      try {
-        await refreshTrustedProjectFingerprint(ctx.db, baseDir)
-      } catch {
-        // 指纹刷新失败不阻塞删除结果（最坏回到 fail-closed 复检路径）
-      }
+      await refreshFingerprintAfterWorkflowDelete(ctx, resolved.baseDir)
       // 热重载：项目级条目消失后，被其遮蔽的同名 user 级条目应重新可见——
       // registry 单名单位（后注册覆盖），仅 delete 无法恢复被覆盖掉的 user 条目。
       try {
-        await reloadRegistry(registry, ctx.cwd, {
-          projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
-        })
+        await reloadRegistryTrusted(ctx, registry)
       } catch {
         // 重载失败不阻塞删除结果（其他文件损坏等）；下次启动/创建时自然恢复
       }
@@ -399,9 +439,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       // 热重载：user 级条目可能遮蔽同名 builtin，仅 delete 会让被覆盖的 builtin
       // 永久消失（registry 单名单位），重建恢复完整层级。
       try {
-        await reloadRegistry(registry, ctx.cwd, {
-          projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
-        })
+        await reloadRegistryTrusted(ctx, registry)
       } catch {
         // 重载失败不阻塞删除结果
       }
@@ -409,14 +447,17 @@ function createWorkflowsRoute(ctx: ServerContext) {
     }
 
     // 兼容旧行为（无 target）：按注册表条目删除（旧客户端调用）。
-    // 项目级删除目标：按 worktree 拼路径，不做 discovery（避免执行仓库代码）。
-    let projectFilePath: string | null = null
+    // 项目级删除目标：按 worktree 拼路径，不做 discovery（避免执行仓库代码）；
+    // 拼路径/existsSync 与 target=project 分支同源（resolveProjectWorkflowFile）。
+    let projectTarget: { baseDir: string; filePath: string } | null = null
     if (projectId) {
-      const found = await getProjectOr404(ctx.db, c, projectId)
-      if (!found.ok) return found.response
-      const candidate = join(found.project.worktree, '.c0de', 'workflows', `${name}.js`)
-      if (existsSync(candidate)) projectFilePath = candidate
+      const resolved = await resolveProjectWorkflowFile(ctx, c, name, projectId)
+      if (resolved instanceof Response) return resolved
+      if (resolved.exists) {
+        projectTarget = { baseDir: resolved.baseDir, filePath: resolved.filePath }
+      }
     }
+    const projectFilePath = projectTarget?.filePath ?? null
 
     // 无项目级文件且注册表无同名条目 → 404
     if (!projectFilePath && !registryEntry) {
@@ -439,19 +480,12 @@ function createWorkflowsRoute(ctx: ServerContext) {
 
     // P1 修复：删除项目级文件同样刷新信任指纹（与 target=project 分支同口径），
     // 防「删除→指纹漂移→自锁复检」。
-    if (projectFilePath) {
-      try {
-        const project = await getProject(ctx.db, projectId ?? '')
-        if (project) await refreshTrustedProjectFingerprint(ctx.db, project.worktree)
-      } catch {
-        // 指纹刷新失败不阻塞删除结果
-      }
+    if (projectTarget) {
+      await refreshFingerprintAfterWorkflowDelete(ctx, projectTarget.baseDir)
     }
     // 热重载：删除可能解除 user/builtin 同名条目的遮蔽，registry 单名单位必须重建。
     try {
-      await reloadRegistry(registry, ctx.cwd, {
-        projectTrusted: await resolveCwdProjectTrusted(ctx.db, ctx.cwd),
-      })
+      await reloadRegistryTrusted(ctx, registry)
     } catch {
       // 重载失败不阻塞删除结果
     }

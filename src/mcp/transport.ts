@@ -113,20 +113,25 @@ function createStdioTransport(
 /** 从 ReadableStream 增量解析 SSE（`data:` 事件），收到即回调。
  *  分帧本体见 shared/utils/sse.ts（与 LLM 流式响应共用）：一个事件块的
  *  多条 `data:` 行按 SSE 规范 join('\n') 为单条 payload 派发——此前逐行
- *  派发，会把规范合法的多行 data 事件拆成非法 JSON 分片。 */
+ *  派发，会把规范合法的多行 data 事件拆成非法 JSON 分片。
+ *  返回是否异常结束（读取中途抛错 → true；正常耗尽/shouldStop 中断 → false）：
+ *  异常被捕获而非上抛，调用方结合「是否已收到匹配响应」判定要不要补发错误
+ *  ——否则 pending 请求会一直挂到调用侧超时。 */
 async function parseSSEStream(
   body: ReadableStream<Uint8Array>,
   onEvent: (data: string) => void,
   shouldStop: () => boolean,
-): Promise<void> {
+): Promise<boolean> {
   try {
     for await (const data of sseDataPayloads(body)) {
       onEvent(data)
       if (shouldStop()) break
     }
   } catch {
-    // 流被取消/连接被关闭：调用方已不需要继续读取
+    // 流被取消/连接被关闭：异常结束（区别于正常耗尽），上报给调用方判定
+    return true
   }
+  return false
 }
 
 /**
@@ -182,13 +187,19 @@ function createHttpTransport(
             },
             () => receivedResponse,
           )
+          // 流中断/提前结束且未收到匹配响应时，pending 请求会一直挂到调用侧
+          // 超时（初始化 30s/工具 120s）——补发 errorResponse 让调用方立即失败。
+          // close() 主动触发的 abort 已置 closed，此处豁免（主动关闭不是错误）。
+          if (!receivedResponse && !closed) {
+            emit(errorResponse(msg, 'MCP stream ended before response'))
+          }
         } else {
           const parsed = (await res.json()) as MCPIncoming
           emit(parsed)
         }
       } catch (err) {
         if (closed) return // close() 触发的 abort，静默
-        emit(errorResponse(msg, err instanceof Error ? err.message : String(err)))
+        emit(errorResponse(msg, errorMessage(err)))
       }
     })()
   }

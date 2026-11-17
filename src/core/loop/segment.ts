@@ -3,6 +3,7 @@ import { saveLLMSegments, segmentFingerprint } from '../../session/segments.js'
 import { generateId } from '../../shared/index.js'
 import type { AgentState, LLMCall, LLMSegment, SegmentTrigger } from '../../shared/types/agent.js'
 import type { ChatTool, FinishReason } from '../../shared/types/llm.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import type { LoopDeps } from '../loop.js'
 import type { StreamCollectResult } from './stream-collect.js'
 
@@ -107,8 +108,6 @@ export async function manageSegment(
     })
     .catch((err: unknown) => {
       // 账本写入失败不致命（会话元数据仍含 segments 备份）；告警便于排查。
-      console.warn(
-        `[loop] usage_events 写入失败（成本账本将缺失本次调用）：${err instanceof Error ? err.message : String(err)}`,
-      )
+      console.warn(`[loop] usage_events 写入失败（成本账本将缺失本次调用）：${errorMessage(err)}`)
     })
 }

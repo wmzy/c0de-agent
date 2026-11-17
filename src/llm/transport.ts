@@ -1,4 +1,5 @@
 import { sseDataPayloads } from '../shared/utils/sse.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { isContextOverflow } from './provider-error.js'
 import { parseRetryAfterHeaders } from './retry.js'
 import { llmError } from './schema/errors.js'
@@ -47,9 +48,7 @@ const httpPost = async (options: StreamHTTPOptions): Promise<ReadableStream<Uint
   } catch (cause) {
     throw llmError('ProviderShared', 'request', {
       _tag: 'Transport',
-      message: `Failed to send request to ${options.url}: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }`,
+      message: `Failed to send request to ${options.url}: ${errorMessage(cause)}`,
       kind: 'network',
       url: options.url,
     })

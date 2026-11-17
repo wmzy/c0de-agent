@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { strictGit } from '../shared/git.js'
+import { errorMessage } from '../shared/utils/string.js'
 
 /** 创建隔离 worktree（detached HEAD），返回其路径（子 agent 的 cwd）。 */
 async function createWorktree(repoRoot: string, branchName: string): Promise<string> {
@@ -30,10 +31,7 @@ async function applyPatchToParent(
     strictGit(repoRoot, ['apply'], patch)
   } catch (e) {
     // apply 失败：记录后尝试 3-way 合并
-    console.warn(
-      '[worktree] git apply failed, retrying with --3way:',
-      e instanceof Error ? e.message : String(e),
-    )
+    console.warn('[worktree] git apply failed, retrying with --3way:', errorMessage(e))
     strictGit(repoRoot, ['apply', '--3way'], patch)
   }
   strictGit(repoRoot, ['add', '-A'])
@@ -47,7 +45,7 @@ function removeWorktree(repoRoot: string, worktreeDir: string): void {
     strictGit(repoRoot, ['worktree', 'remove', '--force', worktreeDir])
   } catch (e) {
     // 清理失败忽略（可能已删），但记录以便排查残留 worktree
-    console.warn('[worktree] worktree cleanup failed:', e instanceof Error ? e.message : String(e))
+    console.warn('[worktree] worktree cleanup failed:', errorMessage(e))
   }
 }
 

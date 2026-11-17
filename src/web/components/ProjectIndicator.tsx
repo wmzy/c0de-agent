@@ -183,9 +183,7 @@ const menuItemCheck = css`
 
 const menuItemSub = css`
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  ${ellipsisCss}
 `
 
 const menuItemHint = css`
@@ -194,8 +192,7 @@ const menuItemHint = css`
   opacity: 0.7;
   flex-shrink: 0;
   max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  ${ellipsisCss}
 `
 
 const footerBtn = css`

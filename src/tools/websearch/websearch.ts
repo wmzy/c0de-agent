@@ -1,5 +1,6 @@
 import type { WebSearchConfig } from '../../shared/types/config.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { formatForLLM, runWebSearch, setFetchOverride } from './index.js'
 
 export { setFetchOverride }
@@ -50,7 +51,7 @@ export function createWebSearchTool(config: WebSearchConfig): ToolDef {
         }
         return { _tag: 'success', output: formatForLLM(response) }
       } catch (err) {
-        return { _tag: 'error', error: err instanceof Error ? err.message : String(err) }
+        return { _tag: 'error', error: errorMessage(err) }
       }
     },
   }

@@ -19,6 +19,20 @@ import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
 import { decryptSecretSafe } from './secret.js'
 
+/** provider 配置条目的读取侧畸形判定（config 路由告警与 registry 构建共用单源）。
+ *  写入侧（applyScopedPatch 的 assertValidProviderList）已显式拒绝畸形条目，这里
+ *  是手改/旧版 config.json 的自愈兜底：非 null 非数组对象且 baseURL 为非空字符串
+ *  才算有效（构建侧注册要求；name/_tag 缺失的判定留在 registerProviderFromConfig
+ *  ——告警侧此前不查 name，不并入以免收紧语义）。判别类型带 baseURL: string，
+ *  让通过守卫的调用方免二次断言即可当字符串使用。 */
+function isValidProviderEntry(
+  entry: unknown,
+): entry is Record<string, unknown> & { baseURL: string } {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return false
+  const baseURL = (entry as Record<string, unknown>).baseURL
+  return typeof baseURL === 'string' && baseURL.length > 0
+}
+
 /** 注册单个 provider 配置条目（畸形/不可解条目静默跳过，绝不抛错）。
  *
  * 跳过而非击穿的理由：
@@ -29,11 +43,11 @@ import { decryptSecretSafe } from './secret.js'
  */
 function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void {
   // 写入侧（applyScopedPatch 的 assertValidProviderList）已显式拒绝畸形条目，
-  // 此处是读取侧的自愈兜底。
-  if (p === null || typeof p !== 'object' || Array.isArray(p)) return
+  // 此处是读取侧的自愈兜底（判定单源 isValidProviderEntry，含 baseURL 校验）。
+  if (!isValidProviderEntry(p)) return
   // 兼容 config.json 中以 _tag 标识 provider 的格式（name 缺失时回退到 _tag）
   const name = p.name || (p as { _tag?: string })._tag
-  if (!name || typeof p.baseURL !== 'string' || !p.baseURL) return
+  if (!name) return
   const apiKey = typeof p.apiKey === 'string' && p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
   if (p.apiKey && apiKey === undefined) {
     console.warn(
@@ -136,6 +150,7 @@ function preflightRoute(
 
 export {
   buildRegistryFromConfig,
+  isValidProviderEntry,
   preflightRoute,
   registerProviderFromConfig,
   syncRegistryFromConfig,

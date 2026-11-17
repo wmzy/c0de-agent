@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
-import { escapeRegex } from '../../shared/utils/string.js'
+import { errorMessage, escapeRegex } from '../../shared/utils/string.js'
 import type { GrepInput, GrepMatch } from '../types.js'
 import { resolveToolPath } from './paths.js'
 import { skipIgnoredDirs, walkFiles } from './walk.js'
@@ -138,7 +138,7 @@ export const grepTool: ToolDef = {
     try {
       regex = buildGrepRegex(pattern, { caseSensitive })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       return { _tag: 'error', error: `Invalid regex pattern: ${message}` }
     }
 
@@ -194,7 +194,7 @@ export const grepTool: ToolDef = {
         },
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       return { _tag: 'error', error: `Grep failed: ${message}` }
     }
   },

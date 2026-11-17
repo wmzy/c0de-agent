@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { type ApplyResult, applyPatch, type PatchHunk, parsePatch } from '../hashline/index.js'
 import type { EditInput } from '../types.js'
 import { resolveToolPath } from './paths.js'
@@ -168,7 +169,7 @@ export const editTool: ToolDef = {
         output: `Edited "${path}": replaced ${origEnd - origStart} chars with ${newText.length} chars`,
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       return { _tag: 'error', error: `Failed to edit "${path}": ${message}` }
     }
   },

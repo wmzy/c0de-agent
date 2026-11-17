@@ -7,7 +7,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type { CatalogModel, CatalogProvider } from '@/services/catalog.js'
-import { catalogAPI } from '@/services/catalog.js'
+import { catalogAPI, catalogProviderModelsKey, catalogProvidersKey } from '@/services/catalog.js'
 import { messageOf } from '@/utils/errors.js'
 
 const searchBar = css`
@@ -214,7 +214,7 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
     error: providersErr,
     refetch: refetchProviders,
   } = useQuery({
-    queryKey: ['catalog', 'providers'],
+    queryKey: catalogProvidersKey(),
     queryFn: () => catalogAPI.listProviders(),
     retry: false,
   })
@@ -226,7 +226,8 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
     error: modelsErr,
     refetch: refetchModels,
   } = useQuery({
-    queryKey: ['catalog', 'providers', selectedId, 'models'],
+    // selectedId 为 null 时查询被 enabled 关住，占位段不影响缓存身份。
+    queryKey: catalogProviderModelsKey(selectedId ?? ''),
     queryFn: () => catalogAPI.getProviderModels(selectedId ?? ''),
     enabled: !!selectedId,
     retry: false,

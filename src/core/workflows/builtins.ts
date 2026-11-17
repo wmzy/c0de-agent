@@ -34,9 +34,7 @@ export default async function workflow(ctx) {
     description: \`扫描 \${m.name}\`,
   })))
 
-  const allFindings = scans
-    .filter((r) => r.ok)
-    .flatMap((r) => { try { return JSON.parse(r.output).findings ?? [] } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return [] } })
+  const allFindings = utils.parseJsonArray(scans, 'findings')
 
   progress(\`交叉验证 \${allFindings.length} 个发现...\`, { phase: 'verify' })
   const verified = await runSubagents('reviewer', allFindings.map((f) => ({
@@ -47,10 +45,7 @@ export default async function workflow(ctx) {
     description: '验证发现',
   })))
 
-  const confirmed = verified
-    .filter((r) => r.ok)
-    .map((r) => { try { return JSON.parse(r.output) } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return null } })
-    .filter((v) => v?.confirmed)
+  const confirmed = utils.parseJsonObjects(verified).filter((v) => v?.confirmed)
 
   progress('生成报告...', { phase: 'report' })
   const summary = \`扫描 \${modules.length} 个模块，发现 \${allFindings.length} 个候选问题，\${confirmed.length} 个经交叉验证确认。\`
@@ -68,7 +63,7 @@ const CODE_REVIEW_SOURCE = `export const meta = {
 }
 
 export default async function workflow(ctx) {
-  const { runSubagents, progress, project, args } = ctx
+  const { runSubagents, utils, progress, project, args } = ctx
   const target = args || project.rootDir
 
   const dimensions = ['correctness', 'security', 'performance', 'maintainability']
@@ -88,9 +83,7 @@ export default async function workflow(ctx) {
     role: dim,
   })))
 
-  const allFindings = reviews
-    .filter((r) => r.ok)
-    .flatMap((r) => { try { return JSON.parse(r.output).findings ?? [] } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return [] } })
+  const allFindings = utils.parseJsonArray(reviews, 'findings')
 
   progress('合并去重并生成报告...', { phase: 'merge' })
   const seen = new Set()
@@ -121,7 +114,7 @@ const MIGRATION_CHECK_SOURCE = `export const meta = {
 }
 
 export default async function workflow(ctx) {
-  const { runSubagents, progress, project, args } = ctx
+  const { runSubagents, utils, progress, project, args } = ctx
   const baseRef = args || 'HEAD~1'
 
   progress(\`分析 \${baseRef} 到当前版本的变更...\`, { phase: 'diff' })
@@ -138,9 +131,7 @@ export default async function workflow(ctx) {
     role: cat,
   })))
 
-  const allItems = analyses
-    .filter((r) => r.ok)
-    .flatMap((r) => { try { return JSON.parse(r.output).items ?? [] } catch (e) { console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', e instanceof Error ? e.message : String(e)); return [] } })
+  const allItems = utils.parseJsonArray(analyses, 'items')
 
   progress('生成迁移报告...', { phase: 'report' })
   const high = allItems.filter((i) => i.impact === 'high').length

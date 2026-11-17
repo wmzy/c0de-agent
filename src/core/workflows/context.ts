@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import { globToRegex } from '../../tools/builtin/glob.js'
 import { buildGrepRegex, splitGrepLines } from '../../tools/builtin/grep.js'
 import { walkFiles } from '../../tools/builtin/walk.js'
@@ -110,11 +111,48 @@ function buildWorkflowContext(opts: BuildContextOpts): WorkflowContext {
       splitByDirectory: async (dir: string, opts?: { depth?: number; ignore?: string[] }) => {
         return splitByDir(resolve(rootDir, dir), opts?.depth ?? 1, opts?.ignore ?? [])
       },
+
+      parseJsonArray: parseJsonArrayFromResults,
+
+      parseJsonObjects: parseJsonObjectsFromResults,
     },
   }
 }
 
 // ── 工具函数 ──
+
+/** 子 agent 输出的 JSON 数组字段提取（utils.parseJsonArray 的实现）：只看 ok
+ *  结果，单条输出非 JSON 时告警跳过——内置工作流内嵌源码里 3 份逐字相同的
+ *  filter(ok).flatMap try-parse 骨架收敛于此（内嵌源码是字符串字面量，无法
+ *  import 仓库 helper，只能经 ctx.utils 注入）。 */
+function parseJsonArrayFromResults(results: WorkflowAgentResult[], key: string): unknown[] {
+  return results
+    .filter((r) => r.ok)
+    .flatMap((r) => {
+      try {
+        return (JSON.parse(r.output) as Record<string, unknown>)[key] ?? []
+      } catch (e) {
+        console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', errorMessage(e))
+        return []
+      }
+    })
+}
+
+/** utils.parseJsonObjects 的实现：整对象解析形态（如安全审计的交叉验证按返回
+ *  对象的 confirmed 字段过滤），容错口径与 parseJsonArrayFromResults 同源。 */
+function parseJsonObjectsFromResults(results: WorkflowAgentResult[]): unknown[] {
+  return results
+    .filter((r) => r.ok)
+    .map((r) => {
+      try {
+        return JSON.parse(r.output) as unknown
+      } catch (e) {
+        console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', errorMessage(e))
+        return null
+      }
+    })
+    .filter((v) => v !== null)
+}
 
 /** 递归遍历目录树：跳过点开头与 node_modules（可附加忽略名单），readdir 失败
  *  （权限/消失竞态）静默跳过该目录，每个文件回调 onFile（附文件名，供不含
@@ -255,4 +293,4 @@ async function splitByDir(
   return modules
 }
 
-export { buildWorkflowContext }
+export { buildWorkflowContext, parseJsonArrayFromResults, parseJsonObjectsFromResults }

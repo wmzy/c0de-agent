@@ -90,6 +90,9 @@ vi.mock('@/services/catalog.js', () => ({
     search: vi.fn(),
     refresh: vi.fn(),
   },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  catalogProvidersKey: () => ['catalog', 'providers'],
+  catalogProviderModelsKey: (id: string) => ['catalog', 'providers', id, 'models'],
 }))
 
 // 设备管理面板依赖 auth service，mock 掉避免测试中发起网络请求

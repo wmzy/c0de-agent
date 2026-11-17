@@ -60,6 +60,8 @@ describe('Workflow types', () => {
         grep: async () => [],
         read: async () => '',
         splitByDirectory: async () => [],
+        parseJsonArray: () => [],
+        parseJsonObjects: () => [],
       },
     }
     expect(ctx.project.rootDir).toBe('/tmp')
@@ -71,6 +73,8 @@ describe('Workflow types', () => {
       grep: async () => [],
       read: async () => '',
       splitByDirectory: async () => [],
+      parseJsonArray: () => [],
+      parseJsonObjects: () => [],
     }
     expect(typeof utils.glob).toBe('function')
   })

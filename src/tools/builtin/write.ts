@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import type { WriteInput } from '../types.js'
 import { resolveToolPath } from './paths.js'
 
@@ -36,7 +37,7 @@ export const writeTool: ToolDef = {
         output: `Wrote ${Buffer.byteLength(content, 'utf8')} bytes to ${path}`,
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       return { _tag: 'error', error: `Failed to write "${path}": ${message}` }
     }
   },

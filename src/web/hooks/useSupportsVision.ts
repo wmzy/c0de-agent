@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { providerAPI } from '@/services/provider.js'
+import { capabilitiesKey, providerAPI } from '@/services/provider.js'
 
 /**
  * 选中模型是否支持图片输入（composer 附件栏据此隐藏/警告图片入口）。
@@ -23,7 +23,7 @@ export function useSupportsVision(
 ): boolean {
   const { provider, model } = selection
   const { data } = useQuery({
-    queryKey: ['capabilities', projectId, provider, model],
+    queryKey: capabilitiesKey(projectId, provider ?? '', model ?? ''),
     queryFn: () => providerAPI.capabilities(provider ?? '', model ?? '', projectId),
     enabled: Boolean(provider && model),
     staleTime: 60_000,

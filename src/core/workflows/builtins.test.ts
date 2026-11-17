@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BUILTIN_WORKFLOWS } from './builtins.js'
+import { parseJsonArrayFromResults, parseJsonObjectsFromResults } from './context.js'
 import type { WorkflowContext, WorkflowResult } from './types.js'
 
 /** Minimal mock ctx for testing builtin execution. */
@@ -15,6 +16,10 @@ function makeMockCtx(overrides?: Partial<WorkflowContext>): WorkflowContext {
       grep: async () => [],
       read: async () => '',
       splitByDirectory: async () => [{ name: 'mod1', path: '/tmp/mod1', files: [] }],
+      // 内嵌源码经 ctx.utils 调用 JSON 提取——mock 直接挂真实实现，
+      // 避免测试 mock 与生产实现漂移（正是本轮收敛的 bug 形态）。
+      parseJsonArray: parseJsonArrayFromResults,
+      parseJsonObjects: parseJsonObjectsFromResults,
     },
     ...overrides,
   }

@@ -64,6 +64,8 @@ vi.mock('@/services/project.js', () => ({
       updatedAt: 1,
     })),
   },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  projectKey: (id: string) => ['project', id],
 }))
 
 /**

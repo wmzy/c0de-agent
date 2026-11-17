@@ -37,6 +37,13 @@ interface WorkflowUtils {
     rootDir: string,
     opts?: { depth?: number; ignore?: string[] },
   ) => Promise<Array<{ name: string; path: string; files: string[] }>>
+  /** 从子 agent 结果提取 JSON 数组字段：只解析 ok 结果，单条非 JSON 告警跳过
+   *  （内置工作流内嵌源码里 3 份逐字相同的 filter(ok).flatMap 容错骨架的
+   *  单一实现——一条畸形输出绝不击穿整个 run）。 */
+  parseJsonArray: (results: WorkflowAgentResult[], key: string) => unknown[]
+  /** parseJsonArray 的整对象形态：解析 ok 结果的 JSON 输出（非 JSON 告警跳过），
+   *  供验证类工作流按返回对象的字段过滤（如 confirmed）。 */
+  parseJsonObjects: (results: WorkflowAgentResult[]) => unknown[]
 }
 
 /** 工作流上下文（注入给脚本 default 函数的参数）。 */

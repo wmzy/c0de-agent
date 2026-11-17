@@ -15,6 +15,7 @@ import {
   sectionTitle,
 } from '@/components/settings/styles.js'
 import { authAPI, authDevicesKey } from '@/services/auth.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatDate } from '@/utils/format.js'
@@ -30,9 +31,7 @@ const deviceRow = css`
 
 const deviceName = css`
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  ${ellipsisCss}
 `
 
 const deviceMeta = css`

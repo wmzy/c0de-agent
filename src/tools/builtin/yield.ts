@@ -1,4 +1,5 @@
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { errorMessage } from '../../shared/utils/string.js'
 
 /**
  * yield 工具：子 agent 专用，提交结构化最终结果。
@@ -44,7 +45,7 @@ export const yieldTool: ToolDef = {
     try {
       ctx.collectYield?.(data)
     } catch (error) {
-      return { _tag: 'error', error: error instanceof Error ? error.message : String(error) }
+      return { _tag: 'error', error: errorMessage(error) }
     }
     return { _tag: 'success', output: 'Result submitted.' }
   },

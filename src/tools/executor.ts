@@ -1,5 +1,6 @@
 import { clampTimerDelay } from '../shared/timer.js'
 import type { ToolContext, ToolDef, ToolResult } from '../shared/types/tool.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { getTool } from './registry.js'
 import { truncateOutput } from './truncate.js'
 import type { PermissionChecker, ToolRegistry } from './types.js'
@@ -75,7 +76,7 @@ export async function executeTool(
 
     return result
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return { _tag: 'error', error: `Tool "${name}" failed: ${message}` }
   }
 }

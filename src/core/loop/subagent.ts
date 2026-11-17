@@ -5,7 +5,7 @@ import type { AgentState } from '../../shared/types/agent.js'
 import type { JSONSchema } from '../../shared/types/base.js'
 import type { Session } from '../../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
-import { headChars } from '../../shared/utils/string.js'
+import { errorMessage, headChars } from '../../shared/utils/string.js'
 import { validateInput } from '../../tools/validate.js'
 import { abortAgent, createAgent, runAgent } from '../agent.js'
 import { mapWithConcurrencyLimit } from '../agents/parallel.js'
@@ -73,7 +73,7 @@ export async function runSubAgent(
       deps.hookRunner,
     )
   } catch (e) {
-    return { _tag: 'error', error: e instanceof Error ? e.message : String(e) }
+    return { _tag: 'error', error: errorMessage(e) }
   }
 
   // 3. worktree 隔离（isolated agent）：失败回退共享 cwd
@@ -83,7 +83,7 @@ export async function runSubAgent(
       worktreePath = await createWorktree(deps.cwd, `subagent-${childSession.id}`)
     } catch (e) {
       console.warn(
-        `[subagent] worktree creation failed, falling back to shared cwd: ${e instanceof Error ? e.message : e}`,
+        `[subagent] worktree creation failed, falling back to shared cwd: ${errorMessage(e)}`,
       )
     }
   }
@@ -211,7 +211,7 @@ export async function runSubAgent(
         }
       }
     } catch (e) {
-      errMsg = e instanceof Error ? e.message : String(e)
+      errMsg = errorMessage(e)
     }
 
     // 5. worktree 回传：仅成功时把 delta apply 回父仓库（spec §4.6）；无论成败都清理 worktree
@@ -221,7 +221,7 @@ export async function runSubAgent(
           const patch = await captureDeltaPatch(worktreePath)
           await applyPatchToParent(deps.cwd, patch, `agent(isolated): ${title}`)
         } catch (e) {
-          console.warn(`[subagent] worktree apply failed: ${e instanceof Error ? e.message : e}`)
+          console.warn(`[subagent] worktree apply failed: ${errorMessage(e)}`)
         }
       }
       removeWorktree(deps.cwd, worktreePath)
@@ -284,18 +284,12 @@ export async function runSubAgent(
           content: [{ _tag: 'text', text: synthetic }],
         }).catch((e) => {
           // 通知消息持久化失败：任务已算完但父 session 收不到完成通知——记录避免静默丢失。
-          console.warn(
-            '[subagent] background 通知消息持久化失败:',
-            e instanceof Error ? e.message : String(e),
-          )
+          console.warn('[subagent] background 通知消息持久化失败:', errorMessage(e))
         })
       })
       .catch((e) => {
         // background 子 agent 执行或合成失败：父 session 永远收不到结果，记录避免静默丢失。
-        console.warn(
-          '[subagent] background 子 agent 执行失败:',
-          e instanceof Error ? e.message : String(e),
-        )
+        console.warn('[subagent] background 子 agent 执行失败:', errorMessage(e))
       })
     return { _tag: 'running', jobId, sessionId: childSession.id }
   }
@@ -349,7 +343,7 @@ export async function runSubAgents(
         return await runOne(request)
       } catch (e) {
         // 隔离单个任务的异常：不向上抛，避免 fail-fast 终止尚未启动的兄弟任务
-        return { _tag: 'error' as const, error: e instanceof Error ? e.message : String(e) }
+        return { _tag: 'error' as const, error: errorMessage(e) }
       }
     },
     parent.abortController.signal,

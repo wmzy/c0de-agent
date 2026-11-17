@@ -1,3 +1,5 @@
+import { errorMessage } from '../../shared/utils/string.js'
+
 type HttpContext = {
   request: { method: string; url: string; headers: Record<string, string> }
   response?: { status: number; headers: Record<string, string> }
@@ -57,11 +59,7 @@ const reasonMessage = (reason: LLMErrorReason): string => {
  *  "[object Object]"——按错误类型提取可读消息。 */
 function parseErrorMarker(e: unknown, raw: string): { _parseError: string; _raw: string } {
   return {
-    _parseError: isLLMError(e)
-      ? reasonMessage(e.reason)
-      : e instanceof Error
-        ? e.message
-        : String(e),
+    _parseError: isLLMError(e) ? reasonMessage(e.reason) : errorMessage(e),
     _raw: raw,
   }
 }

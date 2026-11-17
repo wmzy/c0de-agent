@@ -1,6 +1,6 @@
 import { relative } from 'node:path'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
-import { escapeRegex } from '../../shared/utils/string.js'
+import { errorMessage, escapeRegex } from '../../shared/utils/string.js'
 import type { GlobInput } from '../types.js'
 import { resolveToolPath } from './paths.js'
 import { skipIgnoredDirs, walkFiles } from './walk.js'
@@ -219,7 +219,7 @@ export const globTool: ToolDef = {
         metadata: { count: matched.length },
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       return { _tag: 'error', error: `Glob failed: ${message}` }
     }
   },

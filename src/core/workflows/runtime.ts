@@ -1,4 +1,5 @@
 import { clampTimerDelay, MAX_TIMER_MS } from '../../shared/timer.js'
+import { errorMessage } from '../../shared/utils/string.js'
 import type { AgentDependencies, AgentState, CommandResult } from '../types.js'
 import { buildWorkflowContext } from './context.js'
 import type { WorkflowRegistry } from './registry.js'
@@ -105,7 +106,7 @@ async function executeWorkflow(opts: ExecuteWorkflowOpts): Promise<CommandResult
     }
     return {
       _tag: 'error',
-      message: `Workflow "${name}" failed: ${e instanceof Error ? e.message : String(e)}`,
+      message: `Workflow "${name}" failed: ${errorMessage(e)}`,
     }
   }
 }

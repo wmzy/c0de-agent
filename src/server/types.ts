@@ -64,8 +64,10 @@ type ServerContext = {
    *  发起会话在其工作流运行期间视为占用——主 run 与再次 /workflow run 均 409；
    *  abort/pause/resume 控制端点据此路由到实际的工作流 run。 */
   workflowBusyBySession: Map<string, string>
-  /** 工作流运行占用：执行作用域键 → 工作流会话 id。键为 `project:<projectId>`
-   *  或 `dir:<cwd>`（REST 无 projectId 时）。同一项目/目录不允许并发工作流执行。 */
+  /** 工作流运行占用：执行作用域键 → 工作流会话 id（或 'starting:<工作流名>'
+   *  同步占位——createSession 落库前的窗口，DELETE /:name 守卫同样据此判 busy，
+   *  防占位期文件被删而 run 照常执行）。键为 `project:<projectId>` 或
+   *  `dir:<cwd>`（REST 无 projectId 时）。同一项目/目录不允许并发工作流执行。 */
   workflowBusyByScope: Map<string, string>
   /** 后台版本检查调度器（spec §18.1）；/api/update 读取其缓存结果。 */
   updateScheduler: UpdateScheduler

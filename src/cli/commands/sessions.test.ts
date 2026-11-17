@@ -9,7 +9,7 @@ import type { DB } from '../../db/client.js'
 import { sessions } from '../../db/schema.js'
 import { createTestDB, resetTestDB } from '../../db/test-utils.js'
 import { fromDirectory } from '../../project/project.js'
-import { createSession, listAllSessions } from '../../session/session.js'
+import { createSession, getSession, listAllSessions } from '../../session/session.js'
 import { listDeletedSessions, softDeleteSession } from '../../session/trash.js'
 import { runSessionsCommand } from './sessions.js'
 
@@ -156,6 +156,99 @@ describe('c0de sessions', () => {
       write: (x) => out.push(x),
     })
     expect(out.join('')).toContain('项目归属失败')
+  })
+
+  it('restore 子会话 --project 时连带还原的祖先一并归属到目标项目（P1 与 server 同口径收养）', async () => {
+    // 项目删除后的典型孤儿形态：父子会话均无归属、同批次软删除；恢复子会话时
+    // restoreSessionCore 连带还原父会话，收养逻辑必须把它一并归属到目标项目——
+    // 侧栏按根会话 projectId 过滤整棵树，根无归属则恢复结果在任何项目视图不可达。
+    const parent = await createSession(db, 'parent', undefined, undefined, 'web')
+    const child = await createSession(db, 'child', undefined, undefined, 'web', parent.id)
+    await softDeleteSession(db, parent.id)
+    const projDir = mkdtempSync(join(tmpdir(), 'c0de-sessadopt-'))
+    try {
+      const out: string[] = []
+      await runSessionsCommand({
+        args: { options: { project: projDir }, positionals: ['restore', child.id] },
+        db,
+        write: (x) => out.push(x),
+      })
+      const text = out.join('')
+      expect(text).toContain('已重新归属到项目')
+      expect(text).toContain('同时还原了 1 个父会话')
+      expect(await listDeletedSessions(db)).toHaveLength(0)
+      const restoredChild = await getSession(db, child.id)
+      const restoredParent = await getSession(db, parent.id)
+      expect(restoredParent?.projectId).toBe(restoredChild?.projectId)
+      expect(restoredParent?.worktreePath).toBe(projDir)
+    } finally {
+      rmSync(projDir, { recursive: true, force: true })
+    }
+  })
+
+  it('restore 已有归属的子会话时反查项目收养连带还原的祖先（session.projectId 落定项目）', async () => {
+    // 子会话已有归属、父会话是孤儿：删除父级联子，恢复子时连带还原的父仍无归属——
+    // 由 session.projectId 反查落定项目收养（server restore 路由同口径）。
+    const projDir = mkdtempSync(join(tmpdir(), 'c0de-sessadopt2-'))
+    try {
+      const project = await fromDirectory(db, projDir)
+      const parent = await createSession(db, 'orphan-parent', undefined, undefined, 'web')
+      const child = await createSession(db, 'owned-child', project.id, undefined, 'web', parent.id)
+      await softDeleteSession(db, parent.id)
+      const out: string[] = []
+      await runSessionsCommand({
+        args: { options: {}, positionals: ['restore', child.id] },
+        db,
+        write: (x) => out.push(x),
+      })
+      const text = out.join('')
+      expect(text).toContain('已恢复会话')
+      expect(text).toContain('同时还原了 1 个父会话')
+      expect(await listDeletedSessions(db)).toHaveLength(0)
+      const restoredParent = await getSession(db, parent.id)
+      expect(restoredParent?.projectId).toBe(project.id)
+      expect(restoredParent?.worktreePath).toBe(projDir)
+    } finally {
+      rmSync(projDir, { recursive: true, force: true })
+    }
+  })
+
+  it('restore 无归属且无法收养时如实提示连带还原的会话均无归属（含跨批次提示）', async () => {
+    // 父子分属不同删除批次（子先删、父后删）：恢复子会话连带还原跨批次父会话；
+    // 两者均无归属且无 --project/有效 worktreePath → 无 targetProject 可收养，
+    // 必须如实说「连带还原的会话均无归属」而非静默。
+    const parent = await createSession(db, 'parent-x', undefined, undefined, 'web')
+    const child = await createSession(db, 'child-x', undefined, undefined, 'web', parent.id)
+    await softDeleteSession(db, child.id)
+    await softDeleteSession(db, parent.id)
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['restore', child.id] },
+      db,
+      write: (x) => out.push(x),
+    })
+    const text = out.join('')
+    expect(text).toContain('同时还原了 1 个父会话')
+    expect(text).toContain('跨批次')
+    expect(text).toContain('连带还原的 1 个会话均无归属')
+    expect(await listDeletedSessions(db)).toHaveLength(0)
+  })
+
+  it('restore 提示删除批次不同的分支仍留在回收站（leftBehindDescendantCount）', async () => {
+    // 子会话先单独删除（批次 A）、父会话后删（批次 B）：恢复父会话时子会话因
+    // 批次不同滞留回收站，必须显式告知，否则保留期后被静默物理清除。
+    const parent = await createSession(db, 'parent-y', undefined, undefined, 'web')
+    const child = await createSession(db, 'child-y', undefined, undefined, 'web', parent.id)
+    await softDeleteSession(db, child.id)
+    await softDeleteSession(db, parent.id)
+    const out: string[] = []
+    await runSessionsCommand({
+      args: { options: {}, positionals: ['restore', parent.id] },
+      db,
+      write: (x) => out.push(x),
+    })
+    expect(out.join('')).toContain('1 个分支仍留在回收站')
+    expect((await listDeletedSessions(db)).map((s) => s.id)).toEqual([child.id])
   })
 
   it('deleted 列出回收站会话', async () => {

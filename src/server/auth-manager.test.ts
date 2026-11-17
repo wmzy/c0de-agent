@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createAuthManager } from './auth-manager.js'
+import { createAuthManager, readTokenFile } from './auth-manager.js'
 
 let dir: string
 
@@ -287,5 +287,16 @@ describe('createAuthManager — 设备热重载与撤销（P1-4/P2-5）', () => 
     const mgr = createAuthManager({ dataDir: dir })
     expect(mgr.listDevices()).toHaveLength(0)
     mgr.dispose()
+  })
+})
+
+describe('readTokenFile — token 文件读取单源（bootstrap 加载与 serve handoff 握手共用）', () => {
+  it('缺失/空白文件 → undefined；非空内容 → trim 后返回', () => {
+    const path = join(dir, 'auth-token')
+    expect(readTokenFile(path)).toBeUndefined()
+    writeFileSync(path, '  abc123 \n')
+    expect(readTokenFile(path)).toBe('abc123')
+    writeFileSync(path, '   \n')
+    expect(readTokenFile(path)).toBeUndefined()
   })
 })

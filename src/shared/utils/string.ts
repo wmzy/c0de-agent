@@ -61,6 +61,14 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/** 任意抛出值 → 可读错误消息：Error 取 message，其余 String() 兜底。
+ *  `e instanceof Error ? e.message : String(e)` 骨架的单一实现（core/tools/
+ *  llm/mcp 各 catch 分支共用）——各处手写曾反复漂移（漏 String 兜底、模板里
+ *  隐式 coercion 等），收紧兜底语义时只改这一处。 */
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 /** UUID（任意版本/大小写）格式判定。
  *  用于「路径/参数里的 id 直接进 PG uuid 列」的入口预检：非 UUID 经 drizzle
  *  参数化查询会在 PG 侧抛 22P02（invalid input syntax for type uuid），被 Hono

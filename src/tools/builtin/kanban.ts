@@ -7,7 +7,7 @@
 import type { JSONSchema } from '../../shared/types/base.js'
 import { KANBAN_PRIORITIES, type KanbanPriority } from '../../shared/types/kanban.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
-import { headChars } from '../../shared/utils/string.js'
+import { errorMessage, headChars } from '../../shared/utils/string.js'
 
 // =============================================================================
 // Types
@@ -257,7 +257,7 @@ The board is shared across all sessions and agents in the same project — use i
           errors.push(`Unknown op: ${(params as { op: string }).op}`)
       }
     } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e))
+      errors.push(errorMessage(e))
     }
 
     // Errors are surfaced in output text (like todo tool) so the LLM can read

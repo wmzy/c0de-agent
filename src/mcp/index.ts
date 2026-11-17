@@ -7,6 +7,7 @@
 
 import type { Config, MCPServerConfig } from '../shared/types/config.js'
 import type { ToolDef, ToolResult } from '../shared/types/tool.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { registerTool } from '../tools/registry.js'
 import type { ToolRegistry } from '../tools/types.js'
 import { createMCPClient } from './client.js'
@@ -112,7 +113,7 @@ async function registerMCPServers(
         )
       }
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
+      const reason = errorMessage(error)
       failures.push(`${server.name}: ${reason}`)
       console.warn(`[mcp] 连接 ${server.name} 失败，跳过该服务器：${reason}`)
     }

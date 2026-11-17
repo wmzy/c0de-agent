@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import type { TimelineRow } from '@/components/session/utils/timeline.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { formatCost, formatLatency, formatTimestamp, formatTokenCount } from '@/utils/format.js'
 
 const wrap = css`
@@ -29,12 +30,13 @@ const filterInput = css`
   padding: 3px 8px;
   color: var(--haze-color-text);
   font-size: 12px;
-  min-width: 0;
   /* 自适应内容宽度：haze SelectCore 的 width:100% 会让每个筛选项撑满整行，
    * 4 个控件竖着排满一屏（实测每个 1106px），工具条形同失效。见 tokens.compactSelect。 */
   width: auto;
   max-width: 240px;
-  text-overflow: ellipsis;
+  /* 输入框/下拉的显示值单行截断（haze Input/Select 均为原生单行控件，
+   * nowrap/overflow:hidden 是五件套里的无视觉差补全）。 */
+  ${ellipsisCss}
 
   &:focus {
     outline: none;

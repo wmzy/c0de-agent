@@ -44,3 +44,11 @@ export function currentProjectQueryOptions() {
 export function projectsKey() {
   return ['projects'] as const
 }
+
+/** 单项目查询键。项目域键的层次在此钉死：列表 `['projects']` / 单项
+ *  `['project', id]` / 当前 `['project','current']`——三者互不为前缀，按
+ *  projectKey(id) 失效不会波及列表与 current；但失效根前缀 `['project']`
+ *  会把 current 一起失效，需要精确失效时永远用本 helper 而非根前缀。 */
+export function projectKey(id: string) {
+  return ['project', id] as const
+}

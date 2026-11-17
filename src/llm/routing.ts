@@ -139,5 +139,31 @@ function buildFallbackChain(
   }
 }
 
+/**
+ * buildFallbackChain 的 options 展开形态（chatStream/chat 第三参的接线单点）：
+ * 链未启用/无候选时省略 fallback 字段（保持内置默认），返回值可直接展开进
+ * options——此前主 chat 循环（loop/stream-collect）、标题生成（core/title）与
+ * 压缩摘要器（core/compact）各持一份 `...(fallback ? { fallback } : {})` 手写
+ * 骨架，收紧条件时漏改一处即行为分叉。
+ */
+function fallbackChatOptions(
+  config: {
+    providers: FallbackSourceProvider[]
+    fallback: { enabled: boolean; maxRetries: number; retryDelay: number }
+  },
+  provider: string,
+  model: string,
+): { fallback?: FallbackChain } {
+  const fallback = buildFallbackChain(config, provider, model)
+  return fallback ? { fallback } : {}
+}
+
 export type { FallbackChain, RouteGuard }
-export { buildFallbackChain, chainTargets, guardRouteTarget, runWithFallback, shouldFallOver }
+export {
+  buildFallbackChain,
+  chainTargets,
+  fallbackChatOptions,
+  guardRouteTarget,
+  runWithFallback,
+  shouldFallOver,
+}

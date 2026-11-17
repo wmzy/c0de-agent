@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createRegistry, registerProvider } from './registry.js'
-import { runWithFallback, shouldFallOver } from './routing.js'
+import { fallbackChatOptions, runWithFallback, shouldFallOver } from './routing.js'
 import { isLLMError, llmError } from './schema/errors.js'
 
 const noSleep = async () => {}
@@ -35,6 +35,32 @@ describe('routing shouldFallOver', () => {
   })
   it('does not fall over on non-LLMError', () => {
     expect(shouldFallOver(new Error('x'))).toBe(false)
+  })
+})
+
+describe('routing fallbackChatOptions', () => {
+  const config = (enabled: boolean) => ({
+    providers: [
+      { name: 'a', models: { m1: {} } },
+      { name: 'b', models: { m1: {} } },
+      { name: 'c' }, // 未声明模型清单：不参与回退
+    ],
+    fallback: { enabled, maxRetries: 1, retryDelay: 5 },
+  })
+
+  it('omits the fallback key when disabled (保持内置默认的展开语义)', () => {
+    const opts = fallbackChatOptions(config(false), 'a', 'm1')
+    expect('fallback' in opts).toBe(false)
+    // 直接展开进 chat options 不引入多余键
+    expect({ ...opts }).toEqual({})
+  })
+
+  it('builds the chain for providers declaring the same model', () => {
+    const opts = fallbackChatOptions(config(true), 'a', 'm1')
+    expect(opts.fallback).toBeDefined()
+    expect(opts.fallback?.fallbacks).toEqual([{ provider: 'b', model: 'm1' }])
+    expect(opts.fallback?.maxRetries).toBe(1)
+    expect(opts.fallback?.retryDelay).toBe(5)
   })
 })
 

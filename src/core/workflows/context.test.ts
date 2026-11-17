@@ -460,4 +460,52 @@ describe('buildWorkflowContext', () => {
     expect(results).toHaveLength(1)
     expect(results[0]?.line).toBe(1)
   })
+
+  // utils.parseJsonArray：内置工作流内嵌源码经 ctx.utils 调用的容错 JSON 提取
+  // ——ok 结果取 KEY 数组字段；error 结果与非 JSON 输出跳过（告警不抛错），
+  // 缺字段回落空数组。一条畸形输出绝不击穿整个 run。
+  it('utils.parseJsonArray extracts the key field, skipping failed and non-JSON results', () => {
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const results = [
+        { ok: true as const, output: JSON.stringify({ findings: [{ file: 'a.ts' }] }) },
+        { ok: true as const, output: 'not json' },
+        { ok: false as const, error: 'agent failed' },
+        { ok: true as const, output: JSON.stringify({ other: 1 }) },
+      ]
+      expect(ctx.utils.parseJsonArray(results, 'findings')).toEqual([{ file: 'a.ts' }])
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // utils.parseJsonObjects：整对象形态（交叉验证按返回对象字段过滤），
+  // 非 JSON 输出跳过（告警不抛错）。
+  it('utils.parseJsonObjects parses whole objects, skipping non-JSON outputs', () => {
+    const ctx = buildWorkflowContext({
+      deps: makeMockDeps(),
+      parent: makeMockParent(),
+      args: '',
+      onProgress: () => {},
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const results = [
+        { ok: true as const, output: JSON.stringify({ confirmed: true }) },
+        { ok: true as const, output: 'oops' },
+        { ok: false as const, error: 'agent failed' },
+      ]
+      expect(ctx.utils.parseJsonObjects(results)).toEqual([{ confirmed: true }])
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

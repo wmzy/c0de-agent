@@ -53,3 +53,9 @@ export function providersQueryOptions(projectId?: string) {
     queryFn: () => providerAPI.list(projectId),
   }
 }
+
+/** 模型能力查询键（useSupportsVision 正本）。projectId 必须进键：不同项目作用域
+ *  的注册表会给出不同能力答案，共享缓存会把 A 项目的结论错配给 B 项目。 */
+export function capabilitiesKey(projectId: string | undefined, provider: string, model: string) {
+  return ['capabilities', projectId, provider, model] as const
+}
