@@ -39,10 +39,12 @@ import { ToolsPanel } from '@/components/settings/ToolsPanel.js'
 import { UsagePanel } from '@/components/settings/UsagePanel.js'
 import { WebSearchPanel } from '@/components/settings/WebSearchPanel.js'
 import { WorkflowsPanel } from '@/components/settings/WorkflowsPanel.js'
-import { configQueryOptions } from '@/contexts/ConfigContext.js'
+import { configQueryOptions, configRootKey } from '@/contexts/ConfigContext.js'
 import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
+import { commandsRootKey } from '@/services/commands.js'
 import { configAPI } from '@/services/config.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { btnDanger } from '@/styles/tokens.js'
 import {
   diffConfig,
@@ -117,11 +119,9 @@ const scopeLabel = css`
 
 /** 「目标」写入路径标注：必须与当前作用域一致，故单独成类供 global/project 两分支共用。 */
 const scopeTarget = css`
+  ${ellipsisCss}
   flex-shrink: 0;
   color: var(--haze-color-text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   max-width: 40%;
 `
 
@@ -264,13 +264,13 @@ export function Settings() {
     }) => configAPI.update(payload.patch, payload.scope, projectId),
     onMutate: () => setSaveFeedback({ kind: 'saving' }),
     onSuccess: (resp, variables) => {
-      qc.invalidateQueries({ queryKey: ['config'] })
+      qc.invalidateQueries({ queryKey: configRootKey() })
       // 斜杠命令列表由服务端按 config.slashCommands.enabled 过滤（GET /api/commands），
       // 而 useCommands 的 queryKey ['commands'] 是 staleTime: Infinity——设置页改的
       // 正是这个开关：不失效的话，本会话内禁用 /clear 后浮层照旧列出（点进去被
       // 服务端回一句「未启用」，看着像命令坏了），启用 /compact 后浮层里永远不出现
       // （只能整页刷新）。这里是唯一改配置的入口，失效在这里收口。
-      qc.invalidateQueries({ queryKey: ['commands'] })
+      qc.invalidateQueries({ queryKey: commandsRootKey() })
       // 清除草稿：表单回退到已持久化状态（apiKey 输入不再回显明文，统一显示「已加密」），
       // isDirty 重置为 false，保存按钮禁用直到下一次编辑。
       // 但只清「本次提交出去的那份」：保存期间用户敲进去的新编辑必须留下——

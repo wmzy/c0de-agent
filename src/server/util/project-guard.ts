@@ -6,6 +6,12 @@ import { apiError } from '../middleware/error.js'
 /** getProjectOr404 的判别结果：ok=false 时 response 为可直接 return 的 404。 */
 export type ProjectOr404 = { ok: true; project: Project } | { ok: false; response: Response }
 
+/** PROJECT_NOT_FOUND 404 响应的单点构造：状态码/错误码/文案在此唯一维护，
+ *  路由层手抄 apiError 骨架（含「守卫抛错转译」分支）一律改引此处。 */
+export function projectNotFoundResponse(c: Context, message = '项目不存在'): Response {
+  return apiError(c, 404, 'PROJECT_NOT_FOUND', message)
+}
+
 /**
  * 路由层「项目存在守卫」的单点实现：查不到项目 → 404 PROJECT_NOT_FOUND。
  * message 可按场景覆盖（如「目标项目不存在」「恢复目标项目不存在」），缺省
@@ -20,7 +26,7 @@ export async function getProjectOr404(
 ): Promise<ProjectOr404> {
   const project = await getProject(handle, projectId)
   if (!project) {
-    return { ok: false, response: apiError(c, 404, 'PROJECT_NOT_FOUND', message ?? '项目不存在') }
+    return { ok: false, response: projectNotFoundResponse(c, message) }
   }
   return { ok: true, project }
 }

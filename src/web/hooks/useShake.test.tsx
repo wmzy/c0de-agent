@@ -13,6 +13,18 @@ vi.mock('@/services/session.js', () => ({
   sessionAPI: { shakePreview: vi.fn(), shakeApply: vi.fn() },
   // 键 helper 与真实模块同形（成功路径的失效回写用）
   sessionMessagesKey: (id: string) => ['session', id, 'messages'],
+  sessionsRootKey: () => ['sessions'],
+  deletedSessionsKey: (projectId?: string) =>
+    projectId ? ['sessions', 'deleted', projectId] : ['sessions', 'deleted'],
+  deletedOrphansKey: () => ['sessions', 'deleted', 'orphans'],
+  deletedOrphansCountKey: () => ['sessions', 'deleted', 'orphans-count'],
+  sessionSearchKey: (projectId: string, q: string, includeDeleted: boolean) => [
+    'sessions',
+    'search',
+    projectId,
+    q,
+    includeDeleted,
+  ],
 }))
 
 const region: ShakeRegionView = {

@@ -1,9 +1,9 @@
 // CommitButton 组件测试，对应 src/web/components/CommitButton.tsx
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CommitButton } from '@/components/CommitButton.js'
 import { fileAPI } from '@/services/file.js'
+import { renderWithClient } from '@/test-utils.js'
 
 vi.mock('@/services/file.js', () => ({
   fileAPI: {
@@ -16,11 +16,6 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
-
-function renderWithClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
-}
 
 describe('CommitButton', () => {
   it('有未提交变更时可点提交', async () => {

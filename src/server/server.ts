@@ -177,6 +177,13 @@ function readAuthTokenFile(dataDir: string): string | undefined {
   }
 }
 
+/** handoff 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，
+ *  否则读 auth-token 文件。仅握手读取，语义窄于 resolveAuthToken（不含其
+ *  配置解析/bootstrap 生成等多分支逻辑——握手只消费既有凭据，绝不生成）。 */
+function handoffHandshakeToken(): string | undefined {
+  return process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+}
+
 /** 一次性迁移：<cwd>/.c0de/pglite → 全局路径。仅当目标不存在时执行。
  *
  * 多个项目各有 .c0de/pglite 时只迁移第一个遇到的（首次启动即触发）；
@@ -717,9 +724,8 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
   const host = opts.host ?? '127.0.0.1'
 
   // spec §18.3：新实例从 --handoff-port 拿到旧实例端口，请求优雅退出后绑端口。
-  // 握手 token：updater spawn 时经 C0DE_AUTH_TOKEN 环境变量传入，否则读 auth-token 文件。
   if (opts.handoffPort && !opts.skipHandoff) {
-    const pendingToken = process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+    const pendingToken = handoffHandshakeToken()
     await requestHandoffWithRetry(opts.handoffPort, pendingToken)
   }
 
@@ -836,7 +842,7 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
     // 两阶段交接第二阶段：新实例绑定成功后确认旧实例可退出。
     // 旧实例（无 handoffPort）跳过；确认失败静默（窗口超时兜底）。
     if (opts.handoffPort) {
-      const confirmToken = process.env.C0DE_AUTH_TOKEN ?? readAuthTokenFile(resolveDbDir())
+      const confirmToken = handoffHandshakeToken()
       void confirmHandoff(opts.handoffPort, '127.0.0.1', confirmToken)
     }
   }

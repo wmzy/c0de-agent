@@ -14,6 +14,7 @@ import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
 import { WriteToolView } from '@/components/session/tools/WriteToolView.js'
 import type { RenderBlock } from '@/components/session/utils/normalizeParts.js'
 import { toolSummary } from '@/components/session/utils/toolSummary.js'
+import { ellipsisCss } from '@/styles/shared.js'
 
 type ToolRenderBlock = Extract<RenderBlock, { type: 'tool' }>
 
@@ -76,11 +77,8 @@ const icon = css`
 `
 
 const summary = css`
+  ${ellipsisCss}
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--haze-color-text);
 `
 

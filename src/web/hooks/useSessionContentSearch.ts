@@ -7,7 +7,7 @@ import type { Session } from '@shared/types/message.js'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
-import { sessionAPI } from '@/services/session.js'
+import { sessionAPI, sessionSearchKey } from '@/services/session.js'
 import { messageOf } from '@/utils/errors.js'
 
 /** 单条命中：会话 + 命中部位（标题/消息内容）。 */
@@ -62,7 +62,7 @@ export function useSessionContentSearch(
     error,
     refetch: rqRefetch,
   } = useQuery({
-    queryKey: ['sessions', 'search', projectId, debounced, includeDeleted],
+    queryKey: sessionSearchKey(projectId, debounced, includeDeleted),
     queryFn: () =>
       includeDeleted
         ? sessionAPI.search(debounced, projectId, true)

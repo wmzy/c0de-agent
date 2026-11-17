@@ -17,9 +17,11 @@ import {
   deletedKanbanKey,
   kanbanAPI,
   kanbanKey,
+  kanbanRootKey,
   type MergedBoardCounts,
 } from '@/services/kanban.js'
 import { deletedSessionsKey, sessionAPI } from '@/services/session.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatDate, formatDateTime } from '@/utils/format.js'
 import { ErrorBar } from '@/views/_shared/ErrorBar.js'
@@ -60,10 +62,7 @@ const deletedRow = css`
 
   & > span:first-child {
     flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    ${ellipsisCss}
   }
 
   & > span:nth-child(2) {
@@ -312,7 +311,7 @@ export function RecycleBin({ projectId }: { projectId: string }) {
     mutationFn: (boardId: string) => kanbanAPI.restoreDeletedBoardToOriginal(boardId),
     // 恢复到原项目时客户端不知道原项目 id（由服务端重建/定位），只能失效根前缀
     // ['kanban']：结构化前缀命中所有项目键 + deleted 键。
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kanban'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: kanbanRootKey() }),
   })
   const destroyBoardMut = useMutation({
     mutationFn: (boardId: string) => kanbanAPI.destroyDeletedBoard(boardId),

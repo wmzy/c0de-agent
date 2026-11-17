@@ -1,9 +1,9 @@
 // ProviderCatalogDialog 组件测试，对应 src/web/components/ProviderCatalogDialog.tsx
 import type { ProviderConfig } from '@shared/types/llm.js'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProviderCatalogDialog } from '@/components/ProviderCatalogDialog.js'
+import { renderWithClient } from '@/test-utils.js'
 
 vi.mock('@/services/catalog.js', () => ({
   catalogAPI: {
@@ -24,13 +24,6 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
-
-function renderWithClient(ui: React.ReactElement) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
-}
 
 describe('ProviderCatalogDialog', () => {
   it('渲染 provider 列表', async () => {

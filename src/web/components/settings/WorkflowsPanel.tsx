@@ -15,6 +15,7 @@ import { field, fieldInput, hint, section, sectionTitle } from '@/components/set
 import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 import { workflowsAPI, workflowsKey, workflowsQueryOptions } from '@/services/workflows.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { messageOf } from '@/utils/errors.js'
 
 const row = css`
@@ -41,11 +42,9 @@ const rowName = css`
 `
 
 const rowDesc = css`
+  ${ellipsisCss}
   color: var(--haze-color-text-secondary);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 `
 
 const badge = css`

@@ -16,10 +16,10 @@
 // **未信任**时触发门禁（一次性，信任后不再复检）——兜底「仓库未携带 .c0de
 // 但本机已全局 auto，克隆即全自动执行」的裸奔场景。全局配置的插件/MCP 是用户
 // 本机显式安装（需手改 ~/.c0de），不属仓库自带风险面，不纳入门禁。
-import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import type { Config } from '../shared/types/config.js'
+import { sha256Hex } from '../shared/utils/hash.js'
 
 /** 单个风险项：kind 供前端图标/文案映射，detail 为人类可读说明。
  *  'trust-drift' 为展示专用（仅 projectTrustNeeded 在漂移时返回），
@@ -232,7 +232,7 @@ function fingerprintLines(
 
 function hashLines(lines: string[]): string {
   if (lines.length === 0) return ''
-  return createHash('sha256').update(lines.join('\n')).digest('hex')
+  return sha256Hex(lines.join('\n'))
 }
 
 /** MCP 服务器条目的 canonical 参数行（稳定键序；非法条目跳过）。 */
@@ -290,9 +290,7 @@ function hashDirContents(
           continue
         }
         const rel = relative(dir, full).split(sep).join('/')
-        lines.push(
-          `${prefix}:${rel}:${createHash('sha256').update(readFileSync(full)).digest('hex')}`,
-        )
+        lines.push(`${prefix}:${rel}:${sha256Hex(readFileSync(full))}`)
       } catch {
         // 单个文件读取失败跳过（不因无法 hash 而放行或误报）
       }

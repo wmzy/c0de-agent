@@ -25,6 +25,7 @@ vi.mock('@/services/kanban.js', () => ({
   },
   // 键 helper 与真实模块同形（失效路径断言用不到，但 import 必须可解析）
   kanbanKey: (projectId: string) => ['kanban', projectId],
+  kanbanRootKey: () => ['kanban'],
 }))
 
 afterEach(() => {

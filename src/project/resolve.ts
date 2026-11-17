@@ -1,8 +1,8 @@
 import type { SpawnSyncReturns } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { bestEffortGit, gitRaw, strictGitResult } from '../shared/git.js'
+import { sha256Hex } from '../shared/utils/hash.js'
 
 export type ResolvedProject = {
   id: string
@@ -323,7 +323,7 @@ export function createGitBranch(cwd: string, name: string): { branch: string } |
 }
 
 function hash16(input: string): string {
-  return createHash('sha256').update(input).digest('hex').slice(0, 16)
+  return sha256Hex(input).slice(0, 16)
 }
 
 export function resolveProject(directory: string): ResolvedProject {

@@ -3,11 +3,11 @@
  * 归并建议：本文件为 spec §18 自动升级前端横幅的单元测试，与设置/通知类组件同族；
  * 若后续合并全局通知组件，可并入对应测试文件。
  */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UpdateBanner } from '@/components/UpdateBanner.js'
+import { renderWithClient } from '@/test-utils.js'
 
 vi.mock('@/services/update.js', () => ({
   updateAPI: {
@@ -25,11 +25,6 @@ afterEach(() => {
   localStorage.clear()
   vi.unstubAllGlobals()
 })
-
-function renderWithClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
-}
 
 describe('UpdateBanner', () => {
   it('renders nothing when no update', async () => {

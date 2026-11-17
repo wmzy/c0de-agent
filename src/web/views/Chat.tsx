@@ -27,6 +27,7 @@ import {
   subscribeModeChange,
 } from '@/services/permission.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatTokenCount } from '@/utils/format.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
@@ -163,10 +164,7 @@ const topSpacer = css`
 `
 
 const topStatus = css`
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  ${ellipsisCss}
   color: var(--haze-color-text-secondary);
 `
 
@@ -367,10 +365,7 @@ const wfProgressDot = css`
 `
 
 const wfProgressText = css`
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  ${ellipsisCss}
 `
 
 /* 底栏合并行：模型/工具选择 + 自动授权开关单行排布，替代原 footerBar/modeBar 两层。 */
@@ -485,11 +480,8 @@ const modeWarn = css`
   color: var(--haze-color-warning);
   font-weight: 600;
   /* 窄屏换行后允许文本截断，不横向撑破底栏 */
-  min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  ${ellipsisCss}
 `
 
 /** 会话级「始终允许」白名单 chips 行（可逐项移除）。 */

@@ -1,7 +1,7 @@
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { createRoutes, MemoryRouter, TypedLink, View } from '@native-router/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { type QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +13,7 @@ import {
 import { ReferenceContext } from '@/contexts/ReferenceContext.js'
 import { ThemeProvider } from '@/contexts/ThemeContext.js'
 import type { AppPaths } from '@/routes.js'
+import { makeQueryClient } from '@/test-utils.js'
 import { computeLineRange, FilePreview } from '@/views/FilePreview.js'
 
 // mock CodeEditor：本文件聚焦 FilePreview 行为（脏关闭守卫等），
@@ -82,9 +83,7 @@ function PreviewProviders({
   selection?: Partial<FileSelection>
   entry?: string
 }) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
+  const qc = makeQueryClient()
   return (
     <MemoryRouter routes={previewTestRoutes} initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
@@ -102,10 +101,11 @@ function withClient(ui: React.ReactNode, closeFile = () => {}) {
 }
 
 /**
- * 要主动触发后台重取的用例用这个入口：QueryClient 由调用方持有，
- * 以便 invalidateQueries 后观察「保留 data 的失败」这条路径。
+ * 要主动触发后台重取的用例用这个入口：QueryClient 由调用方持有（经共享
+ * makeQueryClient 创建，与 PreviewProviders 同默认配置），以便
+ * invalidateQueries 后观察「保留 data 的失败」这条路径。
  */
-function renderWithClient(
+function renderWithHeldClient(
   client: QueryClient,
   selection: Partial<FileSelection>,
   node: React.ReactNode,
@@ -333,8 +333,8 @@ describe('FilePreview', () => {
     )
     vi.stubGlobal('fetch', fetchStub)
     const closeFile = vi.fn()
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    renderWithClient(
+    const qc = makeQueryClient()
+    renderWithHeldClient(
       qc,
       { selectedFile: 'a.ts', closeFile },
       <FilePreview projectId="p1" path="a.ts" />,
@@ -755,9 +755,7 @@ describe('FilePreview', () => {
       vi.stubGlobal('fetch', fetchMock('line1\nline2'))
       render(
         <MemoryRouter routes={chatPageRoutes} initialEntries={[entry]}>
-          <QueryClientProvider
-            client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-          >
+          <QueryClientProvider client={makeQueryClient()}>
             <ShellLinks />
             <View />
           </QueryClientProvider>

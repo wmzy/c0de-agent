@@ -43,7 +43,7 @@ async function runSlashCommand(
   }
 
   const { runManualCompact } = await import('../../core/loop.js')
-  const { getSession } = await import('../../session/session.js')
+  const { requireContinuableSession } = await import('../../session/session.js')
 
   // /workflow 命令注入三级注册表（内置 + 用户级 + 受信任的项目级）：
   // 此前 CLI 缺省回退仅内置注册表，~/.c0de/workflows 用户级工作流在 CLI
@@ -74,10 +74,9 @@ async function runSlashCommand(
       err('/compact 需要会话上下文：请加 --continue <session-id> 指定会话\n')
       return true
     }
-    const session = await getSession(ctx.deps.db, continueId)
-    if (!session) {
-      throw new Error(`session not found: ${continueId}`)
-    }
+    // 续接守卫与 print --continue 同口径（requireContinuableSession）：非 uuid/
+    // 不存在统一转译 session not found，回收站会话拒绝压缩。
+    const session = await requireContinuableSession(ctx.deps.db, continueId)
     // agent 组装与压缩执行收敛在 loop.runManualCompact；config 取值口径保留
     // CLI 侧：全局 defaultProvider/defaultModel。
     for await (const event of runManualCompact(

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI, sessionArchivesKey } from '@/services/session.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import type { CompactionArchive, SessionEntry } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatDateTime } from '@/utils/format.js'
@@ -42,11 +43,8 @@ const typeBadge = css`
 `
 
 const summary = css`
+  ${ellipsisCss}
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--haze-color-text);
 `
 

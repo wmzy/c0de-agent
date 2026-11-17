@@ -7,6 +7,7 @@ import { declaredModels } from '@/components/settings/shared.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { providersQueryOptions } from '@/services/provider.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { compactSelect, inputStyle } from '@/styles/tokens.js'
 import { comboboxKeyAction } from '@/utils/combobox-keys.js'
 import { messageOf } from '@/utils/errors.js'
@@ -96,6 +97,7 @@ const hintList = css`
 `
 
 const hintItem = css`
+  ${ellipsisCss}
   padding: 6px 10px;
   font: inherit;
   font-size: 12px;
@@ -104,9 +106,6 @@ const hintItem = css`
   border: none;
   color: var(--haze-color-text);
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   &:hover {
     background: var(--haze-color-bg-subtle);
   }
@@ -125,12 +124,10 @@ const hintItemActive = css`
 
 /** 过滤无匹配时的空态提示。 */
 const hintEmpty = css`
+  ${ellipsisCss}
   padding: 6px 10px;
   font-size: 12px;
   color: var(--haze-color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 `
 
 /**
@@ -162,15 +159,13 @@ const providerMinWidth = css`
  * 明示「先去配置」的话，用户不必靠报错反推前置条件。
  */
 const noProviderNotice = css`
+  ${ellipsisCss}
   display: flex;
   align-items: center;
   gap: 6px;
   min-height: 28px;
   font-size: 12px;
   color: var(--haze-color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 `
 
 /** 读取失败的整行占位收敛在 LoadErrorNotice（此前这里的 css 与 AgentSelector 逐字相同）。 */

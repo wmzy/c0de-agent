@@ -25,6 +25,7 @@ import { fileAPI } from '@/services/file.js'
 import { kanbanAPI } from '@/services/kanban.js'
 import { projectAPI, projectsKey } from '@/services/project.js'
 import { MOBILE } from '@/styles/breakpoints.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
@@ -77,12 +78,8 @@ const projectIcon = css`
 `
 
 const projectName = css`
+  ${ellipsisCss}
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  /* flex 子项默认 min-width:auto 不收缩，置 0 省略号才生效 */
-  min-width: 0;
 `
 
 /** 分支名：等宽字体 + 次级色；边框/背景/hover 见 triggerReset。 */

@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DangerConfirmDialog } from '@/components/DangerConfirmDialog.js'
 import { updateAPI } from '@/services/update.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 
 const impactList = css`
@@ -67,11 +68,8 @@ const dot = css`
 `
 
 const text = css`
+  ${ellipsisCss}
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   line-height: 1;
 `
 

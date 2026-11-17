@@ -98,6 +98,8 @@ vi.mock('../services/auth.js', () => ({
     listDevices: vi.fn().mockResolvedValue({ devices: [] }),
     revokeDevice: vi.fn().mockResolvedValue({ ok: true }),
   },
+  // 键 helper 与真实模块同形（SecurityPanel 查询/失效用）
+  authDevicesKey: () => ['auth', 'devices'],
 }))
 
 vi.mock('../contexts/ThemeContext.js', () => ({
@@ -126,6 +128,8 @@ vi.mock('@/services/commands.js', () => ({
   commandsAPI: {
     list: vi.fn(),
   },
+  // 键 helper 与真实模块同形（保存后失效用）
+  commandsRootKey: () => ['commands'],
 }))
 
 afterEach(() => {

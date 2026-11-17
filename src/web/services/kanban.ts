@@ -134,3 +134,9 @@ export function kanbanKey(projectId: string) {
 export function deletedKanbanKey() {
   return ['kanban', 'deleted'] as const
 }
+
+/** 看板根前缀键（恢复到原项目等客户端不知道目标项目 id 的场景：前缀失效
+ *  命中所有项目键 + deleted 键）。 */
+export function kanbanRootKey() {
+  return ['kanban'] as const
+}

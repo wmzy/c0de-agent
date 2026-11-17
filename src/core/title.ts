@@ -16,7 +16,7 @@ import type { Registry } from '../llm/registry.js'
 import { buildFallbackChain } from '../llm/routing.js'
 import { updateSessionTitle } from '../session/session.js'
 import type { ChatMessage, ChatRequest } from '../shared/types/llm.js'
-import { headChars } from '../shared/utils/string.js'
+import { truncateHead } from '../shared/utils/string.js'
 import type { Config } from './config.js'
 
 /** 会话默认占位标题；仍是该值时才有资格自动生成。 */
@@ -110,7 +110,7 @@ function firstNonEmptyLine(text: string): string | null {
 /** 标题超长截断为 ≤TITLE_MAX_LENGTH（含尾部省略号）。
  *  headChars 内收切点，避免截断点落在代理对中间产出孤立码元。 */
 function truncateTitle(line: string): string {
-  return line.length > TITLE_MAX_LENGTH ? `${headChars(line, TITLE_MAX_LENGTH - 3)}...` : line
+  return truncateHead(line, TITLE_MAX_LENGTH, '...')
 }
 
 /**

@@ -13,6 +13,8 @@ import { ChatHistoryError, ChatWelcome, EXAMPLE_TASKS } from '@/views/ChatView.j
 // Composer 内部 useCommands 会请求 /api/commands；mock 掉避免真实网络调用。
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  commandsRootKey: () => ['commands'],
 }))
 
 // Composer 内部 useQuery 会请求 /api/workflows；mock 掉

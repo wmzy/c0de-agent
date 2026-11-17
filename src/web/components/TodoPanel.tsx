@@ -19,6 +19,7 @@ import {
   todoKey,
 } from '@/services/todo.js'
 import { TOUCH } from '@/styles/breakpoints.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -70,11 +71,8 @@ const summaryDivider = css`
 `
 
 const summaryCurrent = css`
+  ${ellipsisCss}
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 `
 
 const summaryCurrentTask = css`

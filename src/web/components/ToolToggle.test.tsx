@@ -3,12 +3,12 @@
  * 归并建议：本文件为新增「输入区工具开关」组件的单元测试，与 InputArea.test.tsx
  * 同属「输入区交互」组件族；若后续合并输入区组件，可并入对应测试文件。
  */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToolToggle } from '@/components/ToolToggle.js'
+import { renderWithClient } from '@/test-utils.js'
 import type { ToolListItem } from '@/types/index.js'
 
 vi.mock('@/services/tool.js', () => ({
@@ -27,11 +27,6 @@ afterEach(() => {
   cleanup()
   vi.clearAllMocks()
 })
-
-function renderWithClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
-}
 
 /** 回写 onChange 的受控包装，用于测试连续交互闭环。 */
 function StatefulToggle({ initial }: { initial: Set<string> | null }) {

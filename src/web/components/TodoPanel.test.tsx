@@ -17,6 +17,8 @@ vi.mock('@/services/todo.js', () => ({
 
 vi.mock('@/services/kanban.js', () => ({
   kanbanAPI: { addCard: vi.fn() },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  kanbanRootKey: () => ['kanban'],
 }))
 
 beforeEach(() => {

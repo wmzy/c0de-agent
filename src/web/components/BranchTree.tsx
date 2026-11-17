@@ -4,6 +4,7 @@ import { Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { TOUCH } from '@/styles/breakpoints.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import type { SessionTreeNode, SessionUsage } from '@/types/index.js'
 import { formatCost, formatNumber } from '@/utils/format.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -68,11 +69,8 @@ const iconCls = css`
 `
 
 const titleCls = css`
+  ${ellipsisCss}
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 `
 
 const delBtn = css`

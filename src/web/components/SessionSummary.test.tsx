@@ -5,11 +5,11 @@
  */
 import type { LLMSegment } from '@shared/types/agent.js'
 import type { Message, Session } from '@shared/types/message.js'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionSummary } from '@/components/SessionSummary.js'
+import { makeQueryClient, renderWithClient } from '@/test-utils.js'
 
 vi.mock('@/services/session.js', () => {
   const sessionAPI = {
@@ -30,6 +30,19 @@ vi.mock('@/services/session.js', () => {
     }),
     // 键 helper 与真实模块同形（真 useSession.useMessages 在图内，渲染时要调）
     sessionMessagesKey: (id: string) => ['session', id, 'messages'],
+    // 键 helper 与真实模块同形（会话集合/回收站/搜索域）
+    sessionsRootKey: () => ['sessions'],
+    deletedSessionsKey: (projectId?: string) =>
+      projectId ? ['sessions', 'deleted', projectId] : ['sessions', 'deleted'],
+    deletedOrphansKey: () => ['sessions', 'deleted', 'orphans'],
+    deletedOrphansCountKey: () => ['sessions', 'deleted', 'orphans-count'],
+    sessionSearchKey: (projectId: string, q: string, includeDeleted: boolean) => [
+      'sessions',
+      'search',
+      projectId,
+      q,
+      includeDeleted,
+    ],
   }
 })
 
@@ -108,11 +121,6 @@ const segments: LLMSegment[] = [
     ],
   },
 ]
-
-function renderWithClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
-}
 
 function mockAll(
   s: Session | undefined = session,
@@ -354,12 +362,8 @@ describe('SessionSummary 消息/会话元信息读失败态', () => {
     ;(sessionAPI.llmDetails as Mock).mockResolvedValue(segments)
     // 自建 QueryClient：靠查询状态确认「另两条已落地」，而不是靠首次渲染的
     // 短暂「加载中…」——否则本用例在旧实现下也会通过（那时初帧同样是加载中）。
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
-      <QueryClientProvider client={qc}>
-        <SessionSummary sessionId="s1" />
-      </QueryClientProvider>,
-    )
+    const qc = makeQueryClient()
+    renderWithClient(<SessionSummary sessionId="s1" />, qc)
     fireEvent.click(screen.getByTestId('session-summary-toggle'))
 
     await waitFor(() => {

@@ -1,4 +1,5 @@
 import { css } from '@linaria/core'
+import { ellipsisCss } from '@/styles/shared.js'
 
 /** 工作流节点状态。 */
 export type WorkflowNodeStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -72,10 +73,8 @@ const nodeCard = css`
 `
 
 const nodeLabel = css`
+  ${ellipsisCss}
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 `
 
 const nodeMeta = css`

@@ -22,7 +22,7 @@ import { generateId } from '../../shared/index.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
-import { getProjectOr404 } from '../util/project-guard.js'
+import { getProjectOr404, projectNotFoundResponse } from '../util/project-guard.js'
 import { expandPath } from './filesystem.js'
 
 type ProjectWithBranch = Project & { gitBranch: string | null; worktreeMissing: boolean }
@@ -115,7 +115,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
     const name = typeof parsed.body.name === 'string' ? parsed.body.name : ''
     if (!name) return apiError(c, 400, 'BAD_REQUEST', 'name is required')
     const project = await updateProjectName(ctx.db, c.req.param('id'), name)
-    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    if (!project) return projectNotFoundResponse(c)
     return c.json(withBranch(project))
   })
 
@@ -123,7 +123,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
   // 信任是一次性动作（trustedAt 落盘）；此后聊天入口不再拦截本项目。
   app.post('/:id/trust', async (c) => {
     const project = await trustProject(ctx.db, c.req.param('id'))
-    if (!project) return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+    if (!project) return projectNotFoundResponse(c)
     return c.json({ ok: true, project: withBranch(project) })
   })
 
@@ -166,7 +166,7 @@ function createProjectRoute(ctx: ServerContext): Hono {
       return c.json({ ok: true, project: withBranch(project) })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg === 'PROJECT_NOT_FOUND') return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+      if (msg === 'PROJECT_NOT_FOUND') return projectNotFoundResponse(c)
       if (msg.startsWith('TARGET_OCCUPIED')) {
         return apiError(c, 409, 'TARGET_OCCUPIED', msg.replace('TARGET_OCCUPIED: ', ''))
       }

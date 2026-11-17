@@ -10,6 +10,7 @@ import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
 import type { HookRunner } from '../plugins/types.js'
 import type { LastRun, Session, SessionMetadata } from '../shared/types/message.js'
+import { isUuid } from '../shared/utils/string.js'
 import { getEntries } from './message.js'
 import { toEpochMs } from './time.js'
 
@@ -168,6 +169,24 @@ export function webVisibleSessionCondition() {
 async function getSession(handle: DB, id: string): Promise<Session | null> {
   const [row] = await handle.db.select().from(sessions).where(eq(sessions.id, id))
   return row ? rowToSession(row) : null
+}
+
+/** CLI 续接守卫（print --continue 与 chat /compact 共用）：sessions.id 为
+ *  uuid 列，非 uuid 输入会让 PG 直接抛原始 "invalid input syntax for type
+ *  uuid" SQL 错误——前置 isUuid 校验统一转译为「session not found」（与不存在
+ *  的会话同语义），不泄漏 SQL 原文；回收站会话（Web 已删除）拒绝续接（M2
+ *  口径）——否则消息会写入一个 Web 树不可见的会话，与「删除」心智模型冲突。 */
+async function requireContinuableSession(handle: DB, id: string): Promise<Session> {
+  if (!isUuid(id)) throw new Error(`session not found: ${id}`)
+  const session = await getSession(handle, id)
+  if (!session) throw new Error(`session not found: ${id}`)
+  if (session.deletedAt) {
+    throw new Error(
+      `该会话在回收站中（已删除）。请先在 Web 界面回收站中恢复，` +
+        `或停止 serve 后运行 \`c0de sessions restore ${id}\` 恢复，再续接。`,
+    )
+  }
+  return session
 }
 
 /** List all active sessions（未软删除、Web 树可见：web 会话 + 持久化 CLI 会话）。 */
@@ -372,6 +391,7 @@ export {
   markUnfinishedTurn,
   mutateSessionMetadata,
   readSessionMetadata,
+  requireContinuableSession,
   searchSessions,
   touchLastOpened,
   touchSession,

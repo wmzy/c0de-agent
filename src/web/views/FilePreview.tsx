@@ -13,6 +13,7 @@ import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
 import { getAuthToken } from '@/services/api.js'
 import { appendAuthQuery } from '@/services/authUrl.js'
 import { encodeFilePath, fileQueryOptions } from '@/services/file.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { extOf } from '@/utils/format.js'
@@ -38,9 +39,7 @@ const header = css`
 `
 
 const pathText = css`
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  ${ellipsisCss}
   color: var(--haze-color-text-secondary);
 `
 

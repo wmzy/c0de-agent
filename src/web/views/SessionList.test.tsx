@@ -93,7 +93,18 @@ vi.mock('@/services/session.js', () => ({
     touchOrphansSeen: vi.fn().mockResolvedValue({ ok: true, touched: 0 }),
   },
   // 键 helper 与真实模块同形（失效路径断言用不到，但 import 必须可解析）
-  deletedSessionsKey: () => ['sessions', 'deleted'],
+  sessionsRootKey: () => ['sessions'],
+  deletedSessionsKey: (projectId?: string) =>
+    projectId ? ['sessions', 'deleted', projectId] : ['sessions', 'deleted'],
+  deletedOrphansKey: () => ['sessions', 'deleted', 'orphans'],
+  deletedOrphansCountKey: () => ['sessions', 'deleted', 'orphans-count'],
+  sessionSearchKey: (projectId: string, q: string, includeDeleted: boolean) => [
+    'sessions',
+    'search',
+    projectId,
+    q,
+    includeDeleted,
+  ],
 }))
 
 vi.mock('@/services/kanban.js', () => ({
@@ -106,6 +117,7 @@ vi.mock('@/services/kanban.js', () => ({
   // 键 helper 与真实模块同形（失效路径断言用不到，但 import 必须可解析）
   kanbanKey: (projectId: string) => ['kanban', projectId],
   deletedKanbanKey: () => ['kanban', 'deleted'],
+  kanbanRootKey: () => ['kanban'],
 }))
 
 const EMPTY_USAGE = {

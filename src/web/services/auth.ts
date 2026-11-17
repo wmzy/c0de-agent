@@ -52,5 +52,11 @@ const authAPI = {
   revokeDevice: (id: string) => del<{ ok: boolean }>(`/api/auth/devices/${encodeURIComponent(id)}`),
 }
 
+/** 已授权设备列表查询键（SecurityPanel 查询与撤销后失效统一走这里——
+ *  此前两处手抄 ['auth', 'devices']）。 */
+export function authDevicesKey() {
+  return ['auth', 'devices'] as const
+}
+
 export type { AuthorizedDevice, PairingRequestResult, PairingStatus, PendingPairing }
 export { authAPI }

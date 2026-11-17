@@ -2,11 +2,12 @@
 // TopBar 内嵌 ProjectIndicator（项目名/分支可下拉切换 + 添加按钮）+ CommitButton（提交按钮）。
 
 import { createRoutes, MemoryRouter, View } from '@native-router/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TopBar } from '@/components/TopBar.js'
+import { makeQueryClient } from '@/test-utils.js'
 
 // ---- mocks ----
 vi.mock('@/services/usage.js', () => {
@@ -99,14 +100,8 @@ afterEach(() => {
   cleanup()
 })
 
-function makeQC() {
-  return new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  })
-}
-
 async function renderWithProvider(node: React.ReactNode) {
-  const qc = makeQC()
+  const qc = makeQueryClient()
   const view = render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>)
   await act(async () => {})
   return view

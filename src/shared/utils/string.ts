@@ -48,6 +48,13 @@ export function tailChars(text: string, n: number): string {
   return text.slice(safeTailStart(text, text.length - n))
 }
 
+/** 截断到 max 内且省略号计入上限：text 超长时取前 max-ellipsis.length 字符 +
+ *  ellipsis。切点经 headChars 内收，不拆代理对（会话标题与 PTY 标题两处
+ *  truncateTitle 的同形骨架收敛；省略号形态/长度是调用点口径）。 */
+export function truncateHead(text: string, max: number, ellipsis: string): string {
+  return text.length > max ? headChars(text, max - ellipsis.length) + ellipsis : text
+}
+
 /** 正则元字符逐字符转义（转出可安全嵌入 RegExp 的字面量原文）。
  *  glob（非法字符类/花括号降级）与 grep（非法模式的字面量回退）共用。 */
 export function escapeRegex(s: string): string {

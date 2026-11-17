@@ -179,7 +179,30 @@ export function sessionTreeKey() {
   return ['sessions', 'tree'] as const
 }
 
-/** 已删除会话列表查询键（回收站；invalidateSessionLists({deleted:true}) 触达）。 */
-export function deletedSessionsKey() {
-  return ['sessions', 'deleted'] as const
+/** 会话根前缀键（invalidateSessionLists 契约的根：失效命中全部会话域键）。 */
+export function sessionsRootKey() {
+  return ['sessions'] as const
+}
+
+/** 已删除会话列表查询键：带 projectId 为该项目的回收站列表查询键；缺省为
+ *  回收站前缀键（invalidateSessionLists({deleted:true}) 与回收站窄场景失效用）。 */
+export function deletedSessionsKey(projectId?: string) {
+  return projectId
+    ? (['sessions', 'deleted', projectId] as const)
+    : (['sessions', 'deleted'] as const)
+}
+
+/** 未归属项目的已删会话（孤儿）查询键（useDeletedOrphans）。 */
+export function deletedOrphansKey() {
+  return ['sessions', 'deleted', 'orphans'] as const
+}
+
+/** 孤儿条目计数查询键（useDeletedOrphansCount）。 */
+export function deletedOrphansCountKey() {
+  return ['sessions', 'deleted', 'orphans-count'] as const
+}
+
+/** 会话内容搜索查询键（useSessionContentSearch 正本；q 为防抖落地后的搜索词）。 */
+export function sessionSearchKey(projectId: string, q: string, includeDeleted: boolean) {
+  return ['sessions', 'search', projectId, q, includeDeleted] as const
 }

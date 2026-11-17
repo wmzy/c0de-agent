@@ -13,6 +13,7 @@ import {
 } from '@/hooks/useSession.js'
 import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
 import { sessionAPI } from '@/services/session.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
@@ -156,10 +157,7 @@ const matchIcon = css`
 `
 
 const matchTitle = css`
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  ${ellipsisCss}
 `
 
 /** 按项目 id 过滤会话树（以根会话的 projectId 为准）。项目为路由顶级维度，仅显示归属本项目的会话。 */

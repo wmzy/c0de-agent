@@ -18,6 +18,18 @@ vi.mock('@/services/session.js', () => ({
   },
   // 键 helper 与真实模块同形（查询键用）
   sessionArchivesKey: (sessionId: string, q: string) => ['session', sessionId, 'archives', q],
+  sessionsRootKey: () => ['sessions'],
+  deletedSessionsKey: (projectId?: string) =>
+    projectId ? ['sessions', 'deleted', projectId] : ['sessions', 'deleted'],
+  deletedOrphansKey: () => ['sessions', 'deleted', 'orphans'],
+  deletedOrphansCountKey: () => ['sessions', 'deleted', 'orphans-count'],
+  sessionSearchKey: (projectId: string, q: string, includeDeleted: boolean) => [
+    'sessions',
+    'search',
+    projectId,
+    q,
+    includeDeleted,
+  ],
 }))
 
 const { sessionAPI } = await import('@/services/session.js')

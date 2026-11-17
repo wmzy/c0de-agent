@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../../shared/utils/hash.js'
 
 // hashline 补丁语言（spec §16）：内容哈希锚定的行级补丁。
 // 本模块实现全部行级操作（SWAP/DEL/INS.PRE|POST|HEAD|TAIL）。
@@ -44,7 +44,7 @@ type PatchHunk = {
 
 /** 4 位 hex 内容哈希（sha256 取前 4 位）。与 session 快照哈希算法同源。 */
 function computeHash(content: string): string {
-  return createHash('sha256').update(content).digest('hex').slice(0, 4)
+  return sha256Hex(content).slice(0, 4)
 }
 
 // ── parsePatch ───────────────────────────────────────────

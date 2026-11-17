@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { resolveGlobalConfigDir } from '../../core/config.js'
 import { discoverWorkflows, saveWorkflow } from '../../core/workflows/index.js'
@@ -14,7 +15,7 @@ import {
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
-import { getProjectOr404 } from '../util/project-guard.js'
+import { getProjectOr404, projectNotFoundResponse } from '../util/project-guard.js'
 import { resolveSessionScope } from '../util/session-scope.js'
 import { projectTrustState, resolveWorkflowEntry, trustGateResponse } from './trust-gate.js'
 import { createRestWorkflowEmitter, runWorkflowChannel } from './workflow-run.js'
@@ -38,6 +39,12 @@ function findBusyWorkflowByName(ctx: ServerContext, name: string): string | null
 /** 权限确认超时兜底拒绝后暂停 run 的暂停原因（与 chat 路由同口径）。 */
 const PERMISSION_TIMEOUT_PAUSE_REASON =
   '权限确认超时：该工具已被自动拒绝，工作流已暂停。点击「恢复」后可直接要求 agent 重试该工具'
+
+/** workflowRegistry 未初始化（测试缺省/启动异常）→ 500 的单点构造：
+ *  POST /、GET /:name、POST /:name/run、DELETE /:name 四入口逐字同形守卫。 */
+function registryNotInitialized(c: Context): Response {
+  return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
+}
 
 /** 创建工作流 REST API 路由。 */
 function createWorkflowsRoute(ctx: ServerContext) {
@@ -91,7 +98,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
   app.post('/', async (c) => {
     const registry = ctx.workflowRegistry
     if (!registry) {
-      return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
+      return registryNotInitialized(c)
     }
 
     const parsed = await readJsonObject(c)
@@ -125,7 +132,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       if (projectId) {
         const st = await projectTrustState(ctx, projectId)
         if (!st.project) {
-          return apiError(c, 404, 'PROJECT_NOT_FOUND', '项目不存在')
+          return projectNotFoundResponse(c)
         }
         if (!st.trusted) {
           return apiError(
@@ -204,7 +211,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     const name = c.req.param('name')
     const registry = ctx.workflowRegistry
     if (!registry) {
-      return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
+      return registryNotInitialized(c)
     }
 
     // 统一解析：项目级（已信任）> 用户 > 内置，与 GET / 列表口径一致。
@@ -240,7 +247,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
     const name = c.req.param('name')
     const registry = ctx.workflowRegistry
     if (!registry) {
-      return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
+      return registryNotInitialized(c)
     }
     // 项目级解析 + 项目 worktree 作为 agent cwd；信任门禁先行：未信任（或信任后
     // 漂移）项目在发现/执行前拦截——发现本身就会执行工作流模块顶层代码，必须与
@@ -314,7 +321,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
 
     const registry = ctx.workflowRegistry
     if (!registry) {
-      return apiError(c, 500, 'NOT_INITIALIZED', 'Workflow registry not initialized')
+      return registryNotInitialized(c)
     }
     const registryEntry = registry.get(name)
     const projectId = c.req.query('projectId')

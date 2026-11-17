@@ -3,11 +3,11 @@ import { abortAgent, createAgent, runAgent } from '../../core/agent.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { preflightRoute } from '../../core/provider-registry.js'
 import { getByDirectory } from '../../project/index.js'
-import { createSession, getSession } from '../../session/session.js'
+import { createSession, requireContinuableSession } from '../../session/session.js'
 import { upgradeTemporarySession } from '../../session/trash.js'
 import type { AgentConfig, AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
-import { isUuid } from '../../shared/utils/string.js'
+import type { Session } from '../../shared/types/message.js'
 import { PROJECT_BOUND_TOOLS, resolveEnabledToolNames } from '../../tools/index.js'
 
 type PrintOptions = {
@@ -32,10 +32,6 @@ function collectAssistantText(events: AgentEvent[]): string {
   return text
 }
 
-/** sessions.id 为 uuid 列：非 uuid 的 --continue 输入会让 PG 直接抛原始
- *  "invalid input syntax for type uuid" SQL 错误。前置校验（shared isUuid）
- *  统一转译为「session not found」（与不存在的会话同语义），不泄漏 SQL 原文。 */
-
 /** Print 模式：临时会话（或 --continue 指定会话）→ agent → 收集文本 → 返回。 */
 async function runPrintMode(
   config: Config,
@@ -43,19 +39,11 @@ async function runPrintMode(
   deps: LoopDeps,
   opts: PrintOptions = {},
 ): Promise<string> {
-  let session: Awaited<ReturnType<typeof getSession>>
+  let session: Session
   if (opts.sessionId) {
-    if (!isUuid(opts.sessionId)) throw new Error(`session not found: ${opts.sessionId}`)
-    const existing = await getSession(deps.db, opts.sessionId)
-    if (!existing) throw new Error(`session not found: ${opts.sessionId}`)
-    // M2：会话在回收站（Web 已删除）时拒绝续接——否则消息会写入一个 Web 树
-    // 不可见的会话，与「删除」心智模型冲突。给出可操作的恢复途径。
-    if (existing.deletedAt) {
-      throw new Error(
-        `该会话在回收站中（已删除）。请先在 Web 界面回收站中恢复，` +
-          `或停止 serve 后运行 \`c0de sessions restore ${opts.sessionId}\` 恢复，再续接。`,
-      )
-    }
+    // 续接守卫（非 uuid/不存在统一转译 + 回收站拒绝）收敛在 session.ts 的
+    // requireContinuableSession（与 chat /compact 同口径）。
+    const existing = await requireContinuableSession(deps.db, opts.sessionId)
     // P2-6 修复：cwd 与会话 worktree 不一致时拒绝——文件工具在 cwd 执行，
     // 而 kanban/预算等绑定 session.projectId，同一会话上下文会分裂到两个目录，
     // 且毫无提示。给出切换目录的可操作指引，避免用户在错误目录误改文件。

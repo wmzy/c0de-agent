@@ -9,7 +9,7 @@
 //   - 显式配置 security.token 时为静态模式：不轮换、不配对（CI/脚本场景）。
 //   - authEnabled=false 时不启用。
 
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import {
   existsSync,
   type FSWatcher,
@@ -21,6 +21,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { timingSafeEqualString } from '../shared/utils/constant-time.js'
+import { sha256Hex } from '../shared/utils/hash.js'
 import { readJsonFileSafe, writeJsonFileSafe } from '../shared/utils/json-file.js'
 
 const DEVICES_FILENAME = 'devices.json'
@@ -123,7 +124,7 @@ export type AuthManager = {
 }
 
 function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex')
+  return sha256Hex(token)
 }
 
 /**

@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { type RefObject, useCallback, useEffect, useState } from 'react'
+import { ellipsisCss } from '@/styles/shared.js'
 
 export type StickyUser = { id: string; text: string }
 
@@ -30,8 +31,8 @@ const bar = css`
 `
 
 const jump = css`
+  ${ellipsisCss}
   flex: 1;
-  min-width: 0;
   text-align: left;
   background: transparent;
   border: none;
@@ -39,9 +40,6 @@ const jump = css`
   font-size: 12px;
   line-height: 1.4;
   color: var(--haze-color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   padding: 4px 2px;
 `
 

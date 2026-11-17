@@ -18,6 +18,7 @@ import { useDirectoryTree } from '@/components/useDirectoryTree.js'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { filesystemAPI } from '@/services/filesystem.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { comboboxKeyAction } from '@/utils/combobox-keys.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -89,7 +90,7 @@ const suggestions = css`
 `
 
 const suggestion = css`
-  overflow: hidden;
+  ${ellipsisCss}
   padding: 6px 8px;
   border: none;
   border-radius: 4px;
@@ -97,8 +98,6 @@ const suggestion = css`
   color: var(--haze-color-text-secondary);
   font-size: 12px;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   cursor: pointer;
   &:hover,
   &[data-active] {
@@ -139,12 +138,10 @@ const errorOverlay = css`
 `
 
 const selectionBar = css`
-  overflow: hidden;
+  ${ellipsisCss}
   flex-shrink: 0;
   color: var(--haze-color-text-secondary);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 `
 
 type Suggestion = { absolute: string; type: 'directory' }

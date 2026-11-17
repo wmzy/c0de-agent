@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { toolAPI } from '@/services/tool.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { cardStyle, inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 
@@ -104,11 +105,9 @@ const itemName = css`
 `
 
 const itemDesc = css`
+  ${ellipsisCss}
   font-size: 12px;
   color: var(--haze-color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 `
 
 const empty = css`

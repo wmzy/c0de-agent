@@ -14,6 +14,18 @@ vi.mock('@/services/session.js', () => ({
   // 键 helper 与真实模块同形（失效路径断言用不到，但 import 必须可解析）
   sessionMetaKey: (id: string) => ['session', id, 'meta'],
   sessionMessagesKey: (id: string) => ['session', id, 'messages'],
+  sessionsRootKey: () => ['sessions'],
+  deletedSessionsKey: (projectId?: string) =>
+    projectId ? ['sessions', 'deleted', projectId] : ['sessions', 'deleted'],
+  deletedOrphansKey: () => ['sessions', 'deleted', 'orphans'],
+  deletedOrphansCountKey: () => ['sessions', 'deleted', 'orphans-count'],
+  sessionSearchKey: (projectId: string, q: string, includeDeleted: boolean) => [
+    'sessions',
+    'search',
+    projectId,
+    q,
+    includeDeleted,
+  ],
 }))
 
 const userMessage = {

@@ -15,6 +15,8 @@ import { storageGet } from '@/utils/storage.js'
 
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  commandsRootKey: () => ['commands'],
 }))
 
 vi.mock('@/services/workflows.js', () => {

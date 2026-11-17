@@ -16,6 +16,8 @@ vi.mock('@/services/auth.js', () => ({
     approvePairing: vi.fn(),
     denyPairing: vi.fn(),
   },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  authDevicesKey: () => ['auth', 'devices'],
 }))
 
 const PENDING = {

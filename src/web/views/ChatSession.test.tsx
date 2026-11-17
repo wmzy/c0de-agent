@@ -154,6 +154,19 @@ vi.mock('@/services/session.js', () => {
       queryKey: ['session', id, 'llm-details'],
       queryFn: () => sessionAPI.llmDetails(id),
     }),
+    // 键 helper 与真实模块同形（会话集合/回收站/搜索域）
+    sessionsRootKey: () => ['sessions'],
+    deletedSessionsKey: (projectId?: string) =>
+      projectId ? ['sessions', 'deleted', projectId] : ['sessions', 'deleted'],
+    deletedOrphansKey: () => ['sessions', 'deleted', 'orphans'],
+    deletedOrphansCountKey: () => ['sessions', 'deleted', 'orphans-count'],
+    sessionSearchKey: (projectId: string, q: string, includeDeleted: boolean) => [
+      'sessions',
+      'search',
+      projectId,
+      q,
+      includeDeleted,
+    ],
   }
 })
 
@@ -180,6 +193,8 @@ vi.mock('@/services/provider.js', () => {
 
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },
+  // 键 helper 与真实模块同形（import 必须可解析）
+  commandsRootKey: () => ['commands'],
 }))
 
 vi.mock('@/services/config.js', () => ({

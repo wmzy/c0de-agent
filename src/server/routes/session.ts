@@ -56,6 +56,11 @@ import {
   resolveAgentCwd,
 } from './chat.js'
 
+/** 会话资源本体 404 的中文口径文案：uuid 参数守卫与 GET/messages/llm-details
+ *  等端点共用；DELETE 的 softDeleteSession 失败分支此前手抄英文
+ *  'Session not found'，属同资源双口径漂移，已对齐到同一常量。 */
+const SESSION_NOT_FOUND_MESSAGE = '会话不存在或已删除'
+
 function createSessionRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -285,14 +290,14 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // middleware/uuid-param.ts）。必须注册在上方全部静态路径（/import、/tree、
   // /search、/deleted*）之后：Hono 按注册序分派，静态路由先命中即返回，
   // 不会被本守卫拦截。
-  const guardSessionId = uuidParamGuard('id', 'NOT_FOUND', '会话不存在或已删除')
+  const guardSessionId = uuidParamGuard('id', 'NOT_FOUND', SESSION_NOT_FOUND_MESSAGE)
   app.use('/:id', guardSessionId)
   app.use('/:id/*', guardSessionId)
 
   // 获取会话详情
   app.get('/:id', async (c) => {
     const live = await getLiveSessionOr404(ctx, c, c.req.param('id'), {
-      notFoundMessage: '会话不存在或已删除',
+      notFoundMessage: SESSION_NOT_FOUND_MESSAGE,
     })
     if (!live.ok) return live.response
     return c.json(live.session)
@@ -368,7 +373,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
     ctx.agentManager.abortCascade(id)
     const ok = await softDeleteSession(ctx.db, id)
-    if (!ok) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    if (!ok) return apiError(c, 404, 'NOT_FOUND', SESSION_NOT_FOUND_MESSAGE)
     return c.body(null, 204)
   })
 
@@ -557,7 +562,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
   app.get('/:id/messages', async (c) => {
     const id = c.req.param('id')
     const live = await getLiveSessionOr404(ctx, c, id, {
-      notFoundMessage: '会话不存在或已删除',
+      notFoundMessage: SESSION_NOT_FOUND_MESSAGE,
     })
     if (!live.ok) return live.response
     const [messages, steering] = await Promise.all([
@@ -575,7 +580,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (run) return c.json(run.state.segments)
     // P3 口径统一：回收站会话的持久化分段不再下发（会话本身已 404）。
     const live = await getLiveSessionOr404(ctx, c, c.req.param('id'), {
-      notFoundMessage: '会话不存在或已删除',
+      notFoundMessage: SESSION_NOT_FOUND_MESSAGE,
     })
     if (!live.ok) return live.response
     const persisted = await getLLMSegments(ctx.db, c.req.param('id'))
@@ -746,7 +751,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const id = c.req.param('id')
     // P3 口径统一：不存在/回收站会话不再静默返回成功（与 GET /:id 404 一致）。
     const live = await getLiveSessionOr404(ctx, c, id, {
-      notFoundMessage: '会话不存在或已删除',
+      notFoundMessage: SESSION_NOT_FOUND_MESSAGE,
     })
     if (!live.ok) return live.response
     await touchLastOpened(ctx.db, id)

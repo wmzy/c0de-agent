@@ -23,6 +23,7 @@ import {
   kanbanAPI,
   kanbanKey,
 } from '@/services/kanban.js'
+import { ellipsisCss } from '@/styles/shared.js'
 import { messageOf } from '@/utils/errors.js'
 import { LoadError } from '@/views/_shared/errorState.js'
 
@@ -51,13 +52,11 @@ const headerTitle = css`
 
 /** 看板定位说明：项目级 vs 会话内待办的边界（产品定位，P2）。 */
 const headerHint = css`
+  ${ellipsisCss}
   flex: 1;
   margin-left: 12px;
   color: var(--haze-color-text-secondary);
   font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 `
 
 const configBtn = css`

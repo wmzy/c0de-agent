@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto'
 import { and, desc, eq } from 'drizzle-orm'
 import type { DB } from '../db/client.js'
 import { fileSnapshots } from '../db/schema.js'
+import { sha256Hex } from '../shared/utils/hash.js'
 import { toEpochMs } from './time.js'
 import { estimateTokens } from './token.js'
 import type { FileSnapshot } from './types.js'
@@ -32,7 +32,7 @@ async function upsertFileSnapshot(
   content: string,
   mtimeMs?: number,
 ): Promise<string> {
-  const contentHash = createHash('sha256').update(content).digest('hex')
+  const contentHash = sha256Hex(content)
   const tokenCount = estimateTokens(content)
 
   const [existing] = await handle.db

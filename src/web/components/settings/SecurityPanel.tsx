@@ -14,7 +14,7 @@ import {
   section,
   sectionTitle,
 } from '@/components/settings/styles.js'
-import { authAPI } from '@/services/auth.js'
+import { authAPI, authDevicesKey } from '@/services/auth.js'
 import { btnDanger } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatDate } from '@/utils/format.js'
@@ -79,7 +79,7 @@ function DeviceListError({
 function DevicesSection() {
   const qc = useQueryClient()
   const { data, isLoading, isError, error, isFetching, refetch } = useQuery({
-    queryKey: ['auth', 'devices'],
+    queryKey: authDevicesKey(),
     queryFn: () => authAPI.listDevices(),
     staleTime: 30_000,
     retry: false,
@@ -92,7 +92,7 @@ function DevicesSection() {
   const revoke = useMutation({
     mutationFn: (id: string) => authAPI.revokeDevice(id),
     onMutate: () => setRevokeError(null),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'devices'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: authDevicesKey() }),
     onError: (e: unknown) => {
       setRevokeError(messageOf(e) || '撤销失败，设备仍可访问')
     },

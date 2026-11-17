@@ -33,6 +33,12 @@ export function configQueryOptions(projectId?: string) {
   }
 }
 
+/** config 根前缀键（专供前缀失效：invalidateQueries(configRootKey()) 前缀
+ *  命中 server 口径键与全部项目键）。 */
+export function configRootKey() {
+  return ['config'] as const
+}
+
 /** response → ConfigContextValue 的形状拼装（ConfigProvider 与 useConfig 共用）：
  *  字段增减只改这一处——此前两处内联各自兜底，scopes 的默认对象已逐字重复两次。 */
 function toConfigContextValue(

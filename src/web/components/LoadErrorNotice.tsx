@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { Button } from 'haze-ui'
+import { ellipsisCss } from '@/styles/shared.js'
 
 /**
  * 读取失败整行占位（原因 + 重试）：AgentSelector / ModelSelector /
@@ -14,15 +15,13 @@ import { Button } from 'haze-ui'
 
 /** 行内变体（AgentSelector / ModelSelector）：替换 footer 里整行控件的窄占位。 */
 const inlineNotice = css`
+  ${ellipsisCss}
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 28px;
   font-size: 12px;
   color: var(--haze-color-danger, #b3261e);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 `
 
 /** 堆叠变体（ProviderCatalogDialog）：列表面板内的整段失败，标题与重试钮上下排。 */

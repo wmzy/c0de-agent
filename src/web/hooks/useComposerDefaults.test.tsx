@@ -61,6 +61,8 @@ vi.mock('@/services/provider.js', () => {
 
 vi.mock('@/contexts/ConfigContext.js', () => ({
   useConfig: vi.fn(),
+  // 键 helper 与真实模块同形（import 必须可解析）
+  configRootKey: () => ['config'],
 }))
 
 function makeWrapper() {

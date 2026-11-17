@@ -1,9 +1,12 @@
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { projectAPI, projectsKey } from '@/services/project.js'
 import {
+  deletedOrphansCountKey,
+  deletedOrphansKey,
   deletedSessionsKey,
   sessionAPI,
   sessionMessagesKey,
+  sessionsRootKey,
   sessionTreeKey,
 } from '@/services/session.js'
 
@@ -18,7 +21,7 @@ export function invalidateSessionLists(
   opts: { deleted?: boolean } = {},
 ): Promise<void> {
   const jobs = [
-    qc.invalidateQueries({ queryKey: ['sessions'] }),
+    qc.invalidateQueries({ queryKey: sessionsRootKey() }),
     qc.invalidateQueries({ queryKey: sessionTreeKey() }),
   ]
   if (opts.deleted) {
@@ -64,7 +67,7 @@ export function useDeleteSession() {
 /** 回收站：已软删除的会话列表（按项目过滤，P1-7）。 */
 export function useDeletedSessions(projectId?: string) {
   return useQuery({
-    queryKey: ['sessions', 'deleted', projectId],
+    queryKey: deletedSessionsKey(projectId),
     queryFn: () => sessionAPI.deleted(projectId),
   })
 }
@@ -74,7 +77,7 @@ export function useDeletedSessions(projectId?: string) {
  *  展开时由 RecycleBin 显式调用 touchOrphansSeen 启动倒计时。 */
 export function useDeletedOrphans(enabled: boolean) {
   return useQuery({
-    queryKey: ['sessions', 'deleted', 'orphans'],
+    queryKey: deletedOrphansKey(),
     queryFn: () => sessionAPI.deletedOrphans(),
     enabled,
   })
@@ -83,7 +86,7 @@ export function useDeletedOrphans(enabled: boolean) {
 /** A3：孤儿条目计数（不标记 seen；分组折叠时展示「N 条」用）。 */
 export function useDeletedOrphansCount() {
   return useQuery({
-    queryKey: ['sessions', 'deleted', 'orphans-count'],
+    queryKey: deletedOrphansCountKey(),
     queryFn: () => sessionAPI.deletedOrphansCount(),
   })
 }

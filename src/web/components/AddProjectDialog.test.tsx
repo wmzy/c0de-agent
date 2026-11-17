@@ -1,10 +1,10 @@
 // AddProjectDialog 组件测试，对应 src/web/components/AddProjectDialog.tsx
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AddProjectDialog } from '@/components/AddProjectDialog.js'
 import { filesystemAPI } from '@/services/filesystem.js'
 import { projectAPI } from '@/services/project.js'
+import { renderWithClient } from '@/test-utils.js'
 
 vi.mock('@/services/project.js', () => ({
   projectAPI: {
@@ -32,11 +32,6 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
-
-function renderWithClient(ui: React.ReactElement) {
-  const qc = new QueryClient()
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
-}
 
 describe('AddProjectDialog', () => {
   it('空目录时确认按钮禁用', () => {

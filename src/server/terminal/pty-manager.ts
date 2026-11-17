@@ -6,7 +6,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import { type IPty, spawn } from 'node-pty'
 import type { WebSocket } from 'ws'
-import { headChars, tailChars } from '../../shared/utils/string.js'
+import { tailChars, truncateHead } from '../../shared/utils/string.js'
 
 /** PTY 会话信息（返回给前端）。 */
 export interface PTYInfo {
@@ -157,7 +157,7 @@ const SCROLLBACK_MAX = 50_000
  *  产出 101 字符，违反上限契约）。切点经 headChars 内收，不拆代理对。 */
 export function truncateTitle(title: string): string {
   const clean = title.replace(/[\r\n]/g, ' ').trim()
-  return clean.length > MAX_TITLE_LEN ? `${headChars(clean, MAX_TITLE_LEN - 1)}…` : clean
+  return truncateHead(clean, MAX_TITLE_LEN, '…')
 }
 
 /** POSIX 单引号转义：仅安全字符（字母数字与常见路径/别名符号）原样，否则单引号包裹。 */

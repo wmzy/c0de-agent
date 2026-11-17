@@ -2,6 +2,7 @@ import { css } from '@linaria/core'
 import { memo, useState } from 'react'
 import { Collapsible } from '@/components/Collapsible.js'
 import { Markdown } from '@/components/Markdown.js'
+import { ellipsisCss } from '@/styles/shared.js'
 
 const wrap = css`
   border: 1px solid var(--haze-color-border);
@@ -27,11 +28,8 @@ const title = css`
 `
 
 const preview = css`
+  ${ellipsisCss}
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--haze-color-text-secondary);
   opacity: 0.7;
 `

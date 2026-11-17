@@ -71,8 +71,11 @@ const resultRow = css`
 `
 
 /** 搜索结果行的 ghost 动作钮（@引用 / 🗑删除）：两份 16 属性样式只差字号与
- *  hover 色，收敛为基类 + 各自 2 行覆盖。 */
-const ghostAction = css`
+ *  hover 色，收敛为共享声明片段 + 各自覆盖。
+ *  必须是 CSS 文本片段而非 css`` 类：本工具链在 css`` 里内插类名会把类名
+ *  原样吐进声明块（`.x{abc123 font-size:11px;}`），整条声明被浏览器丢弃、
+ *  lightningcss minify 直接报错（曾致 build:web 失败）。见 styles/shared.ts。 */
+const ghostActionCss = `
   opacity: 0.65;
   background: transparent;
   border: none;
@@ -90,7 +93,7 @@ const ghostAction = css`
 `
 
 const searchMentionBtn = css`
-  ${ghostAction}
+  ${ghostActionCss}
   font-size: 11px;
   &:hover {
     color: var(--haze-color-primary);
@@ -98,7 +101,7 @@ const searchMentionBtn = css`
 `
 
 const searchDeleteBtn = css`
-  ${ghostAction}
+  ${ghostActionCss}
   font-size: 12px;
   &:hover {
     color: var(--haze-color-danger);
