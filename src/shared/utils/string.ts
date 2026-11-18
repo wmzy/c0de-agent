@@ -69,6 +69,19 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/** 任意抛出值 → 可读消息（message 属性感知版）：Error 取 message；非 Error 但
+ *  带 message 属性的对象（agentLoop 抛出的失败对象、CommandResult 的 error
+ *  变体、LLMError 等普通对象）取 String(message)；其余 String() 兜底。
+ *  errorMessage 的超集，供「错误可能以 message 载体对象形态抛出」的展示/日志
+ *  路径使用（此前 SSE 错误信封与 stream-collect 各持一份同构提取链）。 */
+export function readableErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    return String((err as { message: unknown }).message)
+  }
+  return String(err)
+}
+
 /** UUID（任意版本/大小写）格式判定。
  *  用于「路径/参数里的 id 直接进 PG uuid 列」的入口预检：非 UUID 经 drizzle
  *  参数化查询会在 PG 侧抛 22P02（invalid input syntax for type uuid），被 Hono

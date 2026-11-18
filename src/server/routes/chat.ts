@@ -1016,6 +1016,13 @@ async function streamAgentRun(
   }
 }
 
+/** 发起会话→工作流 run 路由读取单点（resolveControlTarget 的读取腿，供 session
+ *  路由复用）：发起会话在工作流运行期的 workflowBusyBySession 映射读取。
+ *  只收敛 Map 读取；abortCascade/状态读取等动作语义留各调用方。 */
+export function workflowRunIdFor(ctx: ServerContext, sessionId: string): string | undefined {
+  return ctx.workflowBusyBySession.get(sessionId)
+}
+
 /** 控制端点（/abort /pause /resume /steer）目标解析单点：发起会话在工作流
  *  运行期（workflowBusyBySession）无主 run——操作路由到实际的工作流 run；
  *  非工作流态下启动占位期无 state 可操作 → 409 RUN_STARTING。此前 /pause
@@ -1026,7 +1033,7 @@ function resolveControlTarget(
   c: Context,
   sessionId: string,
 ): { ok: true; targetId: string } | { ok: false; response: Response } {
-  const busyWorkflowId = ctx.workflowBusyBySession.get(sessionId)
+  const busyWorkflowId = workflowRunIdFor(ctx, sessionId)
   if (busyWorkflowId) return { ok: true, targetId: busyWorkflowId }
   const starting = guardSessionNotStarting(ctx, c, sessionId)
   if (starting) return { ok: false, response: starting }

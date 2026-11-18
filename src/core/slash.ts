@@ -259,9 +259,9 @@ const configCommand: SlashCommand = {
   description: '查看或设置配置（支持点路径）',
   argsHint: '[key] [value]',
   execute: async (args, ctx) => {
-    const { getByPath } = await import('./config-path.js')
     // 展示前脱敏：apiKey/token 等敏感字段绝不原样出现在聊天里（P0 密钥暴露）。
-    const { redactSecrets } = await import('./redact.js')
+    // 单键读取的末段脱敏判定收敛在 redactedConfigValue（与 CLI config get 共用）。
+    const { redactedConfigValue, redactSecrets } = await import('./redact.js')
     if (!args) {
       return {
         _tag: 'text',
@@ -272,9 +272,7 @@ const configCommand: SlashCommand = {
     const key = parts[0] ?? ''
     if (parts.length === 1) {
       try {
-        // 用点路径末段作为键名参与脱敏判定：/config security.token 等单键读取同样掩码。
-        const leaf = key.split('.').pop()
-        const value = redactSecrets(getByPath(ctx.config, key), leaf)
+        const value = redactedConfigValue(ctx.config, key)
         return {
           _tag: 'text',
           text: `${key}: ${JSON.stringify(value)}（合并视图：global + project 作用域）`,

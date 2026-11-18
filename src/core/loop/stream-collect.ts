@@ -1,10 +1,10 @@
 import type { chatStream as llmChatStream } from '../../llm/provider.js'
 import { isContextOverflowFailure } from '../../llm/provider-error.js'
 import { fallbackChatOptions } from '../../llm/routing.js'
-import { isLLMError, parseErrorMarker } from '../../llm/schema/errors.js'
+import { parseErrorMarker } from '../../llm/schema/errors.js'
 import type { AgentEvent, AgentState } from '../../shared/types/agent.js'
 import type { ChatRequest, FinishReason, StreamChunk } from '../../shared/types/llm.js'
-import { errorMessage } from '../../shared/utils/string.js'
+import { readableErrorMessage } from '../../shared/utils/string.js'
 import type { LoopDeps } from '../loop.js'
 import type { CollectedToolCall } from '../tool-exec.js'
 import { recoverFromOverflow } from './compaction.js'
@@ -214,14 +214,10 @@ export async function* collectStreamChunks(
       const recoveredResult = await tryOverflowRecovery()
       if (recoveredResult) return recoveredResult
     }
-    const message =
-      err instanceof Error
-        ? err.message
-        : isLLMError(err)
-          ? err.message
-          : typeof err === 'object' && err !== null && 'message' in err
-            ? String((err as { message: unknown }).message)
-            : errorMessage(err)
+    // 提取链收敛为 readableErrorMessage（message 属性感知版）：isLLMError 分支
+    // 冗余（LLMError 是带 message 的普通对象），'message' in 收窄与 errorMessage
+    // 兜底已由其超集语义覆盖。
+    const message = readableErrorMessage(err)
     yield {
       _tag: 'error',
       error: {

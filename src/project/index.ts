@@ -48,6 +48,18 @@ async function refreshTrustedProjectFingerprint(db: DB, dir: string): Promise<bo
   )
 }
 
+/** best-effort 变体：刷新失败吞掉、不阻塞调用方的写入/删除结果（最坏回到
+ *  fail-closed 复检路径，下次聊天一次性确认）。工作流创建/删除、config PATCH
+ *  （REST 与 /config 斜杠）各入口的「写后指纹刷新」此前各持一份同形 try/catch
+ *  手抄，收敛单点防口径漂移。 */
+export async function refreshProjectFingerprintBestEffort(db: DB, dir: string): Promise<void> {
+  try {
+    await refreshTrustedProjectFingerprint(db, dir)
+  } catch {
+    // 失败不阻塞：信任复检的 fail-closed 路径兜底
+  }
+}
+
 export type { Project } from './project.js'
 export type { ResolvedProject } from './resolve.js'
 export { findGitRoot, resolveProject } from './resolve.js'

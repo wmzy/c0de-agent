@@ -57,6 +57,7 @@ import {
   normalizeConfigForForm,
   validateConfigShape,
 } from '@/utils/config-shape.js'
+import { downloadJson } from '@/utils/download.js'
 import { messageOf } from '@/utils/errors.js'
 import { parseBoundedNumber } from '@/utils/format.js'
 import { LoadError } from '@/views/_shared/errorState.js'
@@ -620,15 +621,7 @@ export function Settings() {
     if (cleaned.security && typeof cleaned.security === 'object') {
       delete (cleaned.security as Record<string, unknown>).token
     }
-    const blob = new Blob([JSON.stringify(cleaned, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'c0de-config.json'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    downloadJson('c0de-config.json', cleaned)
   }
 
   /** 应用导入结果：整份替换草稿并切回表单（形状已校验）。 */

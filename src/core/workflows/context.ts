@@ -154,6 +154,14 @@ function parseJsonObjectsFromResults(results: WorkflowAgentResult[]): unknown[] 
     .filter((v) => v !== null)
 }
 
+/** 条目名级跳过谓词：点开头与 node_modules 统一跳过，可附加忽略名单。
+ *  walkTree（文件与目录同名判）与 splitByDir.readSubdirs（只判目录）两处手抄
+ *  谓词的单一实现——文件/目录作用域差异留在调用侧。 */
+function makeSkipPredicate(ignore?: string[]): (name: string) => boolean {
+  return (name) =>
+    name.startsWith('.') || name === 'node_modules' || (ignore?.includes(name) ?? false)
+}
+
 /** 递归遍历目录树：跳过点开头与 node_modules（可附加忽略名单），readdir 失败
  *  （权限/消失竞态）静默跳过该目录，每个文件回调 onFile（附文件名，供不含
  *  路径分隔符的 glob 模式按文件名匹配）。globRecursive/grepRecursive/
@@ -164,8 +172,7 @@ async function walkTree(
   opts: { ignore?: string[] },
   onFile: (fullPath: string, name: string) => Promise<void> | void,
 ): Promise<void> {
-  const skip = (name: string): boolean =>
-    name.startsWith('.') || name === 'node_modules' || (opts.ignore?.includes(name) ?? false)
+  const skip = makeSkipPredicate(opts.ignore)
   await walkFiles(dir, { skipDir: skip }, (fullPath, name) =>
     skip(name) ? undefined : onFile(fullPath, name),
   )
@@ -250,13 +257,9 @@ async function splitByDir(
     } catch {
       return []
     }
-    return entries.filter(
-      (e) =>
-        e.isDirectory() &&
-        !e.name.startsWith('.') &&
-        e.name !== 'node_modules' &&
-        !ignore.includes(e.name),
-    )
+    // 谓词与 walkTree 共用（makeSkipPredicate）；此处只对目录生效。
+    const skip = makeSkipPredicate(ignore)
+    return entries.filter((e) => e.isDirectory() && !skip(e.name))
   }
 
   async function pushModule(dir: string): Promise<void> {

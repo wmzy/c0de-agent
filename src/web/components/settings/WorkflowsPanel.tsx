@@ -13,6 +13,7 @@ import { SyncedInput, SyncedSelect, SyncedTextarea } from '@/components/SyncedCo
 import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import { useBeforeUnloadGuard } from '@/hooks/useBeforeUnloadGuard.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 import { workflowsAPI, workflowsKey, workflowsQueryOptions } from '@/services/workflows.js'
 import { ellipsisCss } from '@/styles/shared.js'
@@ -197,11 +198,13 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     target: 'project',
   })
   /**
-   * 打开序次：查看/编辑要先 await 后端源码，慢盘下用户可能已经关掉再打开另一个
-   * 工作流——迟到的响应属于上一次打开，不能改写当前的草稿与基线（否则基线错位，
-   * 刚打开就显示「未保存的修改」，或把上一条的源码当成本条的内容）。
+   * 打开序次（useScopeGuard 手动模式）：查看/编辑要先 await 后端源码，慢盘下用户
+   * 可能已经关掉再打开另一个工作流——迟到的响应属于上一次打开，不能改写当前的
+   * 草稿与基线（否则基线错位，刚打开就显示「未保存的修改」，或把上一条源码当
+   * 成本条的内容）。每次打开在回调起点 invalidate() 作废上一轮，await 前用
+   * token() 刻号、落地时用 stale() 判定。
    */
-  const openTokenRef = useRef(0)
+  const openGuard = useScopeGuard()
   const [pendingDelete, setPendingDelete] = useState<WorkflowInfo | null>(null)
   /**
    * 删除失败原因单独一份：DangerConfirmDialog 是 <dialog> 模态，section 顶部那条
@@ -257,7 +260,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     setDraftTarget(target)
     // 新建的基线就是这份模板：没动过的模板不触发「放弃修改」确认。
     baselineRef.current = { name: '', source: NEW_WORKFLOW_TEMPLATE, target }
-    openTokenRef.current += 1
+    openGuard.invalidate()
     setEditor({ mode: 'create' })
   }
 
@@ -269,13 +272,13 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     setDraftName('')
     setDraftSource('')
     baselineRef.current = { name: '', source: '', target: draftTarget }
-    openTokenRef.current += 1
-    const token = openTokenRef.current
+    openGuard.invalidate()
+    const token = openGuard.token()
     setEditor({ mode: 'view', name, readOnly: true, loading: true })
     try {
       const detail = await workflowsAPI.get(name, projectId)
       // 迟到的响应（用户已关窗/改开另一条）：不写草稿也不写基线。
-      if (openTokenRef.current !== token) return
+      if (openGuard.stale(token)) return
       setDraftName(detail.name)
       setDraftSource(detail.sourceCode)
       baselineRef.current = {
@@ -285,7 +288,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       }
       setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
-      if (openTokenRef.current !== token) return
+      if (openGuard.stale(token)) return
       setError(errMessage(e))
       setEditor(null)
     }
@@ -298,8 +301,8 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     const target: 'project' | 'user' = wf.source === 'user' ? 'user' : 'project'
     setDraftTarget(target)
     baselineRef.current = { name: '', source: '', target }
-    openTokenRef.current += 1
-    const token = openTokenRef.current
+    openGuard.invalidate()
+    const token = openGuard.token()
     setEditor({
       mode: 'edit',
       name: wf.name,
@@ -308,13 +311,13 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
     })
     try {
       const detail = await workflowsAPI.get(wf.name, projectId)
-      if (openTokenRef.current !== token) return
+      if (openGuard.stale(token)) return
       setDraftName(detail.name)
       setDraftSource(detail.sourceCode)
       baselineRef.current = { name: detail.name, source: detail.sourceCode, target }
       setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
-      if (openTokenRef.current !== token) return
+      if (openGuard.stale(token)) return
       setError(errMessage(e))
       setEditor(null)
     }

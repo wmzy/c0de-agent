@@ -142,13 +142,10 @@ function resolveAuthToken(config: Config, dataDir: string): string | undefined {
   }
 
   // 已有设备 → 复用 auth-token 文件，保持跨重启稳定（已授权设备经 devices.json 认 token）。
+  // 读取单源 auth-manager 的 readTokenFile（缺失/空白/读失败 → undefined，走生成分支）。
   if (hasRegisteredDevices(dataDir)) {
-    try {
-      const existing = readFileSync(tokenFile, 'utf-8').trim()
-      if (existing) return existing
-    } catch {
-      // 文件不存在，走生成分支
-    }
+    const existing = readTokenFile(tokenFile)
+    if (existing) return existing
   }
 
   const generated = randomBytes(24).toString('hex')

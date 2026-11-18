@@ -55,6 +55,7 @@ import {
   guardSessionNotBusy,
   guardSessionNotStarting,
   resolveAgentCwd,
+  workflowRunIdFor,
 } from './chat.js'
 
 /** 会话资源本体 404 的中文口径文案：uuid 参数守卫与 GET/messages/llm-details
@@ -376,7 +377,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     // 已软删除会话。与控制端点同口径：占位期 409，稍后重试。
     const starting = guardSessionNotStarting(ctx, c, id)
     if (starting) return starting
-    const busyWorkflowId = ctx.workflowBusyBySession.get(id)
+    const busyWorkflowId = workflowRunIdFor(ctx, id)
     if (busyWorkflowId) {
       ctx.agentManager.abortCascade(busyWorkflowId)
     }
@@ -658,7 +659,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // lastRun.status='paused' 但无活跃 run（热更新/重启后 run 状态未迁移）→ 同样按中断处理：
   // agent 内存态已丢失，resume 端点无法恢复，唯一可行路径是重发上一条消息。
   app.get('/:id/status', async (c) => {
-    const busyWorkflowId = ctx.workflowBusyBySession.get(c.req.param('id'))
+    const busyWorkflowId = workflowRunIdFor(ctx, c.req.param('id'))
     if (busyWorkflowId) {
       const wfRun = ctx.agentManager.get(busyWorkflowId)
       if (wfRun) return c.json(wfRun.state.status)

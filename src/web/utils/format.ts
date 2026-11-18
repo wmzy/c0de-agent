@@ -47,6 +47,15 @@ export function formatNumber(n: number): string {
   return n.toLocaleString('en-US')
 }
 
+/** MB 换算基数：附件大小展示（AttachmentBar）与单图上限校验（useComposer）共用，
+ *  此前 1024 * 1024 魔法数在两文件各手抄多份。 */
+export const BYTES_PER_MB = 1024 * 1024
+
+/** 字节数 → 一位小数 MB 文案（附件大小提示、超限错误消息共用）。 */
+export function formatMb(bytes: number): string {
+  return `${(bytes / BYTES_PER_MB).toFixed(1)} MB`
+}
+
 export function formatTimestamp(ts: number): string {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }

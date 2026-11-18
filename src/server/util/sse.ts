@@ -1,20 +1,13 @@
 import type { SSEStreamingApi } from 'hono/streaming'
 import type { CommandResult } from '../../core/types.js'
-
-/** SSE error 事件的文案提取：Error.message 优先；非 Error 但带 message 属性的
- *  对象（agentLoop 抛出的失败对象、CommandResult 的 error 变体）取其 message；
- *  其余 String()。chat.ts 各 catch 块此前各持一份略有差异的提取（instanceof
- *  三元 / 裸 String(e) / 带 message-in 收窄），统一为最通用版。 */
-export function sseErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message
-  if (typeof err === 'object' && err !== null && 'message' in err) {
-    return String((err as { message: unknown }).message)
-  }
-  return String(err)
-}
+import { readableErrorMessage } from '../../shared/utils/string.js'
 
 /** SSE error 事件信封（chat.ts 与 workflow-run.ts 此前 8 处同构 writeSSE 块的
- *  单一实现）。
+ *  单一实现）。文案提取用 shared 的 readableErrorMessage：Error.message 优先；
+ *  非 Error 但带 message 属性的对象（agentLoop 抛出的失败对象、CommandResult
+ *  的 error 变体）取其 message；其余 String()——chat.ts 各 catch 块此前各持
+ *  一份略有差异的提取（instanceof 三元 / 裸 String(e) / 带 message-in 收窄），
+ *  统一为最通用版。
  *  - 默认（enveloped）：聊天线协议 { _tag:'error', error:{ _tag:'unexpected',
  *    message } }——前端按 error.message 解析，与 agentLoop 的 error 事件同构。
  *  - flat：REST 工作流通道的原生 error 事件（{ _tag:'error', message }，无
@@ -26,7 +19,7 @@ export async function emitSseError(
   err: unknown,
   opts: { flat?: boolean; swallow?: boolean } = {},
 ): Promise<void> {
-  const message = sseErrorMessage(err)
+  const message = readableErrorMessage(err)
   const data = JSON.stringify(
     opts.flat
       ? { _tag: 'error', message }

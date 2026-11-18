@@ -51,15 +51,14 @@ async function runConfigCommand(ctx: ConfigCommandContext): Promise<void> {
 
   if (sub === 'get') {
     const key = ctx.args.positionals[1]
-    const { redactSecrets } = await import('../../core/redact.js')
+    const { redactedConfigValue, redactSecrets } = await import('../../core/redact.js')
     if (!key) {
       // 展示前脱敏：apiKey/token 明文绝不输出到终端（P0 密钥暴露）。
       write(`${JSON.stringify(redactSecrets(config), null, 2)}\n`)
       return
     }
-    // 用点路径末段作为键名参与脱敏判定：config get security.token 等单键读取同样掩码。
-    const leaf = key.split('.').pop()
-    const val = redactSecrets(getByPath(config, key), leaf)
+    // 单键读取的末段脱敏判定收敛在 redactedConfigValue（与 /config 斜杠命令共用）。
+    const val = redactedConfigValue(config, key)
     write(`${typeof val === 'object' ? JSON.stringify(val) : String(val)}\n`)
     return
   }

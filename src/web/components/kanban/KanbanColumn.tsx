@@ -2,8 +2,9 @@ import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { css } from '@linaria/core'
 import { Button } from 'haze-ui'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
+import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import type {
   KanbanCard as KanbanCardType,
   KanbanLabelDef,
@@ -377,9 +378,10 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
   const [draft, setDraft] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
-  /** 快速新建的请求身份：submit 自增、重开输入框自增。在途请求落地时身份
-   *  已变，说明它描述的是被放弃的那轮输入，成功/失败都不许再碰当前状态。 */
-  const addAttempt = useRef(0)
+  /** 快速新建的请求身份（useScopeGuard 手动模式）：submit 自增、重开输入框自增。
+   *  在途请求落地时身份已变，说明它描述的是被放弃的那轮输入，成功/失败都不许
+   *  再碰当前状态。 */
+  const addGuard = useScopeGuard()
 
   /**
    * a11y：避免 autoFocus，输入框挂载后程序化聚焦（同 BranchTree 重命名输入）。
@@ -403,19 +405,20 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
   const submit = async () => {
     const t = draft.trim()
     if (!t || pending) return
-    const attempt = ++addAttempt.current
+    addGuard.invalidate()
+    const attempt = addGuard.token()
     setPending(true)
     setAddError(null)
     try {
       await onQuickAdd(t)
       // 身份已变（用户 Esc 后重开了输入框）：这是被放弃标题的成功，收起输入框
       // 会砸掉用户正在进行的下一次输入。
-      if (attempt !== addAttempt.current) return
+      if (addGuard.stale(attempt)) return
       setDraft('')
       setIsAdding(false)
     } catch (err) {
       // 同上：被放弃标题的失败不属于当前输入框，不显示。
-      if (attempt !== addAttempt.current) return
+      if (addGuard.stale(attempt)) return
       // 取文案统一走 messageOf（结构化 message 优先、Error.message 兜底）。
       setAddError(messageOf(err) || '新建卡片失败，请重试')
     } finally {
@@ -494,7 +497,7 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
             // 落在其后的仍会砸到新开的空输入框上（显示被放弃标题的报错、或被旧
             // 成功直接收起），所以身份必须在这里翻页。
             onClick={() => {
-              addAttempt.current++
+              addGuard.invalidate()
               setAddError(null)
               setIsAdding(true)
             }}

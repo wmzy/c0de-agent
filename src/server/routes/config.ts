@@ -16,7 +16,7 @@ import {
 import { isValidProviderEntry } from '../../core/provider-registry.js'
 import { containsSecrets } from '../../core/redact.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '../../core/secret.js'
-import { findGitRoot, refreshTrustedProjectFingerprint } from '../../project/index.js'
+import { findGitRoot, refreshProjectFingerprintBestEffort } from '../../project/index.js'
 import type { Config } from '../../shared/types/config.js'
 import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
@@ -262,13 +262,10 @@ function createConfigRoute(ctx: ServerContext): Hono {
 
     // P1：项目作用域写入是用户经产品入口的显式操作——已信任项目刷新风险指纹
     //（与工作流 create/delete 同口径）。不刷新会让用户自己的设置修改触发
-    // trust-drift 复检，「信任 → 改设置 → 再信任」自锁循环。
+    // trust-drift 复检，「信任 → 改设置 → 再信任」自锁循环。失败不阻塞
+    // 配置保存（最坏回到 fail-closed 复检路径）。
     if (scope === 'project') {
-      try {
-        await refreshTrustedProjectFingerprint(ctx.db, target.dir)
-      } catch {
-        // 指纹刷新失败不阻塞配置保存（最坏回到 fail-closed 复检路径）
-      }
+      await refreshProjectFingerprintBestEffort(ctx.db, target.dir)
     }
 
     const isServerCwdProject = target.dir === ctx.cwd

@@ -26,6 +26,7 @@ import { kanbanAPI } from '@/services/kanban.js'
 import { projectAPI, projectsKey } from '@/services/project.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { ellipsisCss } from '@/styles/shared.js'
+import { downloadJson } from '@/utils/download.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
@@ -317,13 +318,7 @@ export function ProjectIndicator({
     setDeleteError(null)
     try {
       const data = await kanbanAPI.exportBoard(project.id)
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `kanban-${project.id}.json`
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadJson(`kanban-${project.id}.json`, data)
       deleteMut.mutate(project.id)
     } catch (err) {
       setDeleteError(messageOf(err) || '看板导出失败，项目未删除')

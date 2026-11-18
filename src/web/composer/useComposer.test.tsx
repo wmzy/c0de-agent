@@ -638,8 +638,9 @@ describe('useComposer 子命令补全浮层', () => {
 
 // ── 跨作用域的在途结果 ──
 // Composer 的 hook 实例不随会话切换重建（目标会话的消息已在 react-query 缓存里时
-// 不走 ChatSkeleton 早返回）：图片读取/发送的在途结果落地时必须先对 scopeGenRef
-// 世代，旧作用域的结果不得写进新会话的界面，也不得把切回原会话后的输入弄丢。
+// 不走 ChatSkeleton 早返回）：图片读取/发送的在途结果落地时必须先核对作用域
+// 世代（scopeGuard），旧作用域的结果不得写进新会话的界面，也不得把切回原会话
+// 后的输入弄丢。
 describe('useComposer 跨作用域的在途结果', () => {
   /** 可随 draftScope 重渲染的 composer（带真实编辑器），用于模拟 A→B(→A) 切换。 */
   function renderScopedComposer(initialScope: string) {

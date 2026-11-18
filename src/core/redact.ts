@@ -4,6 +4,7 @@
  */
 
 import { headChars, tailChars } from '../shared/utils/string.js'
+import { getByPath } from './config-path.js'
 
 /** 敏感字段名模式（大小写不敏感，匹配完整键名）。 */
 const SECRET_KEY_RE = /(api[_-]?key|token|password|passwd|secret|authorization|auth[_-]?token)$/i
@@ -32,6 +33,15 @@ export function redactSecrets(value: unknown, key?: string): unknown {
     return out
   }
   return value
+}
+
+/** 点路径单键读取 + 脱敏：/config <key> 与 `c0de config get <key>` 的共用
+ *  展示口径。用点路径末段作为键名参与脱敏判定（security.token 等单键读取
+ *  同样掩码）；键不存在/含原型链段时 getByPath 照常抛错——catch 与否的
+ *  策略差异留在调用方。 */
+export function redactedConfigValue(config: unknown, key: string): unknown {
+  const leaf = key.split('.').pop()
+  return redactSecrets(getByPath(config, key), leaf)
 }
 
 /** 判断对象树中是否含非空敏感值（用于「配置文件含密钥」类警告）。 */

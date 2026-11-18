@@ -18,7 +18,7 @@ import {
   performGitCommit,
 } from '../../project/resolve.js'
 import { IGNORED_DIR_NAMES } from '../../shared/utils/path.js'
-import { headChars } from '../../shared/utils/string.js'
+import { errorMessage, headChars } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
@@ -189,6 +189,27 @@ function rejectCommitMessage(
   return apiError(c, 400, 'BAD_REQUEST', 'commit message must be a single line')
 }
 
+/** git-commit 三模式（force/append-ignore/默认）共同的提交尾部：performGitCommit
+ *  失败 → 500 COMMIT_FAILED；成功 → committed:true 响应。三分支此前各持一份
+ *  逐字同形的尾部样板，差异仅在 message 的来源。 */
+function commitAndRespond(
+  c: import('hono').Context,
+  root: string,
+  message: string,
+  summary: { fileCount: number },
+): Response {
+  const result = performGitCommit(root, message)
+  if ('error' in result) {
+    return apiError(c, 500, 'COMMIT_FAILED', result.error)
+  }
+  return c.json({
+    committed: true,
+    message,
+    hash: result.hash,
+    fileCount: summary.fileCount,
+  })
+}
+
 /** 子 app 变量注入：中间件解析工作区根后放入 context，handler 经 c.get 取得
  *  （auth.ts 同款模式）——免去每个 handler 重复的 resolveWorkspaceRoot 三行样板。 */
 type FilesEnv = { Variables: { workspaceRoot: string } }
@@ -286,17 +307,7 @@ function createFilesRoute(ctx: ServerContext): Hono<FilesEnv> {
     if (body.mode === 'force') {
       const check = checkCommitMessage(body.message)
       if (!check.ok) return rejectCommitMessage(c, check.reason, 'force')
-      const message = check.message
-      const result = performGitCommit(root, message)
-      if ('error' in result) {
-        return apiError(c, 500, 'COMMIT_FAILED', result.error)
-      }
-      return c.json({
-        committed: true,
-        message,
-        hash: result.hash,
-        fileCount: summary.fileCount,
-      })
+      return commitAndRespond(c, root, check.message, summary)
     }
 
     // --- mode: append-ignore — 追加 .gitignore 后提交 ---
@@ -314,16 +325,7 @@ function createFilesRoute(ctx: ServerContext): Hono<FilesEnv> {
         )
       }
       appendToGitignore(root, suggestions)
-      const result = performGitCommit(root, check.message)
-      if ('error' in result) {
-        return apiError(c, 500, 'COMMIT_FAILED', result.error)
-      }
-      return c.json({
-        committed: true,
-        message: check.message,
-        hash: result.hash,
-        fileCount: summary.fileCount,
-      })
+      return commitAndRespond(c, root, check.message, summary)
     }
 
     // --- 默认模式：LLM 生成 message + 检查可疑文件 ---
@@ -361,7 +363,12 @@ ${headChars(summary.diff, 8000)}`
       )
       raw = (await summarizer(prompt)).trim()
     } catch (err) {
-      return apiError(c, 502, 'LLM_ERROR', `Failed to generate commit message: ${String(err)}`)
+      return apiError(
+        c,
+        502,
+        'LLM_ERROR',
+        `Failed to generate commit message: ${errorMessage(err)}`,
+      )
     }
     // LLM 返回可能含 markdown 代码块包裹，去掉
     raw = raw
@@ -406,16 +413,7 @@ ${headChars(summary.diff, 8000)}`
     }
 
     // 无可疑文件 → 直接提交
-    const result = performGitCommit(root, check.message)
-    if ('error' in result) {
-      return apiError(c, 500, 'COMMIT_FAILED', result.error)
-    }
-    return c.json({
-      committed: true,
-      message,
-      hash: result.hash,
-      fileCount: summary.fileCount,
-    })
+    return commitAndRespond(c, root, check.message, summary)
   })
 
   // 列出本地分支（非 git 仓库返回空数组）
@@ -591,7 +589,7 @@ ${headChars(summary.diff, 8000)}`
       await writeFile(resolved, content, 'utf-8')
       return c.json({ path, written: true })
     } catch (err) {
-      return apiError(c, 500, 'WRITE_ERROR', `Failed to write file: ${String(err)}`)
+      return apiError(c, 500, 'WRITE_ERROR', `Failed to write file: ${errorMessage(err)}`)
     }
   })
 
@@ -610,7 +608,7 @@ ${headChars(summary.diff, 8000)}`
       await trash(resolved)
       return c.json({ path, trashed: true })
     } catch (err) {
-      return apiError(c, 500, 'DELETE_ERROR', `Failed to delete file: ${String(err)}`)
+      return apiError(c, 500, 'DELETE_ERROR', `Failed to delete file: ${errorMessage(err)}`)
     }
   })
 

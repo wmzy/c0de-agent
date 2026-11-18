@@ -33,6 +33,14 @@ function requestSource(c: Context): string {
   return 'local'
 }
 
+/** 配对请求不存在/已过期 404 文案：status 轮询/approve/deny 三端点共用单点。 */
+const PAIRING_NOT_FOUND_MESSAGE = '配对请求不存在或已过期'
+
+/** 从 JSON body 提取 pairingId：非字符串/缺失 → ''（调用方空值时 400 BAD_REQUEST）。 */
+function readPairingId(body: Record<string, unknown>): string {
+  return typeof body.pairingId === 'string' ? body.pairingId : ''
+}
+
 function createAuthRoute(ctx: ServerContext): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>()
 
@@ -116,7 +124,7 @@ function createAuthRoute(ctx: ServerContext): Hono<AuthEnv> {
     if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
     const status = authManager.pairingStatus(pairingId)
     if (status.status === 'not_found') {
-      return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
+      return apiError(c, 404, 'PAIRING_NOT_FOUND', PAIRING_NOT_FOUND_MESSAGE)
     }
     return c.json(status)
   })
@@ -132,7 +140,7 @@ function createAuthRoute(ctx: ServerContext): Hono<AuthEnv> {
     const authManager = c.get('authManager')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
-    const pairingId = typeof parsed.body.pairingId === 'string' ? parsed.body.pairingId : ''
+    const pairingId = readPairingId(parsed.body)
     const code = typeof parsed.body.code === 'string' ? parsed.body.code : ''
     if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
     if (!code) return apiError(c, 400, 'BAD_REQUEST', 'code is required')
@@ -146,7 +154,7 @@ function createAuthRoute(ctx: ServerContext): Hono<AuthEnv> {
       )
     }
     if (result === 'not_found' || result === 'expired') {
-      return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
+      return apiError(c, 404, 'PAIRING_NOT_FOUND', PAIRING_NOT_FOUND_MESSAGE)
     }
     if (result === 'already_handled') {
       return apiError(c, 409, 'PAIRING_ALREADY_HANDLED', '该配对请求已被处理')
@@ -159,10 +167,10 @@ function createAuthRoute(ctx: ServerContext): Hono<AuthEnv> {
     const authManager = c.get('authManager')
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
-    const pairingId = typeof parsed.body.pairingId === 'string' ? parsed.body.pairingId : ''
+    const pairingId = readPairingId(parsed.body)
     if (!pairingId) return apiError(c, 400, 'BAD_REQUEST', 'pairingId is required')
     const ok = authManager.denyPairing(pairingId)
-    if (!ok) return apiError(c, 404, 'PAIRING_NOT_FOUND', '配对请求不存在或已过期')
+    if (!ok) return apiError(c, 404, 'PAIRING_NOT_FOUND', PAIRING_NOT_FOUND_MESSAGE)
     return c.json({ ok: true })
   })
 

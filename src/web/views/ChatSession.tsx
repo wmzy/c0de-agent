@@ -36,6 +36,7 @@ import {
   sessionMetaQueryOptions,
   sessionTreeKey,
 } from '@/services/session.js'
+import { downloadJson } from '@/utils/download.js'
 import { messageOf } from '@/utils/errors.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
 import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
@@ -587,14 +588,8 @@ export function ChatSession({
     setExportError(null)
     try {
       const data = await sessionAPI.exportSession(sessionId, { includeSnapshots })
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
       const title = (data.session.title || 'session').replace(/[^\w一-鿿-]+/g, '_')
-      a.href = url
-      a.download = `${title}.c0de-session.json`
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadJson(`${title}.c0de-session.json`, data)
       if (!exportGuard.stale(gen)) setExportDialogOpen(false)
     } catch (err) {
       if (exportGuard.stale(gen)) return

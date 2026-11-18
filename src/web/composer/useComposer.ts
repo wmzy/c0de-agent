@@ -32,6 +32,7 @@ import {
 } from '@/composer/types.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
+import { BYTES_PER_MB, formatMb } from '@/utils/format.js'
 
 type PopoverState = 'slash' | 'subcommand' | 'at' | 'workflow' | null
 
@@ -71,7 +72,7 @@ type UseComposerOptions = {
 
 /** 单张图片大小上限（8MB）：base64 进 PGLite + SSE 载荷 + provider 请求，超限拒绝而非
  *  静默失败（P0 审查：此前无任何限制，超大图导致 DB 膨胀/provider 400）。 */
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+const MAX_IMAGE_BYTES = 8 * BYTES_PER_MB
 /** 图片数量上限。 */
 const MAX_IMAGE_COUNT = 6
 
@@ -96,8 +97,7 @@ function validateImage(file: File, currentCount: number): string | null {
     return `最多添加 ${MAX_IMAGE_COUNT} 张图片（当前已有 ${currentCount} 张）`
   }
   if (file.size > MAX_IMAGE_BYTES) {
-    const mb = (file.size / (1024 * 1024)).toFixed(1)
-    return `图片 ${file.name || '未命名'} 大小 ${mb}MB 超过上限 ${MAX_IMAGE_BYTES / (1024 * 1024)}MB`
+    return `图片 ${file.name || '未命名'} 大小 ${formatMb(file.size)} 超过上限 ${MAX_IMAGE_BYTES / BYTES_PER_MB}MB`
   }
   if (file.size === 0) return '图片内容为空'
   return null
@@ -165,16 +165,17 @@ function useComposer({
   const steerPendingRef = useRef(false)
   const [steerPending, setSteerPending] = useState(false)
   /**
-   * 发送世代号。每次 send/steer 自增；异步失败还原只在自己那一代仍是最新时回写，
-   * 否则会把后续发送刚清空/输入的框内容盖回去（见 send 里的 restore）。
+   * 发送世代号（useScopeGuard 手动模式）。每次 send/steer 自增（invalidate）；
+   * 异步失败还原只在自己那一代仍是最新时回写，否则会把后续发送刚清空/输入的框
+   * 内容盖回去（见 send 里的 restore）。
    */
-  const sendAttemptRef = useRef(0)
+  const sendGuard = useScopeGuard()
   /**
    * 草稿作用域世代守卫（useScopeGuard 值模式：draftScope 变即作废，含
    * 有值 ↔ undefined 的切换）。在途请求落地时（发送失败的还原、追加指令受理后的
    * 清空）必须先确认还在同一个作用域里。
    *
-   * sendAttemptRef 挡不住跨会话这一路：它只认「又有一次发送」，而切会话不改它。
+   * 发送世代号挡不住跨会话这一路：它只认「又有一次发送」，而切会话不改它。
    * 于是「在 A 发消息 → 请求还没回来就点开 B」时，A 那次失败回来仍会在 B 的输入框
    * 里回填 A 的正文与图片，并且 persist=true 把它写成 B 的草稿（刷新后还在）——
    * 同一段文字被记在两条会话头上。hook 实例并不随会话切换重建（目标会话的消息
@@ -654,7 +655,8 @@ function useComposer({
     // 本次发送的世代号：还原分支只认自己这一代。请求在途期间用户可能又发了一次
     // （或又按了 steering），那时先落地的那次失败再回来还原，就会把后来那条的输入
     // 一起盖掉、并按错误的假设去动提示历史。
-    const attempt = ++sendAttemptRef.current
+    sendGuard.invalidate()
+    const attempt = sendGuard.token()
     // 本次发送所属的草稿作用域：切会话后 A 那次的失败不得回填到 B 的输入框（见 scopeGuard）。
     const scopeGen = scopeGuard.token()
     const scopeAtSend = draftScopeRef.current
@@ -690,7 +692,7 @@ function useComposer({
     }
     const restore = () => {
       // 已被更新的发送取代：本次失败不再回写。
-      if (sendAttemptRef.current !== attempt) return
+      if (sendGuard.stale(attempt)) return
       // 已经切到别的会话/作用域：这条失败属于上一个会话，回填会把它的正文与图片
       // 写进当前会话，并（persist=true）落成当前会话的草稿。改为把失败快照落回
       // **原会话**的草稿键（发送时刚被清掉的那份）：回到原会话时输入框里还是这段
@@ -730,6 +732,7 @@ function useComposer({
     setPromptExternal,
     resetHistory,
     scopeGuard,
+    sendGuard,
   ])
 
   // 追加指令：流式态下注入 steering 文本（仅流式态可用，空文本 no-op）
@@ -749,7 +752,7 @@ function useComposer({
     // {steered:false} 时指令既没进 run 队列也没落库（agent 从未收到，刷新后
     // 乐观条目即消失）。此前无条件清空：用户敲的整段指令连气泡都没有，彻底丢失。
     // 现在只有确认受理才清空，失败时输入原样留着，配合 error 行让用户改用发送。
-    sendAttemptRef.current += 1
+    sendGuard.invalidate()
     // 本次指令所属的草稿作用域：切会话后它落地时不得去清空新会话的输入框
     // （新会话的草稿恰好与这段指令同文时，clear 会把它删掉）。
     const scopeGen = scopeGuard.token()
@@ -783,7 +786,7 @@ function useComposer({
       clear()
       done()
     }
-  }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory, scopeGuard])
+  }, [busy, readPrompt, onSteer, setPromptExternal, resetHistory, scopeGuard, sendGuard])
 
   /**
    * 用户显式关掉浮层的唯一入口（handleKeyDown 的 Esc 分支与 Composer 的 Tab 分支）。

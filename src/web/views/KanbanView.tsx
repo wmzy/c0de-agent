@@ -24,6 +24,7 @@ import {
   kanbanKey,
 } from '@/services/kanban.js'
 import { ellipsisCss } from '@/styles/shared.js'
+import { downloadJson } from '@/utils/download.js'
 import { messageOf } from '@/utils/errors.js'
 import { LoadError } from '@/views/_shared/errorState.js'
 
@@ -374,13 +375,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     setIoError(null)
     try {
       const data = await kanbanAPI.exportBoard(projectId)
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `kanban-${projectId}.json`
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadJson(`kanban-${projectId}.json`, data)
     } catch (err) {
       setIoError(messageOf(err) || '导出失败')
     }

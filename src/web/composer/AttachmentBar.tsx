@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import type { ImagePart } from '@/composer/types.js'
+import { BYTES_PER_MB, formatMb } from '@/utils/format.js'
 
 const bar = css`
   display: flex;
@@ -86,7 +87,7 @@ function AttachmentBar(props: Props) {
     (sum, img) => sum + Math.floor((img.data.length * 3) / 4),
     0,
   )
-  const sizeMb = totalBytes / (1024 * 1024)
+  const sizeMb = totalBytes / BYTES_PER_MB
   const heavy = sizeMb >= 2
   return (
     <div className={bar} data-testid="attachment-bar">
@@ -109,7 +110,7 @@ function AttachmentBar(props: Props) {
         className={`${sizeHint}${heavy ? ` ${sizeHintHeavy}` : ''}`}
         data-testid="image-size-hint"
       >
-        {props.images.length} 张 · 约 {sizeMb >= 0.1 ? `${sizeMb.toFixed(1)} MB` : '< 0.1 MB'}
+        {props.images.length} 张 · 约 {sizeMb >= 0.1 ? formatMb(totalBytes) : '< 0.1 MB'}
         {heavy ? '——大图会显著增加 token 消耗与成本' : '——图片按 token 计费，发送后计入用量'}
       </span>
     </div>
