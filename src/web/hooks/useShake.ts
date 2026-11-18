@@ -7,7 +7,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ShakeModeValue } from '@/components/session/ShakeContext.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
-import { sessionAPI, sessionMessagesKey } from '@/services/session.js'
+import { sessionAPI, sessionArchivesPrefix, sessionMessagesKey } from '@/services/session.js'
 import type { Message, ShakeRegionView } from '@/types/index.js'
 import { messageOf } from '@/utils/errors.js'
 
@@ -49,6 +49,8 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
       if (!ctx || scopeGuard.stale(ctx.scope)) return
       setShakeError(null)
       qc.invalidateQueries({ queryKey: sessionMessagesKey(variables.sessionId) })
+      // shakeApply 服务端把被裁区域归档：ArchivePanel 已打开时列表是陈旧的。
+      qc.invalidateQueries({ queryKey: sessionArchivesPrefix(variables.sessionId) })
       exitShakeMode()
     },
     onError: (error: unknown, _variables, ctx) => {

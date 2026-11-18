@@ -145,6 +145,7 @@ vi.mock('@/services/session.js', () => {
     llmDetailsKey: (id: string) => ['session', id, 'llm-details'],
     // 键 helper 与真实模块同形（树失效与归档面板查询用）
     sessionTreeKey: () => ['sessions', 'tree'],
+    sessionArchivesPrefix: (id: string) => ['session', id, 'archives'],
     sessionArchivesKey: (id: string, q: string) => ['session', id, 'archives', q],
     sessionMetaQueryOptions: (id: string) => ({
       queryKey: ['session', id, 'meta'],

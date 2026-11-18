@@ -19,7 +19,7 @@ import {
   todoKey,
 } from '@/services/todo.js'
 import { TOUCH } from '@/styles/breakpoints.js'
-import { ellipsisCss } from '@/styles/shared.js'
+import { disabledCss, ellipsisCss } from '@/styles/shared.js'
 import { inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -249,12 +249,15 @@ const addBtn = css`
     color: var(--haze-color-primary);
   }
 
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 `
 
+/*
+ * 主操作（「添加」提交键）：primary 实底。hover 刻意用 opacity 微降而非换底
+ * （confirmPrimaryBtn 家族依赖基础按钮的换底 hover）——这是面板内的小型内联
+ * 提交键，实底主色在 hover 时保持不换脸，只轻微降亮提示可点；两处场景不同，
+ * 勿互相收敛。
+ */
 const primaryBtn = css`
   background: var(--haze-color-primary);
   color: var(--haze-color-bg);

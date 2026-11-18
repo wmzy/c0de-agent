@@ -67,6 +67,10 @@ function hasDuplicateIds(items: Array<{ id: string }>): boolean {
   return new Set(items.map((x) => x.id)).size !== items.length
 }
 
+/** 回收站看板资源本体 404 的固定文案：uuid 参数守卫、restore/merge 失败与
+ *  彻底删除未命中五处共用（同 session.ts 的 SESSION_NOT_FOUND_MESSAGE 惯例）。 */
+const BOARD_NOT_FOUND_MESSAGE = '看板不存在或不在回收站'
+
 function createKanbanRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -75,7 +79,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
   // 注册在 /deleted* 路由之前：Hono 按注册序分派，守卫必须先于具体处理器。
   // '/deleted'（单段）不匹配本守卫模式，回收站列表/清空不受影响。
   // 守卫语义收敛到 middleware/uuid-param.ts。
-  const guardBoardId = uuidParamGuard('boardId', 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+  const guardBoardId = uuidParamGuard('boardId', 'BOARD_NOT_FOUND', BOARD_NOT_FOUND_MESSAGE)
   app.use('/deleted/:boardId', guardBoardId)
   app.use('/deleted/:boardId/*', guardBoardId)
 
@@ -104,7 +108,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     if (body.rebuild === true) {
       // 重建原项目：目录仍存在时重建项目记录并恢复到该目录（与会话存储同语义）。
       const board = await getDeletedKanbanBoard(ctx.db, boardId)
-      if (!board) return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+      if (!board) return apiError(c, 404, 'BOARD_NOT_FOUND', BOARD_NOT_FOUND_MESSAGE)
       if (!board.deletedProjectWorktree) {
         return apiError(
           c,
@@ -146,7 +150,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
           ...(recreatedProject ? { recreatedProject } : {}),
         })
       }
-      return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+      return apiError(c, 404, 'BOARD_NOT_FOUND', BOARD_NOT_FOUND_MESSAGE)
     }
     const result = await restoreKanbanBoard(ctx.db, boardId, targetProjectId)
     if (result.ok) {
@@ -155,13 +159,13 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     if (result.reason === 'TARGET_HAS_BOARD') {
       return apiError(c, 409, 'TARGET_HAS_BOARD', targetHasBoardMessage)
     }
-    return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+    return apiError(c, 404, 'BOARD_NOT_FOUND', BOARD_NOT_FOUND_MESSAGE)
   })
 
   // DELETE /deleted/:boardId — 彻底删除回收站看板（不可恢复）。
   app.delete('/deleted/:boardId', async (c) => {
     const count = await permanentlyDeleteKanbanBoard(ctx.db, c.req.param('boardId'))
-    if (count === 0) return apiError(c, 404, 'BOARD_NOT_FOUND', '看板不存在或不在回收站')
+    if (count === 0) return apiError(c, 404, 'BOARD_NOT_FOUND', BOARD_NOT_FOUND_MESSAGE)
     return c.json({ ok: true })
   })
 

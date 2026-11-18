@@ -11,6 +11,10 @@ import { readJsonObject } from '../util/json-body.js'
 /** 允许的 shell 白名单（P2-6：拒绝路径分隔符与任意二进制）。 */
 const ALLOWED_SHELLS = new Set(['bash', 'zsh', 'fish', 'sh'])
 
+/** PTY 资源本体 404 的固定文案：GET/PUT/DELETE /:id 三处守卫共用
+ *  （同 session.ts 的 SESSION_NOT_FOUND_MESSAGE 惯例）。 */
+const PTY_NOT_FOUND_MESSAGE = 'Terminal not found'
+
 /** 创建终端路由（REST 部分；WebSocket 升级在 server.ts 中处理）。 */
 function createTerminalRoute(ctx: ServerContext): Hono {
   const app = new Hono()
@@ -66,6 +70,8 @@ function createTerminalRoute(ctx: ServerContext): Hono {
       const info = mgr.create({ cwd, cols, rows, title, shell, projectId })
       return c.json(info, 201)
     } catch (err) {
+      // 刻意固定 fallback 而非 errorMessage(err)：非 Error 抛出物走产品文案
+      // 而非 String(err) 原样透出——口径已裁定保留，勿「收敛」。
       const message = err instanceof Error ? err.message : 'Failed to create terminal'
       return apiError(c, 500, 'PTY_CREATE_FAILED', message)
     }
@@ -74,7 +80,7 @@ function createTerminalRoute(ctx: ServerContext): Hono {
   // 获取单个 PTY 信息
   app.get('/:id', (c) => {
     const info = mgr.get(c.req.param('id'))
-    if (!info) return apiError(c, 404, 'PTY_NOT_FOUND', 'Terminal not found')
+    if (!info) return apiError(c, 404, 'PTY_NOT_FOUND', PTY_NOT_FOUND_MESSAGE)
     return c.json(info)
   })
 
@@ -82,7 +88,7 @@ function createTerminalRoute(ctx: ServerContext): Hono {
   app.put('/:id', async (c) => {
     const id = c.req.param('id')
     const info = mgr.get(id)
-    if (!info) return apiError(c, 404, 'PTY_NOT_FOUND', 'Terminal not found')
+    if (!info) return apiError(c, 404, 'PTY_NOT_FOUND', PTY_NOT_FOUND_MESSAGE)
 
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
@@ -107,7 +113,7 @@ function createTerminalRoute(ctx: ServerContext): Hono {
   // 终止 PTY
   app.delete('/:id', (c) => {
     const id = c.req.param('id')
-    if (!mgr.get(id)) return apiError(c, 404, 'PTY_NOT_FOUND', 'Terminal not found')
+    if (!mgr.get(id)) return apiError(c, 404, 'PTY_NOT_FOUND', PTY_NOT_FOUND_MESSAGE)
     mgr.kill(id)
     return c.json({ ok: true })
   })

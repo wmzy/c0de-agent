@@ -8,14 +8,13 @@
 // 「60 天内可恢复」但 CLI 无 restore 子命令，恢复只能绕道 Web 界面）。
 
 import type { DB } from '../../db/client.js'
-import { fromDirectory, getProject } from '../../project/project.js'
+import { fromDirectory } from '../../project/project.js'
 import { getSession, listAllSessions } from '../../session/session.js'
 import {
   emptyTrash,
   listDeletedSessions,
   permanentlyDeleteSession,
-  rebindSession,
-  rebindUnboundSessions,
+  resolveRestoreOwnership,
   restoreSessionCore,
   softDeleteSession,
   touchTrashSeen,
@@ -67,60 +66,40 @@ async function runSessionsCommand(ctx: SessionsCommandContext): Promise<void> {
     const result = await restoreSessionCore(ctx.db, id)
     if (!result.restored)
       throw new Error(`sessions restore: session not found or not deleted: ${id}`)
-    // P2-2：与 Web restore 对齐——会话项目已删除（FK set null）时按 worktreePath
-    // 重建归属，避免恢复成功但在 Web 各项目视图不可达。
+    // P2-2：与 Web restore 对齐——归属决策树（目录重建/--project 显式归属/反查/
+    // 连带收养）收敛在 resolveRestoreOwnership（server restore 路由同源），此处只
+    // 保留 CLI 文案包装。
     // P2 修复：--project <path> 提供显式归属出口（Web 有「归属到当前项目」，
     // CLI 此前只有警告、用户自己修不了）。
     const projectPath = ctx.args.options.project as string | undefined
     const session = await getSession(ctx.db, id)
-    // 本次恢复落定的项目：连带还原的祖先/后代也要归属到它（server 同口径）。
+    const ownership = await resolveRestoreOwnership(ctx.db, result.restoredIds, session, {
+      explicitProjectPath: projectPath,
+    })
     // 目标会话最终仍无归属时连带还原的会话同样无人收养，须如实提示。
-    let targetProject: { id: string; worktree: string } | null = null
     let targetUnowned = false
     const lines: string[] = []
-    if (session && !session.projectId && (session.worktreePath || projectPath)) {
-      try {
-        const { existsSync } = await import('node:fs')
-        const target = projectPath ?? session.worktreePath
-        if (target && existsSync(target)) {
-          const project = await fromDirectory(ctx.db, target)
-          await rebindSession(ctx.db, id, project)
-          targetProject = project
-          lines.push(`已恢复会话 ${id}（已重新归属到项目 ${project.id}）。\n`)
-        } else if (projectPath) {
-          throw new Error(`项目目录不存在：${projectPath}`)
-        } else {
-          targetUnowned = true
-          lines.push(
-            `已恢复会话 ${id}（警告：原项目目录不存在，会话未归属任何项目，Web 不可见）。\n`,
-          )
-          lines.push(`提示：c0de sessions restore ${id} --project <项目路径> 可显式归属。\n`)
-        }
-      } catch (error) {
-        targetUnowned = true
-        lines.push(
-          `已恢复会话 ${id}（警告：项目归属失败——${errorMessage(error)}，会话可能不可见）。\n`,
-        )
-      }
-    } else if (session?.projectId) {
-      // 目标会话已有归属（典型：恢复子会话时连带还原的祖先仍无归属）——由
-      // session.projectId 反查落定项目供收养（server 同口径；已有归属的会话在
-      // rebindUnboundSessions 内部天然跳过）。
-      targetProject = await getProject(ctx.db, session.projectId)
+    if (ownership.status === 'rebuilt' || ownership.status === 'assigned') {
+      lines.push(`已恢复会话 ${id}（已重新归属到项目 ${ownership.project.id}）。\n`)
+    } else if (ownership.status === 'owned') {
       lines.push(
         projectPath
           ? `已恢复会话 ${id}（会话已有项目归属，忽略 --project）。\n`
           : `已恢复会话 ${id}。\n`,
       )
+    } else if (ownership.status === 'unowned' && ownership.reason === 'rebuild-failed') {
+      targetUnowned = true
+      lines.push(
+        `已恢复会话 ${id}（警告：项目归属失败——${errorMessage(ownership.error)}，会话可能不可见）。\n`,
+      )
+    } else if (ownership.status === 'unowned' && ownership.reason === 'missing-directory') {
+      targetUnowned = true
+      lines.push(`已恢复会话 ${id}（警告：原项目目录不存在，会话未归属任何项目，Web 不可见）。\n`)
+      lines.push(`提示：c0de sessions restore ${id} --project <项目路径> 可显式归属。\n`)
     } else {
+      // unowned no-candidate / no-session：无归属线索可尝试。
       targetUnowned = true
       lines.push(`已恢复会话 ${id}。\n`)
-    }
-    // P2-2 收养（server 同口径）：目标会话拿到归属时，本次还原出且仍无归属的
-    // 祖先/后代一并归属过去——侧栏按根会话 projectId 过滤整棵树，根无归属则
-    // 整棵子树在任何项目视图里都不可达。
-    if (targetProject) {
-      await rebindUnboundSessions(ctx.db, result.restoredIds, targetProject)
     }
     // P3：恢复语义提示（与 server 响应字段同源）。
     if (result.restoredAncestorCount > 0)

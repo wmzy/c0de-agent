@@ -5,6 +5,7 @@
 import { css } from '@linaria/core'
 import { Dialog as HazeDialog } from 'haze-ui'
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { disabledCss } from '@/styles/shared.js'
 
 export type DialogProps = {
   open?: boolean
@@ -78,10 +79,7 @@ const closeButton = css`
     color: var(--haze-color-text);
   }
 
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 `
 
 const content = css`

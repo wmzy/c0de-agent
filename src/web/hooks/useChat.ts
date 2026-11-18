@@ -24,7 +24,12 @@ import { sendChatMessage } from '@/services/chat.js'
 import { filePathPrefix } from '@/services/file.js'
 import { permissionAPI } from '@/services/permission.js'
 import { projectAPI } from '@/services/project.js'
-import { llmDetailsKey, sessionAPI, sessionMessagesKey } from '@/services/session.js'
+import {
+  llmDetailsKey,
+  sessionAPI,
+  sessionArchivesPrefix,
+  sessionMessagesKey,
+} from '@/services/session.js'
 import { todoKey } from '@/services/todo.js'
 import type { APIError } from '@/types/index.js'
 import { subscribeChannel } from '@/utils/broadcast.js'
@@ -222,6 +227,9 @@ export function useChat(sessionId: string): ChatState & ChatActions {
                 llmDetailTimerRef.current = null
               }
               qc.invalidateQueries({ queryKey: llmDetailsKey(sessionId) })
+              // 本轮 run 可能触发 compact（/compact 斜杠走同一 run 流程）产出归档：
+              // ArchivePanel 已打开时列表是陈旧的，随 done/error 一并失效。
+              qc.invalidateQueries({ queryKey: sessionArchivesPrefix(sessionId) })
             }
           },
           abortRef.current.signal,

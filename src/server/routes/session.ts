@@ -1,8 +1,6 @@
-import { existsSync } from 'node:fs'
 import { Hono } from 'hono'
 import { createSummarizerWithFallback } from '../../core/compact.js'
 import { fromDirectory } from '../../project/index.js'
-import { getProject } from '../../project/project.js'
 import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
 import {
   BranchPointOutOfRangeError,
@@ -37,7 +35,7 @@ import {
   permanentlyDeleteSession,
   purgeEmptySession,
   rebindSession,
-  rebindUnboundSessions,
+  resolveRestoreOwnership,
   restoreSessionCore,
   softDeleteSession,
   touchTrashSeen,
@@ -480,69 +478,28 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const result = await restoreSessionCore(ctx.db, id)
     if (!result.restored) return apiError(c, 404, 'NOT_FOUND', '会话不存在或未删除')
     const session = await getSession(ctx.db, id)
-    let rebound = false
-    let orphaned = false
-    let recreatedProject: { id: string; name: string | null } | null = null
-    // 本次恢复落定的项目：连带还原的祖先/后代也要归属到它（见下方 adoptedCount）。
-    let targetProject: { id: string; worktree: string } | null = null
-    if (session && !session.projectId) {
-      const wt = session.worktreePath
-      // P1-3：用户选择「归属到当前项目」时跳过自动重建（删除项目是用户意图，
-      // 不静默复活）。否则目录仍存在则重建项目记录（明示在响应中）。
-      if (!preferCurrentProject && wt && existsSync(wt)) {
-        try {
-          const project = await fromDirectory(ctx.db, wt)
-          // rebindSession 正本同时写 projectId+worktreePath（此处两者值相同：
-          // project 来自 fromDirectory(wt)，wt 即 session.worktreePath）。
-          await rebindSession(ctx.db, id, project)
-          rebound = true
-          recreatedProject = { id: project.id, name: project.name }
-          targetProject = project
-        } catch {
-          orphaned = true
-        }
-      } else {
-        orphaned = true
-      }
-      // P1-2：目录失效且请求方提供了项目上下文 → 归属到该请求项目；
-      // P1-3：restoreMode='current-project' 时无论目录是否存在都归属请求项目。
-      if (orphaned && requestProjectId) {
-        const project = await getProject(ctx.db, requestProjectId)
-        if (project) {
-          await rebindSession(ctx.db, id, project)
-          orphaned = false
-          rebound = true
-          targetProject = project
-        }
-      }
-    } else if (session?.projectId) {
-      // 目标会话已有归属（典型：恢复到 P2 的子会话，连带还原的祖先仍无归属——
-      // 属已删的 P1 或本来就是孤儿）。此前 targetProject 恒为 null，
-      // rebindUnboundSessions 整个被跳过：祖先保持 projectId=null，侧栏按根会话
-      // projectId 过滤整棵树 ⇒ 恢复结果在目标所属项目里不可达，adoptedCount=0
-      // 也无任何提示。由 session.projectId 反查落定项目（FK 保证行存在，查不到
-      // 则维持旧行为不动）；已有归属的会话在 rebindUnboundSessions 内部天然跳过。
-      targetProject = await getProject(ctx.db, session.projectId)
-    }
-    // P2-2 可达性：恢复只给目标会话落了归属，而删除项目留下的孤儿是**整批**的
-    // ——连带还原的祖先（以及同批次后代）仍是 projectId=null。侧栏按根会话
-    // projectId 过滤整棵树，根无归属时恢复成功的会话在任何项目视图里都不出现
-    // （提示却说「已恢复并归属到当前项目」），被还原的祖先也再无任何列表入口。
-    // 目标会话拿到归属时，把本次还原出的、仍无归属的会话一并归属过去。
-    const adoptedCount = targetProject
-      ? (await rebindUnboundSessions(ctx.db, result.restoredIds, targetProject)).length
-      : 0
+    // P2-2：归属决策树（目录重建/orphaned 回落/反查/连带收养）收敛在
+    // resolveRestoreOwnership（CLI sessions restore 同源），此处只做 HTTP 响应
+    // 字段映射。preferCurrentProject 跳过目录自动重建；requestProjectId 是
+    // 目录失效时的回落归属（两者均为 server 特有的产品差异）。
+    const ownership = await resolveRestoreOwnership(ctx.db, result.restoredIds, session, {
+      fallbackProjectId: requestProjectId,
+      skipRebuild: preferCurrentProject,
+    })
     return c.json({
       ok: true,
-      rebound,
-      orphaned,
-      recreatedProject,
+      rebound: ownership.status === 'rebuilt' || ownership.status === 'assigned',
+      orphaned: ownership.status === 'unowned',
+      recreatedProject:
+        ownership.status === 'rebuilt'
+          ? { id: ownership.project.id, name: ownership.project.name }
+          : null,
       restoredAncestorCount: result.restoredAncestorCount,
       crossedBatchAncestor: result.crossedBatchAncestor,
       // A2：批次不同的已删后代滞留在回收站，显式告知数量供前端提示单独恢复。
       leftBehindDescendantCount: result.leftBehindDescendantCount,
       // P2-2：连带还原且一并归属到本次恢复项目的会话数量（不含目标会话）。
-      adoptedCount,
+      adoptedCount: ownership.adoptedCount,
     })
   })
 
@@ -643,6 +600,8 @@ function createSessionRoute(ctx: ServerContext): Hono {
       })
       return c.json(result)
     } catch (e) {
+      // 刻意的固定 fallback（非 errorMessage 骨架）：非 Error 抛出物没有可用
+      // message，此处钉死 'Compaction failed' 与错误码文案一致，勿改成 String(e)。
       return apiError(
         c,
         500,

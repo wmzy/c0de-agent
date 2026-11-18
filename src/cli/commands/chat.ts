@@ -45,17 +45,16 @@ async function runSlashCommand(
   const { runManualCompact } = await import('../../core/loop.js')
   const { requireContinuableSession } = await import('../../session/session.js')
 
-  // /workflow 命令注入三级注册表（内置 + 用户级 + 受信任的项目级）：
-  // 此前 CLI 缺省回退仅内置注册表，~/.c0de/workflows 用户级工作流在 CLI
-  // 完全不可见/不可运行。项目级仅在 cwd 当前可信时 import（fail-closed）。
+  // /workflow 命令注入二级注册表（内置 + 用户级）：此前 CLI 缺省回退仅内置
+  // 注册表，~/.c0de/workflows 用户级工作流在 CLI 完全不可见/不可运行。项目级
+  // 不在此注入——slash.ts 的 overlay 会对同一 cwd 做唯一一次信任判定与动态
+  // 发现（此前这里先判一次信任并组装进注册表、slash 侧对同一 cwd 再判一次，
+  // 同一条命令信任查询与项目发现各跑两遍；注册表缺项目级时 overlay 的
+  // 「项目 > 用户 > 内置」解析语义完全等价）。
   let workflowRegistry: import('../../core/workflows/registry.js').WorkflowRegistry | undefined
   if (parsed.name === 'workflow') {
     const { createAndPopulateRegistry } = await import('../../core/workflows/index.js')
-    const { resolveCwdProjectTrusted } = await import('../../project/index.js')
-    const projectTrusted = await resolveCwdProjectTrusted(ctx.deps.db, ctx.deps.cwd).catch(
-      () => false,
-    )
-    workflowRegistry = await createAndPopulateRegistry(ctx.deps.cwd, { projectTrusted })
+    workflowRegistry = await createAndPopulateRegistry(ctx.deps.cwd)
   }
 
   const result = await cmd.execute(parsed.args, {

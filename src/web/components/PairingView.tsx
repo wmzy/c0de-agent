@@ -313,20 +313,22 @@ export function PairingApproval() {
     }
   }, [])
 
+  /** 审批/拒绝成功后的收尾：把该请求从列表移除，并一并清掉其已输入配对码——
+   *  否则每处理一条就永久留一份 codes 记录，pairingId 用完也不会回收。 */
+  const resolvePairing = (id: string) => {
+    setCodes((prev) => {
+      if (!(id in prev)) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    setItems((prev) => prev.filter((p) => p.pairingId !== id))
+  }
+
   const approve = (id: string, code: string) => {
     authAPI
       .approvePairing(id, code)
-      .then(() => {
-        // 一并清掉该请求的已输入配对码：否则每处理一条就永久留一份 codes 记录，
-        // pairingId 用完也不会回收。
-        setCodes((prev) => {
-          if (!(id in prev)) return prev
-          const next = { ...prev }
-          delete next[id]
-          return next
-        })
-        setItems((prev) => prev.filter((p) => p.pairingId !== id))
-      })
+      .then(() => resolvePairing(id))
       .catch((e) => {
         setError(
           (e as { code?: string }).code === 'PAIRING_CODE_MISMATCH'
@@ -369,15 +371,7 @@ export function PairingApproval() {
   const deny = (id: string) => {
     authAPI
       .denyPairing(id)
-      .then(() => {
-        setCodes((prev) => {
-          if (!(id in prev)) return prev
-          const next = { ...prev }
-          delete next[id]
-          return next
-        })
-        setItems((prev) => prev.filter((p) => p.pairingId !== id))
-      })
+      .then(() => resolvePairing(id))
       .catch(() => setError('操作失败，请重试'))
   }
 

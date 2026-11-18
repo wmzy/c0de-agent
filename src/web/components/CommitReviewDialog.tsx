@@ -1,15 +1,18 @@
 import { css } from '@linaria/core'
 import { CopyButton } from '@/components/CopyButton.js'
-import { confirmActions, confirmBodyText, confirmBtn } from '@/components/confirmDialogStyles.js'
+import {
+  confirmActions,
+  confirmBodyText,
+  confirmBtn,
+  confirmWarningBtn,
+} from '@/components/confirmDialogStyles.js'
 import { Dialog, useDialogDismiss } from '@/components/Dialog.js'
 import { DialogInlineError } from '@/components/DialogInlineError.js'
+import { disabledCss } from '@/styles/shared.js'
 
 /** 本弹窗三颗按钮在 busy 时都会 disabled，需要显式的禁用视觉（共享基础按钮不带）。 */
 const btnDisabled = css`
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 `
 
 const fileList = css`
@@ -19,14 +22,6 @@ const fileList = css`
   font-family: var(--haze-font-mono, monospace);
   color: var(--haze-color-text-secondary);
   padding: 8px 12px;
-`
-
-const primaryBtn = css`
-  border-color: var(--haze-color-warning, var(--haze-color-border));
-  background: var(--haze-color-warning, var(--haze-color-bg-subtle));
-  /* 琥珀实底上的前景色走 token：warning 的 dark 值是琥珀**字**色，
-     当底色时白字仅 1.67:1（全应用最差的一处）。见 global.ts 的说明。 */
-  color: var(--c0de-warning-on-solid, #fff);
 `
 
 const sectionLabel = css`
@@ -121,7 +116,7 @@ export function CommitReviewDialog({
           </button>
           <button
             type="button"
-            className={`${confirmBtn} ${btnDisabled} ${primaryBtn}`}
+            className={`${confirmWarningBtn} ${btnDisabled}`}
             onClick={onAppendIgnore}
             disabled={busy}
             data-testid="commit-review-ignore"

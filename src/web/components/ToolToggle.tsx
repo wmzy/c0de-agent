@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { toolAPI, toolsKey } from '@/services/tool.js'
-import { ellipsisCss } from '@/styles/shared.js'
+import { disabledCss, ellipsisCss } from '@/styles/shared.js'
 import { cardStyle, inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 
@@ -21,10 +21,7 @@ const trigger = css`
   font-size: 12px;
   cursor: pointer;
 
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 `
 
 const badgeActive = css`

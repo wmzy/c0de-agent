@@ -1,4 +1,4 @@
-import { get } from '@/services/api.js'
+import { appendQuery, get } from '@/services/api.js'
 
 /** 目录列表项。 */
 type DirectoryEntry = {
@@ -26,7 +26,11 @@ const filesystemAPI = {
   /** 递归搜索目录（命中深层目录，返回相对 directory 的目录路径）。 */
   search: (directory: string, q: string, limit = 50) =>
     get<SearchResult>(
-      `/api/filesystem/search?directory=${encodeURIComponent(directory)}&q=${encodeURIComponent(q)}&limit=${limit}`,
+      appendQuery('/api/filesystem/search', {
+        directory,
+        q,
+        limit: String(limit),
+      }),
     ),
 }
 

@@ -1,4 +1,4 @@
-import { del, get, post, withProjectId } from '@/services/api.js'
+import { appendQuery, del, get, post, withProjectId } from '@/services/api.js'
 
 /** GET /api/workflows 返回的工作流条目。 */
 type WorkflowInfo = {
@@ -46,10 +46,7 @@ const workflowsAPI = {
     post<{ ok: boolean; name: string; filePath: string }>('/api/workflows', payload),
   remove: (name: string, projectId: string | undefined, target: WorkflowRemoveTarget) =>
     del<{ ok: boolean }>(
-      `/api/workflows/${encodeURIComponent(name)}?${new URLSearchParams({
-        ...(projectId ? { projectId } : {}),
-        target,
-      })}`,
+      appendQuery(`/api/workflows/${encodeURIComponent(name)}`, { projectId, target }),
     ),
 }
 

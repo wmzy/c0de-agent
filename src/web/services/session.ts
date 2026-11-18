@@ -62,9 +62,7 @@ const sessionAPI = {
     del<{ ok: boolean; deleted: number }>(withProjectId('/api/sessions/deleted', projectId)),
   /** 会话归档列表（compaction/squash/shake/clear 原始内容）；q 为搜索词。 */
   archives: (id: string, q?: string) =>
-    get<{ archives: CompactionArchive[] }>(
-      `/api/sessions/${id}/archives${q ? `?q=${encodeURIComponent(q)}` : ''}`,
-    ),
+    get<{ archives: CompactionArchive[] }>(appendQuery(`/api/sessions/${id}/archives`, { q })),
   /** 会话重命名（P2-5）。 */
   rename: (id: string, title: string) =>
     patch<{ ok: boolean; title: string }>(`/api/sessions/${id}`, { title }),
@@ -169,9 +167,15 @@ export function sessionMessagesQueryOptions(sessionId: string) {
   }
 }
 
+/** 会话归档列表失效前缀（compact/shakeApply 产出新归档后失效所有 q 变体；
+ *  sessionArchivesKey 是它加 q 的子键）。 */
+export function sessionArchivesPrefix(sessionId: string) {
+  return ['session', sessionId, 'archives'] as const
+}
+
 /** 会话归档列表查询键（ArchivePanel，q 为搜索词；挂在 ['session', id] 前缀树下）。 */
 export function sessionArchivesKey(sessionId: string, q: string) {
-  return ['session', sessionId, 'archives', q] as const
+  return [...sessionArchivesPrefix(sessionId), q] as const
 }
 
 /** 会话树查询键（useSessionTree 正本；树刷新失效点统一走这里）。 */

@@ -4,10 +4,12 @@
  * 以及物理删除原语 deleteSessionSubtrees（自引用 FK 要求子先父后）。
  * 会话 CRUD 与常规 metadata 更新见 session.ts；LLM 段管理见 segments.ts。
  */
+import { existsSync } from 'node:fs'
 import { and, eq, gt, inArray, isNull, lt, notExists, or, type SQL, sql } from 'drizzle-orm'
 import { alias, type PgUpdateSetSource } from 'drizzle-orm/pg-core'
 import type { DB } from '../db/client.js'
 import { sessionEntries, sessions } from '../db/schema.js'
+import { fromDirectory, getProject, type Project } from '../project/project.js'
 import { generateId } from '../shared/index.js'
 import type { Session, SessionMetadata } from '../shared/types/message.js'
 import { rowToSession, updateSessionMetadata } from './session.js'
@@ -360,6 +362,111 @@ async function restoreSessionCore(
 }
 
 /**
+ * 恢复后归属决策树（restoreSessionCore 的配套单源）——server restore 路由与
+ * CLI `sessions restore` 此前各持一份同构手抄实现（两侧注释互称「server 同口径」，
+ * 每次修复都得两边各改一份），收敛至此。四段决策：
+ *
+ *  1) 会话无 projectId 且有可尝试目录（worktreePath 或 CLI --project 显式路径）→
+ *     目录存在则 fromDirectory 重建项目记录并 rebindSession 归属；目录失效或
+ *     重建抛错 → unowned（error 随附，CLI 警告文案用 errorMessage 呈现）。
+ *     skipRebuild=true 时跳过自动重建（server restoreMode='current-project'：
+ *     删除项目是用户显式意图，不静默复活）。
+ *  2) unowned 且提供 fallbackProjectId（server body.projectId）→ getProject 回落
+ *     归属到请求项目（server-only；CLI 的显式归属入口就是路径本身，无回落）。
+ *  3) 会话已有 projectId → getProject 反查落定项目，供连带还原会话收养。
+ *  4) 落定项目存在 → rebindUnboundSessions 把本次还原出、仍无归属的会话一并
+ *     归属过去（侧栏按根会话 projectId 过滤整棵树，根无归属则整棵树在任何
+ *     项目视图都不可达）。
+ *
+ * 文案/HTTP 包装留在调用方：各终态与两侧提示一一对应，产品差异（server 的
+ * preferCurrentProject/orphaned 回落、CLI 的显式路径入口）经 opts 表达。
+ */
+export type RestoreOwnershipOutcome =
+  /** 按目录重建项目记录并归属成功（server 据此填 recreatedProject）。 */
+  | { status: 'rebuilt'; project: Project; adoptedCount: number }
+  /** orphaned 回落归属到请求项目成功（server-only；CLI 不产生此态）。 */
+  | { status: 'assigned'; project: Project; adoptedCount: number }
+  /** 目标会话本就有归属：project 为反查落定项目（FK 异常时 null，维持旧行为不收养）。 */
+  | { status: 'owned'; project: Project | null; adoptedCount: number }
+  /** 恢复后仍无归属：missing-directory=目录失效/跳过重建；no-candidate=无目录可尝试。 */
+  | { status: 'unowned'; reason: 'missing-directory' | 'no-candidate'; adoptedCount: 0 }
+  /** 重建归属抛错（error 供 CLI 警告文案；server 吞错只看 orphaned）。 */
+  | { status: 'unowned'; reason: 'rebuild-failed'; error: unknown; adoptedCount: 0 }
+  /** 会话行缺失（恢复成功后读不到；server 旧行为：不标 orphaned、不收养）。 */
+  | { status: 'no-session'; adoptedCount: 0 }
+
+async function resolveRestoreOwnership(
+  db: DB,
+  restoredIds: readonly string[],
+  session: Session | null,
+  opts: {
+    /** CLI --project <路径>：显式归属出口，优先于 worktreePath 作重建目录；
+     *  目录不存在时走 rebuild-failed 腿由调用方警告文案呈现。 */
+    explicitProjectPath?: string
+    /** orphaned 回落项目 id（server body.projectId：目录失效时归属到请求项目）。 */
+    fallbackProjectId?: string
+    /** 跳过 worktree 目录自动重建（server restoreMode='current-project'）。 */
+    skipRebuild?: boolean
+  } = {},
+): Promise<RestoreOwnershipOutcome> {
+  if (!session) return { status: 'no-session', adoptedCount: 0 }
+  if (session.projectId) {
+    // 目标会话已有归属（典型：恢复到子会话，连带还原的祖先仍无归属——属已删的
+    // 上层项目或本来就是孤儿）。由 projectId 反查落定项目供收养；查不到则维持
+    // 旧行为不动（不归属、不收养）。已有归属的会话在 rebindUnboundSessions
+    // 内部天然跳过。
+    const project = await getProject(db, session.projectId)
+    if (!project) return { status: 'owned', project: null, adoptedCount: 0 }
+    const adoptedCount = (await rebindUnboundSessions(db, restoredIds, project)).length
+    return { status: 'owned', project, adoptedCount }
+  }
+  let unowned: Extract<RestoreOwnershipOutcome, { status: 'unowned' }> | null = null
+  if (session.worktreePath || opts.explicitProjectPath) {
+    // 重建目录：CLI 显式路径优先于 worktreePath；skipRebuild 时跳过（用户显式
+    // 选择归属当前项目，不按目录静默复活已删项目）。
+    const rebuildPath = opts.skipRebuild
+      ? null
+      : (opts.explicitProjectPath ?? session.worktreePath ?? null)
+    if (rebuildPath && existsSync(rebuildPath)) {
+      try {
+        const project = await fromDirectory(db, rebuildPath)
+        // rebindSession 正本同时写 projectId+worktreePath（此处两者值相同：
+        // project 来自 fromDirectory(rebuildPath)，rebuildPath 即会话目录）。
+        await rebindSession(db, session.id, project)
+        const adoptedCount = (await rebindUnboundSessions(db, restoredIds, project)).length
+        return { status: 'rebuilt', project, adoptedCount }
+      } catch (error) {
+        unowned = { status: 'unowned', reason: 'rebuild-failed', error, adoptedCount: 0 }
+      }
+    } else if (opts.explicitProjectPath) {
+      // CLI 显式路径不存在：原实现在 try 内 throw 后被同层 catch 吞入同一条
+      // 「项目归属失败」警告，此处保持等价（错误对象进 error 由调用方呈现）。
+      unowned = {
+        status: 'unowned',
+        reason: 'rebuild-failed',
+        error: new Error(`项目目录不存在：${opts.explicitProjectPath}`),
+        adoptedCount: 0,
+      }
+    } else {
+      unowned = { status: 'unowned', reason: 'missing-directory', adoptedCount: 0 }
+    }
+  } else {
+    unowned = { status: 'unowned', reason: 'no-candidate', adoptedCount: 0 }
+  }
+  // 回落：目录失效（或跳过重建）且请求方提供项目上下文 → 归属到该请求项目；
+  // restoreMode='current-project' 时无论目录是否存在都归属请求项目。
+  if (opts.fallbackProjectId) {
+    const project = await getProject(db, opts.fallbackProjectId)
+    if (project) {
+      await rebindSession(db, session.id, project)
+      const adoptedCount = (await rebindUnboundSessions(db, restoredIds, project)).length
+      return { status: 'assigned', project, adoptedCount }
+    }
+  }
+  return unowned
+}
+
+/**
  * P2-4：回收站保留期 60 天（原 30 天），自「用户首次在回收站看到该条目」
  * （metadata.trashSeenAt）起算，而非删除时间（墙钟）——否则用户删除后长期不开服务、
  * 重启即被静默物理清除，从未见过任何倒计时。临时会话（CLI print / workflow）保留期
@@ -690,6 +797,7 @@ export {
   purgeTemporarySessions,
   rebindSession,
   rebindUnboundSessions,
+  resolveRestoreOwnership,
   restoreSessionCore,
   softDeleteSession,
   softDeleteSessionRows,
