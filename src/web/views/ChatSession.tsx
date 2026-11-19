@@ -36,6 +36,7 @@ import {
   sessionMetaQueryOptions,
   sessionTreeKey,
 } from '@/services/session.js'
+import { disabledCss } from '@/styles/shared.js'
 import { downloadJson } from '@/utils/download.js'
 import { messageOf } from '@/utils/errors.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
@@ -63,10 +64,7 @@ const shakeBtn = css`
     background: var(--haze-color-bg-subtle);
   }
 
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 `
 
 const shakeToolbar = css`
@@ -154,10 +152,7 @@ const exportChoiceBtn = css`
   color: var(--haze-color-text);
   font-size: 13px;
   cursor: pointer;
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 `
 
 /** 分支数量检查失败时的内联重试按钮：与说明文字同行，不占据 footer。 */
@@ -180,10 +175,7 @@ const exportChoicePrimary = css`
   color: var(--haze-color-on-primary, #fff);
   font-size: 13px;
   cursor: pointer;
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 `
 
 export function ChatSession({

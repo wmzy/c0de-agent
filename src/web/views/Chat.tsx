@@ -27,7 +27,7 @@ import {
   subscribeModeChange,
 } from '@/services/permission.js'
 import { MOBILE } from '@/styles/breakpoints.js'
-import { ellipsisCss } from '@/styles/shared.js'
+import { disabledCss, ellipsisCss } from '@/styles/shared.js'
 import { messageOf } from '@/utils/errors.js'
 import { formatTokenCount } from '@/utils/format.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
@@ -218,10 +218,7 @@ const ctlBtn = css`
 
   /* 在途禁用态（重发等待 /messages 往返等）：必须有可辨识的视觉差异，
      否则按钮看起来仍可点，用户会反复点击并以为应用卡住 */
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  ${disabledCss}
 
   /* 面板开关态（终端）：与「恢复」等一次性动作按钮区分——它是常驻开关 */
   &[aria-pressed='true'] {
