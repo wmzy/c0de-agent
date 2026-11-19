@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModelSelection } from '@/components/ModelSelector.js'
 import { useConfig } from '@/contexts/ConfigContext.js'
 import { providersQueryOptions } from '@/services/provider.js'
-import { storageGet, storageRemove, storageSet } from '@/utils/storage.js'
+import { parseStoredJson, storageGet, storageRemove, storageSet } from '@/utils/storage.js'
 
 const SELECTION_KEY = 'c0de-agent:modelSelection'
 const AGENT_KEY = 'c0de-agent:selectedAgent'
@@ -29,11 +29,9 @@ function readSelection(projectId?: string): ModelSelection {
   const saved = storageGet(selectionKey(projectId))
   const fallback = saved ?? storageGet(SELECTION_KEY)
   if (fallback) {
-    try {
-      return JSON.parse(fallback) as ModelSelection
-    } catch {
-      // JSON 损坏，回退到默认值
-    }
+    const parsed = parseStoredJson<ModelSelection>(fallback)
+    // JSON 损坏（parsed 为 null）回退到默认值
+    if (parsed) return parsed
   }
   return { provider: '', model: '' }
 }
@@ -41,14 +39,9 @@ function readSelection(projectId?: string): ModelSelection {
 /** 读取持久化的工具白名单；null = 未显式选择（缺记录/JSON 损坏/形状违规）。 */
 function readTools(projectId?: string): Set<string> | null {
   const raw = storageGet(toolsKey(projectId))
-  if (raw == null) return null
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === 'string')) return null
-    return new Set(parsed)
-  } catch {
-    return null
-  }
+  const parsed = parseStoredJson<unknown>(raw)
+  if (!parsed || !Array.isArray(parsed) || !parsed.every((t) => typeof t === 'string')) return null
+  return new Set(parsed)
 }
 
 /** 读取持久化的 agent 名（项目键优先，旧全局键回退）。 */

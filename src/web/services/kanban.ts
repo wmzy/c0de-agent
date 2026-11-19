@@ -1,43 +1,22 @@
+// 看板契约类型（KanbanPriority/列/标签/卡片/看板）的正典在 shared/types/kanban.ts，
+// 由 store、REST 路由与 kanban 工具三方共用；此处 re-export 供 web 侧消费。
+import type {
+  KanbanBoard,
+  KanbanBoardWithCards,
+  KanbanCard,
+  KanbanColumnDef,
+  KanbanLabelDef,
+  KanbanPriority,
+} from '@shared/types/kanban.js'
 import { del, get, patch, post } from '@/services/api.js'
 
-export type KanbanPriority = 'high' | 'medium' | 'low'
-
-export type KanbanColumnDef = {
-  id: string
-  name: string
-}
-
-export type KanbanLabelDef = {
-  id: string
-  name: string
-  color: string
-}
-
-export type KanbanCard = {
-  id: string
-  boardId: string
-  title: string
-  description: string | null
-  columnId: string
-  priority: KanbanPriority
-  position: number
-  labels: string[]
-  createdAt: string
-  updatedAt: string
-}
-
-export type KanbanBoard = {
-  id: string
-  /** P2-5：回收站（软删除）看板 projectId 为 null；活动看板恒有值。 */
-  projectId: string | null
-  columns: KanbanColumnDef[]
-  labels: KanbanLabelDef[]
-  createdAt: string
-  updatedAt: string
-}
-
-export type KanbanBoardWithCards = KanbanBoard & {
-  cards: KanbanCard[]
+export type {
+  KanbanBoard,
+  KanbanBoardWithCards,
+  KanbanCard,
+  KanbanColumnDef,
+  KanbanLabelDef,
+  KanbanPriority,
 }
 
 /**

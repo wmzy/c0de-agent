@@ -1,6 +1,7 @@
 // src/server/agent-manager.ts
 import { abortAgent, injectSteering, pauseAgent, resumeAgent } from '../core/index.js'
 import type { AgentDependencies } from '../core/types.js'
+import { sleep } from '../shared/timer.js'
 import type { AgentState } from '../shared/types/agent.js'
 
 /** 一个活跃的 agent run。 */
@@ -188,7 +189,7 @@ function createAgentManager(): AgentManager {
       while (Date.now() < deadline) {
         const stillRunning = active.filter((r) => r.state.status._tag === 'running')
         if (stillRunning.length === 0) break
-        await new Promise((res) => setTimeout(res, 100))
+        await sleep(100)
       }
       let forcedAbort = 0
       for (const run of active) {

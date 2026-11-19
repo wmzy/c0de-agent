@@ -1,4 +1,4 @@
-import { MAX_TIMER_MS } from '../shared/timer.js'
+import { MAX_TIMER_MS, sleep } from '../shared/timer.js'
 import type { LLMErrorReason, RetryPolicy } from './schema/errors.js'
 import { isLLMError, reasonRetryAfterMs, retryPolicy } from './schema/errors.js'
 
@@ -105,8 +105,8 @@ type RetryOptions = {
   initialDelayMs?: number
 }
 
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms))
+/** 委托 shared/timer 的 sleep；保留别名以维持 RetryOptions.sleep 注入点的可读性。 */
+const defaultSleep = sleep
 
 /**
  * Run an async operation with retry. Retries only on retryable LLM errors.

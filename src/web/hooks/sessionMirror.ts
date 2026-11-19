@@ -1,4 +1,4 @@
-import { sessionGet, sessionRemove, sessionSet } from '@/utils/storage.js'
+import { parseStoredJson, sessionGet, sessionRemove, sessionSet } from '@/utils/storage.js'
 
 /**
  * 「模块级 Map + sessionStorage 镜像」的跨组件实例传递骨架（工厂）。
@@ -16,15 +16,7 @@ import { sessionGet, sessionRemove, sessionSet } from '@/utils/storage.js'
 export function createSessionMirror<T>(keyPrefix: string) {
   const values = new Map<string, T>()
 
-  const loadFromStorage = (key: string): T | null => {
-    const raw = sessionGet(keyPrefix + key)
-    if (!raw) return null
-    try {
-      return JSON.parse(raw) as T
-    } catch {
-      return null
-    }
-  }
+  const loadFromStorage = (key: string): T | null => parseStoredJson<T>(sessionGet(keyPrefix + key))
 
   const get = (key: string): T | undefined => {
     if (values.has(key)) return values.get(key)

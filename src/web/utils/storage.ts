@@ -38,6 +38,18 @@ export function storageRemove(key: string): void {
   }
 }
 
+/** 解析 storageGet 读出的 JSON 文本；raw 为空或 JSON 损坏返回 null。
+ *  只统一「取 raw→parse→异常→null」防御外壳——形状校验与默认值留在调用方
+ *  （各调用点的合法形状与回退语义不同，不在此折叠）。 */
+export function parseStoredJson<T>(raw: string | null): T | null {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return null
+  }
+}
+
 /** 读 sessionStorage；存储不可用返回 null。 */
 export function sessionGet(key: string): string | null {
   try {

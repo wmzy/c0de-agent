@@ -11,7 +11,7 @@
 // 连文本一起丢掉，故超预算时只存文本部分。
 
 import { type ContentPart, type ImagePart, isPromptEmpty, type Prompt } from '@/composer/types.js'
-import { storageGet, storageRemove, storageSet } from '@/utils/storage.js'
+import { parseStoredJson, storageGet, storageRemove, storageSet } from '@/utils/storage.js'
 
 /** 草稿键前缀（带版本号：结构变更时旧键自然失效，无需迁移）。 */
 const DRAFT_KEY_PREFIX = 'composer-draft.v1:'
@@ -62,15 +62,11 @@ function isStoredImage(value: unknown): value is ImagePart {
 /** 读取草稿；无草稿/存储不可用/结构损坏一律返回 null。 */
 function loadDraft(scope: string): StoredDraft | null {
   const raw = storageGet(draftStorageKey(scope))
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw) as { prompt?: unknown; images?: unknown }
-    if (!Array.isArray(parsed.prompt) || !parsed.prompt.every(isStoredPart)) return null
-    const images = Array.isArray(parsed.images) ? parsed.images.filter(isStoredImage) : []
-    return { prompt: parsed.prompt, images }
-  } catch {
-    return null
-  }
+  const parsed = parseStoredJson<{ prompt?: unknown; images?: unknown }>(raw)
+  if (!parsed) return null
+  if (!Array.isArray(parsed.prompt) || !parsed.prompt.every(isStoredPart)) return null
+  const images = Array.isArray(parsed.images) ? parsed.images.filter(isStoredImage) : []
+  return { prompt: parsed.prompt, images }
 }
 
 /** 写入草稿。空草稿（无文本引用且无图片）删除键，避免无用条目长期堆积。 */

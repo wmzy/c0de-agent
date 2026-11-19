@@ -35,6 +35,7 @@ import {
   TRASH_RETENTION_MS,
 } from '../session/trash.js'
 import { backfillUsageEventsOnce } from '../session/usage.js'
+import { sleep } from '../shared/timer.js'
 import type { Config } from '../shared/types/config.js'
 import { readJsonFileSafe, writeJsonFileSafe } from '../shared/utils/json-file.js'
 import { errorMessage } from '../shared/utils/string.js'
@@ -131,13 +132,18 @@ function resolveAuthToken(config: Config, dataDir: string): string | undefined {
   const tokenFile = join(dataDir, 'auth-token')
   const envToken = process.env.C0DE_AUTH_TOKEN
 
-  if (envToken) {
+  /** token 落盘（0o600）；失败不影响本次运行——仍可用内存 token。 */
+  const persistToken = (value: string): void => {
     try {
       mkdirSync(dataDir, { recursive: true })
-      writeFileSync(tokenFile, envToken, { mode: 0o600 })
+      writeFileSync(tokenFile, value, { mode: 0o600 })
     } catch {
-      // 落盘失败不影响本次运行
+      // 落盘失败不影响本次运行，仍可用内存 token
     }
+  }
+
+  if (envToken) {
+    persistToken(envToken)
     return envToken
   }
 
@@ -149,12 +155,7 @@ function resolveAuthToken(config: Config, dataDir: string): string | undefined {
   }
 
   const generated = randomBytes(24).toString('hex')
-  try {
-    mkdirSync(dataDir, { recursive: true })
-    writeFileSync(tokenFile, generated, { mode: 0o600 })
-  } catch {
-    // 落盘失败：本次运行仍可用内存 token
-  }
+  persistToken(generated)
   return generated
 }
 
@@ -643,7 +644,7 @@ async function requestHandoffWithRetry(
       sock.once('error', () => resolve(true)) // 连接拒绝 → 端口已释放
     })
     if (released) return
-    await new Promise((r) => setTimeout(r, delayMs))
+    await sleep(delayMs)
   }
   throw new Error(
     `handoff: old instance on port ${port} did not release after ${maxAttempts} attempts`,

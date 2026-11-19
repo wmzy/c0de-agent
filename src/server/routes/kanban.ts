@@ -71,6 +71,57 @@ function hasDuplicateIds(items: Array<{ id: string }>): boolean {
  *  彻底删除未命中五处共用（同 session.ts 的 SESSION_NOT_FOUND_MESSAGE 惯例）。 */
 const BOARD_NOT_FOUND_MESSAGE = '看板不存在或不在回收站'
 
+/** 卡片公共字段（description/columnId/priority/labels）的形状校验：POST /cards
+ *  与 PATCH /cards/:cardId 两端点此前各持一份逐字相同的校验块，收敛于此。
+ *  历史（两端点原注释合并）：labels 字符串/description 数字会被持久化成毒化
+ *  卡片（jsonb 存非数组，后续每轮前端 .map 崩溃）；数字字段被 as 断言直接
+ *  update 进 DB 时 text/jsonb 类型失配 500。title 校验刻意不在其中——POST
+ *  必填非空、PATCH 可选非空，语义不同留在各端点。 */
+function validateCardFields(c: Context, body: Record<string, unknown>): Response | undefined {
+  if (
+    body.description !== undefined &&
+    body.description !== null &&
+    typeof body.description !== 'string'
+  ) {
+    return apiError(c, 400, 'INVALID_INPUT', 'description must be a string or null')
+  }
+  if (body.columnId !== undefined && typeof body.columnId !== 'string') {
+    return apiError(c, 400, 'INVALID_INPUT', 'columnId must be a string')
+  }
+  if (
+    body.priority !== undefined &&
+    (typeof body.priority !== 'string' || !VALID_PRIORITIES.has(body.priority))
+  ) {
+    return apiError(c, 400, 'INVALID_PRIORITY', 'priority must be high/medium/low')
+  }
+  if (body.labels !== undefined && !isValidStringArray(body.labels)) {
+    return apiError(c, 400, 'INVALID_LABELS', 'labels must be an array of strings')
+  }
+  return undefined
+}
+
+/** store 抛出的看板业务错误 → REST 响应的统一映射：四个卡片/看板端点的 catch
+ *  各持一份 `instanceof → apiError` 手抄（错误码/status/文案完全同构）。
+ *  未命中说明不是看板业务错误，原样上抛交给全局兜底。 */
+function mapKanbanStoreError(c: Context, err: unknown): Response {
+  if (err instanceof KanbanCardNotFoundError) {
+    return apiError(c, 404, 'CARD_NOT_FOUND', err.message)
+  }
+  if (err instanceof KanbanColumnInUseError) {
+    return apiError(c, 409, 'KANBAN_COLUMN_IN_USE', err.message)
+  }
+  if (err instanceof KanbanColumnNotFoundError) {
+    return apiError(c, 400, 'KANBAN_COLUMN_NOT_FOUND', err.message)
+  }
+  if (err instanceof KanbanInvalidPriorityError) {
+    return apiError(c, 400, 'INVALID_PRIORITY', err.message)
+  }
+  if (err instanceof KanbanInvalidPositionError) {
+    return apiError(c, 400, 'INVALID_POSITION', err.message)
+  }
+  throw err
+}
+
 function createKanbanRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -344,10 +395,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
       })
       return c.json(board)
     } catch (err) {
-      if (err instanceof KanbanColumnInUseError) {
-        return apiError(c, 409, 'KANBAN_COLUMN_IN_USE', err.message)
-      }
-      throw err
+      return mapKanbanStoreError(c, err)
     }
   })
 
@@ -357,29 +405,12 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const body = parsed.body
-    // 类型校验：数字 title 此前经 (as string).trim 击穿 500；labels 字符串/
-    // description 数字会被持久化成毒化卡片（jsonb 存非数组，前端 .map 崩溃）。
+    // 类型校验：数字 title 此前经 (as string).trim 击穿 500（title 在 POST
+    // 必填非空）；其余卡片字段的形状校验与历史注释收敛在 validateCardFields。
     const title = typeof body.title === 'string' ? body.title.trim() : ''
     if (!title) return apiError(c, 400, 'INVALID_INPUT', 'title is required')
-    if (
-      body.description !== undefined &&
-      body.description !== null &&
-      typeof body.description !== 'string'
-    ) {
-      return apiError(c, 400, 'INVALID_INPUT', 'description must be a string or null')
-    }
-    if (body.columnId !== undefined && typeof body.columnId !== 'string') {
-      return apiError(c, 400, 'INVALID_INPUT', 'columnId must be a string')
-    }
-    if (
-      body.priority !== undefined &&
-      (typeof body.priority !== 'string' || !VALID_PRIORITIES.has(body.priority))
-    ) {
-      return apiError(c, 400, 'INVALID_PRIORITY', 'priority must be high/medium/low')
-    }
-    if (body.labels !== undefined && !isValidStringArray(body.labels)) {
-      return apiError(c, 400, 'INVALID_LABELS', 'labels must be an array of strings')
-    }
+    const fieldError = validateCardFields(c, body)
+    if (fieldError) return fieldError
     const store = createKanbanStore(ctx.db, projectId)
     try {
       const card = await store.addCard({
@@ -391,13 +422,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
       })
       return c.json(card, 201)
     } catch (err) {
-      if (err instanceof KanbanColumnNotFoundError) {
-        return apiError(c, 400, 'KANBAN_COLUMN_NOT_FOUND', err.message)
-      }
-      if (err instanceof KanbanInvalidPriorityError) {
-        return apiError(c, 400, 'INVALID_PRIORITY', err.message)
-      }
-      throw err
+      return mapKanbanStoreError(c, err)
     }
   })
 
@@ -409,29 +434,13 @@ function createKanbanRoute(ctx: ServerContext): Hono {
     if (!parsed.ok) return parsed.response
     const body = parsed.body
     // 类型校验：数字 title/description/labels 字符串此前被 as 断言后直接
-    // update 进 DB（text/jsonb 类型失配 500 或持久化毒化字段）。
+    // update 进 DB（text/jsonb 类型失配 500 或持久化毒化字段）；title 在
+    // PATCH 可选非空（与 POST 的必填不同），其余字段收敛在 validateCardFields。
     if (body.title !== undefined && (typeof body.title !== 'string' || body.title.trim() === '')) {
       return apiError(c, 400, 'INVALID_INPUT', 'title must be a non-empty string')
     }
-    if (
-      body.description !== undefined &&
-      body.description !== null &&
-      typeof body.description !== 'string'
-    ) {
-      return apiError(c, 400, 'INVALID_INPUT', 'description must be a string or null')
-    }
-    if (
-      body.priority !== undefined &&
-      (typeof body.priority !== 'string' || !VALID_PRIORITIES.has(body.priority))
-    ) {
-      return apiError(c, 400, 'INVALID_PRIORITY', 'priority must be high/medium/low')
-    }
-    if (body.labels !== undefined && !isValidStringArray(body.labels)) {
-      return apiError(c, 400, 'INVALID_LABELS', 'labels must be an array of strings')
-    }
-    if (body.columnId !== undefined && typeof body.columnId !== 'string') {
-      return apiError(c, 400, 'INVALID_INPUT', 'columnId must be a string')
-    }
+    const fieldError = validateCardFields(c, body)
+    if (fieldError) return fieldError
     const store = createKanbanStore(ctx.db, projectId)
 
     try {
@@ -455,19 +464,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
       })
       return c.json(card)
     } catch (err) {
-      if (err instanceof KanbanCardNotFoundError) {
-        return apiError(c, 404, 'CARD_NOT_FOUND', err.message)
-      }
-      if (err instanceof KanbanColumnNotFoundError) {
-        return apiError(c, 400, 'KANBAN_COLUMN_NOT_FOUND', err.message)
-      }
-      if (err instanceof KanbanInvalidPriorityError) {
-        return apiError(c, 400, 'INVALID_PRIORITY', err.message)
-      }
-      if (err instanceof KanbanInvalidPositionError) {
-        return apiError(c, 400, 'INVALID_POSITION', err.message)
-      }
-      throw err
+      return mapKanbanStoreError(c, err)
     }
   })
 
@@ -481,10 +478,7 @@ function createKanbanRoute(ctx: ServerContext): Hono {
       // 不再对任意 id 回 ok:true（删除失败静默无反馈）。
       await store.deleteCard(cardId)
     } catch (err) {
-      if (err instanceof KanbanCardNotFoundError) {
-        return apiError(c, 404, 'CARD_NOT_FOUND', err.message)
-      }
-      throw err
+      return mapKanbanStoreError(c, err)
     }
     return c.json({ ok: true })
   })

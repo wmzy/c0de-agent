@@ -286,17 +286,23 @@ export class PTYManager {
     return info
   }
 
-  /** 向 PTY stdin 写入数据。 */
-  write(id: string, data: string): void {
+  /** 取 PTY 条目，缺失即抛错（write/resize/setTitle 共用）；
+   *  kill 容忍缺失（幂等清理）故不在此列。 */
+  private requireEntry(id: string): PTYEntry {
     const entry = this.entries.get(id)
     if (!entry) throw new Error(`PTY not found: ${id}`)
+    return entry
+  }
+
+  /** 向 PTY stdin 写入数据。 */
+  write(id: string, data: string): void {
+    const entry = this.requireEntry(id)
     entry.pty.write(data)
   }
 
   /** 调整 PTY 尺寸。 */
   resize(id: string, cols: number, rows: number): void {
-    const entry = this.entries.get(id)
-    if (!entry) throw new Error(`PTY not found: ${id}`)
+    const entry = this.requireEntry(id)
     // P3-13：与 create 同口径钳制
     const c = Math.min(MAX_COLS, Math.max(1, cols))
     const r = Math.min(MAX_ROWS, Math.max(1, rows))
@@ -307,8 +313,7 @@ export class PTYManager {
 
   /** 更新 PTY 标题。 */
   setTitle(id: string, title: string): void {
-    const entry = this.entries.get(id)
-    if (!entry) throw new Error(`PTY not found: ${id}`)
+    const entry = this.requireEntry(id)
     entry.info.title = truncateTitle(title)
   }
 

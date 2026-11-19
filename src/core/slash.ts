@@ -4,7 +4,7 @@ import { createSession, getSession, updateSessionLastRun } from '../session/sess
 import { errorMessage, isUuid } from '../shared/utils/string.js'
 
 import { createAgent } from './agent.js'
-import type { SlashCommand } from './types.js'
+import type { CommandResult, SlashCommand } from './types.js'
 import {
   BUILTIN_WORKFLOWS,
   buildWorkflowAgentConfig,
@@ -25,6 +25,14 @@ function parseSlashInput(input: string): { name: string; args: string } | null {
   }
   return { name: trimmed.slice(1, spaceIdx), args: trimmed.slice(spaceIdx + 1).trim() }
 }
+
+/** catch 块错误折叠单源：异常经 errorMessage 归一（剥 'Error: ' 前缀、非 Error
+ *  取 String）为 CommandResult 的 error 变体——此前各命令手写同形 return，
+ *  副本间易漂移。 */
+const slashError = (error: unknown): CommandResult => ({
+  _tag: 'error',
+  message: errorMessage(error),
+})
 
 /** 校验跨会话操作的归属：目标会话必须存在；当前会话与目标均挂项目时须同项目，
  *  防 Web 端误输/被注入 id 清空或分支其他项目的会话。CLI 无当前会话上下文
@@ -172,7 +180,7 @@ const clearCommand: SlashCommand = {
     try {
       await assertSameProjectSession(ctx.deps.db, ctx.sessionId, sessionId)
     } catch (error) {
-      return { _tag: 'error', message: errorMessage(error) }
+      return slashError(error)
     }
     if (!yes) {
       return {
@@ -230,7 +238,7 @@ const forkCommand: SlashCommand = {
     try {
       await assertSameProjectSession(ctx.deps.db, ctx.sessionId, sessionId)
     } catch (error) {
-      return { _tag: 'error', message: errorMessage(error) }
+      return slashError(error)
     }
     // 未指定 index → 默认最新一条消息处分支（与 web fork API 语义一致，不再是 index 0）
     if (messageIndex === undefined) {
@@ -246,10 +254,7 @@ const forkCommand: SlashCommand = {
       const forked = await forkSession(ctx.deps.db, sessionId, messageIndex, ctx.deps.hookRunner)
       return { _tag: 'success', message: `已分支到新会话：${forked.id}` }
     } catch (error) {
-      return {
-        _tag: 'error',
-        message: errorMessage(error),
-      }
+      return slashError(error)
     }
   },
 }
@@ -278,7 +283,7 @@ const configCommand: SlashCommand = {
           text: `${key}: ${JSON.stringify(value)}（合并视图：global + project 作用域）`,
         }
       } catch (error) {
-        return { _tag: 'error', message: errorMessage(error) }
+        return slashError(error)
       }
     }
     // 点路径写值：与 CLI config set 同一写入核心（core/config.ts 的 setConfigKey：
@@ -318,7 +323,7 @@ const configCommand: SlashCommand = {
       }
       // 非有限数值（1e999 → Infinity）等写入面校验失败：作为命令错误反馈给
       // 模型/用户，而非击穿 SSE 流显示「连接中断」。
-      return { _tag: 'error', message: errorMessage(error) }
+      return slashError(error)
     }
   },
 }

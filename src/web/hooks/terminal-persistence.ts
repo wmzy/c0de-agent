@@ -2,7 +2,7 @@
 // 终端面板状态的 localStorage 持久化与纯函数工具。
 // 从 useTerminal.ts 拆出：常量、key 派生、读写、sizes 归一化。
 import { loadClampedNumber } from '@/utils/format.js'
-import { storageGet, storageSet } from '@/utils/storage.js'
+import { parseStoredJson, storageGet, storageSet } from '@/utils/storage.js'
 
 const TERMINAL_HEIGHT_KEY = 'c0de-agent:terminalHeight'
 const DEFAULT_HEIGHT = 240
@@ -40,15 +40,10 @@ function loadOpen(projectId: string): boolean {
 }
 
 function loadPersistedState(projectId: string): PersistedTerminalState | null {
-  try {
-    const raw = storageGet(sessionsKey(projectId))
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as PersistedTerminalState
-    if (!parsed?.sessions || !Array.isArray(parsed.sessions)) return null
-    return parsed
-  } catch {
-    return null
-  }
+  const raw = storageGet(sessionsKey(projectId))
+  const parsed = parseStoredJson<PersistedTerminalState>(raw)
+  if (!parsed?.sessions || !Array.isArray(parsed.sessions)) return null
+  return parsed
 }
 
 function savePersistedState(state: PersistedTerminalState, projectId: string): void {

@@ -6,6 +6,7 @@ import { getMessages } from '../session/message.js'
 import { markBudgetPause, updateSessionLastRun } from '../session/session.js'
 import { estimateTokens } from '../session/token.js'
 import { budgetOverageParts } from '../session/usage.js'
+import { sleep } from '../shared/timer.js'
 import type { AgentConfig, AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
 import type { Session } from '../shared/types/message.js'
@@ -55,8 +56,6 @@ type LoopDeps = AgentDependencies & {
 }
 
 export type { LoopDeps }
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** provider 未声明 contextWindow 时回填的保守下限（避免估计过大不压缩、过小过度压缩）。 */
 const FALLBACK_CONTEXT_WINDOW = 32_000

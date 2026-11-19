@@ -10,6 +10,14 @@
 export const MAX_TIMER_MS = 2_147_483_647
 
 /**
+ * Promise 版 sleep：`await sleep(ms)`。此前 core/loop.ts、server 两处各自
+ * 内联 `new Promise((r) => setTimeout(r, ms))`，收敛为单一来源。
+ * 注意：延迟来自外部输入（配置/插件）时须先经 clampTimerDelay 归一。
+ */
+export const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
  * 归一化「用户输入/配置/插件声明」提供的 timer 时长（毫秒）。
  *
  * 引擎行为：非有限（NaN/±Infinity）或超 32 位上限的延迟都被钳到 1ms。
