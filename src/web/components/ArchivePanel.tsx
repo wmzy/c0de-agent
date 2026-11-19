@@ -6,7 +6,7 @@ import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI, sessionArchivesKey } from '@/services/session.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import type { CompactionArchive, SessionEntry } from '@/types/index.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { formatDateTime } from '@/utils/format.js'
 import { LoadError } from '@/views/_shared/errorState.js'
 
@@ -170,7 +170,7 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
           <LoadError
             center
             title="归档加载失败"
-            detail={messageOf(error) || '无法读取归档内容。'}
+            detail={messageOfOr(error, '无法读取归档内容。')}
             onRetry={() => void refetch()}
             retryTestId="archive-retry"
             testId="archive-load-error"

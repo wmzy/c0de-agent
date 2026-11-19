@@ -214,11 +214,20 @@ function createWorkflowsRoute(ctx: ServerContext) {
           return projectNotFoundResponse(c)
         }
         if (!st.trusted) {
-          return apiError(
-            c,
-            409,
-            'TRUST_REQUIRED',
-            `项目「${projectDisplayName(st.project)}」未信任（或信任后配置漂移），请先信任项目再创建工作流`,
+          // 与 run 入口同口径的 409 载荷：有风险项/指纹漂移时附带
+          // { projectId, projectName, items }，前端据此挂信任弹窗。无风险项但
+          // 从未信任时 trustGateResponse 返回 undefined，回落裸 409——create 是
+          // 写入执行面，比聊天入口严格（无风险项也要求显式信任）。
+          return (
+            trustGateResponse(c, st.project, {
+              riskSurfaces: '.c0de/config.json 或 .c0de/workflows',
+            }) ??
+            apiError(
+              c,
+              409,
+              'TRUST_REQUIRED',
+              `项目「${projectDisplayName(st.project)}」未信任（或信任后配置漂移），请先信任项目再创建工作流`,
+            )
           )
         }
         saveDir = st.project.worktree

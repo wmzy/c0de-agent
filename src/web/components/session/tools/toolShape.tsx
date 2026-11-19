@@ -16,7 +16,8 @@
 // 丢掉的条目必须说出来，绝不把「读不出来」渲染成「空」。**
 
 import { css } from '@linaria/core'
-import type { ToolResult } from '@shared/types/tool.js'
+import { isTodoStatus } from '@shared/types/todo.js'
+import type { TodoPhaseLike, ToolResult } from '@shared/types/tool.js'
 import { isRecord, str } from '@/components/session/utils/shapes.js'
 
 const notice = css`
@@ -134,7 +135,9 @@ export function resultText(output: ToolResult | undefined, fallback = ''): strin
   return output.output
 }
 
-export type TodoPhaseLike = { name: string; tasks: { content: string; status: string }[] }
+// TodoPhaseLike 正本在 @shared/types/tool.js（= shared 的 TodoPhase，status 为
+// 四值联合）；此处 re-export 维持 TodoToolView 的既有导入路径。
+export type { TodoPhaseLike }
 
 export type BoardLike = {
   columns: { id: string; name: string }[]
@@ -169,7 +172,9 @@ export function wellFormedPhases(raw: unknown): Sanitized<TodoPhaseLike[]> {
         dropped++
         continue
       }
-      tasks.push({ content: t.content, status: str(t.status) ?? 'pending' })
+      // status 非四值之一（含类型错的脏值）归一为 'pending'：契约的 status 是
+      // 联合类型，放行任意字符串会让渲染端 TASK_ICONS[status] 得到 undefined。
+      tasks.push({ content: t.content, status: isTodoStatus(t.status) ? t.status : 'pending' })
     }
     phases.push({ name: p.name, tasks })
   }

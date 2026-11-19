@@ -257,6 +257,19 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
     }
   }
 
+  /** 配对条目存活判定单点（status/approve/deny 共用）：未过期返回条目；
+   *  超过 pairingTtlMs 的条目从 pending 清理并返回 'expired'；不存在返回
+   *  undefined。状态分支与返回值映射留调用方（not_found/expired/false）。 */
+  function livePairing(pairingId: string): PendingPairing | 'expired' | undefined {
+    const p = pending.get(pairingId)
+    if (!p) return undefined
+    if (p.createdAt <= now() - pairingTtlMs) {
+      pending.delete(pairingId)
+      return 'expired'
+    }
+    return p
+  }
+
   return {
     get bootstrap() {
       return bootstrap
@@ -327,8 +340,8 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
     },
 
     pairingStatus(pairingId) {
-      const p = pending.get(pairingId)
-      if (!p) return { status: 'not_found' }
+      const p = livePairing(pairingId)
+      if (!p || p === 'expired') return { status: 'not_found' }
       if (p.status === 'approved') {
         // 交付点：把设备登记落盘与「新设备取走 token」原子化到同一时刻——
         // 审批后、取 token 前服务重启时 pending 随内存清空（status=not_found），
@@ -348,10 +361,6 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
         return { status: 'approved', deviceToken }
       }
       if (p.status === 'denied') return { status: 'denied' }
-      if (p.createdAt <= now() - pairingTtlMs) {
-        pending.delete(pairingId)
-        return { status: 'not_found' }
-      }
       return { status: 'pending' }
     },
 
@@ -369,13 +378,10 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
     },
 
     approvePairing(pairingId, code) {
-      const p = pending.get(pairingId)
+      const p = livePairing(pairingId)
       if (!p) return 'not_found'
+      if (p === 'expired') return 'expired'
       if (p.status !== 'pending') return 'already_handled'
-      if (p.createdAt <= now() - pairingTtlMs) {
-        pending.delete(pairingId)
-        return 'expired'
-      }
       if (String(code ?? '').trim() !== p.code) return 'code_mismatch'
       // P：登记推迟到新设备真正取走 token 时（pairingStatus 消费）。此前审批即落盘，
       // 若审批后、新设备轮询前服务重启，devices.json 里会出现一个永远拿不到 token
@@ -388,8 +394,10 @@ export function createAuthManager(opts: AuthManagerOptions): AuthManager {
     },
 
     denyPairing(pairingId) {
-      const p = pending.get(pairingId)
-      if (!p) return false
+      const p = livePairing(pairingId)
+      // 过期条目与「不存在」同语义（false），且顺带清理——此前 deny 不做 TTL
+      // 判定，审批界面滞留的过期请求仍会被「成功拒绝」。
+      if (!p || p === 'expired') return false
       if (p.status !== 'pending') return false
       p.status = 'denied'
       return true

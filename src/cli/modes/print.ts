@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { abortAgent, createAgent, runAgent } from '../../core/agent.js'
+import { collectAssistantText } from '../../core/loop/stream-collect.js'
 import type { LoopDeps } from '../../core/loop.js'
 import { preflightRoute } from '../../core/provider-registry.js'
 import { getByDirectory } from '../../project/index.js'
@@ -21,15 +22,6 @@ type PrintOptions = {
   /** P2-4：外部中止信号（ACP abort）——触发即中止 run 并抛错，
    *  让调用方如实返回失败而非谎报 ok。 */
   abortSignal?: AbortSignal
-}
-
-/** 从事件流累积 assistant 文本。纯函数。 */
-function collectAssistantText(events: AgentEvent[]): string {
-  let text = ''
-  for (const e of events) {
-    if (e._tag === 'text_delta') text += e.text
-  }
-  return text
 }
 
 /** Print 模式：临时会话（或 --continue 指定会话）→ agent → 收集文本 → 返回。 */
@@ -170,4 +162,4 @@ async function runPrintMode(
 }
 
 export type { PrintOptions }
-export { collectAssistantText, runPrintMode }
+export { runPrintMode }

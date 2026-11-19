@@ -1,34 +1,16 @@
+import type {
+  TodoInput as TodoOp,
+  TodoOpResult,
+  TodoPhase,
+  TodoState,
+  TodoTask,
+} from '@shared/types/todo.js'
 import { get, post } from '@/services/api.js'
 
-export type TodoTaskStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
-
-export type TodoTask = {
-  content: string
-  status: string
-}
-
-export type TodoPhase = {
-  name: string
-  tasks: TodoTask[]
-}
-
-export type TodoOp =
-  | { op: 'init'; list?: { phase: string; items: string[] }[]; phase?: string; items?: string[] }
-  | { op: 'start'; task: string }
-  | { op: 'done'; task?: string; phase?: string }
-  | { op: 'drop'; task?: string; phase?: string }
-  | { op: 'rm'; task?: string; phase?: string }
-  | { op: 'append'; phase: string; items: string[] }
-  | { op: 'view' }
-
-export type TodoState = {
-  phases: TodoPhase[]
-}
-
-export type TodoOpResult = {
-  phases: TodoPhase[]
-  output: string
-}
+// 契约正本在 @shared/types/todo.ts（todo 工具 / REST 路由 / agent 状态 /
+// web 服务四方共用）。此前本地手抄副本把 TodoTask.status 放宽为 string，
+// 渲染端 TASK_ICONS[status] 可能 undefined；现已收紧回四值联合。
+export type { TodoOp, TodoOpResult, TodoPhase, TodoState, TodoTask, TodoTaskStatus }
 
 const todoAPI = {
   get: (sessionId: string) => get<TodoState>(`/api/todo/${sessionId}`),

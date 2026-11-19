@@ -1,8 +1,8 @@
-import { chatStream } from '../llm/provider.js'
+import { chatStream, collectStreamText } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
 import { type FallbackChain, fallbackChatOptions } from '../llm/routing.js'
 import type { Summarizer } from '../session/types.js'
-import type { ChatRequest, StreamChunk } from '../shared/types/llm.js'
+import type { ChatRequest } from '../shared/types/llm.js'
 import type { Config } from './config.js'
 
 /** Create a Summarizer backed by an LLM streaming call. */
@@ -19,20 +19,16 @@ function createSummarizer(
       stream: true,
       ...(opts?.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
     }
-    const chunks: StreamChunk[] = []
-    for await (const chunk of chatStream({ registry, signal: opts?.signal }, request, {
-      provider,
-      model,
-      ...(opts?.fallback ? { fallback: opts.fallback } : {}),
-    })) {
-      if (chunk._tag === 'text') {
-        chunks.push(chunk)
-      }
-      if (chunk._tag === 'error') {
-        throw new Error(chunk.error.message)
-      }
-    }
-    return chunks.map((c) => (c._tag === 'text' ? c.text : '')).join('')
+    // 摘要是持久化压缩的输入：流中 error chunk 必须抛错，不能像 chat() 那样
+    // 静默返回半截文本（否则压缩会写入残缺 summary）。
+    return collectStreamText(
+      chatStream({ registry, signal: opts?.signal }, request, {
+        provider,
+        model,
+        ...(opts?.fallback ? { fallback: opts.fallback } : {}),
+      }),
+      { throwOnErrorChunk: true },
+    )
   }
 }
 

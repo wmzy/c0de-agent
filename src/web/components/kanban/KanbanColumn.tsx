@@ -10,7 +10,7 @@ import type {
   KanbanLabelDef,
   KanbanPriority,
 } from '@/services/kanban.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 // ── Styles ─────────────────────────────────────────────────
@@ -420,7 +420,7 @@ export function KanbanColumn({ column: col, cards, labels, onCardClick, onQuickA
       // 同上：被放弃标题的失败不属于当前输入框，不显示。
       if (addGuard.stale(attempt)) return
       // 取文案统一走 messageOf（结构化 message 优先、Error.message 兜底）。
-      setAddError(messageOf(err) || '新建卡片失败，请重试')
+      setAddError(messageOfOr(err, '新建卡片失败，请重试'))
     } finally {
       // pending 不判身份：submit 有 pending 早退，任意时刻至多一个在途请求，
       // 它落地就必须复位按钮，否则重开后的「添加」永远卡在「添加中…」。

@@ -34,6 +34,11 @@ const slashError = (error: unknown): CommandResult => ({
   message: errorMessage(error),
 })
 
+/** 斜杠参数分词单源：按空白切分并滤掉空串。clear/fork/config/workflow 四处
+ *  此前各持 `args.split(/\s+/)`，config 一份漏 .filter(Boolean)——多空格
+ *  输入产出空串元素，value 经 join(' ') 拼回时混入多余空格（现随单源归一）。 */
+const splitArgs = (args: string): string[] => args.split(/\s+/).filter(Boolean)
+
 /** 校验跨会话操作的归属：目标会话必须存在；当前会话与目标均挂项目时须同项目，
  *  防 Web 端误输/被注入 id 清空或分支其他项目的会话。CLI 无当前会话上下文
  *  （sessionId 缺省）时放行——终端单用户显式操作。 */
@@ -171,7 +176,7 @@ const clearCommand: SlashCommand = {
   description: '清空会话消息（先归档原始内容）',
   argsHint: '[session-id] [--yes]',
   execute: async (args, ctx) => {
-    const parts = args.split(/\s+/).filter(Boolean)
+    const parts = splitArgs(args)
     const yes = parts.includes('--yes')
     const sessionId = parts.find((p) => p !== '--yes') ?? ctx.sessionId
     if (!sessionId) {
@@ -218,7 +223,7 @@ const forkCommand: SlashCommand = {
   description: '从指定消息处分支会话',
   argsHint: '[session-id] [message-index]',
   execute: async (args, ctx) => {
-    const parts = args.split(/\s+/).filter(Boolean)
+    const parts = splitArgs(args)
     // 默认当前会话；第一个非纯数字参数视为 session id 覆盖（fork 其他会话）。
     let sessionId = ctx.sessionId
     let messageIndex: number | undefined
@@ -273,7 +278,7 @@ const configCommand: SlashCommand = {
         text: `（合并视图：global + project 作用域；修改请用 /config <key> <value>，写入 project 作用域）\n${JSON.stringify(redactSecrets(ctx.config), null, 2)}`,
       }
     }
-    const parts = args.split(/\s+/)
+    const parts = splitArgs(args)
     const key = parts[0] ?? ''
     if (parts.length === 1) {
       try {
@@ -340,7 +345,7 @@ const workflowCommand: SlashCommand = {
     { name: 'edit', description: 'Edit workflow source', usage: '<name>' },
   ],
   execute: async (args, ctx) => {
-    const parts = args.split(/\s+/).filter(Boolean)
+    const parts = splitArgs(args)
     const subcommand = parts[0] ?? 'list'
 
     let registry = ctx.workflowRegistry

@@ -7,3 +7,8 @@
 export function messageOf(e: unknown): string {
   return (e as { message?: string } | null)?.message ?? (e instanceof Error ? e.message : String(e))
 }
+
+/** messageOf(e) || fallback 的单点：错误消息为空/不可提取时回退固定文案。 */
+export function messageOfOr(e: unknown, fallback: string): string {
+  return messageOf(e) || fallback
+}

@@ -14,7 +14,7 @@ import { fileAPI } from '@/services/file.js'
 import { filesSearchKey } from '@/services/filesystem.js'
 import { btnDanger, btnSm } from '@/styles/tokens.js'
 import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { errorDetail, errorTitle, LoadError } from '@/views/_shared/errorState.js'
 
 const panel = css`
@@ -436,7 +436,7 @@ export function FileBrowser({
       // 「File not found / EACCES / EPERM / ENOTEMPTY」等真实原因被整句丢掉，
       // 用户只能对同一路径反复点删除。APIError 是结构体而非 Error 子类，
       // 必须结构化取 message（messageOf 口径）。
-      setDeleteError(messageOf(err) || '删除失败，请重试。')
+      setDeleteError(messageOfOr(err, '删除失败，请重试。'))
     } finally {
       setDeleting(false)
     }
@@ -535,7 +535,7 @@ export function FileBrowser({
             // 必须结构化取 message，否则渲染成 [object Object]。
             <LoadError
               title="搜索失败"
-              detail={messageOf(searchQ.error) || '无法完成搜索，请稍后重试。'}
+              detail={messageOfOr(searchQ.error, '无法完成搜索，请稍后重试。')}
               onRetry={() => void refetchSearch()}
               retryTestId="file-search-retry"
               testId="file-search-error"

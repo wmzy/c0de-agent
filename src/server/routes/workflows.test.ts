@@ -703,7 +703,7 @@ export default async function workflow(ctx) {
     expect(body.error.message).toContain('source')
   })
 
-  it('returns 409 TRUST_REQUIRED when creating workflow in untrusted project', async () => {
+  it('returns 409 TRUST_REQUIRED when creating workflow in untrusted project（无风险项 → 裸 409 回落）', async () => {
     const { app, ctx } = await setup()
     const project = await fromDirectory(ctx.db, projectCwd)
     const res = await app.request('/', {
@@ -717,8 +717,46 @@ export default async function workflow(ctx) {
       }),
     })
     expect(res.status).toBe(409)
-    const body = (await res.json()) as { error: { code: string } }
+    const body = (await res.json()) as { error: { code: string; details?: unknown } }
     expect(body.error.code).toBe('TRUST_REQUIRED')
+    // 项目无风险项且从未信任：trustGateResponse 无载荷，回落裸 409
+    // （create 是写入执行面，比聊天入口严格——无风险项也要求显式信任）
+    expect(body.error.details).toBeUndefined()
+    // 文件未落盘：未信任项目的执行面不得写入
+    expect(existsSync(join(projectCwd, '.c0de', 'workflows', 'api-wf.js'))).toBe(false)
+  })
+
+  it('P1：有风险项时 create 409 附带信任载荷（projectId/projectName/items，与 run 同契约）', async () => {
+    const { app, ctx } = await setup()
+    const project = await fromDirectory(ctx.db, projectCwd)
+    // 仓库自带 .c0de/workflows/*.js 即触发 workflows-enabled 风险项 → enriched 409
+    await mkdir(join(projectCwd, '.c0de', 'workflows'), { recursive: true })
+    await writeFile(
+      join(projectCwd, '.c0de', 'workflows', 'pre-existing.js'),
+      `export const meta = { name: 'pre-existing', description: 'x' }\nexport default async () => ({ output: 'ok' })`,
+    )
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'api-wf',
+        source: VALID_SOURCE,
+        target: 'project',
+        projectId: project.id,
+      }),
+    })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as {
+      error: {
+        code: string
+        details?: { projectId?: string; projectName?: string; items?: unknown[] }
+      }
+    }
+    expect(body.error.code).toBe('TRUST_REQUIRED')
+    // 前端挂信任弹窗所需的最小载荷契约
+    expect(body.error.details?.projectId).toBe(project.id)
+    expect(typeof body.error.details?.projectName).toBe('string')
+    expect(body.error.details?.items?.length).toBeGreaterThan(0)
     // 文件未落盘：未信任项目的执行面不得写入
     expect(existsSync(join(projectCwd, '.c0de', 'workflows', 'api-wf.js'))).toBe(false)
   })

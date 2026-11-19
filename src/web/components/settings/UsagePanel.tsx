@@ -5,7 +5,7 @@ import { ListErrorBox } from '@/components/settings/ListErrorBox.js'
 import { field, fieldInput, hint, section, sectionTitle } from '@/components/settings/styles.js'
 import type { UsageSummary } from '@/services/usage.js'
 import { usageSummaryQueryOptions } from '@/services/usage.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { formatCost, formatNumber, parseFiniteNumber } from '@/utils/format.js'
 import { budgetStatus, monthTokenSum } from '@/utils/usage.js'
 
@@ -318,7 +318,7 @@ function UsagePanel({
           variant="stacked"
           title="用量读取失败"
           lines={[
-            messageOf(error) || '无法读取用量与成本。',
+            messageOfOr(error, '无法读取用量与成本。'),
             '下列统计不可信：读不到不等于 $0，本月可能已经有花费。',
           ]}
           testId="usage-load-error"

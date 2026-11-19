@@ -101,6 +101,33 @@ async function readSessionMetadata(handle: DB, id: string): Promise<{ metadata: 
   }
 }
 
+/** 会话级权限模式字面量（metadata.permissionMode 的取值域）。 */
+export type SessionPermissionMode = 'auto' | 'default'
+
+/** 是否为合法的会话权限模式字面量：metadata 清洗、PUT 校验与恢复守卫共用同一
+ *  判定（此前 5 处手抄 `=== 'auto' || === 'default'` 已现口径漂移风险）。 */
+function isPermissionMode(v: unknown): v is SessionPermissionMode {
+  return v === 'auto' || v === 'default'
+}
+
+/** 提取并清洗会话 metadata 中的权限态（permissionMode 覆盖 + alwaysAllow 白名单）：
+ *  字段缺失/形状非法时静默丢弃（不写入对应键），返回仅含合法字段的浅对象。
+ *  fork 继承与跨机导入显式确认随迁共用同一清洗骨架——「是否继承权限态」的
+ *  外层开关语义（fork 默认继承、import 默认剥离）留调用方。 */
+function sanitizePermissionMetadata(srcMeta: unknown): {
+  permissionMode?: SessionPermissionMode
+  alwaysAllow?: string[]
+} {
+  const out: { permissionMode?: SessionPermissionMode; alwaysAllow?: string[] } = {}
+  if (!srcMeta || typeof srcMeta !== 'object' || Array.isArray(srcMeta)) return out
+  const m = srcMeta as Record<string, unknown>
+  if (isPermissionMode(m.permissionMode)) out.permissionMode = m.permissionMode
+  if (Array.isArray(m.alwaysAllow)) {
+    out.alwaysAllow = m.alwaysAllow.filter((x): x is string => typeof x === 'string')
+  }
+  return out
+}
+
 /** Escape LIKE/ILIKE metacharacters so the query is treated as a literal substring. */
 function escapeLikePattern(text: string): string {
   return text.replace(/[%_\\]/g, '\\$&')
@@ -384,6 +411,7 @@ export {
   createSession,
   escapeLikePattern,
   getSession,
+  isPermissionMode,
   listAllSessions,
   listSessions,
   listSessionsByProject,
@@ -392,6 +420,7 @@ export {
   mutateSessionMetadata,
   readSessionMetadata,
   requireContinuableSession,
+  sanitizePermissionMetadata,
   searchSessions,
   touchLastOpened,
   touchSession,

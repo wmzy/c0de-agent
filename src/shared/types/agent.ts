@@ -1,5 +1,6 @@
 import type { ChatTool } from './llm.js'
 import type { Message, Session } from './message.js'
+import type { TodoPhase } from './todo.js'
 import type { ToolDef, ToolResult } from './tool.js'
 
 /** Agent error variants. Discriminated by `_tag`. */
@@ -175,7 +176,7 @@ type AgentEvent =
   /** Tag-based todo 操作成功后发射，前端据此刷新 TodoPanel。 */
   | {
       _tag: 'todo_update'
-      phases: { name: string; tasks: { content: string; status: string }[] }[]
+      phases: TodoPhase[]
     }
   /** SSE 心跳（服务端防前端 90s 静默看门狗误杀长任务）；前端无 UI 变化，直接忽略。 */
   | { _tag: 'heartbeat' }
@@ -202,7 +203,7 @@ type AgentState = {
   calibrationFactor: number
   /** 分阶段任务列表（todo 工具状态）。in-memory，通过 tool result metadata 持久化。
    *  createAgent 时从历史消息恢复；每次 todo 工具调用通过 todoState hook 更新。 */
-  todoPhases: { name: string; tasks: { content: string; status: string }[] }[]
+  todoPhases: TodoPhase[]
   compactionModel?: { provider: string; model: string }
   /** P3 成本护栏：本 run 已因预算超支暂停过一次。恢复后不再重复暂停
    *  （用户点「恢复」即知情同意继续，反复暂停是骚扰而非护栏）。 */

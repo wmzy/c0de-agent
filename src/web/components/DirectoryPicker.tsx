@@ -20,7 +20,7 @@ import { useDismiss } from '@/hooks/useDismiss.js'
 import { filesystemAPI } from '@/services/filesystem.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import { comboboxKeyAction } from '@/utils/combobox-keys.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const container = css`
@@ -221,7 +221,7 @@ export function DirectoryPicker({
       setHome(r.path)
       homeRef.current = r.path
     } catch (err) {
-      setHomeError(messageOf(err) || '无法读取该目录')
+      setHomeError(messageOfOr(err, '无法读取该目录'))
     }
   }, [])
 
@@ -271,7 +271,7 @@ export function DirectoryPicker({
         setHomeError(null)
       } catch (err) {
         if (activeTreeNavigation(token, navigation.current))
-          setNavError(messageOf(err) || '无法读取该目录')
+          setNavError(messageOfOr(err, '无法读取该目录'))
       } finally {
         if (activeTreeNavigation(token, navigation.current)) setNavLoading(false)
       }

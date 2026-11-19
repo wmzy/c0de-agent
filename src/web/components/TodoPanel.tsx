@@ -21,7 +21,7 @@ import {
 import { TOUCH } from '@/styles/breakpoints.js'
 import { disabledCss, ellipsisCss } from '@/styles/shared.js'
 import { inputStyle } from '@/styles/tokens.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 import { storageGet, storageSet } from '@/utils/storage.js'
 import { LoadError } from '@/views/_shared/errorState.js'
@@ -593,7 +593,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
          * 500，面板稳定显示「暂无任务，点击添加」）。 */
         <LoadError
           title="待办读取失败"
-          detail={messageOf(queryError) || '无法读取本会话的待办。'}
+          detail={messageOfOr(queryError, '无法读取本会话的待办。')}
           onRetry={() => void refetch()}
           retryTestId="todo-retry"
           testId="todo-load-error"

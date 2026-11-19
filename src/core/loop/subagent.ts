@@ -1,7 +1,7 @@
 import { appendMessage, buildTaskNotification } from '../../session/message.js'
 import { createSession, updateSessionLastRun } from '../../session/session.js'
 import { generateId } from '../../shared/index.js'
-import type { AgentState } from '../../shared/types/agent.js'
+import type { AgentEvent, AgentState } from '../../shared/types/agent.js'
 import type { JSONSchema } from '../../shared/types/base.js'
 import type { Session } from '../../shared/types/message.js'
 import type { SubAgentRequest, SubAgentResult } from '../../shared/types/tool.js'
@@ -16,6 +16,7 @@ import {
   createWorktree,
   removeWorktree,
 } from '../worktree.js'
+import { collectAssistantText } from './stream-collect.js'
 
 /** 运行一个按类型派发的子 agent（spec: multi-agent-design §4.5）。
  *
@@ -195,7 +196,7 @@ export async function runSubAgent(
     const childPrompt = request.context
       ? `CONTEXT\n${request.context}\n\nASSIGNMENT\n${request.prompt}`
       : request.prompt
-    const text: string[] = []
+    const events: AgentEvent[] = []
     let errMsg: string | null = null
     try {
       for await (const ev of runAgent(
@@ -203,9 +204,15 @@ export async function runSubAgent(
         [{ _tag: 'text', text: childPrompt }],
         childDeps,
       )) {
-        if (ev._tag === 'text_delta') {
-          text.push(ev.text)
-        } else if (ev._tag === 'error') {
+        events.push(ev)
+      }
+      // 终态错误归纳：任一 error 事件即失败，unexpected/provider 取 message、
+      // 其余取 tag 字符串，末个为准——与 print 模式「仅 unexpected 抛出」口径
+      // 刻意不同（子 run 必须把失败如实带回父 agent），保留本地不并入
+      // stream-collect。提取放在 try 内（流正常结束后才跑）：流本身抛错时
+      // 走 catch 的 errorMessage 兜底，不被事件内错误覆盖。
+      for (const ev of events) {
+        if (ev._tag === 'error') {
           const e = ev.error
           errMsg = e._tag === 'unexpected' || e._tag === 'provider' ? e.message : e._tag
         }
@@ -213,6 +220,7 @@ export async function runSubAgent(
     } catch (e) {
       errMsg = errorMessage(e)
     }
+    const text = collectAssistantText(events)
 
     // 5. worktree 回传：仅成功时把 delta apply 回父仓库（spec §4.6）；无论成败都清理 worktree
     if (worktreePath) {
@@ -235,7 +243,7 @@ export async function runSubAgent(
       childId,
       agentType: request.agentType,
       success,
-      ...(success ? { output: text.join('') } : {}),
+      ...(success ? { output: text } : {}),
     })
 
     if (errMsg !== null) {
@@ -244,7 +252,7 @@ export async function runSubAgent(
     const data = yielded.length > 0 ? (yielded.length === 1 ? yielded[0] : yielded) : undefined
     return {
       _tag: 'success',
-      output: text.join(''),
+      output: text,
       sessionId: childSession.id,
       ...(data !== undefined ? { data } : {}),
     }

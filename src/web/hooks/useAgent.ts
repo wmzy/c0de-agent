@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { agentAPI } from '@/services/agent.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 
 export function useAgent(sessionId: string) {
   const [busy, setBusy] = useState(false)
@@ -43,7 +43,7 @@ export function useAgent(sessionId: string) {
         return await fn(isStale)
       } catch (e) {
         if (isStale()) return undefined
-        setError(messageOf(e) || '操作失败，请重试')
+        setError(messageOfOr(e, '操作失败，请重试'))
         return undefined
       } finally {
         if (!isStale()) setBusy(false)

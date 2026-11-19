@@ -19,7 +19,7 @@ import {
   kanbanKey,
 } from '@/services/kanban.js'
 import { btnDanger } from '@/styles/tokens.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const sectionTitle = css`
@@ -140,7 +140,7 @@ export function BoardConfigDialog({
       onClose()
     },
     onError: (e: unknown) => {
-      setError(messageOf(e) || '保存失败')
+      setError(messageOfOr(e, '保存失败'))
     },
   })
 

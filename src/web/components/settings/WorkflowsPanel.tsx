@@ -17,7 +17,7 @@ import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import type { WorkflowInfo } from '@/services/workflows.js'
 import { workflowsAPI, workflowsKey, workflowsQueryOptions } from '@/services/workflows.js'
 import { ellipsisCss } from '@/styles/shared.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 
 const row = css`
   display: flex;
@@ -148,11 +148,6 @@ function sourceLabel(source: string): string {
   }
 }
 
-/** 失败原因取文案：统一走 messageOf（结构化 message → Error.message → String 兜底）。 */
-function errMessage(e: unknown): string {
-  return messageOf(e) || '未知错误'
-}
-
 type EditorState =
   | { mode: 'view'; name: string; readOnly: true; loading?: boolean }
   | { mode: 'create' }
@@ -237,7 +232,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       invalidate()
       setEditor(null)
     },
-    onError: (e) => setError(errMessage(e)),
+    onError: (e) => setError(messageOfOr(e, '未知错误')),
   })
 
   const removeMut = useMutation({
@@ -249,7 +244,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       setPendingDelete(null)
       setRemoveError(null)
     },
-    onError: (e) => setRemoveError(errMessage(e)),
+    onError: (e) => setRemoveError(messageOfOr(e, '未知错误')),
   })
 
   const openCreate = () => {
@@ -289,7 +284,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
       if (openGuard.stale(token)) return
-      setError(errMessage(e))
+      setError(messageOfOr(e, '未知错误'))
       setEditor(null)
     }
   }
@@ -318,7 +313,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
       setEditor((cur) => (cur ? { ...cur, loading: false } : cur))
     } catch (e) {
       if (openGuard.stale(token)) return
-      setError(errMessage(e))
+      setError(messageOfOr(e, '未知错误'))
       setEditor(null)
     }
   }
@@ -382,7 +377,7 @@ function WorkflowsPanel({ projectId }: WorkflowsPanelProps) {
           与「确实为空」区分开（与 UsagePanel 同口径）。 */}
       {listError ? (
         <ListErrorBox
-          title={`工作流列表读取失败：${errMessage(listErr)}`}
+          title={`工作流列表读取失败：${messageOfOr(listErr, '未知错误')}`}
           testId="workflow-list-error"
           onRetry={() => void refetchList()}
           retrying={listLoading}

@@ -38,7 +38,7 @@ import {
 } from '@/services/session.js'
 import { disabledCss } from '@/styles/shared.js'
 import { downloadJson } from '@/utils/download.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
 import { useAgents, useComposerBar } from '@/views/_shared/ComposerBar.js'
 import { Chat, type SendPayload } from '@/views/Chat.js'
@@ -306,7 +306,7 @@ export function ChatSession({
       })
       .catch((err: unknown) => {
         if (coldStartGuard.stale(gen)) return
-        setColdStartError(messageOf(err) || '状态检查失败')
+        setColdStartError(messageOfOr(err, '状态检查失败'))
       })
     // 记录打开时间并刷新会话树（排序依据 lastOpenedAt）。此链失败只影响会话列表排序、
     // 不牵连任何恢复入口，故不弹告警（否则每次打开会话都滋扰）。
@@ -566,7 +566,7 @@ export function ChatSession({
       // 而真正的派生分支内容并不在其中（迁移/分享后静默丢失）。改为显式失败态：
       // 说明无法确认影响面 + 内联重试，并放行导出——连不上时把用户永久挡在按钮外
       // 比放行更糟，但绝不再宣称内容完整。
-      setExportBranchFailed(messageOf(err) || '无法读取派生分支')
+      setExportBranchFailed(messageOfOr(err, '无法读取派生分支'))
     }
   }
 

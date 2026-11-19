@@ -33,7 +33,7 @@ import {
 import { todoKey } from '@/services/todo.js'
 import type { APIError } from '@/types/index.js'
 import { subscribeChannel } from '@/utils/broadcast.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 
 /**
  * 连接中断的失败原因文案。两条 interrupted 路径（SSE 无 done 结束、fetch 本身失败）
@@ -966,7 +966,7 @@ export function useChat(sessionId: string): ChatState & ChatActions {
         }
         setState((s) => ({
           ...s,
-          attachError: messageOf(err) || '状态检查失败',
+          attachError: messageOfOr(err, '状态检查失败'),
         }))
         return
       }

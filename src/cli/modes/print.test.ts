@@ -1,6 +1,7 @@
 import { getEventListeners } from 'node:events'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { collectAssistantText } from '../../core/loop/stream-collect.js'
 import type { DB } from '../../db/client.js'
 import { sessionEntries, sessions } from '../../db/schema.js'
 import { createTestDB, resetTestDB } from '../../db/test-utils.js'
@@ -11,7 +12,7 @@ import type { AgentEvent } from '../../shared/types/agent.js'
 import type { Config } from '../../shared/types/config.js'
 import type { ChatRequest, StreamChunk } from '../../shared/types/llm.js'
 import { buildAgentDeps } from '../deps.js'
-import { collectAssistantText, runPrintMode } from './print.js'
+import { runPrintMode } from './print.js'
 
 let db: DB
 beforeAll(async () => {

@@ -3,6 +3,7 @@ import type { DB } from '../db/client.js'
 import { kanbanBoards, kanbanCards } from '../db/schema.js'
 import { toEpochMs } from '../session/time.js'
 import type {
+  DeletedKanbanBoard,
   KanbanBoard,
   KanbanBoardWithCards,
   KanbanCard,
@@ -10,6 +11,7 @@ import type {
   KanbanLabelDef,
   KanbanPriority,
   KanbanStore,
+  MergedBoardCounts,
 } from '../shared/types/kanban.js'
 import { DEFAULT_KANBAN_COLUMNS, KANBAN_PRIORITIES } from '../shared/types/kanban.js'
 
@@ -419,18 +421,9 @@ export {
 // ── P2-5：看板回收站（软删除 → 恢复/彻底删除 → 到期物理清除）──────────────
 // 与会话回收站同保留期（TRASH_RETENTION_MS）。项目删除时看板不再级联销毁。
 
-/** 回收站条目信息（列表展示用）。 */
-export type DeletedKanbanBoard = {
-  id: string
-  /** 删除时记录的原项目名（项目行已删除，无法再 join）。 */
-  projectName: string
-  cardCount: number
-  deletedAt: number
-  /** 已到期进入物理清除宽限期的时间戳（ms）；null=尚未到期。 */
-  purgePendingAt: number | null
-  /** 删除时记录的原项目工作目录；null 或目录已不存在时无法「重建原项目」恢复。 */
-  deletedProjectWorktree: string | null
-}
+/** 回收站条目信息（列表展示用）。正本在 shared/types/kanban.ts；此处
+ *  re-export 维持 kanban/index.ts 的既有导出链。 */
+export type { DeletedKanbanBoard }
 
 /** 软删除字段集（按 id 单板版与项目批量版共用，字段清单单点）：
  *  projectName/worktree 传 null → undefined = 该列不更新（保留上次删除周期的记录）。 */
@@ -606,7 +599,7 @@ export async function restoreKanbanBoard(
 }
 
 export type MergeKanbanBoardResult =
-  | { ok: true; mergedColumns: number; mergedCards: number; mergedLabels: number }
+  | ({ ok: true } & MergedBoardCounts)
   | { ok: false; reason: 'BOARD_NOT_FOUND' }
 
 /**

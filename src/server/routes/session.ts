@@ -17,6 +17,7 @@ import {
   getSession,
   listSessions,
   listSessionsByProject,
+  sanitizePermissionMetadata,
   searchSessions,
   touchLastOpened,
   updateSessionTitle,
@@ -115,16 +116,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const importPermissions = body.importPermissions === true
     const metadata: Record<string, unknown> = {}
     if (importPermissions) {
-      const srcMeta = srcSession.metadata
-      if (srcMeta && typeof srcMeta === 'object' && !Array.isArray(srcMeta)) {
-        const m = srcMeta as Record<string, unknown>
-        if (m.permissionMode === 'auto' || m.permissionMode === 'default') {
-          metadata.permissionMode = m.permissionMode
-        }
-        if (Array.isArray(m.alwaysAllow)) {
-          metadata.alwaysAllow = m.alwaysAllow.filter((x): x is string => typeof x === 'string')
-        }
-      }
+      Object.assign(metadata, sanitizePermissionMetadata(srcSession.metadata))
     }
     // P2：携带用量 segments（会话信息面板/徽标显示历史成本与 token）。
     // 与权限态不同，segments 是纯统计数据无安全含义，默认随迁。

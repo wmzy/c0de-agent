@@ -1,9 +1,11 @@
 import type { JSONSchema, SessionRef } from './base.js'
 import type { KanbanStore } from './kanban.js'
+import type { TodoPhase } from './todo.js'
 
-// Forward-declared type for the todo state hook. The full TodoPhase type lives
-// in tools/builtin/todo.ts; here we only need the structural shape for the hook.
-export type TodoPhaseLike = { name: string; tasks: { content: string; status: string }[] }
+// todo 状态钩子的形状别名：正本 TodoPhase 在 ./todo.ts（todo 工具、REST 路由、
+// agent 状态与 web 服务四方共用的单一形状，status 为四值联合）。此处保留
+// TodoPhaseLike 名，供 ToolContext.todoState 与 web 渲染端的既有引用。
+export type TodoPhaseLike = TodoPhase
 
 /** Permission level for tool execution. */
 type ToolPermission = 'auto' | 'ask' | 'deny'

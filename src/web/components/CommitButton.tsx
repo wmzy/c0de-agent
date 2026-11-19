@@ -6,7 +6,7 @@ import { CommitReviewDialog } from '@/components/CommitReviewDialog.js'
 import { gitStatusQueryOptions, invalidateGitState } from '@/hooks/gitState.js'
 import { fileAPI } from '@/services/file.js'
 import { btnSm } from '@/styles/tokens.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 
 const commitBtn = css`
   display: inline-flex;
@@ -185,7 +185,7 @@ export function CommitButton({ projectId }: { projectId: string }) {
       setTimeout(() => setCommitFeedback((s) => (s.kind === 'ok' ? { kind: 'idle' } : s)), 3000)
     },
     onError: (err: unknown) => {
-      setCommitFeedback({ kind: 'err', msg: messageOf(err) || '提交失败' })
+      setCommitFeedback({ kind: 'err', msg: messageOfOr(err, '提交失败') })
       // 不再自动清：原因此前只活在 tooltip（display:none 的 role=tooltip 气泡）里，
       // 触屏/读屏根本读不到，再叠一个 5s 定时器等于把唯一的信息彻底销毁。
       // 复位交给下一次提交动作（onMutate）与关弹窗（onCancel）。

@@ -6,7 +6,13 @@ import { generateId } from '../shared/index.js'
 import type { LLMSegment } from '../shared/types/agent.js'
 import { aggregateSegmentUsage } from '../shared/usage.js'
 import { getEntries, insertEntry } from './message.js'
-import { createSession, getSession, rowToSession, webVisibleSessionCondition } from './session.js'
+import {
+  createSession,
+  getSession,
+  rowToSession,
+  sanitizePermissionMetadata,
+  webVisibleSessionCondition,
+} from './session.js'
 import { copyFileSnapshots } from './snapshot.js'
 import type { Session, SessionEntry, SessionTreeNode, SessionUsage } from './types.js'
 
@@ -164,18 +170,9 @@ async function forkSession(
     // 此前不复制权限态会使分支静默回退 default 模式、白名单丢失、用户重遇权限疲劳。
     // 同机同用户 fork 继承 auto/白名单安全（与跨机器 import 的「默认剥离」相反——
     // import 面向陌生来源，fork 面向本人上下文）。
-    const srcMeta = source.metadata as {
-      permissionMode?: 'auto' | 'default'
-      alwaysAllow?: unknown
-    }
     const forkedMeta: Record<string, unknown> = {}
     if (inheritedSegments.length > 0) forkedMeta.segments = inheritedSegments
-    if (srcMeta.permissionMode === 'auto' || srcMeta.permissionMode === 'default') {
-      forkedMeta.permissionMode = srcMeta.permissionMode
-    }
-    if (Array.isArray(srcMeta.alwaysAllow)) {
-      forkedMeta.alwaysAllow = srcMeta.alwaysAllow.filter((x): x is string => typeof x === 'string')
-    }
+    Object.assign(forkedMeta, sanitizePermissionMetadata(source.metadata))
     if (Object.keys(forkedMeta).length > 0) {
       await tx.update(sessions).set({ metadata: forkedMeta }).where(eq(sessions.id, forked.id))
     }

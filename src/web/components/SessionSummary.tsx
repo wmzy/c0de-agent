@@ -8,7 +8,7 @@ import { useMemo } from 'react'
 import { Collapsible } from '@/components/Collapsible.js'
 import { useMessages } from '@/hooks/useSession.js'
 import { llmDetailsQueryOptions, sessionMetaQueryOptions } from '@/services/session.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { formatCostUSD, formatDateTime, formatNumber } from '@/utils/format.js'
 
 const wrap = css`
@@ -154,7 +154,7 @@ function Unavailable() {
 
 /** 失败原因取文案：统一走 messageOf（结构化 message → Error.message → String 兜底）。 */
 function failureMessage(error: unknown): string {
-  return messageOf(error) || '无法读取本会话的统计来源。'
+  return messageOfOr(error, '无法读取本会话的统计来源。')
 }
 
 /**

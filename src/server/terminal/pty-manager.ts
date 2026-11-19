@@ -6,21 +6,12 @@ import { tmpdir, userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import { type IPty, spawn } from 'node-pty'
 import type { WebSocket } from 'ws'
+import type { PTYInfo } from '../../shared/types/terminal.js'
 import { tailChars, truncateHead } from '../../shared/utils/string.js'
 
-/** PTY 会话信息（返回给前端）。 */
-export interface PTYInfo {
-  id: string
-  pid: number
-  title: string
-  cols: number
-  rows: number
-  cwd: string
-  /** shell 程序路径。 */
-  shell: string
-  /** 所属项目 id（未归属时为 undefined）。 */
-  projectId?: string
-}
+/** PTY 会话信息（返回给前端）。正本在 shared/types/terminal.ts，web 侧以
+ *  TerminalInfo 名消费同一形状。 */
+export type { PTYInfo }
 
 /** 内部 PTY 条目：进程 + 元信息 + 活跃 WebSocket 连接集合 + 输出缓冲。 */
 interface PTYEntry {

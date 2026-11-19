@@ -1,7 +1,11 @@
 import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { applyScopedPatch, loadConfigScopes, saveConfigScoped } from '../../core/config.js'
-import { mutateSessionMetadata, readSessionMetadata } from '../../session/session.js'
+import {
+  isPermissionMode,
+  mutateSessionMetadata,
+  readSessionMetadata,
+} from '../../session/session.js'
 import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { uuidParamOr404 } from '../middleware/uuid-param.js'
@@ -35,9 +39,8 @@ async function ensureSessionModeLoaded(
 ): Promise<void> {
   if (ctx.sessionPermissionModes.has(sessionId)) return
   const row = metaRow !== undefined ? metaRow : await readSessionMetadata(ctx.db, sessionId)
-  const mode = (row?.metadata as { permissionMode?: 'auto' | 'default' } | undefined)
-    ?.permissionMode
-  if (mode === 'auto' || mode === 'default') {
+  const mode = (row?.metadata as Record<string, unknown> | undefined)?.permissionMode
+  if (isPermissionMode(mode)) {
     ctx.sessionPermissionModes.set(sessionId, mode)
   }
 }
@@ -106,7 +109,7 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const mode = parsed.body.mode
-    if (mode !== 'default' && mode !== 'auto') {
+    if (!isPermissionMode(mode)) {
       return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
     }
     ctx.permissionMode = mode
@@ -147,7 +150,7 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const mode = parsed.body.mode
-    if (mode !== undefined && mode !== 'default' && mode !== 'auto') {
+    if (mode !== undefined && !isPermissionMode(mode)) {
       return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
     }
     if (mode === undefined) {

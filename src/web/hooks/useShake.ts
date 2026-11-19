@@ -9,12 +9,7 @@ import type { ShakeModeValue } from '@/components/session/ShakeContext.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { sessionAPI, sessionArchivesPrefix, sessionMessagesKey } from '@/services/session.js'
 import type { Message, ShakeRegionView } from '@/types/index.js'
-import { messageOf } from '@/utils/errors.js'
-
-/** 失败原因取文案：统一走 messageOf（结构化 message → Error.message → String 兜底）。 */
-function shakeFailureMessage(error: unknown, fallback: string): string {
-  return messageOf(error) || fallback
-}
+import { messageOfOr } from '@/utils/errors.js'
 
 export function useShake(sessionId: string, messages: Message[], qc: QueryClient) {
   // shake 内联模式状态
@@ -55,7 +50,7 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
     },
     onError: (error: unknown, _variables, ctx) => {
       if (!ctx || scopeGuard.stale(ctx.scope)) return
-      setShakeError(shakeFailureMessage(error, '提交失败，被选中的区域没有裁掉。'))
+      setShakeError(messageOfOr(error, '提交失败，被选中的区域没有裁掉。'))
     },
   })
 
@@ -82,7 +77,7 @@ export function useShake(sessionId: string, messages: Message[], qc: QueryClient
     } catch (error) {
       // 同理：A 预览失败的提示不该挂到 B 的工具栏下面。
       if (scopeGuard.stale(scope)) return
-      setShakeError(shakeFailureMessage(error, '无法读取可裁剪的区域，Shake 未打开。'))
+      setShakeError(messageOfOr(error, '无法读取可裁剪的区域，Shake 未打开。'))
     }
   }
 

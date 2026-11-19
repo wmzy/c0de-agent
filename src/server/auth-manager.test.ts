@@ -209,6 +209,18 @@ describe('createAuthManager — 设备配对审批（P2-16）', () => {
     expect(mgr.pairingStatus(req?.pairingId ?? '')).toEqual({ status: 'denied' })
   })
 
+  it('过期配对的 deny：与不存在同语义（false）且顺带清理过期条目', async () => {
+    // ttl=0 实例中新请求立即过期——此前 deny 不做 TTL 判定，会把过期条目
+    // 标记为 denied 并返回 true（审批界面滞留的过期请求仍可被「成功拒绝」）
+    const mgr = managerWithBootstrap({ dataDir: dir, pairingTtlMs: 0 })
+    await registered(mgr)
+    const req = mgr.requestPairing('x')
+    expect(req).not.toBeNull()
+    expect(mgr.denyPairing(req?.pairingId ?? '')).toBe(false)
+    // 过期条目已被 deny 路径清理，设备侧轮询同样 not_found
+    expect(mgr.pairingStatus(req?.pairingId ?? '')).toEqual({ status: 'not_found' })
+  })
+
   it('配对码过期后 status 返回 not_found', async () => {
     const now = Date.now()
     const mgr = managerWithBootstrap({ dataDir: dir, pairingTtlMs: 60_000 })

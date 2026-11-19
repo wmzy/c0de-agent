@@ -27,7 +27,7 @@ import { projectAPI, projectsKey } from '@/services/project.js'
 import { MOBILE } from '@/styles/breakpoints.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import { downloadJson } from '@/utils/download.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
 
 const indicator = css`
@@ -321,7 +321,7 @@ export function ProjectIndicator({
       downloadJson(`kanban-${project.id}.json`, data)
       deleteMut.mutate(project.id)
     } catch (err) {
-      setDeleteError(messageOf(err) || '看板导出失败，项目未删除')
+      setDeleteError(messageOfOr(err, '看板导出失败，项目未删除'))
     } finally {
       setExportBusy(false)
     }

@@ -17,7 +17,7 @@ import {
 import { authAPI, authDevicesKey } from '@/services/auth.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import { btnDanger } from '@/styles/tokens.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { formatDate } from '@/utils/format.js'
 
 /** 设备行：名称占满剩余宽度，id 前缀与创建日期是次要元信息。 */
@@ -63,7 +63,7 @@ function DeviceListError({
   refetching: boolean
   onRetry: () => void
 }) {
-  const message = messageOf(error) || '未知错误'
+  const message = messageOfOr(error, '未知错误')
   return (
     <ListErrorBox
       title={`已授权设备读取失败：${message}`}
@@ -93,7 +93,7 @@ function DevicesSection() {
     onMutate: () => setRevokeError(null),
     onSuccess: () => qc.invalidateQueries({ queryKey: authDevicesKey() }),
     onError: (e: unknown) => {
-      setRevokeError(messageOf(e) || '撤销失败，设备仍可访问')
+      setRevokeError(messageOfOr(e, '撤销失败，设备仍可访问'))
     },
   })
   const devices = data?.devices ?? []

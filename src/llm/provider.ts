@@ -246,18 +246,41 @@ const chatStream = async function* (
   throw lastError
 }
 
+/** 消费 LLM 流并拼接全部 text chunk 为最终文本。
+ *  默认吞掉流中的 error chunk（返回已累积的半截文本）——chat() 的既有口径，
+ *  标题生成（fire-and-forget、错误全吞降级回退标题）等调用依赖该隐式降级；
+ *  需要严格失败语义的调用方（如 compact 摘要）传 throwOnErrorChunk: true，
+ *  首个 error chunk 即抛其 message。 */
+const collectStreamText = async (
+  stream: AsyncIterable<StreamChunk>,
+  opts?: { throwOnErrorChunk?: boolean },
+): Promise<string> => {
+  let text = ''
+  for await (const chunk of stream) {
+    if (chunk._tag === 'text') {
+      text += chunk.text
+    } else if (opts?.throwOnErrorChunk === true && chunk._tag === 'error') {
+      throw new Error(chunk.error.message)
+    }
+  }
+  return text
+}
+
 /** Non-streaming chat: consume the stream and return the final text. */
 const chat = async (
   ctx: ProviderContext,
   request: ChatRequest,
   options: ChatOptions,
-): Promise<string> => {
-  let text = ''
-  for await (const chunk of chatStream(ctx, request, options)) {
-    if (chunk._tag === 'text') text += chunk.text
-  }
-  return text
-}
+): Promise<string> =>
+  // 不传 opts：保持吞错现状（error chunk 静默终止累积、返回半截文本）。
+  collectStreamText(chatStream(ctx, request, options))
 
 export type { ChatOptions, ProviderContext }
-export { buildInternalRequest, chat, chatStream, toInternalMessage, toStreamChunk }
+export {
+  buildInternalRequest,
+  chat,
+  chatStream,
+  collectStreamText,
+  toInternalMessage,
+  toStreamChunk,
+}

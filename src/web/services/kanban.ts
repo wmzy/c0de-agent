@@ -1,44 +1,27 @@
-// 看板契约类型（KanbanPriority/列/标签/卡片/看板）的正典在 shared/types/kanban.ts，
-// 由 store、REST 路由与 kanban 工具三方共用；此处 re-export 供 web 侧消费。
+// 看板契约类型（KanbanPriority/列/标签/卡片/看板/回收站条目/合并计数）的正典在
+// shared/types/kanban.ts，由 store、REST 路由与 kanban 工具三方共用；此处
+// re-export 供 web 侧消费。
 import type {
+  DeletedKanbanBoard,
   KanbanBoard,
   KanbanBoardWithCards,
   KanbanCard,
   KanbanColumnDef,
   KanbanLabelDef,
   KanbanPriority,
+  MergedBoardCounts,
 } from '@shared/types/kanban.js'
 import { del, get, patch, post } from '@/services/api.js'
 
 export type {
+  DeletedKanbanBoard,
   KanbanBoard,
   KanbanBoardWithCards,
   KanbanCard,
   KanbanColumnDef,
   KanbanLabelDef,
   KanbanPriority,
-}
-
-/**
- * 合并恢复（回收站看板 → 现有看板）实际并入的量。标签与列、卡片同口径计数：
- * 源板随后被物理删除，它的标签定义必须一并带过去，否则卡片上的 labelId 悬空。
- */
-export type MergedBoardCounts = {
-  mergedColumns: number
-  mergedCards: number
-  mergedLabels: number
-}
-
-/** P2-5：回收站看板条目。 */
-export type DeletedKanbanBoard = {
-  id: string
-  projectName: string
-  cardCount: number
-  deletedAt: number
-  /** 已到期进入物理清除宽限期的时间戳（ms）；null=尚未到期。 */
-  purgePendingAt: number | null
-  /** 删除时记录的原项目工作目录；null 或目录已不存在时无法「重建原项目」恢复。 */
-  deletedProjectWorktree: string | null
+  MergedBoardCounts,
 }
 
 const kanbanAPI = {

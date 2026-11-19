@@ -3,33 +3,16 @@
 // stateless ToolDef + ToolContext.todoState hook pattern.
 
 import type { JSONSchema } from '../../shared/types/base.js'
+import type { TodoInput, TodoPhase, TodoStatus, TodoTask } from '../../shared/types/todo.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 
 // =============================================================================
 // Types
 // =============================================================================
 
-type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'abandoned'
-
-type TodoItem = {
-  content: string
-  status: TodoStatus
-}
-
-type TodoPhase = {
-  name: string
-  tasks: TodoItem[]
-}
-
-/** A single todo operation entry (the tool's input params). */
-type TodoInput =
-  | { op: 'init'; list?: { phase: string; items: string[] }[]; phase?: string; items?: string[] }
-  | { op: 'start'; task: string }
-  | { op: 'done'; task?: string; phase?: string }
-  | { op: 'drop'; task?: string; phase?: string }
-  | { op: 'rm'; task?: string; phase?: string }
-  | { op: 'append'; phase: string; items: string[] }
-  | { op: 'view' }
+// DTO 正本在 shared/types/todo.ts（todo 工具、REST 路由、agent 状态与 web
+// 服务四方共用的单一形状）；TodoItem 是本文件的历史内部名，与 TodoTask 同形。
+type TodoItem = TodoTask
 
 /** Phase + task identifier for a completion transition. */
 type TodoCompletionTransition = {

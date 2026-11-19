@@ -15,7 +15,7 @@ import { useSessionContentSearch } from '@/hooks/useSessionContentSearch.js'
 import { sessionAPI } from '@/services/session.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import type { Project, SessionTreeNode } from '@/types/index.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { empty, errorBar, noticeBar, searchInput } from '@/views/_shared/recycleStyles.js'
 import { RecycleBin } from '@/views/RecycleBin.js'
 
@@ -242,7 +242,7 @@ export function SessionList({
       return true
     } catch (err) {
       // P3：重命名失败此前写入 deleteError，错误条误显示「删除失败」前缀。
-      setRenameError(messageOf(err) || '重命名失败')
+      setRenameError(messageOfOr(err, '重命名失败'))
       return false
     }
   }

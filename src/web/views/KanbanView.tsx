@@ -25,7 +25,7 @@ import {
 } from '@/services/kanban.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import { downloadJson } from '@/utils/download.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { LoadError } from '@/views/_shared/errorState.js'
 
 const view = css`
@@ -377,7 +377,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       const data = await kanbanAPI.exportBoard(projectId)
       downloadJson(`kanban-${projectId}.json`, data)
     } catch (err) {
-      setIoError(messageOf(err) || '导出失败')
+      setIoError(messageOfOr(err, '导出失败'))
     }
   }
 
@@ -394,7 +394,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       const cardCount = Array.isArray(cards) ? cards.length : 0
       setPendingImport({ data, cardCount })
     } catch (err) {
-      setIoError(messageOf(err) || '导入失败')
+      setIoError(messageOfOr(err, '导入失败'))
     }
   }
 
@@ -408,7 +408,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       await kanbanAPI.importBoard(projectId, pending.data)
       await qc.invalidateQueries({ queryKey: kanbanKey(projectId) })
     } catch (err) {
-      setIoError(messageOf(err) || '导入失败')
+      setIoError(messageOfOr(err, '导入失败'))
     }
   }
 

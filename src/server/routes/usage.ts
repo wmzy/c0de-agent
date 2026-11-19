@@ -10,18 +10,11 @@ import { Hono } from 'hono'
 import { usageEvents } from '../../db/schema.js'
 import { PRICE_CATALOG_VERSION } from '../../llm/registry.js'
 import { localMonthKey } from '../../session/usage.js'
+import type { UsageSummary, UsageTotals } from '../../shared/types/usage.js'
 import type { ServerContext } from '../types.js'
 
-/** 单组用量汇总（totals / byMonth / byModel 共用结构）。 */
-type UsageTotals = {
-  inputTokens: number
-  outputTokens: number
-  cacheRead: number
-  cost: number
-  /** 价格未知、按 $0 计入的调用数（H2：显式提示低估，不再静默）。 */
-  unknownCostCalls: number
-  calls: number
-}
+/** 单组用量汇总的正本在 shared/types/usage.ts（UsageTotals/UsageSummary 与
+ *  web services/usage.ts 共用的响应契约）；此处 import 供聚合中间结构使用。 */
 
 const emptyTotals = (): UsageTotals => ({
   inputTokens: 0,
@@ -80,10 +73,13 @@ function createUsageRoute(ctx: ServerContext): Hono {
       const monthKey = localMonthKey(Date.now())
       return c.json({
         totals: emptyTotals(),
+        // H3：价目版本随响应下发——tz 白名单失败的兜底分支此前漏发该字段，
+        // 违反 UsageSummary 契约（satisfies 收紧后暴露），补齐保持契约完整。
+        priceCatalogVersion: PRICE_CATALOG_VERSION,
         byMonth: [],
         byModel: [],
         currentMonth: { key: monthKey, ...emptyTotals() },
-      })
+      } satisfies UsageSummary)
     }
     const monthExpr = sql<string>`to_char(to_timestamp(${usageEvents.timestamp} / 1000.0) AT TIME ZONE '${sql.raw(tz)}', 'YYYY-MM')`
 
@@ -158,7 +154,7 @@ function createUsageRoute(ctx: ServerContext): Hono {
         .sort((a, b) => b[1].cost - a[1].cost)
         .slice(0, 10)
         .map(([model, t]) => ({ model, ...t })),
-    })
+    } satisfies UsageSummary)
   })
 
   return app

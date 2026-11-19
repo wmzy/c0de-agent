@@ -15,7 +15,7 @@ import { appendAuthQuery } from '@/services/authUrl.js'
 import { encodeFilePath, fileQueryOptions } from '@/services/file.js'
 import { ellipsisCss } from '@/styles/shared.js'
 import { btnDanger } from '@/styles/tokens.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { extOf } from '@/utils/format.js'
 import { secondaryButton } from '@/views/_shared/bannerStyles.js'
 import { errorDetail, errorState, LoadError } from '@/views/_shared/errorState.js'
@@ -415,7 +415,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       body = (
         <div className={errorState} data-testid="file-preview-binary">
           <span className={binaryTitle}>这是二进制文件</span>
-          <span className={errorDetail}>{messageOf(err) || '不能以文本方式显示或编辑。'}</span>
+          <span className={errorDetail}>{messageOfOr(err, '不能以文本方式显示或编辑。')}</span>
           <a
             className={binaryLink}
             href={mediaQuery}
@@ -433,7 +433,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
       body = (
         <LoadError
           title="文件读取失败"
-          detail={messageOf(q.error) || '无法读取该文件内容。'}
+          detail={messageOfOr(q.error, '无法读取该文件内容。')}
           onRetry={() => void q.refetch()}
           retryTestId="file-preview-retry"
           testId="file-preview-error"
@@ -603,7 +603,7 @@ export function FilePreview({ projectId, path }: { projectId: string; path: stri
         {q.data && q.isError && (
           <div className={refetchErrorBar} role="alert" data-testid="file-preview-refetch-error">
             <span className={refetchErrorText}>
-              内容可能有更新，但重新读取失败：{messageOf(q.error) || '未知原因'}
+              内容可能有更新，但重新读取失败：{messageOfOr(q.error, '未知原因')}
               。下面显示的仍是上次读取到的内容。
             </span>
             <button

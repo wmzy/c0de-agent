@@ -18,6 +18,7 @@ import { getLLMSegments } from '../../session/segments.js'
 import {
   consumeBudgetPauseMarker,
   getSession,
+  isPermissionMode,
   markUnfinishedTurn,
   updateSessionLastRun,
 } from '../../session/session.js'
@@ -382,8 +383,9 @@ async function restoreChatSession(
 
   // P2：会话级权限覆盖持久化在 metadata——重启后从 DB 恢复到内存 Map，
   // 使 getMode 的「会话覆盖」优先级跨重启成立。
-  if (session.metadata.permissionMode === 'auto' || session.metadata.permissionMode === 'default') {
-    ctx.sessionPermissionModes.set(sessionId, session.metadata.permissionMode)
+  const permissionMode = session.metadata.permissionMode
+  if (isPermissionMode(permissionMode)) {
+    ctx.sessionPermissionModes.set(sessionId, permissionMode)
   }
   // P2：会话级「始终允许」白名单同样持久化于 metadata，checker 经 getter 实时读取
   // （run 期间用户可追加；此处仅在本会话 Map 尚未加载时注入，已有值优先）。

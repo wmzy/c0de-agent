@@ -54,6 +54,29 @@ type KanbanBoardWithCards = KanbanBoard & {
   cards: KanbanCard[]
 }
 
+/** P2-5：回收站看板条目（列表展示用）。 */
+type DeletedKanbanBoard = {
+  id: string
+  /** 删除时记录的原项目名（项目行已删除，无法再 join）。 */
+  projectName: string
+  cardCount: number
+  deletedAt: number
+  /** 已到期进入物理清除宽限期的时间戳（ms）；null=尚未到期。 */
+  purgePendingAt: number | null
+  /** 删除时记录的原项目工作目录；null 或目录已不存在时无法「重建原项目」恢复。 */
+  deletedProjectWorktree: string | null
+}
+
+/**
+ * 合并恢复（回收站看板 → 现有看板）实际并入的量。标签与列、卡片同口径计数：
+ * 源板随后被物理删除，它的标签定义必须一并带过去，否则卡片上的 labelId 悬空。
+ */
+type MergedBoardCounts = {
+  mergedColumns: number
+  mergedCards: number
+  mergedLabels: number
+}
+
 /** Default 5 columns for a new board. */
 const DEFAULT_KANBAN_COLUMNS: readonly KanbanColumnDef[] = [
   { id: 'todo', name: '待办' },
@@ -119,6 +142,7 @@ interface KanbanStore {
 }
 
 export type {
+  DeletedKanbanBoard,
   KanbanBoard,
   KanbanBoardWithCards,
   KanbanCard,
@@ -126,6 +150,7 @@ export type {
   KanbanLabelDef,
   KanbanPriority,
   KanbanStore,
+  MergedBoardCounts,
 }
 
 export { DEFAULT_KANBAN_COLUMNS, KANBAN_LABEL_COLORS, KANBAN_PRIORITIES }

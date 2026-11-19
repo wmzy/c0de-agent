@@ -1,19 +1,11 @@
 // src/web/services/terminal.ts
 
+import type { PTYInfo as TerminalInfo } from '@shared/types/terminal.js'
 import { API_BASE, del, get, getAuthToken, post, put } from '@/services/api.js'
 import { appendAuthQuery } from '@/services/authUrl.js'
 
-export interface TerminalInfo {
-  id: string
-  pid: number
-  title: string
-  cols: number
-  rows: number
-  cwd: string
-  shell: string
-  /** 所属项目 id（未归属时为 undefined）。 */
-  projectId?: string
-}
+// 契约正本在 @shared/types/terminal.ts（服务端 pty-manager 的 PTYInfo 同一形状）。
+export type { TerminalInfo }
 
 const terminalAPI = {
   list: () => get<{ terminals: TerminalInfo[] }>('/api/terminal'),

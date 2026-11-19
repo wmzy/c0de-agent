@@ -17,6 +17,18 @@ export function isParseErrorInput(input: unknown): boolean {
   return '_parseError' in obj || '_raw' in obj
 }
 
+/** 从已完成 run 的事件数组累积 assistant 文本（拼接全部 text_delta）。纯函数。
+ *  此前 cli/modes/print.ts 与 loop/subagent.ts 各持一份同形累积。
+ *  注意：只收敛文本累积——两处的终态 error 提取口径刻意不同（print 仅
+ *  unexpected 抛出、subagent 任一 error 即失败），仍留在各自调用方。 */
+export function collectAssistantText(events: AgentEvent[]): string {
+  let text = ''
+  for (const e of events) {
+    if (e._tag === 'text_delta') text += e.text
+  }
+  return text
+}
+
 /** collectStreamChunks 的收集结果：单轮 LLM 流的全部产出与状态标记。 */
 export type StreamCollectResult = {
   /** 完整 chunk 序列（供 provider:after hook 与 LLMDetail.responseChunks） */

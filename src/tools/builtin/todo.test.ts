@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { TodoStatus } from '../../shared/types/todo.js'
 import type { ToolContext } from '../../shared/types/tool.js'
 import type { TodoPhase } from './todo.js'
 import {
@@ -13,7 +14,7 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────
 
-type Phase = { name: string; tasks: { content: string; status: string }[] }
+type Phase = { name: string; tasks: { content: string; status: TodoStatus }[] }
 
 /** Safe indexed access for tests. */
 function at<T>(arr: T[], idx: number): T {

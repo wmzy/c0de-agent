@@ -6,7 +6,7 @@ import { type Dispatch, type SetStateAction, useCallback, useState } from 'react
 import type { TreeNode } from '@/components/FileTree.js'
 import { setChildren } from '@/components/tree-utils.js'
 import { type ScopeGuard, useScopeGuard } from '@/hooks/useScopeGuard.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 
 export type DirectoryTree = {
   treeRoot: TreeNode | null
@@ -64,7 +64,7 @@ export function useDirectoryTree(
       } catch (err) {
         if (guard.stale(gen)) return
         // APIError 是结构体而非 Error 子类，必须结构化取 message（messageOf 口径）。
-        setLoadErrors((prev) => new Map(prev).set(dirPath, messageOf(err) || '无法读取该目录'))
+        setLoadErrors((prev) => new Map(prev).set(dirPath, messageOfOr(err, '无法读取该目录')))
       } finally {
         setLoadingPaths((prev) => {
           const next = new Set(prev)

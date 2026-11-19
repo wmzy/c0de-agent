@@ -58,7 +58,7 @@ import {
   validateConfigShape,
 } from '@/utils/config-shape.js'
 import { downloadJson } from '@/utils/download.js'
-import { messageOf } from '@/utils/errors.js'
+import { messageOfOr } from '@/utils/errors.js'
 import { parseBoundedNumber } from '@/utils/format.js'
 import { LoadError } from '@/views/_shared/errorState.js'
 
@@ -295,7 +295,7 @@ export function Settings() {
       flashSaveOk(variables.restoredSecrets)
     },
     onError: (err: unknown) => {
-      setSaveFeedback({ kind: 'err', msg: messageOf(err) || '未知错误' })
+      setSaveFeedback({ kind: 'err', msg: messageOfOr(err, '未知错误') })
     },
   })
 
@@ -344,7 +344,7 @@ export function Settings() {
   if (isLoading) return <div className={loadingWrap}>加载中…</div>
   // APIError 是真正的 Error（services/api.ts 的 ApiErrorImpl），message 即后端文案；
   // message 为空串时回落到通用文案（两处展示位共用同一兜底）。
-  const refetchErrorMessage = messageOf(configError) || '无法读取配置文件。'
+  const refetchErrorMessage = messageOfOr(configError, '无法读取配置文件。')
   // 读失败必须与「还在加载」区分。此前 `isLoading || !config` 把两者并成一条：
   // 请求 500 时 isLoading 已为 false 而 config 恒为 null（resp 为 undefined），
   // 于是设置页永久停在「加载中…」——实测注入 /api/config 500、retry:2 耗尽后
@@ -578,7 +578,7 @@ export function Settings() {
       // 类型假定字段形状），也会把坏形状落盘成永久崩溃源。此处先拦下来。
       setJsonShapeError(validateConfigShape(parsed, config))
     } catch (e) {
-      setJsonError(messageOf(e) || 'JSON 解析错误')
+      setJsonError(messageOfOr(e, 'JSON 解析错误'))
     }
   }
 
@@ -664,7 +664,7 @@ export function Settings() {
       }
       applyImport(normalized.config)
     } catch (err) {
-      setJsonError(`导入失败：${messageOf(err) || '未知错误'}`)
+      setJsonError(`导入失败：${messageOfOr(err, '未知错误')}`)
       setJsonShapeError(null)
       setViewMode('json')
       // 把读取到的原始文本放进编辑器方便定位问题
