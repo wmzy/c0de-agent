@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path'
 import { clampTimerDelay } from '../shared/timer.js'
 import { errorMessage } from '../shared/utils/string.js'
 import type { SessionSnapshot } from './snapshot.js'
+import { DEFAULT_PACKAGE } from './version.js'
 
 /** 热更新执行结果（spec §18）。 */
 type HotUpdateResult =
@@ -53,7 +54,6 @@ type HotUpdateOptions = {
 /** 安装方式（P0-2：识别当前进程安装器；unknown = 不自动安装，提示手动更新）。 */
 type InstallMethod = { kind: 'npm' } | { kind: 'pnpm' } | { kind: 'unknown'; hint: string }
 
-const DEFAULT_PACKAGE = 'c0de-agent'
 const DEFAULT_MANUAL_WAIT_TIMEOUT_MS = 10 * 60 * 1000
 
 /** 安装命令超时：npm/pnpm 网络停滞（registry 半开）时 spawn 永不 exit，

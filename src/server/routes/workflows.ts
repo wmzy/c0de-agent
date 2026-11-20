@@ -11,8 +11,8 @@ import {
   refreshProjectFingerprintBestEffort,
   resolveCwdProjectTrusted,
 } from '../../project/index.js'
+import { permissionTimeoutPauseReason } from '../../shared/permissions.js'
 import { apiError } from '../middleware/error.js'
-import { permissionTimeoutPauseReason } from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getProjectOr404, projectNotFoundResponse } from '../util/project-guard.js'

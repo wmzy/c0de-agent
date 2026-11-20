@@ -19,7 +19,7 @@ type CheckOptions = {
   registryUrl?: string
 }
 
-const DEFAULT_PACKAGE = 'c0de-agent'
+export const DEFAULT_PACKAGE = 'c0de-agent'
 const DEFAULT_VERSION = '0.1.0'
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org'
 

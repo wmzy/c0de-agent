@@ -2,6 +2,7 @@ import type { WebSearchConfig } from '../../shared/types/config.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 import { errorMessage } from '../../shared/utils/string.js'
 import { formatForLLM, runWebSearch, setFetchOverride } from './index.js'
+import type { Recency } from './types.js'
 
 export { setFetchOverride }
 
@@ -42,7 +43,7 @@ export function createWebSearchTool(config: WebSearchConfig): ToolDef {
       const { query, numResults, recency } = input as {
         query: string
         numResults?: number
-        recency?: 'day' | 'week' | 'month' | 'year'
+        recency?: Recency
       }
       try {
         const response = await runWebSearch({ query, numResults, recency }, config, ctx.abort)

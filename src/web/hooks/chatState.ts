@@ -1,6 +1,8 @@
 // 聊天状态机：AgentEvent → ChatState 的纯归约 + 跨标签页 run 状态频道。
 // 从 useChat 拆出——纯函数可独立单测（useChat.test 的 reduceChatEvent 描述块），
 // hook 只保留编排（SSE 消费、权限/信任/段确认的交互流）。
+
+import { permissionTimeoutPauseReason } from '@shared/permissions.js'
 import type { AgentError, AgentEvent } from '@shared/types/agent.js'
 import type { Message, MessageContent } from '@shared/types/message.js'
 import type { RefObject } from 'react'
@@ -353,9 +355,7 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
         permissionTimeout: null,
         runPaused: event.timeoutAction === 'pause',
         runPauseReason:
-          event.timeoutAction === 'pause'
-            ? '权限确认超时：工具已被自动拒绝，对话已暂停。恢复后可直接要求 agent 重试该工具。'
-            : null,
+          event.timeoutAction === 'pause' ? permissionTimeoutPauseReason('对话') : null,
       }
     case 'status_change':
       // 服务端 run 状态同步：权限超时兜底暂停、成本预算超支暂停、或用户在其他

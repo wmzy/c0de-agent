@@ -25,6 +25,7 @@ import {
 import { upsertFileSnapshot } from '../../session/snapshot.js'
 import { upgradeTemporarySession } from '../../session/trash.js'
 import { budgetGateEnabled } from '../../session/usage.js'
+import { permissionTimeoutPauseReason } from '../../shared/permissions.js'
 import type { AgentConfig } from '../../shared/types/agent.js'
 import type { MessageContent } from '../../shared/types/message.js'
 import { errorMessage } from '../../shared/utils/string.js'
@@ -34,7 +35,6 @@ import type { AgentManager } from '../agent-manager.js'
 import { apiError } from '../middleware/error.js'
 import {
   createStreamPermissionChecker,
-  permissionTimeoutPauseReason,
   resolvePermissionTimeoutAction,
 } from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'

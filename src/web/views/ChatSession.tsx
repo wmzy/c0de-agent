@@ -4,6 +4,7 @@
 
 import { css } from '@linaria/core'
 import { useRouter } from '@native-router/react'
+import { permissionTimeoutPauseReason } from '@shared/permissions.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -838,10 +839,7 @@ export function ChatSession({
             )}
             {chat.runPaused && chat.isStreaming && (
               <div className={interruptBanner} data-testid="run-paused-banner">
-                <span>
-                  {chat.runPauseReason ??
-                    '权限确认超时：工具已被自动拒绝，对话已暂停（不会在无人确认时继续执行）。点击「恢复」继续，恢复后可直接要求 agent 重试该工具。'}
-                </span>
+                <span>{chat.runPauseReason ?? permissionTimeoutPauseReason('对话')}</span>
                 <Button
                   variant="outline"
                   onClick={() => {
