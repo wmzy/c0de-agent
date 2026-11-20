@@ -3,6 +3,7 @@ import { budgetGateEnabled, budgetOverageParts } from '../../session/usage.js'
 import type { Config } from '../../shared/types/config.js'
 import { runPrintMode } from '../modes/print.js'
 import type { CommandArgs } from '../parser.js'
+import { resolveStderr, resolveStdout } from './io.js'
 
 type ChatCommandContext = {
   args: CommandArgs
@@ -35,8 +36,8 @@ async function runSlashCommand(
   const cmd = registry.get(parsed.name)
   if (!cmd) return false // 未知斜杠命令：回退为正常消息发给 agent（与 Web 端一致）
 
-  const out = ctx.stdout ?? process.stdout.write.bind(process.stdout)
-  const err = ctx.stderr ?? process.stderr.write.bind(process.stderr)
+  const out = resolveStdout(ctx)
+  const err = resolveStderr(ctx)
   if (!isSlashCommandEnabled(ctx.config.slashCommands?.enabled, parsed.name)) {
     err(`斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）\n`)
     return true
@@ -105,8 +106,8 @@ async function runChatCommand(ctx: ChatCommandContext): Promise<void> {
   const message = ctx.args.positionals.join(' ').trim()
   if (!message) throw new Error('chat: a message is required (c0de chat "your question")')
 
-  const out = ctx.stdout ?? process.stdout.write.bind(process.stdout)
-  const err = ctx.stderr ?? process.stderr.write.bind(process.stderr)
+  const out = resolveStdout(ctx)
+  const err = resolveStderr(ctx)
   const format = (ctx.args.options.format as 'text' | 'json' | undefined) ?? 'text'
   const model = ctx.args.options.model as string | undefined
   let continueId = ctx.args.options.continue as string | undefined

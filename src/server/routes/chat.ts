@@ -34,6 +34,7 @@ import type { AgentManager } from '../agent-manager.js'
 import { apiError } from '../middleware/error.js'
 import {
   createStreamPermissionChecker,
+  permissionTimeoutPauseReason,
   resolvePermissionTimeoutAction,
 } from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'
@@ -101,11 +102,6 @@ export async function resolveAgentCwd(
  * 服务端 stream.onAbort 随即中止 agent，长命令/权限弹窗/多 agent 全部误杀。
  * 30s 心跳保证看门狗只对「连接真正死亡」（连续 3 个心跳周期无数据）生效。
  */
-/** 权限确认超时兜底拒绝后暂停 run 的暂停原因（区别于用户主动暂停）。
- *  附重试指引：被拒工具不会自动重试，用户回来后需要知道可以要求 agent 重做。 */
-const PERMISSION_TIMEOUT_PAUSE_REASON =
-  '权限确认超时：该工具已被自动拒绝，对话已暂停。点击「恢复」后可直接要求 agent 重试该工具'
-
 const SSE_HEARTBEAT_INTERVAL_MS = 30_000
 
 /** 启动心跳定时器；返回停止函数（幂等）。流关闭后写入会被吞掉，安全。 */
@@ -522,7 +518,7 @@ async function runWorkflowSlashChannel(
     // 发起会话：工作流运行期间占用标记 + 权限归属/模式查询键（REST 无发起会话）。
     hostSessionId: sessionId,
     tryAcquireBusyMessage: '该工作流会话已有进行中的执行',
-    permissionPauseReason: PERMISSION_TIMEOUT_PAUSE_REASON,
+    permissionPauseReason: permissionTimeoutPauseReason('对话'),
     createEmitter: createSlashWorkflowEmitter,
   })
 }
@@ -613,7 +609,7 @@ async function dispatchSlashCommand(
         defaultMode: sessionDefaultMode,
         timeoutAction: env.permissionTimeoutAction,
         onPauseExpired: () =>
-          ctx.agentManager.pauseCascade(sessionId, PERMISSION_TIMEOUT_PAUSE_REASON),
+          ctx.agentManager.pauseCascade(sessionId, permissionTimeoutPauseReason('对话')),
       })
       const streamCommandCtx = {
         ...commandCtx,
@@ -898,7 +894,7 @@ async function streamAgentRun(
           defaultMode: sessionDefaultMode,
           timeoutAction: env.permissionTimeoutAction,
           onPauseExpired: () =>
-            ctx.agentManager.pauseCascade(sessionId, PERMISSION_TIMEOUT_PAUSE_REASON),
+            ctx.agentManager.pauseCascade(sessionId, permissionTimeoutPauseReason('对话')),
         })
 
         // cwd 已在斜杠拦截前解析，此处直接复用

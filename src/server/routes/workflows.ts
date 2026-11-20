@@ -12,6 +12,7 @@ import {
   resolveCwdProjectTrusted,
 } from '../../project/index.js'
 import { apiError } from '../middleware/error.js'
+import { permissionTimeoutPauseReason } from '../permission/stream-checker.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getProjectOr404, projectNotFoundResponse } from '../util/project-guard.js'
@@ -114,10 +115,6 @@ async function deleteWorkflowFileAndReload(
   }
   return c.json({ ok: true })
 }
-
-/** 权限确认超时兜底拒绝后暂停 run 的暂停原因（与 chat 路由同口径）。 */
-const PERMISSION_TIMEOUT_PAUSE_REASON =
-  '权限确认超时：该工具已被自动拒绝，工作流已暂停。点击「恢复」后可直接要求 agent 重试该工具'
 
 /** workflowRegistry 未初始化（测试缺省/启动异常）→ 500 的单点构造：
  *  POST /、GET /:name、POST /:name/run、DELETE /:name 四入口逐字同形守卫。 */
@@ -385,7 +382,7 @@ function createWorkflowsRoute(ctx: ServerContext) {
       sessionDefaultMode,
       sessionRegistry,
       tryAcquireBusyMessage: '该会话已有进行中的工作流执行',
-      permissionPauseReason: PERMISSION_TIMEOUT_PAUSE_REASON,
+      permissionPauseReason: permissionTimeoutPauseReason('工作流'),
       createEmitter: createRestWorkflowEmitter,
     })
   })

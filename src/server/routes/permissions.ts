@@ -60,6 +60,11 @@ async function ensureSessionAllowLoaded(
   )
 }
 
+/** mode 字段非法 → 400 INVALID_MODE（PUT / 与 PUT /:sessionId 共用口径）。 */
+function invalidModeResponse(c: Context): Response {
+  return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
+}
+
 function createPermissionsRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
@@ -109,9 +114,7 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const mode = parsed.body.mode
-    if (!isPermissionMode(mode)) {
-      return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
-    }
+    if (!isPermissionMode(mode)) return invalidModeResponse(c)
     ctx.permissionMode = mode
     try {
       const scopes = loadConfigScopes(ctx.cwd)
@@ -150,9 +153,7 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     const parsed = await readJsonObject(c)
     if (!parsed.ok) return parsed.response
     const mode = parsed.body.mode
-    if (mode !== undefined && !isPermissionMode(mode)) {
-      return apiError(c, 400, 'INVALID_MODE', "mode 必须是 'default' 或 'auto'")
-    }
+    if (mode !== undefined && !isPermissionMode(mode)) return invalidModeResponse(c)
     if (mode === undefined) {
       ctx.sessionPermissionModes.delete(sessionId)
     } else {

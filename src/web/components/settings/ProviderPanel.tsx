@@ -48,7 +48,7 @@ const providerField = css`
   }
 `
 
-/** 字段标签：小号次级色（名称/协议/URL/API Key）。 */
+/** 小号次级色文本：字段标签（名称/协议/URL/API Key）与来源提示共用。 */
 const providerFieldLabel = css`
   font-size: 12px;
   color: var(--haze-color-text-secondary);
@@ -81,11 +81,6 @@ const buttonRow = css`
   gap: 8px;
   align-items: center;
   margin-top: 8px;
-`
-
-const sourceHint = css`
-  font-size: 12px;
-  color: var(--haze-color-text-secondary);
 `
 
 const sourceLink = css`
@@ -399,7 +394,7 @@ function ProviderPanel({ providers, onProvidersChange, getDraftEpoch }: Provider
         <Button onClick={() => setCatalogOpen(true)} data-testid="provider-catalog">
           从 models.dev 选择
         </Button>
-        <span className={sourceHint}>
+        <span className={providerFieldLabel}>
           数据源：
           <a className={sourceLink} href="https://models.dev" target="_blank" rel="noreferrer">
             models.dev

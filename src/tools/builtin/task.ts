@@ -24,6 +24,20 @@ type BatchTaskInput = {
 
 type TaskInput = SingleTaskInput | BatchTaskInput
 
+/** subagent_type 运行时守卫：非字符串或空串回退 'general'（批量/单任务同口径）。 */
+function resolveAgentType(v: unknown): string {
+  return typeof v === 'string' && v.length > 0 ? v : 'general'
+}
+
+/** 可选字符串字段守卫：非字符串或空串视为未提供（展开为空对象）。
+ *  description/role/context/model 五处 optional-spread 同形，收敛于此。 */
+function optionalStrField<K extends string>(key: K, value: unknown): { [P in K]?: string } {
+  // 计算键在泛型 K 下推断为字符串索引签名，须断言回具体键映射
+  return typeof value === 'string' && value.length > 0
+    ? ({ [key]: value } as { [P in K]?: string })
+    : {}
+}
+
 /**
  * task 工具：按 agent 类型派发子 agent。
  *
@@ -115,20 +129,13 @@ export const taskTool: ToolDef = {
 
     // 批量模式
     if ('tasks' in inp && batchTasks.length > 0) {
-      const agentType =
-        typeof inp.subagent_type === 'string' && inp.subagent_type.length > 0
-          ? inp.subagent_type
-          : 'general'
+      const agentType = resolveAgentType(inp.subagent_type)
       const requests: SubAgentRequest[] = batchTasks.map((item) => ({
         agentType,
         prompt: item.assignment,
-        ...(typeof item.description === 'string' && item.description.length > 0
-          ? { description: item.description }
-          : {}),
-        ...(typeof item.role === 'string' && item.role.length > 0 ? { role: item.role } : {}),
-        ...(typeof inp.context === 'string' && inp.context.length > 0
-          ? { context: inp.context }
-          : {}),
+        ...optionalStrField('description', item.description),
+        ...optionalStrField('role', item.role),
+        ...optionalStrField('context', inp.context),
       }))
       // 并发派发：工具描述承诺 "Launch multiple agents concurrently"，宿主批量入口
       // 按 config.agents.subagentConcurrency 建并发池。此前无论宿主是否提供批量能力
@@ -186,19 +193,12 @@ export const taskTool: ToolDef = {
           'task: prompt must be a non-empty string (single mode) — for batch mode provide context + tasks[] where every item has a non-empty "assignment"',
       }
     }
-    const agentType =
-      typeof single.subagent_type === 'string' && single.subagent_type.length > 0
-        ? single.subagent_type
-        : 'general'
+    const agentType = resolveAgentType(single.subagent_type)
     const req: SubAgentRequest = {
       agentType,
       prompt: single.prompt,
-      ...(typeof single.description === 'string' && single.description.length > 0
-        ? { description: single.description }
-        : {}),
-      ...(typeof single.model === 'string' && single.model.length > 0
-        ? { model: single.model }
-        : {}),
+      ...optionalStrField('description', single.description),
+      ...optionalStrField('model', single.model),
       ...(single.background === true ? { background: true } : {}),
     }
     if (!runOne) {

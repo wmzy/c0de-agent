@@ -68,6 +68,19 @@ export async function* compactContext(
   }
 }
 
+/** 静默压缩消费骨架（turn-end / mid-turn 共用）：跑 compactContext，静默消费
+ *  text_delta 通知、只把 compaction_done 透传给前端（上下文被改写，用户应被告知，
+ *  可在归档面板查看原始内容，而非悄然失忆），结束后把压缩改写后的消息历史重载进
+ *  内存视图。recoverFromOverflow 不复用此处：它连 compaction_done 也一并静默消费，
+ *  且压缩/重载失败要整体回退 false 走原始错误路径，口径不同。 */
+async function* silentCompact(state: AgentState, deps: LoopDeps): AsyncGenerator<AgentEvent> {
+  for await (const ev of compactContext(state, deps)) {
+    if (ev._tag === 'compaction_done') yield ev
+  }
+  // 压缩改写了消息历史 → 刷新内存视图，供下一轮上下文重建使用
+  state.messages = await getMessages(deps.db, state.session.id)
+}
+
 /**
  * 响应式溢出恢复（reactive overflow compaction）：context-overflow 时压缩
  * 历史并刷新内存消息，使下一轮重建出更小的上下文。仅在 assistant 尚未开始
@@ -96,8 +109,8 @@ export async function recoverFromOverflow(state: AgentState, deps: LoopDeps): Pr
  *    死锁在下一轮用户输入（agentLoop 重入）时重置。
  *  - mid-turn：midTurnEnabled 单独 opt-in（默认关闭）时按 enabled:true 阈值静默压缩，
  *    复用 shouldCompact 逻辑但不发 error/warning，压缩后刷新内存消息视图。
- *  两者都静默消费 compactContext 的 text_delta 通知，但把 compaction_done 透传给前端，
- *  让用户在上下文被改写时得到提示（可在归档面板查看原始内容）。 */
+ *  两者复用 silentCompact：静默消费 text_delta 通知、把 compaction_done 透传给前端，
+ *  让用户在上下文被改写时得到提示（可在归档面板查看原始内容），并重载内存消息视图。 */
 export async function* runCompactionIfNeeded(
   state: AgentState,
   deps: LoopDeps,
@@ -110,17 +123,13 @@ export async function* runCompactionIfNeeded(
   ) {
     // 自动压缩：复用 compactContext；失败非致命，仅记录警告不中断主循环。
     try {
-      for await (const ev of compactContext(state, deps)) {
-        // 静默消费 text_delta 通知，但把 compaction_done 透传给前端——
-        // 上下文被改写，用户应被告知（可在归档面板查看原始内容），而非悄然失忆。
-        if (ev._tag === 'compaction_done') yield ev
-      }
+      yield* silentCompact(state, deps)
       // 进度保护：compactContext 已重算 state.tokenBudget.used。若压缩后仍超阈值
       // （典型成因：keepRecentTokens 本身已超 historyBudget），压缩无法再释放足够
       // 空间 → 标记死锁暂停后续自动压缩，并发出非致命警告（不中断循环）。
       // 死锁在下一轮用户输入（agentLoop 重入）时重置。
-      const postMessages = await getMessages(deps.db, state.session.id)
-      if (shouldCompact(postMessages, state.tokenBudget, deps.config.compaction)) {
+      // silentCompact 已把压缩后的消息重载进 state.messages，死锁检测直接读它。
+      if (shouldCompact(state.messages, state.tokenBudget, deps.config.compaction)) {
         state.compactionDeadEnd = true
         yield {
           _tag: 'error',
@@ -155,12 +164,7 @@ export async function* runCompactionIfNeeded(
     // 中轮压缩静默执行：compactContext 内部已发 text_delta 通知，
     // 不再 yield error/warning（与 turn-end 自动压缩的进度保护语义不同）。
     try {
-      for await (const ev of compactContext(state, deps)) {
-        // 静默消费 text_delta 通知，透传 compaction_done（与 turn-end 一致）。
-        if (ev._tag === 'compaction_done') yield ev
-      }
-      // 压缩改写了消息历史 → 刷新内存视图，供下一轮上下文重建使用
-      state.messages = await getMessages(deps.db, state.session.id)
+      yield* silentCompact(state, deps)
     } catch (e) {
       console.warn('[mid-turn-compaction] failed:', errorMessage(e))
     }

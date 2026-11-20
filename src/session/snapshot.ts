@@ -20,6 +20,17 @@ function rowToSnapshot(row: typeof fileSnapshots.$inferSelect): FileSnapshot {
   }
 }
 
+/** 每个文件路径只保留最高 version 的快照：同路径旧版本是陈旧副本，
+ *  注入上下文（injectSnapshots）与过期比对（refreshStaleSnapshots）都只用最新版。 */
+function latestSnapshotsByPath(snaps: FileSnapshot[]): Map<string, FileSnapshot> {
+  const latest = new Map<string, FileSnapshot>()
+  for (const s of snaps) {
+    const prev = latest.get(s.filePath)
+    if (!prev || s.version > prev.version) latest.set(s.filePath, s)
+  }
+  return latest
+}
+
 /** Create or update a file snapshot. Always creates a new version. Returns the snapshot id.
  *  未传 mtimeMs 时从同文件已有最新行透传（而非置空）：compaction/squash 等从
  *  工具结果重建快照的调用点拿不到磁盘 mtime，透传旧值可避免每次压缩后热文件
@@ -138,5 +149,6 @@ export {
   copyFileSnapshots,
   getFileSnapshots,
   getLatestFileSnapshot,
+  latestSnapshotsByPath,
   upsertFileSnapshot,
 }

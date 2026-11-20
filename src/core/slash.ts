@@ -298,12 +298,10 @@ const configCommand: SlashCommand = {
       const value = await setConfigKey('project', ctx.cwd, key, parts.slice(1).join(' '))
       // P1：/config 写入项目作用域是用户显式操作——已信任项目刷新风险指纹，
       // 防「信任 → 改设置 → 再信任」自锁复检（与 /workflow create 同口径）。
-      try {
-        const { refreshTrustedProjectFingerprint } = await import('../project/index.js')
-        await refreshTrustedProjectFingerprint(ctx.deps.db, ctx.cwd)
-      } catch {
-        // 指纹刷新失败不阻塞配置写入结果（最坏回到 fail-closed 复检路径）
-      }
+      // 刷新失败不阻塞写入结果（最坏回到 fail-closed 复检路径）——吞错外壳
+      // 已收敛进 refreshProjectFingerprintBestEffort（REST config PATCH 同源）。
+      const { refreshProjectFingerprintBestEffort } = await import('../project/index.js')
+      await refreshProjectFingerprintBestEffort(ctx.deps.db, ctx.cwd)
       return {
         _tag: 'success',
         message: `${value === null ? '已取消设置' : '已设置'} ${key} (scope: project)`,

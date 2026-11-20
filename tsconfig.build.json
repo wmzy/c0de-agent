@@ -9,5 +9,12 @@
     "noEmit": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/web/**", "src/**/*.test.ts", "src/**/*.test.tsx", "src/db/test-utils.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/web/**",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/db/test-utils.ts"
+  ]
 }

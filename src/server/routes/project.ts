@@ -66,6 +66,20 @@ async function activeSessionIdsForProject(
 function createProjectRoute(ctx: ServerContext): Hono {
   const app = new Hono()
 
+  /** 「项目下有活跃 run → 409」守卫（relocate 与 delete 共用，仅措辞不同）：
+   *  判定单源 activeSessionIdsForProject（含 starting 占位态，历史注记见彼处）。
+   *  返回 409 响应或 undefined（无冲突）。 */
+  const activeSessionsConflict = async (c: Context, id: string, action: string) => {
+    const active = await activeSessionIdsForProject(ctx, id)
+    if (active.length === 0) return undefined
+    return apiError(
+      c,
+      409,
+      'PROJECT_HAS_ACTIVE_SESSIONS',
+      `项目下有 ${active.length} 个进行中的对话，请先中止后再${action}`,
+    )
+  }
+
   /** 「项目下打开终端 → 409」守卫（relocate 与 delete 共用，仅措辞不同）：
    *  终端绑定项目 worktree，目录身份变化/注销后 shell 的 cwd 悬空——先关闭再操作。
    *  返回 409 响应或 undefined（无冲突）。 */
@@ -162,15 +176,8 @@ function createProjectRoute(ctx: ServerContext): Hono {
     }
 
     // 活跃 run 守卫（与 DELETE 同语义；含 starting 占位态）
-    const active = await activeSessionIdsForProject(ctx, id)
-    if (active.length > 0) {
-      return apiError(
-        c,
-        409,
-        'PROJECT_HAS_ACTIVE_SESSIONS',
-        `项目下有 ${active.length} 个进行中的对话，请先中止后再重新定位`,
-      )
-    }
+    const activeConflict = await activeSessionsConflict(c, id, '重新定位')
+    if (activeConflict) return activeConflict
     // P2-5：打开的终端守卫——终端绑定项目 worktree，重定位后 shell 仍留在旧目录，
     // cwd 身份悬空。与活跃 run 同语义：先关闭再操作。
     const terminalConflict = openTerminalsConflict(c, id, '重新定位')
@@ -201,17 +208,10 @@ function createProjectRoute(ctx: ServerContext): Hono {
     if (!target.ok) return target.response
     const project = target.project
 
-    // 活跃 run 守卫：该项目下任一进行中（含占位 isStarting）的会话 → 拒绝。
-    // 判定单源 activeSessionIdsForProject（与 relocate 共用，历史注记见彼处）。
-    const active = await activeSessionIdsForProject(ctx, id)
-    if (active.length > 0) {
-      return apiError(
-        c,
-        409,
-        'PROJECT_HAS_ACTIVE_SESSIONS',
-        `项目下有 ${active.length} 个进行中的对话，请先中止后再删除`,
-      )
-    }
+    // 活跃 run 守卫：该项目下任一进行中（含占位 isStarting）的会话 → 拒绝
+    // （判定单源 activeSessionIdsForProject，与 relocate 共用，历史注记见彼处）。
+    const activeConflict = await activeSessionsConflict(c, id, '删除')
+    if (activeConflict) return activeConflict
 
     // P2-5：打开的终端守卫——项目删除后其 worktree 上的 PTY 仍继续运行，
     // cwd 指向已注销身份的目录。与活跃 run 同语义：先关闭再删除。

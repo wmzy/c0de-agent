@@ -5,8 +5,9 @@ import type { DB } from '../db/client.js'
 import { sessions } from '../db/schema.js'
 import type { ChatMessage, ContentPart } from '../shared/types/llm.js'
 import type { Message, MessageContent } from '../shared/types/message.js'
+import type { ToolResult } from '../shared/types/tool.js'
 import { getEntries } from './message.js'
-import { getFileSnapshots, upsertFileSnapshot } from './snapshot.js'
+import { getFileSnapshots, latestSnapshotsByPath, upsertFileSnapshot } from './snapshot.js'
 import type { FileSnapshot, SessionEntry } from './types.js'
 
 /**
@@ -80,6 +81,12 @@ function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
   return result
 }
 
+/** 缺 output 的 tool_result：JSON.stringify(undefined) 返回 undefined，
+ *  content 字段缺失的 tool 消息在协议适配层行为未定义——保守序列化为空对象。 */
+function serializeToolOutput(output: ToolResult): string {
+  return JSON.stringify(output === undefined ? {} : output)
+}
+
 /** Convert a stored Message to protocol-level ChatMessage(s) for the LLM.
  *  多结果 tool 消息（同一条消息含多条 tool_result）展开为多条 tool 消息——
  *  此前只取首个 result，其余结果的反馈永远到不了模型（模型会盲目重试
@@ -113,9 +120,7 @@ function messageToChatMessages(msg: Message): ChatMessage[] {
     return toolResults.map((p) => ({
       role: 'tool',
       toolCallId: p.id,
-      // 缺 output 的 tool_result：JSON.stringify(undefined) 返回 undefined，
-      // content 字段缺失的 tool 消息在协议适配层行为未定义——保守序列化为空对象。
-      content: JSON.stringify(p.output === undefined ? {} : p.output),
+      content: serializeToolOutput(p.output),
     }))
   }
 
@@ -138,11 +143,7 @@ function messageToChatMessages(msg: Message): ChatMessage[] {
   // 无图片：保持原纯字符串逻辑（零回归）
   const chat: ChatMessage = {
     role: msg.role,
-    content:
-      textParts ||
-      (toolResultPart
-        ? JSON.stringify(toolResultPart.output === undefined ? {} : toolResultPart.output)
-        : ''),
+    content: textParts || (toolResultPart ? serializeToolOutput(toolResultPart.output) : ''),
   }
 
   if (toolCalls.length > 0) {
@@ -151,9 +152,7 @@ function messageToChatMessages(msg: Message): ChatMessage[] {
 
   if (toolResultPart && toolResultPart._tag === 'tool_result') {
     chat.toolCallId = toolResultPart.id
-    // 缺 output 的 tool_result：JSON.stringify(undefined) 返回 undefined，
-    // content 字段缺失的 tool 消息在协议适配层行为未定义——保守序列化为空对象。
-    chat.content = JSON.stringify(toolResultPart.output === undefined ? {} : toolResultPart.output)
+    chat.content = serializeToolOutput(toolResultPart.output)
   }
 
   return [chat]
@@ -191,11 +190,7 @@ function injectSnapshots(messages: ChatMessage[], snapshots: FileSnapshot[]): Ch
   if (snapshots.length === 0) return messages
 
   // Keep only the highest-version snapshot per filePath (avoid stale duplicates).
-  const latestByPath = new Map<string, FileSnapshot>()
-  for (const s of snapshots) {
-    const prev = latestByPath.get(s.filePath)
-    if (!prev || s.version > prev.version) latestByPath.set(s.filePath, s)
-  }
+  const latestByPath = latestSnapshotsByPath(snapshots)
 
   const block = [...latestByPath.values()]
     .map((s) => `[Cached File: ${s.filePath}]\n\`\`\`\n${s.content}\n\`\`\``)
@@ -264,12 +259,7 @@ async function getSessionContext(
 /** 比对每个文件最新快照与磁盘 mtime，过期则重读并写入新版本。 */
 async function refreshStaleSnapshots(handle: DB, sessionId: string, cwd: string): Promise<void> {
   const snaps = await getFileSnapshots(handle, sessionId)
-  const latest = new Map<string, FileSnapshot>()
-  for (const s of snaps) {
-    const prev = latest.get(s.filePath)
-    if (!prev || s.version > prev.version) latest.set(s.filePath, s)
-  }
-  for (const s of latest.values()) {
+  for (const s of latestSnapshotsByPath(snaps).values()) {
     const p = resolve(cwd, s.filePath)
     // try 只覆盖 fs 错误（stat/readFile）：文件已删除/不可读 → 保留旧快照
     // （读工具会报错提示模型），跳过该文件继续处理其余快照。

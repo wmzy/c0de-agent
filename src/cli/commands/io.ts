@@ -19,4 +19,14 @@ function resolveOutLine(ctx: { out?: (s: string) => void }): (s: string) => void
   return ctx.out ?? ((s: string) => process.stdout.write(`${s}\n`))
 }
 
-export { resolveOutLine, resolveWrite }
+/** 解析 stdout 写入口（chat 命令的斜杠拦截与主循环两处成对手抄，收敛于此）。 */
+function resolveStdout(ctx: { stdout?: (s: string) => void }): (s: string) => void {
+  return ctx.stdout ?? process.stdout.write.bind(process.stdout)
+}
+
+/** 解析 stderr 写入口：缺省回退 process.stderr。 */
+function resolveStderr(ctx: { stderr?: (s: string) => void }): (s: string) => void {
+  return ctx.stderr ?? process.stderr.write.bind(process.stderr)
+}
+
+export { resolveOutLine, resolveStderr, resolveStdout, resolveWrite }

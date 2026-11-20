@@ -69,10 +69,7 @@ function honoApiPlugin(): Plugin {
           const { isAllowedOrigin } = await server.ssrLoadModule(
             path.resolve(__dirname, 'src/server/middleware/cors.ts'),
           )
-          if (
-            origin &&
-            !isAllowedOrigin(origin, ctx.config.security.allowedOrigins)
-          ) {
+          if (origin && !isAllowedOrigin(origin, ctx.config.security.allowedOrigins)) {
             socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
             socket.destroy()
             return
@@ -218,10 +215,10 @@ export default defineConfig({
         // 正则结尾的 [\\/] 确保只匹配包名边界，react 不会误吞 react-router 等。
         codeSplitting: {
           groups: [
-            { name: 'react-query', test: /node_modules[\/]@tanstack[\/]/, priority: 20 },
-            { name: 'react-router', test: /node_modules[\/]react-router/, priority: 20 },
-            { name: 'linaria', test: /node_modules[\/](@linaria|@wyw-in-js)[\/]/, priority: 20 },
-            { name: 'react', test: /node_modules[\/](react|react-dom|scheduler)[\/]/, priority: 20 },
+            { name: 'react-query', test: /node_modules[/]@tanstack[/]/, priority: 20 },
+            { name: 'react-router', test: /node_modules[/]react-router/, priority: 20 },
+            { name: 'linaria', test: /node_modules[/](@linaria|@wyw-in-js)[/]/, priority: 20 },
+            { name: 'react', test: /node_modules[/](react|react-dom|scheduler)[/]/, priority: 20 },
           ],
         },
       },
