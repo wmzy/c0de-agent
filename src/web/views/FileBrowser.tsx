@@ -12,7 +12,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
 import { useProjects } from '@/hooks/useSession.js'
 import { fileAPI } from '@/services/file.js'
 import { filesSearchKey } from '@/services/filesystem.js'
-import { btnDanger, btnSm } from '@/styles/tokens.js'
+import { btnDanger, btnSm, inputStyle } from '@/styles/tokens.js'
 import type { FileEntry, FileSearchResult, GitStatusMap } from '@/types/index.js'
 import { messageOf, messageOfOr } from '@/utils/errors.js'
 import { errorDetail, errorTitle, LoadError } from '@/views/_shared/errorState.js'
@@ -30,15 +30,12 @@ const headerBar = css`
   margin: 8px 8px 0;
 `
 
+/** 只声明调参量（弹性/高/内边距/字号/focus）；边框/圆角/背景/文字色来自 inputStyle。 */
 const searchInputFlex = css`
   flex: 1;
   min-width: 0;
   min-height: 36px;
   padding: 4px 8px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
   font-size: 13px;
   &:focus {
     outline: none;
@@ -498,7 +495,7 @@ export function FileBrowser({
     <div className={panel}>
       <div className={headerBar}>
         <SyncedInput
-          className={searchInputFlex}
+          className={`${inputStyle} ${searchInputFlex}`}
           placeholder="搜索文件…"
           /* 显式名称而非只靠 placeholder：placeholder 只是视觉提示（HTML-AAM 会在名称
            * 为空时拿它兜底，但那是脆弱的名字来源），读屏/语音控制依赖稳定字段名，

@@ -8,15 +8,13 @@ import { LoadErrorNotice } from '@/components/LoadErrorNotice.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import type { CatalogModel, CatalogProvider } from '@/services/catalog.js'
 import { catalogAPI, catalogProviderModelsKey, catalogProvidersKey } from '@/services/catalog.js'
+import { inputStyle } from '@/styles/tokens.js'
 import { messageOf } from '@/utils/errors.js'
 
+/** 只声明调参量（宽/内边距/字号/focus）；边框/圆角/背景/文字色来自 inputStyle。 */
 const searchBar = css`
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
   font-size: 13px;
   &:focus {
     outline: none;
@@ -287,7 +285,7 @@ export function ProviderCatalogDialog({ onClose, onSelect }: ProviderCatalogDial
       }
     >
       <SyncedInput
-        className={searchBar}
+        className={`${inputStyle} ${searchBar}`}
         value={query}
         onChange={(v) => setQuery(v)}
         placeholder="搜索 Provider 名称…"

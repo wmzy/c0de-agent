@@ -19,6 +19,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue.js'
 import { useDismiss } from '@/hooks/useDismiss.js'
 import { filesystemAPI } from '@/services/filesystem.js'
 import { ellipsisCss } from '@/styles/shared.js'
+import { inputStyle } from '@/styles/tokens.js'
 import { comboboxKeyAction } from '@/utils/combobox-keys.js'
 import { messageOfOr } from '@/utils/errors.js'
 import { isImeComposing } from '@/utils/ime.js'
@@ -37,14 +38,11 @@ const pathRow = css`
   gap: 6px;
 `
 
+/** 只声明调参量（弹性/内边距/字号/focus）；边框/圆角/背景/文字色来自 inputStyle。 */
 const input = css`
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid var(--haze-color-border);
-  border-radius: 4px;
-  background: var(--haze-color-bg);
-  color: var(--haze-color-text);
   font-size: 13px;
   &:focus {
     outline: none;
@@ -420,7 +418,7 @@ export function DirectoryPicker({
       <div className={pathRow} ref={pathAreaRef}>
         <SyncedInput
           ref={inputRef}
-          className={input}
+          className={`${inputStyle} ${input}`}
           value={value}
           onChange={(v) => {
             onChange(v)
