@@ -8,6 +8,7 @@
 import { eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { usageEvents } from '../../db/schema.js'
+import { MODEL_CATALOG_SOURCE } from '../../llm/model-catalog.js'
 import { PRICE_CATALOG_VERSION } from '../../llm/registry.js'
 import { localMonthKey } from '../../session/usage.js'
 import type { UsageSummary, UsageTotals } from '../../shared/types/usage.js'
@@ -24,6 +25,12 @@ const emptyTotals = (): UsageTotals => ({
   unknownCostCalls: 0,
   calls: 0,
 })
+
+/** H3：价目版本随响应下发（前端标注估算可能过期）。两级价源拼接以便区分：
+ *  手工核价的 builtin 表日期（registry PRICE_CATALOG_VERSION）+ 打包目录的
+ *  数据源与生成日期（MODEL_CATALOG_SOURCE，scripts/gen-models.mjs 生成，
+ *  未手配价目时的成本兜底）。 */
+const priceCatalogVersionLabel = `${PRICE_CATALOG_VERSION} + ${MODEL_CATALOG_SOURCE}`
 
 const add = (
   t: UsageTotals,
@@ -75,7 +82,7 @@ function createUsageRoute(ctx: ServerContext): Hono {
         totals: emptyTotals(),
         // H3：价目版本随响应下发——tz 白名单失败的兜底分支此前漏发该字段，
         // 违反 UsageSummary 契约（satisfies 收紧后暴露），补齐保持契约完整。
-        priceCatalogVersion: PRICE_CATALOG_VERSION,
+        priceCatalogVersion: priceCatalogVersionLabel,
         byMonth: [],
         byModel: [],
         currentMonth: { key: monthKey, ...emptyTotals() },
@@ -141,7 +148,7 @@ function createUsageRoute(ctx: ServerContext): Hono {
     return c.json({
       totals,
       // H3：价目版本随响应下发，前端标注估算可能过期。
-      priceCatalogVersion: PRICE_CATALOG_VERSION,
+      priceCatalogVersion: priceCatalogVersionLabel,
       // P1-4：服务端权威本月（key + 聚合），前端徽标/面板不再自行计算。
       currentMonth: { key: monthKey, ...current },
       // P1-3：仅全局视图下发（projectId 过滤时未归属桶与该项目无关）。

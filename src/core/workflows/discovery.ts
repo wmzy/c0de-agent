@@ -3,7 +3,10 @@ import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { errorMessage } from '../../shared/utils/string.js'
 import { resolveGlobalConfigDir } from '../config.js'
+import { getLogger } from '../logger.js'
 import type { WorkflowEntry, WorkflowMeta, WorkflowModule, WorkflowSource } from './types.js'
+
+const logger = getLogger('core.workflow')
 
 /** 项目级工作流目录相对路径。 */
 const PROJECT_WORKFLOWS_DIR = '.c0de/workflows'
@@ -35,7 +38,7 @@ async function discoverFromDir(dirPath: string, source: WorkflowSource): Promise
       const mod = (await import(fileUrl)) as Partial<WorkflowModule>
 
       if (!mod.meta || typeof mod.default !== 'function') {
-        console.warn(`[workflow] skipping ${file}: missing meta or default export`)
+        logger.warn(`[workflow] skipping ${file}: missing meta or default export`)
         continue
       }
 
@@ -53,7 +56,7 @@ async function discoverFromDir(dirPath: string, source: WorkflowSource): Promise
         execute: mod.default,
       })
     } catch (e) {
-      console.warn(`[workflow] failed to load ${file}: ${errorMessage(e)}`)
+      logger.warn(`[workflow] failed to load ${file}: ${errorMessage(e)}`)
     }
   }
 

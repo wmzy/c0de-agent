@@ -88,6 +88,11 @@ type PromptBuildContext = {
   skills?: string[]
   agents?: string[]
   cwd?: string
+  /** Project prompt overrides (`<cwd>/.c0de/prompts/*.md`) load only when the
+   *  project is trusted — prompt text propagates via git clone and steers the
+   *  model, so it is gated with the same fail-closed rule as project
+   *  plugins/workflows. Resolved by the agent loop (needs db + fingerprint). */
+  projectTrusted?: boolean
 }
 
 /** A dynamically composable system-prompt section (spec §17). */

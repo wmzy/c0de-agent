@@ -3,9 +3,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { Hono } from 'hono'
+import { getLogger } from '../core/logger.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { createApp } from './app.js'
 import { buildServerContext, createDevDb, releaseDevDbLock, resolveDbDir } from './server.js'
 import type { ServerContext } from './types.js'
+
+const devLogger = getLogger('server.dev')
 
 /**
  * 开发环境入口：初始化并返回 Hono app。
@@ -156,7 +160,7 @@ async function handleApiRequest(
       .on('error', (err) => {
         if (!res.headersSent) res.statusCode = 500
         res.end()
-        console.error('[c0de-hono-api] response stream error:', err)
+        devLogger.error(`[c0de-hono-api] response stream error: ${errorMessage(err)}`)
       })
   } else {
     res.end()

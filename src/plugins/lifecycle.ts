@@ -1,5 +1,6 @@
 // src/plugins/lifecycle.ts
 
+import { getLogger } from '../core/logger.js'
 import type { Registry as LLMRegistry } from '../llm/registry.js'
 import { registerProvider as registerLLMProvider } from '../llm/registry.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
@@ -16,6 +17,8 @@ import type {
   PluginServices,
   ToolDef,
 } from './types.js'
+
+const logger = getLogger('plugins')
 
 function createPluginContext(
   services: PluginServices,
@@ -39,7 +42,7 @@ function createPluginContext(
       } else {
         // 静默丢弃会让插件作者拼错字段名时 provider 无声消失（与 loader 的
         // 「坏插件告警并跳过」口径一致）。
-        console.warn(`[plugin] registerProvider 跳过无 baseURL 的 provider "${provider.name}"`)
+        logger.warn(`[plugin] registerProvider 跳过无 baseURL 的 provider "${provider.name}"`)
       }
     },
     on: hookRunner.on,
@@ -71,7 +74,7 @@ async function activatePlugin(
     record.error = errorMessage(err)
     // 模块加载成功但 setup() 抛错时若不告警，插件静默失效且无任何提示——
     // 与 loader 的 import 失败告警同前缀口径（initPlugins 不检查 status）。
-    console.warn(`[plugin] "${plugin.name}" setup() 失败：`, record.error)
+    logger.warn(`[plugin] "${plugin.name}" setup() 失败：${record.error}`)
   }
 }
 

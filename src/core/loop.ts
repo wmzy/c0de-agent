@@ -1,6 +1,8 @@
+import { costUsdForCall } from '../llm/model-catalog.js'
 import { chatStream as llmChatStream } from '../llm/provider.js'
 import { resolveRoute } from '../llm/registry.js'
 import { detectProjectInfo } from '../project/detect.js'
+import { resolveCwdProjectTrusted } from '../project/index.js'
 import { entriesToChatMessages, getSessionContext } from '../session/context.js'
 import { getMessages } from '../session/message.js'
 import { markBudgetPause, updateSessionLastRun } from '../session/session.js'
@@ -10,8 +12,10 @@ import { sleep } from '../shared/timer.js'
 import type { AgentConfig, AgentEvent, AgentState } from '../shared/types/agent.js'
 import type { ChatRequest, ChatTool } from '../shared/types/llm.js'
 import type { Session } from '../shared/types/message.js'
+import { errorMessage } from '../shared/utils/string.js'
 import { createAgent } from './agent.js'
 import { calibrateEstimate, createTokenBudget, estimateBudget } from './context.js'
+import { getLogger } from './logger.js'
 import { compactContext, runCompactionIfNeeded } from './loop/compaction.js'
 import { persistAssistantAndTools } from './loop/persist.js'
 import { manageSegment } from './loop/segment.js'
@@ -33,6 +37,8 @@ import type { AgentDependencies } from './types.js'
 
 export { compactContext } from './loop/compaction.js'
 export { runSubAgent, runSubAgents } from './loop/subagent.js'
+
+const logger = getLogger('core.loop')
 
 type LoopDeps = AgentDependencies & {
   chatStream?: typeof llmChatStream
@@ -72,7 +78,7 @@ const budgetWarnedStates = new WeakSet<AgentState>()
  *  - provider 已声明（capabilities.contextWindow 为正数）→ 原样采用，不改变正常配置行为。
  *  - 缺失（provider 未注册 / 模型未知 / 未声明 contextWindow）→ 以本轮真实 input token
  *    为下限回填保守估计 max(inputTokens × 2, FALLBACK_CONTEXT_WINDOW)，并在首次回填时
- *    console.warn 告警（非致命——provider 未配置 contextWindow 不是致命错误）。
+ *    logger.warn 告警（非致命——provider 未配置 contextWindow 不是致命错误）。
  *
  * 结果按 agent 缓存：首轮回填后后续轮次复用同一估计值，告警仅触发一次，
  * 使 contextWindow 缺失时不再静默退化压缩阈值。
@@ -94,7 +100,7 @@ function resolveEffectiveContextWindow(
   if (cached !== undefined) return cached
   // 缺失：以本轮真实 input token 作下限回填保守估计
   const estimated = Math.max(inputTokens * 2, FALLBACK_CONTEXT_WINDOW)
-  console.warn(
+  logger.warn(
     `[loop] provider "${provider}" / model "${model}" 未声明 contextWindow，` +
       `使用保守估算值 ${estimated}（基于本轮 input token）。压缩阈值可能不准——` +
       `建议在 provider 配置中声明 contextWindow。`,
@@ -208,13 +214,13 @@ async function* budgetGuard(
       // P2-2：未超支但金额口径不可靠（价格未知调用无 token 兜底）——每 run
       // 记日志一次，不阻断。用户主动看日志即可发现「预算未真正兜底」。
       budgetWarnedStates.add(state)
-      console.warn(`[usage] 预算金额口径低估告警：${warnings.join('；')}`)
+      logger.warn(`[usage] 预算金额口径低估告警：${warnings.join('；')}`)
     }
   } catch (err) {
     // 账本查询失败：记录告警。'warn'/'pause' 路径 fail-open（可用性优先）；
     // 'abort' 路径（用户显式要求硬封顶）保守 fail-closed——账本不可用即无法
     // 保证「绝不超限」，宁可本轮中止并明示，而非静默放行继续烧钱。
-    console.error('[usage] 预算护栏账本查询失败：', err)
+    logger.error(`[usage] 预算护栏账本查询失败：${errorMessage(err)}`)
     const abortSeverity =
       deps.config.usage.budgetAction === 'abort' || deps.config.usage.tokenBudgetAction === 'abort'
     if (abortSeverity) {
@@ -296,6 +302,10 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       config: state.config,
       projectInfo: detectProjectInfo(deps.cwd),
       skills: deps.skills ?? [],
+      cwd: deps.cwd,
+      // 项目级提示词覆写（.c0de/prompts/*.md）仅信任项目加载——与插件/工作流
+      // 门禁同口径（prompt 文本随 git clone 传播、直接引导模型行为）。
+      projectTrusted: await resolveCwdProjectTrusted(deps.db, deps.cwd),
     }
     // spec §16.5：edit 工具模式偏好。仅当该轮启用 edit 且某模式历史成功率
     // 显著优于默认时，向 system prompt 追加偏好提示，引导模型选择高成功率模式。
@@ -381,11 +391,13 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     const totalLatency = Date.now() - requestStartTime
     let contextWindow: number | undefined
     // H2：价格未知时 cost=null（聚合按 $0 计 + 显式计数），不再静默记 0。
-    // 未知判定：provider 未注册/解析失败，或模型价目全为 0（未声明价格的
-    // 自建网关模型回退到 DEFAULT_MODEL_CAPABILITIES 的 0 价）。
+    // 价目优先级：用户配置价目（costPer1k* > 0）不变；未配置时回退打包目录
+    // MODEL_CATALOG（scripts/gen-models.mjs 生成，见 llm/model-catalog.ts）——
+    // 未登记模型不再恒 $0。仍未知（目录也无此模型）：provider 未注册/解析
+    // 失败，或两处均未声明价格。
     let computedCost: number | null = null
     try {
-      const { capabilities } = resolveRoute(
+      const { route, capabilities } = resolveRoute(
         deps.llmRegistry,
         state.config.provider,
         state.config.model,
@@ -393,11 +405,15 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       contextWindow = capabilities.contextWindow
       const inputTokens = collected.usage?.inputTokens ?? 0
       const outputTokens = collected.usage?.outputTokens ?? 0
-      if (capabilities.costPer1kInput > 0 || capabilities.costPer1kOutput > 0) {
-        computedCost =
-          (inputTokens / 1000) * capabilities.costPer1kInput +
-          (outputTokens / 1000) * capabilities.costPer1kOutput
-      }
+      computedCost = costUsdForCall(
+        { providerId: state.config.provider, baseURL: route.baseURL },
+        state.config.model,
+        {
+          costPer1kInput: capabilities.costPer1kInput,
+          costPer1kOutput: capabilities.costPer1kOutput,
+        },
+        { inputTokens, outputTokens },
+      )
     } catch {
       // provider 未注册：保留 contextWindow=undefined、cost=null
     }

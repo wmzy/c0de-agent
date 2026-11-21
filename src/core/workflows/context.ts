@@ -5,8 +5,11 @@ import { errorMessage } from '../../shared/utils/string.js'
 import { globToRegex } from '../../tools/builtin/glob.js'
 import { buildGrepRegex, splitGrepLines } from '../../tools/builtin/grep.js'
 import { walkFiles } from '../../tools/builtin/walk.js'
+import { getLogger } from '../logger.js'
 import type { AgentDependencies, AgentState } from '../types.js'
 import type { WorkflowAgentResult, WorkflowContext } from './types.js'
+
+const logger = getLogger('core.workflow')
 
 /** buildWorkflowContext 的参数。 */
 type BuildContextOpts = {
@@ -132,7 +135,7 @@ function parseJsonArrayFromResults(results: WorkflowAgentResult[], key: string):
       try {
         return (JSON.parse(r.output) as Record<string, unknown>)[key] ?? []
       } catch (e) {
-        console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', errorMessage(e))
+        logger.warn(`[workflow] 子 agent 输出非 JSON，已跳过该结果: ${errorMessage(e)}`)
         return []
       }
     })
@@ -147,7 +150,7 @@ function parseJsonObjectsFromResults(results: WorkflowAgentResult[]): unknown[] 
       try {
         return JSON.parse(r.output) as unknown
       } catch (e) {
-        console.warn('[workflow] 子 agent 输出非 JSON，已跳过该结果:', errorMessage(e))
+        logger.warn(`[workflow] 子 agent 输出非 JSON，已跳过该结果: ${errorMessage(e)}`)
         return null
       }
     })

@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { getLogger } from '../core/logger.js'
 import { timingSafeEqualString } from '../shared/utils/constant-time.js'
 import { errorMessage } from '../shared/utils/string.js'
+
+const ipcLogger = getLogger('update')
 
 /**
  * 端口接管 IPC（spec §18.3）：新实例检测到端口被旧实例占用时，通过 HTTP
@@ -88,7 +91,7 @@ function createHandoffServer(
               setTimeout(() => process.exit(0), 250)
             }
           } catch (error) {
-            console.error('[handoff] confirm handler failed:', error)
+            ipcLogger.error(`[handoff] confirm handler failed: ${errorMessage(error)}`)
           }
           return
         }
@@ -104,7 +107,9 @@ function createHandoffServer(
         } catch (error) {
           res.writeHead(500, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ ok: false, error: String(error) }))
-          console.error('[handoff] onHandoff failed, keeping process alive:', error)
+          ipcLogger.error(
+            `[handoff] onHandoff failed, keeping process alive: ${errorMessage(error)}`,
+          )
         }
         return
       }

@@ -4,8 +4,11 @@ import { generateId } from '../../shared/index.js'
 import type { AgentState, LLMCall, LLMSegment, SegmentTrigger } from '../../shared/types/agent.js'
 import type { ChatTool, FinishReason } from '../../shared/types/llm.js'
 import { errorMessage } from '../../shared/utils/string.js'
+import { getLogger } from '../logger.js'
 import type { LoopDeps } from '../loop.js'
 import type { StreamCollectResult } from './stream-collect.js'
+
+const logger = getLogger('core.loop')
 
 /** 段管理：判断段边界（pending trigger / model / systemPrompt / tools 变化），
  *  构造本轮 LLMCall 并 push 到当前段，持久化 segments。直接修改 state.segments（引用语义）。
@@ -108,6 +111,6 @@ export async function manageSegment(
     })
     .catch((err: unknown) => {
       // 账本写入失败不致命（会话元数据仍含 segments 备份）；告警便于排查。
-      console.warn(`[loop] usage_events 写入失败（成本账本将缺失本次调用）：${errorMessage(err)}`)
+      logger.warn(`[loop] usage_events 写入失败（成本账本将缺失本次调用）：${errorMessage(err)}`)
     })
 }

@@ -1,103 +1,23 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { resolveGlobalConfigDir } from './config.js'
+import { PROMPT_BODIES } from './prompts.generated.js'
 import { builtinCommands } from './slash.js'
 import type { PromptBuildContext, PromptRegistry, PromptSection } from './types.js'
 import { WORKFLOW_SCRIPT_TEMPLATE } from './workflow.js'
 
-// ── Static section bodies (shared with the legacy buildSystemPrompt) ──
+// ── Static section bodies ─────────────────────────────────
+// The .md sources live in src/core/prompts/ and are inlined (committed) as
+// src/core/prompts.generated.ts — regenerate with `node scripts/gen-prompts.mjs`.
+// Sections whose bodies are dynamic (systemPrompt, tool list, project info,
+// skills, agents, slash commands, workflow format) are composed in TS below
+// and have no .md source.
 
-const ROLE_DESCRIPTION = `You are c0de-agent, an open-source AI coding assistant the team trusts with load-bearing changes. You help developers write, debug, and understand code across multiple languages and frameworks.
-
-You operate autonomously: assume the user wants real changes and carry work through to completion end-to-end. Do not stop at analysis or partial fixes. The only times to pause and confirm are: before destructive git operations (commit, reset --hard, amend), before deleting code you did not write, and when a request is genuinely ambiguous between materially different approaches.
-
-Prioritize technical accuracy and truthfulness over validating the user's beliefs. Investigate before confirming; disagree respectfully when necessary. Objective guidance is more valuable than false agreement.`
-
-const ENGINEERING_PRINCIPLES = `# Engineering Principles
-- Optimize for correctness first, then for the next maintainer six months out.
-- You have agency and taste: delete code that isn't pulling its weight, refuse unnecessary abstractions, prefer boring when it's called for.
-- Consider what code compiles to. Never allocate avoidably; no needless copies or computation.
-- You are not alone in this repo. Treat unexpected changes as the user's work and adapt — never revert edits you did not make unless explicitly asked.`
-
-const TOOL_USAGE = `# Tool Usage
-You have dedicated tools — prefer them over shell commands for file operations:
-- Reading a file or listing a directory → \`read\` (NOT \`cat\`, \`head\`, \`tail\`).
-- Finding files by name or pattern → \`glob\` (NOT \`find\`, \`ls -R\`).
-- Searching file contents → \`grep\` (NOT shell \`grep\`/\`rg\`/\`ack\`, NOT \`awk\`/\`sed\`).
-- Modifying files → \`edit\`/\`write\` (NOT \`sed\`, \`echo >\`, heredocs).
-
-Reserve \`bash\` for genuine command execution: builds, tests, git, or short pipelines that compute a fact (\`wc -l\`, \`git status\`, \`diff\`, a checksum). Never explore a codebase with \`find\`/\`ls\`/\`cat\` when \`read\`/\`glob\`/\`grep\` can.
-
-Batch independent tool calls in a single response — parallelize file reads and independent lookups. Only sequence when one call's result informs the next.
-
-When referencing code, use the \`file_path:line_number\` pattern so the user can navigate directly.`
-
-const CODEBASE = `# Working with the Codebase
-Before changing files, understand the existing conventions. Mimic code style, reuse existing utilities, and follow established patterns.
-- NEVER assume a library is available, even if well known. Check package.json (or equivalent) and neighboring files first.
-- When creating a new component, look at existing ones first for naming, typing, and framework conventions.
-- When editing, read the surrounding context (especially imports) to make the change idiomatic. Never introduce code that exposes or logs secrets.`
-
-const PARADIGM_CONSTRAINTS = `# Coding Paradigm
-This project follows a strict data + functions paradigm:
-- Use \`type\` (not \`interface\`) for type definitions.
-- Use discriminated unions with \`_tag\` fields for variant types.
-- Use plain functions \`export function foo(ctx, ...)\` with context-first argument.
-- No classes; prefer factory functions and pure data transformation.
-- Prefer \`import type\` for type-only imports.`
-
-const EXECUTION_WORKFLOW = `# Execution Workflow
-1. Scope — plan before touching files; research existing code and conventions.
-2. Research — read sections, not snippets. Reuse existing patterns; a second convention beside an existing one is prohibited.
-3. Decompose — break multi-step work into steps and track them with the \`todo\` tool; skip for trivial requests. Plan only what makes the request work.
-
-You can also manage todos inline via tags in your text output (saves a tool-call round-trip). Tags use \`phase-task\` sequence numbers visible in the todo summary (e.g. \`1-2\` = phase 1, task 2; \`1\` = all tasks in phase 1). Operations:
-  - \`<todo:init><todo:phase name="Name"><todo:item>Task</todo:item></todo:phase></todo:init>\` — create/replace the list
-  - \`<todo:start seq="1-1" />\` — mark task in progress (task-level seq only)
-  - \`<todo:done seq="1-2" />\` — complete a task (or entire phase: \`seq="1"\`)
-  - \`<todo:drop seq="2-1" />\` — abandon a task
-  - \`<todo:rm seq="1-1" />\` — remove a task
-  - \`<todo:append phase="1"><todo:item>New</todo:item></todo:append>\` — add tasks (phase is 1-based index)
-  - \`<todo:view />\` — request current state
-Tags remain visible in your output text; they are not stripped. Both tags and the todo tool update the same state — use whichever is more convenient.
-4. Implement — fix problems at the source. Remove obsolete code — no leftover comments, aliases, or re-exports. Prefer editing existing files over new ones.
-5. Verify — never yield non-trivial work without proof: run the relevant tests. Prefer testing behavior, not plumbing. Don't test defaults.
-6. Cleanup — changelog, tests, docs, and removing scaffolding are the LAST phase, gated on the request demonstrably working. Never pre-plan cleanup before the request works.`
-
-const VERIFICATION = `# Verification & Evidence
-- Never yield non-trivial work without proof: tests, builds, or QA.
-- Run lint and typecheck after changes if the project provides them.
-- Every claim about code, tools, or tests must be grounded. Mark anything not directly observed as [INFERENCE].
-- Verification claims must match what was actually exercised. A passing typecheck does not prove an integration.`
-
-const DELIVERY_CONTRACT = `# Delivery Contract
-- "Done" means the deliverable behaves as specified end-to-end — not that a scaffold compiles.
-- Never yield unless complete. A phase boundary is never a yield point.
-- Never suppress tests to make code pass. Never fabricate outputs.
-- Never substitute an easier problem: don't infer extra scope, don't treat the symptom unless asked.
-- Never ship stubs, placeholders, mocks, no-ops, or fake fallbacks as finished work.
-- Default to clean cutover: migrate every caller; leave no shims or aliases.`
-
-const GIT_SAFETY = `# Git & Safety
-- NEVER commit unless the user explicitly asks. Committing is too proactive.
-- NEVER use \`git reset --hard\` or \`git checkout --\` unless explicitly approved.
-- Do not amend a commit unless asked.
-- You may be in a dirty worktree. NEVER revert changes you did not make; if unrelated changes conflict with your task, stop and ask.`
-
-const TONE = `# Tone & Output
-- Be concise and direct. Lead with the conclusion, then the evidence.
-- No preamble or postamble ("The answer is…", "Here is what I'll do next…").
-- Use GitHub-flavored markdown. Only use emojis if explicitly asked.
-- Don't hide uncertainty: state it at the specific claim, name the tradeoff.
-- For a simple question, a one-liner is best.`
-
-export {
-  CODEBASE,
-  DELIVERY_CONTRACT,
-  ENGINEERING_PRINCIPLES,
-  EXECUTION_WORKFLOW,
-  GIT_SAFETY,
-  ROLE_DESCRIPTION,
-  TONE,
-  TOOL_USAGE,
-  VERIFICATION,
+/** Body of a built-in static section from the generated catalog. The registry
+ *  test guards drift (every static section id must have a .md source), so the
+ *  ?? '' fallback is unreachable in a consistent tree. */
+function builtinBody(id: string): string {
+  return PROMPT_BODIES[id] ?? ''
 }
 
 // ── Registry ──────────────────────────────────────────────
@@ -125,7 +45,7 @@ export const BUILTIN_SECTION_IDS = [
 /** Built-in sections. Dynamic bodies (tool list, project info, skills) use `render`. */
 function builtinSections(): PromptSection[] {
   return [
-    { id: 'role', content: ROLE_DESCRIPTION, priority: 0 },
+    { id: 'role', content: builtinBody('role'), priority: 0 },
     {
       id: 'systemPrompt',
       content: '',
@@ -133,7 +53,7 @@ function builtinSections(): PromptSection[] {
       condition: (c) => Boolean(c.config.systemPrompt),
       render: (c) => c.config.systemPrompt ?? '',
     },
-    { id: 'engineering', content: ENGINEERING_PRINCIPLES, priority: 10 },
+    { id: 'engineering', content: builtinBody('engineering'), priority: 10 },
     {
       id: 'tool-usage',
       content: '',
@@ -142,17 +62,17 @@ function builtinSections(): PromptSection[] {
       render: (c) => {
         const lines = ['## Available Tools']
         for (const tool of c.tools) lines.push(`- **${tool.name}**: ${tool.description}`)
-        lines.push(TOOL_USAGE)
+        lines.push(builtinBody('tool-usage'))
         return lines.join('\n')
       },
     },
-    { id: 'codebase', content: CODEBASE, priority: 30 },
-    { id: 'constraints', content: PARADIGM_CONSTRAINTS, priority: 40 },
-    { id: 'execution-workflow', content: EXECUTION_WORKFLOW, priority: 50 },
-    { id: 'verification', content: VERIFICATION, priority: 60 },
-    { id: 'delivery-contract', content: DELIVERY_CONTRACT, priority: 70 },
-    { id: 'git-safety', content: GIT_SAFETY, priority: 80 },
-    { id: 'tone', content: TONE, priority: 90 },
+    { id: 'codebase', content: builtinBody('codebase'), priority: 30 },
+    { id: 'constraints', content: builtinBody('constraints'), priority: 40 },
+    { id: 'execution-workflow', content: builtinBody('execution-workflow'), priority: 50 },
+    { id: 'verification', content: builtinBody('verification'), priority: 60 },
+    { id: 'delivery-contract', content: builtinBody('delivery-contract'), priority: 70 },
+    { id: 'git-safety', content: builtinBody('git-safety'), priority: 80 },
+    { id: 'tone', content: builtinBody('tone'), priority: 90 },
     {
       id: 'project',
       content: '',
@@ -232,6 +152,79 @@ function builtinSections(): PromptSection[] {
   ]
 }
 
+// ── User override layer (.md files) ───────────────────────
+
+const PROMPTS_DIRNAME = 'prompts'
+/** Appended user sections sort after every built-in section
+ *  (highest built-in priority: 121 = workflow-format). */
+const APPEND_BASE_PRIORITY = 122
+
+type PromptOverride = { id: string; body: string }
+
+/** Read `<dir>/*.md` as { id: filename-minus-.md, body }. A missing or
+ *  unreadable directory and unreadable files are skipped silently
+ *  (best-effort layer, never blocks prompt assembly). */
+function scanOverrideDir(dir: string): PromptOverride[] {
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return []
+  }
+  const overrides: PromptOverride[] = []
+  for (const entry of entries) {
+    if (!entry.endsWith('.md')) continue
+    try {
+      const body = readFileSync(join(dir, entry), 'utf8').trimEnd()
+      overrides.push({ id: entry.slice(0, -'.md'.length), body })
+    } catch {
+      // one broken file never blocks the rest
+    }
+  }
+  return overrides
+}
+
+/** User overrides visible for this build: global `<config-dir>/prompts` always,
+ *  project `<cwd>/.c0de/prompts` only when the project is trusted (prompt text
+ *  propagates via git clone and steers the model, so it is gated with the same
+ *  fail-closed rule as project plugins/workflows). A project file with the same
+ *  id wins over the global one; ids unknown to the registry are appended after
+ *  the built-ins in filename (id) lexicographic order. */
+function userOverrides(ctx: PromptBuildContext): PromptOverride[] {
+  const layers = [scanOverrideDir(join(resolveGlobalConfigDir(), PROMPTS_DIRNAME))]
+  if (ctx.cwd && ctx.projectTrusted) {
+    layers.push(scanOverrideDir(join(ctx.cwd, '.c0de', PROMPTS_DIRNAME)))
+  }
+  const byId = new Map<string, PromptOverride>()
+  for (const layer of layers) {
+    for (const override of layer) byId.set(override.id, override)
+  }
+  return Array.from(byId.values()).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+/** Registry sections with the user .md layer applied last (after built-ins and
+ *  plugin registrations). A file matching a section id replaces that section's
+ *  body — the slot keeps its priority and condition, any `render` is dropped
+ *  (render takes precedence over content, so it must go for the replacement to
+ *  take effect); an empty file therefore removes the section. Unknown ids are
+ *  appended as new sections after the built-ins. */
+function sectionsWithOverrides(registry: PromptRegistry, ctx: PromptBuildContext): PromptSection[] {
+  const overrides = userOverrides(ctx)
+  if (overrides.length === 0) return Array.from(registry.sections.values())
+  const sections = new Map(registry.sections)
+  let priority = APPEND_BASE_PRIORITY
+  for (const override of overrides) {
+    const existing = sections.get(override.id)
+    if (existing) {
+      sections.set(override.id, { ...existing, content: override.body, render: undefined })
+    } else {
+      sections.set(override.id, { id: override.id, content: override.body, priority })
+      priority += 1
+    }
+  }
+  return Array.from(sections.values())
+}
+
 /** Create a registry pre-loaded with the built-in sections. */
 function createPromptRegistry(): PromptRegistry {
   const registry: PromptRegistry = { sections: new Map() }
@@ -249,7 +242,7 @@ function registerPromptSection(registry: PromptRegistry, section: PromptSection)
 
 /** Assemble the system prompt: filter by condition, sort by priority, render. */
 function buildDynamicPrompt(registry: PromptRegistry, ctx: PromptBuildContext): string {
-  const sections = Array.from(registry.sections.values())
+  const sections = sectionsWithOverrides(registry, ctx)
     .filter((s) => !s.condition || s.condition(ctx))
     .sort((a, b) => a.priority - b.priority)
 

@@ -9,6 +9,7 @@ import { errorMessage, headChars } from '../../shared/utils/string.js'
 import { validateInput } from '../../tools/validate.js'
 import { abortAgent, createAgent, runAgent } from '../agent.js'
 import { mapWithConcurrencyLimit } from '../agents/parallel.js'
+import { getLogger } from '../logger.js'
 import type { LoopDeps } from '../loop.js'
 import {
   applyPatchToParent,
@@ -17,6 +18,8 @@ import {
   removeWorktree,
 } from '../worktree.js'
 import { collectAssistantText } from './stream-collect.js'
+
+const logger = getLogger('core.subagent')
 
 /** 运行一个按类型派发的子 agent（spec: multi-agent-design §4.5）。
  *
@@ -83,7 +86,7 @@ export async function runSubAgent(
     try {
       worktreePath = await createWorktree(deps.cwd, `subagent-${childSession.id}`)
     } catch (e) {
-      console.warn(
+      logger.warn(
         `[subagent] worktree creation failed, falling back to shared cwd: ${errorMessage(e)}`,
       )
     }
@@ -229,7 +232,7 @@ export async function runSubAgent(
           const patch = await captureDeltaPatch(worktreePath)
           await applyPatchToParent(deps.cwd, patch, `agent(isolated): ${title}`)
         } catch (e) {
-          console.warn(`[subagent] worktree apply failed: ${errorMessage(e)}`)
+          logger.warn(`[subagent] worktree apply failed: ${errorMessage(e)}`)
         }
       }
       removeWorktree(deps.cwd, worktreePath)
@@ -292,12 +295,12 @@ export async function runSubAgent(
           content: [{ _tag: 'text', text: synthetic }],
         }).catch((e) => {
           // 通知消息持久化失败：任务已算完但父 session 收不到完成通知——记录避免静默丢失。
-          console.warn('[subagent] background 通知消息持久化失败:', errorMessage(e))
+          logger.warn(`[subagent] background 通知消息持久化失败: ${errorMessage(e)}`)
         })
       })
       .catch((e) => {
         // background 子 agent 执行或合成失败：父 session 永远收不到结果，记录避免静默丢失。
-        console.warn('[subagent] background 子 agent 执行失败:', errorMessage(e))
+        logger.warn(`[subagent] background 子 agent 执行失败: ${errorMessage(e)}`)
       })
     return { _tag: 'running', jobId, sessionId: childSession.id }
   }

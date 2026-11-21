@@ -1,6 +1,13 @@
 allowBuilds:
   esbuild: true
   node-pty: true
+  # postinstall writes .git/hooks from the package.json config (supply-chain
+  # approved: the hook content is a fixed sh stub calling our lint-staged).
+  simple-git-hooks: true
+# Unit is minutes (pnpm docs); 1440 = 24h supply-chain cooling period before a
+# newly published package version becomes resolvable. Same as pnpm 11 default,
+# made explicit so the exclude list below has a clearly pinned baseline.
+minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - react-f0rm
   - '@native-router/*'

@@ -18,6 +18,9 @@ import { updateSessionTitle } from '../session/session.js'
 import type { ChatMessage, ChatRequest } from '../shared/types/llm.js'
 import { errorMessage, truncateHead } from '../shared/utils/string.js'
 import type { Config } from './config.js'
+import { getLogger } from './logger.js'
+
+const logger = getLogger('core.title')
 
 /** 会话默认占位标题；仍是该值时才有资格自动生成。 */
 const DEFAULT_SESSION_TITLE = 'New Session'
@@ -167,7 +170,7 @@ async function generateSessionTitle(
     await updateSessionTitle(db, sessionId, title)
   } catch (e) {
     // 标题生成是尽力而为的辅助功能：失败不阻塞主对话流，但记录以便排查。
-    console.warn('[title] generateSessionTitle failed:', errorMessage(e))
+    logger.warn(`[title] generateSessionTitle failed: ${errorMessage(e)}`)
     // P2-12：失败时回退到首条消息摘要，避免列表出现大量同名 "New Session"。
     await fallbackTitleFromMessage(db, sessionId, firstMessage)
   }

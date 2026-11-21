@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { applyScopedPatch, loadConfigScopes, saveConfigScoped } from '../../core/config.js'
+import { getLogger } from '../../core/logger.js'
 import {
   isPermissionMode,
   mutateSessionMetadata,
@@ -14,6 +15,8 @@ import { rebuildServerConfig } from '../util/config-sync.js'
 import { readJsonObject } from '../util/json-body.js'
 import { getLiveSessionOr404 } from './chat.js'
 import { SESSION_NOT_FOUND_MESSAGE } from './session.js'
+
+const permissionsLogger = getLogger('server.permissions')
 
 /** GET/PUT /api/permissions — 授权模式（default 逐个确认 / auto 自动放行 ask 工具）。
  *  - 根路径：全局默认模式（启动时取 config.permission.defaultMode；
@@ -129,7 +132,9 @@ function createPermissionsRoute(ctx: ServerContext): Hono {
     } catch (err) {
       // 持久化失败不致命：本次运行仍生效（与 /:sessionId 覆盖的降级语义一致），
       // 响应不报错；但静默吞掉会让落盘故障（磁盘满/权限）无迹可寻，补告警留线索。
-      console.warn(`[permissions] 全局默认模式持久化失败（本次运行仍生效）：${errorMessage(err)}`)
+      permissionsLogger.warn(
+        `[permissions] 全局默认模式持久化失败（本次运行仍生效）：${errorMessage(err)}`,
+      )
     }
     return c.json({ mode: ctx.permissionMode })
   })

@@ -20,6 +20,7 @@ import type { Hono } from 'hono'
 import { WebSocketServer } from 'ws'
 import { BUILTIN_AGENTS, createAgentRegistry } from '../core/agents/index.js'
 import { bootstrapRuntime } from '../core/bootstrap.js'
+import { getLogger } from '../core/logger.js'
 import { createAndPopulateRegistry } from '../core/workflows/index.js'
 import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
@@ -59,6 +60,14 @@ import { isAllowedOrigin } from './middleware/cors.js'
 import { createPermissionStore } from './permission/store.js'
 import { PTYManager } from './terminal/pty-manager.js'
 import type { HandoffServer, ServerContext } from './types.js'
+
+// Background diagnostics go to the structured file log (stderr echo for
+// warn/error); deliberate user-facing output (startup banner lives in the CLI
+// serve command) stays on console.
+const terminalLogger = getLogger('server.terminal')
+const trashLogger = getLogger('server.trash')
+const usageLogger = getLogger('server.usage')
+const handoffLogger = getLogger('server.handoff')
 
 type StartServerOptions = {
   port?: number
@@ -293,11 +302,11 @@ async function buildServerContext(
         try {
           ptyManager.write(t.id, `${t.command}\n`)
         } catch (err) {
-          console.warn(`[server] 终端命令重跑失败（${t.id}）：${errorMessage(err)}`)
+          terminalLogger.warn(`[server] 终端命令重跑失败（${t.id}）：${errorMessage(err)}`)
         }
       }
     } catch (err) {
-      console.warn(`[server] 终端恢复失败（${t.id}）：${errorMessage(err)}`)
+      terminalLogger.warn(`[server] 终端恢复失败（${t.id}）：${errorMessage(err)}`)
     }
   }
 
@@ -494,12 +503,12 @@ async function createDevDb(cwd: string): Promise<DB> {
  *  仅在有到期/清除动作时输出，与 fire-and-forget 的「结果落日志可查」口径配套。 */
 function logPurgeResult(kind: '会话' | '看板', r: { marked: number; deleted: number }): void {
   if (r.marked > 0) {
-    console.log(
+    trashLogger.info(
       `[server] 回收站清理：${r.marked} 个${kind}已到期，进入 ${TRASH_PURGE_GRACE_MS / (24 * 60 * 60 * 1000)} 天宽限期（期间可恢复）`,
     )
   }
   if (r.deleted > 0) {
-    console.log(
+    trashLogger.info(
       `[server] 回收站清理：已物理清除 ${r.deleted} 个超过宽限期的${kind}（保留期 ${TRASH_RETENTION_MS / (24 * 60 * 60 * 1000)} 天）`,
     )
   }
@@ -534,10 +543,10 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
   // segments 已剥离 call id，不产生账本行）。fire-and-forget。
   void backfillUsageEventsOnce(db)
     .then((added) => {
-      if (added > 0) console.log(`[server] 成本账本补齐：新增 ${added} 条历史调用记录`)
+      if (added > 0) usageLogger.info(`[server] 成本账本补齐：新增 ${added} 条历史调用记录`)
     })
     .catch((err: unknown) => {
-      console.warn(`[server] 成本账本补齐失败：${errorMessage(err)}`)
+      usageLogger.warn(`[server] 成本账本补齐失败：${errorMessage(err)}`)
     })
 
   // P2-4 + A3：回收站两阶段清理——启动时清一次 + 每 24h 清一次。
@@ -549,14 +558,14 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
       // 清理失败不阻塞启动，但必须落日志（与上方 backfill 同口径）——静默吞错
       // 会让「回收站越积越多」无从排查。
       .catch((err: unknown) => {
-        console.warn(`[server] 回收站清理失败：${errorMessage(err)}`)
+        trashLogger.warn(`[server] 回收站清理失败：${errorMessage(err)}`)
       })
     // P2-5：回收站看板两阶段清理（与会话回收站同策略：到期先标记宽限，期满再物理清除，
     // 杜绝「到期即静默清空」）。
     void purgeDeletedKanbanBoards(db, TRASH_RETENTION_MS, TRASH_PURGE_GRACE_MS)
       .then((r) => logPurgeResult('看板', r))
       .catch((err: unknown) => {
-        console.warn(`[server] 回收站清理失败：${errorMessage(err)}`)
+        trashLogger.warn(`[server] 回收站清理失败：${errorMessage(err)}`)
       })
   }
   runTrashPurge()
@@ -788,14 +797,14 @@ async function startServer(opts: StartServerOptions = {}): Promise<RunningServer
             reviving = true
             try {
               await bringUp()
-              console.warn('[handoff] 新实例未确认接管，旧实例已复活并重新接管端口')
+              handoffLogger.warn('[handoff] 新实例未确认接管，旧实例已复活并重新接管端口')
             } catch (err) {
               if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
                 // 新实例已绑定端口（确认请求丢失）→ 它已接管，旧实例正常退出。
-                console.warn('[handoff] 端口已被新实例接管，旧实例退出')
+                handoffLogger.warn('[handoff] 端口已被新实例接管，旧实例退出')
                 process.exit(0)
               }
-              console.error('[handoff] 旧实例复活失败，退出：', err)
+              handoffLogger.error(`[handoff] 旧实例复活失败，退出：${errorMessage(err)}`)
               process.exit(1)
             } finally {
               reviving = false

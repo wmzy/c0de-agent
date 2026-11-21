@@ -17,7 +17,8 @@ export type UsageTotals = {
 
 export type UsageSummary = {
   totals: UsageTotals
-  /** 内置价目表最近核价日期（H3：估算可能随价格变动过期）。 */
+  /** 价目版本（H3：估算可能随价格变动过期）：手工核价的 builtin 表日期 +
+   *  打包模型目录的数据源/生成日期（未手配价目时的成本兜底）。 */
   priceCatalogVersion: string
   /** P1-4：服务端权威「本月」聚合（key + 统计），客户端不再自行按时区计算。 */
   currentMonth: { key: string } & UsageTotals

@@ -2,8 +2,11 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveGlobalConfigDir } from '../core/config.js'
+import { getLogger } from '../core/logger.js'
 import { errorMessage } from '../shared/utils/string.js'
 import type { Plugin } from './types.js'
+
+const logger = getLogger('plugins')
 
 type ValidationResult = { valid: true; plugin: Plugin } | { valid: false; error: string }
 
@@ -77,7 +80,7 @@ async function discoverPlugins(
       results.push({ name: entry.name, path: entry.path, plugin })
     } catch (e) {
       // Plugin failed to load — skip but warn (otherwise silently inactive)
-      console.warn(`[plugin] failed to load "${entry.name}" from ${entry.path}:`, errorMessage(e))
+      logger.warn(`[plugin] failed to load "${entry.name}" from ${entry.path}: ${errorMessage(e)}`)
     }
   }
   return results

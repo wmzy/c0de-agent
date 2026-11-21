@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AgentConfig } from '../shared/types/agent.js'
 import type { ToolDef } from '../shared/types/tool.js'
 import { buildSystemPrompt } from './prompt.js'
@@ -17,6 +20,22 @@ const readTool: ToolDef = {
   permission: 'auto',
   execute: async () => ({ _tag: 'success', output: '' }),
 }
+
+// buildSystemPrompt 经覆写层读全局 <config>/prompts（按解析时 C0DE_CONFIG_DIR）
+// ——每用例隔离到空 tmp 目录，避免开发机真实 ~/.c0de/prompts 泄入断言。
+const prevConfigDir = process.env.C0DE_CONFIG_DIR
+let isolatedDir = ''
+
+beforeEach(() => {
+  isolatedDir = mkdtempSync(join(tmpdir(), 'prompt-global-'))
+  process.env.C0DE_CONFIG_DIR = isolatedDir
+})
+
+afterEach(() => {
+  if (prevConfigDir === undefined) delete process.env.C0DE_CONFIG_DIR
+  else process.env.C0DE_CONFIG_DIR = prevConfigDir
+  rmSync(isolatedDir, { recursive: true, force: true })
+})
 
 describe('buildSystemPrompt', () => {
   it('includes the role description', () => {

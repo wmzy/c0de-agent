@@ -5,7 +5,10 @@ import type { Message } from '../../shared/types/message.js'
 import { errorMessage } from '../../shared/utils/string.js'
 import { createSummarizerWithFallback } from '../compact.js'
 import { estimateBudget, shouldCompact } from '../context.js'
+import { getLogger } from '../logger.js'
 import type { LoopDeps } from '../loop.js'
+
+const logger = getLogger('core.compaction')
 
 /**
  * 执行会话压缩并刷新 token 预算。
@@ -14,7 +17,7 @@ import type { LoopDeps } from '../loop.js'
  * createSummarizer + compactSession（session 层），压缩改写消息历史后标记下一段 trigger='compaction'。
  *
  * 成功时 yield 一条 text_delta 通知：手动 /compact 透传给用户；自动压缩由调用方
- * 静默消费。失败时抛错，由调用方决定是否记录（自动压缩非致命，仅 console.warn）。
+ * 静默消费。失败时抛错，由调用方决定是否记录（自动压缩非致命，仅 logger.warn）。
  */
 export async function* compactContext(
   state: AgentState,
@@ -97,7 +100,7 @@ export async function recoverFromOverflow(state: AgentState, deps: LoopDeps): Pr
     state.messages = await getMessages(deps.db, state.session.id)
     return true
   } catch (e) {
-    console.warn('[overflow-recovery] compaction failed:', errorMessage(e))
+    logger.warn(`[overflow-recovery] compaction failed: ${errorMessage(e)}`)
     return false
   }
 }
@@ -141,7 +144,7 @@ export async function* runCompactionIfNeeded(
         }
       }
     } catch (e) {
-      console.warn('[compaction] failed:', errorMessage(e))
+      logger.warn(`[compaction] failed: ${errorMessage(e)}`)
     }
   }
 
@@ -166,7 +169,7 @@ export async function* runCompactionIfNeeded(
     try {
       yield* silentCompact(state, deps)
     } catch (e) {
-      console.warn('[mid-turn-compaction] failed:', errorMessage(e))
+      logger.warn(`[mid-turn-compaction] failed: ${errorMessage(e)}`)
     }
   }
 }

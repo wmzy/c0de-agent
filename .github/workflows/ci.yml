@@ -20,7 +20,9 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          # 与本地开发工具链一致（pnpm-workspace.yaml 的 minimumReleaseAge/allowBuilds
+          # 按 pnpm 11 语义验证；锁文件由 pnpm 11 产出）
+          version: 11
 
       # cache: pnpm 让 setup-node 缓存 pnpm 全局 store（~/.local/share/pnpm/store），
       # key 由 pnpm-lock.yaml 派生，命中后 pnpm install 仅做 link，不再走网络下载。
@@ -55,7 +57,9 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          # 与本地开发工具链一致（pnpm-workspace.yaml 的 minimumReleaseAge/allowBuilds
+          # 按 pnpm 11 语义验证；锁文件由 pnpm 11 产出）
+          version: 11
 
       - name: Setup Node
         uses: actions/setup-node@v4
