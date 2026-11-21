@@ -19,6 +19,11 @@ export {
   shouldCompact,
 } from './context.js'
 export { agentLoop } from './loop.js'
+export {
+  buildMagicKeywordNotices,
+  containsKeyword,
+  type MagicKeywordNotice,
+} from './magic-keywords.js'
 export { buildSystemPrompt } from './prompt.js'
 export type { SlashRegistry } from './slash.js'
 export { builtinCommands, createSlashRegistry, parseSlashInput } from './slash.js'
@@ -42,7 +47,7 @@ export type {
   SubcommandDef,
   TokenBudget,
 } from './types.js'
-export { buildWorkflowNotice, containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
+export { buildWorkflowNotice, WORKFLOW_NOTICE } from './workflow.js'
 export type {
   SaveResult,
   SaveTarget,

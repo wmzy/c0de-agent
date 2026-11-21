@@ -17,6 +17,7 @@ export { editTool } from './builtin/edit.js'
 export { globTool, globToRegex } from './builtin/glob.js'
 export { grepTool } from './builtin/grep.js'
 export { kanbanTool } from './builtin/kanban.js'
+export { lspRenameTool, lspTool } from './builtin/lsp.js'
 export { readTool } from './builtin/read.js'
 // ── Builtin tools ───────────────────────────────────────────
 export {
@@ -79,6 +80,7 @@ import { editTool } from './builtin/edit.js'
 import { globTool } from './builtin/glob.js'
 import { grepTool } from './builtin/grep.js'
 import { kanbanTool } from './builtin/kanban.js'
+import { lspTools } from './builtin/lsp.js'
 import { readTool } from './builtin/read.js'
 import { taskTool } from './builtin/task.js'
 import { todoTool } from './builtin/todo.js'
@@ -90,7 +92,8 @@ import { createWebSearchTool } from './websearch/websearch.js'
 
 /**
  * Create a registry pre-loaded with all builtin tools:
- * read, write, edit, glob, grep, bash, task, websearch, and the debug_* set.
+ * read, write, edit, glob, grep, bash, task, todo, websearch, the lsp/lsp_rename
+ * pair, and the debug_* set.
  *
  * config.tools.disabled 中的工具**不注册**——registry 层过滤保证两个入口
  * （CLI print / Web chat / /api/tools 列表）统一生效，禁用的工具对 agent 完全不可见。
@@ -112,6 +115,7 @@ export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
   register(taskTool)
   register(todoTool)
   register(yieldTool)
+  for (const tool of lspTools) register(tool)
   register(createWebSearchTool(config.websearch))
   for (const tool of dapTools) register(tool)
   return reg

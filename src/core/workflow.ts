@@ -12,29 +12,8 @@
  *  （与 tools/builtin/task.ts 的 schema 及下方 WORKFLOW_NOTICE 的 <task-contract> 同口径：
  *   批量条目必填 assignment，prompt 仅单任务模式合法。）
  */
-import { stripMarkdownCode } from '../shared/utils/markdown-code.js'
-
-// 检测：小写关键词，两侧不得是 ASCII 词/路径字符（字母、数字、_、.、/、-）。
-// 用 [\w./-] 而非 \S 做边界，使 CJK 字符和中文标点也能当边界——
-// 中文无词间空格，用 \S 会拒绝「请workflowz」「workflowz。」等合法写法。
-// 仍拒绝 reworkflowz / workflowzed / workflowz.test.ts 等。
-const WORKFLOW_WORD = /(?<![\w./-])workflowz(?![\w./-])/
-
-/**
- * 判断 `text` 是否在 prose 中包含独立关键词 "workflowz"。
- *
- * 边界为「非 ASCII 词/路径字符」，因此 CJK 字符和中文标点也算合法边界
- * （中文无词间空格）；但仍拒绝 workflowzed / reworkflowz / workflowz.test.ts
- * 等拉丁词续或路径内嵌形式。
- *
- * prose 检测：先剥离围栏代码块与行内代码再匹配（shared/utils/markdown-code.ts 的
- * stripMarkdownCode）——未闭合围栏、~~~ 围栏、长反引号围栏、多反引号
- * 行内代码都会漏过此前的手写剥离，代码内容上的字面量关键字误触发
- * 工作流通告注入。
- */
-export function containsWorkflow(text: string): boolean {
-  return WORKFLOW_WORD.test(stripMarkdownCode(text))
-}
+// workflowz 关键词检测已泛化迁至 core/magic-keywords.ts（与 ultrathink/
+// orchestrate 同一匹配器：stripMarkdownCode 剥代码 + Unicode 词边界）。
 
 /**
  * 工作流脚本的 js 骨架模板（单一事实源）：WORKFLOW_NOTICE 的 <create-workflow>

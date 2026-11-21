@@ -543,6 +543,8 @@ describe('chat route (SSE)', () => {
       'edit',
       'glob',
       'grep',
+      'lsp',
+      'lsp_rename',
       'read',
       'task',
       'todo',

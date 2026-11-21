@@ -580,6 +580,18 @@ const workflowCommand: SlashCommand = {
   },
 }
 
+/** /review：并行 diff 审查（P0-P3 + ship/block）——委托内置 review 工作流执行。
+ * Web 通道在 chat 路由被提前分流到 runWorkflowSlashChannel（与 /workflow run 同
+ * 口径：并发守卫/权限/预算/会话生命周期），本 execute 覆盖 CLI 通道。 */
+const reviewCommand: SlashCommand = {
+  name: 'review',
+  description: '并行 diff 审查（P0-P3 分级 + ship/block 判定）',
+  argsHint: '[--base <ref> | <commit>] [补充要求]',
+  execute: async (args, ctx) => {
+    return workflowCommand.execute(`run review ${args}`.trim(), ctx)
+  },
+}
+
 const builtinCommands: SlashCommand[] = [
   helpCommand,
   compactCommand,
@@ -588,6 +600,7 @@ const builtinCommands: SlashCommand[] = [
   forkCommand,
   configCommand,
   workflowCommand,
+  reviewCommand,
 ]
 
 export type { SlashRegistry }

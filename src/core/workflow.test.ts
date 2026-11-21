@@ -1,71 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { buildWorkflowNotice, containsWorkflow, WORKFLOW_NOTICE } from './workflow.js'
+import { buildWorkflowNotice, WORKFLOW_NOTICE } from './workflow.js'
 
-describe('containsWorkflow — keyword detection', () => {
-  it('matches the standalone lowercase trigger word', () => {
-    expect(containsWorkflow('workflowz')).toBe(true)
-    expect(containsWorkflow('please workflowz this rollout')).toBe(true)
-    expect(containsWorkflow('design the workflowz')).toBe(true)
-  })
-
-  it('ignores old triggers, casing, inflections, and path-embedded forms', () => {
-    expect(containsWorkflow('workflow')).toBe(false)
-    expect(containsWorkflow('workflows')).toBe(false)
-    expect(containsWorkflow('Workflowz')).toBe(false)
-    expect(containsWorkflow('WORKFLOWZ')).toBe(false)
-    expect(containsWorkflow('workflowzed the build')).toBe(false)
-    expect(containsWorkflow('reworkflowz everything')).toBe(false)
-    expect(containsWorkflow('packages/coding-agent/test/modes/workflowz.test.ts')).toBe(false)
-    expect(containsWorkflow('nothing to see here')).toBe(false)
-  })
-
-  it('ignores keyword inside code blocks', () => {
-    expect(containsWorkflow('```\nworkflowz\n```')).toBe(false)
-    expect(containsWorkflow('Some text\n```ts\nconst x = "workflowz"\n```')).toBe(false)
-  })
-
-  it('ignores keyword inside inline code', () => {
-    expect(containsWorkflow('use `workflowz` keyword')).toBe(false)
-    expect(containsWorkflow('check `workflowz.ts`')).toBe(false)
-  })
-
-  // 回归：剥离只覆盖 ```...``` 非贪婪配对与单反引号——未闭合围栏、~~~ 围栏、
-  // 长反引号围栏、多反引号行内代码全部漏网：代码内容上的关键字误触发
-  // 工作流 steering 注入（用户粘贴含该词的字面量代码时被当作 fan-out 请求）。
-  it('ignores keyword inside unclosed fences and tilde/long fences', () => {
-    expect(containsWorkflow('```\nworkflowz\n')).toBe(false)
-    expect(containsWorkflow('```ts\nconst x = "workflowz"')).toBe(false)
-    expect(containsWorkflow('~~~\nworkflowz\n~~~')).toBe(false)
-    expect(containsWorkflow('````\nworkflowz\n````')).toBe(false)
-  })
-
-  it('ignores keyword inside multi-backtick inline code', () => {
-    expect(containsWorkflow('use ``workflowz`` keyword')).toBe(false)
-    expect(containsWorkflow('```workflowz```')).toBe(false)
-  })
-
-  it('detects keyword in prose alongside code blocks', () => {
-    expect(
-      containsWorkflow('Here is some code:\n```ts\nconst x = 1\n```\n\nNow workflowz this.'),
-    ).toBe(true)
-  })
-
-  it('matches in CJK prose without ASCII spaces (中文无词间空格)', () => {
-    expect(containsWorkflow('请workflowz，部署')).toBe(true)
-    expect(containsWorkflow('workflowz。')).toBe(true)
-    expect(containsWorkflow('用workflowz方式来')).toBe(true)
-    expect(containsWorkflow('（workflowz）')).toBe(true)
-    expect(containsWorkflow('帮我workflowz这个功能')).toBe(true)
-  })
-
-  it('matches when followed by ASCII punctuation (sentence end)', () => {
-    expect(containsWorkflow('do this workflowz, then report')).toBe(true)
-  })
-
-  it('handles empty string', () => {
-    expect(containsWorkflow('')).toBe(false)
-  })
-})
+// workflowz 关键词检测测试已随实现迁至 magic-keywords.test.ts。
 
 describe('WORKFLOW_NOTICE', () => {
   it('is a non-empty system notice', () => {

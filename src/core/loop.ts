@@ -15,6 +15,7 @@ import type { Session } from '../shared/types/message.js'
 import { errorMessage } from '../shared/utils/string.js'
 import { createAgent } from './agent.js'
 import { calibrateEstimate, createTokenBudget, estimateBudget } from './context.js'
+import { discoverContextFiles, EMPTY_CONTEXT_FILES } from './context-files.js'
 import { getLogger } from './logger.js'
 import { compactContext, runCompactionIfNeeded } from './loop/compaction.js'
 import { persistAssistantAndTools } from './loop/persist.js'
@@ -33,7 +34,7 @@ import {
 } from './prompt-registry.js'
 import { drainSteering } from './steering.js'
 import type { CollectedToolCall } from './tool-exec.js'
-import type { AgentDependencies } from './types.js'
+import type { AgentDependencies, ContextFileBundle } from './types.js'
 
 export { compactContext } from './loop/compaction.js'
 export { runSubAgent, runSubAgents } from './loop/subagent.js'
@@ -297,11 +298,27 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       chatMessages = hookResult.messages
     }
 
+    // 仓库上下文文件（AGENTS.md/CLAUDE.md/.cursor rules 等，恒注入）：主 agent
+    // 全量；子 agent 剔除 AGENTS.md/CLAUDE.md 层级文件（omp 口径——assignment
+    // 自带上下文，省 token），保留 cursor/copilot/cline 等来源。
+    let contextFiles: ContextFileBundle = EMPTY_CONTEXT_FILES
+    try {
+      contextFiles = discoverContextFiles(deps.cwd, {
+        enabled: deps.config.contextFiles?.enabled,
+        extra: deps.config.contextFiles?.extra,
+      })
+      if (deps._subagentDepth !== undefined) {
+        contextFiles = { ...contextFiles, files: contextFiles.files.filter((f) => f.forSubagents) }
+      }
+    } catch {
+      // best-effort 层：发现失败不阻断 prompt 组装
+    }
     const promptCtx = {
       tools: state.tools,
       config: state.config,
       projectInfo: detectProjectInfo(deps.cwd),
       skills: deps.skills ?? [],
+      contextFiles,
       cwd: deps.cwd,
       // 项目级提示词覆写（.c0de/prompts/*.md）仅信任项目加载——与插件/工作流
       // 门禁同口径（prompt 文本随 git clone 传播、直接引导模型行为）。

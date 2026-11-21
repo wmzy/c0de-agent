@@ -62,6 +62,8 @@ describe('tools index', () => {
       'glob',
       'grep',
       'kanban',
+      'lsp',
+      'lsp_rename',
       'read',
       'task',
       'todo',

@@ -51,8 +51,11 @@ const DEFAULT_CONFIG: Config = {
   plugins: { enabled: [] },
   mcpServers: [],
   slashCommands: {
-    enabled: ['/compact', '/model', '/clear', '/help', '/fork', '/config', '/workflow'],
+    enabled: ['/compact', '/model', '/clear', '/help', '/fork', '/config', '/workflow', '/review'],
   },
+  contextFiles: { enabled: true, extra: [] },
+  magicKeywords: { enabled: true, ultrathink: true, orchestrate: true, workflow: true },
+  lsp: { servers: {} },
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: true, allowedOrigins: [] },
   websearch: { provider: 'auto' },

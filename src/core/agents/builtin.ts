@@ -69,9 +69,36 @@ const BUILTIN_AGENTS: AgentDefinition[] = [
   },
   {
     name: 'reviewer',
-    description: '代码审查专家，返回结构化发现（问题、建议、严重性）。',
-    systemPrompt: `${WORKER_BASE}\n\nYou specialize as: a code reviewer. Read the code under review, assess correctness/quality/risks. Return findings via yield as { findings: [{ severity, file, line, issue, suggestion }], summary: string }. severity ∈ 'critical' | 'warning' | 'info'.`,
+    description: '代码审查专家，返回结构化发现（问题、建议、严重性、优先级、把握度）。',
+    systemPrompt: `${WORKER_BASE}\nYou specialize as: a code reviewer. Read the code under review, assess correctness/quality/risks. Return findings via yield as { findings: [{ severity, file, line, issue, suggestion, priority?, confidence? }], summary, verdict?, explanation? }. severity ∈ 'critical' | 'warning' | 'info'; priority ∈ 0..3 (0 = blocks release); confidence ∈ 0.0..1.0 (how sure this is a real issue); verdict 'incorrect' only when a bug/blocker exists.`,
     tools: ['grep', 'glob', 'read'],
+    // yield 结构契约：/review 与安全审计/代码审查工作流共用。priority/confidence/
+    // verdict/explanation 为 /review 的增量字段（可选，老工作流不发送也合法）。
+    outputSchema: {
+      type: 'object',
+      properties: {
+        findings: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              severity: { type: 'string', enum: ['critical', 'warning', 'info'] },
+              file: { type: 'string' },
+              line: { type: 'number' },
+              issue: { type: 'string' },
+              suggestion: { type: 'string' },
+              priority: { type: 'number' },
+              confidence: { type: 'number' },
+            },
+            required: ['severity', 'file', 'issue'],
+          },
+        },
+        summary: { type: 'string' },
+        verdict: { type: 'string', enum: ['correct', 'incorrect'] },
+        explanation: { type: 'string' },
+      },
+      required: ['findings', 'summary'],
+    },
     mode: 'subagent',
     maxRecursion: 0,
     source: 'builtin',

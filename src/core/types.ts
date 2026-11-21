@@ -17,6 +17,7 @@ import type { DebugTransport, ToolDef, URLRegistry } from '../shared/types/tool.
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
 import type { AgentRegistry } from './agents/types.js'
 import type { Config } from './config.js'
+import type { ContextFileBundle } from './context-files.js'
 
 /** Runtime services injected into every core function (DI pattern). */
 
@@ -93,6 +94,9 @@ type PromptBuildContext = {
    *  model, so it is gated with the same fail-closed rule as project
    *  plugins/workflows. Resolved by the agent loop (needs db + fingerprint). */
   projectTrusted?: boolean
+  /** 仓库上下文文件（AGENTS.md/CLAUDE.md/.cursor rules 等，恒注入）。由 agent
+   *  loop 每轮发现（子 agent 已剔除 AGENTS.md/CLAUDE.md 层级文件）。 */
+  contextFiles?: ContextFileBundle
 }
 
 /** A dynamically composable system-prompt section (spec §17). */
@@ -159,6 +163,7 @@ export type {
   ChildRunHandle,
   CommandContext,
   CommandResult,
+  ContextFileBundle,
   HookRunner,
   LLMSegment,
   PendingToolCall,

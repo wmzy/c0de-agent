@@ -104,6 +104,259 @@ export default async function workflow(ctx) {
   }
 }`
 
+// ── review ──
+
+const REVIEW_SOURCE = `export const meta = {
+  name: 'review',
+  description: 'Diff 审查：并行 reviewer 按文件分组审查 + P0-P3 分级 + ship/block 判定',
+  argsHint: '[--base <ref> | <commit>] [补充要求]',
+  phases: ['diff', 'review', 'verdict'],
+  timeout: 600,
+}
+
+export default async function workflow(ctx) {
+  const { runSubagents, utils, progress, project, args } = ctx
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const exec = promisify(execFile)
+  const git = async (...cmd) => {
+    try {
+      // execFile 非 tty：git 不着色，无需 --no-color（且 merge-base/rev-parse
+      // 不认该选项）
+      const { stdout } = await exec('git', cmd, {
+        cwd: project.rootDir,
+        maxBuffer: 128 * 1024 * 1024,
+      })
+      return stdout
+    } catch (err) {
+      throw new Error('git ' + cmd.join(' ') + ' 失败：' + (err && err.stderr ? String(err.stderr).trim() : err && err.message ? err.message : String(err)))
+    }
+  }
+
+  // —— 参数解析：--base <ref>（分支三点 diff）| <hex>（单提交）| 缺省未提交 ——
+  const parts = (args || '').split(/\\s+/).filter(Boolean)
+  let mode = 'uncommitted'
+  let ref = ''
+  const extra = []
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]
+    if (p === '--base') {
+      ref = parts[i + 1]
+      if (!ref) throw new Error('用法：/review [--base <ref> | <commit>] [补充要求]')
+      mode = 'base'
+      i++
+    } else if (!ref && /^[0-9a-f]{7,40}$/.test(p)) {
+      mode = 'commit'
+      ref = p
+    } else extra.push(p)
+  }
+  const extraText = extra.join(' ')
+
+  // —— diff 范围解析（numstat + patch）——
+  const fetchScope = async (m, r) => {
+    if (m === 'commit') {
+      await git('rev-parse', '--verify', r + '^{commit}')
+      return {
+        desc: 'commit ' + r.slice(0, 12),
+        numstat: await git('show', r, '--numstat', '--format='),
+        patch: await git('show', r, '--format='),
+      }
+    }
+    if (m === 'base') {
+      const mb = (await git('merge-base', r, 'HEAD')).trim()
+      return {
+        desc: r + '...HEAD（merge-base ' + mb.slice(0, 7) + '）',
+        numstat: await git('diff', mb, 'HEAD', '--numstat'),
+        patch: await git('diff', mb, 'HEAD'),
+      }
+    }
+    return {
+      desc: '未提交变更（staged + unstaged；不含 untracked 文件）',
+      numstat: await git('diff', 'HEAD', '--numstat'),
+      patch: await git('diff', 'HEAD'),
+    }
+  }
+
+  progress('解析 diff 范围...', { phase: 'diff' })
+  let scope = await fetchScope(mode, ref)
+  let fellBackToHead = false
+  if (mode === 'uncommitted' && scope.numstat.trim() === '') {
+    // 工作区干净：自动回退审查最近一次提交（与 omp 无 ref 时的默认一致）
+    scope = await fetchScope('commit', 'HEAD')
+    scope.desc = '最近一次提交 HEAD（工作区无未提交变更）'
+    fellBackToHead = true
+  }
+
+  // —— numstat → 文件清单（排除锁文件/产物/快照/二进制）——
+  const files = []
+  for (const line of scope.numstat.split('\\n')) {
+    const m = /^(\\d+|\\-)\\t(\\d+|\\-)\\t(.+)$/.exec(line)
+    if (m) {
+      files.push({
+        added: m[1] === '-' ? 0 : Number(m[1]),
+        removed: m[2] === '-' ? 0 : Number(m[2]),
+        path: m[3],
+      })
+    }
+  }
+  const EXCLUDE = [
+    /(^|\\/)(node_modules|vendor|dist|build|coverage|\\.next|target)\\//,
+    /package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|bun\\.lockb?$|Cargo\\.lock|poetry\\.lock|composer\\.lock|Gemfile\\.lock|go\\.sum|flake\\.lock|deno\\.lock/i,
+    /\\.(min\\.(js|css)|map|snap|png|jpe?g|gif|webp|svg|ico|pdf|woff2?|ttf|otf|eot|exe|so|dylib|dll)$/i,
+    /\\.generated\\./,
+  ]
+  const included = files.filter((f) => !EXCLUDE.some((re) => re.test(f.path)))
+  if (included.length === 0) {
+    return {
+      output: '审查范围（' + scope.desc + '）内没有可审查的文本变更（全部被排除：锁文件/构建产物/快照/二进制）。',
+      data: { scope: scope.desc, verdict: 'ship', findings: [], counts: { p0: 0, p1: 0, p2: 0, p3: 0 } },
+    }
+  }
+
+  // —— patch 按文件切分 ——
+  const patchMap = new Map()
+  const diffRe = /^diff --git a\\/(.+) b\\/(.+)$/
+  let curPath = null
+  let curSeg = []
+  for (const line of scope.patch.split('\\n')) {
+    const m = diffRe.exec(line)
+    if (m) {
+      if (curPath) patchMap.set(curPath, curSeg.join('\\n'))
+      curPath = m[2]
+      curSeg = [line]
+    } else if (curPath) curSeg.push(line)
+  }
+  if (curPath) patchMap.set(curPath, curSeg.join('\\n'))
+
+  // —— reviewer 数量（omp 启发式：按变更行数 + 文件数）与按目录局部性分组 ——
+  const churn = included.reduce((s, f) => s + f.added + f.removed, 0)
+  const nf = included.length
+  let agentCount
+  if (churn < 100 || nf <= 2) agentCount = 1
+  else if (churn < 500) agentCount = Math.min(2, nf)
+  else if (churn < 2000) agentCount = Math.min(4, Math.ceil(nf / 3))
+  else if (churn < 5000) agentCount = Math.min(8, Math.ceil(nf / 2))
+  else agentCount = Math.min(16, nf)
+
+  const sorted = [...included].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  const target = Math.ceil(churn / agentCount)
+  const groups = []
+  let cur = []
+  let curChurn = 0
+  for (const f of sorted) {
+    cur.push(f)
+    curChurn += f.added + f.removed
+    if (curChurn >= target && groups.length < agentCount - 1) {
+      groups.push(cur)
+      cur = []
+      curChurn = 0
+    }
+  }
+  if (cur.length > 0) groups.push(cur)
+
+  // —— 每个 reviewer 的 assignment（组内 diff 内联，超预算降级为 read 指引）——
+  const FILE_CAP = 8000
+  const GROUP_CAP = 48000
+  const assignments = groups.map((group, gi) => {
+    let budget = GROUP_CAP
+    const sections = []
+    for (const f of group) {
+      let seg = (patchMap.get(f.path) || '').trimEnd()
+      if (!seg) seg = '(无文本 diff)'
+      if (seg.length > FILE_CAP) seg = seg.slice(0, FILE_CAP) + '\\n…（截断；用 read 工具读 ' + f.path + ' 获取完整上下文）'
+      if (seg.length > budget) seg = '(组 diff 预算耗尽；用 read 工具读 ' + f.path + '）'
+      budget -= seg.length
+      sections.push('--- ' + f.path + ' (+' + f.added + ' -' + f.removed + ')\\n' + seg)
+    }
+    const lines = [
+      '你是 diff 审查专家，负责第 ' + (gi + 1) + '/' + groups.length + ' 组文件。审查范围：' + scope.desc + '。仓库根：' + project.rootDir + '。',
+      '',
+      '<criteria>',
+      '- 只报本次 diff 引入的问题；finding 必须锚定 diff 内的 file + line（新文件用新行号）',
+      '- 每条 finding 要有可证明的影响（provable impact）、可操作（actionable）、不基于未声明的假设',
+      '- 跨函数/模块边界的类型与分支变更：用 read 追到消费侧确认后再下结论',
+      '- 禁止修改文件、禁止构建/执行——只读审查（read/grep/glob）',
+      '</criteria>',
+      '',
+      '<diff>',
+      sections.join('\\n\\n'),
+      '</diff>',
+      extraText ? '用户补充要求：' + extraText : '',
+      '',
+      "用 yield 返回 JSON：{ findings: [{ severity: 'critical'|'warning'|'info', file, line, issue, suggestion, priority, confidence }], summary, verdict: 'correct'|'incorrect', explanation }",
+      '- priority：0=阻断发布（P0），1=应尽快修（P1），2=建议（P2），3=可选（P3）；缺省按 severity 推断（critical→0，warning→1，info→2）',
+      '- confidence：0.0-1.0，你对「这是真实问题」的把握',
+      "- verdict：'incorrect' 仅当存在 bug/阻断级问题；explanation 为 1-3 句结论摘要",
+    ]
+    return { assignment: lines.filter(Boolean).join('\\n'), description: '审查第 ' + (gi + 1) + ' 组（' + group.length + ' 文件）' }
+  })
+
+  progress('并行 ' + groups.length + ' 个 reviewer 审查（' + nf + ' 文件，churn ' + churn + ' 行）...', { phase: 'review' })
+  const reviews = await runSubagents('reviewer', assignments)
+  const parsed = utils.parseJsonObjects(reviews)
+
+  // —— 聚合：去重（file+line+issue 前缀）→ priority/confidence 归一 → 排序 ——
+  const SEV_PRIORITY = { critical: 0, warning: 1, info: 2 }
+  const seen = new Set()
+  const findings = []
+  for (const r of parsed) {
+    for (const f of (r && Array.isArray(r.findings) ? r.findings : [])) {
+      if (!f || typeof f !== 'object' || !f.file || !f.issue) continue
+      const key = String(f.file) + ':' + String(f.line == null ? '' : f.line) + ':' + String(f.issue).toLowerCase().replace(/\\s+/g, ' ').trim().slice(0, 80)
+      if (seen.has(key)) continue
+      seen.add(key)
+      const priority =
+        typeof f.priority === 'number' && f.priority >= 0 && f.priority <= 3
+          ? Math.round(f.priority)
+          : (SEV_PRIORITY[f.severity] != null ? SEV_PRIORITY[f.severity] : 2)
+      const confidence = typeof f.confidence === 'number' ? Math.max(0, Math.min(1, f.confidence)) : 0.5
+      findings.push({
+        severity: f.severity || 'info',
+        file: String(f.file),
+        line: typeof f.line === 'number' ? f.line : null,
+        issue: String(f.issue),
+        suggestion: f.suggestion ? String(f.suggestion) : '',
+        priority,
+        confidence,
+      })
+    }
+  }
+  findings.sort((a, b) => a.priority - b.priority || b.confidence - a.confidence)
+
+  const counts = { p0: 0, p1: 0, p2: 0, p3: 0 }
+  for (const f of findings) counts['p' + f.priority]++
+  const verdictIncorrect = parsed.some((r) => r && r.verdict === 'incorrect')
+  const blocked = findings.some((f) => f.priority === 0 && f.confidence >= 0.5) || verdictIncorrect
+
+  progress('聚合 ' + findings.length + ' 条发现，判定 ' + (blocked ? 'BLOCK' : 'SHIP'), { phase: 'verdict' })
+
+  const lines = [
+    '## 审查结论：' + (blocked ? 'BLOCK — 存在阻断级问题，不建议直接合入' : 'SHIP — 未发现阻断级问题'),
+    '',
+    '范围：' + scope.desc + ' ｜ 文件 ' + nf + ' ｜ P0:' + counts.p0 + ' P1:' + counts.p1 + ' P2:' + counts.p2 + ' P3:' + counts.p3,
+  ]
+  for (const r of parsed) {
+    if (r && (r.explanation || r.summary)) lines.push('- reviewer：' + (r.explanation || r.summary))
+  }
+  if (findings.length > 0) {
+    lines.push('', '## 发现（P0→P3，同优先级按把握度降序）')
+    for (const f of findings) {
+      lines.push(
+        'P' + f.priority + ' [' + f.confidence.toFixed(2) + '] ' + f.file + (f.line != null ? ':' + f.line : '') + ' — ' + f.issue +
+          (f.suggestion ? '\\n  建议：' + f.suggestion : ''),
+      )
+    }
+  }
+  if (mode === 'uncommitted' && !fellBackToHead) {
+    lines.push('', '注：git diff 不含未跟踪（untracked）文件；如需一并审查请先 git add。')
+  }
+
+  return {
+    output: lines.join('\\n'),
+    data: { scope: scope.desc, verdict: blocked ? 'block' : 'ship', counts, findings, reviewerSummaries: parsed.map((r) => r && (r.explanation || r.summary)).filter(Boolean) },
+  }
+}`
+
 // ── migration-check ──
 
 const MIGRATION_CHECK_SOURCE = `export const meta = {
@@ -182,6 +435,7 @@ async function createBuiltinWorkflows(): Promise<WorkflowEntry[]> {
   _builtinWorkflowsCache = await Promise.all([
     sourceToEntry(SECURITY_AUDIT_SOURCE),
     sourceToEntry(CODE_REVIEW_SOURCE),
+    sourceToEntry(REVIEW_SOURCE),
     sourceToEntry(MIGRATION_CHECK_SOURCE),
   ])
   return _builtinWorkflowsCache

@@ -2,7 +2,10 @@ import { resolve } from 'node:path'
 import { abortAgent, createAgent, runAgent } from '../../core/agent.js'
 import { collectAssistantText } from '../../core/loop/stream-collect.js'
 import type { LoopDeps } from '../../core/loop.js'
+import { buildMagicKeywordNotices } from '../../core/magic-keywords.js'
 import { preflightRoute } from '../../core/provider-registry.js'
+import { injectSteering } from '../../core/steering.js'
+import { BUILTIN_WORKFLOWS } from '../../core/workflows/index.js'
 import { getByDirectory } from '../../project/index.js'
 import { createSession, requireContinuableSession } from '../../session/session.js'
 import { upgradeTemporarySession } from '../../session/trash.js'
@@ -119,6 +122,19 @@ async function runPrintMode(
   }
 
   const state = await createAgent(session, agentConfig, deps)
+
+  // magic keywords（ultrathink/orchestrate/workflowz）：CLI chat 与 ACP（共用
+  // print 通道）的用户消息同样触发隐藏指令注入——与 Web chat 路由同口径。
+  for (const notice of buildMagicKeywordNotices(message, {
+    tools: agentConfig.tools,
+    config: config.magicKeywords,
+    workflowList: BUILTIN_WORKFLOWS.map((w) => ({
+      name: w.meta.name,
+      description: w.meta.description,
+    })),
+  })) {
+    injectSteering(state, notice.content)
+  }
 
   // P2-4：ACP abort 真中止——把外部信号桥接到该 run 的 abortController。
   // abortAgent 会使 loop 在 turn/流边界 unwind，runAgent 随即结束。

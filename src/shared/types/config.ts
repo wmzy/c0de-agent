@@ -148,6 +148,26 @@ type UsageConfig = {
   tokenBudgetAction?: 'warn' | 'pause' | 'abort'
 }
 
+/** LSP 服务器配置项（config.lsp.servers.<name>）。覆盖内置默认条目时，
+ *  未提供的字段继承内置值（浅合并）。 */
+type LspServerUserConfig = {
+  /** 启动命令（如 'typescript-language-server'）。 */
+  command?: string
+  /** 命令参数（如 ['--stdio']）。 */
+  args?: string[]
+  /** 服务的文件扩展名（不含点，如 ['ts','tsx']）。 */
+  fileTypes?: string[]
+  /** 项目根标记文件（如 ['package.json','tsconfig.json']）；从目标文件向上
+   *  找到首个标记目录作为 workspaceRoot。 */
+  rootMarkers?: string[]
+  /** LSP initializationOptions。 */
+  initOptions?: Record<string, unknown>
+  /** 启动后经 workspace/didChangeConfiguration 推送的 settings。 */
+  settings?: Record<string, unknown>
+  /** true = 禁用该服务器。 */
+  disabled?: boolean
+}
+
 /** Global application configuration. */
 type Config = {
   providers: ProviderConfig[]
@@ -163,6 +183,15 @@ type Config = {
   plugins: { enabled: string[] }
   mcpServers: MCPServerConfig[]
   slashCommands: { enabled: string[] }
+  /** 仓库上下文文件（AGENTS.md/CLAUDE.md/.cursor rules 等）发现与注入开关。
+   * 纯文本仓库指导，恒注入（与 .c0de/prompts 的信任门禁不同口径）。 */
+  contextFiles: { enabled: boolean; extra: string[] }
+  /** Magic keywords：用户消息中的独立关键词（ultrathink/orchestrate/workflowz）
+   * 触发隐藏指令注入（单关键词与总开关独立可关）。 */
+  magicKeywords: { enabled: boolean; ultrathink: boolean; orchestrate: boolean; workflow: boolean }
+  /** LSP 服务器配置：按名叠加/覆盖内置默认表（src/lsp/servers.ts）。
+   * disabled=true 移除该服务器；command/fileTypes/rootMarkers 可部分覆写。 */
+  lsp: { servers: Record<string, LspServerUserConfig> }
   toolMetrics: ToolMetricsConfig
   security: SecurityConfig
   websearch: WebSearchConfig
@@ -177,6 +206,7 @@ export type {
   AgentsConfig,
   CompactionConfig,
   Config,
+  LspServerUserConfig,
   MCPServerConfig,
   PermissionConfig,
   SecurityConfig,

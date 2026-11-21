@@ -5,11 +5,11 @@ import { type SSEStreamingApi, streamSSE } from 'hono/streaming'
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { Config } from '../../core/config.js'
 import { runManualCompact } from '../../core/loop.js'
+import { buildMagicKeywordNotices } from '../../core/magic-keywords.js'
 import { preflightRoute } from '../../core/provider-registry.js'
 import { createSlashRegistry, isSlashCommandEnabled, parseSlashInput } from '../../core/slash.js'
 import { injectSteering } from '../../core/steering.js'
 import type { RegisterChildRun } from '../../core/types.js'
-import { buildWorkflowNotice, containsWorkflow } from '../../core/workflow.js'
 import { createWorkflowRegistry, discoverWorkflows } from '../../core/workflows/index.js'
 import type { Registry } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
@@ -549,9 +549,15 @@ async function dispatchSlashCommand(
       await emitSseText(stream, `斜杠命令 /${parsed.name} 未启用（config.slashCommands.enabled）`)
     })
   }
-  // /workflow run 走专用通道（预算/URL 注册表/agentManager 生命周期与 REST 同口径）；
-  // 其余 workflow 子命令（list/show/create/edit）继续走通用 commandCtx。
-  if (parsed.name === 'workflow' && /^run(?:\s|$)/.test(parsed.args.trim())) {
+  // /workflow run 与 /review 走专用通道（预算/URL 注册表/agentManager 生命周期与
+  // REST 同口径）；/review 是内置 review 工作流的直通入口，其余 workflow 子命令
+  // （list/show/create/edit）继续走通用 commandCtx。
+  if (
+    (parsed.name === 'workflow' && /^run(?:\s|$)/.test(parsed.args.trim())) ||
+    parsed.name === 'review'
+  ) {
+    const workflowArgs =
+      parsed.name === 'review' ? `run review ${parsed.args}`.trim() : parsed.args.trim()
     return runWorkflowSlashChannel(ctx, {
       c,
       sessionId,
@@ -560,7 +566,7 @@ async function dispatchSlashCommand(
       sessionConfig,
       sessionDefaultMode,
       sessionRegistry,
-      workflowArgs: parsed.args.trim(),
+      workflowArgs,
     })
   }
   const commandCtx = {
@@ -941,16 +947,24 @@ async function streamAgentRun(
         // 填充 tryAcquire 留下的占位（原 register 语义：按 sessionId 覆盖写入）
         ctx.agentManager.register({ sessionId, state, deps })
 
-        // workflowz 关键词检测：用户消息包含独立关键词时注入工作流通知（steering），
-        // 引导模型用 task 工具批量 fan-out 做确定性多子 agent 分解。
-        if (env.message && containsWorkflow(env.message)) {
+        // magic keywords（ultrathink/orchestrate/workflowz）：用户消息中的独立
+        // 关键词触发隐藏指令注入（steering，插在最后一条 user 消息之前，同 turn
+        // 生效）——workflowz 引导用 task 工具做确定性多子 agent 分解，其余见
+        // core/magic-keywords.ts。
+        if (env.message) {
           const wfList = ctx.workflowRegistry
             ? ctx.workflowRegistry.list().map((w) => ({
                 name: w.meta.name,
                 description: w.meta.description,
               }))
             : []
-          injectSteering(state, buildWorkflowNotice(wfList))
+          for (const notice of buildMagicKeywordNotices(env.message, {
+            tools: resolvedTools,
+            config: sessionConfig.magicKeywords,
+            workflowList: wfList,
+          })) {
+            injectSteering(state, notice.content)
+          }
         }
 
         // 客户端断开时中止 agent

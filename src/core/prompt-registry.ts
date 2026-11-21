@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveGlobalConfigDir } from './config.js'
+import { EMPTY_CONTEXT_FILES, renderContextFilesSection } from './context-files.js'
 import { PROMPT_BODIES } from './prompts.generated.js'
 import { builtinCommands } from './slash.js'
 import type { PromptBuildContext, PromptRegistry, PromptSection } from './types.js'
@@ -36,6 +37,7 @@ export const BUILTIN_SECTION_IDS = [
   'git-safety',
   'tone',
   'project',
+  'repo-rules',
   'skills',
   'agents',
   'slash-commands',
@@ -86,6 +88,13 @@ function builtinSections(): PromptSection[] {
         if (c.projectInfo.gitBranch) lines.push(`- Git Branch: ${c.projectInfo.gitBranch}`)
         return lines.join('\n')
       },
+    },
+    {
+      id: 'repo-rules',
+      content: '',
+      priority: 105,
+      condition: (c) => renderContextFilesSection(c.contextFiles ?? EMPTY_CONTEXT_FILES) !== '',
+      render: (c) => renderContextFilesSection(c.contextFiles ?? EMPTY_CONTEXT_FILES),
     },
     {
       id: 'skills',

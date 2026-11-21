@@ -16,6 +16,10 @@
 - **故障回退**：主 provider 失败时自动重试；启用后按配置的重试参数执行，并回退到声明了同一模型的其他 provider（设置 → 故障回退）。
 - **斜杠命令**：`/compact`、`/model`、`/clear` 等可配置的斜杠命令（`slashCommands.enabled` 与 `tools.enabled` 同为 fail-closed 语义）。
 - **提示词覆写**：`~/.c0de/prompts/*.md`（全局）与项目 `.c0de/prompts/*.md`（需项目信任后生效）可替换或追加内置系统提示词分片——文件名命中分片 id 即替换该分片，否则按字典序追加为新分片；每轮对话重新读取，下一轮即生效。
+- **仓库上下文文件**：自动发现并注入仓库自带的指导文件——`AGENTS.md` / `CLAUDE.md`（从会话目录逐级向上到仓库根，每层一个，同层 AGENTS.md 优先）、`.github/copilot-instructions.md`、`.cursorrules`、`.cursor/rules/*` 与 `.windsurf/rules/*`（frontmatter 门控：`alwaysApply` 注入正文，`globs` 只列目录提示）、`.clinerules`；正文内 `@./file.md` 引用递归展开（环与代码区免疫）。更深子目录的 `AGENTS.md` 不注入正文，只列指针提示「改该目录前先 read」。纯文本指导恒注入（可用 `contextFiles.enabled: false` 关闭，`contextFiles.extra` 追加自定义文件名）；子 agent 剔除 AGENTS.md/CLAUDE.md 层级文件（assignment 自带上下文）。
+- **Magic keywords**：用户消息 prose 中的独立关键词触发隐藏指令（steering，插在该条消息之前同轮生效，不动 system prompt）：`ultrathink`（深度多步推理）、`orchestrate`（并行子 agent 编排，需 task 工具）、`workflowz`（确定性工作流分解）。精确小写独立词匹配——代码块/行内代码/HTML 内不触发，`ultrathinks`、`ultrathink.ts`、`ultrathink()` 等嵌码形态不触发；中文贴词（`请ultrathink`）合法。`magicKeywords.enabled` 总开关 + 每关键词独立开关。
+- **`/review` diff 审查**：并行 reviewer 子 agent 审查 diff，产出 **P0–P3 分级 + 把握度 + SHIP/BLOCK 判定**。范围解析：缺省 = 未提交变更（工作区干净时自动回退审查最近一次提交）；`/review --base <ref>` = 与分支的 merge-base 三点 diff；`/review <commit>` = 单提交；其余文本作为补充要求透传给 reviewer。锁文件/构建产物/快照/二进制自动排除；reviewer 数量按变更行数启发式（1–16 个），按目录局部性分组、组内 diff 内联（超预算降级为 read 指引）；聚合端按 file+line+issue 去重，P0 且把握度 ≥0.5 或任一 reviewer 判 `incorrect` → BLOCK。也可 `/workflow run review` 或 REST 调用。
+- **LSP 工具**：agent 可驱动语言服务器——`lsp`（诊断/hover/定义/类型定义/引用/文档符号/状态，定位用 `file+line+symbol` 三元组，symbol 支持子串与 `name#N` 选择器）与 `lsp_rename`（跨文件重命名，`apply:false` 仅预览，默认需确认）。内置识别 `typescript-language-server` / `pyright` / `gopls` / `clangd` / `rust-analyzer`（按 rootMarkers 定项目根、二进制存在才启用；`lsp.servers` 配置可覆盖或追加任意 stdio LSP 服务器）。编辑后用 `lsp diagnostics` 验证是推荐工作流。
 - **分支（fork）**：会话可在任意消息处分支为独立会话。分支继承分支点之前的完整上下文——包括压缩/清理归档（归档面板可查）、用量统计（token 徽标/会话信息面板显示继承成本；新调用按实际发生记账，不重复计费），以及权限态（会话级 `auto` 模式与「始终允许」白名单）与 CLI 会话的工作目录。
 - **会话回收站**：删除会话软删除入回收站，保留 60 天（自**首次打开回收站看到该分组**起算——分组粒度、只标记一次，不随每次打开重置，倒计时稳定可预期；从未被查看的条目自删除起最长保留 365 天后进入宽限期，不会无限滞留）可恢复（按项目隔离，恢复时自动重新归属）。到期后先进入 **7 天宽限期**（回收站内明示「即将清除」，仍可恢复），宽限期满才物理清除，绝不静默清空。回收站列表按到期紧迫度排序（宽限期内条目置顶，其次按到期先后）。删除项目会将其会话移入回收站的「未归属项目」分组（跨项目可见），该分组默认折叠，展开时才启动保留期倒计时；恢复此类会话时可**二选一**：「恢复到当前项目」或「恢复并重建原项目」（原目录仍存在时重建项目记录，响应与界面明示重建的项目，不再静默复活已删除的项目）。恢复会话时仅还原同一次删除操作中一并删除的分支，漏掉的分支会在提示中显式告知数量；恢复前确认框会列出将连带还原的父会话。
 - **会话导出/导入**：会话可导出为 JSON 备份，并在任意项目重新导入（会话列表「导入」按钮），跨机器迁移或本地备份均可用。导出含权限态（自动授权/始终允许白名单）时，导入前会明示风险并让你选择是否随迁——默认剥离，避免导入他人导出的会话时静默继承对危险工具的免确认放行；归档中的**文件快照（被压缩进上下文的文件内容）默认剥离**，导出对话框显式确认后才携带，分享导出 JSON 不泄露文件内容。用量统计（segments）随导入携带、会话信息面板/徽标保留历史成本与 token 口径，但**导入的调用不进入本机成本账本**（`usage_events`）——跨机器导入的历史消费不污染本地月度成本与预算护栏；且 segments 按导入消息时间窗裁剪。导出仅含本会话与归档；有派生分支时会先提示分支内容不会随迁。
@@ -146,9 +150,10 @@ src/
 ├── session/       # 会话上下文、消息、compaction、branch/squash、快照
 ├── project/       # 多项目解析与检测（.git、package.json 等）
 ├── db/            # Drizzle schema 与迁移（PGLite）
-├── tools/         # 内置工具实现（read/write/edit/bash/grep/glob/todo/kanban/dap/websearch…）
+├── tools/         # 内置工具实现（read/write/edit/bash/grep/glob/todo/kanban/dap/lsp/websearch…）
 ├── plugins/       # 插件系统（12 个生命周期钩子）
 ├── dap/           # Debug Adapter Protocol 会话与协议编解码
+├── lsp/           # LSP 客户端（JSON-RPC stdio、服务器默认表与生命周期管理）
 ├── shared/        # 前后端共享类型
 ├── update/        # 版本检查、热更新调度器、会话快照
 ├── kanban/        # 看板状态存储

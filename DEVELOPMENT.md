@@ -43,6 +43,8 @@ vite 单端口 3020：`vite.config.ts` 的 `honoApiPlugin` 把 `src/server/dev.t
 - **插件**：项目 `.c0de/plugins/` 目录（项目未信任或指纹漂移时不加载，与聊天门禁同口径）。12 个生命周期钩子定义在 `src/plugins/types.ts` 的 `HookMap`（`agent:start/end`、`tool:before/after`、`provider:before/after`、`message:before/after`、`session:create/fork/compact`、`config:resolve`）；`:before` 是可改写/可中止的链、`:after` 是广播。
 - **MCP 服务器**：配置键 `mcpServers`（stdio 或 streamable HTTP/SSE 传输），`src/mcp/tool-adapter.ts` 把远端工具以 `mcp__<server>__<tool>` 命名空间挂进工具注册表；项目作用域的 MCP 仅在项目已信任时连接。
 - **技能（skills）**：`src/core/skills.ts` 发现项目 `.c0de/skills/` 与全局 `<config>/skills/` 下含 `SKILL.md` 的目录，注入 system prompt 的 `## Loaded Skills` 段。
+- **仓库上下文文件**：`src/core/context-files.ts` 发现仓库自带的 AGENTS.md / CLAUDE.md / .cursor(rules) / .windsurf / copilot-instructions / .clinerules（规则见 README「仓库上下文文件」），经 prompt-registry 的 `repo-rules` 分片（priority 105）注入 system prompt；`@import` 递归展开、未闭合围栏补闭合；5s TTL 缓存发现结果。纯文本恒注入，不走信任门禁。
+- **Magic keywords**：`src/core/magic-keywords.ts` 的关键字表是单一事实源（id/word/requires/notice）；匹配 = `stripMarkdownCode` 剥代码 + HTML 剥除 + ASCII 词边界正则（CJK 可贴词）。注入点：Web `routes/chat.ts` 与 CLI/ACP `modes/print.ts`（用户消息 → `buildMagicKeywordNotices` → `injectSteering`，同轮生效）。
 - **提示词分片与覆写**：系统提示词由分片注册表组装（`src/core/prompt-registry.ts`，插件可注册分片）。内置静态分片正文存放在 `src/core/prompts/*.md`（文件名即分片 id），改后跑 `pnpm gen:prompts` 重新内联进 `prompts.generated.ts`。用户覆写层：全局 `<config>/prompts/*.md` 恒生效，项目 `.c0de/prompts/*.md` 仅项目已信任时生效（与插件/工作流门禁同口径）；文件名命中分片 id 即替换正文，否则按字典序追加为新分片，每轮对话重新读取（下一轮即生效）。
 - **子 agent**：`src/core/agents/`（builtin 定义、registry、并行调度 `parallel.ts`）；主循环经 `core/loop/subagent.ts` 派生并收集产出（`outputSchema` 校验复用 `tools/validate.ts`）。
 
@@ -53,16 +55,17 @@ vite 单端口 3020：`vite.config.ts` 的 `honoApiPlugin` 把 `src/server/dev.t
 | 目录 | 职责 | 关键文件 |
 | --- | --- | --- |
 | `cli/` | CLI 入口与命令 | `index.ts` + `parser.ts`（命令解析）、`commands/`（serve/chat/config/trust/sessions/auth 等）、`modes/`（print/acp） |
-| `core/` | 配置与 agent 运行时 | `config.ts`（作用域合并、fail-closed 启用语义）、`loop.ts` + `loop/`（主循环）、`prompt-registry.ts`、`slash.ts`、`workflow.ts` + `workflows/`、`skills.ts`、`tool-exec.ts`、`agent.ts` + `agents/` |
+| `core/` | 配置与 agent 运行时 | `config.ts`（作用域合并、fail-closed 启用语义）、`loop.ts` + `loop/`（主循环）、`prompt-registry.ts`、`context-files.ts`（仓库上下文文件发现/注入）、`magic-keywords.ts`（ultrathink/orchestrate/workflowz）、`slash.ts`、`workflow.ts` + `workflows/`（含内置 `review` 工作流）、`skills.ts`、`tool-exec.ts`、`agent.ts` + `agents/` |
 | `llm/` | LLM provider 抽象 | `provider.ts`（流式接口）、`registry.ts`、`routing.ts`（回退）、`retry.ts`、`protocols/openai-compat.ts`（协议实现）、`schema/`（内部消息/events/options 层）、`model-catalog.ts` + `model-catalog.generated.ts`（生成式价目/上下文窗口目录，未配价目时的成本兜底） |
 | `mcp/` | MCP 客户端 | `client.ts`、`transport.ts`（stdio + streamable HTTP/SSE）、`tool-adapter.ts`（`mcp__<server>__<tool>` 适配进工具注册表） |
 | `server/` | Hono HTTP 服务 | `server.ts`/`app.ts`、`routes/`、`middleware/`、`permission/`（交互式权限）、`terminal/`、`agent-manager.ts`、`auth-manager.ts`、`dev.ts`（vite dev 挂载入口） |
 | `session/` | 会话域 | `session.ts`/`context.ts`/`message.ts`、`compaction.ts`/`archive.ts`、`branch.ts`/`squash.ts`、`snapshot.ts`（序列化）、`trash.ts`（回收站）、`segments.ts`/`usage.ts`（用量） |
 | `project/` | 多项目与信任 | `project.ts`/`detect.ts`/`resolve.ts`、`trust.ts`（风险摘要 + 信任指纹，见 AGENTS.md §9） |
 | `db/` | Drizzle + PGLite | `schema.ts`（唯一 schema 源）、`client.ts`（PGLite client）、`migrate.ts`（启动迁移）、`test-utils.ts`（测试共享实例） |
-| `tools/` | 工具系统 | `registry.ts`/`resolver.ts`、`executor.ts`、`permission.ts`、`builtin/`（内置工具实现）、`hashline/`、`websearch/` |
+| `tools/` | 工具系统 | `registry.ts`/`resolver.ts`、`executor.ts`、`permission.ts`、`builtin/`（内置工具实现，含 `lsp.ts` 的 `lsp`/`lsp_rename`）、`hashline/`、`websearch/` |
 | `plugins/` | 插件系统 | `loader.ts`/`registry.ts`/`lifecycle.ts`/`hooks.ts`（12 个生命周期钩子）、`init.ts`、`builtin/` |
 | `dap/` | Debug Adapter Protocol | `session.ts`、`protocol.ts`、`spawn.ts`（适配器映射：node/python/go/lldb） |
+| `lsp/` | LSP 客户端 | `client.ts`（JSON-RPC stdio + Content-Length 帧、didOpen/didChange 全文同步、push 诊断新鲜度判定）、`servers.ts`（内置服务器默认表 + rootMarkers/二进制解析）、`manager.ts`（按 `name:workspaceRoot` 缓存客户端、idle 回收） |
 | `kanban/` | 看板状态存储 | `store.ts`（列/卡片/回收站软删） |
 | `update/` | 版本检查与热更新 | `scheduler.ts`、`updater.ts`、`snapshot.ts`、`ipc.ts`（新旧实例握手） |
 | `shared/` | 前后端共享 | `types/`（REST DTO）、`utils/`（`errorMessage` 等）、`permissions.ts`、`usage.ts` |
