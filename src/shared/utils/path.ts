@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs'
-import { dirname, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
 /**
  * 各处目录遍历统一跳过的目录名：依赖与构建产物噪音（单一来源，消费方：
@@ -56,4 +56,11 @@ function safeResolve(root: string, requestPath: string): string | null {
   return resolved
 }
 
-export { IGNORED_DIR_NAMES, safeResolve }
+/** 绝对路径按 cwd 展示为相对路径（越界或恰为 cwd 本身时回退绝对路径——
+ *  空 rel 若返回空串会产出 `:12:5` 这类畸形输出）。 */
+function displayPath(absolutePath: string, cwd: string): string {
+  const rel = relative(cwd, absolutePath)
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel) ? rel : absolutePath
+}
+
+export { displayPath, IGNORED_DIR_NAMES, safeResolve }

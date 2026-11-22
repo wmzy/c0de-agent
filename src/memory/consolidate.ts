@@ -13,6 +13,7 @@ import type { Registry } from '../llm/registry.js'
 import { estimateTokens } from '../llm/token.js'
 import type { ChatTool } from '../shared/types/llm.js'
 import { redactSecretText } from '../shared/utils/secret-redact.js'
+import { errorMessage, truncateHead } from '../shared/utils/string.js'
 import {
   callToolRequired,
   type MemoryLlmCall,
@@ -158,11 +159,10 @@ export function consolidationMaxTokens(
   return Math.max(MIN_CONSOLIDATION_MAX_TOKENS, budget)
 }
 
-/** 近似 token 截断（omp 口径：token×4 字符 + 省略号；CJK 下偏保守即安全）。 */
+/** 近似 token 截断（omp 口径：token≈4 字符，省略号计入上限；CJK 下偏保守
+ *  即安全）。切片经共享 truncateHead 收进安全边界，不拆代理对。 */
 export function truncateApproxTokens(text: string, tokenLimit: number): string {
-  const maxChars = Math.max(0, tokenLimit * 4)
-  if (text.length <= maxChars) return text
-  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
+  return truncateHead(text, Math.max(0, tokenLimit * 4), '…')
 }
 
 /** 运行一次整合（到期检查 + 全流程）。返回结构化结果，绝不向调用方抛错——
@@ -394,8 +394,4 @@ async function recordConsolidationError(
     // 原始整合错误比二次写 state 失败更有诊断价值，只留日志。
     logger.warn(`consolidation error state write failed: ${errorMessage(error)}`)
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

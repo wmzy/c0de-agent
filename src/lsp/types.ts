@@ -23,13 +23,6 @@ type LspDiagnostic = {
   source?: string
   message: string
 }
-/** textDocument/publishDiagnostics 的缓存条目。version 为 null 表示服务器
- *  未回显版本（如 typescript-language-server，见 client.ts 采信策略）。 */
-type LspPublishedDiagnostics = {
-  uri: string
-  version: number | null
-  diagnostics: LspDiagnostic[]
-}
 type LspDocumentSymbol = {
   name: string
   detail?: string
@@ -161,7 +154,6 @@ export type {
   LspLocation,
   LspLocationLink,
   LspPosition,
-  LspPublishedDiagnostics,
   LspRange,
   LspReconcileResult,
   LspResourceOperation,

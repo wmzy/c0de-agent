@@ -4,14 +4,14 @@
 // （组装点通常桥 injectSteering，把 note 在下一 turn 边界合入主 agent）。
 //
 // 铁律：advisor 是纯旁路——任何错误只 logger.warn 吞掉，绝不影响主循环；
-// 审查经 inFlight 链串行化（同 sharpshooter 提取：不叠请求、顺序确定），
-// 保证 emission-guard 的 update 计数与 LLM 返回顺序一致。
+// 审查经共享串行 runner（memory/wiring，同 sharpshooter 提取链）串行化
+// （不叠请求、顺序确定），保证 emission-guard 的 update 计数与 LLM 返回顺序一致。
 
 import { getLogger } from '../core/logger.js'
-import { buildRegistryFromConfig } from '../core/provider-registry.js'
 import type { AdvisorRuntime } from '../core/types.js'
 import type { Registry } from '../llm/registry.js'
 import { callToolRequired, type MemoryLlmCall } from '../memory/llm-call.js'
+import { createLazyRegistry, createSerialRunner } from '../memory/wiring.js'
 import type { Config } from '../shared/types/config.js'
 import type { ChatTool } from '../shared/types/llm.js'
 import { errorMessage } from '../shared/utils/string.js'
@@ -129,36 +129,13 @@ export function createAdvisorRuntime(
   const system = advisorSystemPrompt(settings)
   const retainedNotes: AdvisorNote[] = []
 
-  let ownRegistry: Registry | undefined
-  const getRegistry = (): Registry => {
-    if (opts.getRegistry) return opts.getRegistry()
-    // 自建 registry 只建一次：CLI 进程 config 不变，重建无意义。
-    ownRegistry ??= buildRegistryFromConfig(config)
-    return ownRegistry
-  }
-
-  // callToolRequired 的模型选择读 config.memory.sharpshooter.model（sharpshooter
-  // 单发基建的固定回退链），advisor 不能给 llm-call 加第二套模型参数，故在
-  // 仅供审查调用使用的 config 视图上把解析好的 advisor 模型放进该槽位。
-  // 主 config 不受影响（浅拷贝）；memory 管线自己的调用不经过此视图。其余
-  // sharpshooter 字段仅为满足类型形状，填兜底值即可（本视图无其他读者）。
-  const llmConfig: Config = {
-    ...config,
-    memory: {
-      backend: config.memory?.backend ?? 'off',
-      sharpshooter: {
-        intervalMinutes: config.memory?.sharpshooter?.intervalMinutes ?? 5,
-        minPromptLength: config.memory?.sharpshooter?.minPromptLength ?? 16,
-        injectionTokenLimit: config.memory?.sharpshooter?.injectionTokenLimit ?? 15000,
-        maxFileLines: config.memory?.sharpshooter?.maxFileLines ?? 120,
-        model: settings.model,
-      },
-    },
-  }
+  const getRegistry = createLazyRegistry(config, opts.getRegistry)
 
   const llmCall: MemoryLlmCall = opts.llmCall ?? callToolRequired
 
-  let inFlight: Promise<void> | undefined
+  // 审查串行链：同会话连发 turn 不叠请求，顺序确定（保证 emission-guard
+  // 的 update 计数与 LLM 返回顺序一致）。
+  const reviewRunner = createSerialRunner()
   let disposed = false
 
   async function reviewOnce(input: {
@@ -174,11 +151,12 @@ export function createAdvisorRuntime(
     const prompt = `${input.delta}\n\n---\nWorking directory: ${input.cwd}\n${status}`
     const result = await llmCall({
       registry: getRegistry(),
-      config: llmConfig,
+      config,
       system,
       input: prompt,
       tool: ADVISE_TOOL,
       maxTokens: ADVISOR_MAX_TOKENS,
+      model: settings.model,
     })
     // beginUpdate 必须在串行链内（而非 onTurnEnd）：update 计数与预算槽
     // 的推进顺序和 LLM 实际完成顺序一致，冷却/预算才有确定语义。
@@ -205,24 +183,20 @@ export function createAdvisorRuntime(
       try {
         const delta = renderer.render(input.sessionId, input.messages)
         if (!delta) return
-        // 串行化在途审查（同 sharpshooter inFlight 链）：同会话连发 turn 也
-        // 不叠请求；失败只记日志——审查是纯旁路，绝不影响主循环。
-        const run = (inFlight ?? Promise.resolve())
-          .then(() =>
+        // 串行化在途审查（同 sharpshooter 提取链）：失败只记日志——审查是
+        // 纯旁路，绝不影响主循环。
+        reviewRunner.submit(
+          () =>
             reviewOnce({
               sessionId: input.sessionId,
               cwd: input.cwd,
               delta,
               willContinue: input.willContinue,
             }),
-          )
-          .catch((error: unknown) => {
+          (error) => {
             logger.warn(`advisor review failed: ${errorMessage(error)}`)
-          })
-          .then(() => {
-            if (inFlight === run) inFlight = undefined
-          })
-        inFlight = run
+          },
+        )
       } catch (error) {
         logger.warn(`advisor review could not start: ${errorMessage(error)}`)
       }

@@ -1,7 +1,7 @@
 import { createDebugSessionManager, type DebugSpawn } from '../../dap/session.js'
 import type { Breakpoint, DAPConfig, DebugStartInput } from '../../dap/types.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
-import { errorMessage } from '../../shared/utils/string.js'
+import { fail, run } from './tool-result.js'
 
 /**
  * debug_* 工具（spec §21）：暴露调试器能力给 agent。
@@ -14,26 +14,6 @@ import { errorMessage } from '../../shared/utils/string.js'
  * 将其传给后续工具。
  */
 const manager = createDebugSessionManager()
-
-function ok(output: unknown): ToolResult {
-  return {
-    _tag: 'success',
-    output: typeof output === 'string' ? output : JSON.stringify(output, null, 2),
-  }
-}
-
-function fail(message: string): ToolResult {
-  return { _tag: 'error', error: message }
-}
-
-/** debug_* execute 统一骨架：fn 成功 → ok(结果)；异常 → fail(`<label> failed: <msg>`)。 */
-const run = async (label: string, fn: () => Promise<unknown>): Promise<ToolResult> => {
-  try {
-    return ok(await fn())
-  } catch (error) {
-    return fail(`${label} failed: ${errorMessage(error)}`)
-  }
-}
 
 // debug_start — 启动调试会话（权限 ask：启动调试器是重操作）
 const debugStartTool: ToolDef = {

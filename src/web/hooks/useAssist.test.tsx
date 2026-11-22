@@ -165,4 +165,28 @@ describe('useIdleRecap', () => {
     expect(result.current.recap).toBe('r2')
     expect(recap).toHaveBeenCalledWith('s2')
   })
+
+  it('请求在途时开始输入 → 旧结果不回写（世代号作废）', async () => {
+    let resolveRecap: (v: { recap: string; cached: boolean }) => void = () => {}
+    recap.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRecap = resolve
+        }),
+    )
+    const { result, rerender } = renderHook(
+      ({ composerEmpty }: { composerEmpty: boolean }) => useIdleRecap({ ...base, composerEmpty }),
+      { initialProps: { composerEmpty: true } },
+    )
+    advance(60_000)
+    // 请求已发出、尚未 resolve：用户开始输入 → 回顾行清空
+    rerender({ composerEmpty: false })
+    expect(result.current.recap).toBeNull()
+    // 旧请求此刻 resolve：不得把过期回顾写回（此前无世代号守卫会回填非空）
+    await act(async () => {
+      resolveRecap({ recap: '过期回顾', cached: false })
+    })
+    await flush()
+    expect(result.current.recap).toBeNull()
+  })
 })

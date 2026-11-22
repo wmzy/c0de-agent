@@ -8,8 +8,8 @@
 // registry 装配（把本工厂产物注册进默认 registry）由宿主完成，本文件不改
 // resolvers.ts。
 import type { URLResolver } from '../../shared/types/tool.js'
+import { displayPath } from '../../shared/utils/path.js'
 import {
-  displayPath,
   type ParsedConflictUri,
   parseConflictUri,
   renderConflictRegion,

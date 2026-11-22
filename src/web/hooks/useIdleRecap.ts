@@ -27,8 +27,13 @@ export function useIdleRecap(options: UseIdleRecapOptions) {
   /** 已触发过回顾的会话：同一会话只触发一次（新消息由服务端锚点判定，但前端
    *  不再主动重复请求——刷新/重进时才重新拉取一次缓存）。 */
   const triggeredForRef = useRef<string | null>(null)
+  /** 世代号（照 usePromptPrediction 的 dismissedGen 口径）：effect 依赖变化
+   *  （开始输入/恢复流式/切会话）即作废在途 recap 的结果——旧请求 resolve 后
+   *  不得回写已被 setRecap(null) 清掉的回顾行。 */
+  const genRef = useRef(0)
 
   useEffect(() => {
+    const gen = ++genRef.current
     const active = !!sessionId && enabled && hasMessages && !isStreaming && composerEmpty
     if (!active) {
       setRecap(null)
@@ -39,7 +44,10 @@ export function useIdleRecap(options: UseIdleRecapOptions) {
       triggeredForRef.current = sessionId ?? null
       assistAPI
         .recap(sessionId as string)
-        .then((res) => setRecap(res.recap))
+        .then((res) => {
+          if (gen !== genRef.current) return
+          setRecap(res.recap)
+        })
         .catch(() => {
           // 回顾失败静默；本会话不再重试（避免反复计费）。
         })

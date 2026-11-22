@@ -10,6 +10,19 @@ import { workflowsAPI } from '@/services/workflows.js'
 import { Chat } from '@/views/Chat.js'
 import { ChatHistoryError, ChatWelcome, EXAMPLE_TASKS } from '@/views/ChatView.js'
 
+// bb6c9ce 起 Chat 直接读 useConfig（assist 开关）；mock 成「config 未到达」
+//（assist 全关），与各用例不依赖配置语义一致，也避免真实配置查询。
+vi.mock('@/contexts/ConfigContext.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useConfig: () => ({
+    config: null,
+    loading: false,
+    warnings: [],
+    scopes: { global: null, project: null },
+    refresh: () => Promise.resolve(),
+  }),
+}))
+
 // Composer 内部 useCommands 会请求 /api/commands；mock 掉避免真实网络调用。
 vi.mock('@/services/commands.js', () => ({
   commandsAPI: { list: vi.fn().mockResolvedValue({ commands: [] }) },

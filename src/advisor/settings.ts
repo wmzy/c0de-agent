@@ -5,6 +5,7 @@
 // （只写 advisor.enabled）都会产生缺字段/非法值——advisor 是 fire-and-forget
 // 后台管线，NaN 传播会变成静默失效，这里集中兜底/clamp。
 
+import { resolveModelOverride } from '../memory/llm-call.js'
 import type { AdvisorConfig, Config } from '../shared/types/config.js'
 import {
   ADVISOR_DEFAULT_BUDGET_PER_UPDATE,
@@ -31,17 +32,12 @@ export function resolveAdvisorSettings(
   config: Pick<Config, 'advisor' | 'defaultProvider' | 'defaultModel'>,
 ): AdvisorSettings {
   const raw = config?.advisor as Partial<AdvisorConfig> | undefined
-  const model =
-    raw?.model &&
-    typeof raw.model.provider === 'string' &&
-    typeof raw.model.model === 'string' &&
-    raw.model.provider !== '' &&
-    raw.model.model !== ''
-      ? { provider: raw.model.provider, model: raw.model.model }
-      : undefined
   return {
     enabled: raw?.enabled === true,
-    model: model ?? { provider: config.defaultProvider, model: config.defaultModel },
+    model: resolveModelOverride(raw?.model) ?? {
+      provider: config.defaultProvider,
+      model: config.defaultModel,
+    },
     maxNotesPerUpdate: intIn(
       raw?.maxNotesPerUpdate,
       1,

@@ -19,7 +19,7 @@ import {
   normalizePaste,
   pasteMode,
 } from '@/composer/paste.js'
-import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
+import type { ComposerSendPayload, ImagePart, Prompt, TextPart } from '@/composer/types.js'
 import {
   atTokenRange,
   clonePromptParts,
@@ -90,6 +90,13 @@ function detectSubcommand(
   const cmd = commands?.find((c) => c.name === m[1])
   if (!cmd?.subcommands?.length) return null
   return { cmd: m[1] ?? '', query: m[2] ?? '' }
+}
+
+/** 覆盖全文的 text part（start:0 / end:content.length）：token 替换与 pill 分隔
+ *  空格等「整段即全文」的构造共用。带真实偏移量的 part（如 insertPromptText 的
+ *  换行前缀）不在此列，保持手写。 */
+function textPart(content: string): TextPart {
+  return { type: 'text', content, start: 0, end: content.length }
 }
 
 /** 校验待添加图片；违规返回错误信息（null=通过）。 */
@@ -394,21 +401,28 @@ function useComposer({
     [setPromptExternal, subcommandCmd],
   )
 
-  /** 光标前 @token 的原位替换骨架（insertFile / insertAgentToken 共用）：定位
-   *  atTokenRange → 光标前没有 @token（浮层开着时光标被移走）⇒ 无范围可替换，
+  /** 光标前 @token 的原位替换骨架（insertFile / insertAgentToken / insertAtDirectory
+   *  共用）：定位 atTokenRange → 光标前没有 @token（浮层开着时光标被移走）⇒ 无范围可替换，
    *  返回 false → 否则 replacePromptRange 原位替换 + 关浮层 + 聚焦。pill/text
-   *  token 的构造（各自语义）留在各回调。
+   *  token 的构造（各自语义）留在各回调。reopenAtQuery 给定时不关浮层，改保持
+   *  at 态并把 query 切到该前缀（目录链式下钻续开补全）。
    *  原位替换的动机：此前从 promptToText 平铺文本重建整个 prompt——既有
    *  file/snippet/terminal pill 被降级为纯文本（发送时 files 附件丢失）。 */
   const replaceAtToken = useCallback(
-    (part: Prompt[number]): boolean => {
+    (part: Prompt[number], options?: { reopenAtQuery?: string }): boolean => {
       const prompt = promptRef.current
       if (!editorRef.current) return false
       const cursor = currentCursor(editorRef.current)
       const range = atTokenRange(promptToText(prompt), cursor)
       if (!range) return false
       setPromptExternal(replacePromptRange(prompt, range.start, range.end, [part]), true)
-      setPopover(null)
+      const reopenAtQuery = options?.reopenAtQuery
+      if (reopenAtQuery !== undefined) {
+        setPopover('at')
+        setPopoverQuery(reopenAtQuery)
+      } else {
+        setPopover(null)
+      }
       editorRef.current.focus()
       return true
     },
@@ -431,25 +445,8 @@ function useComposer({
    * 替换失败（光标已不在 @token 上）返回 false，走浮层失活的兜底路径。
    */
   const insertAtDirectory = useCallback(
-    (path: string): boolean => {
-      const prompt = promptRef.current
-      if (!editorRef.current) return false
-      const cursor = currentCursor(editorRef.current)
-      const range = atTokenRange(promptToText(prompt), cursor)
-      if (!range) return false
-      const token = `@${path}/`
-      setPromptExternal(
-        replacePromptRange(prompt, range.start, range.end, [
-          { type: 'text', content: token, start: 0, end: token.length },
-        ]),
-        true,
-      )
-      setPopover('at')
-      setPopoverQuery(`${path}/`)
-      editorRef.current.focus()
-      return true
-    },
-    [setPromptExternal],
+    (path: string): boolean => replaceAtToken(textPart(`@${path}/`), { reopenAtQuery: `${path}/` }),
+    [replaceAtToken],
   )
 
   // 选中 @agent：把光标前的 @query token 原位替换为 `@name ` 文本（骨架见
@@ -457,10 +454,7 @@ function useComposer({
   // insertFile 平行——hook 的 insert* 家族统一演进（如补 dismissedPopover
   // 口径）时组件层这份必漏，收敛进 hook 与家族并列。
   const insertAgentToken = useCallback(
-    (name: string) => {
-      const token = `@${name} `
-      return replaceAtToken({ type: 'text', content: token, start: 0, end: token.length })
-    },
+    (name: string) => replaceAtToken(textPart(`@${name} `)),
     [replaceAtToken],
   )
 
@@ -474,10 +468,10 @@ function useComposer({
       const parts = clonePromptParts(prompt)
       const text = promptToText(prompt)
       if (text.length > 0 && !text.endsWith(' ')) {
-        parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
+        parts.push(textPart(' '))
       }
       parts.push(pill)
-      parts.push({ type: 'text', content: ' ', start: 0, end: 1 })
+      parts.push(textPart(' '))
       setPromptExternal(parts, true)
       editorRef.current?.focus()
     },

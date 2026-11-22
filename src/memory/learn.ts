@@ -11,6 +11,7 @@ import { dirname } from 'node:path'
 import { getLogger } from '../core/logger.js'
 import type { ToolDef } from '../shared/types/tool.js'
 import { redactSecretText } from '../shared/utils/secret-redact.js'
+import { errorMessage, headChars } from '../shared/utils/string.js'
 import type { SharpshooterBackend } from './backend.js'
 import { acquireBankLock, memoryFilePath } from './storage.js'
 
@@ -107,8 +108,11 @@ export function mergeLearned(
   return { entries: [entry, ...kept].slice(0, maxEntries), added: true }
 }
 
+/** 截断到 limit 内 + 省略号：共享 truncateHead 的本地薄壳变体——切头先
+ *  trimEnd（learned 条目单行不变式下不让尾随空白挤在省略号前）；切片经
+ *  headChars 内收，不拆代理对。 */
 function truncateWithEllipsis(text: string, limit: number): string {
-  return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1)).trimEnd()}…`
+  return text.length <= limit ? text : `${headChars(text, Math.max(0, limit - 1)).trimEnd()}…`
 }
 
 /** 读取 learned.md 并在读取侧再洗一遍（neutralize + redact）。 */
@@ -194,7 +198,7 @@ export function createLearnTool(backend: SharpshooterBackend): ToolDef {
           output: `Recorded. learned memory now holds ${result.total} entries.`,
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorMessage(error)
         logger.warn(`learn tool failed: ${message}`)
         return { _tag: 'error', error: message }
       }

@@ -6,7 +6,7 @@
 // UTF-16，行切分后 char 索引直用。symbol 匹配规则见 parseSymbolSpec/resolveSymbolPosition。
 
 import { readFile, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { loadConfig } from '../../core/config.js'
 import { normalizeLocations } from '../../lsp/client.js'
 import { defaultLspManager } from '../../lsp/manager.js'
@@ -26,28 +26,11 @@ import type {
   LspWorkspaceEdit,
 } from '../../lsp/types.js'
 import { extensionOf, uriToPath } from '../../lsp/types.js'
+import { sleep } from '../../shared/timer.js'
 import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
+import { displayPath } from '../../shared/utils/path.js'
 import { errorMessage } from '../../shared/utils/string.js'
-
-function ok(output: unknown): ToolResult {
-  return {
-    _tag: 'success',
-    output: typeof output === 'string' ? output : JSON.stringify(output, null, 2),
-  }
-}
-
-function fail(message: string): ToolResult {
-  return { _tag: 'error', error: message }
-}
-
-/** execute 统一骨架：fn 成功 → ok(结果)；异常 → fail(`<label> failed: <msg>`)。 */
-const run = async (label: string, fn: () => Promise<unknown>): Promise<ToolResult> => {
-  try {
-    return ok(await fn())
-  } catch (error) {
-    return fail(`${label} failed: ${errorMessage(error)}`)
-  }
-}
+import { fail, run } from './tool-result.js'
 
 // ── 常量 ──
 
@@ -109,8 +92,6 @@ const SYMBOL_KIND_NAMES: Record<number, string> = {
   25: 'Operator',
   26: 'TypeParameter',
 }
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** timeout 秒 → 毫秒，clamp 到 [5,120]；缺省 30。 */
 function clampTimeoutMs(timeout: unknown): number {
@@ -196,11 +177,6 @@ async function resolveSymbolPosition(
 }
 
 // ── 输出格式化 ──
-
-function displayPath(absPath: string, cwd: string): string {
-  const rel = relative(cwd, absPath)
-  return rel.startsWith('..') || isAbsolute(rel) ? absPath : rel
-}
 
 /** ±1 行上下文（`    N | text`）；文件不可读返回 []（如已删除的定义位置）。 */
 async function contextLines(absPath: string, line0: number): Promise<string[]> {

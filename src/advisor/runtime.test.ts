@@ -48,6 +48,7 @@ function advisorConfig(advisor: Partial<NonNullable<Config['advisor']>> = {}): C
 interface CapturedCall {
   input: string
   config: MemoryLlmConfig
+  model: { provider: string; model: string } | undefined
 }
 
 const EMPTY_RESULT: MemoryToolCallResult = { toolCalls: [], finishReason: 'stop' }
@@ -57,7 +58,7 @@ function llmQueue(results: (MemoryToolCallResult | Error)[]) {
   const calls: CapturedCall[] = []
   let index = 0
   const llmCall: MemoryLlmCall = async (opts) => {
-    calls.push({ input: opts.input, config: opts.config })
+    calls.push({ input: opts.input, config: opts.config, model: opts.model })
     const result =
       index < results.length ? (results[index] as MemoryToolCallResult | Error) : undefined
     index += 1
@@ -240,7 +241,7 @@ describe('createAdvisorRuntime', () => {
     ])
   })
 
-  it('advisor.model 覆盖进入 LLM 调用的模型槽位；未设置回退默认模型', async () => {
+  it('advisor.model 覆盖进入 LLM 调用的 model 参数；未设置回退默认模型', async () => {
     const { llmCall, calls } = llmQueue([adviseResult([])])
     const runtime = createAdvisorRuntime(
       advisorConfig({ model: { provider: 'reviewer', model: 'strong-model' } }),
@@ -248,19 +249,15 @@ describe('createAdvisorRuntime', () => {
     )
     runtime.onTurnEnd({ sessionId: 's1', cwd: '/r', messages: [msg('x')], willContinue: false })
     await settle()
-    expect(calls[0]?.config.memory?.sharpshooter?.model).toEqual({
-      provider: 'reviewer',
-      model: 'strong-model',
-    })
+    expect(calls[0]?.model).toEqual({ provider: 'reviewer', model: 'strong-model' })
+    // config 原样透传：不再伪造 memory.sharpshooter 视图。
+    expect(calls[0]?.config.memory).toBeUndefined()
 
     const { llmCall: llm2, calls: calls2 } = llmQueue([adviseResult([])])
     const runtime2 = createAdvisorRuntime(advisorConfig(), { onNote: () => {}, llmCall: llm2 })
     runtime2.onTurnEnd({ sessionId: 's1', cwd: '/r', messages: [msg('y')], willContinue: false })
     await settle()
-    expect(calls2[0]?.config.memory?.sharpshooter?.model).toEqual({
-      provider: 'test',
-      model: 'main-model',
-    })
+    expect(calls2[0]?.model).toEqual({ provider: 'test', model: 'main-model' })
   })
 
   it('dispose 后不再接受新审查；getNotes 返回副本', async () => {

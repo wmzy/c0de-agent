@@ -14,10 +14,26 @@ export type MemoryLlmConfig = Pick<
   'providers' | 'fallback' | 'memory' | 'defaultProvider' | 'defaultModel'
 >
 
-/** 模型选择：memory.sharpshooter.model 覆盖，否则回退 defaultProvider/defaultModel。 */
+/** 模型覆写解析（单源）：raw 形如 { provider, model } 且两者均为非空字符串
+ *  才算有效覆写，否则返回 undefined（回退策略由调用方组合——advisor 回退
+ *  defaultProvider/defaultModel，memory settings 保持未设置键）。空串/半配置
+ *  一律视为未设置：此前 advisor 拒空串、memory settings 不拒、llm-call 无
+ *  校验直接透传，三处口径漂移，统一收敛到本函数。 */
+export function resolveModelOverride(
+  raw: unknown,
+): { provider: string; model: string } | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const candidate = raw as { provider?: unknown; model?: unknown }
+  if (typeof candidate.provider !== 'string' || candidate.provider === '') return undefined
+  if (typeof candidate.model !== 'string' || candidate.model === '') return undefined
+  return { provider: candidate.provider, model: candidate.model }
+}
+
+/** 模型选择：memory.sharpshooter.model 覆写（经 resolveModelOverride 校验），
+ *  否则回退 defaultProvider/defaultModel。 */
 export function resolveMemoryModel(config: MemoryLlmConfig): { provider: string; model: string } {
   return (
-    config.memory?.sharpshooter?.model ?? {
+    resolveModelOverride(config.memory?.sharpshooter?.model) ?? {
       provider: config.defaultProvider,
       model: config.defaultModel,
     }
@@ -35,7 +51,9 @@ export interface MemoryToolCallResult {
   finishReason?: FinishReason
 }
 
-/** 单发「必须工具调用」的 LLM 请求；流中 error chunk 直接抛（管线无静默降级）。 */
+/** 单发「必须工具调用」的 LLM 请求；流中 error chunk 直接抛（管线无静默降级）。
+ *  model 显式指定时优先（advisor 审查模型与 memory 覆写解耦），否则按
+ *  memory.sharpshooter.model → default 解析。 */
 export async function callToolRequired(opts: {
   registry: Registry
   config: MemoryLlmConfig
@@ -44,8 +62,9 @@ export async function callToolRequired(opts: {
   tool: ChatTool
   maxTokens: number
   signal?: AbortSignal
+  model?: { provider: string; model: string }
 }): Promise<MemoryToolCallResult> {
-  const { provider, model } = resolveMemoryModel(opts.config)
+  const { provider, model } = opts.model ?? resolveMemoryModel(opts.config)
   const request: ChatRequest = {
     model,
     system: opts.system,

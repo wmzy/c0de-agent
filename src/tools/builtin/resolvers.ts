@@ -14,16 +14,10 @@ import { resolveGlobalConfigDir } from '../../core/config.js'
 import type { DB } from '../../db/client.js'
 import type { URLRegistry, URLResolver } from '../../shared/types/tool.js'
 import { createURLRegistry, registerURLResolver } from '../resolver.js'
-import { createAgentResolver } from './agent-resolver.js'
+import { createAgentResolver, stripScheme } from './agent-resolver.js'
 import { createConflictResolver } from './conflict-resolver.js'
 import { createGhResolver } from './gh-resolver.js'
 import { resolveToolPath } from './paths.js'
-
-/** 从 `scheme://rest` 中取出 rest（scheme 已校验过，直接切首个 `://`）。 */
-function stripScheme(url: string): string {
-  const idx = url.indexOf('://')
-  return idx < 0 ? url : url.slice(idx + 3)
-}
 
 /** 读文件，读不到抛错（由 resolveURL 包装成 error result）。 */
 async function readOrFail(path: string): Promise<string> {

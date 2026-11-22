@@ -10,9 +10,9 @@ import * as fs from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveGlobalConfigDir } from '../core/config.js'
 import { getLogger } from '../core/logger.js'
-import { buildRegistryFromConfig } from '../core/provider-registry.js'
 import type { Registry } from '../llm/registry.js'
 import type { Config } from '../shared/types/config.js'
+import { errorMessage } from '../shared/utils/string.js'
 import {
   type ConsolidationResult,
   nextConsolidationAt,
@@ -30,6 +30,7 @@ import type { MemoryLlmCall } from './llm-call.js'
 import { resolveMemorySettings } from './settings.js'
 import { memoryFilePath, projectBankSegment, queueDepth, readState } from './storage.js'
 import type { SharpshooterMemoryFile } from './types.js'
+import { createLazyRegistry, createSerialRunner } from './wiring.js'
 
 const logger = getLogger('memory.backend')
 
@@ -92,13 +93,7 @@ export function createSharpshooterBackend(
   const settings = resolveMemorySettings(config)
   // config 即 MemoryLlmConfig 超集（providers/fallback/memory/default* 都在）。
   const llmConfig = config
-  let ownRegistry: Registry | undefined
-  const getRegistry = (): Registry => {
-    if (opts.getRegistry) return opts.getRegistry()
-    // 自建 registry 只建一次：CLI 进程 config 不变，重建无意义。
-    ownRegistry ??= buildRegistryFromConfig(config)
-    return ownRegistry
-  }
+  const getRegistry = createLazyRegistry(config, opts.getRegistry)
 
   // per-bank 注入缓存：本进程内 delta 追加/整合应用/learn 写入即失效；跨进程
   // 写（CLI 写、server 读）由整合应用路径兜底——server 自己的整合会触发失效
@@ -176,7 +171,8 @@ export function createSharpshooterBackend(
     return consolidate(cwd, false)
   }
 
-  let inFlight: Promise<void> | undefined
+  // 提取串行链：同会话连发 prompt 不叠请求（flush 供短命进程退出前等待）。
+  const extractionRunner = createSerialRunner()
 
   return {
     memoriesRoot,
@@ -197,8 +193,8 @@ export function createSharpshooterBackend(
         activeCwds.add(cwd)
         // 串行化在途提取（同会话连发 prompt 时不叠请求）；失败只记日志——
         // 提取是 best-effort 管线，绝不影响主对话路径。
-        const run = (inFlight ?? Promise.resolve())
-          .then(() =>
+        extractionRunner.submit(
+          () =>
             runExtraction({
               registry: getRegistry(),
               config: llmConfig,
@@ -209,34 +205,15 @@ export function createSharpshooterBackend(
               ...(opts.llmCall ? { llmCall: opts.llmCall } : {}),
               onDelta: () => markDirty(cwd),
             }),
-          )
-          .catch((error: unknown) => {
-            logger.debug(`sharpshooter extraction failed: ${errorText(error)}`)
-          })
-          .then(() => {
-            if (inFlight === run) inFlight = undefined
-          })
-        inFlight = run
+          (error) => {
+            logger.debug(`sharpshooter extraction failed: ${errorMessage(error)}`)
+          },
+        )
       } catch (error) {
-        logger.debug(`sharpshooter extraction could not start: ${errorText(error)}`)
+        logger.debug(`sharpshooter extraction could not start: ${errorMessage(error)}`)
       }
     },
-    async flushExtraction(timeoutMs = 5000) {
-      const pending = inFlight
-      if (!pending) return
-      // 有界等待：settled 后清 timer，避免定时器把短命进程的事件循环挂住。
-      // （不用 Promise.withResolvers：当前 tsconfig lib 目标低于 es2024。）
-      let releaseBound: () => void
-      const bound = new Promise<void>((resolve) => {
-        releaseBound = resolve
-      })
-      const timer = setTimeout(() => releaseBound(), Math.max(0, timeoutMs))
-      try {
-        await Promise.race([pending, bound])
-      } finally {
-        clearTimeout(timer)
-      }
-    },
+    flushExtraction: (timeoutMs) => extractionRunner.flush(timeoutMs),
     runConsolidationNow: (cwd) => consolidate(cwd, true),
     consolidateIfDue,
     async schedulerTick() {
@@ -244,7 +221,7 @@ export function createSharpshooterBackend(
         try {
           await consolidateIfDue(cwd)
         } catch (error) {
-          logger.debug(`scheduler tick failed for ${cwd}: ${errorText(error)}`)
+          logger.debug(`scheduler tick failed for ${cwd}: ${errorMessage(error)}`)
         }
       }
     },
@@ -254,10 +231,6 @@ export function createSharpshooterBackend(
       return result
     },
   }
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** 调度器：60s tick 调 backend.schedulerTick（活跃 cwd 的到期整合）。

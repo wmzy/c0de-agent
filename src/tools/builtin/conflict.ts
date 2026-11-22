@@ -20,7 +20,7 @@
 // 不移植（c0de 无对应物）：TUI hashline 展示、LSP writethrough、edit 快照、
 // 边界回声修剪（boundary-echo repair）。
 import { readFile, writeFile } from 'node:fs/promises'
-import { isAbsolute, relative } from 'node:path'
+import { displayPath } from '../../shared/utils/path.js'
 import { errorMessage } from '../../shared/utils/string.js'
 
 const OURS_PREFIX = '<<<<<<<'
@@ -567,12 +567,6 @@ function spliceConflict(
 interface ConflictWriteContext {
   cwd: string
   sessionId: string
-}
-
-/** 绝对路径按 cwd 展示为相对路径（越界回退绝对路径）。 */
-export function displayPath(absolutePath: string, cwd: string): string {
-  const rel = relative(cwd, absolutePath)
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel) ? rel : absolutePath
 }
 
 /**

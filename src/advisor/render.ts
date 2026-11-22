@@ -12,6 +12,7 @@
 
 import type { Message, MessageContent } from '../shared/types/message.js'
 import { redactSecretText } from '../shared/utils/secret-redact.js'
+import { headChars } from '../shared/utils/string.js'
 
 /** 常规文本 part 的渲染上限（字符）。审查只需要「发生了什么」，不是全文。 */
 const MAX_TEXT_CHARS = 4000
@@ -23,8 +24,13 @@ const MAX_TOOL_SNIPPET_CHARS = 200
  *  后果只是受影响会话的下一趟把全量消息重看一遍（一次性、有界）。 */
 const MAX_TRACKED_SESSIONS = 512
 
+/** 截断标记后缀。 */
+const TRUNCATED_SUFFIX = '…[truncated]'
+
+/** 截断 + 标记后缀：共享 truncateHead 的本地薄壳变体——后缀不计入上限
+ *  （truncateHead 把省略号计入上限），切片经 headChars 内收不拆代理对。 */
 function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}…[truncated]`
+  return text.length <= max ? text : `${headChars(text, max)}${TRUNCATED_SUFFIX}`
 }
 
 /** 结果首行：工具输出动辄百行，advisor 只需要首行结论。 */

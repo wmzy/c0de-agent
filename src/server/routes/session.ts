@@ -9,6 +9,7 @@ import {
   sanitizeRecap,
 } from '../../core/assist.js'
 import { createSummarizerWithFallback } from '../../core/compact.js'
+import type { Config } from '../../core/config.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
 import {
@@ -51,7 +52,9 @@ import {
   softDeleteSession,
   touchTrashSeen,
 } from '../../session/trash.js'
+import type { Summarizer } from '../../session/types.js'
 import { generateId } from '../../shared/index.js'
+import type { Session } from '../../shared/types/message.js'
 import { errorMessage } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import { uuidParamGuard } from '../middleware/uuid-param.js'
@@ -63,6 +66,7 @@ import {
   getLiveSessionOr404,
   guardSessionNotBusy,
   guardSessionNotStarting,
+  hasBusySession,
   resolveAgentCwd,
   workflowRunIdFor,
 } from './chat.js'
@@ -556,20 +560,17 @@ function createSessionRoute(ctx: ServerContext): Hono {
     return c.json(persisted)
   })
 
-  // 手动触发会话压缩（段切换确认弹窗「顺便压缩」调用）。用末段的 provider/model 构建摘要器。
-  // P1 多项目：keepRecentTokens 按会话项目配置解析（此前用启动目录配置）。
-  app.post('/:id/compact', async (c) => {
-    const id = c.req.param('id')
-    // P2-5 修复：守卫收敛 busy 守卫（与斜杠 /compact、REST fork 同口径）——
-    // 此前只查 get()，漏 tryAcquire→register 占位窗口与工作流运行期两态。
-    const busy = guardSessionNotBusy(ctx, c, id, '压缩')
-    if (busy) return busy
-    // 历史口径：压缩不拒绝回收站会话（requireLive: false 显式声明）。
-    const live = await getLiveSessionOr404(ctx, c, id, { requireLive: false })
-    if (!live.ok) return live.response
-    const session = live.session
-    // 会话级配置/注册表按会话 cwd 解析（cwd 解析失败不阻塞压缩：回退服务级
-    // 配置，压缩优于报错）。绑定项目的会话按 projectId 复用项目级注册表缓存。
+  /** 会话级 summarizer 组装骨架（POST /:id/compact 与 assist side-turn 此前
+   *  两处逐字同构，收敛为单点）：会话级配置/注册表按会话 cwd 解析（cwd 解析
+   *  失败回退服务级配置——压缩/辅助优于报错），绑定项目的会话按 projectId
+   *  复用项目级注册表缓存；provider/model 取会话最后一段 LLM 调用，无分段时
+   *  回退会话级默认值。返回 sessionConfig 供调用方读会话级参数（compact 的
+   *  keepRecentTokens）。files.ts git-commit 是变体（commitModel 优先级不同），
+   *  刻意不并入。 */
+  const resolveSessionSummarizer = async (
+    session: Session,
+    opts?: { maxTokens?: number; signal?: AbortSignal },
+  ): Promise<{ summarizer: Summarizer; sessionConfig: Config }> => {
     let sessionConfig = ctx.config
     let sessionRegistry = ctx.llmRegistry
     try {
@@ -582,21 +583,37 @@ function createSessionRoute(ctx: ServerContext): Hono {
       sessionConfig = resolved.config
       sessionRegistry = resolved.registry
     } catch {
-      // cwd 解析失败不阻塞压缩：回退服务级配置（压缩优于报错）
+      // cwd 解析失败不阻塞：回退服务级配置（压缩/辅助优于报错）
     }
-    const segs = await getLLMSegments(ctx.db, id)
+    const segs = await getLLMSegments(ctx.db, session.id)
     const lastSeg = segs[segs.length - 1]
     const provider = lastSeg?.provider ?? sessionConfig.defaultProvider
     const model = lastSeg?.model ?? sessionConfig.defaultModel
+    // createSummarizer + fallback 接线收敛在 createSummarizerWithFallback
+    //（opts 透传 assist 的 maxTokens/signal，compact 不传）。
+    const summarizer = createSummarizerWithFallback(
+      sessionRegistry,
+      sessionConfig,
+      provider,
+      model,
+      opts,
+    )
+    return { summarizer, sessionConfig }
+  }
+
+  // 手动触发会话压缩（段切换确认弹窗「顺便压缩」调用）。用末段的 provider/model 构建摘要器。
+  // P1 多项目：keepRecentTokens 按会话项目配置解析（此前用启动目录配置）。
+  app.post('/:id/compact', async (c) => {
+    const id = c.req.param('id')
+    // P2-5 修复：守卫收敛 busy 守卫（与斜杠 /compact、REST fork 同口径）——
+    // 此前只查 get()，漏 tryAcquire→register 占位窗口与工作流运行期两态。
+    const busy = guardSessionNotBusy(ctx, c, id, '压缩')
+    if (busy) return busy
+    // 历史口径：压缩不拒绝回收站会话（requireLive: false 显式声明）。
+    const live = await getLiveSessionOr404(ctx, c, id, { requireLive: false })
+    if (!live.ok) return live.response
+    const { summarizer, sessionConfig } = await resolveSessionSummarizer(live.session)
     try {
-      // createSummarizer + buildFallbackChain 组合收敛在 createSummarizerWithFallback
-      //（与 files.ts git-commit 默认模式同一份构造骨架）。
-      const summarizer = createSummarizerWithFallback(
-        sessionRegistry,
-        sessionConfig,
-        provider,
-        model,
-      )
       const result = await compactSession(ctx.db, id, summarizer, {
         keepRecentTokens: sessionConfig.compaction.keepRecentTokens,
       })
@@ -613,6 +630,14 @@ function createSessionRoute(ctx: ServerContext): Hono {
     }
   })
 
+  /** 「lastRun 断言 running/paused 但无活跃 run」判定（GET /:id/status 与 assist
+   *  settled 守卫共用）：此刻 agent 内存态已丢失（服务重启/热更新中断），status
+   *  端点按 interrupted 展示，assist 拒绝 side-turn。busy 判定的另两条件（活跃
+   *  run / 工作流运行期）两处返回形态不同（run status 对象 vs 409 RUN_ACTIVE），
+   *  不强行合并成谓词。 */
+  const isInterruptedLastRun = (status: string | undefined): boolean =>
+    status === 'running' || status === 'paused'
+
   // 获取会话状态：内存有活跃 run → 返回其 status；否则查 DB lastRun。
   // P1 工作流路由：发起会话在 workflowBusyBySession 中时状态取实际 workflow run
   //（此前工作流运行期间状态栏显示 idle）。
@@ -628,10 +653,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const run = ctx.agentManager.get(c.req.param('id'))
     if (run) return c.json(run.state.status)
     const session = await getSession(ctx.db, c.req.param('id'))
-    if (
-      session?.metadata.lastRun?.status === 'running' ||
-      session?.metadata.lastRun?.status === 'paused'
-    ) {
+    if (isInterruptedLastRun(session?.metadata.lastRun?.status)) {
       return c.json({ _tag: 'interrupted' })
     }
     return c.json({ _tag: 'idle' })
@@ -645,28 +667,30 @@ function createSessionRoute(ctx: ServerContext): Hono {
   // 各自检查 config.assist.* 开关（默认关）。
 
   /** assist side-turn 公共前置：未启用/会话不存在/未 settled/无对话时返回
-   *  可直接 return 的 Response；否则返回裁剪好的对话视图。 */
+   *  可直接 return 的 Response；否则返回 live session（runAssistTurn/recap
+   *  复用，不再二次 getSession）与裁剪好的对话视图。settled 守卫与
+   *  GET /:id/status 同口径：活跃 run/工作流运行期走 hasBusySession 单点
+   *  （'starting' 占位历史不拦 assist，维持原口径），lastRun 断态走
+   *  isInterruptedLastRun。 */
   const assistPrereq = async (
     c: Context,
     id: string,
     feature: 'prediction' | 'recap',
   ): Promise<
-    { ok: true; transcript: string; lastMessageId: string } | { ok: false; response: Response }
+    | { ok: true; session: Session; transcript: string; lastMessageId: string }
+    | { ok: false; response: Response }
   > => {
     const assist = ctx.config.assist
     const enabled = feature === 'prediction' ? assist?.predictionEnabled : assist?.recapEnabled
     if (!enabled) return { ok: false, response: apiError(c, 404, 'NOT_FOUND', 'Feature disabled') }
-    if (ctx.agentManager.get(id)) {
-      return { ok: false, response: apiError(c, 409, 'RUN_ACTIVE', 'Session has an active run') }
-    }
-    if (workflowRunIdFor(ctx, id)) {
+    const busy = hasBusySession(ctx, id)
+    if (busy === 'run' || busy === 'workflow') {
       return { ok: false, response: apiError(c, 409, 'RUN_ACTIVE', 'Session has an active run') }
     }
     const live = await getLiveSessionOr404(ctx, c, id)
     if (!live.ok) return { ok: false, response: live.response }
     const { session } = live
-    const runStatus = session.metadata.lastRun?.status
-    if (runStatus === 'running' || runStatus === 'paused') {
+    if (isInterruptedLastRun(session.metadata.lastRun?.status)) {
       return { ok: false, response: apiError(c, 409, 'RUN_ACTIVE', 'Session has an active run') }
     }
     const messages = await getMessages(ctx.db, id)
@@ -675,42 +699,17 @@ function createSessionRoute(ctx: ServerContext): Hono {
     if (!transcript || !last) {
       return { ok: false, response: apiError(c, 409, 'EMPTY_SESSION', 'Session has no messages') }
     }
-    return { ok: true, transcript, lastMessageId: last.id }
+    return { ok: true, session, transcript, lastMessageId: last.id }
   }
 
-  /** assist side-turn 的模型调用（会话级配置/注册表解析 + provider/model 取
-   *  会话最后一段 + 限时，compaction 的 createSummarizerWithFallback 同款骨架）。 */
-  const runAssistTurn = async (id: string, prompt: string): Promise<string> => {
-    const session = await getSession(ctx.db, id)
-    if (!session) throw new Error('Session not found')
-    let sessionConfig = ctx.config
-    let sessionRegistry = ctx.llmRegistry
-    try {
-      const sessionCwd = await resolveAgentCwd(ctx, session)
-      const resolved = resolveSessionScope(ctx, {
-        cwd: sessionCwd,
-        registryKey: session.projectId ?? undefined,
-        buildWithoutKey: true,
-      })
-      sessionConfig = resolved.config
-      sessionRegistry = resolved.registry
-    } catch {
-      // cwd 解析失败回退服务级配置（compaction 同口径）
-    }
-    const segs = await getLLMSegments(ctx.db, id)
-    const lastSeg = segs[segs.length - 1]
-    const provider = lastSeg?.provider ?? sessionConfig.defaultProvider
-    const model = lastSeg?.model ?? sessionConfig.defaultModel
-    const summarizer = createSummarizerWithFallback(
-      sessionRegistry,
-      sessionConfig,
-      provider,
-      model,
-      {
-        maxTokens: ASSIST_MAX_TOKENS,
-        signal: AbortSignal.timeout(ASSIST_DEADLINE_MS),
-      },
-    )
+  /** assist side-turn 的模型调用：summarizer 组装走 resolveSessionSummarizer
+   *  单点（compaction 同款骨架 + 限时）。session 由 assistPrereq 透传——
+   *  此处此前重复 getSession 且 !session 分支不可达（prereq 已守卫过存在性）。 */
+  const runAssistTurn = async (session: Session, prompt: string): Promise<string> => {
+    const { summarizer } = await resolveSessionSummarizer(session, {
+      maxTokens: ASSIST_MAX_TOKENS,
+      signal: AbortSignal.timeout(ASSIST_DEADLINE_MS),
+    })
     return summarizer(prompt)
   }
 
@@ -720,7 +719,7 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const prereq = await assistPrereq(c, id, 'prediction')
     if (!prereq.ok) return prereq.response
     try {
-      const reply = await runAssistTurn(id, buildPredictionPrompt(prereq.transcript))
+      const reply = await runAssistTurn(prereq.session, buildPredictionPrompt(prereq.transcript))
       return c.json({ prediction: sanitizePrediction(reply) })
     } catch {
       // 预测失败静默为 null：ghost 文本是纯增强，不值得打断用户。
@@ -733,14 +732,13 @@ function createSessionRoute(ctx: ServerContext): Hono {
     const id = c.req.param('id')
     const prereq = await assistPrereq(c, id, 'recap')
     if (!prereq.ok) return prereq.response
-    const session = await getSession(ctx.db, id)
-    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
-    const cached = session.metadata.lastRecap
+    // prereq 已带 live session（守卫过存在性），lastRecap 缓存判定不再二次 getSession。
+    const cached = prereq.session.metadata.lastRecap
     if (cached && cached.anchorId === prereq.lastMessageId) {
       return c.json({ recap: cached.text, cached: true })
     }
     try {
-      const reply = await runAssistTurn(id, buildRecapPrompt(prereq.transcript))
+      const reply = await runAssistTurn(prereq.session, buildRecapPrompt(prereq.transcript))
       const recap = sanitizeRecap(reply)
       if (recap) {
         // 缓存写入失败不影响返回（下一次请求重算即可）。

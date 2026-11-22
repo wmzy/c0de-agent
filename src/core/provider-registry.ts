@@ -17,7 +17,10 @@ import {
 } from '../llm/registry.js'
 import type { Config } from '../shared/types/config.js'
 import type { ProviderConfig } from '../shared/types/llm.js'
+import { getLogger } from './logger.js'
 import { decryptSecretSafe } from './secret.js'
+
+const logger = getLogger('core.provider-registry')
 
 /** provider 配置条目的读取侧畸形判定（config 路由告警与 registry 构建共用单源）。
  *  写入侧（applyScopedPatch 的 assertValidProviderList）已显式拒绝畸形条目，这里
@@ -50,7 +53,7 @@ function registerProviderFromConfig(registry: Registry, p: ProviderConfig): void
   if (!name) return
   const apiKey = typeof p.apiKey === 'string' && p.apiKey ? decryptSecretSafe(p.apiKey) : p.apiKey
   if (p.apiKey && apiKey === undefined) {
-    console.warn(
+    logger.warn(
       `provider "${name}" 的 apiKey 无法在本机解密（配置来自其他机器或密文损坏），已跳过注册，请重新设置`,
     )
     return

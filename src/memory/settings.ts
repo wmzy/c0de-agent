@@ -6,6 +6,7 @@
 // 都会变成静默失效。这里集中兜底 + clamp，非法值回退默认。
 
 import type { Config, MemoryConfig } from '../shared/types/config.js'
+import { resolveModelOverride } from './llm-call.js'
 import { SHARPSHOOTER_MAX_FILE_LINES } from './types.js'
 
 export interface SharpshooterSettings {
@@ -39,10 +40,7 @@ function positiveInt(value: unknown, fallback: number): number {
 export function resolveMemorySettings(config: Pick<Config, 'memory'>): MemorySettings {
   const memory = config?.memory as Partial<MemoryConfig> | undefined
   const raw = memory?.sharpshooter as Partial<MemorySettings['sharpshooter']> | undefined
-  const model =
-    raw?.model && typeof raw.model.provider === 'string' && typeof raw.model.model === 'string'
-      ? { provider: raw.model.provider, model: raw.model.model }
-      : undefined
+  const model = resolveModelOverride(raw?.model)
   return {
     backend: memory?.backend === 'sharpshooter' ? 'sharpshooter' : 'off',
     sharpshooter: {
