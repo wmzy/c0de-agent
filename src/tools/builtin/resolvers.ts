@@ -11,8 +11,12 @@
 import { readFile } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
 import { resolveGlobalConfigDir } from '../../core/config.js'
+import type { DB } from '../../db/client.js'
 import type { URLRegistry, URLResolver } from '../../shared/types/tool.js'
 import { createURLRegistry, registerURLResolver } from '../resolver.js'
+import { createAgentResolver } from './agent-resolver.js'
+import { createConflictResolver } from './conflict-resolver.js'
+import { createGhResolver } from './gh-resolver.js'
 import { resolveToolPath } from './paths.js'
 
 /** 从 `scheme://rest` 中取出 rest（scheme 已校验过，直接切首个 `://`）。 */
@@ -92,11 +96,19 @@ function createSkillResolver(opts?: { globalConfigDir?: string }): URLResolver {
   }
 }
 
-/** 内置 URL 解析器注册表：预装 file + skill。 */
-function createDefaultURLRegistry(opts?: { globalConfigDir?: string }): URLRegistry {
+/** 内置 URL 解析器注册表：预装 file + skill + conflict + agent + issue/pr。
+ *  db 供 agent:// 查询子会话产物（PGLite）；省略时 agent:// 不注册。 */
+function createDefaultURLRegistry(opts?: { globalConfigDir?: string; db?: DB }): URLRegistry {
   const reg = createURLRegistry()
   registerURLResolver(reg, createFileResolver())
   registerURLResolver(reg, createSkillResolver(opts))
+  registerURLResolver(reg, createConflictResolver())
+  if (opts?.db) {
+    registerURLResolver(reg, createAgentResolver({ db: opts.db }))
+  }
+  const gh = createGhResolver()
+  registerURLResolver(reg, gh.issueResolver)
+  registerURLResolver(reg, gh.prResolver)
   return reg
 }
 

@@ -14,8 +14,10 @@ import type { WorkflowRegistry } from '../../core/workflows/registry.js'
 import type { WorkflowEntry } from '../../core/workflows/types.js'
 import { createDebugSpawn } from '../../dap/index.js'
 import type { Registry } from '../../llm/registry.js'
+import { resolveCwdProjectTrusted } from '../../project/index.js'
 import { createSession, updateSessionLastRun } from '../../session/session.js'
 import { budgetGateEnabled } from '../../session/usage.js'
+import { createStreamRuleChecker, discoverStreamRules } from '../../stream-rules/index.js'
 import { apiError } from '../middleware/error.js'
 import {
   createStreamPermissionChecker,
@@ -129,7 +131,7 @@ interface RunWorkflowChannelOptions {
  * dispatchSlashCommand 的 commandCtx.deps 是有意为之的**非完整** LoopDeps
  * （列表/查询类命令消费），不经此组装。
  */
-export function buildLoopDeps(
+export async function buildLoopDeps(
   ctx: ServerContext,
   opts: {
     cwd: string
@@ -138,7 +140,12 @@ export function buildLoopDeps(
     permission: LoopDeps['permission']
     chatStream?: LoopDeps['chatStream']
   },
-): LoopDeps {
+): Promise<LoopDeps> {
+  // TTSR 流规则：run 启动时发现一次（项目规则需项目当前可信任——与提示词
+  // 覆写/插件同 fail-closed 口径；信任指纹已含 .c0de/rules 内容 hash）。
+  // 无激活规则时不注入 checker，流收集零开销。
+  const projectTrusted = await resolveCwdProjectTrusted(ctx.db, opts.cwd)
+  const { rules } = discoverStreamRules(opts.cwd, { projectTrusted })
   return {
     db: ctx.db,
     llmRegistry: opts.llmRegistry,
@@ -154,12 +161,32 @@ export function buildLoopDeps(
     skills: discoverSkills(opts.cwd),
     // DAP（spec §21）：Web 宿主注入真实适配器 spawn（与 CLI 同口径）。
     debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
+    // send 工具投递通道：桥接 agentManager.steer（runs 表含子 agent run，
+    // P1 起子 run 已注册——按 sessionId 即可寻址运行中的任意 agent）。
+    steerAgent: (sessionId, message) => {
+      const delivered = ctx.agentManager.steer(sessionId, message)
+      return {
+        delivered,
+        detail: delivered
+          ? 'The target agent consumes it at its next turn boundary.'
+          : 'Target session has no active run (finished, aborted, or never started). Only running agents can receive messages.',
+      }
+    },
     // P3 成本护栏：会话项目配置任一轴动作为 'pause'/'abort' 时启用预算检查。
     // 具体 pause/abort 由 budgetOverageParts 按超支轴配置动作判定（abort >
     // pause），此处仅注入「启用」门禁——修 P1 双轴动作坍缩（此前 pause 分支
     // 优先，金额=abort+token=pause 等混合配置被静默降级为暂停）。
     ...(budgetGateEnabled(opts.config.usage) ? { budgetPause: true } : {}),
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
+    ...(rules.length > 0 ? { streamRuleChecker: createStreamRuleChecker(rules) } : {}),
+    // 跨会话记忆注入：backend 存在时 loop 每轮读取（内部有 per-bank 缓存）。
+    // 先捕获到局部 const——闭包里再读可选属性会得到 Promise|null 联合类型。
+    ...(() => {
+      const memoryBackend = ctx.memoryBackend
+      return memoryBackend
+        ? { loadMemoryContext: (cwd: string) => memoryBackend.loadContext(cwd) }
+        : {}
+    })(),
   }
 }
 
@@ -274,7 +301,7 @@ async function runWorkflowChannel(
         })
 
         // deps 组装收敛在 buildLoopDeps（与主 chat 通道共用同一份字段清单）。
-        const deps = buildLoopDeps(ctx, {
+        const deps = await buildLoopDeps(ctx, {
           cwd,
           llmRegistry: opts.sessionRegistry,
           config: opts.sessionConfig,

@@ -15,6 +15,7 @@ import { generateId } from '../shared/index.js'
 import type { AgentEvent, AgentState, AgentStatus } from '../shared/types/agent.js'
 import type { StreamChunk } from '../shared/types/llm.js'
 import type { Message, Session, SessionMetadata } from '../shared/types/message.js'
+import { createStreamRuleChecker } from '../stream-rules/index.js'
 import { editTool } from '../tools/builtin/edit.js'
 import { createDefaultRegistry, createToolRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
@@ -252,6 +253,72 @@ beforeEach(async () => {
 })
 
 describe('agentLoop', () => {
+  // TTSR 流规则命中（regex 子集）：首轮流输出违规文本 → 丢弃（不持久化
+  // assistant）、发 stream_discarded、注入规则 steering；同点重试后正常完成。
+  // 第二次请求的消息序列里应能找到注入的规则文本（插在最后一条 user 之前）。
+  it('discards and retries the turn when a stream rule matches', async () => {
+    const messages = await getMessages(db, session.id)
+    const state = makeState(session, messages)
+    const seenRequests: Array<{ messages: { role: string; content: string }[] }> = []
+    let call = 0
+    // 形态对齐真实 chatStream（async function*：调用同步返回 AsyncGenerator，
+    // 而非 Promise<AsyncGenerator>）。
+    const streamFn = (
+      _ctx: unknown,
+      request: { messages: { role: string; content: string }[] },
+    ): AsyncGenerator<StreamChunk> => {
+      seenRequests.push(request)
+      const turn = call
+      call += 1
+      async function* gen() {
+        if (turn === 0) {
+          yield { _tag: 'text', text: '用 Box::leak 就行' } as const
+          yield { _tag: 'done' } as const
+        } else {
+          yield { _tag: 'text', text: '改用 Arc<str>。' } as const
+          yield { _tag: 'done' } as const
+        }
+      }
+      return gen()
+    }
+    const deps: LoopDeps = {
+      ...makeMockDeps(db, undefined as unknown as () => AsyncGenerator<StreamChunk>),
+      chatStream: streamFn as unknown as LoopDeps['chatStream'],
+      streamRuleChecker: createStreamRuleChecker([
+        {
+          name: 'box-leak',
+          conditions: [/Box::leak/],
+          scope: 'text',
+          repeatMode: 'always',
+          repeatGap: 1,
+          body: '不要在生产路径使用 Box::leak。',
+          source: 'test',
+        },
+      ]),
+    }
+    const events: AgentEvent[] = []
+    for await (const ev of agentLoop(state, deps)) {
+      events.push(ev)
+    }
+    // 中断事件已发出，且重试轮完成
+    const discard = events.find((e) => e._tag === 'stream_discarded')
+    expect(discard && discard._tag === 'stream_discarded' ? discard.ruleName : null).toBe(
+      'box-leak',
+    )
+    expect(events.some((e) => e._tag === 'done')).toBe(true)
+    expect(call).toBe(2)
+    // 违规输出被丢弃：第二次请求里无违规 assistant 原文（注入的规则指引允许
+    // 含该词——指引本身就要提到它），且含注入的规则文本
+    const second = seenRequests[1]?.messages ?? []
+    expect(second.some((m) => m.content.includes('用 Box::leak 就行'))).toBe(false)
+    expect(
+      second.some((m) => m.role === 'system' && m.content.includes('stream-rule name="box-leak"')),
+    ).toBe(true)
+    // 持久化历史里也没有违规 assistant 文本
+    const final = await getMessages(db, session.id)
+    expect(final.some((m) => JSON.stringify(m.content).includes('用 Box::leak 就行'))).toBe(false)
+  })
+
   it('emits text_delta and done for a simple text response', async () => {
     const messages = await getMessages(db, session.id)
     const state = makeState(session, messages)

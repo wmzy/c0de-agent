@@ -65,6 +65,7 @@ describe('tools index', () => {
       'lsp',
       'lsp_rename',
       'read',
+      'send',
       'task',
       'todo',
       'websearch',

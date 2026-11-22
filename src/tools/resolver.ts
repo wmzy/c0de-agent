@@ -58,4 +58,31 @@ async function resolveURL(
   }
 }
 
-export { createURLRegistry, isURLPath, parseScheme, registerURLResolver, resolveURL }
+export { createURLRegistry, isURLPath, parseScheme, registerURLResolver, resolveURL, writeURL }
+
+/** Write to a `scheme://…` URL via the resolver's write channel.
+ *  Errors for unregistered schemes and resolvers without write support. */
+async function writeURL(
+  registry: URLRegistry,
+  url: string,
+  content: string,
+  ctx: URLResolveContext,
+): Promise<ResolveResult> {
+  const scheme = parseScheme(url)
+  if (scheme === null) {
+    return { _tag: 'error', error: `Not a URL path: ${url}` }
+  }
+  const resolver = registry.resolvers.get(scheme)
+  if (!resolver) {
+    return { _tag: 'error', error: `No resolver registered for scheme "${scheme}://"` }
+  }
+  if (!resolver.write) {
+    return { _tag: 'error', error: `Scheme "${scheme}://" is read-only (no write channel)` }
+  }
+  try {
+    const output = await resolver.write(url, content, ctx)
+    return { _tag: 'ok', content: output }
+  } catch (e) {
+    return { _tag: 'error', error: errorMessage(e) }
+  }
+}

@@ -546,6 +546,7 @@ describe('chat route (SSE)', () => {
       'lsp',
       'lsp_rename',
       'read',
+      'send',
       'task',
       'todo',
       'websearch',

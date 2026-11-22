@@ -97,6 +97,13 @@ function builtinSections(): PromptSection[] {
       render: (c) => renderContextFilesSection(c.contextFiles ?? EMPTY_CONTEXT_FILES),
     },
     {
+      id: 'memory',
+      content: '',
+      priority: 107,
+      condition: (c) => Boolean(c.memoryContext && c.memoryContext.trim() !== ''),
+      render: (c) => c.memoryContext ?? '',
+    },
+    {
       id: 'skills',
       content: '',
       priority: 110,

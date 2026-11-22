@@ -50,7 +50,7 @@ function createServerContext(opts: CreateServerContextOptions): ServerContext {
     config,
     toolRegistry: opts.toolRegistry ?? createDefaultRegistry(config),
     llmRegistry: opts.llmRegistry,
-    urlRegistry: createDefaultURLRegistry(),
+    urlRegistry: createDefaultURLRegistry({ db: opts.db }),
     hookRunner,
     pluginRegistry: createPluginRegistry(hookRunner),
     agentManager: createAgentManager(),

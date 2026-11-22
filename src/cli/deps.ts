@@ -4,9 +4,11 @@ import { buildRegistryFromConfig } from '../core/provider-registry.js'
 import { discoverSkills } from '../core/skills.js'
 import { createDebugSpawn } from '../dap/index.js'
 import type { DB } from '../db/client.js'
+import { createSharpshooterBackend, resolveMemorySettings } from '../memory/index.js'
 import { budgetGateEnabled } from '../session/usage.js'
 import type { Config } from '../shared/types/config.js'
 import type { ToolContext, ToolDef } from '../shared/types/tool.js'
+import { createStreamRuleChecker, discoverStreamRules } from '../stream-rules/index.js'
 import { createDefaultURLRegistry } from '../tools/index.js'
 import { autoAllowChecker } from '../tools/permission.js'
 import type { PermissionChecker, PermissionResult } from '../tools/types.js'
@@ -110,16 +112,18 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
   // 启动序列（registries → 信任门禁 → 插件 → MCP）单一实现在 core/bootstrap.ts。
   // CLI 侧生命周期差异：MCP stdio 子进程已 unref——CLI 进程退出时 stdin 关闭，
   // MCP 服务器自行退出，故不持有 mcpSessions 做关闭清理。
-  const { toolRegistry, llmRegistry, hookRunner, resolvedConfig } = await bootstrapRuntime(
-    opts.cwd,
-    opts.db,
-    { config },
-  )
+  const { toolRegistry, llmRegistry, hookRunner, resolvedConfig, projectTrusted } =
+    await bootstrapRuntime(opts.cwd, opts.db, { config })
+  // sharpshooter 记忆（CLI：短命进程，backend 轻量实例；注入缓存模块级共享）。
+  const memoryBackend =
+    resolveMemorySettings(resolvedConfig).backend === 'sharpshooter'
+      ? createSharpshooterBackend(resolvedConfig)
+      : undefined
   const deps: LoopDeps = {
     db: opts.db,
     llmRegistry,
     toolRegistry,
-    urlRegistry: createDefaultURLRegistry(),
+    urlRegistry: createDefaultURLRegistry({ db: opts.db }),
     hookRunner,
     permission: resolvePermission(resolvedConfig, opts.permissionStrategy, opts.allowTools).checker,
     config: resolvedConfig,
@@ -129,6 +133,16 @@ async function buildAgentDeps(config: Config, opts: BuildDepsOptions): Promise<L
     // DAP（spec §21）：CLI 宿主注入真实适配器 spawn——此前恒报「no debug adapter
     // spawn is wired」。调试会话随进程结束自然消亡（transport 子进程非 unref）。
     debugSpawn: createDebugSpawn() as LoopDeps['debugSpawn'],
+    // TTSR 流规则（与 web buildLoopDeps 同口径：项目规则需项目当前可信任，
+    // 信任判定复用 bootstrapRuntime 的解析；无规则时零开销）。
+    ...(() => {
+      const { rules } = discoverStreamRules(opts.cwd, { projectTrusted })
+      return rules.length > 0 ? { streamRuleChecker: createStreamRuleChecker(rules) } : {}
+    })(),
+    // sharpshooter 记忆注入（CLI：短命进程，backend 轻量实例即可）。
+    ...(memoryBackend
+      ? { loadMemoryContext: (cwd: string) => memoryBackend.loadContext(cwd) }
+      : {}),
     ...(opts.chatStream ? { chatStream: opts.chatStream } : {}),
     // P：预算护栏 CLI 变体——print/acp 无恢复 UI，超支中止 run（产出 error）而非
     // 暂停永久挂起。启用判定与 Web 的 budgetPause 同口径（budgetGateEnabled：

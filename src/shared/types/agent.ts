@@ -142,6 +142,10 @@ type AgentEvent =
       timeoutAction: 'pause' | 'deny'
     }
   | { _tag: 'error'; error: AgentError }
+  /** TTSR 流规则命中：本轮 assistant 输出被丢弃、规则已注入并从同点重试。
+   *  前端须撤回本轮已渲染的 text/thinking 增量（保留 tool 卡片——中断只发生在
+   *  流式文本阶段，本轮尚未执行任何工具）。ruleName 供 UI 展示命中规则。 */
+  | { _tag: 'stream_discarded'; ruleName: string; reason: string }
   /** 通知前端：本轮 LLM 调用详情已持久化，应刷新调用详情面板。轻量通知，不带 payload。 */
   | { _tag: 'llm_detail' }
   /** 工作流执行进度（/workflow run 的 onProgress → SSE progress 事件）：

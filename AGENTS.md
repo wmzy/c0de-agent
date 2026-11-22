@@ -64,7 +64,7 @@ vite 8 不再把 `.env` 合并进 `process.env`（只进 `import.meta.env`）；
 
 ### 9. 项目信任指纹的覆盖面
 
-信任指纹（`computeProjectRiskFingerprint`，`src/project/trust.ts`）= 风险配置键 canonical 行 + MCP 服务器全参数（name+command+args+transport+url）+ `.c0de/plugins` 目录全部文件内容 hash + `.c0de/workflows` 目录文件内容 hash（后两者防「同名改代码/改 args」绕过复检）。任何新增「仓库自带可执行内容」的机制都必须纳入指纹口径，否则信任边界出现静默缺口。
+信任指纹（`computeProjectRiskFingerprint`，`src/project/trust.ts`）= 风险配置键 canonical 行 + MCP 服务器全参数（name+command+args+transport+url）+ `.c0de/plugins` 目录全部文件内容 hash + `.c0de/workflows` 目录文件内容 hash + `.c0de/rules` 流规则文件内容 hash（后三者防「同名改代码/改 args/改规则条件」绕过复检）。任何新增「仓库自带可执行内容」的机制都必须纳入指纹口径，否则信任边界出现静默缺口。
 
 ### 10. TS 源码一律 .js 后缀 ESM 导入
 

@@ -294,6 +294,23 @@ export function reduceChatEvent(state: ChatState, event: AgentEvent): ChatState 
     }
     case 'usage':
       return { ...state, usage: { input: event.input, output: event.output } }
+    case 'stream_discarded': {
+      // TTSR 流规则命中：服务端已丢弃本轮输出并从同点重试。撤回当前未收口
+      // assistant 轮已渲染的 text/thinking 增量（服务端保证中断只发生在流式
+      // 文本阶段，本轮尚无工具卡；防御性保留非文本 part）。重试输出会以新的
+      // text_delta 重新到达，无需本地占位。
+      const messages = [...state.messages]
+      const idx = openAssistantTurnIndex(messages)
+      if (idx < 0) return state
+      const last = messages[idx] as Message
+      const kept = last.content.filter((p) => p._tag !== 'text' && p._tag !== 'thinking')
+      if (kept.length === 0) {
+        messages.splice(idx, 1)
+      } else {
+        messages[idx] = { ...last, content: kept }
+      }
+      return { ...state, messages }
+    }
     case 'llm_detail':
       // 纯通知事件：调用详情由 useChat 在 onEvent 中 invalidate query 刷新，
       // 状态本身不变。

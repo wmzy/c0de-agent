@@ -32,6 +32,7 @@ export type TrustRiskItem = {
     | 'mcp-enabled'
     | 'provider-rerouting'
     | 'workflows-enabled'
+    | 'stream-rules'
     | 'trust-drift'
   detail: string
 }
@@ -104,6 +105,16 @@ export function summarizeProjectRisk(
       items.push({
         kind: 'workflows-enabled',
         detail: `项目工作流（.c0de/workflows，列出/运行时会执行其中代码）：${names.join('、')}`,
+      })
+    }
+    // TTSR 流规则 `.c0de/rules/*.md`：随 git clone 传播、直接引导模型行为并
+    // 在流中打断重试（等效于注入 system reminder），与项目提示词覆写同风险级——
+    // 纯文件系统检测（无配置键），必须在 !raw 早退之前。
+    const ruleNames = streamRuleFileNames(projectDir)
+    if (ruleNames.length > 0) {
+      items.push({
+        kind: 'stream-rules',
+        detail: `项目流规则（.c0de/rules，命中时中断模型输出并注入规则指引）：${ruleNames.join('、')}`,
       })
     }
   }
@@ -227,6 +238,7 @@ function fingerprintLines(
     ...mcpCanonicalLines(raw),
     ...pluginDirHashes(projectDir),
     ...workflowDirHashes(projectDir),
+    ...streamRuleDirHashes(projectDir),
   ].sort()
 }
 
@@ -329,6 +341,28 @@ function workflowDirHashes(projectDir: string | undefined): string[] {
   if (!projectDir) return []
   return hashDirContents(join(projectDir, '.c0de', 'workflows'), 'workflow-file', {
     filter: (f) => f.endsWith('.js'),
+  })
+}
+
+/** 项目流规则目录 `.c0de/rules` 下的 `*.md` 文件名（排序；目录缺失 → 空）。 */
+function streamRuleFileNames(projectDir: string): string[] {
+  const dir = join(projectDir, '.c0de', 'rules')
+  try {
+    if (!existsSync(dir)) return []
+    return readdirSync(dir)
+      .filter((f) => f.endsWith('.md'))
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/** 项目流规则目录内 `*.md` 文件的内容 hash 行：规则文本漂移（同名改条件/
+ *  改指引）触发 trust-drift 复检，与插件/工作流同一兜底口径。 */
+function streamRuleDirHashes(projectDir: string | undefined): string[] {
+  if (!projectDir) return []
+  return hashDirContents(join(projectDir, '.c0de', 'rules'), 'stream-rule-file', {
+    filter: (f) => f.endsWith('.md'),
   })
 }
 

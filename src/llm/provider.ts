@@ -156,7 +156,9 @@ const buildInternalRequest = (
     ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
   },
   toolChoice:
-    request.tools !== undefined && request.tools.length > 0 ? { type: 'auto' } : undefined,
+    request.tools !== undefined && request.tools.length > 0
+      ? { type: request.toolChoice ?? 'auto' }
+      : undefined,
 })
 
 const resolveChain = (options: ChatOptions): FallbackChain =>

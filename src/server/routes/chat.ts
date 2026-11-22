@@ -2,6 +2,12 @@ import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { type Context, Hono } from 'hono'
 import { type SSEStreamingApi, streamSSE } from 'hono/streaming'
+import {
+  type AdvisorRuntimeHandle,
+  createAdvisorRuntime,
+  renderAdvisoryNote,
+  resolveAdvisorSettings,
+} from '../../advisor/index.js'
 import { createAgent, runAgent } from '../../core/agent.js'
 import type { Config } from '../../core/config.js'
 import { runManualCompact } from '../../core/loop.js'
@@ -13,7 +19,7 @@ import type { RegisterChildRun } from '../../core/types.js'
 import { createWorkflowRegistry, discoverWorkflows } from '../../core/workflows/index.js'
 import type { Registry } from '../../llm/registry.js'
 import { getProject } from '../../project/project.js'
-import { insertEntry } from '../../session/message.js'
+import { getMessages, insertEntry } from '../../session/message.js'
 import { getLLMSegments } from '../../session/segments.js'
 import {
   consumeBudgetPauseMarker,
@@ -884,6 +890,9 @@ async function streamAgentRun(
       const stopHeartbeat = startHeartbeat(stream)
       let doneSent = false
       let runStartedAt: number | undefined
+      // Advisor 影子审查 run（advisor.enabled 时在 try 内创建）：声明在回调
+      // 顶层，finally 善后 dispose 时可达。
+      let advisorRuntime: AdvisorRuntimeHandle | undefined
       try {
         // M3：上轮 run 未正常结束（崩溃/重启/热更新交接，lastRun 仍为
         // running/paused）→ 把最后一条 user 消息之后的半截条目标记为
@@ -907,13 +916,24 @@ async function streamAgentRun(
 
         // 构建 agent 依赖（单点组装：buildLoopDeps，见 workflow-run.ts；此处
         // 经 ctx.chatStream 注入测试用流函数）
-        const deps = buildLoopDeps(ctx, {
+        const deps = await buildLoopDeps(ctx, {
           cwd,
           llmRegistry: sessionRegistry,
           config: sessionConfig,
           permission: permissionChecker,
           chatStream: ctx.chatStream,
         })
+
+        // Advisor 影子审查（advisor.enabled）：每 tool round 后台审查增量，
+        // note 经 steering 注入主对话下一轮（非打断）。onNote 闭包引用下方
+        // 的 state（note 到达时 state 必已创建）。
+        if (resolveAdvisorSettings(deps.config).enabled) {
+          advisorRuntime = createAdvisorRuntime(deps.config, {
+            onNote: (note) => injectSteering(state, renderAdvisoryNote(note)),
+            getRegistry: () => sessionRegistry,
+          })
+          deps.advisorRuntime = advisorRuntime
+        }
 
         const agentConfig: AgentConfig = {
           provider,
@@ -967,6 +987,29 @@ async function streamAgentRun(
           }
         }
 
+        // sharpshooter 记忆提取（best-effort，fire-and-forget）：用户 prompt 落
+        // 库后、run 前触发——envelope 由旧历史 + 当前 prompt 组装；server 常驻
+        // 无需 flush（in-flight 链自会跑完，整合由调度器接管）。
+        if (ctx.memoryBackend && typeof env.message === 'string' && env.message.trim() !== '') {
+          try {
+            ctx.memoryBackend.startExtractor({
+              sessionId,
+              cwd,
+              // DB Message → 提取器的扁平 {role, content}（只取文本，忽略结构）。
+              messages: (await getMessages(ctx.db, sessionId)).map((m) => ({
+                role: m.role as 'user' | 'assistant',
+                content: m.content
+                  .filter((p) => p._tag === 'text')
+                  .map((p) => (p._tag === 'text' ? p.text : ''))
+                  .join('\n'),
+              })),
+              current: { role: 'user', content: env.message ?? '' },
+            })
+          } catch {
+            // 提取失败绝不影响主对话路径
+          }
+        }
+
         // 客户端断开时中止 agent
         stream.onAbort(() => {
           ctx.agentManager.abort(sessionId)
@@ -992,6 +1035,8 @@ async function streamAgentRun(
         await emitSseError(stream, err, { swallow: true })
       } finally {
         stopHeartbeat()
+        // advisor run 随主 run 终止（在途审查允许跑完，只是不再接新 turn）。
+        advisorRuntime?.dispose()
         // 先从 agentManager 释放（占位与活跃 run 均幂等）：必须最先执行，确保
         // 客户端断开使 writeSSE reject 时 agent 状态（state/deps/AbortController）
         // 不会泄漏到 Map（unregister 仅做 Map.delete、不依赖 state，放最前安全）。

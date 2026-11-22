@@ -26,6 +26,11 @@ import type { DB } from '../db/client.js'
 import { createDB, migrateDB } from '../db/index.js'
 import { purgeDeletedKanbanBoards } from '../kanban/index.js'
 import { disconnectMCPServer } from '../mcp/index.js'
+import {
+  createSharpshooterBackend,
+  resolveMemorySettings,
+  startScheduler,
+} from '../memory/index.js'
 import { deactivateAll } from '../plugins/lifecycle.js'
 import { markDeadBackgroundJobs } from '../session/jobs.js'
 import {
@@ -259,7 +264,18 @@ async function buildServerContext(
     mcpSessions,
     projectTrusted,
   } = await bootstrapRuntime(cwd, db)
-  const urlRegistry = createDefaultURLRegistry()
+  const urlRegistry = createDefaultURLRegistry({ db })
+
+  // 跨会话项目决策记忆（sharpshooter）：backend='sharpshooter' 时进 ctx（server
+  // 生命周期单例）；off 时零开销。整合调度器在 bootstrapServerContext 挂载/停止
+  // （那里拥有 close 生命周期）。registry 传 live 引用保持模型路由/密钥热更一致。
+  const memorySettings = resolveMemorySettings(resolvedConfig)
+  const memoryBackend =
+    memorySettings.backend === 'sharpshooter'
+      ? createSharpshooterBackend(resolvedConfig, {
+          getRegistry: () => llmRegistry,
+        })
+      : undefined
 
   // 工作流注册表：三级发现（builtin → global → project），eager 初始化。
   // 此前是惰性 getter 只注册 builtin，导致项目级 .c0de/workflows/*.js 永远不可见。
@@ -316,6 +332,7 @@ async function buildServerContext(
     toolRegistry,
     llmRegistry,
     urlRegistry,
+    ...(memoryBackend ? { memoryBackend } : {}),
     hookRunner,
     pluginRegistry,
     agentManager: createAgentManager(),
@@ -538,6 +555,10 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
 
   const { ctx, dispose } = await buildServerContext(db, opts)
 
+  // sharpshooter 整合调度器（60s tick；backend off 时不创建）——close 生命周期
+  // 与本函数的 purge/sync 定时器同批清理。
+  const memoryScheduler = ctx.memoryBackend ? startScheduler(ctx.memoryBackend) : null
+
   // P2 成本账本 backfill：升级后首次启动把遗留 segments 补齐进 usage_events
   // （幂等，callId 唯一约束去重；app_meta 标记保证只执行一次——导入会话的
   // segments 已剥离 call id，不产生账本行）。fire-and-forget。
@@ -599,6 +620,7 @@ async function bootstrapServerContext(opts: StartServerOptions = {}): Promise<Bo
   return {
     ctx,
     close: async () => {
+      memoryScheduler?.()
       clearInterval(purgeTimer)
       if (syncTimer) clearInterval(syncTimer)
       await dispose()

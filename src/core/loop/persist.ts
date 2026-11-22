@@ -84,6 +84,7 @@ export async function* persistAssistantAndTools(
         session: { id: state.session.id, cwd: deps.cwd },
         abort: state.abortController.signal,
         ...(deps.urlRegistry ? { urlRegistry: deps.urlRegistry } : {}),
+        ...(deps.steerAgent ? { steerAgent: deps.steerAgent } : {}),
         ...(deps.debugSpawn ? { debugSpawn: deps.debugSpawn } : {}),
         runSubAgent: (req) => runSubAgent({ ...deps, _subagentEventSink: eventSink }, state, req),
         // task 工具批量模式：宿主批量入口按 config.agents.subagentConcurrency 建并发池

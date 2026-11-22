@@ -3,6 +3,7 @@ import type { ToolDef, ToolResult } from '../../shared/types/tool.js'
 import { errorMessage } from '../../shared/utils/string.js'
 import { isURLPath, resolveURL } from '../resolver.js'
 import type { ReadInput } from '../types.js'
+import { formatConflictFooter, registerConflicts, scanConflictMarkers } from './conflict.js'
 import { resolveToolPath } from './paths.js'
 
 /** Apply optional offset/limit (1-indexed) to text content. */
@@ -21,7 +22,7 @@ function applyRange(content: string, offset?: number, limit?: number): string {
 export const readTool: ToolDef = {
   name: 'read',
   description:
-    'Read file content, or list a directory (entries with trailing `/` on subdirectories). Supports optional offset (1-indexed line number) and limit (number of lines) for files. Also resolves internal URL schemes (skill://, agent://, pr://, issue://) when a resolver registry is configured.',
+    'Read file content, or list a directory (entries with trailing `/` on subdirectories). Supports optional offset (1-indexed line number) and limit (number of lines) for files. Also resolves internal URL schemes: skill://name, conflict://N (merge conflict block views), agent://<id>/<json-path> (sub-agent output), issue://N and pr://N (GitHub via gh CLI; pr://N/diff for the patch). Files with unresolved merge conflict markers get a `[conflict]` footer with conflict://<id> handles for inspecting and resolving each block.',
   parameters: {
     type: 'object',
     properties: {
@@ -83,7 +84,14 @@ export const readTool: ToolDef = {
       }
 
       const content = await readFile(fullPath, 'utf-8')
-      return { _tag: 'success', output: applyRange(content, offset, limit) }
+      const ranged = applyRange(content, offset, limit)
+      // 冲突标记检测（conflict:// 机制入口）：扫描的是整个文件而非当前窗口
+      // ——read 本就整读了一次，全量注册让 footer 的 id 覆盖文件内全部冲突，
+      // 模型可直接解决窗口外的块（用 conflict://<id> 单独查看）。
+      const blocks = scanConflictMarkers(content.split('\n'), 1)
+      if (blocks.length === 0) return { _tag: 'success', output: ranged }
+      const entries = registerConflicts(ctx.session.id, fullPath, blocks)
+      return { _tag: 'success', output: `${ranged}\n${formatConflictFooter(entries)}` }
     } catch (error) {
       const message = errorMessage(error)
       return { _tag: 'error', error: `Failed to read "${path}": ${message}` }

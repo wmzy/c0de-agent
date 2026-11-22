@@ -210,4 +210,85 @@ describe('readTool', () => {
     const result = await readTool.execute({ path: 'unknown://x' }, urlCtx)
     expect(result._tag).toBe('error')
   })
+
+  // ===== 冲突标记检测（conflict:// 注册 + footer）=====
+
+  it('appends a conflict footer listing registered conflicts for a conflicted file', async () => {
+    // 独立会话 id：conflict id 是会话级计数，避免与其他用例的注册互相串
+    const conflictCtx: ToolContext = {
+      ...ctx,
+      session: { id: 'read-conflict-1', cwd: workDir },
+    }
+    await writeFile(
+      join(workDir, 'merged.txt'),
+      [
+        'intro',
+        '<<<<<<< HEAD',
+        'ours line',
+        '=======',
+        'theirs line',
+        '>>>>>>> feature/x',
+        'outro',
+      ].join('\n'),
+    )
+    const result = await readTool.execute({ path: 'merged.txt' }, conflictCtx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      // 正文原样 + 尾部 footer：数量、id 与行号区间、用法提示
+      expect(result.output).toContain('<<<<<<< HEAD')
+      expect(result.output).toContain('[conflict] file has 1 unresolved conflict(s): #1 (L2-L6)')
+      expect(result.output).toContain('ours = HEAD, theirs = feature/x')
+      expect(result.output).toContain('read conflict://<id>')
+      expect(result.output).toContain('write conflict://<id>')
+    }
+  })
+
+  it('leaves clean files without a conflict footer', async () => {
+    await writeFile(join(workDir, 'clean.txt'), 'a\nb\nc')
+    const result = await readTool.execute({ path: 'clean.txt' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') expect(result.output).not.toContain('[conflict]')
+  })
+
+  it('registers all conflicts with absolute line numbers even on a ranged read', async () => {
+    const conflictCtx: ToolContext = {
+      ...ctx,
+      session: { id: 'read-conflict-2', cwd: workDir },
+    }
+    await writeFile(
+      join(workDir, 'two.txt'),
+      [
+        'x',
+        '<<<<<<< A',
+        'o1',
+        '=======',
+        't1',
+        '>>>>>>> A',
+        'mid',
+        '<<<<<<< B',
+        'o2',
+        '=======',
+        't2',
+        '>>>>>>> B',
+      ].join('\n'),
+    )
+    // 窗口只覆盖第二块；扫描注册的是整个文件（read 本就整读），footer 两个 id 都在
+    const result = await readTool.execute({ path: 'two.txt', offset: 8, limit: 5 }, conflictCtx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') {
+      expect(result.output).toContain(
+        '[conflict] file has 2 unresolved conflict(s): #1 (L2-L6), #2 (L8-L12)',
+      )
+    }
+  })
+
+  it('does not mistake indented marker lookalikes for conflicts', async () => {
+    await writeFile(
+      join(workDir, 'lookalike.txt'),
+      ['  <<<<<<< HEAD', '\t=======', ' >>>>>>> b', 'plain'].join('\n'),
+    )
+    const result = await readTool.execute({ path: 'lookalike.txt' }, ctx)
+    expect(result._tag).toBe('success')
+    if (result._tag === 'success') expect(result.output).not.toContain('[conflict]')
+  })
 })

@@ -1,0 +1,6 @@
+export { AdvisorEmissionGuard } from './emission-guard.js'
+export { createDeltaRenderer, renderMessageBlock } from './render.js'
+export type { AdvisorRuntimeHandle } from './runtime.js'
+export { createAdvisorRuntime, renderAdvisoryNote } from './runtime.js'
+export { resolveAdvisorSettings } from './settings.js'
+export type { AdvisorNote } from './types.js'

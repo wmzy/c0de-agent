@@ -148,6 +148,42 @@ type UsageConfig = {
   tokenBudgetAction?: 'warn' | 'pause' | 'abort'
 }
 
+/** 跨会话项目决策记忆（sharpshooter）配置项。 */
+type MemorySharpshooterConfig = {
+  /** 合并周期（分钟）。到期或有待处理 delta 时触发一次整合；连续失败按
+   *  2^n 指数退避（clamp [1min, 6h]），避免失败 bank 每个 tick 重发全部输入。 */
+  intervalMinutes: number
+  /** 触发提取的最短用户 prompt 长度（按 grapheme 计），过短的确认类回复跳过。 */
+  minPromptLength: number
+  /** 注入系统提示的 token 预算上限（近似估算：token×4 字符截断）。 */
+  injectionTokenLimit: number
+  /** 单个记忆文件（architecture/product/style.md）的硬上限（行数）。 */
+  maxFileLines: number
+  /** 提取/整合模型覆盖；未设置时回退 defaultProvider/defaultModel。 */
+  model?: { provider: string; model: string }
+}
+
+/** 记忆后端配置。backend: 'off'（默认）= 管线完全关闭，不提取不注入。 */
+type MemoryConfig = {
+  backend: 'off' | 'sharpshooter'
+  sharpshooter: MemorySharpshooterConfig
+}
+
+/** Advisor 影子审查配置项（最小版：见 src/advisor/）。 */
+type AdvisorConfig = {
+  /** 总开关。默认 false——影子审查会带来额外模型调用成本，用户显式开启。 */
+  enabled: boolean
+  /** 审查模型覆盖；未设置时回退 defaultProvider/defaultModel。
+   * 审查是「旁观挑错」任务，可配置更强的模型获得更好的判断质量。 */
+  model?: { provider: string; model: string }
+  /** 每个 update（一个 tool round 的增量审查）允许准入的非 blocker note 数
+   *  上限（1–32，超出整段限流）。blocker 豁免——必须总能打断。 */
+  maxNotesPerUpdate: number
+  /** blocker 打断后的冷却 turn 数：N 个 update 内不注入非 blocker note，
+   *  避免打断后连环轰炸淹没主 agent 的恢复动作（0 = 关闭冷却）。 */
+  immuneTurns: number
+}
+
 /** LSP 服务器配置项（config.lsp.servers.<name>）。覆盖内置默认条目时，
  *  未提供的字段继承内置值（浅合并）。 */
 type LspServerUserConfig = {
@@ -192,6 +228,12 @@ type Config = {
   /** LSP 服务器配置：按名叠加/覆盖内置默认表（src/lsp/servers.ts）。
    * disabled=true 移除该服务器；command/fileTypes/rootMarkers 可部分覆写。 */
   lsp: { servers: Record<string, LspServerUserConfig> }
+  /** 跨会话项目决策记忆（sharpshooter）；backend 'off'（默认）时整条管线关闭。
+   *  类型可选以兼容手构/旧测试 Config 字面量；运行时恒经 DEFAULT_CONFIG 合并注入。 */
+  memory?: MemoryConfig
+  /** Advisor 影子审查；enabled false（默认）时整条管线关闭。
+   *  与 memory 同款：类型可选以兼容手构/旧测试 Config 字面量。 */
+  advisor?: AdvisorConfig
   toolMetrics: ToolMetricsConfig
   security: SecurityConfig
   websearch: WebSearchConfig
@@ -203,11 +245,14 @@ type Config = {
 }
 
 export type {
+  AdvisorConfig,
   AgentsConfig,
   CompactionConfig,
   Config,
   LspServerUserConfig,
   MCPServerConfig,
+  MemoryConfig,
+  MemorySharpshooterConfig,
   PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,

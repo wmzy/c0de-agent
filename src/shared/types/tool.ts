@@ -27,6 +27,10 @@ type URLResolveContext = {
 type URLResolver = {
   scheme: string
   resolve: (url: string, ctx: URLResolveContext) => Promise<string>
+  /** 可选写通道（conflict:// 等虚拟资源）。返回人类可读的写结果描述；
+   *  未实现写通道的 scheme 由 write 工具直接报错。DB/agentManager 等重依赖
+   *  经 resolver 工厂闭包捕获注入，不进 shared 契约。 */
+  write?: (url: string, content: string, ctx: URLResolveContext) => Promise<string>
 }
 
 /** Mutable registry of URL resolvers, keyed by scheme. */
@@ -53,6 +57,11 @@ type ToolContext = {
   mode?: string
   /** URL resolver registry; present when the host wires up internal URL schemes. */
   urlRegistry?: URLRegistry
+  /** 向运行中的 agent（主会话或子 agent run）投递 steering 消息：在目标
+   *  agent 的下一个 turn 边界合入上下文（非打断 aside 语义）。Host（web
+   *  buildLoopDeps）桥接 agentManager.steer；CLI 无 run 跟踪器不注入，
+   *  send 工具随之不可见（isAvailable 检查）。 */
+  steerAgent?: (sessionId: string, message: string) => { delivered: boolean; detail: string }
   /** Spawn a sub-agent and return its final text output (dependency-reversal hook
    *  for the `task` tool; avoids tools→core circular import). */
   runSubAgent?: (input: SubAgentRequest) => Promise<SubAgentResult>

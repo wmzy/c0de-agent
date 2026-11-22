@@ -32,7 +32,7 @@ import {
   createPromptRegistry,
   registerPromptSection,
 } from './prompt-registry.js'
-import { drainSteering } from './steering.js'
+import { drainSteering, injectSteering } from './steering.js'
 import type { CollectedToolCall } from './tool-exec.js'
 import type { AgentDependencies, ContextFileBundle } from './types.js'
 
@@ -319,6 +319,11 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
       projectInfo: detectProjectInfo(deps.cwd),
       skills: deps.skills ?? [],
       contextFiles,
+      // 跨会话项目决策记忆：宿主注入 loader 时每轮读取（backend 内部有缓存，
+      // 不必每轮重读磁盘全部内容）。
+      memoryContext: deps.loadMemoryContext
+        ? ((await deps.loadMemoryContext(deps.cwd)) ?? undefined)
+        : undefined,
       cwd: deps.cwd,
       // 项目级提示词覆写（.c0de/prompts/*.md）仅信任项目加载——与插件/工作流
       // 门禁同口径（prompt 文本随 git clone 传播、直接引导模型行为）。
@@ -398,6 +403,18 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     overflowCompacted = collected.overflowCompacted
     // 溢出恢复成功 → 压缩历史后重试本轮（collectStreamChunks 已 reload messages）
     if (collected.overflowRecovered) continue
+    // TTSR 流规则命中 → 丢弃本轮输出（不持久化 assistant/tool）、注入规则、
+    // 通知前端撤回已渲染增量，从同点重试。命中规则自身的 repeat 门控
+    //（once/turn-gap）保证不会无限循环；turn 配额照常递减作为硬护栏。
+    if (collected.ruleInterruption) {
+      injectSteering(state, collected.ruleInterruption.injection)
+      yield {
+        _tag: 'stream_discarded',
+        ruleName: collected.ruleInterruption.ruleName,
+        reason: 'Stream rule matched; output discarded and retried with rule injected',
+      }
+      continue
+    }
     // 致命错误（abort / provider 抛错）→ collectStreamChunks 已 yield error 并设状态，直接终止
     if (collected.fatalError) return
 
@@ -558,6 +575,17 @@ export async function* agentLoop(state: AgentState, deps: LoopDeps): AsyncGenera
     }
     state.tokenBudget.used = estimateBudget(latestMessages, state.calibrationFactor)
     state.messages = latestMessages
+
+    // Advisor 影子审查（fire-and-forget）：本轮工具批次已持久化、即将进入下一
+    // 轮——把全量消息交给 advisor（其内部 diff 增量），不阻塞主循环；note 经
+    // 注入回调在下一 turn 边界合入（与用户 steer 同通道）。完成轮（无工具调用
+    // 直接 done）不审——最终产出由用户直接消费。
+    deps.advisorRuntime?.onTurnEnd({
+      sessionId: state.session.id,
+      cwd: deps.cwd,
+      messages: latestMessages,
+      willContinue: true,
+    })
 
     // —— 轮末压缩（turn-end 自动压缩 + mid-turn 压缩）——
     yield* runCompactionIfNeeded(state, deps, latestMessages)

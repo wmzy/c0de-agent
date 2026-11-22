@@ -6,6 +6,7 @@ import type {
   CompactionConfig,
   Config,
   MCPServerConfig,
+  MemoryConfig,
   PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,
@@ -56,6 +57,20 @@ const DEFAULT_CONFIG: Config = {
   contextFiles: { enabled: true, extra: [] },
   magicKeywords: { enabled: true, ultrathink: true, orchestrate: true, workflow: true },
   lsp: { servers: {} },
+  // 跨会话项目决策记忆（sharpshooter）：默认 'off'——用户显式开启才提取/注入，
+  // 与权限/预算等主动开关同口径（避免升级后行为静默变化）。
+  memory: {
+    backend: 'off',
+    sharpshooter: {
+      intervalMinutes: 5,
+      minPromptLength: 16,
+      injectionTokenLimit: 15000,
+      maxFileLines: 120,
+    },
+  },
+  // Advisor 影子审查：默认关闭——每个 tool round 一次额外 LLM 调用是显式
+  // 成本项，用户开启后才注入运行时（与权限/预算等主动开关同口径）。
+  advisor: { enabled: false, maxNotesPerUpdate: 4, immuneTurns: 3 },
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: true, allowedOrigins: [] },
   websearch: { provider: 'auto' },
@@ -584,6 +599,7 @@ export type {
   ConfigSetFailure,
   ConfigSetFailureCode,
   MCPServerConfig,
+  MemoryConfig,
   PermissionConfig,
   SecurityConfig,
   ToolMetricsConfig,

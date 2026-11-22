@@ -59,6 +59,32 @@ describe('reduceChatEvent', () => {
     expect(s.messages[0]?.content[0]).toEqual({ _tag: 'text', text: 'ab' })
   })
 
+  // TTSR 流规则命中：撤回当前未收口轮的 text/thinking 增量；重试输出以新
+  // text_delta 重新到达。无未收口轮时是纯通知（状态不变）。
+  it('stream_discarded 撤回未收口轮的文本增量', () => {
+    let s = reduceChatEvent(base, { _tag: 'text_delta', text: '违规' })
+    s = reduceChatEvent(s, { _tag: 'thinking', text: '想想' })
+    s = reduceChatEvent(s, {
+      _tag: 'stream_discarded',
+      ruleName: 'box-leak',
+      reason: 'Stream rule matched',
+    })
+    expect(s.messages).toHaveLength(0)
+    // 重试输出重新开轮
+    s = reduceChatEvent(s, { _tag: 'text_delta', text: '改好了' })
+    expect(s.messages[0]?.content[0]).toEqual({ _tag: 'text', text: '改好了' })
+  })
+
+  it('stream_discarded 无未收口轮时不改状态', () => {
+    const before = base
+    const s = reduceChatEvent(before, {
+      _tag: 'stream_discarded',
+      ruleName: 'r',
+      reason: 'x',
+    })
+    expect(s).toBe(before)
+  })
+
   it('tool_call_start + tool_call_end 配对成结果', () => {
     let s = reduceChatEvent(base, { _tag: 'text_delta', text: 'x' })
     s = reduceChatEvent(s, { _tag: 'tool_call_start', id: 't1', tool: 'read', input: {} })

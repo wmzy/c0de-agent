@@ -53,6 +53,10 @@ export type StreamCollectResult = {
   overflowRecovered: boolean
   /** 致命错误（abort / provider 抛错）→ 调用方应直接 return 终止 loop */
   fatalError: boolean
+  /** TTSR 流规则命中（regex 子集）：调用方须丢弃本轮输出（不持久化）、
+   *  注入 injection 到 steering、发 stream_discarded 事件并 continue 重试。
+   *  与 overflowRecovered 同为「重试本轮」语义但互斥。 */
+  ruleInterruption?: { ruleName: string; injection: string; matchedText: string }
 }
 
 /** 解析 tool_call_end 的入参：JSON.parse + 容错标记。
@@ -150,10 +154,25 @@ export async function* collectStreamChunks(
       }
 
       switch (chunk._tag) {
-        case 'text':
+        case 'text': {
+          // TTSR 流规则（regex 子集）：命中即中断本轮流（不再透传该 delta）。
+          // 调用方丢弃整轮输出并从同点重试——已透传的增量由 stream_discarded
+          // 事件让前端撤回。
+          const hit = deps.streamRuleChecker?.checkTextDelta(chunk.text)
+          if (hit) {
+            deps.streamRuleChecker?.resetStream()
+            return finish({
+              ruleInterruption: {
+                ruleName: hit.ruleName,
+                injection: hit.injection,
+                matchedText: chunk.text,
+              },
+            })
+          }
           text.push(chunk.text)
           yield { _tag: 'text_delta', text: chunk.text }
           break
+        }
         case 'tool_call_start':
           // 仅登记，不立即发射 AgentEvent。此时入参尚未到达（流式 delta 累积中），
           // 过早发射空入参的 tool_call_start 会让前端渲染 "Glob · " 等半成品卡，

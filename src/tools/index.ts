@@ -72,6 +72,8 @@ export { createWebSearchTool } from './websearch/websearch.js'
 
 // ── Default registry ────────────────────────────────────────
 import { DEFAULT_CONFIG } from '../core/config.js'
+import { createSharpshooterBackend, resolveMemorySettings } from '../memory/index.js'
+import { createLearnTool } from '../memory/learn.js'
 import type { Config } from '../shared/types/config.js'
 import type { ToolDef } from '../shared/types/tool.js'
 import { bashTool } from './builtin/bash.js'
@@ -82,6 +84,7 @@ import { grepTool } from './builtin/grep.js'
 import { kanbanTool } from './builtin/kanban.js'
 import { lspTools } from './builtin/lsp.js'
 import { readTool } from './builtin/read.js'
+import { sendTool } from './builtin/send.js'
 import { taskTool } from './builtin/task.js'
 import { todoTool } from './builtin/todo.js'
 import { writeTool } from './builtin/write.js'
@@ -115,6 +118,14 @@ export function createDefaultRegistry(config: Config = DEFAULT_CONFIG) {
   register(taskTool)
   register(todoTool)
   register(yieldTool)
+  // send 仅在宿主注入 steerAgent（web run 注册表）时生效：CLI 无 run 跟踪器，
+  // execute 内报 not available（与 dap/kanban 的可选钩子口径一致）。
+  register(sendTool)
+  // learn 工具：memory.backend='sharpshooter' 时注册（轻量 backend 实例——
+  // learned.md 落盘与失效信号经模块级共享缓存与 server 单例一致）。
+  if (resolveMemorySettings(config).backend === 'sharpshooter') {
+    register(createLearnTool(createSharpshooterBackend(config)))
+  }
   for (const tool of lspTools) register(tool)
   register(createWebSearchTool(config.websearch))
   for (const tool of dapTools) register(tool)

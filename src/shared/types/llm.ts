@@ -72,6 +72,10 @@ type ChatRequest = {
   model: string
   messages: ChatMessage[]
   tools?: ChatTool[]
+  /** 强制工具调用策略；缺省 = 'auto'（仅当携带 tools 时生效）。
+   *  供必须产出结构化工具调用的内部管线（memory 提取/整合）使用，
+   *  'required' 逼模型走 tool call 而非自由文本。 */
+  toolChoice?: 'auto' | 'required'
   stream: true
   maxTokens?: number
   temperature?: number

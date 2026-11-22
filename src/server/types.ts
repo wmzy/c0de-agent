@@ -5,6 +5,7 @@ import type { Config } from '../core/config.js'
 import type { DB } from '../db/client.js'
 import type { chatStream as chatStreamFn } from '../llm/provider.js'
 import type { Registry } from '../llm/registry.js'
+import type { SharpshooterBackend } from '../memory/backend.js'
 import type { HookRunner, PluginRegistry } from '../plugins/types.js'
 import type { Config as SharedConfig } from '../shared/types/config.js'
 import type { URLRegistry } from '../shared/types/tool.js'
@@ -23,6 +24,10 @@ type ServerContext = {
   llmRegistry: Registry
   /** 内置 URL 解析器注册表（file://, skill://）；注入 agent loop 的 ToolContext。 */
   urlRegistry: URLRegistry
+  /** 跨会话项目决策记忆后端（memory.backend='sharpshooter' 时存在）：
+   *  server 生命周期单例——chat/print 经 deps.loadMemoryContext 消费注入，
+   *  提取/整合调度器在 server.ts 启动时挂载。off 时为 undefined（零开销）。 */
+  memoryBackend?: SharpshooterBackend
   /** 插件 hook runner；接入 agent loop 的 tool/provider/message hook。 */
   hookRunner: HookRunner
   /** 插件注册表（builtin + 已加载外部插件）；dispose 级联里 deactivateAll

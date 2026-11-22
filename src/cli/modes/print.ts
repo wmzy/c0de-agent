@@ -1,4 +1,10 @@
 import { resolve } from 'node:path'
+import {
+  type AdvisorRuntimeHandle,
+  createAdvisorRuntime,
+  renderAdvisoryNote,
+  resolveAdvisorSettings,
+} from '../../advisor/index.js'
 import { abortAgent, createAgent, runAgent } from '../../core/agent.js'
 import { collectAssistantText } from '../../core/loop/stream-collect.js'
 import type { LoopDeps } from '../../core/loop.js'
@@ -6,6 +12,7 @@ import { buildMagicKeywordNotices } from '../../core/magic-keywords.js'
 import { preflightRoute } from '../../core/provider-registry.js'
 import { injectSteering } from '../../core/steering.js'
 import { BUILTIN_WORKFLOWS } from '../../core/workflows/index.js'
+import { createSharpshooterBackend, resolveMemorySettings } from '../../memory/index.js'
 import { getByDirectory } from '../../project/index.js'
 import { createSession, requireContinuableSession } from '../../session/session.js'
 import { upgradeTemporarySession } from '../../session/trash.js'
@@ -123,6 +130,41 @@ async function runPrintMode(
 
   const state = await createAgent(session, agentConfig, deps)
 
+  // sharpshooter 记忆提取（CLI 短命进程）：run 前触发（best-effort），run 后
+  // 有界 flush——不 flush 则 in-flight 提取随进程退出而丢失。
+  const memoryBackend =
+    resolveMemorySettings(config).backend === 'sharpshooter'
+      ? createSharpshooterBackend(config)
+      : undefined
+  if (memoryBackend) {
+    try {
+      memoryBackend.startExtractor({
+        sessionId: session.id,
+        cwd: deps.cwd,
+        // DB Message → 提取器扁平 {role, content}（只取文本）。
+        messages: state.messages.map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content
+            .filter((p) => p._tag === 'text')
+            .map((p) => (p._tag === 'text' ? p.text : ''))
+            .join('\n'),
+        })),
+        current: { role: 'user', content: message },
+      })
+    } catch {
+      // 提取失败不影响主对话路径
+    }
+  }
+
+  // Advisor 影子审查（advisor.enabled）：CLI 同口径，note 经 steering 注入。
+  let advisorRuntime: AdvisorRuntimeHandle | undefined
+  if (resolveAdvisorSettings(deps.config).enabled) {
+    advisorRuntime = createAdvisorRuntime(deps.config, {
+      onNote: (note) => injectSteering(state, renderAdvisoryNote(note)),
+    })
+    deps.advisorRuntime = advisorRuntime
+  }
+
   // magic keywords（ultrathink/orchestrate/workflowz）：CLI chat 与 ACP（共用
   // print 通道）的用户消息同样触发隐藏指令注入——与 Web chat 路由同口径。
   for (const notice of buildMagicKeywordNotices(message, {
@@ -174,6 +216,9 @@ async function runPrintMode(
     return collectAssistantText(events)
   } finally {
     opts.abortSignal?.removeEventListener('abort', onAbort)
+    // 有界等待 in-flight 提取落盘（短命进程退出前的最后机会；失败静默）。
+    await memoryBackend?.flushExtraction().catch(() => {})
+    advisorRuntime?.dispose()
   }
 }
 

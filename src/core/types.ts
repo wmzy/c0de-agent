@@ -13,6 +13,7 @@ import type {
   TokenBudget,
 } from '../shared/types/agent.js'
 import type { ChatTool } from '../shared/types/llm.js'
+import type { Message } from '../shared/types/message.js'
 import type { DebugTransport, ToolDef, URLRegistry } from '../shared/types/tool.js'
 import type { PermissionChecker, ToolRegistry } from '../tools/types.js'
 import type { AgentRegistry } from './agents/types.js'
@@ -63,6 +64,45 @@ type AgentDependencies = {
    *  Web = agentManager.register/unregister；CLI 无 run 跟踪器，不注入即 no-op。
    *  返回注销函数（幂等），子 agent run 终止时（finally）调用。 */
   registerChildRun?: RegisterChildRun
+  /** 跨会话项目决策记忆（sharpshooter）的上下文加载器。宿主（chat/print
+   *  组装点）在 memory backend 激活时注入；agent loop 每轮调用并把返回文本
+   *  作为 memory 分片注入系统提示。返回 null/空串时该分片不出现。 */
+  loadMemoryContext?: (cwd: string) => Promise<string | null>
+  /** TTSR 流规则检查器（regex 子集）：每个流式 text delta 调用，命中返回
+   *  注入文本；agent loop 收到命中后丢弃本轮输出、注入规则并从同点重试。
+   *  由宿主在存在激活规则文件（.c0de/rules/*.md 或全局 ~/.c0de/rules/*.md）
+   *  时注入。 */
+  streamRuleChecker?: StreamRuleChecker
+  /** send 工具的投递通道：向运行中 agent（含子 agent run）注入 steering
+   *  消息。web 侧桥接 agentManager.steer（runs 表含子 run，P1 已注册）；
+   *  省略时 send 工具不可用。 */
+  steerAgent?: (sessionId: string, message: string) => { delivered: boolean; detail: string }
+  /** Advisor 影子审查运行时：每个 tool round 结束后 fire-and-forget 触发
+   *  （不阻塞主循环）；note 经实现自带的注入回调（通常桥 injectSteering）
+   *  在下一 turn 边界合入。实现见 advisor 模块。 */
+  advisorRuntime?: AdvisorRuntime
+}
+
+/** TTSR 流规则命中信息：injection 为渲染好的完整注入文本。 */
+type StreamRuleMatch = { ruleName: string; injection: string }
+
+/** 流规则检查器（结构类型；实现见 stream-rules 模块）。resetStream 在
+ *  本轮被丢弃/正常结束后调用，重置跨 delta 的匹配缓冲。 */
+type StreamRuleChecker = {
+  checkTextDelta: (delta: string) => StreamRuleMatch | null
+  resetStream: () => void
+}
+
+/** Advisor 影子审查运行时（结构类型；实现见 advisor 模块）。messages 为该
+ *  会话全量 DB 消息——实现内部按 seen 前缀 diff 出本 turn 增量。 */
+type AdvisorRuntime = {
+  onTurnEnd: (input: {
+    sessionId: string
+    cwd: string
+    messages: Message[]
+    willContinue: boolean
+  }) => void
+  dispose?: () => void
 }
 
 type ProjectInfo = {
@@ -97,6 +137,10 @@ type PromptBuildContext = {
   /** 仓库上下文文件（AGENTS.md/CLAUDE.md/.cursor rules 等，恒注入）。由 agent
    *  loop 每轮发现（子 agent 已剔除 AGENTS.md/CLAUDE.md 层级文件）。 */
   contextFiles?: ContextFileBundle
+  /** 跨会话项目决策记忆（sharpshooter），backend 预渲染的文本块。由宿主
+   *  （chat/print 组装点）经 deps.loadMemoryContext 加载后注入；子 agent
+   *  同样注入（项目决策对子 agent 一样成立）。 */
+  memoryContext?: string
 }
 
 /** A dynamically composable system-prompt section (spec §17). */
@@ -153,6 +197,7 @@ type SlashCommand = {
 }
 
 export type {
+  AdvisorRuntime,
   AgentConfig,
   AgentDependencies,
   AgentError,
@@ -174,6 +219,8 @@ export type {
   PromptSection,
   RegisterChildRun,
   SlashCommand,
+  StreamRuleChecker,
+  StreamRuleMatch,
   SubcommandDef,
   TokenBudget,
 }
