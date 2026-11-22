@@ -7,6 +7,7 @@ import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput, SyncedSelect } from '@/components/SyncedControls.js'
 import { AppearancePanel } from '@/components/settings/AppearancePanel.js'
+import { AssistPanel } from '@/components/settings/AssistPanel.js'
 import { CommaListInput } from '@/components/settings/CommaListInput.js'
 import { CompactionPanel } from '@/components/settings/CompactionPanel.js'
 import { FallbackPanel } from '@/components/settings/FallbackPanel.js'
@@ -937,6 +938,10 @@ export function Settings() {
           <WebSearchPanel
             websearch={merged.websearch}
             onWebSearchChange={(patch) => updateSection('websearch', patch)}
+          />
+          <AssistPanel
+            assist={merged.assist}
+            onAssistChange={(patch) => updateSection('assist', patch)}
           />
           <WorkflowsPanel projectId={projectId} />
           <div className={section}>

@@ -71,6 +71,9 @@ const DEFAULT_CONFIG: Config = {
   // Advisor 影子审查：默认关闭——每个 tool round 一次额外 LLM 调用是显式
   // 成本项，用户开启后才注入运行时（与权限/预算等主动开关同口径）。
   advisor: { enabled: false, maxNotesPerUpdate: 4, immuneTurns: 3 },
+  // 交互辅助（oh-my-pi 口径迁移）：默认关闭——每次触发都是一次额外计费请求
+  //（预测=每轮一次全上下文请求；回顾=空闲一次），用户显式开启。
+  assist: { predictionEnabled: false, recapEnabled: false, recapIdleSeconds: 240 },
   toolMetrics: { enabled: true, threshold: 0.8, minSamples: 5 },
   security: { authEnabled: true, allowedOrigins: [] },
   websearch: { provider: 'auto' },

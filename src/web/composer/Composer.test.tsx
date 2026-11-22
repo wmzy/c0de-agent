@@ -36,6 +36,13 @@ vi.mock('@/services/file.js', () => ({
   fileAPI: { search: vi.fn().mockResolvedValue([]) },
 }))
 
+// 空输入预测（assist.prediction）的 API mock：describe 内的用例经 Composer 内
+// usePromptPrediction 消费。vi.mock 提升到模块级，predictPrompt 必须同层级声明。
+const predictPrompt = vi.fn()
+vi.mock('@/services/assist.js', () => ({
+  assistAPI: { predictPrompt: (...args: unknown[]) => predictPrompt(...(args as [])) },
+}))
+
 const execCommand = vi.fn(() => true)
 
 beforeEach(() => {
@@ -1143,5 +1150,92 @@ describe('Composer 浮层打开时 Shift+Enter 不确认候选', () => {
 
     await waitFor(() => expect(editor.textContent).toContain('src/f0.ts'))
     expect(onSend).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * 空输入预测 ghost（assist.prediction，oh-my-pi 口径）：会话 settled 且输入空置
+ * 时请求一次预测，空输入框渲染灰色 ghost 文本——→/End 采纳（原位成为输入）、
+ * Esc 忽略。assistAPI mock 掉（端点行为在服务端测试锁定）。
+ */
+describe('Composer 空输入预测 ghost', () => {
+  function renderComposer(opts?: { enabled?: boolean; hasHistory?: boolean }) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={vi.fn()}
+            isStreaming={false}
+            hasHistory={opts?.hasHistory ?? true}
+            agents={[]}
+            predictNext={opts?.enabled === false ? undefined : { sessionId: 's1', enabled: true }}
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return screen.getByTestId('composer-editor')
+  }
+
+  /** 跳过 800ms 去抖并 flush 微任务（fake timers 下 findByTestId/waitFor 会挂起）。 */
+  async function settlePrediction() {
+    await act(async () => {
+      vi.advanceTimersByTime(900)
+      await Promise.resolve()
+    })
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    predictPrompt.mockReset()
+  })
+
+  it('空闲后 ghost 渲染在占位符位置；→ 采纳为输入正文；再按 → 不残留', async () => {
+    predictPrompt.mockResolvedValue({ prediction: '继续跑测试' })
+    const editor = renderComposer()
+    await settlePrediction()
+    const ghost = screen.getByTestId('composer-ghost')
+    expect(ghost.textContent).toBe('继续跑测试')
+
+    fireEvent.keyDown(editor, { key: 'ArrowRight' })
+    expect(editor.textContent).toBe('继续跑测试')
+    // 采纳后 ghost 消失（已有正文，占位符与 ghost 都不再渲染）
+    expect(screen.queryByTestId('composer-ghost')).toBeNull()
+  })
+
+  it('Esc 忽略本次预测：ghost 消失且不再回填', async () => {
+    predictPrompt.mockResolvedValue({ prediction: '继续跑测试' })
+    const editor = renderComposer()
+    await settlePrediction()
+    expect(screen.getByTestId('composer-ghost')).toBeTruthy()
+
+    fireEvent.keyDown(editor, { key: 'Escape' })
+    expect(screen.queryByTestId('composer-ghost')).toBeNull()
+    expect(editor.textContent).not.toContain('继续跑测试')
+  })
+
+  it('未开启（predictNext 缺省）不发起请求', async () => {
+    renderComposer({ enabled: false })
+    await settlePrediction()
+    expect(predictPrompt).not.toHaveBeenCalled()
+  })
+
+  it('空会话（hasHistory=false）不预测：没有可跟进的上下文', async () => {
+    renderComposer({ hasHistory: false })
+    await settlePrediction()
+    expect(predictPrompt).not.toHaveBeenCalled()
+  })
+
+  it('prediction=null（模型无把握）不渲染 ghost', async () => {
+    predictPrompt.mockResolvedValue({ prediction: null })
+    renderComposer()
+    await settlePrediction()
+    expect(screen.queryByTestId('composer-ghost')).toBeNull()
   })
 })

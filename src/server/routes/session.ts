@@ -1,4 +1,13 @@
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
+import {
+  ASSIST_DEADLINE_MS,
+  ASSIST_MAX_TOKENS,
+  buildPredictionPrompt,
+  buildRecapPrompt,
+  recentTranscript,
+  sanitizePrediction,
+  sanitizeRecap,
+} from '../../core/assist.js'
 import { createSummarizerWithFallback } from '../../core/compact.js'
 import { fromDirectory } from '../../project/index.js'
 import { archiveOriginalEntries, listArchives } from '../../session/archive.js'
@@ -20,6 +29,7 @@ import {
   sanitizePermissionMetadata,
   searchSessions,
   touchLastOpened,
+  updateSessionMetadata,
   updateSessionTitle,
 } from '../../session/session.js'
 import {
@@ -625,6 +635,124 @@ function createSessionRoute(ctx: ServerContext): Hono {
       return c.json({ _tag: 'interrupted' })
     }
     return c.json({ _tag: 'idle' })
+  })
+
+  // ── 交互辅助（assist.*，oh-my-pi composer-prediction / idle-recap 口径迁移）──
+  // 预测与回顾共享同一套 side-turn 接线：settled 守卫（/:id/status 同口径——
+  // 活跃 run / 工作流 / lastRun running|paused 一律拒绝，运行中的会话没有
+  // 「下一步」可言）+ 最近消息裁剪 + createSummarizerWithFallback（compaction
+  // 同款通道，provider/model 取会话最后一段）。两者都是显式计费请求，入口
+  // 各自检查 config.assist.* 开关（默认关）。
+
+  /** assist side-turn 公共前置：未启用/会话不存在/未 settled/无对话时返回
+   *  可直接 return 的 Response；否则返回裁剪好的对话视图。 */
+  const assistPrereq = async (
+    c: Context,
+    id: string,
+    feature: 'prediction' | 'recap',
+  ): Promise<
+    { ok: true; transcript: string; lastMessageId: string } | { ok: false; response: Response }
+  > => {
+    const assist = ctx.config.assist
+    const enabled = feature === 'prediction' ? assist?.predictionEnabled : assist?.recapEnabled
+    if (!enabled) return { ok: false, response: apiError(c, 404, 'NOT_FOUND', 'Feature disabled') }
+    if (ctx.agentManager.get(id)) {
+      return { ok: false, response: apiError(c, 409, 'RUN_ACTIVE', 'Session has an active run') }
+    }
+    if (workflowRunIdFor(ctx, id)) {
+      return { ok: false, response: apiError(c, 409, 'RUN_ACTIVE', 'Session has an active run') }
+    }
+    const live = await getLiveSessionOr404(ctx, c, id)
+    if (!live.ok) return { ok: false, response: live.response }
+    const { session } = live
+    const runStatus = session.metadata.lastRun?.status
+    if (runStatus === 'running' || runStatus === 'paused') {
+      return { ok: false, response: apiError(c, 409, 'RUN_ACTIVE', 'Session has an active run') }
+    }
+    const messages = await getMessages(ctx.db, id)
+    const transcript = recentTranscript(messages)
+    const last = messages[messages.length - 1]
+    if (!transcript || !last) {
+      return { ok: false, response: apiError(c, 409, 'EMPTY_SESSION', 'Session has no messages') }
+    }
+    return { ok: true, transcript, lastMessageId: last.id }
+  }
+
+  /** assist side-turn 的模型调用（会话级配置/注册表解析 + provider/model 取
+   *  会话最后一段 + 限时，compaction 的 createSummarizerWithFallback 同款骨架）。 */
+  const runAssistTurn = async (id: string, prompt: string): Promise<string> => {
+    const session = await getSession(ctx.db, id)
+    if (!session) throw new Error('Session not found')
+    let sessionConfig = ctx.config
+    let sessionRegistry = ctx.llmRegistry
+    try {
+      const sessionCwd = await resolveAgentCwd(ctx, session)
+      const resolved = resolveSessionScope(ctx, {
+        cwd: sessionCwd,
+        registryKey: session.projectId ?? undefined,
+        buildWithoutKey: true,
+      })
+      sessionConfig = resolved.config
+      sessionRegistry = resolved.registry
+    } catch {
+      // cwd 解析失败回退服务级配置（compaction 同口径）
+    }
+    const segs = await getLLMSegments(ctx.db, id)
+    const lastSeg = segs[segs.length - 1]
+    const provider = lastSeg?.provider ?? sessionConfig.defaultProvider
+    const model = lastSeg?.model ?? sessionConfig.defaultModel
+    const summarizer = createSummarizerWithFallback(
+      sessionRegistry,
+      sessionConfig,
+      provider,
+      model,
+      {
+        maxTokens: ASSIST_MAX_TOKENS,
+        signal: AbortSignal.timeout(ASSIST_DEADLINE_MS),
+      },
+    )
+    return summarizer(prompt)
+  }
+
+  // 预测用户下一条消息：Web 空输入框的 ghost 文本来源。
+  app.post('/:id/predict-prompt', async (c) => {
+    const id = c.req.param('id')
+    const prereq = await assistPrereq(c, id, 'prediction')
+    if (!prereq.ok) return prereq.response
+    try {
+      const reply = await runAssistTurn(id, buildPredictionPrompt(prereq.transcript))
+      return c.json({ prediction: sanitizePrediction(reply) })
+    } catch {
+      // 预测失败静默为 null：ghost 文本是纯增强，不值得打断用户。
+      return c.json({ prediction: null })
+    }
+  })
+
+  // 离场回顾：按最后一条消息幂等（metadata.lastRecap 缓存命中不重算）。
+  app.get('/:id/recap', async (c) => {
+    const id = c.req.param('id')
+    const prereq = await assistPrereq(c, id, 'recap')
+    if (!prereq.ok) return prereq.response
+    const session = await getSession(ctx.db, id)
+    if (!session) return apiError(c, 404, 'NOT_FOUND', 'Session not found')
+    const cached = session.metadata.lastRecap
+    if (cached && cached.anchorId === prereq.lastMessageId) {
+      return c.json({ recap: cached.text, cached: true })
+    }
+    try {
+      const reply = await runAssistTurn(id, buildRecapPrompt(prereq.transcript))
+      const recap = sanitizeRecap(reply)
+      if (recap) {
+        // 缓存写入失败不影响返回（下一次请求重算即可）。
+        await updateSessionMetadata(ctx.db, id, (meta) => {
+          meta.lastRecap = { anchorId: prereq.lastMessageId, text: recap, createdAt: Date.now() }
+          return meta
+        })
+      }
+      return c.json({ recap, cached: false })
+    } catch (e) {
+      return apiError(c, 500, 'RECAP_FAILED', e instanceof Error ? e.message : 'Recap failed')
+    }
   })
 
   // shake preview：返回可 shake 的区域列表

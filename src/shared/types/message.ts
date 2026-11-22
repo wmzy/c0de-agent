@@ -49,6 +49,10 @@ type SessionMetadata = {
   unfinishedUntilEntryId?: string
   /** 上次打开时间戳（ms），用于会话列表按最近打开排序。 */
   lastOpenedAt?: number
+  /** 离场回顾（assist.recap）的幂等缓存：anchorId=生成时最后一条消息 id。
+   *  时间线未新增消息时重复请求直接命中缓存，不再计费重算；新消息落地后
+   *  锚点变化自然失效重算。不落库为消息——它是「回到会话时的状态行」。 */
+  lastRecap?: { anchorId: string; text: string; createdAt: number }
   /** P2：会话级授权模式覆盖（'auto'/'default'），跨重启持久化。 */
   permissionMode?: 'auto' | 'default'
   /** 回收站条目首次被用户看到的时间戳（ms）。回收站保留期自此起算，而非删除时间——

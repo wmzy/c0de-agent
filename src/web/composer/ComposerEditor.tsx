@@ -68,6 +68,8 @@ type Props = {
   streaming?: boolean
   hasHistory: boolean
   isEmpty: boolean
+  /** 空输入预测（assist.prediction）：非空时替代占位符渲染为灰色 ghost 文本。 */
+  ghost?: string | null
   onInput: () => void
   onKeyDown: (e: KeyboardEvent) => void
   onPaste: (e: ClipboardEvent) => void
@@ -124,7 +126,11 @@ function ComposerEditor(props: Props) {
 
   return (
     <div className={editorWrap}>
-      {props.isEmpty && <span className={placeholderStyle}>{placeholder}</span>}
+      {props.isEmpty && (
+        <span className={placeholderStyle} data-testid={props.ghost ? 'composer-ghost' : undefined}>
+          {props.ghost ?? placeholder}
+        </span>
+      )}
       {tip && (
         <div className={pillTip} style={{ left: tip.x, top: tip.y }}>
           {tip.content}

@@ -248,6 +248,12 @@ export type {
   TerminalPart,
   TextPart,
 }
+
+/** 把一段纯文本包成单 TextPart 的 Prompt（start/end 仅占位，renderPrompt 不读它们）。 */
+function textPrompt(text: string): Prompt {
+  return [{ type: 'text', content: text, start: 0, end: text.length }]
+}
+
 export {
   atTokenRange,
   clonePromptParts,
@@ -259,4 +265,5 @@ export {
   promptToText,
   replacePromptRange,
   snippetLabel,
+  textPrompt,
 }

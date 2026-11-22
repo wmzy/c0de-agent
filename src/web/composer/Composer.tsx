@@ -10,7 +10,7 @@ import { ComposerEditor } from '@/composer/ComposerEditor.js'
 import { PermissionDock } from '@/composer/PermissionDock.js'
 import { SlashPopover, SubcommandPopover } from '@/composer/SlashPopover.js'
 import type { ComposerSendPayload, ImagePart, Prompt } from '@/composer/types.js'
-import { extractAgentMentions } from '@/composer/types.js'
+import { extractAgentMentions, textPrompt } from '@/composer/types.js'
 import type { PopoverState } from '@/composer/useComposer.js'
 import { useComposer } from '@/composer/useComposer.js'
 import { WorkflowPopover } from '@/composer/WorkflowPopover.js'
@@ -18,6 +18,7 @@ import { useFileReferenceSetter } from '@/contexts/ReferenceContext.js'
 import { useCommands } from '@/hooks/useCommands.js'
 import type { FileSearchResult } from '@/hooks/useFiles.js'
 import { useFileSearch } from '@/hooks/useFiles.js'
+import { usePromptPrediction } from '@/hooks/usePromptPrediction.js'
 import type { AgentListItem } from '@/services/agent.js'
 import { workflowsQueryOptions } from '@/services/workflows.js'
 import { MOBILE } from '@/styles/breakpoints.js'
@@ -269,6 +270,14 @@ type ComposerProps = {
    * localStorage，切会话或刷新后回填。缺省不持久化。
    */
   draftScope?: string
+  /**
+   * 空输入预测（assist.prediction，oh-my-pi 口径）：给定 sessionId 且 enabled
+   * 时，会话 settled 且输入框空置自动请求预测并渲染 ghost 文本（→ 采纳、Esc
+   * 忽略）。草稿页（无会话）不传。
+   */
+  predictNext?: { sessionId: string; enabled: boolean }
+  /** 输入框空/非空变化上报（useIdleRecap 的空闲判定用）。 */
+  onEmptyChange?: (empty: boolean) => void
 }
 
 /**
@@ -307,6 +316,21 @@ function Composer(props: ComposerProps) {
     draftScope: props.draftScope,
   })
   const fileSearch = useFileSearch(composer.popoverQuery, props.projectId)
+
+  // 空输入预测（assist.prediction）：ghost 只在「会话 settled + 输入空置」出现；
+  // 采纳/忽略在本组件的 handleKeyDown（→ / Esc），插入走 setPromptExternal。
+  const { prediction, clearPrediction } = usePromptPrediction({
+    sessionId: props.predictNext?.sessionId,
+    enabled: !!props.predictNext?.enabled,
+    isEmpty: composer.isEmpty,
+    isStreaming: props.isStreaming,
+    hasMessages: props.hasHistory,
+  })
+
+  // 空置状态上报：useIdleRecap 以「输入框空置」为未离开的信号之一。
+  useEffect(() => {
+    props.onEmptyChange?.(composer.isEmpty)
+  }, [composer.isEmpty, props.onEmptyChange])
 
   // 跨实例还原输入：发送失败伴随导航后（首条消息失败 → 清空会话 → 回草稿页）
   // 草稿页是新的 Composer 实例，得由外部把内容灌回来。
@@ -499,6 +523,22 @@ function Composer(props: ComposerProps) {
     // 不判定就会把未确认的候选当最终输入：回车直接插入斜杠命令/子命令/工作流名
     // 或选中 @ 候选，用户正在组合的内容被替换掉。
     if (isImeComposing(e)) return
+    // 空输入预测 ghost（assist.prediction，oh-my-pi 口径）：→/End 采纳、Esc 忽略。
+    // 空输入时光标在 0，→/End 本无位移可让，劫持零破坏；Tab 保持「离开输入框」
+    // 的键位约定不劫持。浮层打开时（空输入不会有候选）不抢键。
+    if (prediction && composer.isEmpty && composer.popover === null) {
+      if (e.key === 'ArrowRight' || e.key === 'End') {
+        e.preventDefault()
+        const text = prediction
+        composer.setPromptExternal(textPrompt(text), true)
+        clearPrediction()
+        return
+      }
+      if (e.key === 'Escape') {
+        clearPrediction()
+        return
+      }
+    }
     // 浮层候选计数：与各 Popover 的实际渲染条件一致（空列表时它们 return null）。
     // 浮层状态是「触发正则匹配」置上的，不保证有候选：@ 一个不存在的名字（@alice 帮我看下）、
     // 未匹配的 /cmd 都会让 popover 挂着但一个菜单项都画不出来。此时继续拦截按键，
@@ -723,6 +763,7 @@ function Composer(props: ComposerProps) {
           streaming={props.isStreaming}
           hasHistory={props.hasHistory}
           isEmpty={composer.isEmpty}
+          ghost={prediction}
           onInput={composer.handleInput}
           onKeyDown={handleKeyDown}
           onPaste={composer.handlePaste}

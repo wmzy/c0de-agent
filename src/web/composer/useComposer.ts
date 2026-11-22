@@ -29,6 +29,7 @@ import {
   promptToText,
   replacePromptRange,
   snippetLabel,
+  textPrompt,
 } from '@/composer/types.js'
 import type { CommandInfo } from '@/hooks/useCommands.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
@@ -115,10 +116,6 @@ function readImagePart(file: File): Promise<ImagePart> {
     reader.onerror = () => reject(new Error('读取图片失败'))
     reader.readAsDataURL(file)
   })
-}
-/** 把一段纯文本包成单 TextPart 的 Prompt（start/end 仅占位，renderPrompt 不读它们）。 */
-function textPrompt(text: string): Prompt {
-  return [{ type: 'text', content: text, start: 0, end: text.length }]
 }
 
 function useComposer({

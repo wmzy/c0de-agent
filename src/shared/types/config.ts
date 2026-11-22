@@ -174,7 +174,7 @@ type AdvisorConfig = {
   /** 总开关。默认 false——影子审查会带来额外模型调用成本，用户显式开启。 */
   enabled: boolean
   /** 审查模型覆盖；未设置时回退 defaultProvider/defaultModel。
-   * 审查是「旁观挑错」任务，可配置更强的模型获得更好的判断质量。 */
+   *  审查是「旁观挑错」任务，可配置更强的模型获得更好的判断质量。 */
   model?: { provider: string; model: string }
   /** 每个 update（一个 tool round 的增量审查）允许准入的非 blocker note 数
    *  上限（1–32，超出整段限流）。blocker 豁免——必须总能打断。 */
@@ -182,6 +182,20 @@ type AdvisorConfig = {
   /** blocker 打断后的冷却 turn 数：N 个 update 内不注入非 blocker note，
    *  避免打断后连环轰炸淹没主 agent 的恢复动作（0 = 关闭冷却）。 */
   immuneTurns: number
+}
+
+/** 交互辅助（oh-my-pi composer-prediction / idle-recap 口径迁移）。两项都默认
+ *  关闭——每次触发都是一次额外计费 LLM 请求，用户显式开启（advisor/memory 同款
+ *  成本口径）。 */
+type AssistConfig = {
+  /** 轮次结束后预测下一条用户消息，Web 空输入框以灰色 ghost 文本预填
+   *  （→ 采纳、Esc 忽略）。预测请求携带最近消息，按会话主模型计费。 */
+  predictionEnabled: boolean
+  /** 离场回顾：会话空闲一定时间后生成一行「目标/当前任务/下一步」的灰色回顾
+   *  （时间线底部，不落库为消息；按最后一条消息幂等缓存于会话 metadata）。 */
+  recapEnabled: boolean
+  /** 离场回顾的空闲秒数（自上轮结束且输入框保持空置起算）。默认 240。 */
+  recapIdleSeconds: number
 }
 
 /** LSP 服务器配置项（config.lsp.servers.<name>）。覆盖内置默认条目时，
@@ -234,6 +248,9 @@ type Config = {
   /** Advisor 影子审查；enabled false（默认）时整条管线关闭。
    *  与 memory 同款：类型可选以兼容手构/旧测试 Config 字面量。 */
   advisor?: AdvisorConfig
+  /** 交互辅助（composer 预测 + 离场回顾）；可选键，运行时恒经 DEFAULT_CONFIG
+   *  合并注入默认值（memory/advisor 同款口径）。 */
+  assist?: AssistConfig
   toolMetrics: ToolMetricsConfig
   security: SecurityConfig
   websearch: WebSearchConfig
@@ -247,6 +264,7 @@ type Config = {
 export type {
   AdvisorConfig,
   AgentsConfig,
+  AssistConfig,
   CompactionConfig,
   Config,
   LspServerUserConfig,

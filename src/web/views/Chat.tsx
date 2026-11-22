@@ -18,6 +18,8 @@ import {
 } from '@/components/session/utils/timeline.js'
 import { Composer, type SendPayload } from '@/composer/Composer.js'
 import type { ImagePart, Prompt } from '@/composer/types.js'
+import { useConfig } from '@/contexts/ConfigContext.js'
+import { useIdleRecap } from '@/hooks/useIdleRecap.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import type { AgentListItem } from '@/services/agent.js'
 import {
@@ -32,6 +34,17 @@ import { messageOf } from '@/utils/errors.js'
 import { formatTokenCount } from '@/utils/format.js'
 import { interruptBanner } from '@/views/_shared/bannerStyles.js'
 import { TableView } from '@/views/TableView.js'
+
+/** 离场回顾行（assist.recap）：灰色斜体一行，视觉上是「时间线底部的注脚」
+ *  而非消息（omp RecapNotice 的 dim italic 口径）。 */
+const recapRow = css`
+  margin: 4px 0;
+  padding: 0 2px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--haze-color-text-muted, var(--haze-color-text-secondary));
+  user-select: none;
+`
 
 export type { SendPayload }
 
@@ -572,6 +585,19 @@ export function Chat({
   terminalToggle,
 }: ChatProps) {
   const streamRef = useRef<HTMLDivElement>(null)
+  // 交互辅助（assist.*，oh-my-pi 口径）：空输入预测 + 离场回顾。两者都默认关
+  //（额外计费请求），配置到达前静默。
+  const { config } = useConfig(projectId ?? undefined)
+  const assist = config?.assist
+  const [composerEmpty, setComposerEmpty] = useState(true)
+  const { recap } = useIdleRecap({
+    sessionId: sessionId ?? undefined,
+    enabled: !!assist?.recapEnabled,
+    idleSeconds: assist?.recapIdleSeconds ?? 240,
+    isStreaming,
+    hasMessages: timeline.length > 0,
+    composerEmpty,
+  })
   // 是否跟随最新内容：只在「用户主动上滚」时停止，回到底部/主动发送/切换会话时恢复。
   // 判据必须是用户输入事件（滚轮/触摸/键盘/滚动条拖拽）：内容增减会改变可滚动高度，
   // 浏览器随即钳制 scrollTop，用「距底距离」或「scrollTop 变小」判定会把钳制误当成
@@ -965,6 +991,13 @@ export function Chat({
           {timeline.length === 0 && emptyState}
           <TimelineChat rows={timeline} showAllJson={viewMode === 'json'} />
           {isStreaming && <StreamingIndicator />}
+          {/* 离场回顾（assist.recap，oh-my-pi 口径）：会话空闲后的一行现状，
+              灰色斜体、非消息（不落库、不进上下文）。 */}
+          {!isStreaming && recap && (
+            <p className={recapRow} data-testid="session-recap">
+              ※ 回顾：{recap}
+            </p>
+          )}
           {!following ? (
             <button
               type="button"
@@ -1094,6 +1127,10 @@ export function Chat({
         creating={creating}
         hasHistory={timeline.length > 0}
         supportsVision={supportsVision}
+        predictNext={
+          sessionId && assist?.predictionEnabled ? { sessionId, enabled: true } : undefined
+        }
+        onEmptyChange={setComposerEmpty}
         permission={
           pendingPermission
             ? { tool: pendingPermission.tool, input: pendingPermission.input }
