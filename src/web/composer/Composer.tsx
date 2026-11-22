@@ -16,6 +16,7 @@ import { useComposer } from '@/composer/useComposer.js'
 import { WorkflowPopover } from '@/composer/WorkflowPopover.js'
 import { useFileReferenceSetter } from '@/contexts/ReferenceContext.js'
 import { useCommands } from '@/hooks/useCommands.js'
+import type { FileSearchResult } from '@/hooks/useFiles.js'
 import { useFileSearch } from '@/hooks/useFiles.js'
 import type { AgentListItem } from '@/services/agent.js'
 import { workflowsQueryOptions } from '@/services/workflows.js'
@@ -432,10 +433,19 @@ function Composer(props: ComposerProps) {
     agents: props.agents,
     results: fileSearch.data ?? [],
     query: composer.popoverQuery,
+    // 新查询在途时 fileSearch.data 是上一查询的 placeholder：按 subsequence 收窄
+    // 后继续可用（oh-my-pi 在途收窄口径），浮层逐字收窄而不是闪「搜索中」。
+    stale: fileSearch.isPlaceholderData === true,
   })
   const atSubagents = atMenu.subagents
   const atFiles = atMenu.files
   const atTotal = atSubagents.length + atFiles.length
+
+  /** @ 候选的接受分派：目录 → 链式下钻（浮层续开），文件 → 插入 file pill。 */
+  const pickAtEntry = (entry: FileSearchResult) =>
+    entry.type === 'directory'
+      ? composer.insertAtDirectory(entry.path)
+      : composer.insertFile(entry.path)
 
   /**
    * 浮层候选插不进去时的收尾（Enter 专用）。
@@ -479,7 +489,7 @@ function Composer(props: ComposerProps) {
     }
     const selected = atMenuSelection(atMenu, i)
     if (selected?.kind === 'agent') return composer.insertAgentToken(selected.agent.name)
-    if (selected?.kind === 'file') return composer.insertFile(selected.file.path)
+    if (selected?.kind === 'file') return pickAtEntry(selected.file)
     return false
   }
 
@@ -702,7 +712,7 @@ function Composer(props: ComposerProps) {
               loading={fileSearch.isLoading}
               error={popoverError}
               onRetry={() => void fileSearch.refetch()}
-              onSelect={(path) => composer.insertFile(path)}
+              onSelect={pickAtEntry}
               onAgentSelect={composer.insertAgentToken}
             />
           </div>

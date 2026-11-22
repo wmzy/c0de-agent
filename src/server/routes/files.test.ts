@@ -227,6 +227,27 @@ describe('files route', () => {
     expect(paths.some((p) => p.includes('hello'))).toBe(true)
   })
 
+  // 子串零命中 → 子序列兜底（oh-my-pi @ 补全的模糊发现口径）：`hlo` 仍能找到
+  // hello.txt；有子串命中时结果集与旧契约一致（不被子序列结果稀释）。
+  it('GET /search 子串零命中时按子序列兜底（模糊发现）', async () => {
+    const { app } = await setupWithDir()
+    const res = await app.request('/search?q=hlo')
+    expect(res.status).toBe(200)
+    const results = (await res.json()) as Array<{ path: string }>
+    expect(results.some((r) => r.path === 'hello.txt')).toBe(true)
+  })
+
+  it('GET /search 有子串命中时不追加子序列结果（契约不变）', async () => {
+    const { app, dir } = await setupWithDir()
+    writeFileSync(join(dir, 'subdir', 'sub-child.txt'), 'x')
+    const res = await app.request('/search?q=hello')
+    const paths = ((await res.json()) as Array<{ path: string }>).map((r) => r.path)
+    // 'hello.txt' 是子串命中；'sub-child.txt' 不是 hello 的子序列——若误把
+    // 兜底并进正常路径，这类噪声会混进来
+    expect(paths).toContain('hello.txt')
+    expect(paths).not.toContain('subdir/sub-child.txt')
+  })
+
   it('GET /hello.txt/raw 返回原始字节和 text/plain 类型', async () => {
     const { app } = await setupWithDir()
     const res = await app.request('/hello.txt/raw')

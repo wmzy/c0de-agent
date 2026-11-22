@@ -130,6 +130,9 @@ type PillInsertResult = {
   appendTerminalReference: (label: string, content: string) => void
   handleInput: () => void
   handleKeyDown: (e: ReactKeyboardEvent) => void
+  insertAtDirectory: (path: string) => boolean
+  /** 浮层 query（insertAtDirectory 后应为 `<path>/`）。 */
+  popoverQuery: () => string
   /** 走**最新一次渲染**的 handler：Esc 的分支依赖当次渲染读到的 popover，
    *  上面的 handleKeyDown 是首帧闭包，按键前若有状态变化会读到过期值。 */
   pressKey: (e: ReactKeyboardEvent) => void
@@ -179,6 +182,8 @@ function renderComposerWithEditor(draftScope?: string, commands?: CommandInfo[])
     appendTerminalReference: result.current.appendTerminalReference,
     handleInput: result.current.handleInput,
     handleKeyDown: result.current.handleKeyDown,
+    insertAtDirectory: result.current.insertAtDirectory,
+    popoverQuery: () => result.current.popoverQuery,
     pressKey: (e) => result.current.handleKeyDown(e),
     send: result.current.send,
     onSend,
@@ -199,6 +204,46 @@ function typeText(c: PillInsertResult, text: string): void {
 
 const pillTypes = (c: PillInsertResult): string[] =>
   (c.promptRef.current.map((p: { type: string }) => p.type) as string[]).filter((t) => t !== 'text')
+
+// ── 目录链式下钻（oh-my-pi autocomplete 口径）──
+// 接受目录候选不是终止：@token 原位替换为文本 `@<path>/`，浮层保持 at 态、query
+// 切到 `<path>/` 继续补全该目录内容；既有 pill 不被平铺重建吞掉。
+describe('useComposer 目录链式下钻', () => {
+  it('insertAtDirectory 把 @token 换成 @path/ 文本，浮层续开且 query 下钻一级', () => {
+    const c = renderComposerWithEditor()
+    act(() => {
+      c.appendFileReference('src/a.ts')
+    })
+    typeText(c, '@sr')
+    let ok = false
+    act(() => {
+      ok = c.insertAtDirectory('src')
+    })
+    expect(ok).toBe(true)
+    expect(promptToText(c.promptRef.current as never)).toBe('src/a.ts @src/')
+    expect(c.popover()).toBe('at')
+    expect(c.popoverQuery()).toBe('src/')
+    expect(pillTypes(c)).toEqual(['file'])
+  })
+
+  it('光标不在 @token 上时替换失败（返回 false，调用方走浮层失活兜底）', () => {
+    const c = renderComposerWithEditor()
+    typeText(c, '@sr')
+    // 光标移出 token（等效于用户点走了光标）：setCursorEnd 后再手动挪到开头
+    const range = document.createRange()
+    range.setStart(c.editor.firstChild as Node, 0)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    let ok = true
+    act(() => {
+      ok = c.insertAtDirectory('src')
+    })
+    expect(ok).toBe(false)
+    expect(promptToText(c.promptRef.current as never)).toBe('@sr')
+  })
+})
 
 describe('useComposer pill 保留', () => {
   it('insertFile（@ popover）保留既有 file/snippet/terminal pill', () => {

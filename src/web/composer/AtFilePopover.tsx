@@ -25,7 +25,8 @@ type Props = {
   error?: string | null
   /** 失败行的重试入口。 */
   onRetry?: () => void
-  onSelect: (path: string) => void
+  /** 选中候选项：目录 → 链式下钻，文件 → 插入 pill（分派在 Composer 的 pickAtEntry）。 */
+  onSelect: (entry: FileSearchResult) => void
   /** 选中 agent 时回调（插入 @name 文本）。 */
   onAgentSelect: (name: string) => void
 }
@@ -58,9 +59,9 @@ function AtFilePopover(props: Props) {
           key={f.path}
           block
           active={subagents.length + i === activeIndex}
-          onSelect={() => props.onSelect(f.path)}
+          onSelect={() => props.onSelect(f)}
         >
-          {f.path}
+          {f.type === 'directory' ? `${f.path}/` : f.path}
         </PopoverOption>
       ))}
     </PopoverList>

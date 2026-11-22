@@ -18,7 +18,7 @@ import {
   performGitCommit,
 } from '../../project/resolve.js'
 import { IGNORED_DIR_NAMES } from '../../shared/utils/path.js'
-import { errorMessage, headChars } from '../../shared/utils/string.js'
+import { errorMessage, headChars, subsequenceMatch } from '../../shared/utils/string.js'
 import { apiError } from '../middleware/error.js'
 import type { ServerContext } from '../types.js'
 import { readJsonObject } from '../util/json-body.js'
@@ -507,7 +507,15 @@ ${headChars(summary.diff, 8000)}`
     const root = c.get('workspaceRoot')
     const all = await collectFiles(root, root)
     const lower = q.toLowerCase()
-    const matched = all.filter((f) => f.path.toLowerCase().includes(lower))
+    const lowerPaths = all.map((f) => f.path.toLowerCase())
+    const hit = (pred: (lowerPath: string) => boolean) =>
+      all.filter((_, i) => pred(lowerPaths[i] ?? ''))
+    let matched = hit((p) => p.includes(lower))
+    if (matched.length === 0) {
+      // 子串零命中时子序列兜底（oh-my-pi @ 补全的模糊发现口径）：`rendr` 也能
+      // 找到 render.ts。仅兜底——有子串命中时结果集与旧契约完全一致。
+      matched = hit((p) => subsequenceMatch(lower, p))
+    }
     return c.json(matched)
   })
 

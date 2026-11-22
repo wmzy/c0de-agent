@@ -61,6 +61,22 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/**
+ * 子序列匹配："wig" ~ "widget"（空 query 恒匹配；query 更长必不匹配）。
+ * @ 文件补全的模糊兜底口径（oh-my-pi autocomplete 同源）：子串零命中时服务端
+ * 按它给出子序列候选；web 端在途收窄（at-completion.ts）同口径。
+ */
+export function subsequenceMatch(query: string, target: string): boolean {
+  if (query.length === 0) return true
+  if (query.length > target.length) return false
+
+  let qi = 0
+  for (let ti = 0; ti < target.length && qi < query.length; ti++) {
+    if (query[qi] === target[ti]) qi++
+  }
+  return qi === query.length
+}
+
 /** 任意抛出值 → 可读错误消息：Error 取 message，其余 String() 兜底。
  *  `e instanceof Error ? e.message : String(e)` 骨架的单一实现（core/tools/
  *  llm/mcp 各 catch 分支共用）——各处手写曾反复漂移（漏 String 兜底、模板里

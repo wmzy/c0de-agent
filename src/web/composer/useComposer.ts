@@ -425,6 +425,36 @@ function useComposer({
     [replaceAtToken],
   )
 
+  /**
+   * 接受目录候选：链式下钻（oh-my-pi 口径）。把光标前的 @token 原位替换为文本
+   * `@<path>/`（**不加尾空格**），浮层保持打开、query 换成 `<path>/`，继续补全
+   * 该目录的内容——`@sr` → 选 `src/` → `@src/` 直接列 src 的子项，而不是把
+   * 目录当文件 pill 定死。目录作为附件引用没有意义，用户选目录的意图就是继续
+   * 往下走；想引用整个目录的场景不存在（files 附件按文件读取）。
+   * 替换失败（光标已不在 @token 上）返回 false，走浮层失活的兜底路径。
+   */
+  const insertAtDirectory = useCallback(
+    (path: string): boolean => {
+      const prompt = promptRef.current
+      if (!editorRef.current) return false
+      const cursor = currentCursor(editorRef.current)
+      const range = atTokenRange(promptToText(prompt), cursor)
+      if (!range) return false
+      const token = `@${path}/`
+      setPromptExternal(
+        replacePromptRange(prompt, range.start, range.end, [
+          { type: 'text', content: token, start: 0, end: token.length },
+        ]),
+        true,
+      )
+      setPopover('at')
+      setPopoverQuery(`${path}/`)
+      editorRef.current.focus()
+      return true
+    },
+    [setPromptExternal],
+  )
+
   // 选中 @agent：把光标前的 @query token 原位替换为 `@name ` 文本（骨架见
   // replaceAtToken）。此前这份骨架留在 Composer 组件层手写，与 hook 层的
   // insertFile 平行——hook 的 insert* 家族统一演进（如补 dismissedPopover
@@ -884,6 +914,7 @@ function useComposer({
     insertSubcommand,
     insertWorkflow,
     insertFile,
+    insertAtDirectory,
     insertAgentToken,
     appendFileReference,
     appendSnippetReference,

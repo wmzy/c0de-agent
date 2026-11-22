@@ -500,6 +500,118 @@ describe('Composer @ 浮层在文件搜索在途时的加载态', () => {
 })
 
 /**
+ * oh-my-pi autocomplete 移植的 @ 文件补全行为（at-completion.ts / at-menu 收窄排序 /
+ * useComposer.insertAtDirectory）：
+ *  - 目录候选可接受并链式下钻——@sr 选 src/ 后输入框变 @src/、浮层续开列子项，
+ *    而不是把目录当文件引用定死；
+ *  - 搜索在途时旧结果按新 query 子序列收窄继续可用（keepPreviousData），浮层
+ *    逐字收窄而不是闪「搜索中」。
+ */
+describe('Composer @ 补全的目录下钻与在途收窄', () => {
+  function typeToken(editor: HTMLElement, text: string) {
+    editor.textContent = text
+    const node = editor.firstChild as Text
+    const range = document.createRange()
+    range.setStart(node, text.length)
+    range.collapse(true)
+    const sel = window.getSelection() as Selection
+    sel.removeAllRanges()
+    sel.addRange(range)
+    fireEvent.input(editor)
+  }
+
+  function renderWithSearch(search: (q: string) => Promise<unknown>) {
+    vi.mocked(fileAPI.search).mockImplementation(search as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <FileSelectionContext.Provider
+          value={{ selectedFile: null, openFile: () => {}, closeFile: () => {} }}
+        >
+          <Composer
+            onSend={vi.fn()}
+            isStreaming={false}
+            hasHistory={false}
+            agents={[]}
+            projectId="p1"
+          />
+        </FileSelectionContext.Provider>
+      </QueryClientProvider>,
+    )
+    return screen.getByTestId('composer-editor')
+  }
+
+  it('Enter 接受目录候选：@token 变 @src/，浮层续开并列出该目录子项', async () => {
+    const editor = renderWithSearch(async (q) => {
+      if (q === 'sr') {
+        return [
+          { path: 'src', type: 'directory' },
+          { path: 'src/a.ts', type: 'file' },
+        ]
+      }
+      if (q === 'src/') {
+        return [
+          { path: 'src/b.ts', type: 'file' },
+          { path: 'src/c', type: 'directory' },
+        ]
+      }
+      return []
+    })
+    typeToken(editor, '@sr')
+    await waitFor(() => expect(screen.getByTestId('at-menu')).toBeTruthy())
+    // 'sr' 的分层排序：目录 src（basename 前缀档）排在文件 src/a.ts（包含档）前，
+    // 初始高亮即目录行（渲染为 src/）
+    expect(screen.getByTestId('at-menu').querySelector('[aria-selected="true"]')?.textContent).toBe(
+      'src/',
+    )
+
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    // 链式下钻：token 原位替换为文本 @src/（无尾空格），浮层不关、query 换成 src/
+    await waitFor(() => expect(editor.textContent).toBe('@src/'))
+    expect(screen.getByTestId('at-menu')).toBeTruthy()
+    // 新 query 'src/' 的结果回来后：直接子项列入浮层（目录渲染带尾 /）
+    await waitFor(() => {
+      const rows = Array.from(screen.getByTestId('at-menu').querySelectorAll('[role="option"]'))
+      expect(rows.map((n) => n.textContent)).toEqual(['src/c/', 'src/b.ts'])
+    })
+  })
+
+  it('搜索在途时旧结果按新 query 子序列收窄，浮层不闪「搜索中」', async () => {
+    const editor = renderWithSearch((q) => {
+      if (q === 's') {
+        return Promise.resolve([
+          { path: 'src/app.ts', type: 'file' },
+          { path: 'src/store.ts', type: 'file' },
+          { path: 'docs/readme.md', type: 'file' },
+        ])
+      }
+      return new Promise(() => {})
+    })
+    typeToken(editor, '@s')
+    // 's' 的分层排序：store.ts（basename 前缀档 900）排在 app.ts / readme.md
+    // （路径包含档 700，稳定保持服务端序）之前
+    await waitFor(() =>
+      expect(
+        Array.from(screen.getByTestId('at-menu').querySelectorAll('[role="option"]')).map(
+          (n) => n.textContent,
+        ),
+      ).toEqual(['src/store.ts', 'src/app.ts', 'docs/readme.md']),
+    )
+
+    // 继续输入：新查询 'st' 永不落地（mock 挂起），旧结果经子序列收窄继续展示
+    typeToken(editor, '@st')
+    await waitFor(() =>
+      expect(
+        Array.from(screen.getByTestId('at-menu').querySelectorAll('[role="option"]')).map(
+          (n) => n.textContent,
+        ),
+      ).toEqual(['src/store.ts', 'src/app.ts']),
+    )
+    expect(screen.queryByTestId('at-menu-loading')).toBeNull()
+  })
+})
+
+/**
  * 候选源读取失败：此前与「没有匹配」渲染完全一致（浮层消失/空列表），用户据此
  * 以为文件/命令不存在，按 Enter 还把字面量 `@foo` / `/cmd` 当正文发出去。
  */
