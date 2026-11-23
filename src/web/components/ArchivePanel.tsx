@@ -5,6 +5,7 @@ import { Dialog } from '@/components/Dialog.js'
 import { SyncedInput } from '@/components/SyncedControls.js'
 import { sessionAPI, sessionArchivesKey } from '@/services/session.js'
 import { ellipsisCss } from '@/styles/shared.js'
+import { expandToggleBtn } from '@/styles/tokens.js'
 import type { CompactionArchive, SessionEntry } from '@/types/index.js'
 import { messageOfOr } from '@/utils/errors.js'
 import { formatDateTime } from '@/utils/format.js'
@@ -54,11 +55,6 @@ const meta = css`
 `
 
 const expandBtn = css`
-  border: none;
-  background: transparent;
-  color: var(--haze-color-primary);
-  cursor: pointer;
-  font-size: 12px;
   padding: 0 4px;
   min-height: auto;
   min-width: auto;
@@ -202,7 +198,7 @@ export function ArchivePanel({ sessionId, onClose }: { sessionId: string; onClos
               </span>
               <button
                 type="button"
-                className={expandBtn}
+                className={`${expandToggleBtn} ${expandBtn}`}
                 onClick={() => setExpanded(expanded === a.id ? null : a.id)}
                 data-testid={`archive-expand-${a.id}`}
               >

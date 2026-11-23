@@ -4,6 +4,7 @@ import { CodeReference } from '@/components/CodeReference.js'
 import { CopyButton } from '@/components/CopyButton.js'
 import { Markdown } from '@/components/Markdown.js'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { expandToggleBtn } from '@/styles/tokens.js'
 import { formatDateTime, formatLatency } from '@/utils/format.js'
 
 const wrap = css`
@@ -30,13 +31,8 @@ const collapsed = css`
   mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 3.2em), transparent);
 `
 
-const btn = css`
+const btnExtra = css`
   align-self: flex-start;
-  font-size: 12px;
-  color: var(--haze-color-primary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
 `
 
 const footer = css`
@@ -87,7 +83,7 @@ export const AssistantTextBlock = memo(function AssistantTextBlock({
         )}
       </div>
       {overflowing && (
-        <button type="button" className={btn} onClick={toggle}>
+        <button type="button" className={`${expandToggleBtn} ${btnExtra}`} onClick={toggle}>
           {isExpanded ? '收起' : '展开'}
         </button>
       )}

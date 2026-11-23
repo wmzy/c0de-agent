@@ -3,6 +3,7 @@
 import { css } from '@linaria/core'
 import { DiffViewer } from 'haze-ui'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { expandToggleBtn } from '@/styles/tokens.js'
 
 const wrap = css`
   margin: 4px 0;
@@ -20,14 +21,6 @@ const collapsed = css`
   mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 2.4em), transparent);
 `
 
-const btn = css`
-  font-size: 12px;
-  color: var(--haze-color-primary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-`
-
 export function ContentDiff({ oldText, newText }: { oldText: string; newText: string }) {
   // DiffViewer 按 '\n' 切行，行尾换行会多出一行空行——先行归一化。
   const stripTrailing = (s: string) => (s.endsWith('\n') ? s.slice(0, -1) : s)
@@ -41,7 +34,7 @@ export function ContentDiff({ oldText, newText }: { oldText: string; newText: st
         </div>
       </div>
       {overflowing && (
-        <button type="button" className={btn} onClick={toggle}>
+        <button type="button" className={expandToggleBtn} onClick={toggle}>
           {expanded ? '收起' : '展开'}
         </button>
       )}

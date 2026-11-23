@@ -1,6 +1,7 @@
 import { css } from '@linaria/core'
 import type { ReactNode } from 'react'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { expandToggleBtn } from '@/styles/tokens.js'
 
 /** 文本输出的统一灰底 <pre>：折行显示、长词可断（终端输出/匹配行是散文，不是代码）。
  *  工具视图里不折叠的灰底 pre（截断说明/兜底入参/task 输出）都从这里组合底版，
@@ -27,17 +28,10 @@ const expandedWindow = css`
   overflow: auto;
 `
 
-const btn = css`
-  font-size: 12px;
-  color: var(--haze-color-primary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-`
-
 /**
  * 可折叠的输出块：内容高于折叠档位才出现「展开/收起」，折叠态裁剪、展开态限高滚动。
- * 档位可调（工具输出 200/400，文件代码块 300/600），检测与按钮只此一份实现。
+ * 档位可调（工具输出 200/400，文件代码块 300/600）；溢出检测（useOverflow）
+ * 与按钮基础形态（tokens.expandToggleBtn）为单一实现，与 session 文本块共用。
  */
 export function CollapsiblePre({
   children,
@@ -77,7 +71,7 @@ export function CollapsiblePre({
         )}
       </div>
       {overflowing && (
-        <button type="button" className={btn} onClick={toggle}>
+        <button type="button" className={expandToggleBtn} onClick={toggle}>
           {expanded ? '收起' : '展开'}
         </button>
       )}

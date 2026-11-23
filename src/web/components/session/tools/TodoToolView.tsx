@@ -1,11 +1,8 @@
 import { css } from '@linaria/core'
+import { isTodoStatus } from '@shared/types/todo.js'
 import type { ToolResult } from '@shared/types/tool.js'
 import { empty, OpToolShell } from '@/components/session/tools/OpToolShell.js'
-import {
-  STATUS_COLORS,
-  TASK_ICONS,
-  type TaskStatus,
-} from '@/components/session/tools/todoShared.js'
+import { STATUS_COLORS, TASK_ICONS } from '@/components/session/tools/todoShared.js'
 import { ToolInlineError } from '@/components/session/tools/toolError.js'
 import {
   ShapeNotice,
@@ -120,11 +117,7 @@ function Board({ phases, unreadable = false }: { phases: TodoPhaseLike[]; unread
               </span>
             </div>
             {phase.tasks.map((task) => {
-              const status = (
-                ['pending', 'in_progress', 'completed', 'abandoned'].includes(task.status)
-                  ? task.status
-                  : 'pending'
-              ) as TaskStatus
+              const status = isTodoStatus(task.status) ? task.status : 'pending'
               return (
                 <div key={task.content} className={taskRow}>
                   <span className={taskIcon} style={{ color: STATUS_COLORS[status] }}>

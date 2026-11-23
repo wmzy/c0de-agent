@@ -1,5 +1,6 @@
 import { css } from '@linaria/core'
 import { useOverflow } from '@/components/session/hooks/useOverflow.js'
+import { expandToggleBtn } from '@/styles/tokens.js'
 
 const wrap = css`
   display: flex;
@@ -24,13 +25,8 @@ const collapsed = css`
   overflow: hidden;
 `
 
-const btn = css`
+const btnExtra = css`
   align-self: flex-start;
-  font-size: 12px;
-  color: var(--haze-color-primary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
   padding: 2px 0;
 `
 
@@ -43,7 +39,7 @@ export function UserTextBlock({ text: content }: { text: string }) {
         <pre className={text}>{content}</pre>
       </div>
       {overflowing && (
-        <button type="button" className={btn} onClick={toggle}>
+        <button type="button" className={`${expandToggleBtn} ${btnExtra}`} onClick={toggle}>
           {expanded ? '收起' : '展开'}
         </button>
       )}

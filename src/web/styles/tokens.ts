@@ -17,6 +17,19 @@ export const inputStyle = css`
   color: var(--haze-color-text);
 `
 
+/** 「展开/收起」溢出切换按钮原子类：12px 次要链接色 / 透明底 / 无边框。
+ *  此前 5 处组件（AssistantTextBlock / UserTextBlock / ContentDiff /
+ *  CollapsiblePre / ArchivePanel）在各自的 css`` 模板里逐字复制且已漂移
+ *  （align-self / padding / min-height 调参变体），收敛于此，经 className
+ *  组合使用，组件本地类只声明增量。 */
+export const expandToggleBtn = css`
+  font-size: 12px;
+  color: var(--haze-color-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+`
+
 /** 卡片容器原子类：边框 / 6px 圆角 / 背景。 */
 export const cardStyle = css`
   border: 1px solid var(--haze-color-border);

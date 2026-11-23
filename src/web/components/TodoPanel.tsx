@@ -1,13 +1,10 @@
 import { css } from '@linaria/core'
+import { isTodoStatus } from '@shared/types/todo.js'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'haze-ui'
 import { useEffect, useState } from 'react'
 import { SyncedInput } from '@/components/SyncedControls.js'
-import {
-  STATUS_COLORS,
-  TASK_ICONS,
-  type TaskStatus,
-} from '@/components/session/tools/todoShared.js'
+import { STATUS_COLORS, TASK_ICONS } from '@/components/session/tools/todoShared.js'
 import { toolInlineErrorText } from '@/components/session/tools/toolError.js'
 import { useScopeGuard } from '@/hooks/useScopeGuard.js'
 import { kanbanAPI } from '@/services/kanban.js'
@@ -615,11 +612,7 @@ export function TodoPanel({ sessionId, projectId }: { sessionId: string; project
                   </span>
                 </div>
                 {phase.tasks.map((task) => {
-                  const status = (
-                    ['pending', 'in_progress', 'completed', 'abandoned'].includes(task.status)
-                      ? task.status
-                      : 'pending'
-                  ) as TaskStatus
+                  const status = isTodoStatus(task.status) ? task.status : 'pending'
                   return (
                     <div key={task.content} className={`${taskItem} ${taskItemHover}`}>
                       <button
